@@ -86,6 +86,15 @@ else
             echo "PUSH: НЕВОЗМОЖЕН: среди $N непушенных коммитов чужой автор: $BAD (ожидается '$WANT')"
         else
             CHANGED=$(git diff --name-only "$UP"..HEAD)
+            # ДОМ ПРАВИЛА ПОДКЛЮЧАЕТСЯ, А НЕ ПОДРАЗУМЕВАЕТСЯ (недоделка фикса №988,
+            # найдена 2026-09-13). Вынос правила «какие пути принадлежат ярусу novac» в
+            # один дом обошёл двух зовущих из трёх: `push-after-gate.sh` и
+            # `check-merge-discipline.sh` подключают файл, а здесь остался голый вызов.
+            # Отказ был МОЛЧАЛИВЫМ и в сторону НЕДОгейта: `command not found` уходит в
+            # stderr, подстановка даёт пусто, `TN` пуст, и справка советует ярус `main`
+            # там, где нужен `novac push + main loop`, — с кодом возврата 0.
+            # shellcheck source=gate-tier-paths.sh
+            . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gate-tier-paths.sh"
             TN=$(printf '%s\n' "$CHANGED" | novac_paths_count)
             LANG=$(printf '%s\n' "$CHANGED" | grep -c -E '^(compiler-codegen/src/|std/src/)' || true)
             SPEC=$(printf '%s\n' "$CHANGED" | grep -c -E '^spec/decisions/' || true)

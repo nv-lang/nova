@@ -112,5 +112,12 @@ fi
 if [ -f "$ROOT/scripts/guards/check-novac-commit-donor.sh" ] && [ -n "${MSGFILE:-}" ]; then
     sh "$ROOT/scripts/guards/check-novac-commit-donor.sh" "$MSGFILE" "$ROOT" || exit 1
 fi
+# Работа по 274 делается БЕЗ УПРОЩЕНИЙ, ровно по спеке, как для прода (владелец,
+# 2026-09-13). Страж рядом с донорским и по той же причине: назвать норму и НЕ внести
+# упрощение молча — обязанность автора, и спрашивать её надо в момент коммита, пока
+# контекст ещё у него в голове.
+if [ -f "$ROOT/scripts/guards/check-novac-commit-no-simplification.py" ] && [ -n "${MSGFILE:-}" ]; then
+    python "$ROOT/scripts/guards/check-novac-commit-no-simplification.py" "$MSGFILE" "$ROOT" || exit 1
+fi
 echo "check-commit-hygiene ok: маркеры, авторство, запрет Co-Authored-By и язык сообщения проверены"
 exit 0

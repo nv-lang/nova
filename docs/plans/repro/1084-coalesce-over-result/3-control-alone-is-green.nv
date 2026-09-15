@@ -1,0 +1,10 @@
+module probe
+
+// The control ALONE: if this is green, the single refusal in probe_result2.nv
+// belongs to the `Result` line and not to this one. Without this half the
+// probe would name a culprit it had not separated.
+fn g(o Option[int]) -> int => o ?? 0
+
+// And `Result` as a type in a position that does NOT involve `??` at all --
+// if this is green too, the type is in the subset and only the operator is not.
+fn h(r Result[int, str]) -> int => 1

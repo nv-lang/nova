@@ -327,6 +327,7 @@ step "novac-text (карта, маркеры, леджер, рёбра — до 
 par_reset
 par_add "$ROOT/scripts/guards/check-novac-arch-class-proofs.py" "класс в архитектуре novac без трёх доказательств (274.1, владелец 2026-08-14)"
 par_add "$ROOT/scripts/guards/check-novac-arch-invariants.py" "раздел карты архитектуры novac без счётчика инвариантов (274.1 §2б)"
+par_add "$ROOT/scripts/guards/check-novac-keyword-parity.py" "разница между списком зарезервированных слов спеки и таблицей лексера novac не объявлена: слово, которого лексер не знает, не молчит — оно ЛЖЁТ (реестр #1089, план 274.7 В10)"
 par_add "$ROOT/scripts/guards/check-novac-no-naked-panic.py" "голый panic( в novac/src вне двери ice() (конвенция novac П12.1)"
 par_add "$ROOT/scripts/guards/check-novac-no-crutch.py" "механизм novac назван костылём вместо того, чтобы быть названным правилом (П34)"
 par_add "$ROOT/scripts/guards/check-novac-no-unwrap-compare.py" "завёрнутый индекс распакован ради сравнения — обёртка перестала защищать (П19)"
@@ -446,8 +447,10 @@ par_add "$ROOT/scripts/guards/check-novac-module-donor.py" "модуль novac �
 # причинами, novac-plan-donor.allow, тоже под храповиком.
 par_add "$ROOT/scripts/guards/check-novac-plan-donor.py" "оракул назван донором в тексте плана/конвенций novac (П25/П27 2а)"
 guard "$ROOT/scripts/guards/check-novac-commit-donor.sh" /dev/null "$ROOT" || fail "check-novac-commit-donor не отвечает на пустом входе"
+guard "$ROOT/scripts/guards/check-novac-commit-no-simplification.py" /dev/null "$ROOT" || fail "check-novac-commit-no-simplification not runnable"
 par_add "$ROOT/scripts/guards/check-novac-resolve-discipline.py" "резолв с тихим дефолтом или линейным сканом имён"
 par_add "$ROOT/scripts/guards/check-novac-channel-one-writer.py" "у канала чекера второй писатель или вывод типа ниже чекера"
+par_add "$ROOT/scripts/guards/check-novac-invented-name-not-named.py" "имя, выдуманное компилятором, отдано двери `named` — двери АВТОРСКИХ имён (274.8 M3)"
 par_add "$ROOT/scripts/guards/check-novac-match-exhaustive.py" "match по сумме novac не покрывает все варианты (оракул это не ловит)"
 par_add "$ROOT/scripts/guards/check-novac-tuple-no-second-door.py" "у кортежа завелась вторая бухгалтерия: он записывается и строится не дверями записи"
 par_add "$ROOT/scripts/guards/check-novac-no-silent-skip.py" "ветка прохода канала ушла молча (ни записи, ни отказа, ни ice)"

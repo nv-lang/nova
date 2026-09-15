@@ -1,0 +1,24 @@
+// CONTROL. One overload only, and it takes position 0 by VIEW -- so no `consume`
+// position exists under that name and the caller must NOT disarm. The obligation
+// is affine (the type declares an effect-free `@cleanup`), so at scope end the
+// compiler must insert the cleanup -- which PANICS. Expected: panic.
+// If this does NOT panic, the sentinel itself is broken and probe A2 proves nothing.
+module dis_a1
+
+type Boom consume { id int }
+
+fn Boom consume @cleanup(_o ScopeOutcome) -> () {
+    panic("cleanup fired")
+}
+
+fn Boom consume @defuse() -> () { }
+
+fn mk(v int) -> Boom => { id: v }
+
+fn use(x Boom, tag int) -> int => tag
+
+fn main() Io -> () {
+    consume g = mk(7)
+    println("${use(g, 1)}")
+    println("reached the end without cleanup")
+}

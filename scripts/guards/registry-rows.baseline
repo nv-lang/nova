@@ -763,6 +763,15 @@
 #       zelyon (cleanup srabatyvaet), poetomu prichina imenno union po imeni;
 #     1101 -- `5 ?? 7` sobiraetsya i pechataet 7, a ne 5: forma, zapreshchyonnaya
 #       D86 (rovno dva konteynera), dayot tikhiy nevernyy rezul'tat.
+# 2026-09-14 (okno 274, SLIYANIE origin/main 22 kommita): rows 1045 -> 1054,
+#   max 1098 -> 1101. Rost SOSTAVNOY i ves' zakonnyy: iz `main` prishli stroki
+#   integratora i okna 283, iz vetki p274-novac -- 1093, 1094 (ro-launder za
+#   granitsey importa i novotip nad skalyarom), 1095 (`if Some(x) = <ne-Option>`),
+#   1099 (nepotreblyonnyy consume-parametr), 1100 (avto-`@cleanup` snimaetsya
+#   overload'om, kotoryy ne vyzyvaetsya), 1101 (`5 ?? 7` pechataet 7).
+#   Baza podnyata TOY ZHE pravkoy, chto i sliyanie: inache khrapovik otstayot i
+#   molcha razreshaet poteryat' stol'ko zhe strok.
+# [SNYATO 2026-09-15 pri rezolve: vtoraya stroka `gaps=`, strazh chital pervuyu] gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1097,1099-1101
 # 2026-09-14 (integrator): rows -> 1046, max bez izmeneniy (1098), gaps -= 1097.
 #   Stroka 1097 PRIEKHALA ot okna 283 -- imya funktsii v C teryaet svoy modul',
 #   kogda vypolnyayutsya TRI usloviya srazu (dva modulya s odinakovoy
@@ -770,6 +779,10 @@
 #   Os' NAZVANA POSLE BISEKTsII iz shesti progonov, pervaya gipoteza okna
 #   ('imya vozvrashchaemogo tipa delitsya') snyata ego zhe proboy.
 #   Pole BLOKIRUET TEG: DA prostavleno mnoyu pri priyome.
+# 2026-09-14 VTOROE SLIYANIE origin/main (5 kommitov): chisla PERESCHITANY, a ne vzyaty
+#   storonoy. U okna 274 bylo rows=1054 max=1101, u integratora rows=1046 max=1098 --
+#   sostavy raznye, i vybor storony poteryal by stroki drugoy storony molcha.
+#   Znacheniya nizhe nazval sam strazh na slitom dereve.
 # 2026-09-14 (integrator): gaps += 1102; rows/max bez izmeneniy.
 #   1102 vydan oknu 274: INT_TOO_LARGE_MSG -- novac otvergaet ZAKONNUYU
 #   programmu (konstanty splitmix64 v u64-kontekste sudyatsya protiv int).
@@ -829,7 +842,12 @@
 #   proverka mnogofaylovoy programmy padaet PO POSTROENIYu. Otsyuda '92 iz 93'
 #   pri fakticheskikh 6 iz 93 v edinitse sborki. Razlichayushchiy opyt:
 #   mangle.nv, diag.nv, lex.nv chisty v pachke i padayut poodinochke.
-rows=1062
+# 2026-09-16 (integrator, sliyanie p274-novac, 83 kommita):
+#   CHISLA PERESCHITANY pravilom strazha na ITOGOVOM dereve, a ne vybrany
+#   iz storon -- ikh zhe dovod, i on opravdalsya u nikh bukval'no: pereschyot
+#   poymal prikleennuyu bez perevoda stroki 1120, iz-za kotoroy soedniaya
+#   №1000 perestala nachinat'sya s '|'. Vybor storony unyos by eyo MOLCHA.
+rows=1074
 max=1122
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
@@ -925,6 +943,19 @@ max=1122
 #   TEKSTAKH DIAGNOSTIK (4 iz 9 putey ne sushchestvuyut), tekst gotov, no
 #   vpisyvat' ego v seredine razbora krasnogo CI ya ne stal -- pridyot
 #   sleduyushchim sliyaniem.
+# 2026-09-15 TRET'E SLIYANIE origin/main (26 kommitov, okno 274). VSE TRI chisla
+#   PERESCHITANY na slitom dereve pravilom samogo strazha (`^\|\s*[0-9]+\s*\|`),
+#   i sverennym vtoroy, strogoy redaktsiey regulyarki -- 1061 po obeim, raskhozhdeniy
+#   nol'. U storon bylo rows=1056/max=1102 (okno 274) i rows=1051/max=1110
+#   (integrator): sostavy raznye, vybor storony poteryal by stroki drugoy MOLCHA.
+#   GAPS SOKRASHCHYON, i eto ne poterya: 1074, 1084, 1089, 1093-1095, 1097,
+#   1099-1102 bol'she ne dyry -- ikh stroki priekhali s obeikh storon sliyaniya.
+#   Ostalis' nastoyashchie: 1096, 1103-1104, 1109 i staryy khvost 174-215/653-654/743/1062.
+# NAYDENO PRI REZOLVE, i eto vtoraya nakhodka: v HEAD bylo DVE stroki `gaps=`, a
+#   strazh chitaet PERVUYU (re.search + re.M). Vtoraya -- ta, chto snimala 1097, --
+#   byla mertva s minuty napisaniya i ne krasnela tol'ko potomu, chto LISHNIY nomer
+#   v gaps= opravdyvaet nesushchestvuyushchuyu dyru: stoit nichego, pryachet vsyo.
+#   Teper' klyuch odin i strochka odna -- pravilo iz shapki etogo zhe fayla.
 # 2026-09-15 (integrator): rows -> 1052, max bez izmeneniy (1110);
 #   gaps -= 1109. Stroka 1109 vpisana: kompilyator ssylaet pol'zovatelya
 #   na fayly, kotorykh net -- iz DEVYATI putey v tekstakh diagnostik
@@ -1004,4 +1035,15 @@ max=1122
 #   rabochey kopii, v indeks ne polozhena). Posle ego kommita edce73538 i etogo
 #   sliyaniya protukhshikh net: 0.
 stale_gaps=0
-gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104,1120,1121
+# 2026-09-15, ЧЕТВЁРТОЕ СЛИЯНИЕ origin/main. ВСЕ ТРИ числа ПЕРЕСЧИТАНЫ
+#   правилом самого стража на слитом дереве: rows=1073, max=1121.
+#   Стороны: у меня rows=1061/max=1110 (плюс две строки с TBD, которые счёт не
+#   видит), у интегратора rows=1061/max=1119 — составы разные. Номера 1120 и 1121
+#   выданы интегратором и поставлены ПОСЛЕ слияния — его же порядок, чтобы не
+#   считать дважды и не рвать целостность его реестра.
+# ПЕРЕСЧЁТ ОПРАВДАЛ СЕБЯ БУКВАЛЬНО И ПОЙМАЛ МОЮ ЖЕ ОШИБКУ: в разрешении
+#   конфликта самого реестра строка 1120 была приклеена без перевода строки, и соседняя
+#   №1000 съехала в тот же ряд, перестав начинаться с `|`. Счёт показал дыру 1000,
+#   которой нет ни в одной из сторон, — и только поэтому потеря нашлась. Выбор
+#   стороны вместо пересчёта унёс бы строку молча.
+gaps=174-208,210-215,653-654,743,1062,1096,1103-1104

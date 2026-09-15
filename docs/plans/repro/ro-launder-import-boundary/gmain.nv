@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Вызывающий пробы G. Он держит `ro`-значение и печатает его длину ДО и ПОСЛЕ вызова.
+// Если правило ro-launder за границей импорта не применяется, второе число будет больше --
+// то есть чужая функция изменила значение, связанное у меня как `ro`.
+module repro
+
+import mod.{Resp, leak}
+
+fn main() Io -> () {
+    ro v = Resp { hdr: Vec[int].of(1, 2) }
+    print("before=${v.hdr.len()}")
+    ro got = leak(v)
+    print("inside=${got}")
+    print("after=${v.hdr.len()}")
+}

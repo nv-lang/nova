@@ -355,6 +355,83 @@ export fn brace_delta(k TokenKind) -> int {
     }
 }
 
+// WHERE THE TABLE DIFFERS FROM THE SPEC'S RESERVED-WORD LIST, AND WHY -- one line per
+// difference, held by check-novac-keyword-parity.py (plan 274.7 wave B10).
+//
+// A keyword the lexer does not know does NOT stay silent: it lies. `loop` lexes as a
+// name, the `{` after it reads as a record literal, and the author is told "record
+// constructor only as a binding initializer" about a loop (registry #1089). Measured
+// 2026-09-13, a SECOND mask of the same class: `and` and `not` lex as names too, and
+// the refusal reads "unknown name: nothing with this name is bound at this point" --
+// a claim about the PROGRAM. That one is worse: it sends the author hunting for a typo
+// in a word they spelled correctly.
+//
+// The guard does NOT demand that every listed word be lexed. Three of them must not be:
+// `true`/`false` are literals and `Self` is a type, and writing them into this table
+// would damage the design to satisfy a number. The list is also partly stale. So each
+// difference is DECLARED instead, with one of four kinds: `debt` (with a stage in
+// brackets), `by design`, `retracted`, `spec-gap`.
+//
+// Twenty-three differences are NOT declared yet, and the guard's ratchet holds that
+// number. Each declaration is a JUDGEMENT -- debt or design, and if debt, which wave --
+// and stamping twenty-three plausible ones in a single pass would put believable words
+// where considered ones belong.
+//
+// KEYWORD-PARITY: true -- by design (a boolean literal, not an entry of this table)
+// KEYWORD-PARITY: false -- by design (a boolean literal, not an entry of this table)
+// KEYWORD-PARITY: Self -- by design (a type, D66, not a lexer keyword)
+// KEYWORD-PARITY: let -- retracted (D184: `let` -> `ro`/`mut`; the spec list still has it)
+// KEYWORD-PARITY: external -- retracted (replaced by `extern "nova"`; `extern` is below)
+// KEYWORD-PARITY: loop -- debt (274.7 B10), registry #1089: the form is legal Nova
+// KEYWORD-PARITY: consume -- spec-gap (a token since 2026-08-23, measured against the
+//     oracle, which refuses `fn consume()`; the spec's list has not caught up)
+// KEYWORD-PARITY: extern -- spec-gap (the list still spells the retracted `external`)
+// KEYWORD-PARITY: unsafe -- spec-gap (a real keyword of the language, absent from the list)
+//
+// The five words measured 2026-09-13 and named by wave B10 itself: each lexes as a NAME
+// today, and the refusal then speaks about the program. `break`/`continue` are not an
+// afterthought to `loop` -- an endless loop with no exit is useless, so B10's acceptance
+// already required `break` and merely did not say so.
+// KEYWORD-PARITY: and -- debt (274.7 B10)
+// KEYWORD-PARITY: or -- debt (274.7 B10)
+// KEYWORD-PARITY: not -- debt (274.7 B10)
+// KEYWORD-PARITY: break -- debt (274.7 B10)
+// KEYWORD-PARITY: continue -- debt (274.7 B10)
+//
+// THE EFFECTS AND CONSUME FAMILY, fifteen words with ONE home, quoted rather than
+// guessed. Plan 274, section E2: "Horizons: basics in full -> control/records/sums ->
+// generics and mono -> effects/consume" -- effects are E2's LAST horizon. Section E4
+// confirms it from the other side: MIR arrives when E2's width reaches effects and
+// consume. `defer`/`errdefer` (D90) are the consume half of the same horizon.
+// KEYWORD-PARITY: with -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: throw -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: interrupt -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: forbid -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: realtime -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: spawn -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: supervised -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: parallel -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: detach -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: blocking -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: select -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: effect -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: handler -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: defer -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: errdefer -- debt (E2, the effects/consume horizon)
+//
+// `protocol` has a wave of its own -- B3a, in the PARENT plan 274 and not in 274.7:
+// "the form `type X protocol { ... }` stops being a syntax error". The first version of
+// this line said 274.7, which has no B3a at all; the reference resolved by SHAPE and led
+// nowhere, which is a stage with a home, only not that one -- caught by a check that
+// looks for each declared wave's section rather than by reading.
+// KEYWORD-PARITY: protocol -- debt (274 B3a)
+//
+// STILL UNDECLARED ON PURPOSE: `alias` and `is`. Neither has a home I could quote --
+// `alias` appears in no wave of the 274 family (searched), and `is` is wider than a
+// lexeme (it needs `any` and a runtime type check, and registry #1067 says that even in
+// the oracle the rule lives in the codegen rather than the checker). A plausible stage
+// for either would be worse than the ratchet holding them.
+
 /// Keyword kind for an identifier text, or Ident when it is not a keyword.
 fn keyword_kind(t str) -> TokenKind => match t {
     "module" => TokenKind.KwModule

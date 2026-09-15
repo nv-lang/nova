@@ -927,3 +927,28 @@ fn main() -> () {\n\
 }", std)
     assert(d3.len() == 0)
 }
+test "a must-consume type declaration is READ and refused BY NAME, not dropped in the parser's bin (274.7 B13 step 0)" {
+    // Until 2026-09-14 `type X consume { ... }` fell into the newtype tail of
+    // `@type_decl` as if `consume` were a representation, the brace body behind it
+    // became junk, and the answer was the parser's fallback -- about a form the
+    // language HAS. Third time that exact shape was found there: `protocol` and
+    // `value` arrived the same way in 2026-08-23, one form apart.
+    //
+    // READING IT IS NOT ACCEPTING IT. Carina has no linearity at all (registry
+    // #1099: a `consume` parameter never consumed gives zero diagnostics), so a
+    // silent yes would promise a guarantee the compiler does not give. The refusal
+    // names itself and carries its stage.
+    ro std = std_decls()
+
+    ro (d, _) = compile_to_c("type Tx consume { v int }\n\
+fn main() { println(1) }", std)
+    assert(d.len() >= 1)
+    assert(d[0].message.contains("must-consume type"))
+    assert(d[0].message.contains("274.7 B13"))
+
+    // THE OTHER DIRECTION, and without it a branch refusing EVERY declaration would
+    // pass this test whole: the same record with no marker stays clean.
+    ro (d2, _) = compile_to_c("type Tx { v int }\n\
+fn main() { println(1) }", std)
+    assert(d2.len() == 0)
+}

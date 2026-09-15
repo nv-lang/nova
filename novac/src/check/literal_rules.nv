@@ -255,7 +255,7 @@ fn Checker mut @report_if_name_repeats(kids []Node) -> () {
         if leaf_kind(c) != TokenKind.Ident { continue }
         ro name = leaf_text(c)
         if @seen_decls.find(name) >= 0 {
-            @report_first_leaf_of(kids, DUP_DECL_MSG)
+            @reject_first_leaf_of(kids, DUP_DECL_MSG)
         } else {
             @seen_decls.put(name, 1)
         }
@@ -406,7 +406,31 @@ const CHAR_UNICODE_MSG = "outside the subset: the unicode char escape (backslash
 /// stage with the same verdict. The second is the subset's: `??` unwraps an
 /// Option, so a left side that is not one has no payload to answer with.
 const COALESCE_RETURN_MSG = "`??` does not take `return` on its right -- the form is retracted (D86); bind the value and return on the next line"
-const COALESCE_NONOPT_MSG = "outside the subset: `??` unwraps an `Option`, and this left side is not one"
+/// `??` unwraps a container, and this left side is not one. NOT a subset refusal:
+/// D86 gives exactly two containers and novac now implements both, so a left side
+/// that is neither is an ERROR OF THE PROGRAM and stays refused forever. The oracle
+/// is wrong here and accepts it (registry 839, blocks the tag: `42 ?? 77` prints 77
+/// while its check says ok), which is why the reference for this form is the spec.
+const COALESCE_NONOPT_MSG = "`??` unwraps an `Option` or a `Result`, and this left side is neither"
+
+/// A `Result` left side: LEGAL IN THE LANGUAGE (D86 gives `??` both containers) and not
+/// emittable yet, so it is refused with the stage that unblocks it rather than accepted
+/// into an emitter that would spell it wrong.
+///
+/// MEASURED, not assumed. `option_some_test` prints `.value != NULL` when the payload is
+/// a pointer -- such an Option carries no tag at all -- and `c_tag` prints novac's own
+/// `NOVAC_TAG_<module><Sum>_<Variant>`, while Option wears the shell's
+/// `NOVA_TAG_Option_Some`. So the general variant door and the Option door print
+/// DIFFERENT C, and a `Result` reaching the Option door would compare an Option tag
+/// against a `NovaRes_` struct.
+///
+/// WHY THE STAGE IS E2-b3 AND NOT A LATER ONE: a `Result` VALUE cannot be produced in
+/// the subset at all today -- all four construction forms are refused by «the type
+/// argument of this sum cannot be inferred from the payload (E2-b3)», and the corpus run
+/// hands novac no std declarations. Nothing can reach the form, so nothing can exercise
+/// an emitter written for it; writing it now would put untested code in the compiler.
+/// When E2-b3 lands, the form becomes both reachable and testable in one step.
+const COALESCE_RESULT_MSG = "outside the subset: `??` over a `Result` is not compiled yet (E2-b3) -- the language allows it (D86), but a `Result` value cannot be built here yet, so the form cannot be exercised end to end"
 
 /// The brace form of a parenthesised record. Not "outside the subset": the
 /// ORACLE fails to emit it too (`Pair { x: 1 }` on `type Pair(x int, y int)`

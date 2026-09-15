@@ -1,0 +1,112 @@
+// Donor: rustc `rustc_hir::Expr::is_*` and `ExprKind` predicates -- the question
+//   "what IS this node" is answered next to the tree's own vocabulary, once, and
+//   every consumer reads that answer instead of re-deriving it from the kind.
+// Role: layer sem -- the CHANNEL's yes/no questions about a node. Judgement about
+//   the SHAPE of a node lives here; extraction and parsing (slots, children, texts)
+//   stay in slots.nv, which is why this file was split off it on 2026-09-13 when
+//   that file crossed the 1000-line limit. The file-size guard demands cutting by
+//   meaning and forbids both a baseline and an exception.
+// Used by: check/ and lower/ while lowering and type-checking; a folder is one
+//   module, so moving these out of slots.nv changed no import anywhere outside.
+// Guarded by: check-novac-deps.py (the edges these predicates exist to remove),
+//   check-novac-file-size.py (the limit that forced the split), check-novac-lint.sh.
+//
+// THE FAMILY GROWS, and it grows by a rule: three of the six predicates here were
+// written within one day, all for the same reason -- the lowering asks the CHANNEL
+// what a node MEANS instead of deriving it at the consumer (plan 196, stage E2-b1).
+// A new question of that shape belongs here, not in the consumer that needs it.
+
+module novac.sem
+
+import ../builtins.{PRINT_FN}
+import ../lex.{TokenKind}
+import ../tree.{Node, NodeKind}
+
+/// Is this child of a call an ARGUMENT? Two shapes are: a bare expression, and
+/// a NAMED argument (`by: 2`), which is a node WRAPPING one.
+///
+/// A door because the answer used to be `is_expr_kind(c.kind_of())` at four
+/// call sites, and a named argument is not an expression kind -- so every one of
+/// them counted the arguments of `f(1, by: 2)` as one.
+export fn is_arg_node(c Node) -> bool =>
+    is_expr_kind(c.kind_of()) || c.kind_of() == NodeKind.NamedArg
+
+/// The kinds a VALUE TAIL may have -- `is_expr_kind` plus the one positional
+/// record literal the tail chain returns since B15 step 4b. ONE door for the
+/// three askers that used to spell the disjunction each on their own (the tail
+/// rule, the `=>` body's typing, the emitter's body arm), and two of them had
+/// not: the body was never typed and never built, and iced after a green check
+/// (#974). NOT folded into `is_expr_kind` -- that list is read by many walks,
+/// and a kind put into it moves silently into every general arm (B13).
+export fn is_value_tail_kind(k NodeKind) -> bool => is_expr_kind(k) || k == NodeKind.TupleExpr
+
+/// Is this leaf an INTEGER LITERAL? A question about what the node MEANS, so the
+/// channel answers it and not the consumer.
+///
+/// Written 2026-09-10 for the lowering's move: `lower` has no edge to `lex` in the
+/// architecture table, and `pattern_of` compared the leaf's kind against
+/// `TokenKind.IntLit` directly. Asking for a NEW edge would mean changing the
+/// architecture for the sake of one comparison -- the owner's words; asking the
+/// channel through a predicate is both allowed and right, since it already answers
+/// the neighbouring questions about a leaf (`leaf_kind`, `literal_prim_of`).
+export fn is_int_lit(n Node) -> bool => leaf_kind(n) == TokenKind.IntLit
+
+/// Is this leaf an IDENTIFIER? The pair to `is_int_lit`, written by the same move
+/// and for the same reason: an arm's pattern is either a literal or a variant name,
+/// and both questions belong to the channel.
+export fn is_ident_leaf(n Node) -> bool => leaf_kind(n) == TokenKind.Ident
+
+/// Node kinds that stand as expressions (argument/operand positions).
+export fn is_expr_kind(k NodeKind) -> bool {
+    // Wrapped with a TRAILING operator only: probed 2026-08-17 -- a leading
+    // `||` on the next line is parsed as something else entirely (the oracle
+    // answered E_CLOSURE_SCALAR_RETURN), and parentheses around a multi-line
+    // chain are refused outright.
+    k == NodeKind.Paren ||
+    k == NodeKind.Unary ||
+    k == NodeKind.Bin ||
+    k == NodeKind.Lit ||
+    k == NodeKind.Name ||
+    k == NodeKind.Call ||
+    k == NodeKind.MethodCall ||
+    k == NodeKind.FieldAccess ||
+    // `@field` is an EXPRESSION, and saying so here is what lets an
+    // expression-bodied method (`fn Box @size() -> int => @n`) reach the
+    // emitter at all: without it the body was "neither a match nor an
+    // expression" and iced (wave 3g, measured 2026-08-23).
+    k == NodeKind.SelfField ||
+    k == NodeKind.SelfExpr ||
+    k == NodeKind.InterpStr ||
+    // `a ?? b` is an expression, and its VALUE is what the argument or the
+    // binding reads -- the emitter hoists it into a temporary the way it
+    // hoists an interpolation chain (the coalesce wave).
+    k == NodeKind.Coalesce ||
+    k == NodeKind.MatchExpr ||
+    // An array literal is an expression since wave B8 let it stand in
+    // argument and constructor-field position; the walks that skip
+    // non-expressions must not skip it, or its type is never recorded.
+    k == NodeKind.ArrayLit ||
+    // A RECORD CONSTRUCTOR joins it for the same reason in wave B13, and the
+    // measurement that found this is worth keeping: `grab(P { n: 7 })` was
+    // refused with "this call omits `p`" -- not because the constructor was
+    // rejected, but because the argument COUNT never saw it. Counting goes
+    // through `is_arg_node`, `is_arg_node` asks here, and a form missing from
+    // this list is not refused anywhere. It is simply not there.
+    k == NodeKind.RecordCtor ||
+    k == NodeKind.Cast
+}
+
+/// Is this a call to `println` in the source? A question about meaning, so the
+/// channel answers it -- exactly as for `is_int_lit`.
+///
+/// Written 2026-09-10 for the lowering's move: `lower` has no edge to `builtins`,
+/// and `lower_eval` compared the callee's name against `PRINT_FN` directly.
+///
+/// Worth saying about `PRINT_FN` itself: it is NOT a C name but the name of a
+/// function in the LANGUAGE (`PRINT_FN = "println"`). It sat in my notes as backend
+/// knowledge for half a day purely because it lives in a module called `builtins`
+/// -- a guess from the module's name, undone by reading the constant.
+export fn is_println_call(e Node) -> bool {
+    if e.kind_of() != NodeKind.Call { return false }
+    call_callee_text(branch_children(e)) == PRINT_FN
+}

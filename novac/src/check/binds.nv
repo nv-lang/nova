@@ -361,7 +361,7 @@ fn Checker mut @type_index(e Node) -> TyId {
     // not exist -- the same defect this window spent the day removing from
     // other refusals, written by hand into a new one.
     if is_ty(idx_t) && idx_t != @ctx.prims.int_id {
-        @report_first_leaf_of(kids, "outside the subset: only an `int` index is compiled yet -- the language allows other integer types here")
+        @report_first_leaf_of(kids, "outside the subset: only an `int` index is compiled yet -- the language allows other integer types here (E2-b, with the numeric family)")
         return no_ty()
     } else {
         // Either an int, or already refused where it was typed.
@@ -476,7 +476,7 @@ fn Checker mut @type_array_lit(init Node) -> TyId {
 }
 
 /// One text for the rule.
-const SELF_INIT_MSG = "outside the subset: a binding's initializer refers to the name it binds"
+const SELF_INIT_MSG = "outside the subset: a binding's initializer refers to the name it binds -- same-scope re-binding is legal (D347 R3: the RHS reads the OLD binding) and novac does not compile it yet (274.7 B9)"
 
 /// Does the initializer read the binding that is being declared?
 ///
@@ -512,7 +512,7 @@ const METHOD_DECL_MSG = "outside the subset: novac does not declare methods yet 
 
 /// One text for the exhaustiveness rule; the oracle's own code is named so a
 /// reader can find the other half of the story.
-const NOT_EXHAUSTIVE_MSG = "outside the subset: match on a sum leaves a variant uncovered (oracle: E_MATCH_NON_EXHAUSTIVE, registry 703)"
+const NOT_EXHAUSTIVE_MSG = "match on a sum leaves a variant uncovered -- the language makes exhaustiveness an ERROR, not a warning (04-effects.md amendment 2026-08-16, registry 703); the oracle let it through check and build and returned silent garbage"
 
 /// One text for the rule: the reader must not guess whether two wordings
 /// mean two limits.

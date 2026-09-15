@@ -21,121 +21,23 @@
 
 module novac.emit_c
 
-import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind}
 import ../diag.{ice}
-import ../sem.{branch_children, leaf_text, leaf_kind, arm_body_at, c_type}
+import ../sem.{branch_children, leaf_text, leaf_kind, c_type}
 import ../sem.{int_literal_c_text}
-import ../sem.{disj_head_slots, pattern_has_disj}
-import ../sem.{c_tag, is_value_sum, VariantRow, raw_vrow, no_vrow, variant_in_sum}
+import ../sem.{c_tag, is_value_sum, VariantRow, raw_vrow, no_vrow}
 import ../builtins.{bool_c_literal}
 import ../types.{TyId}
-import ../lower.{Local, no_local, Pattern, VariantMatch, SwitchCtx, Cond}
+import ../lower.{Local, Pattern, Cond}
 
-/// One `match`, in either position. `dest` is the local the arms' values land in -- a
-/// TEMPORARY of the body, numbered by the builder -- or `no_local()` in statement
-/// position, where the arms run for effect and nothing holds an answer; declaring a
-/// variable for an answer nobody asked for is the shape this compiler keeps refusing
-/// elsewhere (wave B5).
-///
-/// This doc used to say the caller declared `_novac_match_t<uniq>` and that `uniq` named
-/// the scrutinee, the result AND the flag. Two of those three moved on 2026-09-09: the
-/// scrutinee and the result are temporaries numbered by their own index, and only the
-/// printer's `matched` flag is still spelled from `uniq` -- which the BUILDER now mints,
-/// so this function no longer takes it. What has not changed is why the number exists at
-/// all: Nova lets a name be bound twice in one scope (F30), and the C would then
-/// declare one variable twice in one block. So the number is unique per body and
-/// must never be the binding name. [INV-TODO: 274.3 F30 -- nothing checks it]
-fn Emitter mut @lower_match(m Node, dest Local) -> () {
-    ro kids = branch_children(m)
-    ro scr = kids[1]
-    ro scr_t = @out.type_of(scr.id_of())
-    // The scrutinee lands in a binding ONCE through the one door: every arm
-    // tests the same value, and a call in the scrutinee runs one time.
-    // THE SCRUTINEE IS A TEMPORARY OF THE COMPILER, and it can finally say so (2026-09-09).
-    // `_novac_scr_t7` was never a name the author wrote, yet `named` was the only door that
-    // kept a declaration -- because `kind` decided both the name and the declaration point.
-    // `DeclAt` now carries the point, so a `Temp` declared at its first assignment is
-    // expressible, and this line stops lying about who invented the name.
-    //
-    // Slice M2c tried exactly this move and the C stopped compiling: `nova_int T1 = n;`
-    // became `T1 = n;`, the declaration gone. That failure is the both-ways proof of the
-    // separation -- the same edit is correct only after it.
-    ro ls = @ir.temp(scr_t)
-    @lower_place(scr, ls)
-    if dest != no_local() {
-        // The result temporary is declared with its type AND zero-initialised
-        // (274.3/F29): a match on `int` may legally leave values uncovered --
-        // both compilers accept `match n { 1 => 10  2 => 20 }` -- and the
-        // oracle answers 0 there; an uninitialised temporary answered whatever
-        // the stack held. `(T){0}` is C99 and fits scalars and structs alike.
-        // The declaration is a statement of the body (274.8 M2b-2 step 2); the caller
-        // created the local, this door records WHERE it is declared and that it starts
-        // at zero -- the reason is on `DeclAt.Zeroed`.
-        @ir.declare_zeroed(dest)
-    } else {
-        // Statement position: no result, nothing to declare.
-    }
-    // THE FLAG IS THE PRINTER'S: the if-chain needs it to stop at the first
-    // arm that held; the `Switch` means first-match by construction.
-    ro c = @ir.begin_switch(ls)
-    for a in kids {
-        if a.kind_of() != NodeKind.MatchArm { continue }
-        @lower_arm(a, scr_t, ls, c, dest)
-    }
-    @ir.end_switch(c)
-}
-
-/// The guard of an arm, if the source wrote one -- found by walking the arm's
-/// children once; a function with returns, so no Option local is ever
-/// reassigned (the oracle miscompiles that shape today, check.nv notes it).
-fn Emitter @guard_of(ak []Node) -> Option[Node] {
-    for g in ak {
-        if g.kind_of() == NodeKind.Guard {
-            return Some(branch_children(g)[1])
-        }
-    }
-    None
-}
-
-/// What the arm's pattern IS -- decided once, before anything is printed. The
-/// head is asked of the MATCHED SUM through the checker's own door (wave B6,
-/// #964): the emitter does not consult the name table, so the two passes
-/// cannot disagree on which row a head names. A disjunction's other heads
-/// travel with the variant; the checker held every binder of one to `_`.
-fn Emitter @pattern_of(pat []Node, scr_t TyId) -> Pattern {
-    ro p0 = pat[0]
-    if leaf_kind(p0) == TokenKind.IntLit {
-        return Pattern.Lit(p0)
-    }
-    if leaf_kind(p0) != TokenKind.Ident {
-        ice("emit_c: match pattern is neither an int literal nor an identifier")
-    }
-    match variant_in_sum(@ctx, scr_t, leaf_text(p0)) {
-        Some(vrow) => {
-            mut also = []VariantRow.new()
-            for hi in disj_head_slots(pat) {
-                match variant_in_sum(@ctx, scr_t, leaf_text(pat[hi])) {
-                    None => {}
-                    Some(hrow) => also.push(hrow)
-                }
-            }
-            Pattern.Variant(VariantMatch { head: vrow, also })
-        }
-        None => {
-            // Not a variant head: a name binds the scrutinee, `_` binds nothing.
-            if leaf_text(p0) != "_" { Pattern.Bind } else { Pattern.Wild }
-        }
-    }
-}
 
 /// Tag test of a variant pattern. The ACCESS follows the PLACEMENT (A4): a
 /// value sum is read with `.`, a heap sum with `->`. Before A4 the arrow was
 /// unconditional, which is exactly the shape that breaks silently the day the
 /// oracle moves a type off the heap.
 fn Emitter mut @emit_tag_test(scr Local, vrow VariantRow) -> () {
-    ro arrow = if is_value_sum(@ctx, @ir.decl_of(scr).ty) { "." } else { "->" }
-    @body.append("(${@ir.decl_of(scr).name}${arrow}tag == ${c_tag(@ctx, vrow)})")
+    ro arrow = if is_value_sum(@ctx, @lo.ir.decl_of(scr).ty) { "." } else { "->" }
+    @body.append("(${@lo.ir.decl_of(scr).name}${arrow}tag == ${c_tag(@ctx, vrow)})")
 }
 
 /// The C of the arm's test, spelled FROM the pattern: an int compare, the tag
@@ -143,7 +45,7 @@ fn Emitter mut @emit_tag_test(scr Local, vrow VariantRow) -> () {
 fn Emitter mut @emit_pattern_test(pattern Pattern, scr Local) -> () {
     match pattern {
         Lit(n) => {
-            @body.append("(${@ir.decl_of(scr).name} == ")
+            @body.append("(${@lo.ir.decl_of(scr).name} == ")
             @body.append(int_literal_c_text(leaf_text(n)))
             @body.append("LL)")
         }
@@ -171,102 +73,3 @@ fn Emitter mut @print_arm_head(uniq int, pattern Pattern, scr Local) -> () {
     @body.append(")) {\n")
 }
 
-/// Lowers ONE arm of a `match`: records it into the IR, prints its head, then binds
-/// whatever the pattern introduces -- a variant's payload fields, or the scrutinee
-/// under a new name for a plain binder, or nothing at all for a literal or `_` --
-/// emits the body into `dest`, and sets the printer's first-match flag. A guard, if
-/// written, wraps the body in a branch of its own.
-/// The order is deliberate -- recorded first, printed from the record (M2b-2 step 3a),
-/// so that a single later walk can print every arm without reading the tree again.
-fn Emitter mut @lower_arm(arm Node, scr_t TyId, ls Local, c SwitchCtx, dest Local) -> () {
-    ro ak = branch_children(arm)
-    ro pat = branch_children(ak[0])
-    ro arm_e = ak[arm_body_at(ak) ?? ice("emit_c: a match arm with no body reached the emitter")]
-    ro guard = @guard_of(ak)
-    ro pattern = @pattern_of(pat, scr_t)
-    // Recorded first, printed from the record (M2b-2 step 3a). The test itself already
-    // read the IR -- `emit_pattern_test` takes the `Pattern` -- so what moves here is the
-    // PLACE of the printing, which is what lets one walk print every arm later.
-    @ir.begin_arm(c, pattern, guard)
-    match pattern {
-        Variant(vm) => {
-            if !pattern_has_disj(pat) {
-                // Unpack payload fields onto the arm's binders, in order:
-                // binder names sit after '(' in the pattern; field types are
-                // the variant's rows of the flat context. Each binder is a
-                // Binding local assigned the field through the one assignment
-                // printer (M2b-1d).
-                mut binders = []str.new()
-                for j in 2..pat.len() {
-                    // [LEGACY-#676] var-index-method: same workaround as in
-                    // collect_types: variable-index receiver miscompiles.
-                    ro pj = pat[j]
-                    match pj.ident_str() {
-                        Some(binder) => binders.push(binder)
-                        None => {}
-                    }
-                }
-                mut pi = 0
-                for bname in binders {
-                    ro bt = @ctx.payload_types[@ctx.variant_rows[raw_vrow(vm.head)].payload_off + pi]
-                    ro lb = @ir.named(bt, bname)
-                    @ir.take_field(lb, ls, vm.head, pi)
-                    pi += 1
-                }
-            } else {
-                // A disjunction unpacks nothing: the checker held every
-                // binder to `_`.
-            }
-        }
-        Bind => {
-            // Plain binder: the scrutinee under a new name -- the first real
-            // use of the operand rvalue.
-            ro lb = @ir.named(scr_t, leaf_text(pat[0]))
-            @ir.copy(lb, ls)
-        }
-        Lit(_) => {
-            // An int literal introduces no name: the test IS the whole arm.
-        }
-        Wild => {
-            // The wildcard introduces no name either.
-        }
-    }
-    match guard {
-        Some(g) => {
-            // The guard's head is an `if` like any other: it goes through the ONE head
-            // door (`@print_if_head`, emit_flow.nv), which until this step was the third
-            // place spelling `    if (` + condition + `) {` by hand.
-            ro gcond = Cond.Expr(g)
-            // A guard has no else branch, so the bit is not read; passed explicitly so
-            // no default is left for someone to interpret later.
-            ro gi = @ir.begin_if(gcond, false, false)
-            @lower_arm_body(arm_e, dest)
-            @ir.end_if(gi)
-        }
-        None => {
-            @lower_arm_body(arm_e, dest)
-        }
-    }
-    @ir.end_arm(c)
-}
-
-/// The BODY of one arm: assigned to the result local in value position,
-/// run for effect in statement position (wave B5). A statement arm's body
-/// may be a block (`{}` included) or a single statement, and both go through
-/// the doors that already print those shapes.
-fn Emitter mut @lower_arm_body(arm_e Node, dest Local) -> () {
-    if dest != no_local() {
-        // The arm's value lands in the match local through the one door.
-        @lower_place(arm_e, dest)
-        return
-    } else {
-        // Statement position: the body runs, and nothing holds its answer.
-    }
-    // TERMINATOR, not an else: the two shape guards meet on a node-kind test
-    // (274.5 section 2g), and a `return` satisfies both.
-    if arm_e.kind_of() == NodeKind.Block {
-        @emit_block_stmts_fn(arm_e, false)
-        return
-    }
-    @emit_stmt(arm_e)
-}

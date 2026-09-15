@@ -162,7 +162,7 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
         }
     }
     if covered >= vcnt { return }
-    @report_first_leaf_of(kids, NOT_EXHAUSTIVE_MSG)
+    @reject_first_leaf_of(kids, NOT_EXHAUSTIVE_MSG)
 }
 
 /// (rule lives in @type_match now) Every arm of a match must produce the SAME type -- and until 2026-08-17

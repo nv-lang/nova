@@ -20,7 +20,7 @@ module novac.lower
 import ../tree.{Node, AssignOp}
 import ../types.{TyId}
 import ../diag.{ice}
-import ../sem.{VariantRow}
+import ../sem.{VariantRow, Ctx, CheckOut}
 
 /// A local of the lowered body: `Local(0)` is the return place (rustc `_0`);
 /// every other index is a source binding or a temporary, in creation order.
@@ -35,11 +35,13 @@ export type BlockId int
 /// The index behind a `BlockId` -- for the printer and for tests.
 export fn raw_block(b BlockId) -> int => b as int
 
-/// What ROLE a local plays -- the printer spells each differently: the return
-/// place is `return <v>;`, a binding is declared where it is first assigned
-/// (`T name = <v>;`), a temporary is declared by whoever created it and only
-/// assigned here (`name = <v>;`).
-/// WHAT A LOCAL IS FOR -- and ONLY that, since 2026-09-09. Until then this field also
+/// WHAT A LOCAL IS FOR -- and ONLY that, since 2026-09-09. The one printing decision
+/// still taken from the ROLE is the return place: `Return` prints `return <v>;`. Where a
+/// local's DECLARATION goes is NOT decided here -- that is `DeclAt`, and a paragraph
+/// claiming otherwise stood at the top of this doc until 2026-09-13, six lines above the
+/// sentence that had retired it, and it read as a finished paragraph -- so a reader could
+/// leave with the retired model and never reach the correction. Until 2026-09-09 this
+/// field also
 /// decided WHERE the local is declared, and the two questions were welded: a compiler
 /// temporary declared BY ITS OWN VALUE was inexpressible, so the `match` scrutinee had to
 /// live in `named` although the compiler, not the author, invented its name. Moving it to
@@ -58,10 +60,28 @@ export type LocalKind enum
 /// This is ORTHOGONAL to `LocalKind`, and separating them is what makes the fourth
 /// combination legal -- a `Temp` declared at its first assignment, which is exactly the
 /// `match` scrutinee. The indent follows THIS field rather than the kind: four spaces for a
-/// declaration, eight for a bare assignment inside a branch. That correlation is total
-/// today -- every existing `Temp` is zero-initialised (all three `temp` sites either call
-/// `declare_zeroed` themselves or hand the local to a door that does) -- which is why this
-/// separation changes no printing at all.
+/// declaration, eight for a bare assignment inside a branch.
+///
+/// THE FIELD IS READ, NEVER GUESSED FROM THE KIND, and the sentence that used to stand
+/// here claimed the opposite by a false number. It said the correlation was TOTAL --
+/// "all three `temp` sites either call `declare_zeroed` or hand the local to a door that
+/// does" -- and concluded that separating the two fields "changes no printing at all".
+/// Measured 2026-09-13 with a counting rule: calls to `temp` number NINE, calls to
+/// `declare_zeroed` number THREE (occurrences of `.temp(`/`@temp(` in `novac/src/**/*.nv`
+/// outside `_test.nv` and outside comments, not counting this door's own declaration).
+/// The nine were then walked ONE BY ONE, because 9-3 would have given the right answer
+/// by accident: the third `declare_zeroed` (`lowering.nv:604`) zeroes not a temporary of
+/// its own but the `dest` parameter handed to it, and for another caller it zeroes
+/// nothing. Three sites reach `Zeroed` -- two call the door themselves, and `:869` hands
+/// its local to `lower_match`, which is the half of the old sentence that was TRUE and is
+/// kept here: the path through a door exists, and a reader who forgets it will print the
+/// declaration of `:869` a second time. The remaining SIX live with `DeclAt.FirstAssign`.
+///
+/// The BEHAVIOUR was right and is untouched: a temporary declared by its first assignment
+/// must take eight spaces. What was false is the REASON the behaviour rested on, and a
+/// reader who believed it would write a new door that ignores `decl_at` and print four
+/// spaces where eight belong. A number in a doc that nobody recounts lives exactly until
+/// the first reader who trusts it.
 export type DeclAt enum
     | FirstAssign // the first assignment declares it
     | Zeroed // a `Stmt.Decl` declares it, zeroed
@@ -130,8 +150,9 @@ export type Rvalue enum
 ///
 /// The step carries the NAME the author wrote, not the field's registry row, and that is
 /// forced rather than chosen: the emitter may not compute a field row from a name (the
-/// channel guard refuses it by name, and `emit_destructure.nv` remembers being wrong about
-/// that on 2026-09-04), while the channel records the binder's TYPE and not its row. The
+/// guard `check-novac-channel-one-writer.py` refuses that as a second writer of the
+/// channel, and `emit_destructure.nv` remembers being wrong about it on 2026-09-04),
+/// while the channel records the binder's TYPE and not its row. The
 /// name is legal here because it is a C SPELLING and not an identity key -- the same role
 /// `LocalDecl.name` already has. `check-novac-no-string-keys.py` judges `Map[str` outside
 /// `names/` and keys SYNTHESISED by interpolation; a name stored in a field is neither.
@@ -224,6 +245,31 @@ export type Stmt enum
 export type Cond enum
     | Expr(Node) // a boolean expression, printed from the tree
     | IsSome(Local) // the Option in the local is Some
+
+/// WHAT KIND OF `else` AN `if` HAS -- three states, and the fourth is gone because it never
+/// existed. Until 2026-09-13 the doors took two booleans, `has_else` and `els_braced`, which
+/// spell FOUR combinations over three real ones: `has_else = false` with `els_braced = true`
+/// is meaningless and was perfectly representable. At a call site it read
+/// `@ir.begin_if(cond, true, true)` -- which `true` is which, visible only from the signature.
+///
+/// BOTH QUESTIONS ARE REAL and neither derives from the other, which is why the door takes
+/// one value rather than losing one: a chained `if` and a chained `if let` enter through the
+/// same door, but the first continues the `} else ` line while the second sits in braces --
+/// C has no `else <declaration>`, and an `if let`'s first line IS the declaration of its
+/// temporary (registry #991).
+///
+/// Donor: NOT a compiler, and that is an answer rather than a gap in the search. rustc MIR
+/// has no `if` at all -- it lowers to `SwitchInt` with target blocks and never prints source,
+/// so a syntactic shape is not a question it has; WebAssembly's structured flow
+/// (`if`/`else`/`end`), the donor of our terminator shapes, does not distinguish braced from
+/// chained either, because wasm has no source syntax. Ours is peculiar in exactly one way:
+/// the IR must print structured C byte for byte like the oracle. So the donor here is a
+/// PRINCIPLE -- make illegal states unrepresentable (the ML/F# family) -- and it is what
+/// removes the fourth state.
+export type ElseShape enum
+    | NoElse /// no else branch: `els` is the join itself
+    | Braced /// the branch has its own `{ }` -- a block tail, or an `if let` tail
+    | Chained /// `} else if (` -- continues the caller's line, no braces of its own
 
 /// The blocks of one `if` (wave M2b-1): the branch entered on a true
 /// condition, the branch entered otherwise -- the join itself when the source
@@ -571,12 +617,12 @@ fn FnBuilder mut @close(term Terminator, next BlockId) -> () {
 }
 
 /// Opens an `if`: the statements placed so far end the current block with
-/// `If`, and what is placed next belongs to the `then` branch. `has_else`
-/// decides whether the else branch is a block of its own or the join itself
-/// -- the source knows, the builder does not guess.
-export fn FnBuilder mut @begin_if(cond Cond, has_else bool, els_braced bool) -> IfCtx {
+/// `If`, and what is placed next belongs to the `then` branch. `els` says whether
+/// the else branch is a block of its own or the join itself, and in which shape it
+/// prints -- the source knows, the builder does not guess.
+export fn FnBuilder mut @begin_if(cond Cond, els ElseShape) -> IfCtx {
     ro join = @reserve()
-    @open_if(cond, has_else, join, els_braced)
+    @open_if(cond, join, els)
 }
 
 /// Opens an `if` whose join ALREADY exists: the current block ends with `If`
@@ -584,18 +630,28 @@ export fn FnBuilder mut @begin_if(cond Cond, has_else bool, els_braced bool) -> 
 /// comes here; `begin_else_if` comes here with the outer join, so a chain
 /// shares one. The emitter calls it directly when it has to print the
 /// condition after `begin_else` and before the branch opens.
-export fn FnBuilder mut @begin_chained_if(cond Cond, has_else bool, join BlockId,
-                                          els_braced bool) -> IfCtx {
-    @open_if(cond, has_else, join, els_braced)
+export fn FnBuilder mut @begin_chained_if(cond Cond, join BlockId, els ElseShape) -> IfCtx {
+    @open_if(cond, join, els)
 }
 
 /// The ONE place an `If` terminator is built. Both public doors delegate here, which is
-/// exactly why `els_braced` is a PARAMETER: from inside, the entry door is invisible, and
-/// a bit inferred here would come out the same for both forms -- measured in step 3a of
-/// wave M2b-2, where that mistake moved the C of one corpus file by one indent.
-fn FnBuilder mut @open_if(cond Cond, has_else bool, join BlockId, els_braced bool) -> IfCtx {
+/// exactly why the shape is a PARAMETER: from inside, the entry door is invisible, and a bit
+/// inferred here would come out the same for both forms -- measured in step 3a of wave
+/// M2b-2, where that mistake moved the C of one corpus file by one indent. The bit still
+/// reaches `IfTerm`, and the lesson of that measurement stands: it is READ OFF the shape the
+/// caller handed in, never guessed here.
+fn FnBuilder mut @open_if(cond Cond, join BlockId, shape ElseShape) -> IfCtx {
     ro then = @reserve()
-    ro els = if has_else { @reserve() } else { join }
+    ro els = match shape {
+        ElseShape.NoElse => join
+        ElseShape.Braced => @reserve()
+        ElseShape.Chained => @reserve()
+    }
+    ro els_braced = match shape {
+        ElseShape.Braced => true
+        ElseShape.NoElse => false
+        ElseShape.Chained => false
+    }
     @close(Terminator.If(IfTerm { cond, then, els, join, els_braced }), then)
     IfCtx { then, els, join }
 }
@@ -618,10 +674,9 @@ export fn FnBuilder mut @begin_else(c IfCtx) -> () {
 /// pair BY HAND in two places (`lower_if`, `lower_if_let`) and only a builder test called
 /// the door -- one concept, two implementations, and the hand-written pair would not have
 /// followed a change to the door (registry #991 is that class). The emitter now comes here.
-export fn FnBuilder mut @begin_else_if(outer IfCtx, cond Cond, has_else bool,
-                                       els_braced bool) -> IfCtx {
+export fn FnBuilder mut @begin_else_if(outer IfCtx, cond Cond, els ElseShape) -> IfCtx {
     @begin_else(outer)
-    @begin_chained_if(cond, has_else, outer.join, els_braced)
+    @begin_chained_if(cond, outer.join, els)
 }
 
 /// Closes an `if`: the open branch jumps to the join, and what is placed next
@@ -679,7 +734,7 @@ export fn FnBuilder mut @copy(dest Local, src Local) -> () {
 /// a name the lowering composed.
 export fn FnBuilder mut @begin_switch(scr Local) -> SwitchCtx {
     ro uniq = @switches
-    @switches = @switches + 1
+    @switches += 1
     ro h = @reserve()
     ro join = @reserve()
     @close(Terminator.Goto(h), h)
@@ -766,4 +821,47 @@ export fn FnBuilder @finish() -> Fn {
         }
     }
     Fn { @locals, @blocks }
+}
+
+/// THE LOWERING'S RECEIVER (274.8 M3). The lowering used to live as methods on `Emitter`,
+/// the printer's own state, and a method of the printer cannot live in a module BELOW the
+/// printer -- that is the edge inversion the architecture table forbids. So the work is a
+/// change of receiver, not a move of files, and this type is where the lowering lands.
+///
+/// IT CARRIES THREE THINGS: the builder under construction, plus `ctx` and `out`, which
+/// the lowering asks 7 and 11 times. That is shape C of plan 274.8 section 2s, chosen by
+/// measurement over two alternatives: handing `ctx`/`out` as parameters would make FIVE
+/// methods accept arguments they never read purely to pass on, and taking all three fields
+/// away from `Emitter` would cost 181 printer rewires against 23.
+///
+/// TWO READERS ARE NOT TWO SOURCES. `Emitter` keeps its own `ctx`/`out` and this type has
+/// its own; that is not a second home for either, because their home is `sem` and both
+/// readers are read-only. What `Emitter` LOST is the builder -- the mutable state, which
+/// belongs with the methods that write it.
+export type Lowerer {
+    ctx Ctx /// the type registry and def table, read only -- same home as Emitter's (`sem`)
+    out CheckOut /// the checker's channel: every type question is a READ here
+    mut ir FnBuilder /// the body under construction -- the lowering's own mutable state
+}
+
+/// A compound or plain assignment, recorded as a statement of the body. First method to
+/// live here rather than on the printer (274.8 M3, slice 1): it touches the builder and
+/// nothing else, so it proves the receiver without dragging the channel along.
+fn Lowerer mut @lower_store(target Node, op AssignOp, src Node) -> () {
+    @ir.store(target, op, src)
+}
+
+/// A temporary of the body holding a destructuring scrutinee, with the initialiser placed
+/// into it. Second method to live on the receiver (274.8 M3, slice 2), and the LAST one
+/// that could move alone: the call-structure measure found only two leaves, and this is the
+/// one with no outward calls at all. What remains are two mutually recursive groups plus
+/// three methods that call into printing -- they move as wholes, not one at a time.
+///
+/// The name is the body's own index, never the author's: a destructuring scrutinee is the
+/// compiler's invention, and `named` would claim otherwise (held by
+/// check-novac-invented-name-not-named).
+fn Lowerer mut @bind_pair_temp(init Node, pt TyId) -> Local {
+    ro l = @ir.temp(pt)
+    @ir.place(init, l)
+    l
 }

@@ -11,10 +11,16 @@
 // structured control flow (`if`/`loop`/`block` with named exits), because
 // the printer targets structural C and must not rediscover the structure
 // from a flat graph (plan 274.8 section 2a).
-// Role: layer emit_c -- the lowering AND the printing of control flow. The
-//   dispatcher `emit_stmt` routes here; nothing here dispatches on node kind
-//   beyond the shape of the statement it was handed.
-// Used by: emit_c.nv (`emit_stmt`), nothing else.
+// Role: layer emit_c -- the PRINTING of control flow, and nothing else. All eight
+//   functions here are `print_*` on Emitter; the lowering that used to share this
+//   file left for lower/lowering.nv with the M3 move, and the file became a pure
+//   printer by SUBTRACTION rather than by rewriting -- which is the clearest
+//   evidence the move cut where the seam actually was.
+// Used by: emit_c.nv (`@print_body`, from `emit_callable`), nothing else. The
+//   lowering does NOT call in here: it raises builder events (`@ir.begin_if`),
+//   and the printer walks the finished body afterwards. lowering.nv names
+//   `@print_if_head` in a comment only -- an edge would break the M3 criterion
+//   and redden check-novac-deps.
 // Guarded by: check-novac-differential.sh, the corpus C diff of the wave,
 //   lower_test.nv (the graph shapes), check-novac-lowering-one-door.py.
 //
@@ -29,22 +35,12 @@ module novac.emit_c
 
 import ../tree.{Node, NodeKind}
 import ../diag.{ice}
-import ../sem.{branch_children, leaf_text, c_instance_method, for_head_elem}
+import ../sem.{branch_children, leaf_text, c_instance_method}
 // The walk prints a unit return from the type of the return place (2026-09-09).
 import ../sem.{is_unit_ty}
 import ../types.{is_ty}
-import ../lower.{IfCtx, LoopHead, RangeHead, EachHead, Cond, Fn, Stmt, BlockId, SwitchTerm, no_block, raw_block}
+import ../lower.{IfCtx, LoopHead, Cond, Fn, Stmt, BlockId, SwitchTerm, no_block, raw_block}
 import ../builtins.{VEC_LEN_METHOD}
-
-/// Whether the `else` tail prints its OWN pair of braces -- ONE door for the question, so
-/// `lower_if` and `lower_if_let` cannot answer it differently. A block tail and a chained
-/// `if let` are braced; a chained `if` is not, because its head continues the `} else `
-/// line. The reason if-let is braced: C has no `else <declaration>`, and an if-let's first
-/// line IS the declaration of its Option temporary (registry #991).
-fn else_is_braced(tail Node) -> bool {
-    ro k = tail.kind_of()
-    k == NodeKind.Block || k == NodeKind.IfLet
-}
 
 /// Whether this branch continues a `} else ` line its caller printed.
 fn chained_of(outer Option[IfCtx]) -> bool {
@@ -72,160 +68,13 @@ fn Emitter mut @print_if_head(cond Cond, chained bool) -> () {
         IsSome(l) => {
             // The Some-test through the ONE Option door, spelled from the local's type
             // and name -- the same two the hand-written head passed by hand.
-            ro d = @ir.decl_of(l)
+            ro d = @lo.ir.decl_of(l)
             @body.append(@option_some_test(d.ty, d.name))
         }
     }
     @body.append(") {\n")
 }
 
-/// One `if` statement with its `else` / `else if` chain. `outer` is the
-/// enclosing `if` when this one IS its else branch: then the else branch is
-/// opened first and the chained `if` shares the outer join.
-fn Emitter mut @lower_if(st Node, outer Option[IfCtx]) -> () {
-    ro kids = branch_children(st)
-    ro has_else = kids.len() > 4
-    // The condition is RECORDED first and PRINTED from the record (M2b-2 step 3a): the
-    // printing no longer reads the tree, which is what lets one walk print every branch
-    // later. Recording before printing is safe because printing a condition lowers
-    // nothing -- `emit_expr` touches neither the builder nor the name counter (measured
-    // 2026-09-08); only `build_value` lowers, and a condition never goes through it.
-    ro cond = Cond.Expr(kids[1])
-    ro braced = if has_else { else_is_braced(kids[4]) } else { false }
-    ro c = match outer {
-        None => @ir.begin_if(cond, has_else, braced)
-        // THE door for "else, then a chain" -- until 2026-09-08 this pair was opened by
-        // hand here and in `lower_if_let`, while the door itself had only a test as its
-        // caller (class #991: one concept, two implementations).
-        Some(o) => @ir.begin_else_if(o, cond, has_else, braced)
-    }
-    // ONE shape of else (M2b-2-0): a chained `if` continues the `} else ` line its
-    // caller printed, so it starts without the indent the top-level `if` carries.
-    @emit_block_stmts_fn(kids[2], false)
-    if has_else {
-        // The closing brace and the `else` share one line -- the one shape of else
-        // (M2b-2-0). Until then the statement `if` printed `}` and `else` on two lines
-        // while the if-value printed `} else {`; the oracle's recorded C has 41 753
-        // `} else {` and no bare `else {`, so the second shape was novac's own, and a
-        // single printing walk would have needed a flag to reproduce it.
-        // The ELSE branch, since 2026-08-18. Before that the parser did not
-        // read `else` at all; reading it without writing it here would have
-        // been worse than not reading it -- the branch would vanish from the
-        // C in silence, which is the class this compiler keeps finding in
-        // others.
-        @lower_else_tail(c, kids[4])
-    } else {
-        // No else branch was written: the else block IS the join.
-    }
-    @ir.end_if(c)
-}
-
-/// What follows `else` -- ONE door for the `if` and the `if let` (until
-/// M2b-1b each printed its own copy of this and the two had drifted: the `if`
-/// iced on an `else if let` tail the `if let` accepted). Three shapes are
-/// legal and ALL are named: a block, a chained `if`, a chained `if let`.
-/// Anything else is an invariant break, and it says so -- an `else` standing
-/// for "every other node kind" is what P21 refuses, because the next kind
-/// added to the tree would quietly land in it.
-fn Emitter mut @lower_else_tail(c IfCtx, tail Node) -> () {
-    // The caller printed `    } else ` already: this door prints only what follows.
-    ro tk = tail.kind_of()
-    if tk == NodeKind.Block {
-        @ir.begin_else(c)
-        @emit_block_stmts_fn(tail, false)
-    } else if tk == NodeKind.IfStmt {
-        @lower_if(tail, Some(c))
-    } else if tk == NodeKind.IfLet {
-        // C has no `else <declaration>`: the chained if-let's FIRST line is
-        // the declaration of its Option temporary, and printed bare after
-        // `else` it is not a statement -- clang refuses the unit. Found by
-        // the M2b-1b probe (2026-09-06): the two copies of this tail had
-        // accepted the form and printed it unbraced since the else branch
-        // was added, and no corpus file carried it (registry #991: one
-        // concept, two implementations, the copy not knowing a fact the
-        // original knew). The braces give the temporary a block of its own;
-        // the IR already had that block -- the outer else.
-        @lower_if_let(tail, Some(c))
-    } else {
-        ice("emit: the else branch is neither a block nor a chained if / if-let")
-    }
-}
-
-/// One `if Some(v) = expr { ... }` (wave M2b-1b, from emit_iflet.nv): the
-/// Option lands in its own binding through the placement door, the branch
-/// tests `IsSome` of that local, and the binder is a binding local assigned
-/// the payload -- three IR statements where the printer used to spell three
-/// lines by hand. The C is the same: `T tmp = <init>;`, the Some-test
-/// through the ONE Option door (emit_option.nv, wave W4), `P v = tmp.value;`.
-/// INTEROP, named as such: `.tag`/`.value` are the shell's Option ABI
-/// (`NovaOpt_X{.tag,.value}`, read off shell.tpl.c); goes the day novac emits
-/// the whole prelude.
-fn Emitter mut @lower_if_let(st Node, outer Option[IfCtx]) -> () {
-    ro kids = branch_children(st)
-    ro init = kids[6]
-    ro ot = @out.type_of(init.id_of())
-    ro payload = @ctx.tys.arg(ot, 0)
-    ro has_else = kids.len() > 9
-    // THE ELSE BRANCH IS OPENED BY THE DOOR, NOT HERE (fix 2026-09-08, ICE «a block sealed
-    // twice (it already jumps)» on `novac/fixtures/iflet_else/pos_2.nv`). Until the door
-    // `@begin_else_if` existed, this function opened the pair «else, then a chain» by hand:
-    // `begin_else` here, the chained `if` below. The door now does BOTH, so the call here was
-    // the second half of a pair whose first half had moved -- `begin_else` ran twice and the
-    // second `@close` hit a block already sealed with `Goto`. The door stays whole; the
-    // leftover half goes. For a non-chained if-let (`outer == None`) nothing changes at all.
-    //
-    // A temporary of the body, named by its index (274.8 M3): the Option of an
-    // `if let` is the compiler's, not the author's.
-    ro lo = @ir.temp(ot)
-    // Recorded first, printed from the record -- the same door the plain `if` uses
-    // (M2b-2 step 3a). The head is identical to what this function spelled by hand:
-    // `option_some_test` reads the local's type and name, which is what it was passed.
-    ro cond = Cond.IsSome(lo)
-    ro braced = if has_else { else_is_braced(kids[9]) } else { false }
-    // THE TEMPORARY BELONGS TO THE ELSE BLOCK, and under the walk that is decided by
-    // MEMBERSHIP rather than by the moment of printing (found 2026-09-09, the last divergence
-    // of step 3b: `NovaOpt T2 = b;` printed one line ABOVE its `} else {` in
-    // `novac/fixtures/iflet_else/pos_2.nv`). The note this replaced said the declaration
-    // `belongs to the block that precedes the branch` -- true while printing was immediate,
-    // false once the walk prints from sealed blocks: for a CHAIN that preceding block is the
-    // outer then-branch.
-    //
-    // So the composition `begin_else_if` is UNROLLED across these three steps, and the
-    // statement lands between its halves. This is not a return to the shape that iced on
-    // 2026-09-08 (`a block sealed twice (it already jumps)`): that defect was `begin_else`
-    // running TWICE -- by hand here and again inside the door. Each half runs exactly once.
-    match outer {
-        None => {
-            // Not chained: nothing to open, the temporary belongs where the source wrote it.
-        }
-        Some(o) => @ir.begin_else(o)
-    }
-    @lower_place(init, lo)
-    ro c = match outer {
-        None => @ir.begin_if(cond, has_else, braced)
-        Some(o) => @ir.begin_chained_if(cond, has_else, o.join, braced)
-    }
-    // NOT chained for the purpose of PRINTING, even when `outer` is Some -- braced, not continued.
-    // A chained plain `if` continues the `} else ` line its caller printed, so it carries no
-    // indent; a chained `if let` is wrapped in braces by `lower_else_tail` (`{` before it,
-    // `    }` after), because C has no `else <declaration>` and an if-let's first line IS the
-    // declaration of its Option temporary -- unbraced, clang refuses the unit (registry
-    // #991, found by the M2b-1b probe). Inside those braces the head starts a NEW line and
-    // keeps its indent. Measured, not reasoned: passing `chained_of(outer)` here made the
-    // corpus C differ in exactly one file (fixtures/iflet_else/pos_2), the hunk being this
-    // lost indent.
-    // The binder: the checker bound it to the payload type, this door spells
-    // what was decided.
-    ro bv = @ir.named(payload, leaf_text(kids[3]))
-    @ir.take_payload(bv, lo)
-    @emit_block_stmts_fn(kids[7], false)
-    if has_else {
-        @lower_else_tail(c, kids[9])
-    } else {
-        // No else branch was written: the else block IS the join.
-    }
-    @ir.end_if(c)
-}
 
 /// THE HEAD OF A LOOP, printed from the IR (wave M2b-2 step 3a): one printer for all three
 /// loop forms, because what differs between them is the `LoopHead` the lowering RECORDED,
@@ -243,7 +92,7 @@ fn Emitter mut @print_loop_head(head LoopHead) -> () {
             @body.append(") {\n")
         }
         Range(r) => {
-            ro v = @ir.decl_of(r.var).name
+            ro v = @lo.ir.decl_of(r.var).name
             @body.append("    for (nova_int ${v} = ")
             @emit_expr(r.lo)
             @body.append("; ${v} < ")
@@ -251,92 +100,19 @@ fn Emitter mut @print_loop_head(head LoopHead) -> () {
             @body.append("; ${v}++) {\n")
         }
         Each(e) => {
-            ro vd = @ir.decl_of(e.vec)
-            ro i = @ir.decl_of(e.idx).name
+            ro vd = @lo.ir.decl_of(e.vec)
+            ro i = @lo.ir.decl_of(e.idx).name
             ro len_c = c_instance_method(@ctx, vd.ty, VEC_LEN_METHOD)
             @body.append("    for (nova_int ${i} = 0; ${i} < ${len_c}(${vd.name}); ${i}++) {\n")
         }
     }
 }
 
-/// One `while`: the header block carries the loop, the body jumps back.
-fn Emitter mut @lower_while(st Node) -> () {
-    ro kids = branch_children(st)
-    // Recorded first, printed from the record (M2b-2 step 3a).
-    ro head = LoopHead.While(kids[1])
-    ro c = @ir.begin_loop(head)
-    @emit_block_stmts_fn(kids[2], false)
-    @ir.end_loop(c)
-}
-
-/// One `for v in lo..hi`: the loop variable is a binding local of the body,
-/// the bounds stay tree expressions (the M1 bridge), the header carries the
-/// range form so the printer spells C's `for` and not a `while`.
-fn Emitter mut @lower_for_range(kids []Node) -> () {
-    ro v = leaf_text(kids[1])
-    ro range = branch_children(kids[3]) // Bin: [lo, .., hi]
-    // The loop variable is a binding local of the body, and the head is printed from the
-    // record that carries it (M2b-2 step 3a).
-    ro lv = @ir.named(@ctx.prims.int_id, v)
-    ro head = LoopHead.Range(RangeHead { var: lv, lo: range[0], hi: range[2] })
-    ro c = @ir.begin_loop(head)
-    @emit_block_stmts_fn(kids[4], false)
-    @ir.end_loop(c)
-}
-
-/// One `for v in <collection>` (wave M2b-1c, from emit_for.nv): the head runs
-/// ONCE into a TEMPORARY through the placement door, the index is a temporary of
-/// int, the element is the author's binding, the header carries all three, and the
-/// body starts by reading `vec[idx]` -- `Rvalue.IndexPayload`, printed as the
-/// shell's `get(...).value` by the one assignment printer. The C is the same
-/// walk `emit_for_call` spelled by hand: `T <vec> = <head>;`, `for (nova_int <idx>
-/// = 0; <idx> < len(<vec>); <idx>++) {`, `E v = get(<vec>, <idx>).value;` -- the
-/// two temporaries are numbered by the body, so no name is spelled here (274.8 M3).
-/// The element type is the CHECKER's decision (`for_head_elem`), not a second
-/// derivation here (hunt emit_c x K4, 2026-09-04).
-fn Emitter mut @lower_for_each(kids []Node) -> () {
-    ro head = kids[3]
-    ro ht = @out.type_of(head.id_of())
-    ro elem_t = for_head_elem(@ctx, ht)
-    // Both the collection and the index are TEMPORARIES of the body, named by their
-    // indices (274.8 M3). Only the element keeps `named`: `for v in xs` -- `v` is the
-    // author's word, and that is the one question `LocalKind` still answers.
-    ro lv = @ir.temp(ht)
-    @lower_place(head, lv)
-    // All three locals of the walk exist before the head is printed, because the head is
-    // printed FROM the record that names them (M2b-2 step 3a).
-    ro li = @ir.temp(@ctx.prims.int_id)
-    ro le = @ir.named(elem_t, leaf_text(kids[1]))
-    ro lh = LoopHead.Each(EachHead { vec: lv, idx: li, elem: le })
-    ro c = @ir.begin_loop(lh)
-    @ir.take_elem(le, lv, li)
-    @emit_block_stmts_fn(kids[4], false)
-    @ir.end_loop(c)
-}
-
-/// One `return`: the value lands in the return place through the one door
-/// (274.8 M1) -- a bare `return` spells the unit itself -- and the block ends
-/// with `Return`; what the source wrote after it lands in a fresh block.
-fn Emitter mut @lower_return(st Node) -> () {
-    ro kids = branch_children(st)
-    if kids.len() > 1 {
-        @lower_place(kids[1], @ir.ret_place())
-    } else {
-        // A BARE `return` RECORDS AND PRINTS NOTHING HERE (2026-09-09). It used to print
-        // `return NOVA_UNIT;` on the spot, and under the walk that landed the line right
-        // after the opening brace -- before every statement -- so the function returned
-        // immediately and skipped its body. Legal Nova, wrong C, and no corpus file had
-        // the form: a grep for a bare `return` found zero carriers, which is why every
-        // green measurement of this wave was silent about it. The `Return` terminator is
-        // what the walk prints from, and it prints the same for a body that just ends.
-    }
-    @ir.ret()
-}
 
 // ---- THE WALK OVER SEALED BLOCKS (wave M2b-2, step 3b) ---------------------
 //
 // Printing is no longer tied to the order of BUILDING: the body is printed by ONE pass over
-// the `Fn` that `@ir.finish()` handed back. Structural terminators (M2b-1) were chosen for
+// the `Fn` that `@lo.ir.finish()` handed back. Structural terminators (M2b-1) were chosen for
 // exactly this -- `If`/`Loop`/`Switch` carry their own blocks and ONE join -- so the walk
 // stays structural and needs neither graph analysis nor C labels.
 //
@@ -365,9 +141,10 @@ fn Emitter mut @lower_return(st Node) -> () {
 
 
 // ---- THE ENTRY POINT: it replaces the interleaving `emit_callable` used to do ----
-// Before step 3b, `emit_callable` printed the body AS IT WENT and called `@ir.finish()` at
+// Before step 3b, `emit_callable` printed the body AS IT WENT and called `@lo.ir.finish()` at
 // the end only to check the graph's integrity. The order is now the reverse: `finish` first,
 // then ONE walk over what it returned.
+/// Prints a finished body: one walk over the graph `finish` returned.
 fn Emitter mut @print_body(f Fn) -> () {
     // MARKING BLOCKS AS PRINTED removes TWO invariants of this section at once -- `every
     // block exactly once` and `the walk terminates` -- which is why it stands here rather
@@ -387,6 +164,7 @@ fn Emitter mut @print_body(f Fn) -> () {
 // `head_continues` is true for EXACTLY the first block of an unbraced `else` branch: its head
 // continues the `} else ` line the caller printed, so it carries no indent. Further along the
 // chain it goes out -- a second head already starts its own line.
+/// Prints the chain of blocks from `at` up to (not including) `stop`.
 fn Emitter mut @print_chain(f Fn, at BlockId, stop BlockId, head_continues bool,
                             mut printed []bool) -> () {
     mut continues = head_continues
@@ -520,6 +298,7 @@ fn Emitter mut @print_chain(f Fn, at BlockId, stop BlockId, head_continues bool,
 //
 // The block IS MARKED printed right here: otherwise the walk, reaching it by another path,
 // would print its statements a second time -- which is what the marking exists to stop.
+/// Prints the statements of one block, marking it printed.
 fn Emitter mut @print_block_stmts(f Fn, b BlockId, mut printed []bool) -> () {
     ro bi = raw_block(b)
     if bi < 0 || bi >= printed.len() {
@@ -533,8 +312,9 @@ fn Emitter mut @print_block_stmts(f Fn, b BlockId, mut printed []bool) -> () {
         @print_stmt(s)
     }
 }
+/// Prints a switch terminator as the C `switch` with its arms.
 fn Emitter mut @print_switch(f Fn, t SwitchTerm, mut printed []bool) -> () {
-    ro sd = @ir.decl_of(t.scrutinee)
+    ro sd = @lo.ir.decl_of(t.scrutinee)
     @body.append("    int _novac_matched_t${t.uniq} = 0;\n")
     for a in t.arms {
         // THE LOCAL, NOT ITS TYPE (M2c): the door asks the record itself, for both the name
@@ -566,10 +346,10 @@ fn Emitter mut @print_switch(f Fn, t SwitchTerm, mut printed []bool) -> () {
                         @print_chain(f, gt.then, gt.join, false, printed)
                         @body.append("    _novac_matched_t${t.uniq} = 1;\n    }\n")
                     }
-                    Return => ice("emit: a guarded arm whose block does not branch")
-                    Goto(_) => ice("emit: a guarded arm whose block does not branch")
-                    Loop(_) => ice("emit: a guarded arm whose block does not branch")
-                    Switch(_) => ice("emit: a guarded arm whose block does not branch")
+                    Return => ice("emit: a guarded arm whose block returns instead of branching")
+                    Goto(_) => ice("emit: a guarded arm whose block gotos instead of branching")
+                    Loop(_) => ice("emit: a guarded arm whose block heads a loop instead of branching")
+                    Switch(_) => ice("emit: a guarded arm whose block switches instead of branching")
                     Unreached => ice("emit: a guarded arm whose block was never sealed")
                 }
             }
@@ -587,16 +367,17 @@ fn Emitter mut @print_switch(f Fn, t SwitchTerm, mut printed []bool) -> () {
 //
 // THE FIFTH PREREQUISITE HAD TO LAND BEFORE THIS DISPATCHER, and it did. Without it
 // `@emit_assign` was no printer: it called `@build_value`, which for a `MatchExpr` did
-// `@fresh_uniq()`, `@ir.temp(...)` and `@lower_match(...)` -- it LOWERED. The walk runs over
-// the `f` that `@ir.finish()` returned, and pushing new blocks into a finished builder means
+// `@fresh_uniq()`, `@lo.ir.temp(...)` and `@lo.lower_match(...)` -- it LOWERED. The walk runs over
+// the `f` that `@lo.ir.finish()` returned, and pushing new blocks into a finished builder means
 // recording them and printing them NEVER: the body of every match-value (11 files) and every
 // if-value (24 sites) would have vanished from the C. The root was in the record itself:
-// `@ir.place` stores `Rvalue.Expr(e)` with a RAW tree node, and `Rvalue.Expr` calls itself
+// `@lo.ir.place` stores `Rvalue.Expr(e)` with a RAW tree node, and `Rvalue.Expr` calls itself
 // "the M1 bridge".
 //
 // The cure was the prerequisite rather than a part of the walk: the lowering of a match- or
 // if-value moved into the lowering phase (`@lower_value_source`), `Assign` is recorded with
 // a FINISHED source, and only then did `@emit_assign` become a printer.
+/// Prints one IR statement as a line of C.
 fn Emitter mut @print_stmt(s Stmt) -> () {
     match s {
         Assign(a) => @emit_assign(a)

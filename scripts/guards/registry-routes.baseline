@@ -1262,6 +1262,43 @@ no_caveat=0
 #   1083 -- Result[<psevdonim>, <summa>] prinimaetsya chekerom i ne sobiraetsya;
 #   pol'zovatel' vidit oshibku clang vmesto diagnostiki Nova. Naydeno ne
 #   obkhodom, a pri napisanii effekt-semeystva Db v nova-duckdb.
+# 2026-09-13 (okno 274, resheniem integratora): blockers 64 -> 65. Zavedena
+#   1093 -- pravilo ro-launder ne sprashivaetsya u koda, prishedshego IMPORTOM:
+#   proba G stroki 72 (value-zapis' s kuchevym polem, ostavlennaya neg pri ee
+#   zakrytii 2026-07-24 imenno kak dyra zvuchnosti) za granitsey importa
+#   sobiraetsya, i progon pechataet before=2 inside=3 after=3 -- vyzyvaemyy
+#   izmenil znachenie, svyazannoe u vyzyvayushchego kak `ro`.
+#   POLE `BLOKIRUET TEG` POSTAVIL INTEGRATOR, ne zavodivshee okno: ono napisalo
+#   'reshaet vladelets'. Dovod integratora: eto ne tikhiy defekt, a nevypolnenie
+#   glavnogo tezisa yazyka na obychnoy forme zapisi, i reshenie vladel'tsa
+#   2026-08-16 ('vypustit' yazyk, chey glavnyy tezis ne vypolnyaetsya, dorozhe
+#   zaderzhki') uzhe derzhit 685 i 686. Pauza reliza orakula k etomu polyu ne
+#   otnositsya: ona pro ocherednost' rabot, a pole -- pro vozmozhnost' vypuska.
+# 2026-09-14 (okno 274): blockers 65 -> 66. DOLG PREDYDUSHCHEGO KOMMITA, ne novyy rost:
+#   integrator postavil 'BLOKIRUET TEG: DA' stroke 1095 (`if Some(x) = <ne-Option>`
+#   prokhodit `nova check` i padaet clang'om), ya zapisal ego reshenie v stroku i NE
+#   podnyal bazu tem zhe kommitom. Mezhdu tem kommitom i etoy pravkoy derevo bylo krasno
+#   bez prichiny, vidimoy iz diffa; nashel eto ya sam chas spustya, zapuskaya strazha po
+#   drugomu povodu.
+#   PRAVILO, kotoroe iz etogo sleduet: pravka, menyayushchaya CHISLO pod khrapovikom,
+#   dvigaet bazu V TOM ZHE kommite -- inache ona ostavlyaet krasnoe okno sleduyushchemu.
+# 2026-09-14 (okno 274): blockers 66 -> 68. Dve novye stroki, obe s polem ot
+#   integratora:
+#   1100 -- avto-`@cleanup` snimaetsya OVERLOAD'om, kotoryy nikogda ne vyzyvaetsya:
+#     D432 §4 p.3 dizarmit flag po KONSERVATIVNOMU UNION PO IMENI, i chuzhoy overload
+#     s `consume` na toy zhe pozitsii snimaet cleanup s bindinga, kotoryy razreshaetsya
+#     v VIDOVOY overload. Probа: exit=101 u kontrolya (odin overload), exit=0 u defekta
+#     (dva). Tikhaya utechka resursa v mekhanizme, sozdannom protiv neyo.
+#   1101 -- `5 ?? 7` prokhodit check, sobiraetsya i pechataet 7. Ne tol'ko forma vne
+#     D86 prinyata, no i znachenie nevernoe: zapasnaya vetv' pri prisutstvuyushchem levom.
+#
+#   BAZA DVINUTA TEM ZHE KOMMITOM, chto i stroki -- pravilo iz zapisi 65 -> 66 vyshe:
+#   inache mezhdu kommitami derevo krasno bez prichiny, vidimoy iz diffa.
+#
+#   PRI SLIYANII: bazu NE vybirat' storonoy, a PERESCHITAT'
+#   (`python scripts/guards/registry-routes-scan.py .` na slitom dereve) -- u menya 68,
+#   u integratora svoyo chislo, i nabrany oni RAZNYMI strokami. Vybor storony razreshit
+#   molcha poteryat' blokery. Predupredil integrator 2026-09-14.
 # 2026-09-13 (integrator): blockers 64 -> 65. Rost ZAKONNYY -- nayden
 #   NOVYY blokery, a ne poteryan staryy: stroka 1090, svobodnaya
 #   funktsiya s imenem, stalkivayushchimsya so std, dayot neslinkuemyy C
@@ -1272,6 +1309,13 @@ no_caveat=0
 #   1092, naydena po voprosu vladel'tsa: peremeshchenie v vozvrashchaemyy
 #   kortezh ne schitaetsya mestom potrebleniya, i obkhod cherez `ro`
 #   stoyal v std dva mesyatsa opisannyy prozoy bez nomera.
+# 2026-09-14 SLIYANIE origin/main (22 kommita) -- CHISLO PERESCHITANO, a ne vybrano
+#   storonoy. Obe storony prishli k 66 RAZNYMI strokami: u integratora 1090 i 1092, u
+#   okna 274 -- 1093 i 1095, plyus 1100/1101 (66 -> 68). Posle sliyaniya reestrov
+#   blokerov bol'she, chem u lyuboy storony, i lyuboe iz dvukh 66 (kak i 68) okazalos'
+#   by NIZHE fakta -- to est' khrapovik molcha razreshil by poteryat' blokery.
+#   Letopisi OBEIH storon sokhraneny: oni opisyvayut raznye sobytiya, i polovina
+#   letopisi est' polovina ob'yasneniya. Predupredil integrator do sliyaniya.
 # 2026-09-14 (integrator): blockers 66 -> 67. Rost ZAKONNYY -- prinyata
 #   stroka 1097 ot okna 283, i pole BLOKIRUET TEG: DA postavleno mnoyu pri
 #   priyome, po kriteriyu 'molcha vryot': vyzov ukhodit v CHUZHUYU funktsiyu,
@@ -1284,6 +1328,11 @@ no_caveat=0
 #   sobiraetsya, i nositel' v std (`split_pair`) prinyal chestnuyu podpis'.
 #   OPUSKAT' BAZU -- CHAST' RABOTY: strazh krasneet tol'ko na ROST, i
 #   ostavlennaya vysokoy baza molcha razreshila by otkat.
+# 2026-09-14 VTOROE SLIYANIE origin/main (5 kommitov): chislo PERESCHITANO skanerom na
+#   slitom dereve -- 70. U storon bylo 70 (okno 274: +1100, +1101) i 66 (integrator posle
+#   zakrytiya 1092). Sovpadenie s moim chislom SLUCHAYNO: sostavy raznye, i proveryalos'
+#   otdel'no, chto zakrytie 1092 sliyanie ne s'elo (stroka nesyot 'ZAKRYT 2026-09-14').
+#   Letopisi obeikh storon sokhraneny.
 # 2026-09-15 (integrator): blockers 66 -> 69, TRI novykh za odnu noch', i vse
 #   TRI -- odin koren'. Rost ZAKONNYY: ni odna stroka ne otkryta zanovo, vse
 #   tri zavedeny po ZAMERU, i kazhdaya nesyot probu.
@@ -1310,6 +1359,11 @@ no_caveat=0
 #   zhe den' v 176 mestakh; volna, realizuyushchaya proverku, obyazana nesti
 #   perepisyvanie mest tem zhe sliyaniem (zapisano v plan 274.9).
 #   Chislo rastyot NE molcha -- v etom ves' smysl khrapovika.
+# 2026-09-15 TRET'E SLIYANIE origin/main (26 kommitov, okno 274): 73 --
+#   PERESCHITANO skanerom registry-routes-scan.py na slitom dereve, a ne vybrano
+#   storonoy. U storon bylo 70 (okno 274) i 69 (integrator): sostavy RAZNYE, i lyuboy
+#   vybor storony molcha poteryal by blokery drugoy. Letopisi OBEIKH storon vyshe
+#   sokhraneny celikom -- oni ob'yasnyayut, otkuda kazhdaya polovina rosta.
 # 2026-09-15 (integrator): blockers 69 -> 68. Zakryt №1090 -- NASTOYASHchEE
 #   dvizhenie, ne pereklassifikatsiya: forma, davavshaya neslinkuemyy C pri
 #   zelyonom `nova check`, teper' sobiraetsya, oba nositelya snyaty so spiska
@@ -1334,4 +1388,9 @@ no_caveat=0
 #   no CHEM imenno lomaetsya svyazka -- chasy, effekt Time ili GC pod nimi --
 #   NE razdeleno, i tak zapisano v stroke. Karinu ne blokiruet: ona
 #   sobiraetsya bez Monotonic.
-blockers=69
+# 2026-09-15, ЧЕТВЁРТОЕ СЛИЯНИЕ origin/main (окно 274): 73 — ПЕРЕСЧИТАНО
+#   сканером на слитом дереве. У сторон было 73 (моя) и 69 (интегратор); совпадение
+#   с моим числом НЕ есть основание взять сторону: составы разные, и пришли строки
+#   1111-1119 четырьмя слияниями соседей. Мои две новые строки (1120, 1121) блокерами
+#   не считаются: поле «БЛОКИРУЕТ ТЕГ» проставляет интегратор при приёме, не автор.
+blockers=73

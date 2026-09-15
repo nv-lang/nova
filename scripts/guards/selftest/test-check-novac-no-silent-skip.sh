@@ -25,6 +25,15 @@ fi
 D=$(mk refused 'module novac.check' '' 'fn Checker mut @type_expr(e Node) -> () {' '    ro kids = branch_children(e)' '    if kids.len() < 2 {' '        @report_first_leaf_of(kids, "outside the subset: incomplete")' '        return' '    }' '    @record(e, 1)' '}')
 run "$D" && ok "выход после отказа — зелёный" || bad "отказ не зачтён: $(cat "$T/err")"
 
+# --- двери `@reject*` — тоже решение (красный гейт 2026-09-15) ----------
+# Страж знал `@report_*` и НЕ знал `@reject_*`, хотя вторая делегирует в первую:
+# признак мерил ИМЯ двери, а не свойство «выносит решение». Случай «отказ рядом»
+# выше этого не ловил, потому что написан ИМЕННО известной стражу дверью.
+D=$(mk rejected 'module novac.check' '' 'fn Checker mut @type_expr(e Node) -> () {' '    ro kids = branch_children(e)' '    if kids.len() < 2 {' '        @reject_first_leaf_of(kids, "a form the language forbids")' '        return' '    }' '    @record(e, 1)' '}')
+run "$D" && ok "выход после @reject_first_leaf_of — зелёный" || bad "дверь @reject_* не зачтена: $(cat "$T/err")"
+
+D=$(mk rejected_tok 'module novac.check' '' 'fn Checker mut @type_expr(e Node) -> () {' '    if !is_ty(t) {' '        @reject(tok_of(e), "a form the language forbids")' '        return' '    }' '    @record(e, 1)' '}')
+run "$D" && ok "выход после @reject — зелёный" || bad "дверь @reject не зачтена: $(cat "$T/err")"
 # --- ice рядом — законно ---------------------------------------------------
 D=$(mk iced 'module novac.check' '' 'fn Checker mut @type_expr(e Node) -> () {' '    ro kids = branch_children(e)' '    if kids.len() < 2 { ice("check: broken shape") }' '    @record(e, 1)' '}')
 run "$D" && ok "ice вместо выхода — зелёный" || bad "ice не зачтён: $(cat "$T/err")"
@@ -53,6 +62,32 @@ else
     grep -q "мишень" "$T/err" && ok "нет функций прохода — красный (класс №519)" || bad "красный, но не про мишень"
 fi
 
+# --- МЕЖФАЙЛОВАЯ ПРОТЕЧКА СОСТОЯНИЯ (правка 2026-09-15) -------------------
+# Функция не пересекает границу файла. До правки флаг «мы внутри прохода»
+# жил на весь обход, и файл из ОДНИХ КОНСТАНТ судился как продолжение
+# чужой функции: слово `return` внутри ТЕКСТА сообщения становилось «молчаливым
+# выходом». Все прежние случаи писали ОДИН файл — клетка была непокрыта.
+D="$T/twofiles"; mkdir -p "$D"
+printf '%s\n' 'module novac.check' '' 'fn Checker mut @type_expr(e Node) -> () {' \
+    '    @record(e, 1)' '}' > "$D/a_walk.nv"
+printf '%s\n' 'module novac.check' '' \
+    'const FOR_HEAD_MSG = "outside the subset: this head does not return a vector"' \
+    'const TUPLE_PARAM_MSG = "outside the subset: return one, or pass the components"' \
+    > "$D/b_texts.nv"
+run "$D" && ok "файл без функций не судится как чужой проход" \
+    || bad "состояние протекло между файлами: $(cat "$T/err")"
+
+# контроль: сброс состояния не должен означать «перестать судить»
+printf '%s\n' 'module novac.check' '' 'fn Checker mut @type_expr(e Node) -> () {' \
+    '    ro kids = branch_children(e)' '    if kids.len() < 2 { return }' '    @record(e, 1)' '}' \
+    > "$D/a_walk.nv"
+if run "$D"; then
+    bad "после сброса состояния молчаливый выход в ПЕРВОМ файле перестал ловиться"
+else
+    grep -q "молчаливый выход" "$T/err" \
+        && ok "сброс на файле не отменяет суда внутри файла" \
+        || bad "покраснел не тем текстом: $(cat "$T/err")"
+fi
 run "$T/absent"; grep -q "судить нечего" "$T/out" && ok "нет директории — судить нечего" || bad "ждали «судить нечего»"
 
 echo "итог: FAIL $fails"

@@ -151,13 +151,29 @@ def declaration_of(name, srcs):
     return None
 
 
-RE_METHOD = re.compile(r"^fn Emitter (?:mut )?@([a-z_0-9]+)\(")
+# ОБЛАСТЬ -- ЛЮБОЕ ОБЪЯВЛЕНИЕ ВЕРХНЕГО УРОВНЯ, а не только метод `Emitter` (четвёртая
+# редакция правила счёта, 2026-09-13). Прежний образец `^fn Emitter (?:mut )?@имя(` делал
+# невидимыми ДВАДЦАТЬ ОДНУ область в `emit_c/`, включая точку входа модуля `export fn emit(...)`:
+# объявленное до первого метода не просматривалось вовсе, а свободная функция после метода
+# молча приписывалась ему вместе со своими дверями. Ни одна из двадцати одной в тот день не
+# писала в билдер, поэтому вердикт `MET` не был ложным -- но он УСТОЯЛ ПО УДАЧЕ, а не по
+# замеру: правило не запрещало ни одной из них писать. Тот же класс, что и три предыдущие
+# редакции этого правила: область задавалась НАПИСАНИЕМ, а не свойством, и ошибка была зелёной.
+# Помощник `else_is_braced` -- свободная функция -- едва не остался в `emit_c/` мёртвым ровно
+# потому, что мера его не видела.
+RE_DECL = re.compile(r"^(?:export )?fn\s+(?:([A-Z]\w*)\s+)?(?:mut\s+)?@?([a-z_0-9]+)\(")
+
+
+def _label(m):
+    """Имя области для отчёта: метод -- `Получатель.имя`, свободная функция -- с пометкой."""
+    recv, name = m.group(1), m.group(2)
+    return "%s.%s" % (recv, name) if recv else "%s (free fn)" % name
 
 # THE NAMED EXCEPTION OF THE MOVE'S CRITERION, and it is a SET OF DOORS rather than a function.
 #
 # Read out of `emit_callable` on 2026-09-09: the orchestrator touches the builder only through
 # `FnBuilder.new`, `end_body` and `finish` -- the LIFECYCLE -- plus the read `ret_place`. It
-# lowers nothing itself; it CALLS the lowering (`lower_place`, `emit_block_stmts_fn`). Three
+# lowers nothing itself; it CALLS the lowering (`lower_place`, `lower_block_stmts_fn`). Three
 # quarters of its work is printing: the signature, the braces, the contract prologue, the
 # trailing returns.
 #
@@ -182,6 +198,9 @@ def split_measure(root):
     — каждая следующая родилась из дефекта предыдущей:
       1. по приставке `@lower_*` -> 15. НЕДОСЧЁТ: понижают и `emit_coalesce`, `emit_if_value`,
          `emit_bind`, `bind_pair_temp`, `emit_destructure_bind` — названы `emit_*`;
+         (имена в этом пункте — НА ТОТ ДЕНЬ; 2026-09-13 все они переименованы в `lower_*`,
+         и запись оставлена как есть нарочно: она стала лучшим доказательством, почему
+         правило счёта не может стоять на приставке — приставка меняется, предмет нет);
       2. по «обращается к `@ir`» -> 32. ПЕРЕБОР: принтеры законно СПРАШИВАЮТ запись
          (`decl_of` даёт имя и тип локали) — это и есть «печатать из записи»;
       3. по «зовёт ИЗМЕНЯЮЩУЮ дверь билдера» -> 20. Фазы разделяет ЗАПИСЬ, а не обращение.
@@ -204,16 +223,24 @@ def split_measure(root):
         sys.stderr.write("novac-tree-edges: REFUSED -- no mutating builder doors found; the rule\n"
                          "cannot tell lowering from printing, and a zero here would fake a split.\n")
         return 2
-    writers, readers, lifecycle = [], [], []
+    writers, readers, lifecycle, regions = [], [], [], 0
     for p in sorted(glob.glob(os.path.join(root, "novac/src/emit_c/*.nv").replace("\\", "/"))):
         base = p.replace("\\", "/").split("/")[-1]
         lines = read(p).split("\n")
-        idx = [i for i, l in enumerate(lines) if RE_METHOD.match(l)]
+        idx = [i for i, l in enumerate(lines) if RE_DECL.match(l)]
         for j, i in enumerate(idx):
             end = idx[j + 1] if j + 1 < len(idx) else len(lines)
             code = "\n".join(l.split("//")[0] for l in lines[i:end])
-            name = RE_METHOD.match(lines[i]).group(1)
-            used = set(re.findall(r"@ir\.([a-z_0-9]+)\(", code))
+            name = _label(RE_DECL.match(lines[i]))
+            # ДВЕРЬ БИЛДЕРА, А НЕ НАПИСАНИЕ `@ir.` (правка 2026-09-10). Срез переезда
+            # перевёл обращения на путь через получателя (`@lo.ir.begin_if(...)`), и
+            # прежний образец `@ir\.` перестал видеть их ВСЕ — мера напечатала
+            # «writers: 0 ... criterion MET», когда переехал один метод из двадцати одного.
+            # Ошибка была ЗЕЛЁНОЙ, то есть закрывала волну, а не звала разбираться.
+            # Ловится теперь свойство: позвана дверь у выражения, которое ЕСТЬ билдер —
+            # цепочка получателя кончается на `ir` (`@ir`, `@lo.ir`, любое будущее).
+            used = {d for recv, d in re.findall(r"([@A-Za-z_][A-Za-z_0-9.@]*)\.([a-z_0-9]+)\(", code)
+                    if recv.split(".")[-1].lstrip("@") == "ir"}
             wrote = used & mut
             if wrote and wrote <= LIFECYCLE:
                 lifecycle.append((base, name, " ".join(sorted(wrote))))
@@ -221,7 +248,16 @@ def split_measure(root):
                 writers.append((base, name, " ".join(sorted(wrote - LIFECYCLE))))
             elif used & rdo:
                 readers.append((base, name))
+            regions += 1
+    # ЧЕТВЁРТОЕ ПРАВИЛО ШАПКИ (молчание на пустом входе) -- и для НАРЕЗКИ тоже, не только
+    # для файлов: если разрезать не удалось ни одной области, писателей будет ноль, и этот
+    # ноль прочтут как выполненный критерий. Знаменатель обязан быть виден и не равен нулю.
+    if not regions:
+        sys.stderr.write("novac-tree-edges: REFUSED -- not a single declaration was sliced out\n"
+                         "of emit_c/; a zero of writers here would read as the move being done.\n")
+        return 2
     print("novac-tree-edges --split: the lowering/printing split inside emit_c/")
+    print("regions sliced (methods AND free functions): %d" % regions)
     print("builder doors read from ir.nv: %d mutating, %d read-only" % (len(mut), len(rdo)))
     print("LIFECYCLE only (the named exception -- these MAY stay): %d" % len(lifecycle))
     for b, n, d in lifecycle:
@@ -233,7 +269,7 @@ def split_measure(root):
     print("")
     print("criterion of the move: %s"
           % ("MET -- emit_c/ calls no mutating door beyond the lifecycle trio" if not writers
-             else "not met -- %d method(s) still write statements" % len(writers)))
+             else "not met -- %d region(s) still write statements" % len(writers)))
     return 0
 
 

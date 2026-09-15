@@ -228,13 +228,43 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, substs []TyId, cap 
     (c.out, c.chan)
 }
 
-/// Record one subset refusal at the token's exact bytes. THE one place that
-/// knows the code, the severity and how a span is derived from a leaf — it
-/// used to be copied into five reporters, so a change to the span rule had
-/// five chances to be applied four times (owner's review 2026-08-16).
-fn Checker mut @refuse(t Token, msg str) -> () {
+/// WHAT KIND OF REFUSAL THIS IS -- and the two kinds answer different questions, which
+/// is why one code could not carry both (plan 274 section 7, amendment 2026-09-14).
+///
+/// `SubsetDebt` says "this form is legal Nova and novac does not compile it YET". It is a
+/// promise, and a promise owes a date: such a refusal must carry its stage, and
+/// `check-novac-subset-debt-dated` holds that.
+///
+/// `LangError` says "the spec forbids this form" -- there is nothing to wait for, and a
+/// stage on it would be a lie. Until 2026-09-14 both went out under the subset code, so an
+/// author meeting a permanent error had every reason to expect the next wave to fix it.
+/// The census of 2026-09-13 found 43 refusal texts carrying the debt wording and 29 not,
+/// most of the 29 being permanent errors wearing the debt's code.
+export type DiagKind enum
+    | SubsetDebt /// legal form, not compiled yet -- owes a stage
+    | LangError /// the spec forbids it -- nothing to wait for
+
+/// Record one refusal at the token's exact bytes. THE one place that knows the code, the
+/// severity and how a span is derived from a leaf — it used to be copied into five
+/// reporters, so a change to the span rule had five chances to be applied four times
+/// (owner's review 2026-08-16). The KIND is a parameter for the same reason: a second
+/// door would be a second copy of that rule.
+fn Checker mut @refuse_kind(t Token, msg str, kind DiagKind) -> () {
     ro lo = @src.offset_of(t.text)
-    @refuse_span(lo, lo + t.text.byte_len(), msg)
+    @refuse_span_kind(lo, lo + t.text.byte_len(), msg, kind)
+}
+
+/// The subset-debt door: the shape every existing caller already uses.
+fn Checker mut @refuse(t Token, msg str) -> () {
+    @refuse_kind(t, msg, DiagKind.SubsetDebt)
+}
+
+/// The PERMANENT-ERROR door at a token. Its twin exists so a caller moving from debt to
+/// permanent changes ONE thing -- the code -- and not the position of the refusal as well:
+/// without it those callers would have to be rewritten onto the walk-to-first-leaf shape,
+/// and then a shifted diagnostic could not be told from a shifted code.
+fn Checker mut @reject(t Token, msg str) -> () {
+    @refuse_kind(t, msg, DiagKind.LangError)
 }
 
 /// The same door with an EXPLICIT span, for a refusal whose subject is a run
@@ -242,11 +272,22 @@ fn Checker mut @refuse(t Token, msg str) -> () {
 /// underlined at its first byte: the editor squiggle covered `%` and left the
 /// other four looking accepted, which is a lie about what was rejected. The
 /// span rule stays in ONE place -- the reason @refuse exists at all.
-fn Checker mut @refuse_span(lo int, hi int, msg str) -> ()
+fn Checker mut @refuse_span(lo int, hi int, msg str) -> () {
+    @refuse_span_kind(lo, hi, msg, DiagKind.SubsetDebt)
+}
+
+/// THE one place a refusal diagnostic is built, for both kinds. The code is chosen HERE
+/// from the kind and nowhere else: a caller that picked the string itself would be the
+/// fifth copy of the rule this door exists to hold.
+fn Checker mut @refuse_span_kind(lo int, hi int, msg str, kind DiagKind) -> ()
     requires lo >= 0, "check: refusal span starts before the file"
     requires hi >= lo, "check: refusal span ends before it starts" {
+    ro code = match kind {
+        DiagKind.SubsetDebt => "E_NOVAC_SUBSET"
+        DiagKind.LangError => "E_NOVAC_LANG"
+    }
     @out.push(Diagnostic {
-        code: "E_NOVAC_SUBSET",
+        code,
         severity: Severity.ErrorSev,
         lo,
         hi,
@@ -434,6 +475,12 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     // first, so a misplaced form is named as misplaced.
                     @report_if_misplaced_generics(children)
                     @report_if_generic_form(children)
+                    // A MUST-CONSUME type parses (2026-09-14) and is refused BY NAME:
+                    // novac has no linearity, so accepting it would promise a guarantee
+                    // it does not give (registry #1099). Reading the form is what makes
+                    // D133 fixtures writable at all -- before it, the declaration fell
+                    // into the parser's fallback.
+                    @report_if_consume_type(children)
                     // Fields, a newtype's representation, variant payloads:
                     // every type NAME must be declared (#970, typeref_rules) --
                     // `type Box { v Nmbr }` passed check in silence before.
@@ -649,7 +696,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     // `arg_pos` is answered here the same way `ArrayLit`
                     // answers it a few arms below.
                     if !init_pos && !arg_pos {
-                        @report_first_leaf_of(children, "outside the E1 subset: record constructor only as a binding initializer or a call argument")
+                        @report_first_leaf_of(children, "outside the subset: a record constructor is compiled only as a binding initializer or a call argument -- other positions are not compiled yet (E2, the records/sums horizon)")
                         return
                     } else {
                         // Initializer or argument: legal, and the children are
@@ -710,7 +757,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     // novac's own sources, and zero bare tails or assignments,
                     // so those two stay out by measurement, not symmetry.
                     if !init_pos && !arg_pos {
-                        @report_first_leaf_of(children, "outside the E1 subset: array literal only as an initializer, a call argument, or a constructor field")
+                        @report_first_leaf_of(children, "outside the subset: an array literal is compiled only as an initializer, a call argument or a constructor field -- other positions are not compiled yet (E2, the basics horizon)")
                         return
                     } else {
                         // A legal position; typing judges the elements and
@@ -725,7 +772,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     // `{...}` tail is a statement position plus the typing
                     // route of wave B4's tail machinery).
                     if !init_pos && !stmt_pos {
-                        @report_first_leaf_of(children, "outside the E1 subset: match only as an initializer, a statement, or a body tail")
+                        @report_first_leaf_of(children, "outside the subset: a `match` is compiled only as an initializer, a statement or a body tail -- other positions are not compiled yet (E2, the control-flow horizon)")
                         return
                     } else {
                         // A legal position: walked below.

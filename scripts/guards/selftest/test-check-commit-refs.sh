@@ -28,12 +28,18 @@ LIVE="$(git -C "$ROOT" rev-parse --short=11 HEAD)"
 # реестр №894 ссылался на коммит окна 274, и гейт краснел за живой хеш.
 # Строится так: пустой коммит во ВРЕМЕННОЙ ветке реальной репы,
 # без переключения HEAD и без единой правки в рабочем дереве.
-SIDE_BRANCH="selftest/commit-refs-$$"
+# Ссылка, а НЕ ветка: worktree делят один `.git`, и ветка, живущая здесь секунды,
+# видна каждому соседнему дереву. `check-novac-local-only-work` считает локальные
+# ветки с невлитой работой без копии на origin -- и 2026-09-15 покраснел при базе 0
+# на `selftest/commit-refs-<pid>`, уронив гейт яруса push. Живость ядро считает
+# через `rev-list --all`, а он покрывает ВСЕ ссылки под `refs/`: проба в
+# изолированной репе дала 1 совпадение в `rev-list --all` и НОЛЬ в `git branch`.
+SIDE_REF="refs/selftest/commit-refs-$$"
 SIDE="$(git -C "$ROOT" commit-tree "$(git -C "$ROOT" rev-parse HEAD^{tree})" -p HEAD -m "selftest side commit (commit-refs)" 2>/dev/null || true)"
 if [ -n "$SIDE" ]; then
-    git -C "$ROOT" branch -f "$SIDE_BRANCH" "$SIDE" >/dev/null 2>&1
+    git -C "$ROOT" update-ref "$SIDE_REF" "$SIDE"
     SIDE="$(git -C "$ROOT" rev-parse --short=11 "$SIDE")"
-    trap 'git -C "$ROOT" branch -D "$SIDE_BRANCH" >/dev/null 2>&1; rm -rf "$TMP"' EXIT
+    trap 'git -C "$ROOT" update-ref -d "$SIDE_REF" >/dev/null 2>&1; rm -rf "$TMP"' EXIT
 fi
 
 FIX="$TMP/fix"

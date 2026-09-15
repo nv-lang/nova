@@ -17,6 +17,8 @@ mk()  { d="$T/$1"; mkdir -p "$d/m"; shift; printf "%s\n" "$@" > "$d/m/m.nv"; ech
 
 printf '%s\n' 'undated=0' > "$T/zero.baseline"
 printf '%s\n' 'undated=1' > "$T/one.baseline"
+printf '%s\n' 'undated=9' 'undated_by_door=0' > "$T/door_zero.baseline"
+printf '%s\n' 'undated=9' 'undated_by_door=9' > "$T/door_nine.baseline"
 
 # --- ГЛАВНЫЙ случай: новый долг БЕЗ этапа при базе ноль -------------------
 D=$(mk undated "module a" \
@@ -54,6 +56,73 @@ else
     ok "голая ссылка на план без волны отвергнута"
 fi
 
+# --- ОСЬ ФОРМУЛИРОВКИ (добавлена 2026-09-13): до этого дня КАЖДАЯ фикстура выше
+# несла ОБА написания сразу, поэтому самотест не мог заметить, что страж видит
+# только одно из них. Слепота прожила две недели именно в этой непокрытой клетке.
+D=$(mk onlysubset "module a" \
+    'const M = "outside the subset: `??` unwraps an `Option`, and this left side is not one"')
+if run "$D" "$T/zero.baseline"; then
+    bad "отказ ТОЛЬКО в форме 'outside the subset' прошёл - область уже предмета"
+else
+    ok   "отказ только в форме 'outside the subset' пойман"
+fi
+
+D=$(mk onlysubset_dated "module a" \
+    'const M = "outside the subset: a `Result` left side is refused here (E2-b3)"')
+run "$D" "$T/zero.baseline" && ok   "он же со сроком проходит" \
+    || bad "отказ этой формы со сроком покраснел - правило шире класса"
+
+# Прежняя половина не потеряна: расширение обязано быть ДОБАВЛЕНИЕМ, а не подменой.
+# Сегодня же чинилась мерка, где новый образец ловил новое и ронял старое.
+D=$(mk onlyyet "module a" \
+    'const M = "a declared local type is not compiled yet"')
+if run "$D" "$T/zero.baseline"; then
+    bad "прежняя формулировка перестала ловиться - расширение оказалось подменой"
+else
+    ok   "прежняя формулировка ловится по-прежнему"
+fi
+
+# --- ОСЬ «СРОК В СКОБКАХ С ПОЯСНЕНИЕМ» (добавлена 2026-09-13) ---------------------
+# Прежний образец требовал, чтобы скобка содержала ТОЛЬКО этап, и не видел срока в
+# `(E2-b2 multi-file)` — шесть отказов дерева, у которых КОГДА названо, числились
+# бессрочными. Пояснение рядом с этапом делает сообщение лучше, а не хуже.
+D=$(mk stage_with_words "module a" \
+    'const M = "outside the subset: a generic free function of a handed module is not compiled yet (E2-b2 multi-file)"')
+run "$D" "$T/zero.baseline" && ok   "срок в скобках с пояснением принимается" \
+    || bad "срок с пояснением отвергнут - автор вынужден портить сообщение ради формы"
+
+# ...и обратная сторона, без которой расширение стало бы обманом числа: этап ВНЕ скобок
+# сроком не считается. Скобка и есть авторский жест «я отвечаю на вопрос когда», а не
+# «эти буквы встретились в предложении».
+D=$(mk stage_in_prose "module a" \
+    'const M = "outside the subset: a bound dispatches through a protocol, and that arrives with E2-b3 -- the parameter itself is compiled"')
+if run "$D" "$T/zero.baseline"; then
+    bad "этап в проходной фразе сошёл за срок - всякое упоминание стало обещанием"
+else
+    ok   "этап вне скобок сроком не считается"
+fi
+
+# --- ВТОРОЙ ХРАПОВИК (refusals=, цель ноль; 274.7 §И, построен 2026-09-13) --------
+# Датированный долг тоже долг: без этого числа отказов могло становиться больше, лишь
+# бы каждому проставили этап, — а решение владельца требует их УБИРАТЬ.
+printf '%s\n' 'undated=9' 'refusals=1' > "$T/grow.baseline"
+printf '%s\n' 'undated=9' 'refusals=2' > "$T/fit.baseline"
+D=$(mk two "module a" \
+    'const A = "outside the subset: form one is refused (E2-b3)"' \
+    'const B = "outside the subset: form two is refused (E2-b3)"')
+if run "$D" "$T/grow.baseline"; then
+    bad "рост ОБЩЕГО числа отказов прошёл - храповик с целью ноль не держит"
+else
+    ok   "рост общего числа отказов пойман"
+fi
+run "$D" "$T/fit.baseline" && ok   "общее число ровно по базе проходит" \
+    || bad "общее число ровно по базе покраснело"
+# Старая база без ключа `refusals=` обязана работать: правка — добавление, не замена.
+run "$D" "$T/one.baseline" || true
+printf '%s\n' 'undated=9' > "$T/nokey.baseline"
+run "$D" "$T/nokey.baseline" && ok   "база без ключа refusals= по-прежнему работает" \
+    || bad "старая база сломалась - расширение оказалось несовместимым"
+
 # --- ровно по базе: не хуже, чем было --------------------------------------
 D=$(mk atbase "module a" \
     'const M = "outside the subset: string interpolation is not compiled yet"')
@@ -72,9 +141,40 @@ run "$D" "$T/nosuch.baseline" && bad "отсутствие базы прошло
     || ok "отсутствие базы красное"
 
 # --- потерянная мишень ------------------------------------------------------
+# ОТСУТСТВУЮЩАЯ директория — соседняя ось к пустой, и до 2026-09-13 она была зелёной:
+# страж печатал «ok: судить нечего (нет …)». Мета-страж `check-guard-empty-root` судит
+# ПУСТОЙ каркас и этой оси не видит, поэтому случай нужен здесь.
+run "$T/there-is-no-such-dir" "$T/zero.baseline" \
+    && bad "отсутствующая директория прошла - потерянная мишень читается как чистый замер" \
+    || ok   "отсутствующая директория красная (мишень потеряна)"
+
 mkdir -p "$T/empty"
 run "$T/empty" "$T/zero.baseline" \
     && bad "пустая директория прошла - страж, сканирующий ничто, слеп" \
     || ok "пустая директория красная (мишень потеряна)"
+
+# --- СЧЁТ ПО ДВЕРИ: текст БЕЗ канонического написания виден только ему ------
+# Прежний счёт ищет два написания и такой отказ не видит вовсе. Если новая ветка
+# не краснеет здесь, третье число не мерит ничего и его засев -- украшение.
+mkd() {
+    d="$T/$1"; mkdir -p "$d/m"; shift; printf '%s\n' "$@" > "$d/m/m.nv"; echo "$d"
+}
+D=$(mkd doorseen 'module a' \
+    'const M = "unknown field: this type has no field with this name"' \
+    'fn Checker mut @r(kids []Node) -> () { @report_first_leaf_of(kids, M) }')
+if run "$D" "$T/door_zero.baseline"; then
+    bad "отказ без написания, текущий в дверь долга, прошёл - счёт по двери слеп"
+else
+    grep -q "ПО ДВЕРИ" "$T/err" && ok   "счёт по двери видит отказ без канонического написания" \
+        || bad "покраснел, но не по двери: $(cat "$T/err" | head -1)"
+fi
+
+# --- ВТОРАЯ СТОРОНА: тот же текст в двери ПОСТОЯННОЙ ОШИБКИ долгом не считается
+# Без неё ветка, считающая все отказы подряд, прошла бы случай выше и выглядела рабочей.
+D=$(mkd doorlang 'module a' \
+    'const M = "unknown field: this type has no field with this name"' \
+    'fn Checker mut @r(kids []Node) -> () { @reject_first_leaf_of(kids, M) }')
+run "$D" "$T/door_zero.baseline" && ok   "постоянная ошибка на своей двери долгом не считается" \
+    || bad "текст в двери постоянной ошибки посчитан долгом - ветка мерит не дверь"
 
 [ "$fails" -eq 0 ] && echo "test-check-novac-subset-debt-dated: ok" || exit 1
