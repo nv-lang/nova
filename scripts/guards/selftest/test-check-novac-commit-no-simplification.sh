@@ -16,7 +16,8 @@ T="${TMPDIR:-/tmp}/commit-nosimp-selftest.$$"
 mkdir -p "$T"
 trap 'rm -rf "$T"' 0
 fails=0
-ok()  { echo "  ok   $1"; }
+cases=0
+ok()  { echo "  ok   $1"; cases=$((cases+1)); }
 bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
 
 STAGED="novac/src/check/binds.nv"
@@ -186,7 +187,7 @@ else
 fi
 
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-commit-no-simplification ok: 17 случаев, обе стороны по трём свойствам"
+    echo "test-check-novac-commit-no-simplification ok: $cases случаев, обе стороны по трём свойствам"
     exit 0
 fi
 echo "test-check-novac-commit-no-simplification: FAIL -- $fails" >&2

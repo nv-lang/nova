@@ -13,7 +13,8 @@ T="${TMPDIR:-/tmp}/novac-invented-name-selftest.$$"
 mkdir -p "$T"
 trap 'rm -rf "$T"' 0
 fails=0
-ok()  { echo "  ok: $1"; }
+cases=0
+ok()  { echo "  ok: $1"; cases=$((cases+1)); }
 bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
 run() { python "$G" "$ROOT" "$1" > "$T/out" 2> "$T/err"; }
 
@@ -92,4 +93,4 @@ if [ "$fails" -ne 0 ]; then
     echo "test-check-novac-invented-name-not-named: FAIL $fails" >&2
     exit 1
 fi
-echo "test-check-novac-invented-name-not-named ok: 10 случаев (зелёный, знаменатель, литерал, интерполяция, комментарий, получатель красный, получатель зелёный, ноль вызовов, нет двери, нет каталога)"
+echo "test-check-novac-invented-name-not-named ok: $cases случаев (зелёный, знаменатель, литерал, интерполяция, комментарий, получатель красный, получатель зелёный, ноль вызовов, нет двери, нет каталога)"

@@ -333,6 +333,13 @@
   `check-novac-legacy-workarounds.py` — обход бага оракула в novac обязан нести
   маркер `[LEGACY-#NNN]` открытого бага (274 §1.5); фикс-волна оракула снимает
   обходы той же волной (греп на ноль — часть её приёмки).
+  `check-novac-keyword-parity.py` — разницу между нормативным списком ключевых
+  слов и таблицей лексера (`novac/src/lex/lex.nv`) оставить НЕОБЪЯВЛЕННОЙ:
+  слово, которого лексер не знает, не отказывает честно, а лжёт — лексится
+  именем, и `loop`/`and`/`not` тогда тонут в чужих ошибках («record
+  constructor only as a binding initializer», «unknown name»). Каждое
+  расхождение требует строки `KEYWORD-PARITY: <слово> -- debt|by design|retracted`
+  рядом с таблицей (274.7 B10).
   `check-retracted-param-form.sh` — снятая постфиксная форма параметра
   (`buf mut T` вместо `mut buf T`) не имеет права жить в доке: в коде её держит
   компилятор (`E_PARAM_TYPE_POS_MUT_RETRACTED`, все четыре позиции), а документацию
