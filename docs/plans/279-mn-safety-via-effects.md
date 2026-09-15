@@ -126,7 +126,7 @@
   «Gates»); этапная приёмка — точечная;
 - **всякое расхождение `novac` с оракулом, порождённое этим планом, — ожидаемое и
   обязано быть записано**: строка в `novac/divergences.allow` плюс строка в
-  `docs/dev/novac-divergences.md`. Незаписанное расхождение краснит
+  `docs/plans/274.12-novac-divergences.md`. Незаписанное расхождение краснит
   `check-novac-differential.sh`, и это правильно.
 
 ### Э0. Спека — D-блок №TBD + амендмент к D62 + запись инварианта
@@ -202,7 +202,7 @@ Research §3 (правило «минимум, а не потолок», чет�
 |---|---|
 | `nova-cli/target/release/nova test novac/src/parse/parse_test.nv` | `PASS: <N> FAIL: 0` — разбор всех четырёх форм Э1.а–Э1.г |
 | `nova-cli/target/release/nova test novac/src/check/check_test.nv` | `PASS: <N> FAIL: 0` — неподвижная точка Э1.д на трёх формах: прямой вызов, один хоп, каррирование |
-| `sh scripts/guards/check-novac-differential.sh .` | `check-novac-differential ok: фикстур <N>, исходы совпали с оракулом (в allow: <K>)`, где `<K>` — ровно число фикстур этого этапа, каждая со строкой в `docs/dev/novac-divergences.md` |
+| `sh scripts/guards/check-novac-differential.sh .` | `check-novac-differential ok: фикстур <N>, исходы совпали с оракулом (в allow: <K>)`, где `<K>` — ровно число фикстур этого этапа, каждая со строкой в `docs/plans/274.12-novac-divergences.md` |
 | `sh scripts/guards/check-diag-fixture-coverage.sh .` | ok — новый код без neg-фикстуры не заводится (страж-храповик) |
 
 **Краснота доказывается** снятием шага объединения в Э1.д: `neg_*.nv` из

@@ -244,7 +244,7 @@ if [ -f "$T/acc" ]; then
             beh=$((beh+1))
         elif [ -f "$ALLOW" ] && grep -Fxq "$rel" "$ALLOW"; then
             behallow=$((behallow+1))
-            echo "  РАЗОШЛИСЬ СОЗНАТЕЛЬНО (allow): $rel — история в docs/dev/novac-divergences.md" >> "$T/note"
+            echo "  РАЗОШЛИСЬ СОЗНАТЕЛЬНО (allow): $rel — история в docs/plans/274.12-novac-divergences.md" >> "$T/note"
         else
             echo "  ПОВЕДЕНИЕ РАЗОШЛОСЬ: $rel (оба check-принимают, но бинарь novac != оракула)" >> "$T/red"
             behfail=$((behfail+1))

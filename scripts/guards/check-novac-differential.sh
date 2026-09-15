@@ -14,7 +14,7 @@
 #
 # НЕ проверяет: совпадение текстов/кодов диагностик (только исход),
 # поведение на neg_* (их судят diag-schema и no-cascade), обоснованность
-# записей allow — её судит приёмка и docs/dev/novac-divergences.md.
+# записей allow — её судит приёмка и docs/plans/274.12-novac-divergences.md.
 # Контракт вызова: '<bin> check <file>'; если CLI novac окажется иным —
 # страж правится тем же коммитом, что вводит бинарь.
 #
@@ -105,7 +105,7 @@ if [ "$bad" -gt 0 ]; then
     cat "$T/bad" >&2
     echo "  Чинить: либо баг novac (чинится той же волной, обходы запрещены)," >&2
     echo "  либо осознанное расхождение — тогда строка-путь в" >&2
-    echo "  novac/divergences.allow + запись в docs/dev/novac-divergences.md" >&2
+    echo "  novac/divergences.allow + запись в docs/plans/274.12-novac-divergences.md" >&2
     echo "  (план 274 §10.3а)." >&2
     exit 1
 fi
