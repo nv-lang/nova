@@ -954,4 +954,15 @@ max=1117
 #   1116, u kotorykh stroki UZHE est v reestre. Ustarevshee ob'yavlenie dyry
 #   opasno tem, chto poterya takoy stroki projdyot molcha -- rovno to, radi chego
 #   khrapovik zavedyon. Skazano integratoru pismom 2026-09-15.
+# stale_gaps -- nomerov, kotorye ODNOVREMENNO nazvany zakonnoy dyroy v gaps= i
+#   imeyut stroku v reestre. Tolko VNIZ. Zavedeno 2026-09-15 (nakhodka okna b6,
+#   dovedena do svoystva po predlozheniyu integratora): poka nomer chislitsya
+#   dyroy, POTERYA ego stroki prokhodit MOLCHA -- proverka dyr vidit otsutstvie i
+#   sveryaetsya so spiskom, gde otsutstvovat razresheno. Takaya stroka lezhit VNE
+#   zashchity, i zametit eto mozhno tolko chteniem bazy: progon zelyonyy.
+#   Snyatie dyry derzhalos na vnimanii slivshego -- to est na tom, chto my vezde
+#   zamenyaem mekhanizmom. Baza 3: eto 1111, 1115, 1116 v committed main.
+#   Pravka, snimayushchaya ikh, na 2026-09-15 zhivyot v rabochey kopii
+#   integratora nezakommichennoy -- kak tolko ona pridyot, opusti bazu do 0.
+stale_gaps=3
 gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104,1111,1115-1116
