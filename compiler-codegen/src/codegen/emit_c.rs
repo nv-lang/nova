@@ -5983,9 +5983,25 @@ impl CEmitter {
         // `file_priv_fn_c_names` per-(file_id, name) map (D307's
         // `priv(file)` machinery) instead of the naive global cache —
         // `free_fn_c_name` already checks `file_priv_fn_c_names` FIRST, at
-        // both the definition-emit and every call-site (via
-        // `current_emit_file_id`), so no change needed there. Non-colliding
+        // both the definition-emit and every call-site. Non-colliding
         // names are completely unaffected (byte-identical).
+        //
+        // CORRECTION 2026-09-15 (registry 221.1 #1090): the sentence above
+        // used to end "(via `current_emit_file_id`), so no change needed
+        // there", and that half was WRONG — confidently so, which is worse
+        // than vague. `current_emit_file_id` is the CALLER's file, while
+        // this map is keyed by the files of the DECLARING module (see the
+        // registration loop below, which walks `module_file_ids` of the
+        // declarer). Inside the declaring module the two coincide, so the
+        // claim held for every case anyone had tried. Call the function from
+        // ANOTHER module and there is no entry at all, the name also misses
+        // `fn_module_map` (excluded from it precisely for colliding), and
+        // out came the bare `nova_fn_<name>` — a symbol nothing emits.
+        // The call site now ALSO looks this map up by the DECLARER's
+        // file_id, taken from the 196 channel (`resolved_callees[call_id]`);
+        // see `free_fn_c_name_at_call`. The stale half is rewritten rather
+        // than left with a note beside it: a reader reaching this block was
+        // being told, in so many words, that there was nothing to check here.
         //
         // Plan 202 Ф.1b (D78 rev-4 §5): `pf.module_name` is a DECLARATION, and
         // D78 rev-4 legalizes two PHYSICALLY DISTINCT modules sharing the exact
@@ -21616,7 +21632,48 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Не пользовательская функция (runtime/builtin/синтетика)
             // либо peer_files не заполнены — legacy-имя (без коллизий
             // в single-crate bootstrap, см. D134).
-            _ => format!("nova_fn_{}", name),
+            _ => {
+                // [реестр 221.1 №1090, ТРЕТИЙ пункт приёмки — страж
+                // СВОЙСТВОМ: «в выпущенном C нет вызова символа, которого
+                // никто не определяет»].
+                //
+                // Голое `nova_fn_<имя>` законно для обычного имени. Но имя
+                // из `colliding_fn_names` ИСКЛЮЧЕНО из `fn_module_map`
+                // именно потому, что сталкивается, а его мангл лежит в
+                // `file_priv_fn_c_names` — значит ОПРЕДЕЛЕНИЕ носит
+                // мангленное имя всегда, и голое не определяет никто.
+                //
+                // ГРОМКОСТЬ ЗДЕСЬ И ЕСТЬ ВСЯ ЦЕННОСТЬ. Без этой проверки
+                // исход зависит от случайности: если одноимённой функции
+                // рядом НЕТ, падает линковщик (`undefined symbol`) — шумно,
+                // но далеко от причины; если она ЕСТЬ (а она есть, ровно
+                // из-за неё имя и сталкивающееся), всё слинкуется и
+                // вызовется ЧУЖАЯ функция, и не покраснеет ничто. №1097
+                // показал промежуточную форму, где вызов ушёл в чужую
+                // функцию и его поймал только C-компилятор, потому что типы
+                // не сошлись; сойдись они — не поймал бы никто.
+                //
+                // ТОЛЬКО ПРИ `call_id`, и это не осторожность, а предмет:
+                // класс живёт в МЕСТЕ ВЫЗОВА. Сторона определения
+                // (`mangle_fn`) и синтетика (display-spec'и, thunk'и,
+                // адаптеры замыканий) приходят сюда без call_id и в предмет
+                // не входят — судить их значило бы мерить не свой предмет.
+                if call_id.is_some() && self.colliding_fn_names.contains(name) {
+                    panic!(
+                        "internal compiler error (registry 221.1 #1090): the call site \
+                         would emit the bare legacy symbol `nova_fn_{name}` for `{name}`, \
+                         but `{name}` is declared in two or more modules of this compile \
+                         unit, so every DEFINITION of it carries a module-mangled symbol \
+                         and nothing defines the bare one. Emitting this call would either \
+                         fail to link or -- worse -- silently bind to a same-named function \
+                         from another module. The call site must take the name from the \
+                         resolved-callee channel; reaching this arm means the checker \
+                         recorded no callee for this call.",
+                        name = name,
+                    );
+                }
+                format!("nova_fn_{}", name)
+            }
         }
     }
 

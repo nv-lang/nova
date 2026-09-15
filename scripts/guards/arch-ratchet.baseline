@@ -1200,7 +1200,23 @@
 #   storona opredeleniya i sintetika v predmet ne vkhodyat). Bez etikh dvukh
 #   abzatsev pravka vyglyadit proizvol'noy i budet perepisana.
 #   DOLG PREZHNIY I NE OTMENYAETSYA: vernut' lines vniz. Otsyuda -- tol'ko vniz.
-lines=67931
+# 2026-09-15 (integrator): lines 67931 -> 67947, +16. NOL' KODA, tol'ko
+#   kommentariy, i storona rosta zdes' TRET'YA -- ne 'k kanalu' i ne 'ot
+#   nego', a UBRANA LOZH' O KANALE. Nazvano otdel'no, chtoby ne vydavat'
+#   sebya za pervyy vid.
+#   Kommentariy u mesta, gde zavoditsya `file_priv_fn_c_names`, utverzhdal:
+#   "free_fn_c_name already checks ... at both the definition-emit and every
+#   call-site (via `current_emit_file_id`), so no change needed there".
+#   Pervaya polovina verna, vtoraya NET: `current_emit_file_id` -- fayl
+#   VYZYVAYUShchEGO, a karta klyuchuetsya faylami OB'YAVIVShEGO. Vnutri
+#   ob'yavivshego modulya oni sovpadayut, poetomu utverzhdenie derzhalos' na
+#   vsekh sluchayakh, kotorye kto-libo probovai -- i razoshlos' rovno tam, gde
+#   ego nikto ne proveryal (#1090, vyzov iz drugogo modulya).
+#   FRAZA PEREPISANA NA MESTE, a ne snabzhena primechaniem ryadom: chitatel',
+#   doshedshiy do etogo bloka, byl pryamo uvedomlen, chto proveryat' zdes'
+#   nechego. Lozhnyy kommentariy, skazannyy UVERENNO, dorozhe otsutstvuyushchego.
+#   DOLG PREZHNIY: vernut' lines vniz. Otsyuda -- tol'ko vniz.
+lines=67947
 infer=243
 # 2026-08-06 (окно p172-lit-ctor-eq, репро-регресс `neg_str_from_retracted`):
 # 64416 -> 64444 (+28, ВСЕ строки — doc-comment объясняющий диагноз, код
