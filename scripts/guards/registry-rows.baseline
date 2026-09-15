@@ -773,8 +773,8 @@
 #   1102 vydan oknu 274: INT_TOO_LARGE_MSG -- novac otvergaet ZAKONNUYU
 #   programmu (konstanty splitmix64 v u64-kontekste sudyatsya protiv int).
 #   Ikh stroka pridyot sliyaniem; dyru ob'yavlyaet VYDAVSHIY nomer.
-rows=1052
-max=1110
+rows=1053
+max=1112
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
@@ -877,4 +877,25 @@ max=1110
 #   nositel' nayden rukami i v schyot NE voshyol -- regulyarka ne vidit
 #   mnogostrochnyy literal, poetomu 9 eto NIZHNYAYA GRANITSA, a ne
 #   perepis'.
-gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104
+# 2026-09-15 (integrator): gaps += 1111; rows/max bez izmeneniy.
+#   1111 vydan oknu e6 v 16:15 pod raskhozhdenie DVUKH predikatov
+#   ascii-whitespace: `is_ascii_ws` (search.nv) VKLYUCHAET \x0B (9..13) i
+#   obsluzhivaet @trim* i split, a `char @is_ascii_whitespace()`
+#   (defaults.nv) ego ISKLYUCHAET radi pariteta s Rust. To est'
+#   "a\x0Bb".trim() i char-proverka otvechayut po-raznomu pro odnu stroku.
+#   Ikh stroka pridyot sliyaniem.
+#   OB'YAVLENA S OPOZDANIEM, i eto stoit zapisi: nomer vydan v 16:15,
+#   ob'yavit' dyru ya obeshchal 'so svoey storony' i ne ob'yavil. Poymal
+#   strazh v ChUZhOY vetke (okno b6, vstavlyaya 1112): dyra mezhdu 1110 i
+#   1112 neotlichima ot POTERYANNOY stroki, i imenno radi etogo razlicheniya
+#   khrapovik zavedyon. Vydavshiy nomer ob'yavlyaet dyru TEM ZHE khodom --
+#   inache sosed poluchaet krasnotu za moy dolg.
+# 2026-09-15 (okno b6): rows 1052 -> 1053, max 1110 -> 1112. Dobavlena
+#   ODNA stroka -- 1112 (1111 uzhe ob'yavlen zakonnoy dyroy vyshe):
+#   pravilo W_FFI_BARE_HANDLE ne srabatyvaet dazhe tam, gde ego
+#   sobstvennoe uslovie vypolneno doslovno (fs_open -> int pri
+#   fs_close(fd int)). Zamer integratora: nova lint std/src -> 292
+#   file(s), 0 finding(s), pri etom --rule W_FFI_BARE_HANDLE prinyat, a
+#   vydumannoe imya dayot unknown lint rule -- pravilo zapuskaetsya i
+#   molchit. Naydeno poputno po #1109 pri poiske ZhIVOGO etalona formy.
+gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104,1111
