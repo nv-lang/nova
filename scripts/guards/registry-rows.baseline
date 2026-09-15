@@ -791,8 +791,14 @@
 # 2026-09-15 (integrator, sliyanie p1110-commit-refs): rows 1054 -> 1055,
 #   max ostayotsya 1114. Tret'ya storona odnogo dnya: okno nova-23 dobavilo
 #   stroku 1113, kazhdyy schital ot svoey bazy. Skladyvayu, ne vybirayu.
-rows=1055
-max=1114
+# 2026-09-15 (integrator, sliyanie p200-23-ws-iter): rows 1055 -> 1058,
+#   max 1114 -> 1116, gaps -= 1111,1115,1116. Tri stroki okna e6 priekhali
+#   odnim sliyaniem: 1111 (dva otveta na vopros o \x0B -- razvilka vladel'tsa),
+#   1115 (nedeterminirovannyy segfault na svyazke chasov i allokatsiy, K1,
+#   BLOKIRUET TEG: DA), 1116 (benchi ne vkhodyat ni v odin yarus -- krasnyy
+#   fayl lezhal nezamechennym). Dyroy ostayotsya tol'ko 1117 (vydan b6).
+rows=1058
+max=1116
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
@@ -944,4 +950,4 @@ max=1114
 #   chisla podavlennogo net, i priyomka '0 nakhodok' neotlichima ot 'vse
 #   nakhodki pod markerami'; sosedniy lyuk nova:allow pri etom OBYaZAN nesti
 #   prichinu i grepaem. Klass Г19. Stroka pridyot sliyaniem b6.
-gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104,1111,1115-1117
+gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104,1117
