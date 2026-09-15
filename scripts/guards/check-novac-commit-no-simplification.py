@@ -120,24 +120,44 @@ def staged_diff(root, files, override):
 
 
 def added_refusals(diff):
-    """Отказы подмножества в ДОБАВЛЕННЫХ строках диффа: (строка, несёт ли срок).
+    """Отказы подмножества, КОТОРЫЕ КОММИТ ДЕЙСТВИТЕЛЬНО ВНОСИТ: (строка, несёт ли срок).
 
     Судится добавленное, а не весь файл: коммит отвечает за то, что ВНОСИТ. Иначе любая
     правка рядом со старым бессрочным отказом была бы виновата в чужом долге, и страж стал бы
     налогом на прикосновение к файлу.
-    """
-    out = []
-    for line in diff.replace("\r\n", "\n").split("\n"):
-        if not line.startswith("+") or line.startswith("+++"):
-            continue
-        body = line[1:]
-        if sd.is_comment(body):
-            continue
-        m = sd.RE_DEBT.search(body)
-        if m:
-            out.append((m.group(0), bool(sd.RE_STAGE.search(m.group(0)))))
-    return out
 
+    ПЕРЕЕЗД — НЕ ВНЕСЕНИЕ (правка 2026-09-15, по разрезу `rules.nv` на `rules.nv` +
+    `messages.nv`). До неё читались только строки `+`, и 18 текстов, переехавших в соседний
+    файл того же модуля, выглядели внесёнными упрощениями. Дерево при этом не приобрело
+    НИЧЕГО — обе половины меры долга дали те же числа до и после разреза (125/41/84,
+    по двери 134/94/6/36). Расхождение двух замеров и было ответом: мера диффа мерила
+    ПОЛОЖЕНИЕ текста в файлах, а не наличие долга в дереве.
+
+    Считается МУЛЬТИМНОЖЕСТВОМ, а не множеством: одно удалённое вхождение гасит
+    РОВНО ОДНО добавленное. Два одинаковых текста при одном удалённом — это всё ещё
+    ОДИН внесённый, и он обязан быть назван.
+    """
+    def refusals_on(sign):
+        found = []
+        for line in diff.replace("\r\n", "\n").split("\n"):
+            if not line.startswith(sign) or line.startswith(sign * 3):
+                continue
+            body = line[1:]
+            if sd.is_comment(body):
+                continue
+            m = sd.RE_DEBT.search(body)
+            if m:
+                found.append(m.group(0))
+        return found
+
+    removed = refusals_on("-")
+    out = []
+    for lit in refusals_on("+"):
+        if lit in removed:
+            removed.remove(lit)   # переезд: гасим РОВНО одно вхождение
+            continue
+        out.append((lit, bool(sd.RE_STAGE.search(lit))))
+    return out
 
 def dblocks_exist(root, nums):
     """Существуют ли названные D-блоки. Отсутствующий указатель — ритуал с видом ссылки."""

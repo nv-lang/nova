@@ -37,6 +37,22 @@ printf '%s\n' '+++ b/novac/src/check/binds.nv' \
     '+    // "outside the subset: a `Result` left side is refused here"' \
     > "$T/diff-comment"
 
+# ПЕРЕЕЗД: тот же бессрочный текст удалён в одном файле и добавлен в соседнем
+# файле ТОГО ЖЕ модуля. Дерево не приобрело ничего — внесением это не считается.
+printf '%s\n' '+++ b/novac/src/check/messages.nv' \
+    '+const IFLET_VARIANT_MSG = "outside the subset: a record-form variant is not compiled yet"' \
+    '--- a/novac/src/check/rules.nv' \
+    '-const IFLET_VARIANT_MSG = "outside the subset: a record-form variant is not compiled yet"' \
+    > "$T/diff-moved"
+# КОНТРОЛЬ к переезду: ДВА добавленных при ОДНОМ удалённом. Один погашен
+# переездом, второй внесён по-настоящему и обязан краснеть: иначе «гасить
+# переезды» выродилось бы в «не замечать добавленное рядом с удалённым».
+printf '%s\n' '+++ b/novac/src/check/messages.nv' \
+    '+const A_MSG = "outside the subset: a record-form variant is not compiled yet"' \
+    '+const B_MSG = "outside the subset: a brand new refusal with no stage at all"' \
+    '--- a/novac/src/check/rules.nv' \
+    '-const A_MSG = "outside the subset: a record-form variant is not compiled yet"' \
+    > "$T/diff-moved-plus-new"
 msg() { printf '%s\n' "$@" > "$T/msg"; echo "$T/msg"; }
 
 GOOD_SPEC='Spec: D86 04-effects.md -- `??` fallback, both container arms'
@@ -156,8 +172,21 @@ run "$M" "$(cat "$T/diff-undated")" && ok "правка только теста 
     || bad "тестовый файл засчитан - цитата отказа стала долгом"
 STAGED="$STAGED_SAVE"
 
+# --- ПЕРЕЕЗД НЕ ЕСТЬ ВНЕСЕНИЕ (правка 2026-09-15) --------------------------
+M=$(msg "novac: cut a file by meaning" "" "$GOOD_SPEC" "$GOOD_SIMP")
+run "$M" "$(cat "$T/diff-moved")" && ok "переехавший отказ внесённым не считается" \
+    || bad "переезд покраснел - страж мерит ПОЛОЖЕНИЕ, а не долг: $(cat "$T/err")"
+
+# и его контроль: настоящее внесение рядом с переездом обязано ловиться
+if run "$M" "$(cat "$T/diff-moved-plus-new")"; then
+    bad "новый бессрочный отказ прошёл под прикрытием переезда соседнего"
+else
+    grep -q "без срока" "$T/err" && ok "внесённый рядом с переехавшим всё равно ловится" \
+        || bad "покраснел не тем текстом: $(cat "$T/err")"
+fi
+
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-commit-no-simplification ok: 15 случаев, обе стороны по трём свойствам"
+    echo "test-check-novac-commit-no-simplification ok: 17 случаев, обе стороны по трём свойствам"
     exit 0
 fi
 echo "test-check-novac-commit-no-simplification: FAIL -- $fails" >&2
