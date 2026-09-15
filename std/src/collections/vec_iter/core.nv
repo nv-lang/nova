@@ -65,7 +65,13 @@
 // `search.nv` only references the `SplitIter`/`RSplitIter` NAMES (an
 // ordinary cross-module type reference — cycles between modules are
 // allowed by the resolver, so this is a plain forward reference, not a
-// hazard). All fields are plain (not `priv`) so the
+// hazard). **VERIFIED BY A BUILD on 2026-09-15 (plan 200 §23), and until
+// then this paragraph was only a claim:** the cycle is now a REAL one in
+// both directions — this module imports `is_ascii_ws` FROM `runtime.string`
+// while `runtime.string` imports types from here — and `nova test std`
+// passes. Recorded because the window that closed 200 §23 had a fallback
+// ready (a module-private copy of the predicate) for a restriction that
+// turns out not to exist; the next window should not pay for it again. All fields are plain (not `priv`) so the
 // constructor functions in the OTHER module can build the record literal
 // directly. `SplitIter` folds `split`/`splitn`/`split_terminator` into ONE
 // type via a `limit` (`-1` = unlimited, `0` = empty, `n` = Rust `splitn`
