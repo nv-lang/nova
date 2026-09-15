@@ -644,11 +644,13 @@ fn FnBuilder mut @open_if(cond Cond, join BlockId, shape ElseShape) -> IfCtx {
     ro then = @reserve()
     ro els = match shape {
         ElseShape.NoElse => join
-        _ => @reserve()
+        ElseShape.Braced => @reserve()
+        ElseShape.Chained => @reserve()
     }
     ro els_braced = match shape {
         ElseShape.Braced => true
-        _ => false
+        ElseShape.NoElse => false
+        ElseShape.Chained => false
     }
     @close(Terminator.If(IfTerm { cond, then, els, join, els_braced }), then)
     IfCtx { then, els, join }
