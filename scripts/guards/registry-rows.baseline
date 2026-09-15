@@ -810,8 +810,20 @@
 #   dobavilo stroku 1117, ya -- 1118. Skladyvayu, ne vybirayu -- vybor
 #   storony poteryal by chuzhuyu stroku i, po pravilu snyatiya dyry vyshe,
 #   ostavil by eyo vne zashchity khrapovika.
-rows=1060
-max=1118
+# 2026-09-15 (integrator): rows 1060 -> 1061, max 1118 -> 1119.
+#   Stroka 1119 zavedena NE po nakhodke, a po OTKAZU GEYTA: pravilo
+#   vladel'tsa №217 trebuet nomer na kazhdyy novyy marker [M-...], i yarus
+#   push pokrasnel na moyom zhe markere [M-selftest-count-spelled-out],
+#   zavedyonnom chasom ran'she. Marker bez stroki -- nevidimyy dolg, i eto
+#   pravilo pereklikaetsya s klassom samoy stroki: mera, derzhashchaya
+#   polovinu predmeta, vyglyadit tseloy.
+#   1120 i 1121 VYDANY oknu d6 (samotest, zavodyashchiy vetku v obshchem .git;
+#   proektsiya kortezha za granitsu, padayushchaya clang'om), no ikh stroki
+#   pridut POSLE moego pusha -- ikh derevo stoit na origin/main s max=1110,
+#   i stavit' nomera do sliyaniya znachilo by razorvat' tselostnost'.
+#   Poetomu v gaps ikh SEYChAS NET: nomer vydan, no derevo ego eshchyo ne znaet.
+rows=1061
+max=1119
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
