@@ -62,6 +62,32 @@ else
     grep -q "мишень" "$T/err" && ok "нет функций прохода — красный (класс №519)" || bad "красный, но не про мишень"
 fi
 
+# --- МЕЖФАЙЛОВАЯ ПРОТЕЧКА СОСТОЯНИЯ (правка 2026-09-15) -------------------
+# Функция не пересекает границу файла. До правки флаг «мы внутри прохода»
+# жил на весь обход, и файл из ОДНИХ КОНСТАНТ судился как продолжение
+# чужой функции: слово `return` внутри ТЕКСТА сообщения становилось «молчаливым
+# выходом». Все прежние случаи писали ОДИН файл — клетка была непокрыта.
+D="$T/twofiles"; mkdir -p "$D"
+printf '%s\n' 'module novac.check' '' 'fn Checker mut @type_expr(e Node) -> () {' \
+    '    @record(e, 1)' '}' > "$D/a_walk.nv"
+printf '%s\n' 'module novac.check' '' \
+    'const FOR_HEAD_MSG = "outside the subset: this head does not return a vector"' \
+    'const TUPLE_PARAM_MSG = "outside the subset: return one, or pass the components"' \
+    > "$D/b_texts.nv"
+run "$D" && ok "файл без функций не судится как чужой проход" \
+    || bad "состояние протекло между файлами: $(cat "$T/err")"
+
+# контроль: сброс состояния не должен означать «перестать судить»
+printf '%s\n' 'module novac.check' '' 'fn Checker mut @type_expr(e Node) -> () {' \
+    '    ro kids = branch_children(e)' '    if kids.len() < 2 { return }' '    @record(e, 1)' '}' \
+    > "$D/a_walk.nv"
+if run "$D"; then
+    bad "после сброса состояния молчаливый выход в ПЕРВОМ файле перестал ловиться"
+else
+    grep -q "молчаливый выход" "$T/err" \
+        && ok "сброс на файле не отменяет суда внутри файла" \
+        || bad "покраснел не тем текстом: $(cat "$T/err")"
+fi
 run "$T/absent"; grep -q "судить нечего" "$T/out" && ok "нет директории — судить нечего" || bad "ждали «судить нечего»"
 
 echo "итог: FAIL $fails"

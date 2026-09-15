@@ -39,7 +39,7 @@ import ../resolve.{FnLookup, missing_sig_of}
 // Came with the call arms lifted out of `@type_expr` (2026-09-15): imports are
 // per FILE in Nova, so a body that moves between files of ONE module still has to
 // bring the names it uses. Computed from what the moved text actually mentions,
-// not guessed -- and the compiler is the judge of the result.
+// not guessed, and then verified by building: the compiler named the first missing one.
 import ../sem.{no_vrow, ty_of_decl, variants_named}
 import ../types.{same_ty}
 

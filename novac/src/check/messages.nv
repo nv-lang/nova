@@ -1,5 +1,12 @@
 module novac.check
 
+// Donor: none -- a file of message TEXTS has no design to borrow; the texts are this
+//        language's own diagnostics, and their wording rules live in the conventions.
+// Role: check layer, DATA -- the refusal texts the checker hands to the user.
+// Used by: rules.nv and the other check/ files, by bare name (a folder is one module).
+// Guarded by: check-novac-subset-debt-dated.py (a refusal owes a stage, counted two
+//        ways), check-novac-file-size.py (why these texts live apart at all).
+
 /// THE TEXTS of the checker's refusals -- what the user actually reads.
 ///
 /// They live apart from `rules.nv` because they are a different subject with a
