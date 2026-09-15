@@ -851,8 +851,13 @@
 #   srabatyvaet, kogda resiver metoda indeksnyy (snjatyy D249 `str.len()` prohodit
 #   molcha). Ulika docs/plans/repro/1123-index-receiver-skips-refusal s cmd.sh,
 #   komanda vosproizvedena. Chisla PERESCHITANY pravilom strazha, ne pribavleny.
-rows=1075
-max=1123
+# 2026-09-16 (integrator, dve okhoty): rost na DESJAT' strok -- shest' brat'ev
+#   stroki 1118 (strazh merit rabochuyu kopiyu, verdikt o publikuemom) i chetyre
+#   nakhodki emit_c x K7 Kariny. Metka OKHOTNIKOM u kazhdoy: bez neyo meru plana
+#   278 ne poschitat' grepom. Chisla PERESCHITANY pravilom strazha na itogovom
+#   dereve, a ne pribavleny k prezhnim.
+rows=1085
+max=1133
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
