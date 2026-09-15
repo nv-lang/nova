@@ -58,5 +58,11 @@
 #   check x К2 (2026-09-05-check-k2, открыт, №976-978) и одна, закрытая между
 #   ними отчётами соседей (страж вывел 93 из дерева до этой правки).
 #   2026-09-06 (окно 274), 93 -> 92: клетка emit_c x К2 охочена отчётом 2026-09-06-emitc-k2 (пробы волны M2b-1: №991, №992, дыра покрытия корпуса).
-never_hunted=92
+# 2026-09-16 (integrator): 92 -> 90. Dve novye kletki odnim dnyom --
+#   lower x K5 (otchyot okna 274, probyi priehali sliyaniem p274-novac, a fayl
+#   otchyota ne sushchestvoval nikogda -- poymal strazh svyortki) i emit_c x K7
+#   (okhota etogo dnya po 1266 novym strokam emit_c). Bazu opuskayu TEM ZHE
+#   sliyaniem: strazh krasneet tol'ko na ROST, padenie propuskaet molcha, i baza,
+#   ostavlennaya vysokoy, razreshila by otkatit'sya rovno na eti dve kletki.
+never_hunted=90
 modules_at_seed=15

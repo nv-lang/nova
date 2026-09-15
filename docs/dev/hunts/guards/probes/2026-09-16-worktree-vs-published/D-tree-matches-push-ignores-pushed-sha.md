@@ -49,7 +49,8 @@ DIRTY=$(git -C "$ROOT" status --porcelain --untracked-files=no | grep -v '^??')
 
 ## 4. Второй адрес того же расхождения (прочитан, пробой не снят)
 
-`core.hooksPath` в этом репозитории = `D:\Sources\nv-lang\nova\scripts\githooks`
+`core.hooksPath` в этом репозитории задан АБСОЛЮТНЫМ путём в главное дерево
+(сам путь здесь не выписан — №698; смотреть `git config core.hooksPath`)
 (абсолютный путь в ГЛАВНОЕ дерево, а не относительный `scripts/githooks`, как
 ставит `scripts/guards/install-guards.sh:75`). Конфиг общий для всех worktree,
 поэтому соседнее дерево исполняет тело хука из главной рабочей копии — в том
