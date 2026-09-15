@@ -877,4 +877,17 @@ max=1110
 #   nositel' nayden rukami i v schyot NE voshyol -- regulyarka ne vidit
 #   mnogostrochnyy literal, poetomu 9 eto NIZHNYAYA GRANITSA, a ne
 #   perepis'.
-gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104
+# 2026-09-15 (integrator): gaps += 1111; rows/max bez izmeneniy.
+#   1111 vydan oknu e6 v 16:15 pod raskhozhdenie DVUKH predikatov
+#   ascii-whitespace: `is_ascii_ws` (search.nv) VKLYUCHAET \x0B (9..13) i
+#   obsluzhivaet @trim* i split, a `char @is_ascii_whitespace()`
+#   (defaults.nv) ego ISKLYUCHAET radi pariteta s Rust. To est'
+#   "a\x0Bb".trim() i char-proverka otvechayut po-raznomu pro odnu stroku.
+#   Ikh stroka pridyot sliyaniem.
+#   OB'YAVLENA S OPOZDANIEM, i eto stoit zapisi: nomer vydan v 16:15,
+#   ob'yavit' dyru ya obeshchal 'so svoey storony' i ne ob'yavil. Poymal
+#   strazh v ChUZhOY vetke (okno b6, vstavlyaya 1112): dyra mezhdu 1110 i
+#   1112 neotlichima ot POTERYANNOY stroki, i imenno radi etogo razlicheniya
+#   khrapovik zavedyon. Vydavshiy nomer ob'yavlyaet dyru TEM ZHE khodom --
+#   inache sosed poluchaet krasnotu za moy dolg.
+gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104,1111
