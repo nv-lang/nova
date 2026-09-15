@@ -451,7 +451,7 @@ pub fn render_nv(module: &str, fns: &[&RuntimeFn]) -> String {
     ) {
         out.push_str("//\n");
         out.push_str("// Plan 62.D.bis (D126, 2026-05-18): type declaration — see\n");
-        out.push_str("// std/prelude/collections.nv (`external type`, D126).\n");
+        out.push_str("// std/src/prelude/collections.nv (`external type`, D126).\n");
         out.push_str("// This file declares ONLY methods via `external fn` (D82).\n");
     }
     out.push('\n');

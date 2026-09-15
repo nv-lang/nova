@@ -319,6 +319,7 @@ par_add "$ROOT/scripts/guards/check-novac-smoke-wrapper.sh" "POSIX-обёртк�
 par_add "$ROOT/scripts/guards/check-novac-local-only-work.sh" "работа живёт ровно на одном диске: ветка с невлитым и без копии на origin (274 §9.1д К7)"
 par_add "$ROOT/scripts/guards/check-novac-legacy-workarounds.py" "обход бага оракула в novac без маркера/с закрытым багом (274 §1.5)"
 par_add "$ROOT/scripts/guards/check-guard-honesty.py" "страж может соврать или промолчать вместо проверки"
+par_add "$ROOT/scripts/guards/check-diag-paths.py" "текст компилятора ссылает пользователя на несуществующий файл (№1109)"
 par_add "$ROOT/scripts/guards/check-novac-plan-liveline.py" "живая строка плана отстала от кода"
 par_add "$ROOT/scripts/guards/check-novac-time-ledger.py" "коммит в novac/** без строки в леджере времени (274 §1.4)"
 par_add "$ROOT/scripts/guards/check-novac-deps.py" "импорт в novac/src вне таблицы рёбер (архитектура §3, класс К4)"
