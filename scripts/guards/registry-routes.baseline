@@ -1324,4 +1324,14 @@ no_caveat=0
 #   zakrytiyu ne meshaet: 'progon zelyon' i 'moya rabota proverena' -- raznye
 #   utverzhdeniya, zdes' vtoroe verno pri pervom lozhnom (pretsedent -- plan 281).
 #   OPUSKAT' BAZU -- CHAST' RABOTY, a ne uborka potom.
-blockers=68
+# 2026-09-15 (integrator, sliyanie p200-23-ws-iter): blockers 68 -> 69.
+#   ROST, i on zakonen: stroka 1115 -- nedeterminirovannyy segfault na
+#   svyazke Monotonic.now() + tyazholye allokatsii, padaet primerno v
+#   kazhdom tret'em progone na ODNOM binare i ODNOM vvode. Vozhu ego v
+#   blokery tega SVOIM resheniem: takoy defekt prokhodit geyt i padaet u
+#   pol'zovatelya, a tegom my obeshchaem obratnoe. Os' nazvana zamerom okna
+#   e6 (kontrol' bez chasov -- 0 iz 12 pri vchetvero bol'shey nagruzke),
+#   no CHEM imenno lomaetsya svyazka -- chasy, effekt Time ili GC pod nimi --
+#   NE razdeleno, i tak zapisano v stroke. Karinu ne blokiruet: ona
+#   sobiraetsya bez Monotonic.
+blockers=69

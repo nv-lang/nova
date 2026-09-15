@@ -213,3 +213,75 @@ test "split: .collect() Vec is a real, reusable, indexable Vec[str]" {
     for p in parts { sb.append(p) }
     assert(sb.into_str() == "k1=v1k2=v2")
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// `AsciiWhitespaceIter` — lazy `str.split_ascii_whitespace()` (Plan 200 §23).
+// Same arrangement as the SplitIter block above: the CONSTRUCTOR is inherent
+// on `str` (runtime.string/search.nv), the TYPE + `Next[str]` impl are here,
+// so the tests live here too.
+// ──────────────────────────────────────────────────────────────────────────
+
+test "split_ascii_whitespace: lazy .next() drive yields the words one at a time" {
+    mut it = "  hello   world  ".split_ascii_whitespace()
+    assert(it.next() == Some("hello"))
+    assert(it.next() == Some("world"))
+    assert(it.next() == None)
+    assert(it.next() == None)   // idempotent past exhaustion
+}
+
+test "split_ascii_whitespace: WORD-BY-WORD identical to the retired eager array" {
+    // Compared word by word, NOT by length: a permuted or shifted result has
+    // the same length and would pass a length-only check.
+    ro got = "\tone\ntwo\r three ".split_ascii_whitespace().collect()
+    ro want = ["one", "two", "three"]
+    assert(got.len() == want.len())
+    mut i = 0
+    while i < want.len() {
+        assert(got[i] == want[i])
+        i += 1
+    }
+    // ... and the whole-value comparison on top, so a length/order regression
+    // cannot hide behind the loop either.
+    assert(got == want)
+}
+
+test "split_ascii_whitespace: EDGES where eager and lazy forms diverge" {
+    // empty string -> no words at all (the eager body `break`s before push)
+    assert("".split_ascii_whitespace().collect().len() == 0)
+    // whitespace only -> no words (the run is skipped, nothing is yielded)
+    assert("   \t\n ".split_ascii_whitespace().collect().len() == 0)
+    // leading AND trailing whitespace -> ignored, no empty segments
+    assert("  a b  ".split_ascii_whitespace().collect() == ["a", "b"])
+    // doubled separators -> ONE gap, not an empty word between them
+    assert("a  b".split_ascii_whitespace().collect() == ["a", "b"])
+    // a single word with no whitespace at all — the no-separator edge
+    assert("solo".split_ascii_whitespace().collect() == ["solo"])
+}
+
+test "split_ascii_whitespace: the FULL byte class, \\x0B included" {
+    // This splitter's class is space + \t\n\v\f\r (9..13) — WIDER than
+    // `char @is_ascii_whitespace()`, which excludes \x0B for Rust parity.
+    // If the two were ever confused, `a\x0Bb` would come back as ONE word.
+    assert("a\u{0B}b".split_ascii_whitespace().collect() == ["a", "b"])
+    assert("a\u{0C}b".split_ascii_whitespace().collect() == ["a", "b"])
+}
+
+test "split_ascii_whitespace: non-ASCII payload stays byte-exact" {
+    // Whitespace bytes are < 0x80, so they never fall inside a codepoint —
+    // the multi-byte words must survive the scan intact.
+    ro greek = "α  β\tγ".split_ascii_whitespace().collect()
+    assert(greek == ["α", "β", "γ"])
+}
+
+test "split_ascii_whitespace: is LAZY — stops the scan at .take(n)" {
+    // If this were still eager, the whole string would be materialized
+    // regardless; with the iterator, `.take` short-circuits the scan.
+    assert("a b c d".split_ascii_whitespace().take(2).collect() == ["a", "b"])
+    assert("a b c".split_ascii_whitespace().skip(1).collect() == ["b", "c"])
+}
+
+test "split_ascii_whitespace: for-in drives the same iterator" {
+    consume sb = StringBuilder.new()
+    for w in "one two three".split_ascii_whitespace() { sb.append(w) }
+    assert(sb.into_str() == "onetwothree")
+}

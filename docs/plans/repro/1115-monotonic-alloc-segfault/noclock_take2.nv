@@ -1,0 +1,20 @@
+import std.collections.vec_iter
+
+fn long_line(words int) -> str {
+    consume sb = StringBuilder.new()
+    mut i = 0
+    while i < words { sb.append("word "); i = i + 1 }
+    sb.into_str()
+}
+
+fn main() Io -> () {
+    ro haystack = long_line(2000)
+    mut i = 0
+    mut sink = 0
+    while i < 2000 {
+        ro two = haystack.split_ascii_whitespace().take(2).collect()
+        sink = sink + two.len()
+        i = i + 1
+    }
+    print("F ok sink=${sink}")
+}

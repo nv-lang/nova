@@ -37,3 +37,61 @@ bench "string contains" {
         bench.elements(1000)
     }
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Plan 200 §23: does laziness actually PAY on `split_ascii_whitespace`?
+//
+// The семь behaviour fixtures prove the words are the same; these two prove
+// the phase was worth doing. The question is asymmetric on purpose — a
+// consumer that wants only the first few words:
+//
+//   * EAGER (the retired body) had to scan the WHOLE string and push every
+//     word into a `Vec[str]` before the caller could look at word #1;
+//   * LAZY stops after the second word, and never allocates the Vec at all.
+//
+// `.collect().take-the-first-two` below is exactly the eager shape (that is
+// what the old `-> ro []str` forced at every call site), so the pair is a
+// like-for-like A/B on ONE string. If the two come out equal, the phase
+// bought nothing and that is a legitimate finding — better known now.
+// ──────────────────────────────────────────────────────────────────────────
+
+// ~2000 words, built once, OUTSIDE `measure` — the builder is not the subject.
+fn long_ws_line() -> str {
+    consume sb = StringBuilder.new()
+    mut i = 0
+    while i < 2000 {
+        sb.append("word ")
+        i = i + 1
+    }
+    sb.into_str()
+}
+
+bench "split_ascii_whitespace: FIRST TWO words, lazy (.take(2))" {
+    ro haystack = long_ws_line()
+    measure {
+        bench.opaque(haystack.split_ascii_whitespace().take(2).collect())
+        bench.elements(2)
+    }
+}
+
+bench "split_ascii_whitespace: FIRST TWO words, eager shape (.collect() first)" {
+    ro haystack = long_ws_line()
+    measure {
+        // What the eager `-> ro []str` signature forced: materialize all
+        // ~2000 words, then use two of them.
+        ro all = haystack.split_ascii_whitespace().collect()
+        bench.opaque(all[0])
+        bench.opaque(all[1])
+        bench.elements(2)
+    }
+}
+
+// The other half of the question: when the consumer DOES want every word,
+// laziness must not COST anything — same scan, same Vec, one `.collect()`.
+bench "split_ascii_whitespace: ALL words (lazy + .collect())" {
+    ro haystack = long_ws_line()
+    measure {
+        bench.opaque(haystack.split_ascii_whitespace().collect())
+        bench.elements(2000)
+    }
+}

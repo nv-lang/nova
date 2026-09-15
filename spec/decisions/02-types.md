@@ -9789,7 +9789,13 @@ Plan 118 family scope:
 >   - `@split(sep)` — byte-scan, каждый сегмент = zero-copy sub-view
 >     `str{ptr:@ptr+off, len}` (raw-ptr арифметика под `unsafe`). **Амендмент
 >     2026-07-11:** возврат `ro []str` → ленивый `SplitIter` (Rust-паритет; см.
->     03-syntax split-семейство); прежний массив — `.collect()`;
+>     03-syntax split-семейство); прежний массив — `.collect()`. **Амендмент
+>     2026-09-15 (план 200 §23):** так же переведён `@split_ascii_whitespace()`
+>     — возврат `ro []str` → ленивый `AsciiWhitespaceIter`, сегменты те же
+>     zero-copy sub-view'ы, массив — `.collect()`. Тип ОТДЕЛЬНЫЙ, а не
+>     настроенный `SplitIter`: у того разделитель — подстрока (поле `sep str`),
+>     здесь — КЛАСС БАЙТОВ, и общий тип нёс бы мёртвое поле в каждом из двух
+>     случаев. `@lines()` пока эагерный (та же фаза, отдельным шагом);
 >   - `from_bytes_unchecked` / `from_bytes_lossy` — читают `(ptr,len)` источника
 >     через публичные Vec-геттеры `@as_ptr()`/`@len()`, alloc(`len+1`)+memcpy+NUL
 >     на `data[len]` (D26 §3); lossy валидирует UTF-8 и заменяет невалид на
