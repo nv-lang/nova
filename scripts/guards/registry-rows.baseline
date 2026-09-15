@@ -1,3 +1,4 @@
+# 2026-09-15 (okno nova-23): rows 1052 -> 1053, max 1110 -> 1113. Dobavlena odna stroka No1113 -- shag novac-behaviour bez predela, obryv nadevaet verdikt (G16/G9). Dyr ne pribavilos': 1111 i 1112 uzhe ob'yavleny vyshe.
 # 2026-09-05 (окно 274): rows 887 -> 896, max 931 -> 940. Девять строк охоты
 #   emit_c x K3 (932-940), блок номеров выдан интегратором разом; дыр нет.
 # 2026-09-04 (окно 274): rows 879 -> 880, max 923 -> 925, дыра 924 объявлена.
@@ -787,7 +788,10 @@
 #   max ostayotsya 1114. Obe storony pravy i SKLADYVAYUTSYA, a ne
 #   vybirayutsya: okno b6 dobavilo stroku 1112, ya -- 1114, kazhdyy ot
 #   bazy 1052. Letopisi obeikh storon ostavleny na meste.
-rows=1054
+# 2026-09-15 (integrator, sliyanie p1110-commit-refs): rows 1054 -> 1055,
+#   max ostayotsya 1114. Tret'ya storona odnogo dnya: okno nova-23 dobavilo
+#   stroku 1113, kazhdyy schital ot svoey bazy. Skladyvayu, ne vybirayu.
+rows=1055
 max=1114
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
@@ -934,4 +938,10 @@ max=1114
 #   pravilo ZhIVO, a nol' na std -- podavlenie nakhodki markerom [M-...]
 #   (lints.rs:3393-3395). Letopis' ne stirayu: styortaya gipoteza zastavlyaet
 #   proyti put' zanovo. Ispravlenie stroki -- kommit e8480f7cd.
-gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104,1111,1113,1115,1116
+# 2026-09-15 (integrator, sliyanie p1110-commit-refs): gaps -= 1113, += 1117.
+#   1113 priekhal etim sliyaniem -- dyroy byt' perestal. 1117 vydan oknu b6:
+#   glushenie nakhodki markerom [M-...] ne ostavlyaet sleda v vyvode linta --
+#   chisla podavlennogo net, i priyomka '0 nakhodok' neotlichima ot 'vse
+#   nakhodki pod markerami'; sosedniy lyuk nova:allow pri etom OBYaZAN nesti
+#   prichinu i grepaem. Klass Г19. Stroka pridyot sliyaniem b6.
+gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104,1111,1115-1117
