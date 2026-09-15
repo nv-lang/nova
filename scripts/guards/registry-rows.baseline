@@ -797,8 +797,16 @@
 #   1115 (nedeterminirovannyy segfault na svyazke chasov i allokatsiy, K1,
 #   BLOKIRUET TEG: DA), 1116 (benchi ne vkhodyat ni v odin yarus -- krasnyy
 #   fayl lezhal nezamechennym). Dyroy ostayotsya tol'ko 1117 (vydan b6).
-rows=1058
-max=1116
+# 2026-09-15 (integrator): rows 1058 -> 1059, max 1116 -> 1118.
+#   Stroka 1118 -- MOY sobstvennyy defekt, i nashla ego ne moya proverka, a
+#   chuzhoe okno, chitavshee DRUGOE derevo: pravka etoy samoy bazy ne doekhala
+#   do kommita (v indeks legli reestr i routes, a ona net). Vse strazhi posle
+#   sliyaniya byli zelyony, potomu chto chitayut RABOChEE derevo, -- a na chistom
+#   klone rows-intact upal by na 1055 protiv 1058. Klass: proverka chitaet
+#   rabochee derevo, verdikt vydayotsya o PUBLIKUEMOM ob'ekte.
+#   1117 OSTAYoTSYa dyroy: ego stroka zhivyot na vetke b6 i priedet sliyaniem.
+rows=1059
+max=1118
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
