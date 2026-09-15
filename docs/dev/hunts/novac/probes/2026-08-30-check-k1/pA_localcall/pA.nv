@@ -1,6 +1,0 @@
-module p.a
-fn helper(x int) int { x + 1 }
-fn main() {
-    ro y = helper(41)
-    println("ok")
-}
