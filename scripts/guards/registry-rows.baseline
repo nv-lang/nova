@@ -805,7 +805,12 @@
 #   klone rows-intact upal by na 1055 protiv 1058. Klass: proverka chitaet
 #   rabochee derevo, verdikt vydayotsya o PUBLIKUEMOM ob'ekte.
 #   1117 OSTAYoTSYa dyroy: ego stroka zhivyot na vetke b6 i priedet sliyaniem.
-rows=1059
+# 2026-09-15 (integrator, sliyanie p1109-diag-paths): rows 1059 -> 1060,
+#   max ostayotsya 1118. Obe storony schitali ot 1058 i obe pravy: b6
+#   dobavilo stroku 1117, ya -- 1118. Skladyvayu, ne vybirayu -- vybor
+#   storony poteryal by chuzhuyu stroku i, po pravilu snyatiya dyry vyshe,
+#   ostavil by eyo vne zashchity khrapovika.
+rows=1060
 max=1118
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
@@ -958,4 +963,26 @@ max=1118
 #   chisla podavlennogo net, i priyomka '0 nakhodok' neotlichima ot 'vse
 #   nakhodki pod markerami'; sosedniy lyuk nova:allow pri etom OBYaZAN nesti
 #   prichinu i grepaem. Klass Г19. Stroka pridyot sliyaniem b6.
-gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104,1117
+# 2026-09-15 (okno b6): rows 1055 -> 1059, max 1114 -> 1117 (s uchyotom tryokh
+#   strok integratora vyshe). Iz gaps snyat 1117 -- stroka zavedena. Predmet
+#   1117: lyuk, glushashchiy nakhodku linta markerom [M-...], ne ostavlyaet
+#   sleda v vyvode -- chisla podavlennogo net, i priyomka '0 nakhodok'
+#   neotlichima ot 'vse nakhodki pod markerami'. Sosedniy lyuk nova:allow pri
+#   etom obyazan nesti prichinu i grepaem: obstavlen SILNYY lyuk, a
+#   nepodotchetnym ostavlen SLABYY.
+# KONFLIKT ETOY STROKI RAZRESHYON OB'EDINENIEM SNYATIY, a ne vyborom storony:
+#   integrator snyal 1111/1115/1116, okno b6 snyalo 1117. Vybor storony vernul
+#   by chuzhoe snyatie obratno -- to est snova postavil by zhivuyu stroku vne
+#   zashchity.
+# stale_gaps -- nomerov, kotorye ODNOVREMENNO nazvany zakonnoy dyroy v gaps= i
+#   imeyut stroku v reestre. Tolko VNIZ. Zavedeno 2026-09-15 (nakhodka okna b6,
+#   dovedena do svoystva po predlozheniyu integratora): poka nomer chislitsya
+#   dyroy, POTERYA ego stroki prokhodit MOLCHA -- proverka dyr vidit otsutstvie i
+#   sveryaetsya so spiskom, gde otsutstvovat razresheno. Takaya stroka lezhit VNE
+#   zashchity, i zametit eto mozhno tolko chteniem bazy: progon zelyonyy.
+#   ISTORIYA CHISLA: zavedeno so znacheniem 3 -- rovno 1111, 1115, 1116 v
+#   committed main, kuda pravka integratora ne doekhala (otredaktirovana v
+#   rabochey kopii, v indeks ne polozhena). Posle ego kommita edce73538 i etogo
+#   sliyaniya protukhshikh net: 0.
+stale_gaps=0
+gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104

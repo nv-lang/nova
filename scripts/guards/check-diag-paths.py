@@ -59,7 +59,7 @@
 стало вдвое меньше базы, это отказ, а не успех. Иначе «мёртвых стало меньше»
 означало бы «сканер ослеп», и зелёный вердикт был бы ложью (№911).
 
-Самотест: scripts/guards/selftest/test-check-diag-paths.sh (семь случаев).
+Самотест: scripts/guards/selftest/test-check-diag-paths.sh.
 
 $1 — корень репозитория.
 """
@@ -212,6 +212,40 @@ def rs_files(root):
                     yield os.path.join(dirpath, fn)
 
 
+def judged_object(root, paths):
+    """Сказать, ЧТО именно прочитано: дерево, вершина и расходится ли предмет с
+    индексом.
+
+    ЗАЧЕМ (реестр 221.1 №1118, находка интегратора 2026-09-15): страж читает
+    РАБОЧЕЕ дерево, а вердикт по нему выносят о ПУБЛИКУЕМОМ объекте, и совпадать
+    они не обязаны. В тот день правка базы жила в рабочей копии и в индекс не
+    попала: все локальные стражи были зелены, а в `main` уехало другое, и на
+    чистом клоне проверка упала бы. Судить индекс дороже; НАЗВАТЬ прочитанное —
+    дёшево и честно, и этого хватает, чтобы зелёный перестал обещать больше, чем
+    значит. Один вызов git на прогон, не на файл.
+    """
+    import subprocess
+    try:
+        rev = subprocess.run(["git", "-C", root, "rev-parse", "--short", "HEAD"],
+                             capture_output=True, text=True)
+        if rev.returncode != 0:
+            # Вне git об индексе сказать НЕЧЕГО, и молчать нельзя: «совпадает с
+            # индексом» было бы ложью ровно того рода, которую этот отчёт и
+            # ставит. Так работают фикстурные корни самотестов.
+            return "предмет: каталог %s вне git — об индексе сказать нечего" % root
+        head = rev.stdout.strip() or "?"
+        dirty = subprocess.run(["git", "-C", root, "status", "--porcelain", "--"] + list(paths),
+                               capture_output=True, text=True).stdout.strip()
+    except OSError:
+        return "предмет: рабочее дерево %s, git недоступен — об индексе сказать нечего" % root
+    n = len([l for l in dirty.splitlines() if l.strip()])
+    if n:
+        return ("предмет: РАБОЧЕЕ дерево %s на %s, и оно РАСХОДИТСЯ с индексом, "
+                "файлов предмета: %d — опубликовано будет не то, что здесь прочитано"
+                % (root, head, n))
+    return "предмет: рабочее дерево %s на %s, совпадает с индексом" % (root, head)
+
+
 def fail(msg):
     sys.stderr.write("%s: FAIL - %s\n" % (NAME, msg))
     return 1
@@ -308,9 +342,9 @@ def main():
         tail = " - база устарела, опусти dead до %d тем же коммитом" % len(dead)
     sys.stdout.write(
         "%s ok: путей в текстах %d, мёртвых %d (база %d)%s; пропущено: "
-        "путей-значений %d, с подстановкой %d; корней дерева %d; за %.1fс\n"
+        "путей-значений %d, с подстановкой %d; корней дерева %d; %s; за %.1fс\n"
         % (NAME, n, len(dead), base_dead, tail, as_value, dynamic, len(roots),
-           time.time() - t0))
+           judged_object(root, list(SCAN_DIRS) + [BASE_REL]), time.time() - t0))
     return 0
 
 
