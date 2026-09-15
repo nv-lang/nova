@@ -1,3 +1,4 @@
+# 2026-09-15 (okno nova-23): rows 1052 -> 1053, max 1110 -> 1113. Dobavlena odna stroka No1113 -- shag novac-behaviour bez predela, obryv nadevaet verdikt (G16/G9). Dyr ne pribavilos': 1111 i 1112 uzhe ob'yavleny vyshe.
 # 2026-09-05 (окно 274): rows 887 -> 896, max 931 -> 940. Девять строк охоты
 #   emit_c x K3 (932-940), блок номеров выдан интегратором разом; дыр нет.
 # 2026-09-04 (окно 274): rows 879 -> 880, max 923 -> 925, дыра 924 объявлена.
@@ -773,8 +774,8 @@
 #   1102 vydan oknu 274: INT_TOO_LARGE_MSG -- novac otvergaet ZAKONNUYU
 #   programmu (konstanty splitmix64 v u64-kontekste sudyatsya protiv int).
 #   Ikh stroka pridyot sliyaniem; dyru ob'yavlyaet VYDAVSHIY nomer.
-rows=1052
-max=1110
+rows=1053
+max=1113
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
@@ -877,4 +878,26 @@ max=1110
 #   nositel' nayden rukami i v schyot NE voshyol -- regulyarka ne vidit
 #   mnogostrochnyy literal, poetomu 9 eto NIZHNYAYA GRANITSA, a ne
 #   perepis'.
-gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104
+# 2026-09-15 (integrator): gaps += 1111; rows/max bez izmeneniy.
+#   1111 vydan oknu e6 v 16:15 pod raskhozhdenie DVUKH predikatov
+#   ascii-whitespace: `is_ascii_ws` (search.nv) VKLYUCHAET \x0B (9..13) i
+#   obsluzhivaet @trim* i split, a `char @is_ascii_whitespace()`
+#   (defaults.nv) ego ISKLYUCHAET radi pariteta s Rust. To est'
+#   "a\x0Bb".trim() i char-proverka otvechayut po-raznomu pro odnu stroku.
+#   Ikh stroka pridyot sliyaniem.
+#   OB'YAVLENA S OPOZDANIEM, i eto stoit zapisi: nomer vydan v 16:15,
+#   ob'yavit' dyru ya obeshchal 'so svoey storony' i ne ob'yavil. Poymal
+#   strazh v ChUZhOY vetke (okno b6, vstavlyaya 1112): dyra mezhdu 1110 i
+#   1112 neotlichima ot POTERYANNOY stroki, i imenno radi etogo razlicheniya
+#   khrapovik zavedyon. Vydavshiy nomer ob'yavlyaet dyru TEM ZHE khodom --
+#   inache sosed poluchaet krasnotu za moy dolg.
+# 2026-09-15 (integrator): gaps += 1112; rows/max bez izmeneniy.
+#   1112 vydan oknu b6: lint W_FFI_BARE_HANDLE uchit kanonu, kotorogo ne
+#   derzhit ni odin std/*/ffi.nv (7+24+9 = sorok golykh vozvratov int/ptr,
+#   novotipov-hendlov nol'). ZAMER INTEGRATORA UTOChNIL FORMULIROVKU: delo
+#   NE v uzkom okhvate -- pravilo MOLChIT tam, gde ego uslovie vypolneno
+#   doslovno (fs_open -> int pri fs_close(fd int)). Semeystvo conv pri etom
+#   RABOTAET: na conv_pos.nv srabatyvayut vosem' pravil. A samo
+#   W_FFI_BARE_HANDLE ne pokryto NI ODNOY fiksturoy -- vstrechaetsya tol'ko
+#   v lints.rs. Pravilo, ni razu ne dokazavshee, chto umeet srabatyvat'.
+gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104,1111,1112

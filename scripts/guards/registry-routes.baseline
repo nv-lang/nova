@@ -1310,4 +1310,18 @@ no_caveat=0
 #   zhe den' v 176 mestakh; volna, realizuyushchaya proverku, obyazana nesti
 #   perepisyvanie mest tem zhe sliyaniem (zapisano v plan 274.9).
 #   Chislo rastyot NE molcha -- v etom ves' smysl khrapovika.
-blockers=69
+# 2026-09-15 (integrator): blockers 69 -> 68. Zakryt №1090 -- NASTOYASHchEE
+#   dvizhenie, ne pereklassifikatsiya: forma, davavshaya neslinkuemyy C pri
+#   zelyonom `nova check`, teper' sobiraetsya, oba nositelya snyaty so spiska
+#   izvestnoy krasnoty, i spisok po etoy stroke pust tselikom.
+#   TRI PUNKTA PRIYOMKI, a ne dva: proba zeleneet, kontrol' zelyon, i STRAZH
+#   SVOYSTVOM sobran i izmeren -- na korpuse ne srabotal ni razu (326 testov),
+#   to est' 'ni odin zakonnyy put' syuda ne prikhodit' PROVERENO progonom, a ne
+#   ostavleno gipotezoy. Imenno tretiy punkt derzhal stroku otkrytoy sutki.
+#   ZAKRYTO PO VNESHNEMU VERDIKTU: volna v main (ee5952299, tri zerkala svereny
+#   po ob'ektu), CI job `nova-gate (conformance + flagship examples)` -- success.
+#   Progon TSELIKOM pri etom krasen po chuzhim prichinam (№1110, №1061), i eto
+#   zakrytiyu ne meshaet: 'progon zelyon' i 'moya rabota proverena' -- raznye
+#   utverzhdeniya, zdes' vtoroe verno pri pervom lozhnom (pretsedent -- plan 281).
+#   OPUSKAT' BAZU -- CHAST' RABOTY, a ne uborka potom.
+blockers=68
