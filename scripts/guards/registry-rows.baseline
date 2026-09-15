@@ -890,4 +890,13 @@ max=1110
 #   1112 neotlichima ot POTERYANNOY stroki, i imenno radi etogo razlicheniya
 #   khrapovik zavedyon. Vydavshiy nomer ob'yavlyaet dyru TEM ZHE khodom --
 #   inache sosed poluchaet krasnotu za moy dolg.
-gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,1099-1104,1111
+gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1096,# 2026-09-15 (integrator): gaps += 1112; rows/max bez izmeneniy.
+#   1112 vydan oknu b6: lint W_FFI_BARE_HANDLE uchit kanonu, kotorogo ne
+#   derzhit ni odin std/*/ffi.nv (7+24+9 = sorok golykh vozvratov int/ptr,
+#   novotipov-hendlov nol'). ZAMER INTEGRATORA UTOChNIL FORMULIROVKU: delo
+#   NE v uzkom okhvate -- pravilo MOLChIT tam, gde ego uslovie vypolneno
+#   doslovno (fs_open -> int pri fs_close(fd int)). Semeystvo conv pri etom
+#   RABOTAET: na conv_pos.nv srabatyvayut vosem' pravil. A samo
+#   W_FFI_BARE_HANDLE ne pokryto NI ODNOY fiksturoy -- vstrechaetsya tol'ko
+#   v lints.rs. Pravilo, ni razu ne dokazavshee, chto umeet srabatyvat'.
+1099-1104,1111,1112
