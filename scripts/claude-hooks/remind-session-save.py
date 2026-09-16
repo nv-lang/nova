@@ -33,9 +33,44 @@ import time
 # самотест у каждого хука: руками хуки не гоняют.
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 
-HANDOFF = os.path.join("docs", "dev", "prompts", "integrator-handoff.md")
+# РОЛЬ РЕШАЕТ, ПРО КАКУЮ ЗАПИСКУ НАПОМИНАТЬ (правка 2026-09-16 по вопросу
+# владельца «куда записывает сессию ты и Карина?»). До неё хук был слеп: он
+# срабатывал в ЛЮБОМ окне и звал `/save`, у которой в шапке написано «кому:
+# главному интегратору». То есть окно Карины получало напоминание про чужой
+# файл и чужую команду — напоминание, исполнить которое нельзя.
+#
+# Роль определяется ВЕТКОЙ, а не памятью и не именем сессии (оно меняется при
+# каждом перезапуске): `main` — интегратор, ветка Карины — окно Карины.
+# Незнакомая ветка — молчим, и это не дыра: у пакетных окон своя передача
+# (`/stop`), а выдумывать им адресата хук не вправе.
+ROLES = (
+    ("main", os.path.join("docs", "dev", "prompts", "integrator-handoff.md"),
+     "/save", "ЗАПИСКА ИНТЕГРАТОРА"),
+    ("p274-novac", os.path.join("docs", "dev", "prompts", "carina-handoff.md"),
+     "/save", "ЗАПИСКА ОКНА КАРИНЫ"),
+)
 MAX_AGE_SEC = 3600            # час — число владельца (план 290 п.3)
 COOLDOWN_SEC = 900            # не чаще раза в 15 минут
+
+
+def current_branch(root):
+    """Ветка берётся у git, а не из окружения: окружение врёт в worktree."""
+    # `symbolic-ref` ПЕРВЫМ, а не `rev-parse --abbrev-ref`: второй отвечает
+    # пустотой в репозитории БЕЗ КОММИТОВ (HEAD ещё не разрешается), а именно
+    # такой делает самотест — и молчание хука читалось бы как «роль не найдена».
+    # Замер 2026-09-16: два случая самотеста провалились ровно на этом.
+    try:
+        import subprocess
+        for args in (("symbolic-ref", "--short", "HEAD"),
+                     ("rev-parse", "--abbrev-ref", "HEAD")):
+            out = subprocess.run(["git", "-C", root] + list(args),
+                                 capture_output=True, text=True, timeout=10)
+            name = (out.stdout or "").strip()
+            if name and name != "HEAD":
+                return name
+        return ""
+    except Exception:
+        return ""
 
 def main():
     try:
@@ -43,6 +78,14 @@ def main():
     except Exception:
         pass
     root = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    branch = current_branch(root)
+    HANDOFF = CMD = TITLE = None
+    for _b, _h, _c, _t in ROLES:
+        if branch == _b:
+            HANDOFF, CMD, TITLE = _h, _c, _t
+            break
+    if HANDOFF is None:
+        return 0          # роль незнакома — молчим, см. ROLES
     path = os.path.join(root, HANDOFF)
     if not os.path.isfile(path):
         return 0
@@ -61,12 +104,12 @@ def main():
     hours = int(age // 3600)
     mins = int((age % 3600) // 60)
     msg = (
-        u"ЗАПИСКА ИНТЕГРАТОРА НЕ ОБНОВЛЯЛАСЬ %dч %02dм (предел — час).\n"
-        u"  Сохрани контекст: команда /save. Она дописывает раздел состояния\n"
-        u"  СВЕРХУ в %s, беря факты из дерева.\n"
+        u"{title} НЕ ОБНОВЛЯЛАСЬ {h}ч {m:02d}м (предел — час).\n"
+        u"  Сохрани контекст: команда {cmd}. Она дописывает раздел состояния\n"
+        u"  СВЕРХУ в {path}, беря факты из дерева.\n"
         u"  Почему это не пожелание: 2026-09-16 семнадцать часов работы не были\n"
         u"  записаны нигде, кроме истории git (план 290 п.3)."
-    ) % (hours, mins, HANDOFF)
+    ).format(title=TITLE, cmd=CMD, path=HANDOFF, h=hours, m=mins)
 
     try:
         os.makedirs(os.path.dirname(stamp), exist_ok=True)

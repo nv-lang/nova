@@ -22,6 +22,15 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 HOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
                     "remind-session-save.py")
 HANDOFF_REL = os.path.join("docs", "dev", "prompts", "integrator-handoff.md")
+CARINA_REL = os.path.join("docs", "dev", "prompts", "carina-handoff.md")
+
+
+def make_tree(branch):
+    """Настоящий git с НАЗВАННОЙ веткой: роль хук берёт именно у git."""
+    root = tempfile.mkdtemp(prefix="nova-remind-")
+    subprocess.run(["git", "init", "-q", "-b", branch, root],
+                   capture_output=True)
+    return root
 
 fails = 0
 cases = 0
@@ -48,7 +57,7 @@ def bad(msg):
     print("  ПРОВАЛ %s" % msg)
 
 
-root = tempfile.mkdtemp(prefix="remind-save-")
+root = make_tree("main")
 try:
     path = os.path.join(root, HANDOFF_REL)
     os.makedirs(os.path.dirname(path))
@@ -92,6 +101,42 @@ try:
         ok(u"записки нет — хук молчит, а не падает")
     else:
         bad(u"без записки хук отреагировал: rc=%d out=%r" % (rc3, out3[:80]))
+    # (4) РОЛЬ: на ветке Карины хук зовёт ЕЁ команду и ЕЁ записку, а не мои.
+    #     Без этого случая правка «хук учитывает роль» осталась бы недоказанной:
+    #     до неё он звал /save в любом окне, включая то, которому /save не адресована.
+    croot = make_tree("p274-novac")
+    cpath = os.path.join(croot, CARINA_REL)
+    os.makedirs(os.path.dirname(cpath))
+    io.open(cpath, "w", encoding="utf-8").write(u"# записка окна\n")
+    st = os.stat(cpath)
+    os.utime(cpath, (st.st_atime, time.time() - 7200))
+    out, rc = run(croot)
+    ctx = ""
+    if out:
+        try:
+            ctx = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+        except Exception:
+            ctx = ""
+    if ctx and u"/save" in ctx and u"carina-handoff" in ctx:
+        ok(u"ветка Карины — хук зовёт ЕЁ команду и ЕЁ записку")
+    else:
+        bad(u"на ветке Карины хук назвал не то: %r" % (ctx or out)[:140])
+    shutil.rmtree(croot, ignore_errors=True)
+
+    # (5) НЕЗНАКОМАЯ РОЛЬ — молчание, и это решение, а не дыра: у пакетных окон
+    #     своя передача (/stop), выдумывать им адресата хук не вправе.
+    oroot = make_tree("p999-other")
+    opath = os.path.join(oroot, HANDOFF_REL)
+    os.makedirs(os.path.dirname(opath))
+    io.open(opath, "w", encoding="utf-8").write(u"# чужая записка\n")
+    st = os.stat(opath)
+    os.utime(opath, (st.st_atime, time.time() - 7200))
+    out, rc = run(oroot)
+    if out == "" and rc == 0:
+        ok(u"незнакомая ветка — молчит, а не зовёт чужую команду")
+    else:
+        bad(u"на незнакомой ветке хук заговорил: %r" % out[:140])
+    shutil.rmtree(oroot, ignore_errors=True)
 finally:
     shutil.rmtree(root, ignore_errors=True)
 
