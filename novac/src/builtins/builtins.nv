@@ -55,6 +55,19 @@ export const ENTRY_FN = "main"
 /// today, not a std function — the one println the runtime prints through).
 export const PRINT_FN = "println"
 
+/// The intrinsic that yields the location of the expression it stands in
+/// (D468). Named here rather than spelled at the rule that admits it, because
+/// this file is where a name the compiler must know itself belongs (P5).
+///
+/// It is the ONE call the subset takes as a parameter's default value, and the
+/// reason is the exact inverse of the rule that refuses every other expression
+/// there: a default is emitted INSIDE THE CALLER, so the subset admits only
+/// forms that mean the same in both places -- while `caller_loc()` exists
+/// precisely to mean the CALLER's place, and that is its whole work. Registry
+/// #1146. The oracle draws the same line (`callnorm.rs:842`, `is_bare_caller_loc`):
+/// the BARE call only, a nested one left to a later stage.
+export const CALLER_LOC_FN = "caller_loc"
+
 /// The Option FAMILY (if-let wave): the language's sum name and the shell's
 /// C family prefix (`NovaOpt_<elemC>`, by value) plus the Some tag constant.
 /// P5: names live here; the mangle door spells, the emitter reads.

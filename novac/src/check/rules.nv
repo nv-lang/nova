@@ -20,10 +20,11 @@ import ../source.{SourceText}
 import ../lex.{Token, TokenKind, spelling_of}
 import ../tree.{Node, NodeKind, NodeId, no_node, bin_op_of, un_op_of, raw_node}
 import ../diag.{Diagnostic, Severity, ice}
-import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
+import ../builtins.{ENTRY_FN, PRINT_FN, CALLER_LOC_FN, is_bool_literal}
 import ../sem.{Ctx, CheckOut, declares_receiver, generics_have_consume, generics_have_protocol_bound, param_type_at}
 import ../sem.{decl_of_ty}
 import ../sem.{branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, generic_bounds}
+import ../sem.{is_arg_node}
 import ../sem.{ret_is_unit, param_default_slot}
 import ../types.{TyId, no_ty, is_ty}
 
@@ -278,6 +279,16 @@ fn Checker mut @report_if_default_not_value(pk []Node) -> bool {
     } else {
         // Any other expression would be read in the caller's scope.
     }
+    // ONE named exception, and it is not a hole in the rule above but its
+    // inverse: `caller_loc()` EXISTS to be read in the caller's scope (D468).
+    // Everything else is refused because reading the caller's scope would be an
+    // accident; this reads it on purpose, and a compiler whose `ice()` cannot
+    // name its own line is the carrier we measured (#1145, #1146).
+    if default_is_caller_loc(d[0]) {
+        return false
+    } else {
+        // Not the one admitted call either: the refusal below speaks.
+    }
     @report_first_leaf_of(pk, DEFAULT_EXPR_MSG)
     true
 }
@@ -301,6 +312,35 @@ fn default_is_value(d Node) -> bool {
     ro t = kids[kids.len() - 1]
     if t.kind_of() != NodeKind.LeafNode { return false }
     leaf_kind(t) == TokenKind.IntLit || leaf_kind(t) == TokenKind.FloatLit
+}
+
+/// Is this default the ONE call the subset admits -- a BARE `caller_loc()`?
+///
+/// Bare means: that name, and NO arguments. The border is the oracle's own, not
+/// a stricter one invented here: `callnorm.rs:842` rewrites the span for
+/// `is_bare_caller_loc` only, and a `caller_loc()` nested deeper inside a
+/// default expression is left to a later stage's refusal (plan 280, trap 5). So
+/// `= wrap(caller_loc())` is refused by BOTH compilers, and refused for the
+/// same reason rather than by coincidence.
+///
+/// Why the argument count matters and is not pedantry: `caller_loc(x)` is not
+/// this intrinsic, and admitting it by name alone would let an arbitrary
+/// expression `x` into the caller's scope through the one door opened for the
+/// opposite purpose.
+fn default_is_caller_loc(d Node) -> bool {
+    if d.kind_of() != NodeKind.Call { return false }
+    ro kids = branch_children(d)
+    if kids.len() == 0 { return false }
+    if call_callee_text(kids) != CALLER_LOC_FN { return false }
+    mut args = 0
+    for c in kids {
+        if is_arg_node(c) {
+            args += 1
+        } else {
+            // Syntax around the argument list, not an argument.
+        }
+    }
+    args == 0
 }
 
 /// A record-form variant (`| Circle { radius f64 }`) shows up as a brace among
