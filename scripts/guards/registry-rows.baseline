@@ -856,8 +856,11 @@
 #   nakhodki emit_c x K7 Kariny. Metka OKHOTNIKOM u kazhdoy: bez neyo meru plana
 #   278 ne poschitat' grepom. Chisla PERESCHITANY pravilom strazha na itogovom
 #   dereve, a ne pribavleny k prezhnim.
-rows=1085
-max=1133
+# 2026-09-16 (integrator, stroka 1134): kesh libuv beryotsya po faktu
+#   sushchestvovaniya fayla, bez kljucha sredy -- pervyy sobravshiy Linux navyazyvaet
+#   svoy ABI ostal'nym. Nayedeno svoey zhe tsenoy pri popytke vosproizvesti 968.
+rows=1086
+max=1134
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
