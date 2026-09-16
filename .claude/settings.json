@@ -80,6 +80,17 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks/remind-session-save.py\""
+          }
+        ]
+      }
     ]
   }
 }
