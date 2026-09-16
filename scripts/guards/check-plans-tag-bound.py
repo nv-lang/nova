@@ -45,6 +45,11 @@ import os
 import re
 import sys
 
+# Поток переводится на LF ЯВНО: python на Windows пишет CRLF там, где shell писал
+# LF, и вердикт расходится с вердиктами соседних стражей (страж-честность, №847).
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", newline="\n")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
+
 NAME = "check-plans-tag-bound"
 
 # Фраза, по которой план считается тег-зависимым.
