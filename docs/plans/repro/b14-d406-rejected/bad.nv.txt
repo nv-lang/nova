@@ -1,0 +1,21 @@
+// D406-кандидат: голое имя варианта, объявленное ДВУМЯ суммами.
+// Карина отвергает: «this variant name is declared by more than one sum in scope --
+// qualify it as `Type.Variant` (D406; registry #964)».
+// ВОПРОС ПРОБЫ: запрещает ли это спека? В D406 (spec/decisions/02-types.md:764)
+// сказано про маркер `enum` в грамматике типов, а нормы про неоднозначность голого
+// имени не нашлось ТРЕМЯ образцами поиска. Значит проба решает, кто прав.
+// Форма взята из корпуса: module + типы + main + println.
+module probe.d406
+
+type Color enum Red | Green
+
+type Signal enum Red | Amber
+
+fn pick() -> Color {
+    Red
+}
+
+fn main() {
+    ro c = pick()
+    println("ok")
+}

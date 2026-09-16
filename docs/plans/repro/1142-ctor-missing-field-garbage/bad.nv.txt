@@ -1,0 +1,16 @@
+// D17, запрещённая половина: конструктор записи пропускает объявленное поле.
+// Спека, spec/decisions/02-types.md:152: «Construction всегда требует все обязательные
+// поля — частичное заполнение типа Rust `..default` отдельным синтаксисом не зафиксировано».
+// Форма записи взята у examples/basics/destructure_record.nv.
+module probe.d17
+
+type Point value {
+    x int
+    y int
+}
+
+fn main() -> () {
+    ro p = Point { x: 1 }
+    println(p.x)
+    println(p.y)
+}

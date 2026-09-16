@@ -55,7 +55,7 @@ fn Checker mut @type_bind(st Node) -> () {
     // name makes the binding a refutable pattern; the first row stands for all.
     ro (vfirst, vn) = variants_named(@ctx, vname)
     if vn >= 1 && @ctx.variant_rows[raw_vrow(vfirst)].payload_cnt == 0 {
-        @report_first_leaf_of(kids, REFUTABLE_BIND_MSG)
+        @reject_first_leaf_of(kids, REFUTABLE_BIND_MSG)
         return
     } else {
         // Not a variant's name, or a payload-carrying variant: no pattern

@@ -265,7 +265,7 @@ fn Checker mut @report_if_name_repeats(kids []Node) -> () {
         // handed-over name is shadowable by the NORM (D125) but not by this
         // subset's C naming yet (D381) -- see the two messages' own docs.
         if @ctx.builtin_names.find(name) >= 0 {
-            @report_first_leaf_of(kids, PRIM_REDECL_MSG)
+            @reject_first_leaf_of(kids, PRIM_REDECL_MSG)
         } else if shell_struct_named(@ctx, name) {
             // Shadowing a handed-over name is LEGAL (D125, user wins) and the
             // oracle spells the shadowing type with the BARE name -- so novac
@@ -365,7 +365,7 @@ fn Checker mut @report_if_ctor_fields_wrong(ctor Node, t TyId) -> () {
             seen = true
         }
         if !seen {
-            @report_first_leaf_of(kids, CTOR_MISSING_FIELD_MSG)
+            @reject_first_leaf_of(kids, CTOR_MISSING_FIELD_MSG)
             return
         } else {
             // Named; on to the next declared field.

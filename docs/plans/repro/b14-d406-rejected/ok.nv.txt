@@ -1,0 +1,17 @@
+// Законный сосед: ровно тот же файл, но имя варианта КВАЛИФИЦИРОВАНО (`Color.Red`).
+// Если оба компилятора принимают эту половину и расходятся на первой — расхождение
+// именно про неоднозначность, а не про что-то в форме файла.
+module probe.d406
+
+type Color enum Red | Green
+
+type Signal enum Red | Amber
+
+fn pick() -> Color {
+    Color.Red
+}
+
+fn main() {
+    ro c = pick()
+    println("ok")
+}
