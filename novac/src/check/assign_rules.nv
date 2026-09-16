@@ -43,7 +43,7 @@ fn Checker mut @assigned_operand_type(kids []Node) -> TyId {
             }
             if is_numeric_prim(@ctx.tys, adapted) && is_numeric_prim(@ctx.tys, tc) && adapted != tc {
                 match kids[1] {
-                    Leaf(t) => @refuse(t, MIXED_NUMERIC_MSG)
+                    Leaf(t) => @reject(t, MIXED_NUMERIC_MSG)
                     Branch { .. } => {}
                 }
                 return no_ty()

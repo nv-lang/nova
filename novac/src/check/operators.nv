@@ -176,7 +176,7 @@ fn Checker mut @report_if_operator_needs_protocol(kids []Node) -> bool {
     // outranks the oracle (wave 274.7 B4; the oracle's side is #926).
     if both_numeric && lt != rt {
         match kids[1] {
-            Leaf(t) => @refuse(t, MIXED_NUMERIC_MSG)
+            Leaf(t) => @reject(t, MIXED_NUMERIC_MSG)
             Branch { .. } => {}
         }
         return true

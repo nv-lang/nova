@@ -873,8 +873,13 @@
 # 2026-09-16 (integrator, stroka 1138): gejt Kariny na CI otmenyaetsya po vremeni
 #   (45m limit job'a), to est' proverki ne doschityvayutsya vovse -- i v spiske
 #   job'ov eto vyglyadit tem zhe krestom, chto nastoyashchiy otkaz.
-rows=1091
-max=1139
+# 2026-09-16 — 1091 -> 1092, max 1139 -> 1140 (окно Карины). №1140: список дверей
+#   языка знал одну из двух, и отказ, поданный через `@reject`, не считался
+#   ни долгом подмножества, ни постоянной ошибкой. Найдено расхождением двух
+#   чисел, обязанных было двинуться навстречу; починка вскрыла третьего
+#   носителя, невидимого с волны В11-а.
+rows=1092
+max=1140
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
