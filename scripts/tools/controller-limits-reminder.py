@@ -24,6 +24,7 @@ Usage (from the main tree root):
 import datetime as _dt
 import glob
 import importlib.util
+import json
 import os
 import sys
 
@@ -148,7 +149,13 @@ def peers(V):
     files = [f for f in files if os.path.basename(f) != V.ME + ".jsonl"]
     files.sort(key=os.path.getmtime, reverse=True)
     out = []
-    for f in files[:4]:
+    # EIGHT, not four -- and the number is a MEASUREMENT, not a taste. On 2026-09-15 the owner
+    # reopened several windows and `ListAgents` showed EIGHT live peers at once; with the old
+    # slice of four the integrator (the one recipient the owner names by role for the Carina
+    # reminder) fell outside the window whenever four other sessions wrote more recently. A
+    # reminder that silently misses its only addressee is the role's own class: the tool keeps
+    # its shape and changes whom it looks at. If the count grows again, this number grows with it.
+    for f in files[:8]:
         tail = V.SCAN.parse(V.SCAN.read_tail_lines(f, V.TAIL_BYTES))
         if not tail:
             continue
@@ -166,8 +173,96 @@ def peers(V):
         else:
             t, _ = V.tree_of(f, cwd)
             tree = os.path.basename(t or "?")
-        out.append((sid[:8], os.path.basename(tree or "?")))
+        out.append((sid[:8], os.path.basename(tree or "?"), declared_role(sid)))
     return out
+
+
+def declared_role(sid):
+    """The session's role AS IT DECLARED IT -- never counted from its text. '' if never asked.
+
+    The first version of this counted gate/push mentions, the dock's signal for the integrator,
+    and the first live run killed it: the free window `cbc6b24f` scored 61 and the real integrator
+    `3b203470` scored 4 (measured 16:20 local 2026-09-15, 800KB tails). The reason is the one this
+    role has paid for four times already -- MY OWN LETTERS quote gates and pushes into everybody's
+    history, so frequency measures "who was written to about gates", not "who runs them". Over a
+    2MB tail the dock still separates them; over the 800KB this tool reads, it inverts. A signal
+    that inverts on a smaller window is not a weaker signal, it is the wrong signal.
+
+    So the source is the declared map, keyed by session id (names change, ids do not), the same
+    file the verdict asks for trees -- ONE home for "who is this session".
+    """
+    try:
+        with open(TREE_MAP_PATH, encoding="utf-8") as fh:
+            m = json.load(fh)
+    except Exception:  # noqa: BLE001
+        return ""
+    for key, rec in m.items():
+        if key.startswith("_"):
+            continue
+        if sid.startswith(key) or key.startswith(sid[:8]):
+            return str(rec.get("role") or "")
+    return ""
+
+
+CARINA_PLAN = os.path.join("docs", "plans", "221.3-oracle-blocks-carina.md")
+# ONE home for "who is this session": the same declared map the verdict reads for trees.
+TREE_MAP_PATH = os.path.join(STATE_DIR, "tree-map.json")
+
+
+def carina_block(rows, age_min, err):
+    """The owner's hourly order to the INTEGRATOR, 2026-09-15: keep, prioritise, close.
+
+    Wording is the owner's own three verbs plus the address he named. The numbers are measured at
+    send time by carina_facts(); if the file cannot be read, THAT is what the letter says -- a
+    reminder quoting a number it did not take would be the class this role hunts.
+    """
+    if err:
+        state = "СОСТОЯНИЕ ФАЙЛА НЕ СНЯТО: %s. Это неизвестность, а не «всё в порядке»." % err
+    else:
+        state = ("ЗАМЕР на момент письма, и только он: строк в виде — %d, файл тронут %.0f минут "
+                 "назад. Долг файла назван в нём самом, разделом «Поправка 2026-09-15» — сверку "
+                 "строк с полем «БЛОКИРУЕТ ТЕГ: ДА» против четырёх признаков Карины он объявляет "
+                 "НЕ СДЕЛАННОЙ ни разу; числа оттуда я не переношу сюда намеренно, они устареют "
+                 "молча, а файл у вас под рукой." % (rows, age_min))
+    return (
+        "ВТОРАЯ ТЕМА, ЗАКАЗ ВЛАДЕЛЬЦА 2026-09-15, ежечасно и только вам: ВЕДИТЕ блокеры Карины "
+        "в `docs/plans/221.3-oracle-blocks-carina.md`, ПРИОРИТИЗИРУЙТЕ их и ЗАКРЫВАЙТЕ — и на "
+        "эту работу распространяется `/delegate` дословно: перечисления, сверки и инвентари "
+        "(например «какие из 67 строк проходят по четырём признакам») отдаются самой дешёвой "
+        "модели, которая справится, а суждение «блокирует Карину или нет» остаётся вашим.\n"
+        "%s\n"
+        "ПОЧЕМУ ЭТО ПИСЬМО ПРИХОДИТ КАЖДЫЙ ЧАС, а не один раз: файл сам записал причину — шесть "
+        "строк ночи 14/15 (№1105–№1110) в него не попали, вердикт по Карине писался прозой "
+        "внутри строк 221.1. Час — потолок владельца, а не мера моего недоверия." % state)
+
+
+def carina_facts():
+    """Live numbers for the integrator's letter: rows in the view, and when it was last touched.
+
+    MEASURED at send time, never stored in this source. The per-window part used to be a literal
+    here, and on 2026-09-09 one of four had gone false within the hour -- the very part the letter
+    exists for became its worst line. So the Carina block carries only what a command can reproduce:
+    how many rows the view holds right now, and how stale the file is. Whether that is too few is
+    the integrator's judgement, not this tool's.
+    """
+    p = os.path.join(ROOT, CARINA_PLAN)
+    try:
+        with open(p, "r", encoding="utf-8", errors="replace") as fh:
+            body = fh.read()
+    except OSError:
+        return None, None, "FILE MISSING at %s" % p
+    rows, in_table = 0, False
+    for line in body.splitlines():
+        if line.startswith("## "):
+            in_table = line.strip().endswith("Строки")
+            continue
+        # A row of the view: "| <number or link> | ... | ... |". The header and the dashed rule
+        # are skipped by requiring a digit in the first cell -- counting them would inflate the
+        # number by two, and a plausible-looking number is the one that passes unchecked.
+        if in_table and line.startswith("|") and any(c.isdigit() for c in line.split("|")[1]):
+            rows += 1
+    age_min = (_dt.datetime.now().timestamp() - os.path.getmtime(p)) / 60.0
+    return rows, age_min, None
 
 
 def main():
@@ -215,18 +310,34 @@ def main():
         print("recipients: NONE alive -- nothing to send, stamp NOT written")
         return 1
 
-    print("recipients: %s" % ", ".join("%s (%s)" % r for r in rows))
+    print("recipients: %s" % ", ".join("%s (%s, role=%s)" % (a, b, c or "-") for a, b, c in rows))
+    # The integrator is ONE session and it is named by the DECLARED map, not guessed: four idle
+    # windows sit in the main copy too, so "tree == nova" would send his letter to five sessions.
+    # Nobody declared -> UNKNOWN, and then the Carina block is not sent at all: an unhandled case
+    # is never dressed as an answer (prohibition 16).
+    integ = [r for r in rows if r[2].startswith("integrator")]
+    integ_sid = integ[0][0] if len(integ) == 1 else None
+    if len(integ) > 1:
+        print("integrator: AMBIGUOUS -- %d sessions declare the role, fix the map first"
+              % len(integ))
+    print("integrator: %s" % (
+        integ_sid or "UNKNOWN (no declared role in %s) -- Carina block NOT sent" % TREE_MAP_PATH))
+    c_rows, c_age, c_err = carina_facts()
+    print("carina view: %s" % (c_err or "%d rows, touched %.0f min ago" % (c_rows, c_age)))
     out_dir = os.path.join(STATE_DIR, "reminders")
     os.makedirs(out_dir, exist_ok=True)
     stamp_hhmm = now.strftime("%H%M") + "Z"
     print()
-    for sid, tree in rows:
+    for sid, tree, _hits in rows:
         extra = PER_TREE.get(tree)
         body = ["%sZ КОНТРОЛЁР, напоминание владельца (не реже раза в час): %s"
                 % (now.strftime("%H:%M"), COMMON)]
         if extra:
             body.append("")
             body.append("ЧТО ЭТО МЕНЯЕТ ДЛЯ ВАС ИМЕННО СЕЙЧАС: %s" % extra)
+        if sid == integ_sid:
+            body.append("")
+            body.append(carina_block(c_rows, c_age, c_err))
         body.append("")
         body.append("ПРОШУ: ничего, ответа не жду.")
         text = "\n".join(body) + "\n"
