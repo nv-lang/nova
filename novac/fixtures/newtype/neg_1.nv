@@ -6,7 +6,7 @@ module newtype.neg_1
 // novac refuses it BY NAME, at the argument. The ORACLE does not: `nova check`
 // accepts this file and clang then refuses the emission -- class O-1c (the
 // checker admits what its own codegen rejects), measured 2026-08-21 and
-// registered in docs/dev/novac-divergences.md. `Row(1, 2)` -- two arguments to a
+// registered in docs/plans/274.12-novac-divergences.md. `Row(1, 2)` -- two arguments to a
 // one-field wrapper -- passes its check too. So this fixture asserts novac's
 // refusal, not an agreement; the differential guard judges `pos_*` files only,
 // which is why the divergence lives in the registry rather than here.

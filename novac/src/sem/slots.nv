@@ -586,7 +586,7 @@ fn type_slot_after(pk []Node, n int) -> Option[int] {
 /// is immutable by definition, and handing its own children out as a plain
 /// `[]Node` would give every caller a mutable alias of it. The compiler does
 /// not catch that today (see the `ro`-laundering repro in
-/// docs/dev/novac-divergences.md), so the signature has to say it.
+/// docs/plans/274.12-novac-divergences.md), so the signature has to say it.
 export fn branch_children(n Node) -> ro []Node {
     match n {
         Leaf(_) => ice("sem: expected a branch node")

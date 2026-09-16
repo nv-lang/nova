@@ -10,7 +10,7 @@ module generic_call.neg_2
 // is not a hypothetical. MEASURED 2026-08-23 on the same shape: the oracle
 // PASSES it at `check` and clang then refuses the emission with "passing 'const
 // nova_str' to parameter of incompatible type 'nova_int'". Seventh carrier of
-// class O-1c, recorded in docs/dev/novac-divergences.md.
+// class O-1c, recorded in docs/plans/274.12-novac-divergences.md.
 //
 // SO THIS FIXTURE PINS NOVAC'S REFUSAL AND CLAIMS NO AGREEMENT: the oracle's
 // outcome on this shape differs at check level, and a `neg_*` that pretended

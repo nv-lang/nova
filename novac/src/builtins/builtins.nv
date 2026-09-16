@@ -382,7 +382,7 @@ export fn prim_name(ordinal int) -> str
 /// binding out as a plain `[]T` launders it: the caller gets a MUTABLE alias
 /// of read-only data. Probed the same day — the oracle accepts the laundered
 /// form silently AND the mutation lands: pushing through the alias grows the
-/// `ro` table itself (repro in docs/dev/novac-divergences.md). Until that is
+/// `ro` table itself (repro in docs/plans/274.12-novac-divergences.md). Until that is
 /// fixed the compiler cannot enforce this for us, so the signature states it:
 /// `-> ro []BuiltinType`, the same shape std uses for its own views
 /// (`str @bytes() -> ro []u8`, `IoCapture @out_bytes() -> ro []u8`).

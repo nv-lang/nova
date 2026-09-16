@@ -54,7 +54,7 @@
 // on BEHAVIOUR and on the ABI boundary, never on the shape of the emission.
 // Where a different shape is better - argument temporaries in source order
 // (F65), tuples as stack values, one allocation fewer - novac is expected to
-// diverge, with a line in docs/dev/novac-divergences.md saying why.
+// diverge, with a line in docs/plans/274.12-novac-divergences.md saying why.
 //
 // Edge note (table §3): E2-temporary rows `emit_c` -> `tree`/`lex`/`names`/
 // `sem` — the emitter walks the green tree until `lower` exists (E4);

@@ -12,7 +12,7 @@ module value_record.neg_1
 // AGREEMENT IS NOT CLAIMED HERE, and that is why the comment says so: the oracle
 // COMPILES this form. The pair is legal as a fixture because `neg_*` files are
 // judged on novac's own diagnostic (one seeded mistake, exactly one refusal), and
-// the divergence is recorded in docs/dev/novac-divergences.md rather than
+// the divergence is recorded in docs/plans/274.12-novac-divergences.md rather than
 // asserted as a rule.
 type Counter value { n int }
 
