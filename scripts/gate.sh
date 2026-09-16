@@ -122,6 +122,18 @@ GATE_HEAD="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 GATE_BRANCH="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
 TREE_TAIL=" [tree=$GATE_TREE head=$GATE_HEAD branch=$GATE_BRANCH]"
 echo "gate :: дерево $GATE_TREE, коммит $GATE_HEAD, ветка $GATE_BRANCH, ярус $NOVA_GATE_TIER"
+# 290 п.6: МЕСТНОЕ ВРЕМЯ и ОЖИДАЕМАЯ длительность — при старте, чтобы человек
+# знал, сколько ждать, и мог сопоставить прогон с чужими по часам. Ожидаемое
+# берётся ИЗ ФАЙЛА (`gate-budget.baseline`), а не из головы: число в голове
+# протухает молча — ровно так протух профиль 2026-08-21 (275 Ф.10).
+GATE_WALL_START=$(date "+%H:%M:%S")
+_GB="$ROOT/scripts/guards/gate-budget.baseline"
+GATE_EXPECT=$(grep -E "^$NOVA_GATE_TIER[[:space:]]+[0-9]+" "$_GB" 2>/dev/null | head -1 | awk '{print $2}')
+if [ -n "$GATE_EXPECT" ]; then
+    echo "gate :: старт $GATE_WALL_START (местное), ярус $NOVA_GATE_TIER, ожидаемо ~$((GATE_EXPECT / 60)) мин (${GATE_EXPECT}с, из gate-budget.baseline)"
+else
+    echo "gate :: старт $GATE_WALL_START (местное), ярус $NOVA_GATE_TIER, ожидаемой длительности для яруса в базе НЕТ"
+fi
 
 # СУХОЙ ПРОГОН — печатаются заголовки шагов, не исполняется ничего.
 # Заведён как ДОКАЗАТЕЛЬСТВО того, что умолчание не поехало: список шагов до
@@ -1301,6 +1313,7 @@ if body_runs; then
     # идёт около 37 минут. Если дерево не прошло дешёвое, тратить их незачем,
     # но и обрывать на ПЕРВОЙ находке незачем тоже — здесь сообщаются ВСЕ.
     gate_barrier
+
 fi
 
 # РЕЕСТР №884 (2026-09-02): блок самотестов СТОЯЛ ВЫШЕ этой сборки — и на единственном
@@ -2237,11 +2250,23 @@ fi
 # Всякий, кто грепает вердикт (человек, сторож, окно-интегратор), читал
 # зелёное на красном — тот же класс, что №445 («вердикт печатается как полный»)
 # и №645 («строка была, читать было некому»).
+# 290 п.6: по завершении — местное время, полное время, имя яруса и где
+# смотреть профиль шагов. Профиль не пересказывается: он длинный, и место
+# его хранения важнее пересказа.
+_GW_END=$(date "+%H:%M:%S")
+_GW_MIN=$(( GATE_ELAPSED / 60 )); _GW_SEC=$(( GATE_ELAPSED % 60 ))
+if [ -n "${GATE_EXPECT:-}" ] && [ "${GATE_EXPECT:-0}" -gt 0 ] 2>/dev/null; then
+    _GW_PCT=$(( (GATE_ELAPSED - GATE_EXPECT) * 100 / GATE_EXPECT ))
+    echo "gate :: ярус $NOVA_GATE_TIER — старт $GATE_WALL_START, конец $_GW_END (местное), всего ${_GW_MIN}м ${_GW_SEC}с; ожидалось ${GATE_EXPECT}с, дельта ${_GW_PCT}%"
+else
+    echo "gate :: ярус $NOVA_GATE_TIER — старт $GATE_WALL_START, конец $_GW_END (местное), всего ${_GW_MIN}м ${_GW_SEC}с"
+fi
+echo "gate :: профиль шагов — bash scripts/tools/gate-profile.sh <лог этого прогона>"
+
 gate_barrier
 
 if [ -n "$OVERRIDE_FILES" ] && [ "$GATE_TIER_N" -ge 2 ]; then
     print_override_warning
-    echo "GATE OK (final)$TREE_TAIL [DEV-OVERRIDE ACTIVE — не доказательство чистого дерева, см. предупреждение выше]$CI_TAIL$TIER_TAIL"
 else
     echo "GATE OK (final)$TREE_TAIL$CI_TAIL$TIER_TAIL"
 fi
