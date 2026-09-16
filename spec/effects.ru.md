@@ -57,8 +57,8 @@
 
 ```nova
 type Db effect {
-    query(q Sql) -> []DbRow                // только сигнатуры, без реализации
-    exec(q Sql)  -> ()
+    fn query(q Sql) -> []DbRow                // только сигнатуры, без реализации
+    fn exec(q Sql)  -> ()
 }
 
 // функция декларирует, какой эффект ей нужен
@@ -108,7 +108,7 @@ fn fetch(url str) Net Fail -> Response
 
 ```nova
 type Logger effect {
-    log(msg str) -> ()
+    fn log(msg str) -> ()
 }
 
 ro console = effect Logger {
@@ -240,7 +240,7 @@ LLM (и человек), читая сигнатуру, **знает все по
 
 ```nova
 type Db effect {
-    exec(stmt str) -> ()
+    fn exec(stmt str) -> ()
 }
 
 fn save(name str) Db -> () {
@@ -568,7 +568,7 @@ fn parse(s str) -> Result[int, ParseError] => ...
 **Одно исключение, и владелец решением 2026-08-12 сделал его именованным
 отказом, а не молчаливым провалом:** генерики в эффектах НЕ поддержаны на
 обеих осях обобщения — ни на операции (`type Wrap effect { around[T](body
-fn() -> T) -> T }`, реестр 221.1 №570), ни на самом эффекте (`type Store[T]
+fn fn() -> T) -> T }`, реестр 221.1 №570), ни на самом эффекте (`type Store[T]
 effect { ... }`, реестр 221.1 №614). До этого решения обе формы принимались
 `nova check` зелёным и падали уже в Си-компиляторе (`Nova_T*`/`unknown type
 name 'NovaVtable_Store'`) — теперь чекер отвергает обе именованной ошибкой

@@ -1,3 +1,7 @@
+# 2026-09-16 (integrator): 42 -> 41. PERVYJ verdikt po lestnice, i on lyog na
+#   RABOTU, a ne na bumagu: plan 272 poluchil `ISKLYUChENIE 0.2` -- bez mosta
+#   `fn` Karina ne mozhet pisat' svoj kod v obyazatel'noj dlya nee forme, to
+#   est' rabota derzhit stupen' 0.2. Zakaz vladel'ca 2026-09-16.
 # Планы, чей срок держался на теге оракула, — сколько из них ещё БЕЗ ВЕРДИКТА
 # по лестнице версий Карины (0.2 / 0.3 / 1.0). Страж:
 # scripts/guards/check-plans-tag-bound.py. Адрес: план 274 «Лестница версий»,
@@ -11,4 +15,4 @@
 #   кандидатов 42, без вердикта 42. Тег оракула снят решением владельца
 #   2026-09-15, и вместе с ним исчезло событие, к которому эти планы были
 #   привязаны; вердикт каждому назначается пунктом 9 плана 274.11.
-no_verdict=42
+no_verdict=41

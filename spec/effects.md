@@ -65,8 +65,8 @@ Three parts:
 
 ```nova
 type Db effect {
-    query(q Sql) -> []DbRow                // только сигнатуры, без реализации
-    exec(q Sql)  -> ()
+    fn query(q Sql) -> []DbRow                // только сигнатуры, без реализации
+    fn exec(q Sql)  -> ()
 }
 
 // функция декларирует, какой эффект ей нужен
@@ -116,7 +116,7 @@ and continuation-capture.
 
 ```nova
 type Logger effect {
-    log(msg str) -> ()
+    fn log(msg str) -> ()
 }
 
 ro console = effect Logger {
@@ -246,7 +246,7 @@ A signature declares only the effects whose operations the function calls
 
 ```nova
 type Db effect {
-    exec(stmt str) -> ()
+    fn exec(stmt str) -> ()
 }
 
 fn save(name str) Db -> () {
@@ -581,7 +581,7 @@ who writes a test will have to write it.
 **One exception, and the owner's decision of 2026-08-12 made it a named refusal rather
 than a silent failure:** generics in effects are NOT supported on either axis of
 generalisation — neither on the operation (`type Wrap effect { around[T](body
-fn() -> T) -> T }`, registry 221.1 #570) nor on the effect itself (`type Store[T]
+fn fn() -> T) -> T }`, registry 221.1 #570) nor on the effect itself (`type Store[T]
 effect { ... }`, registry 221.1 #614). Before that decision both forms passed
 `nova check` green and failed only in the C compiler (`Nova_T*`/`unknown type
 name 'NovaVtable_Store'`) — now the checker rejects both with a named error
