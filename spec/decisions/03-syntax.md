@@ -9140,7 +9140,7 @@ checker-overflow), см. `[M-181-pattern-var-rebind]`. Nested-scope double-consu
 
 ```nova
 type Cleanup[E] protocol {
-    cleanup(outcome ScopeOutcome) Fail[E] -> ()
+    consume @cleanup(outcome ScopeOutcome) Fail[E] -> ()
 }
 
 type ScopeOutcome
@@ -9916,8 +9916,8 @@ impl Drop for File { fn drop(&mut self) { self.close(); } }
 
 ```nova
 type Cleanup[E] protocol {
-    on_success() Fail[E] -> ()
-    on_failure(err any) Fail[E] -> ()
+    @on_success() Fail[E] -> ()
+    @on_failure(err any) Fail[E] -> ()
 }
 ```
 
@@ -10093,7 +10093,7 @@ allowed in `#realtime`). Это compile error, не runtime.
 
 ```nova
 type WithExitTimeout protocol {
-    exit_timeout() -> Duration
+    @exit_timeout() -> Duration
 }
 
 fn Transaction @exit_timeout() -> Duration => 30.s()

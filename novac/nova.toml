@@ -181,7 +181,29 @@
 # the type declares an effect-free @cleanup. No debt for novac today by the same
 # measure as D476 above: its own source has zero @cleanup methods, so nothing in
 # its build changes; the debt appears when wave 274.9 K4 reaches consume forms.
-#   spec-queue: 76
+# 76 -> 77 (2026-09-16): D183 correction -- the spec read as a contradiction
+# about `==`, and the owner's rule is to FIX the spec, not route around it.
+# Three stale statements were removed from one D-block, each of which read as
+# the norm: (1) `==` dispatches to `@eq` -- false, both compilers look up the
+# name `equal` (emit_c.rs:36497, novac builtins.nv:99); (2) `Compare` embeds
+# `Equal` and carries the default body -- superseded 130 lines below by the
+# block's own amendment, and std holds the opposite (protocols.nv:83-85: the
+# protocols are orthogonal, the default body sits on `Equal`); (3) a type with
+# `@compare` and no `@equal` compiles only when `@equal` is explicit -- refuted
+# by three probes on the oracle (a two-field type compared on ONE field returns
+# true for `==`, while the same type WITHOUT `@compare` returns false, so the
+# control makes the structural explanation impossible). The protocol method was
+# also spelled `equals` throughout, which Plan 108.4 turned from an old spelling
+# into an error (`@` is mandatory on protocol methods); the owner ordered it
+# corrected, and it is.
+# NO DEBT for novac, and the reason is a boundary rather than luck: its `==`
+# handling returns early unless the receiver is `str` (check/operators.nv:39),
+# so no user type reaches the equality rule at all. The default-body rule bites
+# the day the subset takes `==` past `str`, and that day is not this wave.
+# The Carina-side probe could not ask the question directly -- novac does not
+# parse a record literal yet, so it refuses one form earlier. Read from the
+# source instead, and said so.
+#   spec-queue: 77
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,

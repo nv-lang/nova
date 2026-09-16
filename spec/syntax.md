@@ -438,7 +438,7 @@ if elapsed > 1.second() { ... }           // вызывает @compare
 | `a[i]` | `@index(i)` | | `a[i]=v` | `mut @index(i, v)` |
 | `a[x..y]` | `@index(r Range)` + `@end_index()` | | | |
 
-`==`/`!=` — via `@equal` (the `Equal` protocol, `!=` is derived by negation); `<`/`<=`/`>`/`>=` — via the single `@compare(o) -> int` (the `Compare` protocol, memcmp-style: `< 0` / `0` / `> 0`). Indexing `a[i]` / `a[i] = v` — `@index` / `mut @index` (the `Index[K, V]` / `MutIndex[K, V]` protocols, D240); slice indexing `a[x..y]` — the same `@index`, overloaded by parameter type: `x..y` (half-open, does not include `y`) is lowered by the compiler into `Range { start: x, end: y }`, and `a.index(r Range)` is called — on `[]T`/`str` it returns a view without copying (`std/collections/vec/slice.nv`, `std/runtime/string/slice.nv`). `&&`/`||` are **not overloadable** (short-circuit
+`==`/`!=` — via `@equal` (the `Equal` protocol, `!=` is derived by negation); `<`/`<=`/`>`/`>=` — via the single `@compare(o) -> int` (the `Compare` protocol, memcmp-style: `< 0` / `0` / `> 0`). **No `@equal` but a `@compare` — equality comes from there:** the `Equal` protocol carries the default body `@equal(o) => @compare(o) == 0` (`std/prelude/protocols.nv`), so a type that declares only `@compare` is compared by it under `==`, not field by field (measured 2026-09-16 with three probes; the analysis is in [D183](decisions/02-types.md#d183-canonical-comparison-protocols--default-method-bodies-plan-918a), section "Известные ограничения"). The protocols are ORTHOGONAL: `Compare` does NOT embed `Equal`; the default body sits on `Equal` itself. Indexing `a[i]` / `a[i] = v` — `@index` / `mut @index` (the `Index[K, V]` / `MutIndex[K, V]` protocols, D240); slice indexing `a[x..y]` — the same `@index`, overloaded by parameter type: `x..y` (half-open, does not include `y`) is lowered by the compiler into `Range { start: x, end: y }`, and `a.index(r Range)` is called — on `[]T`/`str` it returns a view without copying (`std/collections/vec/slice.nv`, `std/runtime/string/slice.nv`). `&&`/`||` are **not overloadable** (short-circuit
 semantics). **The bitwise family — a `bit` prefix, and `~` separate from `!`** (D46-amendment 2026-07-27, plan [234](../docs/plans/234-bitwise-operator-family.md)): `&`/`|`/`^` → `@bitand`/`@bitor`/`@bitxor` (the former `@and`/`@or`/`@xor` are retracted — they read as LOGICAL, though the logical `&&`/`||` are not overloadable at all); `~a` → `@bitnot()` — bitwise complement, overloadable by user types (`~x == -(x+1)` on signed), whereas `!a` stays LOGICAL and (D46-AMEND 2026-08-02) is not overloadable at all — only `bool`, `@not()` is retracted. Compound assignments: `+=`/`-=`/`*=`/`/=` and (D46-amendment (C), plan 234 Ф.2а) `&=`/`|=`/`^=`/`<<=`/`>>=` — desugar into `a = a <op> b`, no separate operator methods. Custom operators (`:+`, `<>`) are not allowed. Details —
 [D46](decisions/03-syntax.md#d46).
 
@@ -1668,7 +1668,7 @@ No `interface`/`trait`. A structural contract — a separate keyword
 ```nova
 // именованный
 type Printable protocol {
-    show() -> str
+    @show() -> str
 }
 
 fn log_one(x Printable) Log -> () => Log.info(x.show())

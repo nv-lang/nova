@@ -1,0 +1,15 @@
+// Does a type with `@compare` and NO `@equal` support `==`?
+// Spec says yes (Equal's default body `=> @compare(other) == 0`), but the
+// followup [M-91.8a.2-default-codegen] claims codegen does not synthesise it.
+// Measure, do not assume.
+module probe.eqdefault
+
+type Money { cents int }
+
+fn Money @compare(other Money) -> int => @cents - other.cents
+
+fn main() {
+    ro a = Money { cents: 5 }
+    ro b = Money { cents: 5 }
+    println("eq = ", a == b)
+}

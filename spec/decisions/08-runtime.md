@@ -1907,7 +1907,7 @@ runtime-кода, — `From`/`Into` для **семантически нетри
 
 ```nova
 type From[T] protocol {
-    from(v T) -> Self           // static, на целевом типе
+    .from(v T) -> Self          // static, на целевом типе — точка, не `@` (D209)
 }
 
 type Into[T] protocol {
@@ -2082,7 +2082,7 @@ ro f2 = Celsius(100.0).into()           // ok: D73 (into-форма с context)
 
 ```nova
 type From[T] protocol {
-    from(v T) -> Self          // static — на целевом типе
+    .from(v T) -> Self         // static — на целевом типе, точка, не `@` (D209)
 }
 
 type Into[T] protocol {
@@ -2606,7 +2606,7 @@ ro opt = u64.try_from("42").ok()    // Option через Result.ok()
 
 ```nova
 type TryFrom[T, E] protocol {
-    try_from(v T) -> Result[Self, E]
+    .try_from(v T) -> Result[Self, E]    // static, симметричен `.from` — точка (D209)
 }
 
 type TryInto[T, E] protocol {

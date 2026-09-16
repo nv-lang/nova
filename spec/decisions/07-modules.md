@@ -896,12 +896,12 @@ fn Account @validate_amount(amount money) Fail =>          // приватный
 
 // ── Протоколы ─────────────────────────────────────────────────────
 export type Hash protocol {
-    hash() -> u64
-    eq(other Self) -> bool
+    @hash() -> u64
+    @equal(other Self) -> bool
 }
 
 type InternalIter[T] protocol {            // приватный protocol (без export)
-    next() -> Option[T]
+    mut @next() -> Option[T]
 }
 ```
 
