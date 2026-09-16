@@ -1,0 +1,15 @@
+// D478 probe: an AMBIGUOUS bare variant name in a position whose expected type
+// is a PRIMITIVE. `variant_named_in` asks `decl_head_of(expect)`, and that door
+// ices on TkPrim by design ("a PRIMITIVE names no declaration"). If the path is
+// reachable, novac should die here rather than refuse honestly.
+module probe.d478ice
+
+type A enum Red | Green
+
+type B enum Red | Blue
+
+fn take(n int) -> int => n
+
+fn main() {
+    println("r = ", take(Red))
+}

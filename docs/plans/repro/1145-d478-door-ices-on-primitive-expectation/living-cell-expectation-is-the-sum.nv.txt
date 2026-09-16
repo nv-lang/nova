@@ -1,0 +1,23 @@
+// The OTHER half: the D478 feature must still work after the kind guard.
+// `Red` is declared by two sums, and the expected type here IS one of them --
+// so D478 says it resolves into `Hue`, and the program is legal.
+// Without this cell, the ICE fix could have silently disabled the feature and
+// still looked green.
+//
+// Second edition: the first used `A` and `B`, and the oracle refused it for a
+// reason that has nothing to do with D478 -- D30 forbids single-character type
+// names (E_TYPE_NAME_TOO_SHORT). A legal half must be legal ENTIRELY.
+module probe.d478live
+
+type Hue enum Red | Green
+
+type Paint enum Red | Blue
+
+fn pick() -> Hue => Red
+
+fn main() {
+    match pick() {
+        Red => println("red")
+        Green => println("green")
+    }
+}

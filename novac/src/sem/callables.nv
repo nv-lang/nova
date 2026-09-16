@@ -391,12 +391,20 @@ export fn variant_in_sum(ctx Ctx, sum_t TyId, name str) -> Option[VariantRow] {
 #realtime nogc
 export fn variant_named_in(ctx Ctx, name str, expect TyId) -> VariantRow {
     if !is_ty(expect) { return no_vrow() }
-    ro want = decl_index_of_ty(ctx, expect)
-    if want < 0 { return no_vrow() }
+    // ASK before reading: an expectation is any type at all -- `int` reaches here
+    // whenever a bare name stands where a primitive is wanted -- and only the
+    // nominal kinds name a declaration. The first edition of this door skipped
+    // the question and iced the compiler on `fn pick() -> int => Red`.
+    if !ctx.tys.names_a_decl(expect) { return no_vrow() }
+    ro want = ctx.tys.decl_head_of(expect)
     mut r = ctx.variant_names.find(name)
     while r >= 0 {
         ro v = ctx.variant_rows[r]
-        if decl_index_of_ty(ctx, v.sum_id) == want {
+        // By DECLARATION ID, not by this file's declaration INDEX. The index is
+        // only meaningful inside the table that holds it, and the chain walked
+        // here spans handed sums too: two files whose declarations sit at the
+        // same index would have matched as one sum.
+        if ctx.tys.names_a_decl(v.sum_id) && ctx.tys.decl_head_of(v.sum_id) == want {
             return VariantRow(r)
         } else {
             // Another sum declares this name too: keep walking the chain.
