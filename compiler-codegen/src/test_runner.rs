@@ -6388,7 +6388,20 @@ fn resolve_archive_cc_path(tc: &Toolchain) -> PathBuf {
     #[cfg(not(target_os = "windows"))]
     {
         let _ = tc;
-        std::env::var("CC").ok().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("cc"))
+        // Registry 221.1 #1135: this used to return the BARE NAME `cc` when `$CC`
+        // is unset. `rt_archive_compiler_fingerprint` then called
+        // `std::fs::metadata("cc")`, which resolves against the CWD, failed, and
+        // yielded `None` -- so on Unix the archive key carried NO compiler
+        // dimension at all and a clang upgrade did not bust the cache. Nothing
+        // looked broken: the key stayed stable because the Option's discriminant
+        // hashes. The measurement was simply absent, which is the same class as
+        // #1118 and #1134 -- an absent answer standing in for a verdict.
+        //
+        // Found while fixing #1134, where this very function was the MODEL being
+        // copied. `resolve_cc_absolute` walks PATH, and it exists because that fix
+        // needed it.
+        let name = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
+        resolve_cc_absolute(&name)
     }
 }
 
@@ -8537,6 +8550,47 @@ mod tests {
     //
     // `from_raw(11)` is a wait-status whose low seven bits are the signal, which
     // is what `ExitStatus::signal()` reads.
+    // ---- Registry 221.1 #1135: the archive key must SEE the compiler --------
+    //
+    // The defect was an ABSENT measurement, not a wrong one: on Unix
+    // `resolve_archive_cc_path` returned the bare name `cc`, `metadata("cc")`
+    // resolved against the CWD and failed, and the fingerprint came back `None`.
+    // The key stayed stable -- the Option's discriminant hashes -- so nothing ever
+    // looked broken while a clang upgrade quietly failed to bust the cache.
+    //
+    // The FIRST probe for this tried to observe the side effect (a new bucket
+    // appearing after swapping $CC) and showed nothing at all, because a plain
+    // fixture run does not build the archive. The property is what can be called
+    // alone, so the property is what is tested -- the same reasoning the module
+    // comment above gives for testing logic rather than whole runs.
+    #[cfg(unix)]
+    #[test]
+    fn archive_key_sees_the_compiler() {
+        use std::path::PathBuf;
+        // ЧЕРЕЗ НАСТОЯЩУЮ ДВЕРЬ. Первая редакция этого теста звала помощник
+        // `resolve_cc_absolute` напрямую — и оставалась ЗЕЛЁНОЙ с выключателем,
+        // возвращавшим дофиксное поведение, потому что сломана была не она.
+        // Проба в обе стороны поймала это немедленно: тест, зелёный без фикса,
+        // не доказывает ничего.
+        let tc = super::Toolchain::Gcc { gcc: PathBuf::from("gcc") };
+        let p = super::resolve_archive_cc_path(&tc);
+        assert!(
+            p.is_absolute(),
+            "compiler path not resolved: {:?} -- metadata() of a bare name fails",
+            p
+        );
+        assert!(
+            super::rt_archive_compiler_fingerprint(&p).is_some(),
+            "no fingerprint for {:?} -- the archive key would carry no compiler",
+            p
+        );
+
+        // Обратная сторона: несуществующее имя обязано остаться БЕЗ отпечатка,
+        // иначе ключ принял бы выдумку за измерение.
+        let bogus = super::resolve_cc_absolute("nova-no-such-compiler-1135");
+        assert!(super::rt_archive_compiler_fingerprint(&bogus).is_none());
+    }
+
     #[cfg(unix)]
     #[test]
     fn signal_note_names_the_signal() {
