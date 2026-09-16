@@ -38500,22 +38500,55 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         self.line("}");
                         return Ok(result_tmp);
                     }
-                    if matches!(&right.kind, ExprKind::Match { .. }) {
-                        let result_tmp = self.fresh_tmp_named("coalesce");
-                        self.line(&format!("{} {};", payload_c, result_tmp));
-                        self.line(&format!("if ({}) {{", some_check));
-                        self.indent += 1;
-                        self.line(&format!("{} = {}.value;", result_tmp, opt_tmp));
-                        self.indent -= 1;
-                        self.line("} else {");
-                        self.indent += 1;
-                        let r = self.emit_expr_with_target_type(right, &payload_c)?;
-                        self.line(&format!("{} = {};", result_tmp, r));
-                        self.indent -= 1;
-                        self.line("}");
+                    // Реестр 221.1 №1147 (2026-09-17): условие входа в ЛЕНИВЫЙ путь
+                    // спрашивает СВОЙСТВО эмиссии, а не ИМЯ узла.
+                    //
+                    // Прежняя редакция (фикс №402) писала здесь
+                    // `matches!(&right.kind, ExprKind::Match { .. })` и обещала в
+                    // комментарии, что match — «единственная форма, которая строит
+                    // statement-уровневый C». Обещание было неверным УЖЕ ТОГДА:
+                    // `callnorm` переписывает вызов с умолчанием параметра в
+                    // `ExprKind::Block` (двухфазный Block, D102), а Block — вторая
+                    // такая форма, и появилась она РАНЬШЕ фикса №402. Замер
+                    // 2026-09-17: в теле `emit_expr_inner` веток, зовущих
+                    // `self.line(`, — 27, а условие знало ОДНУ. Разрыв не в одну
+                    // форму, а в двадцать шесть, поэтому перечень имён здесь
+                    // заменён вопросом к самой эмиссии.
+                    //
+                    // КАК СПРАШИВАЕМ, и почему именно так. Эмитировать «на пробу» с
+                    // откатом нельзя: у эмиссии есть побочные эффекты (счётчики
+                    // временных, буферы типов), и откат `out` их не вернёт. Поэтому
+                    // правая ветка эмитится СРАЗУ ВНУТРЬ ленивого `else`, а снимок
+                    // длины `out` нужен лишь чтобы понять, НАДО ЛИ было её туда
+                    // класть: если поток не вырос, значит ветка — чистое выражение,
+                    // и прежний тернарный путь даёт байт-в-байт тот же C.
+                    // Идиома снимка `self.out.len()` — своя же, этого файла (см.
+                    // `region_start` и detach-hoist).
+                    let result_tmp = self.fresh_tmp_named("coalesce");
+                    let decl_at = self.out.len();
+                    self.line(&format!("{} {};", payload_c, result_tmp));
+                    self.line(&format!("if ({}) {{", some_check));
+                    self.indent += 1;
+                    self.line(&format!("{} = {}.value;", result_tmp, opt_tmp));
+                    self.indent -= 1;
+                    self.line("} else {");
+                    self.indent += 1;
+                    let before_right = self.out.len();
+                    let r = self.emit_expr_with_target_type(right, &payload_c)?;
+                    let right_built_statements = self.out.len() > before_right;
+                    self.line(&format!("{} = {};", result_tmp, r));
+                    self.indent -= 1;
+                    self.line("}");
+                    if right_built_statements {
                         return Ok(result_tmp);
                     }
-                    let r = self.emit_expr_with_target_type(right, &payload_c)?;
+                    // Ветка оказалась чистым выражением: снимаем весь построенный
+                    // `if/else` и возвращаемся на тернарный путь — прежний C
+                    // сохраняется байт-в-байт для всех форм, кроме опасных.
+                    // Снятие ЗАКОННО ровно здесь и только здесь: между `decl_at` и
+                    // этой строкой в `out` не писал никто, кроме нас самих, —
+                    // эмиссия `right` ничего не добавила, что и проверено условием.
+                    self.out.truncate(decl_at);
                     Ok(format!("({} ? {}.value : {})", some_check, opt_tmp, r))
                 } else if Self::is_result_like(&left_ty) {
                     // D86: `Result ?? fb` — `Ok(v)` → `v`, `Err(_)` → `fb` (ошибка отброшена).

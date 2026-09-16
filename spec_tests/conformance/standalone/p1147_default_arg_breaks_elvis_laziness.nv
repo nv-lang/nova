@@ -21,7 +21,7 @@ fn die_default(msg str, code int = 2) -> never => panic("${msg}/${code}")
 
 fn die_plain(msg str) -> never => panic(msg)
 
-fn maybe(n int) -> Option[int] => if n > 0 { Option.Some(n) } else { Option.None }
+fn maybe(n int) -> Option[int] => if n > 0 { Some(n) } else { None }
 
 // Значение ЕСТЬ (7 > 0) — запасная ветка выполняться не должна ни в одной форме.
 fn strict_plain(n int) -> int => maybe(n) ?? die_plain("not positive")
