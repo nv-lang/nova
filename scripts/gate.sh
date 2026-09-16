@@ -128,12 +128,9 @@ echo "gate :: дерево $GATE_TREE, коммит $GATE_HEAD, ветка $GATE
 # протухает молча — ровно так протух профиль 2026-08-21 (275 Ф.10).
 GATE_WALL_START=$(date "+%H:%M:%S")
 _GB="$ROOT/scripts/guards/gate-budget.baseline"
-GATE_EXPECT=$(grep -E "^$NOVA_GATE_TIER[[:space:]]+[0-9]+" "$_GB" 2>/dev/null | head -1 | awk '{print $2}')
-if [ -n "$GATE_EXPECT" ]; then
-    echo "gate :: старт $GATE_WALL_START (местное), ярус $NOVA_GATE_TIER, ожидаемо ~$((GATE_EXPECT / 60)) мин (${GATE_EXPECT}с, из gate-budget.baseline)"
-else
-    echo "gate :: старт $GATE_WALL_START (местное), ярус $NOVA_GATE_TIER, ожидаемой длительности для яруса в базе НЕТ"
-fi
+echo "gate :: старт $GATE_WALL_START (местное), ярус $NOVA_GATE_TIER"
+# Сколько ждать — печатается НИЖЕ, после расчёта областей: до него режим
+# неизвестен, а цена яруса от режима зависит вдесятеро (275 Ф.11).
 
 # СУХОЙ ПРОГОН — печатаются заголовки шагов, не исполняется ничего.
 # Заведён как ДОКАЗАТЕЛЬСТВО того, что умолчание не поехало: список шагов до
@@ -548,6 +545,22 @@ export NOVA_CAL_FACTOR
 # 275 Ф.10: области считаются ОДИН раз, до первого шага, и печатаются —
 # пропуск обязан быть видимым, иначе он неотличим от зелёного прогона.
 gate_compute_areas
+# 275 Ф.11: РЕЖИМ выбирается здесь, потому что здесь впервые известно, что
+# задето. `rebuild` — когда гейт гонит всё либо задета область `compiler`:
+# тогда пересобирается cargo и включаются ВСЕ поведенческие шаги. Замер одного
+# дня: 208с против 2055с на одном дереве, разница вдесятеро.
+GATE_MODE_ROW="$NOVA_GATE_TIER"
+if [ "$GATE_AREAS_ALL" = "1" ]; then
+    GATE_MODE_ROW=rebuild
+else
+    case " $GATE_AREAS " in *" compiler "*) GATE_MODE_ROW=rebuild ;; esac
+fi
+GATE_EXPECT=$(grep -E "^$GATE_MODE_ROW[[:space:]]+[0-9]+" "$_GB" 2>/dev/null | head -1 | awk '{print $2}')
+if [ -n "$GATE_EXPECT" ]; then
+    echo "gate :: режим $GATE_MODE_ROW — не дольше ~$((GATE_EXPECT / 60)) мин (${GATE_EXPECT}с, потолок из gate-budget.baseline, не среднее)"
+else
+    echo "gate :: режим $GATE_MODE_ROW — строки в gate-budget.baseline НЕТ, длительность не судится"
+fi
 # 275 Ф.10-б: пул стартует СРАЗУ после расчёта областей — чем раньше, тем
 # больше стражей готовы к моменту, когда до них дойдёт шаг.
 gate_prefetch_start
@@ -2232,15 +2245,15 @@ fi
 # ярус — вечнозелёная дыра (класс №519).
 GATE_ELAPSED=$(( $(date +%s) - GATE_T0 ))
 if [ "$NOVA_GATE_DRYRUN" != "1" ]; then
-    BUDGET=$(grep -E "^$NOVA_GATE_TIER[[:space:]]+[0-9]+" "$ROOT/scripts/guards/gate-budget.baseline" 2>/dev/null \
+    BUDGET=$(grep -E "^${GATE_MODE_ROW:-$NOVA_GATE_TIER}[[:space:]]+[0-9]+" "$ROOT/scripts/guards/gate-budget.baseline" 2>/dev/null \
              | head -1 | awk '{print $2}')
     case "$BUDGET" in
         ''|*[!0-9]*)
-            echo "бюджет :: ярус $NOVA_GATE_TIER идёт ${GATE_ELAPSED}с; строки бюджета для него нет (не судится)" ;;
+            echo "бюджет :: ярус $NOVA_GATE_TIER (режим ${GATE_MODE_ROW:-$NOVA_GATE_TIER}) идёт ${GATE_ELAPSED}с; строки бюджета для него нет (не судится)" ;;
         *)
             CAL="$NOVA_CAL_FACTOR"
             BUDGET_LIMIT=$(( BUDGET * CAL ))
-            echo "бюджет :: ярус $NOVA_GATE_TIER — ${GATE_ELAPSED}с при пределе ${BUDGET_LIMIT}с (${BUDGET}с × калибровка ${CAL}x)"
+            echo "бюджет :: ярус $NOVA_GATE_TIER, режим ${GATE_MODE_ROW:-$NOVA_GATE_TIER} — ${GATE_ELAPSED}с при пределе ${BUDGET_LIMIT}с (${BUDGET}с × калибровка ${CAL}x)"
             [ "$GATE_ELAPSED" -le "$BUDGET_LIMIT" ] \
                 || fail "ярус $NOVA_GATE_TIER вышел за бюджет: ${GATE_ELAPSED}с > ${BUDGET_LIMIT}с (scripts/guards/gate-budget.baseline). Ярус, который перестал быть дешёвым, перестаёт зваться — это Г1..Г7 целиком. Чини цену шага, а не число в базе. НО СНАЧАЛА ПЕРЕЗАПУСТИ НА НЕЗАНЯТОЙ МАШИНЕ: это валл-клок, и соседняя сборка его удваивает. Замер 2026-08-26 на ОДНОМ дереве за один день: 147-294с, и первый же перезапуск после окончания сборок вернул 164с. Регресс шага повторяется, разброс — нет." ;;
     esac

@@ -28,8 +28,11 @@ case "$NOVA_GATE_TIER" in
     loop|push|full) ;;
     *) exit 2 ;;
 esac
+GATE_MODE_ROW="$NOVA_GATE_TIER"
+case " $GATE_AREAS " in *" compiler "*) GATE_MODE_ROW=rebuild ;; esac
 GATE_ELAPSED=$(( $(date +%s) - GATE_T0 ))
 BUDGET_FILE="$ROOT/scripts/guards/gate-budget.baseline"
+BUDGET=$(grep -E "^${GATE_MODE_ROW:-$NOVA_GATE_TIER}[[:space:]]+[0-9]+" "$BUDGET_FILE" | head -1 | awk '{print $2}')
 BUDGET_LIMIT=$(( BUDGET * CAL ))
 if [ "$GATE_ELAPSED" -gt "$BUDGET_LIMIT" ]; then
     fail "ярус $NOVA_GATE_TIER вышел за бюджет времени (конвенция гейтов, Г4)"
@@ -37,7 +40,7 @@ fi
 echo "строки бюджета для него нет (не судится)"
 SH
 }
-mk_budget() { printf '# comment\n\nloop 60\npush 900\n' > "$1"; }
+mk_budget() { printf '# comment\n\nloop 60\npush 900\nrebuild 1800\n' > "$1"; }
 
 mk_gate "$T/tree/gate.sh"
 mk_budget "$T/tree/scripts/guards/gate-budget.baseline"
@@ -88,7 +91,31 @@ mutate() { # $1 sed-выражение, $2 ожидаемая причина, $3
         grep -q "$2" "$T/em" && ok "$3 — красный" || bad "$3: красный, но не по той причине"
     fi
 }
-mutate 's|gate-budget.baseline|some-other-file|'  "не читает файл бюджета"   "гейт не читает файл бюджета"
+
+# ── режим бюджета (275 Ф.11): цена яруса двумодальна, и один потолок на две
+# моды либо разрешает дешёвой протухнуть, либо краснеет на дорогой ВСЕГДА.
+# Механизм режима — часть бюджета, и вырезать его молча так же нельзя.
+mutate 's/GATE_MODE_ROW/GATE_DEAD_ROW/g' 'GATE_MODE_ROW' 'режим вырезан из гейта'
+mutate 's/\^\${GATE_MODE_ROW:-\$NOVA_GATE_TIER}/^$NOVA_GATE_TIER/' 'по режиму' \
+    'режим выбран, а потолок читается по ярусу'
+
+# Строка режима пропала из БАЗЫ — дорогая мода осталась без потолка.
+mk_gate "$T/tree/gate.sh"
+printf '# comment\n\nloop 60\npush 900\n' > "$T/tree/scripts/guards/gate-budget.baseline"
+if python "$G" "$T/tree" "$T/tree/gate.sh" > "$T/or" 2> "$T/er"; then
+    bad 'база без строки rebuild прошла зелёным'
+else
+    grep -q 'rebuild' "$T/er" && ok 'нет строки режима в базе — красный' \
+        || bad 'красный, но не про строку режима'
+fi
+mk_budget "$T/tree/scripts/guards/gate-budget.baseline"
+
+# Откат: всё на месте — снова зелёный. Без этой половины проба доказывает
+# лишь то, что страж умеет краснеть, а не то, что он краснеет НА ДЕЛЕ.
+mk_gate "$T/tree/gate.sh"
+python "$G" "$T/tree" "$T/tree/gate.sh" > "$T/ob" 2>&1 \
+    && ok 'откат: механизм на месте — снова зелёный' \
+    || bad "откат не вернул зелёный: [$(head -n 2 "$T/ob")]"mutate 's|gate-budget.baseline|some-other-file|'  "не читает файл бюджета"   "гейт не читает файл бюджета"
 mutate 's|GATE_ELAPSED|SOMETHING_ELSE|g'          "не меряет собственное"    "гейт не меряет своё время"
 mutate 's|BUDGET \* CAL|BUDGET|'                  "не масштабируется"        "предел без калибровки машины"
 mutate 's|fail "ярус |echo "ярус |'               "не приводит к отказу"     "превышение без отказа"

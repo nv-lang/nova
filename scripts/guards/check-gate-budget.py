@@ -92,6 +92,18 @@ def main():
         missing.append("гейт не меряет собственное время (нет GATE_ELAPSED)")
     if not re.search(r"BUDGET_LIMIT=\$\(\(\s*BUDGET \* CAL\s*\)\)", text):
         missing.append("предел не масштабируется калибровкой машины (BUDGET * CAL)")
+    # 275 Ф.11: цена яруса ДВУМОДАЛЬНА (замер одного дня на одном дереве:
+    # push 208с на текстовом диффе против 2055с при тронутом компиляторе), и
+    # одним числом её судить нельзя: дешёвому режиму один потолок разрешает
+    # протухнуть вшестеро, на дорогом краснеет всегда. Механизм режима — часть
+    # бюджета, и вырезать его молча так же нельзя, как сам потолок.
+    if not re.search(r"GATE_MODE_ROW", text):
+        missing.append("режим бюджета вырезан (нет GATE_MODE_ROW): один потолок на две моды")
+    elif not re.search(r"GATE_MODE_ROW\}?:-\$NOVA_GATE_TIER\}?\[\[:space:\]\]", text) \
+            and not re.search(r"\^\$\{GATE_MODE_ROW", text):
+        missing.append("потолок читается по ЯРУСУ, а не по режиму — режим выбран и не применён")
+    if "rebuild" not in rows:
+        missing.append("в базе нет строки режима `rebuild`: дорогая мода осталась без потолка")
     if not re.search(r'fail "ярус \$NOVA_GATE_TIER вышел за бюджет', text):
         missing.append("превышение бюджета не приводит к отказу (нет вызова fail)")
     if missing:
