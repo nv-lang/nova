@@ -148,7 +148,7 @@ fn Checker mut @type_destructure_bind(st Node) -> () {
         bound += 1
     }
     if bound != @ctx.tys.arg_count(pt) {
-        @report_first_leaf_of(kids, DESTR_ARITY_MSG)
+        @reject_first_leaf_of(kids, DESTR_ARITY_MSG)
     } else {
         // Every component found its name; the initializer's record already
         // carries the pair's type for the emitter.
