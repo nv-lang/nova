@@ -2074,7 +2074,12 @@ pub fn compile_c_to_exe(
         let reason = if out.status.is_none() {
             format!("compiler timed out after {:.1}s", timeout.as_secs_f64())
         } else {
-            format!("compiler error:\n{}", detail.trim())
+            // 975: назвать СИГНАЛ, а не только «ошибка компилятора». На
+            // двухъядерном раннере CI компилятор и линкер убивает OOM-killer,
+            // и тогда `detail` пуст, а сообщение молчит о причине. Приём тот
+            // же, что на уже починенном пути запуска (~4108).
+            let sig = out.status.map(|st| signal_note(&st)).unwrap_or_default();
+            format!("compiler error{}:\n{}", sig, detail.trim())
         };
         return Err(anyhow!("{}", reason));
     }
@@ -2418,7 +2423,9 @@ pub fn compile_multi_tu_to_exe(
                 let reason = if out.status.is_none() {
                     format!("compiler timed out after {:.1}s", timeout.as_secs_f64())
                 } else {
-                    format!("compiler error ({}):\n{}", src.display(), detail.trim())
+                    // 975: та же площадка на пути многофайловой сборки.
+                    let sig = out.status.map(|st| signal_note(&st)).unwrap_or_default();
+                    format!("compiler error ({}){}:\n{}", src.display(), sig, detail.trim())
                 };
                 return Err(anyhow!("{}", reason));
             }
@@ -2501,7 +2508,11 @@ pub fn compile_multi_tu_to_exe(
         let reason = if link_out.status.is_none() {
             format!("linker timed out after {:.1}s", timeout.as_secs_f64())
         } else {
-            format!("linker error:\n{}", detail.trim())
+            // 975: linker killed by a signal (OOM on the two-core CI runner) left
+            // `detail` empty and this message silent about the cause -- same shape
+            // as the run path fixed earlier.
+            let sig = link_out.status.map(|st| signal_note(&st)).unwrap_or_default();
+            format!("linker error{}:\n{}", sig, detail.trim())
         };
         return Err(anyhow!("{}", reason));
     }
@@ -8449,6 +8460,39 @@ fn civil_from_days(z: i64) -> (i32, u32, u32) {
 
 #[cfg(test)]
 mod tests {
+
+    // ---- Registry 221.1 #975: the runner must NAME the signal ----------
+    //
+    // The Unix arm of `signal_note` is `cfg`-excluded on the machine this is
+    // written on, so it cannot be typechecked here, let alone run. The first
+    // fix on this row was accepted on the strength of ONE CI log line saying
+    // `убит сигналом SIGSEGV(11)` -- evidence that arrives hours later and only
+    // if something happens to crash. This test moves the proof to the build: on
+    // any Unix runner it either passes or the suite goes red, and it needs no
+    // crash to happen.
+    //
+    // `from_raw(11)` is a wait-status whose low seven bits are the signal, which
+    // is what `ExitStatus::signal()` reads.
+    #[cfg(unix)]
+    #[test]
+    fn signal_note_names_the_signal() {
+        use std::os::unix::process::ExitStatusExt;
+        use std::process::ExitStatus;
+
+        let segv = super::signal_note(&ExitStatus::from_raw(11));
+        assert!(segv.contains("SIGSEGV"), "SIGSEGV not named: {:?}", segv);
+        assert!(segv.contains("11"), "signal number missing: {:?}", segv);
+
+        // A signal outside our table must still be reported BY NUMBER rather
+        // than silently dropped -- that silence is the defect itself.
+        let odd = super::signal_note(&ExitStatus::from_raw(31));
+        assert!(odd.contains("31"), "unnamed signal lost its number: {:?}", odd);
+
+        // And a normal exit must add nothing, or every green run would carry a
+        // note about a signal that never arrived.
+        let ok = super::signal_note(&ExitStatus::from_raw(0));
+        assert!(ok.is_empty(), "note added to a signal-free exit: {:?}", ok);
+    }
 
     // ---- Реестр 221.1 №990: отчётный путь не теряет улику -------------
     //
