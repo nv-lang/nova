@@ -632,6 +632,10 @@ step loop "границы новой волны плана («Не делаем�
 guard "$ROOT/scripts/guards/check-plan-wave-boundaries.py" "$ROOT" \
     || fail "волна с критериями приёмки, но без границ и открытых вопросов"
 
+step loop "слэш-команда несёт правила, а не сегодняшнее состояние"
+guard "$ROOT/scripts/guards/check-commands-no-state.py" "$ROOT" \
+    || fail "в команде записано состояние: оно протухнет, и команда станет вторым домом статуса"
+
 step loop "план, чей срок держался на теге оракула, получил вердикт по лестнице версий"
 guard "$ROOT/scripts/guards/check-plans-tag-bound.py" "$ROOT" \
     || fail "план ссылается на тег, которого не будет, и не сказал: ждёт 1.0 / исключение / летопись"
