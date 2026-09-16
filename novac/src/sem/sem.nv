@@ -322,6 +322,12 @@ export fn decl_of_ty(ctx Ctx, t TyId) -> TypeDef
 /// widen the graph for one subscript.
 export fn decl_index_of_ty(ctx Ctx, t TyId) -> int {
     if !is_ty(t) { return -1 }
+    // THE PROMISE OF THIS DOOR IS TOTALITY -- "-1 when it names none" -- and until
+    // 2026-09-17 it was false: a PRIMITIVE took the ice inside `decl_head_of`
+    // instead of the -1 this line now returns. Registry #1145: the door that ices
+    // by design is right to ice, and a door that promises an answer for every type
+    // has to ASK before it reads.
+    if !ctx.tys.names_a_decl(t) { return -1 }
     ro d = ctx.tys.decl_head_of(t)
     if !is_decl(d) { return -1 }
     if raw_decl(d) >= ctx.types.len() { return -1 }
