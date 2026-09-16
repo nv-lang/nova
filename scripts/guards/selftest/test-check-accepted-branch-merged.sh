@@ -96,6 +96,54 @@ else
     bad "метка из чужой строки погасила требование (rc=$rc): $out"
 fi
 
+# 8. ХЭШ-ПРЕДОК: работа в main, а ВЕТКА ЖИВА и ушла вперёд — это НОРМА.
+#    Ровно случай №1143: прежняя мера краснела на самом факте того, что окно
+#    продолжает работать. Живое окно — не долг.
+setup 'PLACEHOLDER'
+git -C "$TMP" checkout -q -b p-live274 2>/dev/null
+printf 'a\n' > "$TMP/a.txt"
+git -C "$TMP" add a.txt 2>/dev/null
+git -C "$TMP" -c user.name=t -c user.email=t@t commit -q -m accepted 2>/dev/null
+ACC=$(git -C "$TMP" rev-parse --short HEAD)
+git -C "$TMP" checkout -q main 2>/dev/null
+git -C "$TMP" merge -q --no-edit p-live274 2>/dev/null
+git -C "$TMP" checkout -q p-live274 2>/dev/null
+printf 'b\n' > "$TMP/b.txt"
+git -C "$TMP" add b.txt 2>/dev/null
+git -C "$TMP" -c user.name=t -c user.email=t@t commit -q -m 'work goes on' 2>/dev/null
+git -C "$TMP" checkout -q main 2>/dev/null
+printf '%s\n' "| 1 | K1 | ZAKRYTO (okno p-live274) [MERGED-AS: $ACC]. |" \
+    > "$TMP/docs/plans/221.1-bug-sweep.md"
+out=$(bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 0 ]; then ok "хэш-предок: живая ветка впереди долгом не считается"; else bad "ложный отказ на живой ветке с хэшем: $out"; fi
+
+# 9. ХЭШ НЕ ПРЕДОК main — ОТКАЗ. Вторая половина пробы: без неё случай 8
+#    доказывал бы только то, что страж молчит.
+setup 'PLACEHOLDER'
+git -C "$TMP" checkout -q -b p-notin 2>/dev/null
+printf 'c\n' > "$TMP/c.txt"
+git -C "$TMP" add c.txt 2>/dev/null
+git -C "$TMP" -c user.name=t -c user.email=t@t commit -q -m 'never merged' 2>/dev/null
+LOST=$(git -C "$TMP" rev-parse --short HEAD)
+git -C "$TMP" checkout -q main 2>/dev/null
+printf '%s\n' "| 1 | K1 | ZAKRYTO (okno p-notin) [MERGED-AS: $LOST]. |" \
+    > "$TMP/docs/plans/221.1-bug-sweep.md"
+out=$(bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q "$LOST"; then
+    ok "хэш не предок main — отказ, и коммит назван"
+else
+    bad "не поймал хэш вне main (rc=$rc): $out"
+fi
+
+# 10. ХЭША НЕТ В ДЕРЕВЕ — тоже отказ, а не тихое прощение: запись ссылается
+#     на то, чего не существует, и это хуже незакрытой ветки.
+setup '| 1 | K1 | ZAKRYTO (okno p-ghost) [MERGED-AS: deadbee]. |'
+out=$(bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q "deadbee"; then
+    ok "несуществующий коммит в приёмке — отказ"
+else
+    bad "несуществующий коммит прощён (rc=$rc): $out"
+fi
 if [ "$FAILED" -eq 0 ]; then echo "селфтест check-accepted-branch-merged: $CASES/$CASES ok"; exit 0; fi
 echo "селфтест check-accepted-branch-merged: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1
