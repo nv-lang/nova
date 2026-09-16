@@ -1,3 +1,7 @@
+# 2026-09-16 (integrator, okno nova-57): rows 1094 -> 1095, max 1142 -> 1143.
+#   Zavedena No1143 -- strazh 'prinyataya rabota vlita' merit IMYA vetki, a ne
+#   sud'bu raboty, i krasneet vsyakij raz, kogda okno prosto rabotaet.
+#   Najdeno oknom Kariny, podtverzhdeno chteniem strazha. Dyr ne pribavilos'.
 # 2026-09-16 (интегратор, окно nova-83): rows 1090 -> 1091, max 1138 -> 1139.
 #   Заведена №1139 — гейт компилирует nova_codegen трижды за прогон (три
 #   target-каталога, три разных [profile.release]). Дыр не прибавилось.
@@ -885,8 +889,8 @@
 #   конструктор записи без объявленного поля и печатает неинициализированную память
 #   (значение разное при каждом запуске). Блокер ступени 0.2: этим компилятором
 #   собирают Карину.
-rows=1094
-max=1142
+rows=1095
+max=1143
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
