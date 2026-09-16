@@ -619,6 +619,10 @@ step loop "границы новой волны плана («Не делаем�
 guard "$ROOT/scripts/guards/check-plan-wave-boundaries.py" "$ROOT" \
     || fail "волна с критериями приёмки, но без границ и открытых вопросов"
 
+step loop "план, чей срок держался на теге оракула, получил вердикт по лестнице версий"
+guard "$ROOT/scripts/guards/check-plans-tag-bound.py" "$ROOT" \
+    || fail "план ссылается на тег, которого не будет, и не сказал: ждёт 1.0 / исключение / летопись"
+
 step loop "форма записей реестра (класс, приоритет, оговорка)"
 guard "$ROOT/scripts/guards/check-registry-entry-shape.sh" "$ROOT" || fail "запись реестра без класса/приоритета/оговорки"
 step loop "registry-closure-kept (закрытая запись не возвращается в ОТКРЫТ молча)"
