@@ -193,7 +193,14 @@ jobs:
       # They used to live in scripts/gate.sh and gated every compiler change;
       # split out on the owner's decision 2026-08-16 so the two failure
       # domains stop blocking each other.
+      # ЯРУС ЗАДАЁТСЯ ЯВНО (правка 2026-09-16). До неё `NOVAC_TIER` не
+      # задавался НИ В ОДНОМ workflow: гейт Карины всегда шёл `push`, включая
+      # ночной прогон, — то есть яруса `full` у неё на CI не существовало, и
+      # два стража за ним (мутационная проверка самотестов, цена цикла) не
+      # исполнялись ни разу. Ночью время есть: там полная плотность фаззера.
       - name: novac conventions gate (scripts/gate-novac.sh)
+        env:
+          NOVAC_TIER: ${{ github.event_name == 'schedule' && 'full' || 'push' }}
         run: bash scripts/gate-novac.sh "$(pwd)"
 
       - name: Build novac (the self-hosted compiler itself)

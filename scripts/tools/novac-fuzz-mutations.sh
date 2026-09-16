@@ -53,59 +53,28 @@ trap 'rm -rf "$T"' 2 15
 # ---- 1. generate all cases (pure file ops, no compiler) ------------------
 n=0
 srcn=0
-find "$CORPUS" -type f -name '*.nv' | sort > "$T/srcs"
-[ -s "$T/srcs" ] || { echo "novac-fuzz: в $CORPUS нет ни одного .nv" >&2; exit 2; }
-while IFS= read -r src; do
-    srcn=$((srcn+1))
-    base=$(basename "$src" .nv)-$srcn
-    size=$(wc -c < "$src")
-    [ "$size" -gt 2 ] || continue
-    off=1
-    while [ "$off" -lt "$size" ]; do
-        head -c "$off" "$src" > "$T/cases/$base-trunc-$off.nv"; n=$((n+1))
-        off=$((off+STEP))
-    done
-    off=0
-    while [ "$off" -lt "$size" ]; do
-        { head -c "$off" "$src"; printf '\001'; tail -c +$((off+2)) "$src"; } > "$T/cases/$base-corrupt-$off.nv"
-        n=$((n+1))
-        off=$((off+STEP))
-    done
-    # (c) a deleted run: the shape a truncation never makes — a HOLE with
-    # valid text on both sides, which is what a half-typed edit looks like.
-    off=1
-    while [ $((off+STEP)) -lt "$size" ]; do
-        { head -c "$off" "$src"; tail -c +$((off+STEP+1)) "$src"; } > "$T/cases/$base-hole-$off.nv"
-        n=$((n+1))
-        off=$((off+STEP))
-    done
-    # (d) two adjacent bytes swapped: keeps the length and the alphabet, so
-    # the lexer stays happy and the PARSER gets the surprise.
-    off=1
-    while [ $((off+1)) -lt "$size" ]; do
-        { head -c $((off-1)) "$src"
-          tail -c +$((off+1)) "$src" | head -c 1
-          tail -c +$off "$src" | head -c 1
-          tail -c +$((off+2)) "$src"; } > "$T/cases/$base-swap-$off.nv"
-        n=$((n+1))
-        off=$((off+STEP))
-    done
-    # (e) an unbalanced closer: the recovery paths (TERMINATORS, the junk
-    # buckets) are exactly what a stray ')' or '}' exercises, and they are
-    # the youngest code in the parser.
-    for cl in ')' '}' ']'; do
-        off=1
-        while [ "$off" -lt "$size" ]; do
-            { head -c "$off" "$src"; printf '%s' "$cl"; tail -c +$((off+1)) "$src"; } \
-                > "$T/cases/$base-closer$(printf '%s' "$cl" | od -An -tx1 | tr -d ' ')-$off.nv"
-            n=$((n+1))
-            off=$((off+STEP*3))
-        done
-    done
-    cat "$src" "$src" > "$T/cases/$base-doubled.nv"; n=$((n+1))
-    half=$((size/2))
-    { head -c "$half" "$src"; head -c "$half" "$src"; } > "$T/cases/$base-halves.nv"; n=$((n+1))
-done < "$T/srcs"
+# ГЕНЕРАЦИЯ — ОДИН ПРОЦЕСС, А НЕ ДВА НА КАЖДЫЙ ФАЙЛ (правка 2026-09-16).
+#
+# Здесь стояли шелл-циклы: каждая мутация писалась парой `head`/`tail`, а у
+# swap — четырьмя. Замер: шаг 400, корпус examples/basics — 724 файла за
+# 165 560 мс; тот же набор питоновским генератором — 861 мс. Сто девяносто
+# два раза, и это ВСЯ цена стража: на шаге 160 он шёл 901 с и был снят
+# пределом, а на CI съедал 37 из 45 минут job'а (реестр №1138).
+#
+# ПОКРЫТИЕ НЕ ТРОНУТО: виды мутаций, смещения и ИМЕНА файлов повторены один
+# в один, содержимое совпадает побайтно — проба сравнивает наборы, а не
+# намерения. Дешевеет ФОРМА, а не предмет.
+# srcn нужен ВЕРДИКТУ («n мутаций, srcn файлов корпуса»), а цикл, который его
+# считал, снят вместе с генерацией. Без этой строки вердикт печатал бы ноль —
+# то есть соврал бы о том, что мерил.
+srcn=$(find "$CORPUS" -type f -name '*.nv' | wc -l | tr -d " ")
+[ "$srcn" -gt 0 ] || { echo "novac-fuzz: в $CORPUS нет ни одного .nv" >&2; exit 2; }
+GEN="$ROOT/scripts/tools/novac-fuzz-gen.py"
+[ -f "$GEN" ] || { echo "novac-fuzz: нет генератора $GEN" >&2; exit 2; }
+n=$(python "$GEN" "$CORPUS" "$T/cases" "$STEP") || {
+    echo "novac-fuzz: генератор мутаций отказал" >&2; exit 2; }
+case "$n" in ""|*[!0-9]*) echo "novac-fuzz: генератор не назвал число файлов" >&2; exit 2 ;; esac
+[ "$n" -gt 0 ] || { echo "novac-fuzz: генератор не создал ни одного случая" >&2; exit 2; }
 ls "$T/cases" | sort > "$T/list"
 
 # ---- 2. batched check; a panic/hang/crash of a process is red ------------
@@ -161,23 +130,59 @@ if [ -z "$ORACLE" ]; then
 fi
 
 judge_emit() {   # $1 = list file; 0 = zelyono, 1 = chto-to umerlo pri emissii
+    # ПАРАЛЛЕЛЬНО, А НЕ В ОЧЕРЕДЬ (правка 2026-09-16, реестр №1138).
+    #
+    # Здесь стоял `while read` с ОДНИМ вызовом `novac emit` на файл: на шаге
+    # 160 корпус даёт 1372 случая, то есть 1372 запуска процесса ПОДРЯД, при
+    # том что соседний `judge` зовёт `novac check` пачками по 150. Замер:
+    # после починки генерации страж всё равно упирался в 900с, и остаток —
+    # целиком здесь.
+    #
+    # ПОКРЫТИЕ НЕ ТРОНУТО: те же случаи, тот же предел 60с на каждый, то же
+    # различение снятия (124) и паники. Меняется только то, что независимые
+    # запуски идут восемью потоками вместо одного. Случаи независимы по
+    # построению — каждый это отдельный файл и отдельный процесс.
     emit_red=""
+    _ej="${NOVAC_FUZZ_JOBS:-8}"
+    _ed="$T/emit"
+    rm -rf "$_ed"; mkdir -p "$_ed"
+    _ei=0
+    _erun=0
     while IFS= read -r case_nv; do
         [ -n "$case_nv" ] || continue
-        ( cd "$T/cases" && NOVA_STD_PATH="$ROOT/std/src" timeout 60 \
-            "$NOVAC" emit "$case_nv" ) > /dev/null 2> "$T/eerr"
-        erc=$?
-        # ТРЕТЬЕ СЛОВО У ПРЕДЕЛА (Г16): 124 — это СНЯТИЕ ПО ВРЕМЕНИ, а не отказ
-        # и не паника. Для фаззера зависание — тоже находка (приёмка Э1 говорит
-        # «не падает и не виснет»), но НАЗЫВАТЬСЯ оно обязано своим именем:
-        # иначе чинящий пойдёт искать панику там, где процесс просто не успел.
-        if [ "$erc" -eq 124 ]; then
+        _ei=$((_ei + 1))
+        printf "%s" "$case_nv" > "$_ed/$_ei.name"
+        (
+            cd "$T/cases" && NOVA_STD_PATH="$ROOT/std/src" timeout 60 \
+                "$NOVAC" emit "$case_nv" > /dev/null 2> "$_ed/$_ei.err"
+            echo $? > "$_ed/$_ei.rc"
+        ) &
+        _erun=$((_erun + 1))
+        if [ "$_erun" -ge "$_ej" ]; then wait; _erun=0; fi
+    done < "$1"
+    wait
+    _ek=1
+    while [ "$_ek" -le "$_ei" ]; do
+        read -r case_nv < "$_ed/$_ek.name"
+        erc=""
+        [ -f "$_ed/$_ek.rc" ] && read -r erc < "$_ed/$_ek.rc"
+        # ТРЕТЬЕ СЛОВО У ПРЕДЕЛА (Г16): 124 — СНЯТИЕ ПО ВРЕМЕНИ, а не отказ и
+        # не паника. Для фаззера зависание — тоже находка (приёмка Э1 говорит
+        # «не падает и не виснет»), но НАЗЫВАТЬСЯ обязано своим именем: иначе
+        # чинящий пойдёт искать панику там, где процесс просто не успел.
+        # Пустой код — тоже не вердикт: процесс не оставил ответа.
+        if [ -z "$erc" ]; then
+            echo "novac-fuzz: EMIT не оставил кода возврата на $case_nv: вердикта нет" >&2
+            emit_red="$emit_red $case_nv"
+        elif [ "$erc" -eq 124 ]; then
             echo "novac-fuzz: EMIT СНЯТ ПРЕДЕЛОМ 60с на $case_nv: вердикта нет, это зависание" >&2
             emit_red="$emit_red $case_nv"
-        elif novac_is_panic_rc "$erc" || grep -qi "panic" "$T/eerr"; then
+        elif novac_is_panic_rc "$erc" || grep -qi "panic" "$_ed/$_ek.err"; then
             emit_red="$emit_red $case_nv"
         fi
-    done < "$1"
+        _ek=$((_ek + 1))
+    done
+    rm -rf "$_ed"
     [ -z "$emit_red" ]
 }
 
