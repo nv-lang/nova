@@ -173,7 +173,7 @@ fn Checker mut @lit_fits_or_refuse(e Node, t TyId) -> bool {
     ro neg = lk_kids.len() > 1
     if int_text_fits_row(leaf_text(tok), r, neg) { return true }
     match tok {
-        Leaf(lt) => @refuse(lt, "this literal does not fit `${r.name}` (D227 rule 3, E_LIT_OUT_OF_RANGE): the type holds at most ${int_max_text(r.bits, r.signed, neg)} on this side of zero")
+        Leaf(lt) => @reject(lt, "this literal does not fit `${r.name}` (D227 rule 3, E_LIT_OUT_OF_RANGE): the type holds at most ${int_max_text(r.bits, r.signed, neg)} on this side of zero")
         Branch { .. } => {}
     }
     false

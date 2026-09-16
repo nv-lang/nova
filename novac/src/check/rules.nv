@@ -245,7 +245,7 @@ fn Checker mut @report_if_default_order(kids []Node) -> () {
             seen_default = true
         } else {
             if seen_default {
-                @report_first_leaf_of(pk, DEFAULT_ORDER_MSG)
+                @reject_first_leaf_of(pk, DEFAULT_ORDER_MSG)
                 return
             } else {
                 // Still inside the run of required parameters.

@@ -73,7 +73,7 @@ fn Checker mut @refuse_equality_rhs(kids []Node) -> () {
 /// call form the subset synthesises).
 fn Checker mut @refuse_equality_overloaded(kids []Node, key []ArgSpec) -> () {
     if key_fully_typed(key) {
-        @report_first_leaf_of(kids, "`==` on `str` fits more than one `${EQUAL_METHOD}` method and none is more specific -- an ambiguity is refused, never chosen (D84)")
+        @reject_first_leaf_of(kids, "`==` on `str` fits more than one `${EQUAL_METHOD}` method and none is more specific -- an ambiguity is refused, never chosen (D84)")
     } else {
         @report_first_leaf_of(kids, "outside the subset: an operand's type is not decided yet, so the `${EQUAL_METHOD}` overloads are not narrowed")
     }
