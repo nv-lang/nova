@@ -859,8 +859,11 @@
 # 2026-09-16 (integrator, stroka 1134): kesh libuv beryotsya po faktu
 #   sushchestvovaniya fayla, bez kljucha sredy -- pervyy sobravshiy Linux navyazyvaet
 #   svoy ABI ostal'nym. Nayedeno svoey zhe tsenoy pri popytke vosproizvesti 968.
-rows=1086
-max=1134
+# 2026-09-16 (integrator, stroka 1135): sosed-obrazets okazalsya s toy zhe dyroy na
+#   Unix -- otpechatok kompilyatora v kljuche rantaym-arkhiva PUST, potomu chto
+#   fingerprint beryotsya s GOLOGO imeni `cc`. Nayedeno pri pochinke 1134.
+rows=1087
+max=1135
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:

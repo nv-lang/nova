@@ -5340,7 +5340,9 @@ pub fn detect_or_build_libuv(rt_dir: &Path, repo_root: &Path,
         eprintln!("nova: FATAL eventloop.c not found at {}", eventloop_src.display());
         std::process::exit(1);
     }
-    let cache_dir = repo_root.join("target").join("libuv-cache");
+    // #1134: the bucket is keyed by the environment that produced the objects.
+    // Without it the first Linux to build wins forever -- see `libuv_cache_key`.
+    let cache_dir = repo_root.join("target").join("libuv-cache").join(libuv_cache_key());
     let lib_name = if cfg!(target_os = "windows") { "libuv.lib" } else { "libuv.a" };
     let lib_file = cache_dir.join(lib_name);
     if lib_file.is_file() {
@@ -6301,6 +6303,68 @@ fn rt_archive_memo_key(
 /// `PATH` does NOT have `cl.exe` unless vcvars was called for it) for
 /// `cl.exe`; falls back to the literal `cl.exe` (unresolvable → fingerprint
 /// becomes `None`, a safe degrade — see doc above). On Unix: `$CC` or `cc`.
+/// Registry 221.1 #1134: resolve a compiler NAME to an absolute file by walking
+/// PATH, so a fingerprint can actually be taken of it.
+///
+/// Needed because the Unix side of `resolve_archive_cc_path` returns the bare
+/// name `cc` when `$CC` is unset, and `std::fs::metadata("cc")` resolves against
+/// the CWD and fails -- so `rt_archive_compiler_fingerprint` quietly yields `None`
+/// there and the archive key carries NO compiler dimension on Unix at all. That
+/// blind spot is its own finding; this helper is what a fix for it would also use.
+fn resolve_cc_absolute(name: &str) -> PathBuf {
+    let p = PathBuf::from(name);
+    if p.is_absolute() || name.contains('/') || name.contains('\\') {
+        return p;
+    }
+    if let Some(path_var) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            let cand = dir.join(name);
+            if cand.is_file() {
+                return cand;
+            }
+        }
+    }
+    p
+}
+
+/// Registry 221.1 #1134: bucket key for the libuv archive.
+///
+/// WHY IT EXISTS. The cache used to be a single `target/libuv-cache/libuv.a`
+/// taken on the strength of `if lib_file.is_file()` -- no key of any kind. The
+/// first Linux to build it imposed its ABI on every later one: measured
+/// 2026-09-16, a WSL Ubuntu 24.04 build (glibc 2.38+) was reused by a Debian 12
+/// container and produced `undefined reference to '__isoc23_strtol'` in libuv's
+/// own `threadpool.c`/`thread.c`/`linux.c`. The failure reads as a broken Nova
+/// compiler and is nothing of the sort.
+///
+/// WHAT IS FOLDED IN: os, arch, and the COMPILER -- its resolved absolute path
+/// plus size and mtime, the same fingerprint shape the runtime archive uses.
+///
+/// WHAT IS NOT, named rather than hidden: the same compiler binary against a
+/// different libc is not distinguished. Reading a libc version portably costs a
+/// subprocess on every run; the measured case (two distros) differs in the
+/// compiler binary too, so this key catches it.
+fn libuv_cache_key() -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    "nova-libuv-v1".hash(&mut h);
+    std::env::consts::OS.hash(&mut h);
+    std::env::consts::ARCH.hash(&mut h);
+    let cc_name = if cfg!(target_os = "windows") {
+        std::env::var("CC").unwrap_or_else(|_| "cl.exe".to_string())
+    } else {
+        std::env::var("CC").unwrap_or_else(|_| "cc".to_string())
+    };
+    let cc_path = resolve_cc_absolute(&cc_name);
+    cc_path.to_string_lossy().hash(&mut h);
+    if let Some((len, nanos)) = rt_archive_compiler_fingerprint(&cc_path) {
+        len.hash(&mut h);
+        nanos.hash(&mut h);
+    }
+    format!("{:016x}", h.finish())
+}
+
 fn resolve_archive_cc_path(tc: &Toolchain) -> PathBuf {
     #[cfg(target_os = "windows")]
     {
