@@ -10,7 +10,7 @@
 module neg.m_smtmc_effectful_method_neg
 
 type MSmtmcNegEff effect {
-    tick() -> int
+    fn tick() -> int
 }
 
 type MSmtmcNegBox(v int = 0)

@@ -8,7 +8,7 @@
 
 module neg.plan174_6_neg_callback_effect
 type Logger effect {
-    log(msg str) -> ()
+    fn log(msg str) -> ()
 }
 
 fn effectful_cb(x i64) Logger -> i64 {

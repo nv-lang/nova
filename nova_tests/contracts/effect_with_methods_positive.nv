@@ -3,7 +3,7 @@
 module nova_tests.contracts
 
 type Logger2 effect {
-    log(msg str)
+    fn log(msg str)
 }
 
 fn use_logger() -> int

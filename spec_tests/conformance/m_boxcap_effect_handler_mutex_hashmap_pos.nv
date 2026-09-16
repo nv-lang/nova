@@ -72,8 +72,8 @@ fn M_boxcap_Registry @m_boxcap_value(m_boxcap_name str) -> int {
 }
 
 type M_boxcap_Metrics effect {
-    counter(name str) -> ()
-    value(name str) -> int
+    fn counter(name str) -> ()
+    fn value(name str) -> int
 }
 
 // `m_boxcap_reg` is a MUT LOCAL declared INSIDE the escaping factory (not

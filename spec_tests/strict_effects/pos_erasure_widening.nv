@@ -7,7 +7,7 @@
 module strict_effects.pos_erasure_widening
 
 type Counter effect {
-    next() -> int
+    fn next() -> int
 }
 
 fn tick() Counter -> int =>

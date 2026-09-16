@@ -2,25 +2,25 @@
 // Measures effect-row inference + handler-stack codegen.
 
 type Logger effect {
-    log(msg str) -> ()
+    fn log(msg str) -> ()
 }
 
 type Counter effect {
-    incr() -> ()
-    get() -> int
+    fn incr() -> ()
+    fn get() -> int
 }
 
 type Cache[K, V] effect {
-    fetch(key K) -> Option[V]
-    store(key K, value V) -> ()
+    fn fetch(key K) -> Option[V]
+    fn store(key K, value V) -> ()
 }
 
 type Random effect {
-    next_int() -> int
+    fn next_int() -> int
 }
 
 type Audit effect {
-    record(event str) -> ()
+    fn record(event str) -> ()
 }
 
 fn process(x int) Logger Counter -> int {

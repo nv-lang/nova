@@ -37,31 +37,31 @@ module std.os
 #stable(since = "0.1")
 export type Os effect {
     // Program arguments.
-    arg_count() -> int
-    arg_at(i int) -> str
+    fn arg_count() -> int
+    fn arg_at(i int) -> str
     // Environment (keys/values are raw bytes; the handler NUL-terminates).
-    env_get(key []u8) -> Option[str]
-    env_has(key []u8) -> bool
-    env_set(key []u8, val []u8) -> int
-    env_remove(key []u8) -> int
-    env_len() -> int
-    env_key_at(i int) -> str
-    env_val_at(i int) -> str
+    fn env_get(key []u8) -> Option[str]
+    fn env_has(key []u8) -> bool
+    fn env_set(key []u8, val []u8) -> int
+    fn env_remove(key []u8) -> int
+    fn env_len() -> int
+    fn env_key_at(i int) -> str
+    fn env_val_at(i int) -> str
     // Working directory.
-    cwd() -> str
-    set_cwd(path []u8) -> int
+    fn cwd() -> str
+    fn set_cwd(path []u8) -> int
     // Well-known directories.
-    temp_dir() -> str
-    home_dir() -> str
+    fn temp_dir() -> str
+    fn home_dir() -> str
     // Process.
-    exit(code int) -> int
-    pid() -> int
-    hostname() -> str
+    fn exit(code int) -> int
+    fn pid() -> int
+    fn hostname() -> str
     // Spawn a process, wait for it to exit, report (rc, exit_code) (Plan 265
     // Ф.1, D453). Byte-first (program/argv/env cross as NUL-joined blobs, not
     // []str — same convention as env keys/values above); rich Command/
     // ExitStatus are built in os.nv, OUTSIDE this boundary. See D453 for the
     // full (rc, exit_code) contract (0=ran; PROCESS_CANCELLED=scope
     // cancelled/timed out; <0=failed to spawn, -errno-compatible).
-    process_run(program []u8, argv []u8, argc int, env []u8, envc int, use_env bool, cwd []u8) -> (int, int)
+    fn process_run(program []u8, argv []u8, argc int, env []u8, envc int, use_env bool, cwd []u8) -> (int, int)
 }

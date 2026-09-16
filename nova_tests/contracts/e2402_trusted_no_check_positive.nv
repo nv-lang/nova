@@ -4,7 +4,7 @@
 module nova_tests.contracts
 
 type Log effect {
-    Write(msg int)
+    fn Write(msg int)
     #pure last() -> int
     axiom after_write(v) => post(Write(v))(last()) == v
 }

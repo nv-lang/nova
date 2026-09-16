@@ -143,8 +143,8 @@ export fn sql(parts []str, args []SqlValue) -> Sql =>
 // Design left to plan 268 (owner decision recorded in plan 273 §4-тер,
 // "Решения владельца"); NOT designed here.
 export type Db effect {
-    query(q Sql) Fail[DbError] -> []DbRow
-    exec(q Sql) Fail[DbError]  -> int
+    fn query(q Sql) Fail[DbError] -> []DbRow
+    fn exec(q Sql) Fail[DbError]  -> int
 }
 
 /// Errors when running DB operations.

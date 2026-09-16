@@ -5,7 +5,7 @@ module tour.effects_tour
 // call site, not baked into the function — think "testable side-channel",
 // checked by the compiler (unlike `protocol`, which is fixed per-type).
 type Counter effect {
-    next() -> int
+    fn next() -> int
 }
 
 // `Counter` in the signature says: this function performs Counter's

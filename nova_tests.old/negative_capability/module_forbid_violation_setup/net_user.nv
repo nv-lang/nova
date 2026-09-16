@@ -4,7 +4,7 @@
 module module_forbid_violation_setup.net_user
 
 type Net effect {
-    get(url str) -> str
+    fn get(url str) -> str
 }
 
 export fn fetch_url(url str) Net -> str =>

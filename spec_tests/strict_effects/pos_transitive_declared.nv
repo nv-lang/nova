@@ -6,7 +6,7 @@
 module strict_effects.pos_transitive_declared
 
 type Counter effect {
-    next() -> int
+    fn next() -> int
 }
 
 fn tick() Counter -> int =>

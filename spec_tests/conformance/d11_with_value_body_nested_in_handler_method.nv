@@ -49,7 +49,7 @@
 module spec_tests.conformance
 
 type D11WithDb effect {
-    exec() -> int
+    fn exec() -> int
 }
 
 fn d11_leaf(tag int) -> Effect[D11WithDb] => effect D11WithDb {

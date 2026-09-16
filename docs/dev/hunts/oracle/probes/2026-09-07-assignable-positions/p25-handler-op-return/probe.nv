@@ -4,7 +4,7 @@
 module probe
 
 type Meter effect {
-    read() -> u8
+    fn read() -> u8
 }
 
 fn use_meter() Meter -> u8 => Meter.read()

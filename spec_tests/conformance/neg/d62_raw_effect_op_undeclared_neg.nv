@@ -16,7 +16,7 @@
 module neg.d62_raw_effect_op_undeclared_neg
 
 type Log1 effect {
-    info(msg str) -> ()
+    fn info(msg str) -> ()
 }
 
 // ✗ exported fn, raw `Log1.info(...)` call, but NO `Log1` in the signature

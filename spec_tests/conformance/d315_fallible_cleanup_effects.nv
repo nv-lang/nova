@@ -24,7 +24,7 @@ fn d315_block_fail_sig_declared() Fail[D315Boom] -> () {
     }
 }
 
-type D315Beep effect { ping() -> () }
+type D315Beep effect { fn ping() -> () }
 type D315BeepRes consume { id int }
 fn D315BeepRes consume @cleanup(_outcome ScopeOutcome) D315Beep -> () {
     D315Beep.ping()

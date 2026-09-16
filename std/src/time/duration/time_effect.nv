@@ -96,10 +96,10 @@ module time.duration
 /// `Duration`) — an offset, not a duration/instant.
 #stable(since = "0.1")
 export type Time effect {
-    sleep(d Duration) -> ()
-    now() -> Timestamp
-    now_monotonic() -> Monotonic
-    local_offset_sec() -> int
+    fn sleep(d Duration) -> ()
+    fn now() -> Timestamp
+    fn now_monotonic() -> Monotonic
+    fn local_offset_sec() -> int
 }
 
 // extern-примитивы живут ЗДЕСЬ вместе с эффектом. Тонкие `extern "C"`

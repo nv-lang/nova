@@ -4,7 +4,7 @@
 module nova_tests.contracts
 
 type Db7 effect {
-    SetBalance(id int, amount int)
+    fn SetBalance(id int, amount int)
     #pure balance(id int) -> int
     axiom non_negative(id) => balance(id) >= 0
 }

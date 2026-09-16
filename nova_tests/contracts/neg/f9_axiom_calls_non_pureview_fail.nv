@@ -6,7 +6,7 @@
 module neg.f9_axiom_calls_non_pureview_fail
 
 type Db effect {
-    SetBalance(id int, amount int)
+    fn SetBalance(id int, amount int)
     #pure balance(id int) -> int
     axiom bad(id) => SetBalance(id, 100) == 0
 }

@@ -10,7 +10,7 @@
 module spec_tests.conformance
 
 type D61Switch effect {
-    flip() -> bool
+    fn flip() -> bool
 }
 
 type D61Gauge effect {
@@ -23,8 +23,8 @@ type D61Gauge effect {
     // вместо vtable-диспетча) — этот блок остаётся нейтральным (пиннит
     // ИМЕННО B11ac, `NovaVtable_<Eff>*` → `effect_schemas` op-return lookup),
     // отдельно от коллизии — см. `D61Guard` ниже, который ИМЕННО ЕЁ пиннит.
-    peek() -> int
-    tag() -> str
+    fn peek() -> int
+    fn tag() -> str
 }
 
 // [M-novavtable-read-write-pointer-collision] (Plan 196 Zone GEN, closed):
@@ -38,8 +38,8 @@ type D61Gauge effect {
 // vtable-диспетча. Фикс: явное исключение `!obj_ty.starts_with("NovaVtable_")`
 // в ОБОИХ guard'ах (мирроринг существующего `NovaArray_`-исключения).
 type D61Guard effect {
-    read() -> int
-    write(v int) -> bool
+    fn read() -> int
+    fn write(v int) -> bool
 }
 
 test "D61 §8: прямой вызов на handler-значении, минуя with (bool op)" {

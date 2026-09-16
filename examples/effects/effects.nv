@@ -3,7 +3,7 @@
 module effects.effects
 
 type Counter effect {
-    next() -> int
+    fn next() -> int
 }
 
 fn count_three() Counter -> int {

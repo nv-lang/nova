@@ -8,7 +8,7 @@
 module nova_tests.contracts
 
 type Setter effect {
-    SetByCode(c int)
+    fn SetByCode(c int)
     #pure get_value() -> int
     axiom after_code_0(c) => post(SetByCode(c))(get_value()) == c
 }

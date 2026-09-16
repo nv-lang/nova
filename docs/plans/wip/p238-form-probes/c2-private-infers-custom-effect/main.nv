@@ -1,5 +1,5 @@
 export type Signal effect {
-    ping() -> ()
+    fn ping() -> ()
 }
 
 // private, no effect declared in signature — per D28, should be inferred silently

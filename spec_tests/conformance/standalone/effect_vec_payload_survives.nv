@@ -26,9 +26,9 @@ type Point {
 }
 
 type Store effect {
-    ints(n int) -> []int
-    points(n int) -> []Point
-    wrapped(n int) -> Result[[]int, str]
+    fn ints(n int) -> []int
+    fn points(n int) -> []Point
+    fn wrapped(n int) -> Result[[]int, str]
 }
 
 fn make_ints(n int) -> []int {

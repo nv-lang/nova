@@ -4,7 +4,7 @@
 module nova_tests.contracts
 
 type Logger1 effect {
-    log(msg str)
+    fn log(msg str)
 }
 
 fn simple(x int) -> int

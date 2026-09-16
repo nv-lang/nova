@@ -203,7 +203,13 @@
 # The Carina-side probe could not ask the question directly -- novac does not
 # parse a record literal yet, so it refuses one form earlier. Read from the
 # source instead, and said so.
-#   spec-queue: 77
+# +1 (сторона `main`, 2026-09-16): D459 — операция эффекта объявляется
+# словом `fn`. Хроники у этой правки не было — двинулся один счётчик; дописана при
+# слиянии, ибо смысл строки — именно в том, чего решение стоит Карине.
+# Долг Карины по D459 НЕ ИЗМЕРЕН мною и назван вопросом к интегратору: он
+# вёл эту правку и миграцию 255 операций, а писать чужую мерку по догадке хуже, чем
+# оставить пробел названным.
+#   spec-queue: 78
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,

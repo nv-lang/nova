@@ -128,9 +128,9 @@ test "linked list sum" {
 // ===== Bank account через handler =====
 
 type Account effect {
-    deposit(n int) -> ()
-    withdraw(n int) -> bool
-    balance() -> int
+    fn deposit(n int) -> ()
+    fn withdraw(n int) -> bool
+    fn balance() -> int
 }
 
 fn make_transactions() Account -> int {

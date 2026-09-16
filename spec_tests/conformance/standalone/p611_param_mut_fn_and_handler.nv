@@ -30,7 +30,7 @@
 module standalone.p611_param_mut_fn_and_handler
 
 type Fill effect {
-    fill(mut buf []u8) -> int
+    fn fill(mut buf []u8) -> int
 }
 
 // Position 1 — a plain function.

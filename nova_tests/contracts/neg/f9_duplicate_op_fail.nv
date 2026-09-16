@@ -6,6 +6,6 @@
 module neg.f9_duplicate_op_fail
 
 type Db effect {
-    balance(id int) -> int
-    balance(id int) -> int
+    fn balance(id int) -> int
+    fn balance(id int) -> int
 }

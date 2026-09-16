@@ -28,35 +28,35 @@ module std.net
 #stable(since = "0.1")
 export type Net effect {
     // ── TCP ──────────────────────────────────────────────────────────────────
-    tcp_bind(addr SocketAddr) -> Result[TcpListener, NetError]
-    accept(listener TcpListener) -> Result[TcpStream, NetError]
-    connect(addr SocketAddr) -> Result[TcpStream, NetError]
+    fn tcp_bind(addr SocketAddr) -> Result[TcpListener, NetError]
+    fn accept(listener TcpListener) -> Result[TcpStream, NetError]
+    fn connect(addr SocketAddr) -> Result[TcpStream, NetError]
     // Fill buf[0..n] from the stream; Ok(0) = clean EOF (peer close).
-    read(stream TcpStream, mut buf []u8) -> Result[int, NetError]
+    fn read(stream TcpStream, mut buf []u8) -> Result[int, NetError]
     // Send data; Ok(n) = bytes accepted.
-    write(stream TcpStream, data []u8) -> Result[int, NetError]
-    shutdown(stream TcpStream) -> Result[(), NetError]
-    close_stream(stream TcpStream) -> ()
-    close_listener(listener TcpListener) -> ()
-    mark_split(stream TcpStream) -> ()
-    listener_local_port(listener TcpListener) -> int
-    listener_local_addr(listener TcpListener, mut out []u8) -> ()
-    stream_local_port(stream TcpStream) -> int
-    stream_peer_port(stream TcpStream) -> int
-    stream_local_addr(stream TcpStream, mut out []u8) -> ()
-    stream_peer_addr(stream TcpStream, mut out []u8) -> ()
-    set_nodelay(stream TcpStream, on bool) -> ()
-    set_keepalive(stream TcpStream, on bool) -> ()
-    set_reuse_address(listener TcpListener, on bool) -> ()
+    fn write(stream TcpStream, data []u8) -> Result[int, NetError]
+    fn shutdown(stream TcpStream) -> Result[(), NetError]
+    fn close_stream(stream TcpStream) -> ()
+    fn close_listener(listener TcpListener) -> ()
+    fn mark_split(stream TcpStream) -> ()
+    fn listener_local_port(listener TcpListener) -> int
+    fn listener_local_addr(listener TcpListener, mut out []u8) -> ()
+    fn stream_local_port(stream TcpStream) -> int
+    fn stream_peer_port(stream TcpStream) -> int
+    fn stream_local_addr(stream TcpStream, mut out []u8) -> ()
+    fn stream_peer_addr(stream TcpStream, mut out []u8) -> ()
+    fn set_nodelay(stream TcpStream, on bool) -> ()
+    fn set_keepalive(stream TcpStream, on bool) -> ()
+    fn set_reuse_address(listener TcpListener, on bool) -> ()
 
     // ── UDP ──────────────────────────────────────────────────────────────────
-    udp_bind(addr SocketAddr) -> Result[UdpSocket, NetError]
-    send_to(sock UdpSocket, data []u8, addr SocketAddr) -> Result[int, NetError]
+    fn udp_bind(addr SocketAddr) -> Result[UdpSocket, NetError]
+    fn send_to(sock UdpSocket, data []u8, addr SocketAddr) -> Result[int, NetError]
     // Datagram into buf[0..n]; sender's 20-byte image into `sender`.
-    recv_from(sock UdpSocket, mut buf []u8, mut sender []u8) -> Result[int, NetError]
-    close_socket(sock UdpSocket) -> ()
-    socket_local_port(sock UdpSocket) -> int
-    socket_local_addr(sock UdpSocket, mut out []u8) -> ()
+    fn recv_from(sock UdpSocket, mut buf []u8, mut sender []u8) -> Result[int, NetError]
+    fn close_socket(sock UdpSocket) -> ()
+    fn socket_local_port(sock UdpSocket) -> int
+    fn socket_local_addr(sock UdpSocket, mut out []u8) -> ()
 
     // ── DNS ──────────────────────────────────────────────────────────────────
     // Resolve (host):port in one call. The handler builds the owned
@@ -66,5 +66,5 @@ export type Net effect {
     // reproduce, see spec_tests/conformance/standalone/
     // effect_vec_payload_survives.nv). The former (array_base, count) scalar
     // pair was a workaround for a claim that turned out false.
-    lookup(host []u8, port int) -> Result[[]SocketAddr, NetError]
+    fn lookup(host []u8, port int) -> Result[[]SocketAddr, NetError]
 }

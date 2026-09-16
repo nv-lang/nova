@@ -27,7 +27,7 @@
 
 module neg.d710_handler_body_unchecked_neg
 
-type Probe effect { fill(x int) -> int }
+type Probe effect { fn fill(x int) -> int }
 
 fn probe() -> int {
     with Probe = effect Probe {

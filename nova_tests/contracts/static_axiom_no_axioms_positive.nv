@@ -4,7 +4,7 @@
 module nova_tests.contracts
 
 type Greeter effect {
-    greet() -> str
+    fn greet() -> str
 }
 
 fn use_greeter() -> str

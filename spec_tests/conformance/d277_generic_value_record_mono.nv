@@ -90,11 +90,11 @@ type M39Handler[E] value { tag str }
 fn M39Handler[E].new(tag str) -> M39Handler[E] => { tag }
 
 type M39Db effect {
-    query(sql str) -> str
+    fn query(sql str) -> str
 }
 
 type M39Log effect {
-    write(msg str) -> ()
+    fn write(msg str) -> ()
 }
 
 fn m39_use_db(h M39Handler[M39Db]) -> str => h.tag

@@ -4,9 +4,9 @@
 module nova_tests.contracts
 
 type Converter effect {
-    convert(x int) -> str
-    convert(x str) -> int
-    convert(x bool) -> str
+    fn convert(x int) -> str
+    fn convert(x str) -> int
+    fn convert(x bool) -> str
 }
 
 test "three-way overload type-checks" {

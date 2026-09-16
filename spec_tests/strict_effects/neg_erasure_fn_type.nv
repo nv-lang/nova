@@ -9,7 +9,7 @@
 module strict_effects.neg_erasure_fn_type
 
 type Counter effect {
-    next() -> int
+    fn next() -> int
 }
 
 fn tick() Counter -> int =>

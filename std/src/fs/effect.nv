@@ -50,41 +50,41 @@ import std.time.duration.{Timestamp}
 #stable(since = "0.1")
 export type Fs effect {
     // File lifecycle + positioned/sequential I/O (n / fd / 0, or -errno).
-    open(path []u8, flags int, mode int) -> int
-    close(fd int) -> int
-    read(fd int, mut buf []u8) -> int
-    write(fd int, data []u8) -> int
-    read_at(fd int, mut buf []u8, offset int) -> int
-    write_at(fd int, data []u8, offset int) -> int
-    seek(fd int, offset i64, whence int) -> i64
-    sync_all(fd int) -> int
-    sync_data(fd int) -> int
+    fn open(path []u8, flags int, mode int) -> int
+    fn close(fd int) -> int
+    fn read(fd int, mut buf []u8) -> int
+    fn write(fd int, data []u8) -> int
+    fn read_at(fd int, mut buf []u8, offset int) -> int
+    fn write_at(fd int, data []u8, offset int) -> int
+    fn seek(fd int, offset i64, whence int) -> i64
+    fn sync_all(fd int) -> int
+    fn sync_data(fd int) -> int
     // Metadata: 0 or -errno; on success `img` (STAT_IMAGE_BYTES bytes, caller-
     // owned) is filled in place — read it via the stat_* pointer accessors.
-    stat(path []u8, mut img []u8) -> int
-    lstat(path []u8, mut img []u8) -> int
-    fstat(fd int, mut img []u8) -> int
+    fn stat(path []u8, mut img []u8) -> int
+    fn lstat(path []u8, mut img []u8) -> int
+    fn fstat(fd int, mut img []u8) -> int
     // Path-addressed directory / link ops (0 or -errno; copy → byte count).
-    mkdir(path []u8, mode int) -> int
-    remove_file(path []u8) -> int
-    remove_dir(path []u8) -> int
-    rename(src []u8, dst []u8) -> int
-    symlink(target []u8, link []u8) -> int
-    chmod(path []u8, mode int) -> int
-    copy_file(src []u8, dst []u8) -> int
-    fsync_dir(path []u8) -> int
+    fn mkdir(path []u8, mode int) -> int
+    fn remove_file(path []u8) -> int
+    fn remove_dir(path []u8) -> int
+    fn rename(src []u8, dst []u8) -> int
+    fn symlink(target []u8, link []u8) -> int
+    fn chmod(path []u8, mode int) -> int
+    fn copy_file(src []u8, dst []u8) -> int
+    fn fsync_dir(path []u8) -> int
     // Directory iteration: handle-based (no ambient/cached iterator state).
     // scandir_open: stream handle (>= 0) or -errno. scandir_next(h): 1 = an
     // entry is ready (read via scandir_name/_kind(h)), 0 = done.
     // scandir_close(h) is idempotent — call unconditionally once finished.
-    scandir_open(path []u8) -> int
-    scandir_next(h int) -> int
-    scandir_name(h int) -> str
-    scandir_kind(h int) -> int
-    scandir_close(h int) -> ()
+    fn scandir_open(path []u8) -> int
+    fn scandir_next(h int) -> int
+    fn scandir_name(h int) -> str
+    fn scandir_kind(h int) -> int
+    fn scandir_close(h int) -> ()
     // realpath: canonical path + 0, or empty str + -errno — returned TOGETHER
     // from the ONE resolving call (no TLS, no follow-up accessor).
-    realpath(path []u8) -> (int, str)
+    fn realpath(path []u8) -> (int, str)
 }
 
 // ─── FileType ──

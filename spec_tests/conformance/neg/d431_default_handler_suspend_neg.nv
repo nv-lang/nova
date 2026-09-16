@@ -17,7 +17,7 @@ module neg.d431_default_handler_suspend_neg
 import std.time.duration
 
 type D431Cache effect {
-    get() -> int
+    fn get() -> int
 }
 
 #default_handler
