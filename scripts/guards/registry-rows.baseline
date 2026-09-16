@@ -1,3 +1,6 @@
+# 2026-09-16 (интегратор, окно nova-83): rows 1090 -> 1091, max 1138 -> 1139.
+#   Заведена №1139 — гейт компилирует nova_codegen трижды за прогон (три
+#   target-каталога, три разных [profile.release]). Дыр не прибавилось.
 # 2026-09-15 (okno nova-23): rows 1052 -> 1053, max 1110 -> 1113. Dobavlena odna stroka No1113 -- shag novac-behaviour bez predela, obryv nadevaet verdikt (G16/G9). Dyr ne pribavilos': 1111 i 1112 uzhe ob'yavleny vyshe.
 # 2026-09-05 (окно 274): rows 887 -> 896, max 931 -> 940. Девять строк охоты
 #   emit_c x K3 (932-940), блок номеров выдан интегратором разом; дыр нет.
@@ -870,8 +873,8 @@
 # 2026-09-16 (integrator, stroka 1138): gejt Kariny na CI otmenyaetsya po vremeni
 #   (45m limit job'a), to est' proverki ne doschityvayutsya vovse -- i v spiske
 #   job'ov eto vyglyadit tem zhe krestom, chto nastoyashchiy otkaz.
-rows=1090
-max=1138
+rows=1091
+max=1139
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
