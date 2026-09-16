@@ -131,8 +131,29 @@ trap 'rm -rf "$TMP"' EXIT
 INCS=(-DNOVA_USE_LIBUV=1 -I "$CG")
 VCPKG="$CG/vcpkg_installed/x64-windows-static/include"
 [ -d "$VCPKG" ] && INCS+=(-I "$VCPKG")
+# ПРЕДУСЛОВИЕ, А НЕ УСЛОВНОЕ УДОБСТВО (найдено 2026-09-16 интегратором).
+# `-I` на libuv добавлялся условно: нет каталога — молча без него. Дальше
+# `#include <uv.h>` падал, и страж печатал «заголовки не компилируются как
+# C++, чинить вводящей функцией» — то есть отправлял читателя чинить ИСПРАВНЫЕ
+# заголовки. Замер: на CI job `gate.sh tier loop` берёт checkout БЕЗ
+# `submodules: recursive` (в отличие от job push), libuv там нет вовсе, и
+# красное висело как дефект №1061, которым не являлось.
 UV="$RT/libuv/include"
-[ -d "$UV" ] && INCS+=(-I "$UV")
+if [ -d "$UV" ]; then
+    INCS+=(-I "$UV")
+else
+    echo "check-runtime-cxx-clean FAIL: НЕТ ПРЕДУСЛОВИЯ, а не отказ проверки" >&2
+    echo "  заголовков libuv нет по пути: $UV" >&2
+    echo "" >&2
+    echo "  Это НЕ несовместимость с C++ и НЕ дефект №1061: судить нечем." >&2
+    echo '  nova_rt/fibers.h включает <uv.h>, а libuv -- СУБМОДУЛЬ.' >&2
+    echo "  КАК ЧИНИТЬ: выкачать субмодули там, где идёт страж —" >&2
+    echo "    локально: git submodule update --init --recursive" >&2
+    echo "    на CI: в checkout джоба поставить submodules: recursive" >&2
+    echo "  Молчать и судить БЕЗ libuv нельзя: тогда красное выглядит дефектом" >&2
+    echo "  заголовков, и его идут чинить не там (замер 2026-09-16)." >&2
+    exit 1
+fi
 
 cat > "$TMP/tu.cpp" <<'EOF'
 /* Одна трансляционная единица: включить заголовки рантайма как C++ и ничего

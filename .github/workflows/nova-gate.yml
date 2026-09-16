@@ -256,9 +256,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Checkout nova (full history — the git-log guards need a real log)
+      # submodules: recursive добавлено 2026-09-16. Ярус loop объявлен
+      # текстовым, но один его шаг ЗАПУСКАЕТ компилятор — check-runtime-cxx-clean
+      # разбирает заголовки рантайма как C++, а `nova_rt/fibers.h` включает
+      # <uv.h> из СУБМОДУЛЯ libuv. Без субмодуля страж падал сообщением
+      # «заголовки не компилируются как C++» (№1061), которым это не являлось:
+      # красное висело на CI и отправляло чинить исправные заголовки.
+      - name: Checkout nova (submodules recursive — cxx-guard needs libuv; full history for git-log guards)
         uses: actions/checkout@v4
         with:
+          submodules: recursive
           fetch-depth: 0
       - name: scripts/gate.sh — tier loop
         env:
