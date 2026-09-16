@@ -137,6 +137,90 @@ NOVA=""
 
 STEP_ACTIVE=1
 # tier_at_least <ярус> — исполняется ли на ВЫБРАННОМ ярусе шаг такого класса.
+# ── ДИФФО-ЗАВИСИМЫЙ ЯРУС `push` (план 275 Ф.10) ─────────────────────────────
+#
+# ЗАЧЕМ. Замер 2026-09-16 по живому прогону: слой `loop` (только чтение текста)
+# — 91 шаг и 330 с, слой `push` (поведение) — 20 шагов и 1033 с, то есть 76%.
+# И второй замер, по последним 299 коммитам main: 83% из них не трогают НИ ОДНОГО
+# дерева, от которого поведение зависит. Значит на пяти пушах из шести гейт
+# тратит три четверти времени, доказывая то, чего никто не менял.
+#
+# УМОЛЧАНИЕ — ГОНЯТЬ, И ЭТО ГЛАВНОЕ СВОЙСТВО. «Дифф не мог повлиять на X» —
+# СУЖДЕНИЕ, а неверное суждение пропускает дефект. Поэтому: путь, чей верхний
+# каталог не назван в карте ниже, включает ВСЕ поведенческие шаги; git, не
+# ответивший на вопрос, включает ВСЕ поведенческие шаги; пустой дифф (не с чем
+# сравнить) включает ВСЕ поведенческие шаги. Пропуск НИКОГДА не следует из
+# молчания — только из явного перечня задетых областей.
+#
+# ЯРУС `full` НЕ ЗАТРАГИВАЕТСЯ ВОВСЕ: он остаётся безусловным и полным.
+#
+# ВЫКЛЮЧАТЕЛЬ: NOVA_GATE_ALL=1 гонит всё, как до этой правки.
+GATE_AREAS=""          # задетые области, через пробел; пусто = ещё не считали
+GATE_AREAS_ALL=1       # 1 = гнать всё (умолчание до расчёта и при любой неясности)
+GATE_SKIPPED_N=0
+
+# Карта: верхний каталог дерева -> ОБЛАСТЬ. Каталог, которого здесь нет,
+# означает «не знаю» и включает всё. Страж check-gate-diff-map.sh следит,
+# чтобы новый каталог верхнего уровня не остался неназванным.
+gate_area_of() {
+    case "$1" in
+        compiler-codegen/*|nova-cli/*|nova-lsp/*) echo compiler ;;
+        std/*)            echo std ;;
+        spec_tests/*)     echo corpus ;;
+        examples/*)       echo examples ;;
+        novac/*)          echo novac ;;
+        nova_tests/*)     echo corpus ;;
+        docs/*|spec/*|scripts/*|.claude/*|.github/*|editors/*|www/*) echo text ;;
+        *.md|*.toml|*.lock|LICENSE*|.gitignore|.gitattributes|.gitmodules) echo text ;;
+        *) echo unknown ;;
+    esac
+}
+
+gate_compute_areas() {
+    [ "${NOVA_GATE_ALL:-0}" = "1" ] && { GATE_AREAS_ALL=1; return; }
+    [ "$GATE_TIER_N" -ge 3 ] && { GATE_AREAS_ALL=1; return; }   # ярус full — всё
+    _base=""
+    if git -C "$ROOT" rev-parse --verify -q origin/main >/dev/null 2>&1; then
+        _base=$(git -C "$ROOT" merge-base origin/main HEAD 2>/dev/null)
+    fi
+    if [ -z "$_base" ]; then
+        echo "gate: диффо-зависимость ВЫКЛЮЧЕНА — не с чем сравнивать (нет origin/main); гоню всё"
+        GATE_AREAS_ALL=1; return
+    fi
+    # Судится то же, что судит гейт: коммиты ОТ базы плюс рабочее дерево.
+    _files=$( { git -C "$ROOT" diff --name-only "$_base" HEAD 2>/dev/null; \
+                git -C "$ROOT" diff --name-only HEAD 2>/dev/null; \
+                git -C "$ROOT" ls-files --others --exclude-standard 2>/dev/null; } | sort -u )
+    if [ -z "$_files" ]; then
+        echo "gate: диффа нет — поведенческие шаги не нужны, но ГОНЮ ВСЁ: пустой ответ не вердикт"
+        GATE_AREAS_ALL=1; return
+    fi
+    _areas=""
+    for _f in $_files; do
+        _a=$(gate_area_of "$_f")
+        if [ "$_a" = unknown ]; then
+            echo "gate: путь вне карты областей — ГОНЮ ВСЁ: $_f"
+            GATE_AREAS_ALL=1; return
+        fi
+        case " $_areas " in *" $_a "*) ;; *) _areas="$_areas $_a" ;; esac
+    done
+    GATE_AREAS=$(echo $_areas)
+    GATE_AREAS_ALL=0
+    echo "gate: задетые области: ${GATE_AREAS:-(нет)}"
+}
+
+# Нужен ли шаг: да, если гоним всё, если шаг не объявил зависимостей, либо если
+# задета хоть одна названная им область. Компилятор задевает ВСЁ поведение.
+gate_step_needed() {
+    [ "$GATE_AREAS_ALL" = "1" ] && return 0
+    [ -z "$1" ] && return 0
+    case " $GATE_AREAS " in *" compiler "*) return 0 ;; esac
+    for _need in $1; do
+        case " $GATE_AREAS " in *" $_need "*) return 0 ;; esac
+    done
+    return 1
+}
+
 tier_at_least() {
     case "$1" in
         loop) [ "$GATE_TIER_N" -ge 1 ] ;;
@@ -189,6 +273,16 @@ step() {
            exit 1 ;;
     esac
     if tier_at_least "$_step_tier"; then
+        # ТРЕТИЙ АРГУМЕНТ (необязательный) — области, от которых шаг зависит
+        # (275 Ф.10). Нет аргумента = шаг исполняется всегда; это умолчание
+        # выбрано так, чтобы забывчивость включала работу, а не выключала.
+        if [ -n "${2:-}" ] && ! gate_step_needed "$2"; then
+            STEP_ACTIVE=0
+            GATE_SKIPPED_N=$((GATE_SKIPPED_N + 1))
+            printf '[%5ds] -- gate: ПРОПУЩЕН (дифф не трогает: %s) : %s\n' \
+                "$(( $(date +%s) - GATE_T0 ))" "$2" "$1"
+            return 0
+        fi
         STEP_ACTIVE=1
         printf '[%5ds] == gate: %s ==\n' "$(( $(date +%s) - GATE_T0 ))" "$1"
     else
@@ -326,6 +420,10 @@ else
 fi
 case "$NOVA_CAL_FACTOR" in ''|*[!0-9]*) NOVA_CAL_FACTOR=1 ;; esac
 export NOVA_CAL_FACTOR
+
+# 275 Ф.10: области считаются ОДИН раз, до первого шага, и печатаются —
+# пропуск обязан быть видимым, иначе он неотличим от зелёного прогона.
+gate_compute_areas
 
 step loop "arch-ratchet"
 guard "$ROOT/scripts/guards/arch-ratchet.sh" || fail "arch-ratchet (emit_c growth)"
@@ -672,7 +770,7 @@ step loop "crate-test-coverage (новая цель tests/*.rs не появля
 # сам прогон целей живёт ярусом ниже, в `crate-tests`.
 guard "$ROOT/scripts/guards/check-crate-test-coverage.sh" "$ROOT" || fail "появилась интеграционная цель, которую не запускает никто: тест, который не гоняется, не краснеет и не защищает (№854 пункт (3)) — внеси её в SUITES стража check-crate-tests.sh либо переведи крейт на --tests и опусти базу"
 
-step push "crate-tests (собственные наборы nova-lsp и nova-cli — №723)"
+step push "crate-tests (собственные наборы nova-lsp и nova-cli — №723)" "corpus"
 # Замер 2026-09-04: шаг снят своим же пределом на 601-й секунде — то есть НИЧЕГО НЕ ДОКАЗАЛ
 # (№9475), а выглядел как проверка. Причина измерена, а не предположена: на ТЁПЛОМ кэше
 # тот же шаг идёт 61 секунду (1891 тест, зелёные). Разница в десять раз — КОМПИЛЯЦИЯ
@@ -1198,7 +1296,7 @@ guard --deadline 600 "$ROOT/scripts/guards/check-clean-checkout-build.sh" "$ROOT
 # тогда как на машине с только что собранным бинарём страж был зелёный.
 # Тот же корень, что у №804: шаг гейта, которому нужен компилятор, обязан
 # идти ПОСЛЕ шага, который его собирает. Реестр 221.1 №813.
-step push "oracle-nesting-depth (компилятор не умирает на вложенности — №800)"
+step push "oracle-nesting-depth (компилятор не умирает на вложенности — №800)" "corpus"
 # ЗАЧЕМ И ПОЧЕМУ ДО ТЕГА (решение владельца 2026-08-29). Оракул умирал на
 # глубокой вложенности НЕ диагностикой, а смертью треда: `thread
 # 'nova-check-0' has overflowed its stack`, без файла, строки и `E_*`. Это
@@ -1220,9 +1318,9 @@ guard --deadline 400 "$ROOT/scripts/guards/check-oracle-nesting-depth.sh" "$ROOT
 # лежал. Класс чинится целиком, а не на носителе, который покраснел: перед
 # правкой найдены ВСЕ шаги яруса push, берущие этот путь до сборки, их было
 # три (третий — oracle-nesting-depth выше).
-step push "process-exit-under-pool (процесс завершается при 16 воркерах, ×200 — №694)"
+step push "process-exit-under-pool (процесс завершается при 16 воркерах, ×200 — №694)" "corpus"
 guard --deadline 300 "$ROOT/scripts/guards/check-process-exit-under-pool.sh" "$ROOT" || fail "процесс не завершается при полном пуле воркеров (№694: потерянная побудка при остановке)"
-step push "panic-report-contract (запись отказа: оба рендерера — D462, №445)"
+step push "panic-report-contract (запись отказа: оба рендерера — D462, №445)" "corpus"
 guard --deadline 120 "$ROOT/scripts/guards/check-panic-report-contract.sh" "$ROOT" || fail "запись отказа потеряла throw-site/трассу или JSON-рендер (D462, №445)"
 
 # ЧЕТВЁРТЫЙ НОСИТЕЛЬ ТОГО ЖЕ КЛАССА (№813): `check-doc-truth.sh` резолвит тот
@@ -1242,7 +1340,7 @@ step push "cli-language (кириллица в --help, в JSON-схеме и в 
 guard "$ROOT/scripts/guards/check-cli-output-language.sh" "$ROOT" \
     || fail "рост кириллицы в поставляемом выводе CLI (№823)"
 
-step push "mega-CU (spec_tests/conformance, one CU)"
+step push "mega-CU (spec_tests/conformance, one CU)" "corpus"
 if body_runs; then
     MEGA_LOG="${TMPDIR:-/tmp}/gate_mega_$$.log"
     _MEGA_T0=$(date +%s)
@@ -1468,7 +1566,7 @@ if body_runs; then
     # -- конец ветки Г16 (маркер для самотеста; не удалять) --
 fi
 
-step push "conformance-full (лейны panic/exit/timeout — их не гонял НИКТО)"
+step push "conformance-full (лейны panic/exit/timeout — их не гонял НИКТО)" "corpus"
 # ЗАЧЕМ. Мега-CU выше идёт с `--positive --compile-error`. Фикстуры с
 # `EXPECT_RUNTIME_PANIC` (32), `EXPECT_EXIT_CODE` (6) и `EXPECT_TIMEOUT_MS` (16)
 # в эти лейны не попадают — храповик SKIP (№453б) лишь СЧИТАЛ их пропущенными и
@@ -1556,7 +1654,7 @@ if body_runs; then
     fi
 fi
 
-step push "check std/src (byte-canon)"
+step push "check std/src (byte-canon)" "std corpus"
 if body_runs; then
     STD_LINE=$("$NOVA" check "$ROOT/std/src" 2>&1 | sed -e "s/${ESC}\[[0-9;]*m//g" | grep -E "^PASS" | tail -1)
     echo "std :: $STD_LINE"
@@ -1601,7 +1699,7 @@ fi
 # CI — но пересечение неполное (два отказа только локальные, два только на CI).
 # Счётчик сказал бы «7 <= 8, всё хорошо» и скрыл бы `reflect_test`, который
 # до слияния группы M не падал вовсе.
-step push "nova test std/src (то же, что гоняет CI — №591/№402)"
+step push "nova test std/src (то же, что гоняет CI — №591/№402)" "std corpus"
 # Сверка вынесена в СТРАЖ, а не живёт здесь: пока она была телом шага
 # гейта, CI позвать её было нечем, и он гонял `nova test std` голым —
 # любой известный отказ валил дорожку. Оттого внешний гейт был красен
@@ -1611,7 +1709,7 @@ step push "nova test std/src (то же, что гоняет CI — №591/№40
 guard "$ROOT/scripts/guards/check-std-test-baseline.sh" "$ROOT" "$NOVA" \
     || fail "nova test std: отказ вне базы имён (подмена или регресс)"
 
-step push "nova lint --deny std/src (0 findings — 221.1 №416)"
+step push "nova lint --deny std/src (0 findings — 221.1 №416)" "std"
 if body_runs; then
     LINT_LOG="${TMPDIR:-/tmp}/gate_lint_$$.log"
     "$NOVA" lint --deny "$ROOT/std/src" >"$LINT_LOG" 2>&1
@@ -1636,7 +1734,7 @@ fi
 # корпус ФИКСТУР: часть находок в исходных 83 была НАМЕРЕННОЙ (неканоничная
 # форма — сам предмет теста), закрыта через `// nova:allow RULE -- причина`
 # с обоснованием (PROGRESS-p416b.md), не игнором строки/файла целиком.
-step push "nova lint --deny spec_tests (0 findings — 221.1 №416 хвост)"
+step push "nova lint --deny spec_tests (0 findings — 221.1 №416 хвост)" "corpus"
 if body_runs; then
     LINT_LOG2="${TMPDIR:-/tmp}/gate_lint_spec_$$.log"
     "$NOVA" lint --deny "$ROOT/spec_tests" >"$LINT_LOG2" 2>&1
@@ -1650,7 +1748,7 @@ if body_runs; then
     [ "$LINT_EXIT2" -eq 0 ] || fail "nova lint --deny spec_tests: exit=$LINT_EXIT2 (см. $LINT_LOG2)"
 fi
 
-step push "flagship examples --strict-effects (цели из общего с CI списка)"
+step push "flagship examples --strict-effects (цели из общего с CI списка)" "examples std"
 # ПЯТЬ целей, а не одна. 2026-08-09: локальный гейт собирал только aggregator,
 # CI собирает пять — и первым же прогоном покраснел на examples/tls/echo_server.nv
 # (`undefined identifier session`, остаток переименования). Гейт, который слабее
@@ -1690,7 +1788,7 @@ if body_runs; then
     [ -z "$FLAG_FAILED" ] || fail "flagship examples не собрались:$FLAG_FAILED"
 fi
 
-step push "flagship smoke (не собрать, а ЗАПУСТИТЬ — реестр 221.1 №548)"
+step push "flagship smoke (не собрать, а ЗАПУСТИТЬ — реестр 221.1 №548)" "examples std"
 # Сборка ловит синтаксис и типы, но НЕ то, работает ли программа. Флагман-мост
 # вошёл в гейт 2026-08-10 и в тот же день оказался неработающим: туннель
 # открывался, и мост тут же сбрасывал соединение (корень — №552, дизарм не знал
@@ -1729,7 +1827,7 @@ fi
 # Пока их не было, «локально зелено» означало меньше, чем выглядело: 147
 # коммитов ушли на зелёном локальном гейте и покраснели в CI первым прогоном.
 
-step push "examples anti-rot (весь examples/** по списку 197 Ф.5, как в CI)"
+step push "examples anti-rot (весь examples/** по списку 197 Ф.5, как в CI)" "examples std"
 # Список целей читается ИЗ ТОГО ЖЕ файла, что использует CI, — иначе гейт и CI
 # разойдутся молча, а это ровно тот дефект, который здесь и чинится.
 if body_runs; then
@@ -1773,7 +1871,7 @@ if body_runs; then
     fi
 fi
 
-step push "lint registry self-test (правило срабатывает И не даёт ложняка, как в CI)"
+step push "lint registry self-test (правило срабатывает И не даёт ложняка, как в CI)" "corpus"
 # ДВЕ стороны, и вторая важнее: страж, переставший ловить, выглядит так же,
 # как страж, которому нечего ловить.
 # `--deny` ОБЯЗАТЕЛЕН: без него находки информационные и код возврата 0 — так
@@ -1805,7 +1903,7 @@ if body_runs; then
         || fail "conv_clean.nv даёт находки — ложное срабатывание conv-правила (№520)"
 fi
 
-step push "nova build smoke (ICE-храповик плана 196, как в CI)"
+step push "nova build smoke (ICE-храповик плана 196, как в CI)" "corpus"
 if body_runs; then
     SMOKE_NV="${TMPDIR:-/tmp}/nova_build_smoke_$$.nv"
     SMOKE_LOG="${TMPDIR:-/tmp}/nova_build_smoke_$$.log"
@@ -1834,7 +1932,7 @@ if body_runs; then
     rm -f "$SMOKE_NV" "$SMOKE_LOG" "${TMPDIR:-/tmp}/nova_build_smoke_$$.exe"
 fi
 
-step push "lint W_LEADING_BINOP_CONTINUATION по nova_tests (как в CI)"
+step push "lint W_LEADING_BINOP_CONTINUATION по nova_tests (как в CI)" "corpus"
 if body_runs; then
     "$NOVA" lint --rule W_LEADING_BINOP_CONTINUATION "$ROOT/nova_tests" >/dev/null 2>&1 \
         || fail "W_LEADING_BINOP_CONTINUATION даёт находки в nova_tests"
