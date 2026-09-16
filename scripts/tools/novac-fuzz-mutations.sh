@@ -155,7 +155,14 @@ judge_emit() {   # $1 = list file; 0 = zelyono, 1 = chto-to umerlo pri emissii
         (
             cd "$T/cases" && NOVA_STD_PATH="$ROOT/std/src" timeout 60 \
                 "$NOVAC" emit "$case_nv" > /dev/null 2> "$_ed/$_ei.err"
-            echo $? > "$_ed/$_ei.rc"
+            rc=$?
+            # ТРЕТЬЕ СЛОВО СТОИТ РЯДОМ С ВЫЗОВОМ, а не через тридцать строк:
+            # так его видит и человек, и страж «падение по таймауту неотличимо
+            # от настоящего отказа». Разбор ниже остаётся — он собирает исходы
+            # со всех потоков; здесь же исход НАЗЫВАЕТСЯ в тот момент, когда
+            # случился.
+            [ "$rc" -eq 124 ] && echo "СНЯТ ПРЕДЕЛОМ 60с: вердикта нет" >> "$_ed/$_ei.err"
+            echo "$rc" > "$_ed/$_ei.rc"
         ) &
         _erun=$((_erun + 1))
         if [ "$_erun" -ge "$_ej" ]; then wait; _erun=0; fi

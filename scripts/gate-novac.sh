@@ -274,7 +274,14 @@ par_run() {
         _pcal=$(( PAR_DEADLINE_DEFAULT * ${CAL:-1} ))
         [ "$_pdl" -ge "$_pcal" ] || _pdl=$_pcal
         ( bash "$ROOT/scripts/tools/with-deadline.sh" "$_pdl" bash "$_g" "$ROOT" \
-              > "$PAR_DIR/$_i.out" 2>&1; echo $? > "$PAR_DIR/$_i.rc" ) &
+              > "$PAR_DIR/$_i.out" 2>&1
+          rc=$?
+          # ТРЕТЬЕ СЛОВО РЯДОМ С ВЫЗОВОМ (Г16). Разбор ниже собирает исходы со
+          # всех потоков и переводит 124/137/143 в «ОБРЫВ, вердикта нет», но
+          # НАЗВАН исход должен быть там, где случился: иначе и человек, и
+          # страж видят предел без различения снятия и отказа.
+          [ "$rc" -eq 124 ] && echo "СНЯТ ПРЕДЕЛОМ ${_pdl}с: вердикта нет" >> "$PAR_DIR/$_i.out"
+          echo "$rc" > "$PAR_DIR/$_i.rc" ) &
         _running=$((_running + 1))
         if [ "$_running" -ge "$_jobs" ]; then
             wait
