@@ -1,0 +1,23 @@
+// The exact shape of `bin_op_of`: a call with a DEFAULT argument standing in
+// the FALLBACK of `??`. If the default's `let` is hoisted out of the lazy
+// branch, the fallback runs even when the Option is Some -- and every caller
+// dies on a healthy input.
+module probe.oracelvis
+
+fn die(msg str, loc CallerLoc = caller_loc()) -> never {
+    panic("${msg} at ${loc.file}:${loc.line}")
+}
+
+fn maybe(k int) -> Option[int] {
+    if k > 0 {
+        Some(k)
+    } else {
+        None
+    }
+}
+
+fn strict(k int) -> int => maybe(k) ?? die("not positive")
+
+fn main() {
+    println("a = ", strict(7))
+}

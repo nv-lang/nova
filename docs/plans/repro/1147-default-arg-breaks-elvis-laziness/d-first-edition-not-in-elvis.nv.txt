@@ -1,0 +1,28 @@
+// Minimal repro attempt: a `-> never` door with a `caller_loc()` default,
+// called from more than one place -- the shape `ice()` has in novac.
+module probe.oraclice
+
+fn die(msg str, loc CallerLoc = caller_loc()) -> never {
+    panic("${msg} at ${loc.file}:${loc.line}")
+}
+
+fn pick(k int) -> int {
+    if k > 0 {
+        k
+    } else {
+        die("not positive")
+    }
+}
+
+fn second(k int) -> int {
+    if k < 100 {
+        k
+    } else {
+        die("too big")
+    }
+}
+
+fn main() {
+    println("a = ", pick(1))
+    println("b = ", second(2))
+}
