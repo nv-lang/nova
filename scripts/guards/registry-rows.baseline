@@ -867,8 +867,11 @@
 # 2026-09-16 (integrator, stroka 1137): strazh granits sudil pyatuyu chast' mest --
 #   opoznaval kriteriy po odnomu napisaniyu iz pyati. Pochineno tem zhe sliyaniem:
 #   sudimykh voln 19 -> 30, narusheniy 0.
-rows=1089
-max=1137
+# 2026-09-16 (integrator, stroka 1138): gejt Kariny na CI otmenyaetsya po vremeni
+#   (45m limit job'a), to est' proverki ne doschityvayutsya vovse -- i v spiske
+#   job'ov eto vyglyadit tem zhe krestom, chto nastoyashchiy otkaz.
+rows=1090
+max=1138
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
