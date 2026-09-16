@@ -862,8 +862,10 @@
 # 2026-09-16 (integrator, stroka 1135): sosed-obrazets okazalsya s toy zhe dyroy na
 #   Unix -- otpechatok kompilyatora v kljuche rantaym-arkhiva PUST, potomu chto
 #   fingerprint beryotsya s GOLOGO imeni `cc`. Nayedeno pri pochinke 1134.
-rows=1087
-max=1135
+# 2026-09-16 (integrator, stroka 1136): ukazatel' glavnoy zadachi vyol v zaglushku;
+#   proverkoy ssylok ne lovitsya -- fayl sushchestvuet, predmeta v nyom net.
+rows=1088
+max=1136
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
