@@ -1,0 +1,14 @@
+// D411, второй носитель: фигурная деструктуризация называет поле, которого у типа НЕТ.
+// Форма скопирована у examples/basics/destructure_record.nv -- файла, который Карина читает.
+module probe.d411b
+
+type Point value {
+    x int
+    y int
+}
+
+fn main() -> () {
+    ro p = Point { x: 1, y: 2 }
+    ro { nope, .. } = p
+    println(nope)
+}

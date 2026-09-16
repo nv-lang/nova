@@ -177,7 +177,7 @@ fn Checker mut @type_brace_destructure(kids []Node, pt TyId) -> () {
             @fres.field_type(@ctx.fields, pt, nm)
         } else {
             if !bad {
-                @report_first_leaf_of(kids, DESTR_NO_FIELD_MSG)
+                @reject_first_leaf_of(kids, DESTR_NO_FIELD_MSG)
                 bad = true
             } else {
                 // One refusal for the pattern: the rest would cascade.
