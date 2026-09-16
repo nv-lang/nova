@@ -370,8 +370,42 @@ export fn variant_in_sum(ctx Ctx, sum_t TyId, name str) -> Option[VariantRow] {
 /// two corpus regressions of the wave's first cut); the old `defs` hid the
 /// same rule as last-write-wins. Among candidates of one provenance: one ->
 /// that variant; none -> not a variant at all; several -> ambiguous, refused
-/// by name (the spec names no rule for a bare name two sums share -- an open
-/// question to the owner, plan 274.7 s5, this refusal is the default).
+/// by name ONLY when the position gives no expected type -- D478 (owner, 2026-09-16)
+/// decides the rest: with two or more candidates the EXPECTED type of the position
+/// picks the sum, and `variant_named_in` below is the one door that asks it. Before
+/// D478 the spec named no rule here and the blanket refusal was the default; it is
+/// no longer, and a refusal on a position that HAS an expectation is now wrong.
+/// THE ONE DOOR OF D478: among the variants of this NAME, the one whose owning sum is
+/// the type the POSITION expects. `no_vrow()` when the expectation is absent or names
+/// another type -- the caller then refuses, and the refusal is right because the
+/// language has nothing else to go on.
+///
+/// Why a door and not a condition at the call site: the same-named variants live on a
+/// `next_same` chain that only `sem` walks, and TWO callers need this answer (a bare
+/// name in `check/exprs.nv`, a constructor call in `check/calls.nv`). Two copies of one
+/// rule diverge on the first edit -- 274.4, one door per root.
+///
+/// The comparison is by DECLARATION, not by TyId: an expectation may be a generic
+/// instance (`Option[int]`) while the variant's sum is the declaration -- the same door
+/// `option_rules` already uses for a bare `None`.
+#realtime nogc
+export fn variant_named_in(ctx Ctx, name str, expect TyId) -> VariantRow {
+    if !is_ty(expect) { return no_vrow() }
+    ro want = decl_index_of_ty(ctx, expect)
+    if want < 0 { return no_vrow() }
+    mut r = ctx.variant_names.find(name)
+    while r >= 0 {
+        ro v = ctx.variant_rows[r]
+        if decl_index_of_ty(ctx, v.sum_id) == want {
+            return VariantRow(r)
+        } else {
+            // Another sum declares this name too: keep walking the chain.
+        }
+        r = raw_vrow(v.next_same)
+    }
+    no_vrow()
+}
+
 #realtime nogc
 export fn variants_named(ctx Ctx, name str) -> (VariantRow, int) {
     mut r = ctx.variant_names.find(name)

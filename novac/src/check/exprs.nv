@@ -30,7 +30,7 @@ import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
 import ../builtins.{EQUAL_METHOD}
 import ../sem.{raw_crow}
-import ../sem.{variant_range_of, VariantRow, variants_named}
+import ../sem.{variant_range_of, VariantRow, variants_named, variant_named_in}
 import ../resolve.{FnLookup}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
@@ -508,11 +508,18 @@ fn Checker mut @type_expr(e Node) -> () {
                     // B6, #964): one sum declares it -> that variant; several ->
                     // the bare name is ambiguous and refused by name; none -> an
                     // unknown name.
-                    ro (vrow, vn) = variants_named(@ctx, t.text)
+                    ro (vfound, vn) = variants_named(@ctx, t.text)
                     ro is_variant = vn >= 1
-                    if vn > 1 {
+                    // D478 (владелец 2026-09-16): две суммы с одним именем — не
+                    // приговор. Спрашивается ОЖИДАНИЕ позиции, и отказ
+                    // остаётся только там, где ожидания нет либо оно называет
+                    // чужой тип. Разрешённый случай идёт ТЕМ ЖЕ путём, что
+                    // однозначный, — одна дверь на корень (274.4).
+                    ro picked = if vn > 1 { variant_named_in(@ctx, t.text, @value_expect) } else { no_vrow() }
+                    ro vrow = if is_vrow(picked) { picked } else { vfound }
+                    if vn > 1 && !is_vrow(picked) {
                         @refuse(t, AMBIGUOUS_VARIANT_MSG)
-                    } else if vn == 1 {
+                    } else if is_variant {
                         // The value door (option_rules, wave W4): a file sum's
                         // value, or a generic sum's instance from the position's
                         // expectation (`None` at a tail).
