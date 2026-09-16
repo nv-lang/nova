@@ -46,7 +46,7 @@ module prelude.effects
 /// only to non-exported functions; exported ones require explicit `Fail[E]`.
 #stable(since = "0.1")
 export type Fail[E] effect {
-    fail(e E) -> never
+    fn fail(e E) -> never
 }
 
 // `Time` effect + its `real_time()` default-handler — moved to
@@ -72,11 +72,11 @@ export type Fail[E] effect {
 /// **Default handler:** runtime hooks, read-only — not a suspend effect.
 #stable(since = "0.1")
 export type TimerMetrics effect {
-    timer_alloc_total() -> int
-    timer_alloc_active() -> int
-    timer_fired() -> int
-    timer_cancelled() -> int
-    timer_longest_pending_ms() -> int
+    fn timer_alloc_total() -> int
+    fn timer_alloc_active() -> int
+    fn timer_fired() -> int
+    fn timer_cancelled() -> int
+    fn timer_longest_pending_ms() -> int
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -156,8 +156,8 @@ export fn Mem.reset() -> () {
 /// source of the schema; emitted as a regular user effect (no RUNTIME_DEFINED_TYPES).
 #stable(since = "0.1")
 export type Random effect {
-    u64() -> u64                        // 64 случайных бита
-    bytes(n int) -> []u8                // массовая генерация
+    fn u64() -> u64                        // 64 случайных бита
+    fn bytes(n int) -> []u8                // массовая генерация
 }
 
 // ─── real_random — the production Random handler over the OS CSPRNG ───
@@ -253,8 +253,8 @@ export fn real_random() -> Effect[Random] {
 ///   - Return type `()` (observability-only, not value-returning).
 #stable(since = "0.1")
 export type ResourceTrace effect {
-    on_resource_enter(label str) -> ()
-    on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> ()
+    fn on_resource_enter(label str) -> ()
+    fn on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> ()
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -308,7 +308,7 @@ export type Decision enum Escalate | Stop
 /// `interrupt` and suspend operations (`Time.sleep`) forbidden.
 #stable(since = "0.1")
 export type Supervisor effect {
-    on_child_fail(idx int, err any) -> Decision
+    fn on_child_fail(idx int, err any) -> Decision
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -339,6 +339,6 @@ export type Supervisor effect {
 ///   - abort/SIGKILL do not fire finalizers (OS limitation).
 #stable(since = "0.1")
 export type Application effect {
-    register_finalizer(f fn() -> ()) -> ()
-    default_exit_timeout_ms() -> int
+    fn register_finalizer(f fn() -> ()) -> ()
+    fn default_exit_timeout_ms() -> int
 }

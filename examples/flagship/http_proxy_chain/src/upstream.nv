@@ -41,7 +41,7 @@ export fn UpstreamError @to_str() -> str {
 //     and exercise the HTTP parsing/rewriting logic with no real socket at
 //     all — the same reason `std.net`'s own `mock_net()` exists.
 export type Upstream effect {
-    dial(host str, port int) -> Result[TcpStream, UpstreamError]
+    fn dial(host str, port int) -> Result[TcpStream, UpstreamError]
 }
 
 // A SECOND, separate codegen defect (found building this file, distinct

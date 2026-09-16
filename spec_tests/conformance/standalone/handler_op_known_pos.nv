@@ -5,7 +5,7 @@
 module standalone.handler_op_known_pos
 
 type Small effect {
-    ping() -> int
+    fn ping() -> int
 }
 
 fn base() -> Effect[Small] => effect Small {

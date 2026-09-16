@@ -10,11 +10,11 @@
 module effects.effects_d61
 
 type Counter effect {
-    next() -> int
+    fn next() -> int
 }
 
 type Switch effect {
-    flip() -> bool
+    fn flip() -> bool
 }
 
 fn count_three() Counter -> int {

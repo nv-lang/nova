@@ -40,11 +40,11 @@
 module spec_tests.conformance
 
 type Log1 effect {
-    info(msg str) -> ()
+    fn info(msg str) -> ()
 }
 
 type Log2 effect {
-    info(msg str) -> ()
+    fn info(msg str) -> ()
 }
 
 // (1) exported fn, явная декларация Log1.

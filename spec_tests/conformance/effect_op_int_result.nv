@@ -24,7 +24,7 @@ export fn NetErr @to_str() -> str {
 }
 
 type Clock1 effect {
-    tick() -> int
+    fn tick() -> int
 }
 
 fn use_effect_int() Clock1 -> str {

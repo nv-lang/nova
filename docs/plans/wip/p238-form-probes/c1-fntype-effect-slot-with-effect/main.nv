@@ -1,5 +1,5 @@
 export type Signal effect {
-    ping() -> ()
+    fn ping() -> ()
 }
 
 export fn register(f fn(int) Signal -> int) -> () {

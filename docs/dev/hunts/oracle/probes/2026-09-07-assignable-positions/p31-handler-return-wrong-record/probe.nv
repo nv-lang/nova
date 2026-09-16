@@ -5,7 +5,7 @@ type Alpha { ro tag int, ro name str }
 type Beta  { ro other str }
 
 type Meter effect {
-    read() -> Beta
+    fn read() -> Beta
 }
 
 fn use_meter() Meter -> Beta => Meter.read()

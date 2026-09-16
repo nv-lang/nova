@@ -7,7 +7,7 @@
 module neg.f26_handler_matrix_negative
 
 type Store effect {
-    Set(v int)
+    fn Set(v int)
     #pure get() -> int
     axiom after_set(v int) => post(Set(v))(get()) == v
 }

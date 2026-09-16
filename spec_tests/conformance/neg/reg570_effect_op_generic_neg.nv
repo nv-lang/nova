@@ -16,7 +16,7 @@ module neg.reg570_effect_op_generic_neg
 
 type Wrap effect {
     // nova:expect E_EFFECT_OP_GENERIC_UNSUPPORTED -- rank-2: один vtable-слот, одна подпись; Q6 открыт (реестр 221.1 №570)
-    around[T](body fn() -> T) -> T
+    fn around[T](body fn() -> T) -> T
 }
 
 fn main() -> () {}

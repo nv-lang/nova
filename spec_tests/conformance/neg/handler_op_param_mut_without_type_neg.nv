@@ -17,7 +17,7 @@
 module neg.handler_op_param_mut_without_type_neg
 
 type Probe effect {
-    fill(mut buf []u8) -> int
+    fn fill(mut buf []u8) -> int
 }
 
 export fn real_probe() -> Effect[Probe] {

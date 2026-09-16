@@ -5,7 +5,7 @@
 module nova_tests.contracts
 
 type Counter5 effect {
-    Increment()
+    fn Increment()
     #pure value() -> int
     axiom non_negative() => value() >= 0
 }

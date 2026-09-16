@@ -17,18 +17,18 @@ module app
 #stable(since = "0.1")
 export type Emit effect {
     // A lane began fetching (`idx` = its fan-out slot, for stable UI ordering).
-    lane_started(id str, idx int) -> ()
+    fn lane_started(id str, idx int) -> ()
     // A lane settled successfully.
-    lane_done(id str, elapsed_ms int) -> ()
+    fn lane_done(id str, elapsed_ms int) -> ()
     // A lane's upstream/transport call failed (`Fail[AggError]` surfaced).
-    lane_failed(id str, err str, elapsed_ms int) -> ()
+    fn lane_failed(id str, err str, elapsed_ms int) -> ()
     // A lane was still in flight when the shared deadline hit — genuinely
     // cancelled (real `supervised(deadline:)`, not a self-check; the fetch
     // itself was interrupted, not run to completion — see aggregate.nv's
     // file-header note).
-    lane_cancelled(id str, elapsed_ms int) -> ()
+    fn lane_cancelled(id str, elapsed_ms int) -> ()
     // The whole fan-out has settled (every lane done/failed/cancelled).
-    swarm_done(fanout int, done int, failed int, cancelled int, wall_ms int, sequential_ms int) -> ()
+    fn swarm_done(fanout int, done int, failed int, cancelled int, wall_ms int, sequential_ms int) -> ()
 }
 
 /// No-op sink — the default ambient handler for callers who don't need

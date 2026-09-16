@@ -4,7 +4,7 @@
 module nova_tests.contracts
 
 type Store3 effect {
-    Set(v int)
+    fn Set(v int)
     #pure get() -> int
     axiom after_set(v) => post(Set(v))(get()) == v
 }

@@ -9,7 +9,7 @@
 module neg.d353_callback_effect_neg
 
 type D353Logger effect {
-    log(msg str) -> ()
+    fn log(msg str) -> ()
 }
 
 fn d353_effectful_cb(x i64) D353Logger -> i64 {

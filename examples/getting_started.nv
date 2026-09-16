@@ -56,7 +56,7 @@ fn apply_discount(d Discount, subtotal int) -> int => match d {
 // handler installed by `with` changes.
 
 type Audit effect {
-    record(amount int) -> ()
+    fn record(amount int) -> ()
 }
 
 // ---------------------------------------------------------------------------

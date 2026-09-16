@@ -9,10 +9,10 @@ type Point12 { x int, y int }
 type PointV value { ro x int, ro y int }
 
 type MakesPoint effect {
-    heap_record() -> Point12
-    value_record() -> PointV
-    anon_tuple() -> (int, int)
-    ctor_call() -> Point12
+    fn heap_record() -> Point12
+    fn value_record() -> PointV
+    fn anon_tuple() -> (int, int)
+    fn ctor_call() -> Point12
 }
 
 type Shape2_2 enum
@@ -20,7 +20,7 @@ type Shape2_2 enum
     | Square2 { side int }
 
 type MakesShape effect {
-    sum_variant() -> Shape2_2
+    fn sum_variant() -> Shape2_2
 }
 
 test "handler-лит: heap record-литерал в теле опа" {
@@ -65,11 +65,11 @@ fn Point12.new(x int, y int) -> Point12 {
 // дефект D316-amend Ф.2: expected_record_type не подводится в handler-тело.
 
 type AnonHeap effect {
-    make() -> Point12
+    fn make() -> Point12
 }
 
 type AnonValue effect {
-    make() -> PointV
+    fn make() -> PointV
 }
 
 test "handler-лит: анонимный heap record-литерал (=> форма)" {
@@ -114,7 +114,7 @@ test "handler-лит: анонимный value record-литерал" {
 // ==== Захват + анонимный record в одном теле (не сломать capture-механизм).
 
 type AnonWithCapture effect {
-    make() -> Point12
+    fn make() -> Point12
 }
 
 test "handler-лит: захват локали + анонимный record" {
@@ -137,11 +137,11 @@ test "handler-лит: захват локали + анонимный record" {
 // capture-механизм и вложенную эмиссию #define/#undef).
 
 type OuterEff effect {
-    outer_make() -> Point12
+    fn outer_make() -> Point12
 }
 
 type InnerEff effect {
-    inner_make() -> PointV
+    fn inner_make() -> PointV
 }
 
 test "вложенные handler-литы: анонимные record'ы + захваты на двух уровнях" {

@@ -28,7 +28,7 @@ module neg.d710_handler_body_bound_neg
 
 type UserId { v int }
 
-type D710Bound effect { go() -> int }
+type D710Bound effect { fn go() -> int }
 
 fn probe() -> int {
     with D710Bound = effect D710Bound {

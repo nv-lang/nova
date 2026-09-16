@@ -22,9 +22,9 @@ module std.io
 /// effect vtable — the buffer-fill shape sidesteps that, and matches `io.Read`.)
 #stable(since = "0.1")
 export type Io effect {
-    read_in(mut buf []u8) -> Result[int, IoError]
-    write_out(data []u8) -> Result[int, IoError]
-    write_err(data []u8) -> Result[int, IoError]
+    fn read_in(mut buf []u8) -> Result[int, IoError]
+    fn write_out(data []u8) -> Result[int, IoError]
+    fn write_err(data []u8) -> Result[int, IoError]
 }
 
 // ─── stdin / stdout / stderr handles (io.Read / io.Write over Io) ───

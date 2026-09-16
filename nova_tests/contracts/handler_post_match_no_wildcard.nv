@@ -6,7 +6,7 @@
 module nova_tests.contracts
 
 type BoolSetter effect {
-    SetFlag(v bool)
+    fn SetFlag(v bool)
     #pure get_flag() -> bool
     axiom after_set(v) => post(SetFlag(v))(get_flag()) == v
 }

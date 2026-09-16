@@ -22,7 +22,7 @@
 module standalone.d710_handler_body_pos
 
 type D710Probe effect {
-    fill(x int) -> int
+    fn fill(x int) -> int
 }
 
 fn use_probe() -> int {

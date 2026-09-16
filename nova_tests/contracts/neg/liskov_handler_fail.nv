@@ -6,7 +6,7 @@
 module neg.liskov_handler_fail
 
 type ConstEffect effect {
-    get_ten() -> int
+    fn get_ten() -> int
         ensures result == 10
 }
 

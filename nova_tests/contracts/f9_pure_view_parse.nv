@@ -7,8 +7,8 @@
 module nova_tests.contracts
 
 type Db8 effect {
-    SetBalance(id int, amount int)
-    Withdraw(id int, amount int)
+    fn SetBalance(id int, amount int)
+    fn Withdraw(id int, amount int)
     #pure balance(id int) -> int
     axiom non_negative(id) => balance(id) >= 0
 }

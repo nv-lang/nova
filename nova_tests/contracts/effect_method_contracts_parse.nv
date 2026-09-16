@@ -4,10 +4,10 @@
 module nova_tests.contracts
 
 type Storage1 effect {
-    read(key int) -> int
+    fn read(key int) -> int
         requires key > 0
         ensures result >= 0
-    write(key int, val int)
+    fn write(key int, val int)
         requires key > 0
         requires val >= 0
 }

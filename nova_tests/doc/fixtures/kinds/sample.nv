@@ -13,7 +13,7 @@ export type Color | Red | Green | Blue
 ///
 /// #stable
 export type Counter effect {
-    next() -> int
+    fn next() -> int
     axiom non_negative(x int) => x >= 0
 }
 

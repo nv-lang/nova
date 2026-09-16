@@ -5,7 +5,7 @@
 module nova_tests.contracts
 
 type Branchy effect {
-    classify(x int) -> int
+    fn classify(x int) -> int
         ensures match result { _ => true }
 }
 

@@ -20,8 +20,8 @@ module neg.reg614_effect_generic_neg
 
 // nova:expect E_EFFECT_GENERIC_UNSUPPORTED -- rank-2: один vtable-слот, одна подпись; Q6 открыт (реестр 221.1 №614)
 type Store[T] effect {
-    put(v T) -> ()
-    get() -> T
+    fn put(v T) -> ()
+    fn get() -> T
 }
 
 fn main() -> () {}

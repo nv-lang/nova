@@ -1,5 +1,5 @@
 export type Signal effect {
-    ping() -> ()
+    fn ping() -> ()
 }
 
 // public, effect NOT declared in signature — per D28, should be a compile error

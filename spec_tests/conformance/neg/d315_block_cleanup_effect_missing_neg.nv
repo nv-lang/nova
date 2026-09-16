@@ -4,7 +4,7 @@
 // effects are DIRECT effects of the enclosing function, `Beep` included.
 module neg.d315_block_cleanup_effect_missing_neg
 
-type Beep effect { ping() -> () }
+type Beep effect { fn ping() -> () }
 
 type D315BeepRes consume { id int }
 

@@ -10,7 +10,7 @@
 module neg.soundness_guard_handler_unknown_must_error
 
 type Store effect {
-    Set(v int)
+    fn Set(v int)
     #pure get() -> int
     axiom after_set(v) => post(Set(v))(get()) == v
 }

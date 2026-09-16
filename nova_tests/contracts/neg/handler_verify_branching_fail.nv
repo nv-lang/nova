@@ -9,7 +9,7 @@
 module neg.handler_verify_branching_fail
 
 type Db effect {
-    SetBalance(id int, amount int)
+    fn SetBalance(id int, amount int)
     #pure balance(id int) -> int
     axiom after_set(id, x) => post(SetBalance(id, x))(balance(id)) == x
 }

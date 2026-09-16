@@ -15,7 +15,7 @@
 module neg.liskov_variance_diag_fail
 
 type Clamp effect {
-    clamp_low(x int, lo int, n int) -> int
+    fn clamp_low(x int, lo int, n int) -> int
         requires x <= n
         ensures result >= lo
         ensures result <= n

@@ -12,7 +12,7 @@
 // -- and NOT `INNER-AFTER`, because the inner with is abandoned.
 module standalone.p680_user_effect_arm_throw_outer_fail_handles
 
-type ZBoom2 effect { boom() -> never }
+type ZBoom2 effect { fn boom() -> never }
 
 fn work() ZBoom2 Io -> () {
     println("WORK")
