@@ -137,7 +137,15 @@ fn register_sum_variants(c Node, mut types []TypeDef, mut defs DefTable,
                                       next_same: if prev < 0 { no_vrow() } else { VariantRow(prev) } })
         vcnt += 1
     }
+    // `shape` is CARRIED from the row being replaced, for the same reason
+    // `tparam_cnt` beside it is: this literal REPLACES an existing row, and the
+    // field's own rule is that the word of the source decides it AT COLLECT,
+    // EXACTLY ONCE. Writing a constant here would re-decide it. Until 2026-09-17
+    // the field was simply absent -- the constructor compiled silently and the
+    // layout decision read uninitialised memory (registry #1151, found only when
+    // the oracle learned to refuse a missing field, #1142).
     types[raw_decl(sum_decl)] = TypeDef { kind: TypeKind.TkSum,
+                                          shape: types[raw_decl(sum_decl)].shape,
                                           tparam_cnt: types[raw_decl(sum_decl)].tparam_cnt,
                                           ty_id: sum_ty, name: sname,
                                           rows: TypeRows.VariantRows(VariantRow(off), vcnt) }
