@@ -1034,6 +1034,12 @@ mut buf = []u8.new(cap: 1024)             // pre-allocation, ровно 1024 с�
 ro n = parse[int]("42")?                  // явный T = int
 ro m = HashMap[str, int].new()            // явные K, V
 
+// Базой turbofish'а может быть только имя ТИПА (D38, амендмент 2026-09-18).
+// Запись `base[X].method(...)` неоднозначна на вид: отличает формы лишь то,
+// чем является база. Имя ЗНАЧЕНИЯ даёт индексацию с вызовом метода на ЭЛЕМЕНТЕ.
+ro m2 = HashMap[str, int].new()           // база — ТИП    -> turbofish
+ro len = rows[i].len()                    // база — ЗНАЧЕНИЕ -> rows[i], затем .len()
+
 // Set[T] — множество, обёртка над HashMap[T, ()] (использует use-embed, D39)
 mut s = Set[int].new()
 s.insert(1)                               // -> bool, false если дубликат
