@@ -966,6 +966,9 @@ guard "$ROOT/scripts/guards/check-doc-conventions.sh" "$ROOT" "$DOC_GUARD_BASE" 
 step loop "doc-examples (снятые формы в nova-примерах публикуемой доки, окно p-example-guard)"
 DOC_EXAMPLES_SHOW_MATCHES=0 guard "$ROOT/scripts/guards/check-doc-examples.sh" "$ROOT" || fail "doc-examples (дока учит снятому синтаксису — let/readonly/*ro T/*unsafe T/постфикс-!/trait-impl-throws/ref-формы/external fn/addr_of/null <тип>/#impl(<старое имя>) — см. вывод выше)"
 
+step loop "doc-guide-names (форма, НАЗВАННАЯ в публикуемой доке, существует в языке — 2026-09-17, случай debug_assert)"
+guard "$ROOT/scripts/guards/check-doc-guide-names.py" "$ROOT" || fail "doc-guide-names (дока называет форму, которой нет в языке: имя либо снято — чинится ДОКА, либо чужое — вносится в базу с причиной; см. вывод выше)"
+
 step loop "test-fixture-coverage (правила 1/5 test-conventions.md — neg-фикстура на новый E_*/W_*, регресс-фикстура на закрытие маркера; реестр 221.1 №399)"
 # №586-класс: та же ошибка, что у DOC_GUARD_BASE выше — пустая база молча
 # уезжала в подпроверку, которая для СЕБЯ легитимно пропускает rule5/rule1,
