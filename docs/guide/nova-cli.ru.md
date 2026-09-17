@@ -1201,7 +1201,7 @@ expr.capacity → expr.capacity()
 ```
 
 **Условия пропуска:** предыдущий значимый токен == `=`
-(присваивание значения метода: `let f = arr.len`).
+(присваивание значения метода: `ro f = arr.len`).
 
 ```
 migrate_plan60 [--apply] [--dry-run] [--md] [--paths DIR...]

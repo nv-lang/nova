@@ -4,7 +4,7 @@ source_date: 2026-08-02
 ---
 
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
-# Гражданское (календарное) время в Nova — `std/time/civil`
+# Календарное время в Nova — `std/time/civil`
 
 [English](datetime.md) | **Русский**
 

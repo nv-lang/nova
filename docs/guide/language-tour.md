@@ -608,13 +608,13 @@ Nova's opaque-pointer type is `*()` (pointer to unit — `void*` in C); the
 old built-in `ptr` type was removed. Wrap a raw `*()` in a record for a
 **typed handle** so distinct native resources (a file handle vs. a socket
 handle) aren't interchangeable at compile time, even though both are
-`void*` on the C side. `external fn name(args) -> ret` (D82) declares a
+`void*` on the C side. `extern "C" fn name(args) -> ret` (D282) declares a
 binding to a C symbol; the full cookbook — layered wrapping, tuple-by-value
 returns, linking a static/shared library via `[ffi]` in `nova.toml` — is in
 [docs/guide/ffi-cookbook.md](ffi-cookbook.md).
 
 ```nova
-// ffi_tour.nv — FFI basics: opaque pointer `*()`, typed handles, `external fn`.
+// ffi_tour.nv — FFI basics: opaque pointer `*()`, typed handles, `extern "C" fn`.
 // Full cookbook: docs/guide/ffi-cookbook.md. `ptr` as a built-in type was removed
 // (Plan 134) — `*()` (pointer to unit = `void*` in C) is used everywhere.
 module tour.ffi_tour
@@ -629,7 +629,7 @@ fn main() {
     ro nothing *() = (0 as *())
 
     // *() constructed from an integer (normally this would come back from
-    // an `external fn` call into a C library).
+    // an `extern "C" fn` call into a C library).
     ro raw *() = 0x1000 as *()
 
     // Round-trip cast: *() -> int -> *() (same bit pattern).

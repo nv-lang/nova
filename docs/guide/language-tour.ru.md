@@ -617,13 +617,13 @@ monorepo, как это делает корневой `nova.toml` этого р�
 встроенный тип `ptr` удалён. Оборачивайте сырой `*()` в запись для
 **типизированного хендла**, чтобы разные нативные ресурсы (файловый хендл
 против сокетного) не были взаимозаменяемы на этапе компиляции, хотя на C-стороне
-оба — `void*`. `external fn name(args) -> ret` (D82) объявляет привязку к
+оба — `void*`. `extern "C" fn name(args) -> ret` (D282) объявляет привязку к
 C-символу; полный cookbook — послойные обёртки, кортежные возвраты по
 значению, линковка статической/разделяемой библиотеки через `[ffi]` в
 `nova.toml` — в [docs/guide/ffi-cookbook.md](ffi-cookbook.md).
 
 ```nova
-// ffi_tour.nv — FFI basics: opaque pointer `*()`, typed handles, `external fn`.
+// ffi_tour.nv — FFI basics: opaque pointer `*()`, typed handles, `extern "C" fn`.
 // Full cookbook: docs/guide/ffi-cookbook.md. `ptr` as a built-in type was removed
 // (Plan 134) — `*()` (pointer to unit = `void*` in C) is used everywhere.
 module tour.ffi_tour
@@ -638,7 +638,7 @@ fn main() {
     ro nothing *() = (0 as *())
 
     // *() constructed from an integer (normally this would come back from
-    // an `external fn` call into a C library).
+    // an `extern "C" fn` call into a C library).
     ro raw *() = 0x1000 as *()
 
     // Round-trip cast: *() -> int -> *() (same bit pattern).

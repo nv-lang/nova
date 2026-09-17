@@ -7,6 +7,7 @@
 authoring-a-module
 auto-derive-guide
 building-from-source
+caller-location
 channels
 cleanup-cookbook
 consume-types
