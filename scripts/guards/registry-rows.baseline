@@ -909,8 +909,11 @@
 #   бюджете 30 с, 8 с в одиночку). Строка заведена вместо того, чтобы
 #   поднять бюджет носителю: по №453 таких фикстур семь, и решение о форме
 #   принимается на класс.
-rows=1098
-max=1149
+# 2026-09-17 (integrator), chetvyortyy shag dnya: rows 1098 -> 1099,
+#   max 1149 -> 1151. Zavedena stroka 1151; 1150 vydan oknu Kariny i lezhit
+#   v yego vetke -- otsyuda razryv mezhdu prirostom strok (+1) i maksimuma (+2).
+rows=1099
+max=1151
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
@@ -1122,4 +1125,9 @@ stale_gaps=0
 #   ПОЧЕМУ НЕ ЖДАЛ СЛИЯНИЯ: номер выдаётся ДО работы (иначе два окна возьмут
 #   один), а слияние приходит после неё; разрыв между этими моментами —
 #   нормальная цена раздачи номеров одним источником, а не дефект.
-gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1144-1146
+# 2026-09-17: v perechen dyr dobavlen 1150 -- nomer VYDAN oknu Kariny (ICE na
+#   konstruktore s neizvestnym imenem tipa), stroka pishetsya v YEGO vetke i v
+#   main poka ne priyekhala. USLOVIE SNYATIYA to zhe, chto u 1144-1146: pri
+#   sliyanii vetki nomer poyavitsya, i  nado SOKRATIT obratno -- dyra,
+#   ostavlennaya posle sliyaniya, razreshit poteryat nastoyashchuyu stroku.
+gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1144-1146,1150
