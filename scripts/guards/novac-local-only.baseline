@@ -66,4 +66,10 @@
 # чужая незавершённая работа блокировала работу третьего. Красное, которое
 # нельзя починить тому, кто его видит, отключают — этот класс у нас уже
 # записан строкой №1029.
-1
+#
+# 2026-09-17 (integrator): 1 -> 0. Vetka research/regex-nlib-0917 VLITA v main
+# (resheniye vladel'tsa). Chislo opustilos' ROVNO tak, kak zapisano vyshe --
+# sliyaniyem, a ne ustupkoy: rabota bol'she ne zhivyot na odnom diske, ona na
+# tryokh zerkalakh. Tri kommita, tri fayla, vse pod docs/, koda net -- proveril
+# PERED sliyaniyem, a ne posle.
+0
