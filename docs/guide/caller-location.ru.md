@@ -52,7 +52,7 @@ fn half(n int, loc CallerLoc = caller_loc()) -> int
 half(-1)     // panic names the CALLER's line, not the clause's
 ```
 
-Это касается `requires`, `assert`, `debug_assert`, `panic` и `throw`
+Это касается `requires`, `assert` (в том числе `#debug assert`), `panic` и `throw`
 (последний записывает место в поле `site` отказа). Два параметра `CallerLoc`
 отвергаются по имени: выбрать между ними было бы нечем, а выбрать молча — хуже,
 чем отказать.
