@@ -202,6 +202,8 @@ pending the owner's call in Open questions.
 
 ---
 
+> **Две записи одного элемента отвечают одинаково (D479).** `import path.mod.{Pointt}` с `Pointt.MAX` и `import path.mod` с `mod.Pointt.MAX` называют ОДИН элемент. Для читателя они не различаются ничем: ни результатом разрешения, ни набором диагностик, ни текстом отказа. Неразрешённый путь называет ПЕРВЫЙ неразрешившийся сегмент.
+
 ## 9. Runtime, FFI and unsafe · Рантайм, FFI и unsafe
 
 | Русский (норма #language) | English | Example (en) | Note |

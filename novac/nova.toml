@@ -209,7 +209,23 @@
 # Долг Карины по D459 НЕ ИЗМЕРЕН мною и назван вопросом к интегратору: он
 # вёл эту правку и миграцию 255 операций, а писать чужую мерку по догадке хуже, чем
 # оставить пробел названным.
-#   spec-queue: 78
+# 78 -> 79 (2026-09-18): D479 -- two spellings of one element answer alike, and a
+# refusal names the FIRST segment that did not resolve. Raised by this window from
+# registry 1150, number from the integrator, wording agreed with him.
+# THE DEBT IS REAL AND IT IS A CORRECTION, not new work. The door shipped today
+# (`@report_if_path_head_unknown`) judges the HEAD of a path. Under D479 that is the
+# wrong question for the second spelling: `mod.Pointt.MAX` has `mod` as its head, so
+# the door would ask about the module where the user misspelled the TYPE. It is a
+# FIRST SLICE and the plan says so; the full form judges the RESOLUTION of the path.
+# Cannot be finished today: the second spelling needs TWO files in one compilation
+# unit, which is stage E2-b2. Named, not guessed.
+# ALSO IN THIS COMMIT, and it is not a decision but a repair: D29's section
+# "cyclic imports -- forbidden" was retracted by D291 two and a half months ago and
+# still read as the norm. Marked retracted, the old text kept AS HISTORY with the
+# reason it is kept -- a reader who arrives at D29 by search must learn he read
+# something stale rather than conclude he is mad. No rev number: the norm did not
+# change, only the text caught up. Zero cost for novac: it has no module cycles.
+#   spec-queue: 79
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,
