@@ -1,0 +1,2 @@
+module probe.pos_qualvariant
+fn main() { ro c = Huee.Red println("", c) }

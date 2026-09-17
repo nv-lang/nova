@@ -796,13 +796,24 @@ fn Checker mut @type_expr(e Node) -> () {
         // the whole decision -- an anonymous constructor has nothing to judge
         // here, so the arm simply does not enter.
         if rk.len() > 0 && rk[0].kind_of() == NodeKind.Name {
-            ro ct = type_of(e, @ctx, @scope, @chan)
-            if is_ty(ct) {
-                @record(e, ct)
-                @judge_record_ctor(e, ct)
+            // THE NAME IS JUDGED BEFORE IT IS USED, and this line is a fix, not
+            // caution: the `else` below used to claim the unknown name "was
+            // refused where the name was read", and nothing had refused it --
+            // `type_of` reached `ty_of_name_or_ice` and brought the compiler
+            // down on a misspelling (`Pointt { x: 1 }`). Registry #TBD.
+            if @report_if_ctor_type_undeclared(rk) {
+                // Refused by the one door that owns that sentence (#970: one
+                // door, every position, one sentence). Walking on would ask
+                // `type_of` about a name the registry does not hold.
             } else {
-                // No type: the constructor names something the registry does
-                // not know, and that was refused where the name was read.
+                ro ct = type_of(e, @ctx, @scope, @chan)
+                if is_ty(ct) {
+                    @record(e, ct)
+                    @judge_record_ctor(e, ct)
+                } else {
+                    // A DECLARED name whose type the lattice still cannot give:
+                    // refused elsewhere, and readers act on `no_ty()`.
+                }
             }
         } else {
             // Anonymous: nothing to judge here (the SILENT-OK above is the

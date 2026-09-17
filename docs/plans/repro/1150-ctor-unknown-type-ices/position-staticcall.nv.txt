@@ -1,0 +1,2 @@
+module probe.pos_staticcall
+fn main() { ro p = Pointt.new() println("", p) }

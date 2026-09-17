@@ -1,0 +1,2 @@
+module probe.pos_constof
+fn main() { println("", Pointt.MAX) }

@@ -1,0 +1,10 @@
+// CONTROL: the same shape with the type DECLARED. If this is accepted, the
+// refusal above is about the unknown name and not about record constructors.
+module probe.ctoricecontrol
+
+type Point { x int, y int }
+
+fn main() {
+    ro p = Point { x: 1, y: 2 }
+    println("x = ", p.x)
+}

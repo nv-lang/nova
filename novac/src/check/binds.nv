@@ -190,6 +190,20 @@ fn Checker mut @type_bind(st Node) -> () {
     } else {
         // Not a match: nothing decides before the lattice is asked.
     }
+    // THE CONSTRUCTOR'S NAME IS JUDGED BEFORE `type_of` IS ASKED, and this is a
+    // fix rather than caution: asking it about a name the registry does not hold
+    // reaches `ty_of_name_or_ice` and brings the compiler down on a plain
+    // misspelling -- `ro p = Pointt { x: 1 }` (registry #1150). The refusal is
+    // the one `typeref_rules` owns, so every position gets the same sentence.
+    if ik == NodeKind.RecordCtor && @report_if_ctor_type_undeclared(branch_children(init)) {
+        // Refused by name. The binding is STILL made, with no type: its later
+        // uses then read `no_ty()` instead of producing a second diagnostic
+        // about an unknown name, which is the cascade rule.
+        @scope.bind(vname, no_ty(), bind_mode_at(kids))
+        return
+    } else {
+        // Either not a constructor, or a constructor whose name IS declared.
+    }
     ro vtype = type_of(init, @ctx, @scope, @chan)
     @record(init, vtype)
     if ik == NodeKind.RecordCtor {
