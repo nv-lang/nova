@@ -414,6 +414,21 @@ export fn variant_named_in(ctx Ctx, name str, expect TyId) -> VariantRow {
     no_vrow()
 }
 
+/// HOW MANY sums declare this variant name, and the first row that does.
+///
+/// The count is what the caller decides on: one means the bare name resolves,
+/// more than one sends it to `variant_named_in` to be settled by the expected
+/// type (D478), and zero means the name is not a variant at all.
+///
+/// The file's OWN declarations win over handed ones, and that is not a
+/// preference but the only answer that can be right: a handed sum is visible
+/// here only because the shell passed it, while a name the file declares is the
+/// one its author wrote. So the walk counts both, and returns the file's set
+/// whenever it is non-empty.
+///
+/// Its docstring was missing until 2026-09-17 -- the wave beside it added a
+/// neighbouring door and the convention guard (P13) named this one, which is the
+/// ordinary way an old omission surfaces.
 #realtime nogc
 export fn variants_named(ctx Ctx, name str) -> (VariantRow, int) {
     mut r = ctx.variant_names.find(name)
