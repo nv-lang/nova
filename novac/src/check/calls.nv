@@ -667,6 +667,10 @@ fn Checker mut @type_method_call(e Node) -> () {
     // before the receiver is walked, because a type name is no bound value
     // and the name walk would refuse it as unknown -- the first of the two
     // refusals this spelling used to collect.
+    // Same question one line earlier than the variant door, and for the same
+    // reason it names: a type name is no bound value, so the name walk would
+    // refuse it as unknown and say nothing about types (registry #1150).
+    if @report_if_path_head_unknown(kids) { return }
     if @judge_type_head_variant(e, kids, 3) {
         // SILENT-OK: the door DECIDED -- it recorded the construction and
         // its type, or refused the shape. Nothing is left for the method

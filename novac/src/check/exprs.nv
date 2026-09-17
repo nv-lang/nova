@@ -584,6 +584,11 @@ fn Checker mut @type_expr(e Node) -> () {
         }
         // SILENT-OK: the head judge DECIDED for this node -- recorded the
         // variant's value or refused -- and the field walk must not run twice.
+        // NEITHER DOMAIN HOLDS THE HEAD: refused here, where the dot is
+        // visible. The name walk below would say "nothing is bound" -- true
+        // about values and silent about types, which is half the answer when
+        // the author meant a type (registry #1150).
+        if @report_if_path_head_unknown(kids) { return }
         if @judge_type_head_variant(e, kids, -1) { return }
         ro before = @out.len()
         @type_expr(kids[0])

@@ -1,0 +1,13 @@
+// CONTROL 1: a misspelled VARIABLE, with no type of that name either. The
+// author plainly meant a value, and the refusal must stay about values --
+// the path-head door must NOT claim a type was meant.
+module probe.cellvarmiss
+type Point {
+    x int
+    y int
+}
+fn main() {
+    ro p = Point { x: 1, y: 2 }
+    ro v = pp.x
+    println("v = ", v)
+}
