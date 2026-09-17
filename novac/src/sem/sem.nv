@@ -137,8 +137,6 @@ export fn decl_fn_row(f Node, ctx Ctx) -> Option[FnRow] {
     } else {
         // The id addresses this file's table, so the slot answers directly.
     }
-    // [LEGACY-#676] var-index-method: a method on a variable-index element
-    // resolves through the CONTAINER, so the row comes out by binding first.
     ro row = ctx.fn_decl_rows[id]
     if raw_row(row) < 0 {
         // The table is a DENSE int vector and stores -1 for "no row" — that is
