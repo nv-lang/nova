@@ -173,6 +173,25 @@ const SELF_FIELD_MSG = "outside the subset: `@field` arrives with methods"
 /// and that is the inference stage's work (E2-b3).
 const TYPED_LOCAL_MSG = "outside the subset: a declared local type is not compiled yet (E2-b3)"
 
+/// The same limit, said WITH THE NAME the reader came for.
+///
+/// Two facts, and the order between them is the whole point. The subset's limit
+/// is what refuses the program -- that stays first, because it is the truth
+/// about why nothing compiled. But a name nobody declared is what the reader
+/// can FIX, and the old text mentioned neither, so a misspelling in
+/// `ro x Pointt = 1` read as "novac cannot do declared local types yet" and the
+/// typo stayed invisible. Registry #1150: of seven positions where a type name
+/// can be written, this was the one that blamed the subset for a user's error.
+fn typed_local_msg(name str, declared bool) -> str {
+    if declared {
+        return "${TYPED_LOCAL_MSG} -- the type written here is `${name}`"
+    } else {
+        // Nobody declares it: two problems, and only one of them is the
+        // reader's. Both are named, his first.
+    }
+    "${TYPED_LOCAL_MSG}; and no type named `${name}` is declared in this file or in the declarations handed to novac -- a misspelling, or a type from a module this file does not import"
+}
+
 /// `"n=${n}"` -- string interpolation. The lexer keeps the literal whole, so
 /// nothing is lost; compiling it means emitting a format call.
 const INTERP_MSG = "outside the subset: only a bare name is compiled inside an interpolation yet (E2-b3) -- chains, calls and operators arrive with I2"

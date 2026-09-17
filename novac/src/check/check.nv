@@ -786,7 +786,17 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     // declared type where none was written. Counting is a
                     // measurement too, and this one went unmeasured.
                     if children.len() > 4 {
-                        @report_first_leaf_of(children, TYPED_LOCAL_MSG)
+                        // THE NAME IS READ AND JUDGED, not just the shape: the
+                        // limit refuses the program, but a name nobody declared
+                        // is what the reader can fix (registry #1150). The type
+                        // stands third -- keyword, name, TYPE, `=`, initializer.
+                        ro tname = if children[2].kind_of() == NodeKind.LeafNode {
+                            leaf_text(children[2])
+                        } else {
+                            ""
+                        }
+                        ro known = tname.byte_len() == 0 || @type_name_is_declared(tname, []str.new())
+                        @report_first_leaf_of(children, typed_local_msg(tname, known))
                         return
                     } else {
                         // No declared type: the ordinary binding.

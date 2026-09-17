@@ -1,0 +1,11 @@
+// CONTROL for the seventh position: the declared type EXISTS. The subset limit
+// still refuses (E2-b3 is real), but the message must not accuse the name.
+module probe.localdeclared
+type Point {
+    x int
+    y int
+}
+fn main() {
+    ro p Point = Point { x: 1, y: 2 }
+    println("v = ", p.x)
+}
