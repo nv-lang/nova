@@ -149,6 +149,24 @@ grep -q "bar.ru.md" "$TMP/.stderr" || note_fail "2c: сообщение не н�
 printf '# Bar RU\n' > "$TMP/docs/guide/bar.ru.md"
 run_guard || note_fail "2d: ложняк на полной паре bar.md/bar.ru.md"
 
+# 2e-2g — ОБРАТНАЯ СТОРОНА (2026-09-17): пара есть в дереве, а в манифесте её
+# нет. До этих случаев проверка шла в одну сторону и не видела ненапечатанную
+# страницу: `caller-location` пролежал неопубликованным две недели при зелёном
+# страже. Три случая, потому что их три разных: нарушение, законное исключение
+# и край (одинокий файл — не предмет этой проверки).
+printf '# Baz EN\n' > "$TMP/docs/guide/baz.md"
+printf '# Baz RU\n' > "$TMP/docs/guide/baz.ru.md"
+run_guard && note_fail "2e: не поймал пару baz, которой нет в PUBLISHED.list"
+grep -q "baz" "$TMP/.stderr" || note_fail "2e: сообщение не называет непубликуемую пару"
+
+printf 'bar\n# baz — черновик, не публикуем\n' > "$TMP/docs/guide/PUBLISHED.list"
+run_guard || note_fail "2f: закомментированное имя с причиной не сняло требование"
+
+printf '# Qux EN only\n' > "$TMP/docs/guide/qux.md"
+run_guard || note_fail "2g: одинокий en-файл без ru-пары попал под обратную проверку"
+rm -f "$TMP/docs/guide/qux.md" "$TMP/docs/guide/baz.md" "$TMP/docs/guide/baz.ru.md"
+printf 'bar\n' > "$TMP/docs/guide/PUBLISHED.list"
+
 # ============================================================
 # 3. plan_status (ratchet)
 # ============================================================

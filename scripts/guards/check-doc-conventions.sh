@@ -159,7 +159,40 @@ if [ -f "$published_list" ]; then
         fi
         [ "$pair_ok" -eq 1 ] && guide_pair_names="$guide_pair_names $line"
     done < "$published_list"
-    [ "$pair_violations" -eq 0 ] && info "doc-conventions ok: guide_pairing — $pair_count имён в PUBLISHED.list, все с парой"
+    # ОБРАТНАЯ СТОРОНА: пара ЕСТЬ в дереве, а в манифесте её НЕТ.
+    #
+    # Зачем. До 2026-09-17 проверка шла в ОДНУ сторону — «у имени из списка
+    # есть оба файла», — и потому не могла увидеть противоположное: guide
+    # написан, лежит в дереве и НЕ ПУБЛИКУЕТСЯ. Так и вышло с
+    # `caller-location` (появился 2026-09-03 планом 280): страж был зелён,
+    # страница не существовала на сайте, и заметить это было нечем.
+    #
+    # Это не придирка к полноте, а прямое требование САМОГО манифеста: его
+    # шапка говорит «стартовый состав — все guide-файлы (полная публикация,
+    # слово владельца)», а исключение обязано быть строкой, закомментированной
+    # '#' С ПРИЧИНОЙ. Значит молчаливое отсутствие в списке — нарушение
+    # записанного решения, и проверяется оно механически.
+    #
+    # ЗАКОННОЕ ИСКЛЮЧЕНИЕ читается из того же файла: имя, встреченное в
+    # КОММЕНТАРИИ, считается осознанно не публикуемым. Форма одна с тем, что
+    # манифест уже описывает, — второго синтаксиса не заводим.
+    excluded="$(grep -aE '^[[:space:]]*#' "$published_list" 2>/dev/null || true)"
+    unlisted=0
+    for en_file in "$guide_dir"/*.md; do
+        [ -f "$en_file" ] || continue
+        base="$(basename "$en_file")"
+        case "$base" in *.ru.md) continue ;; esac
+        name="${base%.md}"
+        # Судим только ПАРЫ: одинокий en-файл — предмет другой проверки.
+        [ -f "$guide_dir/$name.ru.md" ] || continue
+        case " $guide_pair_names " in *" $name "*) continue ;; esac
+        case "$excluded" in *"$name"*) continue ;; esac
+        red "guide pairing: docs/guide/$name.{md,ru.md} есть в дереве, но НЕ в PUBLISHED.list — страница не публикуется"
+        red "    манифест требует полной публикации; осознанный пропуск пишется строкой '# $name — причина'"
+        unlisted=$((unlisted + 1))
+        pair_violations=$((pair_violations + 1))
+    done
+    [ "$pair_violations" -eq 0 ] && info "doc-conventions ok: guide_pairing — $pair_count имён в PUBLISHED.list, все с парой; непубликуемых пар в дереве 0"
 else
     info "doc-conventions ok (вакуумно): docs/guide/PUBLISHED.list ещё не создан (план 241-Ф.1b)"
 fi
