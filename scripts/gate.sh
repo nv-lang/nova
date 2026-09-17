@@ -966,6 +966,9 @@ guard "$ROOT/scripts/guards/check-doc-conventions.sh" "$ROOT" "$DOC_GUARD_BASE" 
 step loop "doc-examples (снятые формы в nova-примерах публикуемой доки, окно p-example-guard)"
 DOC_EXAMPLES_SHOW_MATCHES=0 guard "$ROOT/scripts/guards/check-doc-examples.sh" "$ROOT" || fail "doc-examples (дока учит снятому синтаксису — let/readonly/*ro T/*unsafe T/постфикс-!/trait-impl-throws/ref-формы/external fn/addr_of/null <тип>/#impl(<старое имя>) — см. вывод выше)"
 
+step loop "handoff-labels (метка раздела ролевой записки — полная дата, а не четыре цифры: 2026-09-17, шесть схем в двух файлах)"
+guard "$ROOT/scripts/guards/check-handoff-labels.py" "$ROOT" || fail "handoff-labels (метка раздела записки не есть полная дата: заведи `0-ГГГГ-ММ-ДД[-часть суток]`, прежнюю — в базу; см. вывод выше)"
+
 step loop "doc-guide-names (форма, НАЗВАННАЯ в публикуемой доке, существует в языке — 2026-09-17, случай debug_assert)"
 guard "$ROOT/scripts/guards/check-doc-guide-names.py" "$ROOT" || fail "doc-guide-names (дока называет форму, которой нет в языке: имя либо снято — чинится ДОКА, либо чужое — вносится в базу с причиной; см. вывод выше)"
 
