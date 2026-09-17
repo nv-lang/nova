@@ -3474,6 +3474,35 @@ fn is_fully_stack_value_guarded(
                         on_path.remove(name);
                         ok
                     }
+                    // Реестр 221.1 №760, план 274.10 пункт 1 (2026-09-17).
+                    // NEWTYPE над стековым носителем САМ стековый: он несёт
+                    // ровно один носитель и не добавляет ни одного поля,
+                    // значит поверхностная побитовая копия для него —
+                    // настоящая копия, ровно как для базового случая
+                    // `is_bare_scalar_primitive_name`.
+                    //
+                    // ЧТО БЫЛО: `type TyId int` попадал в `_ => false` ниже, и
+                    // `fn same(t TyId) -> TyId => t` отвергалось
+                    // `E_READONLY_COERCE` — с доводом «запись у caller'а была
+                    // бы видна источнику», который для копируемого int не
+                    // может быть верен по построению. Карина платила за это
+                    // ДЕСЯТЬЮ обходами в шести файлах (маркер
+                    // `LEGACY-#760-newtype-ro-launder`), включая дверь
+                    // `types/types.nv:same_ty`, где тот же id пересобирался
+                    // ЗАНОВО только чтобы отказ не сработал.
+                    //
+                    // РЕКУРСИЯ, А НЕ `true`: newtype бывает и над heap-типом
+                    // (`type Name str_buf` и подобное), и тогда изъятие
+                    // неверно. Спрашиваем носителя тем же предикатом, и
+                    // защита от цикла — та же, что у соседей.
+                    crate::ast::TypeDeclKind::Newtype(carrier) => {
+                        if !on_path.insert(name.to_string()) {
+                            return false;
+                        }
+                        let ok = is_fully_stack_value_guarded(carrier, types, on_path);
+                        on_path.remove(name);
+                        ok
+                    }
                     _ => false,
                 },
                 None => false,
