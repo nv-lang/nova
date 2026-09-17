@@ -38592,10 +38592,52 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         self.line("}");
                         return Ok(result_tmp);
                     }
-                    let r = match self.novares_ok_err(&left_ty) {
-                        Some((ok_c, _)) => self.emit_expr_with_target_type(right, &ok_c)?,
-                        None => self.emit_expr(right)?,
+                    // Реестр 221.1 №1147, ВТОРОЙ НОСИТЕЛЬ (2026-09-17).
+                    // Ленивость правилась у Option-ветки выше, а ЗДЕСЬ не было
+                    // даже прежнего Match-случая из №402: запасная ветка
+                    // печаталась в тернарный оператор, то есть вычислялась
+                    // ВСЕГДА. Нашло окно Карины худшим из возможных носителей —
+                    // `json_encode(dto) ?? ice(...)` в `to_json`, где
+                    // `json_encode` возвращает Result: компилятор перестал
+                    // печатать ЛЮБУЮ диагностику, потому что `ice` срабатывал на
+                    // каждом успешном кодировании.
+                    //
+                    // ПОЧЕМУ МЫ ОБА ЭТОГО НЕ УВИДЕЛИ, и это записано здесь, а не
+                    // только в реестре: мой фикс проверялся пробой на Option —
+                    // ТЕМ ЖЕ носителем, на котором делался, — и три ночные пробы
+                    // окна Карины тоже были Option. Ни одна не спросила, сколько
+                    // ТИПОВ несёт `??`. Их два. Тот же урок, что строка 1147 уже
+                    // несёт про №402: фикс закрывает класс ТОЛЬКО НА СВОЁМ
+                    // УРОВНЕ, и проба на одном носителе приёмкой класса не
+                    // считается.
+                    //
+                    // Мера та же, что у Option: спрашиваем СВОЙСТВО эмиссии —
+                    // вырос ли поток statement'ов, — а не имя узла.
+                    let ok_c = match self.novares_ok_err(&left_ty) {
+                        Some((c, _)) => c,
+                        None => left_ty.clone(),
                     };
+                    let result_tmp = self.fresh_tmp_named("coalesce");
+                    let decl_at = self.out.len();
+                    self.line(&format!("{} {};", ok_c, result_tmp));
+                    self.line(&format!("if ({}->tag == NOVA_TAG_Result_Ok) {{", res_tmp));
+                    self.indent += 1;
+                    self.line(&format!("{} = {}->payload.Ok._0;", result_tmp, res_tmp));
+                    self.indent -= 1;
+                    self.line("} else {");
+                    self.indent += 1;
+                    let before_right = self.out.len();
+                    let r = self.emit_expr_with_target_type(right, &ok_c)?;
+                    let right_built_statements = self.out.len() > before_right;
+                    self.line(&format!("{} = {};", result_tmp, r));
+                    self.indent -= 1;
+                    self.line("}");
+                    if right_built_statements {
+                        return Ok(result_tmp);
+                    }
+                    // Ветка — чистое выражение: снимаем построенный `if/else` и
+                    // возвращаемся на прежний тернарный путь БАЙТ-В-БАЙТ.
+                    self.out.truncate(decl_at);
                     Ok(format!(
                         "({tmp}->tag == NOVA_TAG_Result_Ok ? {tmp}->payload.Ok._0 : {r})",
                         tmp = res_tmp,
