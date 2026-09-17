@@ -510,12 +510,17 @@ fn Checker mut @type_expr(e Node) -> () {
                     // unknown name.
                     ro (vfound, vn) = variants_named(@ctx, t.text)
                     ro is_variant = vn >= 1
-                    // D478 (владелец 2026-09-16): две суммы с одним именем — не
-                    // приговор. Спрашивается ОЖИДАНИЕ позиции, и отказ
-                    // остаётся только там, где ожидания нет либо оно называет
-                    // чужой тип. Разрешённый случай идёт ТЕМ ЖЕ путём, что
-                    // однозначный, — одна дверь на корень (274.4).
-                    ro picked = if vn > 1 { variant_named_in(@ctx, t.text, @value_expect) } else { no_vrow() }
+                    // D478 (owner, 2026-09-16): two sums declaring one name is
+                    // not a verdict. The POSITION'S EXPECTATION is asked, and
+                    // the refusal stays only where there is no expectation, or
+                    // where it names another type. The admitted case walks the
+                    // SAME path as an unambiguous one -- one door per root
+                    // (274.4).
+                    ro picked = if vn > 1 {
+                        variant_named_in(@ctx, t.text, @value_expect)
+                    } else {
+                        no_vrow()
+                    }
                     ro vrow = if is_vrow(picked) { picked } else { vfound }
                     if vn > 1 && !is_vrow(picked) {
                         @refuse(t, AMBIGUOUS_VARIANT_MSG)
