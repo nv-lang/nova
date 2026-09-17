@@ -81,7 +81,7 @@ git -C . rev-list --count origin/main..HEAD    # сколько своего н�
 ```sh
 bash scripts/guards/check-novac-differential.sh .
 python scripts/guards/check-novac-subset-debt-dated.py .
-bash scripts/guards/check-novac-legacy-workarounds.sh .
+python scripts/guards/check-novac-legacy-workarounds.py .
 ```
 
 **5. Что следующее — из ЖИВЫХ строк подпланов, а не из их номеров.** Номер
