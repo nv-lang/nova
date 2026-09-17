@@ -19446,10 +19446,37 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // sync primitives already have a complete
                             // `#include`d typedef, forward-declaring here
                             // collides with it.
+                            // Реестр 221.1 №761 (2026-09-18): ФОРВАРД ЭМИТИТСЯ
+                            // ТОЛЬКО ТОМУ, ЧТО ДЕЙСТВИТЕЛЬНО STRUCT. Прежнее
+                            // условие спрашивало СПИСОК ИМЁН
+                            // (`debt_is_runtime_backed_newtype` — 20 имён
+                            // рантайма), и всякий ПОЛЬЗОВАТЕЛЬСКИЙ newtype в
+                            // payload варианта получал `typedef struct Nova_X
+                            // Nova_X;` поверх своего же `typedef nova_int
+                            // Nova_X` — «typedef redefinition with different
+                            // types», отказ clang при зелёном чекере.
+                            //
+                            // ПОРЯДОК ОБЪЯВЛЕНИЯ РЕШАЛ, СОБЕРЁТСЯ ЛИ ПРОГРАММА:
+                            // сумма ВЫШЕ newtype — отказ, ниже — успех; и Карина
+                            // платила за это тем, что три типа стоят не там, где
+                            // им место по смыслу, а в файле, эмитящемся раньше.
+                            //
+                            // СПИСОК ИМЁН БЫЛ ВЕРНЫМ ОТВЕТОМ НА УЖЕ́ ВОПРОС:
+                            // он защищал рантаймовые типы, чей typedef приезжает
+                            // заголовком. Но вопрос здесь другой — «нужна ли
+                            // forward-декларация СТРУКТУРЫ», — и ответ на него
+                            // даёт не имя, а вид типа. Запись и сумма свои тела
+                            // эмитят позже, им форвард нужен; всё остальное под
+                            // этим именем структурой не является вовсе, и
+                            // объявлять его структурой — ошибка независимо от
+                            // того, знаком ли нам этот тип.
+                            let bare = base.trim_start_matches("Nova_");
+                            let is_struct_shaped = self.record_schemas.contains_key(bare)
+                                || self.sum_schemas.contains_key(bare)
+                                || self.generic_types.contains(bare);
                             if base.starts_with("Nova_")
-                                && !Self::debt_is_runtime_backed_newtype(
-                                    base.trim_start_matches("Nova_"),
-                                )
+                                && is_struct_shaped
+                                && !Self::debt_is_runtime_backed_newtype(bare)
                                 && fwd_seen.insert(base.to_string())
                             {
                                 self.line(&format!("typedef struct {0} {0};", base));
