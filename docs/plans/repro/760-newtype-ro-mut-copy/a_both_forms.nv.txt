@@ -1,0 +1,28 @@
+module p760a
+
+// Две формы одного правила ro-launder на newtype над примитивом.
+// Обе отвергаются, но РАЗНЫМИ ветвями -- это видно в тексте самих диагностик.
+//
+// Копия с голым `.nv` в скрэтч, затем `nova check` — `.nv.txt` он отвергает:
+//   13 | fn ret(t Tick) -> Tick => t     -> E_READONLY_COERCE, Ф.1б
+//   17 |     mut cur = at                -> E_READONLY_COERCE, Ф.1
+
+export type Tick int
+
+// ФОРМА 1 -- та, что названа в критерии приёмки строки 760.
+fn ret(t Tick) -> Tick => t
+
+// ФОРМА 2 -- в критерии НЕ названа.
+fn walk(at Tick, stop Tick) -> int {
+    mut cur = at
+    mut n = 0
+    while cur != stop {
+        cur = Tick(cur as int + 1)
+        n += 1
+    }
+    n
+}
+
+fn raw(t Tick) -> int => t as int
+
+fn main() Io -> () => print("${raw(ret(Tick(1)))} ${walk(Tick(0), Tick(3))}")
