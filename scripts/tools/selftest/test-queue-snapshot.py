@@ -23,6 +23,7 @@ u"""Самотест снимка очереди (план 292 Ш.2).
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -273,6 +274,80 @@ def c_real_tree():
 cell(u"нет дерева: громко, а не «роль none»", c_broken_self)
 cell(u"настоящее дерево: снимок не считает себя сломанным", c_real_tree)
 
+
+
+# ------------------------------------------- согласие с хуком о «чьё это окно»
+# Снимок и Stop-страж отвечают на ОДИН вопрос. Разойдясь, они дают окну снимок
+# ЧУЖОЙ очереди при молчащем страже — замерено на себе 2026-09-19 02:06, когда
+# хук уже говорил `none`, а снимок в том же дереве — `integrator`.
+
+def _tree_with_card(owner_sid):
+    tmp = tempfile.mkdtemp(prefix="queue-card-")
+    g = os.path.join(tmp, ".git")
+    os.makedirs(g, exist_ok=True)
+    with io.open(os.path.join(g, "HEAD"), "w", encoding="utf-8") as fh:
+        fh.write(u"ref: refs/heads/main\n")
+    with io.open(os.path.join(g, "nova-session-integrator.card"), "w",
+                 encoding="utf-8") as fh:
+        fh.write(u"role=integrator\nsession_id=%s\n" % owner_sid)
+    return tmp
+
+
+def _hook_role(tree, sid):
+    u"""Роль ГЛАЗАМИ ХУКА — его собственной функцией, а не пересказом."""
+    hook = os.path.join(TREE, "scripts", "claude-hooks", "guard-stop-v2.py")
+    src = io.open(hook, encoding="utf-8").read().replace(
+        'if __name__ == "__main__":', "if False:")
+    ns = {"__name__": "probe"}
+    old = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    os.environ["CLAUDE_CODE_SESSION_ID"] = sid
+    os.environ.pop("NOVA_WINDOW_ROLE", None)
+    try:
+        exec(compile(src, "probe", "exec"), ns)
+        return ns["detect_role"](tree)
+    finally:
+        if old is None:
+            os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+        else:
+            os.environ["CLAUDE_CODE_SESSION_ID"] = old
+
+
+def c_agrees_foreign_card():
+    tree = _tree_with_card(u"CHUZHOY")
+    old = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    os.environ["CLAUDE_CODE_SESSION_ID"] = u"MOY"
+    os.environ.pop("NOVA_WINDOW_ROLE", None)
+    try:
+        mine = snapmod.detect_role(tree)
+    finally:
+        if old is None:
+            os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+        else:
+            os.environ["CLAUDE_CODE_SESSION_ID"] = old
+    theirs = _hook_role(tree, u"MOY")
+    shutil.rmtree(tree, ignore_errors=True)
+    return (mine == theirs == u"none"), u"снимок=%s, хук=%s" % (mine, theirs)
+
+
+def c_agrees_own_card():
+    tree = _tree_with_card(u"MOY")
+    old = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    os.environ["CLAUDE_CODE_SESSION_ID"] = u"MOY"
+    os.environ.pop("NOVA_WINDOW_ROLE", None)
+    try:
+        mine = snapmod.detect_role(tree)
+    finally:
+        if old is None:
+            os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+        else:
+            os.environ["CLAUDE_CODE_SESSION_ID"] = old
+    theirs = _hook_role(tree, u"MOY")
+    shutil.rmtree(tree, ignore_errors=True)
+    return (mine == theirs == u"integrator"), u"снимок=%s, хук=%s" % (mine, theirs)
+
+
+cell(u"визитка чужая: снимок и хук говорят `none`", c_agrees_foreign_card)
+cell(u"визитка моя: оба говорят `integrator`", c_agrees_own_card)
 
 print(u"PASS %d  FAIL %d" % (ok_count, fail_count))
 sys.exit(1 if fail_count else 0)
