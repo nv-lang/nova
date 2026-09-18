@@ -785,6 +785,20 @@ export type Hash protocol {
 }
 ```
 
+**Экспортируемое ЗНАЧЕНИЕ уровня модуля пишется только квалифицированно.**
+`export ro NAME = …` с голым именем — не форма языка
+(`E_EXPORT_RO_UNQUALIFIED`): такое имя молча не попадало в экспорты, и отказ
+приходил чужому коду в другом файле как `undefined identifier`. Канон —
+`export ro Type.NAME Тип = …` (амендмент к
+[D200](decisions/02-types.md#d200)); если значение задумано модульно-приватным,
+`export` просто снимается — приватный `ro NAME = …` законен и обычен:
+
+```nova
+export ro Cfg.DEFAULT Cfg = build()   // ✓ экспортируемая форма — квалифицированная
+ro cache_root str = compute_root()    // ✓ приватная форма — голое имя
+export ro cache_root str = compute_root()   // ✗ E_EXPORT_RO_UNQUALIFIED
+```
+
 **Поля record:** без `priv` поля `export`-типа публичны по умолчанию
 (D47). Приватность — модификатор `priv` (`priv`/`priv(type)`/`priv(file)`,
 D220 + D281) на **поле** (`priv internal_id u64`) или на **типе**, задавая

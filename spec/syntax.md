@@ -776,6 +776,20 @@ export type Hash protocol {
 }
 ```
 
+**An exported module-level VALUE is written qualified, and only qualified.**
+`export ro NAME = …` with a bare name is not a form of the language
+(`E_EXPORT_RO_UNQUALIFIED`): such a name was silently dropped from the module's
+exports, and the failure surfaced in someone else's file as `undefined
+identifier`. The canonical spelling is `export ro Type.NAME Type = …` (amendment
+to [D200](decisions/02-types.md#d200)); if the value is meant to stay
+module-private, just drop `export` -- a private `ro NAME = …` is ordinary:
+
+```nova
+export ro Cfg.DEFAULT Cfg = build()   // ok -- exported form is qualified
+ro cache_root str = compute_root()    // ok -- private form, bare name
+export ro cache_root str = compute_root()   // error: E_EXPORT_RO_UNQUALIFIED
+```
+
 **Record fields:** without `priv`, fields of an `export` type are public by
 default (D47). Privacy — the `priv` modifier (`priv`/`priv(type)`/`priv(file)`,
 D220 + D281) on a **field** (`priv internal_id u64`) or on a **type**, setting
