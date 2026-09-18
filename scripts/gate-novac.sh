@@ -472,6 +472,7 @@ par_add "$ROOT/scripts/guards/check-novac-module-donor.py" "модуль novac �
 # причинами, novac-plan-donor.allow, тоже под храповиком.
 par_add "$ROOT/scripts/guards/check-novac-plan-donor.py" "оракул назван донором в тексте плана/конвенций novac (П25/П27 2а)"
 guard "$ROOT/scripts/guards/check-novac-commit-donor.sh" /dev/null "$ROOT" || fail "check-novac-commit-donor не отвечает на пустом входе"
+guard "$ROOT/scripts/guards/check-novac-commit-forms.sh" /dev/null "$ROOT" || fail "check-novac-commit-forms не отвечает на пустом входе"
 guard "$ROOT/scripts/guards/check-novac-commit-no-simplification.py" /dev/null "$ROOT" || fail "check-novac-commit-no-simplification not runnable"
 par_add "$ROOT/scripts/guards/check-novac-resolve-discipline.py" "резолв с тихим дефолтом или линейным сканом имён"
 par_add "$ROOT/scripts/guards/check-novac-channel-one-writer.py" "у канала чекера второй писатель или вывод типа ниже чекера"

@@ -116,6 +116,12 @@ fi
 # 2026-09-13). Страж рядом с донорским и по той же причине: назвать норму и НЕ внести
 # упрощение молча — обязанность автора, и спрашивать её надо в момент коммита, пока
 # контекст ещё у него в голове.
+# Слово владельца 2026-09-18: реализуя СИНТАКСИС, окно обязано перечислить
+# ВСЕ его формы через агента spec-reader — иначе форма переделывается по
+# нескольку раз. Спрашивается в момент коммита, пока контекст у автора.
+if [ -f "$ROOT/scripts/guards/check-novac-commit-forms.sh" ] && [ -n "${MSGFILE:-}" ]; then
+    sh "$ROOT/scripts/guards/check-novac-commit-forms.sh" "$MSGFILE" "$ROOT" || exit 1
+fi
 if [ -f "$ROOT/scripts/guards/check-novac-commit-no-simplification.py" ] && [ -n "${MSGFILE:-}" ]; then
     python "$ROOT/scripts/guards/check-novac-commit-no-simplification.py" "$MSGFILE" "$ROOT" || exit 1
 fi
