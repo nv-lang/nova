@@ -1,0 +1,13 @@
+module pe
+
+import std.fs.{Path}
+
+fn main() Io -> () {
+    ro a = Path.posix("/a/b")
+    ro b = Path.posix("/a/b")
+    ro c = Path.windows("/a/b")
+    println("equals a b  = ${a.equals(b)}")
+    println("==     a b  = ${a == b}")
+    println("equals a c  = ${a.equals(c)}")
+    println("==     a c  = ${a == c}")
+}
