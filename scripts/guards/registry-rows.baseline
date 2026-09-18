@@ -1,3 +1,8 @@
+# 2026-09-19 (интегратор, окно nova-ff): rows 1105 -> 1106, max 1159 -> 1160.
+#   №1160 — 677 строк из 1105 без ПОЛЯ статуса, и два стража толкуют это
+#   противоположно (routes-scan: пусто = ОТКРЫТ; closure-kept: пусто =
+#   ЗАКРЫТ). Счёт пересчитан своей рукой, не принят со слов. Дыр не
+#   прибавилось.
 # 2026-09-18 (интегратор, окно nova-ff): rows 1104 -> 1105, max 1157 -> 1159,
 #   и дыра 1158 объявлена: номер ВЫДАН окну Карины, строка живёт в ЕГО ветке.
 #   №1159 — тест `nova-lsp` с порогом в абсолютных секундах: под нагрузкой
@@ -935,8 +940,8 @@
 # 2026-09-17 (integrator), chetvyortyy shag dnya: rows 1098 -> 1099,
 #   max 1149 -> 1151. Zavedena stroka 1151; 1150 vydan oknu Kariny i lezhit
 #   v yego vetke -- otsyuda razryv mezhdu prirostom strok (+1) i maksimuma (+2).
-rows=1105
-max=1159
+rows=1106
+max=1160
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
