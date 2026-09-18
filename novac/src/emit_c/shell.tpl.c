@@ -701,6 +701,7 @@ static inline NovaRes_nova_uint_Nova_RangeError_p* nova_make_NovaRes_nova_uint_N
 /* Plan 95 Ф.2.4: forward decls для mono'd Nova-body методов на Option/Result (placed after NovaOpt/NovaRes typedefs — by-value/by-pointer signature requires complete/forward typedef visible). */
 static NovaRes_nova_char_Nova_ParseCharError_p* Nova_Option_method_ok_or_nova_char____Nova_ParseCharError_p(NovaOpt_nova_char nova_self, Nova_ParseCharError* err);
 static nova_unit Nova_Option_method_display_nova_str(NovaOpt_nova_str nova_self, Nova_FmtCtx* f);
+static nova_unit Nova_Option_method_display_nova_int(NovaOpt_nova_int nova_self, Nova_FmtCtx* f);
 static nova_unit Nova_Result_method_display_nova_int_nova_str(NovaRes_nova_int_nova_str* nova_self, Nova_FmtCtx* f);
 
 /* Plan 139 Ф.6: interned string literals (rodata dedup). */
@@ -1852,6 +1853,7 @@ static NovaVtable_Random* nova_fn_7prelude7effects11real_random(void);
 static NovaRes_nova_int_nova_str* nova_fn_11shell_probe7res_int(nova_bool f);
 static Nova_Vec____nova_int* nova_fn_11shell_probe5three(void);
 static NovaOpt_nova_str nova_fn_11shell_probe7opt_str(nova_bool f);
+static NovaOpt_nova_int nova_fn_11shell_probe7opt_int(nova_bool f);
 static NovaOpt_nova_f64 nova_fn_11shell_probe7opt_f64(nova_bool f);
 static NovaOpt_nova_bool nova_fn_11shell_probe8opt_bool(nova_bool f);
 static Nova_Vec____nova_byte* Vec____nova_byte_method_append____Nova_Vec____nova_byte_p(Nova_Vec____nova_byte* nova_self, Nova_Vec____nova_byte* other);
@@ -1881,6 +1883,7 @@ static nova_int Vec____nova_int_method_cap(Nova_Vec____nova_int* nova_self);
 static NovaOpt_nova_int Vec____nova_int_method_get(Nova_Vec____nova_int* nova_self, nova_int i);
 static nova_unit Vec____nova_int_method_display(Nova_Vec____nova_int* nova_self, Nova_FmtCtx* f);
 static nova_bool Vec____nova_byte_method_equal(Nova_Vec____nova_byte* nova_self, Nova_Vec____nova_byte* other);
+static nova_unit Nova_RawMem_static_copy_n____nova_byte(const nova_byte* src, nova_byte* dst, nova_int count);
 static nova_byte* nova_fn_11collections3vec9alloc_buf____nova_byte(nova_int n);
 static nova_unit Nova_RawMem_static_copy_n_nonoverlapping____nova_byte(const nova_byte* src, nova_byte* dst, nova_int count);
 static nova_int* nova_fn_11collections3vec9alloc_buf____nova_int(nova_int n);
@@ -5853,27 +5856,27 @@ static NovaVtable_Random* nova_fn_7prelude7effects11real_random(void) {
 static NovaRes_nova_int_nova_str* nova_fn_11shell_probe7res_int(nova_bool f) {
     nova_preempt_check();
     /* SRC: if f { */
-    nova_unit _nv_if_570;
+    nova_unit _nv_if_574;
     if (f) {
         /* SRC: return Ok(1) */
         return nova_make_NovaRes_nova_int_nova_str_Ok(((nova_int)1LL));
     }
-    (void)(_nv_if_570);
+    (void)(_nv_if_574);
     /* SRC: Err("oops") */
-    NovaRes_nova_int_nova_str* _nv_tmp_571 = nova_make_NovaRes_nova_int_nova_str_Err(_nova_strlit_119805b47155934e);
-    return _nv_tmp_571;
+    NovaRes_nova_int_nova_str* _nv_tmp_575 = nova_make_NovaRes_nova_int_nova_str_Err(_nova_strlit_119805b47155934e);
+    return _nv_tmp_575;
 }
 
 static Nova_Vec____nova_int* nova_fn_11shell_probe5three(void) {
     nova_preempt_check();
     /* SRC: mut v = []int.new() */
-    Nova_Vec____nova_int* _nv_tmp_572;
+    Nova_Vec____nova_int* _nv_tmp_576;
     {
         /* SRC: []int.new() */
         nova_int cap = ((nova_int)0LL);
-        _nv_tmp_572 = Nova_Vec____nova_int_static_new(cap);
+        _nv_tmp_576 = Nova_Vec____nova_int_static_new(cap);
     }
-    Nova_Vec____nova_int* v = _nv_tmp_572;
+    Nova_Vec____nova_int* v = _nv_tmp_576;
     /* SRC: v.push(1) */
     (void)(Vec____nova_int_method_push(v, ((nova_int)1LL)));
     /* SRC: v.push(2) */
@@ -5881,50 +5884,64 @@ static Nova_Vec____nova_int* nova_fn_11shell_probe5three(void) {
     /* SRC: v.push(3) */
     (void)(Vec____nova_int_method_push(v, ((nova_int)3LL)));
     /* SRC: v */
-    Nova_Vec____nova_int* _nv_tmp_573 = v;
-    return _nv_tmp_573;
+    Nova_Vec____nova_int* _nv_tmp_577 = v;
+    return _nv_tmp_577;
 }
 
 static NovaOpt_nova_str nova_fn_11shell_probe7opt_str(nova_bool f) {
     nova_preempt_check();
     /* SRC: if f { */
-    nova_unit _nv_if_574;
+    nova_unit _nv_if_578;
     if (f) {
         /* SRC: return Some("yes") */
         return ((NovaOpt_nova_str){.tag = NOVA_TAG_Option_Some, .value = (_nova_strlit_b53f7a197981b790)});
     }
-    (void)(_nv_if_574);
+    (void)(_nv_if_578);
     /* SRC: None */
-    NovaOpt_nova_str _nv_tmp_575 = ((NovaOpt_nova_str){.tag = NOVA_TAG_Option_None});
-    return _nv_tmp_575;
+    NovaOpt_nova_str _nv_tmp_579 = ((NovaOpt_nova_str){.tag = NOVA_TAG_Option_None});
+    return _nv_tmp_579;
+}
+
+static NovaOpt_nova_int nova_fn_11shell_probe7opt_int(nova_bool f) {
+    nova_preempt_check();
+    /* SRC: if f { */
+    nova_unit _nv_if_580;
+    if (f) {
+        /* SRC: return Some(7) */
+        return ((NovaOpt_nova_int){.tag = NOVA_TAG_Option_Some, .value = (((nova_int)7LL))});
+    }
+    (void)(_nv_if_580);
+    /* SRC: None */
+    NovaOpt_nova_int _nv_tmp_581 = ((NovaOpt_nova_int){.tag = NOVA_TAG_Option_None});
+    return _nv_tmp_581;
 }
 
 static NovaOpt_nova_f64 nova_fn_11shell_probe7opt_f64(nova_bool f) {
     nova_preempt_check();
     /* SRC: if f { */
-    nova_unit _nv_if_576;
+    nova_unit _nv_if_582;
     if (f) {
         /* SRC: return Some(1.5) */
         return ((NovaOpt_nova_f64){.tag = NOVA_TAG_Option_Some, .value = (((nova_f64)1.5))});
     }
-    (void)(_nv_if_576);
+    (void)(_nv_if_582);
     /* SRC: None */
-    NovaOpt_nova_f64 _nv_tmp_577 = ((NovaOpt_nova_f64){.tag = NOVA_TAG_Option_None});
-    return _nv_tmp_577;
+    NovaOpt_nova_f64 _nv_tmp_583 = ((NovaOpt_nova_f64){.tag = NOVA_TAG_Option_None});
+    return _nv_tmp_583;
 }
 
 static NovaOpt_nova_bool nova_fn_11shell_probe8opt_bool(nova_bool f) {
     nova_preempt_check();
     /* SRC: if f { */
-    nova_unit _nv_if_578;
+    nova_unit _nv_if_584;
     if (f) {
         /* SRC: return Some(true) */
         return ((NovaOpt_nova_bool){.tag = NOVA_TAG_Option_Some, .value = (true)});
     }
-    (void)(_nv_if_578);
+    (void)(_nv_if_584);
     /* SRC: None */
-    NovaOpt_nova_bool _nv_tmp_579 = ((NovaOpt_nova_bool){.tag = NOVA_TAG_Option_None});
-    return _nv_tmp_579;
+    NovaOpt_nova_bool _nv_tmp_585 = ((NovaOpt_nova_bool){.tag = NOVA_TAG_Option_None});
+    return _nv_tmp_585;
 }
 
 static nova_bool Nova_Set_method_equal(Nova_Set* nova_self, Nova_HashMap* arg0);
@@ -5994,48 +6011,48 @@ static Nova_ValuesIter* Nova_Set_method_values(Nova_Set* nova_self) {
 static Nova_Vec____nova_byte* Vec____nova_byte_method_append____Nova_Vec____nova_byte_p(Nova_Vec____nova_byte* nova_self, Nova_Vec____nova_byte* other) {
     nova_preempt_check();
     nova_int m = Vec____nova_byte_method_len(other);
-    nova_unit _nv_if_580;
+    nova_unit _nv_if_586;
     if ((m > ((nova_int)0LL))) {
         (void)(Vec____nova_byte_method_reserve(nova_self, m));
-        nova_unit _nv_tmp_581;
+        nova_unit _nv_tmp_587;
         {
-            _nv_tmp_581 = NOVA_UNIT; (void)(Nova_RawMem_static_copy(((const nova_byte*)(((other)->data))), ((nova_byte*)((((nova_self->data)) + ((nova_self->len))))), nova_int_checked_mul(m, ((nova_int)sizeof(nova_byte)))));
+            _nv_tmp_587 = NOVA_UNIT; (void)(Nova_RawMem_static_copy_n____nova_byte(((other)->data), (((nova_self->data)) + ((nova_self->len))), m));
         }
-        (void)(_nv_tmp_581);
-        nova_int* _nv_ca_582 = &((nova_self->len));
-        *_nv_ca_582 = nova_int_checked_add(*_nv_ca_582, m);
-        _nv_if_580 = NOVA_UNIT;
+        (void)(_nv_tmp_587);
+        nova_int* _nv_ca_588 = &((nova_self->len));
+        *_nv_ca_588 = nova_int_checked_add(*_nv_ca_588, m);
+        _nv_if_586 = NOVA_UNIT;
     }
-    (void)(_nv_if_580);
+    (void)(_nv_if_586);
     return nova_self;
 }
 
 static Nova_Vec____nova_byte* Nova_Vec____nova_byte_static_new__const_nova_byte_p_nova_int(const nova_byte* ptr, nova_int len) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
     if (!((len >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "new", "len >= 0", "core.nv", 118, NULL);
-    Nova_Vec____nova_byte* _nv_tmp_583 = (Nova_Vec____nova_byte*)nova_alloc(sizeof(Nova_Vec____nova_byte));
-    nova_byte* _nv_tmp_584;
+    Nova_Vec____nova_byte* _nv_tmp_589 = (Nova_Vec____nova_byte*)nova_alloc(sizeof(Nova_Vec____nova_byte));
+    nova_byte* _nv_tmp_590;
     {
-        _nv_tmp_584 = (nova_byte*)(((nova_byte*)(ptr)));
+        _nv_tmp_590 = (nova_byte*)(((nova_byte*)(ptr)));
     }
-    _nv_tmp_583->data = _nv_tmp_584;
-    _nv_tmp_583->len = len;
-    _nv_tmp_583->cap = len;
-    return _nv_tmp_583;
+    _nv_tmp_589->data = _nv_tmp_590;
+    _nv_tmp_589->len = len;
+    _nv_tmp_589->cap = len;
+    return _nv_tmp_589;
 }
 
 static Nova_Vec____nova_byte* Nova_Vec____nova_byte_static_new__const_nova_byte_p_nova_int__sret(const nova_byte* ptr, nova_int len, Nova_Vec____nova_byte* _out) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
     if (!((len >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "new", "len >= 0", "core.nv", 118, NULL);
-    Nova_Vec____nova_byte* _nv_tmp_585 = _out;
-    nova_byte* _nv_tmp_586;
+    Nova_Vec____nova_byte* _nv_tmp_591 = _out;
+    nova_byte* _nv_tmp_592;
     {
-        _nv_tmp_586 = (nova_byte*)(((nova_byte*)(ptr)));
+        _nv_tmp_592 = (nova_byte*)(((nova_byte*)(ptr)));
     }
-    _nv_tmp_585->data = _nv_tmp_586;
-    _nv_tmp_585->len = len;
-    _nv_tmp_585->cap = len;
-    return _nv_tmp_585;
+    _nv_tmp_591->data = _nv_tmp_592;
+    _nv_tmp_591->len = len;
+    _nv_tmp_591->cap = len;
+    return _nv_tmp_591;
 }
 
 static nova_int Vec____nova_byte_method_len(Nova_Vec____nova_byte* nova_self) {
@@ -6045,39 +6062,39 @@ static nova_int Vec____nova_byte_method_len(Nova_Vec____nova_byte* nova_self) {
 
 static NovaRes_nova_char_Nova_ParseCharError_p* Nova_Option_method_ok_or_nova_char____Nova_ParseCharError_p(NovaOpt_nova_char nova_self, Nova_ParseCharError* err) {
     nova_preempt_check();
-    NovaOpt_nova_char _nv_scr_587 = nova_self;
-    NovaRes_nova_char_Nova_ParseCharError_p* _nv_match_588;
-    int _nv_matched_589 = 0;
-    if (!_nv_matched_589 && ((_nv_scr_587.tag == NOVA_TAG_Option_Some))) {
-        nova_char v = _nv_scr_587.value;
-        _nv_match_588 = nova_make_NovaRes_nova_char_Nova_ParseCharError_p_Ok(v);
-        _nv_matched_589 = 1;
+    NovaOpt_nova_char _nv_scr_593 = nova_self;
+    NovaRes_nova_char_Nova_ParseCharError_p* _nv_match_594;
+    int _nv_matched_595 = 0;
+    if (!_nv_matched_595 && ((_nv_scr_593.tag == NOVA_TAG_Option_Some))) {
+        nova_char v = _nv_scr_593.value;
+        _nv_match_594 = nova_make_NovaRes_nova_char_Nova_ParseCharError_p_Ok(v);
+        _nv_matched_595 = 1;
     }
-    if (!_nv_matched_589 && ((_nv_scr_587.tag == NOVA_TAG_Option_None))) {
-        _nv_match_588 = nova_make_NovaRes_nova_char_Nova_ParseCharError_p_Err(err);
-        _nv_matched_589 = 1;
+    if (!_nv_matched_595 && ((_nv_scr_593.tag == NOVA_TAG_Option_None))) {
+        _nv_match_594 = nova_make_NovaRes_nova_char_Nova_ParseCharError_p_Err(err);
+        _nv_matched_595 = 1;
     }
-    return _nv_match_588;
+    return _nv_match_594;
 }
 
 static Nova_Vec____nova_byte* Nova_Vec____nova_byte_static_new(nova_int cap) {
     nova_preempt_check();
     if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "new", "cap >= 0", "core.nv", 106, NULL);
-    Nova_Vec____nova_byte* _nv_tmp_590 = (Nova_Vec____nova_byte*)nova_alloc(sizeof(Nova_Vec____nova_byte));
-    _nv_tmp_590->data = nova_fn_11collections3vec9alloc_buf____nova_byte(Nova_int_method_max(cap, ((nova_int)1LL)));
-    _nv_tmp_590->len = ((nova_int)0LL);
-    _nv_tmp_590->cap = cap;
-    return _nv_tmp_590;
+    Nova_Vec____nova_byte* _nv_tmp_596 = (Nova_Vec____nova_byte*)nova_alloc(sizeof(Nova_Vec____nova_byte));
+    _nv_tmp_596->data = nova_fn_11collections3vec9alloc_buf____nova_byte(Nova_int_method_max(cap, ((nova_int)1LL)));
+    _nv_tmp_596->len = ((nova_int)0LL);
+    _nv_tmp_596->cap = cap;
+    return _nv_tmp_596;
 }
 
 static Nova_Vec____nova_byte* Nova_Vec____nova_byte_static_new__sret(nova_int cap, Nova_Vec____nova_byte* _out) {
     nova_preempt_check();
     if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "new", "cap >= 0", "core.nv", 106, NULL);
-    Nova_Vec____nova_byte* _nv_tmp_591 = _out;
-    _nv_tmp_591->data = nova_fn_11collections3vec9alloc_buf____nova_byte(Nova_int_method_max(cap, ((nova_int)1LL)));
-    _nv_tmp_591->len = ((nova_int)0LL);
-    _nv_tmp_591->cap = cap;
-    return _nv_tmp_591;
+    Nova_Vec____nova_byte* _nv_tmp_597 = _out;
+    _nv_tmp_597->data = nova_fn_11collections3vec9alloc_buf____nova_byte(Nova_int_method_max(cap, ((nova_int)1LL)));
+    _nv_tmp_597->len = ((nova_int)0LL);
+    _nv_tmp_597->cap = cap;
+    return _nv_tmp_597;
 }
 
 static nova_int Vec____nova_byte_method_cap(Nova_Vec____nova_byte* nova_self) {
@@ -6088,24 +6105,24 @@ static nova_int Vec____nova_byte_method_cap(Nova_Vec____nova_byte* nova_self) {
 static Nova_Vec____nova_byte* Vec____nova_byte_method_cap__nova_int(Nova_Vec____nova_byte* nova_self, nova_int n) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
     if (!((n >= (nova_self->len)))) nova_contract_violation(NOVA_CONTRACT_PRE, "cap", "n >= @len", "core.nv", 228, NULL);
-    nova_unit _nv_if_592;
+    nova_unit _nv_if_598;
     if ((n == (nova_self->cap))) {
         return nova_self;
     }
-    (void)(_nv_if_592);
-    nova_unit _nv_if_593;
+    (void)(_nv_if_598);
+    nova_unit _nv_if_599;
     if ((n == ((nova_int)0LL))) {
         (nova_self->data) = nova_fn_11collections3vec9alloc_buf____nova_byte(((nova_int)1LL));
         (nova_self->cap) = ((nova_int)0LL);
         return nova_self;
     }
-    (void)(_nv_if_593);
+    (void)(_nv_if_599);
     nova_byte* dst = nova_fn_11collections3vec9alloc_buf____nova_byte(n);
-    nova_unit _nv_tmp_594;
+    nova_unit _nv_tmp_600;
     {
-        _nv_tmp_594 = NOVA_UNIT; (void)(Nova_RawMem_static_copy_n_nonoverlapping____nova_byte((nova_self->data), dst, (nova_self->len)));
+        _nv_tmp_600 = NOVA_UNIT; (void)(Nova_RawMem_static_copy_n_nonoverlapping____nova_byte((nova_self->data), dst, (nova_self->len)));
     }
-    (void)(_nv_tmp_594);
+    (void)(_nv_tmp_600);
     (nova_self->data) = dst;
     (nova_self->cap) = n;
     return nova_self;
@@ -6118,45 +6135,45 @@ static nova_bool Vec____nova_byte_method_is_empty(Nova_Vec____nova_byte* nova_se
 
 static nova_int Vec____nova_byte_method_compare(Nova_Vec____nova_byte* nova_self, Nova_Vec____nova_byte* other) {
     nova_preempt_check();
-    nova_int _nv_if_595;
+    nova_int _nv_if_601;
     if (((nova_self->len) < Vec____nova_byte_method_len(other))) {
-        _nv_if_595 = (nova_int)((nova_self->len));
+        _nv_if_601 = (nova_int)((nova_self->len));
     } else {
-        _nv_if_595 = (nova_int)(Vec____nova_byte_method_len(other));
+        _nv_if_601 = (nova_int)(Vec____nova_byte_method_len(other));
     }
-    nova_int n = _nv_if_595;
-    nova_unit _nv_tmp_596;
+    nova_int n = _nv_if_601;
+    nova_unit _nv_tmp_602;
     for (nova_int i = ((nova_int)0LL); i < n; i++) {
         nova_preempt_check();
-        nova_byte _nv_tmp_597;
+        nova_byte _nv_tmp_603;
         {
-            _nv_tmp_597 = (nova_byte)((*(((nova_self->data)) + (i))));
+            _nv_tmp_603 = (nova_byte)((*(((nova_self->data)) + (i))));
         }
-        nova_byte a = _nv_tmp_597;
-        nova_byte _nv_tmp_598;
+        nova_byte a = _nv_tmp_603;
+        nova_byte _nv_tmp_604;
         {
-            _nv_tmp_598 = (nova_byte)((*(((other->data)) + (i))));
+            _nv_tmp_604 = (nova_byte)((*(((other->data)) + (i))));
         }
-        nova_byte b = _nv_tmp_598;
+        nova_byte b = _nv_tmp_604;
         nova_int c = Nova_u8_method_compare(a, b);
-        nova_unit _nv_if_599;
+        nova_unit _nv_if_605;
         if ((c != ((nova_int)0LL))) {
             return c;
         }
-        (void)(_nv_if_599);
+        (void)(_nv_if_605);
     }
-    _nv_tmp_596 = NOVA_UNIT;
-    (void)(_nv_tmp_596);
-    nova_unit _nv_if_600;
+    _nv_tmp_602 = NOVA_UNIT;
+    (void)(_nv_tmp_602);
+    nova_unit _nv_if_606;
     if (((nova_self->len) < Vec____nova_byte_method_len(other))) {
         return nova_int_checked_neg(((nova_int)1LL));
     }
-    (void)(_nv_if_600);
-    nova_unit _nv_if_601;
+    (void)(_nv_if_606);
+    nova_unit _nv_if_607;
     if (((nova_self->len) > Vec____nova_byte_method_len(other))) {
         return ((nova_int)1LL);
     }
-    (void)(_nv_if_601);
+    (void)(_nv_if_607);
     return ((nova_int)0LL);
 }
 
@@ -6164,57 +6181,57 @@ static Nova_Vec____nova_byte* Vec____nova_byte_method_index__NovaValue_Range(Nov
     nova_preempt_check();
     if (!(((((r.start) >= ((nova_int)0LL)) && ((r.end) >= (r.start))) && ((r.end) <= (nova_self->len))))) nova_contract_violation(NOVA_CONTRACT_PRE, "index", "r.start >= 0 && r.end >= r.start && r.end <= @len", "slice.nv", 40, NULL);
     nova_int n = nova_int_checked_sub((r.end), (r.start));
-    Nova_Vec____nova_byte* _nv_tmp_602 = (Nova_Vec____nova_byte*)nova_alloc(sizeof(Nova_Vec____nova_byte));
-    nova_byte* _nv_tmp_603;
+    Nova_Vec____nova_byte* _nv_tmp_608 = (Nova_Vec____nova_byte*)nova_alloc(sizeof(Nova_Vec____nova_byte));
+    nova_byte* _nv_tmp_609;
     {
-        _nv_tmp_603 = (nova_byte*)((((nova_self->data)) + ((r.start))));
+        _nv_tmp_609 = (nova_byte*)((((nova_self->data)) + ((r.start))));
     }
-    _nv_tmp_602->data = _nv_tmp_603;
-    _nv_tmp_602->len = n;
-    _nv_tmp_602->cap = n;
-    return _nv_tmp_602;
+    _nv_tmp_608->data = _nv_tmp_609;
+    _nv_tmp_608->len = n;
+    _nv_tmp_608->cap = n;
+    return _nv_tmp_608;
 }
 
 static Nova_Vec____nova_byte* Vec____nova_byte_method_index__NovaValue_Range__sret(Nova_Vec____nova_byte* nova_self, NovaValue_Range r, Nova_Vec____nova_byte* _out) {
     nova_preempt_check();
     if (!(((((r.start) >= ((nova_int)0LL)) && ((r.end) >= (r.start))) && ((r.end) <= (nova_self->len))))) nova_contract_violation(NOVA_CONTRACT_PRE, "index", "r.start >= 0 && r.end >= r.start && r.end <= @len", "slice.nv", 40, NULL);
     nova_int n = nova_int_checked_sub((r.end), (r.start));
-    Nova_Vec____nova_byte* _nv_tmp_604 = _out;
-    nova_byte* _nv_tmp_605;
+    Nova_Vec____nova_byte* _nv_tmp_610 = _out;
+    nova_byte* _nv_tmp_611;
     {
-        _nv_tmp_605 = (nova_byte*)((((nova_self->data)) + ((r.start))));
+        _nv_tmp_611 = (nova_byte*)((((nova_self->data)) + ((r.start))));
     }
-    _nv_tmp_604->data = _nv_tmp_605;
-    _nv_tmp_604->len = n;
-    _nv_tmp_604->cap = n;
-    return _nv_tmp_604;
+    _nv_tmp_610->data = _nv_tmp_611;
+    _nv_tmp_610->len = n;
+    _nv_tmp_610->cap = n;
+    return _nv_tmp_610;
 }
 
 static Nova_Vec____nova_byte* Vec____nova_byte_method_reserve(Nova_Vec____nova_byte* nova_self, nova_int additional) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
     nova_int _at_cap = (nova_self->cap);
     nova_int needed = nova_int_checked_add((nova_self->len), additional);
-    nova_unit _nv_if_606;
+    nova_unit _nv_if_612;
     if ((needed <= _at_cap)) {
         return nova_self;
     }
-    (void)(_nv_if_606);
-    nova_int _nv_if_607;
+    (void)(_nv_if_612);
+    nova_int _nv_if_613;
     if ((_at_cap == ((nova_int)0LL))) {
-        _nv_if_607 = (nova_int)(((nova_int)8LL));
+        _nv_if_613 = (nova_int)(((nova_int)8LL));
     } else {
-        _nv_if_607 = (nova_int)(nova_int_checked_mul(_at_cap, ((nova_int)2LL)));
+        _nv_if_613 = (nova_int)(nova_int_checked_mul(_at_cap, ((nova_int)2LL)));
     }
-    nova_int new_cap = _nv_if_607;
-    nova_unit _nv_while_608;
+    nova_int new_cap = _nv_if_613;
+    nova_unit _nv_while_614;
     while (1) {
         if (!((new_cap < needed))) break;
         nova_preempt_check();
-        nova_int* _nv_ca_609 = &(new_cap);
-        *_nv_ca_609 = nova_int_checked_mul(*_nv_ca_609, ((nova_int)2LL));
+        nova_int* _nv_ca_615 = &(new_cap);
+        *_nv_ca_615 = nova_int_checked_mul(*_nv_ca_615, ((nova_int)2LL));
     }
-    _nv_while_608 = NOVA_UNIT;
-    (void)(_nv_while_608);
+    _nv_while_614 = NOVA_UNIT;
+    (void)(_nv_while_614);
     (void)(Vec____nova_byte_method_cap__nova_int(nova_self, new_cap));
     return nova_self;
 }
@@ -6222,54 +6239,54 @@ static Nova_Vec____nova_byte* Vec____nova_byte_method_reserve(Nova_Vec____nova_b
 static Nova_Vec____nova_byte* Vec____nova_byte_method_advance(Nova_Vec____nova_byte* nova_self, nova_int n) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
     if (!(((n >= ((nova_int)0LL)) && (n <= nova_int_checked_sub((nova_self->cap), (nova_self->len)))))) nova_contract_violation(NOVA_CONTRACT_PRE, "advance", "n >= 0 && n <= @cap - @len", "mutate.nv", 42, NULL);
-    nova_int* _nv_ca_610 = &((nova_self->len));
-    *_nv_ca_610 = nova_int_checked_add(*_nv_ca_610, n);
+    nova_int* _nv_ca_616 = &((nova_self->len));
+    *_nv_ca_616 = nova_int_checked_add(*_nv_ca_616, n);
     return nova_self;
 }
 
 static Nova_Vec____nova_byte* Vec____nova_byte_method_push(Nova_Vec____nova_byte* nova_self, nova_byte v) {
     nova_preempt_check();
     (void)(Vec____nova_byte_method_reserve(nova_self, ((nova_int)1LL)));
-    nova_unit _nv_tmp_611;
+    nova_unit _nv_tmp_617;
     {
-        _nv_tmp_611 = NOVA_UNIT; (void)(((*(((nova_self->data)) + ((nova_self->len)))) = (v), NOVA_UNIT));
+        _nv_tmp_617 = NOVA_UNIT; (void)(((*(((nova_self->data)) + ((nova_self->len)))) = (v), NOVA_UNIT));
     }
-    (void)(_nv_tmp_611);
-    nova_int* _nv_ca_612 = &((nova_self->len));
-    *_nv_ca_612 = nova_int_checked_add(*_nv_ca_612, ((nova_int)1LL));
+    (void)(_nv_tmp_617);
+    nova_int* _nv_ca_618 = &((nova_self->len));
+    *_nv_ca_618 = nova_int_checked_add(*_nv_ca_618, ((nova_int)1LL));
     return nova_self;
 }
 
 static Nova_Vec____nova_int* Nova_Vec____nova_int_static_new(nova_int cap) {
     nova_preempt_check();
     if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "new", "cap >= 0", "core.nv", 106, NULL);
-    Nova_Vec____nova_int* _nv_tmp_613 = (Nova_Vec____nova_int*)nova_alloc(sizeof(Nova_Vec____nova_int));
-    _nv_tmp_613->data = nova_fn_11collections3vec9alloc_buf____nova_int(Nova_int_method_max(cap, ((nova_int)1LL)));
-    _nv_tmp_613->len = ((nova_int)0LL);
-    _nv_tmp_613->cap = cap;
-    return _nv_tmp_613;
+    Nova_Vec____nova_int* _nv_tmp_619 = (Nova_Vec____nova_int*)nova_alloc(sizeof(Nova_Vec____nova_int));
+    _nv_tmp_619->data = nova_fn_11collections3vec9alloc_buf____nova_int(Nova_int_method_max(cap, ((nova_int)1LL)));
+    _nv_tmp_619->len = ((nova_int)0LL);
+    _nv_tmp_619->cap = cap;
+    return _nv_tmp_619;
 }
 
 static Nova_Vec____nova_int* Nova_Vec____nova_int_static_new__sret(nova_int cap, Nova_Vec____nova_int* _out) {
     nova_preempt_check();
     if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "new", "cap >= 0", "core.nv", 106, NULL);
-    Nova_Vec____nova_int* _nv_tmp_614 = _out;
-    _nv_tmp_614->data = nova_fn_11collections3vec9alloc_buf____nova_int(Nova_int_method_max(cap, ((nova_int)1LL)));
-    _nv_tmp_614->len = ((nova_int)0LL);
-    _nv_tmp_614->cap = cap;
-    return _nv_tmp_614;
+    Nova_Vec____nova_int* _nv_tmp_620 = _out;
+    _nv_tmp_620->data = nova_fn_11collections3vec9alloc_buf____nova_int(Nova_int_method_max(cap, ((nova_int)1LL)));
+    _nv_tmp_620->len = ((nova_int)0LL);
+    _nv_tmp_620->cap = cap;
+    return _nv_tmp_620;
 }
 
 static Nova_Vec____nova_int* Vec____nova_int_method_push(Nova_Vec____nova_int* nova_self, nova_int v) {
     nova_preempt_check();
     (void)(Vec____nova_int_method_reserve(nova_self, ((nova_int)1LL)));
-    nova_unit _nv_tmp_615;
+    nova_unit _nv_tmp_621;
     {
-        _nv_tmp_615 = NOVA_UNIT; (void)(((*(((nova_self->data)) + ((nova_self->len)))) = (v), NOVA_UNIT));
+        _nv_tmp_621 = NOVA_UNIT; (void)(((*(((nova_self->data)) + ((nova_self->len)))) = (v), NOVA_UNIT));
     }
-    (void)(_nv_tmp_615);
-    nova_int* _nv_ca_616 = &((nova_self->len));
-    *_nv_ca_616 = nova_int_checked_add(*_nv_ca_616, ((nova_int)1LL));
+    (void)(_nv_tmp_621);
+    nova_int* _nv_ca_622 = &((nova_self->len));
+    *_nv_ca_622 = nova_int_checked_add(*_nv_ca_622, ((nova_int)1LL));
     return nova_self;
 }
 
@@ -6281,33 +6298,33 @@ static nova_int Vec____nova_int_method_len(Nova_Vec____nova_int* nova_self) {
 static Nova_Vec____nova_f64* Nova_Vec____nova_f64_static_new(nova_int cap) {
     nova_preempt_check();
     if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "new", "cap >= 0", "core.nv", 106, NULL);
-    Nova_Vec____nova_f64* _nv_tmp_617 = (Nova_Vec____nova_f64*)nova_alloc(sizeof(Nova_Vec____nova_f64));
-    _nv_tmp_617->data = nova_fn_11collections3vec9alloc_buf____nova_f64(Nova_int_method_max(cap, ((nova_int)1LL)));
-    _nv_tmp_617->len = ((nova_int)0LL);
-    _nv_tmp_617->cap = cap;
-    return _nv_tmp_617;
+    Nova_Vec____nova_f64* _nv_tmp_623 = (Nova_Vec____nova_f64*)nova_alloc(sizeof(Nova_Vec____nova_f64));
+    _nv_tmp_623->data = nova_fn_11collections3vec9alloc_buf____nova_f64(Nova_int_method_max(cap, ((nova_int)1LL)));
+    _nv_tmp_623->len = ((nova_int)0LL);
+    _nv_tmp_623->cap = cap;
+    return _nv_tmp_623;
 }
 
 static Nova_Vec____nova_f64* Nova_Vec____nova_f64_static_new__sret(nova_int cap, Nova_Vec____nova_f64* _out) {
     nova_preempt_check();
     if (!((cap >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "new", "cap >= 0", "core.nv", 106, NULL);
-    Nova_Vec____nova_f64* _nv_tmp_618 = _out;
-    _nv_tmp_618->data = nova_fn_11collections3vec9alloc_buf____nova_f64(Nova_int_method_max(cap, ((nova_int)1LL)));
-    _nv_tmp_618->len = ((nova_int)0LL);
-    _nv_tmp_618->cap = cap;
-    return _nv_tmp_618;
+    Nova_Vec____nova_f64* _nv_tmp_624 = _out;
+    _nv_tmp_624->data = nova_fn_11collections3vec9alloc_buf____nova_f64(Nova_int_method_max(cap, ((nova_int)1LL)));
+    _nv_tmp_624->len = ((nova_int)0LL);
+    _nv_tmp_624->cap = cap;
+    return _nv_tmp_624;
 }
 
 static Nova_Vec____nova_f64* Vec____nova_f64_method_push(Nova_Vec____nova_f64* nova_self, nova_f64 v) {
     nova_preempt_check();
     (void)(Vec____nova_f64_method_reserve(nova_self, ((nova_int)1LL)));
-    nova_unit _nv_tmp_619;
+    nova_unit _nv_tmp_625;
     {
-        _nv_tmp_619 = NOVA_UNIT; (void)(((*(((nova_self->data)) + ((nova_self->len)))) = (v), NOVA_UNIT));
+        _nv_tmp_625 = NOVA_UNIT; (void)(((*(((nova_self->data)) + ((nova_self->len)))) = (v), NOVA_UNIT));
     }
-    (void)(_nv_tmp_619);
-    nova_int* _nv_ca_620 = &((nova_self->len));
-    *_nv_ca_620 = nova_int_checked_add(*_nv_ca_620, ((nova_int)1LL));
+    (void)(_nv_tmp_625);
+    nova_int* _nv_ca_626 = &((nova_self->len));
+    *_nv_ca_626 = nova_int_checked_add(*_nv_ca_626, ((nova_int)1LL));
     return nova_self;
 }
 
@@ -6323,122 +6340,149 @@ static nova_int Vec____nova_int_method_cap(Nova_Vec____nova_int* nova_self) {
 
 static NovaOpt_nova_int Vec____nova_int_method_get(Nova_Vec____nova_int* nova_self, nova_int i) {
     nova_preempt_check();
-    nova_unit _nv_if_621;
+    nova_unit _nv_if_627;
     if (((((nova_int)0LL) <= i) && (i < (nova_self->len)))) {
-        nova_int _nv_tmp_622;
+        nova_int _nv_tmp_628;
         {
-            _nv_tmp_622 = (nova_int)((*(((nova_self->data)) + (i))));
+            _nv_tmp_628 = (nova_int)((*(((nova_self->data)) + (i))));
         }
-        return ((NovaOpt_nova_int){.tag = NOVA_TAG_Option_Some, .value = (_nv_tmp_622)});
+        return ((NovaOpt_nova_int){.tag = NOVA_TAG_Option_Some, .value = (_nv_tmp_628)});
     }
-    (void)(_nv_if_621);
+    (void)(_nv_if_627);
     return ((NovaOpt_nova_int){.tag = NOVA_TAG_Option_None});
 }
 
 static nova_unit Nova_Option_method_display_nova_str(NovaOpt_nova_str nova_self, Nova_FmtCtx* f) {
     nova_preempt_check();
-    NovaOpt_nova_str _nv_scr_623 = nova_self;
-    nova_unit _nv_match_624;
-    int _nv_matched_625 = 0;
-    if (!_nv_matched_625 && ((_nv_scr_623.tag == NOVA_TAG_Option_Some))) {
-        nova_str v = _nv_scr_623.value;
+    NovaOpt_nova_str _nv_scr_629 = nova_self;
+    nova_unit _nv_match_630;
+    int _nv_matched_631 = 0;
+    if (!_nv_matched_631 && ((_nv_scr_629.tag == NOVA_TAG_Option_Some))) {
+        nova_str v = _nv_scr_629.value;
         (void)(Nova_FmtCtx_method_write(f, Nova_str_method_bytes(_nova_strlit_f3b35ec77e5c32fb)));
         (void)(Nova_str_method_display(v, f));
-        _nv_match_624 = Nova_FmtCtx_method_write(f, Nova_str_method_bytes(_nova_strlit_af63a44c86018d64));
-        _nv_matched_625 = 1;
+        _nv_match_630 = Nova_FmtCtx_method_write(f, Nova_str_method_bytes(_nova_strlit_af63a44c86018d64));
+        _nv_matched_631 = 1;
     }
-    if (!_nv_matched_625 && ((_nv_scr_623.tag == NOVA_TAG_Option_None))) {
-        _nv_match_624 = Nova_FmtCtx_method_write(f, Nova_str_method_bytes(_nova_strlit_669b18c6d2d9c95b));
-        _nv_matched_625 = 1;
+    if (!_nv_matched_631 && ((_nv_scr_629.tag == NOVA_TAG_Option_None))) {
+        _nv_match_630 = Nova_FmtCtx_method_write(f, Nova_str_method_bytes(_nova_strlit_669b18c6d2d9c95b));
+        _nv_matched_631 = 1;
     }
-    _nv_match_624;
+    _nv_match_630;
+    return NOVA_UNIT;
+}
+
+static nova_unit Nova_Option_method_display_nova_int(NovaOpt_nova_int nova_self, Nova_FmtCtx* f) {
+    nova_preempt_check();
+    NovaOpt_nova_int _nv_scr_632 = nova_self;
+    nova_unit _nv_match_633;
+    int _nv_matched_634 = 0;
+    if (!_nv_matched_634 && ((_nv_scr_632.tag == NOVA_TAG_Option_Some))) {
+        nova_int v = _nv_scr_632.value;
+        (void)(Nova_FmtCtx_method_write(f, Nova_str_method_bytes(_nova_strlit_f3b35ec77e5c32fb)));
+        (void)(Nova_int_method_display(v, f));
+        _nv_match_633 = Nova_FmtCtx_method_write(f, Nova_str_method_bytes(_nova_strlit_af63a44c86018d64));
+        _nv_matched_634 = 1;
+    }
+    if (!_nv_matched_634 && ((_nv_scr_632.tag == NOVA_TAG_Option_None))) {
+        _nv_match_633 = Nova_FmtCtx_method_write(f, Nova_str_method_bytes(_nova_strlit_669b18c6d2d9c95b));
+        _nv_matched_634 = 1;
+    }
+    _nv_match_633;
     return NOVA_UNIT;
 }
 
 static nova_unit Nova_Result_method_display_nova_int_nova_str(NovaRes_nova_int_nova_str* nova_self, Nova_FmtCtx* f) {
     nova_preempt_check();
-    NovaRes_nova_int_nova_str* _nv_scr_626 = nova_self;
-    nova_unit _nv_match_627;
-    int _nv_matched_628 = 0;
-    if (!_nv_matched_628 && ((_nv_scr_626->tag == NOVA_TAG_Result_Ok))) {
-        nova_int v = _nv_scr_626->payload.Ok._0;
+    NovaRes_nova_int_nova_str* _nv_scr_635 = nova_self;
+    nova_unit _nv_match_636;
+    int _nv_matched_637 = 0;
+    if (!_nv_matched_637 && ((_nv_scr_635->tag == NOVA_TAG_Result_Ok))) {
+        nova_int v = _nv_scr_635->payload.Ok._0;
         (void)(Nova_FmtCtx_method_write(f, Nova_str_method_bytes(_nova_strlit_3022fb19bf922f85)));
         (void)(Nova_int_method_display(v, f));
-        _nv_match_627 = Nova_FmtCtx_method_write(f, Nova_str_method_bytes(_nova_strlit_af63a44c86018d64));
-        _nv_matched_628 = 1;
+        _nv_match_636 = Nova_FmtCtx_method_write(f, Nova_str_method_bytes(_nova_strlit_af63a44c86018d64));
+        _nv_matched_637 = 1;
     }
-    if (!_nv_matched_628 && ((_nv_scr_626->tag == NOVA_TAG_Result_Err))) {
-        nova_str e = _nv_scr_626->payload.Err._0;
+    if (!_nv_matched_637 && ((_nv_scr_635->tag == NOVA_TAG_Result_Err))) {
+        nova_str e = _nv_scr_635->payload.Err._0;
         (void)(Nova_FmtCtx_method_write(f, Nova_str_method_bytes(_nova_strlit_dc5b0e6c70efa4cc)));
         (void)(Nova_str_method_display(e, f));
-        _nv_match_627 = Nova_FmtCtx_method_write(f, Nova_str_method_bytes(_nova_strlit_af63a44c86018d64));
-        _nv_matched_628 = 1;
+        _nv_match_636 = Nova_FmtCtx_method_write(f, Nova_str_method_bytes(_nova_strlit_af63a44c86018d64));
+        _nv_matched_637 = 1;
     }
-    _nv_match_627;
+    _nv_match_636;
     return NOVA_UNIT;
 }
 
 static nova_unit Vec____nova_int_method_display(Nova_Vec____nova_int* nova_self, Nova_FmtCtx* f) {
     nova_preempt_check();
     (void)(Nova_FmtCtx_method_write(f, Nova_str_method_bytes(_nova_strlit_e4b7fd0818d93bda)));
-    nova_unit _nv_tmp_629;
+    nova_unit _nv_tmp_638;
     for (nova_int i = ((nova_int)0LL); i < (nova_self->len); i++) {
         nova_preempt_check();
-        nova_unit _nv_if_630;
+        nova_unit _nv_if_639;
         if ((i > ((nova_int)0LL))) {
-            _nv_if_630 = NOVA_UNIT; (void)(Nova_FmtCtx_method_write(f, Nova_str_method_bytes(_nova_strlit_07d38007b49acdd1)));
+            _nv_if_639 = NOVA_UNIT; (void)(Nova_FmtCtx_method_write(f, Nova_str_method_bytes(_nova_strlit_07d38007b49acdd1)));
         }
-        (void)(_nv_if_630);
-        nova_int _nv_tmp_631;
+        (void)(_nv_if_639);
+        nova_int _nv_tmp_640;
         {
-            _nv_tmp_631 = (nova_int)((*(((nova_self->data)) + (i))));
+            _nv_tmp_640 = (nova_int)((*(((nova_self->data)) + (i))));
         }
-        (void)(Nova_int_method_display(_nv_tmp_631, f));
+        (void)(Nova_int_method_display(_nv_tmp_640, f));
     }
-    _nv_tmp_629 = NOVA_UNIT;
-    (void)(_nv_tmp_629);
+    _nv_tmp_638 = NOVA_UNIT;
+    (void)(_nv_tmp_638);
     Nova_FmtCtx_method_write(f, Nova_str_method_bytes(_nova_strlit_af64104c860244e8));
     return NOVA_UNIT;
 }
 
 static nova_bool Vec____nova_byte_method_equal(Nova_Vec____nova_byte* nova_self, Nova_Vec____nova_byte* other) {
     nova_preempt_check();
-    nova_unit _nv_if_632;
+    nova_unit _nv_if_641;
     if (((nova_self->len) != Vec____nova_byte_method_len(other))) {
         return false;
     }
-    (void)(_nv_if_632);
-    nova_unit _nv_tmp_633;
+    (void)(_nv_if_641);
+    nova_unit _nv_tmp_642;
     for (nova_int i = ((nova_int)0LL); i < (nova_self->len); i++) {
         nova_preempt_check();
-        nova_byte _nv_tmp_634;
+        nova_byte _nv_tmp_643;
         {
-            _nv_tmp_634 = (nova_byte)((*(((nova_self->data)) + (i))));
+            _nv_tmp_643 = (nova_byte)((*(((nova_self->data)) + (i))));
         }
-        nova_byte a = _nv_tmp_634;
-        nova_byte _nv_tmp_635;
+        nova_byte a = _nv_tmp_643;
+        nova_byte _nv_tmp_644;
         {
-            _nv_tmp_635 = (nova_byte)((*(((other->data)) + (i))));
+            _nv_tmp_644 = (nova_byte)((*(((other->data)) + (i))));
         }
-        nova_byte b = _nv_tmp_635;
-        nova_unit _nv_if_636;
+        nova_byte b = _nv_tmp_644;
+        nova_unit _nv_if_645;
         if ((a != b)) {
             return false;
         }
-        (void)(_nv_if_636);
+        (void)(_nv_if_645);
     }
-    _nv_tmp_633 = NOVA_UNIT;
-    (void)(_nv_tmp_633);
+    _nv_tmp_642 = NOVA_UNIT;
+    (void)(_nv_tmp_642);
     return true;
+}
+
+static nova_unit Nova_RawMem_static_copy_n____nova_byte(const nova_byte* src, nova_byte* dst, nova_int count) {
+    nova_preempt_check();
+    if (!((count >= ((nova_int)0LL)))) nova_contract_violation(NOVA_CONTRACT_PRE, "copy_n", "count >= 0", "raw_mem.nv", 111, NULL);
+    Nova_RawMem_static_copy(((const nova_byte*)(src)), ((nova_byte*)(dst)), nova_int_checked_mul(count, ((nova_int)sizeof(nova_byte))));
+    return NOVA_UNIT;
 }
 
 static nova_byte* nova_fn_11collections3vec9alloc_buf____nova_byte(nova_int n) {
     nova_preempt_check();
-    nova_byte* _nv_tmp_637;
+    nova_byte* _nv_tmp_646;
     {
-        _nv_tmp_637 = (nova_byte*)(((nova_byte*)(Nova_RawMem_static_alloc(nova_int_checked_mul(n, ((nova_int)sizeof(nova_byte)))))));
+        _nv_tmp_646 = (nova_byte*)(((nova_byte*)(Nova_RawMem_static_alloc(nova_int_checked_mul(n, ((nova_int)sizeof(nova_byte)))))));
     }
-    return _nv_tmp_637;
+    return _nv_tmp_646;
 }
 
 static nova_unit Nova_RawMem_static_copy_n_nonoverlapping____nova_byte(const nova_byte* src, nova_byte* dst, nova_int count) {
@@ -6450,76 +6494,76 @@ static nova_unit Nova_RawMem_static_copy_n_nonoverlapping____nova_byte(const nov
 
 static nova_int* nova_fn_11collections3vec9alloc_buf____nova_int(nova_int n) {
     nova_preempt_check();
-    nova_int* _nv_tmp_638;
+    nova_int* _nv_tmp_647;
     {
-        _nv_tmp_638 = (nova_int*)(((nova_int*)(Nova_RawMem_static_alloc(nova_int_checked_mul(n, ((nova_int)sizeof(nova_int)))))));
+        _nv_tmp_647 = (nova_int*)(((nova_int*)(Nova_RawMem_static_alloc(nova_int_checked_mul(n, ((nova_int)sizeof(nova_int)))))));
     }
-    return _nv_tmp_638;
+    return _nv_tmp_647;
 }
 
 static Nova_Vec____nova_int* Vec____nova_int_method_reserve(Nova_Vec____nova_int* nova_self, nova_int additional) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
     nova_int _at_cap = (nova_self->cap);
     nova_int needed = nova_int_checked_add((nova_self->len), additional);
-    nova_unit _nv_if_639;
+    nova_unit _nv_if_648;
     if ((needed <= _at_cap)) {
         return nova_self;
     }
-    (void)(_nv_if_639);
-    nova_int _nv_if_640;
+    (void)(_nv_if_648);
+    nova_int _nv_if_649;
     if ((_at_cap == ((nova_int)0LL))) {
-        _nv_if_640 = (nova_int)(((nova_int)8LL));
+        _nv_if_649 = (nova_int)(((nova_int)8LL));
     } else {
-        _nv_if_640 = (nova_int)(nova_int_checked_mul(_at_cap, ((nova_int)2LL)));
+        _nv_if_649 = (nova_int)(nova_int_checked_mul(_at_cap, ((nova_int)2LL)));
     }
-    nova_int new_cap = _nv_if_640;
-    nova_unit _nv_while_641;
+    nova_int new_cap = _nv_if_649;
+    nova_unit _nv_while_650;
     while (1) {
         if (!((new_cap < needed))) break;
         nova_preempt_check();
-        nova_int* _nv_ca_642 = &(new_cap);
-        *_nv_ca_642 = nova_int_checked_mul(*_nv_ca_642, ((nova_int)2LL));
+        nova_int* _nv_ca_651 = &(new_cap);
+        *_nv_ca_651 = nova_int_checked_mul(*_nv_ca_651, ((nova_int)2LL));
     }
-    _nv_while_641 = NOVA_UNIT;
-    (void)(_nv_while_641);
+    _nv_while_650 = NOVA_UNIT;
+    (void)(_nv_while_650);
     (void)(Vec____nova_int_method_cap__nova_int(nova_self, new_cap));
     return nova_self;
 }
 
 static nova_f64* nova_fn_11collections3vec9alloc_buf____nova_f64(nova_int n) {
     nova_preempt_check();
-    nova_f64* _nv_tmp_643;
+    nova_f64* _nv_tmp_652;
     {
-        _nv_tmp_643 = (nova_f64*)(((nova_f64*)(Nova_RawMem_static_alloc(nova_int_checked_mul(n, ((nova_int)sizeof(nova_f64)))))));
+        _nv_tmp_652 = (nova_f64*)(((nova_f64*)(Nova_RawMem_static_alloc(nova_int_checked_mul(n, ((nova_int)sizeof(nova_f64)))))));
     }
-    return _nv_tmp_643;
+    return _nv_tmp_652;
 }
 
 static Nova_Vec____nova_f64* Vec____nova_f64_method_reserve(Nova_Vec____nova_f64* nova_self, nova_int additional) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
     nova_int _at_cap = (nova_self->cap);
     nova_int needed = nova_int_checked_add((nova_self->len), additional);
-    nova_unit _nv_if_644;
+    nova_unit _nv_if_653;
     if ((needed <= _at_cap)) {
         return nova_self;
     }
-    (void)(_nv_if_644);
-    nova_int _nv_if_645;
+    (void)(_nv_if_653);
+    nova_int _nv_if_654;
     if ((_at_cap == ((nova_int)0LL))) {
-        _nv_if_645 = (nova_int)(((nova_int)8LL));
+        _nv_if_654 = (nova_int)(((nova_int)8LL));
     } else {
-        _nv_if_645 = (nova_int)(nova_int_checked_mul(_at_cap, ((nova_int)2LL)));
+        _nv_if_654 = (nova_int)(nova_int_checked_mul(_at_cap, ((nova_int)2LL)));
     }
-    nova_int new_cap = _nv_if_645;
-    nova_unit _nv_while_646;
+    nova_int new_cap = _nv_if_654;
+    nova_unit _nv_while_655;
     while (1) {
         if (!((new_cap < needed))) break;
         nova_preempt_check();
-        nova_int* _nv_ca_647 = &(new_cap);
-        *_nv_ca_647 = nova_int_checked_mul(*_nv_ca_647, ((nova_int)2LL));
+        nova_int* _nv_ca_656 = &(new_cap);
+        *_nv_ca_656 = nova_int_checked_mul(*_nv_ca_656, ((nova_int)2LL));
     }
-    _nv_while_646 = NOVA_UNIT;
-    (void)(_nv_while_646);
+    _nv_while_655 = NOVA_UNIT;
+    (void)(_nv_while_655);
     (void)(Vec____nova_f64_method_cap__nova_int(nova_self, new_cap));
     return nova_self;
 }
@@ -6527,24 +6571,24 @@ static Nova_Vec____nova_f64* Vec____nova_f64_method_reserve(Nova_Vec____nova_f64
 static Nova_Vec____nova_int* Vec____nova_int_method_cap__nova_int(Nova_Vec____nova_int* nova_self, nova_int n) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
     if (!((n >= (nova_self->len)))) nova_contract_violation(NOVA_CONTRACT_PRE, "cap", "n >= @len", "core.nv", 228, NULL);
-    nova_unit _nv_if_648;
+    nova_unit _nv_if_657;
     if ((n == (nova_self->cap))) {
         return nova_self;
     }
-    (void)(_nv_if_648);
-    nova_unit _nv_if_649;
+    (void)(_nv_if_657);
+    nova_unit _nv_if_658;
     if ((n == ((nova_int)0LL))) {
         (nova_self->data) = nova_fn_11collections3vec9alloc_buf____nova_int(((nova_int)1LL));
         (nova_self->cap) = ((nova_int)0LL);
         return nova_self;
     }
-    (void)(_nv_if_649);
+    (void)(_nv_if_658);
     nova_int* dst = nova_fn_11collections3vec9alloc_buf____nova_int(n);
-    nova_unit _nv_tmp_650;
+    nova_unit _nv_tmp_659;
     {
-        _nv_tmp_650 = NOVA_UNIT; (void)(Nova_RawMem_static_copy_n_nonoverlapping____nova_int((nova_self->data), dst, (nova_self->len)));
+        _nv_tmp_659 = NOVA_UNIT; (void)(Nova_RawMem_static_copy_n_nonoverlapping____nova_int((nova_self->data), dst, (nova_self->len)));
     }
-    (void)(_nv_tmp_650);
+    (void)(_nv_tmp_659);
     (nova_self->data) = dst;
     (nova_self->cap) = n;
     return nova_self;
@@ -6553,24 +6597,24 @@ static Nova_Vec____nova_int* Vec____nova_int_method_cap__nova_int(Nova_Vec____no
 static Nova_Vec____nova_f64* Vec____nova_f64_method_cap__nova_int(Nova_Vec____nova_f64* nova_self, nova_int n) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
     if (!((n >= (nova_self->len)))) nova_contract_violation(NOVA_CONTRACT_PRE, "cap", "n >= @len", "core.nv", 228, NULL);
-    nova_unit _nv_if_651;
+    nova_unit _nv_if_660;
     if ((n == (nova_self->cap))) {
         return nova_self;
     }
-    (void)(_nv_if_651);
-    nova_unit _nv_if_652;
+    (void)(_nv_if_660);
+    nova_unit _nv_if_661;
     if ((n == ((nova_int)0LL))) {
         (nova_self->data) = nova_fn_11collections3vec9alloc_buf____nova_f64(((nova_int)1LL));
         (nova_self->cap) = ((nova_int)0LL);
         return nova_self;
     }
-    (void)(_nv_if_652);
+    (void)(_nv_if_661);
     nova_f64* dst = nova_fn_11collections3vec9alloc_buf____nova_f64(n);
-    nova_unit _nv_tmp_653;
+    nova_unit _nv_tmp_662;
     {
-        _nv_tmp_653 = NOVA_UNIT; (void)(Nova_RawMem_static_copy_n_nonoverlapping____nova_f64((nova_self->data), dst, (nova_self->len)));
+        _nv_tmp_662 = NOVA_UNIT; (void)(Nova_RawMem_static_copy_n_nonoverlapping____nova_f64((nova_self->data), dst, (nova_self->len)));
     }
-    (void)(_nv_tmp_653);
+    (void)(_nv_tmp_662);
     (nova_self->data) = dst;
     (nova_self->cap) = n;
     return nova_self;

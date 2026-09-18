@@ -109,6 +109,13 @@ fn main() {
     // are named here rather than guessed at the checker.
     println("d_none = ${opt_str(false)}")
     println("d_some = ${opt_str(true)}")
+    // THE INT INSTANCE, and it is a separate line for a measured reason: the
+    // shell carries only the instances this probe CALLS. With `opt_str` alone
+    // the shell defined `Nova_Option_method_display_nova_str` and nothing else,
+    // so `${Some(1)}` was refused BY NAME -- correctly, and for a reason that
+    // belongs to the probe rather than to the compiler (measured 2026-09-18,
+    // fixture `display_generic/neg_1.nv` asserted exactly that refusal).
+    println("d_int = ${opt_int(true)}")
     println("d_ok = ${res_int(true)}")
     println("d_err = ${res_int(false)}")
     println("d_vec = ${three()}")
@@ -139,6 +146,15 @@ fn three() -> []int {
 fn opt_str(f bool) -> Option[str] {
     if f {
         return Some("yes")
+    }
+    None
+}
+
+/// An Option[int] instance for the shell (B1b-3): the one `@display` needs so
+/// that `${Some(1)}` stops being refused for want of a symbol.
+fn opt_int(f bool) -> Option[int] {
+    if f {
+        return Some(7)
     }
     None
 }
