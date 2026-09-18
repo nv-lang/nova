@@ -170,14 +170,18 @@
 # For novac the form is REQUIRED (plan 274.9 sec.2.7); the oracle is not
 # scheduled. No debt for novac today: its own source has zero @cleanup methods
 # and zero consume scopes, so the rule changes nothing in its build.
-# 76 -> 77 (2026-09-18): амендмент к D38 -- базой turbofish'а может быть только
-# имя ТИПА, имя ЗНАЧЕНИЯ даёт индексацию (реестр 221.1 №676). Долг для novac
-# РЕАЛЬНЫЙ, но МАЛЫЙ и ровно обратного знака к обычному: правило не добавляет
-# ей работы, а СНИМАЕТ -- девять обходов `ro pj = vec[j]` в девяти файлах стоят
-# там только потому, что оракул терял индекс. Собственный разбор novac этой
-# неоднозначности не имеет вовсе (turbofish она не поддерживает), так что
-# согласовывать в её парсере нечего; очередь растёт на единицу, потому что
-# запись спеки появилась, а снятие обходов -- отдельная работа окна 274.
+# 76 -> 77 (2026-09-18): D38 amendment -- only a TYPE name may carry a turbofish;
+# a VALUE name makes it indexing (registry 221.1 #676). The debt for novac is
+# REAL but SMALL, and of the opposite sign to the usual one: the rule does not
+# add work, it REMOVES it -- eight intermediate bindings `ro pj = vec[j]` across
+# eight files exist only because the oracle lost the index. novac's own parser
+# has no such ambiguity at all (it does not support turbofish), so there is
+# nothing to reconcile there; the queue grows by one because the spec entry
+# landed, while removing the workarounds is separate work for window 274.
+#
+# Written in English after the gate refused this manifest: a package manifest
+# ships INSIDE the package repository and is read from outside (owner's rule,
+# 2026-08-10). Mine was the only Cyrillic in 83 manifests.
 #   spec-queue: 77
 #   oracle-pin: 2803de2d9
 #   stage: E2

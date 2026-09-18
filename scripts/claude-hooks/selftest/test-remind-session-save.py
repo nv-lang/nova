@@ -165,6 +165,48 @@ try:
         bad(u"контролёру названа не та записка: %r" % (ctx or out)[:140])
     shutil.rmtree(kroot, ignore_errors=True)
 
+    # (8) ОКНО КАРИНЫ, РАБОТАЮЩЕЕ В WORKTREE. Находка самого окна 2026-09-18:
+    #     ему пришло «ЗАПИСКА ИНТЕГРАТОРА», хотя оно на `p274-novac`. Таблица
+    #     веток верна — неверен КОРЕНЬ: у окна в worktree `CLAUDE_PROJECT_DIR`
+    #     указывает на ГЛАВНОЕ дерево, и ветка читается оттуда, то есть `main`.
+    #     Клетка воспроизводит именно это: дерево на `main`, а визитка говорит
+    #     `carina`, — и адресатом обязана стать ЕЁ записка.
+    wroot = make_tree("main")
+    wcar = os.path.join(wroot, CARINA_REL)
+    os.makedirs(os.path.dirname(wcar))
+    io.open(wcar, "w", encoding="utf-8").write(u"# записка окна Карины\n")
+    st = os.stat(wcar)
+    os.utime(wcar, (st.st_atime, time.time() - 7200))
+    # Записка интегратора тоже протухла: без визитки хук назвал бы ЕЁ.
+    wint = os.path.join(wroot, HANDOFF_REL)
+    io.open(wint, "w", encoding="utf-8").write(u"# записка интегратора\n")
+    st = os.stat(wint)
+    os.utime(wint, (st.st_atime, time.time() - 7200))
+    wgit = subprocess.run(["git", "-C", wroot, "rev-parse", "--git-common-dir"],
+                          capture_output=True, text=True).stdout.strip()
+    if not os.path.isabs(wgit):
+        wgit = os.path.join(wroot, wgit)
+    io.open(os.path.join(wgit, "nova-session-carina.card"), "w",
+            encoding="utf-8").write(
+        u"role=carina\nname=nova-test\nsession_id=SID-CARINA\n")
+    wenv = dict(os.environ)
+    wenv["CLAUDE_PROJECT_DIR"] = wroot
+    wenv["CLAUDE_CODE_SESSION_ID"] = "SID-CARINA"
+    wp = subprocess.run([sys.executable, HOOK], input=b"{}",
+                        capture_output=True, env=wenv)
+    wout = wp.stdout.decode("utf-8", "replace").strip()
+    wctx = ""
+    if wout:
+        try:
+            wctx = json.loads(wout)["hookSpecificOutput"]["additionalContext"]
+        except Exception:
+            wctx = ""
+    if wctx and u"carina-handoff" in wctx and u"integrator-handoff" not in wctx:
+        ok(u"окно Карины при корне главного дерева — записка ЕГО, не интегратора")
+    else:
+        bad(u"окну Карины названа не та записка: %r" % (wctx or wout)[:140])
+    shutil.rmtree(wroot, ignore_errors=True)
+
     # (5) НЕЗНАКОМАЯ РОЛЬ — молчание, и это решение, а не дыра: у пакетных окон
     #     своя передача (/stop), выдумывать им адресата хук не вправе.
     oroot = make_tree("p999-other")
