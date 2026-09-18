@@ -302,5 +302,62 @@ for name, fn in CASES:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+
+# ------------------------------------------------- визитка роли (замер 02:18)
+# Ветка называет роль, но не говорит, ЧЬЁ окно. Первое живое применение хука
+# заблокировало окно БЕЗ роли, работавшее в главном дереве, как ИНТЕГРАТОРА:
+# ветка `main` принадлежит интегратору, а окно — нет. Пара обязательна: проверка,
+# которая всегда молчит, выключает стража целиком.
+#
+# `role=None` здесь ОБЯЗАТЕЛЕН: `NOVA_WINDOW_ROLE` обходит визитку, и клетка с
+# ним проверяла бы не тот путь. Роль обязана выводиться из ветки — поэтому в
+# поддельном дереве пишется `.git/HEAD`.
+
+def _card_tree(role, owner_sid):
+    tmp = tempfile.mkdtemp(prefix="nova-stop-card-")
+    g = os.path.join(tmp, ".git")
+    os.makedirs(g, exist_ok=True)
+    with io.open(os.path.join(g, "HEAD"), "w", encoding="utf-8") as fh:
+        fh.write(u"ref: refs/heads/main\n")
+    with io.open(os.path.join(g, "nova-session-%s.card" % role), "w",
+                 encoding="utf-8") as fh:
+        fh.write(u"role=%s\nsession_id=%s\n" % (role, owner_sid))
+    return tmp
+
+
+def _t_card_foreign():
+    tmp = _card_tree("integrator", "CHUZHOY-ID")
+    try:
+        res = run(tmp, [(u"Готово.", 0)], session="card1", role=None,
+                  env_extra={"CLAUDE_CODE_SESSION_ID": "MOY-ID"})
+        return res is None
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _t_card_mine():
+    tmp = _card_tree("integrator", "MOY-ID")
+    try:
+        res = run(tmp, [(u"Готово.", 0)], session="card2", role=None,
+                  env_extra={"CLAUDE_CODE_SESSION_ID": "MOY-ID"})
+        return bool(res) and res.get("decision") == "block"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+for _name, _fn in ((u"визитка ЧУЖОЙ сессии: роль не моя, хук молчит", _t_card_foreign),
+                   (u"визитка МОЕЙ сессии: роль моя, молчание блокируется", _t_card_mine)):
+    try:
+        _got = _fn()
+        _why = u"ok" if _got else u"не сработало"
+    except Exception as _e:
+        _got, _why = False, u"исключение: %s" % _e
+    if _got:
+        ok += 1
+        print(u"  PASS  %-46s %s" % (_name, _why))
+    else:
+        fail += 1
+        print(u"  FAIL  %-46s %s" % (_name, _why))
+
 print(u"PASS %d  FAIL %d" % (ok, fail))
 sys.exit(1 if fail else 0)

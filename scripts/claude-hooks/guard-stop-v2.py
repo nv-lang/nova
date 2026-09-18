@@ -298,6 +298,66 @@ def current_branch(cwd):
         return u""
 
 
+def common_git_dir(cwd):
+    u"""Общий `.git` — ЧТЕНИЕМ, без запуска git (правило этого хука).
+
+    В главном дереве `.git` — каталог, он и есть общий. В worktree `.git` — файл
+    со строкой `gitdir: <общий>/worktrees/<имя>`, и общий лежит на два уровня выше.
+    """
+    g = os.path.join(cwd or ".", u".git")
+    try:
+        if os.path.isdir(g):
+            return g
+        if os.path.isfile(g):
+            with io.open(g, encoding="utf-8", errors="replace") as fh:
+                line = fh.read().strip()
+            if line.startswith(u"gitdir:"):
+                p = line.split(u":", 1)[1].strip()
+                return os.path.dirname(os.path.dirname(p))
+    except Exception:
+        pass
+    return u""
+
+
+def role_belongs_to_me(cwd, role):
+    u"""Ветка называет РОЛЬ, но не говорит, ЧЬЁ это окно.
+
+    ЗАМЕР 2026-09-19, 02:18, первым же живым применением хука: окно `nova-90`,
+    работавшее в ГЛАВНОМ дереве по просьбе владельца, было заблокировано как
+    ИНТЕГРАТОР — хотя интегратор это другая сессия, а у окна роли нет вовсе.
+    Ветка `main` действительно принадлежит интегратору, и хук посчитал верно —
+    и всё равно потребовал доказательство по чужой очереди.
+
+    Лечится тем же, чем уже вылечено в `remind-session-save.py`
+    (`_branch_role_belongs_to_me`, находка окна nova-1a 2026-09-18): ВИЗИТКА роли
+    знает `session_id` того, кто роль ведёт. Визитка есть и её id НЕ мой — роль
+    не моя, и судить меня по ней нельзя. Второй дом правды здесь не заводится:
+    визитка уже существует и уже читается другим хуком.
+
+    ВИЗИТКИ НЕТ — прежнее поведение (судим по ветке). Окно роли могло не успеть
+    её написать, и пропускать всех при её отсутствии значило бы выключить стража
+    ровно тогда, когда роль поднимается заново.
+    """
+    sid = (os.environ.get("CLAUDE_CODE_SESSION_ID") or u"").strip()
+    if not sid:
+        return True
+    g = common_git_dir(cwd)
+    if not g:
+        return True
+    card = os.path.join(g, u"nova-session-%s.card" % role)
+    if not os.path.isfile(card):
+        return True
+    try:
+        with io.open(card, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if line.startswith(u"session_id="):
+                    owner = line.split(u"=", 1)[1].strip()
+                    return (not owner) or owner == sid
+    except Exception:
+        return True
+    return True
+
+
 def detect_role(cwd):
     env = (os.environ.get("NOVA_WINDOW_ROLE") or u"").strip().lower()
     if env:
@@ -307,7 +367,8 @@ def detect_role(cwd):
         return u"none"
     for needle, role in ROLE_BY_BRANCH:
         if needle in br:
-            return role
+            # Роль ветки — ещё не моя роль: см. role_belongs_to_me.
+            return role if role_belongs_to_me(cwd, role) else u"none"
     return u"none"
 
 
