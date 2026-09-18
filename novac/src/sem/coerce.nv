@@ -28,7 +28,7 @@
 module novac.sem
 
 import ../tree.{Node, NodeId, NodeKind}
-import ../builtins.{COERCE_ATTR}
+import ../builtins.{COERCE_ATTR, IMPL_ATTR, DISPLAY_PROTO}
 import ../lex.{TokenKind}
 import ../types.{TyId, is_ty}
 
@@ -227,12 +227,109 @@ export fn attr_args_all(kids []Node, word str) -> bool {
 /// the ONE reading, not by a defect: the rule "an attribute marks the NEXT
 /// declaration and nothing else" is positional, and a second copy of it is a
 /// second place for it to drift.
-export fn coerce_marked(kids []Node) -> []NodeId {
+export fn coerce_marked(kids []Node) -> []NodeId =>
+    attr_marked(kids, COERCE_ATTR, "")
+
+/// WHICH protocols the `#impl(...)` gate over `id` names, in source order
+/// (D186 gate semantics: bare call and interpolation require the type author's
+/// opt-in).
+///
+/// Returns the NAMES AS WRITTEN and judges none of them. Whether a name is a
+/// protocol at all, and whether this compiler reads it, are different questions
+/// with different answers and different diagnostics -- `E_UNKNOWN_PROTOCOL` for
+/// the first (D186, not answered by this subset yet) and subset debt for the
+/// second. A door that folded them would make "a protocol I do not read"
+/// indistinguishable from "a name that is not a protocol".
+///
+/// The positional rule is the same one `coerce_marked` reads, and it is read
+/// HERE rather than copied into each collector for the reason that door names:
+/// an attribute is a SIBLING of the declaration it marks, and two readings of
+/// one positional rule is how they part company.
+export fn impl_protocols_before(kids []Node, id NodeId) -> []str {
+    mut pending = []str.new()
+    for c in kids {
+        if c.kind_of() == NodeKind.AttrDecl {
+            ro ch = branch_children(c)
+            if attr_kids_name(ch, IMPL_ATTR) {
+                pending = attr_arg_names(ch)
+            } else {
+                // Some other attribute: it marks this declaration, but not with
+                // a gate, and it CONSUMES the position all the same.
+                pending = []str.new()
+            }
+            continue
+        }
+        if c.id_of() == id {
+            return pending
+        } else {
+            // Not the declaration asked about; its own mark is consumed below.
+        }
+        pending = []str.new()
+    }
+    []str.new()
+}
+
+/// The identifiers inside an attribute's argument list, in source order.
+///
+/// `+` and the parentheses are separators and do not appear; `#impl()` and a
+/// bare `#impl` both give an empty list, which the checker refuses as a
+/// LANGUAGE error (D186 amendment 2026-09-18) rather than reading as "no gate".
+fn attr_arg_names(kids []Node) -> []str {
+    mut out = []str.new()
+    mut inside = false
+    for c in kids {
+        if leaf_kind(c) == TokenKind.LParen {
+            inside = true
+            continue
+        } else {
+            // Before the list, or a word inside it -- decided below.
+        }
+        if !inside {
+            continue
+        } else {
+            // Inside the argument list.
+        }
+        if leaf_kind(c) == TokenKind.RParen {
+            return out
+        } else {
+            // Still inside.
+        }
+        match c.ident_str() {
+            Some(t) => { out.push(t) }
+            None => {}
+        }
+    }
+    out
+}
+
+/// Does this declaration's gate name `word`? The question the slot judge asks,
+/// kept as a door so "is the type opted into Display" has ONE spelling.
+#realtime nogc
+export fn gate_names(gates []str, off int, cnt int, word str) -> bool {
+    mut i = 0
+    while i < cnt {
+        if gates[off + i] == word { return true }
+        i += 1
+    }
+    false
+}
+
+/// ONE reading of "whose attribute is this", for any attribute.
+///
+/// `arg` EMPTY means the attribute is matched by NAME alone (`#coerce`).
+/// A non-empty `arg` additionally requires EVERY protocol in the argument list
+/// to be that word -- so `#impl(Display)` marks and `#impl(Display + Serialize)`
+/// does NOT. That asymmetry is the owner's correction of 2026-09-18: reading
+/// the gate as "is Display AMONG them" would silently ignore an opt-in this
+/// compiler does not honour, and an opt-in half-read is worse than refused.
+fn attr_marked(kids []Node, attr str, arg str) -> []NodeId {
     mut out = []NodeId.new()
     mut pending = false
     for c in kids {
         if c.kind_of() == NodeKind.AttrDecl {
-            pending = attr_names(c, COERCE_ATTR)
+            ro achildren = branch_children(c)
+            pending = attr_kids_name(achildren, attr)
+                      && (arg == "" || attr_args_all(achildren, arg))
             continue
         }
         if pending {
@@ -250,7 +347,7 @@ export fn coerce_marked(kids []Node) -> []NodeId {
 /// Is this declaration one of the marked ones? The other half of the same
 /// reading, for a collector that has a node and a list.
 #realtime nogc
-export fn is_coerce_marked(marked []NodeId, id NodeId) -> bool {
+export fn is_attr_marked(marked []NodeId, id NodeId) -> bool {
     for m in marked {
         if m == id { return true }
     }

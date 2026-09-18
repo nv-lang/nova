@@ -28,7 +28,8 @@ import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, BinOp, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
-import ../builtins.{EQUAL_METHOD}
+import ../builtins.{EQUAL_METHOD, DISPLAY_PROTO}
+import ../sem.{gate_names, field_range_of, raw_frow}
 import ../sem.{raw_crow}
 import ../sem.{variant_range_of, VariantRow, variants_named, variant_named_in}
 import ../resolve.{FnLookup}
@@ -109,6 +110,44 @@ fn Checker mut @judge_qualified_payload(e Node, kids []Node, vt Token, vrow Vari
 /// parameter. Built here and not in the lookup door, because a door that asks
 /// a table builds nothing (P18). `no_ty()` in the Fmt slot means std handed no
 /// `Fmt` at all, and the door answers None before asking.
+/// May this type's `@display` be SYNTHESIZED memberwise for an interpolation
+/// slot? Three conditions, and each refuses for its own reason:
+///
+///  1. it is a RECORD -- D422 gives the memberwise form to record/sum/tuple,
+///     and the sum's variant tag is separate work (274.7 boundary);
+///  2. its `#impl(...)` gate NAMES `Display` -- the type author's opt-in, and
+///     without it the slot stays refused even though the fields would print.
+///     A gate that stopped gating would make the whole acceptance false;
+///  3. EVERY field is a primitive. A field that is itself a record would need
+///     recursion and a cycle check (`E_AUTO_DERIVE_CYCLE`), a container or a
+///     pointer field is not spoken of by the norm at all -- so this subset
+///     refuses rather than inventing bytes the oracle does not print.
+///
+/// The answer is a REFUSAL when unsure, never a guess: a wrong shape here is
+/// wrong BYTES in stdout, which the differential reads as a divergence.
+fn Checker @synth_display_ok(t TyId) -> bool {
+    if @ctx.tys.kind_of(t) != TypeKind.TkRecord { return false } else {}
+    ro td = decl_of_ty(@ctx, t)
+    if !gate_names(@ctx.gates, td.gate_off, td.gate_cnt, DISPLAY_PROTO) {
+        return false
+    } else {}
+    match field_range_of(td) {
+        None => false
+        Some((first, cnt)) => {
+            mut i = 0
+            while i < cnt {
+                ro fd = @ctx.fields.rows[raw_frow(first) + i]
+                match prim_row_of(@ctx.tys, fd.type_id) {
+                    None => { return false }
+                    Some(_) => {}
+                }
+                i += 1
+            }
+            cnt > 0
+        }
+    }
+}
+
 fn Checker @display_key_of(t TyId) -> []ArgSpec {
     ro fmt_t = match @ctx.defs.type_decl(FMT_PROTO) {
         None => no_ty()
@@ -359,8 +398,21 @@ fn Checker mut @type_expr(e Node) -> () {
                     }
                     match @display_row_of(@display_key_of(st)) {
                         None => {
-                            @report_first_leaf_of(ikids, INTERP_TYPE_MSG)
-                            return
+                            // NO METHOD OF ITS OWN -- so the GATE decides
+                            // (D422 auto-derive, D109 amended 2026-09-18).
+                            // The order matters and is the spec's: an explicit
+                            // `@display` WINS over the synthesis, which is why
+                            // this arm is reached only after the lookup failed
+                            // ("Explicit > auto-derive", `08-runtime.md`).
+                            if @synth_display_ok(st) {
+                                @record(c, st)
+                                @chan.record_implicit(c.id_of(),
+                                    CalleeTarget.CalleeSynthDisplay(st),
+                                    []TyId.new(), identity_slots(1))
+                            } else {
+                                @report_first_leaf_of(ikids, INTERP_TYPE_MSG)
+                                return
+                            }
                         }
                         Some(row) => {
                             @record(c, st)

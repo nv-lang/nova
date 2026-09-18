@@ -206,7 +206,9 @@ fn Checker mut @adapt_literal_args(e Node, kids []Node, from int, recv_rows int)
     ro target = @chan.callee_of(e.id_of()).target
     ro row = match target {
         CalleeFn(r) => r
-        CalleeVariant(_) | CalleeCtor(_) => no_row()
+        // A construction, a variant or a SYNTHESIZED display has no callable
+        // row -- the last one because the program wrote no function at all.
+        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) => no_row()
     }
     if raw_row(row) < 0 { return }
     ro fd = @ctx.fns.rows[raw_row(row)]

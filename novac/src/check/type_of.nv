@@ -500,6 +500,7 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
                 // until V2b, when the rule made the case real.
                 CalleeFn(row) => same_ty(ctx.fns.rows[raw_row(row)].ret_id)
                 CalleeVariant(_) => ice("check: a type in call position recorded as a variant construction")
+                CalleeSynthDisplay(_) => ice("check: a type in call position recorded as a synthesized display -- the synthesis is recorded on an INTERPOLATION SLOT, never on a call")
             }
         }
         // Nothing recorded: the form was refused (a record's positional

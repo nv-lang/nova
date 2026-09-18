@@ -31,6 +31,21 @@ import ../types.{Interner, TyId, no_ty, is_ty}
 /// collect() brings those in from the signatures it read).
 export fn collect_types(file Node) -> Ctx => collect_types_with(file, []Node.new())
 
+/// Append the protocols of `id`'s `#impl(...)` gate to `gates` and say HOW MANY
+/// were appended -- so the caller writes `gate_off: gates.len()` before the call
+/// and `gate_cnt:` from its result, and the pair cannot drift apart.
+///
+/// The names are NOT judged here: whether a name is a protocol at all, and
+/// whether this compiler reads it, are separate questions asked later and
+/// answered with different diagnostics.
+fn push_gates(mut gates []str, decls []Node, id NodeId) -> int {
+    ro names = impl_protocols_before(decls, id)
+    for n in names {
+        gates.push(n)
+    }
+    names.len()
+}
+
 /// The HEAD of a bare variant name's same-name chain, or -1 when the name is
 /// new: the one lookup the filler makes, kept as its own door because a
 /// lookup allocates nothing (P18) and the filler around it does.
@@ -143,6 +158,12 @@ fn register_sum_variants(c Node, mut types []TypeDef, mut defs DefTable,
     types[raw_decl(sum_decl)] = TypeDef { kind: TypeKind.TkSum,
                                           shape: types[raw_decl(sum_decl)].shape,
                                           tparam_cnt: types[raw_decl(sum_decl)].tparam_cnt,
+                                          // CARRIED OVER, not re-read: this is a REBUILD of a row
+                                          // that pass 1 already filled, and the declaration node is
+                                          // not in hand here. Writing `false` would silently drop a
+                                          // gate the source wrote.
+                                          gate_off: types[raw_decl(sum_decl)].gate_off,
+                                          gate_cnt: types[raw_decl(sum_decl)].gate_cnt,
                                           ty_id: sum_ty, name: sname,
                                           rows: TypeRows.VariantRows(VariantRow(off), vcnt) }
 }
@@ -183,7 +204,11 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     mut variant_rows = []VariantDef.new()
     mut variant_names = NameTable.new(NamespaceId.NsVariants)
     mut payload_types = []TyId.new()
-    harvest_types(decls, types, defs, tys)
+    // THE GATES: protocol names written in `#impl(...)`, flattened into one
+    // vector and addressed per declaration by (off, cnt) -- the same shape
+    // `payload_types` uses for variant payloads.
+    mut gates = []str.new()
+    harvest_types(decls, types, gates, defs, tys)
     // THE VARIANTS OF HANDED SUMS, through the same door the file's own sums
     // take below (274.5 wave "variants of handed sums", 2026-09-04). Until this
     // loop `harvest_types` registered a handed sum's NAME and skipped its
@@ -285,6 +310,10 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
             // it off the payloads (A4), so the row says nothing here.
             types.push(TypeDef { kind: TypeKind.TkSum, shape: RecordShape.Record,
                                  tparam_cnt: generic_names(nk).len(), ty_id: tys.sum(d), name: tname,
+                                 // A SUM's gate is stored like any other -- the representation
+                                 // does not decide coverage. Whether the synthesis READS it is
+                                 // the checker's question, and the variant tag is separate work.
+                                 gate_off: gates.len(), gate_cnt: push_gates(gates, decls_of_file, c.id_of()),
                                  rows: TypeRows.NoRows })
             continue
         }
@@ -320,6 +349,10 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                 types.push(TypeDef { kind: TypeKind.TkRecord,
                                      tparam_cnt: generic_names(nk).len(), shape: shape_of_record_decl(c),
                                      ty_id: tys.record(d), name: tname,
+                                     // THE GATE IS READ HERE (D186 gate semantics): the attribute
+                                     // is a SIBLING of the declaration, so the question is
+                                     // positional and gets one answer from the same door.
+                                     gate_off: gates.len(), gate_cnt: push_gates(gates, decls_of_file, c.id_of()),
                                      rows: TypeRows.NoRows })
             }
             ShapeNewtype => {
@@ -329,6 +362,10 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                 defs.add(tname, DefTarget.DefType(d))
                 types.push(TypeDef { kind: TypeKind.TkNewtype, shape: RecordShape.Record,
                                      tparam_cnt: 0, ty_id: no_ty(), name: tname,
+                                     // A newtype is a DISTINCT type and D422 asks it for its own
+                                     // Display; the gate is stored all the same, because storing
+                                     // is not reading.
+                                     gate_off: gates.len(), gate_cnt: push_gates(gates, decls_of_file, c.id_of()),
                                      rows: TypeRows.NoRows })
             }
             ShapeAlias => {
@@ -417,6 +454,12 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                     types[raw_decl(owner_id)] = TypeDef { kind: TypeKind.TkRecord,
                                                           shape: types[raw_decl(owner_id)].shape,
                                                           tparam_cnt: types[raw_decl(owner_id)].tparam_cnt,
+                                                          // CARRIED OVER for the reason above: this
+                                                          // rebuild runs AFTER the fields are known,
+                                                          // and a zero range here would erase the
+                                                          // gate pass 1 read from the source.
+                                                          gate_off: types[raw_decl(owner_id)].gate_off,
+                                                          gate_cnt: types[raw_decl(owner_id)].gate_cnt,
                                                           ty_id: mine.ty_id,
                                                           name: tname,
                                                           rows: TypeRows.FieldRows(FieldRow(off), cnt) }
@@ -436,6 +479,8 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                                 types[raw_decl(owner_id)] = TypeDef {
                                     kind: TypeKind.TkNewtype, shape: RecordShape.Record,
                                     tparam_cnt: 0,
+                                    gate_off: types[raw_decl(owner_id)].gate_off,
+                                    gate_cnt: types[raw_decl(owner_id)].gate_cnt,
                                     ty_id: tys.newtype(owner_id, ty_of_row(types, spec.under_decl)),
                                     name: tname, rows: TypeRows.NoRows }
                             } else {
@@ -494,7 +539,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                     // A `#coerce` on it declares a PAIR, and the same reader
                     // std's declarations go through decides whether the form is
                     // the one D429 V1 admits.
-                    if is_coerce_marked(coerce_marks, c.id_of()) {
+                    if is_attr_marked(coerce_marks, c.id_of()) {
                         harvest_coerce_pair(fns, coerces, mrow)
                     } else {
                         // An ordinary method: no pair.
@@ -609,7 +654,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // Setting it anywhere else would make the invariant depend on call order.
     mut own = fns
     own.own_cnt = own.rows.len()
-    Ctx { types, foreign_types_cnt, tys, prims, defs, fields, variant_rows, variant_names, payload_types,
+    Ctx { types, foreign_types_cnt, tys, prims, defs, fields, variant_rows, variant_names, payload_types, gates,
           fn_decl_rows, fns: own,
           module_c: module_path_c(file), builtin_names, coerces, protos, consts, interop: InteropTable.new() }
 }

@@ -72,6 +72,12 @@ export type CalleeTarget enum
     | CalleeFn(FnRow)
     | CalleeVariant(VariantRow)
     | CalleeCtor(TyId)
+    // The SYNTHESIZED memberwise `@display` of a type that opted in with
+    // `#impl(Display)` and wrote no method of its own (D422 auto-derive, D109
+    // amended 2026-09-18). It carries a TYPE and no callable row, because
+    // there IS no row: the program never wrote the function, so nothing
+    // collected one. The emitter prints the field sequence from the type.
+    | CalleeSynthDisplay(TyId)
 
 /// What a resolved `Call` targets, plus the type arguments it was written with
 /// -- so the emitter reads a DECISION instead of repeating the lookup by name.
@@ -111,19 +117,29 @@ fn same_target(a CalleeTarget, b CalleeTarget) -> bool {
         CalleeFn(x) => {
             match b {
                 CalleeFn(y) => x == y
-                CalleeVariant(_) | CalleeCtor(_) => false
+                CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) => false
             }
         }
         CalleeVariant(x) => {
             match b {
                 CalleeVariant(y) => x == y
-                CalleeFn(_) | CalleeCtor(_) => false
+                CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) => false
             }
         }
         CalleeCtor(x) => {
             match b {
                 CalleeCtor(y) => x == y
-                CalleeFn(_) | CalleeVariant(_) => false
+                CalleeFn(_) | CalleeVariant(_) | CalleeSynthDisplay(_) => false
+            }
+        }
+        // THE FOURTH KIND THE COMMENT ABOVE FORESAW, arrived 2026-09-18. Two
+        // synthesized displays are the same decision when they are of the same
+        // TYPE -- there is no row to compare, and the type is the whole of the
+        // decision.
+        CalleeSynthDisplay(x) => {
+            match b {
+                CalleeSynthDisplay(y) => x == y
+                CalleeFn(_) | CalleeVariant(_) | CalleeCtor(_) => false
             }
         }
     }
@@ -137,6 +153,7 @@ fn target_present(t CalleeTarget) -> bool {
         CalleeFn(r) => raw_row(r) >= 0
         CalleeVariant(v) => is_vrow(v)
         CalleeCtor(id) => is_ty(id)
+        CalleeSynthDisplay(id) => is_ty(id)
     }
 }
 
@@ -514,6 +531,20 @@ export fn CalleeRef @callable_row() -> FnRow {
         CalleeFn(r) => r
         CalleeVariant(_) => ice("sem: the callable row of a variant reference — a variant row is not a callable row")
         CalleeCtor(_) => ice("sem: the callable row of a construction — a type id is not a callable row")
+        CalleeSynthDisplay(_) => ice("sem: the callable row of a SYNTHESIZED display — the program wrote no function, so no row exists; ask `synth_display_type` instead")
+    }
+}
+
+/// The type whose memberwise `@display` this reference synthesizes, or None.
+///
+/// A door and not a bare `match` at the call site: the emitter asks this
+/// question exactly where it used to ask `callable_row`, and the two answers
+/// must be mutually exclusive by CONSTRUCTION rather than by the reader
+/// remembering to ask in the right order.
+export fn CalleeRef @synth_display_type() -> Option[TyId] {
+    match @target {
+        CalleeSynthDisplay(t) => Some(t)
+        CalleeFn(_) | CalleeVariant(_) | CalleeCtor(_) => None
     }
 }
 
