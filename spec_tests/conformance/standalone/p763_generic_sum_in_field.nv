@@ -33,23 +33,17 @@ type Holder {
 
 fn main() Io -> () {
     ro empty = Holder { d: None, n: None, r: Ok(0) }
-    ro none_val = match empty.d {
-        Some(v) => v
-        None => -1
-    }
+    // `??` — канон D86; ручной `match` по Option в этой позиции линт отвергает
+    // (`W_MANUAL_COALESCE`), и фикстура обязана быть написана каноном: её читают
+    // как образец формы, а не только как проверку.
+    ro none_val = empty.d ?? -1
 
     ro full = Holder { d: Some(1), n: Some(Nd { id: 7 }), r: Ok(41) }
     ro some_val = if Some(v) = full.n { v.id } else { -1 }
-    ro ok_val = match full.r {
-        Ok(v) => v
-        Err(_) => -1
-    }
+    ro ok_val = full.r ?? -1
 
     ro bad = Holder { d: None, n: None, r: Err("no") }
-    ro err_val = match bad.r {
-        Ok(v) => v
-        Err(_) => -2
-    }
+    ro err_val = bad.r ?? -2
 
     println("none=${none_val} some=${some_val} ok=${ok_val} err=${err_val}")
 }
