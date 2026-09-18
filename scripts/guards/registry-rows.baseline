@@ -1,3 +1,9 @@
+# 2026-09-18 (интегратор, окно nova-ff): rows 1099 -> 1103, max 1151 -> 1155.
+#   Четыре строки заведены разом по ходу налога оракула на Карину (274.10):
+#   №1152 — прогон пишет временные файлы на СИСТЕМНЫЙ диск; №1153 — состояние
+#   роли хранилось в %TEMP%, то есть на том же диске; №1154 — поправка на
+#   загрузку машины стала константой; №1155 — именованный кортеж через пиры
+#   модуля (закрыт в этой же правке, коммит fde61905f). Дыр не прибавилось.
 # 2026-09-16 (integrator, okno nova-57): rows 1094 -> 1095, max 1142 -> 1143.
 #   Zavedena No1143 -- strazh 'prinyataya rabota vlita' merit IMYA vetki, a ne
 #   sud'bu raboty, i krasneet vsyakij raz, kogda okno prosto rabotaet.
@@ -912,8 +918,8 @@
 # 2026-09-17 (integrator), chetvyortyy shag dnya: rows 1098 -> 1099,
 #   max 1149 -> 1151. Zavedena stroka 1151; 1150 vydan oknu Kariny i lezhit
 #   v yego vetke -- otsyuda razryv mezhdu prirostom strok (+1) i maksimuma (+2).
-rows=1099
-max=1151
+rows=1103
+max=1155
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
