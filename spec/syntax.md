@@ -89,11 +89,29 @@ ro s = "Hello, ${name}, you are ${age}"
 // = "Hello, " + str.from(name) + ", you are " + str.from(age)
 ```
 
-Each `${expr}` is rendered via `str.from(v)` — primitives and
-prelude types get it automatically; a user type
-hooks in by implementing `Display` (`@display(mut w Write)`,
-[D73](decisions/08-runtime.md#d73)). A literal `${` in a string — via
+Each `${expr}` is printed by the `Display` protocol — primitives and
+prelude types implement it themselves; a user type hooks in with
+`@display(mut f Fmt)` ([D422](decisions/02-types.md#d422)), and a bare
+`${x}` additionally needs the explicit opt-in `#impl(Display)`
+([D186](decisions/02-types.md#d186)). A literal `${` in a string — via
 escape: `"\${name}"`.
+
+> **Corrected 2026-09-18; three retracted claims stood here at once,** and this
+> is the only place on the page that says why — the same correction is applied
+> below without repeating the reason. It read: "rendered via `str.from(v)` …
+> `@display(mut w Write)`, [D73]". (1) There is no built-in `str.from(v)` for a
+> primitive — amendment D54 (`03-syntax.md`); only a USER overload
+> `fn str.from(T)` is live. (2) The signature was replaced by D422 (2026-07-15,
+> keystone). (3) D73 was retracted IN FULL on 2026-07-06 (`08-runtime.md`)
+> together with `From`/`Into`.
+>
+> **How it was found, and why that matters:** `paradigm.ru.md` has been writing
+> `@display(mut f Fmt)` all along, so the two overview pages contradicted EACH
+> OTHER. Two overviews disagreeing proves more than a pointer to a D-block. An
+> overview ranks below a D-block but ABOVE the compiler — so anyone who wrote
+> the method from this page got a refusal and was right by the page. The
+> retracted text is left visible: it still stands in the older D-blocks, and a
+> reader arriving from there would otherwise conclude the mistake was theirs.
 
 **The escape set inside `"..."` is CLOSED** ([D467](decisions/03-syntax.md#d467)
 §2, 2026-08-29): `\n \t \r \\ \" \0 \$ \xNN \u{H…}` plus `\` before a line break,
@@ -604,9 +622,9 @@ Do not use them for other purposes.
   every copy would become a separate counter. The trait is **declared, not
   inferred**: a structural check would see a plain number inside and conclude
   "safe to copy" — the semantics contradict the field layout.
-- `Display`/`@display(mut w Write)` — string representation for
-  `${expr}` interpolation and `str.from(v)` on a user type
-  ([D73](decisions/08-runtime.md#d73)).
+- `Display`/`@display(mut f Fmt)` — string representation for
+  `${expr}` interpolation; a bare `${x}` needs `#impl(Display)`
+  ([D422](decisions/02-types.md#d422), [D186](decisions/02-types.md#d186)).
 - `@hash()` — hash, `@clone()` — copy, `@iter()`/`@next()` — iterator.
 - **Error names** ([D30](decisions/03-syntax.md#d30)) — with a type / domain:
   `ParseComplexError`, `ParseIntError`, `DbError`, `OverflowError`.
@@ -647,8 +665,8 @@ but that is an anti-pattern (the linter warns).
 - `RuntimeError` — sum of bottom-level runtime errors
 - `RuntimeNoneError` — unit type, thrown via `expr!!` on `Option` ([D85](decisions/04-effects.md#d85))
 - `Effect[E]` — first-class type of an effect handler
-- `Display` — protocol with the instance method `@display(mut w Write)`,
-  string representation ([D73](decisions/08-runtime.md#d73))
+- `Display` — protocol with the instance method `@display(mut f Fmt)`,
+  string representation ([D422](decisions/02-types.md#d422))
 
 **Standard effects:**
 - `Fail[E]`, `Fail` — the failable effect
