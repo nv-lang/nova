@@ -1,0 +1,14 @@
+// Реестр 221.1 №763: поле записи с типом generic-СУММЫ.
+// Ожидание по строке: check проходит, сборка падает двумя способами.
+module a_option_field
+
+type Holder { d Option[int] }
+
+fn main() Io -> () {
+    ro h = Holder { d: None }
+    ro n = match h.d {
+        Some(v) => v
+        None => -1
+    }
+    println("n=${n}")
+}

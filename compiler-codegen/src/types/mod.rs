@@ -3974,6 +3974,17 @@ struct TypeCheckCtx<'a> {
     /// NEVER also a genuine type/module Path receiver (`Monotonic.now()`) —
     /// unambiguous.
     const_types: HashMap<String, TypeRef>,
+    /// Реестр 221.1 №762/№1157: ИМЕНА ВСЕХ модульных констант — для запрета
+    /// имени константы в позиции образца.
+    ///
+    /// Почему не переиспользован `const_types`: он держит ТОЛЬКО константы с
+    /// написанной аннотацией типа (`if let Some(ty) = &cd.ty` на своём
+    /// producer-сайте), а запрет обязан действовать и на `const MUT_W = "mut"`
+    /// без аннотации — иначе форма отвергалась бы в зависимости от того,
+    /// написан ли тип, то есть от обстоятельства, к делу не относящегося.
+    /// Замерено: первая редакция проверки читала `const_types` и МОЛЧАЛА на
+    /// обеих пробах.
+    module_const_names: HashSet<String>,
     /// [M-assoc-const-chained-method-call-p67] (окно №73, реестр 221.1 №73):
     /// `(owner_type, const_name) → declared TypeRef` for every out-of-body
     /// (D200 AMEND) assoc-const in the merged CU (`self.types`'s `TypeDecl.
@@ -5087,6 +5098,18 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
+        // Реестр 221.1 №762/№1157: имена ВСЕХ модульных констант, с аннотацией
+        // и без. Отдельный проход, а не ветка выше, потому что у множеств
+        // РАЗНЫЕ предметы: там «какой у константы объявленный тип», здесь
+        // «существует ли такое имя вообще».
+        let module_const_names: HashSet<String> = module
+            .items
+            .iter()
+            .filter_map(|it| match it {
+                Item::Const(cd) => Some(cd.name.clone()),
+                _ => None,
+            })
+            .collect();
 
         // [M-assoc-const-chained-method-call-p67] (окно №73): `(Type, CONST) →
         // declared TypeRef`, mirroring `const_types` above one level deeper —
@@ -5210,7 +5233,7 @@ impl<'a> TypeCheckCtx<'a> {
                 *ret = None;
             }
         }
-        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, types: TypeTable::new(types, colliding_type_names.clone()), const_types, assoc_const_types, coerce_pairs, generic_coerce_patterns, current_coerce_decl_span: std::cell::RefCell::new(None), sum_variant_names, file_local_types, file_imports, file_paths,
+        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, module_const_names, types: TypeTable::new(types, colliding_type_names.clone()), const_types, assoc_const_types, coerce_pairs, generic_coerce_patterns, current_coerce_decl_span: std::cell::RefCell::new(None), sum_variant_names, file_local_types, file_imports, file_paths,
             colliding_type_names, imported_modules,
             current_file: std::cell::Cell::new(None),
             current_fail_payload: std::cell::RefCell::new(None),
@@ -12942,6 +12965,65 @@ impl<'a> TypeCheckCtx<'a> {
                 // непокрытый вариант проходил check и build и давал ТИХО
                 // неверный результат (код 0).
                 self.check_match_exhaustive(scrut_ty.as_ref(), arms, e.span, errors);
+                // РЕЕСТР 221.1 №762/№1157, решение владельца 2026-09-18 (вариант
+                // «б» — ОТВЕРГАТЬ): ИМЯ МОДУЛЬНОЙ КОНСТАНТЫ В ПОЗИЦИИ ОБРАЗЦА
+                // НЕ ФОРМА ЯЗЫКА.
+                //
+                // Что было до запрета — ДВА разных поведения на одной записи, и
+                // выбирал между ними РЕГИСТР имени, а не смысл:
+                //   `const MUT_W = "mut"` … `match w { MUT_W => 1, _ => 0 }`
+                //   — ALL-CAPS парсится как `Pattern::Variant`, варианта нет,
+                //     сборка падает тремя ошибками C (№762, отказ громкий);
+                //   `const mut_w = "mut"` … `match w { mut_w => 1, _ => 0 }`
+                //   — строчное парсится как `Pattern::Ident`, то есть
+                //     СВЯЗЫВАНИЕ: образец подходит ВСЕГДА, ветка `_` мертва,
+                //     функция возвращает 1 на любом входе, и всё это МОЛЧА
+                //     (№1157, блокирует тег).
+                //
+                // Автор в обоих случаях писал СРАВНЕНИЕ. Перечень форм образца
+                // закрыт (`spec/syntax.ru.md`, таблица «Виды паттернов»), и
+                // образца-константы в нём нет; заводить его значило бы, что
+                // запись `NAME => …` значит РАЗНОЕ в зависимости от того,
+                // объявлена ли выше константа с таким именем, — смысл образца
+                // зависел бы от контекста, невидимого в самой строке.
+                //
+                // ТИП СКРУТИНИЗИРУЕМОГО ЗДЕСЬ НЕ НУЖЕН, и это не срезание угла:
+                // по решению форма незаконна ВСЕГДА, а не только для не-сумм.
+                // Вариант суммы имеет приоритет по построению условия ниже.
+                for arm in arms {
+                    let bare = match &arm.pattern {
+                        crate::ast::Pattern::Ident { name, span, .. } => Some((name, span)),
+                        crate::ast::Pattern::Variant {
+                            path,
+                            kind: crate::ast::VariantPatternKind::Unit,
+                            span,
+                        } if path.len() == 1 => Some((&path[0], span)),
+                        _ => None,
+                    };
+                    let Some((name, span)) = bare else { continue };
+                    // Имя, которое ЕСТЬ вариант суммы, остаётся вариантом: иначе
+                    // константа с именем варианта убила бы законный разбор.
+                    if self.sum_variant_names.contains(name.as_str()) {
+                        continue;
+                    }
+                    if !self.module_const_names.contains(name.as_str()) {
+                        continue;
+                    }
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_MATCH_CONST_PATTERN] `{name}` is a module-level \
+                             constant, and a constant name is not a pattern form: \
+                             a bare name in pattern position BINDS, so this arm \
+                             would match everything and the arms below it would be \
+                             dead. Write the comparison as a guard: `x if x == \
+                             {name} => …`. (Registry 221.1 #762/#1157, owner's \
+                             decision 2026-09-18; the list of pattern forms is \
+                             closed.)",
+                            name = name,
+                        ),
+                        *span,
+                    ));
+                }
                 // generic-match-scope-gap fix (2026-07-21, see
                 // `resolve_generic_bound_method_return` doc): when the general
                 // inference above misses (a scrutinee that's a call to a method

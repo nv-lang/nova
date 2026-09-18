@@ -1,3 +1,8 @@
+# 2026-09-18 (интегратор, окно nova-ff): rows 1104 -> 1105, max 1157 -> 1159,
+#   и дыра 1158 объявлена: номер ВЫДАН окну Карины, строка живёт в ЕГО ветке.
+#   №1159 — тест `nova-lsp` с порогом в абсолютных секундах: под нагрузкой
+#   красный, в тишине зелёный с двадцатикратным запасом. Условие снятия дыры
+#   1158 то же, что у прежних: при слиянии сократить обратно.
 # 2026-09-18 (интегратор, окно nova-ff): rows 1103 -> 1104, max 1155 -> 1157,
 #   и в перечень дыр добавлен 1156.
 #   №1157 — тихая половина №762: образец со СТРОЧНЫМ именем константы молча
@@ -930,8 +935,8 @@
 # 2026-09-17 (integrator), chetvyortyy shag dnya: rows 1098 -> 1099,
 #   max 1149 -> 1151. Zavedena stroka 1151; 1150 vydan oknu Kariny i lezhit
 #   v yego vetke -- otsyuda razryv mezhdu prirostom strok (+1) i maksimuma (+2).
-rows=1104
-max=1157
+rows=1105
+max=1159
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
@@ -1148,4 +1153,4 @@ stale_gaps=0
 #   main poka ne priyekhala. USLOVIE SNYATIYA to zhe, chto u 1144-1146: pri
 #   sliyanii vetki nomer poyavitsya, i  nado SOKRATIT obratno -- dyra,
 #   ostavlennaya posle sliyaniya, razreshit poteryat nastoyashchuyu stroku.
-gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1144-1146,1150,1156
+gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1144-1146,1150,1156,1158

@@ -1,3 +1,8 @@
+# 2026-09-18 (integrator, okno nova-ff): blockers 73 -> 72 -- zakryt No1157
+#   (tihaya polovina No762): imya modulnoy konstanty v pozitsii obraztsa
+#   otvergaetsya diagnostikoy E_MATCH_CONST_PATTERN. Baza opuskaetsya TOY ZHE
+#   pravkoy, chto i zakrytie: ostavlennaya vysokoy, ona razreshila by otkatit
+#   rovno stolko, skolko zakryto, i strazh promolchal by.
 # 2026-09-18 (интегратор, окно nova-ff): blockers 72 -> 73 — заведена №1157.
 #   РОСТ ЗАКОННЫЙ И ЭТО НЕ НОВЫЙ ДЕФЕКТ КОДА, а разделение уже известного:
 #   у №762 обнаружилась ТИХАЯ половина. Сам №762 блокером НЕ был и не стал —
@@ -1406,4 +1411,4 @@ no_caveat=0
 #   Это ПАДЕНИЕ, а страж краснеет только на рост, — значит база, оставленная
 #   высокой, молча разрешила бы откатиться ровно на столько, на сколько мы
 #   продвинулись. Доказательства закрытия — в строке реестра №676.
-blockers=73
+blockers=72
