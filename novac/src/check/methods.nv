@@ -110,15 +110,8 @@ fn Checker mut @record_method_callee(e Node, kids []Node, recv_t TyId) -> () {
 /// the cause and `refuse_arg_type` names the first differing position.
 fn Checker mut @refuse_method_call(e Node, t Token, key []ArgSpec) -> () {
     ro kids = branch_children(e)
-    // [LEGACY-#764-nested-if-let-return] The natural shape here is one if-let
-    // inside another; the oracle emits the OUTER one's temporary undeclared as
-    // soon as the inner branch carries a `return` and anything follows the outer
-    // `if` (measured 2026-08-23 on a four-line probe, both return types). So the
-    // outer test is flattened to a plain `if` over the Option. The class is the
-    // oracle's, filed in the registry; this shape goes back the day it is fixed.
-    ro only = @res.only_row_of(t.text)
-    if !only.is_none() {
-        if Some(why) = @binding_refusal(only ?? no_row(), key) {
+    if Some(row) = @res.only_row_of(t.text) {
+        if Some(why) = @binding_refusal(row, key) {
             @refuse(t, why)
             return
         } else {
