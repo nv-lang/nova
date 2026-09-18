@@ -239,8 +239,27 @@ export const RECV_C_NAME = "_novac_self"
 /// the day protocol dispatch is real -- then this pair is the second door.
 export const FMT_PROTO = "Fmt"
 export const FMT_IMPL = "FmtCtx"
-/// The method the `Display` protocol requires (D73/D422): `@display(mut f Fmt)`.
+/// The method the `Display` protocol requires (D422): `@display(mut f Fmt)`.
+///
+/// The citation used to read "D73/D422". D73 was retracted whole on 2026-07-06
+/// (08-runtime.md) together with `From`/`Into`; D422 is the keystone that gives
+/// this method its signature. A name of the language carrying a dead reference
+/// sends the next reader to a block that says the opposite.
 export const DISPLAY_METHOD = "display"
+
+/// The `Display` protocol itself, by NAME -- what `#impl(Display)` opts into.
+///
+/// Here and nowhere else (P5): the same rule that put `COERCE_ATTR` here. The
+/// checker needs the name to tell the ONE protocol the subset judges today from
+/// every other, and a second spelling of it elsewhere would be a second place to
+/// drift.
+export const DISPLAY_PROTO = "Display"
+
+/// The `#impl(P1 + P2 + ...)` attribute (D186): the type author's explicit
+/// opt-in that the type implements those protocols. Structural conformance is
+/// NOT enough for a bare `${x}` -- at least one of (type author, use site) must
+/// say so out loud, and this attribute is how the author does.
+export const IMPL_ATTR = "impl"
 /// The runtime entry that builds a bare `Fmt` context over a builder -- what
 /// the codegen constructs at every user-type slot (measured on the oracle's
 /// emission 2026-09-05: `Nova_FmtCtx_static_bare(sb, 0, false)`). Interop.

@@ -118,6 +118,101 @@ export fn attr_kids_name(kids []Node, word str) -> bool {
     false
 }
 
+/// Does this attribute's argument list name `word` AND NOTHING ELSE? The
+/// companion of `attr_kids_name`, which asks about the attribute's own words and
+/// stops at the argument list.
+///
+/// TWO DOORS AND NOT ONE FLAG, because the two questions have different answers
+/// for the same node: `#impl(Display)` NAMES `impl` and ARGUES `Display`. A
+/// single door with a boolean would let a caller ask the wrong half by passing
+/// the wrong flag, and the compiler would not notice.
+///
+/// "AND NOTHING ELSE" IS THE WHOLE POINT, and the first version got it wrong.
+/// `#impl(P1 + P2 + ...)` (D186) carries a LIST, and a door that answered "is
+/// `word` among them" accepted `#impl(Display + Serialize)`: the author opted
+/// into two protocols, the subset reads one, and the other was ignored in
+/// silence. That is the subset claiming to honour an opt-in it does nothing
+/// about -- measured 2026-09-18, four list forms, all four accepted where two
+/// should have been refused. An opt-in the compiler half-honours is worse than
+/// one it refuses: the author has said the type is Serializable and been
+/// believed.
+///
+/// `+` is not an identifier, so it needs no case of its own; an EMPTY list
+/// answers false, because `#impl()` opts into nothing and is not this door's
+/// business to accept.
+/// Does this attribute carry ANY protocol at all? `#impl()` and a bare `#impl`
+/// both answer false.
+///
+/// A SEPARATE QUESTION FROM `attr_args_all`, and the amendment is why. Until
+/// 2026-09-18 D186 said nothing about an empty list either way, and the checker
+/// could treat it as "a protocol the subset does not read" -- the same refusal
+/// as `#impl(Serialize)`. The owner ruled it an OVERSIGHT: the annotation means
+/// the author OPTED IN, and opting into nothing opens no gate and states
+/// nothing, so both empty spellings are language errors. Two questions now,
+/// because they have different ANSWERS: "no protocol at all" is a form that does
+/// not exist, "a protocol I do not read" is debt of this subset.
+export fn attr_has_args(kids []Node, word str) -> bool {
+    mut inside = false
+    for c in kids {
+        if leaf_kind(c) == TokenKind.LParen {
+            inside = true
+            continue
+        } else {
+            // Before the list.
+        }
+        if !inside {
+            continue
+        } else {
+            // Inside it.
+        }
+        if leaf_kind(c) == TokenKind.RParen {
+            return false
+        } else {
+            // Still inside.
+        }
+        match c.ident_str() {
+            Some(t) => { return true }
+            None => {}
+        }
+    }
+    false
+}
+
+export fn attr_args_all(kids []Node, word str) -> bool {
+    mut inside = false
+    mut seen = false
+    for c in kids {
+        if leaf_kind(c) == TokenKind.LParen {
+            inside = true
+            continue
+        } else {
+            // Before the list, or a word inside it -- decided below.
+        }
+        if !inside {
+            continue
+        } else {
+            // Inside the argument list.
+        }
+        if leaf_kind(c) == TokenKind.RParen {
+            return seen
+        } else {
+            // Still inside.
+        }
+        match c.ident_str() {
+            Some(t) => {
+                if t != word {
+                    return false
+                } else {
+                    // One more protocol the subset does read.
+                }
+                seen = true
+            }
+            None => {}
+        }
+    }
+    false
+}
+
 /// WHICH declarations a `#coerce` attribute marks, by node id.
 ///
 /// ONE reading of "whose attribute is this", asked by BOTH collectors -- std's

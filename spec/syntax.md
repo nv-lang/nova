@@ -96,6 +96,12 @@ prelude types implement it themselves; a user type hooks in with
 ([D186](decisions/02-types.md#d186)). A literal `${` in a string — via
 escape: `"\${name}"`.
 
+The protocol list in `#impl` is NON-EMPTY: several protocols go in ONE
+annotation separated by `+` (`#impl(Display + Equal)`), while `#impl()` and a
+bare `#impl` are an error (`E_IMPL_NO_PROTOCOLS`) — the annotation exists to say
+the author opted IN, and opting into nothing opens no gate
+([D186](decisions/02-types.md#d186), amendment 2026-09-18).
+
 > **Corrected 2026-09-18; three retracted claims stood here at once,** and this
 > is the only place on the page that says why — the same correction is applied
 > below without repeating the reason. It read: "rendered via `str.from(v)` …

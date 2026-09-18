@@ -39,8 +39,9 @@ import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, NodeId, no_node, bin_op_of, un_op_of, raw_node}
 import ../diag.{Diagnostic, Severity, ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, COERCE_ATTR, REALTIME_ATTR}
+import ../builtins.{IMPL_ATTR, DISPLAY_PROTO}
 import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind}
-import ../sem.{expr_leaf_name, attr_kids_name, recv_type_name, is_value_record}
+import ../sem.{expr_leaf_name, attr_kids_name, attr_args_all, attr_has_args, recv_type_name, is_value_record}
 import ../types.{TyId, no_ty, is_ty}
 import ../resolve.{FnIndex, FieldIndex}
 
@@ -145,6 +146,30 @@ type Checker {
 /// subset already refused would turn a refusal into an ice. When #700 lands
 /// the walk becomes unconditional, because then its answer on bad input is a
 /// diagnostic and not a death.
+/// `#impl` stands over a declaration ONCE (D186). Judged here and not in the
+/// walk's `AttrDecl` arm, by construction: the walk sees ONE node, and this form
+/// is about NEIGHBOURS. The same shape `coerce_marked` uses -- an attribute
+/// belongs to the declaration that follows it, so the question is positional and
+/// is asked over the file's children.
+fn Checker mut @reject_repeated_impl(kids []Node) -> () {
+    mut prev_impl = false
+    for c in kids {
+        if c.kind_of() != NodeKind.AttrDecl {
+            prev_impl = false
+            continue
+        } else {
+            // An attribute: it either starts a run or continues one.
+        }
+        ro is_impl = attr_kids_name(branch_children(c), IMPL_ATTR)
+        if is_impl && prev_impl {
+            @reject_first_leaf_of(branch_children(c), IMPL_REPEATED_MSG)
+        } else {
+            // First `#impl` of a run, or another attribute entirely.
+        }
+        prev_impl = is_impl
+    }
+}
+
 export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) {
     mut c = Checker {
         src, ctx,
@@ -161,6 +186,7 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
         value_expect: no_ty(),
         substs: []TyId.new(),
     }
+    c.reject_repeated_impl(branch_children(file))
     c.walk(file)
     c.tell_gap_if_silent()
     if c.out.len() == 0 {
@@ -621,6 +647,32 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     // unread is how a subset becomes WIDER than the language.
                     if attr_kids_name(children, COERCE_ATTR) {
                         // The pair attribute: the collector owns it.
+                    } else if attr_kids_name(children, IMPL_ATTR)
+                              && !attr_has_args(children, IMPL_ATTR) {
+                        // `#impl()` or a bare `#impl` -- a LANGUAGE error since
+                        // the D186 amendment, so the door is `@reject_*`: the
+                        // form does not exist, as opposed to "not read yet".
+                        @reject_first_leaf_of(children, IMPL_NO_PROTOCOLS_MSG)
+                    } else if attr_kids_name(children, IMPL_ATTR)
+                              && attr_args_all(children, DISPLAY_PROTO) {
+                        // `#impl(P)` (D186) -- the author's opt-in, READ ONLY FOR
+                        // THE PROTOCOL THE SUBSET JUDGES, which today is `Display`
+                        // (wave B1b). `#impl(Serialize)` stands in novac's own
+                        // diag/diag.nv and must keep refusing, or the subset would
+                        // claim to honour an opt-in it does nothing about.
+                        //
+                        // ONE CONDITION AND NOT A NESTED REFUSAL, and the reason is
+                        // a measurement: the nested form spelled `ATTR_MSG` a SECOND
+                        // time, and `check-novac-subset-debt-dated` counts refusal
+                        // DOORS -- it went 84 -> 85 while the debt itself went DOWN
+                        // (one form more is accepted). A guard that counts doors is
+                        // right to complain about a second door for one refusal.
+                        //
+                        // Reading it is INERT so far, deliberately: the synthesis of
+                        // a memberwise `@display` is the next step, and until it
+                        // lands the interpolation slot still refuses through its own
+                        // judge with the dated address -- one refusal, at the place
+                        // that knows the reason.
                     } else if attr_kids_name(children, REALTIME_ATTR) {
                         // Read, not enforced [INV-GUARD: check-novac-differential]
                         // -- the corpus compares OUTCOMES against the oracle on

@@ -71,6 +71,28 @@ const BARE_SELF_MSG = "`@` is the method receiver -- outside a method body there
 /// and wrote the method as bare `display(...)`, the spelling D209 retracted.
 /// A diagnostic naming a form that does not exist is worse than a vague one:
 /// the reader goes looking, and the search succeeds only in the old spec.
+/// `#impl` IS WRITTEN ONCE (D186, `02-types.md:8887`: several protocols go in a
+/// single annotation separated by `+`, two annotations are not allowed). A
+/// LANGUAGE error, not subset debt: the form does not exist, as opposed to "not
+/// compiled yet" -- hence the `@reject_*` door rather than `@report_*`.
+///
+/// Written 2026-09-18 in the same step that taught the checker to READ `#impl`.
+/// While the attribute was refused wholesale the doubled form never got through
+/// -- BY ACCIDENT -- and the first edit that read it let the form in. The list
+/// of forms was asked of the `spec-reader` agent, and this one was missing from
+/// the grid the edit had been probed against.
+/// `#impl` CARRIES AT LEAST ONE PROTOCOL (D186 amendment 2026-09-18). Both
+/// `#impl()` and a bare `#impl` are LANGUAGE errors, not subset debt: the
+/// annotation exists to say the author opted IN, and opting into nothing opens
+/// no gate and asserts nothing, while still reading to a human as a decision.
+///
+/// ONE message for both spellings on purpose: the difference between `#impl()`
+/// and `#impl` is in the writing, not in what the author said, and two codes for
+/// one mistake would send the reader looking for a distinction that is not there.
+const IMPL_NO_PROTOCOLS_MSG = "`#impl` names at least one protocol: `#impl(Display)` or `#impl(A + B)` -- an empty annotation opts into nothing (D186)"
+
+const IMPL_REPEATED_MSG = "`#impl` is written once: several protocols go in ONE annotation, separated by `+` -- `#impl(A + B)`, not two lines (D186)"
+
 const INTERP_TYPE_MSG = "outside the subset: an interpolation slot of a non-primitive type without its own `@display(mut f Fmt)` (`Option[T]`, a record that relies on `#impl(Display)`, a generic instance) is not compiled yet (274.7 B1b) -- every primitive family and every plain type with `@display` is"
 
 /// The one primitive the runtime cannot display: `std.runtime.string_builder`
