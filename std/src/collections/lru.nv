@@ -95,12 +95,11 @@ export fn Lru[K, V] mut @put(k K, v V) -> () {
 }
 
 fn Lru[K, V] mut @move_to_front(k K) -> () {
-    // Найти k в order, удалить, поставить в начало.
-    mut new_order []K = [k]
-    for x in @order {
-        if x != k { new_order.push(x) }
+    // Найти k в order, сдвинуть в начало одним memmove.
+    match @order.index_of(k) {
+        Some(i) => @order.move_to_front(i)
+        None => @order.insert(0, k)
     }
-    @order = new_order
 }
 
 // Тесты — см. peer-файл lru_test.nv (module collections.lru_test).
