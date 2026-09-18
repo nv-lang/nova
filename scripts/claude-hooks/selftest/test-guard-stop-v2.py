@@ -257,8 +257,37 @@ def c_escape_after_two(tmp):
     return c, False
 
 
+def c_agents_without_models(tmp):
+    u"""Условие переехало из снятого v1 (2026-09-19). Без этих двух клеток
+    перенос был бы словом: `check-hooks-have-selftests` считает ФАЙЛЫ, а не
+    условия, и молчащая ветка прошла бы незамеченной — ровно так она и
+    пропала при подключении v2."""
+    queue(tmp, {"role": "integrator", "open": []})
+    return run(tmp, [(u"Пустил агента на разбор реестра.\n\n"
+                      u"СТОП: очередь-пуста", 0)]), True
+
+
+def c_agents_with_models(tmp):
+    queue(tmp, {"role": "integrator", "open": []})
+    return run(tmp, [(u"Пустил агента на разбор реестра.\n\n"
+                      u"Модели агентов: haiku — перечисление строк.\n\n"
+                      u"СТОП: очередь-пуста", 0)]), False
+
+
+def c_no_agents_no_line_needed(tmp):
+    u"""КОНТРОЛЬ: без работы агентов строка не требуется. Без этой клетки
+    условие могло бы блокировать ВСЕХ, и парная клетка выше всё равно была
+    бы зелёной."""
+    queue(tmp, {"role": "integrator", "open": []})
+    return run(tmp, [(u"Правил файл руками, всё зелено.\n\n"
+                      u"СТОП: очередь-пуста", 0)]), False
+
+
 for n, f in [
     (u"нет кода остановки", c_no_code),
+    (u"работа агентов без строки моделей", c_agents_without_models),
+    (u"работа агентов со строкой моделей", c_agents_with_models),
+    (u"агентов не было — строка не нужна", c_no_agents_no_line_needed),
     (u"очередь-пуста, снимок пуст", c_empty_queue_ok),
     (u"очередь-пуста, а в снимке два пункта", c_empty_queue_lies),
     (u"очередь-пуста, снимка нет", c_queue_missing),
