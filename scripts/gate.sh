@@ -5,6 +5,20 @@
 #
 # Состав (CLAUDE.md/dev-workflow):
 #   1) cargo build --release (nova-cli)
+#
+# ВРЕМЕННЫЕ ФАЙЛЫ ПРОГОНА — НЕ НА СИСТЕМНОМ ДИСКЕ (владелец, 2026-09-18;
+# реестр 221.1 №1152). Один прогон push-яруса требует около ДЕВЯТИ ГИГАБАЙТ
+# единовременно, и 2026-09-18 этот пик встретил системный диск, заполненный
+# под ноль: 9.8 МБ свободно из 476 ГБ. Гейт покраснел на тесте `nova-cli`,
+# и причина была не в коде — `LLVM ERROR: IO failure on output stream: no
+# space on device`. Отказ ПО СРЕДЕ неотличим от отказа ПО КОДУ, пока не
+# посмотришь в вывод, и первым делом искали регресс компилятора.
+#
+# КОРЕНЬ ВЫВОДИТСЯ, А НЕ ВПИСЫВАЕТСЯ (страж №698): берётся `NOVA_TMP_ROOT`,
+# если задан, иначе каталог `.nova-tmp` РЯДОМ с рабочим деревом — то есть на
+# том же диске, где лежит дерево, а оно по нашей раскладке не системное.
+# Путь к машине владельца в скрипте не пишется никогда: он и был предметом
+# №698.
 #   2) мега-CU spec_tests/conformance ОДНИМ CU: exit=0 И строка "PASS: N  FAIL: 0" присутствует
 #   3) nova check std/src (БЕЗ NOVA_STD_PATH): канон "PASS: 147  FAIL: 26  WARN: 1078"
 #      (ассертится ТОЛЬКО FAIL — см. ~:212; PASS/WARN растут от новых файлов законно)
@@ -13,6 +27,17 @@
 #   6) флагман examples/flagship/aggregator --strict-effects: строка "built:"
 set -u
 ROOT="$(pwd)"
+
+# Реестр 221.1 №1152: прогоны пишут временное рядом с деревом, а не на
+# системный диск. Экспортируется ДО первого запуска nova/cargo, иначе
+# `default_tmp_dir()` (nova-cli/src/main.rs) возьмёт системный `TEMP`.
+NOVA_TMP_ROOT="${NOVA_TMP_ROOT:-$(cd "$ROOT/.." 2>/dev/null && pwd)/.nova-tmp}"
+mkdir -p "$NOVA_TMP_ROOT" 2>/dev/null || :
+if [ -d "$NOVA_TMP_ROOT" ]; then
+    TMPDIR="$NOVA_TMP_ROOT"; TEMP="$NOVA_TMP_ROOT"; TMP="$NOVA_TMP_ROOT"
+    export TMPDIR TEMP TMP
+    echo "gate :: временные файлы -> $NOVA_TMP_ROOT (реестр №1152)"
+fi
 # Boehm GC для мега-CU (test_runner::detect_boehm читает NOVA_GC_LIB_DIR).
 # `vcpkg_installed` под .gitignore — у worktree его нет, он есть только в
 # ГЛАВНОМ дереве, общем для всех worktree через .git. Поэтому берём его не по

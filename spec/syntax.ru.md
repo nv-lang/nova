@@ -770,6 +770,22 @@ caller.nv:17: assert failed: text (cond) [in ice at diag.nv:129]
 
 Подробно — [D30](decisions/03-syntax.md#d30), [D46](decisions/03-syntax.md#d46), [D47](decisions/07-modules.md#d47).
 
+**Литерал `char` — в одинарных кавычках, и управляющий символ пишется только
+escape'ом:**
+
+```nova
+ro a = 'x'
+ro nl = '\n'          // a newline -- only this way
+ro bs = '\\'
+ro emoji = '\u{1F600}'
+```
+
+Внутри `'…'` распознаются ровно `\n`, `\t`, `\r`, `\0`, `\'`, `\"`, `\\`,
+`\u{…}` — и ничего больше. **Живой управляющий символ, набранный в исходнике как
+есть (табуляция, перевод строки), — ошибка `E_CHAR_RAW_CONTROL`**: его не видно
+глазом, и `'<таб>'` неотличим от `'<пробел>'` при чтении. Подробно —
+[D478](decisions/03-syntax.md#d478).
+
 ## Видимость: `export` для публичных деклараций
 
 `export` перед декларацией = публичная (видна снаружи модуля).
@@ -806,6 +822,20 @@ fn Account @validate(amount money) => amount > 0       // приватный hel
 export type Hash protocol {
     @hash() -> u64
 }
+```
+
+**Экспортируемое ЗНАЧЕНИЕ уровня модуля пишется только квалифицированно.**
+`export ro NAME = …` с голым именем — не форма языка
+(`E_EXPORT_RO_UNQUALIFIED`): такое имя молча не попадало в экспорты, и отказ
+приходил чужому коду в другом файле как `undefined identifier`. Канон —
+`export ro Type.NAME Тип = …` (амендмент к
+[D200](decisions/02-types.md#d200)); если значение задумано модульно-приватным,
+`export` просто снимается — приватный `ro NAME = …` законен и обычен:
+
+```nova
+export ro Cfg.DEFAULT Cfg = build()   // ok -- exported form is qualified
+ro cache_root str = compute_root()    // ok -- private form, bare name
+export ro cache_root str = compute_root()   // error: E_EXPORT_RO_UNQUALIFIED
 ```
 
 **Поля record:** без `priv` поля `export`-типа публичны по умолчанию

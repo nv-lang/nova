@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// KONTROL'NAYA KLETKA: sortiruyetsya POSLEDNIM, to yest' ob'yavleniye ZDES'
+// idyot POZZHE potrebitelya v `b_use.nv`. Obratnyy poryadok byl zelenym i do
+// pochinki; yego delo -- ne dat' prinyat' za dokazatel'stvo to, chto dokazyvayet
+// lish' rabotosposobnost' sborki.
+module p1155tup.z_reverse
+
+export type Late (int, int)
+
+export fn late_pair() -> Late => (4, 5) as Late

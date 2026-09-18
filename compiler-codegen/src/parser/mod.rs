@@ -2153,6 +2153,40 @@ impl Parser {
                     // parse_const_decl). Warning остаётся только для bare-формы.
                     Item::Const(self.parse_assoc_ro_decl(is_export, pending_doc.clone(), pending_doc_attrs.clone(), file_private)?)
                 } else {
+                    // РЕЕСТР 221.1 №701 (а), решение владельца 2026-09-18:
+                    // ГОЛЫЙ `export ro name = …` НА УРОВНЕ МОДУЛЯ ОТВЕРГАЕТСЯ.
+                    //
+                    // Замер, из-за которого это правило: слово `export` перед
+                    // модульным `ro` считывалось в локальную переменную и
+                    // ТЕРЯЛОСЬ здесь — `parse_ro_mut_binding` его не получает
+                    // никак. Владелец модуля компилировался молча, а импортёр
+                    // получал `undefined identifier` на месте использования, то
+                    // есть отказ приходил ЧУЖОМУ коду и в другом файле.
+                    //
+                    // ПОЧЕМУ ОТКАЗ, А НЕ ПОЧИНКА ЭКСПОРТА. Спека описывает
+                    // ровно одну экспортируемую форму — КВАЛИФИЦИРОВАННУЮ
+                    // `[export] ro Type.NAME Тип = …` (D200-амендмент); про
+                    // голую на уровне модуля в ней НЕТ ни строки. Научить
+                    // экспортироваться и её значило бы завести ВТОРУЮ форму
+                    // записи для одного и того же, а цену второй формы платит
+                    // каждый читатель языка, а не тот, кто её добавил.
+                    //
+                    // ПРИВАТНЫЙ модульный `ro` этим НЕ ЗАТРОНУТ — он законен и
+                    // используется в std десятками (`fs.nv`, `addr.nv`,
+                    // `unicode/category.nv`). Отвергается ровно сочетание
+                    // `export` + голое имя.
+                    if is_export {
+                        return Err(Diagnostic::new(
+                            "[E_EXPORT_RO_UNQUALIFIED] `export ro NAME = ...` is not \
+                             a form: a module-level `ro` exported under a bare name \
+                             is silently dropped from the module's exports, and the \
+                             importer fails with `undefined identifier` far from \
+                             here. The exported form is QUALIFIED — write `export ro \
+                             Type.NAME Type = ...` (D200 amendment). To keep it \
+                             module-private instead, drop `export`.".to_string(),
+                            self.peek().span,
+                        ));
+                    }
                     if let Some(d) = &pending_doc {
                         eprintln!(
                             "warning: doc-comment (`///`) before bare module-level \

@@ -136,12 +136,87 @@ def role_from_card(root):
     return None
 
 
+def session_root():
+    """Дерево ЭТОЙ сессии, а не главное дерево проекта.
+
+    Найдено окном Карины 2026-09-18 (реестр 221.1 №1156), и замер сошёлся до
+    минуты: хук требовал `/save` через двадцать минут после того, как записка
+    была написана и закоммичена, и печатал «не обновлялась 43ч 46м» — возраст
+    КОПИИ в главном дереве, тогда как рабочая копия в `nova-p274` была свежей.
+
+    Причина названа чтением: `CLAUDE_PROJECT_DIR` указывает на ГЛАВНОЕ дерево,
+    а по `AGENTS.md` всякое окно, кроме интегратора, работает в СВОЁМ worktree.
+    Значит для целого КЛАССА адресатов напоминание было невыполнимым: сколько
+    ни сохраняйся, оно вернётся через час и замолчит только после чужого
+    слияния. Требование, которое нельзя удовлетворить, учит себя игнорировать —
+    а хук заведён ровно потому, что правило без механизма не сработало
+    (план 290 п.3).
+
+    САМ ОТВЕТ ЖИВЁТ В `hook_tree.py`: тот же вопрос задают ещё два хука, и
+    копия, написанная по памяти, не унаследует тонкость с чтением пути
+    БАЙТАМИ (см. шапку того файла).
+    """
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from hook_tree import session_root as _sr
+        return _sr()
+    except Exception:
+        return os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+
+def _branch_role_belongs_to_me(root):
+    """Ветка называет РОЛЬ, но не говорит, ЧЬЁ это окно.
+
+    Находка окна nova-1a 2026-09-18: разовое окно, работавшее в ГЛАВНОМ дереве по
+    просьбе владельца, получило напоминание «записка ИНТЕГРАТОРА не обновлялась».
+    Хук посчитал верно — ветка `main` действительно принадлежит интегратору, — и
+    всё равно адресовал не тому: у окна нет этой роли, и исполнить указание оно
+    может только испортив чужой файл.
+
+    Это ЗЕРКАЛО случая окна Карины (там роль не совпадала с веткой, здесь окно без
+    роли сидит в ветке роли), и лечится тем же: ВИЗИТКА знает `session_id` того,
+    кто роль ведёт. Если визитка роли существует и её id НЕ совпадает с моим —
+    напоминание адресовано не мне, и хук молчит.
+
+    ЕСЛИ ВИЗИТКИ НЕТ ВОВСЕ — прежнее поведение (адресация по ветке). Окно роли
+    могло не успеть её написать, и молчание тогда хуже ложного адреса: записка
+    перестала бы напоминать о себе совсем.
+    """
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "").strip()
+    if not sid:
+        return True          # id неизвестен — судить не по чему, ведём как раньше
+    try:
+        import subprocess
+        out = subprocess.run(["git", "-C", root, "rev-parse", "--git-common-dir"],
+                             capture_output=True, text=True, timeout=10)
+        gitdir = (out.stdout or "").strip()
+        if not gitdir:
+            return True
+        if not os.path.isabs(gitdir):
+            gitdir = os.path.join(root, gitdir)
+        card = os.path.join(gitdir, "nova-session-integrator.card")
+        if not os.path.isfile(card):
+            return True      # визитки роли нет — прежнее поведение
+        owner = ""
+        for line in io.open(card, encoding="utf-8", errors="replace"):
+            if line.startswith("session_id="):
+                owner = line.split("=", 1)[1].strip()
+                break
+        if not owner:
+            return True
+        return owner == sid
+    except Exception:
+        return True
+
+
 def main():
     try:
         sys.stdin.read()
     except Exception:
         pass
-    root = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    # Корень — дерево ЭТОЙ сессии: и ветка, и путь к записке обязаны браться
+    # из ОДНОГО места. Прежде ветка читалась у git, а файл — по
+    # `CLAUDE_PROJECT_DIR`, и в worktree это были разные деревья.
+    root = session_root()
     branch = current_branch(root)
     HANDOFF = CMD = TITLE = None
     # ВИЗИТКА СТАРШЕ ВЕТКИ, и только в эту сторону: она называет роль прямо,
@@ -150,7 +225,7 @@ def main():
     card = role_from_card(root)
     if card in CARD_ROLES:
         HANDOFF, CMD, TITLE = CARD_ROLES[card]
-    else:
+    elif _branch_role_belongs_to_me(root):
         for _b, _h, _c, _t in ROLES:
             if branch == _b:
                 HANDOFF, CMD, TITLE = _h, _c, _t

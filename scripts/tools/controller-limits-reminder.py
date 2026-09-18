@@ -42,7 +42,57 @@ STAMP_ENV = "CONTROLLER_REMINDER_STAMP"
 # have been written into a tree that a forty-minute tier judges. Both are the class this role
 # hunts: the measurement kept its shape and changed what it looked at. The scratchpad is derived
 # from the environment, never from the script's own location.
+def _git_common_dir():
+    """Shared `.git` of this checkout, or None.
+
+    Registry 221.1 #1153. Every worktree of the repository shares ONE `.git`,
+    so a file placed there is visible from any tree, stays out of the index and
+    -- the point here -- is never touched by the operating system's temp
+    cleanup. Session cards already live there for exactly this reason.
+    """
+    try:
+        import subprocess
+        out = subprocess.run(["git", "rev-parse", "--git-common-dir"],
+                             capture_output=True, text=True, timeout=10,
+                             cwd=HERE)
+        d = (out.stdout or "").strip()
+        if not d:
+            return None
+        if not os.path.isabs(d):
+            d = os.path.join(HERE, d)
+        return d if os.path.isdir(d) else None
+    except Exception:
+        return None
+
+
 def _state_dir():
+    """Where this role keeps its clock.
+
+    THE SHARED `.git` COMES FIRST, and that is registry 221.1 #1153 rather than
+    a preference. The stamp used to live under `%TEMP%`, and it VANISHED TWICE
+    in two days: once with the system drive full (9.8 MB free of 476 GB, which
+    invites Windows to clear temp), and once again on 2026-09-18 with 184 GB
+    free -- so a full disk was never the whole cause, and waiting for it to be
+    the cause would have been waiting forever.
+
+    The loss is SILENT, which is the expensive part: the tool does not crash, it
+    simply restarts its clock, and the owner's once-an-hour schedule begins to
+    lie in both directions with nobody the wiser. That is the shape this role
+    exists to hunt -- a measurement that kept its form and changed what it
+    watches.
+
+    The scratchpad stays SECOND: when a session provides one, it is explicitly
+    session-scoped and the caller asked for it. Temp directories remain last,
+    as a fallback for a checkout that is not a git tree at all.
+    """
+    g = _git_common_dir()
+    if g:
+        d = os.path.join(g, "controller-reminder")
+        try:
+            os.makedirs(d, exist_ok=True)
+            return d
+        except OSError:
+            pass
     for var in ("CLAUDE_SCRATCHPAD", "CLAUDE_SCRATCHPAD_DIR", "TMPDIR", "TEMP", "TMP"):
         v = os.environ.get(var)
         if v and os.path.isdir(v):

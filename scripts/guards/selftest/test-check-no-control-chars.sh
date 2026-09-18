@@ -58,6 +58,23 @@ printf 'x\010y\n' > "$TMP/scripts/untracked.sh"
 out=$(bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 0 ]; then ok "неотслеживаемый файл вне периметра"; else bad "ложный отказ на неотслеживаемом: $out"; fi
 
+# 6a. ИМЕНОВАННЫЙ ПРОПУСК С ПРИЧИНОЙ — файл, где управляющий байт есть ПРЕДМЕТ
+#     (neg-фикстура к D478), не считается нарушением.
+setup
+printf 'ro c = \047\013\047\n// GUARD-ALLOW-CONTROL-CHARS: byte is the subject\n' > "$TMP/scripts/allowed.sh"
+git -C "$TMP" add scripts/allowed.sh 2>/dev/null
+out=$(bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 0 ]; then ok "маркер с причиной освобождает файл"; else bad "пропуск не сработал: $out"; fi
+
+# 6b. ОБРАТНАЯ СТОРОНА, и она важнее первой: маркер БЕЗ причины НЕ освобождает.
+#     Пропуск, срабатывающий от одного слова, — дыра, а не исключение: его
+#     поставят копипастом там, где байт всё-таки опечатка.
+setup
+printf 'x\013y\n// GUARD-ALLOW-CONTROL-CHARS:\n' > "$TMP/scripts/bare_marker.sh"
+git -C "$TMP" add scripts/bare_marker.sh 2>/dev/null
+out=$(bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -ne 0 ]; then ok "маркер без причины не освобождает"; else bad "пустой маркер прошёл как пропуск"; fi
+
 # 7. На настоящем дереве зелёный — иначе страж въезжает в гейт красным.
 REAL="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 out=$(bash "$G" "$REAL" 2>&1); rc=$?
@@ -70,6 +87,6 @@ else
     bad "страж не назван в docs/dev/rules-for-agents.md"
 fi
 
-if [ "$FAILED" -eq 0 ]; then echo "селфтест check-no-control-chars: 8/8 ok"; exit 0; fi
+if [ "$FAILED" -eq 0 ]; then echo "селфтест check-no-control-chars: 10/10 ok"; exit 0; fi
 echo "селфтест check-no-control-chars: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1

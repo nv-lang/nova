@@ -88,6 +88,10 @@
           {
             "type": "command",
             "command": "python \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks/remind-session-save.py\""
+          },
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks/show-local-time.py\""
           }
         ]
       }

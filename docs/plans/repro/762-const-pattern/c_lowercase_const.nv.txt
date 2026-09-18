@@ -1,0 +1,17 @@
+// Ось: РЕГИСТР имени. Если заглавная буква и есть признак «это вариант», то
+// строчное имя константы должно вести себя иначе — и тогда дефект не про
+// константы, а про написание имени.
+module c_lowercase_const
+
+const mut_w = "mut"
+
+fn classify(w str) -> int => match w {
+    mut_w => 1
+    _ => 0
+}
+
+fn main() Io -> () {
+    ro a = classify("mut")
+    ro b = classify("ro")
+    println("mut=${a} other=${b}")
+}

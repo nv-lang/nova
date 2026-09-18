@@ -279,7 +279,16 @@
 # type. The question went to the owner and came back a ruling.
 # DEBT FOR CARINA: the synthesis itself is not written yet -- this merge moves
 # the NORM only, and the implementation follows in 274.7 B1b.
-#   spec-queue: 83
+#
+# 83 + 79 -> 85 (слияние origin/main 2026-09-18, окно Карины): НИ МАКСИМУМ,
+# НИ СУММА ДВУХ ЧИСЕЛ — ЗАМЕР ОБЪЕДИНЁННОЙ ИСТОРИИ. Счётчик считает
+# КОММИТЫ, тронувшие spec/decisions после spec-point, без слияний — а у
+# двух веток есть ОБЩАЯ часть, поэтому 83+79 дало бы 162, а факт 85.
+# Взять большее (83) значило бы потерять его два решения из счёта МОЛЧА,
+# взять его (79) — потерять шесть моих. Число взято ТОЙ ЖЕ командой,
+# которой судит страж (`novac-diff-corpus.sh:100`), а не арифметикой по двум
+# числам: счётчик, выведенный из других счётчиков, не есть замер.
+#   spec-queue: 85
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,

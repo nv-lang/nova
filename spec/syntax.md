@@ -752,6 +752,22 @@ caller.nv:17: assert failed: text (cond) [in ice at diag.nv:129]
 - `f32`, `f64`
 - `str`, `bool`, `char` (a byte is `u8`, there is no separate `byte` type)
 
+**A `char` literal uses single quotes, and a control character is written ONLY
+as an escape:**
+
+```nova
+ro a = 'x'
+ro nl = '\n'          // a newline -- only this way
+ro bs = '\\'
+ro emoji = '\u{1F600}'
+```
+
+Inside `'…'` exactly `\n`, `\t`, `\r`, `\0`, `\'`, `\"`, `\\`, `\u{…}` are
+recognised and nothing else. **A raw control character typed into the source as
+itself (a tab, a newline) is an error, `E_CHAR_RAW_CONTROL`**: the eye cannot see
+it, so `'<tab>'` and `'<space>'` read the same. See
+[D478](decisions/03-syntax.md#d478).
+
 Details — [D30](decisions/03-syntax.md#d30), [D46](decisions/03-syntax.md#d46), [D47](decisions/07-modules.md#d47).
 
 ## Visibility: `export` for public declarations
@@ -790,6 +806,20 @@ fn Account @validate(amount money) => amount > 0       // приватный hel
 export type Hash protocol {
     @hash() -> u64
 }
+```
+
+**An exported module-level VALUE is written qualified, and only qualified.**
+`export ro NAME = …` with a bare name is not a form of the language
+(`E_EXPORT_RO_UNQUALIFIED`): such a name was silently dropped from the module's
+exports, and the failure surfaced in someone else's file as `undefined
+identifier`. The canonical spelling is `export ro Type.NAME Type = …` (amendment
+to [D200](decisions/02-types.md#d200)); if the value is meant to stay
+module-private, just drop `export` -- a private `ro NAME = …` is ordinary:
+
+```nova
+export ro Cfg.DEFAULT Cfg = build()   // ok -- exported form is qualified
+ro cache_root str = compute_root()    // ok -- private form, bare name
+export ro cache_root str = compute_root()   // error: E_EXPORT_RO_UNQUALIFIED
 ```
 
 **Record fields:** without `priv`, fields of an `export` type are public by
