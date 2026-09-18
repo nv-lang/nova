@@ -96,6 +96,14 @@ prelude types implement it themselves; a user type hooks in with
 ([D186](decisions/02-types.md#d186)). A literal `${` in a string — via
 escape: `"\${name}"`.
 
+What exactly gets printed for a structural type with no `@display` of its own
+but with the `#impl(Display)` gate in place: the compact form WITHOUT field
+names -- `Point(1, 2)`, and for a sum `Some(5)`, payload as a value. The named
+form `Point { x: 1, y: 2 }` belongs to `${x:?}` and the `Debug` protocol, not to
+`Display` ([D422](decisions/02-types.md#d422) §4, and the D109 amendment of
+2026-09-18). For primitives the two coincide (`42`, `true`) -- the difference
+exists only for structural types.
+
 The protocol list in `#impl` is NON-EMPTY: several protocols go in ONE
 annotation separated by `+` (`#impl(Display + Equal)`), while `#impl()` and a
 bare `#impl` are an error (`E_IMPL_NO_PROTOCOLS`) — the annotation exists to say

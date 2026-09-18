@@ -3567,7 +3567,30 @@ synthesis. Аналог Rust `#[derive(Hash, PartialEq, Clone, Ord, Debug)]`.
 | Hash  | `@hash() -> u64`               | XOR + rotate FxHash-style combine        |
 | Clone | `@clone() -> Self` (D230 NEW)  | record literal с `.clone()` per field    |
 | Compare| `@compare(other) -> int`       | lexicographic if-chain                   |
-| Display | `@display(sb) -> ()`               | `sb.append("Name { f: v, ... }")` chain |
+| Display | `@display(mut f Fmt) -> ()`    | компактная форма `Point(1, 2)` — БЕЗ имён полей |
+| Debug | `@debug(mut f Fmt) -> ()`        | именованная форма `Point { x: 1, y: 2 }` |
+
+> **АМЕНДМЕНТ 2026-09-18 (решение владельца): ДВЕ СТРОКИ ВМЕСТО ОДНОЙ.**
+> До него здесь стояло: `| Display | @display(sb) -> () | sb.append("Name { f:
+> v, ... }") chain |`. Решение дословно: **`display` → `Point(1, 2)` и `Some(5)`;
+> `debug` → `Point { x: 1, y: 2 }`**.
+>
+> **ЭТО ДОПОЛНЕНИЕ, А НЕ ИСПРАВЛЕНИЕ ОШИБКИ, и разница важна
+> читателю.** Старая строка не описывала «другой дизайн» — она отдавала
+> Display ДЕБАЖНУЮ форму, потому что писалась 2026-06-05, ДО того как
+> Display и Debug разделили ([D422](02-types.md#d422), 2026-07-15). Второй
+> строки в таблице физически не было, и одна строка несла оба смысла
+> сразу. Таблица не ошибалась в своё время — она устарела в один день.
+>
+> **Про `debug` расхождения НЕ БЫЛО ВОВСЕ** (сверено дословно по обоим
+> местам): D422 §4 и эта таблица дают одну и ту же форму С ИМЕНАМИ
+> полей. Спор был ТОЛЬКО про `display`, и амендмент касается только его.
+>
+> **Как нашлось.** Окно Карины спросило агента-читателя перечень нормы
+> перед реализацией синтеза `@display` — и перечня не получило: вернулась
+> РАЗВИЛКА из двух D-блоков одного уровня старшинства. Умолчания окно
+> НЕ взяло намеренно: форма синтеза есть БАЙТЫ в stdout, и ошибка стоит
+> красного дифференциала на каждой фикстуре со структурным типом.
 
 **Auto-derive triggers** (см. Plan 126 Ф.4 — `verify_impl_protocols`):
 - Type lists protocol в `#impl(P)` list (D186).
@@ -3591,9 +3614,21 @@ opt-in. Tuple resolver routes `==` через synthesized `@equal` без
 identity-eq fallback'а (tuple никогда не heap-allocated).
 
 **Sum-type** — V1 placeholder: identity-comparison для `Equal`,
-`@compare` returns `0`, `@clone` returns `@`, `@display` emits только type name.
+`@compare` returns `0`, `@clone` returns `@`.
 Rich variant-tag + payload recursion — followup
 [M-126-sum-{equal,hash,clone,compare,fmt}-rich].
+
+> **АМЕНДМЕНТ 2026-09-18 — `@display` СУММЫ ВЫШЕЛ ИЗ PLACEHOLDER'А.**
+> Здесь стояло «`@display` emits только type name». Решение владельца:
+> сумма печатается с payload — **`Some(5)`**, payload как ЗНАЧЕНИЕ
+> ([D422](02-types.md#d422) §4). Остальные три протокола строки остаются
+> placeholder'ами без изменений.
+>
+> **Почему это не спор двух блоков, а исполнение задуманного ЗДЕСЬ ЖЕ:**
+> строка САМА звала себя «V1 placeholder» и САМА несла followup-маркер
+> `[M-126-sum-{equal,hash,clone,compare,fmt}-rich]` — то есть объявляла себя
+> временной с первого дня. Амендмент закрывает часть `fmt` этого маркера,
+> а не отменяет чужое решение. Довод найден интегратором при сверке.
 
 **Cycle detection** (Plan 126 Ф.2):
 - Visited set `(type_name, protocol)` в `AutoDeriveCtx`.
