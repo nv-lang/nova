@@ -1,0 +1,6 @@
+// Проба №675 (б): экранированный бэкслеш как char-литерал.
+module p675_backslash
+fn main() Io -> () {
+    ro c = '\\'
+    println("code=${c as int}")
+}

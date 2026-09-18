@@ -1,0 +1,6 @@
+// Проба №675 (г): сырой 0x0B внутри СТРОКОВОГО литерала — соседняя дверь.
+module p675_raw_in_str
+fn main() Io -> () {
+    ro s = "ab"
+    println("len=${s.byte_len()}")
+}

@@ -1,0 +1,9 @@
+// Проба №675 (д): char-литерал с СЫРЫМ переводом строки внутри.
+// Носитель в novac (`lex.nv:235`) называет эту форму причиной сломанного
+// is_space: «silently accepted with garbage semantics ... even spanning lines».
+module p675_raw_lf
+fn main() Io -> () {
+    ro c = '
+'
+    println("code=${c as int}")
+}
