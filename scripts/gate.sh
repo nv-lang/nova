@@ -978,6 +978,9 @@ DOC_EXAMPLES_SHOW_MATCHES=0 guard "$ROOT/scripts/guards/check-doc-examples.sh" "
 step loop "handoff-labels (метка раздела ролевой записки — полная дата, а не четыре цифры: 2026-09-17, шесть схем в двух файлах)"
 guard "$ROOT/scripts/guards/check-handoff-labels.py" "$ROOT" || fail "handoff-labels (метка раздела записки не есть полная дата: заведи `0-ГГГГ-ММ-ДД[-часть суток]`, прежнюю — в базу; см. вывод выше)"
 
+step loop "handoff-home (передача остановки лежит в РОЛЕВОЙ записке, а не в игнорируемом docs/.sessions — слово владельца 2026-09-18)"
+guard "$ROOT/scripts/guards/check-handoff-home.py" "$ROOT" || fail "handoff-home (передача написана в каталог под .gitignore либо /stop перестал называть ролевую записку: см. вывод выше)"
+
 step loop "doc-guide-names (форма, НАЗВАННАЯ в публикуемой доке, существует в языке — 2026-09-17, случай debug_assert)"
 guard "$ROOT/scripts/guards/check-doc-guide-names.py" "$ROOT" || fail "doc-guide-names (дока называет форму, которой нет в языке: имя либо снято — чинится ДОКА, либо чужое — вносится в базу с причиной; см. вывод выше)"
 

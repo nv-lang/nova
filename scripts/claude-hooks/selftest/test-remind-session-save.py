@@ -23,6 +23,7 @@ HOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
                     "remind-session-save.py")
 HANDOFF_REL = os.path.join("docs", "dev", "prompts", "integrator-handoff.md")
 CARINA_REL = os.path.join("docs", "dev", "prompts", "carina-handoff.md")
+CONTROLLER_REL = os.path.join("docs", "dev", "prompts", "controller-handoff.md")
 
 
 def make_tree(branch):
@@ -122,6 +123,47 @@ try:
     else:
         bad(u"на ветке Карины хук назвал не то: %r" % (ctx or out)[:140])
     shutil.rmtree(croot, ignore_errors=True)
+
+    # (6) КОНТРОЛЁР НА `main` — записка СВОЯ, а не интеграторская. Ветка роли не
+    #     различает: контролёр работает в ГЛАВНОМ дереве, то есть на `main`, как
+    #     и интегратор, — и до правки 2026-09-18 он получал напоминание про чужой
+    #     файл. Роль берётся ВИЗИТКОЙ, сопоставление по session_id.
+    kroot = make_tree("main")
+    kpath = os.path.join(kroot, CONTROLLER_REL)
+    os.makedirs(os.path.dirname(kpath))
+    io.open(kpath, "w", encoding="utf-8").write(u"# записка контролёра\n")
+    st = os.stat(kpath)
+    os.utime(kpath, (st.st_atime, time.time() - 7200))
+    # Записка ИНТЕГРАТОРА тоже лежит и тоже протухла: без визитки хук назвал бы
+    # именно её, и клетка обязана отличать «выбрал верную» от «нашёл хоть какую».
+    ipath = os.path.join(kroot, HANDOFF_REL)
+    io.open(ipath, "w", encoding="utf-8").write(u"# записка интегратора\n")
+    st = os.stat(ipath)
+    os.utime(ipath, (st.st_atime, time.time() - 7200))
+    gitdir = subprocess.run(["git", "-C", kroot, "rev-parse", "--git-common-dir"],
+                            capture_output=True, text=True).stdout.strip()
+    if not os.path.isabs(gitdir):
+        gitdir = os.path.join(kroot, gitdir)
+    io.open(os.path.join(gitdir, "nova-session-controller.card"), "w",
+            encoding="utf-8").write(
+        u"role=controller\nname=nova-test\nsession_id=SID-TEST\n")
+    env_sid = dict(os.environ)
+    env_sid["CLAUDE_PROJECT_DIR"] = kroot
+    env_sid["CLAUDE_CODE_SESSION_ID"] = "SID-TEST"
+    p = subprocess.run([sys.executable, HOOK], input=b"{}",
+                       capture_output=True, env=env_sid)
+    out = p.stdout.decode("utf-8", "replace").strip()
+    ctx = ""
+    if out:
+        try:
+            ctx = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+        except Exception:
+            ctx = ""
+    if ctx and u"controller-handoff" in ctx and u"integrator-handoff" not in ctx:
+        ok(u"контролёр на main — хук зовёт ЕГО записку, не интеграторскую")
+    else:
+        bad(u"контролёру названа не та записка: %r" % (ctx or out)[:140])
+    shutil.rmtree(kroot, ignore_errors=True)
 
     # (5) НЕЗНАКОМАЯ РОЛЬ — молчание, и это решение, а не дыра: у пакетных окон
     #     своя передача (/stop), выдумывать им адресата хук не вправе.

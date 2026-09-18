@@ -38,7 +38,11 @@
   `controller-peers-deep.py <id-prefix> [K] [tail_mb]`, `controller-machine-watch.py`
   (дежурство), `controller-verdict.py [--prove]`, `controller-limits-reminder.py`,
   `controller-selftest.py`.
-- Передача по `/stop` живёт отдельно: `docs/.sessions/handoff-<id сессии>.md`.
+- Передача по `/stop` живёт В ЭТОМ ЖЕ ФАЙЛЕ — разделом сверху, со словом
+  ОСТАНОВКА в заголовке (правка 2026-09-18 по слову владельца). Прежний адрес
+  `docs/.sessions/handoff-<id>.md` стоял под `.gitignore`: написанное туда не
+  переживало ни клон, ни перезапуск машины и не было видно никому, кроме самого
+  окна.
 
 ## Соседи — снимок 01:42–01:50 мест. 2026-09-14
 

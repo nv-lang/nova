@@ -43,12 +43,25 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 # каждом перезапуске): `main` — интегратор, ветка Карины — окно Карины.
 # Незнакомая ветка — молчим, и это не дыра: у пакетных окон своя передача
 # (`/stop`), а выдумывать им адресата хук не вправе.
+# Ключ таблицы — ВЕТКА, и этого хватает не всем ролям: контролёр пушей
+# (`/push-controller`) работает в ГЛАВНОМ дереве, то есть на `main`, как и
+# интегратор. По ветке они неразличимы, и до правки 2026-09-18 контролёр
+# получал напоминание про ЧУЖУЮ записку — то есть указание, исполнить которое
+# он не мог, не испортив чужой файл. Роль такого окна берётся ВИЗИТКОЙ (см.
+# role_from_card ниже): визитка несёт `session_id`, и сопоставление идёт по
+# нему, а не по имени сессии — имя меняется при каждом перезапуске.
 ROLES = (
     ("main", os.path.join("docs", "dev", "prompts", "integrator-handoff.md"),
      "/save", "ЗАПИСКА ИНТЕГРАТОРА"),
     ("p274-novac", os.path.join("docs", "dev", "prompts", "carina-handoff.md"),
      "/save", "ЗАПИСКА ОКНА КАРИНЫ"),
 )
+
+# Роли, которые ветка не различает: ключ — имя роли в визитке.
+CARD_ROLES = {
+    "controller": (os.path.join("docs", "dev", "prompts", "controller-handoff.md"),
+                   "/save", "ЗАПИСКА КОНТРОЛЁРА"),
+}
 MAX_AGE_SEC = 3600            # час — число владельца (план 290 п.3)
 COOLDOWN_SEC = 900            # не чаще раза в 15 минут
 
@@ -72,6 +85,43 @@ def current_branch(root):
     except Exception:
         return ""
 
+def role_from_card(root):
+    """Роль ЭТОЙ сессии по визитке в общем `.git`, либо None.
+
+    Сопоставление по `session_id`, а не по имени: имя вида `nova-NN` меняется
+    при каждом перезапуске, и визитка соседа с тем же именем увела бы
+    напоминание в чужую записку. Визитка — ПОДСКАЗКА, а не власть (решение
+    владельца 2026-09-16), и здесь этого достаточно: цена ошибки — напоминание
+    не тому окну, а не правка файла.
+    """
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "").strip()
+    if not sid:
+        return None
+    try:
+        import subprocess
+        out = subprocess.run(["git", "-C", root, "rev-parse", "--git-common-dir"],
+                             capture_output=True, text=True, timeout=10)
+        gitdir = (out.stdout or "").strip()
+        if not gitdir:
+            return None
+        if not os.path.isabs(gitdir):
+            gitdir = os.path.join(root, gitdir)
+        for name in os.listdir(gitdir):
+            if not (name.startswith("nova-session-") and name.endswith(".card")):
+                continue
+            fields = {}
+            for line in io.open(os.path.join(gitdir, name),
+                                encoding="utf-8", errors="replace"):
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    fields[k.strip()] = v.strip()
+            if fields.get("session_id") == sid:
+                return fields.get("role")
+    except Exception:
+        return None
+    return None
+
+
 def main():
     try:
         sys.stdin.read()
@@ -80,10 +130,17 @@ def main():
     root = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
     branch = current_branch(root)
     HANDOFF = CMD = TITLE = None
-    for _b, _h, _c, _t in ROLES:
-        if branch == _b:
-            HANDOFF, CMD, TITLE = _h, _c, _t
-            break
+    # ВИЗИТКА СТАРШЕ ВЕТКИ, и только в эту сторону: она называет роль прямо,
+    # тогда как ветка её лишь угадывает по дереву. Обратный порядок вернул бы
+    # контролёру записку интегратора — ровно ту ошибку, ради которой правка.
+    card = role_from_card(root)
+    if card in CARD_ROLES:
+        HANDOFF, CMD, TITLE = CARD_ROLES[card]
+    else:
+        for _b, _h, _c, _t in ROLES:
+            if branch == _b:
+                HANDOFF, CMD, TITLE = _h, _c, _t
+                break
     if HANDOFF is None:
         return 0          # роль незнакома — молчим, см. ROLES
     path = os.path.join(root, HANDOFF)
