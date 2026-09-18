@@ -1,0 +1,28 @@
+module display_synth.neg_1
+
+// THE GATE MUST KEEP GATING: the fields are exactly the ones `pos_1` prints
+// perfectly well, and the ONLY difference is the missing `#impl(Display)`. The
+// slot is refused all the same.
+//
+// This is the cell that stops the synthesis from being an improvement that
+// quietly repeals a rule. D186's gate semantics make bare interpolation require
+// the TYPE AUTHOR's opt-in; a synthesis that fired without the gate would print
+// something reasonable, pass every byte comparison against nothing, and leave
+// the opt-in meaning nothing at all. A gate that stopped gating would make the
+// whole acceptance false while every green tick stayed green.
+//
+// BOTH SIDES REFUSE THIS, measured 2026-09-18, which is why it is a `neg_` and
+// not a subset lag: the oracle answers `E_INTERP_NO_DISPLAY` -- the diagnostic
+// D186 names for exactly this -- and novac answers with its own subset refusal
+// at the slot. The differential judges `pos_*` files only, so this file asserts
+// novac's refusal rather than an agreement between the two.
+
+type Bare {
+    x int
+    y int
+}
+
+fn main() {
+    ro b = Bare{ x: 1, y: 2 }
+    println("${b}")
+}

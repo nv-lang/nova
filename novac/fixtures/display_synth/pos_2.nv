@@ -1,0 +1,31 @@
+module display_synth.pos_2
+
+// EXPLICIT BEATS AUTO-DERIVE ("Explicit > auto-derive", `08-runtime.md`): the
+// type carries the gate AND writes its own `@display`, and the written method
+// is the one that runs.
+//
+// THE NUMBER 777 IS THE WHOLE POINT, and it is chosen so the fixture cannot
+// pass for the wrong reason. It appears in NO field, so the memberwise
+// synthesis could not produce it under any separator, any field order, any
+// spacing: if the synthesis had hijacked a type that wrote its own method, the
+// output would read `Point(1, 2)` and differ here in every byte.
+//
+// Without this cell the acceptance would have been satisfiable by a compiler
+// that always synthesizes and never looks for a written method -- and it would
+// still have matched the oracle on `pos_1`. A cell that only the CORRECT
+// implementation can pass is what separates an acceptance from a coincidence.
+
+#impl(Display)
+type Point {
+    x int
+    y int
+}
+
+fn Point @display(mut f Fmt) -> () {
+    f.write("777".bytes())
+}
+
+fn main() {
+    ro p = Point{ x: 1, y: 2 }
+    println("${p}")
+}
