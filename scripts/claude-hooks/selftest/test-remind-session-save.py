@@ -207,6 +207,51 @@ try:
         bad(u"окну Карины названа не та записка: %r" % (wctx or wout)[:140])
     shutil.rmtree(wroot, ignore_errors=True)
 
+    # (9) ЧУЖОЕ ОКНО В ВЕТКЕ РОЛИ. Находка окна nova-1a 2026-09-18: разовое окно,
+    #     работавшее в ГЛАВНОМ дереве по просьбе владельца, получило напоминание
+    #     про записку ИНТЕГРАТОРА. Ветка `main` роль называет верно, но окно не
+    #     её ведёт, и исполнить указание может только испортив чужой файл.
+    #     Зеркало клетки (8): там роль не совпадала с веткой, здесь окно без роли
+    #     сидит в ветке роли.
+    froot = make_tree('main')
+    fint = os.path.join(froot, HANDOFF_REL)
+    os.makedirs(os.path.dirname(fint))
+    io.open(fint, 'w', encoding='utf-8').write(u'# записка интегратора\n')
+    st = os.stat(fint)
+    os.utime(fint, (st.st_atime, time.time() - 7200))
+    fgit = subprocess.run(['git', '-C', froot, 'rev-parse', '--git-common-dir'],
+                          capture_output=True, text=True).stdout.strip()
+    if not os.path.isabs(fgit):
+        fgit = os.path.join(froot, fgit)
+    # Визитка роли есть, и она НЕ моя.
+    io.open(os.path.join(fgit, 'nova-session-integrator.card'), 'w',
+            encoding='utf-8').write(
+        u'role=integrator\nname=nova-other\nsession_id=SID-OWNER\n')
+    fenv = dict(os.environ)
+    fenv['CLAUDE_PROJECT_DIR'] = froot
+    fenv['CLAUDE_CODE_SESSION_ID'] = 'SID-GUEST'
+    fp = subprocess.run([sys.executable, HOOK], input=b'{}',
+                        capture_output=True, env=fenv)
+    fout = fp.stdout.decode('utf-8', 'replace').strip()
+    if fout == '':
+        ok(u'чужое окно в ветке роли — хук МОЛЧИТ')
+    else:
+        bad(u'чужому окну адресовали записку роли: %r' % fout[:140])
+
+    # (10) ТА ЖЕ ОБСТАНОВКА, НО ВИЗИТКИ НЕТ — хук ГОВОРИТ. Без этой клетки
+    #      предыдущая доказывала бы лишь умение молчать: окно роли могло не
+    #      успеть написать визитку, и тогда молчание хуже ложного адреса —
+    #      записка перестала бы напоминать о себе совсем.
+    os.remove(os.path.join(fgit, 'nova-session-integrator.card'))
+    fp2 = subprocess.run([sys.executable, HOOK], input=b'{}',
+                         capture_output=True, env=fenv)
+    fout2 = fp2.stdout.decode('utf-8', 'replace').strip()
+    if fout2 and u'integrator-handoff' in fout2:
+        ok(u'визитки роли нет — прежнее поведение, хук напоминает')
+    else:
+        bad(u'без визитки хук замолчал: %r' % fout2[:140])
+    shutil.rmtree(froot, ignore_errors=True)
+
     # (5) НЕЗНАКОМАЯ РОЛЬ — молчание, и это решение, а не дыра: у пакетных окон
     #     своя передача (/stop), выдумывать им адресата хук не вправе.
     oroot = make_tree("p999-other")

@@ -136,6 +136,51 @@ def role_from_card(root):
     return None
 
 
+def _branch_role_belongs_to_me(root):
+    """Ветка называет РОЛЬ, но не говорит, ЧЬЁ это окно.
+
+    Находка окна nova-1a 2026-09-18: разовое окно, работавшее в ГЛАВНОМ дереве по
+    просьбе владельца, получило напоминание «записка ИНТЕГРАТОРА не обновлялась».
+    Хук посчитал верно — ветка `main` действительно принадлежит интегратору, — и
+    всё равно адресовал не тому: у окна нет этой роли, и исполнить указание оно
+    может только испортив чужой файл.
+
+    Это ЗЕРКАЛО случая окна Карины (там роль не совпадала с веткой, здесь окно без
+    роли сидит в ветке роли), и лечится тем же: ВИЗИТКА знает `session_id` того,
+    кто роль ведёт. Если визитка роли существует и её id НЕ совпадает с моим —
+    напоминание адресовано не мне, и хук молчит.
+
+    ЕСЛИ ВИЗИТКИ НЕТ ВОВСЕ — прежнее поведение (адресация по ветке). Окно роли
+    могло не успеть её написать, и молчание тогда хуже ложного адреса: записка
+    перестала бы напоминать о себе совсем.
+    """
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "").strip()
+    if not sid:
+        return True          # id неизвестен — судить не по чему, ведём как раньше
+    try:
+        import subprocess
+        out = subprocess.run(["git", "-C", root, "rev-parse", "--git-common-dir"],
+                             capture_output=True, text=True, timeout=10)
+        gitdir = (out.stdout or "").strip()
+        if not gitdir:
+            return True
+        if not os.path.isabs(gitdir):
+            gitdir = os.path.join(root, gitdir)
+        card = os.path.join(gitdir, "nova-session-integrator.card")
+        if not os.path.isfile(card):
+            return True      # визитки роли нет — прежнее поведение
+        owner = ""
+        for line in io.open(card, encoding="utf-8", errors="replace"):
+            if line.startswith("session_id="):
+                owner = line.split("=", 1)[1].strip()
+                break
+        if not owner:
+            return True
+        return owner == sid
+    except Exception:
+        return True
+
+
 def main():
     try:
         sys.stdin.read()
@@ -150,7 +195,7 @@ def main():
     card = role_from_card(root)
     if card in CARD_ROLES:
         HANDOFF, CMD, TITLE = CARD_ROLES[card]
-    else:
+    elif _branch_role_belongs_to_me(root):
         for _b, _h, _c, _t in ROLES:
             if branch == _b:
                 HANDOFF, CMD, TITLE = _h, _c, _t
