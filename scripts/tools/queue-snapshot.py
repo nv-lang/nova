@@ -141,6 +141,57 @@ def current_branch(tree):
         return u""
 
 
+def common_git_dir(tree):
+    u"""Общий `.git` чтением: каталог в главном дереве, `gitdir:` двумя уровнями
+    выше в worktree."""
+    g = os.path.join(tree, u".git")
+    try:
+        if os.path.isdir(g):
+            return g
+        if os.path.isfile(g):
+            with io.open(g, encoding="utf-8", errors="replace") as fh:
+                line = fh.read().strip()
+            if line.startswith(u"gitdir:"):
+                p = line.split(u":", 1)[1].strip()
+                return os.path.dirname(os.path.dirname(p))
+    except Exception:
+        pass
+    return u""
+
+
+def role_belongs_to_me(tree, role):
+    u"""Ветка УГАДЫВАЕТ роль, визитка РЕШАЕТ, чья она.
+
+    Дом правила — `scripts/claude-hooks/guard-stop-v2.py` (`role_belongs_to_me`),
+    туда же оно пришло из `remind-session-save.py`. Здесь копия, и она обязана
+    остаться согласной: снимок и хук отвечают на ОДИН вопрос «чьё это окно», и
+    разойдясь, дадут окну снимок чужой очереди при молчащем страже. Клетка
+    самотеста сверяет оба ответа.
+
+    Замерено 2026-09-19 02:06, на себе: хук уже получил визитную проверку и
+    отвечал `none`, а снимок в том же дереве отвечал `integrator` — то есть
+    печатал окну чужую очередь из 12 пунктов.
+    """
+    sid = (os.environ.get("CLAUDE_CODE_SESSION_ID") or u"").strip()
+    if not sid:
+        return True
+    g = common_git_dir(tree)
+    if not g:
+        return True
+    card = os.path.join(g, u"nova-session-%s.card" % role)
+    if not os.path.isfile(card):
+        return True
+    try:
+        with io.open(card, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if line.startswith(u"session_id="):
+                    owner = line.split(u"=", 1)[1].strip()
+                    return (not owner) or owner == sid
+    except Exception:
+        return True
+    return True
+
+
 def detect_role(tree):
     env = (os.environ.get("NOVA_WINDOW_ROLE") or u"").strip().lower()
     if env:
@@ -150,7 +201,7 @@ def detect_role(tree):
         return u"none"
     for needle, role in ROLE_BY_BRANCH:
         if needle in br:
-            return role
+            return role if role_belongs_to_me(tree, role) else u"none"
     return u"none"
 
 

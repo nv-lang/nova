@@ -311,6 +311,77 @@ else:
 for _t in (main_tree, my_tree):
     shutil.rmtree(_t, ignore_errors=True)
 
+
+# ---------------------------------------------------------------- побеги Ш.5
+# Клетки ПАРАМИ: напоминание, которое кричит всегда, бесполезно ровно так же,
+# как молчащее. Пара ловит и то, и другое.
+print(u"-- побеги Stop-стража (план 292 Ш.5) --")
+
+esc_tree = make_tree("main")
+os.makedirs(os.path.join(esc_tree, "docs", "dev", "prompts"), exist_ok=True)
+io.open(os.path.join(esc_tree, HANDOFF_REL), "w", encoding="utf-8").write(u"# note\n")
+# Инструмент чтения лога обязан быть НА МЕСТЕ: хук зовёт его, а не разбирает сам.
+os.makedirs(os.path.join(esc_tree, "scripts", "tools"), exist_ok=True)
+shutil.copy(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..",
+                         "tools", "stop-escapes.py"),
+            os.path.join(esc_tree, "scripts", "tools", "stop-escapes.py"))
+
+
+def _write_escape(root, when_offset=-600):
+    d = os.path.join(root, "target", ".stop-guard")
+    os.makedirs(d, exist_ok=True)
+    io.open(os.path.join(d, "escapes.log"), "w", encoding="utf-8").write(
+        time.strftime("%Y-%m-%d %H:%M", time.localtime(time.time() + when_offset))
+        + u" Snimok ocheredi NEPOLEN (ok=false): zerkalo nosuchremote\n")
+
+
+def _clear_stamps(root):
+    for name in (".session-save-reminder", ".stop-escapes-reminder"):
+        f = os.path.join(root, "target", name)
+        if os.path.isfile(f):
+            os.remove(f)
+
+
+# (1) записка СВЕЖАЯ, побег есть -> хук всё равно говорит о побеге
+_write_escape(esc_tree)
+_clear_stamps(esc_tree)
+os.utime(os.path.join(esc_tree, HANDOFF_REL), None)
+out, _rc = run(esc_tree)
+if u"nosuchremote" in out:
+    ok(u"свежая записка, но побег виден — Ш.5 работает не только при протухшей")
+else:
+    bad(u"побег не показан при свежей записке: %s" % (out[:140] or u"(пусто)"))
+
+# (2) обратная сторона: побегов НЕТ -> при свежей записке хук молчит совсем
+import shutil as _sh
+_sh.rmtree(os.path.join(esc_tree, "target", ".stop-guard"), ignore_errors=True)
+_clear_stamps(esc_tree)
+out, _rc = run(esc_tree)
+if out.strip() == u"":
+    ok(u"побегов нет и записка свежа — молчит (шума не добавили)")
+else:
+    bad(u"шумит без причины: %s" % out[:140])
+
+# (3) отметка времени: второй вызов подряд о том же побеге МОЛЧИТ
+_write_escape(esc_tree)
+_clear_stamps(esc_tree)
+run(esc_tree)
+out2, _rc = run(esc_tree)
+if u"nosuchremote" not in out2:
+    ok(u"повтор в течение часа молчит — цена под контролем")
+else:
+    bad(u"повторяет побег на каждом вызове инструмента: %s" % out2[:140])
+
+# (4) обратная сторона отметки: снял отметку — говорит снова
+_clear_stamps(esc_tree)
+out3, _rc = run(esc_tree)
+if u"nosuchremote" in out3:
+    ok(u"после снятия отметки побег снова виден")
+else:
+    bad(u"замолчал навсегда: %s" % (out3[:140] or u"(пусто)"))
+
+_sh.rmtree(esc_tree, ignore_errors=True)
+
 print(u"селфтест remind-session-save: %d/%d ok" % (cases - fails, cases)
       if fails == 0 else u"селфтест remind-session-save: ЕСТЬ ПРОВАЛЫ (%d)" % fails)
 sys.exit(1 if fails else 0)

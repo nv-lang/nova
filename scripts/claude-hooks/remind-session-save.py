@@ -23,6 +23,7 @@
 import io
 import json
 import os
+import subprocess
 import sys
 import time
 
@@ -208,6 +209,55 @@ def _branch_role_belongs_to_me(root):
         return True
 
 
+ESCAPES_COOLDOWN_SEC = 3600   # раз в час — «почасовое напоминание» плана 292 Ш.5
+
+
+def emit_context(text):
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "additionalContext": text,
+        }
+    }, ensure_ascii=False))
+
+
+def escapes_note(root):
+    u"""Строка о побегах Stop-стража — или пусто (план 292 Ш.5).
+
+    Разбор лога НЕ повторяется здесь: он живёт в `scripts/tools/stop-escapes.py`,
+    и вторая копия разошлась бы с первой на первой же правке формата строки.
+    Хук зовёт тот же дом чтения, что и `/status`.
+
+    Цена под контролем: печать не чаще раза в час, и ДО запуска процесса
+    проверяется отметка времени — иначе `PostToolUse` платил бы за python на
+    каждом вызове инструмента.
+
+    Своя поломка молчит НАМЕРЕННО и только здесь: это напоминание, а не судья;
+    сломавшись, оно не имеет права мешать работе окна. Про молчание отказа у
+    СУДЕЙ действует обратное правило — см. `guard-stop-v2.py`.
+    """
+    try:
+        stamp = os.path.join(root, "target", ".stop-escapes-reminder")
+        if os.path.isfile(stamp) and time.time() - os.path.getmtime(stamp) < ESCAPES_COOLDOWN_SEC:
+            return u""
+        tool = os.path.join(root, "scripts", "tools", "stop-escapes.py")
+        if not os.path.isfile(tool):
+            return u""
+        r = subprocess.run([sys.executable, tool, root, "--quiet"],
+                           capture_output=True, timeout=20)
+        text = r.stdout.decode("utf-8", "replace").strip()
+        if not text:
+            return u""
+        os.makedirs(os.path.dirname(stamp), exist_ok=True)
+        io.open(stamp, "w", encoding="utf-8").write(str(time.time()))
+        return (u"%s\n  Побег — это случай, когда страж остановки НЕ СМОГ судить и "
+                u"отпустил окно.\n  Смотреть: `python scripts/tools/stop-escapes.py .`; "
+                u"если страж не прав — сказать интегратору\n  с цитатой отказа, а не "
+                u"обходить его молча." % text)
+    except Exception:
+        return u""
+
+
 def main():
     try:
         sys.stdin.read()
@@ -236,8 +286,15 @@ def main():
     if not os.path.isfile(path):
         return 0
 
+    escapes = escapes_note(root)
+
     age = time.time() - os.path.getmtime(path)
     if age < MAX_AGE_SEC:
+        # Записка свежа — но побеги Stop-стража от её свежести не зависят и
+        # обязаны быть видны (план 292 Ш.5): лог, которого никто не читает,
+        # равен отсутствию лога.
+        if escapes:
+            emit_context(escapes)
         return 0
 
     stamp = os.path.join(root, "target", ".session-save-reminder")
@@ -263,12 +320,9 @@ def main():
     except OSError:
         pass
 
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "PostToolUse",
-            "additionalContext": msg,
-        }
-    }, ensure_ascii=False))
+    # Побеги приписываются к тому же сообщению, а не шлются вторым: два
+    # напоминания подряд читаются как шум, и первым перестают читать оба.
+    emit_context(msg + (u"\n\n" + escapes if escapes else u""))
     return 0
 
 
