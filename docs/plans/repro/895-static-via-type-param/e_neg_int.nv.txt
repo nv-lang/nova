@@ -1,0 +1,14 @@
+// Негативная клетка, требуемая приёмкой строки №895: тот же вызов при
+// `I = int`, у которого реализации протокола НЕТ. Отказ обязан приходить от
+// ЧЕКЕРА (bound не удовлетворён), а не сборкой C.
+module e_neg_int
+
+type Ordinal protocol {
+    @ordinal() -> int
+    .from_ordinal(i int) -> Self
+}
+fn mk[I Ordinal](n int) -> I => I.from_ordinal(n)
+fn main() Io -> () {
+    ro r = mk[int](41)
+    println(r.ordinal() + 1)
+}
