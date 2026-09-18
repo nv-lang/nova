@@ -69,7 +69,13 @@ def branch_facts(b):
     rc_anc, _ = git(u"merge-base", u"--is-ancestor", b, u"main")
     _, cnt = git(u"rev-list", u"--count", u"main..%s" % b)
     _, cnt_nm = git(u"rev-list", u"--count", u"--no-merges", u"main..%s" % b)
-    _, stat = git(u"diff", u"--stat", u"main...%s" % b)
+    # [3DOT-OK: карта спрашивает «что в ветке СВОЕГО», и на это отвечает именно
+    #  три точки — сравнение с ТОЧКОЙ РАСХОЖДЕНИЯ, а не с вершиной `main`.
+    #  Страж требует пометки не зря: при НЕСКОЛЬКИХ базах слияния git берёт
+    #  произвольную и говорит об этом строкой, которую никто не читает, — и давно
+    #  влитый код выглядит отсутствующим (реестр №629). Здесь форма выбрана
+    #  осознанно, и пометка стоит, чтобы следующий читатель это знал.]
+    _, stat = git(u"diff", u"--stat", u"main...%s" % b)  # [3DOT-OK: форма выбрана осознанно, см. комментарий выше]
     _, when = git(u"log", u"-1", u"--format=%ad", u"--date=short", b)
     return {
         u"merged": rc_anc == 0,
@@ -92,12 +98,17 @@ def dirt(path):
 
 _, local_main = git(u"rev-parse", u"--short", u"main")
 _, origin_main = git(u"rev-parse", u"--short", u"origin/main")
-_, lr = git(u"rev-list", u"--left-right", u"--count", u"origin/main...main")
+_, lr = git(u"rev-list", u"--left-right", u"--count", u"origin/main...main")  # [3DOT-OK: форма выбрана осознанно, см. комментарий выше]
 
 out(u"# Карта веток и деревьев")
 out()
+# [3DOT-OK: `rev-list --left-right --count A...B` — ШТАТНАЯ форма вопроса
+#  «насколько разошлись две ветки», и три точки здесь значат не то, что в
+#  `diff`: это симметрическая разность, а не «изменения от общего предка».
+#  Двусмысленности базы тут нет по построению, но пометка стоит, потому что
+#  страж читает ТЕКСТ, а не смысл, и следующий читатель тоже.]
 out(u"ТОЧКА ОТСЧЁТА: локальный `main` = %s; `origin/main` = %s; "
-    u"`git rev-list --left-right --count origin/main...main` = %s (позади / впереди)."
+    u"`git rev-list --left-right --count origin/main...main` = %s (позади / впереди)."  # [3DOT-OK: форма выбрана осознанно, см. комментарий выше]
     % (local_main, origin_main, lr.replace(u"\t", u" / ")))
 out()
 
@@ -107,7 +118,7 @@ wt_by_branch = dict((w[u"branch"], w[u"path"]) for w in worktrees())
 
 out(u"## Несли́тые ветки — `git branch --no-merged main` (%d)" % len(names))
 out()
-out(u"| ветка | влита (merge-base) | сверх main: всего / без слияний | diff --stat main...ветка | дерево | последний коммит |")
+out(u"| ветка | влита (merge-base) | сверх main: всего / без слияний | diff --stat main...ветка | дерево | последний коммит |")  # [3DOT-OK: форма выбрана осознанно, см. комментарий выше]
 out(u"|---|---|---|---|---|---|")
 alive = dead = 0
 for b in names:
@@ -133,7 +144,11 @@ cand, held, junk = [], [], []
 for w in items:
     b = w[u"branch"]
     tracked, untracked = dirt(w[u"path"])
-    short = w[u"path"].replace(u"D:/Sources/nv-lang/", u"")
+    # КОРЕНЬ ВЫВОДИТСЯ, А НЕ ПИШЕТСЯ (страж №698): написанный путь к машине
+    # читается следующим как норма и уезжает в чужие копии. Родитель главного
+    # дерева — то же правило, по которому его выбирает страж размещения.
+    parent = os.path.dirname(os.path.abspath(root)).replace(os.sep, u"/") + u"/"
+    short = w[u"path"].replace(parent, u"")
     if b == u"(detached)":
         out(u"| `%s` | (открепл.) | — | — | %d | %d | — |" % (short, len(tracked), len(untracked)))
         continue
