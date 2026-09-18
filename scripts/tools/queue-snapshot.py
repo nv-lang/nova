@@ -57,9 +57,7 @@ import time
 
 SOURCE_TIMEOUT_SEC = 15
 MIRRORS_DEFAULT = (u"origin", u"gitverse", u"sourcecraft")
-REGISTRY_REL = u"docs/plans/221.1-bug-sweep.md"
 SCAN_REL_DEFAULT = u"scripts/guards/registry-routes-scan.py"
-TITLE_MAX = 70
 
 # Ветка -> роль. Дом соответствия — `/save`; здесь копия ТОЛЬКО потому, что она
 # обязана совпасть с `detect_role` хука `guard-stop-v2.py`: снимок и хук должны
@@ -284,36 +282,6 @@ def source_blockers(tree, state):
     return {u"value": value, u"cmd": cmd, u"numbers": nums}
 
 
-def registry_titles(tree, numbers, state):
-    u"""Начало заголовка строки реестра для каждого номера. Реестр 4,9 МБ —
-    читается ОДНИМ проходом, а не грепом на номер."""
-    if not numbers:
-        return {}
-    path = os.path.join(tree, REGISTRY_REL.replace(u"/", os.sep))
-    want = set(numbers)
-    got = {}
-    try:
-        with io.open(path, encoding="utf-8", errors="replace") as fh:
-            for line in fh:
-                if not line.startswith(u"|"):
-                    continue
-                cells = line.split(u"|")
-                if len(cells) < 4:
-                    continue
-                key = cells[1].strip()
-                if not key.isdigit() or int(key) not in want:
-                    continue
-                n = int(key)
-                if n in got:
-                    continue
-                title = re.sub(u"\\*\\*|`", u"", cells[3]).strip()
-                got[n] = title[:TITLE_MAX].rstrip() + (u"…" if len(title) > TITLE_MAX else u"")
-    except Exception as e:
-        state.fail(u"failed", u"заголовки строк реестра", REGISTRY_REL,
-                   u"%s: %s" % (type(e).__name__, e))
-    return got
-
-
 # --------------------------------------------------------------------------
 # сборка
 # --------------------------------------------------------------------------
@@ -331,18 +299,30 @@ class State(object):
             self.failed.append(u"%s: %s — `%s` — %s" % (kind, name, cmd, why))
 
 
-def build_open(sources, titles):
+# Источники, из которых собирается `open`. `blockers` СЮДА НЕ ВХОДИТ — см.
+# build_open.
+QUEUE_SOURCES = (u"mirrors_behind", u"unmerged_branches")
+
+
+def build_open(sources):
     u"""`open` СОБИРАЕТСЯ из источников, руками не пишется. Правило вывода —
-    план 292 Ш.2; менять его здесь значит менять договор, а не код."""
+    план 292 Ш.2; менять его здесь значит менять договор, а не код.
+
+    `blockers` В ОЧЕРЕДЬ НЕ ИДЁТ (вердикт интегратора 2026-09-18, сверено по
+    плану 274 обеими цитатами). Поле `БЛОКИРУЕТ ТЕГ` осталось от мёртвого
+    события — тега ОРАКУЛА, которого не будет; владелец снял предмет
+    2026-09-15, а смысл поля «перечитывается как „блокирует релиз Карины“ при
+    работе со строкой, а не сплошной заменой» (274). Как ХРАПОВИК счёт законен
+    и остаётся в `sources` со своей командой; как ОЧЕРЕДЬ он лжив: «73 открытых
+    пункта» прочтётся как работа, которой нет. Разница между храповиком и
+    очередью — ровно та, ради которой писан весь этот снимок.
+    """
     items = []
     mir = sources.get(u"mirrors_behind") or {}
     if mir.get(u"behind"):
         items.append(u"запушить на зеркала: %s" % u", ".join(mir[u"behind"]))
     for br in (sources.get(u"unmerged_branches") or {}).get(u"branches") or []:
         items.append(u"слить ветку %s" % br)
-    for n in (sources.get(u"blockers") or {}).get(u"numbers") or []:
-        t = titles.get(n)
-        items.append(u"№%d — %s" % (n, t if t else u"(заголовок строки не найден)"))
     return items
 
 
@@ -416,13 +396,15 @@ def snapshot(tree, produced_by):
     for t in threads:
         t.join(SOURCE_TIMEOUT_SEC + 5)
 
-    titles = registry_titles(tree, (sources.get(u"blockers") or {}).get(u"numbers") or [], state)
-    items = build_open(sources, titles)
+    items = build_open(sources)
 
     ok = not state.failed
     # Пустой `open` при непустых источниках — ДЕФЕКТ СКРИПТА, а не пустая
     # очередь. Это тот самый случай, ради которого написано И.3.
-    nonzero = [k for k, v in sources.items() if (v or {}).get(u"value")]
+    # Считаются ТОЛЬКО очередные источники: `blockers` в `open` не идёт по
+    # построению, и учитывать его здесь значило бы объявлять дефектом верную
+    # работу — снимок падал бы в `ok: false` ровно потому, что храповик не ноль.
+    nonzero = [k for k in QUEUE_SOURCES if (sources.get(k) or {}).get(u"value")]
     if ok and nonzero and not items:
         ok = False
         state.failed.append(
