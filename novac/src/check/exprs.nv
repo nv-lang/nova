@@ -151,6 +151,14 @@ fn Checker @instance_display_ok(t TyId, row FnRow) -> bool {
     // only question left is the one that was always the real one -- does the
     // SHELL carry this symbol. Keeping the kind check would refuse forms that
     // work, which is the mirror of accepting forms that do not.
+    //
+    // AND THE ORDER MAKES A WRONG SPELLING SAFE, which is worth naming because
+    // it was not designed for and is easy to lose. The symbol novac BUILDS is
+    // checked against the surface the shell ACTUALLY carries, so a spelling
+    // that is wrong for some family answers "not present" and the slot is
+    // refused BY NAME -- it cannot emit a call to a symbol nobody defines. The
+    // spellings are read off the shell (record and sum both), but the families
+    // not yet measured degrade to a refusal instead of to a broken program.
     @ctx.interop.has(c_method_symbol(@ctx, t, DISPLAY_METHOD))
 }
 
