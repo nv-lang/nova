@@ -736,8 +736,8 @@ escape'ом:**
 
 ```nova
 ro a = 'x'
-ro nl = '\n'          // перевод строки — ТОЛЬКО так
-ro bs = '\\'          // обратный слэш
+ro nl = '\n'          // a newline -- only this way
+ro bs = '\\'
 ro emoji = '\u{1F600}'
 ```
 
@@ -794,9 +794,9 @@ export type Hash protocol {
 `export` просто снимается — приватный `ro NAME = …` законен и обычен:
 
 ```nova
-export ro Cfg.DEFAULT Cfg = build()   // ✓ экспортируемая форма — квалифицированная
-ro cache_root str = compute_root()    // ✓ приватная форма — голое имя
-export ro cache_root str = compute_root()   // ✗ E_EXPORT_RO_UNQUALIFIED
+export ro Cfg.DEFAULT Cfg = build()   // ok -- exported form is qualified
+ro cache_root str = compute_root()    // ok -- private form, bare name
+export ro cache_root str = compute_root()   // error: E_EXPORT_RO_UNQUALIFIED
 ```
 
 **Поля record:** без `priv` поля `export`-типа публичны по умолчанию

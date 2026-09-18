@@ -691,6 +691,7 @@ M-random-u64-path-return-ice
 M-ratelimit-buckets-unsynchronized-race
 M-raw-ptr-local-index-codegen
 M-rawmem-typed-copy-wrappers
+M-rawmem-typed-vs-bytes-naming-swap
 M-reachability-codegen-dce
 M-record-elem-vec-bare-ctor-miscompile
 M-redundant-param-ro-diagnostic

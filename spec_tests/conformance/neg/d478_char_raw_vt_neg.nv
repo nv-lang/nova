@@ -4,6 +4,9 @@
 // диагностика обязана предложить общую форму `'\u{...}'`, а не выдумать
 // несуществующий `'\v'`. Без этой клетки подсказка, верная для табуляции,
 // молча осталась бы неверной для всех остальных управляющих.
+// GUARD-ALLOW-CONTROL-CHARS: 0x0B here is the SUBJECT of the test, not a
+// typo -- a fixture for E_CHAR_RAW_CONTROL has to carry the raw byte, or it
+// checks something other than what it claims (D478 section 3).
 module neg.d478_char_raw_vt_neg
 fn main() -> () {
     // nova:expect E_CHAR_RAW_CONTROL -- байт 0x0B; escape'а `\v` в языке нет, канон — `'\u{000B}'`
