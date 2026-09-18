@@ -18387,6 +18387,32 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Emit into user_type_fwd_decls (spliced before value-record defs
                 // and tuple typedefs) so that value-record fields of newtype can
                 // reference this typedef without forward-declaration issues.
+                // Реестр 221.1 №1155 (2026-09-18): КОРТЕЖ ПОД NEWTYPE НАДО
+                // ФОРВАРДИТЬ ЗДЕСЬ ЖЕ. Комментарий выше объясняет, почему алиас
+                // живёт в РАННЕМ блоке: поля value-записей должны на него
+                // ссылаться. Но когда внутренний тип — АНОНИМНЫЙ КОРТЕЖ
+                // (`type Pair (int, int)`), его структура объявляется в ПОЗДНЕМ
+                // блоке (`__VALUE_RECORD_DEFS__`), и алиас ссылается на то,
+                // чего ещё нет: `unknown type name '_NovaTuple_2_8_nova_int_...'`.
+                //
+                // ДВА ТРЕБОВАНИЯ ПРОТИВОРЕЧИЛИ ДРУГ ДРУГУ при одном размещении:
+                // «алиас раньше value-записей» и «структура кортежа раньше
+                // алиаса». Разрешается не переносом (перенос сломал бы первое),
+                // а forward-объявлением структуры рядом с алиасом: полное
+                // определение придёт позже в своём блоке, а C-стандарт это
+                // допускает — тот же приём уже применён к указательным полям
+                // кортежей внутри `render_unified_value_types`.
+                //
+                // ОСЬ, КОТОРУЮ ФИКСТУРА ОБЯЗАНА НАЗВАТЬ: дефект виден, только
+                // когда объявление и потребитель в РАЗНЫХ файлах модуля (пиры
+                // сортируются, и порядок решает); в одном файле порядок
+                // эмиссии случайно оказывался верным.
+                if inner_c.starts_with("_NovaTuple_") {
+                    let fwd = format!("typedef struct {0} {0};\n", inner_c);
+                    if !self.user_type_fwd_decls.contains(&fwd) {
+                        self.user_type_fwd_decls.push_str(&fwd);
+                    }
+                }
                 self.user_type_fwd_decls.push_str(&format!(
                     "typedef {} Nova_{};\n", inner_c, def_base));
                 // Newtypes are typedef'd scalars — use inner type directly (no pointer indirection)
