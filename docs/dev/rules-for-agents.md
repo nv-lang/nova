@@ -293,6 +293,10 @@
   читается как «все приняли»; `check-novac-build-clean.sh` — предупреждение
   сборки novac; `check-novac-cli-surface.sh` — команда или флаг novac мимо
   поверхности `nova-cli` без НАЗВАННОГО расхождения;
+  `check-novac-grammar-kinds.py` — правила `spec/nova.ungrammar` и варианты
+  `NodeKind` разошлись: вид без формы обещает узел, которого нет, а
+  правило без вида описывает несуществующее; судит В ОБЕ СТОРОНЫ и
+  печатает исключения ПОИМёННО (сейчас одно — `LeafNode`, вид листа);
   `check-novac-commit-donor.sh` — коммит novac без строки `Donor:` (и оракул
   донором быть не может, П25); `check-novac-commit-forms.sh` — коммит,
   трогающий ПАРСЕР novac (`novac/src/parse/*.nv`), без строки `Forms:`,

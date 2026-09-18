@@ -447,6 +447,7 @@ step "novac-conventions (П13..П27: доки, имена, реестры, дв�
 par_reset
 par_add "$ROOT/scripts/guards/check-novac-type-field-docs.py" "тип/поле/функция novac без документации (П13)"
 par_add "$ROOT/scripts/guards/check-novac-doc-language.py" "русский текст в .nv novac (П13)"
+par_add "$ROOT/scripts/guards/check-novac-grammar-kinds.py" "правила грамматики и виды узлов разошлись (274.13 Ш.2)"
 par_add "$ROOT/scripts/guards/check-novac-no-name-hardcode.py" "имя языка/std строкой вне builtins (П5)"
 par_add "$ROOT/scripts/guards/check-novac-no-prelude-shadow.py" "novac объявил имя, которое экспортирует прелюдия"
 par_add "$ROOT/scripts/guards/check-novac-ctx-tables.py" "таблица строк в Ctx без строки плана §10.3б (П17)"
