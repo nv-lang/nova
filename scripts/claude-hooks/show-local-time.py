@@ -52,7 +52,17 @@ def main():
         sys.stdin.read()
     except Exception:
         pass
-    root = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    # ОТМЕТКА ОСТУДЫ — В ДЕРЕВЕ СВОЕЙ СЕССИИ (реестр 221.1 №1156, второй
+    # носитель класса). `CLAUDE_PROJECT_DIR` один на все окна, а окна работают
+    # в разных worktree — значит отметку одного окна читало бы другое, и время
+    # не подавалось бы тому, кому оно нужно. Остуда личная по смыслу, поэтому
+    # и место у неё личное.
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from hook_tree import session_root
+        root = session_root()
+    except Exception:
+        root = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
 
     p = stamp_path(root)
     now = time.time()

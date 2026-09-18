@@ -34,10 +34,12 @@ def bad(msg):
 
 
 def run(root):
+    # cwd = derevo ETOY sessii: otmetka ostudy lichnaya, i hook beret koren
+    # ottuda (No1156). Bez cwd kletka merila by otmetku REPOZITORIYA.
     env = dict(os.environ)
     env["CLAUDE_PROJECT_DIR"] = root
     p = subprocess.run([sys.executable, HOOK], input=b"{}",
-                       capture_output=True, env=env)
+                       capture_output=True, env=env, cwd=root)
     return p.stdout.decode("utf-8", "replace").strip()
 
 
@@ -94,6 +96,34 @@ try:
 finally:
     import shutil
     shutil.rmtree(root, ignore_errors=True)
+
+# --- ДВА ДЕРЕВА: отметка остуды ЛИЧНАЯ (реестр 221.1 №1156) -----------------
+#
+# Остуда молчит ровно там, где время уже подавали. Если отметка общая на все
+# окна, то одно окно глушит часы другому — и увидеть это можно только клеткой
+# с ДВУМЯ настоящими деревьями: пока `CLAUDE_PROJECT_DIR` и рабочий каталог
+# совпадают, подмена корня ничего не меняет и клетка зелена при любом коде.
+import subprocess as _sp
+_main = tempfile.mkdtemp(prefix="nova-time-main-")
+_mine = tempfile.mkdtemp(prefix="nova-time-mine-")
+_sp.run(["git", "init", "-q", _main], capture_output=True)
+_sp.run(["git", "init", "-q", _mine], capture_output=True)
+try:
+    _env = dict(os.environ)
+    _env["CLAUDE_PROJECT_DIR"] = _main
+    _p = _sp.run([sys.executable, HOOK], input=b"{}",
+                 capture_output=True, env=_env, cwd=_mine)
+    _out = _p.stdout.decode("utf-8", "replace").strip()
+    _stamp_mine = os.path.join(_mine, "target", ".show-local-time")
+    _stamp_main = os.path.join(_main, "target", ".show-local-time")
+    if ctx_of(_out) and os.path.isfile(_stamp_mine) and not os.path.isfile(_stamp_main):
+        ok(u"отметка остуды легла в дерево СЕССИИ, а не в главное")
+    else:
+        bad(u"отметка не там: своя=%s чужая=%s"
+            % (os.path.isfile(_stamp_mine), os.path.isfile(_stamp_main)))
+finally:
+    shutil.rmtree(_main, ignore_errors=True)
+    shutil.rmtree(_mine, ignore_errors=True)
 
 if fails:
     print("селфтест show-local-time: ЕСТЬ ПРОВАЛЫ (%d)" % fails)

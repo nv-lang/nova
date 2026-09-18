@@ -37,11 +37,17 @@ fails = 0
 cases = 0
 
 
-def run(root):
+def run(root, cwd=None, project_dir=None):
+    """`cwd` — дерево, ИЗ КОТОРОГО работает окно; `project_dir` — главное.
+
+    Раньше параметра не было, и оба всегда совпадали: самотест не мог
+    отличить «возраст взят из моего дерева» от «из главного» — то есть не
+    мерил того, что хук на самом деле делает.
+    """
     env = dict(os.environ)
-    env["CLAUDE_PROJECT_DIR"] = root
+    env["CLAUDE_PROJECT_DIR"] = project_dir or root
     p = subprocess.run([sys.executable, HOOK], input=b"{}",
-                       capture_output=True, env=env)
+                       capture_output=True, env=env, cwd=cwd or root)
     return p.stdout.decode("utf-8", "replace").strip(), p.returncode
 
 
@@ -151,7 +157,7 @@ try:
     env_sid["CLAUDE_PROJECT_DIR"] = kroot
     env_sid["CLAUDE_CODE_SESSION_ID"] = "SID-TEST"
     p = subprocess.run([sys.executable, HOOK], input=b"{}",
-                       capture_output=True, env=env_sid)
+                       capture_output=True, env=env_sid, cwd=kroot)
     out = p.stdout.decode("utf-8", "replace").strip()
     ctx = ""
     if out:
@@ -193,7 +199,7 @@ try:
     wenv["CLAUDE_PROJECT_DIR"] = wroot
     wenv["CLAUDE_CODE_SESSION_ID"] = "SID-CARINA"
     wp = subprocess.run([sys.executable, HOOK], input=b"{}",
-                        capture_output=True, env=wenv)
+                        capture_output=True, env=wenv, cwd=wroot)
     wout = wp.stdout.decode("utf-8", "replace").strip()
     wctx = ""
     if wout:
@@ -231,7 +237,7 @@ try:
     fenv['CLAUDE_PROJECT_DIR'] = froot
     fenv['CLAUDE_CODE_SESSION_ID'] = 'SID-GUEST'
     fp = subprocess.run([sys.executable, HOOK], input=b'{}',
-                        capture_output=True, env=fenv)
+                        capture_output=True, env=fenv, cwd=froot)
     fout = fp.stdout.decode('utf-8', 'replace').strip()
     if fout == '':
         ok(u'чужое окно в ветке роли — хук МОЛЧИТ')
@@ -244,7 +250,7 @@ try:
     #      записка перестала бы напоминать о себе совсем.
     os.remove(os.path.join(fgit, 'nova-session-integrator.card'))
     fp2 = subprocess.run([sys.executable, HOOK], input=b'{}',
-                         capture_output=True, env=fenv)
+                         capture_output=True, env=fenv, cwd=froot)
     fout2 = fp2.stdout.decode('utf-8', 'replace').strip()
     if fout2 and u'integrator-handoff' in fout2:
         ok(u'визитки роли нет — прежнее поведение, хук напоминает')
@@ -268,6 +274,42 @@ try:
     shutil.rmtree(oroot, ignore_errors=True)
 finally:
     shutil.rmtree(root, ignore_errors=True)
+
+# --- ДВА ДЕРЕВА: возраст обязан браться из дерева СЕССИИ (дефект №TBD) ------
+#
+# Обе клетки нужны вместе. Одна проверяет, что хук ЗАМОЛЧАЛ, когда моя копия
+# свежая; вторая — что он ЗАГОВОРИЛ, когда устарела именно моя. Порознь первая
+# проходит и у хука, который онемел совсем.
+print(u"-- два дерева: возраст из дерева сессии --")
+main_tree = make_tree("main")
+my_tree = make_tree("p274-novac")
+for _t, _rel in ((main_tree, HANDOFF_REL), (my_tree, CARINA_REL)):
+    _p = os.path.join(_t, _rel)
+    os.makedirs(os.path.dirname(_p), exist_ok=True)
+    io.open(_p, "w", encoding="utf-8").write(u"x")
+
+# (1) моя записка СВЕЖАЯ, чужая в главном дереве — древняя: хук молчит.
+os.utime(os.path.join(main_tree, HANDOFF_REL), (time.time() - 99999,) * 2)
+out, _rc = run(my_tree, cwd=my_tree, project_dir=main_tree)
+if out == "":
+    ok(u"свежая записка МОЕГО дерева — молчит, хотя в главном копия древняя")
+else:
+    bad(u"взят возраст ЧУЖОГО дерева: %s" % out[:120])
+
+# (2) обратная сторона: моя записка древняя, в главном — свежая: хук говорит.
+os.utime(os.path.join(main_tree, HANDOFF_REL), None)
+os.utime(os.path.join(my_tree, CARINA_REL), (time.time() - 99999,) * 2)
+_stamp = os.path.join(my_tree, "target", ".session-save-reminder")
+if os.path.isfile(_stamp):
+    os.remove(_stamp)
+out, _rc = run(my_tree, cwd=my_tree, project_dir=main_tree)
+if u"КАРИНЫ" in out:
+    ok(u"древняя записка МОЕГО дерева — говорит, и адресует моей роли")
+else:
+    bad(u"молчит либо адресует не туда: %s" % (out[:120] or u"(пусто)"))
+
+for _t in (main_tree, my_tree):
+    shutil.rmtree(_t, ignore_errors=True)
 
 print(u"селфтест remind-session-save: %d/%d ok" % (cases - fails, cases)
       if fails == 0 else u"селфтест remind-session-save: ЕСТЬ ПРОВАЛЫ (%d)" % fails)
