@@ -458,6 +458,22 @@ if [ "$fail" -eq 0 ] && [ "${DOC_EXAMPLES_SHOW_MATCHES:-1}" = "1" ]; then
         [ -n "$m" ] && printf 'doc-examples находки (retired_unsafe_type_modifier):\n%s\n' "$m"
     fi
     [ -n "$bang_matches" ] && printf 'doc-examples находки (retired_postfix_bang):\n%s\n' "$bang_matches"
+
+    # То же для второго периметра. Без этого блока он СЧИТАЛ, но не
+    # ПОКАЗЫВАЛ: число без адресов говорит «что-то есть», а снять
+    # носителей по нему нельзя — пришлось бы заводить ВТОРОЕ правило
+    # счёта рядом со стражем, и они разошлись бы на первой правке.
+    for pair in "nv_retired_kw_let:$re_let" "nv_retired_kw_readonly:$re_readonly" \
+                "nv_retired_pointer_ro:$re_ptr_ro" "nv_retired_trait_impl_throws:$re_trait_impl_throws" \
+                "nv_retired_ref_form:$re_ref" "nv_retired_external_fn:$re_external_fn" \
+                "nv_retired_addr_of:$re_addr_of" "nv_retired_null_ptr:$re_null_ptr" \
+                "nv_retired_protocol_renamed:$re_protocol_renamed"; do
+        key="${pair%%:*}"
+        re="${pair#*:}"
+        m="$(list_class_nv "$re")"
+        [ -n "$m" ] && printf 'doc-examples находки (%s):\n%s\n' "$key" "$m"
+    done
+    [ -n "$nv_bang_matches" ] && printf 'doc-examples находки (nv_retired_postfix_bang):\n%s\n' "$nv_bang_matches"
 fi
 
 
