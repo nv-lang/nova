@@ -1,0 +1,16 @@
+// Ось: тип скрутинизируемого. То же, но по `int` — если падает так же,
+// дело не в `str`.
+module b_int_const
+
+const SEVEN = 7
+
+fn classify(n int) -> int => match n {
+    SEVEN => 1
+    _ => 0
+}
+
+fn main() Io -> () {
+    ro a = classify(7)
+    ro b = classify(8)
+    println("seven=${a} other=${b}")
+}

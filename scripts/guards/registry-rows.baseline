@@ -1,3 +1,15 @@
+# 2026-09-18 (интегратор, окно nova-ff): rows 1103 -> 1104, max 1155 -> 1157,
+#   и в перечень дыр добавлен 1156.
+#   №1157 — тихая половина №762: образец со СТРОЧНЫМ именем константы молча
+#   СВЯЗЫВАЕТ вместо сравнения, первая ветка match матчит всегда, программа
+#   собирается и врёт. Выделена отдельной строкой намеренно: у №762 отказ
+#   громкий (три ошибки C), и держать дорогой дефект под дешёвым значило бы
+#   его спрятать.
+#   №1156 — номер ВЫДАН окну Карины (напоминание о записке мерило чужое
+#   дерево); строка пишется в ЕГО ветке и в main ещё не приехала. УСЛОВИЕ
+#   СНЯТИЯ то же, что у прежних выданных номеров: при слиянии строка
+#   появится, и дыру надо СОКРАТИТЬ обратно — дыра, оставленная после
+#   слияния, разрешает потерять настоящую строку.
 # 2026-09-18 (интегратор, окно nova-ff): rows 1099 -> 1103, max 1151 -> 1155.
 #   Четыре строки заведены разом по ходу налога оракула на Карину (274.10):
 #   №1152 — прогон пишет временные файлы на СИСТЕМНЫЙ диск; №1153 — состояние
@@ -918,8 +930,8 @@
 # 2026-09-17 (integrator), chetvyortyy shag dnya: rows 1098 -> 1099,
 #   max 1149 -> 1151. Zavedena stroka 1151; 1150 vydan oknu Kariny i lezhit
 #   v yego vetke -- otsyuda razryv mezhdu prirostom strok (+1) i maksimuma (+2).
-rows=1103
-max=1155
+rows=1104
+max=1157
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
@@ -1136,4 +1148,4 @@ stale_gaps=0
 #   main poka ne priyekhala. USLOVIE SNYATIYA to zhe, chto u 1144-1146: pri
 #   sliyanii vetki nomer poyavitsya, i  nado SOKRATIT obratno -- dyra,
 #   ostavlennaya posle sliyaniya, razreshit poteryat nastoyashchuyu stroku.
-gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1144-1146,1150
+gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1144-1146,1150,1156
