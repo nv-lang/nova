@@ -146,7 +146,11 @@ fn Checker mut @judge_qualified_payload(e Node, kids []Node, vt Token, vrow Vari
 fn Checker @instance_display_ok(t TyId, row FnRow) -> bool {
     if @ctx.tys.kind_of(t) != TypeKind.TkApp { return true } else {}
     if @ctx.fns.compiles_body(row) { return true } else {}
-    if decl_of_ty(@ctx, t).kind != TypeKind.TkRecord { return false } else {}
+    // THE RECORD-ONLY CONDITION IS GONE (2026-09-18, same evening): novac now
+    // spells a generic SUM by the oracle family (`c_instance_method`), so the
+    // only question left is the one that was always the real one -- does the
+    // SHELL carry this symbol. Keeping the kind check would refuse forms that
+    // work, which is the mirror of accepting forms that do not.
     @ctx.interop.has(c_method_symbol(@ctx, t, DISPLAY_METHOD))
 }
 

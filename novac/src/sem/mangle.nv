@@ -430,8 +430,40 @@ export fn c_method_symbol(ctx Ctx, t TyId, name str) -> str {
 /// missing `Nova_` prefix, which is how the oracle spells methods
 /// (`Vec____nova_int_method_push`, measured 2026-08-26). Interop, same end
 /// condition.
-export fn c_instance_method(ctx Ctx, t TyId, name str) -> str =>
-    "${instance_body(ctx, t)}_method_${name}"
+export fn c_instance_method(ctx Ctx, t TyId, name str) -> str {
+    // TWO FAMILIES, TWO SPELLINGS, both READ OFF THE SHELL and neither invented
+    // (2026-09-18). A generic RECORD instance is `<Head>____<args>_method_<name>`
+    // (`Vec____nova_int_method_display`), while a generic SUM is
+    // `Nova_<Head>_method_<name>_<arg>...` -- measured in `shell.tpl.c`:
+    // `Nova_Option_method_display_nova_str` (defined at :6338) and
+    // `Nova_Result_method_display_nova_int_nova_str`.
+    //
+    // THE SUM ARM CORRECTS A RECORD OF MINE THAT WAS WRONG. Earlier the same day
+    // I wrote -- in the plan, in a fixture and to the integrator -- that
+    // `Option`/`Result` were held by TWO independent blockers: no symbol in the
+    // shell AND no spelling in novac. The first half was FALSE, and the way it
+    // became false is worth the line: I grepped for the spelling novac WOULD
+    // build (`NovaOpt_*_method_display`), found nothing, and read that as "the
+    // shell does not carry it". The shell carries it under the spelling the
+    // ORACLE builds. A grep for the name you expect answers a question about
+    // your expectation, not about the tree.
+    ro head = decl_of_ty(ctx, t)
+    if head.kind != TypeKind.TkSum {
+        return "${instance_body(ctx, t)}_method_${name}"
+    } else {
+        // The family spelling below.
+    }
+    consume s = StringBuilder.new(cap: 64)
+    s.append("Nova_")
+    s.append(head.name)
+    s.append("_method_")
+    s.append(name)
+    for i in 0..ctx.tys.arg_count(t) {
+        s.append("_")
+        s.append(instance_arg_spelling(ctx, ctx.tys.arg(t, i)))
+    }
+    s
+}
 
 /// A method of a PLAIN (non-instance) type as the SHELL spells it:
 /// `Nova_<type>_method_<name>` — measured on the shell 2026-08-28
@@ -511,7 +543,11 @@ fn instance_body(ctx Ctx, t TyId) -> str {
     ro head = decl_of_ty(ctx, t)
     match head.kind {
         TkRecord => {}
-        TkSum => ice("mangle: an instance of a generic SUM has the oracle's family spelling (NovaOpt_/NovaRes_) — arrives with the Option wave")
+        // A SUM never reaches HERE any more: `c_instance_method` answers it with
+        // the family spelling above, without building a record-shaped body. The
+        // ice stays because this door is about the RECORD body specifically, and
+        // a caller that asks it for a sum is asking the wrong door.
+        TkSum => ice("mangle: the record-shaped instance body of a generic SUM -- ask `c_instance_method`, which spells a sum by its family")
         // A head is a declaration; these are not declarations a `[T]` can hang on.
         TkPrim | TkApp | TkParam | TkInfer | TkNewtype | TkTuple =>
             ice("mangle: an application whose head is not a record or sum declaration")

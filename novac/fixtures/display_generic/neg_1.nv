@@ -1,26 +1,31 @@
 module display_generic.neg_1
 
-// AN `Option[int]` IN A SLOT IS STILL REFUSED, and this cell exists because
-// making `Vec` work almost made this one CRASH instead.
+// AN `Option[int]` IN A SLOT IS STILL REFUSED -- and the REASON changed the
+// same evening, which is why this comment was rewritten rather than left.
 //
-// THE MEASUREMENT THAT PUT THIS FILE HERE. The first version of the B1b-3
-// change simply let a generic instance reach the method lookup, since the
-// resolver finds a row for `Option`'s display just as it does for `Vec`'s.
-// novac then accepted the slot -- zero diagnostics -- and died in emission:
-//     internal compiler error (novac bug, not yours): mangle: an instance of a
-//     generic SUM has the oracle's family spelling (NovaOpt_/NovaRes_)
-// An ICE is strictly worse than a refusal: a refusal names which form is not
-// compiled yet, an ice says the compiler is broken and tells the reader nothing
-// about their program.
+// WHAT IT USED TO SAY, and why it was wrong: that novac could not SPELL a
+// generic sum instance, so `Option` was blocked twice over. The spelling is
+// implemented now (`c_instance_method` builds the oracle's family form
+// `Nova_<Head>_method_<name>_<arg>...`), and `Option[str]` prints byte for byte
+// with the oracle -- see `pos_2` beside this file. The old wording would have
+// sent the next reader to fix something already fixed.
 //
-// So the judge now asks TWO further questions of an instance, each about the
-// thing it names: can novac SPELL it (only a record head -- `instance_body`
-// ices on a generic sum), and does the SHELL CARRY the symbol (a row found by
-// the resolver proves the SIGNATURE exists, never the FUNCTION). `Option` fails
-// both, and fails them as a NAMED subset refusal.
+// WHY THIS ONE IS STILL REFUSED, measured: the shell carries only the instances
+// the probe called, and `novac/probe/shell_probe.nv` calls `@display` on an
+// `Option[str]`. A grep of `shell.tpl.c` gives exactly one Option display --
+// `Nova_Option_method_display_nova_str` -- and nothing for the int instance. So
+// the refusal is about the INTEROP SURFACE, not about the compiler, and the way
+// to lift it is one line in the probe plus a shell regen.
 //
-// The differential judges `pos_*` only, so this file asserts novac's refusal
-// rather than agreement with the oracle -- which accepts and prints `Some(5)`.
+// THE CELL IS KEPT THOUGH ITS CAUSE MOVED, because what it guards has not: a
+// slot whose symbol the linker cannot find must be a NAMED REFUSAL and never an
+// ICE. Making `Vec` work briefly turned this very file's shape into
+// "internal compiler error ... mangle: an instance of a generic SUM", and that
+// is strictly worse than a refusal -- it says the compiler is broken and tells
+// the reader nothing about their program.
+//
+// The differential judges `pos_*` only, so this asserts novac's refusal rather
+// than agreement with the oracle, which accepts and prints `Some(5)`.
 
 fn pick(f bool) -> Option[int] {
     if f {
