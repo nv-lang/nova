@@ -26,7 +26,7 @@ export type VecIter[T] value {
 /// # Examples
 ///
 /// ```nova
-/// let v = Vec[int].of(10, 20, 30)
+/// ro v = Vec[int].of(10, 20, 30)
 /// for x in v { println(x) }  // 10, 20, 30
 /// ```
 #impl(Iter[VecIter[T]])

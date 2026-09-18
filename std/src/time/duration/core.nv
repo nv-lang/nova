@@ -53,7 +53,7 @@ module time.duration
 /// # Examples
 ///
 /// ```nova
-/// let d = 500.to_millis()
+/// ro d = 500.to_millis()
 /// assert(d.millis() == 500)
 /// ```
 ///
@@ -116,7 +116,7 @@ export const Duration.HOUR   Duration = { nanos: 3_600_000_000_000 }
 ///
 /// # Examples
 /// ```nova
-/// let d = 1_000_000.to_nanos()
+/// ro d = 1_000_000.to_nanos()
 /// assert(d.micros() == 1000)
 /// ```
 #stable(since = "0.1")
@@ -130,7 +130,7 @@ export fn[T Ints] T @to_micros() -> Duration => { nanos: (@ as i64) * 1_000 }
 ///
 /// # Examples
 /// ```nova
-/// let d = 500.to_millis()
+/// ro d = 500.to_millis()
 /// assert(d.millis() == 500)
 /// ```
 #stable(since = "0.1")
@@ -300,8 +300,8 @@ export type DurationParts {
 ///
 /// # Examples
 /// ```nova
-/// let d = 3661.to_seconds()  // 1h 1min 1s
-/// let p = d.parts()
+/// ro d = 3661.to_seconds()  // 1h 1min 1s
+/// ro p = d.parts()
 /// assert(p.hours == 1)
 /// assert(p.minutes == 1)
 /// assert(p.seconds == 1)
@@ -631,7 +631,7 @@ export fn Duration @debug(mut f Fmt) -> () {
 ///
 /// # Examples
 /// ```nova
-/// let d = 1.to_days() + 2.to_hours() + 30.to_minutes()
+/// ro d = 1.to_days() + 2.to_hours() + 30.to_minutes()
 /// assert(d.to_human().contains("1d"))
 /// ```
 #stable(since = "0.1")

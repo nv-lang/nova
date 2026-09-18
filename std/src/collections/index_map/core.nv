@@ -53,7 +53,7 @@ import std.collections.vec.{Vec}
 /// # Examples
 ///
 /// ```nova
-/// let mut m = IndexMap[str, int].new()
+/// mut m = IndexMap[str, int].new()
 /// m.insert("b", 2)
 /// m.insert("a", 1)
 /// assert(m.keys().collect() == ["b", "a"])   // insertion order, NOT sorted/hash order
@@ -82,7 +82,7 @@ export type IndexMap[K Equal + Hash, V] priv {
 /// # Examples
 ///
 /// ```nova
-/// let mut m = IndexMap[str, int].new()
+/// mut m = IndexMap[str, int].new()
 /// assert(m.is_empty())
 /// ```
 #stable(since = "0.1")
@@ -108,7 +108,7 @@ export fn IndexMap[K Equal + Hash, V] @is_empty() -> bool => @entries.len() == 0
 /// # Examples
 ///
 /// ```nova
-/// let mut m = IndexMap[str, int].new()
+/// mut m = IndexMap[str, int].new()
 /// m.insert("x", 10)
 /// assert(m.get("x") == Some(10))
 /// assert(m.get("y") == None)
@@ -135,7 +135,7 @@ export fn IndexMap[K Equal + Hash, V] @contains(key K) -> bool => @index.contain
 /// # Examples
 ///
 /// ```nova
-/// let mut m = IndexMap[str, int].new()
+/// mut m = IndexMap[str, int].new()
 /// assert(m.insert("a", 1) == None)
 /// assert(m.insert("a", 2) == Some(1))
 /// assert(m.get("a") == Some(2))
@@ -267,7 +267,7 @@ export fn IndexMap[K Equal + Hash, V] mut @clear() {
 /// # Examples
 ///
 /// ```nova
-/// let mut m = IndexMap[str, int].new()
+/// mut m = IndexMap[str, int].new()
 /// m.insert("b", 2)
 /// m.insert("a", 1)
 /// assert(m.keys() == ["b", "a"])
@@ -294,10 +294,10 @@ export fn IndexMap[K Equal + Hash, V] @keys() -> []K {
 /// # Examples
 ///
 /// ```nova
-/// let mut a = IndexMap[str, int].new()
+/// mut a = IndexMap[str, int].new()
 /// a.insert("x", 1)
 /// a.insert("y", 2)
-/// let mut b = IndexMap[str, int].new()
+/// mut b = IndexMap[str, int].new()
 /// b.insert("y", 2)
 /// b.insert("x", 1)
 /// assert(!a.equal(b))    // same pairs, different order — not equal
@@ -319,7 +319,7 @@ type IndexMapIter[K, V] { map IndexMap[K, V], pos int }
 /// # Examples
 ///
 /// ```nova
-/// let mut m = IndexMap[str, int].new()
+/// mut m = IndexMap[str, int].new()
 /// m.insert("a", 1)
 /// m.insert("b", 2)
 /// for (k, v) in m.iter() {

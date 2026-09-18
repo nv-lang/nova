@@ -351,7 +351,7 @@ export fn Vec[T] mut @retain(pred fn(T) -> bool) -> @ {
 ///
 /// ```nova
 /// mut dst = Vec[int].of(0, 0, 0)
-/// let src = Vec[int].of(1, 2, 3)
+/// ro src = Vec[int].of(1, 2, 3)
 /// dst.copy_from(src)
 /// assert(dst.equal(src))
 /// ```

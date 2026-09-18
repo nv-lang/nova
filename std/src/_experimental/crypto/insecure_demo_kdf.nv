@@ -80,7 +80,7 @@ const FORMAT_TAG str = "ndk1"
 /// # Examples
 /// ```nova
 /// with Random = th.seeded(42) {
-///     let h = InsecureDemoKdf.hash("secret", 10)!!
+///     ro h = InsecureDemoKdf.hash("secret", 10)!!
 /// }
 /// ```
 #experimental(note = "демо-KDF, НЕ настоящий bcrypt; см. Plan 193")

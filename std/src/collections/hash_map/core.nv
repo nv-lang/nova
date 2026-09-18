@@ -68,7 +68,7 @@ type Slot[K, V] enum
 /// # Examples
 ///
 /// ```nova
-/// let mut m = HashMap[str, int].new()
+/// mut m = HashMap[str, int].new()
 /// m.insert("alice", 1)
 /// m.insert("bob", 2)
 /// assert(m.get("alice") == Some(1))
@@ -116,7 +116,7 @@ fn hashmap_bucket_count_for(min_capacity int) -> int {
 /// # Examples
 ///
 /// ```nova
-/// let mut m = HashMap[str, int].new()
+/// mut m = HashMap[str, int].new()
 /// assert(m.is_empty())
 /// ```
 #stable(since = "0.1")
@@ -135,7 +135,7 @@ export fn HashMap[K, V].new(cap int = 16) -> HashMap[K, V]
 /// # Examples
 ///
 /// ```nova
-/// let mut m = HashMap[str, int].from([("a", 1), ("b", 2)])
+/// mut m = HashMap[str, int].from([("a", 1), ("b", 2)])
 /// assert(m.get("a") == Some(1))
 /// assert(m.len() == 2)
 /// ```
@@ -197,7 +197,7 @@ export fn HashMap[K, V] mut @cap(n int) -> @
 /// # Examples
 ///
 /// ```nova
-/// let mut m = HashMap[str, int].new()
+/// mut m = HashMap[str, int].new()
 /// m.insert("x", 10)
 /// assert(m.get("x") == Some(10))
 /// assert(m.get("y") == None)
@@ -224,7 +224,7 @@ export fn HashMap[K, V] @contains(key K) -> bool =>
 /// # Examples
 ///
 /// ```nova
-/// let mut m = HashMap[str, int].new()
+/// mut m = HashMap[str, int].new()
 /// assert(m.insert("a", 1) == None)
 /// assert(m.insert("a", 2) == Some(1))
 /// ```
@@ -291,8 +291,8 @@ export fn HashMap[K, V] mut @insert_new(key K, value V) {
 /// # Examples
 ///
 /// ```nova
-/// let mut m = HashMap[str, int].from([("a", 1)])
-/// let m2 = m.clone()
+/// mut m = HashMap[str, int].from([("a", 1)])
+/// ro m2 = m.clone()
 /// assert(m2.get("a") == Some(1))
 /// ```
 #stable(since = "0.1")
@@ -318,8 +318,8 @@ export fn HashMap[K Clone, V Clone] @clone() -> HashMap[K, V] {
 /// # Examples
 ///
 /// ```nova
-/// let a = HashMap[str, int].from([("x", 1), ("y", 2)])
-/// let b = HashMap[str, int].from([("y", 2), ("x", 1)])
+/// ro a = HashMap[str, int].from([("x", 1), ("y", 2)])
+/// ro b = HashMap[str, int].from([("y", 2), ("x", 1)])
 /// assert(a.equal(b))   // order-independent
 /// ```
 #stable(since = "0.1")
@@ -345,8 +345,8 @@ export fn HashMap[K, V] @equal(other HashMap[K, V]) -> bool {
 /// # Examples
 ///
 /// ```nova
-/// let mut a = HashMap[str, int].from([("x", 1)])
-/// let mut b = HashMap[str, int].from([("x", 99), ("y", 2)])
+/// mut a = HashMap[str, int].from([("x", 1)])
+/// mut b = HashMap[str, int].from([("x", 99), ("y", 2)])
 /// a.merge_from(b)
 /// assert(a.get("x") == Some(99))
 /// assert(a.get("y") == Some(2))
@@ -363,8 +363,8 @@ export fn HashMap[K, V] mut @merge_from(other HashMap[K, V]) {
 /// # Examples
 ///
 /// ```nova
-/// let mut m = HashMap[str, int].from([("a", 1), ("b", 2), ("c", 3)])
-/// let big = m.filter(|_, v| v > 1)
+/// mut m = HashMap[str, int].from([("a", 1), ("b", 2), ("c", 3)])
+/// ro big = m.filter(|_, v| v > 1)
 /// assert(big.len() == 2)
 /// ```
 #stable(since = "0.1")
@@ -433,8 +433,8 @@ export fn HashMap[K, V] mut @clear() {
 /// # Examples
 ///
 /// ```nova
-/// let mut counts = HashMap[str, int].new()
-/// let prev = counts.get_or_insert("foo", || 0)
+/// mut counts = HashMap[str, int].new()
+/// ro prev = counts.get_or_insert("foo", || 0)
 /// counts.insert("foo", prev + 1)
 /// assert(counts.get("foo") == Some(1))
 /// ```
@@ -464,7 +464,7 @@ type HashMapIter[K, V] {
 /// # Examples
 ///
 /// ```nova
-/// let mut m = HashMap[str, int].from([("a", 1), ("b", 2)])
+/// mut m = HashMap[str, int].from([("a", 1), ("b", 2)])
 /// for (k, v) in m.iter() {
 ///     assert(v > 0)
 /// }

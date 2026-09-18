@@ -18,7 +18,7 @@ module collections.priority_queue
 /// # Examples
 ///
 /// ```nova
-/// let mut pq = PriorityQueue[int].new()
+/// mut pq = PriorityQueue[int].new()
 /// pq.push(5)
 /// pq.push(1)
 /// pq.push(3)

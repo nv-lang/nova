@@ -54,7 +54,7 @@ import std.time.duration
 /// # Examples
 /// ```nova
 /// with Random = th.seeded(42) {
-///     let u = Uuid.v4()
+///     ro u = Uuid.v4()
 ///     assert(u.version() == V4)
 /// }
 /// ```

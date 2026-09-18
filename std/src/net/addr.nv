@@ -20,11 +20,11 @@ module std.net
 /// # Examples
 ///
 /// ```nova
-/// let a4 = SocketAddr.loopback(8080)       // 127.0.0.1:8080
-/// let a6 = SocketAddr.loopback_v6(8080)    // [::1]:8080
-/// let av = SocketAddr.v4(192, 168, 1, 1, 80)
-/// let ap = "127.0.0.1:9090".to_socket_addr()!!
-/// let aw = SocketAddr.any(8080)            // 0.0.0.0:8080, ALL interfaces
+/// ro a4 = SocketAddr.loopback(8080)       // 127.0.0.1:8080
+/// ro a6 = SocketAddr.loopback_v6(8080)    // [::1]:8080
+/// ro av = SocketAddr.v4(192, 168, 1, 1, 80)
+/// ro ap = "127.0.0.1:9090".to_socket_addr()!!
+/// ro aw = SocketAddr.any(8080)            // 0.0.0.0:8080, ALL interfaces
 /// ```
 #stable(since = "0.1")
 export type SocketAddr value priv { raw []u8 }

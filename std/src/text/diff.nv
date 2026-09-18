@@ -20,7 +20,7 @@ export type DiffOp enum
 ///
 /// # Examples
 /// ```nova
-/// let ops = Diff.compute(["a", "c"], ["a", "b", "c"])
+/// ro ops = Diff.compute(["a", "c"], ["a", "b", "c"])
 /// // ops contains Insert("b") in the middle
 /// ```
 #stable(since = "0.1")

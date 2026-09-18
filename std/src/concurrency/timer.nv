@@ -18,7 +18,7 @@ import std.time.duration
 /// Primary use: timeout arms in `select { ... }`:
 ///
 /// ```nova
-/// let t = ChanReader.close_after(5.to_seconds())
+/// ro t = ChanReader.close_after(5.to_seconds())
 /// select {
 ///     Some(v) = rx.recv() => process(v)
 ///     None    = t.recv()  => log_idle()

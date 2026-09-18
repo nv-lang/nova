@@ -45,7 +45,7 @@ export type SqlValue enum
 ///
 /// # Examples
 /// ```nova
-/// let q = sql`SELECT * FROM users WHERE id = ${user_id}`
+/// ro q = sql`SELECT * FROM users WHERE id = ${user_id}`
 /// // q.template = "SELECT * FROM users WHERE id = ?"
 /// ```
 #stable(since = "0.1")
@@ -283,7 +283,7 @@ export fn DbRow @get_bool(name str) -> Result[bool, DbError] =>
 ///
 /// # Examples
 /// ```nova
-/// let q = Sql.builder(sql`SELECT * FROM users WHERE 1=1`)
+/// ro q = Sql.builder(sql`SELECT * FROM users WHERE 1=1`)
 ///     .where_eq("active", B(true))
 ///     .where_in("role", [S("admin"), S("editor")])
 ///     .build()

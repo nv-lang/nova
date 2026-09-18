@@ -74,7 +74,7 @@ export type CronTime {
 ///
 /// # Examples
 /// ```nova
-/// let cron = "*/15 9-17 * * 1-5".to_cron()!!  // every 15 min, 9-17h, weekdays
+/// ro cron = "*/15 9-17 * * 1-5".to_cron()!!  // every 15 min, 9-17h, weekdays
 /// ```
 #stable(since = "0.1")
 export fn str @to_cron() -> Result[CronExpr, ParseCronError] {

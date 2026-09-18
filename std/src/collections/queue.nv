@@ -26,7 +26,7 @@ module collections.queue
 /// # Examples
 ///
 /// ```nova
-/// let mut q = Queue[int].new()
+/// mut q = Queue[int].new()
 /// q.push(1)
 /// q.push(2)
 /// q.push(3)
@@ -97,7 +97,7 @@ export fn Queue[T] mut @push(item T) -> () =>
 /// # Examples
 ///
 /// ```nova
-/// let mut q = Queue[str].new()
+/// mut q = Queue[str].new()
 /// q.push("first")
 /// q.push("second")
 /// assert(q.pop() == Some("first"))

@@ -73,6 +73,10 @@ check_class() {  # label key nova_body
 check_class "1a let"            retired_kw_let               'ro x = 1
 mut y = x
 let z = 2'
+# `let mut` — та же снятая форма, и до 2026-09-18 класс её не ловил:
+# регэксп ждал `=` сразу за именем, а после `let ` шло `mut`.
+# Скрыто было 45 носителей в доках std.
+check_class "1a2 let mut"       retired_kw_let                'let mut b = 1'
 check_class "1b if-let"         retired_kw_let                'if let Some(v) = opt { }'
 check_class "1c while-let"      retired_kw_let                'while let Some(v) = it.next() { }'
 check_class "1d readonly"       retired_kw_readonly           'fn f(x readonly int) -> int => x'

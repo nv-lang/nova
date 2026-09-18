@@ -39,7 +39,7 @@ module encoding.url
 ///
 /// # Examples
 /// ```nova
-/// let u = "https://user:pass@example.com:8443/api?k=v#top".to_url()
+/// ro u = "https://user:pass@example.com:8443/api?k=v#top".to_url()
 /// assert(u.scheme == "https")
 /// assert(u.host == Some("example.com"))
 /// ```

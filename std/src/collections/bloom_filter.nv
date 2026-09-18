@@ -28,7 +28,7 @@ module collections.bloom_filter
 /// # Examples
 ///
 /// ```nova
-/// let mut bf = BloomFilter.new(1024, 3)
+/// mut bf = BloomFilter.new(1024, 3)
 /// bf.insert("hello")
 /// assert(bf.contains("hello"))
 /// assert(!bf.contains("world"))  // probably false, but not guaranteed
@@ -52,7 +52,7 @@ export type BloomFilter {
 /// # Examples
 ///
 /// ```nova
-/// let mut bf = BloomFilter.new(1024, 3)
+/// mut bf = BloomFilter.new(1024, 3)
 /// bf.insert("test")
 /// assert(bf.contains("test"))
 /// ```
@@ -78,7 +78,7 @@ export fn BloomFilter.new(bits_size int, num_hashes int) -> Self {
 /// # Examples
 ///
 /// ```nova
-/// let mut bf = BloomFilter.optimal(1000, 0.01)  // 1000 items, 1% false-positive
+/// mut bf = BloomFilter.optimal(1000, 0.01)  // 1000 items, 1% false-positive
 /// bf.insert("item")
 /// assert(bf.contains("item"))
 /// ```
