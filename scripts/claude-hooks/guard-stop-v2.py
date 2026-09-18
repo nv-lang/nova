@@ -52,8 +52,27 @@ against мира. Нет строки — блокируем; код есть �
 побег был виден владельцу, а не растворился в тишине. Счётчик сбрасывается
 любым пропуском.
 
+СО ВСЕМИ КОМАНДАМИ — АВТОМАТИЧЕСКИ, И ЭТО ТРЕБУЕТ ВОРОТ ПО РОЛИ. Stop-хук
+настраивается в `settings.json` один раз и срабатывает на КОНЦЕ ЛЮБОГО хода,
+какой бы командой тот ни начался; править команды ради него не нужно. Но из
+этого же следует, что без ворот он спросил бы код у окна, которое отвечает на
+вопрос владельца и никакой очереди не имеет. Поэтому первым делом определяется
+РОЛЬ по ветке (`main` — интегратор, `p274-novac` — Карина, ветка со словом
+`controller` — контролёр; переопределяется `NOVA_WINDOW_ROLE`). Роли нет —
+хук молчит ВООБЩЕ: доказывать ему нечем, а шуметь он не вправе.
+
+В ролевом окне `/explain`, `/status` и прочие «ответные» команды кода не
+отменяют, и это НЕ недосмотр: ответ владельцу не опустошает очередь, а
+`/flow` прямо говорит, что доклад — запятая. Ответил и взял следующий пункт.
+
+ДВЕ ЗАКОННЫЕ КОНЦОВКИ СВЕРХ ТРЁХ КОДОВ, обе машинно проверяемые:
+* прерывание владельцем (`[Request interrupted by user]`) — не остановка окна,
+  а вмешательство; хук пропускает молча;
+* `СТОП: смена` — окно сдаёт смену командой `/stop`; проверяется тем, что
+  ролевая записка ДЕЙСТВИТЕЛЬНО записана в последние десять минут.
+
 ЦЕНА. Ноль запусков процессов: хук читает стенограмму и два маленьких файла.
-Git не зовётся — за это отвечает снимок, который обновляется отдельно.
+Git не зовётся ни разу — ветка берётся чтением `.git/HEAD`, очередь снимком.
 """
 from __future__ import annotations
 
@@ -70,9 +89,27 @@ except Exception:
     pass
 
 STOP_RE = re.compile(
-    u"^[\\s>*_-]*СТОП:\\s*(очередь-пуста|вопрос|неавторизовано)\\b[ \\t]*(.*)$",
+    u"^[\\s>*_-]*СТОП:\\s*(очередь-пуста|вопрос|неавторизовано|смена)\\b[ \\t]*(.*)$",
     re.IGNORECASE | re.MULTILINE,
 )
+
+INTERRUPT = u"[request interrupted"
+
+# Ветка → роль. Дом соответствия — `/save`; здесь копия ТОЛЬКО потому, что хук
+# не имеет права звать git, а знать роль обязан. Расхождение ловится Ш.3-самотестом.
+ROLE_BY_BRANCH = [
+    (u"p274-novac", u"carina"),
+    (u"controller", u"controller"),
+    (u"main", u"integrator"),
+]
+
+# Ролевые записки — для кода «смена» (их свежесть и есть доказательство).
+ROLE_NOTE = {
+    u"integrator": u"docs/dev/prompts/integrator-handoff.md",
+    u"carina": u"docs/dev/prompts/carina-handoff.md",
+    u"controller": u"docs/dev/prompts/controller-handoff.md",
+}
+NOTE_FRESH_SEC = 10 * 60
 
 # Закрытый список необратимых действий (AGENTS.md «Git», /flow пункт 2).
 IRREVERSIBLE = [u"пуш", u"push", u"тег", u"tag", u"удал", u"публик",
@@ -204,6 +241,50 @@ def check_queue(cwd):
     return True, u""
 
 
+def current_branch(cwd):
+    u"""Ветка чтением файлов, без запуска git: в worktree `.git` — файл со
+    строкой `gitdir: <путь>`, HEAD лежит там."""
+    g = os.path.join(cwd or ".", ".git")
+    try:
+        if os.path.isfile(g):
+            with io.open(g, encoding="utf-8", errors="replace") as fh:
+                line = fh.read().strip()
+            if line.startswith("gitdir:"):
+                g = line.split(":", 1)[1].strip()
+        head = os.path.join(g, "HEAD")
+        with io.open(head, encoding="utf-8", errors="replace") as fh:
+            h = fh.read().strip()
+        if h.startswith("ref:"):
+            return h.split("/", 2)[-1]
+        return u""
+    except Exception:
+        return u""
+
+
+def detect_role(cwd):
+    env = (os.environ.get("NOVA_WINDOW_ROLE") or u"").strip().lower()
+    if env:
+        return env
+    br = current_branch(cwd).lower()
+    if not br:
+        return u"none"
+    for needle, role in ROLE_BY_BRANCH:
+        if needle in br:
+            return role
+    return u"none"
+
+
+def note_is_fresh(cwd, role):
+    rel = ROLE_NOTE.get(role)
+    if not rel:
+        return False
+    p = os.path.join(cwd or ".", rel)
+    try:
+        return (time.time() - os.path.getmtime(p)) <= NOTE_FRESH_SEC
+    except Exception:
+        return False
+
+
 def unicode_str(x):
     if isinstance(x, dict):
         return x.get("title") or x.get("id") or json.dumps(x, ensure_ascii=False)
@@ -220,6 +301,13 @@ def main():
         return 0
 
     cwd = data.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or "."
+
+    # ВОРОТА ПО РОЛИ — до всего остального. Окно без роли (исследование, пакет,
+    # разовая волна) хук не судит: очереди у него нет, доказывать нечем.
+    role = detect_role(cwd)
+    if role == u"none":
+        return 0
+
     sp = state_path(cwd, data.get("session_id"))
     st = load_state(sp)
 
@@ -228,6 +316,12 @@ def main():
         return 0
     text = turns[-1][0]
     tail = text[-900:]
+
+    # Прерывание владельца — не остановка окна: он вмешался сам.
+    if INTERRUPT in text.lower():
+        st["blocks"] = 0
+        save_state(sp, st)
+        return 0
 
     # Предохранитель: третья блокировка подряд не ставится.
     if st.get("blocks", 0) >= MAX_BLOCKS_IN_ROW:
@@ -243,8 +337,9 @@ def main():
         block(
             u"Ход окончен без причины. Остановка требует доказательства: последняя "
             u"строка доклада обязана нести код — «СТОП: очередь-пуста» (сверяется со "
-            u"снимком `target/queue.json`), «СТОП: вопрос» (в абзаце есть вопрос) или "
-            u"«СТОП: неавторизовано <действие>» (пуш, тег, удаление, публикация). "
+            u"снимком `target/queue.json`), «СТОП: вопрос» (в абзаце есть вопрос), "
+            u"«СТОП: неавторизовано <действие>» (пуш, тег, удаление, публикация) или "
+            u"«СТОП: смена» (сдача смены через `/stop`, записка обновлена). "
             u"Если причины нет — значит очередь не пуста: бери следующий пункт сейчас, "
             u"в этом же ходе."
         )
@@ -274,6 +369,15 @@ def main():
                     u"причина остановки, когда без ответа работа НЕ идёт; если идёт — "
                     u"делай её, а вопрос задай в конце сделанного."
                 )
+
+    elif code == u"смена":
+        if not note_is_fresh(cwd, role):
+            ok, reason = False, (
+                u"Код «смена» без сданной смены: ролевая записка (%s) не обновлялась "
+                u"последние %d минут. Сдача смены — это ЗАПИСЬ, а не слово: выполни "
+                u"`/stop`, потом заканчивай ход."
+                % (ROLE_NOTE.get(role, u"?"), NOTE_FRESH_SEC // 60)
+            )
 
     elif code == u"неавторизовано":
         low = arg.lower()

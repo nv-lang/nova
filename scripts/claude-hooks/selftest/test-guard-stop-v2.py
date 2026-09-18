@@ -50,11 +50,32 @@ def queue(tmp, payload, age_sec=0):
     return p
 
 
-def run(tmp, turns, session="s1", active=False):
+def note(tmp, role="integrator", age_sec=0):
+    u"""Ролевая записка — доказательство для кода «смена»."""
+    rel = {"integrator": "docs/dev/prompts/integrator-handoff.md",
+           "carina": "docs/dev/prompts/carina-handoff.md",
+           "controller": "docs/dev/prompts/controller-handoff.md"}[role]
+    p = os.path.join(tmp, *rel.split("/"))
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with io.open(p, "w", encoding="utf-8") as fh:
+        fh.write(u"# записка\n")
+    if age_sec:
+        old = time.time() - age_sec
+        os.utime(p, (old, old))
+    return p
+
+
+def run(tmp, turns, session="s1", active=False, role="integrator"):
+    u"""role=None — окно без роли: ворота по роли обязаны сделать хук немым."""
     payload = {"transcript_path": transcript(tmp, turns), "cwd": tmp,
                "session_id": session, "stop_hook_active": active}
+    env = dict(os.environ)
+    if role:
+        env["NOVA_WINDOW_ROLE"] = role
+    else:
+        env.pop("NOVA_WINDOW_ROLE", None)
     r = subprocess.run([sys.executable, HOOK], input=json.dumps(payload),
-                       capture_output=True, text=True, encoding="utf-8")
+                       capture_output=True, text=True, encoding="utf-8", env=env)
     out = (r.stdout or "").strip()
     if not out:
         return None
@@ -130,6 +151,27 @@ def c_active_passes(tmp):
     return run(tmp, [(u"Без кода.", 0)], active=True), False
 
 
+def c_no_role_silent(tmp):
+    # Окно без роли: нет ни ветки, ни NOVA_WINDOW_ROLE. Хук обязан молчать —
+    # иначе он спросит код у исследовательского окна, отвечающего на вопрос.
+    return run(tmp, [(u"Ответил на вопрос владельца.", 0)], role=None), False
+
+
+def c_interrupt_passes(tmp):
+    queue(tmp, {"role": "integrator", "open": [u"пункт"]})
+    return run(tmp, [(u"Начал делать...\n\n[Request interrupted by user]", 0)]), False
+
+
+def c_shift_with_note(tmp):
+    note(tmp)
+    return run(tmp, [(u"Смена сдана.\n\nСТОП: смена", 0)]), False
+
+
+def c_shift_without_note(tmp):
+    note(tmp, age_sec=3 * 60 * 60)
+    return run(tmp, [(u"Ухожу.\n\nСТОП: смена", 0)]), True
+
+
 def c_escape_after_two(tmp):
     queue(tmp, {"role": "integrator", "open": [u"пункт"]})
     t = [(u"Всё.\n\nСТОП: очередь-пуста", 0)]
@@ -153,6 +195,10 @@ for n, f in [
     (u"неавторизовано: пуш назван", c_irreversible_named),
     (u"неавторизовано без действия", c_irreversible_bare),
     (u"stop_hook_active пропускается", c_active_passes),
+    (u"окно без роли — хук нем", c_no_role_silent),
+    (u"прерывание владельца пропускается", c_interrupt_passes),
+    (u"смена сдана: записка свежая", c_shift_with_note),
+    (u"смена объявлена, записка трёхчасовой давности", c_shift_without_note),
     (u"третья блокировка подряд пропускается", c_escape_after_two),
 ]:
     case(n, f)
