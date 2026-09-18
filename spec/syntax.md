@@ -720,6 +720,22 @@ caller.nv:17: assert failed: text (cond) [in ice at diag.nv:129]
 - `f32`, `f64`
 - `str`, `bool`, `char` (a byte is `u8`, there is no separate `byte` type)
 
+**A `char` literal uses single quotes, and a control character is written ONLY
+as an escape:**
+
+```nova
+ro a = 'x'
+ro nl = '\n'          // a newline -- only this way
+ro bs = '\\'
+ro emoji = '\u{1F600}'
+```
+
+Inside `'…'` exactly `\n`, `\t`, `\r`, `\0`, `\'`, `\"`, `\\`, `\u{…}` are
+recognised and nothing else. **A raw control character typed into the source as
+itself (a tab, a newline) is an error, `E_CHAR_RAW_CONTROL`**: the eye cannot see
+it, so `'<tab>'` and `'<space>'` read the same. See
+[D478](decisions/03-syntax.md#d478).
+
 Details — [D30](decisions/03-syntax.md#d30), [D46](decisions/03-syntax.md#d46), [D47](decisions/07-modules.md#d47).
 
 ## Visibility: `export` for public declarations
