@@ -88,6 +88,26 @@ try:
 except Exception:
     pass
 
+# Сырой stdin держим глобально: обработчику падения он нужен, чтобы узнать cwd и
+# `stop_hook_active` уже ПОСЛЕ того, как разбор упал.
+RAW = u""
+
+
+def emit(obj):
+    u"""Печать решения БАЙТАМИ, а не через `print`.
+
+    Кириллица в `print` на консоли cp1251 роняет хук UnicodeEncodeError, а
+    упавший хук неотличим от снятого: пустой stdout — это пропуск. Ровно этот
+    класс поломки интегратор наблюдал 2026-09-18 на кириллическом пути.
+    """
+    try:
+        sys.stdout.buffer.write(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
+        sys.stdout.buffer.write(bytes([10]))
+        sys.stdout.buffer.flush()
+    except Exception:
+        sys.stdout.write(json.dumps(obj, ensure_ascii=True) + chr(10))
+
+
 STOP_RE = re.compile(
     u"^[\\s>*_-]*СТОП:\\s*(очередь-пуста|вопрос|неавторизовано|смена)\\b[ \\t]*(.*)$",
     re.IGNORECASE | re.MULTILINE,
@@ -120,7 +140,7 @@ MAX_BLOCKS_IN_ROW = 2
 
 
 def block(reason):
-    print(json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False))
+    emit({"decision": "block", "reason": reason})
     return True
 
 
@@ -310,8 +330,13 @@ def unicode_str(x):
 
 def main():
     try:
-        data = json.loads(sys.stdin.read() or "{}")
-    except Exception:
+        data = json.loads(RAW or u"{}")
+    except Exception as e:
+        # Единственный немой пропуск, который остаётся, и он вынужденный: без
+        # полезной нагрузки неизвестны ни cwd, ни роль, а блокировать вслепую
+        # значит запереть любое окно проекта. Но след оставляем.
+        log_escape(os.environ.get("CLAUDE_PROJECT_DIR") or u".",
+                   u"вход хука не разобран (%s) — ход пропущен вслепую" % e)
         return 0
 
     if data.get("stop_hook_active"):
@@ -418,5 +443,62 @@ def main():
     return 0
 
 
+def crashed(exc):
+    u"""ХУК УПАЛ — и это обязано быть громким.
+
+    ПРЕДУПРЕЖДЕНИЕ ИНТЕГРАТОРА (2026-09-18, к приёмке Ш.3): проверять надо не
+    только поломку ИСТОЧНИКА данных, но и поломку САМОГО скрипта — исключение,
+    битый JSON, отсутствующий python. У него в тот день фикс прошёл самотест и
+    всё равно молча ушёл в запасную ветку на кириллическом пути.
+
+    Почему это опаснее отказа источника: отказ источника снимок хотя бы
+    называет (`ok: false`), а упавший скрипт не говорит НИЧЕГО — Claude Code
+    видит ненулевой код возврата и пустой stdout и пропускает ход. Хук,
+    молчащий при поломке, неотличим от снятого, и заметить это нельзя ничем.
+    Поэтому падение превращается в блокировку с именем ошибки и местом.
+
+    Запереть окно это не может: на следующем заходе Claude Code ставит
+    `stop_hook_active`, и он читается ЗДЕСЬ, из сырого входа, — то есть до
+    любого кода, который мог упасть.
+    """
+    import traceback
+    where = u"?"
+    try:
+        tb = traceback.extract_tb(sys.exc_info()[2])
+        if tb:
+            where = u"%s:%s" % (os.path.basename(tb[-1][0]), tb[-1][1])
+    except Exception:
+        pass
+    cwd = os.environ.get("CLAUDE_PROJECT_DIR") or u"."
+    active = False
+    try:
+        payload = json.loads(RAW or u"{}")
+        cwd = payload.get("cwd") or cwd
+        active = bool(payload.get("stop_hook_active"))
+    except Exception:
+        pass
+    text = u"ХУК УПАЛ: %s в %s (%s)" % (type(exc).__name__, where, exc)
+    log_escape(cwd, text + (u" — повтор, пропускаем" if active else u""))
+    if active:
+        return 0
+    block(
+        u"%s. Это не разрешение остановиться: хук не смог проверить причину, а "
+        u"молчащий страж неотличим от снятого. Либо закончи ход законным кодом и "
+        u"он пройдёт следующим заходом, либо почини хук — след в "
+        u"`target/.stop-guard/escapes.log`." % text
+    )
+    return 0
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    # Вход читается ДО всего, что может упасть: обработчику падения он нужен,
+    # чтобы увидеть `stop_hook_active` и не запереть окно повтором блокировки.
+    try:
+        RAW = sys.stdin.read() or u"{}"
+    except Exception:
+        RAW = u"{}"
+    try:
+        rc = main()
+    except BaseException as exc:  # намеренно ВСЁ, включая SystemExit из main
+        rc = crashed(exc)
+    sys.exit(rc)
