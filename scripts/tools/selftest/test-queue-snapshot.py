@@ -192,7 +192,25 @@ def c_integrator():
     return (d["role"] == u"integrator" and d["ok"] is True), u"role=%s" % d["role"]
 
 
+R_ASSISTANT = run_snapshot({"NOVA_WINDOW_ROLE": "assistant"})
+
+
+def c_assistant():
+    u"""Очередь помощника — его НЕЗАКОММИЧЕННОЕ, и только оно.
+
+    Слияние его ветки — пункт очереди ИНТЕГРАТОРА, и если он попадёт и сюда,
+    помощник не сможет остановиться никогда — тот же тупик, из которого
+    сегодня вывели Карину."""
+    d = R_ASSISTANT["data"]
+    if d is None:
+        return False, u"снимок не написан"
+    keys = set((d.get("sources") or {}).keys())
+    return ((d["ok"] is True and keys == {"uncommitted"}),
+            u"ok=%s, источники %s" % (d["ok"], sorted(keys)))
+
+
 cell(u"роль carina: очередь из СВОЕГО источника", c_carina)
+cell(u"роль assistant: только незакоммиченное", c_assistant)
 cell(u"роль integrator: очередь выводится", c_integrator)
 
 

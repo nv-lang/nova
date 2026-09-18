@@ -257,6 +257,24 @@ def c_escape_after_two(tmp):
     return c, False
 
 
+def c_assistant_shift_blocked(tmp):
+    u"""У помощника нет ролевой записки, значит код «смена» ему не доказуем.
+    Без этой клетки роль пропускала бы «смену» молча: `note_is_fresh` на
+    неизвестной роли возвращает отсутствие файла, и ветка вела бы себя
+    случайно."""
+    queue(tmp, {"role": "assistant", "open": []})
+    return run(tmp, [(u"Задание сделал.\n\nСТОП: смена", 0)],
+               role="assistant"), True
+
+
+def c_assistant_empty_queue_ok(tmp):
+    u"""КОНТРОЛЬ к предыдущей: законный путь помощнику ОТКРЫТ, иначе роль
+    заперта и первая клетка зеленела бы на запрете всего подряд."""
+    queue(tmp, {"role": "assistant", "open": []})
+    return run(tmp, [(u"Задание сдано, всё закоммичено.\n\n"
+                      u"СТОП: очередь-пуста", 0)], role="assistant"), False
+
+
 def c_agents_without_models(tmp):
     u"""Условие переехало из снятого v1 (2026-09-19). Без этих двух клеток
     перенос был бы словом: `check-hooks-have-selftests` считает ФАЙЛЫ, а не
@@ -285,6 +303,8 @@ def c_no_agents_no_line_needed(tmp):
 
 for n, f in [
     (u"нет кода остановки", c_no_code),
+    (u"помощник: «смена» без записки — отказ", c_assistant_shift_blocked),
+    (u"помощник: пустая очередь — законно", c_assistant_empty_queue_ok),
     (u"работа агентов без строки моделей", c_agents_without_models),
     (u"работа агентов со строкой моделей", c_agents_with_models),
     (u"агентов не было — строка не нужна", c_no_agents_no_line_needed),
@@ -374,7 +394,64 @@ def _t_card_mine():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-for _name, _fn in ((u"визитка ЧУЖОЙ сессии: роль не моя, хук молчит", _t_card_foreign),
+def _assistant_tree(owner_sid):
+    u"""Дерево помощника: ветка, НЕ похожая ни на одну ролевую, плюс визитка."""
+    tmp = tempfile.mkdtemp(prefix="assistant-card-")
+    g = os.path.join(tmp, ".git")
+    os.makedirs(g, exist_ok=True)
+    with io.open(os.path.join(g, "HEAD"), "w", encoding="utf-8") as fh:
+        fh.write(u"ref: refs/heads/research/regex-nlib\n")
+    with io.open(os.path.join(g, "nova-session-assistant.card"), "w",
+                 encoding="utf-8") as fh:
+        fh.write(u"role=assistant\nsession_id=%s\n" % owner_sid)
+    return tmp
+
+
+def _hook_detect_role(tree, sid):
+    u"""Роль СОБСТВЕННОЙ функцией хука, а не пересказом её поведения."""
+    src = io.open(HOOK, encoding="utf-8").read().replace(
+        'if __name__ == "__main__":', "if False:")
+    mod = {}
+    old = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    had_role = os.environ.pop("NOVA_WINDOW_ROLE", None)
+    os.environ["CLAUDE_CODE_SESSION_ID"] = sid
+    try:
+        exec(compile(src, HOOK, "exec"), mod)
+        return mod["detect_role"](tree)
+    finally:
+        if old is None:
+            os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+        else:
+            os.environ["CLAUDE_CODE_SESSION_ID"] = old
+        if had_role is not None:
+            os.environ["NOVA_WINDOW_ROLE"] = had_role
+
+
+def _t_assistant_card_names_role():
+    u"""Помощник работает в `research/...` — ни одно правило ветки его не
+    берёт, и до 2026-09-19 он получал `none`, то есть был невидим стражу
+    целиком. Заметил владелец."""
+    tmp = _assistant_tree("MOY-ID")
+    try:
+        return _hook_detect_role(tmp, "MOY-ID") == u"assistant"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _t_assistant_card_foreign():
+    u"""Чужая визитка роли НЕ даёт: иначе окно наследовало бы роль соседа по
+    общему `.git`, и пара выше зеленела бы на правиле «роль есть у всех»."""
+    tmp = _assistant_tree("CHUZHOY-ID")
+    try:
+        return _hook_detect_role(tmp, "MOY-ID") == u"none"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+for _name, _fn in ((u"визитка НАЗЫВАЕТ роль помощника на чужой ветке",
+                    _t_assistant_card_names_role),
+                   (u"чужая визитка помощника роли не даёт", _t_assistant_card_foreign),
+                   (u"визитка ЧУЖОЙ сессии: роль не моя, хук молчит", _t_card_foreign),
                    (u"визитка МОЕЙ сессии: роль моя, молчание блокируется", _t_card_mine)):
     try:
         _got = _fn()

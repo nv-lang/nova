@@ -388,10 +388,55 @@ def role_belongs_to_me(cwd, role):
     return True
 
 
+def card_role(cwd):
+    u"""Роль ИЗ ВИЗИТКИ — до всякой ветки.
+
+    До 2026-09-19 визитка только ПОДТВЕРЖДАЛА роль, угаданную по ветке, и
+    из-за этого целый класс окон был невидим стражу: ПОМОЩНИК работает в
+    произвольной ветке (`research/...`), под правило ветки не попадает и
+    получает `none`, то есть право молча закончить ход чем угодно. Заметил
+    владелец. Лечится тем же приёмом, которым лечилась роль вообще: ветка
+    УГАДЫВАЕТ, визитка РЕШАЕТ — значит визитка и должна уметь роль назвать.
+
+    Читается только визитка, НАЗЫВАЮЩАЯ ЭТУ сессию: чужая карточка роли не
+    даёт, иначе окно наследовало бы роль соседа по общему `.git`.
+    """
+    sid = (os.environ.get("CLAUDE_CODE_SESSION_ID") or u"").strip()
+    if not sid:
+        return u""
+    g = common_git_dir(cwd)
+    if not g:
+        return u""
+    try:
+        names = os.listdir(g)
+    except Exception:
+        return u""
+    for n in sorted(names):
+        if not (n.startswith(u"nova-session-") and n.endswith(u".card")):
+            continue
+        role = n[len(u"nova-session-"):-len(u".card")].strip().lower()
+        if not role:
+            continue
+        try:
+            with io.open(os.path.join(g, n), encoding="utf-8",
+                         errors="replace") as fh:
+                for line in fh:
+                    if line.startswith(u"session_id="):
+                        if line.split(u"=", 1)[1].strip() == sid:
+                            return role
+                        break
+        except Exception:
+            continue
+    return u""
+
+
 def detect_role(cwd):
     env = (os.environ.get("NOVA_WINDOW_ROLE") or u"").strip().lower()
     if env:
         return env
+    card = card_role(cwd)
+    if card:
+        return card
     br = current_branch(cwd).lower()
     if not br:
         return u"none"
@@ -521,7 +566,18 @@ def main():
                 )
 
     elif code == u"смена":
-        if not note_is_fresh(cwd, role):
+        if role not in ROLE_NOTE:
+            # Роль без записки (помощник) смену не сдаёт: его передача — это
+            # ДОКЛАД ведущему окну плюс закоммиченная работа. Пускать сюда
+            # значило бы принять код, доказательства которому не существует.
+            ok, reason = False, (
+                u"Код «смена» у роли «%s» не доказуем: ролевой записки у неё нет. "
+                u"Помощник сдаёт не смену, а ЗАДАНИЕ: закоммить работу и доложи "
+                u"ведущему окну, тогда законный код — «СТОП: очередь-пуста»: "
+                u"снимок проверит, что незакоммиченного не осталось."
+                % role
+            )
+        elif not note_is_fresh(cwd, role):
             ok, reason = False, (
                 u"Код «смена» без сданной смены: ролевая записка (%s) не обновлялась "
                 u"последние %d минут. Сдача смены — это ЗАПИСЬ, а не слово: выполни "

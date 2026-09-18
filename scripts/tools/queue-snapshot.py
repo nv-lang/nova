@@ -351,6 +351,28 @@ SUBPLAN_CLOSED_WORDS = (
 CARINA_SUBPLAN_NUMBERS = tuple(u"274.%d" % n for n in range(1, 10))
 
 
+def source_uncommitted(tree, state):
+    u"""Очередь помощника = незакоммиченное в ЕГО дереве.
+
+    Роль помощника до 2026-09-19 стражем не судилась вовсе: он работает в
+    произвольной ветке и получал `none`, то есть право закончить ход чем
+    угодно. Заметил владелец.
+
+    Почему именно незакоммиченное, а не «слить мою ветку»: слияние — пункт
+    очереди ИНТЕГРАТОРА, и он там уже есть (`unmerged_branches`). Помощнику
+    же принадлежит ровно одно обязательство перед остановкой: работа не
+    брошена на полдороге в рабочей копии. Наполовину сделанный файл, о
+    котором никто не знает, — это то, что теряется при перезапуске окна.
+    """
+    argv = [u"git", u"-C", tree, u"status", u"--porcelain"]
+    st, out, why = run(argv, tree)
+    if st != u"ok":
+        state.fail(st, u"незакоммиченное", shell_form(argv), why)
+        return {u"value": None, u"cmd": shell_form(argv), u"files": []}
+    names = [l[3:].strip() for l in (out or u"").splitlines() if l.strip()]
+    return {u"value": len(names), u"cmd": shell_form(argv), u"files": names}
+
+
 def source_carina_subplans(tree, state):
     u"""Очередь роли carina = её подпланы, не объявленные закрытыми.
 
@@ -442,7 +464,7 @@ class State(object):
 # Источники, из которых собирается `open`. `blockers` СЮДА НЕ ВХОДИТ — см.
 # build_open.
 QUEUE_SOURCES = (u"mirrors_behind", u"unmerged_branches",
-                 u"carina_subplans")
+                 u"carina_subplans", u"uncommitted")
 
 
 def build_open(sources):
@@ -466,6 +488,8 @@ def build_open(sources):
         items.append(u"слить ветку %s" % br)
     for num in (sources.get(u"carina_subplans") or {}).get(u"plans") or []:
         items.append(u"подплан %s не закрыт" % num)
+    for f in (sources.get(u"uncommitted") or {}).get(u"files") or []:
+        items.append(u"незакоммичено: %s" % f)
     return items
 
 
@@ -529,6 +553,10 @@ def snapshot(tree, produced_by):
     if role == u"carina":
         jobs = [
             (u"carina_subplans", lambda: source_carina_subplans(tree, state)),
+        ]
+    elif role == u"assistant":
+        jobs = [
+            (u"uncommitted", lambda: source_uncommitted(tree, state)),
         ]
     else:
         jobs = [
