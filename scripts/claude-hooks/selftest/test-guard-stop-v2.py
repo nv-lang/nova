@@ -172,6 +172,20 @@ def c_shift_without_note(tmp):
     return run(tmp, [(u"Ухожу.\n\nСТОП: смена", 0)]), True
 
 
+def c_snapshot_failed_passes_with_escape(tmp):
+    # ТРЕТЬЕ УСЛОВИЕ ИНТЕГРАТОРА: снимок сам себя объявил неполным —
+    # окно пропускается (чужую сеть оно не починит), но побег обязан лечь в лог:
+    # «не смог посчитать» не имеет права выглядеть пустой очередью.
+    queue(tmp, {"role": "integrator", "ok": False,
+                "failed_sources": [u"gitverse: нет сети"], "open": []})
+    res = run(tmp, [(u"Всё.\n\nСТОП: очередь-пуста", 0)])
+    log = os.path.join(tmp, "target", ".stop-guard", "escapes.log")
+    assert os.path.exists(log), u"побег не записан в лог"
+    with io.open(log, encoding="utf-8") as fh:
+        assert u"gitverse" in fh.read(), u"в логе не назван сломавшийся источник"
+    return res, False
+
+
 def c_escape_after_two(tmp):
     queue(tmp, {"role": "integrator", "open": [u"пункт"]})
     t = [(u"Всё.\n\nСТОП: очередь-пуста", 0)]
@@ -199,6 +213,7 @@ for n, f in [
     (u"прерывание владельца пропускается", c_interrupt_passes),
     (u"смена сдана: записка свежая", c_shift_with_note),
     (u"смена объявлена, записка трёхчасовой давности", c_shift_without_note),
+    (u"снимок ok=false: пропуск + побег в лог", c_snapshot_failed_passes_with_escape),
     (u"третья блокировка подряд пропускается", c_escape_after_two),
 ]:
     case(n, f)

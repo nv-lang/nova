@@ -207,10 +207,21 @@ def log_escape(cwd, text):
 
 
 def check_queue(cwd):
-    u"""(ok, причина-отказа). Снимок отсутствует/просрочен/непуст — не ok."""
+    u"""(ok, причина-отказа, побег). Снимок отсутствует/просрочен/непуст — не ok.
+
+    ТРЕТЬЕ УСЛОВИЕ ИНТЕГРАТОРА (2026-09-18, приёмка Ш.2): отказ снимка НЕ ИМЕЕТ
+    ПРАВА выглядеть пустой очередью. Различаются два «плохо», и это не одно и то же:
+
+    * снимка нет или он просрочен — окно способно починить это САМО, одной
+      командой, поэтому блокируем и говорим какой;
+    * снимок есть, но сам себя объявил неполным (`ok: false` — не достучались до
+      зеркала, не ответил `gh`) — окно починить это НЕ может. Блокировать значит
+      запереть его за чужую сеть. Пропускаем, но пишем ПОБЕГ в лог: «не смог
+      посчитать» обязан быть громким, а не выглядеть разрешением стоять.
+    """
     p = os.path.join(cwd or ".", "target", "queue.json")
     if not os.path.exists(p):
-        return False, (
+        return False, u"", (
             u"Код «очередь-пуста» ничем не подтверждён: снимка `target/queue.json` нет. "
             u"Сними его — `python scripts/tools/queue-snapshot.py .` — и либо останови "
             u"ход с доказанным пустым снимком, либо бери из него следующий пункт."
@@ -221,14 +232,20 @@ def check_queue(cwd):
             u"Снимку очереди %d мин, порог %d. Устаревший снимок доказательством "
             u"не считается: обнови `python scripts/tools/queue-snapshot.py .`."
             % (int(age // 60), QUEUE_MAX_AGE_SEC // 60)
-        )
+        ), u""
     try:
         with io.open(p, encoding="utf-8") as fh:
             q = json.load(fh)
     except Exception as e:
-        return False, u"Снимок очереди не читается (%s) — обнови его." % e
+        return False, u"Снимок очереди не читается (%s) — обнови его." % e, u""
+    if q.get("ok") is False:
+        bad = q.get("failed_sources") or [u"источник не назван"]
+        return True, u"", (
+            u"Снимок очереди НЕПОЛЕН (ok=false): %s. Остановка пропущена, "
+            u"но пустой очередью это НЕ считается." % u"; ".join(unicode_str(b) for b in bad)
+        )
     if q.get("role") == "none":
-        return True, u""
+        return True, u"", u""
     items = q.get("open") or []
     if items:
         head = u"; ".join(unicode_str(i) for i in items[:5])
@@ -237,8 +254,8 @@ def check_queue(cwd):
             u"Очередь НЕ пуста: %d пункт(ов) — %s%s. Бери следующий сейчас, в этом "
             u"же ходе. Если пункт больше не нужен — сними его в снимке и объясни "
             u"строкой, а не молчанием." % (len(items), head, more)
-        )
-    return True, u""
+        ), u""
+    return True, u"", u""
 
 
 def current_branch(cwd):
@@ -352,7 +369,9 @@ def main():
     reason = u""
 
     if code == u"очередь-пуста":
-        ok, reason = check_queue(cwd)
+        ok, reason, escape = check_queue(cwd)
+        if escape:
+            log_escape(cwd, escape)
 
     elif code == u"вопрос":
         if u"?" not in tail:
