@@ -64,12 +64,26 @@ import ../types.{TyId, no_ty, is_ty, Interner}
 // monomorphisations of one `Option[ConstRow]` stop matching:
 //   assigning to `NovaOpt_nova_int` from incompatible type `NovaOpt_Nova_ConstRow_p`
 //
-// WHAT THAT MEANS FOR WHOEVER REMOVES THIS. The condition is not "the oracle
-// stopped boxing newtypes in sum arms" but "two peers no longer disagree about
-// one `Option[T]` because of their ORDER". A fixture that does not NAME the
-// order is green or red by how its files were named, not by what was fixed --
-// which is how the integrator's three probes all passed while this carrier
-// still fails. Removal is proved by MOVING the rows and building, nothing less.
+// WHAT THAT MEANS FOR WHOEVER REMOVES THIS. Order is what FLIPS this carrier --
+// that much is measured. It is NOT the whole cause, and the correction is
+// worth more than the finding: the integrator then built four minimal probes,
+// one of them with the order set the BAD way (consumer peer sorting before the
+// declaring peer, two consumers of `Option[Row]`, methods as well as free
+// functions), and ALL FOUR PASSED. So order plus two consumers is not
+// sufficient; something else in this module takes part, and naming it now
+// would be a guess dressed as a measurement.
+//
+// Unchecked candidates, listed so the next attempt starts where this one
+// stopped rather than at the beginning: the NUMBER of peers (dozens here
+// against two in the probe), a transitive import through a third file, and
+// `Option[ConstRow]` standing in a record FIELD rather than only in returns.
+//
+// The state is therefore: a CARRIER exists and reproduces with one edit, an
+// EXPLANATION exists for what flips it, and a MINIMAL FORM does not. That is a
+// worse record than a minimal form and a better one than an invented minimal
+// form that passes. Removal is proved by MOVING the rows and building, nothing
+// less -- a fixture that does not NAME the file order is green or red by how
+// its files were called.
 
 /// THE row of a module-level constant in `Ctx.consts` (274.5 wave B2).
 ///
