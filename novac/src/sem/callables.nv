@@ -49,6 +49,27 @@ import ../types.{TyId, no_ty, is_ty, Interner}
 // So this POSITION is a workaround under [LEGACY-#761-newtype-order-in-sum-arm],
 // not a decision about where the type belongs. When the oracle stops caring
 // about declaration order, it moves next to `VariantDef`.
+//
+// THE AXIS, MEASURED 2026-09-18 -- and it is NOT the sum arm, which is what the
+// paragraphs above guessed. Three runs differing in ONE factor, the file that
+// declares `ConstRow`, everything else untouched:
+//   binding.nv   (sorts 1st) -> build EXIT 0
+//   callables.nv (3rd, here) -> build EXIT 0
+//   defs.nv      (7th)       -> build EXIT 1, three C errors
+// Peers are processed SORTED (`files.sort()`, nova-cli/src/main.rs:2119), and
+// `Option[ConstRow]` is returned from TWO of them -- channel.nv (4th) and
+// defs.nv (7th). While the declaration sorts before channel.nv both consumers
+// see the real newtype and emit `NovaOpt_nova_int`; move it after, and the
+// earlier consumer meets the type undeclared, boxes it, and the two
+// monomorphisations of one `Option[ConstRow]` stop matching:
+//   assigning to `NovaOpt_nova_int` from incompatible type `NovaOpt_Nova_ConstRow_p`
+//
+// WHAT THAT MEANS FOR WHOEVER REMOVES THIS. The condition is not "the oracle
+// stopped boxing newtypes in sum arms" but "two peers no longer disagree about
+// one `Option[T]` because of their ORDER". A fixture that does not NAME the
+// order is green or red by how its files were named, not by what was fixed --
+// which is how the integrator's three probes all passed while this carrier
+// still fails. Removal is proved by MOVING the rows and building, nothing less.
 
 /// THE row of a module-level constant in `Ctx.consts` (274.5 wave B2).
 ///
