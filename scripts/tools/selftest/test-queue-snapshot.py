@@ -222,23 +222,29 @@ SYNTH = {
 }
 
 
-def c_open_from_all_three():
-    items = snapmod.build_open(SYNTH, {11: u"первый", 22: u"второй"})
+def c_open_from_queue_sources():
+    items = snapmod.build_open(SYNTH)
     text = u" | ".join(items)
-    return (len(items) == 4 and u"gitverse" in text and u"p999-probe" in text
-            and u"11" in text and u"22" in text), u"пунктов %d из трёх источников" % len(items)
+    return (len(items) == 2 and u"gitverse" in text and u"sourcecraft" in text
+            and u"p999-probe" in text), u"пунктов %d из обоих очередных" % len(items)
 
 
-def c_open_empty_when_nothing():
-    items = snapmod.build_open(
-        {u"mirrors_behind": {u"value": 0, u"behind": []},
-         u"unmerged_branches": {u"value": 0, u"branches": []},
-         u"blockers": {u"value": 0, u"numbers": []}}, {})
-    return (items == []), u"пусто при нулевых источниках"
+def c_blockers_not_a_queue():
+    u"""Вердикт интегратора 2026-09-18, сверено по плану 274: поле `БЛОКИРУЕТ
+    ТЕГ` осталось от мёртвого события, и как ОЧЕРЕДЬ счёт лжив — «73 открытых
+    пункта» прочтётся как работа, которой нет. Как храповик он остаётся в
+    `sources`, и эта клетка стережёт ровно границу между двумя предметами."""
+    only_blockers = {
+        u"mirrors_behind": {u"value": 0, u"behind": []},
+        u"unmerged_branches": {u"value": 0, u"branches": []},
+        u"blockers": {u"value": 73, u"numbers": [11, 22]},
+    }
+    items = snapmod.build_open(only_blockers)
+    return (items == []), u"73 блокера не стали очередью"
 
 
-cell(u"open собран из ВСЕХ трёх источников", c_open_from_all_three)
-cell(u"open пуст, когда источники пусты", c_open_empty_when_nothing)
+cell(u"open собран из ОБОИХ очередных источников", c_open_from_queue_sources)
+cell(u"blockers в open НЕ попадает (храповик, не очередь)", c_blockers_not_a_queue)
 
 
 # --------------------------------------------------------------------------
