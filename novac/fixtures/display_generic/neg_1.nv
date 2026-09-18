@@ -1,0 +1,35 @@
+module display_generic.neg_1
+
+// AN `Option[int]` IN A SLOT IS STILL REFUSED, and this cell exists because
+// making `Vec` work almost made this one CRASH instead.
+//
+// THE MEASUREMENT THAT PUT THIS FILE HERE. The first version of the B1b-3
+// change simply let a generic instance reach the method lookup, since the
+// resolver finds a row for `Option`'s display just as it does for `Vec`'s.
+// novac then accepted the slot -- zero diagnostics -- and died in emission:
+//     internal compiler error (novac bug, not yours): mangle: an instance of a
+//     generic SUM has the oracle's family spelling (NovaOpt_/NovaRes_)
+// An ICE is strictly worse than a refusal: a refusal names which form is not
+// compiled yet, an ice says the compiler is broken and tells the reader nothing
+// about their program.
+//
+// So the judge now asks TWO further questions of an instance, each about the
+// thing it names: can novac SPELL it (only a record head -- `instance_body`
+// ices on a generic sum), and does the SHELL CARRY the symbol (a row found by
+// the resolver proves the SIGNATURE exists, never the FUNCTION). `Option` fails
+// both, and fails them as a NAMED subset refusal.
+//
+// The differential judges `pos_*` only, so this file asserts novac's refusal
+// rather than agreement with the oracle -- which accepts and prints `Some(5)`.
+
+fn pick(f bool) -> Option[int] {
+    if f {
+        return Some(5)
+    }
+    None
+}
+
+fn main() {
+    ro o = pick(true)
+    println("${o}")
+}

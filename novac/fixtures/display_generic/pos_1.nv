@@ -1,0 +1,25 @@
+module display_generic.pos_1
+
+// A GENERIC INSTANCE IN A SLOT (274.7 B1b-3): `Vec[int]` printed through the
+// `@display` the SHELL carries, not through anything novac emits itself.
+//
+// THREE ELEMENTS AND NOT ONE, deliberately: the separator between them is part
+// of the form std's own example asserts (`collections/vec/protocols.nv:192`
+// gives `"Vec[1, 2, 3]"`), and a one-element vector keeps a shape that never
+// prints a separator at all.
+//
+// WHY THIS IS THE ONE GENERIC THAT WORKS TODAY, and the fixture says it so the
+// next reader does not try the others and conclude the wave is broken. An
+// instance method reaches novac only through the shell's interop surface, and
+// the surface is whatever the probe kept alive. Measured 2026-09-18 after the
+// probe was grown: the shell defines `Vec____nova_int_method_display`, which is
+// exactly the name `instance_body` builds for a RECORD head -- while
+// `NovaOpt_*_method_display` and `NovaRes_*_method_display` are absent
+// entirely, and novac could not spell them anyway (`instance_body` ices on a
+// generic SUM by design). So `Option` and `Result` stay refused, by name, and
+// that refusal is asserted in `neg_1` beside this file.
+
+fn main() {
+    ro v = []int.of(1, 2, 3)
+    println("${v}")
+}

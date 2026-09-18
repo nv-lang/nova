@@ -30,6 +30,8 @@ import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
 import ../builtins.{EQUAL_METHOD, DISPLAY_PROTO}
 import ../sem.{gate_names, field_range_of, raw_frow}
+import ../sem.{c_method_symbol}
+import ../builtins.{DISPLAY_METHOD}
 import ../sem.{raw_crow}
 import ../sem.{variant_range_of, VariantRow, variants_named, variant_named_in}
 import ../resolve.{FnLookup}
@@ -125,6 +127,29 @@ fn Checker mut @judge_qualified_payload(e Node, kids []Node, vt Token, vrow Vari
 ///
 /// The answer is a REFUSAL when unsure, never a guess: a wrong shape here is
 /// wrong BYTES in stdout, which the differential reads as a divergence.
+/// May this slot take a GENERIC INSTANCE's `@display` (274.7 B1b-3)?
+///
+/// A plain type always may -- the question is only about `TkApp`. Two
+/// conditions, and neither is a matter of taste:
+///
+///  1. the head is a RECORD. `instance_body` (`sem/mangle.nv:514`) ICES on a
+///     generic SUM, saying the oracle's family spelling (`NovaOpt_`/`NovaRes_`)
+///     arrives with its own wave -- so taking one here turns a named refusal
+///     into a compiler crash;
+///  2. the SHELL carries the symbol. An instance method reaches novac only
+///     through the interop surface, and a row found by the resolver says the
+///     SIGNATURE exists, not that the FUNCTION does. Measured 2026-09-18: the
+///     shell carries `Vec____nova_int_method_display` and nothing for
+///     `Option`/`Result`.
+///
+/// A row with a body of OURS needs neither: we emit it ourselves.
+fn Checker @instance_display_ok(t TyId, row FnRow) -> bool {
+    if @ctx.tys.kind_of(t) != TypeKind.TkApp { return true } else {}
+    if @ctx.fns.compiles_body(row) { return true } else {}
+    if decl_of_ty(@ctx, t).kind != TypeKind.TkRecord { return false } else {}
+    @ctx.interop.has(c_method_symbol(@ctx, t, DISPLAY_METHOD))
+}
+
 fn Checker @synth_display_ok(t TyId) -> bool {
     if @ctx.tys.kind_of(t) != TypeKind.TkRecord { return false } else {}
     ro td = decl_of_ty(@ctx, t)
@@ -392,10 +417,16 @@ fn Checker mut @type_expr(e Node) -> () {
                     // not claim the type: refusing is the honest answer, and
                     // `c_callable` with an empty substitution would be a wrong
                     // program.
-                    if @ctx.tys.kind_of(st) == TypeKind.TkApp {
-                        @report_first_leaf_of(ikids, INTERP_TYPE_MSG)
-                        return
-                    }
+                    // A GENERIC INSTANCE IS ASKED THE SAME QUESTION AS ANY
+                    // OTHER TYPE, and only then refused (274.7 B1b-3). Until
+                    // 2026-09-18 the refusal stood BEFORE the lookup, which
+                    // made "novac cannot spell this instance" and "this type
+                    // has no display" the same answer -- and they are not:
+                    // `Vec[int]`'s method IS in the shell and IS spellable,
+                    // while `Option`/`Result` are held by two other things.
+                    // The instance's TYPE ARGUMENTS travel with the decision,
+                    // because the emitter needs them for the symbol: an empty
+                    // substitution would name a function that does not exist.
                     match @display_row_of(@display_key_of(st)) {
                         None => {
                             // NO METHOD OF ITS OWN -- so the GATE decides
@@ -415,14 +446,49 @@ fn Checker mut @type_expr(e Node) -> () {
                             }
                         }
                         Some(row) => {
+                            // FOUND A ROW IS NOT ENOUGH FOR AN INSTANCE, and the
+                            // measurement that put this line here is worth keeping:
+                            // with only the lookup, `${Some(1)}` stopped being a
+                            // NAMED REFUSAL and became an ICE -- `mangle: an
+                            // instance of a generic SUM has the oracle's family
+                            // spelling`. An ice is worse than a refusal: the
+                            // refusal says which form is not read yet, the ice
+                            // says the compiler is broken. Two conditions, each
+                            // asked of the thing it is about:
+                            //   * novac must be able to SPELL the instance --
+                            //     `instance_body` ices on a generic sum by design,
+                            //     so only a RECORD head is taken (274.7 B1b-3);
+                            //   * the shell must CARRY the symbol -- the surface
+                            //     is what the probe kept alive, and a name the
+                            //     linker cannot find is a wrong program.
+                            if !@instance_display_ok(st, row) {
+                                @report_first_leaf_of(ikids, INTERP_TYPE_MSG)
+                                return
+                            } else {
+                                // Spellable and present.
+                            }
                             @record(c, st)
+                            // THE SUBSTITUTION IS THE INSTANCE'S OWN ARGUMENTS
+                            // when the slot's type is an application, and empty
+                            // otherwise. One line, because the emitter asks the
+                            // channel rather than re-deriving: `c_callable` with
+                            // an empty substitution on an instance names a symbol
+                            // the shell does not carry.
+                            mut targs = []TyId.new()
+                            if @ctx.tys.kind_of(st) == TypeKind.TkApp {
+                                for i in 0..@ctx.tys.arg_count(st) {
+                                    targs.push(@ctx.tys.arg(st, i))
+                                }
+                            } else {
+                                // A plain type substitutes nothing.
+                            }
                             // The slot's own value may be a call (`${f()}`), so the
                             // display it triggers goes to the channel's IMPLICIT
                             // table, not to the node's `res` (which the bare-name
                             // emitter reads for variant values -- the ICE the first
                             // carrier hit).
                             @chan.record_implicit(c.id_of(), CalleeTarget.CalleeFn(row),
-                                []TyId.new(), identity_slots(1))
+                                targs, identity_slots(1))
                         }
                     }
                 }
