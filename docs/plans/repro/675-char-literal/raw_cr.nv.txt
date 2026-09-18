@@ -1,0 +1,6 @@
+// Проба №675 (е): char-литерал с СЫРЫМ CR внутри.
+module p675_raw_cr
+fn main() Io -> () {
+    ro c = ''
+    println("code=${c as int}")
+}

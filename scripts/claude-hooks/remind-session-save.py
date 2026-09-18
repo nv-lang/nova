@@ -43,12 +43,39 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 # каждом перезапуске): `main` — интегратор, ветка Карины — окно Карины.
 # Незнакомая ветка — молчим, и это не дыра: у пакетных окон своя передача
 # (`/stop`), а выдумывать им адресата хук не вправе.
+# Ключ таблицы — ВЕТКА, и этого хватает не всем ролям: контролёр пушей
+# (`/push-controller`) работает в ГЛАВНОМ дереве, то есть на `main`, как и
+# интегратор. По ветке они неразличимы, и до правки 2026-09-18 контролёр
+# получал напоминание про ЧУЖУЮ записку — то есть указание, исполнить которое
+# он не мог, не испортив чужой файл. Роль такого окна берётся ВИЗИТКОЙ (см.
+# role_from_card ниже): визитка несёт `session_id`, и сопоставление идёт по
+# нему, а не по имени сессии — имя меняется при каждом перезапуске.
 ROLES = (
     ("main", os.path.join("docs", "dev", "prompts", "integrator-handoff.md"),
      "/save", "ЗАПИСКА ИНТЕГРАТОРА"),
     ("p274-novac", os.path.join("docs", "dev", "prompts", "carina-handoff.md"),
      "/save", "ЗАПИСКА ОКНА КАРИНЫ"),
 )
+
+# ВИЗИТКА НАЗЫВАЕТ РОЛЬ ПРЯМО, и потому решает для ВСЕХ ролей, а не только для
+# тех, кого не различает ветка. Вторая причина слепоты ветки найдена окном
+# Карины 2026-09-18 и она отдельная: у окна, работающего в WORKTREE,
+# `CLAUDE_PROJECT_DIR` указывает на ГЛАВНОЕ дерево, так что ветка читается
+# оттуда — `main`, — и окно Карины получало напоминание про записку
+# ИНТЕГРАТОРА. Таблица веток при этом верна; неверен был корень, а корень хук
+# не выбирает.
+#
+# Поэтому порядок такой: визитка (роль сказана) → ветка (роль угадана по
+# дереву). Ветка остаётся запасным путём: окно могло не успеть написать
+# визитку, и тогда прежнее поведение лучше молчания.
+CARD_ROLES = {
+    "controller": (os.path.join("docs", "dev", "prompts", "controller-handoff.md"),
+                   "/save", "ЗАПИСКА КОНТРОЛЁРА"),
+    "carina": (os.path.join("docs", "dev", "prompts", "carina-handoff.md"),
+               "/save", "ЗАПИСКА ОКНА КАРИНЫ"),
+    "integrator": (os.path.join("docs", "dev", "prompts", "integrator-handoff.md"),
+                   "/save", "ЗАПИСКА ИНТЕГРАТОРА"),
+}
 MAX_AGE_SEC = 3600            # час — число владельца (план 290 п.3)
 COOLDOWN_SEC = 900            # не чаще раза в 15 минут
 
@@ -72,18 +99,137 @@ def current_branch(root):
     except Exception:
         return ""
 
+def role_from_card(root):
+    """Роль ЭТОЙ сессии по визитке в общем `.git`, либо None.
+
+    Сопоставление по `session_id`, а не по имени: имя вида `nova-NN` меняется
+    при каждом перезапуске, и визитка соседа с тем же именем увела бы
+    напоминание в чужую записку. Визитка — ПОДСКАЗКА, а не власть (решение
+    владельца 2026-09-16), и здесь этого достаточно: цена ошибки — напоминание
+    не тому окну, а не правка файла.
+    """
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "").strip()
+    if not sid:
+        return None
+    try:
+        import subprocess
+        out = subprocess.run(["git", "-C", root, "rev-parse", "--git-common-dir"],
+                             capture_output=True, text=True, timeout=10)
+        gitdir = (out.stdout or "").strip()
+        if not gitdir:
+            return None
+        if not os.path.isabs(gitdir):
+            gitdir = os.path.join(root, gitdir)
+        for name in os.listdir(gitdir):
+            if not (name.startswith("nova-session-") and name.endswith(".card")):
+                continue
+            fields = {}
+            for line in io.open(os.path.join(gitdir, name),
+                                encoding="utf-8", errors="replace"):
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    fields[k.strip()] = v.strip()
+            if fields.get("session_id") == sid:
+                return fields.get("role")
+    except Exception:
+        return None
+    return None
+
+
+def session_root():
+    """Дерево ЭТОЙ сессии, а не главное дерево проекта.
+
+    Найдено окном Карины 2026-09-18 (реестр 221.1 №1156), и замер сошёлся до
+    минуты: хук требовал `/save` через двадцать минут после того, как записка
+    была написана и закоммичена, и печатал «не обновлялась 43ч 46м» — возраст
+    КОПИИ в главном дереве, тогда как рабочая копия в `nova-p274` была свежей.
+
+    Причина названа чтением: `CLAUDE_PROJECT_DIR` указывает на ГЛАВНОЕ дерево,
+    а по `AGENTS.md` всякое окно, кроме интегратора, работает в СВОЁМ worktree.
+    Значит для целого КЛАССА адресатов напоминание было невыполнимым: сколько
+    ни сохраняйся, оно вернётся через час и замолчит только после чужого
+    слияния. Требование, которое нельзя удовлетворить, учит себя игнорировать —
+    а хук заведён ровно потому, что правило без механизма не сработало
+    (план 290 п.3).
+
+    САМ ОТВЕТ ЖИВЁТ В `hook_tree.py`: тот же вопрос задают ещё два хука, и
+    копия, написанная по памяти, не унаследует тонкость с чтением пути
+    БАЙТАМИ (см. шапку того файла).
+    """
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from hook_tree import session_root as _sr
+        return _sr()
+    except Exception:
+        return os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+
+def _branch_role_belongs_to_me(root):
+    """Ветка называет РОЛЬ, но не говорит, ЧЬЁ это окно.
+
+    Находка окна nova-1a 2026-09-18: разовое окно, работавшее в ГЛАВНОМ дереве по
+    просьбе владельца, получило напоминание «записка ИНТЕГРАТОРА не обновлялась».
+    Хук посчитал верно — ветка `main` действительно принадлежит интегратору, — и
+    всё равно адресовал не тому: у окна нет этой роли, и исполнить указание оно
+    может только испортив чужой файл.
+
+    Это ЗЕРКАЛО случая окна Карины (там роль не совпадала с веткой, здесь окно без
+    роли сидит в ветке роли), и лечится тем же: ВИЗИТКА знает `session_id` того,
+    кто роль ведёт. Если визитка роли существует и её id НЕ совпадает с моим —
+    напоминание адресовано не мне, и хук молчит.
+
+    ЕСЛИ ВИЗИТКИ НЕТ ВОВСЕ — прежнее поведение (адресация по ветке). Окно роли
+    могло не успеть её написать, и молчание тогда хуже ложного адреса: записка
+    перестала бы напоминать о себе совсем.
+    """
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "").strip()
+    if not sid:
+        return True          # id неизвестен — судить не по чему, ведём как раньше
+    try:
+        import subprocess
+        out = subprocess.run(["git", "-C", root, "rev-parse", "--git-common-dir"],
+                             capture_output=True, text=True, timeout=10)
+        gitdir = (out.stdout or "").strip()
+        if not gitdir:
+            return True
+        if not os.path.isabs(gitdir):
+            gitdir = os.path.join(root, gitdir)
+        card = os.path.join(gitdir, "nova-session-integrator.card")
+        if not os.path.isfile(card):
+            return True      # визитки роли нет — прежнее поведение
+        owner = ""
+        for line in io.open(card, encoding="utf-8", errors="replace"):
+            if line.startswith("session_id="):
+                owner = line.split("=", 1)[1].strip()
+                break
+        if not owner:
+            return True
+        return owner == sid
+    except Exception:
+        return True
+
+
 def main():
     try:
         sys.stdin.read()
     except Exception:
         pass
-    root = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    # Корень — дерево ЭТОЙ сессии: и ветка, и путь к записке обязаны браться
+    # из ОДНОГО места. Прежде ветка читалась у git, а файл — по
+    # `CLAUDE_PROJECT_DIR`, и в worktree это были разные деревья.
+    root = session_root()
     branch = current_branch(root)
     HANDOFF = CMD = TITLE = None
-    for _b, _h, _c, _t in ROLES:
-        if branch == _b:
-            HANDOFF, CMD, TITLE = _h, _c, _t
-            break
+    # ВИЗИТКА СТАРШЕ ВЕТКИ, и только в эту сторону: она называет роль прямо,
+    # тогда как ветка её лишь угадывает по дереву. Обратный порядок вернул бы
+    # контролёру записку интегратора — ровно ту ошибку, ради которой правка.
+    card = role_from_card(root)
+    if card in CARD_ROLES:
+        HANDOFF, CMD, TITLE = CARD_ROLES[card]
+    elif _branch_role_belongs_to_me(root):
+        for _b, _h, _c, _t in ROLES:
+            if branch == _b:
+                HANDOFF, CMD, TITLE = _h, _c, _t
+                break
     if HANDOFF is None:
         return 0          # роль незнакома — молчим, см. ROLES
     path = os.path.join(root, HANDOFF)

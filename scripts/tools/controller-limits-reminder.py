@@ -42,7 +42,57 @@ STAMP_ENV = "CONTROLLER_REMINDER_STAMP"
 # have been written into a tree that a forty-minute tier judges. Both are the class this role
 # hunts: the measurement kept its shape and changed what it looked at. The scratchpad is derived
 # from the environment, never from the script's own location.
+def _git_common_dir():
+    """Shared `.git` of this checkout, or None.
+
+    Registry 221.1 #1153. Every worktree of the repository shares ONE `.git`,
+    so a file placed there is visible from any tree, stays out of the index and
+    -- the point here -- is never touched by the operating system's temp
+    cleanup. Session cards already live there for exactly this reason.
+    """
+    try:
+        import subprocess
+        out = subprocess.run(["git", "rev-parse", "--git-common-dir"],
+                             capture_output=True, text=True, timeout=10,
+                             cwd=HERE)
+        d = (out.stdout or "").strip()
+        if not d:
+            return None
+        if not os.path.isabs(d):
+            d = os.path.join(HERE, d)
+        return d if os.path.isdir(d) else None
+    except Exception:
+        return None
+
+
 def _state_dir():
+    """Where this role keeps its clock.
+
+    THE SHARED `.git` COMES FIRST, and that is registry 221.1 #1153 rather than
+    a preference. The stamp used to live under `%TEMP%`, and it VANISHED TWICE
+    in two days: once with the system drive full (9.8 MB free of 476 GB, which
+    invites Windows to clear temp), and once again on 2026-09-18 with 184 GB
+    free -- so a full disk was never the whole cause, and waiting for it to be
+    the cause would have been waiting forever.
+
+    The loss is SILENT, which is the expensive part: the tool does not crash, it
+    simply restarts its clock, and the owner's once-an-hour schedule begins to
+    lie in both directions with nobody the wiser. That is the shape this role
+    exists to hunt -- a measurement that kept its form and changed what it
+    watches.
+
+    The scratchpad stays SECOND: when a session provides one, it is explicitly
+    session-scoped and the caller asked for it. Temp directories remain last,
+    as a fallback for a checkout that is not a git tree at all.
+    """
+    g = _git_common_dir()
+    if g:
+        d = os.path.join(g, "controller-reminder")
+        try:
+            os.makedirs(d, exist_ok=True)
+            return d
+        except OSError:
+            pass
     for var in ("CLAUDE_SCRATCHPAD", "CLAUDE_SCRATCHPAD_DIR", "TMPDIR", "TEMP", "TMP"):
         v = os.environ.get(var)
         if v and os.path.isdir(v):
@@ -204,7 +254,7 @@ def declared_role(sid):
     return ""
 
 
-CARINA_PLAN = os.path.join("docs", "plans", "221.3-oracle-blocks-carina.md")
+CARINA_PLAN = os.path.join("docs", "plans", "274.10-oracle-tax-on-carina.md")
 # ONE home for "who is this session": the same declared map the verdict reads for trees.
 TREE_MAP_PATH = os.path.join(STATE_DIR, "tree-map.json")
 
@@ -219,21 +269,18 @@ def carina_block(rows, age_min, err):
     if err:
         state = "СОСТОЯНИЕ ФАЙЛА НЕ СНЯТО: %s. Это неизвестность, а не «всё в порядке»." % err
     else:
-        state = ("ЗАМЕР на момент письма, и только он: строк в виде — %d, файл тронут %.0f минут "
-                 "назад. Долг файла назван в нём самом, разделом «Поправка 2026-09-15» — сверку "
-                 "строк с полем «БЛОКИРУЕТ ТЕГ: ДА» против четырёх признаков Карины он объявляет "
-                 "НЕ СДЕЛАННОЙ ни разу; числа оттуда я не переношу сюда намеренно, они устареют "
-                 "молча, а файл у вас под рукой." % (rows, age_min))
+        state = ("ЗАМЕР на момент письма, и только он: строк в файле — %d, файл тронут %.0f минут "
+                 "назад. Числа оттуда я не переношу сюда намеренно, они устареют молча, а файл у "
+                 "вас под рукой." % (rows, age_min))
     return (
         "ВТОРАЯ ТЕМА, ЗАКАЗ ВЛАДЕЛЬЦА 2026-09-15, ежечасно и только вам: ВЕДИТЕ блокеры Карины "
-        "в `docs/plans/221.3-oracle-blocks-carina.md`, ПРИОРИТИЗИРУЙТЕ их и ЗАКРЫВАЙТЕ — и на "
+        "в `docs/plans/274.10-oracle-tax-on-carina.md`, ПРИОРИТИЗИРУЙТЕ их и ЗАКРЫВАЙТЕ — и на "
         "эту работу распространяется `/delegate` дословно: перечисления, сверки и инвентари "
-        "(например «какие из 67 строк проходят по четырём признакам») отдаются самой дешёвой "
-        "модели, которая справится, а суждение «блокирует Карину или нет» остаётся вашим.\n"
+        "отдаются самой дешёвой модели, которая справится, а суждение «блокирует Карину или "
+        "нет» остаётся вашим.\n"
         "%s\n"
-        "ПОЧЕМУ ЭТО ПИСЬМО ПРИХОДИТ КАЖДЫЙ ЧАС, а не один раз: файл сам записал причину — шесть "
-        "строк ночи 14/15 (№1105–№1110) в него не попали, вердикт по Карине писался прозой "
-        "внутри строк 221.1. Час — потолок владельца, а не мера моего недоверия." % state)
+        "ПОЧЕМУ ЭТО ПИСЬМО ПРИХОДИТ КАЖДЫЙ ЧАС, а не один раз: час — потолок владельца, а не "
+        "мера моего недоверия." % state)
 
 
 def carina_facts():
@@ -251,15 +298,17 @@ def carina_facts():
             body = fh.read()
     except OSError:
         return None, None, "FILE MISSING at %s" % p
-    rows, in_table = 0, False
+    # No single heading names "the" table in this file (274.10 has several sections, none
+    # titled to match by suffix) -- counting under one assumed heading silently returned 0
+    # after 221.3 was folded into 274.10 on 2026-09-16, and the zero read as "nothing tracked"
+    # instead of "wrong file". Counting every numbered row in the whole file is cruder but
+    # cannot go silently blind to a restructure the way a heading match did.
+    rows = 0
     for line in body.splitlines():
-        if line.startswith("## "):
-            in_table = line.strip().endswith("Строки")
-            continue
         # A row of the view: "| <number or link> | ... | ... |". The header and the dashed rule
         # are skipped by requiring a digit in the first cell -- counting them would inflate the
         # number by two, and a plausible-looking number is the one that passes unchecked.
-        if in_table and line.startswith("|") and any(c.isdigit() for c in line.split("|")[1]):
+        if line.startswith("|") and any(c.isdigit() for c in line.split("|")[1]):
             rows += 1
     age_min = (_dt.datetime.now().timestamp() - os.path.getmtime(p)) / 60.0
     return rows, age_min, None

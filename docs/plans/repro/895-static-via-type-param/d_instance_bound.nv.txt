@@ -1,0 +1,16 @@
+// Ось: ИНСТАНСНАЯ половина через ТОТ ЖЕ параметр типа при newtype над int.
+// Ожидание PASS — именно она делает статическую половину виновной, а не
+// параметр типа как таковой.
+module d_instance_bound
+
+type Ordinal protocol {
+    @ordinal() -> int
+    .from_ordinal(i int) -> Self
+}
+type FnRow int
+fn FnRow @ordinal() -> int => @ as int
+fn FnRow.from_ordinal(i int) -> FnRow => i as FnRow
+fn take[I Ordinal](x I) -> int => x.ordinal()
+fn main() Io -> () {
+    println(take[FnRow](41 as FnRow) + 1)
+}

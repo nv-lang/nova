@@ -151,6 +151,26 @@ pub struct Parser {
     /// recursive form cannot forget it: every recursion below flows through
     /// `parse_expr`/`parse_block`.
     depth: u32,
+    /// Реестр 221.1 №676 (2026-09-18): имена, объявленные в ЭТОМ файле как
+    /// ЗНАЧЕНИЯ (`ro`/`mut`/`consume`-биндинги, `for`-переменные) плюс
+    /// параметры функции, чьё тело разбирается сейчас.
+    ///
+    /// ЗАЧЕМ. `base[X].method(...)` неоднозначно по одному синтаксису:
+    /// `Vec[int].new()` — turbofish (D38), `xs[i].len()` — индексация с
+    /// вызовом метода на ЭЛЕМЕНТЕ. Различает их только то, ЧТО ТАКОЕ `base`:
+    /// имя типа или имя значения, — а этого в токенах нет. До этой правки
+    /// побеждал turbofish, и `xs[i].len()` МОЛЧА терял индекс: вызов уходил
+    /// на внешний вектор, `xs[i].len()` печатал 1 вместо 3.
+    ///
+    /// ПОЧЕМУ МНОЖЕСТВО ПО ФАЙЛУ, А НЕ ПО ОБЛАСТИ ВИДИМОСТИ. Разбор
+    /// спекулятивен: `try_parse_turbofish_args` откатывает позицию, и стек
+    /// областей, наполняемый ПО ХОДУ, пришлось бы откатывать вместе с ней —
+    /// лишний инвариант ровно там, где ошибка молчалива. Предскан токенов не
+    /// зависит от порядка и отката вовсе. Цена огрубления названа: имя,
+    /// объявленное значением В ЛЮБОМ месте файла, отменяет turbofish по всему
+    /// файлу. Это меняет разбор, только если в ОДНОМ файле есть и тип `X`, и
+    /// значение `X`, — и тогда индексация всё равно вероятнее.
+    value_names: std::collections::HashSet<String>,
 }
 
 /// **Plan 138.5 / D216 V2/V3 simplification (2026-06-11):** build the
@@ -382,7 +402,49 @@ impl Parser {
             receiver_elem_ctx: false,
             last_carrier_slot_types: Vec::new(),
             depth: 0,
+            value_names: std::collections::HashSet::new(),
         }
+    }
+
+    /// Реестр 221.1 №676: собрать имена, объявленные в файле ЗНАЧЕНИЯМИ.
+    ///
+    /// Одним проходом по токенам, до разбора: `ro`/`mut`/`consume` `<имя>` и
+    /// `for` `<имя>` (до `in`). Параметры функций сюда НЕ попадают — они
+    /// известны структурно и ставятся на время разбора тела (`parse_fn`).
+    ///
+    /// НЕДОБОР БЕЗОПАСЕН, ПЕРЕБОР — НЕТ, поэтому форма узкая: имя берётся
+    /// только вплотную за ключевым словом. Пропущенная форма оставляет
+    /// прежнее поведение (дефект), а лишнее имя отняло бы законный turbofish.
+    fn collect_value_names(&mut self) {
+        let mut out = std::collections::HashSet::new();
+        for (i, t) in self.tokens.iter().enumerate() {
+            let introduces = matches!(
+                t.kind,
+                TokenKind::KwRo | TokenKind::KwMut | TokenKind::KwConsume | TokenKind::KwFor
+            );
+            if !introduces {
+                continue;
+            }
+            // ПЕРЕБОР ЗАКРЫТ ЗДЕСЬ: `ro`/`mut` стоят не только в объявлении
+            // значения, но и в ТИПЕ — `*mut T`, `*ro T` (D216, трёхосевая модель
+            // указателей; живой носитель: `fn Vec[T] mut @ptr() -> *mut T`). Там за
+            // ключевым словом идёт ИМЯ ТИПА, и зачислить его в значения — значит
+            // отнять у `T[…].m()` законный turbofish. Недобор безопасен, перебор — нет.
+            if i > 0 && matches!(self.tokens[i - 1].kind, TokenKind::Star) {
+                continue;
+            }
+            if let Some(next) = self.tokens.get(i + 1) {
+                if let TokenKind::Ident(n) = &next.kind {
+                    out.insert(n.clone());
+                }
+            }
+        }
+        self.value_names = out;
+    }
+
+    /// Реестр 221.1 №676: известно ли имя как ЗНАЧЕНИЕ в этом файле.
+    fn is_value_name(&self, n: &str) -> bool {
+        self.value_names.contains(n)
     }
 
     /// Registry #800: the one place nesting depth is counted. Returns the
@@ -440,6 +502,12 @@ impl Parser {
         let mut p = Parser::with_src(tokens, src);
         // +1 — сам факт входа в интерполяцию есть уровень вложенности.
         p.depth = self.depth.saturating_add(1);
+        // Реестр 221.1 №676: имена-ЗНАЧЕНИЯ наследуются внутрь `${…}`. Свой
+        // предскан подпарсеру недоступен: он видит только текст фрагмента,
+        // где ни одного `ro` нет. Замер 2026-09-18: без этой строки клетка
+        // `local` фикстуры №676 оставалась красной, тогда как `param` чинился, —
+        // разница была РОВНО в том, что первая стояла внутри интерполяции.
+        p.value_names = self.value_names.clone();
         p
     }
 
@@ -496,6 +564,9 @@ impl Parser {
 
     /// Точка входа: парсит модуль (файл целиком).
     pub fn parse_module(&mut self) -> Result<Module, Diagnostic> {
+        // Реестр 221.1 №676: имена-ЗНАЧЕНИЯ собираются ДО разбора: решение
+        // `base[X].m()` принимается в точке встречи, а объявление может стоять ниже.
+        self.collect_value_names();
         self.skip_newlines();
         let start = self.peek().span;
 
@@ -2082,6 +2153,40 @@ impl Parser {
                     // parse_const_decl). Warning остаётся только для bare-формы.
                     Item::Const(self.parse_assoc_ro_decl(is_export, pending_doc.clone(), pending_doc_attrs.clone(), file_private)?)
                 } else {
+                    // РЕЕСТР 221.1 №701 (а), решение владельца 2026-09-18:
+                    // ГОЛЫЙ `export ro name = …` НА УРОВНЕ МОДУЛЯ ОТВЕРГАЕТСЯ.
+                    //
+                    // Замер, из-за которого это правило: слово `export` перед
+                    // модульным `ro` считывалось в локальную переменную и
+                    // ТЕРЯЛОСЬ здесь — `parse_ro_mut_binding` его не получает
+                    // никак. Владелец модуля компилировался молча, а импортёр
+                    // получал `undefined identifier` на месте использования, то
+                    // есть отказ приходил ЧУЖОМУ коду и в другом файле.
+                    //
+                    // ПОЧЕМУ ОТКАЗ, А НЕ ПОЧИНКА ЭКСПОРТА. Спека описывает
+                    // ровно одну экспортируемую форму — КВАЛИФИЦИРОВАННУЮ
+                    // `[export] ro Type.NAME Тип = …` (D200-амендмент); про
+                    // голую на уровне модуля в ней НЕТ ни строки. Научить
+                    // экспортироваться и её значило бы завести ВТОРУЮ форму
+                    // записи для одного и того же, а цену второй формы платит
+                    // каждый читатель языка, а не тот, кто её добавил.
+                    //
+                    // ПРИВАТНЫЙ модульный `ro` этим НЕ ЗАТРОНУТ — он законен и
+                    // используется в std десятками (`fs.nv`, `addr.nv`,
+                    // `unicode/category.nv`). Отвергается ровно сочетание
+                    // `export` + голое имя.
+                    if is_export {
+                        return Err(Diagnostic::new(
+                            "[E_EXPORT_RO_UNQUALIFIED] `export ro NAME = ...` is not \
+                             a form: a module-level `ro` exported under a bare name \
+                             is silently dropped from the module's exports, and the \
+                             importer fails with `undefined identifier` far from \
+                             here. The exported form is QUALIFIED — write `export ro \
+                             Type.NAME Type = ...` (D200 amendment). To keep it \
+                             module-private instead, drop `export`.".to_string(),
+                            self.peek().span,
+                        ));
+                    }
                     if let Some(d) = &pending_doc {
                         eprintln!(
                             "warning: doc-comment (`///`) before bare module-level \
@@ -9262,10 +9367,21 @@ impl Parser {
                     // `.IDENT(` continuation внутри try_parse_turbofish_args;
                     // `[T](args)` / `[T]?` остаются доступны любому base
                     // (`req.body.parse[T]()` и т.п.).
-                    let base_is_type_like = matches!(
-                        &expr.kind,
-                        ExprKind::Ident(_) | ExprKind::Path(_)
-                    );
+                    // Реестр 221.1 №676 (2026-09-18), амендмент к D38: имя,
+                    // объявленное в файле ЗНАЧЕНИЕМ, базой turbofish'а быть не
+                    // может — `xs[i].len()` есть индексация, а не инстанциация.
+                    // Прежний гейт отсекал только базу-ВЫРАЖЕНИЕ (`@buf[i]`,
+                    // `f().x[i]`), а самый частый случай — база-переменная —
+                    // от имени типа неотличим по синтаксису, и разбор молча
+                    // терял индекс.
+                    let base_is_type_like = match &expr.kind {
+                        ExprKind::Ident(n) => !self.is_value_name(n),
+                        ExprKind::Path(parts) => parts
+                            .first()
+                            .map(|p| !self.is_value_name(p))
+                            .unwrap_or(true),
+                        _ => false,
+                    };
                     if let Some((type_args, end_span)) = self.try_parse_turbofish_args(base_is_type_like) {
                         expr = Expr::new(
                             ExprKind::TurboFish {

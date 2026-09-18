@@ -32,6 +32,16 @@ test "insert / remove / swap_remove / reverse" {
     assert(v.equal(Vec[int].of(3, 4)))
 }
 
+test "move_to_front" {
+    mut v = Vec[int].of(1, 2, 3, 4)
+    v.move_to_front(2)
+    assert(v.equal(Vec[int].of(3, 1, 2, 4)))
+    v.move_to_front(0)
+    assert(v.equal(Vec[int].of(3, 1, 2, 4)))
+    v.move_to_front(3)
+    assert(v.equal(Vec[int].of(4, 3, 1, 2)))
+}
+
 test "extend / append / retain" {
     mut v = Vec[int].of(1, 2, 3)
     v.extend([4, 5])
@@ -45,6 +55,14 @@ test "extend / append / retain" {
 
     v.retain(|x| x % 2 == 0)
     assert(v.equal(Vec[int].of(2, 4, 6)))
+}
+
+test "append_zero" {
+    mut v = Vec[int].of(1, 2)
+    v.append_zero(3)
+    assert(v.equal(Vec[int].of(1, 2, 0, 0, 0)))
+    v.append_zero(0)
+    assert(v.equal(Vec[int].of(1, 2, 0, 0, 0)))
 }
 
 test "Vec[Option[int]] stores value-struct elements typed" {

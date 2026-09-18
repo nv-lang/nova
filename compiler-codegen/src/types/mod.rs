@@ -3474,6 +3474,35 @@ fn is_fully_stack_value_guarded(
                         on_path.remove(name);
                         ok
                     }
+                    // Реестр 221.1 №760, план 274.10 пункт 1 (2026-09-17).
+                    // NEWTYPE над стековым носителем САМ стековый: он несёт
+                    // ровно один носитель и не добавляет ни одного поля,
+                    // значит поверхностная побитовая копия для него —
+                    // настоящая копия, ровно как для базового случая
+                    // `is_bare_scalar_primitive_name`.
+                    //
+                    // ЧТО БЫЛО: `type TyId int` попадал в `_ => false` ниже, и
+                    // `fn same(t TyId) -> TyId => t` отвергалось
+                    // `E_READONLY_COERCE` — с доводом «запись у caller'а была
+                    // бы видна источнику», который для копируемого int не
+                    // может быть верен по построению. Карина платила за это
+                    // ДЕСЯТЬЮ обходами в шести файлах (маркер
+                    // `LEGACY-#760-newtype-ro-launder`), включая дверь
+                    // `types/types.nv:same_ty`, где тот же id пересобирался
+                    // ЗАНОВО только чтобы отказ не сработал.
+                    //
+                    // РЕКУРСИЯ, А НЕ `true`: newtype бывает и над heap-типом
+                    // (`type Name str_buf` и подобное), и тогда изъятие
+                    // неверно. Спрашиваем носителя тем же предикатом, и
+                    // защита от цикла — та же, что у соседей.
+                    crate::ast::TypeDeclKind::Newtype(carrier) => {
+                        if !on_path.insert(name.to_string()) {
+                            return false;
+                        }
+                        let ok = is_fully_stack_value_guarded(carrier, types, on_path);
+                        on_path.remove(name);
+                        ok
+                    }
                     _ => false,
                 },
                 None => false,
@@ -8630,6 +8659,59 @@ impl<'a> TypeCheckCtx<'a> {
                             // check — record literal outside type-method scope cannot
                             // init priv fields (unless #test_access).
                             if let TypeDeclKind::Record(rec_fields) = &td.kind {
+                                // Реестр 221.1 №1142: КОНСТРУКТОР БЕЗ ОБЪЯВЛЕННОГО
+                                // ПОЛЯ. До этой проверки `Point { x: 1 }` при
+                                // `type Point value { x int, y int }` собирался БЕЗ
+                                // ЕДИНОЙ диагностики и печатал неинициализированную
+                                // память, РАЗНУЮ на каждом запуске (замер трижды:
+                                // 1865325339888, 2905450931440, 2752327181552).
+                                // Спека дословно (02-types.md:152): «Construction
+                                // всегда требует все обязательные поля».
+                                //
+                                // ПОЧЕМУ ЭТО ПРОСТАЯ РАЗНОСТЬ МНОЖЕСТВ: у
+                                // `RecordField` (ast/mod.rs:1387) НЕТ поля со
+                                // значением по умолчанию — ни одного, — значит
+                                // каждое объявленное поле обязательно, и оговорок
+                                // про умолчания здесь быть не может.
+                                //
+                                // ТРИ ФОРМЫ, КОТОРЫЕ ОБЯЗАНЫ ПЕРЕЖИТЬ ПРОВЕРКУ, и
+                                // они названы ДО кода (строка реестра), а не после
+                                // первого красного прогона:
+                                //   1. `spread` (`...other`) — недостающие поля
+                                //      доезжают из донора, полнота НЕ требуется;
+                                //   2. `embed` — у встроенного поля имя
+                                //      СИНТЕТИЧЕСКОЕ (`__embed_<T>`), требовать его
+                                //      от автора литерала нельзя;
+                                //   3. приватное поле вне области типа — там уже
+                                //      свой отказ ниже, и дублировать его значило бы
+                                //      дать два сообщения на одну причину.
+                                // Проверка стоит ПЕРЕД приватным блоком намеренно:
+                                // «поля нет вовсе» — более ранний вопрос, чем «к
+                                // полю нет доступа».
+                                let has_spread = fields.iter().any(|f| f.is_spread);
+                                if !has_spread {
+                                    let missing: Vec<&str> = rec_fields
+                                        .iter()
+                                        .filter(|fd| !fd.is_embed)
+                                        .filter(|fd| !fields.iter().any(|f| f.name == fd.name))
+                                        .map(|fd| fd.name.as_str())
+                                        .collect();
+                                    if !missing.is_empty() {
+                                        errors.push(Diagnostic::new(
+                                            format!(
+                                                "[E_MISSING_FIELD_IN_LITERAL] record literal \
+                                                 `{}{{ … }}` does not initialise {}: {}. \
+                                                 Construction requires every declared field \
+                                                 (D02 §Construction); add it, or copy the rest \
+                                                 from another value with `...other`.",
+                                                last,
+                                                if missing.len() == 1 { "field" } else { "fields" },
+                                                missing.join(", "),
+                                            ),
+                                            e.span,
+                                        ));
+                                    }
+                                }
                                 let base_allowed = self.priv_access_allowed_base(last.as_str());
                                 if !base_allowed {
                                     let has_priv = rec_fields.iter().any(|fd| fd.priv_field);

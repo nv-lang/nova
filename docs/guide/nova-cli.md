@@ -1194,7 +1194,7 @@ expr.capacity → expr.capacity()
 ```
 
 **Skip conditions:** previous significant token == `=`
-(method-value assignment: `let f = arr.len`).
+(method-value assignment: `ro f = arr.len`).
 
 ```
 migrate_plan60 [--apply] [--dry-run] [--md] [--paths DIR...]

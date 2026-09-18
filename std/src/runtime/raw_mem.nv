@@ -125,3 +125,16 @@ export unsafe fn RawMem.copy_n_nonoverlapping[T](src *T, dst *mut T, count int) 
 {
     RawMem.copy_nonoverlapping(src as *u8, dst as *mut u8, count * size_of[T]())
 }
+
+/// Typed memset-to-zero — zero `count` **elements** of `T` at `dst`.
+/// Mirrors `RawMem.copy_n`, scaled by `size_of[T]()`, but restricted to the
+/// all-zero byte pattern: `RawMem.fill`'s `val` is a single byte, so it
+/// cannot express an arbitrary multi-byte `T` value — only the all-zero
+/// pattern, which is the same bytes regardless of `T`'s layout.
+///
+/// Caller wraps in `unsafe { }` block — raw pointer operation.
+export unsafe fn RawMem.zero_n[T](dst *mut T, count int) -> ()
+    requires count >= 0
+{
+    RawMem.fill(dst as *mut u8, 0 as u8, count * size_of[T]())
+}

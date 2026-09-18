@@ -18387,6 +18387,32 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Emit into user_type_fwd_decls (spliced before value-record defs
                 // and tuple typedefs) so that value-record fields of newtype can
                 // reference this typedef without forward-declaration issues.
+                // Реестр 221.1 №1155 (2026-09-18): КОРТЕЖ ПОД NEWTYPE НАДО
+                // ФОРВАРДИТЬ ЗДЕСЬ ЖЕ. Комментарий выше объясняет, почему алиас
+                // живёт в РАННЕМ блоке: поля value-записей должны на него
+                // ссылаться. Но когда внутренний тип — АНОНИМНЫЙ КОРТЕЖ
+                // (`type Pair (int, int)`), его структура объявляется в ПОЗДНЕМ
+                // блоке (`__VALUE_RECORD_DEFS__`), и алиас ссылается на то,
+                // чего ещё нет: `unknown type name '_NovaTuple_2_8_nova_int_...'`.
+                //
+                // ДВА ТРЕБОВАНИЯ ПРОТИВОРЕЧИЛИ ДРУГ ДРУГУ при одном размещении:
+                // «алиас раньше value-записей» и «структура кортежа раньше
+                // алиаса». Разрешается не переносом (перенос сломал бы первое),
+                // а forward-объявлением структуры рядом с алиасом: полное
+                // определение придёт позже в своём блоке, а C-стандарт это
+                // допускает — тот же приём уже применён к указательным полям
+                // кортежей внутри `render_unified_value_types`.
+                //
+                // ОСЬ, КОТОРУЮ ФИКСТУРА ОБЯЗАНА НАЗВАТЬ: дефект виден, только
+                // когда объявление и потребитель в РАЗНЫХ файлах модуля (пиры
+                // сортируются, и порядок решает); в одном файле порядок
+                // эмиссии случайно оказывался верным.
+                if inner_c.starts_with("_NovaTuple_") {
+                    let fwd = format!("typedef struct {0} {0};\n", inner_c);
+                    if !self.user_type_fwd_decls.contains(&fwd) {
+                        self.user_type_fwd_decls.push_str(&fwd);
+                    }
+                }
                 self.user_type_fwd_decls.push_str(&format!(
                     "typedef {} Nova_{};\n", inner_c, def_base));
                 // Newtypes are typedef'd scalars — use inner type directly (no pointer indirection)
@@ -19446,10 +19472,37 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // sync primitives already have a complete
                             // `#include`d typedef, forward-declaring here
                             // collides with it.
+                            // Реестр 221.1 №761 (2026-09-18): ФОРВАРД ЭМИТИТСЯ
+                            // ТОЛЬКО ТОМУ, ЧТО ДЕЙСТВИТЕЛЬНО STRUCT. Прежнее
+                            // условие спрашивало СПИСОК ИМЁН
+                            // (`debt_is_runtime_backed_newtype` — 20 имён
+                            // рантайма), и всякий ПОЛЬЗОВАТЕЛЬСКИЙ newtype в
+                            // payload варианта получал `typedef struct Nova_X
+                            // Nova_X;` поверх своего же `typedef nova_int
+                            // Nova_X` — «typedef redefinition with different
+                            // types», отказ clang при зелёном чекере.
+                            //
+                            // ПОРЯДОК ОБЪЯВЛЕНИЯ РЕШАЛ, СОБЕРЁТСЯ ЛИ ПРОГРАММА:
+                            // сумма ВЫШЕ newtype — отказ, ниже — успех; и Карина
+                            // платила за это тем, что три типа стоят не там, где
+                            // им место по смыслу, а в файле, эмитящемся раньше.
+                            //
+                            // СПИСОК ИМЁН БЫЛ ВЕРНЫМ ОТВЕТОМ НА УЖЕ́ ВОПРОС:
+                            // он защищал рантаймовые типы, чей typedef приезжает
+                            // заголовком. Но вопрос здесь другой — «нужна ли
+                            // forward-декларация СТРУКТУРЫ», — и ответ на него
+                            // даёт не имя, а вид типа. Запись и сумма свои тела
+                            // эмитят позже, им форвард нужен; всё остальное под
+                            // этим именем структурой не является вовсе, и
+                            // объявлять его структурой — ошибка независимо от
+                            // того, знаком ли нам этот тип.
+                            let bare = base.trim_start_matches("Nova_");
+                            let is_struct_shaped = self.record_schemas.contains_key(bare)
+                                || self.sum_schemas.contains_key(bare)
+                                || self.generic_types.contains(bare);
                             if base.starts_with("Nova_")
-                                && !Self::debt_is_runtime_backed_newtype(
-                                    base.trim_start_matches("Nova_"),
-                                )
+                                && is_struct_shaped
+                                && !Self::debt_is_runtime_backed_newtype(bare)
                                 && fwd_seen.insert(base.to_string())
                             {
                                 self.line(&format!("typedef struct {0} {0};", base));
@@ -38500,22 +38553,55 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         self.line("}");
                         return Ok(result_tmp);
                     }
-                    if matches!(&right.kind, ExprKind::Match { .. }) {
-                        let result_tmp = self.fresh_tmp_named("coalesce");
-                        self.line(&format!("{} {};", payload_c, result_tmp));
-                        self.line(&format!("if ({}) {{", some_check));
-                        self.indent += 1;
-                        self.line(&format!("{} = {}.value;", result_tmp, opt_tmp));
-                        self.indent -= 1;
-                        self.line("} else {");
-                        self.indent += 1;
-                        let r = self.emit_expr_with_target_type(right, &payload_c)?;
-                        self.line(&format!("{} = {};", result_tmp, r));
-                        self.indent -= 1;
-                        self.line("}");
+                    // Реестр 221.1 №1147 (2026-09-17): условие входа в ЛЕНИВЫЙ путь
+                    // спрашивает СВОЙСТВО эмиссии, а не ИМЯ узла.
+                    //
+                    // Прежняя редакция (фикс №402) писала здесь
+                    // `matches!(&right.kind, ExprKind::Match { .. })` и обещала в
+                    // комментарии, что match — «единственная форма, которая строит
+                    // statement-уровневый C». Обещание было неверным УЖЕ ТОГДА:
+                    // `callnorm` переписывает вызов с умолчанием параметра в
+                    // `ExprKind::Block` (двухфазный Block, D102), а Block — вторая
+                    // такая форма, и появилась она РАНЬШЕ фикса №402. Замер
+                    // 2026-09-17: в теле `emit_expr_inner` веток, зовущих
+                    // `self.line(`, — 27, а условие знало ОДНУ. Разрыв не в одну
+                    // форму, а в двадцать шесть, поэтому перечень имён здесь
+                    // заменён вопросом к самой эмиссии.
+                    //
+                    // КАК СПРАШИВАЕМ, и почему именно так. Эмитировать «на пробу» с
+                    // откатом нельзя: у эмиссии есть побочные эффекты (счётчики
+                    // временных, буферы типов), и откат `out` их не вернёт. Поэтому
+                    // правая ветка эмитится СРАЗУ ВНУТРЬ ленивого `else`, а снимок
+                    // длины `out` нужен лишь чтобы понять, НАДО ЛИ было её туда
+                    // класть: если поток не вырос, значит ветка — чистое выражение,
+                    // и прежний тернарный путь даёт байт-в-байт тот же C.
+                    // Идиома снимка `self.out.len()` — своя же, этого файла (см.
+                    // `region_start` и detach-hoist).
+                    let result_tmp = self.fresh_tmp_named("coalesce");
+                    let decl_at = self.out.len();
+                    self.line(&format!("{} {};", payload_c, result_tmp));
+                    self.line(&format!("if ({}) {{", some_check));
+                    self.indent += 1;
+                    self.line(&format!("{} = {}.value;", result_tmp, opt_tmp));
+                    self.indent -= 1;
+                    self.line("} else {");
+                    self.indent += 1;
+                    let before_right = self.out.len();
+                    let r = self.emit_expr_with_target_type(right, &payload_c)?;
+                    let right_built_statements = self.out.len() > before_right;
+                    self.line(&format!("{} = {};", result_tmp, r));
+                    self.indent -= 1;
+                    self.line("}");
+                    if right_built_statements {
                         return Ok(result_tmp);
                     }
-                    let r = self.emit_expr_with_target_type(right, &payload_c)?;
+                    // Ветка оказалась чистым выражением: снимаем весь построенный
+                    // `if/else` и возвращаемся на тернарный путь — прежний C
+                    // сохраняется байт-в-байт для всех форм, кроме опасных.
+                    // Снятие ЗАКОННО ровно здесь и только здесь: между `decl_at` и
+                    // этой строкой в `out` не писал никто, кроме нас самих, —
+                    // эмиссия `right` ничего не добавила, что и проверено условием.
+                    self.out.truncate(decl_at);
                     Ok(format!("({} ? {}.value : {})", some_check, opt_tmp, r))
                 } else if Self::is_result_like(&left_ty) {
                     // D86: `Result ?? fb` — `Ok(v)` → `v`, `Err(_)` → `fb` (ошибка отброшена).
@@ -38559,10 +38645,52 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         self.line("}");
                         return Ok(result_tmp);
                     }
-                    let r = match self.novares_ok_err(&left_ty) {
-                        Some((ok_c, _)) => self.emit_expr_with_target_type(right, &ok_c)?,
-                        None => self.emit_expr(right)?,
+                    // Реестр 221.1 №1147, ВТОРОЙ НОСИТЕЛЬ (2026-09-17).
+                    // Ленивость правилась у Option-ветки выше, а ЗДЕСЬ не было
+                    // даже прежнего Match-случая из №402: запасная ветка
+                    // печаталась в тернарный оператор, то есть вычислялась
+                    // ВСЕГДА. Нашло окно Карины худшим из возможных носителей —
+                    // `json_encode(dto) ?? ice(...)` в `to_json`, где
+                    // `json_encode` возвращает Result: компилятор перестал
+                    // печатать ЛЮБУЮ диагностику, потому что `ice` срабатывал на
+                    // каждом успешном кодировании.
+                    //
+                    // ПОЧЕМУ МЫ ОБА ЭТОГО НЕ УВИДЕЛИ, и это записано здесь, а не
+                    // только в реестре: мой фикс проверялся пробой на Option —
+                    // ТЕМ ЖЕ носителем, на котором делался, — и три ночные пробы
+                    // окна Карины тоже были Option. Ни одна не спросила, сколько
+                    // ТИПОВ несёт `??`. Их два. Тот же урок, что строка 1147 уже
+                    // несёт про №402: фикс закрывает класс ТОЛЬКО НА СВОЁМ
+                    // УРОВНЕ, и проба на одном носителе приёмкой класса не
+                    // считается.
+                    //
+                    // Мера та же, что у Option: спрашиваем СВОЙСТВО эмиссии —
+                    // вырос ли поток statement'ов, — а не имя узла.
+                    let ok_c = match self.novares_ok_err(&left_ty) {
+                        Some((c, _)) => c,
+                        None => left_ty.clone(),
                     };
+                    let result_tmp = self.fresh_tmp_named("coalesce");
+                    let decl_at = self.out.len();
+                    self.line(&format!("{} {};", ok_c, result_tmp));
+                    self.line(&format!("if ({}->tag == NOVA_TAG_Result_Ok) {{", res_tmp));
+                    self.indent += 1;
+                    self.line(&format!("{} = {}->payload.Ok._0;", result_tmp, res_tmp));
+                    self.indent -= 1;
+                    self.line("} else {");
+                    self.indent += 1;
+                    let before_right = self.out.len();
+                    let r = self.emit_expr_with_target_type(right, &ok_c)?;
+                    let right_built_statements = self.out.len() > before_right;
+                    self.line(&format!("{} = {};", result_tmp, r));
+                    self.indent -= 1;
+                    self.line("}");
+                    if right_built_statements {
+                        return Ok(result_tmp);
+                    }
+                    // Ветка — чистое выражение: снимаем построенный `if/else` и
+                    // возвращаемся на прежний тернарный путь БАЙТ-В-БАЙТ.
+                    self.out.truncate(decl_at);
                     Ok(format!(
                         "({tmp}->tag == NOVA_TAG_Result_Ok ? {tmp}->payload.Ok._0 : {r})",
                         tmp = res_tmp,
@@ -65653,6 +65781,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         }
                     }
+                    // Реестр 221.1 №764 (2026-09-18): ТРЕЙЛИНГ, КОТОРЫЙ САМ
+                    // ЯВЛЯЕТСЯ if-let, спрашивается РЕКУРСИВНО. Канал держит
+                    // аннотацию не на всяком узле, и на вложенном if-let её
+                    // может не быть — а его тип выводится тем же правилом, что
+                    // и здесь. Рекурсия сужена до структурных форм намеренно:
+                    // предупреждение выше (про legacy re-derive, падающий на
+                    // связанном идентификаторе) относится к ИДЕНТИФИКАТОРАМ,
+                    // которых в var_types ещё нет, а вложенный if-let ни одного
+                    // связанного имени сам по себе не читает.
+                    if let Some(trailing) = then.trailing.as_ref() {
+                        if matches!(trailing.kind, ExprKind::IfLet { .. }) {
+                            let inner = self.infer_expr_c_type(trailing);
+                            if !inner.is_empty() {
+                                return inner;
+                            }
+                        }
+                    }
                     // Try else-branch if then has no trailing (or annotation unavailable).
                     if let Some(else_br) = else_ {
                         let else_expr_id = match else_br {
@@ -65670,6 +65815,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 }
                             }
                         }
+                    }
+                    // Реестр 221.1 №764: НЕТ ЗНАЧЕНИЯ — ЗНАЧИТ `nova_unit`, а не
+                    // пустая строка. Ветвь, уходящая `return`'ом, трейлинга не
+                    // имеет вовсе, и пустой `else` тоже; прежний код возвращал
+                    // отсюда `""`, а ЭМИССИЯ того же узла в этом случае пишет
+                    // `nova_unit`. Две двери на один вопрос давали разные ответы,
+                    // и в C выходила строка ` _nv_if_let_NNN;` — БЕЗ ТИПА, то есть
+                    // не объявление, а чтение необъявленного имени:
+                    // `use of undeclared identifier`, и падал уже clang, а не мы.
+                    //
+                    // ПОЧЕМУ ТОЛЬКО В ЭТОМ СЛУЧАЕ, а не общим запасным ответом:
+                    // когда трейлинга нет ни у одной ветви, «не знаю» и «unit»
+                    // совпадают ПО ПОСТРОЕНИЮ — значения тут взять негде. Вернуть
+                    // же `nova_unit` там, где значение ЕСТЬ, а канал промолчал,
+                    // значило бы превратить громкий отказ сборки в тихо неверный
+                    // тип, а тихое хуже громкого — цена этого урока уже уплачена
+                    // строкой №676.
+                    let then_has_value = then.trailing.is_some();
+                    let else_has_value = match else_ {
+                        Some(crate::ast::ElseBranch::Block(b)) => b.trailing.is_some(),
+                        Some(crate::ast::ElseBranch::If(_)) => true,
+                        None => false,
+                    };
+                    if !then_has_value && !else_has_value {
+                        return "nova_unit".to_string();
                     }
                     String::new()
                 }

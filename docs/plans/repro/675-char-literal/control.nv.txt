@@ -1,0 +1,7 @@
+// Проба №675 (контроль): печатный символ и законный escape.
+module p675_control
+fn main() Io -> () {
+    ro a = 'x'
+    ro b = '\n'
+    println("a=${a as int} b=${b as int}")
+}

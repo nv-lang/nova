@@ -5,6 +5,20 @@
 #
 # Состав (CLAUDE.md/dev-workflow):
 #   1) cargo build --release (nova-cli)
+#
+# ВРЕМЕННЫЕ ФАЙЛЫ ПРОГОНА — НЕ НА СИСТЕМНОМ ДИСКЕ (владелец, 2026-09-18;
+# реестр 221.1 №1152). Один прогон push-яруса требует около ДЕВЯТИ ГИГАБАЙТ
+# единовременно, и 2026-09-18 этот пик встретил системный диск, заполненный
+# под ноль: 9.8 МБ свободно из 476 ГБ. Гейт покраснел на тесте `nova-cli`,
+# и причина была не в коде — `LLVM ERROR: IO failure on output stream: no
+# space on device`. Отказ ПО СРЕДЕ неотличим от отказа ПО КОДУ, пока не
+# посмотришь в вывод, и первым делом искали регресс компилятора.
+#
+# КОРЕНЬ ВЫВОДИТСЯ, А НЕ ВПИСЫВАЕТСЯ (страж №698): берётся `NOVA_TMP_ROOT`,
+# если задан, иначе каталог `.nova-tmp` РЯДОМ с рабочим деревом — то есть на
+# том же диске, где лежит дерево, а оно по нашей раскладке не системное.
+# Путь к машине владельца в скрипте не пишется никогда: он и был предметом
+# №698.
 #   2) мега-CU spec_tests/conformance ОДНИМ CU: exit=0 И строка "PASS: N  FAIL: 0" присутствует
 #   3) nova check std/src (БЕЗ NOVA_STD_PATH): канон "PASS: 147  FAIL: 26  WARN: 1078"
 #      (ассертится ТОЛЬКО FAIL — см. ~:212; PASS/WARN растут от новых файлов законно)
@@ -13,6 +27,17 @@
 #   6) флагман examples/flagship/aggregator --strict-effects: строка "built:"
 set -u
 ROOT="$(pwd)"
+
+# Реестр 221.1 №1152: прогоны пишут временное рядом с деревом, а не на
+# системный диск. Экспортируется ДО первого запуска nova/cargo, иначе
+# `default_tmp_dir()` (nova-cli/src/main.rs) возьмёт системный `TEMP`.
+NOVA_TMP_ROOT="${NOVA_TMP_ROOT:-$(cd "$ROOT/.." 2>/dev/null && pwd)/.nova-tmp}"
+mkdir -p "$NOVA_TMP_ROOT" 2>/dev/null || :
+if [ -d "$NOVA_TMP_ROOT" ]; then
+    TMPDIR="$NOVA_TMP_ROOT"; TEMP="$NOVA_TMP_ROOT"; TMP="$NOVA_TMP_ROOT"
+    export TMPDIR TEMP TMP
+    echo "gate :: временные файлы -> $NOVA_TMP_ROOT (реестр №1152)"
+fi
 # Boehm GC для мега-CU (test_runner::detect_boehm читает NOVA_GC_LIB_DIR).
 # `vcpkg_installed` под .gitignore — у worktree его нет, он есть только в
 # ГЛАВНОМ дереве, общем для всех worktree через .git. Поэтому берём его не по
@@ -131,6 +156,15 @@ _GB="$ROOT/scripts/guards/gate-budget.baseline"
 echo "gate :: старт $GATE_WALL_START (местное), ярус $NOVA_GATE_TIER"
 # Сколько ждать — печатается НИЖЕ, после расчёта областей: до него режим
 # неизвестен, а цена яруса от режима зависит вдесятеро (275 Ф.11).
+
+# СУТОЧНЫЙ ПРЕДЕЛ ТЯЖЁЛОГО ЯРУСА — проверяется ЗДЕСЬ, до единой строчки работы:
+# проверка после прогона бессмысленна, машина к тому времени уже занята. Требование
+# владельца 2026-09-17 («правило без автоматизации не работает»), замер — четыре
+# прогона яруса push за сутки при одной машине на все окна. Ярус `loop` не судится.
+if ! python "$ROOT/scripts/guards/check-gate-daily-budget.py" "$NOVA_GATE_TIER" "$ROOT"; then
+    echo "GATE FATAL: суточный предел тяжёлого яруса (см. вывод выше)" >&2
+    exit 1
+fi
 
 # СУХОЙ ПРОГОН — печатаются заголовки шагов, не исполняется ничего.
 # Заведён как ДОКАЗАТЕЛЬСТВО того, что умолчание не поехало: список шагов до
@@ -965,6 +999,15 @@ guard "$ROOT/scripts/guards/check-doc-conventions.sh" "$ROOT" "$DOC_GUARD_BASE" 
 
 step loop "doc-examples (снятые формы в nova-примерах публикуемой доки, окно p-example-guard)"
 DOC_EXAMPLES_SHOW_MATCHES=0 guard "$ROOT/scripts/guards/check-doc-examples.sh" "$ROOT" || fail "doc-examples (дока учит снятому синтаксису — let/readonly/*ro T/*unsafe T/постфикс-!/trait-impl-throws/ref-формы/external fn/addr_of/null <тип>/#impl(<старое имя>) — см. вывод выше)"
+
+step loop "handoff-labels (метка раздела ролевой записки — полная дата, а не четыре цифры: 2026-09-17, шесть схем в двух файлах)"
+guard "$ROOT/scripts/guards/check-handoff-labels.py" "$ROOT" || fail "handoff-labels (метка раздела записки не есть полная дата: заведи `0-ГГГГ-ММ-ДД[-часть суток]`, прежнюю — в базу; см. вывод выше)"
+
+step loop "handoff-home (передача остановки лежит в РОЛЕВОЙ записке, а не в игнорируемом docs/.sessions — слово владельца 2026-09-18)"
+guard "$ROOT/scripts/guards/check-handoff-home.py" "$ROOT" || fail "handoff-home (передача написана в каталог под .gitignore либо /stop перестал называть ролевую записку: см. вывод выше)"
+
+step loop "doc-guide-names (форма, НАЗВАННАЯ в публикуемой доке, существует в языке — 2026-09-17, случай debug_assert)"
+guard "$ROOT/scripts/guards/check-doc-guide-names.py" "$ROOT" || fail "doc-guide-names (дока называет форму, которой нет в языке: имя либо снято — чинится ДОКА, либо чужое — вносится в базу с причиной; см. вывод выше)"
 
 step loop "test-fixture-coverage (правила 1/5 test-conventions.md — neg-фикстура на новый E_*/W_*, регресс-фикстура на закрытие маркера; реестр 221.1 №399)"
 # №586-класс: та же ошибка, что у DOC_GUARD_BASE выше — пустая база молча

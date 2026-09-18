@@ -1,0 +1,60 @@
+// EXPECT_STDOUT above=7 below=9 pair=11 ok
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Реестр 221.1 №761, план 274.10 пункт 5. Newtype, стоящий в payload варианта
+// суммы, требовал, чтобы его объявление эмитилось РАНЬШЕ суммы: иначе C получал
+// `typedef struct Nova_Row Nova_Row;` поверх собственного `typedef nova_int
+// Nova_Row` — «typedef redefinition with different types», отказ clang при
+// зелёном чекере.
+//
+// ПОРЯДОК ОБЪЯВЛЕНИЯ РЕШАЛ, СОБЕРЁТСЯ ЛИ ПРОГРАММА, и это вся суть: сумма выше
+// newtype — отказ, ниже — успех. Карина платила за это тем, что три типа
+// (`VariantRow`, `FieldRow`, `ConstRow`) стоят не рядом со своим `VariantDef`,
+// а в файле, который кодоген эмитит раньше их потребителей.
+//
+// ПРИЧИНА — ОТВЕТ ПО СПИСКУ ИМЁН ВМЕСТО ВОПРОСА О СВОЙСТВЕ: пре-проход суммы
+// эмитил forward-декларацию структуры всякому payload-типу, кроме двадцати
+// рантаймовых имён в `debt_is_runtime_backed_newtype`. Список был верным
+// ответом на ДРУГОЙ вопрос (у рантаймовых типов typedef приезжает заголовком),
+// а здесь спрашивают «нужна ли forward-декларация СТРУКТУРЫ» — и отвечает на
+// это не имя, а вид типа.
+//
+// ДВЕ КЛЕТКИ ПО ПОРЯДКУ ОБЪЯВЛЕНИЯ — это и есть измеренная граница, а не два
+// похожих типа: `above` объявлен ВЫШЕ суммы (ломалось), `below` — ниже
+// (работало всегда и стоит здесь контролем). Клетка `pair` держит случай, ради
+// которого дефект вообще заметили: ДВА разных newtype в payload'ах одной суммы.
+module standalone.p761_newtype_in_variant_payload
+
+type Target enum
+    | ToRow(RowAbove)
+    | ToField(FieldAbove)
+    | Nothing
+
+// Объявлен ПОСЛЕ суммы, которая держит его в payload варианта.
+type RowAbove int
+type FieldAbove int
+
+type BelowFirst int
+
+type Holder enum
+    | Wrap(BelowFirst)
+    | Empty
+
+fn read_target(t Target) -> int {
+    match t {
+        ToRow(r) => r as int
+        ToField(f) => (f as int) + 1
+        Nothing => 0
+    }
+}
+
+fn main() {
+    ro a = Target.ToRow(7 as RowAbove)
+    ro h = Holder.Wrap(9 as BelowFirst)
+    ro p = Target.ToField(10 as FieldAbove)
+    ro below = match h {
+        Wrap(b) => b as int
+        Empty => 0
+    }
+    println("above=${read_target(a)} below=${below} pair=${read_target(p)} ok")
+}

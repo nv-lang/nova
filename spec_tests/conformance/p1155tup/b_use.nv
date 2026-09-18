@@ -1,0 +1,49 @@
+// EXPECT_STDOUT sum=5 rev=9 ok
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Реестр 221.1 №1155, план 274.10. Именованный тип-кортеж (`type Pair (int,
+// int)` — newtype над АНОНИМНЫМ кортежем), объявленный в ПЕРВОМ по сортировке
+// пире модуля и поставленный в арм суммы ЗДЕСЬ, во втором, давал
+// `unknown type name '_NovaTuple_2_8_nova_int_8_nova_int'`.
+//
+// ПРИЧИНА — ДВА ТРЕБОВАНИЯ, ПРОТИВОРЕЧИВШИЕ ДРУГ ДРУГУ: алиас newtype пишется в
+// РАННИЙ блок (`__USER_TYPE_FWD_DECLS__`), чтобы поля value-записей могли на
+// него ссылаться, — это записано в самом эмиттере как обоснование; а структура
+// анонимного кортежа объявляется в ПОЗДНЕМ (`__VALUE_RECORD_DEFS__`). Алиас
+// ссылался на то, чего ещё нет. Разрешено не переносом (перенос сломал бы
+// первое требование), а forward-объявлением структуры рядом с алиасом.
+//
+// ЧТО ПРОВЕРЯЕТ КАЖДАЯ КЛЕТКА:
+//   sum — кортеж из ПЕРВОГО пира в арме суммы второго (ломалось);
+//   rev — кортеж, объявленный во ВТОРОМ файле (`z_reverse.nv` сортируется
+//         последним) и использованный ЗДЕСЬ же: обратный порядок, был зелёным
+//         всегда. Контроль: если однажды покраснеет он, дело не в порядке.
+module p1155tup.b_use
+
+import ./a_decl.{Pair}
+import ./z_reverse.{Late, late_pair}
+
+type Target enum
+    | Wrapped(Pair)
+    | Nothing
+
+type LateTarget enum
+    | Held(Late)
+    | Empty
+
+fn main() {
+    ro p = (2, 3) as Pair
+    ro t = Target.Wrapped(p)
+    ro s = match t {
+        Wrapped(q) => (q as (int, int)).0 + (q as (int, int)).1
+        Nothing => 0
+    }
+
+    ro lt = LateTarget.Held(late_pair())
+    ro r = match lt {
+        Held(q) => (q as (int, int)).0 + (q as (int, int)).1
+        Empty => 0
+    }
+
+    println("sum=${s} rev=${r} ok")
+}
