@@ -473,7 +473,7 @@ export fn Vec[T] mut @append_zero(n int) -> @
     }
     @reserve(n)
     unsafe {
-        RawMem.fill(@data.offset(@len) as *mut u8, 0 as u8, n * size_of[T]())
+        RawMem.zero_n(@data.offset(@len), n)
     }
     @len += n
 }

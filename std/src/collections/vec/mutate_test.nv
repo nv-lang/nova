@@ -57,6 +57,14 @@ test "extend / append / retain" {
     assert(v.equal(Vec[int].of(2, 4, 6)))
 }
 
+test "append_zero" {
+    mut v = Vec[int].of(1, 2)
+    v.append_zero(3)
+    assert(v.equal(Vec[int].of(1, 2, 0, 0, 0)))
+    v.append_zero(0)
+    assert(v.equal(Vec[int].of(1, 2, 0, 0, 0)))
+}
+
 test "Vec[Option[int]] stores value-struct elements typed" {
     mut v = Vec[Option[int]].new()
     v.push(Some(1))
