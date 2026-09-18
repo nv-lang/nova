@@ -114,10 +114,6 @@ fn register_sum_variants(c Node, mut types []TypeDef, mut defs DefTable,
         mut pcnt = 0
         // payload type names sit between '(' and ')'
         for j in name_at + 1..vk.len() {
-            // [LEGACY-#676] var-index-method: `vk[j].kind_of()` with a VARIABLE
-            // index miscompiles in the oracle (E_RECV_METHOD_MISMATCH: receiver
-            // resolves as Vec; a constant index works). Found 2026-08-14; the
-            // binding hop is the workaround.
             ro pj = vk[j]
             if pj.kind_of() != NodeKind.LeafNode { continue }
             if leaf_kind(pj) != TokenKind.Ident { continue }

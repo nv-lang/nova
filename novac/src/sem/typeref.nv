@@ -49,8 +49,6 @@ import ../types.{TyId, no_ty, is_ty, same_ty, Interner}
 export fn ty_of_type_ref(pk []Node, at int, recv_t TyId, tps []str, param_rows []TyId,
                          types []TypeDef, defs DefTable, mut tys Interner) -> TyId {
     if at >= pk.len() { return no_ty() }
-    // [LEGACY-#676] var-index-method: the binding hop, same as the readers this
-    // door replaced.
     ro head = pk[at]
     if head.kind_of() != NodeKind.LeafNode { return no_ty() }
     // THE SLICE SUGAR FIRST: `[]Elem` has no head ident of its own -- the head

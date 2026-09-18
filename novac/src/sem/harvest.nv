@@ -393,10 +393,7 @@ fn recv_type_params(rk []Node, at int) -> []str {
     mut out = head_type_args(rk, at)
     for i in 0..at {
         // Slice brackets or the mode keyword are not a parameter list; the
-        // `continue` is the other branch (P31 form 2). [LEGACY-#676] the
-        // binding hop: `rk[i].kind_of()` with the loop's index is the
-        // var-index-method miscompile (reproduced 2026-08-26 in 14 lines; a
-        // parameter index `rk[at - 1]` compiles, the for-range variable does not).
+        // `continue` is the other branch (P31 form 2).
         ro c = rk[i]
         if c.kind_of() != NodeKind.Generics { continue }
         out.append(names_of_generics(branch_children(c)))

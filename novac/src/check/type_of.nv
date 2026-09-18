@@ -425,8 +425,6 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
                 // lattice must not walk into a block -- its statement kinds
                 // have no type rule, and asking would be the #652 ice about
                 // a form nobody wrote as a value.
-                // [LEGACY-#676] var-index-method: the row is bound before the
-                // method call, the same hop the collectors already make.
                 ro body = ak[at]
                 if body.kind_of() == NodeKind.Block { return no_ty() }
                 return type_of(body, ctx, scope, chan)

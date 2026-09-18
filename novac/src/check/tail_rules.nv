@@ -130,10 +130,6 @@ fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
             @report_first_leaf_of([]Node.of(c), TAIL_NO_VALUE_MSG)
             return
         }
-        // [LEGACY-#676] var-index-method: `bk[i].kind_of()` with a VARIABLE
-        // index miscompiles -- the emitter takes the Vec itself for the
-        // receiver (E_RECV_METHOD_MISMATCH). The binding walks around it and
-        // goes when #676 closes.
         ro tail_node = bk[last_stmt]
         ro k = tail_node.kind_of()
         // ALLOW-list, kept in step with the emitter's tail chain -- the
