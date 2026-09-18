@@ -1,0 +1,27 @@
+// Остальные формы, названные строкой №763: payload-ЗАПИСЬ в Option, поле
+// Result[T,E], и привязка через `if Some(v) = r.d` (именно она давала
+// «assigning to 'nova_str' from incompatible type 'nova_int'»).
+module b_forms
+
+type Nd { id int }
+type H1 { d Option[Nd] }
+type H2 { r Result[int, str] }
+
+fn main() Io -> () {
+    ro h1 = H1 { d: Some(Nd { id: 7 }) }
+    ro a = if Some(v) = h1.d { v.id } else { -1 }
+
+    ro h2 = H2 { r: Ok(41) }
+    ro b = match h2.r {
+        Ok(v) => v
+        Err(_) => -1
+    }
+
+    ro h3 = H2 { r: Err("no") }
+    ro c = match h3.r {
+        Ok(v) => v
+        Err(_) => -2
+    }
+
+    println("a=${a} b=${b} c=${c}")
+}
