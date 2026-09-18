@@ -52,9 +52,28 @@
 #   trait/impl-for/throws E       сняты задолго до диагностик-эпохи —
 #                                 канон protocol/#impl(...)/Fail[E]
 #
-# ЧТО ПРОВЕРЯЕТ: файлы docs/guide/*.md (включает *.ru.md — та же маска),
-# spec/*.md (включает *.en.md), README.md/README.ru.md — ТОЛЬКО верхний
-# уровень этих каталогов (без рекурсии — так задание очертило периметр).
+# ЧТО ПРОВЕРЯЕТ, ПЕРИМЕТР ПЕРВЫЙ (markdown): файлы docs/guide/*.md (включает
+# *.ru.md — та же маска), spec/*.md (включает *.en.md), README.md/README.ru.md
+# — ТОЛЬКО верхний уровень этих каталогов (без рекурсии).
+#
+# ПЕРИМЕТР ВТОРОЙ (док-комментарии `.nv`), заведён 2026-09-18 окном Карины:
+# `std/src/**/*.nv`, РЕКУРСИВНО, и в них — содержимое ```nova-блоков внутри
+# `///`-комментариев. Правило счёта: строка берётся, если она внутри
+# ```nova-фенса, а сам фенс написан под `///` (префикс снимается перед
+# разбором, дальше логика ТА ЖЕ, включая блок-гранулярное исключение).
+#
+# ПОЧЕМУ ВТОРОЙ ПЕРИМЕТР ПОЯВИЛСЯ ЧЕРЕЗ ПОЛТОРА МЕСЯЦА ПОСЛЕ СТРАЖА. Шапка
+# выше говорит, что страж заведён против «дока месяцами учила читателя писать
+# снятый синтаксис (`let`, ...)», и `E_KW_REMOVED_LET` стоит первым в списке —
+# а 2026-09-18 в док-комментариях std нашлось около двухсот `let`. Страж при
+# этом был ЗЕЛЁН, и его зелень читалась как «таких форм нет». Периметр,
+# нигде не названный вслух, и есть самый тихий способ не проверять: отсутствие
+# красноты неотличимо от отсутствия нарушений.
+#
+# ЧЕГО СТРАЖ ПО-ПРЕЖНЕМУ НЕ ВИДИТ (названо намеренно, чтобы не повторить то же
+# молчание): `novac/src/**` (док-комментарии компилятора), `examples/**`,
+# `nova_tests/**`, и любые `.nv` вне `std/src`. Это не «покрыто» — это
+# НЕ ПРОВЕРЯЕТСЯ, и расширять периметр следующему придётся так же осознанно.
 # Внутри каждого файла — ТОЛЬКО содержимое ```nova ... ``` блоков (другие
 # языки — ```rust/```sh/```toml/... — не трогаются вовсе, даже если внутри
 # встретится `let`).
@@ -129,6 +148,37 @@ extract_kept_nova_blocks_all() {  # file...
     ' "$@"
 }
 
+# То же самое для `.nv`: ```nova-фенс написан под `///`, поэтому префикс
+# снимается ПЕРЕД разбором, и дальше работает ровно та же машина — включая
+# блок-гранулярное исключение «явно учит не писать так». Отдельная функция, а
+# не флаг у первой: первая ходит по гейтовому периметру, и ломать её ради
+# второго значило бы рисковать обоими сразу.
+extract_kept_nova_blocks_nv() {  # file...
+    awk '
+        FNR == 1 { innova = 0; n = 0; exempt = 0 }
+        {
+            line = $0
+            sub(/^[ \t]*\/\/\/[ ]?/, "", line)
+        }
+        line ~ /^```nova[ \t]*$/ { innova=1; n=0; exempt=0; next }
+        line ~ /^```/ {
+            if (innova && !exempt) {
+                for (i = 1; i <= n; i++) print FILENAME ":" bufline[i] ":" buftext[i]
+            }
+            innova = 0
+            next
+        }
+        innova {
+            n++
+            buftext[n] = line
+            bufline[n] = FNR
+            low = tolower(line)
+            if (low ~ /retired|retract|remov|снят/ || line ~ /E_[A-Z][A-Z0-9_]*/) exempt = 1
+            next
+        }
+    ' "$@"
+}
+
 file_list=""
 add_glob() {  # dir glob
     local d="$1" g="$2" f
@@ -163,6 +213,19 @@ if [ -n "$file_list" ]; then
     kept="$(extract_kept_nova_blocks_all $file_list)"
 fi
 
+# Второй периметр: `std/src/**/*.nv`, рекурсивно. `find` — ОДИН процесс, и awk
+# тоже один (урок №558: порождение процесса на файл уводило стража за срок).
+kept_nv=""
+files_scanned_nv=0
+if [ -d "$ROOT/std/src" ]; then
+    nv_list="$(find "$ROOT/std/src" -name '*.nv' -type f 2>/dev/null | sort)"
+    if [ -n "$nv_list" ]; then
+        files_scanned_nv=$(printf '%s\n' "$nv_list" | wc -l | tr -d ' ')
+        # shellcheck disable=SC2086
+        kept_nv="$(extract_kept_nova_blocks_nv $nv_list)"
+    fi
+fi
+
 # ---------------------------------------------------------------------
 # Классы нарушений: id | E-код(ы) | regex (grep -E, применяется к "code"
 # части строки — до содержимого; см. ниже per-класс замечания) | описание.
@@ -182,11 +245,17 @@ fi
 # страж сказал «значение не целое — страж сломан», то есть повёл себя так, как
 # мы и требуем от проверок (№475: шаг, который не смог, обязан отказать).
 KEPT_FILE="${TMPDIR:-/tmp}/doc_examples_kept_$$"
-trap 'rm -f "$KEPT_FILE"' EXIT
+KEPT_NV_FILE="${TMPDIR:-/tmp}/doc_examples_kept_nv_$$"
+trap 'rm -f "$KEPT_FILE" "$KEPT_NV_FILE"' EXIT
 if [ -n "$kept" ]; then
     printf '%s\n' "$kept" > "$KEPT_FILE"
 else
     : > "$KEPT_FILE"
+fi
+if [ -n "$kept_nv" ]; then
+    printf '%s\n' "$kept_nv" > "$KEPT_NV_FILE"
+else
+    : > "$KEPT_NV_FILE"
 fi
 
 count_class() {  # regex
@@ -199,6 +268,17 @@ count_class() {  # regex
 list_class() {  # regex
     [ -z "$kept" ] && return
     grep -E "$1" "$KEPT_FILE" 2>/dev/null
+}
+count_class_nv() {  # regex
+    if [ -z "$kept_nv" ]; then
+        echo 0
+        return
+    fi
+    grep -cE "$1" "$KEPT_NV_FILE" 2>/dev/null
+}
+list_class_nv() {  # regex
+    [ -z "$kept_nv" ] && return
+    grep -E "$1" "$KEPT_NV_FILE" 2>/dev/null
 }
 
 # 1. `let X = expr` (объявление) + `if let` / `while let` — E_KW_REMOVED_LET.
@@ -271,6 +351,47 @@ re_protocol_renamed='#impl\([[:space:]]*(Hashable|Equatable|Comparable|Cloneable
 n_protocol_renamed=$(count_class "$re_protocol_renamed")
 
 # ---------------------------------------------------------------------
+# ТЕ ЖЕ ОДИННАДЦАТЬ КЛАССОВ по второму периметру (`.nv`-доки). Список форм
+# ОДИН — в этом и ценность стража; отдельны только ключи храповика.
+#
+# ПОЧЕМУ КЛЮЧЕЙ ОДИННАДЦАТЬ, А НЕ ОДИН НА ПЕРИМЕТР: та же причина, что
+# записана выше для markdown — «Разные классы — разные ключи (не одна сумма),
+# чтобы храповик показывал КАКОЙ класс просел/подрос». Одна сумма позволила бы
+# снять сто `let` и завести сто `readonly`, оставшись зелёной.
+# ---------------------------------------------------------------------
+nv_let=$(count_class_nv "$re_let")
+nv_readonly=$(count_class_nv "$re_readonly")
+nv_ptr_ro=$(count_class_nv "$re_ptr_ro")
+nv_unsafe_ptr=0
+if [ -n "$kept_nv" ]; then
+    nv_unsafe_ptr=$(printf '%s\n' "$kept_nv" | grep -E "$re_unsafe_ptr" 2>/dev/null | grep -cvE "$re_unsafe_ptr_fn_ok" 2>/dev/null)
+fi
+# Постфиксный `!` считается НЕ регэкспом, а тем же awk-конвейером, что и в
+# markdown-периметре: переменной `re_bang` не существует вовсе. Первая редакция
+# этой правки передала сюда несуществующее имя, и страж ОТКАЗАЛ строкой
+# «значение не целое — страж сломан», то есть повёл себя ровно как требуется
+# (№475: шаг, который не смог, обязан отказать). Но в отфильтрованном выводе
+# это выглядело как ОТСУТСТВИЕ строки класса, а не как отказ, — и вот это
+# опаснее самой ошибки: класс, который не считался, неотличим от класса, у
+# которого ноль нарушений.
+nv_bang=0
+nv_bang_matches=""
+if [ -n "$kept_nv" ]; then
+    nv_bang_matches="$(printf '%s\n' "$kept_nv" | awk -F'//' '{
+        code = $1
+        sub(/[ \t]+$/, "", code)
+        if (code ~ /[A-Za-z0-9_)\]][!][[:space:]]*$/ && code !~ /!![[:space:]]*$/) print
+    }')"
+    [ -n "$nv_bang_matches" ] && nv_bang=$(printf '%s\n' "$nv_bang_matches" | grep -c '')
+fi
+nv_trait_impl_throws=$(count_class_nv "$re_trait_impl_throws")
+nv_ref=$(count_class_nv "$re_ref")
+nv_external_fn=$(count_class_nv "$re_external_fn")
+nv_addr_of=$(count_class_nv "$re_addr_of")
+nv_null_ptr=$(count_class_nv "$re_null_ptr")
+nv_protocol_renamed=$(count_class_nv "$re_protocol_renamed")
+
+# ---------------------------------------------------------------------
 # Ratchet-хелпер (образец: check-doc-conventions.sh ratchet_check).
 # ---------------------------------------------------------------------
 ratchet_check() {  # key current_value description
@@ -304,6 +425,20 @@ ratchet_check retired_external_fn          "$n_external_fn"       "\`external fn
 ratchet_check retired_addr_of              "$n_addr_of"           "\`addr_of\`/\`addr_of_mut\` (E_ADDR_OF_REMOVED)"
 ratchet_check retired_null_ptr             "$n_null_ptr"          "\`null <тип>\` литерал (E_NULL_PTR_RETRACTED_USE_OPTION)"
 ratchet_check retired_protocol_renamed     "$n_protocol_renamed"  "\`#impl(<старое имя протокола>)\` (E_PROTOCOL_RENAMED)"
+
+info "doc-examples: просканировано .nv = $files_scanned_nv (std/src/**, рекурсивно; nova-блоки внутри док-комментариев)"
+
+ratchet_check nv_retired_kw_let               "$nv_let"               ".nv-доки: \`let\`/\`if let\`/\`while let\` (E_KW_REMOVED_LET)"
+ratchet_check nv_retired_kw_readonly          "$nv_readonly"          ".nv-доки: \`readonly\` (E_KW_REMOVED_READONLY)"
+ratchet_check nv_retired_pointer_ro           "$nv_ptr_ro"            ".nv-доки: \`*ro T\` (E_REDUNDANT_POINTER_RO)"
+ratchet_check nv_retired_unsafe_type_modifier "$nv_unsafe_ptr"        ".nv-доки: \`*unsafe T\` (E_UNSAFE_TYPE_MODIFIER_RENAMED)"
+ratchet_check nv_retired_postfix_bang         "$nv_bang"              ".nv-доки: постфиксный одиночный \`!\` (канон \`!!\`)"
+ratchet_check nv_retired_trait_impl_throws    "$nv_trait_impl_throws" ".nv-доки: trait/impl-for/throws E"
+ratchet_check nv_retired_ref_form             "$nv_ref"               ".nv-доки: \`ref\` в параметре/call-site"
+ratchet_check nv_retired_external_fn          "$nv_external_fn"       ".nv-доки: \`external fn\` (E_EXTERNAL_FN_RETRACTED)"
+ratchet_check nv_retired_addr_of              "$nv_addr_of"           ".nv-доки: \`addr_of\`/\`addr_of_mut\` (E_ADDR_OF_REMOVED)"
+ratchet_check nv_retired_null_ptr             "$nv_null_ptr"          ".nv-доки: \`null <тип>\` литерал"
+ratchet_check nv_retired_protocol_renamed     "$nv_protocol_renamed"  ".nv-доки: \`#impl(<старое имя>)\` (E_PROTOCOL_RENAMED)"
 
 # Печатаем сами находки (не только счёт) — полезно и при первом замере, и
 # при локальном прогоне после правки доки, до коммита baseline.
