@@ -65,7 +65,8 @@ def note(tmp, role="integrator", age_sec=0):
     return p
 
 
-def run(tmp, turns, session="s1", active=False, role="integrator"):
+def run(tmp, turns, session="s1", active=False, role="integrator",
+        hook=None, env_extra=None):
     u"""role=None — окно без роли: ворота по роли обязаны сделать хук немым."""
     payload = {"transcript_path": transcript(tmp, turns), "cwd": tmp,
                "session_id": session, "stop_hook_active": active}
@@ -74,7 +75,9 @@ def run(tmp, turns, session="s1", active=False, role="integrator"):
         env["NOVA_WINDOW_ROLE"] = role
     else:
         env.pop("NOVA_WINDOW_ROLE", None)
-    r = subprocess.run([sys.executable, HOOK], input=json.dumps(payload),
+    if env_extra:
+        env.update(env_extra)
+    r = subprocess.run([sys.executable, hook or HOOK], input=json.dumps(payload),
                        capture_output=True, text=True, encoding="utf-8", env=env)
     out = (r.stdout or "").strip()
     if not out:
@@ -186,6 +189,64 @@ def c_snapshot_failed_passes_with_escape(tmp):
     return res, False
 
 
+def broken_hook(tmp):
+    u"""Копия хука с подстроенным падением в первой же строке `main()`.
+
+    Проверяется не источник данных, а САМ скрипт: исключение внутри хука. Это
+    отдельный класс, и он опаснее — снимок при отказе источника хотя бы говорит
+    `ok: false`, а упавший скрипт не говорит ничего.
+    """
+    src = io.open(HOOK, encoding="utf-8").read()
+    marker = u"def main():"
+    assert src.count(marker) == 1, u"маркер инъекции неоднозначен"
+    src = src.replace(marker, marker + u"\n    raise RuntimeError(u'подстроено')", 1)
+    p = os.path.join(tmp, "hook_boom.py")
+    with io.open(p, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(src)
+    return p
+
+
+def c_hook_crash_blocks(tmp):
+    # ПРЕДУПРЕЖДЕНИЕ ИНТЕГРАТОРА (2026-09-18): проверять надо не только поломку
+    # источника, но и поломку самого скрипта. Упавший хук даёт ненулевой код и
+    # пустой stdout — Claude Code пропускает ход, и заметить это нечем.
+    res = run(tmp, [(u"Сделал правку.", 0)], hook=broken_hook(tmp))
+    assert res and u"ХУК УПАЛ" in (res.get("reason") or u""), u"падение не названо"
+    log = os.path.join(tmp, "target", ".stop-guard", "escapes.log")
+    assert os.path.exists(log), u"падение не оставило следа в логе"
+    return res, True
+
+
+def c_hook_crash_does_not_lock(tmp):
+    # Обратная половина: блокировка от падения не имеет права запереть окно.
+    # `stop_hook_active` читается из СЫРОГО входа, то есть до кода, который упал.
+    return run(tmp, [(u"Сделал правку.", 0)], active=True,
+               hook=broken_hook(tmp)), False
+
+
+def c_queue_broken_json(tmp):
+    d = os.path.join(tmp, "target")
+    os.makedirs(d, exist_ok=True)
+    with io.open(os.path.join(d, "queue.json"), "w", encoding="utf-8") as fh:
+        fh.write(u"{ это не json")
+    return run(tmp, [(u"Всё.\n\nСТОП: очередь-пуста", 0)]), True
+
+
+def c_cyrillic_path_cp1251(tmp):
+    # Случай интегратора в чистом виде: кириллица в пути и однобайтовая консоль.
+    # `print` кириллицей на cp1251 роняет хук UnicodeEncodeError, поэтому решение
+    # печатается байтами. tmp здесь свой — с кириллицей в имени.
+    d = tempfile.mkdtemp(prefix=u"stopv2-Кириллица-")
+    try:
+        res = run(d, [(u"Сделал правку.", 0)],
+                  env_extra={"PYTHONIOENCODING": "cp1251"})
+        assert res and res.get("decision") == "block", u"хук онемел на cp1251"
+        assert u"СТОП" in (res.get("reason") or u""), u"причина нечитаема"
+        return res, True
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def c_escape_after_two(tmp):
     queue(tmp, {"role": "integrator", "open": [u"пункт"]})
     t = [(u"Всё.\n\nСТОП: очередь-пуста", 0)]
@@ -214,6 +275,10 @@ for n, f in [
     (u"смена сдана: записка свежая", c_shift_with_note),
     (u"смена объявлена, записка трёхчасовой давности", c_shift_without_note),
     (u"снимок ok=false: пропуск + побег в лог", c_snapshot_failed_passes_with_escape),
+    (u"хук упал сам — блок, а не немота", c_hook_crash_blocks),
+    (u"хук упал повторно — не запирает окно", c_hook_crash_does_not_lock),
+    (u"снимок битый JSON — блок", c_queue_broken_json),
+    (u"кириллический путь и cp1251 — хук говорит", c_cyrillic_path_cp1251),
     (u"третья блокировка подряд пропускается", c_escape_after_two),
 ]:
     case(n, f)
