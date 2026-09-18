@@ -232,7 +232,27 @@
 # note above. Mirror of the same day's other find: there the overview lagged this
 # D-block, here the D-block lagged the tree. No form starts or stops compiling,
 # so the subset is untouched -- the counter moves because spec/decisions did.
-#   spec-queue: 80
+
+# 76 -> 77 (2026-09-18): D38 amendment -- only a TYPE name may carry a turbofish;
+# a VALUE name makes it indexing (registry 221.1 #676). The debt for novac is
+# REAL but SMALL, and of the opposite sign to the usual one: the rule does not
+# add work, it REMOVES it -- eight intermediate bindings `ro pj = vec[j]` across
+# eight files exist only because the oracle lost the index. novac's own parser
+# has no such ambiguity at all (it does not support turbofish), so there is
+# nothing to reconcile there; the queue grows by one because the spec entry
+# landed, while removing the workarounds is separate work for window 274.
+#
+# Written in English after the gate refused this manifest: a package manifest
+# ships INSIDE the package repository and is read from outside (owner's rule,
+# 2026-08-10). Mine was the only Cyrillic in 83 manifests.
+# 80 -> 81 (слияние 2026-09-18): СЧЁТЧИКИ СТОЛКНУЛИСЬ НОМЕРАМИ.
+# Обе стороны заняли «77» под РАЗНЫЕ решения: ветка — под правку D183,
+# main — под амендмент D38 (#676). Счётчик считает КОММИТЫ, тронувшие
+# spec/decisions, а не максимум двух веток: после слияния их СУММА —
+# мои 80 плюс его один, которого в моём счёте не было. Взять большее из двух
+# (80) значило бы потерять его коммит из счёта молча. Обе летописи ниже
+# сохранены целиком — столкновение номеров видно только из них обеих.
+#   spec-queue: 81
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,

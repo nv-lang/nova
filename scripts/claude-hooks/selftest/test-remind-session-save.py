@@ -23,6 +23,7 @@ HOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
                     "remind-session-save.py")
 HANDOFF_REL = os.path.join("docs", "dev", "prompts", "integrator-handoff.md")
 CARINA_REL = os.path.join("docs", "dev", "prompts", "carina-handoff.md")
+CONTROLLER_REL = os.path.join("docs", "dev", "prompts", "controller-handoff.md")
 
 
 def make_tree(branch):
@@ -122,6 +123,89 @@ try:
     else:
         bad(u"на ветке Карины хук назвал не то: %r" % (ctx or out)[:140])
     shutil.rmtree(croot, ignore_errors=True)
+
+    # (6) КОНТРОЛЁР НА `main` — записка СВОЯ, а не интеграторская. Ветка роли не
+    #     различает: контролёр работает в ГЛАВНОМ дереве, то есть на `main`, как
+    #     и интегратор, — и до правки 2026-09-18 он получал напоминание про чужой
+    #     файл. Роль берётся ВИЗИТКОЙ, сопоставление по session_id.
+    kroot = make_tree("main")
+    kpath = os.path.join(kroot, CONTROLLER_REL)
+    os.makedirs(os.path.dirname(kpath))
+    io.open(kpath, "w", encoding="utf-8").write(u"# записка контролёра\n")
+    st = os.stat(kpath)
+    os.utime(kpath, (st.st_atime, time.time() - 7200))
+    # Записка ИНТЕГРАТОРА тоже лежит и тоже протухла: без визитки хук назвал бы
+    # именно её, и клетка обязана отличать «выбрал верную» от «нашёл хоть какую».
+    ipath = os.path.join(kroot, HANDOFF_REL)
+    io.open(ipath, "w", encoding="utf-8").write(u"# записка интегратора\n")
+    st = os.stat(ipath)
+    os.utime(ipath, (st.st_atime, time.time() - 7200))
+    gitdir = subprocess.run(["git", "-C", kroot, "rev-parse", "--git-common-dir"],
+                            capture_output=True, text=True).stdout.strip()
+    if not os.path.isabs(gitdir):
+        gitdir = os.path.join(kroot, gitdir)
+    io.open(os.path.join(gitdir, "nova-session-controller.card"), "w",
+            encoding="utf-8").write(
+        u"role=controller\nname=nova-test\nsession_id=SID-TEST\n")
+    env_sid = dict(os.environ)
+    env_sid["CLAUDE_PROJECT_DIR"] = kroot
+    env_sid["CLAUDE_CODE_SESSION_ID"] = "SID-TEST"
+    p = subprocess.run([sys.executable, HOOK], input=b"{}",
+                       capture_output=True, env=env_sid)
+    out = p.stdout.decode("utf-8", "replace").strip()
+    ctx = ""
+    if out:
+        try:
+            ctx = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+        except Exception:
+            ctx = ""
+    if ctx and u"controller-handoff" in ctx and u"integrator-handoff" not in ctx:
+        ok(u"контролёр на main — хук зовёт ЕГО записку, не интеграторскую")
+    else:
+        bad(u"контролёру названа не та записка: %r" % (ctx or out)[:140])
+    shutil.rmtree(kroot, ignore_errors=True)
+
+    # (8) ОКНО КАРИНЫ, РАБОТАЮЩЕЕ В WORKTREE. Находка самого окна 2026-09-18:
+    #     ему пришло «ЗАПИСКА ИНТЕГРАТОРА», хотя оно на `p274-novac`. Таблица
+    #     веток верна — неверен КОРЕНЬ: у окна в worktree `CLAUDE_PROJECT_DIR`
+    #     указывает на ГЛАВНОЕ дерево, и ветка читается оттуда, то есть `main`.
+    #     Клетка воспроизводит именно это: дерево на `main`, а визитка говорит
+    #     `carina`, — и адресатом обязана стать ЕЁ записка.
+    wroot = make_tree("main")
+    wcar = os.path.join(wroot, CARINA_REL)
+    os.makedirs(os.path.dirname(wcar))
+    io.open(wcar, "w", encoding="utf-8").write(u"# записка окна Карины\n")
+    st = os.stat(wcar)
+    os.utime(wcar, (st.st_atime, time.time() - 7200))
+    # Записка интегратора тоже протухла: без визитки хук назвал бы ЕЁ.
+    wint = os.path.join(wroot, HANDOFF_REL)
+    io.open(wint, "w", encoding="utf-8").write(u"# записка интегратора\n")
+    st = os.stat(wint)
+    os.utime(wint, (st.st_atime, time.time() - 7200))
+    wgit = subprocess.run(["git", "-C", wroot, "rev-parse", "--git-common-dir"],
+                          capture_output=True, text=True).stdout.strip()
+    if not os.path.isabs(wgit):
+        wgit = os.path.join(wroot, wgit)
+    io.open(os.path.join(wgit, "nova-session-carina.card"), "w",
+            encoding="utf-8").write(
+        u"role=carina\nname=nova-test\nsession_id=SID-CARINA\n")
+    wenv = dict(os.environ)
+    wenv["CLAUDE_PROJECT_DIR"] = wroot
+    wenv["CLAUDE_CODE_SESSION_ID"] = "SID-CARINA"
+    wp = subprocess.run([sys.executable, HOOK], input=b"{}",
+                        capture_output=True, env=wenv)
+    wout = wp.stdout.decode("utf-8", "replace").strip()
+    wctx = ""
+    if wout:
+        try:
+            wctx = json.loads(wout)["hookSpecificOutput"]["additionalContext"]
+        except Exception:
+            wctx = ""
+    if wctx and u"carina-handoff" in wctx and u"integrator-handoff" not in wctx:
+        ok(u"окно Карины при корне главного дерева — записка ЕГО, не интегратора")
+    else:
+        bad(u"окну Карины названа не та записка: %r" % (wctx or wout)[:140])
+    shutil.rmtree(wroot, ignore_errors=True)
 
     # (5) НЕЗНАКОМАЯ РОЛЬ — молчание, и это решение, а не дыра: у пакетных окон
     #     своя передача (/stop), выдумывать им адресата хук не вправе.

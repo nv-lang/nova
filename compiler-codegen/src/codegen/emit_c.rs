@@ -19446,10 +19446,37 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // sync primitives already have a complete
                             // `#include`d typedef, forward-declaring here
                             // collides with it.
+                            // Реестр 221.1 №761 (2026-09-18): ФОРВАРД ЭМИТИТСЯ
+                            // ТОЛЬКО ТОМУ, ЧТО ДЕЙСТВИТЕЛЬНО STRUCT. Прежнее
+                            // условие спрашивало СПИСОК ИМЁН
+                            // (`debt_is_runtime_backed_newtype` — 20 имён
+                            // рантайма), и всякий ПОЛЬЗОВАТЕЛЬСКИЙ newtype в
+                            // payload варианта получал `typedef struct Nova_X
+                            // Nova_X;` поверх своего же `typedef nova_int
+                            // Nova_X` — «typedef redefinition with different
+                            // types», отказ clang при зелёном чекере.
+                            //
+                            // ПОРЯДОК ОБЪЯВЛЕНИЯ РЕШАЛ, СОБЕРЁТСЯ ЛИ ПРОГРАММА:
+                            // сумма ВЫШЕ newtype — отказ, ниже — успех; и Карина
+                            // платила за это тем, что три типа стоят не там, где
+                            // им место по смыслу, а в файле, эмитящемся раньше.
+                            //
+                            // СПИСОК ИМЁН БЫЛ ВЕРНЫМ ОТВЕТОМ НА УЖЕ́ ВОПРОС:
+                            // он защищал рантаймовые типы, чей typedef приезжает
+                            // заголовком. Но вопрос здесь другой — «нужна ли
+                            // forward-декларация СТРУКТУРЫ», — и ответ на него
+                            // даёт не имя, а вид типа. Запись и сумма свои тела
+                            // эмитят позже, им форвард нужен; всё остальное под
+                            // этим именем структурой не является вовсе, и
+                            // объявлять его структурой — ошибка независимо от
+                            // того, знаком ли нам этот тип.
+                            let bare = base.trim_start_matches("Nova_");
+                            let is_struct_shaped = self.record_schemas.contains_key(bare)
+                                || self.sum_schemas.contains_key(bare)
+                                || self.generic_types.contains(bare);
                             if base.starts_with("Nova_")
-                                && !Self::debt_is_runtime_backed_newtype(
-                                    base.trim_start_matches("Nova_"),
-                                )
+                                && is_struct_shaped
+                                && !Self::debt_is_runtime_backed_newtype(bare)
                                 && fwd_seen.insert(base.to_string())
                             {
                                 self.line(&format!("typedef struct {0} {0};", base));
@@ -65728,6 +65755,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         }
                     }
+                    // Реестр 221.1 №764 (2026-09-18): ТРЕЙЛИНГ, КОТОРЫЙ САМ
+                    // ЯВЛЯЕТСЯ if-let, спрашивается РЕКУРСИВНО. Канал держит
+                    // аннотацию не на всяком узле, и на вложенном if-let её
+                    // может не быть — а его тип выводится тем же правилом, что
+                    // и здесь. Рекурсия сужена до структурных форм намеренно:
+                    // предупреждение выше (про legacy re-derive, падающий на
+                    // связанном идентификаторе) относится к ИДЕНТИФИКАТОРАМ,
+                    // которых в var_types ещё нет, а вложенный if-let ни одного
+                    // связанного имени сам по себе не читает.
+                    if let Some(trailing) = then.trailing.as_ref() {
+                        if matches!(trailing.kind, ExprKind::IfLet { .. }) {
+                            let inner = self.infer_expr_c_type(trailing);
+                            if !inner.is_empty() {
+                                return inner;
+                            }
+                        }
+                    }
                     // Try else-branch if then has no trailing (or annotation unavailable).
                     if let Some(else_br) = else_ {
                         let else_expr_id = match else_br {
@@ -65745,6 +65789,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 }
                             }
                         }
+                    }
+                    // Реестр 221.1 №764: НЕТ ЗНАЧЕНИЯ — ЗНАЧИТ `nova_unit`, а не
+                    // пустая строка. Ветвь, уходящая `return`'ом, трейлинга не
+                    // имеет вовсе, и пустой `else` тоже; прежний код возвращал
+                    // отсюда `""`, а ЭМИССИЯ того же узла в этом случае пишет
+                    // `nova_unit`. Две двери на один вопрос давали разные ответы,
+                    // и в C выходила строка ` _nv_if_let_NNN;` — БЕЗ ТИПА, то есть
+                    // не объявление, а чтение необъявленного имени:
+                    // `use of undeclared identifier`, и падал уже clang, а не мы.
+                    //
+                    // ПОЧЕМУ ТОЛЬКО В ЭТОМ СЛУЧАЕ, а не общим запасным ответом:
+                    // когда трейлинга нет ни у одной ветви, «не знаю» и «unit»
+                    // совпадают ПО ПОСТРОЕНИЮ — значения тут взять негде. Вернуть
+                    // же `nova_unit` там, где значение ЕСТЬ, а канал промолчал,
+                    // значило бы превратить громкий отказ сборки в тихо неверный
+                    // тип, а тихое хуже громкого — цена этого урока уже уплачена
+                    // строкой №676.
+                    let then_has_value = then.trailing.is_some();
+                    let else_has_value = match else_ {
+                        Some(crate::ast::ElseBranch::Block(b)) => b.trailing.is_some(),
+                        Some(crate::ast::ElseBranch::If(_)) => true,
+                        None => false,
+                    };
+                    if !then_has_value && !else_has_value {
+                        return "nova_unit".to_string();
                     }
                     String::new()
                 }
