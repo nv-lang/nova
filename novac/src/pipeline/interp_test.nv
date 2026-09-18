@@ -4,7 +4,7 @@
 // assertions (a test here asserts the property, not the byte).
 // Role: acceptance tests of string INTERPOLATION in novac -- the chain (waves
 // I1+I2), every primitive family through its own runtime entry (274.7 B1a),
-// a declared type through its `display(mut f Fmt)` (274.7 B1b-1), and the
+// a declared type through its `@display(mut f Fmt)` (274.7 B1b-1), and the
 // refusals that fence the rest by name (u64, nested slots, a type without
 // display).
 // Used by: check-novac-module-tests (the one batch runner); nothing imports it.

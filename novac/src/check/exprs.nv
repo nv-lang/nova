@@ -326,9 +326,10 @@ fn Checker mut @type_expr(e Node) -> () {
             if @out.len() > before { return }
             ro st = type_of(c, @ctx, @scope, @chan)
             // EVERY PRIMITIVE FAMILY through its carrier (wave B1a, 274.7): the
-            // spec gives the slot `Into[str]`, which every universe row has --
+            // spec routes the slot through `Display` (D422), which every universe
+            // row implements --
             // integers of any width, both floats, bool, char, str. NOT through
-            // the carrier: a newtype is a distinct type and the spec (D73) asks
+            // the carrier: a newtype is a distinct type and the spec (D422) asks
             // it for its own Display -- the oracle's checker refuses `${m}` on a
             // newtype (E_INTERP_NO_DISPLAY), measured on the wave's own carrier
             // before it was committed. That is B1b's ground. Until 2026-09-05

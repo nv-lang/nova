@@ -421,8 +421,9 @@ export fn CheckOut @has_callee(id NodeId) -> bool
 }
 
 /// Record the call the language makes AT this node's value with none written
-/// there (274.7 B1b-1): the interpolation slot's `display(mut f Fmt)` (D422) is
-/// the first; `Into[str]` and the other inserted calls of the spec are the
+/// there (274.7 B1b-1): the interpolation slot's `@display(mut f Fmt)` (D422) is
+/// the first; the `#impl(Display)` synthesis (D186) and the other inserted calls
+/// of the spec are the
 /// rest. The SAME write discipline as `record_callee` -- one answer, the same
 /// answer twice is legal, a different one is the disease -- over the SECOND
 /// table, because the node itself may be a call (`${f()}`) and `res` is taken.

@@ -59,11 +59,19 @@ const NESTED_INTERP_MSG = "outside the subset: an interpolation nested inside an
 /// bound its receiver.
 const BARE_SELF_MSG = "`@` is the method receiver -- outside a method body there is nothing it could name"
 
-/// The slot-type judge's answer for a NON-PRIMITIVE slot: the spec admits any
-/// `Into[str]` (D73 -- `Option[T]`, a record with `From[Self] for str`), and that
-/// is protocol dispatch, wave B1b of 274.7. Every primitive family is compiled
+/// The slot-type judge's answer for a NON-PRIMITIVE slot: the spec routes the
+/// slot through `Display` -- `@display(mut f Fmt)` (D422), with `#impl(Display)`
+/// the opt-in gate that a bare `${x}` needs (D186 amendment) -- and that is
+/// protocol dispatch, wave B1b of 274.7. Every primitive family is compiled
 /// since B1a (2026-09-05): before it the slot was held to `{str, int}` by id.
-const INTERP_TYPE_MSG = "outside the subset: an interpolation slot of a non-primitive type without its own `display(mut f Fmt)` (Option, a record with Into[str], a generic instance) is not compiled yet (274.7 B1b) -- every primitive family and every plain type with `display` is"
+///
+/// CORRECTED 2026-09-18: this doc and the message below said `Into[str]` and
+/// cited D73 for it. D73 RETRACTED `From`/`Into` on 2026-07-06 (08-runtime.md),
+/// so the refusal sent the reader to a protocol the language does not have --
+/// and wrote the method as bare `display(...)`, the spelling D209 retracted.
+/// A diagnostic naming a form that does not exist is worse than a vague one:
+/// the reader goes looking, and the search succeeds only in the old spec.
+const INTERP_TYPE_MSG = "outside the subset: an interpolation slot of a non-primitive type without its own `@display(mut f Fmt)` (`Option[T]`, a record that relies on `#impl(Display)`, a generic instance) is not compiled yet (274.7 B1b) -- every primitive family and every plain type with `@display` is"
 
 /// The one primitive the runtime cannot display: `std.runtime.string_builder`
 /// has no unsigned 64-bit `display_spec`, and the oracle prints `u64`/`uint`
