@@ -65,7 +65,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks/guard-stop.py\""
+            "command": "python \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks/guard-stop-v2.py\""
           }
         ]
       }
