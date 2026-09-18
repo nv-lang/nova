@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR E_MATCH_CONST_PATTERN
+//
+// Реестр 221.1 №762, решение владельца 2026-09-18: имя модульной константы в
+// позиции образца — НЕ форма языка.
+//
+// ЭТА КЛЕТКА — ГРОМКАЯ ПОЛОВИНА. Имя ЗАГЛАВНЫМИ парсер разбирает как
+// `Pattern::Variant`; варианта с таким именем нет, и до запрета сборка падала
+// ТРЕМЯ ошибками C («member reference type 'nova_str' is not a pointer», «no
+// member named 'tag'», «use of undeclared identifier 'NOVA_TAG_nova_str_MUT_W'»),
+// то есть отказ приходил из чужого языка и на чужом этапе.
+//
+// Рядом стоит `d19_const_pattern_lower_neg.nv` — ТИХАЯ половина, и она важнее:
+// там программа собиралась и врала. Обе клетки нужны вместе, потому что до
+// запрета одна и та же запись значила РАЗНОЕ в зависимости от РЕГИСТРА имени.
+module neg.d19_const_pattern_upper_neg
+
+const MUT_W = "mut"
+
+fn classify(w str) -> int => match w {
+    // nova:expect E_MATCH_CONST_PATTERN -- имя константы в позиции образца; канон — `w if w == MUT_W => 1`
+    MUT_W => 1
+    _ => 0
+}
+
+fn main() -> () {
+    ro _ = classify("mut")
+}

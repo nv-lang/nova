@@ -1143,6 +1143,13 @@ takes the first one where the pattern matched AND the guard is true.
 | Tuple | `(a, b)`, `(_, value)` | destructures a tuple |
 | Guard | `n if n < 0` | a pattern + an extra condition |
 
+**A bare name in a pattern ALWAYS binds, even when a constant has that name.**
+`match w { MUT_W => 1, _ => 0 }` does not compare `w` against `MUT_W`, so the
+form is refused (`E_MATCH_CONST_PATTERN`): a comparison is written as a guard --
+`w if w == MUT_W => 1`. The list of pattern forms is CLOSED
+([D19](decisions/03-syntax.md#d19), amendment 2026-09-18): a form absent from the
+table above is not accepted.
+
 **A `_`-prefixed name may not be used, and `_` may not discard a linear
 value** ([D461](decisions/03-syntax.md#d461)). The prefix is a promise that the
 value is not needed, and the compiler holds you to it -- for any type, not only
