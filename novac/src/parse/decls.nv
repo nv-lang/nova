@@ -18,7 +18,7 @@
 
 module novac.parse
 
-import ../lex.{Token, TokenKind, brace_delta}
+import ../lex.{Token, TokenKind, brace_delta, paren_delta}
 import ../tree.{Node, NodeKind}
 
 /// `export <declaration>` -- the visibility WRAPS the declaration.
@@ -138,16 +138,44 @@ fn Cursor mut @import_decl() -> Node {
     @node(NodeKind.ImportDecl, kids)
 }
 
-/// `#realtime nogc` -- an attribute line before a declaration.
+/// `#realtime nogc`, `#impl(Display)` -- an attribute line before a declaration.
 ///
 /// Newlines are trivia in this lexer, so the line's end is not a token: the
 /// attribute runs while identifiers follow, and the next declaration keyword
-/// ends it. That is enough for every attribute the language writes today
-/// (`#realtime nogc`, `#inline`), and the tree keeps every leaf either way.
+/// ends it.
+///
+/// AN ARGUMENT LIST IS PART OF THE ATTRIBUTE, and until 2026-09-18 this door
+/// stopped at the identifier. The doc here used to say the identifier run "is
+/// enough for every attribute the language writes today (`#realtime nogc`,
+/// `#inline`)" -- and that was false while it was being read: `#impl(P)` is
+/// D186, and it stands in novac's OWN source (`diag/diag.nv:52,60`). What the
+/// gap did was not refuse the form but MISPLACE the refusal: `#impl(Display)`
+/// produced TWO diagnostics, one about the unknown attribute and a second where
+/// `(Display)` fell to the parser's fallback as an unparsed form. Measured by
+/// OFFSETS rather than by counting: d0 at the `#`, d1 spanning `(Display)`.
+///
+/// Taking the run does not admit the attribute -- the checker still refuses any
+/// attribute it does not read (`ATTR_MSG`). It makes the refusal name ONE cause
+/// instead of two, which is the promise the subset makes everywhere else.
 fn Cursor mut @attr_decl() -> Node {
     mut kids = []Node.of(@take()) // '#'
     while @peek() == TokenKind.Ident {
         kids.push(@take())
+    }
+    if @peek() == TokenKind.LParen {
+        // The same balanced-run shape the import's brace list uses above, with
+        // the paren counter instead: the tree keeps every leaf, and the form
+        // inside is the checker's question, not the cursor's.
+        mut depth = 0
+        while !@at_eof() {
+            ro k = @peek()
+            ro delta = paren_delta(k)
+            depth += delta
+            kids.push(@take())
+            if depth == 0 { break }
+        }
+    } else {
+        // No argument list: `#realtime nogc`, `#inline`.
     }
     @node(NodeKind.AttrDecl, kids)
 }

@@ -29,6 +29,7 @@ module novac.sem
 
 import ../tree.{Node, NodeId, NodeKind}
 import ../builtins.{COERCE_ATTR}
+import ../lex.{TokenKind}
 import ../types.{TyId, is_ty}
 
 /// ONE declared implicit conversion (D429 V1, form-source): the pair and the
@@ -86,6 +87,25 @@ fn attr_names(attr Node, word str) -> bool => attr_kids_name(branch_children(att
 /// judges the form from inside the walk, the collectors from outside it.
 export fn attr_kids_name(kids []Node, word str) -> bool {
     for c in kids {
+        // THE SCAN STOPS AT THE ARGUMENT LIST, and this stop is younger than the
+        // loop around it (2026-09-18). Until that day the cursor stopped at `(`,
+        // so an attribute's children were its NAME and its modifier words only --
+        // `#realtime nogc` gives `realtime` and `nogc`, and asking "does it name
+        // this word" over all of them was exactly right. Once the cursor began
+        // taking `#impl(Display)` whole, the argument became a child too, and
+        // without this stop `#impl(coerce)` would answer YES to "is this
+        // `#coerce`" -- one attribute read as a different one.
+        //
+        // Nothing in the tree spells it that way today (`#impl(Serialize)`,
+        // `#impl(Display)`, `#impl(Debug)`; protocol names are capitalised),
+        // which is why this is written now rather than after a defect: the
+        // hazard arrived with a change of mine, and the cheapest moment to close
+        // it is the one where it is still visible.
+        if leaf_kind(c) == TokenKind.LParen {
+            break
+        } else {
+            // A name or a modifier word: still part of what the attribute says.
+        }
         // A two-armed match and NOT `if Some(...)`, and the difference is
         // measured: the if-form needs an `else` with a reason anyway (P31), so
         // for an empty second case it is LONGER, not shorter. `if Some(...)`
