@@ -89,6 +89,50 @@ fn main() {
     println("hs = ", is_high_surrogate(0xD800))
     println("ls = ", is_low_surrogate(0xDC00))
     println("sp = ", decode_surrogate_pair(0xD83D, 0xDE00))
+
+    // WAVE B1b-3 (274.7): the `@display` of a GENERIC INSTANCE in a slot.
+    //
+    // WHY THESE LINES ARE HERE AT ALL, since the probe never runs under novac:
+    // an instance method reaches novac only through the shell's INTEROP
+    // SURFACE (`c_method_symbol` + `Ctx.interop.has`, `check/methods.nv:221`),
+    // and the surface is whatever the oracle's DCE kept. Measured 2026-09-18
+    // before this edit: the word `display` appeared ZERO times in this file, so
+    // the shell carried the method for no instance at all -- and the slot judge
+    // would have refused `${Some(1)}` even once taught to look for it, because
+    // the symbol is not in the link.
+    //
+    // THE EXPECTED BYTES COME FROM std's OWN DOC EXAMPLES, not from taste:
+    // `protocols.nv:647` asserts `"${None}" == "None"` and
+    // `"${Some("hi")}" == "Some(hi)"`; `:668` asserts `"${Ok(1)}" == "Ok(1)"`
+    // and `"${Err("oops")}" == "Err(oops)"`; `collections/vec/protocols.nv:192`
+    // asserts `"Vec[1, 2, 3]"`. novac has to print the same bytes, so the forms
+    // are named here rather than guessed at the checker.
+    println("d_none = ${opt_str(false)}")
+    println("d_some = ${opt_str(true)}")
+    println("d_ok = ${res_int(true)}")
+    println("d_err = ${res_int(false)}")
+    println("d_vec = ${three()}")
+}
+
+/// A Result[int, str] instance for the shell (B1b-3): both arms, because the
+/// display of a sum is chosen by the TAG and a one-armed probe would keep only
+/// half the emission alive.
+fn res_int(f bool) -> Result[int, str] {
+    if f {
+        return Ok(1)
+    }
+    Err("oops")
+}
+
+/// A Vec[int] for the shell (B1b-3). Three elements and not one: the separator
+/// between them is part of the form std's own example asserts (`Vec[1, 2, 3]`),
+/// and a single-element vector would keep a shape that never prints one.
+fn three() -> []int {
+    mut v = []int.new()
+    v.push(1)
+    v.push(2)
+    v.push(3)
+    v
 }
 
 /// An Option[str] instance for the shell (W4).
