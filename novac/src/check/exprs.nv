@@ -262,16 +262,12 @@ fn Checker mut @judge_type_head_variant(e Node, kids []Node, arg_from int) -> bo
                     @refuse(vt, "a type name takes a variant after the dot, and this type is not a sum -- it declares no variants")
                 } else {
                     // NO REMEDY IS OFFERED, AND THAT IS THE FIX (registry
-                    // row "a diagnostic names a remedy the compiler itself
-                    // refuses" -- filed 2026-09-19; the NUMBER is deliberately
-                    // absent here, because it is being reissued: the
-                    // integrator handed 1161/1162, then needed them for two
-                    // rows arriving from another branch. Writing a number this
-                    // tree cannot yet carry would put a hole where a row
-                    // should be, and `check-registry-rows-intact` cannot tell
-                    // such a hole from a row lost in a merge -- measured, it
-                    // reddened on exactly that at 03:07). This said "is
-                    // compiled only as a binding
+                    // #1163, whose number arrived only after the merge that
+                    // brought the rows numbered below it -- the comment stood
+                    // here without a number for exactly that reason, because a
+                    // number this tree could not yet carry would leave a hole
+                    // `check-registry-rows-intact` cannot tell from a row lost
+                    // in a merge). This said "is compiled only as a binding
                     // initializer today -- bind the value first" and the
                     // advice was false in every case that could be built:
                     // the arm never asks about POSITION -- there is no
