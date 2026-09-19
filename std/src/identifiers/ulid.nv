@@ -48,8 +48,8 @@ import std.time.duration
 ///
 /// # Examples
 /// ```nova
-/// let u = Ulid.new()
-/// let s = u.to_str()            // 26-char Crockford Base32
+/// ro u = Ulid.new()
+/// ro s = u.to_str()            // 26-char Crockford Base32
 /// assert(s.len == 26)
 /// ```
 #stable(since = "0.1")
@@ -223,7 +223,7 @@ export fn Ulid @compare(other Ulid) -> int {
 ///
 /// # Examples
 /// ```nova
-/// let u = Ulid.new()
+/// ro u = Ulid.new()
 /// assert(u.to_str().to_ulid() == u)
 /// ```
 #stable(since = "0.1")

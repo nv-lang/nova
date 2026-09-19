@@ -55,6 +55,19 @@ export const ENTRY_FN = "main"
 /// today, not a std function — the one println the runtime prints through).
 export const PRINT_FN = "println"
 
+/// The intrinsic that yields the location of the expression it stands in
+/// (D468). Named here rather than spelled at the rule that admits it, because
+/// this file is where a name the compiler must know itself belongs (P5).
+///
+/// It is the ONE call the subset takes as a parameter's default value, and the
+/// reason is the exact inverse of the rule that refuses every other expression
+/// there: a default is emitted INSIDE THE CALLER, so the subset admits only
+/// forms that mean the same in both places -- while `caller_loc()` exists
+/// precisely to mean the CALLER's place, and that is its whole work. Registry
+/// #1146. The oracle draws the same line (`callnorm.rs:842`, `is_bare_caller_loc`):
+/// the BARE call only, a nested one left to a later stage.
+export const CALLER_LOC_FN = "caller_loc"
+
 /// The Option FAMILY (if-let wave): the language's sum name and the shell's
 /// C family prefix (`NovaOpt_<elemC>`, by value) plus the Some tag constant.
 /// P5: names live here; the mangle door spells, the emitter reads.
@@ -226,8 +239,27 @@ export const RECV_C_NAME = "_novac_self"
 /// the day protocol dispatch is real -- then this pair is the second door.
 export const FMT_PROTO = "Fmt"
 export const FMT_IMPL = "FmtCtx"
-/// The method the `Display` protocol requires (D73/D422): `@display(mut f Fmt)`.
+/// The method the `Display` protocol requires (D422): `@display(mut f Fmt)`.
+///
+/// The citation used to read "D73/D422". D73 was retracted whole on 2026-07-06
+/// (08-runtime.md) together with `From`/`Into`; D422 is the keystone that gives
+/// this method its signature. A name of the language carrying a dead reference
+/// sends the next reader to a block that says the opposite.
 export const DISPLAY_METHOD = "display"
+
+/// The `Display` protocol itself, by NAME -- what `#impl(Display)` opts into.
+///
+/// Here and nowhere else (P5): the same rule that put `COERCE_ATTR` here. The
+/// checker needs the name to tell the ONE protocol the subset judges today from
+/// every other, and a second spelling of it elsewhere would be a second place to
+/// drift.
+export const DISPLAY_PROTO = "Display"
+
+/// The `#impl(P1 + P2 + ...)` attribute (D186): the type author's explicit
+/// opt-in that the type implements those protocols. Structural conformance is
+/// NOT enough for a bare `${x}` -- at least one of (type author, use site) must
+/// say so out loud, and this attribute is how the author does.
+export const IMPL_ATTR = "impl"
 /// The runtime entry that builds a bare `Fmt` context over a builder -- what
 /// the codegen constructs at every user-type slot (measured on the oracle's
 /// emission 2026-09-05: `Nova_FmtCtx_static_bare(sb, 0, false)`). Interop.

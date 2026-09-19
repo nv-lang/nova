@@ -2313,16 +2313,16 @@ defer tx.close()                    // close — обязателен, см. D90
 ```nova
 // Writer capability:
 type ChanWriter[T] protocol {
-    send(consume v T) -> bool                     // ЗАБИРАЕТ владение v; true если послал; false если канал закрыт
-    try_send(consume v T) -> bool                 // ЗАБИРАЕТ владение v; true если послал, false если полон или закрыт
-    close() -> ()                                 // закрыть (idempotent; ref-counted при clone)
-    clone() -> ChanWriter[T]                      // дополнительный writer на тот же буфер
+    @send(consume v T) -> bool                    // ЗАБИРАЕТ владение v; true если послал; false если канал закрыт
+    @try_send(consume v T) -> bool                // ЗАБИРАЕТ владение v; true если послал, false если полон или закрыт
+    @close() -> ()                                // закрыть (idempotent; ref-counted при clone)
+    @clone() -> ChanWriter[T]                     // дополнительный writer на тот же буфер
 }
 
 // Reader capability:
 type ChanReader[T] protocol {
-    recv() -> Option[T]                           // blocking; None = closed+drained
-    try_recv() -> Option[T]                       // None = пусто (НЕ означает closed)
+    @recv() -> Option[T]                          // blocking; None = closed+drained
+    @try_recv() -> Option[T]                      // None = пусто (НЕ означает closed)
 }
 ```
 

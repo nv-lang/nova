@@ -1,0 +1,38 @@
+module poisoned_slot.neg_1
+
+// A NAME WHOSE INITIALIZER WAS REFUSED, THEN USED IN AN INTERPOLATION SLOT.
+// One mistake is seeded here -- `mystery` is not a callable novac knows -- so
+// exactly one diagnostic may come out, and it must be that one.
+//
+// WHAT THIS CELL GUARDS, and it is not the wording: the second half of the
+// cascade rule. `check/binds.nv` refuses the initializer and STILL binds the
+// name, with `no_ty()`, precisely so that later uses do not raise a second
+// complaint about an unknown name. That promise binds every consumer, and the
+// interpolation slot is the consumer that broke it.
+//
+// MEASURED 2026-09-20, and the measurement is why the file exists. The binding
+// half landed on 2026-09-19 (398cdb1ab) and turned these three lines into an
+// INTERNAL COMPILER ERROR -- `types.nv:244: kind_of asked for a type id outside
+// the interner` -- because `no_ty()` is `TyId(-1)` and the display doors ask a
+// poisoned type for its kind. The build of 2026-09-17 gave two honest
+// diagnostics on the same source. So a fix that removed a cosmetic second
+// complaint bought a crash: strictly worse, because a refusal tells the reader
+// which form is not compiled yet while an ice tells them the compiler is broken
+// and nothing about their program.
+//
+// AND THE REACH IS WHY IT IS NOT A SMALL BUG. An ice aborts the whole run, so a
+// batch `novac check` stopped at the first file that hit it, and every count of
+// "how far is self-hosting" became a function of argument order: 3, 15, 935 and
+// 1495 diagnostics over one unchanged tree (registry No. 1168, No. 1169).
+//
+// THE CELL IS NEGATIVE ON PURPOSE. It is not waiting for `mystery` to become
+// callable -- it is waiting for nothing. Should the subset one day compile the
+// form, this file must be rewritten around another refused initializer rather
+// than deleted: the property is "a poisoned type reaches a consumer and the
+// compiler still answers with ONE named refusal", and that property has no
+// expiry date.
+
+fn f() -> str {
+    ro from = mystery(1)
+    "a ${from} b"
+}

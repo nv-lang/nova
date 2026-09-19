@@ -1,0 +1,23 @@
+// CONTROL: the same shape with NO default parameter. If this prints "a = 7",
+// the laziness of `??` is intact without a default, and the defaulted version
+// is what breaks it -- the control makes "the fallback always runs" impossible
+// as an alternative explanation.
+module probe.oracelviscontrol
+
+fn die(msg str) -> never {
+    panic(msg)
+}
+
+fn maybe(k int) -> Option[int] {
+    if k > 0 {
+        Some(k)
+    } else {
+        None
+    }
+}
+
+fn strict(k int) -> int => maybe(k) ?? die("not positive")
+
+fn main() {
+    println("a = ", strict(7))
+}

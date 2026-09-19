@@ -1,0 +1,9 @@
+// A record constructor naming a type the file does not declare: an ordinary
+// user mistake (a typo, or a forgotten import). It must be REFUSED by name,
+// not crash the compiler.
+module probe.ctorice
+
+fn main() {
+    ro p = Pointt { x: 1, y: 2 }
+    println("x = ", p.x)
+}

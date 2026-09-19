@@ -471,7 +471,7 @@ fn Compiler mut @compile_node(node RegexNode, out_state int) -> int {
 ///
 /// # Examples
 /// ```nova
-/// let re = Regex.compile("^[a-z]+$")!!
+/// ro re = Regex.compile("^[a-z]+$")!!
 /// assert(re.matches("hello"))
 /// ```
 #stable(since = "0.1")

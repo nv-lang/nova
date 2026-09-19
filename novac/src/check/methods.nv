@@ -110,15 +110,8 @@ fn Checker mut @record_method_callee(e Node, kids []Node, recv_t TyId) -> () {
 /// the cause and `refuse_arg_type` names the first differing position.
 fn Checker mut @refuse_method_call(e Node, t Token, key []ArgSpec) -> () {
     ro kids = branch_children(e)
-    // [LEGACY-#764-nested-if-let-return] The natural shape here is one if-let
-    // inside another; the oracle emits the OUTER one's temporary undeclared as
-    // soon as the inner branch carries a `return` and anything follows the outer
-    // `if` (measured 2026-08-23 on a four-line probe, both return types). So the
-    // outer test is flattened to a plain `if` over the Option. The class is the
-    // oracle's, filed in the registry; this shape goes back the day it is fixed.
-    ro only = @res.only_row_of(t.text)
-    if !only.is_none() {
-        if Some(why) = @binding_refusal(only ?? no_row(), key) {
+    if Some(row) = @res.only_row_of(t.text) {
+        if Some(why) = @binding_refusal(row, key) {
             @refuse(t, why)
             return
         } else {
@@ -240,7 +233,22 @@ fn Checker mut @record_instance_method(e Node, t Token, row FnRow, key []ArgSpec
     }
     ro sym = c_method_symbol(@ctx, key[0].type_id, t.text)
     if !@ctx.interop.has(sym) {
-        @refuse(t, "outside the subset: the shell novac links into carries no `${t.text}` for ${ty_source_name(@ctx, key[0].type_id)} -- the interop surface is the probe program (novac/probe/shell_probe.nv); the method arrives when the probe calls it")
+        // THE ADVICE IS TRUE FOR A HANDED TYPE AND IMPOSSIBLE FOR THIS FILE'S
+        // OWN, so it is given only where it can be followed. "The method
+        // arrives when the probe calls it" is exactly how `Option[int]` was
+        // closed (2026-09-19: one call added to `shell_probe.nv`, shell
+        // regenerated, the refusal gone) -- but the probe is a program
+        // compiled BEFORE the user's, and it can never call a blanket method
+        // on a type the user's file declares. Sending that reader to the probe
+        // sends them nowhere, and a refusal that spends the reader's time
+        // pretending to help is worse than one that spends none (the class of
+        // the two rows filed this night).
+        ro rname = ty_source_name(@ctx, key[0].type_id)
+        if @ctx.defs.declared_by_file(rname) {
+            @refuse(t, "outside the subset: `${t.text}` on `${rname}`, a type THIS FILE declares, is not compiled yet -- a generic method reaches novac only through the shell, and the shell cannot carry one for a type it has never seen (274.7 B1b-2)")
+        } else {
+            @refuse(t, "outside the subset: the shell novac links into carries no `${t.text}` for ${rname} -- the interop surface is the probe program (novac/probe/shell_probe.nv); the method arrives when the probe calls it (274.7 B1b-2)")
+        }
         // Refused, but judged: the deduced return is this node's type
         // (274.4 §2 -- a refusal records its decision too).
         @record(e, @ctx.tys.subst(fd.ret_id, ids))

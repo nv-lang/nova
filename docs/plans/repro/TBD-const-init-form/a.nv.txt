@@ -1,0 +1,48 @@
+module a
+
+// THE CARRIER IS REAL AND REPRODUCIBLE; THE MINIMAL FORM IS NOT FOUND. This
+// file records both halves honestly rather than shipping a probe that does not
+// reproduce -- a probe file that fails for an unrelated reason is worse than
+// none, because the next reader spends their hour on the wrong symptom.
+//
+// THE DEFECT, measured 2026-09-18 on the tree merged with 5360cf431: a
+// module-level const whose initializer stops being a CONSTEXPR NUMBER
+// un-declares same-named constants in OTHER modules.
+//
+// HOW TO REPRODUCE (the carrier, one line):
+//     novac/src/lex/lex.nv, change
+//         const B_BACKSLASH u8 = 0x5C
+//     to the form std's own canon prescribes for a PRINTABLE byte,
+//         const B_BACKSLASH u8 = '\\' as u8
+//     then: nova build novac/src/main.nv -o novac/target/novac.exe
+//
+// WHAT COMES OUT (4 errors, verbatim):
+//     error: use of undeclared identifier
+//            `_nova_const_Nova_const_encoding_json_B_BACKSLASH_value`
+//            (twice, main.c:34246 and :34338)
+//     error: use of undeclared identifier
+//            `_nova_const_Nova_const_std_fs_B_BACKSLASH_value`
+//            (twice, main.c:66927 and :66944)
+// while `_nova_const_Nova_const_novac_lex_B_BACKSLASH_value` IS declared at
+// main.c:29105. Three modules declare a `B_BACKSLASH` -- this lexer,
+// `std/src/encoding/json.nv:422` and `std/src/fs/path.nv:30` -- and the other
+// two spell it as plain numbers. Changing THIS one's initializer FORM decided
+// whether the OTHER TWO were emitted at all.
+//
+// WHY THERE IS NO MINIMAL FORM YET, said plainly so nobody repeats the hour:
+// a standalone file that declares `B_BACKSLASH` as a char cast and imports
+// `std.encoding.json` (and/or `std.fs.path`) to make the same-named constants
+// reachable does NOT reach the defect -- it dies earlier and elsewhere:
+//     lld-link: error: undefined symbol: Nova_EmbeddedDir_static_new
+// That is a different failure of the standalone lane, not this defect. Until
+// somebody gets past it, the carrier remains novac's own source, which is
+// exact and repeatable but large.
+//
+// THE FORM BELOW IS THE ONE THAT TRIGGERS IT INSIDE THE CARRIER, kept here so
+// the spelling is not lost:
+
+const B_BACKSLASH u8 = '\\' as u8
+
+fn main() {
+    println("mine = ", B_BACKSLASH)
+}

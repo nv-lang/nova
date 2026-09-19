@@ -1,0 +1,14 @@
+// CONTROL for eqdefault2: the same shape with NO `@compare` at all.
+// If this prints false, structural equality does look at `note`, and the
+// `true` of eqdefault2 can only have come from Equal's default body.
+// Without this control, `true` there had a second explanation: structural
+// equality silently ignoring the `str` field.
+module probe.eqdefault3
+
+type Money { cents int, note str }
+
+fn main() {
+    ro a = Money { cents: 5, note: "x" }
+    ro b = Money { cents: 5, note: "y" }
+    println("eq = ", a == b)
+}

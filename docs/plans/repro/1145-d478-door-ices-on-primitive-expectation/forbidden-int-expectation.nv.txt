@@ -1,0 +1,15 @@
+// Second edition: aim at the VALUE position, where the D478 first slice actually
+// landed (check/exprs.nv), not at the call argument -- that edit was reverted, so
+// the first probe tested a path that has no `variant_named_in` in it.
+// The expected type here is a PRIMITIVE (`int`), taken from the return type.
+module probe.d478ice2
+
+type A enum Red | Green
+
+type B enum Red | Blue
+
+fn pick() -> int => Red
+
+fn main() {
+    println("r = ", pick())
+}

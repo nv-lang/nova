@@ -42,7 +42,7 @@ module math.complex
 ///
 /// # Examples
 /// ```nova
-/// let z = Complex(1.0, 2.0)
+/// ro z = Complex(1.0, 2.0)
 /// assert(z.real() == 1.0)
 /// assert(z.imag() == 2.0)
 /// ```
@@ -221,8 +221,8 @@ export fn Complex @equal(other Complex) -> bool =>
 ///
 /// # Examples
 /// ```nova
-/// let a = Complex(1.0, 0.0)
-/// let b = Complex(1.0 + 1e-10, 0.0)
+/// ro a = Complex(1.0, 0.0)
+/// ro b = Complex(1.0 + 1e-10, 0.0)
 /// assert(a.approx_eq(b, 1e-9))
 /// ```
 #stable(since = "0.1")

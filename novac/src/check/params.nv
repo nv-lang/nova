@@ -54,14 +54,8 @@ fn Checker mut @bind_typed_param(pk []Node, tat int, row FnRow, slot int) -> boo
     // `param_type_at` locates the type AFTER the name, so a located type means
     // the name was located too; its absence here is a broken invariant.
     ro nat = param_name_at(pk) ?? ice("check: a parameter with a type slot and no name slot")
-    // [LEGACY-#676] var-index-method (until:E3): a method called on `pk[tat]`
-    // with a VARIABLE index takes the CONTAINER as its receiver. Where the
-    // container happens to own a method of the same name the program simply
-    // returns the wrong number and says nothing -- measured 2026-08-18,
-    // `xs[i].len()` answering 1 for `["abc"]`. The intermediate binding is the
-    // whole workaround.
-    ro tnode = pk[tat]
     ro nnode = pk[nat]
+    ro tnode = pk[tat]
     // THE ROW DECIDES, not the tree shape (step B2): `xs []int` carries an
     // application term the collector interned, and a binder gated on "is the
     // type node a plain identifier" skipped the binding -- the body then said

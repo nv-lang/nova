@@ -232,18 +232,43 @@ export type Token {
     text str /// the token's own bytes — ALWAYS a slice of src (the position door depends on it; Eof carries src[n..n])
 }
 
-// [LEGACY-#675] char-literal-permissive: TWO oracle inconsistencies around
-// char literals, both found 2026-08-14 by dogfooding: (a) the backslash
-// literal fails standalone ("expected closing ' in char literal") yet the
-// same spelling inside this file was silently accepted and MISCOMPILED;
-// (b) a char literal containing a RAW control byte (tab / CR / LF, even
-// spanning lines) is silently accepted with garbage semantics -- that is how
-// this very lexer shipped a broken is_space: the built binary looped
-// allocating until Boehm died with "Too many heap sections" (the owner's
-// screenshot). Canon per std (json.nv B_* consts): special bytes as hex
-// constants, printable ones as ('x' as u8). Escalate to the integrator for
-// the number and the registry row; self-expiring: when the checker REJECTS
-// raw control bytes in char literals, the neg fixture will start passing.
+// [LEGACY-#675] char-literal-permissive, NARROWED 2026-09-18: half of it is
+// closed, the constant below stays hex for a DIFFERENT reason than before.
+//
+// WHAT #675 HELD (opened 2026-08-14 by dogfooding): (a) the backslash literal
+// failed standalone while the same spelling inside this file was silently
+// accepted and MISCOMPILED; (b) a char literal holding a RAW control byte was
+// accepted with garbage semantics -- that is how this very lexer shipped a
+// broken `is_space`, the binary looping until Boehm died with "Too many heap
+// sections". Canon per std (json.nv `B_*`): special bytes as hex, printable
+// ones as their literal, so `B_TAB`/`B_LF`/`B_CR` are canonical either way and
+// only `B_BACKSLASH` was ever the workaround.
+//
+// THE MARKER'S OWN REMOVAL CONDITION IS NOW MET -- AND IT WAS NOT ENOUGH.
+// It read "when the checker REJECTS raw control bytes, the neg fixture starts
+// passing". Measured in this tree after merging the fix and rebuilding the
+// oracle: `nova test spec_tests --filter d478 --full` gives PASS 4 / FAIL 0,
+// and a probe prints 92, 9, 10, 13 rather than garbage. So the condition is
+// satisfied. But writing the canonical form `'\\' as u8` here BREAKS THE
+// BUILD, and not on char literals at all:
+//
+//     error: use of undeclared identifier
+//            `_nova_const_Nova_const_encoding_json_B_BACKSLASH_value`
+//     error: use of undeclared identifier
+//            `_nova_const_Nova_const_std_fs_B_BACKSLASH_value`
+//
+// THREE modules declare a `B_BACKSLASH` -- this one, `encoding.json:422` and
+// `fs/path.nv:30` -- and the other two are plain numbers. The moment THIS one
+// stops being a constexpr number, the OTHER TWO stop being emitted, while
+// this one is. A const's initializer FORM in one module decides whether
+// same-named constants in other modules exist at all. Filed as an oracle
+// defect (221.1, No TBD); it rhymes with No701(b), where the canonical spelling
+// also had no working form because a runtime initializer does not link.
+//
+// SO THE CONDITION IS REWRITTEN, and narrowly: `B_BACKSLASH` becomes its
+// literal when a module-level const with a non-constexpr initializer stops
+// unde-declaring same-named constants elsewhere. The char-literal half of #675
+// is closed and is NOT what holds this line any more.
 const B_TAB u8 = 0x09
 const B_LF u8 = 0x0A
 const B_CR u8 = 0x0D

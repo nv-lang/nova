@@ -40,9 +40,9 @@ export type SnowflakeError enum
 /// # Examples
 ///
 /// ```nova
-/// let mut gen = SnowflakeGen.new(1)!!
-/// let id = gen.next()!!
-/// let parts = Snowflake.parse(id)
+/// mut gen = SnowflakeGen.new(1)!!
+/// ro id = gen.next()!!
+/// ro parts = Snowflake.parse(id)
 /// assert(parts.machine_id == 1)
 /// ```
 ///
@@ -124,9 +124,9 @@ export type SnowflakeParts {
 /// # Examples
 ///
 /// ```nova
-/// let mut gen = SnowflakeGen.new(42)!!
-/// let id = gen.next()!!
-/// let parts = Snowflake.parse(id)
+/// mut gen = SnowflakeGen.new(42)!!
+/// ro id = gen.next()!!
+/// ro parts = Snowflake.parse(id)
 /// assert(parts.machine_id == 42)
 /// assert(parts.sequence == 0)
 /// ```

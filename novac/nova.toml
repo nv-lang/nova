@@ -170,6 +170,69 @@
 # For novac the form is REQUIRED (plan 274.9 sec.2.7); the oracle is not
 # scheduled. No debt for novac today: its own source has zero @cleanup methods
 # and zero consume scopes, so the rule changes nothing in its build.
+# 75 -> 76 (2026-09-16): TWO decisions of the owner arrived together.
+# D478 -- how a BARE variant name is read: from one sum it resolves into it;
+# from two or more, by the EXPECTED type of the position; with no expectation
+# it is an error demanding `Type.Variant`. This one carries REAL debt for novac,
+# and the debt is a CORRECTION, not new work: its refusal AMBIGUOUS_VARIANT_MSG
+# rejects any bare name visible twice, so under D478 it refuses legal programs
+# (plan 274.7, wave B14).
+# D432 rev-2 -- a `consume` PARAMETER is auto-released like `consume X = e` when
+# the type declares an effect-free @cleanup. No debt for novac today by the same
+# measure as D476 above: its own source has zero @cleanup methods, so nothing in
+# its build changes; the debt appears when wave 274.9 K4 reaches consume forms.
+# 76 -> 77 (2026-09-16): D183 correction -- the spec read as a contradiction
+# about `==`, and the owner's rule is to FIX the spec, not route around it.
+# Three stale statements were removed from one D-block, each of which read as
+# the norm: (1) `==` dispatches to `@eq` -- false, both compilers look up the
+# name `equal` (emit_c.rs:36497, novac builtins.nv:99); (2) `Compare` embeds
+# `Equal` and carries the default body -- superseded 130 lines below by the
+# block's own amendment, and std holds the opposite (protocols.nv:83-85: the
+# protocols are orthogonal, the default body sits on `Equal`); (3) a type with
+# `@compare` and no `@equal` compiles only when `@equal` is explicit -- refuted
+# by three probes on the oracle (a two-field type compared on ONE field returns
+# true for `==`, while the same type WITHOUT `@compare` returns false, so the
+# control makes the structural explanation impossible). The protocol method was
+# also spelled `equals` throughout, which Plan 108.4 turned from an old spelling
+# into an error (`@` is mandatory on protocol methods); the owner ordered it
+# corrected, and it is.
+# NO DEBT for novac, and the reason is a boundary rather than luck: its `==`
+# handling returns early unless the receiver is `str` (check/operators.nv:39),
+# so no user type reaches the equality rule at all. The default-body rule bites
+# the day the subset takes `==` past `str`, and that day is not this wave.
+# The Carina-side probe could not ask the question directly -- novac does not
+# parse a record literal yet, so it refuses one form earlier. Read from the
+# source instead, and said so.
+# +1 (сторона `main`, 2026-09-16): D459 — операция эффекта объявляется
+# словом `fn`. Хроники у этой правки не было — двинулся один счётчик; дописана при
+# слиянии, ибо смысл строки — именно в том, чего решение стоит Карине.
+# Долг Карины по D459 НЕ ИЗМЕРЕН мною и назван вопросом к интегратору: он
+# вёл эту правку и миграцию 255 операций, а писать чужую мерку по догадке хуже, чем
+# оставить пробел названным.
+# 78 -> 79 (2026-09-18): D479 -- two spellings of one element answer alike, and a
+# refusal names the FIRST segment that did not resolve. Raised by this window from
+# registry 1150, number from the integrator, wording agreed with him.
+# THE DEBT IS REAL AND IT IS A CORRECTION, not new work. The door shipped today
+# (`@report_if_path_head_unknown`) judges the HEAD of a path. Under D479 that is the
+# wrong question for the second spelling: `mod.Pointt.MAX` has `mod` as its head, so
+# the door would ask about the module where the user misspelled the TYPE. It is a
+# FIRST SLICE and the plan says so; the full form judges the RESOLUTION of the path.
+# Cannot be finished today: the second spelling needs TWO files in one compilation
+# unit, which is stage E2-b2. Named, not guessed.
+# ALSO IN THIS COMMIT, and it is not a decision but a repair: D29's section
+# "cyclic imports -- forbidden" was retracted by D291 two and a half months ago and
+# still read as the norm. Marked retracted, the old text kept AS HISTORY with the
+# reason it is kept -- a reader who arrives at D29 by search must learn he read
+# something stale rather than conclude he is mad. No rev number: the norm did not
+# change, only the text caught up. Zero cost for novac: it has no module cycles.
+# 79 -> 80 (2026-09-18, Carina window): D422 called a generic `Vec[T]`/`[]T`
+# Display "future" while the body stands in std/src/collections/vec/protocols.nv
+# and a test prints PASS for it. The word is removed and the place named; the
+# retracted wording is kept as a quote with what closed it, same form as the D29
+# note above. Mirror of the same day's other find: there the overview lagged this
+# D-block, here the D-block lagged the tree. No form starts or stops compiling,
+# so the subset is untouched -- the counter moves because spec/decisions did.
+
 # 76 -> 77 (2026-09-18): D38 amendment -- only a TYPE name may carry a turbofish;
 # a VALUE name makes it indexing (registry 221.1 #676). The debt for novac is
 # REAL but SMALL, and of the opposite sign to the usual one: the rule does not
@@ -182,7 +245,64 @@
 # Written in English after the gate refused this manifest: a package manifest
 # ships INSIDE the package repository and is read from outside (owner's rule,
 # 2026-08-10). Mine was the only Cyrillic in 83 manifests.
-#   spec-queue: 81
+# 80 -> 81 (слияние 2026-09-18): СЧЁТЧИКИ СТОЛКНУЛИСЬ НОМЕРАМИ.
+# Обе стороны заняли «77» под РАЗНЫЕ решения: ветка — под правку D183,
+# main — под амендмент D38 (#676). Счётчик считает КОММИТЫ, тронувшие
+# spec/decisions, а не максимум двух веток: после слияния их СУММА —
+# мои 80 плюс его один, которого в моём счёте не было. Взять большее из двух
+# (80) значило бы потерять его коммит из счёта молча. Обе летописи ниже
+# сохранены целиком — столкновение номеров видно только из них обеих.
+# 81 -> 82 (2026-09-18, Carina window): D186 amendment by the owner's ruling --
+# the protocol list is NON-EMPTY. `#impl()` and a bare `#impl` were neither
+# allowed nor forbidden by the block; the owner called that an oversight, not a
+# freedom, because the annotation means the author OPTED IN and opting into
+# nothing opens no gate while still reading to a human as a decision.
+# DEBT FOR CARINA: real but small, and it lands in the same merge -- the empty
+# form was already refused, but as SUBSET debt; the amendment makes it a
+# LANGUAGE error, so the door changes from `@report_*` to `@reject_*`.
+# Found by asking the spec-reader agent for ALL forms of `#impl` (the owner's
+# other rule of the same day): the agent answered that the spec says NOTHING
+# about the empty list, and that named gap is what produced the amendment.
+#
+# D109 AMENDED 2026-09-18 (the owner's ruling): `display` prints `Point(1, 2)`
+# and `Some(5)`, `debug` prints `Point { x: 1, y: 2 }`. The auto-derive table in
+# `08-runtime.md` carried ONE row for both, because it was written 2026-06-05 --
+# before D422 split Display from Debug -- so the single row handed Display the
+# DEBUG form. Not a wrong design, an outdated one: the row gains a sibling
+# rather than a retraction. The sum's "emits only type name" clause goes too;
+# that clause called itself a V1 placeholder and carried its own followup
+# marker, so the amendment executes what D109 already intended.
+# HOW IT SURFACED: asking the spec-reader agent for the norm BEFORE writing the
+# synthesis returned not a list but a FORK -- two D-blocks of equal rank saying
+# different things. No default was taken, on purpose: the synthesized form is
+# BYTES in stdout, so a wrong guess reddens every fixture printing a structural
+# type. The question went to the owner and came back a ruling.
+# DEBT FOR CARINA: the synthesis itself is not written yet -- this merge moves
+# the NORM only, and the implementation follows in 274.7 B1b.
+#
+# 83 + 79 -> 85 (слияние origin/main 2026-09-18, окно Карины): НИ МАКСИМУМ,
+# НИ СУММА ДВУХ ЧИСЕЛ — ЗАМЕР ОБЪЕДИНЁННОЙ ИСТОРИИ. Счётчик считает
+# КОММИТЫ, тронувшие spec/decisions после spec-point, без слияний — а у
+# двух веток есть ОБЩАЯ часть, поэтому 83+79 дало бы 162, а факт 85.
+# Взять большее (83) значило бы потерять его два решения из счёта МОЛЧА,
+# взять его (79) — потерять шесть моих. Число взято ТОЙ ЖЕ командой,
+# которой судит страж (`novac-diff-corpus.sh:100`), а не арифметикой по двум
+# числам: счётчик, выведенный из других счётчиков, не есть замер.
+#
+# 85 и 80 -> 86 (второе слияние 2026-09-19, окно Карины). ТОТ ЖЕ ЗАМЕР
+# ТОЙ ЖЕ КОМАНДОЙ, что и накануне (`novac-diff-corpus.sh:100`), по объединённой
+# истории двух линий. Ни максимум (85), ни сумма (165): у веток есть
+# ОБЩАЯ часть. Второй раз за сутки — и это само по себе довод за то,
+# чтобы счётчик считался, а не выводился: два разных слияния дали
+# разные приращения (+2 и +1), и ни одно не угадывается из двух чисел.
+# 81 и 86 -> 87 (слияние 2026-09-20, интегратор). ЧИСЛО ИЗМЕРЕНО ПО
+# ОБЪЕДИНЁННОЙ ИСТОРИИ той же командой, что у стража, а не выведено из двух
+# чисел: `git log --since=<spec-point> --no-merges HEAD p274-novac -- spec/decisions`
+# даёт 87. Ни максимум (86), ни сумма (167): у веток общая часть, и обе
+# арифметики врут в разные стороны. Мой вклад в это слияние — D310-амендмент
+# (снятие запрета смешанной знаковости и вложенные type-set'ы), её — шесть
+# спек-коммитов ветки.
+#   spec-queue: 87
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,

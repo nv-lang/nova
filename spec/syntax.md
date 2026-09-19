@@ -89,11 +89,43 @@ ro s = "Hello, ${name}, you are ${age}"
 // = "Hello, " + str.from(name) + ", you are " + str.from(age)
 ```
 
-Each `${expr}` is rendered via `str.from(v)` — primitives and
-prelude types get it automatically; a user type
-hooks in by implementing `Display` (`@display(mut w Write)`,
-[D73](decisions/08-runtime.md#d73)). A literal `${` in a string — via
+Each `${expr}` is printed by the `Display` protocol — primitives and
+prelude types implement it themselves; a user type hooks in with
+`@display(mut f Fmt)` ([D422](decisions/02-types.md#d422)), and a bare
+`${x}` additionally needs the explicit opt-in `#impl(Display)`
+([D186](decisions/02-types.md#d186)). A literal `${` in a string — via
 escape: `"\${name}"`.
+
+What exactly gets printed for a structural type with no `@display` of its own
+but with the `#impl(Display)` gate in place: the compact form WITHOUT field
+names -- `Point(1, 2)`, and for a sum `Some(5)`, payload as a value. The named
+form `Point { x: 1, y: 2 }` belongs to `${x:?}` and the `Debug` protocol, not to
+`Display` ([D422](decisions/02-types.md#d422) §4, and the D109 amendment of
+2026-09-18). For primitives the two coincide (`42`, `true`) -- the difference
+exists only for structural types.
+
+The protocol list in `#impl` is NON-EMPTY: several protocols go in ONE
+annotation separated by `+` (`#impl(Display + Equal)`), while `#impl()` and a
+bare `#impl` are an error (`E_IMPL_NO_PROTOCOLS`) — the annotation exists to say
+the author opted IN, and opting into nothing opens no gate
+([D186](decisions/02-types.md#d186), amendment 2026-09-18).
+
+> **Corrected 2026-09-18; three retracted claims stood here at once,** and this
+> is the only place on the page that says why — the same correction is applied
+> below without repeating the reason. It read: "rendered via `str.from(v)` …
+> `@display(mut w Write)`, [D73]". (1) There is no built-in `str.from(v)` for a
+> primitive — amendment D54 (`03-syntax.md`); only a USER overload
+> `fn str.from(T)` is live. (2) The signature was replaced by D422 (2026-07-15,
+> keystone). (3) D73 was retracted IN FULL on 2026-07-06 (`08-runtime.md`)
+> together with `From`/`Into`.
+>
+> **How it was found, and why that matters:** `paradigm.ru.md` has been writing
+> `@display(mut f Fmt)` all along, so the two overview pages contradicted EACH
+> OTHER. Two overviews disagreeing proves more than a pointer to a D-block. An
+> overview ranks below a D-block but ABOVE the compiler — so anyone who wrote
+> the method from this page got a refusal and was right by the page. The
+> retracted text is left visible: it still stands in the older D-blocks, and a
+> reader arriving from there would otherwise conclude the mistake was theirs.
 
 **The escape set inside `"..."` is CLOSED** ([D467](decisions/03-syntax.md#d467)
 §2, 2026-08-29): `\n \t \r \\ \" \0 \$ \xNN \u{H…}` plus `\` before a line break,
@@ -438,7 +470,7 @@ if elapsed > 1.second() { ... }           // вызывает @compare
 | `a[i]` | `@index(i)` | | `a[i]=v` | `mut @index(i, v)` |
 | `a[x..y]` | `@index(r Range)` + `@end_index()` | | | |
 
-`==`/`!=` — via `@equal` (the `Equal` protocol, `!=` is derived by negation); `<`/`<=`/`>`/`>=` — via the single `@compare(o) -> int` (the `Compare` protocol, memcmp-style: `< 0` / `0` / `> 0`). Indexing `a[i]` / `a[i] = v` — `@index` / `mut @index` (the `Index[K, V]` / `MutIndex[K, V]` protocols, D240); slice indexing `a[x..y]` — the same `@index`, overloaded by parameter type: `x..y` (half-open, does not include `y`) is lowered by the compiler into `Range { start: x, end: y }`, and `a.index(r Range)` is called — on `[]T`/`str` it returns a view without copying (`std/collections/vec/slice.nv`, `std/runtime/string/slice.nv`). `&&`/`||` are **not overloadable** (short-circuit
+`==`/`!=` — via `@equal` (the `Equal` protocol, `!=` is derived by negation); `<`/`<=`/`>`/`>=` — via the single `@compare(o) -> int` (the `Compare` protocol, memcmp-style: `< 0` / `0` / `> 0`). **No `@equal` but a `@compare` — equality comes from there:** the `Equal` protocol carries the default body `@equal(o) => @compare(o) == 0` (`std/prelude/protocols.nv`), so a type that declares only `@compare` is compared by it under `==`, not field by field (measured 2026-09-16 with three probes; the analysis is in [D183](decisions/02-types.md#d183-canonical-comparison-protocols--default-method-bodies-plan-918a), section "Известные ограничения"). The protocols are ORTHOGONAL: `Compare` does NOT embed `Equal`; the default body sits on `Equal` itself. Indexing `a[i]` / `a[i] = v` — `@index` / `mut @index` (the `Index[K, V]` / `MutIndex[K, V]` protocols, D240); slice indexing `a[x..y]` — the same `@index`, overloaded by parameter type: `x..y` (half-open, does not include `y`) is lowered by the compiler into `Range { start: x, end: y }`, and `a.index(r Range)` is called — on `[]T`/`str` it returns a view without copying (`std/collections/vec/slice.nv`, `std/runtime/string/slice.nv`). `&&`/`||` are **not overloadable** (short-circuit
 semantics). **The bitwise family — a `bit` prefix, and `~` separate from `!`** (D46-amendment 2026-07-27, plan [234](../docs/plans/234-bitwise-operator-family.md)): `&`/`|`/`^` → `@bitand`/`@bitor`/`@bitxor` (the former `@and`/`@or`/`@xor` are retracted — they read as LOGICAL, though the logical `&&`/`||` are not overloadable at all); `~a` → `@bitnot()` — bitwise complement, overloadable by user types (`~x == -(x+1)` on signed), whereas `!a` stays LOGICAL and (D46-AMEND 2026-08-02) is not overloadable at all — only `bool`, `@not()` is retracted. Compound assignments: `+=`/`-=`/`*=`/`/=` and (D46-amendment (C), plan 234 Ф.2а) `&=`/`|=`/`^=`/`<<=`/`>>=` — desugar into `a = a <op> b`, no separate operator methods. Custom operators (`:+`, `<>`) are not allowed. Details —
 [D46](decisions/03-syntax.md#d46).
 
@@ -604,9 +636,9 @@ Do not use them for other purposes.
   every copy would become a separate counter. The trait is **declared, not
   inferred**: a structural check would see a plain number inside and conclude
   "safe to copy" — the semantics contradict the field layout.
-- `Display`/`@display(mut w Write)` — string representation for
-  `${expr}` interpolation and `str.from(v)` on a user type
-  ([D73](decisions/08-runtime.md#d73)).
+- `Display`/`@display(mut f Fmt)` — string representation for
+  `${expr}` interpolation; a bare `${x}` needs `#impl(Display)`
+  ([D422](decisions/02-types.md#d422), [D186](decisions/02-types.md#d186)).
 - `@hash()` — hash, `@clone()` — copy, `@iter()`/`@next()` — iterator.
 - **Error names** ([D30](decisions/03-syntax.md#d30)) — with a type / domain:
   `ParseComplexError`, `ParseIntError`, `DbError`, `OverflowError`.
@@ -647,8 +679,8 @@ but that is an anti-pattern (the linter warns).
 - `RuntimeError` — sum of bottom-level runtime errors
 - `RuntimeNoneError` — unit type, thrown via `expr!!` on `Option` ([D85](decisions/04-effects.md#d85))
 - `Effect[E]` — first-class type of an effect handler
-- `Display` — protocol with the instance method `@display(mut w Write)`,
-  string representation ([D73](decisions/08-runtime.md#d73))
+- `Display` — protocol with the instance method `@display(mut f Fmt)`,
+  string representation ([D422](decisions/02-types.md#d422))
 
 **Standard effects:**
 - `Fail[E]`, `Fail` — the failable effect
@@ -1711,7 +1743,7 @@ No `interface`/`trait`. A structural contract — a separate keyword
 ```nova
 // именованный
 type Printable protocol {
-    show() -> str
+    @show() -> str
 }
 
 fn log_one(x Printable) Log -> () => Log.info(x.show())

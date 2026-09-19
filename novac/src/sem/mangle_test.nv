@@ -187,7 +187,8 @@ fn seed_head(mut ctx Ctx, name str, arity int) -> DeclId {
     ro id = DeclId(ctx.types.len())
     ctx.defs.add(name, DefTarget.DefType(id))
     ctx.types.push(TypeDef { kind: TypeKind.TkRecord, shape: RecordShape.Record, tparam_cnt: arity,
-                             ty_id: ctx.tys.record(id), name, rows: TypeRows.NoRows })
+                             ty_id: ctx.tys.record(id), name, gate_off: 0, gate_cnt: 0,
+                             rows: TypeRows.NoRows })
     id
 }
 

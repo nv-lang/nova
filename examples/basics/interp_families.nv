@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // examples/basics/interp_families.nv -- the carrier of wave B1a (plan 274.7):
-// an interpolation slot takes every primitive family the spec's `Into[str]`
-// gives it -- integers of every width, both floats, bool, char, str -- not
+// an interpolation slot takes every primitive family that implements `Display`
+// (`@display(mut f Fmt)`, D422) -- integers of every width, both floats, bool,
+// char, str -- not
 // just `str` and `int`. A newtype is NOT among them: the spec asks a distinct
 // type for its own Display (the oracle refuses `${m}` on one), which is wave
 // B1b. Before the wave the

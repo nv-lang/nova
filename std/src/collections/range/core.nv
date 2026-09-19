@@ -37,12 +37,12 @@ module collections.range
 /// # Examples
 ///
 /// ```nova
-/// let r = 0..5
+/// ro r = 0..5
 /// assert(r.len() == 5)
 /// assert(r.contains(4))
 /// assert(!r.contains(5))
 ///
-/// let mut total = 0
+/// mut total = 0
 /// for x in 0..5 { total += x }
 /// assert(total == 10)
 /// ```

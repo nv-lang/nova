@@ -1,0 +1,11 @@
+// CONTROL 2: a DECLARED type with no such member. The head resolves, so the
+// message must be about the MEMBER, not about the name.
+module probe.cellmember
+type Point {
+    x int
+    y int
+}
+fn main() {
+    ro v = Point.NOPE
+    println("v = ", v)
+}

@@ -49,6 +49,41 @@ import ../types.{TyId, no_ty, is_ty, Interner}
 // So this POSITION is a workaround under [LEGACY-#761-newtype-order-in-sum-arm],
 // not a decision about where the type belongs. When the oracle stops caring
 // about declaration order, it moves next to `VariantDef`.
+//
+// THE AXIS, MEASURED 2026-09-18 -- and it is NOT the sum arm, which is what the
+// paragraphs above guessed. Three runs differing in ONE factor, the file that
+// declares `ConstRow`, everything else untouched:
+//   binding.nv   (sorts 1st) -> build EXIT 0
+//   callables.nv (3rd, here) -> build EXIT 0
+//   defs.nv      (7th)       -> build EXIT 1, three C errors
+// Peers are processed SORTED (`files.sort()`, nova-cli/src/main.rs:2119), and
+// `Option[ConstRow]` is returned from TWO of them -- channel.nv (4th) and
+// defs.nv (7th). While the declaration sorts before channel.nv both consumers
+// see the real newtype and emit `NovaOpt_nova_int`; move it after, and the
+// earlier consumer meets the type undeclared, boxes it, and the two
+// monomorphisations of one `Option[ConstRow]` stop matching:
+//   assigning to `NovaOpt_nova_int` from incompatible type `NovaOpt_Nova_ConstRow_p`
+//
+// WHAT THAT MEANS FOR WHOEVER REMOVES THIS. Order is what FLIPS this carrier --
+// that much is measured. It is NOT the whole cause, and the correction is
+// worth more than the finding: the integrator then built four minimal probes,
+// one of them with the order set the BAD way (consumer peer sorting before the
+// declaring peer, two consumers of `Option[Row]`, methods as well as free
+// functions), and ALL FOUR PASSED. So order plus two consumers is not
+// sufficient; something else in this module takes part, and naming it now
+// would be a guess dressed as a measurement.
+//
+// Unchecked candidates, listed so the next attempt starts where this one
+// stopped rather than at the beginning: the NUMBER of peers (dozens here
+// against two in the probe), a transitive import through a third file, and
+// `Option[ConstRow]` standing in a record FIELD rather than only in returns.
+//
+// The state is therefore: a CARRIER exists and reproduces with one edit, an
+// EXPLANATION exists for what flips it, and a MINIMAL FORM does not. That is a
+// worse record than a minimal form and a better one than an invented minimal
+// form that passes. Removal is proved by MOVING the rows and building, nothing
+// less -- a fixture that does not NAME the file order is green or red by how
+// its files were called.
 
 /// THE row of a module-level constant in `Ctx.consts` (274.5 wave B2).
 ///
@@ -370,8 +405,65 @@ export fn variant_in_sum(ctx Ctx, sum_t TyId, name str) -> Option[VariantRow] {
 /// two corpus regressions of the wave's first cut); the old `defs` hid the
 /// same rule as last-write-wins. Among candidates of one provenance: one ->
 /// that variant; none -> not a variant at all; several -> ambiguous, refused
-/// by name (the spec names no rule for a bare name two sums share -- an open
-/// question to the owner, plan 274.7 s5, this refusal is the default).
+/// by name ONLY when the position gives no expected type -- D478 (owner, 2026-09-16)
+/// decides the rest: with two or more candidates the EXPECTED type of the position
+/// picks the sum, and `variant_named_in` below is the one door that asks it. Before
+/// D478 the spec named no rule here and the blanket refusal was the default; it is
+/// no longer, and a refusal on a position that HAS an expectation is now wrong.
+/// THE ONE DOOR OF D478: among the variants of this NAME, the one whose owning sum is
+/// the type the POSITION expects. `no_vrow()` when the expectation is absent or names
+/// another type -- the caller then refuses, and the refusal is right because the
+/// language has nothing else to go on.
+///
+/// Why a door and not a condition at the call site: the same-named variants live on a
+/// `next_same` chain that only `sem` walks, and TWO callers need this answer (a bare
+/// name in `check/exprs.nv`, a constructor call in `check/calls.nv`). Two copies of one
+/// rule diverge on the first edit -- 274.4, one door per root.
+///
+/// The comparison is by DECLARATION, not by TyId: an expectation may be a generic
+/// instance (`Option[int]`) while the variant's sum is the declaration -- the same door
+/// `option_rules` already uses for a bare `None`.
+#realtime nogc
+export fn variant_named_in(ctx Ctx, name str, expect TyId) -> VariantRow {
+    if !is_ty(expect) { return no_vrow() }
+    // ASK before reading: an expectation is any type at all -- `int` reaches here
+    // whenever a bare name stands where a primitive is wanted -- and only the
+    // nominal kinds name a declaration. The first edition of this door skipped
+    // the question and iced the compiler on `fn pick() -> int => Red`.
+    if !ctx.tys.names_a_decl(expect) { return no_vrow() }
+    ro want = ctx.tys.decl_head_of(expect)
+    mut r = ctx.variant_names.find(name)
+    while r >= 0 {
+        ro v = ctx.variant_rows[r]
+        // By DECLARATION ID, not by this file's declaration INDEX. The index is
+        // only meaningful inside the table that holds it, and the chain walked
+        // here spans handed sums too: two files whose declarations sit at the
+        // same index would have matched as one sum.
+        if ctx.tys.names_a_decl(v.sum_id) && ctx.tys.decl_head_of(v.sum_id) == want {
+            return VariantRow(r)
+        } else {
+            // Another sum declares this name too: keep walking the chain.
+        }
+        r = raw_vrow(v.next_same)
+    }
+    no_vrow()
+}
+
+/// HOW MANY sums declare this variant name, and the first row that does.
+///
+/// The count is what the caller decides on: one means the bare name resolves,
+/// more than one sends it to `variant_named_in` to be settled by the expected
+/// type (D478), and zero means the name is not a variant at all.
+///
+/// The file's OWN declarations win over handed ones, and that is not a
+/// preference but the only answer that can be right: a handed sum is visible
+/// here only because the shell passed it, while a name the file declares is the
+/// one its author wrote. So the walk counts both, and returns the file's set
+/// whenever it is non-empty.
+///
+/// Its docstring was missing until 2026-09-17 -- the wave beside it added a
+/// neighbouring door and the convention guard (P13) named this one, which is the
+/// ordinary way an old omission surfaces.
 #realtime nogc
 export fn variants_named(ctx Ctx, name str) -> (VariantRow, int) {
     mut r = ctx.variant_names.find(name)

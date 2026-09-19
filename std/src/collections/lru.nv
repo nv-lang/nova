@@ -22,7 +22,7 @@ import std.collections.hash_map.{HashMap}
 /// # Examples
 ///
 /// ```nova
-/// let mut cache = Lru[str, int].new(2)
+/// mut cache = Lru[str, int].new(2)
 /// cache.put("a", 1)
 /// cache.put("b", 2)
 /// cache.put("c", 3)   // evicts "a" (LRU)
@@ -84,7 +84,7 @@ export fn Lru[K, V] mut @put(k K, v V) -> () {
         ro evicted = @order[@order.len() - 1]
         @store.remove(evicted)
         // Удаляем последний элемент из order
-        @order = @order[..@order.len() - 1]
+        @order.pop()
     }
 
     // Insert front

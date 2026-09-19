@@ -33,7 +33,7 @@ module text.markdown_minimal
 ///
 /// # Examples
 /// ```nova
-/// let html = Markdown.to_html("# Title\n\n**bold** text")
+/// ro html = Markdown.to_html("# Title\n\n**bold** text")
 /// assert(html.contains("<h1>Title</h1>"))
 /// ```
 #stable(since = "0.1")

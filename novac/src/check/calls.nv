@@ -74,15 +74,8 @@ fn Checker mut @refuse_free_call(kids []Node, cname str, key []ArgSpec) -> () {
     // `bump(5)` writes fewer and is legal. The binding names which rule it is,
     // and it may only do so when the name carries ONE declaration: with two, a
     // message about `by` would be a statement about a candidate nobody chose.
-    // [LEGACY-#764-nested-if-let-return] The natural shape here is one if-let
-    // inside another; the oracle emits the OUTER one's temporary undeclared as
-    // soon as the inner branch carries a `return` and anything follows the outer
-    // `if` (measured 2026-08-23 on a four-line probe, both return types). So the
-    // outer test is flattened to a plain `if` over the Option. The class is the
-    // oracle's, filed in the registry; this shape goes back the day it is fixed.
-    ro only = @res.only_row_of(cname)
-    if !only.is_none() {
-        if Some(why) = @binding_refusal(only ?? no_row(), key) {
+    if Some(row) = @res.only_row_of(cname) {
+        if Some(why) = @binding_refusal(row, key) {
             @report_first_leaf_of(kids, why)
             return
         } else {
@@ -667,6 +660,10 @@ fn Checker mut @type_method_call(e Node) -> () {
     // before the receiver is walked, because a type name is no bound value
     // and the name walk would refuse it as unknown -- the first of the two
     // refusals this spelling used to collect.
+    // Same question one line earlier than the variant door, and for the same
+    // reason it names: a type name is no bound value, so the name walk would
+    // refuse it as unknown and say nothing about types (registry #1150).
+    if @report_if_path_head_unknown(kids) { return }
     if @judge_type_head_variant(e, kids, 3) {
         // SILENT-OK: the door DECIDED -- it recorded the construction and
         // its type, or refused the shape. Nothing is left for the method

@@ -28,7 +28,8 @@
 module novac.sem
 
 import ../tree.{Node, NodeId, NodeKind}
-import ../builtins.{COERCE_ATTR}
+import ../builtins.{COERCE_ATTR, IMPL_ATTR, DISPLAY_PROTO}
+import ../lex.{TokenKind}
 import ../types.{TyId, is_ty}
 
 /// ONE declared implicit conversion (D429 V1, form-source): the pair and the
@@ -86,12 +87,126 @@ fn attr_names(attr Node, word str) -> bool => attr_kids_name(branch_children(att
 /// judges the form from inside the walk, the collectors from outside it.
 export fn attr_kids_name(kids []Node, word str) -> bool {
     for c in kids {
+        // THE SCAN STOPS AT THE ARGUMENT LIST, and this stop is younger than the
+        // loop around it (2026-09-18). Until that day the cursor stopped at `(`,
+        // so an attribute's children were its NAME and its modifier words only --
+        // `#realtime nogc` gives `realtime` and `nogc`, and asking "does it name
+        // this word" over all of them was exactly right. Once the cursor began
+        // taking `#impl(Display)` whole, the argument became a child too, and
+        // without this stop `#impl(coerce)` would answer YES to "is this
+        // `#coerce`" -- one attribute read as a different one.
+        //
+        // Nothing in the tree spells it that way today (`#impl(Serialize)`,
+        // `#impl(Display)`, `#impl(Debug)`; protocol names are capitalised),
+        // which is why this is written now rather than after a defect: the
+        // hazard arrived with a change of mine, and the cheapest moment to close
+        // it is the one where it is still visible.
+        if leaf_kind(c) == TokenKind.LParen {
+            break
+        } else {
+            // A name or a modifier word: still part of what the attribute says.
+        }
         // A two-armed match and NOT `if Some(...)`, and the difference is
         // measured: the if-form needs an `else` with a reason anyway (P31), so
         // for an empty second case it is LONGER, not shorter. `if Some(...)`
         // wins where the second case carries a VALUE or a terminator.
         match c.ident_str() {
             Some(t) => { if t == word { return true } }
+            None => {}
+        }
+    }
+    false
+}
+
+/// Does this attribute's argument list name `word` AND NOTHING ELSE? The
+/// companion of `attr_kids_name`, which asks about the attribute's own words and
+/// stops at the argument list.
+///
+/// TWO DOORS AND NOT ONE FLAG, because the two questions have different answers
+/// for the same node: `#impl(Display)` NAMES `impl` and ARGUES `Display`. A
+/// single door with a boolean would let a caller ask the wrong half by passing
+/// the wrong flag, and the compiler would not notice.
+///
+/// "AND NOTHING ELSE" IS THE WHOLE POINT, and the first version got it wrong.
+/// `#impl(P1 + P2 + ...)` (D186) carries a LIST, and a door that answered "is
+/// `word` among them" accepted `#impl(Display + Serialize)`: the author opted
+/// into two protocols, the subset reads one, and the other was ignored in
+/// silence. That is the subset claiming to honour an opt-in it does nothing
+/// about -- measured 2026-09-18, four list forms, all four accepted where two
+/// should have been refused. An opt-in the compiler half-honours is worse than
+/// one it refuses: the author has said the type is Serializable and been
+/// believed.
+///
+/// `+` is not an identifier, so it needs no case of its own; an EMPTY list
+/// answers false, because `#impl()` opts into nothing and is not this door's
+/// business to accept.
+/// Does this attribute carry ANY protocol at all? `#impl()` and a bare `#impl`
+/// both answer false.
+///
+/// A SEPARATE QUESTION FROM `attr_args_all`, and the amendment is why. Until
+/// 2026-09-18 D186 said nothing about an empty list either way, and the checker
+/// could treat it as "a protocol the subset does not read" -- the same refusal
+/// as `#impl(Serialize)`. The owner ruled it an OVERSIGHT: the annotation means
+/// the author OPTED IN, and opting into nothing opens no gate and states
+/// nothing, so both empty spellings are language errors. Two questions now,
+/// because they have different ANSWERS: "no protocol at all" is a form that does
+/// not exist, "a protocol I do not read" is debt of this subset.
+export fn attr_has_args(kids []Node, word str) -> bool {
+    mut inside = false
+    for c in kids {
+        if leaf_kind(c) == TokenKind.LParen {
+            inside = true
+            continue
+        } else {
+            // Before the list.
+        }
+        if !inside {
+            continue
+        } else {
+            // Inside it.
+        }
+        if leaf_kind(c) == TokenKind.RParen {
+            return false
+        } else {
+            // Still inside.
+        }
+        match c.ident_str() {
+            Some(t) => { return true }
+            None => {}
+        }
+    }
+    false
+}
+
+export fn attr_args_all(kids []Node, word str) -> bool {
+    mut inside = false
+    mut seen = false
+    for c in kids {
+        if leaf_kind(c) == TokenKind.LParen {
+            inside = true
+            continue
+        } else {
+            // Before the list, or a word inside it -- decided below.
+        }
+        if !inside {
+            continue
+        } else {
+            // Inside the argument list.
+        }
+        if leaf_kind(c) == TokenKind.RParen {
+            return seen
+        } else {
+            // Still inside.
+        }
+        match c.ident_str() {
+            Some(t) => {
+                if t != word {
+                    return false
+                } else {
+                    // One more protocol the subset does read.
+                }
+                seen = true
+            }
             None => {}
         }
     }
@@ -112,12 +227,109 @@ export fn attr_kids_name(kids []Node, word str) -> bool {
 /// the ONE reading, not by a defect: the rule "an attribute marks the NEXT
 /// declaration and nothing else" is positional, and a second copy of it is a
 /// second place for it to drift.
-export fn coerce_marked(kids []Node) -> []NodeId {
+export fn coerce_marked(kids []Node) -> []NodeId =>
+    attr_marked(kids, COERCE_ATTR, "")
+
+/// WHICH protocols the `#impl(...)` gate over `id` names, in source order
+/// (D186 gate semantics: bare call and interpolation require the type author's
+/// opt-in).
+///
+/// Returns the NAMES AS WRITTEN and judges none of them. Whether a name is a
+/// protocol at all, and whether this compiler reads it, are different questions
+/// with different answers and different diagnostics -- `E_UNKNOWN_PROTOCOL` for
+/// the first (D186, not answered by this subset yet) and subset debt for the
+/// second. A door that folded them would make "a protocol I do not read"
+/// indistinguishable from "a name that is not a protocol".
+///
+/// The positional rule is the same one `coerce_marked` reads, and it is read
+/// HERE rather than copied into each collector for the reason that door names:
+/// an attribute is a SIBLING of the declaration it marks, and two readings of
+/// one positional rule is how they part company.
+export fn impl_protocols_before(kids []Node, id NodeId) -> []str {
+    mut pending = []str.new()
+    for c in kids {
+        if c.kind_of() == NodeKind.AttrDecl {
+            ro ch = branch_children(c)
+            if attr_kids_name(ch, IMPL_ATTR) {
+                pending = attr_arg_names(ch)
+            } else {
+                // Some other attribute: it marks this declaration, but not with
+                // a gate, and it CONSUMES the position all the same.
+                pending = []str.new()
+            }
+            continue
+        }
+        if c.id_of() == id {
+            return pending
+        } else {
+            // Not the declaration asked about; its own mark is consumed below.
+        }
+        pending = []str.new()
+    }
+    []str.new()
+}
+
+/// The identifiers inside an attribute's argument list, in source order.
+///
+/// `+` and the parentheses are separators and do not appear; `#impl()` and a
+/// bare `#impl` both give an empty list, which the checker refuses as a
+/// LANGUAGE error (D186 amendment 2026-09-18) rather than reading as "no gate".
+fn attr_arg_names(kids []Node) -> []str {
+    mut out = []str.new()
+    mut inside = false
+    for c in kids {
+        if leaf_kind(c) == TokenKind.LParen {
+            inside = true
+            continue
+        } else {
+            // Before the list, or a word inside it -- decided below.
+        }
+        if !inside {
+            continue
+        } else {
+            // Inside the argument list.
+        }
+        if leaf_kind(c) == TokenKind.RParen {
+            return out
+        } else {
+            // Still inside.
+        }
+        match c.ident_str() {
+            Some(t) => { out.push(t) }
+            None => {}
+        }
+    }
+    out
+}
+
+/// Does this declaration's gate name `word`? The question the slot judge asks,
+/// kept as a door so "is the type opted into Display" has ONE spelling.
+#realtime nogc
+export fn gate_names(gates []str, off int, cnt int, word str) -> bool {
+    mut i = 0
+    while i < cnt {
+        if gates[off + i] == word { return true }
+        i += 1
+    }
+    false
+}
+
+/// ONE reading of "whose attribute is this", for any attribute.
+///
+/// `arg` EMPTY means the attribute is matched by NAME alone (`#coerce`).
+/// A non-empty `arg` additionally requires EVERY protocol in the argument list
+/// to be that word -- so `#impl(Display)` marks and `#impl(Display + Serialize)`
+/// does NOT. That asymmetry is the owner's correction of 2026-09-18: reading
+/// the gate as "is Display AMONG them" would silently ignore an opt-in this
+/// compiler does not honour, and an opt-in half-read is worse than refused.
+fn attr_marked(kids []Node, attr str, arg str) -> []NodeId {
     mut out = []NodeId.new()
     mut pending = false
     for c in kids {
         if c.kind_of() == NodeKind.AttrDecl {
-            pending = attr_names(c, COERCE_ATTR)
+            ro achildren = branch_children(c)
+            pending = attr_kids_name(achildren, attr)
+                      && (arg == "" || attr_args_all(achildren, arg))
             continue
         }
         if pending {
@@ -135,7 +347,7 @@ export fn coerce_marked(kids []Node) -> []NodeId {
 /// Is this declaration one of the marked ones? The other half of the same
 /// reading, for a collector that has a node and a list.
 #realtime nogc
-export fn is_coerce_marked(marked []NodeId, id NodeId) -> bool {
+export fn is_attr_marked(marked []NodeId, id NodeId) -> bool {
     for m in marked {
         if m == id { return true }
     }

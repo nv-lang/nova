@@ -5,7 +5,12 @@
 # блоки игнорируются целиком даже если внутри `let`, (4) блок-гранулярное
 # исключение («RETIRED form:»/E_*-код где-то в блоке — исключён весь блок),
 # (5) ratchet пропускает долг в пределах baseline и красит рост над ним,
-# (6) spec/open-questions.ru.md выведен из периметра. LC_ALL=C (урок msys2).
+# (6) spec/open-questions.ru.md выведен из периметра,
+# (7) ВТОРОЙ ПЕРИМЕТР (док-комментарии `///` в std/src/**/*.nv, 2026-09-18):
+#     нарушение ловится, канон не ложнит, блок-исключение работает и там, а
+#     `.nv` ВНЕ std/src не сканируется вовсе — последнее проверяется НАРОЧНО,
+#     чтобы названный в шапке стража пробел был не словом, а клеткой.
+# LC_ALL=C (урок msys2).
 set -u
 export LC_ALL=C
 GUARD_SRC="$(cd "$(dirname "$0")/.." && pwd)/check-doc-examples.sh"
@@ -24,11 +29,22 @@ retired_external_fn=0
 retired_addr_of=0
 retired_null_ptr=0
 retired_protocol_renamed=0
+nv_retired_kw_let=0
+nv_retired_kw_readonly=0
+nv_retired_pointer_ro=0
+nv_retired_unsafe_type_modifier=0
+nv_retired_postfix_bang=0
+nv_retired_trait_impl_throws=0
+nv_retired_ref_form=0
+nv_retired_external_fn=0
+nv_retired_addr_of=0
+nv_retired_null_ptr=0
+nv_retired_protocol_renamed=0
 '
 
 setup_tree() {
     rm -rf "$TMP"
-    mkdir -p "$TMP/docs/guide" "$TMP/spec" "$TMP/scripts/guards"
+    mkdir -p "$TMP/docs/guide" "$TMP/spec" "$TMP/scripts/guards" "$TMP/std/src"
     cp "$GUARD_SRC" "$TMP/scripts/guards/check-doc-examples.sh"
     printf '%s' "$zero_baseline" > "$TMP/scripts/guards/doc-examples.baseline"
 }
@@ -57,6 +73,10 @@ check_class() {  # label key nova_body
 check_class "1a let"            retired_kw_let               'ro x = 1
 mut y = x
 let z = 2'
+# `let mut` — та же снятая форма, и до 2026-09-18 класс её не ловил:
+# регэксп ждал `=` сразу за именем, а после `let ` шло `mut`.
+# Скрыто было 45 носителей в доках std.
+check_class "1a2 let mut"       retired_kw_let                'let mut b = 1'
 check_class "1b if-let"         retired_kw_let                'if let Some(v) = opt { }'
 check_class "1c while-let"      retired_kw_let                'while let Some(v) = it.next() { }'
 check_class "1d readonly"       retired_kw_readonly           'fn f(x readonly int) -> int => x'
@@ -187,13 +207,13 @@ run_guard && note_fail "4c: маркер СНАРУЖИ nova-блока ошиб
 # ============================================================
 setup_tree
 printf '# F1\n\n```nova\nexternal fn a() -> int\n```\n' > "$TMP/docs/guide/f1.md"
-printf 'retired_kw_let=0\nretired_kw_readonly=0\nretired_pointer_ro=0\nretired_unsafe_type_modifier=0\nretired_postfix_bang=0\nretired_trait_impl_throws=0\nretired_ref_form=0\nretired_external_fn=1\nretired_addr_of=0\nretired_null_ptr=0\nretired_protocol_renamed=0\n' > "$TMP/scripts/guards/doc-examples.baseline"
+printf 'retired_kw_let=0\nretired_kw_readonly=0\nretired_pointer_ro=0\nretired_unsafe_type_modifier=0\nretired_postfix_bang=0\nretired_trait_impl_throws=0\nretired_ref_form=0\nretired_external_fn=1\nretired_addr_of=0\nretired_null_ptr=0\nretired_protocol_renamed=0\nnv_retired_kw_let=0\nnv_retired_kw_readonly=0\nnv_retired_pointer_ro=0\nnv_retired_unsafe_type_modifier=0\nnv_retired_postfix_bang=0\nnv_retired_trait_impl_throws=0\nnv_retired_ref_form=0\nnv_retired_external_fn=0\nnv_retired_addr_of=0\nnv_retired_null_ptr=0\nnv_retired_protocol_renamed=0\n' > "$TMP/scripts/guards/doc-examples.baseline"
 run_guard || note_fail "5a: храповик не пропустил retired_external_fn=1 в пределах baseline=1"
 
 printf '# F2\n\n```nova\nexternal fn b() -> int\n```\n' > "$TMP/docs/guide/f2.md"
 run_guard && note_fail "5b: не поймал рост retired_external_fn (1 -> 2, baseline=1)"
 
-printf 'retired_kw_let=0\nretired_kw_readonly=0\nretired_pointer_ro=0\nretired_unsafe_type_modifier=0\nretired_postfix_bang=0\nretired_trait_impl_throws=0\nretired_ref_form=0\nretired_external_fn=2\nretired_addr_of=0\nretired_null_ptr=0\nretired_protocol_renamed=0\n' > "$TMP/scripts/guards/doc-examples.baseline"
+printf 'retired_kw_let=0\nretired_kw_readonly=0\nretired_pointer_ro=0\nretired_unsafe_type_modifier=0\nretired_postfix_bang=0\nretired_trait_impl_throws=0\nretired_ref_form=0\nretired_external_fn=2\nretired_addr_of=0\nretired_null_ptr=0\nretired_protocol_renamed=0\nnv_retired_kw_let=0\nnv_retired_kw_readonly=0\nnv_retired_pointer_ro=0\nnv_retired_unsafe_type_modifier=0\nnv_retired_postfix_bang=0\nnv_retired_trait_impl_throws=0\nnv_retired_ref_form=0\nnv_retired_external_fn=0\nnv_retired_addr_of=0\nnv_retired_null_ptr=0\nnv_retired_protocol_renamed=0\n' > "$TMP/scripts/guards/doc-examples.baseline"
 run_guard || note_fail "5c: храповик не пропустил после легитимного повышения baseline до 2"
 
 # ============================================================
@@ -202,6 +222,42 @@ run_guard || note_fail "5c: храповик не пропустил после 
 setup_tree
 printf '# Open questions\n\n```nova\nexternal fn legacy() -> int\n```\n' > "$TMP/spec/open-questions.ru.md"
 run_guard || note_fail "6: spec/open-questions.ru.md не исключён из периметра (ложный красный на историческом журнале)"
+
+# ============================================================
+# 7. ВТОРОЙ ПЕРИМЕТР: док-комментарии `///` в std/src/**/*.nv (2026-09-18).
+#    Клетки заведены вместе с самим периметром: расширение, у которого нет
+#    красной клетки, доказано ровно настолько же, насколько пустой периметр —
+#    зелёный страж выглядит одинаково в обоих случаях.
+# ============================================================
+
+# 7a. Снятая форма в примере доки `.nv` — ловится.
+setup_tree
+printf 'module p\n\n/// Doc.\n///\n/// ```nova\n/// let x = 1\n/// ```\nfn f() -> int => 1\n' > "$TMP/std/src/v.nv"
+run_guard && note_fail "7a: не поймал \`let\` в док-примере std/src/**/*.nv"
+grep -qE "DOC-EXAMPLES FAIL: nv_retired_kw_let=" "$TMP/.stderr" 2>/dev/null \
+    || note_fail "7a: FAIL-строка не назвала ключ nv_retired_kw_let"
+
+# 7b. КОНТРОЛЬ: канон в том же месте — НЕ нарушение. Без этой клетки 7a
+#     доказывала бы лишь, что страж краснеет на любом док-комментарии.
+setup_tree
+printf 'module p\n\n/// Doc.\n///\n/// ```nova\n/// ro x = 1\n/// mut y = 2\n/// ```\nfn f() -> int => 1\n' > "$TMP/std/src/c.nv"
+run_guard || note_fail "7b: канонический \`ro\`/\`mut\` в док-примере .nv дал ложный красный"
+
+# 7c. Блок-гранулярное исключение работает и во втором периметре: блок,
+#     который САМ учит не писать так, не считается нарушением.
+setup_tree
+printf 'module p\n\n/// Doc.\n///\n/// ```nova\n/// // RETIRED form:\n/// let x = 1\n/// ```\nfn f() -> int => 1\n' > "$TMP/std/src/e.nv"
+run_guard || note_fail "7c: блок-исключение (RETIRED) не сработало во втором периметре"
+
+# 7d. НАЗВАННЫЙ ПРОБЕЛ — клеткой, а не словом: `.nv` ВНЕ std/src не
+#     сканируется. Шапка стража перечисляет novac/src, examples, nova_tests
+#     как непроверяемые; эта клетка делает утверждение проверяемым и заставит
+#     будущего расширителя периметра осознанно её переписать.
+setup_tree
+mkdir -p "$TMP/novac/src" "$TMP/examples"
+printf 'module p\n\n/// Doc.\n///\n/// ```nova\n/// let x = 1\n/// ```\nfn f() -> int => 1\n' > "$TMP/novac/src/v.nv"
+printf 'module p\n\n/// Doc.\n///\n/// ```nova\n/// let x = 1\n/// ```\nfn g() -> int => 1\n' > "$TMP/examples/v.nv"
+run_guard || note_fail "7d: .nv ВНЕ std/src посчитан — периметр шире, чем сказано в шапке стража"
 
 # ============================================================
 # 7. Отсутствие строки в baseline — красный с внятным сообщением
@@ -218,4 +274,4 @@ if [ "$fails" -ne 0 ]; then
     echo "selftest check-doc-examples: FAIL ($fails провал(ов))" >&2
     exit 1
 fi
-echo "selftest check-doc-examples: OK (11 классов ловятся / канон не ложнит / чужой язык игнорируется / блок-исключение RETIRED+E_* / ratchet растёт-красный/долг-зелёный / open-questions.md вне периметра / неполная baseline красная)"
+echo "selftest check-doc-examples: OK (11 классов ловятся / канон не ложнит / чужой язык игнорируется / блок-исключение RETIRED+E_* / ratchet растёт-красный/долг-зелёный / open-questions.md вне периметра / неполная baseline красная / второй периметр .nv: нарушение ловится / канон не ложнит / блок-исключение работает / .nv вне std/src НЕ сканируется)"

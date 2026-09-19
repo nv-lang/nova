@@ -62,7 +62,7 @@ module data.semver
 ///
 /// # Examples
 /// ```nova
-/// let v = "1.2.3-alpha.1+exp.sha.5114f85".to_version()!!
+/// ro v = "1.2.3-alpha.1+exp.sha.5114f85".to_version()!!
 /// assert(v.major() == 1)
 /// assert(v.is_prerelease())
 /// ```
@@ -140,7 +140,7 @@ export fn Version @is_stable() -> bool => @pre.len() == 0 && @major > 0
 ///
 /// # Examples
 /// ```nova
-/// let v = "2.5.1".to_version()!!
+/// ro v = "2.5.1".to_version()!!
 /// assert(v.major() == 2 && v.minor() == 5 && v.patch() == 1)
 /// ```
 #stable(since = "0.1")

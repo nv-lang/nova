@@ -941,7 +941,7 @@ fn Parser mut @parse_member(mut fields JsonObject) -> Result[(), ParseJsonError]
 ///
 /// # Examples
 /// ```nova
-/// let v = Json.parse("[1, 2, 3]")!!
+/// ro v = Json.parse("[1, 2, 3]")!!
 /// assert(v.is_array())
 /// ```
 #stable(since = "0.1")
@@ -974,7 +974,7 @@ export fn JsonValue.try_from(s str) -> Result[JsonValue, ParseJsonError] => // [
 ///
 /// # Examples
 /// ```nova
-/// let v = Array([Num(1.0), Str("a")])
+/// ro v = Array([Num(1.0), Str("a")])
 /// assert(v.to_str() == "[1,\"a\"]")
 /// ```
 #stable(since = "0.1")
@@ -1077,9 +1077,9 @@ fn format_object(m JsonObject) -> str {
 ///
 /// # Examples
 /// ```nova
-/// let mut m = JsonObject.new()
+/// mut m = JsonObject.new()
 /// m.insert("name", Str("alice"))
-/// let s = Object(m).to_str_pretty()
+/// ro s = Object(m).to_str_pretty()
 /// assert(s.contains("\n"))
 /// ```
 #stable(since = "0.1")
@@ -1094,9 +1094,9 @@ export fn JsonValue @to_str_pretty() -> str => pretty_at(@, 0)
 ///
 /// # Examples
 /// ```nova
-/// let mut m = JsonObject.new()
+/// mut m = JsonObject.new()
 /// m.insert("name", Str("alice"))
-/// let v = Object(m)
+/// ro v = Object(m)
 /// assert("${v:#}" == v.to_str_pretty())
 /// assert("${v}" == v.to_str())
 /// ```

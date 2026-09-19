@@ -120,6 +120,8 @@ export type TypeDef value {
     name str /// Source spelling (`int`, `Point`); the mangling door derives C names from it.
     rows TypeRows /// WHICH rows this declaration owns and in WHICH space -- one field, because the space and the range are one fact (see TypeRows)
     tparam_cnt int /// how many type parameters the declaration binds; 0 = not generic. A FIELD and not a derivation: a handed-over declaration's NODE is not retained after collect, so the count cannot be re-read -- and it is the one fact of the generics a HEAD needs (step B1)
+    gate_off int /// First protocol name of THIS declaration's `#impl(...)` gate in `Ctx.gates`; 0 with gate_cnt 0 = no gate
+    gate_cnt int /// How many protocols the gate lists. A LIST and not a bool, deliberately: D186 spells `#impl(A + B + C)`, and the protocols may be the program's OWN. Which of them this compiler READS is a question of coverage and moves with the subset; how many a type may opt into is a question of the LANGUAGE, and a bit would have answered it wrongly in the representation itself. A FIELD and not a derivation for the same reason as `tparam_cnt`: the declaration's NODE is gone after collect, and the slot judge holds a TyId, not a node
 }
 
 /// The callable row a DECLARATION NODE owns, or None.
@@ -137,8 +139,6 @@ export fn decl_fn_row(f Node, ctx Ctx) -> Option[FnRow] {
     } else {
         // The id addresses this file's table, so the slot answers directly.
     }
-    // [LEGACY-#676] var-index-method: a method on a variable-index element
-    // resolves through the CONTAINER, so the row comes out by binding first.
     ro row = ctx.fn_decl_rows[id]
     if raw_row(row) < 0 {
         // The table is a DENSE int vector and stores -1 for "no row" — that is
@@ -263,6 +263,7 @@ export type Ctx {
     fns FnTable /// THE callable registry: file functions and read method signatures, one row shape (plan 273).
     protos ProtoTable /// THE protocol registry: contracts and the signatures they require (E2-b3 wave 3b)
     consts ConstTable /// THE module-level constants of this file: name, type, initializer node (274.5 B2).
+    gates []str /// Protocol names written in `#impl(...)` gates, grouped per declaration via TypeDef.gate_off/gate_cnt. NAMES and not ids on purpose: a protocol may be declared after the type that opts into it, or live in std, so resolving here would impose an order the language does not have -- and the unknown-protocol judgement (D186 `E_UNKNOWN_PROTOCOL`) is a separate question this subset does not answer yet
     interop InteropTable /// THE interop surface: C identifiers the linked shell carries, read from the embedded shell once per process (sub-plan L).
 }
 
@@ -272,7 +273,10 @@ fn seed(mut types []TypeDef, mut defs DefTable, mut tys Interner, name str, ordi
     ro id = DeclId(types.len())
     ro ty_id = tys.prim(ordinal)
     types.push(TypeDef { kind: TypeKind.TkPrim, shape: RecordShape.Record,
-                         ty_id, name, tparam_cnt: 0, rows: TypeRows.NoRows })
+                         // A primitive displays through its universe row, never through a
+                         // gate: D422 has every primitive family implement Display itself.
+                         ty_id, name, tparam_cnt: 0, gate_off: 0, gate_cnt: 0,
+                         rows: TypeRows.NoRows })
     defs.add(name, DefTarget.DefType(id))
     id
 }
@@ -322,6 +326,12 @@ export fn decl_of_ty(ctx Ctx, t TyId) -> TypeDef
 /// widen the graph for one subscript.
 export fn decl_index_of_ty(ctx Ctx, t TyId) -> int {
     if !is_ty(t) { return -1 }
+    // THE PROMISE OF THIS DOOR IS TOTALITY -- "-1 when it names none" -- and until
+    // 2026-09-17 it was false: a PRIMITIVE took the ice inside `decl_head_of`
+    // instead of the -1 this line now returns. Registry #1145: the door that ices
+    // by design is right to ice, and a door that promises an answer for every type
+    // has to ASK before it reads.
+    if !ctx.tys.names_a_decl(t) { return -1 }
     ro d = ctx.tys.decl_head_of(t)
     if !is_decl(d) { return -1 }
     if raw_decl(d) >= ctx.types.len() { return -1 }

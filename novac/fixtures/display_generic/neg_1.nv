@@ -1,0 +1,48 @@
+module display_generic.neg_1
+
+// AN `Option[bool]` IN A SLOT IS REFUSED -- and the cell is what stays while
+// its CARRIER keeps moving. It held `Option[str]` (refused for want of a
+// spelling), then `Option[int]` (refused for want of a symbol, and that file
+// is now `pos_3` beside this one), and today it holds `Option[bool]`.
+//
+// THE PROPERTY IT GUARDS DOES NOT MOVE: a slot whose method the shell does not
+// carry must be a NAMED REFUSAL and never an internal compiler error. This is
+// not a hypothetical. Lifting the blanket refusal on generic instances once
+// turned exactly this shape into "internal compiler error ... mangle: an
+// instance of a generic SUM" -- strictly worse than a refusal, because a
+// refusal names a form that is not compiled yet while an ice says the compiler
+// is broken and tells the reader nothing about their program.
+//
+// WHY THIS CARRIER, measured 2026-09-19 at 01:11. The shell defines exactly
+// three generic sum displays -- `Nova_Option_method_display_nova_int`,
+// `..._nova_str`, and `Nova_Result_method_display_nova_int_nova_str` -- because
+// those are the instances `novac/probe/shell_probe.nv` calls. `bool` is not
+// among them, so `@instance_display_ok` finds no symbol and refuses by name.
+//
+// AND THE CAUSE IS AGAIN SELF-EXPIRING, which is said out loud because the last
+// two occupants of this cell each outlived their stated reason by a day. One
+// line in the probe plus a shell regen would make this file print `Some(true)`.
+// When that happens the right move is the one made for `pos_3`: move the file
+// to the positives and give the cell a carrier that is still refused -- not
+// delete the cell, whose subject is the shape of the diagnostic, not the type.
+//
+// WHAT IS NOT MEASURED HERE: whether `Result[int, str]` reaches this judge at
+// all. It does not -- it is refused earlier, at the constructor, by E2-b3 (the
+// type argument of a sum cannot be inferred from the payload). The shell does
+// carry its display symbol, so the interop half is ready and the compiler half
+// is not. That is a different blocker and it is not this fixture's subject.
+//
+// The differential judges `pos_*` only, so this asserts novac's refusal rather
+// than agreement with the oracle, which accepts and prints `Some(true)`.
+
+fn pick(f bool) -> Option[bool] {
+    if f {
+        return Some(true)
+    }
+    None
+}
+
+fn main() {
+    ro o = pick(true)
+    println("${o}")
+}

@@ -22,7 +22,9 @@ module novac.emit_c
 import ../sem.{Ctx, CheckOut, branch_children, leaf_text, leaf_kind, escaped_byte_len}
 import ../sem.{unescape_dollar, is_expr_kind, prim_row_of}
 import ../builtins.{BuiltinType, FMT_BARE_C}
-import ../sem.{c_callable}
+import ../sem.{c_callable, decl_of_ty, field_range_of, raw_frow, is_value_record}
+import ../sem.{c_method_symbol}
+import ../builtins.{DISPLAY_METHOD}
 import ../types.{TyId}
 import ../tree.{Node, NodeKind, raw_node}
 import ../lex.{TokenKind}
@@ -81,10 +83,39 @@ fn Emitter mut @emit_interp_build(e Node) -> str {
                     // over OUR builder, handed in as the `Write` sink -- the
                     // runtime's `static_bare`. INTEROP, like the rest of this
                     // file, gone when novac emits the prelude itself.
-                    ro row = @out.implicit_of(c.id_of()).callable_row()
+                    ro iref = @out.implicit_of(c.id_of())
+                    match iref.synth_display_type() {
+                        Some(st) => {
+                            @emit_synth_display(c, st, sb)
+                            continue
+                        }
+                        None => {
+                            // A written method: the row below is the decision.
+                        }
+                    }
+                    ro row = iref.callable_row()
+                    // THE SUBSTITUTION COMES FROM THE CHANNEL, not from an
+                    // empty vector: for a generic instance the symbol is
+                    // spelled from its type arguments, and an empty one names
+                    // a function the shell does not carry (274.7 B1b-3).
+                    ro targs = @out.subst_of_ref(iref)
                     ro fc = "_novac_fmt_t${@fresh_uniq()}"
                     @body.append("    Nova_FmtCtx* ${fc} = ${FMT_BARE_C}(${sb}, ((nova_int)0LL), false);\n")
-                    @body.append("    ${c_callable(@ctx, row, []TyId.new())}(")
+                    // OURS OR THE SHELL'S -- the SAME fork a written method call
+                    // makes (`emit_expr.nv:542`), asked through the same door
+                    // rather than restated: a row with a body of ours is named by
+                    // our scheme, a row without one is an instance method the
+                    // SHELL emits and is named by the receiver's instance
+                    // (`Vec____nova_int_method_display`). Writing `c_callable`
+                    // unconditionally was the first version, and the LINKER said
+                    // so: `undefined symbol: novac_fn_vecd_display__Vec_of_nova_int...`
+                    // -- a name for a function nobody defines, because the
+                    // program never wrote it.
+                    if @ctx.fns.compiles_body(row) {
+                        @body.append("    ${c_callable(@ctx, row, targs)}(")
+                    } else {
+                        @body.append("    ${c_method_symbol(@ctx, slot_t, DISPLAY_METHOD)}(")
+                    }
                     @emit_expr(c)
                     @body.append(", ${fc});\n")
                 }
@@ -96,6 +127,68 @@ fn Emitter mut @emit_interp_build(e Node) -> str {
     ro tmp = "_novac_istr_t${@fresh_uniq()}"
     @body.append("    nova_str ${tmp} = Nova_StringBuilder_consume_into_str(${sb});\n")
     tmp
+}
+
+/// THE SYNTHESIZED memberwise `@display` of a gated record, printed INTO the
+/// slot's builder: `Name(` field `, ` field `)` (D422 section 4, D109 amended
+/// 2026-09-18 -- the compact form WITHOUT field names; the named form belongs
+/// to `@debug`).
+///
+/// WHERE THE BYTES COME FROM, and why that is not a P25 violation. The
+/// separator is `", "` -- a comma AND a space -- and the norm does not say so:
+/// it gives ONE sample, `Point(1, 2)`. The oracle writes exactly that, as its
+/// own literal, and the oracle is the fixed point of BEHAVIOUR (same stdout,
+/// same exit code). Reading it for the BYTES is what it is for; reading it for
+/// the SHAPE of this code would be the forbidden thing, and is not done here --
+/// the oracle emits a named function per type, this emits into the slot.
+///
+/// WHY INLINE AND NOT A FUNCTION. The acceptance recorded the opposite
+/// decision and its reason was measured WRONG once this file was read: the
+/// reason given was "the slot emitter already performs that shape, so no new
+/// branch is needed", but the implicit target became a SUM the moment the
+/// synthesis existed, so the branch above is needed either way. With the
+/// branch unavoidable, a function would additionally need an emission site and
+/// a per-type "already emitted" set, and inline needs neither. The
+/// SIMPLIFICATION this leaves is named: no method exists that another consumer
+/// could call, and the condition that removes it is a second consumer -- a
+/// written `p.display(f)`, or a generic bound (274.7 B1b-3).
+fn Emitter mut @emit_synth_display(c Node, st TyId, sb str) -> () {
+    ro td = decl_of_ty(@ctx, st)
+    // A RECORD IS A POINTER IN C unless it is a value record -- the same rule
+    // the field-access emitter reads (`emit_expr.nv:502`), asked through the
+    // same door rather than restated. The first version wrote `.`
+    // unconditionally and clang refused it: "member reference type
+    // 'Nova_Point *' is a pointer". The C compiler caught what a guess would
+    // otherwise have shipped into the corpus run.
+    ro arrow = if is_value_record(@ctx, st) { "." } else { "->" }
+    @body.append("    Nova_StringBuilder_method_append(${sb}, (nova_str){.ptr=(const uint8_t*)\"")
+    @body.append(td.name)
+    @body.append("(\", .len=${escaped_byte_len(td.name) + 1}});\n")
+    match field_range_of(td) {
+        None => ice("emit: a synthesized display for a type with no field rows -- the judge admits a record with at least one field")
+        Some((first, cnt)) => {
+            mut i = 0
+            while i < cnt {
+                if i > 0 {
+                    @body.append("    Nova_StringBuilder_method_append(${sb}, (nova_str){.ptr=(const uint8_t*)\", \", .len=2});\n")
+                } else {
+                    // The first field is not preceded by a separator.
+                }
+                ro fd = @ctx.fields.rows[raw_frow(first) + i]
+                match prim_row_of(@ctx.tys, fd.type_id) {
+                    None => ice("emit: a synthesized display over a non-primitive field -- the judge admits primitives only")
+                    Some(row) => {
+                        ro call = display_call_of(row)
+                        @body.append("    ${call.head}(${sb}, ${call.cast}(")
+                        @emit_expr(c)
+                        @body.append("${arrow}${fd.name}), ${call.tail});\n")
+                    }
+                }
+                i += 1
+            }
+        }
+    }
+    @body.append("    Nova_StringBuilder_method_append(${sb}, (nova_str){.ptr=(const uint8_t*)\")\", .len=1});\n")
 }
 
 /// The three pieces of one runtime display call: the mangled entry, the C cast

@@ -68,7 +68,13 @@ if isinstance(data, dict):
     data = [data]
 if not isinstance(data, list):
     sys.exit("JSON is neither object nor array")
-print(sum(1 for d in data if isinstance(d, dict) and d.get("severity") == "error"))
+errs = [d for d in data if isinstance(d, dict) and d.get("severity") == "error"]
+# TWO numbers, because ONE was not a measurement of the subject: an ice is a
+# single diagnostic of severity error, so counting alone called it a clean
+# refusal. Measured 2026-09-20 -- four files of the compiler own sources died this
+# way while this guard read green (registry No. 1168/1169).
+ices = [d for d in errs if d.get("code") == "E_NOVAC_ICE"]
+print("%d %d" % (len(errs), len(ices)))
 '
 
 bad=0
@@ -77,9 +83,21 @@ while IFS= read -r f; do
     "$BIN" check "$f" > "$T/out" 2>/dev/null </dev/null
     n=$("$PYBIN" -c "$PY" "$T/out" 2> "$T/pyerr")
     rc=$?
-    n=$(printf '%s' "$n" | tr -d '\r\n ')
+    n=$(printf '%s' "$n" | tr -d '\r\n')
+    ices=${n#* }
+    n=${n%% *}
+    ices=$(printf '%s' "$ices" | tr -d ' ')
+    n=$(printf '%s' "$n" | tr -d ' ')
     if [ "$rc" -ne 0 ] || [ -z "$n" ]; then
         printf '  %s: вывод не разобрать (%s)\n' "$rel" "$(tr -d '\r' < "$T/pyerr")" >> "$T/bad"
+        bad=$((bad+1))
+    elif [ -n "$ices" ] && [ "$ices" != "0" ]; then
+        # AN ICE IS NOT A REFUSAL, and the distinction is the whole point of
+        # a negative fixture: a refusal names the form that is not compiled
+        # yet, an ice says the compiler is broken and tells the reader
+        # nothing about their program. It also ABORTS the run, so one iced
+        # file silently truncates every batch measurement taken after it.
+        printf '  %s: %s из %s диагностик — E_NOVAC_ICE; отказ обязан НАЗЫВАТЬ форму, а не падать\n' "$rel" "$ices" "$n" >> "$T/bad"
         bad=$((bad+1))
     elif [ "$n" -ne 1 ]; then
         if [ "$n" -eq 0 ]; then

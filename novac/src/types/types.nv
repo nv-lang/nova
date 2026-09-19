@@ -326,6 +326,28 @@ export fn Interner @decl_head_of(t TyId) -> DeclId
     }
 }
 
+/// Does this term NAME a declaration at all?
+///
+/// The same question `decl_head_of` answers, asked WITHOUT committing to the
+/// answer: that door ices on the four kinds that name none, which is right for
+/// a caller who already knows the term is nominal and wrong for one who is
+/// ASKING. Before this existed, the D478 door (`variant_named_in`) had no way to
+/// ask and asked anyway -- an expected type of `int` iced the compiler on a
+/// program whose only fault was an ambiguous bare variant name.
+///
+/// Kept beside `decl_head_of` on purpose: the two split one question, and a
+/// predicate living in another file drifts from the door it guards on the first
+/// kind added.
+#realtime nogc
+export fn Interner @names_a_decl(t TyId) -> bool
+    requires is_ty(t) && raw_ty(t) < @rows.len(), "types: names_a_decl asked for a type id outside the interner"
+{
+    match @rows[raw_ty(t)].kind {
+        TkRecord | TkSum | TkApp | TkNewtype => true
+        TkPrim | TkTuple | TkParam | TkInfer => false
+    }
+}
+
 /// How many arguments an application carries (0 for every other kind).
 #realtime nogc
 export fn Interner @arg_count(t TyId) -> int

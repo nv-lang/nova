@@ -42,7 +42,7 @@ export type TokenBucket {
 ///
 /// # Examples
 /// ```nova
-/// let mut bucket = TokenBucket.new(5, 1.0)  // 5 burst, 1 token/sec sustained
+/// mut bucket = TokenBucket.new(5, 1.0)  // 5 burst, 1 token/sec sustained
 /// assert(bucket.acquire())
 /// ```
 #stable(since = "0.1")

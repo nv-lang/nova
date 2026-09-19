@@ -173,7 +173,7 @@ fn Checker mut @lit_fits_or_refuse(e Node, t TyId) -> bool {
     ro neg = lk_kids.len() > 1
     if int_text_fits_row(leaf_text(tok), r, neg) { return true }
     match tok {
-        Leaf(lt) => @refuse(lt, "this literal does not fit `${r.name}` (D227 rule 3, E_LIT_OUT_OF_RANGE): the type holds at most ${int_max_text(r.bits, r.signed, neg)} on this side of zero")
+        Leaf(lt) => @reject(lt, "this literal does not fit `${r.name}` (D227 rule 3, E_LIT_OUT_OF_RANGE): the type holds at most ${int_max_text(r.bits, r.signed, neg)} on this side of zero")
         Branch { .. } => {}
     }
     false
@@ -206,7 +206,9 @@ fn Checker mut @adapt_literal_args(e Node, kids []Node, from int, recv_rows int)
     ro target = @chan.callee_of(e.id_of()).target
     ro row = match target {
         CalleeFn(r) => r
-        CalleeVariant(_) | CalleeCtor(_) => no_row()
+        // A construction, a variant or a SYNTHESIZED display has no callable
+        // row -- the last one because the program wrote no function at all.
+        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) => no_row()
     }
     if raw_row(row) < 0 { return }
     ro fd = @ctx.fns.rows[raw_row(row)]

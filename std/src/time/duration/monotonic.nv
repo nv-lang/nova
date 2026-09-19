@@ -28,9 +28,9 @@ module time.duration
 ///
 /// # Examples
 /// ```nova
-/// let start = Monotonic.now()
+/// ro start = Monotonic.now()
 /// // ... work ...
-/// let elapsed = Monotonic.now() - start  // → Duration
+/// ro elapsed = Monotonic.now() - start  // → Duration
 /// ```
 ///
 /// `value`-record — stack-allocated, zero-GC.
@@ -82,7 +82,7 @@ export fn Monotonic @nanos() -> i64 => @nanos
 ///
 /// # Examples
 /// ```nova
-/// let m = 0.to_monotonic_nanos()
+/// ro m = 0.to_monotonic_nanos()
 /// assert(m.nanos() == 0)
 /// ```
 #stable(since = "0.6")
@@ -116,10 +116,10 @@ export fn Monotonic @minus(d Duration) -> Monotonic =>
 ///
 /// # Examples
 /// ```nova
-/// let t1 = Monotonic.now()
+/// ro t1 = Monotonic.now()
 /// // ... work ...
-/// let t2 = Monotonic.now()
-/// let elapsed = t2.elapsed_since(t1)  // Duration ≥ 0 (clock does not go backward)
+/// ro t2 = Monotonic.now()
+/// ro elapsed = t2.elapsed_since(t1)  // Duration ≥ 0 (clock does not go backward)
 /// ```
 #stable(since = "0.6")
 export fn Monotonic @elapsed_since(other Monotonic) -> Duration =>
@@ -158,9 +158,9 @@ export fn Monotonic @sleep_until() Time -> () =>
 ///
 /// # Examples
 /// ```nova
-/// let m1 = Monotonic.now()
-/// let m2 = Monotonic.now()
-/// let d = m2 - m1  // → Duration, dispatches to @minus(Monotonic)
+/// ro m1 = Monotonic.now()
+/// ro m2 = Monotonic.now()
+/// ro d = m2 - m1  // → Duration, dispatches to @minus(Monotonic)
 /// ```
 #stable(since = "0.6")
 export fn Monotonic @minus(other Monotonic) -> Duration => @elapsed_since(other)

@@ -1,0 +1,22 @@
+// THE DISCRIMINATOR: an ORDINARY numeric default in the same position.
+// If this also runs the fallback eagerly, the defect is "a defaulted call in
+// the fallback of `??` loses the laziness" -- far wider than caller_loc.
+module probe.oracelvisplain
+
+fn die(msg str, code int = 2) -> never {
+    panic("${msg}/${code}")
+}
+
+fn maybe(k int) -> Option[int] {
+    if k > 0 {
+        Some(k)
+    } else {
+        None
+    }
+}
+
+fn strict(k int) -> int => maybe(k) ?? die("not positive")
+
+fn main() {
+    println("a = ", strict(7))
+}

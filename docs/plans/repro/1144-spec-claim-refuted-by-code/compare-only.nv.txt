@@ -1,0 +1,15 @@
+// Discriminating probe: `@compare` looks at ONE field, the other differs.
+//   structural equality  -> false
+//   Equal's default body (`=> @compare(o) == 0`) -> true
+// The first probe could not tell these apart: both fields were equal.
+module probe.eqdefault2
+
+type Money { cents int, note str }
+
+fn Money @compare(other Money) -> int => @cents - other.cents
+
+fn main() {
+    ro a = Money { cents: 5, note: "x" }
+    ro b = Money { cents: 5, note: "y" }
+    println("eq = ", a == b)
+}

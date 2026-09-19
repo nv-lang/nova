@@ -95,8 +95,8 @@ export fn RetryPolicy.custom(max_attempts int, backoff Backoff, jitter Jitter) -
 ///
 /// # Examples
 /// ```nova
-/// let policy = RetryPolicy.exponential(5)
-/// let result = policy.execute(|| http_get("https://api.example.com"))
+/// ro policy = RetryPolicy.exponential(5)
+/// ro result = policy.execute(|| http_get("https://api.example.com"))
 /// ```
 #stable(since = "0.1")
 export fn RetryPolicy @execute[T, E](body fn() Fail[E] -> T) Time Random Fail[E] -> T {

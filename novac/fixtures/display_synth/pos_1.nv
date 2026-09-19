@@ -1,0 +1,38 @@
+module display_synth.pos_1
+
+// THE MEMBERWISE `@display` SYNTHESIZED FROM THE GATE (D422 section 4, D109 as
+// amended 2026-09-18): a record that opted in with `#impl(Display)` and wrote
+// no method of its own prints the COMPACT form, without field names.
+//
+// WHY THE VALUES ARE 1 AND 2 AND NOT SOMETHING MEMORABLE. The whole point of
+// this fixture is the SHAPE of the output -- the parentheses, the comma AND the
+// space, the absence of field names -- so the numbers are deliberately dull and
+// the separator is what carries the assertion. `Point(1, 2)` differs from the
+// named form `Point { x: 1, y: 2 }` in five bytes, and a differential comparing
+// stdout byte for byte is what notices all five.
+//
+// WHERE THE SEPARATOR COMES FROM, said plainly because the norm does not say
+// it: D422 gives ONE sample and never states whether the space after the comma
+// is required. The oracle writes `", "` as its own literal, and the oracle is
+// the fixed point of BEHAVIOUR -- same stdout, same exit code. That is the only
+// thing it may be read as; its DESIGN is not a donor (P25), and this fixture
+// takes only the bytes.
+//
+// THE FIXTURE EXISTS BECAUSE THE CORPUS DOES NOT COVER THIS. Measured
+// 2026-09-18: after the synthesis landed, the full corpus run returned numbers
+// identical to the run before it -- 60/6/48/2, behaviour 58 of 60 -- because no
+// corpus file prints a gated record in a slot. A green corpus after a new
+// capability reads as "the capability works", and that reading would have been
+// wrong. This file is what makes the capability visible to a MECHANISM instead
+// of to the window that wrote it.
+
+#impl(Display)
+type Point {
+    x int
+    y int
+}
+
+fn main() {
+    ro p = Point{ x: 1, y: 2 }
+    println("${p}")
+}

@@ -1,0 +1,40 @@
+module display_generic.pos_2
+
+// A GENERIC SUM INSTANCE IN A SLOT: `Option[str]` printed through the shell's
+// own `@display`. The oracle prints `Some(hi)` -- asserted by std's own doc
+// example at `prelude/protocols.nv:647`.
+//
+// THIS FILE EXISTS BECAUSE A RECORD OF MINE WAS WRONG, and the correction is
+// the point. Earlier the same day I wrote -- in the plan, in this directory's
+// `neg_1` and to the integrator -- that `Option` was held by TWO independent
+// blockers: no symbol in the shell AND no spelling in novac. The first half was
+// FALSE. I had grepped for the spelling novac WOULD build
+// (`NovaOpt_*_method_display`), found nothing, and read that as "the shell does
+// not carry it". The shell carries it under the spelling the ORACLE builds:
+// `Nova_Option_method_display_nova_str`, defined in `shell.tpl.c` at :6338.
+//
+// A grep for the name you EXPECT answers a question about your expectation.
+// The question was "does the shell carry this method", and the way to ask it is
+// by the method, not by the name you would have given it.
+//
+// So there was ONE blocker -- novac could not spell a generic sum -- and it is
+// closed: `c_instance_method` now builds the family form
+// `Nova_<Head>_method_<name>_<arg>...`, read off the shell rather than invented.
+//
+// WHY `Option[str]` AND NOT `Option[int]`, said so the next reader does not
+// think the int case is broken: the shell carries only the instances the probe
+// called, and `shell_probe.nv` calls `@display` on an `Option[str]`. The int
+// one is refused BY NAME, correctly, and that is a question for the probe, not
+// for the compiler.
+
+fn pick(f bool) -> Option[str] {
+    if f {
+        return Some("hi")
+    }
+    None
+}
+
+fn main() {
+    ro o = pick(true)
+    println("${o}")
+}

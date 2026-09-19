@@ -40,6 +40,7 @@ import ../builtins.{SELF_TYPE, SUM_MARKER, ALIAS_MARKER, VALUE_MARKER, PROTOCOL_
 import ../sem.{FnRow, raw_row}
 import ../sem.{branch_children, leaf_kind, leaf_text, generic_names, tparam_slot, param_type_at, field_type_at}
 import ../sem.{param_name_at}
+import ../sem.{expr_leaf_name}
 
 /// The KEY PHRASE of the refusal. The holder pins this and nothing longer: a
 /// rewording of the rest of the sentence must not redden a test, or the next
@@ -122,6 +123,61 @@ fn Checker mut @report_if_type_ref_undeclared(kids []Node, at int, tps []str) ->
             true
         }
     }
+}
+
+/// The sentence for a path head that names NOTHING -- neither domain. Its own
+/// sentence and not the `undeclared type name` one, because here the compiler
+/// genuinely cannot tell which domain the author meant, and claiming one would
+/// send the reader to the wrong fix (the very complaint #970 was written about).
+fn path_head_unknown_msg(name str) -> str =>
+    "unknown name `${name}`: no value is bound and no type is declared under this name -- a misspelling, or a name from a module this file does not import"
+
+/// The HEAD of a qualified path (`A.b`, `A.b()`) that is NEITHER a bound value
+/// NOR a declared type.
+///
+/// WHY THE HEAD AND NOT THE NAME WALKER, and this is measured rather than
+/// assumed: the walker meets the name ALONE -- the refusal's span is the name,
+/// not the path (`Pointt` at 49..55 on the probe) -- so at that point nothing
+/// knows a dot follows. The PARENT knows. The question is asked where the
+/// answer is.
+///
+/// A NAME BEFORE A DOT MAY BE A VALUE: `x.field` is a Name with a dot too. So
+/// this door refuses only when NEITHER domain holds the name, and stays silent
+/// the moment either does -- a misspelled VARIABLE keeps its refusal about
+/// values, which is correct and must not be traded away. Registry #1150.
+fn Checker mut @report_if_path_head_unknown(kids []Node) -> bool {
+    if kids.len() == 0 { return false }
+    ro head = kids[0]
+    if head.kind_of() != NodeKind.Name { return false }
+    ro name = expr_leaf_name(head)
+    if @scope.is_bound(name) { return false }
+    if @type_name_is_declared(name, []str.new()) { return false }
+    if @ctx.defs.def_of(name).is_some() { return false }
+    @report_first_leaf_of([]Node.of(head), path_head_unknown_msg(name))
+    true
+}
+
+/// A record CONSTRUCTOR's name (`Point { x: 1 }`), judged by the same rule and
+/// answered with the same sentence as every other type position.
+///
+/// WHY IT IS HERE AND NOT A COPY: this file's whole claim is "one door, every
+/// position, one sentence" (registry #970), and the constructor was the position
+/// that claim did not cover. What stood there instead was `ty_of_name_or_ice`,
+/// so a plain misspelling -- `Pointt { x: 1 }` -- brought the compiler down with
+/// "a name in TYPE position that the registry does not hold" instead of naming
+/// the typo. Registry #TBD; the same shape is what #970 was written about, one
+/// position further on.
+///
+/// No type parameters are passed: a constructor stands in an EXPRESSION, where
+/// the declaration's `tps` are not in scope as type names.
+fn Checker mut @report_if_ctor_type_undeclared(kids []Node) -> bool {
+    if kids.len() == 0 { return false }
+    ro head = kids[0]
+    if head.kind_of() != NodeKind.Name { return false }
+    ro name = expr_leaf_name(head)
+    if @type_name_is_declared(name, []str.new()) { return false }
+    @report_first_leaf_of(kids, undeclared_type_msg(name))
+    true
 }
 
 /// Is this parameter written `[mode] name type [= default]`? Counted by the

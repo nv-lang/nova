@@ -685,10 +685,7 @@ fn Lowerer mut @lower_arm(arm Node, scr_t TyId, ls Local, c SwitchCtx, dest Loca
                 // printer (M2b-1d).
                 mut binders = []str.new()
                 for j in 2..pat.len() {
-                    // [LEGACY-#676] var-index-method: same workaround as in
-                    // collect_types: variable-index receiver miscompiles.
-                    ro pj = pat[j]
-                    match pj.ident_str() {
+                    match pat[j].ident_str() {
                         Some(binder) => binders.push(binder)
                         None => {}
                     }

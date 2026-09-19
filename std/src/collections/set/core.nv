@@ -23,13 +23,13 @@ import std.collections.hash_map.{HashMap}
 /// # Examples
 ///
 /// ```nova
-/// let mut s = Set[int].new()
+/// mut s = Set[int].new()
 /// assert(s.insert(1) == true)
 /// assert(s.insert(1) == false)  // duplicate
 /// assert(s.contains(1))
 ///
-/// let a = Set[int].new(cap: 4)
-/// let b = Set[int].new(cap: 4)
+/// ro a = Set[int].new(cap: 4)
+/// ro b = Set[int].new(cap: 4)
 /// // a | b — union
 /// // a & b — intersection
 /// // a - b — difference

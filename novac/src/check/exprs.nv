@@ -28,9 +28,12 @@ import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, BinOp, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
-import ../builtins.{EQUAL_METHOD}
+import ../builtins.{EQUAL_METHOD, DISPLAY_PROTO}
+import ../sem.{gate_names, field_range_of, raw_frow}
+import ../sem.{c_method_symbol}
+import ../builtins.{DISPLAY_METHOD}
 import ../sem.{raw_crow}
-import ../sem.{variant_range_of, VariantRow, variants_named}
+import ../sem.{variant_range_of, VariantRow, variants_named, variant_named_in}
 import ../resolve.{FnLookup}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
@@ -109,6 +112,79 @@ fn Checker mut @judge_qualified_payload(e Node, kids []Node, vt Token, vrow Vari
 /// parameter. Built here and not in the lookup door, because a door that asks
 /// a table builds nothing (P18). `no_ty()` in the Fmt slot means std handed no
 /// `Fmt` at all, and the door answers None before asking.
+/// May this type's `@display` be SYNTHESIZED memberwise for an interpolation
+/// slot? Three conditions, and each refuses for its own reason:
+///
+///  1. it is a RECORD -- D422 gives the memberwise form to record/sum/tuple,
+///     and the sum's variant tag is separate work (274.7 boundary);
+///  2. its `#impl(...)` gate NAMES `Display` -- the type author's opt-in, and
+///     without it the slot stays refused even though the fields would print.
+///     A gate that stopped gating would make the whole acceptance false;
+///  3. EVERY field is a primitive. A field that is itself a record would need
+///     recursion and a cycle check (`E_AUTO_DERIVE_CYCLE`), a container or a
+///     pointer field is not spoken of by the norm at all -- so this subset
+///     refuses rather than inventing bytes the oracle does not print.
+///
+/// The answer is a REFUSAL when unsure, never a guess: a wrong shape here is
+/// wrong BYTES in stdout, which the differential reads as a divergence.
+/// May this slot take a GENERIC INSTANCE's `@display` (274.7 B1b-3)?
+///
+/// A plain type always may -- the question is only about `TkApp`. Two
+/// conditions, and neither is a matter of taste:
+///
+///  1. the head is a RECORD. `instance_body` (`sem/mangle.nv:514`) ICES on a
+///     generic SUM, saying the oracle's family spelling (`NovaOpt_`/`NovaRes_`)
+///     arrives with its own wave -- so taking one here turns a named refusal
+///     into a compiler crash;
+///  2. the SHELL carries the symbol. An instance method reaches novac only
+///     through the interop surface, and a row found by the resolver says the
+///     SIGNATURE exists, not that the FUNCTION does. Measured 2026-09-18: the
+///     shell carries `Vec____nova_int_method_display` and nothing for
+///     `Option`/`Result`.
+///
+/// A row with a body of OURS needs neither: we emit it ourselves.
+fn Checker @instance_display_ok(t TyId, row FnRow) -> bool {
+    if @ctx.tys.kind_of(t) != TypeKind.TkApp { return true } else {}
+    if @ctx.fns.compiles_body(row) { return true } else {}
+    // THE RECORD-ONLY CONDITION IS GONE (2026-09-18, same evening): novac now
+    // spells a generic SUM by the oracle family (`c_instance_method`), so the
+    // only question left is the one that was always the real one -- does the
+    // SHELL carry this symbol. Keeping the kind check would refuse forms that
+    // work, which is the mirror of accepting forms that do not.
+    //
+    // AND THE ORDER MAKES A WRONG SPELLING SAFE, which is worth naming because
+    // it was not designed for and is easy to lose. The symbol novac BUILDS is
+    // checked against the surface the shell ACTUALLY carries, so a spelling
+    // that is wrong for some family answers "not present" and the slot is
+    // refused BY NAME -- it cannot emit a call to a symbol nobody defines. The
+    // spellings are read off the shell (record and sum both), but the families
+    // not yet measured degrade to a refusal instead of to a broken program.
+    @ctx.interop.has(c_method_symbol(@ctx, t, DISPLAY_METHOD))
+}
+
+fn Checker @synth_display_ok(t TyId) -> bool {
+    if @ctx.tys.kind_of(t) != TypeKind.TkRecord { return false } else {}
+    ro td = decl_of_ty(@ctx, t)
+    if !gate_names(@ctx.gates, td.gate_off, td.gate_cnt, DISPLAY_PROTO) {
+        return false
+    } else {}
+    match field_range_of(td) {
+        None => false
+        Some((first, cnt)) => {
+            mut i = 0
+            while i < cnt {
+                ro fd = @ctx.fields.rows[raw_frow(first) + i]
+                match prim_row_of(@ctx.tys, fd.type_id) {
+                    None => { return false }
+                    Some(_) => {}
+                }
+                i += 1
+            }
+            cnt > 0
+        }
+    }
+}
+
 fn Checker @display_key_of(t TyId) -> []ArgSpec {
     ro fmt_t = match @ctx.defs.type_decl(FMT_PROTO) {
         None => no_ty()
@@ -185,7 +261,24 @@ fn Checker mut @judge_type_head_variant(e Node, kids []Node, arg_from int) -> bo
                 if arg_from < 0 {
                     @refuse(vt, "a type name takes a variant after the dot, and this type is not a sum -- it declares no variants")
                 } else {
-                    @refuse(vt, "outside the subset: a call on a TYPE (`Type.method(...)`) is compiled only as a binding initializer today -- bind the value first")
+                    // NO REMEDY IS OFFERED, AND THAT IS THE FIX (registry
+                    // #1163, whose number arrived only after the merge that
+                    // brought the rows numbered below it -- the comment stood
+                    // here without a number for exactly that reason, because a
+                    // number this tree could not yet carry would leave a hole
+                    // `check-registry-rows-intact` cannot tell from a row lost
+                    // in a merge). This said "is compiled only as a binding
+                    // initializer today -- bind the value first" and the
+                    // advice was false in every case that could be built:
+                    // the arm never asks about POSITION -- there is no
+                    // `init_pos` here and no caller that supplies one --
+                    // so `consume s = StringBuilder.new(cap: 32)`, the
+                    // textbook initializer and the very example named in
+                    // this function's own comment above, is refused by this
+                    // same line. A refusal with no advice sends the reader
+                    // to think; a refusal with false advice sends them in a
+                    // circle and spends their time wearing the face of help.
+                    @refuse(vt, "outside the subset: a call on a TYPE (`Type.method(...)`) is not compiled yet -- no position accepts it (274.7, the E2 horizon)")
                 }
             }
             Branch { .. } => {}
@@ -325,10 +418,38 @@ fn Checker mut @type_expr(e Node) -> () {
             @type_expr(c)
             if @out.len() > before { return }
             ro st = type_of(c, @ctx, @scope, @chan)
+            // A POISONED TYPE STOPS HERE, and this line is the other half of
+            // the cascade rule `binds.nv` states: when an initializer is
+            // refused, the name is STILL bound, with `no_ty()`, so that its
+            // later uses do not raise a second complaint about an unknown
+            // name. That promise binds the CONSUMER too. Without this line
+            // the slot walks on and asks the display doors about `TyId(-1)`,
+            // and `kind_of` refuses it by contract -- an ICE, which is the
+            // worst possible answer: the compiler says IT is broken when the
+            // program merely had an earlier mistake, already reported.
+            //
+            // MEASURED 2026-09-20, and the measurement is the reason the
+            // comment is this long. The binding half landed 2026-09-19
+            // (`398cdb1ab`) and traded a cosmetic "unknown name" for a
+            // CRASH: `ro from = mystery(1)` then `"a ${from} b"` iced, while
+            // the same three lines on the build of 2026-09-17 gave two
+            // honest diagnostics. Worse than the crash was its reach -- the
+            // ICE aborts the whole run, so a batch check stopped at the
+            // first file that hit it and every count of "how far is
+            // self-hosting" became a function of argument order (3, 15, 935
+            // and 1495 diagnostics on one unchanged tree; registry No. 1168).
+            //
+            // THE GUARD IS AT THE ENTRY, not in each display door, because
+            // there are three of them (`display_row_of`, `synth_display_ok`,
+            // `instance_display_ok`) and a rule spread over three doors is
+            // one door away from the next hole. `prim_row_of` already guards
+            // itself -- which is why the crash came from further in.
+            if !is_ty(st) { return }
             // EVERY PRIMITIVE FAMILY through its carrier (wave B1a, 274.7): the
-            // spec gives the slot `Into[str]`, which every universe row has --
+            // spec routes the slot through `Display` (D422), which every universe
+            // row implements --
             // integers of any width, both floats, bool, char, str. NOT through
-            // the carrier: a newtype is a distinct type and the spec (D73) asks
+            // the carrier: a newtype is a distinct type and the spec (D422) asks
             // it for its own Display -- the oracle's checker refuses `${m}` on a
             // newtype (E_INTERP_NO_DISPLAY), measured on the wave's own carrier
             // before it was committed. That is B1b's ground. Until 2026-09-05
@@ -352,24 +473,78 @@ fn Checker mut @type_expr(e Node) -> () {
                     // not claim the type: refusing is the honest answer, and
                     // `c_callable` with an empty substitution would be a wrong
                     // program.
-                    if @ctx.tys.kind_of(st) == TypeKind.TkApp {
-                        @report_first_leaf_of(ikids, INTERP_TYPE_MSG)
-                        return
-                    }
+                    // A GENERIC INSTANCE IS ASKED THE SAME QUESTION AS ANY
+                    // OTHER TYPE, and only then refused (274.7 B1b-3). Until
+                    // 2026-09-18 the refusal stood BEFORE the lookup, which
+                    // made "novac cannot spell this instance" and "this type
+                    // has no display" the same answer -- and they are not:
+                    // `Vec[int]`'s method IS in the shell and IS spellable,
+                    // while `Option`/`Result` are held by two other things.
+                    // The instance's TYPE ARGUMENTS travel with the decision,
+                    // because the emitter needs them for the symbol: an empty
+                    // substitution would name a function that does not exist.
                     match @display_row_of(@display_key_of(st)) {
                         None => {
-                            @report_first_leaf_of(ikids, INTERP_TYPE_MSG)
-                            return
+                            // NO METHOD OF ITS OWN -- so the GATE decides
+                            // (D422 auto-derive, D109 amended 2026-09-18).
+                            // The order matters and is the spec's: an explicit
+                            // `@display` WINS over the synthesis, which is why
+                            // this arm is reached only after the lookup failed
+                            // ("Explicit > auto-derive", `08-runtime.md`).
+                            if @synth_display_ok(st) {
+                                @record(c, st)
+                                @chan.record_implicit(c.id_of(),
+                                    CalleeTarget.CalleeSynthDisplay(st),
+                                    []TyId.new(), identity_slots(1))
+                            } else {
+                                @report_first_leaf_of(ikids, INTERP_TYPE_MSG)
+                                return
+                            }
                         }
                         Some(row) => {
+                            // FOUND A ROW IS NOT ENOUGH FOR AN INSTANCE, and the
+                            // measurement that put this line here is worth keeping:
+                            // with only the lookup, `${Some(1)}` stopped being a
+                            // NAMED REFUSAL and became an ICE -- `mangle: an
+                            // instance of a generic SUM has the oracle's family
+                            // spelling`. An ice is worse than a refusal: the
+                            // refusal says which form is not read yet, the ice
+                            // says the compiler is broken. Two conditions, each
+                            // asked of the thing it is about:
+                            //   * novac must be able to SPELL the instance --
+                            //     `instance_body` ices on a generic sum by design,
+                            //     so only a RECORD head is taken (274.7 B1b-3);
+                            //   * the shell must CARRY the symbol -- the surface
+                            //     is what the probe kept alive, and a name the
+                            //     linker cannot find is a wrong program.
+                            if !@instance_display_ok(st, row) {
+                                @report_first_leaf_of(ikids, INTERP_TYPE_MSG)
+                                return
+                            } else {
+                                // Spellable and present.
+                            }
                             @record(c, st)
+                            // THE SUBSTITUTION IS THE INSTANCE'S OWN ARGUMENTS
+                            // when the slot's type is an application, and empty
+                            // otherwise. One line, because the emitter asks the
+                            // channel rather than re-deriving: `c_callable` with
+                            // an empty substitution on an instance names a symbol
+                            // the shell does not carry.
+                            mut targs = []TyId.new()
+                            if @ctx.tys.kind_of(st) == TypeKind.TkApp {
+                                for i in 0..@ctx.tys.arg_count(st) {
+                                    targs.push(@ctx.tys.arg(st, i))
+                                }
+                            } else {
+                                // A plain type substitutes nothing.
+                            }
                             // The slot's own value may be a call (`${f()}`), so the
                             // display it triggers goes to the channel's IMPLICIT
                             // table, not to the node's `res` (which the bare-name
                             // emitter reads for variant values -- the ICE the first
                             // carrier hit).
                             @chan.record_implicit(c.id_of(), CalleeTarget.CalleeFn(row),
-                                []TyId.new(), identity_slots(1))
+                                targs, identity_slots(1))
                         }
                     }
                 }
@@ -508,11 +683,23 @@ fn Checker mut @type_expr(e Node) -> () {
                     // B6, #964): one sum declares it -> that variant; several ->
                     // the bare name is ambiguous and refused by name; none -> an
                     // unknown name.
-                    ro (vrow, vn) = variants_named(@ctx, t.text)
+                    ro (vfound, vn) = variants_named(@ctx, t.text)
                     ro is_variant = vn >= 1
-                    if vn > 1 {
+                    // D478 (owner, 2026-09-16): two sums declaring one name is
+                    // not a verdict. The POSITION'S EXPECTATION is asked, and
+                    // the refusal stays only where there is no expectation, or
+                    // where it names another type. The admitted case walks the
+                    // SAME path as an unambiguous one -- one door per root
+                    // (274.4).
+                    ro picked = if vn > 1 {
+                        variant_named_in(@ctx, t.text, @value_expect)
+                    } else {
+                        no_vrow()
+                    }
+                    ro vrow = if is_vrow(picked) { picked } else { vfound }
+                    if vn > 1 && !is_vrow(picked) {
                         @refuse(t, AMBIGUOUS_VARIANT_MSG)
-                    } else if vn == 1 {
+                    } else if is_variant {
                         // The value door (option_rules, wave W4): a file sum's
                         // value, or a generic sum's instance from the position's
                         // expectation (`None` at a tail).
@@ -572,6 +759,11 @@ fn Checker mut @type_expr(e Node) -> () {
         }
         // SILENT-OK: the head judge DECIDED for this node -- recorded the
         // variant's value or refused -- and the field walk must not run twice.
+        // NEITHER DOMAIN HOLDS THE HEAD: refused here, where the dot is
+        // visible. The name walk below would say "nothing is bound" -- true
+        // about values and silent about types, which is half the answer when
+        // the author meant a type (registry #1150).
+        if @report_if_path_head_unknown(kids) { return }
         if @judge_type_head_variant(e, kids, -1) { return }
         ro before = @out.len()
         @type_expr(kids[0])
@@ -784,13 +976,24 @@ fn Checker mut @type_expr(e Node) -> () {
         // the whole decision -- an anonymous constructor has nothing to judge
         // here, so the arm simply does not enter.
         if rk.len() > 0 && rk[0].kind_of() == NodeKind.Name {
-            ro ct = type_of(e, @ctx, @scope, @chan)
-            if is_ty(ct) {
-                @record(e, ct)
-                @judge_record_ctor(e, ct)
+            // THE NAME IS JUDGED BEFORE IT IS USED, and this line is a fix, not
+            // caution: the `else` below used to claim the unknown name "was
+            // refused where the name was read", and nothing had refused it --
+            // `type_of` reached `ty_of_name_or_ice` and brought the compiler
+            // down on a misspelling (`Pointt { x: 1 }`). Registry #TBD.
+            if @report_if_ctor_type_undeclared(rk) {
+                // Refused by the one door that owns that sentence (#970: one
+                // door, every position, one sentence). Walking on would ask
+                // `type_of` about a name the registry does not hold.
             } else {
-                // No type: the constructor names something the registry does
-                // not know, and that was refused where the name was read.
+                ro ct = type_of(e, @ctx, @scope, @chan)
+                if is_ty(ct) {
+                    @record(e, ct)
+                    @judge_record_ctor(e, ct)
+                } else {
+                    // A DECLARED name whose type the lattice still cannot give:
+                    // refused elsewhere, and readers act on `no_ty()`.
+                }
             }
         } else {
             // Anonymous: nothing to judge here (the SILENT-OK above is the

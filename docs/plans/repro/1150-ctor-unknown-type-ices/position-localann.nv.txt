@@ -1,0 +1,2 @@
+module probe.pos_localann
+fn main() { ro x Pointt = 1 println("", x) }

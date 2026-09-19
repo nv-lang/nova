@@ -297,7 +297,13 @@ fn mark_ref(cr CalleeRef, ctx Ctx, out CheckOut, mut seen []bool, mut inst []Ins
         // Neither is a callable, so the fn set says nothing about either:
         // one case, and it is NOT a wildcard -- a fourth kind of target
         // would still have to come here and say what it does (P21).
-        CalleeVariant(_) | CalleeCtor(_) => {}
+        //
+        // THE FOURTH KIND ARRIVED 2026-09-18 and joins them, for the same
+        // reason spelled differently: a synthesized display names no row, so
+        // the fn set has nothing to grow. It is not generic either -- the
+        // synthesis is refused for a generic instance (274.7 B1b-3), so there
+        // is no instance for mono to make.
+        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) => {}
     }
     // AN INSERTED CONVERSION IS A CALL TOO (D429 R7, wave 5). A `#coerce`
     // pair's method is reached by the call that needed it and by nothing

@@ -883,6 +883,105 @@ type Result[T, E] enum                   // многострочный — | о�
 - [D55](#d55-literal-coercion-в-позиции-с-явным-типом-sum-конструкторы-и-record-литералы) — literal coercion в позиции sum-type (inline `enum` тоже)
 - [03-syntax.md → D46](03-syntax.md#d46) — `|` как `@or` оператор — разрешается по контексту (keyword `enum`/`set` или expr-контекст)
 - [Plan 105](../../docs/plans/105-sum-type-explicit-base.md) — явный базовый тип discriminants
+- [D478](#d478-разрешение-голого-имени-варианта-по-ожидаемому-типу-иначе-квалификация-2026-09-16) — как читается имя варианта, написанное БЕЗ имени типа
+
+---
+
+## D478. Разрешение ГОЛОГО имени варианта: по ожидаемому типу, иначе квалификация (2026-09-16)
+
+**Статус:** ПРИНЯТО (решение владельца 2026-09-16; поднято окном Карины, план 274.7 волна
+В14). Дополняет [D406](#d406-sum-type-синтаксис-enum-маркер-2026-07-01) — тот задаёт
+СИНТАКСИС сумм, этот блок отвечает на другой вопрос: как читается ИМЯ варианта, написанное
+без имени типа.
+
+### Задача
+
+Две суммы в области видимости могут объявить вариант с одним именем:
+
+```nova
+type Color  enum Red | Green
+type Signal enum Red | Amber
+```
+
+До этого решения язык на вопрос «что значит голое `Red`» не отвечал вовсе, и две
+реализации разошлись: нынешний компилятор принимал такую программу, выбирая сумму сам
+(реестр [221.1](../../docs/plans/221.1-bug-sweep.md) №962, №964 — выбирал он её неверно),
+а Карина отвергала любое голое имя, видимое дважды. Пробы обеих половин лежат в
+`docs/plans/repro/b14-d406-rejected/`.
+
+### Правило
+
+1. **Имя варианта, видимое РОВНО ИЗ ОДНОЙ суммы, разрешается в неё.** Квалификация не
+   требуется, и существующий код не меняется — это большинство случаев.
+2. **Имя, видимое из ДВУХ И БОЛЕЕ сумм, разрешается ПО ОЖИДАЕМОМУ ТИПУ позиции.** Ожидаемый
+   тип — это тип, ОБЪЯВЛЕННЫЙ в самой программе для этой позиции, а не выведенный из
+   соседних выражений.
+3. **Если ожидаемого типа у позиции нет — это ошибка, и она требует квалификации**
+   `Type.Variant`. Не «выбрать любую», не «выбрать первую объявленную»: молчаливый выбор из
+   двух и есть то, что уже дало дефект №964.
+
+### Что считается ОЖИДАЕМЫМ ТИПОМ — закрытый перечень позиций
+
+Перечень закрыт по построению: тип объявлен синтаксически, значит позиция либо объявляет
+его, либо нет. Ожидание есть у:
+
+- **хвоста и `return`** функции с объявленным типом возврата;
+- **аргумента вызова**, у чьего параметра объявлен тип;
+- **биндинга с объявленным типом** — `ro c Color = Red`;
+- **поля в конструкторе записи** — тип поля объявлен в типе;
+- **ветви `match`/`if`, стоящей в значащей позиции из перечисленных** — ожидание протекает
+  внутрь ветвей, потому что ветвь и есть значение этой позиции.
+
+Ожидания НЕТ, и потому требуется квалификация, у:
+
+- **биндинга без объявленного типа** — `ro c = Red`;
+- **элемента литерала массива без объявленного типа элемента**;
+- **операнда сравнения или арифметики**, когда вторая сторона тип не фиксирует;
+- **выражения-утверждения**, значение которого отбрасывается.
+
+### Отказ
+
+Диагностика обязана назвать ОБЕ суммы и потребовать форму `Type.Variant`. Сообщение «имя
+объявлено более чем одной суммой» без имён сумм заставляет читателя искать их самому —
+а он и так уже не знает, какие это суммы.
+
+### Примеры (обе половины — из проб волны В14, не выдуманы)
+
+```nova
+module probe.d478
+
+type Color  enum Red | Green
+type Signal enum Red | Amber
+
+fn pick() -> Color {
+    Red                    \ ЗАКОННО: ожидаемый тип объявлен возвратом
+}
+
+fn main() {
+    ro c = Red             \ ОШИБКА: ожидания нет -- писать Color.Red
+    ro s Signal = Red      \ ЗАКОННО: тип биндинга объявлен
+    println("ok")
+}
+```
+
+### Что этот блок НЕ решает (границы)
+
+- **Не вводит вывод типа по соседям.** Ожидание берётся только из объявления; «понятно из
+  контекста» без объявления — не основание, иначе правило перестанет быть проверяемым.
+- **Не трогает квалифицированную форму.** `Color.Red` законна всегда и была законна до
+  этого блока.
+- **Не отменяет дефекты реализаций:** нынешний компилятор выбирал сумму неверно (№962,
+  №964) — это чинится отдельно и к формулировке правила отношения не имеет.
+
+### Связь
+
+- [D406](#d406-sum-type-синтаксис-enum-маркер-2026-07-01) — синтаксис объявления сумм;
+- реестр [221.1](../../docs/plans/221.1-bug-sweep.md) №962, №964 — дефекты разрешения по
+  голому имени в обеих реализациях;
+- план [274.7](../../docs/plans/274.7-subset-to-spec.md), волна В14 — отказ Карины
+  `AMBIGUOUS_VARIANT_MSG` после этого блока становится ЧАСТИЧНО неверным (он отвергает
+  любое голое имя, видимое дважды, даже когда ожидаемый тип есть) и требует работы, а не
+  переезда.
 
 ---
 
@@ -909,14 +1008,14 @@ type any protocol { }
 ```nova
 // Раньше (D42): отдельный keyword
 protocol Hash {
-    hash() -> u64
-    eq(other Self) -> bool
+    @hash() -> u64
+    @equal(other Self) -> bool
 }
 
 // Теперь (D53): kind-токен в системе D52
 type Hash protocol {
-    hash() -> u64
-    eq(other Self) -> bool
+    @hash() -> u64
+    @equal(other Self) -> bool
 }
 
 type Logger effect {
@@ -924,7 +1023,7 @@ type Logger effect {
 }
 
 type Iterator[T] protocol {
-    next() -> Option[T]
+    mut @next() -> Option[T]
 }
 
 type Db effect {
@@ -1027,8 +1126,8 @@ fn list_users() Db -> []User =>      // Db в позиции эффекта — 
 ```nova
 // Модель A — generic на protocol
 type Container[T] protocol {
-    add(item T) -> ()
-    get(idx int) -> T
+    @add(item T) -> ()
+    @get(idx int) -> T
 }
 
 // Модель B — generic на методе
@@ -1047,7 +1146,7 @@ type Tracer effect {
 type User { id u64, name str }
 
 type Display protocol {
-    show() -> str
+    @show() -> str
 }
 
 fn User @show() -> str => "User(${@name})"
@@ -1150,52 +1249,57 @@ kind-токеном в системе D52, унифицируя объявлен
 
 Q22 («унификация type/protocol») — закрыт принятием D53.
 
-### Method-prefix в protocol-блоке (Plan 17 Ф.1)
+### Method-prefix в protocol-блоке: `@` ОБЯЗАТЕЛЕН
 
-В protocol-объявлении instance-методы можно писать в **обеих формах**
-— и с префиксом `@`, и без. Они **эквивалентны**:
+**НОРМА (D209, Plan 108.4).** У instance-метода в объявлении протокола префикс `@`
+обязателен; голое имя — ошибка разбора `E_PROTO_METHOD_NEEDS_AT` («add `@` before
+method name»). Статический метод пишется ТОЧКОЙ. Модификатор приёмника стоит ПЕРЕД `@`,
+по умолчанию он `ro`:
 
 ```nova
 type Hash protocol {
-    hash() -> u64                    // ✅ голое имя
-    eq(other Self) -> bool
+    @hash() -> u64                   // instance, приёмник `ro` по умолчанию
+    @equal(other Self) -> bool
 }
 
-type Hash protocol {
-    @hash() -> u64                   // ✅ с @, симметрия с реализацией
-    @eq(other Self) -> bool
-}
-```
-
-`@` факультативен потому что в protocol-блоке метод **всегда
-instance** — без receiver-выражения, контекст однозначный. С `@`
-форма читается как «копия декларации из реализации» (точно как `fn
-User @hash() -> u64`); без `@` — короче. Структурная совместимость
-работает одинаково.
-
-**Когда писать что:**
-
-- `@method()` — для **визуальной симметрии** с реализацией; для
-  объявлений где соседние static-методы (если они появятся через
-  Q-static-method-protocol) пишутся через `.method()`.
-- `method()` — для **краткости** в простых protocol'ах.
-
-**Mut-методы** — `mut @method()` обязательно с `@` (mut-modifier
-требует receiver-маркера; голое `mut method()` отвергнуто как
-двусмысленное с mut-binding'ом):
-
-```nova
 type Iter[T] protocol {
-    mut @next() -> Option[T]         // ✅
-    mut next() -> Option[T]          // ✅ (текущая prelude-форма, D26)
+    mut @next() -> Option[T]         // mut-приёмник
+}
+
+type FromIter[T] protocol {
+    .from_iter(it Iter[T]) -> Self   // static — через точку
 }
 ```
 
-В bootstrap'е (2026-05-08) обе формы парсятся; std/testing/property.nv
-и std/collections/* используют голую форму.
+Грамматика и полный список ошибок соответствия реализации — [D209](04-effects.md).
 
-См. также [Q-protocol-method-prefix](../open-questions.md#q-protocol-method-prefix)
-(closed этой секцией).
+> **ОТМЕНЕНО D209 (Plan 108.4, 2026-06-09).** Здесь стояло правило, что в
+> protocol-объявлении instance-методы можно писать в ОБЕИХ формах — с `@` и без, — и что
+> они **эквивалентны**:
+>
+> ```nova
+> type Hash protocol {
+>     hash() -> u64                    // голое имя — БОЛЬШЕ НЕ ПРИНИМАЕТСЯ
+>     eq(other Self) -> bool
+> }
+> ```
+>
+> Довод был: в protocol-блоке метод всегда instance, контекст однозначен, поэтому `@`
+> факультативен; выбор предлагался по вкусу — «с `@` ради симметрии с реализацией, без
+> `@` ради краткости». Исключением уже тогда были mut-методы: `mut @next()` требовал `@`,
+> потому что голое `mut next()` двусмысленно с mut-binding'ом.
+>
+> **Чем отменено:** D209 сделал `@` обязательным и добавил модификаторы приёмника
+> (`mut`/`ro`/`consume`) с проверкой соответствия реализации; тогдашнее исключение для
+> mut-методов стало общим правилом. Вопрос `Q-protocol-method-prefix` закрыт ЭТИМ
+> решением, а не прежней секцией.
+
+> **Правка редакционная (2026-09-16, окно Карины, приказ владельца; форма — интегратора,
+> согласована по `/peers`).** Раздел стоял с 2026-05-08 и показывал голую форму как
+> законную — то есть спека учила писать то, что компилятор отвергает ошибкой разбора.
+> Норма не менялась и rev не выдавался: текст приведён к решению D209. Тем же проходом
+> `@` дописан в 32 объявлениях протоколов по всей спеке, причём ТРИ статических метода
+> получили точку, а не `@` (строка реестра №1144).
 
 #### Реализация в bootstrap (2026-05-09)
 
@@ -2235,12 +2339,12 @@ ro x Mixed = 42                  ❌ ambiguous — обязателен A(42) / 
 
 ```nova
 type Hash protocol {        // D52/D53: kind-токен `protocol` под `type`
-    hash() -> u64
-    eq(other Self) -> bool
+    @hash() -> u64
+    @equal(other Self) -> bool
 }
 
 type Iterator[T] protocol {
-    next() -> Option[T]
+    mut @next() -> Option[T]
 }
 
 type Login {                    // record (данные) — голый type
@@ -2260,7 +2364,7 @@ type Login {                    // record (данные) — голый type
 type User { id u64, name str }
 
 type Display protocol {
-    show() -> str
+    @show() -> str
 }
 
 fn User @show() -> str => "User(${@name})"
@@ -2301,14 +2405,14 @@ T фиксирован для всего protocol'а: один handler = оди�
 
 ```nova
 type Iterator[T] protocol {
-    next() -> Option[T]
-    peek() -> Option[T]
+    mut @next() -> Option[T]
+    @peek() -> Option[T]
 }
 
 type Container[T] protocol {
-    add(item T) -> ()
-    get(idx int) -> T
-    size() -> int                    // методы без T тоже допустимы
+    @add(item T) -> ()
+    @get(idx int) -> T
+    @size() -> int                   // методы без T тоже допустимы
 }
 
 type Channel[T] effect {            // effect — нужен with-substitution
@@ -2362,8 +2466,8 @@ T для каждого вызова.
 
 ```nova
 type Stream[T] protocol {
-    next() -> Option[T]                       // T на protocol-уровне
-    fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc   // Acc на методе
+    mut @next() -> Option[T]                  // T на protocol-уровне
+    @fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc  // Acc на методе
 }
 ```
 
@@ -2452,7 +2556,7 @@ type Stream[T] protocol {
 
 ```nova
 type Display protocol {
-    show() -> str
+    @show() -> str
 }
 
 type User { id u64, name str }
@@ -2886,7 +2990,7 @@ process(aa.account)                 // ок: извлекли Account-часть
 
 ```nova
 type HasBalance protocol {
-    balance() -> money
+    @balance() -> money
 }
 
 fn process(a HasBalance) -> () => ...
@@ -4004,8 +4108,8 @@ fn Box[T] @with_value(v T) -> Self =>
 
 // protocol — для type-safe equality
 type Hash protocol {
-    hash() -> u64
-    eq(other Self) -> bool       // Self = тот тип, что реализует
+    @hash() -> u64
+    @equal(other Self) -> bool   // Self = тот тип, что реализует
 }
 
 // effect — для transactional/recursive handler-операций
@@ -4089,7 +4193,7 @@ Refactoring-safe: переименование `HashMap → Map` меняет т
 
 ```nova
 type FromStr protocol {
-    from_str(s str) -> Self              // late-bound
+    .from_str(s str) -> Self             // late-bound, СТАТИЧЕСКИЙ — точка, не `@` (D209)
 }
 
 fn parse[T FromStr](s str) -> T => T.from_str(s)
@@ -4356,8 +4460,8 @@ Forward-references запрещены ради простоты type-checker'а 
 
 ```nova
 type Hash protocol {
-    hash() -> u64
-    eq(other Self) -> bool
+    @hash() -> u64
+    @equal(other Self) -> bool
 }
 
 // Bound в generic-объявлении:
@@ -5756,6 +5860,9 @@ Rust's `usize`). Bootstrap-grade alias.
 ## D133. `type X consume` — обязательная consume-семантика (must-be-consumed)
 
 > **Plan 100.1.** Принято 2026-05-23 (proposed; implementation pending).
+> СМ. ТАКЖЕ [D432](#d432-авто-cleanup-для-непотреблённых-consume-переменных-гибрид-c) и его амендмент **rev-2**
+> (2026-09-16): у типа с эффект-free `@cleanup` линейность смягчается до аффинной НЕ ТОЛЬКО
+> для формы `consume X = e`, но и для `consume`-ПАРАМЕТРА.
 > Extends [D131](05-memory.md#d131) affine `consume` qualifier.
 
 ### Что
@@ -6456,6 +6563,33 @@ consume-параметр, вызов consume-метода на биндинге)
 Все четыре точки реализованы; известных пробелов в disarm-механике на
 момент принятия D432 нет (folder-CU регресс — `spec_tests/conformance`
 одним CU — прогнан до зелёного после КАЖДОГО из вскрытых случаев).
+
+> **Amended (D432 rev-2, владелец 2026-09-16, поднято окном Карины — тот же тип
+> освобождался в биндинге и НЕ освобождался в параметре): `consume`-ПАРАМЕТР
+> получает авто-`@cleanup` наравне с `consume X = e`.**
+>
+> 1. **Область расширена.** Авто-`@cleanup` применяется не только к переменной,
+>    объявленной формой `consume X = e`, но и к **параметру, объявленному
+>    `consume`**, если у его типа есть `@cleanup` с ПУСТЫМ effect-row. К концу
+>    тела функции непотреблённый такой параметр освобождается сам, на тех же
+>    висячих exit-путях и тем же транспортом (§3 D314), что и переменная.
+> 2. **Причина — не удобство, а устранение разрыва.** До этой правки гарантия
+>    висела на ФОРМЕ ЗАПИСИ, а не на ТИПЕ: одно и то же значение с
+>    эффект-free `@cleanup` освобождалось само в `consume X = e` и требовало
+>    явного потребления, будучи параметром. Тип обещал «забыть можно», позиция
+>    отвечала «обязан потребить», и читатель не мог узнать правду из типа.
+>    Донор-подтверждение: в Rust владеющий параметр дропается ровно как `let`.
+> 3. **Все ограждения D432 действуют без изменений** и не ослабляются: §1
+>    эффект-чистота (fallible-`@cleanup` остаётся строго линейным — D133),
+>    §2 отсутствие рекурсии, §4 дизарм на передаче владения, §5 drop-флаг на
+>    общем exit-пути, §6 циклы. Параметр — ещё одна ПОЗИЦИЯ того же правила, а
+>    не новая механика.
+> 4. **Без `@cleanup` ничего не меняется.** `consume`-параметр типа, не
+>    объявившего `@cleanup`, остаётся строго линейным: непотребление —
+>    ошибка D133, как и было.
+> 5. **ГРАНИЦА, НАЗВАННАЯ ЯВНО:** `consume`-ПРИЁМНИК (`fn X consume @method()`)
+>    этим амендментом НЕ затрагивается — спека оставляет его открытым, и
+>    молчание здесь означает «вопрос не решён», а не «решено так же».
 
 ### §5. Drop-флаг (§8а п.6, MaybeConsumed на общем exit-пути)
 
@@ -7710,13 +7844,13 @@ type Writer protocol { write(buf []u8) -> int }
 // 1. Multi-composition в type-decl:
 type ReadWriter protocol {
     use Reader, Writer       // embed
-    close() -> ()            // own method
+    @close() -> ()           // own method
 }
 
 // 2. Single-composition (естественно, без ambiguity):
 type ReadExt protocol {
     use Reader
-    job() -> ()
+    @job() -> ()
 }
 
 // 3. Pure composition без own methods:
@@ -7726,9 +7860,9 @@ type Streamable protocol {
 
 // 4. Mix anywhere в block — order independent:
 type Complex protocol {
-    init() -> ()
+    @init() -> ()
     use Reader
-    helper() -> int
+    @helper() -> int
     use Writer
 }
 
@@ -8372,34 +8506,66 @@ compiler принимает обе формы; canonical форма докуме
 |---|---|---|
 | `Iter[T]` | `Iterable[T]` → `Next[T]` + `Iter[I]` (Plan 138 D241+D242) | `std/prelude/collections.nv` |
 | `Display` | `Display` | `std/prelude/protocols.nv` |
-| `Equal.eq(other Self) -> bool` | `Equal.equals(other Self) -> bool` | `std/prelude/protocols.nv` |
+| `Equal.eq(other Self) -> bool` | `Equal.@equal(other Self) -> bool` | `std/prelude/protocols.nv` |
 | `Compare.cmp(other Self) -> Ordering` | `Compare.compare(other Self) -> int` | `std/prelude/protocols.nv` |
 | `Hash.hash() -> u64` | unchanged | `std/prelude/protocols.nv` |
 
 **Rationale renames:**
 - **`-able` suffix convention** — unified naming (Iterable/Equal/Compare/Hash/Display).
 - **`Compare.compare -> int`** — единый стиль с `str.compare()` (D178) и C `memcmp`/`strcmp`. `Ordering` sum-type удалён.
-- **`Equal.equals`** — явнее чем `eq` (Java convention).
+- **`Equal.@equal`** — явнее чем `eq` (Java convention). **Написание приведено к действующему 2026-09-16** (окно Карины, приказ владельца): D183 писался до Plan 108.4, где `@` у методов протокола стал ОБЯЗАТЕЛЬНЫМ, а `equals` стал `@equal` (таблица переименований — `04-effects.md`, раздел «Stdlib migration (Ф.3)»). Прежнее написание здесь было не вариантом, а ошибкой: такой метод не соберётся.
 - **`Display` → `Display`** — действие через `-able`, не имя-noun.
 
-### Compare embeds Equal
+### Равенство и порядок: протоколы ОРТОГОНАЛЬНЫ
+
+**НОРМА.** `Equal` и `Compare` — независимые протоколы: `Compare` НЕ встраивает `Equal`.
+Тело по умолчанию висит на самом `Equal`, и тип, объявивший один лишь `@compare`,
+получает `@equal` через него:
 
 ```nova
 export type Equal protocol {
-    equals(other Self) -> bool
+    @equal(other Self) -> bool => @compare(other) == 0
 }
 
 export type Compare protocol {
-    use Equal
-    compare(other Self) -> int
-    equals(other Self) -> bool => @compare(other) == 0    // default body
+    @compare(other Self) -> int
 }
 ```
 
-`use Equal` (D39 embed) делает каждый Compare также Equal.
-Локальная декларация `equals` в Compare с default body **overrides**
-embedded default — implementer пишет только `@compare`, `@equal`
-auto-synthesized из default body как `@compare(other) == 0`.
+Это ровно то, что стоит в дереве: `std/src/prelude/protocols.nv:83-105`, с комментарием
+«Total order. Orthogonal to Equal (no embed); Equal gets its default body via coercion
+to Compare». Разбор формы и довод — ниже, в разделе «D183 amendment — Plan 91.8a.2
+part 1: protocols refactor (orthogonal)».
+
+> **ОТМЕНЕНО амендментом Plan 91.8a.2, часть 1 (протоколы ортогональны).** Прежняя форма
+> выглядела так:
+>
+> ```nova
+> export type Equal protocol {
+>     equals(other Self) -> bool
+> }
+>
+> export type Compare protocol {
+>     use Equal
+>     compare(other Self) -> int
+>     equals(other Self) -> bool => @compare(other) == 0    // default body
+> }
+> ```
+>
+> `use Equal` (D39 embed) делал каждый `Compare` также `Equal`; локальная декларация
+> `equals` с телом по умолчанию **overrides** embedded default, и implementer писал
+> только `@compare`.
+>
+> **Чем отменено:** амендмент того же блока (Plan 91.8a.2, часть 1, 2026-05-29), решение
+> Q6 — каждый протокол stand-alone, зависимость между ними выражается coercion'ом и видна
+> при чтении декларации. Форма внутри этой цитаты набрана как БЫЛО, включая написание
+> `equals` без `@`: с Plan 108.4 так писать нельзя, `@` у методов протокола обязателен.
+
+> **Правка редакционная (2026-09-16, окно Карины, форма задана интегратором).** Раздел
+> назывался «Compare embeds Equal» и открывался отменённой формой, набранной как норма, —
+> амендмент стоял на 130 строк ниже, и читатель, попавший сюда поиском, брал отменённое
+> за действующее (замер: так и случилось в этот день). Норма не менялась и rev не
+> выдавался: текст приведён в соответствие с решением, которое уже принято.
 
 ### Default method bodies в protocols
 
@@ -8421,8 +8587,8 @@ auto-synthesized из default body как `@compare(other) == 0`.
 ```nova
 type Compare protocol {
     use Equal
-    compare(other Self) -> int                              // abstract
-    equals(other Self) -> bool => @compare(other) == 0      // default
+    @compare(other Self) -> int                              // abstract
+    @equal(other Self) -> bool => @compare(other) == 0      // default
 }
 
 type MyDate { y int, m int, d int }
@@ -8465,13 +8631,13 @@ fn int @compare(other int) -> int =>
 ### Реализация (части)
 
 - **Парсер** (`compiler-codegen/src/parser/mod.rs::parse_effect_methods`): добавлен parser default body после return_type/contracts. Body = `=> expr` или `{ ... }`. Поле `EffectMethod.default_body: Option<Block>` в AST.
-- **`check_protocol_embeds`** (`compiler-codegen/src/types/mod.rs`): local override embedded methods разрешён — locally declared метод в protocol с тем же именем что embedded не считается duplicate. Используется для `Compare.equals` overrides embedded `Equal.equals` default.
-- **Codegen synthesis для defaults**: followup `[M-91.8a.2-default-codegen]`. Сейчас implementer пишет default-method explicitly для compatibility (как boilerplate `equals(o) => @compare(o) == 0`).
+- **`check_protocol_embeds`** (`compiler-codegen/src/types/mod.rs`): local override embedded methods разрешён — locally declared метод в protocol с тем же именем что embedded не считается duplicate. Используется для `Compare.@equal` overrides embedded `Equal.@equal` default.
+- **Codegen synthesis для defaults**: followup `[M-91.8a.2-default-codegen]`. **Уточнено 2026-09-16 (окно Карины):** здесь стояло, что implementer пишет default-method явно ради совместимости, и образец был записан как `equals(o) => @compare(o) == 0`. Неверно дважды: метод зовётся `@equal` (Plan 108.4 сделал `@` обязательным), а явно писать его больше не требуется — замер трёмя пробами в разделе «Известные ограничения» ниже. Действующий образец тела по умолчанию: `@equal(o) => @compare(o) == 0`.
 
 ### Известные ограничения / followups
 
-- **Codegen synthesis (`[M-91.8a.2-default-codegen]`):** type T который имеет `@compare` но не `@equal` пока компилируется только если `@equal` объявлен явно. Eager synthesis из default body — отдельный codegen pass.
-- **Operator dispatch (D363, Plan 91.8b):** `==` всё ещё dispatches к `@eq` (D46). Renaming `@eq` → `@equal` в operator dispatch — задача Plan 91.8b. До 91.8b implementer пишет оба: `@equal` (protocol) + `@eq` (operator).
+- **Codegen synthesis (`[M-91.8a.2-default-codegen]`) — ЗАЯВЛЕНИЕ ОПРОВЕРГНУТО ЗАМЕРОМ 2026-09-16 (окно Карины).** Здесь стояло: тип с `@compare` и без `@equal` компилируется только при явном `@equal`. Проба из трёх клеток на оракуле: (а) `type Money { cents int, note str }` с одним лишь `fn Money @compare(other Money) -> int => @cents - other.cents` — СОБИРАЕТСЯ, и `Money{5,"x"} == Money{5,"y"}` даёт `true`, то есть равенство идёт через `@compare`, а не пополево; (б) тот же тип БЕЗ `@compare` даёт `false` — значит структурное равенство поле `note` ВИДИТ, и «true» в (а) другого объяснения не имеет; (в) первая редакция пробы (оба поля равны) ничего не различала и отброшена. **НАЗВАННЫЙ ПРОБЕЛ:** проба судит ПОВЕДЕНИЕ, а не механизм: синтез ли это тела по умолчанию или прямой фолбэк operator-dispatch на `@compare` — чтением кода не установлено. Но старое утверждение ложно в любом случае, а именно его читают как норму.
+- **Operator dispatch (D363, Plan 91.8b) — ЗАКРЫТО, проверено 2026-09-16 (окно Карины).** НОРМА одна и живёт в `03-syntax.md` (таблица операторов): `a == b` → `@equal(b)` через протокол `Equal`. Переименование сделано и в обоих компиляторах: оракул диспатчит на `"equal"` (`compiler-codegen/src/codegen/emit_c.rs:36497`), Карина — на `EQUAL_METHOD` (`novac/src/builtins/builtins.nv:99`, то же имя). Прежний текст здесь утверждал, что `==` всё ещё идёт в `@eq` (D46) и implementer пишет оба метода, — запись о долге пережила сам долг и читалась как норма, противореча таблице операторов.
 - **Structural `==` для mono'd generic-sum + Result ✅ (Plan 153.3, commit `1cc82de5`):** дефолтное
   структурное `==` (tag + payload, без user `@equal`/`@compare`) теперь покрывает
   **мономорфизированные generic-sum** (`Foo[int].A(1) == A(1)`) и **Result** (`NovaRes_*`). Раньше
@@ -8521,25 +8687,25 @@ fn int @compare(other int) -> int =>
 **Было (91.8a part 1):**
 ```nova
 type Equal protocol {
-    equals(other Self) -> bool
+    @equal(other Self) -> bool
 }
 type Compare protocol {
     use Equal
-    compare(other Self) -> int
-    equals(other Self) -> bool => @compare(other) == 0   // override of embedded default
+    @compare(other Self) -> int
+    @equal(other Self) -> bool => @compare(other) == 0   // override of embedded default
 }
 ```
 
 **Стало (91.8a.2 part 1) — canonical:**
 ```nova
 type Equal protocol {
-    equals(other Self) -> bool {
+    @equal(other Self) -> bool {
         ro cmp Compare = @                  // coercion-style (explicit dependency)
         cmp.compare(other) == 0
     }
 }
 type Compare protocol {
-    compare(other Self) -> int
+    @compare(other Self) -> int
 }
 ```
 
@@ -8556,11 +8722,11 @@ type Compare protocol {
   output after devirtualization. Coercion form preferred в stdlib для
   documentation.
 
-### Display.fmt default body
+### `Display.@display` default body (было `fmt`)
 
 ```nova
 type Display protocol {
-    fmt(sb StringBuilder) {
+    @display(sb StringBuilder) {
         sb.append(str.from(@))
     }
 }
@@ -8607,7 +8773,7 @@ receiver context». Fix: `emit_c.rs::emit_module` method overload registration
    - Protocol coercion (`let x Equal = m`)
    - Operator dispatch (Plan 91.8b)
    - String interpolation (Plan 91.10)
-   - NOT triggered: bare method call (`m.equals(other)` — direct lookup only)
+   - NOT triggered: bare method call (`m.equal(other)` — direct lookup only)
 2. **Devirtualization pass** — coercion form `let cmp Protocol = @` становится
    type ascription + direct call при synthesis для concrete T. Result: same
    C output что direct form.
@@ -8648,7 +8814,7 @@ default body synthesis (D183) ситуация ухудшилась:
 
 ```nova
 type Greetable protocol {
-    greet() -> str { "Hello, " + @name() }
+    @greet() -> str { "Hello, " + @name() }
 }
 type User { display_name str }
 fn User @name() -> str => @display_name
@@ -8710,7 +8876,7 @@ type Coin { value int }
 
 fn Coin @compare(other Self) -> int => ...
 fn str.from(c Coin) -> str => ...
-// equals auto-derived через Equal.equals default (uses @compare)
+// @equal auto-derived через Equal.@equal default (uses @compare)
 // fmt auto-derived через Display.fmt default (uses str.from)
 ```
 
@@ -8719,6 +8885,34 @@ fn str.from(c Coin) -> str => ...
 Order arbitrary: `#impl(A + B)` ≡ `#impl(B + A)`.
 
 Multiple `#impl` annotations не разрешены — single annotation with `+`.
+
+> **АМЕНДМЕНТ 2026-09-18 (решение владельца): СПИСОК НЕПУСТ.**
+> Аннотация несёт МИНИМУМ ОДИН протокол. Обе пустые формы — ОШИБКА:
+>
+> ```nova
+> #impl()          // ошибка: пустой список
+> #impl            // ошибка: списка нет вовсе
+> #impl(Display)   // норма
+> ```
+>
+> **Почему это амендмент, а не уточнение.** Блок нигде не говорил о пустом
+> списке ни да, ни нет, и это был НЕДОСМОТР, а не намеренная свобода:
+> смысл аннотации — ОПТ-ИН автора типа (раздел «Gate semantics» выше), а опт-ин
+> ни во что не открывает ни одних ворот и ничего не утверждает. Пустая
+> аннотация — не «нейтральный случай», а строка, которая выглядит решением
+> автора и им не является; читатель такого кода решит, что опт-ин есть.
+>
+> **Диагностика — `E_IMPL_NO_PROTOCOLS`**, в семье type-уровневых кодов этого блока
+> (`E_UNKNOWN_PROTOCOL`, `E_IMPL_NOT_PROTOCOL`, `E_IMPL_MISSING_METHODS`). Обе
+> пустые формы дают его же: разница между `#impl()` и `#impl` — в написании,
+> а не в том, что автор сказал, и два кода на одну ошибку заставили бы
+> читателя искать разницу, которой нет.
+>
+> **Как нашлось.** Окно Карины реализовывало чтение `#impl` и спросило
+> агента-читателя перечень ВСЕХ форм (правило владельца того же дня).
+> Агент ответил, что про пустой список и про `#impl` без скобок спека не
+> говорит НИЧЕГО — и этот НАЗВАННЫЙ ПРОБЕЛ оказался ценнее половины
+> ответов: без него каждый реализующий решал бы за спеку сам и по-разному.
 
 #### Position
 
@@ -14607,7 +14801,7 @@ D109 family (Equal/Hash/Compare/Display + Clone).
 ```nova
 #stable(since = "0.1")
 export type Clone protocol {
-    clone() -> Self
+    @clone() -> Self
 }
 ```
 
@@ -18215,7 +18409,7 @@ D422 — заполняют места, где D422 либо молчит, ли�
    который пишет прямо в целевой `StringBuilder` без промежуточного), но
    единственный источник рендер-семантики: полиморфный путь
    (`v.display(f)`/`v.debug(f)` через абстрактный `Fmt` — `Option[T Debug]`/
-   `Result[T Debug, E Debug]` и future generic `Vec[T]`/`[]T` Display) теперь
+   `Result[T Debug, E Debug]` и generic `Vec[T]`/`[]T` Display) теперь
    зовёт ТОТ ЖЕ `*_display_spec`-движок, что компиляторный fast-path
    девиртуализует, а не отдельную циркулярную дорожку. V1-упрощение #3
    (эта секция целиком) ЗАКРЫТО ПОЛНОСТЬЮ — обе половины («рендер хардкожен
@@ -18224,6 +18418,19 @@ D422 — заполняют места, где D422 либо молчит, ли�
    follow-up вне scope Ш2 (примитив тут рендерится редко, только через
    абстрактный `Fmt`; горячий top-level путь остаётся zero-copy через Ш3
    fast-path, не задет).
+
+   > **Правка 2026-09-18 (согласована с интегратором):** выше стояло «future
+   > generic `Vec[T]`/`[]T` Display». Слово снято: тело
+   > `Vec[T Display] @display(mut f Fmt)` живёт в
+   > `std/src/collections/vec/protocols.nv:192` и покрыто тестом (печатает
+   > «PASS: Vec[T] Display: nested»); док-пример там же утверждает
+   > `"Vec[1, 2, 3]"`. `[]T` отдельного тела не требует — это алиас `Vec[T]`.
+   >
+   > Почему записано, а не просто исправлено: в тот же день нашлось
+   > зеркальное — обзорные `syntax.*` отставали от этого же D422, а здесь
+   > сам D422 отстал от дерева. Источник, оставленный неправленным, учит
+   > неверному в обе стороны, и «not yet» в нормативном тексте опаснее
+   > устаревшего описания: по нему планируют работу, которая уже сделана.
 
    Верификация: `nova check` (checker-only — обходит НЕСВЯЗАННЫЙ
    pre-existing `[M-d216-write-at-return-type-unknown-cc-panic]`, который

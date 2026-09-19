@@ -39,7 +39,7 @@ const SHA256_OUTPUT_SIZE = 32
 ///
 /// # Examples
 /// ```nova
-/// let mac = HmacSha256.compute("secret".bytes(), "data".bytes())
+/// ro mac = HmacSha256.compute("secret".bytes(), "data".bytes())
 /// ```
 #stable(since = "0.1")
 export fn HmacSha256.compute(key []u8, message []u8) -> [32]u8 {

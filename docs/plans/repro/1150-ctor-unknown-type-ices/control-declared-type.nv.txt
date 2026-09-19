@@ -1,0 +1,13 @@
+// CONTROL for 1150: the same shape with the type DECLARED. Fields on separate
+// lines -- a record's fields are a SEQUENCE and D452 separates those by a
+// newline; the comma form this probe used before is not Nova, and the subset
+// was right to refuse reading it.
+module probe.ctoricecontrol
+type Point {
+    x int
+    y int
+}
+fn main() {
+    ro p = Point { x: 1, y: 2 }
+    println("x = ", p.x)
+}

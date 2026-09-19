@@ -285,6 +285,9 @@ fn callee_row_or_none(cr CalleeRef) -> FnRow {
         CalleeFn(row) => row
         CalleeVariant(_) => no_row()
         CalleeCtor(_) => no_row()
+        // A synthesized display has no row to give: the program wrote no
+        // function, and the emitter prints the field sequence from the TYPE.
+        CalleeSynthDisplay(_) => no_row()
     }
 }
 
@@ -413,7 +416,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
                                 @body.append("${c_maker(@ctx, v)}()")
                             }
                         }
-                        CalleeFn(_) | CalleeCtor(_) => ice("emit: a bare name resolved to a non-variant callee")
+                        CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) => ice("emit: a bare name resolved to a non-variant callee")
                     }
                 } else {
                     // Not a constant: an ordinary name, and `nova_bool` IS C
@@ -462,7 +465,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
                     }
                     return
                 }
-                CalleeFn(_) | CalleeCtor(_) => ice("emit: a field access resolved to a non-variant callee")
+                CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) => ice("emit: a field access resolved to a non-variant callee")
             }
         } else {
             // An ordinary field access: the shapes below own it.
@@ -531,6 +534,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
             CalleeFn(_) | CalleeCtor(_) => {
                 // An ordinary method call: the row below is the decision.
             }
+            CalleeSynthDisplay(_) => ice("emit: a method call resolved to a synthesized display -- the synthesis is recorded on an INTERPOLATION SLOT, and a written call has a row")
         }
         // The SUBSTITUTION comes from the same record as the row: one question
         // ("which instance does this call name"), one read. An ordinary call
@@ -587,6 +591,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
             // literal on the stack (`((NovaTuple_Pair){1LL, 2LL})`, read off
             // its C 2026-09-03), never a call to a C function that exists
             // nowhere. One expression, so nothing is hoisted (274.6 V2b).
+            CalleeSynthDisplay(_) => ice("emit: a call hoist for a synthesized display -- the synthesis is a slot, not a written call")
             CalleeFn(row) => {
                 ro rt = @ctx.fns.rows[raw_row(row)].ret_id
                 // Same deferral as the checker's routing door: only the

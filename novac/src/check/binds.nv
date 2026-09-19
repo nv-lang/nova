@@ -78,7 +78,24 @@ fn Checker mut @type_bind(st Node) -> () {
         // used to stop this walk too, and `@type_bind` then skipped its
         // `@scope.bind` -- every later name came out "unknown" (probe
         // 2026-08-20). The question is about THIS expression.
-        if @out.len() > before { return }
+        if @out.len() > before {
+            // AND THE NAME IS STILL BOUND, with no type. This is the cascade
+            // rule the `RecordCtor` branch below states in words ("its later
+            // uses then read `no_ty()` instead of producing a second
+            // diagnostic about an unknown name") -- the rule was written
+            // there and not applied here, so a refusal in ANY other
+            // initializer form collected an extra "unknown name" for every
+            // later use of the name.
+            //
+            // MEASURED 2026-09-19, and the measurement is what moved the fix
+            // from the refusing doors to this one place: two refusals with
+            // nothing in common -- a call on a TYPE (`check/exprs.nv`) and an
+            // interpolation slot of a non-primitive (`check/methods.nv`) --
+            // produced the SAME trailing "unknown name". The cause was never
+            // in either door; it is here, in the one statement that binds.
+            @scope.bind(vname, no_ty(), bind_mode_at(kids))
+            return
+        }
     } else {
         // A match or record-ctor initializer is walked BELOW, after its type is
         // decided; any other form was refused by the subset walk. Neither has
@@ -189,6 +206,20 @@ fn Checker mut @type_bind(st Node) -> () {
         if @out.len() > mmark { return }
     } else {
         // Not a match: nothing decides before the lattice is asked.
+    }
+    // THE CONSTRUCTOR'S NAME IS JUDGED BEFORE `type_of` IS ASKED, and this is a
+    // fix rather than caution: asking it about a name the registry does not hold
+    // reaches `ty_of_name_or_ice` and brings the compiler down on a plain
+    // misspelling -- `ro p = Pointt { x: 1 }` (registry #1150). The refusal is
+    // the one `typeref_rules` owns, so every position gets the same sentence.
+    if ik == NodeKind.RecordCtor && @report_if_ctor_type_undeclared(branch_children(init)) {
+        // Refused by name. The binding is STILL made, with no type: its later
+        // uses then read `no_ty()` instead of producing a second diagnostic
+        // about an unknown name, which is the cascade rule.
+        @scope.bind(vname, no_ty(), bind_mode_at(kids))
+        return
+    } else {
+        // Either not a constructor, or a constructor whose name IS declared.
     }
     ro vtype = type_of(init, @ctx, @scope, @chan)
     @record(init, vtype)

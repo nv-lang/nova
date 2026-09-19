@@ -447,6 +447,7 @@ step "novac-conventions (П13..П27: доки, имена, реестры, дв�
 par_reset
 par_add "$ROOT/scripts/guards/check-novac-type-field-docs.py" "тип/поле/функция novac без документации (П13)"
 par_add "$ROOT/scripts/guards/check-novac-doc-language.py" "русский текст в .nv novac (П13)"
+par_add "$ROOT/scripts/guards/check-novac-grammar-kinds.py" "правила грамматики и виды узлов разошлись (274.13 Ш.2)"
 par_add "$ROOT/scripts/guards/check-novac-no-name-hardcode.py" "имя языка/std строкой вне builtins (П5)"
 par_add "$ROOT/scripts/guards/check-novac-no-prelude-shadow.py" "novac объявил имя, которое экспортирует прелюдия"
 par_add "$ROOT/scripts/guards/check-novac-ctx-tables.py" "таблица строк в Ctx без строки плана §10.3б (П17)"
@@ -472,6 +473,7 @@ par_add "$ROOT/scripts/guards/check-novac-module-donor.py" "модуль novac �
 # причинами, novac-plan-donor.allow, тоже под храповиком.
 par_add "$ROOT/scripts/guards/check-novac-plan-donor.py" "оракул назван донором в тексте плана/конвенций novac (П25/П27 2а)"
 guard "$ROOT/scripts/guards/check-novac-commit-donor.sh" /dev/null "$ROOT" || fail "check-novac-commit-donor не отвечает на пустом входе"
+guard "$ROOT/scripts/guards/check-novac-commit-forms.sh" /dev/null "$ROOT" || fail "check-novac-commit-forms не отвечает на пустом входе"
 guard "$ROOT/scripts/guards/check-novac-commit-no-simplification.py" /dev/null "$ROOT" || fail "check-novac-commit-no-simplification not runnable"
 par_add "$ROOT/scripts/guards/check-novac-resolve-discipline.py" "резолв с тихим дефолтом или линейным сканом имён"
 par_add "$ROOT/scripts/guards/check-novac-channel-one-writer.py" "у канала чекера второй писатель или вывод типа ниже чекера"

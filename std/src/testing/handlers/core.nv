@@ -164,7 +164,7 @@ fn rotl64(x u64, k int) -> u64 =>
 /// # Examples
 /// ```nova
 /// with Random = th.seeded(42) {
-///     let u = Uuid.v4()  // deterministic
+///     ro u = Uuid.v4()  // deterministic
 /// }
 /// ```
 #stable(since = "0.1")

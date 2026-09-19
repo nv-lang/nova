@@ -1,0 +1,42 @@
+module display_generic.pos_3
+
+// AN `Option[int]` IN A SLOT. THIS PROGRAM USED TO LIVE IN `neg_1`, where it
+// asserted a refusal; it now asserts agreement with the oracle, byte for byte.
+// It was committed through `git mv`, but git will NOT show it as a rename and
+// the note says so rather than leaving the reader to wonder: both texts were
+// rewritten past the similarity threshold, so the commit reads as one file
+// added and one modified. The link between them is this sentence.
+//
+// WHAT LIFTED IT, measured 2026-09-19 at 01:09. Nothing in the compiler. The
+// refusal was never about novac's ability to spell or emit this call -- the
+// spelling landed the evening before (`c_instance_method` builds the oracle's
+// family form `Nova_<Head>_method_<name>_<arg>...`, and `pos_2` beside this
+// file prints an `Option[str]` with it). It was about the INTEROP SURFACE: an
+// instance method reaches novac only through the symbols the shell carries,
+// and the shell carries only the instances `novac/probe/shell_probe.nv` CALLS.
+// The probe called `@display` on an `Option[str]` and on nothing else of that
+// head, so `Nova_Option_method_display_nova_int` did not exist, and the slot
+// judge refused BY NAME rather than emitting a call the linker could not
+// resolve.
+//
+// The whole fix was one call in the probe plus a shell regen. After it, a grep
+// of `shell.tpl.c` gives the symbol at :704 (declaration) and :6375
+// (definition), and this file is byte-identical to the oracle.
+//
+// WHY THE LESSON OUTLIVES THE FIX: "this form is refused" and "this form cannot
+// be compiled" are different sentences, and only the first one was ever true
+// here. A refusal whose cause lives in a probe file expires the moment somebody
+// edits the probe -- so the cause belongs in the fixture, in words, or the next
+// reader spends a day in the compiler looking for a defect that is not there.
+
+fn pick(f bool) -> Option[int] {
+    if f {
+        return Some(5)
+    }
+    None
+}
+
+fn main() {
+    ro o = pick(true)
+    println("${o}")
+}

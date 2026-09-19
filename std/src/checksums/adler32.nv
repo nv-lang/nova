@@ -32,7 +32,7 @@ fn adler_base() -> u32 => 65521
 ///
 /// # Examples
 /// ```nova
-/// let cs = adler32("Wikipedia".bytes())
+/// ro cs = adler32("Wikipedia".bytes())
 /// assert(cs == 0x11E60398)
 /// ```
 #stable(since = "0.1")
@@ -44,10 +44,10 @@ export fn adler32(data []u8) -> u32 =>
 ///
 /// # Examples
 /// ```nova
-/// let mut s = adler32_init()
+/// mut s = adler32_init()
 /// s = adler32_update(s, chunk1)
 /// s = adler32_update(s, chunk2)
-/// let final = adler32_finalize(s)
+/// ro final = adler32_finalize(s)
 /// ```
 #stable(since = "0.1")
 export fn adler32_init() -> u32 => 1

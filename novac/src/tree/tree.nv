@@ -39,7 +39,6 @@ export type NodeKind enum
     | FnDecl
     | Block
     | Call
-    | Args
     | Bin
     | Lit
     | IfStmt

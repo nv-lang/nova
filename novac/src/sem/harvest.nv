@@ -98,7 +98,7 @@ fn harvest_in(n Node, handed_from str, types []TypeDef, mut defs DefTable, mut t
                 if c.kind_of() == NodeKind.AttrDecl { continue }
                 ro before = fns.rows.len()
                 harvest_in(c, handed_from, types, defs, tys, fns, coerces)
-                if is_coerce_marked(marked, c.id_of()) && fns.rows.len() > before {
+                if is_attr_marked(marked, c.id_of()) && fns.rows.len() > before {
                     harvest_coerce_pair(fns, coerces, FnRow(fns.rows.len() - 1))
                 } else {
                     // Either no attribute stood here, or the declaration under
@@ -128,10 +128,17 @@ fn harvest_in(n Node, handed_from str, types []TypeDef, mut defs DefTable, mut t
 /// field of a handed-over record is reachable only through a form the subset does
 /// not compile (`iter.pos`), so reading them now would be a capability with no
 /// obligation (K7). The name and the KIND are what a type in a signature needs.
-export fn harvest_types(decls []Node, mut types []TypeDef, mut defs DefTable,
+export fn harvest_types(decls []Node, mut types []TypeDef, mut gates []str, mut defs DefTable,
                         mut tys Interner) -> () {
     for d in decls {
-        for c in file_decls(d) {
+        // THE GATES of std's types, read where the DECLARATION LIST is (D186).
+        // Std goes through the same door as the compiled file deliberately:
+        // reading the gate in only one of the two would leave a std type
+        // carrying `#impl(Display)` silently ungated -- the exact asymmetry
+        // `coerce_marked` was written to end (2026-08-23, when only std's loop
+        // was read and a `#coerce` in the compiled file registered nothing).
+        ro decls_here = file_decls(d)
+        for c in decls_here {
             ro k = c.kind_of()
             if k != NodeKind.TypeDecl && k != NodeKind.SumDecl { continue }
             ro nk = branch_children(c)
@@ -171,6 +178,8 @@ export fn harvest_types(decls []Node, mut types []TypeDef, mut defs DefTable,
                 types.push(TypeDef { kind: TypeKind.TkSum, shape: RecordShape.Record,
                                      tparam_cnt: tp_cnt,
                                      ty_id: tys.sum(id), name: tname,
+                                     gate_off: gates.len(),
+                                     gate_cnt: push_gates(gates, decls_here, c.id_of()),
                                      rows: TypeRows.NoRows })
                 continue
             }
@@ -182,6 +191,8 @@ export fn harvest_types(decls []Node, mut types []TypeDef, mut defs DefTable,
             types.push(TypeDef { kind: TypeKind.TkRecord, shape: shape_of_record_decl(c),
                                  tparam_cnt: tp_cnt,
                                  ty_id: tys.record(id), name: tname,
+                                 gate_off: gates.len(),
+                                 gate_cnt: push_gates(gates, decls_here, c.id_of()),
                                  rows: TypeRows.NoRows })
         }
     }
@@ -393,10 +404,7 @@ fn recv_type_params(rk []Node, at int) -> []str {
     mut out = head_type_args(rk, at)
     for i in 0..at {
         // Slice brackets or the mode keyword are not a parameter list; the
-        // `continue` is the other branch (P31 form 2). [LEGACY-#676] the
-        // binding hop: `rk[i].kind_of()` with the loop's index is the
-        // var-index-method miscompile (reproduced 2026-08-26 in 14 lines; a
-        // parameter index `rk[at - 1]` compiles, the for-range variable does not).
+        // `continue` is the other branch (P31 form 2).
         ro c = rk[i]
         if c.kind_of() != NodeKind.Generics { continue }
         out.append(names_of_generics(branch_children(c)))

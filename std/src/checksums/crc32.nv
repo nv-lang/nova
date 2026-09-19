@@ -61,7 +61,7 @@ fn lookup(i u8) -> u32 => table_value(i)
 ///
 /// # Examples
 /// ```nova
-/// let cs = crc32("123456789".bytes())
+/// ro cs = crc32("123456789".bytes())
 /// assert(cs == 0xCBF43926)
 /// ```
 #stable(since = "0.1")
@@ -81,10 +81,10 @@ export fn crc32(data []u8) -> u32 {
 ///
 /// # Examples
 /// ```nova
-/// let mut s = crc32_init()
+/// mut s = crc32_init()
 /// s = crc32_update(s, chunk1)
 /// s = crc32_update(s, chunk2)
-/// let final = crc32_finalize(s)
+/// ro final = crc32_finalize(s)
 /// ```
 #stable(since = "0.1")
 export fn crc32_init() -> u32 => 0xFFFFFFFF

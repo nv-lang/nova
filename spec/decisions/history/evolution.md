@@ -458,8 +458,8 @@ protocol Hash {
 
 ```nova
 type Hash protocol {
-    hash() -> u64
-    eq(other Self) -> bool
+    @hash() -> u64
+    @equal(other Self) -> bool
 }
 ```
 

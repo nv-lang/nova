@@ -81,7 +81,7 @@ export type MemOrdering enum
 ///
 /// ```nova
 /// // worker fiber:
-/// let prev = refcount.fetch_sub(1)   // Release-dec (103.2)
+/// ro prev = refcount.fetch_sub(1)   // Release-dec (103.2)
 /// if prev == 1 {
 ///     fence(MemOrdering.Acquire)     // synchronize with all Release-decs
 ///     // safe to access data — last fiber holds it
@@ -1555,7 +1555,7 @@ export extern "nova" fn OnceGuard consume @abort()
 /// # Examples
 ///
 /// ```nova
-/// let mut mu = Mutex.new()
+/// mut mu = Mutex.new()
 /// mu.lock()
 /// // critical section
 /// mu.unlock()
@@ -1640,7 +1640,7 @@ export extern "nova" fn Mutex.new_unfair() -> Self
 /// # Examples
 ///
 /// ```nova
-/// let mut mu = Mutex.new()
+/// mut mu = Mutex.new()
 /// if mu.lock_for(100.to_millis()) {
 ///     defer mu.unlock()
 ///     // critical section
@@ -1675,8 +1675,8 @@ export extern "nova" fn Mutex @is_locked() -> bool
 /// # Examples
 ///
 /// ```nova
-/// let mut mu = Mutex.new()
-/// let result = mu.with_lock { ||
+/// mut mu = Mutex.new()
+/// ro result = mu.with_lock { ||
 ///     compute_under_lock()
 /// }
 /// ```
@@ -1706,9 +1706,9 @@ export fn Mutex @with_lock[R](body fn() -> R) -> R {
 /// # Examples
 ///
 /// ```nova
-/// let mut rw = RwLock.new()
+/// mut rw = RwLock.new()
 /// rw.with_read { ||
-///     let v = shared_data
+///     ro v = shared_data
 ///     print(v)
 /// }
 /// rw.with_write { ||
@@ -1851,7 +1851,7 @@ export fn RwLock @with_write[R](body fn() -> R) -> R {
 /// # Examples
 ///
 /// ```nova
-/// let mut rm = ReentrantMutex.new()
+/// mut rm = ReentrantMutex.new()
 /// rm.lock()
 /// rm.lock()           // same fiber — no deadlock
 /// rm.unlock()
@@ -1918,7 +1918,7 @@ export fn ReentrantMutex mut @with_lock[R](body fn() -> R) -> R {
 /// # Examples
 ///
 /// ```nova
-/// let mut wg = WaitGroup.new()
+/// mut wg = WaitGroup.new()
 /// wg.add(3)
 /// spawn { work1(); wg.done() }
 /// spawn { work2(); wg.done() }
@@ -1989,7 +1989,7 @@ export type OnceState enum
 /// # Examples
 ///
 /// ```nova
-/// let init = Once.new()
+/// ro init = Once.new()
 /// init.call_once { || setup() }
 /// assert(init.is_completed() == true)
 /// ```
@@ -2076,7 +2076,7 @@ export extern "nova" fn Once mut @make_guard() -> OnceGuard
 /// # Examples
 ///
 /// ```nova
-/// let mut once = Once.new()
+/// mut once = Once.new()
 /// match once.start() {
 ///     Some(consume g) => {
 ///         // This fiber won — do the work
@@ -2182,8 +2182,8 @@ export extern "nova" fn OnceCell[T] @is_initialized() -> bool
 /// # Examples
 ///
 /// ```nova
-/// let lazy = Lazy[int].new() { expensive_computation() }
-/// let v = lazy.force()  // runs init if first call
+/// ro lazy = Lazy[int].new() { expensive_computation() }
+/// ro v = lazy.force()  // runs init if first call
 /// ```
 ///
 /// # See Also
@@ -2423,7 +2423,7 @@ export extern "nova" fn Condvar mut @notify_all()
 /// # Examples
 ///
 /// ```nova
-/// let mut latch = CountDownLatch.new(5)
+/// mut latch = CountDownLatch.new(5)
 /// parallel for _i in 0..5 {
 ///     do_work()
 ///     latch.count_down()
@@ -2644,7 +2644,7 @@ export extern "nova" fn Semaphore mut @release_n(n int)
 /// # Examples
 ///
 /// ```nova
-/// let pool = Semaphore.new(5)
+/// ro pool = Semaphore.new(5)
 /// pool.with_permit { ||
 ///     do_work()
 /// }
