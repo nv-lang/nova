@@ -78,7 +78,24 @@ fn Checker mut @type_bind(st Node) -> () {
         // used to stop this walk too, and `@type_bind` then skipped its
         // `@scope.bind` -- every later name came out "unknown" (probe
         // 2026-08-20). The question is about THIS expression.
-        if @out.len() > before { return }
+        if @out.len() > before {
+            // AND THE NAME IS STILL BOUND, with no type. This is the cascade
+            // rule the `RecordCtor` branch below states in words ("its later
+            // uses then read `no_ty()` instead of producing a second
+            // diagnostic about an unknown name") -- the rule was written
+            // there and not applied here, so a refusal in ANY other
+            // initializer form collected an extra "unknown name" for every
+            // later use of the name.
+            //
+            // MEASURED 2026-09-19, and the measurement is what moved the fix
+            // from the refusing doors to this one place: two refusals with
+            // nothing in common -- a call on a TYPE (`check/exprs.nv`) and an
+            // interpolation slot of a non-primitive (`check/methods.nv`) --
+            // produced the SAME trailing "unknown name". The cause was never
+            // in either door; it is here, in the one statement that binds.
+            @scope.bind(vname, no_ty(), bind_mode_at(kids))
+            return
+        }
     } else {
         // A match or record-ctor initializer is walked BELOW, after its type is
         // decided; any other form was refused by the subset walk. Neither has
