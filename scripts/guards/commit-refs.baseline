@@ -102,6 +102,29 @@
 #   sosednih okon, kotoryh na chekaute CI net. Merilos' na KLONE
 #   `git clone --single-branch --branch main` — tom zhe, chto delaet CI:
 #   do pravki 849 (> bazy, otsyuda krasnyy), posle 831.
-dead_hash_refs=831
+# 2026-09-19 (integrator), vecher: 831 -> 847. BAZA PODNYATA, I PODNYATA IZ-ZA
+#   MOYEY OSHIBKI V ZAMERE, a ne iz-za novogo dolga. Letopis' vyshe utverzhdayet
+#   'merilos' na klone --single-branch, posle pravki 831'. Vosproizvedeno segodnya
+#   tem zhe sposobom na tom zhe kommite: klon dayot 856, a ne 831. Chislo 831
+#   klonom poluchit' nel'zya -- ono prishlo iz LOKAL'NOGO zamera s bogatym naborom
+#   ssylok, i ya zapisal yego kak klonovoye.
+#
+#   TRI CHISLA ODNOGO PREDIKATA NA ODNOM I TOM ZHE DEREVE (cbfaff2da), zamer
+#   2026-09-19 vecherom -- raznitsa TOL'KO v nabore ssylok, derevo ne menyalos':
+#     822  lokal'no: 8 svoih vetok + 30 remote-tracking (rev-list --all vidit vsyo)
+#     847  CI: 29 vetok origin, bez lokal'nyh (run 35410639757, stroka
+#          'check-commit-refs: R2 VYROSLO -- 847 > bazy 831')
+#     856  klon --single-branch --branch main: dostizhimost' bednee vsego
+#   Razbros 34 -- eto NE drift dereva: tot zhe klon na 8e9e66a13 dayot te zhe 856,
+#   to yest' dva vecherne kommita ne dobavili ni odnoy myortvoy ssylki.
+#
+#   NAZVANNYY PROBEL, i on vazhneye chisla: znachenie etogo hrapovika
+#   NEVOSPROIZVODIMO vne CI. Predikat sprashivayet 'vidno li hesh hot' otkuda',
+#   a 'otkuda' u kazhdoy sredy svoyo -- i eto SOZNATEL'NOYE reshenie strazha
+#   (sm. reachable_shas: hesh nevlitoy vetki ne myortv). Sledstviye: yedinstvennyy
+#   chestnyy istochnik chisla dlya etoy bazy -- STROKA PROGONA CI, a lyuboy
+#   lokal'nyy zamer zdes' ne dokazatel'stvo, dazhe kogda on 'toy zhe komandoy'.
+#   Stroka reyestra 1167 vedyot etot klass.
+dead_hash_refs=847
 commit_url_no_context=0
 mirror_links=0
