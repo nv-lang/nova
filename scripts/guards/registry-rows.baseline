@@ -940,8 +940,8 @@
 # 2026-09-17 (integrator), chetvyortyy shag dnya: rows 1098 -> 1099,
 #   max 1149 -> 1151. Zavedena stroka 1151; 1150 vydan oknu Kariny i lezhit
 #   v yego vetke -- otsyuda razryv mezhdu prirostom strok (+1) i maksimuma (+2).
-rows=1111
-max=1167
+rows=1112
+max=1168
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
@@ -1171,6 +1171,10 @@ stale_gaps=0
 #   TOY ZHE PRAVKOY: rows 1108 -> 1109, max 1162 -> 1165. Novaya stroka 1165 --
 #   `nova test <katalog>` beryot odin fayl iz shestnadtsati i pechataet verdikt
 #   tak, budto proveril katalog (nahodka okna Kariny, zamer sveren mnoyu).
+# 2026-09-20 (integrator): rows 1111 -> 1112, max 1167 -> 1168. Zavedena stroka
+#   1168 -- ICE obryvayet progon samoproverki, i chislo otvergnutyh faylov
+#   okazyvayetsya funktsiyey PORYADKA argumentov (15 / 3 / 1495 na odnom dereve).
+#   Nomer vydan srazu, bez dyry: stroka pishetsya v main etim zhe hodom.
 # 2026-09-19 (integrator), sliyaniye vetki pomoshchnika: rows 1110 -> 1111,
 #   1166 SNYAT iz gaps -- stroka priyekhala v main etim zhe sliyaniyem, i eto
 #   rovno to usloviye snyatiya, kotoroye bylo zapisano pri vydache nomera.
