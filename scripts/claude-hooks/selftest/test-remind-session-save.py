@@ -256,6 +256,30 @@ try:
         ok(u'визитки роли нет — прежнее поведение, хук напоминает')
     else:
         bad(u'без визитки хук замолчал: %r' % fout2[:140])
+
+    # (10а) ВИЗИТКА ЕСТЬ, НО ПРОТУХЛА (старше 12 часов) — она след, а не адрес,
+    #       и приравнивается к отсутствующей. Находка окна nova-78, 2026-09-19:
+    #       двухдневная визитка `carina` называла мёртвое окно `nova-49`, и
+    #       сегодняшнее окно роли получало «это не твоя роль» — то есть механизм
+    #       замолкал ровно у той роли, ради которой заведён. Пара к клетке (9):
+    #       там визитка СВЕЖАЯ и чужая, и молчание верно.
+    io.open(os.path.join(fgit, 'nova-session-integrator.card'), 'w',
+            encoding='utf-8').write(
+        u'role=integrator\nname=nova-dead\nsession_id=SID-OWNER\nepoch=%d\n'
+        % int(time.time() - 13 * 3600))
+    # Отметка остуды, поставленная клеткой (10), иначе заглушит этот вызов — и
+    # клетка мерила бы остуду, а не визитку. Помощника `_clear_stamps` здесь ещё
+    # нет: он определён ниже по файлу.
+    _stamp = os.path.join(froot, 'target', '.session-save-reminder')
+    if os.path.isfile(_stamp):
+        os.remove(_stamp)
+    fp3 = subprocess.run([sys.executable, HOOK], input=b'{}',
+                         capture_output=True, env=fenv, cwd=froot)
+    fout3 = fp3.stdout.decode('utf-8', 'replace').strip()
+    if fout3 and u'integrator-handoff' in fout3:
+        ok(u'визитка протухла — хук напоминает, как при её отсутствии')
+    else:
+        bad(u'протухшая визитка заглушила хук: %r' % (fout3[:140] or u'(пусто)'))
     shutil.rmtree(froot, ignore_errors=True)
 
     # (5) НЕЗНАКОМАЯ РОЛЬ — молчание, и это решение, а не дыра: у пакетных окон

@@ -313,7 +313,7 @@ for name, fn in CASES:
 # ним проверяла бы не тот путь. Роль обязана выводиться из ветки — поэтому в
 # поддельном дереве пишется `.git/HEAD`.
 
-def _card_tree(role, owner_sid):
+def _card_tree(role, owner_sid, epoch=None):
     tmp = tempfile.mkdtemp(prefix="nova-stop-card-")
     g = os.path.join(tmp, ".git")
     os.makedirs(g, exist_ok=True)
@@ -322,6 +322,8 @@ def _card_tree(role, owner_sid):
     with io.open(os.path.join(g, "nova-session-%s.card" % role), "w",
                  encoding="utf-8") as fh:
         fh.write(u"role=%s\nsession_id=%s\n" % (role, owner_sid))
+        if epoch is not None:
+            fh.write(u"epoch=%d\n" % epoch)
     return tmp
 
 
@@ -345,8 +347,75 @@ def _t_card_mine():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# --- возраст визитки: след против адреса (находка nova-78, 2026-09-19 04:56) ---
+#
+# Визитка переживает своё окно. Пока затвор читал её без оглядки на возраст,
+# двухдневная визитка с ЧУЖИМ id отвечала «роль не твоя» СЕГОДНЯШНЕМУ окну роли —
+# и страж молчал ровно там, где заведён. Клетки идут парой: протухшая обязана
+# судить (громко), свежая чужая обязана молчать — иначе «починка» была бы просто
+# отключением проверки визитки.
+
+def _t_card_stale_foreign():
+    tmp = _card_tree("integrator", "CHUZHOY-ID",
+                     epoch=int(time.time()) - 13 * 3600)
+    try:
+        res = run(tmp, [(u"Готово.", 0)], session="card3", role=None,
+                  env_extra={"CLAUDE_CODE_SESSION_ID": "MOY-ID"})
+        return bool(res) and res.get("decision") == "block"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _t_card_fresh_foreign():
+    tmp = _card_tree("integrator", "CHUZHOY-ID",
+                     epoch=int(time.time()) - 60)
+    try:
+        res = run(tmp, [(u"Готово.", 0)], session="card4", role=None,
+                  env_extra={"CLAUDE_CODE_SESSION_ID": "MOY-ID"})
+        return res is None
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _t_stale_copies_agree():
+    u"""Две копии `card_is_stale` (Stop-страж и напоминалка) — один ответ.
+
+    Общего модуля нет намеренно: хук обязан быть самодостаточным. Значит
+    расхождение копий ловится механизмом, а не доверием. Пара внутри клетки:
+    файлы РАЗНЫЕ по возрасту, иначе согласие двух «False» ничего не значило бы.
+    """
+    import importlib.util as ilu
+
+    def _load(name, path):
+        spec = ilu.spec_from_file_location(name, path)
+        mod = ilu.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    os.environ.setdefault("NOVA_STOP_RAW", "{}")
+    stop = _load("stop_v2", HOOK)
+    rem = _load("remind_ss", os.path.join(here, "..", "remind-session-save.py"))
+
+    tmp = tempfile.mkdtemp(prefix="nova-stop-age-")
+    try:
+        answers = []
+        for age in (13 * 3600, 60):
+            p = os.path.join(tmp, "c%d.card" % age)
+            with io.open(p, "w", encoding="utf-8") as fh:
+                fh.write(u"role=integrator\nsession_id=X\nepoch=%d\n"
+                         % (int(time.time()) - age))
+            answers.append((stop.card_is_stale(p), rem._card_is_stale(p)))
+        return answers == [(True, True), (False, False)]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 for _name, _fn in ((u"визитка ЧУЖОЙ сессии: роль не моя, хук молчит", _t_card_foreign),
-                   (u"визитка МОЕЙ сессии: роль моя, молчание блокируется", _t_card_mine)):
+                   (u"визитка МОЕЙ сессии: роль моя, молчание блокируется", _t_card_mine),
+                   (u"визитка ПРОТУХЛА: след, а не адрес — страж судит", _t_card_stale_foreign),
+                   (u"визитка СВЕЖАЯ и чужая: по-прежнему молчит", _t_card_fresh_foreign),
+                   (u"две копии возраста визитки дают один ответ", _t_stale_copies_agree)):
     try:
         _got = _fn()
         _why = u"ok" if _got else u"не сработало"

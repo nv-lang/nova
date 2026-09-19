@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOLS = os.path.dirname(HERE)
@@ -281,7 +282,7 @@ cell(u"настоящее дерево: снимок не считает себ�
 # ЧУЖОЙ очереди при молчащем страже — замерено на себе 2026-09-19 02:06, когда
 # хук уже говорил `none`, а снимок в том же дереве — `integrator`.
 
-def _tree_with_card(owner_sid):
+def _tree_with_card(owner_sid, epoch=None):
     tmp = tempfile.mkdtemp(prefix="queue-card-")
     g = os.path.join(tmp, ".git")
     os.makedirs(g, exist_ok=True)
@@ -290,6 +291,8 @@ def _tree_with_card(owner_sid):
     with io.open(os.path.join(g, "nova-session-integrator.card"), "w",
                  encoding="utf-8") as fh:
         fh.write(u"role=integrator\nsession_id=%s\n" % owner_sid)
+        if epoch is not None:
+            fh.write(u"epoch=%d\n" % epoch)
     return tmp
 
 
@@ -346,8 +349,33 @@ def c_agrees_own_card():
     return (mine == theirs == u"integrator"), u"снимок=%s, хук=%s" % (mine, theirs)
 
 
+def c_agrees_stale_card():
+    u"""Визитка ПРОТУХЛА — оба судят по ветке, и судят ОДИНАКОВО.
+
+    Третья копия правила живёт здесь, и разойтись она могла бы ровно на этом:
+    почини возраст в хуке и забудь в снимке — и снимок снова начнёт печатать
+    окну чужую очередь, пока страж молчит. Клетка зовёт ЧУЖУЮ функцию, а не
+    пересказывает её поведение.
+    """
+    tree = _tree_with_card(u"CHUZHOY", epoch=int(time.time()) - 13 * 3600)
+    old = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    os.environ["CLAUDE_CODE_SESSION_ID"] = u"MOY"
+    os.environ.pop("NOVA_WINDOW_ROLE", None)
+    try:
+        mine = snapmod.detect_role(tree)
+    finally:
+        if old is None:
+            os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+        else:
+            os.environ["CLAUDE_CODE_SESSION_ID"] = old
+    theirs = _hook_role(tree, u"MOY")
+    shutil.rmtree(tree, ignore_errors=True)
+    return (mine == theirs == u"integrator"), u"снимок=%s, хук=%s" % (mine, theirs)
+
+
 cell(u"визитка чужая: снимок и хук говорят `none`", c_agrees_foreign_card)
 cell(u"визитка моя: оба говорят `integrator`", c_agrees_own_card)
+cell(u"визитка протухла: оба судят по ветке", c_agrees_stale_card)
 
 print(u"PASS %d  FAIL %d" % (ok_count, fail_count))
 sys.exit(1 if fail_count else 0)
