@@ -1276,7 +1276,11 @@
 # сторон он расходился по существу: в её ветке строки 1156, 1158, 1163-1164 уже
 # были, в main они числились дырами. Резерв 1169-1171 снят условием, записанным
 # при его выдаче: строки приехали этим слиянием.
-rows=1124
-max=1172
+# 2026-09-20 (integrator), pered gate-progonom: rows 1124 -> 1126,
+#   max 1172 -> 1174. Zavedeny 1173 (spec i kompilyator rashodyatsya na
+#   privatnoy funktsii s tranzitivnym effektom -- reshayet vladelets) i 1174
+#   (dva defekta dokumentov: myortvaya ssylka i primer snyatoy formy).
+rows=1126
+max=1174
 stale_gaps=0
 gaps=174-208,210-215,653-654,743,1062,1096,1103-1104
