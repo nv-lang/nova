@@ -940,8 +940,8 @@
 # 2026-09-17 (integrator), chetvyortyy shag dnya: rows 1098 -> 1099,
 #   max 1149 -> 1151. Zavedena stroka 1151; 1150 vydan oknu Kariny i lezhit
 #   v yego vetke -- otsyuda razryv mezhdu prirostom strok (+1) i maksimuma (+2).
-rows=1112
-max=1168
+rows=1113
+max=1172
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
@@ -1171,6 +1171,10 @@ stale_gaps=0
 #   TOY ZHE PRAVKOY: rows 1108 -> 1109, max 1162 -> 1165. Novaya stroka 1165 --
 #   `nova test <katalog>` beryot odin fayl iz shestnadtsati i pechataet verdikt
 #   tak, budto proveril katalog (nahodka okna Kariny, zamer sveren mnoyu).
+# 2026-09-20 (integrator), pozzhe: rows 1112 -> 1113, max 1168 -> 1172. Stroka
+#   1172 (tihiy kaskad: tri potrebitelya dayut po dve diagnostiki, strazh slep
+#   iz-za pustoy misheni) napisana v main SRAZU, poetomu max rastyot po FAKTU,
+#   a ne po obeshchaniyu. 1169-1171 po-prezhnemu v gaps: oni v vetke Kariny.
 # 2026-09-20 (integrator), po zaprosu okna Kariny: max 1168 -> 1171, v gaps
 #   dobavleny 1169-1171. 1169 i 1170 -- dve stroki iz yeyo kommita 268fa7478,
 #   stoyavshie s No.TBD (strazh formy krasnel i derzhal yeyo push); 1171 VYDAN
