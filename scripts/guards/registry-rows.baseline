@@ -940,8 +940,8 @@
 # 2026-09-17 (integrator), chetvyortyy shag dnya: rows 1098 -> 1099,
 #   max 1149 -> 1151. Zavedena stroka 1151; 1150 vydan oknu Kariny i lezhit
 #   v yego vetke -- otsyuda razryv mezhdu prirostom strok (+1) i maksimuma (+2).
-rows=1108
-max=1162
+rows=1109
+max=1165
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
@@ -1168,4 +1168,16 @@ stale_gaps=0
 #   nerazlichima ot poteryannoy stroki. Rezerv nomera pod chuzhuyu vetku
 #   zakonen tolko zapisyu v gaps= (sm. 1144-1146, 1150), a ne molchaniyem.
 #   Okno Kariny uvedomleno: yego stroki poluchayut 1163 i 1164.
-gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1144-1146,1150,1156,1158
+#   TOY ZHE PRAVKOY: rows 1108 -> 1109, max 1162 -> 1165. Novaya stroka 1165 --
+#   `nova test <katalog>` beryot odin fayl iz shestnadtsati i pechataet verdikt
+#   tak, budto proveril katalog (nahodka okna Kariny, zamer sveren mnoyu).
+# 2026-09-19 (integrator), vtoraya pravka za noch: v perechen dyr dobavleny
+#   1163-1164 -- nomera VYDANY oknu Kariny (otkaz s lozhnym sredstvom: vyzov na
+#   TIPE i `v.to_str()` na polzovatelskoy zapisi), stroki pishutsya v YEYO vetke
+#   i v main poka ne priyekhali. USLOVIE SNYATIYA to zhe, chto u 1144-1146/1150:
+#   pri sliyanii nomera poyavyatsya, i dyru nado SOKRATIT obratno.
+#   POCHEMU ZAPIS, A NE MOLCHANIE -- urok etoy zhe nochi, kuplennyy dvazhdy:
+#   pervyy raz ya ostavil 1161-1162 pustymi 'pro zapas' i strazh pokrasnel, i
+#   on byl prav -- dyra bez prichiny nerazlichima ot stroki, poteryannoy
+#   sliyaniyem. Rezerv sushchestvuyet tolko togda, kogda on ZAPISAN zdes.
+gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1144-1146,1150,1156,1158,1163-1164
