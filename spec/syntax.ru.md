@@ -1832,13 +1832,19 @@ type-set** в списке bound'ов (`E_MULTIPLE_TYPE_SETS`) — проток�
 
 **Члены — только конкретные типы**, перечисленные по идентичности:
 newtype `type MyI8 i8` не входит в `{i8}` автоматически — нужен явный
-листинг (`E_TYPE_SET_MEMBER_NOT_CONCRETE` для protocol/effect/другого
-type-set как члена). **Один set не смешивает signed/unsigned целые**
-(`E_TYPE_SET_MIXED_SIGNEDNESS`) — готовые `SignedInts`/`UnsignedInts` в
-prelude (`std/prelude/protocols.nv`) разделены по этой оси; `Ints` — их полное
-объединение, единственная разрешённая смесь (D430 R1): D310 запрещает *частичный*
-signed/unsigned микс, а монорфизация per член резолвит `T.MAX`/`T.MIN` per-instance; `Floats` —
-`f32 | f64` (добавлен 2026-09-04). Всего set'ов четыре.
+листинг (`E_TYPE_SET_MEMBER_NOT_CONCRETE` для protocol или effect как члена).
+**Член может сам быть другим type-set'ом** (`type Ints set SignedInts |
+UnsignedInts`): на объявлении внешнего набора члены вложенного разворачиваются
+(flatten) в его список, рекурсивно и с дедупликацией (`set Ints | i32` не
+дублирует `i32`); цикл (`type A set B`, `type B set A` либо прямая самоссылка)
+конечного разворачивания не имеет — `E_TYPE_SET_CYCLE`.
+**Смешивать signed и unsigned целые в одном set'е разрешено** — как частично
+(`set i32 | u32`), так и полностью: прежний запрет частичной смеси снят
+(D310-амендмент, план p424). Готовые `SignedInts`/`UnsignedInts` в prelude
+(`std/prelude/protocols.nv`) остаются полезны там, где однородность по знаку нужна
+ПО СУЩЕСТВУ, просто перестали быть обязательным способом её получить; `Ints` — их
+полное объединение, `Floats` — `f32 | f64` (добавлен 2026-09-04). Всего set'ов
+четыре.
 
 Подробно — [D72](decisions/02-types.md#d72), [D310](decisions/02-types.md#d310-type-set-bounds-plan-1723).
 

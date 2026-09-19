@@ -1824,14 +1824,19 @@ are allowed in any amount.
 
 **Members — only concrete types**, listed by identity:
 a newtype `type MyI8 i8` does not enter `{i8}` automatically — an explicit
-listing is needed (`E_TYPE_SET_MEMBER_NOT_CONCRETE` for protocol/effect/another
-type-set as a member). **One set does not mix signed/unsigned integers**
-(`E_TYPE_SET_MIXED_SIGNEDNESS`) — the ready-made `SignedInts`/`UnsignedInts`
-in the prelude (`std/prelude/protocols.nv`) are split along this axis; `Ints` is their
-full union — the one mix D430 R1 allows, because D310 forbids a *partial* signed/unsigned
-mix and per-member monomorphisation resolves `T.MAX`/`T.MIN` per instance — and `Floats`
-is `f32 | f64` (added 2026-09-04). Four sets in all.
-
+listing is needed (`E_TYPE_SET_MEMBER_NOT_CONCRETE` for a protocol or an effect
+as a member). **A member may itself be another type-set** (`type Ints set
+SignedInts | UnsignedInts`): on the declaration of the outer set the members of
+the nested one are flattened into its list, recursively and with deduplication
+(`set Ints | i32` does not duplicate `i32`); a cycle (`type A set B`, `type B set
+A`, or a direct self-reference) has no finite expansion — `E_TYPE_SET_CYCLE`.
+**Mixing signed and unsigned integers in one set is allowed**, partially
+(`set i32 | u32`) as well as fully — the former prohibition on a partial mix is
+lifted (D310 amendment, Plan p424). The ready-made `SignedInts`/`UnsignedInts` in
+the prelude (`std/prelude/protocols.nv`) stay useful where homogeneity of sign is
+needed by substance, they are simply no longer the obligatory way to have it;
+`Ints` is their full union and `Floats` is `f32 | f64` (added 2026-09-04). Four
+sets in all. A `~` (repr/structural) bound is not accepted by a type-set.
 Details — [D72](decisions/02-types.md#d72), [D310](decisions/02-types.md#d310-type-set-bounds-plan-1723).
 
 ## Conversions: `as` and `T.from(v)`
