@@ -1171,6 +1171,16 @@ stale_gaps=0
 #   TOY ZHE PRAVKOY: rows 1108 -> 1109, max 1162 -> 1165. Novaya stroka 1165 --
 #   `nova test <katalog>` beryot odin fayl iz shestnadtsati i pechataet verdikt
 #   tak, budto proveril katalog (nahodka okna Kariny, zamer sveren mnoyu).
+# 2026-09-20 (integrator), po zaprosu okna Kariny: max 1168 -> 1171, v gaps
+#   dobavleny 1169-1171. 1169 i 1170 -- dve stroki iz yeyo kommita 268fa7478,
+#   stoyavshie s No.TBD (strazh formy krasnel i derzhal yeyo push); 1171 VYDAN
+#   vperyod pod stroku o tom, chto etot ICE ne nazyvayet MESTA (pustoye pole
+#   file, span 0 0). USLOVIYE SNYATIYA: pri sliyanii yeyo vetki nomera
+#   VAZHNO PRO max: yego NE podnimayut vperyod stroki -- strazh sveryayet ego s
+#   fakticheski naibolshim nomerom v reyestre i krasneyet na obeshchanii
+#   (proveril na sebe v tot zhe chas). Rezerv zhivyot TOLKO v gaps.
+#   poyavyatsya strokami, i dyru nado SOKRATIT obratno; yesli 1171 ne budet
+#   napisan -- snyat' yego iz gaps i opustit' max.
 # 2026-09-20 (integrator): rows 1111 -> 1112, max 1167 -> 1168. Zavedena stroka
 #   1168 -- ICE obryvayet progon samoproverki, i chislo otvergnutyh faylov
 #   okazyvayetsya funktsiyey PORYADKA argumentov (15 / 3 / 1495 na odnom dereve).
@@ -1195,4 +1205,4 @@ stale_gaps=0
 #   pervyy raz ya ostavil 1161-1162 pustymi 'pro zapas' i strazh pokrasnel, i
 #   on byl prav -- dyra bez prichiny nerazlichima ot stroki, poteryannoy
 #   sliyaniyem. Rezerv sushchestvuyet tolko togda, kogda on ZAPISAN zdes.
-gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1144-1146,1150,1156,1158,1163-1164
+gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1144-1146,1150,1156,1158,1163-1164,1169-1171
