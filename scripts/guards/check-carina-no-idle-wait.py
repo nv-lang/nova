@@ -34,6 +34,10 @@ import io
 import os
 import sys
 
+# Вердикт печатается ЧЕРЕЗ LF: на Windows поток по умолчанию отдаёт CRLF,
+# и строка вердикта уезжает в лог гейта с лишним байтом (страж честности).
+sys.stdout.reconfigure(newline="\n")
+
 NAME = "check-carina-no-idle-wait"
 CMD = os.path.join(".claude", "commands", "carina.md")
 
