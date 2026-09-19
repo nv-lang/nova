@@ -11,7 +11,8 @@ export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 G="$ROOT/scripts/guards/check-plan-292-parts.sh"
 FAILED=0
-ok()  { echo "  ok: $1"; }
+OKN=0
+ok()  { OKN=$((OKN + 1)); echo "  ok: $1"; }
 bad() { echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
@@ -83,7 +84,7 @@ else
 fi
 
 if [ "$FAILED" -eq 0 ]; then
-    echo "test-check-plan-292-parts ok: 5/5"
+    echo "test-check-plan-292-parts ok: $OKN/$OKN"
     exit 0
 fi
 echo "test-check-plan-292-parts FAIL"

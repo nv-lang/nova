@@ -940,8 +940,8 @@
 # 2026-09-17 (integrator), chetvyortyy shag dnya: rows 1098 -> 1099,
 #   max 1149 -> 1151. Zavedena stroka 1151; 1150 vydan oknu Kariny i lezhit
 #   v yego vetke -- otsyuda razryv mezhdu prirostom strok (+1) i maksimuma (+2).
-rows=1106
-max=1160
+rows=1108
+max=1162
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
@@ -1158,4 +1158,14 @@ stale_gaps=0
 #   main poka ne priyekhala. USLOVIE SNYATIYA to zhe, chto u 1144-1146: pri
 #   sliyanii vetki nomer poyavitsya, i  nado SOKRATIT obratno -- dyra,
 #   ostavlennaya posle sliyaniya, razreshit poteryat nastoyashchuyu stroku.
+# 2026-09-19 (integrator): rows 1106 -> 1108, max 1160 -> 1162. Dve zapisi
+#   priyekhali so sliyaniyem vetki pomoshchnika BEZ NOMERA (TBD), nomer dayot
+#   integrator: 1161 -- pin etapa Kariny otstayot ot prozy plana 274:8;
+#   1162 -- `Path @equals` vne kanona, `==` yego ne zovyot.
+#   NOMERA VZYATY PODRYAD NAROCHNO. Snachala ya vydal 1161/1162 oknu Kariny
+#   pod yeyo stroki i postavil etim 1163/1164 -- i srazu poluchil DYRU, na
+#   kotoruyu strazh chestno pokrasnel: dyra, ostavlennaya 'pro zapas',
+#   nerazlichima ot poteryannoy stroki. Rezerv nomera pod chuzhuyu vetku
+#   zakonen tolko zapisyu v gaps= (sm. 1144-1146, 1150), a ne molchaniyem.
+#   Okno Kariny uvedomleno: yego stroki poluchayut 1163 i 1164.
 gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1144-1146,1150,1156,1158
