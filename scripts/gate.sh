@@ -685,6 +685,7 @@ step loop "registry-closure-kept (закрытая запись не возвр�
 # main, вернуло строку 812 из ЗАКРЫТ в ОТКРЫТ и стёрло доказательства. Четыре
 # существующих стража реестра этого не видели — проверено пробой в обе стороны.
 guard "$ROOT/scripts/guards/check-registry-closure-kept.py" "$ROOT" || fail "закрытая запись реестра перестала быть закрытой без хроники в базе"
+guard "$ROOT/scripts/guards/check-registry-status-field.py" "$ROOT" || fail "строка реестра заведена без поля статуса — два стража истолкуют её противоположно, и оба молча"
 step loop "ABI-спеллинги прелюдии заморожены (Карина линкуется по ним)"
 guard "$ROOT/scripts/guards/check-oracle-abi-spellings.sh" "$ROOT" || fail "ABI-якорь прелюдии дрейфнул: интероп Карины сидит на этом спеллинге (см. шапку стража)"
 step loop "registry-routes (маршрут класса + оговорка + счётчик блокеров тега)"

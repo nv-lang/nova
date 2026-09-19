@@ -349,6 +349,49 @@ def common_git_dir(cwd):
     return u""
 
 
+CARD_STALE_SEC = 12 * 3600   # ровно порог `session-card.sh read` (43200)
+
+
+def card_is_stale(card):
+    u"""Визитка старше 12 часов — СЛЕД, а не адрес, и судить по ней нельзя.
+
+    ЗАМЕР 2026-09-19, 04:56 (находка окна nova-78, проверена здесь). Визитка
+    роли `carina` написана 17-го сессией `nova-49`; сегодняшнее окно Карины —
+    другое, но сидит в той же ветке `p274-novac`. Затвор читал визитку без
+    оглядки на возраст, видел ЧУЖОЙ `session_id` и отвечал `role=none` — то есть
+    Stop-страж молчал ровно у той роли, ради которой он заведён. Прогон пробы:
+    сегодняшнее окно -> role=none, окно с id из визитки -> role=carina.
+
+    Отказ падает В СТОРОНУ ГРОМКОСТИ: протухшая визитка приравнивается к
+    ОТСУТСТВУЮЩЕЙ, а это уже описанный случай — судим по ветке, страж включён.
+    Обратное («не моя роль») глушит стража молча, а немой отказ в костюме
+    успеха — тот самый класс, против которого писан план 292.
+
+    Порог 12 часов не выдуман здесь: его печатает `scripts/tools/session-card.sh`
+    (строка 75, «визитке больше 12 часов, это след, а не адрес»). Человеку тот
+    инструмент возраст показывал всегда — расходилось то, что решение машиной
+    принималось без него.
+
+    Возраст берётся из поля `epoch=`, которое пишет сам инструмент; нет поля или
+    оно нечитаемо — по mtime файла (визитка переписывается целиком).
+    """
+    try:
+        stamp = 0.0
+        with io.open(card, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if line.startswith(u"epoch="):
+                    try:
+                        stamp = float(line.split(u"=", 1)[1].strip())
+                    except ValueError:
+                        stamp = 0.0
+                    break
+        if stamp <= 0:
+            stamp = os.path.getmtime(card)
+        return (time.time() - stamp) > CARD_STALE_SEC
+    except Exception:
+        return False         # возраст неизвестен — визитку не отбрасываем
+
+
 def role_belongs_to_me(cwd, role):
     u"""Ветка называет РОЛЬ, но не говорит, ЧЬЁ это окно.
 
@@ -377,6 +420,8 @@ def role_belongs_to_me(cwd, role):
     card = os.path.join(g, u"nova-session-%s.card" % role)
     if not os.path.isfile(card):
         return True
+    if card_is_stale(card):
+        return True          # след, а не адрес — см. card_is_stale
     try:
         with io.open(card, encoding="utf-8", errors="replace") as fh:
             for line in fh:

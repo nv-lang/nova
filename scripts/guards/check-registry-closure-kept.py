@@ -30,6 +30,7 @@ $1 — корень; $2 — override пути к реестру (шов само
 $3 — override пути к базе.
 """
 import io
+import os
 import pathlib
 import re
 import sys
@@ -40,6 +41,57 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 NAME = "check-registry-closure-kept"
 RE_ROW = re.compile(r"^\|\s*(\d+)\s*\|")
 RE_OPEN = re.compile(r"\*\*Статус:\*\*\s*ОТКРЫТ")
+
+
+FIELD = "**" + "Статус" + ":**"
+
+
+def nofield_baseline():
+    """Номера строк, которым разрешено не иметь поля статуса (засев 2026-09-19).
+
+    Дом правила — `check-registry-status-field.py` и `registry-nofield.baseline`.
+    Здесь КОПИЯ чтения, намеренная: страж обязан быть самодостаточным. Копии
+    сверяет клетка самотеста, а не доверие к тому, что они совпадают.
+    """
+    p = os.environ.get("NOVA_NOFIELD_BASELINE") or (
+        pathlib.Path(__file__).resolve().parent / "registry-nofield.baseline")
+    out = set()
+    try:
+        for line in io.open(p, encoding="utf-8", errors="replace"):
+            s = line.strip()
+            if s.isdigit():
+                out.add(s)
+    except OSError:
+        return None
+    return out
+
+
+def refuse_unjudgeable(path):
+    """ОТКАЗ СУДИТЬ строку без поля статуса (реестр 221.1 №1160).
+
+    Этот страж по умолчанию считает строку ЗАКРЫТОЙ, если не видит поля
+    `ОТКРЫТ`, — а сканер маршрутов ту же строку считает ОТКРЫТОЙ. Домысливание в
+    разные стороны про один предмет и есть дефект; теперь новая такая строка не
+    судится вовсе. Старые держит база: отказ на 677 строках снял бы стража в
+    первый же прогон.
+    """
+    allowed = nofield_baseline()
+    if allowed is None:
+        print(f"{NAME}: FAIL — нет базы registry-nofield.baseline", file=sys.stderr)
+        return 1
+    new = []
+    for line in io.open(path, encoding="utf-8", errors="replace"):
+        m = RE_ROW.match(line)
+        if m and FIELD not in line and m.group(1) not in allowed:
+            new.append(m.group(1))
+    if new:
+        print(f"{NAME}: ОТКАЗ СУДИТЬ — строка без поля статуса: "
+              f"{', '.join('№' + n for n in new)}", file=sys.stderr)
+        print("  Этот страж счёл бы её ЗАКРЫТОЙ, сканер маршрутов — ОТКРЫТОЙ. "
+              "Поставь поле статуса: значение — вердикт, а не формальность.",
+              file=sys.stderr)
+        return 1
+    return 0
 
 
 def closed_numbers(path):
@@ -63,6 +115,11 @@ def main():
     if not reg.is_file():
         print(f"{NAME} ok: судить нечего (нет {reg})")
         return 0
+
+    # Отказ — ДО счёта: число, посчитанное с домыслом, выглядит как замер.
+    rc = refuse_unjudgeable(reg)
+    if rc:
+        return rc
 
     now = closed_numbers(reg)
 

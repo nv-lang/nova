@@ -20,6 +20,57 @@ ROW = re.compile(u"^\\| [0-9]+ \\|")
 K1 = u"\U0001F534"
 
 
+FIELD = u"**" + u"Статус" + u":**"
+
+
+def nofield_baseline(root):
+    u"""Номера строк, которым разрешено не иметь поля статуса (засев 2026-09-19).
+
+    Дом правила и его летопись — `scripts/guards/check-registry-status-field.py`
+    и `registry-nofield.baseline`. Здесь КОПИЯ чтения, и она намеренна: страж
+    обязан быть самодостаточным. Копии сверяет клетка самотеста
+    `test-registry-status-field.py`, а не доверие.
+    """
+    p = os.environ.get("NOVA_NOFIELD_BASELINE") or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "registry-nofield.baseline")
+    out = set()
+    try:
+        for line in io.open(p, encoding="utf-8", errors="replace"):
+            s = line.strip()
+            if s.isdigit():
+                out.add(s)
+    except OSError:
+        return None
+    return out
+
+
+def refuse_unjudgeable(rows, root):
+    u"""ОТКАЗ СУДИТЬ вместо домысливания (реестр 221.1 №1160).
+
+    Прежде этот файл честно писал в докстринге: «записи без поля считаются
+    открытыми — консервативно». Консервативно для ЭТОГО стража, но храповик
+    закрытий на той же строке домысливает ПРОТИВОПОЛОЖНОЕ, и обе машины молчат.
+    Теперь новая строка без поля не судится вовсе: отказ громкий и с номером.
+    Старые держит база — иначе гейт покраснел бы на 677 строках разом.
+    """
+    allowed = nofield_baseline(root)
+    if allowed is None:
+        sys.stderr.write("registry-routes-scan: FAIL - net bazy "
+                         "registry-nofield.baseline\n")
+        return 1
+    bad = sorted((l for l in rows if FIELD not in l), key=num)
+    new = [l for l in bad if str(num(l)) not in allowed]
+    if new:
+        sys.stderr.write(
+            u"registry-routes-scan: ОТКАЗ СУДИТЬ — строка без поля статуса: %s\n"
+            % u", ".join(u"№%d" % num(l) for l in new))
+        sys.stderr.write(
+            u"  Числа этого стража на такой строке были бы догадкой: он счёл бы её\n"
+            u"  открытой, а храповик закрытий — закрытой. Поставь поле статуса.\n")
+        return 1
+    return 0
+
+
 def status(line):
     m = re.search(u"Статус:\\s*(.{0,60})", line)
     return m.group(1) if m else u""
@@ -36,6 +87,12 @@ def main():
         sys.stderr.write("registry-routes-scan: нет %s\n" % path)
         return 1
     rows = [l for l in io.open(path, encoding="utf-8").read().split(u"\n") if ROW.match(l)]
+
+    # Отказ проверяется ДО печати чисел: половина правды хуже молчания — её
+    # потребитель (в том числе снимок очереди) примет за замер.
+    rc = refuse_unjudgeable(rows, root)
+    if rc:
+        return rc
 
     open_k1, blockers = [], []
     for l in rows:
