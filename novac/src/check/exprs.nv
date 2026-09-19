@@ -418,6 +418,33 @@ fn Checker mut @type_expr(e Node) -> () {
             @type_expr(c)
             if @out.len() > before { return }
             ro st = type_of(c, @ctx, @scope, @chan)
+            // A POISONED TYPE STOPS HERE, and this line is the other half of
+            // the cascade rule `binds.nv` states: when an initializer is
+            // refused, the name is STILL bound, with `no_ty()`, so that its
+            // later uses do not raise a second complaint about an unknown
+            // name. That promise binds the CONSUMER too. Without this line
+            // the slot walks on and asks the display doors about `TyId(-1)`,
+            // and `kind_of` refuses it by contract -- an ICE, which is the
+            // worst possible answer: the compiler says IT is broken when the
+            // program merely had an earlier mistake, already reported.
+            //
+            // MEASURED 2026-09-20, and the measurement is the reason the
+            // comment is this long. The binding half landed 2026-09-19
+            // (`398cdb1ab`) and traded a cosmetic "unknown name" for a
+            // CRASH: `ro from = mystery(1)` then `"a ${from} b"` iced, while
+            // the same three lines on the build of 2026-09-17 gave two
+            // honest diagnostics. Worse than the crash was its reach -- the
+            // ICE aborts the whole run, so a batch check stopped at the
+            // first file that hit it and every count of "how far is
+            // self-hosting" became a function of argument order (3, 15, 935
+            // and 1495 diagnostics on one unchanged tree; registry No. 1168).
+            //
+            // THE GUARD IS AT THE ENTRY, not in each display door, because
+            // there are three of them (`display_row_of`, `synth_display_ok`,
+            // `instance_display_ok`) and a rule spread over three doors is
+            // one door away from the next hole. `prim_row_of` already guards
+            // itself -- which is why the crash came from further in.
+            if !is_ty(st) { return }
             // EVERY PRIMITIVE FAMILY through its carrier (wave B1a, 274.7): the
             // spec routes the slot through `Display` (D422), which every universe
             // row implements --
