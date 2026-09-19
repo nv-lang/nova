@@ -261,7 +261,28 @@ fn Checker mut @judge_type_head_variant(e Node, kids []Node, arg_from int) -> bo
                 if arg_from < 0 {
                     @refuse(vt, "a type name takes a variant after the dot, and this type is not a sum -- it declares no variants")
                 } else {
-                    @refuse(vt, "outside the subset: a call on a TYPE (`Type.method(...)`) is compiled only as a binding initializer today -- bind the value first")
+                    // NO REMEDY IS OFFERED, AND THAT IS THE FIX (registry
+                    // row "a diagnostic names a remedy the compiler itself
+                    // refuses" -- filed 2026-09-19; the NUMBER is deliberately
+                    // absent here, because it is being reissued: the
+                    // integrator handed 1161/1162, then needed them for two
+                    // rows arriving from another branch. Writing a number this
+                    // tree cannot yet carry would put a hole where a row
+                    // should be, and `check-registry-rows-intact` cannot tell
+                    // such a hole from a row lost in a merge -- measured, it
+                    // reddened on exactly that at 03:07). This said "is
+                    // compiled only as a binding
+                    // initializer today -- bind the value first" and the
+                    // advice was false in every case that could be built:
+                    // the arm never asks about POSITION -- there is no
+                    // `init_pos` here and no caller that supplies one --
+                    // so `consume s = StringBuilder.new(cap: 32)`, the
+                    // textbook initializer and the very example named in
+                    // this function's own comment above, is refused by this
+                    // same line. A refusal with no advice sends the reader
+                    // to think; a refusal with false advice sends them in a
+                    // circle and spends their time wearing the face of help.
+                    @refuse(vt, "outside the subset: a call on a TYPE (`Type.method(...)`) is not compiled yet -- no position accepts it (274.7, the E2 horizon)")
                 }
             }
             Branch { .. } => {}
