@@ -141,6 +141,57 @@ def current_branch(tree):
         return u""
 
 
+def common_git_dir(tree):
+    u"""Общий `.git` чтением: каталог в главном дереве, `gitdir:` двумя уровнями
+    выше в worktree."""
+    g = os.path.join(tree, u".git")
+    try:
+        if os.path.isdir(g):
+            return g
+        if os.path.isfile(g):
+            with io.open(g, encoding="utf-8", errors="replace") as fh:
+                line = fh.read().strip()
+            if line.startswith(u"gitdir:"):
+                p = line.split(u":", 1)[1].strip()
+                return os.path.dirname(os.path.dirname(p))
+    except Exception:
+        pass
+    return u""
+
+
+def role_belongs_to_me(tree, role):
+    u"""Ветка УГАДЫВАЕТ роль, визитка РЕШАЕТ, чья она.
+
+    Дом правила — `scripts/claude-hooks/guard-stop-v2.py` (`role_belongs_to_me`),
+    туда же оно пришло из `remind-session-save.py`. Здесь копия, и она обязана
+    остаться согласной: снимок и хук отвечают на ОДИН вопрос «чьё это окно», и
+    разойдясь, дадут окну снимок чужой очереди при молчащем страже. Клетка
+    самотеста сверяет оба ответа.
+
+    Замерено 2026-09-19 02:06, на себе: хук уже получил визитную проверку и
+    отвечал `none`, а снимок в том же дереве отвечал `integrator` — то есть
+    печатал окну чужую очередь из 12 пунктов.
+    """
+    sid = (os.environ.get("CLAUDE_CODE_SESSION_ID") or u"").strip()
+    if not sid:
+        return True
+    g = common_git_dir(tree)
+    if not g:
+        return True
+    card = os.path.join(g, u"nova-session-%s.card" % role)
+    if not os.path.isfile(card):
+        return True
+    try:
+        with io.open(card, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if line.startswith(u"session_id="):
+                    owner = line.split(u"=", 1)[1].strip()
+                    return (not owner) or owner == sid
+    except Exception:
+        return True
+    return True
+
+
 def detect_role(tree):
     env = (os.environ.get("NOVA_WINDOW_ROLE") or u"").strip().lower()
     if env:
@@ -150,7 +201,7 @@ def detect_role(tree):
         return u"none"
     for needle, role in ROLE_BY_BRANCH:
         if needle in br:
-            return role
+            return role if role_belongs_to_me(tree, role) else u"none"
     return u"none"
 
 
@@ -282,6 +333,117 @@ def source_blockers(tree, state):
     return {u"value": value, u"cmd": cmd, u"numbers": nums}
 
 
+# Признак ЗАКРЫТОСТИ подплана. Список взят ИЗ ДЕРЕВА (перебор всех строк
+# `**Статус:**` в `docs/plans/` 2026-09-19), а не придуман: вокабуляр там
+# свободный, семьдесят с лишним форм первого слова. Поэтому правило
+# ОДНОСТОРОННЕЕ — закрытым считается только явно названное закрытым, всё
+# прочее ОТКРЫТО. Незнакомая формулировка обязана давать НЕПУСТУЮ очередь:
+# ошибка в сторону «работа есть» стоит окну одного лишнего хода, ошибка в
+# другую сторону выдаёт окну право остановиться, которого у него нет.
+SUBPLAN_CLOSED_WORDS = (
+    u"ЗАКРЫТ", u"ЗАВЕРШЁН", u"ИСПОЛНЕН", u"ПОГЛОЩЁН",
+    u"CLOSED", u"SUPERSEDED", u"СУПЕРСЕДЕД",
+)
+
+# Подпланы, которые ведёт ОКНО КАРИНЫ (`/integrator`: 274.1-274.9 её, 274.10 и
+# 274.11 мои). Номера перечислены явно: шаблон `274.*` затянул бы и мои, и
+# очередь Карины поехала бы от моей работы.
+CARINA_SUBPLAN_NUMBERS = tuple(u"274.%d" % n for n in range(1, 10))
+
+
+def source_uncommitted(tree, state):
+    u"""Очередь помощника = незакоммиченное в ЕГО дереве.
+
+    Роль помощника до 2026-09-19 стражем не судилась вовсе: он работает в
+    произвольной ветке и получал `none`, то есть право закончить ход чем
+    угодно. Заметил владелец.
+
+    Почему именно незакоммиченное, а не «слить мою ветку»: слияние — пункт
+    очереди ИНТЕГРАТОРА, и он там уже есть (`unmerged_branches`). Помощнику
+    же принадлежит ровно одно обязательство перед остановкой: работа не
+    брошена на полдороге в рабочей копии. Наполовину сделанный файл, о
+    котором никто не знает, — это то, что теряется при перезапуске окна.
+    """
+    argv = [u"git", u"-C", tree, u"status", u"--porcelain"]
+    st, out, why = run(argv, tree)
+    if st != u"ok":
+        state.fail(st, u"незакоммиченное", shell_form(argv), why)
+        return {u"value": None, u"cmd": shell_form(argv), u"files": []}
+    names = [l[3:].strip() for l in (out or u"").splitlines() if l.strip()]
+    return {u"value": len(names), u"cmd": shell_form(argv), u"files": names}
+
+
+def source_carina_subplans(tree, state):
+    u"""Очередь роли carina = её подпланы, не объявленные закрытыми.
+
+    До 2026-09-19 источника не было вовсе, и снимок отвечал `ok: false` —
+    то есть код `СТОП: очередь-пуста` был для Карины НЕДОКАЗУЕМ ПО
+    ПОСТРОЕНИЮ: законно остановиться она не могла никогда, только пробиться
+    предохранителем на третьей блокировке подряд. Нашло это её собственное
+    окно, уткнувшись в отказ. Побег, случающийся по расписанию, перестаёт
+    быть сигналом, а давление на нас, которым эта дыра оправдывалась,
+    платилось НЕ нами.
+
+    Источник читается ФАЙЛАМИ, а не командой: `**Статус:**` и есть
+    единственный дом правды о состоянии плана (`/status`, `/integrator`).
+    `cmd` всё равно ставится — дословный греп, которым читатель повторит
+    тот же ответ руками (И.1).
+    """
+    cmd = u"grep -m1 '^[*][*]Статус:[*][*]' docs/plans/274.{1..9}-*.md"
+    plans_dir = os.path.join(tree, u"docs", u"plans")
+    if not os.path.isdir(plans_dir):
+        state.fail(u"not_launched", u"подпланы Карины", cmd,
+                   u"каталога docs/plans нет в дереве %s" % tree)
+        return {u"value": None, u"cmd": cmd, u"plans": []}
+
+    try:
+        names = sorted(os.listdir(plans_dir))
+    except Exception as e:
+        state.fail(u"failed", u"подпланы Карины", cmd,
+                   u"каталог не читается: %s" % e)
+        return {u"value": None, u"cmd": cmd, u"plans": []}
+
+    open_plans = []
+    seen = []
+    for num in CARINA_SUBPLAN_NUMBERS:
+        hit = [n for n in names
+               if n.startswith(num + u"-") and n.endswith(u".md")]
+        if not hit:
+            # Пропавший подплан — беда, а не пустая очередь: его могли
+            # переименовать, и тогда снимок молча перестал бы его считать.
+            state.fail(u"failed", u"подпланы Карины", cmd,
+                       u"подплана %s нет в docs/plans" % num)
+            continue
+        seen.append(num)
+        path = os.path.join(plans_dir, hit[0])
+        try:
+            text = io.open(path, encoding="utf-8", errors="replace").read()
+        except Exception as e:
+            state.fail(u"failed", u"подпланы Карины", cmd,
+                       u"%s не читается: %s" % (hit[0], e))
+            continue
+        m = re.search(u"^\\*\\*Статус:\\*\\*(.*)$", text, re.MULTILINE)
+        if m is None:
+            # Плана без статус-строки быть не должно; молчать нельзя.
+            state.fail(u"failed", u"подпланы Карины", cmd,
+                       u"%s: нет строки **Статус:**" % hit[0])
+            continue
+        # ВЕРДИКТ НЕСЁТ ПЕРВОЕ СЛОВО, а не вхождение куда-нибудь в строку.
+        # Куплено пробой 2026-09-19: 274.8 со статусом «В РАБОТЕ — … (3а)
+        # ЗАКРЫТА обеими половинами критерия» был посчитан ЗАКРЫТЫМ, то есть
+        # страж прочёл прозу как данные и выдал Карине право остановиться при
+        # живом подплане. Ведущие значки и `**` снимаются, дальше берётся
+        # ровно один токен.
+        head = m.group(1).strip().upper()
+        head = re.sub(u"^[^0-9A-ZА-ЯЁ]+", u"", head)
+        first = re.split(u"[^0-9A-ZА-ЯЁ]", head, maxsplit=1)[0]
+        if first not in SUBPLAN_CLOSED_WORDS:
+            open_plans.append(num)
+
+    return {u"value": len(open_plans), u"cmd": cmd,
+            u"plans": open_plans, u"checked": seen}
+
+
 # --------------------------------------------------------------------------
 # сборка
 # --------------------------------------------------------------------------
@@ -301,7 +463,8 @@ class State(object):
 
 # Источники, из которых собирается `open`. `blockers` СЮДА НЕ ВХОДИТ — см.
 # build_open.
-QUEUE_SOURCES = (u"mirrors_behind", u"unmerged_branches")
+QUEUE_SOURCES = (u"mirrors_behind", u"unmerged_branches",
+                 u"carina_subplans", u"uncommitted")
 
 
 def build_open(sources):
@@ -323,6 +486,10 @@ def build_open(sources):
         items.append(u"запушить на зеркала: %s" % u", ".join(mir[u"behind"]))
     for br in (sources.get(u"unmerged_branches") or {}).get(u"branches") or []:
         items.append(u"слить ветку %s" % br)
+    for num in (sources.get(u"carina_subplans") or {}).get(u"plans") or []:
+        items.append(u"подплан %s не закрыт" % num)
+    for f in (sources.get(u"uncommitted") or {}).get(u"files") or []:
+        items.append(u"незакоммичено: %s" % f)
     return items
 
 
@@ -347,12 +514,17 @@ def snapshot(tree, produced_by):
 
     role = detect_role(tree)
 
-    if role in (u"carina", u"controller"):
-        # Очередь этих ролей сегодня НЕ ВЫВОДИТСЯ: в их записках раздела с
-        # командами нет. Молчать нельзя — половина жалобы владельца была про
-        # Карину. По И.3 это `ok: false` с названной причиной, а НЕ пустая
-        # очередь: хук такое окно пропустит и запишет побег, и побег каждый
-        # день в логе есть то давление, которое заставит источник назвать.
+    if role == u"controller":
+        # Очередь КОНТРОЛЁРА не выводится: в его записке раздела с командами
+        # нет, а сама роль под вопросом — владелец 2026-09-19 оставил её
+        # «пока работает, если не мешает», и критерий её сворачивания —
+        # замер (план 292 Ш.6). Заводить ему источник значит закреплять роль,
+        # которую, возможно, снимут. По И.3 это `ok: false` с названной
+        # причиной, а НЕ пустая очередь.
+        #
+        # РОЛЬ carina ОТСЮДА УШЛА 2026-09-19 — см. `source_carina_subplans`.
+        # Держать её здесь значило сделать код `СТОП: очередь-пуста`
+        # недоказуемым по построению для целого окна.
         why = u"очередь роли %s не выводится: источник не назван" % role
         return {
             u"role": role, u"at": iso_now(), u"produced_by": produced_by,
@@ -375,11 +547,23 @@ def snapshot(tree, produced_by):
     # Источники опрашиваются ПАРАЛЛЕЛЬНО: последовательно это ~12 с (замер
     # 2026-09-18: sourcecraft один даёт 9,8 с), а бюджет снимка — 15 с.
     sources = {}
-    jobs = [
-        (u"mirrors_behind", lambda: source_mirrors(tree, state)),
-        (u"unmerged_branches", lambda: source_unmerged(tree, state)),
-        (u"blockers", lambda: source_blockers(tree, state)),
-    ]
+    # Набор источников — ПО РОЛИ: очередь интегратора (зеркала, несли́тые
+    # ветки) не есть очередь Карины, и подавать ей мою работу значит то же
+    # самое, за что 2026-09-19 чинился сам снимок.
+    if role == u"carina":
+        jobs = [
+            (u"carina_subplans", lambda: source_carina_subplans(tree, state)),
+        ]
+    elif role == u"assistant":
+        jobs = [
+            (u"uncommitted", lambda: source_uncommitted(tree, state)),
+        ]
+    else:
+        jobs = [
+            (u"mirrors_behind", lambda: source_mirrors(tree, state)),
+            (u"unmerged_branches", lambda: source_unmerged(tree, state)),
+            (u"blockers", lambda: source_blockers(tree, state)),
+        ]
     threads = []
     for key, fn in jobs:
         def worker(key=key, fn=fn):

@@ -88,6 +88,20 @@
 #   bazy 848: OB'YASNENIE DEFEKTA VOSPROIZVELO DEFEKT, rovno +6. Apostrofy
 #   snyaty; znachenie chitaemo, predikat ego bol'she ne vidit. Ne vozvrashchay
 #   formatirovanie -- ono zdes' semanticheskoe.
-dead_hash_refs=848
+# 2026-09-19 (integrator): 848 -> 831. PRICHINA KRASNOGO CI NA f8107bb6b i yego
+#   lechenie. Zapiska kontrolyora perechislyaet ID SESSIY (`d88c3231`,
+#   `de83dbfa`, `2ed7d346`, ...) — dlya strazha eto golye heshi, i on schital ih
+#   myortvymi ssylkami. U nego dlya etogo YEST' pristavka roda:
+#   `session:<id>` (NONCOMMIT_KINDS), ona i postavlena — 18 vhozhdeniy shesti id.
+#   DVA iz vos'mi NE pomecheny namerenno: `46bc74599` i `bae24d208` —
+#   nastoyashchie kommity (proveril `git cat-file -t`), prosto iz nevlitoy vetki.
+#   Nazvat' ih sessiyami znachilo by solgat' radi zelyonogo chisla.
+#
+#   SPOSOB ZAMERA NAZVAN, potomu chto lokal'nyy schyot MEN'SHE nastoyashchego i
+#   imenno na etom ya by oshibsya: `rev-list --all` lokal'no vidit vetki
+#   sosednih okon, kotoryh na chekaute CI net. Merilos' na KLONE
+#   `git clone --single-branch --branch main` — tom zhe, chto delaet CI:
+#   do pravki 849 (> bazy, otsyuda krasnyy), posle 831.
+dead_hash_refs=831
 commit_url_no_context=0
 mirror_links=0

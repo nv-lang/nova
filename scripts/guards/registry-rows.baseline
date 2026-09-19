@@ -947,6 +947,9 @@
 # 2026-09-17 (integrator), chetvyortyy shag dnya: rows 1098 -> 1099,
 #   max 1149 -> 1151. Zavedena stroka 1151; 1150 vydan oknu Kariny i lezhit
 #   v yego vetke -- otsyuda razryv mezhdu prirostom strok (+1) i maksimuma (+2).
+# СЛИЯНИЕ 2026-09-19, 03:52 (окно Карины влило `cbfaff2da`) — ПЯТОЕ ЗА СУТКИ.
+# Стороны: rows=1114/max=1162 (ветка) и rows=1109/max=1165 (main).
+# Пять слияний — пять разных приращений; значение ниже — ЗАМЕР стража.
 # СЛИЯНИЕ 2026-09-19, 02:14 (окно Карины влило `f8107bb6b`) — ЧЕТВЁРТОЕ ЗА СУТКИ.
 # Стороны: rows=1111/max=1159 (ветка) и rows=1106/max=1160 (main). Опять
 # ни одна пара не годится: у ветки больше строк, у main больше максимум.
@@ -979,8 +982,11 @@
 #   (вызов на типе и интероп-поверхность). Довод интегратора: две строки
 #   дают меру «сколько дверей поражено», одна строка с двумя носителями
 #   не даёт меры и закроется по первому фиксу.
-rows=1114
-max=1162
+#   Прибавилось ТРИ строки: №1161 и №1162 из main, №1165 оттуда же.
+#   Мои две строки НЕ добавились, а ПЕРЕНУМЕРОВАНЫ 1161→1163, 1162→1164
+#   в зарезервированные за ними номера — поэтому max вырос на 3, а rows тоже на 3.
+rows=1117
+max=1165
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
@@ -1203,6 +1209,32 @@ stale_gaps=0
 #   main poka ne priyekhala. USLOVIE SNYATIYA to zhe, chto u 1144-1146: pri
 #   sliyanii vetki nomer poyavitsya, i  nado SOKRATIT obratno -- dyra,
 #   ostavlennaya posle sliyaniya, razreshit poteryat nastoyashchuyu stroku.
+# 2026-09-19, 03:52 (окно Карины, пятое слияние за сутки): из `gaps=` сняты
+#   номера, у которых ТЕПЕРЬ ЕСТЬ СТРОКА: 1144-1146, 1150, 1156, 1158, 1163-1164.
+#   Резерв номера перестаёт быть дырой в тот момент, когда строка приехала:
+#   оставленная дыра разрешит потерять НАСТОЯЩУЮ строку ровно с тем же номером.
+# 2026-09-19 (integrator): rows 1106 -> 1108, max 1160 -> 1162. Dve zapisi
+#   priyekhali so sliyaniyem vetki pomoshchnika BEZ NOMERA (TBD), nomer dayot
+#   integrator: 1161 -- pin etapa Kariny otstayot ot prozy plana 274:8;
+#   1162 -- `Path @equals` vne kanona, `==` yego ne zovyot.
+#   NOMERA VZYATY PODRYAD NAROCHNO. Snachala ya vydal 1161/1162 oknu Kariny
+#   pod yeyo stroki i postavil etim 1163/1164 -- i srazu poluchil DYRU, na
+#   kotoruyu strazh chestno pokrasnel: dyra, ostavlennaya 'pro zapas',
+#   nerazlichima ot poteryannoy stroki. Rezerv nomera pod chuzhuyu vetku
+#   zakonen tolko zapisyu v gaps= (sm. 1144-1146, 1150), a ne molchaniyem.
+#   Okno Kariny uvedomleno: yego stroki poluchayut 1163 i 1164.
+#   TOY ZHE PRAVKOY: rows 1108 -> 1109, max 1162 -> 1165. Novaya stroka 1165 --
+#   `nova test <katalog>` beryot odin fayl iz shestnadtsati i pechataet verdikt
+#   tak, budto proveril katalog (nahodka okna Kariny, zamer sveren mnoyu).
+# 2026-09-19 (integrator), vtoraya pravka za noch: v perechen dyr dobavleny
+#   1163-1164 -- nomera VYDANY oknu Kariny (otkaz s lozhnym sredstvom: vyzov na
+#   TIPE i `v.to_str()` na polzovatelskoy zapisi), stroki pishutsya v YEYO vetke
+#   i v main poka ne priyekhali. USLOVIE SNYATIYA to zhe, chto u 1144-1146/1150:
+#   pri sliyanii nomera poyavyatsya, i dyru nado SOKRATIT obratno.
+#   POCHEMU ZAPIS, A NE MOLCHANIE -- urok etoy zhe nochi, kuplennyy dvazhdy:
+#   pervyy raz ya ostavil 1161-1162 pustymi 'pro zapas' i strazh pokrasnel, i
+#   on byl prav -- dyra bez prichiny nerazlichima ot stroki, poteryannoy
+#   sliyaniyem. Rezerv sushchestvuyet tolko togda, kogda on ZAPISAN zdes.
 # 2026-09-19: дыры приведены к состоянию ПОСЛЕ слияния: номер,
 #   чья строка приехала, дырой быть перестаёт — иначе она разрешает
 #   потерять НАСТОЯЩУЮ строку.

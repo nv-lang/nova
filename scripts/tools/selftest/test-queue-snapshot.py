@@ -23,6 +23,7 @@ u"""Самотест снимка очереди (план 292 Ш.2).
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -164,11 +165,26 @@ R_CARINA = run_snapshot({"NOVA_WINDOW_ROLE": "carina"})
 
 
 def c_carina():
+    u"""У Карины ЕСТЬ источник очереди (с 2026-09-19), и он её собственный.
+
+    До этой правки клетка требовала `ok: false` — и была зелёной ровно
+    потому, что код `СТОП: очередь-пуста` был для Карины недоказуем по
+    построению. Клетка проверяла форму отказа вместо предмета.
+
+    Числа открытых подпланов здесь НЕТ намеренно: оно меняется от её
+    работы, и клетка покраснела бы на успехе. Проверяется, что очередь
+    СОБРАНА из своего источника, а не из моей.
+    """
     d = R_CARINA["data"]
     if d is None:
         return False, u"снимок не написан"
-    return (d["ok"] is False and u"carina" in joined(d)
-            and bool(d["open"])), u"ok=%s, open=%d" % (d["ok"], len(d["open"]))
+    src = (d.get("sources") or {}).get("carina_subplans")
+    mine = [k for k in (d.get("sources") or {})
+            if k in ("mirrors_behind", "unmerged_branches", "blockers")]
+    return (d["ok"] is True and src is not None and not mine
+            and src.get("value") == len(src.get("plans") or [])), \
+        u"ok=%s, подпланов открыто %s, чужих источников %d" % (
+            d["ok"], (src or {}).get("value"), len(mine))
 
 
 def c_integrator():
@@ -176,7 +192,25 @@ def c_integrator():
     return (d["role"] == u"integrator" and d["ok"] is True), u"role=%s" % d["role"]
 
 
-cell(u"роль carina: ok=false с причиной, не пустая очередь", c_carina)
+R_ASSISTANT = run_snapshot({"NOVA_WINDOW_ROLE": "assistant"})
+
+
+def c_assistant():
+    u"""Очередь помощника — его НЕЗАКОММИЧЕННОЕ, и только оно.
+
+    Слияние его ветки — пункт очереди ИНТЕГРАТОРА, и если он попадёт и сюда,
+    помощник не сможет остановиться никогда — тот же тупик, из которого
+    сегодня вывели Карину."""
+    d = R_ASSISTANT["data"]
+    if d is None:
+        return False, u"снимок не написан"
+    keys = set((d.get("sources") or {}).keys())
+    return ((d["ok"] is True and keys == {"uncommitted"}),
+            u"ok=%s, источники %s" % (d["ok"], sorted(keys)))
+
+
+cell(u"роль carina: очередь из СВОЕГО источника", c_carina)
+cell(u"роль assistant: только незакоммиченное", c_assistant)
 cell(u"роль integrator: очередь выводится", c_integrator)
 
 
@@ -272,6 +306,165 @@ def c_real_tree():
 
 cell(u"нет дерева: громко, а не «роль none»", c_broken_self)
 cell(u"настоящее дерево: снимок не считает себя сломанным", c_real_tree)
+
+
+
+# ------------------------------------------- согласие с хуком о «чьё это окно»
+# Снимок и Stop-страж отвечают на ОДИН вопрос. Разойдясь, они дают окну снимок
+# ЧУЖОЙ очереди при молчащем страже — замерено на себе 2026-09-19 02:06, когда
+# хук уже говорил `none`, а снимок в том же дереве — `integrator`.
+
+def _tree_with_card(owner_sid):
+    tmp = tempfile.mkdtemp(prefix="queue-card-")
+    g = os.path.join(tmp, ".git")
+    os.makedirs(g, exist_ok=True)
+    with io.open(os.path.join(g, "HEAD"), "w", encoding="utf-8") as fh:
+        fh.write(u"ref: refs/heads/main\n")
+    with io.open(os.path.join(g, "nova-session-integrator.card"), "w",
+                 encoding="utf-8") as fh:
+        fh.write(u"role=integrator\nsession_id=%s\n" % owner_sid)
+    return tmp
+
+
+def _hook_role(tree, sid):
+    u"""Роль ГЛАЗАМИ ХУКА — его собственной функцией, а не пересказом."""
+    hook = os.path.join(TREE, "scripts", "claude-hooks", "guard-stop-v2.py")
+    src = io.open(hook, encoding="utf-8").read().replace(
+        'if __name__ == "__main__":', "if False:")
+    ns = {"__name__": "probe"}
+    old = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    os.environ["CLAUDE_CODE_SESSION_ID"] = sid
+    os.environ.pop("NOVA_WINDOW_ROLE", None)
+    try:
+        exec(compile(src, "probe", "exec"), ns)
+        return ns["detect_role"](tree)
+    finally:
+        if old is None:
+            os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+        else:
+            os.environ["CLAUDE_CODE_SESSION_ID"] = old
+
+
+def c_agrees_foreign_card():
+    tree = _tree_with_card(u"CHUZHOY")
+    old = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    os.environ["CLAUDE_CODE_SESSION_ID"] = u"MOY"
+    os.environ.pop("NOVA_WINDOW_ROLE", None)
+    try:
+        mine = snapmod.detect_role(tree)
+    finally:
+        if old is None:
+            os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+        else:
+            os.environ["CLAUDE_CODE_SESSION_ID"] = old
+    theirs = _hook_role(tree, u"MOY")
+    shutil.rmtree(tree, ignore_errors=True)
+    return (mine == theirs == u"none"), u"снимок=%s, хук=%s" % (mine, theirs)
+
+
+def c_agrees_own_card():
+    tree = _tree_with_card(u"MOY")
+    old = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    os.environ["CLAUDE_CODE_SESSION_ID"] = u"MOY"
+    os.environ.pop("NOVA_WINDOW_ROLE", None)
+    try:
+        mine = snapmod.detect_role(tree)
+    finally:
+        if old is None:
+            os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+        else:
+            os.environ["CLAUDE_CODE_SESSION_ID"] = old
+    theirs = _hook_role(tree, u"MOY")
+    shutil.rmtree(tree, ignore_errors=True)
+    return (mine == theirs == u"integrator"), u"снимок=%s, хук=%s" % (mine, theirs)
+
+
+cell(u"визитка чужая: снимок и хук говорят `none`", c_agrees_foreign_card)
+cell(u"визитка моя: оба говорят `integrator`", c_agrees_own_card)
+
+# ------------------------------------- подпланы Карины: обе стороны и проза
+# Источник читает ФАЙЛЫ, поэтому клетки строят дерево из подложных планов —
+# так обе стороны видны на одном коде, а не на двух состояниях репозитория.
+
+def _tree_with_subplans(statuses):
+    u"""statuses: словарь номер -> текст статус-строки. Неназванные номера
+    получают закрытый статус, чтобы клетка мерила ровно то, что назвала."""
+    tmp = tempfile.mkdtemp(prefix="queue-subplans-")
+    plans = os.path.join(tmp, "docs", "plans")
+    os.makedirs(plans)
+    for n in range(1, 10):
+        num = u"274.%d" % n
+        st = statuses.get(num, u"ЗАКРЫТ 2026-09-19, влит.")
+        with io.open(os.path.join(plans, u"%s-fake.md" % num), "w",
+                     encoding="utf-8") as fh:
+            fh.write(u"# подплан %s\n\n**Статус:** %s\n" % (num, st))
+    return tmp
+
+
+def _subplans(statuses):
+    tree = _tree_with_subplans(statuses)
+    st = snapmod.State()
+    try:
+        return snapmod.source_carina_subplans(tree, st), st.failed
+    finally:
+        shutil.rmtree(tree, ignore_errors=True)
+
+
+def c_subplans_all_closed():
+    src, failed = _subplans({})
+    return (src["value"] == 0 and not src["plans"] and not failed), \
+        u"value=%s, отказов %d" % (src["value"], len(failed))
+
+
+def c_subplans_one_open():
+    src, failed = _subplans({u"274.5": u"🚧 В РАБОТЕ с 2026-08-29."})
+    return (src["value"] == 1 and src["plans"] == [u"274.5"] and not failed), \
+        u"value=%s, %s" % (src["value"], src["plans"])
+
+
+def c_subplans_prose_is_not_a_verdict():
+    u"""КИЛСВИТЧ на купленный дефект (2026-09-19): слово «закрыта» в ПРОЗЕ
+    статус-строки не закрывает подплан. Настоящая строка 274.8 читалась как
+    ЗАКРЫТ, потому что вердикт искался вхождением, а не первым словом."""
+    src, failed = _subplans({
+        u"274.8": u"🚧 В РАБОТЕ — слито M0; (3а) закрыта обеими половинами",
+    })
+    return (u"274.8" in src["plans"]), u"открытые: %s" % src["plans"]
+
+
+def c_subplans_missing_is_loud():
+    u"""Пропавший подплан — ОТКАЗ, а не молчаливое «работы меньше»."""
+    tree = _tree_with_subplans({})
+    plans = os.path.join(tree, "docs", "plans")
+    os.unlink(os.path.join(plans, u"274.3-fake.md"))
+    st = snapmod.State()
+    try:
+        snapmod.source_carina_subplans(tree, st)
+    finally:
+        shutil.rmtree(tree, ignore_errors=True)
+    return (len(st.failed) == 1 and u"274.3" in st.failed[0]), \
+        u"отказов %d: %s" % (len(st.failed), st.failed[:1])
+
+
+def c_subplans_no_status_line_is_loud():
+    tree = _tree_with_subplans({})
+    path = os.path.join(tree, "docs", "plans", u"274.6-fake.md")
+    with io.open(path, "w", encoding="utf-8") as fh:
+        fh.write(u"# подплан без статуса\n")
+    st = snapmod.State()
+    try:
+        snapmod.source_carina_subplans(tree, st)
+    finally:
+        shutil.rmtree(tree, ignore_errors=True)
+    return (len(st.failed) == 1 and u"274.6" in st.failed[0]), \
+        u"отказов %d" % len(st.failed)
+
+
+cell(u"подпланы: все закрыты — очередь ПУСТА", c_subplans_all_closed)
+cell(u"подпланы: один открыт — очередь непуста", c_subplans_one_open)
+cell(u"подпланы: «закрыта» в прозе НЕ закрывает", c_subplans_prose_is_not_a_verdict)
+cell(u"подпланы: пропавший файл — громкий отказ", c_subplans_missing_is_loud)
+cell(u"подпланы: нет строки статуса — громкий отказ", c_subplans_no_status_line_is_loud)
 
 
 print(u"PASS %d  FAIL %d" % (ok_count, fail_count))
