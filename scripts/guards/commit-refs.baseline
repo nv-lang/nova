@@ -124,7 +124,10 @@
 #   (sm. reachable_shas: hesh nevlitoy vetki ne myortv). Sledstviye: yedinstvennyy
 #   chestnyy istochnik chisla dlya etoy bazy -- STROKA PROGONA CI, a lyuboy
 #   lokal'nyy zamer zdes' ne dokazatel'stvo, dazhe kogda on 'toy zhe komandoy'.
-#   Stroka reyestra 1167 vedyot etot klass.
+#   Klass vedyot stroka reyestra 1029 (ona otkryta s 2026-09-08 i razobrana
+#   dal'she: tam nazvana popytka lecheniya --remotes i prichina yeyo otkata --
+#   samotest 942 'hesh sosedney vetki ne myortv'). Stroka 1167, zavedyonnaya
+#   mnoyu segodnya na tot zhe klass, POGLOSHCHENA 1029 v den' zavedeniya.
 dead_hash_refs=847
 commit_url_no_context=0
 mirror_links=0
