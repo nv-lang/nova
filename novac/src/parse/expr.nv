@@ -320,7 +320,21 @@ fn Cursor mut @match_expr() -> Node {
         ro before = @i
         mut ak = []Node.new()
         // pattern
-        if @peek() == TokenKind.IntLit {
+        // A LITERAL PATTERN -- integer, string or char. One leaf each, and
+        // the three stand together because they are one form of the
+        // grammar: D19 lists `literal` as a single alternative of `pattern`,
+        // not three.
+        //
+        // THE INTEGER ONE WAS READ AND THE OTHER TWO WERE NOT, which is a
+        // difference nothing in the language justifies -- it is simply where
+        // the subset had got to. Measured 2026-09-20: last two of the four
+        // arm shapes the parser stopped at, one file each
+        // (`lex/lex.nv:462` matches keyword spellings against string
+        // literals, `diag/diag.nv:110` escapes characters against char
+        // literals) -- and those two files are where the remaining
+        // self-hosting diagnostics are most concentrated.
+        if @peek() == TokenKind.IntLit || @peek() == TokenKind.StrLit ||
+           @peek() == TokenKind.CharLit {
             ak.push(@node(NodeKind.Pattern, []Node.of(@take())))
         } else if @peek() == TokenKind.EmptyBrackets {
             // The empty array pattern is one token now.
