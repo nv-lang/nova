@@ -1,0 +1,202 @@
+# База стража check-ecode-fixture-debt: коды `E_*`, живущие в ИСПОЛНИМОМ коде
+# компилятора без живой негативной фикстуры и без названного перехватчика.
+# ДОМ ПРАВИЛА: реестр 221.1 №1187 (решение интегратора 2026-09-20).
+#
+# ЧИСЛО МОЖЕТ ТОЛЬКО УБЫВАТЬ, каждое движение — строкой летописи.
+#
+# БАЗА ИМЕННАЯ, и здесь это важнее, чем где-либо: набор кодов перечислим, а счёт
+# прячет ДВЕ вещи разом — ЗАМЕНУ (один код закрыли фикстурой, другой завели,
+# число то же) и СУЖЕНИЕ ПРЕДИКАТА (перестали перечислять часть исходников,
+# число упало, и падение прочлось как погашенный долг). Исчезновение имени
+# разбирается независимым поиском идентификатора по дереву, а не предикатом
+# самого стража: иначе проверка судила бы сама себя.
+#
+# 2026-09-20 — база заведена на 178 (помощник, по решению интегратора того же
+#   дня). ЗАМЕР, на котором она стоит: кодов в исполнимом коде 378, только в
+#   комментариях 39, с живой фикстурой 200, затенённых 0, долг 178.
+#   ЧИСЛО «39» СОШЛОСЬ С НЕЗАВИСИМЫМ ЗАМЕРОМ ИНТЕГРАТОРА, и это не совпадение,
+#   а контроль: моя первая редакция предиката дала 143, потому что `/*` внутри
+#   строки-сообщения выключала остаток файла. Ошибку нашла выборка, а не
+#   правдоподобие числа.
+#   ЗАТЕНЁННЫХ СЕГОДНЯ НОЛЬ — пометок `nova:shadowed-by` в дереве ещё нет;
+#   три известных затенённых кода (замер 1187) ждут, когда их пометит тот, кто
+#   чинит, а не тот, кто считает.
+debt=178
+debt_code=E_ADDR_OF_NON_LVALUE
+debt_code=E_ADDR_OF_REMOVED
+debt_code=E_AMBIGUOUS_IDENT_PATTERN
+debt_code=E_AMP_LITERAL
+debt_code=E_AMP_RECORD_LITERAL
+debt_code=E_ARRAY_ELEM_NARROW
+debt_code=E_ARRAY_INDEX_PTR_BANNED
+debt_code=E_AUTO_DERIVE_CYCLE
+debt_code=E_AUTO_DERIVE_UNKNOWN_PROTOCOL
+debt_code=E_AUTO_DERIVE_UNSUPPORTED_KIND
+debt_code=E_BAD_FORMAT_SPEC
+debt_code=E_BARE_TYPEVAR_NEEDS_PREFIX
+debt_code=E_BINDING_REQUIRES_INIT
+debt_code=E_BLOCKING_FN_DECL_MISSING
+debt_code=E_BLOCKING_NOGC_ALLOC
+debt_code=E_BOUND_NOT_PROTOCOL
+debt_code=E_BOUND_UNKNOWN
+debt_code=E_CALL_NOT_CALLABLE
+debt_code=E_CAST_UNWRAP_REQUIRED
+debt_code=E_CHANNEL_TYPE_NOT_INSTANTIABLE
+debt_code=E_COERCE_EFFECTFUL
+debt_code=E_COERCE_NOT_UNARY
+debt_code=E_COERCE_NOT_ZERO_COST
+debt_code=E_COERCE_ON_PROTOCOL
+debt_code=E_COERCE_RECEIVER_FORM_DEFERRED
+debt_code=E_CONST_CONSUME_CONFLICT
+debt_code=E_CONST_FIELD_IN_LITERAL
+debt_code=E_CONST_FN_ALLOCATION
+debt_code=E_CONST_FN_CLOSURE_ARITY
+debt_code=E_CONST_FN_CLOSURE_BODY
+debt_code=E_CONST_FN_CLOSURE_EXTERNAL
+debt_code=E_CONST_FN_CLOSURE_FIRST_CLASS
+debt_code=E_CONST_FN_CLOSURE_GENERIC_ARITY
+debt_code=E_CONST_FN_CLOSURE_GENERIC_NO_TURBOFISH
+debt_code=E_CONST_FN_CLOSURE_NON_CONST_ARG
+debt_code=E_CONST_FN_CLOSURE_NO_RET_TYPE
+debt_code=E_CONST_FN_CLOSURE_OUTER_NOT_CONST
+debt_code=E_CONST_FN_CLOSURE_PARAM_TYPE
+debt_code=E_CONST_FN_CONTROL_FLOW
+debt_code=E_CONST_FN_DIV_ZERO
+debt_code=E_CONST_FN_EFFECT_IN_SIGNATURE
+debt_code=E_CONST_FN_EVAL_DEPTH_EXCEEDED
+debt_code=E_CONST_FN_EVAL_ITERATIONS_EXCEEDED
+debt_code=E_CONST_FN_EVAL_OVERFLOW
+debt_code=E_CONST_FN_EVAL_PANIC
+debt_code=E_CONST_FN_EXTERNAL
+debt_code=E_CONST_FN_FIRST_CLASS
+debt_code=E_CONST_FN_FIRST_CLASS_RUNTIME_HOF
+debt_code=E_CONST_FN_FLUENT_RETURN
+debt_code=E_CONST_FN_GENERIC_NEEDS_T_REFLECTION
+debt_code=E_CONST_FN_MATCH_EXHAUSTIVE
+debt_code=E_CONST_FN_PARTIAL_CONSTNESS
+debt_code=E_CONST_FN_PATTERN_NOT_SUPPORTED
+debt_code=E_CONST_FN_RECURSION
+debt_code=E_CONST_FN_REF_NON_CONST
+debt_code=E_CONST_FN_TRAMPOLINE_GENERIC_ARITY
+debt_code=E_CONST_FN_TRAMPOLINE_GENERIC_INFER
+debt_code=E_CONST_FN_TRAMPOLINE_GENERIC_UNRESOLVED
+debt_code=E_CONST_FN_TRAMPOLINE_INTRINSIC
+debt_code=E_CONST_INSTANCE_ACCESS
+debt_code=E_CONST_IN_BODY_RETRACTED
+debt_code=E_CONST_MUT_CONFLICT
+debt_code=E_CONST_NOT_CONSTEXPR
+debt_code=E_CONST_REFERS_NON_CONSTEXPR
+debt_code=E_CONST_RO_REDUNDANT
+debt_code=E_CONST_UNKNOWN_TYPE
+debt_code=E_CONSUME_AT_MODULE_LEVEL
+debt_code=E_CONSUME_IN_CONDITION
+debt_code=E_DEFAULT_HANDLER_ARITY
+debt_code=E_DEFAULT_HANDLER_CYCLE
+debt_code=E_DEFAULT_HANDLER_DUPLICATE
+debt_code=E_DEFAULT_HANDLER_RETURN_TYPE
+debt_code=E_DEFAULT_HANDLER_UNKNOWN_EFFECT
+debt_code=E_DEP_PATH_OUTSIDE_REPO
+debt_code=E_DUPLICATE_GENERIC_DECL
+debt_code=E_EFFECT_ERASED_IN_FN_TYPE
+debt_code=E_EXTENSION_METHOD_NEEDS_IMPORT
+debt_code=E_EXTERNAL_FN_FAIL_EFFECT
+debt_code=E_FFI_C_NAME_OVERLOAD_CONFLICT
+debt_code=E_FIBER_INDIRECT_CALL
+debt_code=E_FORMAT_SPEC_EMPTY
+debt_code=E_FORMAT_SPEC_TRAILING
+debt_code=E_HANDLER_OP_RETURN_TYPE_MISMATCH
+debt_code=E_IMPL_MISSING_METHODS
+debt_code=E_IMPL_NOT_A_PROTOCOL_METHOD
+debt_code=E_IMPL_NOT_PROTOCOL
+debt_code=E_IMPL_SIGNATURE_MISMATCH
+debt_code=E_IMPL_WRONG_SIGNATURE
+debt_code=E_INCOMPLETE_HANDLER_OP_DECL
+debt_code=E_INVALID_ORDERING_LOAD
+debt_code=E_INVALID_ORDERING_STORE
+debt_code=E_INVALID_POINTER_MODIFIER
+debt_code=E_KW_REMOVED_READONLY
+debt_code=E_LINT_ALLOW_NO_REASON
+debt_code=E_LINT_EXPECT_NO_REASON
+debt_code=E_METHOD_AMBIGUOUS
+debt_code=E_MONO_METHOD_KEY_COLLISION
+debt_code=E_MUTABILITY_CONFLICT_VALUE_TYPE
+debt_code=E_MUT_AT_MODULE_LEVEL
+debt_code=E_NAMED_TUPLE_EMPTY
+debt_code=E_PARAM_MOD_CONFLICT
+debt_code=E_PATTERN_CONSUME_MUT_CONFLICT
+debt_code=E_PATTERN_GROUP_MUT
+debt_code=E_POINTER_PREFIX_MODIFIER
+debt_code=E_PREFIX_SHADOWS_NAMED_TYPE
+debt_code=E_PRIMITIVE_NO_PROTOCOL_METHOD
+debt_code=E_PRIV_FIELD_INIT
+debt_code=E_PRIV_FIELD_INIT_SPREAD
+debt_code=E_PRIV_FIELD_PATTERN
+debt_code=E_PRIV_FIELD_READ
+debt_code=E_PRIV_FIELD_WRITE
+debt_code=E_PRIV_PUB_CONFLICT
+debt_code=E_PROTOCOL_BOUND_NOT_SATISFIED
+debt_code=E_PROTOCOL_EMBED_AFTER_METHOD
+debt_code=E_PROTOCOL_EMBED_CYCLE
+debt_code=E_PROTOCOL_EMBED_DUPLICATE
+debt_code=E_PROTOCOL_EMBED_NOT_NAMED
+debt_code=E_PROTOCOL_EMBED_NOT_PROTOCOL
+debt_code=E_PROTOCOL_EMBED_UNKNOWN
+debt_code=E_PROTOCOL_RENAMED
+debt_code=E_PROTO_IMPL_CONSUME_FOR_MUT
+debt_code=E_PROTO_IMPL_MUT_FOR_CONSUME
+debt_code=E_PROTO_IMPL_MUT_FOR_RO
+debt_code=E_PTR_NO_DISPLAY_USE_DEBUG_STR
+debt_code=E_PTR_OP_IN_CONST
+debt_code=E_PTR_ORDER_COMPARE_REQUIRES_UNSAFE
+debt_code=E_READONLY_
+debt_code=E_REALTIME_POINTER_OP
+debt_code=E_REALTIME_SYNC_WAKE
+debt_code=E_RECV_METHOD_MISMATCH
+debt_code=E_REDUNDANT_TYPE_MODIFIER
+debt_code=E_REEXPORT_GLOB
+debt_code=E_REF_ARG_NOT_ADDRESSABLE
+debt_code=E_REF_ARG_NOT_MUT
+debt_code=E_REF_ESCAPE_CAPTURE
+debt_code=E_REPLACE_IN_MANIFEST
+debt_code=E_REPLACE_PATH_MISSING
+debt_code=E_SAFE_RETIRED
+debt_code=E_SERDE_ATTRIBUTE_MISPLACED
+debt_code=E_SERDE_ATTRIBUTE_ON_SUM_UNSUPPORTED
+debt_code=E_SERDE_BAD_ATTRIBUTE
+debt_code=E_SERDE_CONTENT_WITHOUT_TAG
+debt_code=E_SERDE_DUPLICATE_ATTRIBUTE
+debt_code=E_SERDE_FLATTEN_DENY_CONFLICT
+debt_code=E_SERDE_FLATTEN_UNSUPPORTED
+debt_code=E_SERDE_INTERNAL_TAG_NON_STRUCT
+debt_code=E_SERDE_SKIP_FIELD_NO_DEFAULT
+debt_code=E_SERDE_SKIP_RENAME_CONFLICT
+debt_code=E_SERDE_TAGGING_CONFLICT
+debt_code=E_SERDE_TAGGING_ON_NON_SUM
+debt_code=E_SERDE_UNKNOWN_FIELD_POLICY_CONFLICT
+debt_code=E_SERDE_UNTAGGED_GATED
+debt_code=E_SERDE_WIRE_NAME_COLLISION
+debt_code=E_SIZE_ACCESSOR_FIELD
+debt_code=E_STR_NO_INT_INDEX
+debt_code=E_TAGGED_TEMPLATE_ARG
+debt_code=E_THREAD_AFFINE_NOT_EXTERN
+debt_code=E_TUPLE_ASSIGN_CONSUME_TYPE
+debt_code=E_TUPLE_ASSIGN_RHS
+debt_code=E_TUPLE_DESTRUCTURE_ARITY
+debt_code=E_TUPLE_MIXED_FIELDS
+debt_code=E_TUPLE_NO_PER_FIELD_MOD
+debt_code=E_TUPLE_NO_PRIV
+debt_code=E_TYPE_ARITY_MISMATCH
+debt_code=E_TYPE_UNKNOWN
+debt_code=E_UNDECLARED_TRANSITIVE_EFFECT
+debt_code=E_UNDECLARED_TYPEVAR_IN_RECEIVER
+debt_code=E_UNKNOWN_PROTOCOL
+debt_code=E_UNKNOWN_TYPE
+debt_code=E_UNKNOWN_TYPE_METHOD
+debt_code=E_UNSAFE_ARG_REQUIRES_WRAP
+debt_code=E_UNSAFE_FN_PTR_COERCION
+debt_code=E_UNSAFE_REQUIRED
+debt_code=E_UNSAFE_T_NARROW_REQUIRES_UNSAFE
+debt_code=E_UNSAFE_T_READ_REQUIRES_WRAP
+debt_code=E_UNUSED_PREFIX_TYPEVAR
+debt_code=E_VALUE_RECORD_ESCAPE_AFTER_CONSUME
+debt_code=E_ZERO_ON_MOVE_INVALID_KIND
