@@ -141,6 +141,57 @@ export fn file_of_offset(files []UnitFile, off int) -> int {
 /// positions side.
 export fn offset_in_file(f UnitFile, off int) -> int => off - f.at + f.from
 
+/// The index of a path's last separator, or -1 when it has none.
+///
+/// BOTH separators, because the CLI receives the path exactly as it was
+/// typed and this compiler is built on Windows as much as anywhere else.
+fn last_sep(path str) -> int {
+    ro b = path.bytes()
+    mut i = 0
+    mut last = 0 - 1
+    while i < b.len() {
+        if b[i] == UNIT_SLASH || b[i] == UNIT_BACKSLASH { last = i } else {}
+        i += 1
+    }
+    last
+}
+
+/// The two separators, prefixed like everything else this file declares.
+///
+/// FOURTH COLLISION OF ONE NIGHT, and the prefix is the whole defence: a
+/// bare `BACKSLASH` here resolved to the one `novac.check` declares, and the
+/// C named a symbol this unit does not emit. The census of 2026-09-20 found
+/// 145 constants under 145 DISTINCT names and therefore zero collisions in
+/// the tree -- which is true and misleading, because a collision that was
+/// hit and renamed leaves no trace. The denominator that matters is
+/// collisions MET while writing, and this file met four.
+const UNIT_SLASH u8 = 0x2F
+const UNIT_BACKSLASH u8 = 0x5C
+
+/// Do two paths name files of ONE module?
+///
+/// A module is a directory in this compiler's layout, so the question is
+/// whether the paths agree up to their last separator. Compared BYTE BY
+/// BYTE rather than by cutting the directory out: cutting means slicing, and
+/// a slice is not compiled by novac yet (registry No. 1170).
+///
+/// Two paths with no separator at all are peers -- they name files of the
+/// working directory, which is one module like any other.
+export fn same_dir(a str, b str) -> bool {
+    ro sa = last_sep(a)
+    ro sb = last_sep(b)
+    if sa != sb { return false } else {}
+    if sa < 0 { return true } else {}
+    ro ba = a.bytes()
+    ro bb = b.bytes()
+    mut i = 0
+    while i < sa {
+        if ba[i] != bb[i] { return false } else {}
+        i += 1
+    }
+    true
+}
+
 /// A module's files, handed to the compiler as ONE text (274.7 M).
 ///
 /// `text` is what the parser sees; `files` says which part of it came from

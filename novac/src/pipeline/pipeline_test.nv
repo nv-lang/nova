@@ -37,6 +37,34 @@ fn std_decls() -> []str => []str.of("fn str @byte_len() -> int => 0\nfn str @to_
 
 fn n_diags(text str) -> int => compile(text, std_decls()).len()
 
+// --- same_dir: which paths make one unit (274.7 M) -----------------------
+
+test "same_dir: peers of one directory" {
+    assert(same_dir("a/b.nv", "a/c.nv"))
+}
+
+test "same_dir: different directories are not peers" {
+    assert(!same_dir("a/b.nv", "x/c.nv"))
+}
+
+test "same_dir: SAME separator position, different directory" {
+    // The cell a naive implementation passes wrongly: comparing only where
+    // the separator sits would call these peers.
+    assert(!same_dir("ax/c.nv", "ay/c.nv"))
+}
+
+test "same_dir: bare names are peers of the working directory" {
+    assert(same_dir("b.nv", "c.nv"))
+    assert(!same_dir("a/b.nv", "c.nv"))
+}
+
+test "same_dir: the other separator counts too" {
+    // The path arrives exactly as the CLI received it, and this compiler is
+    // built on Windows as much as anywhere else.
+    assert(same_dir("a\\b.nv", "a\\c.nv"))
+    assert(!same_dir("a\\b.nv", "x\\c.nv"))
+}
+
 // --- unit_of: a module's files as ONE text (274.7 M) ---------------------
 //
 // Two files of one module. The unit must carry ONE module line, both
