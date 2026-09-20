@@ -304,7 +304,12 @@
 # branches share a past and both arithmetics lie, in opposite directions. My part
 # in this merge is the D310 amendment (the ban on a mixed-signedness type-set
 # lifted, and type-sets may nest); hers is six spec commits of the branch.
-#   spec-queue: 87
+# 87 -> 88 (2026-09-20, окно nova-78): D480 — запись типа-ссылки (`ref T` /
+# `ref mut T`, избыточный `ro` при ссылке запрещён) плюс амендмент к Р1 ревизии
+# D326: возврат `ref T` над параметром типа законен. Счётчик двигаю ОДНИМ, потому
+# что коммит один и решение одно; вторая половина (строки реестра и улика) в
+# `spec/decisions` не заходит и счётчика не касается.
+#   spec-queue: 88
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,
