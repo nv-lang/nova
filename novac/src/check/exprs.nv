@@ -114,14 +114,12 @@ fn Checker @synth_display_ok(t TyId) -> bool {
     match field_range_of(td) {
         None => false
         Some((first, cnt)) => {
-            mut i = 0
-            while i < cnt {
+            for i in 0..cnt {
                 ro fd = @ctx.fields.rows[raw_frow(first) + i]
                 match prim_row_of(@ctx.tys, fd.type_id) {
                     None => { return false }
                     Some(_) => {}
                 }
-                i += 1
             }
             cnt > 0
         }

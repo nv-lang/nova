@@ -306,10 +306,8 @@ fn attr_arg_names(kids []Node) -> []str {
 /// kept as a door so "is the type opted into Display" has ONE spelling.
 #realtime nogc
 export fn gate_names(gates []str, off int, cnt int, word str) -> bool {
-    mut i = 0
-    while i < cnt {
+    for i in 0..cnt {
         if gates[off + i] == word { return true }
-        i += 1
     }
     false
 }
@@ -328,8 +326,8 @@ fn attr_marked(kids []Node, attr str, arg str) -> []NodeId {
     for c in kids {
         if c.kind_of() == NodeKind.AttrDecl {
             ro achildren = branch_children(c)
-            pending = attr_kids_name(achildren, attr)
-                      && (arg == "" || attr_args_all(achildren, arg))
+            pending = attr_kids_name(achildren, attr) &&
+                      (arg == "" || attr_args_all(achildren, arg))
             continue
         }
         if pending {

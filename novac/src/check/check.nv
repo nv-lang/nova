@@ -848,7 +848,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                         } else {
                             ""
                         }
-                        ro known = tname.byte_len() == 0 || @type_name_is_declared(tname, []str.new())
+                        ro known = tname == "" || @type_name_is_declared(tname, []str.new())
                         @report_first_leaf_of(children, typed_local_msg(tname, known))
                         return
                     } else {

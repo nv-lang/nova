@@ -184,10 +184,8 @@ export fn same_dir(a str, b str) -> bool {
     if sa < 0 { return true } else {}
     ro ba = a.bytes()
     ro bb = b.bytes()
-    mut i = 0
-    while i < sa {
+    for i in 0..sa {
         if ba[i] != bb[i] { return false } else {}
-        i += 1
     }
     true
 }
@@ -249,10 +247,9 @@ fn module_line_end(text str) -> int {
 /// compiled by novac yet (registry No. 1170) and this file has to stay
 /// inside the subset it is helping to widen.
 fn append_range(mut out []u8, b []u8, from int, to int) -> () {
-    mut i = from
-    while i < to {
+    for i in from..to {
+        // nova:allow W_MANUAL_SLICE_COPY -- the canon `x[a..b]` is a SLICE, and novac does not compile one yet (registry 1170): obeying here would add to the debt this file exists to remove
         out.push(b[i])
-        i += 1
     }
 }
 
@@ -336,10 +333,8 @@ fn matches_at(b []u8, at int, word str) -> bool {
     ro w = word.bytes()
     ro m = word.byte_len()
     if at + m > b.len() { return false } else {}
-    mut k = 0
-    while k < m {
+    for k in 0..m {
         if b[at + k] != w[k] { return false } else {}
-        k += 1
     }
     true
 }
