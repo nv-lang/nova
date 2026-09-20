@@ -766,7 +766,7 @@ Inside `'…'` exactly `\n`, `\t`, `\r`, `\0`, `\'`, `\"`, `\\`, `\u{…}` are
 recognised and nothing else. **A raw control character typed into the source as
 itself (a tab, a newline) is an error, `E_CHAR_RAW_CONTROL`**: the eye cannot see
 it, so `'<tab>'` and `'<space>'` read the same. See
-[D478](decisions/03-syntax.md#d478).
+[D481](decisions/03-syntax.md#d481).
 
 Details — [D30](decisions/03-syntax.md#d30), [D46](decisions/03-syntax.md#d46), [D47](decisions/07-modules.md#d47).
 

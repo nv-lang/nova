@@ -60,7 +60,7 @@ out=$(bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 0 ]; then ok "неотслеживаемый файл вне периметра"; else bad "ложный отказ на неотслеживаемом: $out"; fi
 
 # 6a. ИМЕНОВАННЫЙ ПРОПУСК С ПРИЧИНОЙ — файл, где управляющий байт есть ПРЕДМЕТ
-#     (neg-фикстура к D478), не считается нарушением.
+#     (neg-фикстура к D481), не считается нарушением.
 setup
 printf 'ro c = \047\013\047\n// GUARD-ALLOW-CONTROL-CHARS: byte is the subject\n' > "$TMP/scripts/allowed.sh"
 git -C "$TMP" add scripts/allowed.sh 2>/dev/null
