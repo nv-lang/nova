@@ -46,24 +46,33 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 
 NAME = "check-handoff-labels"
 
-NOTES = (
-    os.path.join("docs", "dev", "prompts", "integrator-handoff.md"),
-    os.path.join("docs", "dev", "prompts", "carina-handoff.md"),
-    # Записка помощника заведена 2026-09-20 (решение владельца) и внесена СЮДА в
-    # том же слиянии: записка, чьи метки никто не судит, расходится со схемой
-    # молча — ровно то, против чего страж и написан.
-    #
-    os.path.join("docs", "dev", "prompts", "assistant-handoff.md"),
-    # ОСТАЛЬНЫЕ ЧЕТЫРЕ ВНЕСЕНЫ 2026-09-20 по слову интегратора: страж судил
-    # ТРИ записки из СЕМИ, то есть мерил часть своего предмета, и записка вне
-    # суда расходится со схемой молча. Список снят ГРЕПОМ по дереву
-    # (`find docs -name "*handoff*.md"`), а не переписан из чьего-то сообщения:
-    # если бы их оказалось не семь, это была бы находка, а не повод подогнать.
-    os.path.join("docs", "dev", "prompts", "controller-handoff.md"),
-    os.path.join("docs", "dev", "prompts", "agent-274-handoff.md"),
-    os.path.join("docs", "dev", "prompts", "window-283-handoff.md"),
-    os.path.join("docs", "dev", "prompts", "window-guards-handoff.md"),
-)
+NOTES_DIR = os.path.join("docs", "dev", "prompts")
+NOTES_GLOB = "*handoff*.md"
+
+
+def notes(root):
+    u"""Записки СНИМАЮТСЯ С ДЕРЕВА на каждом прогоне, а не зашиты списком.
+
+    ПОЧЕМУ ЗНАМЕНАТЕЛЬ — ЗАПИСКИ, А НЕ МЕТКИ (правка 2026-09-20, разбор
+    интегратора). До неё страж перечислял МЕТКИ и о каждой спрашивал, хороша ли
+    она; предметом же были ЗАПИСКИ. Записка без единой метки не «проваливала
+    проверку» — она в проверку НЕ ВХОДИЛА, и ноль нарушений при нуле
+    осмотренного читался как «чисто». Замер, на котором это поймано: внесение
+    четырёх записок в прежний зашитый список добавило ДВЕ метки (35 -> 37), то
+    есть две записки остались невидимыми, а вывод выглядел нормально.
+
+    Зашитый список имел ту же болезнь сбоку: восьмая записка не судилась бы,
+    пока кто-нибудь не вспомнит вписать её руками. Поэтому список снимается
+    грепом, а его размер ПЕЧАТАЕТСЯ — знаменатель обязан быть виден.
+    """
+    d = os.path.join(root, NOTES_DIR)
+    if not os.path.isdir(d):
+        return []
+    out = []
+    for name in sorted(os.listdir(d)):
+        if name.endswith(".md") and "handoff" in name:
+            out.append(os.path.join(NOTES_DIR, name))
+    return out
 LABEL = re.compile(r"^##\s+(0-\S+?)[.\s]", re.M)
 GOOD = re.compile(r"^0-\d{4}-\d{2}-\d{2}(?:-[^\W\d_]+)?$", re.UNICODE)
 
@@ -86,24 +95,66 @@ def main():
 
     seen = []
     files_read = 0
-    for rel in NOTES:
+    mute = []                 # записки БЕЗ единой метки — их страж не видел
+    for rel in notes(root):
         p = os.path.join(root, rel)
         if not os.path.isfile(p):
             continue
         files_read += 1
         text = io.open(p, encoding="utf-8", errors="replace").read()
-        for m in LABEL.finditer(text):
-            seen.append((os.path.basename(rel), m.group(1)))
+        found = [m.group(1) for m in LABEL.finditer(text)]
+        if not found:
+            mute.append(os.path.basename(rel))
+        for l in found:
+            seen.append((os.path.basename(rel), l))
 
     if files_read == 0:
         print("%s ok: судить нечего (ролевых записок нет)" % NAME)
         return 0
 
+    # Записки, у которых метки не заведены ИСТОРИЧЕСКИ, держатся базой и
+    # храповиком ВНИЗ — как всё прочее в этом каталоге. Без базы правка
+    # покрасила бы записки закрытых окон за то, что их никто не ведёт, и страж
+    # сняли бы первым же днём; с базой новая безметочная записка краснеет, а
+    # старая — названа и посчитана.
+    mute_allowed = {l[len("nolabel:"):].strip()
+                    for l in allowed if l.startswith("nolabel:")}
+    # Записи `nolabel:` — НЕ метки, и в счёте меток им делать нечего: иначе
+    # страж объявил бы их «метками, которых в записках больше нет» и посоветовал
+    # снять то, что держит его же храповик. Поймано на первом прогоне.
+    allowed = {l for l in allowed if not l.startswith("nolabel:")}
+
     bad = [(f, l) for f, l in seen if not GOOD.match(l) and l not in allowed]
     stale = sorted(allowed - {l for _f, l in seen})
 
-    print("%s: записок %d, меток %d, в базе %d, вне схемы сверх базы %d"
+    print("%s: ОСМОТРЕНО ЗАПИСОК %d, меток %d, в базе %d, вне схемы сверх базы %d"
           % (NAME, files_read, len(seen), len(allowed), len(bad)))
+
+    mute_new = [f for f in mute if f not in mute_allowed]
+    mute_fixed = sorted(mute_allowed - set(mute))
+    print("%s: записок без единой метки %d (в базе %d), новых %d"
+          % (NAME, len(mute), len(mute_allowed), len(mute_new)))
+    if mute_fixed:
+        print("%s: записки, получившие метки, — сними их из базы ТОЙ ЖЕ правкой: %s"
+              % (NAME, ", ".join(mute_fixed)))
+    sys.stdout.flush()
+    mute = mute_new
+    if mute:
+        # Записка без единой метки — ОТКАЗ, а не тишина: именно так выглядит
+        # пустая мишень, и именно её ноль нарушений выдаёт за чистоту.
+        print("%s: ЗАПИСКА БЕЗ ЕДИНОЙ МЕТКИ РАЗДЕЛА (%d) — страж такую НЕ ВИДИТ:"
+              % (NAME, len(mute)), file=sys.stderr)
+        for f in mute:
+            print("    %s" % f, file=sys.stderr)
+        print("", file=sys.stderr)
+        print("    Раздел состояния обязан начинаться меткой `## 0-ГГГГ-ММ-ДД[-часть]`.",
+              file=sys.stderr)
+        print("    Записка без метки не проваливает проверку — она в неё не входит,",
+              file=sys.stderr)
+        print("    и ноль нарушений при нуле осмотренного читается как «чисто».",
+              file=sys.stderr)
+        print("%s: FAIL" % NAME, file=sys.stderr)
+        return 1
     if stale:
         print("%s: в базе есть метки, которых в записках больше нет (%d) — "
               "их можно снять: %s" % (NAME, len(stale), ", ".join(stale[:6])))
