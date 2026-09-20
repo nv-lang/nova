@@ -196,7 +196,9 @@ fn read_decls(dir str) Fs -> []str {
                     out.append(read_decls("${dir}/${nm}"))
                     continue
                 } else {
-                    // A file: judged by its name below.
+                    // A file: the two tests that decide its fate are the
+                    // next two lines of THIS loop -- the `.nv` suffix and
+                    // the `_test.nv` house rule. No other door sees it.
                 }
                 if !nm.ends_with(".nv") { continue }
                 // Tests live beside the module (house rule), and a test is not
