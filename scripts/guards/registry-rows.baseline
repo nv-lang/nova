@@ -1294,7 +1294,10 @@
 # 2026-09-20 (integrator): rows 1130 -> 1131, max 1181 -> 1182 -- zavedena 1182
 #   (450 vnutrennih ssylok speki iz 453 nikuda ne vedut: korotkiy yakor (#dNNN)
 #   protiv 8 yavnyh targetov). Zamer sdelan poputno pri perenumeracii D478.
-rows=1131
-max=1182
+# 2026-09-20 (integrator): rows 1131 -> 1132, max 1182 -> 1183 -- zavedena 1183
+#   (import std.encoding.serde molcha vyklyuchaet proverku dubley u potrebitelya;
+#   razlichie v ODNOY stroke import, nashyol pomoshchnik). Blokiruet teg.
+rows=1132
+max=1183
 stale_gaps=0
 gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1176-1178
