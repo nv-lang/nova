@@ -487,7 +487,9 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     @report_if_decl_types_undeclared(children)
                 }
                 ConstDecl => {
-                    // A CONSTANT IS JUDGED BY ITS INITIALIZER, and the walk
+                    // A CONSTANT IS JUDGED BY ITS INITIALIZER -- by
+                    // `@const_type_of` in `exprs.nv`, which reads the
+                    // initializer at the point of USE -- and the walk
                     // has nothing of its own to refuse here: the name goes
                     // into the registry at collection, the type comes from
                     // the initializer at the point of USE (274.5 wave B2),
