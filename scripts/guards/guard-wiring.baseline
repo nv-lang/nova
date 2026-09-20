@@ -74,4 +74,70 @@
 #   vyros tolko na dva -- dva staryh dolga byli pogasheny. Obmen imyon na chislo
 #   pryachet ZAMENU odnogo narushitelya drugim. Imennaya baza -- sleduyushchaya
 #   rabota pomoshchnika.
+# 2026-09-20 (помощник): база стала ИМЕННОЙ — к счёту добавлен НАБОР имён,
+#   по строке `no_plan_ref_name=` на стража. Счёт остаётся и сверяется с числом
+#   имён: два источника одного значения расходятся молча, поэтому страж требует
+#   их равенства.
+#   ПОВОД ПЕРВЫЙ (замер того же дня): база 48 стояла при живом долге 50, а
+#   стражей без ссылки, заведённых после последней правки базы, было ЧЕТЫРЕ.
+#   Рост +2 — разность: два старых долга погасили. По числу нельзя было
+#   спросить «кто именно новый», и замена одного нарушителя другим прошла бы
+#   вовсе беззвучно.
+#   ПОВОД ВТОРОЙ, сильнее первого (интегратор): счёт прячет и СУЖЕНИЕ
+#   ПРЕДИКАТА. Этот страж дважды судил написание вместо свойства — искал текст
+#   цикла `for`, а потом требовал у самотеста расширение `.sh` и подключение
+#   только в `gate.sh` (при том что CI зовёт ДВА гейта). Сузившийся предикат
+#   роняет ЧИСЛО, и падение читается как погашенный долг. Имена исчезают
+#   пачкой, и пачка видна.
+#   ИСЧЕЗНОВЕНИЕ ИМЕНИ РАЗБИРАЕТСЯ ПО ФАЙЛУ, А НЕ ПО ПРЕДИКАТУ (иначе проверка
+#   судила бы себя): файл на месте, а имя не перечислено — КРАСНЫЙ; страж
+#   обзавёлся ссылкой — совет опустить базу; файла нет — совет убрать строку.
+#   ЗАСЕВ СДЕЛАН НА СЛИТОМ ДЕРЕВЕ (main от f76c86fd5), а не в своей ветке:
+#   значение храповика есть свойство пары «дерево + среда».
 no_plan_ref=46
+no_plan_ref_name=check-novac-acceptance-donor
+no_plan_ref_name=check-novac-arch-invariants
+no_plan_ref_name=check-novac-atomics-door
+no_plan_ref_name=check-novac-branch-complete
+no_plan_ref_name=check-novac-channel-one-writer
+no_plan_ref_name=check-novac-cli-surface
+no_plan_ref_name=check-novac-commit-donor
+no_plan_ref_name=check-novac-cursor-is-range
+no_plan_ref_name=check-novac-deps
+no_plan_ref_name=check-novac-doc-language
+no_plan_ref_name=check-novac-edge-payload
+no_plan_ref_name=check-novac-emitted-names
+no_plan_ref_name=check-novac-export-has-caller
+no_plan_ref_name=check-novac-file-decls-door
+no_plan_ref_name=check-novac-file-size
+no_plan_ref_name=check-novac-ice-messages
+no_plan_ref_name=check-novac-import-exists
+no_plan_ref_name=check-novac-line-length
+no_plan_ref_name=check-novac-local-only-work
+no_plan_ref_name=check-novac-mangling-one-way
+no_plan_ref_name=check-novac-match-exhaustive
+no_plan_ref_name=check-novac-module-donor
+no_plan_ref_name=check-novac-no-alloc-in-lookup
+no_plan_ref_name=check-novac-no-copy-loop
+no_plan_ref_name=check-novac-no-crutch
+no_plan_ref_name=check-novac-no-default-branch
+no_plan_ref_name=check-novac-no-grammar-excuse
+no_plan_ref_name=check-novac-no-naked-panic
+no_plan_ref_name=check-novac-no-name-hardcode
+no_plan_ref_name=check-novac-no-prelude-shadow
+no_plan_ref_name=check-novac-no-silent-skip
+no_plan_ref_name=check-novac-no-string-keys
+no_plan_ref_name=check-novac-oracle-fresh
+no_plan_ref_name=check-novac-pch
+no_plan_ref_name=check-novac-precondition
+no_plan_ref_name=check-novac-ref-field-names
+no_plan_ref_name=check-novac-resolve-discipline
+no_plan_ref_name=check-novac-row-fields
+no_plan_ref_name=check-novac-second-door
+no_plan_ref_name=check-novac-selftest-proves-red
+no_plan_ref_name=check-novac-surface
+no_plan_ref_name=check-novac-table-is-match
+no_plan_ref_name=check-novac-temp-edges
+no_plan_ref_name=check-novac-time-ledger
+no_plan_ref_name=check-novac-tyid-door
+no_plan_ref_name=check-novac-type-field-docs
