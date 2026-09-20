@@ -26,6 +26,9 @@
 module novac.check
 
 import ../sem.{c_free_symbol}
+// Which arguments have an observable order (F65) -- the same door the rule and
+// the lowering ask, so the three cannot disagree on WHICH arguments they mean.
+import ../sem.{contains_call}
 
 import ../tree.{Node, raw_node}
 import ../diag.{ice}
@@ -648,6 +651,76 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
 }
 
 /// A method call, and the ONE shape that wears its spelling without being one:
+
+/// THE TYPE OF EVERY ARGUMENT, into the channel (F65).
+///
+/// The lowering hoists an effectful argument into a temporary so that the
+/// order of effects is the source's rather than C's, and a temporary needs a
+/// type. Until this door the channel knew the call's type and the receiver's
+/// and nothing about the arguments, so the hoist skipped every one of them
+/// and the ordering silently did not happen.
+///
+/// ASKED ONLY WHEN NOTHING WAS REFUSED: `type_of` on a node the walk has just
+/// refused is an ice, and the callers place this after their own
+/// `@out.len() > before` guard for exactly that reason.
+/// THE TYPE OF EVERY EFFECTFUL ARGUMENT, into the channel (F65).
+///
+/// The lowering hoists an argument that calls something into a local of its
+/// own, so the order of effects is the source's rather than C's -- and a
+/// local needs a type. The channel knew the call's type and the receiver's
+/// and nothing about the arguments.
+///
+/// ONLY THE EFFECTFUL ONES, and the narrowness is not caution: recording
+/// every argument put this answer in FIRST and the position's answer
+/// second, so a literal beside a named operand -- which takes the
+/// position's width (D405) -- made the channel assert `a node was typed
+/// twice with different answers`. It was right to. A literal contains no
+/// call, so asking `contains_call` removes the collision rather than
+/// arbitrating it.
+fn Checker mut @record_arg_types(kids []Node, from int) -> () {
+    mut i = 0
+    for c in kids {
+        if i < from || !is_expr_kind(c.kind_of()) {
+            // The callee of a free call, and the receiver, dot and name of a
+            // method call, are children too -- and none of them is an
+            // argument. `is_arg_node` could not say so: it knows the KIND
+            // and nothing about position.
+            i += 1
+            continue
+        } else {
+            // An argument: its type is what the hoist needs.
+        }
+        i += 1
+        // NEVER OVERWRITE AN ANSWER THE CHANNEL ALREADY HAS. A literal beside
+        // a named operand is recorded with the POSITION's width (D405), and the
+        // lattice, asked on its own, says `int` -- so a blanket record wrote a
+        // second, different answer and the channel asserted, correctly: `a node
+        // was typed twice with different answers`. Three cells of
+        // `pipeline/decls_test` said it within a minute of the first build.
+        if !contains_call(c) {
+            // ONLY WHAT THE HOIST WILL TAKE, and that is the narrow set: an
+            // argument whose evaluation ORDER is observable, i.e. one that
+            // calls something. Recording every argument put MY answer in first
+            // and the position's answer second -- a literal beside a named
+            // operand takes the position's WIDTH (D405), the lattice says
+            // `int`, and the channel asserted `a node was typed twice with
+            // different answers`. Correctly: it forbids two answers, and the
+            // later one was the right one. A literal contains no call, so the
+            // narrow rule removes the collision instead of arbitrating it.
+            continue
+        } else {
+            // An effectful argument: the hoist needs a type for its temporary.
+        }
+        ro at = type_of(c, @ctx, @scope, @chan)
+        if is_ty(at) {
+            @record(c, at)
+        } else {
+            // SILENT-OK: a form the lattice has no answer for -- it is not
+            // refused here, it simply has no type to record, and the hoist
+            // leaves such an argument inline as it always did.
+        }
+    }
+}
 /// `Sum.Variant(x)`. Lifted out of `@type_expr` on 2026-09-15 when exprs.nv passed the
 /// 1000-line limit (274, decision 12). The cut is by SUBJECT, not by size: a call's
 /// home is this file, and the arm was self-contained already -- it takes the node's
@@ -698,6 +771,10 @@ fn Checker mut @type_method_call(e Node) -> () {
     // type, and the silence was covered by type_of re-resolving the
     // name (the second door). The question is about THIS call's children.
     if @out.len() == before {
+        // The arguments' types, for the hoist that orders their effects
+        // (F65). From slot 3: receiver, dot and name come first, exactly as
+        // the typing loop above says with `i > 2`.
+        @record_arg_types(kids, 3)
         ro recv_t = type_of(kids[0], @ctx, @scope, @chan)
         @record(kids[0], recv_t)
         // The DECISION, not a hint: which row this method call goes to.
@@ -777,6 +854,8 @@ fn Checker mut @type_free_call(e Node) -> () {
     }
     @value_expect = saved_expect
     if @out.len() > before { return }
+    // Nothing was refused: every argument has a type worth recording (F65).
+    @record_arg_types(kids, 1)
     // The `is_none()` guard above returned, so the row is there. It is read
     // from the SAME Option rather than looked up a second time: `def_of`
     // answers with the row, so there is no index to carry and no second

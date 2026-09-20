@@ -22,6 +22,8 @@ import ../tree.{Node, NodeKind, NodeId, no_node, bin_op_of, un_op_of, raw_node}
 import ../diag.{Diagnostic, Severity, ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, CALLER_LOC_FN, is_bool_literal}
 import ../sem.{Ctx, CheckOut, declares_receiver, generics_have_consume, generics_have_protocol_bound, param_type_at}
+// The tree question that decides what a hoist must order (F65).
+import ../sem.{contains_call}
 import ../sem.{decl_of_ty}
 import ../sem.{branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, generic_bounds}
 import ../sem.{is_arg_node}
@@ -661,20 +663,6 @@ fn Checker mut @report_first_leaf_kind(children []Node, msg str, kind DiagKind) 
     }
 }
 
-/// Does this subtree call anything? An argument that calls something is an
-/// argument whose evaluation ORDER is observable.
-fn contains_call(n Node) -> bool {
-    match n {
-        Leaf(_) => false
-        Branch { kind, children, .. } => {
-            if kind == NodeKind.Call || kind == NodeKind.MethodCall { return true }
-            for c in children {
-                if contains_call(c) { return true }
-            }
-            false
-        }
-    }
-}
 
 /// Two arguments that BOTH call something are two side effects whose order
 /// the emitter does not fix: it prints the call straight into C, and C
@@ -692,8 +680,16 @@ fn Checker mut @report_if_ordered_args(kids []Node) -> () {
         if !contains_call(c) { continue }
         effectful += 1
     }
+    // THE REFUSAL IS GONE AND THE DOOR STAYS, on purpose. Since 2026-09-20 the
+    // lowering hoists these arguments into temporaries in SOURCE ORDER
+    // (`@hoist_ordered_args`), which is exactly the condition this rule named
+    // for its own removal. The function keeps its shape so that the next form
+    // whose order is observable has somewhere to be refused from -- and so that
+    // the two sides go on asking the SAME question through `contains_call`.
+    // No `else` after a terminator (P31 form 2). Two or more effectful
+    // arguments are ORDERED BY THE HOIST now rather than refused here --
+    // see `@hoist_ordered_args` in the lowering.
     if effectful < 2 { return }
-    @report_first_leaf_of(kids, "outside the E1 subset: two arguments that both call something, and the emitter does not fix their order yet (F65)")
 }
 
 
