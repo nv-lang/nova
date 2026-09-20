@@ -1439,4 +1439,8 @@ no_caveat=0
 #   fiksturoy (dva schyota, raznye kriterii, oba v stroke). Chestnyy rost:
 #   hrapovik schitaet NAZVANNOE, a polovina poverhnosti diagnostik nikogda ne
 #   ispolnyalas ni v odnom progone.
-blockers=75
+# 2026-09-20 (integrator): blockers 75 -> 76. Zavedena 1188 -- modulnye testy novac
+#   NIKOGDA ne zapuskalis na CI: shag konvenciy padaet ranshe, i vsyo posle nego
+#   skipped (zamer po vosmi progonam, 18-20 sentyabrya). Eto ne rost dolga za noch,
+#   a NAZYVANIE togo, chto stoyalo tri dnya i schitalos zelyonym.
+blockers=76

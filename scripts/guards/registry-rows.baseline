@@ -1327,7 +1327,11 @@
 # 2026-09-20 (integrator): rows 1138 -> 1139, max 1186 -> 1187 -- zavedena 1187
 #   (417 kodov E_* ob'yavleno, 198-217 iz nih ne nazvany ni odnoy fiksturoy --
 #   dva schyota s raznymi kriteriyami, oba zapisany v stroke).
-rows=1139
-max=1187
+# 2026-09-20 (integrator): rows 1139 -> 1141, max 1187 -> 1189. 1188 -- novac module
+#   tests have NEVER run on CI (the conventions step fails first and everything after
+#   it is skipped; measured over eight runs, 18-20 September). 1189 -- the body-tail
+#   door knows `if` and not `if let`, 12 self-hosting diagnostics (Carina's window).
+rows=1141
+max=1189
 stale_gaps=0
 gaps=174-208,210-215,653-654,743,1062,1096,1103-1104
