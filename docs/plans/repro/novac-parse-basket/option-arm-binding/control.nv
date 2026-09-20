@@ -1,0 +1,10 @@
+export type Row enum
+    | RowA(int)
+    | RowB
+
+export fn pick(r Row) -> int {
+    match r {
+        RowA(v) => v
+        RowB => 0
+    }
+}
