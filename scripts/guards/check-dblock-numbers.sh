@@ -137,7 +137,18 @@ for r in $REFS $EXTRA_REFS; do
     [ "$r" = "$BASE_REF" ] && continue
     NREFS=$((NREFS + 1))
     # Заголовки, ДОБАВЛЕННЫЕ этой веткой относительно точки расхождения.
-    git diff "$BASE_REF...$r" -- spec/decisions 2>/dev/null \
+    # [3DOT-OK: спрашивается именно «что ВЕТКА ДОБАВИЛА от общего
+    # предка» — это и есть семантика A...B, а не вопрос о влитости,
+    # ради которого заведён branch-absorbed.sh.
+    # ЧТО БУДЕТ ПРИ НЕСКОЛЬКИХ БАЗАХ СЛИЯНИЯ, называю явно: git
+    # возьмёт произвольную, и более СТАРАЯ база покажет уже
+    # влитый заголовок как «добавленный веткой». Это ложная
+    # ТРЕВОГА, а не пропуск: страж ошибается В СТОРОНУ
+    # ГРОМКОСТИ, и это сознательный выбор: незамеченное
+    # столкновение номеров стоило нам трёх случаев за сутки,
+    # а лишний отказ стоит одного взгляда человека.]
+    ADDED=$(git diff "$BASE_REF...$r" -- spec/decisions 2>/dev/null)  # [3DOT-OK: sprashivaetsya imenno "chto VETKA DOBAVILA ot obshchego predka" -- eto i est semantika A...B, a ne vopros o vlitosti, radi kotorogo zavedyon branch-absorbed.sh; pri neskol'kih bazah sliyaniya git voz'myot proizvol'nuyu, i bolee staraya pokazhet uzhe vlityy zagolovok kak dobavlennyy -- eto LOZHNAYA TREVOGA, a ne propusk, to est oshibka idyot V STORONU GROMKOSTI]
+    printf '%s\n' "$ADDED" \
         | grep -E "^\+#{2,3} *D[0-9]+" \
         | sed -E "s/^\+//" \
         | extract "$r" >> "$PAIRS"
