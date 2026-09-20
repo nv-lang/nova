@@ -1,0 +1,5 @@
+=== CONTROL: uniform separators -- ONE unit ===
+rc=0  (no JSON above = clean)
+=== SUBJECT: same two files, prefix spelled "sub\mod" for the first ===
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"sub\\mod\\a.nv","start":38,"end":41},"message":"outside the subset: this name is not a callable novac knows in an expression (println is a statement here, not a value)","poisoned_by":null}
+rc=1

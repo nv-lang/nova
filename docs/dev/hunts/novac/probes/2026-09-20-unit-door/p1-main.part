@@ -1,0 +1,18 @@
+
+fn yn(b bool) -> str => if b { "peers" } else { "NOT peers" }
+
+fn main() Io -> () {
+    // SUBJECT: one directory, mixed separators -- what a Windows CLI hands in
+    // when one path is typed and the other comes from a glob.
+    print("mixed     x\\a\\b.nv vs x/a/c.nv -> ${yn(same_dir("x\\a\\b.nv", "x/a/c.nv"))}")
+    // CONTROL A: the very same two files, separators spelled alike.
+    print("all-slash x/a/b.nv vs x/a/c.nv -> ${yn(same_dir("x/a/b.nv", "x/a/c.nv"))}")
+    // CONTROL B: same, all backslashes.
+    print("all-back  x\\a\\b.nv vs x\\a\\c.nv -> ${yn(same_dir("x\\a\\b.nv", "x\\a\\c.nv"))}")
+    // CONTROL C: genuinely different directories must stay NOT peers, so the
+    // subject line above is not just "this function says peers to everything".
+    print("differ    x/a/b.nv vs x/z/c.nv -> ${yn(same_dir("x/a/b.nv", "x/z/c.nv"))}")
+    // CONTROL D: the cell the module test already covers -- ONE separator,
+    // mixed spelling -- which passes and hides the subject above.
+    print("one-sep   a\\b.nv vs a/c.nv -> ${yn(same_dir("a\\b.nv", "a/c.nv"))}")
+}

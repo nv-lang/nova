@@ -1338,7 +1338,10 @@
 #   nevernyy otvet v novac (emitter chitaet obrazec plecha inache, chem pishet
 #   parser); nashla Karina V SVOEY ZHE volne, uzhe vlitoy mnoyu. 1192 -- defekt
 #   orakula s vremennoy pod znachenie `if let`, eyo zhe poputnaya nahodka.
-rows=1144
-max=1192
+# 2026-09-20 (integrator): rows 1144 -> 1148, max 1192 -> 1196 -- chetyre nahodki
+#   ohoty po kletke 'dver sborki edinicy x K1' (trek novac, otchyot
+#   docs/dev/hunts/novac/2026-09-20-unit-door.md, shest prob v dereve).
+rows=1148
+max=1196
 stale_gaps=0
 gaps=174-208,210-215,653-654,743,1062,1096,1103-1104

@@ -1450,4 +1450,10 @@ no_caveat=0
 #   pochemu on proshyol priyomku: ona merila, chto forma CHITAETSYA, a ne chto
 #   programma VEDYOT SEBYA verno. Differencial -- yarus integratora, i on ego
 #   na etoy volne ne progonyal pered sliyaniem.
-blockers=77
+# 2026-09-20 (integrator): blockers 77 -> 79. Ohota po kletke 'dver sborki
+#   edinicy kompilyacii x K1' (trek novac) dala chetyre nahodki, dve iz nih
+#   blokery: 1193 (tablica edinicy otdayot paru 'fayl+smeshchenie', kotoroy ne
+#   sushchestvuet -- diagnostika saditsya na NEVINOVNOGO rovesnika) i 1194
+#   (same_dir sravnivaet bayty, i smeshannye razdeliteli molcha razryvayut
+#   modul nadvoe). Chestnyy rost: oba defekta byli v dereve i ranshe.
+blockers=79

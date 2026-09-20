@@ -1,0 +1,2 @@
+module m
+type T value { f int }
