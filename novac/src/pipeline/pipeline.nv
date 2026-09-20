@@ -95,6 +95,81 @@ export fn compile(text str, decl_texts []str) -> []Diagnostic =>
 /// Two doors and not a flag: a caller with texts (every module test) says so by
 /// calling the wrapper above, and a caller compiling many files parses once and
 /// calls this. The wrapper is the whole difference between them.
+/// Does `word` stand at byte `at` of `b`? A prefix test that allocates
+/// nothing and takes no slice -- see the note inside `header_end`.
+fn matches_at(b []u8, at int, word str) -> bool {
+    ro w = word.bytes()
+    ro m = word.byte_len()
+    if at + m > b.len() { return false } else {}
+    mut k = 0
+    while k < m {
+        if b[at + k] != w[k] { return false } else {}
+        k += 1
+    }
+    true
+}
+
+/// The byte just past a file's HEADER -- its `module` line and its imports.
+///
+/// The first step of the peers-as-one-unit wave (274.7 M): a unit is ONE
+/// header followed by the BODIES of the module's files, because a naive
+/// concatenation is refused -- a repeated `module` line and repeated imports
+/// are not read (measured 2026-09-20). Everything else the unit needs is
+/// arithmetic on this number, which is why it is a door of its own and has
+/// its own test.
+///
+/// THE LAST header line decides, not the first body line. A doc comment sits
+/// between them and belongs to the declaration below it, so asking "where do
+/// the headers stop" is answerable while "where does the body start" is not:
+/// the body's first line is a comment whose owner is two lines further down.
+///
+/// BYTES, not `@lines`, and the reason is measured elsewhere in this project:
+/// a working copy can hold CRLF, and counting `line.byte_len() + 1` would
+/// then drift by one per line -- silently, and only on some machines.
+fn header_end(text str) -> int {
+    ro b = text.bytes()
+    ro n = text.byte_len()
+    mut last = 0
+    mut ls = 0
+    mut i = 0
+    while i <= n {
+        mut at_end = false
+        if i == n {
+            at_end = true
+        } else {
+            if b[i] == UNIT_LF { at_end = true } else {}
+        }
+        if at_end {
+            // BYTES AGAIN, and this time not for CRLF but for the subset: the
+            // obvious `text[ls..i].starts_with(...)` is a SLICE, and a slice is
+            // not compiled by novac yet (registry No. 1170). Writing it here
+            // would have added one line of self-hosting debt with the very
+            // edit that exists to remove a quarter of it -- measured, not
+            // feared: the first draft of this function did exactly that and
+            // novac answered with one new refusal.
+            if matches_at(b, ls, "module ") || matches_at(b, ls, "import ") {
+                last = i
+                if i < n { last = i + 1 } else {}
+            } else {}
+            ls = i + 1
+        } else {}
+        i += 1
+    }
+    last
+}
+
+/// The line feed, by name: the scan above compares one byte, and a bare 0x0A
+/// in an expression says nothing to the next reader.
+///
+/// THE SPELLING IS A SCAR, and it is cheaper to explain than to rediscover.
+/// `novac.lex` has its own `B_LF`, NOT exported -- and a `const B_LF` here
+/// still resolved to it: the C came out naming a symbol this unit does not
+/// emit, and the test died at the C compiler. Renaming to `LF_BYTE` hit the
+/// same wall against `novac.check`. So a private constant of a peer module is
+/// NOT private today -- identity is a bare name without its module (the class
+/// the registry knows as the key-without-module one). Measured twice in three
+/// minutes, 2026-09-20, by two CC-FAILs on this file's own test.
+const UNIT_LF u8 = 0x0A
 export fn compile_with(text str, decls []Node, interop InteropTable) -> []Diagnostic {
     ro src = SourceText { text }
     ro tree = parse(tokens_of(text))

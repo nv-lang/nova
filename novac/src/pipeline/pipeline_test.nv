@@ -37,6 +37,37 @@ fn std_decls() -> []str => []str.of("fn str @byte_len() -> int => 0\nfn str @to_
 
 fn n_diags(text str) -> int => compile(text, std_decls()).len()
 
+// --- header_end: where a unit takes a file's body from (274.7 M) ---------
+//
+// The unit is ONE header plus the BODIES of a module's files, so this number
+// is the whole arithmetic of the wave. Four cells, and the last is the one
+// the byte scan exists for.
+
+test "header_end: past the module line when there are no imports" {
+    assert(header_end("module a\nfn f() -> int => 1\n") == 9)
+}
+
+test "header_end: past the LAST import, not the first" {
+    ro t = "module a\nimport b\nimport c\nfn f() -> int => 1\n"
+    assert(header_end(t) == 27)
+}
+
+test "header_end: a doc comment belongs to the BODY, not the header" {
+    // The reason the door answers "where do the headers stop" and not
+    // "where does the body start": the body's first line is a comment whose
+    // owner is the declaration two lines down.
+    ro t = "module a\nimport b\n/// doc\nfn f() -> int => 1\n"
+    assert(header_end(t) == 18)
+}
+
+test "header_end: CRLF does not shift the answer" {
+    // A working copy can hold CRLF, and counting `line.byte_len() + 1` would
+    // drift by one per line -- silently, and only on some machines. The scan
+    // is over BYTES for exactly this cell.
+    ro t = "module a\r\nimport b\r\nfn f() -> int => 1\r\n"
+    assert(header_end(t) == 20)
+}
+
 test "no cascade: a run of top-level junk is one cause, one diagnostic" {
     // E1 review p.1 (2026-08-14): this used to be THREE diagnostics.
     assert(n_diags("1 2 3") == 1)
