@@ -64,5 +64,11 @@
 #   (okhota etogo dnya po 1266 novym strokam emit_c). Bazu opuskayu TEM ZHE
 #   sliyaniem: strazh krasneet tol'ko na ROST, padenie propuskaet molcha, i baza,
 #   ostavlennaya vysokoy, razreshila by otkatit'sya rovno na eti dve kletki.
-never_hunted=90
+# 2026-09-20, интегратор: 90 -> 89. Охота по клетке pipeline x К1
+# (отчёт 2026-09-20-unit-door.md, пять находок, строки реестра 1193-1196).
+# Клетка была охочена ещё утром, но НЕ СЧИТАЛАСЬ: в отчёте не было
+# машинной строки «КЛЕТКА |», и страж честно отказал на непонятой форме.
+# База опущена ТЕМ ЖЕ диффом, что и правка отчёта: оставленная
+# высокой база разрешает откатиться ровно на то, на что продвинулись, и молча.
+never_hunted=89
 modules_at_seed=15
