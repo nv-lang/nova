@@ -1,0 +1,6 @@
+module p.c
+
+fn h(x int) -> int {
+    ro r = if x > 0 { 1 } else { 2 }
+    r
+}
