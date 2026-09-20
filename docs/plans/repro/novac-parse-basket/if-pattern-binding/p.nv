@@ -1,0 +1,10 @@
+export type Look enum
+    | One(int)
+    | Many
+
+export fn n(got Look) -> int {
+    if Look.One(_) = got {
+        return 1
+    }
+    return 0
+}

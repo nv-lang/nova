@@ -1,0 +1,1 @@
+export fn all() -> []int => []int.of(1, 2)

@@ -1,0 +1,38 @@
+# Корзина парсера novac: первый отказ каждого файла
+# Снято 2026-09-20. Команда на модуль:
+#   NOVAC_SELF_PATH=novac/src NOVAC_UNIT=1 ./novac/target/novac.exe check novac/src/<мод>/*.nv
+# Исключены поимённо (ICE обрывает прогон): novac/src/emit_c/emit_place.nv, novac/src/lower/lowering.nv
+# Диагностик всего 355; из них корзины 44 в 15 файлах; строк вывода вне JSON 0
+
+builtins/builtins.nv                 341  ro universe = []BuiltinType.of(
+check/exprs.nv                       122  Some((first, cnt)) => {
+check/literal_rules.nv                63  if t.byte_len() > 2 && t[..2] == "0x" {
+check/match_arms.nv                  195  Some(_) => { covered += 1 }
+check/methods.nv                     227  Some(v) => v
+emit_c/emit_interp.nv                169  Some((first, cnt)) => {
+lex/lex.nv                           897  0x7E => { i += 1; kind = TokenKind.Tilde }   // ~
+parse/parse.nv                       168  leaf(Token { kind: k, leading: "", text: t.text[..0] })
+resolve/resolve.nv                   478  ro pd = ctx.protos.def_of(proto)?
+resolve/resolve_test.nv              134  if FnLookup.FnOverloaded(_) = got {
+sem/defs.nv                          174  ro def = @def_of(name)?
+sem/harvest.nv                       350  Some(t) => t
+sem/mangle.nv                        828  if t.byte_len() > 2 && t[..2] == "0x" { return t }
+sem/sem.nv                           356  ro d = @defs.type_decl(name)?
+tree/tree.nv                         317  Node.Branch { id, kind, children }
+
+# отказов корзины по файлам (для справки, НЕ мера форм):
+#   builtins/builtins.nv                     1
+#   check/exprs.nv                           7
+#   check/literal_rules.nv                   4
+#   check/match_arms.nv                      4
+#   check/methods.nv                         1
+#   emit_c/emit_interp.nv                    7
+#   lex/lex.nv                               1
+#   parse/parse.nv                           4
+#   resolve/resolve.nv                       1
+#   resolve/resolve_test.nv                  6
+#   sem/defs.nv                              3
+#   sem/harvest.nv                           1
+#   sem/mangle.nv                            2
+#   sem/sem.nv                               1
+#   tree/tree.nv                             1

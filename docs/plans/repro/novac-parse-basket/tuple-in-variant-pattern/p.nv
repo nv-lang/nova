@@ -1,0 +1,8 @@
+export fn get(x int) -> Option[(int, int)] => if x > 0 { Some((x, x)) } else { None }
+
+export fn pick(x int) -> int {
+    match get(x) {
+        Some((first, cnt)) => first + cnt
+        None => 0
+    }
+}
