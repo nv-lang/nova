@@ -95,7 +95,7 @@ export fn compile(text str, decl_texts []str) -> []Diagnostic =>
 /// Two doors and not a flag: a caller with texts (every module test) says so by
 /// calling the wrapper above, and a caller compiling many files parses once and
 /// calls this. The wrapper is the whole difference between them.
-/// One file's BODY inside a unit of peers (274.7 M).
+/// One RUN of a unit of peers, and the file it came from (274.7 M).
 ///
 /// A unit is one header plus the bodies of a module's files, so a span that
 /// comes out of the checker is an offset into the UNIT and has to be handed
@@ -109,8 +109,8 @@ export fn compile(text str, decl_texts []str) -> []Diagnostic =>
 /// that prints needs a table.
 export type UnitFile value {
     path str /// the path exactly as the CLI received it
-    at int /// where this body begins INSIDE the unit text
-    from int /// where that same body began in the file it came from
+    at int /// where this run begins INSIDE the unit text
+    from int /// where that same run began in the file it came from
 }
 
 /// Which file of the unit owns a unit offset -- its index, or -1.
@@ -185,6 +185,13 @@ fn append_range(mut out []u8, b []u8, from int, to int) -> () {
 /// concatenation. Deduplicating would mean comparing lines, and comparing
 /// lines means slicing, which this file may not do yet.
 ///
+/// THE TABLE COVERS THE WHOLE UNIT, not only the bodies, and that is a
+/// correction of the first draft. A diagnostic can land in the header -- a
+/// malformed import is exactly that -- and a table of bodies only would have
+/// had to answer "no file" and invent a path to print. Since each file's
+/// imports also occupy one contiguous run, they are entries too, and every
+/// offset of the unit maps to the file it came from.
+///
 /// THE ORDER IS THE CALLER'S. Whether the checker depends on it once bodies
 /// can see each other is NOT measured yet and stands as an open question of
 /// the wave; sorting here would hide the answer instead of giving it.
@@ -199,10 +206,12 @@ export fn unit_of(paths []str, texts []str) -> Unit {
         ro empty = Unit { text: "", files }
         return empty
     } else {}
-    // The module line of the FIRST file speaks for the unit.
+    // The module line of the FIRST file speaks for the unit -- and it is a
+    // RUN like any other, because a diagnostic can land in it.
     ro t0 = texts[0]
     ro b0 = t0.bytes()
     ro m0 = first_line_end(texts[0])
+    files.push(UnitFile { path: paths[0], at: 0, from: 0 })
     append_range(out, b0, 0, m0)
     // Then the imports of every file -- the part of a header after its own
     // module line.
@@ -212,7 +221,10 @@ export fn unit_of(paths []str, texts []str) -> Unit {
         ro bi = ti.bytes()
         ro mi = first_line_end(texts[i])
         ro hi = header_end(texts[i])
-        if hi > mi { append_range(out, bi, mi, hi) } else {}
+        if hi > mi {
+            files.push(UnitFile { path: paths[i], at: out.len(), from: mi })
+            append_range(out, bi, mi, hi)
+        } else {}
         i += 1
     }
     // Then the bodies, each remembering where it came from.

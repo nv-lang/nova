@@ -73,17 +73,32 @@ test "unit_of: one module line, both imports, both bodies" {
     assert(u.text.contains("fn two()"))
 }
 
-test "unit_of: the table names both files, in order" {
-    // BOUND SEPARATELY, not nested: two arguments that both call something
-    // are outside the subset yet (F65), and a test of the wave that removes
-    // self-hosting debt must not add three lines of it.
+test "unit_of: the table covers every run, module line included" {
     ro ps = two_paths()
     ro ts0 = two_texts()
     ro u = unit_of(ps, ts0)
-    assert(u.files.len() == 2)
+    // Five runs for two files: the module line, two import runs, two bodies.
+    assert(u.files.len() == 5)
     assert(u.files[0].path == "one.nv")
-    assert(u.files[1].path == "two.nv")
-    assert(u.files[0].at < u.files[1].at)
+    assert(u.files[0].at == 0)
+    // Monotonic by construction, which is what file_of_offset relies on.
+    mut k = 1
+    while k < u.files.len() {
+        assert(u.files[k - 1].at <= u.files[k].at)
+        k += 1
+    }
+}
+
+test "unit_of: an offset in the HEADER still names a file" {
+    // The reason the table grew past bodies. A malformed import is a real
+    // diagnostic in the header, and a table of bodies only would have had to
+    // answer "no file" and invent a path to print.
+    ro ps = two_paths()
+    ro ts0 = two_texts()
+    ro u = unit_of(ps, ts0)
+    ro fi = file_of_offset(u.files, 3)
+    assert(fi == 0)
+    assert(u.files[fi].path == "one.nv")
 }
 
 test "unit_of: a span inside the second body maps back to the second file" {
@@ -95,12 +110,14 @@ test "unit_of: a span inside the second body maps back to the second file" {
     ro ps = two_paths()
     ro ts0 = two_texts()
     ro u = unit_of(ps, ts0)
-    ro at2 = u.files[1].at
-    assert(file_of_offset(u.files, at2 + 3) == 1)
+    // The bodies are the LAST runs of the table; the second file's is last.
+    ro last = u.files.len() - 1
+    ro at2 = u.files[last].at
+    assert(file_of_offset(u.files, at2 + 3) == last)
     // And the same byte, named as the FILE knows it, lands inside that
     // file's own text rather than past its end.
-    ro back = offset_in_file(u.files[1], at2 + 3)
-    assert(back >= u.files[1].from)
+    ro back = offset_in_file(u.files[last], at2 + 3)
+    assert(back >= u.files[last].from)
     ro ts = two_texts()
     assert(back < ts[1].byte_len())
 }
