@@ -1341,7 +1341,11 @@
 # 2026-09-20 (integrator): rows 1144 -> 1148, max 1192 -> 1196 -- chetyre nahodki
 #   ohoty po kletke 'dver sborki edinicy x K1' (trek novac, otchyot
 #   docs/dev/hunts/novac/2026-09-20-unit-door.md, shest prob v dereve).
-rows=1148
-max=1196
+# 2026-09-20 (integrator): rows 1148 -> 1150, max 1196 -> 1198. Proba k stroke 623
+#   podtverdila samu 623 (dyra ne vosproizvoditsya) i nashla DVA drugih defekta:
+#   1197 -- diagnostiki kompilyatora po-russki pri publichnom repozitorii;
+#   1198 -- otkaz ukazyvaet na stroku `module`, a ne na mesto vyzova.
+rows=1150
+max=1198
 stale_gaps=0
 gaps=174-208,210-215,653-654,743,1062,1096,1103-1104

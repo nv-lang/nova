@@ -1456,4 +1456,9 @@ no_caveat=0
 #   sushchestvuet -- diagnostika saditsya na NEVINOVNOGO rovesnika) i 1194
 #   (same_dir sravnivaet bayty, i smeshannye razdeliteli molcha razryvayut
 #   modul nadvoe). Chestnyy rost: oba defekta byli v dereve i ranshe.
-blockers=79
+# 2026-09-20 (integrator): blockers 79 -> 80. Zavedena 1197 -- diagnostiki
+#   kompilyatora pechatayutsya PO-RUSSKI, a repozitoriy publichen i zerkalitsya
+#   na tri hosta. Strazh cli-output-language sudit --help, JSON-shemu i teksty
+#   oshibok CLI, a diagnostiki chekera -- samuyu bolshuyu poverhnost teksta --
+#   ne sudit nikto. Nashlos poputno pri probe k stroke 623.
+blockers=80
