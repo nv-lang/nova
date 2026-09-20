@@ -5268,7 +5268,7 @@ Migration: ~10 примеров `Effect[E]` в spec/, где требуется
 
 ---
 
-## D90. `defer` и `errdefer` — scope-level cleanup statement
+## D90. `defer` и `errdefer` — scope-level cleanup statement {#d90}
 
 > **Закрывает** [Q20 «Нужен ли defer?»](../open-questions.md#q20).
 >
