@@ -7,7 +7,8 @@ export LC_ALL=C
 G="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/check-no-control-chars.sh"
 TMP="${TMPDIR:-/tmp}/selftest_ctl_$$"
 FAILED=0
-ok()  { echo "  ok: $1"; }
+OKN=0
+ok()  { OKN=$((OKN + 1)); echo "  ok: $1"; }
 bad() { echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
 
 setup() {
@@ -87,6 +88,6 @@ else
     bad "страж не назван в docs/dev/rules-for-agents.md"
 fi
 
-if [ "$FAILED" -eq 0 ]; then echo "селфтест check-no-control-chars: 10/10 ok"; exit 0; fi
+if [ "$FAILED" -eq 0 ]; then echo "селфтест check-no-control-chars: $OKN/$OKN ok"; exit 0; fi
 echo "селфтест check-no-control-chars: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1

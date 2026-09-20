@@ -10,7 +10,8 @@ export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 G="$ROOT/scripts/guards/check-worktree-location.sh"
 FAILED=0
-ok()  { echo "  ok: $1"; }
+OKN=0
+ok()  { OKN=$((OKN + 1)); echo "  ok: $1"; }
 bad() { echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
@@ -81,6 +82,6 @@ git -C "$REPO" worktree remove --force "$TMP/elsewhere/wt6" >/dev/null 2>&1
 out=$(bash "$G" "$REPO" 2>&1); rc=$?
 if [ "$rc" -eq 0 ]; then ok "выведенный корень не ложнит на своём дереве"; else bad "ложняк на выведенном корне: $out"; fi
 
-if [ "$FAILED" -eq 0 ]; then echo "селфтест check-worktree-location: 7/7 ok"; exit 0; fi
+if [ "$FAILED" -eq 0 ]; then echo "селфтест check-worktree-location: $OKN/$OKN ok"; exit 0; fi
 echo "селфтест check-worktree-location: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1

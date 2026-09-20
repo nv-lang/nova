@@ -11,7 +11,8 @@ export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 G="$ROOT/scripts/guards/check-registry-entry-shape.sh"
 FAILED=0
-ok()  { echo "  ok: $1"; }
+OKN=0
+ok()  { OKN=$((OKN + 1)); echo "  ok: $1"; }
 bad() { echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
@@ -108,6 +109,6 @@ mk '| 912 | 🟡 К2 | **A.** **КЛАСС: что-то.** Фикс носите
 out=$(NOVA_REGSHAPE_BASELINE="$BASE" bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 0 ]; then ok "разные номера проходят"; else bad "ложный отказ на разных номерах"; fi
 
-if [ "$FAILED" -eq 0 ]; then echo "селфтест check-registry-entry-shape: 14/14 ok"; exit 0; fi
+if [ "$FAILED" -eq 0 ]; then echo "селфтест check-registry-entry-shape: $OKN/$OKN ok"; exit 0; fi
 echo "селфтест check-registry-entry-shape: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1

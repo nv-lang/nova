@@ -7,7 +7,8 @@ export LC_ALL=C
 G="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/check-background-build-verified.sh"
 TMP="${TMPDIR:-/tmp}/selftest_bbv_$$"
 FAILED=0
-ok()  { echo "  ok: $1"; }
+OKN=0
+ok()  { OKN=$((OKN + 1)); echo "  ok: $1"; }
 bad() { echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
 
 setup() { rm -rf "$TMP"; mkdir -p "$TMP/scripts/tools"; }
@@ -53,6 +54,6 @@ else
     bad "страж не назван в docs/dev/rules-for-agents.md"
 fi
 
-if [ "$FAILED" -eq 0 ]; then echo "селфтест check-background-build-verified: 6/6 ok"; exit 0; fi
+if [ "$FAILED" -eq 0 ]; then echo "селфтест check-background-build-verified: $OKN/$OKN ok"; exit 0; fi
 echo "селфтест check-background-build-verified: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1
