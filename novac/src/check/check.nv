@@ -892,6 +892,37 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     }
                     return
                 }
+                RetStmt => {
+                    // `return <value>` IS AN INITIALIZER POSITION (2026-09-21):
+                    // the lowering places the value through `@lower_place` into
+                    // the return slot (`@lower_return`, `lower/lowering.nv`) --
+                    // the same door a binding's own initializer goes through --
+                    // so a record constructor or a `match` here has the exact
+                    // tmp-scheme `init_pos` exists to permit. Found by
+                    // narrowing: `return Point { .. }` and `return match k {..}`
+                    // both refused before this arm existed, while the same
+                    // values as a binding's initializer already compiled
+                    // (274.5 §5г). A bare `return` has one child (the keyword
+                    // leaf) and marking it init_pos is harmless -- a leaf does
+                    // not read the flag.
+                    //
+                    // THIS WALK DECIDES POSITION ONLY -- it does not type
+                    // anything, and an earlier version of this fix called
+                    // `@type_match` right here, from inside the STRUCTURAL
+                    // walk, before any function's parameters are bound into
+                    // `@scope`. It refused the match's own scrutinee as
+                    // "unknown name": not a double-typing bug, but asking the
+                    // typing question in the wrong PASS. Typing a `return`'s
+                    // match value is typing.nv's job (RetStmt branch), which
+                    // runs later, after scope is populated -- see the mirror
+                    // of FnExprBody's dispatch there.
+                    mut i = 0
+                    for c in children {
+                        @walk(c, init_pos: i == children.len() - 1)
+                        i += 1
+                    }
+                    return
+                }
                 Lit => {
                     // MAGNITUDE FIRST (#810): a literal too large for `int`
                     // is a silent miscompile downstream -- the emitter prints
@@ -918,7 +949,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // gets here: that arm walks its children itself.
                     @report_if_range_outside_for(children, index_pos: index_pos)
                 }
-                LeafNode | File | ModuleDecl | IfStmt | RetStmt => {}
+                LeafNode | File | ModuleDecl | IfStmt => {}
                 AssignStmt | WhileStmt | FieldAccess | CtorField | CtorSpread => {}
                 MatchArm | Pattern | ArraySpread | Guard => {}
                 Recv | Generics | Unary | Paren | Name => {}
