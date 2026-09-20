@@ -190,6 +190,45 @@
    УЛУЧШЕНИЙ (218 → 235 при неизменных 14 файлах). Утренний доклад «332 → 218»
    этой мерой верен, но одной её мало. Разбор — 274.7 §Р, строка реестра №1201.
 
+## 0-2026-09-21-ОСТАНОВКА. Перезапуск по команде владельца, 01:13
+
+СДЕЛАНО (хэши, HEAD -> назад):
+- `91d7419b6` registry(TBD): with-handler refused as record ctor that is not there
+- `09b0fe1bc` plan(274.5): a form narrowed is not yet the cause the carriers refuse on
+- `fca999b22` plan(274.5): return position open to no form -- one door not six fixes
+- `f32aed67b` plan(274.5): all six forms narrowed, not four resting on a lying address
+- `86b2e4b4a` plan(274.5): one unnamed refusal was six forms, address pointed at innocent
+- `6bbfb7a7b` tools(rung-distance): where we stand, in one output instead of four
+- `1d6d5bcf7` registry(TBD): effect declaration refused by wrong cause, false advice
+- `27e5729f9` plan(274.5): 31 refusals grouped by first cause
+- `86bc8bec6` plan(274.5): first number toward rung 0.3 -- 59 of 90 examples
+- `8eefa5059` plan(274.5): remainder measure blind to forms our own source avoids
+- `16fe2ebcf` docs(carina-handoff): evening state section
+- `5a56aaeb1` repro(685): probe making oracle's argument order visible
+- `20a185854` novac(lint): marker written for reader not mechanism (6->0 findings)
+- `8e74e3e2d` spec(D484): argument order amendment to D188
+
+В ПОЛЁТЕ:
+- ничего недоделанного в дереве; последний коммит `91d7419b6` закрыт и цел.
+
+НЕЗАКОММИЧЕНО:
+```
+ M .vscode/settings.json
+```
+(не моё, чужое; не трогал).
+
+ДАЛЬШЕ: проверить прогоном гипотезу из 274.5 §5г/5д -- позиция `return` не
+открыта ни для одной формы (пробел настоящий), но носителей в корпусе
+примеров у неё нет; приоритет очереди 0.3 -- эффекты (`type X effect`,
+`with X = Y {...}`), два TBD-строки реестра уже заведены.
+
+ВОПРОСЫ ВЛАДЕЛЬЦУ/ИНТЕГРАТОРУ:
+- пуш держится до прогона двойной сборки (согласовано с nova-37: сперва
+  пуш 156+ коммитов, сразу за ним S5/двойная сборка -- приёмка 0.2, которая
+  НИКОГДА не гонялась в этом дереве);
+- номера для двух строк реестра TBD (`type X effect` неверная причина,
+  `with` отвергается как несуществующий конструктор записи) -- у интегратора.
+
 ## 0-2009в. Состояние на 2026-09-20, вечер (после перезапуска)
 
 ### Что сделано
