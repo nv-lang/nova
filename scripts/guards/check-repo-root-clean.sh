@@ -64,6 +64,7 @@ nova.toml
 ALLOWED_DIRS='
 .claude
 .githooks
+.kimi-code
 .github
 .sourcecraft
 .vscode
