@@ -178,13 +178,25 @@ fn Checker mut @judge_type_head_variant(e Node, kids []Node, arg_from int) -> bo
             // arity, like the field scan of a constructor -- not name
             // resolution in a registry, which is what the discipline rule is about.
             ro td = decl_of_ty(@ctx, head_t)
-                    // LOUD, NOT `?? (no_vrow(), 0)`. The head passed the `TkSum`
-            // test above, so a missing range is OUR fault, not the
-            // reader's -- and the zero fallback turned it into a refusal
-            // naming their name as unknown. Unreachable today, which is
-            // why it would have been found late.
-            ro vrange = variant_range_of(td)
-                ?? ice("check: a sum declaration with no variant rows reached the qualified-name judge")
+            // LOUD, NOT `?? (no_vrow(), 0)`. The head passed the `TkSum` test
+            // above, so a missing range is OUR fault, not the reader's -- and
+            // the zero fallback turned it into a refusal naming their name as
+            // unknown. Unreachable today, which is why it would have been found
+            // late.
+            //
+            // ON ONE LINE, AND THAT IS THE GRAMMAR, not style. Carried to a
+            // continuation line, `??` is refused by the COMPILER:
+            // `error: unexpected `??` in expression`. Measured 2026-09-20 with a
+            // four-line probe, after I had written here that only Carina refused
+            // it and the oracle was happy -- which was false, and false in the
+            // direction that lets the reader relax.
+            //
+            // HOW THE BROKEN FORM REACHED A COMMIT: I proved that edit by running
+            // `check-novac-subset-debt-dated`, which was green. It reads TEXT. The
+            // last build had run BEFORE the edit, and I took it as evidence for
+            // what came after. A check that does not measure its subject is worth
+            // less than no check, because it also carries conviction.
+            ro vrange = variant_range_of(td) ?? ice("check: a sum with no variant rows")
             ro first = raw_vrow(vrange.0)
             for j in first..first + vrange.1 {
                 ro vd = @ctx.variant_rows[j]
