@@ -1,0 +1,1509 @@
+# Строка реестра 1197: язык текстов диагностик компилятора. ЗАМЕР, НЕ ВЕРДИКТ.
+# Снято 2026-09-20 помощником, по заданию интегратора.
+#
+# ЗНАМЕНАТЕЛИ: файлов прочитано 138; строк со строковым литералом ВНЕ
+# комментария 25468.
+#
+# КИРИЛЛИЦА В ТЕКСТЕ, ключ КОД:            105 кодов
+# КИРИЛЛИЦА В ТЕКСТЕ, кода в строке НЕТ:   677 мест
+# только типографика (`—`, `§`, «»), кириллицы нет: 50 кодов — НЕ долг,
+# правило требует английского, а не ASCII.
+#
+# ПОЧЕМУ ДВА МНОЖЕСТВА. Носитель самой строки 1197 —
+# `compiler-codegen/src/argbind.rs:66` — кода в своей строке НЕ несёт,
+# и опись, построенная ТОЛЬКО по кодам, его пропускает. Ключ-код верен
+# для поиска снаружи, но как предикат охвата он уже предмета.
+
+## Кириллица при названном коде
+
+E_AMBIGUOUS_IDENT_PATTERN                    compiler-codegen/src/parser/mod.rs:11304
+E_AMP_RECORD_LITERAL                         compiler-codegen/src/parser/mod.rs:9058
+    (ещё вхождений: 1)
+E_ARRAY_ELEM_NARROW                          compiler-codegen/src/codegen/emit_c.rs:53501
+E_BANG_REQUIRES_FAIL                         compiler-codegen/src/types/fail_reach.rs:160
+E_BLANKET_CONFLICT                           compiler-codegen/src/types/mod.rs:19417
+E_BORROWING_METHOD_CONSUMES_SELF             compiler-codegen/src/types/mod.rs:48132
+E_CLOSURE_SCALAR_RETURN                      compiler-codegen/src/types/mod.rs:20735
+E_COALESCE_RETURN_FALLBACK                   compiler-codegen/src/types/mod.rs:10315
+E_CONST_FN_ALLOCATION                        compiler-codegen/src/types/mod.rs:2859
+E_CONST_FN_CLOSURE_ARITY                     compiler-codegen/src/const_fn_closure.rs:650
+    (ещё вхождений: 1)
+E_CONST_FN_CLOSURE_BODY                      compiler-codegen/src/const_fn_closure.rs:531
+    (ещё вхождений: 1)
+E_CONST_FN_CLOSURE_NO_RET_TYPE               compiler-codegen/src/const_fn_closure.rs:741
+E_CONST_FN_CLOSURE_OUTER_NOT_CONST           compiler-codegen/src/const_fn_closure.rs:538
+E_CONST_FN_CLOSURE_PARAM_TYPE                compiler-codegen/src/const_fn_closure.rs:663
+E_CONST_FN_CONTROL_FLOW                      compiler-codegen/src/const_fn_eval.rs:1900
+    (ещё вхождений: 4)
+E_CONST_FN_DIV_ZERO                          compiler-codegen/src/const_fn_eval.rs:794
+E_CONST_FN_EFFECT_IN_BODY                    compiler-codegen/src/types/mod.rs:2889
+    (ещё вхождений: 2)
+E_CONST_FN_EFFECT_IN_SIGNATURE               compiler-codegen/src/parser/mod.rs:4013
+E_CONST_FN_EVAL_OVERFLOW                     compiler-codegen/src/const_fn_eval.rs:783
+E_CONST_FN_EVAL_PANIC                        compiler-codegen/src/const_fn_eval.rs:262
+    (ещё вхождений: 20)
+E_CONST_FN_EXTERNAL                          compiler-codegen/src/parser/mod.rs:4001
+    (ещё вхождений: 1)
+E_CONST_FN_FIRST_CLASS                       compiler-codegen/src/const_fn_eval.rs:2880
+E_CONST_FN_GENERIC_NEEDS_T_REFLECTION        compiler-codegen/src/const_fn_eval.rs:2080
+    (ещё вхождений: 1)
+E_CONST_FN_MATCH_EXHAUSTIVE                  compiler-codegen/src/const_fn_eval.rs:490
+    (ещё вхождений: 1)
+E_CONST_FN_PARTIAL_CONSTNESS                 compiler-codegen/src/parser/mod.rs:3990
+E_CONST_FN_PATTERN_NOT_SUPPORTED             compiler-codegen/src/const_fn_eval.rs:2231
+    (ещё вхождений: 2)
+E_CONST_FN_TRAMPOLINE_GENERIC_ARITY          compiler-codegen/src/const_fn_trampoline.rs:294
+E_CONST_FN_TRAMPOLINE_INTRINSIC              compiler-codegen/src/const_fn_trampoline.rs:1519
+E_CONST_IN_BODY_RETRACTED                    compiler-codegen/src/parser/mod.rs:5320
+E_CONST_NOT_CONSTEXPR                        compiler-codegen/src/codegen/emit_c.rs:10771
+    (ещё вхождений: 4)
+E_CONST_NOT_MUT                              compiler-codegen/src/types/mod.rs:48544
+    (ещё вхождений: 1)
+E_CONST_PARAM_MOD_CONFLICT                   compiler-codegen/src/parser/mod.rs:4186
+    (ещё вхождений: 4)
+E_CONSUME_BLOCK_MOVE_OUT                     compiler-codegen/src/types/mod.rs:46982
+    (ещё вхождений: 2)
+E_CONSUME_BLOCK_NOT_OWNED                    compiler-codegen/src/types/mod.rs:46893
+E_CONSUME_IN_CONDITION                       compiler-codegen/src/parser/mod.rs:10957
+    (ещё вхождений: 1)
+E_CONSUME_KEYWORD_MISSING                    compiler-codegen/src/types/mod.rs:46498
+E_CONSUME_PATTERN_REQUIRED                   compiler-codegen/src/types/mod.rs:45996
+E_CONSUME_RECEIVER_RETURNS_AT                compiler-codegen/src/parser/mod.rs:3914
+E_D188_NOT_CLEANUP                           compiler-codegen/src/types/mod.rs:46921
+E_DEBUG_ATTR_TARGET                          compiler-codegen/src/parser/mod.rs:3480
+    (ещё вхождений: 5)
+E_DEFER_OUTCOME_ARITY                        compiler-codegen/src/parser/mod.rs:12513
+E_DEFER_OUTCOME_TYPE                         compiler-codegen/src/parser/mod.rs:12504
+E_DEP_PATH_OUTSIDE_REPO                      compiler-codegen/src/manifest.rs:872
+E_DUPLICATE_GENERIC_DECL                     compiler-codegen/src/types/mod.rs:7214
+E_DUPLICATE_PROTOCOL_IMPL                    compiler-codegen/src/types/mod.rs:19374
+E_EMPTY_GENERIC_PARAM_LIST                   compiler-codegen/src/parser/mod.rs:7886
+E_EXPLICIT_SELF_RETURN                       compiler-codegen/src/types/mod.rs:43951
+E_FFI_NON_C_ABI_TYPE                         compiler-codegen/src/parser/mod.rs:7682
+E_IS_NON_ANY                                 compiler-codegen/src/types/mod.rs:8013
+E_LINEAR_CAPTURE_IN_FIBER                    compiler-codegen/src/types/mod.rs:35085
+    (ещё вхождений: 1)
+E_LINEAR_PAYLOAD_DISCARDED                   compiler-codegen/src/types/mod.rs:45970
+E_LOCAL_NOT_MUT                              compiler-codegen/src/types/mod.rs:9970
+    (ещё вхождений: 3)
+E_MATCH_FOREIGN_VARIANT                      compiler-codegen/src/types/mod.rs:15490
+E_MATCH_NON_EXHAUSTIVE                       compiler-codegen/src/types/mod.rs:15508
+E_METHOD_REDEFINITION                        compiler-codegen/src/types/mod.rs:1505
+E_MISSING_RETURN                             compiler-codegen/src/types/mod.rs:9316
+E_MODULE_FILE_ORPHAN                         compiler-codegen/src/imports.rs:1775
+E_MONO_METHOD_KEY_COLLISION                  compiler-codegen/src/codegen/mono_method_registry.rs:91
+E_MUT_ARG_NOT_MUTABLE                        compiler-codegen/src/types/mod.rs:31979
+E_NO_COPY_CONSUME_CONFLICT                   compiler-codegen/src/types/mod.rs:41276
+E_NO_COPY_SECOND_NAME                        compiler-codegen/src/types/mod.rs:44637
+E_NO_STATIC_METHOD                           compiler-codegen/src/types/mod.rs:17674
+E_OR_PATTERN_BINDING_MISMATCH                compiler-codegen/src/types/mod.rs:3876
+E_PARAM_MOD_CONFLICT                         compiler-codegen/src/parser/mod.rs:4261
+    (ещё вхождений: 4)
+E_PARAM_NOT_MUT                              compiler-codegen/src/types/mod.rs:48239
+    (ещё вхождений: 1)
+E_PATTERN_CONSUME_MUT_CONFLICT               compiler-codegen/src/parser/mod.rs:12777
+    (ещё вхождений: 1)
+E_PATTERN_GROUP_MUT                          compiler-codegen/src/parser/mod.rs:6307
+    (ещё вхождений: 2)
+E_PRIMITIVE_NO_PROTOCOL_METHOD               compiler-codegen/src/codegen/emit_c.rs:46895
+E_PTR_ARITHMETIC_BANNED                      compiler-codegen/src/types/mod.rs:30260
+E_PTR_CAST_INVALID_TARGET                    compiler-codegen/src/codegen/emit_c.rs:58392
+    (ещё вхождений: 10)
+E_READONLY_COERCE                            compiler-codegen/src/types/mod.rs:13693
+    (ещё вхождений: 4)
+E_READONLY_FIELD                             compiler-codegen/src/types/mod.rs:26918
+E_REALTIME_POINTER_OP                        compiler-codegen/src/types/mod.rs:56167
+E_REBIND_LIVE_CONSUME                        compiler-codegen/src/types/mod.rs:43472
+E_RECEIVER_BINDING_NOT_MUT                   compiler-codegen/src/types/mod.rs:48361
+E_RECORD_VARIANT_POSITIONAL_PATTERN          compiler-codegen/src/types/mod.rs:14371
+E_RECV_METHOD_MISMATCH                       compiler-codegen/src/codegen/emit_c.rs:47227
+E_REDUNDANT_TYPE_MODIFIER                    compiler-codegen/src/parser/mod.rs:6712
+    (ещё вхождений: 1)
+E_REF_ALIAS_OVERLAP                          compiler-codegen/src/types/mod.rs:31883
+    (ещё вхождений: 1)
+E_REF_ARG_NOT_ADDRESSABLE                    compiler-codegen/src/types/mod.rs:32005
+    (ещё вхождений: 1)
+E_REF_ARG_NOT_MUT                            compiler-codegen/src/types/mod.rs:26782
+E_REF_CALL_MARKER_REMOVED                    compiler-codegen/src/parser/mod.rs:4455
+E_REF_ESCAPE                                 compiler-codegen/src/types/mod.rs:44398
+E_REF_ESCAPE_CAPTURE                         compiler-codegen/src/types/mod.rs:26753
+E_REF_PARAM_FORM_REMOVED                     compiler-codegen/src/parser/mod.rs:4321
+E_REF_TYPE_POSITION                          compiler-codegen/src/types/mod.rs:8251
+E_REPLACE_IN_MANIFEST                        compiler-codegen/src/manifest.rs:797
+E_REPLACE_PATH_MISSING                       compiler-codegen/src/imports.rs:1626
+E_SUPERVISOR_HANDLER_INTERRUPT               compiler-codegen/src/types/mod.rs:40398
+E_SUPERVISOR_HANDLER_SUSPEND                 compiler-codegen/src/types/mod.rs:40443
+E_TAGGED_TEMPLATE_ARG                        compiler-codegen/src/parser/mod.rs:8366
+    (ещё вхождений: 2)
+E_THROW_TYPE_MISMATCH                        compiler-codegen/src/types/mod.rs:5425
+E_TRY_IN_FAIL_FN                             compiler-codegen/src/types/mod.rs:49901
+E_TRY_OPTION_IN_RESULT_FN                    compiler-codegen/src/types/mod.rs:10239
+E_TRY_RESULT_IN_OPTION_FN                    compiler-codegen/src/types/mod.rs:10246
+E_TUPLE_NO_PER_FIELD_MOD                     compiler-codegen/src/parser/mod.rs:5191
+E_TUPLE_NO_PRIV                              compiler-codegen/src/parser/mod.rs:5155
+    (ещё вхождений: 1)
+E_UNDERSCORE_NAME_USED                       compiler-codegen/src/types/mod.rs:37851
+E_UNKNOWN_STATIC_METHOD                      compiler-codegen/src/codegen/emit_c.rs:48132
+E_UNSAFE_ARG_REQUIRES_WRAP                   compiler-codegen/src/types/mod.rs:45606
+E_UNUSED_PREFIX_TYPEVAR                      compiler-codegen/src/types/mod.rs:7092
+E_VALUE_RECORD_ESCAPE_AFTER_CONSUME          compiler-codegen/src/types/mod.rs:44232
+E_VIEW_BINDING_FORBIDDEN                     compiler-codegen/src/types/mod.rs:46477
+W_CONSUME_KEYWORD_UNNECESSARY                compiler-codegen/src/types/mod.rs:46540
+W_LOCK_LEGACY_NAME                           compiler-codegen/src/lockfile.rs:277
+
+## Кириллица без кода в строке (ключ — файл:строка)
+
+compiler-codegen/src/alpha_rename.rs:1377
+    переменная `x__s1` жива
+compiler-codegen/src/alpha_rename.rs:1378
+    переменная `x` жива
+compiler-codegen/src/argbind.rs:55
+    позиционный аргумент не может идти после именованного (D102)
+compiler-codegen/src/argbind.rs:61
+    именованный аргумент `{}` — нет такого параметра{}
+compiler-codegen/src/argbind.rs:64
+    параметр `{}` связан дважды (позиционно и по имени)
+compiler-codegen/src/argbind.rs:66
+    обязательный параметр `{}` не передан
+compiler-codegen/src/argbind.rs:68
+    именованный аргумент `{}` недопустим для variadic-параметра (D102)
+compiler-codegen/src/argbind.rs:70
+    слишком много позиционных аргументов: ожидалось {}, передано {}
+compiler-codegen/src/argbind.rs:72
+    `...spread` допустим только для variadic-параметра
+compiler-codegen/src/ast/pretty.rs:442
+    ... pretty не должна иметь '...' placeholder в binary, got: {}
+compiler-codegen/src/chain_norm.rs:927
+    expected 1 @buf read после chain rewrite (was N=4 before)
+compiler-codegen/src/chain_norm.rs:992
+    expected nested chain inside if-then к wrap
+compiler-codegen/src/chain_norm.rs:1035
+    bump declared с -> @ must be в registry; got {:?}
+compiler-codegen/src/chain_norm.rs:1037
+    reset declared с -> @ must be в registry; got {:?}
+compiler-codegen/src/chain_norm.rs:1039
+    get is NOT -> @ — must NOT be в registry; got {:?}
+compiler-codegen/src/chain_norm.rs:1265
+    step name must be в registry due к A's -> @; got {:?}
+compiler-codegen/src/codegen/emit_c.rs:2729
+    failed to load std/runtime/*.nv (Plan 13 Ф.8)
+compiler-codegen/src/codegen/emit_c.rs:3067
+    * legacy _nova_handler_Fail (nova_str) тоже install'тся в emit_with через\n
+compiler-codegen/src/codegen/emit_c.rs:3099
+    /* Per-E throw entry: prefer per-E slot, fallback на erased nova_throw_typed.\n
+compiler-codegen/src/codegen/emit_c.rs:3100
+    * Plan 173 Ф.4 #6 (D158 model B): cleanup-unwind bypasses handler dispatch —\n
+compiler-codegen/src/codegen/emit_c.rs:3101
+    * a failing cleanup composes into the suppressed pocket, не hijack'ит handler. */\n
+compiler-codegen/src/codegen/emit_c.rs:3131
+    /* Fallback к erased path (preserves typed payload в fail-frame). */\n
+compiler-codegen/src/codegen/emit_c.rs:5201
+    Self type used outside receiver context (free function or top-level expression). Self valid only внутри `fn Ty
+compiler-codegen/src/codegen/emit_c.rs:5428
+    note: режим сборки выключил {} проверок(и) `#debug` (контракты/инварианты).              В этой сборке они НЕ 
+compiler-codegen/src/codegen/emit_c.rs:9322
+    /* Plan 36: forward decls для user types — нужны для NovaOpt_<T> */\n{}
+compiler-codegen/src/codegen/emit_c.rs:9362
+    /* Plan 14 Ф.1: lazy NovaOpt_<T> typedef'ы — для T без \
+compiler-codegen/src/codegen/emit_c.rs:9381
+    /* Plan 59 Ф.7.5: mono'd NovaRes_<ok>_<err> Result typedef'ы. \
+compiler-codegen/src/codegen/emit_c.rs:9395
+    /* Plan 95 Ф.2.4: forward decls для mono'd Nova-body \
+compiler-codegen/src/codegen/emit_c.rs:9531
+    /* Plan 148 Ф.4: legacy all-int tuple typedefs (erased-generic fallback, on-demand). */\n
+compiler-codegen/src/codegen/emit_c.rs:9640
+    /* Plan 61 Ф.1: per-type NovaTypeId constants. */\n
+compiler-codegen/src/codegen/emit_c.rs:9656
+    \n/* Diagnostic helper для user-types (called from Plan 61\n
+compiler-codegen/src/codegen/emit_c.rs:9657
+    * unhandled-fail path; static, не overrides typeid.c weak). */\n
+compiler-codegen/src/codegen/emit_c.rs:10884
+    contract-only operator {:?} not allowed в const initialiser
+compiler-codegen/src/codegen/emit_c.rs:17711
+    HOF param `{}` в fn `{}`: inner closure param type
+compiler-codegen/src/codegen/emit_c.rs:17717
+    HOF param `{}` в fn `{}`: inner closure return type
+compiler-codegen/src/codegen/emit_c.rs:18104
+    field `{}` в type `{}`
+compiler-codegen/src/codegen/emit_c.rs:19244
+    int _consume_ccount; /* Plan 173 Ф.5 D188 R2 exactly-once */
+compiler-codegen/src/codegen/emit_c.rs:23361
+    warning: large mono'd tuple `{}` ({} элементов, ~{} bytes) — \
+compiler-codegen/src/codegen/emit_c.rs:31840
+    /* реестр 221.1 №583: {} has no declared @cleanup — nothing to run */
+compiler-codegen/src/codegen/emit_c.rs:32544
+    {} = 0;  /* Plan 217: consuming-вызов (receiver) — cleanup дизармлен */
+compiler-codegen/src/codegen/emit_c.rs:32576
+    {} = 0;  /* Plan 217: consume-param call-arg — cleanup дизармлен */
+compiler-codegen/src/codegen/emit_c.rs:32628
+    Nova_{}_zero_storage(&({}));  /* №465: zero-on-move — исходное хранилище занулено */
+compiler-codegen/src/codegen/emit_c.rs:32746
+    {} = 0;  /* Plan 201 v3 / 217: consuming-вызов — cleanup дизармлен */
+compiler-codegen/src/codegen/emit_c.rs:32778
+    {} = 0;  /* Plan 201 v3 / 217: consuming-вызов (fallback) — cleanup дизармлен */
+compiler-codegen/src/codegen/emit_c.rs:34635
+    {} = 0;  /* Plan 201 / 217: return-вынос — cleanup дизармлен */
+compiler-codegen/src/codegen/emit_c.rs:34841
+    {} = 0;  /* Plan 217: re-consume блок берёт cleanup на себя — outer auto-cleanup дизармлен */
+compiler-codegen/src/codegen/emit_c.rs:34883
+    /* Plan 173 Ф.2.B3-merge: consume {} = ... {{ ... }} */
+compiler-codegen/src/codegen/emit_c.rs:35057
+    {} = 0;  /* Plan 201: tail-вынос — cleanup дизармлен */
+compiler-codegen/src/codegen/emit_c.rs:35508
+    [M-fixed-array-value-semantics] `[N]T` array literal против `{}` \
+compiler-codegen/src/codegen/emit_c.rs:35514
+    [M-fixed-array-value-semantics] array literal с {} элементами \
+compiler-codegen/src/codegen/emit_c.rs:37745
+    Range materialize: open-ended Range without start bound (Plan 96 Ф.2)
+compiler-codegen/src/codegen/emit_c.rs:37747
+    Range materialize: open-ended Range without end bound (Plan 96 Ф.2)
+compiler-codegen/src/codegen/emit_c.rs:37872
+    compiler bug: map literal `[k: v]` reached codegen без \
+compiler-codegen/src/codegen/emit_c.rs:40190
+    spread не by-ptr
+compiler-codegen/src/codegen/emit_c.rs:41033
+    variadic call: ожидалось минимум {} regular-аргумента(ов), получено {}
+compiler-codegen/src/codegen/emit_c.rs:41053
+    spread (...) разрешён только в variadic-позиции
+compiler-codegen/src/codegen/emit_c.rs:41070
+    spread (...) на call-site разрешён только для variadic-fn (D69). \
+compiler-codegen/src/codegen/emit_c.rs:45534
+    fn-typed call param через mono subst
+compiler-codegen/src/codegen/emit_c.rs:45563
+    fn-typed call return через mono subst
+compiler-codegen/src/codegen/emit_c.rs:48455
+    spread (...) в println/print пока не поддержан
+compiler-codegen/src/codegen/emit_c.rs:50511
+    for-in: open-ended Range without start bound (Plan 96 Ф.2)
+compiler-codegen/src/codegen/emit_c.rs:50513
+    for-in: open-ended Range without end bound (Plan 96 Ф.2)
+compiler-codegen/src/codegen/emit_c.rs:51013
+    for-in tuple-pattern: непонятный elem-type `{}`
+compiler-codegen/src/codegen/emit_c.rs:53081
+    spread не поддерживается в []Protocol \
+compiler-codegen/src/codegen/emit_c.rs:53616
+    plan138.1 Ф.2: Vec method `{}` not found in generic_type_methods \
+compiler-codegen/src/codegen/emit_c.rs:53897
+    for-in tuple pattern: nested {:?} не поддерживается
+compiler-codegen/src/codegen/emit_c.rs:57981
+    Plan 59 Ф.7.5 D4: не удалось вывести (T,E) для Result-метода \
+compiler-codegen/src/codegen/emit_c.rs:58342
+    `as`-cast `{} as char` запрещён: codepoint 0x{:X} \
+compiler-codegen/src/codegen/emit_c.rs:58349
+    `as`-cast `{} as char` запрещён: codepoint U+{:04X} \
+compiler-codegen/src/codegen/emit_c.rs:58407
+    `as`-cast `{} as {}` запрещён: {}.
+compiler-codegen/src/codegen/emit_c.rs:59478
+    spread не by-ptr
+compiler-codegen/src/codegen/emit_c.rs:66363
+    /* Plan 139 Ф.6: interned string literals (rodata dedup). */\n
+compiler-codegen/src/codegen/emit_c.rs:67713
+    без фасада `collections` эмиссия обязана отказать, а не выдать код
+compiler-codegen/src/codegen/emit_c.rs:67715
+    отказ обязан назвать A8, иначе его не с чем связать; получено:\n{}
+compiler-codegen/src/codegen/emit_c.rs:67717
+    отказ обязан назвать НАСТОЯЩИЙ тип элемента, а не подставленный \
+compiler-codegen/src/codegen/emit_c.rs:67728
+    примитивный элемент без фасада — тот же отказ
+compiler-codegen/src/codegen/emit_c.rs:67730
+    получено:\n{}
+compiler-codegen/src/codegen/emit_c.rs:67735
+    снятый рантайм не должен эмититься даже частично:\n{}
+compiler-codegen/src/codegen/emit_c.rs:67737
+    снятый рантайм не должен эмититься даже частично:\n{}
+compiler-codegen/src/codegen/emit_c.rs:67754
+    D226 NovaValue_ prefix MUST NOT match Nova_ check — иначе \
+compiler-codegen/src/codegen/emit_c.rs:67766
+    heap records have trailing * — `!ety.ends_with('*')` фильтрует их
+compiler-codegen/src/codegen/emit_c.rs:67927
+    Path[<local-var>, <field>] must route к Member-branch; got `{}`
+compiler-codegen/src/codegen/emit_c/emit_detach.rs:56
+    {} = 0;  /* №379: spawn/detach-consume — outer auto-cleanup дизармлен перед файбером */
+compiler-codegen/src/codegen/runtime_registry.rs:118
+    sqrt Квадратный корень. NaN на отрицательном.
+compiler-codegen/src/codegen/runtime_registry.rs:119
+    cbrt Кубический корень.
+compiler-codegen/src/codegen/runtime_registry.rs:120
+    abs Модуль (|x|).
+compiler-codegen/src/codegen/runtime_registry.rs:121
+    ceil Округление вверх (toward +∞).
+compiler-codegen/src/codegen/runtime_registry.rs:122
+    floor Округление вниз (toward -∞).
+compiler-codegen/src/codegen/runtime_registry.rs:123
+    round Округление до ближайшего целого (half away from zero).
+compiler-codegen/src/codegen/runtime_registry.rs:124
+    trunc Отбрасывание дробной части (toward zero).
+compiler-codegen/src/codegen/runtime_registry.rs:125
+    sin Синус (radians).
+compiler-codegen/src/codegen/runtime_registry.rs:126
+    cos Косинус (radians).
+compiler-codegen/src/codegen/runtime_registry.rs:127
+    tan Тангенс (radians).
+compiler-codegen/src/codegen/runtime_registry.rs:128
+    asin Арксинус. Result в [-π/2, π/2].
+compiler-codegen/src/codegen/runtime_registry.rs:129
+    acos Арккосинус. Result в [0, π].
+compiler-codegen/src/codegen/runtime_registry.rs:130
+    atan Арктангенс. Result в (-π/2, π/2).
+compiler-codegen/src/codegen/runtime_registry.rs:131
+    sinh Гиперболический синус.
+compiler-codegen/src/codegen/runtime_registry.rs:132
+    cosh Гиперболический косинус.
+compiler-codegen/src/codegen/runtime_registry.rs:133
+    tanh Гиперболический тангенс.
+compiler-codegen/src/codegen/runtime_registry.rs:136
+    ln Натуральный log (по основанию e).
+compiler-codegen/src/codegen/runtime_registry.rs:137
+    log2 Log по основанию 2.
+compiler-codegen/src/codegen/runtime_registry.rs:138
+    log10 Log по основанию 10.
+compiler-codegen/src/codegen/runtime_registry.rs:166
+    atan2(y, x) — angle от positive x-axis. Self = y.
+compiler-codegen/src/codegen/runtime_registry.rs:190
+    sqrt(self^2 + y^2) без overflow.
+compiler-codegen/src/codegen/runtime_registry.rs:203
+    True если NaN.
+compiler-codegen/src/codegen/runtime_registry.rs:215
+    True если не ±∞ и не NaN.
+compiler-codegen/src/codegen/runtime_registry.rs:227
+    True если ±∞.
+compiler-codegen/src/codegen/runtime_registry.rs:235
+    sqrt sqrtf Квадратный корень (single precision).
+compiler-codegen/src/codegen/runtime_registry.rs:236
+    cbrt cbrtf Кубический корень (single precision).
+compiler-codegen/src/codegen/runtime_registry.rs:237
+    abs fabsf Модуль |x| (single precision).
+compiler-codegen/src/codegen/runtime_registry.rs:238
+    ceil ceilf Округление вверх (single precision).
+compiler-codegen/src/codegen/runtime_registry.rs:239
+    floor floorf Округление вниз (single precision).
+compiler-codegen/src/codegen/runtime_registry.rs:240
+    round roundf Округление до ближайшего (single precision).
+compiler-codegen/src/codegen/runtime_registry.rs:242
+    sin sinf Синус radians (single precision).
+compiler-codegen/src/codegen/runtime_registry.rs:243
+    cos cosf Косинус radians (single precision).
+compiler-codegen/src/codegen/runtime_registry.rs:244
+    tan tanf Тангенс radians (single precision).
+compiler-codegen/src/codegen/runtime_registry.rs:245
+    asin asinf Арксинус (single precision).
+compiler-codegen/src/codegen/runtime_registry.rs:246
+    acos acosf Арккосинус (single precision).
+compiler-codegen/src/codegen/runtime_registry.rs:247
+    atan atanf Арктангенс (single precision).
+compiler-codegen/src/codegen/runtime_registry.rs:248
+    sinh sinhf Гиперболический синус (single precision).
+compiler-codegen/src/codegen/runtime_registry.rs:249
+    cosh coshf Гиперболический косинус (single precision).
+compiler-codegen/src/codegen/runtime_registry.rs:250
+    tanh tanhf Гиперболический тангенс (single precision).
+compiler-codegen/src/codegen/runtime_registry.rs:253
+    ln logf Натуральный log (single precision).
+compiler-codegen/src/codegen/runtime_registry.rs:319
+    True если NaN (single precision).
+compiler-codegen/src/codegen/runtime_registry.rs:331
+    True если не ±∞ и не NaN (single precision).
+compiler-codegen/src/codegen/runtime_registry.rs:343
+    True если ±∞ (single precision).
+compiler-codegen/src/codegen/runtime_registry.rs:440
+    // См. docs/plans/13-runtime-stdlib-and-autogen.md.\n
+compiler-codegen/src/codegen/split_tu.rs:1136
+    /* Plan 36: forward decls для user types — нужны для NovaOpt_<T> */\ntypedef int64_t Nova_RawMem;\n
+compiler-codegen/src/codegen/sum_schema_registry.rs:1076
+    Option.unwrap_or мигрирован на Nova-body — НЕ в baseline method_routing
+compiler-codegen/src/codegen/sum_schema_registry.rs:1078
+    Option.is_some мигрирован на Nova-body — НЕ в baseline method_routing
+compiler-codegen/src/codegen/sum_schema_registry.rs:1083
+    Option.unwrap должен оставаться в baseline routing
+compiler-codegen/src/codegen/sum_schema_registry.rs:1206
+    re-registration с тем же (nova_name, source) должна overwrite
+compiler-codegen/src/codegen/sum_schema_registry.rs:1315
+    is_some убран из baseline — регистрируется DeclaredBody через prelude scan
+compiler-codegen/src/codegen/sum_schema_registry.rs:1321
+    Option.unwrap_or мигрирован на Nova-body — НЕ в baseline (None без prelude scan)
+compiler-codegen/src/codegen/sum_schema_registry.rs:1336
+    Result.unwrap_or мигрирован на Nova-body — НЕ в baseline (None без prelude scan)
+compiler-codegen/src/codegen/sum_schema_registry.rs:1406
+    init_prelude_decls (Ф.1 stub) must not change entry count
+compiler-codegen/src/codegen/sum_schema_registry.rs:1421
+    пустой items list не должен добавлять entries
+compiler-codegen/src/codegen/sum_schema_registry.rs:1459
+    Prelude entry должен выигрывать lookup precedence
+compiler-codegen/src/codegen/sum_schema_registry.rs:1461
+    Prelude entry должен иметь origin_module = Some(std.prelude.core)
+compiler-codegen/src/codegen/sum_schema_registry.rs:1468
+    Option.unwrap должен оставаться routable после Prelude scan'а
+compiler-codegen/src/codegen/sum_schema_registry.rs:1472
+    routing must inherit от HardcodedBaseline
+compiler-codegen/src/codegen/sum_schema_registry.rs:1474
+    is_per_t flag должен сохраниться (unwrap — non-per-T inline)
+compiler-codegen/src/codegen/sum_schema_registry.rs:1485
+    Option.unwrap_or (Nova-body, не в этих items) не routable из baseline-inherited entry
+compiler-codegen/src/codegen/sum_schema_registry.rs:1494
+    is_some убран из baseline (Plan 95) — external декларация без baseline-entry не регистрирует routing
+compiler-codegen/src/codegen/sum_schema_registry.rs:1537
+    Result methods — non-per-T в bootstrap'е
+compiler-codegen/src/codegen/sum_schema_registry.rs:1545
+    Result.unwrap_or (Nova-body, не в этих items) не routable из baseline-inherited entry
+compiler-codegen/src/codegen/sum_schema_registry.rs:1601
+    Nova-body метод → has_nova_body = true
+compiler-codegen/src/codegen/sum_schema_registry.rs:1613
+    external method `unwrap` остаётся C-routed (не DeclaredBody), got {:?}
+compiler-codegen/src/codegen/sum_schema_registry.rs:1621
+    unwrap_or (Nova-body, не в items) не routable из baseline-inherited entry
+compiler-codegen/src/codegen/sum_schema_registry.rs:1727
+    Prelude entry должен выигрывать lookup precedence
+compiler-codegen/src/codegen/sum_schema_registry.rs:1729
+    Prelude entry должен иметь origin_module = Some(std.prelude.errors)
+compiler-codegen/src/codegen/sum_schema_registry.rs:1762
+    variant {} must resolve через Prelude (higher priority)
+compiler-codegen/src/codegen/sum_schema_registry.rs:1804
+    variant drift должен trigger silent skip; baseline остаётся primary
+compiler-codegen/src/codegen/sum_schema_registry.rs:1807
+    Prelude entry не должен быть зарегистрирован
+compiler-codegen/src/codegen/sum_schema_registry.rs:1826
+    ReadBufferError не должен быть в HardcodedBaseline
+compiler-codegen/src/codegen/sum_schema_registry.rs:1861
+    ReadBufferError должен быть зарегистрирован
+compiler-codegen/src/codegen/sum_schema_registry.rs:1877
+    UnexpectedEnd должен резолвиться
+compiler-codegen/src/codegen/sum_schema_registry.rs:1911
+    method on non-Option/Result type не должен добавлять entries
+compiler-codegen/src/doc/collect_handlers.rs:284
+    ident `subhandler` не должен match'нуть keyword
+compiler-codegen/src/doc/collect_handlers.rs:293
+    handler без `{{` не должен match'нуть
+compiler-codegen/src/doc/highlight.rs:217
+    doc comment должен highlighted, got: {}
+compiler-codegen/src/doc/highlight.rs:225
+    line comment должен highlighted, got: {}
+compiler-codegen/src/doc/highlight.rs:233
+    <a> raw HTML tags не должны быть в output
+compiler-codegen/src/doc/highlight.rs:252
+    fn внутри string НЕ должен highlighted, got: {}
+compiler-codegen/src/doc/json_parse.rs:174
+    \\uXXXX escape unsupported (Plan 45 Ф.32.2 limitation)
+compiler-codegen/src/doc/mcp.rs:243
+    no `items` array в JSON
+compiler-codegen/src/doc/mcp.rs:390
+    add resp должна содержать `add`, got: {}
+compiler-codegen/src/doc/mcp.rs:391
+    sub resp должна содержать `sub`, got: {}
+compiler-codegen/src/doc/mcp.rs:399
+    add pure fn `add` должен match, got: {}
+compiler-codegen/src/doc/mcp.rs:403
+    result должен содержать add как item name
+compiler-codegen/src/doc/mcp.rs:405
+    non-pure sub НЕ должен быть в result
+compiler-codegen/src/doc/mcp.rs:413
+    add resp должна mention add
+compiler-codegen/src/doc/watch_cache.rs:67
+    mtime для {}: {}
+compiler-codegen/src/doc/watch_cache.rs:256
+    hit должен return same Arc pointer
+compiler-codegen/src/effect_surface.rs:136
+    в `{}` не найдено .nv-файлов
+compiler-codegen/src/effect_surface.rs:142
+    чтение {}: {}
+compiler-codegen/src/effect_surface.rs:175
+    forbid-проверка `{}`: {}
+compiler-codegen/src/effect_surface.rs:185
+    forbid-проверка `{}`: {}
+compiler-codegen/src/effect_surface.rs:199
+    \n  запрещённый эффект `{}` в публичном API: {}
+compiler-codegen/src/effect_surface.rs:207
+    зависимость `{}` нарушает capability-границу `forbid`{}\n  \
+compiler-codegen/src/effect_surface.rs:255
+    приватный Net не в публичной surface
+compiler-codegen/src/effect_surface.rs:333
+    Net под forbid → ошибка
+compiler-codegen/src/effect_surface.rs:354
+    Fs не используется — нарушения нет
+compiler-codegen/src/embed_resolve.rs:437
+    relative/path\") (D412-amendment, Plan 210 Ф.7.2)
+compiler-codegen/src/field_cache.rs:10319
+    ro x must emit ровно ONE cache let; got {:?}
+compiler-codegen/src/field_cache.rs:10621
+    no V1.1 split needed когда V7.5 makes single region; got {:?}
+compiler-codegen/src/field_cache.rs:10659
+    V7.6: no split expected когда ref-type kept cache; got {:?}
+compiler-codegen/src/field_cache.rs:10902
+    V2.1: single read без loop body should NOT cache; got {:?}
+compiler-codegen/src/field_cache.rs:10928
+    V2.1: for-loop body read should promote с threshold=5; got {:?}
+compiler-codegen/src/field_cache.rs:11088
+    Bldr.replace must be в replaces_self set
+compiler-codegen/src/field_cache.rs:11097
+    Outer.b field_type_leaf must resolve к Bldr
+compiler-codegen/src/field_cache.rs:11777
+    x expected все mut_caches to be 'x'
+compiler-codegen/src/field_cache.rs:12551
+    must NOT emit length-3 prefix (only 1 chain через _.c); got {:?}
+compiler-codegen/src/field_cache.rs:13098
+    @do not found в explain report
+compiler-codegen/src/field_cache.rs:13227
+    ro field must land в ro_caches; got {:?}
+compiler-codegen/src/field_cache.rs:13326
+    после №468: newtype над примитивом наследует НЕстабильный слот
+compiler-codegen/src/field_cache.rs:13402
+    после №468: поле str НЕ ref-typed — `fn str mut @` переписывает handle
+compiler-codegen/src/field_cache.rs:13414
+    ro []u8 must recurse и be ref-typed
+compiler-codegen/src/field_cache.rs:13439
+    alias to []int must recurse и be ref-typed
+compiler-codegen/src/git_cache.rs:53
+    не удалось определить домашнюю директорию Nova \
+compiler-codegen/src/git_cache.rs:123
+    не удалось запустить `git {}` — git установлен и в PATH?
+compiler-codegen/src/git_cache.rs:130
+    `git {}` завершился с ошибкой:\n  {}
+compiler-codegen/src/git_cache.rs:169
+    версия `{}`
+compiler-codegen/src/git_cache.rs:170
+    ветка по умолчанию
+compiler-codegen/src/git_cache.rs:316
+    git-зависимость `{}` отсутствует в кэше, а режим offline \
+compiler-codegen/src/git_cache.rs:324
+    не удалось создать каталог кэша {}
+compiler-codegen/src/git_cache.rs:331
+    clone git-зависимости `{}`
+compiler-codegen/src/git_cache.rs:388
+    зафиксированный в nova.lock.toml commit `{}` git-зависимости \
+compiler-codegen/src/git_cache.rs:403
+    fetch git-зависимости `{}`
+compiler-codegen/src/git_cache.rs:407
+    git-зависимость `{}`: ни один тег не подходит под версию `{}`{}
+compiler-codegen/src/git_cache.rs:410
+    (offline — fetch запрещён)
+compiler-codegen/src/git_cache.rs:417
+    git-зависимость `{}`: тег `{}` не резолвится в commit
+compiler-codegen/src/git_cache.rs:431
+    fetch git-зависимости `{}`
+compiler-codegen/src/git_cache.rs:443
+    fetch git-зависимости `{}`
+compiler-codegen/src/git_cache.rs:447
+    git-зависимость `{}`: {} не найден в репозитории{}
+compiler-codegen/src/git_cache.rs:451
+    (offline — fetch запрещён)
+compiler-codegen/src/git_cache.rs:466
+    не удалось создать каталог checkout {}
+compiler-codegen/src/git_cache.rs:483
+    checkout commit `{}` git-зависимости `{}`
+compiler-codegen/src/git_cache.rs:716
+    тег не подходит err: {}
+compiler-codegen/src/imports.rs:1534
+    relative import `{}{}` выходит за границу файловой системы\n  \
+compiler-codegen/src/imports.rs:1545
+    relative import `{}{}` выходит за границу пакета\n  \
+compiler-codegen/src/imports.rs:1587
+    импорт из зависимости `{}` требует путь к модулю: \
+compiler-codegen/src/imports.rs:1603
+    зависимость `{}` задана registry-версией `{}`, но registry \
+compiler-codegen/src/imports.rs:1611
+    некорректная запись `[dependencies]` для `{}`: {}\n  \
+compiler-codegen/src/imports.rs:1613
+    ...\" }}` либо \
+compiler-codegen/src/imports.rs:1618
+    path-зависимость `{}` указывает на несуществующую \
+compiler-codegen/src/imports.rs:1637
+    path-зависимость `{}`: директория не содержит `nova.toml`\n  \
+compiler-codegen/src/imports.rs:1645
+    имя зависимости `{}` не совпадает с `[package].name` = `{}` \
+compiler-codegen/src/imports.rs:1768
+    ий ие
+compiler-codegen/src/imports.rs:1771
+    - {} — объявляет `module {}`
+compiler-codegen/src/imports.rs:1834
+    import `{}` пересекает границу пакета без объявления в \
+compiler-codegen/src/imports.rs:1863
+    relative import резолвится в модуль `{}` — это модуль \
+compiler-codegen/src/imports.rs:3227
+    `std` — зарезервированное имя (неявный stdlib-пакет); \
+compiler-codegen/src/imports.rs:3235
+    зависимость `{}` объявлена в `[dependencies]` дважды\n  \
+compiler-codegen/src/imports.rs:3333
+    git-зависимость `{}`: {}
+compiler-codegen/src/imports_stats.rs:109
+    \n===== imports stats (план 252 Ф.0) =====
+compiler-codegen/src/imports_stats.rs:110
+    resolve_imports_inline_ex вызовов : {}
+compiler-codegen/src/imports_stats.rs:111
+    collect_all_signatures вызовов    : {}
+compiler-codegen/src/imports_stats.rs:112
+    разборов peer-файлов (полный)     : {}
+compiler-codegen/src/imports_stats.rs:113
+    разборов peer-файлов (сигнатуры)  : {}
+compiler-codegen/src/imports_stats.rs:114
+    разборов всего                    : {}
+compiler-codegen/src/imports_stats.rs:115
+    уникальных файлов                 : {}
+compiler-codegen/src/imports_stats.rs:119
+    повторность (разборов/уникальных) : {:.1}x
+compiler-codegen/src/imports_stats.rs:123
+    разобрано байт                    : {} ({:.1} MiB)
+compiler-codegen/src/imports_stats.rs:126
+    -- чаще всего разбираемые файлы --
+compiler-codegen/src/interp/mod.rs:137
+    external fn пропущен выше
+compiler-codegen/src/lexer/mod.rs:447
+    lex_doc_comment должна вызываться только когда позиция на префиксе
+compiler-codegen/src/lexer/mod.rs:1334
+    стек не пустеет без return
+compiler-codegen/src/lints.rs:8720
+    ожидался E_PARAM_TYPE_POS_MUT_RETRACTED, получено: {}
+compiler-codegen/src/lints.rs:8731
+    ожидался E_PARAM_TYPE_POS_MUT_RETRACTED на slice-типе, получено: {}
+compiler-codegen/src/lints.rs:8742
+    ожидался E_PARAM_TYPE_POS_MUT_RETRACTED на fixed-size array, получено: {}
+compiler-codegen/src/lints.rs:8754
+    ожидался E_PARAM_TYPE_POS_MUT_RETRACTED на R2-split `ro x mut T`, получено: {}
+compiler-codegen/src/lints.rs:8766
+    не должен fire на канонической префиксной форме, получено: {:?}
+compiler-codegen/src/lints.rs:8915
+    ожидался trust-introduced warning, получено: {:?}
+compiler-codegen/src/lints.rs:8929
+    trust-introduced не должен эмититься внутри #trusted
+compiler-codegen/src/lints.rs:8942
+    ожидался assert-static-unverified, получено: {:?}
+compiler-codegen/src/lints.rs:9296
+    ожидался W_STATIC_CONVERSION на `Path.from_str`, получено: {:?}
+compiler-codegen/src/lints.rs:9313
+    не должен fire на `from_polar` (концепт-источник), получено: {:?}
+compiler-codegen/src/lints.rs:9329
+    не должен fire на `from_raw_parts` (концепт-источник), получено: {:?}
+compiler-codegen/src/lints.rs:9348
+    consume + голое имя, конвертирующее в другой тип, должно флагаться, got: {:?}
+compiler-codegen/src/lints.rs:9363
+    канон into_* не должен флагаться, got: {:?}
+compiler-codegen/src/lints.rs:9377
+    consume @with_* (D117 wither, не финализатор) не должен флагаться, got: {:?}
+compiler-codegen/src/lints.rs:9391
+    не-consume голый вид не должен флагаться, got: {:?}
+compiler-codegen/src/lints.rs:9405
+    возврат ТОГО ЖЕ типа (не финализатор в другой тип) не должен флагаться, got: {:?}
+compiler-codegen/src/lints.rs:9419
+    Unit-возврат (RAII-финализатор, не конверсия в значение) не должен флагаться, got: {:?}
+compiler-codegen/src/lints.rs:9434
+    `Result[(), E]`-финализатор (close-класс) не должен флагаться, got: {:?}
+compiler-codegen/src/lints.rs:9450
+    nova:allow должен гасить находку, got: {:?}
+compiler-codegen/src/lints.rs:9579
+    ожидался W_STR_CONCAT_LOOP на `s += i.to_str()` в цикле, получено: {:?}
+compiler-codegen/src/lints.rs:9595
+    не должен fire на int += int, получено: {:?}
+compiler-codegen/src/lints.rs:9609
+    ожидался W_STR_CONCAT_METHOD на str.concat(...), получено: {:?}
+compiler-codegen/src/lints.rs:9622
+    ожидался W_STR_CONCAT_METHOD, ресивер .to_str(), получено: {:?}
+compiler-codegen/src/lints.rs:9637
+    ожидались 2 срабатывания (chain), получено {}: {:?}
+compiler-codegen/src/lints.rs:9653
+    не должен fire на Vec.concat, получено: {:?}
+compiler-codegen/src/lints.rs:9667
+    не должен fire на []u8.concat, получено: {:?}
+compiler-codegen/src/lints.rs:9684
+    должен молчать при in_str_runtime_impl, получено: {:?}
+compiler-codegen/src/lints.rs:10255
+    ожидался new-then-cap, получено: {:?}
+compiler-codegen/src/lints.rs:10271
+    ожидался new-then-cap (chain), получено: {:?}
+compiler-codegen/src/lints.rs:10288
+    не должен fire когда cap уже передан в new(), получено: {:?}
+compiler-codegen/src/lints.rs:10308
+    не должен fire на самостоятельном .cap()-сеттере, получено: {:?}
+compiler-codegen/src/lints.rs:10329
+    не должен fire когда .cap() зовётся на ДРУГОМ binding'е, получено: {:?}
+compiler-codegen/src/lints.rs:10349
+    не должен fire когда между new и cap есть другой stmt, получено: {:?}
+compiler-codegen/src/lockfile.rs:216
+    nova.lock.toml: запись [[package]] без `name`
+compiler-codegen/src/lockfile.rs:228
+    nova.lock.toml: git-запись `{}` без `commit`
+compiler-codegen/src/lockfile.rs:233
+    nova.lock.toml: запись `{}` с неизвестным source `{}`
+compiler-codegen/src/lockfile.rs:271
+    чтение {}
+compiler-codegen/src/lockfile.rs:282
+    чтение {}
+compiler-codegen/src/lockfile.rs:351
+    зависимость `{}`: path `{}` не существует\n  ожидалось: {}
+compiler-codegen/src/lockfile.rs:371
+    git-зависимость `{}`
+compiler-codegen/src/lockfile.rs:409
+    цикл зависимостей пакетов:\n  {}
+compiler-codegen/src/lockfile.rs:476
+    зависимость `{}` НЕПЕРЕНОСИМА: {}\n    \
+compiler-codegen/src/lockfile.rs:489
+    зависимость `{}` объявляет [replace] `{}` в СВОЁМ \
+compiler-codegen/src/lockfile.rs:564
+    запись {}
+compiler-codegen/src/lockfile.rs:661
+    запись {}
+compiler-codegen/src/lockfile.rs:680
+    некорректная версия `{}`: {}
+compiler-codegen/src/lockfile.rs:723
+    версия {} пакета `{}` не найдена среди тегов
+compiler-codegen/src/lockfile.rs:760
+    git-пакет `{}`@{}: нет `[package]` в nova.toml
+compiler-codegen/src/lockfile.rs:815
+    резолв версий git-зависимостей:\n  {}
+compiler-codegen/src/lockfile.rs:821
+    commit версии {} пакета `{}`
+compiler-codegen/src/lockfile.rs:930
+    цикл err: {}
+compiler-codegen/src/manifest.rs:312
+    git-зависимость: пины rev/tag/branch/version \
+compiler-codegen/src/manifest.rs:329
+    git-зависимость: некорректный version `{}`: {}
+compiler-codegen/src/manifest.rs:848
+    путь ведёт в СОСЕДНИЙ git-репозиторий, на чистом клоне он не разрешится
+compiler-codegen/src/manifest.rs:851
+    ни манифест, ни цель не под git — подтвердить, что путь придёт вместе с клоном, нечем
+compiler-codegen/src/manifest.rs:854
+    цель не под git — подтвердить, что она придёт вместе с клоном манифеста, нечем
+compiler-codegen/src/manifest.rs:857
+    манифест не под git — подтвердить, что цель придёт вместе с ним, нечем
+compiler-codegen/src/manifest.rs:873
+    {}\"` в [dependencies] ({}) — {}\n  \
+compiler-codegen/src/manifest.rs:875
+    x.y\" }}` в [dependencies]; локальный путь — в \
+compiler-codegen/src/manifest.rs:876
+    {}\" }}` внутри nova.override.toml \
+compiler-codegen/src/manifest.rs:923
+    зависимость `{}` объявлена голым `path` в [dependencies] \
+compiler-codegen/src/manifest.rs:926
+    x.y\" }}` в [dependencies], а `path` — в \
+compiler-codegen/src/manifest.rs:942
+    [replace] `{}` не соответствует ни одной записи \
+compiler-codegen/src/manifest.rs:960
+    {} устарел, переименуйте в nova.override.toml
+compiler-codegen/src/manifest.rs:973
+    {}: неподдерживаемый ключ/секция `{}` — {} \
+compiler-codegen/src/manifest.rs:1745
+    estab_trail_cmt [package]\nname = \"x\"\n[lib]\nsrc = \".\"\nenforce-stability = true # opt-in строгий режим\n
+compiler-codegen/src/manifest.rs:1757
+    flag только в [lib], не в [package]
+compiler-codegen/src/manifest.rs:1782
+    ожидался Path (replace), получено {:?}
+compiler-codegen/src/manifest.rs:1799
+    ожидался Path, получено {:?}
+compiler-codegen/src/manifest.rs:2073
+    ожидался GitPin::Version, получено {:?}
+compiler-codegen/src/manifest.rs:2085
+    взаимоисключ
+compiler-codegen/src/manifest.rs:2088
+    ожидался Invalid, получено {:?}
+compiler-codegen/src/manifest.rs:2096
+    получено {:?}
+compiler-codegen/src/manifest.rs:2111
+    ожидался Git, получено {:?}
+compiler-codegen/src/parser/mod.rs:1153
+    после `./` не может идти `../` — пишите `../` напрямую
+compiler-codegen/src/parser/mod.rs:2898
+    #fuel требует аргумент: `#fuel(N)`
+compiler-codegen/src/parser/mod.rs:2908
+    #fuel(N) требует 0 <= N <= 100
+compiler-codegen/src/parser/mod.rs:2915
+    #fuel требует int literal: `#fuel(2)`
+compiler-codegen/src/parser/mod.rs:2922
+    ожидался `)` после #fuel(N)
+compiler-codegen/src/parser/mod.rs:2945
+    #fn_eval_max_depth требует аргумент: `#fn_eval_max_depth(N)`
+compiler-codegen/src/parser/mod.rs:2955
+    #fn_eval_max_depth(N) требует 1 <= N <= 65535
+compiler-codegen/src/parser/mod.rs:2962
+    #fn_eval_max_depth требует int literal: `#fn_eval_max_depth(512)`
+compiler-codegen/src/parser/mod.rs:2969
+    ожидался `)` после #fn_eval_max_depth(N)
+compiler-codegen/src/parser/mod.rs:2985
+    #test_access требует list: `#test_access(TypeX, TypeY, ...)`
+compiler-codegen/src/parser/mod.rs:3001
+    ожидался Type-identifier или `)` в #test_access(...)
+compiler-codegen/src/parser/mod.rs:3017
+    #test_access требует хотя бы один Type: `#test_access(TypeX, ...)`
+compiler-codegen/src/parser/mod.rs:3169
+    duplicate protocol `{}` в #impl list
+compiler-codegen/src/parser/mod.rs:3766
+    receiver не может иметь два квалификатора подряд: `mut` и \
+compiler-codegen/src/parser/mod.rs:3848
+    variadic-параметр `{}` должен быть последним в списке (D69)
+compiler-codegen/src/parser/mod.rs:3862
+    параметр `{}` без значения по умолчанию не может идти после \
+compiler-codegen/src/parser/mod.rs:3902
+    `-> @` (fluent-return, возврат receiver'а) допустим \
+compiler-codegen/src/parser/mod.rs:4231
+    параметр не может быть одновременно `consume` и `mut` (D131): \
+compiler-codegen/src/parser/mod.rs:4313
+    пишите `mut x T` — параметр `mut` теперь in-out ссылка всегда
+compiler-codegen/src/parser/mod.rs:4315
+    пишите `x T` — представление ro-параметра выбирает компилятор по размеру
+compiler-codegen/src/parser/mod.rs:4317
+    пишите `mut x T` (in-out) либо `x T` (ro)
+compiler-codegen/src/parser/mod.rs:4391
+    variadic-параметр `{}` должен иметь тип `[]T` (массив)
+compiler-codegen/src/parser/mod.rs:4402
+    variadic-параметр `{}` не может иметь значение по умолчанию (D102)
+compiler-codegen/src/parser/mod.rs:4461
+    уберите маркер `ref` — пишите `f(x)`
+compiler-codegen/src/parser/mod.rs:5362
+    #visible_to требует list: `#visible_to(TypeX, TypeY, ...)`
+compiler-codegen/src/parser/mod.rs:5377
+    ожидался Type-identifier или `)` в #visible_to(...)
+compiler-codegen/src/parser/mod.rs:5393
+    #visible_to требует хотя бы один Type
+compiler-codegen/src/parser/mod.rs:6426
+    Plan 201 (D188): `consume s = consume X { body }` требует \
+compiler-codegen/src/parser/mod.rs:6617
+    Plan 201 (D188): в rvalue-позиции после `=` ожидается \
+compiler-codegen/src/parser/mod.rs:6627
+    Plan 201 (D188): `consume X` в rvalue-позиции требует блок \
+compiler-codegen/src/parser/mod.rs:6963
+    имя\" panics \"паттерн\" { … }`; \
+compiler-codegen/src/parser/mod.rs:8041
+    generic-параметр без default'а `{}` следует после параметра с default — \
+compiler-codegen/src/parser/mod.rs:8167
+    generic default не разрешён в receiver/instantiation context — \
+compiler-codegen/src/parser/mod.rs:10134
+    {} (in closure-light parameter list — `|x|`, `|x, y|`, `|_|`, или `||` для no-arg)
+compiler-codegen/src/parser/mod.rs:10291
+    variadic-параметр `{}` должен быть последним в списке (D69)
+compiler-codegen/src/parser/mod.rs:13444
+    ожидалась функция
+compiler-codegen/src/parser/mod.rs:13447
+    ожидалось выражение-тело
+compiler-codegen/src/parser/mod.rs:13450
+    ожидался строковый литерал, получено {:?}
+compiler-codegen/src/parser/mod.rs:13457
+    CRLF-тело backtick разошлось с LF-телом: §7 п.4 не применён
+compiler-codegen/src/pkg_proxy.rs:142
+    warning: {} устарел, переименуйте в nova.override.toml \
+compiler-codegen/src/resolver.rs:104
+    корень
+compiler-codegen/src/resolver.rs:182
+    версия `{}` пакета `{}` требует `{} {}`, но `{}` \
+compiler-codegen/src/resolver.rs:215
+    не удалось разрешить зависимости пакета `{}`
+compiler-codegen/src/resolver.rs:233
+    <неизвестно>
+compiler-codegen/src/resolver.rs:235
+    не удалось подобрать версию пакета `{}` — ни одна доступная \
+compiler-codegen/src/resolver.rs:242
+    \n  доступные версии: {}
+compiler-codegen/src/resolver.rs:273
+    пакет `{}` недоступен
+compiler-codegen/src/resolver.rs:284
+    нет версии `{}` пакета `{}`
+compiler-codegen/src/resolver.rs:350
+    a 1.0.0 откат с a@2.0 на a@1.0
+compiler-codegen/src/resolver.rs:365
+    b 1.0.0 b@2.0 откатывается из-за c
+compiler-codegen/src/resolver.rs:383
+    ожидался Conflict, не Provider: {}
+compiler-codegen/src/semver.rs:73
+    пустая строка версии
+compiler-codegen/src/semver.rs:86
+    лишние сегменты в версии `{}`
+compiler-codegen/src/semver.rs:104
+    версия `{}`: отсутствует {}
+compiler-codegen/src/semver.rs:106
+    версия `{}`: пустой сегмент {}
+compiler-codegen/src/semver.rs:109
+    версия `{}`: сегмент {} `{}` не число
+compiler-codegen/src/semver.rs:114
+    версия `{}`: пустой pre-release
+compiler-codegen/src/semver.rs:119
+    версия `{}`: пустой pre-release-сегмент
+compiler-codegen/src/semver.rs:126
+    версия `{}`: ведущий ноль в pre-release `{}`
+compiler-codegen/src/semver.rs:269
+    пустая строка version-требования
+compiler-codegen/src/semver.rs:275
+    требование `{}`: пустой сегмент
+compiler-codegen/src/semver.rs:359
+    некорректная версия `{}`
+compiler-codegen/src/semver.rs:363
+    версия `{}`: major `{}` не число
+compiler-codegen/src/semver.rs:368
+    версия `{}`: minor `{}` не число
+compiler-codegen/src/semver.rs:375
+    версия `{}`: patch `{}` не число
+compiler-codegen/src/semver.rs:379
+    версия `{}`: лишние сегменты
+compiler-codegen/src/semver.rs:439
+    wildcard `{}`: `{}` не число
+compiler-codegen/src/semver.rs:447
+    некорректный wildcard `{}`
+compiler-codegen/src/source_index.rs:121
+    \n===== source_index (план 252 Ф.2) =====\n\
+compiler-codegen/src/source_index.rs:134
+    включён ВЫКЛЮЧЕН (сквозной проход)
+compiler-codegen/src/source_index.rs:698
+    [INV-PROPERTY] снимок обязан быть неизменен в пределах прогона
+compiler-codegen/src/source_index.rs:729
+    5000 ответов индекса стоили {} обращений к ФС вместо нуля
+compiler-codegen/src/source_index.rs:769
+    индекс разошёлся с ОС по регистру для {:?}
+compiler-codegen/src/source_index.rs:807
+    вывод по каталогу пересчитан
+compiler-codegen/src/test_runner.rs:207
+    , убит сигналом {}
+compiler-codegen/src/test_runner.rs:209
+    , убит сигналом {}({})
+compiler-codegen/src/test_runner.rs:4121
+    процесс умер молча, exit={} (0x{:X}){}, вывода нет
+compiler-codegen/src/test_runner.rs:4168
+    {}, … и ещё {} (полный список: NOVA_DEBUG_RUN_DUMP=1)
+compiler-codegen/src/test_runner.rs:7510
+    [MERGED CU, {} файлов] вероятный виновник: {} | {} | кандидаты: {}
+compiler-codegen/src/test_runner.rs:7514
+    [MERGED CU, {} файлов] файл-виновник НЕ определён (нет \
+compiler-codegen/src/test_runner.rs:7538
+    {}… [обрезано: {} из {} символов; полностью — NOVA_DEBUG_RUN_DUMP=1]
+compiler-codegen/src/test_runner.rs:8653
+    окно не найдено при живой диагностике
+compiler-codegen/src/test_runner.rs:8656
+    ExceptionCode:    0xC0000005 нет кода исключения: {}
+compiler-codegen/src/test_runner.rs:8657
+    FaultAddress: нет адреса обращения: {}
+compiler-codegen/src/test_runner.rs:8658
+    RIP-RVA: нет RVA: {}
+compiler-codegen/src/test_runner.rs:8660
+    frame_0 нет кадра #00: {}
+compiler-codegen/src/test_runner.rs:8661
+    frame_1 нет кадра #01 (KEYSTONE): {}
+compiler-codegen/src/test_runner.rs:8663
+    frame_29 глубокий кадр попал в окно: {}
+compiler-codegen/src/test_runner.rs:8665
+    RAX= дамп регистров съел бюджет: {}
+compiler-codegen/src/test_runner.rs:8677
+    старое правило брало ГЛУБОКИЕ кадры — вход перестал воспроизводить дефект: {}
+compiler-codegen/src/test_runner.rs:8680
+    старое правило теряло код исключения: {}
+compiler-codegen/src/test_runner.rs:8682
+    старое правило теряло KEYSTONE-кадр: {}
+compiler-codegen/src/test_runner.rs:8700
+    короткая деталь
+compiler-codegen/src/test_runner.rs:8701
+    короткое не трогается
+compiler-codegen/src/test_runner.rs:8707
+    обрезано обрезка молчалива: {}
+compiler-codegen/src/test_runner.rs:8708
+    1000 не назван полный размер: {}
+compiler-codegen/src/test_runner.rs:8709
+    NOVA_DEBUG_RUN_DUMP не сказано, чем добрать остальное: {}
+compiler-codegen/src/test_runner.rs:8717
+    НЕ определён в строке нет вердикта атрибуции
+compiler-codegen/src/test_runner.rs:8718
+    yyy в строке нет raw_detail
+compiler-codegen/src/test_runner.rs:8720
+    вердикт стоит ПОСЛЕ длинного текста — обрезка съест его первым
+compiler-codegen/src/test_runner.rs:8723
+    НЕ определён
+compiler-codegen/src/test_runner.rs:8724
+    после обрезки вердикт пропал — ровно дефект №990: {}
+compiler-codegen/src/test_runner.rs:8725
+    обрезано обрезка молчалива: {}
+compiler-codegen/src/test_runner.rs:9199
+    P3-B vtable dispatch: codegen должен успешно скомпилировать, но: {:?}
+compiler-codegen/src/types/fail_reach.rs:162
+    ...\")`/ `match`), либо пробрось `?` (D85, ENFORCED \
+compiler-codegen/src/types/fiber_safety.rs:1615
+    Plan 238 Ф.1 invariant: every Item::Fn must receive exactly one tag
+compiler-codegen/src/types/fiber_safety.rs:1646
+    [NOVA_DEBUG_FIBER_SAFETY] Plan 238 Ф.1 dump
+compiler-codegen/src/types/mod.rs:2053
+    verify_module (SMT) — ТОЛЬКО верификация, --verify включён
+compiler-codegen/src/types/mod.rs:2055
+    verify_module (SMT) — ПРОПУЩЕНА (--verify выключен, по умолчанию)
+compiler-codegen/src/types/mod.rs:2066
+    tail of post-check passes (после verify, до unsafe-context)
+compiler-codegen/src/types/mod.rs:2088
+    fiber_safety::run (238 Ф.1)
+compiler-codegen/src/types/mod.rs:2098
+    fiber_safety::check_seed_points (238 Ф.2)
+compiler-codegen/src/types/mod.rs:2107
+    fiber_safety::compute_required_params (238 Ф.3)
+compiler-codegen/src/types/mod.rs:2116
+    fiber_safety::check_param_passing (238 Ф.3)
+compiler-codegen/src/types/mod.rs:3866
+    не вводит {}
+compiler-codegen/src/types/mod.rs:3870
+    и
+compiler-codegen/src/types/mod.rs:3872
+    вводит лишние {}
+compiler-codegen/src/types/mod.rs:13747
+    receiver `@` (ro — метод объявлен \
+compiler-codegen/src/types/mod.rs:13750
+    `{n}` (ro — L1-binding или явный `ro T`, L2)
+compiler-codegen/src/types/mod.rs:13752
+    источник
+compiler-codegen/src/types/mod.rs:13798
+    (b) скопируй явно — `.clone()` (D230) — если нужна \
+compiler-codegen/src/types/mod.rs:13802
+    (b) поле не реализует `Clone` (нет `#impl(Clone)` на \
+compiler-codegen/src/types/mod.rs:13810
+    поля
+compiler-codegen/src/types/mod.rs:15513
+    вариант варианты
+compiler-codegen/src/types/mod.rs:25237
+    Ф.4c: resolve_return diverged from build_recv_subst binding
+compiler-codegen/src/types/mod.rs:28018
+    без рекурсии вглубь\": the unifier only binds top-level \
+compiler-codegen/src/types/mod.rs:28563
+    `?` пробрасывает ту же обёртку наружу (D85) — тот же носитель что и \
+compiler-codegen/src/types/mod.rs:28567
+    замени на `X?`
+compiler-codegen/src/types/mod.rs:28574
+    выражение даёт `Result`, функция возвращает `Option` — мост `.ok()` \
+compiler-codegen/src/types/mod.rs:28578
+    замени на `X.ok()?`
+compiler-codegen/src/types/mod.rs:28586
+    меняется тип ошибки (наружу `{}`) — канон `.map_err` (D85 отклонил \
+compiler-codegen/src/types/mod.rs:28592
+    замени на `X.map_err(fn(_ {}) -> {} => <ошибка>)?` — впиши исходное \
+compiler-codegen/src/types/mod.rs:28599
+    .map_err(fn(_ {}) -> {} => /* исходное выражение ошибки */)?
+compiler-codegen/src/types/mod.rs:28606
+    выражение даёт `Option`, функция возвращает `Result` — мост \
+compiler-codegen/src/types/mod.rs:28610
+    замени на `X.ok_or(<ошибка>)?` — впиши исходное \
+compiler-codegen/src/types/mod.rs:28614
+    .ok_or(/* исходное выражение ошибки */)?
+compiler-codegen/src/types/mod.rs:28619
+    обёртки для проброса нет — здесь явный `match` законен и читается \
+compiler-codegen/src/types/mod.rs:28628
+    тип операнда или return-тип функции не выведен (или несёт \
+compiler-codegen/src/types/mod.rs:30397
+    - числовой (int/float-семейство) или пользовательский \
+compiler-codegen/src/types/mod.rs:30405
+    ~ целочисленный (`i8`..`i64`/`u8`..`u64`/`int`/`uint`) \
+compiler-codegen/src/types/mod.rs:31626
+    [{}] `MemOrdering.{}` запрещён как failure-ordering для `{}`; \
+compiler-codegen/src/types/mod.rs:31635
+    замените на Acquire (или SeqCst для simplicity)
+compiler-codegen/src/types/mod.rs:31757
+    параметр `{}` связан и trailing-формой, и именованным \
+compiler-codegen/src/types/mod.rs:32093
+    параметр `{}` имеет значение по умолчанию — \
+compiler-codegen/src/types/mod.rs:32100
+    параметр `{}` объявлен здесь
+compiler-codegen/src/types/mod.rs:32104
+    параметры с дефолтом — keyword-only: обязательный — \
+compiler-codegen/src/types/mod.rs:33164
+    \n  fix: добавить недостающие методы для типа `{}`. \
+compiler-codegen/src/types/mod.rs:34094
+    sent into a channel (D441 §1(б) — the receiving \
+compiler-codegen/src/types/mod.rs:35258
+    замыкание \
+compiler-codegen/src/types/mod.rs:35306
+    замыкание как ПОЛЕ структуры\" class, Plan S1a №117/№242§3 — the \
+compiler-codegen/src/types/mod.rs:35431
+    обработчик, вычисленный \
+compiler-codegen/src/types/mod.rs:38134
+    избыточная форма поля `{name}: {name}` — \
+compiler-codegen/src/types/mod.rs:38143
+    избыточная форма поля `{name}: @{name}` — \
+compiler-codegen/src/types/mod.rs:40477
+    handler-method `{}.{}` обрабатывает операцию с возвращаемым типом `never` \
+compiler-codegen/src/types/mod.rs:41339
+    [D133-field-marker-missing] field `{}` имеет consume-тип \
+compiler-codegen/src/types/mod.rs:41350
+    [D133-marker-on-non-consume] поле `{}` помечено `consume` \
+compiler-codegen/src/types/mod.rs:41363
+    [D133-type-marker-missing] type `{}` содержит consume-поле, \
+compiler-codegen/src/types/mod.rs:41385
+    [D133-empty-consume] type `{}` помечен `consume` но не \
+compiler-codegen/src/types/mod.rs:42525
+    consume-биндинг `consume X = …`
+compiler-codegen/src/types/mod.rs:42526
+    consume-параметр функции
+compiler-codegen/src/types/mod.rs:42527
+    биндинг из паттерна
+compiler-codegen/src/types/mod.rs:42528
+    результат-биндинг consume-области
+compiler-codegen/src/types/mod.rs:42529
+    параметр замыкания / хендлер-опа
+compiler-codegen/src/types/mod.rs:42530
+    переменная `for consume`-цикла
+compiler-codegen/src/types/mod.rs:42895
+    потреблён неявной #coerce-финализацией `{method}()` в вызове \
+compiler-codegen/src/types/mod.rs:42899
+    значение потреблено здесь
+compiler-codegen/src/types/mod.rs:42903
+    использование потреблённой переменной `{}` (D131): \
+compiler-codegen/src/types/mod.rs:42912
+    использование, возможно, потреблённой переменной `{}` \
+compiler-codegen/src/types/mod.rs:42919
+    значение потенциально потреблено здесь
+compiler-codegen/src/types/mod.rs:43622
+    вызовите consume-метод типа `{}` \
+compiler-codegen/src/types/mod.rs:43626
+    объявите consume-метод для этого типа
+compiler-codegen/src/types/mod.rs:43631
+    см. `nova doc {}`
+compiler-codegen/src/types/mod.rs:43659
+    [{}] переменная `{}` (тип `{}`) не \
+compiler-codegen/src/types/mod.rs:43669
+    происхождение биндинга: {} — авто-`@cleanup` (D432 §2) \
+compiler-codegen/src/types/mod.rs:43684
+    вызовите consume-метод типа `{}` \
+compiler-codegen/src/types/mod.rs:43688
+    объявите consume-метод
+compiler-codegen/src/types/mod.rs:43706
+    cover `{name}` on all paths: `defer` (D162) или `consume`-scope (D188) ({code})
+compiler-codegen/src/types/mod.rs:43714
+    [{}] переменная `{}` (тип `{}`) \
+compiler-codegen/src/types/mod.rs:43720
+    частичный consume здесь
+compiler-codegen/src/types/mod.rs:43764
+    [D133-field-not-restored] метод `{}` consume'нул \
+compiler-codegen/src/types/mod.rs:43777
+    [D133-field-not-restored] метод `{}` возможно \
+compiler-codegen/src/types/mod.rs:43882
+    метод `{}` объявлен `-> @` (fluent-return, D132/D409): \
+compiler-codegen/src/types/mod.rs:44055
+    метод `{}` объявлен `-> Self`, но все пути возвращают \
+compiler-codegen/src/types/mod.rs:44769
+    чтение поля в локальную переменную (`x = obj.field`)
+compiler-codegen/src/types/mod.rs:44771
+    голое связывание существующего значения (`ro b = a`)
+compiler-codegen/src/types/mod.rs:44820
+    встраивание в литерал записи (`Type { field: a }`)
+compiler-codegen/src/types/mod.rs:44830
+    встраивание в литерал кортежа (`(a, b)`)
+compiler-codegen/src/types/mod.rs:44874
+    передача аргументом получателю без гарантии заимствования \
+compiler-codegen/src/types/mod.rs:45470
+    [D162-uncovered-error-path] consume binding `{}` (тип `{}`) \
+compiler-codegen/src/types/mod.rs:45527
+    [D162-uncovered-success-path] consume binding `{}` (тип `{}`) \
+compiler-codegen/src/types/mod.rs:45700
+    решения: (a) если источник — параметр текущей функции, объяви его \
+compiler-codegen/src/types/mod.rs:45733
+    receiver `@` (ro — метод объявлен без `mut @`, D176-дефолт)
+compiler-codegen/src/types/mod.rs:45739
+    `{root_name}` (ro — L1-binding или явный `ro T`, L2)
+compiler-codegen/src/types/mod.rs:46004
+    владение must-consume пейлоадом должно быть явным на \
+compiler-codegen/src/types/mod.rs:46484
+    views существуют ТОЛЬКО как function-параметры (D157). \
+compiler-codegen/src/types/mod.rs:46488
+    use `consume {} = …` для move ownership
+compiler-codegen/src/types/mod.rs:46506
+    consume-обязательные значения должны быть явно ownership-bound \
+compiler-codegen/src/types/mod.rs:46547
+    удали `consume ` для regular let-binding.
+compiler-codegen/src/types/mod.rs:46736
+    [D133-assign-live-field] присваивание в Live \
+compiler-codegen/src/types/mod.rs:48246
+    добавь `mut` к параметру: `fn ...(mut <name> T)` — \
+compiler-codegen/src/types/mod.rs:48270
+    добавь `mut` к binding'у: `mut <name> = ...` (Plan 114 D184) — \
+compiler-codegen/src/types/mod.rs:48369
+    чтобы мутировать, вызови mut-метод напрямую на mut-binding'е \
+compiler-codegen/src/types/mod.rs:48437
+    добавь `mut` к параметру: `fn ...(mut <name> T)` — \
+compiler-codegen/src/types/mod.rs:48486
+    добавь `mut` к binding'у: `mut <name> = ...` (Plan 114 D184) — \
+compiler-codegen/src/types/mod.rs:48551
+    сохрани значение в `mut`-локал перед вызовом mut-метода: \
+compiler-codegen/src/types/mod.rs:48660
+    использование потреблённого поля \
+compiler-codegen/src/types/mod.rs:48665
+    поле потреблено здесь
+compiler-codegen/src/types/mod.rs:48771
+    [D133-consume-rvalue-in-view] consume-rvalue (тип `{}`) \
+compiler-codegen/src/types/mod.rs:48800
+    closure вызвана (и потреблена) здесь
+compiler-codegen/src/types/mod.rs:48951
+    сохрани значение в `mut`-локал перед вызовом mut-метода: \
+compiler-codegen/src/types/mod.rs:52071
+    — возможно нужен общий тип, напр. `HashMap[K, JsonValue]`?
+compiler-codegen/src/types/mod.rs:53580
+    [{}] `MemOrdering.{}` запрещён для load; \
+compiler-codegen/src/types/mod.rs:53588
+    замените на Acquire (или SeqCst для simplicity)
+compiler-codegen/src/types/mod.rs:53618
+    [{}] `MemOrdering.{}` запрещён для store; \
+compiler-codegen/src/types/mod.rs:53626
+    замените на Release (или SeqCst для simplicity)
+compiler-codegen/src/types/mod.rs:57189
+    Plan 128.1 Ф.2: expected Some(Named(Vec3)) для NamedTuple ctor; \
+compiler-codegen/src/types/mod.rs:57594
+    `{}` должен быть builtin mut-method
+compiler-codegen/src/types/mod.rs:57602
+    `{}` НЕ должен быть builtin mut-method (pure-read)
+compiler-codegen/src/types/mod.rs:57900
+    ro b → b.v.set_x() — должен fire E_LOCAL_NOT_MUT; \
+compiler-codegen/src/types/mod.rs:57919
+    mut b → b.v.set_x() — НЕ должен fire E_LOCAL_NOT_MUT; \
+compiler-codegen/src/types/mod.rs:57937
+    ro b → b.v.len() (pure-method) — НЕ должен fire E_LOCAL_NOT_MUT; \
+compiler-codegen/src/types/mod.rs:57955
+    fn(b Body) → b.v.set_x() — должен fire E_PARAM_NOT_MUT; \
+compiler-codegen/src/types/mod.rs:57973
+    fn(mut b Body) → b.v.set_x() — НЕ должен fire E_PARAM_NOT_MUT; \
+compiler-codegen/src/types/mod.rs:58017
+    fn(f Fmt) → f.pad(...) (direct protocol method) — должен fire \
+compiler-codegen/src/types/mod.rs:58055
+    fn(mut f Fmt) → f.write()/f.pad() — НЕ должен fire E_PARAM_NOT_MUT; \
+compiler-codegen/src/types/mod.rs:58076
+    ro f (Fmt) → f.write(...) — должен fire E_LOCAL_NOT_MUT; \
+compiler-codegen/src/types/mod.rs:58112
+    impl @display(f Fmt) vs protocol @display(mut f Fmt) — должен fire \
+compiler-codegen/src/types/mod.rs:58137
+    impl @display(mut f Fmt) vs protocol @display(mut f Fmt) — НЕ должен \
+compiler-codegen/src/types/mod.rs:58182
+    ro arr → arr.push(4) — должен fire E_LOCAL_NOT_MUT (Ident path); \
+compiler-codegen/src/types/mod.rs:58200
+    ro arr2d → arr2d[0].push() — должен fire E_LOCAL_NOT_MUT \
+compiler-codegen/src/verify/backend/cvc5.rs:100
+    не удалось запустить cvc5: {}
+compiler-codegen/src/verify/backend/cvc5.rs:104
+    cvc5: нет stdin pipe
+compiler-codegen/src/verify/backend/cvc5.rs:158
+    формула не транслировалась в SMT-LIB — результат cvc5 \
+compiler-codegen/src/verify/backend/cvc5.rs:168
+    cvc5 не найден (env NOVA_CVC5 либо PATH) — cross-check \
+compiler-codegen/src/verify/backend/cvc5.rs:210
+    (пустой вывод)
+compiler-codegen/src/verify/backend/cvc5.rs:212
+    cvc5 не вернул sat/unsat/unknown: {}
+compiler-codegen/src/verify/backend/cvc5.rs:353
+    ожидалась строка, получили {:?}
+compiler-codegen/src/verify/backend/cvc5.rs:379
+    cvc5 недоступен — интеграционный тест пропущен
+compiler-codegen/src/verify/backend/cvc5.rs:424
+    cvc5 не доказал BV-тавтологию — баг эмиссии bit-vector'ов
+compiler-codegen/src/verify/backend/cvc5.rs:446
+    cvc5 не доказал FP-тавтологию — баг эмиссии floating-point
+compiler-codegen/src/verify/backend/cvc5.rs:468
+    cvc5 не доказал string-тавтологию — баг эмиссии строк
+compiler-codegen/src/verify/backend/cvc5.rs:503
+    cvc5 не доказал forall+UF — баг эмиссии кванторов / UF
+compiler-codegen/src/verify/backend/z3.rs:772
+    формула не транслировалась в Z3 AST — результат \
+compiler-codegen/src/verify/crosscheck.rs:194
+    … (+{} ещё)
+compiler-codegen/src/verify/crosscheck.rs:206
+    CROSS-CHECK DISAGREEMENT [E2412]: Z3 и CVC5 разошлись\n
+compiler-codegen/src/verify/crosscheck.rs:217
+    Один из решателей или один из путей кодирования (Z3-FFI либо\n  \
+compiler-codegen/src/verify/crosscheck.rs:236
+    cross-check: 0 расхождений — Z3 и CVC5 согласны.
+compiler-codegen/src/verify/crosscheck.rs:239
+    cross-check: НАЙДЕНО {} definite-расхождений Z3 ↔ CVC5:\n\n
+compiler-codegen/src/verify/crosscheck.rs:345
+    <прямой check-sat>
+compiler-codegen/src/verify/crosscheck.rs:451
+    cvc5 недоступен — интеграционный тест пропущен
+compiler-codegen/src/verify/crosscheck.rs:472
+    ожидался Proven, получили {:?}
+compiler-codegen/src/verify/crosscheck.rs:477
+    согласие решателей не должно давать disagreement
+compiler-codegen/src/verify/crosscheck.rs:499
+    ожидался Disproved, получили {:?}
+compiler-codegen/src/verify/crosscheck.rs:529
+    0 расхождений
+compiler-codegen/src/verify/crosscheck.rs:530
+    НАЙДЕНО 1
+compiler-codegen/src/verify/encode.rs:483
+    block с statements в контракте не поддерживается; \
+compiler-codegen/src/verify/encode.rs:489
+    пустой block в контракте не поддерживается
+compiler-codegen/src/verify/encode.rs:495
+    tuple-литерал в контракте не поддерживается SMT-encoder'ом; \
+compiler-codegen/src/verify/encode.rs:500
+    match-выражение в контракте не поддерживается; \
+compiler-codegen/src/verify/encode.rs:505
+    if let в контракте не поддерживается; используйте if/else
+compiler-codegen/src/verify/encode.rs:510
+    лямбда/closure в контракте не поддерживается; \
+compiler-codegen/src/verify/encode.rs:516
+    индексирование (arr[i]) в контракте не поддерживается в V1; \
+compiler-codegen/src/verify/encode.rs:523
+    анонимный record
+compiler-codegen/src/verify/encode.rs:525
+    record-литерал `{}` в контракте не поддерживается; \
+compiler-codegen/src/verify/encode.rs:529
+    array-литерал в контракте не поддерживается; \
+compiler-codegen/src/verify/encode.rs:535
+    маркер `ref` (передача по borrow) в контракте не поддерживается; \
+compiler-codegen/src/verify/encode.rs:539
+    оператор `?` в контракте не поддерживается; \
+compiler-codegen/src/verify/encode.rs:542
+    оператор `!!` в контракте не поддерживается; \
+compiler-codegen/src/verify/encode.rs:545
+    оператор `??` в контракте не поддерживается; \
+compiler-codegen/src/verify/encode.rs:592
+    type check `is {:?}` в контракте не поддерживается; \
+compiler-codegen/src/verify/encode.rs:608
+    интерполированная строка в контракте не поддерживается
+compiler-codegen/src/verify/encode.rs:615
+    range-выражение в контракте разрешено только внутри forall/exists квантора
+compiler-codegen/src/verify/encode.rs:621
+    цикл в контракте не поддерживается; \
+compiler-codegen/src/verify/encode.rs:626
+    concurrency-конструкция в контракте не поддерживается
+compiler-codegen/src/verify/encode.rs:634
+    with/effect-литерал/protocol-литерал в контракте не поддерживается
+compiler-codegen/src/verify/encode.rs:638
+    interrupt/forbid/realtime в контракте не поддерживается
+compiler-codegen/src/verify/encode.rs:643
+    `detach { ... }` (concurrency primitive) в контракте не поддерживается; \
+compiler-codegen/src/verify/encode.rs:646
+    `blocking { ... }` (concurrency primitive) в контракте не поддерживается; \
+compiler-codegen/src/verify/encode.rs:649
+    `throw expr` (error-throw) в контракте не поддерживается; \
+compiler-codegen/src/verify/encode.rs:655
+    `?? return ...` (D86-ретрактнутая форма, E_COALESCE_RETURN_FALLBACK) \
+compiler-codegen/src/verify/encode.rs:659
+    map-литерал `[k:v]` в контракте не поддерживается SMT-encoder'ом; \
+compiler-codegen/src/verify/encode.rs:662
+    tagged template `tag\"...\"` в контракте не поддерживается; \
+compiler-codegen/src/verify/handler_exec.rs:108
+    #verify handler для эффекта {}: post-axiom '{}' не удалось верифицировать [E2402].\
+compiler-codegen/src/verify/handler_exec.rs:121
+    #verify handler для эффекта {}: post-axiom '{}' не encodable [E2402]: {}
+compiler-codegen/src/verify/handler_exec.rs:231
+    contravariant (появляется только в `requires`)
+compiler-codegen/src/verify/handler_exec.rs:232
+    covariant (появляется только в `ensures`)
+compiler-codegen/src/verify/handler_exec.rs:233
+    invariant (появляется в `requires` и `ensures`)
+compiler-codegen/src/verify/handler_exec.rs:282
+    параметр `{}`: {}
+compiler-codegen/src/verify/handler_exec.rs:284
+    \n  variance параметров эффекта:\n{} \n
+compiler-codegen/src/verify/handler_exec.rs:344
+    Liskov requires для handler method `{}` не закодирован в SMT [W2402]: {}.\n  \
+compiler-codegen/src/verify/handler_exec.rs:372
+    Liskov ensures для handler method `{}` не закодирован в SMT [W2402]: {}.
+compiler-codegen/src/verify/handler_exec.rs:383
+    Liskov check для handler method `{}` пропущен [W2402]: \
+compiler-codegen/src/verify/handler_exec.rs:402
+    `#verify` handler method `{}` нарушает контракт эффекта @ position {}:\n  \
+compiler-codegen/src/verify/handler_exec.rs:415
+    Liskov check для handler method `{}` вернул Unknown [W2402]: {}.\n  \
+compiler-codegen/src/verify/pipeline.rs:97
+    warning: NOVA_CROSSCHECK задан, но бинарник `cvc5` не найден \
+compiler-codegen/src/verify/pipeline.rs:104
+    warning: NOVA_CROSSCHECK задан, но бинарь собран без \
+compiler-codegen/src/verify/pipeline.rs:584
+    [CONTRACT_UNSUPPORTED] `apply {}` ссылается на несуществующую лемму [E2405]: \
+compiler-codegen/src/verify/pipeline.rs:615
+    `apply {}` auto-inference не удалась [W2402]: \
+compiler-codegen/src/verify/pipeline.rs:628
+    `apply {}` имеет {} args, ожидалось {} [W2402]:\n  \
+compiler-codegen/src/verify/pipeline.rs:838
+    ensures_fail может не выполняться на Fail-пути: {}
+compiler-codegen/src/verify/pipeline.rs:913
+    рекурсивная функция `{}` без `decreases` [W2402]: \
+compiler-codegen/src/verify/pipeline.rs:951
+    loop invariant не удалось закодировать в SMT [W2402]: {}.\n  \
+compiler-codegen/src/verify/pipeline.rs:1037
+    loop decreases expr не закодирован в SMT [W2402]: {}.\n  \
+compiler-codegen/src/verify/pipeline.rs:2626
+    сохранение инварианта цикла НЕ проверено [W2402]: тело цикла \
+compiler-codegen/src/verify/pipeline.rs:2672
+    loop invariant preservation НЕ проверена [W2402]: invariant \
+compiler-codegen/src/verify/pipeline.rs:2706
+    loop invariant preservation НЕ проверена [W2402]: body assignment \
+compiler-codegen/src/verify/pipeline.rs:2762
+    loop invariant post-state НЕ проверен [W2402]: invariant не \
+compiler-codegen/src/verify/pipeline.rs:3034
+    TrivialBackend не reasoning'ует ({})
+compiler-codegen/src/verify/pipeline.rs:3041
+    axiom consistency для effect `{}` НЕ проверена [W2402]: {}.\n  \
+compiler-codegen/src/verify/pipeline.rs:3267
+    fn '{}' помечена `#unverified` внутри `#must_verify_module` [E2403]: \
+compiler-codegen/src/verify/pipeline.rs:3296
+    fn '{}': #proof_budget vc_count_max={} превышен \
+compiler-codegen/src/verify/pipeline.rs:3366
+    fn '{}': SMT-верификация не завершена [W2402]: {}\n  \
+compiler-codegen/src/verify/pipeline.rs:3387
+    hint: пометьте fn как #unverified для runtime-fallback,\
+compiler-codegen/src/verify/pipeline.rs:3391
+    контракт fn '{}' содержит конструкцию \
+compiler-codegen/src/verify/pipeline.rs:3398
+    fn '{}' помечена #unverified: SMT verification пропущен [W2401]
+compiler-codegen/src/verify/pipeline.rs:3407
+    fn '{}' помечена `#verify`: тело fn содержит конструкцию \
+compiler-codegen/src/verify/pipeline.rs:3438
+    lemma `{}` не доказана:\n  counterexample: {}\n  \
+compiler-codegen/src/verify/pipeline.rs:3445
+    lemma `{}` не удалось верифицировать:\n  {}\n  \
+compiler-codegen/src/verify/pipeline.rs:3455
+    lemma `{}` контракт не поддерживается SMT-encoder'ом [E2401]: {}
+compiler-codegen/src/verify/pipeline.rs:3460
+    lemma `{}`: тело или контракт не encodable: {}\n  \
+compiler-codegen/src/verify/pipeline.rs:3496
+    lemma `{}` определена, но не применена нигде в модуле [W2402]: \
+compiler-codegen/src/verify/pipeline.rs:3504
+    lemma `{}` без параметров [W2402]:\n  \
+compiler-codegen/src/verify/pipeline.rs:3519
+    lemma `{}` имеет `requires false` [W2402]:\n  \
+compiler-codegen/src/verify/pipeline.rs:3544
+    lemma `{}` имеет ensures идентичные requires [W2402]:\n  \
+compiler-codegen/src/verify/pipeline.rs:3558
+    lemma `{}` имеет то же имя что обычная fn в модуле [W2402]:\n  \
+compiler-codegen/src/verify/pipeline.rs:3571
+    lemma `{}` применяет саму себя через `apply {}(...)` [E2408]:\n  \
+compiler-codegen/src/verify/pipeline.rs:3591
+    lemma `{}`: param `{}` не используется в contracts/body [W2402]:\n  \
+compiler-codegen/src/verify/pipeline.rs:3610
+    lemma `{}`: body буквально совпадает с ensures [W2402]:\n  \
+compiler-codegen/src/verify/pipeline.rs:3628
+    axiom `{}.{}`: vacuous `=> true` без binders [W2402]:\n  \
+compiler-codegen/src/verify/pipeline.rs:3639
+    effect `{}` пустой (без methods и axioms) [W2402]:\n  \
+compiler-codegen/src/verify/pipeline.rs:3659
+    fn `{}`: `requires true` тривиально true [W2402]: \
+compiler-codegen/src/verify/pipeline.rs:3718
+    fn `{}`: `ensures_fail` без `Fail` effect [W2402]:\n  \
+compiler-codegen/src/verify/pipeline.rs:3779
+    fn `{}`: ensures (без result/old) идентичны requires [W2402]:\n  \
+compiler-codegen/src/verify/pipeline.rs:3860
+    fn `{}`: contradictory requires для `{}` [E2405]:\n  \
+compiler-codegen/src/verify/pipeline.rs:3876
+    fn `{}`: param `{}` не используется в теле [W2402]:\n  \
+compiler-codegen/src/verify/pipeline.rs:3937
+    fn `{}`: loop без `invariant` clause [W2402]:\n  \
+compiler-codegen/src/verify/pipeline.rs:3952
+    fn `{}` помечена `#verify` но не имеет contracts [W2402]:\n  \
+compiler-codegen/src/verify/pipeline.rs:3968
+    fn `{}` имеет только `requires` без `ensures` [W2402]:\n  \
+compiler-codegen/src/verify/pipeline.rs:4005
+    fn `{}`: `{}` clause содержит {} AND-conjunct'ов [W2402]:\n  \
+compiler-codegen/src/verify/pipeline.rs:4020
+    fn `{}`: `{}` clause содержит {} OR-disjunct'ов [W2402]:\n  \
+compiler-codegen/src/verify/pipeline.rs:4063
+    fn `{}`: `apply {}(...)` к vacuous лемме [W2402]:\n  \
+compiler-codegen/src/verify/pipeline.rs:4087
+    fn `{}`: `reveal {}` ссылается на несуществующую fn [E2411]:\n  \
+compiler-codegen/src/verify/pipeline.rs:4093
+    fn `{}`: `reveal {}` на non-opaque fn [W2403]:\n  \
+compiler-codegen/src/verify/pipeline.rs:4131
+    fn `{}`: `#opaque` но никогда не reveal'ится в модуле [W2403]:\n  \
+compiler-codegen/src/verify/pipeline.rs:4141
+    fn `{}`: `#fuel(0)` явный — эквивалентно отсутствию fuel [W2403]:\n  \
+compiler-codegen/src/verify/pipeline.rs:4157
+    effect `{}` имеет #pure methods но не имеет axioms [W2402]:\n  \
+compiler-codegen/src/verify/smtlib.rs:60
+    smtlib: неподдержанный оператор `{}` с {} арг.
+compiler-codegen/src/verify/smtlib.rs:62
+    smtlib: некорректный параметр оператора: {}
+compiler-codegen/src/verify/smtlib.rs:63
+    smtlib: строковый литерал содержит NUL
+compiler-codegen/src/verify/smtlib.rs:65
+    smtlib: не определена ширина bit-vector'а: {}
+compiler-codegen/src/verify/smtlib.rs:877
+    NUL должен пометить translation_failed
+compiler-codegen/src/verify/smtlib.rs:1037
+    ожидалась одна константа:\n{}
+compiler-codegen/src/verify/suggest.rs:70
+    hint: добавьте `requires {} != 0` для безопасности делителя
+compiler-codegen/src/verify/suggest.rs:85
+    hint: для `{}[{}]` добавьте `requires {} >= 0 && {} < {}.len()`
+compiler-codegen/src/verify/suggest.rs:133
+    hint: `decreases X + {}` — measure должен убывать, не возрастать. \
