@@ -255,5 +255,5 @@ if [ "$cm" -gt "$base_cm" ] || [ "$bm" -gt "$base_bm" ]; then
     echo "  Подними числа в scripts/guards/novac-corpus.baseline ТЕМ ЖЕ коммитом (§10.4)." >&2
     exit 1
 fi
-echo "$NAME ok (ИТОГ ВСЕХ ТРЁХ ЭТАПОВ): храповик корпуса — contract $cm, behavior $bm (== база)"
+echo "$NAME ok: ИТОГ ВСЕХ ТРЁХ ЭТАПОВ — храповик корпуса: contract $cm, behavior $bm (== база)"
 exit 0
