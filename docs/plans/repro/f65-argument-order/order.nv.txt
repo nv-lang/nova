@@ -1,0 +1,17 @@
+module f.order
+
+fn left() -> int {
+    println("left")
+    1
+}
+
+fn right() -> int {
+    println("right")
+    2
+}
+
+fn take(a int, b int) -> int => a + b
+
+fn main() {
+    println(take(left(), right()))
+}

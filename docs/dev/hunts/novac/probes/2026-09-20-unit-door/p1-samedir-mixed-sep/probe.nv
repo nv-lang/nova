@@ -1,0 +1,357 @@
+// Probe: same_dir on paths that name ONE directory but spell the separators
+// differently. The code block below is copied VERBATIM from
+// novac/src/pipeline/pipeline.nv lines 110-439 (tree state of 2026-09-20);
+// the only shim is a local `ice`, which novac imports from novac.diag.
+
+module hunt_probe
+
+fn ice(msg str) -> never { panic(msg) }
+
+type UnitFile value {
+    path str /// the path exactly as the CLI received it
+    at int /// where this run begins INSIDE the unit text
+    from int /// where that same run began in the file it came from
+}
+
+/// Which file of the unit owns a unit offset -- its index, or -1.
+///
+/// The bodies lie in order and back to back, so the owner is the LAST one that
+/// starts at or before the offset. A linear walk, not a search: a module has
+/// tens of files, and a binary search here would be machinery for nothing.
+///
+/// -1 rather than an ice for an offset before the first body: the header is a
+/// real part of the unit and a diagnostic CAN land in it (a malformed import
+/// is a diagnostic about the unit itself). The caller then names the module
+/// rather than a file, and that is a decision, not a hole.
+export fn file_of_offset(files []UnitFile, off int) -> int {
+    mut best = 0 - 1
+    for i in 0..files.len() {
+        if files[i].at <= off {
+            best = i
+        } else {
+            // A run that starts AFTER the offset: not this file's, and the
+            // scan keeps walking -- the answer is the LAST run at or before.
+        }
+    }
+    best
+}
+
+/// The offset as the FILE knows it: undo the unit's shift.
+///
+/// `off - f.at` is how far into the body the span sits, and `f.from` is where
+/// that body began in the original -- so the sum is the original offset. Two
+/// numbers and a subtraction, which is the entire price of the wave on the
+/// positions side.
+export fn offset_in_file(f UnitFile, off int) -> int => off - f.at + f.from
+
+/// The index of a path's last separator, or -1 when it has none.
+///
+/// BOTH separators, because the CLI receives the path exactly as it was
+/// typed and this compiler is built on Windows as much as anywhere else.
+fn last_sep(path str) -> int {
+    ro b = path.bytes()
+    mut last = 0 - 1
+    for i in 0..b.len() {
+        if b[i] == UNIT_SLASH || b[i] == UNIT_BACKSLASH {
+            last = i
+        } else {
+            // An ordinary byte: it is not a separator, and `last` keeps the
+            // one found before it. A path with no separator at all leaves -1.
+        }
+    }
+    last
+}
+
+/// The two separators, prefixed like everything else this file declares.
+///
+/// FOURTH COLLISION OF ONE NIGHT, and the prefix is the whole defence: a
+/// bare `BACKSLASH` here resolved to the one `novac.check` declares, and the
+/// C named a symbol this unit does not emit. The census of 2026-09-20 found
+/// 145 constants under 145 DISTINCT names and therefore zero collisions in
+/// the tree -- which is true and misleading, because a collision that was
+/// hit and renamed leaves no trace. The denominator that matters is
+/// collisions MET while writing, and this file met four.
+const UNIT_SLASH u8 = 0x2F
+const UNIT_BACKSLASH u8 = 0x5C
+
+/// Do two paths name files of ONE module?
+///
+/// A module is a directory in this compiler's layout, so the question is
+/// whether the paths agree up to their last separator. Compared BYTE BY
+/// BYTE rather than by cutting the directory out: cutting means slicing, and
+/// a slice is not compiled by novac yet (registry No. 1170).
+///
+/// Two paths with no separator at all are peers -- they name files of the
+/// working directory, which is one module like any other.
+export fn same_dir(a str, b str) -> bool {
+    ro sa = last_sep(a)
+    ro sb = last_sep(b)
+    if sa != sb { return false }
+    if sa < 0 { return true }
+    ro ba = a.bytes()
+    ro bb = b.bytes()
+    for i in 0..sa {
+        if ba[i] != bb[i] { return false }
+    }
+    true
+}
+
+/// A module's files, handed to the compiler as ONE text (274.7 M).
+///
+/// `text` is what the parser sees; `files` says which part of it came from
+/// where, so a span can be handed back as a file and an offset in it.
+export type Unit value {
+    text str /// the unit as the parser will read it
+    files []UnitFile /// where each body landed, in order
+}
+
+/// The end of a file's `module` line -- found BY NAME, not by position.
+///
+/// A unit keeps ONE module line and takes every file's imports after it, so
+/// this number is where a file's contribution to the header begins.
+///
+/// THE FIRST LINE IS NOT THE MODULE LINE, and assuming it was cost twenty
+/// diagnostics. Every file of this compiler opens with an SPDX comment, so a
+/// unit built on `first line` copied that comment as its header and left each
+/// file's real `module` line inside the imports region -- where it was
+/// repeated once per file, and a repeated module line is exactly what the
+/// parser refuses. Caught by two measurements disagreeing: the same module
+/// gave 77 diagnostics assembled by the probe script and 97 assembled here,
+/// while the file-by-file number matched exactly (308 and 308). The
+/// agreement of the halves that shared code is what made the difference
+/// point at the half that did not.
+///
+/// A file with NO module line answers 0: it contributes no header, and the
+/// whole of it is body. That is a real shape -- a fragment handed in by a
+/// test -- and not an error.
+fn module_line_end(text str) -> int {
+    ro b = text.bytes()
+    ro n = text.byte_len()
+    mut ls = 0
+    mut i = 0
+    while i <= n {
+        mut at_end = false
+        if i == n {
+            at_end = true
+        } else {
+            if b[i] == UNIT_LF {
+                at_end = true
+            } else {
+                // A byte inside the line: the line has not ended, so the scan
+                // walks on without touching where the line began.
+            }
+        }
+        if at_end {
+            if matches_at(b, ls, "module ") {
+                mut e = i
+                if i < n {
+                    e = i + 1
+                } else {
+                    // The header ends AT the end of the text: there is no
+                    // newline to step past, so the end stays where it is.
+                }
+                return e
+            } else {
+                // The line is not the module line: it is a comment, an
+                // import or blank, and the scan moves its start forward.
+            }
+            ls = i + 1
+        } else {
+            // Mid-line: nothing is decided until the line ends, and the
+            // next byte is read.
+        }
+        i += 1
+    }
+    0
+}
+
+/// Copy `b[from..to)` onto `out` -- a byte loop, because a slice is not
+/// compiled by novac yet (registry No. 1170) and this file has to stay
+/// inside the subset it is helping to widen.
+fn append_range(mut out []u8, b []u8, from int, to int) -> () {
+    for i in from..to {
+        // nova:allow W_MANUAL_SLICE_COPY -- the canon `x[a..b]` is a SLICE, and novac does not compile one yet (registry 1170): obeying here would add to the debt this file exists to remove
+        out.push(b[i])
+    }
+}
+
+/// Build the unit: ONE module line, then every file's imports, then every
+/// file's body, in the order given.
+///
+/// IMPORTS ARE NOT DEDUPLICATED, and that is measured rather than lazy: a
+/// repeated `import` line is accepted (probe, 2026-09-20), while a repeated
+/// `module` line is not -- which is the whole reason a unit is not a plain
+/// concatenation. Deduplicating would mean comparing lines, and comparing
+/// lines means slicing, which this file may not do yet.
+///
+/// THE TABLE COVERS THE WHOLE UNIT, not only the bodies, and that is a
+/// correction of the first draft. A diagnostic can land in the header -- a
+/// malformed import is exactly that -- and a table of bodies only would have
+/// had to answer "no file" and invent a path to print. Since each file's
+/// imports also occupy one contiguous run, they are entries too, and every
+/// offset of the unit maps to the file it came from.
+///
+/// THE ORDER IS THE CALLER'S. Whether the checker depends on it once bodies
+/// can see each other is NOT measured yet and stands as an open question of
+/// the wave; sorting here would hide the answer instead of giving it.
+export fn unit_of(paths []str, texts []str) -> Unit {
+    mut out = []u8.new()
+    mut files = []UnitFile.new()
+    if texts.len() == 0 {
+        // BOUND FIRST, not returned inline: a record constructor is compiled
+        // only as a binding initializer or a call argument, and writing it in
+        // the return position would add a subset refusal to the very file
+        // that exists to remove them (measured here, 2026-09-20).
+        ro empty = Unit { text: "", files }
+        return empty
+    }
+    // The module line of the FIRST file speaks for the unit -- and it is a
+    // RUN like any other, because a diagnostic can land in it.
+    ro t0 = texts[0]
+    ro b0 = t0.bytes()
+    ro m0 = module_line_end(texts[0])
+    files.push(UnitFile { path: paths[0], at: 0, from: 0 })
+    append_range(out, b0, 0, m0)
+    // Then the imports of every file -- the part of a header after its own
+    // module line.
+    for i in 0..texts.len() {
+        ro ti = texts[i]
+        ro bi = ti.bytes()
+        ro mi = module_line_end(texts[i])
+        ro hi = header_end(texts[i])
+        if hi > mi {
+            files.push(UnitFile { path: paths[i], at: out.len(), from: mi })
+            append_range(out, bi, mi, hi)
+        } else {
+            // No imports in this file: its header is the module line alone,
+            // which the unit already carries once, so there is nothing to
+            // hand over and no run to remember.
+        }
+    }
+    // Then the bodies, each remembering where it came from.
+    for j in 0..texts.len() {
+        ro tj = texts[j]
+        ro bj = tj.bytes()
+        ro hj = header_end(texts[j])
+        files.push(UnitFile { path: paths[j], at: out.len(), from: hj })
+        append_range(out, bj, hj, bj.len())
+        out.push(UNIT_LF)
+    }
+    match out.to_str() {
+        Ok(t) => {
+            ro u = Unit { text: t, files }
+            u
+        }
+        // The pieces came from strings, so the bytes are UTF-8 by
+        // construction and a failure here would mean the copy lost a
+        // boundary -- an invariant of this function, not an input error.
+        Err(_) => ice("pipeline: a unit built from strings did not read back as UTF-8")
+    }
+}
+
+/// Does `word` stand at byte `at` of `b`? A prefix test that allocates
+/// nothing and takes no slice -- see the note inside `header_end`.
+fn matches_at(b []u8, at int, word str) -> bool {
+    ro w = word.bytes()
+    ro m = word.byte_len()
+    if at + m > b.len() { return false }
+    for k in 0..m {
+        if b[at + k] != w[k] { return false }
+    }
+    true
+}
+
+/// The byte just past a file's HEADER -- its `module` line and its imports.
+///
+/// The first step of the peers-as-one-unit wave (274.7 M): a unit is ONE
+/// header followed by the BODIES of the module's files, because a naive
+/// concatenation is refused -- a repeated `module` line and repeated imports
+/// are not read (measured 2026-09-20). Everything else the unit needs is
+/// arithmetic on this number, which is why it is a door of its own and has
+/// its own test.
+///
+/// THE LAST header line decides, not the first body line. A doc comment sits
+/// between them and belongs to the declaration below it, so asking "where do
+/// the headers stop" is answerable while "where does the body start" is not:
+/// the body's first line is a comment whose owner is two lines further down.
+///
+/// BYTES, not `@lines`, and the reason is measured elsewhere in this project:
+/// a working copy can hold CRLF, and counting `line.byte_len() + 1` would
+/// then drift by one per line -- silently, and only on some machines.
+fn header_end(text str) -> int {
+    ro b = text.bytes()
+    ro n = text.byte_len()
+    mut last = 0
+    mut ls = 0
+    mut i = 0
+    while i <= n {
+        mut at_end = false
+        if i == n {
+            at_end = true
+        } else {
+            if b[i] == UNIT_LF {
+                at_end = true
+            } else {
+                // A byte inside the line: the line has not ended, so the scan
+                // walks on without touching where the line began.
+            }
+        }
+        if at_end {
+            // BYTES AGAIN, and this time not for CRLF but for the subset: the
+            // obvious `text[ls..i].starts_with(...)` is a SLICE, and a slice is
+            // not compiled by novac yet (registry No. 1170). Writing it here
+            // would have added one line of self-hosting debt with the very
+            // edit that exists to remove a quarter of it -- measured, not
+            // feared: the first draft of this function did exactly that and
+            // novac answered with one new refusal.
+            if matches_at(b, ls, "module ") || matches_at(b, ls, "import ") {
+                last = i
+                if i < n {
+                    last = i + 1
+                } else {
+                    // The header line is the last line of the text: there
+                    // is no newline to step past.
+                }
+            } else {
+                // Not a header line: the header ended before it, and `last`
+                // keeps the end of the previous one.
+            }
+            ls = i + 1
+        } else {
+            // Mid-line: nothing is decided until the line ends.
+        }
+        i += 1
+    }
+    last
+}
+
+/// The line feed, by name: the scan above compares one byte, and a bare 0x0A
+/// in an expression says nothing to the next reader.
+///
+/// THE SPELLING IS A SCAR, and it is cheaper to explain than to rediscover.
+/// `novac.lex` has its own `B_LF`, NOT exported -- and a `const B_LF` here
+/// still resolved to it: the C came out naming a symbol this unit does not
+/// emit, and the test died at the C compiler. Renaming to `LF_BYTE` hit the
+/// same wall against `novac.check`. So a private constant of a peer module is
+/// NOT private today -- identity is a bare name without its module (the class
+/// the registry knows as the key-without-module one). Measured twice in three
+/// minutes, 2026-09-20, by two CC-FAILs on this file's own test.
+const UNIT_LF u8 = 0x0A
+
+fn yn(b bool) -> str => if b { "peers" } else { "NOT peers" }
+
+fn main() Io -> () {
+    // SUBJECT: one directory, mixed separators -- what a Windows CLI hands in
+    // when one path is typed and the other comes from a glob.
+    print("mixed     x\\a\\b.nv vs x/a/c.nv -> ${yn(same_dir("x\\a\\b.nv", "x/a/c.nv"))}")
+    // CONTROL A: the very same two files, separators spelled alike.
+    print("all-slash x/a/b.nv vs x/a/c.nv -> ${yn(same_dir("x/a/b.nv", "x/a/c.nv"))}")
+    // CONTROL B: same, all backslashes.
+    print("all-back  x\\a\\b.nv vs x\\a\\c.nv -> ${yn(same_dir("x\\a\\b.nv", "x\\a\\c.nv"))}")
+    // CONTROL C: genuinely different directories must stay NOT peers, so the
+    // subject line above is not just "this function says peers to everything".
+    print("differ    x/a/b.nv vs x/z/c.nv -> ${yn(same_dir("x/a/b.nv", "x/z/c.nv"))}")
+    // CONTROL D: the cell the module test already covers -- ONE separator,
+    // mixed spelling -- which passes and hides the subject above.
+    print("one-sep   a\\b.nv vs a/c.nv -> ${yn(same_dir("a\\b.nv", "a/c.nv"))}")
+}

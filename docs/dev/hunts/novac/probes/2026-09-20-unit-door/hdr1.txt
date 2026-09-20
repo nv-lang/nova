@@ -1,0 +1,5 @@
+// Probe: same_dir on paths that name ONE directory but spell the separators
+// differently. The code block below is copied VERBATIM from
+// novac/src/pipeline/pipeline.nv lines 110-439 (tree state of 2026-09-20);
+// the only shim is a local `ice`, which novac imports from novac.diag.
+

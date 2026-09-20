@@ -1,0 +1,32 @@
+module applied_sum_arm.neg_1
+
+// A `match` ON AN APPLIED SUM -- refused BY NAME, and the name is the point.
+//
+// Until 2026-09-20 this said "this arm names a variant of a different sum than
+// the value matched on". That sentence is about the PROGRAM and was a statement
+// about the COMPILER: `Some` is registered under the generic `Option`, the
+// scrutinee is an application, and the door compared type ids. The reader was
+// sent looking for a sum mix-up that is not in their code.
+//
+// WHAT THE WAVE DID AND DELIBERATELY DID NOT DO. The door now finds the head
+// through the DECLARATION, so the form is recognised -- and it is refused here,
+// because the emitter cannot spell it: an applied sum reaching novac comes from
+// the SHELL, with the oracle's tag names and value semantics, while novac emits
+// its own spelling and a pointer access. Measured on this very file:
+// `_novac_l2->tag` against a value struct, and an undeclared
+// `NOVAC_TAG_..._Option_Some`.
+//
+// So recognition landed and compilation did not, ON PURPOSE. Letting the form
+// through the checker with the emitter unable to carry it is the silent-
+// acceptance class this compiler keeps closing -- and this same night it had
+// already cost one wrong answer and two ices.
+//
+// A user's OWN generic sum never reaches this door: generic parameters are
+// refused earlier (E2-b2). So this cell is about the shell's sums alone.
+
+// NOVAC_EXPECT a `match` on an applied sum
+
+fn from_option(o Option[int]) -> int => match o {
+    Some(v) => v
+    None => 0
+}

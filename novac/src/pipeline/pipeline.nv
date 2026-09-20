@@ -177,9 +177,18 @@ const UNIT_BACKSLASH u8 = 0x5C
 /// Do two paths name files of ONE module?
 ///
 /// A module is a directory in this compiler's layout, so the question is
-/// whether the paths agree up to their last separator. Compared BYTE BY
-/// BYTE rather than by cutting the directory out: cutting means slicing, and
-/// a slice is not compiled by novac yet (registry No. 1170).
+/// whether the paths agree up to their last separator. Compared byte by byte
+/// rather than by cutting the directory out: cutting means slicing, and a
+/// slice is not compiled by novac yet (registry No. 1170).
+///
+/// THE TWO SEPARATORS COMPARE EQUAL (registry 1194). `last_sep` has looked
+/// for both since it was written -- "the CLI receives the path exactly as it
+/// was typed and this compiler is built on Windows as much as anywhere else"
+/// -- and the prefix comparison did not, so `sub/x.nv` and `sub\\y.nv` were
+/// different directories. The module split in two, and the call between the
+/// peers was refused as an unknown name: a CORRECT program refused for how
+/// its path was spelled on the command line. Measured 2026-09-20 with the
+/// same two files handed in both ways.
 ///
 /// Two paths with no separator at all are peers -- they name files of the
 /// working directory, which is one module like any other.
@@ -191,9 +200,21 @@ export fn same_dir(a str, b str) -> bool {
     ro ba = a.bytes()
     ro bb = b.bytes()
     for i in 0..sa {
-        if ba[i] != bb[i] { return false }
+        if !same_path_byte(ba[i], bb[i]) { return false }
     }
     true
+}
+
+/// Two bytes of a PATH: equal, or the two spellings of one separator.
+///
+/// Its own door because the question is asked per byte and the answer is a
+/// rule about paths, not about bytes -- and because a reader of `same_dir`
+/// should meet the rule by name rather than by an `||` in a loop.
+fn same_path_byte(x u8, y u8) -> bool {
+    if x == y { return true }
+    ro x_sep = x == UNIT_SLASH || x == UNIT_BACKSLASH
+    ro y_sep = y == UNIT_SLASH || y == UNIT_BACKSLASH
+    x_sep && y_sep
 }
 
 /// A module's files, handed to the compiler as ONE text (274.7 M).
@@ -270,7 +291,8 @@ fn module_line_end(text str) -> int {
 /// inside the subset it is helping to widen.
 fn append_range(mut out []u8, b []u8, from int, to int) -> () {
     for i in from..to {
-        // nova:allow W_MANUAL_SLICE_COPY -- the canon `x[a..b]` is a SLICE, and novac does not compile one yet (registry 1170): obeying here would add to the debt this file exists to remove
+        // nova:allow W_MANUAL_SLICE_COPY -- the canon `x[a..b]` is a SLICE,
+        // and novac does not compile one yet (registry 1170)
         out.push(b[i])
     }
 }
@@ -329,13 +351,39 @@ export fn unit_of(paths []str, texts []str) -> Unit {
         }
     }
     // Then the bodies, each remembering where it came from.
+    mut bodies = 0
     for j in 0..texts.len() {
         ro tj = texts[j]
         ro bj = tj.bytes()
         ro hj = header_end(texts[j])
-        files.push(UnitFile { path: paths[j], at: out.len(), from: hj })
-        append_range(out, bj, hj, bj.len())
-        out.push(UNIT_LF)
+        // A FILE THAT CONTRIBUTES NO BYTES CONTRIBUTES NO RUN (registry 1193).
+        //
+        // An empty body was recorded as a run of length zero, and the newline
+        // written after it then fell inside that run -- so `file_of_offset`,
+        // which answers with the LAST run at or before the offset, handed the
+        // end of the unit to the file that had given nothing. Measured: a
+        // three-line broken file plus a ZERO-BYTE peer reported
+        // `z_empty.nv:1` -- a byte that file does not have -- while the broken
+        // file alone reported its own offset 43 correctly.
+        //
+        // The separator goes with the run: it exists to keep one body's last
+        // line off the next body's first, and an absent body needs no keeping
+        // apart.
+        if hj < bj.len() {
+            // THE SEPARATOR GOES BETWEEN BODIES, NOT AFTER EACH (registry 1193,
+            // second half). Written after, the last body was followed by a
+            // newline that belongs to no file -- and a diagnostic at the END of
+            // the unit landed on it, so a span that read 43 alone read 44 in the
+            // unit: one byte past a 43-byte file. Between-form has no last one.
+            if bodies > 0 { out.push(UNIT_LF) } else {
+                // The first body follows the header, which already ends in one.
+            }
+            bodies += 1
+            files.push(UnitFile { path: paths[j], at: out.len(), from: hj })
+            append_range(out, bj, hj, bj.len())
+        } else {
+            // No body: an empty file, or one that is nothing but its header.
+        }
     }
     match out.to_str() {
         Ok(t) => {

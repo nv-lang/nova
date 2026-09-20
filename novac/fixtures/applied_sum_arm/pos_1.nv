@@ -1,0 +1,26 @@
+module applied_sum_arm.pos_1
+
+// A `match` ON A PLAIN SUM WITH A PAYLOAD -- the control that named the axis,
+// and the half that works.
+//
+// It is here because of what it PROVED rather than what it does: this shape was
+// accepted throughout, while the same shape over an `Option[int]` was refused as
+// "this arm names a variant of a different sum". Two shapes, one payload each,
+// one arm each -- so the axis was neither the payload nor the arm. It was the
+// APPLICATION: `Some` is registered under the generic `Option` and a scrutinee
+// of type `Option[int]` is a different TyId, which the door compared directly.
+//
+// Its pair `neg_1.nv` holds the applied case, which is refused BY NAME now
+// instead of being described wrongly.
+
+type Box enum Empty | Full(int)
+
+fn from_box(b Box) -> int => match b {
+    Full(v) => v
+    Empty => 0
+}
+
+fn main() {
+    println(from_box(Full(7)))
+    println(from_box(Empty))
+}

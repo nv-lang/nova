@@ -1443,4 +1443,29 @@ no_caveat=0
 #   NIKOGDA ne zapuskalis na CI: shag konvenciy padaet ranshe, i vsyo posle nego
 #   skipped (zamer po vosmi progonam, 18-20 sentyabrya). Eto ne rost dolga za noch,
 #   a NAZYVANIE togo, chto stoyalo tri dnya i schitalos zelyonym.
-blockers=76
+# 2026-09-20 (integrator): blockers 76 -> 77. Zavedena 1191 -- emitter novac
+#   chitaet obrazec plecha inache, chem pishet parser: programma sobiraetsya,
+#   molchit i dayot NEVERNYY otvet (name_of(Kind.B) vozvrashchaet "A").
+#   Nashla Karina v SVOEY ZHE volne, uzhe vlitoy mnoyu -- i vazhnee defekta to,
+#   pochemu on proshyol priyomku: ona merila, chto forma CHITAETSYA, a ne chto
+#   programma VEDYOT SEBYA verno. Differencial -- yarus integratora, i on ego
+#   na etoy volne ne progonyal pered sliyaniem.
+# 2026-09-20 (integrator): blockers 77 -> 79. Ohota po kletke 'dver sborki
+#   edinicy kompilyacii x K1' (trek novac) dala chetyre nahodki, dve iz nih
+#   blokery: 1193 (tablica edinicy otdayot paru 'fayl+smeshchenie', kotoroy ne
+#   sushchestvuet -- diagnostika saditsya na NEVINOVNOGO rovesnika) i 1194
+#   (same_dir sravnivaet bayty, i smeshannye razdeliteli molcha razryvayut
+#   modul nadvoe). Chestnyy rost: oba defekta byli v dereve i ranshe.
+# 2026-09-20 (integrator): blockers 79 -> 80. Zavedena 1197 -- diagnostiki
+#   kompilyatora pechatayutsya PO-RUSSKI, a repozitoriy publichen i zerkalitsya
+#   na tri hosta. Strazh cli-output-language sudit --help, JSON-shemu i teksty
+#   oshibok CLI, a diagnostiki chekera -- samuyu bolshuyu poverhnost teksta --
+#   ne sudit nikto. Nashlos poputno pri probe k stroke 623.
+# 2026-09-20 (integrator): blockers 80 -> 81. Zavedena 1199 -- strazh pechataet
+#   DVA verdikta podryad, i pervyy 'ok'; chitayushchiy ostanavlivaetsya na pervom,
+#   i pod nim prozhila vsyu noch tihaya miskompilyaciya 1191. Nashla Karina.
+# 2026-09-20 (integrator): blockers 81 -> 82. Ne novaya stroka, a PEREKLASSIFIKACIYA
+#   1195: ona byla pro formulirovku otkaza (K2, ne bloker), a zamer pokazal drugoy
+#   predmet -- proverka dubley imyon pokryvaet TOLKO TIPY: `fn dup()` i `const K`
+#   dvazhdy v odnom fayle dayut NOL diagnostik. Pole ispravleno NA MESTE.
+blockers=82

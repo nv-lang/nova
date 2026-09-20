@@ -429,6 +429,31 @@ fn Checker mut @type_block(b Node) -> () {
                     i += 1
                     continue
                 }
+                if i == tail_at && c.kind_of() == NodeKind.IfLet &&
+                   !stmt_terminates(c) {
+                    // THE TAIL `if let` IS A VALUE TOO (registry 1189). It was
+                    // refused here as "a body ending without a value" while the
+                    // same shape written `if c { a } else { b }` was accepted --
+                    // one form, two spellings, and the allow-list knew only one.
+                    //
+                    // UNLESS IT TERMINATES, and that condition is not caution:
+                    // `if Some(v) = e { return v } else { return -1 }` produces
+                    // no value at all -- both paths leave -- and it compiled
+                    // correctly long before this wave. Without the question the
+                    // value door refuses a returning branch by its own rule and
+                    // a working form breaks. Found by `iflet_test.nv`, which is
+                    // what a test corpus is for: my own probes all had branches
+                    // that produce values, so none of them could have noticed.
+                    ro lmark = @out.len()
+                    @type_if_let(c, as_value: true)
+                    if @out.len() == lmark {
+                        @judge_return(c, @chan.type_if_known(c.id_of()))
+                    } else {
+                        // Refused inside the door, by name: nothing to add.
+                    }
+                    i += 1
+                    continue
+                }
                 if i == tail_at && is_expr_kind(c.kind_of()) {
                     // ANY OTHER EXPRESSION TAIL of a value body (a name, a
                     // literal, an operator, a field) is the returned value too
@@ -763,7 +788,7 @@ fn Checker mut @type_stmt(st Node) -> () {
 /// carriers use nothing else), and the binder takes the payload type inside
 /// the then-block. The initializer's type is RECORDED for the emitter's
 /// strict door -- the same lesson every wave since B15 step 5 pays once.
-fn Checker mut @type_if_let(st Node) -> () {
+fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
     ro kids = branch_children(st)
     if kids.len() < 8 {
         assert(@out.len() > 0, "check: a malformed if-let reached typing with no refusal")
@@ -796,6 +821,41 @@ fn Checker mut @type_if_let(st Node) -> () {
         return
     }
     @record(init, ot)
+    if as_value {
+        // AS A VALUE: an `else` is not optional -- without it the None path
+        // produces nothing and the function would fall off its end. The plain
+        // tail `if` says the same thing in the same words (274.7 B14).
+        if kids.len() <= 9 {
+            @report_first_leaf_of(kids, IFLET_VALUE_NEEDS_ELSE_MSG)
+            return
+        } else {
+            // Both paths written: each one's tail is a value below.
+        }
+        // The binder lives in the SOME branch only, which is why the mark is
+        // released before the else is typed rather than after both.
+        ro vmark = @scope.mark()
+        @scope.bind(leaf_text(kids[3]), payload, ParamMode.ModeRo)
+        ro some_t = @type_branch_value(kids[7])
+        @scope.release(vmark)
+        ro none_t = @type_branch_value(kids[9])
+        if !is_ty(some_t) || !is_ty(none_t) {
+            // SILENT-OK: the branch without a value was refused inside
+            // `@type_branch_value`, by name; one cause, one diagnostic.
+            return
+        } else {
+            // Both produced a type: they must be the same one.
+        }
+        if some_t != none_t {
+            @report_first_leaf_of(kids, IFLET_VALUE_DISAGREE_MSG)
+            return
+        } else {
+            // Agreed: the `if let` carries that type.
+        }
+        @record(st, some_t)
+        return
+    } else {
+        // As a statement: the branches are blocks, typed below.
+    }
     ro mark = @scope.mark()
     @scope.bind(leaf_text(kids[3]), payload, ParamMode.ModeRo)
     @type_block(kids[7])

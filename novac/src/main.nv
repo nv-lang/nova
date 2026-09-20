@@ -414,12 +414,26 @@ fn run(a []str) -> int {
                 }
                 return worst.code()
             } else {
-                // Peers of one directory go in together, in the order given:
-                // the order of bodies does not change the checker's verdict
-                // (measured 2026-09-20, 274.7 M), so nothing is sorted here.
+                // Peers of one directory go in together, IN THE ORDER GIVEN,
+                // and nothing is sorted here.
+                //
+                // WHAT THE MEASUREMENT ACTUALLY SAID (registry 1196, correcting
+                // my own claim of 2026-09-20 the same day): the order does not
+                // change the checker's VERDICT. It was written here as though it
+                // did not change anything, and the wider reading is false --
+                // `unit_of` takes the `module` line from the FIRST file only, so
+                // which argv position a file holds decides whether the unit
+                // carries a module declaration at all. The hunt proved there is
+                // no consequence TODAY (emission byte-identical either way), and
+                // a claim outliving its measurement is how the next consequence
+                // arrives unnoticed.
+                //
+                // So the sentence now says only what was measured, and the
+                // unmeasured half is named as unmeasured.
                 mut all = []str.new()
                 for k in argi..a.len() {
-                    // nova:allow W_MANUAL_SLICE_COPY -- the canon `x[a..b]` is a SLICE, and novac does not compile one yet (registry 1170): obeying here would add to the debt this file exists to remove
+                    // nova:allow W_MANUAL_SLICE_COPY -- the canon `x[a..b]` is a
+                    // SLICE, and novac does not compile one yet (registry 1170)
                     all.push(a[k])
                 }
                 mut used = []bool.new()
@@ -433,12 +447,15 @@ fn run(a []str) -> int {
                         continue
                     }
                     mut group = []str.new()
-                    // nova:allow W_MANUAL_SLICE_COPY -- not a copy: the push is CONDITIONAL (a gather), and no slice expresses picking some elements and not others
+                    // nova:allow W_MANUAL_SLICE_COPY -- not a copy: the push is
+                    // CONDITIONAL, and no slice picks some elements and not others
                     group.push(all[i2])
                     used[i2] = true
                     for j2 in i2 + 1..all.len() {
                         if !used[j2] && same_dir(all[i2], all[j2]) {
-                            // nova:allow W_MANUAL_SLICE_COPY -- not a copy: the push is CONDITIONAL (a gather), and no slice expresses picking some elements and not others
+                            // nova:allow W_MANUAL_SLICE_COPY -- not a copy: the
+                            // push is CONDITIONAL, and no slice picks some
+                            // elements and not others
                             group.push(all[j2])
                             used[j2] = true
                         } else {

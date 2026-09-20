@@ -1,0 +1,7 @@
+module p.i
+
+fn g(o Option[int]) -> bool {
+    if Some(v) = o { v > 0 } else { false }
+}
+
+fn main() { println(g(Some(7))) }

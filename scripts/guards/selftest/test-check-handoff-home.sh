@@ -65,6 +65,38 @@ else
     echo "$NAME: ok — команда без предписания отвергнута"
 fi
 
+# ── 5. ДОКАЗАТЕЛЬСТВО С ПАРОЙ — PASS (НОВОЕ поведение, 2026-09-20) ─────
+# Зачем клетка: с этого дня файл в docs/.sessions/ ТРЕБУЕТСЯ Stop-хуком как
+# доказательство остановки, и краснеть на его НАЛИЧИИ стало неверно.
+# Клетка 4 ниже держит вторую половину: без пары отказ остался.
+mk_tree "$TMP/paired"
+mkdir -p "$TMP/paired/docs/dev/prompts"
+printf '# peredacha\n' > "$TMP/paired/docs/.sessions/handoff-beef0001.md"
+printf '## 0-2026-09-20-den. ОСТАНОВКА smeny\n\ntelo\n' \
+    > "$TMP/paired/docs/dev/prompts/integrator-handoff.md"
+if python "$GUARD" "$TMP/paired" >/dev/null 2>&1; then
+    echo "$NAME: ok — доказательство с парой в записке принято"
+else
+    echo "$NAME: FAIL — доказательство с парой отвергнуто" >&2
+    FAILED=1
+fi
+
+# ── 6. ПАРА БЕЗ СЛОВА ОСТАНОВКА — FAIL (контроль к клетке 5) ───────
+# Без этой клетки пятая доказывала бы только что ЗАПИСКА СУЩЕСТВУЕТ,
+# а не что в ней есть РАЗДЕЛ ОСТАНОВКИ: замена заголовка делает
+# причину приёма невозможной, и в этом смысл контроля.
+mk_tree "$TMP/nopair"
+mkdir -p "$TMP/nopair/docs/dev/prompts"
+printf '# peredacha\n' > "$TMP/nopair/docs/.sessions/handoff-beef0002.md"
+printf '## 0-2026-09-20-den. Sostoyanie smeny\n\ntelo\n' \
+    > "$TMP/nopair/docs/dev/prompts/integrator-handoff.md"
+if python "$GUARD" "$TMP/nopair" >/dev/null 2>&1; then
+    echo "$NAME: FAIL — записка без раздела ОСТАНОВКА засчитана за пару" >&2
+    FAILED=1
+else
+    echo "$NAME: ok — записка без раздела ОСТАНОВКА парой не считается"
+fi
+
 if [ "$FAILED" -ne 0 ]; then
     echo "$NAME: FAIL" >&2
     exit 1

@@ -1,0 +1,45 @@
+  run 2 path=b.nv at=53 from=9
+---- S2 first file has no module line
+[[UNIT TEXT BEGIN]]
+fn one() -> int => 1
+
+fn two() -> int => 2
+
+
+[[UNIT TEXT END]] runs=3
+  run 0 path=a.nv at=0 from=0
+  run 1 path=a.nv at=0 from=0
+  run 2 path=b.nv at=22 from=9
+---- S2-control same two files, swapped
+[[UNIT TEXT BEGIN]]
+module m
+fn two() -> int => 2
+
+fn one() -> int => 1
+
+
+[[UNIT TEXT END]] runs=3
+  run 0 path=b.nv at=0 from=0
+  run 1 path=b.nv at=9 from=9
+  run 2 path=a.nv at=31 from=0
+---- S3 peers declaring different modules
+[[UNIT TEXT BEGIN]]
+module m
+fn one() -> int => 1
+
+fn two() -> int => 2
+
+
+[[UNIT TEXT END]] runs=3
+  run 0 path=a.nv at=0 from=0
+  run 1 path=a.nv at=9 from=9
+  run 2 path=b.nv at=31 from=18
+---- S3-control second file alone
+[[UNIT TEXT BEGIN]]
+module other.name
+fn two() -> int => 2
+
+
+[[UNIT TEXT END]] runs=2
+  run 0 path=b.nv at=0 from=0
+  run 1 path=b.nv at=18 from=18

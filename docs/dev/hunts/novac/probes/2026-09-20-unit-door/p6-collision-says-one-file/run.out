@@ -1,0 +1,4 @@
+=== SUBJECT: unit of ta.nv + tb.nv ===
+{"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"tb.nv","start":9,"end":13},"message":"this top-level name is declared twice in one file -- one namespace, so the second declaration collides (E_DUP_DEFINITION, D29); the oracle drops the second body in silence (#811)","poisoned_by":null}
+=== CONTROL: ta.nv alone (no JSON = clean) ===
+rc=0
