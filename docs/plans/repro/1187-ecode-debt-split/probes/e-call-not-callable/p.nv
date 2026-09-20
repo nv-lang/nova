@@ -1,0 +1,5 @@
+fn main() Io -> () {
+    ro x = 1
+    ro y = x()
+    print("x")
+}

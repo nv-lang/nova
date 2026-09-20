@@ -1,0 +1,5 @@
+type RecBox {
+    mut const A int
+}
+
+fn main() Io -> () => print("x")

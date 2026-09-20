@@ -1,0 +1,203 @@
+# 1187: место и МЕХАНИЗМ попадания кода долга в диагностику
+# Вторая редакция (2026-09-20): первая искала только литерал и
+# объявляла «без места печати» двенадцать кодов — это была слепота
+# сканера, а не свойство кодов.
+#
+# ЗНАМЕНАТЕЛИ: кодов в базе 178; файлов .rs прочитано 138;
+# с найденным механизмом 177; только в комментариях 1;
+# не встречаются нигде 0.
+#
+#   bare-name      4
+#   const          2
+#   lint           2
+#   literal        163
+#   other-literal  4
+#   table          2
+#
+# Мест подстановки `format!("[{code}] …")` в дереве: 2
+
+код                                            механизм   место                                          функция
+E_ADDR_OF_NON_LVALUE                           literal    compiler-codegen/src/parser/mod.rs:9094        parse_unary
+E_ADDR_OF_REMOVED                              literal    compiler-codegen/src/const_fn_eval.rs:2474     walk_expr
+E_AMBIGUOUS_IDENT_PATTERN                      literal    compiler-codegen/src/parser/mod.rs:11002       parse_if
+E_AMP_LITERAL                                  literal    compiler-codegen/src/parser/mod.rs:9078        parse_unary
+E_AMP_RECORD_LITERAL                           literal    compiler-codegen/src/parser/mod.rs:9058        parse_unary
+E_ARRAY_ELEM_NARROW                            literal    compiler-codegen/src/codegen/emit_c.rs:53501   try_emit_typed_vec_literal
+E_ARRAY_INDEX_PTR_BANNED                       literal    compiler-codegen/src/parser/mod.rs:9066        parse_unary
+E_AUTO_DERIVE_CYCLE                            literal    compiler-codegen/src/protocols/auto_derive.rs:160 diagnostic_message
+E_AUTO_DERIVE_UNKNOWN_PROTOCOL                 literal    compiler-codegen/src/protocols/auto_derive.rs:182 diagnostic_message
+E_AUTO_DERIVE_UNSUPPORTED_KIND                 literal    compiler-codegen/src/protocols/auto_derive.rs:192 diagnostic_message
+E_BAD_FORMAT_SPEC                              literal    compiler-codegen/src/ast/format_spec.rs:260    parse_rich_format_spec
+E_BARE_TYPEVAR_NEEDS_PREFIX                    literal    compiler-codegen/src/types/mod.rs:7017         check_fn
+E_BINDING_REQUIRES_INIT                        literal    compiler-codegen/src/parser/mod.rs:6746        parse_ro_mut_binding
+E_BLOCKING_FN_DECL_MISSING                     literal    compiler-codegen/src/codegen/emit_c.rs:16224   emit_blocking_fn_call
+E_BLOCKING_NOGC_ALLOC                          literal    compiler-codegen/src/types/mod.rs:34609        check_capabilities_at
+E_BOUND_NOT_PROTOCOL                           literal    compiler-codegen/src/types/mod.rs:29252        check_generic_bound_declarations
+E_BOUND_UNKNOWN                                literal    compiler-codegen/src/types/mod.rs:29270        check_generic_bound_declarations
+E_CALL_NOT_CALLABLE                            literal    compiler-codegen/src/types/mod.rs:30844        is_callable_local_ty
+E_CAST_UNWRAP_REQUIRED                         literal    compiler-codegen/src/types/mod.rs:12018        f1_expr_inner
+E_CHANNEL_TYPE_NOT_INSTANTIABLE                literal    compiler-codegen/src/types/mod.rs:6813         channel_bare_type_diag
+E_COERCE_EFFECTFUL                             literal    compiler-codegen/src/types/mod.rs:28031        collect_coerce_pairs
+E_COERCE_NOT_UNARY                             literal    compiler-codegen/src/types/mod.rs:27877        collect_coerce_pairs
+E_COERCE_NOT_ZERO_COST                         literal    compiler-codegen/src/types/mod.rs:28044        collect_coerce_pairs
+E_COERCE_ON_PROTOCOL                           literal    compiler-codegen/src/parser/mod.rs:5878        parse_effect_methods
+E_COERCE_RECEIVER_FORM_DEFERRED                literal    compiler-codegen/src/types/mod.rs:27892        collect_coerce_pairs
+E_CONST_CONSUME_CONFLICT                       other-literal compiler-codegen/src/parser/mod.rs:5517        parse_record_fields_with_default
+E_CONST_FIELD_IN_LITERAL                       literal    compiler-codegen/src/types/mod.rs:8669         walk_expr
+E_CONST_FN_ALLOCATION                          literal    compiler-codegen/src/types/mod.rs:2837         check_const_fn_expr
+E_CONST_FN_CLOSURE_ARITY                       literal    compiler-codegen/src/const_fn_closure.rs:650   lambda_params_to_fn_params
+E_CONST_FN_CLOSURE_BODY                        literal    compiler-codegen/src/const_fn_closure.rs:531   generate_closure_spec
+E_CONST_FN_CLOSURE_EXTERNAL                    literal    compiler-codegen/src/const_fn_closure.rs:626   extract_closure_parts_from_expr
+E_CONST_FN_CLOSURE_FIRST_CLASS                 literal    compiler-codegen/src/const_fn_closure.rs:1169  check
+E_CONST_FN_CLOSURE_GENERIC_ARITY               literal    compiler-codegen/src/const_fn_closure.rs:1122  rewrite_expr
+E_CONST_FN_CLOSURE_GENERIC_NO_TURBOFISH        literal    compiler-codegen/src/const_fn_closure.rs:1111  rewrite_expr
+E_CONST_FN_CLOSURE_NON_CONST_ARG               literal    compiler-codegen/src/const_fn_closure.rs:1092  rewrite_expr
+E_CONST_FN_CLOSURE_NO_RET_TYPE                 literal    compiler-codegen/src/const_fn_closure.rs:694   closure_light_params_to_fn_params
+E_CONST_FN_CLOSURE_OUTER_NOT_CONST             literal    compiler-codegen/src/const_fn_closure.rs:538   generate_closure_spec
+E_CONST_FN_CLOSURE_PARAM_TYPE                  literal    compiler-codegen/src/const_fn_closure.rs:663   lambda_params_to_fn_params
+E_CONST_FN_CONTROL_FLOW                        literal    compiler-codegen/src/const_fn_eval.rs:1741     eval_block
+E_CONST_FN_DIV_ZERO                            literal    compiler-codegen/src/const_fn_eval.rs:794      div_zero_err
+E_CONST_FN_EFFECT_IN_SIGNATURE                 literal    compiler-codegen/src/parser/mod.rs:4013        parse_fn
+E_CONST_FN_EVAL_DEPTH_EXCEEDED                 literal    compiler-codegen/src/const_fn_eval.rs:245      eval_call_inner
+E_CONST_FN_EVAL_ITERATIONS_EXCEEDED            literal    compiler-codegen/src/const_fn_eval.rs:1919     exec_for_loop
+E_CONST_FN_EVAL_OVERFLOW                       literal    compiler-codegen/src/const_fn_eval.rs:631      eval_unary
+E_CONST_FN_EVAL_PANIC                          literal    compiler-codegen/src/const_fn_eval.rs:262      eval_call_inner
+E_CONST_FN_EXTERNAL                            literal    compiler-codegen/src/const_fn_eval.rs:295      eval_call_inner
+E_CONST_FN_FIRST_CLASS                         literal    compiler-codegen/src/const_fn_eval.rs:2880     check_runtime_let_to_const_fn
+E_CONST_FN_FIRST_CLASS_RUNTIME_HOF             literal    compiler-codegen/src/const_fn_eval.rs:2932     check_runtime_hof_use
+E_CONST_FN_FLUENT_RETURN                       literal    compiler-codegen/src/parser/mod.rs:3887        parse_fn
+E_CONST_FN_GENERIC_NEEDS_T_REFLECTION          literal    compiler-codegen/src/const_fn_eval.rs:2080     eval_expr
+E_CONST_FN_MATCH_EXHAUSTIVE                    literal    compiler-codegen/src/const_fn_eval.rs:490      body
+E_CONST_FN_PARTIAL_CONSTNESS                   literal    compiler-codegen/src/parser/mod.rs:3990        parse_fn
+E_CONST_FN_PATTERN_NOT_SUPPORTED               literal    compiler-codegen/src/const_fn_eval.rs:1909     exec_for_loop
+E_CONST_FN_RECURSION                           literal    compiler-codegen/src/types/mod.rs:1983         visit
+E_CONST_FN_REF_NON_CONST                       literal    compiler-codegen/src/types/mod.rs:2638         check_const_fn_expr
+E_CONST_FN_TRAMPOLINE_GENERIC_ARITY            literal    compiler-codegen/src/const_fn_trampoline.rs:294 generate_generic_trampoline_decl
+E_CONST_FN_TRAMPOLINE_GENERIC_INFER            literal    compiler-codegen/src/const_fn_trampoline.rs:776 try_seed_generic
+E_CONST_FN_TRAMPOLINE_GENERIC_UNRESOLVED       literal    compiler-codegen/src/const_fn_trampoline.rs:756 try_seed_generic
+E_CONST_FN_TRAMPOLINE_INTRINSIC                literal    compiler-codegen/src/const_fn_trampoline.rs:1519 rewrite_body_expr
+E_CONST_INSTANCE_ACCESS                        literal    compiler-codegen/src/types/mod.rs:18919        f3_check_member_ctx
+E_CONST_IN_BODY_RETRACTED                      literal    compiler-codegen/src/parser/mod.rs:5320        parse_record_fields_with_default
+E_CONST_MUT_CONFLICT                           other-literal compiler-codegen/src/parser/mod.rs:5516        parse_record_fields_with_default
+E_CONST_NOT_CONSTEXPR                          literal    compiler-codegen/src/codegen/emit_c.rs:10771   emit_const_record_lit
+E_CONST_REFERS_NON_CONSTEXPR                   literal    compiler-codegen/src/types/mod.rs:2354         check_const_constexpr_ex
+E_CONST_RO_REDUNDANT                           other-literal compiler-codegen/src/parser/mod.rs:5515        parse_record_fields_with_default
+E_CONST_UNKNOWN_TYPE                           literal    compiler-codegen/src/imports.rs:810            attach_out_of_body_assoc_consts
+E_CONSUME_AT_MODULE_LEVEL                      literal    compiler-codegen/src/parser/mod.rs:2218        parse_item
+E_CONSUME_IN_CONDITION                         literal    compiler-codegen/src/parser/mod.rs:10957       parse_if
+E_DEFAULT_HANDLER_ARITY                        literal    compiler-codegen/src/types/mod.rs:54185        default_handler_infer_effect_name
+E_DEFAULT_HANDLER_CYCLE                        literal    compiler-codegen/src/types/mod.rs:54374        dfs
+E_DEFAULT_HANDLER_DUPLICATE                    literal    compiler-codegen/src/types/mod.rs:54172        default_handler_infer_effect_name
+E_DEFAULT_HANDLER_RETURN_TYPE                  literal    compiler-codegen/src/types/mod.rs:54131        default_handler_infer_effect_name
+E_DEFAULT_HANDLER_UNKNOWN_EFFECT               literal    compiler-codegen/src/types/mod.rs:54158        default_handler_infer_effect_name
+E_DEP_PATH_OUTSIDE_REPO                        literal    compiler-codegen/src/manifest.rs:872           check_no_cross_repo_path_deps
+E_DUPLICATE_GENERIC_DECL                       literal    compiler-codegen/src/types/mod.rs:7214         check_fn
+E_EFFECT_ERASED_IN_FN_TYPE                     literal    compiler-codegen/src/strict_effects.rs:480     check_fn_type_target
+E_EXTENSION_METHOD_NEEDS_IMPORT                literal    compiler-codegen/src/types/mod.rs:14196        check_extension_method_policy
+E_EXTERNAL_FN_FAIL_EFFECT                      literal    compiler-codegen/src/types/mod.rs:1126         check_module_impl
+E_FFI_C_NAME_OVERLOAD_CONFLICT                 literal    compiler-codegen/src/codegen/emit_c.rs:6780    resolve_chain
+E_FIBER_INDIRECT_CALL                          literal    compiler-codegen/src/types/fiber_safety.rs:2531 check_one_seed
+E_FORMAT_SPEC_EMPTY                            literal    compiler-codegen/src/ast/format_spec.rs:214    parse_rich_format_spec
+E_FORMAT_SPEC_TRAILING                         literal    compiler-codegen/src/ast/format_spec.rs:349    parse_rich_format_spec
+E_HANDLER_OP_RETURN_TYPE_MISMATCH              literal    compiler-codegen/src/types/mod.rs:54959        walk_expr_for_handler_op_decls
+E_IMPL_MISSING_METHODS                         literal    compiler-codegen/src/types/mod.rs:19638        verify_impl_protocols
+E_IMPL_NOT_A_PROTOCOL_METHOD                   literal    compiler-codegen/src/types/mod.rs:19671        verify_method_impl_protocols
+E_IMPL_NOT_PROTOCOL                            literal    compiler-codegen/src/types/mod.rs:19485        verify_impl_protocols
+E_IMPL_SIGNATURE_MISMATCH                      literal    compiler-codegen/src/types/mod.rs:19781        verify_method_impl_protocols
+E_IMPL_WRONG_SIGNATURE                         literal    compiler-codegen/src/types/mod.rs:19608        verify_impl_protocols
+E_INCOMPLETE_HANDLER_OP_DECL                   literal    compiler-codegen/src/types/mod.rs:54942        walk_expr_for_handler_op_decls
+E_INVALID_ORDERING_LOAD                        const      compiler-codegen/src/types/mod.rs:53503        infer_unified_type
+E_INVALID_ORDERING_STORE                       const      compiler-codegen/src/types/mod.rs:53507        infer_unified_type
+E_INVALID_POINTER_MODIFIER                     literal    compiler-codegen/src/parser/mod.rs:7577        parse_type
+E_KW_REMOVED_READONLY                          literal    compiler-codegen/src/parser/mod.rs:4171        parse_param
+E_LINT_ALLOW_NO_REASON                         lint       compiler-codegen/src/lints.rs:3503             apply_nova_allow_suppressions
+E_LINT_EXPECT_NO_REASON                        lint       compiler-codegen/src/lints.rs:3620             apply_nova_expect_no_reason_check
+E_METHOD_AMBIGUOUS                             literal    compiler-codegen/src/types/mod.rs:14212        check_extension_method_policy
+E_MONO_METHOD_KEY_COLLISION                    literal    compiler-codegen/src/codegen/mono_method_registry.rs:91 signature_shape
+E_MUTABILITY_CONFLICT_VALUE_TYPE               literal    compiler-codegen/src/types/mod.rs:3553         check_v3_ro_mut_conflict
+E_MUT_AT_MODULE_LEVEL                          literal    compiler-codegen/src/parser/mod.rs:2205        parse_item
+E_NAMED_TUPLE_EMPTY                            literal    compiler-codegen/src/parser/mod.rs:5270        parse_named_tuple_fields_with_default
+E_PARAM_MOD_CONFLICT                           literal    compiler-codegen/src/parser/mod.rs:4261        parse_param
+E_PATTERN_CONSUME_MUT_CONFLICT                 literal    compiler-codegen/src/parser/mod.rs:12777       parse_pattern
+E_PATTERN_GROUP_MUT                            literal    compiler-codegen/src/parser/mod.rs:6307        parse_let_decl_legacy
+E_POINTER_PREFIX_MODIFIER                      literal    compiler-codegen/src/parser/mod.rs:186         pointer_prefix_modifier_error
+E_PREFIX_SHADOWS_NAMED_TYPE                    literal    compiler-codegen/src/types/mod.rs:7109         check_fn
+E_PRIMITIVE_NO_PROTOCOL_METHOD                 literal    compiler-codegen/src/codegen/emit_c.rs:46895   emit_call
+E_PRIV_FIELD_INIT                              bare-name  compiler-codegen/src/types/mod.rs:8758         walk_expr
+E_PRIV_FIELD_INIT_SPREAD                       literal    compiler-codegen/src/types/mod.rs:8758         walk_expr
+E_PRIV_FIELD_PATTERN                           literal    compiler-codegen/src/types/mod.rs:14460        check_priv_pattern_recursive_inner
+E_PRIV_FIELD_READ                              literal    compiler-codegen/src/types/mod.rs:18707        f3_check_member_ctx
+E_PRIV_FIELD_WRITE                             literal    compiler-codegen/src/types/mod.rs:27106        check_field_write_attrs
+E_PRIV_PUB_CONFLICT                            literal    compiler-codegen/src/parser/mod.rs:5460        parse_record_fields_with_default
+E_PROTOCOL_BOUND_NOT_SATISFIED                 literal    compiler-codegen/src/types/mod.rs:16504        bound_violation_message
+E_PROTOCOL_EMBED_AFTER_METHOD                  literal    compiler-codegen/src/parser/mod.rs:5861        parse_effect_methods
+E_PROTOCOL_EMBED_CYCLE                         literal    compiler-codegen/src/types/mod.rs:28883        check_protocol_embeds
+E_PROTOCOL_EMBED_DUPLICATE                     literal    compiler-codegen/src/types/mod.rs:29036        flatten_with_origin
+E_PROTOCOL_EMBED_NOT_NAMED                     literal    compiler-codegen/src/types/mod.rs:28869        check_protocol_embeds
+E_PROTOCOL_EMBED_NOT_PROTOCOL                  literal    compiler-codegen/src/types/mod.rs:28917        check_protocol_embeds
+E_PROTOCOL_EMBED_UNKNOWN                       literal    compiler-codegen/src/types/mod.rs:28904        check_protocol_embeds
+E_PROTOCOL_RENAMED                             literal    compiler-codegen/src/types/mod.rs:19445        verify_impl_protocols
+E_PROTO_IMPL_CONSUME_FOR_MUT                   table      compiler-codegen/src/types/mod.rs:38876        check_receiver_mut_match
+E_PROTO_IMPL_MUT_FOR_CONSUME                   other-literal compiler-codegen/src/types/mod.rs:38861        check_receiver_mut_match
+E_PROTO_IMPL_MUT_FOR_RO                        table      compiler-codegen/src/types/mod.rs:38892        check_receiver_mut_match
+E_PTR_NO_DISPLAY_USE_DEBUG_STR                 literal    compiler-codegen/src/types/mod.rs:56900        declares
+E_PTR_OP_IN_CONST                              literal    compiler-codegen/src/codegen/emit_c.rs:10850   emit_const_expr
+E_PTR_ORDER_COMPARE_REQUIRES_UNSAFE            literal    compiler-codegen/src/types/mod.rs:56220        walk_expr
+E_READONLY_                                    bare-name  compiler-codegen/src/parser/mod.rs:281         postfix_param_mut_retracted_error
+E_REALTIME_POINTER_OP                          literal    compiler-codegen/src/types/mod.rs:56140        walk_expr
+E_REALTIME_SYNC_WAKE                           literal    compiler-codegen/src/codegen/emit_c.rs:43425   emit_call
+E_RECV_METHOD_MISMATCH                         literal    compiler-codegen/src/codegen/emit_c.rs:47227   emit_call
+E_REDUNDANT_TYPE_MODIFIER                      literal    compiler-codegen/src/parser/mod.rs:6712        parse_ro_mut_binding
+E_REEXPORT_GLOB                                literal    compiler-codegen/src/types/mod.rs:1195         check_module_impl
+E_REF_ARG_NOT_ADDRESSABLE                      literal    compiler-codegen/src/types/mod.rs:32005        check_ref_place_addressable
+E_REF_ARG_NOT_MUT                              literal    compiler-codegen/src/types/mod.rs:26782        check_ref_marker_mutability
+E_REF_ESCAPE_CAPTURE                           literal    compiler-codegen/src/types/mod.rs:26753        report_ref_escape
+E_REPLACE_IN_MANIFEST                          literal    compiler-codegen/src/manifest.rs:797           check_no_committed_replace
+E_REPLACE_PATH_MISSING                         literal    compiler-codegen/src/imports.rs:1626           resolve_one
+E_SAFE_RETIRED                                 literal    compiler-codegen/src/parser/mod.rs:7552        parse_type
+E_SERDE_ATTRIBUTE_MISPLACED                    literal    compiler-codegen/src/protocols/auto_derive.rs:224 serde_tagging_mode
+E_SERDE_ATTRIBUTE_ON_SUM_UNSUPPORTED           literal    compiler-codegen/src/protocols/auto_derive.rs:255 serde_tagging_mode
+E_SERDE_BAD_ATTRIBUTE                          literal    compiler-codegen/src/parser/mod.rs:3310        parse_serde_attr
+E_SERDE_CONTENT_WITHOUT_TAG                    literal    compiler-codegen/src/protocols/auto_derive.rs:329 serde_tagging_mode
+E_SERDE_DUPLICATE_ATTRIBUTE                    literal    compiler-codegen/src/protocols/auto_derive.rs:393 type_serde_options
+E_SERDE_FLATTEN_DENY_CONFLICT                  literal    compiler-codegen/src/protocols/auto_derive.rs:575 validate_wire_contract
+E_SERDE_FLATTEN_UNSUPPORTED                    literal    compiler-codegen/src/protocols/auto_derive.rs:585 validate_wire_contract
+E_SERDE_INTERNAL_TAG_NON_STRUCT                literal    compiler-codegen/src/protocols/auto_derive.rs:316 serde_tagging_mode
+E_SERDE_SKIP_FIELD_NO_DEFAULT                  literal    compiler-codegen/src/protocols/auto_derive.rs:648 resolve_missing_value
+E_SERDE_SKIP_RENAME_CONFLICT                   literal    compiler-codegen/src/protocols/auto_derive.rs:473 field_serde_options
+E_SERDE_TAGGING_CONFLICT                       literal    compiler-codegen/src/protocols/auto_derive.rs:275 serde_tagging_mode
+E_SERDE_TAGGING_ON_NON_SUM                     literal    compiler-codegen/src/protocols/auto_derive.rs:238 serde_tagging_mode
+E_SERDE_UNKNOWN_FIELD_POLICY_CONFLICT          literal    compiler-codegen/src/protocols/auto_derive.rs:405 type_serde_options
+E_SERDE_UNTAGGED_GATED                         literal    compiler-codegen/src/protocols/auto_derive.rs:288 serde_tagging_mode
+E_SERDE_WIRE_NAME_COLLISION                    literal    compiler-codegen/src/protocols/auto_derive.rs:536 validate_wire_contract
+E_SIZE_ACCESSOR_FIELD                          literal    compiler-codegen/src/codegen/emit_c.rs:37497   emit_expr_inner
+E_STR_NO_INT_INDEX                             literal    compiler-codegen/src/types/mod.rs:12746        f1_expr_inner
+E_TAGGED_TEMPLATE_ARG                          literal    compiler-codegen/src/parser/mod.rs:8366        parse_template_args
+E_THREAD_AFFINE_NOT_EXTERN                     literal    compiler-codegen/src/parser/mod.rs:1987        parse_item
+E_TUPLE_ASSIGN_CONSUME_TYPE                    literal    compiler-codegen/src/types/mod.rs:47102        consume_walk_stmt
+E_TUPLE_ASSIGN_RHS                             literal    compiler-codegen/src/parser/mod.rs:12701       parse_stmt_or_expr
+E_TUPLE_DESTRUCTURE_ARITY                      literal    compiler-codegen/src/codegen/emit_c.rs:53003   emit_tuple_destructure
+E_TUPLE_MIXED_FIELDS                           literal    compiler-codegen/src/parser/mod.rs:5209        parse_named_tuple_fields_with_default
+E_TUPLE_NO_PER_FIELD_MOD                       literal    compiler-codegen/src/parser/mod.rs:5191        parse_named_tuple_fields_with_default
+E_TUPLE_NO_PRIV                                literal    compiler-codegen/src/parser/mod.rs:5155        parse_named_tuple_fields_with_default
+E_TYPE_UNKNOWN                                 literal    compiler-codegen/src/types/mod.rs:8174         walk_typeref
+E_UNDECLARED_TRANSITIVE_EFFECT                 literal    compiler-codegen/src/types/mod.rs:34741        check_transitive_effect_strict
+E_UNDECLARED_TYPEVAR_IN_RECEIVER               literal    compiler-codegen/src/types/mod.rs:6997         check_fn
+E_UNKNOWN_PROTOCOL                             bare-name  compiler-codegen/src/protocols/auto_derive.rs:182 diagnostic_message
+E_UNKNOWN_TYPE                                 bare-name  compiler-codegen/src/codegen/emit_c.rs:46853   emit_call
+E_UNKNOWN_TYPE_METHOD                          literal    compiler-codegen/src/codegen/emit_c.rs:46853   emit_call
+E_UNSAFE_ARG_REQUIRES_WRAP                     literal    compiler-codegen/src/types/mod.rs:45606        check_unsafe_coerce_args
+E_UNSAFE_FN_PTR_COERCION                       literal    compiler-codegen/src/types/mod.rs:56079        walk_stmt
+E_UNSAFE_REQUIRED                              literal    compiler-codegen/src/types/mod.rs:56155        walk_expr
+E_UNSAFE_T_NARROW_REQUIRES_UNSAFE              literal    compiler-codegen/src/types/mod.rs:56845        declares
+E_UNSAFE_T_READ_REQUIRES_WRAP                  literal    compiler-codegen/src/types/mod.rs:56564        body
+E_UNUSED_PREFIX_TYPEVAR                        literal    compiler-codegen/src/types/mod.rs:7092         check_fn
+E_VALUE_RECORD_ESCAPE_AFTER_CONSUME            literal    compiler-codegen/src/types/mod.rs:44232        walk_expr
+E_ZERO_ON_MOVE_INVALID_KIND                    literal    compiler-codegen/src/types/mod.rs:7440         check_type_decl
+
+## Только в комментариях — места сборки нет (1)
+
+  E_TYPE_ARITY_MISMATCH
+
+## Не встречаются нигде (0)
+

@@ -1,0 +1,10 @@
+type Rec {
+    a int
+}
+
+const A = 1
+
+fn main() Io -> () {
+    ro r = Rec { a: A }
+    print("x")
+}
