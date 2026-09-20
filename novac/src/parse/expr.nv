@@ -320,7 +320,21 @@ fn Cursor mut @match_expr() -> Node {
         ro before = @i
         mut ak = []Node.new()
         // pattern
-        if @peek() == TokenKind.IntLit {
+        // A LITERAL PATTERN -- integer, string or char. One leaf each, and
+        // the three stand together because they are one form of the
+        // grammar: D19 lists `literal` as a single alternative of `pattern`,
+        // not three.
+        //
+        // THE INTEGER ONE WAS READ AND THE OTHER TWO WERE NOT, which is a
+        // difference nothing in the language justifies -- it is simply where
+        // the subset had got to. Measured 2026-09-20: last two of the four
+        // arm shapes the parser stopped at, one file each
+        // (`lex/lex.nv:462` matches keyword spellings against string
+        // literals, `diag/diag.nv:110` escapes characters against char
+        // literals) -- and those two files are where the remaining
+        // self-hosting diagnostics are most concentrated.
+        if @peek() == TokenKind.IntLit || @peek() == TokenKind.StrLit ||
+           @peek() == TokenKind.CharLit {
             ak.push(@node(NodeKind.Pattern, []Node.of(@take())))
         } else if @peek() == TokenKind.EmptyBrackets {
             // The empty array pattern is one token now.
@@ -349,6 +363,31 @@ fn Cursor mut @match_expr() -> Node {
             ak.push(@node(NodeKind.Pattern, pk))
         } else if @peek() == TokenKind.Ident {
             mut pk = []Node.of(@take())
+            // A QUALIFIED variant: `K.A => ...`, the sum named before the
+            // variant. Read as two more leaves in the same Pattern node, the
+            // way `sem` already reads a qualified name elsewhere -- the
+            // parser records the shape and the checker decides what it means.
+            //
+            // MEASURED 2026-09-20, and this is why it is first of four. The
+            // parser's fallback was 143 of the 332 diagnostics left after the
+            // peers wave -- a BUCKET, not a form. Taking the FIRST refusal of
+            // each file (plan 274:3056: later spans are recovery debris) left
+            // nineteen places, and they were one family: match-arm patterns.
+            // A matrix of one shape per file then named the four the parser
+            // stops at, of which this is one:
+            //   `K.A => 1`            qualified variant   <- here
+            //   `Some(v) => return v` a bare return body
+            //   `"a" => 1`            a string literal
+            //   `'a' => 1`            a char literal
+            // while a bare variant, `_` and an integer literal were read
+            // already. Carriers: `check/check.nv:313` (`DiagKind.LangError`),
+            // `lower/ir.nv:646` (`ElseShape.NoElse`).
+            if @peek() == TokenKind.Dot && @peek(skip: 1) == TokenKind.Ident {
+                pk.push(@take())
+                pk.push(@take())
+            } else {
+                // An unqualified head: the branches below answer for it.
+            }
             // A record-form variant in PATTERN position: `Circle { radius }`.
             // D54 (#719) makes this the only legal way to destructure such a
             // variant -- the positional form is refused by the oracle since
@@ -420,6 +459,24 @@ fn Cursor mut @match_expr() -> Node {
         // emitter have read a Block arm body since wave B5.
         if @peek() == TokenKind.LBrace && !@brace_opens_ctor() {
             ak.push(@block())
+        } else if @peek() == TokenKind.KwReturn {
+            // A BARE `return` AS THE ARM BODY: `None => return no_ty()`.
+            // An arm body is an expression here, and `return` is a
+            // STATEMENT -- so the expression door met a keyword it does not
+            // start with and the whole arm fell into the parser's fallback.
+            //
+            // THE STATEMENT DOOR IS CALLED, not copied. Building a RetStmt
+            // node here would be a second home for one rule -- the shape of
+            // a bare `return` (with a value, or without one at the end of a
+            // block) is settled in `@stmt`, and two builders drift on the
+            // first change to either.
+            //
+            // MEASURED 2026-09-20: second of the four shapes the parser
+            // stopped at, and the largest of the three that remained -- five
+            // files open on it against one each for a string- and a
+            // char-literal arm. Carriers: `check/calls.nv:248`,
+            // `check/exprs.nv:65`, `check/return_rules.nv:140`.
+            ak.push(@stmt())
         } else {
             ak.push(@expr())
         }

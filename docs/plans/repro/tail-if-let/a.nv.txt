@@ -1,0 +1,5 @@
+module p.a
+
+fn f(x int) -> int {
+    if x > 0 { 1 } else { 2 }
+}

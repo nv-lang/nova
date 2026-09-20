@@ -150,7 +150,9 @@ fn Checker mut @refuse_arg_type(kids []Node, row FnRow, key []ArgSpec, form Call
 }
 
 /// WHY this call does not bind to this declaration -- or `None` when it binds
-/// and the cause lies elsewhere (the argument TYPES, judged by the caller).
+/// and the cause lies elsewhere -- in `@refuse_arg_type` (this file, the next
+/// door down). Both askers reach it when `None` comes back here:
+/// `@refuse_free_call` in this file and the method judge in `methods.nv`.
 ///
 /// D102 is the authority and every arm names the RULE, because these are not
 /// subset limits: `bump(5, 2)` is not Nova novac cannot compile yet, it is Nova

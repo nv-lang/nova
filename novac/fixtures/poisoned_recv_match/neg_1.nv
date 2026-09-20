@@ -1,0 +1,36 @@
+module poisoned_recv_match.neg_1
+
+// ONE SEEDED MISTAKE: `mystery` is not a callable novac knows. Exactly one
+// diagnostic may come out, and it must be that one -- never an internal
+// compiler error.
+//
+// WHAT THIS CELL GUARDS. When an initializer is refused, `binds.nv` still binds
+// the name, with `no_ty()`, so later uses raise no second complaint. A METHOD
+// CALL on such a name is then never decided -- the judge has nothing to look a
+// method up on -- and `type_of` used to read that silence as a violation of the
+// pass order and die.
+//
+// WHY THE ARMS ARE QUALIFIED, and it is not decoration. Until 2026-09-20 the
+// parser stopped at `Kind.A =>` altogether, so the walk never reached the
+// method call and the hole stayed invisible. Reading the form opened the path,
+// and `check/check.nv` began to ice where it had produced diagnostics. Both
+// halves are needed: a match whose arms are qualified, and a method call on a
+// receiver whose type never arrived. Neither alone reproduces, which is why
+// this file carries both.
+//
+// THE PASS-ORDER CHECK ITSELF STAYS ALIVE. It catches a real class -- two
+// answers to one question, plan 274.4 -- and the fix gave it a distinguishing
+// question rather than removing it: is the receiver typed at all. A cell that
+// merely asserted "no ice" would pass just as well with the check deleted, so
+// the property here is "ONE named diagnostic", which deleting it would break in
+// the other direction.
+
+type Kind enum A | B
+
+fn pick(k Kind, n int) -> int {
+    ro s = mystery(n)
+    match k {
+        Kind.A => s.byte_len()
+        Kind.B => 0
+    }
+}

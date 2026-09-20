@@ -275,6 +275,31 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         ro known = chan.type_if_known(nid)
         if is_ty(known) { return known }
         if !chan.has_callee(nid) {
+            // A POISONED RECEIVER IS THE ONE LEGAL SILENCE, and telling it
+            // apart from a pass-order violation is the whole of this branch.
+            // When an earlier statement refused a binding, `binds.nv` still
+            // binds the name with `no_ty()` so its later uses raise no second
+            // complaint -- and a method call on such a name is never decided,
+            // because the judge has nothing to look a method up on. The
+            // absence of a decision is then the ANSWER, not a broken pass
+            // order.
+            //
+            // MEASURED 2026-09-20 (registry No. 1168). The check stayed
+            // correct while the form could not be parsed at all; reading a
+            // qualified arm pattern opened the path, and `check/check.nv`
+            // began to ice where it used to produce diagnostics. Both halves
+            // are needed to see it -- a match whose arms are qualified, and a
+            // method call on a receiver whose type never arrived -- which is
+            // why neither half alone reproduces.
+            //
+            // THE PASS-ORDER CHECK ITSELF STAYS, and that is deliberate: it
+            // catches a real class (274.4, two answers to one question), and
+            // removing it to silence this case would trade a guard for a
+            // symptom. What it gains here is a distinguishing question --
+            // is the receiver typed at all -- instead of treating every
+            // silence as a violation.
+            ro recv_t = type_of(kids[0], ctx, scope, chan)
+            if !is_ty(recv_t) { return no_ty() }
             ice("check: method call reached type_of with no decision in the channel (274.4 pass-order)")
         }
         return ctx.fns.rows[raw_row(chan.callee_of(nid).callable_row())].ret_id
@@ -425,8 +450,24 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
                 // lattice must not walk into a block -- its statement kinds
                 // have no type rule, and asking would be the #652 ice about
                 // a form nobody wrote as a value.
+                //
+                // A BARE `return` ARM IS THE SAME FACT WITHOUT THE BRACES,
+                // and it joins the test rather than getting a line of its
+                // own: `A => return 1` and `A => { return 1 }` leave through
+                // the function alike, so a door that told them apart would
+                // be answering about punctuation.
+                //
+                // MEASURED 2026-09-20, and the measurement is why the pair
+                // is written together. The parser learnt the braceless form
+                // an hour ago; the braced one had been read since wave B9,
+                // so this door knew the RULE and not the second spelling of
+                // it, and answered the #652 ice the comment above predicts.
+                // The statement-position match was fine throughout -- only
+                // the VALUE position asks here -- which is why the shape
+                // needs `match` in a tail to reproduce.
                 ro body = ak[at]
-                if body.kind_of() == NodeKind.Block { return no_ty() }
+                ro bk = body.kind_of()
+                if bk == NodeKind.Block || bk == NodeKind.RetStmt { return no_ty() }
                 return type_of(body, ctx, scope, chan)
             }
         }

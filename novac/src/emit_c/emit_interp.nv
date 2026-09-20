@@ -167,8 +167,7 @@ fn Emitter mut @emit_synth_display(c Node, st TyId, sb str) -> () {
     match field_range_of(td) {
         None => ice("emit: a synthesized display for a type with no field rows -- the judge admits a record with at least one field")
         Some((first, cnt)) => {
-            mut i = 0
-            while i < cnt {
+            for i in 0..cnt {
                 if i > 0 {
                     @body.append("    Nova_StringBuilder_method_append(${sb}, (nova_str){.ptr=(const uint8_t*)\", \", .len=2});\n")
                 } else {
@@ -184,7 +183,6 @@ fn Emitter mut @emit_synth_display(c Node, st TyId, sb str) -> () {
                         @body.append("${arrow}${fd.name}), ${call.tail});\n")
                     }
                 }
-                i += 1
             }
         }
     }

@@ -1427,4 +1427,20 @@ no_caveat=0
 #   dublya imyon NIKOGDA, dazhe bez importa. Chestnyy rost: defekt byl v dereve i
 #   ranshe, hrapovik schitaet NAZVANNOE. Sledstvie tyazhelee samogo defekta -- rezhim,
 #   kotorym gonyaetsya korpus, slep k etomu klassu, znachit nasha priyomka slepa.
-blockers=75
+# 2026-09-20 (integrator): blockers 75 -> 74. NOT a fix -- a RETRACTION. Row 1186
+#   was filed by me two hours ago on a premise that turned out false: `nova test`
+#   was said to be blind to duplicate names, and it is not. Verified by MY OWN
+#   probe (two peer files, duplicate Node, a live test): check FAIL: 1, test
+#   FAIL: 1. The only divergence of the eight families measured is row 1183, where
+#   it is `check` that stays silent. Lowering the base in the same edit, because a
+#   base left high silently permits filing the same phantom again.
+# 2026-09-20 (integrator): blockers 74 -> 75. Zavedena 1187 -- 417 kodov E_*
+#   ob'yavleno v compiler-codegen/src, 198-217 iz nih ne nazvany NI ODNOY
+#   fiksturoy (dva schyota, raznye kriterii, oba v stroke). Chestnyy rost:
+#   hrapovik schitaet NAZVANNOE, a polovina poverhnosti diagnostik nikogda ne
+#   ispolnyalas ni v odnom progone.
+# 2026-09-20 (integrator): blockers 75 -> 76. Zavedena 1188 -- modulnye testy novac
+#   NIKOGDA ne zapuskalis na CI: shag konvenciy padaet ranshe, i vsyo posle nego
+#   skipped (zamer po vosmi progonam, 18-20 sentyabrya). Eto ne rost dolga za noch,
+#   a NAZYVANIE togo, chto stoyalo tri dnya i schitalos zelyonym.
+blockers=76

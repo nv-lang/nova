@@ -68,4 +68,25 @@
 # резать чужие выстраданные формулировки в спешке — худший из возможных
 # моментов. Маркер [M-context-layer-trim] в docs/plans/backlog-followups.md.
 after-compact = 17000
-session-start = 44544
+# 2026-09-20 (integrator): after-compact 17000 OSTAYOTSYA, session-start
+#   44544 -> 45200. DVE POLOVINY LECHILIS PO-RAZNOMU, i eto namerenno.
+#
+#   AFTER-COMPACT ulozhen VYNOSOM, bez podnyatiya: 20295 -> 16640. Dva razdela
+#   pro agentov (chitatel i ohotnik) pereehali v
+#   docs/dev/delegation-agent-briefs.md, v sloe ostalis svyazyvayushchie stroki
+#   i ssylka. Ni odno slovo ne udaleno -- oni nuzhny TOMU, KTO SOSTAVLYAET BRIF,
+#   a ne kazhdomu oknu kazhdyy raz. Eto i yest [M-context-layer-trim], nazvannyy
+#   v letopisi vyshe i otlozhennyy odin raz; otkladyvat vtoroy raz s tem zhe
+#   dovodom znachilo by prevratit ego v pravilo bez mehanizma.
+#
+#   SESSION-START podnyat na 656 bayt, i prichina nazvana tochno: norma
+#   vladelca pro vremya (`date` pered KAZHDYM soobshcheniem, ne raz za hod)
+#   zapisana v AGENTS.md i flow.md 2026-09-20. AGENTS.md -- 23289 iz 45122,
+#   to yest polovina sloya; rezat v nyom prishlos by OBOSNOVANIYA pravil, a etot
+#   fayl pryamo govorit, chto pravilo bez prichiny ne derzhitsya. Norma stoit
+#   svoih bayt: bez neyo doklady ne sopostavlyayutsya s progonami gejta.
+#
+#   CHEGO ETA PRAVKA NE UTVERZHDAET: chto sloy bolshe ne rastyot. On rastyot
+#   pri kazhdom novom pravile, i sleduyushchiy perebor nado lechit VYNOSOM
+#   snova -- podnyatie dvazhdy podryad prevratit potolok v letopis rosta.
+session-start = 45200

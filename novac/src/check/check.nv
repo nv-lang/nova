@@ -42,6 +42,7 @@ import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, COERCE_ATTR, REALTIME_A
 import ../builtins.{IMPL_ATTR, DISPLAY_PROTO}
 import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind}
 import ../sem.{expr_leaf_name, attr_kids_name, attr_args_all, attr_has_args, recv_type_name, is_value_record}
+import ../sem.{file_decls}
 import ../types.{TyId, no_ty, is_ty}
 import ../resolve.{FnIndex, FieldIndex}
 
@@ -170,6 +171,12 @@ fn Checker mut @reject_repeated_impl(kids []Node) -> () {
     }
 }
 
+/// The module's ONE door: judge a parsed file and hand back what was decided.
+///
+/// Two results, and the pair is the interface rather than a convenience: the
+/// DIAGNOSTICS are what the caller reports, the CHANNEL is what the emitter
+/// reads. Everything else in this module is private to it -- a second entry
+/// would be a second answer to the same question.
 export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) {
     mut c = Checker {
         src, ctx,
@@ -186,7 +193,11 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
         value_expect: no_ty(),
         substs: []TyId.new(),
     }
-    c.reject_repeated_impl(branch_children(file))
+    // THROUGH THE DOOR (P18): a raw walk over a file's children does not see
+    // what sits inside an `export` wrapper, so `export #impl` would have been
+    // invisible to this judge -- and invisible, not refused. `file_decls`
+    // unwraps it and keeps the order, which is what a run of attributes needs.
+    c.reject_repeated_impl(file_decls(file))
     c.walk(file)
     c.tell_gap_if_silent()
     if c.out.len() == 0 {
@@ -387,7 +398,8 @@ fn Checker @run_end_of(children []Node, best int) -> int {
 /// form is an honest E_NOVAC_SUBSET, not an emitter ice later. The default
 /// is the common case, so only the two places that actually open an
 /// initializer position say so.
-fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_pos bool = false) -> () {
+fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
+                     arg_pos bool = false, index_pos bool = false) -> () {
     match n {
         Leaf(t) => @report_if_error_token(t)
         Branch { kind, children, .. } => {
@@ -475,7 +487,9 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     @report_if_decl_types_undeclared(children)
                 }
                 ConstDecl => {
-                    // A CONSTANT IS JUDGED BY ITS INITIALIZER, and the walk
+                    // A CONSTANT IS JUDGED BY ITS INITIALIZER -- by
+                    // `@const_type_of` in `exprs.nv`, which reads the
+                    // initializer at the point of USE -- and the walk
                     // has nothing of its own to refuse here: the name goes
                     // into the registry at collection, the type comes from
                     // the initializer at the point of USE (274.5 wave B2),
@@ -847,7 +861,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                         } else {
                             ""
                         }
-                        ro known = tname.byte_len() == 0 || @type_name_is_declared(tname, []str.new())
+                        ro known = tname == "" || @type_name_is_declared(tname, []str.new())
                         @report_first_leaf_of(children, typed_local_msg(tname, known))
                         return
                     } else {
@@ -895,7 +909,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                     // the oracle accepts it -- so the subset refuses it BY NAME
                     // instead of dying on it. Inside a for-head the walk never
                     // gets here: that arm walks its children itself.
-                    @report_if_range_outside_for(children)
+                    @report_if_range_outside_for(children, index_pos: index_pos)
                 }
                 LeafNode | File | ModuleDecl | IfStmt | RetStmt => {}
                 AssignStmt | WhileStmt | FieldAccess | CtorField | CtorSpread => {}
@@ -906,15 +920,25 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false, arg_p
                 // so walking into them would report the same thing twice.
                 ProtoMethod => {}
             }
+            mut at = 0
             for c in children {
                 // STATEMENT POSITION is "a direct child of a Block" (274.5
                 // wave B5) and ARGUMENT POSITION is "a direct child of a call
                 // or a constructor field" (wave B8): both flags are computed
                 // in this ONE recursion, the same way init_pos is computed at
                 // its two call sites -- a position has a single definition.
+                //
+                // INDEX POSITION joins them (registry 1170): it is not "a
+                // child of an Index" but the child at slot 2 -- `recv`, `[`,
+                // index -- because the RECEIVER is a child too, and marking
+                // it would call `(a..b)[i]` a slice of itself. `@type_index`
+                // reads the same three slots, and the two agree by counting
+                // the same way rather than by remembering each other.
                 @walk(c, stmt_pos: kind == NodeKind.Block,
                       arg_pos: kind == NodeKind.Call || kind == NodeKind.MethodCall ||
-                               kind == NodeKind.CtorField)
+                               kind == NodeKind.CtorField,
+                      index_pos: kind == NodeKind.Index && at == 2)
+                at += 1
             }
         }
     }

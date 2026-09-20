@@ -1,0 +1,29 @@
+module slice_vs_range.neg_1
+
+// A SLICE, `p[c..]` -- and the refusal must name a SLICE.
+//
+// Registry 1170. Both this form and a bare `ro r = 1..3` are one `Bin` node
+// with a `..` operator, they arrived at one door, and the door answered for
+// both with the words of the first: "a range is a `for` head here, not a
+// value". A reader of `path[cut..]` was told about the head of a `for` that
+// his line does not contain -- the refusal was not wrong about the subset, it
+// was wrong about WHICH form it was looking at, which is worse: it sends the
+// reader to fix something that is not there.
+//
+// MEASURED 2026-09-20 on novac's own sources: thirty-one carriers, every one
+// of them a slice (`src[a..b]` in the lexer, `@args[off..off + n]` in the
+// tables), and NOT ONE a range used as a value. The text that was printed
+// thirty-one times described the case that occurred zero times.
+//
+// WHAT THIS CELL GUARDS is not the wording but the DISTINCTION: that the door
+// asks where the range stands instead of answering for two forms at once. Its
+// pair is `neg_2.nv`, which seeds the other form and must keep the other text.
+// One file alone cannot show a distinction -- it would be green if both forms
+// collapsed back onto this text.
+//
+// The form stays refused until slices are compiled; the file is negative on
+// purpose, and when they are, the property moves rather than disappears.
+
+// NOVAC_EXPECT a slice `x[lo..hi]` is read but not compiled yet
+
+fn f(p []u8, c int) -> []u8 => p[c..]

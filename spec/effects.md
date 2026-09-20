@@ -294,6 +294,19 @@ fn helper(name str) -> () {
   (including adding `Fail[E]` if a private function uses `!!`/`throw`
   somewhere). In `export fn` direct effects must be explicit — that is
   the public contract.
+- The rule above is about DIRECT effects. A TRANSITIVE one -- the function
+  does not perform the operation itself, it calls something that does --
+  is written in the signature explicitly, in a private function too.
+  Under `--strict-effects` its absence is `E_UNDECLARED_TRANSITIVE_EFFECT`;
+  without the flag it is a warning, since the list of effects is a LOWER
+  bound ([D448](decisions/04-effects.md#d448)). (D28 amendment, 2026-09-20.)
+  Measured before it was written, four cells of one probe: a private
+  function calling `read_dir`, with and without the row, under the flag and
+  without it. Private without the row fails under the flag; private WITH the
+  row passes. So the page as it stood described neither half: it promised
+  that inference covers a private function, and the compiler required the
+  row -- a reader learnt the rule from the compiler rather than from here,
+  which is the one thing a specification exists to prevent.
 
 ## Async — invisible infrastructure (D62)
 

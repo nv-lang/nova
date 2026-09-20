@@ -1,0 +1,52 @@
+module return_arm.pos_1
+
+// A BARE `return` AS THE BODY OF A MATCH ARM: `Kind.A => return 1`, without
+// the braces that made the same thing readable since wave B9.
+//
+// WHY THIS FORM, measured 2026-09-20. Of the four arm shapes the parser stopped
+// at, this one opened the most files -- five against one each for a string- and
+// a char-literal arm. The count is not of occurrences but of files whose FIRST
+// refusal is this shape, because later spans in a file are recovery debris.
+//
+// THE BRACED TWIN IS HERE ON PURPOSE. `A => return 1` and `A => { return 1 }`
+// are the same fact with different punctuation, and every judge that tells them
+// apart is a judge that will drift. Both spellings in one program, both
+// reaching the same answer, is what makes the FORM the subject rather than its
+// acceptance.
+//
+// AND THE MIXED ARM, which is the one that found the real hole. A match whose
+// arms all return yields the enclosing function no value; a match where ONE arm
+// returns and another produces a value still has a type, and it comes from the
+// arm that produces one. The value-position match is the only shape that asks
+// the lattice about an arm body at all -- a statement-position match never did,
+// which is why the ice needed a tail to reproduce.
+
+type Kind enum A | B
+
+fn all_return(k Kind) -> int {
+    match k {
+        Kind.A => return 1
+        Kind.B => return 2
+    }
+}
+
+fn braced(k Kind) -> int {
+    match k {
+        Kind.A => { return 1 }
+        Kind.B => { return 2 }
+    }
+}
+
+fn mixed(k Kind, n int) -> int {
+    match k {
+        A => return n
+        B => 7
+    }
+}
+
+fn main() {
+    println("${all_return(Kind.A)}")
+    println("${braced(Kind.B)}")
+    println("${mixed(Kind.B, 3)}")
+    println("${all_return(Kind.B) == braced(Kind.B)}")
+}

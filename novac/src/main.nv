@@ -28,7 +28,8 @@ module novac
 
 import ./sem.{InteropTable}
 import ./pipeline.{compile_with, compile_to_c_with, parse_decls, interop_surface}
-import ./diag.{to_json, json_escape}
+import ./pipeline.{Unit, unit_of, file_of_offset, offset_in_file, same_dir}
+import ./diag.{to_json, json_escape, Diagnostic}
 import std.fs.{read, read_dir, real_fs}
 import std.os.{args, env, exit_process, real_os}
 
@@ -102,6 +103,70 @@ fn compile_one(text str, file str, decls []Node, interop InteropTable) -> Verdic
     if diags.len() > 0 { Verdict.Refused } else { Verdict.Clean }
 }
 
+/// Compile a module's files as ONE unit and print their diagnostics, each
+/// named by the file it actually came from (274.7 M).
+///
+/// This is the door's half of the wave. The measurement that justifies it:
+/// handed in file by file, the compiler sees peers only as declarations
+/// without bodies, so every call of a peer's method is refused as interop --
+/// 1191 diagnostics over the tree against about 325 as units.
+///
+/// THE TRANSLATION IS WHY THE UNIT IS POSSIBLE AT ALL. A span leaving the
+/// checker is an offset into the unit; the table says which run owns it and
+/// where that run began in its file, so the printed line names a real file
+/// and a real position. Nothing in the tree or the channel knows about
+/// several files -- only this door does.
+fn compile_unit(u Unit, decls []Node, interop InteropTable) -> Verdict {
+    ro diags = compile_with(u.text, decls, interop)
+    mut i = 0
+    for d in diags {
+        ro fi = file_of_offset(u.files, d.lo)
+        // A table that covers every byte answers for every span; the branch
+        // below exists for an EMPTY unit, where there is nothing to name.
+        if fi < 0 {
+            println(to_json(d, i, "<unit>"))
+        } else {
+            ro f = u.files[fi]
+            ro lo = offset_in_file(f, d.lo)
+            ro hi = offset_in_file(f, d.hi)
+            ro local = Diagnostic { code: d.code, severity: d.severity, lo, hi, message: d.message }
+            println(to_json(local, i, f.path))
+        }
+        i += 1
+    }
+    if diags.len() > 0 { Verdict.Refused } else { Verdict.Clean }
+}
+
+/// Read a module's files and compile them as one unit.
+fn check_unit(paths []str, decls []Node, interop InteropTable) Fs -> Verdict {
+    mut texts = []str.new()
+    mut kept = []str.new()
+    for p in paths {
+        match read(p.to_path()) {
+            Ok(bytes) => {
+                match bytes.to_str() {
+                    Ok(text) => {
+                        texts.push(text)
+                        kept.push(p)
+                    }
+                    Err(_) => { println("novac: not UTF-8: ", p) }
+                }
+            }
+            Err(_) => { println("novac: cannot read ", p) }
+        }
+    }
+    // A file that could not be read is REPORTED and dropped, not fatal: the
+    // rest of the module is still judgeable, and a door error for the batch
+    // would hide every diagnostic of its peers.
+    if texts.len() < paths.len() {
+        ro u = unit_of(kept, texts)
+        ro v = compile_unit(u, decls, interop)
+        return worse(v, Verdict.DoorError)
+    }
+    ro u = unit_of(kept, texts)
+    compile_unit(u, decls, interop)
+}
+
 /// Read the declaration texts of a directory (`--std <dir>`): every *.nv,
 /// no recursion. THIS IS THE DOOR: filesystem walking lives here and the
 /// compiler is handed texts (architecture §1 — the compiler reads nothing
@@ -131,7 +196,9 @@ fn read_decls(dir str) Fs -> []str {
                     out.append(read_decls("${dir}/${nm}"))
                     continue
                 } else {
-                    // A file: judged by its name below.
+                    // A file: the two tests that decide its fate are the
+                    // next two lines of THIS loop -- the `.nv` suffix and
+                    // the `_test.nv` house rule. No other door sees it.
                 }
                 if !nm.ends_with(".nv") { continue }
                 // Tests live beside the module (house rule), and a test is not
@@ -330,10 +397,61 @@ fn run(a []str) -> int {
         }
         if a[1] == "check" {
             mut worst = Verdict.Clean
-            for path in a[argi..] {
-                worst = worse(worst, check_path(path, decls, interop))
+            // THE UNIT PATH IS BEHIND A SWITCH, and deliberately so. Handing
+            // a module in as one text changes what a batch MEANS, and the
+            // corpus runner and the differential both read this batch; turning
+            // it on by default would move their numbers in the same commit
+            // that introduces it, and nobody could then say which change did
+            // what. `NOVAC_UNIT=1` turns it on for the measurement; the
+            // default stays file by file until the numbers are taken.
+            //
+            // The same shape as `NOVAC_SELF_PATH` beside it: an env root,
+            // unset meaning the old behaviour.
+            ro unit_mode = env("NOVAC_UNIT") ?? ""
+            if unit_mode == "" {
+                for path in a[argi..] {
+                    worst = worse(worst, check_path(path, decls, interop))
+                }
+                return worst.code()
+            } else {
+                // Peers of one directory go in together, in the order given:
+                // the order of bodies does not change the checker's verdict
+                // (measured 2026-09-20, 274.7 M), so nothing is sorted here.
+                mut all = []str.new()
+                for k in argi..a.len() {
+                    // nova:allow W_MANUAL_SLICE_COPY -- the canon `x[a..b]` is a SLICE, and novac does not compile one yet (registry 1170): obeying here would add to the debt this file exists to remove
+                    all.push(a[k])
+                }
+                mut used = []bool.new()
+                for z in 0..all.len() {
+                    used.push(false)
+                }
+                mut i2 = 0
+                while i2 < all.len() {
+                    if used[i2] {
+                        i2 += 1
+                        continue
+                    }
+                    mut group = []str.new()
+                    // nova:allow W_MANUAL_SLICE_COPY -- not a copy: the push is CONDITIONAL (a gather), and no slice expresses picking some elements and not others
+                    group.push(all[i2])
+                    used[i2] = true
+                    for j2 in i2 + 1..all.len() {
+                        if !used[j2] && same_dir(all[i2], all[j2]) {
+                            // nova:allow W_MANUAL_SLICE_COPY -- not a copy: the push is CONDITIONAL (a gather), and no slice expresses picking some elements and not others
+                            group.push(all[j2])
+                            used[j2] = true
+                        } else {
+                            // Already taken by an earlier group, or a file of
+                            // another directory: neither belongs to THIS unit,
+                            // and both are reached again by the outer scan.
+                        }
+                    }
+                    worst = worse(worst, check_unit(group, decls, interop))
+                    i2 += 1
+                }
+                return worst.code()
             }
-            return worst.code()
         }
         ro path = a[argi]
         match read(path.to_path()) {

@@ -477,7 +477,7 @@ guard "$ROOT/scripts/guards/check-novac-commit-forms.sh" /dev/null "$ROOT" || fa
 guard "$ROOT/scripts/guards/check-novac-commit-no-simplification.py" /dev/null "$ROOT" || fail "check-novac-commit-no-simplification not runnable"
 par_add "$ROOT/scripts/guards/check-novac-resolve-discipline.py" "резолв с тихим дефолтом или линейным сканом имён"
 par_add "$ROOT/scripts/guards/check-novac-channel-one-writer.py" "у канала чекера второй писатель или вывод типа ниже чекера"
-par_add "$ROOT/scripts/guards/check-novac-invented-name-not-named.py" "имя, выдуманное компилятором, отдано двери `named` — двери АВТОРСКИХ имён (274.8 M3)"
+par_add "$ROOT/scripts/guards/check-novac-invented-name-not-named.py" "имя, выдуманное компилятором, отдано двери \`named\` — двери АВТОРСКИХ имён (274.8 M3)"
 par_add "$ROOT/scripts/guards/check-novac-match-exhaustive.py" "match по сумме novac не покрывает все варианты (оракул это не ловит)"
 par_add "$ROOT/scripts/guards/check-novac-tuple-no-second-door.py" "у кортежа завелась вторая бухгалтерия: он записывается и строится не дверями записи"
 par_add "$ROOT/scripts/guards/check-novac-no-silent-skip.py" "ветка прохода канала ушла молча (ни записи, ни отказа, ни ice)"
@@ -523,6 +523,7 @@ if [ "$NOVAC_TIER" != "loop" ]; then
     par_add "$ROOT/scripts/guards/check-novac-build-clean.sh" "сборка novac печатает предупреждения компилятора (П30)"
     par_add "$ROOT/scripts/guards/check-novac-diag-schema.sh" "диагностика novac не по схеме §7"
     par_add "$ROOT/scripts/guards/check-novac-no-cascade.sh" "каскад диагностик от одной причины (274 §6)"
+    par_add "$ROOT/scripts/guards/check-novac-fixture-expect.sh" "фикстура пришпилила текст отказа, а получила другой (№1170)"
     guard --deadline 300 "$ROOT/scripts/guards/check-novac-emission-size.sh" "$ROOT" || fail "объём эмиссии novac разошёлся с базой (274.2 §1б.2)"
     # 19с на пятнадцати фикстурах (замер 2026-08-23): пятнадцать запусков
     # процесса, а не медленная проверка. Поэтому ярус push, не loop.

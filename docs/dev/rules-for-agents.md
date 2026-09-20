@@ -305,6 +305,8 @@
   `check-novac-diag-schema.sh` — диагностика вне JSON-схемы
   (id, code, severity, primary, message); `check-novac-no-cascade.sh` — больше
   одного `severity=error` на одну посеянную причину (№636 механизмом);
+  `check-novac-fixture-expect.sh` — фикстура пришпиливает СВОЙ текст отказа строкой `// NOVAC_EXPECT <подстрока>`, и прогон его сверяет — заведён потому, что соседний no-cascade судит ЧИСЛО причин, а при слипшихся текстах 
+  причина по-прежнему ОДНА — то есть к этому классу он слеп по построению, а не по недосмотру;
   `check-novac-differential.sh` — расхождение исхода с оракулом вне
   `novac/divergences.allow`; `check-novac-no-panic.sh` — паника или сигнал на
   любой фикстуре (инвариант 11); `check-novac-grammar-fixture-coverage.sh` —

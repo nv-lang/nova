@@ -1,0 +1,254 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/pipeline -- the UNIT's own cells: a module's files assembled
+// into ONE text, and the arithmetic that takes a span back to the file it
+// came from (274.7 wave M).
+//
+// SEPARATE FILE because the subject is separate, not because the other one
+// grew past the thousand-line limit (it did, and that is what made the seam
+// visible). Everything here tests PURE functions over text and offsets: no
+// import, no compiler state, no `compile()`. Its neighbour's cells all go
+// through the one door and judge diagnostics -- a different question, and
+// one that needs the whole front end to answer.
+//
+// WHY THE UNIT IS TEXT AND NOT MERGED TREES, since the cells below assume
+// it: `parse` restarts `next_id` at zero for every parse, and the channel is
+// keyed by NodeId -- two trees merged after the fact collide silently.
+
+module novac.pipeline
+
+// --- module_line_end: the module line is not the first line (274.7 M) ----
+//
+// Every file of this compiler opens with an SPDX comment. A unit built on
+// "the first line" copied that comment as its header and left each file's
+// real module line inside the imports region, repeated once per file -- and
+// a repeated module line is what the parser refuses. Twenty diagnostics,
+// found by two measurements disagreeing (77 by the probe script, 97 by the
+// door) while the file-by-file halves matched exactly.
+
+test "module_line_end: a comment stands before the module line" {
+    ro t = "// c\nmodule m\nimport a\nfn f() -> int => 1\n"
+    assert(module_line_end(t) == 14)
+}
+
+test "module_line_end: no module line at all answers zero" {
+    // A fragment handed in by a test is a real shape, not an error: it
+    // contributes no header and all of it is body.
+    ro t = "fn f() -> int => 1\n"
+    assert(module_line_end(t) == 0)
+}
+
+test "unit_of: ONE module line even when a comment opens every file" {
+    mut ps = []str.new()
+    ps.push("a.nv")
+    ps.push("b.nv")
+    mut ts = []str.new()
+    ts.push("// SPDX\nmodule m\nimport a\nfn one() -> int => 1\n")
+    ts.push("// SPDX\nmodule m\nimport b\nfn two() -> int => 2\n")
+    ro u = unit_of(ps, ts)
+    // The second module line must not survive anywhere in the unit.
+    assert(!u.text.contains("module m\nimport b\nmodule m"))
+    assert(count_of(u.text, "module m") == 1)
+}
+
+/// How many times `needle` occurs in `hay` -- a counting helper the cell
+/// above needs, because `contains` answers yes for one and for three alike.
+fn count_of(hay str, needle str) -> int {
+    ro hb = hay.bytes()
+    mut n = 0
+    for i in 0..hb.len() {
+        if matches_at(hb, i, needle) { n += 1 } else {}
+    }
+    n
+}
+
+// --- same_dir: which paths make one unit (274.7 M) -----------------------
+
+test "same_dir: peers of one directory" {
+    assert(same_dir("a/b.nv", "a/c.nv"))
+}
+
+test "same_dir: different directories are not peers" {
+    assert(!same_dir("a/b.nv", "x/c.nv"))
+}
+
+test "same_dir: SAME separator position, different directory" {
+    // The cell a naive implementation passes wrongly: comparing only where
+    // the separator sits would call these peers.
+    assert(!same_dir("ax/c.nv", "ay/c.nv"))
+}
+
+test "same_dir: bare names are peers of the working directory" {
+    assert(same_dir("b.nv", "c.nv"))
+    assert(!same_dir("a/b.nv", "c.nv"))
+}
+
+test "same_dir: the other separator counts too" {
+    // The path arrives exactly as the CLI received it, and this compiler is
+    // built on Windows as much as anywhere else.
+    assert(same_dir("a\\b.nv", "a\\c.nv"))
+    assert(!same_dir("a\\b.nv", "x\\c.nv"))
+}
+
+// --- unit_of: a module's files as ONE text (274.7 M) ---------------------
+//
+// Two files of one module. The unit must carry ONE module line, both
+// imports, and both bodies -- and its table must send a span back to the
+// file it came from.
+
+fn two_texts() -> []str {
+    mut v = []str.new()
+    v.push("module m\nimport a\nfn one() -> int => 1\n")
+    v.push("module m\nimport b\nfn two() -> int => 2\n")
+    v
+}
+
+fn two_paths() -> []str {
+    mut v = []str.new()
+    v.push("one.nv")
+    v.push("two.nv")
+    v
+}
+
+test "unit_of: one module line, both imports, both bodies" {
+    // BOUND SEPARATELY, not nested: two arguments that both call something
+    // are outside the subset yet (F65), and a test of the wave that removes
+    // self-hosting debt must not add three lines of it.
+    ro ps = two_paths()
+    ro ts0 = two_texts()
+    ro u = unit_of(ps, ts0)
+    assert(u.text.starts_with("module m\n"))
+    // The second file's module line is gone; its import is not.
+    assert(!u.text.contains("module m\nmodule m"))
+    assert(u.text.contains("import a"))
+    assert(u.text.contains("import b"))
+    assert(u.text.contains("fn one()"))
+    assert(u.text.contains("fn two()"))
+}
+
+test "unit_of: the table covers every run, module line included" {
+    ro ps = two_paths()
+    ro ts0 = two_texts()
+    ro u = unit_of(ps, ts0)
+    // Five runs for two files: the module line, two import runs, two bodies.
+    assert(u.files.len() == 5)
+    assert(u.files[0].path == "one.nv")
+    assert(u.files[0].at == 0)
+    // Monotonic by construction, which is what file_of_offset relies on.
+    for k in 1..u.files.len() {
+        assert(u.files[k - 1].at <= u.files[k].at)
+    }
+}
+
+test "unit_of: an offset in the HEADER still names a file" {
+    // The reason the table grew past bodies. A malformed import is a real
+    // diagnostic in the header, and a table of bodies only would have had to
+    // answer "no file" and invent a path to print.
+    ro ps = two_paths()
+    ro ts0 = two_texts()
+    ro u = unit_of(ps, ts0)
+    ro fi = file_of_offset(u.files, 3)
+    assert(fi == 0)
+    assert(u.files[fi].path == "one.nv")
+}
+
+test "unit_of: a span inside the second body maps back to the second file" {
+    // The round trip is the whole point of the table: take the offset of a
+    // byte known to sit in the second body, and ask who owns it.
+    // BOUND SEPARATELY, not nested: two arguments that both call something
+    // are outside the subset yet (F65), and a test of the wave that removes
+    // self-hosting debt must not add three lines of it.
+    ro ps = two_paths()
+    ro ts0 = two_texts()
+    ro u = unit_of(ps, ts0)
+    // The bodies are the LAST runs of the table; the second file's is last.
+    ro last = u.files.len() - 1
+    ro at2 = u.files[last].at
+    assert(file_of_offset(u.files, at2 + 3) == last)
+    // And the same byte, named as the FILE knows it, lands inside that
+    // file's own text rather than past its end.
+    ro back = offset_in_file(u.files[last], at2 + 3)
+    assert(back >= u.files[last].from)
+    ro ts = two_texts()
+    assert(back < ts[1].byte_len())
+}
+
+test "unit_of: no files is an empty unit, not an ice" {
+    mut none_p = []str.new()
+    mut none_t = []str.new()
+    ro u = unit_of(none_p, none_t)
+    assert(u.text == "")
+    assert(u.files.len() == 0)
+}
+
+// --- the unit's offset arithmetic (274.7 M) ------------------------------
+//
+// Three bodies at 100, 200 and 300 inside a unit; each began at 40, 50 and 60
+// in the file it came from. The boundaries are the cells that matter: an
+// offset exactly ON a body's first byte belongs to THAT body, not the one
+// before it, and an offset in the header belongs to no file at all.
+
+fn three_files() -> []UnitFile {
+    mut v = []UnitFile.new()
+    v.push(UnitFile { path: "a.nv", at: 100, from: 40 })
+    v.push(UnitFile { path: "b.nv", at: 200, from: 50 })
+    v.push(UnitFile { path: "c.nv", at: 300, from: 60 })
+    v
+}
+
+test "file_of_offset: inside the second body" {
+    assert(file_of_offset(three_files(), 250) == 1)
+}
+
+test "file_of_offset: exactly on a body start belongs to THAT body" {
+    assert(file_of_offset(three_files(), 200) == 1)
+    assert(file_of_offset(three_files(), 199) == 0)
+}
+
+test "file_of_offset: past the last body is still the last body" {
+    assert(file_of_offset(three_files(), 9000) == 2)
+}
+
+test "file_of_offset: the header belongs to no file" {
+    // Not an ice: a diagnostic CAN land in the unit header, and the caller
+    // then names the module rather than a file.
+    assert(file_of_offset(three_files(), 7) == 0 - 1)
+}
+
+test "offset_in_file: undoes the unit shift" {
+    ro f = UnitFile { path: "b.nv", at: 200, from: 50 }
+    // 30 bytes into the body, which began at 50 in the original.
+    assert(offset_in_file(f, 230) == 80)
+    // The body's first byte maps to the body's first byte.
+    assert(offset_in_file(f, 200) == 50)
+}
+
+// --- header_end: where a unit takes a file's body from (274.7 M) ---------
+//
+// The unit is ONE header plus the BODIES of a module's files, so this number
+// is the whole arithmetic of the wave. Four cells, and the last is the one
+// the byte scan exists for.
+
+test "header_end: past the module line when there are no imports" {
+    assert(header_end("module a\nfn f() -> int => 1\n") == 9)
+}
+
+test "header_end: past the LAST import, not the first" {
+    ro t = "module a\nimport b\nimport c\nfn f() -> int => 1\n"
+    assert(header_end(t) == 27)
+}
+
+test "header_end: a doc comment belongs to the BODY, not the header" {
+    // The reason the door answers "where do the headers stop" and not
+    // "where does the body start": the body's first line is a comment whose
+    // owner is the declaration two lines down.
+    ro t = "module a\nimport b\n/// doc\nfn f() -> int => 1\n"
+    assert(header_end(t) == 18)
+}
+
+test "header_end: CRLF does not shift the answer" {
+    // A working copy can hold CRLF, and counting `line.byte_len() + 1` would
+    // drift by one per line -- silently, and only on some machines. The scan
+    // is over BYTES for exactly this cell.
+    ro t = "module a\r\nimport b\r\nfn f() -> int => 1\r\n"
+    assert(header_end(t) == 20)
+}

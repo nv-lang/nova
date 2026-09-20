@@ -94,6 +94,10 @@ fn Checker mut @type_bind(st Node) -> () {
             // produced the SAME trailing "unknown name". The cause was never
             // in either door; it is here, in the one statement that binds.
             @scope.bind(vname, no_ty(), bind_mode_at(kids))
+            // SILENT-OK: the initializer was refused a moment ago and the
+            // name is bound poisoned on purpose, so that its later uses
+            // raise nothing. One cause, one diagnostic -- a second word
+            // here would be the cascade this binding exists to prevent.
             return
         }
     } else {

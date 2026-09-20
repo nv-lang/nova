@@ -63,4 +63,15 @@
 #   ОБНУЛИТЬ храповик, потому что счёт зависел от СРЕДЫ (локальные ветки, каких
 #   на CI нет по построению). Здесь считается свойство ДЕРЕВА — сколько стражей
 #   без ссылки на план, — и оно одинаково везде, так что совет честен.
-no_plan_ref=48
+# 2026-09-20 (integrator): no_plan_ref 48 -> 46. Chetyre shapki poluchili adres
+#   pravila (check-novac-commit-forms, -commit-no-simplification,
+#   check-carina-no-idle-wait, check-novac-invented-name-not-named), i dva
+#   segodnyashnih strazha zavedeny srazu so ssylkoy.
+#
+#   NAZVANNYY PROBEL, i on vazhneye chisla (nashyol pomoshchnik): baza derzhit
+#   SCHYOT, a ne NABOR IMYON, poetomu po ney nelzya sprosit 'kto imenno novyy'.
+#   Zamer: posle 2026-09-08 dobavleno 24 strazha, chetyre bez ssylki, a schyot
+#   vyros tolko na dva -- dva staryh dolga byli pogasheny. Obmen imyon na chislo
+#   pryachet ZAMENU odnogo narushitelya drugim. Imennaya baza -- sleduyushchaya
+#   rabota pomoshchnika.
+no_plan_ref=46
