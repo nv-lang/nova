@@ -125,10 +125,13 @@ export type UnitFile value {
 /// rather than a file, and that is a decision, not a hole.
 export fn file_of_offset(files []UnitFile, off int) -> int {
     mut best = 0 - 1
-    mut i = 0
-    while i < files.len() {
-        if files[i].at <= off { best = i } else {}
-        i += 1
+    for i in 0..files.len() {
+        if files[i].at <= off {
+            best = i
+        } else {
+            // A run that starts AFTER the offset: not this file's, and the
+            // scan keeps walking -- the answer is the LAST run at or before.
+        }
     }
     best
 }
@@ -147,11 +150,14 @@ export fn offset_in_file(f UnitFile, off int) -> int => off - f.at + f.from
 /// typed and this compiler is built on Windows as much as anywhere else.
 fn last_sep(path str) -> int {
     ro b = path.bytes()
-    mut i = 0
     mut last = 0 - 1
-    while i < b.len() {
-        if b[i] == UNIT_SLASH || b[i] == UNIT_BACKSLASH { last = i } else {}
-        i += 1
+    for i in 0..b.len() {
+        if b[i] == UNIT_SLASH || b[i] == UNIT_BACKSLASH {
+            last = i
+        } else {
+            // An ordinary byte: it is not a separator, and `last` keeps the
+            // one found before it. A path with no separator at all leaves -1.
+        }
     }
     last
 }
@@ -180,12 +186,12 @@ const UNIT_BACKSLASH u8 = 0x5C
 export fn same_dir(a str, b str) -> bool {
     ro sa = last_sep(a)
     ro sb = last_sep(b)
-    if sa != sb { return false } else {}
-    if sa < 0 { return true } else {}
+    if sa != sb { return false }
+    if sa < 0 { return true }
     ro ba = a.bytes()
     ro bb = b.bytes()
     for i in 0..sa {
-        if ba[i] != bb[i] { return false } else {}
+        if ba[i] != bb[i] { return false }
     }
     true
 }
@@ -228,16 +234,32 @@ fn module_line_end(text str) -> int {
         if i == n {
             at_end = true
         } else {
-            if b[i] == UNIT_LF { at_end = true } else {}
+            if b[i] == UNIT_LF {
+                at_end = true
+            } else {
+                // A byte inside the line: the line has not ended, so the scan
+                // walks on without touching where the line began.
+            }
         }
         if at_end {
             if matches_at(b, ls, "module ") {
                 mut e = i
-                if i < n { e = i + 1 } else {}
+                if i < n {
+                    e = i + 1
+                } else {
+                    // The header ends AT the end of the text: there is no
+                    // newline to step past, so the end stays where it is.
+                }
                 return e
-            } else {}
+            } else {
+                // The line is not the module line: it is a comment, an
+                // import or blank, and the scan moves its start forward.
+            }
             ls = i + 1
-        } else {}
+        } else {
+            // Mid-line: nothing is decided until the line ends, and the
+            // next byte is read.
+        }
         i += 1
     }
     0
@@ -282,7 +304,7 @@ export fn unit_of(paths []str, texts []str) -> Unit {
         // that exists to remove them (measured here, 2026-09-20).
         ro empty = Unit { text: "", files }
         return empty
-    } else {}
+    }
     // The module line of the FIRST file speaks for the unit -- and it is a
     // RUN like any other, because a diagnostic can land in it.
     ro t0 = texts[0]
@@ -292,8 +314,7 @@ export fn unit_of(paths []str, texts []str) -> Unit {
     append_range(out, b0, 0, m0)
     // Then the imports of every file -- the part of a header after its own
     // module line.
-    mut i = 0
-    while i < texts.len() {
+    for i in 0..texts.len() {
         ro ti = texts[i]
         ro bi = ti.bytes()
         ro mi = module_line_end(texts[i])
@@ -301,19 +322,20 @@ export fn unit_of(paths []str, texts []str) -> Unit {
         if hi > mi {
             files.push(UnitFile { path: paths[i], at: out.len(), from: mi })
             append_range(out, bi, mi, hi)
-        } else {}
-        i += 1
+        } else {
+            // No imports in this file: its header is the module line alone,
+            // which the unit already carries once, so there is nothing to
+            // hand over and no run to remember.
+        }
     }
     // Then the bodies, each remembering where it came from.
-    mut j = 0
-    while j < texts.len() {
+    for j in 0..texts.len() {
         ro tj = texts[j]
         ro bj = tj.bytes()
         ro hj = header_end(texts[j])
         files.push(UnitFile { path: paths[j], at: out.len(), from: hj })
         append_range(out, bj, hj, bj.len())
         out.push(UNIT_LF)
-        j += 1
     }
     match out.to_str() {
         Ok(t) => {
@@ -332,9 +354,9 @@ export fn unit_of(paths []str, texts []str) -> Unit {
 fn matches_at(b []u8, at int, word str) -> bool {
     ro w = word.bytes()
     ro m = word.byte_len()
-    if at + m > b.len() { return false } else {}
+    if at + m > b.len() { return false }
     for k in 0..m {
-        if b[at + k] != w[k] { return false } else {}
+        if b[at + k] != w[k] { return false }
     }
     true
 }
@@ -367,7 +389,12 @@ fn header_end(text str) -> int {
         if i == n {
             at_end = true
         } else {
-            if b[i] == UNIT_LF { at_end = true } else {}
+            if b[i] == UNIT_LF {
+                at_end = true
+            } else {
+                // A byte inside the line: the line has not ended, so the scan
+                // walks on without touching where the line began.
+            }
         }
         if at_end {
             // BYTES AGAIN, and this time not for CRLF but for the subset: the
@@ -379,10 +406,20 @@ fn header_end(text str) -> int {
             // novac answered with one new refusal.
             if matches_at(b, ls, "module ") || matches_at(b, ls, "import ") {
                 last = i
-                if i < n { last = i + 1 } else {}
-            } else {}
+                if i < n {
+                    last = i + 1
+                } else {
+                    // The header line is the last line of the text: there
+                    // is no newline to step past.
+                }
+            } else {
+                // Not a header line: the header ended before it, and `last`
+                // keeps the end of the previous one.
+            }
             ls = i + 1
-        } else {}
+        } else {
+            // Mid-line: nothing is decided until the line ends.
+        }
         i += 1
     }
     last
@@ -400,6 +437,12 @@ fn header_end(text str) -> int {
 /// the registry knows as the key-without-module one). Measured twice in three
 /// minutes, 2026-09-20, by two CC-FAILs on this file's own test.
 const UNIT_LF u8 = 0x0A
+/// One file to diagnostics, with the declarations and the interop surface
+/// handed IN rather than read from disk.
+///
+/// The handing-in is what makes the pipeline testable without a filesystem,
+/// and it is also how the unit wave feeds novac several files at once: the
+/// text is a unit, the declarations are its peers'.
 export fn compile_with(text str, decls []Node, interop InteropTable) -> []Diagnostic {
     ro src = SourceText { text }
     ro tree = parse(tokens_of(text))

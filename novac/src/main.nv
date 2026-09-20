@@ -162,7 +162,7 @@ fn check_unit(paths []str, decls []Node, interop InteropTable) Fs -> Verdict {
         ro u = unit_of(kept, texts)
         ro v = compile_unit(u, decls, interop)
         return worse(v, Verdict.DoorError)
-    } else {}
+    }
     ro u = unit_of(kept, texts)
     compile_unit(u, decls, interop)
 }
@@ -416,36 +416,34 @@ fn run(a []str) -> int {
                 // the order of bodies does not change the checker's verdict
                 // (measured 2026-09-20, 274.7 M), so nothing is sorted here.
                 mut all = []str.new()
-                mut k = argi
-                while k < a.len() {
+                for k in argi..a.len() {
                     // nova:allow W_MANUAL_SLICE_COPY -- the canon `x[a..b]` is a SLICE, and novac does not compile one yet (registry 1170): obeying here would add to the debt this file exists to remove
                     all.push(a[k])
-                    k += 1
                 }
                 mut used = []bool.new()
-                mut z = 0
-                while z < all.len() {
+                for z in 0..all.len() {
                     used.push(false)
-                    z += 1
                 }
                 mut i2 = 0
                 while i2 < all.len() {
                     if used[i2] {
                         i2 += 1
                         continue
-                    } else {}
+                    }
                     mut group = []str.new()
                     // nova:allow W_MANUAL_SLICE_COPY -- not a copy: the push is CONDITIONAL (a gather), and no slice expresses picking some elements and not others
                     group.push(all[i2])
                     used[i2] = true
-                    mut j2 = i2 + 1
-                    while j2 < all.len() {
+                    for j2 in i2 + 1..all.len() {
                         if !used[j2] && same_dir(all[i2], all[j2]) {
                             // nova:allow W_MANUAL_SLICE_COPY -- not a copy: the push is CONDITIONAL (a gather), and no slice expresses picking some elements and not others
                             group.push(all[j2])
                             used[j2] = true
-                        } else {}
-                        j2 += 1
+                        } else {
+                            // Already taken by an earlier group, or a file of
+                            // another directory: neither belongs to THIS unit,
+                            // and both are reached again by the outer scan.
+                        }
                     }
                     worst = worse(worst, check_unit(group, decls, interop))
                     i2 += 1

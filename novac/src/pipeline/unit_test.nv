@@ -55,10 +55,8 @@ test "unit_of: ONE module line even when a comment opens every file" {
 fn count_of(hay str, needle str) -> int {
     ro hb = hay.bytes()
     mut n = 0
-    mut i = 0
-    while i < hb.len() {
+    for i in 0..hb.len() {
         if matches_at(hb, i, needle) { n += 1 } else {}
-        i += 1
     }
     n
 }
@@ -136,10 +134,8 @@ test "unit_of: the table covers every run, module line included" {
     assert(u.files[0].path == "one.nv")
     assert(u.files[0].at == 0)
     // Monotonic by construction, which is what file_of_offset relies on.
-    mut k = 1
-    while k < u.files.len() {
+    for k in 1..u.files.len() {
         assert(u.files[k - 1].at <= u.files[k].at)
-        k += 1
     }
 }
 

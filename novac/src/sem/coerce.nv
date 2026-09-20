@@ -178,6 +178,11 @@ export fn attr_has_args(kids []Node, word str) -> bool {
     false
 }
 
+/// Does EVERY name in this attribute's argument list equal `word`?
+///
+/// `#display(Display)` and `#display(Display, Debug)` are both asked about one
+/// protocol at a time, so ALL rather than ANY: an attribute that also names
+/// something else is not an opt-in to this one alone.
 export fn attr_args_all(kids []Node, word str) -> bool {
     mut inside = false
     mut seen = false

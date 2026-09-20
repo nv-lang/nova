@@ -87,8 +87,8 @@ fn Checker mut @const_type_of(name str) -> TyId {
 ///
 /// A row with a body of OURS needs neither: we emit it ourselves.
 fn Checker @instance_display_ok(t TyId, row FnRow) -> bool {
-    if @ctx.tys.kind_of(t) != TypeKind.TkApp { return true } else {}
-    if @ctx.fns.compiles_body(row) { return true } else {}
+    if @ctx.tys.kind_of(t) != TypeKind.TkApp { return true }
+    if @ctx.fns.compiles_body(row) { return true }
     // THE RECORD-ONLY CONDITION IS GONE (2026-09-18, same evening): novac now
     // spells a generic SUM by the oracle family (`c_instance_method`), so the
     // only question left is the one that was always the real one -- does the
@@ -105,12 +105,18 @@ fn Checker @instance_display_ok(t TyId, row FnRow) -> bool {
     @ctx.interop.has(c_method_symbol(@ctx, t, DISPLAY_METHOD))
 }
 
+/// May this slot take a SYNTHESIZED `@display` -- the one novac writes itself?
+///
+/// Three conditions, all necessary: the type is a RECORD, it is opted into the
+/// protocol through its gates, and every field is a primitive. The last one is
+/// the limit of what the synthesis can spell today; a field of a record type
+/// would need the synthesis to recurse, and it does not.
 fn Checker @synth_display_ok(t TyId) -> bool {
-    if @ctx.tys.kind_of(t) != TypeKind.TkRecord { return false } else {}
+    if @ctx.tys.kind_of(t) != TypeKind.TkRecord { return false }
     ro td = decl_of_ty(@ctx, t)
     if !gate_names(@ctx.gates, td.gate_off, td.gate_cnt, DISPLAY_PROTO) {
         return false
-    } else {}
+    }
     match field_range_of(td) {
         None => false
         Some((first, cnt)) => {
@@ -126,6 +132,12 @@ fn Checker @synth_display_ok(t TyId) -> bool {
     }
 }
 
+/// The lookup key of `display(mut f Fmt)` on this receiver.
+///
+/// TYPED, not named: the resolver matches the parameter's type, so a
+/// `display(mut w Write)` does not answer for it. The oracle checks the same
+/// way and for the same reason (#634: seven types kept a display over `Write`
+/// through a migration and crashed).
 fn Checker @display_key_of(t TyId) -> []ArgSpec {
     ro fmt_t = match @ctx.defs.type_decl(FMT_PROTO) {
         None => no_ty()

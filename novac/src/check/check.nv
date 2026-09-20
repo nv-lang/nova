@@ -42,6 +42,7 @@ import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, COERCE_ATTR, REALTIME_A
 import ../builtins.{IMPL_ATTR, DISPLAY_PROTO}
 import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind}
 import ../sem.{expr_leaf_name, attr_kids_name, attr_args_all, attr_has_args, recv_type_name, is_value_record}
+import ../sem.{file_decls}
 import ../types.{TyId, no_ty, is_ty}
 import ../resolve.{FnIndex, FieldIndex}
 
@@ -170,6 +171,12 @@ fn Checker mut @reject_repeated_impl(kids []Node) -> () {
     }
 }
 
+/// The module's ONE door: judge a parsed file and hand back what was decided.
+///
+/// Two results, and the pair is the interface rather than a convenience: the
+/// DIAGNOSTICS are what the caller reports, the CHANNEL is what the emitter
+/// reads. Everything else in this module is private to it -- a second entry
+/// would be a second answer to the same question.
 export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) {
     mut c = Checker {
         src, ctx,
@@ -186,7 +193,11 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
         value_expect: no_ty(),
         substs: []TyId.new(),
     }
-    c.reject_repeated_impl(branch_children(file))
+    // THROUGH THE DOOR (P18): a raw walk over a file's children does not see
+    // what sits inside an `export` wrapper, so `export #impl` would have been
+    // invisible to this judge -- and invisible, not refused. `file_decls`
+    // unwraps it and keeps the order, which is what a run of attributes needs.
+    c.reject_repeated_impl(file_decls(file))
     c.walk(file)
     c.tell_gap_if_silent()
     if c.out.len() == 0 {
