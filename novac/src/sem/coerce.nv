@@ -250,7 +250,7 @@ export fn coerce_marked(kids []Node) -> []NodeId =>
 /// HERE rather than copied into each collector for the reason that door names:
 /// an attribute is a SIBLING of the declaration it marks, and two readings of
 /// one positional rule is how they part company.
-export fn impl_protocols_before(kids []Node, id NodeId) -> []str {
+fn impl_protocols_before(kids []Node, id NodeId) -> []str {
     mut pending = []str.new()
     for c in kids {
         if c.kind_of() == NodeKind.AttrDecl {
@@ -350,7 +350,7 @@ fn attr_marked(kids []Node, attr str, arg str) -> []NodeId {
 /// Is this declaration one of the marked ones? The other half of the same
 /// reading, for a collector that has a node and a list.
 #realtime nogc
-export fn is_attr_marked(marked []NodeId, id NodeId) -> bool {
+fn is_attr_marked(marked []NodeId, id NodeId) -> bool {
     for m in marked {
         if m == id { return true }
     }

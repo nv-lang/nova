@@ -107,7 +107,7 @@ export fn compile(text str, decl_texts []str) -> []Diagnostic =>
 /// handed to `to_json` separately, by the door that already knows it. So
 /// nothing in the tree or the channel needs to learn about files -- the door
 /// that prints needs a table.
-export type UnitFile value {
+type UnitFile value {
     path str /// the path exactly as the CLI received it
     at int /// where this run begins INSIDE the unit text
     from int /// where that same run began in the file it came from
