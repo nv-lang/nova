@@ -1345,7 +1345,10 @@
 #   podtverdila samu 623 (dyra ne vosproizvoditsya) i nashla DVA drugih defekta:
 #   1197 -- diagnostiki kompilyatora po-russki pri publichnom repozitorii;
 #   1198 -- otkaz ukazyvaet na stroku `module`, a ne na mesto vyzova.
-rows=1150
-max=1198
+# 2026-09-20 (integrator): rows 1150 -> 1151, max 1198 -> 1199 -- zavedena 1199
+#   (strazh pechataet DVA verdikta podryad, i pervyy -- ok; pod etim ok prozhila
+#   vsyu noch tihaya miskompilyaciya 1191). Nashla Karina, format verdiktov moy.
+rows=1151
+max=1199
 stale_gaps=0
 gaps=174-208,210-215,653-654,743,1062,1096,1103-1104

@@ -1461,4 +1461,7 @@ no_caveat=0
 #   na tri hosta. Strazh cli-output-language sudit --help, JSON-shemu i teksty
 #   oshibok CLI, a diagnostiki chekera -- samuyu bolshuyu poverhnost teksta --
 #   ne sudit nikto. Nashlos poputno pri probe k stroke 623.
-blockers=80
+# 2026-09-20 (integrator): blockers 80 -> 81. Zavedena 1199 -- strazh pechataet
+#   DVA verdikta podryad, i pervyy 'ok'; chitayushchiy ostanavlivaetsya na pervom,
+#   i pod nim prozhila vsyu noch tihaya miskompilyaciya 1191. Nashla Karina.
+blockers=81
