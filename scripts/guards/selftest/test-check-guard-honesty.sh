@@ -190,10 +190,106 @@ else
     ok "сломанный разбор — красный, строки ok: нет"
 fi
 
+
+# ── 14. проба-улика с НЕэкранированным апострофом — красный ──────────────
+# Живой случай (реестр №1190): апостроф в двойных кавычках стоял в СВОЕЙ же
+# пробе окна, оболочка выполнила `Node`, и в улику упало «Node: command not
+# found». Судья его не видел: смотрел только scripts/**.
+mkdir -p "$T/probe/scripts/guards" "$T/probe/docs/plans/repro/x"
+printf '#!/bin/sh\nexit 0\n' > "$T/probe/scripts/guards/check-ok.sh"
+printf '#!/bin/sh\necho "planted %s Node %s here"\n' "\`" "\`" > "$T/probe/docs/plans/repro/x/cmd.sh"
+if python "$G" "$T/probe" > "$T/o14" 2> "$T/e14"; then
+    bad "апостроф в пробе-улике прошёл: [$(head -n 1 "$T/o14")]"
+else
+    grep -q "docs/plans/repro/x/cmd.sh" "$T/e14" \
+        && ok "апостроф в пробе-улике — красный, и отказ называет ФАЙЛ" \
+        || bad "красный, но без имени файла пробы: [$(head -n 1 "$T/e14")]"
+fi
+
+# ── 15. апостроф в КОММЕНТАРИИ пробы — зелёный ───────────────────────────
+# Обратная сторона, без которой правило считает символы, а не исполнение:
+# в живых пробах апострофы стоят в комментариях десятками (в носителе №1190 их
+# два — строки 7 и 83), и оболочка их не исполняет.
+mkdir -p "$T/probecomment/scripts/guards" "$T/probecomment/docs/plans/repro/y"
+printf '#!/bin/sh\nexit 0\n' > "$T/probecomment/scripts/guards/check-ok.sh"
+printf '#!/bin/sh\n# tema: komanda %s Node %s i eyo vyvod\necho "quiet"\n' "\`" "\`" \
+    > "$T/probecomment/docs/plans/repro/y/cmd.sh"
+if python "$G" "$T/probecomment" > "$T/o15" 2>&1; then
+    ok "апостроф в комментарии пробы законен — правило судит исполнение"
+else
+    bad "комментарий пробы покрашен — страж считает символы: [$(head -n 2 "$T/o15")]"
+fi
+
+# ── 16. объявленная территория проб БЕЗ единого .sh — красный ────────────
+# Пустая мишень читается как чистая: ровно этот класс дефекта территория и
+# закрывает, поэтому ноль подсудимых здесь — отказ, а не «нарушений 0».
+mkdir -p "$T/noprobe/scripts/guards" "$T/noprobe/docs/plans/repro"
+printf '#!/bin/sh\nexit 0\n' > "$T/noprobe/scripts/guards/check-ok.sh"
+if python "$G" "$T/noprobe" > "$T/o16" 2> "$T/e16"; then
+    bad "территория проб без единого .sh прошла: [$(head -n 1 "$T/o16")]"
+else
+    grep -q "судить в ней нечего" "$T/e16" \
+        && ok "объявленная территория проб без .sh — красный" \
+        || bad "красный, но не про пустую территорию: [$(head -n 1 "$T/e16")]"
+fi
+
+# ── 17. территории проб нет вовсе — зелёный ──────────────────────────────
+# Граница предыдущего случая: отказ вызывает ПУСТОЙ объявленный каталог, а не
+# его отсутствие, иначе всякое дерево без docs/plans/repro стало бы красным.
+mkdir -p "$T/noterritory/scripts/guards"
+printf '#!/bin/sh\nexit 0\n' > "$T/noterritory/scripts/guards/check-ok.sh"
+if python "$G" "$T/noterritory" > "$T/o17" 2>&1; then
+    ok "отсутствие территории проб законно — красит пустота, а не отсутствие"
+else
+    bad "дерево без docs/plans/repro покрашено: [$(head -n 2 "$T/o17")]"
+fi
+
+# ── 18. съеденный возврат каретки В ПРОБЕ — красный ──────────────────────
+mkdir -p "$T/probeeaten/scripts/guards" "$T/probeeaten/docs/plans/repro/z"
+printf '#!/bin/sh\nexit 0\n' > "$T/probeeaten/scripts/guards/check-ok.sh"
+printf '#!/bin/sh\nX=$(cat f | tr -d %s\n%s | grep -F x)\n' "'" "'" \
+    > "$T/probeeaten/docs/plans/repro/z/cmd.sh"
+if python "$G" "$T/probeeaten" > "$T/o18" 2> "$T/e18"; then
+    bad "съеденный возврат каретки в пробе прошёл: [$(head -n 1 "$T/o18")]"
+else
+    grep -q "съеденный" "$T/e18" \
+        && ok "съеденный возврат каретки в пробе — красный" \
+        || bad "красный, но не про съеденный возврат: [$(head -n 1 "$T/e18")]"
+fi
+
+# ── 19. знаменатели ОБОИХ периметров печатаются, и оба НЕнулевые ─────────
+# Требование интегратора 2026-09-20: число по каждому периметру ОТДЕЛЬНО.
+# Вердикт без знаменателя не даёт отличить «проверено 166» от «проверено 0».
+if python "$G" "$ROOT" > "$T/o19" 2>&1; then
+    n_probe=$(sed -n 's/.*проб-улик \([0-9][0-9]*\) .*/\1/p' "$T/o19")
+    n_guard=$(sed -n 's/.*стражей проверено \([0-9][0-9]*\) .*/\1/p' "$T/o19")
+    if [ -n "$n_probe" ] && [ -n "$n_guard" ] && [ "$n_probe" -gt 0 ] && [ "$n_guard" -gt 0 ]; then
+        ok "знаменатели обоих периметров напечатаны: стражей $n_guard, проб $n_probe"
+    else
+        bad "знаменатель периметра отсутствует или нулевой: [$(head -n 1 "$T/o19")]"
+    fi
+else
+    bad "живое дерево красное на знаменателях: [$(head -n 2 "$T/o19")]"
+fi
+
+# ── 20. проба, знающая только nova.exe, — ЗЕЛЁНАЯ (названная слепая зона) ─
+# Замер 2026-09-20: 70 проб из 166 знают только .exe. Это не долг — проба
+# фиксирует команду КОНКРЕТНОЙ машины, а на Linux отсутствие файла даёт ГРОМКУЮ
+# ошибку, тогда как правило заведено против МОЛЧАНИЯ. Случай держит границу:
+# перенос правила сюда покрасил бы 70 честных улик.
+mkdir -p "$T/probeexe/scripts/guards" "$T/probeexe/docs/plans/repro/w"
+printf '#!/bin/sh\nexit 0\n' > "$T/probeexe/scripts/guards/check-ok.sh"
+printf '#!/bin/sh\nNOVA="$R/nova-cli/target/release/nova.exe"\n"$NOVA" check x.nv\n' \
+    > "$T/probeexe/docs/plans/repro/w/cmd.sh"
+if python "$G" "$T/probeexe" > "$T/o20" 2>&1; then
+    ok "проба со своим путём к .exe законна — слепая зона названа, а не молчалива"
+else
+    bad "правило про имя бинаря уехало на пробы: [$(head -n 2 "$T/o20")]"
+fi
 if [ "$fails" -ne 0 ]; then
     echo "итог: FAIL $fails" >&2
     exit 1
 fi
 echo "итог: PASS"
-echo "test-check-guard-honesty ok: все случаи, включая ловушку экранированного апострофа, оба питоновских правила, съеденный возврат каретки и сломанный разбор"
+echo "test-check-guard-honesty ok: все случаи, включая ловушку экранированного апострофа, оба питоновских правила, съеденный возврат каретки, сломанный разбор и вторую территорию — пробы-улики с обеими её границами (комментарий зелен, пустая территория красна)"
 exit 0

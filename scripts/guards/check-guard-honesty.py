@@ -41,6 +41,21 @@
 81 строка; компилятор стерпел, а всякий читатель с универсальными переводами
 строк увидел ВДВОЕ больше строк, и номера в диагностиках уехали на девять.
 
+ПРОВЕРЯЕТ пробы-улики — `*.sh` в docs/plans/repro/**, docs/dev/hunts/** и
+docs/plans/wip/**. Территория заведена 2026-09-20 по случаю: апостроф в двойных
+кавычках (реестр №1190) был найден в СВОЕЙ же пробе окна, и судья его не видел,
+потому что смотрел только на scripts/**. Проба не страж, но читают её так же —
+как запись того, что произошло; съеденный оболочкой символ портит эту запись
+молча, и «x: command not found» в улике неотличим от вывода предмета. Судятся
+ровно два правила, оба про порчу текста: апостроф в кавычках и съеденный
+возврат каретки.
+
+  СЛЕПАЯ ЗОНА, НАЗВАННАЯ ЗДЕСЬ: правило про имя бинаря на эту территорию НЕ
+  распространяется. Замер 2026-09-20: 166 проб, из них 70 знают только
+  `nova.exe`. И это не долг — проба фиксирует КОМАНДУ КОНКРЕТНОЙ МАШИНЫ, а на
+  Linux отсутствие файла даёт ГРОМКУЮ ошибку, тогда как правило заведено против
+  МОЛЧАНИЯ. Расширить его сюда значило бы покрасить 70 честных улик.
+
 НЕ ПРОВЕРЯЕТ: строки, содержащие одинарную кавычку, — там живут awk-программы и
 фикстуры самотестов, где апостроф безобиден (сознательная слепая зона, названная
 здесь, а не молчаливая); смысл сообщений; прочие башизмы — их судит сам CI, и
@@ -68,6 +83,10 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 
 NAME = "check-guard-honesty"
 DOOR = "lib/novac.sh"
+# Вторая территория: пробы-улики. Каталоги перечислены ЗДЕСЬ, а не выводятся из
+# «всё, что не scripts»: судить весь репозиторий значило бы судить примеры и
+# фикстуры, где оболочечная строка — предмет показа, а не исполняемый текст.
+PROBE_DIRS = ("docs/plans/repro", "docs/dev/hunts", "docs/plans/wip")
 
 RE_EXE = re.compile(r"release/nova\.exe")
 RE_COMMENT = re.compile(r"^[ \t\v\f]*#")
@@ -84,6 +103,25 @@ def read_lines(path):
     if out and out[-1] == "":
         out.pop()
     return [l[:-1] if l.endswith("\r") else l for l in out]
+
+
+def judge_text(rel, lines, bad):
+    """Два правила про ПОРЧУ ТЕКСТА — общие для стражей и для проб-улик.
+
+    Оба судят исполняемую строку, а не символ: апостроф в комментарии оболочка
+    не исполняет, и красить его значило бы считать символы вместо исполнения.
+    """
+    prev = ""
+    for n, line in enumerate(lines, 1):
+        if (RE_SAYS.match(line) and "'" not in line
+                and "\\`" not in line and "`" in line):
+            bad.append(f"  {rel}:{n}: апостроф в двойных кавычках — "
+                       f"оболочка выполнит его как команду")
+        if RE_EATEN.search(prev) and line.startswith("'"):
+            bad.append(f"  {rel}:{n - 1}: перевод строки в одинарных кавычках — "
+                       f"съеденный \\r: снесёт строки вместо возвратов каретки, "
+                       f"и правило умрёт молча")
+        prev = line
 
 
 def git(root, *args):
@@ -118,7 +156,9 @@ def main():
     bad = []
 
     # (1) CRLF — в ИНДЕКСЕ, а не в рабочем дереве -----------------------------
-    eol = git(root, "ls-files", "--eol", "--", "scripts/*.sh", "scripts/**/*.sh")
+    eol_globs = ["scripts/*.sh", "scripts/**/*.sh"]
+    eol_globs += [f"{d}/**/*.sh" for d in PROBE_DIRS]
+    eol = git(root, "ls-files", "--eol", "--", *eol_globs)
     for line in eol.decode("utf-8", "replace").split("\n"):
         f = line.split()
         if len(f) >= 2 and "i/crlf" in f[0]:
@@ -132,26 +172,45 @@ def main():
         rel = rel_of(p)
         skip = DOOR in rel or "/selftest/" in rel
         saw_exe = saw_door = saw_fallback = False
-        prev = ""
-        for n, line in enumerate(read_lines(p), 1):
-            if not skip:
-                if not RE_COMMENT.match(line) and RE_EXE.search(line):
-                    saw_exe = True
-                if "novac_find_oracle" in line:
-                    saw_door = True
-                if RE_FALLBACK_SH.search(line):
-                    saw_fallback = True
-            if (RE_SAYS.match(line) and "'" not in line
-                    and "\\`" not in line and "`" in line):
-                bad.append(f"  {rel}:{n}: апостроф в двойных кавычках — "
-                           f"оболочка выполнит его как команду")
-            if RE_EATEN.search(prev) and line.startswith("'"):
-                bad.append(f"  {rel}:{n - 1}: перевод строки в одинарных кавычках — "
-                           f"съеденный \\r: снесёт строки вместо возвратов каретки, "
-                           f"и правило умрёт молча")
-            prev = line
+        lines = read_lines(p)
+        judge_text(rel, lines, bad)
+        for line in lines:
+            if skip:
+                break
+            if not RE_COMMENT.match(line) and RE_EXE.search(line):
+                saw_exe = True
+            if "novac_find_oracle" in line:
+                saw_door = True
+            if RE_FALLBACK_SH.search(line):
+                saw_fallback = True
         if not skip and saw_exe and not saw_door and not saw_fallback:
             bad.append(f"  {rel}: знает только nova.exe — на Linux не найдёт оракула и промолчит")
+
+    # (3b) Пробы-улики — те же два правила про порчу текста -------------------
+    # Файлы ищутся ОБХОДОМ ДЕРЕВА, а не `git ls-files`: в непроиндексированном
+    # дереве (а самотест работает именно с такими) ls-files вернул бы пусто, и
+    # новые правила молча остались бы непроверенными — тот самый случай «пустая
+    # мишень читается как чистая», ради которого территория и заводится.
+    probe_files, declared = [], []
+    for sub in PROBE_DIRS:
+        d_probe = root / sub
+        if not d_probe.is_dir():
+            continue
+        declared.append(sub)
+        for dirpath, _dirs, names in os.walk(d_probe):
+            for nm in names:
+                if nm.endswith(".sh"):
+                    probe_files.append(pathlib.Path(dirpath) / nm)
+    probe_files.sort(key=lambda p: str(p).replace("\\", "/"))
+
+    if declared and not probe_files:
+        print(f"{NAME}: FAIL — территория проб объявлена ({', '.join(declared)}), "
+              f"а судить в ней нечего: ноль *.sh читается как чистота, но ею не является",
+              file=sys.stderr)
+        return 1
+
+    for p in probe_files:
+        judge_text(rel_of(p), read_lines(p), bad)
 
     # (4) ДВОЙНОЙ возврат каретки в отслеживаемых файлах ---------------------
     tracked = git(root, "ls-files", "-z", "--", "novac/**", "scripts/**", "docs/**")
@@ -198,7 +257,8 @@ def main():
               file=sys.stderr)
         return 1
 
-    print(f"{NAME} ok: скриптов проверено {len(sh_files)} (.sh) и {len(py_files)} (.py), "
+    print(f"{NAME} ok: стражей проверено {len(sh_files)} (.sh) и {len(py_files)} (.py), "
+          f"проб-улик {len(probe_files)} (.sh), "
           f"CRLF 0, слепых к имени бинаря 0, съедаемых оболочкой сообщений 0")
     return 0
 
