@@ -1,0 +1,77 @@
+# №1188: чем падает шаг конвенций СЕГОДНЯ и что уходит следом в skipped
+# Прогон 35497981793, коммит d8882eee03b2, начат 2026-09-20T07:51:14Z, вердикт failure
+#
+# ВАЖНО: это НОВЕЙШИЙ доступный прогон, и он судит НЕ сегодняшний main:
+# main ушёл вперёд и на момент замера не был запушен.
+
+## docs-guard (doc-conventions.md enforcement, Plan 242) — success
+   шагов 8; упало: —
+   в skipped ушло 0: —
+
+## novac-gate (self-hosted compiler builds + module tests) — failure
+   шагов 12; упало: novac conventions gate (scripts/gate-novac.sh)
+   в skipped ушло 3: Build novac (the self-hosted compiler itself), novac module tests (each *_test.nv beside its module), Post Cache cargo registry + nova-cli target
+
+## gate.sh tier push (behaviour; tier full on the nightly schedule) — failure
+   шагов 10; упало: scripts/gate.sh — tier push (full on the nightly schedule)
+   в skipped ушло 1: Post Cache cargo registry + nova-cli target
+
+## nova-gate (conformance + flagship examples) — success
+   шагов 14; упало: —
+   в skipped ушло 0: —
+
+## gate.sh tier loop (text only — no compiler is started) — failure
+   шагов 5; упало: scripts/gate.sh — tier loop
+   в skipped ушло 0: —
+
+## Стражи, отказавшие внутри шага конвенций (в порядке вывода): 21
+
+  check-novac-cursor-is-range
+  check-novac-import-exists
+  check-novac-acceptance-donor
+  check-novac-legacy-workarounds
+  check-novac-plan-liveline
+  check-novac-time-ledger
+  check-novac-file-size
+  check-novac-type-field-docs
+  check-novac-empty-str-door
+  check-novac-surface
+  check-novac-no-silent-skip
+  check-novac-line-length
+  check-novac-no-copy-loop
+  check-novac-table-one-filler
+  check-novac-deferral-address
+  check-novac-file-decls-door
+  check-novac-branch-complete
+  check-novac-lint
+  check-novac-emission-size
+  check-novac-selftest-proves-red
+  check-novac-guard-registry
+
+## Строки вердикта самого гейта (`NOVAC-GATE FAIL:`): 25
+
+  NOVAC-GATE FAIL: курсор с шагом один написан вручную вместо диапазона (П32)
+  NOVAC-GATE FAIL: импортируется имя, которого нет — оракул этого не сверяет (замер 2026-08-22)
+  NOVAC-GATE FAIL: приёмка волны не называет донора (П27-класс)
+  NOVAC-GATE FAIL: обход бага оракула в novac без маркера/с закрытым багом (274 §1.5)
+  NOVAC-GATE FAIL: живая строка плана отстала от кода
+  NOVAC-GATE FAIL: коммит в novac/** без строки в леджере времени (274 §1.4)
+  NOVAC-GATE FAIL: файл novac длиннее 1000 строк (решение 12)
+  NOVAC-GATE FAIL: тип/поле/функция novac без документации (П13)
+  NOVAC-GATE FAIL: пустота строки спрошена длиной представления, а не сравнением с пустой строкой (П37)
+  NOVAC-GATE FAIL: публичная поверхность разошлась с базой (274 §10.4)
+  NOVAC-GATE FAIL: ветка прохода канала ушла молча (ни записи, ни отказа, ни ice)
+  NOVAC-GATE FAIL: строка длиннее 120 символов вне исключений (П29)
+  NOVAC-GATE FAIL: коллекция перекладывается поэлементно вместо append (П32)
+  NOVAC-GATE FAIL: у таблицы реестра появился ВТОРОЙ наполнитель: наполняющий и спрашивающий связаны только намерением автора (274.5 §3-пред62)
+  NOVAC-GATE FAIL: комментарий отсылает ответственность («это проверит X»), не называя адреса: отсылка в дверь, которая не открывается (П6)
+  NOVAC-GATE FAIL: объявления файла берутся мимо двери file_decls (П18)
+  NOVAC-GATE FAIL: неполные ветвления выросли (П31)
+  NOVAC-GATE FAIL: nova lint нашёл замечания в novac/src
+  NOVAC-GATE FAIL: объём эмиссии novac разошёлся с базой (274.2 §1б.2)
+  NOVAC-GATE FAIL: мэнгл novac разошёлся с оракулом
+  NOVAC-GATE FAIL: check-novac-fuzz-zero-panic.sh: ОБРЫВ, вердикта нет — предмет не судили (Г16, №1113)
+  NOVAC-GATE FAIL: модульный тест novac упал (контракт модуля)
+  NOVAC-GATE FAIL: shell.tpl.c протух
+  NOVAC-GATE FAIL: самотест стража novac проходит над заглушкой (П16)
+  NOVAC-GATE FAIL: реестр стражей novac разошёлся

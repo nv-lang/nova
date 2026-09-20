@@ -79,8 +79,13 @@ OUT=$(awk '
             $0 !~ /ПРИЁМКОЙ (НЕ|не) СЧИТАЕТСЯ/ &&
             $0 !~ /ПРИЕМКОЙ (НЕ|не) СЧИТАЕТСЯ/)              bad = bad " оговорка-о-носителе"
         if (bad != "") { printf "%s:%s\n", num, bad; cnt++ }
+        rows++
     }
-    END { printf "TOTAL %d\n", cnt + 0 }
+    # ЗНАМЕНАТЕЛЬ РАЗБОРА (2026-09-20): сколько строк реестра awk вообще узнал.
+    # Без него падение счёта неотличимо от того, что разбор перестал видеть
+    # строки (разметка, переезд файла, съехавший образец), — а это падение
+    # читается как погашенный долг.
+    END { printf "TOTAL %d\n", cnt + 0; printf "ROWS %d\n", rows + 0 }
 ' "$REG")
 
 # Запись, ждущая номера, НЕВИДИМА для проверки выше: регулярка строки реестра —
@@ -156,7 +161,19 @@ if [ -n "$NOVERDICT" ]; then
 fi
 
 N=$(printf '%s\n' "$OUT" | sed -n 's/^TOTAL //p')
-LIST=$(printf '%s\n' "$OUT" | grep -v '^TOTAL ' || true)
+ROWS=$(printf '%s\n' "$OUT" | sed -n 's/^ROWS //p')
+LIST=$(printf '%s\n' "$OUT" | grep -v '^TOTAL \|^ROWS ' || true)
+NOW_NUMS=$(printf '%s\n' "$LIST" | sed -n 's/^\([0-9][0-9]*\):.*/\1/p' | sort -n)
+
+# ШОВ ЗАСЕВА: печать ПОЛНОГО набора номеров. Нужен ровно затем, чтобы база
+# заполнялась ИЗ САМОГО СТРАЖА, а не вторым предикатом рядом: две копии одного
+# правила расходятся на первой же правке, и база начинает держать не тот набор,
+# который страж считает. Отказ при этом не выносится — это выдача, не суд.
+if [ -n "${NOVA_REGSHAPE_LIST:-}" ]; then
+    printf '%s\n' "$NOW_NUMS"
+    printf 'ROWS %s\n' "${ROWS:-0}"
+    exit 0
+fi
 
 BASE=0
 if [ -f "$BASELINE" ]; then
@@ -183,5 +200,61 @@ if [ "${N:-0}" -lt "$BASE" ]; then
     echo "check-registry-entry-shape: долг СНИЗИЛСЯ ($N < базы $BASE) — опусти базу в $BASELINE"
 fi
 
-echo "check-registry-entry-shape ok: роста неоформленных записей нет ($N <= $BASE)"
+# ─────────────────────────────────────────────────────────────────────────
+# ЯРУС ИМЁН (2026-09-20). Счёт в 343 записи прячет ЗАМЕНУ: одну запись
+# дооформили, другая приехала слиянием неоформленной — итог тот же, храповик
+# молчит. И прячет СУЖЕНИЕ РАЗБОРА: образец строки реестра съехал — счёт упал —
+# падение прочлось как уборка. Против первого — набор номеров, против второго —
+# знаменатель разобранных строк, который может только расти.
+#
+# Ярус идёт, только когда база ПРИНАДЛЕЖИТ судимому дереву: у самотеста своя
+# подставная репа, и сверять её с набором настоящего реестра бессмысленно.
+RS_TIER=1
+RS_ROOT_ABS="$(cd "$ROOT" 2>/dev/null && pwd)"
+RS_BASE_ABS="$(cd "$(dirname "$BASELINE")" 2>/dev/null && pwd)/$(basename "$BASELINE")"
+case "$RS_BASE_ABS" in
+    "${RS_ROOT_ABS:-$ROOT}"/*) ;;
+    *) RS_TIER=0 ;;
+esac
+
+if [ "$RS_TIER" = "1" ]; then
+    RS_WANT_ROWS=$(sed -n 's/^scanned_rows=\([0-9][0-9]*\)$/\1/p' "$BASELINE" | head -1)
+    RS_NAMES=$(sed -n 's/^incomplete_row=\([0-9][0-9]*\)$/\1/p' "$BASELINE" | sort -n)
+    RS_NAMED=$(printf '%s\n' "$RS_NAMES" | grep -c . )
+
+    if [ -z "$RS_WANT_ROWS" ] || { [ "${BASE:-0}" -gt 0 ] && [ "$RS_NAMED" -eq 0 ]; }; then
+        echo "check-registry-entry-shape: FAIL — база держит только счёт: нет строк scanned_rows= / incomplete_row=." >&2
+        echo "    Счёт прячет замену записи и сужение разбора." >&2
+        exit 1
+    fi
+    if [ "${RS_NAMED:-0}" -ne "${BASE:-0}" ]; then
+        echo "check-registry-entry-shape: FAIL — база противоречит себе: incomplete_entries=$BASE, номеров $RS_NAMED" >&2
+        exit 1
+    fi
+    if [ "${ROWS:-0}" -lt "${RS_WANT_ROWS:-0}" ]; then
+        echo "check-registry-entry-shape: FAIL — РАЗОБРАНО МЕНЬШЕ СТРОК, ЧЕМ В БАЗЕ: $ROWS < $RS_WANT_ROWS — разбор сузился." >&2
+        echo "    Долг, переставший считаться, читается как погашенный. Это не он." >&2
+        exit 1
+    fi
+
+    RS_NEW=$(printf '%s\n' "$NOW_NUMS" | grep -v '^$' | while read -r r; do
+        printf '%s\n' "$RS_NAMES" | grep -qx "$r" || printf '%s ' "$r"
+    done)
+    if [ -n "$RS_NEW" ]; then
+        echo "check-registry-entry-shape: FAIL — НОВЫЕ неоформленные записи: $RS_NEW" >&2
+        echo "    Общее число могло НЕ вырасти: одну дооформили, другая пришла." >&2
+        exit 1
+    fi
+    RS_PAID=$(printf '%s\n' "$RS_NAMES" | grep -v '^$' | while read -r r; do
+        printf '%s\n' "$NOW_NUMS" | grep -qx "$r" || printf '%s ' "$r"
+    done)
+    if [ -n "$RS_PAID" ]; then
+        echo "check-registry-entry-shape ok: дооформлены — $RS_PAID: убери эти incomplete_row= из $BASELINE и поправь счёт ТОЙ ЖЕ правкой"
+        exit 0
+    fi
+    echo "check-registry-entry-shape ok: роста неоформленных записей нет ($N <= $BASE, номера сверены поимённо), разобрано строк $ROWS >= $RS_WANT_ROWS"
+    exit 0
+fi
+
+echo "check-registry-entry-shape ok: роста неоформленных записей нет ($N <= $BASE) (база не принадлежит судимому дереву: ярус имён не проверяется)"
 exit 0
