@@ -1,0 +1,7 @@
+fn make_adder(const n int) -> const fn(int) -> int => n
+
+fn main() Io -> () {
+    ro adder5 = make_adder(5)
+    ro r = adder5(3)
+    print("x")
+}

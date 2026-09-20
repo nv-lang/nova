@@ -1,0 +1,5 @@
+type RecOk {
+    a int
+}
+
+fn main() Io -> () => print("x")

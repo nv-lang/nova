@@ -1,0 +1,6 @@
+fn c_alloc(const a int) -> const int {
+    const xs = [1, 2]
+    a
+}
+
+fn main() Io -> () => print("x")

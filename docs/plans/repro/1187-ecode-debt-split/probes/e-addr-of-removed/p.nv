@@ -1,0 +1,6 @@
+fn c_addr(const a int) -> const int {
+    ro p = addr_of(a)
+    a
+}
+
+fn main() Io -> () => print("x")
