@@ -28,7 +28,7 @@ module novac
 
 import ./sem.{InteropTable}
 import ./pipeline.{compile_with, compile_to_c_with, parse_decls, interop_surface}
-import ./pipeline.{Unit, UnitFile, unit_of, file_of_offset, offset_in_file, same_dir}
+import ./pipeline.{Unit, unit_of, file_of_offset, offset_in_file, same_dir}
 import ./diag.{to_json, json_escape, Diagnostic}
 import std.fs.{read, read_dir, real_fs}
 import std.os.{args, env, exit_process, real_os}

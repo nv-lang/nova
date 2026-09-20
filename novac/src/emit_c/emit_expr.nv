@@ -416,7 +416,8 @@ fn Emitter mut @emit_expr(e Node) -> () {
                                 @body.append("${c_maker(@ctx, v)}()")
                             }
                         }
-                        CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) => ice("emit: a bare name resolved to a non-variant callee")
+                        CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) =>
+                            ice("emit: a bare name resolved to a non-variant callee")
                     }
                 } else {
                     // Not a constant: an ordinary name, and `nova_bool` IS C
@@ -465,7 +466,8 @@ fn Emitter mut @emit_expr(e Node) -> () {
                     }
                     return
                 }
-                CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) => ice("emit: a field access resolved to a non-variant callee")
+                CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) =>
+                    ice("emit: a field access resolved to a non-variant callee")
             }
         } else {
             // An ordinary field access: the shapes below own it.
