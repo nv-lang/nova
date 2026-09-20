@@ -1,0 +1,24 @@
+warning: in the working copy of 'readme', LF will be replaced by CRLF the next time Git touches it
+=== A. kontrol: derevo RYADOM s repozitoriem -> zelenyy
+check-worktree-location: рабочих деревьев 2, дозволенный корень D:/Sources/nv-lang/nova/docs/dev/hunts/guards/probes/2026-09-20-neighbour-sign/p4-worktree-inside/base
+check-worktree-location: деревьев стало меньше (2 < 15) — опусти базу в /d/Sources/nv-lang/nova/scripts/guards/worktree-count.baseline
+check-worktree-location ok: все рабочие деревья в D:/Sources/nv-lang/nova/docs/dev/hunts/guards/probes/2026-09-20-neighbour-sign/p4-worktree-inside/base
+rc=0
+
+=== B. PREDMET NARUSHEN: derevo VNUTRI repozitoriya
+    (tot samyy .claude/worktrees/**, iz-za kotorogo strazh i zaveden)
+-- git worktree list:
+   D:/Sources/nv-lang/nova/docs/dev/hunts/guards/probes/2026-09-20-neighbour-sign/p4-worktree-inside/base/main
+   D:/Sources/nv-lang/nova/docs/dev/hunts/guards/probes/2026-09-20-neighbour-sign/p4-worktree-inside/base/beside
+   D:/Sources/nv-lang/nova/docs/dev/hunts/guards/probes/2026-09-20-neighbour-sign/p4-worktree-inside/base/main/.claude/worktrees/inside
+-- verdikt strazha:
+check-worktree-location: рабочих деревьев 3, дозволенный корень D:/Sources/nv-lang/nova/docs/dev/hunts/guards/probes/2026-09-20-neighbour-sign/p4-worktree-inside/base
+check-worktree-location: деревьев стало меньше (3 < 15) — опусти базу в /d/Sources/nv-lang/nova/scripts/guards/worktree-count.baseline
+check-worktree-location ok: все рабочие деревья в D:/Sources/nv-lang/nova/docs/dev/hunts/guards/probes/2026-09-20-neighbour-sign/p4-worktree-inside/base
+rc=0
+
+=== C. i srazu sledstvie, radi kotorogo pravilo napisano:
+   grep po derevu vidit chuzhoy snimok kak svoy fayl:
+   main/.claude/worktrees/inside/readme
+   main/readme
+rc=0
