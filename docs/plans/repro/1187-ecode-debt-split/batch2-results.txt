@@ -96,3 +96,53 @@ E_CONST_FN_CLOSURE_EXTERNAL, E_BLOCKING_FN_DECL_MISSING -- не пробовал
     (`spec_tests/conformance/lint/conv_clean.nv:84`), но не проверено, считает
     ли `iter_sum_variants`/поле-итератор такой тип записью (тогда путь другой)
     или тоже unsupported. Оставлено следующей волне.
+
+# 1187, партия 2, ПЯТАЯ ВОЛНА (02:23) -- два последних кода, оба НЕДОСТИЖИМЫ
+
+E_CONST_FN_CLOSURE_EXTERNAL
+  Условие живёт в `extract_closure_parts_from_expr` (`const_fn_closure.rs:626`):
+  `ClosureFull` с телом `FnBody::External`. Чтение ЕДИНСТВЕННОГО места, где
+  `ExprKind::ClosureFull` вообще строится (`parser/mod.rs:10303-10312`), нашло
+  явную гарантию САМОГО ПАРСЕРА:
+
+      FnBody::External => unreachable!(
+          "closure-full cannot be `external` -- only named fns can; ..."
+      ),
+
+  То есть парсер физически не может произвести `ClosureFull` с телом
+  `External` -- тело замыкания читается через `parse_fn_body`, и ветка
+  `External` там зарезервирована только для ИМЕНОВАННЫХ функций верхнего
+  уровня. Условие для `E_CONST_FN_CLOSURE_EXTERNAL` требует того, что
+  конструктор AST сам объявляет невозможным -- `unreachable!()`, а не догадка.
+
+E_BLOCKING_FN_DECL_MISSING
+  Условие: `self.mono_fn_decls.get(fn_name).ok_or_else(...)` в
+  `emit_blocking_fn_call` (`codegen/emit_c.rs:16223`). Решающая деталь --
+  СИГНАТУРА функции: `Result<String, String>`, а не `Result<_, Diagnostic>`,
+  которым размечен весь путь типизации. Это код ЭМИССИИ C, вызываемый ПОСЛЕ
+  того, как чекер уже подтвердил существование и типы функции; `#blocking fn`
+  без предварительной регистрации в `mono_fn_decls` означало бы, что
+  типизация прошла для функции, которой эмиттер не знает, -- расхождение
+  между двумя фазами компилятора, а не форма, которую пишет пользователь.
+  Косвенное подтверждение: рабочая фикстура `#blocking fn` в корпусе
+  (`spec_tests/conformance/d172_realtime_blocking_attrs.nv`) компилируется
+  без этого кода -- обычный путь его не задевает.
+
+ИТОГ ПАРТИИ 2 ИЗ 20 ЗАЯВЛЕННЫХ КОДОВ -- НЕ ВСЕ РАЗОБРАНЫ, счёт ниже честный:
+
+  живых 5:        E_ADDR_OF_REMOVED, E_AMBIGUOUS_IDENT_PATTERN,
+                   E_AUTO_DERIVE_UNSUPPORTED_KIND (с оговоркой про носителя),
+                   E_COERCE_NOT_ZERO_COST, E_CONST_FN_ALLOCATION
+  недостижимо 3:   E_AUTO_DERIVE_UNKNOWN_PROTOCOL, E_BLOCKING_FN_DECL_MISSING,
+                   E_CONST_FN_CLOSURE_EXTERNAL (у каждого чтение, не молчание)
+  честно открыто 2: E_CONST_FN_CLOSURE_ARITY, E_CONST_FN_CLOSURE_BODY
+  НЕ ПРОБОВАЛИСЬ 10: E_ARRAY_ELEM_NARROW, E_AUTO_DERIVE_CYCLE,
+                   E_BARE_TYPEVAR_NEEDS_PREFIX, E_BLOCKING_NOGC_ALLOC,
+                   E_CAST_UNWRAP_REQUIRED, E_CHANNEL_TYPE_NOT_INSTANTIABLE,
+                   E_COERCE_EFFECTFUL, E_COERCE_NOT_UNARY,
+                   E_COERCE_ON_PROTOCOL, E_COERCE_RECEIVER_FORM_DEFERRED
+
+  5 + 3 + 2 + 10 = 20. `E_COERCE_NOT_UNARY` поднялась ПОБОЧНО в первой
+  (неверной) редакции контроля для `E_COERCE_NOT_ZERO_COST` -- это НЕ
+  засчитывается как её собственная проба: у неё нет своей минимальной формы
+  и своего контроля, поэтому она остаётся в куче «не пробовались».
