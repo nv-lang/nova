@@ -1,0 +1,6 @@
+#impl(Equal)
+type Rec {
+    a int
+}
+
+fn main() Io -> () => print("x")

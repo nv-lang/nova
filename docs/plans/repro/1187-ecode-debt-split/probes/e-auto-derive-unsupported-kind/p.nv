@@ -1,0 +1,4 @@
+#impl(Equal)
+type MyInt = int
+
+fn main() Io -> () => print("x")
