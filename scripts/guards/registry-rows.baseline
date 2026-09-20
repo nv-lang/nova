@@ -1280,7 +1280,9 @@
 #   max 1172 -> 1174. Zavedeny 1173 (spec i kompilyator rashodyatsya na
 #   privatnoy funktsii s tranzitivnym effektom -- reshayet vladelets) i 1174
 #   (dva defekta dokumentov: myortvaya ssylka i primer snyatoy formy).
-rows=1126
-max=1174
+# 2026-09-20 (integrator): rows 1126 -> 1127, max 1174 -> 1175 -- zavedena 1175
+#   (kod ostanovki "smena" sudilsya priznakom, vypolnyayushchimsya sam).
+rows=1127
+max=1175
 stale_gaps=0
 gaps=174-208,210-215,653-654,743,1062,1096,1103-1104

@@ -65,6 +65,21 @@ def note(tmp, role="integrator", age_sec=0):
     return p
 
 
+def handoff(tmp, session="s1", age_sec=0):
+    u"""Файл передачи — АРТЕФАКТ команды `/stop`, и с 2026-09-20 именно он
+    доказывает код «смена». Записка доказательством быть перестала: её
+    обновляют по часовому напоминанию посреди работы, и условие сходилось
+    само — окно сказало «смена», смены не сдав, и хук пропустил."""
+    p = os.path.join(tmp, "docs", ".sessions", "handoff-%s.md" % session)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with io.open(p, "w", encoding="utf-8") as fh:
+        fh.write(u"СДЕЛАНО: …\nВ ПОЛЁТЕ: …\nНЕЗАКОММИЧЕНО: …\nДАЛЬШЕ: …\n")
+    if age_sec:
+        old = time.time() - age_sec
+        os.utime(p, (old, old))
+    return p
+
+
 def run(tmp, turns, session="s1", active=False, role="integrator",
         hook=None, env_extra=None):
     u"""role=None — окно без роли: ворота по роли обязаны сделать хук немым."""
@@ -167,12 +182,23 @@ def c_interrupt_passes(tmp):
 
 def c_shift_with_note(tmp):
     note(tmp)
+    handoff(tmp)
     return run(tmp, [(u"Смена сдана.\n\nСТОП: смена", 0)]), False
 
 
 def c_shift_without_note(tmp):
     note(tmp, age_sec=3 * 60 * 60)
+    handoff(tmp, age_sec=3 * 60 * 60)
     return run(tmp, [(u"Ухожу.\n\nСТОП: смена", 0)]), True
+
+
+def c_shift_note_fresh_but_no_handoff(tmp):
+    u"""ЖИВОЙ СЛУЧАЙ 2026-09-20, найденный владельцем: записка свежа (её
+    обновили по часовому напоминанию), смены никто не сдавал, а код «смена»
+    прошёл. Признак совпадал с обычной работой — вот клетка, которая этого
+    больше не допустит."""
+    note(tmp)
+    return run(tmp, [(u"Продолжу завтра.\n\nСТОП: смена", 0)]), True
 
 
 def c_snapshot_failed_passes_with_escape(tmp):
@@ -323,6 +349,8 @@ for n, f in [
     (u"прерывание владельца пропускается", c_interrupt_passes),
     (u"смена сдана: записка свежая", c_shift_with_note),
     (u"смена объявлена, записка трёхчасовой давности", c_shift_without_note),
+    (u"смена при свежей записке, но БЕЗ передачи — отказ",
+     c_shift_note_fresh_but_no_handoff),
     (u"снимок ok=false: пропуск + побег в лог", c_snapshot_failed_passes_with_escape),
     (u"хук упал сам — блок, а не немота", c_hook_crash_blocks),
     (u"хук упал повторно — не запирает окно", c_hook_crash_does_not_lock),
