@@ -1464,4 +1464,8 @@ no_caveat=0
 # 2026-09-20 (integrator): blockers 80 -> 81. Zavedena 1199 -- strazh pechataet
 #   DVA verdikta podryad, i pervyy 'ok'; chitayushchiy ostanavlivaetsya na pervom,
 #   i pod nim prozhila vsyu noch tihaya miskompilyaciya 1191. Nashla Karina.
-blockers=81
+# 2026-09-20 (integrator): blockers 81 -> 82. Ne novaya stroka, a PEREKLASSIFIKACIYA
+#   1195: ona byla pro formulirovku otkaza (K2, ne bloker), a zamer pokazal drugoy
+#   predmet -- proverka dubley imyon pokryvaet TOLKO TIPY: `fn dup()` i `const K`
+#   dvazhdy v odnom fayle dayut NOL diagnostik. Pole ispravleno NA MESTE.
+blockers=82
