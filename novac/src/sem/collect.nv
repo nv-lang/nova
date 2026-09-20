@@ -40,9 +40,11 @@ export fn collect_types(file Node) -> Ctx => collect_types_with(file, []Node.new
 /// answered with different diagnostics.
 fn push_gates(mut gates []str, decls []Node, id NodeId) -> int {
     ro names = impl_protocols_before(decls, id)
-    for n in names {
-        gates.push(n)
-    }
+    // THE DOOR, not a loop of my own: `append` is std's, it gets std's fixes,
+    // and a hand-written copy of it silently stops receiving them (P-class,
+    // check-novac-no-copy-loop). A loop is legal where it CARRIES work -- a
+    // condition, a transformation -- and this one carried none.
+    gates.append(names)
     names.len()
 }
 

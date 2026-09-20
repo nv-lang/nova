@@ -128,7 +128,7 @@ fn harvest_in(n Node, handed_from str, types []TypeDef, mut defs DefTable, mut t
 /// field of a handed-over record is reachable only through a form the subset does
 /// not compile (`iter.pos`), so reading them now would be a capability with no
 /// obligation (K7). The name and the KIND are what a type in a signature needs.
-export fn harvest_types(decls []Node, mut types []TypeDef, mut gates []str, mut defs DefTable,
+fn harvest_types(decls []Node, mut types []TypeDef, mut gates []str, mut defs DefTable,
                         mut tys Interner) -> () {
     for d in decls {
         // THE GATES of std's types, read where the DECLARATION LIST is (D186).

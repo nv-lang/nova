@@ -1,0 +1,5 @@
+module p.b
+
+fn g(o Option[int]) -> int {
+    if Some(v) = o { v } else { 0 }
+}
