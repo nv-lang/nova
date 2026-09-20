@@ -159,7 +159,67 @@ if printf '%s' "$out" | grep -q 'skip-worktree'; then
     ok "отказ называет причину расхождения (бит), а не только число"
 else bad "отказ не объясняет расхождения: $out"; fi
 
+# ── ЯРУС 3б: ИМЕНА НОСИТЕЛЕЙ И ЗНАМЕНАТЕЛЬ (2026-09-20) ──────────────────
+# База задаётся ВНУТРИ поддельного дерева: ярус имён идёт только по базе,
+# принадлежащей судимому дереву, — иначе фикстура сверялась бы с набором
+# настоящего репозитория, и «осмотрено 2 из 6244» было бы свойством фикстуры.
+# Каждое дерево несёт ОДИН чистый скрипт: без него страж отказывает ещё на
+# ярусе 1, и красный приходил бы не от проверяемого правила.
+mk3b() { # $1 — содержимое docs/x.md
+    mk
+    addf scripts/tools/clean.sh '#!/bin/sh
+echo ok'
+    mkdir -p "$TMP/r/docs" "$TMP/r/scripts/guards"
+    addf docs/x.md "$1"
+}
+MPB="$TMP/mp3b.baseline"
+
+# (а) КОНТРОЛЬ: верная база — зелёный. Без него любой красный ниже доказывал бы
+# лишь то, что страж умеет краснеть.
+mk3b 'see d:/Sources/nv-lang/nova for the layout'
+MPB="$TMP/r/scripts/guards/mp.baseline"
+printf 'paths=1\nscanned_files=2\npaths_file=docs/x.md 1\n' > "$MPB"
+out=$(NOVA_MACHINE_PATHS_BASELINE="$MPB" bash "$G" "$TMP/r" 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'носителей 1'; then
+    ok "контроль: верная именная база — зелёный, носители посчитаны"
+else bad "контроль не прошёл (rc=$rc): $out"; fi
+
+# (б) ЗАМЕНА НОСИТЕЛЯ при том же счёте — красный. Ровно то, чего счёт не умеет:
+# вычистили в одном файле, написали в другом, итог прежний.
+printf 'paths=1\nscanned_files=2\npaths_file=docs/other.md 1\n' > "$MPB"
+out=$(NOVA_MACHINE_PATHS_BASELINE="$MPB" bash "$G" "$TMP/r" 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'NEW docs/x.md'; then
+    ok "замена носителя при неизменном счёте — красный, и назван новый носитель"
+else bad "замена носителя не поймана (rc=$rc): $out"; fi
+
+# (в) РОСТ В ПРЕЖНЕМ НОСИТЕЛЕ при неизменном ОБЩЕМ счёте — красный.
+mk3b 'd:/Sources/one and d:/Sources/two'
+MPB="$TMP/r/scripts/guards/mp.baseline"
+printf 'paths=2\nscanned_files=2\npaths_file=docs/x.md 1\n' > "$MPB"
+out=$(NOVA_MACHINE_PATHS_BASELINE="$MPB" bash "$G" "$TMP/r" 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'GROWN docs/x.md'; then
+    ok "рост внутри носителя при том же общем счёте — красный"
+else bad "рост внутри носителя не пойман (rc=$rc): $out"; fi
+
+# (г) СУЖЕНИЕ ПРЕДИКАТА: осмотрено меньше файлов, чем в базе, — красный.
+# Именно эта половина отличает уборку от того, что часть дерева перестала
+# попадать под pathspec: долг падает одинаково, а причины разные.
+printf 'paths=2\nscanned_files=99\npaths_file=docs/x.md 2\n' > "$MPB"
+out=$(NOVA_MACHINE_PATHS_BASELINE="$MPB" bash "$G" "$TMP/r" 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'предикат сузился'; then
+    ok "падение знаменателя осмотра — красный именно про сужение"
+else bad "сужение предиката не поймано (rc=$rc): $out"; fi
+
+# (д) База СВОЯ, но держит только счёт — красный.
+printf 'paths=2\n' > "$MPB"
+out=$(NOVA_MACHINE_PATHS_BASELINE="$MPB" bash "$G" "$TMP/r" 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'держит только счёт'; then
+    ok "своя база без имён и знаменателя — красный"
+else bad "счётная база прошла (rc=$rc): $out"; fi
+
 echo "итог: $PASS ok, $FAIL FAIL"
 [ "$FAIL" -eq 0 ] || { echo "selftest check-no-machine-paths: ПРОВАЛ" >&2; exit 1; }
-echo "selftest check-no-machine-paths: OK (зелёный на дереве и на 3 законных формах / красный на 4 формах хардкода)"
+# Чисел форм в этой строке БОЛЬШЕ НЕТ: стояло «3 законных / 4 хардкода» при
+# двадцати трёх случаях — литерал разошёлся с телом, как всегда и бывает.
+echo "selftest check-no-machine-paths: OK (зелёный на дереве и на законных формах, красный на формах хардкода, на замене носителя, росте внутри файла и сужении предиката)"
 exit 0
