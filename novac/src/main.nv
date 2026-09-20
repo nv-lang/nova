@@ -414,9 +414,22 @@ fn run(a []str) -> int {
                 }
                 return worst.code()
             } else {
-                // Peers of one directory go in together, in the order given:
-                // the order of bodies does not change the checker's verdict
-                // (measured 2026-09-20, 274.7 M), so nothing is sorted here.
+                // Peers of one directory go in together, IN THE ORDER GIVEN,
+                // and nothing is sorted here.
+                //
+                // WHAT THE MEASUREMENT ACTUALLY SAID (registry 1196, correcting
+                // my own claim of 2026-09-20 the same day): the order does not
+                // change the checker's VERDICT. It was written here as though it
+                // did not change anything, and the wider reading is false --
+                // `unit_of` takes the `module` line from the FIRST file only, so
+                // which argv position a file holds decides whether the unit
+                // carries a module declaration at all. The hunt proved there is
+                // no consequence TODAY (emission byte-identical either way), and
+                // a claim outliving its measurement is how the next consequence
+                // arrives unnoticed.
+                //
+                // So the sentence now says only what was measured, and the
+                // unmeasured half is named as unmeasured.
                 mut all = []str.new()
                 for k in argi..a.len() {
                     // nova:allow W_MANUAL_SLICE_COPY -- the canon `x[a..b]` is a
