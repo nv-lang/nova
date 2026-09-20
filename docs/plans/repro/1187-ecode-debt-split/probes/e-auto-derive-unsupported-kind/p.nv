@@ -1,4 +1,4 @@
 #impl(Equal)
-type MyInt = int
+external type RawHandle
 
 fn main() Io -> () => print("x")
