@@ -11,7 +11,8 @@ export LC_ALL=C
 G="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/check-staged-secrets.sh"
 TMP="${TMPDIR:-/tmp}/selftest_secrets_$$"
 FAILED=0
-ok()  { echo "  ok: $1"; }
+OKN=0
+ok()  { OKN=$((OKN + 1)); echo "  ok: $1"; }
 bad() { echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
 
 setup() {
@@ -137,6 +138,6 @@ else
 fi
 rm -rf "$CFGT"
 
-if [ "$FAILED" -eq 0 ]; then echo "селфтест check-staged-secrets: 13/13 ok"; exit 0; fi
+if [ "$FAILED" -eq 0 ]; then echo "селфтест check-staged-secrets: $OKN/$OKN ok"; exit 0; fi
 echo "селфтест check-staged-secrets: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1

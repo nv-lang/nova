@@ -14,7 +14,8 @@ export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 G="$ROOT/scripts/guards/check-rules-page-complete.sh"
 FAILED=0
-ok()  { echo "  ok: $1"; }
+OKN=0
+ok()  { OKN=$((OKN + 1)); echo "  ok: $1"; }
 bad() { echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
@@ -85,6 +86,6 @@ set_base 5
 out=$(bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 1 ] && echo "$out" | grep -q "СНИЗИЛСЯ"; then ok "снижение долга требует опустить базу"; else bad "снижение долга обязано требовать правки базы (код $rc): $out"; fi
 
-if [ "$FAILED" -eq 0 ]; then echo "селфтест check-rules-page-complete: 10/10 ok"; exit 0; fi
+if [ "$FAILED" -eq 0 ]; then echo "селфтест check-rules-page-complete: $OKN/$OKN ok"; exit 0; fi
 echo "селфтест check-rules-page-complete: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1

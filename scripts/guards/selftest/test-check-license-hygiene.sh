@@ -9,7 +9,8 @@ export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 G="$ROOT/scripts/guards/check-license-hygiene.sh"
 FAILED=0
-ok()  { echo "  ok: $1"; }
+OKN=0
+ok()  { OKN=$((OKN + 1)); echo "  ok: $1"; }
 bad() { echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
@@ -48,6 +49,6 @@ rm -f "$TMP/THIRD_PARTY/README.md"
 out=$(bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 1 ] && echo "$out" | grep -q "THIRD_PARTY"; then ok "ловит отсутствие файла уведомлений"; else bad "не поймал отсутствие уведомлений (код $rc): $out"; fi
 
-if [ "$FAILED" -eq 0 ]; then echo "селфтест check-license-hygiene: 6/6 ok"; exit 0; fi
+if [ "$FAILED" -eq 0 ]; then echo "селфтест check-license-hygiene: $OKN/$OKN ok"; exit 0; fi
 echo "селфтест check-license-hygiene: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1

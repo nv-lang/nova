@@ -9,7 +9,8 @@ export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 G="$ROOT/scripts/guards/check-commit-hygiene.sh"
 FAILED=0
-ok()  { echo "  ok: $1"; }
+OKN=0
+ok()  { OKN=$((OKN + 1)); echo "  ok: $1"; }
 bad() { echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
@@ -67,6 +68,6 @@ printf 'quote kept\n\n> %s\n' "$(printf '\xd1\x86\xd0\xb8\xd1\x82\xd0\xb0\xd1\x8
 out=$(NOVA_COMMIT_EMAIL=selftest@example.com bash "$G" "$MSG" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 0 ]; then ok "цитата строкой с > не краснит"; else bad "ложный отказ на цитате (код $rc): $out"; fi
 
-if [ "$FAILED" -eq 0 ]; then echo "селфтест check-commit-hygiene: 7/7 ok"; exit 0; fi
+if [ "$FAILED" -eq 0 ]; then echo "селфтест check-commit-hygiene: $OKN/$OKN ok"; exit 0; fi
 echo "селфтест check-commit-hygiene: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1

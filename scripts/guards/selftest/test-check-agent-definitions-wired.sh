@@ -7,7 +7,8 @@ export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 G="$ROOT/scripts/guards/check-agent-definitions-wired.sh"
 FAILED=0
-ok()  { echo "  ok: $1"; }
+OKN=0
+ok()  { OKN=$((OKN + 1)); echo "  ok: $1"; }
 bad() { echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
@@ -85,6 +86,6 @@ printf 'no agents here\n' > "$CMD/x.md"
 out=$(bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 0 ]; then ok "команды без агентов — зелено"; else bad "отсутствие агентов не нарушение: $out"; fi
 
-if [ "$FAILED" -eq 0 ]; then echo "селфтест check-agent-definitions-wired: 9/9 ok"; exit 0; fi
+if [ "$FAILED" -eq 0 ]; then echo "селфтест check-agent-definitions-wired: $OKN/$OKN ok"; exit 0; fi
 echo "селфтест check-agent-definitions-wired: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1
