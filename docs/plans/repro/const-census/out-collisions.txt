@@ -1,0 +1,34 @@
+ВСЕГО объявлений const: 145
+ВСЕГО РАЗНЫХ имён: 145
+ИМЁН, встречающихся в ДВУХ и более модулях: 0 (доля от разных имён: 0.0%)
+ИЗ НИХ не экспортированы НИГДЕ (ложно-приватные): 0
+
+=== СТОЛКНОВЕНИЯ, ведущий адрес `файл : имя` ===
+
+=== ПОПУТНОЕ: имена импортов в двух и более модулях ===
+разных путей импорта: 154, из них встречаются в 2+ модулях: 32
+    ../builtins.{ALIAS_MARKER,               novac.parse, novac.sem
+    ../builtins.{BuiltinType,                novac.check, novac.emit_c
+    ../builtins.{BuiltinType}                novac.check, novac.emit_c
+    ../builtins.{DISPLAY_METHOD}             novac.check, novac.emit_c
+    ../builtins.{ENTRY_FN,                   novac.check, novac.sem
+    ../builtins.{EQUAL_METHOD,               novac.check, novac.emit_c
+    ../builtins.{TypeKind,                   novac.emit_c, novac.sem, novac.types
+    ../builtins.{TypeKind}                   novac.check, novac.emit_c, novac.sem
+    ../diag.{Diagnostic,                     novac.check, novac.pipeline
+    ../diag.{ice}                            novac.check, novac.emit_c, novac.lower, novac.mono, novac.pipeline, novac.resolve, novac.sem, novac.tree, novac.types
+    ../lex.{Token,                           novac.check, novac.parse, novac.sem, novac.tree
+    ../lex.{TokenKind}                       novac.check, novac.emit_c, novac.parse, novac.sem
+    ../lex.{lex}                             novac.check, novac.parse
+    ../names.{DeclId,                        novac.sem, novac.types
+    ../names.{DeclId}                        novac.check, novac.sem, novac.types
+    ../names.{NameTable,                     novac.check, novac.resolve, novac.sem
+    ../parse.{parse}                         novac.check, novac.pipeline
+    ../sem.{ArgSpec,                         novac.check, novac.resolve
+    ../sem.{Ctx,                             novac.check, novac.emit_c, novac.pipeline
+    ../sem.{InteropTable}                    novac.emit_c, novac.pipeline
+    ../sem.{VariantRow,                      novac.emit_c, novac.lower
+    ../sem.{branch_children,                 novac.check, novac.emit_c, novac.pipeline
+    ../sem.{c_free_symbol}                   novac.check, novac.emit_c
+    ../sem.{c_method_symbol}                 novac.check, novac.emit_c
+    ../sem.{prim_row_of,                     novac.check, novac.emit_c
