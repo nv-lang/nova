@@ -1,0 +1,8 @@
+### a-compliant
+  rc=0  out=[]
+### b-violating
+  rc=2  out=[231.2 §3: feedback-zametka bez polya 'enforcement:'. Dobav v telo stroku 'enforcement: <mekhanizm — huk/lint/gate/ratchet, stroka v 231.2>' libo 'enforcement: nemashinnoe — <prichina>'. Zametka-bez-mekhanizma = simptom, ne fiks (plan 231.2).]
+### c-malformed
+  rc=0  out=[]
+### d-schema-shift
+  rc=0  out=[]

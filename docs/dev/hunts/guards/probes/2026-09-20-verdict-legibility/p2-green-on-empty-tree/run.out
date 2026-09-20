@@ -1,0 +1,24 @@
+### check-generic-static.sh
+  A real tree  rc=0 : check-generic-static ok: ни одного статика внутри generic-функции
+  B empty tree rc=0 : check-generic-static ok: ни одного статика внутри generic-функции
+  -> VERDICT BYTE-IDENTICAL
+### check-test-env-races.sh
+  A real tree  rc=0 : check-test-env-races ok: ни одной переменной среды, которую правит больше одного теста
+  B empty tree rc=0 : check-test-env-races ok: ни одной переменной среды, которую правит больше одного теста
+  -> VERDICT BYTE-IDENTICAL
+### check-no-control-chars.sh
+  A real tree  rc=0 : check-no-control-chars ok: невидимых управляющих байтов нет
+  B empty tree rc=0 : check-no-control-chars ok: невидимых управляющих байтов нет
+  -> VERDICT BYTE-IDENTICAL
+### check-no-handwritten-plan-index.sh
+  A real tree  rc=0 : check-no-handwritten-plan-index ok: второго индекса планов нет
+  B empty tree rc=0 : check-no-handwritten-plan-index ok: второго индекса планов нет
+  -> VERDICT BYTE-IDENTICAL
+### check-invariant-discipline.sh
+  A real tree  rc=0 : check-invariant-discipline ok: новых инвариантов на честном слове нет
+  B empty tree rc=0 : check-invariant-discipline ok: новых инвариантов на честном слове нет
+  -> VERDICT BYTE-IDENTICAL
+### check-expect-markers.sh
+  A real tree  rc=0 : check-expect-markers ok: неизвестных EXPECT_* нет
+  B empty tree rc=0 : check-expect-markers ok: неизвестных EXPECT_* нет
+  -> VERDICT BYTE-IDENTICAL
