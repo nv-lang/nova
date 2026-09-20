@@ -250,6 +250,16 @@ fn module_line_end(text str) -> int {
     ro n = text.byte_len()
     mut ls = 0
     mut i = 0
+    // THE CANON IS `for i in 0..=n`, AND CARINA CANNOT READ IT. Asked her
+    // directly rather than assumed: `novac/src/lex` and `novac/src/parse` carry
+    // no inclusive-range token at all, and `..=` appears zero times in the whole
+    // of `novac/src`. This file is part of the corpus Carina must compile to
+    // build herself, so the canon form would be a form she cannot parse -- the
+    // exact defect found in `check/variant_rules.nv` an hour earlier, where the
+    // oracle compiled a line Carina refused.
+    //
+    // Goes back to the canon when `..=` is in the subset, not before.
+    // nova:allow W_WHILE_COUNTER_FOR_RANGE -- `..=` absent from Carina's lexer and parser
     while i <= n {
         mut at_end = false
         if i == n {
@@ -291,8 +301,9 @@ fn module_line_end(text str) -> int {
 /// inside the subset it is helping to widen.
 fn append_range(mut out []u8, b []u8, from int, to int) -> () {
     for i in from..to {
-        // nova:allow W_MANUAL_SLICE_COPY -- the canon `x[a..b]` is a SLICE,
-        // and novac does not compile one yet (registry 1170)
+        // The canon `x[a..b]` is a SLICE, and novac does not compile one yet
+        // (registry 1170), so the copy is by hand here.
+        // nova:allow W_MANUAL_SLICE_COPY -- slice not compiled yet, registry 1170
         out.push(b[i])
     }
 }
@@ -375,7 +386,9 @@ export fn unit_of(paths []str, texts []str) -> Unit {
             // newline that belongs to no file -- and a diagnostic at the END of
             // the unit landed on it, so a span that read 43 alone read 44 in the
             // unit: one byte past a 43-byte file. Between-form has no last one.
-            if bodies > 0 { out.push(UNIT_LF) } else {
+            if bodies > 0 {
+                out.push(UNIT_LF)
+            } else {
                 // The first body follows the header, which already ends in one.
             }
             bodies += 1
@@ -432,6 +445,16 @@ fn header_end(text str) -> int {
     mut last = 0
     mut ls = 0
     mut i = 0
+    // THE CANON IS `for i in 0..=n`, AND CARINA CANNOT READ IT. Asked her
+    // directly rather than assumed: `novac/src/lex` and `novac/src/parse` carry
+    // no inclusive-range token at all, and `..=` appears zero times in the whole
+    // of `novac/src`. This file is part of the corpus Carina must compile to
+    // build herself, so the canon form would be a form she cannot parse -- the
+    // exact defect found in `check/variant_rules.nv` an hour earlier, where the
+    // oracle compiled a line Carina refused.
+    //
+    // Goes back to the canon when `..=` is in the subset, not before.
+    // nova:allow W_WHILE_COUNTER_FOR_RANGE -- `..=` absent from Carina's lexer and parser
     while i <= n {
         mut at_end = false
         if i == n {

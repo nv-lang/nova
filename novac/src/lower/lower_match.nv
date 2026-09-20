@@ -1,0 +1,266 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc's `mir_build::matches` -- the lowering of a match lives apart
+// from the lowering of everything else, because its vocabulary is its own.
+// Role: layer 8 (lower) -- how a `match` becomes a Switch of the lowered
+// body: the match, its guard, what an arm's pattern IS, the arm, the body.
+// Used by: lowering.nv (the statement and value doors call `@lower_match`).
+// Guarded by: check-novac-file-size.py (this file exists because lowering.nv
+// crossed 1000 lines after the F65 hoist landed in it).
+// novac/src/lower/lower_match.nv -- a match, lowered.
+//
+// THE SEAM IS BY MEANING rather than by the count that revealed it: these
+// five functions share `Pattern`, `SwitchCtx` and `VariantMatch`, and
+// nothing else in the module names any of the three. A folder is one module
+// of co-equal files, so nothing is exported and no caller changes.
+
+module novac.lower
+
+import ../sem.{pattern_has_disj}
+
+import ../sem.{arm_body_at}
+
+import ../sem.{disj_head_slots}
+
+import ../sem.{leaf_text}
+
+import ../sem.{variant_in_sum}
+
+import ../diag.{ice}
+
+import ../sem.{is_ident_leaf}
+
+import ../sem.{is_int_lit}
+
+import ../sem.{pattern_head_slot}
+
+import ../sem.{branch_children}
+import ../sem.{raw_vrow}
+import ../sem.{payload_as_seen}
+
+/// One `match`, in either position. `dest` is the local the arms' values land in -- a
+/// TEMPORARY of the body, numbered by the builder -- or `no_local()` in statement
+/// position, where the arms run for effect and nothing holds an answer; declaring a
+/// variable for an answer nobody asked for is the shape this compiler keeps refusing
+/// elsewhere (wave B5).
+///
+/// This doc used to say the caller declared `_novac_match_t<uniq>` and that `uniq` named
+/// the scrutinee, the result AND the flag. Two of those three moved on 2026-09-09: the
+/// scrutinee and the result are temporaries numbered by their own index, and only the
+/// printer's `matched` flag is still spelled from `uniq` -- which the BUILDER now mints,
+/// so this function no longer takes it. What has not changed is why the number exists at
+/// all: it must be unique per body, because Nova lets a name be bound twice in one
+/// scope (F30) and a C variable declared twice in one block is invalid C from legal
+/// Nova.
+///
+/// WHAT HOLDS IT MECHANICALLY, and what does not. A number invented here can never
+/// enter the author's door: `named` refuses invented names by guard
+/// [INV-GUARD: check-novac-invented-name-not-named], which reddens on a literal, on an
+/// interpolated name and on a missing door. The MIRROR half -- that a generated name
+/// never coincides with a name the author wrote -- holds by construction today (every
+/// generated name carries the `_novac_` prefix, which the checker forbids in source
+/// identifiers) and is NOT machine-checked here; that is said out loud rather than
+/// implied by the mark. [INV-TODO: 274.3 F30 -- nothing checks it]
+fn Lowerer mut @lower_match(m Node, dest Local) -> () {
+    ro kids = branch_children(m)
+    ro scr = kids[1]
+    ro scr_t = @out.type_of(scr.id_of())
+    // The scrutinee lands in a binding ONCE through the one door: every arm
+    // tests the same value, and a call in the scrutinee runs one time.
+    // THE SCRUTINEE IS A TEMPORARY OF THE COMPILER, and it can finally say so (2026-09-09).
+    // `_novac_scr_t7` was never a name the author wrote, yet `named` was the only door that
+    // kept a declaration -- because `kind` decided both the name and the declaration point.
+    // `DeclAt` now carries the point, so a `Temp` declared at its first assignment is
+    // expressible, and this line stops lying about who invented the name.
+    //
+    // Slice M2c tried exactly this move and the C stopped compiling: `nova_int T1 = n;`
+    // became `T1 = n;`, the declaration gone. That failure is the both-ways proof of the
+    // separation -- the same edit is correct only after it.
+    ro ls = @ir.temp(scr_t)
+    @lower_place(scr, ls)
+    if dest != no_local() {
+        // The result temporary is declared with its type AND zero-initialised
+        // (274.3/F29): a match on `int` may legally leave values uncovered --
+        // both compilers accept `match n { 1 => 10  2 => 20 }` -- and the
+        // oracle answers 0 there; an uninitialised temporary answered whatever
+        // the stack held. `(T){0}` is C99 and fits scalars and structs alike.
+        // The declaration is a statement of the body (274.8 M2b-2 step 2); the caller
+        // created the local, this door records WHERE it is declared and that it starts
+        // at zero -- the reason is on `DeclAt.Zeroed`.
+        @ir.declare_zeroed(dest)
+    } else {
+        // Statement position: no result, nothing to declare.
+    }
+    // THE FLAG IS THE PRINTER'S: the if-chain needs it to stop at the first
+    // arm that held; the `Switch` means first-match by construction.
+    ro c = @ir.begin_switch(ls)
+    for a in kids {
+        if a.kind_of() != NodeKind.MatchArm { continue }
+        @lower_arm(a, scr_t, ls, c, dest)
+    }
+    @ir.end_switch(c)
+}
+
+/// The guard of an arm, if the source wrote one -- found by walking the arm's
+/// children once; a function with returns, so no Option local is ever
+/// reassigned (the oracle miscompiles that shape today, check.nv notes it).
+fn Lowerer @guard_of(ak []Node) -> Option[Node] {
+    for g in ak {
+        if g.kind_of() == NodeKind.Guard {
+            return Some(branch_children(g)[1])
+        }
+    }
+    None
+}
+
+/// What the arm's pattern IS -- decided once, before anything is printed. The
+/// head is asked of the MATCHED SUM through the checker's own door (wave B6,
+/// #964): the emitter does not consult the name table, so the two passes
+/// cannot disagree on which row a head names. A disjunction's other heads
+/// travel with the variant; the checker held every binder of one to `_`.
+fn Lowerer @pattern_of(pat []Node, scr_t TyId) -> Pattern {
+    // THE SAME DOOR THE CHECKER USES (registry 1190). Reading slot 0 here
+    // made a qualified arm a binder, and a binder matches everything.
+    ro p0 = pat[pattern_head_slot(pat)]
+    if is_int_lit(p0) {
+        return Pattern.Lit(p0)
+    }
+    if !is_ident_leaf(p0) {
+        ice("emit_c: match pattern is neither an int literal nor an identifier")
+    }
+    match variant_in_sum(@ctx, scr_t, leaf_text(p0)) {
+        Some(vrow) => {
+            mut also = []VariantRow.new()
+            for hi in disj_head_slots(pat) {
+                match variant_in_sum(@ctx, scr_t, leaf_text(pat[hi])) {
+                    None => {}
+                    Some(hrow) => also.push(hrow)
+                }
+            }
+            Pattern.Variant(VariantMatch { head: vrow, also })
+        }
+        None => {
+            // Not a variant head: a name binds the scrutinee, `_` binds nothing.
+            if leaf_text(p0) != "_" { Pattern.Bind } else { Pattern.Wild }
+        }
+    }
+}
+
+/// Lowers ONE arm of a `match`: records it into the IR, prints its head, then binds
+/// whatever the pattern introduces -- a variant's payload fields, or the scrutinee
+/// under a new name for a plain binder, or nothing at all for a literal or `_` --
+/// emits the body into `dest`, and sets the printer's first-match flag. A guard, if
+/// written, wraps the body in a branch of its own.
+/// The order is deliberate -- recorded first, printed from the record (M2b-2 step 3a),
+/// so that a single later walk can print every arm without reading the tree again.
+fn Lowerer mut @lower_arm(arm Node, scr_t TyId, ls Local, c SwitchCtx, dest Local) -> () {
+    ro ak = branch_children(arm)
+    ro pat = branch_children(ak[0])
+    ro arm_e = ak[arm_body_at(ak) ?? ice("emit_c: a match arm with no body reached the emitter")]
+    ro guard = @guard_of(ak)
+    ro pattern = @pattern_of(pat, scr_t)
+    // Recorded first, printed from the record (M2b-2 step 3a). The test itself already
+    // read the IR -- `emit_pattern_test` takes the `Pattern` -- so what moves here is the
+    // PLACE of the printing, which is what lets one walk print every arm later.
+    @ir.begin_arm(c, pattern, guard)
+    match pattern {
+        Variant(vm) => {
+            if !pattern_has_disj(pat) {
+                // Unpack payload fields onto the arm's binders, in order:
+                // binder names sit after '(' in the pattern; field types are
+                // the variant's rows of the flat context. Each binder is a
+                // Binding local assigned the field through the one assignment
+                // printer (M2b-1d).
+                mut binders = []str.new()
+                // FROM THE HEAD (registry 1190), exactly as the checker counts:
+                // a payload binder follows the head and its `(`, which is slot 2
+                // for a bare head and slot 4 for a qualified one. The two passes
+                // agree because they ask the same door, not because both
+                // remember the same constant -- which is how this defect lived.
+                for j in pattern_head_slot(pat) + 2..pat.len() {
+                    match pat[j].ident_str() {
+                        Some(binder) => binders.push(binder)
+                        None => {}
+                    }
+                }
+                mut pi = 0
+                for bname in binders {
+                    // AS THE SCRUTINEE SEES IT, the same door the checker asks:
+                    // for `Option[int]` the payload `T` is `int`. Without the
+                    // substitution the emitter asked the layout of a type
+                    // PARAMETER and died -- `mangle: c_type of a type parameter,
+                    // layout is asked before substitution`. The checker had the
+                    // substitution and the lowering did not, which is the same
+                    // two-doors-one-question shape as the pattern head above.
+                    ro braw = @ctx.payload_types[@ctx.variant_rows[raw_vrow(vm.head)].payload_off + pi]
+                    ro bt = payload_as_seen(@ctx, scr_t, braw)
+                    ro lb = @ir.named(bt, bname)
+                    @ir.take_field(lb, ls, vm.head, pi)
+                    pi += 1
+                }
+            } else {
+                // A disjunction unpacks nothing: the checker held every
+                // binder to `_`.
+            }
+        }
+        Bind => {
+            // Plain binder: the scrutinee under a new name -- the first real
+            // use of the operand rvalue.
+            ro lb = @ir.named(scr_t, leaf_text(pat[0]))
+            @ir.copy(lb, ls)
+        }
+        Lit(_) => {
+            // An int literal introduces no name: the test IS the whole arm.
+        }
+        Wild => {
+            // The wildcard introduces no name either.
+        }
+    }
+    match guard {
+        Some(g) => {
+            // The guard's head is an `if` like any other: it goes through the ONE head
+            // door (`@print_if_head`, emit_flow.nv), which until this step was the third
+            // place spelling `    if (` + condition + `) {` by hand.
+            ro gcond = Cond.Expr(g)
+            // A guard has no else branch at all, and that is now the whole answer: there
+            // is no second bit to pass, and no default for anyone to interpret later.
+            ro gi = @ir.begin_if(gcond, ElseShape.NoElse)
+            @lower_arm_body(arm_e, dest)
+            @ir.end_if(gi)
+        }
+        None => {
+            @lower_arm_body(arm_e, dest)
+        }
+    }
+    @ir.end_arm(c)
+}
+
+/// The BODY of one arm: assigned to the result local in value position,
+/// run for effect in statement position (wave B5). A statement arm's body
+/// may be a block (`{}` included) or a single statement, and both go through
+/// the doors that already print those shapes.
+fn Lowerer mut @lower_arm_body(arm_e Node, dest Local) -> () {
+    // AN ARM THAT LEAVES PRODUCES NO VALUE, and that is true in value position
+    // too (registry 1190, found by the differential). `match k { A => return n
+    // B => 7 }` has one arm of each kind: the checker already answers None for
+    // the returning one and int for the other, so the match IS a value. This
+    // door did not ask, assigned the `return` statement into the result local
+    // as if it were an expression, and the value arm's 7 never arrived: the
+    // function returned the local's zero. The oracle printed 7, novac 0, and
+    // nothing in between said a word.
+    ro leaves = arm_e.kind_of() == NodeKind.RetStmt || arm_e.kind_of() == NodeKind.Block
+    if dest != no_local() && !leaves {
+        // The arm's value lands in the match local through the one door.
+        @lower_place(arm_e, dest)
+        return
+    } else {
+        // Statement position, or an arm that leaves through `return`: the body
+        // runs and nothing holds its answer.
+    }
+    // TERMINATOR, not an else: the two shape guards meet on a node-kind test
+    // (274.5 section 2g), and a `return` satisfies both.
+    if arm_e.kind_of() == NodeKind.Block {
+        @lower_block_stmts_fn(arm_e, false)
+        return
+    }
+    @lower_stmt(arm_e)
+}

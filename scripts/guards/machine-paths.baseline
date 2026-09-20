@@ -76,8 +76,20 @@
 #   одном файле разошлись бы, и следующее окно прочло бы первую.
 #   И ЭТО ЖЕ ДОВОД ЗА ИМЕНА: по ЧИСЛУ уборку двух путей нельзя отличить от
 #   сужения предиката — обе роняют счёт одинаково.
-paths=1027
-scanned_files=6244
+# 2026-09-20, интегратор: 1027 -> 1026, носителей 334 -> 333.
+# Сняты пути из ДВУХ ролевых записок (помощника и Карины): они
+# называли своё дерево абсолютным путём. ИМЯ каталога осталось,
+# раскладка машины ушла: корень worktree ВЫВОДИТСЯ (родитель
+# главной копии), и записывать его незачем.
+#
+# ЗАПИСАНО РАДИ СЛЕДУЮЩЕГО ОКНА: сначала я взял ДВА
+# исключения из ШЕСТИ и починил 19 проб в `docs/plans/repro` —
+# каталоге, который страж НЕ СУДИТ вовсе (строка 115).
+# Счёт не сдвинулся — и это было ЕДИНСТВЕННЫМ признаком
+# ошибки: своя формула вместо формулы стража даёт
+# правдоподобный ответ на ДРУГОЙ вопрос.
+paths=1026
+scanned_files=6296
 paths_file=.claude/commands/carina.md 1
 paths_file=.claude/commands/whoami.md 3
 paths_file=NOTES.md 2
@@ -98,7 +110,6 @@ paths_file=docs/dev/hunts/novac/2026-09-03-emitc-k4.md 1
 paths_file=docs/dev/hunts/novac/2026-09-03-types-k2.md 1
 paths_file=docs/dev/opencode-runbook.md 5
 paths_file=docs/dev/prompts/agent-274-handoff.md 1
-paths_file=docs/dev/prompts/carina-handoff.md 1
 paths_file=docs/dev/prompts/controller-handoff.md 1
 paths_file=docs/dev/prompts/integrator-handoff.md 6
 paths_file=docs/dev/prompts/opencode-brief-template.md 5

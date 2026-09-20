@@ -27,6 +27,7 @@ import ../tree.{Node, NodeKind}
 import ../sem.{branch_children, leaf_text, leaf_kind, expr_leaf_name, is_expr_kind}
 import ../sem.{VariantRow, variants_named, variant_named_in, variant_range_of}
 import ../sem.{raw_vrow, no_vrow, is_vrow}
+import ../diag.{ice}
 import ../sem.{arg_expr_of, arg_count, CalleeTarget, CallForm}
 import ../sem.{identity_slots}
 import ../sem.{ty_of_decl}
@@ -177,7 +178,25 @@ fn Checker mut @judge_type_head_variant(e Node, kids []Node, arg_from int) -> bo
             // arity, like the field scan of a constructor -- not name
             // resolution in a registry, which is what the discipline rule is about.
             ro td = decl_of_ty(@ctx, head_t)
-            ro vrange = variant_range_of(td) ?? (no_vrow(), 0)
+            // LOUD, NOT `?? (no_vrow(), 0)`. The head passed the `TkSum` test
+            // above, so a missing range is OUR fault, not the reader's -- and
+            // the zero fallback turned it into a refusal naming their name as
+            // unknown. Unreachable today, which is why it would have been found
+            // late.
+            //
+            // ON ONE LINE, AND THAT IS THE GRAMMAR, not style. Carried to a
+            // continuation line, `??` is refused by the COMPILER:
+            // `error: unexpected `??` in expression`. Measured 2026-09-20 with a
+            // four-line probe, after I had written here that only Carina refused
+            // it and the oracle was happy -- which was false, and false in the
+            // direction that lets the reader relax.
+            //
+            // HOW THE BROKEN FORM REACHED A COMMIT: I proved that edit by running
+            // `check-novac-subset-debt-dated`, which was green. It reads TEXT. The
+            // last build had run BEFORE the edit, and I took it as evidence for
+            // what came after. A check that does not measure its subject is worth
+            // less than no check, because it also carries conviction.
+            ro vrange = variant_range_of(td) ?? ice("check: a sum with no variant rows")
             ro first = raw_vrow(vrange.0)
             for j in first..first + vrange.1 {
                 ro vd = @ctx.variant_rows[j]
@@ -192,7 +211,12 @@ fn Checker mut @judge_type_head_variant(e Node, kids []Node, arg_from int) -> bo
                 }
                 return true
             }
-            @refuse(vt, "outside the subset: a type name takes a variant after the dot, and this is not one of its variants")
+            // NOT `outside the subset:`, and the prefix was the whole
+            // defect: it promises a later wave that compiles this, and
+            // no wave ever will. The head IS a sum by the test above, so
+            // the name is simply not among its variants -- a permanent
+            // error, worded like its sibling for a non-sum head.
+            @refuse(vt, "a type name takes a variant after the dot, and this is not one of its variants")
             true
         }
         Branch { .. } => {

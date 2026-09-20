@@ -432,8 +432,9 @@ fn run(a []str) -> int {
                 // unmeasured half is named as unmeasured.
                 mut all = []str.new()
                 for k in argi..a.len() {
-                    // nova:allow W_MANUAL_SLICE_COPY -- the canon `x[a..b]` is a
-                    // SLICE, and novac does not compile one yet (registry 1170)
+                    // The canon `x[a..b]` is a SLICE, and novac does not compile
+                    // one yet (registry 1170), so the copy is by hand here.
+                    // nova:allow W_MANUAL_SLICE_COPY -- slice not compiled yet, registry 1170
                     all.push(a[k])
                 }
                 mut used = []bool.new()
@@ -447,15 +448,16 @@ fn run(a []str) -> int {
                         continue
                     }
                     mut group = []str.new()
-                    // nova:allow W_MANUAL_SLICE_COPY -- not a copy: the push is
-                    // CONDITIONAL, and no slice picks some elements and not others
+                    // Not a copy at all: the push is CONDITIONAL, and no slice
+                    // picks some elements and not others.
+                    // nova:allow W_MANUAL_SLICE_COPY -- conditional push, no slice expresses it
                     group.push(all[i2])
                     used[i2] = true
                     for j2 in i2 + 1..all.len() {
                         if !used[j2] && same_dir(all[i2], all[j2]) {
-                            // nova:allow W_MANUAL_SLICE_COPY -- not a copy: the
-                            // push is CONDITIONAL, and no slice picks some
-                            // elements and not others
+                            // Not a copy: the push is CONDITIONAL, and no slice
+                            // picks some elements and not others.
+                            // nova:allow W_MANUAL_SLICE_COPY -- conditional push, no slice expresses it
                             group.push(all[j2])
                             used[j2] = true
                         } else {

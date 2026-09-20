@@ -56,6 +56,12 @@ fn Checker mut @report_if_applied_sum(kids []Node, scr_t TyId) -> bool {
     true
 }
 
+/// A `match` in STATEMENT position: its arms run for effect and none of
+/// them yields a value to anyone.
+///
+/// Its pair is `@type_match`, the value door; they differ in what they do
+/// with an arm's type and in nothing else, which is why the applied-sum
+/// question is asked identically in both.
 fn Checker mut @type_match_stmt(m Node) -> () {
     ro kids = branch_children(m)
     if kids.len() < 2 {
@@ -67,9 +73,9 @@ fn Checker mut @type_match_stmt(m Node) -> () {
     if @out.len() > 0 { return }
     ro scr_t = type_of(scr, @ctx, @scope, @chan)
     @record(scr, scr_t)
-    if @report_if_applied_sum(kids, scr_t) { return } else {
-        // A plain sum, or a scrutinee whose type was refused already.
-    }
+    // No `else` is owed after a terminator (P31 form 2): what follows IS
+    // the plain-sum case, and an empty else here says it twice.
+    if @report_if_applied_sum(kids, scr_t) { return }
     for c in kids {
         if c.kind_of() != NodeKind.MatchArm { continue }
         @type_arm_stmt(c, scr_t)
@@ -113,9 +119,9 @@ fn Checker mut @type_match(m Node) -> () {
     if @out.len() > 0 { return }
     ro scr_t = type_of(scr, @ctx, @scope, @chan)
     @record(scr, scr_t)
-    if @report_if_applied_sum(kids, scr_t) { return } else {
-        // A plain sum, or a scrutinee whose type was refused already.
-    }
+    // No `else` is owed after a terminator (P31 form 2): what follows IS
+    // the plain-sum case, and an empty else here says it twice.
+    if @report_if_applied_sum(kids, scr_t) { return }
     mut first_t = None
     for c in kids {
         if c.kind_of() != NodeKind.MatchArm { continue }
@@ -463,9 +469,14 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
             // Typed: the nested match's own type is this arm's.
         }
         ro mt = type_of(body, @ctx, @scope, @chan)
-        if is_ty(mt) { @record(body, mt) } else {
+        if is_ty(mt) {
+            @record(body, mt)
+        } else {
             // Untypeable: the fold is told so rather than guessing.
         }
+        // SILENT-OK: the type was recorded a line above when there was one,
+        // and `None` is not the answer here -- the arm HAS a value, the
+        // nested match's. What travels is the type, and the fold reads it.
         return Some(mt)
     } else {
         // Any other expression: the lattice answers below.

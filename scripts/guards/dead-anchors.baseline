@@ -28,7 +28,14 @@
 #   live at once. Worth recording because it changes the SHAPE of the remaining
 #   debt: 143 addresses are not 143 equal units of work -- a handful of headings
 #   carry most of the links, so the cheap half of this debt is a dozen anchors.
-dead=435
+# 2026-09-20 (integrator), second drop of the day: dead 435 -> 421.
+# ONE anchor did it, again. D188 had no explicit {#d188} while 46 links
+# across the tree point at it; the block that exposed this was D484,
+# which amends D188 and therefore links to it. The morning's drop
+# (450 -> 435) came the same way, from d90 -- so the cheapest fix for
+# this debt is not editing links but giving heavily-cited D-blocks an
+# explicit anchor. TWO measurements now say so.
+dead=421
 d100
 d101
 d102

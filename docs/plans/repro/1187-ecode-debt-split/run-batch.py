@@ -105,7 +105,7 @@ for code, suspect, control in CASES:
     io.open(os.path.join(d, "control.nv"), "w", encoding="utf-8", newline="\n").write(control)
     io.open(os.path.join(d, "cmd.sh"), "w", encoding="utf-8", newline="\n").write(
         u"#!/bin/sh\n"
-        u"R=\"${1:-/d/Sources/nv-lang/nova-wt-research}\"\n"
+        u"R=\"${1:-$R}\"\n"
         u"D=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n"
         u"cd \"$R\" || exit 2\n"
         u"echo '== forma =='\n"

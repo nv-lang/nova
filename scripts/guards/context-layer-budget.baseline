@@ -89,4 +89,19 @@ after-compact = 17000
 #   CHEGO ETA PRAVKA NE UTVERZHDAET: chto sloy bolshe ne rastyot. On rastyot
 #   pri kazhdom novom pravile, i sleduyushchiy perebor nado lechit VYNOSOM
 #   snova -- podnyatie dvazhdy podryad prevratit potolok v letopis rosta.
-session-start = 45200
+# 2026-09-20/21, integrator: session-start 45200 -> 49600.
+# Eto VTOROY podryad podyom etoy poloviny (pervyy byl 44544 -> 45200,
+# kommit 749c92d5c) -- preduprezhdenie vyshe skazano ne dlya galochki:
+# vtoroy podryad podyom uzhe est priznak, chto potolok stanovitsya
+# letopisyu rosta. No prichina zdes NAZVANA i PROVERENA, a ne prosto
+# 'stalo bolshe': AGENTS.md vyros na 3807 bayt odnim slitym kommitom
+# (Technology stack, Security considerations, nedostayushchie stroki
+# struktury repozitoriya) -- eto ne moy tekst i ne padding, fakty
+# svereny pered sliyaniem (nova-lsp/, z3-backend, nova.toml members,
+# SECURITY.md, bench.toml -- vse suschestvuyut).
+#
+# Uslovie na sleduyushchiy raz: tretiy podryad podyom etoy zhe poloviny
+# NE podnimat molcha -- snachala smotret, chto v sloye mozhno VYNESTI
+# (naprimer, chast AGENTS.md v otdelnyy docs/-fayl so ssylkoy), a ne
+# prosto sdvigat chislo.
+session-start = 49600

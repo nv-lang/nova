@@ -1,0 +1,62 @@
+// Registry 221.1 No. 685 -- the order of argument evaluation is normative
+// (D188 sec. 4, raised into a norm of its own by D484) and the oracle breaks it.
+//
+// WHY THIS IS EVIDENCE AND NOT A TEST. Placed in spec_tests/ it would redden the
+// gate for everyone until 685 is fixed, and the gate belongs to the integrator.
+// The placement is his call. The measurement is not, and it is below.
+//
+// ---------------------------------------------------------------------------
+// MEASURED 2026-09-20, both sides, from the repository root. The file was put in
+// a directory of its own first: the oracle compiles a whole module, so a second
+// file declaring `module arg_order` beside it fails as a duplicate definition
+// and the failure looks like a defect in the form.
+//
+//   nova-cli/target/release/nova build <dir>/p.nv -o <dir>/o.exe   &&  <dir>/o.exe
+//   novac/target/novac.exe emit <dir>/p.nv > <dir>/p.c
+//
+// ORACLE -- build exit 0, and it prints:
+//
+//     right
+//     left
+//     3
+//
+// Right to left. The norm says left to right, so the oracle violates it. The
+// same shape is on record in row 685 from 2026-08-16 as `third / second /
+// first`, so this is not a one-off of one program.
+//
+// CARINA -- emit exit 0, and the emitted C fixes the order before the call:
+//
+//     nova_int _novac_l2 = ..._say...(_novac_strlit_0);   // "left"
+//     nova_int _novac_l3 = ..._say...(_novac_strlit_1);   // "right"
+//     nova_int n = ..._add...(_novac_l2, _novac_l3);
+//
+// That is the F65 hoist: each effectful argument is lowered into its own local
+// in SOURCE order, so the order of effects no longer depends on what the C
+// compiler chooses -- C does not define it.
+//
+// ---------------------------------------------------------------------------
+// WHAT MAKES THE PROBE HONEST: each argument prints its own name and returns a
+// number, so the ORDER shows in stdout and the RESULT shows too. Two arguments
+// returning the same value would agree under either order and prove nothing.
+//
+// WHAT THE PROBE DOES NOT COVER, named rather than left to the reader: the
+// method call `x.m(a(), b())` and the constructor. Only the free call is
+// measured here, and D484 sec. 5 says the same.
+//
+// FORM NOTE: no effect row (`Io`) on either function. Carina does not read one
+// yet -- her own source writes `fn main() {` -- and the oracle accepts its
+// absence, so this is the one shape both sides compile.
+
+module arg_order
+
+fn say(s str) -> int {
+    println(s)
+    1
+}
+
+fn add(a int, b int) -> int => a + b + 1
+
+fn main() {
+    ro n = add(say("left"), say("right"))
+    println(n)
+}

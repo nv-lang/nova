@@ -4,6 +4,12 @@ argument-hint: "[что считать сделанным отрезком; по
 allowed-tools: "Bash, Read, Grep, Glob"
 ---
 
+**Граница с [`/release-speed`](release-speed.md) (заведена 2026-09-20):** здесь мерится
+**РАССТОЯНИЕ** до ступени — стало ли ближе. Почему путь проходится МЕДЛЕННО и что
+этому мешает — вопрос другой команды, и отвечает она замером ПРОСТОЯ, а не
+объёма работы. Две меры расходятся регулярно: 2026-09-20 за сутки легло 219
+коммитов, а `origin/main` не двигался десять часов.
+
 **КОМУ ЭТА КОМАНДА: главному интегратору и владельцу.** Окно, работающее над
 своей волной, отвечает на «что дальше» командой `/status`, а не этой: здесь
 меряется расстояние ПРОЕКТА до релиза, а не прогресс окна.
@@ -46,7 +52,7 @@ allowed-tools: "Bash, Read, Grep, Glob"
 ```sh
 bash scripts/guards/check-novac-differential.sh .        # корпус: совпали / отставание
 python scripts/guards/check-novac-subset-debt-dated.py . # долг подмножества
-bash scripts/guards/check-novac-legacy-workarounds.sh .  # налог оракула: обходы
+python scripts/guards/check-novac-legacy-workarounds.py .  # налог оракула: обходы
 python scripts/guards/check-plans-tag-bound.py .         # сколько планов ждёт 1.0
 gh run list --limit 10                                   # CI: зелёный ли, и чем красен
 ```
