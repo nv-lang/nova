@@ -1367,7 +1367,7 @@
 # (вывод стража не позволяет судить его предмет). №1204 ВЫДАН
 # помощнику и будет заведён им — поэтому rows растёт на 4, а max на 5.
 # 2026-09-20: rows 1161 -> 1162 -- stroka 1204 (znamenatel dolga zavyshen)
-rows=1162
+rows=1163
 max=1213
 stale_gaps=0
 # 2026-09-20: №1204 — ВРЕМЕННАЯ дыра, номер ВЫДАН помощнику (nova-94)
@@ -1388,4 +1388,6 @@ stale_gaps=0
 # 2026-09-20: 1204 SNYAT iz gaps= -- stroka priehala sliyaniem vetki
 # pomoshchnika. Obyazatelstvo, zapisannoe zdes zhe chasom ranshe, ispolneno:
 # nomer I v gaps=, I so strokoy schitaetsya 'protuhshey dyroy'.
-gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1209-1211
+# 2026-09-21: №1209 ПРИЕХАЛ и СНЯТ из gaps=
+# (писал интегратор, как и планировалось). №1210-1211 всё ещё ждёт Карину.
+gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1210-1211
