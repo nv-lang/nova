@@ -26,6 +26,8 @@ import ../sem.{decl_of_ty, decl_fn_row, arm_body_at, Ctx, CheckOut, param_name_a
 import ../sem.{disj_head_slots, pattern_has_disj}
 // The head of a flat pattern, through the one door (registry 1190).
 import ../sem.{pattern_head_slot, ty_source_name}
+// The payload of an APPLIED sum, with the application's arguments put in.
+import ../sem.{payload_as_seen}
 import ../sem.{branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, raw_vrow, no_vrow}
 import ../sem.{is_vrow, variant_range_of, variant_in_sum, variants_named}
 import ../types.{TyId, no_ty, is_ty}
@@ -35,6 +37,25 @@ import ../types.{TyId, no_ty, is_ty}
 /// STATEMENTS, and coverage judged -- but no value question is asked: the
 /// arms run for effect, and demanding that `{}` agree in type with
 /// `{ println(x) }` would refuse legal code the census counts five files of.
+/// IS THIS SCRUTINEE AN APPLIED SUM -- and if so, say it ONCE.
+///
+/// The head of an arm is found through the DECLARATION since 2026-09-20, so
+/// `Some` over an `Option[int]` is no longer called a variant of ANOTHER sum
+/// -- which was false and sent the reader looking for a mix-up not in their
+/// code. What it is instead: a form novac READS and cannot EMIT, because an
+/// applied sum comes from the SHELL with the oracle's tag names and value
+/// semantics (measured: `_novac_l2->tag` against a value struct, and an
+/// undeclared `NOVAC_TAG_..._Option_Some`).
+///
+/// AT THE MATCH AND NOT AT THE ARM, because the fact is a property of the
+/// SCRUTINEE: at the arm it fired once per arm and said one thing twice.
+fn Checker mut @report_if_applied_sum(kids []Node, scr_t TyId) -> bool {
+    if !is_ty(scr_t) { return false }
+    if @ctx.tys.kind_of(scr_t) != TypeKind.TkApp { return false }
+    @report_first_leaf_of(kids, APPLIED_SUM_ARM_MSG)
+    true
+}
+
 fn Checker mut @type_match_stmt(m Node) -> () {
     ro kids = branch_children(m)
     if kids.len() < 2 {
@@ -46,6 +67,9 @@ fn Checker mut @type_match_stmt(m Node) -> () {
     if @out.len() > 0 { return }
     ro scr_t = type_of(scr, @ctx, @scope, @chan)
     @record(scr, scr_t)
+    if @report_if_applied_sum(kids, scr_t) { return } else {
+        // A plain sum, or a scrutinee whose type was refused already.
+    }
     for c in kids {
         if c.kind_of() != NodeKind.MatchArm { continue }
         @type_arm_stmt(c, scr_t)
@@ -89,6 +113,9 @@ fn Checker mut @type_match(m Node) -> () {
     if @out.len() > 0 { return }
     ro scr_t = type_of(scr, @ctx, @scope, @chan)
     @record(scr, scr_t)
+    if @report_if_applied_sum(kids, scr_t) { return } else {
+        // A plain sum, or a scrutinee whose type was refused already.
+    }
     mut first_t = None
     for c in kids {
         if c.kind_of() != NodeKind.MatchArm { continue }
@@ -341,8 +368,11 @@ fn Checker mut @bind_arm_pattern(ak []Node, scr_t TyId) -> bool {
                 Some(binder) => {
                     // A payload binder holds a value of the arm, read-only:
                     // nothing in the subset writes through it.
-                    @scope.bind(binder, @ctx.payload_types[@ctx.variant_rows[raw_vrow(vrow)].payload_off + pi],
-                                ParamMode.ModeRo)
+                    // AS THE SCRUTINEE SEES IT: for `Option[int]` the payload
+                    // `T` is `int`, and binding the parameter instead made the
+                    // arms disagree and the mangler assert.
+                    ro praw = @ctx.payload_types[@ctx.variant_rows[raw_vrow(vrow)].payload_off + pi]
+                    @scope.bind(binder, payload_as_seen(@ctx, scr_t, praw), ParamMode.ModeRo)
                     pi += 1
                 }
                 None => {}

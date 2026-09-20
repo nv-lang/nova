@@ -29,6 +29,8 @@ module novac.sem
 import ../tree.{Node}
 import ../diag.{ice}
 import ../names.{NameTable, NamespaceId}
+// A variant belongs to a DECLARATION, not to a type id (the applied-sum fix).
+import ../names.{DeclId, is_decl, no_decl}
 import ../builtins.{ENTRY_FN, TypeKind}
 import ../types.{TyId, no_ty, is_ty, Interner}
 
@@ -388,12 +390,57 @@ export fn FnTable mut @add(name str, ret_id TyId, has_recv bool, param_ids []Par
 #realtime nogc
 export fn variant_in_sum(ctx Ctx, sum_t TyId, name str) -> Option[VariantRow] {
     if !is_ty(sum_t) { return None }
+    // THE QUESTION IS ABOUT A DECLARATION, NOT A TYPE ID (registry TBD,
+    // measured 2026-09-20). `Some` is registered under the generic `Option`,
+    // and a scrutinee of type `Option[int]` is an APPLICATION -- a different
+    // TyId entirely. Comparing ids therefore answered `no` for the most
+    // common sum in the language: `match o { Some(v) => v  None => 0 }` was
+    // refused as an arm naming a variant of ANOTHER sum, while the same shape
+    // over a user sum without parameters was accepted. The axis is the
+    // application, not the payload and not the arm.
+    ro want = decl_of_sum_ty(ctx, sum_t)
+    if !is_decl(want) { return None }
     mut r = ctx.variant_names.find(name)
     while r >= 0 {
-        if ctx.variant_rows[r].sum_id == sum_t { return Some(VariantRow(r)) }
+        if decl_of_sum_ty(ctx, ctx.variant_rows[r].sum_id) == want {
+            return Some(VariantRow(r))
+        }
         r = raw_vrow(ctx.variant_rows[r].next_same)
     }
     None
+}
+
+/// A VARIANT'S PAYLOAD TYPE AS THE SCRUTINEE SEES IT.
+///
+/// For a plain sum the payload is already a type. For an APPLICATION the
+/// payload is written in the declaration's parameters -- `Some(T)` -- and the
+/// arguments of THIS application are what they stand for. Without the
+/// substitution the binder of `Some(v)` over an `Option[int]` takes `T`, the
+/// arms disagree (`T` against `int`) and the mangler asserts on a parameter
+/// with no substitution behind it. Both measured 2026-09-20.
+export fn payload_as_seen(ctx Ctx, scr_t TyId, pt TyId) -> TyId {
+    if !is_ty(pt) { return pt }
+    if !is_ty(scr_t) { return pt }
+    if ctx.tys.kind_of(scr_t) != TypeKind.TkApp { return pt }
+    mut args = []TyId.new()
+    for i in 0..ctx.tys.arg_count(scr_t) {
+        args.push(ctx.tys.arg(scr_t, i))
+    }
+    subst_type(ctx, pt, args)
+}
+
+/// THE DECLARATION a sum term names, for `Option[int]` as much as for `Option`
+/// -- or `no_decl()` when the term names none.
+///
+/// Its own door because `decl_head_of` ICEs on the non-nominal kinds by
+/// design, and a scrutinee can perfectly well be a primitive or a poisoned
+/// type: the kind test belongs WITH the question, not at each caller.
+fn decl_of_sum_ty(ctx Ctx, t TyId) -> DeclId {
+    if !is_ty(t) { return no_decl() }
+    match ctx.tys.kind_of(t) {
+        TkSum | TkApp | TkRecord | TkNewtype => ctx.tys.decl_head_of(t)
+        TkPrim | TkParam | TkInfer | TkTuple => no_decl()
+    }
 }
 
 /// HOW MANY sums declare a variant of this NAME, and the first such row: the

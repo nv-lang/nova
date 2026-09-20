@@ -17,6 +17,7 @@ import ../sem.{is_expr_kind, is_ident_leaf, is_int_lit, is_println_call, is_valu
 import ../sem.{leaf_text, literal_prim_of, pattern_binders, pattern_has_disj, raw_vrow, variant_in_sum}
 // The head of a flat pattern, through the same door the checker asks (1190).
 import ../sem.{pattern_head_slot}
+import ../sem.{payload_as_seen}
 
 
 /// THE LOWERING (274.8 M3). Everything here used to be methods on `Emitter`, the printer's own
@@ -738,7 +739,15 @@ fn Lowerer mut @lower_arm(arm Node, scr_t TyId, ls Local, c SwitchCtx, dest Loca
                 }
                 mut pi = 0
                 for bname in binders {
-                    ro bt = @ctx.payload_types[@ctx.variant_rows[raw_vrow(vm.head)].payload_off + pi]
+                    // AS THE SCRUTINEE SEES IT, the same door the checker asks:
+                    // for `Option[int]` the payload `T` is `int`. Without the
+                    // substitution the emitter asked the layout of a type
+                    // PARAMETER and died -- `mangle: c_type of a type parameter,
+                    // layout is asked before substitution`. The checker had the
+                    // substitution and the lowering did not, which is the same
+                    // two-doors-one-question shape as the pattern head above.
+                    ro braw = @ctx.payload_types[@ctx.variant_rows[raw_vrow(vm.head)].payload_off + pi]
+                    ro bt = payload_as_seen(@ctx, scr_t, braw)
                     ro lb = @ir.named(bt, bname)
                     @ir.take_field(lb, ls, vm.head, pi)
                     pi += 1

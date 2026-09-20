@@ -143,6 +143,20 @@ const DISJ_BINDER_MSG = "outside the subset: a `|` pattern takes `_` binders onl
 /// a form that reaches an emitter with no arm for it ICEs. The refusal is
 /// louder than the crash and quieter than a wrong answer, which is the whole
 /// order of preference here.
+/// A `match` whose scrutinee is an APPLIED sum -- `Option[int]`, `Result[T, E]`.
+///
+/// The form is recognised now (the arm's head is found through the
+/// DECLARATION, so `Some` is no longer called a variant of another sum), and
+/// it is refused HERE because the emitter cannot spell it: an applied sum
+/// reaching novac comes from the SHELL, with the oracle's tag names
+/// (`NOVA_TAG_Option_Some`) and value semantics, while novac writes its own
+/// spelling and a pointer access. Measured 2026-09-20: `_novac_l2->tag` on a
+/// value struct and an undeclared `NOVAC_TAG_..._Option_Some`.
+///
+/// A user's own generic sum never reaches this door -- generic parameters are
+/// refused earlier (E2-b2) -- so this refusal is about the shell's sums alone.
+const APPLIED_SUM_ARM_MSG = "outside the subset: a `match` on an applied sum (`Option[int]`) is read but not compiled yet -- its tags belong to the shell (E2-b2, with generics)"
+
 const LITERAL_ARM_MSG = "outside the subset: a `match` arm on a string or char literal is read but not compiled yet (E2-b, with the string family)"
 
 const IFLET_VARIANT_MSG = "outside the subset: `if <pattern> = ...` takes only `Some(name)` here -- other variants arrive with their carriers"
