@@ -574,10 +574,10 @@ Do not use them for other purposes.
   field names are part of the contract, and a by-order unpack would silently
   break under a legitimate reordering of the fields.
   **Field defaults come LAST ONLY**
-  ([D478](decisions/02-types.md#d478-умолчания-только-в-хвосте-решение-владельца-2026-09-14),
+  ([D482](decisions/02-types.md#d482-ex-d478-renumber-2026-09-20-умолчания-только-в-хвосте-решение-владельца-2026-09-14),
   owner's decision 2026-09-14): `type BadOrder(a int = 7, b int)` is a compile
   error, exactly as `fn g(x int = 0, y int)` is under D102. Until then the D215
-  amendment EXPLICITLY PERMITTED alternation, so D478 retracts a grant rather
+  amendment EXPLICITLY PERMITTED alternation, so D482 retracts a grant rather
   than filling a gap. The reason is not tidiness: the arity check judges the
   COUNT of arguments, and counting tells a bound field from an unbound one only
   while defaults form a suffix.
