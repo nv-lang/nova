@@ -37,6 +37,48 @@ fn std_decls() -> []str => []str.of("fn str @byte_len() -> int => 0\nfn str @to_
 
 fn n_diags(text str) -> int => compile(text, std_decls()).len()
 
+// --- the unit's offset arithmetic (274.7 M) ------------------------------
+//
+// Three bodies at 100, 200 and 300 inside a unit; each began at 40, 50 and 60
+// in the file it came from. The boundaries are the cells that matter: an
+// offset exactly ON a body's first byte belongs to THAT body, not the one
+// before it, and an offset in the header belongs to no file at all.
+
+fn three_files() -> []UnitFile {
+    mut v = []UnitFile.new()
+    v.push(UnitFile { path: "a.nv", at: 100, from: 40 })
+    v.push(UnitFile { path: "b.nv", at: 200, from: 50 })
+    v.push(UnitFile { path: "c.nv", at: 300, from: 60 })
+    v
+}
+
+test "file_of_offset: inside the second body" {
+    assert(file_of_offset(three_files(), 250) == 1)
+}
+
+test "file_of_offset: exactly on a body start belongs to THAT body" {
+    assert(file_of_offset(three_files(), 200) == 1)
+    assert(file_of_offset(three_files(), 199) == 0)
+}
+
+test "file_of_offset: past the last body is still the last body" {
+    assert(file_of_offset(three_files(), 9000) == 2)
+}
+
+test "file_of_offset: the header belongs to no file" {
+    // Not an ice: a diagnostic CAN land in the unit header, and the caller
+    // then names the module rather than a file.
+    assert(file_of_offset(three_files(), 7) == 0 - 1)
+}
+
+test "offset_in_file: undoes the unit shift" {
+    ro f = UnitFile { path: "b.nv", at: 200, from: 50 }
+    // 30 bytes into the body, which began at 50 in the original.
+    assert(offset_in_file(f, 230) == 80)
+    // The body's first byte maps to the body's first byte.
+    assert(offset_in_file(f, 200) == 50)
+}
+
 // --- header_end: where a unit takes a file's body from (274.7 M) ---------
 //
 // The unit is ONE header plus the BODIES of a module's files, so this number

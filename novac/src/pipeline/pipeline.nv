@@ -95,6 +95,52 @@ export fn compile(text str, decl_texts []str) -> []Diagnostic =>
 /// Two doors and not a flag: a caller with texts (every module test) says so by
 /// calling the wrapper above, and a caller compiling many files parses once and
 /// calls this. The wrapper is the whole difference between them.
+/// One file's BODY inside a unit of peers (274.7 M).
+///
+/// A unit is one header plus the bodies of a module's files, so a span that
+/// comes out of the checker is an offset into the UNIT and has to be handed
+/// back as a file plus an offset in that file. These three numbers are the
+/// whole of that translation.
+///
+/// WHY THE FILE IS NOT IN THE DIAGNOSTIC INSTEAD: it never was. A Diagnostic
+/// carries a code, a severity, two byte offsets and a message; the path is
+/// handed to `to_json` separately, by the door that already knows it. So
+/// nothing in the tree or the channel needs to learn about files -- the door
+/// that prints needs a table.
+export type UnitFile value {
+    path str /// the path exactly as the CLI received it
+    at int /// where this body begins INSIDE the unit text
+    from int /// where that same body began in the file it came from
+}
+
+/// Which file of the unit owns a unit offset -- its index, or -1.
+///
+/// The bodies lie in order and back to back, so the owner is the LAST one that
+/// starts at or before the offset. A linear walk, not a search: a module has
+/// tens of files, and a binary search here would be machinery for nothing.
+///
+/// -1 rather than an ice for an offset before the first body: the header is a
+/// real part of the unit and a diagnostic CAN land in it (a malformed import
+/// is a diagnostic about the unit itself). The caller then names the module
+/// rather than a file, and that is a decision, not a hole.
+export fn file_of_offset(files []UnitFile, off int) -> int {
+    mut best = 0 - 1
+    mut i = 0
+    while i < files.len() {
+        if files[i].at <= off { best = i } else {}
+        i += 1
+    }
+    best
+}
+
+/// The offset as the FILE knows it: undo the unit's shift.
+///
+/// `off - f.at` is how far into the body the span sits, and `f.from` is where
+/// that body began in the original -- so the sum is the original offset. Two
+/// numbers and a subtraction, which is the entire price of the wave on the
+/// positions side.
+export fn offset_in_file(f UnitFile, off int) -> int => off - f.at + f.from
+
 /// Does `word` stand at byte `at` of `b`? A prefix test that allocates
 /// nothing and takes no slice -- see the note inside `header_end`.
 fn matches_at(b []u8, at int, word str) -> bool {
