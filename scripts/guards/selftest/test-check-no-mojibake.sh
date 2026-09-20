@@ -27,6 +27,15 @@ io.open(sys.argv[1], 'w', encoding='utf-8', newline='\n').write($1)
 " "$TMP/docs/dev/probe.md"
     printf 'mojibake_lines=%s\n' "$2" > "$TMP/scripts/guards/mojibake.baseline"
     printf 'fffd_lines=%s\n' "${3:-0}" >> "$TMP/scripts/guards/mojibake.baseline"
+    # С 2026-09-20 база, ПРИЗНАЮЩАЯ долг числом, обязана называть носителей и
+    # знаменатель обхода — иначе счёт скрывает замену файла и сужение обхода.
+    # Фикстуры кладут весь долг в один файл, поэтому строка носителя ровно одна.
+    printf 'scanned_files=0\n' >> "$TMP/scripts/guards/mojibake.baseline"
+    [ "$2" -gt 0 ] 2>/dev/null && \
+        printf 'mojibake_file=docs/dev/probe.md %s\n' "$2" >> "$TMP/scripts/guards/mojibake.baseline"
+    [ "${3:-0}" -gt 0 ] 2>/dev/null && \
+        printf 'fffd_file=docs/dev/probe.md %s\n' "${3:-0}" >> "$TMP/scripts/guards/mojibake.baseline"
+    return 0
 }
 trap 'rm -rf "$TMP"' EXIT
 
@@ -134,6 +143,82 @@ if git --version >/dev/null 2>&1; then
 else
     ok "git недоступен — проверка фильтра пропущена (и это НАЗВАНО)"
 fi
+
+
+# ── ЯРУС ИМЁН: замена носителя, рост в носителе, сужение обхода ──────────
+# Счёт прячет замену (убрали в одном файле, приехало в другом) и сужение обхода
+# (перестали читать часть дерева — число упало — прочлось как уборка). Обе
+# половины доказываются здесь, и у каждой есть контроль.
+
+# (а) КОНТРОЛЬ: верная именная база — зелёный.
+setup "$DIRTY" 1
+out=$(bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 0 ]; then ok "контроль: верная именная база — зелёный"
+else bad "контроль не прошёл (rc=$rc): $out"; fi
+
+# (б) ЗАМЕНА НОСИТЕЛЯ при том же счёте — красный.
+setup "$DIRTY" 1
+python - "$TMP/scripts/guards/mojibake.baseline" <<'PY'
+import io, sys
+p = sys.argv[1]
+s = io.open(p, encoding="utf-8").read()
+s = s.replace(u"mojibake_file=docs/dev/probe.md", u"mojibake_file=docs/dev/other.md")
+io.open(p, "w", encoding="utf-8", newline="\n").write(s)
+PY
+out=$(bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'NEW(sig) docs/dev/probe.md'; then
+    ok "замена носителя при неизменном счёте — красный, носитель назван"
+else bad "замена носителя не поймана (rc=$rc): $out"; fi
+
+# (в) РОСТ В ПРЕЖНЕМ НОСИТЕЛЕ при неизменном общем счёте — красный.
+setup "$DIRTY" 1
+python - "$TMP/scripts/guards/mojibake.baseline" <<'PY'
+import io, sys
+p = sys.argv[1]
+s = io.open(p, encoding="utf-8").read()
+s = s.replace(u"mojibake_file=docs/dev/probe.md 1", u"mojibake_file=docs/dev/probe.md 0")
+io.open(p, "w", encoding="utf-8", newline="\n").write(s)
+PY
+out=$(bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'GROWN(sig) docs/dev/probe.md'; then
+    ok "рост внутри носителя при том же общем счёте — красный"
+else bad "рост внутри носителя не пойман (rc=$rc): $out"; fi
+
+# (г) СУЖЕНИЕ ОБХОДА — мутируем ЯДРО: копия перестаёт читать `.md`. Находок
+# станет ноль, счёт упадёт, и это прочлось бы как уборка. Знаменатель не даёт.
+setup "$DIRTY" 1
+python - "$TMP/scripts/guards/mojibake.baseline" <<'PY'
+import io, sys
+p = sys.argv[1]
+s = io.open(p, encoding="utf-8").read().replace(u"scanned_files=0", u"scanned_files=1")
+io.open(p, "w", encoding="utf-8", newline="\n").write(s)
+PY
+out=$(bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 0 ]; then ok "контроль сужения: при широком обходе база сходится"
+else bad "контроль сужения не прошёл (rc=$rc): $out"; fi
+# Страж зовёт ядро ИЗ СВОЕГО каталога, поэтому мутируется пара «страж + ядро»,
+# положенная в поддельное дерево, и запускается КОПИЯ стража. Первая редакция
+# мутировала ядро в дереве и зеленела, ничего не проверив.
+cp "$G" "$TMP/scripts/guards/check-no-mojibake.sh"
+python - "$TMP/scripts/guards/mojibake-scan.py" <<'PY'
+import io, sys
+p = sys.argv[1]
+s = io.open(p, encoding="utf-8").read()
+s = s.replace('EXTS = (".md"', 'EXTS = (".nomatch"')
+io.open(p, "w", encoding="utf-8", newline="\n").write(s)
+PY
+out=$(bash "$TMP/scripts/guards/check-no-mojibake.sh" "$TMP" 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'обход сузился'; then
+    ok "сужение обхода — красный именно про сужение"
+else bad "сужение обхода не поймано (rc=$rc): $out"; fi
+
+# (д) База ПРИЗНАЁТ долг числом, но не называет ни носителей, ни знаменателя.
+setup "$DIRTY" 1
+printf 'mojibake_lines=1\nfffd_lines=0\n' > "$TMP/scripts/guards/mojibake.baseline"
+out=$(bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'держит только счёт'; then
+    ok "счётная база при признанном долге — красный"
+else bad "счётная база прошла (rc=$rc): $out"; fi
 
 if [ "$FAILED" -eq 0 ]; then echo "селфтест check-no-mojibake: все проверки ok"; exit 0; fi
 echo "селфтест check-no-mojibake: ЕСТЬ ПРОВАЛЫ" >&2
