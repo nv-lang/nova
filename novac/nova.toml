@@ -321,7 +321,50 @@
 # spec/decisions, so a shift spent on the NUMBERING of decisions looks exactly like
 # a shift spent writing them. Whoever drains the queue will find nothing to
 # implement in any of the three; registry row 1182 holds the anchor work.
-#   spec-queue: 90
+# 87 -> 88 (2026-09-20, окно nova-78): D480 — запись типа-ссылки (`ref T` /
+# `ref mut T`, избыточный `ro` при ссылке запрещён) плюс амендмент к Р1 ревизии
+# D326: возврат `ref T` над параметром типа законен. Счётчик двигаю ОДНИМ, потому
+# что коммит один и решение одно; вторая половина (строки реестра и улика) в
+# `spec/decisions` не заходит и счётчика не касается.
+# 88 -> 89 (тот же вечер, то же окно): поправка владельца к §2 D480 — возврат
+# ссылки на `ro`-параметр отвергается ПРАВИЛЬНО, дефект в тексте отказа. Коммит
+# с поправкой я провёл через `NOVA_SPECQUEUE_NA=1`, чтобы не двигать счётчик
+# дважды одной правкой, и тут же довёл его до замера: команда стража
+# (`git log --since=<spec-point> --no-merges HEAD p274-novac -- spec/decisions`)
+# даёт 89. Число ВЗЯТО ЗАМЕРОМ, а не прибавлено в уме — ровно потому, что
+# пропуск хука делает арифметику невидимой.
+# 89 -> 90 (2026-09-20, то же окно): амендмент D477 §5а — маркер `indirect`
+# законен и без рекурсии.
+#   ДВЕ АРИФМЕТИКИ РАЗОШЛИСЬ ПРЯМО ЗДЕСЬ, и это стоит записать. Команда из шапки
+#   (`git log --since=<spec-point> --no-merges HEAD p274-novac -- spec/decisions`)
+#   дала 90 ДО этого коммита, то есть требовала бы 91; хук предкоммита требует 90.
+#   Разница — знаменатель: хук считает историю ЭТОЙ ветки, команда шапки добавляет
+#   ветку Карины, которая двигалась параллельно. Поставлено 90 — по МЕХАНИЗМУ,
+#   который краснеет, а не по команде из прозы; при слиянии число всё равно
+#   снимается заново, и именно об этом предупреждает запись выше.
+# 90 -> 91 (тот же вечер): запрет ref-локалов (D480) и no-op маркера на кучевом
+# типе (D477). Коммит провёл через `NOVA_SPECQUEUE_NA=1`, чтобы не гадать число в
+# момент правки, и тут же снял его замером — по ветке 91, по объединённой истории
+# с `p274-novac` 92. Ставлю 91, тем же знаменателем, что и прошлый раз (история
+# ЭТОЙ ветки): одно число на две арифметики выбирать нельзя, а менять знаменатель
+# посреди летописи — худшее из двух.
+# 91 -> 94 (тот же вечер, конец разговора): пример толстого варианта с
+# объявлениями, пояснение к нему по замечанию владельца, и D483 — снятие
+# авторазыменования у сырого указателя. Три коммита в `spec/decisions`, число
+# снято замером по ветке, а не сложено в уме.
+# 94 -> 95: уточнение владельца — `*.` один токен, `p * .field` невалидно.
+# 90 i 95 -> 99 (2026-09-20, sliyanie vetki nova-78, integrator). OBE LETOPISI
+# VYSHE SOHRANENY: storony pisali o RAZNOY rabote i ni odna ne otmenyaet druguyu.
+# Chislo ne vybrano iz dvuh i ne slozheno, a IZMERENO po ob'edinyonnoy istorii toy
+# zhe komandoy, chto u strazha:
+#   git log --since=2026-08-14 --no-merges --format=%H HEAD d480-ref-type-spelling
+#       -- spec/decisions | sort -u | wc -l   ->  99
+# Ni maksimum (95), ni summa (185): vetki delyat proshloe, i obe arifmetiki lgut v
+# protivopolozhnye storony. Tretiy takoy sluchay za dvoe sutok, i kazhdyy raz
+# prirashchenie bylo raznym -- imenno poetomu chislo meryayut, a ne vyvodyat.
+# POBOCHNAYA NAHODKA: HEAD v odinochku dayot 91, a v fayle stoyalo 90 -- moy
+# sobstvennyy schyot otstal na edinicu, i uvidel ya eto tol'ko zamerom.
+#   spec-queue: 99
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,

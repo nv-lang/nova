@@ -1301,7 +1301,18 @@
 #   nazyvaet ro-otmyvanie tam, gde prichina -- VREMYA ZHIZNI ro-parametra).
 #   Ob'yavlen dyroy do vliva yego vetki: nomer, kotoryy nesyot chuzhaya vetka,
 #   zanyat nezavisimo ot togo, vidit li yego eto derevo.
-rows=1132
-max=1183
+# 2026-09-20 (integrator, merge of window nova-78's branch): 1176-1178 and 1184
+#   removed from gaps -- the rows ARRIVED with the branch, so the reservation is no
+#   longer a reservation. Removed in the SAME step the row arrived in: otherwise a
+#   later loss of that row passes silently, because the hole check sees it missing
+#   and confirms against a list where missing is allowed.
+# 2026-09-20 (integrator, same merge): rows 1132 -> 1136, max 1183 -> 1184.
+#   Four rows arrived with the branch: 1176 (a variant name repeated, caught by the
+#   C compiler for us), 1177 (D216 section 5 shows retracted forms), 1178 (a D215
+#   callout with no scope), 1184 (E_READONLY_COERCE names ro-laundering where the
+#   cause is the lifetime of a ro parameter). 1184 is the number I issued an hour
+#   ago; the other three the window filed itself and I assigned them earlier.
+rows=1136
+max=1184
 stale_gaps=0
-gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1176-1178,1184
+gaps=174-208,210-215,653-654,743,1062,1096,1103-1104
