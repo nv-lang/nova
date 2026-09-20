@@ -103,20 +103,40 @@ fn type_ref_at_cursor(resolved: &ResolvedModule, offset: usize) -> Option<TypeRe
 /// coordinate system as the in-memory `src`/cursor (imported items' spans are in
 /// their *own* files' byte coordinates and must not be matched here).
 fn innermost_expr_type(env: &ModuleEnv, offset: usize) -> Option<&TypeRef> {
-    let mut best: Option<(&Span, &TypeRef)> = None;
+    // Two tiers, not one: an offset sitting EXACTLY at a span's trailing
+    // boundary (`offset == span.end`) is ambiguous — it is both "one past the
+    // last byte of this span" and "the first byte of whatever comes right
+    // after it". Registry 221.1 #684: self-access `@field` parses `@` as its
+    // own `SelfAccess` node with a ONE-BYTE span immediately butting against
+    // the field name (no separator, unlike `obj.field`'s `.`), so a cursor on
+    // the field's own first character sits at `SelfAccess.span.end` *and*
+    // strictly inside the enclosing `Member` span. Preferring the smallest
+    // span at that boundary picked `SelfAccess` (typed as the receiver) over
+    // `Member` (typed as the field) — the field's own type was never
+    // reachable there. A strict `[start, end)` match is tried first; the
+    // old inclusive-end match is now only a FALLBACK for when nothing
+    // strictly contains the offset (preserves "cursor right after a token"
+    // for every span that has no such competing sibling).
+    let mut strict: Option<(&Span, &TypeRef)> = None;
+    let mut at_boundary: Option<(&Span, &TypeRef)> = None;
     for (span, ty) in &env.expr_types {
         if span.file_id != MAIN_FILE_ID {
             continue;
         }
-        if span.start <= offset && offset <= span.end {
-            let width = span.end.saturating_sub(span.start);
-            match best {
+        let width = span.end.saturating_sub(span.start);
+        if span.start <= offset && offset < span.end {
+            match strict {
                 Some((b, _)) if b.end.saturating_sub(b.start) <= width => {}
-                _ => best = Some((span, ty)),
+                _ => strict = Some((span, ty)),
+            }
+        } else if offset == span.end {
+            match at_boundary {
+                Some((b, _)) if b.end.saturating_sub(b.start) <= width => {}
+                _ => at_boundary = Some((span, ty)),
             }
         }
     }
-    best.map(|(_, t)| t)
+    strict.or(at_boundary).map(|(_, t)| t)
 }
 
 /// If `offset` sits on a `let`/`const` binding name, return that binding's type:
@@ -575,6 +595,34 @@ fn main() {
         assert_eq!(loc.uri, u, "same-file type decl");
         // `type User` is declared on line 1 (0-based).
         assert_eq!(loc.range.start.line, 1, "must point at the `type User` decl line");
+    }
+
+    /// POS: typeDefinition on a self-access field (`@field`) → the field's own
+    /// type decl. Registry 221.1 #684: this path reads `expr_types` by span
+    /// containment (not the `symbol.rs` offset-boundary arithmetic fixed for
+    /// goto-definition/hover), so it is a SEPARATE question whether it already
+    /// handles `@field` — checked empirically rather than assumed from the fix
+    /// to the other two providers.
+    #[test]
+    fn typedef_pos_self_access_field() {
+        let src = "\
+module app.mod
+type Inner {
+  ro v int
+}
+type Outer {
+  ro inner Inner
+}
+fn Outer @get() -> Inner => @inner
+";
+        let (u, path) = write_fixture("typedef_self_access", src);
+        let resolved = provenance::resolve_module_for_ide(&path, src);
+        // Cursor on `inner` in `@inner` (line 7, col 29 — the 'i' right after `@`).
+        let loc = compute_type_definition_in(&resolved, src, pos(7, 29), &u)
+            .expect("typeDefinition on `@inner` must resolve to `type Inner`");
+        assert_eq!(loc.uri, u, "same-file type decl");
+        // `type Inner` is declared on line 1 (0-based).
+        assert_eq!(loc.range.start.line, 1, "must point at the `type Inner` decl line");
     }
 
     /// POS: typeDefinition on an identifier *use* of a typed variable → its type

@@ -58270,6 +58270,21 @@ mod expr_types_ide_tests {
         assert!(is_named(t, "int"), "expected int, got {:?}", t);
     }
 
+    // POS: SelfAccess field (`@x`) — registry 221.1 #684 isolation probe.
+    // `nova-lsp`'s `check_module_with_expr_types_ide` (same impl, lenient
+    // wrapper) stack-overflows on this exact minimal form; plain `check_module`
+    // (record_expr_types=false) compiles it fine. This test calls the SAME
+    // `record_expr_types=true` path this crate exposes directly, to find out
+    // whether the recursion lives in the checker itself or only reachable via
+    // the nova-lsp call site.
+    #[test]
+    fn pos_self_access_field() {
+        let src = "module t\ntype Foo {\n x int\n}\nfn Foo @bar() -> int => @x\n";
+        let m = expr_types_of(src);
+        let t = ty_at(&m, src, "@x").expect("self-access @x recorded");
+        assert!(is_named(t, "int"), "expected int, got {:?}", t);
+    }
+
     // POS: Range (via the semantic resolved_types_buf channel)
     #[test]
     fn pos_range() {
