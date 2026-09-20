@@ -523,6 +523,7 @@ if [ "$NOVAC_TIER" != "loop" ]; then
     par_add "$ROOT/scripts/guards/check-novac-build-clean.sh" "сборка novac печатает предупреждения компилятора (П30)"
     par_add "$ROOT/scripts/guards/check-novac-diag-schema.sh" "диагностика novac не по схеме §7"
     par_add "$ROOT/scripts/guards/check-novac-no-cascade.sh" "каскад диагностик от одной причины (274 §6)"
+    par_add "$ROOT/scripts/guards/check-novac-fixture-expect.sh" "фикстура пришпилила текст отказа, а получила другой (№1170)"
     guard --deadline 300 "$ROOT/scripts/guards/check-novac-emission-size.sh" "$ROOT" || fail "объём эмиссии novac разошёлся с базой (274.2 §1б.2)"
     # 19с на пятнадцати фикстурах (замер 2026-08-23): пятнадцать запусков
     # процесса, а не медленная проверка. Поэтому ярус push, не loop.
