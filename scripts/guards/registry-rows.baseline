@@ -1312,7 +1312,12 @@
 #   callout with no scope), 1184 (E_READONLY_COERCE names ro-laundering where the
 #   cause is the lifetime of a ro parameter). 1184 is the number I issued an hour
 #   ago; the other three the window filed itself and I assigned them earlier.
+# 2026-09-20 (integrator): 1185 issued to window nova-78 -- Option over a POINTER
+#   is emitted with an nova_int payload, so the null-pointer optimisation of D216
+#   section 7 does not happen and the pointer TYPE is lost, not just the layout.
+#   Declared as a hole until that branch merges: a number carried by someone else's
+#   branch is taken whether or not this tree can see it.
 rows=1136
 max=1184
 stale_gaps=0
-gaps=174-208,210-215,653-654,743,1062,1096,1103-1104
+gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1185
