@@ -1468,4 +1468,11 @@ no_caveat=0
 #   1195: ona byla pro formulirovku otkaza (K2, ne bloker), a zamer pokazal drugoy
 #   predmet -- proverka dubley imyon pokryvaet TOLKO TIPY: `fn dup()` i `const K`
 #   dvazhdy v odnom fayle dayut NOL diagnostik. Pole ispravleno NA MESTE.
-blockers=82
+# 2026-09-20, интегратор: 82 -> 84, РОСТ и он законен.
+# Две новые строки окна Карины — №1212 и №1213, обе с БЛОКИРУЕТ ТЕГ: ДА.
+# Это НЕ регресс: дефекты существовали и раньше, а число выросло
+# потому, что их ВПЕРВЫЕ ИЗМЕРИЛИ: первый замер расстояния до
+# ступени 0.3 (59 из 90 примеров, 274.5 §5) вскрыл то, чего не считал
+# остаток самосборки — он считает НАШ исходник и слеп к формам,
+# которыми мы не пользуемся. Число выросло от ЗРЕНИЯ, не от ухудшения.
+blockers=84
