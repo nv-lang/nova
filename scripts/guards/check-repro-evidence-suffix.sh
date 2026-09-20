@@ -86,9 +86,46 @@ count_bare_nv() {
     | grep -c . || true
 }
 
+# ВТОРАЯ ТЕРРИТОРИЯ — `docs/dev/hunts/**` (2026-09-20, повод интегратора).
+#
+# Пробы охоты лежат там ТОЧНО ТАК ЖЕ и запускаются так же, а страж до них не
+# дотягивался: он знал один каталог. Третий носитель класса «территория уже
+# риска» за смену — после `check-guard-honesty`, где не хватало ровно того же.
+#
+# ПРИЗНАК ТОТ ЖЕ, НО ГЛУБЖЕ: освобождает `cmd.sh` в ЛЮБОМ каталоге-предке до
+# корня территории, а не только рядом с файлом. Иначе поддельные деревья вида
+# `<проба>/root/novac/src/**.nv` — входные данные записанной команды — оказались
+# бы нарушителями: замер 2026-09-20 дал 186 таких при соседнем `cmd.sh` выше по
+# пути. Страж, краснеющий на законном, выключают первым.
+#
+# БАЗА НЕ НОЛЬ, А 157, И ЭТО НЕ УСТУПКА. Столько голых `.nv` там лежит сегодня
+# без записанной команды где-либо в пути. Ноль покраснел бы на унаследованном в
+# первый же прогон, и стража сняли бы вместо того, чтобы переименовывать
+# полторы сотни чужих улик. Храповик держит НОВЫЕ.
+count_bare_nv_hunts() {
+  find "$1/docs/dev/hunts" -name '*.nv' -type f 2>/dev/null \
+    | while IFS= read -r f; do
+        d=$(dirname "$f")
+        exempt=0
+        while [ "$d" != "$1/docs/dev/hunts" ] && [ "$d" != "/" ] && [ "$d" != "." ]; do
+          if [ -f "$d/cmd.sh" ]; then exempt=1; break; fi
+          d=$(dirname "$d")
+        done
+        [ "$exempt" = "1" ] && continue
+        printf '%s\n' "${f#"$1/docs/dev/hunts/"}"
+      done \
+    | grep -c . || true
+}
+
 read_baseline() {
   local v
   v=$(grep -E '^bare_nv=[0-9]+$' "$BASELINE" 2>/dev/null | tail -1 | cut -d= -f2)
+  if [ -z "${v:-}" ]; then echo "MISSING"; else echo "$v"; fi
+}
+
+read_baseline_hunts() {
+  local v
+  v=$(grep -E '^bare_nv_hunts=[0-9]+$' "$BASELINE" 2>/dev/null | tail -1 | cut -d= -f2)
   if [ -z "${v:-}" ]; then echo "MISSING"; else echo "$v"; fi
 }
 
@@ -184,7 +221,45 @@ if [ "$SELFTEST" = "1" ]; then
   fi
   rm -rf "$TMP/docs/plans/repro/930-invoked"
 
-  echo "селфтест $NAME: $([ "$fail" = "0" ] && echo "9/9 ok" || echo "ЕСТЬ ПРОВАЛЫ")"
+  # (10) ВТОРАЯ ТЕРРИТОРИЯ: голый .nv в пробе охоты БЕЗ записанной команды —
+  # считается. До 2026-09-20 страж до этого каталога не дотягивался вовсе.
+  mkdir -p "$TMP/docs/dev/hunts/novac/probes/2026-09-20-x/case"
+  : > "$TMP/docs/dev/hunts/novac/probes/2026-09-20-x/case/p.nv"
+  printf 'bare_nv=0\nbare_nv_hunts=0\n' > "$TMP/scripts/guards/repro-evidence-suffix.baseline"
+  if bash "$0" "$TMP" >/dev/null 2>&1; then
+    echo "  ПРОВАЛ: голый .nv в hunts не посчитан — территория снова слепа"; fail=1
+  else
+    echo "  ok: голый .nv в пробе охоты считается"
+  fi
+
+  # (11) та же проба с `cmd.sh` ВЫШЕ ПО ПУТИ — не считается. Признак обязан
+  # смотреть на предков: поддельные деревья вида `<проба>/root/novac/src/*.nv`
+  # иначе стали бы нарушителями (замер 2026-09-20: 186 таких файлов).
+  mkdir -p "$TMP/docs/dev/hunts/novac/probes/2026-09-20-y/case/root/novac/src"
+  : > "$TMP/docs/dev/hunts/novac/probes/2026-09-20-y/case/root/novac/src/a.nv"
+  : > "$TMP/docs/dev/hunts/novac/probes/2026-09-20-y/case/cmd.sh"
+  rm -rf "$TMP/docs/dev/hunts/novac/probes/2026-09-20-x"
+  printf 'bare_nv=0\nbare_nv_hunts=0\n' > "$TMP/scripts/guards/repro-evidence-suffix.baseline"
+  if bash "$0" "$TMP" >/dev/null 2>&1; then
+    echo "  ok: .nv под cmd.sh выше по пути НЕ считается"
+  else
+    echo "  ПРОВАЛ: законное поддельное дерево покрашено"; fail=1
+  fi
+
+  # (12) территория охоты ЕСТЬ, а строки базы для неё НЕТ — красный.
+  # Непосчитанная территория читается как чистая; это тот же класс, что и
+  # пустая мишень.
+  printf 'bare_nv=0\n' > "$TMP/scripts/guards/repro-evidence-suffix.baseline"
+  if bash "$0" "$TMP" >/dev/null 2>&1; then
+    echo "  ПРОВАЛ: территория без своей базы прошла молча"; fail=1
+  else
+    echo "  ok: территория охоты без строки базы — красный"
+  fi
+  rm -rf "$TMP/docs/dev/hunts"
+
+  # Числа случаев здесь НЕТ намеренно: литерал расходится с телом при первом же
+  # добавлении клетки (2026-09-20 он и разошёлся — стояло «9/9» при двенадцати).
+  echo "селфтест $NAME: $([ "$fail" = "0" ] && echo "все случаи ok" || echo "ЕСТЬ ПРОВАЛЫ")"
   [ "$fail" = "0" ] || exit 1
   exit 0
 fi
@@ -217,5 +292,30 @@ if [ "$N" -lt "$BASE" ]; then
   echo "    высоким, молча разрешает вернуть ровно столько, сколько ты убрал."
   exit 1
 fi
+
+# ВТОРАЯ ТЕРРИТОРИЯ судится ТЕМ ЖЕ правилом и отдельной базой: числа разные,
+# и общий счётчик скрыл бы рост в одной половине за счёт падения в другой.
+if [ -d "$ROOT/docs/dev/hunts" ]; then
+  NH=$(count_bare_nv_hunts "$ROOT")
+  BASEH=$(read_baseline_hunts)
+  if [ "$BASEH" = "MISSING" ]; then
+    echo "$NAME: FAIL — в базе нет строки bare_nv_hunts=N, а территория охоты существует."
+    echo "    Непосчитанная территория читается как чистая: ровно этот класс закрывается."
+    exit 1
+  fi
+  echo "$NAME: проб охоты с голым .nv — $NH (база $BASEH)"
+  if [ "$NH" -gt "$BASEH" ]; then
+    echo "$NAME: FAIL — голых .nv в docs/dev/hunts стало БОЛЬШЕ: $BASEH -> $NH"
+    echo "    Правило то же (№695 п.2): улику хранят как \`.nv.txt\`, а у пробы,"
+    echo "    которую ЗАПУСКАЮТ, рядом или выше по пути лежит \`cmd.sh\` — тогда она"
+    echo "    не считается. Записанной команды нет — значит это улика, и ей нужен суффикс."
+    exit 1
+  fi
+  if [ "$NH" -lt "$BASEH" ]; then
+    echo "$NAME: FAIL — число по охоте УПАЛО ($NH < $BASEH): опусти bare_nv_hunts той же правкой."
+    exit 1
+  fi
+fi
+
 echo "$NAME ok: роста нет"
 exit 0

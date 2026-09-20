@@ -79,24 +79,70 @@ fi
 # ДВА СКАНЕРА РАЗОШЛИСЬ: 55 блокеров против 35 при честном подсчёте.
 # Десять таких строк среди блокеров заполнены 2026-08-19; остальные —
 # храповик, который может только убывать.
-NS_BASE_FILE="$ROOT/scripts/guards/verdict-no-status.baseline"
+NS_BASE_FILE="${NOVA_VERDICT_NO_STATUS_BASELINE:-$ROOT/scripts/guards/verdict-no-status.baseline}"
 NS_BASE=$(grep -E '^rows=' "$NS_BASE_FILE" 2>/dev/null | head -1 | cut -d= -f2)
 case "$NS_BASE" in ''|*[!0-9]*)
     echo "$NAME: FAIL — база verdict-no-status не задана ($NS_BASE_FILE)" >&2
     exit 1;;
 esac
-if [ "$NS" -gt "$NS_BASE" ]; then
-    echo "$NAME: FAIL — строк с вердиктом, но БЕЗ статуса стало больше: $NS > $NS_BASE" >&2
-    printf '%s\n' "$OUT" | grep 'verdict without a status' | head -12 >&2
+
+# БАЗА ИМЕННАЯ (2026-09-20, помощник; повод — интегратора, и он не теоретический).
+# Счёт 19 не менялся ДВАЖДЫ ЗА СМЕНУ, пока состав менялся: в набор вошла строка
+# 1170, пришедшая слиянием, потом её починили. Оба раза число говорило «19», то
+# есть ЗАМЕНА ПРОИЗОШЛА НА ГЛАЗАХ У ЧИТАТЕЛЯ И БЫЛА НЕВИДИМА. Поэтому держится
+# НАБОР НОМЕРОВ, а не счёт.
+#
+# ЗНАМЕНАТЕЛЬ ОСМОТРА рядом с набором. Исчезновение номера из набора значит либо
+# починку, либо то, что разбор перестал УЗНАВАТЬ строки реестра (разметка,
+# переезд, съехавший образец) — а это падение долга, читаемое как погашение.
+# Различает их не выдуманный признак, а число разобранных строк: оно может
+# только расти.
+ROWS_SCANNED=$(printf '%s\n' "$OUT" | sed -n 's/^rows_scanned=\(-\{0,1\}[0-9][0-9]*\)$/\1/p' | tail -1)
+case "$ROWS_SCANNED" in ''|*[!0-9-]*)
+    echo "$NAME: FAIL — ядро не вернуло знаменатель rows_scanned" >&2; exit 1;;
+esac
+NS_ROWS_BASE=$(grep -E '^scanned_rows=[0-9]+$' "$NS_BASE_FILE" | head -1 | cut -d= -f2)
+NS_NAMES=$(grep -E '^no_status_row=[0-9]+$' "$NS_BASE_FILE" | cut -d= -f2 | sort -n)
+NS_NAMES_COUNT=$(printf '%s\n' "$NS_NAMES" | grep -c .)
+
+# База с нулевым счётом законно не имеет номеров: пустой набор и есть ноль.
+# Отказ адресован базе, которая ПРИЗНАЁТ долг числом, но не называет носителей.
+if [ -z "$NS_ROWS_BASE" ] || { [ "$NS_BASE" -gt 0 ] && [ "$NS_NAMES_COUNT" -eq 0 ]; }; then
+    echo "$NAME: FAIL — база $NS_BASE_FILE держит только счёт: нет строк no_status_row= или scanned_rows=." >&2
+    echo "    Счёт прячет ЗАМЕНУ строки (замерено дважды за смену 2026-09-20) и сужение разбора." >&2
+    exit 1
+fi
+if [ "$NS_NAMES_COUNT" -ne "$NS_BASE" ]; then
+    echo "$NAME: FAIL — база противоречит себе: rows=$NS_BASE, а номеров $NS_NAMES_COUNT" >&2
+    exit 1
+fi
+if [ "$ROWS_SCANNED" -lt "$NS_ROWS_BASE" ]; then
+    echo "$NAME: FAIL — РАЗОБРАНО МЕНЬШЕ СТРОК РЕЕСТРА, ЧЕМ В БАЗЕ: $ROWS_SCANNED < $NS_ROWS_BASE — разбор сузился." >&2
+    echo "    Долг, переставший считаться, читается как погашенный. Это не он." >&2
+    exit 1
+fi
+
+NS_NOW=$(printf '%s\n' "$OUT" | sed -n 's/^row \([0-9][0-9]*\): verdict without a status$/\1/p' | sort -n)
+NS_NEW=$(printf '%s\n' "$NS_NOW" | grep -v '^$' | while read -r r; do
+    printf '%s\n' "$NS_NAMES" | grep -qx "$r" || printf '%s ' "$r"
+done)
+NS_PAID=$(printf '%s\n' "$NS_NAMES" | grep -v '^$' | while read -r r; do
+    printf '%s\n' "$NS_NOW" | grep -qx "$r" || printf '%s ' "$r"
+done)
+
+if [ -n "$NS_NEW" ]; then
+    echo "$NAME: FAIL — НОВЫЕ строки с вердиктом, но БЕЗ статуса: $NS_NEW" >&2
+    echo "    Общее число могло НЕ вырасти: одну строку починили, другая вошла —" >&2
+    echo "    ровно эта замена дважды прошла незамеченной 2026-09-20." >&2
     echo "    Строка, объявившая вердикт, обязана объявить и статус: иначе" >&2
     echo "    страж релиза считает её открытой по умолчанию, а написано" >&2
     echo "    ничего — и заглавное число врёт молча." >&2
     exit 1
 fi
-if [ "$NS" -lt "$NS_BASE" ]; then
-    echo "$NAME ok: вердиктов без статуса $NS (база $NS_BASE) — ЗАМЕТКА: опусти базу с летописью"
+if [ -n "$NS_PAID" ]; then
+    echo "$NAME ok: вердиктов без статуса $NS (база $NS_BASE); ПОГАШЕНЫ: $NS_PAID — убери эти строки no_status_row= из $NS_BASE_FILE и поправь rows= ТОЙ ЖЕ правкой"
     exit 0
 fi
 
-echo "$NAME ok: у каждой строки реестра ровно один действующий вердикт, статус и маршрут"
+echo "$NAME ok: у каждой строки реестра ровно один действующий вердикт, статус и маршрут; вердиктов без статуса $NS при базе $NS_BASE (номера сверены поимённо), разобрано строк $ROWS_SCANNED >= $NS_ROWS_BASE"
 exit 0

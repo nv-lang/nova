@@ -61,6 +61,7 @@ report() { echo "  ✗ $1" >&2; problems=$((problems + 1)); }
 # выключенного: его красноту начинают обходить. Рост по-прежнему красный.
 noref=0
 NOREF_NAMES=""
+ALL_NAMES=""
 WIRING_BASELINE="${NOVA_WIRING_BASELINE:-$(dirname "${BASH_SOURCE[0]}")/guard-wiring.baseline}"
 
 echo "check-guard-wiring: проверяю стражи scripts/guards/check-*.sh и check-*.py"
@@ -162,6 +163,7 @@ for g in "${guards[@]}"; do
     name="${g##*/}"
     name="${name%.sh}"
     name="${name%.py}"
+    ALL_NAMES="$ALL_NAMES $name"
     ok=1
 
     # 1. Документирован: содержательная шапка + ссылка на план. Считает
@@ -224,21 +226,88 @@ for g in "${guards[@]}"; do
     [ "$ok" -eq 1 ] && echo "  ok: $name — документирован, подключён, покрыт самотестом"
 done
 
+# ─── БАЗА ИМЕННАЯ, А НЕ СЧЁТНАЯ ──────────────────────────────────────────
+# Причина ПЕРВАЯ (2026-09-20, помощник): по числу нельзя спросить «кто именно
+# новый». В тот день база 48 стояла при живом долге 50, четыре стража без
+# ссылки появились после последней правки базы, а рост был +2 — потому что два
+# старых долга погасили. Счёт прячет ЗАМЕНУ одного нарушителя другим.
+#
+# Причина ВТОРАЯ, сильнее первой (интегратор, тот же день): счёт прячет и
+# СУЖЕНИЕ ПРЕДИКАТА. Этот самый страж дважды судил НАПИСАНИЕ вместо свойства —
+# искал текст цикла `for`, потом требовал у самотеста расширение `.sh` и
+# подключение только в `gate.sh`. Сузь предикат нечаянно — и число УПАДЁТ,
+# прочитавшись как погашенный долг. Имена исчезают ПАЧКОЙ, и пачка видна.
+#
+# Отсюда три разных ответа на исчезновение имени, и различает их НЕ предикат
+# стража (это было бы тавтологией), а существование файла на диске:
+#   * имя не перечислено, а файл есть  → КРАСНЫЙ: предикат перестал видеть стража;
+#   * имя перечислено и обзавелось ссылкой → совет: опусти базу;
+#   * файла нет вовсе (страж удалён)   → совет: убери строку.
+in_list() {  # $1 — имя, $2 — список через пробел
+    case " $2 " in *" $1 "*) return 0 ;; *) return 1 ;; esac
+}
+
 WIRING_BASE=0
+BASE_NAMES=""
 if [ -f "$WIRING_BASELINE" ]; then
     WIRING_BASE=$(sed -n 's/^no_plan_ref=\([0-9][0-9]*\).*/\1/p' "$WIRING_BASELINE" | head -1)
     WIRING_BASE=${WIRING_BASE:-0}
+    BASE_NAMES=$(sed -n 's/^no_plan_ref_name=\([A-Za-z0-9_.-]*\).*/\1/p' "$WIRING_BASELINE" | tr '\n' ' ')
 else
     echo "check-guard-wiring: базы нет ($WIRING_BASELINE) — считаю базой 0" >&2
 fi
-echo "check-guard-wiring: без ссылки на план $noref (база $WIRING_BASE)"
-if [ "$noref" -gt "$WIRING_BASE" ]; then
-    echo "check-guard-wiring: ВЫРОСЛО — $noref > базы $WIRING_BASE" >&2
-    for n in $NOREF_NAMES; do echo "    ✗ $n: нет ссылки на план/реестр в шапке" >&2; done
+base_count=0
+for n in $BASE_NAMES; do base_count=$((base_count + 1)); done
+
+echo "check-guard-wiring: без ссылки на план $noref (база $WIRING_BASE, имён в базе $base_count)"
+
+# База с нулевым счётом законно не имеет имён: пустой набор и есть ноль. Отказ
+# адресован базе, которая ПРИЗНАЁТ долг числом, но не называет его носителей.
+if [ -f "$WIRING_BASELINE" ] && [ "$WIRING_BASE" -gt 0 ] && [ "$base_count" -eq 0 ]; then
+    echo "check-guard-wiring: база БЕЗ ИМЁН — она держит только счёт, а счёт прячет и замену, и сужение предиката" >&2
     problems=$((problems + 1))
-elif [ "$noref" -lt "$WIRING_BASE" ]; then
-    echo "check-guard-wiring: долг СНИЗИЛСЯ ($noref < базы $WIRING_BASE) — опусти базу в $WIRING_BASELINE с летописью"
+elif [ "$base_count" -ne "$WIRING_BASE" ]; then
+    # Два источника одного значения расходятся молча — поэтому они сверяются.
+    echo "check-guard-wiring: база противоречит себе — no_plan_ref=$WIRING_BASE, а имён $base_count" >&2
+    problems=$((problems + 1))
 fi
+
+# Набор сверяется ВСЕГДА, в том числе когда он пуст: пустая база означает «долга
+# нет», и тогда КАЖДЫЙ безадресный страж — новый. Условие «только при непустой
+# базе» стоило бы ровно того случая, ради которого храповик и существует, —
+# самотест поймал его на дереве с базой 0 и одним нарушителем.
+{
+    grew=""
+    for n in $NOREF_NAMES; do
+        in_list "$n" "$BASE_NAMES" || grew="$grew $n"
+    done
+    if [ -n "$grew" ]; then
+        echo "check-guard-wiring: НОВЫЕ стражи без ссылки на план/реестр:" >&2
+        for n in $grew; do echo "    ✗ $n: нет ссылки на план/реестр в шапке" >&2; done
+        problems=$((problems + 1))
+    fi
+
+    vanished=""
+    paid=""
+    for n in $BASE_NAMES; do
+        if in_list "$n" "$ALL_NAMES"; then
+            in_list "$n" "$NOREF_NAMES" || paid="$paid $n"
+        elif [ -f "$REPO_ROOT/scripts/guards/$n.sh" ] || [ -f "$REPO_ROOT/scripts/guards/$n.py" ]; then
+            vanished="$vanished $n"
+        else
+            paid="$paid $n"
+        fi
+    done
+    if [ -n "$vanished" ]; then
+        echo "check-guard-wiring: ИМЯ ПРОПАЛО ИЗ НАБОРА, А ФАЙЛ НА МЕСТЕ — предикат сузился:" >&2
+        for n in $vanished; do echo "    ✗ $n: файл есть, но страж его больше не перечисляет" >&2; done
+        echo "    Долг, переставший считаться, читается как погашенный. Это не он." >&2
+        problems=$((problems + 1))
+    fi
+    if [ -n "$paid" ]; then
+        echo "check-guard-wiring: долг СНИЗИЛСЯ —$paid: убери эти строки из $WIRING_BASELINE ТОЙ ЖЕ правкой и поправь no_plan_ref"
+    fi
+}
 
 if [ "$problems" -ne 0 ]; then
     cat >&2 <<'HINT'
