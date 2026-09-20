@@ -63,18 +63,25 @@ def main():
 
     if not os.path.isfile(path):
         w("MISSING %s\n" % TARGET.replace(os.sep, "/"))
-        w("dup_verdict=-1\ndup_status=-1\ndup_route=-1\nverdict_no_status=-1\n")
+        w("dup_verdict=-1\ndup_status=-1\ndup_route=-1\nverdict_no_status=-1\n"
+          "rows_scanned=-1\n")
         return 1
 
     dup_v = 0
     dup_s = 0
     dup_r = 0
     no_status = 0
+    # ЗНАМЕНАТЕЛЬ ОСМОТРА (2026-09-20). Без него падение любого счётчика ниже
+    # читается как погашенный долг, хотя может означать, что разбор перестал
+    # УЗНАВАТЬ строки: поменялась разметка реестра, съехал `ROW`, файл переехал.
+    # Ноль нарушений при нуле разобранных строк — не чистота.
+    rows_seen = 0
     for line in io.open(path, encoding="utf-8", errors="replace"):
         m = ROW.match(line)
         if not m:
             continue
         num = m.group(1)
+        rows_seen += 1
         # ЦИТАТА — НЕ ВЕРДИКТ. Строка, объясняющая само это правило, неизбежно
         # называет маркеры по имени: «строк с двумя `Статус:`». Счётчик,
         # принимающий цитату за утверждение, соврал бы ровно в ту сторону,
@@ -108,6 +115,7 @@ def main():
     w("dup_status=%d\n" % dup_s)
     w("dup_route=%d\n" % dup_r)
     w("verdict_no_status=%d\n" % no_status)
+    w("rows_scanned=%d\n" % rows_seen)
     return 0
 
 
