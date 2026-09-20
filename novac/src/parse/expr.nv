@@ -349,6 +349,31 @@ fn Cursor mut @match_expr() -> Node {
             ak.push(@node(NodeKind.Pattern, pk))
         } else if @peek() == TokenKind.Ident {
             mut pk = []Node.of(@take())
+            // A QUALIFIED variant: `K.A => ...`, the sum named before the
+            // variant. Read as two more leaves in the same Pattern node, the
+            // way `sem` already reads a qualified name elsewhere -- the
+            // parser records the shape and the checker decides what it means.
+            //
+            // MEASURED 2026-09-20, and this is why it is first of four. The
+            // parser's fallback was 143 of the 332 diagnostics left after the
+            // peers wave -- a BUCKET, not a form. Taking the FIRST refusal of
+            // each file (plan 274:3056: later spans are recovery debris) left
+            // nineteen places, and they were one family: match-arm patterns.
+            // A matrix of one shape per file then named the four the parser
+            // stops at, of which this is one:
+            //   `K.A => 1`            qualified variant   <- here
+            //   `Some(v) => return v` a bare return body
+            //   `"a" => 1`            a string literal
+            //   `'a' => 1`            a char literal
+            // while a bare variant, `_` and an integer literal were read
+            // already. Carriers: `check/check.nv:313` (`DiagKind.LangError`),
+            // `lower/ir.nv:646` (`ElseShape.NoElse`).
+            if @peek() == TokenKind.Dot && @peek(skip: 1) == TokenKind.Ident {
+                pk.push(@take())
+                pk.push(@take())
+            } else {
+                // An unqualified head: the branches below answer for it.
+            }
             // A record-form variant in PATTERN position: `Circle { radius }`.
             // D54 (#719) makes this the only legal way to destructure such a
             // variant -- the positional form is refused by the oracle since
