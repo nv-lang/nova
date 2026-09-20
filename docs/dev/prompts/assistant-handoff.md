@@ -20,8 +20,8 @@
 задан не зря: по ветке роль помощника не опознаётся, а дерево у неё своё):
 
 * **ветка:** `measure/1186-check-vs-test`;
-* **рабочее дерево:** `D:\Sources\nv-lang\nova-wt-research`
-  (в POSIX-виде `/d/Sources/nv-lang/nova-wt-research`) — отдельный worktree
+* **рабочее дерево:** `<рядом с репозиторием>\nova-wt-research`
+  (в POSIX-виде `<рядом с репозиторием>/nova-wt-research`) — отдельный worktree
   рядом с главной копией, не сама репа;
 * визитка роли: `nova-session-assistant.card` в общем `.git`, перезаписывается
   при каждом входе.

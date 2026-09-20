@@ -52,7 +52,7 @@ allowed-tools: "Bash, Read, Grep, Glob"
 ```sh
 bash scripts/guards/check-novac-differential.sh .        # корпус: совпали / отставание
 python scripts/guards/check-novac-subset-debt-dated.py . # долг подмножества
-bash scripts/guards/check-novac-legacy-workarounds.sh .  # налог оракула: обходы
+python scripts/guards/check-novac-legacy-workarounds.py .  # налог оракула: обходы
 python scripts/guards/check-plans-tag-bound.py .         # сколько планов ждёт 1.0
 gh run list --limit 10                                   # CI: зелёный ли, и чем красен
 ```
