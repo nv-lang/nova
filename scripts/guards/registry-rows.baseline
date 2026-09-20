@@ -1297,7 +1297,11 @@
 # 2026-09-20 (integrator): rows 1131 -> 1132, max 1182 -> 1183 -- zavedena 1183
 #   (import std.encoding.serde molcha vyklyuchaet proverku dubley u potrebitelya;
 #   razlichie v ODNOY stroke import, nashyol pomoshchnik). Blokiruet teg.
+# 2026-09-20 (integrator): 1184 vydan oknu nova-78 (tekst E_READONLY_COERCE
+#   nazyvaet ro-otmyvanie tam, gde prichina -- VREMYA ZHIZNI ro-parametra).
+#   Ob'yavlen dyroy do vliva yego vetki: nomer, kotoryy nesyot chuzhaya vetka,
+#   zanyat nezavisimo ot togo, vidit li yego eto derevo.
 rows=1132
 max=1183
 stale_gaps=0
-gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1176-1178
+gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1176-1178,1184
