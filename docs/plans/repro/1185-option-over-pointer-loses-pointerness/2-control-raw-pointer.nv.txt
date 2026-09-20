@@ -1,0 +1,11 @@
+// КОНТРОЛЬ 1 к №1185: тот же `Option`, но над ГОЛЫМ указателем, без newtype.
+//
+// Зачем: без этой пробы вывод звучал бы «newtype теряет указательность», и чинили
+// бы newtype. Здесь newtype нет вовсе, а результат тот же `NovaOpt_nova_int` —
+// значит теряет `Option` при инстанциации, а не обёртка.
+
+fn takeraw(h Option[*()]) -> int => match h { Some(_) => 1, None => 0 }
+
+fn main() Io -> () {
+    print("ok ${takeraw(None)}")
+}

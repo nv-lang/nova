@@ -1,0 +1,16 @@
+// Улика к строке реестра №1185 — ФОРМА: непрозрачная ручка как newtype над
+// указателем, обе записи из D216 §3.
+//
+// Ожидаемое по норме (D216 §7): `Option[CHandle]` — ОДИН указатель, `None` = NULL.
+// Фактическое: в выпущенном C параметр объявлен `NovaOpt_nova_int` — структура
+// с тегом и нагрузкой `nova_int`. Команда и дословные вердикты — в README.md.
+
+type CHandle *()
+type CHandle2(*())
+
+fn take(h Option[CHandle]) -> int => match h { Some(_) => 1, None => 0 }
+fn take2(h Option[CHandle2]) -> int => match h { Some(_) => 1, None => 0 }
+
+fn main() Io -> () {
+    print("ok ${take(None)} ${take2(None)}")
+}
