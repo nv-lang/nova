@@ -253,14 +253,37 @@ def save_state(p, st):
         pass
 
 
-def log_escape(cwd, text):
+def log_escape(cwd, text, why=None):
+    u"""Запись побега несёт ТО, ЧТО КЛАПАН ВЫПУСТИЛ, а не только факт срабатывания.
+
+    ЗАМЕР 2026-09-20 (интегратор, реестр 221.1 №1202): за сутки 24 записи,
+    ВСЕ одним текстом «пропуск после 2 блокировок подряд», без имени окна и без
+    причин тех двух блокировок. По такой записи нельзя сказать ни что побег был
+    верен, ни что ошибочен, — журнал мерил СРАБАТЫВАНИЕ клапана вместо
+    его ПРЕДМЕТА. Теперь строка несёт метки обеих блокировок и сессию.
+
+    Метка КОРОТКАЯ и без текста доклада намеренно: журнал читают глазами
+    и грепом, а ход окна может содержать что угодно."""
     d = os.path.join(cwd or ".", "target", ".stop-guard")
+    sid = (os.environ.get("CLAUDE_CODE_SESSION_ID") or u"?")[:8]
+    w = u" | ".join(why) if why else u"меток нет"
     try:
         os.makedirs(d, exist_ok=True)
         with io.open(os.path.join(d, "escapes.log"), "a", encoding="utf-8") as fh:
-            fh.write(u"%s %s\n" % (time.strftime("%Y-%m-%d %H:%M"), text))
+            fh.write(u"%s [%s] %s :: выпущено после: %s\n"
+                     % (time.strftime("%Y-%m-%d %H:%M"), sid, text, w))
     except Exception:
         pass
+
+
+def note_block(st, tag):
+    u"""Запомнить МЕТКУ блокировки и увеличить счётчик. Держим две последние:
+    клапан срабатывает ровно после двух, больше хранить нечего."""
+    st["blocks"] = st.get("blocks", 0) + 1
+    why = list(st.get("why") or [])
+    why.append(tag)
+    st["why"] = why[-2:]
+    return st
 
 
 def check_queue(cwd):
@@ -581,16 +604,18 @@ def main():
 
     # Предохранитель: третья блокировка подряд не ставится.
     if st.get("blocks", 0) >= MAX_BLOCKS_IN_ROW:
+        why = list(st.get("why") or [])
         st["blocks"] = 0
+        st["why"] = []
         save_state(sp, st)
-        log_escape(cwd, u"пропуск после %d блокировок подряд" % MAX_BLOCKS_IN_ROW)
+        log_escape(cwd, u"пропуск после %d блокировок подряд" % MAX_BLOCKS_IN_ROW, why)
         return 0
 
     # Строка «Модели агентов:» ищется по ВСЕМУ ходу, а не по хвосту: работа
     # агентов называется в середине доклада, а строка — в конце.
     whole = text.lower()
     if any(w in whole for w in AGENT_WORK) and MODELS_LINE not in whole:
-        st["blocks"] = st.get("blocks", 0) + 1
+        note_block(st, u"нет строки Модели агентов")
         save_state(sp, st)
         block(
             u"В ходе есть работа агентов, но нет строки «Модели агентов: …». "
@@ -603,7 +628,7 @@ def main():
 
     m = STOP_RE.search(tail)
     if not m:
-        st["blocks"] = st.get("blocks", 0) + 1
+        note_block(st, u"ход без стоп-кода")
         save_state(sp, st)
         block(
             u"Ход окончен без причины. Остановка требует доказательства: последняя "
@@ -688,7 +713,7 @@ def main():
         save_state(sp, st)
         return 0
 
-    st["blocks"] = st.get("blocks", 0) + 1
+    note_block(st, (reason or u"код не подтвердился").split(u".")[0][:60])
     save_state(sp, st)
     block(reason)
     return 0

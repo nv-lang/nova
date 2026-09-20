@@ -542,6 +542,36 @@ def _t_stale_copies_agree():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _t_escape_names_what_it_let_through():
+    u"""ПОБЕГ ОБЯЗАН НАЗВАТЬ, ЧТО ВЫПУЩЕНО.
+
+    Зачем клетка (реестр 221.1 №1202): до 2026-09-20 журнал писал только
+    факт срабатывания клапана — 24 записи за сутки ОДНИМ текстом, без окна
+    и без причин двух блокировок. По такой записи нельзя решить, был ли
+    побег верен: журнал мерил КЛАПАН вместо его ПРЕДМЕТА.
+
+    КОНТРОЛЬ ВНУТРИ КЛЕТКИ, а не рядом: проверяется НЕ само наличие
+    строки — она была и раньше, — а то, что в ней НЕТ слов «меток нет»
+    и есть метка блокировки. Сними передачу меток — клетка краснеет."""
+    tmp = tempfile.mkdtemp(prefix="stopesc-")
+    try:
+        queue(tmp, {"role": "integrator", "open": [u"есть работа"]})
+        turns = [(u"Сделал правку, всё зелено.", 0)]
+        # две блокировки подряд, третья — побег
+        for _ in range(3):
+            run(tmp, turns, session="esc1")
+        p = os.path.join(tmp, "target", ".stop-guard", "escapes.log")
+        if not os.path.exists(p):
+            return False
+        last = io.open(p, encoding="utf-8").read().strip().split("\n")[-1]
+        if u"меток нет" in last:
+            return False
+        return (u"выпущено после:" in last
+                and u"стоп-кода" in last)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 for _name, _fn in ((u"визитка НАЗЫВАЕТ роль помощника на чужой ветке",
                     _t_assistant_card_names_role),
                    (u"чужая визитка помощника роли не даёт", _t_assistant_card_foreign),
@@ -549,7 +579,8 @@ for _name, _fn in ((u"визитка НАЗЫВАЕТ роль помощник�
                    (u"визитка МОЕЙ сессии: роль моя, молчание блокируется", _t_card_mine),
                    (u"визитка ПРОТУХЛА: след, а не адрес — страж судит", _t_card_stale_foreign),
                    (u"визитка СВЕЖАЯ и чужая: по-прежнему молчит", _t_card_fresh_foreign),
-                   (u"две копии возраста визитки дают один ответ", _t_stale_copies_agree)):
+                   (u"две копии возраста визитки дают один ответ", _t_stale_copies_agree),
+                   (u"побег называет, ЧТО выпущено", _t_escape_names_what_it_let_through)):
     try:
         _got = _fn()
         _why = u"ok" if _got else u"не сработало"
