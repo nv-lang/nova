@@ -9153,7 +9153,7 @@ checker-overflow), см. `[M-181-pattern-var-rebind]`. Nested-scope double-consu
 
 ---
 
-## D188. `Cleanup[E]` protocol + `consume X = expr { body }` scope-block
+## D188. `Cleanup[E]` protocol + `consume X = expr { body }` scope-block {#d188}
 
 > **Plan 110.** Принято 2026-05-31. **Статус: ACTIVE** (Plan 110.1+110.2
 > +110.4+110.5 landed 2026-06-01; Plan 110.9 V1.1 partial 2026-06-03 —
