@@ -437,10 +437,13 @@ export fn payload_as_seen(ctx Ctx, scr_t TyId, pt TyId) -> TyId {
 /// type: the kind test belongs WITH the question, not at each caller.
 fn decl_of_sum_ty(ctx Ctx, t TyId) -> DeclId {
     if !is_ty(t) { return no_decl() }
-    match ctx.tys.kind_of(t) {
-        TkSum | TkApp | TkRecord | TkNewtype => ctx.tys.decl_head_of(t)
-        TkPrim | TkParam | TkInfer | TkTuple => no_decl()
-    }
+    // THE DOOR, not a second reading of the kind. `names_a_decl` answers
+    // exactly this and answers it for EVERY type since registry #1145 -- the
+    // first version here matched over `TypeKind` and was a duplicate of it.
+    // Found by the tuple guard, which was right about more than the word:
+    // the duplicate is why the word appeared at all.
+    if !ctx.tys.names_a_decl(t) { return no_decl() }
+    ctx.tys.decl_head_of(t)
 }
 
 /// HOW MANY sums declare a variant of this NAME, and the first such row: the

@@ -17,7 +17,7 @@
 
 module novac.lower
 
-import ../tree.{Node, AssignOp}
+import ../tree.{Node, AssignOp, NodeId, raw_node}
 import ../types.{TyId}
 import ../diag.{ice}
 import ../sem.{VariantRow, Ctx, CheckOut}
@@ -447,6 +447,36 @@ export type FnBuilder {
     open_arms []SwitchArm /// arms of the open matches, innermost match last (M2b-1d)
     arm_start []int /// where each open match's arms begin in `open_arms`, innermost last
     switches int /// how many matches this body has opened -- the source of `SwitchTerm.uniq`
+    hoisted_at []int /// node ids whose value is already in a local (F65), parallel to `hoisted_to`
+    hoisted_to []Local /// the local holding the node at the same index of `hoisted_at`
+}
+
+/// A NODE WHOSE VALUE IS ALREADY IN A LOCAL, or `no_local()` (F65).
+///
+/// The other half of `Operand enum Place(Local) | Tree(Node)`: the operand
+/// type could already SAY "a local", and nothing could say WHICH local a
+/// given tree node had been put in. The printer asks this before printing a
+/// node, so a hoisted argument prints as its temporary and its effects have
+/// already run, in the order the source wrote them.
+///
+/// A LINEAR SCAN ON PURPOSE: the table holds the effectful arguments of one
+/// call at a time -- two or three entries, emptied with the builder at every
+/// function. A map would cost more to build than the scan costs to walk.
+export fn FnBuilder @local_of_node(id NodeId) -> Local {
+    for i in 0..@hoisted_at.len() {
+        if @hoisted_at[i] == raw_node(id) { return @hoisted_to[i] }
+    }
+    no_local()
+}
+
+/// Put this node's value in a local of its own and remember which (F65).
+///
+/// The caller lowers the node into the local; this door only records the
+/// pairing, so the recording cannot drift from the placement -- they are one
+/// statement at the one call site.
+export fn FnBuilder mut @remember_hoist(id NodeId, l Local) -> () {
+    @hoisted_at.push(raw_node(id))
+    @hoisted_to.push(l)
 }
 
 /// A builder whose local 0 is the return place of type `ret_ty` (rustc `_0`)
@@ -459,7 +489,13 @@ export fn FnBuilder.new(ret_ty TyId) -> FnBuilder {
     mut cur = []Stmt.new()
     mut open_arms = []SwitchArm.new()
     mut arm_start = []int.new()
-    FnBuilder { locals, blocks, cur, cur_id: BlockId(0), open_arms, arm_start, switches: 0 }
+    // EMPTY WITH THE BUILDER: a hoist belongs to one function body, and a node
+    // id is unique within it -- so the table cannot answer about a node of the
+    // previous function even by accident (F65).
+    mut hoisted_at = []int.new()
+    mut hoisted_to = []Local.new()
+    FnBuilder { locals, blocks, cur, cur_id: BlockId(0), open_arms, arm_start, switches: 0,
+                hoisted_at, hoisted_to }
 }
 
 /// The block the next statement lands in.

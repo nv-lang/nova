@@ -830,6 +830,36 @@ export fn digit_index(text str) -> int {
 /// The qualifier itself is left at slot 0 for the caller that has to check
 /// it names the matched type -- a question this door does not answer,
 /// because it has no `Ctx`.
+/// DOES THIS SUBTREE CALL ANYTHING? An argument that calls something is an
+/// argument whose evaluation ORDER is observable.
+///
+/// Two askers, one door: `check` refuses two such arguments in one call when
+/// nothing fixes their order, and the lowering hoists exactly those into
+/// temporaries so that something does (F65). The two must agree on WHICH
+/// arguments they mean, and agreeing by asking the same function is the only
+/// kind of agreement that survives an edit.
+export fn contains_call(n Node) -> bool {
+    match n {
+        Leaf(_) => false
+        Branch { kind, children, .. } => {
+            if kind == NodeKind.Call || kind == NodeKind.MethodCall { return true }
+            for c in children {
+                if contains_call(c) { return true }
+            }
+            false
+        }
+    }
+}
+
+/// WHICH LEAF OF A FLAT PATTERN IS ITS HEAD -- slot 0 for a bare head, slot
+/// 2 for a qualified one (`Kind`, `.`, `B`).
+///
+/// Its doc paragraph ended up above `disj_head_slots` when that door was
+/// written beside it -- the same displacement, in the other direction, that
+/// the neighbour's own doc records. Registry 1190 is why the door exists:
+/// reading slot 0 found the TYPE name, which names no variant, so both the
+/// checker and the lowering fell through to "a plain binder" -- and a
+/// binder matches everything.
 export fn pattern_head_slot(pat []Node) -> int {
     if pat.len() < 3 { return 0 }
     if !pat[0].is_ident() { return 0 }

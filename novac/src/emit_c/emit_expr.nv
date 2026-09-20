@@ -15,6 +15,8 @@
 module novac.emit_c
 
 import ../sem.{c_free_symbol}
+// The absent local (F65): a node that was not hoisted.
+import ../lower.{no_local}
 
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, raw_node}
@@ -247,7 +249,22 @@ fn Emitter mut @emit_bound_args(kids []Node, from int, recv_slot bool,
         } else if recv_slot && at == 0 {
             @emit_expr(kids[0])
         } else {
-            @emit_expr(call_arg_at(kids, from, if recv_slot { at - 1 } else { at }))
+            // ALREADY IN A LOCAL? (F65) The lowering hoists an effectful
+            // argument into a temporary so the effects run in the order the
+            // source wrote them; here that decision becomes the printed text.
+            //
+            // ASKED HERE AND NOT AT THE HEAD OF `@emit_expr`: there it
+            // substituted the local for the node everywhere, INCLUDING inside
+            // the statement that defines the local, and the emission said so
+            // plainly -- `nova_int _novac_l2 = _novac_l2;`. The question is
+            // about an ARGUMENT, and this is where an argument is printed.
+            ro anode = call_arg_at(kids, from, if recv_slot { at - 1 } else { at })
+            ro hl = @lo.ir.local_of_node(anode.id_of())
+            if hl != no_local() {
+                @body.append(@lo.ir.decl_of(hl).name)
+            } else {
+                @emit_expr(anode)
+            }
         }
         if wrap {
             @body.append(")")

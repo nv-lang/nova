@@ -375,7 +375,9 @@ export fn unit_of(paths []str, texts []str) -> Unit {
             // newline that belongs to no file -- and a diagnostic at the END of
             // the unit landed on it, so a span that read 43 alone read 44 in the
             // unit: one byte past a 43-byte file. Between-form has no last one.
-            if bodies > 0 { out.push(UNIT_LF) } else {
+            if bodies > 0 {
+                out.push(UNIT_LF)
+            } else {
                 // The first body follows the header, which already ends in one.
             }
             bodies += 1
