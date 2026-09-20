@@ -1,0 +1,7 @@
+z_empty.nv byte count: 0
+=== SUBJECT: unit of a_broken.nv + the empty peer ===
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"z_empty.nv","start":1,"end":1},"message":"fn declares a return type but its body ends without a value","poisoned_by":null}
+=== CONTROL 1: the broken file alone ===
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"a_broken.nv","start":43,"end":43},"message":"fn declares a return type but its body ends without a value","poisoned_by":null}
+=== CONTROL 2: the empty file alone (no JSON = clean) ===
+rc=0

@@ -1,0 +1,6 @@
+export fn kind(b int) -> int {
+    match b {
+        126 => 1
+        _ => 0
+    }
+}

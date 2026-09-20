@@ -1376,6 +1376,22 @@ Account.new                // static-функция как значение, т�
 The programmer and the LLM instantly distinguish: a call = with
 parentheses, a value = without. No properties with side effects.
 
+### Argument evaluation order in a call: left to right (D484)
+
+Call arguments are evaluated **left to right, in source order**, and that order
+is **observable**: if two arguments produce effects, the program must see them
+in exactly that order.
+
+```nova
+f(say("left"), say("right"))   // left first, then right
+```
+
+The rule is not new. It lived inside D188, in the prose about the disarm point,
+and was therefore unfindable -- three searches over a month walked past it. The
+single word added here is *observable*, and it is not decoration: without it the
+rule reads as a hint to the compiler, which it is free to ignore. The norm and
+its price: [D484](decisions/03-syntax.md#d484).
+
 ### One internal form -- `@` as the receiver's type variable (D458)
 The sugar above (`fn Type mut @job(a int) -> @`) is unchanged -- it stays
 the only DECLARATION form for a method. D458 (2026-08-12, implementation --

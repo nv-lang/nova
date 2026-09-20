@@ -858,7 +858,7 @@ guard "$ROOT/scripts/guards/check-rt-sigpipe-ign.sh" "$ROOT" || fail "SIG_IGN(SI
 step loop "retracted-param-form (снятая форма параметра в доке — D445, №611)"
 guard "$ROOT/scripts/guards/check-retracted-param-form.sh" "$ROOT" || fail "снятая постфиксная форма параметра в доке (D445 AMEND, №611)"
 step loop 'retracted-try-semantics (снятая трактовка `?` в доке — D85, №713)'
-guard "$ROOT/scripts/guards/check-retracted-try-semantics.sh" "$ROOT" || fail 'снятая трактовка `?` в доке: руководство обязано быть на нуле, осадок по зонам — только вниз (D85, №713/№442)'
+guard "$ROOT/scripts/guards/check-retracted-try-semantics.sh" "$ROOT" || fail 'снятая трактовка \`?\` в доке: руководство обязано быть на нуле, осадок по зонам — только вниз (D85, №713/№442)'
 step loop "retired-names (снятое имя не живёт в рабочих зонах — №442)"
 guard "$ROOT/scripts/guards/check-retired-names.sh" "$ROOT" || fail "снятое имя живёт в рабочей зоне: переименование сделано наполовину (список пар — scripts/guards/retired-names.list)"
 step loop "hunter-mark (мера охотника считается грепом по трекам, пробы в дереве — план 278 Ф.2/Ф.6)"
@@ -1010,7 +1010,7 @@ step loop "doc-examples (снятые формы в nova-примерах пуб
 DOC_EXAMPLES_SHOW_MATCHES=0 guard "$ROOT/scripts/guards/check-doc-examples.sh" "$ROOT" || fail "doc-examples (дока учит снятому синтаксису — let/readonly/*ro T/*unsafe T/постфикс-!/trait-impl-throws/ref-формы/external fn/addr_of/null <тип>/#impl(<старое имя>) — см. вывод выше)"
 
 step loop "handoff-labels (метка раздела ролевой записки — полная дата, а не четыре цифры: 2026-09-17, шесть схем в двух файлах)"
-guard "$ROOT/scripts/guards/check-handoff-labels.py" "$ROOT" || fail "handoff-labels (метка раздела записки не есть полная дата: заведи `0-ГГГГ-ММ-ДД[-часть суток]`, прежнюю — в базу; см. вывод выше)"
+guard "$ROOT/scripts/guards/check-handoff-labels.py" "$ROOT" || fail "handoff-labels (метка раздела записки не есть полная дата: заведи \`0-ГГГГ-ММ-ДД[-часть суток]\`, прежнюю — в базу; см. вывод выше)"
 
 step loop "handoff-home (передача остановки лежит в РОЛЕВОЙ записке, а не в игнорируемом docs/.sessions — слово владельца 2026-09-18)"
 guard "$ROOT/scripts/guards/check-handoff-home.py" "$ROOT" || fail "handoff-home (передача написана в каталог под .gitignore либо /stop перестал называть ролевую записку: см. вывод выше)"
@@ -1031,9 +1031,9 @@ guard "$ROOT/scripts/guards/check-test-fixture-coverage.sh" "$ROOT" "$TFC_BASE" 
 step loop "diag-fixture-coverage (кодов диагностик без neg-фикстуры не прибавляется — №639)"
 guard "$ROOT/scripts/guards/check-diag-fixture-coverage.sh" "$ROOT" || fail "прибавилось кодов диагностики без neg-фикстуры: правило 5 работает ПО ДИФФУ и про накопленное не знает ничего — замер 2026-08-19: из 421 кода без фикстуры 210 (№639); новая диагностика обязана приезжать со своей neg-фикстурой, обе формы записи кода считаются одинаково"
 step loop "test-env-races (одну переменную среды правит не больше одного теста — №733)"
-guard "$ROOT/scripts/guards/check-test-env-races.sh" "$ROOT" || fail "два теста правят ОДНУ переменную среды, а тесты Rust идут ПАРАЛЛЕЛЬНО в ОДНОМ процессе: зелёное становится вопросом планировщика (№733 — `march_flag_default` упал на CI, пройдя локально); решение — в чистую функцию, чтение среды — РОВНО ОДНОМУ тесту"
+guard "$ROOT/scripts/guards/check-test-env-races.sh" "$ROOT" || fail "два теста правят ОДНУ переменную среды, а тесты Rust идут ПАРАЛЛЕЛЬНО в ОДНОМ процессе: зелёное становится вопросом планировщика (№733 — \`march_flag_default\` упал на CI, пройдя локально); решение — в чистую функцию, чтение среды — РОВНО ОДНОМУ тесту"
 step loop "generic-static (статик не живёт внутри generic-функции — №736)"
-guard "$ROOT/scripts/guards/check-generic-static.sh" "$ROOT" || fail "`static` внутри generic-функции: Rust инстанцирует его НА КАЖДУЮ мономорфизацию, и мьютекс, заведённый там ради сериализации, НЕ СЕРИАЛИЗУЕТ НИЧЕГО (№736: у каждого из семи тестов SCC-кэша был СВОЙ мьютекс, и CI дал (0,3) вместо (0,1)); вынеси статик на уровень модуля"
+guard "$ROOT/scripts/guards/check-generic-static.sh" "$ROOT" || fail "\`static\` внутри generic-функции: Rust инстанцирует его НА КАЖДУЮ мономорфизацию, и мьютекс, заведённый там ради сериализации, НЕ СЕРИАЛИЗУЕТ НИЧЕГО (№736: у каждого из семи тестов SCC-кэша был СВОЙ мьютекс, и CI дал (0,3) вместо (0,1)); вынеси статик на уровень модуля"
 step loop "std-module-coverage (модулей std без единого теста не прибавляется — №471)"
 guard "$ROOT/scripts/guards/check-std-module-coverage.sh" "$ROOT" || fail "прибавилось модулей std БЕЗ ЕДИНОГО теста: база известных отказов сторожит ПАДАЮЩИЕ тесты и слепа к ОТСУТСТВУЮЩИМ — непокрытость выглядит как исправность (№471); тест клади РЯДОМ с модулем, как требует конвенция std"
 
@@ -2256,6 +2256,20 @@ step loop "D-number uniqueness"
 if body_runs; then
     bash scripts/guards/check-dblock-numbers.sh . \
         || fail "check-dblock-numbers: столкновение номеров D-блоков (подробности выше)"
+    # Мёртвый внутридокументный якорь (строка реестра 221.1 №1182): ссылка
+    # `(#dNNN)` работает только при явном `{#dNNN}`, и до 2026-09-20 это не
+    # судил никто. Судится РОСТ, база засеяна сегодняшними 450.
+    python scripts/guards/check-dead-anchors.py . \
+        || fail "check-dead-anchors: новые мёртвые внутридокументные якоря (подробности выше)"
+    # Долг фикстур по кодам диагностик (реестр 221.1 №1187): из 417 объявленных
+    # кодов `E_*` половина не закреплена ничем. Судится НОВЫЙ код без
+    # фикстуры и без пометки `nova:shadowed-by` с именем перехватчика.
+    #
+    # ПОДКЛЮЧЁН 2026-09-20 интегратором: страж был написан, но не звался
+    # ниоткуда — то есть держался на том, что кто-то помнит его запустить,
+    # а помнить перестают ровно тогда, когда гейт долгий (Г8).
+    python scripts/guards/check-ecode-fixture-debt.py . \
+        || fail "check-ecode-fixture-debt: новый код `E_*` без фикстуры и без пометки затенения (подробности выше)"
 fi
 # №651: вердикт внешнего гейта — у итога, где его прочтут. Красный CI не
 # роняет локальный гейт (совещательный шаг, см. его вызов), но GATE OK не

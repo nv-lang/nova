@@ -1,0 +1,9 @@
+type Rec {
+    a int
+}
+
+fn main() Io -> () {
+    ro acc = Rec { a: 1 }
+    unsafe { ro p = raw &acc }
+    print("x")
+}

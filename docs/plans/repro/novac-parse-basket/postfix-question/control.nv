@@ -1,0 +1,10 @@
+export type Row enum
+    | RowA(int)
+    | RowB
+
+export fn pick(x int) -> Option[Row] => if x > 0 { Some(Row.RowA(x)) } else { None }
+
+export fn take(x int) -> Option[int] {
+    ro r = pick(x)
+    return Some(1)
+}

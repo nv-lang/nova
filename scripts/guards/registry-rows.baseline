@@ -1312,7 +1312,85 @@
 #   callout with no scope), 1184 (E_READONLY_COERCE names ro-laundering where the
 #   cause is the lifetime of a ro parameter). 1184 is the number I issued an hour
 #   ago; the other three the window filed itself and I assigned them earlier.
-rows=1136
-max=1184
+# 2026-09-20 (integrator): 1185 issued to window nova-78 -- Option over a POINTER
+#   is emitted with an nova_int payload, so the null-pointer optimisation of D216
+#   section 7 does not happen and the pointer TYPE is lost, not just the layout.
+#   Declared as a hole until that branch merges: a number carried by someone else's
+#   branch is taken whether or not this tree can see it.
+# 2026-09-20 (integrator): rows 1136 -> 1137, max 1184 -> 1186 -- zavedena 1186
+#   (`nova test` ne vidit dublya imyon NIKOGDA, dazhe bez importa, poetomu fikstura
+#   na etot klass v korpuse zelena pri zhivom defekte). 1185 ostayotsya dyroy --
+#   on vydan oknu nova-78 i pridyot s yego vetkoy.
+# 2026-09-20 (integrator, merge): 1185 removed from gaps -- the row arrived with
+#   the branch. Removed in the same step it arrived, so a later loss of it cannot
+#   pass as a declared hole.
+# 2026-09-20 (integrator): rows 1138 -> 1139, max 1186 -> 1187 -- zavedena 1187
+#   (417 kodov E_* ob'yavleno, 198-217 iz nih ne nazvany ni odnoy fiksturoy --
+#   dva schyota s raznymi kriteriyami, oba zapisany v stroke).
+# 2026-09-20 (integrator): rows 1139 -> 1141, max 1187 -> 1189. 1188 -- novac module
+#   tests have NEVER run on CI (the conventions step fails first and everything after
+#   it is skipped; measured over eight runs, 18-20 September). 1189 -- the body-tail
+#   door knows `if` and not `if let`, 12 self-hosting diagnostics (Carina's window).
+# 2026-09-20 (integrator): rows 1141 -> 1142, max 1189 -> 1190 -- zavedena 1190
+#   (opisaniya strazhey v gate.sh/gate-novac.sh ispolnyalis obolochkoy: obratnye
+#   apostrofy vnutri dvoynyh kavychek -- podstanovka komandy, ne razmetka).
+# 2026-09-20 (integrator): rows 1142 -> 1144, max 1190 -> 1192. 1191 -- tihiy
+#   nevernyy otvet v novac (emitter chitaet obrazec plecha inache, chem pishet
+#   parser); nashla Karina V SVOEY ZHE volne, uzhe vlitoy mnoyu. 1192 -- defekt
+#   orakula s vremennoy pod znachenie `if let`, eyo zhe poputnaya nahodka.
+# 2026-09-20 (integrator): rows 1144 -> 1148, max 1192 -> 1196 -- chetyre nahodki
+#   ohoty po kletke 'dver sborki edinicy x K1' (trek novac, otchyot
+#   docs/dev/hunts/novac/2026-09-20-unit-door.md, shest prob v dereve).
+# 2026-09-20 (integrator): rows 1148 -> 1150, max 1196 -> 1198. Proba k stroke 623
+#   podtverdila samu 623 (dyra ne vosproizvoditsya) i nashla DVA drugih defekta:
+#   1197 -- diagnostiki kompilyatora po-russki pri publichnom repozitorii;
+#   1198 -- otkaz ukazyvaet na stroku `module`, a ne na mesto vyzova.
+# 2026-09-20 (integrator): rows 1150 -> 1151, max 1198 -> 1199 -- zavedena 1199
+#   (strazh pechataet DVA verdikta podryad, i pervyy -- ok; pod etim ok prozhila
+#   vsyu noch tihaya miskompilyaciya 1191). Nashla Karina, format verdiktov moy.
+# 2026-09-20, интегратор: rows 1151 -> 1153, max 1199 -> 1201.
+# Добавлены №1200 (роль в снимке очереди выводится из ветки
+# дерева запуска, а не из автора) и №1201 («первый отказ файла»
+# взят за адрес причины; мера остатка мешает две величины).
+# Поднята ПОСЛЕ строк, а не вместе с ними, и это мой промах:
+# гейт поймал расхождение сам, и именно за этим храповик и стоит.
+# 2026-09-20, интегратор: rows 1153 -> 1154, max 1201 -> 1202.
+# Добавлена №1202 (журнал побегов Stop-стража пишет срабатывание
+# клапана вместо того, что он выпустил). База поднята ТЕМ ЖЕ
+# коммитом, что и строка, — в отличие от предыдущего раза,
+# когда она отстала на две строки и гейт поймал это за меня.
+# 2026-09-20, интегратор: rows 1154 -> 1155, max 1202 -> 1203.
+# Добавлена №1203 (три механизма требовали противоположного
+# о месте передачи остановки).
+# 2026-09-20, интегратор: rows 1155 -> 1159, max 1203 -> 1208.
+# Добавлены №1205–1208 — четыре находки охоты guards
+# (вывод стража не позволяет судить его предмет). №1204 ВЫДАН
+# помощнику и будет заведён им — поэтому rows растёт на 4, а max на 5.
+# 2026-09-20: rows 1161 -> 1162 -- stroka 1204 (znamenatel dolga zavyshen)
+# 2026-09-21, интегратор: rows 1163 -> 1164, max 1213 -> 1214.
+# Добавлена №1214 (check-commit-refs красный на CI c6c958472 — протухшая
+# краснота, локально уже снята; причина обхода NOVA_SKIP_CI_CHECK=1 пуша).
+rows=1164
+max=1214
 stale_gaps=0
-gaps=174-208,210-215,653-654,743,1062,1096,1103-1104
+# 2026-09-20: №1204 — ВРЕМЕННАЯ дыра, номер ВЫДАН помощнику (nova-94)
+# под строку про `E_READONLY_` — обрывок имени, завышающий знаменатель
+# долга 178. Строку заводит он, не я. **ОБЯЗАТЕЛЬСТВО:** как только
+# строка влита — УБРАТЬ 1204 отсюда, иначе она станет
+# «протухшей дырой» (номер и в gaps=, и со строкой), а их страж считает
+# отдельно и краснеет на росте.
+# 2026-09-20, интегратор: №1209–1211 — ВРЕМЕННЫЕ дыры, номера
+# ВЫДАНЫ вслух и строки ещё не написаны:
+#   1209 — `Spec: none` с самодоносом проходит стража, снимающего отказ;
+#   1210 — адрес отказа съезжает на СЛЕДУЮЩИЙ оператор (восстановление);
+#   1211 — диагностика называет форму, которой в программе НЕТ (`with` читается
+#          как конструктор записи).
+# Текст 1210 и 1211 пишет окно Карины (оно видело предмет), 1209 — я.
+# ОБЯЗАТЕЛЬСТВО то же, что у 1204: как строка приедет — УБРАТЬ номер
+# отсюда, иначе он станет «протухшей дырой» и страж покраснеет уже на этом.
+# 2026-09-20: 1204 SNYAT iz gaps= -- stroka priehala sliyaniem vetki
+# pomoshchnika. Obyazatelstvo, zapisannoe zdes zhe chasom ranshe, ispolneno:
+# nomer I v gaps=, I so strokoy schitaetsya 'protuhshey dyroy'.
+# 2026-09-21: №1209 ПРИЕХАЛ и СНЯТ из gaps=
+# (писал интегратор, как и планировалось). №1210-1211 всё ещё ждёт Карину.
+gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1210-1211

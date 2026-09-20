@@ -1,0 +1,4 @@
+fn main() Io -> () {
+    unsafe { ro p = raw &1 }
+    print("x")
+}

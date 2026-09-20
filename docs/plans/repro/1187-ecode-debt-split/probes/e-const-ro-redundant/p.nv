@@ -1,0 +1,3 @@
+const ro X = 1
+
+fn main() Io -> () => print("x")

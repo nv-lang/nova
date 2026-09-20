@@ -398,14 +398,40 @@
 # That is not "my version won": every entry of theirs is present, only the language
 # changed, and the manifest must be English because it ships inside the package
 # repository.
-# 102 -> 103 (2026-09-20, окно Карины): приехал D484, амендмент D188 -- порядок
-# вычисления аргументов поднят из прозы в самостоятельную норму и объявлен
-# НАБЛЮДАЕМЫМ. КАРИНЕ ЭТО СТОИТ НУЛЯ РАБОТЫ И ОДНОГО ДОЛГА: норму она уже
-# исполняет (волна F65, хоист аргументов в локалы), и это ИСПРАВЛЕНИЕ уже
-# написанного, а не новый заказ -- правило существовало в D188 п.4 и было
-# несущим. Долг -- фикстура: вызова с двумя эффективными аргументами в корпусе
-# нет, поэтому нарушение нормы ОРАКУЛОМ (реестр 685) не судится ничем.
-#   spec-queue: 103
+# 97 -> 98 (window nova-78): registry row 1185 and a caveat written into the D216
+# amendment -- Option over a POINTER is emitted as a tagged struct with an nova_int
+# payload, so the null-pointer optimisation of section 7 does not happen and the
+# pointer TYPE is lost, not merely its layout. The caveat went into the amendment
+# text rather than only into the registry, on the argument that a reader of a rule
+# does not go and check whether it is implemented.
+# 102 and 98 -> 103 (2026-09-20, fourth pass of the same merge, integrator).
+# Measured again: 103. Four passes, four measurements, and every one of them was
+# already stale when the next pass began. If anything is the lesson of this file
+# tonight, it is that a counter shared by two moving branches has no value between
+# measurements -- only at them.
+# 103 -> 104 (2026-09-20, integrator, resolving this very conflict). BOTH SIDES
+# SAID 103 AND BOTH WERE WRONG. Measured by the hook's own formula over the
+# JOINED history -- `git log --since=<spec-point> --no-merges HEAD MERGE_HEAD
+# -- spec/decisions | sort -u` -- and the union is 104: each branch had one
+# commit the other could not see. Taking either side, or their maximum, would
+# have shipped 103. This is the fourth time this file records that a counter
+# shared by two moving branches has no value between measurements; it is the
+# first time the union was actually computed instead of a side being picked.
+# CARINA'S ENTRY, TRANSLATED (the manifest ships inside the package repository
+# and must be English; her branch never saw the translation, so the text is
+# carried over, not dropped): D484 arrived -- an amendment to D188. The
+# argument evaluation order is lifted out of that rule's prose into a norm of
+# its own and declared OBSERVABLE. THIS COSTS CARINA ZERO WORK AND ONE DEBT:
+# she already obeys the norm (wave F65 hoists arguments into locals), so this
+# corrects what is written rather than ordering something new -- the rule
+# existed in D188 p.4 and was load-bearing. The debt is a fixture: the corpus
+# has no call with two effectful arguments, so the ORACLE's violation of the
+# norm (registry 685) is judged by nothing.
+# 104 -> 105 (2026-09-20, integrator): D188 gets an explicit {#d188} anchor,
+# which is a spec/decisions commit and therefore counts. No rule changed --
+# the anchor makes 46 existing links resolve and drops the dead-anchor debt
+# from 436 to 421.
+#   spec-queue: 105
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,

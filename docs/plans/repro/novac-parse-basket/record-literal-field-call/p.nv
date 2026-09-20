@@ -1,0 +1,6 @@
+export type Tok {
+    kind int
+    text str
+}
+
+export fn mk(t str) -> Tok => Tok { kind: 1, text: t }

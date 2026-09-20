@@ -1,0 +1,6 @@
+fn main() Io -> () {
+    ro a = []int.of(1, 2)
+    ro v = a[0]
+    unsafe { ro p = raw &v }
+    print("x")
+}

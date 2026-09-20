@@ -1423,4 +1423,56 @@ no_caveat=0
 #   std-modulya (`std.encoding.serde`) VYKLYUCHAET proverku dubley u potrebitelya,
 #   dva drugih std-modulya ne vyklyuchayut. Nashyol pomoshchnik, razlichie v ODNOY
 #   stroke import. Tot zhe chestnyy rost, chto i 73: schitaetsya NAZVANNOE.
-blockers=74
+# 2026-09-20 (integrator): blockers 74 -> 75. Zavedena 1186 -- `nova test` ne vidit
+#   dublya imyon NIKOGDA, dazhe bez importa. Chestnyy rost: defekt byl v dereve i
+#   ranshe, hrapovik schitaet NAZVANNOE. Sledstvie tyazhelee samogo defekta -- rezhim,
+#   kotorym gonyaetsya korpus, slep k etomu klassu, znachit nasha priyomka slepa.
+# 2026-09-20 (integrator): blockers 75 -> 74. NOT a fix -- a RETRACTION. Row 1186
+#   was filed by me two hours ago on a premise that turned out false: `nova test`
+#   was said to be blind to duplicate names, and it is not. Verified by MY OWN
+#   probe (two peer files, duplicate Node, a live test): check FAIL: 1, test
+#   FAIL: 1. The only divergence of the eight families measured is row 1183, where
+#   it is `check` that stays silent. Lowering the base in the same edit, because a
+#   base left high silently permits filing the same phantom again.
+# 2026-09-20 (integrator): blockers 74 -> 75. Zavedena 1187 -- 417 kodov E_*
+#   ob'yavleno v compiler-codegen/src, 198-217 iz nih ne nazvany NI ODNOY
+#   fiksturoy (dva schyota, raznye kriterii, oba v stroke). Chestnyy rost:
+#   hrapovik schitaet NAZVANNOE, a polovina poverhnosti diagnostik nikogda ne
+#   ispolnyalas ni v odnom progone.
+# 2026-09-20 (integrator): blockers 75 -> 76. Zavedena 1188 -- modulnye testy novac
+#   NIKOGDA ne zapuskalis na CI: shag konvenciy padaet ranshe, i vsyo posle nego
+#   skipped (zamer po vosmi progonam, 18-20 sentyabrya). Eto ne rost dolga za noch,
+#   a NAZYVANIE togo, chto stoyalo tri dnya i schitalos zelyonym.
+# 2026-09-20 (integrator): blockers 76 -> 77. Zavedena 1191 -- emitter novac
+#   chitaet obrazec plecha inache, chem pishet parser: programma sobiraetsya,
+#   molchit i dayot NEVERNYY otvet (name_of(Kind.B) vozvrashchaet "A").
+#   Nashla Karina v SVOEY ZHE volne, uzhe vlitoy mnoyu -- i vazhnee defekta to,
+#   pochemu on proshyol priyomku: ona merila, chto forma CHITAETSYA, a ne chto
+#   programma VEDYOT SEBYA verno. Differencial -- yarus integratora, i on ego
+#   na etoy volne ne progonyal pered sliyaniem.
+# 2026-09-20 (integrator): blockers 77 -> 79. Ohota po kletke 'dver sborki
+#   edinicy kompilyacii x K1' (trek novac) dala chetyre nahodki, dve iz nih
+#   blokery: 1193 (tablica edinicy otdayot paru 'fayl+smeshchenie', kotoroy ne
+#   sushchestvuet -- diagnostika saditsya na NEVINOVNOGO rovesnika) i 1194
+#   (same_dir sravnivaet bayty, i smeshannye razdeliteli molcha razryvayut
+#   modul nadvoe). Chestnyy rost: oba defekta byli v dereve i ranshe.
+# 2026-09-20 (integrator): blockers 79 -> 80. Zavedena 1197 -- diagnostiki
+#   kompilyatora pechatayutsya PO-RUSSKI, a repozitoriy publichen i zerkalitsya
+#   na tri hosta. Strazh cli-output-language sudit --help, JSON-shemu i teksty
+#   oshibok CLI, a diagnostiki chekera -- samuyu bolshuyu poverhnost teksta --
+#   ne sudit nikto. Nashlos poputno pri probe k stroke 623.
+# 2026-09-20 (integrator): blockers 80 -> 81. Zavedena 1199 -- strazh pechataet
+#   DVA verdikta podryad, i pervyy 'ok'; chitayushchiy ostanavlivaetsya na pervom,
+#   i pod nim prozhila vsyu noch tihaya miskompilyaciya 1191. Nashla Karina.
+# 2026-09-20 (integrator): blockers 81 -> 82. Ne novaya stroka, a PEREKLASSIFIKACIYA
+#   1195: ona byla pro formulirovku otkaza (K2, ne bloker), a zamer pokazal drugoy
+#   predmet -- proverka dubley imyon pokryvaet TOLKO TIPY: `fn dup()` i `const K`
+#   dvazhdy v odnom fayle dayut NOL diagnostik. Pole ispravleno NA MESTE.
+# 2026-09-20, интегратор: 82 -> 84, РОСТ и он законен.
+# Две новые строки окна Карины — №1212 и №1213, обе с БЛОКИРУЕТ ТЕГ: ДА.
+# Это НЕ регресс: дефекты существовали и раньше, а число выросло
+# потому, что их ВПЕРВЫЕ ИЗМЕРИЛИ: первый замер расстояния до
+# ступени 0.3 (59 из 90 примеров, 274.5 §5) вскрыл то, чего не считал
+# остаток самосборки — он считает НАШ исходник и слеп к формам,
+# которыми мы не пользуемся. Число выросло от ЗРЕНИЯ, не от ухудшения.
+blockers=84

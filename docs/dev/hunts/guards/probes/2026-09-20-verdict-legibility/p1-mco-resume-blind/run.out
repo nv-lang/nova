@@ -1,0 +1,9 @@
+=== A. real tree (invariant truly holds, 60+ runtime files)
+check-single-mco-resume ok: mco_resume только внутри nova_resume_fiber (+ документированные allowlist'ы)
+rc=0
+=== B. control 1: nova_rt exists but EMPTY (target gone)
+check-single-mco-resume ok: mco_resume только внутри nova_resume_fiber (+ документированные allowlist'ы)
+rc=0
+=== C. control 2: naked mco_resume in nova_rt/gc/gc_resume.c (subdir)
+check-single-mco-resume ok: mco_resume только внутри nova_resume_fiber (+ документированные allowlist'ы)
+rc=0

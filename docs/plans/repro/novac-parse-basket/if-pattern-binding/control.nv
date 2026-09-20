@@ -1,0 +1,10 @@
+export type Look enum
+    | One(int)
+    | Many
+
+export fn n(got Look) -> int {
+    match got {
+        One(_) => 1
+        Many => 0
+    }
+}

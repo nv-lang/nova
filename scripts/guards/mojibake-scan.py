@@ -129,6 +129,12 @@ def main():
     sig = SIG_FFFD if "--fffd" in flags else SIG
     tracked = tracked_files(root)
     hits = []
+    # ЗНАМЕНАТЕЛЬ ОСМОТРА (2026-09-20). Сколько файлов реально прочитано. Он
+    # нужен не для отчётности: счёт находок берётся обходом со списком
+    # расширений, пропусками файлов и фильтром по индексу git — сузь любой из
+    # трёх, и число УПАДЁТ, а падение читается как «порчу вычистили». Ноль
+    # находок при нуле прочитанного — не чистота.
+    scanned = 0
     for base, dirs, files in os.walk(root):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
         for f in files:
@@ -142,6 +148,7 @@ def main():
                 text = io.open(p, encoding="utf-8").read()
             except Exception:
                 continue
+            scanned += 1
             for i, line in enumerate(text.split(u"\n"), 1):
                 if both:
                     if SIG.search(line):
@@ -153,6 +160,11 @@ def main():
     out = io.open(sys.stdout.fileno(), "w", encoding="utf-8", newline="\n", closefd=False)
     for h in hits:
         out.write(h + u"\n")
+    # Строка знаменателя печатается ТОЛЬКО в режиме `--both`: прежние два режима
+    # читаются глазами и опорой самотеста, и лишняя строка в них сломала бы
+    # счёт находок у того, кто пропускает вывод через `grep -c`.
+    if both:
+        out.write(u"scanned:%d\n" % scanned)
     out.flush()
 
 

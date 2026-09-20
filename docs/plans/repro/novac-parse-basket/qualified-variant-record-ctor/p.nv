@@ -1,0 +1,6 @@
+export type Node enum
+    | Leaf(int)
+    | Branch { id int, kind int }
+
+export fn branch(id int, kind int) -> Node =>
+    Node.Branch { id, kind }

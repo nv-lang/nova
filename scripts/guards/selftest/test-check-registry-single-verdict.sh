@@ -22,7 +22,9 @@ REG="$TMP/docs/plans/221.1-bug-sweep.md"
 # Baza novoy proverki (verdikt bez statusa) zhivet v proveryaemom dereve:
 # bez neyo strazh chestno otkazyvaetsya, i samotest lovil by ne to.
 NSB="$TMP/scripts/guards/verdict-no-status.baseline"
-printf 'rows=0' > "$NSB"
+printf 'rows=0
+scanned_rows=0
+' > "$NSB"
 mk() { printf '%s\n' "$@" > "$REG"; }
 run() { sh "$G" "$TMP" >/dev/null 2>&1; echo $?; }
 
@@ -113,10 +115,69 @@ rows = (u'| 1 | K1 | text. ' + BL + u' DA. |' + LF
         + u'| 2 | K1 | text. ' + BL + u' NET. ' + ST + u' OTKRYT |' + LF)
 io.open(p, 'w', encoding='utf-8', newline=LF).write(rows)
 PY2
-printf 'rows=0' > "$NSB"
+printf 'rows=0
+scanned_rows=0
+' > "$NSB"
 check "verdikt bez statusa -- krasneet" "$(run)" "1"
-printf 'rows=1' > "$NSB"
+printf 'rows=1
+scanned_rows=0
+no_status_row=1
+' > "$NSB"
 check "ta zhe stroka v baze -- zeleno" "$(run)" "0"
+
+
+echo "== imennaya baza: zamena, suzhenie razbora, samoprotivorechie =="
+# Реестр из двух строк: 1 — вердикт БЕЗ статуса, 2 — полная.
+python - "$REG" <<'PY3'
+import io, sys
+p = sys.argv[1]
+BL = u"БЛОКИРУЕТ ТЕГ:"
+ST = u"Статус:"
+LF = chr(10)
+rows = (u'| 1 | K1 | text. ' + BL + u' DA. |' + LF
+        + u'| 2 | K1 | text. ' + BL + u' NET. ' + ST + u' OTKRYT |' + LF)
+io.open(p, 'w', encoding='utf-8', newline=LF).write(rows)
+PY3
+
+# ЗАМЕНА: счёт тот же (1), номер в базе ДРУГОЙ. Счётный храповик молчал бы.
+# Это не гипотеза: 2026-09-20 счёт 19 дважды пережил смену состава.
+printf 'rows=1\nscanned_rows=0\nno_status_row=777\n' > "$NSB"
+check "zamena nomera pri tom zhe schete -- krasneet" "$(run)" "1"
+
+# ПОГАШЕНИЕ: номер в базе есть, нарушения уже нет — зелёный С СОВЕТОМ.
+printf 'rows=2\nscanned_rows=0\nno_status_row=1\nno_status_row=777\n' > "$NSB"
+check "pogashennyy nomer -- zelyonyy" "$(run)" "0"
+sh "$G" "$TMP" 2>&1 | grep -q "POGASHENY\|ПОГАШЕНЫ" \
+    && ok "pogashenie nazvano vsluh" \
+    || bad "pogashenie proshlo molcha"
+
+# БАЗА ПРИЗНАЁТ ДОЛГ ЧИСЛОМ, НО НЕ НАЗЫВАЕТ НОМЕРОВ.
+printf 'rows=1\nscanned_rows=0\n' > "$NSB"
+check "schet bez nomerov -- krasneet" "$(run)" "1"
+
+# БАЗА ПРОТИВОРЕЧИТ СЕБЕ: счёт против числа номеров.
+printf 'rows=5\nscanned_rows=0\nno_status_row=1\n' > "$NSB"
+check "schet ne raven chislu nomerov -- krasneet" "$(run)" "1"
+
+# СУЖЕНИЕ РАЗБОРА — мутируем ЯДРО, а не базу: копия сканера перестаёт узнавать
+# строки реестра. Долг падает до нуля, и счётный храповик прочёл бы это как
+# погашение. Знаменатель разобранных строк не даёт.
+printf 'rows=1\nscanned_rows=2\nno_status_row=1\n' > "$NSB"
+check "kontrol: pri shirokom razbore baza shoditsya" "$(run)" "0"
+MUT="$TMP/mut"; mkdir -p "$MUT"
+cp "$G" "$MUT/check-registry-single-verdict.sh"
+sed 's/^ROW = re\.compile(.*/ROW = re.compile(r"^NIKOGDA-NE-SOVPADET")/' \
+    "$HERE/../registry-verdict-scan.py" > "$MUT/registry-verdict-scan.py"
+if sh "$MUT/check-registry-single-verdict.sh" "$TMP" > "$TMP/mutout" 2>&1; then
+    bad "suzhennyy razbor proshel kak zelyonyy"
+else
+    grep -q "razbor suzilsya\|разбор сузился" "$TMP/mutout" \
+        && ok "suzhenie razbora -- krasneet imenno pro suzhenie" \
+        || bad "krasnyy, no ne pro suzhenie razbora"
+fi
+
+# Вернуть базу в состояние, ожидаемое остальными случаями ниже.
+printf 'rows=0\nscanned_rows=0\n' > "$NSB"
 
 echo "== ne vret o srede =="
 rm -f "$REG"

@@ -232,7 +232,25 @@ export type Token {
     text str /// the token's own bytes — ALWAYS a slice of src (the position door depends on it; Eof carries src[n..n])
 }
 
-// [LEGACY-#675] char-literal-permissive, NARROWED 2026-09-18: half of it is
+// [LEGACY-#1158] char-literal-permissive. REPOINTED 2026-09-20 (integrator):
+// this workaround used to name #675, and #675 is CLOSED -- the gate said so and
+// it was right. What still holds the workaround is a DIFFERENT and open row,
+// #1158: the form of a constant's initialiser in one module decides whether
+// same-named constants in OTHER modules are emitted at all. Writing the canonical
+// `'\\' as u8` here fails on `_nova_const_..._B_BACKSLASH_value`, which is that
+// row's symptom and not a char-literal problem at all.
+//
+// A MARKER POINTING AT A CLOSED BUG LIES ABOUT WHY IT EXISTS: the next window
+// reads "#675 is closed", removes the workaround, and meets a build error in a
+// place that has nothing to do with char literals. That is the same shape as
+// registry row 1183 -- a refusal naming the wrong address -- and the family is
+// wider than it looks: rows 171, 151, 559 and 1158 are all cross-module constant
+// emission, and 1183's own foreign address (`Duration.ZERO`) is row 171 verbatim.
+//
+// HISTORY OF #675 IS KEPT BELOW because the narrowing is real and its measurement
+// is what proved the condition met -- it just was not enough.
+//
+// [was: LEGACY-#675] char-literal-permissive, NARROWED 2026-09-18: half of it is
 // closed, the constant below stays hex for a DIFFERENT reason than before.
 //
 // WHAT #675 HELD (opened 2026-08-14 by dogfooding): (a) the backslash literal

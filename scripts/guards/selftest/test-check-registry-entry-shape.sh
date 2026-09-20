@@ -26,7 +26,7 @@ GOOD='| 900 | 🔴 К1 | **Заголовок дефекта.** Описание
 mk() { printf '%s\n' "$@" > "$REG"; }
 
 # 1. Полная запись — зелено при базе 0.
-mk "$GOOD"; echo 'incomplete_entries=0' > "$BASE"
+mk "$GOOD"; printf 'incomplete_entries=0\nscanned_rows=0\n' > "$BASE"
 out=$(NOVA_REGSHAPE_BASELINE="$BASE" bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 0 ]; then ok "полная запись проходит"; else bad "ложный отказ на полной записи: $out"; fi
 
@@ -47,7 +47,9 @@ if [ "$rc" -eq 1 ] && echo "$out" | grep -q 'оговорка-о-носител�
 
 # 5. Храповик держит существующий долг: две неполные записи при базе 2 — зелено.
 mk '| 904 | 🔴 К1 | **A.** Описание. **БЛОКИРУЕТ ТЕГ: НЕТ — фикстура селфтеста.** |' '| 905 | 🔴 К1 | **B.** Описание. **БЛОКИРУЕТ ТЕГ: НЕТ — фикстура селфтеста.** |'
-echo 'incomplete_entries=2' > "$BASE"
+# С 2026-09-20 база именная: два долга обязаны быть НАЗВАНЫ номерами,
+# иначе страж не отличит «те же две» от «две другие вместо них».
+printf 'incomplete_entries=2\nscanned_rows=0\nincomplete_row=904\nincomplete_row=905\n' > "$BASE"
 out=$(NOVA_REGSHAPE_BASELINE="$BASE" bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 0 ]; then ok "храповик держит долг в пределах базы"; else bad "ложный отказ на долге в базе (код $rc): $out"; fi
 
@@ -64,14 +66,14 @@ if [ "$rc" -eq 0 ] && echo "$out" | grep -q 'СНИЗИЛСЯ'; then ok "соо�
 # 8. К3 — тоже приоритет. Проверка появилась после того, как страж считал
 #    двенадцать записей с К3 неоформленными и держал их в базе долга.
 mk '| 907 | 🟢 К3 | **Заголовок.** **КЛАСС: что-то.** Фикс носителя приёмкой НЕ считается. |'
-echo 'incomplete_entries=0' > "$BASE"
+printf 'incomplete_entries=0\nscanned_rows=0\n' > "$BASE"
 out=$(NOVA_REGSHAPE_BASELINE="$BASE" bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 0 ]; then ok "К3 считается приоритетом"; else bad "ложный отказ на записи с К3 (код $rc): $out"; fi
 
 # 9. Запись без номера (TBD) — красно. Она невидима проверке формы, значит
 #    «оформлено» считалось бы по неполному множеству.
 mk "$GOOD" '| TBD | 🔴 К1 | **Заголовок.** **КЛАСС: что-то.** Фикс носителя приёмкой НЕ считается. **БЛОКИРУЕТ ТЕГ: НЕТ — фикстура селфтеста.** |'
-echo 'incomplete_entries=0' > "$BASE"
+printf 'incomplete_entries=0\nscanned_rows=0\n' > "$BASE"
 out=$(NOVA_REGSHAPE_BASELINE="$BASE" bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 1 ] && echo "$out" | grep -q 'без номера'; then ok "ловит запись с TBD вместо номера"; else bad "не поймал TBD (код $rc): $out"; fi
 
@@ -84,7 +86,7 @@ if [ "$rc" -eq 0 ]; then ok "без TBD ложняка нет"; else bad "лож
 #     Поле введено разбором 2026-08-11 по всем открытым К1 сразу, поэтому
 #     множество полное и послабления не нужно: новая К1 обязана нести вердикт.
 mk '| 908 | 🔴 К1 | **Заголовок.** **КЛАСС: что-то.** Фикс носителя приёмкой НЕ считается. Статус: ОТКРЫТ |'
-echo 'incomplete_entries=0' > "$BASE"
+printf 'incomplete_entries=0\nscanned_rows=0\n' > "$BASE"
 out=$(NOVA_REGSHAPE_BASELINE="$BASE" bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 1 ] && echo "$out" | grep -q 'БЛОКИРУЕТ ТЕГ'; then ok "ловит К1 без вердикта о теге"; else bad "не поймал К1 без вердикта (rc=$rc): $out"; fi
 
@@ -108,6 +110,37 @@ mk '| 912 | 🟡 К2 | **A.** **КЛАСС: что-то.** Фикс носите
    '| 913 | 🟡 К2 | **B.** **КЛАСС: что-то.** Фикс носителя приёмкой НЕ считается. |'
 out=$(NOVA_REGSHAPE_BASELINE="$BASE" bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 0 ]; then ok "разные номера проходят"; else bad "ложный отказ на разных номерах"; fi
+
+# ── ИМЕННАЯ ЧАСТЬ БАЗЫ (2026-09-20) ─────────────────────────────────────
+# Счёт прячет ЗАМЕНУ записи и СУЖЕНИЕ разбора; обе половины проверяются, и у
+# каждой есть контроль.
+
+# (а) КОНТРОЛЬ: те же два номера в базе — зелено.
+mk '| 904 | 🔴 К1 | **A.** Описание. **БЛОКИРУЕТ ТЕГ: НЕТ — фикстура селфтеста.** |' '| 905 | 🔴 К1 | **B.** Описание. **БЛОКИРУЕТ ТЕГ: НЕТ — фикстура селфтеста.** |'
+printf 'incomplete_entries=2\nscanned_rows=0\nincomplete_row=904\nincomplete_row=905\n' > "$BASE"
+out=$(NOVA_REGSHAPE_BASELINE="$BASE" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 0 ]; then ok "контроль: те же номера — зелено"; else bad "контроль не прошёл: $out"; fi
+
+# (б) ЗАМЕНА при том же счёте — красно, и новый номер НАЗВАН.
+printf 'incomplete_entries=2\nscanned_rows=0\nincomplete_row=904\nincomplete_row=999\n' > "$BASE"
+out=$(NOVA_REGSHAPE_BASELINE="$BASE" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q '905'; then ok "замена записи при том же счёте — красно, номер назван"; else bad "замена не поймана (код $rc): $out"; fi
+
+# (в) СУЖЕНИЕ РАЗБОРА: разобрано меньше строк, чем в базе, — красно.
+printf 'incomplete_entries=2\nscanned_rows=99\nincomplete_row=904\nincomplete_row=905\n' > "$BASE"
+out=$(NOVA_REGSHAPE_BASELINE="$BASE" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q 'разбор сузился'; then ok "падение знаменателя разбора — красно"; else bad "сужение разбора не поймано (код $rc): $out"; fi
+
+# (г) База ПРИЗНАЁТ долг числом, но номеров не называет, — красно.
+printf 'incomplete_entries=2\nscanned_rows=0\n' > "$BASE"
+out=$(NOVA_REGSHAPE_BASELINE="$BASE" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q 'только счёт'; then ok "счёт без номеров — красно"; else bad "счётная база прошла (код $rc): $out"; fi
+
+# (д) ПОГАШЕНИЕ: номер в базе есть, записи уже нет — зелено С СОВЕТОМ.
+mk '| 904 | 🔴 К1 | **A.** Описание. **БЛОКИРУЕТ ТЕГ: НЕТ — фикстура селфтеста.** |'
+printf 'incomplete_entries=2\nscanned_rows=0\nincomplete_row=904\nincomplete_row=905\n' > "$BASE"
+out=$(NOVA_REGSHAPE_BASELINE="$BASE" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && echo "$out" | grep -q 'дооформлены'; then ok "погашение — зелено и названо вслух"; else bad "погашение обработано неверно (код $rc): $out"; fi
 
 if [ "$FAILED" -eq 0 ]; then echo "селфтест check-registry-entry-shape: $OKN/$OKN ok"; exit 0; fi
 echo "селфтест check-registry-entry-shape: ЕСТЬ ПРОВАЛЫ" >&2

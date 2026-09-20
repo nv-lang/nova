@@ -1,0 +1,6 @@
+fn f() -> int => 1
+
+fn main() Io -> () {
+    ro y = f()
+    print("x")
+}

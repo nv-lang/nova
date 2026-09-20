@@ -73,11 +73,19 @@ gate rather than passing quietly.
   часы. Требование владельца, распространено на все окна и всех агентов
   2026-09-16 (план 290 пункт 6). Без времени доклад не сопоставить с чужими
   прогонами и с логами гейта, а на одной машине их идёт несколько.
+* **Команда зовётся ПЕРЕД КАЖДЫМ таким сообщением, а не раз за ход** (правка
+  2026-09-20, замер владельца: доклад помечен 05:56 при машинных 05:54 — время
+  снято в начале хода и проставлено спустя одиннадцать минут работы). Ход длится
+  десятки минут; значение, взятое в его начале, к докладу уже неверно, и ошибка
+  всегда уходит ВПЕРЁД. **Прибавлять к прежнему значению «сколько прошло»
+  запрещено:** это та же память, только с арифметикой. Правило распространяется и
+  на сообщения СОСЕДНИМ ОКНАМ — по ним сверяют порядок событий.
 * **Гейт печатает время сам:** при старте — местное время, ярус и ожидаемую
   длительность из `scripts/guards/gate-budget.baseline`; по завершении — время
   конца, полное время, ярус и где смотреть профиль шагов. Ожидаемое берётся из
   ФАЙЛА, потому что число в голове протухает молча (замер: профиль плана 275 был
   снят на 67 шагах и пережил рост до 114).
+
 **Language**
 
 * Commit messages in **English** — the repository is public and mirrored to
@@ -166,7 +174,41 @@ gate rather than passing quietly.
 
 ## What is Nova
 
-Nova is a systems programming language with algebraic effects, structured concurrency, and optional contracts. Side effects are visible in function signatures (`Db Net Fail`), enabling local code review and handler-based testing without mocks. See [README.md](README.md) for a full overview.
+Nova is a systems programming language with algebraic effects, structured concurrency, and optional contracts. Side effects are visible in function signatures (`Db Net Fail`), enabling local code review and handler-based testing without mocks. Nova compiles to C, then to a native binary — no VM, no interpreter; memory is managed by a Boehm GC by default, with `consume`/ownership for deterministic cleanup. See [README.md](README.md) for a full overview.
+
+**Status: v0.1.0, the first public release.** The repository holds the compiler,
+the standard library, the specification, and the tooling. Separately versioned
+packages (`nova-http`, `nova-tls`, `nova-compress`, `nova-polaris`,
+`nova-bignum`, ...) live in their own satellite repositories and are pulled in
+via `nova.lock.toml`.
+
+## Technology stack
+
+* **Compiler** (`compiler-codegen/`, crate `nova-codegen`): Rust (1.85+,
+  edition 2021). Parser, type-checker, C-backend codegen, plus the native C
+  runtime `nova_rt/` (effects, fibers, Boehm GC, libuv M:N scheduler). Kept
+  deliberately dependency-light (`clap` + `anyhow`); the optional `z3-backend`
+  cargo feature adds SMT contract verification via libz3/vcpkg.
+* **CLI** (`nova-cli/`, crate `nova`): the single user-facing `nova` binary
+  (`check` / `build` / `test` / `doc` / `lint` / `regen-runtime` / `test-build`),
+  wrapping `nova_codegen` as a path dependency. Also carries one-shot migration
+  binaries (`migrate_plan60`, `migrate_plan65`). `nova run` (interpreter) is
+  currently unsupported — Nova compiles to C; use `nova build` or `nova test`.
+* **LSP** (`nova-lsp/`): Rust language server with a VSCode extension.
+* **`novac/`** (brand **Carina**): the self-hosted compiler being written in
+  Nova itself (`novac/src/{lex,parse,resolve,sem,types,emit_c,...}`), developed
+  against the Rust compiler as the oracle — see
+  [docs/dev/novac-architecture.md](docs/dev/novac-architecture.md).
+* **Standard library** (`std/`): written in Nova (`.nv`), grouped by domain
+  under `std/src/` (collections, io, fs, net, text, unicode, time, crypto,
+  concurrency, ffi, ...).
+* **Nova workspace**: the root [nova.toml](nova.toml) (D78) declares
+  `members = ["std", "examples", "nova_tests", "spec_tests", "novac"]`;
+  directory name == `package.name`. The Rust crates are NOT part of it.
+* **CI**: GitHub Actions in `.github/workflows/` (`nova-gate`, `nova-lint`,
+  `nova-test-regression`, `crate-tests`, `contracts-z3`, `contracts-crosscheck`,
+  `bench-regression`, `nova-doc`, `dco`). The repo is mirrored to GitVerse and
+  SourceCraft; GitHub is the source of truth.
 
 ## Build
 
@@ -179,6 +221,13 @@ cd nova-cli && cargo build --release && cd ..
 
 # Build compiler internals only (no CLI wrapper)
 cd compiler-codegen && cargo build && cd ..
+
+# Language server
+cd nova-lsp && cargo build --release && cd ..
+
+# Optional SMT-backed contract verification (needs libz3 via vcpkg,
+# see docs/guide/z3-setup.md)
+cd nova-cli && cargo build --release --features z3-backend && cd ..
 ```
 
 After any change to Rust sources in `compiler-codegen/` or `nova-cli/`, rebuild before running tests.
@@ -219,16 +268,22 @@ Full test guide: [docs/dev/test-conventions.md](docs/dev/test-conventions.md).
 
 ```
 nova/
-├── nova-cli/            # User-facing CLI: nova build/run/test/check/doc
+├── nova-cli/            # User-facing CLI: nova build/run/test/check/doc (Rust crate "nova")
 ├── compiler-codegen/    # Rust compiler: parser, type-checker, C-backend codegen, runtime
 │   └── nova_rt/         # C runtime: effects, fibers, GC, libuv scheduler
-├── spec_tests/          # THE authoritative corpus: conformance/ (+neg/, standalone/), soundness/, strict_effects/
+├── nova-lsp/            # Language server (Rust) + VSCode extension pieces
+├── novac/               # Self-hosted compiler in Nova (brand Carina); lex/parse/sem/emit_c in .nv
+├── spec_tests/          # THE authoritative corpus: conformance/ (+neg/, standalone/), soundness/, strict_effects/, p270/
 ├── nova_tests/          # NOT tests: CI inputs only (contracts/, doc/fixtures/)
 ├── nova_tests.old/      # FROZEN ARCHIVE — nothing runs it, never add
 ├── std/                 # Nova standard library source (tests: std/src/<module>/*_test.nv, peer files)
 ├── spec/                # Language specification
 │   ├── decisions/       # Design decisions (D-blocks) — READ BEFORE CHANGING SEMANTICS
 │   └── effects.md       # Effect system intro
+├── examples/            # Nova code examples (incl. examples/flagship/aggregator demo)
+├── bench/               # Benchmarks (corpus/, micro/, m_n/, plan*); config in bench.toml
+├── scripts/             # gate.sh / gate-novac.sh, guards/, githooks/, claude-hooks/, tools/
+├── docker/              # Release Dockerfile + image test runner
 ├── docs/                # Developer guides
 │   ├── dev/test-conventions.md   # Test authoring and EXPECT markers
 │   └── dev/simplifications.md    # Running list of removed complexity
@@ -268,6 +323,17 @@ Other markers: `EXPECT_RUNTIME_PANIC`, `EXPECT_EXIT` / `EXPECT_EXIT_CODE`, `EXPE
 A test file for a new feature `X` goes in `spec_tests/conformance/` (language semantics; negatives in `neg/`, runtime in `standalone/`) or as a peer file next to the std module, `std/src/<module>/X_test.nv`. `SOUNDNESS_REGRESSION` is not a marker the runner recognizes — it is a counter tracked only in `contracts-z3.yml`.
 
 Full marker reference: [docs/dev/test-conventions.md](docs/dev/test-conventions.md).
+
+## Security considerations
+
+* Reporting policy and honest scope statement (pre-1.0, not audited, `unsafe`/FFI
+  can corrupt memory as C can): [SECURITY.md](SECURITY.md). Do not open public
+  issues for vulnerabilities.
+* Secrets are protected by the environment, not by discipline — see the Git rules
+  above: `.claude/settings.json` denies reads of env files, private keys and
+  certificates. Never use shell commands to route around that.
+* Known defects, including security-relevant ones, are tracked in the open in
+  `docs/plans/221.1-bug-sweep.md`.
 
 ## Followup markers (`[M-…]`)
 
@@ -322,4 +388,5 @@ Deferred work is tracked with `[M-<kebab-name>]` markers in docs and code commen
 | [docs/dev/module-conventions.md](docs/dev/module-conventions.md) | **Designing any Nova module (std/app/third-party) + C integration** — effect-family architecture (mockable plumbing + type-method facade), value/must-consume types, structured `Result` errors, byte-first, the `extern "C"` `ffi.nv` layer (CStr vs `(*u8,len)`, errno, value-records), `#cfg` platform-split. (`extern "nova"`/runtime park-wake/`#stable` are std-runtime-only — marked in §Применимость.) Complements [ffi-cookbook.md](docs/guide/ffi-cookbook.md) (FFI mechanics) and [nv-coding-style.md](docs/dev/nv-coding-style.md) (`.nv` style). |
 | [docs/dev/simplifications.md](docs/dev/simplifications.md) | History of removed complexity |
 | [compiler-codegen/README.md](compiler-codegen/README.md) | Compiler internals, build options |
+| [docs/dev/novac-architecture.md](docs/dev/novac-architecture.md) | Architecture of `novac` (Carina), the self-hosted compiler in Nova |
 | [docs/guide/nova-cli.md](docs/guide/nova-cli.md) | CLI command reference |

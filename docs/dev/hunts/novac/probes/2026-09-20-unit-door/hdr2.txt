@@ -1,0 +1,4 @@
+// Probe: what unit_of actually produces. The block below is copied VERBATIM
+// from novac/src/pipeline/pipeline.nv lines 110-439 (tree state 2026-09-20);
+// the only shim is a local `ice` (novac imports it from novac.diag).
+

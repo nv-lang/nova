@@ -1,0 +1,24 @@
+### A. honest stamp: heavy tier ran 1 minute ago
+  rc=1
+  check-gate-daily-budget: ТЯЖЁЛЫЙ ЯРУС УЖЕ ШЁЛ СЕГОДНЯ — осталось 23ч 59м
+    Предел владельца 2026-09-17: полный гейт не чаще раза в
+    сутки. Машина одна на все окна, и каждый прогон — 23-30
+    минут чужого простоя (замер: четыре прогона за сутки).
+    Вместо него, по возрастанию цены: точечный страж (секунды),
+    одна фикстура (`nova test … --filter <имя>`), ярус loop.
+    Ждать дороже? NOVA_GATE_DAILY_OVERRIDE="<причина>" —
+    причина печатается в вывод и попадает в доклад.
+check-gate-daily-budget: FAIL
+  stamp after: [1757999940 push]
+### B. same world, stamp file EMPTY (interrupted write)
+  rc=0
+  check-gate-daily-budget ok: тяжёлого яруса в последние сутки не было
+  stamp after: [1758000000 push]
+### C. same world, stamp field order changed
+  rc=0
+  check-gate-daily-budget ok: тяжёлого яруса в последние сутки не было
+  stamp after: [1758000000 push]
+### D. no stamp at all - heavy tier really never ran
+  rc=0
+  check-gate-daily-budget ok: тяжёлого яруса в последние сутки не было
+  stamp after: [1758000000 push]
