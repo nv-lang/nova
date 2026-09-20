@@ -1067,6 +1067,14 @@ The norm is [D477](decisions/02-types.md); no compiler implements it yet.
 ## Creating values and pattern matching
 
 ```nova
+type BigRec value { a i64  b i64  c i64  d i64 }   // 32 байта
+
+type Node enum
+    | Leaf
+    | indirect Decorated(BigRec, Node)             // за указателем ОБА поля
+```
+
+```nova
 ro p = Point(1.0, 2.0)
 ro u = User { id: 1, name: "alice" }
 ro c = Circle { radius: 5.0 }
@@ -1483,6 +1491,23 @@ show(my_acc)
 ```
 
 ### Field kinds: `ro` for never-mut, `mut` for cache
+
+```nova
+p.read()        // операция НАД указателем (примитив)
+p*.field        // поле ЦЕЛИ
+p*.method()     // метод ЦЕЛИ
+```
+
+```nova
+p*.field        // p : *T
+p**.field       // p : **T
+```
+
+```nova
+fn edit[T](mut x T) -> ref mut T => x  // сквозь неё пишут: mut-параметр — место вызывающего
+fn ptr_read[T](p *T) -> ref T          // сквозь неё читают: место адресует указатель
+
+```
 
 ```nova
 type Account {
