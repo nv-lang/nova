@@ -270,7 +270,8 @@ fn module_line_end(text str) -> int {
 /// inside the subset it is helping to widen.
 fn append_range(mut out []u8, b []u8, from int, to int) -> () {
     for i in from..to {
-        // nova:allow W_MANUAL_SLICE_COPY -- the canon `x[a..b]` is a SLICE, and novac does not compile one yet (registry 1170): obeying here would add to the debt this file exists to remove
+        // nova:allow W_MANUAL_SLICE_COPY -- the canon `x[a..b]` is a SLICE,
+        // and novac does not compile one yet (registry 1170)
         out.push(b[i])
     }
 }

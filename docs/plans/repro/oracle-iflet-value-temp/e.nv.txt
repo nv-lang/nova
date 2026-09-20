@@ -1,0 +1,12 @@
+module p.e
+
+fn g(o Option[int]) -> int {
+    if Some(v) = o { v } else { 0 }
+}
+
+fn none_int() -> Option[int] => None
+
+fn main() {
+    println(g(Some(7)))
+    println(g(none_int()))
+}

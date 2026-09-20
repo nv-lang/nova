@@ -1,0 +1,7 @@
+module p.k
+
+fn g(o Option[int]) -> int {
+    if Some(v) = o { v + 0 } else { 0 }
+}
+
+fn main() { println(g(Some(7))) }

@@ -1,0 +1,7 @@
+module p.j
+
+fn g(o Option[str]) -> int {
+    if Some(v) = o { v.byte_len() } else { 0 }
+}
+
+fn main() { println(g(Some("hi"))) }
