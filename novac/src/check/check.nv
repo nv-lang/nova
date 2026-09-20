@@ -43,6 +43,8 @@ import ../builtins.{IMPL_ATTR, DISPLAY_PROTO}
 import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind}
 import ../sem.{expr_leaf_name, attr_kids_name, attr_args_all, attr_has_args, recv_type_name, is_value_record}
 import ../sem.{file_decls}
+// Where an arm keeps its body -- the door the lowering has read for waves.
+import ../sem.{arm_body_at}
 import ../types.{TyId, no_ty, is_ty}
 import ../resolve.{FnIndex, FieldIndex}
 
@@ -399,7 +401,8 @@ fn Checker @run_end_of(children []Node, best int) -> int {
 /// is the common case, so only the two places that actually open an
 /// initializer position say so.
 fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
-                     arg_pos bool = false, index_pos bool = false) -> () {
+                     arg_pos bool = false, index_pos bool = false,
+                     arm_pos bool = false) -> () {
     match n {
         Leaf(t) => @report_if_error_token(t)
         Branch { kind, children, .. } => {
@@ -837,8 +840,12 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // tail of a value body (`=>` bodies took it earlier; the
                     // `{...}` tail is a statement position plus the typing
                     // route of wave B4's tail machinery).
-                    if !init_pos && !stmt_pos {
-                        @report_first_leaf_of(children, "outside the subset: a `match` is compiled only as an initializer, a statement or a body tail -- other positions are not compiled yet (E2, the control-flow horizon)")
+                    // FOUR legal positions since 2026-09-20: the ARM BODY of
+                    // another match joins the three, and it is 33 of novac's
+                    // own carriers -- the lexer dispatches on a second byte
+                    // that way throughout.
+                    if !init_pos && !stmt_pos && !arm_pos {
+                        @report_first_leaf_of(children, "outside the subset: a `match` is compiled only as an initializer, a statement, a body tail or the body of a match arm -- other positions are not compiled yet (E2, the control-flow horizon)")
                         return
                     } else {
                         // A legal position: walked below.
@@ -920,6 +927,17 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                 // so walking into them would report the same thing twice.
                 ProtoMethod => {}
             }
+            // THE ARM'S BODY SLOT, asked once rather than per child: the door
+            // that knows where an arm keeps its body is `arm_body_at`, and
+            // both the checker and the lowering have read it for waves.
+            ro body_at = if kind == NodeKind.MatchArm {
+                // PARENTHESISED ON PURPOSE: `x ?? 0 - 1` binds as `(x ?? 0) - 1`,
+                // so a body at slot 2 answered 1 and the flag was never true.
+                // Found within a minute by the probe that should have passed.
+                arm_body_at(children) ?? (0 - 1)
+            } else {
+                0 - 1
+            }
             mut at = 0
             for c in children {
                 // STATEMENT POSITION is "a direct child of a Block" (274.5
@@ -937,7 +955,11 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                 @walk(c, stmt_pos: kind == NodeKind.Block,
                       arg_pos: kind == NodeKind.Call || kind == NodeKind.MethodCall ||
                                kind == NodeKind.CtorField,
-                      index_pos: kind == NodeKind.Index && at == 2)
+                      index_pos: kind == NodeKind.Index && at == 2,
+                      // ARM-BODY POSITION (2026-09-20): a `match` or an `if`
+                      // standing as the body of an arm is a VALUE there, and
+                      // the lowering has been able to place one since M2b-1d.
+                      arm_pos: at == body_at)
                 at += 1
             }
         }

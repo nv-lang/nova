@@ -447,6 +447,29 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
         // the only thing not recorded is a type this arm never produces.
         return None
     }
+    // A `match` AS THE ARM'S BODY goes through the MATCH door, not the lattice
+    // (2026-09-20). The walk admitted the position and the typing had no route
+    // for it, so nothing was recorded and the lowering died asking -- `sem: no
+    // type recorded`. Teaching a POSITION is half the work; the other half is
+    // every judge the position now reaches, and this is the third time tonight.
+    if body.kind_of() == NodeKind.MatchExpr {
+        ro mmark = @out.len()
+        @type_match(body)
+        @scope.release(mark)
+        if @out.len() > mmark {
+            // Refused inside, by name: the arm has no type to offer.
+            return None
+        } else {
+            // Typed: the nested match's own type is this arm's.
+        }
+        ro mt = type_of(body, @ctx, @scope, @chan)
+        if is_ty(mt) { @record(body, mt) } else {
+            // Untypeable: the fold is told so rather than guessing.
+        }
+        return Some(mt)
+    } else {
+        // Any other expression: the lattice answers below.
+    }
     // TERMINATOR above, no `else` (the intersection rule of 274.5 s2g, fourth
     // application): an expression body falls through to the lattice, as it
     // always has.
