@@ -1331,7 +1331,10 @@
 #   tests have NEVER run on CI (the conventions step fails first and everything after
 #   it is skipped; measured over eight runs, 18-20 September). 1189 -- the body-tail
 #   door knows `if` and not `if let`, 12 self-hosting diagnostics (Carina's window).
-rows=1141
-max=1189
+# 2026-09-20 (integrator): rows 1141 -> 1142, max 1189 -> 1190 -- zavedena 1190
+#   (opisaniya strazhey v gate.sh/gate-novac.sh ispolnyalis obolochkoy: obratnye
+#   apostrofy vnutri dvoynyh kavychek -- podstanovka komandy, ne razmetka).
+rows=1142
+max=1190
 stale_gaps=0
 gaps=174-208,210-215,653-654,743,1062,1096,1103-1104
