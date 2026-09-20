@@ -1288,7 +1288,10 @@
 #   NE VZYATY: ih nesyot vetka okna nova-78, kotoroy v etom dereve NET -- nomer v
 #   chuzhoy vetke zanyat, hotya grep ego ne vidit. Ob'yavleny dyrami do yeyo vliva;
 #   kogda vetka pridyot, tri dyry snimayutsya TEM ZHE sliyaniem.
-rows=1129
-max=1180
+# 2026-09-20 (integrator): rows 1129 -> 1130, max 1180 -> 1181 -- zavedena 1181
+#   (kommentariy dveri carrier_of utverzhdaet invariant, kotorogo nikto ne derzhit;
+#   cikl padaet ICE vmesto diagnostiki). Naydeno chteniem pri planirovanii 274.15.
+rows=1130
+max=1181
 stale_gaps=0
 gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1176-1178

@@ -308,7 +308,14 @@
 # the duplicated D478 -- the char-literal block became D481, the variant block kept
 # D478. The counter moves anyway because it counts COMMITS touching spec/decisions,
 # not decisions; whoever drains the queue will find nothing to implement in this one.
-#   spec-queue: 88
+# 88 -> 89 (2026-09-20, integrator). AGAIN NO NEW NORM, and the repetition is
+# the point: this commit adds spec/decisions/ISSUED-NUMBERS.md, a register of
+# issued D-numbers, after the number D478 was taken three times in one day. The
+# counter moves because it counts COMMITS touching spec/decisions, not decisions.
+# Twice in one shift now; whoever drains the queue finds nothing to implement in
+# either. Not skipped with NOVA_SPECQUEUE_NA because the number is MEASURED by a
+# command -- a skip here would disagree with what the next window measures.
+#   spec-queue: 89
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,
