@@ -1324,7 +1324,10 @@
 # 2026-09-20 (integrator, merge): 1185 removed from gaps -- the row arrived with
 #   the branch. Removed in the same step it arrived, so a later loss of it cannot
 #   pass as a declared hole.
-rows=1138
-max=1186
+# 2026-09-20 (integrator): rows 1138 -> 1139, max 1186 -> 1187 -- zavedena 1187
+#   (417 kodov E_* ob'yavleno, 198-217 iz nih ne nazvany ni odnoy fiksturoy --
+#   dva schyota s raznymi kriteriyami, oba zapisany v stroke).
+rows=1139
+max=1187
 stale_gaps=0
 gaps=174-208,210-215,653-654,743,1062,1096,1103-1104

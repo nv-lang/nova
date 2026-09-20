@@ -1434,4 +1434,9 @@ no_caveat=0
 #   FAIL: 1. The only divergence of the eight families measured is row 1183, where
 #   it is `check` that stays silent. Lowering the base in the same edit, because a
 #   base left high silently permits filing the same phantom again.
-blockers=74
+# 2026-09-20 (integrator): blockers 74 -> 75. Zavedena 1187 -- 417 kodov E_*
+#   ob'yavleno v compiler-codegen/src, 198-217 iz nih ne nazvany NI ODNOY
+#   fiksturoy (dva schyota, raznye kriterii, oba v stroke). Chestnyy rost:
+#   hrapovik schitaet NAZVANNOE, a polovina poverhnosti diagnostik nikogda ne
+#   ispolnyalas ni v odnom progone.
+blockers=75
