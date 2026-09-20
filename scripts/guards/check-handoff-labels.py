@@ -49,6 +49,16 @@ NAME = "check-handoff-labels"
 NOTES = (
     os.path.join("docs", "dev", "prompts", "integrator-handoff.md"),
     os.path.join("docs", "dev", "prompts", "carina-handoff.md"),
+    # Записка помощника заведена 2026-09-20 (решение владельца) и внесена СЮДА в
+    # том же слиянии: записка, чьи метки никто не судит, расходится со схемой
+    # молча — ровно то, против чего страж и написан.
+    #
+    # НАЗВАННЫЙ ПРОБЕЛ, и он НЕ мой, чтобы закрывать: в `docs/dev/prompts/`
+    # лежит СЕМЬ записок (плюс controller, agent-274, window-283,
+    # window-guards), а судятся три. То есть страж мерит часть своего предмета.
+    # Решение, брать ли остальные под суд, за интегратором: часть из них —
+    # записки закрытых окон, и правило для них может быть другим.
+    os.path.join("docs", "dev", "prompts", "assistant-handoff.md"),
 )
 LABEL = re.compile(r"^##\s+(0-\S+?)[.\s]", re.M)
 GOOD = re.compile(r"^0-\d{4}-\d{2}-\d{2}(?:-[^\W\d_]+)?$", re.UNICODE)
