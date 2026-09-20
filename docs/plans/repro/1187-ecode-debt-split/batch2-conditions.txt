@@ -1,0 +1,99 @@
+# 1187, подготовка партии 2: условие у места печати (ЧТЕНИЕ, без прогонов)
+# Кодов выписано 20. Окно поиска условия — 15 строк над местом печати,
+# берутся три ближайших `if`/`match`/`while`.
+#
+# ЭТО ВЫПИСКА, А НЕ РАЗБОР: какая форма нужна, решает человек, читая
+# условие целиком в файле. Цель — чтобы проба писалась по условию, а не
+# по догадке: в партии 1 догадка стоила восьми недошедших из пятнадцати.
+
+E_ADDR_OF_REMOVED
+    место: compiler-codegen/src/const_fn_eval.rs:2474   функция: walk_expr
+    условие 2470: if let ExprKind::Ident(n) = &func.kind {
+    условие 2471: if (n == "addr_of" || n == "addr_of_mut") && args.len() == 1 {
+
+E_AMBIGUOUS_IDENT_PATTERN
+    место: compiler-codegen/src/parser/mod.rs:11002   функция: parse_if
+    условие 11000: if Self::is_ident_pattern(&pattern) {
+
+E_ARRAY_ELEM_NARROW
+    место: compiler-codegen/src/codegen/emit_c.rs:53501   функция: try_emit_typed_vec_literal
+    условие 53487: if elem_c == "void*" || elem_c == "void_p" {
+    условие 53497: if elem_c == "nova_f64"
+
+E_AUTO_DERIVE_CYCLE
+    место: compiler-codegen/src/protocols/auto_derive.rs:160   функция: diagnostic_message
+    условие 158: match self {
+
+E_AUTO_DERIVE_UNKNOWN_PROTOCOL
+    место: compiler-codegen/src/protocols/auto_derive.rs:182   функция: diagnostic_message
+    условие: в окне 15 строк не найдено — читать функцию целиком
+
+E_AUTO_DERIVE_UNSUPPORTED_KIND
+    место: compiler-codegen/src/protocols/auto_derive.rs:192   функция: diagnostic_message
+    условие: в окне 15 строк не найдено — читать функцию целиком
+
+E_BARE_TYPEVAR_NEEDS_PREFIX
+    место: compiler-codegen/src/types/mod.rs:7017   функция: check_fn
+    условие 7013: if tn.len() <= 2 && tn.chars().all(|c| c.is_ascii_uppercase()) {
+    условие 7014: if !gs.contains_key(tn) && !self.types_get_here_contains(tn) {
+
+E_BLOCKING_FN_DECL_MISSING
+    место: compiler-codegen/src/codegen/emit_c.rs:16224   функция: emit_blocking_fn_call
+    условие: в окне 15 строк не найдено — читать функцию целиком
+
+E_BLOCKING_NOGC_ALLOC
+    место: compiler-codegen/src/types/mod.rs:34609   функция: check_capabilities_at
+    условие 34595: if let Some(fns) = methods.get(&path[1]) {
+    условие 34605: if state.realtime_nogc && nogc_blacklisted_call(&path) {
+    условие 34606: if state.blocking_body_active && !state.realtime_active {
+
+E_CAST_UNWRAP_REQUIRED
+    место: compiler-codegen/src/types/mod.rs:12018   функция: f1_expr_inner
+    условие 12004: if src_path.len() == 1
+    условие 12007: if let TypeRef::Named { path: dst_path, generics: dst_gens, .. } =
+    условие 12010: if dst_path.len() == 1 && dst_gens.is_empty()
+
+E_CHANNEL_TYPE_NOT_INSTANTIABLE
+    место: compiler-codegen/src/types/mod.rs:6813   функция: channel_bare_type_diag
+    условие 6802: if path.len() != 1 || path[0] != "Channel" {
+
+E_COERCE_EFFECTFUL
+    место: compiler-codegen/src/types/mod.rs:28031   функция: collect_coerce_pairs
+    условие 28028: if !f.effects.is_empty() {
+
+E_COERCE_NOT_UNARY
+    место: compiler-codegen/src/types/mod.rs:27877   функция: collect_coerce_pairs
+    условие 27862: if seen_spans.insert(f.span) {
+    условие 27870: if !f.coerce_attr {
+
+E_COERCE_NOT_ZERO_COST
+    место: compiler-codegen/src/types/mod.rs:28044   функция: collect_coerce_pairs
+    условие: в окне 15 строк не найдено — читать функцию целиком
+
+E_COERCE_ON_PROTOCOL
+    место: compiler-codegen/src/parser/mod.rs:5878   функция: parse_effect_methods
+    условие 5873: if matches!(self.peek().kind, TokenKind::Hash) {
+    условие 5874: if let TokenKind::Ident(n) = &self.peek_at(1).kind {
+    условие 5875: if n == "coerce" {
+
+E_COERCE_RECEIVER_FORM_DEFERRED
+    место: compiler-codegen/src/types/mod.rs:27892   функция: collect_coerce_pairs
+    условие 27887: match recv.kind {
+    условие 27889: if f.params.len() == 1 {
+
+E_CONST_FN_ALLOCATION
+    место: compiler-codegen/src/types/mod.rs:2837   функция: check_const_fn_expr
+    условие: в окне 15 строк не найдено — читать функцию целиком
+
+E_CONST_FN_CLOSURE_ARITY
+    место: compiler-codegen/src/const_fn_closure.rs:650   функция: lambda_params_to_fn_params
+    условие 647: if !expected_types.is_empty() && expected_types.len() != params.len() {
+
+E_CONST_FN_CLOSURE_BODY
+    место: compiler-codegen/src/const_fn_closure.rs:531   функция: generate_closure_spec
+    условие: в окне 15 строк не найдено — читать функцию целиком
+
+E_CONST_FN_CLOSURE_EXTERNAL
+    место: compiler-codegen/src/const_fn_closure.rs:626   функция: extract_closure_parts_from_expr
+    условие: в окне 15 строк не найдено — читать функцию целиком
+
