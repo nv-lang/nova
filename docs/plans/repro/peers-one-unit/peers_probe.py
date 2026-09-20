@@ -15,6 +15,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import sys
 from collections import Counter
 
@@ -22,7 +23,12 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 BT = chr(96)
 PAT = re.compile(r"carries no " + BT + r"([^" + BT + r"]+)" + BT + r" for (\S+)")
-SCRATCH = os.path.dirname(os.path.abspath(__file__)).replace(os.sep, "/")
+# THE UNIT GOES TO A TEMP DIR, not beside this script. Written here on
+# 2026-09-20 after the first run of the moved script left `unit_check.nv`
+# in `docs/plans/repro/`: an evidence script that writes into the tree it
+# is evidence about dirties someone else's status, and a stray `.nv` there
+# also breaks the suffix rule for probe files (they are kept as `.nv.txt`).
+SCRATCH = tempfile.mkdtemp(prefix="peers-unit-")
 
 MODULE = sys.argv[1] if len(sys.argv) > 1 else "parse"
 peers = [f.replace(os.sep, "/")
