@@ -351,13 +351,39 @@ export fn unit_of(paths []str, texts []str) -> Unit {
         }
     }
     // Then the bodies, each remembering where it came from.
+    mut bodies = 0
     for j in 0..texts.len() {
         ro tj = texts[j]
         ro bj = tj.bytes()
         ro hj = header_end(texts[j])
-        files.push(UnitFile { path: paths[j], at: out.len(), from: hj })
-        append_range(out, bj, hj, bj.len())
-        out.push(UNIT_LF)
+        // A FILE THAT CONTRIBUTES NO BYTES CONTRIBUTES NO RUN (registry 1193).
+        //
+        // An empty body was recorded as a run of length zero, and the newline
+        // written after it then fell inside that run -- so `file_of_offset`,
+        // which answers with the LAST run at or before the offset, handed the
+        // end of the unit to the file that had given nothing. Measured: a
+        // three-line broken file plus a ZERO-BYTE peer reported
+        // `z_empty.nv:1` -- a byte that file does not have -- while the broken
+        // file alone reported its own offset 43 correctly.
+        //
+        // The separator goes with the run: it exists to keep one body's last
+        // line off the next body's first, and an absent body needs no keeping
+        // apart.
+        if hj < bj.len() {
+            // THE SEPARATOR GOES BETWEEN BODIES, NOT AFTER EACH (registry 1193,
+            // second half). Written after, the last body was followed by a
+            // newline that belongs to no file -- and a diagnostic at the END of
+            // the unit landed on it, so a span that read 43 alone read 44 in the
+            // unit: one byte past a 43-byte file. Between-form has no last one.
+            if bodies > 0 { out.push(UNIT_LF) } else {
+                // The first body follows the header, which already ends in one.
+            }
+            bodies += 1
+            files.push(UnitFile { path: paths[j], at: out.len(), from: hj })
+            append_range(out, bj, hj, bj.len())
+        } else {
+            // No body: an empty file, or one that is nothing but its header.
+        }
     }
     match out.to_str() {
         Ok(t) => {
