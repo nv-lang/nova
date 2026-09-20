@@ -37,6 +37,82 @@ fn std_decls() -> []str => []str.of("fn str @byte_len() -> int => 0\nfn str @to_
 
 fn n_diags(text str) -> int => compile(text, std_decls()).len()
 
+// --- unit_of: a module's files as ONE text (274.7 M) ---------------------
+//
+// Two files of one module. The unit must carry ONE module line, both
+// imports, and both bodies -- and its table must send a span back to the
+// file it came from.
+
+fn two_texts() -> []str {
+    mut v = []str.new()
+    v.push("module m\nimport a\nfn one() -> int => 1\n")
+    v.push("module m\nimport b\nfn two() -> int => 2\n")
+    v
+}
+
+fn two_paths() -> []str {
+    mut v = []str.new()
+    v.push("one.nv")
+    v.push("two.nv")
+    v
+}
+
+test "unit_of: one module line, both imports, both bodies" {
+    // BOUND SEPARATELY, not nested: two arguments that both call something
+    // are outside the subset yet (F65), and a test of the wave that removes
+    // self-hosting debt must not add three lines of it.
+    ro ps = two_paths()
+    ro ts0 = two_texts()
+    ro u = unit_of(ps, ts0)
+    assert(u.text.starts_with("module m\n"))
+    // The second file's module line is gone; its import is not.
+    assert(!u.text.contains("module m\nmodule m"))
+    assert(u.text.contains("import a"))
+    assert(u.text.contains("import b"))
+    assert(u.text.contains("fn one()"))
+    assert(u.text.contains("fn two()"))
+}
+
+test "unit_of: the table names both files, in order" {
+    // BOUND SEPARATELY, not nested: two arguments that both call something
+    // are outside the subset yet (F65), and a test of the wave that removes
+    // self-hosting debt must not add three lines of it.
+    ro ps = two_paths()
+    ro ts0 = two_texts()
+    ro u = unit_of(ps, ts0)
+    assert(u.files.len() == 2)
+    assert(u.files[0].path == "one.nv")
+    assert(u.files[1].path == "two.nv")
+    assert(u.files[0].at < u.files[1].at)
+}
+
+test "unit_of: a span inside the second body maps back to the second file" {
+    // The round trip is the whole point of the table: take the offset of a
+    // byte known to sit in the second body, and ask who owns it.
+    // BOUND SEPARATELY, not nested: two arguments that both call something
+    // are outside the subset yet (F65), and a test of the wave that removes
+    // self-hosting debt must not add three lines of it.
+    ro ps = two_paths()
+    ro ts0 = two_texts()
+    ro u = unit_of(ps, ts0)
+    ro at2 = u.files[1].at
+    assert(file_of_offset(u.files, at2 + 3) == 1)
+    // And the same byte, named as the FILE knows it, lands inside that
+    // file's own text rather than past its end.
+    ro back = offset_in_file(u.files[1], at2 + 3)
+    assert(back >= u.files[1].from)
+    ro ts = two_texts()
+    assert(back < ts[1].byte_len())
+}
+
+test "unit_of: no files is an empty unit, not an ice" {
+    mut none_p = []str.new()
+    mut none_t = []str.new()
+    ro u = unit_of(none_p, none_t)
+    assert(u.text == "")
+    assert(u.files.len() == 0)
+}
+
 // --- the unit's offset arithmetic (274.7 M) ------------------------------
 //
 // Three bodies at 100, 200 and 300 inside a unit; each began at 40, 50 and 60

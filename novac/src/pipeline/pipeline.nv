@@ -141,6 +141,103 @@ export fn file_of_offset(files []UnitFile, off int) -> int {
 /// positions side.
 export fn offset_in_file(f UnitFile, off int) -> int => off - f.at + f.from
 
+/// A module's files, handed to the compiler as ONE text (274.7 M).
+///
+/// `text` is what the parser sees; `files` says which part of it came from
+/// where, so a span can be handed back as a file and an offset in it.
+export type Unit value {
+    text str /// the unit as the parser will read it
+    files []UnitFile /// where each body landed, in order
+}
+
+/// The end of a file's FIRST line -- its `module` line, if it has one.
+///
+/// A unit keeps ONE module line and takes every file's imports after it, so
+/// this number is where a file's contribution to the header begins.
+fn first_line_end(text str) -> int {
+    ro b = text.bytes()
+    ro n = text.byte_len()
+    mut i = 0
+    while i < n {
+        if b[i] == UNIT_LF { return i + 1 } else {}
+        i += 1
+    }
+    n
+}
+
+/// Copy `b[from..to)` onto `out` -- a byte loop, because a slice is not
+/// compiled by novac yet (registry No. 1170) and this file has to stay
+/// inside the subset it is helping to widen.
+fn append_range(mut out []u8, b []u8, from int, to int) -> () {
+    mut i = from
+    while i < to {
+        out.push(b[i])
+        i += 1
+    }
+}
+
+/// Build the unit: ONE module line, then every file's imports, then every
+/// file's body, in the order given.
+///
+/// IMPORTS ARE NOT DEDUPLICATED, and that is measured rather than lazy: a
+/// repeated `import` line is accepted (probe, 2026-09-20), while a repeated
+/// `module` line is not -- which is the whole reason a unit is not a plain
+/// concatenation. Deduplicating would mean comparing lines, and comparing
+/// lines means slicing, which this file may not do yet.
+///
+/// THE ORDER IS THE CALLER'S. Whether the checker depends on it once bodies
+/// can see each other is NOT measured yet and stands as an open question of
+/// the wave; sorting here would hide the answer instead of giving it.
+export fn unit_of(paths []str, texts []str) -> Unit {
+    mut out = []u8.new()
+    mut files = []UnitFile.new()
+    if texts.len() == 0 {
+        // BOUND FIRST, not returned inline: a record constructor is compiled
+        // only as a binding initializer or a call argument, and writing it in
+        // the return position would add a subset refusal to the very file
+        // that exists to remove them (measured here, 2026-09-20).
+        ro empty = Unit { text: "", files }
+        return empty
+    } else {}
+    // The module line of the FIRST file speaks for the unit.
+    ro t0 = texts[0]
+    ro b0 = t0.bytes()
+    ro m0 = first_line_end(texts[0])
+    append_range(out, b0, 0, m0)
+    // Then the imports of every file -- the part of a header after its own
+    // module line.
+    mut i = 0
+    while i < texts.len() {
+        ro ti = texts[i]
+        ro bi = ti.bytes()
+        ro mi = first_line_end(texts[i])
+        ro hi = header_end(texts[i])
+        if hi > mi { append_range(out, bi, mi, hi) } else {}
+        i += 1
+    }
+    // Then the bodies, each remembering where it came from.
+    mut j = 0
+    while j < texts.len() {
+        ro tj = texts[j]
+        ro bj = tj.bytes()
+        ro hj = header_end(texts[j])
+        files.push(UnitFile { path: paths[j], at: out.len(), from: hj })
+        append_range(out, bj, hj, bj.len())
+        out.push(UNIT_LF)
+        j += 1
+    }
+    match out.to_str() {
+        Ok(t) => {
+            ro u = Unit { text: t, files }
+            u
+        }
+        // The pieces came from strings, so the bytes are UTF-8 by
+        // construction and a failure here would mean the copy lost a
+        // boundary -- an invariant of this function, not an input error.
+        Err(_) => ice("pipeline: a unit built from strings did not read back as UTF-8")
+    }
+}
+
 /// Does `word` stand at byte `at` of `b`? A prefix test that allocates
 /// nothing and takes no slice -- see the note inside `header_end`.
 fn matches_at(b []u8, at int, word str) -> bool {
