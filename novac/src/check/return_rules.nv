@@ -33,6 +33,17 @@ fn Checker @return_expectation(row FnRow) -> TyId {
     if !is_ty(rid) { return no_ty() }
     if rid == @ctx.prims.unit_id { return no_ty() }
     ro cr = @concrete(rid)
+    // THE TWIN OF THE GUARD IN `judge_return`, and finding it here is what
+    // turned one fix into a rule: `is_ty(rid)` above says the DECLARED type
+    // is real, and says nothing about what `@concrete` gives back. An
+    // unresolved inference variable resolves to an absence, and the door
+    // below refuses it by contract.
+    //
+    // Both sites read as guarded to a reader -- and to a scan -- because an
+    // `is_ty` stands a line or two above. The question that separates them
+    // is whether the guard is on the value HANDED to the door or on the one
+    // it was derived from.
+    if !is_ty(cr) { return no_ty() } else {}
     if @ctx.tys.kind_of(cr) == TypeKind.TkParam { return no_ty() }
     cr
 }
@@ -119,6 +130,24 @@ fn Checker mut @judge_return(e Node, t0 TyId) -> () {
     // the comparison is between concrete types, through the same door every
     // type of the body takes; a parameter that stays a parameter is not judged.
     ro t = @concrete(t0)
+    // `is_ty(t0)` ABOVE DOES NOT IMPLY `is_ty(t)` HERE, and the gap is the
+    // whole of this line. `@concrete` resolves an inference variable to what
+    // it was bound to, and an unresolved one has nothing to give back -- so a
+    // type that WAS real arrives as an absence, and `kind_of` refuses it by
+    // contract.
+    //
+    // MEASURED 2026-09-20 (registry No. 1168 family). Reading two new arm
+    // forms tonight let the walk reach this judge on shapes it had never
+    // seen, and `check/return_rules.nv` iced where it used to produce
+    // diagnostics. Third time in one night that a form becoming readable
+    // opened a path into a door that asks the interner about a type nobody
+    // guaranteed.
+    //
+    // WORTH KNOWING FOR THE NEXT AUDIT: a scan for unguarded `kind_of` that
+    // looks for an `is_ty` anywhere earlier in the function calls this site
+    // GUARDED and misses it. The guard has to be on the value actually
+    // handed to the door, not on its ancestor.
+    if !is_ty(t) { return } else {}
     if @ctx.tys.kind_of(t) == TypeKind.TkParam { return }
     if t == @ret_expect { return }
     ro from = ty_source_name(@ctx, t)

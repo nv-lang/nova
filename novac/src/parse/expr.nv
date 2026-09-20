@@ -445,6 +445,24 @@ fn Cursor mut @match_expr() -> Node {
         // emitter have read a Block arm body since wave B5.
         if @peek() == TokenKind.LBrace && !@brace_opens_ctor() {
             ak.push(@block())
+        } else if @peek() == TokenKind.KwReturn {
+            // A BARE `return` AS THE ARM BODY: `None => return no_ty()`.
+            // An arm body is an expression here, and `return` is a
+            // STATEMENT -- so the expression door met a keyword it does not
+            // start with and the whole arm fell into the parser's fallback.
+            //
+            // THE STATEMENT DOOR IS CALLED, not copied. Building a RetStmt
+            // node here would be a second home for one rule -- the shape of
+            // a bare `return` (with a value, or without one at the end of a
+            // block) is settled in `@stmt`, and two builders drift on the
+            // first change to either.
+            //
+            // MEASURED 2026-09-20: second of the four shapes the parser
+            // stopped at, and the largest of the three that remained -- five
+            // files open on it against one each for a string- and a
+            // char-literal arm. Carriers: `check/calls.nv:248`,
+            // `check/exprs.nv:65`, `check/return_rules.nv:140`.
+            ak.push(@stmt())
         } else {
             ak.push(@expr())
         }

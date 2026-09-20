@@ -341,6 +341,28 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
     // has read a block body since wave B5; this is the same route for the
     // value variant, and the None is what keeps the fold honest instead of
     // inventing a type for an arm that never produces one.
+    // A `return` BODY LEAVES THROUGH THE FUNCTION, so the arm yields no
+    // value either -- the same answer a block body gets, for the same
+    // reason, and written beside it so the pair cannot drift.
+    //
+    // MEASURED 2026-09-20. The parser learnt `None => return no_ty()` an
+    // hour before this line existed, and the form immediately reached the
+    // type rules as a kind they had no case for: `check: expression kind
+    // without a type rule`. An ice, and mine -- the same shape as the
+    // qualified arm earlier tonight, where reading a form opened a path
+    // into a place that had never been asked. Teaching the parser a form
+    // is half the work; the other half is every judge the form now
+    // reaches.
+    if body.kind_of() == NodeKind.RetStmt {
+        @type_stmt(body)
+        @scope.release(mark)
+        // SILENT-OK: the statement judged itself, and the arm has no type
+        // to offer the fold -- which is what None says. A type invented
+        // here would be a value the program never produces.
+        return None
+    } else {
+        // Not a return: the block and expression routes below answer.
+    }
     if body.kind_of() == NodeKind.Block {
         @type_block(body)
         @scope.release(mark)

@@ -450,8 +450,24 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
                 // lattice must not walk into a block -- its statement kinds
                 // have no type rule, and asking would be the #652 ice about
                 // a form nobody wrote as a value.
+                //
+                // A BARE `return` ARM IS THE SAME FACT WITHOUT THE BRACES,
+                // and it joins the test rather than getting a line of its
+                // own: `A => return 1` and `A => { return 1 }` leave through
+                // the function alike, so a door that told them apart would
+                // be answering about punctuation.
+                //
+                // MEASURED 2026-09-20, and the measurement is why the pair
+                // is written together. The parser learnt the braceless form
+                // an hour ago; the braced one had been read since wave B9,
+                // so this door knew the RULE and not the second spelling of
+                // it, and answered the #652 ice the comment above predicts.
+                // The statement-position match was fine throughout -- only
+                // the VALUE position asks here -- which is why the shape
+                // needs `match` in a tail to reproduce.
                 ro body = ak[at]
-                if body.kind_of() == NodeKind.Block { return no_ty() }
+                ro bk = body.kind_of()
+                if bk == NodeKind.Block || bk == NodeKind.RetStmt { return no_ty() }
                 return type_of(body, ctx, scope, chan)
             }
         }
