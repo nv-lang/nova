@@ -136,7 +136,31 @@ const DISJ_BINDER_MSG = "outside the subset: a `|` pattern takes `_` binders onl
 
 /// The if-let judges' two answers (if-let wave). The subset takes exactly
 /// the shape its carriers write: `Some` and an Option-instance initializer.
+/// A `match` arm whose pattern is a STRING or CHAR literal (registry 1190).
+///
+/// The parser reads the form since 2026-09-20 and the checker judges it, but
+/// the lowering compares patterns as int literals or variant tags only -- and
+/// a form that reaches an emitter with no arm for it ICEs. The refusal is
+/// louder than the crash and quieter than a wrong answer, which is the whole
+/// order of preference here.
+const LITERAL_ARM_MSG = "outside the subset: a `match` arm on a string or char literal is read but not compiled yet (E2-b, with the string family)"
+
 const IFLET_VARIANT_MSG = "outside the subset: `if <pattern> = ...` takes only `Some(name)` here -- other variants arrive with their carriers"
+
+/// A tail `if let` used as a VALUE with no `else` (registry 1189).
+///
+/// Not a subset limit but a fact about the shape: the None path produces
+/// nothing, so the function would fall off its end. The plain tail `if` is
+/// refused in the same words for the same reason (274.7 B14).
+const IFLET_VALUE_NEEDS_ELSE_MSG = "outside the subset: a tail `if let` needs an `else` to be a value -- without it the None path produces nothing (E2-b)"
+
+/// The two branches of a value `if let` disagreed on a type.
+///
+/// The agreement is the whole rule, and the cost of skipping it is silent:
+/// the emitter declares ONE temporary and writes both branches into it, so a
+/// compiler that took the first branch's type would produce valid C with a
+/// wrong answer and no diagnostic anywhere.
+const IFLET_VALUE_DISAGREE_MSG = "outside the subset: the branches of a value `if let` must agree on a type (E2-b)"
 
 /// See IFLET_VARIANT_MSG above; the initializer half.
 const IFLET_INIT_MSG = "the initializer of `if Some(...) = ...` must be an Option instance -- this expression's type is not one"

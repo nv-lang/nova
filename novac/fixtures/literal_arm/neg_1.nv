@@ -1,0 +1,30 @@
+module literal_arm.neg_1
+
+// A `match` ARM ON A STRING LITERAL -- READ, JUDGED, AND REFUSED BY NAME.
+//
+// THIS CELL WAS POSITIVE UNTIL 2026-09-20 08:11 AND IT ASSERTED SOMETHING
+// FALSE. The parser learnt string and char arm patterns that night and the
+// fixture recorded the win; nobody ran the differential, and the differential
+// is what said the rest: novac DIED on this file with `emit_c: match pattern
+// is neither an int literal nor an identifier`. The form reached an emitter
+// that had no arm for it.
+//
+// So the cell changes sides rather than disappearing, and what it guards is
+// the ORDER OF PREFERENCE, not the wording: a named refusal is louder than a
+// crash and quieter than a wrong answer. The day the lowering can compare a
+// string, this becomes a positive again -- and the cell will have held the
+// line in between instead of leaving a hole where a green light used to be.
+//
+// What the parser wave was really worth is unchanged and measured: `diag`
+// fell from 22 diagnostics to 2 and `lex` from 76 to 31 on these two forms.
+// Reading them was the win; compiling them is the next one.
+
+// NOVAC_EXPECT a `match` arm on a string or char literal is read but not compiled yet
+
+fn word_kind(s str) -> int => match s {
+    // ONE string arm, because a negative cell seeds ONE cause: the door
+    // refuses each arm it meets, so a second string arm here would be a
+    // second diagnostic about the same missing capability.
+    "match" => 2
+    _ => 0
+}

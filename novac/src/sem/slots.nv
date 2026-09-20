@@ -816,6 +816,33 @@ export fn digit_index(text str) -> int {
 /// wave). Slot 0 is NOT here -- the first head keeps its original readers;
 /// this door feeds the exhaustiveness count and the emitter's OR-chain with
 /// the alternatives only. Two readers, one walk (P18).
+/// WHICH LEAF OF A FLAT PATTERN IS ITS HEAD -- the one question two passes
+/// used to answer separately and wrongly in the same way.
+///
+/// A bare head is slot 0 (`A => ...`). A QUALIFIED head is slot 2, because
+/// the parser writes the three leaves `Kind`, `.`, `B` and the variant is the
+/// last of them. Before 2026-09-20 both the checker and the lowering read
+/// slot 0 and found the TYPE name, which names no variant -- so both fell
+/// through to "a plain binder", and a plain binder matches everything. The
+/// first arm of every qualified match won, in a program that compiled
+/// cleanly and printed a wrong answer.
+///
+/// The qualifier itself is left at slot 0 for the caller that has to check
+/// it names the matched type -- a question this door does not answer,
+/// because it has no `Ctx`.
+export fn pattern_head_slot(pat []Node) -> int {
+    if pat.len() < 3 { return 0 }
+    if !pat[0].is_ident() { return 0 }
+    if leaf_kind(pat[1]) != TokenKind.Dot { return 0 }
+    if !pat[2].is_ident() { return 0 }
+    2
+}
+
+/// THE ALTERNATIVE HEADS of a disjunction -- the slot right after each pipe.
+///
+/// Its doc paragraph lived above it until `pattern_head_slot` was inserted
+/// here and took it: a door written directly above another inherits the one
+/// thing that was never its own.
 export fn disj_head_slots(pat []Node) -> []int {
     mut slots = []int.new()
     for i in 1..pat.len() {

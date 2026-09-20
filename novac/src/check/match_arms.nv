@@ -24,6 +24,8 @@ import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{decl_of_ty, decl_fn_row, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at}
 import ../sem.{disj_head_slots, pattern_has_disj}
+// The head of a flat pattern, through the one door (registry 1190).
+import ../sem.{pattern_head_slot, ty_source_name}
 import ../sem.{branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, raw_vrow, no_vrow}
 import ../sem.{is_vrow, variant_range_of, variant_in_sum, variants_named}
 import ../types.{TyId, no_ty, is_ty}
@@ -143,7 +145,12 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
         // identifier" is `continue`, and `continue` is not an expression, so
         // the Option form would have to be a manual match -- which the linter
         // reads as drift from `X ?? D` (W_MANUAL_COALESCE), and rightly.
-        if !pat[0].is_ident() { continue }
+        // THE HEAD, through the one door (registry 1190). Reading slot 0 made
+        // a qualified arm look like a non-variant -- which this scan reads as
+        // "a binder covering everything" and RETURNS, so a match missing half
+        // its variants passed exhaustiveness in silence.
+        ro hs = pattern_head_slot(pat)
+        if !pat[hs].is_ident() { continue }
         // EVERY alternative head of a disjunction counts too (the
         // pattern-alternatives wave): heads stand right after each pipe.
         // Heads are asked of the MATCHED SUM (wave B6, #964): a head that is
@@ -156,7 +163,7 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
                 Some(_) => { covered += 1 }
             }
         }
-        match variant_in_sum(@ctx, scr_t, leaf_text(pat[0])) {
+        match variant_in_sum(@ctx, scr_t, leaf_text(pat[hs])) {
             None => return
             Some(_) => { covered += 1 }
         }
@@ -240,8 +247,39 @@ fn Checker mut @bind_arm_pattern(ak []Node, scr_t TyId) -> bool {
         @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern")
         return false
     }
-    ro p0 = pat[0]
+    // THE HEAD, through the one door (registry 1190): a qualified arm keeps
+    // its variant in slot 2, and reading slot 0 found the TYPE name -- which
+    // is a variant of nothing, so the arm became a catch-all binder.
+    ro hslot = pattern_head_slot(pat)
+    ro p0 = pat[hslot]
+    // A STRING OR CHAR LITERAL PATTERN is refused BY NAME until the lowering
+    // can compare one (registry 1190). Until 2026-09-20 08:11 it passed here
+    // and died in the emitter with `emit_c: match pattern is neither an int
+    // literal nor an identifier` -- an ice on a program whose only fault was
+    // being ahead of the emitter. A refusal names the form; an ice names the
+    // compiler and tells the reader nothing about their code.
+    ro lk0 = leaf_kind(p0)
+    if lk0 == TokenKind.StrLit || lk0 == TokenKind.CharLit {
+        @report_first_leaf_of(ak, LITERAL_ARM_MSG)
+        return false
+    } else {
+        // An identifier head, an int literal, or punctuation: judged below.
+    }
     ro is_ident = leaf_kind(p0) == TokenKind.Ident
+    // A QUALIFIER NAMING ANOTHER TYPE, asked here and answered by the SAME
+    // door as the bare case below -- they are one rule ('this arm belongs to
+    // another sum') and two spellings of it. Two `@report` sites would be two
+    // places one text can leave from, which is what the debt measure counts
+    // and, more to the point, what drifts.
+    //
+    // THE TYPE IS ASKED ONLY WHEN THERE IS ONE: `ty_source_name` reads the
+    // interner by id, and a poisoned scrutinee is `TyId(-1)` -- asking it for
+    // a name walked off the end and the checker died with "index 211 out of
+    // bounds for length 211" on a program whose only fault was a qualified
+    // arm. Measured within a minute of writing the line, which is the whole
+    // argument for probing a fix instead of reading it.
+    ro wrong_qualifier = hslot > 0 && is_ty(scr_t) &&
+                         leaf_text(pat[0]) != ty_source_name(@ctx, scr_t)
     // ONE question about the pattern head, asked once: which variant row does
     // it name? -1 answers "none" for every other shape (a plain binder, `_`,
     // a punctuation leaf), and both branches below read that one answer.
@@ -249,7 +287,8 @@ fn Checker mut @bind_arm_pattern(ak []Node, scr_t TyId) -> bool {
     // ANOTHER sum is refused here, at the arm -- until 2026-09-05 it fell
     // through as a binder and the match was refused as non-exhaustive instead.
     ro vrow = if is_ident { variant_in_sum(@ctx, scr_t, leaf_text(p0)) ?? no_vrow() } else { no_vrow() }
-    if is_ident && !is_vrow(vrow) && variants_named(@ctx, leaf_text(p0)).1 > 0 {
+    if wrong_qualifier ||
+       (is_ident && !is_vrow(vrow) && variants_named(@ctx, leaf_text(p0)).1 > 0) {
         @report_first_leaf_of(ak, WRONG_SUM_ARM_MSG)
         return false
     } else {
@@ -281,7 +320,13 @@ fn Checker mut @bind_arm_pattern(ak []Node, scr_t TyId) -> bool {
         // the walk advances by exactly one every time, so the counter carried no
         // information -- and a hand-advanced cursor makes "forgot to advance" a
         // possible bug, which the range form deletes rather than documents.
-        for j in 2..pat.len() {
+        // FROM THE HEAD, not from slot two (registry 1190). A payload binder
+        // sits after the head and its `(`, which is slot 2 for a bare head and
+        // slot 4 for a qualified one. Counting from a constant made `Kind.B`
+        // hand its own variant name to the payload table as a binder, and a
+        // variant with no payload indexed one past its end: the checker died
+        // with "index 211 out of bounds for length 211" on three correct lines.
+        for j in hslot + 2..pat.len() {
             ro pj = pat[j]
             // ONE question -- is this child a binder leaf? Two nested ifs
             // asked it in two steps and neither named its second branch.
