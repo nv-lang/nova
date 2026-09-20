@@ -1317,7 +1317,11 @@
 #   section 7 does not happen and the pointer TYPE is lost, not just the layout.
 #   Declared as a hole until that branch merges: a number carried by someone else's
 #   branch is taken whether or not this tree can see it.
-rows=1136
-max=1184
+# 2026-09-20 (integrator): rows 1136 -> 1137, max 1184 -> 1186 -- zavedena 1186
+#   (`nova test` ne vidit dublya imyon NIKOGDA, dazhe bez importa, poetomu fikstura
+#   na etot klass v korpuse zelena pri zhivom defekte). 1185 ostayotsya dyroy --
+#   on vydan oknu nova-78 i pridyot s yego vetkoy.
+rows=1137
+max=1186
 stale_gaps=0
 gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1185
