@@ -1,0 +1,41 @@
+module qualified_arm.pos_1
+
+// A QUALIFIED VARIANT AS A MATCH-ARM PATTERN: `Kind.A => ...`, the sum named
+// before the variant. Both compilers must accept it and print the same thing.
+//
+// WHY THIS FORM AND NOT ANOTHER, measured 2026-09-20. After the peers-as-a-unit
+// wave, 332 diagnostics of self-hosting remained, and 143 of them were the
+// parser's fallback -- a BUCKET rather than a form. Opened the way plan
+// 274:3056 prescribes, by the FIRST refusal of each file (later spans are
+// recovery debris), it came to nineteen places, and they were one family: the
+// patterns of match arms. A matrix of one shape per file named the four the
+// parser stopped at, and this is the first of them, worth 35 diagnostics of the
+// remainder on its own.
+//
+// THE OTHER THREE ARE NAMED HERE so the next reader does not take this file for
+// the whole of the work: a bare `return` as an arm body, a string literal arm,
+// and a char literal arm. They are separate fixtures when they land.
+//
+// BOTH SPELLINGS IN ONE PROGRAM on purpose. `Kind.A` and a bare `A` mean the same
+// variant, and a fixture carrying only the qualified one would pass just as
+// well if the parser had quietly started reading a qualified name as something
+// else entirely -- a field access, say. Printing both and getting the same
+// answer is what makes the form, and not merely its acceptance, the subject.
+
+type Kind enum A | B
+
+fn name_of(k Kind) -> str => match k {
+    Kind.A => "A"
+    Kind.B => "B"
+}
+
+fn bare_of(k Kind) -> str => match k {
+    A => "A"
+    B => "B"
+}
+
+fn main() {
+    println(name_of(Kind.A))
+    println(bare_of(Kind.B))
+    println("${name_of(Kind.B) == bare_of(Kind.B)}")
+}

@@ -1,0 +1,204 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `check_expr_struct` / Go `types2` -- the construction of a
+// sum's variant judged apart from the expression dispatcher that reaches it.
+// Role: layer 7, the VARIANT judges -- `Sum.Variant` as a value and
+// `Sum.Variant(x)` as a construction, both spellings through one door.
+// Used by: exprs.nv (the dispatcher calls them); nothing else.
+// Guarded by: check-novac-file-size.py (this file exists because exprs.nv
+// crossed 1000 lines, exactly as exprs.nv exists because typing.nv did).
+// novac/src/check/variant_rules.nv -- a variant written with its type.
+//
+// THE SEAM IS BY MEANING, and the meaning is worth stating: the dispatcher
+// answers "what is the type of THIS expression", and these three answer a
+// narrower question it delegates -- "is this dotted head a variant of a
+// declared sum, and is it written with the arguments its payload demands".
+// That question has its own vocabulary (VariantRow, the variant registry)
+// and its own history: before 2026-09-04 the two spellings reached two
+// different doors and one of them refused a construction that compiled
+// byte-for-byte when written the other way.
+
+module novac.check
+
+// Imports are PER FILE, so the split had to name what these judges actually
+// use -- and the compiler named it, one identifier per build, which is the
+// only list that cannot be stale.
+import ../lex.{Token, TokenKind}
+import ../tree.{Node, NodeKind}
+import ../sem.{branch_children, leaf_text, leaf_kind, expr_leaf_name, is_expr_kind}
+import ../sem.{VariantRow, variants_named, variant_named_in, variant_range_of}
+import ../sem.{raw_vrow, no_vrow, is_vrow}
+import ../sem.{arg_expr_of, arg_count, CalleeTarget, CallForm}
+import ../sem.{identity_slots}
+import ../sem.{ty_of_decl}
+import ../sem.{prim_row_of}
+import ../sem.{decl_of_ty}
+import ../types.{TyId, no_ty, is_ty}
+/// The payload half of the door above: `Sum.Variant(x)`, and the refusal a
+/// payload-carrying variant earns when it is written with no arguments at all.
+///
+/// The arguments are walked FIRST, by the rule every call in this file follows:
+/// the key of a construction is its arguments, and a refusal among them makes
+/// the decision untrustworthy. The binding is the IDENTITY, exactly as the
+/// unqualified `Variant(x)` records it -- a variant's payload is positional by
+/// construction, with no names to bind by and no defaults to omit.
+fn Checker mut @judge_qualified_payload(e Node, kids []Node, vt Token, vrow VariantRow, arg_from int) -> () {
+    if arg_from < 0 {
+        // `Sum.Variant` with a payload and no argument list: the same refusal
+        // this door has always given, now in its own branch.
+        @refuse(vt, VARIANT_VALUE_NEEDS_ARGS_MSG)
+        return
+    }
+    ro before = @out.len()
+    mut i = 0
+    for c in kids {
+        if i >= arg_from && is_expr_kind(c.kind_of()) {
+            @type_expr(c)
+        } else {
+            // The head, the dot, the variant's name and the punctuation: no
+            // expression stands there, and the cursor still has to advance.
+        }
+        i += 1
+    }
+    if @out.len() > before {
+        // An argument was refused: the construction's type would be built over
+        // a value nobody trusts, and the walk has already spoken.
+        return
+    }
+    ro vd = @ctx.variant_rows[raw_vrow(vrow)]
+    @record(e, vd.sum_id)
+    @chan.record_callee(e.id_of(),
+        CalleeTarget.CalleeVariant(vrow), []TyId.new(), identity_slots(arg_count(kids, arg_from)))
+}
+
+/// THE KEY a slot's display is looked up with: `(t ro, Fmt mut)` -- the
+/// receiver by value, the context as the mutable PLACE P14 admits to a `mut`
+/// parameter. Built here and not in the lookup door, because a door that asks
+/// a table builds nothing (P18). `no_ty()` in the Fmt slot means std handed no
+/// `Fmt` at all, and the door answers None before asking.
+/// May this type's `@display` be SYNTHESIZED memberwise for an interpolation
+/// slot? Three conditions, and each refuses for its own reason:
+///
+///  1. it is a RECORD -- D422 gives the memberwise form to record/sum/tuple,
+///     and the sum's variant tag is separate work (274.7 boundary);
+///  2. its `#impl(...)` gate NAMES `Display` -- the type author's opt-in, and
+///     without it the slot stays refused even though the fields would print.
+///     A gate that stopped gating would make the whole acceptance false;
+///  3. EVERY field is a primitive. A field that is itself a record would need
+///     recursion and a cycle check (`E_AUTO_DERIVE_CYCLE`), a container or a
+///     pointer field is not spoken of by the norm at all -- so this subset
+///     refuses rather than inventing bytes the oracle does not print.
+///
+/// The answer is a REFUSAL when unsure, never a guess: a wrong shape here is
+/// wrong BYTES in stdout, which the differential reads as a divergence.
+
+/// Is this name a VARIANT of some declared sum? Asked by the method judge
+/// above, which must not call a construction a missing method. The definition
+/// registry answers -- the same `def_of` every other variant question uses, so
+/// there is no second table to disagree with.
+fn Checker @is_known_variant(name str) -> bool => variants_named(@ctx, name).1 >= 1
+
+/// `Sum.Variant` as a VALUE: a head that names a TYPE followed by the dot and
+/// one of ITS variants is the variant's value, not a field read -- and the head
+/// must not go through the name walk (a type name is no bound value). Answers
+/// true when THIS node was decided: recorded with the same CalleeVariant row a
+/// `C(7)` call writes, or refused (a non-variant after the type's dot, or a
+/// payload-carrying variant written with no arguments). Answers false when the
+/// shape is an ordinary field access.
+///
+/// `arg_from` is what makes ONE door serve BOTH spellings (2026-09-04, wave
+/// V3-4b): `-1` for `Sum.Variant`, where the tree has no argument list, and the
+/// index the arguments start at for `Sum.Variant(x)`, which the parser reads as
+/// a METHOD CALL. Before this the second spelling reached no door at all: the
+/// method judge asked the CALLABLE index about the variant's name, found
+/// nothing and refused with "no such method", while the very same construction
+/// written `Variant(x)` compiled byte-for-byte against the oracle. One form of
+/// the language, two spellings, one door -- the second door would have been the
+/// copy this compiler exists to avoid.
+fn Checker mut @judge_type_head_variant(e Node, kids []Node, arg_from int) -> bool {
+    if kids[0].kind_of() != NodeKind.Name {
+        // A computed head (a call, a chain): an ordinary field access.
+        return false
+    }
+    mut head_t = no_ty()
+    match @ctx.defs.def_of(expr_leaf_name(kids[0])) {
+        None => {}
+        Some(hd) => match hd.target {
+            DefType(decl) => { head_t = ty_of_decl(@ctx, decl) }
+            DefFn(_) | DefConst(_) => {}
+        }
+    }
+    if !is_ty(head_t) {
+        // The head is no type name: the operand walk owns the access.
+        return false
+    }
+    // A TYPE THAT IS NO SUM HAS NO VARIANTS TO OFFER, and saying "not one of
+    // its variants" about `StringBuilder.new(cap: 32)` named the wrong cause
+    // (the K4 hunt's sixth carrier, 2026-09-04; the family of #922). A
+    // primitive head names no declaration at all, so it is asked first.
+    if prim_row_of(@ctx.tys, head_t).is_some() || decl_of_ty(@ctx, head_t).kind != TypeKind.TkSum {
+        match kids[2] {
+            Leaf(vt) => {
+                if arg_from < 0 {
+                    @refuse(vt, "a type name takes a variant after the dot, and this type is not a sum -- it declares no variants")
+                } else {
+                    // NO REMEDY IS OFFERED, AND THAT IS THE FIX (registry
+                    // #1163, whose number arrived only after the merge that
+                    // brought the rows numbered below it -- the comment stood
+                    // here without a number for exactly that reason, because a
+                    // number this tree could not yet carry would leave a hole
+                    // `check-registry-rows-intact` cannot tell from a row lost
+                    // in a merge). This said "is compiled only as a binding
+                    // initializer today -- bind the value first" and the
+                    // advice was false in every case that could be built:
+                    // the arm never asks about POSITION -- there is no
+                    // `init_pos` here and no caller that supplies one --
+                    // so `consume s = StringBuilder.new(cap: 32)`, the
+                    // textbook initializer and the very example named in
+                    // this function's own comment above, is refused by this
+                    // same line. A refusal with no advice sends the reader
+                    // to think; a refusal with false advice sends them in a
+                    // circle and spends their time wearing the face of help.
+                    @refuse(vt, "outside the subset: a call on a TYPE (`Type.method(...)`) is not compiled yet -- no position accepts it (274.7, the E2 horizon)")
+                }
+            }
+            Branch { .. } => {}
+        }
+        return true
+    }
+    match kids[2] {
+        Leaf(vt) => {
+            // THE SUM'S OWN VARIANTS, not the flat name table. `Sum.Variant`
+            // qualifies the name, so the answer lives in the sum's variant
+            // range -- and only there. Until 2026-09-04 the judge asked
+            // `defs.def_of(name)`, a table where the LAST registered variant of
+            // that name wins: `NodeKind.MethodCall` was answered by
+            // `CallForm.MethodCall` (another sum, handed later) and refused as
+            // "not one of its variants". The scan is bounded by the sum's own
+            // arity, like the field scan of a constructor -- not name
+            // resolution in a registry, which is what the discipline rule is about.
+            ro td = decl_of_ty(@ctx, head_t)
+            ro vrange = variant_range_of(td) ?? (no_vrow(), 0)
+            ro first = raw_vrow(vrange.0)
+            for j in first..first + vrange.1 {
+                ro vd = @ctx.variant_rows[j]
+                if vd.name != vt.text { continue }
+                ro vrow = VariantRow(j)
+                if vd.payload_cnt == 0 && arg_from < 0 {
+                    @record(e, vd.sum_id)
+                    @chan.record_callee(e.id_of(),
+                        CalleeTarget.CalleeVariant(vrow), []TyId.new(), identity_slots(0))
+                } else {
+                    @judge_qualified_payload(e, kids, vt, vrow, arg_from)
+                }
+                return true
+            }
+            @refuse(vt, "outside the subset: a type name takes a variant after the dot, and this is not one of its variants")
+            true
+        }
+        Branch { .. } => {
+            // A recovery shape in the variant slot: the parser already
+            // carried the refusal; nothing to judge twice.
+            true
+        }
+    }
+}

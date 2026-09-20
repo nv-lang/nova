@@ -28,7 +28,7 @@
 module novac.sem
 
 import ../tree.{Node, NodeId, NodeKind}
-import ../builtins.{COERCE_ATTR, IMPL_ATTR, DISPLAY_PROTO}
+import ../builtins.{COERCE_ATTR, IMPL_ATTR}
 import ../lex.{TokenKind}
 import ../types.{TyId, is_ty}
 

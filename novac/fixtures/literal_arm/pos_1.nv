@@ -1,0 +1,46 @@
+module literal_arm.pos_1
+
+// STRING AND CHAR LITERALS AS MATCH-ARM PATTERNS, the last two of the four
+// shapes the parser stopped at.
+//
+// THE INTEGER ONE WAS ALREADY READ, and that is why all three stand in this
+// file. D19 lists `literal` as ONE alternative of the pattern production, not
+// three, so a compiler that reads an integer arm and refuses a string one is
+// not implementing a narrower language -- it is implementing an inconsistent
+// one. The fixture asserts the three together for that reason.
+//
+// WHAT THEY WERE WORTH, measured 2026-09-20 through the unit path: `diag` fell
+// from 22 diagnostics to 2 and `lex` from 76 to 31 on these two forms alone.
+// The concentration is not a coincidence -- a lexer matches keyword spellings
+// against string literals and an escaper matches characters against char
+// literals, so each of those files is mostly arms of one shape.
+//
+// THE ESCAPE IS HERE ON PURPOSE. A char arm whose literal is a backslash escape
+// is the shape `diag/diag.nv` actually carries, and a fixture built only on
+// plain characters would pass while the real carrier still failed.
+
+fn word_kind(s str) -> int => match s {
+    "fn" => 1
+    "match" => 2
+    _ => 0
+}
+
+fn escape_len(c char) -> int => match c {
+    '"' => 2
+    '\\' => 2
+    'a' => 1
+    _ => 0
+}
+
+fn small(n int) -> int => match n {
+    0 => 100
+    1 => 200
+    _ => 0
+}
+
+fn main() {
+    println("${word_kind("match")}")
+    println("${escape_len('\\')}")
+    println("${escape_len('a')}")
+    println("${small(1)}")
+}
