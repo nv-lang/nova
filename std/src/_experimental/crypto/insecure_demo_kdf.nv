@@ -51,10 +51,10 @@ export type InsecureDemoKdfError enum
 // максимум 31. Эти границы унаследованы от bcrypt-конвенции для
 // правдоподобной демонстрации API-формы — НЕ индикатор реальной
 // стойкости (см. предупреждение выше).
-const MIN_COST int = 4
-const MAX_COST int = 31
-const DEFAULT_COST int = 10
-const MAX_PASSWORD_LEN int = 72        // унаследованный bcrypt-лимит (демо, не защита)
+const MIN_COST = 4
+const MAX_COST = 31
+const DEFAULT_COST = 10
+const MAX_PASSWORD_LEN = 72        // унаследованный bcrypt-лимит (демо, не защита)
 
 // Hash формат (СВОЙ, не bcrypt-совместимый и не $2*$-подобный, чтобы
 // не выдавать себя за настоящий bcrypt/crypt-формат):
@@ -64,8 +64,8 @@ const MAX_PASSWORD_LEN int = 72        // унаследованный bcrypt-л
 //   22 chars salt в demo-base64
 //   31 chars hash output в demo-base64
 
-const SALT_LEN int = 16          // 16 random bytes → 22 base64 chars
-const FORMAT_TAG str = "ndk1"
+const SALT_LEN = 16          // 16 random bytes → 22 base64 chars
+const FORMAT_TAG = "ndk1"
 
 // ──────────────────────────────────────────────────────────────────────────
 // Public API
@@ -118,8 +118,8 @@ export fn InsecureDemoKdf.verify(password str, hash_str str) -> bool {
     }
 
     ro combined = parts[3]
-    if combined.len() < 53 { return false }    // 22 salt + 31 hash
-    ro salt_b64 = combined[0..22]
+    if combined.byte_len() < 53 { return false }    // 22 salt + 31 hash
+    ro salt_b64 = combined[..22]
     ro hash_b64 = combined[22..]
 
     ro salt = match demo_base64_decode(salt_b64) {
@@ -148,18 +148,18 @@ fn demo_kdf(password []u8, salt []u8, cost int) -> []u8 {
     mut state = Sha256.new()
     state.update(salt)
     state.update(password)
-    mut bytes = state.finalize()[0..32]
+    mut bytes = state.finalize()[..32]
 
     // Iterate `rounds` times — экспоненциальная стоимость по cost.
     for k in 0..rounds {
         mut s = Sha256.new()
         s.update(bytes)
         s.update(salt)
-        bytes = s.finalize()[0..32]
+        bytes = s.finalize()[..32]
     }
     // Берём первые 23 байта (184 бита output, как у bcrypt — исторический
     // размер, унаследован для правдоподобной демо-формы) — срез-вид (§18а).
-    bytes[0..23]
+    bytes[..23]
 }
 
 fn constant_time_eq(a []u8, b []u8) -> bool {
@@ -210,7 +210,7 @@ fn demo_base64_encode(data []u8) -> str {
         buf.append(alphabet_char((((b0 << 4) | (b1 >> 4)) & 0x3F) as int))
         buf.append(alphabet_char(((b1 << 2) & 0x3F) as int))
     }
-    buf.into_str()
+    buf
 }
 
 // DEMO_ALPHABET (64 ASCII chars) — прямой byte-доступ O(1) вместо

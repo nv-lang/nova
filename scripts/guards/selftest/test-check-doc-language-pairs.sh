@@ -7,7 +7,8 @@ export LC_ALL=C
 G="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/check-doc-language-pairs.sh"
 TMP="${TMPDIR:-/tmp}/selftest_pairs_$$"
 FAILED=0
-ok()  { echo "  ok: $1"; }
+OKN=0
+ok()  { OKN=$((OKN + 1)); echo "  ok: $1"; }
 bad() { echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
 
 # Пустая база: самотест проверяет саму механику, а не сегодняшние долги.
@@ -112,6 +113,6 @@ else
     bad "страж не назван в docs/dev/rules-for-agents.md"
 fi
 
-if [ "$FAILED" -eq 0 ]; then echo "селфтест check-doc-language-pairs: 10/10 ok"; exit 0; fi
+if [ "$FAILED" -eq 0 ]; then echo "селфтест check-doc-language-pairs: $OKN/$OKN ok"; exit 0; fi
 echo "селфтест check-doc-language-pairs: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1

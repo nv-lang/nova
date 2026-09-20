@@ -270,7 +270,13 @@ fn helper(name str) -> () {
 - **The `--strict-effects` flag** (`nova check`/`build`/`test`, Plan 197) turns
   this warning into a hard error `E_UNDECLARED_TRANSITIVE_EFFECT` —
   the project convention requires building `std/**` and `examples/**` with
-  exactly this flag (see `CLAUDE.md`). The same flag catches
+  exactly this flag (the owner's convention of 2026-07-13; a function calling an
+  effectful one outside a `with` scope must carry the effect in its OWN
+  signature, and an fn-value does not coerce into an fn-type with fewer
+  effects). **Until 2026-09-20 this sentence pointed the reader at a file that
+  has never mentioned the flag at all** (registry 1174): the rule is kept by a
+  developer document that does not ship with the spec, so the spec now states
+  the rule instead of addressing it. The same flag catches
   `E_EFFECT_ERASED_IN_FN_TYPE` — assigning/passing a function into a
   `fn(...) Row -> T` narrower in effects.
 - **`Fail[E]`** — the exception to "direct": throw stays **strictly

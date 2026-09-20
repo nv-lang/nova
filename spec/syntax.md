@@ -40,7 +40,7 @@ ro r = regex`\d+\.\d+`                       // -> Regex, raw
 
 A byte blob is a separate `x"…"` literal (hex digits → `[]u8`), not a
 tagged template: `ro b = x"deadbeef"` (D412, implemented —
-[Plan 186](../docs/plans/186-hex-blob-embed.md), status "РЕАЛИЗОВАН 2026-07-09").
+[Plan 186](../docs/plans/186-hex-blob-embed.md), implemented 2026-07-09).
 
 **Interpolation via `${expr}`** — the tag function receives the parts and
 arguments **separately**, which provides safety (protection from SQL
@@ -470,8 +470,8 @@ if elapsed > 1.second() { ... }           // вызывает @compare
 | `a[i]` | `@index(i)` | | `a[i]=v` | `mut @index(i, v)` |
 | `a[x..y]` | `@index(r Range)` + `@end_index()` | | | |
 
-`==`/`!=` — via `@equal` (the `Equal` protocol, `!=` is derived by negation); `<`/`<=`/`>`/`>=` — via the single `@compare(o) -> int` (the `Compare` protocol, memcmp-style: `< 0` / `0` / `> 0`). **No `@equal` but a `@compare` — equality comes from there:** the `Equal` protocol carries the default body `@equal(o) => @compare(o) == 0` (`std/prelude/protocols.nv`), so a type that declares only `@compare` is compared by it under `==`, not field by field (measured 2026-09-16 with three probes; the analysis is in [D183](decisions/02-types.md#d183-canonical-comparison-protocols--default-method-bodies-plan-918a), section "Известные ограничения"). The protocols are ORTHOGONAL: `Compare` does NOT embed `Equal`; the default body sits on `Equal` itself. Indexing `a[i]` / `a[i] = v` — `@index` / `mut @index` (the `Index[K, V]` / `MutIndex[K, V]` protocols, D240); slice indexing `a[x..y]` — the same `@index`, overloaded by parameter type: `x..y` (half-open, does not include `y`) is lowered by the compiler into `Range { start: x, end: y }`, and `a.index(r Range)` is called — on `[]T`/`str` it returns a view without copying (`std/collections/vec/slice.nv`, `std/runtime/string/slice.nv`). `&&`/`||` are **not overloadable** (short-circuit
-semantics). **The bitwise family — a `bit` prefix, and `~` separate from `!`** (D46-amendment 2026-07-27, plan [234](../docs/plans/234-bitwise-operator-family.md)): `&`/`|`/`^` → `@bitand`/`@bitor`/`@bitxor` (the former `@and`/`@or`/`@xor` are retracted — they read as LOGICAL, though the logical `&&`/`||` are not overloadable at all); `~a` → `@bitnot()` — bitwise complement, overloadable by user types (`~x == -(x+1)` on signed), whereas `!a` stays LOGICAL and (D46-AMEND 2026-08-02) is not overloadable at all — only `bool`, `@not()` is retracted. Compound assignments: `+=`/`-=`/`*=`/`/=` and (D46-amendment (C), plan 234 Ф.2а) `&=`/`|=`/`^=`/`<<=`/`>>=` — desugar into `a = a <op> b`, no separate operator methods. Custom operators (`:+`, `<>`) are not allowed. Details —
+`==`/`!=` — via `@equal` (the `Equal` protocol, `!=` is derived by negation); `<`/`<=`/`>`/`>=` — via the single `@compare(o) -> int` (the `Compare` protocol, memcmp-style: `< 0` / `0` / `> 0`). **No `@equal` but a `@compare` — equality comes from there:** the `Equal` protocol carries the default body `@equal(o) => @compare(o) == 0` (`std/prelude/protocols.nv`), so a type that declares only `@compare` is compared by it under `==`, not field by field (measured 2026-09-16 with three probes; the analysis is in [D183](decisions/02-types.md#d183-canonical-comparison-protocols--default-method-bodies-plan-918a), the "known limitations" section there). The protocols are ORTHOGONAL: `Compare` does NOT embed `Equal`; the default body sits on `Equal` itself. Indexing `a[i]` / `a[i] = v` — `@index` / `mut @index` (the `Index[K, V]` / `MutIndex[K, V]` protocols, D240); slice indexing `a[x..y]` — the same `@index`, overloaded by parameter type: `x..y` (half-open, does not include `y`) is lowered by the compiler into `Range { start: x, end: y }`, and `a.index(r Range)` is called — on `[]T`/`str` it returns a view without copying (`std/collections/vec/slice.nv`, `std/runtime/string/slice.nv`). `&&`/`||` are **not overloadable** (short-circuit
+semantics). **The bitwise family — a `bit` prefix, and `~` separate from `!`** (D46-amendment 2026-07-27, plan [234](../docs/plans/234-bitwise-operator-family.md)): `&`/`|`/`^` → `@bitand`/`@bitor`/`@bitxor` (the former `@and`/`@or`/`@xor` are retracted — they read as LOGICAL, though the logical `&&`/`||` are not overloadable at all); `~a` → `@bitnot()` — bitwise complement, overloadable by user types (`~x == -(x+1)` on signed), whereas `!a` stays LOGICAL and (D46-AMEND 2026-08-02) is not overloadable at all — only `bool`, `@not()` is retracted. Compound assignments: `+=`/`-=`/`*=`/`/=` and (D46-amendment (C), plan 234 Ph.2a) `&=`/`|=`/`^=`/`<<=`/`>>=` — desugar into `a = a <op> b`, no separate operator methods. Custom operators (`:+`, `<>`) are not allowed. Details —
 [D46](decisions/03-syntax.md#d46).
 
 ## Mathematical operations on numeric types
@@ -766,7 +766,7 @@ Inside `'…'` exactly `\n`, `\t`, `\r`, `\0`, `\'`, `\"`, `\\`, `\u{…}` are
 recognised and nothing else. **A raw control character typed into the source as
 itself (a tab, a newline) is an error, `E_CHAR_RAW_CONTROL`**: the eye cannot see
 it, so `'<tab>'` and `'<space>'` read the same. See
-[D478](decisions/03-syntax.md#d478).
+[D481](decisions/03-syntax.md#d481).
 
 Details — [D30](decisions/03-syntax.md#d30), [D46](decisions/03-syntax.md#d46), [D47](decisions/07-modules.md#d47).
 
@@ -1856,14 +1856,19 @@ are allowed in any amount.
 
 **Members — only concrete types**, listed by identity:
 a newtype `type MyI8 i8` does not enter `{i8}` automatically — an explicit
-listing is needed (`E_TYPE_SET_MEMBER_NOT_CONCRETE` for protocol/effect/another
-type-set as a member). **One set does not mix signed/unsigned integers**
-(`E_TYPE_SET_MIXED_SIGNEDNESS`) — the ready-made `SignedInts`/`UnsignedInts`
-in the prelude (`std/prelude/protocols.nv`) are split along this axis; `Ints` is their
-full union — the one mix D430 R1 allows, because D310 forbids a *partial* signed/unsigned
-mix and per-member monomorphisation resolves `T.MAX`/`T.MIN` per instance — and `Floats`
-is `f32 | f64` (added 2026-09-04). Four sets in all.
-
+listing is needed (`E_TYPE_SET_MEMBER_NOT_CONCRETE` for a protocol or an effect
+as a member). **A member may itself be another type-set** (`type Ints set
+SignedInts | UnsignedInts`): on the declaration of the outer set the members of
+the nested one are flattened into its list, recursively and with deduplication
+(`set Ints | i32` does not duplicate `i32`); a cycle (`type A set B`, `type B set
+A`, or a direct self-reference) has no finite expansion — `E_TYPE_SET_CYCLE`.
+**Mixing signed and unsigned integers in one set is allowed**, partially
+(`set i32 | u32`) as well as fully — the former prohibition on a partial mix is
+lifted (D310 amendment, Plan p424). The ready-made `SignedInts`/`UnsignedInts` in
+the prelude (`std/prelude/protocols.nv`) stay useful where homogeneity of sign is
+needed by substance, they are simply no longer the obligatory way to have it;
+`Ints` is their full union and `Floats` is `f32 | f64` (added 2026-09-04). Four
+sets in all. A `~` (repr/structural) bound is not accepted by a type-set.
 Details — [D72](decisions/02-types.md#d72), [D310](decisions/02-types.md#d310-type-set-bounds-plan-1723).
 
 ## Conversions: `as` and `T.from(v)`

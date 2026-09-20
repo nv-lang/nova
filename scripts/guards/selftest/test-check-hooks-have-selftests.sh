@@ -10,7 +10,8 @@ export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 G="$ROOT/scripts/guards/check-hooks-have-selftests.sh"
 FAILED=0
-ok()  { echo "  ok: $1"; }
+OKN=0
+ok()  { OKN=$((OKN + 1)); echo "  ok: $1"; }
 bad() { echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
@@ -82,6 +83,6 @@ rm -rf "$TMP/scripts"
 out=$(bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 0 ]; then ok "каталога хуков нет — зелено"; else bad "страж не должен падать без каталога: $out"; fi
 
-if [ "$FAILED" -eq 0 ]; then echo "селфтест check-hooks-have-selftests: 7/7 ok"; exit 0; fi
+if [ "$FAILED" -eq 0 ]; then echo "селфтест check-hooks-have-selftests: $OKN/$OKN ok"; exit 0; fi
 echo "селфтест check-hooks-have-selftests: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1

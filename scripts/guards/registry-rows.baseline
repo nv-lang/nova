@@ -985,8 +985,6 @@
 #   Прибавилось ТРИ строки: №1161 и №1162 из main, №1165 оттуда же.
 #   Мои две строки НЕ добавились, а ПЕРЕНУМЕРОВАНЫ 1161→1163, 1162→1164
 #   в зарезервированные за ними номера — поэтому max вырос на 3, а rows тоже на 3.
-rows=1117
-max=1165
 # 2026-09-14 (integrator): gaps += 1103,1104; rows/max bez izmeneniy.
 #   Dva nomera vydany pod ODIN vecherniy klass, i eto zapisano zdes' imenno
 #   potomu, chto poodinochke oni vyglyadyat melkimi, a vmeste -- net:
@@ -1172,7 +1170,6 @@ max=1165
 #   committed main, kuda pravka integratora ne doekhala (otredaktirovana v
 #   rabochey kopii, v indeks ne polozhena). Posle ego kommita edce73538 i etogo
 #   sliyaniya protukhshikh net: 0.
-stale_gaps=0
 # 2026-09-15, ЧЕТВЁРТОЕ СЛИЯНИЕ origin/main. ВСЕ ТРИ числа ПЕРЕСЧИТАНЫ
 #   правилом самого стража на слитом дереве: rows=1073, max=1121.
 #   Стороны: у меня rows=1061/max=1110 (плюс две строки с TBD, которые счёт не
@@ -1226,6 +1223,35 @@ stale_gaps=0
 #   TOY ZHE PRAVKOY: rows 1108 -> 1109, max 1162 -> 1165. Novaya stroka 1165 --
 #   `nova test <katalog>` beryot odin fayl iz shestnadtsati i pechataet verdikt
 #   tak, budto proveril katalog (nahodka okna Kariny, zamer sveren mnoyu).
+# 2026-09-20 (integrator), pozzhe: rows 1112 -> 1113, max 1168 -> 1172. Stroka
+#   1172 (tihiy kaskad: tri potrebitelya dayut po dve diagnostiki, strazh slep
+#   iz-za pustoy misheni) napisana v main SRAZU, poetomu max rastyot po FAKTU,
+#   a ne po obeshchaniyu. 1169-1171 po-prezhnemu v gaps: oni v vetke Kariny.
+# 2026-09-20 (integrator), po zaprosu okna Kariny: max 1168 -> 1171, v gaps
+#   dobavleny 1169-1171. 1169 i 1170 -- dve stroki iz yeyo kommita 268fa7478,
+#   stoyavshie s No.TBD (strazh formy krasnel i derzhal yeyo push); 1171 VYDAN
+#   vperyod pod stroku o tom, chto etot ICE ne nazyvayet MESTA (pustoye pole
+#   file, span 0 0). USLOVIYE SNYATIYA: pri sliyanii yeyo vetki nomera
+#   VAZHNO PRO max: yego NE podnimayut vperyod stroki -- strazh sveryayet ego s
+#   fakticheski naibolshim nomerom v reyestre i krasneyet na obeshchanii
+#   (proveril na sebe v tot zhe chas). Rezerv zhivyot TOLKO v gaps.
+#   poyavyatsya strokami, i dyru nado SOKRATIT obratno; yesli 1171 ne budet
+#   napisan -- snyat' yego iz gaps i opustit' max.
+# 2026-09-20 (integrator): rows 1111 -> 1112, max 1167 -> 1168. Zavedena stroka
+#   1168 -- ICE obryvayet progon samoproverki, i chislo otvergnutyh faylov
+#   okazyvayetsya funktsiyey PORYADKA argumentov (15 / 3 / 1495 na odnom dereve).
+#   Nomer vydan srazu, bez dyry: stroka pishetsya v main etim zhe hodom.
+# 2026-09-19 (integrator), sliyaniye vetki pomoshchnika: rows 1110 -> 1111,
+#   1166 SNYAT iz gaps -- stroka priyekhala v main etim zhe sliyaniyem, i eto
+#   rovno to usloviye snyatiya, kotoroye bylo zapisano pri vydache nomera.
+#   Poymal eto STRAZH (protuhsheye obyavleniye dyry), a ne ya: nomer i v gaps,
+#   i so strokoy -- eto huzhe oboih sostoyaniy po otdelnosti, potomu chto
+#   poterya takoy stroki proshla by MOLCHA.
+# 2026-09-19 (integrator), vecher: rows 1109 -> 1110, max 1165 -> 1167.
+#   Zavedena stroka 1167 (hrapovik myortvyh ssylok hranit chislo, zavisyashcheye
+#   ot sredy). NOMER 1166 VYDAN oknu-pomoshchniku (vetka research/regex-nlib-0917,
+#   stroka pro srok godnosti vizitki) i v main poka ne priyekhal -- poetomu max
+#   1167 pri rows 1110, a 1166 stoit v gaps s usloviyem snyatiya pri sliyanii.
 # 2026-09-19 (integrator), vtoraya pravka za noch: v perechen dyr dobavleny
 #   1163-1164 -- nomera VYDANY oknu Kariny (otkaz s lozhnym sredstvom: vyzov na
 #   TIPE i `v.to_str()` na polzovatelskoy zapisi), stroki pishutsya v YEYO vetke
@@ -1241,4 +1267,22 @@ stale_gaps=0
 # 2026-09-18: дыры 1144-1146 и 1150 СНЯТЫ по условию, записанному вместе с ними
 # стороной main: ветка влита, все пять номеров на месте (проверено
 # построчным грепом по каждому номеру, не оптом).
+
+# СЛИЯНИЕ 2026-09-20 (интегратор влил ветку Карины), ШЕСТОЕ в этом ряду — и
+# первое, где конфликтных мест в базе оказалось ДВА: значения и ПЕРЕЧЕНЬ ДЫР.
+# Оба разрешены ЗАМЕРОМ по сведённому реестру, а не выбором стороны: строк 1124,
+# максимум 1172, пропущенных номеров 48. Перечень дыр ПЕРЕСЧИТАН целиком
+# (какие номера реально отсутствуют между первым и последним), потому что у
+# сторон он расходился по существу: в её ветке строки 1156, 1158, 1163-1164 уже
+# были, в main они числились дырами. Резерв 1169-1171 снят условием, записанным
+# при его выдаче: строки приехали этим слиянием.
+# 2026-09-20 (integrator), pered gate-progonom: rows 1124 -> 1126,
+#   max 1172 -> 1174. Zavedeny 1173 (spec i kompilyator rashodyatsya na
+#   privatnoy funktsii s tranzitivnym effektom -- reshayet vladelets) i 1174
+#   (dva defekta dokumentov: myortvaya ssylka i primer snyatoy formy).
+# 2026-09-20 (integrator): rows 1126 -> 1127, max 1174 -> 1175 -- zavedena 1175
+#   (kod ostanovki "smena" sudilsya priznakom, vypolnyayushchimsya sam).
+rows=1127
+max=1175
+stale_gaps=0
 gaps=174-208,210-215,653-654,743,1062,1096,1103-1104

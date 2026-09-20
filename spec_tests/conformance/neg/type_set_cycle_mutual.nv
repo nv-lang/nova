@@ -1,0 +1,10 @@
+module neg.type_set_cycle_mutual
+// Plan p424 (D310 amendment) — NEGATIVE: a MUTUAL cycle — `D310CycleA` nests
+// `D310CycleB`, `D310CycleB` nests `D310CycleA` — is caught the same way as
+// the direct self-cycle.
+// EXPECT_COMPILE_ERROR E_TYPE_SET_CYCLE
+
+type D310CycleA set D310CycleB
+type D310CycleB set D310CycleA
+
+fn main() -> int { 0 }

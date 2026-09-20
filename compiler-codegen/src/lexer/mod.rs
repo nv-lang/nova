@@ -1161,7 +1161,7 @@ impl<'a> Lexer<'a> {
                 }
             }
         } else if b < 0x20 || b == 0x7F {
-            // D478 §3 (решение владельца 2026-09-18, реестр 221.1 №675):
+            // D481 §3 (решение владельца 2026-09-18, реестр 221.1 №675):
             // СЫРОЙ УПРАВЛЯЮЩИЙ СИМВОЛ В ЛИТЕРАЛЕ — ОШИБКА.
             //
             // Прежде он принимался молча и давал ПРАВИЛЬНЫЙ байт — то есть
@@ -1187,7 +1187,7 @@ impl<'a> Lexer<'a> {
             return Err(Diagnostic::new(
                 format!(
                     "[E_CHAR_RAW_CONTROL] raw control character U+{:04X} inside a char \
-                     literal (D478 §3): it is invisible in the source, so \
+                     literal (D481 §3): it is invisible in the source, so \
                      `'<tab>'` and `'<space>'` read the same. Write it as \
                      an escape: `'{}'`.",
                     b, shown,

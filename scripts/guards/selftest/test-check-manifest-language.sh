@@ -10,7 +10,8 @@ export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 G="$ROOT/scripts/guards/check-manifest-language.sh"
 FAILED=0
-ok()  { echo "  ok: $1"; }
+OKN=0
+ok()  { OKN=$((OKN + 1)); echo "  ok: $1"; }
 bad() { echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
@@ -61,6 +62,6 @@ else
     bad "красный, но не про ноль манифестов (код $rc): $out"
 fi
 
-if [ "$FAILED" -eq 0 ]; then echo "селфтест check-manifest-language: 6/6 ok"; exit 0; fi
+if [ "$FAILED" -eq 0 ]; then echo "селфтест check-manifest-language: $OKN/$OKN ok"; exit 0; fi
 echo "селфтест check-manifest-language: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1

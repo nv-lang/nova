@@ -6,7 +6,8 @@ export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 G="$ROOT/scripts/tools/rebuild-if-stale.sh"
 FAILED=0
-ok()  { echo "  ok: $1"; }
+OKN=0
+ok()  { OKN=$((OKN + 1)); echo "  ok: $1"; }
 bad() { echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
 
 # 1. На реальном дереве --check обязан отвечать однозначно (0 или 1), без падений.
@@ -33,6 +34,6 @@ else
     bad "неизвестный аргумент проглочен (код $rc): $out"
 fi
 
-if [ "$FAILED" -eq 0 ]; then echo "селфтест rebuild-if-stale: 3/3 ok"; exit 0; fi
+if [ "$FAILED" -eq 0 ]; then echo "селфтест rebuild-if-stale: $OKN/$OKN ok"; exit 0; fi
 echo "селфтест rebuild-if-stale: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1

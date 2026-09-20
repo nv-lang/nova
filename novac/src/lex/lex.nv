@@ -247,7 +247,7 @@ export type Token {
 // THE MARKER'S OWN REMOVAL CONDITION IS NOW MET -- AND IT WAS NOT ENOUGH.
 // It read "when the checker REJECTS raw control bytes, the neg fixture starts
 // passing". Measured in this tree after merging the fix and rebuilding the
-// oracle: `nova test spec_tests --filter d478 --full` gives PASS 4 / FAIL 0,
+// oracle: `nova test spec_tests --filter d481 --full` gives PASS 4 / FAIL 0,
 // and a probe prints 92, 9, 10, 13 rather than garbage. So the condition is
 // satisfied. But writing the canonical form `'\\' as u8` here BREAKS THE
 // BUILD, and not on char literals at all:

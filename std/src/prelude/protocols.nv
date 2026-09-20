@@ -680,8 +680,11 @@ fn Result[T Display, E Display] @display(mut f Fmt) -> () {
     }
 }
 
-// Type-set bounds for primitive integer families. Signed/unsigned are
-// separate sets (E_TYPE_SET_MIXED_SIGNEDNESS guards user-declared mixed).
+// Type-set bounds for primitive integer families. Signed/unsigned are kept
+// as separate sets for bodies that rely on signedness-homogeneity (e.g. "no
+// negative values" invariants) — NOT because mixing is rejected: D310
+// amendment (Plan p424) dropped the partial signed/unsigned mix ban, so
+// `set i32 | u32` compiles too. `Ints` below composes both by nesting.
 type SignedInts   set i8 | i16 | i32 | i64 | int
 type UnsignedInts set u8 | u16 | u32 | u64 | uint
 

@@ -1,0 +1,13 @@
+=== A. ruka bez znaka dollara -> ozhidaem KRASNYY
+check-selftest-honest-count: FAIL — самотестов с ЛИТЕРАЛЬНЫМ числом случаев: 1, база 0. Число, написанное рукой, расходится с телом на первом же добавленном случае и не краснеет никогда — печатай счётчик:
+    docs/dev/hunts/guards/probes/2026-09-20-neighbour-sign/p2-honest-count/case-a/test-a.sh:2: then echo "test-a ok: 8/8"
+rc=1
+
+=== B. ta zhe ruka 8/8 + lyuboy $ v stroke -> strazh ZELEN
+check-selftest-honest-count ok: самотестов: 1, с литеральным числом случаев: 0 (база 0) — счётчик, а не рука
+rc=0
+
+=== C. odin golyy simvol $ vnutri kavychek -> strazh ZELEN
+check-selftest-honest-count ok: самотестов: 1, с литеральным числом случаев: 0 (база 0) — счётчик, а не рука
+rc=0
+rc=0

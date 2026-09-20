@@ -164,6 +164,35 @@ def session_root():
     except Exception:
         return os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
 
+CARD_STALE_SEC = 12 * 3600   # тот же порог, что у `session-card.sh read`
+
+
+def _card_is_stale(card):
+    """Визитка старше 12 часов — след, а не адрес: судим как при её отсутствии.
+
+    Своя копия, а не импорт из `guard-stop-v2.py`: хук обязан быть
+    самодостаточным. Чтобы копии не разошлись, самотест ЗАГРУЖАЕТ оба модуля и
+    требует одинакового ответа на одном файле — расхождение ловится механизмом.
+
+    Причина и замер — в `guard-stop-v2.py`, `card_is_stale` (единственный дом
+    объяснения; здесь ссылка, чтобы две копии текста не разошлись).
+    """
+    try:
+        stamp = 0.0
+        for line in io.open(card, encoding="utf-8", errors="replace"):
+            if line.startswith("epoch="):
+                try:
+                    stamp = float(line.split("=", 1)[1].strip())
+                except ValueError:
+                    stamp = 0.0
+                break
+        if stamp <= 0:
+            stamp = os.path.getmtime(card)
+        return (time.time() - stamp) > CARD_STALE_SEC
+    except Exception:
+        return False
+
+
 def _branch_role_belongs_to_me(root):
     """Ветка называет РОЛЬ, но не говорит, ЧЬЁ это окно.
 
@@ -197,6 +226,8 @@ def _branch_role_belongs_to_me(root):
         card = os.path.join(gitdir, "nova-session-integrator.card")
         if not os.path.isfile(card):
             return True      # визитки роли нет — прежнее поведение
+        if _card_is_stale(card):
+            return True      # визитка протухла — тоже прежнее поведение
         owner = ""
         for line in io.open(card, encoding="utf-8", errors="replace"):
             if line.startswith("session_id="):

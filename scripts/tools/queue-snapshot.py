@@ -159,6 +159,34 @@ def common_git_dir(tree):
     return u""
 
 
+CARD_STALE_SEC = 12 * 3600   # тот же порог, что печатает `session-card.sh read`
+
+
+def card_is_stale(card):
+    u"""Визитка старше 12 часов — след, а не адрес: считаем, что её нет.
+
+    Третья копия того же правила (хук остановки, напоминалка, снимок), и она
+    обязана отвечать так же — иначе снимок снова начнёт печатать окну чужую
+    очередь при молчащем страже. Причина и замер — в `guard-stop-v2.py`,
+    `card_is_stale`; клетка самотеста сверяет ответы вызовом, а не пересказом.
+    """
+    try:
+        stamp = 0.0
+        with io.open(card, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if line.startswith(u"epoch="):
+                    try:
+                        stamp = float(line.split(u"=", 1)[1].strip())
+                    except ValueError:
+                        stamp = 0.0
+                    break
+        if stamp <= 0:
+            stamp = os.path.getmtime(card)
+        return (time.time() - stamp) > CARD_STALE_SEC
+    except Exception:
+        return False
+
+
 def role_belongs_to_me(tree, role):
     u"""Ветка УГАДЫВАЕТ роль, визитка РЕШАЕТ, чья она.
 
@@ -180,6 +208,8 @@ def role_belongs_to_me(tree, role):
         return True
     card = os.path.join(g, u"nova-session-%s.card" % role)
     if not os.path.isfile(card):
+        return True
+    if card_is_stale(card):
         return True
     try:
         with io.open(card, encoding="utf-8", errors="replace") as fh:

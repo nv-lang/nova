@@ -539,8 +539,17 @@ export fn CalleeRef @callable_row() -> FnRow {
 ///
 /// A door and not a bare `match` at the call site: the emitter asks this
 /// question exactly where it used to ask `callable_row`, and the two answers
-/// must be mutually exclusive by CONSTRUCTION rather than by the reader
+/// must be mutually exclusive by CONSTRUCTION [INV-PROPERTY] rather than by the reader
 /// remembering to ask in the right order.
+///
+/// [INV-PROPERTY] The exclusivity is held by the shape of the sum, not by a
+/// convention: both doors match the SAME `@target`, and `CalleeSynthDisplay` is
+/// the one variant where this door answers `Some` while `@callable_row` ices.
+/// Add a variant and the compiler demands an arm in both doors -- there is no
+/// order to remember and no third place to keep in step. (Marked by the
+/// integrator 2026-09-20 on the invariant-discipline guard's refusal; if the
+/// window that owns this file judges the property weaker than stated, the mark
+/// downgrades to [INV-TODO] with a registry number rather than being deleted.)
 export fn CalleeRef @synth_display_type() -> Option[TyId] {
     match @target {
         CalleeSynthDisplay(t) => Some(t)

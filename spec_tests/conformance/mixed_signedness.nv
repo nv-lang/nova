@@ -1,0 +1,30 @@
+// Plan p424 (D310 amendment) — POSITIVE (was `neg/mixed_signedness.nv`,
+// `E_TYPE_SET_MIXED_SIGNEDNESS` on declaration). The declaration-time ban on
+// a PARTIAL signed/unsigned mix (`set i32 | u32`) is REMOVED: `{i32,u32} ⊂
+// Ints`, and D423 §R3 (`04-effects.md`) already requires a SINGLE blanket
+// sound for the FULL signed+unsigned union (`Ints`, prelude) — a body sound
+// for all ten `Ints` members is sound for any two of them. See 02-types.md
+// §D310 «Синтаксис» for the amendment text.
+module spec_tests.conformance
+
+// A partial signed/unsigned mix — formerly rejected by
+// `E_TYPE_SET_MIXED_SIGNEDNESS`, legal since the D310 amendment.
+type D310MixedSet set i32 | u32
+
+// Body uses `+`, legal for both members; monomorphized once per member
+// (D310 §«Семантика тела» — same per-member mono as any other type-set).
+fn[T D310MixedSet] d310_mixed_twice(x T) -> T => x + x
+
+test "type-set: partial signed/unsigned mix compiles, monomorphizes on BOTH members via explicit type-args (D310 amendment)" {
+    // T = i32 member (signed)
+    assert(d310_mixed_twice[i32](21) == 42)
+    // T = u32 member (unsigned) — a DIFFERENT instantiation of the same generic
+    assert(d310_mixed_twice[u32](21) == 42)
+}
+
+test "type-set: partial signed/unsigned mix — inference also picks each member (D310 amendment)" {
+    ro a i32 = 100
+    assert(d310_mixed_twice(a) == 200)   // T inferred = i32
+    ro b u32 = 100
+    assert(d310_mixed_twice(b) == 200)   // T inferred = u32 — separate instantiation
+}

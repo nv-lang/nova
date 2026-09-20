@@ -1,0 +1,29 @@
+=== A. derzhateley net - kontrol
+check-binary-not-busy ok: бинарь этого дерева свободен, держателей 0 (искал: <TREE>/docs/dev/hunts/guards/probes/2026-09-20-neighbour-sign/p1-binary-not-busy/fake-tree/nova-cli/target/release/nova)
+rc=0
+
+=== B. ZAPUSK IZ POWERSHELL (predmet narushen: fayl uderzhan)
+-- windows-put: <TREE>\docs\dev\hunts\guards\probes\2026-09-20-neighbour-sign\p1-binary-not-busy\fake-tree\nova-cli\target\release\nova.exe
+-- ps -W vidit process:
+     4262288       0       0      67984  ?              0 03:07:53 <TREE>\docs\dev\hunts\guards\probes\2026-09-20-neighbour-sign\p1-binary-not-busy\fake-tree\nova-cli\target\release\nova.exe
+-- popytka perezapisat fayl (imenno eto delaet cargo build):
+   cp: cannot create regular file '<TREE>/docs/dev/hunts/guards/probes/2026-09-20-neighbour-sign/p1-binary-not-busy/fake-tree/nova-cli/target/release/nova.exe': Device or resource busy
+   rc perezapisi: 0
+-- verdikt strazha:
+check-binary-not-busy ok: бинарь этого дерева свободен, держателей 0 (искал: <TREE>/docs/dev/hunts/guards/probes/2026-09-20-neighbour-sign/p1-binary-not-busy/fake-tree/nova-cli/target/release/nova)
+rc=0
+
+=== C. TOT ZHE binar i to zhe uderzhanie, no ZAPUSK IZ BASH
+     1225485 1225449 1225448      56476  ?         197610 03:07:58 <TREE>/docs/dev/hunts/guards/probes/2026-09-20-neighbour-sign/p1-binary-not-busy/fake-tree/nova-cli/target/release/nova
+check-binary-not-busy: FAIL — бинарь ЭТОГО дерева занят чужим прогоном: держателей 1 (№1098)
+      1225485 1225449 1225448      56476  ?         197610 03:07:58 <TREE>/docs/dev/hunts/guards/probes/2026-09-20-neighbour-sign/p1-binary-not-busy/fake-tree/nova-cli/target/release/nova
+    искал: <TREE>/docs/dev/hunts/guards/probes/2026-09-20-neighbour-sign/p1-binary-not-busy/fake-tree/nova-cli/target/release/nova
+    Это НЕ права доступа и НЕ регресс сборки: перезаписать работающий
+    .exe на Windows нельзя, поэтому `cargo build` упал бы через минуту
+    с `os error 5` — отказом, называющим не свою причину.
+    Договорись о слоте и повтори. Правило (№1098): пока идёт чужой гейт,
+    бинарь ЭТОГО дерева не ЗАПУСКАЕТСЯ вообще — запрет на ВЛАДЕНИЕ файлом,
+    а не на нагрузку; двухсекундный check роняет сборку так же, как долгий.
+    Бинарь СОСЕДНЕГО worktree предметом НЕ является и здесь не считается.
+rc=1
+rc=0

@@ -65,6 +65,21 @@ def note(tmp, role="integrator", age_sec=0):
     return p
 
 
+def handoff(tmp, session="s1", age_sec=0):
+    u"""Файл передачи — АРТЕФАКТ команды `/stop`, и с 2026-09-20 именно он
+    доказывает код «смена». Записка доказательством быть перестала: её
+    обновляют по часовому напоминанию посреди работы, и условие сходилось
+    само — окно сказало «смена», смены не сдав, и хук пропустил."""
+    p = os.path.join(tmp, "docs", ".sessions", "handoff-%s.md" % session)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with io.open(p, "w", encoding="utf-8") as fh:
+        fh.write(u"СДЕЛАНО: …\nВ ПОЛЁТЕ: …\nНЕЗАКОММИЧЕНО: …\nДАЛЬШЕ: …\n")
+    if age_sec:
+        old = time.time() - age_sec
+        os.utime(p, (old, old))
+    return p
+
+
 def run(tmp, turns, session="s1", active=False, role="integrator",
         hook=None, env_extra=None):
     u"""role=None — окно без роли: ворота по роли обязаны сделать хук немым."""
@@ -167,12 +182,23 @@ def c_interrupt_passes(tmp):
 
 def c_shift_with_note(tmp):
     note(tmp)
+    handoff(tmp)
     return run(tmp, [(u"Смена сдана.\n\nСТОП: смена", 0)]), False
 
 
 def c_shift_without_note(tmp):
     note(tmp, age_sec=3 * 60 * 60)
+    handoff(tmp, age_sec=3 * 60 * 60)
     return run(tmp, [(u"Ухожу.\n\nСТОП: смена", 0)]), True
+
+
+def c_shift_note_fresh_but_no_handoff(tmp):
+    u"""ЖИВОЙ СЛУЧАЙ 2026-09-20, найденный владельцем: записка свежа (её
+    обновили по часовому напоминанию), смены никто не сдавал, а код «смена»
+    прошёл. Признак совпадал с обычной работой — вот клетка, которая этого
+    больше не допустит."""
+    note(tmp)
+    return run(tmp, [(u"Продолжу завтра.\n\nСТОП: смена", 0)]), True
 
 
 def c_snapshot_failed_passes_with_escape(tmp):
@@ -323,6 +349,8 @@ for n, f in [
     (u"прерывание владельца пропускается", c_interrupt_passes),
     (u"смена сдана: записка свежая", c_shift_with_note),
     (u"смена объявлена, записка трёхчасовой давности", c_shift_without_note),
+    (u"смена при свежей записке, но БЕЗ передачи — отказ",
+     c_shift_note_fresh_but_no_handoff),
     (u"снимок ok=false: пропуск + побег в лог", c_snapshot_failed_passes_with_escape),
     (u"хук упал сам — блок, а не немота", c_hook_crash_blocks),
     (u"хук упал повторно — не запирает окно", c_hook_crash_does_not_lock),
@@ -362,7 +390,7 @@ for name, fn in CASES:
 # ним проверяла бы не тот путь. Роль обязана выводиться из ветки — поэтому в
 # поддельном дереве пишется `.git/HEAD`.
 
-def _card_tree(role, owner_sid):
+def _card_tree(role, owner_sid, epoch=None):
     tmp = tempfile.mkdtemp(prefix="nova-stop-card-")
     g = os.path.join(tmp, ".git")
     os.makedirs(g, exist_ok=True)
@@ -371,6 +399,8 @@ def _card_tree(role, owner_sid):
     with io.open(os.path.join(g, "nova-session-%s.card" % role), "w",
                  encoding="utf-8") as fh:
         fh.write(u"role=%s\nsession_id=%s\n" % (role, owner_sid))
+        if epoch is not None:
+            fh.write(u"epoch=%d\n" % epoch)
     return tmp
 
 
@@ -438,6 +468,25 @@ def _t_assistant_card_names_role():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# --- возраст визитки: след против адреса (находка nova-78, 2026-09-19 04:56) ---
+#
+# Визитка переживает своё окно. Пока затвор читал её без оглядки на возраст,
+# двухдневная визитка с ЧУЖИМ id отвечала «роль не твоя» СЕГОДНЯШНЕМУ окну роли —
+# и страж молчал ровно там, где заведён. Клетки идут парой: протухшая обязана
+# судить (громко), свежая чужая обязана молчать — иначе «починка» была бы просто
+# отключением проверки визитки.
+
+def _t_card_stale_foreign():
+    tmp = _card_tree("integrator", "CHUZHOY-ID",
+                     epoch=int(time.time()) - 13 * 3600)
+    try:
+        res = run(tmp, [(u"Готово.", 0)], session="card3", role=None,
+                  env_extra={"CLAUDE_CODE_SESSION_ID": "MOY-ID"})
+        return bool(res) and res.get("decision") == "block"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def _t_assistant_card_foreign():
     u"""Чужая визитка роли НЕ даёт: иначе окно наследовало бы роль соседа по
     общему `.git`, и пара выше зеленела бы на правиле «роль есть у всех»."""
@@ -448,11 +497,59 @@ def _t_assistant_card_foreign():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _t_card_fresh_foreign():
+    tmp = _card_tree("integrator", "CHUZHOY-ID",
+                     epoch=int(time.time()) - 60)
+    try:
+        res = run(tmp, [(u"Готово.", 0)], session="card4", role=None,
+                  env_extra={"CLAUDE_CODE_SESSION_ID": "MOY-ID"})
+        return res is None
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _t_stale_copies_agree():
+    u"""Две копии `card_is_stale` (Stop-страж и напоминалка) — один ответ.
+
+    Общего модуля нет намеренно: хук обязан быть самодостаточным. Значит
+    расхождение копий ловится механизмом, а не доверием. Пара внутри клетки:
+    файлы РАЗНЫЕ по возрасту, иначе согласие двух «False» ничего не значило бы.
+    """
+    import importlib.util as ilu
+
+    def _load(name, path):
+        spec = ilu.spec_from_file_location(name, path)
+        mod = ilu.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    os.environ.setdefault("NOVA_STOP_RAW", "{}")
+    stop = _load("stop_v2", HOOK)
+    rem = _load("remind_ss", os.path.join(here, "..", "remind-session-save.py"))
+
+    tmp = tempfile.mkdtemp(prefix="nova-stop-age-")
+    try:
+        answers = []
+        for age in (13 * 3600, 60):
+            p = os.path.join(tmp, "c%d.card" % age)
+            with io.open(p, "w", encoding="utf-8") as fh:
+                fh.write(u"role=integrator\nsession_id=X\nepoch=%d\n"
+                         % (int(time.time()) - age))
+            answers.append((stop.card_is_stale(p), rem._card_is_stale(p)))
+        return answers == [(True, True), (False, False)]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 for _name, _fn in ((u"визитка НАЗЫВАЕТ роль помощника на чужой ветке",
                     _t_assistant_card_names_role),
                    (u"чужая визитка помощника роли не даёт", _t_assistant_card_foreign),
                    (u"визитка ЧУЖОЙ сессии: роль не моя, хук молчит", _t_card_foreign),
-                   (u"визитка МОЕЙ сессии: роль моя, молчание блокируется", _t_card_mine)):
+                   (u"визитка МОЕЙ сессии: роль моя, молчание блокируется", _t_card_mine),
+                   (u"визитка ПРОТУХЛА: след, а не адрес — страж судит", _t_card_stale_foreign),
+                   (u"визитка СВЕЖАЯ и чужая: по-прежнему молчит", _t_card_fresh_foreign),
+                   (u"две копии возраста визитки дают один ответ", _t_stale_copies_agree)):
     try:
         _got = _fn()
         _why = u"ok" if _got else u"не сработало"

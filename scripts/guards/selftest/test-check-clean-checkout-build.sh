@@ -12,7 +12,8 @@ export LC_ALL=C
 G="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/check-clean-checkout-build.sh"
 TMP="${TMPDIR:-/tmp}/selftest_cleanprobe_$$"
 FAILED=0
-ok()  { echo "  ok: $1"; }
+OKN=0
+ok()  { OKN=$((OKN + 1)); echo "  ok: $1"; }
 bad() { echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
 
 rm -rf "$TMP"; mkdir -p "$TMP"
@@ -58,6 +59,6 @@ else
     bad "страж не назван в docs/dev/rules-for-agents.md"
 fi
 
-if [ "$FAILED" -eq 0 ]; then echo "селфтест check-clean-checkout-build: 4/4 ok"; exit 0; fi
+if [ "$FAILED" -eq 0 ]; then echo "селфтест check-clean-checkout-build: $OKN/$OKN ok"; exit 0; fi
 echo "селфтест check-clean-checkout-build: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1
