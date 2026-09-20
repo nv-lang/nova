@@ -320,6 +320,18 @@ const CAST_MSG = "outside the subset: a cast `expr as T` is not compiled yet (E2
 /// A range that is not the head of a `for`.
 const RANGE_MSG = "outside the subset: a range is a `for` head here, not a value (E2-b)"
 
+/// A SLICE, `src[lo..hi]` -- a range standing as the INDEX of an index
+/// expression, which is a different form from a range used as a value.
+///
+/// Registry 1170, found 2026-09-20 by this window's own measurement: both
+/// forms came through one door and the door answered for both with the
+/// words of one, so a reader of `path[cut..]` was told about the head of a
+/// `for` that his line does not contain. The class is the general one --
+/// a shared path is POORER than the cases it absorbed -- and the repair is
+/// not a second text beside the first but a question the door can ask:
+/// WHERE does this range stand.
+const SLICE_MSG = "outside the subset: a slice `x[lo..hi]` is read but not compiled yet (E2-b)"
+
 /// The ONE text of the rule, so that the two doors cannot drift apart.
 const FOR_HEAD_MSG = "outside the subset: the head of a `for` is a range `lo..hi` here; a collection head arrives with generics (E2-b)"
 
