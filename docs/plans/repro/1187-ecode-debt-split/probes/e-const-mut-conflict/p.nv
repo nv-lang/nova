@@ -1,0 +1,3 @@
+const mut X = 1
+
+fn main() Io -> () => print("x")

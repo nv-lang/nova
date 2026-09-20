@@ -1,0 +1,3 @@
+const consume X = 1
+
+fn main() Io -> () => print("x")

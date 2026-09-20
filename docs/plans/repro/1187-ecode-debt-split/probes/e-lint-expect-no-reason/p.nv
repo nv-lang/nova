@@ -1,0 +1,2 @@
+// nova:expect E_BINDING_REQUIRES_INIT
+fn main() Io -> () => print("x")

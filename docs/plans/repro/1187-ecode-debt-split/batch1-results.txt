@@ -1,0 +1,37 @@
+# 1187, шаг 2: партия 1 — пробы по одной на код, у каждой контроль
+# Снято помощником 2026-09-20. ЗАМЕР, НЕ ВЕРДИКТ.
+# Кодов в партии 15 из 178 базы долга.
+#
+# «НЕ ДОШЛА» значит: МОЯ форма не подняла ни одного кода. Это не
+# «код мёртв» — утверждать смерть можно только чтением условия.
+
+E_BINDING_REQUIRES_INIT            ЖИВОЙ                        контроль: чист
+    ===== SUMMARY =====
+E_AMP_LITERAL                      ЖИВОЙ                        контроль: чист
+    ===== SUMMARY =====
+E_ADDR_OF_NON_LVALUE               ЖИВОЙ                        контроль: чист
+    ===== SUMMARY =====
+E_ARRAY_INDEX_PTR_BANNED           ЖИВОЙ                        контроль: чист
+    ===== SUMMARY =====
+E_BAD_FORMAT_SPEC                  НЕ ДОШЛА                     контроль: чист
+    [32mok:[0m C:/Users/B7E3~1/AppData/Local/Temp/claude/d--Sources-nv-lang-nova/2ed7d346-7886-4768-b532-3cd5bde9137b/scratchpad/probes1187\e-bad-format
+E_BOUND_UNKNOWN                    НЕ ДОШЛА                     контроль: чист
+    ===== SUMMARY =====
+E_CONST_RO_REDUNDANT               НЕ ДОШЛА                     контроль: чист
+    ===== SUMMARY =====
+E_CONST_MUT_CONFLICT               НЕ ДОШЛА                     контроль: чист
+    ===== SUMMARY =====
+E_CONST_CONSUME_CONFLICT           НЕ ДОШЛА                     контроль: чист
+    ===== SUMMARY =====
+E_LINT_EXPECT_NO_REASON            НЕ ДОШЛА                     контроль: чист
+    [32mok:[0m C:/Users/B7E3~1/AppData/Local/Temp/claude/d--Sources-nv-lang-nova/2ed7d346-7886-4768-b532-3cd5bde9137b/scratchpad/probes1187\e-lint-expec
+E_TYPE_ARITY_MISMATCH              НЕ ДОШЛА                     контроль: чист
+    ===== SUMMARY =====
+E_BOUND_NOT_PROTOCOL               НЕ ДОШЛА                     контроль: чист
+    ===== SUMMARY =====
+E_CALL_NOT_CALLABLE                ЖИВОЙ                        контроль: чист
+    ===== SUMMARY =====
+E_AMP_RECORD_LITERAL               ЖИВОЙ                        контроль: чист
+    ===== SUMMARY =====
+E_CONST_FIELD_IN_LITERAL           ЗАТЕНЁН: E_MISSING_FIELD_IN_LITERAL контроль: чист
+    ===== SUMMARY =====

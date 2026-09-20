@@ -1,0 +1,4 @@
+fn main() Io -> () {
+    ro n = 1
+    print("{n:-5}")
+}
