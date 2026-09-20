@@ -87,4 +87,60 @@ mojibake_lines=144
 #
 # ПОЧЕМУ РОСТ ОТ НУЛЯ ЗАКОННЫЙ: метрика заведена сегодня и сразу мерит
 # унаследованный долг. Ноль здесь означал бы не чистоту, а неизмеренность.
+
+# 2026-09-20 — к обоим счётам добавлены НОСИТЕЛИ (`mojibake_file=`,
+#   `fffd_file=`, по строке на файл с числом строк) и ЗНАМЕНАТЕЛЬ обхода
+#   (`scanned_files=`).
+#   ПОВОД. Счёт прячет ЗАМЕНУ: одну порчу вычистили, другая приехала слиянием —
+#   итог прежний, храповик молчит. У символа-замены это особенно наглядно: все
+#   418 строк живут в ОДНОМ файле (docs/history/simplifications-closed.md), и порча, заведённая в другом при
+#   уборке в этом, была бы невидима вовсе.
+#   ВТОРОЕ: счёт берётся обходом со списком расширений, списком пропусков и
+#   фильтром по индексу git. Сузь любой из трёх — число упадёт, и падение
+#   прочтётся как уборка. Знаменатель — сколько файлов ядро ПРОЧИТАЛО; он может
+#   только расти. Исчезновение носителя иначе неотличимо от уборки по
+#   построению: предмет — число строк, и «файл ушёл» равно «строк ноль».
+#   ЗАМЕР ЗАСЕВА: подпись cp1251 — 144 строк в 39 файлах; символ-замена —
+#   418 строк в 1 файлах; осмотрено файлов 7642.
 fffd_lines=418
+scanned_files=7642
+mojibake_file=compiler-codegen/src/test_runner.rs 5
+mojibake_file=docs/dev/simplifications.md 2
+mojibake_file=docs/plans/138.2-vec-in-prelude-novarray-retirement.md 1
+mojibake_file=docs/plans/139-str-as-nova-value-type.md 53
+mojibake_file=docs/plans/221.1-bug-sweep.md 1
+mojibake_file=nova_tests.old/plan108_4/neg/neg_mut_for_ro.nv 1
+mojibake_file=nova_tests.old/plan124/neg/plan124_8_modifier_order_independence_ok.nv 1
+mojibake_file=nova_tests.old/plan126/neg/p16_field_lacks_protocol_neg.nv 2
+mojibake_file=nova_tests.old/plan126/neg/p17_hashable_field_lacks_neg.nv 2
+mojibake_file=nova_tests.old/plan126/neg/p18_cloneable_field_lacks_neg.nv 2
+mojibake_file=nova_tests.old/plan126/neg/p19_comparable_field_lacks_neg.nv 2
+mojibake_file=nova_tests.old/plan126/neg/p20_printable_field_lacks_neg.nv 2
+mojibake_file=nova_tests.old/plan144_inftype/neg_mutual_cycle.nv 3
+mojibake_file=nova_tests.old/plan148/neg/mo_neg_priv_value.nv 1
+mojibake_file=nova_tests.old/plan91_14/t10_pos_debug_in_concat_with_display.nv 4
+mojibake_file=nova_tests.old/plan91_14/t1_pos_parse_debug_spec_ok.nv 4
+mojibake_file=nova_tests.old/plan91_14/t5_pos_debug_struct_memberwise.nv 8
+mojibake_file=nova_tests.old/strings/neg/plan131_vec_clone_pos.nv 1
+mojibake_file=nova_tests.old/strings/neg/plan131_vec_eq_pos.nv 1
+mojibake_file=spec_tests/conformance/loop_iteration_ok.nv 3
+mojibake_file=spec_tests/conformance/m2_v5_4_1_nested_region_ok.nv 4
+mojibake_file=spec_tests/conformance/m5_v2_1_licm_weighted_ok.nv 1
+mojibake_file=spec_tests/conformance/m6_v2_1_dyn_range_ok.nv 3
+mojibake_file=spec_tests/conformance/m6_v2_1_dyn_small_range_neg.nv 4
+mojibake_file=spec_tests/conformance/neg/n1_no_impl_no_autoderive_neg.nv 1
+mojibake_file=spec_tests/conformance/neg/n2_field_lacks_protocol_neg.nv 1
+mojibake_file=spec_tests/conformance/neg/n2_ro_binding_deep_chain_mut_neg.nv 2
+mojibake_file=spec_tests/conformance/p4_deep_chain_mut_ok.nv 4
+mojibake_file=spec_tests/conformance/plan123_1_2_v1_2_negative_below_threshold_nested_ok.nv 3
+mojibake_file=spec_tests/conformance/plan123_7_5_v7_5_var_method_invalidates_neg_ok.nv 3
+mojibake_file=spec_tests/conformance/plan123_7_7_v7_7_chain_receiver_sibling_safe_ok.nv 1
+mojibake_file=spec_tests/conformance/plan123_7_7_v7_7_depth_3_chain_ok.nv 1
+mojibake_file=spec_tests/conformance/plan123_followups_2026_06_05_m2_v5_4_1_nested_region_ok.nv 4
+mojibake_file=spec_tests/conformance/plan123_followups_2026_06_05_m5_v2_1_licm_weighted_ok.nv 1
+mojibake_file=spec_tests/conformance/plan123_followups_2026_06_05_m6_v2_1_dyn_range_ok.nv 3
+mojibake_file=spec_tests/conformance/plan123_followups_2026_06_05_m6_v2_1_dyn_small_range_neg.nv 4
+mojibake_file=spec_tests/conformance/v7_5_var_method_invalidates_neg_ok.nv 3
+mojibake_file=spec_tests/conformance/v7_7_chain_receiver_sibling_safe_ok.nv 1
+mojibake_file=spec_tests/conformance/v7_7_depth_3_chain_ok.nv 1
+fffd_file=docs/history/simplifications-closed.md 418
