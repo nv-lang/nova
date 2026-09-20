@@ -128,6 +128,17 @@
 #   dal'she: tam nazvana popytka lecheniya --remotes i prichina yeyo otkata --
 #   samotest 942 'hesh sosedney vetki ne myortv'). Stroka 1167, zavedyonnaya
 #   mnoyu segodnya na tot zhe klass, POGLOSHCHENA 1029 v den' zavedeniya.
-dead_hash_refs=847
+# 2026-09-20 (integrator): 847 -> 855. CHISLO IZ LOGA CI (progon 35481737087,
+#   stroka 'myortvykh heshey 855 (baza 847)'), ne iz lokal'nogo zamera -- lokal'no
+#   v tot zhe chas 829, raznitsa 26, rovno kak opisano vyshe.
+#   ROST MOY SOBSTVENNYY, i ya voshyol v nego PO PREDUPREZHDENIYU, kotoroe
+#   napisano v etoy zhe letopisi: ob'yasnenie defekta vosproizvodit defekt. Za
+#   smenu ya napisal desyatki strok s heshami v obratnykh apostrofakh -- soobshcheniya
+#   kommitov syuda ne schitayutsya, no stroki reyestra, letopisi baz i zapiski da.
+#   Pri etom pered pushem ya zapisal v reyestr 1029 PROVERYAEMOE utverzhdenie
+#   ('pervyy progon CI dast <= 847 i zelyonyy shag') -- ono OPROVERGNUTO, i eto
+#   zapisano tam zhe. Obhod byl neveren ne prichinoy, a tem, chto ya ne uchyol
+#   sobstvennyy vklad v schyot.
+dead_hash_refs=855
 commit_url_no_context=0
 mirror_links=0

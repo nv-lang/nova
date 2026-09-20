@@ -315,7 +315,13 @@
 # Twice in one shift now; whoever drains the queue finds nothing to implement in
 # either. Not skipped with NOVA_SPECQUEUE_NA because the number is MEASURED by a
 # command -- a skip here would disagree with what the next window measures.
-#   spec-queue: 89
+# 89 -> 90 (2026-09-20, integrator). THIRD time this shift with NO new norm, and
+# by now that is itself a measurement: tonight the counter moved for a renumbering,
+# for a register of issued numbers, and for an anchor. It counts COMMITS touching
+# spec/decisions, so a shift spent on the NUMBERING of decisions looks exactly like
+# a shift spent writing them. Whoever drains the queue will find nothing to
+# implement in any of the three; registry row 1182 holds the anchor work.
+#   spec-queue: 90
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,
