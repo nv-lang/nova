@@ -67,6 +67,21 @@ test "same_dir: peers of one directory" {
     assert(same_dir("a/b.nv", "a/c.nv"))
 }
 
+test "same_dir: the two separators are ONE separator (registry 1194)" {
+    // THE CELL THE OLD ONES COULD NOT BE. Every same_dir test wrote the SAME
+    // separator on both sides, so all of them passed while the mechanism was
+    // broken: two files of one directory, handed in with `/` on one and `\`
+    // on the other, were split into two units and the call between them was
+    // refused as an unknown name -- a correct program refused for how its path
+    // was SPELLED. Measured 2026-09-20 on the real binaries, both ways.
+    assert(same_dir("a/b.nv", "a\\c.nv"))
+    assert(same_dir("a\\b.nv", "a/c.nv"))
+    assert(same_dir("x/y/b.nv", "x\\y/c.nv"))
+    // And the separator is not a wildcard: a different DIRECTORY is still a
+    // different directory whichever way it is written.
+    assert(!same_dir("a/b.nv", "z\\c.nv"))
+}
+
 test "same_dir: different directories are not peers" {
     assert(!same_dir("a/b.nv", "x/c.nv"))
 }
