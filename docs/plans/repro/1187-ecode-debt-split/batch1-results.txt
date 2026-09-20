@@ -14,7 +14,7 @@ E_ADDR_OF_NON_LVALUE               ЖИВОЙ                        контр�
 E_ARRAY_INDEX_PTR_BANNED           ЖИВОЙ                        контроль: чист
     ===== SUMMARY =====
 E_BAD_FORMAT_SPEC                  НЕ ДОШЛА                     контроль: чист
-    [32mok:[0m C:/Users/B7E3~1/AppData/Local/Temp/claude/d--Sources-nv-lang-nova/2ed7d346-7886-4768-b532-3cd5bde9137b/scratchpad/probes1187\e-bad-format
+    [32mok:[0m <scratchpad>
 E_BOUND_UNKNOWN                    НЕ ДОШЛА                     контроль: чист
     ===== SUMMARY =====
 E_CONST_RO_REDUNDANT               НЕ ДОШЛА                     контроль: чист
@@ -24,7 +24,7 @@ E_CONST_MUT_CONFLICT               НЕ ДОШЛА                     конт�
 E_CONST_CONSUME_CONFLICT           НЕ ДОШЛА                     контроль: чист
     ===== SUMMARY =====
 E_LINT_EXPECT_NO_REASON            НЕ ДОШЛА                     контроль: чист
-    [32mok:[0m C:/Users/B7E3~1/AppData/Local/Temp/claude/d--Sources-nv-lang-nova/2ed7d346-7886-4768-b532-3cd5bde9137b/scratchpad/probes1187\e-lint-expec
+    [32mok:[0m <scratchpad>
 E_TYPE_ARITY_MISMATCH              НЕ ДОШЛА                     контроль: чист
     ===== SUMMARY =====
 E_BOUND_NOT_PROTOCOL               НЕ ДОШЛА                     контроль: чист
