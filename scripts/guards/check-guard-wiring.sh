@@ -44,6 +44,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # Скрипт живёт в scripts/guards/ — корень репы на два уровня выше.
 REPO_ROOT="${1:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 GATE="$REPO_ROOT/scripts/gate.sh"
+GATE_NOVAC="$REPO_ROOT/scripts/gate-novac.sh"
 SELFTEST_DIR="$REPO_ROOT/scripts/guards/selftest"
 
 # Минимум содержательной шапки: столько строк комментария в первых 20.
@@ -83,6 +84,8 @@ fi
 # план), сведено к ОДНОМУ проходу awk по всем файлам разом.
 GATE_CONTENT=""
 [ -f "$GATE" ] && GATE_CONTENT="$(<"$GATE")"
+GATE_NOVAC_CONTENT=""
+[ -f "$GATE_NOVAC" ] && GATE_NOVAC_CONTENT="$(<"$GATE_NOVAC")"
 loop_covers=0
 grep -qE "selftest/test-\*\.sh|selftest[^\"']*-name '?test-\*\.sh|guards/selftest" \
     "$GATE" 2>/dev/null && loop_covers=1
@@ -188,13 +191,26 @@ for g in "${guards[@]}"; do
     # как раньше: страж проверял НАПИСАНИЕ цикла, а не факт обхода каталога.
     # Теперь принимается любая форма, называющая каталог самотестов, — это то
     # свойство, которое на самом деле требуется.
+    # ПОПРАВКА 2026-09-20: подключение ищется в ОБОИХ гейтах. CI зовёт
+    # `gate.sh` И `gate-novac.sh` отдельными шагами (nova-gate.yml), а сюда
+    # смотрел только первый — и объявлял «не подключён» стража, который
+    # исполняется каждый прогон. Тот же класс, что описан абзацем выше про
+    # форму цикла: судили НАПИСАНИЕ одного файла вместо факта вызова.
     wired_directly=0
     case "$GATE_CONTENT" in *"$name"*) wired_directly=1 ;; esac
+    case "$GATE_NOVAC_CONTENT" in *"$name"*) wired_directly=1 ;; esac
 
     # 3. Проверен: есть самотест.
+    # ПОПРАВКА 2026-09-20: самотест засчитывается и на python. Искалось
+    # только `test-<имя>.sh`, а `test-check-novac-grammar-kinds.py` лежит
+    # в каталоге и работает — страж требовал РАСШИРЕНИЕ, а нужен ФАКТ теста.
     selftest="$SELFTEST_DIR/test-$name.sh"
+    selftest_py="$SELFTEST_DIR/test-$name.py"
     has_selftest=0
     [ -f "$selftest" ] && has_selftest=1
+    if [ "$has_selftest" -eq 0 ] && [ -f "$selftest_py" ]; then
+        has_selftest=1; selftest="$selftest_py"
+    fi
 
     if [ "$has_selftest" -eq 0 ]; then
         report "$name: НЕТ самотеста ($selftest) — страж без теста = доверие на слово"
