@@ -1,0 +1,37 @@
+module tail_if_let_value.pos_1
+
+// A TAIL `if let` USED AS A VALUE -- the form registry 1189 was filed for.
+//
+// Until 2026-09-20 this was refused as "fn declares a return type but its body
+// ends without a value", while the same shape written `if c { a } else { b }`
+// was accepted. One form, two spellings, and the allow-list of value tails knew
+// only one of them: nine of novac's own files carried the refusal.
+//
+// WHY THE STRING SPELLING, and it is not a matter of taste. The int spelling is
+// the one that found the bug and the one that matters, but the ORACLE CANNOT
+// BUILD IT: its own value temporary for an if-let is declared `nova_str`
+// whenever the Some branch is the bare binder, so `-> int` dies in C. A
+// positive fixture is a DIFFERENTIAL subject -- the two compilers must both
+// build it and answer the same -- and a file only one of them can build is not
+// one. The oracle's defect has its own probes and README under
+// `docs/plans/repro/oracle-iflet-value-temp/`, seven of them, with the axis
+// narrowed by six controls.
+//
+// THE INT SPELLING IS STILL PROVED, just not here: novac's own emission was
+// linked with the oracle's exact clang argv and RUN -- `g(Some(7))` printed 7
+// and `g(none_int())` printed 0. Reading the C would not have been enough; the
+// acceptance of 1189 says what the program prints.
+//
+// Its pair is `neg_1.nv`: the same form with no `else`, which must stay
+// refused, because the None path produces nothing.
+
+fn g(o Option[str]) -> str {
+    if Some(v) = o { v } else { "none" }
+}
+
+fn none_str() -> Option[str] => None
+
+fn main() {
+    println(g(Some("hi")))
+    println(g(none_str()))
+}

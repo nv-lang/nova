@@ -1,0 +1,21 @@
+module tail_if_let_value.neg_1
+
+// A TAIL `if let` USED AS A VALUE WITH NO `else` -- still refused, and this
+// cell is why the fix is a fix rather than a hole.
+//
+// The None path produces nothing, so the function would fall off its end. That
+// is not a subset limit but a fact about the shape, and the plain tail `if` is
+// refused in the same words for the same reason (274.7 B14).
+//
+// WHAT IT GUARDS is the CONDITION on the allow-list, not the message. Letting
+// `IfLet` into the list of value tails unconditionally is the easy version of
+// the 1189 fix and it would compile this file into a function with no return
+// value. The pair to this cell is `pos_1.nv`: one form accepted, its
+// else-less twin refused, and neither can be green without the other being
+// looked at.
+
+// NOVAC_EXPECT ends without a value
+
+fn g(o Option[int]) -> int {
+    if Some(v) = o { v }
+}

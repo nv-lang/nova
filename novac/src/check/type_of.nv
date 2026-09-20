@@ -436,8 +436,10 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
     if k == NodeKind.MatchExpr {
         // The match's value type: its FIRST arm expression (the corpus arms
         // agree by construction; the type checker wave will judge).
+        mut arms = 0
         for c in branch_children(e) {
             if c.kind_of() == NodeKind.MatchArm {
+                arms += 1
                 ro ak = branch_children(c)
                 // An arm whose children are all punctuation cannot come from a
                 // successful parse; until 2026-08-19 this answered -1 and the
@@ -467,10 +469,34 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
                 // needs `match` in a tail to reproduce.
                 ro body = ak[at]
                 ro bk = body.kind_of()
-                if bk == NodeKind.Block || bk == NodeKind.RetStmt { return no_ty() }
+                if bk == NodeKind.Block || bk == NodeKind.RetStmt {
+                    // THE NEXT ARM IS ASKED, not the match abandoned
+                    // (registry 1190). An arm that leaves yields no value,
+                    // which is not the same as the MATCH having none: in
+                    // `match k { A => return n  B => 7 }` the second arm is
+                    // the value and the first merely departs. Returning
+                    // `no_ty()` on the first arm left the match untyped, so
+                    // the lowering gave it no destination, the 7 was emitted
+                    // as `(void)(7)` and the function returned zero. The
+                    // oracle printed 7. This mirrors the checker's own fold,
+                    // which has carried Nones through since it was written --
+                    // the two answers to one question had drifted apart.
+                    continue
+                } else {
+                    // An arm with a value: it answers for the match.
+                }
                 return type_of(body, ctx, scope, chan)
             }
         }
+        // ARMS THAT ALL LEAVE are not an absence of arms, and telling the two
+        // apart is what this counter is for (registry 1190). `match k { A =>
+        // return 1  B => return 2 }` yields the match no value -- a fact, not a
+        // fault -- while a match with NO arms is a program nobody can mean. The
+        // first version of the scan above walked off the end into the ice below
+        // and killed the compiler on a correct program.
+        // The then-branch leaves, so no `else` is owed (P31 form 2): what
+        // follows IS the no-arms case the ice below was written for.
+        if arms > 0 { return no_ty() }
         // [LEGACY-#700-user-error-as-ice until:E2b3] `match x { }` is a USER error;
         // neither parse nor check refuses it today.
         ice("check: match without arms past check")

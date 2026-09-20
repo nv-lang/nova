@@ -155,6 +155,17 @@ fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
         // record literal the tail chain returns since step 4b -- ONE door for
         // this rule, the `=>` body's typing and the emitter's body arm (#974).
         if k == NodeKind.RetStmt || is_value_tail_kind(k) || k == NodeKind.IfStmt { return }
+        // `IfLet` JOINS with registry 1189, and it joins WITH A CONDITION: only
+        // the shape that has an `else`. Without one the None path produces no
+        // value and this door's own refusal is still the true thing to say.
+        //
+        // THE CONDITION IS NOT CAUTION, IT IS THE MEASUREMENT. Letting the form
+        // through unconditionally was probed first: the emitter wrote
+        // `(void)(v); ... return 0;` -- both branch values discarded and a hard
+        // zero returned -- so `g(Some(7))` printed 0. Check would have passed,
+        // the program would have built, and twelve diagnostics would have gone:
+        // every sign of work done, over a wrong answer.
+        if k == NodeKind.IfLet && branch_children(tail_node).len() > 9 { return }
         // An INDEX tail (`@heads[b]`) is a value too -- one novac does not compile
         // yet, and that refusal belongs to the expression walk ("indexing is read
         // but not compiled yet"). Until 2026-09-05 this door refused it first,

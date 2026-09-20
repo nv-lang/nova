@@ -1,0 +1,7 @@
+module p.l
+
+fn g(o Option[bool]) -> bool {
+    if Some(v) = o { v } else { false }
+}
+
+fn main() { println(g(Some(true))) }

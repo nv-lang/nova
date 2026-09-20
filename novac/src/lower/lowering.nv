@@ -15,6 +15,8 @@ import ../diag.{ice}
 import ../sem.{arm_body_at, binder_text, brace_pattern, branch_children, disj_head_slots, for_head_elem}
 import ../sem.{is_expr_kind, is_ident_leaf, is_int_lit, is_println_call, is_value_tail_kind, leaf_kind}
 import ../sem.{leaf_text, literal_prim_of, pattern_binders, pattern_has_disj, raw_vrow, variant_in_sum}
+// The head of a flat pattern, through the same door the checker asks (1190).
+import ../sem.{pattern_head_slot}
 
 
 /// THE LOWERING (274.8 M3). Everything here used to be methods on `Emitter`, the printer's own
@@ -110,6 +112,43 @@ fn Lowerer mut @lower_if_value(n Node, res_t TyId) -> Local {
     @ir.end_if(c)
     // The result local is HANDED BACK (274.8 M2b-2, prerequisite 5): the caller records
     // the assignment from it at LOWERING time, so nothing is lowered while the walk prints.
+    t
+}
+
+/// A tail `if let` laid down as a VALUE (registry 1189): the Option into its
+/// own temporary, the Some-test, the binder, and BOTH branches writing into a
+/// result temporary the caller returns.
+///
+/// It is `@lower_if_value` and `@lower_if_let` composed, and neither of them
+/// could answer alone: the first knows how a branching VALUE is laid down, the
+/// second knows what an if-let's parts are. The `(T){0}` initialiser is there
+/// for the reason given at `@lower_if_value` -- both branches always write, and
+/// the zero costs one C token to remove the whole question.
+///
+/// AN `else` IS A FACT HERE, not a guess: the checker refuses a value if-let
+/// without one (`IFLET_VALUE_NEEDS_ELSE_MSG`), so `kids[9]` exists by the time
+/// this runs. The same holds for the recorded type -- the branches had to
+/// agree before anything reached the lowering.
+fn Lowerer mut @lower_if_let_value(n Node, res_t TyId) -> Local {
+    ro kids = branch_children(n)
+    ro init = kids[6]
+    ro ot = @out.type_of(init.id_of())
+    ro payload = @ctx.tys.arg(ot, 0)
+    ro t = @ir.temp(res_t)
+    @ir.declare_zeroed(t)
+    // The Option is a temporary of the BODY, named by its index (274.8 M3):
+    // the Option of an `if let` is the compiler's, not the author's.
+    ro lo = @ir.temp(ot)
+    @lower_place(init, lo)
+    ro c = @ir.begin_if(Cond.IsSome(lo), ElseShape.Braced)
+    // The binder: the checker bound it to the payload type, this door spells
+    // what was decided.
+    ro bv = @ir.named(payload, leaf_text(kids[3]))
+    @ir.take_payload(bv, lo)
+    @lower_block_value(kids[7], t)
+    @ir.begin_else(c)
+    @lower_block_value(kids[9], t)
+    @ir.end_if(c)
     t
 }
 
@@ -633,7 +672,9 @@ fn Lowerer @guard_of(ak []Node) -> Option[Node] {
 /// cannot disagree on which row a head names. A disjunction's other heads
 /// travel with the variant; the checker held every binder of one to `_`.
 fn Lowerer @pattern_of(pat []Node, scr_t TyId) -> Pattern {
-    ro p0 = pat[0]
+    // THE SAME DOOR THE CHECKER USES (registry 1190). Reading slot 0 here
+    // made a qualified arm a binder, and a binder matches everything.
+    ro p0 = pat[pattern_head_slot(pat)]
     if is_int_lit(p0) {
         return Pattern.Lit(p0)
     }
@@ -684,7 +725,12 @@ fn Lowerer mut @lower_arm(arm Node, scr_t TyId, ls Local, c SwitchCtx, dest Loca
                 // Binding local assigned the field through the one assignment
                 // printer (M2b-1d).
                 mut binders = []str.new()
-                for j in 2..pat.len() {
+                // FROM THE HEAD (registry 1190), exactly as the checker counts:
+                // a payload binder follows the head and its `(`, which is slot 2
+                // for a bare head and slot 4 for a qualified one. The two passes
+                // agree because they ask the same door, not because both
+                // remember the same constant -- which is how this defect lived.
+                for j in pattern_head_slot(pat) + 2..pat.len() {
                     match pat[j].ident_str() {
                         Some(binder) => binders.push(binder)
                         None => {}
@@ -739,12 +785,22 @@ fn Lowerer mut @lower_arm(arm Node, scr_t TyId, ls Local, c SwitchCtx, dest Loca
 /// may be a block (`{}` included) or a single statement, and both go through
 /// the doors that already print those shapes.
 fn Lowerer mut @lower_arm_body(arm_e Node, dest Local) -> () {
-    if dest != no_local() {
+    // AN ARM THAT LEAVES PRODUCES NO VALUE, and that is true in value position
+    // too (registry 1190, found by the differential). `match k { A => return n
+    // B => 7 }` has one arm of each kind: the checker already answers None for
+    // the returning one and int for the other, so the match IS a value. This
+    // door did not ask, assigned the `return` statement into the result local
+    // as if it were an expression, and the value arm's 7 never arrived: the
+    // function returned the local's zero. The oracle printed 7, novac 0, and
+    // nothing in between said a word.
+    ro leaves = arm_e.kind_of() == NodeKind.RetStmt || arm_e.kind_of() == NodeKind.Block
+    if dest != no_local() && !leaves {
         // The arm's value lands in the match local through the one door.
         @lower_place(arm_e, dest)
         return
     } else {
-        // Statement position: the body runs, and nothing holds its answer.
+        // Statement position, or an arm that leaves through `return`: the body
+        // runs and nothing holds its answer.
     }
     // TERMINATOR, not an else: the two shape guards meet on a node-kind test
     // (274.5 section 2g), and a `return` satisfies both.
@@ -881,6 +937,10 @@ fn Lowerer mut @lower_value_source(e Node, ty TyId) -> Option[Local] {
         // hands back the local it declared.
         return Some(@lower_if_value(e, ty))
     }
+    if k == NodeKind.IfLet {
+        // The same pair with the Option machinery around it (registry 1189).
+        return Some(@lower_if_let_value(e, ty))
+    }
     None
 }
 
@@ -889,8 +949,13 @@ fn Lowerer mut @lower_value_source(e Node, ty TyId) -> Option[Local] {
 /// a statement whose arms leave through `return`, 274.5 wave B9).
 fn Lowerer @tail_places_value(c Node) -> bool {
     ro k = c.kind_of()
+    // An `if let` places a value only when the checker TYPED it as one --
+    // the same test the tail match takes, and for the same reason: the
+    // statement spelling of both shapes leaves through `return`, and asking
+    // the node's kind alone cannot tell the two apart.
     is_value_tail_kind(k) || k == NodeKind.IfStmt ||
-        (k == NodeKind.MatchExpr && is_ty(@out.type_if_known(c.id_of())))
+        ((k == NodeKind.MatchExpr || k == NodeKind.IfLet) &&
+            is_ty(@out.type_if_known(c.id_of())))
 }
 
 /// WHICH SHAPE OF `else` THIS `if` HAS -- the ONE place that decides it. A question about

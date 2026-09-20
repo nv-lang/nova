@@ -1,0 +1,7 @@
+module p.f
+
+fn g(o Option[str]) -> str {
+    if Some(v) = o { v } else { "" }
+}
+
+fn main() { println(g(Some("hi"))) }
