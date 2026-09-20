@@ -1427,4 +1427,11 @@ no_caveat=0
 #   dublya imyon NIKOGDA, dazhe bez importa. Chestnyy rost: defekt byl v dereve i
 #   ranshe, hrapovik schitaet NAZVANNOE. Sledstvie tyazhelee samogo defekta -- rezhim,
 #   kotorym gonyaetsya korpus, slep k etomu klassu, znachit nasha priyomka slepa.
-blockers=75
+# 2026-09-20 (integrator): blockers 75 -> 74. NOT a fix -- a RETRACTION. Row 1186
+#   was filed by me two hours ago on a premise that turned out false: `nova test`
+#   was said to be blind to duplicate names, and it is not. Verified by MY OWN
+#   probe (two peer files, duplicate Node, a live test): check FAIL: 1, test
+#   FAIL: 1. The only divergence of the eight families measured is row 1183, where
+#   it is `check` that stays silent. Lowering the base in the same edit, because a
+#   base left high silently permits filing the same phantom again.
+blockers=74
