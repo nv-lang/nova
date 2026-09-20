@@ -1,0 +1,1 @@
+fn takes_reader(c ChanReader[int]) -> () => ()

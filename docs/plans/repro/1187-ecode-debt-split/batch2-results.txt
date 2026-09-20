@@ -146,3 +146,81 @@ E_BLOCKING_FN_DECL_MISSING
   (неверной) редакции контроля для `E_COERCE_NOT_ZERO_COST` -- это НЕ
   засчитывается как её собственная проба: у неё нет своей минимальной формы
   и своего контроля, поэтому она остаётся в куче «не пробовались».
+
+# 1187, партия 2, ШЕСТАЯ ВОЛНА (02:4x) -- все 9 оставшихся кодов разобраны
+
+ЖИВЫЕ (7), пробы/контроль в probes/e-<код>/:
+  E_BARE_TYPEVAR_NEEDS_PREFIX
+    `fn T @bar() -> int => 1` (T -- голая заглавная буква длины <=2, без
+    `fn[T]` префикса, не объявлена типом). Контроль: `fn[T] T @bar()...`.
+  E_CAST_UNWRAP_REQUIRED
+    `ro a Option[int] = Some(1); ro b = a as u64` -- прямой каст без
+    разворачивания. ЛОВУШКА МЕТОДА: первая попытка обернула форму в
+    `module spec_tests.conformance` + `test { }` (по образцу корпуса) --
+    и p.nv/control.nv стали давать ОДИНАКОВУЮ ошибку с путём p.nv даже
+    при проверке control.nv: `nova check`, похоже, резолвит/кэширует по
+    ДЕКЛАРИРОВАННОМУ МОДУЛЮ, а не по пути файла, и оба файла с одинаковым
+    `module spec_tests.conformance` схлопнулись в одну проверку. Убрал
+    `module`-строку и `test`-обёртку (голый `fn main() Io -> ()`, как во
+    всех прежних пробах этого расследования) -- коллизия исчезла. Урок:
+    голый `fn main()` без `module` -- обязательная форма для проб этого
+    каталога, не только стилевое предпочтение.
+  E_CHANNEL_TYPE_NOT_INSTANTIABLE
+    `fn takes_channel(c Channel[int]) -> () => ()` -- голый `Channel[T]` в
+    позиции параметра/возврата. Контроль: `ChanReader[int]`.
+  E_COERCE_EFFECTFUL
+    `#coerce fn int @to_str() Io -> ro str {...}` -- добавлен эффект `Io` к
+    уже известной живой форме `#coerce fn int @to_str() -> ro str`.
+  E_COERCE_NOT_UNARY
+    Взят СОБСТВЕННЫЙ контроль (пятая волна отметила его как найденный лишь
+    ПОБОЧНО, без своей формы): `#coerce fn int @to_str(extra int) -> ro str`
+    -- instance-форма с ненулевым числом параметров.
+  E_COERCE_ON_PROTOCOL
+    `type Hashable protocol { #coerce @key_hash() -> u64 }` -- `#coerce` на
+    требовании протокола, а не на конкретной fn.
+  E_COERCE_RECEIVER_FORM_DEFERRED
+    `#coerce fn int.from_str(s str) -> int {...}` -- статическая
+    конструктор-форма (точка, не `@`) с ОДНИМ параметром.
+
+НЕДОСТИЖИМЫ (2), архитектурным чтением, без догадок:
+  E_AUTO_DERIVE_CYCLE
+    Условие (`auto_derive.rs:963-966`): `mark_visiting` возвращает false при
+    ПОВТОРНОМ входе в тот же (type, protocol) внутри ОДНОГО visited-набора --
+    но ВСЕ ТРИ вызывающих места в дереве (`auto_derive.rs:3526`,
+    `types/mod.rs:5653`, `types/mod.rs:19576`) создают `AutoDeriveCtx::new(...)`
+    ЗАНОВО непосредственно перед каждым вызовом `synthesize_method`, для
+    КАЖДОЙ (тип, протокол) пары по отдельности. Ни `synthesize_method`, ни
+    `synthesize_method_inner` не вызывают `synthesize_method` рекурсивно --
+    поля проверяются через `check_field_eligibility*`, не через повторный
+    вход в синтезатор. Значит `mark_visiting` каждый раз стартует с ПУСТОГО
+    набора и физически не может увидеть дубликат -- цикл, который эта
+    проверка стережёт, никогда не строится в текущем драйвере. Проба не
+    строилась -- как и для двух кодов пятой волны, доказательство читаемо
+    напрямую (отсутствие recursion-пути), а не по молчанию формы.
+  E_BLOCKING_NOGC_ALLOC
+    Условие требует `state.blocking_body_active && !state.realtime_active`
+    (`types/mod.rs:34606`). Поле `blocking_body_active` (`types/mod.rs:33455`)
+    ОБЪЯВЛЕНО, ЧИТАЕТСЯ в трёх местах (:34559, :34606, :34680), но НИГДЕ в
+    дереве не присваивается `true` -- ни оператором `=`, ни структурным
+    литералом `blocking_body_active: true` (грепнуто по обоим шаблонам
+    отдельно). Док-комментарий поля прямо говорит "True внутри тела
+    `blocking { ... }`" -- то есть механизм задуман (Plan 83.3 Ф.6), но
+    провод от walk'а тела `blocking { }` к этому флагу не подключен. Попутно:
+    ДВА других диагностических сообщения на том же флаге (:34559, :34680,
+    без кода `E_*`, значит вне периметра базы долга) тоже мертвы этим же
+    путём -- не заводится отдельной строкой, у них нет `E_*`-кода в базе.
+
+ИТОГ ПАРТИИ 2, ВСЕ 20 КОДОВ РАЗОБРАНЫ:
+  живых 13:      E_ADDR_OF_REMOVED, E_AMBIGUOUS_IDENT_PATTERN,
+                 E_ARRAY_ELEM_NARROW, E_AUTO_DERIVE_UNSUPPORTED_KIND (оговорка
+                 про носителя), E_BARE_TYPEVAR_NEEDS_PREFIX,
+                 E_CAST_UNWRAP_REQUIRED, E_CHANNEL_TYPE_NOT_INSTANTIABLE,
+                 E_COERCE_EFFECTFUL, E_COERCE_NOT_UNARY, E_COERCE_NOT_ZERO_COST,
+                 E_COERCE_ON_PROTOCOL, E_COERCE_RECEIVER_FORM_DEFERRED,
+                 E_CONST_FN_ALLOCATION
+  недостижимо 5: E_AUTO_DERIVE_CYCLE, E_AUTO_DERIVE_UNKNOWN_PROTOCOL,
+                 E_BLOCKING_FN_DECL_MISSING, E_BLOCKING_NOGC_ALLOC,
+                 E_CONST_FN_CLOSURE_EXTERNAL
+  честно открыто 2: E_CONST_FN_CLOSURE_ARITY, E_CONST_FN_CLOSURE_BODY
+
+  13 + 5 + 2 = 20.
