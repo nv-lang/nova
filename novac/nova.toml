@@ -308,7 +308,97 @@
 # the duplicated D478 -- the char-literal block became D481, the variant block kept
 # D478. The counter moves anyway because it counts COMMITS touching spec/decisions,
 # not decisions; whoever drains the queue will find nothing to implement in this one.
-#   spec-queue: 88
+# 88 -> 89 (2026-09-20, integrator). AGAIN NO NEW NORM, and the repetition is
+# the point: this commit adds spec/decisions/ISSUED-NUMBERS.md, a register of
+# issued D-numbers, after the number D478 was taken three times in one day. The
+# counter moves because it counts COMMITS touching spec/decisions, not decisions.
+# Twice in one shift now; whoever drains the queue finds nothing to implement in
+# either. Not skipped with NOVA_SPECQUEUE_NA because the number is MEASURED by a
+# command -- a skip here would disagree with what the next window measures.
+# 89 -> 90 (2026-09-20, integrator). THIRD time this shift with NO new norm, and
+# by now that is itself a measurement: tonight the counter moved for a renumbering,
+# for a register of issued numbers, and for an anchor. It counts COMMITS touching
+# spec/decisions, so a shift spent on the NUMBERING of decisions looks exactly like
+# a shift spent writing them. Whoever drains the queue will find nothing to
+# implement in any of the three; registry row 1182 holds the anchor work.
+# 87 -> 88 (2026-09-20, window nova-78): D480 -- how a reference type spells
+# itself (`ref T` / `ref mut T`, a redundant `ro` on a reference refused), plus an
+# amendment to R1 of revision D326: returning `ref T` over a type parameter is
+# legal. The counter moves by ONE because the commit is one and the decision is
+# one; the other half (registry rows and the probe) does not enter spec/decisions
+# and does not touch the counter.
+# 88 -> 89 (same evening, same window): the owner's correction to D480 section 2 --
+# returning a reference to a `ro` parameter is refused CORRECTLY, and the defect is
+# in the wording of the refusal. I put the correcting commit through
+# NOVA_SPECQUEUE_NA=1 so that one edit would not move the counter twice, and then
+# brought it to the measured value at once: the guard's own command gives 89. The
+# number is MEASURED rather than added in my head -- precisely because skipping the
+# hook makes the arithmetic invisible.
+# 89 -> 90 (2026-09-20, same window): amendment D477 section 5a -- the `indirect`
+# marker is legal without recursion.
+#   TWO ARITHMETICS DISAGREED RIGHT HERE, and that is worth recording. The command
+#   from the header gave 90 BEFORE this commit, so it would have demanded 91; the
+#   pre-commit hook demands 90. The difference is the denominator: the hook counts
+#   the history of THIS branch, the header's command adds Carina's branch, which
+#   was moving in parallel. 90 was set -- by the MECHANISM that reddens, not by the
+#   command written in prose; at merge time the number is taken again anyway, which
+#   is exactly what the note above warns about.
+# 90 -> 91 (same evening): reference locals banned (D480) and the marker made a
+# no-op on a heap type (D477). The commit went through NOVA_SPECQUEUE_NA=1 so as
+# not to guess the number while editing, and it was measured straight after: 91
+# over the branch, 92 over the joined history with p274-novac. 91 is set, with the
+# same denominator as last time (the history of THIS branch): one number cannot be
+# chosen for two arithmetics, and changing the denominator mid-chronicle is the
+# worse of the two.
+# 91 -> 94 (same evening, end of the conversation): the fat-variant example with
+# its declarations, the explanation the owner asked for, and D483 -- auto-deref
+# removed from the raw pointer. Three commits in spec/decisions; the number was
+# measured over the branch rather than added up in my head.
+# 94 -> 95: the owner's refinement -- `*.` is one token and `p * .field` is invalid.
+# 95 -> 96: one star per pointer level (`p**.field`), so the lexeme is not simply
+# `*.` -- it is a run of N stars immediately followed by a dot, and a wrong number
+# of stars must be an error rather than a silent no-op.
+# 90 and 95 -> 99 (2026-09-20, merge of window nova-78's branch, integrator). BOTH
+# CHRONICLES ABOVE ARE KEPT: the sides wrote about DIFFERENT work and neither
+# cancels the other. The number was not chosen between the two and not added up,
+# but MEASURED over the joined history with the guard's own command:
+#   git log --since=2026-08-14 --no-merges --format=%H HEAD d480-ref-type-spelling
+#       -- spec/decisions | sort -u | wc -l   ->  99
+# Neither the maximum (95) nor the sum (185): the branches share a past and both
+# arithmetics lie, in opposite directions. Third such case in two days, and the
+# increment differed every time -- which is why the number is measured rather than
+# derived. A side finding: HEAD alone gives 91 while the file said 90, so my own
+# count had fallen one step behind and only the measurement showed it.
+# 99 and 96 -> 100 (2026-09-20, second pass of the same merge, integrator). The
+# branch added two commits while I was resolving the first thirteen, so the number
+# had to be taken AGAIN -- 99 was ten minutes stale. Measured with the same
+# command: 100. This is the reason for measuring rather than keeping a count in
+# your head: between two passes of one merge, both sides keep writing.
+# A CORRECTION TO THIS VERY BLOCK, recorded because it is the same class the block
+# is about: translating the window's chronicle into English (the manifest must be
+# English -- it ships inside the package repository) SILENTLY DROPPED two entries,
+# `95 -> 96` and the first merge note. The replaced span was chosen by "lines
+# containing Cyrillic" and my English replacement was written from the summary
+# rather than line by line, so entries that lived inside the span and not in my
+# summary disappeared without a trace. Restored here.
+# 96 -> 97 (window nova-78): amendment to D216 on two rulings the owner made after
+# the branch was handed over -- (1) access through a VALID pointer is safe, and
+# `unsafe` stays only on address arithmetic and on `*uninit T`; (2) `extern "C"`
+# must declare a pointer as `Option[*T]`, never bare. The second half is what makes
+# the first honest: otherwise nobody answers for the validity of a pointer coming
+# from C, and "safe" would read as a guarantee from the compiler. The amendment
+# also RETRACTS the wording of section 5 ("all pointer ops gated"), which is the
+# norm catching up with the code -- a measurement the same day showed the compiler
+# already accepts `ptr.x` outside `unsafe`.
+# 100 and 97 -> 102 (2026-09-20, third pass of the same merge, integrator).
+# Measured again, same command: 102. The window kept working through all three
+# passes, so every earlier number was stale by the time I used it. THEIR SIDE OF
+# THIS CONFLICT CARRIED THE RUSSIAN CHRONICLE AGAIN -- their branch never saw the
+# translation -- so my side was taken whole and their new entry translated into it.
+# That is not "my version won": every entry of theirs is present, only the language
+# changed, and the manifest must be English because it ships inside the package
+# repository.
+#   spec-queue: 102
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,

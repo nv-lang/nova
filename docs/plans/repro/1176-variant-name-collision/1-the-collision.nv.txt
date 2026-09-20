@@ -1,0 +1,18 @@
+// Улика к строке реестра №1176 — два варианта с ОДНИМ именем в одной сумме.
+//
+// `nova check` принимает этот файл. `nova build` падает не диагностикой Nova,
+// а текстом C-компилятора (redefinition of enumerator / duplicate member).
+// Команда и дословные вердикты — в README.md рядом.
+
+type Rv enum Pay { vec int } | Pay(int)
+
+fn main() Io -> () {
+    ro a = Rv.Pay { vec: 1 }
+    ro b = Rv.Pay(2)
+    match a {
+        Pay { vec } => print("rec ${vec}")
+    }
+    match b {
+        Pay(n) => print("pos ${n}")
+    }
+}

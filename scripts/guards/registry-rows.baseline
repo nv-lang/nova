@@ -1282,7 +1282,37 @@
 #   (dva defekta dokumentov: myortvaya ssylka i primer snyatoy formy).
 # 2026-09-20 (integrator): rows 1126 -> 1127, max 1174 -> 1175 -- zavedena 1175
 #   (kod ostanovki "smena" sudilsya priznakom, vypolnyayushchimsya sam).
-rows=1127
-max=1175
+# 2026-09-20 (integrator): rows 1127 -> 1129, max 1175 -> 1180 -- zavedeny 1179
+#   (dva peer-fayla odnogo modulya ob'yavlyayut odin tip, kompilyator molchit)
+#   i 1180 (`nova check <katalog>` schitaet odin fayl iz dvuh). NOMERA 1176-1178
+#   NE VZYATY: ih nesyot vetka okna nova-78, kotoroy v etom dereve NET -- nomer v
+#   chuzhoy vetke zanyat, hotya grep ego ne vidit. Ob'yavleny dyrami do yeyo vliva;
+#   kogda vetka pridyot, tri dyry snimayutsya TEM ZHE sliyaniem.
+# 2026-09-20 (integrator): rows 1129 -> 1130, max 1180 -> 1181 -- zavedena 1181
+#   (kommentariy dveri carrier_of utverzhdaet invariant, kotorogo nikto ne derzhit;
+#   cikl padaet ICE vmesto diagnostiki). Naydeno chteniem pri planirovanii 274.15.
+# 2026-09-20 (integrator): rows 1130 -> 1131, max 1181 -> 1182 -- zavedena 1182
+#   (450 vnutrennih ssylok speki iz 453 nikuda ne vedut: korotkiy yakor (#dNNN)
+#   protiv 8 yavnyh targetov). Zamer sdelan poputno pri perenumeracii D478.
+# 2026-09-20 (integrator): rows 1131 -> 1132, max 1182 -> 1183 -- zavedena 1183
+#   (import std.encoding.serde molcha vyklyuchaet proverku dubley u potrebitelya;
+#   razlichie v ODNOY stroke import, nashyol pomoshchnik). Blokiruet teg.
+# 2026-09-20 (integrator): 1184 vydan oknu nova-78 (tekst E_READONLY_COERCE
+#   nazyvaet ro-otmyvanie tam, gde prichina -- VREMYA ZHIZNI ro-parametra).
+#   Ob'yavlen dyroy do vliva yego vetki: nomer, kotoryy nesyot chuzhaya vetka,
+#   zanyat nezavisimo ot togo, vidit li yego eto derevo.
+# 2026-09-20 (integrator, merge of window nova-78's branch): 1176-1178 and 1184
+#   removed from gaps -- the rows ARRIVED with the branch, so the reservation is no
+#   longer a reservation. Removed in the SAME step the row arrived in: otherwise a
+#   later loss of that row passes silently, because the hole check sees it missing
+#   and confirms against a list where missing is allowed.
+# 2026-09-20 (integrator, same merge): rows 1132 -> 1136, max 1183 -> 1184.
+#   Four rows arrived with the branch: 1176 (a variant name repeated, caught by the
+#   C compiler for us), 1177 (D216 section 5 shows retracted forms), 1178 (a D215
+#   callout with no scope), 1184 (E_READONLY_COERCE names ro-laundering where the
+#   cause is the lifetime of a ro parameter). 1184 is the number I issued an hour
+#   ago; the other three the window filed itself and I assigned them earlier.
+rows=1136
+max=1184
 stale_gaps=0
 gaps=174-208,210-215,653-654,743,1062,1096,1103-1104
