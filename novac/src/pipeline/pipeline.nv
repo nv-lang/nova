@@ -201,19 +201,48 @@ export type Unit value {
     files []UnitFile /// where each body landed, in order
 }
 
-/// The end of a file's FIRST line -- its `module` line, if it has one.
+/// The end of a file's `module` line -- found BY NAME, not by position.
 ///
 /// A unit keeps ONE module line and takes every file's imports after it, so
 /// this number is where a file's contribution to the header begins.
-fn first_line_end(text str) -> int {
+///
+/// THE FIRST LINE IS NOT THE MODULE LINE, and assuming it was cost twenty
+/// diagnostics. Every file of this compiler opens with an SPDX comment, so a
+/// unit built on `first line` copied that comment as its header and left each
+/// file's real `module` line inside the imports region -- where it was
+/// repeated once per file, and a repeated module line is exactly what the
+/// parser refuses. Caught by two measurements disagreeing: the same module
+/// gave 77 diagnostics assembled by the probe script and 97 assembled here,
+/// while the file-by-file number matched exactly (308 and 308). The
+/// agreement of the halves that shared code is what made the difference
+/// point at the half that did not.
+///
+/// A file with NO module line answers 0: it contributes no header, and the
+/// whole of it is body. That is a real shape -- a fragment handed in by a
+/// test -- and not an error.
+fn module_line_end(text str) -> int {
     ro b = text.bytes()
     ro n = text.byte_len()
+    mut ls = 0
     mut i = 0
-    while i < n {
-        if b[i] == UNIT_LF { return i + 1 } else {}
+    while i <= n {
+        mut at_end = false
+        if i == n {
+            at_end = true
+        } else {
+            if b[i] == UNIT_LF { at_end = true } else {}
+        }
+        if at_end {
+            if matches_at(b, ls, "module ") {
+                mut e = i
+                if i < n { e = i + 1 } else {}
+                return e
+            } else {}
+            ls = i + 1
+        } else {}
         i += 1
     }
-    n
+    0
 }
 
 /// Copy `b[from..to)` onto `out` -- a byte loop, because a slice is not
@@ -261,7 +290,7 @@ export fn unit_of(paths []str, texts []str) -> Unit {
     // RUN like any other, because a diagnostic can land in it.
     ro t0 = texts[0]
     ro b0 = t0.bytes()
-    ro m0 = first_line_end(texts[0])
+    ro m0 = module_line_end(texts[0])
     files.push(UnitFile { path: paths[0], at: 0, from: 0 })
     append_range(out, b0, 0, m0)
     // Then the imports of every file -- the part of a header after its own
@@ -270,7 +299,7 @@ export fn unit_of(paths []str, texts []str) -> Unit {
     while i < texts.len() {
         ro ti = texts[i]
         ro bi = ti.bytes()
-        ro mi = first_line_end(texts[i])
+        ro mi = module_line_end(texts[i])
         ro hi = header_end(texts[i])
         if hi > mi {
             files.push(UnitFile { path: paths[i], at: out.len(), from: mi })

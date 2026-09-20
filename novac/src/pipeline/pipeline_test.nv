@@ -37,6 +37,53 @@ fn std_decls() -> []str => []str.of("fn str @byte_len() -> int => 0\nfn str @to_
 
 fn n_diags(text str) -> int => compile(text, std_decls()).len()
 
+// --- module_line_end: the module line is not the first line (274.7 M) ----
+//
+// Every file of this compiler opens with an SPDX comment. A unit built on
+// "the first line" copied that comment as its header and left each file's
+// real module line inside the imports region, repeated once per file -- and
+// a repeated module line is what the parser refuses. Twenty diagnostics,
+// found by two measurements disagreeing (77 by the probe script, 97 by the
+// door) while the file-by-file halves matched exactly.
+
+test "module_line_end: a comment stands before the module line" {
+    ro t = "// c\nmodule m\nimport a\nfn f() -> int => 1\n"
+    assert(module_line_end(t) == 14)
+}
+
+test "module_line_end: no module line at all answers zero" {
+    // A fragment handed in by a test is a real shape, not an error: it
+    // contributes no header and all of it is body.
+    ro t = "fn f() -> int => 1\n"
+    assert(module_line_end(t) == 0)
+}
+
+test "unit_of: ONE module line even when a comment opens every file" {
+    mut ps = []str.new()
+    ps.push("a.nv")
+    ps.push("b.nv")
+    mut ts = []str.new()
+    ts.push("// SPDX\nmodule m\nimport a\nfn one() -> int => 1\n")
+    ts.push("// SPDX\nmodule m\nimport b\nfn two() -> int => 2\n")
+    ro u = unit_of(ps, ts)
+    // The second module line must not survive anywhere in the unit.
+    assert(!u.text.contains("module m\nimport b\nmodule m"))
+    assert(count_of(u.text, "module m") == 1)
+}
+
+/// How many times `needle` occurs in `hay` -- a counting helper the cell
+/// above needs, because `contains` answers yes for one and for three alike.
+fn count_of(hay str, needle str) -> int {
+    ro hb = hay.bytes()
+    mut n = 0
+    mut i = 0
+    while i < hb.len() {
+        if matches_at(hb, i, needle) { n += 1 } else {}
+        i += 1
+    }
+    n
+}
+
 // --- same_dir: which paths make one unit (274.7 M) -----------------------
 
 test "same_dir: peers of one directory" {
