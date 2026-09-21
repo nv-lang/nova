@@ -81,6 +81,11 @@ AttrDecl =
 ConstDecl =
   'const' 'ident' TypeRefLeaves? '=' Expr
 
+// Module-level `ro NAME [Type] = expr` (D184's Item::Let) — same shape as
+// ConstDecl, `ro` in place of `const`.
+LetDecl =
+  'ro' 'ident' TypeRefLeaves? '=' Expr
+
 TestDecl =
   'test' 'string' (Block | Err)
 
@@ -139,6 +144,12 @@ Field =
 
 ProtoMethod =
   '@' 'ident' ('(' Param* ')')? RetType?
+
+// One operation signature inside `type X effect { ... }` (D459): `fn NAME(params) -> T`.
+// `check` refuses the whole declaration by name (no effect-system semantics
+// yet) -- this shape only keeps the reader from turning the body into junk.
+EffectOp =
+  'fn' 'ident' ('(' Param* ')')? RetType?
 
 Generics =
   '[' BalancedRun ']'

@@ -1,0 +1,4 @@
+fn open_left(t []int) -> int => t[..2][0]
+fn open_right(t []int) -> int => t[2..][0]
+fn closed(t []int) -> int => t[0..2][0]
+fn unaffected(a int, b int) -> int => a + b

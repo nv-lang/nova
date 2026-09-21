@@ -167,3 +167,27 @@ test "shape: a bare `return` at a match arm's end does not swallow the next arm 
     }
     assert(tree_reserialize(f) == src)
 }
+
+test "shape: a leading `..` (open-left slice) parses as an Index, not the parser's fallback (registry #1241)" {
+    // `..` is a BINARY operator only (is_binop/binding_power); it never
+    // appears as a prefix, so `t[..2]` used to give `@primary()` no branch
+    // to take and fall into generic Err recovery, eating the `..` as one
+    // stray token. `t[a..]` (open-right) worked all along, but only by
+    // accident -- its `a` gives `@primary()` a real left, the same binop
+    // loop reads `..` normally, and the ABSENT right becomes its own
+    // recovered node. This fixes the missing left the same way.
+    ro src = "fn m() {\n    t[..2]\n}\n"
+    ro f = parse(lex(src))
+    match ret_test_fn_block(f) {
+        Branch { children, .. } => {
+            mut found = false
+            for c in children {
+                if c.kind_of() != NodeKind.Index { continue }
+                found = true
+            }
+            assert(found)
+        }
+        Leaf(_) => assert(false)
+    }
+    assert(tree_reserialize(f) == src)
+}

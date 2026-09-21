@@ -676,8 +676,10 @@ fn Checker mut @type_stmt(st Node) -> () {
         ro rv = kids[1]
         if rv.kind_of() == NodeKind.MatchExpr {
             @type_match(rv)
-        } else {
+        } else if is_value_tail_kind(rv.kind_of()) {
             @type_tail_value(rv)
+        } else {
+            // Not an expression tail: the subset walk already refused this form.
         }
         if @out.len() == rmark {
             @judge_return(rv, @tail_type_of(rv))
