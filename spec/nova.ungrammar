@@ -167,8 +167,12 @@ Generics =
 IfStmt =
   'if' cond:Expr (Block | Err) ('else' (Block | IfStmt | Err))?
 
+// поправка 2026-09-21 (окно nova-6e, аудит по заданию интегратора): голова
+// была написана только для ГОЛОЙ формы. Реестр #1259 расширил парсер до
+// КВАЛИФИЦИРОВАННОЙ формы `if Sum.Variant(binder) = expr` (`parse.nv:624-665`,
+// `iflet_qualified`) -- снимок ниже ловит обе.
 IfLet =
-  'if' 'ident' '(' binder:'ident' ')' '=' scrutinee:Expr Block
+  'if' 'ident' ('.' 'ident')? '(' binder:'ident' ')' '=' scrutinee:Expr Block
   ('else' (Block | IfStmt | Err))?
 
 WhileStmt =
@@ -216,8 +220,13 @@ Paren =
 TupleExpr =
   '(' Expr (',' Expr)+ ')'
 
+// поправка 2026-09-21 (окно nova-6e, тот же аудит): else-ветка не несла
+// само-рекурсию, хотя сосед-IfStmt её уже несёт. Реестр #1243 научил парсер
+// строить `else if` в позиции значения как вложенный IfExpr (`expr.nv:645-660`,
+// комментарий "nests as IfExpr(..., KwElse, IfExpr(...))") -- снимок был
+// написан до этой правки и не подхватил новую ветку.
 IfExpr =
-  'if' cond:Expr (Block | Err) ('else' (Block | Err))?
+  'if' cond:Expr (Block | Err) ('else' (Block | IfExpr | Err))?
 
 MatchExpr =
   'match' scrutinee:Expr '{' MatchArm* '}'
