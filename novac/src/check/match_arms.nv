@@ -569,9 +569,15 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
         @scope.release(mark)
         return None
     }
-    ro body_t = Some(type_of(body, @ctx, @scope, @chan))
+    ro bt = type_of(body, @ctx, @scope, @chan)
     @scope.release(mark)
-    body_t
+    // A poisoned body raises no NEW diagnostic here (the second door,
+    // `type_of` on a name/call whose own declaration was already refused
+    // elsewhere) but still has no type to compare -- Some(no_ty()) would
+    // read as "this arm has a type" to the fold and produce the exact
+    // spurious ARMS_DISAGREE_MSG this comment block above warns against,
+    // just one level up from the file-wide `@out.len()` class it names.
+    if is_ty(bt) { Some(bt) } else { None }
 }
 
 /// Two or more sums in scope declare a variant of this name, and the position

@@ -1426,8 +1426,8 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
-rows=1220
-max=1268
+rows=1221
+max=1269
 # 2026-09-21, integrator: row 1242 added -- new checker ICE exposed by
 # Carina's #1237 fix (channel.nv:409), same class as #1229, blocks S5
 # 2026-09-21, integrator: row 1244 added -- assistant found effect row
@@ -1598,3 +1598,7 @@ gaps=174-208,210-215,653-654,743,1062,1103,1210-1211
 # W_MANUAL_COALESCE false positive on `?? continue` in sem/collect.nv:286
 # (continue is Stmt-only, same class as line 391's own `?? break` comment).
 # rows 1219->1220, max 1267->1268.
+# 2026-09-21, integrator: row 1269 added -- assistant found a named
+# refusal cascading through two doors in a row (poisoned receiver:
+# method-call door then match-arm door), fixed both, commit 18ca24cc6.
+# rows 1220->1221, max 1268->1269.

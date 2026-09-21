@@ -837,6 +837,20 @@ fn Checker mut @type_method_call(e Node) -> () {
         @record_arg_types(kids, 3)
         ro recv_t = type_of(kids[0], @ctx, @scope, @chan)
         @record(kids[0], recv_t)
+        if !is_ty(recv_t) {
+            // The receiver's own type never arrived -- not from THIS
+            // call's children (the mark above stayed put), but from an
+            // EARLIER refusal at its bind site, poisoning it with
+            // no_ty(); a bare-name re-read raises no new diagnostic,
+            // which is exactly why the mark alone let this reach here.
+            // A key built over that would resolve on a type nobody
+            // trusts, the same invariant the else branch below already
+            // states about its own case (poisoned_recv_match/neg_1.nv).
+            // SILENT-OK: the earlier refusal already spoke.
+            return
+        } else {
+            // A real type: the lookup below may proceed.
+        }
         // The DECISION, not a hint: which row this method call goes to.
         // Until 2026-08-18 nobody made it -- check only asked whether the
         // NAME existed anywhere, and the emitter rebuilt the C name from
