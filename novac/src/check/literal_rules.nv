@@ -433,7 +433,7 @@ const COALESCE_NONOPT_MSG = "`??` unwraps an `Option` or a `Result`, and this le
 /// The lone `?` (Try operator, D85, registry #1264): legal Nova --
 /// the oracle compiles it as early-return propagation on `Option`/`Result`
 /// -- not compiled yet. Named here rather than at the lexer, mirroring
-/// `??`'s own two refusals above: a legal-but-unimplemented construct
+/// `??`'s own two refusals above: a legal-but-unimplemented (D85) construct
 /// reaches the tree and is refused BY NAME in the checker, not swallowed
 /// as a syntax error about a form the language does not have.
 const TRY_MSG = "outside the subset: the `?` (Try) operator is not compiled yet (E2, the control-flow horizon) -- match the `Option`/`Result` and write the early return by hand"
