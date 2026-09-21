@@ -42,8 +42,7 @@ import std.collections.range.{Range}
 // continuation byte (0b10xxxxxx) would yield invalid UTF-8.
 fn str @slice_boundary_guard(off int) -> () {
     ro n = @byte_len()
-    ro bytes = @bytes()
-    if off < n && (bytes[off] as int & 0xC0) == 0x80 {
+    if off < n && (unsafe { @ptr().read_at(off) } as int & 0xC0) == 0x80 {
         panic("str: slice splits a UTF-8 codepoint")
     }
 }
@@ -79,9 +78,8 @@ export fn str @index(r Range) -> str
 export fn str @get(r Range) -> Option[str] {
     ro n = @byte_len()
     if r.start < 0 || r.end < r.start || r.end > n { return None }
-    ro bytes = @bytes()
-    if r.start < n && (bytes[r.start] as int & 0xC0) == 0x80 { return None }
-    if r.end < n && (bytes[r.end] as int & 0xC0) == 0x80 { return None }
+    if r.start < n && (unsafe { @ptr().read_at(r.start) } as int & 0xC0) == 0x80 { return None }
+    if r.end < n && (unsafe { @ptr().read_at(r.end) } as int & 0xC0) == 0x80 { return None }
     ro buf = unsafe { @ptr().offset(r.start) }
     Some(str.new(buf, r.end - r.start))
 }
