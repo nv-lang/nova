@@ -430,6 +430,14 @@ const COALESCE_RETURN_MSG = "`??` does not take `return` on its right -- the for
 /// while its check says ok), which is why the reference for this form is the spec.
 const COALESCE_NONOPT_MSG = "`??` unwraps an `Option` or a `Result`, and this left side is neither"
 
+/// The lone `?` (Try operator, D85, registry #1264): legal Nova --
+/// the oracle compiles it as early-return propagation on `Option`/`Result`
+/// -- not compiled yet. Named here rather than at the lexer, mirroring
+/// `??`'s own two refusals above: a legal-but-unimplemented construct
+/// reaches the tree and is refused BY NAME in the checker, not swallowed
+/// as a syntax error about a form the language does not have.
+const TRY_MSG = "outside the subset: the `?` (Try) operator is not compiled yet (E2, the control-flow horizon) -- match the `Option`/`Result` and write the early return by hand"
+
 /// A `Result` left side: LEGAL IN THE LANGUAGE (D86 gives `??` both containers) and not
 /// emittable yet, so it is refused with the stage that unblocks it rather than accepted
 /// into an emitter that would spell it wrong.

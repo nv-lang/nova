@@ -103,6 +103,7 @@ export type NodeKind enum
     | SelfField
     | SelfExpr /// bare `@` as a value inside a method body (the receiver itself): one At leaf
     | Coalesce /// `a ?? b`: the payload of an Option, or the fallback
+    | Try /// `a?` (D85, registry #1264): the lone Try operator -- legal Nova, refused BY NAME in the checker (E2), never reaches emission
     | InterpStr /// an interpolated string (wave I2): StrFrag, then per slot InterpOpen, expr, InterpClose, StrFrag
     | Recv
     | Generics
