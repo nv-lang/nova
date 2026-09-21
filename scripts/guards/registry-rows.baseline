@@ -1426,6 +1426,15 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1254
+max=1302
+# 2026-09-22, integrator: rows 1298-1302 added RETROACTIVELY -- the
+# 2026-08-31 emitc-k1 hunt report's 11 findings (5 root classes H1-H5) were
+# fixed directly in code the same/next day (commits 23ae19270, 7f3266e5b,
+# f1d68558e, 87657ffcf) but never got a registry row, breaking check-
+# hunter-fold.sh's "no finding lost" rule. Filed now, already-closed, so
+# the report can be folded into LEDGER.md without losing the findings.
+# rows 1249->1254, max 1297->1302.
 rows=1249
 max=1297
 # 2026-09-22, integrator: rows 1295-1297 added -- Carina's arm_pos sweep
