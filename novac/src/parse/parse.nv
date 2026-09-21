@@ -102,6 +102,21 @@ fn Cursor @peek_text(skip int = 0) -> str {
     @toks[@i + skip].text
 }
 
+/// Does the token `skip` ahead start on the SAME line as the token before
+/// it -- i.e. does its leading trivia carry no newline?
+///
+/// D49 rule 3 names exactly two postfix starters that tolerate a preceding
+/// newline: `.` (method chain) and `?` (error propagation). Everything else
+/// that could open a postfix continuation -- `[` (index) and `(` (call) --
+/// is NOT on that list, and D49's own edge case makes the intent explicit:
+/// `foo` then `(arg)` on the next line is two statements, not a call.
+/// Past end of stream answers `true` (Eof carries no meaningful newline
+/// question -- callers gate on token KIND first, so this never fires alone).
+fn Cursor @peek_same_line(skip int = 0) -> bool {
+    if @i + skip >= @toks.len() { return true }
+    !@toks[@i + skip].leading.contains("\n")
+}
+
 /// Is a parameter/receiver MODE standing at the cursor?
 ///
 /// Asked BY MECHANISM, which is the whole reason this is a door: `mut` and `ro`

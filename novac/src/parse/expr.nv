@@ -246,7 +246,7 @@ fn Cursor mut @primary() -> Node {
     // nests MethodCall inside MethodCall; a dot WITHOUT a call is field
     // access (E2-records). Both are subset forms now; check judges the
     // method name against the one subset table.
-    while @peek() == TokenKind.Dot || @peek() == TokenKind.LBracket {
+    while @peek() == TokenKind.Dot || (@peek() == TokenKind.LBracket && @peek_same_line()) {
         if @peek() == TokenKind.LBracket {
             // AN INDEX EXPRESSION HAS A NODE NOW (274.5 wave B8). Until this
             // wave `[` after an expression fell into the array-literal branch
@@ -254,6 +254,13 @@ fn Cursor mut @primary() -> Node {
             // binding initializer" marks were index expressions wearing the
             // wrong refusal. The parser reads the language; whether the subset
             // COMPILES the form is check's question, answered by name.
+            //
+            // `@peek_same_line()` gates the loop's ENTRY (registry #1232):
+            // D49 rule 3 tolerates a newline before `.` and `?` by name only
+            // -- `[` is not on that list, so a `[` starting the next
+            // statement (a match arm's slice pattern, or any statement
+            // beginning with an array/index form) must not glue onto this
+            // atom's trailing expression as an index.
             mut ik = []Node.of(e, @take()) // recv, '['
             ik.push(@expr())
             @push_expected(ik, TokenKind.RBracket)
@@ -719,13 +726,20 @@ fn Cursor mut @atom() -> Node {
     }
     if @peek() == TokenKind.Ident {
         ro name = @take()
-        if @peek() == TokenKind.LBracket && @after_bracket_run() != TokenKind.LParen {
+        if @peek() == TokenKind.LBracket && @peek_same_line() && @after_bracket_run() != TokenKind.LParen {
             // INDEX: `xs[0]` (274.5 wave B8). A bracket after a name stopped
             // being unambiguous the moment the index expression got a node --
             // the disambiguator is the token AFTER the bracket run, read
             // without consuming: a turbofish is mandatory-called (`id[int](7)`,
             // E2-b2 refuses the bare form anyway), so `(` and only `(` says
             // "type arguments".
+            //
+            // `@peek_same_line()` (registry #1232 and its sibling on `(`):
+            // a `[` opening the NEXT statement -- a match arm's pattern, or
+            // any statement starting with an index/array form -- must not
+            // glue onto this name as an index just because it is the next
+            // token; D49 rule 3 tolerates a newline before `.` and `?` by
+            // name only, `[` is not on that list.
             mut ik = []Node.of(@node(NodeKind.Name, []Node.of(name)), @take()) // recv, '['
             // A LIST, not one expression, and that is the whole of wave B10's
             // dispatch decision. `xs[0].len()` and `HashMap[str, int].new()`
@@ -746,12 +760,18 @@ fn Cursor mut @atom() -> Node {
             // does for every other atom.
             return @node(NodeKind.Index, ik)
         }
-        if @peek() == TokenKind.LBracket {
+        if @peek() == TokenKind.LBracket && @peek_same_line() {
             // TURBOFISH: `id[int](7)` — the type arguments of an EXPLICIT
             // instantiation, told apart from an index by the `(` after the
             // bracket run (see above). Mandatory by plan 274 E2-b2 —
             // there is no inference, and the order of the arguments IS the
             // whole mapping to the declaration's type parameters.
+            //
+            // `@peek_same_line()`: reached when the Index check above did
+            // not fire either because the disambiguator said turbofish OR
+            // because a newline preceded the `[` -- the second case is NOT
+            // a turbofish either, it is the start of the next statement, so
+            // the same guard applies here too.
             mut kids = []Node.of(name, @turbofish())
             if @peek() == TokenKind.LParen {
                 kids.push(@take())
@@ -763,7 +783,12 @@ fn Cursor mut @atom() -> Node {
             }
             return @node(NodeKind.Call, kids)
         }
-        if @peek() == TokenKind.LParen {
+        if @peek() == TokenKind.LParen && @peek_same_line() {
+            // `@peek_same_line()`: same class as the Index guard above --
+            // `foo` on one line then `(arg)` on the next is D49's own edge
+            // case for TWO statements, not a call (03-syntax.md, D49
+            // "Edge cases"). Registry #1232's sibling: this branch used to
+            // glue them into a call regardless of the newline.
             mut kids = []Node.of(name, @take())
             @call_args(kids)
             return @node(NodeKind.Call, kids)
