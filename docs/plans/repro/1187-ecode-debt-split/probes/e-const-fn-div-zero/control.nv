@@ -1,6 +1,8 @@
-fn d199_div(const a int, const b int) -> const int => a / b
+#no_prelude
+module neg.d199_div_zero_control
 
-fn main() Io -> () {
-    const R = d199_div(5, 2)
-    print("x")
+fn divide(const a int, const b int) -> const int => a / b
+
+fn use_it() {
+    const R = divide(5, 2)
 }

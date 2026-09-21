@@ -1,6 +1,9 @@
-fn d199_div(const a int, const b int) -> const int => a / b
+// EXPECT_COMPILE_ERROR E_CONST_FN_DIV_ZERO -- does NOT reproduce, see NOTE.md
+#no_prelude
+module neg.d199_div_zero_test
 
-test "div by zero in const fn" {
-    const R = d199_div(5, 0)
-    assert(R == 0)
+fn divide(const a int, const b int) -> const int => a / b
+
+fn use_it() {
+    const R = divide(5, 0)
 }

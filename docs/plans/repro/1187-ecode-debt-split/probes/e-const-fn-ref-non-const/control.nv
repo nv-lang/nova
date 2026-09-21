@@ -1,0 +1,3 @@
+fn ok(const a int) -> const int => a + 1
+
+fn main() Io -> () => print("x")
