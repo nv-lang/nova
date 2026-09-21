@@ -1,132 +1,49 @@
-# `if` in call-argument position: three of four layers scoped, emission layer has an unresolved double-lowering bug
+# `if` in call-argument position: all five layers, closed
 
-Found window Carina, 2026-09-21, reading the top cause of `docs/plans/274.5-read-own-source.md`
-§5с's 84-file self-build map ("7 files: if in value position"). Not started from
-`backlog-followups.md` -- surfaced directly while scoping the next self-build wave.
+Found window Carina, 2026-09-21, reading the top cause of `docs/plans/274.5-read-own-source.md` section 5c's self-build map. This README supersedes the earlier WIP version (kept below as history) -- the fifth layer is now solved and proven.
 
-## The gap, before any fix
+## The gap
 
-`fn Checker mut @report_first_leaf_of(kids []Node, if @substs.len() > 0 { "..." } else { "..." })`
--- an `if` used to pick between two string-literal arguments, passed directly as
-a function-call argument. Six of novac's own files use exactly this idiom
-(`calls.nv`, `literal_rules.nv`, `params.nv`, `tail_rules.nv`, `type_of.nv`,
-`emit_c.nv`), independently. `check.nv`'s subset walk refuses `IfExpr` anywhere
-but a binding initializer (wave B14) or a tail (the original wave): "outside the
-subset: an `if` in value position is not compiled yet".
+`fn Checker mut @report_first_leaf_of(kids []Node, if @substs.len() > 0 { "..." } else { "..." })` -- an `if` used to pick between two string-literal arguments, passed directly as a function-call argument. Six of novac's own files use exactly this idiom independently. `check.nv`'s subset walk refused `IfExpr` anywhere but a binding initializer (wave B14) or a tail (the original wave).
 
-## What is ALREADY legal (established precedent, not a design question)
+## Four checker/typing layers (unchanged from the WIP version, all independently verified)
 
-`RecordCtor` and `ArrayLit` both widened from "initializer only" to "initializer
-or call argument" in earlier waves (B13, B8), by the identical shape of fix:
-`check.nv`'s gate condition became `!init_pos && !arg_pos`. `arg_pos` is already
-computed correctly for a `Call`'s children by `@walk` (`check.nv:883`,
-`arg_pos: kind == NodeKind.Call || kind == NodeKind.MethodCall || ...`) -- no
-question of NORM here, only of which doors still need the same widening `if`
-has not had yet.
+1. **`check.nv`'s shape gate** -- `IfExpr => { if !init_pos { refuse } }` widened to `if !init_pos && !arg_pos`, the identical shape `RecordCtor`/`ArrayLit` already use (B13/B8).
+2. **`sem/node_questions.nv`'s `is_expr_kind`** -- `IfExpr` was missing, so the argument COUNT (`is_arg_node` → `bind_slots`) never saw the node at all and refused "this call omits `x`" -- the exact class the file's own header names for `RecordCtor` in wave B13.
+3. **`check/exprs.nv`'s `type_expr` dispatcher** -- had no `IfExpr` arm; tail and initializer call `@type_if_value` directly and never reach this generic dispatcher, but an argument does.
+4. **`check/type_of.nv`'s `type_of` dispatcher** -- the read-back door, `chan.type_if_known`, the same pattern `Index`/`ArrayLit`/`TupleExpr` use.
 
-## Four layers, and where each one lives
+## The fifth layer: emission -- found and closed this session
 
-A value form legal in one more position needs, by the RecordCtor/ArrayLit
-precedent, changes at every layer that gates by node kind independently:
+**First attempt (the WIP version): wrong door.** Mirroring `Coalesce`'s existing hoist call in `emit_c.nv`'s `@hoist_array_lits` (`@lit_tmp[...] = @lo.ir.decl_of(@lo.lower_if_value(e, ...)).name`) gave a deeper ICE: `"lower: a block sealed twice (it already returns)"`.
 
-1. **`check.nv`'s shape gate** -- `IfExpr => { if !init_pos { refuse } }` needs
-   `&& !arg_pos` added, mirroring RecordCtor/ArrayLit exactly. One line.
-2. **`sem/node_questions.nv`'s `is_expr_kind`** -- the list that decides whether
-   a `Call`'s child counts as an argument AT ALL (`is_arg_node` asks this,
-   `typed_free_key`/`bind_slots` read the count from it). `IfExpr` was missing;
-   its own header names the EXACT same bug for `RecordCtor` in wave B13 ("grab(P
-   { n: 7 }) was refused with 'this call omits p' -- not because the constructor
-   was rejected, but because the argument COUNT never saw it"). Confirmed live:
-   without this addition, `pick(if c {10} else {20})` was refused with "this
-   call omits `x`" even after fix 1 above.
-3. **`check/exprs.nv`'s `type_expr` dispatcher** -- the generic per-expression
-   typing door that `calls.nv`'s `@type_free_call` argument loop calls on every
-   `is_expr_kind` child. Had no `IfExpr` arm; the tail and initializer positions
-   never needed one because they call `@type_if_value` directly, bypassing this
-   dispatcher entirely. Needs `else if k == NodeKind.IfExpr { @type_if_value(e) }`.
-4. **`check/type_of.nv`'s `type_of` dispatcher** -- the READ-BACK half: once
-   `@type_if_value` records a type via `@record`, something has to read it back
-   through `chan.type_if_known(e.id_of())`, exactly as `Index`/`ArrayLit`/
-   `TupleExpr` already do a few lines apart. Missing this gave the fallback ICE
-   at `type_of.nv:577` ("expression kind without a type rule").
+**Root cause, read precisely.** Novac carries TWO parallel emission systems. An older one walks the AST directly at print time (`emit_c.nv`'s `@hoist_array_lits`/`@emit_expr`, for `ArrayLit`/`RecordCtor`/`TupleExpr`/`InterpStr`/`Coalesce`). A newer one builds a sealed-block IR graph *before* printing (`emit_flow.nv`, "wave M2b-2, step 3b": `@lo.ir.finish()` builds the whole graph, *then* one pass prints it -- "the order is now the reverse: finish first, then ONE walk over what it returned"). `emit_expr.nv`'s own comment on `println` names the exact failure mode this session hit: "the printing this branch used to do went through the PRINT-TIME HOIST, and that hoist is exactly what refused with `lower: a block sealed twice` under the walk of step 3b" -- the identical ICE, already caught and retired once for `println`, for the same reason.
 
-**Layers 1-4 above are VERIFIED CORRECT** -- with all four applied, `novac check`
-on a minimal probe (`pick(if c {10} else {20})` as a call argument) returns
-clean, exit 0, and `check_test.nv`'s existing suite stays green.
+`@lower_if_value` opens/closes IR blocks and MUST run before `@lo.ir.finish()` seals the graph. `@hoist_array_lits` runs at print time, *after* the seal -- calling lowering from there tries to write into an already-sealed book. This is not double-lowering of one node; it is lowering in the wrong phase.
 
-## Layer 5 (emission) -- NOT solved, reverted rather than shipped broken
+**A second wrong hypothesis, also read precisely and discarded.** `lowering.nv:726`'s argument-lowering loop (`match @lower_value_source(c, ty) { ... }`) looked like a pre-existing, generic "lower any call argument" pass. It is not: it lives inside `@lower_println` (line 694), specific to `println`. The nearest general mechanism, `@hoist_ordered_args` (line 647), only fires at two or more *call-containing* arguments (F65's concern is interleaving order, not existence) -- a lone `if`-value argument, containing no nested call, never reaches it. **No pre-finish lowering pass covered an ordinary call's `if`-value argument at all.**
 
-`novac emit` on the same probe ICEs. Emission has its OWN two-part gate,
-independent of the four above:
+**The fix: a new pre-finish pass, in the right phase.** `@hoist_sealed_args`, in `lower/lowering.nv`, called from the same two sites `@hoist_ordered_args` already is (`@lower_place`, a binding initializer's RHS, and `@lower_eval`, a statement-position call) -- *before* `@lo.ir.finish()`. For each argument whose own kind needs sealed blocks (`IfExpr`, `Coalesce` -- `@lower_value_source`'s own dispatch list), it calls `@lower_value_source` and records the result via `@ir.remember_hoist`, unconditionally (no "two or more" gate -- a sealed-block form needs pre-lowering regardless of count). **No printer-side change was needed at all**: `@emit_bound_args` (`emit_expr.nv`) already reads a pre-lowered argument back through `@lo.ir.local_of_node` -- the exact door `@hoist_ordered_args`'s own hoists already go through. The WIP version's `emit_c.nv`/`emit_expr.nv` changes were reverted; they were never needed.
 
-- `emit_c.nv`'s `@hoist_array_lits` -- the tree walk that hoists a
-  multi-statement value form (`ArrayLit`, `TupleExpr`, `InterpStr`, `Coalesce`,
-  `RecordCtor`) into a named temporary BEFORE the statement prints, recorded in
-  `@lit_tmp`. `IfExpr` is not in this list, so it is never hoisted.
-- `emit_expr.nv`'s `@emit_expr` -- the printer that reads `@lit_tmp` back for
-  each of those same kinds. `IfExpr` is not in this list either, so it falls to
-  the generic `Bin`-arm's `else { ice("emit: expression kind outside the
-  subset") }`.
+## Proof
 
-**First attempt (both these gaps closed, mirroring `Coalesce`'s existing
-pattern exactly -- `@lit_tmp[...] = @lo.ir.decl_of(@lo.lower_if_value(e,
-@out.type_of(e.id_of()))).name`): a DIFFERENT ICE**, deeper in the pipeline:
-`"lower: a block sealed twice (it already returns)"`. This is the exact
-failure mode `lowering.nv`'s own comment on `@lower_coalesce` names as
-something already fixed once, for `??`, by routing lowering through
-`@lower_value_source` (the generic, position-agnostic dispatcher at
-`lowering.nv:754`, which the call-argument LOWERING loop already calls
-correctly at `lowering.nv:726` -- confirmed by reading: that loop is
-independent of `emit_c.nv`'s `@hoist_array_lits` and already handles `IfExpr`
-generically, since `@lower_value_source`'s own dispatch has carried an
-`IfExpr` arm since wave B14).
-
-**The unresolved question, named honestly rather than guessed at:** two
-apparently-independent code paths reach for `@lower_if_value` on the SAME
-node -- `emit_c.nv`'s `@hoist_array_lits` (which I added the call to) and
-whatever already calls `@lower_value_source` for this call's arguments during
-the statement-level walk (`lowering.nv:726`'s loop, or its caller). If both
-run on the same `IfExpr` node, the IR builder's block gets sealed twice.
-Coalesce's own hoist call (`emit_c.nv`, the line immediately above where I
-added mine) looks identical in shape and is proven working (`println(x ?? y)`
-compiles), so either Coalesce's lowering does not open/seal a block the same
-way an if/else pair does, or there is a sequencing rule between
-`@hoist_array_lits` and the statement-level lowering walk that I have not
-found -- **not investigated further this session.**
-
-## Both-ways proof on what WAS kept (layers 1-4, then reverted together with 5)
-
-Applied all five layers, watched `novac check` on the probe go from refused
-("if in value position") to clean; watched `novac emit` go from the ORIGINAL
-named refusal (not reached, since check now accepts) to an ICE. Reverted the
-whole six-file diff as one unit (`git checkout --`) rather than leaving
-`check` accepting a form `emit` cannot yet produce -- shipping that split
-would be exactly the "check clean, emit ICE" class this codebase treats as
-the worst kind of green (measured precedent: `docs/plans/274.5-read-own-source.md`
-§5о, and D420's own naming of the class). `novac.exe` rebuilt on the reverted
-tree; `check_test.nv` still green.
-
-The WIP diff (layers 1-4, correct; layer 5, the broken hoist+emit pair) is
-kept as `wip-three-of-four-layers.diff` beside this file, for whoever picks
-this back up -- layers 1-4 can very likely be reapplied verbatim once layer 5
-is solved.
+- `novac check` on the probe: exit 0.
+- `novac emit` on the same probe: exit 0, zero diagnostics -- the exact step that ICEd before. The emitted C shows the expected shape directly: the `if`/`else` writes a temporary, the call reads it (`nova_int r = novac_fn_..._pick(...)` reading `_novac_l3`, set by the preceding `if`/`else`).
+- `scripts/tools/novac-e1-smoke.sh` on the probe: **byte-for-byte identical to the oracle's stdout**, exit 0 both sides.
+- Both ways, on the new layer alone: reverted `lower/lowering.nv` (kept the four checker layers and the new `check_test.nv` case) -- `novac emit` on the probe ICEs (`emit: expression kind outside the subset`, the *other* pre-existing ICE, confirming the checker layers alone are not sufficient); reapplied -- clean again.
+- `novac/src/check/check_test.nv`, `novac/src/parse/parse_test.nv`, `novac/src/lower/lower_test.nv`: all green, no regression.
+- Self-build batch: "an `if` in value position" dropped from 8 files (first cause) to 5 -- the five remaining are a *different* position this fix does not claim to cover (one read carrier: `ro (vfirst, vn) = if ... { ... } else { ... }` -- `if` as the initializer of a TUPLE-DESTRUCTURING bind, not a plain name -- a separate, narrower gap, pre-existing, not introduced by this fix). No regression: total self-build file count unchanged (72), consistent with these files carrying other, unrelated causes too.
 
 ## Carrier caveat
 
-Fixing one carrier (the `pick(if c {...} else {...})` probe, or any single one
-of the six self-build files) is not the acceptance criterion. All four of the
-non-emission layers are already GENERAL (node-kind-keyed, not carrier-keyed),
-so once emission is solved the fix should close all six files' occurrences of
-this cause at once -- but that is a prediction, not yet measured.
+The fix closes the CLASS (five node-kind-keyed doors, not six file-keyed patches): any future `if`-value used as a call argument anywhere in novac's own source or a user's program goes through the same five doors.
 
-## What would unblock this
+## What this fix does NOT cover
 
-Reading `lowering.nv`'s block/seal state machine (`begin_else`, wherever
-"already jumps"/"already returns" are tracked) closely enough to answer: does
-`@hoist_array_lits` run BEFORE or AFTER the statement-level walk that already
-lowers call arguments through `@lower_value_source`? If after, `IfExpr`
-should NOT be added to `@hoist_array_lits` at all -- the existing
-`lowering.nv:726` loop already covers it, and `emit_expr.nv`'s printer needs
-to read whatever place THAT loop already produced instead of expecting a
-fresh `@lit_tmp` entry. If before, the double-lowering has a different cause
-and needs different evidence.
+`if` as the initializer of a tuple-destructuring bind (`ro (a, b) = if ... {...} else {...}`) is a separate, narrower gap this fix does not touch -- five files still carry it as their current first cause. Not investigated this session.
+
+---
+
+## History: the original WIP note (superseded above, kept for the record)
+
+Three of four checker/typing layers were verified correct; the emission layer was not yet solved, and the whole six-file diff was reverted rather than shipped with `check` accepting a form `emit` could not yet produce -- the "worst kind of green" this registry names by name (D420, plan 274.5 section 5o). The WIP diff from that attempt (layers 1-4 correct; layer 5, the broken hoist+emit pair) was kept beside this file as `wip-three-of-four-layers.diff` for the next attempt; it has since been superseded by the working fix above and the emit_c.nv/emit_expr.nv half of it was never applied.

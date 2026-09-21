@@ -100,7 +100,14 @@ export fn is_expr_kind(k NodeKind) -> bool {
     // through `is_arg_node`, `is_arg_node` asks here, and a form missing from
     // this list is not refused anywhere. It is simply not there.
     k == NodeKind.RecordCtor ||
-    k == NodeKind.Cast
+    k == NodeKind.Cast ||
+    // AN `if` VALUE joins for the identical reason RecordCtor did (see the
+    // comment above): registry #TBD found `pick(if c {10} else {20}))`
+    // refused with "this call omits `x`" even after `check.nv`'s shape gate
+    // and `exprs.nv`'s `type_expr` both learned the argument position --
+    // counting never saw the node, because counting goes through
+    // `is_arg_node`, which asks here, and IfExpr was not on this list.
+    k == NodeKind.IfExpr
 }
 
 /// Is this a call to `println` in the source? A question about meaning, so the

@@ -481,3 +481,25 @@ test "default parameter: a plain string literal is a legal value, same as a numb
     ro control_num = "module m\n\nfn f(x int = 0, y bool = true) -> int {\n    x\n}\n"
     assert(diagnose(control_num) == 0, "numeric and boolean defaults must not regress")
 }
+
+test "if-value: a call-argument position is legal, the same door as initializer and tail (registry #TBD)" {
+    // `check.nv`'s `IfExpr` arm refused everywhere but initializer (B14) and
+    // tail -- `pick(if c {10} else {20})` was refused even though six of
+    // novac's own files write exactly this idiom (`@report_first_leaf_of
+    // (kids, if cond {...} else {...})` and kin). Widened by the SAME
+    // `arg_pos` gate RecordCtor/ArrayLit already use (B13/B8), plus three
+    // supporting doors this arm alone did not need: `is_expr_kind` (so the
+    // argument COUNT sees the node at all -- registry #TBD's own B13
+    // precedent, "grab(P {n: 7}) omits p" class), `type_expr`'s dispatcher
+    // (arguments reach it generically; init/tail call `@type_if_value`
+    // directly and never did), and `type_of`'s read-back (`chan.
+    // type_if_known`, the same pattern `Index`/`ArrayLit`/`TupleExpr` use).
+    ro src = "module m\n\nfn pick(x int) -> int {\n    x + 1\n}\n\nfn f(c bool) -> int {\n    pick(if c { 10 } else { 20 })\n}\n"
+    assert(diagnose(src) == 0, "an `if` value as a call argument must be accepted, the same as initializer and tail position")
+
+    // Control: the tail and initializer positions must not regress.
+    ro control_tail = "module m\n\nfn f(c bool) -> int {\n    if c { 1 } else { 2 }\n}\n"
+    assert(diagnose(control_tail) == 0, "if-value in tail position must not regress")
+    ro control_init = "module m\n\nfn f(c bool) -> int {\n    ro r = if c { 1 } else { 2 }\n    r\n}\n"
+    assert(diagnose(control_init) == 0, "if-value in initializer position must not regress")
+}

@@ -607,6 +607,7 @@ fn Lowerer mut @lower_place(e Node, dest Local) -> () {
     // before left, because a binding initializer comes through here instead.
     // One form, two doors -- and only the probe could tell me the second one.
     @hoist_ordered_args(e)
+    @hoist_sealed_args(e)
     // THE SOURCE IS RESOLVED FIRST (prerequisite 5): a value form that lays down blocks
     // is lowered NOW and the assignment reads the local it produced, through the operand
     // rvalue door `@ir.copy`. Otherwise the tree node stays the source -- the M1 bridge,
@@ -629,6 +630,7 @@ fn Lowerer mut @lower_eval(e Node) -> () {
         return
     }
     @hoist_ordered_args(e)
+    @hoist_sealed_args(e)
     @ir.eval(e)
 }
 
@@ -673,6 +675,43 @@ fn Lowerer mut @hoist_ordered_args(call Node) -> () {
         ro l = @ir.temp(t)
         @lower_place(c, l)
         @ir.remember_hoist(c.id_of(), l)
+    }
+}
+
+/// ONE MORE gate before `@lo.ir.finish()` seals the graph (registry #TBD,
+/// the if-in-argument wave): an argument whose OWN kind needs sealed
+/// blocks (`IfExpr`, `Coalesce` -- `@lower_value_source`'s own dispatch)
+/// cannot wait for `@hoist_ordered_args` above -- that gate fires only at
+/// two or more call-CONTAINING arguments (F65's concern is INTERLEAVING,
+/// not existence), so a single such argument never reaches it, and
+/// printing it from the tree at print time is impossible by then:
+/// `@lo.ir.finish()` has already sealed the graph, and `@lower_if_value`
+/// opening a new block there is the `block sealed twice` ICE (measured
+/// live, this wave). Lowered HERE instead -- before the seal --
+/// `@emit_bound_args` (emit_expr.nv) already reads the hoist back through
+/// `@lo.ir.local_of_node`, so no printer-side change is needed at all.
+fn Lowerer mut @hoist_sealed_args(call Node) -> () {
+    ro kids = branch_children(call)
+    for c in kids {
+        if !is_expr_kind(c.kind_of()) { continue }
+        ro ck = c.kind_of()
+        if ck != NodeKind.IfExpr && ck != NodeKind.Coalesce { continue }
+        ro t = @out.type_if_known(c.id_of())
+        if !is_ty(t) {
+            // SILENT-OK: refused where it was typed; nothing to hoist.
+            continue
+        } else {
+            // A typed sealed-block argument: it gets its own local.
+        }
+        match @lower_value_source(c, t) {
+            Some(l) => @ir.remember_hoist(c.id_of(), l)
+            None => {
+                // Not actually a value (e.g. every branch terminates):
+                // nothing to hoist, and the print side has nothing to read
+                // either -- consistent with how a terminating tail if is
+                // already handled elsewhere in this file.
+            }
+        }
     }
 }
 
