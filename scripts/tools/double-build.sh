@@ -90,6 +90,9 @@ trap 'rm -rf "$T"' 0
 # (novac-diff-corpus.sh is not touched here), but avoided here directly.
 eval "NOVAC_SELF_PATH=novac/src timeout 60 \"$NOVAC\" check $self_files" > "$T/self.out" 2> "$T/self.err" </dev/null
 rc=$?
+if [ "$rc" -eq 124 ]; then
+    echo "double-build: батч СНЯТ ПРЕДЕЛОМ 60с (rc=124) -- вердикта нет, это не «все файлы плохи»" >&2
+fi
 if grep -q "E_NOVAC_ICE" "$T/self.out" "$T/self.err" 2>/dev/null; then
     rc=99
 fi
@@ -99,10 +102,20 @@ if [ "$rc" -le 2 ]; then
 else
     echo "double-build: batch died (rc=$rc) -- falling back to one process per file" >&2
     self_rej=0
+    timed_out=0
     for f in "$ROOT"/novac/src/*/*.nv "$ROOT"/novac/src/*.nv; do
         [ -f "$f" ] || continue
-        timeout 10 "$NOVAC" check "$f" >/dev/null 2>&1 </dev/null || self_rej=$((self_rej + 1))
+        timeout 10 "$NOVAC" check "$f" >/dev/null 2>&1 </dev/null
+        frc=$?
+        if [ "$frc" -eq 124 ]; then
+            timed_out=$((timed_out + 1))
+            echo "double-build: SNYAT PREDELOM 10s (rc=124), не отказ проверки: $f" >&2
+        fi
+        [ "$frc" -eq 0 ] || self_rej=$((self_rej + 1))
     done
+    if [ "$timed_out" -gt 0 ]; then
+        echo "double-build: $timed_out файл(ов) снято пределом, а не отвергнуто -- считаются отвергнутыми за неимением вердикта, но это не одно и то же" >&2
+    fi
 fi
 self_acc=$((self_total - self_rej))
 

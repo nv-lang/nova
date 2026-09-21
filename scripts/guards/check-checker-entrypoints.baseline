@@ -58,6 +58,13 @@ compiler-codegen/tests/doc_workspace_determinism.rs
 compiler-codegen/tests/p131_raw_effect_op_enforce.rs
 compiler-codegen/tests/strict_effects_flag.rs
 
+# nova-lsp symbol.rs self-access resolution tests (registry #684): same
+# reason as the two compiler-codegen unit tests above — inline single-file
+# module literals with no imports/embeds to resolve, testing whether
+# resolve_symbol_at_with_limit reads a ModuleEnv's expr_types correctly, not
+# simulating a real editor session's file-open pipeline.
+nova-lsp/src/symbol.rs
+
 # Performance benchmarks (`nova bench`) — measure the type-checker's own
 # wall-clock cost on an already-prepared module; not a diagnostics-producing
 # entry point a user sees, and re-routing it through prepare_module_for_check
