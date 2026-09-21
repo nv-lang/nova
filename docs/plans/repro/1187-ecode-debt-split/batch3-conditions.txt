@@ -1,0 +1,32 @@
+# 1187, батч 3: кластер E_CONST_FN_* (28 кодов), условия по print-sites.txt
+
+E_CONST_FN_CLOSURE_FIRST_CLASS       const_fn_closure.rs:1169  check
+E_CONST_FN_CLOSURE_GENERIC_ARITY     const_fn_closure.rs:1122  rewrite_expr
+E_CONST_FN_CLOSURE_GENERIC_NO_TURBOFISH const_fn_closure.rs:1111 rewrite_expr
+E_CONST_FN_CLOSURE_NO_RET_TYPE       const_fn_closure.rs:694   closure_light_params_to_fn_params
+E_CONST_FN_CLOSURE_NON_CONST_ARG     const_fn_closure.rs:1092  rewrite_expr
+E_CONST_FN_CLOSURE_OUTER_NOT_CONST   const_fn_closure.rs:538   generate_closure_spec
+E_CONST_FN_CLOSURE_PARAM_TYPE        const_fn_closure.rs:663   lambda_params_to_fn_params
+E_CONST_FN_CONTROL_FLOW              const_fn_eval.rs:1741     eval_block
+E_CONST_FN_DIV_ZERO                  const_fn_eval.rs:794      div_zero_err
+E_CONST_FN_EFFECT_IN_SIGNATURE       (не найдено в этом заходе)
+E_CONST_FN_EVAL_DEPTH_EXCEEDED       const_fn_eval.rs:245      eval_call_inner
+E_CONST_FN_EVAL_ITERATIONS_EXCEEDED  const_fn_eval.rs:1919     exec_for_loop
+E_CONST_FN_EVAL_OVERFLOW             const_fn_eval.rs:631      eval_unary
+E_CONST_FN_EVAL_PANIC                const_fn_eval.rs:262      eval_call_inner (доп. точка: 383, unbound identifier)
+E_CONST_FN_EXTERNAL                  (не найдено в этом заходе)
+E_CONST_FN_FIRST_CLASS               (не найдено в этом заходе)
+E_CONST_FN_FIRST_CLASS_RUNTIME_HOF   (не найдено в этом заходе)
+E_CONST_FN_FLUENT_RETURN             parser/mod.rs:~3884       parse_fn (найдено попутно при чтении return_is_const)
+E_CONST_FN_GENERIC_NEEDS_T_REFLECTION const_fn_eval.rs:2080,2454 (разные функции)
+E_CONST_FN_MATCH_EXHAUSTIVE          const_fn_eval.rs:490      body
+E_CONST_FN_PARTIAL_CONSTNESS         (не найдено в этом заходе)
+E_CONST_FN_PATTERN_NOT_SUPPORTED     const_fn_eval.rs:1909     exec_for_loop
+E_CONST_FN_RECURSION                 types/mod.rs:1983         visit
+E_CONST_FN_REF_NON_CONST             types/mod.rs:2638         check_const_fn_expr
+E_CONST_FN_TRAMPOLINE_GENERIC_ARITY  (не найдено в этом заходе)
+E_CONST_FN_TRAMPOLINE_GENERIC_INFER  (не найдено в этом заходе)
+E_CONST_FN_TRAMPOLINE_GENERIC_UNRESOLVED (не найдено в этом заходе)
+E_CONST_FN_TRAMPOLINE_INTRINSIC      (не найдено в этом заходе)
+
+Дальше по кластеру не разбирался в этой волне — открыт следующей.

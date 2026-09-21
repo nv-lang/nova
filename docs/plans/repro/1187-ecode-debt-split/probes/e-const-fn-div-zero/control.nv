@@ -1,0 +1,6 @@
+fn d199_div(const a int, const b int) -> const int => a / b
+
+fn main() Io -> () {
+    const R = d199_div(5, 2)
+    print("x")
+}

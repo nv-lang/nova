@@ -1,0 +1,3 @@
+fn d199_neg(const a int) -> const int => -a
+
+const R = d199_neg(-9223372036854775808)
