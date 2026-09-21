@@ -191,3 +191,43 @@ test "shape: a leading `..` (open-left slice) parses as an Index, not the parser
     }
     assert(tree_reserialize(f) == src)
 }
+
+test "shape: an `else if` chain in value position parses as nested IfExpr (registry #1243)" {
+    // The value-`if` reader's `else` arm checked ONLY `LBrace` for the else
+    // branch -- no case for a chained `else if` at all, unlike the
+    // statement-`if` reader right next to it (`@stmt()`), which already
+    // recurses on `KwIf` to build the chain. `ro want = if c1 {1} else if
+    // c2 {2} else {3}` used to leave the `else if` unconsumed and fall
+    // apart downstream. Fixed by recursing into the same value-`if` reader
+    // (`@atom()`) the outer call itself went through, mirroring `@stmt()`.
+    ro src = "fn m() {\n    ro want = if c1 {\n        1\n    } else if c2 {\n        2\n    } else {\n        3\n    }\n}\n"
+    ro f = parse(lex(src))
+    match ret_test_fn_block(f) {
+        Branch { children, .. } => {
+            mut ifs = 0
+            for c in children {
+                if c.kind_of() != NodeKind.BindStmt { continue }
+                match c {
+                    Branch { children: bk, .. } => {
+                        for b in bk {
+                            if b.kind_of() != NodeKind.IfExpr { continue }
+                            ifs += 1
+                            match b {
+                                Branch { children: ik, .. } => {
+                                    for i in ik {
+                                        if i.kind_of() == NodeKind.IfExpr { ifs += 1 }
+                                    }
+                                }
+                                Leaf(_) => {}
+                            }
+                        }
+                    }
+                    Leaf(_) => {}
+                }
+            }
+            assert(ifs == 2)
+        }
+        Leaf(_) => assert(false)
+    }
+    assert(tree_reserialize(f) == src)
+}
