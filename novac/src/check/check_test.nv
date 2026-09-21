@@ -272,3 +272,26 @@ test "literal magnitude: a match pattern's own literal is judged too (registry #
     ro small_pattern = "module m\n\nfn f(x int) -> int {\n    match x {\n        7 => 1\n        _ => 2\n    }\n}\n"
     assert(diagnose(small_pattern) == 0, "an ordinary small pattern literal must stay clean")
 }
+
+test "tail if: a tail `if` whose branches both return needs no value (registry #1252)" {
+    // `tail_rules.nv`'s own `stmt_terminates`/`block_terminates` already
+    // answers correctly that this `if` ends the function -- both branches
+    // `return`. `typing.nv`'s tail-value walk asked the SAME tail a second
+    // time, through `@type_if_value` -> `@type_branch_value`, which only
+    // understands a tail as an expression and refused EACH `return`-ending
+    // branch as "ends without a value" -- two refusals for code the oracle
+    // accepts outright, and the ordinary way to write such a function.
+    ro src = "module m\n\nfn classify(n int) -> int {\n    if n > 0 {\n        return 1\n    } else {\n        return 2\n    }\n}\n"
+    assert(diagnose(src) == 0, "both branches returning is not a missing tail value")
+}
+
+test "tail if: one branch returns, the other's value is the if's value (registry #1252, mixed)" {
+    // The narrower case `stmt_terminates` on the WHOLE `if` answers false for
+    // (only one branch terminates), so the `if` still needs a value -- but
+    // the terminating branch must not be asked for one either: only the
+    // branch that can fall through carries the type.
+    ro ok = "module m\n\nfn classify(n int) -> int {\n    if n > 0 {\n        return 1\n    } else {\n        2\n    }\n}\n"
+    assert(diagnose(ok) == 0, "the non-terminating branch's type is the if's type, unconditionally")
+    ro mismatch = "module m\n\nfn classify(n int) -> int {\n    if n > 0 {\n        return 1\n    } else {\n        \"s\"\n    }\n}\n"
+    assert(diagnose(mismatch) > 0, "the non-terminating branch's type must still agree with the fn's own return type")
+}
