@@ -183,14 +183,14 @@ export fn str @split_ascii_whitespace() -> AsciiWhitespaceIter =>
 // the empty string yields no lines (Rust `lines`).
 export fn str @lines() -> ro []str {
     mut out = []str.new()
-    ro (bytes, sn) = (@bytes(), @byte_len())
+    ro sn = @byte_len()
     if sn == 0 { return out }
     mut start = 0
     mut i = 0
     while i < sn {
-        if (bytes[i] as int) == 10 {
+        if (unsafe { @ptr.read_at(i) } as int) == 10 {
             mut end = i
-            if end > start && (bytes[end - 1] as int) == 13 { end -= 1 }
+            if end > start && (unsafe { @ptr.read_at(end - 1) } as int) == 13 { end -= 1 }
             out.push(@[start..end])
             i += 1
             start = i
@@ -250,7 +250,7 @@ export fn str @ends_with(c char) -> bool {
     if @is_empty() { return false }
     ro (bytes, n) = (@bytes(), @byte_len())
     mut i = n - 1
-    while i > 0 && ((bytes[i] as int) & 0xC0) == 0x80 { i -= 1 }
+    while i > 0 && (unsafe { @ptr.read_at(i) } as int & 0xC0) == 0x80 { i -= 1 }
     ro (last_cp, _) = decode_utf8(bytes, i, n)
     last_cp == (c as int)
 }

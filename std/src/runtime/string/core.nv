@@ -358,9 +358,8 @@ fn ascii_lower_byte(b int) -> int => if b >= 65 && b <= 90 { b + 32 } else { b }
 export fn str @eq_ignore_ascii_case(other str) -> bool {
     ro n = @byte_len()
     if n != other.byte_len() { return false }
-    ro (a, b) = (@bytes(), other.bytes())
     for i in 0..n {
-        if ascii_lower_byte(a[i] as int) != ascii_lower_byte(b[i] as int) { return false }
+        if ascii_lower_byte(unsafe { @ptr.read_at(i) } as int) != ascii_lower_byte(unsafe { other.ptr.read_at(i) } as int) { return false }
     }
     true
 }

@@ -14,27 +14,27 @@ import std.runtime.string_builder.{StringBuilder}
 // `@[start..end]` (не alloc-копия). str иммутабелен + GC держит буфер живым
 // через view. Whitespace = байт <= 0x20 (Unicode-WS — Phase B).
 export fn str @trim_ascii() -> str {
-    ro (bytes, n) = (@bytes(), @byte_len())
+    ro n = @byte_len()
     mut start = 0
-    while start < n && is_ascii_ws(bytes[start] as int) { start += 1 }
+    while start < n && is_ascii_ws(unsafe { @ptr().read_at(start) } as int) { start += 1 }
     mut end = n
-    while end > start && is_ascii_ws(bytes[end - 1] as int) { end -= 1 }
+    while end > start && is_ascii_ws(unsafe { @ptr().read_at(end - 1) } as int) { end -= 1 }
     @[start..end]
 }
 
 // Убирает ASCII whitespace только СЛЕВА (zero-copy view).
 export fn str @trim_ascii_start() -> str {
-    ro (bytes, n) = (@bytes(), @byte_len())
+    ro n = @byte_len()
     mut start = 0
-    while start < n && is_ascii_ws(bytes[start] as int) { start += 1 }
+    while start < n && is_ascii_ws(unsafe { @ptr().read_at(start) } as int) { start += 1 }
     @[start..n]
 }
 
 // Убирает ASCII whitespace только СПРАВА (zero-copy view).
 export fn str @trim_ascii_end() -> str {
-    ro (bytes, n) = (@bytes(), @byte_len())
+    ro n = @byte_len()
     mut end = n
-    while end > 0 && is_ascii_ws(bytes[end - 1] as int) { end -= 1 }
+    while end > 0 && is_ascii_ws(unsafe { @ptr().read_at(end - 1) } as int) { end -= 1 }
     @[..end]
 }
 
