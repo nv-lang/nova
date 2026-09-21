@@ -1,0 +1,8 @@
+module ti_final
+import ../tree.{Node, NodeKind}
+import ../sem.{branch_children}
+
+fn Checker mut @probe(e Node) -> bool {
+    ro kids = branch_children(e)
+    kids[0].kind_of() == NodeKind.Name
+}

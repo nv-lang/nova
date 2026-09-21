@@ -420,7 +420,14 @@ export fn impl_of_proto(ctx Ctx, t TyId) -> TyId {
 /// One question, one door; a protocol receiver goes through its implementor.
 export fn c_method_symbol(ctx Ctx, t TyId, name str) -> str {
     ro it = impl_of_proto(ctx, t)
-    if ctx.tys.kind_of(it) == TypeKind.TkApp { return c_instance_method(ctx, it, name) }
+    // `it` is `no_ty()` whenever the caller's OWN receiver type did not
+    // resolve (registry: an index into a self-hosted `[]Node` losing its
+    // element type upstream) -- `impl_of_proto` passes that absence straight
+    // through (`same_ty(t)` on its `!is_ty(t)` branch), and asking the
+    // interner for the KIND of an absent type is the ICE this door used to
+    // reach. Not a type application either way, so the shell-method spelling
+    // is the honest fallback, same as any other non-instance receiver.
+    if is_ty(it) && ctx.tys.kind_of(it) == TypeKind.TkApp { return c_instance_method(ctx, it, name) }
     c_shell_method(ctx, it, name)
 }
 
