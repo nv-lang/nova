@@ -1426,8 +1426,8 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
-rows=1221
-max=1269
+rows=1228
+max=1276
 # 2026-09-21, integrator: row 1242 added -- new checker ICE exposed by
 # Carina's #1237 fix (channel.nv:409), same class as #1229, blocks S5
 # 2026-09-21, integrator: row 1244 added -- assistant found effect row
@@ -1602,3 +1602,8 @@ gaps=174-208,210-215,653-654,743,1062,1103,1210-1211
 # refusal cascading through two doors in a row (poisoned receiver:
 # method-call door then match-arm door), fixed both, commit 18ca24cc6.
 # rows 1220->1221, max 1268->1269.
+# 2026-09-21, integrator: rows 1270-1276 added -- defect-hunter agent's
+# check x K4 hunt (7 findings), report+probes restored from its own
+# session transcript after the worktree was auto-removed before the
+# report could be copied into the main tree (nothing was lost).
+# rows 1221->1228, max 1269->1276.
