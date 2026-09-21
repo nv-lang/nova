@@ -1388,8 +1388,8 @@
 # 2026-09-21, интегратор: rows 1175 -> 1176, max 1225 -> 1226. №1226 —
 # помощник нашёл, что голый `unsafe fn` не имеет ветки ни в одном из двух
 # диспетчеров верхнего уровня (parse.nv, decls.nv) — третий вид корня.
-rows=1201
-max=1249
+rows=1208
+max=1256
 # 2026-09-21, integrator: row 1242 added -- new checker ICE exposed by
 # Carina's #1237 fix (channel.nv:409), same class as #1229, blocks S5
 # 2026-09-21, integrator: row 1244 added -- assistant found effect row
@@ -1431,6 +1431,17 @@ max=1249
 # her new TBD (@out.len() > 0 absolute in three more check/ sites,
 # same class as #1242) numbered as row 1249. rows 1200->1201,
 # max 1248->1249.
+# 2026-09-21, integrator: rows 1250-1256 added -- defect-hunter agent
+# (novac check x K4, docs/dev/hunts/novac/2026-09-21-check-k4.md), seven
+# findings: integer magnitude checked by two doors (1250), match-arm
+# literal unchecked by either (1251), tail-if-return checked twice with
+# a stale answer (1252, K1-adjacent since it silently reopened an
+# already-fixed class), while-loop missing from the terminator form list
+# (1253), ro-binding/field assignment silently accepted in four syntaxes
+# (1254, K1 -- accepted code compiles and runs, a real semantic hole),
+# call-key class read as arity in the refusal text (1255), a stale
+# println example baked into an unrelated refusal message (1256). rows
+# 1201->1208, max 1249->1256.
 # batch measure again. rows 1193->1194, max 1241->1242.
 
 # 2026-09-21, integrator: rows 1190->1193, max 1238->1241 -- measured after
