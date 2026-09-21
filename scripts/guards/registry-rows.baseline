@@ -1426,8 +1426,8 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
-rows=1233
-max=1281
+rows=1234
+max=1282
 # 2026-09-21, integrator: row 1242 added -- new checker ICE exposed by
 # Carina's #1237 fix (channel.nv:409), same class as #1229, blocks S5
 # 2026-09-21, integrator: row 1244 added -- assistant found effect row
@@ -1622,6 +1622,12 @@ gaps=174-208,210-215,653-654,743,1062,1103,1210-1211
 # 34), confirmed not a regression (two newest candidates checked
 # directly, both false positives of an already-documented class).
 # rows 1230->1231, max 1278->1279.
+# 2026-09-21, integrator: row 1282 added and closed same commit --
+# a real check-novac-branch-complete FAIL surfaced on CI after the
+# push (parse/expr.nv:727, missing else on the optional :? spec
+# check), the other three from the same CI run were already fixed
+# in a later commit not yet on that CI's tested tree.
+# rows 1233->1234, max 1281->1282.
 # 2026-09-21, integrator: rows 1280-1281 added -- Carina's two TBD
 # findings from the p274-novac merge (absolute @out.len()>0 class
 # recurrence, interp-string escape never checked), numbered and the

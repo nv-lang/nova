@@ -450,7 +450,10 @@ test "unknown escape inside an interpolated string's literal piece is refused, n
     // Control: the identical illegal escape in a PLAIN (non-interpolated)
     // string was already refused before this fix -- must still be, unchanged.
     ro control_plain = "module m\n\nfn f() -> str {\n    \"a\\qb\"\n}\n"
-    assert(diagnose_first_msg(control_plain).contains("this string escape is not compiled yet"), "the plain-string escape refusal must not regress")
+    assert(
+        diagnose_first_msg(control_plain).contains("this string escape is not compiled yet"),
+        "the plain-string escape refusal must not regress",
+    )
 
     // Control: a LEGAL escape alongside a real slot must stay clean -- the
     // fix must not turn every interpolated string into a refusal.
