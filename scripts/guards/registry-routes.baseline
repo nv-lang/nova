@@ -1490,7 +1490,10 @@ no_caveat=0
 # 2026-09-21, интегратор: 85 -> 86, РОСТ и он законен. Новая строка №1226 —
 # голый `unsafe fn` без ветки в двух диспетчерах парсера разом (parse.nv,
 # decls.nv) — третий вид корня того же читательского класса.
-blockers=91
+blockers=90
+# 2026-09-21, integrator: 91 -> 90. Carina's window closed #1229 (ba968b4bc,
+# ICE in c_method_symbol on an unresolved receiver type, turned into an
+# honest refusal) -- the last K1 from tonight's registry findings.
 # 2026-09-21, integrator: rows 1234 (nova-polaris arity mismatch, K1 but
 # BLOKIRUET TEG: NET -- package ecosystem, not Carina's tag) and 1235
 # (nova-http lint + timeout, also NET) added; neither counts as a blocker.
