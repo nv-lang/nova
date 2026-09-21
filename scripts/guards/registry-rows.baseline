@@ -1388,8 +1388,12 @@
 # 2026-09-21, интегратор: rows 1175 -> 1176, max 1225 -> 1226. №1226 —
 # помощник нашёл, что голый `unsafe fn` не имеет ветки ни в одном из двух
 # диспетчеров верхнего уровня (parse.nv, decls.nv) — третий вид корня.
-rows=1182
-max=1232
+rows=1183
+max=1233
+# 2026-09-21, integrator: row 1233 added (Carina's window) -- match on a
+# slice pattern gets misrouted through the Option[int]/sum path in the
+# checker, wrong-cause diagnostic, same carrier file as #1232. rows
+# 1182->1183, max 1232->1233.
 stale_gaps=0
 # 2026-09-21, интегратор: rows 1179 -> 1182 -- поправка счёта. Мои прежние
 # бампы после мержа p274-novac прибавляли +1 за каждый НОМЕР, но два из них
