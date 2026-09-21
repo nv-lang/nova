@@ -1,0 +1,7 @@
+module p
+// В файле нет ни одного `println` в хвосте — отказ рассказывает про println.
+fn f(n int) -> int {
+    if n > 0 { return 1 }
+    panic("no")
+}
+fn main() { println(f(3)) }

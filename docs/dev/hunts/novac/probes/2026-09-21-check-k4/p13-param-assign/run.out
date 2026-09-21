@@ -1,0 +1,12 @@
+=== SUBJECT: novac check
+novac rc=0
+=== ORACLE: nova check (тот же файл)
+[31mFAIL:[0m docs/dev/hunts/novac/probes/2026-09-21-check-k4/p13-param-assign/probe.nv
+  docs/dev/hunts/novac/probes/2026-09-21-check-k4/p13-param-assign/probe.nv:4:5: error: [E_LOCAL_NOT_MUT] local-binding `x` не помечен `mut`, но переприсваивается (`x = ...`). `ro`-binding фиксирует имя (L1 — Plan 147 / D246); для переприсваивания используй `mut x = ...`. (Явный `mut T` content-view не делает имя переприсваиваемым — это R2-split: `ro r mut T` разрешает `r.field = v`, но не `r = X`.)
+  4 |     x = 5
+    |     ^
+
+===== SUMMARY =====
+PASS: 0  [31mFAIL[0m: 1  WARN: 0
+[1m[31merror:[0m[0m 1 file(s) failed type-check
+oracle rc=1

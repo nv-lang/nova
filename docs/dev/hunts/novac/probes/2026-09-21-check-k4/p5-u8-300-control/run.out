@@ -1,0 +1,14 @@
+=== SUBJECT: novac check
+{"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"docs/dev/hunts/novac/probes/2026-09-21-check-k4/p5-u8-300-control/probe.nv","start":250,"end":253},"message":"this literal does not fit `u8` (D227 rule 3, E_LIT_OUT_OF_RANGE): the type holds at most 255 on this side of zero","poisoned_by":null}
+novac rc=1
+=== ORACLE: nova check (тот же файл)
+[31mFAIL:[0m docs/dev/hunts/novac/probes/2026-09-21-check-k4/p5-u8-300-control/probe.nv
+  docs/dev/hunts/novac/probes/2026-09-21-check-k4/p5-u8-300-control/probe.nv:5:18: error: [E_LIT_OUT_OF_RANGE] 300 > u8.MAX (255)
+  5 | fn main() { take(300) }
+    |                  ^^^
+    note: parameter `x` declared here --> docs/dev/hunts/novac/probes/2026-09-21-check-k4/p5-u8-300-control/probe.nv:4:9
+
+===== SUMMARY =====
+PASS: 0  [31mFAIL[0m: 1  WARN: 0
+[1m[31merror:[0m[0m 1 file(s) failed type-check
+oracle rc=1

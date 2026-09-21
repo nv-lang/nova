@@ -1,2 +1,0 @@
-module m
-fn two() -> int => 2

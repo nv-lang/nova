@@ -1,0 +1,8 @@
+=== SUBJECT: novac check
+novac rc=0
+=== ORACLE: nova check (тот же файл)
+[32mok:[0m docs/dev/hunts/novac/probes/2026-09-21-check-k4/p15-mut-binding-control/probe.nv
+
+===== SUMMARY =====
+[32mPASS[0m: 1  FAIL: 0
+oracle rc=0

@@ -1,0 +1,12 @@
+=== SUBJECT: novac check (ожидается МОЛЧАНИЕ)
+novac rc=0
+=== ORACLE: nova check (тот же файл)
+[31mFAIL:[0m docs/dev/hunts/novac/probes/2026-09-21-check-k4/p18-ro-field-write/probe.nv
+  docs/dev/hunts/novac/probes/2026-09-21-check-k4/p18-ro-field-write/probe.nv:8:5: error: [E_READONLY_FIELD] cannot mutate `n` через `ro`-binding (binding dominates даже над `mut field` markers — Plan 124.8 / D175 amend). Hint: используй `mut binding-name = ...` если нужна мутация.
+  8 |     b.n = 2
+    |     ^^^
+
+===== SUMMARY =====
+PASS: 0  [31mFAIL[0m: 1  WARN: 0
+[1m[31merror:[0m[0m 1 file(s) failed type-check
+oracle rc=1

@@ -1,3 +1,0 @@
-module m
-fn broken() -> int {
-    ro v = 1

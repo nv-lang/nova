@@ -1,5 +1,0 @@
-module m
-fn one() -> int {
-    ro v = two()
-    v
-}
