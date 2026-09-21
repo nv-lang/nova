@@ -98,6 +98,7 @@ export type NodeKind enum
     | DestructureBind /// destructuring binding: `ro (a, b) = e` by position or `ro { x, y } = e` / `ro { x, .. } = e` by name. ONE kind for both, because D411 gives the language ONE pattern grammar -- the opening leaf says which shape was written, and the checker judges the shape against the type
     | IfLet /// `if Some(v) = expr { ... } [else ...]` (if-let wave; else -- W1): KwIf, variant ident, LParen, binder ident, RParen, Assign, initializer, then-block, then optionally KwElse and a Block or a chained if / if-let
     | Requires /// a `requires <expr>, "<text>"` clause between signature and body (contracts): word leaf, condition expr, comma, message StrLit
+    | EffectItem /// one effect in a signature's effect_list (D3/D209, `spec/decisions/04-effects.md`): `Fs`, `Fail[E]` -- a bare type reference, sitting as a FnDecl child between `)` and the optional `-> T`/body. Zero or more, space-separated, no markers -- the boundary is structural (D3's own phrase), so there is no wrapping list node: each effect is its own sibling, in source order, the same way `Requires` clauses stack.
     // `@field` -- a field of the receiver, inside a method body.
     | SelfField
     | SelfExpr /// bare `@` as a value inside a method body (the receiver itself): one At leaf

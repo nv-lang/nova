@@ -470,6 +470,17 @@ fn Cursor mut @fn_decl(lead []Node) -> Node {
         kids.push(@node(NodeKind.Param, pk))
     }
     @push_expected(kids, TokenKind.RParen)
+    // EFFECT LIST (D3/D209, registry #1244): zero or more effects, written as
+    // bare type references (`Fs`, `Fail[E]`) with NO separator and no
+    // markers between them -- the boundary is structural, exactly as D3
+    // states it: everything between `)` and `->` (or the body, when the
+    // return type is the omittable `()`) that starts like a type IS one.
+    // Each becomes its own `EffectItem` sibling, the same way `Requires`
+    // clauses stack below -- there is no wrapping list node to build or to
+    // keep exhaustive.
+    while @peek() == TokenKind.Ident {
+        kids.push(@node(NodeKind.EffectItem, @type_ref()))
+    }
     if @peek() == TokenKind.Arrow {
         mut rt = []Node.of(@take())
         rt.append(@type_ref())

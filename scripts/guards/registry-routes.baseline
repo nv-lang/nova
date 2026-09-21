@@ -1490,7 +1490,12 @@ no_caveat=0
 # 2026-09-21, интегратор: 85 -> 86, РОСТ и он законен. Новая строка №1226 —
 # голый `unsafe fn` без ветки в двух диспетчерах парсера разом (parse.nv,
 # decls.nv) — третий вид корня того же читательского класса.
-blockers=92
+blockers=90
+# 2026-09-21, integrator: 92 -> 90, LEGITIMATE DROP (two closures).
+# Carina closed #1242 (channel.nv ICE, root: @out.len() compared to a
+# literal 0 instead of a relative mark) and #1244 (effect row before
+# -> now parses, D3/D209 confirmed via spec-reader) -- both real
+# movement toward the tag.
 # 2026-09-21, integrator: 93 -> 92, LEGITIMATE DROP. Merged Carina's
 # closed version of row 1243 (else-if-in-value-position, second checker
 # fix for init_pos propagation) -- its BLOKIRUET TEG: DA row is closed,
