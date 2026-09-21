@@ -1,0 +1,7 @@
+fn f(extended []int) -> int {
+    ro first = match extended {
+        [x, ..] => x
+        [] => -1
+    }
+    first
+}
