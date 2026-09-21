@@ -1,0 +1,8 @@
+module a
+
+fn f(o Option[int]) -> () {
+    match o {
+        None => return
+        Some(_) => {}
+    }
+}
