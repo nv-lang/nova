@@ -25,6 +25,16 @@ fn diagnose(text str) -> int {
     diags.len()
 }
 
+/// The FIRST diagnostic's message, or "" when the file was clean -- for the
+/// tests that judge WHAT a refusal says, not just whether one fired.
+fn diagnose_first_msg(text str) -> str {
+    ro src = SourceText { text }
+    ro tree = parse(lex(text))
+    ro (diags, _) = check(tree, src, collect(tree, []Node.new(), InteropTable.new()))
+    if diags.len() == 0 { return "" }
+    diags[0].message
+}
+
 test "tail rule: a binding tail in a value-returning fn is refused" {
     ro src = "module m\n\nfn f() -> int {\n    ro x = 1\n}\n"
     assert(diagnose(src) > 0, "a body that ends without a value must be refused")
@@ -99,4 +109,16 @@ test "arg position: a typed array literal's `.of(...)` arguments get it too (reg
     // children get for free.
     ro src = "module m\n\ntype Point value {\n    x int\n    y int\n}\n\nro pts = []Point.of(Point { x: 1, y: 2 }, Point { x: 3, y: 4 })\n"
     assert(diagnose(src) == 0, "a record constructor as a `.of(...)` argument is a call argument")
+}
+
+test "diagnostic naming: an unknown-in-expression refusal names the ACTUAL callee (hunt check x K4, N7)" {
+    // The message used to say "println is a statement here, not a value"
+    // UNCONDITIONALLY, regardless of which name actually failed -- true
+    // for the case the door's own comment was written about, false for a
+    // tail `panic(...)` (the oracle accepts it; novac refuses it for an
+    // unrelated, honest reason -- panic outside the subset -- but used to
+    // blame a name, `println`, that this file never even writes).
+    ro src = "module m\n\nfn f(ok bool) -> int {\n    if ok {\n        1\n    } else {\n        panic(\"no\")\n    }\n}\n"
+    ro msg = diagnose_first_msg(src)
+    assert(msg.contains("`panic`"), "the refusal must name the callee that actually failed")
 }
