@@ -1,0 +1,7 @@
+fn f(x int) -> int {
+    x = 5
+    x
+}
+fn main() Io -> () {
+    println(f(1))
+}

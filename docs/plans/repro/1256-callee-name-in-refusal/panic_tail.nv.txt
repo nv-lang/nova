@@ -1,0 +1,7 @@
+fn f(ok bool) -> int {
+    if ok {
+        1
+    } else {
+        panic("no")
+    }
+}
