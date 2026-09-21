@@ -139,6 +139,44 @@ initializer are, at this door, the identical operation.
   Two files, one door widened together -- not investigated further than
   this pointer.
 
+  **REFINED, 2026-09-22 late night, still not attempted.** Read
+  `@type_match` (match_arms.nv:138) fully: it takes NO "does the caller
+  want a value" parameter and unconditionally folds every arm's type via
+  `@fold_arm_type` regardless of whether the match stands in a statement
+  or a value position -- so `@type_arm`'s Block case does not need a
+  value-wanted flag threaded in either; it can simply ALWAYS try to type
+  the tail as a value and return `Some(t)`/`None` accordingly, the same
+  way it already does for a nested `MatchExpr` body. The reusable door
+  already exists and needs no new one: `@type_branch_value`
+  (`tail_rules.nv:164`) is written generically over any `Block` node (it
+  is not `if`-specific despite living beside `@type_if_value`) --
+  non-tail statements go through `@type_stmt`, the tail goes through
+  `@type_expr` if `is_expr_kind` accepts it, and the block's own
+  `block_terminates` question already exists to detect a `return`-only
+  tail. `@type_arm`'s Block case could plausibly become: if
+  `block_terminates(body)`, behave exactly as today (`None`); otherwise
+  call something shaped like `@type_branch_value(body)` and return
+  `Some(t)`/`None` from what it answers.
+
+  On the lowering side, the destination-hardcoding is the only obstacle,
+  not a missing mechanism: `@lower_block_stmts_fn(b, tail)` already does
+  the identical dance for a function body's tail (`tail=true`: find the
+  last branch, if `@tail_places_value` accepts it, lower it into a
+  destination and treat everything else as statements) -- the ONLY
+  difference is that destination is hardcoded to `@ir.ret_place()`
+  (line ~79) rather than a parameter. Generalizing it to take an
+  arbitrary `Local` (or adding a sibling function that does) and having
+  `@lower_arm_body` call it with `dest` when the block does not
+  terminate would likely close this with no new lowering mechanism
+  either -- just reusing the two doors that already exist for the
+  identical question asked in a different position.
+
+  Still not attempted: `@lower_block_stmts_fn` is shared with function
+  bodies, so touching its signature is a shared-surface change that
+  needs its OWN both-ways proof on the function-body path too, not just
+  the new match-arm path -- exactly the kind of change this note keeps
+  saying deserves a fresh, careful pass rather than a late-night patch.
+
 ## Carrier caveat
 
 The fix closes the ARM-BODY position class, not the seven carriers named
