@@ -399,7 +399,6 @@
 
 | Маркер | Суть | Home | Pri |
 |---|---|---|---|
-| `[M-json-serializer-set-pending-naming]` | **OPEN 2026-07-22 (аудит владельца).** `fn JsonSerializer mut @set_pending(key str) -> Result[(), SerError]` (std/src/encoding/serde/json.nv:71) — `set_`-префикс нарушает property-конвенцию (D117/D84/D409: сеттер = `mut @x(v) -> @`). Нюанс: fallible (`-> Result`, не `-> @`) → это НЕ чистый property-сеттер, а реализация протокол-метода `@struct_field(key)` (serde.nv:136). Fix: инлайн в `@struct_field` ИЛИ императивное имя без `set_`. Мелочь std-гигиены. | serde std / naming | **P3** |
 | `[M-folder-module-detector]` | `is_folder_module_peer` (`imports.rs:1714`) — лишняя функция. `check_module_path` может определить тип модуля из декларации: `decl.last() == folder_name` → пир, иначе single-file. Текущий workaround: убрано ограничение `entries.len() < 2`, добавлена проверка `decl.last() == folder_name`. Правильное решение: удалить `is_folder_module_peer`, логику встроить в `expected_module_path_rev3`. | floating (manifest.rs / imports.rs) | P3 |
 
 ## P3 — Codegen cleanliness (генерируемый C полиш; рантайм не затронут)
