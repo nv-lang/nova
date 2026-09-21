@@ -642,17 +642,26 @@ fn main() {\n\
     assert(d.len() == 0)
     assert(c.contains("0xFF"))
 
-    // The magnitude judge (#810) reads hex by its own bound (int is i64):
-    // sixteen digits led by 8 overflow, led by 7 fit.
+    // The magnitude judge (#810) reads hex by the widest row the language
+    // has, `u64` since registry #1250 (was `int`'s own bound before that
+    // fix): a hex run past `int::MAX` but still inside `u64::MAX` is legal
+    // at this untyped position, matching the oracle -- 2^63 (sixteen digits
+    // led by 8) is exactly that case, confirmed accepted by both compilers.
+    // Seventeen digits led by 1 (2^64) is past `u64::MAX` too and stays
+    // refused on both sides -- the real boundary this test now pins.
     ro (d2, _) = compile_to_c("fn main() {\n\
  println(0x8000000000000000)\n\
 }", std)
-    assert(d2.len() == 1)
-    assert(d2[0].message.contains("does not fit in `int`"))
+    assert(d2.len() == 0)
     ro (d3, _) = compile_to_c("fn main() {\n\
  println(0x7FFFFFFFFFFFFFFF)\n\
 }", std)
     assert(d3.len() == 0)
+    ro (d3b, _) = compile_to_c("fn main() {\n\
+ println(0x10000000000000000)\n\
+}", std)
+    assert(d3b.len() == 1)
+    assert(d3b[0].message.contains("does not fit any integer type"))
 
     // A broken tail is one refusal, not a silent pair: the whole run is a
     // single ErrorTok (`0xZZ` never splits into `0` and `xZZ`).
