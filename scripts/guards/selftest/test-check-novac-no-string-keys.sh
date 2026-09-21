@@ -114,6 +114,42 @@ fn row_of(recv int, name str) -> int {
 EOF
 python "$G" "$ROOT" "$T/g10" >/dev/null 2>&1 && ok "цепочка с целочисленным сравнением проходит" || bad "законная цепочка покраснела"
 
+# 11. Нарушение #914: комментарий УПОМИНАЕТ NamespaceId, но структура его
+# полем не несёт и композитного ключа нет — красный (страж не должен читать
+# прозу как данные, ни в старую сторону, ни в новую).
+mkdir -p "$T/g11/names"
+cat > "$T/g11/names/comment_only.nv" <<'EOF'
+fn resolve() {
+    let flat = Map[str, DeclId].new() // NOT actually a NamespaceId component
+}
+EOF
+python "$G" "$ROOT" "$T/g11" >/dev/null 2>&1 && bad "комментарий-обманка внутри names/ прошёл (#914)" || ok "комментарий-обманка внутри names/ пойман (#914)"
+
+# 12. Законно #914: ns СОСЕДНИМ ПОЛЕМ структуры, без композитного ключа и
+# без слова NamespaceId на строке самого Map[str — зелено.
+mkdir -p "$T/g12/names"
+cat > "$T/g12/names/sibling.nv" <<'EOF'
+export type NameTable {
+    ns NamespaceId
+    map HashMap[str, int]
+}
+EOF
+python "$G" "$ROOT" "$T/g12" >/dev/null 2>&1 && ok "ns соседним полем структуры проходит (#914)" || bad "ns соседним полем структуры покраснела (#914)"
+
+# 13. Законно #914: тот же файл, конструктор ВНЕ блока type -- запись-
+# литерал `{ ns, map: ... }` за пределами объявления структуры.
+mkdir -p "$T/g13/names"
+cat > "$T/g13/names/ctor.nv" <<'EOF'
+export type NameTable {
+    ns NamespaceId
+    map HashMap[str, int]
+}
+
+export fn NameTable.new(ns NamespaceId) -> NameTable =>
+    { ns, map: HashMap[str, int].new() }
+EOF
+python "$G" "$ROOT" "$T/g13" >/dev/null 2>&1 && ok "конструктор с ns вне блока type проходит (#914)" || bad "конструктор с ns вне блока type покраснел (#914)"
+
 rm -rf "$T"
 if [ "$fails" -eq 0 ]; then
     echo "test-check-novac-no-string-keys ok: $CASES/$CASES"
