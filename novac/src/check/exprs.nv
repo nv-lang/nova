@@ -187,6 +187,17 @@ fn Checker mut @type_expr(e Node) -> () {
         // today. The literal's own type is str; the emitter reads the slot
         // types from the nodes, not from a side record.
         ro ikids = branch_children(e)
+        // BAD ESCAPES IN THE LITERAL PIECES (registry #TBD): the plain-StrLit
+        // walk (`Lit` arm, `check.nv`) refuses an unknown escape before it
+        // ever reaches typing -- this arm used to skip straight to the slot
+        // loop below, which only visits expression children (`is_expr_kind`)
+        // and never looks at the StrFrag leaves at all. `"a\qb${o}"` compiled
+        // clean where `"a\qb"` alone was refused: same bytes, no judge ever
+        // saw them. Checked first, same order as the Lit arm (escape before
+        // interpolation-shape refusals).
+        ro before_esc = @out.len()
+        @report_if_bad_escape(ikids)
+        if @out.len() > before_esc { return }
         for i in 0..ikids.len() {
             ro c = ikids[i]
             if !is_expr_kind(c.kind_of()) { continue }
