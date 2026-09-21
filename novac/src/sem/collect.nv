@@ -283,6 +283,8 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
         ro ck = const_decl_of(c)
         if !ck.is_some() { continue }
         ro kids = branch_children(ck ?? c)
+        // Same class as `?? break` at this file's own line 391 comment.
+        // nova:allow W_MANUAL_COALESCE -- `?? continue` does not parse, Stmt-only RHS
         ro cname = match const_full_name(kids) {
             None => continue
             Some(n) => n

@@ -716,6 +716,18 @@ fn Cursor mut @atom() -> Node {
         while @peek() == TokenKind.InterpOpen {
             kids.push(@take())
             kids.push(@expr())
+            // FORMAT SPEC (D229 V1, registry #1231): `${expr:?}`, the debug
+            // format. Read narrowly -- only the exact `:` `?` pair the spec
+            // names, as two leaves the checker refuses by name (I2's slot
+            // walk already skips any child that is not an expression and
+            // not a `StrFrag`, so these two extra leaves cost every other
+            // consumer nothing). Any other spec (the later Rust-style
+            // mini-language, D183) is NOT this door's business and still
+            // falls to the parser's own fallback, same as before this fix.
+            if @peek() == TokenKind.Colon && @peek(skip: 1) == TokenKind.Question {
+                kids.push(@take()) // Colon
+                kids.push(@take()) // Question
+            }
             @push_expected(kids, TokenKind.InterpClose)
             @push_expected(kids, TokenKind.StrFrag)
         }

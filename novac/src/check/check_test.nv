@@ -386,3 +386,21 @@ test "if-let: a QUALIFIED head naming a non-Some variant reaches the same named 
     ro bare_wrong_variant = "module m\n\ntype Shape enum\n    | Circle(int)\n    | Square(int)\n\nfn f(s Shape) -> int {\n    if Circle(r) = s {\n        r\n    } else {\n        0\n    }\n}\n"
     assert(diagnose_first_msg(bare_wrong_variant) == msg, "the qualified and bare forms must be refused with the identical message")
 }
+
+test "interpolation format spec `:?`: named refusal, not the anonymous parser fallback (registry #1231)" {
+    // `${expr:?}` (D229 V1) is legal Nova -- until this fix the parser's
+    // slot loop had no branch for the `:` after the expression at all, so
+    // the form fell into the unnamed "did not parse this" fallback. Now the
+    // `:` `?` pair reads as two extra leaves of the slot and the checker
+    // refuses the slot BY NAME before the ordinary Display route below would
+    // otherwise silently ignore the spec and print the value plain.
+    ro src = "module m\n\nfn f(s str) -> str {\n    \"\${s:?}\"\n}\n"
+    ro msg = diagnose_first_msg(src)
+    assert(!msg.contains("did not parse"), "a legal form (D229 V1) must not read as a syntax error")
+    assert(msg.contains("format specifier"), "the refusal must name the format specifier, not stay anonymous")
+
+    // Control: plain interpolation (no spec) is the already-working form and
+    // must not regress -- zero diagnostics, same as before this fix.
+    ro control = "module m\n\nfn f(s str) -> str {\n    \"\${s}\"\n}\n"
+    assert(diagnose(control) == 0, "plain interpolation must stay clean")
+}

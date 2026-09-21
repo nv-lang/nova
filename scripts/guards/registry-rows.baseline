@@ -1426,8 +1426,8 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
-rows=1219
-max=1267
+rows=1220
+max=1268
 # 2026-09-21, integrator: row 1242 added -- new checker ICE exposed by
 # Carina's #1237 fix (channel.nv:409), same class as #1229, blocks S5
 # 2026-09-21, integrator: row 1244 added -- assistant found effect row
@@ -1593,3 +1593,8 @@ gaps=174-208,210-215,653-654,743,1062,1103,1210-1211
 # in value position isn't parsed (parser lacks the KwIf branch the
 # statement-form already has); checker's message for it already exists.
 # rows 1194->1195, max 1242->1243.
+# 2026-09-21, integrator: row 1268 added -- own live finding, check-novac-lint
+# guard's marker baseline stale (2->4, own sem/slots.nv split) plus a genuine
+# W_MANUAL_COALESCE false positive on `?? continue` in sem/collect.nv:286
+# (continue is Stmt-only, same class as line 391's own `?? break` comment).
+# rows 1219->1220, max 1267->1268.
