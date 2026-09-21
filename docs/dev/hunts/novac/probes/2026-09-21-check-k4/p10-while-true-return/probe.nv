@@ -1,0 +1,8 @@
+module p
+// Соседняя форма того же свойства: терминатор внутри `while`.
+fn f(n int) -> int {
+    while true {
+        return n
+    }
+}
+fn main() { println(f(3)) }

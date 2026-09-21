@@ -1,0 +1,19 @@
+=== SUBJECT: novac check (ожидается молчание)
+novac rc=0
+=== ORACLE: nova check
+[31mFAIL:[0m docs/dev/hunts/novac/probes/2026-09-21-check-k4/p6-match-literal-unjudged/probe.nv
+  docs/dev/hunts/novac/probes/2026-09-21-check-k4/p6-match-literal-unjudged/probe.nv:6:9: error: invalid int: number too large to fit in target type
+  6 |         99999999999999999999999 => println(1)
+    |         ^^^^^^^^^^^^^^^^^^^^^^^
+
+===== SUMMARY =====
+PASS: 0  [31mFAIL[0m: 1  WARN: 0
+[1m[31merror:[0m[0m 1 file(s) failed type-check
+oracle rc=1
+=== ЧТО ЭМИТИТСЯ (строка сравнения в сгенерированном C)
+5856:    if (!_novac_matched_t0 && ((_novac_l1 == 99999999999999999999999LL))) {
+=== ЧТО СКАЖЕТ СИШНЫЙ КОМПИЛЯТОР на эту строку
+docs/dev/hunts/novac/probes/2026-09-21-check-k4/p6-match-literal-unjudged/emitted_line.c:7:26: error: integer literal is too large to be represented in any integer type
+    7 |     return (_novac_l1 == 99999999999999999999999LL);
+      |                          ^
+1 error generated.

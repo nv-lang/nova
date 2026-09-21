@@ -1,0 +1,9 @@
+=== SUBJECT: novac check
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"docs/dev/hunts/novac/probes/2026-09-21-check-k4/p10-while-true-return/probe.nv","start":140,"end":145},"message":"fn declares a return type but its body ends without a value","poisoned_by":null}
+novac rc=1
+=== ORACLE: nova check (тот же файл)
+[32mok:[0m docs/dev/hunts/novac/probes/2026-09-21-check-k4/p10-while-true-return/probe.nv
+
+===== SUMMARY =====
+[32mPASS[0m: 1  FAIL: 0
+oracle rc=0

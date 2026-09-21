@@ -1,0 +1,22 @@
+=== SUBJECT: novac check (ожидается ЧИСТО)
+novac rc=0
+=== ORACLE: nova check
+[32mok:[0m docs/dev/hunts/novac/probes/2026-09-21-check-k4/p8-dead-code-makes-it-legal/probe.nv
+
+===== SUMMARY =====
+[32mPASS[0m: 1  FAIL: 0
+oracle rc=0
+=== ЧТО ЭМИТИТСЯ (форма компилируется правильно — значит отказ Н3 не про эмиттер)
+static nova_int novac_fn_p_f__nova_int__to_nova_int(nova_int n) {
+    if (((nova_int)((n) > (((nova_int)0LL))))) {
+    return ((nova_int)1LL);
+    } else {
+    return ((nova_int)2LL);
+    }
+    nova_int dead = ((nova_int)0LL);
+    return (nova_int)0LL;
+}
+    nova_print_int(novac_fn_p_f__nova_int__to_nova_int(((nova_int)3LL)));
+    nova_print_newline();
+    return NOVA_UNIT;
+}
