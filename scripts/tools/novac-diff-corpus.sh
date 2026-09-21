@@ -291,6 +291,8 @@ for f in "$ROOT"/novac/src/*/*.nv "$ROOT"/novac/src/*.nv; do
     self_files="$self_files \"$f\""
 done
 self_rej=0
+self_mode="batch"
+self_rej_partial=""
 if [ "$self_total" -gt 0 ]; then
     eval "timeout 60 NOVAC_SELF_PATH=novac/src \"$NOVAC\" check $self_files" > "$T/self.out" 2> "$T/self.err" </dev/null
     src=$?
@@ -306,6 +308,18 @@ if [ "$self_total" -gt 0 ]; then
         self_rej=$(cat "$T/self.out" "$T/self.err" 2>/dev/null \
             | grep -o '"file":"[^"]*"' | sort -u | wc -l | tr -d '[:space:]')
     else
+        # РЕЖИМ СМЕНИЛСЯ (реестр №1122): пофайловый откат спрашивает «стоит ли
+        # файл САМ ПО СЕБЕ», а не «отвергла ли его пачка» — межфайловые импорты
+        # не резолвятся в одиночной проверке, так что число здесь СИСТЕМАТИЧЕСКИ
+        # больше и отвечает на ДРУГОЙ вопрос. Печатать его под тем же именем, что
+        # батчевое число, значит врать о расстоянии до самосборки на порядок
+        # (замер №1122: 92 из 93 пофайлово при 6 из 93 батчем на той же дате).
+        # Оба числа остаются в выводе: пофайловое — вердикт (недостоверный
+        # частичный батч мог пропустить файлы после точки краха), частичный
+        # батчевый счёт — для видимости, не для сравнения с базой.
+        self_mode="perfile-fallback"
+        self_rej_partial=$(cat "$T/self.out" "$T/self.err" 2>/dev/null \
+            | grep -o '"file":"[^"]*"' | sort -u | wc -l | tr -d '[:space:]')
         for f in "$ROOT"/novac/src/*/*.nv "$ROOT"/novac/src/*.nv; do
             [ -f "$f" ] || continue
             timeout 10 "$NOVAC" check "$f" >/dev/null 2>&1 </dev/null || self_rej=$((self_rej+1))
@@ -315,7 +329,11 @@ fi
 wall=$(( ( $(date +%s%N) - wall0 ) / 1000000 ))
 
 echo "novac-diff-corpus: файлов $N — совпали-приняли $acc · совпали-отвергли $rej · отставание $subset · вне-точки $outpoint · заблокировано-оракулом $blocked · DANGER $danger · PANIC $panic · allow $allowed"
-echo "novac-diff-corpus: поведенчески совпали $beh из $acc · самосборка: отвергнуто $self_rej из $self_total"
+if [ "$self_mode" = "batch" ]; then
+    echo "novac-diff-corpus: поведенчески совпали $beh из $acc · самосборка (БАТЧ): отвергнуто $self_rej из $self_total"
+else
+    echo "novac-diff-corpus: поведенчески совпали $beh из $acc · самосборка (ПОФАЙЛОВЫЙ ОТКАТ -- ICE убил пачку, числа НЕ сравнимы с батчевым режимом, реестр №1122): отвергнуто $self_rej из $self_total (частичный счёт краха: $self_rej_partial, недостоверен)"
+fi
 echo "novac-diff-corpus: цена прогона — novac ${t_novac}ms, оракул ${t_oracle}ms, стена ${wall}ms"
 if [ -f "$T/acc" ]; then
     echo "  в подмножестве (оба приняли):"
@@ -334,6 +352,6 @@ fi
 if [ -s "$T/note" ]; then
     cat "$T/note"
 fi
-echo "novac-diff-corpus baseline-numbers: contract-match=$((acc+rej)) behavior-match=$beh no-entry=$noentry behavior-allowed=$behallow out-of-point=$outpoint oracle-blocked=$blocked self-distance=$self_rej/$self_total"
+echo "novac-diff-corpus baseline-numbers: contract-match=$((acc+rej)) behavior-match=$beh no-entry=$noentry behavior-allowed=$behallow out-of-point=$outpoint oracle-blocked=$blocked self-distance=$self_rej/$self_total self-mode=$self_mode"
 echo "novac-diff-corpus ok"
 exit 0
