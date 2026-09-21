@@ -356,6 +356,17 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // refused has no type, and its readers act on `no_ty()`.
         return chan.type_if_known(e.id_of())
     }
+    if k == NodeKind.IfExpr {
+        // Same rule as Index/ArrayLit/TupleExpr above (registry #TBD, the
+        // argument-position wave): `@type_if_value` records the agreed
+        // branch type before anyone asks here -- this door reads, it does
+        // not re-derive. Its absence iced the moment `is_expr_kind` and the
+        // `type_expr` dispatcher both learned the argument position but this
+        // one had not: `pick(if c {10} else {20})` reached the fallback ice
+        // at the bottom of this function. Silence is a refused `if` (no
+        // else, disagreeing branches), and readers act on `no_ty()`.
+        return chan.type_if_known(e.id_of())
+    }
     if k == NodeKind.RecordCtor {
         ro kids = branch_children(e)
         if kids[0].kind_of() == NodeKind.Name {

@@ -181,6 +181,17 @@ fn Checker mut @type_expr(e Node) -> () {
         @type_expr(tk[0])
         if @out.len() > before { return }
         @report_first_leaf_of(tk, TRY_MSG)
+    } else if k == NodeKind.IfExpr {
+        // A CALL ARGUMENT is a legal position too (registry #TBD, the B14
+        // door widened the same way B13's record constructor was): this
+        // generic dispatcher is where `@type_free_call`'s argument loop
+        // (`calls.nv`) reaches every argument through `@type_expr`, and
+        // until now it had no arm for `IfExpr` at all -- `check.nv`'s shape
+        // walk refused the position before typing was ever asked. The tail
+        // and initializer positions call `@type_if_value` directly and
+        // never reach this dispatcher; an argument does, so this is the
+        // one new call site the class needed.
+        @type_if_value(e)
     } else if k == NodeKind.InterpStr {
         // Every slot's expression is a real node (I2): walked, typed, and
         // its display type judged -- str and int carry builder inserts
