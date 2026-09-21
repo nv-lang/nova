@@ -36,7 +36,12 @@ import ../sem.{leaf_kind, leaf_text, interp_slices}
 fn Checker mut @report_if_bad_escape(kids []Node) -> () {
     for c in kids {
         if c.kind_of() != NodeKind.LeafNode { continue }
-        if leaf_kind(c) != TokenKind.StrLit { continue }
+        // StrFrag (registry #TBD): an interpolated string's literal pieces
+        // carry the same escape alphabet as a plain StrLit -- the walk that
+        // used to visit only StrLit left every `${...}`-bearing literal's
+        // text unchecked, so `"a\qb${o}"` passed where `"a\qb"` alone was
+        // refused. Same bytes, same rule; only the leaf kind differs.
+        if leaf_kind(c) != TokenKind.StrLit && leaf_kind(c) != TokenKind.StrFrag { continue }
         // D249: a `str` has three diverging lengths, so bytes are asked for
         // through the byte lens -- the same door the lexer uses on the source.
         ro b = leaf_text(c).bytes()

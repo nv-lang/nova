@@ -404,3 +404,26 @@ test "interpolation format spec `:?`: named refusal, not the anonymous parser fa
     ro control = "module m\n\nfn f(s str) -> str {\n    \"\${s}\"\n}\n"
     assert(diagnose(control) == 0, "plain interpolation must stay clean")
 }
+
+test "unknown escape inside an interpolated string's literal piece is refused, not silently accepted (registry #TBD)" {
+    // `report_if_bad_escape` used to walk only `Lit`-node children (the plain
+    // StrLit path in `check.nv`'s `Lit` arm) -- an interpolated string never
+    // reaches that arm at all (it is a distinct `InterpStr` node), and that
+    // node's own walk (`exprs.nv`) visited only the slot expressions
+    // (`is_expr_kind`), skipping every StrFrag leaf outright. `"a\qb${o}"`
+    // therefore compiled clean where `"a\qb"` alone was refused -- same
+    // illegal byte pair, no judge ever looked at it in the interpolated form.
+    ro src = "module m\n\nfn f(o int) -> str {\n    \"a\\qb\${o}\"\n}\n"
+    ro msg = diagnose_first_msg(src)
+    assert(msg.contains("this string escape is not compiled yet"), "the interpolated form must be refused by the same escape rule as a plain string")
+
+    // Control: the identical illegal escape in a PLAIN (non-interpolated)
+    // string was already refused before this fix -- must still be, unchanged.
+    ro control_plain = "module m\n\nfn f() -> str {\n    \"a\\qb\"\n}\n"
+    assert(diagnose_first_msg(control_plain).contains("this string escape is not compiled yet"), "the plain-string escape refusal must not regress")
+
+    // Control: a LEGAL escape alongside a real slot must stay clean -- the
+    // fix must not turn every interpolated string into a refusal.
+    ro control_legal = "module m\n\nfn f(o int) -> str {\n    \"a\\nb\${o}\"\n}\n"
+    assert(diagnose(control_legal) == 0, "a legal escape in an interpolated literal piece must not regress")
+}
