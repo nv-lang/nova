@@ -187,8 +187,23 @@ fn Checker mut @type_expr(e Node) -> () {
         // today. The literal's own type is str; the emitter reads the slot
         // types from the nodes, not from a side record.
         ro ikids = branch_children(e)
-        for c in ikids {
+        for i in 0..ikids.len() {
+            ro c = ikids[i]
             if !is_expr_kind(c.kind_of()) { continue }
+            // A FORMAT SPEC ON THIS SLOT (`${expr:?}`, D229, registry #1231):
+            // the parser reads the `:` `?` pair as two leaves right after the
+            // slot's expression, so its presence is a lookahead of ONE from
+            // here. Refused before `type_expr`/`type_of` run at all -- the
+            // spec asks for Debug output, and letting the ordinary Display
+            // route below run instead would compile a program that silently
+            // ignores what it asked for.
+            if i + 1 < ikids.len() {
+                ro nx = ikids[i + 1]
+                if nx.kind_of() == NodeKind.LeafNode && leaf_kind(nx) == TokenKind.Colon {
+                    @report_first_leaf_of(ikids, INTERP_SPEC_MSG)
+                    return
+                }
+            }
             ro before = @out.len()
             @type_expr(c)
             if @out.len() > before { return }

@@ -438,6 +438,16 @@ const COALESCE_NONOPT_MSG = "`??` unwraps an `Option` or a `Result`, and this le
 /// as a syntax error about a form the language does not have.
 const TRY_MSG = "outside the subset: the `?` (Try) operator is not compiled yet (E2, the control-flow horizon) -- match the `Option`/`Result` and write the early return by hand"
 
+/// A debug format specifier in an interpolation slot (`${expr:?}`, D229 V1;
+/// registry #1231): legal Nova, and the parser now reads the `: ?` pair as
+/// two leaves of the slot instead of falling into the unnamed fallback --
+/// but nothing downstream of the parser DISPATCHES `Debug.@debug` yet.
+/// Refusing by name here, before the ordinary `Display` resolution below
+/// runs, keeps a written `:?` from being silently ignored and printed
+/// through the plain (non-debug) route, which would compile clean and be
+/// wrong.
+const INTERP_SPEC_MSG = "outside the subset: a format specifier in string interpolation (`\${expr:?}`, D229) is not compiled yet (274.7 B1b, the Display family) -- write the value plain and format it by hand"
+
 /// A `Result` left side: LEGAL IN THE LANGUAGE (D86 gives `??` both containers) and not
 /// emittable yet, so it is refused with the stage that unblocks it rather than accepted
 /// into an emitter that would spell it wrong.
