@@ -1,0 +1,6 @@
+fn f(r Result[int, str]) -> int {
+    match r {
+        Ok(a) => a
+        Err(e) => 0
+    }
+}
