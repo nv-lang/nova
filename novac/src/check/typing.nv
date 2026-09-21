@@ -662,10 +662,25 @@ fn Checker mut @type_stmt(st Node) -> () {
         }
         // A `return` is a tail by another spelling: the same literal rule and
         // the same door (274.7 B5), asked only when typing refused nothing.
+        //
+        // A MATCH IS THE ONE FORM `@type_tail_value` DOES NOT KNOW (2026-09-21):
+        // `@type_expr`'s own dispatch skips `MatchExpr` outright and says so --
+        // "the two doors that admit a match ... call @type_match themselves"
+        // (exprs.nv). Until this arm existed, `return` was a THIRD door
+        // admitting one (the subset walk in check.nv opened the position the
+        // same day) without anyone calling the door that types it: `check`
+        // passed `return match k {..}`, `emit` ICE'd with "no type recorded
+        // for this node". Mirrors `FnExprBody`'s own dispatch above
+        // (line ~296) rather than inventing a new shape for it.
         ro rmark = @out.len()
-        @type_tail_value(kids[1])
+        ro rv = kids[1]
+        if rv.kind_of() == NodeKind.MatchExpr {
+            @type_match(rv)
+        } else {
+            @type_tail_value(rv)
+        }
         if @out.len() == rmark {
-            @judge_return(kids[1], @tail_type_of(kids[1]))
+            @judge_return(rv, @tail_type_of(rv))
         } else {
             // The operand was refused: the walk already spoke.
         }

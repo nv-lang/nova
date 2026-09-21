@@ -21,7 +21,7 @@
 module novac.parse
 
 import ../lex.{TokenKind, brace_delta, paren_delta}
-import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, VALUE_MARKER, PRIV_MARKER, SUM_MARKER}
+import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, VALUE_MARKER, PRIV_MARKER, SUM_MARKER, EFFECT_MARKER}
 import ../tree.{Node, NodeKind}
 
 /// `type Name { field type ... }` — fields are newline-separated pairs of
@@ -83,6 +83,34 @@ fn Cursor mut @type_decl() -> Node {
         return @node(NodeKind.TypeDecl, kids)
     } else {
         // Not a protocol: the sum marker and the record/newtype tails follow.
+    }
+    // An EFFECT declaration -- `type Counter effect { fn log(msg str) -> () }`
+    // (D459: every operation begins with `fn`, the same word every other
+    // function in the language uses; the old bare form is retracted).
+    //
+    // Read the same way `protocol` is, one form later: until 2026-09-21 the
+    // word `effect` fell into the newtype/alias tail below as an ordinary
+    // type name, the brace body behind it became junk, and `check` refused
+    // `effect` as "undeclared type name" -- a misspelling nobody made. `check`
+    // still refuses the declaration (novac types no effect-system form yet),
+    // but by NAME now, which is what makes the refusal honest rather than
+    // wrong (registry TBD, found surveying rung 0.3).
+    if @peek_ident(EFFECT_MARKER) {
+        kids.push(@take())
+        if @peek() == TokenKind.LBrace {
+            kids.push(@take())
+            // ONE SIGNATURE PER `fn`, the mirror of protocol's `@`.
+            while @peek() == TokenKind.KwFn {
+                kids.push(@effect_op())
+            }
+            @push_expected(kids, TokenKind.RBrace)
+        } else {
+            // `type Counter effect` with no body: broken input, recovered by
+            // the top loop rather than swallowed here.
+        }
+        return @node(NodeKind.TypeDecl, kids)
+    } else {
+        // Not an effect: the sum marker and the record/newtype tails follow.
     }
     // A VALUE record or a VALUE sum: the word stands where `enum` and
     // `protocol` stand, and D241 fixes that order. Until 2026-08-23 it fell into
@@ -348,4 +376,38 @@ fn Cursor mut @proto_method() -> Node {
         // VISIBLE (no RetType node), which is what lets `check` name it.
     }
     @node(NodeKind.ProtoMethod, kids)
+}
+
+/// Parse ONE operation signature of an effect body: `fn name(params) -> T`
+/// (D459 -- the sole normative spelling; the old bare form without `fn` is
+/// retracted). The mirror of `@proto_method` one line up, `fn` standing
+/// where `@` stands: a signature and nothing else, no body, no default --
+/// `check` refuses the whole declaration by name regardless (novac types no
+/// effect-system form yet), so this reader's only job is to stop the body
+/// from becoming junk the way `protocol`'s did before wave 3a.
+fn Cursor mut @effect_op() -> Node {
+    mut kids = []Node.of(@take()) // KwFn
+    @push_expected(kids, TokenKind.Ident) // operation name
+    if @peek() == TokenKind.LParen {
+        kids.push(@take())
+        while @peek() == TokenKind.Ident {
+            mut pk = []Node.of(@take()) // parameter name
+            pk.append(@type_ref())
+            @push_if(pk, TokenKind.Comma)
+            kids.push(@node(NodeKind.Param, pk))
+        }
+        @push_expected(kids, TokenKind.RParen)
+    } else {
+        // No parameter list: broken input. The RParen is absent rather than
+        // invented, and `check` sees the absence.
+    }
+    if @peek() == TokenKind.Arrow {
+        mut rt = []Node.of(@take())
+        rt.append(@type_ref())
+        kids.push(@node(NodeKind.RetType, rt))
+    } else {
+        // An effect operation without a declared return type: the absence
+        // is VISIBLE (no RetType node), the same contract `ProtoMethod` keeps.
+    }
+    @node(NodeKind.EffectOp, kids)
 }

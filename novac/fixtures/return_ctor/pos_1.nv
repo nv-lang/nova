@@ -1,0 +1,55 @@
+module return_ctor.pos_1
+
+// `return <value>` AS AN INITIALIZER POSITION -- a record constructor and a
+// `match` in a `return`'s value, neither refused any more (2026-09-21).
+//
+// WHY THIS FORM. The value a `return` carries is placed through the same
+// door a binding's own initializer goes through (`@lower_place` into the
+// return slot), so a record constructor or a `match` here has the exact
+// tmp-scheme the checker's `init_pos` flag exists to permit -- but until
+// this fixture landed, neither form had ever been checked in this position.
+// Found while surveying the rung-0.3 examples (274.5 sec.5b): six carriers
+// refused as "record constructor not in the right position" turned out to
+// use a DIFFERENT position (`with X = Y {...}`, a separate defect); this
+// door was opened anyway because `return Point{..}` and `return match k{..}`
+// are ordinary Nova and neither compiled.
+//
+// THE MATCH HALF NEEDED A SECOND FIX, and it is the reason this fixture
+// carries both forms in one file rather than splitting them: the position
+// fix alone made `check` accept `return match k {..}` while `emit` ICE'd
+// ("no type recorded for this node"), because `@type_expr` deliberately does
+// not type a `MatchExpr` -- the two doors that admit one elsewhere
+// (a binding initializer, a fn's expression body) call `@type_match`
+// themselves, and `return` had become a third door without calling it.
+// A fixture carrying only the record constructor would not have caught a
+// regression in that second fix.
+//
+// PROVEN BOTH WAYS BEFORE THIS FIXTURE EXISTED (not by this fixture alone):
+// reverted to HEAD, rebuilt -- both forms refused as before; reapplied,
+// rebuilt -- both compile. Behavior checked with
+// scripts/tools/novac-e1-smoke.sh: stdout byte-for-byte and exit code
+// identical to the oracle for each form separately. This fixture is what
+// keeps that proof from needing to be redone by hand.
+
+type Point {
+    x int
+    y int
+}
+
+type Kind enum A | B
+
+fn make_point() -> Point {
+    return Point { x: 1, y: 2 }
+}
+
+fn name_of(k Kind) -> int {
+    return match k {
+        A => 1
+        B => 2
+    }
+}
+
+fn main() {
+    println(make_point().x)
+    println(name_of(Kind.A))
+}

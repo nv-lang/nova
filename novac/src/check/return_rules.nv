@@ -184,3 +184,31 @@ fn int_narrows(tys Interner, from TyId, to TyId) -> bool {
     if !from_int || !to_int { return false }
     tr.bits < fr.bits || (tr.bits == fr.bits && tr.signed != fr.signed)
 }
+
+/// `return <value>` IS AN INITIALIZER POSITION (2026-09-21, moved from
+/// check.nv's subset walk when that file crossed 1000 lines the same night --
+/// check-novac-file-size.py): the lowering places the value through
+/// `@lower_place` into the return slot (`@lower_return`, `lower/lowering.nv`)
+/// -- the same door a binding's own initializer goes through -- so a record
+/// constructor or a `match` here has the exact tmp-scheme `init_pos` exists
+/// to permit. Found by narrowing: `return Point { .. }` and `return match
+/// k {..}` both refused before this arm existed, while the same values as a
+/// binding's initializer already compiled (274.5 sec.5g). A bare `return`
+/// has one child (the keyword leaf) and marking it init_pos is harmless --
+/// a leaf does not read the flag.
+///
+/// THIS WALK DECIDES POSITION ONLY -- it does not type anything, and an
+/// earlier version of this fix called `@type_match` right here, from inside
+/// the STRUCTURAL walk, before any function's parameters are bound into
+/// `@scope`. It refused the match's own scrutinee as "unknown name": not a
+/// double-typing bug, but asking the typing question in the wrong PASS.
+/// Typing a `return`'s match value is typing.nv's job (RetStmt branch),
+/// which runs later, after scope is populated -- see the mirror of
+/// `FnExprBody`'s dispatch there.
+fn Checker mut @walk_ret_stmt(children []Node) -> () {
+    mut i = 0
+    for c in children {
+        @walk(c, init_pos: i == children.len() - 1)
+        i += 1
+    }
+}

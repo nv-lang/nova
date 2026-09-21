@@ -195,6 +195,14 @@ export const PRIV_MARKER = "priv"
 /// in one registry: the parser asks, it does not spell.
 export const PROTOCOL_MARKER = "protocol"
 
+/// The word that marks an EFFECT declaration: `type Counter effect { ... }`
+/// (spec/effects.ru.md; kind-token position, `02-types.md` D53). A contextual
+/// word beside `protocol`, read the same way -- until this the parser had no
+/// idea `effect` was anything but an ordinary type name, and `type Counter
+/// effect { ... }` was read as the alias form `type Name Y`, refusing `effect`
+/// as an undeclared type (registry TBD, found 2026-09-20 surveying rung 0.3).
+export const EFFECT_MARKER = "effect"
+
 /// The name the RECEIVER is bound under inside a method body: `@`.
 ///
 /// Not an invented word (`self`, `this`, `nova_self`) but the symbol the

@@ -51,7 +51,7 @@ const UNDECLARED_TYPE_PHRASE = "undeclared type name"
 /// hold. For them "undeclared" would be a lie -- the word exists, novac has not
 /// compiled it -- so they keep the subset refusal of the position they stand in.
 fn is_language_type_word(name str) -> bool =>
-    name == "unit" || name == "never" || name == "any"
+    name == "unit" || name == "never" || name == "any" || name == "Effect"
 
 /// The sentence, built around the name. `byte` gets its own: the language
 /// removed it (D367) and the canonical spelling is the whole fix.
