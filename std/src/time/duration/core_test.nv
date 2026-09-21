@@ -341,10 +341,9 @@ test "Ф.3(d)/D237/Q12: @display Duration/Monotonic — byte-exact ASCII (нет
     ro d = 150.to_micros()
     ro s = "${d}"
     assert(s == "150us")
-    ro bs = s.bytes()
     mut all_ascii = true
-    for i in 0..bs.len() {
-        if bs[i] > 0x7F as u8 { all_ascii = false }
+    for i in 0..s.byte_len() {
+        if unsafe { s.ptr().read_at(i) } > 0x7F as u8 { all_ascii = false }
     }
     assert(all_ascii)
 

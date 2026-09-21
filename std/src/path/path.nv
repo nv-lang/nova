@@ -205,20 +205,18 @@ export fn Path.normalize(p str) -> str {
 // вызывающими функциями (в отличие от codepoint-индекса `nth`, который был
 // бы несовместим на non-ASCII путях).
 fn find_last_slash(s str) -> Option[int] {
-    ro sb = s.bytes()
     mut i = s.byte_len() - 1
     while i >= 0 {
-        if sb[i] == ('/' as u8) { return Some(i) }
+        if unsafe { s.ptr().read_at(i) } == ('/' as u8) { return Some(i) }
         i -= 1
     }
     None
 }
 
 fn find_last_dot(s str) -> Option[int] {
-    ro sb = s.bytes()
     mut i = s.byte_len() - 1
     while i >= 0 {
-        if sb[i] == ('.' as u8) { return Some(i) }
+        if unsafe { s.ptr().read_at(i) } == ('.' as u8) { return Some(i) }
         i -= 1
     }
     None

@@ -61,17 +61,17 @@ const MIN_19DIGIT_INT u64 = 1000000000000000000
 // does): for up to 19 digits that IS the value; for more, the significant digits are
 // re-read below and `many_digits` tells the converter that the tail was dropped.
 fn parse_number(s str) -> Result[Number, ParseFloatError] {
-    ro bytes = s.bytes()
+    ro ptr = s.ptr()
     ro n = s.byte_len()
     if n == 0 { return Err(ParseFloatError.Empty) }
     mut i = 0
-    ro negative = bytes[0] == '-'
-    if bytes[0] == '-' || bytes[0] == '+' { i = 1 }
+    ro negative = unsafe { ptr.read_at(0) } == '-'
+    if unsafe { ptr.read_at(0) } == '-' || unsafe { ptr.read_at(0) } == '+' { i = 1 }
     ro int_start = i
     mut mantissa = 0 as u64
     mut n_digits = 0
     while i < n {
-        ro c = bytes[i] as int
+        ro c = unsafe { ptr.read_at(i) } as int
         if c >= '0' && c <= '9' {
             mantissa = mantissa.wrapping_mul(10).wrapping_add((c - 48) as u64)
             i += 1
@@ -82,11 +82,11 @@ fn parse_number(s str) -> Result[Number, ParseFloatError] {
     mut frac_start = i
     mut frac_end = i
     mut exponent = 0
-    if i < n && bytes[i] == '.' {
+    if i < n && unsafe { ptr.read_at(i) } == '.' {
         i += 1
         frac_start = i
         while i < n {
-            ro c = bytes[i] as int
+            ro c = unsafe { ptr.read_at(i) } as int
             if c >= '0' && c <= '9' {
                 mantissa = mantissa.wrapping_mul(10).wrapping_add((c - 48) as u64)
                 i += 1
@@ -98,16 +98,16 @@ fn parse_number(s str) -> Result[Number, ParseFloatError] {
     }
     if n_digits == 0 { return Err(ParseFloatError.Malformed { at: i }) }
     mut exp_number = 0
-    if i < n && (bytes[i] == 'e' || bytes[i] == 'E') {
+    if i < n && (unsafe { ptr.read_at(i) } == 'e' || unsafe { ptr.read_at(i) } == 'E') {
         i += 1
         mut exp_negative = false
-        if i < n && (bytes[i] == '-' || bytes[i] == '+') {
-            exp_negative = bytes[i] == '-'
+        if i < n && (unsafe { ptr.read_at(i) } == '-' || unsafe { ptr.read_at(i) } == '+') {
+            exp_negative = unsafe { ptr.read_at(i) } == '-'
             i += 1
         }
         mut exponent_digits = 0
         while i < n {
-            ro c = bytes[i] as int
+            ro c = unsafe { ptr.read_at(i) } as int
             if c >= '0' && c <= '9' {
                 // Saturate well before overflow (donor: parse_scientific): past 0x10000 the
                 // value is zero or infinity whatever the significand says.
@@ -127,8 +127,8 @@ fn parse_number(s str) -> Result[Number, ParseFloatError] {
     // More than 19 digits: leading zeros (and the dot among them) are not significant.
     mut significant = n_digits - 19
     mut p = int_start
-    while p < frac_end && (bytes[p] == '.' || bytes[p] == '0') {
-        if bytes[p] == '0' { significant -= 1 }
+    while p < frac_end && (unsafe { ptr.read_at(p) } == '.' || unsafe { ptr.read_at(p) } == '0') {
+        if unsafe { ptr.read_at(p) } == '0' { significant -= 1 }
         p += 1
     }
     if significant <= 0 {
@@ -140,7 +140,7 @@ fn parse_number(s str) -> Result[Number, ParseFloatError] {
     mantissa = 0
     mut j = int_start
     while j < int_end && mantissa < MIN_19DIGIT_INT {
-        mantissa = mantissa * 10 + (((bytes[j] as int) - 48) as u64)
+        mantissa = mantissa * 10 + (((unsafe { ptr.read_at(j) } as int) - 48) as u64)
         j += 1
     }
     mut exp_read = 0
@@ -151,7 +151,7 @@ fn parse_number(s str) -> Result[Number, ParseFloatError] {
         // continue into the fraction (it exists: the integer part alone was short)
         mut k = frac_start
         while k < frac_end && mantissa < MIN_19DIGIT_INT {
-            mantissa = mantissa * 10 + (((bytes[k] as int) - 48) as u64)
+            mantissa = mantissa * 10 + (((unsafe { ptr.read_at(k) } as int) - 48) as u64)
             k += 1
         }
         exp_read = -(k - frac_start)

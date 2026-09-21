@@ -191,10 +191,9 @@ fn decode_with(s str, require_padding bool) -> Result[[]u8, Base64Error] {
     // URL-safe без padding: оцениваем по длине.
     // `=` — ASCII, base64-контент целиком ASCII → прямой byte-доступ O(1)
     // вместо ретрактированного `chars().nth()` (D260-амендмент).
-    ro sb = s.bytes()
     ro trimmed_len = if require_padding {
-        if sb[s.byte_len() - 1] == ('=' as u8) {
-            if sb[s.byte_len() - 2] == ('=' as u8) {
+        if unsafe { s.ptr().read_at(s.byte_len() - 1) } == ('=' as u8) {
+            if unsafe { s.ptr().read_at(s.byte_len() - 2) } == ('=' as u8) {
                 s.byte_len() - 2
             } else {
                 s.byte_len() - 1

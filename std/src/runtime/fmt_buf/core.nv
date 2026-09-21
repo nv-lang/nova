@@ -454,13 +454,12 @@ fn utf8_encode_at(cp int, buf *mut u8, cap int, pos int) -> int {
 export fn str_debug_fmt(s str, buf *mut u8, cap int) -> int
     requires cap >= 0
 {
-    ro bytes = s.bytes()
-    ro blen = bytes.len()
+    ro blen = s.byte_len()
     mut pos = 0
     unsafe { if pos < cap { buf.write_at(pos, '"' as u8) } }
     pos += 1
     for i in 0..blen {
-        ro c = bytes[i]
+        ro c = unsafe { s.ptr().read_at(i) }
         if c == ('"' as u8) { pos = write_esc2_at(buf, cap, pos, '"' as u8) }
         else if c == ('\\' as u8) { pos = write_esc2_at(buf, cap, pos, '\\' as u8) }
         else if c == ('\n' as u8) { pos = write_esc2_at(buf, cap, pos, 'n' as u8) }

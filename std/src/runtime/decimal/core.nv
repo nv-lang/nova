@@ -242,28 +242,28 @@ export fn DigitBuf mut @right_shift(shift int) -> () {
 // and `truncated` set when more followed, the exponent folded into `decimal_point`. The
 // sign is the caller's business and is skipped here.
 export fn DigitBuf mut @parse_from(s str) -> () {
-    ro bytes = s.bytes()
+    ro p = s.ptr()
     ro n = s.byte_len()
     mut i = 0
-    if i < n && (bytes[i] == '-' || bytes[i] == '+') { i += 1 }
+    if i < n && (unsafe { p.read_at(i) } == '-' || unsafe { p.read_at(i) } == '+') { i += 1 }
     ro start = i
-    while i < n && bytes[i] == '0' { i += 1 }
+    while i < n && unsafe { p.read_at(i) } == '0' { i += 1 }
     while i < n {
-        ro c = bytes[i] as int
+        ro c = unsafe { p.read_at(i) } as int
         if c >= '0' && c <= '9' {
             @try_add_digit((c - 48) as u8)
             i += 1
         } else { break }
     }
-    if i < n && bytes[i] == '.' {
+    if i < n && unsafe { p.read_at(i) } == '.' {
         i += 1
         ro first = i
         // Skip leading zeros.
         if @num_digits == 0 {
-            while i < n && bytes[i] == '0' { i += 1 }
+            while i < n && unsafe { p.read_at(i) } == '0' { i += 1 }
         }
         while i < n {
-            ro c = bytes[i] as int
+            ro c = unsafe { p.read_at(i) } as int
             if c >= '0' && c <= '9' {
                 @try_add_digit((c - 48) as u8)
                 i += 1
@@ -275,14 +275,14 @@ export fn DigitBuf mut @parse_from(s str) -> () {
     if @num_digits != 0 {
         // Ignore the trailing zeros if there are any
         mut n_trailing_zeros = 0
-        mut p = i - 1
-        while p >= start {
-            if bytes[p] == '0' {
+        mut q = i - 1
+        while q >= start {
+            if unsafe { p.read_at(q) } == '0' {
                 n_trailing_zeros += 1
-            } else if bytes[p] != '.' {
+            } else if unsafe { p.read_at(q) } != '.' {
                 break
             }
-            p -= 1
+            q -= 1
         }
         @decimal_point += n_trailing_zeros
         @num_digits -= n_trailing_zeros
@@ -298,16 +298,16 @@ export fn DigitBuf mut @parse_from(s str) -> () {
             @num_digits = @digit_cap()
         }
     }
-    if i < n && (bytes[i] == 'e' || bytes[i] == 'E') {
+    if i < n && (unsafe { p.read_at(i) } == 'e' || unsafe { p.read_at(i) } == 'E') {
         i += 1
         mut neg_exp = false
-        if i < n && (bytes[i] == '-' || bytes[i] == '+') {
-            neg_exp = bytes[i] == '-'
+        if i < n && (unsafe { p.read_at(i) } == '-' || unsafe { p.read_at(i) } == '+') {
+            neg_exp = unsafe { p.read_at(i) } == '-'
             i += 1
         }
         mut exp_num = 0
         while i < n {
-            ro c = bytes[i] as int
+            ro c = unsafe { p.read_at(i) } as int
             if c >= '0' && c <= '9' {
                 if exp_num < 0x10000 { exp_num = 10 * exp_num + (c - 48) }
                 i += 1
