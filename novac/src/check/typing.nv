@@ -484,6 +484,20 @@ fn Checker mut @type_block(b Node) -> () {
 /// compiler that picked the first branch would declare a temporary of one type
 /// and write the other into it -- valid C, a wrong answer, no diagnostic. So the
 /// two are compared and a mismatch is refused BY NAME.
+///
+/// A branch that TERMINATES (`return`, or a nested if/if-let whose own
+/// branches all return -- `tail_rules.nv`'s own `stmt_terminates`/
+/// `block_terminates`, the SAME question the missing-return door already
+/// asked about this exact tail `if`) is asked NEITHER for a value nor for
+/// agreement: it never falls through to needing one. Before this, a
+/// terminating branch reached `@type_branch_value` regardless, which knows
+/// only "does the tail read as an expression" and refused a `return`-tail as
+/// "ends without a value" -- the SAME judgment `stmt_terminates` had already
+/// made correctly, made a second time by a door that does not know the
+/// first door's answer, and disagreeing with it (registry #1252). Two
+/// terminating branches leave nothing to record; one terminating branch
+/// leaves the OTHER branch's type as the whole `if`'s type, unconditionally
+/// -- there is no second branch left to agree with.
 fn Checker mut @type_if_value(n Node) -> () {
     ro kids = branch_children(n)
     if kids.len() < 5 {
@@ -493,8 +507,29 @@ fn Checker mut @type_if_value(n Node) -> () {
         // Both branches present: typed below.
     }
     @type_expr(kids[1])
-    ro then_t = @type_branch_value(kids[2])
-    ro else_t = @type_branch_value(kids[4])
+    ro then_terminates = block_terminates(kids[2])
+    ro else_terminates = block_terminates(kids[4])
+    if then_terminates && else_terminates {
+        // Neither branch falls through: the whole tail `if` produces no
+        // value, and none is needed -- the function ends by `return`, not
+        // by this expression's type.
+        return
+    } else {
+        // At least one branch may fall through to a value.
+    }
+    ro then_t = if then_terminates { no_ty() } else { @type_branch_value(kids[2]) }
+    ro else_t = if else_terminates { no_ty() } else { @type_branch_value(kids[4]) }
+    if then_terminates {
+        if is_ty(else_t) { @record(n, else_t) } else { }
+        return
+    } else { }
+    if else_terminates {
+        if is_ty(then_t) { @record(n, then_t) } else { }
+        return
+    } else {
+        // Neither branch terminates: both were asked for a value, and they
+        // must agree, exactly as before this fix.
+    }
     if !is_ty(then_t) || !is_ty(else_t) {
         // SILENT-OK: the branch without a value was refused inside
         // `@type_branch_value`, by name; one cause gets one diagnostic.
