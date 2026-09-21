@@ -114,6 +114,31 @@ initializer are, at this door, the identical operation.
   own scoped wave (checker AND lowering together, oracle-verified first),
   not a fourth quick patch mislabeled as "one more line".
 
+  **CONCRETE NEXT STEP, FOR WHOEVER PICKS THIS UP (read, not guessed):**
+  the lowering-side machinery for "a block's tail is a value" ALREADY
+  EXISTS, generically, for a function body: `@lower_block_stmts_fn(b,
+  tail)` (`lowering.nv:44`) -- when `tail=true`, it finds the block's last
+  branch child and, if `@tail_places_value(c)` (tail_rules.nv) says that
+  child is a value-producing form, calls `@lower_place(c,
+  @ir.ret_place())`. This is EXACTLY the mechanism a match-arm's Block
+  body needs -- except the destination is hardcoded to `@ir.ret_place()`
+  (the function's own return slot), not an arbitrary local. `@lower_arm_body`
+  currently calls `@lower_block_stmts_fn(arm_e, false)` (tail=FALSE,
+  always) -- the fix likely generalizes `@lower_block_stmts_fn` (or adds
+  a sibling) to take a destination `Local` instead of assuming
+  `@ir.ret_place()`, then `@lower_arm_body` calls it with `tail = (dest !=
+  no_local())` and that same `dest`. On the CHECKER side, `@type_arm`
+  (match_arms.nv:511) needs the mirror change: when the body is a Block
+  AND the match is in value position (the fold is being asked for a
+  type), thread the block's tail value up through something like
+  `@type_branch_value` (tail_rules.nv) instead of unconditionally
+  returning `None` -- but ONLY when a value is actually wanted, since a
+  Block arm in a STATEMENT match must keep behaving exactly as it does
+  today (this is the same "who asked" distinction `@lower_arm_body`
+  already makes via `dest != no_local()`, mirrored on the checker side).
+  Two files, one door widened together -- not investigated further than
+  this pointer.
+
 ## Carrier caveat
 
 The fix closes the ARM-BODY position class, not the seven carriers named
