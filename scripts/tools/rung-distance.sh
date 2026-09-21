@@ -65,6 +65,22 @@ fi
 if [ -f target/remainder-verdict.txt ]; then
     echo "  remainder:     $(head -1 target/remainder-verdict.txt)"
     echo "                 recorded $(date -r target/remainder-verdict.txt '+%Y-%m-%d %H:%M'), commit $(sed -n 2p target/remainder-verdict.txt)"
+    # CAVEAT ADDED 2026-09-21, after this line was trusted for a whole shift:
+    # the self-distance count (the "N of 99" figure inside the verdict above)
+    # comes from a BATCH check over all of novac/src
+    # (NOVAC_SELF_PATH=novac/src), which ICEs (types.nv:244, an interner
+    # bound; minimal repro: `NOVAC_SELF_PATH=novac/src novac check
+    # novac/src/check/binds.nv`, registry TBD). The measure's own fallback on
+    # that crash is a PER-FILE loop, and a file checked alone cannot see a
+    # sibling file's declarations -- so most of what it counts as
+    # "undeclared" is a type declared two files over, not real subset debt.
+    # The number above is honest about ITS OWN age and source; it is not
+    # honest about what the SOURCE run actually measured, because nobody
+    # knew yet that the source run's measure was itself broken.
+    echo "                 CAVEAT: if this verdict's self-distance count came from"
+    echo "                 the per-file fallback (the batch ICEs -- see registry"
+    echo "                 TBD, types.nv:244), most of what it counts is a name"
+    echo "                 declared in a SIBLING file, not real subset debt."
 else
     echo "  remainder:     NOT MEASURED -- and deliberately not measured from here:"
     echo "                 bash scripts/guards/check-novac-differential.sh .   (~5.5 min)"
