@@ -39,7 +39,17 @@ const QUALIFIER_POSITION_MSG = "this qualifier is not legal here (`ro` is the de
 /// this rule exists to catch (#810).
 const INT_MAX_TEXT = "9223372036854775807"
 
-const INT_TOO_LARGE_MSG = "this integer literal does not fit in `int` -- the language makes that a hard compile error (E_LIT_OUT_OF_RANGE, 03-syntax.md), not a silent truncation; the oracle wraps it in the emitted C (#810)"
+/// The largest MAGNITUDE any integer row novac knows can ever hold -- `u64`,
+/// the widest (registry #1250). The eager Lit-walk door (`int_text_fits`)
+/// used `INT_MAX_TEXT` here until #1250: that bound is `int`'s own, one row
+/// among several, and comparing every literal against it before the literal's
+/// OWN position decided its row refused `take(18446744073709551615)` at a
+/// `u64` parameter -- legal Nova the row door (`int_text_fits_row`) accepts
+/// once it is asked. `U64_MAX_TEXT` is the true ceiling: nothing wider fits
+/// any row this language has, signed or not.
+const U64_MAX_TEXT = "18446744073709551615"
+
+const INT_TOO_LARGE_MSG = "this integer literal does not fit any integer type novac knows -- the language makes that a hard compile error (E_LIT_OUT_OF_RANGE, 03-syntax.md), not a silent truncation; the oracle wraps it in the emitted C (#810)"
 
 /// The nesting refusal (#807/#808). The number is the oracle's 512, which is
 /// normative there; the whole corpus never writes past 40 levels.

@@ -34,9 +34,18 @@ import ../types.{TyId, is_ty}
 /// MISCOMPILE, not a missing refusal -- the oracle says "number too large to
 /// fit in target type" and stops.
 ///
-/// The bound is `int`'s own: Nova's `int` is intptr_t (like Go's intgo), 64
-/// bits on every target novac emits for, so the largest literal is
-/// 9223372036854775807. Compared as TEXT -- by length first, then
+/// CALLED FROM THE GENERIC `Lit` WALK, BEFORE the literal's OWN position has
+/// decided which row it will be adapted to (D227 rule 2) -- so this door
+/// cannot yet ask the precise, per-row question `int_text_fits_row` answers
+/// later, once a call argument or an assignment target names a type. Until
+/// #1250 it asked the WRONG question instead of a coarser one: bounding every
+/// literal by `int`'s own 64-bit signed range rejected `take(18446744073709551615)`
+/// at a `u64` parameter and `take(-9223372036854775808)` at `int` -- both
+/// legal Nova, both accepted by the row door once it runs, neither ever
+/// reached because this door refused first. The fix subordinates this door to
+/// the row door: it only rules out what NO row this language has could EVER
+/// admit (wider than `u64`, the widest), and leaves the position-specific
+/// bound to `int_text_fits_row`. Compared as TEXT -- by length first, then
 /// lexicographically -- because parsing it into the very type whose range is
 /// in question is how the check would inherit the defect it exists to catch.
 fn Checker mut @report_if_int_too_large(kids []Node) -> () {
@@ -53,12 +62,18 @@ fn Checker mut @report_if_int_too_large(kids []Node) -> () {
     }
 }
 
-/// Does this decimal digit run fit in `int`? Compared as text against the
-/// bound, so nothing is parsed into the type whose range is being judged.
-/// Leading zeros are stripped first: `0000009` is nine, not a nine-digit
-/// number. A hex literal (the hex wave) has its own bound: at most 16 hex
-/// digits after the leading zeros, and on the 16th the first stays under 8
-/// (int is i64; `0x7FFF...` fits, `0x8000...` does not).
+/// Does this decimal digit run fit SOME integer row -- not necessarily
+/// `int`'s own (registry #1250)? Compared as text against the bound, so
+/// nothing is parsed into the type whose range is being judged. Leading
+/// zeros are stripped first: `0000009` is nine, not a nine-digit number. The
+/// bound is `u64`'s -- the widest row -- because THIS door runs before the
+/// literal's position has named a row at all; the SIGNED bound (`int`'s own,
+/// or any other row narrower than `u64`) is `int_text_fits_row`'s question,
+/// asked once a position exists to ask it about. A hex literal (the hex
+/// wave) mirrors this: at most 16 hex digits after the leading zeros, and
+/// every nibble is free at the 16th -- `0xFFFF...F` (all ones, `u64::MAX`)
+/// fits exactly as much as `0x7FFF...F` does; which SIGNED rows the top
+/// nibble narrows for is again `int_text_fits_row`'s question.
 fn int_text_fits(t str) -> bool {
     if t.byte_len() > 2 && t[..2] == "0x" {
         mut h = 2
@@ -66,9 +81,7 @@ fn int_text_fits(t str) -> bool {
             h += 1
         }
         ro hex = t[h..]
-        if hex.byte_len() < 16 { return true }
-        if hex.byte_len() > 16 { return false }
-        return !(hex[..1] > "7")
+        return hex.byte_len() <= 16
     }
     mut i = 0
     while i + 1 < t.byte_len() && t[i..i + 1] == "0" {
@@ -77,9 +90,9 @@ fn int_text_fits(t str) -> bool {
     // The upper bound is omitted: `t[i..]` says the same and the linter is
     // right that spelling it twice adds nothing.
     ro digits = t[i..]
-    if digits.byte_len() < INT_MAX_TEXT.byte_len() { return true }
-    if digits.byte_len() > INT_MAX_TEXT.byte_len() { return false }
-    !(digits > INT_MAX_TEXT)
+    if digits.byte_len() < U64_MAX_TEXT.byte_len() { return true }
+    if digits.byte_len() > U64_MAX_TEXT.byte_len() { return false }
+    !(digits > U64_MAX_TEXT)
 }
 
 /// The largest MAGNITUDE a decimal literal may carry for an integer row, as
@@ -105,7 +118,7 @@ fn int_max_text(bits int, signed bool, neg bool) -> str {
         if neg { return "2147483648" }
         return "2147483647"
     }
-    if !signed { return "18446744073709551615" }
+    if !signed { return U64_MAX_TEXT }
     if neg { return "9223372036854775808" }
     INT_MAX_TEXT
 }

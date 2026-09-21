@@ -167,3 +167,31 @@ test "binding mode: assignment to a `ro` target is refused in all four shapes (r
     ro ctrl_field = "module m\n\ntype Pt value { n int }\n\nfn f() -> int {\n    mut b = Pt { n: 1 }\n    b.n = 2\n    b.n\n}\n"
     assert(diagnose(ctrl_field) == 0, "a field through a `mut`-bound receiver must stay writable")
 }
+
+test "literal magnitude: the eager Lit-walk door defers to the row door, not `int`'s own bound (registry #1250)" {
+    // `int_text_fits` used to bound EVERY literal by `int`'s own 64-bit
+    // signed range, before the literal's own position (a call argument, a
+    // return) ever named a row -- so a `u64` parameter refused its own
+    // maximum, and `int` itself refused its own minimum (the magnitude door
+    // never looks at a preceding `-`, only at the digit run). The row door
+    // (`int_text_fits_row`, asked once the position's type is known) already
+    // answered both correctly; the eager door just never let it run.
+    ro u64_max = "module m\n\nfn take(x u64) -> u64 => x\n\nfn f() -> u64 {\n    take(18446744073709551615)\n}\n"
+    assert(diagnose(u64_max) == 0, "u64's own maximum must fit a u64 parameter")
+
+    ro int_min = "module m\n\nfn take(x int) -> int => x\n\nfn f() -> int {\n    take(-9223372036854775808)\n}\n"
+    assert(diagnose(int_min) == 0, "int's own minimum must fit an int parameter")
+
+    ro u64_max_hex = "module m\n\nfn take(x u64) -> u64 => x\n\nfn f() -> u64 {\n    take(0xFFFFFFFFFFFFFFFF)\n}\n"
+    assert(diagnose(u64_max_hex) == 0, "the same maximum written in hex must fit too")
+
+    // Control: a magnitude no row could EVER hold stays refused -- the eager
+    // door still catches what the row door will never even get asked about.
+    ro too_wide = "module m\n\nfn f() -> int {\n    99999999999999999999999999999999\n}\n"
+    assert(diagnose(too_wide) > 0, "a literal wider than u64 fits no row at all and must stay refused")
+
+    // Control: a narrow row's own bound must still be enforced -- widening
+    // the EAGER door must not have widened the ROW door underneath it.
+    ro u8_overflow = "module m\n\nfn take(x u8) -> u8 => x\n\nfn f() -> u8 {\n    take(300)\n}\n"
+    assert(diagnose(u8_overflow) > 0, "a u8 parameter must still refuse a value past 255")
+}
