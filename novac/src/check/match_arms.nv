@@ -336,8 +336,31 @@ fn Checker mut @bind_arm_pattern(ak []Node, scr_t TyId) -> bool {
     if lk0 == TokenKind.StrLit || lk0 == TokenKind.CharLit {
         @report_first_leaf_of(ak, LITERAL_ARM_MSG)
         return false
+    } else if lk0 == TokenKind.IntLit {
+        // THE MAGNITUDE DOOR, ASKED HERE TOO (registry #1251) -- and
+        // deliberately NOT the row door (`@lit_fits_or_refuse`, #1249's
+        // sibling for out-of-range values): the oracle itself does not apply
+        // D227 rule 3 at a pattern's position (`match x { 300 => .. }` on
+        // `x u8` compiles clean on BOTH compilers today, an always-false
+        // comparison the oracle tolerates -- the neighbour the hunt measured
+        // and did not file, because there the oracle agrees with novac).
+        // What the oracle DOES refuse is a literal too wide for ANY row at
+        // all -- 23 decimal digits, `E_LIT` at the oracle's own check -- and
+        // that is exactly `int_text_fits`'s question (#1250: bounded by
+        // `u64`, the widest row), asked everywhere else from the generic
+        // `Lit` walk. A `Pattern` node is never a `Lit` node, so that walk
+        // never visits it; `check` stayed clean and the EMITTER wrote the
+        // 23-digit text verbatim into a C comparison, which clang then
+        // refused outright -- the exact failure #810 exists to prevent,
+        // reopened at one position nobody had visited yet.
+        if !int_text_fits(leaf_text(p0)) {
+            @report_first_leaf_of(ak, INT_TOO_LARGE_MSG)
+            return false
+        } else {
+            // Within the widest row's bound: this position asks no more.
+        }
     } else {
-        // An identifier head, an int literal, or punctuation: judged below.
+        // An identifier head or punctuation: judged below.
     }
     ro is_ident = leaf_kind(p0) == TokenKind.Ident
     // A QUALIFIER NAMING ANOTHER TYPE, asked here and answered by the SAME

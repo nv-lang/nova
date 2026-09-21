@@ -1,0 +1,9 @@
+fn f(x u8) -> int {
+    match x {
+        300 => 1
+        _ => 2
+    }
+}
+fn main() Io -> () {
+    println(f(1))
+}
