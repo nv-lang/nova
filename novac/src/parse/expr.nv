@@ -236,6 +236,30 @@ fn Cursor mut @turbofish() -> Node {
 /// so the emitted constant stays one token) -- everything else becomes a
 /// Unary node.
 fn Cursor mut @primary() -> Node {
+    if @peek() == TokenKind.DotDot {
+        // A LEADING `..` (open-left range/slice, D144/D238/D470: `t[..b]` is
+        // one of the five legal Range forms in index position, on par with
+        // `t[a..]`). `..` is a BINARY operator only (is_binop/binding_power);
+        // it never appears as a prefix in that table, so without this branch
+        // `@primary()` had no case for it and fell into the generic Err
+        // recovery, eating the `..` as one stray token (registry #1241).
+        //
+        // The open-RIGHT form already works, but only by accident: `t[a..]`
+        // gives `@primary()` a real `a`, the binop loop then reads `..`
+        // normally, and the missing right side becomes its own recovered
+        // Err node when `@expr_bp` finds nothing valid before `]` -- the
+        // checker's slice door (`rules.nv @report_if_range_outside_for`)
+        // only ever asks the OPERATOR's kind, not whether either side is a
+        // real value. Returning a missing LEFT here, without consuming `..`,
+        // lets the SAME climbing loop pick the operator up immediately
+        // after and build the identical `Bin(missing, .., real-or-missing)`
+        // shape for the open-left case. Wrapped in `Err` (`@error_node`,
+        // not a bare `@missing_of` leaf): a raw `ErrorTok` leaf sitting
+        // where an expression is expected reads to a later pass as a
+        // genuine unrecognized token, which doubled the diagnostic on the
+        // first attempt at this fix.
+        return @error_node(TokenKind.ErrorTok)
+    }
     if is_unop(@peek()) && !@minus_before_literal() {
         mut kids = []Node.of(@take())
         kids.push(@primary())
