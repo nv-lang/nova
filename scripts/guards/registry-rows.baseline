@@ -1388,8 +1388,8 @@
 # 2026-09-21, интегратор: rows 1175 -> 1176, max 1225 -> 1226. №1226 —
 # помощник нашёл, что голый `unsafe fn` не имеет ветки ни в одном из двух
 # диспетчеров верхнего уровня (parse.nv, decls.nv) — третий вид корня.
-rows=1199
-max=1247
+rows=1200
+max=1248
 # 2026-09-21, integrator: row 1242 added -- new checker ICE exposed by
 # Carina's #1237 fix (channel.nv:409), same class as #1229, blocks S5
 # 2026-09-21, integrator: row 1244 added -- assistant found effect row
@@ -1416,6 +1416,13 @@ max=1247
 # incident); documented the tension, did NOT flip the boolean -- both
 # fixtures must stay green, a third signal is needed. rows 1198->1199,
 # max 1246->1247.
+# 2026-09-21, integrator: merged Carina's p274-novac (check.nv split,
+# shell.tpl.c regen, #1243 else-if-value closed with a second checker
+# fix). Row 1243 replaced with her closed version; her own #1246 (K7 in
+# the priority column, same class as before) folded as a supplement
+# onto the existing numbered row instead of duplicating; her check.nv
+# file-size TBD numbered as row 1248, closed (file now 889 lines,
+# check-novac-file-size green). rows 1199->1200, max 1247->1248.
 # batch measure again. rows 1193->1194, max 1241->1242.
 
 # 2026-09-21, integrator: rows 1190->1193, max 1238->1241 -- measured after
