@@ -208,6 +208,32 @@ fn Cursor mut @const_decl() -> Node {
     @node(NodeKind.ConstDecl, kids)
 }
 
+/// A module-level binding: `ro NAME [Type] = expr` (D184's `Item::Let`).
+///
+/// Grammar and shape mirror `@const_decl` exactly (D184, precise diff:
+/// `module_item ::= "export"? "ro" IDENT type_opt "=" expr | const_decl`,
+/// same `type_opt` door as scope-local `ro`) -- the parser reads `ro` and
+/// `const` symmetrically here; which of the two a value belongs in is a
+/// constexpr question the checker asks after parsing (D184 "Strict
+/// module-level partition"), never the parser's.
+///
+/// `mut`/`consume` at module level are NOT read by this door (registry
+/// TBD): D184 names a diagnostic for each (`E_MUT_AT_MODULE_LEVEL`,
+/// `E_CONSUME_AT_MODULE_LEVEL`), but wiring that refusal is its own
+/// follow-up, not bundled into this fix for `ro`.
+fn Cursor mut @let_decl() -> Node {
+    mut kids = []Node.of(@take()) // KwRo
+    @push_expected(kids, TokenKind.Ident) // the name
+    if @peek() != TokenKind.Assign {
+        kids.append(@type_ref())
+    } else {
+        // No type written: the initializer carries it.
+    }
+    @push_expected(kids, TokenKind.Assign)
+    kids.push(@expr())
+    @node(NodeKind.LetDecl, kids)
+}
+
 /// A `test "name" { ... }` block: read whole, judged by the subset walk.
 fn Cursor mut @test_decl() -> Node {
     mut kids = []Node.of(@take()) // KwTest

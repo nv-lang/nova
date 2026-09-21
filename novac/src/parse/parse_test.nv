@@ -37,6 +37,31 @@ test "shape: file holds module decl, fn decl, eof" {
     }
 }
 
+test "shape: module-level `ro` parses as LetDecl (registry TBD, D184 Item::Let)" {
+    // Before this door existed, EVERY module-level `ro` -- not just array
+    // literals or record constructors, as the failing carrier's shape
+    // suggested -- fell into the parser's unnamed fallback. Narrowed by
+    // probe down to `ro x = 5` alone.
+    ro f = parse(lex("module a\n\nro x = 5"))
+    match f {
+        Branch { children, .. } => {
+            assert(children[1].kind_of() == NodeKind.LetDecl)
+        }
+        Leaf(_) => assert(false)
+    }
+    assert(tree_reserialize(f) == "module a\n\nro x = 5")
+}
+
+test "shape: module-level `ro` with a declared type still parses (D184 type_opt)" {
+    ro f = parse(lex("module a\n\nro x int = 5"))
+    match f {
+        Branch { children, .. } => {
+            assert(children[1].kind_of() == NodeKind.LetDecl)
+        }
+        Leaf(_) => assert(false)
+    }
+}
+
 test "shape: unexpected top-level token becomes an Err branch, then parsing continues" {
     ro f = parse(lex("42 fn main() { }"))
     match f {

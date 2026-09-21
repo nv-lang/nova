@@ -52,6 +52,10 @@ export type NodeKind enum
     | FieldAccess
     | TypeDecl
     | ConstDecl
+    /// A module-level `ro NAME [Type] = expr` (D184's `Item::Let`; the
+    /// name mirrors the spec's own AST node, distinct from the LOCAL
+    /// binding `BindStmt` a function body writes with the same keyword).
+    | LetDecl
     | Index
     | Unsafe /// `unsafe { ... }` -- a BLOCK expression (D216 s8): the value is the block's tail
     | DepthErr

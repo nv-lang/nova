@@ -265,6 +265,8 @@ export fn parse(toks []Token) -> Node
             items.push(p.attr_decl())
         } else if k == TokenKind.KwConst {
             items.push(p.const_decl())
+        } else if k == TokenKind.KwRo {
+            items.push(p.let_decl())
         } else if k == TokenKind.KwTest {
             items.push(p.test_decl())
         } else if k == TokenKind.KwModule {
