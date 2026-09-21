@@ -524,6 +524,10 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // D133 fixtures writable at all -- before it, the declaration fell
                     // into the parser's fallback.
                     @report_if_consume_type(children)
+                    // AN EFFECT DECLARATION parses (2026-09-21) and is refused
+                    // BY NAME, the same shape as consume above: novac types no
+                    // effect-system form at all. See @report_if_effect_type.
+                    @report_if_effect_type(children)
                     // Fields, a newtype's representation, variant payloads:
                     // every type NAME must be declared (#970, typeref_rules) --
                     // `type Box { v Nmbr }` passed check in silence before.
@@ -957,6 +961,11 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                 // declaration (refused by name until the predicate lands),
                 // so walking into them would report the same thing twice.
                 ProtoMethod => {}
+                // AN EFFECT'S OPERATIONS, the same reason: the declaration is
+                // refused BY NAME below (`@report_if_effect_type`), so there
+                // is nothing here to say about one operation that the
+                // declaration has not already said about the whole form.
+                EffectOp => {}
             }
             // THE ARM'S BODY SLOT, asked once rather than per child: the door
             // that knows where an arm keeps its body is `arm_body_at`, and
