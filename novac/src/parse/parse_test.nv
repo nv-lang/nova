@@ -268,3 +268,36 @@ test "shape: an effect_list before `->` parses as EffectItem siblings (registry 
     }
     assert(tree_reserialize(f) == src)
 }
+
+test "shape: a comma between brace-record fields parses, not just a newline (registry #1227)" {
+    // The field loop's condition (`Ident` or a mode word) never matched a
+    // `,` -- so the SECOND field of a one-line record looked like the end
+    // of the body, and the mismatched `}` expectation fell into the
+    // parser's own recovery. Two fields here, both must arrive as their
+    // own `Field` child, and the comma must round-trip losslessly (the
+    // tree keeps every byte, it does not merely accept and drop it).
+    ro src = "type Point { x f64, y f64 }\n"
+    ro f = parse(lex(src))
+    match f {
+        Branch { children, .. } => {
+            mut found_type = false
+            for c in children {
+                if c.kind_of() != NodeKind.TypeDecl { continue }
+                found_type = true
+                match c {
+                    Branch { children: fk, .. } => {
+                        mut fields = 0
+                        for e in fk {
+                            if e.kind_of() == NodeKind.Field { fields += 1 }
+                        }
+                        assert(fields == 2)
+                    }
+                    Leaf(_) => assert(false)
+                }
+            }
+            assert(found_type)
+        }
+        Leaf(_) => assert(false)
+    }
+    assert(tree_reserialize(f) == src)
+}

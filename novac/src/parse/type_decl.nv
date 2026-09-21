@@ -24,8 +24,10 @@ import ../lex.{TokenKind, brace_delta, paren_delta}
 import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, VALUE_MARKER, PRIV_MARKER, SUM_MARKER, EFFECT_MARKER}
 import ../tree.{Node, NodeKind}
 
-/// `type Name { field type ... }` — fields are newline-separated pairs of
-/// idents, no commas. `type Name` followed by leading `|` variants is a sum
+/// `type Name { field type ... }` — fields are pairs of idents, separated by
+/// a newline, a comma, or both (registry #1227: the comma used to be
+/// refused, contradicting the spec and the oracle). `type Name` followed by
+/// leading `|` variants is a sum
 /// (the corpus form on the pin; the oracle accepts it — divergence registry,
 /// prediction 1). A non-brace, non-pipe tail falls into the top loop's
 /// recovery on the next token.
@@ -277,6 +279,17 @@ fn Cursor mut @type_decl() -> Node {
             // Measured 2026-08-29: seven of novac's own files stop here.
             fk.append(@type_ref())
             kids.push(@node(NodeKind.Field, fk))
+            // A COMMA BETWEEN FIELDS (registry #1227): the newline-separated
+            // form this loop was written for is not the only one the spec and
+            // the oracle accept -- `type Point { x f64, y f64 }` on one line
+            // is legal too, and until this line the loop's condition
+            // (`Ident` or a mode word) never matched a `,`, so the SECOND
+            // field looked like the end of the body and the mismatched `}`
+            // expectation fell into the parser's own recovery. Trivia to the
+            // declaration, exactly as the parenthesised record form already
+            // treats it below: shape and collect read `Field` nodes by kind,
+            // and a comma leaf among the kids is ignored.
+            @push_if(kids, TokenKind.Comma)
         }
         @push_expected(kids, TokenKind.RBrace)
     } else if @peek() == TokenKind.LParen {
