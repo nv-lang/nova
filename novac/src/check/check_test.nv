@@ -214,3 +214,19 @@ test "method call refusal: a mut-receiver method on a ro binding is named by its
     assert(!msg.contains("no such method"), "the method plainly exists; naming it missing lied about the cause")
     assert(msg.contains("mutable"), "the real cause -- the receiver's binding class -- must be named")
 }
+
+test "lone ? (Try operator): named refusal, not the anonymous parser fallback (registry #1264)" {
+    // `a?` (D85) is legal Nova -- the oracle compiles it as
+    // early-return propagation on Option/Result -- but novac does not
+    // implement its semantics yet. Before this fix a lone `?` lexed
+    // straight to `ErrorTok` (lex.nv's own comment used to say so
+    // explicitly) and the parser's generic fallback refused it with no
+    // name at all, the same "novac did not parse this" text a genuinely
+    // malformed program gets. Now it reaches the tree as its own
+    // `NodeKind.Try` and is refused BY NAME in the checker, mirroring the
+    // established rule for the sibling `?? return` form (D86, expr.nv).
+    ro src = "module m\n\nfn maybe() -> int {\n    5\n}\n\nfn use_it() -> int {\n    ro v = maybe()?\n    v\n}\n"
+    ro msg = diagnose_msg(src)
+    assert(!msg.contains("did not parse"), "a legal form must not read as a syntax error")
+    assert(msg.contains("not compiled yet"), "the refusal must name the operator, not stay anonymous")
+}

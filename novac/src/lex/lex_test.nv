@@ -63,9 +63,14 @@ test "string literal's line-continuation backslash survives a CRLF source (regis
 }
 
 test "unknown byte becomes ErrorTok, not a panic, and keeps its text" {
-    ro toks = lex("a ? b")
+    // `?` used to stand for "a byte no rule claims" here -- it no longer
+    // does (registry #1264: a lone `?` lexes its own `TokenKind.Question`
+    // now, refused BY NAME in the checker instead of dying as an anonymous
+    // ErrorTok). Backtick is still genuinely unclaimed by any rule in the
+    // table.
+    ro toks = lex("a ` b")
     assert(toks[1].kind == TokenKind.ErrorTok)
-    assert(toks[1].text == "?")
+    assert(toks[1].text == "`")
 }
 
 test "positions derive by prefix sum, no span is stored (owner 2026-08-14)" {
@@ -202,7 +207,7 @@ test "char literal: one token, escapes whole, reserialize lossless (char wave)" 
     assert(open[3].kind == TokenKind.ErrorTok)
 }
 
-test "`??` is one token; a lone `?` is not a subset lexeme (coalesce wave)" {
+test "`??` and a lone `?` are two different tokens (coalesce wave, registry #1264)" {
     // `ro v = o ?? 0` -- ro(0) v(1) =(2) o(3) ??(4) 0(5).
     ro toks = lex("ro v = o ?? 0")
     assert(toks[4].kind == TokenKind.Question2)
@@ -211,10 +216,15 @@ test "`??` is one token; a lone `?` is not a subset lexeme (coalesce wave)" {
 ro w = a ?? b"
     assert(reserialize(lex(src)) == src)
 
-    // A LONE `?` is the Try operator, which the subset does not compile: it
-    // stays an ErrorTok, lossless, like every other byte no rule claims.
+    // A LONE `?` is the Try operator (D85): legal Nova, refused BY
+    // NAME in the checker (registry #1264), not an unclaimed byte -- it now
+    // lexes its OWN token, not the `ErrorTok` it used to fall to before the
+    // fix (the same reasoning `?? return` already established for its own
+    // sibling form: a legal-but-unimplemented construct must reach the
+    // tree, not die at the lexer as if it were not Nova).
     ro one = lex("ro v = o ? 1")
-    assert(one[4].kind == TokenKind.ErrorTok)
+    assert(one[4].kind == TokenKind.Question)
+    assert(one[4].text == "?")
 }
 
 test "F22: a non-ASCII run is ONE error token, not one per letter" {

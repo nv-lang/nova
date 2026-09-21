@@ -315,7 +315,20 @@ fn Cursor mut @primary() -> Node {
     // shape (its `??` sits in the postfix loop and parses its right side with
     // `parse_unary`). So the right side is a PRIMARY -- `o ?? f(x)` takes the
     // whole call, `o ?? a + b` takes only `a`, exactly as the oracle does.
-    while @peek() == TokenKind.Question2 {
+    while @peek() == TokenKind.Question2 || @peek() == TokenKind.Question {
+        if @peek() == TokenKind.Question {
+            // The lone Try operator (D85, registry #1264): a postfix
+            // suffix with no right-hand side, at the SAME tier as `??` so the
+            // two chain left to right (`a? ?? b`, `a ?? b?`) instead of one
+            // silently winning by being parsed first. Reaches the tree as
+            // its own kind -- the checker refuses it BY NAME (E2), not the
+            // lexer as a syntax error, mirroring `?? return`'s own rule two
+            // lines below.
+            e = @node(NodeKind.Try, []Node.of(e, @take()))
+            continue
+        } else {
+            // `??`: judged below, as before.
+        }
         mut qk = []Node.of(e, @take()) // lhs, '??'
         if @peek() == TokenKind.KwReturn {
             // `X ?? return R` is RETRACTED (D86 amendment). The oracle parses

@@ -167,7 +167,21 @@ fn Checker @display_row_of(key []ArgSpec) -> Option[FnRow] {
 /// One expression: record what the emitter asks about, walk what it emits.
 fn Checker mut @type_expr(e Node) -> () {
     ro k = e.kind_of()
-    if k == NodeKind.InterpStr {
+    if k == NodeKind.Try {
+        // `a?` (D85, registry #1264): the operand is typed first so
+        // an earlier mistake inside it is not masked by this refusal
+        // (#902's rule, the same one every door in this file follows), then
+        // the whole expression is refused BY NAME -- never falls through to
+        // `type_of`'s generic "expression kind without a type rule" ice,
+        // which is what it did before this branch existed (measured: the
+        // ice fired, not a named message, the same silent-widening risk
+        // every other unhandled-kind gap in this file guards against).
+        ro tk = branch_children(e)
+        ro before = @out.len()
+        @type_expr(tk[0])
+        if @out.len() > before { return }
+        @report_first_leaf_of(tk, TRY_MSG)
+    } else if k == NodeKind.InterpStr {
         // Every slot's expression is a real node (I2): walked, typed, and
         // its display type judged -- str and int carry builder inserts
         // today. The literal's own type is str; the emitter reads the slot
