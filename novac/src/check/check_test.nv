@@ -527,3 +527,29 @@ test "record constructor: an ordinary array-literal element is a legal position,
     ro control_msg = diagnose_first_msg(control_of)
     assert(!control_msg.contains("a record constructor is compiled only as"), "the `.of(...)` form must not regress -- got: ${control_msg}")
 }
+
+test "record constructor: the body of a match arm is a legal position too (registry #TBD)" {
+    // `check.nv`'s `RecordCtor` arm gated on `!init_pos && !arg_pos`,
+    // never asking `arm_pos` -- the flag `@walk` has computed generically
+    // since 2026-09-20 for a value standing in a match arm's own body
+    // slot. `@lower_arm_body` (lower_match.nv) places a value arm's body
+    // through the SAME door a binding initializer's RHS takes
+    // (`@lower_place`), so no emission change was needed -- only this
+    // gate agreeing with what lowering already does.
+    ro src = "module m\n\ntype Shape value {\n    n int\n}\n\nfn f(k int) -> Shape {\n    match k {\n        0 => Shape { n: 10 }\n        _ => Shape { n: 20 }\n    }\n}\n"
+    ro msg = diagnose_first_msg(src)
+    assert(!msg.contains("a record constructor is compiled only as"), "a record constructor as a match arm's body must not be refused as a wrong position -- got: ${msg}")
+}
+
+test "if value: the body of a match arm is a legal position too (registry #TBD)" {
+    // The identical gap, one node kind over: `IfExpr`'s own gate (wave
+    // B14 / the if-in-argument fix, same evening) had the same shape and
+    // the same missing `arm_pos`. `exprs.nv`'s `type_expr` dispatcher's
+    // `IfExpr` arm is already unconditional, and lowering already places
+    // an `IfExpr` value through the position-agnostic
+    // `@lower_value_source` dispatch -- the shape walk was the only door
+    // left closed.
+    ro src = "module m\n\nfn f(k int, c bool) -> int {\n    match k {\n        0 => if c { 1 } else { 2 }\n        _ => 3\n    }\n}\n"
+    ro msg = diagnose_first_msg(src)
+    assert(!msg.contains("an `if` in value position is not compiled yet"), "an `if` value as a match arm's body must not be refused as a wrong position -- got: ${msg}")
+}
