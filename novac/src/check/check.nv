@@ -44,7 +44,7 @@ import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, 
 import ../sem.{expr_leaf_name, attr_kids_name, attr_args_all, attr_has_args, recv_type_name, is_value_record}
 import ../sem.{file_decls}
 // Where an arm keeps its body -- the door the lowering has read for waves.
-import ../sem.{arm_body_at}
+import ../sem.{arm_body_at, array_of_lparen_at}
 import ../types.{TyId, no_ty, is_ty}
 import ../resolve.{FnIndex, FieldIndex}
 
@@ -852,6 +852,19 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
             } else {
                 0 - 1
             }
+            // THE `.of(...)` CALL'S ARGUMENTS (registry #1239's remaining
+            // half): `[]Point.of(a, b)` is ONE `ArrayLit` node (sub-plan L),
+            // not a `Call` wrapping the array -- so the generic `arg_pos`
+            // check below (kind == Call/MethodCall/CtorField) never sees
+            // it, and `a`/`b` lost the argument position a `Call`'s own
+            // children get for free. `array_of_lparen_at` names the `(`'s
+            // slot; every child AFTER it is an argument, the same way
+            // `body_at` names the arm's own value slot above.
+            ro of_lparen_at = if kind == NodeKind.ArrayLit {
+                array_of_lparen_at(children) ?? (0 - 1)
+            } else {
+                0 - 1
+            }
             mut at = 0
             for c in children {
                 // STATEMENT POSITION is "a direct child of a Block" (274.5
@@ -868,7 +881,8 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                 // the same way rather than by remembering each other.
                 @walk(c, stmt_pos: kind == NodeKind.Block,
                       arg_pos: kind == NodeKind.Call || kind == NodeKind.MethodCall ||
-                               kind == NodeKind.CtorField,
+                               kind == NodeKind.CtorField ||
+                               (kind == NodeKind.ArrayLit && of_lparen_at >= 0 && at > of_lparen_at),
                       index_pos: kind == NodeKind.Index && at == 2,
                       // ARM-BODY POSITION (2026-09-20): a `match` or an `if`
                       // standing as the body of an arm is a VALUE there, and

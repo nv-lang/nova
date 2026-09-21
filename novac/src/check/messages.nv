@@ -155,7 +155,11 @@ const DISJ_BINDER_MSG = "outside the subset: a `|` pattern takes `_` binders onl
 ///
 /// A user's own generic sum never reaches this door -- generic parameters are
 /// refused earlier (E2-b2) -- so this refusal is about the shell's sums alone.
-const APPLIED_SUM_ARM_MSG = "outside the subset: a `match` on an applied sum (`Option[int]`) is read but not compiled yet -- its tags belong to the shell (E2-b2, with generics)"
+///
+/// NOT a constant (registry #1233): the applied sum's own name is part of
+/// the message (`ty_source_name(@ctx, scr_t)`), built at the one call site
+/// in `match_arms.nv` that already has `@ctx` -- a static string here named
+/// `Option[int]` regardless of which applied sum actually fired the gate.
 
 const LITERAL_ARM_MSG = "outside the subset: a `match` arm on a string or char literal is read but not compiled yet (E2-b, with the string family)"
 

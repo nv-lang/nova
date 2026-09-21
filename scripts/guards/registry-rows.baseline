@@ -1388,8 +1388,8 @@
 # 2026-09-21, интегратор: rows 1175 -> 1176, max 1225 -> 1226. №1226 —
 # помощник нашёл, что голый `unsafe fn` не имеет ветки ни в одном из двух
 # диспетчеров верхнего уровня (parse.nv, decls.nv) — третий вид корня.
-rows=1209
-max=1257
+rows=1210
+max=1258
 # 2026-09-21, integrator: row 1242 added -- new checker ICE exposed by
 # Carina's #1237 fix (channel.nv:409), same class as #1229, blocks S5
 # 2026-09-21, integrator: row 1244 added -- assistant found effect row
@@ -1447,6 +1447,11 @@ max=1257
 # causes all already resolved (novac file-size/shell.tpl.c closed by
 # later commits) or pre-existing known flake (presume_446_stress,
 # registry #848). rows 1208->1209, max 1256->1257.
+# 2026-09-21, integrator: merged Carina's third p274-novac sync (#1233
+# fully closed, #1240 escalated to owner, #1249 items closed). Dropped
+# stale duplicates of already-numbered rows 1242/1246/1247/1248/1249;
+# her new TBD (qualified module-level const/ro name, Type.NAME, not
+# parsed at all) numbered as row 1258. rows 1209->1210, max 1257->1258.
 # batch measure again. rows 1193->1194, max 1241->1242.
 
 # 2026-09-21, integrator: rows 1190->1193, max 1238->1241 -- measured after

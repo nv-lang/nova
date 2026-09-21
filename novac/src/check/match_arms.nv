@@ -59,7 +59,14 @@ fn Checker mut @report_if_applied_sum(kids []Node, scr_t TyId) -> bool {
     // misrouted through this door and refused with an unrelated `Option[int]`
     // message it never named).
     if decl_of_ty(@ctx, scr_t).kind != TypeKind.TkSum { return false }
-    @report_first_leaf_of(kids, APPLIED_SUM_ARM_MSG)
+    // Registry #1233's remaining half: the message used to be a static
+    // string with `Option[int]` WRITTEN IN, regardless of which applied
+    // sum actually triggered this gate -- honest for the shell's own
+    // `Option`, a lie for any other applied sum reaching here. `scr_t` is
+    // already resolved and checked above; naming it costs one call to the
+    // same door every sibling message in this file already reads through
+    // (`ty_source_name`, line 341).
+    @report_first_leaf_of(kids, "outside the subset: a `match` on an applied sum (`${ty_source_name(@ctx, scr_t)}`) is read but not compiled yet -- its tags belong to the shell (E2-b2, with generics)")
     true
 }
 
