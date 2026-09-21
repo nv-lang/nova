@@ -1381,3 +1381,24 @@ const DOUBLE_POW5_SPLIT_HI [326]u64 = [
     0x13C33B72569C6375, // 5^324, high
     0x18B40A4EEC437C52, // 5^325, high
 ]
+
+// ---- `f32` (plan 285 F.2): THE SAME TABLES, DIFFERENT BIT COUNTS ----
+//
+// The donor ships a separate pair of `FLOAT_POW5_*` tables, and they are NOT what
+// it uses by default: `f2s.c` includes `f2s_intrinsics.h`, where the 32-bit path
+// reads `DOUBLE_POW5_INV_SPLIT[q][1] + 1` and `DOUBLE_POW5_SPLIT[i][1]` -- the HIGH
+// words of the tables above -- and redefines the bit counts as `DOUBLE_* - 64`.
+// The separate tables belong to an optional build flag (`RYU_FLOAT_FULL_TABLE`).
+//
+// This was checked by numbers, not by reading intent: the donor's `FLOAT_POW5_SPLIT`
+// equals the high word of `DOUBLE_POW5_SPLIT` in all 47 entries, while its
+// `FLOAT_POW5_INV_SPLIT` differs in all 55 -- because that one is scaled to a
+// different bit count (59 against 61). Tables and bit count travel as a PAIR, and
+// the pair taken here is the one the donor takes by default.
+//
+// So `f32` adds no constants at all. An earlier commit of this wave emitted those
+// 102 values before the default path was read; they are gone for the same reason
+// the donor's `div1e8` is absent from `shortest.nv` -- a carried constant with no
+// consumer is a claim that something uses it.
+const FLOAT_POW5_INV_BITCOUNT = DOUBLE_POW5_INV_BITCOUNT - 64
+const FLOAT_POW5_BITCOUNT = DOUBLE_POW5_BITCOUNT - 64

@@ -1490,7 +1490,11 @@ no_caveat=0
 # 2026-09-21, интегратор: 85 -> 86, РОСТ и он законен. Новая строка №1226 —
 # голый `unsafe fn` без ветки в двух диспетчерах парсера разом (parse.nv,
 # decls.nv) — третий вид корня того же читательского класса.
-blockers=91
+blockers=92
+# 2026-09-21, integrator: measured value after p283-float-parse merge is 92
+# (was 91 before this merge) -- #1096 (record literal missing a required
+# field compiles silently and corrupts the value) is the one new blocker
+# p283 brought; #1081 and #1104 from the same branch are BLOKIRUET TEG: NET.
 # 2026-09-21, integrator: blocker 1227 -- single-line record with commas
 # doesn't parse (table 274.5 5v), BLOKIRUET TEG: DA. blockers 86->87.
 # 2026-09-21, integrator: merge with p274-novac. Net +2: #1212 CLOSED
@@ -1503,3 +1507,11 @@ blockers=91
 # 2026-09-21, integrator: row 1232 added (assistant's 6th table-5v finding,
 # ASI-style [ greedily binds to prior match-arm body), BLOKIRUET TEG: DA.
 # blockers 90->91.
+# 2026-09-21, integrator, merge with p283-float-parse (26 commits stale on
+# its side, last synced 2026-09-15 at blockers=70 -- 91 already supersedes
+# it by construction, this is not a base to reconcile against). Number is
+# RE-MEASURED on the merged registry, per this file's own established rule,
+# not derived by arithmetic over two stale sides: p283 brought #1096
+# (record literal missing a required field compiles silently, BLOKIRUET
+# TEG: DA) as a genuinely new blocker; #1081 and #1104 from the same branch
+# are BLOKIRUET TEG: NET. Measured value below.
