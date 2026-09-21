@@ -1,0 +1,10 @@
+fn get(x int) -> Option[int] => if x > 0 { Some(x) } else { None }
+
+fn pick(x int) -> int {
+    if v = get(x) {
+        return 1
+    }
+    return 0
+}
+
+fn main() Io -> () => print("x")

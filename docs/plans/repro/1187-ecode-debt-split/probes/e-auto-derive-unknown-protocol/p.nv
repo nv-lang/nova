@@ -1,0 +1,6 @@
+#impl(NoSuchProtocol)
+type Rec {
+    a int
+}
+
+fn main() Io -> () => print("x")

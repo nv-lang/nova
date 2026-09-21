@@ -1,0 +1,6 @@
+fn c_ok(const a int) -> const int {
+    ro b = a
+    b
+}
+
+fn main() Io -> () => print("x")

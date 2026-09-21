@@ -1,0 +1,5 @@
+#coerce fn int.from_str(s str) -> int {
+    0
+}
+
+fn main() Io -> () => print("x")

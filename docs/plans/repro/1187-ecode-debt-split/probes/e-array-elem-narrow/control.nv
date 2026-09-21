@@ -1,0 +1,4 @@
+fn main() Io -> () {
+    ro a []f32 = [1.5]
+    print("x")
+}
