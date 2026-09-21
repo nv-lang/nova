@@ -1414,8 +1414,14 @@
 # nova-a5 из ff0ceba90) и закрыта const-половина строки #1258 (nova-a5,
 # 5d02172ec) — обе правки были на моём HEAD стальными/открытыми до этого
 # слияния, число строк не меняли (правка ТЕКСТА существующих строк).
-rows=1216
-max=1264
+# 2026-09-21, интегратор: rows 1216 -> 1217, max 1264 -> 1265. №1265 —
+# собственная находка: два стража реестра (check-registry-entry-shape.sh,
+# check-registry-single-verdict.sh) тратили 3-8 минут на шаг вместо секунд —
+# O(n*m) shell-цикл `while read` + `grep` на каждый элемент, переписан на
+# `comm`; оба селфтеста PASS, замер 3-8 мин -> под 4с на реестре той же
+# правкой.
+rows=1217
+max=1265
 # 2026-09-21, integrator: row 1242 added -- new checker ICE exposed by
 # Carina's #1237 fix (channel.nv:409), same class as #1229, blocks S5
 # 2026-09-21, integrator: row 1244 added -- assistant found effect row
