@@ -14,10 +14,59 @@
 
 module novac.check
 
-import ../tree.{Node, assign_op_of}
+import ../tree.{Node, NodeKind, assign_op_of}
 import ../types.{TyId, no_ty, is_ty, same_ty}
 import ../builtins.{TypeKind}
-import ../sem.{leaf_kind, carrier_of, is_numeric_prim, ty_source_name}
+import ../sem.{leaf_kind, carrier_of, is_numeric_prim, ty_source_name, expr_leaf_name, branch_children, ParamMode}
+
+/// The root NAME of an assignment TARGET -- the identifier at the bottom of
+/// any field/index chain (`b.n`, `arr[0].n`), or the target itself when it
+/// already IS a bare name. `None` when the chain bottoms out on anything
+/// else (a call's result, an owned temporary) -- such a target is not a
+/// BOUND PLACE at all, and the mode gate below has nothing to ask about it.
+fn assign_target_root(e Node) -> Option[str] {
+    ro k = e.kind_of()
+    if k == NodeKind.Name { return Some(expr_leaf_name(e)) }
+    if k == NodeKind.FieldAccess || k == NodeKind.Index {
+        return assign_target_root(branch_children(e)[0])
+    }
+    None
+}
+
+/// THE BINDING-MODE GATE (registry #1254): a target the ASSIGNMENT DOOR below
+/// accepts by TYPE may still be forbidden by MODE -- `ro x = 1; x = 2` types
+/// clean (int = int) and the oracle refuses it all the same. The mode is
+/// already tracked (`scope.nv:131`, `Scope @mode_of_name`) and already read at
+/// a CALL's key (`type_of.nv:129`, `class_of_binding`); this door is the first
+/// to ask it at an ASSIGNMENT's target. One question, two shapes: the target
+/// IS the root -- a bare name, or a non-`mut` parameter (bound the same way,
+/// `params.nv:152`) -- answers `E_LOCAL_NOT_MUT`; the target REACHES the root
+/// through a field or index (`b.n` -- D175's "binding dominates") answers
+/// `E_READONLY_FIELD`, the oracle's own naming for the same two cases (Plan
+/// 124.8 / D175 amend). A target with no bound root at all (a call's result,
+/// an owned temporary's own field) is not this door's question and passes.
+fn Checker mut @report_if_assign_target_not_writable(kids []Node) -> bool {
+    if Some(name) = assign_target_root(kids[0]) {
+        if !@scope.is_bound(name) { return false }
+        match @scope.mode_of_name(name) {
+            ModeMut => false
+            ModeRo | ModeConsume => {
+                ro msg = if kids[0].kind_of() == NodeKind.Name {
+                    "cannot assign to `${name}` -- it is bound `ro`, and only a `mut` binding may be reassigned; declare it `mut ${name}` if it needs to change (D184, E_LOCAL_NOT_MUT)"
+                } else {
+                    "cannot mutate through `${name}` -- it is bound `ro`, and the binding governs every field or index reached through it; declare it `mut ${name}` if it needs to change (D175, E_READONLY_FIELD)"
+                }
+                match kids[1] {
+                    Leaf(tk) => @refuse(tk, msg)
+                    Branch { .. } => {}
+                }
+                true
+            }
+        }
+    } else {
+        false
+    }
+}
 
 /// THE TYPE A COMPOUND ASSIGNMENT RUNS IN, or `no_ty()` when the operand was
 /// refused here (274.7 B7, #932). `a op= b` is `a = a op b`, so D405's operand
@@ -30,6 +79,7 @@ import ../sem.{leaf_kind, carrier_of, is_numeric_prim, ty_source_name}
 /// the right operand is the answer here, and the emitter reads that and
 /// nothing else -- no second table of target types in emission.
 fn Checker mut @assigned_operand_type(kids []Node) -> TyId {
+    if @report_if_assign_target_not_writable(kids) { return no_ty() }
     ro rt0 = type_of(kids[2], @ctx, @scope, @chan)
     match assign_op_of(leaf_kind(kids[1])) {
         Set => @assigned_value_type(kids, rt0)

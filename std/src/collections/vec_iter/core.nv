@@ -579,15 +579,14 @@ export type AsciiWhitespaceIter value {
 #impl(Next[str])
 export fn AsciiWhitespaceIter mut @next() -> Option[str] {
     ro sn = @src.byte_len()
-    ro bytes = @src.bytes()
     mut i = @start
-    while i < sn && is_ascii_ws(bytes[i] as int) { i += 1 }
+    while i < sn && is_ascii_ws(unsafe { @src.ptr().read_at(i) } as int) { i += 1 }
     if i >= sn {
         @start = sn
         return None
     }
     ro word_start = i
-    while i < sn && !is_ascii_ws(bytes[i] as int) { i += 1 }
+    while i < sn && !is_ascii_ws(unsafe { @src.ptr().read_at(i) } as int) { i += 1 }
     @start = i
     Some(@src[word_start..i])
 }

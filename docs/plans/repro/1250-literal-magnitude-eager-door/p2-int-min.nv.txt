@@ -1,0 +1,4 @@
+fn take(x int) -> int => x
+fn main() Io -> () {
+    println(take(-9223372036854775808))
+}

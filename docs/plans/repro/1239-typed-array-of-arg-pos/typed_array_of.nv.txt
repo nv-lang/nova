@@ -1,0 +1,8 @@
+module m
+
+type Point value {
+    x int
+    y int
+}
+
+ro pts = []Point.of(Point { x: 1, y: 2 }, Point { x: 3, y: 4 })

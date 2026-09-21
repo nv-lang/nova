@@ -237,17 +237,29 @@ if [ "$RS_TIER" = "1" ]; then
         exit 1
     fi
 
-    RS_NEW=$(printf '%s\n' "$NOW_NUMS" | grep -v '^$' | while read -r r; do
-        printf '%s\n' "$RS_NAMES" | grep -qx "$r" || printf '%s ' "$r"
-    done)
+    # comm вместо построчного `while read` + `grep` на каждый элемент: тот же
+    # O(n*m) с подпроцессом на итерацию однажды уже не уложился в таймаут
+    # (комментарий выше, строка 55) — здесь тот же класс, просто набор чисел,
+    # а не строк реестра, и раньше он не был замечен, потому что оба списка
+    # были короче. `comm` требует ЛЕКСИКОГРАФИЧЕСКОЙ сортировки (под LC_ALL=C,
+    # заданным в шапке файла), а не числовой (`sort -n`, которым оба набора
+    # уже отсортированы для остального скрипта) — 9 идёт ПОСЛЕ 10 лексикографи-
+    # чески, значит сортировка для `comm` берётся заново, отдельной переменной,
+    # не переиспользует $NOW_NUMS/$RS_NAMES напрямую.
+    RS_NOW_LEX=$(printf '%s\n' "$NOW_NUMS" | grep -v '^$' | sort)
+    RS_NAMES_LEX=$(printf '%s\n' "$RS_NAMES" | grep -v '^$' | sort)
+    # `grep -v '^$'` INSIDE the substitution too: `printf '%s\n' ""` on an
+    # empty variable still emits one blank line, which `comm` would then read
+    # as a phantom entry on whichever side is actually empty (found by the
+    # selftest: an all-paid case reported a spurious "new" entry that was
+    # really just this blank line).
+    RS_NEW=$(comm -23 <(printf '%s\n' "$RS_NOW_LEX" | grep -v '^$') <(printf '%s\n' "$RS_NAMES_LEX" | grep -v '^$') | tr '\n' ' ')
     if [ -n "$RS_NEW" ]; then
         echo "check-registry-entry-shape: FAIL — НОВЫЕ неоформленные записи: $RS_NEW" >&2
         echo "    Общее число могло НЕ вырасти: одну дооформили, другая пришла." >&2
         exit 1
     fi
-    RS_PAID=$(printf '%s\n' "$RS_NAMES" | grep -v '^$' | while read -r r; do
-        printf '%s\n' "$NOW_NUMS" | grep -qx "$r" || printf '%s ' "$r"
-    done)
+    RS_PAID=$(comm -13 <(printf '%s\n' "$RS_NOW_LEX" | grep -v '^$') <(printf '%s\n' "$RS_NAMES_LEX" | grep -v '^$') | tr '\n' ' ')
     if [ -n "$RS_PAID" ]; then
         echo "check-registry-entry-shape ok: дооформлены — $RS_PAID: убери эти incomplete_row= из $BASELINE и поправь счёт ТОЙ ЖЕ правкой"
         exit 0

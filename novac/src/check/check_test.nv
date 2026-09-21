@@ -25,6 +25,16 @@ fn diagnose(text str) -> int {
     diags.len()
 }
 
+/// The FIRST diagnostic's message, or "" when the file was clean -- for the
+/// tests that judge WHAT a refusal says, not just whether one fired.
+fn diagnose_first_msg(text str) -> str {
+    ro src = SourceText { text }
+    ro tree = parse(lex(text))
+    ro (diags, _) = check(tree, src, collect(tree, []Node.new(), InteropTable.new()))
+    if diags.len() == 0 { return "" }
+    diags[0].message
+}
+
 test "tail rule: a binding tail in a value-returning fn is refused" {
     ro src = "module m\n\nfn f() -> int {\n    ro x = 1\n}\n"
     assert(diagnose(src) > 0, "a body that ends without a value must be refused")
@@ -88,6 +98,19 @@ test "match exhaustiveness: a later match is still checked after an earlier one'
     assert(diagnose(src) == 2, "each function's own non-exhaustive match must be named, not just the first")
 }
 
+test "arg position: a typed array literal's `.of(...)` arguments get it too (registry #1239)" {
+    // `[]Point.of(a, b)` is ONE `ArrayLit` node (sub-plan L), not a `Call`
+    // wrapping the array -- the generic `arg_pos` check (kind == Call/
+    // MethodCall/CtorField) never sees it, so a record-constructor
+    // argument of `.of(...)` used to be refused as "compiled only as a
+    // binding initializer or a call argument" even though it plainly IS
+    // a call argument. `array_of_lparen_at` names the `(`'s slot; every
+    // child after it now gets the same argument position a `Call`'s own
+    // children get for free.
+    ro src = "module m\n\ntype Point value {\n    x int\n    y int\n}\n\nro pts = []Point.of(Point { x: 1, y: 2 }, Point { x: 3, y: 4 })\n"
+    assert(diagnose(src) == 0, "a record constructor as a `.of(...)` argument is a call argument")
+}
+
 test "match agreement: a later match's disagreeing arms are still checked after an earlier one's own (registry #1249)" {
     // The #1242 class, one door over: `@agree_arm_type` compared `@out.len()`
     // against a LITERAL 0 too (found grepping `check/` for the same shape
@@ -119,6 +142,63 @@ test "generic receiver: refused after an unrelated earlier refusal too (registry
     assert(diagnose(src) == 3, "broken's two refusals plus dup's own generic-receiver refusal, not just broken's")
 }
 
+test "diagnostic naming: an unknown-in-expression refusal names the ACTUAL callee (hunt check x K4, N7)" {
+    // The message used to say "println is a statement here, not a value"
+    // UNCONDITIONALLY, regardless of which name actually failed -- true
+    // for the case the door's own comment was written about, false for a
+    // tail `panic(...)` (the oracle accepts it; novac refuses it for an
+    // unrelated, honest reason -- panic outside the subset -- but used to
+    // blame a name, `println`, that this file never even writes).
+    ro src = "module m\n\nfn f(ok bool) -> int {\n    if ok {\n        1\n    } else {\n        panic(\"no\")\n    }\n}\n"
+    ro msg = diagnose_first_msg(src)
+    assert(msg.contains("`panic`"), "the refusal must name the callee that actually failed")
+}
+
+test "termination: an infinite `while true { return }` is a terminator, no dead-tail refusal (hunt check x K6, N4, registry #1253)" {
+    // `stmt_terminates` enumerated the terminating FORMS (`RetStmt`,
+    // `IfLet`, `IfStmt`) rather than answering the PROPERTY "control does
+    // not fall through this statement" -- `while` was simply never on
+    // the list, so a value-returning fn whose ONLY body is `while true {
+    // return n }` was refused as ending without a value, even though the
+    // oracle accepts it and there is no way to fall through: `break` is
+    // not a form novac reads at all.
+    ro src = "module m\n\nfn f(n int) -> int {\n    while true {\n        return n\n    }\n}\n"
+    assert(diagnose(src) == 0, "an infinite `while true` with a `return` inside never falls through")
+    // Control: a NON-literal condition can still fall through when it
+    // turns false, so it must NOT be treated as a terminator.
+    ro src2 = "module m\n\nfn g(n int) -> int {\n    while n > 0 {\n        return n\n    }\n}\n"
+    assert(diagnose(src2) > 0, "a `while` with a real condition can exit without returning")
+}
+
+test "binding mode: assignment to a `ro` target is refused in all four shapes (registry #1254)" {
+    // The ASSIGNMENT DOOR (assign_rules.nv) used to judge only the value's
+    // TYPE, never the target's MODE -- `ro x = 1; x = 2` typed clean (int =
+    // int) and novac accepted it silently, although the mode was already
+    // tracked (`scope.nv`) and already read at a call's key
+    // (`type_of.nv:class_of_binding`). Four independent shapes reach the
+    // same untouched door: a plain `ro` local, a compound assignment to
+    // one, a parameter without `mut`, and a field written through a `ro`
+    // -bound receiver (caught by NEITHER shape's own message).
+    ro simple = "module m\n\nfn f() -> int {\n    ro x = 1\n    x = 2\n    x\n}\n"
+    assert(diagnose(simple) > 0, "assigning to a `ro` local must be refused")
+
+    ro compound = "module m\n\nfn f() -> int {\n    ro x = 1\n    x += 2\n    x\n}\n"
+    assert(diagnose(compound) > 0, "a compound assignment to a `ro` local must be refused too")
+
+    ro param = "module m\n\nfn f(x int) -> int {\n    x = 5\n    x\n}\n"
+    assert(diagnose(param) > 0, "a non-`mut` parameter is bound `ro` the same way a local is")
+
+    ro field = "module m\n\ntype Pt value { n int }\n\nfn f() -> int {\n    ro b = Pt { n: 1 }\n    b.n = 2\n    b.n\n}\n"
+    ro field_msg = diagnose_first_msg(field)
+    assert(field_msg.contains("E_READONLY_FIELD"), "a field written through a `ro`-bound receiver names the field code, not the local one")
+
+    // Control: a `mut` local (and a `mut`-bound field owner) must stay clean.
+    ro ctrl = "module m\n\nfn f() -> int {\n    mut x = 1\n    x = 2\n    x\n}\n"
+    assert(diagnose(ctrl) == 0, "a `mut` local must stay assignable")
+    ro ctrl_field = "module m\n\ntype Pt value { n int }\n\nfn f() -> int {\n    mut b = Pt { n: 1 }\n    b.n = 2\n    b.n\n}\n"
+    assert(diagnose(ctrl_field) == 0, "a field through a `mut`-bound receiver must stay writable")
+}
+
 test "qualified module constant: `Type.NAME` resolves through its own registry key (D200 amend #66)" {
     // `const BigInt.ZERO BigInt = zero()` then a use site `BigInt.ZERO.sign`
     // -- the SAME dotted shape a bare-variant read uses (`@judge_type_head_variant`),
@@ -138,6 +218,59 @@ test "qualified module constant: an unknown qualified name still falls through t
     // ones a `const Type.NAME` actually claims.
     ro src = "module m\n\ntype BigInt value {\n    sign int\n}\n\nfn use_it() -> int {\n    BigInt.NOPE\n}\n"
     assert(diagnose(src) > 0, "an undeclared qualified name is not a free pass past the sum-variant refusal")
+}
+
+test "literal magnitude: the eager Lit-walk door defers to the row door, not `int`'s own bound (registry #1250)" {
+    // `int_text_fits` used to bound EVERY literal by `int`'s own 64-bit
+    // signed range, before the literal's own position (a call argument, a
+    // return) ever named a row -- so a `u64` parameter refused its own
+    // maximum, and `int` itself refused its own minimum (the magnitude door
+    // never looks at a preceding `-`, only at the digit run). The row door
+    // (`int_text_fits_row`, asked once the position's type is known) already
+    // answered both correctly; the eager door just never let it run.
+    ro u64_max = "module m\n\nfn take(x u64) -> u64 => x\n\nfn f() -> u64 {\n    take(18446744073709551615)\n}\n"
+    assert(diagnose(u64_max) == 0, "u64's own maximum must fit a u64 parameter")
+
+    ro int_min = "module m\n\nfn take(x int) -> int => x\n\nfn f() -> int {\n    take(-9223372036854775808)\n}\n"
+    assert(diagnose(int_min) == 0, "int's own minimum must fit an int parameter")
+
+    ro u64_max_hex = "module m\n\nfn take(x u64) -> u64 => x\n\nfn f() -> u64 {\n    take(0xFFFFFFFFFFFFFFFF)\n}\n"
+    assert(diagnose(u64_max_hex) == 0, "the same maximum written in hex must fit too")
+
+    // Control: a magnitude no row could EVER hold stays refused -- the eager
+    // door still catches what the row door will never even get asked about.
+    ro too_wide = "module m\n\nfn f() -> int {\n    99999999999999999999999999999999\n}\n"
+    assert(diagnose(too_wide) > 0, "a literal wider than u64 fits no row at all and must stay refused")
+
+    // Control: a narrow row's own bound must still be enforced -- widening
+    // the EAGER door must not have widened the ROW door underneath it.
+    ro u8_overflow = "module m\n\nfn take(x u8) -> u8 => x\n\nfn f() -> u8 {\n    take(300)\n}\n"
+    assert(diagnose(u8_overflow) > 0, "a u8 parameter must still refuse a value past 255")
+}
+
+test "literal magnitude: a match pattern's own literal is judged too (registry #1251)" {
+    // Neither magnitude door ever visited a `Pattern` node: not the eager one
+    // (only the generic `Lit` walk called it, and a match pattern is never a
+    // `Lit`) and not the row one (only ever asked from an assignment/call/
+    // return position). `check` stayed clean on a 23-digit pattern literal
+    // and the EMITTER wrote it verbatim into a C comparison clang refused
+    // outright -- registry #810's own failure, reopened at a position
+    // nobody had visited.
+    ro too_wide_pattern = "module m\n\nfn f(x int) -> int {\n    match x {\n        99999999999999999999999 => 1\n        _ => 2\n    }\n}\n"
+    assert(diagnose(too_wide_pattern) > 0, "a match pattern literal wider than u64 fits no row and must be refused")
+
+    // Control, named explicitly by the hunt: the ORACLE ITSELF does not
+    // apply D227 rule 3 (the per-row bound) at a pattern's position --
+    // `match x { 300 => .. }` on `x u8` compiles clean on both compilers,
+    // an always-false comparison the oracle tolerates. Refusing it here
+    // would be a NEW divergence in the opposite direction (novac stricter
+    // than the oracle), not a fix -- only the "fits ANY row" question
+    // belongs at this position, not "fits THIS row".
+    ro u8_300_pattern = "module m\n\nfn f(x u8) -> int {\n    match x {\n        300 => 1\n        _ => 2\n    }\n}\n"
+    assert(diagnose(u8_300_pattern) == 0, "a pattern literal out of the SCRUTINEE's own row must stay accepted, matching the oracle")
+
+    ro small_pattern = "module m\n\nfn f(x int) -> int {\n    match x {\n        7 => 1\n        _ => 2\n    }\n}\n"
+    assert(diagnose(small_pattern) == 0, "an ordinary small pattern literal must stay clean")
 }
 
 test "tail if: a tail `if` whose branches both return needs no value (registry #1252)" {
@@ -229,4 +362,27 @@ test "lone ? (Try operator): named refusal, not the anonymous parser fallback (r
     ro msg = diagnose_msg(src)
     assert(!msg.contains("did not parse"), "a legal form must not read as a syntax error")
     assert(msg.contains("not compiled yet"), "the refusal must name the operator, not stay anonymous")
+}
+
+test "if-let: a QUALIFIED head naming a non-Some variant reaches the same named refusal as a bare one (registry #1259)" {
+    // The positive half of #1259 (a qualified `Option.Some(v)` head parsing
+    // and type-checking) needs `Option` DECLARED to reach `option_payload`
+    // at all -- this file's `diagnose()` deliberately runs against an EMPTY
+    // interop table (see its own doc comment) and cannot resolve `Option`,
+    // so that half lives in `pipeline/iflet_test.nv` instead, where
+    // `compile_to_c` injects real `std` declarations. What IS testable here,
+    // with no `Option` involved at all: a qualified head naming a variant of
+    // a SELF-DECLARED sum (no std dependency) reaches the SAME named
+    // "Some(name) only" refusal a bare non-Some head already gives -- not
+    // the unnamed parser fallback the qualified form used to fall into
+    // before this fix.
+    ro qualified_wrong_variant = "module m\n\ntype Shape enum\n    | Circle(int)\n    | Square(int)\n\nfn f(s Shape) -> int {\n    if Shape.Circle(r) = s {\n        r\n    } else {\n        0\n    }\n}\n"
+    ro msg = diagnose_first_msg(qualified_wrong_variant)
+    assert(msg.contains("Some(name)"), "a qualified non-Some head must name the same subset boundary the bare form already refuses with")
+
+    // Control: the bare non-Some form gives the identical message -- the fix
+    // did not change WHAT is said, only WHICH heads can reach the door that
+    // says it.
+    ro bare_wrong_variant = "module m\n\ntype Shape enum\n    | Circle(int)\n    | Square(int)\n\nfn f(s Shape) -> int {\n    if Circle(r) = s {\n        r\n    } else {\n        0\n    }\n}\n"
+    assert(diagnose_first_msg(bare_wrong_variant) == msg, "the qualified and bare forms must be refused with the identical message")
 }

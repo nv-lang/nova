@@ -4,7 +4,10 @@
 // framework — these are plain questions over a children slice, and a framework
 // would hide the very indices this file exists to remove.
 // Role: layer 3 — the ONE place that knows where a name, a type or a body
-//   stands among a node's children; every pass asks here instead of counting.
+//   stands among a node's children -- narrowed since the 2026-09-21 split
+//   (see below) to a NAME's, a PARAMETER's, a CALL's or a PATTERN's own
+//   geometry; the sibling file `slots_decl.nv` answers the same kind of
+//   question about what a DECLARATION itself is.
 // Used by: check, emit_c, mono and sem itself, at every stage from E1 on.
 // Guarded by: check-novac-no-alloc-in-lookup.py (these doors allocate nothing),
 // check-novac-type-field-docs.py (every function documented), the module tests
@@ -16,15 +19,26 @@
 // WHERE in the tree it is written. Every one of them was born from the same
 // case: a fixed index (`kids[1]`, `pk[0]`) read a mode as the name, or a comma
 // as the type, the moment the shape grew one child.
+//
+// SPLIT AGAIN, INTO `slots_decl.nv`, ON 2026-09-21 (decision 12 / P13): this
+// file itself reached 998/1000 lines after two more door-scanners (#1239's
+// `array_of_lparen_at`, #1254's investigation) landed in it -- the ACTUAL mine
+// `backlog-followups.md`'s `[M-novac-checker-files-at-the-size-cap]` entry
+// names, once the earlier `rules.nv`/`exprs.nv` mines had already been cut.
+// The declaration-shape doors (`type`/`const`/field: what a declaration IS)
+// moved out whole; every import below was re-derived from what the REMAINING
+// functions actually use -- the file had carried five dead names
+// (`NodeId`/`raw_node`/`is_node` from `tree`, `no_ty`/`is_ty`/`same_ty`/
+// `Interner` from `types`, and the whole `builtins`/`names` import lines,
+// which nothing here ever called) that the split is also where they stopped
+// being carried forward.
 
 module novac.sem
 
-import ../tree.{Node, NodeKind, NodeId, raw_node, is_node}
+import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
 import ../diag.{ice}
-import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, UNIT_TYPE_NAME, VALUE_MARKER, SLICE_HEAD, SELF_TYPE, PRINT_FN}
-import ../names.{DeclId, raw_decl, no_decl, is_decl}
-import ../types.{TyId, no_ty, is_ty, same_ty, Interner}
+import ../types.{TyId}
 
 /// The BODY of a match arm, or None when the arm carries nothing but
 /// punctuation. Its last child is not always the body.
@@ -45,6 +59,22 @@ export fn arm_body_at(ak []Node) -> Option[int] {
             (leaf_kind(c) == TokenKind.Comma || leaf_kind(c) == TokenKind.FatArrow)
         if !is_punct { return Some(i) }
         i -= 1
+    }
+    None
+}
+
+/// The slot of the `(` in a TYPED array literal's own constructor call
+/// (`[]Point.of(a, b)`, sub-plan L) -- everything after it is an ARGUMENT
+/// of `.of(...)`, the same position a `Call`'s own children get (registry
+/// #1239's remaining half). `None` for the plain `[a, b]` shape and for a
+/// bare `[]Point` with no argument list -- neither has a `(` at all.
+export fn array_of_lparen_at(kids []Node) -> Option[int] {
+    mut i = 0
+    for c in kids {
+        if c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.LParen {
+            return Some(i)
+        }
+        i += 1
     }
     None
 }
@@ -263,6 +293,11 @@ export fn decl_name_at(kids []Node) -> Option[int] {
 /// (`KwMut`, `KwRo`, `KwConsume`), so an IDENTIFIER can no longer be one. The
 /// caller that asked -- `param_name_at`, looking for the parameter's name --
 /// needs no filter at all now, because a keyword is not an identifier.
+///
+/// `is_mode_word(w str)` stood here until 2026-08-23 and is gone with the last
+/// reader that had only TEXT to go on. All three mode words are keywords now, so
+/// the question is about a token KIND, and `mode_of_leaf` answers it -- one door
+/// instead of a door plus three spellings kept in step with the lexer by hand.
 
 /// The MODE this parameter declares -- `ModeRo` when it writes none, which is
 /// the language's default (D32/D246: a bare parameter IS the read-only view).
@@ -320,185 +355,6 @@ fn mode_before(pk []Node, n int) -> ParamMode {
         i += 1
     }
     ModeRo
-}
-
-/// What the TAIL of a type declaration says, when it is a type reference:
-/// which type, and whether the declaration is an ALIAS of it or a NEWTYPE over
-/// it.
-///
-/// One record and not two answers, because the two travel together: a caller
-/// that got the id without the alias bit would have to ask a second door to
-/// know what to do with it.
-export type ReprSpec value {
-    under_decl DeclId /// the representation's DECLARATION -- this door has no type table, and a name resolves to a declaration first (wave B8)
-    is_alias bool /// `type Row alias int` -- the same type under a second name
-}
-
-/// WHAT a `type` declaration IS, read from the TREE alone.
-///
-/// Separate from `repr_of_decl` for a reason that cost a live defect: the shape
-/// must be known BEFORE any name is resolved. `repr_of_decl` asks the registry
-/// for the representation, so in the first pass -- where the point is to
-/// register names -- it answers None for a forward reference and the caller
-/// concludes "record". The shape does not need a registry: fields versus a type
-/// reference versus the `alias` marker is a question about leaves.
-export type DeclShape enum
-    | ShapeRecord
-    | ShapeNewtype
-    | ShapeAlias
-    | ShapeProtocol /// `type Sized protocol { ... }` -- the form parses (wave 3a), dispatch arrives with 3b
-
-/// The shape of this `type` declaration. No lookups, no registry, no order
-/// dependence.
-export fn shape_of_decl(decl Node) -> DeclShape {
-    mut seen_name = false
-    mut tail_ident = false
-    for c in branch_children(decl) {
-        if c.kind_of() == NodeKind.Field { return DeclShape.ShapeRecord }
-        if !c.is_ident() { continue }
-        if !seen_name {
-            // The FIRST identifier is the declared NAME (position, not lookup --
-            // the same rule `repr_of_decl` lives by).
-            seen_name = true
-            continue
-        }
-        if leaf_text(c) == ALIAS_MARKER { return DeclShape.ShapeAlias }
-        // The PROTOCOL marker is read BEFORE the field test can lie: a protocol
-        // body holds method signatures, and the record branch would call the
-        // first one "a field that must declare a type" -- a refusal about a
-        // shape the source never wrote (measured 2026-08-23, one form after the
-        // parser learned this declaration).
-        if leaf_text(c) == PROTOCOL_MARKER { return DeclShape.ShapeProtocol }
-        tail_ident = true
-    }
-    if tail_ident { DeclShape.ShapeNewtype } else { DeclShape.ShapeRecord }
-}
-
-/// The TYPE NAME of a method's receiver group (`fn Counter mut @bump()` answers
-/// `Counter`), or `None` when the declaration is not a method.
-///
-/// The receiver's type is the FIRST identifier of the group -- a mode word stands
-/// after it, which is the same positional rule `mode_after_first_ident` reads the
-/// mode by. A door because two readers want it: the harvest that builds the row,
-/// and the subset walk that refuses a form the layout cannot carry yet.
-export fn recv_type_name(kids []Node) -> Option[str] {
-    for c in kids {
-        if c.kind_of() != NodeKind.Recv { continue }
-        for r in branch_children(c) {
-            if r.is_ident() { return Some(leaf_text(r)) }
-        }
-    }
-    // NOT `""`: absence is declared by the TYPE, because an empty string as a
-    // tail is the silent default P21 (1a) refuses -- a caller cannot tell "a
-    // receiver named nothing" from "no receiver at all".
-    None
-}
-
-/// The SHAPE a record declaration wrote in the source: `value` after the
-/// name makes a ValueRecord, otherwise a plain (heap) Record. ONE door for
-/// the two collectors (sem pass 1 and harvest) -- wave V2 of plan 274.6
-/// adds the parenthesised tuple forms here, which is why the answer is the
-/// RecordShape enumeration and not a boolean: the shapes are four (D215,
-/// architecture 4b), and a boolean could not say which.
-///
-/// Absorbs the old `decl_is_value` (its two callers are exactly the two
-/// collectors); the scan is unchanged -- the marker is a leaf between the
-/// name and the body, read off the declaration node.
-export fn shape_of_record_decl(decl Node) -> RecordShape {
-    // THE PAREN LEAF SAYS "parenthesised", NOT "named" -- the owner caught this
-    // reading (2026-09-03): `type Point(f64, f64)` also opens with `(`. The
-    // honest discriminant is the FIELD: a named field writes an identifier
-    // before its type (`x int`), a positional one writes the type alone. So
-    // the paren says WHICH FAMILY, and the first field says WHICH MEMBER.
-    //
-    // The earlier version returned NamedTuple on any paren leaf and was
-    // right only by accident: the parser reads named fields only, so a
-    // positional declaration produces no `Field` node and never reaches this
-    // door. Correct-by-accident stops being correct the day V3 reads the
-    // positional form.
-    mut paren = false
-    for c in branch_children(decl) {
-        match c {
-            Leaf(t) => {
-                if t.text == VALUE_MARKER { return RecordShape.ValueRecord }
-                // ACCUMULATION, not a dispatch. Written as an `if` with an
-                // empty `else` this reddened P21: an `else` closing a test by
-                // KIND must be an honest refusal, and "the name, a generic
-                // bracket, a marker word" is not one. The flag only ever turns
-                // ON, so there is no "everything else" case to get silently
-                // wrong -- and stated as one expression there is no branch for
-                // either guard to judge.
-                paren = paren || leaf_kind(c) == TokenKind.LParen
-            }
-            Branch { .. } => {}
-        }
-    }
-    if !paren { return RecordShape.Record }
-    for c in branch_children(decl) {
-        if c.kind_of() != NodeKind.Field { continue }
-        // A field that carries a NAME is the named family; one that carries
-        // only a type is the positional (anonymous-component) family.
-        if field_name_at(branch_children(c)).is_none() {
-            // A DECLARED type whose fields are positional -- it HAS a name of
-            // its own, so it is not the anonymous form (owner's correction
-            // 2026-09-03: "no name" meant two things under one word).
-            return RecordShape.PositionalTuple
-        }
-        return RecordShape.NamedTuple
-    }
-    // Parens with no field at all: a recovery shape the parser already
-    // refused; the plain record reading keeps the layout question answerable.
-    RecordShape.Record
-}
-
-/// The representation a type declaration names, or None when it declares a
-/// RECORD (a brace body) or names a type novac does not know.
-///
-/// The tail is read by SHAPE: a `Field` child means a record, an `alias` word
-/// means an alias, and a lone identifier is the representation. Until
-/// 2026-08-21 the parser did not read this tail at all and `type Row int` came
-/// back "this is not a form of the language" -- about a form the language has
-/// and the oracle compiles.
-export fn repr_of_decl(decl Node, defs DefTable) -> Option[ReprSpec] {
-    mut marks_alias = false
-    mut under = no_decl()
-    mut seen_name = false
-    for c in branch_children(decl) {
-        // A record declares FIELDS: then the tail is not a representation at
-        // all, and this door answers None.
-        if c.kind_of() == NodeKind.Field { return None }
-        if !c.is_ident() { continue }
-        ro word = leaf_text(c)
-        if !seen_name {
-            // The FIRST identifier is the DECLARED name. It must be skipped by
-            // position rather than by lookup: the name is already in the
-            // registry (the first pass put it there), so asking the registry
-            // would answer with the declaration's own id and make every
-            // newtype a newtype over itself.
-            seen_name = true
-            continue
-        }
-        if word == ALIAS_MARKER {
-            marks_alias = true
-            continue
-        }
-        if is_decl(under) {
-            // Already found: a further identifier belongs to a form this door
-            // does not read (type arguments), judged elsewhere.
-            continue
-        }
-        // The Option is read AS an Option (the owner's correction 2026-08-21):
-        // `?? no_ty()` followed by a comparison with the same sentinel is a
-        // detour that turns "absent" into a number to be remembered.
-        if Some(d) = defs.type_decl(word) {
-            under = d
-        } else {
-            // A word that names no type novac knows: the declaration is refused
-            // at its own position, not guessed at here.
-        }
-    }
-    if !is_decl(under) { return None }
-    Some(ReprSpec { under_decl: under, is_alias: marks_alias })
 }
 
 /// The MODE a BINDING statement declares: `ro x = …`, `mut x = …`,
@@ -673,161 +529,6 @@ export fn declares_receiver(kids []Node) -> bool {
     false
 }
 
-/// The NAME slot of a record-field node, or None.
-///
-/// A field may carry a MODE (`mut n int`), so index zero is not the name --
-/// exactly the trap the parameter reader fell into on 2026-08-21 and this one
-/// fell into on 2026-08-23: the collector read the mode AS the name, the real
-/// name never entered the registry, and the refusal said "unknown field" about a
-/// field written right there.
-export fn field_name_at(fk []Node) -> Option[int] {
-    mut i = 0
-    for c in fk {
-        // The TERMINATOR is the branch (P21): `continue` for anything that is
-        // not a leaf, so a new node kind cannot fall into an `else` that does
-        // work. A match over NodeKind would need forty-five arms.
-        if c.kind_of() != NodeKind.LeafNode {
-            i += 1
-            continue
-        }
-        if mode_of_leaf(c).is_none() { return Some(i) }
-        i += 1
-    }
-    None
-}
-
-/// The TYPE slot of a record-field node -- the leaf after its name -- or None.
-export fn field_type_at(fk []Node) -> Option[int] {
-    // THE SAME DOOR PARAMETERS USE (274.5 wave B1): the slot right after the
-    // name, whatever its KIND. The walk here used to skip every non-leaf, so a
-    // field whose type is a read type REFERENCE (`xs []int`, `rows Vec[T]` --
-    // branches since the parser learned them) answered None, the field never
-    // reached the registry, and the refusal said "unknown field" about a field
-    // written right there. One question, one door (P18).
-    if Some(n) = field_name_at(fk) { type_slot_after(fk, n) } else { None }
-}
-
-// `is_mode_word(w str)` stood here until 2026-08-23 and is gone with the last
-// reader that had only TEXT to go on. All three mode words are keywords now, so
-// the question is about a token KIND, and `mode_of_leaf` answers it -- one door
-// instead of a door plus three spellings kept in step with the lexer by hand.
-
-/// The `ConstDecl` node itself, unwrapped from an `export` wrapper when there
-/// is one: `export const N = 7` builds `Export[ConstDecl]`, and every reader
-/// asks the same question of both spellings (274.5 wave B2).
-export fn const_decl_of(c Node) -> Option[Node] {
-    if c.kind_of() == NodeKind.ConstDecl { return Some(c) }
-    if c.kind_of() != NodeKind.ExportDecl { return None }
-    for k in branch_children(c) {
-        if k.kind_of() == NodeKind.ConstDecl { return Some(k) }
-    }
-    None
-}
-
-/// The slot of a constant's NAME: the first identifier leaf after `const`.
-///
-/// The TERMINATOR is the branch (P21), as in `field_name_at`: a node that is
-/// not a leaf simply is not the name, and saying that with a `continue` keeps
-/// the closed set of node kinds out of an `else` that would swallow a new one.
-export fn const_name_at(kids []Node) -> int {
-    mut i = 0
-    for c in kids {
-        if c.kind_of() != NodeKind.LeafNode {
-            i += 1
-            continue
-        }
-        if leaf_kind(c) == TokenKind.Ident { return i }
-        i += 1
-    }
-    -1
-}
-
-/// The constant's FULL name, as registered: the bare name, or the two
-/// leaves of a QUALIFIED one (D200 amend #66) joined by a dot.
-///
-/// `const_name_at` alone answers ONE index, and a qualified name is TWO
-/// leaves (`Type`, `NAME`) the parser already reads side by side (`Type`
-/// `.` `NAME`) -- this door is the one place that turns that shape into
-/// the registry's KEY, so `collect.nv` (the only caller) does not have to
-/// know the shape itself. `BigInt.ZERO` registers and resolves as the one
-/// string "BigInt.ZERO"; an unqualified `ZERO` registers as "ZERO", same
-/// as it always has -- the two spellings share one namespace by
-/// construction, exactly as `Type.method` and a free function already do.
-export fn const_full_name(kids []Node) -> Option[str] {
-    ro n = const_name_at(kids)
-    if n < 0 { return None }
-    ro base = leaf_text(kids[n])
-    if n + 2 >= kids.len() { return Some(base) }
-    ro dot = kids[n + 1]
-    ro qual = kids[n + 2]
-    if dot.kind_of() != NodeKind.LeafNode || leaf_kind(dot) != TokenKind.Dot {
-        return Some(base)
-    } else {
-        // Not a qualifier: the bare name is the whole answer.
-    }
-    if qual.kind_of() != NodeKind.LeafNode || leaf_kind(qual) != TokenKind.Ident {
-        return Some(base)
-    } else {
-        // The qualified form: two leaves, one name.
-    }
-    Some("${base}.${leaf_text(qual)}")
-}
-
-/// The slot of a constant's INITIALIZER: the child right after `=`.
-///
-/// By the ASSIGN leaf rather than by a fixed index, because a declared type may
-/// stand between the name and `=` and its own shape varies (`int`, `[]int`,
-/// `Vec[T]` are one child each, but that is the type door's business, not this
-/// one's).
-export fn const_init_at(kids []Node) -> int {
-    mut i = 0
-    mut seen_assign = false
-    for c in kids {
-        if seen_assign { return i }
-        // The TERMINATOR is the branch (P21), as in the two doors above: a
-        // node that is not a leaf is not the `=` either, and a `continue`
-        // says so without an `else` that a new node kind could fall into.
-        if c.kind_of() != NodeKind.LeafNode {
-            i += 1
-            continue
-        }
-        // TERMINATOR, not an `else`: two guards meet on this line -- one
-        // wants every branch complete, the other forbids an `else` that
-        // stands for "every other variant" of a closed set. A `continue`
-        // satisfies both, and it is the shape the two doors above use.
-        if leaf_kind(c) != TokenKind.Assign {
-            i += 1
-            continue
-        }
-        seen_assign = true
-        i += 1
-    }
-    -1
-}
-
-/// The method NAME of a `ProtoMethod` node: the identifier after the `@`.
-///
-/// Position, not lookup -- the same rule every other reader of this tree lives
-/// by. An absent name answers `None`: `@` with nothing after it is broken input,
-/// and the checker refuses it by name instead of the registry holding a
-/// signature nobody can require.
-export fn proto_method_name(m Node) -> Option[str] {
-    mut seen_at = false
-    for c in branch_children(m) {
-        if c.kind_of() != NodeKind.LeafNode { continue }
-        if !seen_at {
-            seen_at = true
-            continue
-        }
-        if leaf_kind(c) == TokenKind.Ident { return Some(leaf_text(c)) }
-    }
-    // ABSENCE, not an empty name. `@` with no identifier after it is broken
-    // input, and a `""` tail would make the registry hold a signature nobody
-    // can require -- the silent-default shape P21 refuses.
-    None
-}
-
-
 /// The INDEX a projection leaf spells, or -1: `t.0` carries its component
 /// index as the integer literal's text, and the checker needs the number to
 /// judge it against the tuple's arity. Plain unsigned decimal -- anything
@@ -937,77 +638,37 @@ export fn pattern_has_disj(pat []Node) -> bool {
     false
 }
 
-
-/// The PIECES of a string literal's TOKEN TEXT (outer quotes kept by the
-/// caller's slice bounds): even slots are literal fragments (escapes kept
-/// verbatim), odd slots are the texts between `${` and `}`. A literal with
-/// no interpolation answers ONE even slot. `\$` never opens -- the byte
-/// before the dollar decides, exactly as the check's byte rule reads it.
-/// Two readers, one walk (P18): the checker judges the odd slots, the
-/// emitter spells the builder chain.
-export fn interp_slices(text str) -> []str {
-    ro b = text.bytes()
-    mut out = []str.new()
-    ro n = b.len() - 1
-    mut start = 1
-    mut i = 1
-    while i < n {
-        if b[i] == INTERP_BSLASH {
-            i += 2
-        } else if b[i] == INTERP_DOLLAR && i + 1 < n && b[i + 1] == INTERP_LBRACE {
-            out.push(text[start..i])
-            mut j = i + 2
-            while j < n && b[j] != INTERP_RBRACE { j += 1 }
-            out.push(text[i + 2..j])
-            i = j + 1
-            start = i
-        } else {
-            i += 1
-        }
-    }
-    if start <= n {
-        out.push(text[start..n])
-    } else {
-        // An UNCLOSED slot ran to the token's end (the lexer closes a string
-        // at the first bare quote, so a quoted literal INSIDE a slot cuts
-        // the token short -- hunt K4 shape). The empty tail keeps the
-        // even/odd contract; the form judge refuses the non-name slot.
-        out.push("")
-    }
-    out
+/// Does this `IfLet`'s head carry a QUALIFIER -- `if Sum.Variant(b) = e`,
+/// not bare `if Variant(b) = e` (registry #1259)? Slot 2 is `.` for the
+/// qualified form and `(` for the bare one; the parser writes no other
+/// shape. The same class already fixed for match's own pattern head
+/// (`pattern_head_slot` above) and for `const Type.NAME` -- a variant's
+/// head is read in more than one place in this grammar, and if-let's was
+/// the one that had not learned the qualifier yet.
+export fn iflet_is_qualified(kids []Node) -> bool {
+    kids.len() > 2 && kids[2].kind_of() == NodeKind.LeafNode && leaf_kind(kids[2]) == TokenKind.Dot
 }
 
-/// The BYTE length a literal fragment has AFTER C reads its escapes: a
-/// backslash pair is one byte. The emitter's `.len` field needs the C
-/// answer, not the source count.
-export fn escaped_byte_len(piece str) -> int {
-    ro b = piece.bytes()
-    mut len = 0
-    mut i = 0
-    while i < b.len() {
-        if b[i] == INTERP_BSLASH { i += 2 } else { i += 1 }
-        len += 1
-    }
-    len
+/// The QUALIFIER'S WIDTH: 2 extra slots (`.` + the variant ident) stand
+/// before everything the bare head already had, when there is one. Every
+/// other `iflet_*_at` door below is the bare offset plus this.
+fn iflet_shift(kids []Node) -> int {
+    if iflet_is_qualified(kids) { 2 } else { 0 }
 }
 
+/// The slot of the VARIANT name -- 1 for a bare head, 3 for a qualified one.
+export fn iflet_variant_at(kids []Node) -> int => 1 + iflet_shift(kids)
 
-/// The four bytes the slicer reads.
-const INTERP_BSLASH u8 = 0x5C  // backslash
-const INTERP_DOLLAR u8 = 0x24  // $
-const INTERP_LBRACE u8 = 0x7B  // {
-const INTERP_RBRACE u8 = 0x7D  // }
+/// The slot of the BINDER name inside the parens.
+export fn iflet_binder_at(kids []Node) -> int => 3 + iflet_shift(kids)
 
-/// Does this constant's initializer INTERPOLATE? The I1 boundary judge asks
-/// once, at the use site -- the substitution point, where no hoist ran.
-export fn const_init_interpolates(ctx Ctx, row ConstRow) -> bool {
-    ro cd = ctx.consts.rows[raw_crow(row)]
-    if cd.init.len() == 0 { return false }
-    ro init = cd.init[0]
-    if init.kind_of() != NodeKind.Lit { return false }
-    ro kids = branch_children(init)
-    ro t = kids[kids.len() - 1]
-    if t.kind_of() != NodeKind.LeafNode { return false }
-    if leaf_kind(t) != TokenKind.StrLit { return false }
-    interp_slices(leaf_text(t)).len() > 1
-}
+/// The slot of the INITIALIZER expression, the head after `=`.
+export fn iflet_init_at(kids []Node) -> int => 6 + iflet_shift(kids)
+
+/// The slot of the THEN-block (the `Some`/binder branch).
+export fn iflet_body_at(kids []Node) -> int => 7 + iflet_shift(kids)
+
+/// The slot of the ELSE-branch (the `None` branch), when there is one --
+/// callers still check `kids.len()` against it; this door only says WHERE
+/// it would stand, not WHETHER it does.
+export fn iflet_else_at(kids []Node) -> int => 9 + iflet_shift(kids)

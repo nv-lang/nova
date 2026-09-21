@@ -1,6 +1,0 @@
-=== SUBJECT: unit of the two peers ===
-{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"b_fine.nv","start":9,"end":9},"message":"fn declares a return type but its body ends without a value","poisoned_by":null}
-=== CONTROL 1: the broken file alone ===
-{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"a_broken.nv","start":43,"end":43},"message":"fn declares a return type but its body ends without a value","poisoned_by":null}
-=== CONTROL 2: the fine file alone (no JSON = clean) ===
-rc=0

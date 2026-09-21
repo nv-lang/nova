@@ -1,4 +1,0 @@
-nova: libuv not built, building (one-time, ~30 sec)...
-nova: libuv.lib built (37 files)
-[32mbuilt:[0m probe.exe (18.21s)
-mixed     x\a\b.nv vs x/a/c.nv -> NOT peersall-slash x/a/b.nv vs x/a/c.nv -> peersall-back  x\a\b.nv vs x\a\c.nv -> peersdiffer    x/a/b.nv vs x/z/c.nv -> NOT peersone-sep   a\b.nv vs a/c.nv -> peers

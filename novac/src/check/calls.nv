@@ -887,7 +887,16 @@ fn Checker mut @type_free_call(e Node) -> () {
     // mistake: an unknown callee in a value position is refused here, at
     // the call's own name.
     if found.is_none() {
-        @report_first_leaf_of(kids, "outside the subset: this name is not a callable novac knows in an expression (println is a statement here, not a value)")
+        // NAME THE ACTUAL CALLEE (hunt novac/check x K4, 2026-09-21, N7):
+        // the message used to say "println is a statement here, not a
+        // value" UNCONDITIONALLY, as if that were the cause -- true for
+        // the case the comment above was written about, false for every
+        // OTHER name that lands here (measured on a tail `panic("no")`,
+        // which the oracle accepts: the refusal named a builtin that
+        // does not even appear in that file). `println` stays as the
+        // one worked example of the CLASS this door refuses, not a
+        // claim about the file being read.
+        @report_first_leaf_of(kids, "outside the subset: `${cname}` is not a callable novac knows in an expression -- either it does not exist, or (like `println`) it is a statement-only form novac does not read as a value (E2-b3)")
         return
     }
     // ARGUMENTS FIRST, since 2026-08-21. The key of a call IS its argument

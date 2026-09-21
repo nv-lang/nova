@@ -1,0 +1,4 @@
+fn take(x u64) -> u64 => x
+fn main() Io -> () {
+    println(take(0xFFFFFFFFFFFFFFFF))
+}

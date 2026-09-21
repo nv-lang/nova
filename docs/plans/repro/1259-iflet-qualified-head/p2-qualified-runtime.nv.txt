@@ -1,0 +1,14 @@
+fn describe(o Option[int]) Io -> () {
+    if Option.Some(v) = o {
+        println(v)
+    } else {
+        println(0)
+    }
+}
+fn main() Io -> () {
+    describe(Some(7))
+    describe(none_int())
+}
+fn none_int() -> Option[int] {
+    None
+}

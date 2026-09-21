@@ -215,10 +215,9 @@ fn parse_path(s str) -> (str, str) {
 // поэтому byte-scan корректен даже над non-ASCII `s` — O(1) индекс вместо
 // ретрактированного `chars().nth(i)` O(n) скана (D260-амендмент).
 fn find_first_of(s str, chars str) -> Option[int] {
-    ro sb = s.bytes()
     mut i = 0
     while i < s.byte_len() {
-        ro c = (sb[i] as int).to_char() ?? ' '
+        ro c = (unsafe { s.ptr().read_at(i) } as int).to_char() ?? ' '
         if chars.contains(c.to_str()) { return Some(i) }
         i += 1
     }

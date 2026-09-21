@@ -1,2 +1,0 @@
-module m
-type T value { g int }

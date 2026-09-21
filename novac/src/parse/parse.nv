@@ -611,14 +611,37 @@ fn Cursor mut @head_expr() -> Node {
 
 /// Parse one statement: if/while/return/mut/ro/for, or an expression (assignment).
 fn Cursor mut @stmt() -> Node {
-    if @peek() == TokenKind.KwIf && @peek(skip: 1) == TokenKind.Ident &&
+    // IF-LET head lookahead, bare OR QUALIFIED (registry #1259): `if
+    // Sum.Variant(binder) = expr` is the same class already fixed for
+    // match's own pattern head and for `const Type.NAME` -- a variant's
+    // head is read in more than one place, and this was the one that had
+    // not learned the qualifier yet. An ordinary `if` head can never carry
+    // an `=` at either offset, so the lookahead alone still tells an
+    // if-let from an expression; it is only WIDENED to look two tokens
+    // further when a `.` stands where a bare head's `(` would.
+    ro iflet_head = @peek() == TokenKind.KwIf && @peek(skip: 1) == TokenKind.Ident
+    ro iflet_bare = iflet_head &&
        @peek(skip: 2) == TokenKind.LParen && @peek(skip: 3) == TokenKind.Ident &&
-       @peek(skip: 4) == TokenKind.RParen && @peek(skip: 5) == TokenKind.Assign {
+       @peek(skip: 4) == TokenKind.RParen && @peek(skip: 5) == TokenKind.Assign
+    ro iflet_qualified = iflet_head && !iflet_bare &&
+       @peek(skip: 2) == TokenKind.Dot && @peek(skip: 3) == TokenKind.Ident &&
+       @peek(skip: 4) == TokenKind.LParen && @peek(skip: 5) == TokenKind.Ident &&
+       @peek(skip: 6) == TokenKind.RParen && @peek(skip: 7) == TokenKind.Assign
+    if iflet_bare || iflet_qualified {
         // IF-LET (wave: if-let + Option family): `if Some(v) = expr { ... }`.
-        // Five tokens of lookahead tell it from an ordinary `if` -- an
-        // expression head cannot carry `=` there. Its own kind, the B14
-        // discipline; which variants the subset takes is typing's question.
-        mut kids = []Node.of(@take(), @take(), @take(), @take(), @take(), @take())
+        // Its own kind, the B14 discipline; which variants the subset takes
+        // is typing's question.
+        mut kids = []Node.of(@take(), @take())
+        if iflet_qualified {
+            kids.push(@take()) // `.`
+            kids.push(@take()) // the qualified variant's own ident
+        } else {
+            // Bare head: nothing stands between the name and `(`.
+        }
+        kids.push(@take()) // `(`
+        kids.push(@take()) // binder ident
+        kids.push(@take()) // `)`
+        kids.push(@take()) // `=`
         // The initializer is a HEAD expression (wave W1, 274.7): a `{` after it
         // opens the then-block, never a record constructor -- `if Some(v) = o {`
         // used to read `o { ... }` as a construction and the if-let vanished
@@ -628,8 +651,11 @@ fn Cursor mut @stmt() -> Node {
         kids.push(@block())
         // `else` after an if-let (wave W1): the same two shapes as after an
         // `if`, hung off the same node -- [.. then-block, KwElse, <Block | IfStmt
-        // | IfLet>] -- so a reader that knows the first eight children keeps
-        // working unchanged. Eight of novac's own files write this form.
+        // | IfLet>]. A reader no longer counts children by a fixed number
+        // (registry #1259 widened the head by two slots for the qualified
+        // form): `sem/slots.nv`'s `iflet_*_at` doors answer WHERE each part
+        // stands, bare or qualified alike. Eight of novac's own files write
+        // the bare form.
         if @peek() == TokenKind.KwElse {
             kids.push(@take())
             if @peek() == TokenKind.KwIf {
