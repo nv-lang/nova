@@ -885,9 +885,20 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                 // reads the same three slots, and the two agree by counting
                 // the same way rather than by remembering each other.
                 @walk(c, stmt_pos: kind == NodeKind.Block,
+                      // AN ORDINARY ELEMENT OF `[a, b]` IS AN ARGUMENT
+                      // POSITION TOO (registry #TBD): `.of(...)`'s own
+                      // arguments already were (`of_lparen_at >= 0`); a
+                      // plain array literal has no `.of(` at all
+                      // (`of_lparen_at < 0`), and its elements are legal
+                      // positions the same way -- `@emit_array_lit`
+                      // (emit_c.nv) already hoists each element through
+                      // `@hoist_array_lits` before printing it, so the
+                      // emission side needed no change once this gate
+                      // agreed.
                       arg_pos: kind == NodeKind.Call || kind == NodeKind.MethodCall ||
                                kind == NodeKind.CtorField ||
-                               (kind == NodeKind.ArrayLit && of_lparen_at >= 0 && at > of_lparen_at),
+                               (kind == NodeKind.ArrayLit &&
+                                (of_lparen_at < 0 || at > of_lparen_at)),
                       index_pos: kind == NodeKind.Index && at == 2,
                       // ARM-BODY POSITION (2026-09-20): a `match` or an `if`
                       // standing as the body of an arm is a VALUE there, and

@@ -494,3 +494,36 @@ test "if-value: a call-argument position is legal, the same door as initializer 
     ro control_init = "module m\n\nfn f(c bool) -> int {\n    ro r = if c { 1 } else { 2 }\n    r\n}\n"
     assert(diagnose(control_init) == 0, "if-value in initializer position must not regress")
 }
+
+test "record constructor: an ordinary array-literal element is a legal position, not just .of(...) (registry #TBD)" {
+    // `check.nv`'s `arg_pos` for an `ArrayLit`'s children was true only for
+    // the `.of(...)` call form (registry #1239's own carrier) -- a PLAIN
+    // literal, `[Point {x:1,y:2}, Point {x:3,y:4}]`, has no `.of(` at all,
+    // so its elements were neither `init_pos` nor `arg_pos` and the
+    // constructor was refused. `@emit_array_lit` (emit_c.nv) already hoists
+    // each element through `@hoist_array_lits` before printing it -- the
+    // emission side needed no change, only this gate agreeing with it.
+    //
+    // THE GAP IS REAL, NOT A TEST-HARNESS ARTEFACT -- checked directly against
+    // the real CLI (2026-09-21): `[]int.of(1, 2)` inside a function body is
+    // clean, `[]Point.of(...)` inside a function body still hits "the shell
+    // novac links into carries no `Vec` instance for Point", the same message
+    // the empty `InteropTable.new()` gives here. `Vec[Point]` is a GENERIC
+    // instance no probe program has ever exercised (registry #TBD, a separate,
+    // pre-existing gap this fix does not touch). A MODULE-LEVEL binding of the
+    // identical form (registry #1239's own precedent, `check_test.nv:110`)
+    // does not hit this check at all -- top-level bindings take a different
+    // path than a function body's -- so `diagnose(src) == 0` only holds for
+    // that shape, not this file's function-wrapped one. So the assertion here
+    // is NOT "clean" but "the position class is gone": the interop refusal
+    // may still fire, the RECORD-CONSTRUCTOR one must not.
+    ro src = "module m\n\ntype Point value {\n    x int\n    y int\n}\n\nfn f() -> int {\n    ro pts = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]\n     0\n}\n"
+    ro msg = diagnose_first_msg(src)
+    assert(!msg.contains("a record constructor is compiled only as"), "a plain array-literal element must not be refused as a wrong position -- got: ${msg}")
+
+    // Control: the `.of(...)` form must not regress -- same shell-instance
+    // gap as above (it is function-bodied too), so judged the same way.
+    ro control_of = "module m\n\ntype Point value {\n    x int\n    y int\n}\n\nfn f() -> int {\n    ro pts = []Point.of(Point { x: 1, y: 2 })\n     0\n}\n"
+    ro control_msg = diagnose_first_msg(control_of)
+    assert(!control_msg.contains("a record constructor is compiled only as"), "the `.of(...)` form must not regress -- got: ${control_msg}")
+}
