@@ -1,0 +1,8 @@
+module a
+
+fn f() -> str {
+    ro src = "module basics.a\n\
+\n\
+"
+    src
+}

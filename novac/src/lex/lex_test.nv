@@ -48,6 +48,20 @@ test "string literal keeps escapes verbatim and stays lossless" {
     assert(reserialize(toks) == src)
 }
 
+test "string literal's line-continuation backslash survives a CRLF source (registry #1229's sibling)" {
+    // The continuation is `\` followed by the SOURCE's own line break (D467
+    // §3). On a CRLF-terminated file that break is TWO bytes, and the scan
+    // used to consume only the backslash and the `\r`, leaving a bare `\n`
+    // that the newline-ends-the-scan rule (274.3/F19) cut the literal on --
+    // corrupting everything after it. `\r`/`\n` here are VALUE escapes
+    // (D467), building an actual CR+LF pair inside `src`, not the raw
+    // newline D467 §4 forbids.
+    ro src = "\"a\\\r\nb\""
+    ro toks = lex(src)
+    assert(toks[0].kind == TokenKind.StrLit)
+    assert(reserialize(toks) == src)
+}
+
 test "unknown byte becomes ErrorTok, not a panic, and keeps its text" {
     ro toks = lex("a ? b")
     assert(toks[1].kind == TokenKind.ErrorTok)
