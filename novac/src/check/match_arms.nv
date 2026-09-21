@@ -158,7 +158,7 @@ fn Checker mut @type_match(m Node) -> () {
     mut first_t = None
     for c in kids {
         if c.kind_of() != NodeKind.MatchArm { continue }
-        first_t = @fold_arm_type(c, scr_t, first_t)
+        first_t = @fold_arm_type(c, scr_t, first_t, before_arms)
     }
     if @out.len() > before_arms { return }
     @report_if_not_exhaustive(kids, scr_t)
@@ -271,19 +271,27 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
 /// arm whose body the walk refused has no type to compare, and before the first
 /// such arm there is nothing to compare AGAINST — two facts that shared the
 /// value -1 until 2026-08-19 and were told apart by their position in the code.
-fn Checker mut @fold_arm_type(arm Node, scr_t TyId, first Option[TyId]) -> Option[TyId] {
+fn Checker mut @fold_arm_type(arm Node, scr_t TyId, first Option[TyId], before_arms int) -> Option[TyId] {
     // No type: the arm reported a diagnostic and has nothing to offer, so the
     // fold carries the first one through.
-    if Some(at) = @type_arm(arm, scr_t) { @agree_arm_type(arm, at, first) } else { first }
+    if Some(at) = @type_arm(arm, scr_t) { @agree_arm_type(arm, at, first, before_arms) } else { first }
 }
 
 /// The same fold once THIS arm has a type: agree with the first one or report.
-fn Checker mut @agree_arm_type(arm Node, at TyId, first Option[TyId]) -> Option[TyId] {
+///
+/// `before_arms` (registry #1249, the #1242 class): the RELATIVE mark taken
+/// by the caller before the arm-folding loop started, not literal zero. Was
+/// `@out.len() == 0` -- true only when NOTHING in the whole FILE had ever
+/// been refused, so a match placed anywhere after the file's first refusal
+/// silently stopped reporting disagreeing arm types (K-C: the oracle refuses
+/// `match n { 0 => 1  _ => "s" }`, novac accepted it once an earlier,
+/// unrelated declaration had already been refused).
+fn Checker mut @agree_arm_type(arm Node, at TyId, first Option[TyId], before_arms int) -> Option[TyId] {
     match first {
         // The first arm with a type sets what the rest must match.
         None => Some(at)
         Some(f) => {
-            if at != f && @out.len() == 0 {
+            if at != f && @out.len() == before_arms {
                 @report_first_leaf_of([]Node.of(arm), ARMS_DISAGREE_MSG)
             } else {
                 // The arm agrees, or a diagnostic already stands: the answer
@@ -517,13 +525,24 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
     // TERMINATOR above, no `else` (the intersection rule of 274.5 s2g, fourth
     // application): an expression body falls through to the lattice, as it
     // always has.
+    // RELATIVE to THIS call, not absolute (registry #1249, the #1242 class
+    // grepped elsewhere in `check/`): `Checker.out` accumulates for the whole
+    // FILE, not per-arm, so a bare `@out.len() > 0` was true the moment
+    // ANYTHING earlier in the file was refused -- every later arm's own,
+    // cleanly-typed body then answered `None` too, and the arms-agree fold
+    // silently stopped comparing types it never received. Proven both ways:
+    // `match n { 0 => 1  _ => "s" }` alone is refused by name
+    // ("match arms produce different types"); the same match placed after an
+    // unrelated earlier refusal in the same file passed with zero diagnostics
+    // about it -- a K-C silent widening, not a crash.
+    ro before = @out.len()
     @type_expr(body)
     // None is "this arm has no type to compare": the walk refused something in
     // the body, so the lattice must not be asked about it (its miss is an ice).
     // Written as a terminator rather than an if-else: the shape guard reads an
     // `else` here as the wildcard of the KIND test above (it is a count test,
     // a different subject) -- and the early exit says the same thing plainly.
-    if @out.len() > 0 {
+    if @out.len() > before {
         @scope.release(mark)
         return None
     }

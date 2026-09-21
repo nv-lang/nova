@@ -100,3 +100,34 @@ test "arg position: a typed array literal's `.of(...)` arguments get it too (reg
     ro src = "module m\n\ntype Point value {\n    x int\n    y int\n}\n\nro pts = []Point.of(Point { x: 1, y: 2 }, Point { x: 3, y: 4 })\n"
     assert(diagnose(src) == 0, "a record constructor as a `.of(...)` argument is a call argument")
 }
+
+test "match agreement: a later match's disagreeing arms are still checked after an earlier one's own (registry #1249)" {
+    // The #1242 class, one door over: `@agree_arm_type` compared `@out.len()`
+    // against a LITERAL 0 too (found grepping `check/` for the same shape
+    // after #1242 closed), so `first`'s own arm-type disagreement pushed one
+    // diagnostic, and `second`'s equally-disagreeing arms answered `first`
+    // (its type) instead of reporting -- the fold's own comment even named
+    // the bug's excuse ("a diagnostic already stands") without noticing the
+    // excuse was checking the wrong file-wide slate. Fixed by threading the
+    // caller's own `before_arms` mark (`@type_match`'s, already taken for
+    // its OWN exhaustiveness door) through `@fold_arm_type` into
+    // `@agree_arm_type`, mirroring #1242's mark-not-absolute fix.
+    ro src = "module m\n\nfn first(n int) -> int {\n    match n {\n        0 => 1\n        _ => \"x\"\n    }\n}\n\nfn second(n int) -> int {\n    match n {\n        0 => 1\n        _ => \"s\"\n    }\n}\n"
+    assert(diagnose(src) == 2, "each function's own arm-type disagreement must be named, not just the first")
+}
+
+test "generic receiver: refused after an unrelated earlier refusal too (registry #1249, third door)" {
+    // `@report_if_generic_decl`'s OWN gate, one door short of the two above:
+    // `@report_if_misplaced_generics(kids)` is called, then `if @out.len()
+    // > 0 { return }` -- absolute again, so `broken`'s `unsafe` block
+    // (refused by the SUBSET walk, same pass that calls this door for
+    // every FnDecl in file order) made `dup`'s OWN, unrelated
+    // receiver-generics check answer "the position rule already
+    // reported" and skip the receiver loop that names `fn[T] []T @dup` --
+    // the real carrier is std's own `serde.nv:319`,
+    // `fn[T Serialize] []T @serialize[S Serializer](...)`. Fixed the same
+    // way: `before = @out.len()` taken right before the call this gate
+    // judges.
+    ro src = "module m\n\nfn broken() -> int {\n    unsafe {\n    }\n}\n\nfn[T] []T @dup(n int) -> []T {\n    @\n}\n"
+    assert(diagnose(src) == 3, "broken's two refusals plus dup's own generic-receiver refusal, not just broken's")
+}
