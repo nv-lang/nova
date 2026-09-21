@@ -17,7 +17,7 @@ module novac.check
 
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, NodeId, no_node}
-import ../sem.{branch_children, is_expr_kind, leaf_kind, ret_is_unit, is_value_tail_kind}
+import ../sem.{branch_children, is_expr_kind, leaf_kind, ret_is_unit, is_value_tail_kind, expr_leaf_name}
 
 /// Does this statement END the function on every path?
 ///
@@ -33,6 +33,24 @@ import ../sem.{branch_children, is_expr_kind, leaf_kind, ret_is_unit, is_value_t
 fn stmt_terminates(st Node) -> bool {
     ro k = st.kind_of()
     if k == NodeKind.RetStmt { return true }
+    // AN INFINITE `while true { ... }` NEVER FALLS THROUGH (hunt novac/
+    // check x K6, registry #1253): the terminator was enumerated by FORM
+    // (`RetStmt`/`IfLet`/`IfStmt`) rather than by the PROPERTY "control
+    // does not reach past this statement", and `while` was simply never
+    // added to the list. Safe to answer unconditionally without walking
+    // the body: `break` is not a form novac reads at all yet (no
+    // `BreakStmt`/`KwBreak` anywhere in `tree`/`parse`), so a literal-
+    // `true` condition admits no OTHER way out than a `return` somewhere
+    // inside, or looping forever -- both leave control right here. A
+    // non-literal condition (`while n > 0 { ... }`) is NOT covered: the
+    // loop can exit through the condition falling false, which is
+    // exactly the fall-through an `if` without `else` already refuses.
+    if k == NodeKind.WhileStmt {
+        ro wk = branch_children(st)
+        if wk.len() < 2 { return false }
+        ro cond = wk[1]
+        return cond.kind_of() == NodeKind.Name && expr_leaf_name(cond) == "true"
+    }
     // An if-let ends the function when BOTH its branches do (wave W1): the
     // then-block and the else. Without an else the None path falls through,
     // exactly as an `if` without else.

@@ -122,3 +122,19 @@ test "diagnostic naming: an unknown-in-expression refusal names the ACTUAL calle
     ro msg = diagnose_first_msg(src)
     assert(msg.contains("`panic`"), "the refusal must name the callee that actually failed")
 }
+
+test "termination: an infinite `while true { return }` is a terminator, no dead-tail refusal (hunt check x K6, N4, registry #1253)" {
+    // `stmt_terminates` enumerated the terminating FORMS (`RetStmt`,
+    // `IfLet`, `IfStmt`) rather than answering the PROPERTY "control does
+    // not fall through this statement" -- `while` was simply never on
+    // the list, so a value-returning fn whose ONLY body is `while true {
+    // return n }` was refused as ending without a value, even though the
+    // oracle accepts it and there is no way to fall through: `break` is
+    // not a form novac reads at all.
+    ro src = "module m\n\nfn f(n int) -> int {\n    while true {\n        return n\n    }\n}\n"
+    assert(diagnose(src) == 0, "an infinite `while true` with a `return` inside never falls through")
+    // Control: a NON-literal condition can still fall through when it
+    // turns false, so it must NOT be treated as a terminator.
+    ro src2 = "module m\n\nfn g(n int) -> int {\n    while n > 0 {\n        return n\n    }\n}\n"
+    assert(diagnose(src2) > 0, "a `while` with a real condition can exit without returning")
+}
