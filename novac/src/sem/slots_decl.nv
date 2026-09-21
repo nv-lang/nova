@@ -283,6 +283,30 @@ export fn const_name_at(kids []Node) -> int {
     -1
 }
 
+/// A module-level constant's full name, qualified form included
+/// (`const Type.NAME`, D200 amend #66) -- `None` only when the declaration
+/// carries no identifier at all (a parse-error shape `const_name_at` already
+/// refuses upstream).
+export fn const_full_name(kids []Node) -> Option[str] {
+    ro n = const_name_at(kids)
+    if n < 0 { return None }
+    ro base = leaf_text(kids[n])
+    if n + 2 >= kids.len() { return Some(base) }
+    ro dot = kids[n + 1]
+    ro qual = kids[n + 2]
+    if dot.kind_of() != NodeKind.LeafNode || leaf_kind(dot) != TokenKind.Dot {
+        return Some(base)
+    } else {
+        // Not a qualifier: the bare name is the whole answer.
+    }
+    if qual.kind_of() != NodeKind.LeafNode || leaf_kind(qual) != TokenKind.Ident {
+        return Some(base)
+    } else {
+        // The qualified form: two leaves, one name.
+    }
+    Some("${base}.${leaf_text(qual)}")
+}
+
 /// The slot of a constant's INITIALIZER: the child right after `=`.
 ///
 /// By the ASSIGN leaf rather than by a fixed index, because a declared type may

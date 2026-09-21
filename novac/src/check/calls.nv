@@ -36,6 +36,7 @@ import ../builtins.{TypeKind}
 import ../sem.{LitArg, ArgSpec, CallForm, CalleeTarget, decl_of_ty, Ctx, CheckOut, FnRow, raw_row, coerce_row}
 import ../sem.{subst_type, slot_binding_in, representation_of, generic_names, is_expr_kind, branch_children}
 import ../sem.{ty_source_name, bind_fault, bind_slots, identity_slots, no_row, SlotBind}
+import ../sem.{ArgClass, ParamMode, ParamDef, mode_admits}
 import ../sem.{shape_of, call_callee_text}
 import ../types.{TyId, no_ty, is_ty}
 import ../resolve.{FnLookup, missing_sig_of}
@@ -71,6 +72,7 @@ fn Checker mut @refuse_free_call(kids []Node, cname str, key []ArgSpec) -> () {
     } else {
         // The name is known, so the cause is the shape of the call.
     }
+    mut single_row = no_row()
     // BINDING BEFORE ARITY (wave 4). With defaults and named arguments, "how
     // many arguments" is no longer the first question -- `bump(5, 2)` writes
     // exactly as many as the declaration takes and is still refused, and
@@ -82,7 +84,8 @@ fn Checker mut @refuse_free_call(kids []Node, cname str, key []ArgSpec) -> () {
             @report_first_leaf_of(kids, why)
             return
         } else {
-            // It binds: the cause is the types, named below.
+            // It binds: the cause is a type or a BINDING CLASS, named below.
+            single_row = row
         }
     } else {
         // Overloaded (or unknown): the questions below answer.
@@ -90,8 +93,31 @@ fn Checker mut @refuse_free_call(kids []Node, cname str, key []ArgSpec) -> () {
     // The same question with the TYPES removed: if nothing fits by arity
     // alone, the arity is the cause and the types never mattered.
     match @res.lookup(@ctx.fns, @ctx.tys, cname, free_call_key(kids, @scope), CallForm.FreeCall) {
-        FnUnknown => @report_first_leaf_of(kids,
-            "outside the subset: no function of this name takes this many arguments")
+        FnUnknown => {
+            // registry #1255: `free_call_key` erases TYPE (every slot is
+            // `no_ty()`, which `type_admits` accepts unconditionally) but it
+            // does NOT erase CLASS -- `unknown_args` still fills the real
+            // `ArgClass` per argument, and `fits` still asks `mode_admits`
+            // with it. So a call whose one declaration's SHAPE binds fine
+            // (checked above) but whose argument is the wrong CLASS for its
+            // parameter's mode (`bump(mut x int)` called `bump(x)` with a
+            // `ro x` -- one parameter, one argument) reaches here too, and
+            // "no function of this name takes this many arguments" named the
+            // wrong axis: the count was never in question, the BINDING was
+            // (measured on p14, the K4 hunt's #1255). When the one known
+            // declaration's own FORM matches this call (it is a free
+            // function, not a method reached the wrong way), the real cause
+            // is a slot `@refuse_arg_type` can name -- type OR, since this
+            // fix, class. A form mismatch (the one declaration is a method)
+            // is still an arity-shaped question this door cannot answer more
+            // precisely, and keeps the arity text.
+            if raw_row(single_row) >= 0 && !@ctx.fns.rows[raw_row(single_row)].has_recv {
+                @refuse_arg_type(kids, single_row, key, CallForm.FreeCall)
+            } else {
+                @report_first_leaf_of(kids,
+                    "outside the subset: no function of this name takes this many arguments")
+            }
+        }
         // Several rows take this many arguments and none of them fits the
         // types. Naming a position would mean naming ONE candidate as the
         // intended one, and which was intended is exactly what is unknown.
@@ -101,11 +127,33 @@ fn Checker mut @refuse_free_call(kids []Node, cname str, key []ArgSpec) -> () {
     }
 }
 
+/// registry #1255: WHY a mode (P14: `ro`/`mut`/`consume`) refuses this
+/// argument's class, worded like the D102 binding refusals beside it -- no
+/// "outside the subset" prefix, because a class mismatch is not a subset
+/// limit either: the oracle refuses it too, under its own name
+/// (`E_MUT_ARG_NOT_MUTABLE`, checked directly against
+/// `nova-cli/target/release/nova.exe check` on the carrier below).
+/// `ModeRo` never reaches here -- `mode_admits(ModeRo, _)` is unconditionally
+/// true (P14: `ro` takes anything) -- so the arm is unreachable and loud
+/// about it, not a silently-wrong string.
+fn mode_refusal_msg(p ParamDef, got ArgClass) -> str {
+    match p.mode {
+        ModeRo => ice("check: a `ro` parameter's mode never refuses an argument's class (P14)")
+        ModeMut => "parameter `${p.name}` needs a mutable place (`mut`, or a `consume` binding) -- this argument is not one (P14)"
+        ModeConsume => "parameter `${p.name}` needs ownership (an owned temporary, or a binding declared `consume`) -- this argument is not one (P14)"
+    }
+}
+
 /// The one candidate of this arity did not fit: name the FIRST position whose
-/// type differs, and say when a `#coerce` pair (D429) makes the call legal.
-/// The FORM decides the pair's arm of the message: the free coercing stage
-/// runs before any refusal, the method one has not arrived (E2-b3 M3 tail) --
-/// and each text must claim only the stage its path actually ran (D420).
+/// type differs or whose CLASS the parameter's mode refuses (registry #1255:
+/// a class mismatch used to reach only the arity-shaped "no function of this
+/// name takes this many arguments", one door up, because the lookup that
+/// filters by class has no way to say WHICH axis failed -- this door already
+/// walks every slot, so it is the one that can), and say when a `#coerce`
+/// pair (D429) makes the call legal. The FORM decides the pair's arm of the
+/// message: the free coercing stage runs before any refusal, the method one
+/// has not arrived (E2-b3 M3 tail) -- and each text must claim only the stage
+/// its path actually ran (D420).
 fn Checker mut @refuse_arg_type(kids []Node, row FnRow, key []ArgSpec, form CallForm) -> () {
     ro fd = @ctx.fns.rows[raw_row(row)]
     // BY SLOT, not by written position (wave 4): with a named argument the two
@@ -122,7 +170,19 @@ fn Checker mut @refuse_arg_type(kids []Node, row FnRow, key []ArgSpec, form Call
         // no type to disagree with. `continue` IS the other branch (P31 form 2).
         if at < 0 { continue }
         ro want = @ctx.fns.params[fd.param_off + s]
-        if want.type_id == key[at].type_id { continue }
+        if want.type_id == key[at].type_id {
+            // The TYPE agrees. The CLASS may still not (P14) -- checked only
+            // now, because a type disagreement is judged first below and must
+            // not be shadowed by a class question at some OTHER slot.
+            if mode_admits(want.mode, key[at].cls) {
+                continue
+            } else {
+                @report_first_leaf_of(kids, mode_refusal_msg(want, key[at].cls))
+                return
+            }
+        } else {
+            // The type itself disagrees: judged below, as before this fix.
+        }
         match coerce_row(@ctx, key[at].type_id, want.type_id) {
             // D429: a pair IS declared for this position, and since wave 5 a
             // pair novac can EMIT is taken by the coercing stage before any

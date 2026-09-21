@@ -111,6 +111,37 @@ test "arg position: a typed array literal's `.of(...)` arguments get it too (reg
     assert(diagnose(src) == 0, "a record constructor as a `.of(...)` argument is a call argument")
 }
 
+test "match agreement: a later match's disagreeing arms are still checked after an earlier one's own (registry #1249)" {
+    // The #1242 class, one door over: `@agree_arm_type` compared `@out.len()`
+    // against a LITERAL 0 too (found grepping `check/` for the same shape
+    // after #1242 closed), so `first`'s own arm-type disagreement pushed one
+    // diagnostic, and `second`'s equally-disagreeing arms answered `first`
+    // (its type) instead of reporting -- the fold's own comment even named
+    // the bug's excuse ("a diagnostic already stands") without noticing the
+    // excuse was checking the wrong file-wide slate. Fixed by threading the
+    // caller's own `before_arms` mark (`@type_match`'s, already taken for
+    // its OWN exhaustiveness door) through `@fold_arm_type` into
+    // `@agree_arm_type`, mirroring #1242's mark-not-absolute fix.
+    ro src = "module m\n\nfn first(n int) -> int {\n    match n {\n        0 => 1\n        _ => \"x\"\n    }\n}\n\nfn second(n int) -> int {\n    match n {\n        0 => 1\n        _ => \"s\"\n    }\n}\n"
+    assert(diagnose(src) == 2, "each function's own arm-type disagreement must be named, not just the first")
+}
+
+test "generic receiver: refused after an unrelated earlier refusal too (registry #1249, third door)" {
+    // `@report_if_generic_decl`'s OWN gate, one door short of the two above:
+    // `@report_if_misplaced_generics(kids)` is called, then `if @out.len()
+    // > 0 { return }` -- absolute again, so `broken`'s `unsafe` block
+    // (refused by the SUBSET walk, same pass that calls this door for
+    // every FnDecl in file order) made `dup`'s OWN, unrelated
+    // receiver-generics check answer "the position rule already
+    // reported" and skip the receiver loop that names `fn[T] []T @dup` --
+    // the real carrier is std's own `serde.nv:319`,
+    // `fn[T Serialize] []T @serialize[S Serializer](...)`. Fixed the same
+    // way: `before = @out.len()` taken right before the call this gate
+    // judges.
+    ro src = "module m\n\nfn broken() -> int {\n    unsafe {\n    }\n}\n\nfn[T] []T @dup(n int) -> []T {\n    @\n}\n"
+    assert(diagnose(src) == 3, "broken's two refusals plus dup's own generic-receiver refusal, not just broken's")
+}
+
 test "diagnostic naming: an unknown-in-expression refusal names the ACTUAL callee (hunt check x K4, N7)" {
     // The message used to say "println is a statement here, not a value"
     // UNCONDITIONALLY, regardless of which name actually failed -- true
@@ -168,6 +199,27 @@ test "binding mode: assignment to a `ro` target is refused in all four shapes (r
     assert(diagnose(ctrl_field) == 0, "a field through a `mut`-bound receiver must stay writable")
 }
 
+test "qualified module constant: `Type.NAME` resolves through its own registry key (D200 amend #66)" {
+    // `const BigInt.ZERO BigInt = zero()` then a use site `BigInt.ZERO.sign`
+    // -- the SAME dotted shape a bare-variant read uses (`@judge_type_head_variant`),
+    // so the qualified-constant branch has to answer BEFORE the "not a sum"
+    // refusal would otherwise claim the read. Proven the other way too: with
+    // the resolution branch removed, this same source refused twice (the
+    // qualified-name read AND, upstream, the parser's own `E_NOVAC_SUBSET`
+    // fallback before `@const_decl`/`@let_decl` learned the `.` branch).
+    ro src = "module m\n\ntype BigInt value {\n    sign int\n}\n\nfn zero() -> BigInt => BigInt { sign: 0 }\n\nconst BigInt.ZERO BigInt = zero()\n\nfn use_it() -> int {\n    BigInt.ZERO.sign\n}\n"
+    assert(diagnose(src) == 0, "a qualified constant's own type must answer its use site, not the sum-variant refusal")
+}
+
+test "qualified module constant: an unknown qualified name still falls through to the sum refusal" {
+    // The registry lookup answers `None` for a name nobody declared, and the
+    // pre-existing "not a sum" refusal below still has to fire -- the new
+    // branch must not swallow every dotted read on a non-sum type, only the
+    // ones a `const Type.NAME` actually claims.
+    ro src = "module m\n\ntype BigInt value {\n    sign int\n}\n\nfn use_it() -> int {\n    BigInt.NOPE\n}\n"
+    assert(diagnose(src) > 0, "an undeclared qualified name is not a free pass past the sum-variant refusal")
+}
+
 test "literal magnitude: the eager Lit-walk door defers to the row door, not `int`'s own bound (registry #1250)" {
     // `int_text_fits` used to bound EVERY literal by `int`'s own 64-bit
     // signed range, before the literal's own position (a call argument, a
@@ -219,6 +271,97 @@ test "literal magnitude: a match pattern's own literal is judged too (registry #
 
     ro small_pattern = "module m\n\nfn f(x int) -> int {\n    match x {\n        7 => 1\n        _ => 2\n    }\n}\n"
     assert(diagnose(small_pattern) == 0, "an ordinary small pattern literal must stay clean")
+}
+
+test "tail if: a tail `if` whose branches both return needs no value (registry #1252)" {
+    // `tail_rules.nv`'s own `stmt_terminates`/`block_terminates` already
+    // answers correctly that this `if` ends the function -- both branches
+    // `return`. `typing.nv`'s tail-value walk asked the SAME tail a second
+    // time, through `@type_if_value` -> `@type_branch_value`, which only
+    // understands a tail as an expression and refused EACH `return`-ending
+    // branch as "ends without a value" -- two refusals for code the oracle
+    // accepts outright, and the ordinary way to write such a function.
+    ro src = "module m\n\nfn classify(n int) -> int {\n    if n > 0 {\n        return 1\n    } else {\n        return 2\n    }\n}\n"
+    assert(diagnose(src) == 0, "both branches returning is not a missing tail value")
+}
+
+test "tail if: one branch returns, the other's value is the if's value (registry #1252, mixed)" {
+    // The narrower case `stmt_terminates` on the WHOLE `if` answers false for
+    // (only one branch terminates), so the `if` still needs a value -- but
+    // the terminating branch must not be asked for one either: only the
+    // branch that can fall through carries the type.
+    ro ok = "module m\n\nfn classify(n int) -> int {\n    if n > 0 {\n        return 1\n    } else {\n        2\n    }\n}\n"
+    assert(diagnose(ok) == 0, "the non-terminating branch's type is the if's type, unconditionally")
+    ro mismatch = "module m\n\nfn classify(n int) -> int {\n    if n > 0 {\n        return 1\n    } else {\n        \"s\"\n    }\n}\n"
+    assert(diagnose(mismatch) > 0, "the non-terminating branch's type must still agree with the fn's own return type")
+}
+
+/// The message half of `diagnose()`: the first diagnostic's own text, for
+/// tests that judge WORDING, not just count -- registry #1255 is a wording
+/// bug (the vardict is already right; the CAUSE it names is not).
+fn diagnose_msg(text str) -> str {
+    ro src = SourceText { text }
+    ro tree = parse(lex(text))
+    ro (diags, _) = check(tree, src, collect(tree, []Node.new(), InteropTable.new()))
+    if diags.len() == 0 { return "" }
+    diags[0].message
+}
+
+test "free call refusal: a binding-CLASS mismatch is named by its own rule, not by arity (registry #1255)" {
+    // `fn bump(mut x int)` called `bump(x)` with a `ro x`: one parameter, one
+    // argument -- the untyped-but-CLASSED key `free_call_key` still fails
+    // (P14: `mut` needs a mutable place), so the arity-shaped lookup answers
+    // `FnUnknown` for a call whose count was never wrong. Before this fix the
+    // text said so anyway ("no function of this name takes this many
+    // arguments"), because nothing between the binding-shape door
+    // (`@binding_refusal`, which only reads POSITIONAL/NAMED/DEFAULT faults,
+    // not class) and the arity-lookup door asked P14's own question. Fixed by
+    // routing the single-known-declaration case straight to
+    // `@refuse_arg_type`, itself taught to ask `mode_admits` per slot.
+    ro src = "module m\n\nfn bump(mut x int) -> int => x\n\nfn use_it() -> int {\n    ro x = 1\n    bump(x)\n}\n"
+    ro msg = diagnose_msg(src)
+    assert(!msg.contains("takes this many arguments"), "the count was never the cause: one parameter, one argument")
+    assert(msg.contains("mutable place") || msg.contains("P14"), "the real cause -- the argument's binding class -- must be named")
+}
+
+test "free call refusal: a matching binding class still checks cleanly (registry #1255, control)" {
+    // The same declaration, called with a `mut` binding: admits by P14, and
+    // the call resolves with no refusal at all.
+    ro src = "module m\n\nfn bump(mut x int) -> int => x\n\nfn use_it() -> int {\n    mut x = 1\n    bump(x)\n}\n"
+    assert(diagnose(src) == 0, "a mut argument for a mut parameter binds; nothing to refuse")
+}
+
+test "method call refusal: a mut-receiver method on a ro binding is named by its own rule (registry #1255 twin)" {
+    // `@refuse_method_call`'s own copy of the same shape `@refuse_free_call`
+    // had (registry #1255): the receiver is parameter zero (plan 273) and
+    // carries a class exactly like any other argument, so `@method_arity_key`
+    // erasing TYPE (not CLASS) means a `mut`-receiver method called through a
+    // `ro` binding fails the arity-shaped lookup too -- confirmed on the
+    // UNFIXED code: the message was "outside the subset: this type has no
+    // such method in the declarations novac was handed", naming a method
+    // that plainly exists, over an arity that was never one argument short.
+    // Fixed the same way as the free-call door: routed to `@refuse_arg_type`,
+    // which now asks `mode_admits` for the receiver slot too.
+    ro src = "module m\n\ntype Pt { n int }\n\nfn Pt mut @bump() -> int {\n    @n = @n + 1\n    @n\n}\n\nfn use_it() -> int {\n    ro p = Pt { n: 0 }\n    p.bump()\n}\n"
+    ro msg = diagnose_msg(src)
+    assert(!msg.contains("no such method"), "the method plainly exists; naming it missing lied about the cause")
+    assert(msg.contains("mutable"), "the real cause -- the receiver's binding class -- must be named")
+}
+
+test "lone ? (Try operator): named refusal, not the anonymous parser fallback (registry #1264)" {
+    // `a?` (D85) is legal Nova -- the oracle compiles it as
+    // early-return propagation on Option/Result -- but novac does not
+    // implement its semantics yet. Before this fix a lone `?` lexed
+    // straight to `ErrorTok` (lex.nv's own comment used to say so
+    // explicitly) and the parser's generic fallback refused it with no
+    // name at all, the same "novac did not parse this" text a genuinely
+    // malformed program gets. Now it reaches the tree as its own
+    // `NodeKind.Try` and is refused BY NAME in the checker, mirroring the
+    // established rule for the sibling `?? return` form (D86, expr.nv).
+    ro src = "module m\n\nfn maybe() -> int {\n    5\n}\n\nfn use_it() -> int {\n    ro v = maybe()?\n    v\n}\n"
+    ro msg = diagnose_msg(src)
+    assert(!msg.contains("did not parse"), "a legal form must not read as a syntax error")
+    assert(msg.contains("not compiled yet"), "the refusal must name the operator, not stay anonymous")
 }
 
 test "if-let: a QUALIFIED head naming a non-Some variant reaches the same named refusal as a bare one (registry #1259)" {

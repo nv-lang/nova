@@ -1,0 +1,68 @@
+// УЛИКА, не тест (guard-репозиторий, база ноль -- см. docs/dev/prompts/... /
+// reference-repro-evidence-nv-txt в памяти помощника). Найдено 2026-09-21
+// окном-помощником при работе над #1239/qualified-name (novac), инструментируя
+// `leaf_text(vt)` внутри `novac/src/check/variant_rules.nv` @judge_type_head_variant
+// однократными content-gated `ice()`-пробами -- OOM у novac.exe свёлся к пустой
+// строке здесь же, под ОРАКУЛОМ, без единого диагностика.
+//
+// ПРАВИЛО (задокументировано, не выдумано): spec/decisions/02-types.md, раздел
+// "Уточнение и расширение sum-coercion" (~строка 1600) -- значение `expr`
+// авто-оборачивается в `W.C(expr)`, если `W` -- sum с РОВНО ОДНИМ unary-вариантом
+// `C(Y)`, чей `Y` совпадает "родом" с типом `expr`.
+//
+// ЗАМЕР 1 (свежее значение, НЕ из match) -- РАБОТАЕТ ПРАВИЛЬНО:
+//   ro tok = Tok { text: "ZERO" }
+//   print(leaf_text(tok))   // "ZERO" -- auto-wrap в Nd.Leaf(tok), корректно
+//
+// ЗАМЕР 2 (round-trip: то же значение извлечено ЧЕРЕЗ match из СУЩЕСТВУЮЩЕГО
+// Nd.Leaf, затем передано туда же, где авто-wrap оборачивает его ОБРАТНО) --
+// ТИХО ВОЗВРАЩАЕТ ПУСТУЮ СТРОКУ, ни диагностика, ни крах, exit=0, stdout и
+// stderr оба пусты побайтово (проверено xxd):
+//   ro tok = Tok { text: "ZERO" }
+//   ro node = Nd.Leaf(tok)
+//   match node {
+//       Leaf(t) => print(leaf_text(t))   // ожидание "ZERO", факт: ""
+//       Branch { .. } => print("branch")
+//   }
+//
+// Собрано и прогнано ЧЕРЕЗ ОРАКУЛ (nova-cli/target/release/nova.exe build,
+// полный C-codegen, НЕ novac) -- значит это дефект ОРАКУЛА, а не самохостинга;
+// в novac.exe эта же форма (тип Token с тремя полями, не одним) проявилась
+// ХУЖЕ -- как `nova: out of memory` (мусорный byte_len ~1.19e12 вместо 4),
+// то есть тот же класс, разная манифестация в зависимости от layout структуры.
+//
+// Файл ниже -- ТОЧНАЯ форма замера 2 (расширенная, с промежуточными print для
+// локализации), сохранённая как была собрана и прогнана:
+
+module standalone.probe_sumwrap_roundtrip
+
+type Tok { text str }
+
+type Nd enum
+    | Leaf(Tok)
+    | Branch { children []Nd }
+
+fn leaf_text(n Nd) -> str {
+    match n {
+        Leaf(t) => t.text
+        Branch { .. } => "not a leaf"
+    }
+}
+
+fn main() Io -> () {
+    ro tok = Tok { text: "ZERO" }
+    ro node = Nd.Leaf(tok)
+    match node {
+        Leaf(t) => {
+            print("A:")
+            print(t.text)           // печатает "ZERO" -- t.text напрямую цел
+            print("B:")
+            print(leaf_text(t))     // ожидание "ZERO", факт: "" (пусто)
+        }
+        Branch { .. } => print("branch")
+    }
+}
+
+// Наблюдённый вывод (побайтово, через xxd, exit=0, stderr пуст):
+//   A:ZEROB:
+// -- то есть после "B:" ничего вообще, ни байта, ни новой строки.

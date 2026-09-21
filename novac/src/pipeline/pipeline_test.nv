@@ -407,11 +407,22 @@ test "a static method on a GENERIC type is refused by name, never iced" {
 fn P[A].mk(a A) -> int => 1\n\
 fn main() { println(1) }"
     ro (diags, _) = compile_to_c(src, std_decls())
-    // Named, and named ONCE: an ice would be `E_NOVAC_ICE`, and a cascade would
-    // be two diagnostics about one form.
-    assert(diags.len() == 1)
-    assert(!diags[0].message.contains("internal compiler error"))
-    assert(diags[0].message.contains("generic parameters are not compiled yet"))
+    // Named, and named per FORM: an ice would be `E_NOVAC_ICE`, and a
+    // cascade would be a SECOND diagnostic about the SAME form. `type P[A]`'s
+    // own generic declaration and `fn P[A].mk`'s generic receiver are two
+    // distinct forms, each refused once -- `type P[A]` alone (no method)
+    // already produces its own diagnostic, confirmed by isolating it.
+    // Before registry #1249's fix (each declaration's own gate threads its
+    // own `before` mark instead of comparing against an absolute
+    // `@out.len() > 0`), the type's diagnostic firing first silently
+    // swallowed the method's -- this test's old count of 1 was pinning that
+    // swallow, not the ICE guard the comment above describes; #1249 restored
+    // the method's own diagnostic without reintroducing the ICE.
+    assert(diags.len() == 2)
+    for d in diags {
+        assert(!d.message.contains("internal compiler error"))
+        assert(d.message.contains("generic parameters are not compiled yet"))
+    }
 }
 
 test "a handed-over type is KNOWN, and the file's own declaration of that name wins" {
@@ -642,13 +653,11 @@ test "an integer literal too large for `int` is refused, not silently wrapped (#
     ro std = std_decls()
     ro (d1, _) = compile_to_c("fn main() {\n println(18446744073709551616)\n}", std)
     assert(d1.len() == 1)
-    // Registry #1250 widened the eager door's own bound from `int`'s own
-    // range to `u64`'s -- the widest row this language has -- so it no
-    // longer answers "does not fit in `int`" (that was never this door's
-    // own question; it was the ROW door's, asked later once a position
-    // names a type). `2^64` is one past `u64::MAX` too, so it stays
-    // refused, with the wording that actually matches what this door now
-    // asks: does it fit ANY row at all.
+    // Text updated by registry #1250: the eager door now bounds by the
+    // WIDEST row the language has (`u64`), not `int`'s own -- so its
+    // message asks "does this fit ANY row" rather than naming `int`
+    // specifically, matching what is actually known at this untyped
+    // position.
     assert(d1[0].message.contains("does not fit any integer type"))
 
     ro (d2, _) = compile_to_c("fn main() {\n println(9999999999999999999999999999999999999)\n}", std)

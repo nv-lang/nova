@@ -45,6 +45,14 @@ fn Cursor mut @export_decl() -> Node {
         kids.push(@import_decl())
     } else if k == TokenKind.KwConst {
         kids.push(@const_decl())
+    } else if k == TokenKind.KwRo {
+        // `export ro NAME = expr` (D184's module-level `Item::Let`) -- the
+        // wrapper knew `const` but not its own `ro` twin, so EVERY exported
+        // module-level `ro` (qualified or not) fell to the `else` below and
+        // came back as an unnamed parser fallback, however that binding was
+        // itself perfectly readable by `@let_decl` alone (df13dff0d taught
+        // the bare, unwrapped form; this teaches the wrapper the same word).
+        kids.push(@let_decl())
     } else {
         // `export` in front of something that is not a declaration. The leaf is
         // already in the tree (nothing is lost); naming the mistake is check's
@@ -195,7 +203,20 @@ fn Cursor mut @attr_decl() -> Node {
 /// most of them happen to have.
 fn Cursor mut @const_decl() -> Node {
     mut kids = []Node.of(@take()) // KwConst
-    @push_expected(kids, TokenKind.Ident) // the name
+    @push_expected(kids, TokenKind.Ident) // the name, or the TYPE of a qualified name
+    // A QUALIFIED module-level name (D200 amend #66): `const Type.NAME` reads
+    // exactly like `Type.method` does everywhere else in the grammar -- a
+    // `Dot` right after the leading identifier, with another identifier
+    // after it. Read here, not deferred to a generic "name" door, because
+    // this cursor already holds the two leaves losslessly; the checker
+    // decides whether the qualifier resolves to a real type, this door only
+    // reads the shape the language has.
+    if @peek() == TokenKind.Dot && @peek(skip: 1) == TokenKind.Ident {
+        kids.push(@take()) // '.'
+        kids.push(@take()) // the qualified name itself
+    } else {
+        // An unqualified name: the ordinary door below answers.
+    }
     if @peek() != TokenKind.Assign {
         // A declared type stands between the name and `=`, read by the ONE
         // type-reference door (274.5 wave B1 put fields on it too).
@@ -223,7 +244,16 @@ fn Cursor mut @const_decl() -> Node {
 /// follow-up, not bundled into this fix for `ro`.
 fn Cursor mut @let_decl() -> Node {
     mut kids = []Node.of(@take()) // KwRo
-    @push_expected(kids, TokenKind.Ident) // the name
+    @push_expected(kids, TokenKind.Ident) // the name, or the TYPE of a qualified name
+    // A QUALIFIED module-level name (D200 amend #66, `ro` twin of the
+    // `const` form right above -- see its own comment for the reason this
+    // reads `Dot Ident` directly rather than through a generic name door).
+    if @peek() == TokenKind.Dot && @peek(skip: 1) == TokenKind.Ident {
+        kids.push(@take()) // '.'
+        kids.push(@take()) // the qualified name itself
+    } else {
+        // An unqualified name: the ordinary door below answers.
+    }
     if @peek() != TokenKind.Assign {
         kids.append(@type_ref())
     } else {

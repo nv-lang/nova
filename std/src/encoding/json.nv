@@ -442,11 +442,10 @@ const B_UPPER_F   u8 = 0x46  // 'F'
 // Текущий байт (Option, None на конце входа). O(1). Честный байт — не char
 // (см. выше).
 fn Lexer @peek() -> Option[u8] {
-    ro bytes = @input.bytes()
-    if @pos >= bytes.len() {
+    if @pos >= @input.byte_len() {
         None
     } else {
-        Some(bytes[@pos])
+        Some(unsafe { @input.ptr().read_at(@pos) })
     }
 }
 
@@ -464,9 +463,8 @@ fn Lexer mut @bump(b u8) -> () {
 }
 
 fn Lexer mut @advance() -> Option[u8] {
-    ro bytes = @input.bytes()
-    if @pos >= bytes.len() { return None }
-    ro b = bytes[@pos]
+    if @pos >= @input.byte_len() { return None }
+    ro b = unsafe { @input.ptr().read_at(@pos) }
     @bump(b)
     Some(b)
 }
@@ -614,7 +612,7 @@ fn Lexer mut @read_string() -> Result[str, ParseJsonError] {
             err = Some(UnexpectedEof { @line, @col })
             done = true
         } else {
-            ro b = bytes[@pos]
+            ro b = unsafe { @input.ptr().read_at(@pos) }
             if b == 0x22 {               // '"' — конец строки
                 if @pos > run_start { buf.append(bytes[run_start..@pos]) }
                 @bump(b)

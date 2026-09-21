@@ -1388,8 +1388,40 @@
 # 2026-09-21, интегратор: rows 1175 -> 1176, max 1225 -> 1226. №1226 —
 # помощник нашёл, что голый `unsafe fn` не имеет ветки ни в одном из двух
 # диспетчеров верхнего уровня (parse.nv, decls.nv) — третий вид корня.
-rows=1209
-max=1257
+# 2026-09-21, интегратор: rows 1212 -> 1213, max 1260 -> 1261. №1261 —
+# помощник (nova-a5) нашёл only_row_of-подозрение при std-масштабе, заведено
+# под номером 1258 (коллизия: интегратор уже занял 1258 на другой ветке для
+# несвязанной находки, обе ветки не видели решения друг друга) — при слиянии
+# переномерован в 1261; сама находка закрыта тем же коммитом-помощником как
+# ложная тревога (name collision с std-методом Lexer.bump).
+# 2026-09-21, интегратор: rows 1213 -> 1214, max 1261 -> 1262. №1262 —
+# окно Карины (nova-46) нашло if-let не читает квалифицированную голову
+# варианта (parse.nv:614-616), заведено под номером 1259 — та же коллизия
+# класса, что и №1261: номер уже занят на этой ветке, обе стороны писали
+# одновременно и не видели решения друг друга; переномеровано в 1262.
+# 2026-09-21, интегратор: rows 1214 -> 1215, max 1262 -> 1263. №1263 —
+# три модульных теста novac/src/pipeline/ пинили поведение, которое #1249/
+# #1250 уже честно изменили (волна check_test.nv их не задела, другой
+# каталог); тексты и счётчики обновлены под текущий, оракул-согласованный
+# вывод, найдено и закрыто интегратором тем же коммитом.
+# 2026-09-21, интегратор: rows 1215 -> 1216, max 1263 -> 1264. №1264 —
+# помощник (nova-a5) нашла: одиночный `?` (Try на Option) легален у оракула,
+# в novac падает в безымянный fallback (лексер молча отдаёт ErrorTok вместо
+# именованного отказа) — пять носителей известны (resolve.nv/sem.nv/
+# defs.nv), фикс широкий (новый NodeKind + обход 42 файлов match-exhaustive),
+# оставлена открытой. Тем же слиянием восстановлена закрывающая часть
+# строки #1249 (пропадала при более раннем слиянии, дословно вернула
+# nova-a5 из ff0ceba90) и закрыта const-половина строки #1258 (nova-a5,
+# 5d02172ec) — обе правки были на моём HEAD стальными/открытыми до этого
+# слияния, число строк не меняли (правка ТЕКСТА существующих строк).
+# 2026-09-21, интегратор: rows 1216 -> 1217, max 1264 -> 1265. №1265 —
+# собственная находка: два стража реестра (check-registry-entry-shape.sh,
+# check-registry-single-verdict.sh) тратили 3-8 минут на шаг вместо секунд —
+# O(n*m) shell-цикл `while read` + `grep` на каждый элемент, переписан на
+# `comm`; оба селфтеста PASS, замер 3-8 мин -> под 4с на реестре той же
+# правкой.
+rows=1217
+max=1265
 # 2026-09-21, integrator: row 1242 added -- new checker ICE exposed by
 # Carina's #1237 fix (channel.nv:409), same class as #1229, blocks S5
 # 2026-09-21, integrator: row 1244 added -- assistant found effect row
@@ -1447,6 +1479,24 @@ max=1257
 # causes all already resolved (novac file-size/shell.tpl.c closed by
 # later commits) or pre-existing known flake (presume_446_stress,
 # registry #848). rows 1208->1209, max 1256->1257.
+# 2026-09-21, integrator: merged Carina's third p274-novac sync (#1233
+# fully closed, #1240 escalated to owner, #1249 items closed). Dropped
+# stale duplicates of already-numbered rows 1242/1246/1247/1248/1249;
+# her new TBD (qualified module-level const/ro name, Type.NAME, not
+# parsed at all) numbered as row 1258. rows 1209->1210, max 1257->1258.
+# 2026-09-21, integrator: row 1259 added -- stale/mixed CI redness on
+# f2a60b26a (run:35581346396), six causes: two real (module-donor
+# header on new diagnostics.nv, shell.tpl.c drift from nova-6e's D216
+# fix) fixed this same stretch (regen + rebuild + 46-fixture smoke),
+# four already stale/resolved by tree movement. rows 1210->1211,
+# max 1258->1259.
+# 2026-09-21, integrator: row 1260 added -- assistant found a silent
+# oracle miscompilation, sum-variant auto-wrap round-trip through a
+# match empties a string (compiler-codegen/src/types/mod.rs,
+# single_wrap_candidates/try_wrap_leaf), K1 per owner's 2026-08-16
+# silent-miscompile policy. Dropped a stale duplicate of #1256 and a
+# stale export-ro TBD (already numbered as #1258). rows 1211->1212,
+# max 1259->1260.
 # batch measure again. rows 1193->1194, max 1241->1242.
 
 # 2026-09-21, integrator: rows 1190->1193, max 1238->1241 -- measured after

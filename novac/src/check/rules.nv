@@ -79,7 +79,7 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
                         EmptyBrackets |
                         KwConsume | KwModule | KwIf | KwReturn | KwFor | KwIn | KwWhile | KwType | KwMatch |
                         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern |
-                        KwUnsafe | Hash | Ident | IntLit | FloatLit | StrLit | CharLit | Question2 |
+                        KwUnsafe | Hash | Ident | IntLit | FloatLit | StrLit | CharLit | Question2 | Question |
                         StrFrag | InterpOpen | InterpClose | RParen | LBrace |
                         RBrace | RBracket | Dot | Comma | Plus | Minus | Slash | Lt | Le | Gt |
                         Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret | Shl |
@@ -568,8 +568,19 @@ fn Checker mut @report_if_generic_form(kids []Node) -> () {
 /// The POSITION rule runs first either way, so a misplaced form is told it is
 /// misplaced rather than unsupported.
 fn Checker mut @report_if_generic_decl(kids []Node) -> () {
+    // RELATIVE to THIS call, not absolute (registry #1249, the #1242 class
+    // grepped by a peer window, confirmed by this window with a real
+    // carrier from std: `serde.nv:319`'s `fn[T Serialize] []T @serialize[S
+    // Serializer](...)`). `Checker.out` accumulates for the whole FILE, so
+    // a bare `@out.len() > 0` was true the moment ANYTHING earlier in the
+    // file was refused (even an unrelated `unsafe` block) -- every LATER
+    // declaration's own receiver-generics check then answered "the
+    // position rule already reported" and skipped the receiver-loop below
+    // in silence, letting `fn[T] []T @map[U]` (E2-b3, not admitted here)
+    // through unrefused once anything else in the file had already failed.
+    ro before = @out.len()
     @report_if_misplaced_generics(kids)
-    if @out.len() > 0 {
+    if @out.len() > before {
         // The position rule already reported: one mistake, one diagnostic.
         return
     } else {

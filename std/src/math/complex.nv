@@ -328,13 +328,12 @@ export fn str @to_complex() -> Result[Complex, ParseComplexError] {
 // прямой byte-доступ O(1) вместо ретрактированного `chars().nth(i)` O(n)
 // скана (D260-амендмент).
 fn split_re_im(body str) -> Option[(str, str)] {
-    ro bb = body.bytes()
     mut i = 1                              // пропускаем знак re если есть
     while i < body.byte_len() {
-        ro b = bb[i]
+        ro b = unsafe { body.ptr().read_at(i) }
         if b == ('+' as u8) || b == ('-' as u8) {
             // Не часть экспоненты `1e-5`?
-            ro prev = bb[i - 1]
+            ro prev = unsafe { body.ptr().read_at(i - 1) }
             if prev != ('e' as u8) && prev != ('E' as u8) {
                 ro re_s = body[..i]
                 ro im_s = body[i..]

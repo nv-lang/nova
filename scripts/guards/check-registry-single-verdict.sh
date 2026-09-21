@@ -123,12 +123,20 @@ if [ "$ROWS_SCANNED" -lt "$NS_ROWS_BASE" ]; then
 fi
 
 NS_NOW=$(printf '%s\n' "$OUT" | sed -n 's/^row \([0-9][0-9]*\): verdict without a status$/\1/p' | sort -n)
-NS_NEW=$(printf '%s\n' "$NS_NOW" | grep -v '^$' | while read -r r; do
-    printf '%s\n' "$NS_NAMES" | grep -qx "$r" || printf '%s ' "$r"
-done)
-NS_PAID=$(printf '%s\n' "$NS_NAMES" | grep -v '^$' | while read -r r; do
-    printf '%s\n' "$NS_NOW" | grep -qx "$r" || printf '%s ' "$r"
-done)
+# comm вместо построчного `while read` + `grep` на каждый элемент: тот же
+# O(n*m)-с-подпроцессом-на-итерацию, что в check-registry-entry-shape.sh —
+# на выросшем реестре (343+ имён с каждой стороны) это несколько минут вместо
+# секунд. `comm` требует ЛЕКСИКОГРАФИЧЕСКОЙ сортировки (LC_ALL=C, шапка
+# файла), не числовой (`sort -n`, которым $NS_NOW/$NS_NAMES уже отсортированы
+# для остального скрипта) — сортировка для `comm` берётся заново, отдельными
+# переменными.
+NS_NOW_LEX=$(printf '%s\n' "$NS_NOW" | grep -v '^$' | sort)
+NS_NAMES_LEX=$(printf '%s\n' "$NS_NAMES" | grep -v '^$' | sort)
+# `grep -v '^$'` INSIDE the substitution too: `printf '%s\n' ""` on an empty
+# variable still emits one blank line, which `comm` would read as a phantom
+# entry on whichever side is actually empty.
+NS_NEW=$(comm -23 <(printf '%s\n' "$NS_NOW_LEX" | grep -v '^$') <(printf '%s\n' "$NS_NAMES_LEX" | grep -v '^$') | tr '\n' ' ')
+NS_PAID=$(comm -13 <(printf '%s\n' "$NS_NOW_LEX" | grep -v '^$') <(printf '%s\n' "$NS_NAMES_LEX" | grep -v '^$') | tr '\n' ' ')
 
 if [ -n "$NS_NEW" ]; then
     echo "$NAME: FAIL — НОВЫЕ строки с вердиктом, но БЕЗ статуса: $NS_NEW" >&2

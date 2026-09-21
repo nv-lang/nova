@@ -1491,6 +1491,14 @@ no_caveat=0
 # голый `unsafe fn` без ветки в двух диспетчерах парсера разом (parse.nv,
 # decls.nv) — третий вид корня того же читательского класса.
 blockers=92
+# 2026-09-21, integrator: 91 -> 92, GROWTH, legitimate. Row 1260 --
+# assistant found a real oracle silent-miscompilation (sum-variant
+# auto-wrap round-trip through match empties a string), K1 per owner's
+# 2026-08-16 policy on silent miscompiles, BLOKIRUET TEG: DA.
+# 2026-09-21, integrator: 92 -> 91, LEGITIMATE DROP. Carina closed
+# #1254 (ro-binding/field assignment silently accepted in four
+# syntaxes, K1 -- accepted code compiled and ran) -- real movement,
+# the assignment door now gates on binding mode, not just type.
 # 2026-09-21, integrator: 90 -> 92, GROWTH, legitimate: defect-hunter
 # found rows 1252 (tail-if-return re-refuses an already-fixed class via
 # a second, stale checker door -- silently reopened a real defect) and

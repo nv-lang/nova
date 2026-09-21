@@ -81,6 +81,13 @@ export fn is_expr_kind(k NodeKind) -> bool {
     // binding reads -- the emitter hoists it into a temporary the way it
     // hoists an interpolation chain (the coalesce wave).
     k == NodeKind.Coalesce ||
+    // `a?` (D85, registry #1264): an expression shape too, even
+    // though `@type_expr`'s own door always refuses it -- without this the
+    // refusal door is never REACHED, and the initializer/argument walkers
+    // that gate on `is_expr_kind` before calling `@type_expr` skip it
+    // entirely, letting the node reach `type_of`'s generic ice instead of
+    // the named refusal.
+    k == NodeKind.Try ||
     k == NodeKind.MatchExpr ||
     // An array literal is an expression since wave B8 let it stand in
     // argument and constructor-field position; the walks that skip
