@@ -231,3 +231,40 @@ test "shape: an `else if` chain in value position parses as nested IfExpr (regis
     }
     assert(tree_reserialize(f) == src)
 }
+
+test "shape: an effect_list before `->` parses as EffectItem siblings (registry #1244)" {
+    // The signature reader checked ONLY `@peek() == Arrow` right after `)` --
+    // no case for an effect_list (D3/D209) standing between `)` and `->` at
+    // all, so `fn f() Fs Net -> int` used to decide there was no return type
+    // the moment it saw `Fs` (an Ident, not Arrow), and the whole effect
+    // list fell into the parser's fallback further down. Two effects here,
+    // both must arrive as their own `EffectItem` child, in order, and the
+    // `RetType` must still be found afterward.
+    ro src = "fn f() Fs Net -> int {\n    0\n}\n"
+    ro f = parse(lex(src))
+    match f {
+        Branch { children, .. } => {
+            mut found_fn = false
+            for c in children {
+                if c.kind_of() != NodeKind.FnDecl { continue }
+                found_fn = true
+                match c {
+                    Branch { children: fk, .. } => {
+                        mut effects = 0
+                        mut found_ret = false
+                        for e in fk {
+                            if e.kind_of() == NodeKind.EffectItem { effects += 1 }
+                            if e.kind_of() == NodeKind.RetType { found_ret = true }
+                        }
+                        assert(effects == 2)
+                        assert(found_ret)
+                    }
+                    Leaf(_) => assert(false)
+                }
+            }
+            assert(found_fn)
+        }
+        Leaf(_) => assert(false)
+    }
+    assert(tree_reserialize(f) == src)
+}

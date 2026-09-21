@@ -1388,8 +1388,8 @@
 # 2026-09-21, интегратор: rows 1175 -> 1176, max 1225 -> 1226. №1226 —
 # помощник нашёл, что голый `unsafe fn` не имеет ветки ни в одном из двух
 # диспетчеров верхнего уровня (parse.nv, decls.nv) — третий вид корня.
-rows=1197
-max=1245
+rows=1199
+max=1247
 # 2026-09-21, integrator: row 1242 added -- new checker ICE exposed by
 # Carina's #1237 fix (channel.nv:409), same class as #1229, blocks S5
 # 2026-09-21, integrator: row 1244 added -- assistant found effect row
@@ -1401,6 +1401,21 @@ max=1245
 # b4b988424, check-commit-refs R2 grew 855->857 (docs/plans/110.4:8,
 # two objects gone from local store, June-vintage squash-merge gc, not
 # new work). rows 1196->1197, max 1244->1245.
+# 2026-09-21, integrator: row 1246 assigned -- Carina's #1241 both-ways
+# probe found `nova test`'s module runner gives a false PASS on a
+# git-reverted carrier while `novac.exe check` correctly reproduces the
+# old crash, a cache/daemon trust issue in the test runner, not a
+# language defect. Row arrived as `#TBD` with column-2 priority slot
+# holding a hunt-class value (K7) instead of a real priority; renumbered
+# and reclassified to K2 (priority column is K1/K2/K3 only, K1-K7 is a
+# different axis -- registry-row-shape-priority-vs-hunt-class). rows
+# 1197->1198, max 1245->1246.
+# 2026-09-21, integrator: row 1247 added -- nova-e8's stale-role-card
+# finding (guard-stop-v2.py role_belongs_to_me) conflicts with an
+# existing test (_t_card_stale_foreign, from an opposite nova-78
+# incident); documented the tension, did NOT flip the boolean -- both
+# fixtures must stay green, a third signal is needed. rows 1198->1199,
+# max 1246->1247.
 # batch measure again. rows 1193->1194, max 1241->1242.
 
 # 2026-09-21, integrator: rows 1190->1193, max 1238->1241 -- measured after

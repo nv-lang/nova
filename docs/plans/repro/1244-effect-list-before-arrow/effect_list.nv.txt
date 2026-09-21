@@ -1,0 +1,15 @@
+fn f() Fs -> int {
+    0
+}
+
+fn g() Fs Net -> int {
+    1
+}
+
+fn plain() -> int {
+    3
+}
+
+fn param(a int, b str) Fs Net Time -> int {
+    a
+}

@@ -76,18 +76,31 @@ fn Checker mut @type_match_stmt(m Node) -> () {
         return
     }
     ro scr = kids[1]
+    // RELATIVE to THIS call, not absolute (registry #1242, found by a peer
+    // window's instrumented trap): `Checker.out` accumulates for the whole
+    // FILE, not per-match, so a bare `@out.len() > 0` is true the moment
+    // ANYTHING earlier in the file was refused -- every later match in that
+    // same file then returns here silently, typing no arm at all, and a
+    // LATER reader asking `type_of()` about an untyped arm body ICEs far
+    // from the actual cause. Every sibling gate in `check/` (exprs.nv,
+    // typing.nv, binds.nv, calls.nv, casts.nv, destructure.nv, rules.nv,
+    // variant_rules.nv) already marks `@out.len()` BEFORE the call it is
+    // judging and compares against THAT mark; this door and the one below
+    // were the only two that compared against a literal `0`.
+    ro before = @out.len()
     @type_expr(scr)
-    if @out.len() > 0 { return }
+    if @out.len() > before { return }
     ro scr_t = type_of(scr, @ctx, @scope, @chan)
     @record(scr, scr_t)
     // No `else` is owed after a terminator (P31 form 2): what follows IS
     // the plain-sum case, and an empty else here says it twice.
     if @report_if_applied_sum(kids, scr_t) { return }
+    ro before_arms = @out.len()
     for c in kids {
         if c.kind_of() != NodeKind.MatchArm { continue }
         @type_arm_stmt(c, scr_t)
     }
-    if @out.len() > 0 { return }
+    if @out.len() > before_arms { return }
     @report_if_not_exhaustive(kids, scr_t)
 }
 
@@ -122,19 +135,25 @@ fn Checker mut @type_match(m Node) -> () {
         return
     }
     ro scr = kids[1]
+    // RELATIVE to THIS call (registry #1242) -- see @type_match_stmt's own
+    // comment above for the full story: `Checker.out` is per-FILE, and a
+    // bare `> 0` made every match after the file's first refusal silently
+    // type no arm at all.
+    ro before = @out.len()
     @type_expr(scr)
-    if @out.len() > 0 { return }
+    if @out.len() > before { return }
     ro scr_t = type_of(scr, @ctx, @scope, @chan)
     @record(scr, scr_t)
     // No `else` is owed after a terminator (P31 form 2): what follows IS
     // the plain-sum case, and an empty else here says it twice.
     if @report_if_applied_sum(kids, scr_t) { return }
+    ro before_arms = @out.len()
     mut first_t = None
     for c in kids {
         if c.kind_of() != NodeKind.MatchArm { continue }
         first_t = @fold_arm_type(c, scr_t, first_t)
     }
-    if @out.len() > 0 { return }
+    if @out.len() > before_arms { return }
     @report_if_not_exhaustive(kids, scr_t)
 }
 

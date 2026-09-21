@@ -110,6 +110,12 @@ Param =
 RetType =
   '->' TypeRefLeaves
 
+// One effect in a signature's effect_list (D3/D209): zero or more, written
+// as bare type references between `)` and `->` (or the body, when the
+// return type is the omittable `()`), no separator between them.
+EffectItem =
+  TypeRefLeaves
+
 Requires =
   'requires' Expr (',' 'string')?
 
