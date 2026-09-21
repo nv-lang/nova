@@ -110,19 +110,36 @@ fn Checker mut @record_method_callee(e Node, kids []Node, recv_t TyId) -> () {
 /// the cause and `refuse_arg_type` names the first differing position.
 fn Checker mut @refuse_method_call(e Node, t Token, key []ArgSpec) -> () {
     ro kids = branch_children(e)
+    mut single_row = no_row()
     if Some(row) = @res.only_row_of(t.text) {
         if Some(why) = @binding_refusal(row, key) {
             @refuse(t, why)
             return
         } else {
-            // It binds -- so the receiver's type or an argument's is the cause.
+            // It binds -- so the receiver's type, an argument's type, or an
+            // argument's BINDING CLASS is the cause, named below.
+            single_row = row
         }
     } else {
         // Unknown or overloaded: the arity question below answers.
     }
     match @res.lookup(@ctx.fns, @ctx.tys, t.text, @method_arity_key(kids, key[0].type_id), CallForm.MethodCall) {
-        FnUnknown => @refuse(t,
-            "outside the subset: this type has no such method in the declarations novac was handed")
+        FnUnknown => {
+            // registry #1255's twin door: `@method_arity_key` erases every
+            // argument's TYPE the same way `free_call_key` does, but not its
+            // CLASS -- so a receiver-and-arity match whose only fault is a
+            // `mut`/`ro`/`consume` mismatch (P14) reached this arm too, and
+            // "no such method" named the wrong axis. When the one known
+            // method's own receiver already fits (checked by `only_row_of` +
+            // `@binding_refusal` above), `@refuse_arg_type` names the real
+            // slot -- type or class.
+            if raw_row(single_row) >= 0 {
+                @refuse_arg_type(kids, single_row, key, CallForm.MethodCall)
+            } else {
+                @refuse(t,
+                    "outside the subset: this type has no such method in the declarations novac was handed")
+            }
+        }
         // Several rows take this receiver and this many arguments, and none of
         // them fits the types. Naming a position would mean naming ONE
         // candidate as the intended one, and which was intended is unknown.

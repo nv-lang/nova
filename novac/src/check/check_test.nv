@@ -295,3 +295,55 @@ test "tail if: one branch returns, the other's value is the if's value (registry
     ro mismatch = "module m\n\nfn classify(n int) -> int {\n    if n > 0 {\n        return 1\n    } else {\n        \"s\"\n    }\n}\n"
     assert(diagnose(mismatch) > 0, "the non-terminating branch's type must still agree with the fn's own return type")
 }
+
+/// The message half of `diagnose()`: the first diagnostic's own text, for
+/// tests that judge WORDING, not just count -- registry #1255 is a wording
+/// bug (the vardict is already right; the CAUSE it names is not).
+fn diagnose_msg(text str) -> str {
+    ro src = SourceText { text }
+    ro tree = parse(lex(text))
+    ro (diags, _) = check(tree, src, collect(tree, []Node.new(), InteropTable.new()))
+    if diags.len() == 0 { return "" }
+    diags[0].message
+}
+
+test "free call refusal: a binding-CLASS mismatch is named by its own rule, not by arity (registry #1255)" {
+    // `fn bump(mut x int)` called `bump(x)` with a `ro x`: one parameter, one
+    // argument -- the untyped-but-CLASSED key `free_call_key` still fails
+    // (P14: `mut` needs a mutable place), so the arity-shaped lookup answers
+    // `FnUnknown` for a call whose count was never wrong. Before this fix the
+    // text said so anyway ("no function of this name takes this many
+    // arguments"), because nothing between the binding-shape door
+    // (`@binding_refusal`, which only reads POSITIONAL/NAMED/DEFAULT faults,
+    // not class) and the arity-lookup door asked P14's own question. Fixed by
+    // routing the single-known-declaration case straight to
+    // `@refuse_arg_type`, itself taught to ask `mode_admits` per slot.
+    ro src = "module m\n\nfn bump(mut x int) -> int => x\n\nfn use_it() -> int {\n    ro x = 1\n    bump(x)\n}\n"
+    ro msg = diagnose_msg(src)
+    assert(!msg.contains("takes this many arguments"), "the count was never the cause: one parameter, one argument")
+    assert(msg.contains("mutable place") || msg.contains("P14"), "the real cause -- the argument's binding class -- must be named")
+}
+
+test "free call refusal: a matching binding class still checks cleanly (registry #1255, control)" {
+    // The same declaration, called with a `mut` binding: admits by P14, and
+    // the call resolves with no refusal at all.
+    ro src = "module m\n\nfn bump(mut x int) -> int => x\n\nfn use_it() -> int {\n    mut x = 1\n    bump(x)\n}\n"
+    assert(diagnose(src) == 0, "a mut argument for a mut parameter binds; nothing to refuse")
+}
+
+test "method call refusal: a mut-receiver method on a ro binding is named by its own rule (registry #1255 twin)" {
+    // `@refuse_method_call`'s own copy of the same shape `@refuse_free_call`
+    // had (registry #1255): the receiver is parameter zero (plan 273) and
+    // carries a class exactly like any other argument, so `@method_arity_key`
+    // erasing TYPE (not CLASS) means a `mut`-receiver method called through a
+    // `ro` binding fails the arity-shaped lookup too -- confirmed on the
+    // UNFIXED code: the message was "outside the subset: this type has no
+    // such method in the declarations novac was handed", naming a method
+    // that plainly exists, over an arity that was never one argument short.
+    // Fixed the same way as the free-call door: routed to `@refuse_arg_type`,
+    // which now asks `mode_admits` for the receiver slot too.
+    ro src = "module m\n\ntype Pt { n int }\n\nfn Pt mut @bump() -> int {\n    @n = @n + 1\n    @n\n}\n\nfn use_it() -> int {\n    ro p = Pt { n: 0 }\n    p.bump()\n}\n"
+    ro msg = diagnose_msg(src)
+    assert(!msg.contains("no such method"), "the method plainly exists; naming it missing lied about the cause")
+    assert(msg.contains("mutable"), "the real cause -- the receiver's binding class -- must be named")
+}
