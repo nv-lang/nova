@@ -1,0 +1,47 @@
+#no_prelude
+module runtime.decimal
+
+// Co-equal test of `DigitBuf` -- the exact decimal both directions of the float
+// conversion stand on.
+//
+// WHY THESE TESTS LIVE HERE. They were written in wave 283 next to the parser, because
+// that is where the type lived; they read `LEFT_SHIFT_TABLE`, which is internal to the
+// type and has no business being exported. When the type moved to its own home (plan 285
+// Ф.4), the choice was to widen the module's surface for a foreign test file or to move
+// the tests with their subject. The second is the convention and the better answer: a
+// test belongs where the thing it judges belongs, and privacy stays private.
+
+test "DigitBuf: parse, right_shift and left_shift step by step on \"1\" (and the tables they read)" {
+    mut d = parse_digit_buf("1")
+    assert(d.digits.len() == 768, "buffer length")
+    assert(d.num_digits == 1, "parse: num_digits == 1")
+    assert(d.decimal_point == 1, "parse: decimal_point == 1")
+    assert(d.digits[0] == 1, "parse: digits[0] == 1")
+    assert(!d.truncated, "parse: not truncated")
+    d.right_shift(3)
+    assert(d.decimal_point == 0, "right_shift: decimal_point == 0")
+    assert(d.num_digits == 3, "right_shift: num_digits == 3")
+    assert(d.digits[0] == 1, "right_shift: digits[0] == 1")
+    assert(d.digits[1] == 2, "right_shift: digits[1] == 2")
+    assert(d.digits[2] == 5, "right_shift: digits[2] == 5")
+    assert(LEFT_SHIFT_TABLE.len() == 65, "LEFT_SHIFT_TABLE length")
+    assert(LEFT_SHIFT_TABLE[2] == 0x0801, "LEFT_SHIFT_TABLE[2] == 0x0801")
+    assert(LEFT_SHIFT_TABLE[3] == 0x0803, "LEFT_SHIFT_TABLE[3] == 0x0803")
+    assert(TABLE_POW5.len() == 1308, "TABLE_POW5 length")
+    assert(TABLE_POW5[0] == 5, "TABLE_POW5[0] == 5")
+    // Characterising the corruption: if the literal list is built as a Vec of `int`
+    // (8 bytes each) and read back through a `[]u8` slot (1 byte), then element 1 is the
+    // second BYTE of the first int -- zero -- and the real second value shows up at 8.
+    // That was registry 221.1 #1003, found here and fixed 2026-09-07; the table is now
+    // `[1308]u8`, so these two lines stay as the REGRESSION guard for the narrow-element
+    // path rather than as a description of a live defect.
+    assert(TABLE_POW5[1] != 0, "TABLE_POW5[1] is 0 -- int-stride read through a u8 slot")
+    assert(TABLE_POW5[8] != 2, "TABLE_POW5[8] is 2 -- the second value sits 8 bytes on")
+    assert(TABLE_POW5[1] == 2, "TABLE_POW5[1] == 2")
+    assert(TABLE_POW5[2] == 5, "TABLE_POW5[2] == 5")
+    assert(d.number_of_digits_decimal_left_shift(2) == 0, "digits [1,2,5] shifted by 2 gain NO new digit")
+    d.left_shift(2)
+    assert(d.num_digits == 1, "left_shift: num_digits == 1")
+    assert(d.decimal_point == 0, "left_shift: decimal_point == 0")
+    assert(d.digits[0] == 5, "left_shift: digits[0] == 5")
+}

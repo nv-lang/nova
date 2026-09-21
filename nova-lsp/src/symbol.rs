@@ -1115,9 +1115,17 @@ fn find_member_field_in_expr(expr: &Expr, offset: usize) -> Option<(Span, String
             if let Some(r) = find_member_field_in_expr(obj, offset) {
                 return Some(r);
             }
-            // Cursor on the field-name region (past the object, within this
-            // member expression) — this is the field being hovered.
-            if offset > obj.span.end && offset <= expr.span.end {
+            // Cursor on the field-name region: the last `name.len()` bytes of
+            // `expr.span`. Computed from the name's own length rather than
+            // `obj.span.end + 1` because that assumed a one-byte separator
+            // (the `.` in `obj.field`) that self-access `@field` does not
+            // have — `@` parses `obj` as a zero-length-gap `SelfAccess`
+            // immediately followed by the field name, so the old
+            // `offset > obj.span.end` boundary excluded the field's own
+            // first byte, the position a click on `@field` actually lands
+            // on (registry 221.1 #684).
+            let field_start = expr.span.end.saturating_sub(name.len());
+            if offset >= field_start && offset <= expr.span.end {
                 return Some((obj.span, name.clone()));
             }
             None
@@ -1431,6 +1439,44 @@ mod tests {
                 assert_eq!(name, "bar");
             }
             other => panic!("expected MethodDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_resolve_self_access_field() {
+        // Registry 221.1 #684: does `@field` inside a receiver method resolve
+        // to the field's real declaration through the Ф.6 member-access path
+        // (`Member { obj: SelfAccess, name }`), the same way `obj.field` does?
+        let src = "module basics.lsp_test\ntype Foo {\n x int\n}\nfn Foo @bar() -> int => @x";
+        let module = parse_module(src);
+        let env = nova_codegen::types::check_module_with_expr_types_ide(&module);
+        let x_offset = src.rfind("@x").unwrap() + 1; // the 'x' in '@x' — the click position
+        let sym = resolve_symbol_at_with_limit(&module, x_offset, 0, Some(&env));
+        assert!(sym.is_some(), "should resolve `@x` to field `x` on `Foo`");
+        match sym.unwrap() {
+            SymbolInfo::FieldDecl { owner, name, .. } => {
+                assert_eq!(owner, "Foo");
+                assert_eq!(name, "x");
+            }
+            other => panic!("expected FieldDecl for `@x`, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_resolve_self_access_method() {
+        // Same question for `@method()` — the call form of self-access.
+        let src = "module basics.lsp_test\ntype Foo {\n x int\n}\nfn Foo @helper() -> int => 0\nfn Foo @bar() -> int => @helper()";
+        let module = parse_module(src);
+        let env = nova_codegen::types::check_module_with_expr_types_ide(&module);
+        let helper_call_offset = src.rfind("@helper()").unwrap() + 1; // the 'h' in the call
+        let sym = resolve_symbol_at_with_limit(&module, helper_call_offset, 0, Some(&env));
+        assert!(sym.is_some(), "should resolve `@helper()` to method `helper` on `Foo`");
+        match sym.unwrap() {
+            SymbolInfo::MethodDecl { receiver_type, name, .. } => {
+                assert_eq!(receiver_type, "Foo");
+                assert_eq!(name, "helper");
+            }
+            other => panic!("expected MethodDecl for `@helper()`, got {:?}", other),
         }
     }
 

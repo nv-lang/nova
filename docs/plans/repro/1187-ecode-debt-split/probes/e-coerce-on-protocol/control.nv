@@ -1,0 +1,3 @@
+type Hashable protocol {
+    @key_hash() -> u64
+}

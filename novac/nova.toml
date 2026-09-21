@@ -431,7 +431,24 @@
 # which is a spec/decisions commit and therefore counts. No rule changed --
 # the anchor makes 46 existing links resolve and drops the dead-anchor debt
 # from 436 to 421.
-#   spec-queue: 105
+# 106 and 77 -> 109 (2026-09-21, integrator, merging p283-float-parse). Neither
+# side's number: p283 tracked its OWN spec-queue history independently since
+# 2026-09-15 (its own merges of origin/main at the time, chronicled above the
+# fold on its side) and never saw main's later commits, so its 77 was stale by
+# thirty. Measured over the joined history by the guard's own command:
+#   git log --since=2026-08-14 --no-merges --format=%H HEAD MERGE_HEAD
+#       -- spec/decisions | sort -u | wc -l   ->  109
+# p283's own spec commit in this merge is D482 (ex-D478, renumbered because the
+# owner's D478 was handed out three times in one day, ISSUED-NUMBERS.md already
+# knows the pattern) -- defaults only in the tail of a named tuple, retracting
+# D215's explicit permission to interleave them. Unrelated to anything
+# Carina's window has touched tonight; the float/decimal formatting work that
+# gives this branch its name needed no new D-block of its own.
+# 109 -> 110 (2026-09-21, integrator): no new norm -- ISSUED-NUMBERS.md's D482
+# row moved from "issued, not yet merged" to "merged", per the file's own
+# rule (a number leaves that table the moment its block lands in main).
+# check-dblock-numbers flagged the stale row on the stale gate run this fixes.
+#   spec-queue: 110
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,

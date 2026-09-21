@@ -1475,4 +1475,61 @@ no_caveat=0
 # ступени 0.3 (59 из 90 примеров, 274.5 §5) вскрыл то, чего не считал
 # остаток самосборки — он считает НАШ исходник и слеп к формам,
 # которыми мы не пользуемся. Число выросло от ЗРЕНИЯ, не от ухудшения.
-blockers=84
+# 2026-09-21, интегратор: 84 -> 83. Строка №701 (половина «б», ассоциированный
+# ro/const) закрыта — фикс уже стоял в дереве полтора месяца (assoc_ro.rs,
+# план 157), запись просто не сверялась с ним; свежее репро в обе стороны
+# подтвердило рабочие формы, регистр 221.1 №701.
+# 2026-09-21, интегратор: 83 -> 84, РОСТ и он законен. Новая строка №1224 —
+# помощник нашёл ТРЕТИЙ носитель класса №1212/№1213 (effect как выражение,
+# `orm_decorators.nv`) и назвал общий корень (effect не лексится как ключевое
+# слово, `lex.nv:459`). Число выросло от ЗРЕНИЯ (третий носитель того же
+# пробела, впервые названного 2026-09-20), не от ухудшения компилятора.
+# 2026-09-21, интегратор: 84 -> 85, РОСТ и он законен. Новая строка №1225 —
+# помощник нашёл, что одиночный `?` (Try-оператор) не лексится вовсе
+# (lex.nv:876-882) — родня №1089 по классу, отдельный корень (пунктуация).
+# 2026-09-21, интегратор: 85 -> 86, РОСТ и он законен. Новая строка №1226 —
+# голый `unsafe fn` без ветки в двух диспетчерах парсера разом (parse.nv,
+# decls.nv) — третий вид корня того же читательского класса.
+blockers=90
+# 2026-09-21, integrator: 91 -> 90. Carina's window closed #1230 (62f1cc9ad,
+# CRLF string-literal continuation bug), found independently a second time
+# while scanning the self-build rejection map -- same root cause the row
+# already predicted, fix matches it exactly.
+# 2026-09-21, integrator: 91 -> 90. Carina's window closed #1229 (ba968b4bc,
+# ICE in c_method_symbol on an unresolved receiver type, turned into an
+# honest refusal) -- the last K1 from tonight's registry findings.
+# 2026-09-21, integrator: rows 1234 (nova-polaris arity mismatch, K1 but
+# BLOKIRUET TEG: NET -- package ecosystem, not Carina's tag) and 1235
+# (nova-http lint + timeout, also NET) added; neither counts as a blocker.
+# 2026-09-21, integrator: 92 -> 91. Carina's window closed #1232 (f4c9de52d,
+# ASI-style postfix boundary fix, verified both ways) while I was merging
+# her branch back in. Opportunistic drop, not the reason for this edit.
+# 2026-09-21, integrator: measured value after p283-float-parse merge is 92
+# (was 91 before this merge) -- #1096 (record literal missing a required
+# field compiles silently and corrupts the value) is the one new blocker
+# p283 brought; #1081 and #1104 from the same branch are BLOKIRUET TEG: NET.
+# 2026-09-21, integrator: blocker 1227 -- single-line record with commas
+# doesn't parse (table 274.5 5v), BLOKIRUET TEG: DA. blockers 86->87.
+# 2026-09-21, integrator: merge with p274-novac. Net +2: #1212 CLOSED
+# (Carina's window, real fix landed) but #1228 (Effect[E] not registered,
+# partial), #1229 (self-check batch ICE, S5 measure blocked) and #1230
+# (CRLF escaped-newline lexer bug, assistant's 4th table-5v finding) are
+# new blockers. 87 -1 +1 +1 +1 = 89.
+# 2026-09-21, integrator: row 1231 added (assistant's 5th table-5v finding,
+# ${s:?} debug-specifier not parsed), BLOKIRUET TEG: DA. blockers 89->90.
+# 2026-09-21, integrator: row 1232 added (assistant's 6th table-5v finding,
+# ASI-style [ greedily binds to prior match-arm body), BLOKIRUET TEG: DA.
+# blockers 90->91.
+# 2026-09-21, integrator, merge with p283-float-parse (26 commits stale on
+# its side, last synced 2026-09-15 at blockers=70 -- 91 already supersedes
+# it by construction, this is not a base to reconcile against). Number is
+# RE-MEASURED on the merged registry, per this file's own established rule,
+# not derived by arithmetic over two stale sides: p283 brought #1096
+# (record literal missing a required field compiles silently, BLOKIRUET
+# TEG: DA) as a genuinely new blocker; #1081 and #1104 from the same branch
+# are BLOKIRUET TEG: NET. Measured value below.
+# 2026-09-21, integrator: row 1234 added (nova-polaris arity mismatch,
+# serve overload resolution), BLOKIRUET TEG: DA (K1, pre-existing). row
+# 1235 (nova-http lint + timeout) is BLOKIRUET TEG: NET. blockers 91->92.
+# 2026-09-21, integrator: row 1237 added (assistant, bare return as middle
+# match arm not recognized), BLOKIRUET TEG: DA. blockers 90->91.

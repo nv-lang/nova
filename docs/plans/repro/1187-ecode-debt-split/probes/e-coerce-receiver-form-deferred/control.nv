@@ -1,0 +1,5 @@
+#coerce fn int @to_str() -> ro str {
+    "x"
+}
+
+fn main() Io -> () => print("x")

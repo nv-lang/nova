@@ -1,0 +1,5 @@
+fn main() Io -> () {
+    ro a Option[int] = Some(1)
+    ro b = (a ?? 0) as u64
+    print("done")
+}

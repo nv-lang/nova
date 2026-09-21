@@ -1,0 +1,238 @@
+# 1187, партия 2 (первая волна): результаты, машина освободилась в 01:34
+# Снято помощником 2026-09-20/21. ЗАМЕР, НЕ ВЕРДИКТ.
+
+ЖИВЫЕ (3):
+  E_CONST_FN_ALLOCATION       -- const fn с `const xs = [1, 2]` в теле (литерал
+                                  массива, а не вызов .of(...) -- он не ловится)
+  E_AMBIGUOUS_IDENT_PATTERN   -- `if v = get(x) { ... }`, голый идентификатор
+                                  как образец
+  E_ADDR_OF_REMOVED           -- `addr_of(a)` внутри const fn (поднимает вместе
+                                  с E_CONST_FN_EFFECT_IN_BODY -- ДВА кода на
+                                  одной форме, оба живые)
+
+НЕДОСТИЖИМ, доказано ДВУМЯ независимыми путями (1):
+  E_AUTO_DERIVE_UNKNOWN_PROTOCOL
+    (1) чтение: ВСЕ ТРИ вызывающих места (types/mod.rs:5641, :19541,
+        auto_derive.rs:3508) проверяют is_builtin_protocol(proto) ПЕРЕД
+        вызовом synthesize_method и делают `continue` на неизвестном
+        протоколе -- ветка UnknownProtocol внутри synthesize_method
+        вызывается только из юнит-тестов самого файла;
+    (2) живая проба: `#impl(NoSuchProtocol)` на типе поднимает ДРУГОЙ код,
+        E_UNKNOWN_PROTOCOL, перехватывающий раньше. У ЭТОГО перехватчика
+        фикстуры ТОЖЕ НЕТ -- значит по правилу «затенение засчитывается
+        только когда у перехватчика фикстура есть» это НЕ затенение, а
+        второе, независимое подтверждение недостижимости.
+
+НЕ РАЗОБРАНО В ЭТОЙ ВОЛНЕ, честно оставлено открытым (не подбор наугад):
+  E_CONST_FN_CLOSURE_BODY, E_CONST_FN_CLOSURE_ARITY
+    Условие для входа в проверку найдено чтением (`has_closure_returning_body`,
+    const_fn_closure.rs:455): тело функции обязано пройти этот же тест ДО
+    того, как код ошибки вообще может быть поднят -- Block-форма требует ВСЕ
+    stmts как `Stmt::Const` и trailing как closure literal, и это ТОТ ЖЕ
+    тест, что стоит внутри самой проверки на ошибку. Три формы (bare
+    expr-тело, expr-тело + вызов + применение) прошли ЧИСТО -- функция просто
+    не попадает в список кандидатов на спец-компиляцию. Форма, которая
+    проходит внешний гейт и падает на внутреннем, не найдена в рамках этой
+    волны. Called НЕ считаю недостижимыми -- признак другой: моя проба не
+    построена, а не что построить нельзя.
+
+  E_AUTO_DERIVE_UNSUPPORTED_KIND, E_COERCE_NOT_ZERO_COST,
+  E_CONST_FN_CLOSURE_EXTERNAL, E_BLOCKING_FN_DECL_MISSING
+    Не пробовались в этой волне -- условия записаны в batch2-conditions.txt,
+    следующий заход.
+
+# 1187, партия 2, ВТОРАЯ ВОЛНА (тот же ход, 01:56)
+
+ЖИВОЙ (1), контроль поправлен ПОСЛЕ первой попытки:
+  E_COERCE_NOT_ZERO_COST
+    Форма пробы: `#coerce fn int @to_str() { "x" }` (нет возвращаемого типа).
+    Первый КОНТРОЛЬ (тип str-в-int с параметром) сам оказался неверной формой
+    и упал на ДВУХ ДРУГИХ кодах (`E_COERCE_NOT_ZERO_COST` без `ro`-обёртки,
+    `E_COERCE_NOT_UNARY` за параметр) -- сообщение компилятора назвало точное
+    требование: возврат обязан быть `ro O`, а не голым `O` (D429 R2,
+    zero-cost view). Верный контроль: `-> ro str`. Оба вывода сошлись с
+    ЧТЕНИЕМ (`types/mod.rs:28041`, `let Some(ret_ty) = &f.return_type else`) --
+    отсутствие типа тоже ловится этим путём, а `ro`-требование стоит НИЖЕ по
+    функции и проверяется ей же под другим сообщением.
+
+# 1187, партия 2, ТРЕТЬЯ ПОПЫТКА (02:06) -- форма не найдена, записано честно
+
+E_AUTO_DERIVE_UNSUPPORTED_KIND
+  Условие (`auto_derive.rs:1012`): срабатывает, когда объявление типа НЕ
+  является ни записью (есть поля), ни суммой (есть варианты). Единственная
+  проба, которую построил -- `type MyInt = int` (алиас) -- дала ПАРСЕР-ОШИБКУ:
+  такого синтаксиса в Nova нет вовсе (`expected type, got '='`). То есть
+  вопрос "существует ли ТРЕТИЙ вид объявления типа, кроме записи и суммы"
+  остался без ответа -- либо не существует (тогда ветка мертва по той же
+  причине, что и `E_AUTO_DERIVE_UNKNOWN_PROTOCOL`), либо синтаксис другой и
+  его надо искать чтением грамматики `parse_type_decl`, а не подбором.
+  ОСТАНОВИЛСЯ ЗДЕСЬ, а не продолжил гадать: это третья подряд рабочая
+  гипотеза без корпусного примера (после двух closure-кодов), и дальнейший
+  подбор синтаксиса на глаз запрещён правилом «не изобретать формы».
+
+E_CONST_FN_CLOSURE_EXTERNAL, E_BLOCKING_FN_DECL_MISSING -- не пробовались
+  вовсе в этом ходе.
+
+# 1187, партия 2, ЧЕТВЁРТАЯ ВОЛНА (02:19) -- форма найдена чтением грамматики парсера
+
+ЖИВОЙ (1), с оговоркой про носителя:
+  E_AUTO_DERIVE_UNSUPPORTED_KIND
+    Третья попытка (алиас `type X = int`) была неверным синтаксисом. Чтение
+    `parse_type_decl` (parser/mod.rs:4554) нашло ТРЕТИЙ вид объявления типа:
+    `external type X [consume]` -- опаque-тип без полей и без вариантов
+    (комментарий парсера: "FFI opaque consume-types (File, Mutex, Socket)").
+    Форма `#impl(Equal) external type RawHandle` поднимает `E_AUTO_DERIVE_UNSUPPORTED_KIND`.
+
+    ОГОВОРКА ПРО НОСИТЕЛЯ, обязательная: та же форма поднимает ЕЩЁ ДВА кода --
+    `E_EXTERNAL_TYPE_RETRACTED` (`external type X` retracted, D126/D163;
+    канонический путь -- `type X(ptr)`) и `E_IMPL_MISSING_METHODS`. То есть
+    ПУТЬ реален, но идёт через РЕТРАКТИРОВАННЫЙ синтаксис, который парсер всё
+    ещё принимает ради собственной диагностики (комментарий парсера:
+    "let parse proceed; types/mod.rs emits E_EXTERNAL_TYPE_RETRACTED").
+    ОТКРЫТЫЙ ВОПРОС, не закрытый в этой волне: существует ли ТЕКУЩИЙ
+    (нератрактированный) путь к третьему виду типа -- например, именованный
+    кортеж `type X(a int)` -- у которого `#impl` на неподдерживаемый протокол
+    даст тот же код БЕЗ ретракции сверху. Корпус знает форму `type X(a int)`
+    (`spec_tests/conformance/lint/conv_clean.nv:84`), но не проверено, считает
+    ли `iter_sum_variants`/поле-итератор такой тип записью (тогда путь другой)
+    или тоже unsupported. Оставлено следующей волне.
+
+# 1187, партия 2, ПЯТАЯ ВОЛНА (02:23) -- два последних кода, оба НЕДОСТИЖИМЫ
+
+E_CONST_FN_CLOSURE_EXTERNAL
+  Условие живёт в `extract_closure_parts_from_expr` (`const_fn_closure.rs:626`):
+  `ClosureFull` с телом `FnBody::External`. Чтение ЕДИНСТВЕННОГО места, где
+  `ExprKind::ClosureFull` вообще строится (`parser/mod.rs:10303-10312`), нашло
+  явную гарантию САМОГО ПАРСЕРА:
+
+      FnBody::External => unreachable!(
+          "closure-full cannot be `external` -- only named fns can; ..."
+      ),
+
+  То есть парсер физически не может произвести `ClosureFull` с телом
+  `External` -- тело замыкания читается через `parse_fn_body`, и ветка
+  `External` там зарезервирована только для ИМЕНОВАННЫХ функций верхнего
+  уровня. Условие для `E_CONST_FN_CLOSURE_EXTERNAL` требует того, что
+  конструктор AST сам объявляет невозможным -- `unreachable!()`, а не догадка.
+
+E_BLOCKING_FN_DECL_MISSING
+  Условие: `self.mono_fn_decls.get(fn_name).ok_or_else(...)` в
+  `emit_blocking_fn_call` (`codegen/emit_c.rs:16223`). Решающая деталь --
+  СИГНАТУРА функции: `Result<String, String>`, а не `Result<_, Diagnostic>`,
+  которым размечен весь путь типизации. Это код ЭМИССИИ C, вызываемый ПОСЛЕ
+  того, как чекер уже подтвердил существование и типы функции; `#blocking fn`
+  без предварительной регистрации в `mono_fn_decls` означало бы, что
+  типизация прошла для функции, которой эмиттер не знает, -- расхождение
+  между двумя фазами компилятора, а не форма, которую пишет пользователь.
+  Косвенное подтверждение: рабочая фикстура `#blocking fn` в корпусе
+  (`spec_tests/conformance/d172_realtime_blocking_attrs.nv`) компилируется
+  без этого кода -- обычный путь его не задевает.
+
+ИТОГ ПАРТИИ 2 ИЗ 20 ЗАЯВЛЕННЫХ КОДОВ -- НЕ ВСЕ РАЗОБРАНЫ, счёт ниже честный:
+
+  живых 5:        E_ADDR_OF_REMOVED, E_AMBIGUOUS_IDENT_PATTERN,
+                   E_AUTO_DERIVE_UNSUPPORTED_KIND (с оговоркой про носителя),
+                   E_COERCE_NOT_ZERO_COST, E_CONST_FN_ALLOCATION
+  недостижимо 3:   E_AUTO_DERIVE_UNKNOWN_PROTOCOL, E_BLOCKING_FN_DECL_MISSING,
+                   E_CONST_FN_CLOSURE_EXTERNAL (у каждого чтение, не молчание)
+  честно открыто 2: E_CONST_FN_CLOSURE_ARITY, E_CONST_FN_CLOSURE_BODY
+  НЕ ПРОБОВАЛИСЬ 10: E_ARRAY_ELEM_NARROW, E_AUTO_DERIVE_CYCLE,
+                   E_BARE_TYPEVAR_NEEDS_PREFIX, E_BLOCKING_NOGC_ALLOC,
+                   E_CAST_UNWRAP_REQUIRED, E_CHANNEL_TYPE_NOT_INSTANTIABLE,
+                   E_COERCE_EFFECTFUL, E_COERCE_NOT_UNARY,
+                   E_COERCE_ON_PROTOCOL, E_COERCE_RECEIVER_FORM_DEFERRED
+
+  5 + 3 + 2 + 10 = 20. `E_COERCE_NOT_UNARY` поднялась ПОБОЧНО в первой
+  (неверной) редакции контроля для `E_COERCE_NOT_ZERO_COST` -- это НЕ
+  засчитывается как её собственная проба: у неё нет своей минимальной формы
+  и своего контроля, поэтому она остаётся в куче «не пробовались».
+
+# 1187, партия 2, ШЕСТАЯ ВОЛНА (02:4x) -- все 9 оставшихся кодов разобраны
+
+ЖИВЫЕ (7), пробы/контроль в probes/e-<код>/:
+  E_BARE_TYPEVAR_NEEDS_PREFIX
+    `fn T @bar() -> int => 1` (T -- голая заглавная буква длины <=2, без
+    `fn[T]` префикса, не объявлена типом). Контроль: `fn[T] T @bar()...`.
+  E_CAST_UNWRAP_REQUIRED
+    `ro a Option[int] = Some(1); ro b = a as u64` -- прямой каст без
+    разворачивания. ЛОВУШКА МЕТОДА: первая попытка обернула форму в
+    `module spec_tests.conformance` + `test { }` (по образцу корпуса) --
+    и p.nv/control.nv стали давать ОДИНАКОВУЮ ошибку с путём p.nv даже
+    при проверке control.nv: `nova check`, похоже, резолвит/кэширует по
+    ДЕКЛАРИРОВАННОМУ МОДУЛЮ, а не по пути файла, и оба файла с одинаковым
+    `module spec_tests.conformance` схлопнулись в одну проверку. Убрал
+    `module`-строку и `test`-обёртку (голый `fn main() Io -> ()`, как во
+    всех прежних пробах этого расследования) -- коллизия исчезла. Урок:
+    голый `fn main()` без `module` -- обязательная форма для проб этого
+    каталога, не только стилевое предпочтение.
+  E_CHANNEL_TYPE_NOT_INSTANTIABLE
+    `fn takes_channel(c Channel[int]) -> () => ()` -- голый `Channel[T]` в
+    позиции параметра/возврата. Контроль: `ChanReader[int]`.
+  E_COERCE_EFFECTFUL
+    `#coerce fn int @to_str() Io -> ro str {...}` -- добавлен эффект `Io` к
+    уже известной живой форме `#coerce fn int @to_str() -> ro str`.
+  E_COERCE_NOT_UNARY
+    Взят СОБСТВЕННЫЙ контроль (пятая волна отметила его как найденный лишь
+    ПОБОЧНО, без своей формы): `#coerce fn int @to_str(extra int) -> ro str`
+    -- instance-форма с ненулевым числом параметров.
+  E_COERCE_ON_PROTOCOL
+    `type Hashable protocol { #coerce @key_hash() -> u64 }` -- `#coerce` на
+    требовании протокола, а не на конкретной fn.
+  E_COERCE_RECEIVER_FORM_DEFERRED
+    `#coerce fn int.from_str(s str) -> int {...}` -- статическая
+    конструктор-форма (точка, не `@`) с ОДНИМ параметром.
+
+НЕДОСТИЖИМЫ (2), архитектурным чтением, без догадок:
+  E_AUTO_DERIVE_CYCLE
+    Условие (`auto_derive.rs:963-966`): `mark_visiting` возвращает false при
+    ПОВТОРНОМ входе в тот же (type, protocol) внутри ОДНОГО visited-набора --
+    но ВСЕ ТРИ вызывающих места в дереве (`auto_derive.rs:3526`,
+    `types/mod.rs:5653`, `types/mod.rs:19576`) создают `AutoDeriveCtx::new(...)`
+    ЗАНОВО непосредственно перед каждым вызовом `synthesize_method`, для
+    КАЖДОЙ (тип, протокол) пары по отдельности. Ни `synthesize_method`, ни
+    `synthesize_method_inner` не вызывают `synthesize_method` рекурсивно --
+    поля проверяются через `check_field_eligibility*`, не через повторный
+    вход в синтезатор. Значит `mark_visiting` каждый раз стартует с ПУСТОГО
+    набора и физически не может увидеть дубликат -- цикл, который эта
+    проверка стережёт, никогда не строится в текущем драйвере. Проба не
+    строилась -- как и для двух кодов пятой волны, доказательство читаемо
+    напрямую (отсутствие recursion-пути), а не по молчанию формы.
+  E_BLOCKING_NOGC_ALLOC
+    Условие требует `state.blocking_body_active && !state.realtime_active`
+    (`types/mod.rs:34606`). Поле `blocking_body_active` (`types/mod.rs:33455`)
+    ОБЪЯВЛЕНО, ЧИТАЕТСЯ в трёх местах (:34559, :34606, :34680), но НИГДЕ в
+    дереве не присваивается `true` -- ни оператором `=`, ни структурным
+    литералом `blocking_body_active: true` (грепнуто по обоим шаблонам
+    отдельно). Док-комментарий поля прямо говорит "True внутри тела
+    `blocking { ... }`" -- то есть механизм задуман (Plan 83.3 Ф.6), но
+    провод от walk'а тела `blocking { }` к этому флагу не подключен. Попутно:
+    ДВА других диагностических сообщения на том же флаге (:34559, :34680,
+    без кода `E_*`, значит вне периметра базы долга) тоже мертвы этим же
+    путём -- не заводится отдельной строкой, у них нет `E_*`-кода в базе.
+
+ИТОГ ПАРТИИ 2, ВСЕ 20 КОДОВ РАЗОБРАНЫ:
+  живых 13:      E_ADDR_OF_REMOVED, E_AMBIGUOUS_IDENT_PATTERN,
+                 E_ARRAY_ELEM_NARROW, E_AUTO_DERIVE_UNSUPPORTED_KIND (оговорка
+                 про носителя), E_BARE_TYPEVAR_NEEDS_PREFIX,
+                 E_CAST_UNWRAP_REQUIRED, E_CHANNEL_TYPE_NOT_INSTANTIABLE,
+                 E_COERCE_EFFECTFUL, E_COERCE_NOT_UNARY, E_COERCE_NOT_ZERO_COST,
+                 E_COERCE_ON_PROTOCOL, E_COERCE_RECEIVER_FORM_DEFERRED,
+                 E_CONST_FN_ALLOCATION
+  недостижимо 5: E_AUTO_DERIVE_CYCLE, E_AUTO_DERIVE_UNKNOWN_PROTOCOL,
+                 E_BLOCKING_FN_DECL_MISSING, E_BLOCKING_NOGC_ALLOC,
+                 E_CONST_FN_CLOSURE_EXTERNAL
+  честно открыто 2: E_CONST_FN_CLOSURE_ARITY, E_CONST_FN_CLOSURE_BODY
+
+  13 + 5 + 2 = 20.
+
+# Добавка (02:55): E_CONST_FN_CLOSURE_ARITY, повторная проверка build'ом
+Прерван переключением на задание интегратора (nova-lsp #684) -- зафиксировано,
+что уже начато, честно, без досказывания. Прежняя проба (`|x, y|` при
+объявленном `-> const fn(int) -> int`) дала чистый PASS не только под `check`
+(как записано выше), но и под `build` -- значит это НЕ случай слепоты
+check/build из шестой волны. Осталось непроверенным: срабатывает ли
+специализация ВООБЩЕ, когда результат closure-returning const fn РЕАЛЬНО
+вызывается (`make_adder(5)(3)`, а не просто `ro adder5 = make_adder(5)` без
+второго вызова) -- `rewrite_item` (const_fn_closure.rs:887) мог требовать
+именно двойного вызова как триггера переписывания, и обе мои формы этого не
+делали. Остаётся ОТКРЫТЫМ, следующая волна.

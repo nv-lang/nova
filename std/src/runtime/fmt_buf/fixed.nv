@@ -1,0 +1,232 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Co-equal file of module `runtime.fmt_buf` (folder = one module).
+// Role: `%.*f` and `%.*e` -- printing a float at a GIVEN precision, without libc.
+//
+// WHY THIS IS NOT THE SHORTEST PRODUCER WITH A DIFFERENT TAIL. The plan for this phase
+// assumed fixed and scientific forms could be assembled from the shortest digits the Ryu
+// port already yields. Measurement on the acceptance grid (`prec = 0..17`) refuted it:
+// 34 mismatches of 216 for `%.*f`, 60 of 216 for `%.*e`. The shortest form carries as
+// many digits as READING IT BACK requires; a higher precision prints the digits of the
+// EXACT binary value. libc renders `0.1` at precision 17 as `0.10000000000000001`, while
+// the shortest form padded with zeros gives `0.10000000000000000`. Six digits cannot be
+// derived from one -- they have to be generated.
+//
+// SO THE DIGITS COME FROM EXACT DECIMAL ARITHMETIC, and that already existed: wave 283
+// built it for the slow path of PARSING, and plan 285 Ф.4 moved it to its own home,
+// `runtime.decimal`. The bound is the same in both directions -- a binary64 value needs
+// at most 767 decimal digits to be written exactly, which is why that buffer's MAXIMUM is
+// 768. Since F.6 a buffer is not always made at that maximum: `DigitBuf.new(keep:)` sizes
+// it to the budget the caller asks for, and the maximum is what `keep: 0` means. Printing
+// at a given precision is exactly the case that wants less, and that sizing is where F.6's
+// speed came from -- the cost was a constructor zeroing 768 elements per value, not the
+// length of the digit loop. Nothing here was ported a second time.
+//
+// WHAT IS NOT HERE: the surface. Width, fill, sign and the `${x:.2}` mini-language stay
+// in `core.nv` and in the unified formatter (D422); this file answers only "which bytes
+// are the digits of `v` at precision `prec`".
+
+#no_prelude
+module runtime.fmt_buf
+
+import std.runtime.numeric
+import std.runtime.decimal
+
+/// `v` as `(mantissa, binary exponent)`, with the subnormal case already folded in.
+///
+/// ONE decode for two users -- the expansion below and the bound above it. Written out
+/// twice, the two would drift, and they would drift in the direction nobody notices: a
+/// bound computed from a slightly different exponent still looks plausible.
+fn decode_binary(v f64) -> (u64, int) {
+    ro bits = v.to_bits()
+    ro ieee_mantissa = bits & ((1 as u64 << DOUBLE_MANTISSA_BITS) - 1)
+    ro exp_mask = (1 as u64 << DOUBLE_EXPONENT_BITS) - 1
+    ro ieee_exponent = ((bits >> DOUBLE_MANTISSA_BITS) & exp_mask) as int
+    if ieee_exponent == 0 {
+        // Subnormal: no implicit leading one, and the exponent is the fixed floor.
+        (ieee_mantissa, 1 - DOUBLE_BIAS - DOUBLE_MANTISSA_BITS)
+    } else {
+        ((1 as u64 << DOUBLE_MANTISSA_BITS) | ieee_mantissa,
+         ieee_exponent - DOUBLE_BIAS - DOUBLE_MANTISSA_BITS)
+    }
+}
+
+/// How many significant digits suffice to print `v` with `prec` places.
+///
+/// THE GUARD DIGITS, and why there are exactly this many. The magnitude is estimated with
+/// the donor's integer logarithm (`log10_pow2`), which is an APPROXIMATION carrying an
+/// error of one, and rounding at the last place looks at the digit next to it. Ten guard
+/// digits cover both with room to spare and still leave a bound many times below 768 --
+/// at a typical `prec = 2` that is about fifteen digits instead of seven hundred sixty-eight.
+///
+/// Only digits to the RIGHT of the wanted place are dropped, and those do not influence it:
+/// halving carries information right-to-left solely through the remainder. The one thing
+/// they do influence is rounding, and for that the buffer carries the `truncated` flag,
+/// which the shifts raise themselves whenever a dropped digit is non-zero.
+fn digits_needed_for(e2 int, mantissa_len int, prec int) -> int {
+    ro guard = 10
+    ro scale = if e2 >= 0 { log10_pow2(e2) } else { -log10_pow2(-e2) }
+    ro dp = mantissa_len + scale
+    (dp + prec + guard).max(guard)
+}
+
+/// The exact decimal value of `v`, as `m * 2^e` expanded by shifting.
+///
+/// `keep == 0` expands as far as the buffer allows -- what the parser does. A positive
+/// `keep` stops at that many significant digits, which is what printing at a given
+/// precision wants: the rest is computed only to be discarded.
+fn exact_decimal_of(v f64, keep int) -> DigitBuf {
+    ro (m, e2) = decode_binary(v)
+    // The budget is declared to the CONSTRUCTOR, not set afterwards: the buffer is
+    // allocated and zeroed to it, and that allocation is where the time actually went.
+    mut d = DigitBuf.from_u64_keeping(m, keep)
+    // THE CAP IS SET BEFORE THE SHIFTS, not after: the shifts are where the digits are
+    // produced, so a limit applied afterwards would cost exactly what it was meant to
+    // save.
+    d.keep_digits = keep
+    // `shift_pow2` and NOT `left_shift`/`right_shift` directly: a single shift is
+    // defined only up to `DECIMAL_MAX_SHIFT`, because the tables stop at 5^60, and a
+    // larger one is silently wrong rather than refused. Printing needs up to 1074.
+    // The first version of this function called `right_shift(-e2)` in one go and
+    // rendered `1e-5` as `184467440737096`.
+    d.shift_pow2(e2)
+    d
+}
+
+/// Writes the non-finite spellings this module already uses, or `-1` when `v` is finite.
+///
+/// Shared by both forms below rather than written twice: `nan` and `inf` do not depend
+/// on precision, and two copies of that would be two places to disagree.
+fn put_non_finite(v f64, buf *mut u8, cap int) -> int {
+    ro bits = v.to_bits()
+    ro exp_mask = (1 as u64 << DOUBLE_EXPONENT_BITS) - 1
+    ro ieee_exponent = ((bits >> DOUBLE_MANTISSA_BITS) & exp_mask) as int
+    if ieee_exponent != (1 << DOUBLE_EXPONENT_BITS) - 1 { return -1 }
+
+    ro ieee_mantissa = bits & ((1 as u64 << DOUBLE_MANTISSA_BITS) - 1)
+    if ieee_mantissa != 0 {
+        put_at(buf, cap, 0, 'n' as u8)
+        put_at(buf, cap, 1, 'a' as u8)
+        put_at(buf, cap, 2, 'n' as u8)
+        return 3
+    }
+    mut index = 0
+    if (bits >> 63) != 0 {
+        put_at(buf, cap, 0, '-' as u8)
+        index = 1
+    }
+    put_at(buf, cap, index, 'i' as u8)
+    put_at(buf, cap, index + 1, 'n' as u8)
+    put_at(buf, cap, index + 2, 'f' as u8)
+    index + 3
+}
+
+/// `%.*f` -- positional form with exactly `prec` digits after the point.
+///
+/// Returns the bytes the full rendering needs; like the rest of this module it truncates
+/// rather than trapping, so a return above `cap` means the caller's buffer was short.
+/// Returns the number of bytes ACTUALLY WRITTEN, i.e. the full rendering clamped to
+/// `cap` -- the contract `f64_fmt` has always had and that `StringBuilder.advance`
+/// depends on: it moves the builder's length by this number, so a count above the
+/// buffer would claim bytes nobody wrote. The wave's first version returned the
+/// NEEDED length instead, which is a different and quieter promise; the clamp lives
+/// in one place per producer so the two cannot drift apart again.
+export fn f64_fixed_fmt(v f64, buf *mut u8, cap int, prec int) -> int
+    requires cap >= 0
+    => f64_fixed_needed(v, buf, cap, prec).min(cap)
+
+fn f64_fixed_needed(v f64, buf *mut u8, cap int, prec int) -> int
+    requires cap >= 0
+{
+    ro special = put_non_finite(v, buf, cap)
+    if special >= 0 { return special }
+
+    mut index = 0
+    if (v.to_bits() >> 63) != 0 {
+        put_at(buf, cap, index, '-' as u8)
+        index += 1
+    }
+
+    ro (_m, e2) = decode_binary(v)
+    mut d = exact_decimal_of(v, digits_needed_for(e2, 17, prec))
+    // Round where the requested precision ends. `decimal_point + prec` is the count of
+    // significant digits that survive; rounding may move the point (9.99 at one digit
+    // after the point is 10.0), so the point is read back AFTERWARDS.
+    d.round_to_digits(d.decimal_point + prec)
+    ro dp = d.decimal_point
+
+    if dp <= 0 {
+        put_at(buf, cap, index, '0' as u8)
+        index += 1
+    } else {
+        for i in 0..dp {
+            ro digit = if i < d.num_digits { d.digits[i] } else { 0 as u8 }
+            put_at(buf, cap, index, 48 + digit)
+            index += 1
+        }
+    }
+
+    if prec > 0 {
+        put_at(buf, cap, index, '.' as u8)
+        index += 1
+        for k in 0..prec {
+            // Position `dp + k` is negative for the leading zeros of a value below one,
+            // and beyond `num_digits` once the exact expansion has ended; both read as
+            // zero, which is what those places are.
+            ro pos = dp + k
+            ro digit = if pos >= 0 && pos < d.num_digits { d.digits[pos] } else { 0 as u8 }
+            put_at(buf, cap, index, 48 + digit)
+            index += 1
+        }
+    }
+    index
+}
+
+/// `%.*e` -- scientific form with exactly `prec` digits after the point.
+/// Returns the number of bytes ACTUALLY WRITTEN, i.e. the full rendering clamped to
+/// `cap` -- the contract `f64_fmt` has always had and that `StringBuilder.advance`
+/// depends on: it moves the builder's length by this number, so a count above the
+/// buffer would claim bytes nobody wrote. The wave's first version returned the
+/// NEEDED length instead, which is a different and quieter promise; the clamp lives
+/// in one place per producer so the two cannot drift apart again.
+export fn f64_sci_fmt(v f64, buf *mut u8, cap int, prec int) -> int
+    requires cap >= 0
+    => f64_sci_needed(v, buf, cap, prec).min(cap)
+
+fn f64_sci_needed(v f64, buf *mut u8, cap int, prec int) -> int
+    requires cap >= 0
+{
+    ro special = put_non_finite(v, buf, cap)
+    if special >= 0 { return special }
+
+    mut index = 0
+    if (v.to_bits() >> 63) != 0 {
+        put_at(buf, cap, index, '-' as u8)
+        index += 1
+    }
+
+    // Scientific form asks for prec + 1 SIGNIFICANT digits, so the bound does not
+    // depend on the value's magnitude at all -- unlike the fixed form, where the
+    // whole part has to be produced before the fraction can start.
+    mut d = exact_decimal_of(v, prec + 1 + 10)
+    // Zero has no significant digit to lead with, and its exponent is zero by
+    // convention rather than by computation.
+    ro is_zero = d.num_digits == 0
+    if !is_zero { d.round_to_digits(prec + 1) }
+    ro x = if is_zero { 0 } else { d.decimal_point - 1 }
+
+    ro lead = if is_zero || d.num_digits == 0 { 0 as u8 } else { d.digits[0] }
+    put_at(buf, cap, index, 48 + lead)
+    index += 1
+
+    if prec > 0 {
+        put_at(buf, cap, index, '.' as u8)
+        index += 1
+        for k in 1..=prec {
+            ro digit = if !is_zero && k < d.num_digits { d.digits[k] } else { 0 as u8 }
+            put_at(buf, cap, index, 48 + digit)
+            index += 1
+        }
+    }
+    index + put_exponent(buf, cap, index, x)
+}

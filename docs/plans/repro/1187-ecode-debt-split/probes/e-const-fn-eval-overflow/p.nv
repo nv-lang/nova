@@ -1,0 +1,9 @@
+// EXPECT_COMPILE_ERROR E_CONST_FN_EVAL_OVERFLOW -- does NOT reproduce, see NOTE.md
+#no_prelude
+module neg.d199_eval_overflow_test
+
+fn negate(const a int) -> const int => -a
+
+fn use_it() {
+    const R = negate(-9223372036854775808)
+}

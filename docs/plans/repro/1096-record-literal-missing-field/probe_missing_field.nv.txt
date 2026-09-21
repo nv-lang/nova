@@ -1,0 +1,51 @@
+// Насколько широк дефект: пропущенное поле в литерале записи.
+//
+// Спека (spec/decisions/02-types.md:1955) объявляет это ОШИБКОЙ дословно:
+//     ro u User = { id: 2 }    // ОШИБКА: missing field `name`
+// и строкой 1735: «construction всегда требует все поля». Компилятор принимает.
+//
+// Проба идёт по ОСЯМ, а не по одному случаю: массив, целое, строка, вектор — и запись
+// обычная против `value`. Строка здесь самая важная: если её поле остаётся мусором, это
+// уже не «неверное число», а дикий указатель, и цена дефекта другая.
+
+type NumsVal value {
+    mut n int
+    mut digits [4]u8
+}
+
+type TextVal value {
+    mut id int
+    mut name str
+}
+
+type TextRec {
+    mut id int
+    mut name str
+}
+
+fn omit_array() -> NumsVal => { n: 1 }
+fn omit_int() -> NumsVal => { digits: [9, 9, 9, 9] }
+fn omit_str_value() -> TextVal => { id: 7 }
+fn omit_str_record() -> TextRec => { id: 8 }
+
+fn main() Io -> () {
+    ro a = omit_array()
+    print("value+[4]u8, array omitted: digits[0]=")
+    print(a.digits[0] as int)
+    print("\n")
+
+    ro b = omit_int()
+    print("value+int, int omitted: n=")
+    print(b.n)
+    print("\n")
+
+    ro c = omit_str_value()
+    print("value+str, str omitted: len=")
+    print(c.name.byte_len())
+    print("\n")
+
+    ro d = omit_str_record()
+    print("record+str, str omitted: len=")
+    print(d.name.byte_len())
+    print("\n")
+}

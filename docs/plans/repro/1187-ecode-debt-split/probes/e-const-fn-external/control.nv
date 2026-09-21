@@ -1,0 +1,1 @@
+fn ext_add(const a int, const b int) -> const int => a + b

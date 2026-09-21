@@ -1,0 +1,4 @@
+#impl(Equal)
+external type RawHandle
+
+fn main() Io -> () => print("x")

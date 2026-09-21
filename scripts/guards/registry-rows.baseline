@@ -1370,9 +1370,42 @@
 # 2026-09-21, интегратор: rows 1163 -> 1164, max 1213 -> 1214.
 # Добавлена №1214 (check-commit-refs красный на CI c6c958472 — протухшая
 # краснота, локально уже снята; причина обхода NOVA_SKIP_CI_CHECK=1 пуша).
-rows=1164
-max=1214
+# 2026-09-21, интегратор: rows 1164 -> 1171, max 1214 -> 1221 (слияние
+# measure/1186-check-vs-test). Номера 1215-1221 выданы семи строкам
+# помощника (батч 2 по 1187: пять недостижимых/открытых кодов долга
+# ecode-fixture-debt плюс методологическая находка про check vs build),
+# приехавшим с №TBD и оформленным этим же слиянием.
+# 2026-09-21, интегратор: rows 1171 -> 1173, max 1221 -> 1223 (батч 3 по
+# 1187, помощник): №1222 — const-fn вычислитель недостижим из check при
+# рабочем соседнем гейте той же функции; №1223 — E_CONST_FN_CLOSURE_PARAM_TYPE
+# недостижим (единственный путь — ретрактированный синтаксис лямбды).
+# 2026-09-21, интегратор: rows 1173 -> 1174, max 1223 -> 1224. №1224 —
+# помощник нашёл третий носитель класса №1212/№1213 (effect в позиции
+# выражения, orm_decorators.nv) и назвал общий корень в lex.nv:459.
+# 2026-09-21, интегратор: rows 1174 -> 1175, max 1224 -> 1225. №1225 —
+# помощник нашёл, что одиночный `?` (Try) не лексится вовсе (lex.nv:876-882);
+# родня №1089 по классу, отдельный корень (пунктуация, не ключевое слово).
+# 2026-09-21, интегратор: rows 1175 -> 1176, max 1225 -> 1226. №1226 —
+# помощник нашёл, что голый `unsafe fn` не имеет ветки ни в одном из двух
+# диспетчеров верхнего уровня (parse.nv, decls.nv) — третий вид корня.
+rows=1190
+max=1238
+# 2026-09-21, integrator: rows 1183->1185 -- measured by the guard itself
+# after the p283-float-parse merge (rows 1081, 1096, 1104 arrived, none of
+# them previously counted since p283 diverged before main tracked past
+# ~1066). max unchanged: none of p283's numbers exceed main's 1233.
+# 2026-09-21, integrator: row 1233 added (Carina's window) -- match on a
+# slice pattern gets misrouted through the Option[int]/sum path in the
+# checker, wrong-cause diagnostic, same carrier file as #1232. rows
+# 1182->1183, max 1232->1233.
 stale_gaps=0
+# 2026-09-21, интегратор: rows 1179 -> 1182 -- поправка счёта. Мои прежние
+# бампы после мержа p274-novac прибавляли +1 за каждый НОМЕР, но два из них
+# (1228, 1229) были numbered-TBD-строками, УЖЕ существовавшими как физические
+# строки до мержа (не проходили regex ^| N | без номера, поэтому не входили в
+# прежний rows= вовсе) -- их нумерация добавила 2 к счёту, а не 0. Реальный
+# счётчик стража (check-registry-rows-intact.py) дал 1182 -- беру его число,
+# а не пересчитываю руками ещё раз.
 # 2026-09-20: №1204 — ВРЕМЕННАЯ дыра, номер ВЫДАН помощнику (nova-94)
 # под строку про `E_READONLY_` — обрывок имени, завышающий знаменатель
 # долга 178. Строку заводит он, не я. **ОБЯЗАТЕЛЬСТВО:** как только
@@ -1393,4 +1426,43 @@ stale_gaps=0
 # nomer I v gaps=, I so strokoy schitaetsya 'protuhshey dyroy'.
 # 2026-09-21: №1209 ПРИЕХАЛ и СНЯТ из gaps=
 # (писал интегратор, как и планировалось). №1210-1211 всё ещё ждёт Карину.
-gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1210-1211
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211
+# 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
+# real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
+# 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding
+# (single-line record with commas doesn't parse, parse.nv:27-28 already names
+# the narrowness in its own doc-comment). rows 1176->1177, max 1226->1227.
+# 2026-09-21, integrator: after merging p274-novac, numbered Carina's two
+# TBD findings as 1228 (Effect[E] not registered, partial fix) and 1229
+# (self-check batch ICE blocking S5 measure), and assistant's two further
+# table-5v findings as 1230 (CRLF escaped-newline lexer bug) and 1231
+# (${s:?} debug-specifier not parsed). rows 1177->1178 (one net-new numbered
+# row group merged: #1212 already existed, #1228-1231 are new), max 1227->1231.
+# 2026-09-21, integrator: row 1232 added -- assistant's 6th and final
+# table-5v finding, a real ASI-style parser bug (leading `[` on a new line
+# greedily binds as indexing onto the previous match arm's body), not a
+# subset gap like the other five. rows 1178->1179, max 1231->1232.
+# 2026-09-21, integrator, merge with p283-float-parse. Its own gaps= list
+# (stale since 2026-09-15) already knew to drop 1096 and 1104 once those
+# rows existed -- and by the time of THIS merge, rows 1074, 1081, 1084,
+# 1089, 1093-1095, 1099-1103, 1109 ALSO all exist on main (p283 never saw
+# them being filled, since it diverged early and tracked its own stale
+# gaps= copy independently). None of p283's remaining gap numbers survive
+# the merge; only 1103 does not yet have a row. Re-measured below, per this
+# file's own rule, rather than reconciled by hand from two stale lists.
+# 2026-09-21, integrator: rows 1234-1235 added -- package-tier gate
+# redness (nova-polaris arity mismatch on serve overload resolution,
+# nova-http stale consume lint + transport/real timeout), reproduced on
+# a stale gate run's HEAD and confirmed pre-existing (not touched by
+# tonight's registry-only work). rows 1185->1187, max 1233->1235.
+# 2026-09-21, integrator: row 1236 added -- seven guard selftests failed
+# simultaneously on the fresh push-tier gate run, reproduced by hand,
+# confirmed pre-existing (none of tonight's registry-only commits touched
+# these tools). rows 1187->1188, max 1235->1236.
+# 2026-09-21, integrator: row 1237 added -- assistant found bare `return`
+# as a MIDDLE match arm isn't recognized (only last-arm case was fixed
+# 2026-09-20), found scanning the 87-file self-check rejection list.
+# rows 1188->1189, max 1236->1237.
+# 2026-09-21, integrator: row 1238 added -- stale CI redness on 6aeac95d0,
+# closed, cause of the NOVA_SKIP_CI_CHECK=1 override for tonight's push.
+# rows 1189->1190, max 1237->1238.

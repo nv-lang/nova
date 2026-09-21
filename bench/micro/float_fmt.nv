@@ -1,0 +1,150 @@
+// План 285 Ф.5: чего стоила замена libc в печати float.
+module micro.float_fmt
+
+import std.runtime.fmt_buf
+
+// ЗАМЕР ИДЁТ НА ОДНОМ БИНАРЕ, и это не удобство, а условие сравнимости. Старый
+// C-хелпер никуда не делся: после Ф.3/Ф.4 он остался эталоном дифференциала, поэтому
+// обе стороны живут в одной сборке и меряются одним и тем же прогоном. Сравнение
+// «раньше собирали так, теперь эдак» дало бы разницу компилятора и флагов вместе с
+// разницей алгоритма; здесь разница только в том, кого позвали.
+extern "C" fn nova_f64_shortest(v f64, buf *mut u8) -> int
+extern "C" fn nova_f64_fmt(v f64, buf *mut u8, cap int, kind int, prec int) -> int
+
+// ТРИ НАБОРА, названные планом заранее: короткие, JSON-типичные, длинные.
+//
+// Разделены не по вкусу, а по тому, что делает СТАРЫЙ путь: он печатает `%g` и читает
+// обратно `strtod`, пока не совпадёт, и цикл идёт от точности 6 до 17. На коротких он
+// угадывает с первого раза, на JSON-типичных — со второго-третьего, на длинных доходит
+// до конца. Один усреднённый набор спрятал бы именно то, ради чего волна и делалась.
+fn short_set() -> []f64 => []f64.of(0.0, 1.0, 0.5, 2.5, 100.0, 0.25, 42.0, 7.0)
+
+fn json_set() -> []f64 => []f64.of(
+    0.1, 3.14159, 1234.5678, 0.001, 99.99, 12345.6789, 2.718281828, 0.0625,
+)
+
+fn long_set() -> []f64 => []f64.of(
+    0.1234567890123456, 1.7976931348623157e308, 5.0e-324, 1.0 / 3.0,
+    9.007199254740993e15, 2.2250738585072014e-308, 1.2345678901234567e-15,
+    123456789012345.6,
+)
+
+fn ours_over(set []f64) -> int {
+    mut buf = []u8.new(cap: 64)
+    mut total = 0
+    for i in 0..set.len() {
+        total += f64_shortest_fmt(set[i], buf.ptr(), 64)
+    }
+    total
+}
+
+fn theirs_over(set []f64) -> int {
+    mut buf = []u8.new(cap: 64)
+    mut total = 0
+    for i in 0..set.len() {
+        total += unsafe { nova_f64_shortest(set[i], buf.ptr()) }
+    }
+    total
+}
+
+bench "shortest f64, short values -- ours" {
+    ro set = short_set()
+    measure {
+        bench.elements(8)
+        bench.opaque(ours_over(set))
+    }
+}
+
+bench "shortest f64, short values -- C helper" {
+    ro set = short_set()
+    measure {
+        bench.elements(8)
+        bench.opaque(theirs_over(set))
+    }
+}
+
+bench "shortest f64, json-typical -- ours" {
+    ro set = json_set()
+    measure {
+        bench.elements(8)
+        bench.opaque(ours_over(set))
+    }
+}
+
+bench "shortest f64, json-typical -- C helper" {
+    ro set = json_set()
+    measure {
+        bench.elements(8)
+        bench.opaque(theirs_over(set))
+    }
+}
+
+bench "shortest f64, long values -- ours" {
+    ro set = long_set()
+    measure {
+        bench.elements(8)
+        bench.opaque(ours_over(set))
+    }
+}
+
+bench "shortest f64, long values -- C helper" {
+    ro set = long_set()
+    measure {
+        bench.elements(8)
+        bench.opaque(theirs_over(set))
+    }
+}
+
+// Fixed и Sci: у старого пути тут нет цикла обратного чтения, только один `snprintf`.
+// Ожидание поэтому ДРУГОЕ, и оно записано до замера: выигрыша может не быть вовсе, а
+// наш путь раскладывает значение точно и способен оказаться дороже. Замер на то и
+// замер, чтобы это выяснить, а не предположить.
+fn ours_fixed_over(set []f64, prec int) -> int {
+    mut buf = []u8.new(cap: 512)
+    mut total = 0
+    for i in 0..set.len() {
+        total += f64_fixed_fmt(set[i], buf.ptr(), 512, prec)
+    }
+    total
+}
+
+fn theirs_fixed_over(set []f64, prec int) -> int {
+    mut buf = []u8.new(cap: 512)
+    mut total = 0
+    for i in 0..set.len() {
+        total += unsafe { nova_f64_fmt(set[i], buf.ptr(), 512, 1, prec) }
+    }
+    total
+}
+
+bench "fixed f64 prec=2, json-typical -- ours" {
+    ro set = json_set()
+    measure {
+        bench.elements(8)
+        bench.opaque(ours_fixed_over(set, 2))
+    }
+}
+
+bench "fixed f64 prec=2, json-typical -- C snprintf" {
+    ro set = json_set()
+    measure {
+        bench.elements(8)
+        bench.opaque(theirs_fixed_over(set, 2))
+    }
+}
+
+bench "fixed f64 prec=17, long values -- ours" {
+    ro set = long_set()
+    measure {
+        bench.elements(8)
+        bench.opaque(ours_fixed_over(set, 17))
+    }
+}
+
+bench "fixed f64 prec=17, long values -- C snprintf" {
+    ro set = long_set()
+    measure {
+        bench.elements(8)
+        bench.opaque(theirs_fixed_over(set, 17))
+    }
+}

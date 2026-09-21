@@ -14,12 +14,23 @@
 //     pressure) — the `.nv` replacement for the equivalent int/bool/char
 //     helpers in `conv.h` (`nova_fmt_int_body`/`nova_bool_to_str`/
 //     `nova_char_to_str`).
-//   - `nova_f64_fmt` — the ONE C-extern this design keeps (dtoa/shortest-
-//     round-trip is not portably expressible in `.nv`); literal-name
-//     `extern "C" fn`, body in `nova_rt/nova_rt.h` (next to the existing
-//     `nova_f64_shortest`/`nova_f32_shortest` it reuses). `f64_fmt` is the
-//     `.nv`-side wrapper converting the `FloatKind` enum to the `int` the
-//     C-ABI boundary carries (enums do not cross `extern "C"` directly).
+//   - `f64_fmt`/`f32_fmt` — the float digits, produced HERE, in `.nv`: the Ryu
+//     port in the peer `shortest.nv` for the shortest round-trip form, and
+//     exact decimal arithmetic (`runtime.decimal`) in `fixed.nv` for `%.*f`
+//     and `%.*e`. All three kinds of `FloatKind` go to Nova code.
+//
+//     THIS LINE USED TO SAY THE OPPOSITE, and the correction is the point of
+//     plan 285: it called `nova_f64_fmt` "the ONE C-extern this design keeps"
+//     on the grounds that "dtoa/shortest-round-trip is not portably
+//     expressible in `.nv`". That premise is RETRACTED, formally, by D475
+//     (`spec/decisions/02-types.md`) — not softened, retracted: it was an
+//     assumption nobody had tested, and the port is 967 lines of peer file
+//     that judges itself against the C helper it replaced. Leaving the claim
+//     here would leave the next reader believing the door must stay open.
+//
+//     The C externs below are NOT dead and are not to be deleted: they are the
+//     REFERENCE the differential tests measure against, and they leave the tree
+//     together with libc on the Carina track, not earlier.
 //   - `Align`/`FloatKind` — the enum-marker types; `Align`
 //     is exported here because `StringBuilder.@pad_in_place`/`@write_padded`
 //     (`std/src/runtime/string_builder.nv`) take it directly.
@@ -308,39 +319,65 @@ export fn char_fmt(v char, buf *mut u8, cap int) -> int
 /// `nova_f32_shortest`), reusing the existing `nova_f64_shortest` engine for
 /// `kind == 0`. Writes at most `cap` bytes into `buf`, returns bytes written
 /// (truncates defensively). `kind`: 0=Shortest, 1=Fixed (`%.*f`), 2=Sci
-/// (`%.*e`) — see `f64_fmt` below for the enum-typed, default-argued public
-/// `.nv`-side wrapper. Module-private (not `export`) — callers reach this
-/// ONLY through `f64_fmt`.
+/// (`%.*e`).
+///
+/// SINCE PLAN 285 Ф.3/Ф.4 THIS IS NO LONGER A DOOR OF THE FORMATTER. `f64_fmt` sends
+/// every kind to Nova code, and the only callers left are this module's own tests,
+/// where it serves as the differential's reference. It is kept, not deleted, for two
+/// reasons: a reference that disappears leaves the differential comparing our code
+/// with itself, and registry 1072 -- `print(x)` for a float, which still reaches the C
+/// side through `nova_print_f64` -- has not been closed yet. When it is, and the tests
+/// have a reference they do not need the runtime for, this declaration and its C body
+/// go together.
 extern "C" fn nova_f64_fmt(v f64, buf *mut u8, cap int, kind int, prec int) -> int
 
 /// f32 counterpart of `nova_f64_fmt` (owner 2026-07-20): shortest via
 /// `nova_f32_shortest` — the same engine as f32 printing/`to_str` (NOT
-/// an f64 extension: no double tails). Module-private — callers reach this
-/// ONLY through `f32_fmt` below.
+/// an f64 extension: no double tails). Like its `f64` sibling above, it stopped being
+/// a door in plan 285 Ф.3 -- `f32_fmt` goes to Nova code now -- and remains only as
+/// the reference the module's own differential compares against.
 extern "C" fn nova_f32_fmt(v f32, buf *mut u8, cap int) -> int
 
-/// `.nv`-side wrapper: converts `FloatKind` → the `int` `nova_f64_fmt`
-/// carries across the `extern "C"` ABI boundary (enums don't cross
-/// `extern "C"` directly). Defaults (`kind`/`prec`) make the simple call
-/// shape `f64_fmt(v, buf, cap)` render shortest round-trip.
-/// `unsafe fn` (raw `buf` write) — call-sites wrap in `unsafe { }`.
+/// The float entry point: picks the producer for `kind` and hands it the caller's
+/// buffer. Defaults (`kind`/`prec`) make the simple call shape `f64_fmt(v, buf, cap)`
+/// render shortest round-trip. `unsafe fn` (raw `buf` write) — call-sites wrap in
+/// `unsafe { }`.
+///
+/// This used to describe itself as a wrapper "converting `FloatKind` to the `int`
+/// `nova_f64_fmt` carries across the `extern "C"` boundary". That was true while the
+/// digits came from C; since plan 285 Ф.3/Ф.4 no kind crosses that boundary, and the
+/// enum is matched here rather than flattened for an ABI. The `int` encoding survives
+/// only where it is still needed — in the differential's own calls to the C reference.
 export unsafe fn f64_fmt(v f64, buf *mut u8, cap int, kind FloatKind = FloatKind.Shortest, prec int = -1) -> int
     requires cap >= 0
 {
-    ro k = match kind {
-        FloatKind.Shortest => 0
-        FloatKind.Fixed => 1
-        FloatKind.Sci => 2
+    // Plan 285 Ф.3 and Ф.4: every kind is OURS now -- the Ryu port in the peer
+    // `shortest.nv` for the shortest form, and the exact decimal of `runtime.decimal`
+    // for the two precision forms in `fixed.nv`. Each was judged against the C helper
+    // it replaces by a differential BEFORE the switch, and `nova_f64_fmt` stays in the
+    // runtime only as that differential's reference.
+    //
+    // THE PRECISION DEFAULTS AND CLAMPS ARE THE C ONES, deliberately: `prec < 0` means
+    // six places for both forms, `Fixed` clamps at 340 and `Sci` at 40. They are not
+    // ours to change here -- a formatter that quietly widened its own limits while
+    // "only" swapping the digit producer would be changing the surface after all.
+    ro p_fixed = if prec < 0 { 6 } else { prec.min(340) }
+    ro p_sci = if prec < 0 { 6 } else { prec.min(40) }
+    match kind {
+        FloatKind.Shortest => f64_shortest_fmt(v, buf, cap)
+        FloatKind.Fixed => f64_fixed_fmt(v, buf, cap, p_fixed)
+        FloatKind.Sci => f64_sci_fmt(v, buf, cap, p_sci)
     }
-    unsafe { nova_f64_fmt(v, buf, cap, k, prec) }
 }
 
 /// `.nv`-side wrapper over `nova_f32_fmt` — shortest-only (f32 has no
 /// Fixed/Sci axis; the user-facing rich-spec path widens through f64
 /// instead). `unsafe fn` (raw `buf` write) — call-sites wrap in `unsafe { }`.
+/// Plan 285 Ф.3: `f32` has only the shortest kind, so this door is now entirely
+/// ours -- `nova_f32_fmt` keeps its C body only as the differential's reference.
 export unsafe fn f32_fmt(v f32, buf *mut u8, cap int) -> int
     requires cap >= 0
-    => unsafe { nova_f32_fmt(v, buf, cap) }
+    => f32_shortest_fmt(v, buf, cap)
 
 // ─── Debug-escape engine ──────────────────────────────────────────────
 //

@@ -1,0 +1,5 @@
+ro g = 5
+
+fn bad(const a int) -> const int => a + g
+
+fn main() Io -> () => print("x")

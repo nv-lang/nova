@@ -25,7 +25,9 @@
 #
 # Замер на день засева: строк реестра 1106, из них без поля 677.
 
-nofield=660
+nofield=659
+# 2026-09-21, integrator: #895 got its Статус: field (plan 274.10 reminded of
+# it), removed from this list. 660->659.
 
 10
 22
@@ -657,7 +659,6 @@ nofield=660
 890
 891
 892
-895
 896
 897
 898
