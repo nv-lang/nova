@@ -1,0 +1,8 @@
+#no_prelude
+module neg.d199_div_zero_control
+
+fn divide(const a int, const b int) -> const int => a / b
+
+fn use_it() {
+    const R = divide(5, 2)
+}

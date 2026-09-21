@@ -1,0 +1,8 @@
+#no_prelude
+module neg.d199_eval_overflow_control
+
+fn negate(const a int) -> const int => -a
+
+fn use_it() {
+    const R = negate(5)
+}

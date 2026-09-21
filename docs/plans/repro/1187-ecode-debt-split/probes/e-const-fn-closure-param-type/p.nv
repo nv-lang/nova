@@ -1,0 +1,2 @@
+fn make_adder(const n int) -> const fn(int) -> int =>
+    (x) => x + n

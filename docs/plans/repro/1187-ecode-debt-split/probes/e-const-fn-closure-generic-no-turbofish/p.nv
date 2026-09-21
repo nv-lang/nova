@@ -1,0 +1,6 @@
+fn make_adder[T](const n T) -> const fn(T) -> T => |x| x + n
+
+fn main() Io -> () {
+    ro adder5 = make_adder(5)
+    print("x")
+}
