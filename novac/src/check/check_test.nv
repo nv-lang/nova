@@ -451,3 +451,24 @@ test "unknown escape inside an interpolated string's literal piece is refused, n
     ro control_legal = "module m\n\nfn f(o int) -> str {\n    \"a\\nb\${o}\"\n}\n"
     assert(diagnose(control_legal) == 0, "a legal escape in an interpolated literal piece must not regress")
 }
+
+test "default parameter: a plain string literal is a legal value, same as a number or bool (registry #TBD)" {
+    // `default_is_value` (rules.nv) used to accept only IntLit/FloatLit and
+    // the bare bool names -- a string literal default (`greeting str =
+    // "hello"`) was refused as "outside the subset", even though it reads
+    // no more scope than a numeric default does: the text is fixed at the
+    // declaration and means the same thing at every call site (D102).
+    ro src = "module m\n\nfn f(x str = \"hi\") -> str {\n    x\n}\n"
+    assert(diagnose(src) == 0, "a plain string literal default must be accepted, exactly like a number or bool default")
+
+    // Control: an INTERPOLATED string default reads the CALLER's scope (the
+    // slot's value), which is exactly what this door exists to refuse --
+    // must stay refused, not swept in by the same fix.
+    ro control_interp = "module m\n\nfn f(x int, y str = \"\${x}\") -> str {\n    y\n}\n"
+    ro msg = diagnose_first_msg(control_interp)
+    assert(msg.contains("a default parameter value is a number or a boolean"), "an interpolated string default must still be refused -- it reads the caller's scope")
+
+    // Control: the existing numeric/bool defaults must not regress.
+    ro control_num = "module m\n\nfn f(x int = 0, y bool = true) -> int {\n    x\n}\n"
+    assert(diagnose(control_num) == 0, "numeric and boolean defaults must not regress")
+}
