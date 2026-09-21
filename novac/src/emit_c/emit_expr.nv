@@ -147,9 +147,10 @@ fn Emitter @printer_of(t TyId) -> str {
             if !row.signed && row.bits == 64 { return "nova_print_uint" }
             return "nova_print_int"
         }
-        PfStr | PfBool | PfChar | PfUnit => {}
+        PfChar => { return "nova_print_char" }
+        PfStr | PfBool | PfUnit => {}
     }
-    ice("emit_c: printer_of reached a primitive family without a printer (char and unit; str and bool are answered above)")
+    ice("emit_c: printer_of reached a primitive family without a printer (unit; str, bool and char are answered above)")
 }
 
 /// Does this operator emit as a C INFIX operator inside a truth-value cast?
