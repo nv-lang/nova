@@ -49,6 +49,22 @@ export fn arm_body_at(ak []Node) -> Option[int] {
     None
 }
 
+/// The slot of the `(` in a TYPED array literal's own constructor call
+/// (`[]Point.of(a, b)`, sub-plan L) -- everything after it is an ARGUMENT
+/// of `.of(...)`, the same position a `Call`'s own children get (registry
+/// #1239's remaining half). `None` for the plain `[a, b]` shape and for a
+/// bare `[]Point` with no argument list -- neither has a `(` at all.
+export fn array_of_lparen_at(kids []Node) -> Option[int] {
+    mut i = 0
+    for c in kids {
+        if c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.LParen {
+            return Some(i)
+        }
+        i += 1
+    }
+    None
+}
+
 /// Where the NAME of a parameter sits among its children, and where its TYPE
 /// begins.
 ///
