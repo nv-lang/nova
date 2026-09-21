@@ -1426,6 +1426,16 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1237
+max=1285
+# 2026-09-21, integrator: rows 1284-1285 added -- Carina's two remaining
+# TBD findings from the second p274-novac merge this evening (NOVAC_SELF_PATH
+# double-registration harness bug, filed not fixed; string-literal default
+# parameter value class fix), numbered and the string-default repro dir
+# renamed to match #1285. Her third TBD row (if-in-argument-position) was a
+# byte-near-duplicate of the integrator's own #1283 from the SAME earlier
+# finding on her unsynced branch tip -- dropped, not renumbered.
+# rows 1235->1237, max 1283->1285.
 rows=1235
 max=1283
 # 2026-09-21, integrator: row 1242 added -- new checker ICE exposed by

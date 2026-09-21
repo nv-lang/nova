@@ -27,7 +27,7 @@ import ../sem.{contains_call}
 import ../sem.{decl_of_ty}
 import ../sem.{branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, generic_bounds}
 import ../sem.{is_arg_node}
-import ../sem.{ret_is_unit, param_default_slot}
+import ../sem.{ret_is_unit, param_default_slot, interp_slices}
 import ../types.{TyId, no_ty, is_ty}
 
 
@@ -313,6 +313,18 @@ fn default_is_value(d Node) -> bool {
     // The token stands LAST: the unary minus, when written, stands before it.
     ro t = kids[kids.len() - 1]
     if t.kind_of() != NodeKind.LeafNode { return false }
+    // A STRING LITERAL joins for the same reason the numeric ones do
+    // (registry #TBD): the text is fixed at the declaration, so reading it
+    // means the same thing at every call site -- it reads no scope, exactly
+    // the property this whole door is named for. Not an INTERPOLATED one:
+    // that reads a slot's value, which is the caller's scope by definition,
+    // and `interp_slices` is the door that already tells the two apart
+    // elsewhere in this checker.
+    if leaf_kind(t) == TokenKind.StrLit {
+        return interp_slices(leaf_text(t)).len() < 2
+    } else {
+        // Not a string either: the numeric check below decides.
+    }
     leaf_kind(t) == TokenKind.IntLit || leaf_kind(t) == TokenKind.FloatLit
 }
 

@@ -345,3 +345,51 @@ test "shape: bare `unsafe fn` parses as FnDecl through both entry doors (registr
     }
     assert(tree_reserialize(exported) == exported_src)
 }
+
+/// How many `NodeKind.Err` nodes stand anywhere in this tree -- a recovery
+/// count, not a shape check: a form the parser reads cleanly plants none.
+fn count_err(n Node) -> int {
+    match n {
+        Leaf(_) => 0
+        Branch { kind, children, .. } => {
+            mut c = if kind == NodeKind.Err { 1 } else { 0 }
+            for k in children {
+                c += count_err(k)
+            }
+            c
+        }
+    }
+}
+
+test "shape: a nested tuple/record sub-pattern in a variant payload parses, not the parser's fallback (registry #1240, D157)" {
+    // `Some((first, cnt))` used to fall through the payload loop entirely --
+    // it read only a flat, comma-separated run of `Ident`, so the leading
+    // `(` of the nested tuple matched no branch and the whole arm dropped
+    // into the parser's unnamed fallback (three cascaded Err nodes for one
+    // mistake). D157 already named the form legal on 2026-07-21; the spec
+    // amendment for #1240 (2026-09-21) made D184's grammar say so too.
+    // `mut b` inside the nested pattern is the oracle-confirmed sibling
+    // form (per-element consume mode, D157's own reason for existing).
+    ro src = "fn m(p Pos) -> int {\n    match p {\n        Nowhere => 0\n        Point((first, mut cnt)) => first\n    }\n}\n"
+    ro f = parse(lex(src))
+    assert(tree_reserialize(f) == src, "the tree must reserialize byte for byte -- no token lost to recovery")
+    assert(count_err(f) == 0, "a form the parser reads cleanly plants no NodeKind.Err -- a nonzero count means some part still fell into the fallback")
+
+    mut found_match = false
+    match ret_test_fn_block(f) {
+        Branch { children, .. } => {
+            for c in children {
+                if c.kind_of() == NodeKind.MatchExpr { found_match = true }
+            }
+        }
+        Leaf(_) => {}
+    }
+    assert(found_match, "the match expression itself must parse as MatchExpr, not fall into recovery before reaching the arms")
+
+    // Control: the record sub-pattern form (`{first, second}`, D157's other
+    // half) parses the same way, on its own probe.
+    ro rec_src = "fn m(p Pos) -> int {\n    match p {\n        Nowhere => 0\n        Boxed({w, h}) => w\n    }\n}\n"
+    ro rf = parse(lex(rec_src))
+    assert(tree_reserialize(rf) == rec_src, "the record sub-pattern form must reserialize byte for byte too")
+    assert(count_err(rf) == 0, "the record sub-pattern form must plant no NodeKind.Err either")
+}
