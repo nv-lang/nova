@@ -1388,8 +1388,16 @@
 # 2026-09-21, интегратор: rows 1175 -> 1176, max 1225 -> 1226. №1226 —
 # помощник нашёл, что голый `unsafe fn` не имеет ветки ни в одном из двух
 # диспетчеров верхнего уровня (parse.nv, decls.nv) — третий вид корня.
-rows=1190
-max=1238
+rows=1193
+max=1241
+# 2026-09-21, integrator: rows 1190->1193, max 1238->1241 -- measured after
+# reconciling Carina's post-push sync with main: removed a duplicate #1230
+# closure that reappeared via merge, numbered her module-level-ro finding
+# as #1239 (already fixed by her, D184/D200 contradiction resolved too),
+# numbered nested-tuple-in-variant-pattern as #1240, closed #1237 with her
+# fix (removing a duplicate standalone row), and numbered the assistant's
+# open-left-bound-slice finding as #1241.
+
 # 2026-09-21, integrator: rows 1183->1185 -- measured by the guard itself
 # after the p283-float-parse merge (rows 1081, 1096, 1104 arrived, none of
 # them previously counted since p283 diverged before main tracked past

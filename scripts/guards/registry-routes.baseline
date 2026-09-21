@@ -1490,7 +1490,11 @@ no_caveat=0
 # 2026-09-21, интегратор: 85 -> 86, РОСТ и он законен. Новая строка №1226 —
 # голый `unsafe fn` без ветки в двух диспетчерах парсера разом (parse.nv,
 # decls.nv) — третий вид корня того же читательского класса.
-blockers=90
+blockers=91
+# 2026-09-21, integrator: 90 -> 91. Net after reconciling post-push sync:
+# #1237 closed (-1, Carina's fix) but #1240 (nested tuple pattern) and
+# #1241 (open-left-bound slice) are new blockers (+2); #1239 (module-ro)
+# is not a blocker (already fixed).
 # 2026-09-21, integrator: 91 -> 90. Carina's window closed #1230 (62f1cc9ad,
 # CRLF string-literal continuation bug), found independently a second time
 # while scanning the self-build rejection map -- same root cause the row
