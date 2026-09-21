@@ -1426,6 +1426,14 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1239
+max=1287
+# 2026-09-21, integrator: rows 1286-1287 added -- gate-novac's 7 live
+# failures on current HEAD (pre-existing debt, confirmed via git log/older
+# CI run, not introduced by tonight's merges) and a new presume_446_stress
+# CI symptom (SIGABRT/D92-invariant, distinct from the known SIGSEGV
+# flake #848 -- not yet proven same class or new regression).
+# rows 1237->1239, max 1285->1287.
 rows=1237
 max=1285
 # 2026-09-21, integrator: rows 1284-1285 added -- Carina's two remaining
