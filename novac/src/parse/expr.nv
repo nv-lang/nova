@@ -351,9 +351,57 @@ fn Cursor mut @primary() -> Node {
     e
 }
 
+/// ONE element of a variant's payload pattern (D157, spec amendment for
+/// registry #1240): a binder -- optionally `mut` -- or a NESTED sub-pattern,
+/// `(a, b)` for a tuple payload or `{a, b}` for a record one. Pushed FLAT
+/// into `pk`, the convention the array pattern already uses a few lines
+/// down (`[b1, b2, ..]`): the checker re-reads the delimiter leaves
+/// structurally, so nesting costs no new node kind here, only a door that
+/// recurses instead of stopping at the first `Ident`.
+///
+/// `Some((first, cnt))` used to fall through this loop entirely -- it read
+/// ONLY a flat, comma-separated run of `Ident`, so a leading `(` (the start
+/// of the nested tuple) matched no branch and the whole arm dropped into
+/// the parser's unnamed fallback (registry #1240, three cascaded
+/// diagnostics from one mistake). The grammar was never narrower than
+/// this -- D157 already named the form legal on 2026-07-21 -- the parser
+/// simply had not read that far.
+fn Cursor mut @variant_payload_elem(mut pk []Node) -> () {
+    if @peek() == TokenKind.KwMut {
+        pk.push(@take())
+    } else {
+        // No mode word: the binder is `ro` by the pattern's own default.
+    }
+    if @peek() == TokenKind.LParen {
+        pk.push(@take())
+        while @peek() == TokenKind.Ident || @peek() == TokenKind.KwMut ||
+              @peek() == TokenKind.LParen || @peek() == TokenKind.LBrace {
+            @variant_payload_elem(pk)
+            @push_if(pk, TokenKind.Comma)
+        }
+        @push_expected(pk, TokenKind.RParen)
+    } else if @peek() == TokenKind.LBrace {
+        // The record sub-pattern is FLAT (D157: `"{" IDENT ("," IDENT)*
+        // "}"`) -- a nested tuple or record inside a record field is not
+        // part of the norm this amendment names, so it is not read here.
+        pk.push(@take())
+        while @peek() == TokenKind.Ident {
+            pk.push(@take())
+            @push_if(pk, TokenKind.Comma)
+        }
+        @push_expected(pk, TokenKind.RBrace)
+    } else if @peek() == TokenKind.Ident {
+        pk.push(@take())
+    } else {
+        @push_expected(pk, TokenKind.Ident)
+    }
+}
+
 /// `match scrutinee { arm* }` — an arm is `pattern [if guard] => expr`.
 /// Patterns of the subset: int literal · binder ident (`_` included — the
-/// emitter treats any binder named `_` as bindless) · `Variant(b1, b2)`.
+/// emitter treats any binder named `_` as bindless) · `Variant(b1, b2)`,
+/// each payload position itself a binder or a nested tuple/record
+/// sub-pattern (D157, `@variant_payload_elem` above).
 /// Arm separators are newlines (D452 land); the tree does not care — arms
 /// run to the closing brace, lossless either way.
 fn Cursor mut @match_expr() -> Node {
@@ -449,8 +497,9 @@ fn Cursor mut @match_expr() -> Node {
             }
             if @peek() == TokenKind.LParen {
                 pk.push(@take())
-                while @peek() == TokenKind.Ident {
-                    pk.push(@take())
+                while @peek() == TokenKind.Ident || @peek() == TokenKind.KwMut ||
+                      @peek() == TokenKind.LParen || @peek() == TokenKind.LBrace {
+                    @variant_payload_elem(pk)
                     @push_if(pk, TokenKind.Comma)
                 }
                 @push_expected(pk, TokenKind.RParen)
@@ -469,8 +518,9 @@ fn Cursor mut @match_expr() -> Node {
                 @push_expected(pk, TokenKind.Ident)
                 if @peek() == TokenKind.LParen {
                     pk.push(@take())
-                    while @peek() == TokenKind.Ident {
-                        pk.push(@take())
+                    while @peek() == TokenKind.Ident || @peek() == TokenKind.KwMut ||
+                          @peek() == TokenKind.LParen || @peek() == TokenKind.LBrace {
+                        @variant_payload_elem(pk)
                         @push_if(pk, TokenKind.Comma)
                     }
                     @push_expected(pk, TokenKind.RParen)
