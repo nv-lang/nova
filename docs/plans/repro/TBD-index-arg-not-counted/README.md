@@ -54,6 +54,17 @@ message that names the wrong axis of the problem.
   compile -- the indexing gap itself is untouched and still legitimately
   refused.
 
+## Self-build map, before/after
+
+Fresh batch check (`NOVAC_SELF_PATH=novac/src novac.exe check <all
+non-test files>`), same total (72 files with a diagnostic, unchanged --
+this fix corrects a diagnosis, it does not complete a feature): the
+"this call omits `n`" first-diagnostic bucket disappeared entirely (was
+present before), and "indexing is read but not compiled yet (E2-b)" grew
+from 1 file to 3 -- exactly the carriers whose first diagnostic used to
+be the misleading message now correctly show the honest, pre-existing
+indexing gap instead.
+
 ## Carrier caveat
 
 The fix closes the COUNTING class for `Index` specifically -- any other
