@@ -1,0 +1,141 @@
+diff --git a/novac/src/check/check.nv b/novac/src/check/check.nv
+index 3b5435869..60474ff7f 100644
+--- a/novac/src/check/check.nv
++++ b/novac/src/check/check.nv
+@@ -468,16 +468,21 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
+                     // (tail_rules) already lets a tuple through by name.
+                 }
+                 IfExpr => {
+-                    // INITIALIZER POSITION IS LEGAL since wave B14: the binding
+-                    // path types it through the same doors as the tail form
+-                    // (both branches, forced to agree) and the emitter lays it
+-                    // into a value temporary. Everywhere else the refusal
++                    // INITIALIZER AND ARGUMENT POSITIONS ARE LEGAL (wave B14,
++                    // extended registry #TBD): the binding path and the call
++                    // argument loop both type it through the same doors (both
++                    // branches, forced to agree) and lowering already lays it
++                    // into a value temporary through the position-agnostic
++                    // `@lower_value_source` dispatch -- measured: that door's
++                    // `IfExpr` arm never checked position, so the gap was
++                    // ONLY here and in `type_expr` (exprs.nv), not in
++                    // lowering or emission. Everywhere else the refusal
+                     // stands, exactly as the record constructor's does.
+-                    if !init_pos {
++                    if !init_pos && !arg_pos {
+                         @report_first_leaf_of(children, IF_EXPR_MSG)
+                         return
+                     } else {
+-                        // In initializer position the walk continues into the
++                        // A legal position: the walk continues into the
+                         // children like any other node's.
+                     }
+                 }
+diff --git a/novac/src/check/exprs.nv b/novac/src/check/exprs.nv
+index 8ec864937..9970731d3 100644
+--- a/novac/src/check/exprs.nv
++++ b/novac/src/check/exprs.nv
+@@ -181,6 +181,17 @@ fn Checker mut @type_expr(e Node) -> () {
+         @type_expr(tk[0])
+         if @out.len() > before { return }
+         @report_first_leaf_of(tk, TRY_MSG)
++    } else if k == NodeKind.IfExpr {
++        // A CALL ARGUMENT is a legal position too (registry #TBD, the B14
++        // door widened the same way B13's record constructor was): this
++        // generic dispatcher is where `@type_free_call`'s argument loop
++        // (`calls.nv`) reaches every argument through `@type_expr`, and
++        // until now it had no arm for `IfExpr` at all -- `check.nv`'s shape
++        // walk refused the position before typing was ever asked. The tail
++        // and initializer positions call `@type_if_value` directly and
++        // never reach this dispatcher; an argument does, so this is the
++        // one new call site the class needed.
++        @type_if_value(e)
+     } else if k == NodeKind.InterpStr {
+         // Every slot's expression is a real node (I2): walked, typed, and
+         // its display type judged -- str and int carry builder inserts
+diff --git a/novac/src/check/type_of.nv b/novac/src/check/type_of.nv
+index 0400ffb40..6bf25f8ff 100644
+--- a/novac/src/check/type_of.nv
++++ b/novac/src/check/type_of.nv
+@@ -356,6 +356,17 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
+         // refused has no type, and its readers act on `no_ty()`.
+         return chan.type_if_known(e.id_of())
+     }
++    if k == NodeKind.IfExpr {
++        // Same rule as Index/ArrayLit/TupleExpr above (registry #TBD, the
++        // argument-position wave): `@type_if_value` records the agreed
++        // branch type before anyone asks here -- this door reads, it does
++        // not re-derive. Its absence iced the moment `is_expr_kind` and the
++        // `type_expr` dispatcher both learned the argument position but this
++        // one had not: `pick(if c {10} else {20})` reached the fallback ice
++        // at the bottom of this function. Silence is a refused `if` (no
++        // else, disagreeing branches), and readers act on `no_ty()`.
++        return chan.type_if_known(e.id_of())
++    }
+     if k == NodeKind.RecordCtor {
+         ro kids = branch_children(e)
+         if kids[0].kind_of() == NodeKind.Name {
+diff --git a/novac/src/emit_c/emit_c.nv b/novac/src/emit_c/emit_c.nv
+index 395cface5..54c3013d5 100644
+--- a/novac/src/emit_c/emit_c.nv
++++ b/novac/src/emit_c/emit_c.nv
+@@ -484,6 +484,17 @@ fn Emitter mut @hoist_array_lits(e Node) -> () {
+                 @lit_tmp[raw_node(e.id_of())] = @lo.ir.decl_of(@lo.lower_coalesce(e)).name
+                 return
+             }
++            if kind == NodeKind.IfExpr {
++                // THE SAME DOOR as `??` above (registry #TBD, the argument-
++                // position wave): an `if` value is also a multi-statement
++                // build (a temp plus an if/else laying it in), so it cannot
++                // print inline either -- `@lower_if_value` is the SAME door
++                // the initializer-position bind path already calls
++                // (`binds.nv`), position-agnostic by construction; only the
++                // CALLER differed until now.
++                @lit_tmp[raw_node(e.id_of())] = @lo.ir.decl_of(@lo.lower_if_value(e, @out.type_of(e.id_of()))).name
++                return
++            }
+             if kind == NodeKind.Lit {
+                 // A literal hoists nothing: the pool owns a plain string,
+                 // and the interpolated form is its own InterpStr node since
+diff --git a/novac/src/emit_c/emit_expr.nv b/novac/src/emit_c/emit_expr.nv
+index 0b3ba16d4..57122fd52 100644
+--- a/novac/src/emit_c/emit_expr.nv
++++ b/novac/src/emit_c/emit_expr.nv
+@@ -393,6 +393,18 @@ fn Emitter mut @emit_expr(e Node) -> () {
+             // Hoisted: the temporary carries the built pair.
+         }
+         @body.append(ttmp)
++    } else if k == NodeKind.IfExpr {
++        // The same contract again (registry #TBD, the argument-position
++        // wave): an `if` value is a multi-statement build (temp declared,
++        // then filled by whichever branch runs), so what stands in the
++        // expression is the temporary `@hoist_array_lits` filled.
++        ro iftmp = @lit_tmp[raw_node(e.id_of())]
++        if iftmp == "" {
++            ice("emit: an `if` value in expression position was never hoisted")
++        } else {
++            // Hoisted: the temporary carries the agreed-branch value.
++        }
++        @body.append(iftmp)
+     } else if k == NodeKind.RecordCtor {
+         // The same contract as the array literal above, and for the same
+         // reason (wave B13): a constructor is built by several C statements,
+diff --git a/novac/src/sem/node_questions.nv b/novac/src/sem/node_questions.nv
+index 01ab6d82e..ab122cbbf 100644
+--- a/novac/src/sem/node_questions.nv
++++ b/novac/src/sem/node_questions.nv
+@@ -100,7 +100,14 @@ export fn is_expr_kind(k NodeKind) -> bool {
+     // through `is_arg_node`, `is_arg_node` asks here, and a form missing from
+     // this list is not refused anywhere. It is simply not there.
+     k == NodeKind.RecordCtor ||
+-    k == NodeKind.Cast
++    k == NodeKind.Cast ||
++    // AN `if` VALUE joins for the identical reason RecordCtor did (see the
++    // comment above): registry #TBD found `pick(if c {10} else {20}))`
++    // refused with "this call omits `x`" even after `check.nv`'s shape gate
++    // and `exprs.nv`'s `type_expr` both learned the argument position --
++    // counting never saw the node, because counting goes through
++    // `is_arg_node`, which asks here, and IfExpr was not on this list.
++    k == NodeKind.IfExpr
+ }
+ 
+ /// Is this a call to `println` in the source? A question about meaning, so the
