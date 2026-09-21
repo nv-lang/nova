@@ -1,0 +1,28 @@
+module effect_decl.neg_1
+
+// `type X effect { fn op(..) -> T }` -- the declaration reads (2026-09-21)
+// and is refused BY NAME, not by a lie.
+//
+// WHY THIS FIXTURE. Until the fix, `effect` fell into the alias tail
+// (`type Name Y`, `effect` read as an ordinary type name) and the refusal
+// was "undeclared type name `effect`" -- a misspelling nobody made, about
+// an import nobody was missing. `effect` is a genuine word of the language
+// (D61/D459), and this fixture pins the HONEST text so a regression of
+// `check/check.nv`'s `@report_if_effect_type` or of the parser's
+// `EFFECT_MARKER` arm in `parse/type_decl.nv` silently falls back to the
+// wrong message rather than staying silent.
+//
+// THE SUBSTRING PINNED IS THE DISTINGUISHING PART, not the whole sentence
+// (check-novac-fixture-expect.sh's own contract): "declares an effect" is
+// specific to this refusal and cannot be produced by the old alias-tail
+// path, which named `effect` itself as the undeclared thing.
+
+// NOVAC_EXPECT declares an effect
+
+type Counter effect {
+    fn log(msg str) -> ()
+}
+
+fn main() {
+    println(1)
+}

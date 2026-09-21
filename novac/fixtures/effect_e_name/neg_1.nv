@@ -1,0 +1,24 @@
+module effect_e_name.neg_1
+
+// `Effect[T]` (D87/D142, the builtin generic type of a handler's value) is
+// a known type WORD now (2026-09-21), not a typo -- and it still refuses,
+// but honestly.
+//
+// WHY THIS FIXTURE. Before the fix, `Effect[T]` in a parameter or return
+// position gave "undeclared type name `Effect`" -- and the name is not
+// undeclared, it is a genuine language word this subset's registry does
+// not hold, exactly the class `is_language_type_word` already carries
+// `unit`/`never`/`any` for. This fixture pins the DIFFERENT, honest
+// refusal the flow reaches once the name stops lying: the existing
+// subset-debt message about an unknown type shape, unchanged by this fix
+// and already dated. A regression of `check/typeref_rules.nv`'s
+// `is_language_type_word` list would silently fall back to the wrong
+// "undeclared" text.
+
+// NOVAC_EXPECT novac does not know this type yet
+
+fn pass_through(x Effect[int]) -> Effect[int] => x
+
+fn main() {
+    println(1)
+}
