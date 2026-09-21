@@ -66,16 +66,147 @@ initializer are, at this door, the identical operation.
   position -- a record constructor as the TAIL EXPRESSION of a `{ ... }`
   block, where that block is itself a match arm's body (`PfFloat => { if
   ... { return DisplayCall{...} } DisplayCall{...} }` -- the un-parenthesised
-  final expression of the block). `check.nv`'s own comment on `MatchExpr`
-  names why this is a SEPARATE mechanism, not another case for `arm_pos`:
-  "the `{...}` tail is a statement position plus the typing route of wave
-  B4's tail machinery" -- a block's tail child is walked as `stmt_pos`,
-  and whether a VALUE is legal there is decided by tail-specific typing
-  (`tail_rules.nv`), not by `@walk`'s `init_pos`/`arg_pos`/`arm_pos` flags
-  at all. Fixing THIS position needs reading that mechanism fresh -- not
-  attempted this sitting (three narrow fixes plus this investigation is
-  enough for one evening); named honestly as an open follow-up rather than
-  forced into a fourth quick patch that would not actually be one line.
+  final expression of the block).
+
+  **THIS FOURTH POSITION IS NOT A ONE-LINE GAP -- IT IS A DESIGN BOUNDARY,
+  AND THE CURRENT REFUSAL IS PROTECTIVE, NOT INCIDENTAL.** Read
+  `check/match_arms.nv`'s `@type_arm` (lines 511-518, wave B9): a Block
+  ARM BODY is typed via `@type_block` (a STATEMENT walk) and the fold
+  ALWAYS receives `None` for it -- "the arm itself yields no value ...
+  which is exactly what None says here", by explicit design, not an
+  oversight. `@fold_arm_type`/`@agree_arm_type` then let the match's type
+  come from whichever OTHER arms DO produce one; a Block arm contributes
+  nothing and is not rejected, just excluded from the agreement. On the
+  LOWERING side, `@lower_arm_body` (lower_match.nv) mirrors this exactly:
+  `leaves = ... || arm_e.kind_of() == NodeKind.Block` is UNCONDITIONAL, so
+  a Block arm NEVER reaches `@lower_place(arm_e, dest)` -- it always goes
+  to `@lower_block_stmts_fn`, regardless of whether the match is a value
+  or a statement. If such an arm is reached at runtime in a match used as
+  a value, `dest` keeps the zero `@lower_match` pre-declares it with (the
+  same convention already used for an incomplete match's uncovered arms).
+
+  **Consequence: novac's checker and lowering already AGREE that a Block
+  arm body never produces a value for the match** -- which means
+  `@type_arm`'s refusal of `RecordCtor` in that block's tail (via the
+  ordinary statement walk, `stmt_pos`) is not an accidental narrowness to
+  patch with one more flag; it is the thing standing between "refuses a
+  form" and "silently returns zero instead of the tail value the oracle
+  actually produces" -- exactly the "check clean, wrong answer" class this
+  project's own differential guard is built to catch. Widening `RecordCtor`
+  to accept `stmt_pos` (or teaching `@type_arm` to thread a Block's tail
+  value through) WITHOUT ALSO teaching `@lower_arm_body` to route that
+  same tail through `@lower_place` when `dest != no_local()` would very
+  likely MISCOMPILE this exact carrier, not just widen the subset.
+
+  **CHECKED AGAINST THE REAL ORACLE, 2026-09-22 00:45 -- CONFIRMED, NOT
+  HYPOTHETICAL.** `fn f(k int) -> Shape { match k { 0 => { if k > 100 {
+  return Shape{n:-1} }  Shape{n:20} }  _ => Shape{n:20} } }`, built and run
+  with the oracle (`nova-cli/target/release/nova.exe build`, isolated in
+  its own directory so it is not swept into an unrelated compilation
+  unit): builds clean, prints `20` -- the block's BARE TAIL expression (no
+  `return`, no `;`) IS the arm's value there, exactly the function-body/
+  if-branch tail convention. novac's current design (checker AND lowering
+  agreeing a Block arm never produces a value) is a REAL, ORACLE-CONFIRMED
+  divergence for this shape, not a guess.
+
+  Not attempted this sitting -- three narrow, safe fixes plus this
+  investigation is enough for one evening, and this specific gap needs its
+  own scoped wave (checker AND lowering together, oracle-verified first),
+  not a fourth quick patch mislabeled as "one more line".
+
+  **CONCRETE NEXT STEP, FOR WHOEVER PICKS THIS UP (read, not guessed):**
+  the lowering-side machinery for "a block's tail is a value" ALREADY
+  EXISTS, generically, for a function body: `@lower_block_stmts_fn(b,
+  tail)` (`lowering.nv:44`) -- when `tail=true`, it finds the block's last
+  branch child and, if `@tail_places_value(c)` (tail_rules.nv) says that
+  child is a value-producing form, calls `@lower_place(c,
+  @ir.ret_place())`. This is EXACTLY the mechanism a match-arm's Block
+  body needs -- except the destination is hardcoded to `@ir.ret_place()`
+  (the function's own return slot), not an arbitrary local. `@lower_arm_body`
+  currently calls `@lower_block_stmts_fn(arm_e, false)` (tail=FALSE,
+  always) -- the fix likely generalizes `@lower_block_stmts_fn` (or adds
+  a sibling) to take a destination `Local` instead of assuming
+  `@ir.ret_place()`, then `@lower_arm_body` calls it with `tail = (dest !=
+  no_local())` and that same `dest`. On the CHECKER side, `@type_arm`
+  (match_arms.nv:511) needs the mirror change: when the body is a Block
+  AND the match is in value position (the fold is being asked for a
+  type), thread the block's tail value up through something like
+  `@type_branch_value` (tail_rules.nv) instead of unconditionally
+  returning `None` -- but ONLY when a value is actually wanted, since a
+  Block arm in a STATEMENT match must keep behaving exactly as it does
+  today (this is the same "who asked" distinction `@lower_arm_body`
+  already makes via `dest != no_local()`, mirrored on the checker side).
+  Two files, one door widened together -- not investigated further than
+  this pointer.
+
+  **REFINED, 2026-09-22 late night, still not attempted.** Read
+  `@type_match` (match_arms.nv:138) fully: it takes NO "does the caller
+  want a value" parameter and unconditionally folds every arm's type via
+  `@fold_arm_type` regardless of whether the match stands in a statement
+  or a value position -- so `@type_arm`'s Block case does not need a
+  value-wanted flag threaded in either; it can simply ALWAYS try to type
+  the tail as a value and return `Some(t)`/`None` accordingly, the same
+  way it already does for a nested `MatchExpr` body. The reusable door
+  already exists and needs no new one: `@type_branch_value`
+  (`tail_rules.nv:164`) is written generically over any `Block` node (it
+  is not `if`-specific despite living beside `@type_if_value`) --
+  non-tail statements go through `@type_stmt`, the tail goes through
+  `@type_expr` if `is_expr_kind` accepts it, and the block's own
+  `block_terminates` question already exists to detect a `return`-only
+  tail. `@type_arm`'s Block case could plausibly become: if
+  `block_terminates(body)`, behave exactly as today (`None`); otherwise
+  call something shaped like `@type_branch_value(body)` and return
+  `Some(t)`/`None` from what it answers.
+
+  On the lowering side, the destination-hardcoding is the only obstacle,
+  not a missing mechanism: `@lower_block_stmts_fn(b, tail)` already does
+  the identical dance for a function body's tail (`tail=true`: find the
+  last branch, if `@tail_places_value` accepts it, lower it into a
+  destination and treat everything else as statements) -- the ONLY
+  difference is that destination is hardcoded to `@ir.ret_place()`
+  (line ~79) rather than a parameter. Generalizing it to take an
+  arbitrary `Local` (or adding a sibling function that does) and having
+  `@lower_arm_body` call it with `dest` when the block does not
+  terminate would likely close this with no new lowering mechanism
+  either -- just reusing the two doors that already exist for the
+  identical question asked in a different position.
+
+  Still not attempted: `@lower_block_stmts_fn` is shared with function
+  bodies, so touching its signature is a shared-surface change that
+  needs its OWN both-ways proof on the function-body path too, not just
+  the new match-arm path -- exactly the kind of change this note keeps
+  saying deserves a fresh, careful pass rather than a late-night patch.
+
+  **SECOND SUBTLETY FOUND, 2026-09-22, SAME SITTING -- WHY `@type_branch_value`
+  IS NOT A DIRECT REUSE AFTER ALL.** Read its "not an expression" branch
+  closely: it REFUSES by name ("a branch of a tail `if` ends without a
+  value"). That refusal is correct for an `if`-VALUE branch, where a
+  value is mandatory. It is WRONG for a match arm's Block body, where a
+  value is OPTIONAL -- today, a perfectly legal statement-only arm
+  (`0 => { ro x = compute(); }`) types its tail as an ordinary statement
+  and offers nothing to the fold; calling `@type_branch_value` on it
+  unconditionally would newly REFUSE code that compiles today. The fix
+  needs its own door, not a reuse: something shaped like
+  `@type_arm_block_value` that mirrors `@type_branch_value`'s loop but
+  falls through to `@type_stmt` (not a refusal) when the tail is not an
+  expression kind -- identical behavior to today's `@type_block` for a
+  non-value tail, PLUS a captured type for a value tail.
+
+  **THIRD RISK, NAMED NOT MEASURED:** even with that correct new door,
+  a Block arm whose tail happens to be an expression today offers `None`
+  to the fold UNCONDITIONALLY -- some OTHER arm's disagreeing type next
+  to it is invisible today (the fold never compares against it). Once a
+  Block arm can offer `Some(t)`, a match that compiles today because its
+  Block arm was silently excluded from agreement could newly fail with
+  "arms disagree" -- correct per the language, but a real behavior change
+  novac's own self-build and the corpus have never been measured against.
+  This needs a differential run AFTER the checker change, before the
+  lowering half is even written, to see whether anything currently-green
+  turns red for exactly this reason.
+
+  Two real subtleties found by reasoning alone, no code written -- this
+  is not "one more line" by any measure now, and attempting it in the
+  same sitting as four other fixes was correctly not done.
 
 ## Carrier caveat
 

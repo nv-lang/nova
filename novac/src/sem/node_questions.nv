@@ -107,7 +107,16 @@ export fn is_expr_kind(k NodeKind) -> bool {
     // and `exprs.nv`'s `type_expr` both learned the argument position --
     // counting never saw the node, because counting goes through
     // `is_arg_node`, which asks here, and IfExpr was not on this list.
-    k == NodeKind.IfExpr
+    k == NodeKind.IfExpr ||
+    // AN INDEX EXPRESSION (`xs[i]`) joins for the IDENTICAL reason (found
+    // 2026-09-22): `takes_one(xs[0])` was refused "this call omits `n`" even
+    // though `xs[0]` is plainly the one argument written -- counting goes
+    // through `is_arg_node`, which asks here, and `NodeKind.Index` was not on
+    // this list, so the argument was never counted at all. Indexing itself is
+    // still a separate, already-named subset gap ("indexing is read but not
+    // compiled yet", binds.nv) -- this fix only lets the call reach THAT
+    // honest refusal instead of the misleading "omits a parameter" one.
+    k == NodeKind.Index
 }
 
 /// Is this a call to `println` in the source? A question about meaning, so the

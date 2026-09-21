@@ -562,3 +562,29 @@ test "if value: the body of a match arm is a legal position too (registry #TBD)"
     ro msg = diagnose_first_msg(src)
     assert(!msg.contains("an `if` in value position is not compiled yet"), "an `if` value as a match arm's body must not be refused as a wrong position -- got: ${msg}")
 }
+
+test "array literal: the body of a match arm is a legal position too (registry #TBD)" {
+    // A third node kind, the same evening, the same gap: `ArrayLit`'s own
+    // gate gated on `!init_pos && !arg_pos`, never asking `arm_pos`
+    // either. `@lower_arm_body` places a value arm's body through
+    // `@lower_place`, the same door an initializer's own array literal
+    // already resolves through since wave B8.
+    ro src = "module m\n\nfn f(k int) -> []int {\n    match k {\n        0 => [1, 2, 3]\n        _ => [4, 5]\n    }\n}\n"
+    ro msg = diagnose_first_msg(src)
+    assert(!msg.contains("an array literal is compiled only as"), "an array literal as a match arm's body must not be refused as a wrong position -- got: ${msg}")
+}
+
+test "arg count: an index expression argument is counted, not silently dropped (registry #TBD)" {
+    // `is_arg_node` (sem/node_questions.nv) asks `is_expr_kind`, and
+    // `NodeKind.Index` was missing from that list -- the SAME class that hit
+    // `RecordCtor` (wave B13) and `IfExpr` (registry #TBD, if-in-argument):
+    // an argument the walk does not recognize as an expression is never
+    // COUNTED, so `takes_one(xs[0])` was refused "this call omits `n`" even
+    // though `xs[0]` is plainly the one argument written. The fix does not
+    // make indexing itself legal (that stays refused, honestly, by binds.nv's
+    // own named gate) -- it only lets the call reach that refusal instead of
+    // a misleading one about a missing parameter.
+    ro src = "module m\n\nfn takes_one(n int) -> int => n + 1\n\nfn f(xs []int) -> int {\n    takes_one(xs[0])\n}\n"
+    ro msg = diagnose_first_msg(src)
+    assert(!msg.contains("this call omits"), "an index-expression argument must be counted, not silently dropped -- got: ${msg}")
+}

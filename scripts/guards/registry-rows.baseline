@@ -1426,6 +1426,15 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1257
+max=1305
+# 2026-09-22, integrator: rows 1303-1305 added -- Carina's index-expression
+# call-arg counting fix (#1303), block-tail-arm architectural boundary
+# finding (#1304, not fixed, own wave needed), and the ArrayLit-as-match-
+# arm-body fix (#1305, filed retroactively same evening -- her own commit
+# 4110f998f explicitly filed only the block-tail finding, this one was
+# missed). Repro dirs renamed from TBD- prefixes.
+# rows 1254->1257, max 1302->1305.
 rows=1254
 max=1302
 # 2026-09-22, integrator: rows 1298-1302 added RETROACTIVELY -- the
