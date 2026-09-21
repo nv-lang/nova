@@ -177,6 +177,37 @@ initializer are, at this door, the identical operation.
   the new match-arm path -- exactly the kind of change this note keeps
   saying deserves a fresh, careful pass rather than a late-night patch.
 
+  **SECOND SUBTLETY FOUND, 2026-09-22, SAME SITTING -- WHY `@type_branch_value`
+  IS NOT A DIRECT REUSE AFTER ALL.** Read its "not an expression" branch
+  closely: it REFUSES by name ("a branch of a tail `if` ends without a
+  value"). That refusal is correct for an `if`-VALUE branch, where a
+  value is mandatory. It is WRONG for a match arm's Block body, where a
+  value is OPTIONAL -- today, a perfectly legal statement-only arm
+  (`0 => { ro x = compute(); }`) types its tail as an ordinary statement
+  and offers nothing to the fold; calling `@type_branch_value` on it
+  unconditionally would newly REFUSE code that compiles today. The fix
+  needs its own door, not a reuse: something shaped like
+  `@type_arm_block_value` that mirrors `@type_branch_value`'s loop but
+  falls through to `@type_stmt` (not a refusal) when the tail is not an
+  expression kind -- identical behavior to today's `@type_block` for a
+  non-value tail, PLUS a captured type for a value tail.
+
+  **THIRD RISK, NAMED NOT MEASURED:** even with that correct new door,
+  a Block arm whose tail happens to be an expression today offers `None`
+  to the fold UNCONDITIONALLY -- some OTHER arm's disagreeing type next
+  to it is invisible today (the fold never compares against it). Once a
+  Block arm can offer `Some(t)`, a match that compiles today because its
+  Block arm was silently excluded from agreement could newly fail with
+  "arms disagree" -- correct per the language, but a real behavior change
+  novac's own self-build and the corpus have never been measured against.
+  This needs a differential run AFTER the checker change, before the
+  lowering half is even written, to see whether anything currently-green
+  turns red for exactly this reason.
+
+  Two real subtleties found by reasoning alone, no code written -- this
+  is not "one more line" by any measure now, and attempting it in the
+  same sitting as four other fixes was correctly not done.
+
 ## Carrier caveat
 
 The fix closes the ARM-BODY position class, not the seven carriers named
