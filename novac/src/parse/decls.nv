@@ -53,6 +53,12 @@ fn Cursor mut @export_decl() -> Node {
         // itself perfectly readable by `@let_decl` alone (df13dff0d taught
         // the bare, unwrapped form; this teaches the wrapper the same word).
         kids.push(@let_decl())
+    } else if k == TokenKind.KwUnsafe && @peek(skip: 1) == TokenKind.KwFn {
+        // `export unsafe fn ...` (registry #1226), no `extern` in front --
+        // the same gap `parse.nv`'s top-level loop had, and for the same
+        // reason: `unsafe` was only ever read as extern_decl's optional
+        // leaf (#815), never as a lead of its own here.
+        kids.push(@fn_decl([]Node.of(@take())))
     } else {
         // `export` in front of something that is not a declaration. The leaf is
         // already in the tree (nothing is lost); naming the mistake is check's
