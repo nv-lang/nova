@@ -87,3 +87,18 @@ test "match exhaustiveness: a later match is still checked after an earlier one'
     ro src = "module m\n\ntype S enum A | B\n\nfn first(s S) -> int {\n    match s {\n        A => 1\n    }\n}\n\nfn second(s S) -> int {\n    match s {\n        A => 1\n    }\n}\n"
     assert(diagnose(src) == 2, "each function's own non-exhaustive match must be named, not just the first")
 }
+
+test "match agreement: a later match's disagreeing arms are still checked after an earlier one's own (registry #1249)" {
+    // The #1242 class, one door over: `@agree_arm_type` compared `@out.len()`
+    // against a LITERAL 0 too (found grepping `check/` for the same shape
+    // after #1242 closed), so `first`'s own arm-type disagreement pushed one
+    // diagnostic, and `second`'s equally-disagreeing arms answered `first`
+    // (its type) instead of reporting -- the fold's own comment even named
+    // the bug's excuse ("a diagnostic already stands") without noticing the
+    // excuse was checking the wrong file-wide slate. Fixed by threading the
+    // caller's own `before_arms` mark (`@type_match`'s, already taken for
+    // its OWN exhaustiveness door) through `@fold_arm_type` into
+    // `@agree_arm_type`, mirroring #1242's mark-not-absolute fix.
+    ro src = "module m\n\nfn first(n int) -> int {\n    match n {\n        0 => 1\n        _ => \"x\"\n    }\n}\n\nfn second(n int) -> int {\n    match n {\n        0 => 1\n        _ => \"s\"\n    }\n}\n"
+    assert(diagnose(src) == 2, "each function's own arm-type disagreement must be named, not just the first")
+}
