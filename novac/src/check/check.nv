@@ -478,7 +478,17 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // ONLY here and in `type_expr` (exprs.nv), not in
                     // lowering or emission. Everywhere else the refusal
                     // stands, exactly as the record constructor's does.
-                    if !init_pos && !arg_pos {
+                    //
+                    // THE BODY OF A MATCH ARM JOINS THEM (registry #TBD, the
+                    // same widening the record constructor's own gate just
+                    // took): `@lower_arm_body` places a value arm's body
+                    // through `@lower_place`, which reaches
+                    // `@lower_value_source` -- the SAME position-agnostic
+                    // door the argument position already relies on above.
+                    // `exprs.nv`'s `type_expr` dispatcher's `IfExpr` arm is
+                    // unconditional (no position gate of its own), so the
+                    // shape walk here was the only door left closed.
+                    if !init_pos && !arg_pos && !arm_pos {
                         @report_first_leaf_of(children, IF_EXPR_MSG)
                         return
                     } else {
@@ -675,12 +685,21 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // is exactly what an array literal has done since B8 -- so
                     // `arg_pos` is answered here the same way `ArrayLit`
                     // answers it a few arms below.
-                    if !init_pos && !arg_pos {
-                        @report_first_leaf_of(children, "outside the subset: a record constructor is compiled only as a binding initializer or a call argument -- other positions are not compiled yet (E2, the records/sums horizon)")
+                    //
+                    // THE BODY OF A MATCH ARM IS A LEGAL POSITION TOO (registry
+                    // #TBD): `@lower_arm_body` (lower_match.nv) assigns a value
+                    // arm's body through the SAME door a binding initializer
+                    // takes, `@lower_place` -- and a record constructor already
+                    // builds correctly there (`init_pos` has accepted it since
+                    // wave B8). `arm_pos` is computed generically by `@walk`
+                    // (2026-09-20, for `match`/`if` as an arm body) and was
+                    // simply never asked here.
+                    if !init_pos && !arg_pos && !arm_pos {
+                        @report_first_leaf_of(children, "outside the subset: a record constructor is compiled only as a binding initializer, a call argument or the body of a match arm -- other positions are not compiled yet (E2, the records/sums horizon)")
                         return
                     } else {
-                        // Initializer or argument: legal, and the children are
-                        // walked below like any other node's.
+                        // Initializer, argument or arm body: legal, and the
+                        // children are walked below like any other node's.
                     }
                 }
                 DepthErr => {
@@ -890,9 +909,20 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                 // reads the same three slots, and the two agree by counting
                 // the same way rather than by remembering each other.
                 @walk(c, stmt_pos: kind == NodeKind.Block,
+                      // AN ORDINARY ELEMENT OF `[a, b]` IS AN ARGUMENT
+                      // POSITION TOO (registry #TBD): `.of(...)`'s own
+                      // arguments already were (`of_lparen_at >= 0`); a
+                      // plain array literal has no `.of(` at all
+                      // (`of_lparen_at < 0`), and its elements are legal
+                      // positions the same way -- `@emit_array_lit`
+                      // (emit_c.nv) already hoists each element through
+                      // `@hoist_array_lits` before printing it, so the
+                      // emission side needed no change once this gate
+                      // agreed.
                       arg_pos: kind == NodeKind.Call || kind == NodeKind.MethodCall ||
                                kind == NodeKind.CtorField ||
-                               (kind == NodeKind.ArrayLit && of_lparen_at >= 0 && at > of_lparen_at),
+                               (kind == NodeKind.ArrayLit &&
+                                (of_lparen_at < 0 || at > of_lparen_at)),
                       index_pos: kind == NodeKind.Index && at == 2,
                       // ARM-BODY POSITION (2026-09-20): a `match` or an `if`
                       // standing as the body of an arm is a VALUE there, and

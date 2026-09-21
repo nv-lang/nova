@@ -1426,6 +1426,13 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1249
+max=1297
+# 2026-09-22, integrator: rows 1295-1297 added -- Carina's arm_pos sweep
+# (RecordCtor as array-literal element, RecordCtor as match-arm body,
+# IfExpr as match-arm body -- all three the same class, arg_pos/arm_pos
+# gate missing a position axis), repro dirs renamed from TBD- prefixes.
+# rows 1246->1249, max 1294->1297.
 rows=1246
 max=1294
 # 2026-09-22, integrator: rows 1293-1294 added -- nova-6e's second ungrammar

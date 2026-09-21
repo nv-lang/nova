@@ -503,3 +503,62 @@ test "if-value: a call-argument position is legal, the same door as initializer 
     ro control_init = "module m\n\nfn f(c bool) -> int {\n    ro r = if c { 1 } else { 2 }\n    r\n}\n"
     assert(diagnose(control_init) == 0, "if-value in initializer position must not regress")
 }
+
+test "record constructor: an ordinary array-literal element is a legal position, not just .of(...) (registry #TBD)" {
+    // `check.nv`'s `arg_pos` for an `ArrayLit`'s children was true only for
+    // the `.of(...)` call form (registry #1239's own carrier) -- a PLAIN
+    // literal, `[Point {x:1,y:2}, Point {x:3,y:4}]`, has no `.of(` at all,
+    // so its elements were neither `init_pos` nor `arg_pos` and the
+    // constructor was refused. `@emit_array_lit` (emit_c.nv) already hoists
+    // each element through `@hoist_array_lits` before printing it -- the
+    // emission side needed no change, only this gate agreeing with it.
+    //
+    // THE GAP IS REAL, NOT A TEST-HARNESS ARTEFACT -- checked directly against
+    // the real CLI (2026-09-21): `[]int.of(1, 2)` inside a function body is
+    // clean, `[]Point.of(...)` inside a function body still hits "the shell
+    // novac links into carries no `Vec` instance for Point", the same message
+    // the empty `InteropTable.new()` gives here. `Vec[Point]` is a GENERIC
+    // instance no probe program has ever exercised (registry #TBD, a separate,
+    // pre-existing gap this fix does not touch). A MODULE-LEVEL binding of the
+    // identical form (registry #1239's own precedent, `check_test.nv:110`)
+    // does not hit this check at all -- top-level bindings take a different
+    // path than a function body's -- so `diagnose(src) == 0` only holds for
+    // that shape, not this file's function-wrapped one. So the assertion here
+    // is NOT "clean" but "the position class is gone": the interop refusal
+    // may still fire, the RECORD-CONSTRUCTOR one must not.
+    ro src = "module m\n\ntype Point value {\n    x int\n    y int\n}\n\nfn f() -> int {\n    ro pts = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]\n     0\n}\n"
+    ro msg = diagnose_first_msg(src)
+    assert(!msg.contains("a record constructor is compiled only as"), "a plain array-literal element must not be refused as a wrong position -- got: ${msg}")
+
+    // Control: the `.of(...)` form must not regress -- same shell-instance
+    // gap as above (it is function-bodied too), so judged the same way.
+    ro control_of = "module m\n\ntype Point value {\n    x int\n    y int\n}\n\nfn f() -> int {\n    ro pts = []Point.of(Point { x: 1, y: 2 })\n     0\n}\n"
+    ro control_msg = diagnose_first_msg(control_of)
+    assert(!control_msg.contains("a record constructor is compiled only as"), "the `.of(...)` form must not regress -- got: ${control_msg}")
+}
+
+test "record constructor: the body of a match arm is a legal position too (registry #TBD)" {
+    // `check.nv`'s `RecordCtor` arm gated on `!init_pos && !arg_pos`,
+    // never asking `arm_pos` -- the flag `@walk` has computed generically
+    // since 2026-09-20 for a value standing in a match arm's own body
+    // slot. `@lower_arm_body` (lower_match.nv) places a value arm's body
+    // through the SAME door a binding initializer's RHS takes
+    // (`@lower_place`), so no emission change was needed -- only this
+    // gate agreeing with what lowering already does.
+    ro src = "module m\n\ntype Shape value {\n    n int\n}\n\nfn f(k int) -> Shape {\n    match k {\n        0 => Shape { n: 10 }\n        _ => Shape { n: 20 }\n    }\n}\n"
+    ro msg = diagnose_first_msg(src)
+    assert(!msg.contains("a record constructor is compiled only as"), "a record constructor as a match arm's body must not be refused as a wrong position -- got: ${msg}")
+}
+
+test "if value: the body of a match arm is a legal position too (registry #TBD)" {
+    // The identical gap, one node kind over: `IfExpr`'s own gate (wave
+    // B14 / the if-in-argument fix, same evening) had the same shape and
+    // the same missing `arm_pos`. `exprs.nv`'s `type_expr` dispatcher's
+    // `IfExpr` arm is already unconditional, and lowering already places
+    // an `IfExpr` value through the position-agnostic
+    // `@lower_value_source` dispatch -- the shape walk was the only door
+    // left closed.
+    ro src = "module m\n\nfn f(k int, c bool) -> int {\n    match k {\n        0 => if c { 1 } else { 2 }\n        _ => 3\n    }\n}\n"
+    ro msg = diagnose_first_msg(src)
+    assert(!msg.contains("an `if` in value position is not compiled yet"), "an `if` value as a match arm's body must not be refused as a wrong position -- got: ${msg}")
+}
