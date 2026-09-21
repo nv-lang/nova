@@ -138,3 +138,32 @@ test "termination: an infinite `while true { return }` is a terminator, no dead-
     ro src2 = "module m\n\nfn g(n int) -> int {\n    while n > 0 {\n        return n\n    }\n}\n"
     assert(diagnose(src2) > 0, "a `while` with a real condition can exit without returning")
 }
+
+test "binding mode: assignment to a `ro` target is refused in all four shapes (registry #1254)" {
+    // The ASSIGNMENT DOOR (assign_rules.nv) used to judge only the value's
+    // TYPE, never the target's MODE -- `ro x = 1; x = 2` typed clean (int =
+    // int) and novac accepted it silently, although the mode was already
+    // tracked (`scope.nv`) and already read at a call's key
+    // (`type_of.nv:class_of_binding`). Four independent shapes reach the
+    // same untouched door: a plain `ro` local, a compound assignment to
+    // one, a parameter without `mut`, and a field written through a `ro`
+    // -bound receiver (caught by NEITHER shape's own message).
+    ro simple = "module m\n\nfn f() -> int {\n    ro x = 1\n    x = 2\n    x\n}\n"
+    assert(diagnose(simple) > 0, "assigning to a `ro` local must be refused")
+
+    ro compound = "module m\n\nfn f() -> int {\n    ro x = 1\n    x += 2\n    x\n}\n"
+    assert(diagnose(compound) > 0, "a compound assignment to a `ro` local must be refused too")
+
+    ro param = "module m\n\nfn f(x int) -> int {\n    x = 5\n    x\n}\n"
+    assert(diagnose(param) > 0, "a non-`mut` parameter is bound `ro` the same way a local is")
+
+    ro field = "module m\n\ntype Pt value { n int }\n\nfn f() -> int {\n    ro b = Pt { n: 1 }\n    b.n = 2\n    b.n\n}\n"
+    ro field_msg = diagnose_first_msg(field)
+    assert(field_msg.contains("E_READONLY_FIELD"), "a field written through a `ro`-bound receiver names the field code, not the local one")
+
+    // Control: a `mut` local (and a `mut`-bound field owner) must stay clean.
+    ro ctrl = "module m\n\nfn f() -> int {\n    mut x = 1\n    x = 2\n    x\n}\n"
+    assert(diagnose(ctrl) == 0, "a `mut` local must stay assignable")
+    ro ctrl_field = "module m\n\ntype Pt value { n int }\n\nfn f() -> int {\n    mut b = Pt { n: 1 }\n    b.n = 2\n    b.n\n}\n"
+    assert(diagnose(ctrl_field) == 0, "a field through a `mut`-bound receiver must stay writable")
+}

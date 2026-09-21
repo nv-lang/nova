@@ -1,0 +1,8 @@
+type Pt value {
+    n int
+}
+fn main() Io -> () {
+    ro b = Pt { n: 1 }
+    b.n = 2
+    println(b.n)
+}
