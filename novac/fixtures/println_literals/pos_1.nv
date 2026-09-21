@@ -12,13 +12,13 @@
 // literal arrives as `[Minus, lit]`, so the token that decides the type is the
 // LAST leaf, not the first.
 //
-// A CHAR IS ABSENT ON PURPOSE, and it is not a gap in this fixture: `println('z')`
-// passes novac's checker and then ICEs in emission -- `printer_of` has no printer for
-// the char family. The oracle prints `z` (measured 2026-09-09 by building and running
-// it), so the program is legal Nova and novac's refusal is a DEFECT, not a subset
-// boundary: a boundary is held by the checker, never by an emitter's ice. It is
-// recorded in plan 274.8 and gets its own carrier when it is fixed; putting it here
-// would make this fixture a known divergence needing an excuse.
+// A CHAR was absent on purpose until registry #1060: `println('z')` passed
+// novac's checker and then ICEd in emission -- `printer_of` (emit_c/emit_expr.nv)
+// had no printer for the char family, though the runtime's `nova_print_char`
+// already existed. The oracle prints `z` (measured 2026-09-09 by building and
+// running it), so the program was legal Nova and novac's ICE was a DEFECT, not
+// a subset boundary. Fixed by adding the missing match arm; this is now its
+// carrier, as the earlier comment promised it would be.
 module println_literals.pos_1
 
 fn main() {
@@ -28,5 +28,6 @@ fn main() {
     println(2.5)
     println(-2.5)
     println(true)
+    println('z')
     println("label", 7, -2.5, true)
 }
