@@ -205,11 +205,14 @@ test "split mock stream — read half + write half" {
 // panicking fiber (`s2` below) would have been left owning a permanently-wrong
 // counter (a real close from `s2` afterwards would either double-release or
 // never trigger the underlying extern-close). This path had NO coverage before
-// this fixture. The fix (tcp.nv `@into_split()`) makes the check-and-mutate ONE
-// atomic `compare_exchange(1, 0)`: on failure the CAS is a no-op by construction
-// (hardware/runtime CAS contract, exercised generically by
-// std/src/runtime/sync_test.nv — not re-proven here), so `s2.rc` is unaffected
-// by the panicking attempt; this fixture's job is only to pin that the
+// this fixture. The fix (tcp.nv `@into_split()`) reorders to `@rc.load()` first,
+// `@rc.fetch_sub(1)` only when it reads exactly 1 — not a single atomic
+// `compare_exchange`, which would need a non-extern method through a `*mut
+// AtomicInt` receiver and hits an unrelated codegen gap (registry 221.1 №515);
+// tcp.nv's own doc comment argues the two-op form is race-free here because `s`
+// is a linear value (see tcp.nv `@into_split()`, "race-free HERE specifically").
+// On failure the load-only path never touches `rc`, so `s2.rc` is unaffected by
+// the panicking attempt; this fixture's job is only to pin that the
 // precondition violation actually panics (previously unverified).
 test "into_split panics on a live share()-copy (rc != 1, #498)" panics "sole ownership" {
     with Net = mock_net() {
