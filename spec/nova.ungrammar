@@ -72,8 +72,12 @@ ModuleDecl =
 ImportDecl =
   ('import' | 'use') ('ident' | '.' | '..' | '/')* Err? BalancedRun?
 
+// поправка 2026-09-22 (окно nova-6e, тот же аудит): не несла LetDecl.
+// `export ro NAME = expr` (D184's Item::Let) читалось `@let_decl()` без
+// обёртки с самого начала (df13dff0d), но обёртка `ExportDecl` учила слово
+// `ro` отдельно, позже (комментарий decls.nv:47-53) -- снимок не подтянулся.
 ExportDecl =
-  'export' (FnDecl | TypeDecl | SumDecl | ImportDecl | ConstDecl | Err)
+  'export' (FnDecl | TypeDecl | SumDecl | ImportDecl | ConstDecl | LetDecl | Err)
 
 AttrDecl =
   '#' 'ident'* BalancedRun?
@@ -129,10 +133,17 @@ Block =
 // Объявления типов
 //==========================================================================
 
+// поправка 2026-09-22 (окно nova-6e, тот же аудит): не несла EFFECT-форму.
+// `type Counter effect { fn log(msg str) -> () }` (D459) читается парсером
+// с 2026-09-21 (type_decl.nv:100-116, комментарий там же цитирует
+// "registry TBD" -- эта строка её и закрывает) тем же приёмом, что
+// 'protocol' в 2026-08-23; EffectOp — уже своё правило ниже, просто не было
+// на кого сослаться.
 TypeDecl =
   'type' 'ident' Generics? 'value'? 'consume'? ('priv' BalancedRun?)?
   (
       'protocol' ('{' ProtoMethod* '}')?
+    | 'effect' ('{' EffectOp* '}')?
     | '{' Field* '}'
     | '(' Field* ')'
     | 'alias'? TypeRefLeaves
