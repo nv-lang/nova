@@ -66,21 +66,25 @@ if [ -f target/remainder-verdict.txt ]; then
     echo "  remainder:     $(head -1 target/remainder-verdict.txt)"
     echo "                 recorded $(date -r target/remainder-verdict.txt '+%Y-%m-%d %H:%M'), commit $(sed -n 2p target/remainder-verdict.txt)"
     # CAVEAT ADDED 2026-09-21, after this line was trusted for a whole shift:
-    # the self-distance count (the "N of 99" figure inside the verdict above)
-    # comes from a BATCH check over all of novac/src
-    # (NOVAC_SELF_PATH=novac/src), which ICEs (types.nv:244, an interner
-    # bound; minimal repro: `NOVAC_SELF_PATH=novac/src novac check
-    # novac/src/check/binds.nv`, registry TBD). The measure's own fallback on
-    # that crash is a PER-FILE loop, and a file checked alone cannot see a
-    # sibling file's declarations -- so most of what it counts as
-    # "undeclared" is a type declared two files over, not real subset debt.
-    # The number above is honest about ITS OWN age and source; it is not
-    # honest about what the SOURCE run actually measured, because nobody
-    # knew yet that the source run's measure was itself broken.
-    echo "                 CAVEAT: if this verdict's self-distance count came from"
-    echo "                 the per-file fallback (the batch ICEs -- see registry"
-    echo "                 TBD, types.nv:244), most of what it counts is a name"
-    echo "                 declared in a SIBLING file, not real subset debt."
+    # the self-distance count used to come from a PER-FILE fallback whenever
+    # the BATCH check (NOVAC_SELF_PATH=novac/src) hit an interner ICE
+    # (types.nv:244) -- and a file checked alone cannot see a sibling file's
+    # declarations, so most of what that fallback counted as "undeclared" was
+    # a name declared two files over, not real subset debt.
+    #
+    # FIXED THE SAME NIGHT (registry #1229, mangle.nv:423 c_method_symbol,
+    # commit ba968b4bc): the specific ICE this caveat warned about no longer
+    # reproduces, and the batch check now runs to completion. Measured right
+    # after the fix (07:32): self-distance read 83/99 both before and after --
+    # the number did not move, but its PROVENANCE did, from a crash-fallback
+    # artifact to a genuine batch count (verified by reproducing the exact
+    # command with zero E_NOVAC_ICE in its output). A verdict recorded before
+    # this fix landed is still suspect for the old reason; one recorded after
+    # is not, unless a NEW ice reappears -- grep the run's own output for
+    # E_NOVAC_ICE before trusting a self-distance number blindly either way.
+    echo "                 NOTE: the #1229 ICE this number used to hide behind is"
+    echo "                 fixed (ba968b4bc) -- grep the source run for E_NOVAC_ICE"
+    echo "                 before trusting an OLDER verdict; a fresh one is genuine."
 else
     echo "  remainder:     NOT MEASURED -- and deliberately not measured from here:"
     echo "                 bash scripts/guards/check-novac-differential.sh .   (~5.5 min)"
