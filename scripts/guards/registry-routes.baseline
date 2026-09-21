@@ -1490,7 +1490,13 @@ no_caveat=0
 # 2026-09-21, интегратор: 85 -> 86, РОСТ и он законен. Новая строка №1226 —
 # голый `unsafe fn` без ветки в двух диспетчерах парсера разом (parse.nv,
 # decls.nv) — третий вид корня того же читательского класса.
-blockers=90
+blockers=93
+# 2026-09-21, integrator: 91 -> 92. Row 1242 added -- new checker ICE
+# (channel.nv:409) exposed by Carina's #1237 fix, blocks S5 batch measure.
+# 2026-09-21, integrator: 90 -> 91. Net after reconciling post-push sync:
+# #1237 closed (-1, Carina's fix) but #1240 (nested tuple pattern) and
+# #1241 (open-left-bound slice) are new blockers (+2); #1239 (module-ro)
+# is not a blocker (already fixed).
 # 2026-09-21, integrator: 91 -> 90. Carina's window closed #1230 (62f1cc9ad,
 # CRLF string-literal continuation bug), found independently a second time
 # while scanning the self-build rejection map -- same root cause the row
@@ -1533,3 +1539,5 @@ blockers=90
 # 1235 (nova-http lint + timeout) is BLOKIRUET TEG: NET. blockers 91->92.
 # 2026-09-21, integrator: row 1237 added (assistant, bare return as middle
 # match arm not recognized), BLOKIRUET TEG: DA. blockers 90->91.
+# 2026-09-21, integrator: row 1243 added (assistant, else-if chain in
+# value position not parsed), BLOKIRUET TEG: DA. blockers 92->93.

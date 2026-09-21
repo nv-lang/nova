@@ -1388,8 +1388,20 @@
 # 2026-09-21, интегратор: rows 1175 -> 1176, max 1225 -> 1226. №1226 —
 # помощник нашёл, что голый `unsafe fn` не имеет ветки ни в одном из двух
 # диспетчеров верхнего уровня (parse.nv, decls.nv) — третий вид корня.
-rows=1190
-max=1238
+rows=1195
+max=1243
+# 2026-09-21, integrator: row 1242 added -- new checker ICE exposed by
+# Carina's #1237 fix (channel.nv:409), same class as #1229, blocks S5
+# batch measure again. rows 1193->1194, max 1241->1242.
+
+# 2026-09-21, integrator: rows 1190->1193, max 1238->1241 -- measured after
+# reconciling Carina's post-push sync with main: removed a duplicate #1230
+# closure that reappeared via merge, numbered her module-level-ro finding
+# as #1239 (already fixed by her, D184/D200 contradiction resolved too),
+# numbered nested-tuple-in-variant-pattern as #1240, closed #1237 with her
+# fix (removing a duplicate standalone row), and numbered the assistant's
+# open-left-bound-slice finding as #1241.
+
 # 2026-09-21, integrator: rows 1183->1185 -- measured by the guard itself
 # after the p283-float-parse merge (rows 1081, 1096, 1104 arrived, none of
 # them previously counted since p283 diverged before main tracked past
@@ -1466,3 +1478,7 @@ gaps=174-208,210-215,653-654,743,1062,1103,1210-1211
 # 2026-09-21, integrator: row 1238 added -- stale CI redness on 6aeac95d0,
 # closed, cause of the NOVA_SKIP_CI_CHECK=1 override for tonight's push.
 # rows 1189->1190, max 1237->1238.
+# 2026-09-21, integrator: row 1243 added -- assistant found else-if chain
+# in value position isn't parsed (parser lacks the KwIf branch the
+# statement-form already has); checker's message for it already exists.
+# rows 1194->1195, max 1242->1243.

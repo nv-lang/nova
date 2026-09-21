@@ -8215,7 +8215,14 @@ bind_lhs       ::= IDENT type_opt
 const_decl     ::= "export"? "const" IDENT type_opt "=" expr
 
 module_item    ::= ...
-                 | "export"? "ro" IDENT type_opt "=" expr
+                 // поправка 2026-09-21 (интегратор, найдено агентом spec-reader
+                 // в ветке Карины): голая экспортная форма ИЗ ЭТОЙ СТРОКИ была
+                 // отменена амендментом D200/№701(а) 2026-09-18 — экспортируется
+                 // только КВАЛИФИЦИРОВАННАЯ форма Type.NAME. Грамматика
+                 // расходилась с более поздним нормативным решением — исправлено,
+                 // а не оставлено как есть.
+                 | "ro" IDENT type_opt "=" expr
+                 | "export" "ro" TYPE_PATH "." IDENT type_opt "=" expr
                  | const_decl
 
 if_stmt        ::= "if" if_cond ("," if_cond)* block ("else" else_branch)?

@@ -448,7 +448,11 @@
 # row moved from "issued, not yet merged" to "merged", per the file's own
 # rule (a number leaves that table the moment its block lands in main).
 # check-dblock-numbers flagged the stale row on the stale gate run this fixes.
-#   spec-queue: 110
+# 110 -> 111 (2026-09-21, integrator): D184's module_item grammar contradicted
+# the later D200/#701(a) amendment (bare export ro NAME was retracted, only
+# qualified Type.NAME exports) -- found by Carina's window's spec-reader agent
+# investigation, fixed here since it's a grammar/norm mismatch, not new work.
+#   spec-queue: 111
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,
