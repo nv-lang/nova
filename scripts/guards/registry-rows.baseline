@@ -1426,6 +1426,13 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1246
+max=1294
+# 2026-09-22, integrator: rows 1293-1294 added -- nova-6e's second ungrammar
+# batch (ExportDecl missing LetDecl form, TypeDecl missing the effect-block
+# form D459 added the day before), numbered at merge; her stale duplicate
+# copies of #1283/1288/1289 (branch tip predated main sync again) dropped.
+# rows 1244->1246, max 1292->1294.
 rows=1244
 max=1292
 # 2026-09-22, integrator: rows 1290-1292 added -- defect-hunter's parse×K7
