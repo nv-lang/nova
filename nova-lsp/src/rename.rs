@@ -1270,6 +1270,19 @@ mod tests {
         }
     }
 
+    #[test]
+    fn pos_prepare_on_self_access_field() {
+        let src = "type Foo { x int }\nfn Foo @bar() -> int => @x\n";
+        // cursor on 'x' of '@x' (line 1, col 25 -- right after '@')
+        let result = prepare_rename(src, pos(1, 25)).unwrap();
+        match result {
+            PrepareRenameResponse::RangeWithPlaceholder { placeholder, .. } => {
+                assert_eq!(placeholder, "x");
+            }
+            _ => panic!("expected RangeWithPlaceholder"),
+        }
+    }
+
     // ── prepareRename neg tests ───────────────────────────────────────────────
 
     #[test]
@@ -1596,6 +1609,20 @@ mod tests {
         let edits = collect_edits_in_text(src, "foo", "bar");
         // Only replace outside comment.
         assert_eq!(edits.len(), 1, "should not replace inside comment");
+    }
+
+    #[test]
+    fn test_collect_edits_self_access_field() {
+        // `@x` self-access has NO separator byte before the field name
+        // (unlike `obj.x`'s `.`) -- verify the word-boundary scanner still
+        // finds and correctly ranges the field name, not the `@` sigil.
+        let src = "type Foo { x int }\nfn Foo @bar() -> int => @x\n";
+        let edits = collect_edits_in_text(src, "x", "y");
+        assert_eq!(edits.len(), 2, "expected field decl + @-access, got {:?}", edits);
+        let result = apply_edits_to_text(src, &edits);
+        assert!(result.contains("@y"), "self-access occurrence not renamed: {}", result);
+        assert!(!result.contains("@x"), "stale self-access occurrence left behind: {}", result);
+        assert!(result.contains("{ y int }"), "field decl not renamed: {}", result);
     }
 
     #[test]

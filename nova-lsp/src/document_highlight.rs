@@ -129,8 +129,11 @@ pub fn compute_document_highlights(text: &str, pos: Position) -> Option<Vec<Docu
 }
 
 /// True if the identifier starting at `start` is immediately preceded by a `.`
-/// (ignoring inline horizontal whitespace) — i.e. it is a `obj.field` /
-/// `obj.method` access, not a standalone value reference.
+/// or a `@` (ignoring inline horizontal whitespace) — i.e. it is a
+/// `obj.field` / `obj.method` access, or a `@field` / `@method` SELF-access,
+/// not a standalone value reference. Self-access has no separator byte of its
+/// own before the name (the `@` sigil sits directly against it, unlike `.`),
+/// so it needs its own arm here rather than falling out of the `.` handling.
 fn preceded_by_member_dot(text: &str, start: usize) -> bool {
     let bytes = text.as_bytes();
     let mut i = start;
@@ -138,6 +141,7 @@ fn preceded_by_member_dot(text: &str, start: usize) -> bool {
         i -= 1;
         match bytes[i] {
             b' ' | b'\t' => continue,
+            b'@' => return true,
             b'.' => {
                 // Exclude range operator `..` (e.g. slice `a..b`) — the char
                 // before the dot being another `.` means this is not a member
@@ -702,6 +706,19 @@ mod tests {
             .expect("highlights");
         // decl `x` + the standalone `x` use; the `p.x` member access is excluded.
         assert_eq!(hs.len(), 2, "member access `p.x` is not the local `x`");
+    }
+
+    #[test]
+    fn neg_self_access_field_not_highlighted_for_local() {
+        // Local `x` and a same-named SELF-ACCESS field `@x` in the same fn --
+        // `@x` has no separator byte before the name (unlike `p.x`'s `.`), so
+        // it must be excluded from a local `x`'s highlights exactly like a
+        // `.`-member access is.
+        let src = "fn f() {\n  ro x = 1\n  ro y = @x + x\n}\n";
+        let hs = compute_document_highlights(src, pos_at(src, nth(src, "x", 0)))
+            .expect("highlights");
+        // decl `x` + the standalone `x` use; the `@x` self-access is excluded.
+        assert_eq!(hs.len(), 2, "self-access `@x` is not the local `x`");
     }
 
     #[test]
