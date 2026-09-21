@@ -1426,6 +1426,15 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1244
+max=1292
+# 2026-09-22, integrator: rows 1290-1292 added -- defect-hunter's parse×K7
+# findings (match-arm alternative reads one form of four; []*T pointer-of-
+# slice unreadable plus a false diagnostic; if-let/while-let lookahead
+# reads one pattern shape of five, one case silently mis-parses instead of
+# refusing). Test name in parse_test.nv:364 also reworded (tuple ->
+# positional) per nova-a5's verdict on the tuple-no-second-door ratchet.
+# rows 1241->1244, max 1289->1292.
 rows=1241
 max=1289
 # 2026-09-21, integrator: rows 1288-1289 added -- nova-6e's two confirmed
