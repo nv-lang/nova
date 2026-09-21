@@ -265,6 +265,8 @@ export fn parse(toks []Token) -> Node
             items.push(p.attr_decl())
         } else if k == TokenKind.KwConst {
             items.push(p.const_decl())
+        } else if k == TokenKind.KwRo {
+            items.push(p.let_decl())
         } else if k == TokenKind.KwTest {
             items.push(p.test_decl())
         } else if k == TokenKind.KwModule {
@@ -665,12 +667,22 @@ fn Cursor mut @stmt() -> Node {
     }
     if @peek() == TokenKind.KwReturn {
         mut kids = []Node.of(@take())
-        if @peek() != TokenKind.RBrace {
+        if @peek() != TokenKind.RBrace && @peek_same_line() {
             kids.push(@expr())
         } else {
             // A bare `return` at the end of a block returns unit: the value
             // is absent, and the emitter writes NOVA_UNIT for a RetStmt of
             // one child. An expression node here would invent a value.
+            //
+            // `@peek_same_line()` (registry TBD): the ORIGINAL guard only
+            // asked "is the next token `}`", so a bare `return` at the end
+            // of a match arm -- followed by a NEWLINE and the next arm's
+            // pattern, not `}` -- glued that pattern on as the return's
+            // value (`return\nSome(_) => {}` read as `return Some(_)`, then
+            // choked on the `=>` right after). D49's own separator rule
+            // ends a statement at a newline unless a specific continuation
+            // token follows; `return` with nothing after it on its own
+            // line is exactly the bare form, same as before `}`.
         }
         return @node(NodeKind.RetStmt, kids)
     }

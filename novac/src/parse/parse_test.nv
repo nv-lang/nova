@@ -6,7 +6,7 @@
 module novac.parse
 
 import ../lex.{lex}
-import ../tree.{NodeKind, tree_reserialize}
+import ../tree.{Node, NodeKind, tree_reserialize}
 
 fn roundtrip(src str) -> bool => tree_reserialize(parse(lex(src))) == src
 
@@ -32,6 +32,31 @@ test "shape: file holds module decl, fn decl, eof" {
             assert(kind == NodeKind.File)
             assert(children[0].kind_of() == NodeKind.ModuleDecl)
             assert(children[1].kind_of() == NodeKind.FnDecl)
+        }
+        Leaf(_) => assert(false)
+    }
+}
+
+test "shape: module-level `ro` parses as LetDecl (registry TBD, D184 Item::Let)" {
+    // Before this door existed, EVERY module-level `ro` -- not just array
+    // literals or record constructors, as the failing carrier's shape
+    // suggested -- fell into the parser's unnamed fallback. Narrowed by
+    // probe down to `ro x = 5` alone.
+    ro f = parse(lex("module a\n\nro x = 5"))
+    match f {
+        Branch { children, .. } => {
+            assert(children[1].kind_of() == NodeKind.LetDecl)
+        }
+        Leaf(_) => assert(false)
+    }
+    assert(tree_reserialize(f) == "module a\n\nro x = 5")
+}
+
+test "shape: module-level `ro` with a declared type still parses (D184 type_opt)" {
+    ro f = parse(lex("module a\n\nro x int = 5"))
+    match f {
+        Branch { children, .. } => {
+            assert(children[1].kind_of() == NodeKind.LetDecl)
         }
         Leaf(_) => assert(false)
     }
@@ -85,4 +110,60 @@ test "shape: binary chain is left-associative" {
     // the check slice compares against the oracle.
     ro f = parse(lex("fn m() { 1 + 2 * 3 }"))
     assert(tree_reserialize(f) == "fn m() { 1 + 2 * 3 }")
+}
+
+/// The Block of the first FnDecl in a File.
+fn ret_test_fn_block(f Node) -> ro Node {
+    match f {
+        Branch { children, .. } => {
+            for c in children {
+                if c.kind_of() == NodeKind.FnDecl {
+                    match c {
+                        Branch { children: fc, .. } => {
+                            for cc in fc {
+                                if cc.kind_of() == NodeKind.Block { return cc }
+                            }
+                        }
+                        Leaf(_) => {}
+                    }
+                }
+            }
+        }
+        Leaf(_) => {}
+    }
+    f
+}
+
+test "shape: a bare `return` at a match arm's end does not swallow the next arm (registry TBD)" {
+    // `if @peek() != RBrace { ... }` used to be the whole check for "does
+    // this bare `return` have a value" -- true for anything but `}`, so
+    // the NEXT arm's pattern (not `}`) got read as the return's value.
+    // The block below must still hold exactly one statement: one MatchExpr.
+    ro src = "fn m() {\n    match o {\n        None => return\n        Some(_) => {}\n    }\n}\n"
+    ro f = parse(lex(src))
+    match ret_test_fn_block(f) {
+        Branch { children, .. } => {
+            // The block's children are LOSSLESS (the `{`/`}` leaves sit
+            // beside the statement), so the match is found by kind, not by
+            // a fixed index.
+            mut found = false
+            for c in children {
+                if c.kind_of() != NodeKind.MatchExpr { continue }
+                found = true
+                match c {
+                    Branch { children: mk, .. } => {
+                        mut arms = 0
+                        for m in mk {
+                            if m.kind_of() == NodeKind.MatchArm { arms += 1 }
+                        }
+                        assert(arms == 2)
+                    }
+                    Leaf(_) => assert(false)
+                }
+            }
+            assert(found)
+        }
+        Leaf(_) => assert(false)
+    }
+    assert(tree_reserialize(f) == src)
 }

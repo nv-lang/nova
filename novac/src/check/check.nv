@@ -499,6 +499,21 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // and an initializer the subset cannot compile is refused
                     // where it is used, with the position the user can see.
                 }
+                LetDecl => {
+                    // A module-level `ro` (D184's `Item::Let`, registry TBD)
+                    // -- unlike `ConstDecl`, walked EAGERLY here, mirroring
+                    // `BindStmt` below: the last child is the initializer,
+                    // and only there are a record constructor or an array
+                    // literal legal. Emission of a real runtime-initialized
+                    // global (as opposed to a constexpr-inlined `const`) is
+                    // NOT this walk's question -- only the position rule is.
+                    mut i = 0
+                    for c in children {
+                        @walk(c, init_pos: i == children.len() - 1)
+                        i += 1
+                    }
+                    return
+                }
                 TypeDecl | SumDecl => {
                     // ONE NAME, ONE DECLARATION (#811): a repeat is refused
                     // here because sem keeps the FIRST body and drops the
