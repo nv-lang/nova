@@ -32,11 +32,11 @@ fn bump_params(int_id TyId) -> []ParamDef => []ParamDef.of(
 
 /// A positional argument of type `int`.
 fn pos_arg(int_id TyId) -> ArgSpec =>
-    { type_id: int_id, cls: ArgClass.ArgOwnedTemp, name: "" }
+    { type_id: int_id, cls: ArgClass.ArgOwnedTemp, name: "", lit: LitArg.NotLit }
 
 /// An argument passed by NAME.
 fn named_arg(int_id TyId, nm str) -> ArgSpec =>
-    { type_id: int_id, cls: ArgClass.ArgOwnedTemp, name: nm }
+    { type_id: int_id, cls: ArgClass.ArgOwnedTemp, name: nm, lit: LitArg.NotLit }
 
 /// Is this fault the one the test means? Compared by SHAPE and by POSITION,
 /// because a fault naming the wrong slot is as wrong as the wrong fault.
