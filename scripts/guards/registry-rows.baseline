@@ -1426,8 +1426,8 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
-rows=1228
-max=1276
+rows=1229
+max=1277
 # 2026-09-21, integrator: row 1242 added -- new checker ICE exposed by
 # Carina's #1237 fix (channel.nv:409), same class as #1229, blocks S5
 # 2026-09-21, integrator: row 1244 added -- assistant found effect row
@@ -1607,3 +1607,8 @@ gaps=174-208,210-215,653-654,743,1062,1103,1210-1211
 # session transcript after the worktree was auto-removed before the
 # report could be copied into the main tree (nothing was lost).
 # rows 1221->1228, max 1269->1276.
+# 2026-09-21, integrator: row 1277 added -- assistant's marker
+# [M-orm-examples-known-gaps-also-stale] (backlog-followups.md), the
+# examples/README.md ORM known-gaps bullet is stale in two different
+# ways at once, needed a number per the check-bug-number-sync rule.
+# rows 1228->1229, max 1276->1277.
