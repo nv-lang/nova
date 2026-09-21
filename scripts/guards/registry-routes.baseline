@@ -1490,7 +1490,7 @@ no_caveat=0
 # 2026-09-21, интегратор: 85 -> 86, РОСТ и он законен. Новая строка №1226 —
 # голый `unsafe fn` без ветки в двух диспетчерах парсера разом (parse.nv,
 # decls.nv) — третий вид корня того же читательского класса.
-blockers=89
+blockers=90
 # 2026-09-21, integrator: blocker 1227 -- single-line record with commas
 # doesn't parse (table 274.5 5v), BLOKIRUET TEG: DA. blockers 86->87.
 # 2026-09-21, integrator: merge with p274-novac. Net +2: #1212 CLOSED
@@ -1498,3 +1498,5 @@ blockers=89
 # partial), #1229 (self-check batch ICE, S5 measure blocked) and #1230
 # (CRLF escaped-newline lexer bug, assistant's 4th table-5v finding) are
 # new blockers. 87 -1 +1 +1 +1 = 89.
+# 2026-09-21, integrator: row 1231 added (assistant's 5th table-5v finding,
+# ${s:?} debug-specifier not parsed), BLOKIRUET TEG: DA. blockers 89->90.

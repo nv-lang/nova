@@ -1388,8 +1388,8 @@
 # 2026-09-21, интегратор: rows 1175 -> 1176, max 1225 -> 1226. №1226 —
 # помощник нашёл, что голый `unsafe fn` не имеет ветки ни в одном из двух
 # диспетчеров верхнего уровня (parse.nv, decls.nv) — третий вид корня.
-rows=1177
-max=1227
+rows=1178
+max=1231
 stale_gaps=0
 # 2026-09-20: №1204 — ВРЕМЕННАЯ дыра, номер ВЫДАН помощнику (nova-94)
 # под строку про `E_READONLY_` — обрывок имени, завышающий знаменатель
@@ -1415,3 +1415,9 @@ gaps=174-208,210-215,653-654,743,1062,1096,1103-1104,1210-1211
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding
 # (single-line record with commas doesn't parse, parse.nv:27-28 already names
 # the narrowness in its own doc-comment). rows 1176->1177, max 1226->1227.
+# 2026-09-21, integrator: after merging p274-novac, numbered Carina's two
+# TBD findings as 1228 (Effect[E] not registered, partial fix) and 1229
+# (self-check batch ICE blocking S5 measure), and assistant's two further
+# table-5v findings as 1230 (CRLF escaped-newline lexer bug) and 1231
+# (${s:?} debug-specifier not parsed). rows 1177->1178 (one net-new numbered
+# row group merged: #1212 already existed, #1228-1231 are new), max 1227->1231.
