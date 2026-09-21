@@ -316,6 +316,12 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // A contract clause (the requires wave): typing types its
                     // condition in the parameters' scope; the walk descends.
                 }
+                EffectItem => {
+                    // One effect in a signature's effect_list (registry
+                    // #1244, D3/D209): novac does not check effects yet (E2,
+                    // known debt) -- the walk has nothing of its own to say,
+                    // same as `ProtoMethod`/`EffectOp` below.
+                }
                 // A block used to be judged for ONE thing here -- a call in
                 // statement position that was not `println`. Wave B12 made
                 // that a form of the language, so the arm has nothing of its
