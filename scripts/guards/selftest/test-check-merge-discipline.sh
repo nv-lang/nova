@@ -24,7 +24,14 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 GC="git -C $TMP -c user.name=selftest -c user.email=selftest@example.com -c commit.gpgsign=false"
 
 git init -q -b main "$TMP" 2>/dev/null || { echo "нет врем. репозитория" >&2; exit 1; }
+# Дата коммита НАРОЧНО в прошлом: новый блок «ритм слияний» (ниже) отказывает
+# слиянию, случившемуся МЕНЬШЕ NOVA_MERGE_CADENCE_MIN_MINUTES минут после
+# последнего коммита на main. Свежий "сейчас"-коммит сделал бы КАЖДЫЙ из
+# случаев 1-20 (они про вердикт гейта, не про ритм) ложно красным ритмом
+# раньше, чем дело дойдёт до проверки, которую они на самом деле тестируют.
+export GIT_COMMITTER_DATE="2020-01-01T00:00:00" GIT_AUTHOR_DATE="2020-01-01T00:00:00"
 echo base > "$TMP/f.txt"; $GC add f.txt >/dev/null 2>&1; $GC commit -q -m base >/dev/null 2>&1
+unset GIT_COMMITTER_DATE GIT_AUTHOR_DATE
 
 V="$TMP/verdict"
 
@@ -62,8 +69,10 @@ fi
 # 4. Вердикт зелёный, но СТАРШЕ HEAD — отказ. Без этой проверки один зелёный
 #    гейт недельной давности разрешал бы слияния вечно (класс №473:
 #    «проверка есть, но ничего не проверяет»).
+# Дата ЗАВЕДОМО раньше коммита "base" (тот датирован 2020-01-01, см. выше) —
+# иначе "СТАРШЕ HEAD" не наступает: обе даты совпали бы.
 echo "RC=0 SEC=2412" > "$V"
-touch -d '2020-01-01' "$V" 2>/dev/null || touch -t 202001010000 "$V"
+touch -d '2010-01-01' "$V" 2>/dev/null || touch -t 201001010000 "$V"
 out=$(NOVA_GATE_VERDICT="$V" bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 1 ] && echo "$out" | grep -q 'СТАРШЕ HEAD'; then
     ok "отказ на устаревшем вердикте"
@@ -283,6 +292,76 @@ if [ "$rc" -eq 0 ] && echo "$out" | grep -q "GITHEAD"; then
 else
     bad "путь хука: ложный отказ или источник не назван (код $rc): $out"
 fi
+$GC checkout -q -f main 2>/dev/null
+
+# ── РИТМ СЛИЯНИЙ (2026-09-21, вопрос владельца «не слишком ли часто ты
+#    пускаешь гейты?») — блок в самом check-merge-discipline.sh, до сих пор
+#    не потревоженный: коммит "base" нарочно датирован 2020-м годом. ──────
+echo recent > "$TMP/r.txt"; $GC add r.txt >/dev/null 2>&1; $GC commit -q -m recent >/dev/null 2>&1
+
+# 21. Маленький батч (1 коммит) сразу после свежего коммита на main — ОТКАЗ,
+#     и причина названа СОДЕРЖАТЕЛЬНО (не спутать с отказом по вердикту).
+$GC checkout -q -b smallbr main 2>/dev/null
+echo s1 > "$TMP/s1.txt"; $GC add s1.txt >/dev/null 2>&1; $GC commit -q -m s1 >/dev/null 2>&1
+$GC checkout -q main 2>/dev/null
+$GC merge --no-commit --no-ff smallbr >/dev/null 2>&1
+echo "RC=0 SEC=1 TIER=main:push" > "$V"
+out=$(NOVA_GATE_VERDICT="$V" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q 'ритм слияний'; then
+    ok "отказ: маленький батч сразу после предыдущего коммита"
+else
+    bad "маленький батч прошёл без ограничения (код $rc): $out"
+fi
+$GC merge --abort >/dev/null 2>&1
+
+# 22. Большой батч (>= порога по умолчанию, 5 коммитов) в тот же момент —
+#     ПРОПУСК: цена гейта та же, выгода больше, ограничивать нечего.
+#     Направление «не мешать» здесь особенно важно: страж, блокирующий
+#     ЛЮБОЕ слияние после недавнего коммита, был бы обойдён в первый день.
+$GC checkout -q -b bigbr main 2>/dev/null
+for i in 1 2 3 4 5; do
+    echo "b$i" > "$TMP/b$i.txt"; $GC add "b$i.txt" >/dev/null 2>&1; $GC commit -q -m "b$i" >/dev/null 2>&1
+done
+$GC checkout -q main 2>/dev/null
+$GC merge --no-commit --no-ff bigbr >/dev/null 2>&1
+HEAD_SHA=$(git -C "$TMP" rev-parse HEAD 2>/dev/null)
+echo "RC=0 SEC=1 TIER=main:push HASH=$HEAD_SHA" > "$V"
+out=$(NOVA_GATE_VERDICT="$V" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && echo "$out" | grep -q 'слияние законно'; then
+    ok "пропускает большой батч сразу после предыдущего коммита"
+else
+    bad "ложный отказ на большом батче (код $rc): $out"
+fi
+$GC merge --abort >/dev/null 2>&1
+
+# 23. Маленький батч, но НАЗВАНА причина срочности (NOVA_MERGE_URGENT) —
+#     ПРОПУСК, причина видна в журнале.
+$GC checkout -q main 2>/dev/null
+$GC merge --no-commit --no-ff smallbr >/dev/null 2>&1
+HEAD_SHA=$(git -C "$TMP" rev-parse HEAD 2>/dev/null)
+echo "RC=0 SEC=1 TIER=main:push HASH=$HEAD_SHA" > "$V"
+out=$(NOVA_GATE_VERDICT="$V" NOVA_MERGE_URGENT="блокирует пира" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && echo "$out" | grep -q 'NOVA_MERGE_URGENT'; then
+    ok "осознанный обход ритма пропускает и называет причину"
+else
+    bad "обход ритма не сработал (код $rc): $out"
+fi
+$GC merge --abort >/dev/null 2>&1
+
+# 24. Порог настраивается: NOVA_MERGE_CADENCE_MIN_COMMITS=1 пропускает тот
+#     же маленький батч без обхода — подтверждает, что пороги читаются из
+#     окружения, а не зашиты числом.
+$GC checkout -q main 2>/dev/null
+$GC merge --no-commit --no-ff smallbr >/dev/null 2>&1
+HEAD_SHA=$(git -C "$TMP" rev-parse HEAD 2>/dev/null)
+echo "RC=0 SEC=1 TIER=main:push HASH=$HEAD_SHA" > "$V"
+out=$(NOVA_GATE_VERDICT="$V" NOVA_MERGE_CADENCE_MIN_COMMITS=1 bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && echo "$out" | grep -q 'слияние законно'; then
+    ok "настраиваемый порог: MIN_COMMITS=1 пропускает тот же батч"
+else
+    bad "настраиваемый порог не сработал (код $rc): $out"
+fi
+$GC merge --abort >/dev/null 2>&1
 $GC checkout -q -f main 2>/dev/null
 
 if [ "$FAILED" -eq 0 ]; then echo "селфтест check-merge-discipline: $CASES/$CASES ok"; exit 0; fi

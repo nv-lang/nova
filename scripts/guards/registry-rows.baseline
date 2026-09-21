@@ -1420,8 +1420,14 @@
 # O(n*m) shell-цикл `while read` + `grep` на каждый элемент, переписан на
 # `comm`; оба селфтеста PASS, замер 3-8 мин -> под 4с на реестре той же
 # правкой.
-rows=1217
-max=1265
+# 2026-09-21, интегратор: rows 1217 -> 1219, max 1265 -> 1267. Слияние
+# принесло стальной дубль (старая пред-номерная копия #1249, ноль строк
+# после удаления) и два новых номера: #1266 (Карина, пустой туплет-
+# литерал как выражение не читается) и #1267 (интегратор, два стража
+# сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
+# разошёлся с базой, оба починены).
+rows=1230
+max=1278
 # 2026-09-21, integrator: row 1242 added -- new checker ICE exposed by
 # Carina's #1237 fix (channel.nv:409), same class as #1229, blocks S5
 # 2026-09-21, integrator: row 1244 added -- assistant found effect row
@@ -1587,3 +1593,28 @@ gaps=174-208,210-215,653-654,743,1062,1103,1210-1211
 # in value position isn't parsed (parser lacks the KwIf branch the
 # statement-form already has); checker's message for it already exists.
 # rows 1194->1195, max 1242->1243.
+# 2026-09-21, integrator: row 1268 added -- own live finding, check-novac-lint
+# guard's marker baseline stale (2->4, own sem/slots.nv split) plus a genuine
+# W_MANUAL_COALESCE false positive on `?? continue` in sem/collect.nv:286
+# (continue is Stmt-only, same class as line 391's own `?? break` comment).
+# rows 1219->1220, max 1267->1268.
+# 2026-09-21, integrator: row 1269 added -- assistant found a named
+# refusal cascading through two doors in a row (poisoned receiver:
+# method-call door then match-arm door), fixed both, commit 18ca24cc6.
+# rows 1220->1221, max 1268->1269.
+# 2026-09-21, integrator: rows 1270-1276 added -- defect-hunter agent's
+# check x K4 hunt (7 findings), report+probes restored from its own
+# session transcript after the worktree was auto-removed before the
+# report could be copied into the main tree (nothing was lost).
+# rows 1221->1228, max 1269->1276.
+# 2026-09-21, integrator: row 1277 added -- assistant's marker
+# [M-orm-examples-known-gaps-also-stale] (backlog-followups.md), the
+# examples/README.md ORM known-gaps bullet is stale in two different
+# ways at once, needed a number per the check-bug-number-sync rule.
+# rows 1228->1229, max 1277->1277.
+# 2026-09-21, integrator: row 1278 added and closed same commit -- a
+# merge-cadence throttle in check-merge-discipline.sh, answering the
+# owner's own question about gating too often (~25 merges one evening,
+# many for 1-2 docs commits). See the row for the mechanism.
+# rows 1229->1230, max 1277->1278.
+# rows 1228->1229, max 1276->1277.

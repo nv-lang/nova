@@ -142,6 +142,30 @@ test "generic receiver: refused after an unrelated earlier refusal too (registry
     assert(diagnose(src) == 3, "broken's two refusals plus dup's own generic-receiver refusal, not just broken's")
 }
 
+test "poisoned receiver: a method call on a name refused at its bind site names ONE diagnostic (carrier: novac/fixtures/poisoned_recv_match/neg_1.nv, registry #TBD)" {
+    // The #1249 class, two doors further down the same call chain. `s`'s
+    // initializer (`mystery(n)`) is refused and unknown -- `binds.nv`
+    // still binds `s`, with `no_ty()`, so the bare re-read inside
+    // `s.byte_len()` raises no SECOND diagnostic of its own. Before this
+    // fix, `@type_method_call` (calls.nv) read that silence as "children
+    // clean" (its gate only checked `@out.len() == before`, not whether
+    // the receiver's type actually arrived) and pressed on into
+    // `@record_method_callee` -> `@judge_method_lookup`'s `FnOverloaded`
+    // arm, which then refused a SECOND time ("an argument's type is not
+    // decided yet"). Fixed with an `is_ty(recv_t)` guard mirroring the
+    // sibling `else` branch's own stated invariant.
+    //
+    // Silencing that second door moved the poison one door further still:
+    // `@type_arm` (match_arms.nv) wrapped `type_of(body, ...)` in
+    // `Some(...)` unconditionally, so the arm's own now-silent `no_ty()`
+    // body read as "this arm has a type" to `@agree_arm_type`'s fold,
+    // producing a THIRD-door cascade ("match arms produce different
+    // types") against the sibling arm's real `int`. Fixed the same way:
+    // `Some(bt)` only when `is_ty(bt)`.
+    ro src = "module m\n\ntype Kind enum A | B\n\nfn pick(k Kind, n int) -> int {\n    ro s = mystery(n)\n    match k {\n        Kind.A => s.byte_len()\n        Kind.B => 0\n    }\n}\n"
+    assert(diagnose(src) == 1, "one seeded mistake (the unknown callee) must name exactly one diagnostic, not a cascade through the method call and the match arms")
+}
+
 test "diagnostic naming: an unknown-in-expression refusal names the ACTUAL callee (hunt check x K4, N7)" {
     // The message used to say "println is a statement here, not a value"
     // UNCONDITIONALLY, regardless of which name actually failed -- true
