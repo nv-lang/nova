@@ -1491,6 +1491,9 @@ no_caveat=0
 # голый `unsafe fn` без ветки в двух диспетчерах парсера разом (parse.nv,
 # decls.nv) — третий вид корня того же читательского класса.
 blockers=91
+# 2026-09-21, integrator: rows 1234 (nova-polaris arity mismatch, K1 but
+# BLOKIRUET TEG: NET -- package ecosystem, not Carina's tag) and 1235
+# (nova-http lint + timeout, also NET) added; neither counts as a blocker.
 # 2026-09-21, integrator: 92 -> 91. Carina's window closed #1232 (f4c9de52d,
 # ASI-style postfix boundary fix, verified both ways) while I was merging
 # her branch back in. Opportunistic drop, not the reason for this edit.
@@ -1518,3 +1521,6 @@ blockers=91
 # (record literal missing a required field compiles silently, BLOKIRUET
 # TEG: DA) as a genuinely new blocker; #1081 and #1104 from the same branch
 # are BLOKIRUET TEG: NET. Measured value below.
+# 2026-09-21, integrator: row 1234 added (nova-polaris arity mismatch,
+# serve overload resolution), BLOKIRUET TEG: DA (K1, pre-existing). row
+# 1235 (nova-http lint + timeout) is BLOKIRUET TEG: NET. blockers 91->92.
