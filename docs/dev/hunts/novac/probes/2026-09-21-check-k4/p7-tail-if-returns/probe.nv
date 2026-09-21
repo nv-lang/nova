@@ -1,0 +1,7 @@
+module p
+// Хвостовой `if`, обе ветви которого ВОЗВРАЩАЮТ. Шапка stmt_terminates
+// (tail_rules.nv) называет ровно эту форму «обычным способом так писать».
+fn f(n int) -> int {
+    if n > 0 { return 1 } else { return 2 }
+}
+fn main() { println(f(3)) }

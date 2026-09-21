@@ -1,0 +1,21 @@
+=== SUBJECT: novac check (ожидается МОЛЧАНИЕ)
+novac rc=0
+=== ORACLE: nova check
+[31mFAIL:[0m docs/dev/hunts/novac/probes/2026-09-21-check-k4/p11-ro-assign-accepted/probe.nv
+  docs/dev/hunts/novac/probes/2026-09-21-check-k4/p11-ro-assign-accepted/probe.nv:5:5: error: [E_LOCAL_NOT_MUT] local-binding `x` не помечен `mut`, но переприсваивается (`x = ...`). `ro`-binding фиксирует имя (L1 — Plan 147 / D246); для переприсваивания используй `mut x = ...`. (Явный `mut T` content-view не делает имя переприсваиваемым — это R2-split: `ro r mut T` разрешает `r.field = v`, но не `r = X`.)
+  5 |     x = 2
+    |     ^
+
+===== SUMMARY =====
+PASS: 0  [31mFAIL[0m: 1  WARN: 0
+[1m[31merror:[0m[0m 1 file(s) failed type-check
+oracle rc=1
+=== ЧТО ЭМИТИТСЯ (обычный изменяемый C-локал: молчаливое принятие)
+static nova_unit nova_fn_main_impl(void) {
+    nova_int x = ((nova_int)1LL);
+    x = ((nova_int)2LL);
+    nova_print_int(x);
+    nova_print_newline();
+    return NOVA_UNIT;
+}
+        nova_fn_main_impl();

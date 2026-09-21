@@ -1,0 +1,16 @@
+=== SUBJECT: novac check
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"docs/dev/hunts/novac/probes/2026-09-21-check-k4/p9-binding-tail-alone/probe.nv","start":276,"end":278},"message":"fn declares a return type but its body ends without a value","poisoned_by":null}
+novac rc=1
+=== ORACLE: nova check (тот же файл)
+[31mFAIL:[0m docs/dev/hunts/novac/probes/2026-09-21-check-k4/p9-binding-tail-alone/probe.nv
+  docs/dev/hunts/novac/probes/2026-09-21-check-k4/p9-binding-tail-alone/probe.nv:4:20: error: [E_MISSING_RETURN] функция `f` объявляет `-> int`, но её блочное тело заканчивается STATEMENT'ом и не даёт значения. Биндинг-форма `consume X = expr { body }` (D188), биндинг `ro`/`mut`/`consume`, присваивание и пустое тело — всё это statement'ы типа `()`; выражением объявлена только re-consume форма `consume X { body }`. Добавь `return <expr>` (в том числе изнутри блока — очистка при этом отрабатывает), либо хвостовое выражение, либо убери `-> int`.
+  4 | fn f(n int) -> int {
+    |                    ^
+    | ... (1 more lines)
+  6 | }
+    | ~
+
+===== SUMMARY =====
+PASS: 0  [31mFAIL[0m: 1  WARN: 0
+[1m[31merror:[0m[0m 1 file(s) failed type-check
+oracle rc=1

@@ -1,0 +1,9 @@
+=== SUBJECT: novac check
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"docs/dev/hunts/novac/probes/2026-09-21-check-k4/p4-u64-return/probe.nv","start":204,"end":224},"message":"this integer literal does not fit in `int` -- the language makes that a hard compile error (E_LIT_OUT_OF_RANGE, 03-syntax.md), not a silent truncation; the oracle wraps it in the emitted C (#810)","poisoned_by":null}
+novac rc=1
+=== ORACLE: nova check (тот же файл)
+[32mok:[0m docs/dev/hunts/novac/probes/2026-09-21-check-k4/p4-u64-return/probe.nv
+
+===== SUMMARY =====
+[32mPASS[0m: 1  FAIL: 0
+oracle rc=0

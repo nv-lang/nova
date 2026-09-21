@@ -1,0 +1,10 @@
+=== SUBJECT: novac check
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"docs/dev/hunts/novac/probes/2026-09-21-check-k4/p7-tail-if-returns/probe.nv","start":279,"end":285},"message":"outside the subset: a branch of a tail `if` ends without a value (E2-b)","poisoned_by":null}
+{"id":"d1","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"docs/dev/hunts/novac/probes/2026-09-21-check-k4/p7-tail-if-returns/probe.nv","start":297,"end":303},"message":"outside the subset: a branch of a tail `if` ends without a value (E2-b)","poisoned_by":null}
+novac rc=1
+=== ORACLE: nova check (тот же файл)
+[32mok:[0m docs/dev/hunts/novac/probes/2026-09-21-check-k4/p7-tail-if-returns/probe.nv
+
+===== SUMMARY =====
+[32mPASS[0m: 1  FAIL: 0
+oracle rc=0

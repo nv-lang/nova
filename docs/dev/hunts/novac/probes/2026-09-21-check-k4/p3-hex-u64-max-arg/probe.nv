@@ -1,0 +1,4 @@
+module p
+// Та же величина ДРУГИМ синтаксисом: шестнадцатеричный литерал.
+fn take(x u64) -> () { println(1) }
+fn main() { take(0xFFFFFFFFFFFFFFFF) }
