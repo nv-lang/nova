@@ -385,8 +385,8 @@ export fn TcpStream consume @cleanup(_outcome ScopeOutcome) -> () {
 ///
 /// `load()` then `fetch_sub()` (two ops, not one CAS instruction — `@rc`'s
 /// `compare_exchange` hits an unrelated, pre-existing codegen gap through a
-/// `*mut AtomicInt` receiver, `[E_CODEGEN_TYPE_UNKNOWN]`; №TBD, reported
-/// separately) is race-free HERE specifically because `@` (`s`, the value
+/// `*mut AtomicInt` receiver, `[E_CODEGEN_TYPE_UNKNOWN]`; registry 221.1
+/// №515) is race-free HERE specifically because `@` (`s`, the value
 /// `into_split()` consumes) is Nova's ONLY handle that can ever increment
 /// this `rc` — `@share()` requires possessing `s` itself, and `s` is a
 /// linear value with exactly one owner at a time. So `rc == 1` observed by
