@@ -1,0 +1,15 @@
+module m
+
+type S enum A | B
+
+fn first(s S) -> int {
+    match s {
+        A => 1
+    }
+}
+
+fn second(s S) -> int {
+    match s {
+        A => 1
+    }
+}

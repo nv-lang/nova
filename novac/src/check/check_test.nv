@@ -68,3 +68,22 @@ test "tail rule: a fn that declares no value is exempt" {
     ro src = "module m\n\nfn main() {\n    ro x = 1\n}\n"
     assert(diagnose(src) == 0, "main declares no value, so nothing is missing")
 }
+
+test "match exhaustiveness: a later match is still checked after an earlier one's own refusal (registry #1242)" {
+    // @type_match/@type_match_stmt compared `@out.len()` against a LITERAL
+    // 0 (absolute -- "has anything at all been refused in this file since
+    // check() started") instead of a mark taken right before the call
+    // being judged, unlike every sibling gate in check/ (exprs.nv,
+    // typing.nv, binds.nv, calls.nv, casts.nv, destructure.nv, rules.nv,
+    // variant_rules.nv all mark-and-compare). `Checker.out` accumulates
+    // for the WHOLE file, so the moment `first`'s own non-exhaustive
+    // match pushed its one diagnostic, `second`'s match returned at that
+    // same absolute check before ever reaching its own exhaustiveness
+    // door -- silently WIDENING the subset (the oracle refuses `second`
+    // too; novac's old behaviour let it through with rc=0 and read
+    // uninitialised storage, the exact K-C class `@report_if_not_exhaustive`'s
+    // own header warns about). Two non-exhaustive matches, in two
+    // different functions, must both be named.
+    ro src = "module m\n\ntype S enum A | B\n\nfn first(s S) -> int {\n    match s {\n        A => 1\n    }\n}\n\nfn second(s S) -> int {\n    match s {\n        A => 1\n    }\n}\n"
+    assert(diagnose(src) == 2, "each function's own non-exhaustive match must be named, not just the first")
+}
