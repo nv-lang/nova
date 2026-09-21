@@ -301,3 +301,47 @@ test "shape: a comma between brace-record fields parses, not just a newline (reg
     }
     assert(tree_reserialize(f) == src)
 }
+
+test "shape: bare `unsafe fn` parses as FnDecl through both entry doors (registry #1226)" {
+    // `unsafe` was only ever read as extern_decl's OPTIONAL leaf
+    // (`extern "ABI" unsafe fn`, #815) -- a bare `unsafe fn`, with no
+    // `extern` in front, matched no branch of either the top-level loop
+    // (parse.nv) or the `export` wrapper (decls.nv's `@export_decl`), and
+    // fell into the parser's own fallback in both places. Both doors must
+    // now recognise it, each on its own carrier.
+    ro bare_src = "unsafe fn risky() -> int {\n    0\n}\n"
+    ro bare = parse(lex(bare_src))
+    match bare {
+        Branch { children, .. } => {
+            mut found = false
+            for c in children {
+                if c.kind_of() == NodeKind.FnDecl { found = true }
+            }
+            assert(found, "a bare `unsafe fn` at top level must reach FnDecl, not the parser's fallback")
+        }
+        Leaf(_) => assert(false)
+    }
+    assert(tree_reserialize(bare) == bare_src)
+
+    ro exported_src = "export unsafe fn risky() -> int {\n    0\n}\n"
+    ro exported = parse(lex(exported_src))
+    match exported {
+        Branch { children, .. } => {
+            mut found = false
+            for c in children {
+                if c.kind_of() != NodeKind.ExportDecl { continue }
+                match c {
+                    Branch { children: ek, .. } => {
+                        for e in ek {
+                            if e.kind_of() == NodeKind.FnDecl { found = true }
+                        }
+                    }
+                    Leaf(_) => assert(false)
+                }
+            }
+            assert(found, "`export unsafe fn` must reach FnDecl inside ExportDecl, not the fallback")
+        }
+        Leaf(_) => assert(false)
+    }
+    assert(tree_reserialize(exported) == exported_src)
+}

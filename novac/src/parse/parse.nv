@@ -269,6 +269,16 @@ export fn parse(toks []Token) -> Node
             items.push(p.let_decl())
         } else if k == TokenKind.KwTest {
             items.push(p.test_decl())
+        } else if k == TokenKind.KwUnsafe && p.peek(skip: 1) == TokenKind.KwFn {
+            // BARE `unsafe fn ...` (registry #1226), no `extern` in front.
+            // `unsafe` was already read as an OPTIONAL leaf inside
+            // `@extern_decl` (`extern "ABI" unsafe fn`, #815) -- that door
+            // never fires without `extern` first, so the bare form fell
+            // through every branch here into the junk bucket below and
+            // gave the same unnamed fallback every other missing form did.
+            // Same shape `@extern_decl` already uses: `unsafe` becomes a
+            // lead leaf of the `FnDecl`, not a wrapper node.
+            items.push(p.fn_decl([]Node.of(p.take())))
         } else if k == TokenKind.KwModule {
             // A module declaration that is NOT the file header is outside
             // the language shape — wrap it in Err so check reports it. It
