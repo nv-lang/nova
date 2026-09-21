@@ -17,6 +17,7 @@ import ../sem.{is_expr_kind, is_ident_leaf, is_int_lit, is_println_call, is_valu
 import ../sem.{leaf_text, literal_prim_of, pattern_binders, pattern_has_disj, raw_vrow, variant_in_sum}
 // The head of a flat pattern, through the same door the checker asks (1190).
 import ../sem.{pattern_head_slot}
+import ../sem.{iflet_binder_at, iflet_body_at, iflet_else_at, iflet_init_at}
 import ../sem.{payload_as_seen}
 // Which arguments have an observable order (F65) -- the checker's own door.
 import ../sem.{contains_call}
@@ -134,7 +135,7 @@ fn Lowerer mut @lower_if_value(n Node, res_t TyId) -> Local {
 /// agree before anything reached the lowering.
 fn Lowerer mut @lower_if_let_value(n Node, res_t TyId) -> Local {
     ro kids = branch_children(n)
-    ro init = kids[6]
+    ro init = kids[iflet_init_at(kids)]
     ro ot = @out.type_of(init.id_of())
     ro payload = @ctx.tys.arg(ot, 0)
     ro t = @ir.temp(res_t)
@@ -146,11 +147,11 @@ fn Lowerer mut @lower_if_let_value(n Node, res_t TyId) -> Local {
     ro c = @ir.begin_if(Cond.IsSome(lo), ElseShape.Braced)
     // The binder: the checker bound it to the payload type, this door spells
     // what was decided.
-    ro bv = @ir.named(payload, leaf_text(kids[3]))
+    ro bv = @ir.named(payload, leaf_text(kids[iflet_binder_at(kids)]))
     @ir.take_payload(bv, lo)
-    @lower_block_value(kids[7], t)
+    @lower_block_value(kids[iflet_body_at(kids)], t)
     @ir.begin_else(c)
-    @lower_block_value(kids[9], t)
+    @lower_block_value(kids[iflet_else_at(kids)], t)
     @ir.end_if(c)
     t
 }
@@ -455,10 +456,11 @@ fn Lowerer mut @lower_else_tail(c IfCtx, tail Node) -> () {
 /// the whole prelude.
 fn Lowerer mut @lower_if_let(st Node, outer Option[IfCtx]) -> () {
     ro kids = branch_children(st)
-    ro init = kids[6]
+    ro init = kids[iflet_init_at(kids)]
     ro ot = @out.type_of(init.id_of())
     ro payload = @ctx.tys.arg(ot, 0)
-    ro has_else = kids.len() > 9
+    ro else_at = iflet_else_at(kids)
+    ro has_else = kids.len() > else_at
     // THE ELSE BRANCH IS OPENED BY THE DOOR, NOT HERE (fix 2026-09-08, ICE «a block sealed
     // twice (it already jumps)» on `novac/fixtures/iflet_else/pos_2.nv`). Until the door
     // `@begin_else_if` existed, this function opened the pair «else, then a chain» by hand:
@@ -474,7 +476,7 @@ fn Lowerer mut @lower_if_let(st Node, outer Option[IfCtx]) -> () {
     // (M2b-2 step 3a). The head is identical to what this function spelled by hand:
     // `option_some_test` reads the local's type and name, which is what it was passed.
     ro cond = Cond.IsSome(lo)
-    ro shape = else_shape(kids, 9)
+    ro shape = else_shape(kids, else_at)
     // THE TEMPORARY BELONGS TO THE ELSE BLOCK, and under the walk that is decided by
     // MEMBERSHIP rather than by the moment of printing (found 2026-09-09, the last divergence
     // of step 3b: `NovaOpt T2 = b;` printed one line ABOVE its `} else {` in
@@ -509,11 +511,11 @@ fn Lowerer mut @lower_if_let(st Node, outer Option[IfCtx]) -> () {
     // lost indent.
     // The binder: the checker bound it to the payload type, this door spells
     // what was decided.
-    ro bv = @ir.named(payload, leaf_text(kids[3]))
+    ro bv = @ir.named(payload, leaf_text(kids[iflet_binder_at(kids)]))
     @ir.take_payload(bv, lo)
-    @lower_block_stmts_fn(kids[7], false)
+    @lower_block_stmts_fn(kids[iflet_body_at(kids)], false)
     if has_else {
-        @lower_else_tail(c, kids[9])
+        @lower_else_tail(c, kids[else_at])
     } else {
         // No else branch was written: the else block IS the join.
     }

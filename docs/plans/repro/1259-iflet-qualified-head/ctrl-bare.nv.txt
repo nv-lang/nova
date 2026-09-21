@@ -1,0 +1,14 @@
+fn g(o Option[int]) -> int {
+    if Some(v) = o {
+        v
+    } else {
+        0
+    }
+}
+fn none_int() -> Option[int] {
+    None
+}
+fn main() Io -> () {
+    println(g(Some(7)))
+    println(g(none_int()))
+}
