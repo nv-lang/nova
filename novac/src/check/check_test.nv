@@ -553,3 +553,14 @@ test "if value: the body of a match arm is a legal position too (registry #TBD)"
     ro msg = diagnose_first_msg(src)
     assert(!msg.contains("an `if` in value position is not compiled yet"), "an `if` value as a match arm's body must not be refused as a wrong position -- got: ${msg}")
 }
+
+test "array literal: the body of a match arm is a legal position too (registry #TBD)" {
+    // A third node kind, the same evening, the same gap: `ArrayLit`'s own
+    // gate gated on `!init_pos && !arg_pos`, never asking `arm_pos`
+    // either. `@lower_arm_body` places a value arm's body through
+    // `@lower_place`, the same door an initializer's own array literal
+    // already resolves through since wave B8.
+    ro src = "module m\n\nfn f(k int) -> []int {\n    match k {\n        0 => [1, 2, 3]\n        _ => [4, 5]\n    }\n}\n"
+    ro msg = diagnose_first_msg(src)
+    assert(!msg.contains("an array literal is compiled only as"), "an array literal as a match arm's body must not be refused as a wrong position -- got: ${msg}")
+}

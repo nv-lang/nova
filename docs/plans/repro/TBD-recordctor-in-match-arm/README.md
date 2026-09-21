@@ -66,16 +66,53 @@ initializer are, at this door, the identical operation.
   position -- a record constructor as the TAIL EXPRESSION of a `{ ... }`
   block, where that block is itself a match arm's body (`PfFloat => { if
   ... { return DisplayCall{...} } DisplayCall{...} }` -- the un-parenthesised
-  final expression of the block). `check.nv`'s own comment on `MatchExpr`
-  names why this is a SEPARATE mechanism, not another case for `arm_pos`:
-  "the `{...}` tail is a statement position plus the typing route of wave
-  B4's tail machinery" -- a block's tail child is walked as `stmt_pos`,
-  and whether a VALUE is legal there is decided by tail-specific typing
-  (`tail_rules.nv`), not by `@walk`'s `init_pos`/`arg_pos`/`arm_pos` flags
-  at all. Fixing THIS position needs reading that mechanism fresh -- not
-  attempted this sitting (three narrow fixes plus this investigation is
-  enough for one evening); named honestly as an open follow-up rather than
-  forced into a fourth quick patch that would not actually be one line.
+  final expression of the block).
+
+  **THIS FOURTH POSITION IS NOT A ONE-LINE GAP -- IT IS A DESIGN BOUNDARY,
+  AND THE CURRENT REFUSAL IS PROTECTIVE, NOT INCIDENTAL.** Read
+  `check/match_arms.nv`'s `@type_arm` (lines 511-518, wave B9): a Block
+  ARM BODY is typed via `@type_block` (a STATEMENT walk) and the fold
+  ALWAYS receives `None` for it -- "the arm itself yields no value ...
+  which is exactly what None says here", by explicit design, not an
+  oversight. `@fold_arm_type`/`@agree_arm_type` then let the match's type
+  come from whichever OTHER arms DO produce one; a Block arm contributes
+  nothing and is not rejected, just excluded from the agreement. On the
+  LOWERING side, `@lower_arm_body` (lower_match.nv) mirrors this exactly:
+  `leaves = ... || arm_e.kind_of() == NodeKind.Block` is UNCONDITIONAL, so
+  a Block arm NEVER reaches `@lower_place(arm_e, dest)` -- it always goes
+  to `@lower_block_stmts_fn`, regardless of whether the match is a value
+  or a statement. If such an arm is reached at runtime in a match used as
+  a value, `dest` keeps the zero `@lower_match` pre-declares it with (the
+  same convention already used for an incomplete match's uncovered arms).
+
+  **Consequence: novac's checker and lowering already AGREE that a Block
+  arm body never produces a value for the match** -- which means
+  `@type_arm`'s refusal of `RecordCtor` in that block's tail (via the
+  ordinary statement walk, `stmt_pos`) is not an accidental narrowness to
+  patch with one more flag; it is the thing standing between "refuses a
+  form" and "silently returns zero instead of the tail value the oracle
+  actually produces" -- exactly the "check clean, wrong answer" class this
+  project's own differential guard is built to catch. Widening `RecordCtor`
+  to accept `stmt_pos` (or teaching `@type_arm` to thread a Block's tail
+  value through) WITHOUT ALSO teaching `@lower_arm_body` to route that
+  same tail through `@lower_place` when `dest != no_local()` would very
+  likely MISCOMPILE this exact carrier, not just widen the subset.
+
+  **CHECKED AGAINST THE REAL ORACLE, 2026-09-22 00:45 -- CONFIRMED, NOT
+  HYPOTHETICAL.** `fn f(k int) -> Shape { match k { 0 => { if k > 100 {
+  return Shape{n:-1} }  Shape{n:20} }  _ => Shape{n:20} } }`, built and run
+  with the oracle (`nova-cli/target/release/nova.exe build`, isolated in
+  its own directory so it is not swept into an unrelated compilation
+  unit): builds clean, prints `20` -- the block's BARE TAIL expression (no
+  `return`, no `;`) IS the arm's value there, exactly the function-body/
+  if-branch tail convention. novac's current design (checker AND lowering
+  agreeing a Block arm never produces a value) is a REAL, ORACLE-CONFIRMED
+  divergence for this shape, not a guess.
+
+  Not attempted this sitting -- three narrow, safe fixes plus this
+  investigation is enough for one evening, and this specific gap needs its
+  own scoped wave (checker AND lowering together, oracle-verified first),
+  not a fourth quick patch mislabeled as "one more line".
 
 ## Carrier caveat
 
