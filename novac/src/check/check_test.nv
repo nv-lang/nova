@@ -198,3 +198,24 @@ test "binding mode: assignment to a `ro` target is refused in all four shapes (r
     ro ctrl_field = "module m\n\ntype Pt value { n int }\n\nfn f() -> int {\n    mut b = Pt { n: 1 }\n    b.n = 2\n    b.n\n}\n"
     assert(diagnose(ctrl_field) == 0, "a field through a `mut`-bound receiver must stay writable")
 }
+
+test "qualified module constant: `Type.NAME` resolves through its own registry key (D200 amend #66)" {
+    // `const BigInt.ZERO BigInt = zero()` then a use site `BigInt.ZERO.sign`
+    // -- the SAME dotted shape a bare-variant read uses (`@judge_type_head_variant`),
+    // so the qualified-constant branch has to answer BEFORE the "not a sum"
+    // refusal would otherwise claim the read. Proven the other way too: with
+    // the resolution branch removed, this same source refused twice (the
+    // qualified-name read AND, upstream, the parser's own `E_NOVAC_SUBSET`
+    // fallback before `@const_decl`/`@let_decl` learned the `.` branch).
+    ro src = "module m\n\ntype BigInt value {\n    sign int\n}\n\nfn zero() -> BigInt => BigInt { sign: 0 }\n\nconst BigInt.ZERO BigInt = zero()\n\nfn use_it() -> int {\n    BigInt.ZERO.sign\n}\n"
+    assert(diagnose(src) == 0, "a qualified constant's own type must answer its use site, not the sum-variant refusal")
+}
+
+test "qualified module constant: an unknown qualified name still falls through to the sum refusal" {
+    // The registry lookup answers `None` for a name nobody declared, and the
+    // pre-existing "not a sum" refusal below still has to fire -- the new
+    // branch must not swallow every dotted read on a non-sum type, only the
+    // ones a `const Type.NAME` actually claims.
+    ro src = "module m\n\ntype BigInt value {\n    sign int\n}\n\nfn use_it() -> int {\n    BigInt.NOPE\n}\n"
+    assert(diagnose(src) > 0, "an undeclared qualified name is not a free pass past the sum-variant refusal")
+}

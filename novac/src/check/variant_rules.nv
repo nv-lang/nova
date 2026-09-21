@@ -33,6 +33,7 @@ import ../sem.{identity_slots}
 import ../sem.{ty_of_decl}
 import ../sem.{prim_row_of}
 import ../sem.{decl_of_ty}
+import ../sem.{ty_source_name}
 import ../types.{TyId, no_ty, is_ty}
 /// The payload half of the door above: `Sum.Variant(x)`, and the refusal a
 /// payload-carrying variant earns when it is written with no arguments at all.
@@ -139,6 +140,52 @@ fn Checker mut @judge_type_head_variant(e Node, kids []Node, arg_from int) -> bo
     if prim_row_of(@ctx.tys, head_t).is_some() || decl_of_ty(@ctx, head_t).kind != TypeKind.TkSum {
         match kids[2] {
             Leaf(vt) => {
+                // A QUALIFIED MODULE CONSTANT (D200 amend #66) is written the
+                // SAME shape as a bare-variant read (`Type.NAME`, no call
+                // parens -- `arg_from < 0`), and it names a TYPE too, so it
+                // reaches this exact door before the "not a sum" refusal
+                // below would otherwise claim it. The registry keys the
+                // constant by the two leaves joined ("BigInt.ZERO"), the
+                // same string `const_full_name` built at collection.
+                //
+                // `vt.text` DIRECTLY, NOT `leaf_text(vt)` (registry #TBD,
+                // filed 2026-09-21): `vt` here is already a `Token` (bound
+                // by matching `kids[2]` against `Node.Leaf(Token)`), and
+                // `leaf_text` takes a `Node`. The call compiles: `Node` has
+                // exactly one unary variant (`Leaf(Token)`), so D200's
+                // sum-coercion auto-wraps `vt` into `Node.Leaf(vt)` per spec
+                // (`spec/decisions/02-types.md` "sum-coercion", ~line 1600).
+                // The RULE is legitimate; ITS MATERIALIZATION is not, for a
+                // value that itself came out of a `match` on the SAME sum a
+                // moment earlier -- proven with a minimal oracle-only repro
+                // (`docs/plans/repro/TBD-sumwrap-roundtrip-empties.nv.txt`):
+                // a freshly-built payload round-trips correctly, but one
+                // pulled out of `Leaf(t) => ...` and handed to a `Node`-typed
+                // parameter comes back an EMPTY string with no diagnostic --
+                // in novac's own self-check the same shape (a 3-field
+                // `Token`, not this repro's 1-field `Tok`) explodes into
+                // `nova: out of memory` instead. `vt.text` sidesteps the
+                // whole coercion path: no call, no wrap, no bug surface.
+                if arg_from < 0 {
+                    ro qname = "${ty_source_name(@ctx, head_t)}.${vt.text}"
+                    if @ctx.defs.const_row(qname).is_some() {
+                        ro ct = @const_type_of(qname)
+                        if is_ty(ct) {
+                            @record(e, ct)
+                            return true
+                        } else {
+                            // Registered but untypeable (a refused
+                            // initializer): the lattice must not be asked,
+                            // by the same #902 rule every other reader of
+                            // this channel follows.
+                        }
+                    } else {
+                        // No constant of this qualified name: the refusal
+                        // below still applies.
+                    }
+                } else {
+                    // A call: never a constant read, judged below as before.
+                }
                 if arg_from < 0 {
                     @refuse(vt, "a type name takes a variant after the dot, and this type is not a sum -- it declares no variants")
                 } else {

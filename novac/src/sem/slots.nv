@@ -758,6 +758,37 @@ export fn const_name_at(kids []Node) -> int {
     -1
 }
 
+/// The constant's FULL name, as registered: the bare name, or the two
+/// leaves of a QUALIFIED one (D200 amend #66) joined by a dot.
+///
+/// `const_name_at` alone answers ONE index, and a qualified name is TWO
+/// leaves (`Type`, `NAME`) the parser already reads side by side (`Type`
+/// `.` `NAME`) -- this door is the one place that turns that shape into
+/// the registry's KEY, so `collect.nv` (the only caller) does not have to
+/// know the shape itself. `BigInt.ZERO` registers and resolves as the one
+/// string "BigInt.ZERO"; an unqualified `ZERO` registers as "ZERO", same
+/// as it always has -- the two spellings share one namespace by
+/// construction, exactly as `Type.method` and a free function already do.
+export fn const_full_name(kids []Node) -> Option[str] {
+    ro n = const_name_at(kids)
+    if n < 0 { return None }
+    ro base = leaf_text(kids[n])
+    if n + 2 >= kids.len() { return Some(base) }
+    ro dot = kids[n + 1]
+    ro qual = kids[n + 2]
+    if dot.kind_of() != NodeKind.LeafNode || leaf_kind(dot) != TokenKind.Dot {
+        return Some(base)
+    } else {
+        // Not a qualifier: the bare name is the whole answer.
+    }
+    if qual.kind_of() != NodeKind.LeafNode || leaf_kind(qual) != TokenKind.Ident {
+        return Some(base)
+    } else {
+        // The qualified form: two leaves, one name.
+    }
+    Some("${base}.${leaf_text(qual)}")
+}
+
 /// The slot of a constant's INITIALIZER: the child right after `=`.
 ///
 /// By the ASSIGN leaf rather than by a fixed index, because a declared type may

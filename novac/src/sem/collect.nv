@@ -283,9 +283,10 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
         ro ck = const_decl_of(c)
         if !ck.is_some() { continue }
         ro kids = branch_children(ck ?? c)
-        ro cname_at = const_name_at(kids)
-        if cname_at < 0 { continue }
-        ro cname = leaf_text(kids[cname_at])
+        ro cname = match const_full_name(kids) {
+            None => continue
+            Some(n) => n
+        }
         if defs.declared_by_file(cname) { continue }
         ro init_at = const_init_at(kids)
         if init_at < 0 { continue }
