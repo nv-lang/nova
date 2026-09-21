@@ -34,20 +34,19 @@ export type ParseIntError enum Empty | InvalidDigit { at int } | AboveMax | Belo
 /// by `@to_int`/`@to_i64` below.
 fn str @parse_int_core(radix int) -> Result[int, ParseIntError] {
     if radix < 2 || radix > 36 { return Err(ParseIntError.InvalidRadix) }
-    ro bytes = @bytes()
     ro n = @byte_len()
     if n == 0 { return Err(ParseIntError.Empty) }
     mut neg = false
     mut start = 0
-    if bytes[0] == '-' {
+    if unsafe { @ptr().read_at(0) } == '-' {
         neg = true
         start = 1
     }
-    else if bytes[0] == '+' { start = 1 }
+    else if unsafe { @ptr().read_at(0) } == '+' { start = 1 }
     if start >= n { return Err(ParseIntError.Empty) }
     mut acc = 0
     for j in start..n {
-        ro c = bytes[j] as int
+        ro c = unsafe { @ptr().read_at(j) } as int
         mut d = -1
         if c >= '0' && c <= '9' { d = c - '0' }
         else if c >= 'a' && c <= 'z' { d = c - 'a' + 10 }
@@ -67,16 +66,15 @@ fn str @parse_int_core(radix int) -> Result[int, ParseIntError] {
 /// reused by `@to_u64`/`@to_u32`/`@to_u8` below.
 fn str @parse_uint_core(radix int) -> Result[uint, ParseIntError] {
     if radix < 2 || radix > 36 { return Err(ParseIntError.InvalidRadix) }
-    ro bytes = @bytes()
     ro n = @byte_len()
     if n == 0 { return Err(ParseIntError.Empty) }
     mut start = 0
-    if bytes[0] == '+' { start = 1 }
+    if unsafe { @ptr().read_at(0) } == '+' { start = 1 }
     if start >= n { return Err(ParseIntError.Empty) }
     mut acc uint = 0
     ro uradix = radix as uint
     for j in start..n {
-        ro c = bytes[j] as int
+        ro c = unsafe { @ptr().read_at(j) } as int
         mut d = -1
         if c >= '0' && c <= '9' { d = c - '0' }
         else if c >= 'a' && c <= 'z' { d = c - 'a' + 10 }

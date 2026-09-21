@@ -1491,8 +1491,15 @@ no_caveat=0
 # голый `unsafe fn` без ветки в двух диспетчерах парсера разом (parse.nv,
 # decls.nv) — третий вид корня того же читательского класса.
 blockers=93
+# 2026-09-21, integrator: 94 -> 93, LEGITIMATE DROP. Carina's a11fa61ad
+# fixed #1241 (leading `..` open-left slice now parses to the honest
+# E2-b every other slice form gets) -- its BLOKIRUET TEG: DA row is
+# closed, real movement toward the tag, not a reclassification.
 # 2026-09-21, integrator: 91 -> 92. Row 1242 added -- new checker ICE
 # (channel.nv:409) exposed by Carina's #1237 fix, blocks S5 batch measure.
+# 2026-09-21, integrator: 93 -> 94. Row 1244 added -- assistant found
+# effect row before `->` in a function signature has no AST node at all
+# (parse.nv:473), confirmed on std/src/fs/fs.nv, blocks S5 and wider.
 # 2026-09-21, integrator: 90 -> 91. Net after reconciling post-push sync:
 # #1237 closed (-1, Carina's fix) but #1240 (nested tuple pattern) and
 # #1241 (open-left-bound slice) are new blockers (+2); #1239 (module-ro)
