@@ -35,6 +35,20 @@
 # there would be nothing to run it against and no way to tell a real pass
 # from a script that silently does nothing.
 #
+# KNOWN BROKEN, 2026-09-21 (Carina's window, registry 221.1 #TBD): the batch
+# call this script and novac-diff-corpus.sh both rely on ICEs on this tree
+# (`E_NOVAC_ICE types.nv:244: kind_of asked for a type id outside the
+# interner`, isolated to `check/binds.nv`'s `@type_index`, unconfirmed
+# mechanism -- possibly the self-declaration interner growing mid-typecheck).
+# That means EVERY run so far has silently taken the per-file fallback below,
+# and the fallback has its OWN distortion: each file is checked ALONE, so a
+# type declared in a sibling file of the same novac module reads as
+# "undeclared" -- a false rejection with nothing to do with real subset debt.
+# CI's 83/99 and this script's own 11/99 are both numbers from a broken
+# measure, not a subset-debt count. Do not trust either until the interner
+# ICE is fixed (then the batch mode's whole-tree visibility becomes
+# meaningful) or the fallback is changed to check by MODULE, not by file.
+#
 # Usage: sh scripts/tools/double-build.sh
 # Cost: one novac process over ~99 files, a few seconds -- see
 # novac-diff-corpus.sh's own comment on the same batch for the measured
@@ -101,6 +115,7 @@ if [ "$rc" -le 2 ]; then
         | grep -o '"file":"[^"]*"' | sort -u | wc -l | tr -d '[:space:]')
 else
     echo "double-build: batch died (rc=$rc) -- falling back to one process per file" >&2
+    FELL_BACK=1
     self_rej=0
     timed_out=0
     for f in "$ROOT"/novac/src/*/*.nv "$ROOT"/novac/src/*.nv; do
@@ -123,8 +138,14 @@ echo "double-build: precondition -- novac check on its own source: accepted $sel
 
 HEAD_SHORT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
+if [ "${FELL_BACK:-0}" = 1 ]; then
+    FALLBACK_NOTE=" -- UNTRUSTED NUMBER: batch mode ICEd (see this script's header), per-file fallback checks each file ALONE and false-rejects on cross-file references within the same novac module; this is not a real subset-debt count"
+else
+    FALLBACK_NOTE=""
+fi
+
 if [ "$self_rej" -gt 0 ]; then
-    SUMMARY="S5 PRECONDITION NOT MET: novac check accepts only $self_acc/$self_total of its own source; emit+build+compare not attempted (would have nothing to run against)"
+    SUMMARY="S5 PRECONDITION NOT MET: novac check accepts only $self_acc/$self_total of its own source$FALLBACK_NOTE; emit+build+compare not attempted (would have nothing to run against)"
     printf '%s\n%s\n' "$SUMMARY" "$HEAD_SHORT" > "$VERDICT"
     echo "double-build: $SUMMARY"
     echo "double-build: verdict recorded in $VERDICT"
@@ -133,7 +154,7 @@ fi
 
 # ---- precondition met: the actual A -> B -> C pipeline is NOT YET WRITTEN -
 # See the file header: this is the extension point, not a silent no-op.
-SUMMARY="PRECONDITION MET ($self_acc/$self_total self-check) BUT EMIT+BUILD+COMPARE IS NOT YET IMPLEMENTED -- see this script's header for what is missing and why"
+SUMMARY="PRECONDITION MET ($self_acc/$self_total self-check)$FALLBACK_NOTE BUT EMIT+BUILD+COMPARE IS NOT YET IMPLEMENTED -- see this script's header for what is missing and why"
 printf '%s\n%s\n' "$SUMMARY" "$HEAD_SHORT" > "$VERDICT"
 echo "double-build: $SUMMARY"
 echo "double-build: verdict recorded in $VERDICT"
