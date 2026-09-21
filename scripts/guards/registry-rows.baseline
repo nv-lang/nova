@@ -1426,6 +1426,12 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1258
+max=1306
+# 2026-09-22, integrator: row 1306 added -- mut/consume at module level
+# give an unnamed fallback instead of D184's own diagnostics (found by
+# the peer window continuing the parse x K7 hunt into decls.nv).
+# rows 1257->1258, max 1305->1306.
 rows=1257
 max=1305
 # 2026-09-22, integrator: rows 1303-1305 added -- Carina's index-expression
