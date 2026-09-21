@@ -139,6 +139,25 @@
 #   ('pervyy progon CI dast <= 847 i zelyonyy shag') -- ono OPROVERGNUTO, i eto
 #   zapisano tam zhe. Obhod byl neveren ne prichinoy, a tem, chto ya ne uchyol
 #   sobstvennyy vklad v schyot.
-dead_hash_refs=855
+# 2026-09-21 (integrator): 855 -> 863. CHISLO IZ LOGA CI (progon 35564050409,
+#   stroka 'myortvykh heshey 863 (baza 855)'), ne iz lokal'nogo zamera --
+#   lokal'no v tot zhe chas 857 (kontroller-okno derzhit svoy chernovik
+#   controller-handoff.md nezakommichennym, i lokal'nyy schyot vidit DRUGOYE
+#   soderzhimoye togo zhe fayla, chem klon CI).
+#   DVE PRICHINY ROSTA, obe nazvany registrom (stroka #1245):
+#   (1) plan 110-x semya (110, 110.1-110.8) povtoryaet odnu i tu zhe umbrella-
+#       ssylku na dva iyunskikh (2026-06-03) ob"yekta, 874f5766ca5 i
+#       1c09f315f02 -- proverено `git cat-file -t`, ob"yekty otsutstvuyut v
+#       khranilishche VOVSE (ne prosto nedostizhimy), veroyatno gc posle
+#       udaleniya topic-vetok togo squash-workflow;
+#   (2) neskol'ko ID SESSIY bez pristavki `session:` v handoff-zapiskakh
+#       (controller-handoff.md, carina-handoff.md, integrator-handoff.md,
+#       debugging-races.md, doc-conventions.md) -- TOT ZHE KLASS lozhnykh
+#       srabatyvaniy, chto uzhe opisan vyshe v letopisi za 2026-09-15/19
+#       (predikat sudit NAPISANIE hex-stroki, a ne predmet).
+#   Ni odna prichina -- ne novaya rabota etoy nochi po yazyku; obе -- gigiena
+#   dok. Nastoyashchaya pochinka klassa (2) -- prostavit' `session:` pristavku
+#   pouchastno; ne sdelano seychas, potomu chto ne blokiruet yazyk.
+dead_hash_refs=863
 commit_url_no_context=0
 mirror_links=0
