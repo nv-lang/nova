@@ -1,11 +1,11 @@
 # Hunt: novac / parse x K7 -- 2026-09-22
 
-Binaries: oracle D:/Sources/nv-lang/nova/nova-cli/target/release/nova.exe (09-21 04:43);
-novac D:/Sources/nv-lang/nova/novac/target/novac.exe (09-21 22:57) -- NEWER than every
+Binaries: oracle nova-cli/target/release/nova.exe (09-21 04:43);
+novac novac/target/novac.exe (09-21 22:57) -- NEWER than every
 novac/src/parse/*.nv (newest expr.nv 09-21 22:45), so the runs judge these sources.
-Worktree parse/*.nv md5-identical to main tree's.
+Worktree parse/*.nv md5-identical to main tree's. (Paths relative to repo root.)
 
-Run: cd D:/Sources/nv-lang/nova && sh <probe-dir>/cmd.sh D:/Sources/nv-lang/nova
+Run: cd <repo root> && sh <probe-dir>/cmd.sh <repo root>
 
 | probe dir | oracle | novac |
 |---|---|---|

@@ -1078,6 +1078,7 @@ D453). Номер назначает интегратор; спроси.
 | `check-sigsegv-altstack` | обработчик переполнения стека без `SA_ONSTACK` либо без `sigaltstack` — то есть неспособный запуститься (№745) |
 | `check-single-mco-resume` | новый resume-сайт в обход `nova_resume_fiber` |
 | `check-stale-unimplemented` | пометку «не реализован» на том, что план считает сделанным |
+| `check-tbd-branch-freshness` | новую строку реестра с `№TBD`, пока ветка отстаёт от `main` |
 | `check-test-fixture-coverage` | новый `E_*`/`W_*` без neg-фикстуры |
 | `hardcode-audit` | хардкод семи категорий в компиляторе |
 | `lint-no-silent-int-fallback` | новый молчаливый откат к `nova_int` |
