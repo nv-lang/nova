@@ -728,7 +728,19 @@ export fn lex(src str) -> []Token {
                     // not look inside: `\${` is the escaped, literal form and
                     // must NOT flag interpolation (E1 review p.4 -- the old
                     // loop inspected the already-escaped byte).
-                    i += 2
+                    //
+                    // CRLF (D467 §3's `\` + line-break continuation, on a
+                    // file whose own line ending is `\r\n`): consuming just
+                    // `\` and `\r` here left a BARE `\n` right after -- and
+                    // the newline check above ends the scan on exactly that
+                    // byte, before the closing quote. `\` + `\r\n` is ONE
+                    // continuation, not `\` escaping `\r` with the real
+                    // newline left over to trip the scan.
+                    if b[i + 1] == B_CR && i + 2 < n && b[i + 2] == B_LF {
+                        i += 3
+                    } else {
+                        i += 2
+                    }
                 } else {
                     // Interpolation is detected, not consumed: the refusal is
                     // decided after the literal closes.
