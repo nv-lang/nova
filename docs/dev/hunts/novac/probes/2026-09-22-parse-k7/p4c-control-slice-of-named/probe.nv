@@ -1,0 +1,3 @@
+module p4c
+
+fn count(v [][]int) -> int => 0

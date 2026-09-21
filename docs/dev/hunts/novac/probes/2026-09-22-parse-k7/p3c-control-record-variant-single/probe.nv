@@ -1,0 +1,10 @@
+module p3c
+
+type Shape enum Circle { w int } | Square { w int }
+
+fn width(s Shape) -> int {
+    match s {
+        Circle { w } => w
+        Square { w } => w
+    }
+}

@@ -1,0 +1,8 @@
+module p10
+
+fn use_pair(pair (int, int)) -> int {
+    if (a, b) = pair {
+        return a + b
+    }
+    0
+}

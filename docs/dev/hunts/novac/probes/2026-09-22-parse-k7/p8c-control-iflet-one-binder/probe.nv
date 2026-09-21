@@ -1,0 +1,10 @@
+module p8c
+
+type Pair enum One(int) | Nothing
+
+fn sum(p Pair) -> int {
+    if One(a) = p {
+        return a
+    }
+    0
+}

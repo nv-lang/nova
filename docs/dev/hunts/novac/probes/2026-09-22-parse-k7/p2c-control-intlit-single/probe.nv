@@ -1,0 +1,9 @@
+module p2c
+
+fn classify(n int) -> int {
+    match n {
+        1 => 10
+        2 => 10
+        _ => 0
+    }
+}
