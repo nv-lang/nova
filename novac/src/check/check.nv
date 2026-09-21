@@ -510,6 +510,11 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // side's Option and refuses `?? return`; the walk descends
                     // into both sides like anyone else's children.
                 }
+                Try => {
+                    // `a?` (D85, registry #1264): `@type_expr`'s own Try
+                    // arm refuses it by name; the walk descends into the
+                    // operand like anyone else's child.
+                }
                 SelfField => {
                     // Judged, not refused (wave 3g): the receiver is a binding
                     // (`@`) and `@field` is a field access on it. Outside a

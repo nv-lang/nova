@@ -121,6 +121,8 @@ fn Checker mut @type_if_value(n Node) -> () {
         // Neither branch falls through: the whole tail `if` produces no
         // value, and none is needed -- the function ends by `return`, not
         // by this expression's type.
+        // SILENT-OK: nothing to record, nothing to refuse -- this exits
+        // the judge, not the checked program, and the comment above says why.
         return
     } else {
         // At least one branch may fall through to a value.
@@ -128,11 +130,28 @@ fn Checker mut @type_if_value(n Node) -> () {
     ro then_t = if then_terminates { no_ty() } else { @type_branch_value(kids[2]) }
     ro else_t = if else_terminates { no_ty() } else { @type_branch_value(kids[4]) }
     if then_terminates {
-        if is_ty(else_t) { @record(n, else_t) } else { }
+        if is_ty(else_t) {
+            @record(n, else_t)
+        } else {
+            // The else branch's own walk already refused something: no
+            // type to record, and that walk already spoke.
+        }
+        // SILENT-OK: the only branch that could produce a value (else) was
+        // just judged above, either recorded or refused; nothing left here.
         return
-    } else { }
+    } else {
+        // then does not terminate: both branches were asked for a value
+        // below, and the else-terminates arm judges the rest.
+    }
     if else_terminates {
-        if is_ty(then_t) { @record(n, then_t) } else { }
+        if is_ty(then_t) {
+            @record(n, then_t)
+        } else {
+            // The then branch's own walk already refused something: no
+            // type to record, and that walk already spoke.
+        }
+        // SILENT-OK: the only branch that could produce a value (then) was
+        // just judged above, either recorded or refused; nothing left here.
         return
     } else {
         // Neither branch terminates: both were asked for a value, and they

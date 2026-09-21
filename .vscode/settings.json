@@ -20,6 +20,5 @@
     "terminal.integrated.env.windows": {
         "NOVA_GC_LIB_DIR": "${workspaceFolder}/compiler-codegen/vcpkg_installed/x64-windows-static/lib",
         "NOVA_GC_INCLUDE_DIR": "${workspaceFolder}/compiler-codegen/vcpkg_installed/x64-windows-static/include"
-    },
-    "cmake.sourceDirectory": "D:/Sources/nv-lang/nova-p274/compiler-codegen/nova_rt/libuv"
+    }
 }

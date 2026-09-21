@@ -220,8 +220,8 @@ ro w = a ?? b"
     // NAME in the checker (registry #1264), not an unclaimed byte -- it now
     // lexes its OWN token, not the `ErrorTok` it used to fall to before the
     // fix (the same reasoning `?? return` already established for its own
-    // sibling form: a legal-but-unimplemented construct must reach the
-    // tree, not die at the lexer as if it were not Nova).
+    // sibling form: a legal-but-unimplemented (D85) construct must reach
+    // the tree, not die at the lexer as if it were not Nova).
     ro one = lex("ro v = o ? 1")
     assert(one[4].kind == TokenKind.Question)
     assert(one[4].text == "?")

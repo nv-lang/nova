@@ -777,6 +777,11 @@ fn Cursor mut @atom() -> Node {
             if @peek() == TokenKind.Colon && @peek(skip: 1) == TokenKind.Question {
                 kids.push(@take()) // Colon
                 kids.push(@take()) // Question
+            } else {
+                // No `:?` here -- the spec is OPTIONAL (plain `${expr}` is
+                // legal and far more common), so absence is not an error:
+                // the two `@push_expected` calls right below still run and
+                // close out this slot exactly as if this branch were absent.
             }
             @push_expected(kids, TokenKind.InterpClose)
             @push_expected(kids, TokenKind.StrFrag)

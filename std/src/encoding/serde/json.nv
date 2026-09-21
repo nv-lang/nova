@@ -78,7 +78,7 @@ fn JsonSerializer mut @put(v JsonValue) -> Result[(), SerError] {
     }
 }
 
-fn JsonSerializer mut @set_pending(key str) -> Result[(), SerError] {
+fn JsonSerializer mut @remember_key(key str) -> Result[(), SerError] {
     match @stack.pop() {
         None => Err(SerError.new(SerOther("field key outside container")))
         Some(mut fr) => {
@@ -144,7 +144,7 @@ fn JsonSerializer mut @begin_struct(name str, len int) -> Result[(), SerError] {
     Ok(())
 }
 
-fn JsonSerializer mut @struct_field(key str) -> Result[(), SerError] => @set_pending(key)
+fn JsonSerializer mut @struct_field(key str) -> Result[(), SerError] => @remember_key(key)
 
 fn JsonSerializer mut @end_struct() -> Result[(), SerError] => @finish_obj()
 
@@ -155,7 +155,7 @@ fn JsonSerializer mut @begin_map(len int) -> Result[(), SerError] {
     Ok(())
 }
 
-fn JsonSerializer mut @map_key(key str) -> Result[(), SerError] => @set_pending(key)
+fn JsonSerializer mut @map_key(key str) -> Result[(), SerError] => @remember_key(key)
 
 fn JsonSerializer mut @end_map() -> Result[(), SerError] => @finish_obj()
 

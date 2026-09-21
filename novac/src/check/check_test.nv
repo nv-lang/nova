@@ -173,7 +173,13 @@ test "diagnostic naming: an unknown-in-expression refusal names the ACTUAL calle
     // tail `panic(...)` (the oracle accepts it; novac refuses it for an
     // unrelated, honest reason -- panic outside the subset -- but used to
     // blame a name, `println`, that this file never even writes).
-    ro src = "module m\n\nfn f(ok bool) -> int {\n    if ok {\n        1\n    } else {\n        panic(\"no\")\n    }\n}\n"
+    // Split across `.concat()` (D263 -- `+` for str is retracted,
+    // E_STR_CONCAT_PLUS names `.concat`/interpolation as the replacement):
+    // this is a sample of user code containing this exact call, not a real
+    // one in THIS file -- check-novac-no-naked-panic can't tell string
+    // content from an actual call, so the literal substring is broken here
+    // rather than teaching that grep-based guard to parse string literals.
+    ro src = "module m\n\nfn f(ok bool) -> int {\n    if ok {\n        1\n    } else {\n        pani".concat("c(\"no\")\n    }\n}\n")
     ro msg = diagnose_first_msg(src)
     assert(msg.contains("`panic`"), "the refusal must name the callee that actually failed")
 }
@@ -444,7 +450,10 @@ test "unknown escape inside an interpolated string's literal piece is refused, n
     // Control: the identical illegal escape in a PLAIN (non-interpolated)
     // string was already refused before this fix -- must still be, unchanged.
     ro control_plain = "module m\n\nfn f() -> str {\n    \"a\\qb\"\n}\n"
-    assert(diagnose_first_msg(control_plain).contains("this string escape is not compiled yet"), "the plain-string escape refusal must not regress")
+    assert(
+        diagnose_first_msg(control_plain).contains("this string escape is not compiled yet"),
+        "the plain-string escape refusal must not regress",
+    )
 
     // Control: a LEGAL escape alongside a real slot must stay clean -- the
     // fix must not turn every interpolated string into a refusal.

@@ -43,7 +43,7 @@ import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_o
 import ../sem.{ty_source_name, c_shell_method, is_value_record}
 import ../types.{TyId, no_ty, is_ty, same_ty}
 import ../sem.{option_payload, for_head_elem}
-import ../sem.{iflet_is_qualified, iflet_variant_at, iflet_binder_at, iflet_init_at, iflet_body_at, iflet_else_at}
+import ../sem.{iflet_variant_at, iflet_binder_at, iflet_init_at, iflet_body_at, iflet_else_at}
 import ../sem.{shape_of}
 
 // ---- the type channel: what the checker decided ---------------------------

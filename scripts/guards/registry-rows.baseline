@@ -1426,8 +1426,26 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
-rows=1230
-max=1278
+rows=1239
+max=1287
+# 2026-09-21, integrator: rows 1286-1287 added -- gate-novac's 7 live
+# failures on current HEAD (pre-existing debt, confirmed via git log/older
+# CI run, not introduced by tonight's merges) and a new presume_446_stress
+# CI symptom (SIGABRT/D92-invariant, distinct from the known SIGSEGV
+# flake #848 -- not yet proven same class or new regression).
+# rows 1237->1239, max 1285->1287.
+rows=1237
+max=1285
+# 2026-09-21, integrator: rows 1284-1285 added -- Carina's two remaining
+# TBD findings from the second p274-novac merge this evening (NOVAC_SELF_PATH
+# double-registration harness bug, filed not fixed; string-literal default
+# parameter value class fix), numbered and the string-default repro dir
+# renamed to match #1285. Her third TBD row (if-in-argument-position) was a
+# byte-near-duplicate of the integrator's own #1283 from the SAME earlier
+# finding on her unsynced branch tip -- dropped, not renumbered.
+# rows 1235->1237, max 1283->1285.
+rows=1235
+max=1283
 # 2026-09-21, integrator: row 1242 added -- new checker ICE exposed by
 # Carina's #1237 fix (channel.nv:409), same class as #1229, blocks S5
 # 2026-09-21, integrator: row 1244 added -- assistant found effect row
@@ -1617,4 +1635,25 @@ gaps=174-208,210-215,653-654,743,1062,1103,1210-1211
 # owner's own question about gating too often (~25 merges one evening,
 # many for 1-2 docs commits). See the row for the mechanism.
 # rows 1229->1230, max 1277->1278.
+# 2026-09-21, integrator: row 1279 added and closed same commit --
+# check-novac-deferral-address's baseline was 17 days stale (32 vs
+# 34), confirmed not a regression (two newest candidates checked
+# directly, both false positives of an already-documented class).
+# rows 1230->1231, max 1278->1279.
+# 2026-09-21, integrator: row 1282 added and closed same commit --
+# a real check-novac-branch-complete FAIL surfaced on CI after the
+# push (parse/expr.nv:727, missing else on the optional :? spec
+# check), the other three from the same CI run were already fixed
+# in a later commit not yet on that CI's tested tree.
+# rows 1233->1234, max 1281->1282.
+# 2026-09-21, integrator: row 1283 added -- Carina's TBD finding from
+# the p274-novac merge conflict (if in argument position, four of
+# five layers fixed, fifth (emission) still open, whole diff reverted
+# pending it), numbered and the repro dir renamed to match.
+# rows 1234->1235, max 1282->1283.
+# 2026-09-21, integrator: rows 1280-1281 added -- Carina's two TBD
+# findings from the p274-novac merge (absolute @out.len()>0 class
+# recurrence, interp-string escape never checked), numbered and the
+# repro dir renamed to match #1281.
+# rows 1231->1233, max 1279->1281.
 # rows 1228->1229, max 1276->1277.

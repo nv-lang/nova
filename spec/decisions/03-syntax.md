@@ -8235,7 +8235,23 @@ cond_pattern   ::= ("ro" | "mut") IDENT type_opt
                  | record_pattern
 constructor_pattern ::= TYPE_PATH "(" pattern_arg ("," pattern_arg)* ")"
                       | TYPE_PATH
+                 // поправка 2026-09-21 (интегратор, найдено окном Карины при
+                 // самопроверке novac, разобрано агентом spec-reader): строка
+                 // `pattern_arg` ниже была ПЛОСКОЙ с момента написания этого
+                 // блока (Plan 114) и с тех пор разошлась с [D157](05-memory.md#d157)
+                 // (amendment [M-216-record-payload-consume], 2026-07-21),
+                 // который вложенный tuple/record sub-pattern внутри
+                 // Ok/Some/Err-payload УЖЕ называет легальной формой и даёт
+                 // ей диагностику (`E_CONSUME_PATTERN_REQUIRED` per-element/
+                 // per-field). Оракул это подтверждает живьём: `nova check`
+                 // принимает `Some((first, cnt))` и `Some((a, mut b))` без
+                 // единой ошибки (проба интегратора, тот же приём, что уже
+                 // исправил соседнюю строку `module_item` этого же блока по
+                 // D200/№701(а) 2026-09-18). Грамматика ниже — ИСПРАВЛЕНА
+                 // под уже действующее поведение, а не расширена заново.
 pattern_arg    ::= "mut"? IDENT type_opt
+                 | "(" pattern_arg ("," pattern_arg)* ")"
+                 | "{" IDENT ("," IDENT)* "}"
 
 field_decl     ::= ("ro" | "mut")? "field"? IDENT type
                  | "mut" "field"? IDENT "ro" type
@@ -8279,6 +8295,7 @@ fn_return      ::= "->" "const"? type
 - [D175](02-types.md#d175) — `ro field` full freeze (rename).
 - [D176](02-types.md#d176) — `ro T` type-modifier + return defaults + `@`-inheritance (rename + Plan 114 раздел).
 - [D180](05-memory.md#d180) — `consume` binding (cross-ref).
+- [D157](05-memory.md#d157) — nested tuple/record sub-pattern внутри Ok/Some/Err payload (amendment [M-216-record-payload-consume], 2026-07-21); поправка 2026-09-21 выше приводит `pattern_arg` этого блока в соответствие.
 - [D199](#d199-const-fn--comptime-evaluable-functions) — `const fn` comptime evaluable functions (Plan 114.4 Ф.3).
 - [D200](02-types.md#d200) — associated constants (Plan 114.4 Ф.2).
 - [D201](#d201-cancel_safe--attestation-на-ffi-safety-inside-cleanup) — `#cancel_safe` FFI attestation (Plan 110.7.3.a).
