@@ -1426,6 +1426,12 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1241
+max=1289
+# 2026-09-21, integrator: rows 1288-1289 added -- nova-6e's two confirmed
+# nova.ungrammar-vs-novac-parser discrepancies (IfLet #1259 qualified head,
+# IfExpr #1243 else-if value-position self-recursion), numbered at merge.
+# rows 1239->1241, max 1287->1289.
 rows=1239
 max=1287
 # 2026-09-21, integrator: rows 1286-1287 added -- gate-novac's 7 live
