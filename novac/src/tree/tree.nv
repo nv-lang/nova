@@ -34,6 +34,7 @@ import ../diag.{ice}
 export type NodeKind enum
     | LeafNode
     | ProtoMethod /// one required signature inside `type X protocol { ... }`: `@name(params) -> T`
+    | EffectOp /// one operation signature inside `type X effect { ... }`: `fn name(params) -> T` (D459)
     | File
     | ModuleDecl
     | FnDecl

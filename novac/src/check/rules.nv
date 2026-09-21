@@ -20,7 +20,7 @@ import ../source.{SourceText}
 import ../lex.{Token, TokenKind, spelling_of}
 import ../tree.{Node, NodeKind, NodeId, no_node, bin_op_of, un_op_of, raw_node}
 import ../diag.{Diagnostic, Severity, ice}
-import ../builtins.{ENTRY_FN, PRINT_FN, CALLER_LOC_FN, is_bool_literal}
+import ../builtins.{ENTRY_FN, PRINT_FN, CALLER_LOC_FN, is_bool_literal, EFFECT_MARKER}
 import ../sem.{Ctx, CheckOut, declares_receiver, generics_have_consume, generics_have_protocol_bound, param_type_at}
 // The tree question that decides what a hoist must order (F65).
 import ../sem.{contains_call}
@@ -513,6 +513,25 @@ fn Checker mut @report_if_consume_type(kids []Node) -> () {
     for c in kids {
         if c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.KwConsume {
             @report_first_leaf_of([]Node.of(c), CONSUME_TYPE_MSG)
+            return
+        }
+    }
+}
+
+/// An EFFECT declaration parses (2026-09-21) and is refused BY NAME, the same
+/// shape as consume above: novac types no effect-system form at all -- no
+/// `with`, no handler, no operation call -- so accepting the declaration
+/// would promise a body the compiler cannot yet run. Reading it turns a WRONG
+/// diagnostic into an HONEST one: before this the form fell into the alias
+/// tail (`type Name Y`), and `effect` was refused as "undeclared type name"
+/// -- a misspelling nobody made, about an import nobody was missing
+/// (registry TBD, found surveying rung 0.3). `effect` is an IDENT marker like
+/// `protocol` and `value`, so it is found by TEXT, not by token kind.
+fn Checker mut @report_if_effect_type(kids []Node) -> () {
+    for c in kids {
+        if c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.Ident
+                && leaf_text(c) == EFFECT_MARKER {
+            @report_first_leaf_of([]Node.of(c), EFFECT_TYPE_MSG)
             return
         }
     }

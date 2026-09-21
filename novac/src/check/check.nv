@@ -524,6 +524,10 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // D133 fixtures writable at all -- before it, the declaration fell
                     // into the parser's fallback.
                     @report_if_consume_type(children)
+                    // AN EFFECT DECLARATION parses (2026-09-21) and is refused
+                    // BY NAME, the same shape as consume above: novac types no
+                    // effect-system form at all. See @report_if_effect_type.
+                    @report_if_effect_type(children)
                     // Fields, a newtype's representation, variant payloads:
                     // every type NAME must be declared (#970, typeref_rules) --
                     // `type Box { v Nmbr }` passed check in silence before.
@@ -892,6 +896,14 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     }
                     return
                 }
+                RetStmt => {
+                    // Position only -- see `@walk_ret_stmt` in return_rules.nv
+                    // for why (moved here 2026-09-21, check-novac-file-size.py:
+                    // this file crossed 1000 lines with the return-position and
+                    // effect-declaration waves the same night).
+                    @walk_ret_stmt(children)
+                    return
+                }
                 Lit => {
                     // MAGNITUDE FIRST (#810): a literal too large for `int`
                     // is a silent miscompile downstream -- the emitter prints
@@ -918,7 +930,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // gets here: that arm walks its children itself.
                     @report_if_range_outside_for(children, index_pos: index_pos)
                 }
-                LeafNode | File | ModuleDecl | IfStmt | RetStmt => {}
+                LeafNode | File | ModuleDecl | IfStmt => {}
                 AssignStmt | WhileStmt | FieldAccess | CtorField | CtorSpread => {}
                 MatchArm | Pattern | ArraySpread | Guard => {}
                 Recv | Generics | Unary | Paren | Name => {}
@@ -926,6 +938,11 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                 // declaration (refused by name until the predicate lands),
                 // so walking into them would report the same thing twice.
                 ProtoMethod => {}
+                // AN EFFECT'S OPERATIONS, the same reason: the declaration is
+                // refused BY NAME below (`@report_if_effect_type`), so there
+                // is nothing here to say about one operation that the
+                // declaration has not already said about the whole form.
+                EffectOp => {}
             }
             // THE ARM'S BODY SLOT, asked once rather than per child: the door
             // that knows where an arm keeps its body is `arm_body_at`, and

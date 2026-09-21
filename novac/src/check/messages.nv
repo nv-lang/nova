@@ -382,6 +382,13 @@ const FOR_HEAD_MSG = "outside the subset: the head of a `for` is a range `lo..hi
 /// missing guarantee nobody does.
 const CONSUME_TYPE_MSG = "outside the subset: `type X consume` declares a must-consume type, and novac checks no consumption obligation anywhere -- accepting the declaration would promise a guarantee it does not give; not compiled yet (274.7 B13)"
 
+/// See @report_if_effect_type: an honest refusal to replace the wrong one
+/// ("undeclared type name `effect`") that stood here until 2026-09-21. No
+/// generic parameter on the declaration -- D456, in force -- is a SEPARATE
+/// question this message does not reach: the whole form is refused before
+/// generics are asked about at all.
+const EFFECT_TYPE_MSG = "outside the subset: `type X effect { ... }` declares an effect, and novac types no effect-system form yet -- no `with`, no handler, no operation call -- so accepting the declaration would promise a body the compiler cannot run; not compiled yet (E2-b, effects)"
+
 /// Type parameters in the wrong PLACE -- a different mistake from type
 /// parameters not being compiled yet, and the message must not confuse them.
 const GENERIC_POSITION_MSG = "type parameters before the name belong to a method receiver; a free function declares them after its name"
