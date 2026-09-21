@@ -1388,8 +1388,8 @@
 # 2026-09-21, интегратор: rows 1175 -> 1176, max 1225 -> 1226. №1226 —
 # помощник нашёл, что голый `unsafe fn` не имеет ветки ни в одном из двух
 # диспетчеров верхнего уровня (parse.nv, decls.nv) — третий вид корня.
-rows=1188
-max=1236
+rows=1189
+max=1237
 # 2026-09-21, integrator: rows 1183->1185 -- measured by the guard itself
 # after the p283-float-parse merge (rows 1081, 1096, 1104 arrived, none of
 # them previously counted since p283 diverged before main tracked past
@@ -1459,3 +1459,7 @@ gaps=174-208,210-215,653-654,743,1062,1103,1210-1211
 # simultaneously on the fresh push-tier gate run, reproduced by hand,
 # confirmed pre-existing (none of tonight's registry-only commits touched
 # these tools). rows 1187->1188, max 1235->1236.
+# 2026-09-21, integrator: row 1237 added -- assistant found bare `return`
+# as a MIDDLE match arm isn't recognized (only last-arm case was fixed
+# 2026-09-20), found scanning the 87-file self-check rejection list.
+# rows 1188->1189, max 1236->1237.
