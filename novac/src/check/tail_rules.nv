@@ -18,6 +18,7 @@ module novac.check
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, NodeId, no_node}
 import ../sem.{branch_children, is_expr_kind, leaf_kind, ret_is_unit, is_value_tail_kind, expr_leaf_name}
+import ../sem.{iflet_body_at, iflet_else_at}
 
 /// Does this statement END the function on every path?
 ///
@@ -56,8 +57,8 @@ fn stmt_terminates(st Node) -> bool {
     // exactly as an `if` without else.
     if k == NodeKind.IfLet {
         ro lk = branch_children(st)
-        if lk.len() <= 9 { return false }
-        return block_terminates(lk[7]) && block_terminates(lk[9])
+        if lk.len() <= iflet_else_at(lk) { return false }
+        return block_terminates(lk[iflet_body_at(lk)]) && block_terminates(lk[iflet_else_at(lk)])
     }
     if k != NodeKind.IfStmt { return false }
     ro kids = branch_children(st)
@@ -183,7 +184,12 @@ fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
         // zero returned -- so `g(Some(7))` printed 0. Check would have passed,
         // the program would have built, and twelve diagnostics would have gone:
         // every sign of work done, over a wrong answer.
-        if k == NodeKind.IfLet && branch_children(tail_node).len() > 9 { return }
+        if k == NodeKind.IfLet {
+            ro lk = branch_children(tail_node)
+            if lk.len() > iflet_else_at(lk) { return }
+        } else {
+            // Not an if-let: judged below.
+        }
         // An INDEX tail (`@heads[b]`) is a value too -- one novac does not compile
         // yet, and that refusal belongs to the expression walk ("indexing is read
         // but not compiled yet"). Until 2026-09-05 this door refused it first,

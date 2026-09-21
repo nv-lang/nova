@@ -43,6 +43,7 @@ import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_o
 import ../sem.{ty_source_name, c_shell_method, is_value_record}
 import ../types.{TyId, no_ty, is_ty, same_ty}
 import ../sem.{option_payload, for_head_elem}
+import ../sem.{iflet_is_qualified, iflet_variant_at, iflet_binder_at, iflet_init_at, iflet_body_at, iflet_else_at}
 import ../sem.{shape_of}
 
 // ---- the type channel: what the checker decided ---------------------------
@@ -807,12 +808,16 @@ fn Checker mut @type_stmt(st Node) -> () {
 /// strict door -- the same lesson every wave since B15 step 5 pays once.
 fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
     ro kids = branch_children(st)
-    if kids.len() < 8 {
+    // The minimum length is the BODY slot plus one -- the same slot a
+    // qualified head shifts by two (registry #1259, `iflet_*_at` in
+    // `sem/slots.nv`), so the bound below is honest for both shapes.
+    if kids.len() < iflet_body_at(kids) + 1 {
         assert(@out.len() > 0, "check: a malformed if-let reached typing with no refusal")
         return
     }
-    if leaf_text(kids[1]) != OPTION_SOME_VARIANT {
-        match kids[1] {
+    ro variant_at = iflet_variant_at(kids)
+    if leaf_text(kids[variant_at]) != OPTION_SOME_VARIANT {
+        match kids[variant_at] {
             Leaf(t) => @refuse(t, IFLET_VARIANT_MSG)
             // SILENT-OK: the parser puts a LEAF in the variant slot by
             // construction; a branch here is its recovery, already named.
@@ -820,7 +825,7 @@ fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
         }
         return
     }
-    ro init = kids[6]
+    ro init = kids[iflet_init_at(kids)]
     ro before = @out.len()
     match init {
         Leaf(_) => {
@@ -838,11 +843,14 @@ fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
         return
     }
     @record(init, ot)
+    ro binder_at = iflet_binder_at(kids)
+    ro body_at = iflet_body_at(kids)
+    ro else_at = iflet_else_at(kids)
     if as_value {
         // AS A VALUE: an `else` is not optional -- without it the None path
         // produces nothing and the function would fall off its end. The plain
         // tail `if` says the same thing in the same words (274.7 B14).
-        if kids.len() <= 9 {
+        if kids.len() <= else_at {
             @report_first_leaf_of(kids, IFLET_VALUE_NEEDS_ELSE_MSG)
             return
         } else {
@@ -851,10 +859,10 @@ fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
         // The binder lives in the SOME branch only, which is why the mark is
         // released before the else is typed rather than after both.
         ro vmark = @scope.mark()
-        @scope.bind(leaf_text(kids[3]), payload, ParamMode.ModeRo)
-        ro some_t = @type_branch_value(kids[7])
+        @scope.bind(leaf_text(kids[binder_at]), payload, ParamMode.ModeRo)
+        ro some_t = @type_branch_value(kids[body_at])
         @scope.release(vmark)
-        ro none_t = @type_branch_value(kids[9])
+        ro none_t = @type_branch_value(kids[else_at])
         if !is_ty(some_t) || !is_ty(none_t) {
             // SILENT-OK: the branch without a value was refused inside
             // `@type_branch_value`, by name; one cause, one diagnostic.
@@ -874,14 +882,14 @@ fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
         // As a statement: the branches are blocks, typed below.
     }
     ro mark = @scope.mark()
-    @scope.bind(leaf_text(kids[3]), payload, ParamMode.ModeRo)
-    @type_block(kids[7])
+    @scope.bind(leaf_text(kids[binder_at]), payload, ParamMode.ModeRo)
+    @type_block(kids[body_at])
     @scope.release(mark)
     // The ELSE branch (wave W1) is typed with the binder OUT of scope -- it is
     // the None arm, and the payload's name means nothing there. A block or a
     // chained if / if-let: the one door for "a body is a block or a statement".
-    if kids.len() > 9 {
-        @type_body(kids[9])
+    if kids.len() > else_at {
+        @type_body(kids[else_at])
     } else {
         // No else branch was written.
     }

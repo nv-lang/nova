@@ -637,3 +637,38 @@ export fn pattern_has_disj(pat []Node) -> bool {
     }
     false
 }
+
+/// Does this `IfLet`'s head carry a QUALIFIER -- `if Sum.Variant(b) = e`,
+/// not bare `if Variant(b) = e` (registry #1259)? Slot 2 is `.` for the
+/// qualified form and `(` for the bare one; the parser writes no other
+/// shape. The same class already fixed for match's own pattern head
+/// (`pattern_head_slot` above) and for `const Type.NAME` -- a variant's
+/// head is read in more than one place in this grammar, and if-let's was
+/// the one that had not learned the qualifier yet.
+export fn iflet_is_qualified(kids []Node) -> bool {
+    kids.len() > 2 && kids[2].kind_of() == NodeKind.LeafNode && leaf_kind(kids[2]) == TokenKind.Dot
+}
+
+/// The QUALIFIER'S WIDTH: 2 extra slots (`.` + the variant ident) stand
+/// before everything the bare head already had, when there is one. Every
+/// other `iflet_*_at` door below is the bare offset plus this.
+fn iflet_shift(kids []Node) -> int {
+    if iflet_is_qualified(kids) { 2 } else { 0 }
+}
+
+/// The slot of the VARIANT name -- 1 for a bare head, 3 for a qualified one.
+export fn iflet_variant_at(kids []Node) -> int => 1 + iflet_shift(kids)
+
+/// The slot of the BINDER name inside the parens.
+export fn iflet_binder_at(kids []Node) -> int => 3 + iflet_shift(kids)
+
+/// The slot of the INITIALIZER expression, the head after `=`.
+export fn iflet_init_at(kids []Node) -> int => 6 + iflet_shift(kids)
+
+/// The slot of the THEN-block (the `Some`/binder branch).
+export fn iflet_body_at(kids []Node) -> int => 7 + iflet_shift(kids)
+
+/// The slot of the ELSE-branch (the `None` branch), when there is one --
+/// callers still check `kids.len()` against it; this door only says WHERE
+/// it would stand, not WHETHER it does.
+export fn iflet_else_at(kids []Node) -> int => 9 + iflet_shift(kids)

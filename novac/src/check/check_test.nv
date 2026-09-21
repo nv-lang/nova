@@ -220,3 +220,26 @@ test "literal magnitude: a match pattern's own literal is judged too (registry #
     ro small_pattern = "module m\n\nfn f(x int) -> int {\n    match x {\n        7 => 1\n        _ => 2\n    }\n}\n"
     assert(diagnose(small_pattern) == 0, "an ordinary small pattern literal must stay clean")
 }
+
+test "if-let: a QUALIFIED head naming a non-Some variant reaches the same named refusal as a bare one (registry #1259)" {
+    // The positive half of #1259 (a qualified `Option.Some(v)` head parsing
+    // and type-checking) needs `Option` DECLARED to reach `option_payload`
+    // at all -- this file's `diagnose()` deliberately runs against an EMPTY
+    // interop table (see its own doc comment) and cannot resolve `Option`,
+    // so that half lives in `pipeline/iflet_test.nv` instead, where
+    // `compile_to_c` injects real `std` declarations. What IS testable here,
+    // with no `Option` involved at all: a qualified head naming a variant of
+    // a SELF-DECLARED sum (no std dependency) reaches the SAME named
+    // "Some(name) only" refusal a bare non-Some head already gives -- not
+    // the unnamed parser fallback the qualified form used to fall into
+    // before this fix.
+    ro qualified_wrong_variant = "module m\n\ntype Shape enum\n    | Circle(int)\n    | Square(int)\n\nfn f(s Shape) -> int {\n    if Shape.Circle(r) = s {\n        r\n    } else {\n        0\n    }\n}\n"
+    ro msg = diagnose_first_msg(qualified_wrong_variant)
+    assert(msg.contains("Some(name)"), "a qualified non-Some head must name the same subset boundary the bare form already refuses with")
+
+    // Control: the bare non-Some form gives the identical message -- the fix
+    // did not change WHAT is said, only WHICH heads can reach the door that
+    // says it.
+    ro bare_wrong_variant = "module m\n\ntype Shape enum\n    | Circle(int)\n    | Square(int)\n\nfn f(s Shape) -> int {\n    if Circle(r) = s {\n        r\n    } else {\n        0\n    }\n}\n"
+    assert(diagnose_first_msg(bare_wrong_variant) == msg, "the qualified and bare forms must be refused with the identical message")
+}

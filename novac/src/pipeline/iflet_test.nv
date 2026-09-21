@@ -48,3 +48,30 @@ test "if-let: a call initializer, an else branch, a returning then-branch (W1)" 
     ro (d4, _) = compile_to_c("fn show(xs Vec[int], i int) -> () {\n if Some(v) = xs.get(i) {\n  println(v)\n } else 5\n}\nfn main() {\n ro xs = [5]\n show(xs, 0)\n}", std)
     assert(d4.len() == 1, messages(d4))
 }
+
+test "if-let: a QUALIFIED variant head (`Option.Some(v)`), not just the bare head (registry #1259)" {
+    mut std = std_decls()
+    std.push("module std.v\nexport type Vec[T] { n int }\nexport fn Vec[T] @get(i int) -> Option[T] => None\nexport type Option[T] enum Some(T) | None\n")
+    // The if-let lookahead (parse.nv) only recognized `KwIf Ident LParen Ident
+    // RParen Assign` -- a BARE head. `if Option.Some(v) = o` writes `.` where
+    // the lookahead expected `(`, missed the whole match, and fell into the
+    // unnamed parser fallback ("did not parse this") instead of parsing at
+    // all. Same class already fixed for match's own pattern head
+    // (`pattern_head_slot`) and for `const Type.NAME`.
+    ro (d0, c0) = compile_to_c("fn show(o Option[int]) -> () {\n if Option.Some(v) = o {\n  println(v)\n } else {\n  println(0)\n }\n}\nfn main() {\n ro xs = [5, 9]\n show(xs.get(1))\n}", std)
+    assert(d0.len() == 0, messages(d0))
+    assert(c0.contains("    } else {"), c0)
+    assert(c0.contains(".value;"), c0)
+    // The qualified head must produce the SAME C as the bare one for the
+    // same source shape -- the qualifier is a parse-time/slot-arithmetic
+    // fact only, not a different lowering path.
+    ro (d1, c1) = compile_to_c("fn show(o Option[int]) -> () {\n if Some(v) = o {\n  println(v)\n } else {\n  println(0)\n }\n}\nfn main() {\n ro xs = [5, 9]\n show(xs.get(1))\n}", std)
+    assert(d1.len() == 0, messages(d1))
+    assert(c0 == c1, "qualified head: ${c0}\nbare head: ${c1}")
+    // The qualified head also gets an `else`-required check as a VALUE tail,
+    // exactly like the bare form (registry 1189's own fix) -- with else, a
+    // returning call compiles.
+    ro (d2, c2) = compile_to_c("fn pick(o Option[int]) -> int {\n if Option.Some(v) = o {\n  return v\n } else {\n  return -1\n }\n}\nfn main() {\n ro xs = [5, 9]\n println(pick(xs.get(0)))\n}", std)
+    assert(d2.len() == 0, messages(d2))
+    assert(c2.contains("return -1") || c2.contains("return (-1)") || c2.contains("checked_neg"), c2)
+}

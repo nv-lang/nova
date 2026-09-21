@@ -642,7 +642,14 @@ test "an integer literal too large for `int` is refused, not silently wrapped (#
     ro std = std_decls()
     ro (d1, _) = compile_to_c("fn main() {\n println(18446744073709551616)\n}", std)
     assert(d1.len() == 1)
-    assert(d1[0].message.contains("does not fit in `int`"))
+    // Registry #1250 widened the eager door's own bound from `int`'s own
+    // range to `u64`'s -- the widest row this language has -- so it no
+    // longer answers "does not fit in `int`" (that was never this door's
+    // own question; it was the ROW door's, asked later once a position
+    // names a type). `2^64` is one past `u64::MAX` too, so it stays
+    // refused, with the wording that actually matches what this door now
+    // asks: does it fit ANY row at all.
+    assert(d1[0].message.contains("does not fit any integer type"))
 
     ro (d2, _) = compile_to_c("fn main() {\n println(9999999999999999999999999999999999999)\n}", std)
     assert(d2.len() == 1)

@@ -1,0 +1,10 @@
+fn g(o Option[int]) -> int {
+    if Option.Some(v) = o {
+        v
+    } else {
+        0
+    }
+}
+fn h(o Option[int]) -> int {
+    g(o)
+}
