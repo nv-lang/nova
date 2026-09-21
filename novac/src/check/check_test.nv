@@ -195,3 +195,28 @@ test "literal magnitude: the eager Lit-walk door defers to the row door, not `in
     ro u8_overflow = "module m\n\nfn take(x u8) -> u8 => x\n\nfn f() -> u8 {\n    take(300)\n}\n"
     assert(diagnose(u8_overflow) > 0, "a u8 parameter must still refuse a value past 255")
 }
+
+test "literal magnitude: a match pattern's own literal is judged too (registry #1251)" {
+    // Neither magnitude door ever visited a `Pattern` node: not the eager one
+    // (only the generic `Lit` walk called it, and a match pattern is never a
+    // `Lit`) and not the row one (only ever asked from an assignment/call/
+    // return position). `check` stayed clean on a 23-digit pattern literal
+    // and the EMITTER wrote it verbatim into a C comparison clang refused
+    // outright -- registry #810's own failure, reopened at a position
+    // nobody had visited.
+    ro too_wide_pattern = "module m\n\nfn f(x int) -> int {\n    match x {\n        99999999999999999999999 => 1\n        _ => 2\n    }\n}\n"
+    assert(diagnose(too_wide_pattern) > 0, "a match pattern literal wider than u64 fits no row and must be refused")
+
+    // Control, named explicitly by the hunt: the ORACLE ITSELF does not
+    // apply D227 rule 3 (the per-row bound) at a pattern's position --
+    // `match x { 300 => .. }` on `x u8` compiles clean on both compilers,
+    // an always-false comparison the oracle tolerates. Refusing it here
+    // would be a NEW divergence in the opposite direction (novac stricter
+    // than the oracle), not a fix -- only the "fits ANY row" question
+    // belongs at this position, not "fits THIS row".
+    ro u8_300_pattern = "module m\n\nfn f(x u8) -> int {\n    match x {\n        300 => 1\n        _ => 2\n    }\n}\n"
+    assert(diagnose(u8_300_pattern) == 0, "a pattern literal out of the SCRUTINEE's own row must stay accepted, matching the oracle")
+
+    ro small_pattern = "module m\n\nfn f(x int) -> int {\n    match x {\n        7 => 1\n        _ => 2\n    }\n}\n"
+    assert(diagnose(small_pattern) == 0, "an ordinary small pattern literal must stay clean")
+}
