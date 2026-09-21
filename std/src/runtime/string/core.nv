@@ -339,8 +339,7 @@ export fn str @is_char_boundary(idx int) -> bool {
     ro n = @byte_len()
     if idx == 0 || idx == n { return true }
     if idx < 0 || idx > n { return false }
-    ro bytes = @bytes()
-    (bytes[idx] as int & 0xC0) != 0x80
+    (unsafe { @ptr.read_at(idx) } as int & 0xC0) != 0x80
 }
 
 // `str.try_from_codepoint(cp int)` and its `InvalidCodepoint` error were retired

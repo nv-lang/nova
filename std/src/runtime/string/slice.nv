@@ -66,8 +66,10 @@ export fn str @end_index() -> int => @byte_len()
 export fn str @index(r Range) -> str
     requires 0 <= r.start && r.start <= r.end && r.end <= @byte_len()
 {
-    @slice_boundary_guard(r.start)
-    @slice_boundary_guard(r.end)
+    assert(r.start == @byte_len() || (unsafe { @ptr().read_at(r.start) } as int & 0xC0) != 0x80,
+        "str: slice splits a UTF-8 codepoint")
+    assert(r.end == @byte_len() || (unsafe { @ptr().read_at(r.end) } as int & 0xC0) != 0x80,
+        "str: slice splits a UTF-8 codepoint")
     ro buf = unsafe { @ptr().offset(r.start) }
     str.new(buf, r.end - r.start)
 }
