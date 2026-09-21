@@ -1426,8 +1426,8 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
-rows=1229
-max=1277
+rows=1230
+max=1278
 # 2026-09-21, integrator: row 1242 added -- new checker ICE exposed by
 # Carina's #1237 fix (channel.nv:409), same class as #1229, blocks S5
 # 2026-09-21, integrator: row 1244 added -- assistant found effect row
@@ -1611,4 +1611,10 @@ gaps=174-208,210-215,653-654,743,1062,1103,1210-1211
 # [M-orm-examples-known-gaps-also-stale] (backlog-followups.md), the
 # examples/README.md ORM known-gaps bullet is stale in two different
 # ways at once, needed a number per the check-bug-number-sync rule.
+# rows 1228->1229, max 1277->1277.
+# 2026-09-21, integrator: row 1278 added and closed same commit -- a
+# merge-cadence throttle in check-merge-discipline.sh, answering the
+# owner's own question about gating too often (~25 merges one evening,
+# many for 1-2 docs commits). See the row for the mechanism.
+# rows 1229->1230, max 1277->1278.
 # rows 1228->1229, max 1276->1277.
