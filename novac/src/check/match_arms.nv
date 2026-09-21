@@ -52,6 +52,13 @@ import ../types.{TyId, no_ty, is_ty}
 fn Checker mut @report_if_applied_sum(kids []Node, scr_t TyId) -> bool {
     if !is_ty(scr_t) { return false }
     if @ctx.tys.kind_of(scr_t) != TypeKind.TkApp { return false }
+    // TkApp alone only says "a generic type is applied" -- true for
+    // `Vec[int]` (and `[]int`, its alias) and `HashMap[K, V]` exactly as
+    // much as for `Option[T]`. The applied-sum refusal is honest only when
+    // the HEAD DECLARATION itself is a sum (registry: match-on-slice was
+    // misrouted through this door and refused with an unrelated `Option[int]`
+    // message it never named).
+    if decl_of_ty(@ctx, scr_t).kind != TypeKind.TkSum { return false }
     @report_first_leaf_of(kids, APPLIED_SUM_ARM_MSG)
     true
 }
