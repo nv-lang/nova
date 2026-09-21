@@ -543,6 +543,7 @@ M-f64-try-parse-to-parse-f64
 M-ffi-handle-newtype
 M-ffi-prefix-reversal
 M-fiber-arena-raise-cap
+M-fixture-as-norm-source
 M-fiber-arena-sigsegv-install-race
 M-fiber-stack-lazy-decommit
 M-fixed-array-value-semantics
