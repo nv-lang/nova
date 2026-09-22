@@ -198,6 +198,13 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
         builtin_names.put(bt.name, ordinal)
         ordinal += 1
     }
+    // THE HANDLER CONSTRUCTOR, right after the universe and before the handed
+    // declarations: a signature may name `Effect[Fs]` (the self-build carrier
+    // does), and the seed must precede the harvest the way the prims do. It
+    // is NOT part of `builtin_types()`: that table is the PRIMITIVE universe,
+    // ordinals and all, and `Effect` has no ordinal -- it is a generic
+    // constructor with its own seed door (see `seed_effect_ctor`).
+    seed_effect_ctor(types, defs, tys)
     // THE HANDED-OVER TYPES, right after the seed and before anything of this
     // file: a signature of the file may name one of them, and the pass that
     // reads signatures is below. The boundary is fixed immediately after, so the
@@ -318,6 +325,23 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                                  // A SUM's gate is stored like any other -- the representation
                                  // does not decide coverage. Whether the synthesis READS it is
                                  // the checker's question, and the variant tag is separate work.
+                                 gate_off: gates.len(), gate_cnt: push_gates(gates, decls_of_file, c.id_of()),
+                                 rows: TypeRows.NoRows })
+            continue
+        }
+        // AN EFFECT DECLARATION is classified as its own kind BEFORE the shape
+        // dispatch: `effect` is an identifier the shape reader does not know,
+        // and read as a plain tail it would call this declaration a newtype
+        // (E4 wave). The TERM reuses the record interning -- the NAMED
+        // simplification the with-typing wave owns -- and `rows` stays empty:
+        // an effect owns OPERATION rows, not field rows, and those arrive with
+        // the Effect-type stage.
+        if effect_marker_of(c).is_some() {
+            ro d = DeclId(types.len())
+            defs.add(tname, DefTarget.DefType(d))
+            types.push(TypeDef { kind: TypeKind.TkEffect, shape: RecordShape.Record,
+                                 tparam_cnt: generic_names(nk).len(),
+                                 ty_id: tys.record(d), name: tname,
                                  gate_off: gates.len(), gate_cnt: push_gates(gates, decls_of_file, c.id_of()),
                                  rows: TypeRows.NoRows })
             continue

@@ -121,6 +121,21 @@ type Checker {
     /// one form the language types from its context alone -- a bare variant of
     /// a GENERIC sum (`None`, wave W4), whose instance is not in the token.
     value_expect TyId
+    /// Whether a call typed RIGHT NOW is link-checked against the shell
+    /// surface (W6/B1b interop refusals). TRUE everywhere except one
+    /// position: a `with` handler value (E4 wave, 274.11). The with statement
+    /// is read and typed, but lowering installs no handler this wave — the
+    /// emitter has no WithStmt arm — so a call in handler position is NEVER
+    /// linked, and the shell-symbol refusal would defend a link error that
+    /// cannot happen. MEASURED 2026-09-22: without the exemption the
+    /// self-build carrier's `with Fs = real_fs()` is refused because
+    /// `nova_fn_3std2fs7real_fs` is not in the shell — and real_fs's symbol
+    /// is not in the shell for the ORACLE's emission either, so no probe can
+    /// ever add it. The W6 rule itself is untouched: every ordinary position
+    /// keeps the refusal (handed_free_test pins it). Saved and restored
+    /// around the handler expression exactly like `value_expect` is around
+    /// call arguments.
+    link_check bool
 }
 
 /// Check a parsed file against the E1 subset. Always returns the full list;
@@ -193,6 +208,7 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
         tail_value_body: no_node(),
         ret_expect: no_ty(),
         value_expect: no_ty(),
+        link_check: true,
         substs: []TyId.new(),
     }
     // THROUGH THE DOOR (P18): a raw walk over a file's children does not see
@@ -261,6 +277,7 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, substs []TyId, cap 
         tail_value_body: no_node(),
         ret_expect: no_ty(),
         value_expect: no_ty(),
+        link_check: true,
         substs,
     }
     c.type_fn(decl)
@@ -424,7 +441,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // AN EFFECT DECLARATION parses (2026-09-21) and is refused
                     // BY NAME, the same shape as consume above: novac types no
                     // effect-system form at all. See @report_if_effect_type.
-                    @report_if_effect_type(children)
+                    @report_if_effect_type(n)
                     // Fields, a newtype's representation, variant payloads:
                     // every type NAME must be declared (#970, typeref_rules) --
                     // `type Box { v Nmbr }` passed check in silence before.
@@ -728,16 +745,13 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     return
                 }
                 WithStmt => {
-                    // READ, and refused BY NAME (wave 274.11 Э.4), the Unsafe
-                    // template: the parser gives `with X = h { ... }` its own
-                    // node, so the refusal names the form. Before this arm the
-                    // statement fell apart into three plausible ones and no
-                    // refusal named any. Typing the bindings and lowering the
-                    // installation are the following waves of the same Э.4 --
-                    // letting it through now, with nothing to install the
-                    // handler, is the silent-acceptance class (#809).
-                    @report_first_leaf_of(children, WITH_STMT_MSG)
-                    return
+                    // READ and TYPED (E4 wave, 274.11): the statement's own
+                    // doors -- binding resolution and the handler-value rule
+                    // -- live in `@type_stmt`; the walk's only job here is
+                    // to descend, giving the body Block its statement
+                    // position exactly like IfStmt does. A malformed binding
+                    // piece is an Err child and is reported by the generic
+                    // Err branch, the same division the if/while arms use.
                 }
                 Index => {
                     // NOT TYPED HERE (fix 2026-08-31). This walk judges the

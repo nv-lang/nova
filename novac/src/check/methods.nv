@@ -209,7 +209,11 @@ fn Checker mut @judge_method_lookup(e Node, t Token, key []ArgSpec, found FnLook
                 // INTEROP, with the same end condition as the instance path.
                 ro mfd = @ctx.fns.rows[raw_row(row)]
                 ro sym = c_method_symbol(@ctx, key[0].type_id, t.text)
-                if @ctx.interop.has(sym) {
+                // `@link_check`: a `with` handler value is typed but never
+                // linked this wave (Checker field doc) — the shell question
+                // is not asked in handler position, the callee is recorded
+                // like any other.
+                if @ctx.interop.has(sym) || !@link_check {
                     @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new(),
                         bind_slots(@ctx.fns.params, mfd.param_off, mfd.param_cnt, key))
                     @record(e, mfd.ret_id)
@@ -250,7 +254,10 @@ fn Checker mut @record_instance_method(e Node, t Token, row FnRow, key []ArgSpec
         return
     }
     ro sym = c_method_symbol(@ctx, key[0].type_id, t.text)
-    if !@ctx.interop.has(sym) {
+    // `@link_check`: a `with` handler value is typed but never linked this
+    // wave (Checker field doc) — the shell question is not asked in handler
+    // position; the instance recording below runs like any other.
+    if !@ctx.interop.has(sym) && @link_check {
         // THE ADVICE IS TRUE FOR A HANDED TYPE AND IMPOSSIBLE FOR THIS FILE'S
         // OWN, so it is given only where it can be followed. "The method
         // arrives when the probe calls it" is exactly how `Option[int]` was

@@ -1,0 +1,69 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: none -- the `with` statement is the language's own form (D61);
+// the binding-resolution and handler-value doors are novac's own design,
+// measured against the oracle's refusals. NOT taken: the `Effect[E, IRT]`
+// two-argument form (D87/D88) and lowering a with statement at all -- the
+// emitter has no WithStmt arm yet, so these tests judge the CHECK path
+// (`compile_with`) and the emit ICE is the named debt of the next wave.
+// Role: acceptance tests of the E4 wave (274.11): `with X = h { body }`
+// reads, resolves the binding to an effect declaration, types the handler
+// value and the body, and refuses a KNOWN value type as the handler.
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file; the differential fixtures
+// pos_* and divergences.allow.
+// novac/src/pipeline/with_test.nv -- the with statement, as novac writes it.
+
+module novac.pipeline
+
+test "with: a handler value of type Effect[Fs], body typed -- accepted (E4)" {
+    // POSITIVE: the self-build carrier's shape. `make()` hands a value whose
+    // type is the builtin `Effect[Fs]` -- RESOLVED since the Effect seed
+    // (a generic constructor row, arity 1, applied through the ordinary
+    // app-term door): the with-rule accepts an application type as a
+    // handler. JUDGED ON THE CHECK PATH (`compile_with`): the emitter has
+    // no WithStmt arm this wave, so `compile_to_c` would ICE after this
+    // clean check -- the named debt, not a divergence.
+    mut std = std_decls()
+    std.push("module std.fx\nexport type Fs effect { fn read(p str) -> []u8 }\nexport fn make() -> Effect[Fs]\n")
+    ro d = compile_with("fn g() -> int {\n with Fs = make() {\n  ro x = 1\n  println(x)\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(std), interop_surface())
+    assert(d.len() == 0, messages(d))
+}
+
+test "with: several bindings in one statement (E4)" {
+    // `with Fs = make(), Os = make() { ... }` -- the comma-separated form the
+    // carrier (main.nv) writes. Every binding resolves independently; one
+    // statement carries both. Judged on the check path like the test above:
+    // the emit ICE on WithStmt is the named debt, not part of this verdict.
+    mut std = std_decls()
+    std.push("module std.fx\nexport type Fs effect { fn read(p str) -> []u8 }\nexport type Os effect { fn args() -> []str }\nexport fn make() -> Effect[Fs]\nexport fn make_o() -> Effect[Os]\n")
+    ro d = compile_with("fn g() -> int {\n with Fs = make(), Os = make_o() {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(std), interop_surface())
+    assert(d.len() == 0, messages(d))
+}
+
+test "with: a KNOWN value type as the handler is refused, naming the cause (E4)" {
+    // NEGATIVE: `with Fs = 42` diverges from the oracle if it passes -- the
+    // oracle refuses int as a handler. A KNOWN non-handler type is refused
+    // at the value, naming the type; unknown and application types stay
+    // accepted (the named debt above).
+    mut std = std_decls()
+    std.push("module std.fx\nexport type Fs effect { fn read(p str) -> []u8 }\n")
+    ro (d, _) = compile_to_c("fn g() -> int {\n with Fs = 42 {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}", std)
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("takes a handler"), d[0].message)
+    assert(d[0].message.contains("int"), d[0].message)
+}
+
+test "with: an unknown effect name is refused as a name (E4)" {
+    // CONTROL: the binding name must resolve to a declaration at all. The
+    // wording is the compiler's existing unknown-name door -- a second,
+    // different refusal proves the resolution ran. The handler value is
+    // ORDINARY here (`make()` over the resolvable `Effect[Fs]`), so the
+    // binding-name refusal is the ONLY diagnostic; coupling the control to
+    // an unresolvable handler type would sink `make` itself and report a
+    // second refusal about a value that is not what this door judges.
+    mut std = std_decls()
+    std.push("module std.fx\nexport type Fs effect { fn read(p str) -> []u8 }\nexport fn make() -> Effect[Fs]\n")
+    ro (d, _) = compile_to_c("fn g() -> int {\n with Nope = make() {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}", std)
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("unknown name"), d[0].message)
+}

@@ -32,7 +32,7 @@ import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING,
 import ../builtins.{EQUAL_METHOD, OPTION_SOME_VARIANT}
 import ../sem.{LitArg, raw_crow, field_range_of, decl_of_ty, no_frow, brace_pattern, has_rest}
 import ../resolve.{FnLookup}
-import ../names.{NameTable, NamespaceId}
+import ../names.{NameTable, NamespaceId, raw_decl}
 import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
 import ../sem.{Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text}
 import ../sem.{is_value_tail_kind}
@@ -694,6 +694,102 @@ fn Checker mut @type_stmt(st Node) -> () {
         @type_destructure_bind(st)
     } else if k == NodeKind.IfLet {
         @type_if_let(st)
+    } else if k == NodeKind.WithStmt {
+        ro kids = branch_children(st)
+        // Geometry from the parser: `with`, name, `=`, handler expr, then
+        // (`,`, name, `=`, handler expr)*, then the body Block. A malformed
+        // binding piece is an Err leaf the subset walk already reports, and
+        // the refusal is the decision (P17) -- the same discipline as the
+        // if/while arms above.
+        if kids.len() < 5 {
+            assert(@out.len() > 0, "check: a malformed with reached typing with no refusal")
+            return
+        }
+        // Bindings: name at bi, `=` at bi+1, handler expr at bi+2, optional
+        // `,` at bi+3. The body is the LAST child; a missing body is an
+        // error node the walk reported, and typing leaves it alone.
+        mut bi = 1
+        while bi + 2 < kids.len() {
+            ro nm = kids[bi]
+            if nm.kind_of() != NodeKind.LeafNode || leaf_kind(nm) != TokenKind.Ident {
+                // A planted Err (missing name): the walk already spoke.
+                break
+            }
+            ro name = leaf_text(nm)
+            match @ctx.defs.type_decl(name) {
+                None => {
+                    match nm {
+                        Leaf(t) => @refuse(t, "unknown name: nothing with this name is bound at this point")
+                        Branch { .. } => {}
+                    }
+                }
+                Some(d) => {
+                    // The binding names a type that is not an effect: a
+                    // `with` binding installs a HANDLER, and the name must
+                    // be an effect declaration. Refused at the name leaf,
+                    // naming what the name actually is -- the same
+                    // word-the-cause rule as the other binding doors.
+                    ro dk = @ctx.types[raw_decl(d)].kind
+                    if dk != TypeKind.TkEffect {
+                        ro what = if dk == TypeKind.TkSum {
+                            "a sum"
+                        } else if dk == TypeKind.TkNewtype {
+                            "a newtype"
+                        } else {
+                            "a record"
+                        }
+                        match nm {
+                            Leaf(t) => @refuse(t, "a `with` binding names an effect, and `${name}` is ${what}, not one")
+                            Branch { .. } => {}
+                        }
+                    }
+                }
+            }
+            // The handler value is typed either way: its own refusals are
+            // the answer about the value. When typing refused nothing, a
+            // KNOWN non-handler type is refused here -- `with Fs = 42`
+            // diverges from the oracle if it passes. Unknown and
+            // application types (the `Effect[Fs]` a `real_fs()`-style
+            // value carries, resolved since the Effect seed -- the named
+            // debt that remains is the 2-argument D87/D88 form) are
+            // accepted: the handler-type machinery is deferred by E.5 of
+            // the plan.
+            //
+            // THE HANDLER IS NOT LINK-CHECKED: `link_check` is off for the
+            // one expression, so a handed `make()`/`real_fs()` value is
+            // typed and recorded but the W6 shell-symbol refusal does not
+            // fire -- the with statement is never lowered this wave (the
+            // emitter has no WithStmt arm), so the call has no link to
+            // defend. MEASURED 2026-09-22: without the exemption the
+            // self-build carrier's `with Fs = real_fs()` is refused on a
+            // symbol no probe can add, and the same call in an ordinary
+            // position keeps the refusal (the control case is pinned in
+            // handed_free_test, and the probe's non-with case shows it).
+            ro saved_link = @link_check
+            @link_check = false
+            ro hmark = @out.len()
+            @type_expr(kids[bi + 2])
+            @link_check = saved_link
+            if @out.len() == hmark {
+                ro hty = @tail_type_of(kids[bi + 2])
+                if is_ty(hty) {
+                    ro hk = @ctx.tys.kind_of(hty)
+                    if hk == TypeKind.TkPrim || hk == TypeKind.TkRecord || hk == TypeKind.TkSum || hk == TypeKind.TkNewtype || hk == TypeKind.TkTuple {
+                        @report_first_leaf_of(branch_children(kids[bi + 2]), "a `with` binding takes a handler for its effect, and `${ty_source_name(@ctx, hty)}` is a value type -- pass a handler (E4, wave 274.11)")
+                    }
+                }
+            }
+            bi += 3
+            if bi < kids.len() && kids[bi].kind_of() == NodeKind.LeafNode {
+                bi += 1
+            }
+        }
+        ro body = kids[kids.len() - 1]
+        if body.kind_of() == NodeKind.Block {
+            @type_block(body)
+        } else {
+            // A missing body is the parser's error node, reported by the walk.
+        }
     } else if is_expr_kind(k) {
         @type_expr(st)
     } else {

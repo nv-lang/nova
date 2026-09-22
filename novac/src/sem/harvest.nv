@@ -188,7 +188,13 @@ fn harvest_types(decls []Node, mut types []TypeDef, mut gates []str, mut defs De
             // honest "a type novac knows of and knows nothing about". Refusing
             // here would drop the declaration and take the methods that mention
             // it down with it.
-            types.push(TypeDef { kind: TypeKind.TkRecord, shape: shape_of_record_decl(c),
+            // AN EFFECT DECLARATION is the one exception: classified as
+            // TkEffect, the handed side of the same rule the file's own
+            // declarations take in collect (E4 wave). The term reuses the
+            // record interning; `rows` stays empty -- operation rows are not
+            // field rows.
+            ro kind = if effect_marker_of(c).is_some() { TypeKind.TkEffect } else { TypeKind.TkRecord }
+            types.push(TypeDef { kind, shape: shape_of_record_decl(c),
                                  tparam_cnt: tp_cnt,
                                  ty_id: tys.record(id), name: tname,
                                  gate_off: gates.len(),

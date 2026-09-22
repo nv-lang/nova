@@ -468,7 +468,10 @@ export fn type_admits(tys Interner, want TyId, got TyId) -> bool {
             }
             return true
         }
-        TkPrim | TkRecord | TkSum | TkInfer | TkNewtype => { return want == got }
+        // TkEffect: not a unification variable and nothing structural to
+        // unify -- an effect admits only ITSELF, exactly as the nominal
+        // kinds in the group.
+        TkPrim | TkRecord | TkSum | TkInfer | TkNewtype | TkEffect => { return want == got }
     }
 }
 
@@ -510,6 +513,8 @@ export fn slot_binding_in(tys Interner, want TyId, got TyId, slot int) -> TyId {
             }
             return no_ty()
         }
-        TkPrim | TkRecord | TkSum | TkInfer | TkNewtype => { return no_ty() }
+        // TkEffect: a marker nominal carries no parameter slot anywhere -- no
+        // binding, as the kinds in the group.
+        TkPrim | TkRecord | TkSum | TkInfer | TkNewtype | TkEffect => { return no_ty() }
     }
 }

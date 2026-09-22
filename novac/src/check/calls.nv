@@ -415,7 +415,8 @@ fn Checker mut @record_newtype_ctor(e Node, kids []Node, type_id TyId) -> () {
     }
     ro is_newtype = match decl_of_ty(@ctx, type_id).kind {
         TkNewtype => true
-        TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkTuple => false
+        // TkEffect: an effect is not a newtype -- no construction by call.
+        TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkTuple | TkEffect => false
     }
     if !is_newtype {
         @report_first_leaf_of(kids,
@@ -590,19 +591,35 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
     // as the shell's symbol -- and the shell has to carry it, or the refusal
     // names the true reason (the row exists now; "not a callable" was the wrong
     // one, #925). A generic handed free function has an instance name the shell
-    // would spell by substitution; not this wave.
+    // would spell by substitution; not this wave. THE CHECK IS GATED on
+    // `@link_check`: a `with` handler value is typed but never linked this
+    // wave (the field doc holds the measurement), and the callee is recorded
+    // all the same.
     ro hfd = @ctx.fns.rows[raw_row(row)]
     if hfd.handed_from != "" {
         if hfd.tparam_cnt > 0 {
+            // NOT GATED: generic multi-file is refused in EVERY position this
+            // wave — letting one through reaches mono's "a row this file does
+            // not declare" ice, and the wave's carriers are plain calls.
             @report_first_leaf_of(kids,
                 "outside the subset: a generic free function of a handed module is not compiled into this unit yet (E2-b2 multi-file)")
             return
         }
-        ro sym = c_free_symbol(@ctx, row)
-        if !@ctx.interop.has(sym) {
-            @report_first_leaf_of(kids,
-                "outside the subset: `${hfd.name}` is declared in module `${hfd.handed_from}`, whose bodies novac does not compile into this unit yet (E2-b2 multi-file), and the shell novac links into carries no `${sym}` for it")
-            return
+        // A `with` HANDLER VALUE is not link-checked this wave (`@link_check`,
+        // field doc): the call is typed and recorded, but the with statement
+        // is never lowered, so the shell-symbol question has no link to
+        // defend. Every ordinary position keeps the refusal.
+        if @link_check {
+            ro sym = c_free_symbol(@ctx, row)
+            if !@ctx.interop.has(sym) {
+                @report_first_leaf_of(kids,
+                    "outside the subset: `${hfd.name}` is declared in module `${hfd.handed_from}`, whose bodies novac does not compile into this unit yet (E2-b2 multi-file), and the shell novac links into carries no `${sym}` for it")
+                return
+            }
+        } else {
+            // Handler position: the callee is still recorded — the channel
+            // stays complete and `type_of` answers through the row — only
+            // the link question is not asked.
         }
     } else {
         // The file's own callable, or a constructor row: nothing to ask the shell.

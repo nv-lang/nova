@@ -20,12 +20,12 @@ import ../source.{SourceText}
 import ../lex.{Token, TokenKind, spelling_of}
 import ../tree.{Node, NodeKind, NodeId, no_node, bin_op_of, un_op_of, raw_node}
 import ../diag.{Diagnostic, Severity, ice}
-import ../builtins.{ENTRY_FN, PRINT_FN, CALLER_LOC_FN, is_bool_literal, EFFECT_MARKER}
+import ../builtins.{ENTRY_FN, PRINT_FN, CALLER_LOC_FN, is_bool_literal}
 import ../sem.{Ctx, CheckOut, declares_receiver, generics_have_consume, generics_have_protocol_bound, param_type_at}
 // The tree question that decides what a hoist must order (F65).
 import ../sem.{contains_call}
 import ../sem.{decl_of_ty}
-import ../sem.{branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, generic_bounds}
+import ../sem.{branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, generic_bounds, effect_marker_of}
 import ../sem.{is_arg_node}
 import ../sem.{ret_is_unit, param_default_slot, interp_slices}
 import ../types.{TyId, no_ty, is_ty}
@@ -539,13 +539,13 @@ fn Checker mut @report_if_consume_type(kids []Node) -> () {
 /// -- a misspelling nobody made, about an import nobody was missing
 /// (registry TBD, found surveying rung 0.3). `effect` is an IDENT marker like
 /// `protocol` and `value`, so it is found by TEXT, not by token kind.
-fn Checker mut @report_if_effect_type(kids []Node) -> () {
-    for c in kids {
-        if c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.Ident
-                && leaf_text(c) == EFFECT_MARKER {
-            @report_first_leaf_of([]Node.of(c), EFFECT_TYPE_MSG)
-            return
-        }
+///
+/// The marker scan itself is `effect_marker_of` in `sem` -- the collectors
+/// classify on the same marker, and one scan serves all three readers (P18).
+fn Checker mut @report_if_effect_type(decl Node) -> () {
+    match effect_marker_of(decl) {
+        Some(marker) => @report_first_leaf_of([]Node.of(marker), EFFECT_TYPE_MSG)
+        None => {}
     }
 }
 

@@ -394,19 +394,17 @@ test "lone ? (Try operator): named refusal, not the anonymous parser fallback (r
     assert(msg.contains("not compiled yet"), "the refusal must name the operator, not stay anonymous")
 }
 
-test "with: a handler-installation statement reaches a NAMED refusal, not three wrong ones (274.11 Э.4)" {
-    // `with Fs = h { ... }` (D61) is legal Nova -- the oracle compiles it --
-    // but novac only READS it so far: the parser gives it its own
-    // `NodeKind.WithStmt`, and check refuses BY NAME until the rest of the
-    // Э.4 wave types the bindings and lowering installs the handler. Before
-    // the parse arm, this source produced THREE plausible statements (a
-    // `with` name, an assignment, a record constructor) and two refusals
-    // that named none of them.
+test "with: a binding naming a non-effect is refused at the name, saying what the name is (274.11 E.4)" {
+    // `with Fs = h { ... }` (D61) is legal Nova and now READ: the parser
+    // gives it its own `NodeKind.WithStmt` and typing checks the binding.
+    // A name that resolves to a non-effect type is refused AT THE NAME,
+    // naming what the name actually is -- before the E4 wave the form
+    // fell apart into three plausible statements and no refusal named any.
     ro src = "module m\n\ntype Fs { v int }\n\nfn g(h Fs) -> int {\n    with Fs = h {\n        1\n    }\n    0\n}\n"
     ro msg = diagnose_msg(src)
     assert(!msg.contains("did not parse"), "a legal form must not read as a syntax error")
     assert(msg.contains("`with`"), "the refusal must name the statement")
-    assert(msg.contains("not compiled yet"))
+    assert(msg.contains("is a record"), "the refusal must say what the name resolves to")
 }
 
 test "if-let: a QUALIFIED head naming a non-Some variant reaches the same named refusal as a bare one (registry #1259)" {

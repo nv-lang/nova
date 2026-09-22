@@ -281,6 +281,44 @@ fn seed(mut types []TypeDef, mut defs DefTable, mut tys Interner, name str, ordi
     id
 }
 
+/// Seed `Effect`, the HANDLER-TYPE CONSTRUCTOR (D61/D87): `Effect[Fs]` is the
+/// type a handler value carries, and the with-doors of wave 274.11 accept a
+/// handler whose type is exactly such an application. Without this row the
+/// name resolves to nothing, and a handed declaration like
+/// `fn make() -> Effect[Fs]` loses its WHOLE callable — the unresolvable
+/// return type sinks the declaration (measured 2026-09-22, with_test: `make()`
+/// refuses as "not a callable novac knows in an expression").
+///
+/// THE ROW'S KIND LIES, NAMEDLY: it says TkRecord and it is not a record —
+/// `Effect` is a builtin generic CONSTRUCTOR, and TypeKind has no kind for
+/// one (adding one for a single seed is the enum growth this wave refuses;
+/// the Effect-type stage gives the constructor its own truth). The lie
+/// cannot leak: the row sits BELOW the handed boundary with the other
+/// seeds, so the emitter's kind walk never reaches it; an `Effect[...]`
+/// value is accepted only by the with-doors and never reaches emission this
+/// wave; and a `with` binding naming `Effect` is refused as "a record, not
+/// an effect" — the honest answer for a non-effect declaration. TkEffect
+/// would be the WRONG label here: the with-doors key on it, and it would
+/// admit `with Effect = h`.
+///
+/// ARITY 1 IS THE WAVE'S SCOPE: `Effect[E]`. The two-argument `Effect[E, IRT]`
+/// of D87/D88 is DEFERRED — `app_term_of` accepts exactly the declared arity,
+/// so a 2-argument application is refused as an unknown type until that wave
+/// (named debt of plan 274.11, same as the deferred Effect-type stage).
+fn seed_effect_ctor(mut types []TypeDef, mut defs DefTable, mut tys Interner) -> DeclId {
+    ro id = DeclId(types.len())
+    // THE HEAD TERM is a bare nominal row, exactly like a generic record
+    // declaration's (step B1): `Effect[Fs]` is an APPLICATION of this head,
+    // interned by `app_term_of` on first use. The record-interning reuse is
+    // the same named simplification the TkEffect terms ride on.
+    ro ty_id = tys.record(id)
+    types.push(TypeDef { kind: TypeKind.TkRecord, shape: RecordShape.Record,
+                         tparam_cnt: 1, ty_id, name: "Effect", gate_off: 0, gate_cnt: 0,
+                         rows: TypeRows.NoRows })
+    defs.add("Effect", DefTarget.DefType(id))
+    id
+}
+
 /// THE DECLARATION ROW of a type -- ONE door where ten bare indexings stood.
 ///
 /// AND THE PLACE WHERE A FINDING IS RECORDED, because wrapping the type-id space
