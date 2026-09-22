@@ -86,6 +86,52 @@ fn Lowerer mut @lower_block_stmts_fn(b Node, tail bool) -> () {
     }
 }
 
+/// The same door as `@lower_block_stmts_fn`'s `tail=true` path, generalized
+/// to an ARBITRARY destination instead of the function's own return place --
+/// written for a match arm's Block body (registry #TBD, the block-tail-arm
+/// wave): the arm's tail is the value the OUTER match reads, not the
+/// enclosing function's return, so `@ir.ret_place()` would be the wrong
+/// local entirely.
+///
+/// A NEW function rather than a parameter on the existing one:
+/// `@lower_block_stmts_fn` is shared with every function body's own tail,
+/// and widening its signature would need its own both-ways proof on that
+/// unrelated path -- this door touches nothing there, by construction.
+fn Lowerer mut @lower_block_stmts_value(b Node, dest Local) -> () {
+    ro kids = branch_children(b)
+    mut last_branch = -1
+    mut j = 0
+    for c in kids {
+        match c {
+            Leaf(_) => {}
+            Branch { .. } => { last_branch = j }
+        }
+        j += 1
+    }
+    mut i = 0
+    for c in kids {
+        match c {
+            Leaf(_) => {} // the block's own braces -- trivia carriers, not statements
+            Branch { .. } => {
+                if i == last_branch && c.kind_of() == NodeKind.MatchExpr
+                        && !is_ty(@out.type_if_known(c.id_of())) {
+                    // A tail match whose OWN arms are Blocks yields no value
+                    // (the same rule this whole door exists to grow): the
+                    // checker recorded no type on purpose, so the honest
+                    // emission is the statement form, exactly as
+                    // `@lower_block_stmts_fn`'s twin arm does.
+                    @lower_match(c, no_local())
+                } else if i == last_branch && @tail_places_value(c) {
+                    @lower_place(c, dest)
+                } else {
+                    @lower_stmt(c)
+                }
+            }
+        }
+        i += 1
+    }
+}
+
 /// A tail `if` laid down as a VALUE: a zero-initialised temporary, both
 /// branches writing into it, the caller returning it.
 ///

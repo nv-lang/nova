@@ -119,6 +119,15 @@ fn main() {
     println("d_ok = ${res_int(true)}")
     println("d_err = ${res_int(false)}")
     println("d_vec = ${three()}")
+    // `@index` (`v[i]`, `v.index(i)`) for Vec[int] (274.5 map, indexing bucket):
+    // the shell carried `_method_get`/`_method_len` but no `_method_index`, so
+    // `xs[i]` used as a value was refused "this call omits `n`" or "indexing
+    // is read but not compiled yet" depending on the caller shape -- both
+    // named the shell's missing symbol by name rather than accepting a form
+    // novac cannot yet emit. A plain index read, not a slice: `x[lo..hi]`
+    // stays its own, separate gap (a RangeIndex parse/emit form novac does
+    // not have at all yet), this line does not claim to close it.
+    println("d_idx = ${three().index(1)}")
 }
 
 /// A Result[int, str] instance for the shell (B1b-3): both arms, because the
