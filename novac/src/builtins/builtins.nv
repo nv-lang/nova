@@ -438,6 +438,16 @@ export fn builtin_types() -> ro []BuiltinType => universe
 #realtime nogc
 export fn is_bool_literal(name str) -> bool => name == "true" || name == "false"
 
+/// The `true` literal alone, for the one place that needs to tell the two
+/// apart: `while true { ... }` ends a function (no way out but `return`),
+/// `while false` and every computed condition do not (`check/tail_rules.nv`).
+/// Named here rather than spelled in the checker for the same reason as its
+/// two neighbours -- P5: a language name is not a string literal of the
+/// backend. The checker carried `== "true"` inline until 2026-09-22
+/// (registry 221.1 #1286).
+#realtime nogc
+export fn is_true_literal(name str) -> bool => name == "true"
+
 /// The C spelling of a bool constant. `nova_bool` IS C `bool`, so the two
 /// spellings coincide -- but they are LANGUAGE names, and language names live
 /// here (P5), not as string literals in the backend.

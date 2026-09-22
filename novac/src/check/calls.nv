@@ -781,6 +781,14 @@ fn Checker mut @record_arg_types(kids []Node, from int) -> () {
         }
     }
 }
+/// The refusal text for a callee no registry knows, built OUTSIDE the door that
+/// finds (or fails to find) it. The door asks a table, and a door that asks a
+/// table does not allocate (P18/P14): interpolation lives here, in a plain
+/// function that looks nothing up. Carried inline in `@type_free_call` until
+/// 2026-09-22 (registry 221.1 #1286).
+fn unknown_callee_msg(cname str) -> str =>
+    "outside the subset: `${cname}` is not a callable novac knows in an expression -- either it does not exist, or (like `println`) it is a statement-only form novac does not read as a value (E2-b3)"
+
 /// A call by bare name: a variant constructor, a declared callable, or the subset's one
 /// builtin. Lifted out of `@type_expr` together with the method-call arm, for the same
 /// reason and with the same property: it reads its own children and answers for the node.
@@ -822,7 +830,7 @@ fn Checker mut @type_free_call(e Node) -> () {
         // does not even appear in that file). `println` stays as the
         // one worked example of the CLASS this door refuses, not a
         // claim about the file being read.
-        @report_first_leaf_of(kids, "outside the subset: `${cname}` is not a callable novac knows in an expression -- either it does not exist, or (like `println`) it is a statement-only form novac does not read as a value (E2-b3)")
+        @report_first_leaf_of(kids, unknown_callee_msg(cname))
         return
     }
     // ARGUMENTS FIRST, since 2026-08-21. The key of a call IS its argument
