@@ -901,6 +901,27 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
             } else {
                 0 - 1
             }
+            // THE VALUE-PLACING TAIL OF AN ARM'S BLOCK BODY (registry #TBD,
+            // the block-tail-arm wave). A Block standing as a match arm's body
+            // places its own TAIL as the arm's value -- the checker types it
+            // so (`@type_arm`'s Block case, match_arms.nv) and the lowering
+            // places it so (`@lower_block_stmts_value`, lowering.nv) -- so the
+            // tail child stands in the SAME value position the block itself
+            // was given, and the kinds that GATE on a position (a record
+            // constructor, an array literal, an `if` value) have to see it.
+            // Without this the three layers disagreed: typing and lowering
+            // both carried the tail's value, and this walk still refused the
+            // constructor standing in it.
+            //
+            // Computed once, like the two slots above, and ONLY when this
+            // Block really is an arm's body that does not leave through
+            // `return` on every path: a terminating block's tail is dead code,
+            // and a value position there would be a promise nothing keeps.
+            ro tail_at = if arm_pos && kind == NodeKind.Block && !block_terminates(n) {
+                last_branch_of(children)
+            } else {
+                0 - 1
+            }
             mut at = 0
             for c in children {
                 // STATEMENT POSITION is "a direct child of a Block" (274.5
@@ -934,7 +955,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                       // ARM-BODY POSITION (2026-09-20): a `match` or an `if`
                       // standing as the body of an arm is a VALUE there, and
                       // the lowering has been able to place one since M2b-1d.
-                      arm_pos: at == body_at,
+                      arm_pos: at == body_at || at == tail_at,
                       // ELSE-IF CHAIN CONTINUATION (registry #1243): a nested
                       // `IfExpr` sitting in an `if`-value's own else-arm is
                       // the SAME value position as its parent -- `else if` is
