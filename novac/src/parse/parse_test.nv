@@ -269,6 +269,44 @@ test "shape: an effect_list before `->` parses as EffectItem siblings (registry 
     assert(tree_reserialize(f) == src)
 }
 
+test "shape: a with statement parses as one WithStmt, bindings and body intact (274.11 Э.4)" {
+    // `with Fs = h, Os = h2 { body }` used to fall apart into THREE
+    // plausible statements -- a `with` name, an assignment, and a record
+    // constructor -- and check refused none of them by name. The door is
+    // spelling + shape (Ident Ident `=` at 0..2 can only be this form),
+    // and every byte must round-trip: two bindings, two commas worth of
+    // `=` signs, one body block.
+    ro src = "fn g(h Fs, o Os) -> int {\n    with Fs = h, Os = o {\n        1\n    }\n}\n"
+    ro f = parse(lex(src))
+    match ret_test_fn_block(f) {
+        Branch { children, .. } => {
+            mut found_with = false
+            for c in children {
+                if c.kind_of() != NodeKind.WithStmt { continue }
+                found_with = true
+                match c {
+                    Branch { children: wk, .. } => {
+                        mut names = 0
+                        mut body = false
+                        for k in wk {
+                            if k.kind_of() == NodeKind.Name { names += 1 }
+                            if k.kind_of() == NodeKind.Block { body = true }
+                        }
+                        // Geometry: `with`, Name, `=`, expr, `,`, Name, `=`, expr, Block.
+                        assert(wk.len() == 9)
+                        assert(names == 2)
+                        assert(body)
+                    }
+                    Leaf(_) => assert(false)
+                }
+            }
+            assert(found_with)
+        }
+        Leaf(_) => assert(false)
+    }
+    assert(tree_reserialize(f) == src)
+}
+
 test "shape: a comma between brace-record fields parses, not just a newline (registry #1227)" {
     // The field loop's condition (`Ident` or a mode word) never matched a
     // `,` -- so the SECOND field of a one-line record looked like the end

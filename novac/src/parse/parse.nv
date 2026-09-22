@@ -831,6 +831,44 @@ fn Cursor mut @stmt() -> Node {
         }
         return @node(NodeKind.ForStmt, kids)
     }
+    // WITH (wave 274.11 Э.4): `with Fs = real_fs(), Os = real_os() { ... }`.
+    // `with` is a CONTEXTUAL word, not a lexer keyword (D61; the keyword
+    // table stays closed), so the door is spelling + shape: an ordinary
+    // expression statement can never have Ident Ident `=` at offsets 0..2
+    // (`with` alone, `with.x`, `with(...)` all stay expression statements).
+    // Before this arm the form fell apart into THREE plausible statements --
+    // a `with` name, an assignment, a record constructor -- and check
+    // answered with refusals that named none of them.
+    ro with_stmt = @peek_ident("with") &&
+        @peek(skip: 1) == TokenKind.Ident && @peek(skip: 2) == TokenKind.Assign
+    if with_stmt {
+        mut kids = []Node.of(@take()) // `with`
+        while true {
+            @push_expected(kids, TokenKind.Ident) // the effect's name
+            kids.push(@take()) // `=`
+            // THE HANDLER VALUE GOES THROUGH @head_expr, not @expr --
+            // measured 2026-09-22: `with Fs = h, Os = o { body }` let the
+            // LAST binding's expression swallow the body as a record
+            // constructor (`o { 1 }`), and the with-statement ended up
+            // bodyless. Same discipline as the if/while head: a brace after
+            // a value at this position is the BODY, never a ctor.
+            kids.push(@head_expr())
+            if @peek() == TokenKind.Comma {
+                kids.push(@take())
+            } else {
+                break
+            }
+        }
+        if @peek() == TokenKind.LBrace {
+            kids.push(@block())
+        } else {
+            // `with X = h` with no body: the same marker discipline as
+            // if/while above -- a bodyless with must not reach the emitter
+            // unrefused.
+            kids.push(@error_node(TokenKind.ErrorTok))
+        }
+        return @node(NodeKind.WithStmt, kids)
+    }
     ro e = @expr()
     if is_assign_op(@peek()) {
         mut kids = []Node.of(e, @take())

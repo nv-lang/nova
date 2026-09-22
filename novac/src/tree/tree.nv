@@ -48,6 +48,9 @@ export type NodeKind enum
     | AssignStmt
     | ForStmt
     | WhileStmt
+    /// A handler-installation statement: `with Fs = h, Os = h2 { body }`
+    /// (D61; wave 274.11 Э.4). Contextual word, not a lexer keyword.
+    | WithStmt
     | MethodCall
     | FieldAccess
     | TypeDecl

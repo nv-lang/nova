@@ -307,6 +307,11 @@ const ATTR_MSG = "outside the subset: an effect attribute is read but not compil
 /// `unsafe { ... }` -- D216 s8. Read since 274.5 B10, not compiled yet.
 const UNSAFE_MSG = "outside the subset: an `unsafe` block is read but not compiled yet"
 
+/// A WITH STATEMENT (wave 274.11 Э.4): `with Fs = h { ... }` parses into
+/// its own node and is refused BY NAME until the effects stage types the
+/// bindings and lowering installs the handler.
+const WITH_STMT_MSG = "outside the subset: a `with` statement is read but not compiled yet (E4, wave 274.11 -- effects and structured concurrency for 0.2)"
+
 /// `test "name" { ... }`.
 const TEST_MSG = "outside the subset: a `test` block arrives with the test runner"
 

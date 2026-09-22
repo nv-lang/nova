@@ -727,6 +727,18 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     @report_first_leaf_of(children, UNSAFE_MSG)
                     return
                 }
+                WithStmt => {
+                    // READ, and refused BY NAME (wave 274.11 Э.4), the Unsafe
+                    // template: the parser gives `with X = h { ... }` its own
+                    // node, so the refusal names the form. Before this arm the
+                    // statement fell apart into three plausible ones and no
+                    // refusal named any. Typing the bindings and lowering the
+                    // installation are the following waves of the same Э.4 --
+                    // letting it through now, with nothing to install the
+                    // handler, is the silent-acceptance class (#809).
+                    @report_first_leaf_of(children, WITH_STMT_MSG)
+                    return
+                }
                 Index => {
                     // NOT TYPED HERE (fix 2026-08-31). This walk judges the
                     // FORM of a file against the subset; it holds no scope --
