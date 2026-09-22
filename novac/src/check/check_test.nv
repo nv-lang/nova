@@ -534,7 +534,10 @@ test "record constructor: an ordinary array-literal element is a legal position,
     // gap as above (it is function-bodied too), so judged the same way.
     ro control_of = "module m\n\ntype Point value {\n    x int\n    y int\n}\n\nfn f() -> int {\n    ro pts = []Point.of(Point { x: 1, y: 2 })\n     0\n}\n"
     ro control_msg = diagnose_first_msg(control_of)
-    assert(!control_msg.contains("a record constructor is compiled only as"), "the `.of(...)` form must not regress -- got: ${control_msg}")
+    assert(
+        !control_msg.contains("a record constructor is compiled only as"),
+        "the `.of(...)` form must not regress -- got: ${control_msg}",
+    )
 }
 
 test "record constructor: the body of a match arm is a legal position too (registry #TBD)" {

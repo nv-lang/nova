@@ -1426,6 +1426,59 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1258
+max=1306
+# 2026-09-22, integrator: row 1306 added -- mut/consume at module level
+# give an unnamed fallback instead of D184's own diagnostics (found by
+# the peer window continuing the parse x K7 hunt into decls.nv).
+# rows 1257->1258, max 1305->1306.
+rows=1257
+max=1305
+# 2026-09-22, integrator: rows 1303-1305 added -- Carina's index-expression
+# call-arg counting fix (#1303), block-tail-arm architectural boundary
+# finding (#1304, not fixed, own wave needed), and the ArrayLit-as-match-
+# arm-body fix (#1305, filed retroactively same evening -- her own commit
+# 4110f998f explicitly filed only the block-tail finding, this one was
+# missed). Repro dirs renamed from TBD- prefixes.
+# rows 1254->1257, max 1302->1305.
+rows=1254
+max=1302
+# 2026-09-22, integrator: rows 1298-1302 added RETROACTIVELY -- the
+# 2026-08-31 emitc-k1 hunt report's 11 findings (5 root classes H1-H5) were
+# fixed directly in code the same/next day (commits 23ae19270, 7f3266e5b,
+# f1d68558e, 87657ffcf) but never got a registry row, breaking check-
+# hunter-fold.sh's "no finding lost" rule. Filed now, already-closed, so
+# the report can be folded into LEDGER.md without losing the findings.
+# rows 1249->1254, max 1297->1302.
+rows=1249
+max=1297
+# 2026-09-22, integrator: rows 1295-1297 added -- Carina's arm_pos sweep
+# (RecordCtor as array-literal element, RecordCtor as match-arm body,
+# IfExpr as match-arm body -- all three the same class, arg_pos/arm_pos
+# gate missing a position axis), repro dirs renamed from TBD- prefixes.
+# rows 1246->1249, max 1294->1297.
+rows=1246
+max=1294
+# 2026-09-22, integrator: rows 1293-1294 added -- nova-6e's second ungrammar
+# batch (ExportDecl missing LetDecl form, TypeDecl missing the effect-block
+# form D459 added the day before), numbered at merge; her stale duplicate
+# copies of #1283/1288/1289 (branch tip predated main sync again) dropped.
+# rows 1244->1246, max 1292->1294.
+rows=1244
+max=1292
+# 2026-09-22, integrator: rows 1290-1292 added -- defect-hunter's parse×K7
+# findings (match-arm alternative reads one form of four; []*T pointer-of-
+# slice unreadable plus a false diagnostic; if-let/while-let lookahead
+# reads one pattern shape of five, one case silently mis-parses instead of
+# refusing). Test name in parse_test.nv:364 also reworded (tuple ->
+# positional) per nova-a5's verdict on the tuple-no-second-door ratchet.
+# rows 1241->1244, max 1289->1292.
+rows=1241
+max=1289
+# 2026-09-21, integrator: rows 1288-1289 added -- nova-6e's two confirmed
+# nova.ungrammar-vs-novac-parser discrepancies (IfLet #1259 qualified head,
+# IfExpr #1243 else-if value-position self-recursion), numbered at merge.
+# rows 1239->1241, max 1287->1289.
 rows=1239
 max=1287
 # 2026-09-21, integrator: rows 1286-1287 added -- gate-novac's 7 live

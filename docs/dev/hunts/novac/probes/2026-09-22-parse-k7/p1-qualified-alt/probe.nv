@@ -1,0 +1,10 @@
+module p1
+
+type Kind enum A | B | C
+
+fn pick(k Kind) -> int {
+    match k {
+        Kind.A | Kind.B => 1
+        Kind.C => 0
+    }
+}

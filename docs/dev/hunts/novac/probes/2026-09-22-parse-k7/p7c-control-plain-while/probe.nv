@@ -1,0 +1,9 @@
+module p7c
+
+fn drain(n int) -> int {
+    mut k = n
+    while k > 0 {
+        k = k - 1
+    }
+    k
+}

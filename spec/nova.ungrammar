@@ -72,8 +72,12 @@ ModuleDecl =
 ImportDecl =
   ('import' | 'use') ('ident' | '.' | '..' | '/')* Err? BalancedRun?
 
+// поправка 2026-09-22 (окно nova-6e, тот же аудит): не несла LetDecl.
+// `export ro NAME = expr` (D184's Item::Let) читалось `@let_decl()` без
+// обёртки с самого начала (df13dff0d), но обёртка `ExportDecl` учила слово
+// `ro` отдельно, позже (комментарий decls.nv:47-53) -- снимок не подтянулся.
 ExportDecl =
-  'export' (FnDecl | TypeDecl | SumDecl | ImportDecl | ConstDecl | Err)
+  'export' (FnDecl | TypeDecl | SumDecl | ImportDecl | ConstDecl | LetDecl | Err)
 
 AttrDecl =
   '#' 'ident'* BalancedRun?
@@ -129,10 +133,17 @@ Block =
 // Объявления типов
 //==========================================================================
 
+// поправка 2026-09-22 (окно nova-6e, тот же аудит): не несла EFFECT-форму.
+// `type Counter effect { fn log(msg str) -> () }` (D459) читается парсером
+// с 2026-09-21 (type_decl.nv:100-116, комментарий там же цитирует
+// "registry TBD" -- эта строка её и закрывает) тем же приёмом, что
+// 'protocol' в 2026-08-23; EffectOp — уже своё правило ниже, просто не было
+// на кого сослаться.
 TypeDecl =
   'type' 'ident' Generics? 'value'? 'consume'? ('priv' BalancedRun?)?
   (
       'protocol' ('{' ProtoMethod* '}')?
+    | 'effect' ('{' EffectOp* '}')?
     | '{' Field* '}'
     | '(' Field* ')'
     | 'alias'? TypeRefLeaves
@@ -167,8 +178,12 @@ Generics =
 IfStmt =
   'if' cond:Expr (Block | Err) ('else' (Block | IfStmt | Err))?
 
+// поправка 2026-09-21 (окно nova-6e, аудит по заданию интегратора): голова
+// была написана только для ГОЛОЙ формы. Реестр #1259 расширил парсер до
+// КВАЛИФИЦИРОВАННОЙ формы `if Sum.Variant(binder) = expr` (`parse.nv:624-665`,
+// `iflet_qualified`) -- снимок ниже ловит обе.
 IfLet =
-  'if' 'ident' '(' binder:'ident' ')' '=' scrutinee:Expr Block
+  'if' 'ident' ('.' 'ident')? '(' binder:'ident' ')' '=' scrutinee:Expr Block
   ('else' (Block | IfStmt | Err))?
 
 WhileStmt =
@@ -216,8 +231,13 @@ Paren =
 TupleExpr =
   '(' Expr (',' Expr)+ ')'
 
+// поправка 2026-09-21 (окно nova-6e, тот же аудит): else-ветка не несла
+// само-рекурсию, хотя сосед-IfStmt её уже несёт. Реестр #1243 научил парсер
+// строить `else if` в позиции значения как вложенный IfExpr (`expr.nv:645-660`,
+// комментарий "nests as IfExpr(..., KwElse, IfExpr(...))") -- снимок был
+// написан до этой правки и не подхватил новую ветку.
 IfExpr =
-  'if' cond:Expr (Block | Err) ('else' (Block | Err))?
+  'if' cond:Expr (Block | Err) ('else' (Block | IfExpr | Err))?
 
 MatchExpr =
   'match' scrutinee:Expr '{' MatchArm* '}'

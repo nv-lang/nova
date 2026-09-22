@@ -78,4 +78,7 @@
 #   ДВЕ БАЗЫ, А НЕ ОДНА СУММА: общий счётчик скрыл бы рост в одной половине за
 #   счёт падения в другой.
 bare_nv=0
-bare_nv_hunts=157
+bare_nv_hunts=101
+# 2026-09-22, integrator: 157 -> 101 -- folding the 2026-08-31 emitc-k1 hunt
+# report into LEDGER.md removed its 56 probe files along with it (registry
+# 221.1 #1298-1302). Genuine drop, not a measurement change.

@@ -361,7 +361,7 @@ fn count_err(n Node) -> int {
     }
 }
 
-test "shape: a nested tuple/record sub-pattern in a variant payload parses, not the parser's fallback (registry #1240, D157)" {
+test "shape: a nested positional/record sub-pattern in a variant payload parses, not the parser's fallback (registry #1240, D157)" {
     // `Some((first, cnt))` used to fall through the payload loop entirely --
     // it read only a flat, comma-separated run of `Ident`, so the leading
     // `(` of the nested tuple matched no branch and the whole arm dropped

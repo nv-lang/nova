@@ -1,0 +1,7 @@
+fn read_env_default() -> int => 0
+
+ro counter = read_env_default()
+
+fn main() Io -> () {
+    println(counter)
+}

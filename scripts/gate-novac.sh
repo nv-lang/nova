@@ -475,6 +475,7 @@ par_add "$ROOT/scripts/guards/check-novac-plan-donor.py" "оракул назв�
 guard "$ROOT/scripts/guards/check-novac-commit-donor.sh" /dev/null "$ROOT" || fail "check-novac-commit-donor не отвечает на пустом входе"
 guard "$ROOT/scripts/guards/check-novac-commit-forms.sh" /dev/null "$ROOT" || fail "check-novac-commit-forms не отвечает на пустом входе"
 guard "$ROOT/scripts/guards/check-novac-commit-no-simplification.py" /dev/null "$ROOT" || fail "check-novac-commit-no-simplification not runnable"
+guard "$ROOT/scripts/guards/check-tbd-branch-freshness.sh" "$ROOT" || fail "check-tbd-branch-freshness не отвечает на текущем дереве"
 par_add "$ROOT/scripts/guards/check-novac-resolve-discipline.py" "резолв с тихим дефолтом или линейным сканом имён"
 par_add "$ROOT/scripts/guards/check-novac-channel-one-writer.py" "у канала чекера второй писатель или вывод типа ниже чекера"
 par_add "$ROOT/scripts/guards/check-novac-invented-name-not-named.py" "имя, выдуманное компилятором, отдано двери \`named\` — двери АВТОРСКИХ имён (274.8 M3)"

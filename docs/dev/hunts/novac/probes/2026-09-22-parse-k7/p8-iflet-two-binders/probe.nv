@@ -1,0 +1,10 @@
+module p8
+
+type Pair enum Both(int, int) | Nothing
+
+fn sum(p Pair) -> int {
+    if Both(a, b) = p {
+        return a + b
+    }
+    0
+}

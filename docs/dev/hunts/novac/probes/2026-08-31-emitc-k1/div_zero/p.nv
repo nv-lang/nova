@@ -1,6 +1,0 @@
-module p
-
-fn main() {
-    mut z = 0
-    println(7 / z)
-}

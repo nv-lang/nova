@@ -1,0 +1,8 @@
+module p2
+
+fn classify(n int) -> int {
+    match n {
+        1 | 2 => 10
+        _ => 0
+    }
+}
