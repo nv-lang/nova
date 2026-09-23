@@ -1,0 +1,141 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/parse/handler.nv -- the HANDLER LITERAL reader:
+// `effect Fs { read(p str) -> []u8 => []u8.new() }`.
+//
+// Donor: none -- the form is the language's own (D61), not taken from
+//        another compiler or specification.
+// Role: layer 2 -- one expression-leaf form, read by `@atom`'s contextual
+//   door (`effect` Ident `{`); the shape walk and the typist judge it.
+// Used by: parse/expr.nv (@atom) and nothing else; check calls no parser.
+// Guarded by: check-novac-file-size.py (this file exists because expr.nv at
+//   929 lines had no honest room for the literal's ~90), the reserialize
+//   property in parse_test.nv (every token the literal writes is a child).
+//
+// Measured against: the oracle, 2026-09-22 (window nova-6e), for the SHAPE
+//   only -- no `fn` keyword on the op ("expected identifier, got `fn`" is
+//   the oracle's parse error), params typed (`p str`) or bare (`p`), body an
+//   expression after `=>` or a block. NOT taken: `mut name` WITHOUT a type
+//   as an error the parser would plant -- that judgement
+//   (E_HANDLER_OP_PARAM_MUT_WITHOUT_TYPE) is the checker's, and this wave
+//   does not read it. This is NOT a donor relationship (P25): the form is
+//   D61's own, only its concrete shape was probed against the oracle.
+//
+// A co-equal file of module `novac.parse` (folder = one module), cut by
+// MEANING under decision 12: expr.nv keeps the precedence climb and the
+// generic atom reader; this file keeps the one atom that carries
+// DECLARATIONS inside an expression -- like `match` it interrupts the
+// ordinary expression grammar, and unlike every other atom its children
+// are signatures with bodies.
+
+module novac.parse
+
+import ../lex.{TokenKind}
+import ../tree.{Node, NodeKind}
+
+/// A HANDLER LITERAL, one node keeping every token (the reserialize
+/// invariant): `effect`, the effect's name, `{`, one HandlerOp per
+/// operation, `}`. Ops are NEWLINE-SEPARATED (measured on the oracle's own
+/// fixture `handler_op_unknown_neg.nv`, two ops with no comma between), so
+/// the loop between the braces keys on an identifier start and nothing else.
+///
+/// THE BODY-BRACE QUESTION IS ANSWERED BY THE CALLER'S DISCIPLINE, not by
+/// a flag of this node's own: `@atom`'s door fires BEFORE the generic
+/// name-ctor arm, so the literal's opening `{` is this reader's by
+/// construction. The BODY of one op (`=> expr` / `{ ... }`) is read with
+/// the constructor restriction LIFTED (`@no_ctor = false`, saved and
+/// restored): a record constructor is an ordinary expression and may be
+/// the whole body (`=> Point { x: 1 }`), which the head-position flag the
+/// `with` binding set would otherwise refuse to see -- the same reasoning
+/// `@call_args` applies to arguments.
+fn Cursor mut @handler_lit() -> Node {
+    mut kids = []Node.of(@take()) // `effect`
+    kids.push(@take())            // the effect's name
+    kids.push(@take())            // `{`
+    while !@at_eof() && @peek() != TokenKind.RBrace {
+        ro before = @i
+        if @peek() == TokenKind.Ident {
+            kids.push(@handler_op())
+        } else {
+            // Recovery inside the literal: one Err, one token, advance --
+            // bounded by the RBrace test above, the literal's own closer.
+            // RECOVERY-BOUNDED: the while loop above stops at `}`, the
+            // literal's own closer, so this take can never reach it.
+            kids.push(@node(NodeKind.Err, []Node.of(@take())))
+        }
+        if @i == before { break }
+    }
+    @push_expected(kids, TokenKind.RBrace)
+    @node(NodeKind.HandlerLit, kids)
+}
+
+/// ONE operation implementation: `read(p str) -> []u8 => []u8.new()` or
+/// `read(p) -> []u8 { return []u8.new() }`.
+///
+/// THE PARAMS RIDE THE FN-PARAM SHAPE (`Param` nodes, mode leaf optional,
+/// type optional, comma inside the node) so every positional door written
+/// for declarations -- `param_name_at`, `param_type_at` -- answers for the
+/// literal too, one question one door (P18). The comma between params stays
+/// INSIDE the Param node, the decl-side loop's own shape.
+///
+/// `-> T` IS REQUIRED BY THE ORACLE, but the absence is kept VISIBLE here
+/// (no RetType node) instead of recovered around: the checker names it
+/// (E_INCOMPLETE_HANDLER_OP_DECL), and a parser-planted marker would make
+/// the form unreadable from the missing half. A body that is neither `=>`
+/// nor `{` gets the zero-width marker, the same contract if/while keep for
+/// a missing body.
+fn Cursor mut @handler_op() -> Node {
+    mut kids = []Node.of(@take()) // the operation's name
+    if @peek() == TokenKind.LParen {
+        kids.push(@take())
+        // The loop follows the fn-parameter reader (parse.nv): a mode word
+        // may stand before the name (`fill(mut buf []u8)` is the oracle's
+        // own spelling in spec_tests/conformance/neg/handler_op_param_mut_
+        // without_type_neg.nv), and the type may be absent (`read(p)`).
+        while @peek() == TokenKind.Ident || @at_mode_word() {
+            ro before = @i
+            mut pk = []Node.new()
+            ro mode_ahead = @at_mode_word() && @peek(skip: 1) == TokenKind.Ident
+            if mode_ahead {
+                pk.push(@take())
+            } else {
+                // No mode: read-only by default (D176), as every parameter.
+            }
+            pk.push(@take()) // the parameter's name
+            pk.append(@type_ref())
+            @push_if(pk, TokenKind.Comma)
+            kids.push(@node(NodeKind.Param, pk))
+            if @i == before { break }
+        }
+        @push_expected(kids, TokenKind.RParen)
+    } else {
+        // No parameter list: the RParen is absent rather than invented,
+        // and the checker sees the absence -- the EffectOp contract.
+    }
+    if @peek() == TokenKind.Arrow {
+        mut rt = []Node.of(@take())
+        rt.append(@type_ref())
+        kids.push(@node(NodeKind.RetType, rt))
+    } else {
+        // The required return type is MISSING: the absence is the fact the
+        // checker names (E_INCOMPLETE_HANDLER_OP_DECL), not a gap to heal.
+    }
+    if @peek() == TokenKind.FatArrow {
+        kids.push(@take())
+        ro saved = @no_ctor
+        @no_ctor = false
+        if @peek() == TokenKind.LBrace {
+            kids.push(@block())
+        } else {
+            kids.push(@expr())
+        }
+        @no_ctor = saved
+    } else if @peek() == TokenKind.LBrace {
+        kids.push(@block())
+    } else {
+        // Neither an expression body nor a block: the zero-width marker the
+        // if/while arms plant for a missing body, so the form cannot reach
+        // the checker bodyless and unrefused.
+        kids.push(@error_node(TokenKind.ErrorTok))
+    }
+    @node(NodeKind.HandlerOp, kids)
+}

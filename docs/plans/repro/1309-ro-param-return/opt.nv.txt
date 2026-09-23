@@ -1,0 +1,7 @@
+
+
+fn pass_through(x Option[int]) -> Option[int] => x
+
+fn main() {
+    println(1)
+}

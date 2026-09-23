@@ -44,7 +44,13 @@ test "Option construction: Some(x) from the payload, None from the expectation, 
     assert(messages(d2).contains("bare `None`"), messages(d2))
     // A bare `None` as a call ARGUMENT in a tail is not the fn's own return:
     // the expectation stops at the call, and the argument is refused by its cause.
-    ro (d3, _) = compile_to_c("fn take(o Option[int]) -> Option[int] => o\nfn f() -> Option[int] => take(None)\nfn main() {\n println(1)\n}", std)
+    // `consume o`, not `o` (registry #1309, 2026-09-23): a `ro` parameter returned
+    // through a non-`ro` result is E_READONLY_COERCE in the oracle and in novac --
+    // the helper is not what this case is about, so it is written legally.
+    ro (d3, _) = compile_to_c(
+        "fn take(consume o Option[int]) -> Option[int] => o\nfn f() -> Option[int] => take(None)\nfn main() {\n println(1)\n}",
+        std,
+    )
     assert(d3.len() == 1, messages(d3))
     assert(messages(d3).contains("bare `None`"), messages(d3))
     // The payload fixes the instance, and the return door judges it against

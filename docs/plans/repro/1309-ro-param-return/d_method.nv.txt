@@ -1,0 +1,7 @@
+type Bag { items []int }
+
+fn Bag @get(b Bag) -> Bag => b
+
+fn main() {
+    println(1)
+}

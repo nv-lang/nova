@@ -95,13 +95,11 @@ trap 'rm -rf "$T"' 0
 # command: `timeout` does not itself parse a `VAR=val` word among its own
 # arguments as an environment assignment (that is a shell-parsing feature
 # that only applies to words preceding the command name). The sibling
-# `novac-diff-corpus.sh` writes `timeout 60 NOVAC_SELF_PATH=... "$NOVAC"
-# ...`, which this machine's `timeout` rejects outright (rc=127, "failed to
-# run command 'NOVAC_SELF_PATH=novac/src'") -- the one-process batch there
-# silently never runs on this environment, and its own per-file fallback
-# absorbs the failure, so the numbers it reports stay correct but pay the
-# per-process cost the batch exists to avoid. Not this script's bug to fix
-# (novac-diff-corpus.sh is not touched here), but avoided here directly.
+# `novac-diff-corpus.sh` carried exactly that bug from 2026-09-01 until
+# registry 221.1 #1310 (2026-09-23): its one-process batch never ran, and its
+# per-file fallback reported "ICE killed the batch" with no ICE at all. It is
+# fixed there now and refuses rc=126/127 loudly; this note stays so the form
+# is not copied back.
 eval "NOVAC_SELF_PATH=novac/src timeout 60 \"$NOVAC\" check $self_files" > "$T/self.out" 2> "$T/self.err" </dev/null
 rc=$?
 if [ "$rc" -eq 124 ]; then

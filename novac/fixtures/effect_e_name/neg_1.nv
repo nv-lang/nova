@@ -1,21 +1,24 @@
 module effect_e_name.neg_1
 
-// `Effect[T]` (D87/D142, the builtin generic type of a handler's value) is
-// a known type WORD now (2026-09-21), not a typo -- and it still refuses,
-// but honestly.
+// `Effect[T]` (D87/D142, the builtin generic type of a handler's value) is a
+// known type word (2026-09-21) and, since the E4 wave (274.11), a SEEDED builtin
+// type -- so this program is no longer refused as "a type novac does not know".
 //
-// WHY THIS FIXTURE. Before the fix, `Effect[T]` in a parameter or return
-// position gave "undeclared type name `Effect`" -- and the name is not
-// undeclared, it is a genuine language word this subset's registry does
-// not hold, exactly the class `is_language_type_word` already carries
-// `unit`/`never`/`any` for. This fixture pins the DIFFERENT, honest
-// refusal the flow reaches once the name stops lying: the existing
-// subset-debt message about an unknown type shape, unchanged by this fix
-// and already dated. A regression of `check/typeref_rules.nv`'s
-// `is_language_type_word` list would silently fall back to the wrong
-// "undeclared" text.
+// WHY THIS FIXTURE, THEN AND NOW. It was written to pin that `Effect[T]` in a
+// parameter or return position does not LIE ("undeclared type name `Effect`"):
+// the flow reached the honest subset refusal about an unknown type shape. The
+// E4 wave seeded `Effect`, and the refusal disappeared -- and the fixture went
+// red with NO diagnostic at all, which is what exposed registry 221.1 #1309:
+// the program is not legal Nova. `x` is a `ro` parameter (no `mut`, D176) and
+// `-> Effect[int]` is not `ro`, which the oracle refuses as E_READONLY_COERCE
+// (D246 amendment); novac accepted the same shape for every non-scalar type,
+// `[]int` included, long before the wave.
+//
+// So the contract moved twice, and the fixture follows both: the name is
+// known (no "undeclared"), and the program is refused for the reason the
+// language gives. The general door is pinned by novac/fixtures/ro_param_return/.
 
-// NOVAC_EXPECT novac does not know this type yet
+// NOVAC_EXPECT cannot return `x` through a result that is not `ro`
 
 fn pass_through(x Effect[int]) -> Effect[int] => x
 

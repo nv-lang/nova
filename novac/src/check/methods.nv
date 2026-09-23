@@ -19,15 +19,18 @@
 
 module novac.check
 
-import ../tree.{Node}
+import ../tree.{Node, NodeKind}
 import ../lex.{Token}
 import ../types.{TyId, is_ty}
 import ../builtins.{TypeKind}
+import ../diag.{ice}
+import ../names.{raw_decl}
 import ../resolve.{FnLookup}
 import ../sem.{LitArg, branch_children, ArgSpec, ArgClass, CallForm, FnRow, CalleeTarget, raw_row, no_row, bind_slots}
 import ../sem.{is_expr_kind}
 import ../sem.{c_method_symbol, impl_of_proto, ty_source_name, decl_of_ty}
 import ../sem.{option_payload}
+import ../sem.{expr_leaf_name, type_admits}
 
 /// The lookup key of a method call: the receiver's type in position ZERO, then
 /// one slot per written argument, each carrying its TYPE (E2-b3 M1).
@@ -209,7 +212,11 @@ fn Checker mut @judge_method_lookup(e Node, t Token, key []ArgSpec, found FnLook
                 // INTEROP, with the same end condition as the instance path.
                 ro mfd = @ctx.fns.rows[raw_row(row)]
                 ro sym = c_method_symbol(@ctx, key[0].type_id, t.text)
-                if @ctx.interop.has(sym) {
+                // `@link_check`: a `with` handler value is typed but never
+                // linked this wave (Checker field doc) — the shell question
+                // is not asked in handler position, the callee is recorded
+                // like any other.
+                if @ctx.interop.has(sym) || !@link_check {
                     @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new(),
                         bind_slots(@ctx.fns.params, mfd.param_off, mfd.param_cnt, key))
                     @record(e, mfd.ret_id)
@@ -250,7 +257,10 @@ fn Checker mut @record_instance_method(e Node, t Token, row FnRow, key []ArgSpec
         return
     }
     ro sym = c_method_symbol(@ctx, key[0].type_id, t.text)
-    if !@ctx.interop.has(sym) {
+    // `@link_check`: a `with` handler value is typed but never linked this
+    // wave (Checker field doc) — the shell question is not asked in handler
+    // position; the instance recording below runs like any other.
+    if !@ctx.interop.has(sym) && @link_check {
         // THE ADVICE IS TRUE FOR A HANDED TYPE AND IMPOSSIBLE FOR THIS FILE'S
         // OWN, so it is given only where it can be followed. "The method
         // arrives when the probe calls it" is exactly how `Option[int]` was
@@ -311,6 +321,21 @@ fn Checker mut @type_method_call(e Node) -> () {
     // reason it names: a type name is no bound value, so the name walk would
     // refuse it as unknown and say nothing about types (registry #1150).
     if @report_if_path_head_unknown(kids) { return }
+    // AN EFFECT-OPERATION CALL is judged BEFORE the variant door below:
+    // `Fs.read("p")` wears this shape with an EFFECT name as its head, and
+    // the variant judge would name a non-sum head ("not one of its
+    // variants") instead of asking the effect schema. Measured 2026-09-23:
+    // without this door the call refused as "no such method" (walk) or as
+    // a non-sum variant head (typing), while the oracle types it green.
+    if @type_effect_op_call(e, kids) {
+        // SILENT-OK: the door DECIDED -- it recorded the call's type, or
+        // refused by name (unknown operation, arity, an argument's type).
+        // The variant and ordinary-method paths below answer questions
+        // this shape does not ask.
+        return
+    } else {
+        // The head is no effect: an ordinary call, judged below.
+    }
     if @judge_type_head_variant(e, kids, 3) {
         // SILENT-OK: the door DECIDED -- it recorded the construction and
         // its type, or refused the shape. Nothing is left for the method
@@ -379,4 +404,140 @@ fn Checker mut @type_method_call(e Node) -> () {
         // type nobody trusts. One run still shows every mistake -- the
         // children were all walked before this mark was read.
     }
+}
+
+
+/// Does this qualified-call shape carry an EFFECT name as its head? The ONE
+/// question both halves of the judgement ask: the shape walk (which must
+/// not call an operation a missing METHOD) and the typing door below (which
+/// judges the call against the effect's schema). A bound value of the same
+/// name wins -- `fn f(Fs SomeRec) { Fs.read("p") }` is an ordinary method
+/// call on the parameter, and the nearer scope is the authority the
+/// path-head door already defers to (registry #1150's rule, one domain
+/// over).
+fn Checker @effect_op_head(kids []Node) -> bool {
+    if kids.len() < 3 { return false }
+    if kids[0].kind_of() != NodeKind.Name { return false }
+    ro head_name = expr_leaf_name(kids[0])
+    if @scope.is_bound(head_name) { return false }
+    match @ctx.defs.type_decl(head_name) {
+        None => false
+        Some(d) => @ctx.types[raw_decl(d)].kind == TypeKind.TkEffect
+    }
+}
+
+/// AN EFFECT-OPERATION CALL, `Fs.read("p")` (E.4 item 2, plan 274.11): the
+/// method-call shape with an EFFECT name as its head. The head names no
+/// value -- it names the effect whose schema declares the operation -- so
+/// the ordinary method path (type the receiver as an expression, resolve
+/// the name on the callable table) has nothing to stand on. This door
+/// answers the three questions the schema CAN answer: the operation
+/// exists, the arity fits, the arguments fit the declared parameter types.
+///
+/// THE HANDLER QUESTION IS DELIBERATELY NOT ASKED. The oracle's acceptance
+/// (E.4 item 2) types the call with or WITHOUT an installed handler, and a
+/// missing handler is a RUNTIME panic there, not a check error -- a green
+/// check on `Fs.read("p")` with no `with` in sight is the acceptance, not a
+/// hole in it.
+///
+/// Returns true when THIS node was decided (recorded with the operation's
+/// return type, or refused by name); false when the head is no effect and
+/// the caller's ordinary paths apply. HOW THE CALL LOWERS (handler
+/// dispatch) is not this wave: like the with statement, the call is typed
+/// but not emitted, and an emit-side ice there is the same standing debt.
+fn Checker mut @type_effect_op_call(e Node, kids []Node) -> bool {
+    // SILENT-OK: a head that is no effect is not this door's subject --
+    // the caller's variant and ordinary-method paths decide that node, and
+    // returning false only hands the shape on, it decides nothing here.
+    if !@effect_op_head(kids) { return false }
+    ro head_name = expr_leaf_name(kids[0])
+    ro edecl = @ctx.defs.type_decl(head_name) ?? ice("check: the effect-op head lost its declaration between two reads of one Option")
+    ro onm = match kids[2] {
+        Leaf(t) => t
+        Branch { .. } => { return false }
+    }
+    ro opname = onm.text
+    ro schema = @ctx.effects.def_of(head_name) ?? ice("check: an effect declaration with no op schema reached the effect-op call door")
+    // (a) THE OPERATION MUST BE IN THE SCHEMA -- the call-side sibling of
+    // the handler literal's E_HANDLER_OP_UNKNOWN (one family, two
+    // positions; the literal's door names the same shape). The oracle's
+    // exact wording for a bad operation CALL was not probed -- this is the
+    // family wording, and a direct probe is filed for the followup.
+    mut sig_at = -1
+    for i in schema.op_off..schema.op_off + schema.op_cnt {
+        if @ctx.effects.ops[i].name == opname {
+            sig_at = i
+        } else {
+            // Not this one; the next operation may carry the name.
+        }
+    }
+    if sig_at < 0 {
+        ro what = effect_op_list(@ctx.effects, schema)
+        @refuse(onm, "`${head_name}.${opname}` is not an operation of effect `${head_name}` -- it declares: ${what}. An operation call may only name operations the effect declares: check the spelling, or the operation may have been removed from `${head_name}` while this call kept using it. (E4, wave 274.11)")
+        return true
+    }
+    ro sig = @ctx.effects.ops[sig_at]
+    // ARGUMENTS FIRST, the free-call order of 2026-08-21: each argument is
+    // typed through the ordinary expression walk, so every refusal
+    // machinery that already exists for arguments answers here without a
+    // copy. The mark is this call's, not the file's (#902's rule). Named
+    // arguments are not the measured grammar of an operation call and are
+    // not counted -- a file that writes one meets the arity refusal below,
+    // which names the counts and so is not silent about the shape.
+    ro before = @out.len()
+    mut args = []Node.new()
+    mut i = 0
+    for c in kids {
+        if i > 2 && is_expr_kind(c.kind_of()) {
+            @type_expr(c)
+            args.push(c)
+        } else {
+            // Children 0..2 are the head, the dot and the operation name,
+            // and a punctuation leaf is no expression: nothing to walk,
+            // and the cursor still has to advance.
+        }
+        i += 1
+    }
+    if @out.len() > before {
+        // SILENT-OK: an argument's own refusal already spoke; the type a
+        // comparison would use is not trustworthy, the same invariant the
+        // ordinary call paths state at their own marks.
+        return true
+    }
+    // (b) ARITY, named with both counts -- a body judged against the wrong
+    // arity would answer questions the operation never asked.
+    if args.len() != sig.param_cnt {
+        @refuse(onm, "effect operation `${head_name}.${opname}` takes ${sig.param_cnt} parameter(s), but this call passes ${args.len()} -- operation calls must match the effect's declaration exactly. (E4, wave 274.11)")
+        return true
+    }
+    // (c) EACH ARGUMENT against the schema's parameter type, through the
+    // ONE unification door (`type_admits`) -- int where the operation
+    // declares str is refused here with both types named, the same lattice
+    // every other position asks. A schema parameter novac could not read
+    // (a handed declaration with an unresolvable type) is not compared --
+    // the ProtoSig precedent: the declaration's own gap owns that sentence,
+    // not the caller. Bare literals are NOT adapted to the parameter width
+    // this wave: the D227 literal-adaptation machinery belongs to the
+    // ordinary call paths, and copying it here would be the second door.
+    for a in 0..args.len() {
+        ro got = type_of(args[a], @ctx, @scope, @chan)
+        if !is_ty(got) {
+            // SILENT-OK: an argument whose type never arrived was poisoned
+            // by an earlier refusal at its own bind site; the mark above
+            // stayed put, and comparing on no_ty would ice the lattice.
+            return true
+        }
+        ro want = @ctx.effects.op_params[sig.param_off + a]
+        if is_ty(want) && !type_admits(@ctx.tys, want, got) {
+            @refuse(onm, "effect operation `${head_name}.${opname}` argument ${a + 1} is `${ty_source_name(@ctx, got)}`, but the operation declares `${ty_source_name(@ctx, want)}` -- operation calls must match the effect's declaration exactly. (E4, wave 274.11)")
+            return true
+        }
+    }
+    @record_arg_types(kids, 3)
+    // THE CALL'S TYPE is the operation's declared return -- recorded for
+    // every reader of the channel, the same decision a resolved call
+    // writes. What the emitter DOES with the call is the lowering wave's
+    // question, not this door's.
+    @record(e, sig.ret_id)
+    true
 }

@@ -67,6 +67,24 @@ fn stmt_terminates(st Node) -> bool {
         if lk.len() <= iflet_else_at(lk) { return false }
         return block_terminates(lk[iflet_body_at(lk)]) && block_terminates(lk[iflet_else_at(lk)])
     }
+    // A `with` ends the function when its BODY does (E4 wave, 274.11 -- the
+    // form-6 carrier measurement): the body is an ordinary block from
+    // typing's point of view (the with-arm types it with `@type_block`),
+    // so the question is `block_terminates`'s own and no new judge is
+    // written -- the IfLet precedent one arm up, one branch instead of
+    // two. Measured 2026-09-23 on novac/src/main.nv:351:
+    // `with Os = real_os() { return args() }` as the tail of
+    // `fn compiler_argv() -> []str` refused "ends without a value" while
+    // the oracle compiles it -- a body's `return` IS the fn's return.
+    // Supervised/spawn deliberately do NOT join this list: a `return`
+    // inside a `spawn` body belongs to the CHILD fiber (D13), and claiming
+    // it terminates the enclosing fn would need a semantics proof this
+    // task does not have -- only what the carrier needs, per the wave.
+    if k == NodeKind.WithStmt {
+        ro wk = branch_children(st)
+        if wk.len() < 2 { return false }
+        return block_terminates(wk[wk.len() - 1])
+    }
     if k != NodeKind.IfStmt { return false }
     ro kids = branch_children(st)
     if kids.len() <= 4 { return false }

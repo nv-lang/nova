@@ -72,7 +72,8 @@ export fn carrier_of(ctx Ctx, t TyId) -> TyId {
         if !is_ty(cur) { return cur }
         ro is_new = match ctx.tys.kind_of(cur) {
             TkNewtype => true
-            TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkTuple => false
+            // TkEffect: an effect is not a newtype -- the peel stops here.
+            TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkTuple | TkEffect => false
         }
         if !is_new { return cur }
         cur = representation_of(ctx, cur)
@@ -97,7 +98,8 @@ export fn is_value_sum(ctx Ctx, t TyId) -> bool {
     if !is_ty(t) { return false }
     match ctx.tys.kind_of(t) {
         TkSum => {}
-        TkPrim | TkRecord | TkApp | TkParam | TkInfer | TkNewtype | TkTuple => { return false }
+        // TkEffect: an effect is not a sum -- the A4 question answers false.
+        TkPrim | TkRecord | TkApp | TkParam | TkInfer | TkNewtype | TkTuple | TkEffect => { return false }
     }
     ro td = decl_of_ty(ctx, t)
     if is_runtime_abi_sum(td.name) { return false }
@@ -128,6 +130,9 @@ export fn ty_source_name(ctx Ctx, t TyId) -> str {
     if !is_ty(t) { return "an unreadable type" }
     match ctx.tys.kind_of(t) {
         TkPrim => prim_name(ctx.tys.prim_ordinal_of(t))
+        // TkEffect: the term reuses the Record interning (E4 wave), so the head
+        // IS a declaration and the name answers through it like any nominal's.
+        TkEffect => decl_of_ty(ctx, t).name
         TkRecord => decl_of_ty(ctx, t).name
         TkSum => decl_of_ty(ctx, t).name
         TkNewtype => decl_of_ty(ctx, t).name
@@ -235,7 +240,9 @@ export fn shape_of(ctx Ctx, t TyId) -> RecordShape {
         // first version did) meant "on the heap", which is false about a tuple
         // and was invisible only because the tuple had a door of its own.
         TkTuple => RecordShape.AnonPositionalTuple
-        TkPrim | TkSum | TkNewtype | TkApp | TkParam | TkInfer => RecordShape.Record
+        // TkEffect: an effect is not a record -- it takes the same "declares no
+        // record" default as the rest of the residual group.
+        TkPrim | TkSum | TkNewtype | TkApp | TkParam | TkInfer | TkEffect => RecordShape.Record
     }
 }
 
@@ -290,6 +297,10 @@ export fn c_type(ctx Ctx, t TyId) -> str {
             }
             TkParam => { ice("mangle: c_type of a type parameter — layout is asked before substitution") }
             TkInfer => { ice("mangle: c_type of an inference variable — a variable escaped its body") }
+            // TkEffect: unreachable while the with-doors refuse non-handler values;
+            // ice, not a fallback (E4 wave). Effect types get a C spelling with the
+            // Effect-type stage, not by masquerading as a record pointer here.
+            TkEffect => { ice("mangle: c_type of an EFFECT type — effect values are typed by with-doors, which are not built yet (E4 wave)") }
             // A tuple is a BY-VALUE mono struct (D123): its C type IS its
             // struct name, no pointer -- the same word `value` means on a
             // record, and the shell's own pair typedefs are structs by value.
@@ -339,6 +350,10 @@ export fn c_struct(ctx Ctx, t TyId) -> str {
         }
         TkParam => { ice("mangle: struct name of a type parameter — no layout before substitution") }
         TkInfer => { ice("mangle: struct name of an inference variable — a variable escaped its body") }
+        // TkEffect: unreachable while the with-doors refuse non-handler values;
+        // ice, not a fallback (E4 wave). An effect owns operation rows, not a C
+        // struct.
+        TkEffect => { ice("mangle: struct name of an EFFECT type — an effect declares no C struct; with-doors refuse non-handler values (E4 wave)") }
         // The typedef is self-named (`typedef struct X {...} X;`), so the
         // struct name and the C type are the one string.
         TkTuple => { return mono_tuple_name(ctx, t) }
@@ -374,7 +389,8 @@ fn family_instance_name(ctx Ctx, t TyId) -> str {
     ro head = decl_of_ty(ctx, t)
     ro is_sum = match head.kind {
         TkSum => true
-        TkPrim | TkRecord | TkApp | TkParam | TkInfer | TkNewtype | TkTuple => false
+        // TkEffect: an effect is not a sum -- no family spelling.
+        TkPrim | TkRecord | TkApp | TkParam | TkInfer | TkNewtype | TkTuple | TkEffect => false
     }
     if !is_sum { return "" }
     if head.name != OPTION_SUM { return "" }
@@ -556,7 +572,8 @@ fn instance_body(ctx Ctx, t TyId) -> str {
         // a caller that asks it for a sum is asking the wrong door.
         TkSum => ice("mangle: the record-shaped instance body of a generic SUM -- ask `c_instance_method`, which spells a sum by its family")
         // A head is a declaration; these are not declarations a `[T]` can hang on.
-        TkPrim | TkApp | TkParam | TkInfer | TkNewtype | TkTuple =>
+        // TkEffect joins them: an effect head owns operations, not an instance body.
+        TkPrim | TkApp | TkParam | TkInfer | TkNewtype | TkTuple | TkEffect =>
             ice("mangle: an application whose head is not a record or sum declaration")
     }
     consume s = StringBuilder.new(cap: 64)
@@ -609,6 +626,9 @@ fn instance_arg_spelling(ctx Ctx, a TyId) -> str {
         // used to be the second answer, an ice after a green check.
         TkNewtype => instance_arg_spelling(ctx, representation_of(ctx, a))
         TkTuple => ice("mangle: a TUPLE as an instance argument — its in-name spelling is not measured on the shell")
+        // TkEffect: unreachable while the with-doors refuse non-handler values;
+        // ice, not a fallback (E4 wave). An effect has no in-name spelling.
+        TkEffect => ice("mangle: an EFFECT as an instance argument — an effect value reaches a generic instance only through a with-door bug (E4 wave)")
         TkParam => ice("mangle: a type parameter as an instance argument — layout asked before substitution")
         TkInfer => ice("mangle: an inference variable as an instance argument — a variable escaped its body")
     }
@@ -736,8 +756,9 @@ export fn subst_type(ctx Ctx, t TyId, subst []TyId) -> TyId {
         }
         // Every other kind is already a type: a substitution has nothing to
         // rewrite in it. Named one by one rather than through a wildcard --
-        // a new kind must come here and say what it does (P21).
-        TkPrim | TkRecord | TkSum | TkApp | TkInfer | TkNewtype | TkTuple => {}
+        // a new kind must come here and say what it does (P21). TkEffect is
+        // one of them: a marker nominal whose term mentions no parameter.
+        TkPrim | TkRecord | TkSum | TkApp | TkInfer | TkNewtype | TkTuple | TkEffect => {}
     }
     // `same_ty`, not `t`: [LEGACY-#760-newtype-ro-launder].
     same_ty(t)
@@ -821,6 +842,10 @@ fn type_tag(ctx Ctx, t TyId, subst []TyId) -> str
         // what `T` stands for.
         TkParam => type_tag(ctx, subst_type(ctx, t, subst), subst)
         TkInfer => ice("mangle: type_tag of an inference variable — inference arrives at E2-b3")
+        // TkEffect: unreachable while the with-doors refuse non-handler values;
+        // ice, not a fallback (E4 wave). A callable named BY an effect type is a
+        // with-typing question, not a mangle guess.
+        TkEffect => ice("mangle: type_tag of an EFFECT type — an effect value reaches a callable name only through a with-door bug (E4 wave)")
     }
 }
 

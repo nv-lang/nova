@@ -1,0 +1,8 @@
+fn f(o Option[[]int], d []int) -> []int => match o {
+    Some(v) => v
+    None => d.clone()
+}
+
+fn main() {
+    println(1)
+}

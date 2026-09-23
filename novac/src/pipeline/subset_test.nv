@@ -760,25 +760,37 @@ test "an unknown form in println's argument position refuses instead of falling 
     // `println("a", v[1], "b")` printed `ab`: the Index branch was in
     // neither walk's list, so it was filed under punctuation by BOTH the
     // checker and the emitter. A branch is never punctuation.
-    ro std = std_decls()
+    //
+    // 2026-09-22, registry #1303: the index now COUNTS as an argument
+    // (`is_expr_kind` learned NodeKind.Index), so it no longer dies with
+    // the generic "argument position" text -- it is typed and reaches its
+    // own named door, the indexing subset gap (E2-b, binds.nv). The Vec
+    // head is handed beside the poor shared decls so the form reaches THAT
+    // door instead of dying earlier on the missing slice head -- measured
+    // 2026-09-22 with a debug probe: without it the compile gives two
+    // refusals ("slice head `Vec` is not among the declarations" and
+    // "unknown name" for the never-established binding) and the index's
+    // own door is never reached. The pinned substring is the stable part
+    // of the door's text; the "interop shell carries no `index`" suffix
+    // is volatile on purpose -- the shell already carries `Vec[int].index`
+    // (probe widened, 67c935c3b) and indexing task (2) rewords it.
+    mut std = std_decls()
+    std.push("module std.v\n\
+export type Vec[T] { n int }")
     ro (dpr, _) = compile_to_c("fn main() {\n\
  ro v = []int.of(10, 20, 30)\n\
  println(\"a\", v[1], \"b\")\n\
 }", std)
-    // The shared decls are poor (no Vec), so the vector literal adds its
-    // own honest refusal -- the judge's answer is sought by TEXT, not by
-    // count.
-    mut hit = false
-    for g in dpr {
-        if g.message.contains("argument position") { hit = true }
-    }
-    assert(hit)
+    assert(dpr.len() == 1)
+    assert(dpr[0].message.contains("indexing is read but not compiled yet"))
 
     // The literal tuple falls in the same class (the second carrier the
-    // hunt named); the refusal is the same door.
+    // hunt named); the refusal is the same door. TupleExpr is consciously
+    // NOT in `is_expr_kind` (it has its own `is_value_tail_kind` door), so
+    // #1303 did not move this half -- measured unchanged 2026-09-22.
     ro (d2, _) = compile_to_c("fn main() {\n\
  println(\"a\", (1, 2), \"b\")\n\
-}", std)
+}", std_decls())
     assert(d2.len() == 1)
     assert(d2[0].message.contains("argument position"))
 }

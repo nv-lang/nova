@@ -198,6 +198,13 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
         builtin_names.put(bt.name, ordinal)
         ordinal += 1
     }
+    // THE HANDLER CONSTRUCTOR, right after the universe and before the handed
+    // declarations: a signature may name `Effect[Fs]` (the self-build carrier
+    // does), and the seed must precede the harvest the way the prims do. It
+    // is NOT part of `builtin_types()`: that table is the PRIMITIVE universe,
+    // ordinals and all, and `Effect` has no ordinal -- it is a generic
+    // constructor with its own seed door (see `seed_effect_ctor`).
+    seed_effect_ctor(types, defs, tys)
     // THE HANDED-OVER TYPES, right after the seed and before anything of this
     // file: a signature of the file may name one of them, and the pass that
     // reads signatures is below. The boundary is fixed immediately after, so the
@@ -210,7 +217,12 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // vector and addressed per declaration by (off, cnt) -- the same shape
     // `payload_types` uses for variant payloads.
     mut gates = []str.new()
-    harvest_types(decls, types, gates, defs, tys)
+    // THE EFFECT-OP SCHEMAS (E4 wave, 274.11): the operations an effect
+    // declares, filled from BOTH collectors -- the handed side by the
+    // harvest below, this file's own in pass 2, the ProtoTable two-pass
+    // contract. Declared BEFORE the harvest because the harvest fills it.
+    mut fx = EffectTable.new()
+    harvest_types(decls, types, gates, defs, tys, fx)
     // THE VARIANTS OF HANDED SUMS, through the same door the file's own sums
     // take below (274.5 wave "variants of handed sums", 2026-09-04). Until this
     // loop `harvest_types` registered a handed sum's NAME and skipped its
@@ -322,6 +334,34 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                                  rows: TypeRows.NoRows })
             continue
         }
+        // AN EFFECT DECLARATION is classified as its own kind BEFORE the shape
+        // dispatch: `effect` is an identifier the shape reader does not know,
+        // and read as a plain tail it would call this declaration a newtype
+        // (E4 wave). The TERM reuses the record interning -- the NAMED
+        // simplification the with-typing wave owns -- and `rows` stays empty:
+        // an effect owns OPERATION rows, not field rows, and those live in
+        // `fx`, the effect-op schema table, filled in pass 2 the way protocol
+        // signatures are: pass 1 registers the NAME and the operation COUNT
+        // with placeholder rows, because a signature's types may point
+        // forward in this file.
+        if effect_marker_of(c).is_some() {
+            ro d = DeclId(types.len())
+            defs.add(tname, DefTarget.DefType(d))
+            mut opcnt = 0
+            for m in nk {
+                opcnt += if m.kind_of() == NodeKind.EffectOp { 1 } else { 0 }
+            }
+            fx.add(tname, fx.ops.len(), opcnt)
+            for _ in 0..opcnt {
+                fx.ops.push(EffectOpSig { name: "", ret_id: no_ty(), param_off: 0, param_cnt: 0 })
+            }
+            types.push(TypeDef { kind: TypeKind.TkEffect, shape: RecordShape.Record,
+                                 tparam_cnt: generic_names(nk).len(),
+                                 ty_id: tys.record(d), name: tname,
+                                 gate_off: gates.len(), gate_cnt: push_gates(gates, decls_of_file, c.id_of()),
+                                 rows: TypeRows.NoRows })
+            continue
+        }
         match shape_of_decl(c) {
             // A PROTOCOL is not a type a value can have: it names a CONTRACT,
             // and `types` holds types. Registering it there would let
@@ -408,6 +448,19 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                 continue
             } else {
                 // Not a protocol: the ordinary owner lookup below applies.
+            }
+            // AN EFFECT'S OPS ARE FILLED BEFORE `defs` IS ASKED, the protocol
+            // precedent one branch up: the schema filler needs no owner row,
+            // only the declaration node and the now-complete type registry --
+            // a signature may name a type declared below the effect. (The
+            // owner lookup would FIND the effect's TkEffect row, but the
+            // shape dispatch below would read the declaration as a newtype
+            // tail and fill nothing: `effect` is unknown to `shape_of_decl`.)
+            if effect_marker_of(c).is_some() {
+                fill_own_effect_ops(fx, c, tname, types, defs, tys)
+                continue
+            } else {
+                // Not an effect: the ordinary owner lookup below applies.
             }
             ro owner_id = defs.type_decl(tname) ?? no_decl()
             if !is_decl(owner_id) { continue }
@@ -661,5 +714,6 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     own.own_cnt = own.rows.len()
     Ctx { types, foreign_types_cnt, tys, prims, defs, fields, variant_rows, variant_names, payload_types, gates,
           fn_decl_rows, fns: own,
-          module_c: module_path_c(file), builtin_names, coerces, protos, consts, interop: InteropTable.new() }
+          module_c: module_path_c(file), builtin_names, coerces, protos, effects: fx, consts,
+          interop: InteropTable.new() }
 }

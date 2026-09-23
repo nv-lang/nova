@@ -458,6 +458,43 @@ fn Checker mut @bind_arm_pattern(ak []Node, scr_t TyId) -> bool {
     true
 }
 
+/// A match arm's Block body, typed for its VALUE when the tail places one --
+/// unlike `@type_branch_value` (tail_rules.nv, a tail `if`'s branch, where a
+/// value is MANDATORY and a non-expression tail is a named refusal), a value
+/// here is OPTIONAL: `@type_match` folds every arm's type unconditionally,
+/// whether the match itself stands in a statement or a value position, so a
+/// Block arm whose tail is not an expression must NOT be refused here -- it
+/// is typed as an ordinary statement, exactly as `@type_block` already does
+/// for it, and offers `no_ty()` to the fold, precisely what happened before
+/// this door existed (registry #TBD, the block-tail-arm wave).
+fn Checker mut @type_arm_block_value(b Node) -> TyId {
+    ro kids = branch_children(b)
+    ro last = last_branch_of(kids)
+    mut i = 0
+    mut out_t = no_ty()
+    for c in kids {
+        match c {
+            Leaf(_) => {}
+            Branch { .. } => {
+                if i == last && is_expr_kind(c.kind_of()) {
+                    ro before = @out.len()
+                    @type_expr(c)
+                    if @out.len() == before {
+                        out_t = type_of(c, @ctx, @scope, @chan)
+                    } else {
+                        // Refused inside: no type, and the refusal already
+                        // is the diagnostic -- nothing invented here.
+                    }
+                } else {
+                    @type_stmt(c)
+                }
+            }
+        }
+        i += 1
+    }
+    out_t
+}
+
 /// One arm in VALUE position: bind its pattern, type its guards, type its
 /// body, and answer the body's type -- which the fold compares against the
 /// first arm's. None means the arm reported a diagnostic and has no type to
@@ -509,13 +546,42 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
         // Not a return: the block and expression routes below answer.
     }
     if body.kind_of() == NodeKind.Block {
-        @type_block(body)
+        if block_terminates(body) {
+            @type_block(body)
+            @scope.release(mark)
+            // SILENT-OK: the block WAS judged just above -- every statement
+            // in it recorded its own answers -- and the arm itself yields no
+            // value to the fold, which is exactly what None says here.
+            // Nothing is skipped: the only thing not recorded is a type this
+            // arm never produces (it leaves through `return` on every path).
+            return None
+        } else {
+            // Does not always terminate: the tail may place a value
+            // (registry #TBD, the block-tail-arm wave) -- judged below,
+            // through the same door a binding initializer's own tail-if
+            // branch uses, adapted so a non-value tail is a statement, not
+            // a refusal (see @type_arm_block_value's own comment).
+        }
+        ro bt = @type_arm_block_value(body)
         @scope.release(mark)
-        // SILENT-OK: the block WAS judged just above -- every statement in it
-        // recorded its own answers -- and the arm itself yields no value to
-        // the fold, which is exactly what None says here. Nothing is skipped:
-        // the only thing not recorded is a type this arm never produces.
-        return None
+        if is_ty(bt) {
+            // RECORDED ON THE BLOCK ITSELF, not just answered to the fold:
+            // `lower` cannot ask `check` "does this arm place a value" (the
+            // architecture table gives `lower` no edge to `check` at all) --
+            // it reads the answer already recorded on this node through the
+            // shared channel instead, the same door `@lower_arm_body` already
+            // reads other bodies' recorded types through.
+            @record(body, bt)
+            // SILENT-OK: the decision IS the recorded type handed back --
+            // this early return only skips the no-value fallthrough below,
+            // which the `else` names for its own case.
+            return Some(bt)
+        } else {
+            // SILENT-OK: the tail was not a value form (or was refused
+            // inside, which already spoke); every statement in the block
+            // was still judged, by @type_arm_block_value itself.
+            return None
+        }
     }
     // A `match` AS THE ARM'S BODY goes through the MATCH door, not the lattice
     // (2026-09-20). The walk admitted the position and the typing had no route

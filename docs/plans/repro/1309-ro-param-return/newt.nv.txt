@@ -1,0 +1,7 @@
+type Meters(int)
+
+fn pass_through(x Meters) -> Meters => x
+
+fn main() {
+    println(1)
+}

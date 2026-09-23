@@ -129,7 +129,7 @@ fn harvest_in(n Node, handed_from str, types []TypeDef, mut defs DefTable, mut t
 /// not compile (`iter.pos`), so reading them now would be a capability with no
 /// obligation (K7). The name and the KIND are what a type in a signature needs.
 fn harvest_types(decls []Node, mut types []TypeDef, mut gates []str, mut defs DefTable,
-                        mut tys Interner) -> () {
+                        mut tys Interner, mut fx EffectTable) -> () {
     for d in decls {
         // THE GATES of std's types, read where the DECLARATION LIST is (D186).
         // Std goes through the same door as the compiled file deliberately:
@@ -188,6 +188,24 @@ fn harvest_types(decls []Node, mut types []TypeDef, mut gates []str, mut defs De
             // honest "a type novac knows of and knows nothing about". Refusing
             // here would drop the declaration and take the methods that mention
             // it down with it.
+            // AN EFFECT DECLARATION is the one exception: classified as
+            // TkEffect, the handed side of the same rule the file's own
+            // declarations take in collect (E4 wave). The term reuses the
+            // record interning; `rows` stays empty -- operation rows are not
+            // field rows, and they are registered in `fx` right here, the
+            // handed half of the schema the handler-literal typist judges
+            // against (a handler literal in the compiled file implements
+            // std's effect, so the HANDED side is the one that must be full).
+            if effect_marker_of(c).is_some() {
+                types.push(TypeDef { kind: TypeKind.TkEffect, shape: shape_of_record_decl(c),
+                                     tparam_cnt: tp_cnt,
+                                     ty_id: tys.record(id), name: tname,
+                                     gate_off: gates.len(),
+                                     gate_cnt: push_gates(gates, decls_here, c.id_of()),
+                                     rows: TypeRows.NoRows })
+                fill_harvested_effect_ops(fx, c, tname, types, defs, tys)
+                continue
+            }
             types.push(TypeDef { kind: TypeKind.TkRecord, shape: shape_of_record_decl(c),
                                  tparam_cnt: tp_cnt,
                                  ty_id: tys.record(id), name: tname,

@@ -1,0 +1,7 @@
+type Shape enum Circle(int) | Square(int)
+
+fn pass_through(x Shape) -> Shape => x
+
+fn main() {
+    println(1)
+}

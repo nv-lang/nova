@@ -446,3 +446,8 @@ const GENERIC_MSG = "outside the E1 subset: generic parameters are not compiled 
 /// place of a considered one. It carries neither canonical debt spelling for the same
 /// reason -- both of them promise "yet", and this refusal declines to promise.
 const SYNTAX_MSG = "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form"
+
+/// A handler-literal op's `-> T` this door cannot resolve (check/handler.nv). The
+/// undeclared name goes to the author's sentence first (`@report_if_ret_ref_undeclared`);
+/// what is left is a type parameter of a generic body, not substituted there yet.
+const HANDLER_RET_UNRESOLVED_MSG = "outside the subset: a handler-literal op's return type is not resolved here -- inside a generic body its type parameters are not substituted by this door yet (E4, handler-literal wave)"

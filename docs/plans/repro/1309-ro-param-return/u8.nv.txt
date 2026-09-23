@@ -1,0 +1,7 @@
+
+
+fn pass_through(x u8) -> u8 => x
+
+fn main() {
+    println(1)
+}

@@ -37,6 +37,12 @@ import ../sem.{branch_children}
 import ../sem.{raw_vrow}
 import ../sem.{payload_as_seen}
 
+// `is_ty` (registry #TBD, the block-tail-arm wave): `@lower_arm_body` reads
+// whether the checker recorded a type for a Block arm's body through the
+// channel (`@out.type_if_known`), the same door `@lower_block_stmts_fn`
+// (lowering.nv) already reads for a tail `MatchExpr`.
+import ../types.{is_ty}
+
 /// One `match`, in either position. `dest` is the local the arms' values land in -- a
 /// TEMPORARY of the body, numbered by the builder -- or `no_local()` in statement
 /// position, where the arms run for effect and nothing holds an answer; declaring a
@@ -247,14 +253,34 @@ fn Lowerer mut @lower_arm_body(arm_e Node, dest Local) -> () {
     // as if it were an expression, and the value arm's 7 never arrived: the
     // function returned the local's zero. The oracle printed 7, novac 0, and
     // nothing in between said a word.
-    ro leaves = arm_e.kind_of() == NodeKind.RetStmt || arm_e.kind_of() == NodeKind.Block
-    if dest != no_local() && !leaves {
+    // A BLOCK BODY MAY PLACE A VALUE TOO (registry #TBD, the block-tail-arm
+    // wave): whether it does is asked of the CHANNEL, not recomputed here --
+    // `lower` has no edge to `check` in the architecture table, and the
+    // checker already recorded a type on this exact node when its tail was a
+    // value form (`@type_arm`'s Block case, match_arms.nv). A Block that
+    // leaves through `return` on every path, or whose tail is not a value
+    // form, carries no recorded type, and `is_ty` below answers `false` for
+    // it -- the same as before this door existed.
+    ro block_places_value = arm_e.kind_of() == NodeKind.Block && is_ty(@out.type_if_known(arm_e.id_of()))
+    ro leaves = arm_e.kind_of() == NodeKind.RetStmt || (arm_e.kind_of() == NodeKind.Block && !block_places_value)
+    if dest != no_local() && !leaves && !block_places_value {
         // The arm's value lands in the match local through the one door.
         @lower_place(arm_e, dest)
         return
     } else {
-        // Statement position, or an arm that leaves through `return`: the body
-        // runs and nothing holds its answer.
+        // Statement position, an arm that leaves through `return`, or a Block
+        // whose own door (below) already places the value: nothing more to
+        // do above.
+    }
+    if dest != no_local() && block_places_value {
+        // The block's tail is the value -- lowered through the same
+        // generalized door `@lower_block_stmts_fn`'s own tail=true path
+        // uses for a function body, adapted to write `dest` instead of
+        // `@ir.ret_place()`.
+        @lower_block_stmts_value(arm_e, dest)
+        return
+    } else {
+        // Not a value-placing Block: the remaining shapes below answer.
     }
     // TERMINATOR, not an else: the two shape guards meet on a node-kind test
     // (274.5 section 2g), and a `return` satisfies both.
