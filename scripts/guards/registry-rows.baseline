@@ -1426,6 +1426,13 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1260
+max=1308
+# 2026-09-23, integrator: rows 1307-1308 added -- a killed novac gate wrote a
+# GREEN verdict (EXIT trap took the last command's code; fixed with a
+# reached-the-end flag and a live-path selftest), and a literal as a
+# constructor-pattern argument is not parsed by novac (49 std carriers).
+# rows 1258->1260, max 1306->1308.
 rows=1258
 max=1306
 # 2026-09-22, integrator: row 1306 added -- mut/consume at module level

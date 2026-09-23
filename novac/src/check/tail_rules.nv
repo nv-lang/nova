@@ -25,6 +25,7 @@ import ../tree.{Node, NodeKind, NodeId, no_node}
 import ../sem.{branch_children, is_expr_kind, leaf_kind, ret_is_unit, is_value_tail_kind, expr_leaf_name}
 import ../types.{TyId, no_ty, is_ty}
 import ../sem.{iflet_body_at, iflet_else_at}
+import ../builtins.{is_true_literal}
 
 /// Does this statement END the function on every path?
 ///
@@ -56,7 +57,7 @@ fn stmt_terminates(st Node) -> bool {
         ro wk = branch_children(st)
         if wk.len() < 2 { return false }
         ro cond = wk[1]
-        return cond.kind_of() == NodeKind.Name && expr_leaf_name(cond) == "true"
+        return cond.kind_of() == NodeKind.Name && is_true_literal(expr_leaf_name(cond))
     }
     // An if-let ends the function when BOTH its branches do (wave W1): the
     // then-block and the else. Without an else the None path falls through,
