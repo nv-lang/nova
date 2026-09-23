@@ -451,3 +451,13 @@ const SYNTAX_MSG = "novac did not parse this -- and it cannot tell whether the f
 /// undeclared name goes to the author's sentence first (`@report_if_ret_ref_undeclared`);
 /// what is left is a type parameter of a generic body, not substituted there yet.
 const HANDLER_RET_UNRESOLVED_MSG = "outside the subset: a handler-literal op's return type is not resolved here -- inside a generic body its type parameters are not substituted by this door yet (E4, handler-literal wave)"
+
+/// A handler literal outside the two positions whose doors judge it (registry 1312).
+/// `@type_handler_lit` is called by the `with` binding's handler slot and by a local
+/// binding's initializer, and by nothing else: in a `=>` body, after `return`, as a
+/// match arm, an argument, a block tail or an if branch no door typed the literal at
+/// all -- silent on an unknown op, an ICE on a legal literal, or somebody else's cause.
+/// The refusal is said by the walk gate, `@walk`'s HandlerLit arm (check/check.nv).
+/// The spec calls those positions legal (`04-effects.md`, `Effect[E]` as a value); the
+/// plan defers them (274.11 E.5), so the answer there is this name, not silence.
+const HANDLER_LIT_POSITION_MSG = "outside the subset: a handler literal is compiled only as a `with` binding's handler or a local binding's initializer (`ro h = effect E { ... }`) -- a handler value in any other position is not compiled yet (E4, boundary E.5 of plan 274.11)"

@@ -376,6 +376,13 @@ fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
         // cause named (274.7 B3 measurement). The tail is let through to the walk
         // that owns the real answer.
         if k == NodeKind.Index { return }
+        // A HANDLER-LITERAL tail is a value on the same terms (registry 1312):
+        // the walk gate (`@walk`'s HandlerLit arm, check/check.nv) refuses it
+        // by name outside the two judged positions,
+        // and this door answering first put a second, FALSE cause ("ends
+        // without a value") on the same byte -- measured on the hunt's
+        // hl-block-tail probe, two diagnostics for one literal.
+        if k == NodeKind.HandlerLit { return }
         @report_first_leaf_of([]Node.of(tail_node), TAIL_NO_VALUE_MSG)
         return
     }

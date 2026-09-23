@@ -159,9 +159,16 @@ type Checker {
 /// form and the fn-parameter rules — a declared type, no variadic — do
 /// not apply. The literal's own typist binds these positionally against
 /// the effect's schema, the same division WithStmt keeps for its pieces.
+/// handler_pos: a handler literal standing here is JUDGED -- the `with`
+/// binding's handler slot and a local binding's initializer, the only two
+/// doors that call `@type_handler_lit` (registry 1312). Not init_pos: that
+/// flag is also open in a `=>` body and an op body, where no door types the
+/// literal, and a position flag that says "judged" where nothing judges is
+/// the class this flag closes.
 fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                      arg_pos bool = false, index_pos bool = false,
-                     arm_pos bool = false, handler_param bool = false) -> () {
+                     arm_pos bool = false, handler_param bool = false,
+                     handler_pos bool = false) -> () {
     match n {
         Leaf(t) => @report_if_error_token(t)
         Branch { kind, children, .. } => {
@@ -640,6 +647,23 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // like WithStmt: op bodies get their statement
                     // position, malformed pieces are Err children the
                     // generic branch names.
+                    //
+                    // ONLY WHERE A DOOR JUDGES IT (registry 1312). Before this
+                    // gate the walk let the literal through in EVERY position
+                    // on the word that typing judges it, while typing skipped
+                    // it outside two positions on the word that the walk had
+                    // refused it: each door pointed at the other, and in a `=>`
+                    // body, after `return`, as an arm, an argument, a block
+                    // tail or an if branch nobody judged it -- an unknown op
+                    // passed in silence, a legal literal died in an ICE. The
+                    // gate is the RecordCtor/IfExpr shape: one flag, computed
+                    // where the position is, and a named refusal elsewhere.
+                    if !handler_pos {
+                        @report_first_leaf_of(children, HANDLER_LIT_POSITION_MSG)
+                        return
+                    } else {
+                        // A judged position: descended below.
+                    }
                 }
                 HandlerOp => {
                     // ONE piece of a HandlerLit, judged by the literal's own
@@ -747,9 +771,14 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     } else {
                         // No declared type: the ordinary binding.
                     }
+                    // The initializer is also a JUDGED handler position:
+                    // `@type_bind` routes a HandlerLit to its typist
+                    // (check/binds.nv), which is why only this loop -- not
+                    // LetDecl's or FnExprBody's -- opens handler_pos.
                     mut i = 0
                     for c in children {
-                        @walk(c, init_pos: i == children.len() - 1)
+                        @walk(c, init_pos: i == children.len() - 1,
+                              handler_pos: i == children.len() - 1)
                         i += 1
                     }
                     return
@@ -898,6 +927,12 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                       // own typist binds these against the effect schema).
                       handler_param: kind == NodeKind.HandlerOp &&
                                      c.kind_of() == NodeKind.Param,
+                      // THE `with` BINDING'S HANDLER SLOT (registry 1312):
+                      // every other direct child of a WithStmt is a leaf
+                      // (`with`, name, `=`, `,`) or the body Block, so a
+                      // literal standing directly under it IS in the slot
+                      // `@type_with_stmt` types.
+                      handler_pos: kind == NodeKind.WithStmt,
                       // ELSE-IF CHAIN CONTINUATION (registry #1243): a nested
                       // `IfExpr` sitting in an `if`-value's own else-arm is
                       // the SAME value position as its parent -- `else if` is

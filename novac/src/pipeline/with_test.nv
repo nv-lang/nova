@@ -166,6 +166,53 @@ test "handler literal: the literal names a record, named at the name (E4)" {
     assert(d[0].message.contains("is a record, not one"), d[0].message)
 }
 
+test "handler literal: in every OTHER value position it is refused BY NAME -- never silent, never an ICE (registry 1312)" {
+    // NEGATIVE, six positions from the hunt (docs/dev/hunts/novac/
+    // 2026-09-23-check-k7.md, family A). Only the with slot and a local
+    // binding's initializer call the literal's typist; before the walk gate
+    // the first form below (an op the effect does not declare, as a `=>`
+    // body) passed in SILENCE, `return` and the match arm died in an ICE,
+    // and the argument, block tail and if branch got somebody else's cause.
+    // Each form must now carry the ONE named refusal and no ICE.
+    mut srcs = []str.new()
+    srcs.push("fn mk() -> Effect[Fs] => effect Fs { write(p str) -> str => p }\nfn main() {\n println(1)\n}")
+    srcs.push("fn mk() -> Effect[Fs] {\n return effect Fs { read(p str) -> str => p }\n}\nfn main() {\n println(1)\n}")
+    srcs.push("fn g(k int) -> int {\n ro h = match k {\n  0 => effect Fs { read(p str) -> str => p }\n  _ => effect Fs { read(p str) -> str => p }\n }\n 0\n}\nfn main() {\n println(g(0))\n}")
+    srcs.push("fn use_h(h Effect[Fs]) -> int => 1\nfn main() {\n println(use_h(effect Fs { read(p str) -> str => p }))\n}")
+    srcs.push("fn mk() -> Effect[Fs] {\n effect Fs { read(p str) -> str => p }\n}\nfn main() {\n println(1)\n}")
+    srcs.push("fn g(c bool) -> int {\n ro h = if c {\n  effect Fs { read(p str) -> str => p }\n } else {\n  effect Fs { read(p str) -> str => p }\n }\n 0\n}\nfn main() {\n println(g(true))\n}")
+    for s in srcs {
+        ro d = compile_with(s, parse_decls(handler_fx()), interop_surface())
+        mut hit = false
+        for g in d {
+            assert(g.code != "E_NOVAC_ICE", "${s}\n--\n${messages(d)}")
+            // The FOREIGN causes the hunt measured beside or instead of the
+            // name: the block tail's "ends without a value" and the call's
+            // "omits `h`". One literal, one cause.
+            assert(!g.message.contains("ends without a value"), "${s}\n--\n${messages(d)}")
+            assert(!g.message.contains("omits"), "${s}\n--\n${messages(d)}")
+            if g.message.contains("a handler literal is compiled only as") {
+                hit = true
+            } else {
+                // Another diagnostic beside the named one: allowed, the
+                // ICE and foreign-cause checks above are what this loop guards.
+            }
+        }
+        assert(hit, "${s}\n--\n${messages(d)}")
+    }
+}
+
+test "handler literal: the gate leaves a JUDGED position to the typist (registry 1312, control)" {
+    // CONTROL of the test above: a local binding's initializer is a judged
+    // position, so an op outside the schema is refused by the literal's
+    // OWN typist (E_HANDLER_OP_UNKNOWN), not by the walk gate. If the gate
+    // swallowed this position too, the test above would still pass -- this
+    // one would not.
+    ro d = compile_with("fn g() -> int {\n ro h = effect Fs { write(p str) -> str => p }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(handler_fx()), interop_surface())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("is not an operation of effect `Fs`"), d[0].message)
+}
+
 
 // ---------------------------------------------------------------------------
 // THE EFFECT-OPERATION CALL (E.4 item 2, plan 274.11): `Fs.read("p")` types
