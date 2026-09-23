@@ -202,6 +202,17 @@ test "handler literal: in every OTHER value position it is refused BY NAME -- ne
     }
 }
 
+test "handler literal: a handler bound by `ro` is handed on as `Effect[Fs]` -- returned and passed (registry 1323)" {
+    // POSITIVE: the literal's recorded type is the SEED application
+    // `Effect[Fs]`, the same term a signature's `-> Effect[Fs]` and a
+    // parameter `h Effect[Fs]` resolve to. It used to be recorded as
+    // `Fs[Fs]` (the effect itself as the head), and both uses below were
+    // refused -- the return with "cannot return value of type `Fs[Fs]`".
+    // The oracle accepts and runs this shape.
+    ro d = compile_with("fn use_h(h Effect[Fs]) -> int => 1\nfn mk() -> Effect[Fs] {\n ro h = effect Fs { read(p str) -> str => p }\n h\n}\nfn g() -> int {\n ro h = effect Fs { read(p str) -> str => p }\n use_h(h)\n}\nfn main() {\n println(g())\n}", parse_decls(handler_fx()), interop_surface())
+    assert(d.len() == 0, messages(d))
+}
+
 test "handler literal: the gate leaves a JUDGED position to the typist (registry 1312, control)" {
     // CONTROL of the test above: a local binding's initializer is a judged
     // position, so an op outside the schema is refused by the literal's

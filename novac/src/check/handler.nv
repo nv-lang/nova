@@ -118,7 +118,17 @@ fn Checker mut @type_handler_resolved(e Node, kids []Node, name str, edecl DeclI
     // own head term as the argument) -- the same term a `make() ->
     // Effect[Fs]` value carries, so every reader of the channel sees one
     // type for one concept.
-    @record(e, @ctx.tys.app(edecl, []TyId.of(@ctx.types[raw_decl(edecl)].ty_id)))
+    //
+    // THE HEAD IS THE SEED, found by the one name door a signature's
+    // `-> Effect[Fs]` resolves through (registry 1323). This line used to
+    // apply `edecl` -- the effect ITSELF -- as the head, so the literal was
+    // recorded as `Fs[Fs]`: the comment above promised the seed's row and
+    // the code interned a different term, and `ro h = effect Fs { ... }`
+    // handed on by `return` or as an argument was refused against the
+    // declared `Effect[Fs]` with that malformed name in the sentence. The
+    // with slot never noticed: its rule admits every application kind.
+    ro seed = @ctx.defs.type_decl("Effect") ?? ice("check: the Effect seed is not registered (sem/sem.nv `seed_effect_ctor`)")
+    @record(e, @ctx.tys.app(seed, []TyId.of(@ctx.types[raw_decl(edecl)].ty_id)))
 }
 
 /// Name the first undeclared type name in a handler op's `-> T`, through the door
