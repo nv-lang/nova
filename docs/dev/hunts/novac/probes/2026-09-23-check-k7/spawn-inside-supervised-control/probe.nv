@@ -1,0 +1,7 @@
+fn main() {
+    supervised {
+        spawn {
+            println(1)
+        }
+    }
+}

@@ -1,0 +1,13 @@
+fn g() -> int {
+    ro x = with Random = effect Random {
+        u64() -> u64 => 4
+        bytes(n int) -> []u8 => "ab".bytes()
+    } {
+        5
+    }
+    x
+}
+
+fn main() {
+    println(g())
+}

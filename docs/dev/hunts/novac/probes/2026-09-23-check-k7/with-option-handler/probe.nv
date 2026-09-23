@@ -1,0 +1,10 @@
+fn g() -> int {
+    with Random = Some(1) {
+        println(1)
+    }
+    0
+}
+
+fn main() {
+    println(g())
+}
