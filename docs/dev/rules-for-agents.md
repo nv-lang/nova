@@ -1079,6 +1079,7 @@ D453). Номер назначает интегратор; спроси.
 | `check-single-mco-resume` | новый resume-сайт в обход `nova_resume_fiber` |
 | `check-stale-unimplemented` | пометку «не реализован» на том, что план считает сделанным |
 | `check-tbd-branch-freshness` | новую строку реестра с `№TBD`, пока ветка отстаёт от `main` |
+| `check-no-env-after-timeout` | переменную окружения ПОСЛЕ `timeout` (`timeout 60 ИМЯ=значение команда`) — `timeout` запускает её как программу, команда не стартует (№1310) |
 | `check-test-fixture-coverage` | новый `E_*`/`W_*` без neg-фикстуры |
 | `hardcode-audit` | хардкод семи категорий в компиляторе |
 | `lint-no-silent-int-fallback` | новый молчаливый откат к `nova_int` |

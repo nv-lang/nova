@@ -1,0 +1,9 @@
+module r1319_mixed
+
+fn mixed(c bool, x u8) -> u8 {
+    if c {
+        x
+    } else {
+        0
+    }
+}
