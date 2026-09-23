@@ -113,11 +113,28 @@ NOVAC_VERDICT_SHORT=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo 
 NOVAC_TREE_TAIL=" [tree=$ROOT head=$NOVAC_VERDICT_SHORT branch=$NOVAC_VERDICT_BRANCH]"
 echo "novac-gate :: дерево $ROOT, коммит $NOVAC_VERDICT_SHORT, ветка $NOVAC_VERDICT_BRANCH, ярус $NOVAC_TIER"
 rm -f "$NOVAC_DONE"
+# ЗЕЛЁНЫЙ ВЕРДИКТ ДАЁТ ТОЛЬКО ПРОГОН, ДОШЕДШИЙ ДО СВОЕЙ ПОСЛЕДНЕЙ СТРОКИ (№1307).
+# Ловушка EXIT берёт `$?` ПОСЛЕДНЕЙ ЗАВЕРШЁННОЙ КОМАНДЫ, а не исход прогона.
+# Прогон, убитый сигналом посреди работы (сторож окна, остановка фоновой задачи,
+# «стоп» владельца), выходит через эту же ловушку — и наследует 0 от последнего
+# успешного шага. Замер 2026-09-23: гейт убит на 49-й секунде, в файл лёг
+# `RC=0 SEC=49 TIER=novac HASH=16b501ea7…`, и страж слияния открыл бы им слияние,
+# которого никто не судил. Основной гейт этой дыры не имеет: там код пишет
+# обёртка по коду САМОГО процесса (`PIPESTATUS`), и убитый прогон у него красный.
+# Флаг ставится ТОЛЬКО рядом с двумя зелёными `exit 0`; без него ноль становится
+# 125 с пометкой INTERRUPTED=1. Красный код не трогается — он и так честен.
+# Самотест: scripts/guards/selftest/test-gate-novac-interrupted-verdict.sh.
+NOVAC_REACHED_VERDICT=0
 _novac_write_verdict() {
     _rc=$?
+    _tail=""
+    if [ "$_rc" -eq 0 ] && [ "$NOVAC_REACHED_VERDICT" != "1" ]; then
+        _rc=125
+        _tail=" INTERRUPTED=1"
+    fi
     _tier=novac
     [ -n "${SEAMS:-}" ] && _tier=novac-sample
-    echo "RC=$_rc SEC=$(( $(date +%s) - GATE_T0 )) TIER=$_tier HASH=$NOVAC_VERDICT_HASH BRANCH=$NOVAC_VERDICT_BRANCH" \
+    echo "RC=$_rc SEC=$(( $(date +%s) - GATE_T0 )) TIER=$_tier HASH=$NOVAC_VERDICT_HASH BRANCH=$NOVAC_VERDICT_BRANCH$_tail" \
         > "$NOVAC_DONE"
     return $_rc
 }
@@ -611,6 +628,7 @@ if [ "$DESYNC_N" -gt 0 ]; then
     echo "  зависимые стражи не отработали. Лечится слиянием рантайма, не правкой novac." >&2
     exit 2
 fi
+NOVAC_REACHED_VERDICT=1
 if [ -n "$SEAMS" ]; then
     echo "NOVAC-GATE OK (ВЫБОРКА, швы:$SEAMS — это не полный прогон)$NOVAC_TREE_TAIL"
     exit 0

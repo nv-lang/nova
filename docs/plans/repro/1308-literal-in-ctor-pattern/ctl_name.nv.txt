@@ -1,0 +1,7 @@
+fn classify(c Option[char]) -> int => match c {
+    Some(x) => 1
+    Some(_) => 2
+    None => 0
+}
+
+fn main() Io -> () => println("x")
