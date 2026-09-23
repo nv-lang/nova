@@ -35,6 +35,25 @@ export type NodeKind enum
     | LeafNode
     | ProtoMethod /// one required signature inside `type X protocol { ... }`: `@name(params) -> T`
     | EffectOp /// one operation signature inside `type X effect { ... }`: `fn name(params) -> T` (D459)
+    /// A handler literal (D61): `effect Fs { read(p str) -> []u8 => []u8.new() }`.
+    /// The value a `with` binding installs, spelled INLINE -- the operations
+    /// implemented where the handler is written. Contextual like `with`
+    /// itself: `effect` names no type, so the three-token door (Ident Ident
+    /// `{`) cannot capture an ordinary expression (two names never parse as
+    /// one). The checker types it through `@type_handler_lit`, called by the
+    /// doors that admit the form -- it is NOT in `is_expr_kind`, so a general
+    /// argument walk never swallows it silently (E.5 defers first-class
+    /// handler values; the literal is read where a handler is expected).
+    | HandlerLit
+    /// ONE operation implementation inside a handler literal:
+    /// `name(params) -> T => body` or `name(params) -> T { ... }` -- NO `fn`
+    /// keyword (measured on the oracle 2026-09-22: with `fn` it is a parse
+    /// error, "expected identifier"). Its own kind, not a reuse of EffectOp:
+    /// the decl-side op is a bare signature (`fn read(p str) -> []u8`), this
+    /// one carries a BODY and params that may be BARE NAMES -- two shapes one
+    /// kind would make every EffectOp reader ask the parent first, which is
+    /// the confusion the registry filler and the checker both avoid this way.
+    | HandlerOp
     | File
     | ModuleDecl
     | FnDecl
@@ -48,6 +67,25 @@ export type NodeKind enum
     | AssignStmt
     | ForStmt
     | WhileStmt
+    /// A handler-installation statement: `with Fs = h, Os = h2 { body }`
+    /// (D61; wave 274.11 Э.4). Contextual word, not a lexer keyword.
+    | WithStmt
+    /// A SUPERVISION statement: `supervised { body }` (D13; wave 274.11
+    /// Э.7 item 4). Contextual word like `with`: the door is spelling +
+    /// shape, and a statement beginning `supervised {` can only be this
+    /// form. Parsed and typed this wave; EMISSION (fibers, the failure
+    /// delivery to `on_child_fail`, the §7 line as BEHAVIOUR) is the E4
+    /// emit wave's honest debt -- an emitter ice before that machinery
+    /// lands is the accepted answer, not a silent drop.
+    | SupervisedStmt
+    /// A SPAWN statement: `spawn { body }` (D13's structured concurrency
+    /// pair; wave 274.11 Э.7 item 4). Same contextual discipline as
+    /// `supervised`: spelling + `{`, statement position, no value
+    /// semantics this wave (Outcome/T arrive with later stages). A type
+    /// literally NAMED `spawn` loses its bare statement constructor to
+    /// this door -- the contextual-keyword class, measured and accepted
+    /// for the carrier (see the parser arm's comment).
+    | SpawnStmt
     | MethodCall
     | FieldAccess
     | TypeDecl

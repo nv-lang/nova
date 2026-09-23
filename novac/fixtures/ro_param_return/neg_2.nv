@@ -1,0 +1,19 @@
+module ro_param_return.neg_2
+
+// `return x` goes through the same return door as a `=>` body (registry #1309):
+// a record declared without `value` is shared with its source, so a `ro`
+// parameter of that type returned as `-> Point` is the oracle's
+// E_READONLY_COERCE. A `value` record is copied and is NOT refused -- the
+// positive half lives in check/check_test.nv.
+
+// NOVAC_EXPECT cannot return `p` through a result that is not `ro`
+
+type Point { x int, y int }
+
+fn keep(p Point) -> Point {
+    return p
+}
+
+fn main() {
+    println(1)
+}

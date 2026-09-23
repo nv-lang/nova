@@ -1,0 +1,7 @@
+type Point { x int, y int }
+
+fn pass_through(x Point) -> Point => x
+
+fn main() {
+    println(1)
+}

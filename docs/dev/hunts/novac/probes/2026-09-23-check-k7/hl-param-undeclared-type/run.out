@@ -1,0 +1,32 @@
+=== SUBJECT: novac check
+novac rc=0
+=== ORACLE: nova check
+ok: docs/dev/hunts/novac/probes/2026-09-23-check-k7/hl-param-undeclared-type/probe.nv
+
+===== SUMMARY =====
+PASS: 1  FAIL: 0
+oracle check rc=0
+=== ORACLE: nova build + run
+error: compiler error:
+<TMP>\build-881388f847cf\probe.c:8083:5: error: unknown type name 'Nova_Nope'; did you mean 'Nova_Once'?
+ 8083 |     Nova_Nope* n = (Nova_Nope*)(intptr_t)(n_wire);
+      |     ^~~~~~~~~
+      |     Nova_Once
+<ROOT>/compiler-codegen\nova_rt\sync_primitives.h:1932:3: note: 'Nova_Once' declared here
+ 1932 | } Nova_Once;
+      |   ^
+<TMP>\build-881388f847cf\probe.c:8083:21: error: use of undeclared identifier 'Nova_Nope'; did you mean 'Nova_Once'?
+ 8083 |     Nova_Nope* n = (Nova_Nope*)(intptr_t)(n_wire);
+      |                     ^~~~~~~~~
+<ROOT>/compiler-codegen\nova_rt\sync_primitives.h:1932:3: note: 'Nova_Once' declared here
+ 1932 | } Nova_Once;
+      |   ^
+<TMP>\build-881388f847cf\probe.c:8083:31: error: expected expression
+ 8083 |     Nova_Nope* n = (Nova_Nope*)(intptr_t)(n_wire);
+      |                               ^
+<TMP>\build-881388f847cf\probe.c:8083:33: error: unexpected type name 'intptr_t': expected expression
+ 8083 |     Nova_Nope* n = (Nova_Nope*)(intptr_t)(n_wire);
+      |                                 ^
+4 errors generated.
+oracle build rc=1
+no binary built

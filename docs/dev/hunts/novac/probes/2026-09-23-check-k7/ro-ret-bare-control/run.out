@@ -1,0 +1,19 @@
+=== SUBJECT: novac check
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"docs/dev/hunts/novac/probes/2026-09-23-check-k7/ro-ret-bare-control/probe.nv","start":42,"end":43},"message":"cannot return `x` through a result that is not `ro`: the parameter is bound `ro` (written without `mut`, D176), and `mut w = f(...)` at the caller would write what it froze (D246 amendment, E_READONLY_COERCE) -- take `mut x`, return a copy, or declare the result `-> ro T`","poisoned_by":null}
+novac rc=1
+=== ORACLE: nova check
+FAIL: docs/dev/hunts/novac/probes/2026-09-23-check-k7/ro-ret-bare-control/probe.nv
+  docs/dev/hunts/novac/probes/2026-09-23-check-k7/ro-ret-bare-control/probe.nv:3:23: error: [E_READONLY_COERCE] возврат `x` — источник связан как `ro` (L1-binding — явный `ro x = ...` либо параметр без `mut`, D176-дефолт, P7 freeze), но объявленный тип возврата НЕ `ro` (mut-дефолт биндинга у caller'а, D184): `mut w = f()` у caller'а дал бы запись, видимую внутреннему источнику `x` (D246-амендмент, [M-ro-launder-via-mut-binding], Ф.1б). Решения: (a) если `x` должен быть mut-параметром — in-out по D326-ревизии §Р3, сама функция это НЕ решает изнутри для собственного параметра; поменяй сигнатуру функции на `mut x T`, если это правильная семантика; (b) верни явную независимую копию — `x.clone()` (D230); (c) объяви возврат `-> ro T`, если источник действительно должен остаться заморожен и у caller'а.
+  3 | fn f(x Rec) -> Rec => x
+    |                       ^
+
+===== SUMMARY =====
+PASS: 0  FAIL: 1  WARN: 0
+error: 1 file(s) failed type-check
+oracle check rc=1
+=== ORACLE: nova build + run
+error: <ROOT>\docs\dev\hunts\novac\probes\2026-09-23-check-k7\ro-ret-bare-control\probe.nv:3:23: error: [E_READONLY_COERCE] возврат `x` — источник связан как `ro` (L1-binding — явный `ro x = ...` либо параметр без `mut`, D176-дефолт, P7 freeze), но объявленный тип возврата НЕ `ro` (mut-дефолт биндинга у caller'а, D184): `mut w = f()` у caller'а дал бы запись, видимую внутреннему источнику `x` (D246-амендмент, [M-ro-launder-via-mut-binding], Ф.1б). Решения: (a) если `x` должен быть mut-параметром — in-out по D326-ревизии §Р3, сама функция это НЕ решает изнутри для собственного параметра; поменяй сигнатуру функции на `mut x T`, если это правильная семантика; (b) верни явную независимую копию — `x.clone()` (D230); (c) объяви возврат `-> ro T`, если источник действительно должен остаться заморожен и у caller'а.
+3 | fn f(x Rec) -> Rec => x
+  |                       ^
+oracle build rc=1
+no binary built

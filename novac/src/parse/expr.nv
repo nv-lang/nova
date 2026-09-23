@@ -23,6 +23,7 @@ const MAX_NESTING_DEPTH = 512
 
 import ../lex.{Token, TokenKind, brace_delta, paren_delta}
 import ../tree.{Node, NodeKind, BinOp, is_binop, bin_op_of, is_unop}
+import ../builtins.{EFFECT_MARKER}
 
 
 /// Binding power of a binary operator: the DECISION decides, not the token.
@@ -632,6 +633,21 @@ fn Cursor mut @atom() -> Node {
         mut uk = []Node.of(@take()) // 'unsafe'
         uk.push(@block())
         return @node(NodeKind.Unsafe, uk)
+    }
+    if @peek_ident(EFFECT_MARKER) && @peek(skip: 1) == TokenKind.Ident && @peek(skip: 2) == TokenKind.LBrace {
+        // A HANDLER LITERAL (D61): `effect Fs { read(p) -> []u8 => ... }`,
+        // the value a `with` binding installs, spelled inline. The door is
+        // the with-statement's own class — a CONTEXTUAL word plus shape, not
+        // a lexer keyword (D61 keeps the keyword table closed): `effect`
+        // names no type, and two identifiers followed by `{` cannot begin
+        // an ordinary expression, so nothing legal is captured. Measured
+        // 2026-09-22 (oracle, window nova-6e): the op form takes NO `fn`
+        // keyword; params may be bare names; the body is an expression or a
+        // block. Before this arm the literal fell apart — `effect` read as
+        // a name, `Fs { ... }` as a record constructor — and the with-arm's
+        // handler rule accepted the debris silently (the exact silence this
+        // wave ends).
+        return @handler_lit()
     }
     if @peek() == TokenKind.IntLit || @peek() == TokenKind.FloatLit || @peek() == TokenKind.StrLit ||
        @peek() == TokenKind.CharLit {

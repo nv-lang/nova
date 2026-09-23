@@ -1,0 +1,8 @@
+type Rec { n int }
+
+fn f(x Rec) -> Rec => (x)
+
+fn main() {
+    ro r = f(Rec { n: 1 })
+    println(r.n)
+}

@@ -1,0 +1,17 @@
+fn g(k int) -> int {
+    ro h = match k {
+        0 => effect Random {
+            u64() -> u64 => 4
+            bytes(n int) -> []u8 => "ab".bytes()
+        }
+        _ => effect Random {
+            u64() -> u64 => 5
+            bytes(n int) -> []u8 => "ab".bytes()
+        }
+    }
+    0
+}
+
+fn main() {
+    println(g(0))
+}

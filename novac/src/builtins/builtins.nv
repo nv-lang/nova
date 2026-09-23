@@ -39,14 +39,15 @@ export type TypeKind enum
     | TkInfer /// an inference variable, alive only inside one body (E2-b1)
     | TkNewtype /// a NEWTYPE: a distinct nominal type over a representation (`type Row int`), its underlying type in the interner's args
     | TkTuple /// a structural TUPLE (D123): head = ARITY, components in the interner's args -- no declaration, its identity IS its components (B15 step 3)
+    | TkEffect /// an EFFECT declaration (E4 wave, 274.11): `type Fs effect { ... }` -- the marker kind: owns operation rows, not field/variant rows; values of handler type are typed by the `with` doors, the term reuses the Record interning until the Effect-type stage lands (named in the with-typing wave)
 
 /// How many kinds there are. The interner's bucket arithmetic multiplies by
 /// this, so it lives NEXT TO the enum it counts (owner's question 2026-08-16:
 /// "what is that 6?" — a magic constant one file away from its source is the
 /// first thing to drift when a kind is added). Every dispatch on TypeKind is
-/// an exhaustive match, so a seventh kind is a compile error at each site —
+/// an exhaustive match, so a tenth kind is a compile error at each site —
 /// and this constant is the ONE place a match cannot reach, hence the note.
-export const TYPE_KIND_COUNT = 8
+export const TYPE_KIND_COUNT = 9
 
 /// Name of the program entry function.
 export const ENTRY_FN = "main"
@@ -437,6 +438,16 @@ export fn builtin_types() -> ro []BuiltinType => universe
 /// owner's question about the literal list exposed (2026-08-16).
 #realtime nogc
 export fn is_bool_literal(name str) -> bool => name == "true" || name == "false"
+
+/// The `true` literal alone, for the one place that needs to tell the two
+/// apart: `while true { ... }` ends a function (no way out but `return`),
+/// `while false` and every computed condition do not (`check/tail_rules.nv`).
+/// Named here rather than spelled in the checker for the same reason as its
+/// two neighbours -- P5: a language name is not a string literal of the
+/// backend. The checker carried `== "true"` inline until 2026-09-22
+/// (registry 221.1 #1286).
+#realtime nogc
+export fn is_true_literal(name str) -> bool => name == "true"
 
 /// The C spelling of a bool constant. `nova_bool` IS C `bool`, so the two
 /// spellings coincide -- but they are LANGUAGE names, and language names live

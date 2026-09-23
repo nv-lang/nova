@@ -37,7 +37,7 @@ module novac.sem
 
 import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
-import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, VALUE_MARKER}
+import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, VALUE_MARKER, EFFECT_MARKER}
 import ../names.{DeclId, no_decl, is_decl}
 
 /// What the TAIL of a type declaration says, when it is a type reference:
@@ -90,6 +90,22 @@ export fn shape_of_decl(decl Node) -> DeclShape {
         tail_ident = true
     }
     if tail_ident { DeclShape.ShapeNewtype } else { DeclShape.ShapeRecord }
+}
+
+/// The `effect` MARKER LEAF of a `type` declaration, or None. `effect` is an
+/// IDENT marker like `protocol` and `value`, so it is found by TEXT, not by
+/// token kind. THE one scan over the marker: the collectors classify on it
+/// (TkEffect, E4 wave) and check refuses on it -- the scan stood inline in
+/// three places, which is the shape of three doors (P18). The LEAF is the
+/// answer, not a boolean, because check reports AT the marker.
+export fn effect_marker_of(decl Node) -> Option[Node] {
+    for c in branch_children(decl) {
+        if c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.Ident
+                && leaf_text(c) == EFFECT_MARKER {
+            return Some(c)
+        }
+    }
+    None
 }
 
 /// The TYPE NAME of a method's receiver group (`fn Counter mut @bump()` answers

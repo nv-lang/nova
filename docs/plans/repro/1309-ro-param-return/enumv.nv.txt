@@ -1,0 +1,7 @@
+type Color enum Red | Green
+
+fn pass_through(x Color) -> Color => x
+
+fn main() {
+    println(1)
+}

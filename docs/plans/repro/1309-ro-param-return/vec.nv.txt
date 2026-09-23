@@ -1,0 +1,7 @@
+
+
+fn pass_through(x []int) -> []int => x
+
+fn main() {
+    println(1)
+}

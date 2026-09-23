@@ -1,0 +1,18 @@
+module ro_param_return.neg_1
+
+// A `ro` PARAMETER RETURNED THROUGH A NON-`ro` RESULT (D246 amendment,
+// E_READONLY_COERCE; registry 221.1 #1309). `x` is written without `mut`, so it
+// is bound `ro` (D176), and `-> []int` would hand the caller a `mut w = f(v)`
+// that writes what the parameter froze. The oracle refuses this program; novac
+// accepted it without a word until 2026-09-23.
+//
+// This is the `=>` body. neg_2 is `return x` with a record, neg_3 a payload-free
+// enum through an ordinary parameter of a method -- the three forms measured.
+
+// NOVAC_EXPECT cannot return `x` through a result that is not `ro`
+
+fn pass_through(x []int) -> []int => x
+
+fn main() {
+    println(1)
+}

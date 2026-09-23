@@ -136,6 +136,10 @@ fn kind_ordinal(k TypeKind) -> int {
         TkInfer => 5
         TkNewtype => 6
         TkTuple => 7
+        // TkEffect: the bucket ordinal is kind arithmetic, not semantics -- the
+        // term reuses the Record interning (named simplification, E4 wave), the
+        // KIND still gets its own bucket.
+        TkEffect => 8
     }
 }
 
@@ -278,7 +282,9 @@ export fn Interner @prim_ordinal_of(t TyId) -> int
     ro row = @rows[raw_ty(t)]
     match row.kind {
         TkPrim => row.head_id
-        TkRecord | TkSum | TkApp | TkNewtype =>
+        // TkEffect: the term reuses the Record interning (E4 wave), so its head
+        // is a declaration too -- the nominal refusal is the honest one.
+        TkRecord | TkSum | TkApp | TkNewtype | TkEffect =>
             ice("types: the prim ordinal of a NOMINAL term -- its head is a declaration")
         TkParam => ice("types: the prim ordinal of a type PARAMETER -- its head is a slot index")
         TkInfer => ice("types: the prim ordinal of an inference variable -- its head is a vid")
@@ -296,7 +302,9 @@ export fn Interner @param_slot_of(t TyId) -> int
     match row.kind {
         TkParam => row.head_id
         TkPrim => ice("types: the parameter slot of a PRIMITIVE -- its head is a universe ordinal")
-        TkRecord | TkSum | TkApp | TkNewtype =>
+        // TkEffect: the term reuses the Record interning (E4 wave), so its head
+        // is a declaration, not a slot index.
+        TkRecord | TkSum | TkApp | TkNewtype | TkEffect =>
             ice("types: the parameter slot of a NOMINAL term -- its head is a declaration")
         TkInfer => ice("types: the parameter slot of an inference variable -- its head is a vid")
         TkTuple => ice("types: the parameter slot of a TUPLE -- its head is an arity")
@@ -315,8 +323,11 @@ export fn Interner @decl_head_of(t TyId) -> DeclId
     ro row = @rows[raw_ty(t)]
     match row.kind {
         // The NOMINAL kinds are one case, not four: each of them names a
-        // declaration, and that is the whole rule.
-        TkRecord | TkSum | TkApp | TkNewtype => DeclId(row.head_id)
+        // declaration, and that is the whole rule. TkEffect joins it by the
+        // NAMED term-reuse simplification (E4 wave): its interned term IS a
+        // Record term until the Effect-type stage lands, so its head is a
+        // DeclId like any nominal's.
+        TkRecord | TkSum | TkApp | TkNewtype | TkEffect => DeclId(row.head_id)
         // The other four are four DIFFERENT things, so they stay four arms:
         // the refusal names WHAT was found instead of a declaration.
         TkPrim => ice("types: a PRIMITIVE names no declaration -- its head is a universe ordinal")
@@ -343,7 +354,10 @@ export fn Interner @names_a_decl(t TyId) -> bool
     requires is_ty(t) && raw_ty(t) < @rows.len(), "types: names_a_decl asked for a type id outside the interner"
 {
     match @rows[raw_ty(t)].kind {
-        TkRecord | TkSum | TkApp | TkNewtype => true
+        // TkEffect is TRUE here by the NAMED term-reuse simplification (E4
+        // wave): the interned term reuses the Record interning, so its head
+        // IS a declaration.
+        TkRecord | TkSum | TkApp | TkNewtype | TkEffect => true
         TkPrim | TkTuple | TkParam | TkInfer => false
     }
 }
@@ -389,6 +403,10 @@ export fn Interner @is_concrete(t TyId) -> bool {
         TkPrim => { return true }
         TkRecord => { return true }
         TkSum => { return true }
+        // TkEffect: a MARKER kind with no arguments in its term (operation
+        // rows live on the declaration, not in the pool) -- concrete exactly
+        // as the record nominal beside it is.
+        TkEffect => { return true }
         TkParam => { return false }
         TkInfer => { return false }
         // A NEWTYPE is concrete exactly when its representation is: the type is
@@ -427,6 +445,9 @@ export fn Interner mut @subst(t TyId, args []TyId) -> TyId {
         // representation substitutes exactly as an application's arguments do,
         // and this arm grows the same three lines.
         TkNewtype => { return same_ty(t) }
+        // TkEffect: a MARKER kind over a declaration, with nothing in its term
+        // a substitution could rewrite -- identity, as the record nominal.
+        TkEffect => { return same_ty(t) }
         TkParam => {
             if row.head_id < 0 || row.head_id >= args.len() {
                 ice("types: subst with a partial argument vector — a Param has no argument")

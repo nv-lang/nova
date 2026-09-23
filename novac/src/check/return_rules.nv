@@ -20,7 +20,8 @@ module novac.check
 import ../tree.{Node, NodeKind}
 import ../types.{TyId, no_ty, is_ty, Interner, same_ty}
 import ../sem.{FnRow, raw_row, branch_children, ty_source_name, prim_row_of, LitArg}
-import ../builtins.{TypeKind}
+import ../sem.{Ctx, expr_leaf_name, is_value_record}
+import ../builtins.{TypeKind, RECV_BINDING}
 
 /// THE RETURN A BODY MUST PRODUCE, or `no_ty()` when nothing is judged: no
 /// declared value (unit, or none), or a type PARAMETER -- the instance types
@@ -149,7 +150,11 @@ fn Checker mut @judge_return(e Node, t0 TyId) -> () {
     // handed to the door, not on its ancestor.
     if !is_ty(t) { return } else {}
     if @ctx.tys.kind_of(t) == TypeKind.TkParam { return }
-    if t == @ret_expect { return }
+    if t == @ret_expect {
+        // Same type as the result. What is left is HOW the value is bound (#1309).
+        @judge_ro_param_return(e, t)
+        return
+    }
     ro from = ty_source_name(@ctx, t)
     ro to = ty_source_name(@ctx, @ret_expect)
     ro msg = if int_narrows(@ctx.tys, t, @ret_expect) {
@@ -159,6 +164,48 @@ fn Checker mut @judge_return(e Node, t0 TyId) -> () {
     }
     @report_first_leaf_of([]Node.of(e), msg)
 }
+
+/// A `ro` PARAMETER HANDED OUT THROUGH A NON-`ro` RESULT (D246 amendment,
+/// E_READONLY_COERCE; registry #1309). A parameter written without `mut` is bound
+/// `ro` (D176), and returning it as a plain `-> T` lets the caller's
+/// `mut w = f(x)` write what the parameter froze. The oracle refuses exactly this;
+/// until 2026-09-23 novac accepted it without a word.
+///
+/// MEASURED against the oracle, and this door mirrors it and nothing wider
+/// (`docs/plans/repro/1309-ro-param-return/`): a record without `value`, a sum --
+/// a payload-free enum too --, an applied type (`[]T`, `Option[T]`) and an effect
+/// handler are refused; a primitive, a `value` record and a newtype are accepted,
+/// and so are the receiver `@`, a `mut` or `consume` parameter, a pattern binder
+/// and a field of the parameter. THE ALIAS `ro y = x` then `y` the oracle refuses
+/// and this door does not see -- the named rest of #1309.
+fn Checker mut @judge_ro_param_return(e Node, t TyId) -> () {
+    if e.kind_of() != NodeKind.Name {
+        // Not a bare name: a call, a field, a literal -- a fresh value, or one the
+        // oracle does not freeze (measured, see above).
+    } else if !ro_return_freezes(@ctx, t) {
+        // A type the language copies: nothing is shared with the caller.
+    } else {
+        ro name = expr_leaf_name(e)
+        if name != RECV_BINDING && @scope.is_ro_param(name) {
+            @report_first_leaf_of([]Node.of(e), ro_param_return_msg(name))
+        } else {
+            // The receiver, a `mut`/`consume` parameter, or a local.
+        }
+    }
+}
+
+/// Does a value of this type stay SHARED with its source when it is returned --
+/// the types E_READONLY_COERCE is about? The measured list of the door above; a
+/// kind added later is ACCEPTED here until it is measured, and #1309 says so.
+fn ro_return_freezes(ctx Ctx, t TyId) -> bool {
+    ro k = ctx.tys.kind_of(t)
+    if k == TypeKind.TkRecord { return !is_value_record(ctx, t) }
+    k == TypeKind.TkSum || k == TypeKind.TkApp || k == TypeKind.TkEffect
+}
+
+/// The refusal text, outside the door so the door builds nothing (P18).
+fn ro_param_return_msg(name str) -> str =>
+    "cannot return `${name}` through a result that is not `ro`: the parameter is bound `ro` (written without `mut`, D176), and `mut w = f(...)` at the caller would write what it froze (D246 amendment, E_READONLY_COERCE) -- take `mut ${name}`, return a copy, or declare the result `-> ro T`"
 
 /// Is `to` a NARROWER integer than `from` -- fewer bits, or the same bits with the
 /// other signedness (D54's table: every such pair loses range)? Two integer rows

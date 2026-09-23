@@ -1,0 +1,19 @@
+=== SUBJECT: novac check
+{"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"docs/dev/hunts/novac/probes/2026-09-23-check-k7/clean-hl-nested-in-op/probe.nv","start":162,"end":166},"message":"handler-literal op `Random.nope` is not an operation of effect `Random` -- it declares: u64, bytes. A handler may only implement operations the effect declares: check the spelling, or the operation may have been removed from `Random` while this handler kept implementing it.","poisoned_by":null}
+novac rc=1
+=== ORACLE: nova check
+FAIL: docs/dev/hunts/novac/probes/2026-09-23-check-k7/clean-hl-nested-in-op/probe.nv
+  docs/dev/hunts/novac/probes/2026-09-23-check-k7/clean-hl-nested-in-op/probe.nv:6:17: error: [E_HANDLER_OP_UNKNOWN] handler-literal op `Random.nope` is not an operation of effect `Random` -- it declares: bytes, u64. A handler may only implement operations the effect declares: check the spelling, or the operation may have been removed from `Random` while this handler kept implementing it.
+  6 |                 nope() -> int => 1
+    |                 ^^^^^^^^^^^^^^^^^^
+
+===== SUMMARY =====
+PASS: 0  FAIL: 1  WARN: 0
+error: 1 file(s) failed type-check
+oracle check rc=1
+=== ORACLE: nova build + run
+error: <ROOT>\docs\dev\hunts\novac\probes\2026-09-23-check-k7\clean-hl-nested-in-op\probe.nv:6:17: error: [E_HANDLER_OP_UNKNOWN] handler-literal op `Random.nope` is not an operation of effect `Random` -- it declares: bytes, u64. A handler may only implement operations the effect declares: check the spelling, or the operation may have been removed from `Random` while this handler kept implementing it.
+6 |                 nope() -> int => 1
+  |                 ^^^^^^^^^^^^^^^^^^
+oracle build rc=1
+no binary built

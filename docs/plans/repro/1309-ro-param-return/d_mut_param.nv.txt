@@ -1,0 +1,5 @@
+fn f(mut x []int) -> []int => x
+
+fn main() {
+    println(1)
+}

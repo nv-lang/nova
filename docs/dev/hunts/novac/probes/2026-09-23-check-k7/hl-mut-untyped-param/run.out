@@ -1,0 +1,18 @@
+=== SUBJECT: novac check
+novac rc=0
+=== ORACLE: nova check
+FAIL: docs/dev/hunts/novac/probes/2026-09-23-check-k7/hl-mut-untyped-param/probe.nv
+  docs/dev/hunts/novac/probes/2026-09-23-check-k7/hl-mut-untyped-param/probe.nv:4:15: error: [E_HANDLER_OP_PARAM_MUT_WITHOUT_TYPE] `mut n` in a handler operation has no type. The mode modifier describes the parameter's type, so the type must be written: `mut n Type`.
+  4 |         bytes(mut n) -> []u8 => "ab".bytes()
+    |               ^^^
+
+===== SUMMARY =====
+PASS: 0  FAIL: 1  WARN: 0
+error: 1 file(s) failed type-check
+oracle check rc=1
+=== ORACLE: nova build + run
+error: <ROOT>\docs\dev\hunts\novac\probes\2026-09-23-check-k7\hl-mut-untyped-param\probe.nv:4:15: error: [E_HANDLER_OP_PARAM_MUT_WITHOUT_TYPE] `mut n` in a handler operation has no type. The mode modifier describes the parameter's type, so the type must be written: `mut n Type`.
+4 |         bytes(mut n) -> []u8 => "ab".bytes()
+  |               ^^^
+oracle build rc=1
+no binary built

@@ -1,0 +1,178 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: none -- the language's own statement forms (D61 `with`, D439
+// `supervised`/`spawn`), typed by the doors this module already has.
+// Role: layer 7 (check) -- the E4 wave's STATEMENT doors (274.11 Э.7/Э.8): a
+// `with` binding is resolved and its handler value judged, its body typed as
+// a block; `supervised { spawn { ... } }` bodies are typed as ordinary blocks.
+// Used by: typing.nv (`@type_stmt` dispatches the two statement kinds here).
+// Guarded by: check-novac-file-size.py (this file exists because typing.nv
+// crossed 1000 lines at the nova-kim acceptance -- the cut is the wave's block,
+// by meaning, the precedent of return_rules.nv), pipeline/with_test.nv and
+// pipeline/concurrency_test.nv.
+// novac/src/check/with_typing.nv -- the E4 statements: `with` and `supervised`/`spawn`.
+
+module novac.check
+
+import ../lex.{TokenKind}
+import ../tree.{Node, NodeKind}
+import ../builtins.{TypeKind}
+import ../names.{raw_decl}
+import ../sem.{branch_children, leaf_text}
+import ../sem.{leaf_kind}
+import ../sem.{ty_source_name}
+import ../types.{is_ty}
+
+/// Type a `with` statement (E4 wave, 274.11): the effect bindings resolve, the
+/// handler value is judged against the effect, and the body is a block.
+fn Checker mut @type_with_stmt(st Node) -> () {
+    ro kids = branch_children(st)
+    // Geometry from the parser: `with`, name, `=`, handler expr, then
+    // (`,`, name, `=`, handler expr)*, then the body Block. A malformed
+    // binding piece is an Err leaf the subset walk already reports, and
+    // the refusal is the decision (P17) -- the same discipline as the
+    // if/while arms above.
+    if kids.len() < 5 {
+        assert(@out.len() > 0, "check: a malformed with reached typing with no refusal")
+        return
+    }
+    // Bindings: name at bi, `=` at bi+1, handler expr at bi+2, optional
+    // `,` at bi+3. The body is the LAST child; a missing body is an
+    // error node the walk reported, and typing leaves it alone.
+    mut bi = 1
+    while bi + 2 < kids.len() {
+        ro nm = kids[bi]
+        if nm.kind_of() != NodeKind.LeafNode || leaf_kind(nm) != TokenKind.Ident {
+            // A planted Err (missing name): the walk already spoke.
+            break
+        }
+        ro name = leaf_text(nm)
+        match @ctx.defs.type_decl(name) {
+            None => {
+                match nm {
+                    Leaf(t) => @refuse(t, "unknown name: nothing with this name is bound at this point (E4, wave 274.11)")
+                    Branch { .. } => {}
+                }
+            }
+            Some(d) => {
+                // The binding names a type that is not an effect: a
+                // `with` binding installs a HANDLER, and the name must
+                // be an effect declaration. Refused at the name leaf,
+                // naming what the name actually is -- the same
+                // word-the-cause rule as the other binding doors.
+                ro dk = @ctx.types[raw_decl(d)].kind
+                if dk != TypeKind.TkEffect {
+                    ro what = if dk == TypeKind.TkSum {
+                        "a sum"
+                    } else if dk == TypeKind.TkNewtype {
+                        "a newtype"
+                    } else {
+                        "a record"
+                    }
+                    match nm {
+                        Leaf(t) => @refuse(t, "a `with` binding names an effect, and `${name}` is ${what}, not one (E4, wave 274.11)")
+                        Branch { .. } => {}
+                    }
+                } else {
+                    // A TkEffect kind: the name is a valid handler
+                    // target, and the handler expression is typed below
+                    // regardless of which arm of this match ran.
+                }
+            }
+        }
+        // The handler value is typed either way: its own refusals are
+        // the answer about the value. When typing refused nothing, a
+        // KNOWN non-handler type is refused here -- `with Fs = 42`
+        // diverges from the oracle if it passes. Unknown and
+        // application types (the `Effect[Fs]` a `real_fs()`-style
+        // value carries, resolved since the Effect seed -- the named
+        // debt that remains is the 2-argument D87/D88 form) are
+        // accepted: the handler-type machinery is deferred by E.5 of
+        // the plan.
+        //
+        // THE HANDLER IS NOT LINK-CHECKED: `link_check` is off for the
+        // one expression, so a handed `make()`/`real_fs()` value is
+        // typed and recorded but the W6 shell-symbol refusal does not
+        // fire -- the with statement is never lowered this wave (the
+        // emitter has no WithStmt arm), so the call has no link to
+        // defend. MEASURED 2026-09-22: without the exemption the
+        // self-build carrier's `with Fs = real_fs()` is refused on a
+        // symbol no probe can add, and the same call in an ordinary
+        // position keeps the refusal (the control case is pinned in
+        // handed_free_test, and the probe's non-with case shows it).
+        ro saved_link = @link_check
+        @link_check = false
+        ro hmark = @out.len()
+        @type_expr(kids[bi + 2])
+        @link_check = saved_link
+        if @out.len() == hmark {
+            ro hty = @tail_type_of(kids[bi + 2])
+            if is_ty(hty) {
+                ro hk = @ctx.tys.kind_of(hty)
+                // A VALUE-TYPE kind is refused. The condition names the kinds
+                // that MAY carry a handler instead, so a kind added later is
+                // refused -- loud -- until someone judges it, rather than
+                // accepted in silence by a list that forgot it.
+                if hk != TypeKind.TkApp && hk != TypeKind.TkParam && hk != TypeKind.TkInfer &&
+                    hk != TypeKind.TkEffect {
+                    @report_first_leaf_of(branch_children(kids[bi + 2]), "a `with` binding takes a handler for its effect, and `${ty_source_name(@ctx, hty)}` is a value type -- pass a handler (E4, wave 274.11)")
+                } else {
+                    // Not a value-type kind: a protocol/generic/unknown
+                    // instance is accepted this wave, per the deferred
+                    // handler-type machinery noted above (E.5).
+                }
+            } else {
+                // No tail type recorded -- an unresolved or deferred
+                // handler type (e.g. `Effect[Fs]`) is accepted this
+                // wave; see the comment above this match.
+            }
+        } else {
+            // SILENT-OK: the handler expression already refused itself
+            // while typing; asking whether its type is a value type
+            // would be the second death over the same cause.
+        }
+        bi += 3
+        if bi < kids.len() && kids[bi].kind_of() == NodeKind.LeafNode {
+            bi += 1
+        } else {
+            // No trailing `,` leaf here: either the bindings ended (the
+            // next child is the body Block) or the loop condition below
+            // stops on its own -- either way `bi` already sits where
+            // the next piece is read from.
+        }
+    }
+    ro body = kids[kids.len() - 1]
+    if body.kind_of() == NodeKind.Block {
+        @type_block(body)
+    } else {
+        // A missing body is the parser's error node, reported by the
+        // shape walk's generic Err arm, `@report_err_branch`
+        // (check/rules.nv:791, called from check/check.nv:185).
+    }
+}
+
+/// Type a `supervised` or `spawn` statement (E4 wave, 274.11 Э.7 item 4): its
+/// one body Block is typed as an ordinary block.
+fn Checker mut @type_supervised_stmt(st Node) -> () {
+    // SUPERVISION AND SPAWN (E4 wave, 274.11 Э.7 item 4): `supervised
+    // { spawn { ... } }`. Each is its keyword leaf plus ONE body
+    // Block, and the body is typed as an ORDINARY block -- D439
+    // (direct blocking ops in a supervised body) is explicitly not
+    // this task, per the plan record. No value semantics: the
+    // statement's type is nobody's question (Outcome/T are later
+    // stages). The parser's door guarantees the body brace, so the
+    // short shape is a broken invariant, not a form: the P17 assert
+    // says typing does not re-report what a malformed arm would mean.
+    ro skids = branch_children(st)
+    if skids.len() < 2 {
+        assert(@out.len() > 0, "check: a malformed supervised/spawn reached typing with no refusal")
+        return
+    }
+    ro sbody = skids[skids.len() - 1]
+    if sbody.kind_of() == NodeKind.Block {
+        @type_block(sbody)
+    } else {
+        // A missing body is the parser's error node, reported by the
+        // shape walk's generic Err arm, `@report_err_branch`
+        // (check/rules.nv:791, called from check/check.nv:185).
+    }
+}

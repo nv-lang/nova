@@ -1,0 +1,14 @@
+type Quiz effect {
+    fn ask() -> int
+}
+
+fn g() -> int {
+    with Quiz = effect Quiz { ask() -> int => 41 } {
+        println(Quiz.ask() + 1)
+    }
+    0
+}
+
+fn main() {
+    println(g())
+}

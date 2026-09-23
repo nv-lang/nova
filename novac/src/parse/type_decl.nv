@@ -394,17 +394,34 @@ fn Cursor mut @proto_method() -> Node {
 /// Parse ONE operation signature of an effect body: `fn name(params) -> T`
 /// (D459 -- the sole normative spelling; the old bare form without `fn` is
 /// retracted). The mirror of `@proto_method` one line up, `fn` standing
-/// where `@` stands: a signature and nothing else, no body, no default --
-/// `check` refuses the whole declaration by name regardless (novac types no
-/// effect-system form yet), so this reader's only job is to stop the body
-/// from becoming junk the way `protocol`'s did before wave 3a.
+/// where `@` stands: a signature and nothing else, no body, no default.
+/// `check` still refuses an in-source effect declaration WHOLESALE by name
+/// (rules.nv EFFECT_TYPE_MSG) -- but the signature is no longer junk-shaped,
+/// because the wave that types handler literals READS the declaration as the
+/// effect's op SCHEMA (sem/effects.nv): this reader's job is to keep every
+/// op, moded params included, in a shape the schema filler can read.
 fn Cursor mut @effect_op() -> Node {
     mut kids = []Node.of(@take()) // KwFn
     @push_expected(kids, TokenKind.Ident) // operation name
     if @peek() == TokenKind.LParen {
         kids.push(@take())
-        while @peek() == TokenKind.Ident {
-            mut pk = []Node.of(@take()) // parameter name
+        // The loop follows the fn-parameter reader, not the Ident-only test
+        // that stood here: std writes effect operations with MODED params
+        // (`fn fill(mut buf []u8)` in std/fs/effect.nv), and an Ident-only
+        // condition stopped at `mut`, planted a zero-width `)` and dropped
+        // the rest of the operation into the junk bucket -- so the op never
+        // reached the effect SCHEMA this wave registers, and a handler
+        // implementing it met "not an operation of `Fs`" about an operation
+        // `Fs` declares. Measured 2026-09-23 on the handed std declaration.
+        while @peek() == TokenKind.Ident || @at_mode_word() {
+            mut pk = []Node.new()
+            ro mode_ahead = @at_mode_word() && @peek(skip: 1) == TokenKind.Ident
+            if mode_ahead {
+                pk.push(@take())
+            } else {
+                // No mode: read-only by default (D176), as every parameter.
+            }
+            pk.push(@take()) // parameter name
             pk.append(@type_ref())
             @push_if(pk, TokenKind.Comma)
             kids.push(@node(NodeKind.Param, pk))

@@ -1426,6 +1426,36 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1272
+max=1320
+# 2026-09-23, integrator: rows 1312-1320 added -- the 19 findings of hunt
+# 2026-09-23-check-k7 on the E4 surface, grouped by root (1309 extended with
+# two more). rows 1263->1272, max 1311->1320.
+rows=1263
+max=1311
+# 2026-09-23, integrator: row 1311 added -- the reason for the
+# NOVA_SKIP_CI_CHECK=1 push of the accepted nova-kim batch, with the
+# measured non-intersection (0 of 105 files in the red main-gate steps).
+# rows 1262->1263, max 1310->1311.
+rows=1262
+max=1310
+# 2026-09-23, integrator: row 1310 added -- the corpus runner never ran its
+# self-build batch (an env assignment after `timeout` is run as a command,
+# rc=127) and its fallback blamed an ICE that did not exist.
+# rows 1261->1262, max 1309->1310.
+rows=1261
+max=1309
+# 2026-09-23, integrator: row 1309 added at the nova-kim acceptance -- a ro
+# parameter of a non-scalar type returned through a non-ro result was
+# accepted by novac, refused by the oracle (E_READONLY_COERCE).
+# rows 1260->1261, max 1308->1309.
+rows=1260
+max=1308
+# 2026-09-23, integrator: rows 1307-1308 added -- a killed novac gate wrote a
+# GREEN verdict (EXIT trap took the last command's code; fixed with a
+# reached-the-end flag and a live-path selftest), and a literal as a
+# constructor-pattern argument is not parsed by novac (49 std carriers).
+# rows 1258->1260, max 1306->1308.
 rows=1258
 max=1306
 # 2026-09-22, integrator: row 1306 added -- mut/consume at module level

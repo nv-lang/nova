@@ -25,6 +25,7 @@ import ../tree.{Node, NodeKind, NodeId, no_node}
 import ../sem.{branch_children, is_expr_kind, leaf_kind, ret_is_unit, is_value_tail_kind, expr_leaf_name}
 import ../types.{TyId, no_ty, is_ty}
 import ../sem.{iflet_body_at, iflet_else_at}
+import ../builtins.{is_true_literal}
 
 /// Does this statement END the function on every path?
 ///
@@ -56,7 +57,7 @@ fn stmt_terminates(st Node) -> bool {
         ro wk = branch_children(st)
         if wk.len() < 2 { return false }
         ro cond = wk[1]
-        return cond.kind_of() == NodeKind.Name && expr_leaf_name(cond) == "true"
+        return cond.kind_of() == NodeKind.Name && is_true_literal(expr_leaf_name(cond))
     }
     // An if-let ends the function when BOTH its branches do (wave W1): the
     // then-block and the else. Without an else the None path falls through,
@@ -65,6 +66,24 @@ fn stmt_terminates(st Node) -> bool {
         ro lk = branch_children(st)
         if lk.len() <= iflet_else_at(lk) { return false }
         return block_terminates(lk[iflet_body_at(lk)]) && block_terminates(lk[iflet_else_at(lk)])
+    }
+    // A `with` ends the function when its BODY does (E4 wave, 274.11 -- the
+    // form-6 carrier measurement): the body is an ordinary block from
+    // typing's point of view (the with-arm types it with `@type_block`),
+    // so the question is `block_terminates`'s own and no new judge is
+    // written -- the IfLet precedent one arm up, one branch instead of
+    // two. Measured 2026-09-23 on novac/src/main.nv:351:
+    // `with Os = real_os() { return args() }` as the tail of
+    // `fn compiler_argv() -> []str` refused "ends without a value" while
+    // the oracle compiles it -- a body's `return` IS the fn's return.
+    // Supervised/spawn deliberately do NOT join this list: a `return`
+    // inside a `spawn` body belongs to the CHILD fiber (D13), and claiming
+    // it terminates the enclosing fn would need a semantics proof this
+    // task does not have -- only what the carrier needs, per the wave.
+    if k == NodeKind.WithStmt {
+        ro wk = branch_children(st)
+        if wk.len() < 2 { return false }
+        return block_terminates(wk[wk.len() - 1])
     }
     if k != NodeKind.IfStmt { return false }
     ro kids = branch_children(st)

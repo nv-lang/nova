@@ -1,0 +1,12 @@
+=== SUBJECT: novac check
+novac rc=0
+=== ORACLE: nova check
+ok: docs/dev/hunts/novac/probes/2026-09-23-check-k7/spawn-outside-supervised/probe.nv
+
+===== SUMMARY =====
+PASS: 1  FAIL: 0
+oracle check rc=0
+=== ORACLE: nova build + run
+error: codegen error: spawn is only allowed inside `supervised`, `parallel for` or other structured-scope (D50). Wrap your code in `supervised { ... }` to enable concurrent execution.
+oracle build rc=1
+no binary built

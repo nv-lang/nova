@@ -1,0 +1,175 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/check/run.nv -- the RUN doors: `check` (the module's ONE entry),
+// `check_instance` (one generic body under one substitution), and the one
+// file-level judge that must see the file's children before any walk --
+// `@reject_repeated_impl`.
+//
+// Donor: none -- mechanical extraction from check.nv along an existing seam
+//   (decision 12's 1000-line cap), not a borrowed design: the entry doors
+//   were always "a constructor plus a run" (the doc below says so), and the
+//   neighbour-judge was always filed separately from the per-node walk.
+// Role: layer 7 -- how a check RUN starts and ends: build the Checker, run
+//   the shape walk, type the file only on a clean verdict, hand back the
+//   (diagnostics, channel) pair.
+// Used by: pipeline (compile/compile_with/check_instance); nothing else may
+//   enter the module -- a second entry would be a second answer to one file.
+// Guarded by: check-novac-file-size.py (this file exists because check.nv
+//   crossed 1000 lines -- 1048 with the E4 wave's additions -- and the cap's
+//   remedy is a by-meaning cut, not a baseline), the pipeline tests.
+//
+// A co-equal file of module `novac.check` (folder = one module), cut by
+// MEANING under decision 12: check.nv keeps the Checker state and the shape
+// walk; this file keeps the doors that START a run. Every name below is
+// still module-private where it was -- the cut moves bodies, not borders.
+
+module novac.check
+
+import ../source.{SourceText}
+import ../lex.{TokenKind}
+import ../tree.{Node, NodeId, no_node, raw_node}
+import ../diag.{Diagnostic}
+import ../builtins.{IMPL_ATTR}
+import ../sem.{Ctx, CheckOut, branch_children, file_decls, attr_kids_name}
+import ../names.{NameTable, NamespaceId}
+import ../resolve.{FnIndex, FieldIndex}
+import ../types.{TyId, no_ty}
+
+/// Check a parsed file against the E1 subset. Always returns the full list;
+/// no Result (274 §4 item 1).
+///
+/// WHY THIS IS A FREE FUNCTION AND NOT A METHOD ON `Ctx` (owner's question,
+/// 2026-08-16). `Ctx` is DATA — the type registry and the callable table.
+/// Hanging a pass on it would make the registry own the pass, and then
+/// `emit` would want to hang there too: `Ctx` becomes the object that knows
+/// every backend, which is exactly the ownership the architecture keeps
+/// apart (the rustc_middle model — `TyCtxt` holds data, passes consume it).
+/// It would also invert an edge of the §3 table: `Ctx` lives in `sem`, so a
+/// method on it would make `sem` reference `Diagnostic` and the checker,
+/// and `check-novac-deps.py` refuses that edge by construction. What the
+/// entry point IS, is a constructor plus a run — the same shape `emit_c`
+/// uses for `Emitter`: the module has one door, and the receiver lives
+/// behind it.
+/// The channel comes back WITH the diagnostics, from ONE door: a second
+/// entry point ("check, and this time also record") would be two passes
+/// disagreeing about one file, which is the disease the channel cures.
+///
+/// The typing walk runs only on a CLEAN subset verdict. That is not a
+/// convenience: the emitter's contract is already "never called on broken
+/// input" (pipeline), the lattice remaining ices are user errors under
+/// [LEGACY-#700-user-error-as-ice until:E2b3], and typing a file that the
+/// subset already refused would turn a refusal into an ice. When #700 lands
+/// the walk becomes unconditional, because then its answer on bad input is a
+/// diagnostic and not a death.
+export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) {
+    mut c = Checker {
+        src, ctx,
+        res: FnIndex.build(ctx.fns),
+        fres: FieldIndex.build(ctx.fields),
+        gap_at: -1,
+        gap_kind: TokenKind.ErrorTok,
+        out: []Diagnostic.new(),
+        chan: CheckOut.new(raw_node(file.id_of()) + 1),
+        scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
+        seen_decls: NameTable.new(NamespaceId.NsDefs),
+        tail_value_body: no_node(),
+        ret_expect: no_ty(),
+        value_expect: no_ty(),
+        link_check: true,
+        substs: []TyId.new(),
+    }
+    // THROUGH THE DOOR (P18): a raw walk over a file's children does not see
+    // what sits inside an `export` wrapper, so `export #impl` would have been
+    // invisible to this judge -- and invisible, not refused. `file_decls`
+    // unwraps it and keeps the order, which is what a run of attributes needs.
+    c.reject_repeated_impl(file_decls(file))
+    c.walk(file)
+    c.tell_gap_if_silent()
+    if c.out.len() == 0 {
+        // THE ENTRY IS A RESOLUTION (274.4 step 2): a name chain is walked to
+        // find it, and after the checker nobody resolves -- mono reads the
+        // channel instead of asking the registry itself.
+        match c.res.entry_row(c.ctx.fns) {
+            Some(r) => { c.chan.record_entry(r) }
+            None => {
+                // A file with no entry point: nothing to record, and mono
+                // answers "nothing reachable" from the same silence.
+            }
+        }
+        c.type_file(file)
+        // The disjointness walk that stood here is gone (2026-08-18): the
+        // channel holds ONE sum per node now, so "a call and an
+        // instantiation at once" is not a state that can be built.
+    } else {
+        // A refused file is not typed: the walk's answer on broken input is an
+        // ice today ([LEGACY-#700-user-error-as-ice until:E2b3]), so the refusals already
+        // collected ARE the verdict, and the channel goes back as the walk left it.
+    }
+    (c.out, c.chan)
+}
+
+/// Type ONE declaration under a substitution -- one instance of a generic
+/// callable (E2-b2; donor: Go stenciling, one copy of the body per instance,
+/// each typed on its own).
+///
+/// WHY A SEPARATE CHANNEL. The channel is keyed by `NodeId`: one node, one
+/// type. Two instances of one body cannot both live in it, and the alternative
+/// -- keeping the body's types parametric and substituting in every reader --
+/// spreads one decision across every consumer of the channel (P18). So each
+/// instance gets its own channel, sized like the file's, and the emitter reads
+/// the one belonging to the instance it emits.
+///
+/// `cap` is the file's node capacity, not the declaration's: node ids are
+/// handed out per FILE, so a declaration's nodes sit anywhere in that range.
+export fn check_instance(decl Node, src SourceText, ctx Ctx, substs []TyId, cap int) -> ([]Diagnostic, CheckOut)
+    requires cap > 0, "check: an instance channel needs the file's node capacity"
+{
+    mut c = Checker {
+        src, ctx,
+        res: FnIndex.build(ctx.fns),
+        fres: FieldIndex.build(ctx.fields),
+        // SILENT-OK: an instance never TELLS its gap, and that is not an
+        // omission. A gap is a syntax hole, and syntax was judged when the
+        // FILE was checked -- by the time an instance is typed the same hole
+        // has already been told there, or already suppressed there. Telling
+        // it again would report one hole once per instantiation. The field is
+        // still initialised so both entries share one shape; only
+        // `tell_gap_if_silent` belongs to the file alone.
+        gap_at: -1,
+        gap_kind: TokenKind.ErrorTok,
+        out: []Diagnostic.new(),
+        chan: CheckOut.new(cap),
+        scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
+        seen_decls: NameTable.new(NamespaceId.NsDefs),
+        tail_value_body: no_node(),
+        ret_expect: no_ty(),
+        value_expect: no_ty(),
+        link_check: true,
+        substs,
+    }
+    c.type_fn(decl)
+    (c.out, c.chan)
+}
+
+/// `#impl` stands over a declaration ONCE (D186). Judged here and not in the
+/// walk's `AttrDecl` arm, by construction: the walk sees ONE node, and this form
+/// is about NEIGHBOURS. The same shape `coerce_marked` uses -- an attribute
+/// belongs to the declaration that follows it, so the question is positional and
+/// is asked over the file's children.
+fn Checker mut @reject_repeated_impl(kids []Node) -> () {
+    mut prev_impl = false
+    for c in kids {
+        if c.kind_of() != NodeKind.AttrDecl {
+            prev_impl = false
+            continue
+        } else {
+            // An attribute: it either starts a run or continues one.
+        }
+        ro is_impl = attr_kids_name(branch_children(c), IMPL_ATTR)
+        if is_impl && prev_impl {
+            @reject_first_leaf_of(branch_children(c), IMPL_REPEATED_MSG)
+        } else {
+            // First `#impl` of a run, or another attribute entirely.
+        }
+        prev_impl = is_impl
+    }
+}

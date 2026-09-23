@@ -83,6 +83,10 @@ def main():
                      # is a registry table of Ctx like the others, and its rows are
                      # judged like the others.
                      s / "sem" / "interop.nv",
+                     # `effects.nv` -- 2026-09-23, волна E4 (план 274.11): реестр
+                     # схем операций эффектов, прецедент protocols.nv применённый
+                     # к эффектной половине системы эффектов. Строки те же строки.
+                     s / "sem" / "effects.nv",
                      s / "types" / "types.nv"]
     sem = pathlib.Path(a[2]) if a[2] else root / "novac" / "src" / "sem" / "sem.nv"
     plan = pathlib.Path(a[3]) if a[3] else root / "docs" / "plans" / "274-novac-self-hosted-compiler.md"

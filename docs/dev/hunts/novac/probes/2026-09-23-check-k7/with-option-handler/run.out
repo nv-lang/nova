@@ -1,0 +1,16 @@
+=== SUBJECT: novac check
+novac rc=0
+=== ORACLE: nova check
+ok: docs/dev/hunts/novac/probes/2026-09-23-check-k7/with-option-handler/probe.nv
+
+===== SUMMARY =====
+PASS: 1  FAIL: 0
+oracle check rc=0
+=== ORACLE: nova build + run
+error: compiler error:
+<TMP>\build-8fee2f2743f0\probe.c:7628:24: error: initializing 'NovaVtable_Random *' with an expression of incompatible type 'NovaOpt_nova_int' (aka 'struct NovaOpt_nova_int')
+ 7628 |     NovaVtable_Random* _nv_tmp_777 = ((NovaOpt_nova_int){.tag = NOVA_TAG_Option_Some, .value = (((nova_int)1LL))}); /* GC root pin (TLS not scanned) */
+      |                        ^             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1 error generated.
+oracle build rc=1
+no binary built

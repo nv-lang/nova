@@ -7,6 +7,7 @@ module novac.parse
 
 import ../lex.{lex}
 import ../tree.{Node, NodeKind, tree_reserialize}
+import ../diag.{ice}
 
 fn roundtrip(src str) -> bool => tree_reserialize(parse(lex(src))) == src
 
@@ -269,6 +270,44 @@ test "shape: an effect_list before `->` parses as EffectItem siblings (registry 
     assert(tree_reserialize(f) == src)
 }
 
+test "shape: a with statement parses as one WithStmt, bindings and body intact (274.11 Э.4)" {
+    // `with Fs = h, Os = h2 { body }` used to fall apart into THREE
+    // plausible statements -- a `with` name, an assignment, and a record
+    // constructor -- and check refused none of them by name. The door is
+    // spelling + shape (Ident Ident `=` at 0..2 can only be this form),
+    // and every byte must round-trip: two bindings, two commas worth of
+    // `=` signs, one body block.
+    ro src = "fn g(h Fs, o Os) -> int {\n    with Fs = h, Os = o {\n        1\n    }\n}\n"
+    ro f = parse(lex(src))
+    match ret_test_fn_block(f) {
+        Branch { children, .. } => {
+            mut found_with = false
+            for c in children {
+                if c.kind_of() != NodeKind.WithStmt { continue }
+                found_with = true
+                match c {
+                    Branch { children: wk, .. } => {
+                        mut names = 0
+                        mut body = false
+                        for k in wk {
+                            if k.kind_of() == NodeKind.Name { names += 1 }
+                            if k.kind_of() == NodeKind.Block { body = true }
+                        }
+                        // Geometry: `with`, Name, `=`, expr, `,`, Name, `=`, expr, Block.
+                        assert(wk.len() == 9)
+                        assert(names == 2)
+                        assert(body)
+                    }
+                    Leaf(_) => assert(false)
+                }
+            }
+            assert(found_with)
+        }
+        Leaf(_) => assert(false)
+    }
+    assert(tree_reserialize(f) == src)
+}
+
 test "shape: a comma between brace-record fields parses, not just a newline (registry #1227)" {
     // The field loop's condition (`Ident` or a mode word) never matched a
     // `,` -- so the SECOND field of a one-line record looked like the end
@@ -392,4 +431,192 @@ test "shape: a nested positional/record sub-pattern in a variant payload parses,
     ro rf = parse(lex(rec_src))
     assert(tree_reserialize(rf) == rec_src, "the record sub-pattern form must reserialize byte for byte too")
     assert(count_err(rf) == 0, "the record sub-pattern form must plant no NodeKind.Err either")
+}
+
+
+test "tree reserialization: a handler literal loses nothing -- typed params, bare names, block body" {
+    // The three measured spellings of the op (oracle, 2026-09-22): typed
+    // params (`p str`), bare names (`q`), an expression body after `=>` and
+    // a BLOCK body -- plus two ops separated by a NEWLINE, no comma (the
+    // oracle's own fixture shape). Every token -- `effect`, the name, both
+    // braces, parens, arrows, commas -- is a child of the literal, so the
+    // reserialize identity is the whole witness.
+    ro src = "fn g() -> int {\n    with Fs = effect Fs {\n        read(p str) -> []u8 => []u8.new()\n        seek(q) -> int {\n            return q\n        }\n    } {\n        1\n    }\n    0\n}\n"
+    assert(roundtrip(src))
+}
+
+test "tree reserialization: a handler literal body may be a record constructor" {
+    // The body is read with the constructor restriction LIFTED (the
+    // @call_args reasoning): `=> Point { x: 1 }` must keep its brace as a
+    // constructor, not lose it to the no_ctor discipline the with-head set.
+    ro src = "fn g() -> int {\n    with Fs = effect Fs {\n        read(p str) -> Point => Point { x: 1 }\n    } {\n        1\n    }\n    0\n}\n"
+    assert(roundtrip(src))
+}
+
+test "shape: a handler literal is one HandlerLit, ops are HandlerOps with every piece" {
+    // `effect Fs { read(p str) -> []u8 => []u8.new() }` used to fall apart
+    // -- `effect` read as a name, `Fs { ... }` as a record constructor --
+    // and the with-arm's handler rule accepted the debris silently. The
+    // door is spelling + shape (Ident Ident `{` can only be this form), and
+    // the shape is: effect leaf, name leaf, `{`, one HandlerOp per
+    // operation, `}`. The op keeps: name, `(`, a Param per parameter (name
+    // leaf, optional type leaves, optional comma INSIDE), `)`, a RetType
+    // node, `=>`, the body.
+    ro src = "fn g() -> int {\n    with Fs = effect Fs {\n        read(p str, q) -> []u8 => []u8.new()\n    } {\n        1\n    }\n    0\n}\n"
+    ro f = parse(lex(src))
+    ro with_stmt = handler_lit_test_stmt(f)
+    match with_stmt {
+        Branch { children: wk, .. } => {
+            mut found = false
+            for k in wk {
+                if k.kind_of() != NodeKind.HandlerLit { continue }
+                found = true
+                match k {
+                    Branch { children: lk, .. } => {
+                        // `effect`, name, `{`, ONE HandlerOp, `}`.
+                        assert(lk.len() == 5, "a one-op literal has five children")
+                        assert(lk[0].kind_of() == NodeKind.LeafNode)
+                        assert(lk[1].kind_of() == NodeKind.LeafNode)
+                        assert(lk[2].kind_of() == NodeKind.LeafNode)
+                        assert(lk[3].kind_of() == NodeKind.HandlerOp)
+                        assert(lk[4].kind_of() == NodeKind.LeafNode)
+                        match lk[3] {
+                            Branch { children: ok, .. } => {
+                                // name, `(`, two Params (the comma lives
+                                // INSIDE the first, the decl-side shape), `)`,
+                                // RetType, `=>`, body.
+                                assert(ok.len() == 8, "the op keeps every token as a child")
+                                assert(ok[0].kind_of() == NodeKind.LeafNode)
+                                assert(ok[1].kind_of() == NodeKind.LeafNode)
+                                assert(ok[2].kind_of() == NodeKind.Param)
+                                assert(ok[3].kind_of() == NodeKind.Param)
+                                assert(ok[4].kind_of() == NodeKind.LeafNode)
+                                assert(ok[5].kind_of() == NodeKind.RetType)
+                                assert(ok[6].kind_of() == NodeKind.LeafNode, "the `=>` is kept")
+                                assert(ok[7].kind_of() == NodeKind.ArrayLit, "the body is the constructor expression `[]u8.new()` -- the ArrayLit form")
+                            }
+                            Leaf(_) => assert(false)
+                        }
+                    }
+                    Leaf(_) => assert(false)
+                }
+            }
+            assert(found, "the with binding's handler must be ONE HandlerLit node")
+        }
+        Leaf(_) => assert(false)
+    }
+    assert(tree_reserialize(f) == src)
+}
+
+test "shape: a handler-literal op without `-> T` keeps the absence VISIBLE" {
+    // The oracle REQUIRES the return type (E_INCOMPLETE_HANDLER_OP_DECL);
+    // the parser must not plant a fake one. The absence is readable as: no
+    // RetType child among the op's children.
+    ro src = "fn g() -> int {\n    with Fs = effect Fs {\n        read(p) => []u8.new()\n    } {\n        1\n    }\n    0\n}\n"
+    ro f = parse(lex(src))
+    ro with_stmt = handler_lit_test_stmt(f)
+    match with_stmt {
+        Branch { children: wk, .. } => {
+            for k in wk {
+                if k.kind_of() != NodeKind.HandlerLit { continue }
+                match k {
+                    Branch { children: lk, .. } => {
+                        for op in lk {
+                            if op.kind_of() != NodeKind.HandlerOp { continue }
+                            match op {
+                                Branch { children: ok, .. } => {
+                                    mut has_ret = false
+                                    for c in ok {
+                                        if c.kind_of() == NodeKind.RetType { has_ret = true }
+                                    }
+                                    assert(!has_ret, "no `-> T` means NO RetType node -- the checker names the absence")
+                                }
+                                Leaf(_) => assert(false)
+                            }
+                        }
+                    }
+                    Leaf(_) => assert(false)
+                }
+            }
+        }
+        Leaf(_) => assert(false)
+    }
+    assert(tree_reserialize(f) == src)
+}
+
+/// The with statement inside the test fn's body -- the shape tests walk the
+/// literal through it, and a helper keeps the four tests above readable.
+fn handler_lit_test_stmt(f Node) -> ro Node {
+    match ret_test_fn_block(f) {
+        Branch { children, .. } => {
+            for c in children {
+                if c.kind_of() == NodeKind.WithStmt { return c }
+            }
+        }
+        Leaf(_) => {}
+    }
+    ice("parse test: the fixture has no with statement")
+}
+
+
+test "tree reserialization: supervised { spawn { ... } } survives byte for byte" {
+    // The carrier's exact concurrency shape (main.nv:286-330): a nested
+    // spawn inside supervised. Every token -- both keywords, both brace
+    // pairs -- is a child of its own statement node, so the reserialize
+    // identity is the whole witness.
+    ro src = "fn g() -> int {\n    supervised {\n        spawn {\n            1\n        }\n    }\n    0\n}\n"
+    assert(roundtrip(src))
+}
+
+test "shape: supervised and spawn are their own statement nodes, bodies nested" {
+    // Before these kinds the pair fell apart into a RecordCtor refusal and
+    // the parser's fallback (plan 274.11 Э.7's measurement, item 5). The
+    // door is spelling + shape (`supervised {` can only be this form), and
+    // the shape is: keyword leaf, ONE body Block; the spawn's Block sits
+    // inside the supervised's.
+    ro src = "fn g() -> int {\n    supervised {\n        spawn {\n            1\n        }\n    }\n    0\n}\n"
+    ro f = parse(lex(src))
+    ro sup = supervised_test_stmt(f)
+    match sup {
+        Branch { children: sk, .. } => {
+            // `supervised`, `{ ... }`.
+            assert(sk.len() == 2, "a bare supervised statement has two children")
+            assert(sk[1].kind_of() == NodeKind.Block)
+            match sk[1] {
+                Branch { children: bk, .. } => {
+                    mut found_spawn = false
+                    for b in bk {
+                        if b.kind_of() != NodeKind.SpawnStmt { continue }
+                        found_spawn = true
+                        match b {
+                            Branch { children: pk, .. } => {
+                                // `spawn`, `{ ... }`.
+                                assert(pk.len() == 2, "a bare spawn statement has two children")
+                                assert(pk[1].kind_of() == NodeKind.Block)
+                            }
+                            Leaf(_) => assert(false)
+                        }
+                    }
+                    assert(found_spawn, "the supervised body must hold the spawn statement")
+                }
+                Leaf(_) => assert(false)
+            }
+        }
+        Leaf(_) => assert(false)
+    }
+    assert(tree_reserialize(f) == src)
+}
+
+/// The supervised statement inside the test fn's body -- the shape tests
+/// walk the spawn through it, and a helper keeps the three tests readable.
+fn supervised_test_stmt(f Node) -> ro Node {
+    match ret_test_fn_block(f) {
+        Branch { children, .. } => {
+            for c in children {
+                if c.kind_of() == NodeKind.SupervisedStmt { return c }
+            }
+        }
+        Leaf(_) => {}
+    }
+    ice("parse test: the fixture has no supervised statement")
 }

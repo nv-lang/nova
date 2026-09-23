@@ -1,0 +1,7 @@
+import std.fs.{Fs}
+
+fn g() Fs -> i64 => Fs.seek(3, 0, 0)
+
+fn main() {
+    println(1)
+}

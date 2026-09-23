@@ -82,7 +82,8 @@ fn Checker @representation_of_or_self(t TyId) -> TyId {
     if !is_ty(t) { return same_ty(t) }
     match @ctx.tys.kind_of(t) {
         TkNewtype => representation_of(@ctx, t)
-        TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkTuple => same_ty(t)
+        // TkEffect: an effect is not a newtype -- nothing to unwrap, itself.
+        TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkTuple | TkEffect => same_ty(t)
     }
 }
 

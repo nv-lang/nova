@@ -1,0 +1,10 @@
+fn g() -> int {
+    with Random = "ab".bytes() {
+        println(1)
+    }
+    0
+}
+
+fn main() {
+    println(g())
+}

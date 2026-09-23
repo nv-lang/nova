@@ -32,7 +32,7 @@ import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING,
 import ../builtins.{EQUAL_METHOD, OPTION_SOME_VARIANT}
 import ../sem.{LitArg, raw_crow, field_range_of, decl_of_ty, no_frow, brace_pattern, has_rest}
 import ../resolve.{FnLookup}
-import ../names.{NameTable, NamespaceId}
+import ../names.{NameTable, NamespaceId, raw_decl}
 import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
 import ../sem.{Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text}
 import ../sem.{is_value_tail_kind}
@@ -252,6 +252,8 @@ fn Checker mut @type_fn(f Node) -> () {
         // THE entry point takes no parameters, so there is nothing to bind; its
         // body is typed by the loop below like any other body.
     }
+    // Everything bound so far is a parameter; the return door asks (#1309).
+    @scope.seal_params()
     for c in kids {
         ro ck = c.kind_of()
         if ck == NodeKind.Requires {
@@ -694,6 +696,10 @@ fn Checker mut @type_stmt(st Node) -> () {
         @type_destructure_bind(st)
     } else if k == NodeKind.IfLet {
         @type_if_let(st)
+    } else if k == NodeKind.WithStmt {
+        @type_with_stmt(st)
+    } else if k == NodeKind.SupervisedStmt || k == NodeKind.SpawnStmt {
+        @type_supervised_stmt(st)
     } else if is_expr_kind(k) {
         @type_expr(st)
     } else {
