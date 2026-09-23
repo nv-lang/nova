@@ -20,7 +20,7 @@
 module novac.emit_c
 
 import ../sem.{Ctx, CheckOut, branch_children, leaf_text, leaf_kind, escaped_byte_len}
-import ../sem.{unescape_dollar, is_expr_kind, prim_row_of}
+import ../sem.{literal_as_c_text, is_expr_kind, prim_row_of}
 import ../builtins.{BuiltinType, FMT_BARE_C}
 import ../sem.{c_callable, decl_of_ty, field_range_of, raw_frow, is_value_record}
 import ../sem.{c_method_symbol}
@@ -55,7 +55,7 @@ fn Emitter mut @emit_interp_build(e Node) -> str {
             ro piece = frag_body(leaf_text(c), fi == 0, fi == kids.len() - 1)
             if piece != "" {
                 @body.append("    Nova_StringBuilder_method_append(${sb}, (nova_str){.ptr=(const uint8_t*)\"")
-                @body.append(unescape_dollar(piece))
+                @body.append(literal_as_c_text(piece))
                 @body.append("\", .len=${escaped_byte_len(piece)}});\n")
             } else {
                 // An empty fragment appends nothing.

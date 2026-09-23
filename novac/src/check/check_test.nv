@@ -448,6 +448,22 @@ test "interpolation format spec `:?`: named refusal, not the anonymous parser fa
     assert(diagnose(control) == 0, "plain interpolation must stay clean")
 }
 
+test "a line continuation on a CRLF file is one continuation, not an unknown escape on the CR (registry 1324)" {
+    // D467 section 3's `\` + line break, in a file whose line ending is
+    // `\r\n`. The lexer read it as one continuation; the escape door knew
+    // only `\` + `\n` and refused the `\r` -- four of novac's own test files
+    // were rejected in every CRLF checkout and accepted in an LF one.
+    ro crlf = "module m\r\n\r\nfn f() -> str {\r\n    \"ab\\\r\ncd\"\r\n}\r\n"
+    assert(diagnose(crlf) == 0, diagnose_first_msg(crlf))
+    // CONTROL, the reason the rule checks the LF after the CR: a lone `\`+CR
+    // with no line break is no continuation, and stays an unknown escape.
+    ro lone_cr = "module m\n\nfn f() -> str {\n    \"ab\\\rcd\"\n}\n"
+    assert(diagnose_first_msg(lone_cr).contains("this string escape is not compiled yet"), "a bare CR after a backslash must stay refused")
+    // CONTROL: the LF continuation that already worked must stay clean.
+    ro lf = "module m\n\nfn f() -> str {\n    \"ab\\\ncd\"\n}\n"
+    assert(diagnose(lf) == 0, diagnose_first_msg(lf))
+}
+
 test "unknown escape inside an interpolated string's literal piece is refused, not silently accepted (registry #TBD)" {
     // `report_if_bad_escape` used to walk only `Lit`-node children (the plain
     // StrLit path in `check.nv`'s `Lit` arm) -- an interpolated string never
