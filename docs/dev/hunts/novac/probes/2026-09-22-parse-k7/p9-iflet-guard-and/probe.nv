@@ -1,8 +1,0 @@
-module p9
-
-fn take(o Option[int]) -> int {
-    if Some(v) = o && v > 0 {
-        return v
-    }
-    0
-}

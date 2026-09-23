@@ -1,3 +1,0 @@
-module p4
-
-fn count(v []*int) -> int => 0
