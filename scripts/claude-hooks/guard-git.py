@@ -72,6 +72,22 @@ RULES = [
      "FORBIDDEN: git add -A/--all/-u/--update/. — tolko po imenam faylov (konventsiya)."),
     (re.compile(r"\bgit\b[^|;&\n]*\bstash\b", re.IGNORECASE),
      "FORBIDDEN: git stash — worktree delyat .git (konventsiya: temp-commit/reset)."),
+    # ПУШ СИЛОЙ И ПЕРЕПИСЫВАНИЕ ИСТОРИИ (2026-09-23, очередь механизмов лестницы
+    # правил, docs/dev/rules-for-agents.md §12). AGENTS.md запрещает оба, а держались
+    # они только текстом: на коммитах стоят рабочие деревья других окон, зеркал три.
+    # Подкоманда ищется НА СВОЁМ МЕСТЕ — после `git` и необязательных `-C`/`-c`, — а
+    # не где угодно в строке: иначе `git log --grep rebase` и сообщение со словом
+    # «rebase» получали бы отказ за упоминание.
+    (re.compile(r"\bgit(\s+-[Cc]\s+\S+)*\s+push\b[^|;&\n]*"
+                r"(\s--force(-with-lease|-if-includes)?\b|\s-[A-Za-z]*f[A-Za-z]*\b|\s\+\S)"),
+     "FORBIDDEN: git push --force/-f/+ref — na kommitakh stoyat derev'ya drugikh okon, "
+     "zerkal tri (AGENTS.md: never git push --force)."),
+    (re.compile(r"\bgit(\s+-[Cc]\s+\S+)*\s+(rebase|filter-branch|filter-repo)\b"),
+     "FORBIDDEN: git rebase/filter-branch — perepisyvanie istorii tol'ko s razresheniya "
+     "vladel'tsa (AGENTS.md)."),
+    (re.compile(r"\bgit(\s+-[Cc]\s+\S+)*\s+pull\b[^|;&\n]*\s--rebase\b"),
+     "FORBIDDEN: git pull --rebase — perepisyvaet lokal'nye kommity; sinkhronizatsiya — "
+     "sliyaniem origin/main (AGENTS.md, /commit-push)."),
     # СОСТОЯНИЕ-МЕНЯЮЩАЯ КОМАНДА БЕЗ ЯВНОГО -C.
     #
     # Наблюдение 2026-08-10: рабочий каталог оболочки уехал в worktree окна
