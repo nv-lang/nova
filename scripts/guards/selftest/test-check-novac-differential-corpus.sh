@@ -66,7 +66,7 @@ corpus_out() {
         printf 'novac-diff-corpus: файлов 60 — совпали-приняли %s · совпали-отвергли 0 · отставание 40 · вне-точки 0 · заблокировано-оракулом 9 · DANGER 0 · PANIC 0 · allow 0\n' "$1"
         printf 'novac-diff-corpus: поведенчески совпали %s из %s · самосборка: отвергнуто 0 из 18\n' "$2" "$1"
         printf 'novac-diff-corpus: цена прогона — novac 40000ms, оракул 20000ms, стена %sms\n' "$3"
-        printf 'novac-diff-corpus baseline-numbers: contract-match=%s behavior-match=%s out-of-point=0 oracle-blocked=9 self-distance=0/18 self-mode=%s\n' "$1" "$2" "${4:-batch}"
+        printf 'novac-diff-corpus baseline-numbers: contract-match=%s behavior-match=%s out-of-point=0 oracle-blocked=9 self-distance=0/18 self-mode=%s\n' "$1" "$2" "${4:-batch-unit}"
         printf 'novac-diff-corpus ok\n'
     } > "$FIX/corpus.out.fixture"
 }
@@ -143,6 +143,11 @@ corpus_out 11 5 68000
 sed -i 's/ self-mode=[a-z-]*//' "$FIX/corpus.out.fixture"
 check "поля self-mode нет вовсе — красный (формат разошёлся, а не «всё хорошо»)" "$(run)" "1"
 has "$TMP/err" 'поля нет в строке раннера' "пропажа поля названа"
+# С 2026-09-23 мера 0.2 — пачка МОДУЛЯМИ (NOVAC_UNIT=1, консенсус окна Карины и
+# интегратора). Пофайловая пачка `batch` — прежняя мера, и молча вернуться к ней
+# нельзя: число снова ответило бы на другой вопрос под тем же именем.
+corpus_out 11 5 68000 batch
+check "self-mode=batch (пофайловая пачка, прежняя мера) — красный" "$(run)" "1"
 corpus_out 11 5 68000
 
 echo "== ловит непарсимое =="
