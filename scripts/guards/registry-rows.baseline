@@ -1426,6 +1426,12 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1263
+max=1311
+# 2026-09-23, integrator: row 1311 added -- the reason for the
+# NOVA_SKIP_CI_CHECK=1 push of the accepted nova-kim batch, with the
+# measured non-intersection (0 of 105 files in the red main-gate steps).
+# rows 1262->1263, max 1310->1311.
 rows=1262
 max=1310
 # 2026-09-23, integrator: row 1310 added -- the corpus runner never ran its
