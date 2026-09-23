@@ -262,6 +262,7 @@ export type Ctx {
     fn_decl_rows []FnRow /// NodeId of a FnDecl -> the row it owns in `fns`; `no_row()` = none. See below.
     fns FnTable /// THE callable registry: file functions and read method signatures, one row shape (plan 273).
     protos ProtoTable /// THE protocol registry: contracts and the signatures they require (E2-b3 wave 3b)
+    effects EffectTable /// THE effect-op schema registry: what operations an effect declares, with which signatures (E4 wave, 274.11) -- the effect half of the effect system, protocols' sibling: a handler literal is judged against THIS, never against the tree
     consts ConstTable /// THE module-level constants of this file: name, type, initializer node (274.5 B2).
     gates []str /// Protocol names written in `#impl(...)` gates, grouped per declaration via TypeDef.gate_off/gate_cnt. NAMES and not ids on purpose: a protocol may be declared after the type that opts into it, or live in std, so resolving here would impose an order the language does not have -- and the unknown-protocol judgement (D186 `E_UNKNOWN_PROTOCOL`) is a separate question this subset does not answer yet
     interop InteropTable /// THE interop surface: C identifiers the linked shell carries, read from the embedded shell once per process (sub-plan L).

@@ -825,6 +825,17 @@ fn Checker mut @type_expr(e Node) -> () {
         } else {
             // Refused inside type_array_lit, by name; nothing to record.
         }
+    } else if k == NodeKind.HandlerLit {
+        // A HANDLER LITERAL (E4 wave, 274.11): `effect Fs { read(p) -> []u8
+        // => ... }`. Typed by its own door against the effect's op schema;
+        // this arm exists so the doors that admit the form -- the with
+        // binding's handler position, a binding initializer -- reach the
+        // typist through the ONE expression dispatcher. NOT in
+        // is_expr_kind on purpose: a general argument walk never swallows
+        // a handler literal silently (E.5 defers first-class handler
+        // values; where the language will want one, its door will call
+        // this typist, the match precedent).
+        @type_handler_lit(e)
     } else {
         // The kinds `is_expr_kind` admits and this chain does not name are
         // Lit and MatchExpr, and neither has work HERE: a literal's type is

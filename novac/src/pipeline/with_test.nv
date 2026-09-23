@@ -67,3 +67,101 @@ test "with: an unknown effect name is refused as a name (E4)" {
     assert(d.len() == 1, messages(d))
     assert(d[0].message.contains("unknown name"), d[0].message)
 }
+
+
+// ---------------------------------------------------------------------------
+// THE HANDLER LITERAL (E4 wave, 274.11): `with Fs = effect Fs {
+// read(p str) -> []u8 => []u8.new() } { ... }`, measured against the oracle
+// 2026-09-22. All of these judge the CHECK path (`compile_with`): the with
+// statement is not lowered this wave, so `compile_to_c` would ICE after a
+// clean check -- the named debt, the same note the tests above carry.
+// ---------------------------------------------------------------------------
+
+/// The handed corpus the literal tests share: the slice head (the schema's
+/// `[]u8` resolves through it, the same dependency every `[]T` signature
+/// has) and the effect with a typed op and a slice-returning op.
+fn handler_fx() -> []str {
+    mut std = []str.new()
+    std.push("module std.v\nexport type Vec[T] { n int }\n")
+    std.push("module std.fx\nexport type Fs effect { fn read(p str) -> str\nfn sl(p str) -> []u8 }\nexport type Fs2 effect { fn read(p str) -> str\nfn size() -> int }\n")
+    std
+}
+
+test "handler literal: expr body, typed param, judged against the schema -- accepted (E4)" {
+    // POSITIVE: the literal implements the schema op exactly. The typed
+    // parameter annotation is accepted and NOT cross-checked beyond the
+    // schema (the named simplification: binding is positional).
+    ro d = compile_with("fn g() -> int {\n with Fs = effect Fs { read(p str) -> str => p } {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(handler_fx()), interop_surface())
+    assert(d.len() == 0, messages(d))
+}
+
+test "handler literal: block body, BARE param the body uses -- positional binding (E4)" {
+    // POSITIVE: `read(p)` binds `p` BY POSITION to the schema's `str` --
+    // the body reads it, and a bare name is the oracle's own spelling.
+    ro d = compile_with("fn g() -> int {\n with Fs = effect Fs { read(p) -> str {\n  println(p)\n  return p\n } } {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(handler_fx()), interop_surface())
+    assert(d.len() == 0, messages(d))
+}
+
+test "handler literal: several ops, newline-separated, one literal (E4)" {
+    // POSITIVE: the oracle fixture's own shape -- two ops, no comma, the
+    // second an expression body over a different return type.
+    ro d = compile_with("fn g() -> int {\n with Fs2 = effect Fs2 {\n  read(p str) -> str => p\n  size() -> int => 7\n } {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(handler_fx()), interop_surface())
+    assert(d.len() == 0, messages(d))
+}
+
+test "handler literal: a binding OUTSIDE a with is routed and typed (E4)" {
+    // POSITIVE: `ro h = effect Fs { ... }` -- first-class handler values
+    // are deferred by E.5, but the literal's typist is one door, and a
+    // binding initializer reaching it through the TupleExpr precedent is
+    // typed `Effect[Fs]` rather than left to the lattice's ice.
+    ro d = compile_with("fn g() -> int {\n ro h = effect Fs { read(p str) -> str => p }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(handler_fx()), interop_surface())
+    assert(d.len() == 0, messages(d))
+}
+
+test "handler literal: a missing `-> T` is E_INCOMPLETE_HANDLER_OP_DECL by name (E4)" {
+    // NEGATIVE: the oracle's first code. The absence is kept VISIBLE by
+    // the parser (no RetType node); the checker names it, and the advice
+    // spells the SCHEMA's return (`str`), matching the oracle's wording.
+    ro d = compile_with("fn g() -> int {\n with Fs = effect Fs { read(p) => p } {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(handler_fx()), interop_surface())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].code == "E_NOVAC_LANG", d[0].code)
+    assert(d[0].message.contains("missing its return type"), d[0].message)
+    assert(d[0].message.contains("read(...) -> str => ..."), d[0].message)
+}
+
+test "handler literal: a wrong return type is E_HANDLER_OP_RETURN_TYPE_MISMATCH by name (E4)" {
+    // NEGATIVE: the oracle's second code, both types named.
+    ro d = compile_with("fn g() -> int {\n with Fs = effect Fs { read(p str) -> int => 1 } {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(handler_fx()), interop_surface())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].code == "E_NOVAC_LANG", d[0].code)
+    assert(d[0].message.contains("declares return type `int`"), d[0].message)
+    assert(d[0].message.contains("must match the effect schema exactly"), d[0].message)
+}
+
+test "handler literal: an op outside the schema is E_HANDLER_OP_UNKNOWN by name (E4)" {
+    // NEGATIVE: the oracle's third code (registry 819's class). The
+    // refusal names the op, the effect, and WHAT THE EFFECT DECLARES --
+    // the schema's op list is in the sentence.
+    ro d = compile_with("fn g() -> int {\n with Fs = effect Fs { write(p str) -> str => p } {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(handler_fx()), interop_surface())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].code == "E_NOVAC_LANG", d[0].code)
+    assert(d[0].message.contains("is not an operation of effect `Fs`"), d[0].message)
+    assert(d[0].message.contains("it declares: read, sl"), d[0].message)
+}
+
+test "handler literal: the BODY is judged by the fn return door (E4)" {
+    // NEGATIVE: `-> str => 1` passes the annotation-vs-schema comparison
+    // and then the BODY refuses through the SAME return door a fn body
+    // uses -- one return discipline, not a handler-flavoured copy.
+    ro d = compile_with("fn g() -> int {\n with Fs = effect Fs { read(p str) -> str => 1 } {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(handler_fx()), interop_surface())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("cannot return value of type `int`"), d[0].message)
+}
+
+test "handler literal: the literal names a record, named at the name (E4)" {
+    // NEGATIVE: the literal's OWN name resolves, and what it resolves to
+    // is named -- the same word-the-cause rule the with binding keeps.
+    ro d = compile_with("type Box { v int }\nfn g() -> int {\n with Fs = effect Box { read(p str) -> str => p } {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(handler_fx()), interop_surface())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("is a record, not one"), d[0].message)
+}

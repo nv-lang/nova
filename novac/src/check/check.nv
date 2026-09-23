@@ -20,6 +20,13 @@
 // rustc's obligation solver (arrives with bounds, E2-b3).
 // novac/src/check — the E1 mini-checker (architecture §2: module `check`).
 //
+// SPLIT 2026-09-23 (decision 12, the same cut that made run.nv): this file
+// keeps the Checker state and the shape walk; `run.nv` keeps the doors that
+// START a run -- `check`, `check_instance`, `@reject_repeated_impl`. The cut
+// closed an inherited over-cap: the E4 wave's additions (the with/handler
+// arms, the link_check discipline) pushed this file to 1048 against the
+// 1000-line cap the guard holds, and the cap's remedy is a by-meaning cut.
+//
 // The subset rule is ONE: everything the parser had to recover from is
 // outside the E1 subset, and every such place is reported HONESTLY as
 // E_NOVAC_SUBSET with its exact byte position — computed through the one
@@ -35,17 +42,17 @@
 module novac.check
 
 import ../source.{SourceText}
-import ../lex.{Token, TokenKind}
-import ../tree.{Node, NodeKind, NodeId, no_node, bin_op_of, un_op_of, raw_node}
-import ../diag.{Diagnostic, Severity, ice}
-import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, COERCE_ATTR, REALTIME_ATTR}
+import ../lex.{TokenKind}
+import ../tree.{Node, NodeKind, NodeId, bin_op_of, un_op_of}
+import ../diag.{Diagnostic, ice}
+import ../builtins.{COERCE_ATTR, REALTIME_ATTR}
 import ../builtins.{IMPL_ATTR, DISPLAY_PROTO}
 import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind}
 import ../sem.{expr_leaf_name, attr_kids_name, attr_args_all, attr_has_args, recv_type_name, is_value_record}
 import ../sem.{file_decls}
 // Where an arm keeps its body -- the door the lowering has read for waves.
 import ../sem.{arm_body_at, array_of_lparen_at}
-import ../types.{TyId, no_ty, is_ty}
+import ../types.{TyId, no_ty}
 import ../resolve.{FnIndex, FieldIndex}
 
 /// State of one check run: the source (for positions), the semantic context
@@ -138,152 +145,6 @@ type Checker {
     link_check bool
 }
 
-/// Check a parsed file against the E1 subset. Always returns the full list;
-/// no Result (274 §4 item 1).
-///
-/// WHY THIS IS A FREE FUNCTION AND NOT A METHOD ON `Ctx` (owner's question,
-/// 2026-08-16). `Ctx` is DATA — the type registry and the callable table.
-/// Hanging a pass on it would make the registry own the pass, and then
-/// `emit` would want to hang there too: `Ctx` becomes the object that knows
-/// every backend, which is exactly the ownership the architecture keeps
-/// apart (the rustc_middle model — `TyCtxt` holds data, passes consume it).
-/// It would also invert an edge of the §3 table: `Ctx` lives in `sem`, so a
-/// method on it would make `sem` reference `Diagnostic` and the checker,
-/// and `check-novac-deps.py` refuses that edge by construction. What the
-/// entry point IS, is a constructor plus a run — the same shape `emit_c`
-/// uses for `Emitter`: the module has one door, and the receiver lives
-/// behind it.
-/// The channel comes back WITH the diagnostics, from ONE door: a second
-/// entry point ("check, and this time also record") would be two passes
-/// disagreeing about one file, which is the disease the channel cures.
-///
-/// The typing walk runs only on a CLEAN subset verdict. That is not a
-/// convenience: the emitter's contract is already "never called on broken
-/// input" (pipeline), the lattice remaining ices are user errors under
-/// [LEGACY-#700-user-error-as-ice until:E2b3], and typing a file that the
-/// subset already refused would turn a refusal into an ice. When #700 lands
-/// the walk becomes unconditional, because then its answer on bad input is a
-/// diagnostic and not a death.
-/// `#impl` stands over a declaration ONCE (D186). Judged here and not in the
-/// walk's `AttrDecl` arm, by construction: the walk sees ONE node, and this form
-/// is about NEIGHBOURS. The same shape `coerce_marked` uses -- an attribute
-/// belongs to the declaration that follows it, so the question is positional and
-/// is asked over the file's children.
-fn Checker mut @reject_repeated_impl(kids []Node) -> () {
-    mut prev_impl = false
-    for c in kids {
-        if c.kind_of() != NodeKind.AttrDecl {
-            prev_impl = false
-            continue
-        } else {
-            // An attribute: it either starts a run or continues one.
-        }
-        ro is_impl = attr_kids_name(branch_children(c), IMPL_ATTR)
-        if is_impl && prev_impl {
-            @reject_first_leaf_of(branch_children(c), IMPL_REPEATED_MSG)
-        } else {
-            // First `#impl` of a run, or another attribute entirely.
-        }
-        prev_impl = is_impl
-    }
-}
-
-/// The module's ONE door: judge a parsed file and hand back what was decided.
-///
-/// Two results, and the pair is the interface rather than a convenience: the
-/// DIAGNOSTICS are what the caller reports, the CHANNEL is what the emitter
-/// reads. Everything else in this module is private to it -- a second entry
-/// would be a second answer to the same question.
-export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) {
-    mut c = Checker {
-        src, ctx,
-        res: FnIndex.build(ctx.fns),
-        fres: FieldIndex.build(ctx.fields),
-        gap_at: -1,
-        gap_kind: TokenKind.ErrorTok,
-        out: []Diagnostic.new(),
-        chan: CheckOut.new(raw_node(file.id_of()) + 1),
-        scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
-        seen_decls: NameTable.new(NamespaceId.NsDefs),
-        tail_value_body: no_node(),
-        ret_expect: no_ty(),
-        value_expect: no_ty(),
-        link_check: true,
-        substs: []TyId.new(),
-    }
-    // THROUGH THE DOOR (P18): a raw walk over a file's children does not see
-    // what sits inside an `export` wrapper, so `export #impl` would have been
-    // invisible to this judge -- and invisible, not refused. `file_decls`
-    // unwraps it and keeps the order, which is what a run of attributes needs.
-    c.reject_repeated_impl(file_decls(file))
-    c.walk(file)
-    c.tell_gap_if_silent()
-    if c.out.len() == 0 {
-        // THE ENTRY IS A RESOLUTION (274.4 step 2): a name chain is walked to
-        // find it, and after the checker nobody resolves -- mono reads the
-        // channel instead of asking the registry itself.
-        match c.res.entry_row(c.ctx.fns) {
-            Some(r) => { c.chan.record_entry(r) }
-            None => {
-                // A file with no entry point: nothing to record, and mono
-                // answers "nothing reachable" from the same silence.
-            }
-        }
-        c.type_file(file)
-        // The disjointness walk that stood here is gone (2026-08-18): the
-        // channel holds ONE sum per node now, so "a call and an
-        // instantiation at once" is not a state that can be built.
-    } else {
-        // A refused file is not typed: the walk's answer on broken input is an
-        // ice today ([LEGACY-#700-user-error-as-ice until:E2b3]), so the refusals already
-        // collected ARE the verdict, and the channel goes back as the walk left it.
-    }
-    (c.out, c.chan)
-}
-
-/// Type ONE declaration under a substitution -- one instance of a generic
-/// callable (E2-b2; donor: Go stenciling, one copy of the body per instance,
-/// each typed on its own).
-///
-/// WHY A SEPARATE CHANNEL. The channel is keyed by `NodeId`: one node, one
-/// type. Two instances of one body cannot both live in it, and the alternative
-/// -- keeping the body's types parametric and substituting in every reader --
-/// spreads one decision across every consumer of the channel (P18). So each
-/// instance gets its own channel, sized like the file's, and the emitter reads
-/// the one belonging to the instance it emits.
-///
-/// `cap` is the file's node capacity, not the declaration's: node ids are
-/// handed out per FILE, so a declaration's nodes sit anywhere in that range.
-export fn check_instance(decl Node, src SourceText, ctx Ctx, substs []TyId, cap int) -> ([]Diagnostic, CheckOut)
-    requires cap > 0, "check: an instance channel needs the file's node capacity"
-{
-    mut c = Checker {
-        src, ctx,
-        res: FnIndex.build(ctx.fns),
-        fres: FieldIndex.build(ctx.fields),
-        // SILENT-OK: an instance never TELLS its gap, and that is not an
-        // omission. A gap is a syntax hole, and syntax was judged when the
-        // FILE was checked -- by the time an instance is typed the same hole
-        // has already been told there, or already suppressed there. Telling
-        // it again would report one hole once per instantiation. The field is
-        // still initialised so both entries share one shape; only
-        // `tell_gap_if_silent` belongs to the file alone.
-        gap_at: -1,
-        gap_kind: TokenKind.ErrorTok,
-        out: []Diagnostic.new(),
-        chan: CheckOut.new(cap),
-        scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
-        seen_decls: NameTable.new(NamespaceId.NsDefs),
-        tail_value_body: no_node(),
-        ret_expect: no_ty(),
-        value_expect: no_ty(),
-        link_check: true,
-        substs,
-    }
-    c.type_fn(decl)
-    (c.out, c.chan)
-}
-
 /// Walk the tree and collect subset diagnostics.
 ///
 /// init_pos: record constructors and match expressions are subset forms ONLY
@@ -293,9 +154,14 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, substs []TyId, cap 
 /// form is an honest E_NOVAC_SUBSET, not an emitter ice later. The default
 /// is the common case, so only the two places that actually open an
 /// initializer position say so.
+/// handler_param: this Param sits inside a handler-literal op
+/// (`effect Fs { read(p) -> ... }`), where BARE names are the measured
+/// form and the fn-parameter rules — a declared type, no variadic — do
+/// not apply. The literal's own typist binds these positionally against
+/// the effect's schema, the same division WithStmt keeps for its pieces.
 fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                      arg_pos bool = false, index_pos bool = false,
-                     arm_pos bool = false) -> () {
+                     arm_pos bool = false, handler_param bool = false) -> () {
     match n {
         Leaf(t) => @report_if_error_token(t)
         Branch { kind, children, .. } => {
@@ -672,16 +538,26 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // named instead of the whole form being turned away.
                 }
                 Param => {
-                    // The two forms below are refused whole, and the rules
-                    // after them are skipped on purpose: a variadic already
-                    // carries a slice type, so the type-form rule would add a
-                    // second diagnostic about the same parameter.
-                    if has_variadic_mark(children) {
-                        @report_first_leaf_of(children, VARIADIC_MSG)
-                        return
+                    // A HANDLER-LITERAL op parameter is judged by the
+                    // literal's own typist, never at this door: bare names
+                    // are the measured form there (`read(p)` is how the
+                    // oracle's own fixture spells it), and the fn-param
+                    // rules below -- a declared type, no variadic, no
+                    // misplaced qualifier -- answer a question the handler
+                    // grammar does not ask.
+                    if handler_param {
+                        // Nothing to judge here (see the flag's doc).
                     } else {
-                        // Not a variadic: judged as an ordinary parameter.
-                    }
+                        // The two forms below are refused whole, and the rules
+                        // after them are skipped on purpose: a variadic already
+                        // carries a slice type, so the type-form rule would add a
+                        // second diagnostic about the same parameter.
+                        if has_variadic_mark(children) {
+                            @report_first_leaf_of(children, VARIADIC_MSG)
+                            return
+                        } else {
+                            // Not a variadic: judged as an ordinary parameter.
+                        }
                     // The default's FORM is in the subset (wave 4); what is
                     // judged is its EXPRESSION, and the ORDER rule belongs to
                     // the declaration and is asked there. A refused default
@@ -694,6 +570,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     }
                     @report_if_qualifier_misplaced(children, "parameter")
                     @report_if_missing_type(children, "outside the E1 subset: parameter must declare a type")
+                    }
                 }
                 RecordCtor => {
                     // AN ARGUMENT IS A LEGAL POSITION TOO (wave B13). The
@@ -752,6 +629,21 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // position exactly like IfStmt does. A malformed binding
                     // piece is an Err child and is reported by the generic
                     // Err branch, the same division the if/while arms use.
+                }
+                HandlerLit => {
+                    // READ and TYPED (E4 wave, 274.11): the literal's own
+                    // door -- `@type_handler_lit`, called from `@type_expr`
+                    // by the positions that admit a handler -- judges it
+                    // against the effect's op schema. The walk descends
+                    // like WithStmt: op bodies get their statement
+                    // position, malformed pieces are Err children the
+                    // generic branch names.
+                }
+                HandlerOp => {
+                    // ONE piece of a HandlerLit, judged by the literal's own
+                    // typist, never standalone: the walk descends so the
+                    // body statements carry their positions, exactly like
+                    // the WithStmt/HandlerLit arms above.
                 }
                 Index => {
                     // NOT TYPED HERE (fix 2026-08-31). This walk judges the
@@ -982,6 +874,12 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                       // standing as the body of an arm is a VALUE there, and
                       // the lowering has been able to place one since M2b-1d.
                       arm_pos: at == body_at || at == tail_at,
+                      // A PARAMETER OF A HANDLER-LITERAL OP: bare names are
+                      // the measured form there, and the fn-param rules do
+                      // not apply (the flag's doc says why; the literal's
+                      // own typist binds these against the effect schema).
+                      handler_param: kind == NodeKind.HandlerOp &&
+                                     c.kind_of() == NodeKind.Param,
                       // ELSE-IF CHAIN CONTINUATION (registry #1243): a nested
                       // `IfExpr` sitting in an `if`-value's own else-arm is
                       // the SAME value position as its parent -- `else if` is
@@ -989,8 +887,16 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                       // rather than being walked as a fresh, bare `if` (which
                       // would refuse it with the generic IF_EXPR_MSG instead
                       // of letting `@type_branch_value` name the real gap).
-                      init_pos: init_pos && kind == NodeKind.IfExpr &&
-                                at == children.len() - 1 && c.kind_of() == NodeKind.IfExpr)
+                      // AND THE BODY OF A HANDLER-LITERAL OP is a VALUE
+                      // position like the body of an expression-bodied fn
+                      // (the FnExprBody arm opens init_pos for its own last
+                      // child two hundred lines up): a constructor or an
+                      // array literal may BE the body, and the literal's own
+                      // typist judges the body against the op's return --
+                      // the walk only has to not refuse the position.
+                      init_pos: (init_pos && kind == NodeKind.IfExpr &&
+                                 at == children.len() - 1 && c.kind_of() == NodeKind.IfExpr) ||
+                                (kind == NodeKind.HandlerOp && at == children.len() - 1))
                 at += 1
             }
         }

@@ -572,6 +572,9 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
             // shared channel instead, the same door `@lower_arm_body` already
             // reads other bodies' recorded types through.
             @record(body, bt)
+            // SILENT-OK: the decision IS the recorded type handed back --
+            // this early return only skips the no-value fallthrough below,
+            // which the `else` names for its own case.
             return Some(bt)
         } else {
             // SILENT-OK: the tail was not a value form (or was refused

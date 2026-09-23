@@ -1,0 +1,312 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/check/handler.nv -- the HANDLER LITERAL typist:
+// `effect Fs { read(p str) -> []u8 => []u8.new() }` read, resolved and
+// judged against the effect's op schema.
+//
+// Donor: none -- the three refusals are the oracle's own texts (probed
+//        2026-09-22, window nova-6e): E_HANDLER_OP_UNKNOWN,
+//        E_INCOMPLETE_HANDLER_OP_DECL, E_HANDLER_OP_RETURN_TYPE_MISMATCH.
+//        novac's §7 schema carries two machine codes (the one door in
+//        diagnostics.nv says which), so these go out as LangError with the
+//        oracle's wording -- the code family surfaces in the message, as
+//        every permanent-error door in this module already does.
+// Role: layer 7 -- the type-and-judge half of the handler literal; the
+//   shape walk descends it, this door decides it. Called ONLY by the
+//   doors that admit the form (@type_expr's HandlerLit arm -- itself
+//   reached from the with-binding handler position and the binding
+//   initializer), never through `is_expr_kind`: first-class handler values
+//   are deferred by E.5, and the literal is read where a handler is
+//   expected, the match precedent exactly.
+// Used by: exprs.nv (@type_expr's arm) and binds.nv (the initializer arm).
+// Guarded by: check-novac-file-size.py (this file exists because typing.nv
+//   at 976 lines had no honest room for the typist's ~170), the with_test
+//   witnesses of the E4 wave (all three refusals pinned by name).
+//
+// A co-equal file of module `novac.check` (folder = one module), cut by
+// MEANING under decision 12: typing.nv walks statements, exprs.nv walks
+// expressions, this file judges the one expression that carries
+// declarations inside it.
+
+module novac.check
+
+import ../tree.{Node, NodeKind}
+import ../diag.{ice}
+import ../builtins.{TypeKind}
+import ../names.{raw_decl}
+import ../sem.{branch_children, leaf_text, param_name_at, param_mode_at, ty_source_name}
+import ../sem.{EffectDef, EffectTable, effect_op_ret_type_of}
+import ../types.{TyId, no_ty, is_ty, same_ty}
+
+/// ONE handler literal: resolve the effect name, judge every op against
+/// the effect's schema, record the literal's own type (`Effect[Fs]` -- the
+/// application the Effect seed interns, so the with-arm's handler rule and
+/// a binding initializer read exactly what a `real_fs()`-style value
+/// carries).
+///
+/// THE NAME RESOLVES TWICE, and that is deliberate, not redundant: the
+/// BINDING name (in the with statement) names the effect the handler is
+/// installed UNDER; the LITERAL's own name names the effect it
+/// IMPLEMENTS. The carrier writes both as `Fs`; when they differ, each is
+/// judged by its own door and the language does not require them to be
+/// the same name this wave (the oracle's acceptance is the carrier's
+/// shape; the question is filed, not guessed).
+fn Checker mut @type_handler_lit(e Node) -> () {
+    ro kids = branch_children(e)
+    // Geometry from the parser, kept as a contract: `effect`, the name,
+    // `{`, the ops, `}`. A shorter shape is the walk's recovery business,
+    // not this door's.
+    // SILENT-OK: fewer than three children means the parser's own recovery
+    // marker stands in this node, and the shape walk already reported it --
+    // there is nothing here to type, and re-reporting would be the cascade.
+    if kids.len() < 3 { return }
+    ro name = leaf_text(kids[1])
+    // A STATEMENT match, the with-arm's shape: the resolution doors refuse
+    // inside their arms, and the work continues in `Some` -- an expression
+    // match whose None arm refuses turned `edecl` into `()` under the
+    // current oracle (measured 2026-09-23), which is the miscompile this
+    // shape avoids rather than a form to admire.
+    match @ctx.defs.type_decl(name) {
+        None => {
+            match kids[1] {
+                Leaf(t) => @refuse(t, "unknown name: nothing with this name is bound at this point")
+                Branch { .. } => {}
+            }
+        }
+        Some(d) => {
+            ro dk = @ctx.types[raw_decl(d)].kind
+            if dk != TypeKind.TkEffect {
+                ro what = if dk == TypeKind.TkSum {
+                    "a sum"
+                } else if dk == TypeKind.TkNewtype {
+                    "a newtype"
+                } else {
+                    "a record"
+                }
+                match kids[1] {
+                    Leaf(t) => @refuse(t, "a handler literal names an effect, and `${name}` is ${what}, not one")
+                    Branch { .. } => {}
+                }
+            } else {
+                @type_handler_resolved(e, kids, name, d)
+            }
+        }
+    }
+}
+
+/// THE LITERAL, RESOLVED: the effect declaration is a TkEffect row, so the
+/// schema is asked and every op is judged against it. Split from the
+/// resolving door so that door stays the with-arm's statement-match shape.
+fn Checker mut @type_handler_resolved(e Node, kids []Node, name str, edecl DeclId) -> () {
+    ro schema = match @ctx.effects.def_of(name) {
+        None => ice("check: an effect declaration with no op schema reached the handler-literal typist")
+        Some(s) => s
+    }
+    ro before = @out.len()
+    for c in kids {
+        if c.kind_of() != NodeKind.HandlerOp { continue }
+        @type_handler_op(c, name, schema)
+        // ONE OP, ONE DIAGNOSTIC SET: a refused op's body is not typed --
+        // the schema has nothing to type it against, and cascading
+        // "unknown name" about the op's own parameters would be the second
+        // word about one cause.
+    }
+    if @out.len() > before { return }
+    // THE LITERAL'S OWN TYPE is the handler-type application `Effect[Fs]`,
+    // interned through the one door (the Effect seed's row, the effect's
+    // own head term as the argument) -- the same term a `make() ->
+    // Effect[Fs]` value carries, so every reader of the channel sees one
+    // type for one concept.
+    @record(e, @ctx.tys.app(edecl, []TyId.of(@ctx.types[raw_decl(edecl)].ty_id)))
+}
+
+/// ONE operation implementation against the schema: known op? return type
+/// present, resolvable, and EQUAL to the schema's? parameter count equal?
+/// body typed against the schema's return through the fn body's own doors
+/// (`@ret_expect` / `@tail_value_body` / `@judge_return`), so `return` and
+/// the tail-value rule behave EXACTLY as in a fn body -- one return
+/// discipline, not a handler-flavoured copy.
+fn Checker mut @type_handler_op(op Node, eff_name str, schema EffectDef) -> () {
+    ro okids = branch_children(op)
+    // SILENT-OK: an op with no children at all is the parser's recovery
+    // marker in a shape the walk already reported -- a nameless op has no
+    // schema question to ask and no body to type.
+    if okids.len() < 1 { return }
+    ro onm = okids[0]
+    ro opname = leaf_text(onm)
+    // (a) THE OP MUST BE IN THE SCHEMA. The registry is keyed by name, so
+    // the scan rides the schema's own range; a miss is the oracle's
+    // E_HANDLER_OP_UNKNOWN, naming the op, the effect, and what the effect
+    // ACTUALLY declares (the fixture's own lesson, registry 819: a phantom
+    // op once reached codegen and broke the link).
+    mut sig_at = -1
+    for i in schema.op_off..schema.op_off + schema.op_cnt {
+        if @ctx.effects.ops[i].name == opname {
+            sig_at = i
+        } else {
+            // Not this one; the next operation may carry the name.
+        }
+    }
+    if sig_at < 0 {
+        ro what = effect_op_list(@ctx.effects, schema)
+        match onm {
+            Leaf(t) => @reject(t, "handler-literal op `${eff_name}.${opname}` is not an operation of effect `${eff_name}` -- it declares: ${what}. A handler may only implement operations the effect declares: check the spelling, or the operation may have been removed from `${eff_name}` while this handler kept implementing it.")
+            Branch { .. } => {}
+        }
+        return
+    }
+    ro sig = @ctx.effects.ops[sig_at]
+    // (b) `-> T` IS REQUIRED (the oracle's E_INCOMPLETE_HANDLER_OP_DECL):
+    // the absence stays VISIBLE in the tree (no RetType node -- the parse
+    // contract), and this door names it instead of guessing a type. A
+    // return type that IS written but names nothing novac knows is a
+    // DIFFERENT cause, and gets the cast door's wording family rather than
+    // the missing-return sentence. ACCUMULATION, not a dispatch (P31): the
+    // flag only ever turns on, so there is no branch for either guard to
+    // judge.
+    mut has_ret = false
+    for c in okids {
+        has_ret = has_ret || c.kind_of() == NodeKind.RetType
+    }
+    if !has_ret {
+        ro advice = if is_ty(sig.ret_id) {
+            ty_source_name(@ctx, sig.ret_id)
+        } else {
+            "T"
+        }
+        match onm {
+            Leaf(t) => @reject(t, "handler-literal op `${eff_name}.${opname}` is missing its return type -- handler-op declarations must be FULLY typed (Plan 175.2 Ф.2-v4 П4): write `${opname}(...) -> ${advice} => ...`, matching the effect's own `${eff_name}` declaration.")
+            Branch { .. } => {}
+        }
+        return
+    }
+    ro lit_ret = effect_op_ret_type_of(okids, @ctx.types, @ctx.defs, @ctx.tys)
+    if !is_ty(lit_ret) {
+        match onm {
+            Leaf(t) => @refuse(t, "outside the subset: a handler-literal op's return type is not a type novac knows (E4, handler-literal wave)")
+            Branch { .. } => {}
+        }
+        return
+    }
+    // (c) THE RETURN TYPE MUST MATCH THE SCHEMA, compared as interned
+    // terms through the one lattice: one structural type is one id, so
+    // `==` on ids IS the lattice's answer for this wave (`int` against
+    // `[]u8` is the oracle's E_HANDLER_OP_RETURN_TYPE_MISMATCH). When the
+    // SCHEMA declares no return (a handed declaration novac could not
+    // read), the ProtoSig precedent holds: the position is not compared,
+    // and the declaration's own refusal owns that sentence.
+    if is_ty(sig.ret_id) && lit_ret != sig.ret_id {
+        ro from = ty_source_name(@ctx, lit_ret)
+        ro to = ty_source_name(@ctx, sig.ret_id)
+        match onm {
+            Leaf(t) => @reject(t, "handler-literal op `${eff_name}.${opname}` declares return type `${from}`, but the effect's own declaration says `${to}` -- handler-op signatures must match the effect schema exactly.")
+            Branch { .. } => {}
+        }
+        return
+    }
+    // (d) PARAMETERS, bound BY POSITION to the schema's types. The
+    // literal's own annotations, when written, are parsed and NOT
+    // cross-checked this wave -- the named simplification the carrier
+    // rides (its ops take bare names), and a diverging annotation is a
+    // divergence only on programs outside the acceptance corpus. The
+    // COUNT, though, is compared: a body typed against the wrong arity
+    // would answer questions the schema never asked.
+    ro pmark = @scope.mark()
+    mut pcnt = 0
+    for c in okids {
+        if c.kind_of() != NodeKind.Param { continue }
+        ro pk = branch_children(c)
+        ro pname = match param_name_at(pk) {
+            None => continue
+            Some(at) => leaf_text(pk[at])
+        }
+        if pcnt >= sig.param_cnt {
+            @scope.release(pmark)
+            match onm {
+                Leaf(t) => @reject(t, "handler-literal op `${eff_name}.${opname}` declares more parameters than the effect's operation takes (${sig.param_cnt}) -- handler-op signatures must match the effect schema exactly.")
+                Branch { .. } => {}
+            }
+            return
+        }
+        @scope.bind(pname, @ctx.effects.op_params[sig.param_off + pcnt], param_mode_at(pk))
+        pcnt += 1
+    }
+    if pcnt < sig.param_cnt {
+        @scope.release(pmark)
+        match onm {
+            Leaf(t) => @reject(t, "handler-literal op `${eff_name}.${opname}` declares ${pcnt} parameters, but the effect's operation takes ${sig.param_cnt} -- handler-op signatures must match the effect schema exactly.")
+            Branch { .. } => {}
+        }
+        return
+    }
+    // THE BODY against the schema's return, through the fn body's own
+    // doors: `@ret_expect` is set so `return` operands and the tail value
+    // are judged by `@judge_return` exactly as a fn body judges them, and
+    // `@tail_value_body` marks a BLOCK body so its tail expression is the
+    // returned value. BOTH are saved and restored: the literal is typed
+    // INSIDE some enclosing fn body whose return expectation must survive
+    // -- the same save/restore `@value_expect` keeps around calls. The
+    // enclosing with-arm's `link_check = false` covers the body: a with
+    // statement is never lowered, so a call inside a handler body has no
+    // link to defend either.
+    ro body = okids[okids.len() - 1]
+    // A missing body is the parser's marker; the walk named it.
+    // SILENT-OK: the refusal belongs to the shape walk that planted the
+    // marker, and the op's parameters are released without binding a body
+    // -- there is no second decision this door could add.
+    if body.kind_of() == NodeKind.Err {
+        @scope.release(pmark)
+        return
+    }
+    ro saved_ret = same_ty(@ret_expect)
+    ro saved_tail = @tail_value_body
+    @ret_expect = same_ty(sig.ret_id)
+    // THE BODY against the schema's return, through the fn body's own
+    // doors: `@ret_expect` is set so `return` operands and the tail value
+    // are judged by `@judge_return` exactly as a fn body judges them, and
+    // `@tail_value_body` marks a BLOCK body so its tail expression is the
+    // returned value. BOTH are saved and restored: the literal is typed
+    // INSIDE some enclosing fn body whose return expectation must survive
+    // -- the same save/restore `@value_expect` keeps around calls. The
+    // enclosing with-arm's `link_check = false` covers the body: a with
+    // statement is never lowered, so a call inside a handler body has no
+    // link to defend either. The two shapes are a statement sequence, the
+    // `@type_body` precedent -- no `else` after the variant test (P21).
+    if body.kind_of() == NodeKind.Block {
+        @tail_value_body = body.id_of()
+        @type_block(body)
+        @ret_expect = saved_ret
+        @tail_value_body = saved_tail
+        @scope.release(pmark)
+        // SILENT-OK: the block body was typed and its tail judged inside
+        // `@type_block` through the very doors a fn body uses -- the
+        // decision this door exists for is made, and returning only hands
+        // the next op its turn.
+        return
+    }
+    ro bmark = @out.len()
+    @type_tail_value(body)
+    if @out.len() == bmark {
+        @judge_return(body, @tail_type_of(body))
+    } else {
+        // Refused while typing: the walk already spoke.
+    }
+    @ret_expect = saved_ret
+    @tail_value_body = saved_tail
+    @scope.release(pmark)
+}
+
+/// The effect's operation names as the E_HANDLER_OP_UNKNOWN sentence
+/// lists them ("it declares: read, write."), read straight off the schema
+/// rows -- the refusal names what IS, not what the literal expected.
+fn effect_op_list(fx EffectTable, schema EffectDef) -> str {
+    consume s = StringBuilder.new(cap: 32)
+    for i in schema.op_off..schema.op_off + schema.op_cnt {
+        if i > schema.op_off {
+            s.append(", ")
+        } else {
+            // The first name follows the colon directly.
+        }
+        s.append(fx.ops[i].name)
+    }
+    s
+}

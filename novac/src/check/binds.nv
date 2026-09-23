@@ -156,6 +156,23 @@ fn Checker mut @type_bind(st Node) -> () {
         @scope.bind(vname, pt, bind_mode_at(kids))
         return
     }
+    // A HANDLER LITERAL routes explicitly, the TupleExpr precedent exactly:
+    // not in is_expr_kind (E.5 defers first-class handler values), so the
+    // general path never sees it, and the fallthrough's `type_of` would
+    // ice on a kind the lattice has no rule for. Typed by its own door;
+    // the bind takes the `Effect[Fs]` the door records -- one type for the
+    // literal wherever it stands.
+    if ik == NodeKind.HandlerLit {
+        ro before2 = @out.len()
+        @type_expr(init)
+        if @out.len() > before2 { return }
+        ro ht = @chan.type_if_known(init.id_of())
+        // SILENT-OK: a refused literal was reported inside the typist, by
+        // name; nothing to bind.
+        if !is_ty(ht) { return }
+        @scope.bind(vname, ht, bind_mode_at(kids))
+        return
+    }
     // AN INDEX DECIDES ITS OWN TYPE HERE for the same reason the literal above
     // does: the answer comes from a DOOR (`@type_index` asks the receiver's
     // application for its element) and carries every subset refusal about an

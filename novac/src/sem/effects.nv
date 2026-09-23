@@ -1,0 +1,194 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/sem/effects.nv -- THE effect-op schema registry: what operations
+// an effect declares, with which parameter and return types.
+//
+// Donor: rustc `TraitDef`/`AssocFn` for the ROLE (the schema a handler must
+//        satisfy lives beside the declaration, not in the checker's memory);
+//        the SHAPE is this module's own, mirroring ProtoTable one folder
+//        over. NOT taken: effect vtables, handler typing beyond the schema
+//        (E.5 of the plan defers both).
+// Role: layer 3 (sem) -- the answer to "does effect Fs declare op read,
+//   with which signature", read by the checker's handler-literal typist.
+// Used by: sem (collect pass 1+2 and the handed harvest fill it), check
+//   (@type_handler_lit reads it); nothing else may ask.
+// Guarded by: check-novac-ctx-tables.py (the table rides on Ctx, declared in
+//   plan §10.3б), check-novac-row-fields.py (EffectDef/EffectOpSig fields,
+//   §10.3в), the with_test/pipeline witnesses of the E4 wave.
+//
+// WHY A TABLE OF ITS OWN (P17, the question the registry exists to make
+// loud). The op schema is not fields and not variants -- the TkEffect
+// TypeDef deliberately carries `rows: NoRows` (operations are not record
+// rows; the Effect-type stage gives them their own truth). It is not the
+// callable table either: an operation has no body novac compiles, no C
+// symbol, no overload set. And it cannot be recomputed from the tree on
+// demand: the checker's doors read `Ctx`, never the declaration nodes
+// (274.4 step 2 -- after the checker nobody resolves). What the effect
+// DECLARES is collected once, here, in both collectors, exactly like
+// protocols -- this file is the protocol precedent applied to the effect
+// half of the effect system.
+//
+// A co-equal file of module `novac.sem` (folder = one module), cut by
+// MEANING under decision 12: protocols.nv holds contracts, this holds
+// effect schemas; the two never merge, because a protocol is SATISFIED by
+// a type while an effect is HANDLED by a value -- different questions
+// downstream from one shape upstream.
+
+module novac.sem
+
+import ../types.{TyId, no_ty, Interner}
+import ../names.{NameTable, NamespaceId}
+import ../tree.{Node, NodeKind}
+import ../builtins.{UNIT_TYPE_NAME}
+import ../diag.{ice}
+
+/// ONE operation of an effect's schema: `fn read(p str) -> []u8`.
+///
+/// Value row, flat pools, no heap per row -- the same discipline ProtoSig
+/// lives by (P18/P23). The parameter TYPES live in `EffectTable.op_params`,
+/// addressed by this row.
+export type EffectOpSig value {
+    name str /// the operation's spelling, without `fn`
+    ret_id TyId /// the declared return type; `no_ty()` = the declaration wrote none -- the ProtoSig precedent: the position is then NOT compared, the declaration's own refusal (in-source: the wholesale effect refusal) owns that sentence
+    param_off int /// first parameter type of this operation in EffectTable.op_params
+    param_cnt int /// how many parameters the operation takes
+}
+
+/// One effect declaration: a NAME and the range of operations it declares.
+export type EffectDef value {
+    name str /// the effect's spelling as declared
+    op_off int /// first operation in EffectTable.ops
+    op_cnt int /// how many operations the effect declares
+}
+
+/// THE effect-op schema registry: effects by name, their operations, and
+/// the flat pool of parameter types those operations address.
+///
+/// Why not a row in `types`: an effect declaration IS in `types` -- a
+/// TkEffect marker TypeDef -- but the marker carries no rows by design
+/// (E4 wave): the schema is data ABOUT the declaration, not a fact of its
+/// layout, and stuffing it into TypeRows would make every rows-reader meet
+/// a third arm for a question it never asks. Own namespace for the same
+/// reason protocols have one: an effect name keys a contract, not a
+/// layout.
+export type EffectTable {
+    names NameTable /// effect name -> row index (NsEffects)
+    rows []EffectDef /// one row per declared effect
+    ops []EffectOpSig /// operations of every effect, grouped by EffectDef.op_off/cnt
+    op_params []TyId /// parameter types of every operation, grouped by EffectOpSig.param_off/cnt
+}
+
+/// Empty effect registry with its own namespace.
+export fn EffectTable.new() -> EffectTable =>
+    { names: NameTable.new(NamespaceId.NsEffects), rows: []EffectDef.new(),
+      ops: []EffectOpSig.new(), op_params: []TyId.new() }
+
+/// Register one effect and return its row index. `op_off` is the CURRENT
+/// `ops.len()` -- the caller appends the placeholder rows, exactly the
+/// ProtoTable pass-1/pass-2 contract.
+export fn EffectTable mut @add(name str, op_off int, op_cnt int) -> int {
+    ro row = @rows.len()
+    @names.put(name, row)
+    @rows.push(EffectDef { name, op_off, op_cnt })
+    row
+}
+
+/// The effect this name owns, or None when the registry knows no such
+/// schema: the ONE door callers ask, the ProtoTable.def_of lesson applied
+/// (the row, not an index that lives a line and a half).
+#realtime nogc
+export fn EffectTable @def_of(name str) -> Option[EffectDef] {
+    ro r = @names.find(name)
+    if r < 0 { return None }
+    Some(@rows[r])
+}
+
+/// Fill the operations of ONE effect declaration, HANDED side: the harvest
+/// calls this where the types are already resolvable, tolerant like the
+/// rest of harvest -- an operation whose type novac cannot read stores
+/// `no_ty()` (the ProtoSig precedent) and stays in the schema, rather than
+/// vanishing and taking a handler-literal refusal down with it.
+///
+/// THE PARAMETER TYPES through the same doors `harvest_fn` reads (slots.nv
+/// `param_type_at` + typeref.nv `ty_of_type_ref`): a MODE stands at index
+/// zero of `mut buf []u8`, and the first-Ident-leaf reader protocols use
+/// would read `u8` where the type is the SLICE. The RETURN type mirrors
+/// harvest_fn's own reading: the unit keeps its spelling, a mode before
+/// the type (`-> ro []u8`) is skipped, the type itself through the one
+/// reference door.
+export fn fill_harvested_effect_ops(mut fx EffectTable, decl Node, tname str,
+                                    types []TypeDef, defs DefTable, mut tys Interner) -> () {
+    ro start = fx.ops.len()
+    for m in branch_children(decl) {
+        if m.kind_of() != NodeKind.EffectOp { continue }
+        ro mk = branch_children(m)
+        if mk.len() < 2 { continue }
+        ro poff = fx.op_params.len()
+        mut pcnt = 0
+        for pm in mk {
+            if pm.kind_of() != NodeKind.Param { continue }
+            ro pk = branch_children(pm)
+            ro pt = match param_type_at(pk) {
+                None => no_ty()
+                Some(tat) => ty_of_type_ref(pk, tat, no_ty(), []str.new(), []TyId.new(), types, defs, tys)
+            }
+            fx.op_params.push(pt)
+            pcnt += 1
+        }
+        fx.ops.push(EffectOpSig { name: leaf_text(mk[1]), ret_id: effect_op_ret_type_of(mk, types, defs, tys),
+                                  param_off: poff, param_cnt: pcnt })
+    }
+    fx.add(tname, start, fx.ops.len() - start)
+}
+
+/// Fill the operations of ONE effect declaration, the FILE'S OWN side:
+/// collect pass 1 registered the name and the operation COUNT with
+/// placeholder rows (a forward reference may sit in a signature type), and
+/// this pass-2 door REPLACES those rows in place, exactly like
+/// `fill_proto_sigs` -- the one place that knows the pass-1 contract.
+export fn fill_own_effect_ops(mut fx EffectTable, decl Node, tname str,
+                              types []TypeDef, defs DefTable, mut tys Interner) -> () {
+    mut oi = match fx.def_of(tname) {
+        Some(ed) => ed.op_off
+        None => ice("sem: pass 2 sees an effect pass 1 did not register")
+    }
+    for m in branch_children(decl) {
+        if m.kind_of() != NodeKind.EffectOp { continue }
+        ro mk = branch_children(m)
+        if mk.len() < 2 { continue }
+        if oi >= fx.ops.len() { ice("sem: an effect declares more operations at pass 2 than pass 1 counted") }
+        ro poff = fx.op_params.len()
+        mut pcnt = 0
+        for pm in mk {
+            if pm.kind_of() != NodeKind.Param { continue }
+            ro pk = branch_children(pm)
+            ro pt = match param_type_at(pk) {
+                None => no_ty()
+                Some(tat) => ty_of_type_ref(pk, tat, no_ty(), []str.new(), []TyId.new(), types, defs, tys)
+            }
+            fx.op_params.push(pt)
+            pcnt += 1
+        }
+        fx.ops[oi] = EffectOpSig { name: leaf_text(mk[1]), ret_id: effect_op_ret_type_of(mk, types, defs, tys),
+                                   param_off: poff, param_cnt: pcnt }
+        oi += 1
+    }
+}
+
+/// The RETURN type an operation's PARENT-CHILDREN declare -- the children
+/// of the EffectOp OR the HandlerOp, this door scans for the RetType --
+/// or `no_ty()` when the declaration wrote none. Mirrors harvest_fn's
+/// reading (the mode leaf before `-> ro []u8`, the unit's own spelling,
+/// the one reference door for everything else) so the handed schema, the
+/// own schema and the LITERAL's annotation cannot drift apart on one
+/// signature: one reader, three readers' worth of call sites (P18).
+export fn effect_op_ret_type_of(mk []Node, types []TypeDef, defs DefTable, mut tys Interner) -> TyId {
+    for c in mk {
+        if c.kind_of() != NodeKind.RetType { continue }
+        ro rk = branch_children(c)
+        if rk.len() < 2 { return no_ty() }
+        if ret_is_unit(rk) { return ty_or_none(types, defs, UNIT_TYPE_NAME) }
+        ro from = if is_mode_leaf(rk[1]) { 2 } else { 1 }
+        return ty_of_type_ref(rk, from, no_ty(), []str.new(), []TyId.new(), types, defs, tys)
+    }
+    no_ty()
+}

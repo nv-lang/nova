@@ -35,6 +35,25 @@ export type NodeKind enum
     | LeafNode
     | ProtoMethod /// one required signature inside `type X protocol { ... }`: `@name(params) -> T`
     | EffectOp /// one operation signature inside `type X effect { ... }`: `fn name(params) -> T` (D459)
+    /// A handler literal (D61): `effect Fs { read(p str) -> []u8 => []u8.new() }`.
+    /// The value a `with` binding installs, spelled INLINE -- the operations
+    /// implemented where the handler is written. Contextual like `with`
+    /// itself: `effect` names no type, so the three-token door (Ident Ident
+    /// `{`) cannot capture an ordinary expression (two names never parse as
+    /// one). The checker types it through `@type_handler_lit`, called by the
+    /// doors that admit the form -- it is NOT in `is_expr_kind`, so a general
+    /// argument walk never swallows it silently (E.5 defers first-class
+    /// handler values; the literal is read where a handler is expected).
+    | HandlerLit
+    /// ONE operation implementation inside a handler literal:
+    /// `name(params) -> T => body` or `name(params) -> T { ... }` -- NO `fn`
+    /// keyword (measured on the oracle 2026-09-22: with `fn` it is a parse
+    /// error, "expected identifier"). Its own kind, not a reuse of EffectOp:
+    /// the decl-side op is a bare signature (`fn read(p str) -> []u8`), this
+    /// one carries a BODY and params that may be BARE NAMES -- two shapes one
+    /// kind would make every EffectOp reader ask the parent first, which is
+    /// the confusion the registry filler and the checker both avoid this way.
+    | HandlerOp
     | File
     | ModuleDecl
     | FnDecl
