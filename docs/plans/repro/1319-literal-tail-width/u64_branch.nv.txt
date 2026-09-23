@@ -1,0 +1,3 @@
+module r1319_u64
+
+fn h(c bool) -> u64 => if c { 4 } else { 5 }

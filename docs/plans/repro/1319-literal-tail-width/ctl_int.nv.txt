@@ -1,0 +1,3 @@
+module r1319_ctl
+
+fn h(c bool) -> int => if c { 29 } else { 28 }
