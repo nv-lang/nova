@@ -165,3 +165,83 @@ test "handler literal: the literal names a record, named at the name (E4)" {
     assert(d.len() == 1, messages(d))
     assert(d[0].message.contains("is a record, not one"), d[0].message)
 }
+
+
+// ---------------------------------------------------------------------------
+// THE EFFECT-OPERATION CALL (E.4 item 2, plan 274.11): `Fs.read("p")` types
+// through the effect's op schema. The oracle's acceptance: the call is
+// typed with or WITHOUT an installed handler -- a missing handler is a
+// RUNTIME panic there, not a check error -- so a green check with no
+// `with` in sight is the acceptance, not a hole in it. Judged on the
+// CHECK path (`compile_with`): how the call lowers (handler dispatch) is
+// the lowering wave's debt, the same standing note the with tests carry.
+// ---------------------------------------------------------------------------
+
+/// The handed corpus the operation-call tests share: the slice head (the
+/// schema's `[]u8` resolves through it), the effect with a str-parameter
+/// and an int-parameter operation, and a maker the with-binding tests use.
+fn opcall_fx() -> []str {
+    mut std = []str.new()
+    std.push("module std.v\nexport type Vec[T] { n int }\n")
+    std.push("module std.fx\nexport type Fs effect { fn read(p str) -> []u8\nfn size() -> int }\nexport fn make() -> Effect[Fs]\n")
+    std
+}
+
+test "effect op call: no handler in sight -- check is green, the runtime panic is the oracle's (E.4 item 2)" {
+    // THE ACCEPTANCE, verbatim from the plan: `Fs.read("p")` types without
+    // a `with` anywhere; the absence of a handler is a RUNTIME error in
+    // the oracle's semantics, and novac's check must not turn it into a
+    // check error. (How the call lowers is the standing emit debt.)
+    ro d = compile_with("fn g() -> int {\n ro b = Fs.read(\"p\")\n println(Fs.size())\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(opcall_fx()), interop_surface())
+    assert(d.len() == 0, messages(d))
+}
+
+test "effect op call: inside a with body, the handler installed -- green (E.4 item 2)" {
+    ro d = compile_with("fn g() -> int {\n with Fs = make() {\n  ro b = Fs.read(\"p\")\n  println(Fs.size())\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(opcall_fx()), interop_surface())
+    assert(d.len() == 0, messages(d))
+}
+
+test "effect op call: the operation's return type is the call's type (E.4 item 2)" {
+    // `size()` declares `-> int`: the recorded type flows into arithmetic,
+    // so a wrong record would refuse here -- the channel is the answer.
+    ro d = compile_with("fn g() -> int {\n ro n = Fs.size() + 1\n println(n)\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(opcall_fx()), interop_surface())
+    assert(d.len() == 0, messages(d))
+}
+
+test "effect op call: an operation the effect does not declare is refused by name (E.4 item 2)" {
+    // The call-side sibling of the handler literal's E_HANDLER_OP_UNKNOWN:
+    // the refusal names the op, the effect, and what the effect DECLARES.
+    // (The oracle's exact wording for a bad operation CALL was not probed;
+    // the family wording is shared on purpose -- a direct probe is filed.)
+    ro d = compile_with("fn g() -> int {\n ro b = Fs.write(\"p\")\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(opcall_fx()), interop_surface())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("is not an operation of effect `Fs`"), d[0].message)
+    assert(d[0].message.contains("it declares: read, size"), d[0].message)
+}
+
+test "effect op call: arity mismatch names both counts (E.4 item 2)" {
+    ro d = compile_with("fn g() -> int {\n ro b = Fs.read(\"p\", \"q\")\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(opcall_fx()), interop_surface())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("takes 1 parameter(s)"), d[0].message)
+    assert(d[0].message.contains("passes 2"), d[0].message)
+}
+
+test "effect op call: an argument against the declared parameter type (E.4 item 2)" {
+    // `read` declares `p str`; the int literal is refused through the one
+    // unification door, both types named.
+    ro d = compile_with("fn g() -> int {\n ro b = Fs.read(1)\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(opcall_fx()), interop_surface())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("argument 1 is `int`"), d[0].message)
+    assert(d[0].message.contains("declares `str`"), d[0].message)
+}
+
+test "effect op call: a bound value named like the effect keeps the call (E.4 item 2)" {
+    // CONTROL: `fn f(Fs Box)` -- the parameter shadows the effect name,
+    // and the nearer scope decides what `Fs.read` names. The effect-op
+    // door stays silent (its refusal family is "is not an operation",
+    // and that text must NOT appear); the pre-existing type-head
+    // machinery answers instead.
+    ro d = compile_with("type Box { v int }\nfn f(Fs Box) -> int {\n ro b = Fs.read(\"p\")\n 0\n}\nfn main() {\n println(1)\n}", parse_decls(opcall_fx()), interop_surface())
+    assert(d.len() == 1, messages(d))
+    assert(!d[0].message.contains("is not an operation of effect"), d[0].message)
+}
