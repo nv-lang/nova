@@ -46,7 +46,7 @@ import ../diag.{ice}
 /// Value row, flat pools, no heap per row -- the same discipline ProtoSig
 /// lives by (P18/P23). The parameter TYPES live in `EffectTable.op_params`,
 /// addressed by this row.
-type EffectOpSig value {
+export type EffectOpSig value {
     name str /// the operation's spelling, without `fn`
     ret_id TyId /// the declared return type; `no_ty()` = the declaration wrote none -- the ProtoSig precedent: the position is then NOT compared, the declaration's own refusal (in-source: the wholesale effect refusal) owns that sentence
     param_off int /// first parameter type of this operation in EffectTable.op_params
