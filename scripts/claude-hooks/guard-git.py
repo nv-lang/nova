@@ -64,8 +64,12 @@ RULES = [
     (re.compile(r"\bgit\b[^|;&\n]*\bconfig\b[^|;&\n]*\buser\.(name|email)\s+\S", re.IGNORECASE),
      "FORBIDDEN: git config user.* write — avtorstvo pravit tolko vladelets vruchnuyu "
      "(urok 2026-07-25: 349 commitov pod 'Claude Haiku' cherez obshchiy .git worktree)."),
-    (re.compile(r"\bgit\b[^|;&\n]*\badd\b\s+(-A\b|--all\b|\.(\s|$))", re.IGNORECASE),
-     "FORBIDDEN: git add -A/--all/. — tolko po imenam faylov (konventsiya)."),
+    # `-u`/`--update` добавлены 2026-09-23: AGENTS.md запрещает их наравне с `-A`
+    # и `.`, а регулярка их не знала — разметка правил по лестнице нашла, что
+    # правило держалось механизмом лишь на три формы из четырёх. `git commit -a`
+    # отдельной формы не требует: его отклоняет правило области коммита ниже.
+    (re.compile(r"\bgit\b[^|;&\n]*\badd\b\s+(-A\b|--all\b|-u\b|--update\b|\.(\s|$))", re.IGNORECASE),
+     "FORBIDDEN: git add -A/--all/-u/--update/. — tolko po imenam faylov (konventsiya)."),
     (re.compile(r"\bgit\b[^|;&\n]*\bstash\b", re.IGNORECASE),
      "FORBIDDEN: git stash — worktree delyat .git (konventsiya: temp-commit/reset)."),
     # СОСТОЯНИЕ-МЕНЯЮЩАЯ КОМАНДА БЕЗ ЯВНОГО -C.
