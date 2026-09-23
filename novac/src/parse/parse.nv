@@ -884,9 +884,10 @@ fn Cursor mut @stmt() -> Node {
     if @peek_ident("supervised") && @peek(skip: 1) == TokenKind.LBrace {
         // The door's lookahead guarantees the body brace, so the block is
         // taken directly -- a BARE `supervised` (no brace) never reaches
-        // this arm: it is an ordinary name statement, refused by the name
-        // door at typing (measured 2026-09-23; the oracle, which RESERVES
-        // the word, refuses it at parse -- either way, refused not silent).
+        // this arm: it is an ordinary name statement, refused by the
+        // unknown-name door at typing (check/exprs.nv:526; measured
+        // 2026-09-23; the oracle, which RESERVES the word, refuses it at
+        // parse -- either way, refused not silent).
         mut kids = []Node.of(@take()) // `supervised`
         kids.push(@block())
         return @node(NodeKind.SupervisedStmt, kids)

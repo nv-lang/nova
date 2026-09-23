@@ -539,7 +539,8 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                 }
                 Param => {
                     // A HANDLER-LITERAL op parameter is judged by the
-                    // literal's own typist, never at this door: bare names
+                    // literal's own typist, `@type_handler_op`
+                    // (check/handler.nv), never at this door: bare names
                     // are the measured form there (`read(p)` is how the
                     // oracle's own fixture spells it), and the fn-param
                     // rules below -- a declared type, no variadic, no
@@ -628,7 +629,8 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // to descend, giving the body Block its statement
                     // position exactly like IfStmt does. A malformed binding
                     // piece is an Err child and is reported by the generic
-                    // Err branch, the same division the if/while arms use.
+                    // Err branch (check/check.nv:184), the same division
+                    // the if/while arms use.
                 }
                 HandlerLit => {
                     // READ and TYPED (E4 wave, 274.11): the literal's own
@@ -641,9 +643,10 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                 }
                 HandlerOp => {
                     // ONE piece of a HandlerLit, judged by the literal's own
-                    // typist, never standalone: the walk descends so the
-                    // body statements carry their positions, exactly like
-                    // the WithStmt/HandlerLit arms above.
+                    // typist, `@type_handler_op` (check/handler.nv), never
+                    // standalone: the walk descends so the body statements
+                    // carry their positions, exactly like the
+                    // WithStmt/HandlerLit arms above.
                 }
                 SupervisedStmt => {
                     // READ and TYPED (E4 wave, 274.11 Э.7 item 4): the

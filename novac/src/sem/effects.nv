@@ -46,7 +46,7 @@ import ../diag.{ice}
 /// Value row, flat pools, no heap per row -- the same discipline ProtoSig
 /// lives by (P18/P23). The parameter TYPES live in `EffectTable.op_params`,
 /// addressed by this row.
-export type EffectOpSig value {
+type EffectOpSig value {
     name str /// the operation's spelling, without `fn`
     ret_id TyId /// the declared return type; `no_ty()` = the declaration wrote none -- the ProtoSig precedent: the position is then NOT compared, the declaration's own refusal (in-source: the wholesale effect refusal) owns that sentence
     param_off int /// first parameter type of this operation in EffectTable.op_params
@@ -78,14 +78,14 @@ export type EffectTable {
 }
 
 /// Empty effect registry with its own namespace.
-export fn EffectTable.new() -> EffectTable =>
+fn EffectTable.new() -> EffectTable =>
     { names: NameTable.new(NamespaceId.NsEffects), rows: []EffectDef.new(),
       ops: []EffectOpSig.new(), op_params: []TyId.new() }
 
 /// Register one effect and return its row index. `op_off` is the CURRENT
 /// `ops.len()` -- the caller appends the placeholder rows, exactly the
 /// ProtoTable pass-1/pass-2 contract.
-export fn EffectTable mut @add(name str, op_off int, op_cnt int) -> int {
+fn EffectTable mut @add(name str, op_off int, op_cnt int) -> int {
     ro row = @rows.len()
     @names.put(name, row)
     @rows.push(EffectDef { name, op_off, op_cnt })
@@ -115,7 +115,7 @@ export fn EffectTable @def_of(name str) -> Option[EffectDef] {
 /// harvest_fn's own reading: the unit keeps its spelling, a mode before
 /// the type (`-> ro []u8`) is skipped, the type itself through the one
 /// reference door.
-export fn fill_harvested_effect_ops(mut fx EffectTable, decl Node, tname str,
+fn fill_harvested_effect_ops(mut fx EffectTable, decl Node, tname str,
                                     types []TypeDef, defs DefTable, mut tys Interner) -> () {
     ro start = fx.ops.len()
     for m in branch_children(decl) {
@@ -145,7 +145,7 @@ export fn fill_harvested_effect_ops(mut fx EffectTable, decl Node, tname str,
 /// placeholder rows (a forward reference may sit in a signature type), and
 /// this pass-2 door REPLACES those rows in place, exactly like
 /// `fill_proto_sigs` -- the one place that knows the pass-1 contract.
-export fn fill_own_effect_ops(mut fx EffectTable, decl Node, tname str,
+fn fill_own_effect_ops(mut fx EffectTable, decl Node, tname str,
                               types []TypeDef, defs DefTable, mut tys Interner) -> () {
     mut oi = match fx.def_of(tname) {
         Some(ed) => ed.op_off
@@ -155,7 +155,7 @@ export fn fill_own_effect_ops(mut fx EffectTable, decl Node, tname str,
         if m.kind_of() != NodeKind.EffectOp { continue }
         ro mk = branch_children(m)
         if mk.len() < 2 { continue }
-        if oi >= fx.ops.len() { ice("sem: an effect declares more operations at pass 2 than pass 1 counted") }
+        assert(oi < fx.ops.len(), "sem: an effect declares more operations at pass 2 than pass 1 counted")
         ro poff = fx.op_params.len()
         mut pcnt = 0
         for pm in mk {

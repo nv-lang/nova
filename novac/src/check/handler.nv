@@ -3,13 +3,8 @@
 // `effect Fs { read(p str) -> []u8 => []u8.new() }` read, resolved and
 // judged against the effect's op schema.
 //
-// Donor: none -- the three refusals are the oracle's own texts (probed
-//        2026-09-22, window nova-6e): E_HANDLER_OP_UNKNOWN,
-//        E_INCOMPLETE_HANDLER_OP_DECL, E_HANDLER_OP_RETURN_TYPE_MISMATCH.
-//        novac's §7 schema carries two machine codes (the one door in
-//        diagnostics.nv says which), so these go out as LangError with the
-//        oracle's wording -- the code family surfaces in the message, as
-//        every permanent-error door in this module already does.
+// Donor: none -- the effect-system semantics are the language's own, not
+//        taken from another compiler or specification.
 // Role: layer 7 -- the type-and-judge half of the handler literal; the
 //   shape walk descends it, this door decides it. Called ONLY by the
 //   doors that admit the form (@type_expr's HandlerLit arm -- itself
@@ -21,6 +16,15 @@
 // Guarded by: check-novac-file-size.py (this file exists because typing.nv
 //   at 976 lines had no honest room for the typist's ~170), the with_test
 //   witnesses of the E4 wave (all three refusals pinned by name).
+//
+// Measured against: the oracle (window nova-6e, 2026-09-22), for the
+//   exact WORDING of three texts only -- E_HANDLER_OP_UNKNOWN,
+//   E_INCOMPLETE_HANDLER_OP_DECL, E_HANDLER_OP_RETURN_TYPE_MISMATCH. novac's
+//   §7 schema carries two machine codes (the one door in diagnostics.nv says
+//   which), so these go out as LangError with that wording -- the code family
+//   surfaces in the message, as every permanent-error door in this module
+//   already does. This is NOT a donor relationship (P25): no semantics were
+//   taken, only three diagnostic strings were probed for their wording.
 //
 // A co-equal file of module `novac.check` (folder = one module), cut by
 // MEANING under decision 12: typing.nv walks statements, exprs.nv walks
@@ -47,9 +51,10 @@ import ../types.{TyId, no_ty, is_ty, same_ty}
 /// BINDING name (in the with statement) names the effect the handler is
 /// installed UNDER; the LITERAL's own name names the effect it
 /// IMPLEMENTS. The carrier writes both as `Fs`; when they differ, each is
-/// judged by its own door and the language does not require them to be
-/// the same name this wave (the oracle's acceptance is the carrier's
-/// shape; the question is filed, not guessed).
+/// judged by its own door -- the binding name at check/typing.nv:722, the
+/// literal name right below in this same function -- and the language does
+/// not require them to be the same name this wave (the oracle's acceptance
+/// is the carrier's shape; the question is filed, not guessed).
 fn Checker mut @type_handler_lit(e Node) -> () {
     ro kids = branch_children(e)
     // Geometry from the parser, kept as a contract: `effect`, the name,
@@ -68,7 +73,7 @@ fn Checker mut @type_handler_lit(e Node) -> () {
     match @ctx.defs.type_decl(name) {
         None => {
             match kids[1] {
-                Leaf(t) => @refuse(t, "unknown name: nothing with this name is bound at this point")
+                Leaf(t) => @refuse(t, "unknown name: nothing with this name is bound at this point (E4, handler-literal wave)")
                 Branch { .. } => {}
             }
         }
@@ -83,7 +88,7 @@ fn Checker mut @type_handler_lit(e Node) -> () {
                     "a record"
                 }
                 match kids[1] {
-                    Leaf(t) => @refuse(t, "a handler literal names an effect, and `${name}` is ${what}, not one")
+                    Leaf(t) => @refuse(t, "a handler literal names an effect, and `${name}` is ${what}, not one (E4, handler-literal wave)")
                     Branch { .. } => {}
                 }
             } else {
@@ -97,10 +102,7 @@ fn Checker mut @type_handler_lit(e Node) -> () {
 /// schema is asked and every op is judged against it. Split from the
 /// resolving door so that door stays the with-arm's statement-match shape.
 fn Checker mut @type_handler_resolved(e Node, kids []Node, name str, edecl DeclId) -> () {
-    ro schema = match @ctx.effects.def_of(name) {
-        None => ice("check: an effect declaration with no op schema reached the handler-literal typist")
-        Some(s) => s
-    }
+    ro schema = @ctx.effects.def_of(name) ?? ice("check: an effect declaration with no op schema reached the handler-literal typist")
     ro before = @out.len()
     for c in kids {
         if c.kind_of() != NodeKind.HandlerOp { continue }
@@ -117,6 +119,17 @@ fn Checker mut @type_handler_resolved(e Node, kids []Node, name str, edecl DeclI
     // Effect[Fs]` value carries, so every reader of the channel sees one
     // type for one concept.
     @record(e, @ctx.tys.app(edecl, []TyId.of(@ctx.types[raw_decl(edecl)].ty_id)))
+}
+
+/// Name the first undeclared type name in a handler op's `-> T`, through the door
+/// every signature uses, and say whether one was named. The door itself skips
+/// the `ro`/`mut` mode word after `->` (typeref_rules.nv, `@undeclared_in_type_ref`).
+fn Checker mut @report_if_ret_ref_undeclared(okids []Node) -> bool {
+    for c in okids {
+        if c.kind_of() != NodeKind.RetType { continue }
+        return @report_if_type_ref_undeclared(branch_children(c), 1, []str.new())
+    }
+    false
 }
 
 /// ONE operation implementation against the schema: known op? return type
@@ -181,9 +194,26 @@ fn Checker mut @type_handler_op(op Node, eff_name str, schema EffectDef) -> () {
     }
     ro lit_ret = effect_op_ret_type_of(okids, @ctx.types, @ctx.defs, @ctx.tys)
     if !is_ty(lit_ret) {
-        match onm {
-            Leaf(t) => @refuse(t, "outside the subset: a handler-literal op's return type is not a type novac knows (E4, handler-literal wave)")
-            Branch { .. } => {}
+        // TWO CAUSES, AND THEY ARE DIFFERENT SENTENCES (measured 2026-09-23 at
+        // the nova-kim acceptance). In an ORDINARY run -- `@substs` empty, and a
+        // generic body is not typed there at all (typing.nv `type_fn`) -- the
+        // one reference door leaves no type only for a NAME declared nowhere: a
+        // form novac cannot compile is refused earlier by the type-reference
+        // walk and never reaches this line (probe: `-> fn(int) -> int` gives
+        // that refusal alone). An undeclared name is the AUTHOR's mistake and
+        // gets the sentence a fn signature gives, from the same door
+        // (`@report_if_type_ref_undeclared`, typeref_rules.nv:118). Until this
+        // fix it was called novac's debt -- "not a type novac knows".
+        // In an INSTANCE run the name may be the body's own type parameter,
+        // which `effect_op_ret_type_of` does not substitute: that is novac's
+        // debt, and only that keeps the dated refusal.
+        if @substs.len() == 0 && @report_if_ret_ref_undeclared(okids) {
+            // SILENT-OK: the type-reference door named the undeclared name.
+        } else {
+            match onm {
+                Leaf(t) => @refuse(t, HANDLER_RET_UNRESOLVED_MSG)
+                Branch { .. } => {}
+            }
         }
         return
     }
@@ -240,9 +270,10 @@ fn Checker mut @type_handler_op(op Node, eff_name str, schema EffectDef) -> () {
     }
     // THE BODY against the schema's return, through the fn body's own
     // doors: `@ret_expect` is set so `return` operands and the tail value
-    // are judged by `@judge_return` exactly as a fn body judges them, and
-    // `@tail_value_body` marks a BLOCK body so its tail expression is the
-    // returned value. BOTH are saved and restored: the literal is typed
+    // are judged by `@judge_return` (check/return_rules.nv:126) exactly as
+    // a fn body judges them, and `@tail_value_body` marks a BLOCK body so
+    // its tail expression is the returned value. BOTH are saved and
+    // restored: the literal is typed
     // INSIDE some enclosing fn body whose return expectation must survive
     // -- the same save/restore `@value_expect` keeps around calls. The
     // enclosing with-arm's `link_check = false` covers the body: a with
@@ -262,9 +293,10 @@ fn Checker mut @type_handler_op(op Node, eff_name str, schema EffectDef) -> () {
     @ret_expect = same_ty(sig.ret_id)
     // THE BODY against the schema's return, through the fn body's own
     // doors: `@ret_expect` is set so `return` operands and the tail value
-    // are judged by `@judge_return` exactly as a fn body judges them, and
-    // `@tail_value_body` marks a BLOCK body so its tail expression is the
-    // returned value. BOTH are saved and restored: the literal is typed
+    // are judged by `@judge_return` (check/return_rules.nv:126) exactly as
+    // a fn body judges them, and `@tail_value_body` marks a BLOCK body so
+    // its tail expression is the returned value. BOTH are saved and
+    // restored: the literal is typed
     // INSIDE some enclosing fn body whose return expectation must survive
     // -- the same save/restore `@value_expect` keeps around calls. The
     // enclosing with-arm's `link_check = false` covers the body: a with

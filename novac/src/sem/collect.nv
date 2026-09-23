@@ -349,7 +349,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
             defs.add(tname, DefTarget.DefType(d))
             mut opcnt = 0
             for m in nk {
-                if m.kind_of() == NodeKind.EffectOp { opcnt += 1 }
+                opcnt += if m.kind_of() == NodeKind.EffectOp { 1 } else { 0 }
             }
             fx.add(tname, fx.ops.len(), opcnt)
             for _ in 0..opcnt {
@@ -714,5 +714,6 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     own.own_cnt = own.rows.len()
     Ctx { types, foreign_types_cnt, tys, prims, defs, fields, variant_rows, variant_names, payload_types, gates,
           fn_decl_rows, fns: own,
-          module_c: module_path_c(file), builtin_names, coerces, protos, effects: fx, consts, interop: InteropTable.new() }
+          module_c: module_path_c(file), builtin_names, coerces, protos, effects: fx, consts,
+          interop: InteropTable.new() }
 }

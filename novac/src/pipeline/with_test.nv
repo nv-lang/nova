@@ -213,14 +213,22 @@ test "effect op call: an operation the effect does not declare is refused by nam
     // the refusal names the op, the effect, and what the effect DECLARES.
     // (The oracle's exact wording for a bad operation CALL was not probed;
     // the family wording is shared on purpose -- a direct probe is filed.)
-    ro d = compile_with("fn g() -> int {\n ro b = Fs.write(\"p\")\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(opcall_fx()), interop_surface())
+    ro d = compile_with(
+        "fn g() -> int {\n ro b = Fs.write(\"p\")\n 0\n}\nfn main() {\n println(g())\n}",
+        parse_decls(opcall_fx()),
+        interop_surface(),
+    )
     assert(d.len() == 1, messages(d))
     assert(d[0].message.contains("is not an operation of effect `Fs`"), d[0].message)
     assert(d[0].message.contains("it declares: read, size"), d[0].message)
 }
 
 test "effect op call: arity mismatch names both counts (E.4 item 2)" {
-    ro d = compile_with("fn g() -> int {\n ro b = Fs.read(\"p\", \"q\")\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(opcall_fx()), interop_surface())
+    ro d = compile_with(
+        "fn g() -> int {\n ro b = Fs.read(\"p\", \"q\")\n 0\n}\nfn main() {\n println(g())\n}",
+        parse_decls(opcall_fx()),
+        interop_surface(),
+    )
     assert(d.len() == 1, messages(d))
     assert(d[0].message.contains("takes 1 parameter(s)"), d[0].message)
     assert(d[0].message.contains("passes 2"), d[0].message)
@@ -280,4 +288,18 @@ test "if-let: the sibling termination machinery still answers (control, E4)" {
     std.push("module std.v\nexport type Option[T] enum Some(T) | None\n")
     ro d = compile_with("fn g() -> int {\n if Some(v) = Some(1) {\n  return v\n } else {\n  return 0\n }\n}\nfn main() {\n println(g())\n}", parse_decls(std), interop_surface())
     assert(d.len() == 0, messages(d))
+}
+
+test "handler literal: an undeclared return type is the author's error (E4, found at the nova-kim acceptance)" {
+    // MEASURED 2026-09-23: in an ordinary run this was the ONLY diagnostic, and it
+    // said "outside the subset ... not a type novac knows" -- calling the author's
+    // misspelling novac's debt. A fn signature says "undeclared type name" for the
+    // same name, and the literal now goes through that very door.
+    ro d = compile_with(
+        "fn g() -> int {\n with Fs = effect Fs { read(p str) -> Nope => p } {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}",
+        parse_decls(handler_fx()),
+        interop_surface(),
+    )
+    assert(d.len() == 1, messages(d))
+    assert(messages(d).contains("undeclared type name `Nope`"), messages(d))
 }

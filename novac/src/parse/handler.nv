@@ -2,19 +2,23 @@
 // novac/src/parse/handler.nv -- the HANDLER LITERAL reader:
 // `effect Fs { read(p str) -> []u8 => []u8.new() }`.
 //
-// Donor: none -- the form is the language's own (D61), measured against the
-//        oracle 2026-09-22 (window nova-6e): no `fn` keyword on the op
-//        ("expected identifier, got `fn`" is the oracle's parse error),
-//        params typed (`p str`) or bare (`p`), body an expression after
-//        `=>` or a block. NOT taken: `mut name` WITHOUT a type as an error
-//        the parser would plant -- that judgement (E_HANDLER_OP_PARAM_MUT_
-//        WITHOUT_TYPE) is the checker's, and this wave does not read it.
+// Donor: none -- the form is the language's own (D61), not taken from
+//        another compiler or specification.
 // Role: layer 2 -- one expression-leaf form, read by `@atom`'s contextual
 //   door (`effect` Ident `{`); the shape walk and the typist judge it.
 // Used by: parse/expr.nv (@atom) and nothing else; check calls no parser.
 // Guarded by: check-novac-file-size.py (this file exists because expr.nv at
 //   929 lines had no honest room for the literal's ~90), the reserialize
 //   property in parse_test.nv (every token the literal writes is a child).
+//
+// Measured against: the oracle, 2026-09-22 (window nova-6e), for the SHAPE
+//   only -- no `fn` keyword on the op ("expected identifier, got `fn`" is
+//   the oracle's parse error), params typed (`p str`) or bare (`p`), body an
+//   expression after `=>` or a block. NOT taken: `mut name` WITHOUT a type
+//   as an error the parser would plant -- that judgement
+//   (E_HANDLER_OP_PARAM_MUT_WITHOUT_TYPE) is the checker's, and this wave
+//   does not read it. This is NOT a donor relationship (P25): the form is
+//   D61's own, only its concrete shape was probed against the oracle.
 //
 // A co-equal file of module `novac.parse` (folder = one module), cut by
 // MEANING under decision 12: expr.nv keeps the precedence climb and the
@@ -54,6 +58,8 @@ fn Cursor mut @handler_lit() -> Node {
         } else {
             // Recovery inside the literal: one Err, one token, advance --
             // bounded by the RBrace test above, the literal's own closer.
+            // RECOVERY-BOUNDED: the while loop above stops at `}`, the
+            // literal's own closer, so this take can never reach it.
             kids.push(@node(NodeKind.Err, []Node.of(@take())))
         }
         if @i == before { break }

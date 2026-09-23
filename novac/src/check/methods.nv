@@ -451,19 +451,13 @@ fn Checker mut @type_effect_op_call(e Node, kids []Node) -> bool {
     // returning false only hands the shape on, it decides nothing here.
     if !@effect_op_head(kids) { return false }
     ro head_name = expr_leaf_name(kids[0])
-    ro edecl = match @ctx.defs.type_decl(head_name) {
-        None => ice("check: the effect-op head lost its declaration between two reads of one Option")
-        Some(d) => d
-    }
+    ro edecl = @ctx.defs.type_decl(head_name) ?? ice("check: the effect-op head lost its declaration between two reads of one Option")
     ro onm = match kids[2] {
         Leaf(t) => t
         Branch { .. } => { return false }
     }
     ro opname = onm.text
-    ro schema = match @ctx.effects.def_of(head_name) {
-        None => ice("check: an effect declaration with no op schema reached the effect-op call door")
-        Some(s) => s
-    }
+    ro schema = @ctx.effects.def_of(head_name) ?? ice("check: an effect declaration with no op schema reached the effect-op call door")
     // (a) THE OPERATION MUST BE IN THE SCHEMA -- the call-side sibling of
     // the handler literal's E_HANDLER_OP_UNKNOWN (one family, two
     // positions; the literal's door names the same shape). The oracle's
@@ -479,7 +473,7 @@ fn Checker mut @type_effect_op_call(e Node, kids []Node) -> bool {
     }
     if sig_at < 0 {
         ro what = effect_op_list(@ctx.effects, schema)
-        @refuse(onm, "`${head_name}.${opname}` is not an operation of effect `${head_name}` -- it declares: ${what}. An operation call may only name operations the effect declares: check the spelling, or the operation may have been removed from `${head_name}` while this call kept using it.")
+        @refuse(onm, "`${head_name}.${opname}` is not an operation of effect `${head_name}` -- it declares: ${what}. An operation call may only name operations the effect declares: check the spelling, or the operation may have been removed from `${head_name}` while this call kept using it. (E4, wave 274.11)")
         return true
     }
     ro sig = @ctx.effects.ops[sig_at]
@@ -513,7 +507,7 @@ fn Checker mut @type_effect_op_call(e Node, kids []Node) -> bool {
     // (b) ARITY, named with both counts -- a body judged against the wrong
     // arity would answer questions the operation never asked.
     if args.len() != sig.param_cnt {
-        @refuse(onm, "effect operation `${head_name}.${opname}` takes ${sig.param_cnt} parameter(s), but this call passes ${args.len()} -- operation calls must match the effect's declaration exactly.")
+        @refuse(onm, "effect operation `${head_name}.${opname}` takes ${sig.param_cnt} parameter(s), but this call passes ${args.len()} -- operation calls must match the effect's declaration exactly. (E4, wave 274.11)")
         return true
     }
     // (c) EACH ARGUMENT against the schema's parameter type, through the
@@ -535,7 +529,7 @@ fn Checker mut @type_effect_op_call(e Node, kids []Node) -> bool {
         }
         ro want = @ctx.effects.op_params[sig.param_off + a]
         if is_ty(want) && !type_admits(@ctx.tys, want, got) {
-            @refuse(onm, "effect operation `${head_name}.${opname}` argument ${a + 1} is `${ty_source_name(@ctx, got)}`, but the operation declares `${ty_source_name(@ctx, want)}` -- operation calls must match the effect's declaration exactly.")
+            @refuse(onm, "effect operation `${head_name}.${opname}` argument ${a + 1} is `${ty_source_name(@ctx, got)}`, but the operation declares `${ty_source_name(@ctx, want)}` -- operation calls must match the effect's declaration exactly. (E4, wave 274.11)")
             return true
         }
     }

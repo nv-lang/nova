@@ -25,7 +25,8 @@ import ../sem.{Ctx, CheckOut, declares_receiver, generics_have_consume, generics
 // The tree question that decides what a hoist must order (F65).
 import ../sem.{contains_call}
 import ../sem.{decl_of_ty}
-import ../sem.{branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, generic_bounds, effect_marker_of}
+import ../sem.{branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
+import ../sem.{generic_bounds, effect_marker_of}
 import ../sem.{is_arg_node}
 import ../sem.{ret_is_unit, param_default_slot, interp_slices}
 import ../types.{TyId, no_ty, is_ty}

@@ -63,9 +63,10 @@ test "supervised: a binding does NOT leak out of the spawn body (E4)" {
 test "supervised: a bare word (no brace) is an ordinary name, refused not silent (E4)" {
     // NEGATIVE, and the contextual class's own semantics: the door sees
     // `supervised` only before `{`, so a bare `supervised` statement is a
-    // NAME expression -- refused by the name door at typing. (The oracle,
-    // which RESERVES the word, refuses it at parse; either way the form
-    // dies with a diagnostic, and the carrier always writes the brace.)
+    // NAME expression -- refused by the unknown-name door at typing
+    // (check/exprs.nv:526). (The oracle, which RESERVES the word, refuses
+    // it at parse; either way the form dies with a diagnostic, and the
+    // carrier always writes the brace.)
     ro d = compile_with("fn g() -> int {\n    supervised\n    0\n}\nfn main() {\n    println(g())\n}", parse_decls([]str.new()), interop_surface())
     assert(d.len() == 1, messages(d))
     assert(d[0].message.contains("unknown name"), d[0].message)
