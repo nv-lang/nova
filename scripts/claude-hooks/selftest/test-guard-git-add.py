@@ -17,7 +17,11 @@ import subprocess
 import sys
 
 H = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "guard-git.py")
-R = "/d/Sources/nv-lang/nova"
+# Дерево для `-C` выводится от расположения теста, а не пишется литералом:
+# путь к машине автора в отслеживаемом скрипте — класс №698 (первая редакция
+# этого файла так и покраснела на check-no-machine-paths).
+R = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 os.pardir, os.pardir, os.pardir)).replace("\\", "/")
 
 cases = [
     # ── НЕ ТРОГАЕМ: по именам — законная форма, первой ────────────────────
