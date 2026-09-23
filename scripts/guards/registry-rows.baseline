@@ -1426,6 +1426,12 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1262
+max=1310
+# 2026-09-23, integrator: row 1310 added -- the corpus runner never ran its
+# self-build batch (an env assignment after `timeout` is run as a command,
+# rc=127) and its fallback blamed an ICE that did not exist.
+# rows 1261->1262, max 1309->1310.
 rows=1261
 max=1309
 # 2026-09-23, integrator: row 1309 added at the nova-kim acceptance -- a ro

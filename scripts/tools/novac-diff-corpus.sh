@@ -294,8 +294,23 @@ self_rej=0
 self_mode="batch"
 self_rej_partial=""
 if [ "$self_total" -gt 0 ]; then
-    eval "timeout 60 NOVAC_SELF_PATH=novac/src \"$NOVAC\" check $self_files" > "$T/self.out" 2> "$T/self.err" </dev/null
+    # ПЕРЕМЕННАЯ ОКРУЖЕНИЯ СТОИТ ДО `timeout`, И ЭТО НЕ СТИЛЬ (реестр 221.1 №1310).
+    # С 2026-09-01 (c255751bd) строка была `timeout 60 NOVAC_SELF_PATH=... "$NOVAC"`:
+    # `timeout` не разбирает `VAR=val` среди своих аргументов -- это делает
+    # оболочка, и только для слов ПЕРЕД именем команды, -- и пытался запустить
+    # программу по имени `NOVAC_SELF_PATH=novac/src` (rc=127). Пачка не шла НИ
+    # РАЗУ три недели: каждый прогон уходил в пофайловый откат ниже и печатал
+    # «ICE убил пачку», хотя ICE не было. `scripts/tools/double-build.sh` это
+    # видел и обошёл у себя, не заведя строки.
+    eval "NOVAC_SELF_PATH=novac/src timeout 60 \"$NOVAC\" check $self_files" > "$T/self.out" 2> "$T/self.err" </dev/null
     src=$?
+    # ПАЧКА, КОТОРАЯ НЕ ЗАПУСТИЛАСЬ, -- НЕ СМЕРТЬ ПАЧКИ. Коды 126/127 значат, что
+    # команда не стартовала вовсе: о самосборке не узнали ничего, и тихий откат
+    # на пофайловый проход выдал бы поломку среды за вердикт. Громко и сразу.
+    if [ "$src" -eq 126 ] || [ "$src" -eq 127 ]; then
+        echo "novac-diff-corpus: FAIL -- самосборка пачкой НЕ ЗАПУСТИЛАСЬ (rc=$src): $(head -c 200 "$T/self.err")" >&2
+        exit 1
+    fi
     # ПАЧКА С ICE НЕДОСТОВЕРНА (замер 2026-08-30): ice обрывает процесс кодом 2,
     # который ПРОХОДИТ порог «код вне 0/1/2», и файлы ПОСЛЕ точки смерти выходят
     # «чистыми», не будучи досуженными вовсе. Так родилось ложное 41/53 волны В6:
@@ -332,7 +347,7 @@ echo "novac-diff-corpus: файлов $N — совпали-приняли $acc 
 if [ "$self_mode" = "batch" ]; then
     echo "novac-diff-corpus: поведенчески совпали $beh из $acc · самосборка (БАТЧ): отвергнуто $self_rej из $self_total"
 else
-    echo "novac-diff-corpus: поведенчески совпали $beh из $acc · самосборка (ПОФАЙЛОВЫЙ ОТКАТ -- ICE убил пачку, числа НЕ сравнимы с батчевым режимом, реестр №1122): отвергнуто $self_rej из $self_total (частичный счёт краха: $self_rej_partial, недостоверен)"
+    echo "novac-diff-corpus: поведенчески совпали $beh из $acc · самосборка (ПОФАЙЛОВЫЙ ОТКАТ -- пачка дала ICE или умерла, код $src, числа НЕ сравнимы с батчевым режимом, реестр №1122): отвергнуто $self_rej из $self_total (частичный счёт краха: $self_rej_partial, недостоверен)"
 fi
 echo "novac-diff-corpus: цена прогона — novac ${t_novac}ms, оракул ${t_oracle}ms, стена ${wall}ms"
 if [ -f "$T/acc" ]; then
