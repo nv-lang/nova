@@ -1426,6 +1426,12 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1273
+max=1321
+# 2026-09-23, integrator: row 1321 added -- the second axis of #1291
+# measured by the assistant found the same lying diagnostic on two other
+# parameter type forms ([N]T, fn(T) Effect -> R), 7 carriers in std.
+# rows 1272->1273, max 1320->1321.
 rows=1272
 max=1320
 # 2026-09-23, integrator: rows 1312-1320 added -- the 19 findings of hunt

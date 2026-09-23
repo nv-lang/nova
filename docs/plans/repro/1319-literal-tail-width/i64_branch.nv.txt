@@ -1,0 +1,3 @@
+module r1319_i64
+
+fn g(c bool) -> i64 => if c { 29 } else { 28 }
