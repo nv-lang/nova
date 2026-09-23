@@ -1,0 +1,79 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: none -- `supervised`/`spawn` are the language's own D13 forms;
+// the acceptance is the carrier's shape (novac/src/main.nv:286-330), and
+// the division of labour is the plan's own record (274.11 Э.7 item 4):
+// parser and checker THIS wave, emission (fibers, failure delivery to
+// `on_child_fail`, the §7 line as BEHAVIOUR) honestly deferred to the E4
+// emit wave. NOT taken: D439 (direct blocking ops in a supervised body) --
+// the body is typed as an ordinary block; `timeout:`/`cancel:` arguments;
+// value semantics (Outcome/T are later stages).
+// Role: acceptance tests of the E4 concurrency forms (plan 274.11): the
+//   statements parse as their own nodes, type their bodies as ordinary
+//   blocks, and refuse malformed shapes not silently.
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file; kill-switch probes both
+//   directions (the wave's law, transcripts in the window's report).
+// novac/src/pipeline/concurrency_test.nv -- `supervised { spawn { ... } }`,
+// as the carrier writes it.
+
+module novac.pipeline
+
+/// The carrier's shape, reduced to the subset's vocabulary: a nested
+/// spawn inside supervised, bodies of ordinary statements. Judged on the
+/// CHECK path (`compile_with`) -- the emit-side ICE before the concurrency
+/// machinery lands is the accepted answer (plan 274.11 Э.7 item 4), so
+/// `compile_to_c` is not the verdict door for these forms.
+fn supervised_src() -> str =>
+    "fn g() -> int {\n    supervised {\n        spawn {\n            ro x = 1\n            println(x)\n        }\n    }\n    0\n}\nfn main() {\n    println(g())\n}"
+
+test "supervised { spawn { ... } }: the carrier's shape types clean (E4)" {
+    // POSITIVE: the exact form main.nv writes -- bare supervised, bare
+    // spawn, an ordinary block body. Zero diagnostics on the check path.
+    ro d = compile_with(supervised_src(), parse_decls([]str.new()), interop_surface())
+    assert(d.len() == 0, messages(d))
+}
+
+test "spawn: a bare statement outside supervised types clean (E4)" {
+    // POSITIVE: the plan scopes the wave to the statement forms
+    // themselves; a bare `spawn { ... }` is the same door, and the oracle
+    // accepts it wherever a statement stands.
+    ro d = compile_with("fn g() -> int {\n    spawn {\n        println(1)\n    }\n    0\n}\nfn main() {\n    println(g())\n}", parse_decls([]str.new()), interop_surface())
+    assert(d.len() == 0, messages(d))
+}
+
+test "supervised: nested blocks, a binding scoped to the spawn body (E4)" {
+    // POSITIVE: the body blocks are ordinary -- a binding lives and dies
+    // inside its spawn body, a nested block scopes like any other (a bare
+    // `{ ... }` statement is the anonymous-ctor shape the subset refuses
+    // on its own, so the nest rides an ordinary `if`), and nothing leaks
+    // across the concurrency boundary.
+    ro d = compile_with("fn g() -> int {\n    supervised {\n        spawn {\n            ro x = 1\n            if x > 0 {\n                ro y = x + 1\n                println(y)\n            }\n        }\n    }\n    0\n}\nfn main() {\n    println(g())\n}", parse_decls([]str.new()), interop_surface())
+    assert(d.len() == 0, messages(d))
+}
+
+test "supervised: a binding does NOT leak out of the spawn body (E4)" {
+    // NEGATIVE: `x` bound inside the spawn body is unknown outside it --
+    // the body is an ordinary BLOCK, and the block's scope discipline is
+    // the answer, not a concurrency-flavoured copy of it.
+    ro d = compile_with("fn g() -> int {\n    supervised {\n        spawn {\n            ro x = 1\n            println(x)\n        }\n        println(x)\n    }\n    0\n}\nfn main() {\n    println(g())\n}", parse_decls([]str.new()), interop_surface())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("unknown name"), d[0].message)
+}
+
+test "supervised: a bare word (no brace) is an ordinary name, refused not silent (E4)" {
+    // NEGATIVE, and the contextual class's own semantics: the door sees
+    // `supervised` only before `{`, so a bare `supervised` statement is a
+    // NAME expression -- refused by the name door at typing. (The oracle,
+    // which RESERVES the word, refuses it at parse; either way the form
+    // dies with a diagnostic, and the carrier always writes the brace.)
+    ro d = compile_with("fn g() -> int {\n    supervised\n    0\n}\nfn main() {\n    println(g())\n}", parse_decls([]str.new()), interop_surface())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("unknown name"), d[0].message)
+}
+
+test "spawn: a bare word (no brace) is an ordinary name, refused not silent (E4)" {
+    // NEGATIVE: the spawn pair of the test above, same measured semantics.
+    ro d = compile_with("fn g() -> int {\n    spawn\n    0\n}\nfn main() {\n    println(g())\n}", parse_decls([]str.new()), interop_surface())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("unknown name"), d[0].message)
+}

@@ -869,6 +869,40 @@ fn Cursor mut @stmt() -> Node {
         }
         return @node(NodeKind.WithStmt, kids)
     }
+    // SUPERVISED (wave 274.11 Э.7 item 4): `supervised { body }` -- the
+    // D13 supervision statement the carrier writes (main.nv:286). The door
+    // is the with-statement's own class: a CONTEXTUAL word plus shape, not
+    // a lexer keyword (D13 keeps the keyword table closed). `supervised`
+    // alone, `supervised.x`, `supervised(...)` all stay ordinary
+    // expressions; only `supervised {` can be this form.
+    // THE NAMED HAZARD, probed and void: `Name {` is also the record-ctor
+    // expression shape, so this door would shadow a bare statement
+    // constructor of a type literally NAMED `supervised` -- but the ORACLE
+    // RESERVES the word (probed 2026-09-23: `type supervised { ... }`
+    // refuses "expected identifier, got `supervised`"), so no such type
+    // exists in the language and the contextual door loses nothing.
+    if @peek_ident("supervised") && @peek(skip: 1) == TokenKind.LBrace {
+        // The door's lookahead guarantees the body brace, so the block is
+        // taken directly -- a BARE `supervised` (no brace) never reaches
+        // this arm: it is an ordinary name statement, refused by the name
+        // door at typing (measured 2026-09-23; the oracle, which RESERVES
+        // the word, refuses it at parse -- either way, refused not silent).
+        mut kids = []Node.of(@take()) // `supervised`
+        kids.push(@block())
+        return @node(NodeKind.SupervisedStmt, kids)
+    }
+    // SPAWN (wave 274.11 Э.7 item 4): `spawn { body }` -- the D13 pair of
+    // `supervised`. Same contextual door, same probed-void hazard (the
+    // oracle reserves `spawn` too: "expected identifier, got `spawn`"),
+    // same bodyless marker. No `timeout:`/`cancel:` arguments this wave:
+    // the carrier writes none, and the acceptance is the carrier's shape.
+    if @peek_ident("spawn") && @peek(skip: 1) == TokenKind.LBrace {
+        // Same guarantee and the same bare-word semantics as `supervised`
+        // one arm up: the door sees the brace, so the block is direct.
+        mut kids = []Node.of(@take()) // `spawn`
+        kids.push(@block())
+        return @node(NodeKind.SpawnStmt, kids)
+    }
     ro e = @expr()
     if is_assign_op(@peek()) {
         mut kids = []Node.of(e, @take())

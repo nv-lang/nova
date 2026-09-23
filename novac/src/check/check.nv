@@ -645,6 +645,21 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // body statements carry their positions, exactly like
                     // the WithStmt/HandlerLit arms above.
                 }
+                SupervisedStmt => {
+                    // READ and TYPED (E4 wave, 274.11 Э.7 item 4): the
+                    // statement's own door -- typing the body block --
+                    // lives in `@type_stmt`; the walk's only job is to
+                    // descend, giving the body Block its statement
+                    // position exactly like WithStmt does. Emission
+                    // (fibers, failure delivery) is the E4 emit wave's
+                    // honest debt; a malformed body piece is an Err child
+                    // the generic branch names.
+                }
+                SpawnStmt => {
+                    // The D13 pair of SupervisedStmt, same division: typed
+                    // by `@type_stmt`, descended here so the body's
+                    // statements carry their positions.
+                }
                 Index => {
                     // NOT TYPED HERE (fix 2026-08-31). This walk judges the
                     // FORM of a file against the subset; it holds no scope --

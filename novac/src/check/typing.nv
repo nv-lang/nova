@@ -790,6 +790,27 @@ fn Checker mut @type_stmt(st Node) -> () {
         } else {
             // A missing body is the parser's error node, reported by the walk.
         }
+    } else if k == NodeKind.SupervisedStmt || k == NodeKind.SpawnStmt {
+        // SUPERVISION AND SPAWN (E4 wave, 274.11 Э.7 item 4): `supervised
+        // { spawn { ... } }`. Each is its keyword leaf plus ONE body
+        // Block, and the body is typed as an ORDINARY block -- D439
+        // (direct blocking ops in a supervised body) is explicitly not
+        // this task, per the plan record. No value semantics: the
+        // statement's type is nobody's question (Outcome/T are later
+        // stages). The parser's door guarantees the body brace, so the
+        // short shape is a broken invariant, not a form: the P17 assert
+        // says typing does not re-report what a malformed arm would mean.
+        ro skids = branch_children(st)
+        if skids.len() < 2 {
+            assert(@out.len() > 0, "check: a malformed supervised/spawn reached typing with no refusal")
+            return
+        }
+        ro sbody = skids[skids.len() - 1]
+        if sbody.kind_of() == NodeKind.Block {
+            @type_block(sbody)
+        } else {
+            // A missing body is the parser's error node, reported by the walk.
+        }
     } else if is_expr_kind(k) {
         @type_expr(st)
     } else {

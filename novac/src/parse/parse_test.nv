@@ -557,3 +557,66 @@ fn handler_lit_test_stmt(f Node) -> ro Node {
     }
     ice("parse test: the fixture has no with statement")
 }
+
+
+test "tree reserialization: supervised { spawn { ... } } survives byte for byte" {
+    // The carrier's exact concurrency shape (main.nv:286-330): a nested
+    // spawn inside supervised. Every token -- both keywords, both brace
+    // pairs -- is a child of its own statement node, so the reserialize
+    // identity is the whole witness.
+    ro src = "fn g() -> int {\n    supervised {\n        spawn {\n            1\n        }\n    }\n    0\n}\n"
+    assert(roundtrip(src))
+}
+
+test "shape: supervised and spawn are their own statement nodes, bodies nested" {
+    // Before these kinds the pair fell apart into a RecordCtor refusal and
+    // the parser's fallback (plan 274.11 Э.7's measurement, item 5). The
+    // door is spelling + shape (`supervised {` can only be this form), and
+    // the shape is: keyword leaf, ONE body Block; the spawn's Block sits
+    // inside the supervised's.
+    ro src = "fn g() -> int {\n    supervised {\n        spawn {\n            1\n        }\n    }\n    0\n}\n"
+    ro f = parse(lex(src))
+    ro sup = supervised_test_stmt(f)
+    match sup {
+        Branch { children: sk, .. } => {
+            // `supervised`, `{ ... }`.
+            assert(sk.len() == 2, "a bare supervised statement has two children")
+            assert(sk[1].kind_of() == NodeKind.Block)
+            match sk[1] {
+                Branch { children: bk, .. } => {
+                    mut found_spawn = false
+                    for b in bk {
+                        if b.kind_of() != NodeKind.SpawnStmt { continue }
+                        found_spawn = true
+                        match b {
+                            Branch { children: pk, .. } => {
+                                // `spawn`, `{ ... }`.
+                                assert(pk.len() == 2, "a bare spawn statement has two children")
+                                assert(pk[1].kind_of() == NodeKind.Block)
+                            }
+                            Leaf(_) => assert(false)
+                        }
+                    }
+                    assert(found_spawn, "the supervised body must hold the spawn statement")
+                }
+                Leaf(_) => assert(false)
+            }
+        }
+        Leaf(_) => assert(false)
+    }
+    assert(tree_reserialize(f) == src)
+}
+
+/// The supervised statement inside the test fn's body -- the shape tests
+/// walk the spawn through it, and a helper keeps the three tests readable.
+fn supervised_test_stmt(f Node) -> ro Node {
+    match ret_test_fn_block(f) {
+        Branch { children, .. } => {
+            for c in children {
+                if c.kind_of() == NodeKind.SupervisedStmt { return c }
+            }
+        }
+        Leaf(_) => {}
+    }
+    ice("parse test: the fixture has no supervised statement")
+}

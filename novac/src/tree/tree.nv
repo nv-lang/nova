@@ -70,6 +70,22 @@ export type NodeKind enum
     /// A handler-installation statement: `with Fs = h, Os = h2 { body }`
     /// (D61; wave 274.11 Э.4). Contextual word, not a lexer keyword.
     | WithStmt
+    /// A SUPERVISION statement: `supervised { body }` (D13; wave 274.11
+    /// Э.7 item 4). Contextual word like `with`: the door is spelling +
+    /// shape, and a statement beginning `supervised {` can only be this
+    /// form. Parsed and typed this wave; EMISSION (fibers, the failure
+    /// delivery to `on_child_fail`, the §7 line as BEHAVIOUR) is the E4
+    /// emit wave's honest debt -- an emitter ice before that machinery
+    /// lands is the accepted answer, not a silent drop.
+    | SupervisedStmt
+    /// A SPAWN statement: `spawn { body }` (D13's structured concurrency
+    /// pair; wave 274.11 Э.7 item 4). Same contextual discipline as
+    /// `supervised`: spelling + `{`, statement position, no value
+    /// semantics this wave (Outcome/T arrive with later stages). A type
+    /// literally NAMED `spawn` loses its bare statement constructor to
+    /// this door -- the contextual-keyword class, measured and accepted
+    /// for the carrier (see the parser arm's comment).
+    | SpawnStmt
     | MethodCall
     | FieldAccess
     | TypeDecl
