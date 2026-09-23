@@ -245,3 +245,39 @@ test "effect op call: a bound value named like the effect keeps the call (E.4 it
     assert(d.len() == 1, messages(d))
     assert(!d[0].message.contains("is not an operation of effect"), d[0].message)
 }
+
+
+test "with: a tail whose body RETURNS is the fn's return (E4, form-6)" {
+    // POSITIVE: `with Fs = h { return 1 }` as the whole body of a
+    // value-returning fn. The form-6 carrier measurement (main.nv:351,
+    // `compiler_argv`) refused this "ends without a value" while the
+    // oracle compiles it: the with statement terminates the fn when its
+    // BODY does, through the very `stmt_terminates` door the if-let
+    // precedent uses -- no with-flavoured copy of the judge.
+    mut std = std_decls()
+    std.push("module std.fx\nexport type Fs effect { fn read(p str) -> str }\n")
+    ro d = compile_with("fn g() -> int {\n with Fs = effect Fs { read(p str) -> str => p } {\n  return 1\n }\n}\nfn main() {\n println(g())\n}", parse_decls(std), interop_surface())
+    assert(d.len() == 0, messages(d))
+}
+
+test "with: a tail whose body does NOT return still refuses (E4, form-6)" {
+    // NEGATIVE: the same tail shape with a body that falls through --
+    // the statement leaves control behind it, exactly the fall-through
+    // an `if` without else already refuses. The termination arm answers
+    // false, and the missing-return door says its one sentence.
+    mut std = std_decls()
+    std.push("module std.fx\nexport type Fs effect { fn read(p str) -> str }\n")
+    ro d = compile_with("fn g() -> int {\n with Fs = effect Fs { read(p str) -> str => p } {\n  println(1)\n }\n}\nfn main() {\n println(g())\n}", parse_decls(std), interop_surface())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("ends without a value"), d[0].message)
+}
+
+test "if-let: the sibling termination machinery still answers (control, E4)" {
+    // CONTROL: a tail if-let whose branches return terminates the fn --
+    // the door the with arm joined, unchanged. If the new arm disturbed
+    // the enumeration, this reddens first.
+    mut std = std_decls()
+    std.push("module std.v\nexport type Option[T] enum Some(T) | None\n")
+    ro d = compile_with("fn g() -> int {\n if Some(v) = Some(1) {\n  return v\n } else {\n  return 0\n }\n}\nfn main() {\n println(g())\n}", parse_decls(std), interop_surface())
+    assert(d.len() == 0, messages(d))
+}
