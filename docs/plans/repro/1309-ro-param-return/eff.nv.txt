@@ -1,0 +1,7 @@
+
+
+fn pass_through(x Effect[int]) -> Effect[int] => x
+
+fn main() {
+    println(1)
+}

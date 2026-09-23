@@ -1,0 +1,7 @@
+type VP value { x int, y int }
+
+fn pass_through(x VP) -> VP => x
+
+fn main() {
+    println(1)
+}

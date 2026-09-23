@@ -1426,6 +1426,12 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1261
+max=1309
+# 2026-09-23, integrator: row 1309 added at the nova-kim acceptance -- a ro
+# parameter of a non-scalar type returned through a non-ro result was
+# accepted by novac, refused by the oracle (E_READONLY_COERCE).
+# rows 1260->1261, max 1308->1309.
 rows=1260
 max=1308
 # 2026-09-23, integrator: rows 1307-1308 added -- a killed novac gate wrote a

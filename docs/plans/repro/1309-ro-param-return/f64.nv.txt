@@ -1,0 +1,7 @@
+
+
+fn pass_through(x f64) -> f64 => x
+
+fn main() {
+    println(1)
+}

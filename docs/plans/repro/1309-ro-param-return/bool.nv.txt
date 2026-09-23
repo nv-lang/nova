@@ -1,0 +1,7 @@
+
+
+fn pass_through(x bool) -> bool => x
+
+fn main() {
+    println(1)
+}

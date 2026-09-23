@@ -1,0 +1,20 @@
+module ro_param_return.neg_3
+
+// A PAYLOAD-FREE enum is refused too -- measured against the oracle, not
+// assumed: `type Color enum Red | Green` returned from a `ro` parameter is
+// E_READONLY_COERCE there, while a primitive, a newtype and a `value` record are
+// accepted (registry #1309). The parameter here is an ordinary one of a
+// METHOD; returning the receiver `@` itself is accepted by the oracle and by
+// novac.
+
+// NOVAC_EXPECT cannot return `c` through a result that is not `ro`
+
+type Color enum Red | Green
+
+type Palette { n int }
+
+fn Palette @pick(c Color) -> Color => c
+
+fn main() {
+    println(1)
+}

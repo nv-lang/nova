@@ -50,6 +50,9 @@ type Scope {
     /// order -- names and rows travel together, so the pair is two vectors
     /// addressed by one index, not a second table.
     shadowed_names []str
+    /// Rows of `binds` below this one are the fn's own parameters (and its
+    /// receiver); later rows are locals. Set once by `@seal_params` (#1309).
+    params_end int
 }
 
 /// Empty scope with the NsLocals namespace.
@@ -59,6 +62,7 @@ fn Scope.new() -> Scope =>
         binds: []Binding.new(),
         shadowed: []int.new(),
         shadowed_names: []str.new(),
+        params_end: 0,
     }
 
 /// One local binding: its type and the MODE it was bound with.
@@ -105,6 +109,26 @@ fn Scope mut @release(mark int) -> () {
         @names.put(name, prev)
         ro _ = @shadowed.pop()
         ro _n = @shadowed_names.pop()
+    }
+}
+
+/// CLOSE THE PARAMETER BLOCK (#1309): every binding made so far is one of the
+/// fn's own parameters or its receiver, every later one a local. Called once per
+/// fn by `type_fn` (typing.nv), right after the parameters are bound.
+fn Scope mut @seal_params() -> () {
+    @params_end = @binds.len()
+}
+
+/// Is `name` bound RIGHT NOW to one of the fn's own parameters as written, with
+/// no `mut` and no `consume` -- the `ro` default of D176? A local that shadows the
+/// parameter answers no: its row is newer than the seal.
+#realtime nogc
+fn Scope @is_ro_param(name str) -> bool {
+    ro row = @names.find(name)
+    if row < 0 || row >= @params_end { return false }
+    match @binds[row].mode {
+        ModeRo => true
+        ModeMut | ModeConsume => false
     }
 }
 

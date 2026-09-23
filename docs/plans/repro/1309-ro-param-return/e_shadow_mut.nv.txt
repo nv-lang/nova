@@ -1,0 +1,8 @@
+fn f(x []int) -> []int {
+    mut x = []int.of(1, 2)
+    x
+}
+
+fn main() {
+    println(1)
+}

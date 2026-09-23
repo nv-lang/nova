@@ -632,3 +632,36 @@ test "match arm: a Block body's tail IS the arm's value (registry #TBD, the bloc
     ro leaves = "module m\n\nfn f(k int) -> int {\n    match k {\n        0 => {\n            return 1\n        }\n        _ => 3\n    }\n}\n"
     assert(diagnose(leaves) == 0, "a returning Block arm keeps its old answer: no value offered, no disagreement")
 }
+
+test "return door: a ro parameter of a freezing type is refused (registry #1309)" {
+    // Measured against the oracle on 27 forms (docs/plans/repro/1309-ro-param-return/):
+    // E_READONLY_COERCE for a record without `value`, a sum -- a payload-free
+    // enum too --, an applied type and an effect handler, through `=>` and
+    // `return` alike. Until 2026-09-23 novac accepted every one of them. The
+    // shapes here are records and enums declared in the file: this helper
+    // collects no std, so `[]int` would be refused for a different cause.
+    ro arrow = "module m\n\ntype Point { x int }\n\nfn f(p Point) -> Point => p\n"
+    assert(diagnose(arrow) == 1, "a ro record parameter returned as the record is refused")
+    assert(diagnose_first_msg(arrow).contains("E_READONLY_COERCE"), "the refusal names the oracle's code")
+    ro ret = "module m\n\ntype Point { x int }\n\nfn f(p Point) -> Point {\n    return p\n}\n"
+    assert(diagnose(ret) == 1, "`return p` is refused like `=> p`")
+    ro en = "module m\n\ntype Color enum Red | Green\n\nfn f(c Color) -> Color => c\n"
+    assert(diagnose(en) == 1, "a payload-free enum is refused too -- measured, not assumed")
+}
+
+test "return door: what the oracle accepts stays accepted (registry #1309)" {
+    // The mirror is no wider than the measurement: each of these the oracle takes.
+    ro prim = "module m\n\nfn f(x int) -> int => x\n"
+    assert(diagnose(prim) == 0, "a primitive is copied, nothing to freeze")
+    ro mutp = "module m\n\ntype Point { x int }\n\nfn f(mut p Point) -> Point => p\n"
+    assert(diagnose(mutp) == 0, "a `mut` parameter is not frozen")
+    ro cons = "module m\n\ntype Point { x int }\n\nfn f(consume p Point) -> Point => p\n"
+    assert(diagnose(cons) == 0, "a `consume` parameter hands its ownership over")
+    ro vrec = "module m\n\ntype Vp value { x int }\n\nfn f(v Vp) -> Vp => v\n"
+    assert(diagnose(vrec) == 0, "a `value` record is copied")
+    ro recv = "module m\n\ntype Bag { n int }\n\nfn Bag @me() -> Bag => @\n"
+    assert(diagnose(recv) == 0, "the receiver `@` is accepted by the oracle")
+    // THE SEAL: a local that shadows the parameter is a local, not the parameter.
+    ro shadow = "module m\n\ntype Point { x int }\n\nfn f(p Point) -> Point {\n    ro p = Point { x: 1 }\n    p\n}\n"
+    assert(diagnose(shadow) == 0, "a ro local shadowing a parameter is a fresh value")
+}

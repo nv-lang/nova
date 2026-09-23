@@ -827,9 +827,11 @@ test "an application in TYPE position resolves -- Vec[int], and []T is its D239 
 export type Vec[T] { n int }"
     ro (d1, _) = compile_to_c("module m.a\n\
 fn take(xs Vec[int]) -> int => 1\n\
-fn f(xs []int) -> []int => xs\n\
+fn f(consume xs []int) -> []int => xs\n\
 fn main() { println(1) }",
                               []str.of(handed))
+    // `consume xs` (registry #1309): a `ro` parameter returned as `-> []int` is
+    // E_READONLY_COERCE; the spelling of the type is this case's subject, not the mode.
     assert(d1.len() == 0)
     // The rotten pair, both directions of the lid: a WRONG-ARITY application is
     // not a type (the head refusal names what to write), and the forms B2 did

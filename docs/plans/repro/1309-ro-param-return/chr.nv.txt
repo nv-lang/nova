@@ -1,0 +1,7 @@
+
+
+fn pass_through(x char) -> char => x
+
+fn main() {
+    println(1)
+}

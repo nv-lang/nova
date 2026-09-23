@@ -252,6 +252,8 @@ fn Checker mut @type_fn(f Node) -> () {
         // THE entry point takes no parameters, so there is nothing to bind; its
         // body is typed by the loop below like any other body.
     }
+    // Everything bound so far is a parameter; the return door asks (#1309).
+    @scope.seal_params()
     for c in kids {
         ro ck = c.kind_of()
         if ck == NodeKind.Requires {
