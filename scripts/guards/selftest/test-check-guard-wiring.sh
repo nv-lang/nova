@@ -179,6 +179,39 @@ else
     check "расхождение счёта и имён — красный" 1 0
 fi
 
+# ── (3ж) Адрес ТОЛЬКО В ТЕЛЕ, после шапки — это НЕ адрес шапки: красный ──
+# 2026-09-23: предикат судил весь файл, и комментарий посреди кода («волна E4
+# (план 274.11)» в check-novac-row-fields, строка 86) гасил долг. Свойство —
+# «шапка называет план», поэтому адрес засчитывается только в ведущем блоке.
+r8="$tmp/r8"; make_repo "$r8"
+{ printf '#!/usr/bin/env bash\n'; for i in $(seq 1 10); do printf '# строка шапки %s\n' "$i"; done
+  printf 'set -u\n'; printf '# случайное упоминание: план 274 — не адрес шапки\n'; printf 'exit 0\n'; } \
+    > "$r8/scripts/guards/check-bodyref.sh"
+touch "$r8/scripts/guards/selftest/test-check-bodyref.sh"
+NOVA_WIRING_BASELINE="$wb0" bash "$GUARD" "$r8" > "$tmp/o3zh" 2>&1
+check "адрес только в теле — красный при базе 0" 1 $?
+
+# ── (3з) ДЛИННАЯ шапка: адрес после 20-й строки, но внутри шапки — зелёный ─
+# Граница — конец ведущего блока, а не «первые 20 строк»: у самого
+# check-guard-wiring адрес стоит в строке 35, и он законен.
+r9="$tmp/r9"; make_repo "$r9"
+{ printf '#!/usr/bin/env bash\n'; for i in $(seq 1 24); do printf '# строка шапки %s\n' "$i"; done
+  printf '#\n# План: docs/plans/231-bug-cycle-exit.md §4в.\n\n'; printf 'set -u\nexit 0\n'; } \
+    > "$r9/scripts/guards/check-longhdr.sh"
+touch "$r9/scripts/guards/selftest/test-check-longhdr.sh"
+NOVA_WIRING_BASELINE="$wb0" bash "$GUARD" "$r9" > "$tmp/o3z" 2>&1
+check "адрес в длинной шапке после 20-й строки — не ложняк" 0 $?
+
+# ── (3и) Питоновская шапка: адрес внутри докстринга — зелёный ───────────
+r10="$tmp/r10"; make_repo "$r10"
+{ printf '#!/usr/bin/env python3\n'; printf '"""check-pyaddr — учебный страж.\n'
+  for i in $(seq 1 8); do printf 'строка шапки %s\n' "$i"; done
+  printf 'План: docs/plans/231-bug-cycle-exit.md §4в.\n"""\n'; printf 'import sys\n'; } \
+    > "$r10/scripts/guards/check-pyaddr.py"
+touch "$r10/scripts/guards/selftest/test-check-pyaddr.py"
+NOVA_WIRING_BASELINE="$wb0" bash "$GUARD" "$r10" > "$tmp/o3i" 2>&1
+check "адрес внутри питоновского докстринга — не ложняк" 0 $?
+
 # (4) НЕ ловит: полностью корректный страж (шапка + план + самотест + цикл в gate).
 r4="$tmp/r4"; make_repo "$r4"
 good_header "$r4/scripts/guards/check-good.sh" "check-good.sh"
