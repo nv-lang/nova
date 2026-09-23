@@ -1426,6 +1426,13 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1276
+max=1324
+# 2026-09-23, Carina window: rows 1323 and 1324 added -- 1323 (a handler
+# literal typed E[E] instead of Effect[E], f9a69c3bf) and 1324 (a string line
+# continuation kept the next line's indentation, a silent wrong string, and
+# was refused on a CRLF file, e583aba20), both closed with their fixes.
+# rows 1274->1276, max 1322->1324.
 rows=1274
 max=1322
 # 2026-09-23, integrator: row 1322 added -- the assistant's self-build
