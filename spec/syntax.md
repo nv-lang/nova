@@ -1544,8 +1544,9 @@ fn ptr_read[T](p *T) -> ref T          // сквозь неё читают: ме
 
 **Linearity through a pointer** ([D216 amendment 2026-09-25](decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo)):
 a write comes as a pair, copying (ordinary `T` only) and consuming (`consume`), chosen by D84
-rule 3; `p.read()` / `p.read_at(i)` is a move out with an owned result; to look without taking
-the value out, `p.lend(f)` / `p.lend_at(i, f)` lends the element to a closure as a view
+rule 3; `p.read()` / `p.read_at(i)` is a copy, ordinary `T` only, and
+`p.read_consume()` / `p.read_consume_at(i)` is a move out with an owned result; to look without
+taking the value out, `p.lend(f)` / `p.lend_at(i, f)` lends the element to a closure as a view
 parameter. The rules are the same in safe and unsafe code.
 
 **What `mut` on a parameter means** (D326 Р3, amendment 2026-09-24): the right to change the value RECEIVED, not a link to the caller's variable. For a value type the value is the caller's storage — assigning it is visible outside. For a heap type the value is the object: changing the object is visible, while assigning the parameter only rebinds the local name, and the compiler warns `W_MUT_HEAP_PARAM_REBIND`.
