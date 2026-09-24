@@ -1426,6 +1426,10 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1277
+max=1327
+# 2026-09-24, integrator: row 1327 added (a linear container loses its
+# linearity when spelled []T instead of Vec[T]). rows 1276->1277, max 1326->1327.
 rows=1276
 max=1326
 # 2026-09-24, integrator: row 1326 added (the consume pass sees a generic

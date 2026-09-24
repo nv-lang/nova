@@ -1,0 +1,23 @@
+// #1327 carrier: `clone` of a `[]Res` -- two owners of every element -- nova check PASS.
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> () { () }
+
+fn mk(i int) -> Res => { id: i }
+
+fn drain(consume v []Res) -> () {
+    for consume r in v {
+        r.close()
+    }
+}
+
+fn main() -> () {
+    mut v = []Res.new()
+    v.push(mk(1))
+    v.push(mk(2))
+    consume w = v.clone()
+    drain(w)
+    drain(v)
+}

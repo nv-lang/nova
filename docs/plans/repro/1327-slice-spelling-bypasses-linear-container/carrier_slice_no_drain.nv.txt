@@ -1,0 +1,21 @@
+// #1327 carrier: `[]Res` (the alias of Vec[Res]) left non-empty, never consumed -- nova check PASS.
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> () { () }
+
+fn mk(i int) -> Res => { id: i }
+
+fn drain(consume v []Res) -> () {
+    for consume r in v {
+        r.close()
+    }
+}
+
+fn main() -> () {
+    mut v = []Res.new()
+    v.push(mk(1))
+    v.push(mk(2))
+
+}
