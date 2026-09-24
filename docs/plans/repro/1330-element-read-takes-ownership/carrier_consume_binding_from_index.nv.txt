@@ -1,0 +1,26 @@
+// #1330 carrier: `consume r = v[0]` then `r.close()`, then the vector is drained -- nova check PASS.
+// Run: nova check <file>. Element 0 is closed twice when the carrier passes.
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> () {
+}
+
+fn take(consume r Res) -> () {
+    r.close()
+}
+
+fn drain_all(consume v Vec[Res]) -> () {
+    for consume x in v {
+        x.close()
+    }
+}
+
+fn main() -> () {
+    consume v = Vec[Res].new()
+    v.push(Res { id: 1 })
+    consume r = v[0]
+    r.close()
+    drain_all(v)
+}

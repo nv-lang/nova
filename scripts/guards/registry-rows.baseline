@@ -1426,6 +1426,10 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1280
+max=1330
+# 2026-09-25, integrator: row 1330 added (reading a vector element takes
+# ownership while the element stays in the vector). rows 1279->1280, max 1329->1330.
 rows=1279
 max=1329
 # 2026-09-25, integrator: row 1329 added and closed (the gate's dry run was
