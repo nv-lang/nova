@@ -1,0 +1,19 @@
+// #1332 control: a temporary takes the consuming form and prints form=42 -- CORRECT.
+// EXPECT_STDOUT x
+module standalone.r309_temporary
+
+type Bag {
+    n int
+}
+
+fn Bag @put(v int) -> int => 1
+
+fn Bag @put(consume v int) -> int => v
+
+
+fn main() Io -> () {
+    ro b = Bag { n: 0 }
+
+    ro k = b.put(40 + 2)
+    print("form=${k}")
+}

@@ -1426,6 +1426,10 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1282
+max=1332
+# 2026-09-25, integrator: row 1332 added (regression of #309: a plain binding
+# goes to the consuming form of a mode pair). rows 1281->1282, max 1331->1332.
 rows=1281
 max=1331
 # 2026-09-25, integrator: row 1331 added (`match consume <expr>` from D157 is
