@@ -1426,6 +1426,10 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1276
+max=1326
+# 2026-09-24, integrator: row 1326 added (the consume pass sees a generic
+# [T consume] return as T, not the substituted type). rows 1275->1276, max 1325->1326.
 rows=1275
 max=1325
 # 2026-09-24, integrator: row 1325 added (== on a fixed array passes the

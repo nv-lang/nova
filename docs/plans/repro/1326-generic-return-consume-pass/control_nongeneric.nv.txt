@@ -1,0 +1,27 @@
+// #1326 control: the same flow through a non-generic `fn passr(consume x Res) -> Res` -- PASS.
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> () { () }
+
+type Plain {
+    id int
+}
+
+type Cell[T] {
+    n int
+}
+
+fn Cell[T consume] @put(consume v T) -> T => v
+
+fn Cell[T consume] consume @done() -> () { () }
+
+fn pass[T consume](consume x T) -> T => x
+
+fn passr(consume x Res) -> Res => x
+
+fn main() -> () {
+    consume r = passr(Res { id: 1 })
+    r.close()
+}

@@ -1,0 +1,26 @@
+// #1326 carrier 1: `consume r = pass(Res {..})` through `fn pass[T consume](consume x T) -> T`.
+// nova check: D133-not-consumed on `r` "(type `T`)" although `r.close()` is called.
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> () { () }
+
+type Plain {
+    id int
+}
+
+type Cell[T] {
+    n int
+}
+
+fn Cell[T consume] @put(consume v T) -> T => v
+
+fn Cell[T consume] consume @done() -> () { () }
+
+fn pass[T consume](consume x T) -> T => x
+
+fn main() -> () {
+    consume r = pass(Res { id: 1 })
+    r.close()
+}
