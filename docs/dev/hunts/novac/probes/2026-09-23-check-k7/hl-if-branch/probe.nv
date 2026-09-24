@@ -1,0 +1,18 @@
+fn g(c bool) -> int {
+    ro h = if c {
+        effect Random {
+            u64() -> u64 => 4
+            bytes(n int) -> []u8 => "ab".bytes()
+        }
+    } else {
+        effect Random {
+            u64() -> u64 => 5
+            bytes(n int) -> []u8 => "ab".bytes()
+        }
+    }
+    0
+}
+
+fn main() {
+    println(g(true))
+}

@@ -1,0 +1,8 @@
+fn use_h(h Effect[Random]) -> int => 1
+
+fn main() {
+    println(use_h(effect Random {
+        u64() -> u64 => 4
+        bytes(n int) -> []u8 => "ab".bytes()
+    }))
+}

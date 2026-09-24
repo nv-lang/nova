@@ -32,8 +32,8 @@ Claude Code session automatically, this one is not, so the order has to live
 there and the rules have to live here. Nothing is duplicated — two copies drift,
 and you would read the stale one.
 
-Every line below is enforced by a guard: breaking it reddens the authoritative
-gate rather than passing quietly.
+Not every line below has a guard. Which are held by a hook or guard and which by
+text only is mapped in [rules-for-agents.md §12](docs/dev/rules-for-agents.md).
 
 **Git**
 
@@ -371,7 +371,7 @@ Deferred work is tracked with `[M-<kebab-name>]` markers in docs and code commen
   contribution.
 - `git add` by filename only (Rules → Git, above) — applies here too: multiple agents work in parallel worktrees.
 - **One commit per logical task.** Multiple tasks → multiple commits.
-- The `Co-Authored-By` ban (Rules → Git, above) is enforced automatically here: a repo hook strips the trailer on commit — no need to check by hand.
+- The `Co-Authored-By` ban (Rules → Git, above) is enforced automatically here: a repo hook refuses a commit that carries the trailer.
 - Commit language is English (Rules → Language, above), enforced since 2026-08-09 by `scripts/guards/check-commit-language.sh` (Cyrillic after the cutover commit reddens the gate); `docs/dev/` and owner reports stay Russian.
 - **License:** code is `MIT OR Apache-2.0`; docs are `CC-BY-4.0`. See [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE).
 

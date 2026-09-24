@@ -1,3 +1,0 @@
-mut counter = 0
-
-fn main() Io -> () => print("x")

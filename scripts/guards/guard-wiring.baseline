@@ -94,7 +94,19 @@
 #   обзавёлся ссылкой — совет опустить базу; файла нет — совет убрать строку.
 #   ЗАСЕВ СДЕЛАН НА СЛИТОМ ДЕРЕВЕ (main от f76c86fd5), а не в своей ветке:
 #   значение храповика есть свойство пары «дерево + среда».
-no_plan_ref=46
+# 2026-09-23 (integrator): no_plan_ref 46 -> 59, GROWTH FROM SEEING, not from
+#   new debt. The address regex judged the WHOLE file while the property is
+#   'the header names its plan/registry row': an address in a code comment
+#   paid the debt. Found when the guard advised dropping check-novac-row-fields
+#   -- its 'reference' was line 86, a comment inside the code (1d94838c5).
+#   Now the address counts only inside the LEADING header block (shebang,
+#   comments, blank lines, docstring). Measured before the change: 14 guards
+#   carry an address only in the body; 13 of them were not in this base
+#   (row-fields already was). Their names are added, none is new work.
+no_plan_ref=59
+no_plan_ref_name=check-bug-number-sync
+no_plan_ref_name=check-dblock-numbers
+no_plan_ref_name=check-merge-message-hashes
 no_plan_ref_name=check-novac-acceptance-donor
 no_plan_ref_name=check-novac-arch-invariants
 no_plan_ref_name=check-novac-atomics-door
@@ -102,6 +114,8 @@ no_plan_ref_name=check-novac-branch-complete
 no_plan_ref_name=check-novac-channel-one-writer
 no_plan_ref_name=check-novac-cli-surface
 no_plan_ref_name=check-novac-commit-donor
+no_plan_ref_name=check-novac-conventions-coverage
+no_plan_ref_name=check-novac-ctx-tables
 no_plan_ref_name=check-novac-cursor-is-range
 no_plan_ref_name=check-novac-deps
 no_plan_ref_name=check-novac-doc-language
@@ -110,6 +124,8 @@ no_plan_ref_name=check-novac-emitted-names
 no_plan_ref_name=check-novac-export-has-caller
 no_plan_ref_name=check-novac-file-decls-door
 no_plan_ref_name=check-novac-file-size
+no_plan_ref_name=check-novac-grammar-kinds
+no_plan_ref_name=check-novac-guard-registry
 no_plan_ref_name=check-novac-ice-messages
 no_plan_ref_name=check-novac-import-exists
 no_plan_ref_name=check-novac-line-length
@@ -129,8 +145,10 @@ no_plan_ref_name=check-novac-no-silent-skip
 no_plan_ref_name=check-novac-no-string-keys
 no_plan_ref_name=check-novac-oracle-fresh
 no_plan_ref_name=check-novac-pch
+no_plan_ref_name=check-novac-plan-liveline
 no_plan_ref_name=check-novac-precondition
 no_plan_ref_name=check-novac-ref-field-names
+no_plan_ref_name=check-novac-registry-counts
 no_plan_ref_name=check-novac-resolve-discipline
 no_plan_ref_name=check-novac-row-fields
 no_plan_ref_name=check-novac-second-door
@@ -139,5 +157,9 @@ no_plan_ref_name=check-novac-surface
 no_plan_ref_name=check-novac-table-is-match
 no_plan_ref_name=check-novac-temp-edges
 no_plan_ref_name=check-novac-time-ledger
+no_plan_ref_name=check-novac-tuple-no-second-door
 no_plan_ref_name=check-novac-tyid-door
 no_plan_ref_name=check-novac-type-field-docs
+no_plan_ref_name=check-plan-292-parts
+no_plan_ref_name=check-registry-entry-shape
+no_plan_ref_name=check-registry-row-closed

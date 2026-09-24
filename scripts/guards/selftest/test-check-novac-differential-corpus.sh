@@ -66,7 +66,7 @@ corpus_out() {
         printf 'novac-diff-corpus: файлов 60 — совпали-приняли %s · совпали-отвергли 0 · отставание 40 · вне-точки 0 · заблокировано-оракулом 9 · DANGER 0 · PANIC 0 · allow 0\n' "$1"
         printf 'novac-diff-corpus: поведенчески совпали %s из %s · самосборка: отвергнуто 0 из 18\n' "$2" "$1"
         printf 'novac-diff-corpus: цена прогона — novac 40000ms, оракул 20000ms, стена %sms\n' "$3"
-        printf 'novac-diff-corpus baseline-numbers: contract-match=%s behavior-match=%s out-of-point=0 oracle-blocked=9 self-distance=0/18\n' "$1" "$2"
+        printf 'novac-diff-corpus baseline-numbers: contract-match=%s behavior-match=%s out-of-point=0 oracle-blocked=9 self-distance=0/18 self-mode=%s\n' "$1" "$2" "${4:-batch-unit}"
         printf 'novac-diff-corpus ok\n'
     } > "$FIX/corpus.out.fixture"
 }
@@ -85,6 +85,7 @@ hasF "$REAL" 'novac-diff-corpus baseline-numbers: contract-match=' "машинн
 hasF "$REAL" 'behavior-match=' "второе число храповика зовётся так же"
 hasF "$REAL" 'out-of-point=' "корзина «вне точки» зовётся так же"
 hasF "$REAL" 'self-distance=' "хвост машинной строки тот же"
+hasF "$REAL" 'self-mode=' "поле режима самосборки зовётся так же (№1310)"
 hasF "$REAL" 'novac-diff-corpus: цена прогона' "строка цены зовётся так же"
 hasE "$REAL" 'стена .*ms' "стена печатается в мс — её и парсит бюджет П14"
 hasF "$REAL" 'novac-diff-corpus: поведенчески совпали' "строка поведения зовётся так же"
@@ -100,8 +101,13 @@ rm -rf "$FIX/novac/src"
 
 echo "== числа равны базе — проходит =="
 check "contract/behavior == база — зелёный" "$(run)" "0"
-has "$TMP/out" 'исходы совпали с оракулом' "фикстурная половина пройдена (иначе до корпуса не дойти)"
-has "$TMP/out" 'ok: храповик корпуса' "корпусная зелёная строка"
+# The expected texts follow the guard's three-stage verdicts (19cf7c8ff, №1199):
+# stage 1 and 2 say "НЕ ВЕРДИКТ", and only the final line may carry `ok:`. Until
+# 2026-09-23 these two cells and the skip cell below still expected the pre-19cf
+# wording and were red for three days (registry 221.1 №1236).
+has "$TMP/out" 'этап 1/3 ИСХОДЫ' "фикстурная половина пройдена (иначе до корпуса не дойти)"
+has "$TMP/out" 'ИСХОДЫ: .* НЕ ВЕРДИКТ' "этап 1 не выдаёт себя за вердикт (№1199)"
+has "$TMP/out" 'ok: ИТОГ ВСЕХ ТРЁХ ЭТАПОВ' "корпусная зелёная строка"
 has "$TMP/out" '== база' "равенство базе названо"
 has "$TMP/out" 'поведенчески совпали' "корзины раннера напечатаны рядом с базой"
 
@@ -125,6 +131,24 @@ check "behavior БОЛЬШЕ базы — красный" "$(run)" "1"
 corpus_out 12 6 68000; mkbase 12 6
 check "числа выросли И база поднята тем же коммитом — зелёный" "$(run)" "0"
 mkbase 11 5; corpus_out 11 5 68000
+
+echo "== самосборка обязана идти пачкой (реестр №1310) =="
+corpus_out 11 5 68000 perfile-fallback
+check "self-mode=perfile-fallback без причины — красный" "$(run)" "1"
+has "$TMP/err" 'НЕ пачкой' "откат самосборки назван, а не проглочен"
+check "self-mode=perfile-fallback С причиной — зелёный" \
+      "$(NOVAC_SELFBUILD_FALLBACK_OK='проба самотеста' NOVAC_CORPUS=1 sh "$G" "$FIX" "$BIN" > "$TMP/out" 2> "$TMP/err"; echo $?)" "0"
+has "$TMP/out" 'принято по причине: проба самотеста' "причина снятия напечатана в вердикте"
+corpus_out 11 5 68000
+sed -i 's/ self-mode=[a-z-]*//' "$FIX/corpus.out.fixture"
+check "поля self-mode нет вовсе — красный (формат разошёлся, а не «всё хорошо»)" "$(run)" "1"
+has "$TMP/err" 'поля нет в строке раннера' "пропажа поля названа"
+# С 2026-09-23 мера 0.2 — пачка МОДУЛЯМИ (NOVAC_UNIT=1, консенсус окна Карины и
+# интегратора). Пофайловая пачка `batch` — прежняя мера, и молча вернуться к ней
+# нельзя: число снова ответило бы на другой вопрос под тем же именем.
+corpus_out 11 5 68000 batch
+check "self-mode=batch (пофайловая пачка, прежняя мера) — красный" "$(run)" "1"
+corpus_out 11 5 68000
 
 echo "== ловит непарсимое =="
 printf 'novac-diff-corpus baseline-numbers: contract-match=? behavior-match=?\n' > "$FIX/corpus.out.fixture"
@@ -170,7 +194,7 @@ mkbase 11 5
 mkrc 1; corpus_out 10 4 200000
 check "NOVAC_CORPUS=0 — зелёный, раннер не зовётся" \
       "$(NOVAC_CORPUS=0 sh "$G" "$FIX" "$BIN" > "$TMP/out" 2> "$TMP/err"; echo $?)" "0"
-has "$TMP/out" 'корпусная часть пропущена' "пропуск назван строкой"
+has "$TMP/out" 'стадия КОРПУСА пропущена' "пропуск назван строкой"
 
 echo "== монотонность САМОГО файла базы: откат обязан быть ОБЪЯВЛЕН =="
 # Блок стража сверяет базу с версией в HEAD, поэтому подложке нужен git —

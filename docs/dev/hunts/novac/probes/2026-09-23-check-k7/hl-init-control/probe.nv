@@ -1,0 +1,12 @@
+fn g() -> int {
+    ro h = effect Random {
+        u64() -> u64 => 4
+        nope() -> int => 1
+        bytes(n int) -> []u8 => "ab".bytes()
+    }
+    0
+}
+
+fn main() {
+    println(g())
+}

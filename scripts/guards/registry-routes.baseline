@@ -1490,7 +1490,20 @@ no_caveat=0
 # 2026-09-21, интегратор: 85 -> 86, РОСТ и он законен. Новая строка №1226 —
 # голый `unsafe fn` без ветки в двух диспетчерах парсера разом (parse.nv,
 # decls.nv) — третий вид корня того же читательского класса.
-blockers=92
+blockers=85
+# 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
+# 92 for two days although the chronicle below already records 92 -> 91:
+# the comment was written and the key was not moved, so the ratchet allowed
+# a silent regression of seven rows. Diffed by name against the registry at
+# 7afa75fa2 (where 92 was last true): 8 rows left the blocker list, 1 joined.
+#   real fixes (distance to the tag actually shortened): #1226 (2a403a7a9),
+#     #1227 (ce86a7a05), #1231 (2f6932ce1), #1240 (c68b33ab7 + bc2809f14),
+#     #1252 (bdb235540);
+#   open while the fix was already merged (the number lied, nothing moved):
+#     #1193, #1194 -- fixes in the tree since 2026-09-20;
+#   closed as a duplicate (bookkeeping): #1225 -> #1264;
+#   joined: #1286 (new row).
+# 92 - 8 + 1 = 85.
 # 2026-09-21, integrator: 91 -> 92, GROWTH, legitimate. Row 1260 --
 # assistant found a real oracle silent-miscompilation (sum-variant
 # auto-wrap round-trip through match empties a string), K1 per owner's

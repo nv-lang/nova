@@ -1,9 +1,0 @@
-module p6
-
-fn take(o Option[int]) -> int {
-    if Some(mut v) = o {
-        v = v + 1
-        return v
-    }
-    0
-}

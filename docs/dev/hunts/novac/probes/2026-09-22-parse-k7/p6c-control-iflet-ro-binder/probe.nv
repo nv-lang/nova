@@ -1,8 +1,0 @@
-module p6c
-
-fn take(o Option[int]) -> int {
-    if Some(v) = o {
-        return v
-    }
-    0
-}

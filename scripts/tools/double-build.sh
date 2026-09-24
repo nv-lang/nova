@@ -100,7 +100,13 @@ trap 'rm -rf "$T"' 0
 # per-file fallback reported "ICE killed the batch" with no ICE at all. It is
 # fixed there now and refuses rc=126/127 loudly; this note stays so the form
 # is not copied back.
-eval "NOVAC_SELF_PATH=novac/src timeout 60 \"$NOVAC\" check $self_files" > "$T/self.out" 2> "$T/self.err" </dev/null
+#
+# NOVAC_UNIT=1 -- the module is checked as one text, the same measure the
+# differential takes since 2026-09-23 (consensus of the Carina window and the
+# integrator): self-build is a module build, and the per-file check produced
+# harness artifacts (registry #1284, #1322). One rung, one measure -- the two
+# tools must not disagree on what "Carina builds itself" means.
+eval "NOVAC_UNIT=1 NOVAC_SELF_PATH=novac/src timeout 60 \"$NOVAC\" check $self_files" > "$T/self.out" 2> "$T/self.err" </dev/null
 rc=$?
 if [ "$rc" -eq 124 ]; then
     echo "double-build: батч СНЯТ ПРЕДЕЛОМ 60с (rc=124) -- вердикта нет, это не «все файлы плохи»" >&2

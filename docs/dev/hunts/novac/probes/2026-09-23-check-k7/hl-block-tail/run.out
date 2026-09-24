@@ -1,0 +1,14 @@
+=== SUBJECT: novac check
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"docs/dev/hunts/novac/probes/2026-09-23-check-k7/hl-block-tail/probe.nv","start":32,"end":38},"message":"fn declares a return type but its body ends without a value","poisoned_by":null}
+novac rc=1
+=== ORACLE: nova check
+ok: docs/dev/hunts/novac/probes/2026-09-23-check-k7/hl-block-tail/probe.nv
+
+===== SUMMARY =====
+PASS: 1  FAIL: 0
+oracle check rc=0
+=== ORACLE: nova build + run
+built: <TMP>/p.exe (6.97s)
+oracle build rc=0
+1
+run rc=0

@@ -35,6 +35,9 @@
 # (450 -> 435) came the same way, from d90 -- so the cheapest fix for
 # this debt is not editing links but giving heavily-cited D-blocks an
 # explicit anchor. TWO measurements now say so.
+# 2026-09-23 (integrator): address d188 removed from the list below. The
+# entry of 2026-09-20 above lowered the COUNT when {#d188} appeared, but
+# left the address in the list -- the guard said 142 < 143 for three days.
 dead=421
 d100
 d101
@@ -68,7 +71,6 @@ d169
 d183
 d184
 d186
-d188
 d189
 d190
 d191

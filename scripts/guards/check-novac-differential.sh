@@ -198,6 +198,28 @@ if [ -z "$cm" ] || [ -z "$bm" ] || [ -z "$base_cm" ] || [ -z "$base_bm" ]; then
     exit 1
 fi
 grep -E '^novac-diff-corpus: (файлов|поведенчески|цена)' "$T/corpus.out" | sed "s/^/$NAME: /"
+# САМОСБОРКА ОБЯЗАНА ИДТИ ПАЧКОЙ (реестр 221.1 №1310). Раннер три недели не
+# запускал пачку (`timeout 60 VAR=val` -> rc=127), уходил в пофайловый откат и
+# печатал «ICE убил пачку» без ICE — а число `self-distance`, мера ступени 0.2,
+# снималось не тем способом под батчевым именем. Откат законен только при
+# настоящей смерти пачки, и тогда это не норма, а находка: краснота снимается
+# ЧЕЛОВЕКОМ, причиной в NOVAC_SELFBUILD_FALLBACK_OK, и причина печатается здесь.
+# Поля нет вовсе — формат раннера разошёлся со стражем: тоже красный, а не пропуск.
+# С 2026-09-23 пачка идёт МОДУЛЯМИ (`batch-unit`, NOVAC_UNIT=1 — консенсус окна
+# Карины и интегратора о мере 0.2): прежняя пофайловая пачка `batch` тоже не
+# та мера, и молчаливый возврат к ней краснит так же, как откат.
+smode=$(echo "$NUMS" | sed -n 's/.*self-mode=\([a-z-]*\).*/\1/p')
+if [ "$smode" != "batch-unit" ]; then
+    if [ -n "$smode" ] && [ -n "${NOVAC_SELFBUILD_FALLBACK_OK:-}" ]; then
+        echo "$NAME: самосборка НЕ пачкой (self-mode=$smode) — принято по причине: $NOVAC_SELFBUILD_FALLBACK_OK"
+    else
+        echo "$NAME: FAIL — самосборка шла НЕ пачкой: self-mode=${smode:-<поля нет в строке раннера>} (реестр 221.1 №1310)." >&2
+        echo "  Пачка умерла или не запустилась, и self-distance снят пофайлово — это другой вопрос под тем же именем." >&2
+        echo "  Разбери причину по строке «самосборка (...)» выше; снять красноту — только причиной:" >&2
+        echo "    NOVAC_SELFBUILD_FALLBACK_OK='<почему откат законен сейчас>'" >&2
+        exit 1
+    fi
+fi
 # Cost ratchet (P14): the corpus run's wall must stay within its budget.
 wall_ms=$(sed -n 's/^novac-diff-corpus: цена прогона.*стена \([0-9]*\)ms.*/\1/p' "$T/corpus.out")
 bud_ms=$(tr -d '\r' < "$ROOT/scripts/guards/novac-iteration-cost.baseline" 2>/dev/null | sed -n 's/^diff-corpus-ms \([0-9]*\)$/\1/p')

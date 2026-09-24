@@ -1,0 +1,35 @@
+=== SUBJECT: novac check
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"docs/dev/hunts/novac/probes/2026-09-23-check-k7/with-protocol-named-record/probe.nv","start":25,"end":30},"message":"a `with` binding names an effect, and `Clone` is a record, not one (E4, wave 274.11)","poisoned_by":null}
+novac rc=1
+=== ORACLE: nova check
+ok: docs/dev/hunts/novac/probes/2026-09-23-check-k7/with-protocol-named-record/probe.nv
+
+===== SUMMARY =====
+PASS: 1  FAIL: 0
+oracle check rc=0
+=== ORACLE: nova build + run
+error: compiler error:
+<TMP>\build-2ff9b7bac5bd\probe.c:7644:37: error: use of undeclared identifier '_nova_handler_Clone'; did you mean '_nova_handler_Time'?
+ 7644 |     NovaVtable_Clone* _nv_tmp_779 = _nova_handler_Clone;
+      |                                     ^~~~~~~~~~~~~~~~~~~
+      |                                     _nova_handler_Time
+<ROOT>/compiler-codegen\nova_rt\effects.h:1900:44: note: '_nova_handler_Time' declared here
+ 1900 | __declspec(thread) extern NovaVtable_Time* _nova_handler_Time;
+      |                                            ^
+<TMP>\build-2ff9b7bac5bd\probe.c:7645:5: error: use of undeclared identifier '_nova_handler_Clone'; did you mean '_nova_handler_Time'?
+ 7645 |     _nova_handler_Clone = _nv_tmp_778;
+      |     ^~~~~~~~~~~~~~~~~~~
+      |     _nova_handler_Time
+<ROOT>/compiler-codegen\nova_rt\effects.h:1900:44: note: '_nova_handler_Time' declared here
+ 1900 | __declspec(thread) extern NovaVtable_Time* _nova_handler_Time;
+      |                                            ^
+<TMP>\build-2ff9b7bac5bd\probe.c:7664:5: error: use of undeclared identifier '_nova_handler_Clone'; did you mean '_nova_handler_Time'?
+ 7664 |     _nova_handler_Clone = _nv_tmp_779;
+      |     ^~~~~~~~~~~~~~~~~~~
+      |     _nova_handler_Time
+<ROOT>/compiler-codegen\nova_rt\effects.h:1900:44: note: '_nova_handler_Time' declared here
+ 1900 | __declspec(thread) extern NovaVtable_Time* _nova_handler_Time;
+      |                                            ^
+3 errors generated.
+oracle build rc=1
+no binary built
