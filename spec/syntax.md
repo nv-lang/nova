@@ -571,6 +571,11 @@ Do not use them for other purposes.
   own cleanup that walks the elements and, per
   [D432](decisions/02-types.md#d432), becomes affine — you may forget it, the
   compiler inserts the call.
+- **A plain `[T]` admits only ordinary types** ([D156 amendment,
+  2026-09-24](decisions/02-types.md#d156)): a must-consume type is substituted only into a
+  `[T consume]` parameter, whose body the compiler checks strictly. A container is declared
+  `type Vec[T consume]`; its methods that drop or duplicate elements are written with a plain
+  `[T]` and are simply unavailable for a must-consume element.
 - **Auto-`@cleanup` frees ONE binding form, not everything except a list**
   ([D432 amendment 2026-08-21](decisions/02-types.md#d432), registry 221.1
   #672). The s.2 exemption lifts the obligation only from `consume X = e;`
