@@ -463,7 +463,7 @@
 # already-accepted behavior, nothing NEW for self-hosting to catch up on
 # semantically, but novac/src/parse/expr.nv's variant-pattern loop still
 # needs the parser fix itself (this row hands it to Carina's window).
-#   spec-queue: 115
+#   spec-queue: 116
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,

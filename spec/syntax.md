@@ -1189,6 +1189,8 @@ match open() {
 }
 ```
 
+Where the grammar forces the transfer there is no decision to document, so the marker is not needed (D157, amendment 2026-09-24): a payload name used exactly once, as an arm's tail, a `return`, or a constructor argument — `Ok(s) => s`, `Ok(v) => Ok(v)`. Any other use, as `r.close()` above, still needs `consume`. Implementation: plan 293.
+
 **Exhaustiveness check.** The compiler checks that the match covers all
 possible cases. If not — an error naming the uncovered variant. This works
 for sum types and bool. For general types (`int`, `str`) you need either a
