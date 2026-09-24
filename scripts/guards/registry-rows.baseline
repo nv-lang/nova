@@ -1426,6 +1426,11 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1278
+max=1328
+# 2026-09-25, integrator: row 1328 added (Carina's parser reads type modifiers
+# in the fixed order value-consume-priv; the canonical consume value priv is
+# not parsed, and there is no E_MODIFIER_ORDER). rows 1277->1278, max 1327->1328.
 rows=1277
 max=1327
 # 2026-09-24, integrator: row 1327 added (a linear container loses its
