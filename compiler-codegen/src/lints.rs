@@ -39,9 +39,11 @@ pub fn lint_module(m: &Module) -> Vec<LintWarning> {
     // Plan 90.1 Ф.5: module-level suppress for W_VIEW_EXTEND_DETACH.
     let view_extend_suppressed = m.attrs.iter()
         .any(|a| matches!(a.kind, crate::ast::ModuleAttrKind::AllowViewExtendDetach));
+    let module_heap_types = collect_module_heap_types(m);
     for item in &m.items {
         match item {
             Item::Fn(f) => {
+                lint_mut_heap_param_rebind(f, &module_heap_types, &mut warnings);
                 check_fn(f, &mut warnings);
                 check_assume_trust(f, &mut warnings);
                 check_assert_static_unverified(f, &mut warnings);
@@ -1926,6 +1928,132 @@ fn walk_stmt_lints(s: &Stmt, out: &mut Vec<LintWarning>) {
 /// встрече `X.push(...)` на tracked X — emit warning.
 ///
 /// Closes `[P-plan96-lint-deferred]` from Plan 96.
+/// D326 Р3 amendment (2026-09-24, owner): `mut` is the right to change the value
+/// received, not an in-out link to the caller's variable. For a HEAP type that
+/// value is the object, so `x = …` on a `mut` param only rebinds the local name
+/// and the caller never sees it — `W_MUT_HEAP_PARAM_REBIND`.
+///
+/// SOUND, NOT COMPLETE: a lint has no type tables, so a type counts as heap only
+/// when that is certain from the syntax — `[]T`, `Vec`/`Map`/`Set`/`Deque`, and
+/// records/sums of THIS module declared without `value`. An imported named type
+/// may be a value type, where the assignment IS visible to the caller, so it is
+/// skipped rather than risk a false warning. A `let` of the same name shadows the
+/// param for the rest of the fn (conservative: no warning after it).
+fn collect_module_heap_types(m: &Module) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    for item in &m.items {
+        if let Item::Type(td) = item {
+            let data_kind = matches!(td.kind, TypeDeclKind::Record(_) | TypeDeclKind::Sum(_));
+            if data_kind && matches!(td.allocation, crate::ast::AllocKind::Heap) {
+                out.insert(td.name.clone());
+            }
+        }
+    }
+    out
+}
+
+fn mut_param_ty_is_surely_heap(ty: &TypeRef, module_heap: &std::collections::HashSet<String>) -> bool {
+    match ty {
+        TypeRef::Array(..) => true,
+        TypeRef::Named { path, .. } if path.len() == 1 => {
+            let n = path[0].as_str();
+            matches!(n, "Vec" | "Map" | "Set" | "Deque") || module_heap.contains(n)
+        }
+        _ => false,
+    }
+}
+
+fn lint_mut_heap_param_rebind(
+    f: &FnDecl,
+    module_heap: &std::collections::HashSet<String>,
+    out: &mut Vec<LintWarning>,
+) {
+    let mut names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for p in &f.params {
+        if p.is_mut && !p.consume && mut_param_ty_is_surely_heap(&p.ty, module_heap) {
+            names.insert(p.name.clone());
+        }
+    }
+    if names.is_empty() {
+        return;
+    }
+    match &f.body {
+        FnBody::Expr(e) => mhpr_expr(e, &mut names, out),
+        FnBody::Block(b) => mhpr_block(b, &mut names, out),
+        FnBody::External => {}
+    }
+}
+
+fn mhpr_block(b: &Block, names: &mut std::collections::HashSet<String>, out: &mut Vec<LintWarning>) {
+    for s in &b.stmts {
+        mhpr_stmt(s, names, out);
+    }
+    if let Some(t) = &b.trailing {
+        mhpr_expr(t, names, out);
+    }
+}
+
+fn mhpr_stmt(s: &Stmt, names: &mut std::collections::HashSet<String>, out: &mut Vec<LintWarning>) {
+    match s {
+        Stmt::Let(d) => {
+            mhpr_expr(&d.value, names, out);
+            if let Pattern::Ident { name, .. } = &d.pattern {
+                names.remove(name);
+            }
+        }
+        Stmt::Expr(e) => mhpr_expr(e, names, out),
+        Stmt::Assign { target, op, value, span } => {
+            if let ExprKind::Ident(name) = &target.kind {
+                if matches!(op, crate::ast::AssignOp::Assign) && names.contains(name) {
+                    out.push(LintWarning {
+                        rule: "W_MUT_HEAP_PARAM_REBIND",
+                        diag: crate::diag::Diagnostic::new(
+                            format!(
+                                "W_MUT_HEAP_PARAM_REBIND: assigning to `mut` parameter `{}` of a \
+                                 heap type only rebinds the local name — the caller never sees it \
+                                 (D326 Р3). Change the object through a method, return the new \
+                                 value, or bind a local.",
+                                name
+                            ),
+                            *span,
+                        ),
+                    });
+                }
+            }
+            mhpr_expr(value, names, out);
+        }
+        Stmt::Return { value: Some(v), .. } => mhpr_expr(v, names, out),
+        _ => {}
+    }
+}
+
+fn mhpr_expr(e: &Expr, names: &mut std::collections::HashSet<String>, out: &mut Vec<LintWarning>) {
+    match &e.kind {
+        ExprKind::Block(b) => mhpr_block(b, names, out),
+        ExprKind::If { then, else_, .. } => {
+            mhpr_block(then, names, out);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => mhpr_block(b, names, out),
+                    ElseBranch::If(if_expr) => mhpr_expr(if_expr, names, out),
+                }
+            }
+        }
+        ExprKind::For { body, .. } | ExprKind::While { body, .. } | ExprKind::Loop { body, .. } => {
+            mhpr_block(body, names, out);
+        }
+        ExprKind::Match { arms, .. } => {
+            for arm in arms {
+                match &arm.body {
+                    MatchArmBody::Block(b) => mhpr_block(b, names, out),
+                    MatchArmBody::Expr(x) => mhpr_expr(x, names, out),
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 fn lint_view_push_detach(f: &FnDecl, out: &mut Vec<LintWarning>) {
     let mut slice_views: std::collections::HashMap<String, crate::diag::Span> =
         std::collections::HashMap::new();

@@ -1533,6 +1533,8 @@ fn ptr_read[T](p *T) -> ref T          // сквозь неё читают: ме
 
 ```
 
+**What `mut` on a parameter means** (D326 Р3, amendment 2026-09-24): the right to change the value RECEIVED, not a link to the caller's variable. For a value type the value is the caller's storage — assigning it is visible outside. For a heap type the value is the object: changing the object is visible, while assigning the parameter only rebinds the local name, and the compiler warns `W_MUT_HEAP_PARAM_REBIND`.
+
 ```nova
 type Account {
     ro id u64                // никогда не меняется (D36)
