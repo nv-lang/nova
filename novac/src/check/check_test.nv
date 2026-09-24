@@ -458,7 +458,8 @@ test "a line continuation on a CRLF file is one continuation, not an unknown esc
     // CONTROL, the reason the rule checks the LF after the CR: a lone `\`+CR
     // with no line break is no continuation, and stays an unknown escape.
     ro lone_cr = "module m\n\nfn f() -> str {\n    \"ab\\\rcd\"\n}\n"
-    assert(diagnose_first_msg(lone_cr).contains("this string escape is not compiled yet"), "a bare CR after a backslash must stay refused")
+    ro refused = diagnose_first_msg(lone_cr).contains("this string escape is not compiled yet")
+    assert(refused, "a bare CR after a backslash must stay refused")
     // CONTROL: the LF continuation that already worked must stay clean.
     ro lf = "module m\n\nfn f() -> str {\n    \"ab\\\ncd\"\n}\n"
     assert(diagnose(lf) == 0, diagnose_first_msg(lf))
