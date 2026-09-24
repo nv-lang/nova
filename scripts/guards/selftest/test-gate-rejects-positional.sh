@@ -66,6 +66,16 @@ esac
 [ "$rc3" -eq 0 ] && ok "сухой ход без аргументов зелёный" \
                  || bad "сухой ход без аргументов покраснел (rc=$rc3)"
 
+# ── сухой ход не судится суточным пределом и не ставит отметку (№1329) ────
+# Отметка подменена своей (NOVA_GATE_STAMP): самотест не трогает общую.
+python -c "import time;print(int(time.time()), 'push')" > "$T/stamp-busy"
+NOVA_GATE_STAMP="$T/stamp-busy" NOVA_GATE_TIER=full NOVA_GATE_DRYRUN=1 bash "$GATE" >/dev/null 2>&1 \
+    && ok "сухой ход при занятом пределе зелёный" \
+    || bad "сухой ход при занятом пределе отказал — предел судит то, что машину не занимает"
+NOVA_GATE_STAMP="$T/stamp-free" NOVA_GATE_TIER=full NOVA_GATE_DRYRUN=1 bash "$GATE" >/dev/null 2>&1
+[ -e "$T/stamp-free" ] && bad "сухой ход поставил отметку — сжёг суточный тяжёлый прогон" \
+                       || ok "сухой ход отметки не ставит"
+
 # ── мутация подсудного: без блока отказа аргумент снова проглочен ─────────
 cat > "$T/gate-with.sh" <<'SH'
 if [ "$#" -ne 0 ]; then
@@ -92,5 +102,5 @@ mout="$(bash "$T/gate-without.sh" loop 2>&1)"
     && ok "мутант БЕЗ блока воспроизводит дефект дословно (tier=full на 'loop')" \
     || bad "мутант БЕЗ блока дал '$mout', ожидалось tier=full"
 
-echo "самотест gate-rejects-positional: PASS $((10-fails)) FAIL $fails"
+echo "самотест gate-rejects-positional: PASS $((12-fails)) FAIL $fails"
 [ "$fails" -eq 0 ]

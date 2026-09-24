@@ -1426,6 +1426,10 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1279
+max=1329
+# 2026-09-25, integrator: row 1329 added and closed (the gate's dry run was
+# judged and stamped by the daily budget). rows 1278->1279, max 1328->1329.
 rows=1278
 max=1328
 # 2026-09-25, integrator: row 1328 added (Carina's parser reads type modifiers
