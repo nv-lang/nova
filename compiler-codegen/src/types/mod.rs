@@ -41406,6 +41406,16 @@ struct ConsumeRegistry {
     /// Для var-type инференса `let x = factory()` — расширяет резолв
     /// consume-метода за пределы очевидных конструкторов.
     fn_return_types: HashMap<String, String>,
+    /// Registry 221.1 #1326: a free fn whose declared return is a bare type
+    /// parameter (`fn pass[T consume](consume x T) -> T`) maps to the index of
+    /// the parameter spelled `T`. The binding's type is then inferred from
+    /// THAT argument; the declared name `T` is never used as a type (it is
+    /// not one), which is what made `consume r = pass(Res {..})` look
+    /// unconsumed after `r.close()`.
+    fn_return_param_idx: HashMap<String, usize>,
+    /// #1326, method twin of `fn_return_param_idx`; the type parameter may
+    /// come from the receiver (`fn Cell[T consume] @put(consume v T) -> T`).
+    method_return_param_idx: HashMap<(String, String), usize>,
     /// D86-followup (2026-07-14): free-fn name → Ok/Some-inner type name,
     /// companion of `fn_return_types` — see `unwrapped_method_return_types`
     /// doc for rationale (same `Result[T,E]`/`Option[T]` unwrap, free-fn side).
@@ -41642,6 +41652,25 @@ struct ConsumeRegistry {
 /// Used to populate `unwrapped_method_return_types`/`unwrapped_fn_return_types`
 /// — see those fields' docs for why this must be a SEPARATE map rather than
 /// changing `method_return_types`/`fn_return_types` in place.
+/// Registry 221.1 #1326: if `fd`'s declared return is a bare type parameter
+/// (of the fn itself or of its receiver), `Some(idx)` where `idx` is the first
+/// parameter whose type is exactly that parameter, `Some(None)` when none is;
+/// `None` when the return is not a type parameter at all.
+fn generic_return_param_idx(fd: &FnDecl) -> Option<Option<usize>> {
+    let Some(TypeRef::Named { path, .. }) = &fd.return_type else { return None };
+    if path.len() != 1 { return None; }
+    let name = &path[0];
+    let mut generic = fd.generics.iter().any(|g| &g.name == name);
+    if let Some(r) = &fd.receiver {
+        generic |= r.generics.iter().any(|g| matches!(g,
+            TypeRef::Named { path: p, .. } if p.len() == 1 && &p[0] == name));
+        generic |= r.carrier_bounds.iter().any(|g| &g.name == name);
+    }
+    if !generic { return None; }
+    Some(fd.params.iter().position(|p| matches!(&p.ty,
+        TypeRef::Named { path: p2, .. } if p2.len() == 1 && &p2[0] == name)))
+}
+
 fn unwrap_result_option_name(rt: &TypeRef, self_ty: &str) -> Option<String> {
     if let TypeRef::Named { path, generics, .. } = rt {
         if path.len() == 1
@@ -41736,6 +41765,8 @@ impl ConsumeRegistry {
         let mut method_param_output_keys: HashMap<(String, String), Vec<String>> = HashMap::new();
         let mut method_params: HashMap<(String, String), Vec<usize>> = HashMap::new();
         let mut fn_return_types: HashMap<String, String> = HashMap::new();
+        let mut fn_return_param_idx: HashMap<String, usize> = HashMap::new();
+        let mut method_return_param_idx: HashMap<(String, String), usize> = HashMap::new();
         // D86-followup: unwrapped (Ok/Some-inner) companion maps — see field docs.
         let mut unwrapped_fn_return_types: HashMap<String, String> = HashMap::new();
         let mut unwrapped_method_return_types: HashMap<(String, String), String> = HashMap::new();
@@ -41993,7 +42024,12 @@ impl ConsumeRegistry {
                         // `fn Mutex mut @lock() -> MutexGuard consume` → ("Mutex","lock") → "MutexGuard".
                         // Resolve "Self" → receiver type so that `consume b = a.clone()`
                         // correctly infers b's type as the receiver type (e.g. "StringBuilder").
-                        if let Some(TypeRef::Named { path, .. }) = &fd.return_type {
+                        let gen_ret = generic_return_param_idx(fd);
+                        if let Some(Some(i)) = gen_ret {
+                            method_return_param_idx
+                                .insert((r.type_name.clone(), fd.name.clone()), i);
+                        }
+                        if let (None, Some(TypeRef::Named { path, .. })) = (gen_ret, &fd.return_type) {
                             if path.len() == 1 {
                                 let ret = if path[0] == "Self" {
                                     r.type_name.clone()
@@ -42063,7 +42099,11 @@ impl ConsumeRegistry {
                             fn_non_unsafe_params.insert(fd.name.clone(), non_unsafe_idx);
                         }
                         // Plan 73 followup: return-тип свободной функции.
-                        if let Some(TypeRef::Named { path, .. }) = &fd.return_type {
+                        let gen_ret = generic_return_param_idx(fd);
+                        if let Some(Some(i)) = gen_ret {
+                            fn_return_param_idx.insert(fd.name.clone(), i);
+                        }
+                        if let (None, Some(TypeRef::Named { path, .. })) = (gen_ret, &fd.return_type) {
                             if path.len() == 1 {
                                 fn_return_types
                                     .insert(fd.name.clone(), path[0].clone());
@@ -42183,6 +42223,7 @@ impl ConsumeRegistry {
         ConsumeRegistry {
             method_param_output_keys,
             methods, fn_params, method_params, fn_return_types, recv_returning,
+            fn_return_param_idx, method_return_param_idx,
             fn_view_params, method_return_types, mut_methods, ro_methods,
             mut_methods_arity, ro_methods_arity, recv_returning_arity,
             fn_mut_params, method_mut_params,
@@ -42253,7 +42294,12 @@ impl ConsumeRegistry {
                     if r.consume {
                         self.methods.insert((r.type_name.clone(), fd.name.clone()));
                     }
-                    if let Some(TypeRef::Named { path, .. }) = &fd.return_type {
+                    let gen_ret = generic_return_param_idx(fd);
+                    if let Some(Some(i)) = gen_ret {
+                        self.method_return_param_idx
+                            .entry((r.type_name.clone(), fd.name.clone())).or_insert(i);
+                    }
+                    if let (None, Some(TypeRef::Named { path, .. })) = (gen_ret, &fd.return_type) {
                         if path.len() == 1 {
                             let ret = if path[0] == "Self" {
                                 r.type_name.clone()
@@ -42982,7 +43028,7 @@ impl<'a> ConsumeCtx<'a> {
             ExprKind::StrLit(_) => Some("str".to_string()),
             ExprKind::CharLit(_) => Some("char".to_string()),
             // Конструктор `Type.new(...)` / `.with_capacity` / `.from` и т.п.
-            ExprKind::Call { func, .. } => {
+            ExprKind::Call { func, args, .. } => {
                 if let ExprKind::Path(parts) = &func.kind {
                     if parts.len() == 2 && matches!(parts[1].as_str(),
                         "new" | "with_capacity" | "from" | "default" | "filled")
@@ -43027,6 +43073,10 @@ impl<'a> ConsumeCtx<'a> {
                 // Plan 73 followup: свободная функция с известным
                 // return-типом (`let x = make_builder()`).
                 if let ExprKind::Ident(fname) = &func.kind {
+                    // #1326: a generic return takes the type of its argument.
+                    if let Some(&i) = self.reg.fn_return_param_idx.get(fname) {
+                        return args.get(i).and_then(|a| match a { CallArg::Item(e) => self.infer_value_type(e), _ => None });
+                    }
                     if let Some(rt) = self.reg.fn_return_types.get(fname) {
                         return Some(rt.clone());
                     }
@@ -43064,6 +43114,12 @@ impl<'a> ConsumeCtx<'a> {
                         _ => self.infer_value_type(obj),
                     };
                     if let Some(rty) = recv_ty {
+                        // #1326: a generic return takes the type of its argument.
+                        if let Some(&i) = self.reg.method_return_param_idx
+                            .get(&(rty.clone(), method.clone()))
+                        {
+                            return args.get(i).and_then(|a| match a { CallArg::Item(e) => self.infer_value_type(e), _ => None });
+                        }
                         if let Some(ret) = self.reg.method_return_types
                             .get(&(rty, method.clone()))
                         {
