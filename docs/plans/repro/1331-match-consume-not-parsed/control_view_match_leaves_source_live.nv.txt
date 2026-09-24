@@ -1,0 +1,19 @@
+// #1331 control: a plain (view) match leaves `o` Live, so D133-not-consumed on `o` is CORRECT here (D157).
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> () {
+}
+
+type Service consume {
+    consume file Option[Res]
+}
+
+fn main() -> () {
+    consume o = Some(Res { id: 1 })
+    match o {
+        Some(consume f) => f.close()
+        None => { }
+    }
+}
