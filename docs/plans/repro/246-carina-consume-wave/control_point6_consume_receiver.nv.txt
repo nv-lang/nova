@@ -1,0 +1,14 @@
+// Oracle 2026-09-25: nova check PASS (the oracle does not implement point 6; by the owner's
+// decision of 2026-09-25 the check is Carina's).
+// Control for point 6: the same method with the receiver written [T consume] is legal.
+type Holder[T consume] {
+    n int
+}
+
+fn Holder[T consume] @put(consume x T) -> T => x
+
+fn main() Io -> () {
+    ro h Holder[int] = { n: 0 }
+    ro y = h.put(5)
+    print("${y}")
+}
