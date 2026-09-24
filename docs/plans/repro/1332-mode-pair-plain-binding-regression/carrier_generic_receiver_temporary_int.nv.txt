@@ -1,0 +1,39 @@
+// #1332 carrier (axis 2, dispatch): generic receivers `Bag[T]` / `Bag[T consume]`, a temporary -- prints form=1 (the COPYING form); rule 3 requires the consuming form (2). NOTE: the consuming body loops (keep/sink) if ever reached -- it is a probe of which form is chosen.
+// EXPECT_STDOUT x
+module standalone.q2_int_temporary
+
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> int => @id
+
+type Bag[T consume] {
+    n int
+}
+
+fn Bag[T consume] consume @done() -> () {
+}
+
+// copying form: ordinary T only
+fn Bag[T] mut @put(v T) -> int => 1
+
+// consuming form: any T
+fn Bag[T consume] mut @put(consume v T) -> int {
+    keep(v)
+    2
+}
+
+fn keep[T consume](consume x T) -> () {
+    sink(x)
+}
+
+fn sink[T consume](consume x T) -> () {
+    keep(x)
+}
+
+fn main() Io -> () {
+    mut b Bag[int] = { n: 0 }
+    ro k = b.put(7)
+    print("form=${k}")
+}
