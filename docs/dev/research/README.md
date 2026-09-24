@@ -22,6 +22,7 @@
 | 10 | [10-unicode-test-data-storage.md](10-unicode-test-data-storage.md) | Как хранят тяжёлые Unicode-тест-данные (Go/Rust/TS/Kotlin-Java/ICU/CPython) → рекомендация regenerate-on-demand; родитель Plan 156 |
 | 11 | [11-stdlib-method-resolution-reachability.md](11-stdlib-method-resolution-reachability.md) | Stdlib-методы на примитивах + достижимость (Rust/Swift/Zig/Go): import-vs-no-import ⊥ ленивый-анализ-vs-линкер-срез; наши замеры (отсева в codegen НЕТ) → рекомендация reachability-codegen; родитель Plan 159 |
 | 15 | [15-flagship-concurrency-showcase.md](15-flagship-concurrency-showcase.md) | Флагманское демо: живая визуализация конкурентных запросов (агрегатор). Отбор идеи из 5; SSE-транспорт; визуал swimlanes+waterfall (A+C); **дизайн и архитектура бека** на реальных примитивах (эффекты/supervised-spawn/handler-подмена/D28); gap'ы 91-Ф.6 и зависимости 173/178; родитель будущего Plan 187 |
+| 16 | [16-consume-pattern-auto-move.md](16-consume-pattern-auto-move.md) | consume-паттерны payload сумм (`Ok(consume s)`): замеры оракула (E_CONSUME_PATTERN_REQUIRED, generic-эрозия map_err, расхождение check↔emit на mode-перегрузках с consume-аргументом), два варианта освобождения от маркера; вердикт: **В1 (только чистый авто-перенос) — рекомендован, В2 (авто-consume принуждает переноз) — на подумать**; под решение владельца (D157/D180) |
 
 > Нумерация начинается с 03, потому что 01 и 02 переехали в отдельную
 > репу с черновиками публикаций.
