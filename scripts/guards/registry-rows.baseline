@@ -1426,6 +1426,12 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1275
+max=1325
+# 2026-09-24, integrator: row 1325 added (== on a fixed array passes the
+# checker and fails the C build). 1323 and 1324 are ISSUED to the Carina
+# window and live in its branch (fbfbf9437) until the merge -- they are the
+# legal gap here. rows 1274->1275, max 1322->1325.
 rows=1274
 max=1322
 # 2026-09-23, integrator: row 1322 added -- the assistant's self-build
@@ -1662,7 +1668,7 @@ stale_gaps=0
 # nomer I v gaps=, I so strokoy schitaetsya 'protuhshey dyroy'.
 # 2026-09-21: №1209 ПРИЕХАЛ и СНЯТ из gaps=
 # (писал интегратор, как и планировалось). №1210-1211 всё ещё ждёт Карину.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1323-1324
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding

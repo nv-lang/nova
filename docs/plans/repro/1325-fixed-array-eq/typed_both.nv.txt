@@ -1,0 +1,14 @@
+// EXPECT_STDOUT eq
+// Carrier 2 of #1325: both sides typed [4]u8. The checker accepts `==`, the
+// emitter writes C `==` on a struct, and clang refuses:
+//   error: invalid operands to binary expression
+//   ('_NovaFixArr_4_9_nova_byte' ... and '_NovaFixArr_4_9_nova_byte')
+fn main() Io -> () {
+    ro a [4]u8 = [1, 2, 3, 4]
+    ro b [4]u8 = [1, 2, 3, 4]
+    if a == b {
+        println("eq")
+    } else {
+        println("ne")
+    }
+}
