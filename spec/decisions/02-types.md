@@ -12115,7 +12115,7 @@ retracted, pointer-таблица + str переписаны; A6 — 0 регр�
 
 ## D220. Per-field visibility — `priv` keyword + type-level default flip
 
-> **Status:** V1 ACTIVE (spec + parser/AST infrastructure landed, 2026-06-02). **AMENDED by [D281](#d281-module-level-field-privacy--type-x-priv---plan-160)** (2026-06-15): type-level `priv` теперь = module-private (не type-private); type-private type-level default = `priv(type)`. Field-level explicit `priv` остаётся type-private (без изменений). Реализация — [Plan 124](../../docs/plans/124-priv-field-visibility.md). Empirical validation — [docs/dev/research/06-field-visibility-go-kubernetes.md](../../docs/dev/research/06-field-visibility-go-kubernetes.md). Amends [D47](07-modules.md#d47) (replaces deprecated `_prefix` convention с compile-time enforcement).
+> **Status:** V1 ACTIVE (spec + parser/AST infrastructure landed, 2026-06-02). **AMENDED by [D281](#d281-module-level-field-privacy--type-x-priv---plan-160)** (2026-06-15): type-level `priv` теперь = module-private (не type-private); type-private type-level default = `priv(type)`. Field-level explicit `priv` тоже module-private — по таблице D281; type-private поле пишется `priv(type)` (правка формулировки 2026-09-24 по решению владельца: прежняя фраза «остаётся type-private (без изменений)» противоречила таблице D281 и компилятору, который уже судит по D281). Реализация — [Plan 124](../../docs/plans/124-priv-field-visibility.md). Empirical validation — [docs/dev/research/06-field-visibility-go-kubernetes.md](../../docs/dev/research/06-field-visibility-go-kubernetes.md). Amends [D47](07-modules.md#d47) (replaces deprecated `_prefix` convention с compile-time enforcement).
 
 ### Что
 
