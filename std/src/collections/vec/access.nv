@@ -247,8 +247,13 @@ export fn Vec[T] @binary_search_by_key[K Compare](key fn(T) -> K, k K) -> Result
 ///   - Only `[0, len())` element slots are live; never read past `len()`.
 ///   - The pointer is INVALIDATED by any reallocating mutation
 ///     (`push`/`reserve`/`insert`/`new().cap(n)` growth). Re-fetch after such.
-///   - On an empty `Vec` (`cap == 0`) `@data` is the 1-slot placeholder (ex-null_buf) —
-///     non-null but a single never-live slot; do not dereference it.
+///   - On an EMPTY Vec (`len == 0`, including `new()` and `@cap(0)`) the
+///     pointer is NULL (D232 amend 2026-09-24) — never dereference it (a
+///     view's offset arithmetic over an empty base is fine: at len 0 the
+///     result is never read, owner ruling 2026-09-25). At the FFI
+///     boundary a `(NULL, 0)` pair is the correct machine-readable
+///     "empty": pass `len()` along and let the C side check it before
+///     touching the pointer.
 ///
 /// The recv-mut companion `mut @ptr() -> *mut T` (below) yields a writable
 /// `*mut T` when called on a `mut`-bound receiver (recv-mut overload dispatch).
