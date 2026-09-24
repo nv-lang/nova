@@ -11459,14 +11459,20 @@ field-default), не вводя произвольных синонимичны�
 
 ### Правила
 
-- Канон: `export` (до `type`) → type-level mods (`value`) → type-level ownership
-  (`consume`) → field-default mods (`priv`) → `{ fields }`.
-- **Canonical ranks** (по scope, широкий→узкий): `value`=0 (представление/аллокация
-  всего типа) → `consume`=1 (must-consume обязательство всего типа) → `priv`=2
+> **ПОПРАВКА ТЕКСТА 2026-09-24 (слово владельца):** правила ниже прежде давали ранги
+> `value`=0, `consume`=1, то есть канон `value consume priv`. Реализация с Plan 148 Ф.1
+> (`parser/mod.rs`, `parse_type_decl`) ставит `consume`=0, `value`=1, `priv`=2 и принимает
+> ТОЛЬКО `consume value priv`; так же пишут `std` и остальная спека (`02-types.md`,
+> `04-effects.md`). Исправлен текст, а не язык: семантика та, что исполняется.
+
+- Канон: `export` (до `type`) → type-level ownership (`consume`) → type-level mods
+  (`value`) → field-default mods (`priv`) → `{ fields }`.
+- **Canonical ranks:** `consume`=0 (must-consume обязательство всего типа —
+  владение первично) → `value`=1 (представление/аллокация всего типа) → `priv`=2
   (дефолт видимости полей). `export` — отдельным keyword'ом *до* `type`, в rank-набор
   не входит (всегда левее имени).
 - Out-of-canon (любая инверсия rank'ов в порядке появления, напр. `priv value`,
-  `priv consume`, `consume value`) → `E_MODIFIER_ORDER` с fix-it (переписать
+  `priv consume`, `value consume`) → `E_MODIFIER_ORDER` с fix-it (переписать
   modifier-регион в rank-отсортированный канон).
 - 0 или 1 модификатор — всегда канон (нечего переставлять); проверка фактически
   применяется к ≥2 модификаторам.

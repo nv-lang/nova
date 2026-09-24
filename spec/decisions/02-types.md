@@ -303,9 +303,9 @@ type Shape enum
 Грамматика type-declaration:
 `[export] type Name[T] [value] [priv|priv(type)|priv(file)] [consume] { … }`
 эквивалентно:
-`[export|priv(file)] type Name[T] [value] [priv|priv(type)] [consume] { … }`
+`[export|priv(file)] type Name[T] [consume] [value] [priv|priv(type)] { … }`
 
-Модификаторы **комбинируются**: `export type Job value priv consume { … }`.
+Модификаторы **комбинируются** — в единственном каноническом порядке D241 (`consume` → `value` → `priv`): `export type Job consume value priv { … }`.
 
 Поля внутри `{…}` могут иметь **field-level** модификаторы:
 `ro` (D175), `mut` (D36), `priv` / `priv(type)` / `priv(file)` (D281/D307).
@@ -13872,15 +13872,16 @@ ACTIVE-список) — `uninit` добавлен рядом с `unsafe` (D278)
 
 7-я форма declaration: **value record** — `type X value { ... }`. 
 Stack-allocated reference type с copy-on-pass semantics (D32 amend). 
-Composable с `consume`/`priv` модификаторами в каноническом порядке
-`value consume priv` (см. amend ниже — order-independence RETIRED).
+Composable с `consume`/`priv` модификаторами в каноническом порядке D241
+`consume value priv` (см. amend ниже — order-independence RETIRED).
 
 `value` — **contextual keyword** (recognized только в `type Name[Generics]
 [modifiers] value [modifiers] {` position; identifier `value` остаётся
 валидным во всех других позициях для backward compat).
 
-Canonical modifier order: `type X value consume priv { ... }` —
-allocation → ownership → visibility (outer → inner).
+Canonical modifier order: `type X consume value priv { ... }` —
+ownership → allocation → visibility (D241; правка 2026-09-24: здесь стоял
+`value consume priv`, который компилятор отвергает `E_MODIFIER_ORDER`).
 
 > **AMEND 2026-06-12 (Plan 148 Ф.1 / D241, [M-138-canonical-modifier-order]):**
 > Parser больше **НЕ** order-independent — out-of-canon порядок модификаторов
@@ -14494,7 +14495,7 @@ records, value records (D228), и generic nested literals; nested literal
   elements currently boxed (V3 followup для inline element storage).
 - A8.13 ✅ **V2 LANDED 2026-06-03:** param pass = value copy (C-native);
   return-by-value works через RVO.
-- A8.14 ✅ `type Token value consume { ... }` works (composition).
+- A8.14 ✅ `type Token consume value { ... }` works (composition; канонический порядок D241).
 - A8.15 ✅ `type X value priv { ... }` works (D220 §3.3.1 preserved).
 - A8.16 ✅ `ro x ro T` → E_REDUNDANT_TYPE_MODIFIER.
 - A8.17 ✅ `mut x mut T` → E_REDUNDANT_TYPE_MODIFIER.
