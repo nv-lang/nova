@@ -575,7 +575,9 @@ Do not use them for other purposes.
   2026-09-24](decisions/02-types.md#d156)): a must-consume type is substituted only into a
   `[T consume]` parameter, whose body the compiler checks strictly. A container is declared
   `type Vec[T consume]`; its methods that drop or duplicate elements are written with a plain
-  `[T]` and are simply unavailable for a must-consume element.
+  `[T]` and are simply unavailable for a must-consume element. In such a type a plain-`[T]`
+  method may not take `consume x T`: the consuming form is written once, with `[T consume]`
+  (`E_CONSUME_PARAM_UNBOUNDED`, amendment point 6, 2026-09-25).
 - **Auto-`@cleanup` frees ONE binding form, not everything except a list**
   ([D432 amendment 2026-08-21](decisions/02-types.md#d432), registry 221.1
   #672). The s.2 exemption lifts the obligation only from `consume X = e;`
