@@ -1543,8 +1543,8 @@ fn ptr_read[T](p *T) -> ref T          // сквозь неё читают: ме
 ```
 
 **Linearity through a pointer** ([D216 amendment 2026-09-25](decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo)):
-a write comes as a pair, copying (ordinary `T` only) and consuming (`consume`), chosen by D84
-rule 3; `p.read()` / `p.read_at(i)` is a copy, ordinary `T` only, and
+`p.write(v)` / `p.write_at(i, v)` and `p.read()` / `p.read_at(i)` copy, for an ordinary `T` only;
+`p.write_consume(v)` / `p.write_consume_at(i, v)` moves ownership into memory, for any `T`;
 `p.read_consume()` / `p.read_consume_at(i)` is a move out with an owned result; to look without
 taking the value out, `p.lend(f)` / `p.lend_at(i, f)` lends the element to a closure as a view
 parameter. The rules are the same in safe and unsafe code.

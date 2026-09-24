@@ -5941,7 +5941,7 @@ Compiler проводит **flow-sensitive** анализ (расширение 
 | `return tx` (тип consume) | `tx` → `Returned` (передача caller'у) |
 | `record.field = tx` где field declared consume | `tx` → `Moved` (в record) |
 | `T { field: tx, … }` — init consume-поля record-литерала голым binding'ом | `tx` → `Consumed` (move при конструировании) |
-| `p.write(tx)` / `p.write_at(i, tx)` — забирающая форма записи в память ([D216, амендмент 2026-09-25](#d216-typed-pointer-family--unsafe-model--null-safety-через-npo)) | `tx` → `Consumed` (владение в памяти); `p.read_consume()` / `p.read_consume_at(i)` — изъятие, результат владеющий |
+| `p.write_consume(tx)` / `p.write_consume_at(i, tx)` — запись во владение памяти ([D216, амендмент 2026-09-25](#d216-typed-pointer-family--unsafe-model--null-safety-через-npo)) | `tx` → `Consumed` (владение в памяти); `p.read_consume()` / `p.read_consume_at(i)` — изъятие, результат владеющий |
 | `(a, b)` в позиции возврата — кортеж из consume-биндингов | каждый элемент → `Returned` (передача caller'у, как `return tx`) |
 | `consume new_owner = tx` (transfer alias) | `tx` → `Consumed`, `new_owner` → `Live` |
 | `f(tx)` где `f(tx Tx)` — view-param (no qualifier) | `tx` остаётся `Live` (callee — view-borrow) |
@@ -11368,18 +11368,20 @@ Closes [M-118.1-cstr-runtime-wiring] (was: «C primitive ABI wiring»; pure-Nova
 адресной арифметики по §21 п. 8 держится соглашением — такое правило стояло бы ни на чём.
 
 **Правило — одинаковое в safe- и unsafe-коде, из уже существующих средств.** Относится к
-`p.write(v)`, `p.write_at(i, v)`, `p.read()`, `p.read_at(i)` и новым `p.read_consume()`,
-`p.read_consume_at(i)`, `p.lend(f)`, `p.lend_at(i, f)`. Варианты `_unaligned` / `_volatile`
+`p.write(v)`, `p.write_at(i, v)`, `p.read()`, `p.read_at(i)` и новым `p.write_consume(v)`,
+`p.write_consume_at(i, v)`, `p.read_consume()`, `p.read_consume_at(i)`, `p.lend(f)`,
+`p.lend_at(i, f)`. Варианты `_unaligned` / `_volatile`
 (регистры, упакованные данные) — только для обычного `T`: линейных значений там не бывает, и
 комбинаций вида `read_consume_volatile_at` язык не заводит.
 
-1. **Запись — пара форм, как у вставки в контейнер** (D156, амендмент 2026-09-24, п. 4); выбор —
-   правило 3 оси режима D84 (`10-overloading.md`): временное или забирающая привязка — забирающая
-   форма, остальное — копирующая.
-   - **копирующая** — значение-вид, только для обычного `T`: в память кладётся копия, источник
-     жив; для must-consume `T` недоступна (D156, амендмент 2026-09-24, п. 1);
-   - **забирающая** — значение `consume`, для любого `T`: владение переходит в память,
-     обязательство снимается как у передачи в consume-параметр (таблица D133).
+1. **Запись — две формы, и различает их ИМЯ, как у чтения** (уточнение владельца 2026-09-25
+   тем же часом; правило 3 D84 для встроенных операций не нужно — эффект виден в имени):
+   - **`p.write(v)` / `p.write_at(i, v)` — копия, только для обычного `T`:** в память кладётся
+     копия, источник жив; для must-consume `T` недоступна (D156, амендмент 2026-09-24, п. 1).
+     Смысл этих операций для обычного кода не меняется;
+   - **`p.write_consume(v)` / `p.write_consume_at(i, v)` — владение в память, для любого `T`:**
+     параметр значения — `consume`, обязательство снимается как у любой передачи в
+     consume-параметр (таблица D133).
 2. **Чтение — две формы, и различает их ИМЯ** (у чтения нет параметра, который нёс бы режим;
    уточнение владельца 2026-09-25 тем же часом):
    - **`p.read()` / `p.read_at(i)` — копия, только для обычного `T`;** для must-consume `T`
@@ -11407,7 +11409,7 @@ Closes [M-118.1-cstr-runtime-wiring] (was: «C primitive ABI wiring»; pure-Nova
 языке нет, и этот амендмент её не вводит: для пользователя операции выглядят как пара
 перегрузок по режиму значения.
 
-**Следствия.** Контейнер (`Vec`) пишет вставку забирающей записью, изъятие —
+**Следствия.** Контейнер (`Vec`) пишет вставку `write_consume_at`, изъятие —
 `read_consume_at`, просмотр элемента — `lend_at` и отдаёт наружу `@lend(i, f)`; план 246, волна
 `Vec[T consume]`.
 
