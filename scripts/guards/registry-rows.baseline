@@ -1426,6 +1426,10 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1284
+max=1334
+# 2026-09-25, integrator: row 1334 added (a receiver-mode pair @m / consume @m
+# is refused as a duplicate definition). rows 1283->1284, max 1333->1334.
 rows=1283
 max=1333
 # 2026-09-25, integrator: row 1333 added (a mode pair called through @ with a
