@@ -1,0 +1,31 @@
+// #1345 carrier: a Vec[Res] whose Res has @cleanup is left to scope exit -- by D156 family 2 + D432 it is affine and its cleanup runs; nova test: D133-not-consumed on `v` (type ``), and D162-uncovered-error-path in a failable fn.
+// EXPECT_STDOUT closed 1 2 3 | done
+//
+// D156 amendment 2026-08-04, family 2 (spec/decisions/02-types.md): a
+// `Vec[T consume Cleanup[E]]` declares its own `@cleanup`, which ends every
+// element with the element's cleanup, and so (D432) the vector is affine --
+// leaving scope without consuming it runs that cleanup. Each element is
+// cleaned exactly once, front to back.
+
+module standalone.vec_cleanup_elements
+
+type Res consume {
+    id int
+}
+
+fn Res consume @cleanup(outcome ScopeOutcome) Fail[str] -> () {
+    print(" ${@id}")
+}
+
+fn fill() Io Fail[str] -> () {
+    consume v = Vec[Res].new()
+    v.push(Res { id: 1 })
+    v.push(Res { id: 2 })
+    v.push(Res { id: 3 })
+    print("closed")
+}
+
+fn main() Io -> () {
+    ro r = with Fail[str] = |e| e { fill() }
+    print(" | done")
+}

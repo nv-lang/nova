@@ -1,0 +1,34 @@
+// EXPECT_STDOUT closed 1 2 3 | done
+//
+// D156 amendment 2026-08-04, family 2 (spec/decisions/02-types.md): a
+// `Vec[T consume Cleanup[E]]` declares its own `@cleanup`, which ends every
+// element with the element's cleanup. Called here explicitly: each element
+// is cleaned exactly once, front to back. That the vector is therefore affine
+// (D432: forgetting it runs the cleanup) is not yet accepted by the oracle --
+// registry row 1345.
+
+module standalone.vec_cleanup_elements
+
+type Res consume {
+    id int
+}
+
+fn Res consume @cleanup(outcome ScopeOutcome) Fail[str] -> () {
+    print(" ${@id}")
+}
+
+fn fill() Io -> () {
+    consume v = Vec[Res].new()
+    v.push(Res { id: 1 })
+    v.push(Res { id: 2 })
+    v.push(Res { id: 3 })
+    print("closed")
+    with Fail[str] = |e| {} {
+        v.cleanup(Success)
+    }
+}
+
+fn main() Io -> () {
+    fill()
+    print(" | done")
+}
