@@ -99,6 +99,10 @@ pub struct Parser {
     /// `.n.m`-positional-tuple-access, где Float-токен нужно
     /// расщепить обратно в две части).
     src: String,
+    /// Registry 221.1 #739: file offset of `src`'s first byte. A sub-parser
+    /// of a `${...}` body holds only that fragment, while its tokens carry
+    /// file offsets; slices of `src` by a token span subtract this.
+    src_base: usize,
     /// **Plan 118.5 / D216 V2 §V2.6 (2026-06-04):** parser-emitted lint
     /// warnings collected during parsing. Drained by the driver via
     /// `into_warnings()` and merged with post-parse lint_module() output.
@@ -404,6 +408,7 @@ impl Parser {
             no_struct_lit: false,
             no_trailing_block: false,
             src,
+            src_base: 0,
             warnings: Vec::new(),
             pointee_ctx: false,
             receiver_elem_ctx: false,
@@ -531,8 +536,10 @@ impl Parser {
             // Парсер был создан без src — fallback к синтезу из Float
             return String::new();
         }
+        let (Some(a), Some(b)) = (span.start.checked_sub(self.src_base),
+                                  span.end.checked_sub(self.src_base)) else { return String::new() };
         self.src
-            .get(span.start..span.end)
+            .get(a..b)
             .map(|s| s.to_string())
             .unwrap_or_default()
     }
@@ -3166,7 +3173,8 @@ impl Parser {
                                 bracket_start
                             };
                             let bracket_text = self.src
-                                .get(bracket_start..bracket_end)
+                                .get(bracket_start.saturating_sub(self.src_base)
+                                    ..bracket_end.saturating_sub(self.src_base))
                                 .unwrap_or("")
                                 .to_string();
                             format!("{}{}", n, bracket_text)
@@ -8372,6 +8380,7 @@ impl Parser {
                 t.span.end += abs_off;
             }
             let mut sub = self.sub_parser(toks, src_text.clone());
+            sub.src_base = abs_off;
             let e = sub.parse_expr()?;
             if !matches!(sub.peek().kind, TokenKind::Eof | TokenKind::Newline) {
                 return Err(Diagnostic::new(
@@ -13044,6 +13053,48 @@ impl Parser {
     /// Если интерполяций нет — возвращаем обычный `StrLit`.
     /// Иначе codegen сам построит StringBuilder-цепочку (одна
     /// аллокация с pre-size estimate, без O(N²) от `+`).
+    /// Registry 221.1 #739: file offset of the first byte of each `${...}`
+    /// body of the string literal at `span`, scanned from the source text as
+    /// written (a `\` skips the next byte, so `\${` is not an interpolation).
+    /// `None` when this parser's source does not hold that span (a sub-parser
+    /// sees only its fragment).
+    fn interp_body_offsets(&self, span: Span) -> Option<Vec<usize>> {
+        let lit = self.src.as_bytes()
+            .get(span.start.checked_sub(self.src_base)?..span.end.checked_sub(self.src_base)?)?;
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < lit.len() {
+            if lit[i] == b'\\' { i += 2; continue; }
+            if lit[i] == b'$' && i + 1 < lit.len() && lit[i + 1] == b'{' {
+                let close = crate::lexer::scan_interpolation_body(lit, i + 1)?;
+                out.push(span.start + i + 2);
+                i = close + 1;
+                continue;
+            }
+            i += 1;
+        }
+        Some(out)
+    }
+
+    /// The number of `${...}` interpolations in a lexed string body, scanned
+    /// the way `desugar_string_interpolation` scans it (the `\x01$` sentinel
+    /// of an escaped `${` is not one).
+    fn interp_count(bytes: &[u8]) -> usize {
+        let mut n = 0;
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == 0x01 && i + 1 < bytes.len() && bytes[i + 1] == b'$' { i += 2; continue; }
+            if bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+                match crate::lexer::scan_interpolation_body(bytes, i + 1) {
+                    Some(j) => { n += 1; i = j + 1; continue; }
+                    None => return n,
+                }
+            }
+            i += 1;
+        }
+        n
+    }
+
     fn desugar_string_interpolation(
         &mut self,
         raw: String,
@@ -13052,6 +13103,13 @@ impl Parser {
         let bytes = raw.as_bytes();
         let mut parts: Vec<InterpPart> = Vec::new();
         let mut cur_lit = String::new();
+        // Registry 221.1 #739: file offsets of the `${` bodies, read from the
+        // literal as written -- `raw` has its escapes decoded, so its offsets
+        // are not the file's. Used only when both texts hold the same number
+        // of interpolations; otherwise the spans stay fragment-relative.
+        let body_offsets: Option<Vec<usize>> = self.interp_body_offsets(span)
+            .filter(|o| o.len() == Self::interp_count(bytes));
+        let mut interp_idx = 0usize;
         let mut i = 0;
         while i < bytes.len() {
             let b = bytes[i];
@@ -13136,10 +13194,17 @@ impl Parser {
                 // остаются relative к `expr_src` substring'у, как и раньше
                 // (только `file_id`, единственное поле, использующееся как
                 // HashMap-ключ в const-резолве, был неверен).
+                let shift = body_offsets.as_ref()
+                    .and_then(|o| o.get(interp_idx).copied())
+                    .unwrap_or(0);
+                interp_idx += 1;
                 for t in &mut tokens {
                     t.span.file_id = span.file_id;
+                    t.span.start += shift;
+                    t.span.end += shift;
                 }
                 let mut sub = self.sub_parser(tokens, expr_src.to_string());
+                sub.src_base = shift;
                 let inner = sub.parse_expr().map_err(|e| {
                     Diagnostic::new(
                         format!("invalid expression in `${{...}}`: {}", e.message),
@@ -13158,7 +13223,7 @@ impl Parser {
                 // colon token's byte span gives us the precise split point in
                 // `expr_src`.
                 let spec = if matches!(sub.peek().kind, TokenKind::Colon) {
-                    let colon_end = sub.peek().span.end;
+                    let colon_end = sub.peek().span.end - shift;
                     // `expr_src` is the raw `${...}` body; slice off the spec
                     // text after the colon and parse it directly.
                     let spec_raw = expr_src.get(colon_end..).unwrap_or("");

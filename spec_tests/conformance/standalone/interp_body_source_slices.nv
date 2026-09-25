@@ -1,0 +1,15 @@
+// EXPECT_STDOUT [   42] 7 ok
+//
+// Registry 221.1 #739: the parser reads the source text of an interpolation
+// body in two places -- the `:` format spec (`${v:>5}`) and the split of a
+// float-looking positional access (`${t.0.1}`, lexed as `Dot Float(0.1)`).
+// Once the body's tokens carry file offsets, both slices must still land on
+// the body's own text.
+module standalone.interp_body_source_slices
+
+fn main() Io -> () {
+    ro v = 42
+    ro t = ((0, 7), 1)
+    ro s = "ok"
+    print("[${v:>5}] ${t.0.1} ${s}")
+}
