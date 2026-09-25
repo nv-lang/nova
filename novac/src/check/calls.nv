@@ -909,6 +909,9 @@ fn Checker mut @type_free_call(e Node) -> () {
                     if key_fully_typed(key) {
                         @report_first_leaf_of(kids,
                             "this call fits more than one function and none is more specific -- an ambiguity is refused, never chosen (D84)")
+                    } else if args_read_poisoned(kids, 1, @scope) {
+                        // SILENT-OK: an argument reads a poisoned name -- the earlier
+                        // refusal is the cause (`@args_read_poisoned`, methods.nv).
                     } else {
                         @report_first_leaf_of(kids,
                             "outside the subset: an argument's type is not decided yet, so this overloaded function is not narrowed")

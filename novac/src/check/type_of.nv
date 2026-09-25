@@ -320,6 +320,10 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
             // silence as a violation.
             ro recv_t = type_of(kids[0], ctx, scope, chan)
             if !is_ty(recv_t) { return no_ty() }
+            // A POISONED ARGUMENT is the same legal silence one slot later: the
+            // judge left an overload set undecided because an argument reads a
+            // name an earlier refusal bound with no type (`args_read_poisoned`).
+            if args_read_poisoned(kids, 3, scope) { return no_ty() }
             ice("check: method call reached type_of with no decision in the channel (274.4 pass-order)")
         }
         return ctx.fns.rows[raw_row(chan.callee_of(nid).callable_row())].ret_id

@@ -493,6 +493,17 @@ test "a refused initializer binds its name POISONED in every form -- one cause, 
     assert(diagnose(op) == 1, diagnose_first_msg(op))
 }
 
+test "an overload set left undecided by a POISONED argument says nothing more -- one cause, one diagnostic" {
+    // The poisoned name fits every overload, so the set does not narrow; the
+    // earlier refusal is the cause. "not narrowed" was said about it 271 times
+    // over novac's own source, and silence here iced in `type_of` until the
+    // lattice asked the same question (`args_read_poisoned`).
+    ro m = "module m\n\ntype Box { v int }\n\nfn Box @put(x int) -> int => x\n\nfn Box @put(x str) -> int => 1\n\nfn f(b Box) -> int {\n    ro xs = [nosuch(1)]\n    ro n = b.put(xs)\n    n\n}\n"
+    assert(diagnose(m) == 1, diagnose_first_msg(m))
+    ro fr = "module m\n\nfn g(x int) -> int => x\n\nfn g(x str) -> int => 1\n\nfn f() -> int {\n    ro xs = [nosuch(1)]\n    ro n = g(xs)\n    n\n}\n"
+    assert(diagnose(fr) == 1, diagnose_first_msg(fr))
+}
+
 test "a closed `str` slice is compiled; other receivers, open bounds and non-int bounds keep their refusals (274.7 U-1)" {
     // D470 section 5: `s[lo..hi]` is `s.index(Range { start: lo, end: hi })`, a
     // byte range of type `str` (D249). Wave U-1 compiles the closed form over
