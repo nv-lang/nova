@@ -27,7 +27,7 @@ module collections.vec
 /// assert(a.equal(b))
 /// assert(!a.equal(c))
 /// ```
-export fn Vec[T] @equal(other Vec[T]) -> bool {
+export fn Vec[T consume] @equal(other Vec[T]) -> bool {
     if @len != other.len() {
         return false
     }
@@ -36,10 +36,11 @@ export fn Vec[T] @equal(other Vec[T]) -> bool {
     // idiom (`@append`/`@splice`/`@copy_from`). Extract to typed locals so the
     // `!=` operands have element type `T` (a method/operator on a raw deref kept
     // *inside* the `unsafe` block misresolves in codegen).
+    // Both elements are LENT (D216 amendment 2026-09-25), never copied out.
+    ro mine = @data
+    ro theirs = other.data
     for i in 0..@len {
-        ro a = unsafe { @data.read_at(i) }
-        ro b = unsafe { other.data.read_at(i) }
-        if a != b {
+        if unsafe { mine.view_at(i, |a| theirs.view_at(i, |b| a != b)) } {
             return false
         }
     }
@@ -73,16 +74,16 @@ export fn Vec[T] @equal(other Vec[T]) -> bool {
 /// assert(a.compare(c) == 1)    // a longer, common prefix equal
 /// assert(a.compare(a) == 0)
 /// ```
-export fn Vec[T Compare] @compare(other Vec[T]) -> int {
+export fn Vec[T consume Compare] @compare(other Vec[T]) -> int {
     ro n = if @len < other.len() { @len } else { other.len() }
     // `i < n <= other.len()`, so read both elements raw — no redundant `@index`
     // bounds check on `other` (module `other.data` idiom). Extract to typed
     // locals so `.compare` dispatches on element type `T`; a method call kept
     // *inside* the `unsafe` block on a raw deref misresolves in codegen.
+    ro mine = @data
+    ro theirs = other.data
     for i in 0..n {
-        ro a = unsafe { @data.read_at(i) }
-        ro b = unsafe { other.data.read_at(i) }
-        ro c = a.compare(b)
+        ro c = unsafe { mine.view_at(i, |a| theirs.view_at(i, |b| a.compare(b))) }
         if c != 0 {
             return c
         }
@@ -146,7 +147,7 @@ export fn Vec[T Clone] @clone() -> Self {
 /// ro b = Vec[int].of(1, 2, 3)
 /// assert(a.hash() == b.hash())
 /// ```
-export fn Vec[T Hash] @hash() -> u64 {
+export fn Vec[T consume Hash] @hash() -> u64 {
     // FNV-1a (64-bit): offset basis, then `h = (h ^ x) * prime` per step.
     // `.wrapping_mul` — модульное умножение по замыслу (sized-int trap-default
     // не даёт голому `*` переполниться).
@@ -156,8 +157,7 @@ export fn Vec[T Hash] @hash() -> u64 {
     for i in 0..@len {
         // Typed local first — `.hash()` on a raw deref kept *inside* the `unsafe`
         // block misresolves in codegen (same idiom as `@equal`/`@compare`).
-        ro e = unsafe { @data.read_at(i) }
-        ro eh = e.hash()
+        ro eh = unsafe { @data.view_at(i, |e| e.hash()) }
         h = (h ^ eh).wrapping_mul(prime)
     }
     h
@@ -189,11 +189,11 @@ export fn Vec[T Hash] @hash() -> u64 {
 /// v.display(FmtCtx.bare(sb, 0, false))
 /// assert(sb.into_str() == "Vec[1, 2, 3]")
 /// ```
-export fn Vec[T Display] @display(mut f Fmt) -> () {
+export fn Vec[T consume Display] @display(mut f Fmt) -> () {
     f.write("Vec[")
     for i in 0..@len {
         if i > 0 { f.write(", ") }
-        unsafe { @data.read_at(i) }.display(f)
+        unsafe { @data.view_at(i, |e| e.display(f)) }
     }
     f.write("]")
 }
@@ -201,11 +201,11 @@ export fn Vec[T Display] @display(mut f Fmt) -> () {
 /// Append a debug representation of `self` to `f`.
 ///
 /// Provided so that `${v:?}` interp-string syntax works for `Vec[T]`.
-export fn Vec[T Debug] @debug(mut f Fmt) -> () {
+export fn Vec[T consume Debug] @debug(mut f Fmt) -> () {
     f.write("Vec[")
     for i in 0..@len {
         if i > 0 { f.write(", ") }
-        unsafe { @data.read_at(i) }.debug(f)
+        unsafe { @data.view_at(i, |e| e.debug(f)) }
     }
     f.write("]")
 }

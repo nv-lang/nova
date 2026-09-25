@@ -159,4 +159,4 @@ fn[T Reflect] []T.reflect() -> TypeShape => Arr(T.reflect())
 /// `Option[T]`.
 #unstable
 #impl(Reflect)
-fn Option[T Reflect].reflect() -> TypeShape => Opt(T.reflect())
+fn Option[T consume Reflect].reflect() -> TypeShape => Opt(T.reflect())

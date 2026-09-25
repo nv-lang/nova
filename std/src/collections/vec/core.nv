@@ -64,7 +64,7 @@ import std.runtime.raw_mem.{RawMem}
 /// assert(v.len() == 3)
 /// assert(v.get(1) == Some(2))
 /// ```
-export type Vec[T] priv {
+export type Vec[T consume] priv {
     // Raw element buffer. `cap` elements wide; first `len` are live.
     // Never read/written outside `unsafe` blocks in this module.
     //
@@ -102,7 +102,7 @@ export type Vec[T] priv {
 /// `Vec[T].new().cap(n)` but one call, one allocation — the canonical
 /// pre-sizing spelling (`Vec[T].new(cap: 1024)`, or positionally
 /// `Vec[T].new(1024)`).
-export fn Vec[T].new(cap int = 0) -> Self
+export fn Vec[T consume].new(cap int = 0) -> Self
     requires cap >= 0
     => { data: alloc_buf[T](cap.max(1)), len: 0, cap }
 
@@ -114,7 +114,7 @@ export fn Vec[T].new(cap int = 0) -> Self
 /// OUTLIVES the view (for a GC buffer the `data` field keeps it reachable), writes
 /// through the view are forbidden by the source's contract. The `*T → *mut T` cast is hidden
 /// in the body — the `ro` return gives no way to use it.
-export unsafe fn Vec[T].new(ptr *T, len int) -> ro Self
+export unsafe fn Vec[T consume].new(ptr *T, len int) -> ro Self
     requires len >= 0
     => { data: unsafe { ptr as *mut T }, len, cap: len }
 
@@ -147,7 +147,7 @@ export unsafe fn Vec[T].new(ptr *T, len int) -> ro Self
 /// result `ro` enforces this at L2) — passing a genuinely read-only `*T`
 /// through the `*mut T` param is itself the caller's `unsafe` obligation,
 /// same as before.
-export fn Vec[T].new(ptr *mut T, len int, cap int) -> Self
+export fn Vec[T consume].new(ptr *mut T, len int, cap int) -> Self
     requires len >= 0 && cap >= len
 => { data: ptr, len, cap }
 
@@ -198,10 +198,10 @@ export fn Vec[T].of(...args []T) -> Self
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Number of live elements.
-export fn Vec[T] @len() -> int => @len
+export fn Vec[T consume] @len() -> int => @len
 
 /// Number of allocated element slots.
-export fn Vec[T] @cap() -> int => @cap
+export fn Vec[T consume] @cap() -> int => @cap
 
 /// Set the capacity to **exactly** `n` slots (no ×2 rounding) — the precise,
 /// absolute capacity request. The accessor-convention
@@ -224,7 +224,7 @@ export fn Vec[T] @cap() -> int => @cap
 /// `v.cap(10)` disambiguates to this 1-arg
 /// setter (not the 0-arg getter). This accessor-convention form replaced the
 /// distinct `@cap_to` helper that held the place during the gap.
-export fn Vec[T] mut @cap(n int) -> @
+export fn Vec[T consume] mut @cap(n int) -> @
     requires n >= @len
 {
     if n == @cap { return }
@@ -249,32 +249,38 @@ export fn Vec[T] mut @cap(n int) -> @
 }
 
 /// `true` if the vector has no live elements.
-export fn Vec[T] @is_empty() -> bool => @len == 0
+export fn Vec[T consume] @is_empty() -> bool => @len == 0
+
+/// Destroy an EMPTY vector. The only way to end a `Vec` of must-consume
+/// elements once they have all been taken out: `clear` and `truncate` drop
+/// elements and exist only for an ordinary `T`. Panics if the vector is not
+/// empty (the precondition is a contract; the Austral precedent is
+/// `destroyEmpty`). Plan 246, wave `Vec[T consume]`.
+export fn Vec[T consume] consume @destroy_empty() -> ()
+    requires @len == 0
+{
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Capacity management
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Ensure room for at least `additional` more elements beyond the current
-/// length. Grows the buffer with a ×2 strategy (initial capacity 8) when the
-/// current capacity does not suffice. No-op when `additional <= 0` or capacity
-/// already covers `len + additional`. This is the sole *amortised* growth method
-/// (rounds the buffer up to a ×2 capacity for O(1)-amortised push); the exact,
-/// un-rounded capacity setter is `@cap(n)`.
+/// length. When the current capacity does not suffice, grows it in one step to
+/// the largest of twice the capacity, 8 (D232: ×2 growth, initial capacity 8)
+/// and `len + additional`. No-op when `additional <= 0` or capacity already
+/// covers `len + additional`. This is the sole *amortised* growth method
+/// (doubling keeps push O(1) amortised); the exact capacity setter is `@cap(n)`.
 ///
 /// Returns `@` (self) for fluent chaining — `v.reserve(10).append(xs).sort()`
 /// (fluent convention, precedent `StringBuilder.@append`).
-export fn Vec[T] mut @reserve(additional int) -> @ {
+export fn Vec[T consume] mut @reserve(additional int) -> @ {
     ro needed = @len + additional
     if needed <= @cap {
         return
     }
-    mut new_cap = if @cap == 0 { 8 } else { @cap * 2 }
-    // KEEP as while: non-unit-step (×2 doubling), not a `0..@len` index loop.
-    while new_cap < needed {
-        new_cap *= 2
-    }
-    @cap(new_cap)
+    // D232: ×2 growth, initial capacity 8 -- and never less than needed.
+    @cap((@cap * 2).max(8).max(needed))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -282,7 +288,7 @@ export fn Vec[T] mut @reserve(additional int) -> @ {
 // ──────────────────────────────────────────────────────────────────────────
 
 // Allocate a zeroed `*mut T` buffer of `n` element slots. `n > 0`.
-fn alloc_buf[T](n int) -> *mut T {
+fn alloc_buf[T consume](n int) -> *mut T {
     unsafe {
         RawMem.alloc(n * size_of[T]()) as *mut T
     }

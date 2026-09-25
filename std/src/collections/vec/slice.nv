@@ -48,7 +48,7 @@ export fn Vec[T] @index(r Range) -> Self
 /// the receiver's `len` FIELD, which made "can be sliced" a structural property —
 /// a type with a `len` that is a counter or a capacity passed the test silently.
 /// Asking a named method instead makes the answer the type's own.
-export fn Vec[T] @end_index() -> int => @len
+export fn Vec[T consume] @end_index() -> int => @len
 
 /// Safe zero-copy sub-range view — `Some(view)` when `[r.start, r.end)` is in
 /// bounds, `None` otherwise. The non-panicking counterpart of `@index(Range)`.
