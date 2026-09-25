@@ -46221,6 +46221,15 @@ fn scan_defer_coverage(b: &Block) -> (bool, bool) {
     (has_errdefer, has_okdefer)
 }
 
+/// `f` (or its receiver's carrier) has a type parameter bounded by
+/// `Cleanup[..]` (D156 amendment 2026-08-04, family 2).
+fn fn_has_cleanup_bounded_param(f: &FnDecl) -> bool {
+    let is_cleanup = |g: &GenericParam| g.bounds.iter().any(|b| matches!(b,
+        TypeRef::Named { path, .. } if path.last().map_or(false, |p| p == "Cleanup")));
+    f.generics.iter().any(is_cleanup)
+        || f.receiver.as_ref().map_or(false, |r| r.carrier_bounds.iter().any(is_cleanup))
+}
+
 /// Plan 100.8 (D166): Simplified D162 coverage check.
 ///
 /// Emits `D162-uncovered-error-path` when a failable function (`Fail[E]`
@@ -46275,6 +46284,15 @@ fn check_d162_coverage(
             // covered on EVERY exit path by the compiler-inserted call,
             // errdefer redundant. See `has_any_cleanup` doc.
             if lin_reg.has_any_cleanup(&ty) {
+                continue;
+            }
+            // D156 amendment 2026-08-04, family 2 (plan 246): in a fn over a
+            // `[T consume Cleanup[E]]` parameter the loop variable of `for
+            // consume x in @` is a `T` -- this pass does not type it (`ty` is
+            // empty), but such a `T` carries its own cleanup (D432), so it is
+            // covered like any declared-`@cleanup` binding. Narrow: only an
+            // untyped binding, only under a Cleanup-bounded type parameter.
+            if ty.is_empty() && fn_has_cleanup_bounded_param(f) {
                 continue;
             }
             let methods = lin_reg.consume_methods_for(&ty);
