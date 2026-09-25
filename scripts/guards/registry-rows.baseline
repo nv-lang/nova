@@ -1426,6 +1426,10 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1283
+max=1333
+# 2026-09-25, integrator: row 1333 added (a mode pair called through @ with a
+# for-consume variable takes the copying form). rows 1282->1283, max 1332->1333.
 rows=1282
 max=1332
 # 2026-09-25, integrator: row 1332 added (regression of #309: a plain binding
