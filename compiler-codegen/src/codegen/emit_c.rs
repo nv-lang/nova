@@ -22184,6 +22184,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// with cast: `T tmp; tmp.f0 = (E1)val.f0; ...`. Bit-compatible value
     /// types (nova_int, void*, fn pointer) round-trip transparently.
     fn emit_tuple_return_stash(&mut self, ret_ty: &str, tmp: &str, val: &str, actual_ty: &str) {
+        // [#1349] payload → Result[T,E]: a fn's tail (an `r?` tail unwrapping
+        // to the Ok payload, or an explicit `return X` under an active defer
+        // scope) evaluates to the bare Ok payload — its own natural C type,
+        // not the enclosing Result — because the checker's tail-position D55
+        // sum-coercion accepts a payload value where `Result[T,E]` is
+        // expected without itself constructing the wrapped value (that's
+        // codegen's job). Build the `Ok(...)` here so the return slot is
+        // correctly typed. Guarded to `actual_ty` not already Result-shaped
+        // so a genuine `Ok(..)`/`Err(..)` value or a Result-returning callee
+        // (`from_ty == ret_ty`, already handled by the plain-assign default
+        // below) is left untouched.
+        if Self::is_result_like(ret_ty) && !actual_ty.is_empty() && !Self::is_result_like(actual_ty) {
+            self.line(&format!(
+                "{} {} = {}({});",
+                ret_ty, tmp, self.result_ctor_name(ret_ty, "Ok"), val
+            ));
+            return;
+        }
         if !Self::needs_tuple_field_copy(ret_ty, actual_ty) {
             self.line(&format!("{} {} = {};", ret_ty, tmp, val));
             return;
@@ -52153,6 +52171,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // legitimate unit value к unit-typed slot.
         if to_ty == "nova_unit" && from_ty != "nova_unit" {
             return format!("((void)({}), NOVA_UNIT)", val);
+        }
+        // [#1349] payload → Result[T,E]: a match arm whose value is the bare
+        // Ok payload (e.g. `()`/`42`, not an `Ok(..)`/`Err(..)` constructor
+        // call) assigned into a Result-typed result_tmp. `emit_match`'s
+        // checker-channel read (resolved_types[match_id]) can type the slot
+        // itself as the enclosing `Result[T,E]` — the tail-position D55
+        // sum-coercion the checker already accepted for this arm — but the
+        // raw arm value was never wrapped, so the plain assignment mismatches
+        // in C. Build the `Ok(...)` here. Guarded to `from_ty` not already
+        // Result-shaped so a genuine `Ok(..)`/`Err(..)` arm (already emitted
+        // as the right NovaRes_* pointer, `from_ty == to_ty`, short-circuited
+        // above) or a differently-toleranced Result (reconciled Err side) is
+        // left untouched.
+        if Self::is_result_like(to_ty) && !from_ty.is_empty() && !Self::is_result_like(from_ty) {
+            return format!("{}({})", self.result_ctor_name(to_ty, "Ok"), val);
         }
         val.to_string()
     }
