@@ -17196,6 +17196,31 @@ impl<'a> TypeCheckCtx<'a> {
                 None => {} // arity-fail for this candidate
             }
         }
+        // Registry 221.1 #1341: rule 3 of the D84 mode axis (10-overloading.md)
+        // excludes a candidate whose `consume` parameter (or `consume @`
+        // receiver) would take a `ro`/`mut` binding, a field or `@` -- "otherwise
+        // (a ro/mut binding) the consume candidate is excluded". The exclusion
+        // was applied only inside `mode_axis_tiebreak`, i.e. only between
+        // candidates with IDENTICAL parameter types; with a type-differing
+        // sibling (`fn Vec[T consume] mut @append(consume other Vec[T])` beside
+        // the copying `fn Vec[T] mut @append[S AsSlice[T]](other S)`) the
+        // "concrete beats generic" step below picked the consuming form for
+        // `v.append(other)` with `mut other` -- and the bulk-move append then
+        // emptied the caller's live `other`. Applied only when a candidate
+        // survives it: a lone consuming overload keeps taking the binding (D131).
+        {
+            let rule3_ok = |f: &FnDecl| -> bool {
+                let recv_ok = !f.receiver.as_ref().map_or(false, |r| r.consume)
+                    || self.expr_mode_axis_consume_eligible(obj);
+                recv_ok && f.params.iter().zip(args.iter()).all(|(p, a)| {
+                    !p.consume || self.expr_mode_axis_consume_eligible(a.expr())
+                })
+            };
+            if compat_fns.iter().any(|f| rule3_ok(f)) && !compat_fns.iter().all(|f| rule3_ok(f)) {
+                compat_fns.retain(|f| rule3_ok(f));
+                compat_spans = compat_fns.iter().map(|f| f.span).collect();
+            }
+        }
         let any_compat = !compat_spans.is_empty();
         // D84 "concrete beats generic" (precedent already established at the
         // array-facade site above, ~12196): when a concrete (non-generic)

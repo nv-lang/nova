@@ -1,0 +1,63 @@
+// EXPECT_STDOUT made=9 closed=9 sum=45 order=243 other=2 kept=2
+//
+// Registry 221.1 #1341: the consuming `append` / `splice` of `Vec[T consume]`
+// move `other`'s elements with ONE bulk copy (`RawMem.copy_n`, D216
+// amendment 2026-09-25: a bulk move is outside linearity and the module keeps
+// it correct) instead of a per-element `for consume` loop. Every `Res` must
+// change owner exactly once and be closed exactly once: made = closed, and
+// the ids 1..9 sum to 45. `order` is the positional checksum of the final
+// sequence 1,2,7,8,9,3,4,5,6 (sum of id * position), so it shows where each
+// moved element landed.
+//
+// A copying `append` / `splice` on an ordinary `Vec[int]` passed a `mut`
+// binding must leave that binding intact (rule 3 of the D84 mode axis,
+// 10-overloading.md: the consuming candidate is excluded for a ro/mut
+// binding) -- `other=2` and `kept=2`. Before the fix the consuming form was
+// chosen there too and the bulk move emptied the caller's live vector.
+module standalone.vec_linear_bulk_append_splice
+
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> int => @id
+
+fn make(from int, to int, mut made []int) -> Vec[Res] {
+    consume v = Vec[Res].new()
+    for i in from..to {
+        v.push(Res { id: i })
+        made.push(i)
+    }
+    v
+}
+
+fn main() Io -> () {
+    mut made []int = []
+    consume v Vec[Res] = make(1, 3, made)
+    consume tail Vec[Res] = make(3, 7, made)
+    v.append(tail)
+    consume mid Vec[Res] = make(7, 10, made)
+    v.splice(2, mid)
+    v.append(Vec[Res].new())
+    // `order` is a positional checksum: sum of id * position (1-based) --
+    // it tells where each moved element landed, without reading the vector
+    // before it is consumed.
+    mut closed = 0
+    mut sum = 0
+    mut order = 0
+    for consume r in v {
+        closed += 1
+        ro id = r.close()
+        sum += id
+        order += id * closed
+    }
+
+    // ordinary elements: a mut binding takes the copying forms and stays live
+    mut a = Vec[int].of(1, 2, 3)
+    mut other = Vec[int].of(6, 7)
+    a.append(other)
+    mut more = Vec[int].of(8, 9)
+    a.splice(1, more)
+
+    print("made=${made.len()} closed=${closed} sum=${sum} order=${order} other=${other.len()} kept=${more.len()}")
+}

@@ -30790,8 +30790,70 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// Plan 217: does this block contain at least one bare consume-let that
     /// qualifies for auto-cleanup (`auto_cleanup_qualifies`)? Non-recursive,
     /// mirrors `block_has_defers` (nested blocks get their own scope).
-    fn block_has_auto_cleanup_lets(&self, block: &Block) -> bool {
-        block.stmts.iter().any(|s| matches!(s, Stmt::Let(decl) if self.auto_cleanup_qualifies(decl).is_some()))
+    fn block_has_auto_cleanup_lets(&mut self, block: &Block) -> bool {
+        // Cheap syntactic gate first: only a bare `consume X = e` can qualify.
+        if !block.stmts.iter().any(|s| matches!(s,
+            Stmt::Let(d) if d.consume && matches!(d.pattern, Pattern::Ident { .. })))
+        {
+            return false;
+        }
+        let mut shadowed: Vec<(String, Option<String>, String)> = Vec::new();
+        let mut found = false;
+        for s in &block.stmts {
+            if let Stmt::Let(decl) = s {
+                if self.auto_cleanup_qualifies(decl).is_some() {
+                    found = true;
+                    break;
+                }
+            }
+            self.prescan_declare_let(s, &mut shadowed);
+        }
+        self.prescan_restore_lets(shadowed);
+        found
+    }
+
+    /// Registry 221.1 #1341: the auto-cleanup prologue scan
+    /// (`block_has_auto_cleanup_lets`, `enter_defer_scope`) types every bare
+    /// `consume X = e` of a block BEFORE any statement of it is emitted, so
+    /// `e` was typed without the block's EARLIER locals -- and `var_types` is
+    /// not function-scoped, so a name the block declares earlier resolved to
+    /// whatever ANOTHER function last bound under that name. The field cache
+    /// makes this systematic: its hoisted `ro _at_data = @data` precedes
+    /// `consume removed = unsafe { _at_data.read_consume_at(i) }`
+    /// (`Vec @swap_remove`), and `_at_data` is a name every Vec/ReadBuffer
+    /// method shares -- `Vec[int] @swap_remove` was typed through
+    /// ReadBuffer's `_at_data: []u8` (E_CODEGEN_TYPE_UNKNOWN) or, before
+    /// #1341, silently through the previous mono's `Nova_EmbeddedEntry**`.
+    /// The scan now walks the block in emission order and, after each
+    /// statement, declares a plain `let` it passed (its annotation, else its
+    /// value's type), as emission will; `prescan_restore_lets` undoes it
+    /// before the real emission. Records `(name, previous, inserted)`.
+    fn prescan_declare_let(&mut self, s: &Stmt, shadowed: &mut Vec<(String, Option<String>, String)>) {
+        let Stmt::Let(d) = s else { return };
+        let Pattern::Ident { name, .. } = &d.pattern else { return };
+        let ty = match &d.ty {
+            Some(t) => self.type_ref_to_c(t).unwrap_or_default(),
+            None => self.infer_expr_c_type(&d.value),
+        };
+        if ty.is_empty() {
+            return;
+        }
+        let prev = self.var_types.insert(name.clone(), ty.clone());
+        shadowed.push((name.clone(), prev, ty));
+    }
+
+    /// #1341: undo `prescan_declare_let`, newest first. An entry the prologue
+    /// itself re-bound meanwhile (the hoisted auto-cleanup binding) is kept.
+    fn prescan_restore_lets(&mut self, shadowed: Vec<(String, Option<String>, String)>) {
+        for (name, prev, inserted) in shadowed.into_iter().rev() {
+            if self.var_types.get(&name) != Some(&inserted) {
+                continue;
+            }
+            match prev {
+                Some(p) => { self.var_types.insert(name, p); }
+                None => { self.var_types.remove(&name); }
+            }
+        }
     }
 
     /// Push a new defer scope onto the stack and emit its prologue:
@@ -30805,6 +30867,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let block_id = self.defer_block_counter;
         let mut entries: Vec<DeferEntry> = Vec::new();
         let mut idx = 0usize;
+        // #1341: see `prescan_declare_let` -- the scan sees the block's earlier
+        // locals, in emission order; undone after the loop.
+        let mut prescan_shadowed: Vec<(String, Option<String>, String)> = Vec::new();
         for s in &block.stmts {
             // Plan 173 Ф.1 (#4): only plain `defer` remains (D189).
             // Plan 217 (гибрид C): bare auto-cleanup-eligible `consume X = e;`
@@ -30936,6 +31001,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     continue;
                 }
             }
+            // #1341: a plain let passed -> visible to the later statements' scan.
+            self.prescan_declare_let(s, &mut prescan_shadowed);
             let (body, outcome_binding) = match s {
                 Stmt::Defer { body, outcome_binding, .. } => (body, outcome_binding.clone()),
                 _ => continue,
@@ -30950,6 +31017,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.line(&format!("int {} = 0;", var));
             idx += 1;
         }
+        self.prescan_restore_lets(prescan_shadowed);
         // Plan 100.8 (D166) C-codegen fix: hoist Let bindings referenced in
         // errdefer/defer bodies so they're declared BEFORE the setjmp handler.
         // In C, a variable's scope starts at its declaration; if an errdefer
