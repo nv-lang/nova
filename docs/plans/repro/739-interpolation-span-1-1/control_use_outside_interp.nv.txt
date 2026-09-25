@@ -1,0 +1,13 @@
+// #739 control: the same use-after-consume outside the interpolation -- reported at 10:12, as it should.
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> int => @id
+
+fn main() Io -> () {
+    consume r = Res { id: 1 }
+    ro k = r.close()
+    ro z = r.id
+    print("k=${k} again=${z}")
+}
