@@ -1,0 +1,40 @@
+// EXPECT_STDOUT <  Vec[1, 22]> <Vec[1, 22]  > <Vec[1, 22]>
+//
+// D422 §7 (spec/decisions/02-types.md): the width / alignment / fill of a spec
+// belong to a composite as ONE value -- `Vec` is named among the streaming
+// composites the compiler pads whole. This pins it for elements that pad
+// themselves (`f.pad`): the width goes to the vector only, never to each
+// element, and the vector is padded once (measured 2026-09-25: it already
+// holds). A per-element spec is the future `[M-fmt-nested-element-spec]`. A
+// wrapper passes its `Fmt` into the Vec, because `${v:SPEC}` on a generic type
+// is refused today (registry 1342).
+
+module standalone.vec_display_width_whole
+
+type Cell {
+    n int
+}
+
+fn Cell @display(mut f Fmt) -> () {
+    f.pad("${@n}".bytes())
+}
+
+fn Cell @debug(mut f Fmt) -> () {
+    f.pad("${@n}".bytes())
+}
+
+type Wrap {
+    v Vec[Cell]
+}
+
+fn Wrap @display(mut f Fmt) -> () {
+    @v.display(f)
+}
+
+fn main() Io -> () {
+    ro w = Wrap { v: Vec[Cell].of(Cell { n: 1 }, Cell { n: 22 }) }
+    ro a = "${w:>12}"
+    ro b = "${w:<12}"
+    ro c = "${w.v:?}"
+    print("<${a}> <${b}> <${c}>")
+}
