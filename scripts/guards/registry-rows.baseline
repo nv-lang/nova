@@ -1426,6 +1426,11 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1304
+max=1352
+# 2026-09-25, Carina window: row 1352 added (number from integrator nova-73) --
+# the oracle accepts `==` on a sum with no `#impl(Equal)`. rows 1303->1304,
+# max 1351->1352.
 rows=1303
 max=1351
 # 2026-09-25, Carina window: row 1351 added (number from integrator nova-73) --

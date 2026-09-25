@@ -1273,6 +1273,7 @@ for (i, x) in list.iter().enumerate() { ... }   // индекс через itera
 
 while cond { ... }                // условный цикл
 loop { ... }                      // бесконечный, выход через break/return
+ro a = loop { ... break v }       // loop is an expression: the loop's value (D485)
 ```
 
 **An explicit element type — `for x TYPE in iter`** — is optional and
@@ -1302,7 +1303,10 @@ This is consistent with the D32 + D33 rule — all bindings are immutable by
 default, mutation explicitly via `mut`. There is no `const` or `final`
 marker in Nova — immutability is already the default.
 
-`break` / `continue` — standard.
+`break` / `continue` — standard, no labels; both are expressions of type `never`
+(AMEND D25), and outside a loop they are an error. `break <value>` only in `loop`:
+the value becomes the loop's value, and the type of `loop` is the common type of
+all its `break`s ([D485](decisions/03-syntax.md#d485)).
 
 ### A pattern in a condition — `if pattern = …` / `while pattern = …`
 
