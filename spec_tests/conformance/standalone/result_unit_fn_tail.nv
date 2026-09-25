@@ -1,0 +1,76 @@
+// EXPECT_STDOUT ok|zero|ok|neg|10|zero|100|neg|
+//
+// #1349: the tail of a `Result[(), E]`-returning fn, when its expression is
+// itself unit-typed (a statement `match` whose non-diverging arm is a bare
+// `()`, or an `r?` tail that unwraps to the `()` Ok payload), used to be
+// codegen'd as the RAW unit value assigned straight into the function's
+// Result-typed slot/return, instead of `Ok(())` -- CC-FAIL "assigning to
+// 'NovaRes_nova_unit_nova_str *' ... from incompatible type 'nova_unit'"
+// (match tail) / "initializing ... with an expression of incompatible type
+// 'nova_unit'" (`r?` tail). `nova check` accepted both shapes (the checker's
+// tail-position sum-coercion, D55, already allows a bare payload where
+// `Result[T,E]` is expected) -- only codegen never built the `Ok(...)` wrap.
+//
+// Same defect class, NOT unit-specific: `Result[T, E]` with a concrete
+// payload (`int` here) hit the identical mis-emission -- silently, without a
+// CC-FAIL, because C implicitly (with only a warning) converts an integer
+// into a pointer slot. `f_match_int`/`f_qmark_int` below reproduce that
+// shape; before the fix both SEGFAULTED at runtime (a raw int reinterpreted
+// as a `NovaRes_*` pointer, then dereferenced by the caller's `match`).
+//
+// Two tail shapes x two payload widths = four functions, each exercised on
+// its Ok and Err path.
+module standalone.result_unit_fn_tail
+
+fn f_match_unit(x int) -> Result[(), str] {
+    match x {
+        0 => return Err("zero")
+        _ => ()
+    }
+}
+
+fn f_qmark_unit(x int) -> Result[(), str] {
+    ro r = if x > 0 {
+        Ok(())
+    } else {
+        Err("neg")
+    }
+    r?
+}
+
+fn f_match_int(x int) -> Result[int, str] {
+    match x {
+        0 => return Err("zero")
+        _ => x * 10
+    }
+}
+
+fn f_qmark_int(x int) -> Result[int, str] {
+    ro r = if x > 0 {
+        Ok(x * 100)
+    } else {
+        Err("neg")
+    }
+    r?
+}
+
+fn show_unit(r Result[(), str]) -> str => match r {
+    Ok(()) => "ok"
+    Err(e) => e
+}
+
+fn show_int(r Result[int, str]) -> str => match r {
+    Ok(v) => "${v}"
+    Err(e) => e
+}
+
+fn main() Io -> () {
+    print("${show_unit(f_match_unit(1))}|")
+    print("${show_unit(f_match_unit(0))}|")
+    print("${show_unit(f_qmark_unit(1))}|")
+    print("${show_unit(f_qmark_unit(-1))}|")
+    print("${show_int(f_match_int(1))}|")
+    print("${show_int(f_match_int(0))}|")
+    print("${show_int(f_qmark_int(1))}|")
+    print("${show_int(f_qmark_int(-1))}|")
+}

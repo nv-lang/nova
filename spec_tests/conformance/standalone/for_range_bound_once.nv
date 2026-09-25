@@ -1,0 +1,45 @@
+// EXPECT_STDOUT calls=1 iters=3 seen=3 len=4 each=2 wlen=3
+//
+// Registry 221.1 #1340, D58 (spec/decisions/03-syntax.md:4241, 4329): `for x in c`
+// calls `c.iter()` ONCE and `a..b` is the value `Range { start: a, end: b }`, so
+// the bounds are evaluated once, before the first iteration. A bound with a side
+// effect runs once (calls=1), and a push in the body of `for i in 0..v.len()` does
+// not lengthen the loop. The loop over the Vec itself (each=2) is a CONTROL: it
+// goes through `VecIter`, which captures the length at `iter()`, and was right
+// before the fix too.
+
+module standalone.for_range_bound_once
+
+type Box {
+    mut n int
+}
+
+fn Box mut @hi() -> int {
+    @n += 1
+    3
+}
+
+fn main() Io -> () {
+    mut b = Box { n: 0 }
+    mut iters = 0
+    for i in 0..b.hi() {
+        iters += 1
+    }
+    mut v = Vec[int].of(1, 2, 3)
+    mut seen = 0
+    for i in 0..v.len() {
+        if i == 0 {
+            v.push(9)
+        }
+        seen += 1
+    }
+    mut w = Vec[int].of(1, 2)
+    mut each = 0
+    for x in w {
+        if each == 0 {
+            w.push(x + 10)
+        }
+        each += 1
+    }
+    print("calls=${b.n} iters=${iters} seen=${seen} len=${v.len()} each=${each} wlen=${w.len()}")
+}
