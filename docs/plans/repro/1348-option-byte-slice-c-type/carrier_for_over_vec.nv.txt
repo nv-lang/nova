@@ -1,0 +1,26 @@
+// #1348 carrier 2: `for x in` a []Option[[]u8] -- the same CC-FAIL.
+// EXPECT_STDOUT count=1
+// expected: `check` passes AND the C build succeeds — iterating a
+//   []Option[[]u8] with `for x in vec` is ordinary generic code.
+// got: `check` passes, the C build fails:
+//   error: unknown type name 'NovaOpt_Nova_Vec____nova_byte'; did you mean
+//   'NovaOpt_Nova_Vec____nova_byte_p'? | initializing
+//   'NovaOpt_Nova_Vec____nova_byte_p *' with an expression of incompatible type ...
+//   The mono collector declares the VecIter payload with a `_p` suffix while
+//   the loop variable is emitted without it (same class as the documented
+//   [M-static-conv-array-record-mono-cc-fail] in std runtime/read_buffer.nv).
+// command: ./nova.sh check repro-local/opt_slice_iter/src/main.nv → ok
+//          ./nova.sh build repro-local/opt_slice_iter/src/main.nv -o target/opt_slice_iter.exe → C error above
+module main
+
+fn main() {
+    ro params []Option[[]u8] = [Some("a".bytes()), None]
+    mut count = 0
+    for p in params {
+        match p {
+            Some(_) => { count += 1 }
+            None => ()
+        }
+    }
+    println("count=${count}")
+}

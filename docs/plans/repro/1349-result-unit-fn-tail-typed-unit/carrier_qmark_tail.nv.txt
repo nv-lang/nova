@@ -1,0 +1,28 @@
+// #1349 carrier 2: `r?` as the tail -- CC-FAIL initializing 'NovaRes_nova_unit_nova_str *' with 'nova_unit'.
+// EXPECT_STDOUT done
+// expected: `check` passes AND the C build succeeds — `r?` as the function
+//   tail yields the Ok payload and the function returns Ok(payload).
+// got: `check` passes, the C build fails — the tail `r?` is emitted as
+//   `return Ok._0;` (the raw payload) instead of `return Ok(Ok._0);`:
+//   error: initializing 'NovaRes_nova_unit_NovaString *' with an expression
+//   of incompatible type 'nova_unit'
+//   (workaround used in src/session.nv: `r?` followed by an explicit tail)
+// command: ./nova.sh check repro-local/qmark_tail/src/main.nv → ok
+//          ./nova.sh build repro-local/qmark_tail/src/main.nv -o target/qt.exe → C error above
+module main
+
+fn f(x int) -> Result[(), str] {
+    ro r = if x > 0 {
+        Ok(())
+    } else {
+        Err("neg")
+    }
+    r?
+}
+
+fn main() {
+    match f(1) {
+        Ok(()) => println("done")
+        Err(e) => println(e)
+    }
+}

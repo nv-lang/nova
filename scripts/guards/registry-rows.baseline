@@ -1426,6 +1426,10 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1299
+max=1349
+# 2026-09-25, integrator: rows 1348-1349 added (from nova-postgres D8b repro-local:
+# Option[[]u8] C type not declared; a Result[(), E] fn tail typed unit). rows 1297->1299, max 1347->1349.
 rows=1297
 max=1347
 # 2026-09-25, integrator: row 1347 added (a loop after a consuming append makes the
