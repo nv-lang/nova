@@ -1,0 +1,22 @@
+// #1338 variant: `a.mapx[int](..)` -- still empty stdout.
+// over the result of a user generic sum's method-generic call reads the payload as `nova_str`
+// (generated C: `nova_str bb = ... (*(nova_str*)(v))`) -- `nova build` + run: segfault, exit 139,
+// nothing printed. Controls: extracting the same value through a fn with a typed parameter
+// (`fn unw(o Opt[int]) -> int => match o { ... }`) prints b=4; so does a method `@val(d T) -> T`.
+// EXPECT_STDOUT b=4
+type Opt[T] enum Som(T) | Non
+
+fn Opt[T] @mapx[U](f fn(T) -> U) -> Opt[U] => match @ {
+    Som(v) => Som(f(v))
+    Non => Non
+}
+
+fn main() Io -> () {
+    ro a Opt[int] = Som(3)
+    ro b = a.mapx[int](|x| x + 1)
+    ro bb = match b {
+        Som(v) => v
+        Non => 0
+    }
+    println("b=${bb}")
+}
