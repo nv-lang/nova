@@ -7787,6 +7787,7 @@ impl CEmitter {
                 }
             }
             let mut seen_vec_mono: HashSet<String> = HashSet::new();
+            let mut seen_novaopt_container_fwd: HashSet<String> = HashSet::new();
             for elem in &array_elems {
                 // Resolve elem → C type. As a side effect this also enqueues the
                 // Vec[elem] instance (the Array arm of type_ref_to_c).
@@ -7799,6 +7800,29 @@ impl CEmitter {
                 // analogous concrete-mono carve-out used in the Option/Named arms.
                 if self.debt_skip_array_fwd_decl(&elem_c) {
                     continue;
+                }
+                // [221.1 #1348] `elem_c` for an `Option[T]` element is already the
+                // NovaOpt_<sani> VALUE-type name (`resolved_named_to_c`'s "Option" arm
+                // → `opt_repr_c_type` → `register_novaopt_decl`) — but that registration
+                // only ever queues the typedef into `novaopt_typedefs_buf`, spliced at
+                // `/*__NOVAOPT_TYPEDEFS__*/`, which sits TEXTUALLY AFTER
+                // `/*__GENERIC_TYPE_DEFS__*/` (compare the `self.line(...)` call order:
+                // `/*__GENERIC_TYPE_DEFS__*/` at the top of this function vs
+                // `/*__NOVAOPT_TYPEDEFS__*/` far below it). The Vec[Option[T]] struct
+                // BODY is spliced at `__GENERIC_TYPE_DEFS__` and references
+                // `NovaOpt_<sani>*` as its `data` field — a pointer field only needs a
+                // FORWARD typedef, so emit one into `user_type_fwd_decls` (an early
+                // marker, same buffer this loop already uses for the Vec mono itself)
+                // whenever the collected element resolves to a NovaOpt_ value type. Was
+                // previously registered only when Option[T] ALSO appeared as a bare
+                // local/param/return elsewhere in the SAME file (those sites are function
+                // bodies/signatures, emitted much later, so the ordering never bit them);
+                // an Option used ONLY as a container element had no such second site.
+                if elem_c.starts_with("NovaOpt_")
+                    && seen_novaopt_container_fwd.insert(elem_c.clone())
+                {
+                    self.user_type_fwd_decls.push_str(&format!(
+                        "typedef struct {0} {0};\n", elem_c));
                 }
                 let type_args_c = vec![elem_c];
                 let mangled = Self::compute_generic_type_c_name("Vec", &type_args_c);
@@ -46434,6 +46458,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 }
                                             }
                                         }
+                                        // [221.1 #1348 follow-up] a bare `None` argument
+                                        // (e.g. `vec_of_Option_X.push(None)`) carries no
+                                        // type of its own — `emit_expr` defaults it to
+                                        // `NovaOpt_nova_int` (Plan 39 Issue A's documented
+                                        // fallback). The callee's OWN param type (`Option[X]`,
+                                        // X bound to the concrete element via the ACTIVE
+                                        // `current_type_subst` at this point — same window
+                                        // the RecordLit branch above already reads
+                                        // `param_decl.ty` in) names the correct target; reuse
+                                        // it exactly like the RecordLit `expected_record_type`
+                                        // hook, narrowed to the literal `None` ident so every
+                                        // other arg (Result/Option/scalar — see the
+                                        // `emit_expr_with_target_type` mis-wrap note on the
+                                        // sibling turbofish-arg loop) stays byte-identical.
+                                        if matches!(&a.expr().kind, ExprKind::Ident(n) if n == "None") {
+                                            if let Ok(pc) = self.type_ref_to_c(&param_decl.ty) {
+                                                if let Some(sani) = pc.strip_prefix("NovaOpt_") {
+                                                    arg_strs.push(self.option_none_expr(sani));
+                                                    self.expected_record_type = saved_er;
+                                                    continue;
+                                                }
+                                            }
+                                        }
                                         // [M-generic-reflect-call-inside-sibling-struct-
                                         // literal] (ICE-пачка п.5): `a.expr()` is an
                                         // ordinary CALLER-scope expression — restore
@@ -51264,7 +51311,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // `_p` as part of their field-encoding suffix, NOT as a
                     // pointer marker. They are value types stored by value in
                     // the NovaOpt — do not desanitize them.
-                    let binding_c_ty = if elem_c_ty.starts_with("_NovaTuple_") {
+                    // [221.1 #1348] a NESTED Option element (`for x in
+                    // []Option[T]` — `T` bound so the iterator's own `Option[T]`
+                    // payload IS `NovaOpt_<sani(T)>`) makes `elem_c_ty` itself a
+                    // `NovaOpt_<...>` VALUE-type struct name. When `sani(T)` was
+                    // built from a POINTER `T` (e.g. `T = []u8`), that name
+                    // already ends in `_p` as part of its OWN identity
+                    // (`NovaOpt_Nova_Vec____nova_byte_p`) — not as the
+                    // pointer-sanitization marker `desanitize_c_from_ident`
+                    // assumes. Stripping it there rebuilds a DIFFERENT,
+                    // undeclared pointer type (`NovaOpt_..._byte*`) instead of
+                    // the actual (non-pointer) struct the `.value` field holds.
+                    // Same carve-out shape as the `_NovaTuple_` exception right
+                    // above it — a NovaOpt_ name is already the correct, final
+                    // C spelling and must never be re-desanitized.
+                    let binding_c_ty = if elem_c_ty.starts_with("_NovaTuple_")
+                        || elem_c_ty.starts_with("NovaOpt_")
+                    {
                         elem_c_ty.clone()
                     } else {
                         Self::desanitize_c_from_ident(&elem_c_ty)
