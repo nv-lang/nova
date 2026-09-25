@@ -1,0 +1,6 @@
+// #1337 carrier 2: an unannotated builtin constructor temporary as the receiver of a nested-receiver method, one declaration -- nova test: CC-FAIL (unknown type in C).
+// EXPECT_STDOUT ok
+fn main() Io -> () {
+    ro x = Some(Ok(1)).transpose()
+    print("ok")
+}

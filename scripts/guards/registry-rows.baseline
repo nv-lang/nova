@@ -1426,6 +1426,10 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1288
+max=1338
+# 2026-09-25, integrator: rows 1336-1338 added (nested-receiver mode pair; untyped
+# constructor receiver; match payload read as str). rows 1285->1288, max 1335->1338.
 rows=1285
 max=1335
 # 2026-09-25, integrator: row 1335 added (a generic method's mode pair whose

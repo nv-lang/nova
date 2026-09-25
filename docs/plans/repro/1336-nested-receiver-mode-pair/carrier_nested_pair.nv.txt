@@ -1,0 +1,17 @@
+// #1336 carrier: a receiver-mode pair on the nested receiver `Option[Result[T, E]]`; the COPYING form on int -- nova test: CC-FAIL `member reference type 'nova_int'`.
+// EXPECT_STDOUT n=5
+fn Option[Result[T, E]] @tp() -> Result[Option[T], E]
+  => match @ { Some(r) => match r { Ok(v) => Ok(Some(v)), Err(e) => Err(e) }, None => Ok(None) }
+
+fn Option[Result[T consume, E consume]] consume @tp() -> Result[Option[T], E]
+  => match consume @ {
+      Some(consume r) => match consume r { Ok(consume v) => Ok(Some(v)), Err(consume e) => Err(e) }
+      None => Ok(None)
+  }
+
+fn main() Io -> () {
+    ro t Option[Result[int, int]] = Some(Ok(5))
+    ro tt = t.tp()
+    ro n = match tt { Ok(x) => x ?? 0, Err(_) => 0 }
+    print("n=${n}")
+}

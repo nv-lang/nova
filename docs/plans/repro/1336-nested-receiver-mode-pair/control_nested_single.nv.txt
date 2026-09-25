@@ -1,0 +1,11 @@
+// #1336 control: the copying form alone -- nova test PASS (n=5).
+// EXPECT_STDOUT n=5
+fn Option[Result[T, E]] @tp() -> Result[Option[T], E]
+  => match @ { Some(r) => match r { Ok(v) => Ok(Some(v)), Err(e) => Err(e) }, None => Ok(None) }
+
+fn main() Io -> () {
+    ro t Option[Result[int, int]] = Some(Ok(5))
+    ro tt = t.tp()
+    ro n = match tt { Ok(x) => x ?? 0, Err(_) => 0 }
+    print("n=${n}")
+}
