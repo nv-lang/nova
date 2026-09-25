@@ -1,0 +1,13 @@
+// #1339 carrier: the same on the builtin Result -- nova test: stdout `a=1 b=1` (expected `a=1 b=2`).
+// EXPECT_STDOUT a=1 b=2
+fn Result[T, E] @mm() -> int => 1
+
+fn Result[T consume, E consume] consume @mm() -> int => match consume @ { Ok(consume v) => 2, Err(consume e) => 3 }
+
+fn main() Io -> () {
+    ro r Result[int, str] = Ok(5)
+    ro a = r.mm()
+    ro t Result[int, str] = Ok(6)
+    ro b = Ok(6).mm()
+    print("a=${a} b=${b}")
+}

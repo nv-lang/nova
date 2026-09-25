@@ -1426,6 +1426,10 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1289
+max=1339
+# 2026-09-25, integrator: row 1339 added (a receiver-mode pair on the builtin
+# Option / Result picks the copying form for a temporary). rows 1288->1289, max 1338->1339.
 rows=1288
 max=1338
 # 2026-09-25, integrator: rows 1336-1338 added (nested-receiver mode pair; untyped
