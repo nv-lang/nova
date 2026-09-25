@@ -457,6 +457,11 @@ test "a refused initializer binds its name POISONED in every form -- one cause, 
     assert(diagnose(arr) == 1, diagnose_first_msg(arr))
     ro idx = "module m\n\nfn f() -> int {\n    ro v = nosuch(1)[0]\n    ro w = v\n    1\n}\n"
     assert(diagnose(idx) == 1, diagnose_first_msg(idx))
+    // AND AN OPERATOR over the poisoned name says nothing more: the operator
+    // judge used to answer "dispatches through a protocol" about an operand
+    // with no type -- the wrong cause, a second time.
+    ro op = "module m\n\nfn f() -> bool {\n    ro xs = [nosuch(1)]\n    ro n = xs\n    n < 2\n}\n"
+    assert(diagnose(op) == 1, diagnose_first_msg(op))
 }
 
 test "a closed `str` slice is compiled; other receivers, open bounds and non-int bounds keep their refusals (274.7 U-1)" {

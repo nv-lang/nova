@@ -16,7 +16,7 @@ module novac.check
 import ../tree.{Node, BinOp, bin_op_of, un_op_of}
 import ../sem.{LitArg, leaf_kind, leaf_text}
 import ../sem.{carrier_of, is_int_prim, is_numeric_prim, prim_row_of}
-import ../types.{TyId, no_ty}
+import ../types.{TyId, no_ty, is_ty}
 import ../builtins.{EQUAL_METHOD, BuiltinType}
 import ../resolve.{FnLookup}
 import ../sem.{ArgSpec, ArgClass, CallForm, CalleeTarget, ty_source_name, c_shell_method}
@@ -149,6 +149,14 @@ fn equality_key(lhs_t TyId, rhs_t TyId) -> []ArgSpec => [
 fn Checker mut @report_if_operator_needs_protocol(kids []Node) -> bool {
     ro lt0 = type_of(kids[0], @ctx, @scope, @chan)
     ro rt0 = type_of(kids[2], @ctx, @scope, @chan)
+    // A POISONED OPERAND is a cause already spoken (one cause, one diagnostic):
+    // no type means it was refused where it was typed -- or it is a name bound
+    // poisoned after its initializer's refusal. Answering "dispatches through
+    // a protocol" about it named the wrong cause a second time: measured
+    // 2026-09-25, `kids.len() < 2` over `ro kids = branch_children(st)` (a body
+    // of another module, refused) drew it in every function of check/. The
+    // operator counts as refused, so nothing downstream records it.
+    if !is_ty(lt0) || !is_ty(rt0) { return true }
     // D227/D405: a bare numeric literal takes the OTHER operand's type. The
     // lattice's door decides (adapt_operand, one door for both readers); the
     // walk RECORDS the decision here and judges the literal's range against
