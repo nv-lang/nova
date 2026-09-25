@@ -1,4 +1,4 @@
-module sum_eq.pos_1
+module sum_eq.wait1353_pos_1
 
 // `==` and `!=` on a payload-free sum that declares `#impl(Equal)` (274.7 wave R):
 // D363 routes equality through Equal, a sum is a value type (D477) and opts in.
