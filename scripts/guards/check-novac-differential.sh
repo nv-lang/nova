@@ -220,6 +220,36 @@ if [ "$smode" != "batch-unit" ]; then
         exit 1
     fi
 fi
+# ПРИНИМАЕТСЯ ЕДИНИЦА, А НЕ ФАЙЛ (реестр 221.1 №1350, 2026-09-25). Единица пачки —
+# один модуль, один текст, а `novac/src/check/run.nv` типизирует текст только при
+# чистом вердикте обхода. Один отказ обхода в ЛЮБОМ файле единицы выключает
+# типизацию всей единицы, и её молчащие файлы не судил никто; мера, считавшая их
+# принятыми, давала 79/108 при 0/16 чистых единиц. Раннер печатает по строке на
+# единицу, и страж ПЕРЕСЧИТЫВАЕТ заголовок по ним: засчитать принятым файл
+# единицы с диагностиками — красный, а не цифра. Полей нет — формат разошёлся,
+# тоже красный.
+if [ "$smode" = "batch-unit" ]; then
+    su=$(echo "$NUMS" | sed -n 's/.*self-units=\([0-9]*\)\/\([0-9]*\).*/\1 \2/p')
+    suf=$(echo "$NUMS" | sed -n 's/.*self-unit-files=\([0-9]*\)\/\([0-9]*\).*/\1 \2/p')
+    if [ -z "$su" ] || [ -z "$suf" ]; then
+        echo "$NAME: FAIL — в строке раннера нет self-units / self-unit-files (реестр 221.1 №1350):" >&2
+        echo "  без счёта по единицам мера 0.2 снова считает принятыми файлы, которых никто не типизировал." >&2
+        exit 1
+    fi
+    re_units=$(grep -c '^novac-diff-corpus self-unit: ' "$T/corpus.out" | tr -d '[:space:]')
+    re_clean=$(grep '^novac-diff-corpus self-unit: ' "$T/corpus.out" | awk '$NF == 0' | wc -l | tr -d '[:space:]')
+    re_files=$(grep '^novac-diff-corpus self-unit: ' "$T/corpus.out" | awk '$NF == 0 { s += $(NF-2) } END { print s + 0 }')
+    # Not `set --`: that would overwrite the guard's own $1/$2 (root, binary).
+    su_clean=${su%% *}; su_total=${su##* }
+    suf_files=${suf%% *}
+    if [ "$re_units" != "$su_total" ] || [ "$re_clean" != "$su_clean" ] || [ "$re_files" != "$suf_files" ]; then
+        echo "$NAME: FAIL — счёт единиц не сходится со строками единиц (реестр 221.1 №1350):" >&2
+        echo "  заголовок: единиц чисто $su_clean из $su_total, файлов в чистых $suf_files; по строкам: $re_clean из $re_units, файлов $re_files." >&2
+        echo "  Файл единицы, в которой есть диагностики, засчитан принятым — его никто не типизировал." >&2
+        exit 1
+    fi
+    echo "$NAME: самосборка по единицам: чисто $su_clean из $su_total, файлов в чистых $suf_files — пересчитано по строкам единиц"
+fi
 # Cost ratchet (P14): the corpus run's wall must stay within its budget.
 wall_ms=$(sed -n 's/^novac-diff-corpus: цена прогона.*стена \([0-9]*\)ms.*/\1/p' "$T/corpus.out")
 bud_ms=$(tr -d '\r' < "$ROOT/scripts/guards/novac-iteration-cost.baseline" 2>/dev/null | sed -n 's/^diff-corpus-ms \([0-9]*\)$/\1/p')
