@@ -504,6 +504,18 @@ test "an overload set left undecided by a POISONED argument says nothing more --
     assert(diagnose(fr) == 1, diagnose_first_msg(fr))
 }
 
+test "`==` on a sum goes through `Equal` by `#impl(Equal)`: a tag compare, a language error without it (274.7 R)" {
+    // D363 + the value-type rule + D477: a sum opts in, no identity fallback.
+    // Fixtures: novac/fixtures/sum_eq.
+    ro ok = "module m\n\n#impl(Equal)\ntype C enum A | B\n\nfn f(x C, y C) -> bool => x != y\n"
+    assert(diagnose(ok) == 0, diagnose_first_msg(ok))
+    ro bare = "module m\n\ntype C enum A | B\n\nfn f(x C, y C) -> bool => x == y\n"
+    assert(diagnose_first_msg(bare).contains("needs the type to implement `Equal`"), diagnose_first_msg(bare))
+    // CONTROL: a payload sum declaring Equal keeps the dispatch refusal, never a tag compare.
+    ro pay = "module m\n\n#impl(Equal)\ntype S enum P(int) | Q\n\nfn f(x S, y S) -> bool => x == y\n"
+    assert(diagnose_first_msg(pay).contains("dispatches through a protocol"), diagnose_first_msg(pay))
+}
+
 test "a closed `str` slice is compiled; other receivers, open bounds and non-int bounds keep their refusals (274.7 U-1)" {
     // D470 section 5: `s[lo..hi]` is `s.index(Range { start: lo, end: hi })`, a
     // byte range of type `str` (D249). Wave U-1 compiles the closed form over

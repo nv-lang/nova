@@ -46,9 +46,9 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, NodeId, bin_op_of, un_op_of}
 import ../diag.{Diagnostic, ice}
 import ../builtins.{COERCE_ATTR, REALTIME_ATTR}
-import ../builtins.{IMPL_ATTR, DISPLAY_PROTO}
+import ../builtins.{IMPL_ATTR, DISPLAY_PROTO, EQUAL_PROTO}
 import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind}
-import ../sem.{expr_leaf_name, attr_kids_name, attr_args_all, attr_has_args, recv_type_name, is_value_record}
+import ../sem.{expr_leaf_name, attr_kids_name, attr_args_among, attr_has_args, recv_type_name, is_value_record}
 import ../sem.{file_decls}
 import ../sem.{is_closed_slice_bin}
 // Where an arm keeps its body -- the door the lowering has read for waves.
@@ -497,7 +497,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                         // form does not exist, as opposed to "not read yet".
                         @reject_first_leaf_of(children, IMPL_NO_PROTOCOLS_MSG)
                     } else if attr_kids_name(children, IMPL_ATTR)
-                              && attr_args_all(children, DISPLAY_PROTO) {
+                              && attr_args_among(children, []str.of(DISPLAY_PROTO, EQUAL_PROTO)) {
                         // `#impl(P)` (D186) -- the author's opt-in, READ ONLY FOR
                         // THE PROTOCOL THE SUBSET JUDGES, which today is `Display`
                         // (wave B1b). `#impl(Serialize)` stands in novac's own

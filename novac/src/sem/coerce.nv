@@ -183,7 +183,13 @@ export fn attr_has_args(kids []Node, word str) -> bool {
 /// `#display(Display)` and `#display(Display, Debug)` are both asked about one
 /// protocol at a time, so ALL rather than ANY: an attribute that also names
 /// something else is not an opt-in to this one alone.
-export fn attr_args_all(kids []Node, word str) -> bool {
+export fn attr_args_all(kids []Node, word str) -> bool => attr_args_among(kids, []str.of(word))
+
+/// Does every name in this attribute's argument list belong to `words` -- and is
+/// there at least one? `#impl(Display + Equal)` is an opt-in to protocols the
+/// subset reads when BOTH are among them (274.7 wave R added `Equal`); one name
+/// outside the set and the attribute is not one the subset may accept unread.
+export fn attr_args_among(kids []Node, words []str) -> bool {
     mut inside = false
     mut seen = false
     for c in kids {
@@ -205,7 +211,7 @@ export fn attr_args_all(kids []Node, word str) -> bool {
         }
         match c.ident_str() {
             Some(t) => {
-                if t != word {
+                if !word_in(words, t) {
                     return false
                 } else {
                     // One more protocol the subset does read.
@@ -214,6 +220,14 @@ export fn attr_args_all(kids []Node, word str) -> bool {
             }
             None => {}
         }
+    }
+    false
+}
+
+/// Whether `t` is one of `words` -- the membership `attr_args_among` asks per name.
+fn word_in(words []str, t str) -> bool {
+    for w in words {
+        if w == t { return true }
     }
     false
 }

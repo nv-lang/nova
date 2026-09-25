@@ -475,3 +475,7 @@ const HANDLER_LIT_POSITION_MSG = "outside the subset: a handler literal is compi
 /// `break` or `continue` with no loop around it (274.7 wave B10): a language error --
 /// the jump has no target. A handler op's body counts as its own function.
 const LOOP_CTL_OUTSIDE_MSG = "`break` and `continue` stand only inside the body of a `for` or `while` loop -- there is no loop around this one"
+
+/// `==` / `!=` on a sum with no `Equal` in its `#impl(...)` (274.7 wave R): a LANGUAGE
+/// error -- D363 routes equality through `Equal`, and a sum is a value type that opts in.
+const SUM_EQ_NEEDS_EQUAL_MSG = "`==` on a sum needs the type to implement `Equal` (D363): a sum is a value type (D477) and opts in -- add `#impl(Equal)` above its declaration"

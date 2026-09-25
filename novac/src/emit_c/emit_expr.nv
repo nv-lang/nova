@@ -28,7 +28,7 @@ import ../sem.{shape_of}
 import ../sem.{int_literal_c_text, char_literal_code, interp_slices}
 import ../tree.{raw_node}
 import ../sem.{c_tag, c_maker, VariantRow, raw_vrow, no_vrow, call_arg_at, raw_row, slot_default_of, no_row}
-import ../sem.{is_value_record, is_closed_slice_bin}
+import ../sem.{is_value_record, is_closed_slice_bin, is_value_sum}
 import ../builtins.{EQUAL_METHOD, PRINT_FN, bool_c_literal, RECV_C_NAME, RANGE_TYPE}
 import ../types.{TyId, is_ty}
 import ../sem.{prim_row_of, is_int_prim}
@@ -817,6 +817,17 @@ fn Emitter mut @emit_expr(e Node) -> () {
             @body.append(", ")
             @emit_expr(kids[2])
             @body.append(")))")
+        } else if is_sum_equality(op, @ctx, @out.type_of(kids[0].id_of())) {
+            // A PAYLOAD-FREE SUM declaring `Equal` (274.7 wave R): its value IS
+            // the tag, so the tags compare -- the access by placement, the way
+            // `@emit_tag_test` reads a scrutinee (A4).
+            @body.append("((nova_int)((")
+            @emit_expr(kids[0])
+            @body.append(").tag ")
+            @body.append(form)
+            @body.append(" (")
+            @emit_expr(kids[2])
+            @body.append(").tag))")
         } else if is_bit_infix(op) {
             @body.append("((")
             @emit_expr(kids[0])
@@ -885,4 +896,15 @@ fn Emitter mut @emit_call_stmt(call Node) -> () {
     @body.append("    ")
     @emit_expr(call)
     @body.append(";\n")
+}
+
+/// `==` / `!=` whose operands are a payload-free sum (274.7 wave R): the checker
+/// let it through only with `#impl(Equal)` and `is_value_sum`, so the operand's
+/// recorded type is the whole question here -- nothing is decided twice.
+fn is_sum_equality(op BinOp, ctx Ctx, t TyId) -> bool {
+    match op {
+        Equal | NotEqual => is_value_sum(ctx, t)
+        Add | Sub | Mul | Div | Modulo | Less | LessEq | Greater | GreaterEq | AndAlso | OrElse => false
+        BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight | Range => false
+    }
 }

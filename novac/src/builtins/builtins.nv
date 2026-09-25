@@ -269,6 +269,11 @@ export const DISPLAY_METHOD = "display"
 /// drift.
 export const DISPLAY_PROTO = "Display"
 
+/// The protocol `==` and `!=` dispatch through (D363). A SUM opts in by
+/// `#impl(Equal)` -- it is a value type (D477), and value types get no identity
+/// fallback -- so the checker asks the gate for this name (274.7 wave R).
+export const EQUAL_PROTO = "Equal"
+
 /// The `#impl(P1 + P2 + ...)` attribute (D186): the type author's explicit
 /// opt-in that the type implements those protocols. Structural conformance is
 /// NOT enough for a bare `${x}` -- at least one of (type author, use site) must

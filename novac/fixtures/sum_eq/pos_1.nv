@@ -1,0 +1,24 @@
+module sum_eq.pos_1
+
+// `==` and `!=` on a payload-free sum that declares `#impl(Equal)` (274.7 wave R):
+// D363 routes equality through Equal, a sum is a value type (D477) and opts in.
+// novac compiles it as a tag compare. The oracle cannot BUILD this file -- its
+// synthesized @equal reads a NovaValue pointer with `.` (registry #1353) -- so
+// the behaviour was checked against the oracle on the same program without the
+// attribute, which it accepts (#1352): stdout byte for byte (2026-09-25).
+
+#impl(Equal)
+type Color enum Red | Green | Blue
+
+fn same(a Color, b Color) -> bool => a == b
+
+fn main() {
+    ro c = Color.Green
+    println(same(c, Color.Green))
+    println(same(c, Color.Red))
+    if c != Color.Blue {
+        println(1)
+    }
+    ro d = c == Color.Green
+    println(d)
+}

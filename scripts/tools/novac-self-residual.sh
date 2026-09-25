@@ -75,4 +75,4 @@ if [ "$ice" -gt 0 ]; then
     echo "novac-self-residual: WARNING -- an ICE aborts its run; the total hides what stood behind it" >&2
 fi
 echo "top causes:"
-sort "$T/msgs" | uniq -c | sort -rn | head -15
+sort "$T/msgs" | uniq -c | sort -rn | head -${NOVAC_RESIDUAL_TOP:-15}
