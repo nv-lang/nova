@@ -448,6 +448,17 @@ test "interpolation format spec `:?`: named refusal, not the anonymous parser fa
     assert(diagnose(control) == 0, "plain interpolation must stay clean")
 }
 
+test "a refused initializer binds its name POISONED in every form -- one cause, one diagnostic" {
+    // `@type_bind` bound the name with no type only after a refused PLAIN
+    // expression; the array literal, tuple, handler literal, `if`, index and
+    // match exits returned without binding, so each later use added "unknown
+    // name" (164 `kids` over novac's own source in module mode).
+    ro arr = "module m\n\nfn f() -> int {\n    ro xs = [nosuch(1)]\n    ro n = xs\n    1\n}\n"
+    assert(diagnose(arr) == 1, diagnose_first_msg(arr))
+    ro idx = "module m\n\nfn f() -> int {\n    ro v = nosuch(1)[0]\n    ro w = v\n    1\n}\n"
+    assert(diagnose(idx) == 1, diagnose_first_msg(idx))
+}
+
 test "a closed `str` slice is compiled; other receivers, open bounds and non-int bounds keep their refusals (274.7 U-1)" {
     // D470 section 5: `s[lo..hi]` is `s.index(Range { start: lo, end: hi })`, a
     // byte range of type `str` (D249). Wave U-1 compiles the closed form over

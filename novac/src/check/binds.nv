@@ -130,8 +130,11 @@ fn Checker mut @type_bind(st Node) -> () {
     if ik == NodeKind.ArrayLit {
         ro lit_t = @type_array_lit(init)
         // SILENT-OK: the refusal was already reported inside type_array_lit, by
-        // name; a literal with no type has nothing to record and binds no name.
-        if !is_ty(lit_t) { return }
+        // name; a literal with no type records nothing and binds the name POISONED.
+        if !is_ty(lit_t) {
+            @bind_poisoned(vname, kids)
+            return
+        }
         @record(init, lit_t)
         @scope.bind(vname, lit_t, bind_mode_at(kids))
         // SILENT-OK: recorded and bound above, the literal is fully decided; the
@@ -148,11 +151,17 @@ fn Checker mut @type_bind(st Node) -> () {
     if ik == NodeKind.TupleExpr {
         ro before2 = @out.len()
         @type_expr(init)
-        if @out.len() > before2 { return }
+        if @out.len() > before2 {
+            @bind_poisoned(vname, kids)
+            return
+        }
         ro pt = @chan.type_if_known(init.id_of())
         // SILENT-OK: a pair with an unanswerable component was already refused
-        // (or the hole is named) inside type_expr; nothing to bind.
-        if !is_ty(pt) { return }
+        // (or the hole is named) inside type_expr; the name is bound POISONED.
+        if !is_ty(pt) {
+            @bind_poisoned(vname, kids)
+            return
+        }
         @scope.bind(vname, pt, bind_mode_at(kids))
         return
     }
@@ -165,11 +174,17 @@ fn Checker mut @type_bind(st Node) -> () {
     if ik == NodeKind.HandlerLit {
         ro before2 = @out.len()
         @type_expr(init)
-        if @out.len() > before2 { return }
+        if @out.len() > before2 {
+            @bind_poisoned(vname, kids)
+            return
+        }
         ro ht = @chan.type_if_known(init.id_of())
         // SILENT-OK: a refused literal was reported inside the typist, by
-        // name; nothing to bind.
-        if !is_ty(ht) { return }
+        // name; the name is bound POISONED.
+        if !is_ty(ht) {
+            @bind_poisoned(vname, kids)
+            return
+        }
         @scope.bind(vname, ht, bind_mode_at(kids))
         return
     }
@@ -192,8 +207,11 @@ fn Checker mut @type_bind(st Node) -> () {
         ro if_t = @chan.type_if_known(init.id_of())
         // SILENT-OK: a refused `if` (no else, disagreeing branches, a branch
         // without a value) was reported inside `@type_if_value`, by name; it
-        // has nothing to record and binds no name.
-        if !is_ty(if_t) { return }
+        // records nothing and binds the name POISONED.
+        if !is_ty(if_t) {
+            @bind_poisoned(vname, kids)
+            return
+        }
         @scope.bind(vname, if_t, bind_mode_at(kids))
         return
     } else {
@@ -202,8 +220,11 @@ fn Checker mut @type_bind(st Node) -> () {
     if ik == NodeKind.Index {
         ro idx_t = @type_index(init)
         // SILENT-OK: refused inside `@type_index`, by name; an index with no
-        // type has nothing to record and binds no name.
-        if !is_ty(idx_t) { return }
+        // type records nothing and binds the name POISONED.
+        if !is_ty(idx_t) {
+            @bind_poisoned(vname, kids)
+            return
+        }
         @record(init, idx_t)
         @scope.bind(vname, idx_t, bind_mode_at(kids))
         return
@@ -224,7 +245,10 @@ fn Checker mut @type_bind(st Node) -> () {
         // the ice this fix removes.
         ro mmark = @out.len()
         @type_match(init)
-        if @out.len() > mmark { return }
+        if @out.len() > mmark {
+            @bind_poisoned(vname, kids)
+            return
+        }
     } else {
         // Not a match: nothing decides before the lattice is asked.
     }
@@ -319,6 +343,18 @@ fn Checker mut @judge_record_ctor(ctor Node, vtype TyId) -> () {
             // they hold no expression to type.
         }
     }
+}
+
+/// Bind a name whose initializer was REFUSED, with no type -- so its later uses
+/// raise nothing (one cause, one diagnostic). Every refusal exit of `@type_bind`
+/// goes through here: until 2026-09-25 only the plain-expression exit and the
+/// undeclared-constructor exit bound the name, and six others (array literal,
+/// tuple, handler literal, `if`, index, match) returned without it -- measured on
+/// novac's own source in module mode, `mut kids = []Node.of(@take())` refused
+/// once and every later `kids` became "unknown name" (164 of them, 721 unknown
+/// names that were no constants at all).
+fn Checker mut @bind_poisoned(vname str, kids []Node) -> () {
+    @scope.bind(vname, no_ty(), bind_mode_at(kids))
 }
 
 /// The type of `xs[i]` — the ELEMENT of the receiver's application (274.5 B10).
