@@ -384,6 +384,11 @@ const RANGE_MSG = "outside the subset: a range is a `for` head here, not a value
 /// WHERE does this range stand.
 const SLICE_MSG = "outside the subset: a slice `x[lo..hi]` is read but not compiled yet (E2-b)"
 
+/// A newtype over a number mixed with another newtype or with a value of its
+/// representation (check/operators.nv) -- D52's amendment of 2026-09-04, rule 3:
+/// a LANGUAGE error, not a subset limit, and the words name the way out.
+const NEWTYPE_MIX_MSG = "the operands are different types -- a newtype does not mix with another newtype or with a value of its representation (D52): convert one side with `as`"
+
 /// An index or a slice bound of a type other than `int` (check/binds.nv). One text
 /// for both: measured against the oracle, it accepts a `u8` index and a `u8` slice
 /// bound alike (2026-08-30 and 2026-09-25), so the refusal says SUBSET, not language.

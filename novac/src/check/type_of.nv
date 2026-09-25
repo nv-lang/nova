@@ -165,12 +165,32 @@ fn lit_arg_of(e Node) -> LitArg {
 #realtime nogc
 fn adapt_operand(e Node, own TyId, other TyId, tys Interner) -> TyId {
     if !is_ty(other) { return same_ty(own) }
+    // A NEWTYPE over a number takes the literal too (D52 amendment 2026-09-04,
+    // rule 2: `a + 1` with `a FnRow` is legal and gives `FnRow`): the literal is
+    // asked of the representation, and the operand takes the newtype itself.
+    ro rep = numeric_rep(tys, other)
     match lit_arg_of(e) {
         NotLit => { return same_ty(own) }
-        IntLitArg => { if !is_numeric_prim(tys, other) { return same_ty(own) } }
-        FloatLitArg => { if !is_float_prim(tys, other) { return same_ty(own) } }
+        IntLitArg => { if !is_numeric_prim(tys, rep) { return same_ty(own) } }
+        FloatLitArg => { if !is_float_prim(tys, rep) { return same_ty(own) } }
     }
     same_ty(other)
+}
+
+/// The type a value COMPUTES as for D52's operators: a newtype is peeled to its
+/// representation (one level per step, a chain peels fully), anything else is
+/// itself. Asked of the interner, the door this file already has: the
+/// representation is argument zero of a newtype's term (`representation_of`).
+fn numeric_rep(tys Interner, t TyId) -> TyId {
+    mut cur = t
+    mut steps = 0
+    // Bounded: each step moves to a different term, and a cycle among newtypes
+    // is a declaration the checker refuses before any operator is typed.
+    while is_ty(cur) && tys.kind_of(cur) == TypeKind.TkNewtype && steps < 64 {
+        cur = tys.arg(cur, 0)
+        steps += 1
+    }
+    cur
 }
 
 /// The TARGET type of a cast, resolved from the type written after `as`.
@@ -442,6 +462,9 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // str/bool/records is not a silent int (#652 class), it is an
         // invariant break here.
         if lt == rt && is_numeric_prim(ctx.tys, lt) { return lt }
+        // ONE NEWTYPE over a number on both sides (D52 amendment, rule 1): the
+        // result is the newtype itself -- `FnRow + FnRow` is a `FnRow`.
+        if lt == rt && is_numeric_prim(ctx.tys, numeric_rep(ctx.tys, lt)) { return lt }
         // Two numeric operands of DIFFERENT types: the operator judge refused
         // this node (spec/conversions.md, wave B4), and a refusal is also a
         // decision (274.4 step 2) -- the left operand's type is what the

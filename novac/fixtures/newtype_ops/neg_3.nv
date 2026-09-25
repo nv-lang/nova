@@ -1,0 +1,15 @@
+module newtype_ops.neg_3
+
+// Arithmetic between TWO NEWTYPES (D52 amendment, rule 3) -- the third
+// operator family the amendment names beside `==` (neg_1) and `<` (neg_2).
+
+// NOVAC_EXPECT a newtype does not mix with another newtype
+
+type Row int
+type Col int
+
+fn sum(a Row, b Col) -> Row => a + b
+
+fn main() {
+    println(1)
+}

@@ -17,7 +17,7 @@ import ../tree.{Node, BinOp, bin_op_of, un_op_of}
 import ../sem.{LitArg, leaf_kind, leaf_text}
 import ../sem.{carrier_of, is_int_prim, is_numeric_prim, prim_row_of}
 import ../types.{TyId, no_ty, is_ty}
-import ../builtins.{EQUAL_METHOD, BuiltinType}
+import ../builtins.{EQUAL_METHOD, BuiltinType, TypeKind}
 import ../resolve.{FnLookup}
 import ../sem.{ArgSpec, ArgClass, CallForm, CalleeTarget, ty_source_name, c_shell_method}
 import ../sem.{identity_slots, branch_children, ParamMode}
@@ -108,6 +108,15 @@ fn Checker mut @accept_equality_row(e Node, kids []Node, lhs_t TyId, row FnRow) 
     @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new(), identity_slots(2))
 }
 
+/// The operators D52's newtype rule covers: arithmetic and comparison (its
+/// amendment of 2026-09-04, rule 1). Logic and bits are outside it.
+fn is_arith_or_compare(op BinOp) -> bool {
+    match op {
+        Add | Sub | Mul | Div | Modulo | Less | LessEq | Greater | GreaterEq | Equal | NotEqual => true
+        AndAlso | OrElse | BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight | Range => false
+    }
+}
+
 /// True for `==` and `!=` -- the pair that dispatches through
 /// the `Equal` protocol (D46).
 fn is_equality(op BinOp) -> bool {
@@ -193,13 +202,31 @@ fn Checker mut @report_if_operator_needs_protocol(kids []Node) -> bool {
     ro ints = lt == rt && is_int_prim(@ctx.tys, lt)
     ro bools = lt == @ctx.prims.bool_id && rt == @ctx.prims.bool_id
     ro same_prim = lt == rt && @is_primitive(lt)
+    // A NEWTYPE OVER A NUMBER (D52 amendment 2026-09-04). Rule 1: arithmetic and
+    // comparison are defined between operands of ONE newtype -- the operators of
+    // its representation, no impl written. Rule 3: the newtype beside another
+    // newtype, or beside a value of its representation, is a LANGUAGE error
+    // naming `as` -- a bare literal was already adapted above (rule 2), so what
+    // reaches this test mixed is a real mix.
+    ro lt_nt = @ctx.tys.kind_of(lt) == TypeKind.TkNewtype && @is_numeric(numeric_rep(@ctx.tys, lt))
+    ro rt_nt = @ctx.tys.kind_of(rt) == TypeKind.TkNewtype && @is_numeric(numeric_rep(@ctx.tys, rt))
+    ro same_nt = lt == rt && lt_nt
+    if (lt_nt || rt_nt) && lt != rt && is_arith_or_compare(op) {
+        match kids[1] {
+            Leaf(t) => @reject(t, NEWTYPE_MIX_MSG)
+            Branch { .. } => {}
+        }
+        return true
+    } else {
+        // No newtype mix: the table below decides.
+    }
     // Each operator states WHICH operands the subset can emit for it. The
     // match is exhaustive, so a new operator cannot slip in without an
     // answer -- and the answer is a refusal, never a guess.
     match op {
-        Add | Sub | Mul | Div | Modulo => { if numeric { return false } }
-        Less | LessEq | Greater | GreaterEq => { if numeric { return false } }
-        Equal | NotEqual => { if same_prim { return false } }
+        Add | Sub | Mul | Div | Modulo => { if numeric || same_nt { return false } }
+        Less | LessEq | Greater | GreaterEq => { if numeric || same_nt { return false } }
+        Equal | NotEqual => { if same_prim || same_nt { return false } }
         AndAlso | OrElse => { if bools { return false } }
         BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight => { if ints { return false } }
         Range => { if numeric { return false } }

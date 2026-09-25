@@ -448,6 +448,17 @@ test "interpolation format spec `:?`: named refusal, not the anonymous parser fa
     assert(diagnose(control) == 0, "plain interpolation must stay clean")
 }
 
+test "operators inside ONE newtype over a number are defined; a mix is D52's language error" {
+    // D52 amendment 2026-09-04: arithmetic and comparison between operands of
+    // the same newtype need no impl, a literal adapts to the newtype, and the
+    // newtype beside another newtype or a value of its representation is a
+    // compile error naming `as`. Fixtures: novac/fixtures/newtype_ops.
+    ro ok = "module m\n\ntype Row int\n\nfn f(a Row, b Row) -> bool => a + b - 1 < b\n"
+    assert(diagnose(ok) == 0, diagnose_first_msg(ok))
+    ro mix = "module m\n\ntype Row int\n\nfn f(a Row, n int) -> bool => a < n\n"
+    assert(diagnose_first_msg(mix).contains("a newtype does not mix"), diagnose_first_msg(mix))
+}
+
 test "a refused initializer binds its name POISONED in every form -- one cause, one diagnostic" {
     // `@type_bind` bound the name with no type only after a refused PLAIN
     // expression; the array literal, tuple, handler literal, `if`, index and

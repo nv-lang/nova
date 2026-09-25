@@ -1,0 +1,16 @@
+module newtype_ops.neg_1
+
+// TWO NEWTYPES under one operator (D52 amendment, rule 3): a compile error
+// naming `as`. The oracle still accepts this (registry 221.1 #904 -- its
+// operators erase the newtype); the spec outranks it.
+
+// NOVAC_EXPECT a newtype does not mix with another newtype
+
+type Row int
+type Col int
+
+fn same(a Row, b Col) -> bool => a == b
+
+fn main() {
+    println(1)
+}
