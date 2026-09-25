@@ -463,7 +463,11 @@
 # already-accepted behavior, nothing NEW for self-hosting to catch up on
 # semantically, but novac/src/parse/expr.nv's variant-pattern loop still
 # needs the parser fix itself (this row hands it to Carina's window).
-#   spec-queue: 129
+# 129 -> 130 (2026-09-25, Carina window, agreed with the integrator): D144 gets
+# two pointer notes -- its `str[range]` paragraphs still said codepoint-indexed,
+# which the D249 amendment (2026-06-13) had reverted to a byte range. Editorial
+# pointer, no rule changes; novac implements D249 in wave 274.7 U.
+#   spec-queue: 130
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,
