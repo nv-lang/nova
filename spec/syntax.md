@@ -588,6 +588,8 @@ Do not use them for other purposes.
   forms that differ only by the marker -- a general `[T consume]` and a fast plain `[T]`: an
   ordinary `T` takes `[T]`, a must-consume one `[T consume]`, and the results must agree (point 7,
   [D464 amendment 2026-09-25](decisions/10-overloading.md#d464--бáунд-как-фильтр-отбора-отсев-без-ранжирования-2026-08-16)).
+  Order (point 8): `for consume x in v` goes from the first element to the last, while a
+  `Cleanup` container's cleanup goes from the last to the first, LIFO like `defer` (D161).
 - **Auto-`@cleanup` frees ONE binding form, not everything except a list**
   ([D432 amendment 2026-08-21](decisions/02-types.md#d432), registry 221.1
   #672). The s.2 exemption lifts the obligation only from `consume X = e;`

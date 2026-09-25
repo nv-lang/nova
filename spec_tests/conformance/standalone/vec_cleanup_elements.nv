@@ -1,9 +1,9 @@
-// EXPECT_STDOUT closed 1 2 3 | done
+// EXPECT_STDOUT closed 3 2 1 | done
 //
 // D156 amendment 2026-08-04, family 2 (spec/decisions/02-types.md): a
 // `Vec[T consume Cleanup[E]]` declares its own `@cleanup`, which ends every
 // element with the element's cleanup. Called here explicitly: each element
-// is cleaned exactly once, front to back. That the vector is therefore affine
+// is cleaned exactly once, from the LAST to the first (LIFO, like `defer`). That the vector is therefore affine
 // (D432: forgetting it runs the cleanup) is not yet accepted by the oracle --
 // registry row 1345.
 

@@ -286,15 +286,21 @@ export fn Vec[T consume] consume @destroy_empty() -> ()
 /// End every element with its own `@cleanup`, front to back (D156 amendment
 /// 2026-08-04, family 2): a vector of cleanup-carrying elements declares its
 /// own cleanup and so, by D432, is affine -- forgetting a `Vec[File]` closes
-/// each file exactly once. The cleanup's effects are the elements' (D28).
-/// A failing element's error propagates at once; the elements after it are
-/// not cleaned yet -- accumulating the errors so that every element is cleaned
-/// first (D161) needs `Option[E]` in this body, which the oracle does not
-/// monomorphize yet (registry, plan 246 "Осталось").
+/// each file exactly once. Elements are cleaned from the LAST to the first
+/// (owner 2026-09-25): the same LIFO order as several `defer`s (D161) and the
+/// scope stack (D188 §R5). The cleanup's effects are the elements' (D28).
+/// A failing element's error propagates at once; the elements still in the
+/// vector are not cleaned yet -- accumulating the errors so that every element
+/// is cleaned first (D161) needs `Option[E]` in this body, which the oracle
+/// does not monomorphize yet (registry 1346).
 export fn Vec[T consume Cleanup[E]] consume @cleanup(outcome ScopeOutcome) Fail[E] -> () {
-    for consume x in @ {
-        x.cleanup(outcome)
+    while true {
+        match @pop() {
+            Some(consume x) => x.cleanup(outcome)
+            None => break
+        }
     }
+    @destroy_empty()
 }
 
 // ──────────────────────────────────────────────────────────────────────────
