@@ -424,6 +424,15 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         }
         ro lt0 = type_of(kids[0], ctx, scope, chan)
         ro rt0 = type_of(kids[2], ctx, scope, chan)
+        // A POISONED OPERAND poisons the expression (registry 1322's follow-up):
+        // no type means refused where it was typed, and the lattice answers
+        // `no_ty()` -- the tolerant rule every recorded kind above follows.
+        // Measured 2026-09-25: once handed records' fields were read,
+        // `fd.param_off + rslot` with `fd` bound poisoned by an index refusal
+        // reached the invariant below and iced three files of novac's own
+        // check/ (params, option_rules, methods). The ICE stays for what it was
+        // written for: a TYPED operand that is not numeric.
+        if !is_ty(lt0) || !is_ty(rt0) { return no_ty() }
         // A bare literal on one side takes the other side's type (the one
         // door the judge records through -- see adapt_operand).
         ro lt = adapt_operand(kids[0], lt0, rt0, ctx.tys)

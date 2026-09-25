@@ -24,7 +24,7 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, NodeId, raw_node, is_node}
 import ../diag.{ice}
 import ../names.{NameTable, NamespaceId, DeclId, raw_decl, no_decl, is_decl}
-import ../builtins.{TypeKind, builtin_types, COERCE_ATTR, UNIT_TYPE_NAME}
+import ../builtins.{TypeKind, builtin_types, COERCE_ATTR, UNIT_TYPE_NAME, PRIV_MARKER}
 import ../types.{Interner, TyId, no_ty, is_ty}
 
 /// The type and declaration registry of ONE file (without methods:
@@ -479,49 +479,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                 // one. The arm is named rather than left to a `_` so that a new
                 // shape still stops the compiler here (P21).
                 ShapeProtocol => {}
-                ShapeRecord => {
-                    ro off = fields.rows.len()
-                    mut cnt = 0
-                    for f in branch_children(c) {
-                        if f.kind_of() != NodeKind.Field { continue }
-                        ro fk = branch_children(f)
-                        // BY DOOR, not by index: a field may carry a MODE
-                        // (`mut n int`), and index zero is then the mode. Read
-                        // positionally, the mode became the NAME and the field
-                        // vanished from the registry -- the refusal then said
-                        // "unknown field" about a field written right there.
-                        ro fnat = field_name_at(fk) ?? -1
-                        ro ftat = field_type_at(fk) ?? -1
-                        if fnat < 0 || ftat < 0 { continue }
-                        // THE TYPE THROUGH THE ONE REFERENCE DOOR (274.5 wave
-                        // B1), exactly as a parameter reads it: a plain name,
-                        // `Name[Args]`, or the `[]Elem` sugar. Reading the leaf
-                        // text instead saw only the first token, so a field of
-                        // a slice type was dropped from the registry -- the
-                        // parser had grown the form and this pass had not.
-                        ro ft = ty_of_type_ref(fk, ftat, no_ty(), []str.new(),
-                                               []TyId.new(), types, defs, tys)
-                        if !is_ty(ft) { continue }
-                        fields.add(mine.ty_id, leaf_text(fk[fnat]), ft)
-                        cnt += 1
-                    }
-                    // THE LAYOUT SURVIVES THE REWRITE: this pass replaces the row
-                    // to attach the field range, and dropping `by_value` here
-                    // would lose the declaration's own word one pass after
-                    // reading it.
-                    types[raw_decl(owner_id)] = TypeDef { kind: TypeKind.TkRecord,
-                                                          shape: types[raw_decl(owner_id)].shape,
-                                                          tparam_cnt: types[raw_decl(owner_id)].tparam_cnt,
-                                                          // CARRIED OVER for the reason above: this
-                                                          // rebuild runs AFTER the fields are known,
-                                                          // and a zero range here would erase the
-                                                          // gate pass 1 read from the source.
-                                                          gate_off: types[raw_decl(owner_id)].gate_off,
-                                                          gate_cnt: types[raw_decl(owner_id)].gate_cnt,
-                                                          ty_id: mine.ty_id,
-                                                          name: tname,
-                                                          rows: TypeRows.FieldRows(FieldRow(off), cnt) }
-                }
+                ShapeRecord => fill_record_fields(c, owner_id, tname, types, defs, fields, tys)
                 ShapeNewtype => {
                     // The TERM is interned here and not in pass 1: the
                     // representation is a type reference, so it may point at a
@@ -691,6 +649,9 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
             // debris is check's job (274.3/F-B4).
         }
     }
+    // THE HANDED RECORDS' FIELDS, after every name exists (registry 1322): a
+    // field's type may name any declaration, handed or the file's own.
+    fill_handed_fields(file, decls, foreign_types_cnt, types, defs, fields, tys)
     // THE E2-b1 INVARIANT LIVED HERE AND IS GONE BY DESIGN, not by neglect.
     // It asserted `types[i].ty_id == i` -- that the interner hands out ids in
     // exactly the order declaration rows are pushed -- and its own comment said
@@ -716,4 +677,128 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
           fn_decl_rows, fns: own,
           module_c: module_path_c(file), builtin_names, coerces, protos, effects: fx, consts,
           interop: InteropTable.new() }
+}
+
+/// Fill ONE record declaration's field rows -- the door the file's own records
+/// and the handed ones share (registry 1322), so the two cannot read a field
+/// two ways.
+fn fill_record_fields(c Node, owner_id DeclId, tname str, mut types []TypeDef, defs DefTable,
+                      mut fields FieldTable, mut tys Interner) -> () {
+    ro mine = types[raw_decl(owner_id)]
+    ro off = fields.rows.len()
+    mut cnt = 0
+    for f in branch_children(c) {
+        if f.kind_of() != NodeKind.Field { continue }
+        ro fk = branch_children(f)
+        // BY DOOR, not by index: a field may carry a MODE (`mut n int`), and
+        // index zero is then the mode. Read positionally, the mode became the
+        // NAME and the field vanished from the registry -- the refusal then said
+        // "unknown field" about a field written right there.
+        ro fnat = field_name_at(fk) ?? -1
+        ro ftat = field_type_at(fk) ?? -1
+        if fnat < 0 || ftat < 0 { continue }
+        // THE TYPE THROUGH THE ONE REFERENCE DOOR (274.5 wave B1), exactly as a
+        // parameter reads it: a plain name, `Name[Args]`, or the `[]Elem` sugar.
+        // Reading the leaf text instead saw only the first token, so a field of
+        // a slice type was dropped from the registry.
+        ro ft = ty_of_type_ref(fk, ftat, no_ty(), []str.new(), []TyId.new(), types, defs, tys)
+        if !is_ty(ft) { continue }
+        fields.add(mine.ty_id, leaf_text(fk[fnat]), ft)
+        cnt += 1
+    }
+    // THE LAYOUT AND THE GATE SURVIVE THE REWRITE: this pass replaces the row
+    // to attach the field range, and a zero range here would erase what the
+    // first pass read from the source.
+    types[raw_decl(owner_id)] = TypeDef { kind: TypeKind.TkRecord, shape: mine.shape,
+                                          tparam_cnt: mine.tparam_cnt,
+                                          gate_off: mine.gate_off, gate_cnt: mine.gate_cnt,
+                                          ty_id: mine.ty_id, name: tname,
+                                          rows: TypeRows.FieldRows(FieldRow(off), cnt) }
+}
+
+/// The FIELDS OF HANDED RECORDS, filled where the language lets the compiled
+/// file see them (registry 1322).
+///
+/// `harvest_types` registers a handed record's name and kind and NOT its fields
+/// ("FIELDS ARE NOT READ YET"), on the reasoning that a handed field is reached
+/// only through a form the subset does not compile. The self-build refutes it:
+/// in module mode a unit's neighbours in the same module are in the unit, but
+/// every type of ANOTHER module arrives handed -- `Ctx`, `FnRow`, `SourceText`
+/// -- and 771 of the 4156 typing diagnostics of novac's own source were
+/// "unknown field" about fields written right there (measured 2026-09-25).
+///
+/// VISIBILITY IS THE LANGUAGE'S, D281 with D220 brought to it (2026-09-24):
+/// fields are public by default; a type-level bare `priv` makes them
+/// module-private; `priv(type)` and `priv(file)` narrow further. So a handed
+/// record of the SAME module shows its fields unless its `priv` is qualified,
+/// and one of ANOTHER module only when it is exported and carries no `priv` at
+/// all. Whatever this does not open stays "unknown field" -- a loud refusal,
+/// never a silent grant.
+///
+/// The FIRST handed declaration of a name owns its row (harvest's own rule), so
+/// only that declaration fills it; a row the file itself declares shadows the
+/// handed one and is left to the file's own pass.
+fn fill_handed_fields(file Node, decls []Node, foreign_cnt int, mut types []TypeDef, defs DefTable,
+                      mut fields FieldTable, mut tys Interner) -> () {
+    ro own_module = module_dotted(file)
+    mut seen = []bool.new()
+    while seen.len() < foreign_cnt { seen.push(false) }
+    for d in decls {
+        ro same_module = module_dotted(d) == own_module
+        // The `file_decls` walk, keeping what it drops: whether the declaration
+        // stood inside an `export` wrapper -- the other half of D281's rule.
+        for w in branch_children(d) {
+            if w.kind_of() != NodeKind.ExportDecl {
+                fill_one_handed(w, false, same_module, foreign_cnt, seen, types, defs, fields, tys)
+                continue
+            }
+            for inner in branch_children(w) {
+                if inner.kind_of() == NodeKind.LeafNode { continue }
+                fill_one_handed(inner, true, same_module, foreign_cnt, seen, types, defs, fields, tys)
+            }
+        }
+    }
+}
+
+/// One handed declaration of `fill_handed_fields`: a record whose row it owns,
+/// filled when D281 lets the compiled file see its fields.
+fn fill_one_handed(c Node, exported bool, same_module bool, foreign_cnt int, mut seen []bool,
+                   mut types []TypeDef, defs DefTable, mut fields FieldTable, mut tys Interner) -> () {
+    if c.kind_of() != NodeKind.TypeDecl { return }
+    if shape_of_decl(c) != DeclShape.ShapeRecord { return }
+    ro nk = branch_children(c)
+    if nk.len() < 2 || nk[1].kind_of() != NodeKind.LeafNode { return }
+    ro tname = leaf_text(nk[1])
+    ro owner_id = defs.type_decl(tname) ?? no_decl()
+    if !is_decl(owner_id) { return }
+    ro at = raw_decl(owner_id)
+    // The file's own row shadows the handed one; its own pass fills it.
+    if at >= foreign_cnt { return }
+    if types[at].name != tname || types[at].kind != TypeKind.TkRecord { return }
+    if seen[at] { return }
+    seen[at] = true
+    ro marker_at = priv_marker_at(nk)
+    ro has_priv = marker_at >= 0
+    ro qualified = has_priv && marker_at + 1 < nk.len() && leaf_kind(nk[marker_at + 1]) == TokenKind.LParen
+    ro visible = if same_module { !qualified } else { exported && !has_priv }
+    if !visible { return }
+    fill_record_fields(c, owner_id, tname, types, defs, fields, tys)
+}
+
+/// Where a declaration's type-level privacy marker stands (D281), or -1 when it
+/// has none. A qualifier group -- `priv(type)`, `priv(file)` -- opens with the
+/// `(` right after it, which the caller asks of the next child. An int and not a
+/// pair: a tuple in a signature is a form novac does not compile yet, and this
+/// file is part of its own source.
+fn priv_marker_at(nk []Node) -> int {
+    mut i = 0
+    while i < nk.len() {
+        if nk[i].kind_of() == NodeKind.LeafNode && leaf_text(nk[i]) == PRIV_MARKER {
+            return i
+        } else {
+            // Not the marker: keep looking.
+        }
+        i += 1
+    }
+    0 - 1
 }

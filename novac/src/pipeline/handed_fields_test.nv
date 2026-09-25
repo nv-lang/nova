@@ -1,0 +1,74 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Role: the FIELDS of a record novac was HANDED (registry 1322) -- what the
+//   compiled file may read of a record declared in another module, or in
+//   another file of its own module, under D281 (with D220 brought to it).
+// Used by: nova test novac/src/pipeline (the module-test batch of the gate).
+// Guarded by: check-novac-module-tests, check-novac-file-size.py.
+//
+// Why a file of its own: the rule has two axes -- same module or not, and the
+// privacy marker -- and each cell needs a handed declaration text of its own.
+// The values come in as PARAMETERS, not from a handed maker: a call into
+// another module's body is refused on its own (E2-b2), and that refusal is not
+// what these cells judge.
+
+module novac.pipeline
+
+/// A handed module with one record per privacy cell.
+fn hx_decls() -> []str {
+    mut std = std_decls()
+    std.push("module std.hx\n\
+export type Open { v int }\n\
+type Hidden { v int }\n\
+export type Sealed priv { v int }\n")
+    std
+}
+
+test "a handed record of ANOTHER module: an exported one shows its fields, a hidden or `priv` one does not (D281)" {
+    // POSITIVE: `Open` is exported and carries no marker -- fields are public by
+    // default, so `o.v` reads. Until registry 1322 every handed record
+    // registered with NO fields, and this was "unknown field" -- 771 times over
+    // novac's own source in module mode, about fields written right there.
+    ro open_src = "fn g(o Open) -> int => o.v\nfn main() {\n println(1)\n}"
+    ro ok = compile_with(open_src, parse_decls(hx_decls()), interop_surface())
+    assert(ok.len() == 0, messages(ok))
+    // CONTROL: a record the other module does not export keeps its fields to it.
+    ro hidden_src = "fn g(h Hidden) -> int => h.v\nfn main() {\n println(1)\n}"
+    ro hid = compile_with(hidden_src, parse_decls(hx_decls()), interop_surface())
+    assert(hid.len() >= 1, messages(hid))
+    assert(hid[0].message.contains("unknown field"), messages(hid))
+    // CONTROL: a type-level bare `priv` makes the fields module-private.
+    ro sealed_src = "fn g(s Sealed) -> int => s.v\nfn main() {\n println(1)\n}"
+    ro sea = compile_with(sealed_src, parse_decls(hx_decls()), interop_surface())
+    assert(sea.len() >= 1, messages(sea))
+    assert(sea[0].message.contains("unknown field"), messages(sea))
+}
+
+test "a handed record of the SAME module: bare `priv` is visible to a neighbour file, `priv(file)` is not (D281)" {
+    // The per-file shape of the self-build: the neighbour file of module `m`
+    // arrives handed. A bare `priv` is module-private -- the neighbour sees it;
+    // `priv(file)` is private to its declaring file -- the neighbour does not.
+    mut decls = std_decls()
+    decls.push("module m\n\
+export type Near priv { v int }\n\
+export type Mine priv(file) { v int }\n")
+    ro ok = compile_with("module m\nfn g(n Near) -> int => n.v\nfn main() {\n println(1)\n}", parse_decls(decls), interop_surface())
+    assert(ok.len() == 0, messages(ok))
+    ro own = compile_with("module m\nfn g(n Mine) -> int => n.v\nfn main() {\n println(1)\n}", parse_decls(decls), interop_surface())
+    assert(own.len() >= 1, messages(own))
+    assert(own[0].message.contains("unknown field"), messages(own))
+}
+
+test "a poisoned operand in index arithmetic poisons the index, it does not reach the lattice's ICE (registry 1322 follow-up)" {
+    // `p` is bound POISONED -- its initializer, an index over `[]P`, is refused
+    // -- and `p.n + 1` then stands as another index. The lattice iced here
+    // ("binary arithmetic on non-numeric operands past check"): measured on
+    // three files of novac's own check/ once handed fields were read. The
+    // refusals stay; the ICE is gone -- a module test that ICEd would not return.
+    mut std = std_decls()
+    std.push("module std.v\nexport type Vec[T] { n int }\n")
+    ro d = compile_with("type P { n int }\nfn f(ps []P, qs []int) -> int {\n ro p = ps[0]\n qs[p.n + 1]\n}\nfn main() {\n println(1)\n}", parse_decls(std), interop_surface())
+    assert(d.len() >= 1, messages(d))
+    for g in d {
+        assert(g.code != "E_NOVAC_ICE", messages(d))
+    }
+}
