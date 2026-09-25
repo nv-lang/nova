@@ -44555,11 +44555,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     && obj_ty != "void*"
                 {
                     let is_const = obj_ty.starts_with("const ");
-                    if method == "read" && args.is_empty() {
+                    // D216 амендмент 2026-09-25 (план 246): `read_consume`/
+                    // `write_consume` — то же самое чтение/копирующая запись
+                    // байт, что `read`/`write`; разница (владение против
+                    // копии) — на уровне check_consume/ConsumeCtx, не codegen.
+                    if (method == "read" || method == "read_consume") && args.is_empty() {
                         let obj_c = self.emit_expr(obj)?;
                         return Ok(format!("(*({}))", obj_c));
                     }
-                    if method == "write" && args.len() == 1 && !is_const {
+                    if (method == "write" || method == "write_consume")
+                        && args.len() == 1 && !is_const {
                         // Plan 174.5 §3: `.write(v *T)` overload — copy FROM a
                         // source pointer (large struct, avoids a value-copy
                         // through the call). Detected by the arg's C-type
@@ -44648,12 +44653,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // contract as `.read()`); `write_at` is the SOLE write-cap
                     // checkpoint for the index form (mirrors `.write`'s `is_const`
                     // gate, one code path for both).
-                    if method == "read_at" && args.len() == 1 {
+                    // D216 амендмент 2026-09-25 (план 246): `read_consume_at`/
+                    // `write_consume_at` — тот же индекс-сахар, что
+                    // `read_at`/`write_at` (владение решается вне codegen).
+                    if (method == "read_at" || method == "read_consume_at") && args.len() == 1 {
                         let obj_c = self.emit_expr(obj)?;
                         let idx_c = self.emit_expr(args[0].expr())?;
                         return Ok(format!("(*(({}) + ({})))", obj_c, idx_c));
                     }
-                    if method == "write_at" && args.len() == 2 {
+                    if (method == "write_at" || method == "write_consume_at") && args.len() == 2 {
                         if is_const {
                             let msg = "error: [E_POINTER_RO_ASSIGN] cannot `.write_at()` \
                                 through a readonly pointer — `*T` is a readonly pointee \
@@ -62097,7 +62105,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             && obj_ty != "void*"
                         {
                             self.icr_trace("B11d_typed_pointer_methods");
-                            if method == "read" && args.is_empty() {
+                            // D216 амендмент 2026-09-25 (план 246): consume-формы
+                            // возвращают тот же C-тип, что read/write (см. emit_call
+                            // twin ~L44558 и checker Channel-2 twin в types/mod.rs).
+                            if (method == "read" || method == "read_consume") && args.is_empty() {
                                 // pointee = strip "const " prefix + ONE trailing
                                 // '*' (not `trim_end_matches`, which would over-
                                 // strip a `Nova_X**` double-pointer to `Nova_X`).
@@ -62105,7 +62116,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     .strip_suffix('*').unwrap_or_default().trim();
                                 return pointee.to_string();
                             }
-                            if method == "write" && args.len() == 1 {
+                            if (method == "write" || method == "write_consume") && args.len() == 1 {
                                 return "nova_unit".into();
                             }
                             // [M-ptr-raw-access-contract-and-unaligned] item 2:
@@ -62133,12 +62144,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // Plan 174.5 Ф.2 (§3): read_at/write_at/offset/dist +
                             // copy_from(_nonoverlapping)/copy_to(_nonoverlapping)
                             // — same infer channel as the read/write family above.
-                            if method == "read_at" && args.len() == 1 {
+                            if (method == "read_at" || method == "read_consume_at") && args.len() == 1 {
                                 let pointee = obj_ty.trim_start_matches("const ")
                                     .strip_suffix('*').unwrap_or_default().trim();
                                 return pointee.to_string();
                             }
-                            if method == "write_at" && args.len() == 2 {
+                            if (method == "write_at" || method == "write_consume_at") && args.len() == 2 {
                                 return "nova_unit".into();
                             }
                             // Model A (sign-off 2026-06-22): `.offset(n)` does

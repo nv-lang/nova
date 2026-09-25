@@ -10924,6 +10924,7 @@ impl<'a> TypeCheckCtx<'a> {
                     if matches!(
                         name.as_str(),
                         "write" | "write_at" | "write_unaligned" | "write_volatile"
+                            | "write_consume" | "write_consume_at"
                             | "copy_from" | "copy_from_nonoverlapping"
                     ) {
                         if let Some(ty) = self.infer_expr_type(obj, scope) {
@@ -10988,6 +10989,7 @@ impl<'a> TypeCheckCtx<'a> {
                     if !matches!(
                         name.as_str(),
                         "write" | "write_at" | "write_unaligned" | "write_volatile"
+                            | "write_consume" | "write_consume_at"
                             | "copy_from" | "copy_from_nonoverlapping"
                     ) {
                         if let Some(ty) = self.infer_expr_type(obj, scope) {
@@ -11511,19 +11513,21 @@ impl<'a> TypeCheckCtx<'a> {
                                     {
                                         let result_rt: Option<ResolvedType> = match method.as_str() {
                                             "read" | "read_unaligned" | "read_volatile"
+                                            | "read_consume"
                                                 if args.is_empty() =>
                                             {
                                                 Some((**inner).clone())
                                             }
-                                            "read_at" if args.len() == 1 => {
+                                            "read_at" | "read_consume_at" if args.len() == 1 => {
                                                 Some((**inner).clone())
                                             }
                                             "write" | "write_unaligned" | "write_volatile"
+                                            | "write_consume"
                                                 if args.len() == 1 =>
                                             {
                                                 Some(ResolvedType::Unit)
                                             }
-                                            "write_at" if args.len() == 2 => {
+                                            "write_at" | "write_consume_at" if args.len() == 2 => {
                                                 Some(ResolvedType::Unit)
                                             }
                                             "copy_from" | "copy_from_nonoverlapping"
@@ -48611,6 +48615,24 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                 }
                             }
                         }
+                        // D216 амендмент 2026-09-25 (план 246): `p.write_consume(v)` /
+                        // `p.write_consume_at(i, v)` — значение-аргумент (последний)
+                        // ПОТРЕБЛЯЕТСЯ, ровно как передача в consume-параметр функции
+                        // (см. `consume_args`, тот же примитив, которым выше в этом
+                        // файле помечается арг ChanWriter.send'а, §1a). Раскрытие по
+                        // ИМЕНИ метода, а не по типу receiver'а: `p` — сырой указатель
+                        // (`TypedPtr`/`Pointer`), а не именной тип из `self.types`, и
+                        // `ctx.var_types`/`method_params` (ключ — nominal type name)
+                        // никогда не заводят на него запись — тот же разрыв, из-за
+                        // которого `write`/`write_at` до этого амендмента НИКОГДА не
+                        // потребляли свой аргумент. Встроенная операция (§21 п.8, не
+                        // `Item::Fn`), поэтому нет и не может быть родного
+                        // `method_params`-реестра, откуда взять индекс иначе.
+                        if method == "write_consume" && args.len() == 1 {
+                            ctx.consume_args(args, &[0], e.span);
+                        } else if method == "write_consume_at" && args.len() == 2 {
+                            ctx.consume_args(args, &[1], e.span);
+                        }
                         // consume-метод → receiver (весь alias-класс)
                         // потребляется.
                         if ctx.is_consume_method(&recv, method) {
@@ -55463,6 +55485,13 @@ fn is_raw_pointer_intrinsic_method(name: &str) -> bool {
         "read" | "write" | "read_at" | "write_at"
             | "read_unaligned" | "write_unaligned"
             | "read_volatile" | "write_volatile"
+            // D216 амендмент 2026-09-25 (план 246): consume-формы —
+            // те же raw-pointer intrinsics, тот же unsafe-контур
+            // (§21), просто владение вместо копии (см. doc-comment
+            // выше и `check_consume`'s `write_consume`/
+            // `write_consume_at` arg-consuming special-case).
+            | "read_consume" | "write_consume"
+            | "read_consume_at" | "write_consume_at"
             | "offset" | "dist"
             | "copy_from" | "copy_from_nonoverlapping"
             | "copy_to" | "copy_to_nonoverlapping"
