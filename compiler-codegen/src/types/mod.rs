@@ -25106,9 +25106,27 @@ impl<'a> TypeCheckCtx<'a> {
                 let a = arity?;
                 let cands: Vec<&&FnDecl> =
                     many.iter().filter(|f| f.params.len() == a).collect();
+                // Registry 221.1 #1336: a D84 MODE pair (`fn Option[Result[T, E]]
+                // @tp()` / `fn Option[Result[T consume, E consume]] consume @tp()`,
+                // or `@put(v T)` / `@put(consume v T)`) has the same arity and
+                // parameter types, so the arg-type dispatch below found no
+                // unique candidate (zero-arg: no first argument at all) and the
+                // call got no return type -- codegen then typed the binding as
+                // `nova_int`. The checker's own choice for this call
+                // (`resolved_callees`, written by `mode_axis_tiebreak`) decides.
+                // No choice recorded -> the old path (an honest miss, not a guess
+                // at a form: the halves may differ in the return type too).
+                let mode_pick: Option<&FnDecl> = if cands.len() > 1 {
+                    call_id
+                        .and_then(|id| self.resolved_callees.borrow().get(&id).copied())
+                        .and_then(|sp| cands.iter().find(|f| f.span == sp).map(|f| **f))
+                } else {
+                    None
+                };
                 match cands.as_slice() {
                     [] => return None,
                     [one] => *one,
+                    _ if mode_pick.is_some() => mode_pick?,
                     same_arity => {
                         // 172.1.2 arg-type dispatch: тип ПЕРВОГО аргумента против
                         // КОНКРЕТНОГО param0 кандидатов — ровно одно совпадение.

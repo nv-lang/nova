@@ -26535,6 +26535,48 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
     /// Plan 48: register a monomorphized METHOD instance (add forward decl + worklist entry).
     /// Like register_mono_instance but prepends `nova_self` receiver param.
+    /// Registry 221.1 #1336: the Nova-body method `method` of the builtin sum
+    /// `sum` (`Option` / `Result`) the call lowers. A receiver-mode pair
+    /// (`fn Option[Result[T, E]] @tp()` / `fn Option[Result[T consume, E
+    /// consume]] consume @tp()`, D84 mode axis, R14) keeps two declarations
+    /// in `generic_type_methods`; the first-wins lookup ran the copying body
+    /// for every call. With several same-name declarations the checker's
+    /// choice (`resolved_callees`, by `FnDecl.span`) decides; otherwise the
+    /// single declaration, as before.
+    fn builtin_sum_method_decl(
+        &self,
+        sum: &str,
+        method: &str,
+        call_id: crate::ast::ExprId,
+    ) -> Option<crate::ast::FnDecl> {
+        let same: Vec<&crate::ast::FnDecl> = self.generic_type_methods
+            .get(sum)
+            .map(|ms| ms.iter().filter(|m| m.name == method).collect())
+            .unwrap_or_default();
+        if same.len() > 1 {
+            if let Some(sp) = self.resolved_callees.get(&call_id) {
+                if let Some(f) = same.iter().find(|m| m.span == *sp) {
+                    return Some((*f).clone());
+                }
+            }
+        }
+        same.first().map(|f| (*f).clone())
+    }
+
+    /// #1336: the mono-name kind segment of a builtin-sum Nova-body method --
+    /// `method`, or `consume` for the consuming half of a receiver-mode pair
+    /// (a same-name sibling whose receiver is not `consume`), so the two
+    /// halves get two C symbols. Only a real pair is tagged: every existing
+    /// mono name stays `Nova_<Sum>_method_<m>_<T>`.
+    fn builtin_sum_method_kind(&self, sum: &str, f: &crate::ast::FnDecl) -> &'static str {
+        let is_consume = |g: &crate::ast::FnDecl| g.receiver.as_ref().map_or(false, |r| r.consume);
+        let paired = is_consume(f)
+            && self.generic_type_methods.get(sum).map_or(false, |ms| {
+                ms.iter().any(|g| g.name == f.name && !is_consume(g))
+            });
+        if paired { "consume" } else { "method" }
+    }
+
     fn register_mono_method_instance(
         &mut self,
         fn_decl: &crate::ast::FnDecl,
@@ -42683,10 +42725,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             has_nova_body: true,
                         }) = &routing {
                             // FnDecl собран в Ф.1.1 в `generic_type_methods`.
-                            let fn_decl = self.generic_type_methods
-                                .get("Option")
-                                .and_then(|ms| ms.iter().find(|m| m.name == method.as_str()))
-                                .cloned();
+                            // #1336: the checker's choice among a receiver-mode pair.
+                            let fn_decl = self.builtin_sum_method_decl(
+                                "Option", method.as_str(), call_id);
                             if let Some(fn_decl) = fn_decl {
                                 // Recover real C-type для T из `novaopt_value_types`
                                 // (хранит mapping sanitized→real). Для примитивов
@@ -42729,7 +42770,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     // map[int]` коллизятся в одном C-имени
                                     // `Nova_Option_method_map_nova_int`.
                                     let base_name = format!(
-                                        "Nova_Option_method_{}_{}",
+                                        "Nova_Option_{}_{}_{}",
+                                        self.builtin_sum_method_kind("Option", &fn_decl),
                                         method.as_str(), elem_ty);
                                     let mono_name = if method_extras.is_empty() {
                                         base_name
@@ -42970,10 +43012,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if let Some(super::sum_schema_registry::MethodRouting::DeclaredBody {
                             has_nova_body: true,
                         }) = &routing {
-                            let fn_decl = self.generic_type_methods
-                                .get("Result")
-                                .and_then(|ms| ms.iter().find(|m| m.name == method.as_str()))
-                                .cloned();
+                            // #1336: the checker's choice among a receiver-mode pair.
+                            let fn_decl = self.builtin_sum_method_decl(
+                                "Result", method.as_str(), call_id);
                             if let Some(fn_decl) = fn_decl {
                                 // Recover (ok_c, err_c) из mono'd `NovaRes_<n>*`.
                                 // Legacy `Nova_Result*` — fallback erased
@@ -43017,7 +43058,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     // (`_<U>...`) после `_<ok>_<err>`.
                                     let suffix = Self::novares_name(&ok_c, &err_c);
                                     let base_name = format!(
-                                        "Nova_Result_method_{}_{}",
+                                        "Nova_Result_{}_{}_{}",
+                                        self.builtin_sum_method_kind("Result", &fn_decl),
                                         method.as_str(), suffix);
                                     let mono_name = if method_extras.is_empty() {
                                         base_name
