@@ -146,6 +146,8 @@ type Checker {
     link_check bool
     /// Loops around the node being walked (274.7 B10): `break`/`continue` at 0 are refused.
     loop_depth int
+    /// The body being typed returns no value (`-> ()` or none declared): a bare `return` is legal.
+    ret_unit bool
 }
 
 /// Walk the tree and collect subset diagnostics.

@@ -23,6 +23,10 @@ import ../sem.{FnRow, raw_row, branch_children, ty_source_name, prim_row_of, Lit
 import ../sem.{Ctx, expr_leaf_name, is_value_record}
 import ../builtins.{TypeKind, RECV_BINDING}
 
+/// Whether a declared return (a callable row's `ret_id`) promises NO value: `()`,
+/// or nothing declared (the entry point). A bare `return` is legal there.
+fn Checker @returns_unit(rid TyId) -> bool => !is_ty(rid) || rid == @ctx.prims.unit_id
+
 /// THE RETURN A BODY MUST PRODUCE, or `no_ty()` when nothing is judged: no
 /// declared value (unit, or none), or a type PARAMETER -- the instance types
 /// its own body under its substitution, and the generic shape answers "I do

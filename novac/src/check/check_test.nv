@@ -516,6 +516,14 @@ test "`==` on a sum goes through `Equal` by `#impl(Equal)`: a tag compare, a lan
     assert(diagnose_first_msg(pay).contains("dispatches through a protocol"), diagnose_first_msg(pay))
 }
 
+test "a bare `return` is the early exit of a body that returns no value, and stays refused where a value is promised" {
+    // Fixtures: novac/fixtures/bare_return.
+    ro unit = "module m\n\nfn f(n int) -> () {\n    if n < 0 {\n        return\n    }\n    println(n)\n}\n"
+    assert(diagnose(unit) == 0, diagnose_first_msg(unit))
+    ro value = "module m\n\nfn f(n int) -> int {\n    if n > 0 {\n        return\n    }\n    n\n}\n"
+    assert(diagnose_first_msg(value).contains("must carry a value"), diagnose_first_msg(value))
+}
+
 test "a closed `str` slice is compiled; other receivers, open bounds and non-int bounds keep their refusals (274.7 U-1)" {
     // D470 section 5: `s[lo..hi]` is `s.index(Range { start: lo, end: hi })`, a
     // byte range of type `str` (D249). Wave U-1 compiles the closed form over

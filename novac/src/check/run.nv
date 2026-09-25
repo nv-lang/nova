@@ -76,6 +76,7 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
         value_expect: no_ty(),
         link_check: true,
         loop_depth: 0,
+        ret_unit: false,
         substs: []TyId.new(),
     }
     // THROUGH THE DOOR (P18): a raw walk over a file's children does not see
@@ -146,6 +147,7 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, substs []TyId, cap 
         value_expect: no_ty(),
         link_check: true,
         loop_depth: 0,
+        ret_unit: false,
         substs,
     }
     c.type_fn(decl)

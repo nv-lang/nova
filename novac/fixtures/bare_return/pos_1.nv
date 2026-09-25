@@ -1,28 +1,34 @@
-// A UNIT FUNCTION WHOSE BLOCK BODY SIMPLY ENDS -- the form the corpus never carried.
-//
-// Why this fixture exists (2026-09-09). `emit_callable` printed a trailing return only for the
-// entry row and for `int` functions, so a plain `-> ()` function with a block body got NONE: its
-// C fell off the end of a function whose return type is `nova_unit`. A grep across
-// `examples/basics/` and `novac/fixtures/` found zero carriers of the form, which is why every
-// green measurement of wave M3 -- corpus C identical on 94 files, differential 35 of 35, module
-// tests 26 of 26 -- was silent about it.
-//
-// The statements before the end are the point: without them a missing return is invisible,
-// because there is nothing for it to skip.
-//
-// WHAT THIS FIXTURE DELIBERATELY DOES NOT CARRY, and the reason is a measurement: a BARE `return`
-// is outside novac's subset -- the checker refuses it by name, `outside the subset: return must
-// carry a value`. The first edition of this carrier had one, and the probe refused the whole file.
-// So that form needs no emitter fix at all: the boundary is held by the checker, which is where a
-// boundary belongs.
 module bare_return.pos_1
 
-fn hush(n int) -> () {
-    println("quiet")
+// A bare `return` in a body that returns no value (`-> ()`, or main with none
+// declared): the ordinary early exit -- from an `if`, from inside a loop, from
+// main. novac refused every one as "`return` must carry a value" until
+// 2026-09-26 (195 of its own). Behaviour byte for byte with the oracle.
+
+fn show(n int) -> () {
+    if n < 0 {
+        return
+    }
     println(n)
 }
 
+fn loop_until(n int) -> () {
+    mut i = 0
+    while true {
+        if i >= n {
+            return
+        }
+        println(i)
+        i += 1
+    }
+}
+
 fn main() {
-    hush(9)
-    println("after")
+    show(0 - 1)
+    show(5)
+    loop_until(3)
+    if true {
+        return
+    }
+    println(99)
 }
