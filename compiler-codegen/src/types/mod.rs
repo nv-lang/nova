@@ -41583,6 +41583,12 @@ struct ConsumeRegistry {
     /// #1326, method twin of `fn_return_param_idx`; the type parameter may
     /// come from the receiver (`fn Cell[T consume] @put(consume v T) -> T`).
     method_return_param_idx: HashMap<(String, String), usize>,
+    /// #1326 (nested tail): callees whose declared return is a generic type
+    /// whose arguments mention a type parameter (`-> Option[T]`,
+    /// `-> Result[Option[T], E]`). This pass does not substitute them, so it
+    /// does not know whether such a value is must-consume.
+    fn_generic_wrapped_return: HashSet<String>,
+    method_generic_wrapped_return: HashSet<(String, String)>,
     /// D86-followup (2026-07-14): free-fn name → Ok/Some-inner type name,
     /// companion of `fn_return_types` — see `unwrapped_method_return_types`
     /// doc for rationale (same `Result[T,E]`/`Option[T]` unwrap, free-fn side).
@@ -41849,6 +41855,33 @@ fn generic_return_param_idx(fd: &FnDecl) -> Option<Option<usize>> {
         TypeRef::Named { path: p2, .. } if p2.len() == 1 && &p2[0] == name)))
 }
 
+/// Registry 221.1 #1326 (nested tail): true when `fd`'s declared return is a
+/// generic type whose arguments mention one of `fd`'s type parameters (of the
+/// fn itself or of its receiver) -- `-> Option[T]`, `-> Result[Option[T], E]`.
+fn generic_wrapped_return(fd: &FnDecl) -> bool {
+    let Some(TypeRef::Named { generics, .. }) = &fd.return_type else { return false };
+    let mut params: Vec<&str> = fd.generics.iter().map(|g| g.name.as_str()).collect();
+    if let Some(r) = &fd.receiver {
+        for g in &r.generics {
+            if let TypeRef::Named { path, .. } = g {
+                if path.len() == 1 { params.push(path[0].as_str()); }
+            }
+        }
+        params.extend(r.carrier_bounds.iter().map(|g| g.name.as_str()));
+    }
+    fn mentions(t: &TypeRef, ps: &[&str]) -> bool {
+        match t {
+            TypeRef::Named { path, generics, .. } =>
+                (path.len() == 1 && ps.contains(&path[0].as_str()))
+                    || generics.iter().any(|g| mentions(g, ps)),
+            TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => mentions(inner, ps),
+            TypeRef::Tuple(items, _) => items.iter().any(|g| mentions(g, ps)),
+            _ => false,
+        }
+    }
+    generics.iter().any(|g| mentions(g, &params))
+}
+
 fn unwrap_result_option_name(rt: &TypeRef, self_ty: &str) -> Option<String> {
     if let TypeRef::Named { path, generics, .. } = rt {
         if path.len() == 1
@@ -41945,6 +41978,8 @@ impl ConsumeRegistry {
         let mut fn_return_types: HashMap<String, String> = HashMap::new();
         let mut fn_return_param_idx: HashMap<String, usize> = HashMap::new();
         let mut method_return_param_idx: HashMap<(String, String), usize> = HashMap::new();
+        let mut fn_generic_wrapped_return: HashSet<String> = HashSet::new();
+        let mut method_generic_wrapped_return: HashSet<(String, String)> = HashSet::new();
         // D86-followup: unwrapped (Ok/Some-inner) companion maps — see field docs.
         let mut unwrapped_fn_return_types: HashMap<String, String> = HashMap::new();
         let mut unwrapped_method_return_types: HashMap<(String, String), String> = HashMap::new();
@@ -42214,6 +42249,10 @@ impl ConsumeRegistry {
                             method_return_param_idx
                                 .insert((r.type_name.clone(), fd.name.clone()), i);
                         }
+                        if generic_wrapped_return(fd) {
+                            method_generic_wrapped_return
+                                .insert((r.type_name.clone(), fd.name.clone()));
+                        }
                         if let (None, Some(TypeRef::Named { path, .. })) = (gen_ret, &fd.return_type) {
                             if path.len() == 1 {
                                 let ret = if path[0] == "Self" {
@@ -42289,6 +42328,9 @@ impl ConsumeRegistry {
                         let gen_ret = generic_return_param_idx(fd);
                         if let Some(Some(i)) = gen_ret {
                             fn_return_param_idx.insert(fd.name.clone(), i);
+                        }
+                        if generic_wrapped_return(fd) {
+                            fn_generic_wrapped_return.insert(fd.name.clone());
                         }
                         if let (None, Some(TypeRef::Named { path, .. })) = (gen_ret, &fd.return_type) {
                             if path.len() == 1 {
@@ -42411,6 +42453,7 @@ impl ConsumeRegistry {
             method_param_output_keys,
             methods, fn_params, method_params, fn_return_types, recv_returning,
             fn_return_param_idx, method_return_param_idx,
+            fn_generic_wrapped_return, method_generic_wrapped_return,
             fn_view_params, method_return_types, mut_methods, ro_methods,
             mut_methods_arity, ro_methods_arity, recv_returning_arity,
             fn_mut_params, method_mut_params,
@@ -42486,6 +42529,10 @@ impl ConsumeRegistry {
                     if let Some(Some(i)) = gen_ret {
                         self.method_return_param_idx
                             .entry((r.type_name.clone(), fd.name.clone())).or_insert(i);
+                    }
+                    if generic_wrapped_return(fd) {
+                        self.method_generic_wrapped_return
+                            .insert((r.type_name.clone(), fd.name.clone()));
                     }
                     if let (None, Some(TypeRef::Named { path, .. })) = (gen_ret, &fd.return_type) {
                         if path.len() == 1 {
@@ -43207,6 +43254,36 @@ impl<'a> ConsumeCtx<'a> {
             return Some(ty.clone());
         }
         turbofish_ctor_type_ref(&decl.value)
+    }
+
+    /// #1326 (nested tail): the value is a call whose declared return is a
+    /// generic type over the callee's type parameters (`wrap(r)` with
+    /// `-> Option[T]`, `o.map(f)` with `-> Option[U]`). The bare name this
+    /// pass infers (`Option`) says nothing about the payload, so "the RHS is
+    /// not must-consume" cannot be concluded from it.
+    fn rhs_generic_wrapped_return(&self, e: &Expr) -> bool {
+        let ExprKind::Call { func, .. } = &e.kind else { return false };
+        match &func.kind {
+            ExprKind::Ident(fname) => self.reg.fn_generic_wrapped_return.contains(fname),
+            ExprKind::Path(parts) if parts.len() >= 2 => self.reg.method_generic_wrapped_return
+                .contains(&(parts[parts.len() - 2].clone(), parts[parts.len() - 1].clone())),
+            ExprKind::Member { obj, name: method } => {
+                let recv_ty = match &obj.kind {
+                    ExprKind::Ident(recv) if recv == "self" => self.self_type.clone(),
+                    ExprKind::Ident(recv) => {
+                        let canon = self.canonical(recv);
+                        self.var_types.get(&canon)
+                            .or_else(|| self.var_types.get(recv.as_str()))
+                            .cloned()
+                    }
+                    ExprKind::SelfAccess => self.self_type.clone(),
+                    _ => self.infer_value_type(obj),
+                };
+                recv_ty.map(|rty| self.reg.method_generic_wrapped_return
+                    .contains(&(rty, method.clone()))).unwrap_or(false)
+            }
+            _ => false,
+        }
     }
 
     /// Best-effort тип выражения — только синтаксически очевидные формы.
@@ -46853,6 +46930,7 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
             // skip (sound: false-negative permissive, не false-positive).
             else if decl.consume && !rhs_yields_consume_type && !alias_obligated
                 && names.len() == 1
+                && !ctx.rhs_generic_wrapped_return(&decl.value)
                 && inferred_ty_d180.as_ref().map(|ty| {
                     ctx.lin_reg.local_type_names.contains(ty.as_str())
                 }).unwrap_or(false)

@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR W_CONSUME_KEYWORD_UNNECESSARY
+//
+// Registry 221.1 #1326, nested tail -- the control of
+// `standalone/consume_generic_nested_return_binding.nv`. That fixture stops
+// [W_CONSUME_KEYWORD_UNNECESSARY] from judging a generic call whose declared
+// return wraps a type parameter (`-> Option[T]`): the consume pass does not
+// know the payload there. A NON-generic `-> Option[int]` says everything about
+// its payload, so a `consume` binding of it is still reported as unnecessary.
+module neg.consume_keyword_unnecessary_plain_wrapped_neg
+
+fn plain() -> Option[int] => Some(1)
+
+fn main() Io -> () {
+    // nova:expect W_CONSUME_KEYWORD_UNNECESSARY -- `plain()` returns an ordinary Option[int]; the exemption covers only generic returns
+    consume x = plain()
+    ro n = x ?? 0
+    print("${n}")
+}
