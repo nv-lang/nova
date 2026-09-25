@@ -1,0 +1,19 @@
+// #1331 carrier: `match consume o` over a named Option[Res] binding -- nova check: unexpected `consume` in expression.
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> () {
+}
+
+type Service consume {
+    consume file Option[Res]
+}
+
+fn main() -> () {
+    consume o = Some(Res { id: 1 })
+    match consume o {
+        Some(consume f) => f.close()
+        None => { }
+    }
+}

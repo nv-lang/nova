@@ -1,0 +1,148 @@
+// Registry 221.1 #1334: D84 mode axis on the RECEIVER (spec/decisions/
+// 10-overloading.md, amendment 2026-07-06, R14: `@` is the zeroth parameter).
+// `fn T @m()` and `fn T consume @m()` are two legal overloads, and rule 3
+// picks between them by the receiver expression: a temporary or a
+// `consume`-spelled binding takes the CONSUMING form; a `ro` / `mut` binding
+// takes the COPYING form and stays live, so a second call works.
+//
+// Before the fix the checker refused the pair as "duplicate definition
+// `Box.take` with same signature" (the duplicate key compared only
+// `receiver.mutable`), and once accepted: both bodies got one C symbol, a
+// call-result receiver (`mk().take()`) ran the copying form, the generic
+// pair collapsed to its first declaration, and the consume pass consumed
+// every receiver of the name.
+//
+// Every call reports the form it ran. Plain type: the copying `@take` returns
+// 1, the consuming one 2. Generic sum: the copying `@mapx` answers `Som`
+// (printed `S`), the consuming one `Mov` (printed `M`). A must-consume payload
+// (`Opt[Res]`) goes to the consuming form, and each `Res` is closed exactly
+// once (`closed=` lists the ids in closing order).
+// EXPECT_STDOUT box: ro=1,1 mut=1,1 lit=2 call=2 chain=2 self=2 tok=2 field=12 | opt: ro=S4,S6 mut=S5,S5 ctor=M107 call=M108 | res: bind=M5 ctor=M6 closed=5,6
+module standalone.receiver_mode_pair
+
+// -- a plain record ---------------------------------------------------------
+
+type Box {
+    n int
+}
+
+fn Box @take() -> int => 1
+
+fn Box consume @take() -> int => 2
+
+fn Box @bumped() -> Box => { n: @n + 1 }
+
+// `@` is not consume-eligible (rule 3): a borrowing method may call the pair
+// on its own receiver -- it runs the copying form and consumes nothing.
+fn Box @twice() -> int => @take() + @take()
+
+fn mk_box() -> Box => { n: 0 }
+
+// -- a plain must-consume record: a `consume` binding receiver ---------------
+
+type Tok consume {
+    n int
+}
+
+fn Tok @peek() -> int => 1
+
+fn Tok consume @peek() -> int => 2
+
+fn Tok consume @drop() -> int => @n
+
+// A field receiver is not consume-eligible either: `@t.peek()` copies and the
+// field stays live until `@t.drop()` consumes it.
+type Holder consume {
+    consume t Tok
+}
+
+fn Holder consume @done() -> int {
+    ro a = @t.peek()
+    ro b = @t.peek()
+    ro c = @t.drop()
+    a + b + c
+}
+
+// -- a generic sum: the shape of the std `Option.map` pair -------------------
+
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> int => @id
+
+type Opt[T consume] enum Som(T) | Mov(T) | Non
+
+fn Opt[T] @mapx[U](f fn(T) -> U) -> Opt[U] => match @ {
+    Som(v) => Som(f(v))
+    Mov(v) => Som(f(v))
+    Non => Non
+}
+
+fn Opt[T consume] consume @mapx[U consume](f fn(T) -> U) -> Opt[U] => match consume @ {
+    Som(consume v) => Mov(f(v))
+    Mov(consume v) => Mov(f(v))
+    Non => Non
+}
+
+fn show(o Opt[int]) -> str => match o {
+    Som(v) => "S${v}"
+    Mov(v) => "M${v}"
+    Non => "N"
+}
+
+fn mk_opt(n int) -> Opt[int] => Som(n)
+
+// Reports the form and closes the payload once.
+fn fin(consume o Opt[Res], mut closed []int) -> str => match consume o {
+    Som(consume r) => {
+        ro id = r.close()
+        closed.push(id)
+        "S${id}"
+    }
+    Mov(consume r) => {
+        ro id = r.close()
+        closed.push(id)
+        "M${id}"
+    }
+    Non => "N"
+}
+
+fn main() Io -> () {
+    // plain record: bindings copy and stay live, temporaries consume
+    ro x = Box { n: 0 }
+    ro x1 = x.take()
+    ro x2 = x.take()
+    mut y = Box { n: 0 }
+    ro y1 = y.take()
+    ro y2 = y.take()
+    ro lit = Box { n: 0 }.take()
+    ro call = mk_box().take()
+    ro chain = x.bumped().take()
+    ro twice = x.twice()
+    consume t = Tok { n: 3 }
+    ro tok = t.peek()
+    consume h = Holder { t: Tok { n: 10 } }
+    ro field = h.done()
+    print("box: ro=${x1},${x2} mut=${y1},${y2} lit=${lit} call=${call} chain=${chain} self=${twice} tok=${tok} field=${field}")
+
+    // generic sum, int payload
+    ro a Opt[int] = Som(3)
+    ro a1 = a.mapx(|v| v + 1)
+    ro a2 = a.mapx(|v| v * 2)
+    mut m Opt[int] = Som(5)
+    ro m1 = m.mapx(|v| v)
+    ro m2 = m.mapx(|v| v)
+    ro c1 = Som(7).mapx(|v| v + 100)
+    ro c2 = mk_opt(8).mapx(|v| v + 100)
+    print(" | opt: ro=${show(a1)},${show(a2)} mut=${show(m1)},${show(m2)} ctor=${show(c1)} call=${show(c2)}")
+
+    // generic sum, must-consume payload: only the consuming form applies
+    mut closed []int = []
+    consume r Opt[Res] = Som(Res { id: 5 })
+    consume r2 Opt[Res] = r.mapx(|v| v)
+    ro k1 = fin(r2, closed)
+    consume r3 Opt[Res] = Som(Res { id: 6 }).mapx(|v| v)
+    ro k2 = fin(r3, closed)
+    print(" | res: bind=${k1} ctor=${k2} closed=${closed[0]},${closed[1]}")
+}

@@ -291,7 +291,15 @@ for f in "$ROOT"/novac/src/*/*.nv "$ROOT"/novac/src/*.nv; do
     self_files="$self_files \"$f\""
 done
 self_rej=0
-self_mode="batch"
+# РЕЖИМ МОДУЛЯ, А НЕ ПОФАЙЛОВЫЙ (консенсус окна Карины и интегратора
+# 2026-09-23). Предмет ступени 0.2 — «Карина собирает себя», а сборка
+# модульная: файлы одного каталога — один модуль. Пофайловая проверка с
+# `NOVAC_SELF_PATH` отвечала на другой вопрос и рождала артефакты харнесса:
+# ложную D84 (№1284) и невидимые поля соседнего файла (№1322). Замер помощника
+# того дня на одном бинаре: пофайлово 95/108 отвергнуто, модулем 39/108; обе
+# цифры записаны в novac-corpus.baseline. Метка `batch-unit` различима
+# стражем: откат к пофайловой мере без объявления краснит дифференциал.
+self_mode="batch-unit"
 self_rej_partial=""
 if [ "$self_total" -gt 0 ]; then
     # ПЕРЕМЕННАЯ ОКРУЖЕНИЯ СТОИТ ДО `timeout`, И ЭТО НЕ СТИЛЬ (реестр 221.1 №1310).
@@ -302,7 +310,7 @@ if [ "$self_total" -gt 0 ]; then
     # РАЗУ три недели: каждый прогон уходил в пофайловый откат ниже и печатал
     # «ICE убил пачку», хотя ICE не было. `scripts/tools/double-build.sh` это
     # видел и обошёл у себя, не заведя строки.
-    eval "NOVAC_SELF_PATH=novac/src timeout 60 \"$NOVAC\" check $self_files" > "$T/self.out" 2> "$T/self.err" </dev/null
+    eval "NOVAC_UNIT=1 NOVAC_SELF_PATH=novac/src timeout 60 \"$NOVAC\" check $self_files" > "$T/self.out" 2> "$T/self.err" </dev/null
     src=$?
     # ПАЧКА, КОТОРАЯ НЕ ЗАПУСТИЛАСЬ, -- НЕ СМЕРТЬ ПАЧКИ. Коды 126/127 значат, что
     # команда не стартовала вовсе: о самосборке не узнали ничего, и тихий откат
@@ -344,8 +352,8 @@ fi
 wall=$(( ( $(date +%s%N) - wall0 ) / 1000000 ))
 
 echo "novac-diff-corpus: файлов $N — совпали-приняли $acc · совпали-отвергли $rej · отставание $subset · вне-точки $outpoint · заблокировано-оракулом $blocked · DANGER $danger · PANIC $panic · allow $allowed"
-if [ "$self_mode" = "batch" ]; then
-    echo "novac-diff-corpus: поведенчески совпали $beh из $acc · самосборка (БАТЧ): отвергнуто $self_rej из $self_total"
+if [ "$self_mode" = "batch-unit" ]; then
+    echo "novac-diff-corpus: поведенчески совпали $beh из $acc · самосборка (БАТЧ, МОДУЛЯМИ): отвергнуто $self_rej из $self_total"
 else
     echo "novac-diff-corpus: поведенчески совпали $beh из $acc · самосборка (ПОФАЙЛОВЫЙ ОТКАТ -- пачка дала ICE или умерла, код $src, числа НЕ сравнимы с батчевым режимом, реестр №1122): отвергнуто $self_rej из $self_total (частичный счёт краха: $self_rej_partial, недостоверен)"
 fi

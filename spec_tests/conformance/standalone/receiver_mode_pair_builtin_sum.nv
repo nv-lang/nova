@@ -1,0 +1,128 @@
+// Registry 221.1 #1339: the D84 receiver mode pair (spec/decisions/
+// 10-overloading.md, amendment 2026-07-06, R14; rule 3) on the BUILTIN
+// `Option` / `Result` -- the shape std's `Option.map` / `Result.map` pairs
+// take. A `ro` / `mut` binding takes the copying form and stays live; a
+// temporary or a `consume` binding takes the consuming form.
+//
+// Two defects:
+//   * the builtin-sum dispatch lowered the FIRST same-name declaration
+//     whatever the checker chose (`Some(6).mm()` printed the copying `1`) --
+//     fixed with #1336 (`builtin_sum_method_decl`);
+//   * with a pair whose argument is a closure (`@mapy[U](map_fn fn(T) -> U)`)
+//     the closure's parameters were seeded only for a SINGLE overload, so the
+//     closure body stayed untyped, `U` got no binding, and a chain such as
+//     `get(k).mapy(|s| s.to_int().map_err(..)).transpose()` failed in C
+//     (`unknown type name 'NovaRes_nova_int_nova_str_p'`). Declared in std,
+//     one such pair broke every program that maps a temporary.
+//
+// `@mm` answers 1 for the copying form and 2 for the consuming one; `@mapy`
+// logs its form into `log`. The `Res` is closed exactly once (`closed=`).
+// EXPECT_STDOUT opt: ro=1,1 mut=1,1 temp=2 call=2 | res: ro=1,1 temp=2 call=2 | chain: p=42 q=bad | mapy: ro=4 temp=10 res=7 | log=move,move,copy,move,move | closed=1:7
+module standalone.receiver_mode_pair_builtin_sum
+
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> int => @id
+
+// -- a zero-argument pair on Option and on Result -----------------------------
+
+fn Option[T] @mm() -> int => 1
+
+fn Option[T consume] consume @mm() -> int => match consume @ {
+    Some(consume v) => 2
+    None => 0
+}
+
+fn Result[T, E] @mm() -> int => 1
+
+fn Result[T consume, E consume] consume @mm() -> int => match consume @ {
+    Ok(consume v) => 2
+    Err(consume e) => 3
+}
+
+// -- a pair with a closure argument and a method generic ----------------------
+
+fn Option[T] @mapy[U](mut log []str, map_fn fn(T) -> U) -> Option[U] {
+    log.push("copy")
+    match @ {
+        Some(v) => Some(map_fn(v))
+        None => None
+    }
+}
+
+fn Option[T consume] consume @mapy[U consume](mut log []str, map_fn fn(T) -> U) -> Option[U] {
+    log.push("move")
+    match consume @ {
+        Some(consume v) => Some(map_fn(v))
+        None => None
+    }
+}
+
+// -- helpers ------------------------------------------------------------------
+
+fn mk_opt(n int) -> Option[int] => Some(n)
+
+fn mk_res(n int) -> Result[int, str] => Ok(n)
+
+fn get(k str) -> Option[str] => if k == "port" { Some("42") } else { Some("x") }
+
+// The driving std shape: a temporary mapped by a closure whose body is a
+// method chain, then `transpose`.
+fn port(key str, mut log []str) -> Result[int, str] {
+    ro p = get(key)
+        .mapy(log, |s| s.to_int().map_err(|_| "bad"))
+        .transpose()? ?? 0
+    Ok(p)
+}
+
+fn close_opt(consume o Option[Res], mut closed []int) -> int => match consume o {
+    Some(consume r) => {
+        ro id = r.close()
+        closed.push(id)
+        id
+    }
+    None => 0
+}
+
+fn main() Io -> () {
+    mut log []str = []
+    mut closed []int = []
+
+    // Option: bindings copy and stay live, temporaries move
+    ro o = Some(5)
+    ro o1 = o.mm()
+    ro o2 = o.mm()
+    mut m = Some(6)
+    ro m1 = m.mm()
+    ro m2 = m.mm()
+    ro t1 = Some(7).mm()
+    ro c1 = mk_opt(8).mm()
+    print("opt: ro=${o1},${o2} mut=${m1},${m2} temp=${t1} call=${c1}")
+
+    // Result
+    ro q Result[int, str] = Ok(5)
+    ro q1 = q.mm()
+    ro q2 = q.mm()
+    ro t2 = Ok(6).mm()
+    ro c2 = mk_res(7).mm()
+    print(" | res: ro=${q1},${q2} temp=${t2} call=${c2}")
+
+    // the closure pair in a chain
+    ro a = match port("port", log) { Ok(v) => "${v}", Err(e) => e }
+    ro b = match port("q", log) { Ok(v) => "${v}", Err(e) => e }
+    print(" | chain: p=${a} q=${b}")
+
+    // the closure pair: ro binding, temporary, must-consume consume binding
+    ro x = Some(3)
+    ro x1 = x.mapy(log, |v| v + 1) ?? 0
+    ro x2 = mk_opt(9).mapy(log, |v| v + 1) ?? 0
+    consume rr Option[Res] = Some(Res { id: 7 })
+    consume moved Option[Res] = rr.mapy(log, |v| v)
+    ro x3 = close_opt(moved, closed)
+    print(" | mapy: ro=${x1} temp=${x2} res=${x3}")
+
+    print(" | log=${log[0]},${log[1]},${log[2]},${log[3]},${log[4]}")
+    print(" | closed=${closed.len()}:${closed[0]}")
+}

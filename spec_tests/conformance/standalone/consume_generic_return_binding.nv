@@ -1,0 +1,35 @@
+// EXPECT_STDOUT free=1 method=2
+//
+// Registry 221.1 #1326: a binding taken from a generic `[T consume]` call gets the
+// substituted type, so `consume r = pass(..)` followed by `r.close()` is a correct
+// program -- through a free function and through a method whose receiver carries
+// the bound. Before the fix the consume pass typed the binding as `T` (the
+// declared return) and refused both with D133-not-consumed.
+module standalone.consume_generic_return_binding
+
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> int => @id
+
+type Cell[T consume] {
+    n int
+}
+
+fn Cell[T consume] @put(consume v T) -> T => v
+
+fn Cell[T consume] consume @done() -> () {
+}
+
+fn pass[T consume](consume x T) -> T => x
+
+fn main() Io -> () {
+    consume a = pass(Res { id: 1 })
+    ro fa = a.close()
+    consume c Cell[Res] = { n: 0 }
+    consume b = c.put(Res { id: 2 })
+    ro mb = b.close()
+    c.done()
+    print("free=${fa} method=${mb}")
+}

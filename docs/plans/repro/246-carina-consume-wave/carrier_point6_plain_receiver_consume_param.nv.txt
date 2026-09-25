@@ -1,0 +1,16 @@
+// Oracle 2026-09-25: nova check PASS (the oracle does not implement point 6; by the owner's
+// decision of 2026-09-25 the check is Carina's).
+// D156 amendment point 6 (2026-09-25): in a type declared [T consume], a method whose
+// receiver is written with a plain [T] may not take `consume x T`. Expected:
+// E_CONSUME_PARAM_UNBOUNDED at the declaration of `put` (Carina's consume wave).
+type Holder[T consume] {
+    n int
+}
+
+fn Holder[T] @put(consume x T) -> T => x
+
+fn main() Io -> () {
+    ro h Holder[int] = { n: 0 }
+    ro y = h.put(5)
+    print("${y}")
+}

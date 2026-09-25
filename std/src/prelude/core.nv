@@ -29,12 +29,12 @@ module prelude.core
 /// Optional value — `Some(v)` or `None`. Idiomatic way for
 /// fallible operations without exceptions / null.
 #stable(since = "0.1")
-export type Option[T] enum Some(T) | None
+export type Option[T consume] enum Some(T) | None
 
 /// Result of fallible computation. `Ok(v)` — success, `Err(e)` —
 /// failure with typed error payload `e: E`.
 #stable(since = "0.1")
-export type Result[T, E] enum Ok(T) | Err(E)
+export type Result[T consume, E consume] enum Ok(T) | Err(E)
 
 /// A call site: which file and line a call was made from (D468).
 /// Produced by the built-in `caller_loc()` and passed around as an
@@ -130,7 +130,7 @@ type str value priv(type) {
 
 /// True if the Option contains a value.
 #stable(since = "0.1")
-fn Option[T] @is_some() -> bool => match @ { Some(_) => true, None => false }
+fn Option[T consume] @is_some() -> bool => match @ { Some(_) => true, None => false }
 
 // Option[T].new() declined — codegen не поддерживает generic static
 // методы на builtin sum-types (Option/Result). Workaround: use `None`
@@ -138,7 +138,7 @@ fn Option[T] @is_some() -> bool => match @ { Some(_) => true, None => false }
 
 /// True if the Option is empty (None).
 #stable(since = "0.1")
-fn Option[T] @is_none() -> bool => match @ { Some(_) => false, None => true }
+fn Option[T consume] @is_none() -> bool => match @ { Some(_) => false, None => true }
 
 // [M-unwrap-twins-retraction] (2026-07-07): `@unwrap()` /
 // `@unwrap_or(default)` / `@unwrap_or_else(f)` ретрактированы — дублировали
@@ -151,11 +151,24 @@ fn Option[T] @is_none() -> bool => match @ { Some(_) => false, None => true }
 fn Option[T] @map[U](map_fn fn(T) -> U) -> Option[U]
   => match @ { Some(v) => Some(map_fn(v)), None => None }
 
+/// Consuming form (plan 246, D84 mode axis on the receiver): taken by a
+/// temporary or a `consume` binding; the only form for a must-consume `T`.
+#stable(since = "0.1")
+fn Option[T consume] consume @map[U consume](map_fn fn(T) -> U) -> Option[U]
+  => match consume @ { Some(consume v) => Some(map_fn(v)), None => None }
+
 /// `Some(v) -> Ok(v)`, `None -> Err(err)`. Useful for converting an
 /// Option into a Result chain.
 #stable(since = "0.1")
 fn Option[T] @ok_or[E](err E) -> Result[T, E]
   => match @ { Some(v) => Ok(v), None => Err(err) }
+
+/// Consuming form (plan 246, D84 mode axis on the receiver): taken by a
+/// temporary or a `consume` binding; the only form for a must-consume `T`.
+/// `err` is an ordinary value: it is dropped when the Option holds a value.
+#stable(since = "0.1")
+fn Option[T consume] consume @ok_or[E](err E) -> Result[T, E]
+  => match consume @ { Some(consume v) => Ok(v), None => Err(err) }
 
 /// `Some(v) -> Some(v)`, `None -> other`. Returns another Option if the
 /// current one is empty (fallback chain).
@@ -178,6 +191,12 @@ fn Option[T] @or(other Option[T]) -> Option[T] => match @ { Some(v) => Some(v), 
 fn Option[T] @flat_map[U](flat_map_fn fn(T) -> Option[U]) -> Option[U]
   => match @ { Some(v) => flat_map_fn(v), None => None }
 
+/// Consuming form (plan 246, D84 mode axis on the receiver): taken by a
+/// temporary or a `consume` binding; the only form for a must-consume `T`.
+#stable(since = "0.1")
+fn Option[T consume] consume @flat_map[U consume](flat_map_fn fn(T) -> Option[U]) -> Option[U]
+  => match consume @ { Some(consume v) => flat_map_fn(v), None => None }
+
 /// `Some(v) -> Some(v)` if `pred(v)`, otherwise `None`. `None` stays `None`.
 /// `??`/`.map` cannot drop a `Some` by predicate — the only way to return
 /// `None` from a `Some` without an explicit `match`. Param-name `pred` —
@@ -192,11 +211,11 @@ fn Option[T] @filter(pred fn(T) -> bool) -> Option[T]
 
 /// True if the Result is the Ok variant.
 #stable(since = "0.1")
-fn Result[T, E] @is_ok() -> bool => match @ { Ok(_) => true, Err(_) => false }
+fn Result[T consume, E consume] @is_ok() -> bool => match @ { Ok(_) => true, Err(_) => false }
 
 /// True if the Result is the Err variant.
 #stable(since = "0.1")
-fn Result[T, E] @is_err() -> bool => match @ { Ok(_) => false, Err(_) => true }
+fn Result[T consume, E consume] @is_err() -> bool => match @ { Ok(_) => false, Err(_) => true }
 
 // [M-unwrap-twins-retraction] (2026-07-07): `@unwrap()` /
 // `@unwrap_or(default)` / `@unwrap_or_else(f)` ретрактированы —
@@ -210,11 +229,23 @@ fn Result[T, E] @is_err() -> bool => match @ { Ok(_) => false, Err(_) => true }
 fn Result[T, E] @map[U](map_fn fn(T) -> U) -> Result[U, E]
   => match @ { Ok(v) => Ok(map_fn(v)), Err(e) => Err(e) }
 
+/// Consuming form (plan 246, D84 mode axis on the receiver): taken by a
+/// temporary or a `consume` binding; the only form for a must-consume `T`.
+#stable(since = "0.1")
+fn Result[T consume, E consume] consume @map[U consume](map_fn fn(T) -> U) -> Result[U, E]
+  => match consume @ { Ok(consume v) => Ok(map_fn(v)), Err(consume e) => Err(e) }
+
 /// Applies `err_fn` to the Err payload: `Err(e) -> Err(err_fn(e))`, `Ok(v)` passes through.
 /// Param-name `err_fn` (not `f`) — see Option.map.
 #stable(since = "0.1")
 fn Result[T, E] @map_err[F](err_fn fn(E) -> F) -> Result[T, F]
   => match @ { Ok(v) => Ok(v), Err(e) => Err(err_fn(e)) }
+
+/// Consuming form (plan 246, D84 mode axis on the receiver): taken by a
+/// temporary or a `consume` binding; the only form for a must-consume `T`.
+#stable(since = "0.1")
+fn Result[T consume, E consume] consume @map_err[F consume](err_fn fn(E) -> F) -> Result[T, F]
+  => match consume @ { Ok(consume v) => Ok(v), Err(consume e) => Err(err_fn(e)) }
 
 /// Bind/monadic chain: `Ok(v) -> flat_map_fn(v)`, `Err(e) -> Err(e)`. Unlike
 /// `@map`, `flat_map_fn` itself returns `Result[U, E]` — no nested
@@ -224,6 +255,12 @@ fn Result[T, E] @map_err[F](err_fn fn(E) -> F) -> Result[T, F]
 #stable(since = "0.1")
 fn Result[T, E] @flat_map[U](flat_map_fn fn(T) -> Result[U, E]) -> Result[U, E]
   => match @ { Ok(v) => flat_map_fn(v), Err(e) => Err(e) }
+
+/// Consuming form (plan 246, D84 mode axis on the receiver): taken by a
+/// temporary or a `consume` binding; the only form for a must-consume `T`.
+#stable(since = "0.1")
+fn Result[T consume, E consume] consume @flat_map[U consume](flat_map_fn fn(T) -> Result[U, E]) -> Result[U, E]
+  => match consume @ { Ok(consume v) => flat_map_fn(v), Err(consume e) => Err(e) }
 
 /// Bind/monadic chain on the ERROR branch — recovery: `Err(e) -> recover_fn(e)`
 /// (with access to the error), `Ok(v)` passes through. Sibling of `map_err`,
@@ -235,6 +272,12 @@ fn Result[T, E] @flat_map[U](flat_map_fn fn(T) -> Result[U, E]) -> Result[U, E]
 #stable(since = "0.1")
 fn Result[T, E] @flat_map_err[F](recover_fn fn(E) -> Result[T, F]) -> Result[T, F]
   => match @ { Ok(v) => Ok(v), Err(e) => recover_fn(e) }
+
+/// Consuming form (plan 246, D84 mode axis on the receiver): taken by a
+/// temporary or a `consume` binding; the only form for a must-consume `T`.
+#stable(since = "0.1")
+fn Result[T consume, E consume] consume @flat_map_err[F consume](recover_fn fn(E) -> Result[T, F]) -> Result[T, F]
+  => match consume @ { Ok(consume v) => Ok(v), Err(consume e) => recover_fn(e) }
 
 /// Swaps `Option[Result[T, E]]` for `Result[Option[T], E]` — the ONE
 /// combinator that distinguishes "no value" from "value present but
@@ -249,13 +292,36 @@ fn Result[T, E] @flat_map_err[F](recover_fn fn(E) -> Result[T, F]) -> Result[T, 
 fn Option[Result[T, E]] @transpose() -> Result[Option[T], E]
   => match @ { Some(r) => match r { Ok(v) => Ok(Some(v)), Err(e) => Err(e) }, None => Ok(None) }
 
+/// Consuming form (plan 246, D84 mode axis on the receiver): taken by a
+/// temporary or a `consume` binding; the only form for a must-consume `T`.
+#stable(since = "0.1")
+fn Option[Result[T consume, E consume]] consume @transpose() -> Result[Option[T], E]
+  => match consume @ {
+      Some(consume r) => match consume r { Ok(consume v) => Ok(Some(v)), Err(consume e) => Err(e) }
+      None => Ok(None)
+  }
+
 /// `Ok(v) -> Some(v)`, `Err(_) -> None`. Discards error.
 #stable(since = "0.1")
 fn Result[T, E] @ok() -> Option[T] => match @ { Ok(v) => Some(v), Err(_) => None }
 
+/// Consuming form (plan 246, D84 mode axis on the receiver): taken by a
+/// temporary or a `consume` binding; the only form for a must-consume `T`.
+/// The error side is dropped, so `E` stays an ordinary type.
+#stable(since = "0.1")
+fn Result[T consume, E] consume @ok() -> Option[T]
+  => match consume @ { Ok(consume v) => Some(v), Err(_) => None }
+
 /// `Err(e) -> Some(e)`, `Ok(_) -> None`. Discards Ok-value.
 #stable(since = "0.1")
 fn Result[T, E] @err() -> Option[E] => match @ { Ok(_) => None, Err(e) => Some(e) }
+
+/// Consuming form (plan 246, D84 mode axis on the receiver): taken by a
+/// temporary or a `consume` binding; the only form for a must-consume `T`.
+/// The value side is dropped, so `T` stays an ordinary type.
+#stable(since = "0.1")
+fn Result[T, E consume] consume @err() -> Option[E]
+  => match consume @ { Ok(_) => None, Err(consume e) => Some(e) }
 
 /// Fail-fast collector for a list of results. The first `Err` aborts and is
 /// returned (short-circuit); otherwise `Ok` with ALL values in order.

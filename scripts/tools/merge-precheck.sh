@@ -7,6 +7,8 @@
 #   bash scripts/tools/merge-precheck.sh --branch <дерево-ветки> [--base <дерево-базы>]
 #       ДО слияния: ярус loop ОБОИХ гейтов на ветке и на базе (по умолчанию —
 #       главное дерево, `.`), и разбор отказов на три кучи — чьи они.
+#   bash scripts/tools/merge-precheck.sh --report <своё-дерево>
+#       СДАЧА ветки исполнителем: то же на одном своём дереве, отказы дословно.
 #
 # ЗАЧЕМ ПЕРВЫЙ РЕЖИМ (замер /release-speed, 2026-09-21, интегратор). За одну ночь
 # дважды полный прогон ловил отказы, которые дают вердикт за секунды сами по себе:
@@ -56,6 +58,7 @@ export LC_ALL=C
 usage() {
     echo "usage: merge-precheck.sh <tree>                       (after merge)" >&2
     echo "       merge-precheck.sh --branch <tree> [--base <tree>] (before merge)" >&2
+    echo "       merge-precheck.sh --report <tree>                (hand-over: own tree only)" >&2
     exit 2
 }
 
@@ -117,7 +120,8 @@ gates_on_tree() {
     echo "   rc=$rc_novac"
     { collect_fails "$work/main.log" "$rc_main" "основной гейт"
       collect_fails "$work/novac.log" "$rc_novac" "гейт Карины"
-    } | sed -E 's/[0-9]+/N/g' | sort -u > "$out"
+    } > "$out.raw"
+    sed -E 's/[0-9]+/N/g' "$out.raw" | sort -u > "$out"
     grep -qE '^GATE: ' "$work/main.log" && : > "$out.barrier"
     rm -rf "$work"
 }
@@ -173,8 +177,38 @@ branch_mode() {
     exit 0
 }
 
+# ---- режим 3: сдача работы — красное своего дерева дословно ----------------
+# Для исполнителя, который сдаёт ветку (внешний агент вместо окна, помощник):
+# судит ТОЛЬКО своё дерево, в главное не заходит, строки отказов печатает как
+# есть — с числами, без нормализации. Замер, ради которого режим заведён
+# (docs/dev/opencode-runbook.md, пачка Kim Code 2026-09-23): «PASS» в докладе
+# значило одни модульные тесты, а на дереве краснели 13 стражей, зелёных на
+# `main`. Вывод этой команды прикладывается к сдаче целиком, не пересказом.
+report_mode() {
+    local TREE="$1"
+    [ -f "$TREE/scripts/gate.sh" ] || { echo "merge-precheck: в '$TREE' нет scripts/gate.sh — это не дерево репозитория" >&2; exit 2; }
+    scratch="$(mktemp -d)"; trap 'rm -rf "$scratch"' EXIT
+    echo "merge-precheck --report: дерево $TREE, вершина $(git -C "$TREE" rev-parse --short HEAD 2>/dev/null), незакоммиченных путей $(git -C "$TREE" status --porcelain 2>/dev/null | grep -c .)"
+    gates_on_tree "$TREE" "$scratch/t"
+    local n; n=$(grep -c . "$scratch/t.raw")
+    echo ""
+    echo "== КРАСНОЕ НА ЭТОМ ДЕРЕВЕ (ярус loop обоих гейтов) — $n"
+    [ "$n" -gt 0 ] && sed 's/^/   /' "$scratch/t.raw"
+    [ -f "$scratch/t.barrier" ] && echo "   ВНИМАНИЕ: основной гейт встал на рубеже — отказы ПОСЛЕ него не видны"
+    if [ "$n" -gt 0 ]; then
+        echo "merge-precheck --report: красное есть — приложи этот вывод к сдаче целиком." >&2
+        exit 1
+    fi
+    echo "merge-precheck ok: на ярусе loop обоих гейтов красного нет (это не авторитетный гейт)."
+    exit 0
+}
+
 [ "$#" -ge 1 ] || usage
 case "$1" in
+    --report)
+        [ "$#" -ge 2 ] || usage
+        report_mode "$(cd "$2" && pwd)"
+        ;;
     --branch)
         [ "$#" -ge 2 ] || usage
         BR="$2"; BASE="."

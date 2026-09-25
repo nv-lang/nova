@@ -7090,6 +7090,7 @@ impl CEmitter {
                     // marker (FFI/runtime entries) — default false. Ф.2 can extend
                     // ExternalDecl/ExternalRegistry to carry mutability if needed.
                     recv_mutable: false,
+                    recv_consume: false,
                     // Plan 184 (Р13/Р14): external entries carry no per-param mode
                     // markers — empty vector degrades matchers to pre-184 behaviour.
                     param_modes: Vec::new(),
@@ -7938,17 +7939,35 @@ impl CEmitter {
                         // passing a `nova_str` into a `nova_int` param (CC-FAIL). Same
                         // declaration re-supplied via builtin+import has identical param
                         // types → still deduped.
+                        // Registry 221.1 #1332: compare the parameter MODE too
+                        // (`consume` / `mut`, the D84 mode axis). A copying/consuming
+                        // pair (`fn Bag[T] mut @put(v T)` / `fn Bag[T consume] mut
+                        // @put(consume v T)`) has identical param types, so without
+                        // the mode it collapsed to the FIRST (copying) declaration:
+                        // the checker's choice of the consuming form found no FnDecl
+                        // with its span here and every call ran the copying body.
+                        // A re-supplied declaration has the same modes -> still deduped.
                         let dup = entry.iter().any(|g| {
                             g.name == f.name
                                 && g.params.len() == f.params.len()
                                 && g.params.iter().zip(f.params.iter()).all(|(gp, fp)|
                                     Self::type_ref_overload_key(&gp.ty)
-                                        == Self::type_ref_overload_key(&fp.ty))
+                                        == Self::type_ref_overload_key(&fp.ty)
+                                        && (gp.consume, gp.is_mut) == (fp.consume, fp.is_mut))
+                                // #1334: the receiver mode is the full triple --
+                                // `fn Opt[T] @mapx` / `fn Opt[T consume] consume @mapx`
+                                // are two declarations, not one re-supplied twice.
                                 && g.receiver.as_ref().map(|r| {
-                                    (r.mutable, matches!(r.kind, crate::ast::ReceiverKind::Static))
+                                    (r.mutable, r.consume,
+                                     matches!(r.kind, crate::ast::ReceiverKind::Static))
                                 }) == f.receiver.as_ref().map(|r| {
-                                    (r.mutable, matches!(r.kind, crate::ast::ReceiverKind::Static))
+                                    (r.mutable, r.consume,
+                                     matches!(r.kind, crate::ast::ReceiverKind::Static))
                                 })
+                                // D464 amendment 2026-09-25: the linearity axis --
+                                // `fn Vec[T] @index_of` / `fn Vec[T consume] @index_of`
+                                // are two declarations too.
+                                && !crate::types::linearity_pair_differs(g, f)
                         });
                         if !dup {
                             entry.push(f.clone());
@@ -8465,6 +8484,7 @@ impl CEmitter {
                         param_defaults,
                         // Plan 128 Ф.1: free fns have no receiver — false.
                         recv_mutable: false,
+                        recv_consume: false,
                         // Plan 184 (Р13/Р14): parameter-mode overload axis.
                         param_modes: Self::fn_param_modes(f),
                         // U.4.3 c2.2: source FnDecl identity for the dispatch consume.
@@ -8707,8 +8727,24 @@ impl CEmitter {
                             .map(|sigs| sigs.iter().any(|s|
                                 s.c_name == cand && s.param_modes != new_modes))
                             .unwrap_or(false);
-                        if collides {
+                        let cand = if collides {
                             format!("{}__{}", cand, Self::param_mode_tag(f))
+                        } else {
+                            cand
+                        };
+                        // D464 amendment 2026-09-25: a linearity pair (`[T]` /
+                        // `[T consume]`) shares params, receiver and param modes,
+                        // so it still collides here; the second one registered
+                        // gets a tag. Only a real collision triggers it.
+                        let lin_collides = self.method_overloads.get(&key)
+                            .map(|sigs| sigs.iter().any(|s| s.c_name == cand))
+                            .unwrap_or(false);
+                        if lin_collides {
+                            if crate::types::linearity_marks(f).iter().any(|c| *c) {
+                                format!("{cand}__lin")
+                            } else {
+                                format!("{cand}__plain")
+                            }
                         } else {
                             cand
                         }
@@ -8732,6 +8768,7 @@ impl CEmitter {
                         param_defaults,
                         // Plan 128 Ф.1: capture recv.mutable for downstream ABI dispatch.
                         recv_mutable: recv.mutable,
+                        recv_consume: recv.consume,  // #1334: receiver-consume axis
                         // Plan 184 (Р13/Р14): parameter-mode overload axis.
                         param_modes: Self::fn_param_modes(f),
                         // U.4.3 c2.2: source FnDecl identity — the KEY site for the
@@ -8831,6 +8868,7 @@ impl CEmitter {
                         // the original (Ф.2 will use this when shaping the
                         // proxy's nova_self ABI).
                         recv_mutable: base_sig.recv_mutable,
+                        recv_consume: base_sig.recv_consume,  // #1334: receiver-consume axis
                         // Plan 184 (Р13/Р14): proxy inherits base method's param modes.
                         param_modes: base_sig.param_modes.clone(),
                         // U.4.3 c2.2: D39 embed proxy is synthesized (no single FnDecl).
@@ -11917,6 +11955,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Using it here for correctness; checker enforcement (Ф.2)
                         // will wire full mut-receiver dispatch for protocol methods.
                         recv_mutable: m.receiver_mut,
+                        recv_consume: false,
                         // Plan 184 (Р13/Р14): protocol-default params default to `ro`.
                         param_modes: vec![0u8; param_c_tys.len()],
                         // U.4.3 c2.2: protocol-default method is synthesized (no FnDecl).
@@ -17470,6 +17509,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // demand. Inherit from FnDecl recv.mutable; concrete mono'd
                     // emission will use this when registering the real sig.
                     recv_mutable: recv.mutable,
+                    recv_consume: recv.consume,  // #1334: receiver-consume axis
                     // Plan 184 (Р13/Р14): generic mono-sentinel — carry the source
                     // param modes so a concrete mono method can still be mode-matched.
                     param_modes: Self::fn_param_modes(f),
@@ -19896,17 +19936,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // mode-overload (`fn T @m(x H)` vs `fn T mut @m(mut x H)`) emits
                     // its OWN body under its OWN mangled symbol.
                     let want_modes = Self::fn_param_modes(f);
-                    // Pass 0: exact match on params + recv_mutable + param_modes.
+                    // Registry 221.1 #1334: the receiver-consume axis too --
+                    // `fn T @m()` / `fn T consume @m()` share params and
+                    // `recv_mutable`, so without it both bodies took the
+                    // first one's symbol (C redefinition).
+                    let want_recv_consume = recv.consume;
+                    // D464 amendment 2026-09-25: a linearity pair is identical in
+                    // everything the passes below compare, so the declaration's own
+                    // registration (its span) decides first.
+                    if let Some(sig) = overloads.iter().find(|s| s.fn_span == Some(f.span)) {
+                        return sig.c_name.clone();
+                    }
+                    // Pass 0: exact match on params + receiver mode + param_modes.
                     for sig in overloads.iter() {
                         if sig.param_c_types == want_params
                             && sig.recv_mutable == want_recv_mut
+                            && sig.recv_consume == want_recv_consume
                             && sig.param_modes == want_modes {
                             return sig.c_name.clone();
                         }
                     }
-                    // First pass: exact match on both params + recv_mutable.
+                    // First pass: exact match on both params + receiver mode.
                     for sig in overloads.iter() {
-                        if sig.param_c_types == want_params && sig.recv_mutable == want_recv_mut {
+                        if sig.param_c_types == want_params && sig.recv_mutable == want_recv_mut
+                            && sig.recv_consume == want_recv_consume {
                             return sig.c_name.clone();
                         }
                     }
@@ -26508,6 +26561,48 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
     /// Plan 48: register a monomorphized METHOD instance (add forward decl + worklist entry).
     /// Like register_mono_instance but prepends `nova_self` receiver param.
+    /// Registry 221.1 #1336: the Nova-body method `method` of the builtin sum
+    /// `sum` (`Option` / `Result`) the call lowers. A receiver-mode pair
+    /// (`fn Option[Result[T, E]] @tp()` / `fn Option[Result[T consume, E
+    /// consume]] consume @tp()`, D84 mode axis, R14) keeps two declarations
+    /// in `generic_type_methods`; the first-wins lookup ran the copying body
+    /// for every call. With several same-name declarations the checker's
+    /// choice (`resolved_callees`, by `FnDecl.span`) decides; otherwise the
+    /// single declaration, as before.
+    fn builtin_sum_method_decl(
+        &self,
+        sum: &str,
+        method: &str,
+        call_id: crate::ast::ExprId,
+    ) -> Option<crate::ast::FnDecl> {
+        let same: Vec<&crate::ast::FnDecl> = self.generic_type_methods
+            .get(sum)
+            .map(|ms| ms.iter().filter(|m| m.name == method).collect())
+            .unwrap_or_default();
+        if same.len() > 1 {
+            if let Some(sp) = self.resolved_callees.get(&call_id) {
+                if let Some(f) = same.iter().find(|m| m.span == *sp) {
+                    return Some((*f).clone());
+                }
+            }
+        }
+        same.first().map(|f| (*f).clone())
+    }
+
+    /// #1336: the mono-name kind segment of a builtin-sum Nova-body method --
+    /// `method`, or `consume` for the consuming half of a receiver-mode pair
+    /// (a same-name sibling whose receiver is not `consume`), so the two
+    /// halves get two C symbols. Only a real pair is tagged: every existing
+    /// mono name stays `Nova_<Sum>_method_<m>_<T>`.
+    fn builtin_sum_method_kind(&self, sum: &str, f: &crate::ast::FnDecl) -> &'static str {
+        let is_consume = |g: &crate::ast::FnDecl| g.receiver.as_ref().map_or(false, |r| r.consume);
+        let paired = is_consume(f)
+            && self.generic_type_methods.get(sum).map_or(false, |ms| {
+                ms.iter().any(|g| g.name == f.name && !is_consume(g))
+            });
+        if paired { "consume" } else { "method" }
+    }
+
     fn register_mono_method_instance(
         &mut self,
         fn_decl: &crate::ast::FnDecl,
@@ -30695,8 +30790,70 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// Plan 217: does this block contain at least one bare consume-let that
     /// qualifies for auto-cleanup (`auto_cleanup_qualifies`)? Non-recursive,
     /// mirrors `block_has_defers` (nested blocks get their own scope).
-    fn block_has_auto_cleanup_lets(&self, block: &Block) -> bool {
-        block.stmts.iter().any(|s| matches!(s, Stmt::Let(decl) if self.auto_cleanup_qualifies(decl).is_some()))
+    fn block_has_auto_cleanup_lets(&mut self, block: &Block) -> bool {
+        // Cheap syntactic gate first: only a bare `consume X = e` can qualify.
+        if !block.stmts.iter().any(|s| matches!(s,
+            Stmt::Let(d) if d.consume && matches!(d.pattern, Pattern::Ident { .. })))
+        {
+            return false;
+        }
+        let mut shadowed: Vec<(String, Option<String>, String)> = Vec::new();
+        let mut found = false;
+        for s in &block.stmts {
+            if let Stmt::Let(decl) = s {
+                if self.auto_cleanup_qualifies(decl).is_some() {
+                    found = true;
+                    break;
+                }
+            }
+            self.prescan_declare_let(s, &mut shadowed);
+        }
+        self.prescan_restore_lets(shadowed);
+        found
+    }
+
+    /// Registry 221.1 #1341: the auto-cleanup prologue scan
+    /// (`block_has_auto_cleanup_lets`, `enter_defer_scope`) types every bare
+    /// `consume X = e` of a block BEFORE any statement of it is emitted, so
+    /// `e` was typed without the block's EARLIER locals -- and `var_types` is
+    /// not function-scoped, so a name the block declares earlier resolved to
+    /// whatever ANOTHER function last bound under that name. The field cache
+    /// makes this systematic: its hoisted `ro _at_data = @data` precedes
+    /// `consume removed = unsafe { _at_data.read_consume_at(i) }`
+    /// (`Vec @swap_remove`), and `_at_data` is a name every Vec/ReadBuffer
+    /// method shares -- `Vec[int] @swap_remove` was typed through
+    /// ReadBuffer's `_at_data: []u8` (E_CODEGEN_TYPE_UNKNOWN) or, before
+    /// #1341, silently through the previous mono's `Nova_EmbeddedEntry**`.
+    /// The scan now walks the block in emission order and, after each
+    /// statement, declares a plain `let` it passed (its annotation, else its
+    /// value's type), as emission will; `prescan_restore_lets` undoes it
+    /// before the real emission. Records `(name, previous, inserted)`.
+    fn prescan_declare_let(&mut self, s: &Stmt, shadowed: &mut Vec<(String, Option<String>, String)>) {
+        let Stmt::Let(d) = s else { return };
+        let Pattern::Ident { name, .. } = &d.pattern else { return };
+        let ty = match &d.ty {
+            Some(t) => self.type_ref_to_c(t).unwrap_or_default(),
+            None => self.infer_expr_c_type(&d.value),
+        };
+        if ty.is_empty() {
+            return;
+        }
+        let prev = self.var_types.insert(name.clone(), ty.clone());
+        shadowed.push((name.clone(), prev, ty));
+    }
+
+    /// #1341: undo `prescan_declare_let`, newest first. An entry the prologue
+    /// itself re-bound meanwhile (the hoisted auto-cleanup binding) is kept.
+    fn prescan_restore_lets(&mut self, shadowed: Vec<(String, Option<String>, String)>) {
+        for (name, prev, inserted) in shadowed.into_iter().rev() {
+            if self.var_types.get(&name) != Some(&inserted) {
+                continue;
+            }
+            match prev {
+                Some(p) => { self.var_types.insert(name, p); }
+                None => { self.var_types.remove(&name); }
+            }
+        }
     }
 
     /// Push a new defer scope onto the stack and emit its prologue:
@@ -30710,6 +30867,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let block_id = self.defer_block_counter;
         let mut entries: Vec<DeferEntry> = Vec::new();
         let mut idx = 0usize;
+        // #1341: see `prescan_declare_let` -- the scan sees the block's earlier
+        // locals, in emission order; undone after the loop.
+        let mut prescan_shadowed: Vec<(String, Option<String>, String)> = Vec::new();
         for s in &block.stmts {
             // Plan 173 Ф.1 (#4): only plain `defer` remains (D189).
             // Plan 217 (гибрид C): bare auto-cleanup-eligible `consume X = e;`
@@ -30841,6 +31001,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     continue;
                 }
             }
+            // #1341: a plain let passed -> visible to the later statements' scan.
+            self.prescan_declare_let(s, &mut prescan_shadowed);
             let (body, outcome_binding) = match s {
                 Stmt::Defer { body, outcome_binding, .. } => (body, outcome_binding.clone()),
                 _ => continue,
@@ -30855,6 +31017,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.line(&format!("int {} = 0;", var));
             idx += 1;
         }
+        self.prescan_restore_lets(prescan_shadowed);
         // Plan 100.8 (D166) C-codegen fix: hoist Let bindings referenced in
         // errdefer/defer bodies so they're declared BEFORE the setjmp handler.
         // In C, a variable's scope starts at its declaration; if an errdefer
@@ -42656,10 +42819,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             has_nova_body: true,
                         }) = &routing {
                             // FnDecl собран в Ф.1.1 в `generic_type_methods`.
-                            let fn_decl = self.generic_type_methods
-                                .get("Option")
-                                .and_then(|ms| ms.iter().find(|m| m.name == method.as_str()))
-                                .cloned();
+                            // #1336: the checker's choice among a receiver-mode pair.
+                            let fn_decl = self.builtin_sum_method_decl(
+                                "Option", method.as_str(), call_id);
                             if let Some(fn_decl) = fn_decl {
                                 // Recover real C-type для T из `novaopt_value_types`
                                 // (хранит mapping sanitized→real). Для примитивов
@@ -42702,7 +42864,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     // map[int]` коллизятся в одном C-имени
                                     // `Nova_Option_method_map_nova_int`.
                                     let base_name = format!(
-                                        "Nova_Option_method_{}_{}",
+                                        "Nova_Option_{}_{}_{}",
+                                        self.builtin_sum_method_kind("Option", &fn_decl),
                                         method.as_str(), elem_ty);
                                     let mono_name = if method_extras.is_empty() {
                                         base_name
@@ -42943,10 +43106,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if let Some(super::sum_schema_registry::MethodRouting::DeclaredBody {
                             has_nova_body: true,
                         }) = &routing {
-                            let fn_decl = self.generic_type_methods
-                                .get("Result")
-                                .and_then(|ms| ms.iter().find(|m| m.name == method.as_str()))
-                                .cloned();
+                            // #1336: the checker's choice among a receiver-mode pair.
+                            let fn_decl = self.builtin_sum_method_decl(
+                                "Result", method.as_str(), call_id);
                             if let Some(fn_decl) = fn_decl {
                                 // Recover (ok_c, err_c) из mono'd `NovaRes_<n>*`.
                                 // Legacy `Nova_Result*` — fallback erased
@@ -42990,7 +43152,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     // (`_<U>...`) после `_<ok>_<err>`.
                                     let suffix = Self::novares_name(&ok_c, &err_c);
                                     let base_name = format!(
-                                        "Nova_Result_method_{}_{}",
+                                        "Nova_Result_{}_{}_{}",
+                                        self.builtin_sum_method_kind("Result", &fn_decl),
                                         method.as_str(), suffix);
                                     let mono_name = if method_extras.is_empty() {
                                         base_name
@@ -44555,11 +44718,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     && obj_ty != "void*"
                 {
                     let is_const = obj_ty.starts_with("const ");
-                    if method == "read" && args.is_empty() {
+                    // D216 амендмент 2026-09-25 (план 246): `read_consume`/
+                    // `write_consume` — то же самое чтение/копирующая запись
+                    // байт, что `read`/`write`; разница (владение против
+                    // копии) — на уровне check_consume/ConsumeCtx, не codegen.
+                    if (method == "read" || method == "read_consume") && args.is_empty() {
                         let obj_c = self.emit_expr(obj)?;
                         return Ok(format!("(*({}))", obj_c));
                     }
-                    if method == "write" && args.len() == 1 && !is_const {
+                    if (method == "write" || method == "write_consume")
+                        && args.len() == 1 && !is_const {
                         // Plan 174.5 §3: `.write(v *T)` overload — copy FROM a
                         // source pointer (large struct, avoids a value-copy
                         // through the call). Detected by the arg's C-type
@@ -44648,12 +44816,48 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // contract as `.read()`); `write_at` is the SOLE write-cap
                     // checkpoint for the index form (mirrors `.write`'s `is_const`
                     // gate, one code path for both).
-                    if method == "read_at" && args.len() == 1 {
+                    // D216 амендмент 2026-09-25 (план 246): `read_consume_at`/
+                    // `write_consume_at` — тот же индекс-сахар, что
+                    // `read_at`/`write_at` (владение решается вне codegen).
+                    if (method == "read_at" || method == "read_consume_at") && args.len() == 1 {
                         let obj_c = self.emit_expr(obj)?;
                         let idx_c = self.emit_expr(args[0].expr())?;
                         return Ok(format!("(*(({}) + ({})))", obj_c, idx_c));
                     }
-                    if method == "write_at" && args.len() == 2 {
+                    // D216 амендмент 2026-09-25 п. 3 (план 246): `view(f)` /
+                    // `view_at(i, f)` ≡ `f(p.read())` / `f(p.read_at(i))` —
+                    // опускается в синтетический блок (`ptr_view_synth`),
+                    // инференс-близнец — `infer_call_ret_c` B11d.
+                    if method == "view" || method == "view_at" {
+                        let tag = self.fresh_tmp_named("view");
+                        if let Some(synth) = Self::ptr_view_synth(obj, method, args, &tag) {
+                            // Путь временной: сигнатура `__nova_view_f<tag>`
+                            // нужна пробе типа блока ДО emit'а его `let`
+                            // (см. `ptr_view_temp_ret_c`).
+                            let f_name = format!("__nova_view_f{}", tag);
+                            let is_temp = matches!(&synth.kind, ExprKind::Block(b)
+                                if matches!(b.stmts.first(), Some(Stmt::Let(d))
+                                    if matches!(&d.pattern, Pattern::Ident { name, .. } if *name == f_name)));
+                            let mut pre = None;
+                            if is_temp {
+                                let elem_c = obj_ty.trim_start_matches("const ")
+                                    .strip_suffix('*').unwrap_or_default().trim().to_string();
+                                let f = args[args.len() - 1].expr();
+                                if let Some(ret_c) = self.ptr_view_temp_ret_c(f, &elem_c, Some(call_id)) {
+                                    pre = Some(self.fn_param_sigs.insert(f_name.clone(), (vec![elem_c], ret_c)));
+                                }
+                            }
+                            let r = self.emit_expr(&synth);
+                            if let Some(prev) = pre {
+                                match prev {
+                                    Some(old) => { self.fn_param_sigs.insert(f_name, old); }
+                                    None => { self.fn_param_sigs.remove(&f_name); }
+                                }
+                            }
+                            return r;
+                        }
+                    }
+                    if (method == "write_at" || method == "write_consume_at") && args.len() == 2 {
                         if is_const {
                             let msg = "error: [E_POINTER_RO_ASSIGN] cannot `.write_at()` \
                                 through a readonly pointer — `*T` is a readonly pointee \
@@ -54815,6 +55019,197 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         format!("_nv_tmp_{}", n)
     }
 
+    /// D216 амендмент 2026-09-25 п. 3 (план 246): `p.view(f)` /
+    /// `p.view_at(i, f)`, `f fn(T) -> R`, результат `R`. По смыслу
+    /// `p.view(f)` ≡ `f(p.read())`, `p.view_at(i, f)` ≡ `f(p.read_at(i))` —
+    /// ровно так операция и опускается: строится синтетическое выражение
+    /// из уже поддержанных форм, и emit / инференс типа идут по нему (одно
+    /// дерево на оба пути — рассинхрона C-типа нет). Элемент сначала
+    /// кладётся во временную `__nova_view_e<tag>` (индекс и приёмник
+    /// вычисляются ДО привязки имени параметра — `p.view_at(x, |x| …)` не
+    /// путает внешний `x` с параметром).
+    ///
+    /// Формы `f`:
+    /// - литерал с одним параметром (`|x| expr`, `|x| { … }`,
+    ///   `fn(x T) -> R => …`) без `return` в теле — подставляется на месте:
+    ///   `{ ro __e = p.read_at(i); ro x [T] = __e; тело }` (при `-> R` тело
+    ///   привязывается к `ro __r R`). Кодоген не умеет вызывать литерал
+    ///   замыкания на месте (`(|x| x+1)(v)` — E_CODEGEN_TYPE_UNKNOWN), а
+    ///   подстановка сохраняет захваты как есть (внешние имена видны в блоке);
+    /// - имя (функция или локал-значение-функция) — `f(__e)`;
+    /// - прочее (литерал с `return` в теле — подстановка изменила бы его
+    ///   смысл; вызов, вернувший функцию; поле) — `f` вычисляется ОДИН раз
+    ///   во временную `__nova_view_f<tag>`, затем `__nova_view_f<tag>(__e)`.
+    ///
+    /// Элемент не изымается и ничем не помечается: оракул только принимает
+    /// форму (решение владельца, план 246); линейность проверяет Карина.
+    fn ptr_view_synth(obj: &Expr, method: &str, args: &[CallArg], tag: &str) -> Option<Expr> {
+        let (idx, f) = match (method, args) {
+            ("view", [f]) => (None, f.expr()),
+            ("view_at", [i, f]) => (Some(i.expr()), f.expr()),
+            _ => return None,
+        };
+        let sp = obj.span;
+        let let_ro = |name: &str, value: Expr| Stmt::Let(LetDecl {
+            mutable: false,
+            pattern: Pattern::Ident { name: name.to_string(), span: sp, is_mut: false, is_consume: false },
+            ty: None,
+            value,
+            span: sp,
+            is_ghost: false,
+            consume: false,
+        });
+        let read_name = if idx.is_some() { "read_at" } else { "read" };
+        let elem = Expr::new(
+            ExprKind::Call {
+                func: Box::new(Expr::new(
+                    ExprKind::Member { obj: Box::new(obj.clone()), name: read_name.to_string() },
+                    sp,
+                )),
+                args: idx.map(|i| vec![CallArg::Item(i.clone())]).unwrap_or_default(),
+                trailing: None,
+            },
+            sp,
+        );
+        let e_name = format!("__nova_view_e{}", tag);
+        let e_ident = Expr::new(ExprKind::Ident(e_name.clone()), sp);
+        let mut stmts = vec![let_ro(&e_name, elem)];
+        // Литерал с одним параметром: (имя, аннотация параметра, тело,
+        // аннотация результата). Тело-блок заворачивается в `Expr::Block`.
+        let literal: Option<(&str, Option<TypeRef>, Expr, Option<TypeRef>)> = match &f.kind {
+            ExprKind::ClosureLight { params, body } if params.len() == 1 => Some((
+                params[0].name.as_str(),
+                None,
+                match body {
+                    ClosureBody::Expr(be) => (**be).clone(),
+                    ClosureBody::Block(b) => Expr::new(ExprKind::Block(b.clone()), b.span),
+                },
+                None,
+            )),
+            ExprKind::Lambda { params, body, return_type, .. } if params.len() == 1 => Some((
+                params[0].name.as_str(),
+                params[0].ty.clone(),
+                (**body).clone(),
+                return_type.clone(),
+            )),
+            ExprKind::ClosureFull(sb) if sb.params.len() == 1 => match &sb.body {
+                FnBody::Expr(be) => Some((
+                    sb.params[0].name.as_str(),
+                    Some(sb.params[0].ty.clone()),
+                    be.clone(),
+                    sb.return_type.clone(),
+                )),
+                FnBody::Block(b) => Some((
+                    sb.params[0].name.as_str(),
+                    Some(sb.params[0].ty.clone()),
+                    Expr::new(ExprKind::Block(b.clone()), b.span),
+                    sb.return_type.clone(),
+                )),
+                FnBody::External => None,
+            },
+            _ => None,
+        };
+        // `return` в теле литерала выходит из ЗАМЫКАНИЯ; после подстановки он
+        // вышел бы из объемлющей функции — такой литерал идёт путём
+        // временной. Поиск по Debug-печати консервативен: ложное совпадение
+        // (строка-литерал с тем же текстом) лишь уводит на путь временной.
+        let literal = literal.filter(|(_, _, body, _)| !format!("{:?}", body).contains("Return {"));
+        let trailing = match literal {
+            Some((pname, pty, body, ret_ty)) => {
+                if pname != "_" {
+                    let mut d = let_ro(pname, e_ident);
+                    if let Stmt::Let(ld) = &mut d { ld.ty = pty; }
+                    stmts.push(d);
+                }
+                match ret_ty {
+                    // `-> R` литерала — результат приводится к `R`, как
+                    // приводился бы `return` замыкания.
+                    Some(rt) => {
+                        let r_name = format!("__nova_view_r{}", tag);
+                        let mut d = let_ro(&r_name, body);
+                        if let Stmt::Let(ld) = &mut d { ld.ty = Some(rt); }
+                        stmts.push(d);
+                        Expr::new(ExprKind::Ident(r_name), sp)
+                    }
+                    None => body,
+                }
+            }
+            None if matches!(&f.kind, ExprKind::Ident(_) | ExprKind::Path(_)) => Expr::new(
+                ExprKind::Call {
+                    func: Box::new(f.clone()),
+                    args: vec![CallArg::Item(e_ident)],
+                    trailing: None,
+                },
+                sp,
+            ),
+            _ => {
+                let f_name = format!("__nova_view_f{}", tag);
+                // `f` вычисляется ДО элемента — порядок `f(p.read_at(i))`.
+                stmts.insert(0, let_ro(&f_name, f.clone()));
+                Expr::new(
+                    ExprKind::Call {
+                        func: Box::new(Expr::new(ExprKind::Ident(f_name), sp)),
+                        args: vec![CallArg::Item(e_ident)],
+                        trailing: None,
+                    },
+                    sp,
+                )
+            }
+        };
+        Some(Expr::new(
+            ExprKind::Block(Block { stmts, trailing: Some(Box::new(trailing)), span: sp, is_unsafe: false }),
+            sp,
+        ))
+    }
+
+    /// Путь временной `ptr_view_synth` (`f` — не подставляемый литерал и не
+    /// имя): C-тип результата `R` для вызова `__nova_view_f<tag>(__e)`.
+    /// Проба типа блока (`emit_block_expr` / `infer_expr_c_type`) идёт ДО
+    /// того, как `let __nova_view_f = f` зарегистрирует сигнатуру в
+    /// `fn_param_sigs`, и без этого ответа даёт пустой тип. Порядок: канал
+    /// чекера на самом вызове → канал замыкания (`R::Func` на `f`) →
+    /// аннотация `-> R` литерала → тело литерала при параметре типа элемента
+    /// (тот же приём, что B10c в `infer_call_ret_c`).
+    fn ptr_view_temp_ret_c(&self, f: &Expr, elem_c: &str, call_id: Option<ExprId>) -> Option<String> {
+        let ok = |s: String| if s.is_empty() || s == "void*" { None } else { Some(s) };
+        if let Some(id) = call_id.filter(|i| i.is_set()) {
+            if let Some(rt) = self.resolved_types.get(&id) {
+                if let Some(c) = self.resolved_type_to_c(rt).ok().and_then(ok) {
+                    return Some(c);
+                }
+            }
+        }
+        if let Some(c) = self.closure_channel_ret_c(f.id).and_then(ok) {
+            return Some(c);
+        }
+        let (pname, body): (&str, Expr) = match &f.kind {
+            ExprKind::ClosureFull(sb) => {
+                return match &sb.return_type {
+                    Some(t) => self.type_ref_to_c(t).ok().and_then(ok),
+                    None => Some("nova_unit".into()),
+                };
+            }
+            ExprKind::Lambda { return_type: Some(t), .. } => {
+                return self.type_ref_to_c(t).ok().and_then(ok);
+            }
+            ExprKind::Lambda { params, body, .. } if params.len() == 1 => {
+                (params[0].name.as_str(), (**body).clone())
+            }
+            ExprKind::ClosureLight { params, body } if params.len() == 1 => (
+                params[0].name.as_str(),
+                match body {
+                    ClosureBody::Expr(be) => (**be).clone(),
+                    ClosureBody::Block(b) => Expr::new(ExprKind::Block(b.clone()), b.span),
+                },
+            ),
+            _ => return None,
+        };
+        self.closure_param_type_overrides.borrow_mut().insert(pname.to_string(), elem_c.to_string());
+        let r = self.infer_expr_c_type(&body);
+        self.closure_param_type_overrides.borrow_mut().remove(pname);
+        ok(r)
+    }
+
     /// Clear the heap-promoted var_boxed registry at function exit.
     /// No #undef needed — var_boxed uses ExprKind::Ident rewriting, not macros.
     fn flush_boxed_vars(&mut self) {
@@ -62097,7 +62492,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             && obj_ty != "void*"
                         {
                             self.icr_trace("B11d_typed_pointer_methods");
-                            if method == "read" && args.is_empty() {
+                            // D216 амендмент 2026-09-25 (план 246): consume-формы
+                            // возвращают тот же C-тип, что read/write (см. emit_call
+                            // twin ~L44558 и checker Channel-2 twin в types/mod.rs).
+                            if (method == "read" || method == "read_consume") && args.is_empty() {
                                 // pointee = strip "const " prefix + ONE trailing
                                 // '*' (not `trim_end_matches`, which would over-
                                 // strip a `Nova_X**` double-pointer to `Nova_X`).
@@ -62105,7 +62503,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     .strip_suffix('*').unwrap_or_default().trim();
                                 return pointee.to_string();
                             }
-                            if method == "write" && args.len() == 1 {
+                            if (method == "write" || method == "write_consume") && args.len() == 1 {
                                 return "nova_unit".into();
                             }
                             // [M-ptr-raw-access-contract-and-unaligned] item 2:
@@ -62133,13 +62531,35 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // Plan 174.5 Ф.2 (§3): read_at/write_at/offset/dist +
                             // copy_from(_nonoverlapping)/copy_to(_nonoverlapping)
                             // — same infer channel as the read/write family above.
-                            if method == "read_at" && args.len() == 1 {
+                            if (method == "read_at" || method == "read_consume_at") && args.len() == 1 {
                                 let pointee = obj_ty.trim_start_matches("const ")
                                     .strip_suffix('*').unwrap_or_default().trim();
                                 return pointee.to_string();
                             }
-                            if method == "write_at" && args.len() == 2 {
+                            if (method == "write_at" || method == "write_consume_at") && args.len() == 2 {
                                 return "nova_unit".into();
+                            }
+                            // D216 амендмент 2026-09-25 п. 3: `view(f)` /
+                            // `view_at(i, f)` → C-тип `R` — инференс ТОГО ЖЕ
+                            // синтетического блока, что эмитит emit_call
+                            // (`ptr_view_synth`; имя временной на тип не влияет).
+                            if method == "view" || method == "view_at" {
+                                if let Some(synth) = Self::ptr_view_synth(obj, method, args, "") {
+                                    let t = self.infer_expr_c_type(&synth);
+                                    if !t.is_empty() {
+                                        return t;
+                                    }
+                                    // Путь временной: сигнатура `f` ещё не
+                                    // зарегистрирована — см. `ptr_view_temp_ret_c`.
+                                    let elem_c = obj_ty.trim_start_matches("const ")
+                                        .strip_suffix('*').unwrap_or_default().trim().to_string();
+                                    if let Some(r) = self.ptr_view_temp_ret_c(
+                                        args[args.len() - 1].expr(), &elem_c, Some(expr.id))
+                                    {
+                                        return r;
+                                    }
+                                    return t;
+                                }
                             }
                             // Model A (sign-off 2026-06-22): `.offset(n)` does
                             // NOT degrade the receiver type (`*T`→`*T`,

@@ -1,0 +1,19 @@
+// #1332 carrier: the #309 probe shape -- `mut x = 5; b.put(x)` with a copying/consuming pair -- refused: use of consumed `x` (D131). Rule 3 (10-overloading.md) says a plain binding takes the COPYING form.
+// EXPECT_STDOUT x
+module standalone.r309_mut_int_binding
+
+type Bag {
+    n int
+}
+
+fn Bag @put(v int) -> int => 1
+
+fn Bag @put(consume v int) -> int => v
+
+
+fn main() Io -> () {
+    ro b = Bag { n: 0 }
+    mut x = 5
+    ro k = b.put(x)
+    print("form=${k} x=${x}")
+}

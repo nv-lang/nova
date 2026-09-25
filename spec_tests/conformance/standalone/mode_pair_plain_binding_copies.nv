@@ -1,0 +1,149 @@
+// Registry 221.1 #1332 (a regression of #309): D84 mode axis, rule 3
+// (spec/decisions/10-overloading.md). For an overload pair that differs only
+// by the mode of one parameter (`v T` / `consume v T`), a temporary or a
+// `consume`-spelled binding takes the CONSUMING form; a plain `ro` / `mut`
+// binding takes the COPYING form and stays live after the call.
+//
+// Two defects were measured before the fix:
+//   * the consume pass declared a plain binding consumed whenever the NAME had
+//     a consuming declaration (`fn_params` / `method_params` hold one index set
+//     per name), so `put(x)` followed by a read of `x` was refused as D131;
+//   * on a GENERIC receiver (`Cell[T]` / `Cell[T consume]`) the codegen
+//     collapsed the pair into its first (copying) declaration, so a temporary
+//     ran the copying body -- for a must-consume `Res`, a copying body over a
+//     linear value;
+//   * a `consume` binding from a PATTERN (`Ok(consume s)`) never reached the
+//     dispatch's set of consume-spelled bindings: the consume pass treated
+//     `use_conn(s)` as moving `s` while the program ran the view form, and the
+//     linear value leaked silently (the check-vs-emit divergence reported
+//     2026-09-24, same class).
+//
+// Every call below reports the form it ran: the copying forms add 100 to the
+// value, the consuming forms hand the value back as is (the generic pair
+// records the form in the receiver's `n`: 1 = copying, 2 = consuming). A
+// must-consume element (`Cell[Res]`) has no copying form (D156 amendment
+// 2026-09-24), so its temporary takes the consuming one.
+// EXPECT_STDOUT fn:105,x=5 fn:42 fn:7 me:105,i=5 me:106,j=6 me:42 me:9 gen:1,k=3 gen:2 gen:2 res:2,id=11 lin:consume3 lin:consume4
+module standalone.mode_pair_plain_binding_copies
+
+// -- a free-function pair over a record --------------------------------------
+
+type Box {
+    n int
+}
+
+fn put(v Box) -> Box => { n: v.n + 100 }
+
+fn put(consume v Box) -> Box => v
+
+// A `consume` parameter is a consume-spelled binding: it takes the consuming form.
+fn put_owned(consume v Box) -> Box => put(v)
+
+// -- a method pair on a plain receiver ---------------------------------------
+
+type Bag {
+    n int
+}
+
+fn Bag @put(v int) -> int => v + 100
+
+fn Bag @put(consume v int) -> int => v
+
+// -- a method pair on a generic receiver --------------------------------------
+
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> int => @id
+
+type Cell[T consume] {
+    n int
+}
+
+fn Cell[T consume] consume @done() -> () {
+}
+
+// Both forms return `ro T`, so the pair differs ONLY by the parameter mode.
+// copying form: ordinary T only
+fn Cell[T] mut @put(v T) -> ro T {
+    @n = 1
+    v
+}
+
+// consuming form: any T
+fn Cell[T consume] mut @put(consume v T) -> ro T {
+    @n = 2
+    v
+}
+
+// -- a free-function pair over a must-consume type ------------------------------
+
+type Conn consume {
+    id int
+}
+
+fn Conn consume @close() -> int => @id
+
+fn open_conn(id int) -> Result[Conn, str] => Ok(Conn { id })
+
+// view form: the caller keeps the connection
+fn use_conn(x Conn) -> str => "view${x.id}"
+
+// consuming form: the connection is closed here
+fn use_conn(consume x Conn) -> str {
+    ro id = x.close()
+    "consume${id}"
+}
+
+fn main() Io -> () {
+    // free functions: plain binding / temporary / consume parameter
+    ro x = Box { n: 5 }
+    ro f1 = put(x)
+    ro f2 = put(Box { n: 42 })
+    ro f3 = put_owned(Box { n: 7 })
+
+    // methods: `mut` binding / `ro` binding / temporary / consume binding
+    ro b = Bag { n: 0 }
+    mut i = 5
+    ro m1 = b.put(i)
+    ro j = 6
+    ro m2 = b.put(j)
+    ro m3 = b.put(40 + 2)
+    consume t = 9
+    ro m4 = b.put(t)
+
+    // generic receiver, ordinary T: plain binding / temporary / consume binding
+    mut g Cell[int] = { n: 0 }
+    ro k = 3
+    ro _g1 = g.put(k)
+    ro g1 = g.n
+    ro _g2 = g.put(7)
+    ro g2 = g.n
+    consume u = 4
+    ro _g3 = g.put(u)
+    ro g3 = g.n
+
+    // generic receiver, must-consume T: the temporary takes the consuming form
+    consume c Cell[Res] = { n: 0 }
+    consume r = c.put(Res { id: 11 })
+    ro rid = r.close()
+    ro rn = c.n
+    c.done()
+
+    // must-consume free-function pair: a pattern `consume` binding and a
+    // `consume` let both take the consuming form (nothing is left to close)
+    mut l1 = ""
+    match open_conn(3) {
+        Ok(consume s) => {
+            l1 = use_conn(s)
+        }
+        Err(_) => {
+            l1 = "err"
+        }
+    }
+    consume s2 = Conn { id: 4 }
+    ro l2 = use_conn(s2)
+
+    print("fn:${f1.n},x=${x.n} fn:${f2.n} fn:${f3.n} me:${m1},i=${i} me:${m2},j=${j} me:${m3} me:${m4} gen:${g1},k=${k} gen:${g2} gen:${g3} res:${rn},id=${rid} lin:${l1} lin:${l2}")
+}

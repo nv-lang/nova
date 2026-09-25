@@ -1,0 +1,25 @@
+// #1349 carrier (nova-postgres D8b): CC-FAIL assigning to 'NovaRes_nova_unit_nova_str *' from incompatible type 'nova_unit'.
+// EXPECT_STDOUT done
+// expected: `check` passes AND the C build succeeds — a trailing `match` in
+//   statement position whose arms diverge via `return` is ordinary code.
+// got: `check` passes, the C build fails: the match slot is emitted with the
+//   function's Result type, e.g.
+//   error: assigning to 'NovaRes_nova_unit_NovaString*' from incompatible
+//   type 'nova_unit'
+// command: ./nova.sh check repro-local/match_arm_return/src/main.nv → ok
+//          ./nova.sh build repro-local/match_arm_return/src/main.nv -o target/mar.exe → C error above
+module main
+
+fn f(x int) -> Result[(), str] {
+    match x {
+        0 => return Err("zero")
+        _ => ()
+    }
+}
+
+fn main() {
+    match f(1) {
+        Ok(()) => println("done")
+        Err(e) => println(e)
+    }
+}

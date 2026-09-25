@@ -26,6 +26,106 @@ export fn Vec[T] mut @push(v T) -> @ {
     @len += 1
 }
 
+/// Append `v`, taking ownership of it -- the consuming form of `push`. D84 mode
+/// rule 3 picks it for a temporary or a `consume` binding; for a must-consume
+/// `T` it is the only `push` (the copying form above is ordinary-`T` only,
+/// D156 amendment 2026-09-24, point 4). Plan 246, class B.
+export fn Vec[T consume] mut @push(consume v T) -> @ {
+    @reserve(1)
+    unsafe {
+        @data.write_consume_at(@len, v)
+    }
+    @len += 1
+}
+
+/// Insert `v` at index `i`, taking ownership of it -- the consuming form of
+/// `insert` (see the consuming `push`). Panics if `i > len`.
+export fn Vec[T consume] mut @insert(i int, consume v T) -> @
+    requires 0 <= i && i <= @len
+{
+    @reserve(1)
+    unsafe {
+        ro tail = @len - i
+        if tail > 0 {
+            RawMem.copy_n(@data.offset(i), @data.offset(i + 1), tail)
+        }
+        @data.write_consume_at(i, v)
+    }
+    @len += 1
+}
+
+/// Move every element of `other` to the end, taking ownership of `other` --
+/// the consuming form of `append`. One bulk move of the buffer
+/// (`RawMem.copy_n`; D216 amendment 2026-09-25: a bulk move is outside
+/// linearity and the module keeps it correct): every element changes owner
+/// exactly once, then `other` is ended without touching its elements.
+export fn Vec[T consume] mut @append(consume other Vec[T]) -> @ {
+    ro m = other.len()
+    if m > 0 {
+        @reserve(m)
+        unsafe {
+            RawMem.copy_n(other.data, @data.offset(@len), m)
+        }
+        @len += m
+    }
+    other.forget_moved()
+    other.destroy_empty()
+}
+
+// The elements of this vector were moved out by a bulk copy (`append`,
+// `splice`): forget them, so `destroy_empty` can end the vector without
+// touching them. Module-private: called anywhere else it would lose the
+// elements silently.
+fn Vec[T consume] mut @forget_moved() -> () {
+    @len = 0
+}
+
+/// Move every element of `other` into this vector at index `i`, taking
+/// ownership of `other` -- the consuming form of `splice`, one bulk move like
+/// the consuming `append`. Panics if `i > len`.
+export fn Vec[T consume] mut @splice(i int, consume other Vec[T]) -> @
+    requires 0 <= i && i <= @len
+{
+    ro n = other.len()
+    @reserve(n)
+    ro tail = @len - i
+    if tail > 0 {
+        unsafe {
+            RawMem.copy_n(@data.offset(i), @data.offset(i + n), tail)
+        }
+    }
+    if n > 0 {
+        unsafe {
+            RawMem.copy_n(other.data, @data.offset(i), n)
+        }
+    }
+    @len += n
+    other.forget_moved()
+    other.destroy_empty()
+}
+
+/// Replace the element at `i` with `v` and hand the old one back -- a take
+/// that leaves no hole (plan 246, "how to take ownership out point-wise").
+/// Panics if `i` is out of bounds.
+export fn Vec[T consume] mut @exchange(i int, consume v T) -> T
+    requires 0 <= i && i < @len
+{
+    consume old = unsafe { @data.read_consume_at(i) }
+    unsafe {
+        @data.write_consume_at(i, v)
+    }
+    old
+}
+
+/// Look at the element at `i` without taking it: the element is lent to `f` as
+/// a view parameter (D216 amendment 2026-09-25) -- the way to read an element
+/// of a vector of must-consume values. Panics if `i` is out of bounds.
+export fn Vec[T consume] @view[R](i int, f fn(T) -> R) -> R
+    requires 0 <= i && i < @len
+{
+    unsafe { @data.view_at(i, f) }
+}
+
 /// Publish `n` elements ALREADY WRITTEN into reserved capacity: `len += n`,
 /// `cap` unchanged — in-place grow-only twin of Rust `Vec::set_len(len + n)`.
 /// The sanctioned way to bump live length after writing directly through the
@@ -38,19 +138,19 @@ export fn Vec[T] mut @push(v T) -> @ {
 /// Reading an uninit `u8` is garbage; for pointer-bearing `T` an uninit slot
 /// is GC-hazardous (scanner walks junk) — hence the call-site obligation.
 /// Range (`0 <= n <= cap - len`) is enforced by `requires` (D257).
-export unsafe fn Vec[T] mut @advance(n int) -> @
+export unsafe fn Vec[T consume] mut @advance(n int) -> @
     requires n >= 0 && n <= @cap - @len
 {
     @len += n
 }
 
 /// Remove and return the last element, or `None` if empty.
-export fn Vec[T] mut @pop() -> Option[T] {
+export fn Vec[T consume] mut @pop() -> Option[T] {
     if @len == 0 {
         return None
     }
     @len -= 1
-    Some(unsafe { @data.read_at(@len) })
+    Some(unsafe { @data.read_consume_at(@len) })
 }
 
 /// Insert `v` at index `i`, shifting later elements right. Panics if
@@ -121,27 +221,27 @@ export fn Vec[T] mut @splice(i int, other Vec[T]) -> @
 /// One overlap-safe memmove over the prefix plus one write — half the memmove
 /// traffic of `v.insert(0, v.remove(i))`, which shifts the same prefix twice
 /// (once left closing the gap at `i`, once right opening the gap at 0).
-export fn Vec[T] mut @move_to_front(i int) -> @
+export fn Vec[T consume] mut @move_to_front(i int) -> @
     requires 0 <= i && i < @len
 {
     if i == 0 {
         return
     }
     unsafe {
-        ro moved = @data.read_at(i)
+        consume moved = @data.read_consume_at(i)
         // Shift the prefix `[0, i)` one slot right (memmove, overlap-safe),
         // then drop `moved` into the freed slot 0.
         RawMem.copy_n(@data, @data.offset(1), i)
-        @data.write_at(0, moved)
+        @data.write_consume_at(0, moved)
     }
 }
 
 /// Remove and return the element at `i`, shifting later elements left.
 /// Panics if `i` is out of bounds.
-export fn Vec[T] mut @remove(i int) -> T
+export fn Vec[T consume] mut @remove(i int) -> T
     requires 0 <= i && i < @len
 {
-    ro removed = unsafe { @data.read_at(i) }
+    consume removed = unsafe { @data.read_consume_at(i) }
     unsafe {
         // Shift the suffix `(i, len)` one slot left with a single overlap-safe
         // memmove, closing the gap left by the removed element.
@@ -154,16 +254,39 @@ export fn Vec[T] mut @remove(i int) -> T
     removed
 }
 
+/// Remove `n` elements starting at `i`, shifting later elements left. Panics
+/// if the run `[i, i + n)` is out of bounds. The removed elements are dropped,
+/// so this form is written with a plain `[T]` and exists only for an ordinary
+/// `T` (D156 amendment 2026-09-24, point 4); for a must-consume `T` take the
+/// run out with `drain(i..i + n)`.
+///
+/// ```nova
+/// mut v = Vec[int].of(1, 2, 3, 4, 5)
+/// v.remove(1, 2)
+/// assert(v.equal(Vec[int].of(1, 4, 5)))
+/// ```
+export fn Vec[T] mut @remove(i int, n int) -> @
+    requires 0 <= i && 0 <= n && i + n <= @len
+{
+    ro tail = @len - i - n
+    if n > 0 && tail > 0 {
+        unsafe {
+            RawMem.copy_n(@data.offset(i + n), @data.offset(i), tail)
+        }
+    }
+    @len -= n
+}
+
 /// Remove the element at `i` in O(1) by swapping it with the last element,
 /// then popping. Does not preserve order. Panics if `i` is out of bounds.
-export fn Vec[T] mut @swap_remove(i int) -> T
+export fn Vec[T consume] mut @swap_remove(i int) -> T
     requires 0 <= i && i < @len
 {
-    ro removed = unsafe { @data.read_at(i) }
+    consume removed = unsafe { @data.read_consume_at(i) }
     ro last = @len - 1
     if i != last {
         unsafe {
-            @data.write_at(i, @data.read_at(last))
+            @data.write_consume_at(i, @data.read_consume_at(last))
         }
     }
     @len -= 1
@@ -187,7 +310,7 @@ export fn Vec[T] mut @truncate(n int) -> @ { // [M-lint-findings-param-no-contra
 }
 
 /// Reverse the live elements in place.
-export fn Vec[T] mut @reverse() -> @ {
+export fn Vec[T consume] mut @reverse() -> @ {
     mut lo = 0
     mut hi = @len - 1
     // KEEP as while: two-pointer converge (lo++ / hi--), not a forward `0..@len` loop.
@@ -196,9 +319,9 @@ export fn Vec[T] mut @reverse() -> @ {
             // `(a, b) = (b, a)` tuple-assign isn't expressible with
             // method-call targets (`.write_at` isn't an lvalue) — a temp-swap
             // via `.read_at`/`.write_at` is the direct equivalent.
-            ro tmp = @data.read_at(lo)
-            @data.write_at(lo, @data.read_at(hi))
-            @data.write_at(hi, tmp)
+            consume tmp = @data.read_consume_at(lo)
+            @data.write_consume_at(lo, @data.read_consume_at(hi))
+            @data.write_consume_at(hi, tmp)
         }
         lo += 1
         hi -= 1
@@ -207,14 +330,14 @@ export fn Vec[T] mut @reverse() -> @ {
 
 /// Swap the elements at indices `i` and `j` in place. `i == j` is a no-op.
 /// Panics if either index is out of bounds. Returns `@` for chaining.
-export fn Vec[T] mut @swap(i int, j int) -> @
+export fn Vec[T consume] mut @swap(i int, j int) -> @
     requires 0 <= i && i < @len && 0 <= j && j < @len
 {
     if i != j {
         unsafe {
-            ro tmp = @data.read_at(i)
-            @data.write_at(i, @data.read_at(j))
-            @data.write_at(j, tmp)
+            consume tmp = @data.read_consume_at(i)
+            @data.write_consume_at(i, @data.read_consume_at(j))
+            @data.write_consume_at(j, tmp)
         }
     }
 }

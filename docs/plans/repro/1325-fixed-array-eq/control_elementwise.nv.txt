@@ -1,0 +1,21 @@
+// EXPECT_STDOUT eq
+// Control of #1325: the same values compared element by element. Builds and
+// prints `eq` -- so the arrays themselves are fine; only `==` on [N]T is not.
+fn same(a [4]u8, b [4]u8) -> bool {
+    for i in 0..4 {
+        if a[i] != b[i] {
+            return false
+        }
+    }
+    true
+}
+
+fn main() Io -> () {
+    ro a [4]u8 = [1, 2, 3, 4]
+    ro b [4]u8 = [1, 2, 3, 4]
+    if same(a, b) {
+        println("eq")
+    } else {
+        println("ne")
+    }
+}

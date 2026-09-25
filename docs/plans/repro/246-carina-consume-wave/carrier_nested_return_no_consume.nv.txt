@@ -1,0 +1,18 @@
+// oracle: nova check PASS (2026-09-25, main@c94b50a41). Carina: refuse.
+// Carina must refuse (D180 E_CONSUME_KEYWORD_MISSING): `o` holds Option[Res], a must-consume value, bound without `consume`.
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> int => @id
+
+fn wrap[T consume](consume x T) -> Option[T] => Some(x)
+
+fn main() Io -> () {
+    ro o = wrap(Res { id: 1 })
+    ro n = match consume o {
+        Some(consume r) => r.close()
+        None => 0
+    }
+    print("${n}")
+}

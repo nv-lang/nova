@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR использование потреблённой переменной `t`
+//
+// Registry 221.1 #1334 (D84 mode axis on the receiver, rule 3, R14:
+// spec/decisions/10-overloading.md): the mirror of
+// `standalone/receiver_mode_pair.nv`. For the pair `@peek()` /
+// `consume @peek()` a `ro` / `mut` binding takes the copying form and stays
+// live -- but a `consume`-spelled binding takes the CONSUMING form, so a
+// second call on it is use-after-consume (D131). The fix narrows the consume
+// pass to the receiver's form; it must not stop consuming the binding that
+// really moves.
+module neg.receiver_mode_pair_consume_then_use_neg
+
+type Tok consume {
+    n int
+}
+
+fn Tok @peek() -> int => 1
+
+fn Tok consume @peek() -> int => 2
+
+fn main() Io -> () {
+    consume t = Tok { n: 3 }
+    ro a = t.peek()
+    // nova:expect D131 -- `t` is consume-spelled, so `t.peek()` above took the consuming form (rule 3); this call is use-after-consume
+    ro b = t.peek()
+    print("${a + b}")
+}

@@ -1,0 +1,51 @@
+// EXPECT_STDOUT closed=1+2+3
+//
+// Registry 221.1 #1326, nested tail: a generic call whose declared return
+// wraps a type parameter (`-> Option[T]`, `-> Result[Option[T], E]`) bound to
+// a must-consume type, taken into a `consume` binding. The consume pass knows
+// only the wrapper's bare name there (`Option`), and used to conclude from it
+// that the binding's `consume` was unnecessary -- a false refusal
+// ([W_CONSUME_KEYWORD_UNNECESSARY]) of a correct program. Three call shapes:
+// a free function, a generic method, and a method whose
+// receiver is itself nested (`Option[Result[T, E]]`).
+
+module standalone.consume_generic_nested_return_binding
+
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> int => @id
+
+fn wrap[T consume](consume x T) -> Option[T] => Some(x)
+
+type Shelf {
+    n int
+}
+
+fn Shelf @put[T consume](consume v T) -> Option[T] => Some(v)
+
+fn Option[Result[T consume, E consume]] consume @flip() -> Result[Option[T], E]
+  => match consume @ {
+      Some(consume r) => match consume r { Ok(consume v) => Ok(Some(v)), Err(consume e) => Err(e) }
+      None => Ok(None)
+  }
+
+fn close_opt(consume o Option[Res]) -> int => match consume o { Some(consume r) => r.close(), None => 0 }
+
+fn main() Io -> () {
+    consume a = wrap(Res { id: 1 })
+    ro n1 = close_opt(a)
+
+    ro c = Shelf { n: 0 }
+    consume b = c.put(Res { id: 2 })
+    ro n2 = close_opt(b)
+
+    consume t Option[Result[Res, int]] = Some(Ok(Res { id: 3 }))
+    consume f = t.flip()
+    ro n3 = match consume f {
+        Ok(consume o) => close_opt(o)
+        Err(_) => 0
+    }
+    print("closed=${n1}+${n2}+${n3}")
+}

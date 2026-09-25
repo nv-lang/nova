@@ -1,0 +1,149 @@
+// Registry 221.1 #1336: the D84 receiver mode pair (spec/decisions/
+// 10-overloading.md, amendment 2026-07-06, R14; rule 3) on a NESTED receiver
+// of the builtin sums -- `fn Option[Result[T, E]] @tp()` beside
+// `fn Option[Result[T consume, E consume]] consume @tp()`, the shape of the
+// std `transpose` pair. A `ro` / `mut` binding takes the copying form and
+// stays live; a `consume` binding or a temporary (a call result) takes the
+// consuming form.
+//
+// Before the fix: even the copying form on `Option[Result[int, int]]` was a
+// CC-FAIL (`member reference type 'nova_int'`) -- the call's return type was
+// resolved by first-argument type only, a mode pair has no deciding argument,
+// so the binding was typed `nova_int`; the builtin-sum dispatch took the
+// FIRST same-name declaration whatever the checker chose, and both halves
+// shared one mono name; with a must-consume payload the call had no return
+// type at all (`[E_CODEGEN_TYPE_UNKNOWN]`).
+//
+// `@tpl` logs the form it ran (`copy` / `move`) into its `log` argument. The
+// zero-argument pair `@tp` is the registry carrier itself (values only). Every
+// `Res` / `Fault` is closed exactly once; `closed=` gives the count and the
+// ids in closing order.
+//
+// Bindings of the sums are annotated: an unannotated constructor receiver is
+// registry #1337 (out of scope here), and `Some(Ok(Res { .. }))` alone does not
+// fix `E` anyway -- the temporaries are call results.
+// EXPECT_STDOUT tpl: ro=5,5 mut=6,6 call=7 | res: bind=4 err=9 call=8 | tp: ro=3 res=11 | form: ro=2 call=move | log=copy,copy,copy,copy,move,move,move,move | closed=4:4,9,8,11
+module standalone.receiver_mode_pair_nested
+
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> int => @id
+
+type Fault consume {
+    code int
+}
+
+fn Fault consume @close() -> int => @code
+
+// -- the logging pair ---------------------------------------------------------
+
+fn Option[Result[T, E]] @tpl(mut log []str) -> Result[Option[T], E] {
+    log.push("copy")
+    match @ {
+        Some(r) => match r {
+            Ok(v) => Ok(Some(v))
+            Err(e) => Err(e)
+        }
+        None => Ok(None)
+    }
+}
+
+fn Option[Result[T consume, E consume]] consume @tpl(mut log []str) -> Result[Option[T], E] {
+    log.push("move")
+    match consume @ {
+        Some(consume r) => match consume r {
+            Ok(consume v) => Ok(Some(v))
+            Err(consume e) => Err(e)
+        }
+        None => Ok(None)
+    }
+}
+
+// -- the registry carrier: a zero-argument pair ------------------------------
+
+fn Option[Result[T, E]] @tp() -> Result[Option[T], E]
+  => match @ { Some(r) => match r { Ok(v) => Ok(Some(v)), Err(e) => Err(e) }, None => Ok(None) }
+
+fn Option[Result[T consume, E consume]] consume @tp() -> Result[Option[T], E]
+  => match consume @ {
+      Some(consume r) => match consume r { Ok(consume v) => Ok(Some(v)), Err(consume e) => Err(e) }
+      None => Ok(None)
+  }
+
+// -- a pair whose halves differ in the return type too: only the checker's
+//    choice can type the call ---------------------------------------------------
+
+fn Option[Result[T, E]] @form() -> int => 1
+
+fn Option[Result[T consume, E consume]] consume @form() -> str => "move"
+
+// -- helpers ------------------------------------------------------------------
+
+fn mk(n int) -> Option[Result[int, int]] => Some(Ok(n))
+
+fn mk_res(n int) -> Option[Result[Res, Fault]] => Some(Ok(Res { id: n }))
+
+fn val(r Result[Option[int], int]) -> int => match r {
+    Ok(o) => o ?? 0
+    Err(e) => e
+}
+
+// Closes whatever the result holds, once, and reports its id.
+fn fin(consume x Result[Option[Res], Fault], mut closed []int) -> int => match consume x {
+    Ok(consume o) => match consume o {
+        Some(consume v) => {
+            ro id = v.close()
+            closed.push(id)
+            id
+        }
+        None => 0
+    }
+    Err(consume f) => {
+        ro code = f.close()
+        closed.push(code)
+        code
+    }
+}
+
+fn main() Io -> () {
+    mut log []str = []
+    mut closed []int = []
+
+    // int payload: bindings copy and stay live, a call result moves
+    ro a Option[Result[int, int]] = Some(Ok(5))
+    ro a1 = val(a.tpl(log))
+    ro a2 = val(a.tpl(log))
+    mut m Option[Result[int, int]] = Some(Ok(6))
+    ro m1 = val(m.tpl(log))
+    ro m2 = val(m.tpl(log))
+    ro t1 = val(mk(7).tpl(log))
+    print("tpl: ro=${a1},${a2} mut=${m1},${m2} call=${t1}")
+
+    // must-consume payload: a consume binding and a call result move
+    consume r Option[Result[Res, Fault]] = Some(Ok(Res { id: 4 }))
+    consume rr = r.tpl(log)
+    ro k1 = fin(rr, closed)
+    consume e Option[Result[Res, Fault]] = Some(Err(Fault { code: 9 }))
+    consume ee = e.tpl(log)
+    ro k2 = fin(ee, closed)
+    consume tt = mk_res(8).tpl(log)
+    ro k3 = fin(tt, closed)
+    print(" | res: bind=${k1} err=${k2} call=${k3}")
+
+    // the zero-argument carrier pair
+    ro b Option[Result[int, int]] = Some(Ok(3))
+    ro b1 = val(b.tp())
+    consume q Option[Result[Res, Fault]] = Some(Ok(Res { id: 11 }))
+    consume qq = q.tp()
+    ro k4 = fin(qq, closed)
+    print(" | tp: ro=${b1} res=${k4}")
+
+    ro f1 = b.form()
+    ro f2 = mk(2).form()
+    print(" | form: ro=${f1 + 1} call=${f2}")
+
+    print(" | log=${log[0]},${log[1]},${log[2]},${log[3]},${log[4]},${log[5]},${log[6]},${log[7]}")
+    print(" | closed=${closed.len()}:${closed[0]},${closed[1]},${closed[2]},${closed[3]}")
+}

@@ -1,0 +1,12 @@
+// #1339 carrier: a receiver-mode pair on the builtin Option; the temporary `Some(6).mm()` must take the consuming form -- nova test: stdout `a=1 b=1` (expected `a=1 b=2`).
+// EXPECT_STDOUT a=1 b=2
+fn Option[T] @mm() -> int => 1
+
+fn Option[T consume] consume @mm() -> int => match consume @ { Some(consume v) => 2, None => 0 }
+
+fn main() Io -> () {
+    ro o = Some(5)
+    ro a = o.mm()
+    ro b = Some(6).mm()
+    print("a=${a} b=${b}")
+}

@@ -1,0 +1,22 @@
+// #1346 carrier: in `fn Vec[T consume Cleanup[E]] consume @cleanup(...)` the body
+// `mut first Option[E] = None ... first = Some(e) ... throw e` (accumulate the errors so every
+// element is cleaned first, D161) -- nova test on vec_cleanup_elements.nv: CC-FAIL
+// `assigning to 'NovaOpt_nova_int' from incompatible type 'NovaOpt_Nova_E_p'`: `E`, introduced
+// only by the bound, is not substituted in the monomorph. Body (put in std/src/collections/vec/core.nv):
+//
+// export fn Vec[T consume Cleanup[E]] consume @cleanup(outcome ScopeOutcome) Fail[E] -> () {
+//     mut first Option[E] = None
+//     for consume x in @ {
+//         with Fail[E] = |e| {
+//             if first.is_none() {
+//                 first = Some(e)
+//             }
+//         } {
+//             x.cleanup(outcome)
+//         }
+//     }
+//     match first {
+//         Some(e) => throw e
+//         None => {}
+//     }
+// }

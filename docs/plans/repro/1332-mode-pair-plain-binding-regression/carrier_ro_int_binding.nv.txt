@@ -1,0 +1,19 @@
+// #1332 carrier: the same with `ro x = 5` -- refused the same way.
+// EXPECT_STDOUT x
+module standalone.r309_ro_int_binding
+
+type Bag {
+    n int
+}
+
+fn Bag @put(v int) -> int => 1
+
+fn Bag @put(consume v int) -> int => v
+
+
+fn main() Io -> () {
+    ro b = Bag { n: 0 }
+    ro x = 5
+    ro k = b.put(x)
+    print("form=${k} x=${x}")
+}

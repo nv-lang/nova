@@ -1426,13 +1426,94 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
-rows=1276
-max=1324
+rows=1301
+max=1349
+# 2026-09-25, Carina window, merge of main into p274-novac: rows 1323 and 1324
+# (f9a69c3bf, e583aba20 -- written on the branch before main's 1325-1349) join
+# main's table. rows 1299->1301, max stays 1349. The branch-side entry they
+# arrived with, kept as it was:
 # 2026-09-23, Carina window: rows 1323 and 1324 added -- 1323 (a handler
 # literal typed E[E] instead of Effect[E], f9a69c3bf) and 1324 (a string line
 # continuation kept the next line's indentation, a silent wrong string, and
 # was refused on a CRLF file, e583aba20), both closed with their fixes.
 # rows 1274->1276, max 1322->1324.
+rows=1299
+max=1349
+# 2026-09-25, integrator: rows 1348-1349 added (from nova-postgres D8b repro-local:
+# Option[[]u8] C type not declared; a Result[(), E] fn tail typed unit). rows 1297->1299, max 1347->1349.
+rows=1297
+max=1347
+# 2026-09-25, integrator: row 1347 added (a loop after a consuming append makes the
+# consumed binding look partly consumed). rows 1296->1297, max 1346->1347.
+rows=1296
+max=1346
+# 2026-09-25, integrator: rows 1345-1346 added (a container with cleanup-carrying
+# elements is not affine; a bound-introduced type param is not monomorphized).
+# rows 1294->1296, max 1344->1346.
+rows=1294
+max=1344
+# 2026-09-25, integrator: rows 1341-1344 added (bulk append codegen panic;
+# format spec on a generic type; generic free fn monomorphs by name; strict mode
+# obligating a view parameter). rows 1290->1294, max 1340->1344.
+rows=1290
+max=1340
+# 2026-09-25, integrator: row 1340 added (a for-range bound is re-evaluated on
+# every iteration). rows 1289->1290, max 1339->1340.
+rows=1289
+max=1339
+# 2026-09-25, integrator: row 1339 added (a receiver-mode pair on the builtin
+# Option / Result picks the copying form for a temporary). rows 1288->1289, max 1338->1339.
+rows=1288
+max=1338
+# 2026-09-25, integrator: rows 1336-1338 added (nested-receiver mode pair; untyped
+# constructor receiver; match payload read as str). rows 1285->1288, max 1335->1338.
+rows=1285
+max=1335
+# 2026-09-25, integrator: row 1335 added (a generic method's mode pair whose
+# forms differ by return type: codegen takes the copying form's type). rows 1284->1285, max 1334->1335.
+rows=1284
+max=1334
+# 2026-09-25, integrator: row 1334 added (a receiver-mode pair @m / consume @m
+# is refused as a duplicate definition). rows 1283->1284, max 1333->1334.
+rows=1283
+max=1333
+# 2026-09-25, integrator: row 1333 added (a mode pair called through @ with a
+# for-consume variable takes the copying form). rows 1282->1283, max 1332->1333.
+rows=1282
+max=1332
+# 2026-09-25, integrator: row 1332 added (regression of #309: a plain binding
+# goes to the consuming form of a mode pair). rows 1281->1282, max 1331->1332.
+rows=1281
+max=1331
+# 2026-09-25, integrator: row 1331 added (`match consume <expr>` from D157 is
+# not parsed by the oracle). rows 1280->1281, max 1330->1331.
+rows=1280
+max=1330
+# 2026-09-25, integrator: row 1330 added (reading a vector element takes
+# ownership while the element stays in the vector). rows 1279->1280, max 1329->1330.
+rows=1279
+max=1329
+# 2026-09-25, integrator: row 1329 added and closed (the gate's dry run was
+# judged and stamped by the daily budget). rows 1278->1279, max 1328->1329.
+rows=1278
+max=1328
+# 2026-09-25, integrator: row 1328 added (Carina's parser reads type modifiers
+# in the fixed order value-consume-priv; the canonical consume value priv is
+# not parsed, and there is no E_MODIFIER_ORDER). rows 1277->1278, max 1327->1328.
+rows=1277
+max=1327
+# 2026-09-24, integrator: row 1327 added (a linear container loses its
+# linearity when spelled []T instead of Vec[T]). rows 1276->1277, max 1326->1327.
+rows=1276
+max=1326
+# 2026-09-24, integrator: row 1326 added (the consume pass sees a generic
+# [T consume] return as T, not the substituted type). rows 1275->1276, max 1325->1326.
+rows=1275
+max=1325
+# 2026-09-24, integrator: row 1325 added (== on a fixed array passes the
+# checker and fails the C build). 1323 and 1324 are ISSUED to the Carina
+# window and live in its branch (fbfbf9437) until the merge -- they are the
+# legal gap here. rows 1274->1275, max 1322->1325.
 rows=1274
 max=1322
 # 2026-09-23, integrator: row 1322 added -- the assistant's self-build

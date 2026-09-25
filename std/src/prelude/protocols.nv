@@ -474,7 +474,7 @@ export type MutIndex[K, V] protocol {
 /// assert(a == [1, 2, 3, 4, 5])
 /// ```
 #stable(since = "0.1")
-export type AsSlice[T] protocol {
+export type AsSlice[T consume] protocol {
     @ptr() -> *T
     @len() -> int
 }
@@ -593,7 +593,7 @@ fn str @debug(mut f Fmt) -> () {
 /// assert("${Some("hi"):?}" == "Some(\"hi\")")
 /// ```
 #impl(Debug)
-fn Option[T Debug] @debug(mut f Fmt) -> () {
+fn Option[T consume Debug] @debug(mut f Fmt) -> () {
     match @ {
         Some(v) => {
             f.write("Some(")
@@ -614,7 +614,7 @@ fn Option[T Debug] @debug(mut f Fmt) -> () {
 /// assert("${Err("oops"):?}" == "Err(\"oops\")")
 /// ```
 #impl(Debug)
-fn Result[T Debug, E Debug] @debug(mut f Fmt) -> () {
+fn Result[T consume Debug, E consume Debug] @debug(mut f Fmt) -> () {
     match @ {
         Ok(v) => {
             f.write("Ok(")
@@ -644,7 +644,7 @@ fn Result[T Debug, E Debug] @debug(mut f Fmt) -> () {
 /// assert("${Some("hi")}" == "Some(hi)")
 /// ```
 #impl(Display)
-fn Option[T Display] @display(mut f Fmt) -> () {
+fn Option[T consume Display] @display(mut f Fmt) -> () {
     match @ {
         Some(v) => {
             f.write("Some(")
@@ -665,7 +665,7 @@ fn Option[T Display] @display(mut f Fmt) -> () {
 /// assert("${Err("oops")}" == "Err(oops)")
 /// ```
 #impl(Display)
-fn Result[T Display, E Display] @display(mut f Fmt) -> () {
+fn Result[T consume Display, E consume Display] @display(mut f Fmt) -> () {
     match @ {
         Ok(v) => {
             f.write("Ok(")

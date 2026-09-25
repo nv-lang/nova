@@ -146,7 +146,7 @@ export fn Vec[Vec[T]] @flatten() -> Vec[T] {
 /// v.rotate_left(2)
 /// assert(v.equal(Vec[int].of(3, 4, 5, 1, 2)))
 /// ```
-export fn Vec[T] mut @rotate_left(n int) -> @
+export fn Vec[T consume] mut @rotate_left(n int) -> @
     requires n >= 0
 {
     if @len < 2 {
@@ -181,7 +181,7 @@ export fn Vec[T] mut @rotate_left(n int) -> @
 /// v.rotate_right(2)
 /// assert(v.equal(Vec[int].of(4, 5, 1, 2, 3)))
 /// ```
-export fn Vec[T] mut @rotate_right(n int) -> @
+export fn Vec[T consume] mut @rotate_right(n int) -> @
     requires n >= 0
 {
     if @len < 2 {
@@ -215,7 +215,7 @@ export fn Vec[T] mut @rotate_right(n int) -> @
 /// assert(cut.equal(Vec[int].of(2, 3, 4)))
 /// assert(v.equal(Vec[int].of(1, 5)))
 /// ```
-export fn Vec[T] mut @drain(range Range) -> Vec[T]
+export fn Vec[T consume] mut @drain(range Range) -> Vec[T]
     requires range.start >= 0 && range.end >= range.start && range.end <= @len
 {
     ro { start, end } = range

@@ -1,0 +1,11 @@
+// #1328 carrier: canonical `consume value` (D241). Oracle PASS; novac adds "novac did not parse this" at `value` to the subset refusal of `type X consume`.
+// Run: `nova check <file>` (oracle) and `novac/target/novac.exe check <file>` from the root of Carina's tree at 979ba60eb.
+type Job consume value {
+    n int
+}
+
+fn Job consume @close() -> () {
+}
+
+fn main() -> () {
+}

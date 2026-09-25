@@ -74,6 +74,19 @@ export fn Vec[T] @last() -> Option[T] => @get(@len - 1)
 /// assert(v.contains(20))
 /// assert(!v.contains(99))
 /// ```
+export fn Vec[T consume] @contains(v T) -> bool {
+    // Each element is LENT to the closure as a view parameter (D216 amendment
+    // 2026-09-25): a copy out of memory would duplicate a must-consume element.
+    for i in 0..@len {
+        if unsafe { @data.view_at(i, |e| e == v) } {
+            return true
+        }
+    }
+    false
+}
+
+/// Fast form for an ordinary `T` (D464 linearity axis, plan 246): reads each
+/// element directly; the result equals the general `[T consume]` form above.
 export fn Vec[T] @contains(v T) -> bool {
     // Typed local so `==` dispatches on element type `T`; a method/operator kept
     // *inside* the `unsafe` deref misresolves in codegen (same idiom as @equal).
@@ -96,6 +109,17 @@ export fn Vec[T] @contains(v T) -> bool {
 /// assert(v.index_of(20) == Some(1))
 /// assert(v.index_of(99) == None)
 /// ```
+export fn Vec[T consume] @index_of(v T) -> Option[int] {
+    for i in 0..@len {
+        if unsafe { @data.view_at(i, |e| e == v) } {
+            return Some(i)
+        }
+    }
+    None
+}
+
+/// Fast form for an ordinary `T` (D464 linearity axis, plan 246): reads each
+/// element directly; the result equals the general `[T consume]` form above.
 export fn Vec[T] @index_of(v T) -> Option[int] {
     for i in 0..@len {
         ro e = unsafe { @data.read_at(i) }
@@ -107,6 +131,17 @@ export fn Vec[T] @index_of(v T) -> Option[int] {
 }
 
 /// First index whose element satisfies `pred`, or `None`. Linear O(n).
+export fn Vec[T consume] @position(pred fn(T) -> bool) -> Option[int] {
+    for i in 0..@len {
+        if unsafe { @data.view_at(i, pred) } {
+            return Some(i)
+        }
+    }
+    None
+}
+
+/// Fast form for an ordinary `T` (D464 linearity axis, plan 246): reads each
+/// element directly; the result equals the general `[T consume]` form above.
 export fn Vec[T] @position(pred fn(T) -> bool) -> Option[int] {
     for i in 0..@len {
         ro e = unsafe { @data.read_at(i) }
@@ -119,6 +154,19 @@ export fn Vec[T] @position(pred fn(T) -> bool) -> Option[int] {
 
 /// **Last** index whose element satisfies `pred`, or `None`. Scans from the
 /// back, O(n).
+export fn Vec[T consume] @rposition(pred fn(T) -> bool) -> Option[int] {
+    mut i = @len
+    while i > 0 {
+        i -= 1
+        if unsafe { @data.view_at(i, pred) } {
+            return Some(i)
+        }
+    }
+    None
+}
+
+/// Fast form for an ordinary `T` (D464 linearity axis, plan 246): reads each
+/// element directly; the result equals the general `[T consume]` form above.
 export fn Vec[T] @rposition(pred fn(T) -> bool) -> Option[int] {
     mut i = @len
     while i > 0 {
@@ -134,6 +182,22 @@ export fn Vec[T] @rposition(pred fn(T) -> bool) -> Option[int] {
 /// `true` if elements are in non-decreasing order by the element's own
 /// `Compare` (`a.compare(b) <= 0` for every adjacent pair). Empty / single
 /// element are sorted. O(n).
+export fn Vec[T consume Compare] @is_sorted() -> bool {
+    if @len < 2 {
+        return true
+    }
+    ro data = @data
+    for i in 1..@len {
+        ro c = unsafe { data.view_at(i - 1, |a| data.view_at(i, |b| a.compare(b))) }
+        if c > 0 {
+            return false
+        }
+    }
+    true
+}
+
+/// Fast form for an ordinary `T` (D464 linearity axis, plan 246): reads each
+/// element directly; the result equals the general `[T consume]` form above.
 export fn Vec[T Compare] @is_sorted() -> bool {
     if @len < 2 {
         return true
@@ -150,6 +214,22 @@ export fn Vec[T Compare] @is_sorted() -> bool {
 
 /// `true` if non-decreasing under `cmp` (`cmp(a, b) <= 0` for every adjacent
 /// pair). `cmp` returns `<0` / `0` / `>0` (no `Ordering` type). O(n).
+export fn Vec[T consume] @is_sorted_by(cmp fn(T, T) -> int) -> bool {
+    if @len < 2 {
+        return true
+    }
+    ro data = @data
+    for i in 1..@len {
+        ro c = unsafe { data.view_at(i - 1, |a| data.view_at(i, |b| cmp(a, b))) }
+        if c > 0 {
+            return false
+        }
+    }
+    true
+}
+
+/// Fast form for an ordinary `T` (D464 linearity axis, plan 246): reads each
+/// element directly; the result equals the general `[T consume]` form above.
 export fn Vec[T] @is_sorted_by(cmp fn(T, T) -> int) -> bool {
     if @len < 2 {
         return true
@@ -173,6 +253,26 @@ export fn Vec[T] @is_sorted_by(cmp fn(T, T) -> int) -> bool {
 /// assert(v.binary_search(5) == Ok(2))
 /// assert(v.binary_search(4) == Err(2))   // would insert at index 2
 /// ```
+export fn Vec[T consume Compare] @binary_search(x T) -> Result[int, int] {
+    mut lo = 0
+    mut hi = @len
+    while lo < hi {
+        ro mid = lo + (hi - lo) / 2
+        ro c = unsafe { @data.view_at(mid, |e| e.compare(x)) }
+        if c == 0 {
+            return Ok(mid)
+        }
+        if c < 0 {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    Err(lo)
+}
+
+/// Fast form for an ordinary `T` (D464 linearity axis, plan 246): reads each
+/// element directly; the result equals the general `[T consume]` form above.
 export fn Vec[T Compare] @binary_search(x T) -> Result[int, int] {
     mut lo = 0
     mut hi = @len
@@ -195,6 +295,26 @@ export fn Vec[T Compare] @binary_search(x T) -> Result[int, int] {
 /// Binary search with a comparator: `cmp(elem)` returns the order of `elem`
 /// **relative to the target** (`<0` elem before target, `>0` after, `0` match).
 /// `Ok(i)` / `Err(insertion_point)`. O(log n).
+export fn Vec[T consume] @binary_search_by(cmp fn(T) -> int) -> Result[int, int] {
+    mut lo = 0
+    mut hi = @len
+    while lo < hi {
+        ro mid = lo + (hi - lo) / 2
+        ro c = unsafe { @data.view_at(mid, cmp) }
+        if c == 0 {
+            return Ok(mid)
+        }
+        if c < 0 {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    Err(lo)
+}
+
+/// Fast form for an ordinary `T` (D464 linearity axis, plan 246): reads each
+/// element directly; the result equals the general `[T consume]` form above.
 export fn Vec[T] @binary_search_by(cmp fn(T) -> int) -> Result[int, int] {
     mut lo = 0
     mut hi = @len
@@ -217,6 +337,26 @@ export fn Vec[T] @binary_search_by(cmp fn(T) -> int) -> Result[int, int] {
 /// Binary search by a projected key: compares `key(elem)` against `k` via the
 /// key type's own `Compare`. `Ok(i)` / `Err(insertion_point)`. O(log n) plus the
 /// `key` cost per probe.
+export fn Vec[T consume] @binary_search_by_key[K Compare](key fn(T) -> K, k K) -> Result[int, int] {
+    mut lo = 0
+    mut hi = @len
+    while lo < hi {
+        ro mid = lo + (hi - lo) / 2
+        ro c = unsafe { @data.view_at(mid, |e| key(e).compare(k)) }
+        if c == 0 {
+            return Ok(mid)
+        }
+        if c < 0 {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    Err(lo)
+}
+
+/// Fast form for an ordinary `T` (D464 linearity axis, plan 246): reads each
+/// element directly; the result equals the general `[T consume]` form above.
 export fn Vec[T] @binary_search_by_key[K Compare](key fn(T) -> K, k K) -> Result[int, int] {
     mut lo = 0
     mut hi = @len
@@ -247,15 +387,20 @@ export fn Vec[T] @binary_search_by_key[K Compare](key fn(T) -> K, k K) -> Result
 ///   - Only `[0, len())` element slots are live; never read past `len()`.
 ///   - The pointer is INVALIDATED by any reallocating mutation
 ///     (`push`/`reserve`/`insert`/`new().cap(n)` growth). Re-fetch after such.
-///   - On an empty `Vec` (`cap == 0`) `@data` is the 1-slot placeholder (ex-null_buf) —
-///     non-null but a single never-live slot; do not dereference it.
+///   - On an EMPTY Vec (`len == 0`, including `new()` and `@cap(0)`) the
+///     pointer is NULL (D232 amend 2026-09-24) — never dereference it (a
+///     view's offset arithmetic over an empty base is fine: at len 0 the
+///     result is never read, owner ruling 2026-09-25). At the FFI
+///     boundary a `(NULL, 0)` pair is the correct machine-readable
+///     "empty": pass `len()` along and let the C side check it before
+///     touching the pointer.
 ///
 /// The recv-mut companion `mut @ptr() -> *mut T` (below) yields a writable
 /// `*mut T` when called on a `mut`-bound receiver (recv-mut overload dispatch).
 // Vec[T] implements AsSlice[T]: exposes @ptr() + @len() pair for
 // bulk RawMem.copy operations (used by @append).
 #impl(AsSlice[T])
-export fn Vec[T] @ptr() -> *T => @data
+export fn Vec[T consume] @ptr() -> *T => @data
 
 /// Raw mutable pointer to the element buffer — the writable recv-mut overload
 /// of `@as_ptr`. Selected when the receiver is `mut`-bound; yields `*mut T`
@@ -263,5 +408,5 @@ export fn Vec[T] @ptr() -> *T => @data
 ///
 /// SAFE to call; same dereference-needs-unsafe and reachability-invalidation /
 /// empty-`Vec` caveats as the `ro` overload above.
-export fn Vec[T] mut @ptr() -> *mut T => @data
+export fn Vec[T consume] mut @ptr() -> *mut T => @data
 

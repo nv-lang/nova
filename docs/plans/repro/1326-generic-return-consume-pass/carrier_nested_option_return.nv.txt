@@ -1,0 +1,18 @@
+// #1326 carrier 3 (still open 2026-09-25): a NESTED generic return, `-> Option[T]`.
+// nova check: W_CONSUME_KEYWORD_UNNECESSARY + D133-not-consumed on `o` (type `Option`, inner unknown).
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> () {
+}
+
+fn wrap[T consume](consume x T) -> Option[T] => Some(x)
+
+fn main() -> () {
+    consume o = wrap(Res { id: 1 })
+    match o {
+        Some(consume r) => { r.close() }
+        None => { }
+    }
+}

@@ -1,0 +1,29 @@
+// #1334 carrier: the Option.map pair shape on a user enum (`fn Opt[T] @mapx` / `fn Opt[T consume] consume @mapx`) -- nova test: duplicate definition `Opt.mapx`.
+// EXPECT_STDOUT b=4 c=6 k=5
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> int => @id
+
+type Opt[T consume] enum Som(T) | Non
+
+fn Opt[T] @mapx[U](f fn(T) -> U) -> Opt[U] => match @ { Som(v) => Som(f(v)), Non => Non }
+
+fn Opt[T consume] consume @mapx[U consume](f fn(T) -> U) -> Opt[U]
+  => match consume @ { Som(consume v) => Som(f(v)), Non => Non }
+
+fn main() Io -> () {
+    ro a = Som(3)
+    ro b = a.mapx(|x| x + 1)
+    ro c = a.mapx(|x| x * 2)
+    consume r = Som(Res { id: 5 })
+    consume r2 = r.mapx(|x| x)
+    ro k = match consume r2 {
+        Som(consume x) => x.close()
+        Non => 0
+    }
+    ro bb = match b { Som(v) => v, Non => 0 }
+    ro cc = match c { Som(v) => v, Non => 0 }
+    print("b=${bb} c=${cc} k=${k}")
+}

@@ -1,0 +1,19 @@
+// #1348 carrier (nova-postgres D8b, Kim Code; rerun by the integrator 2026-09-25 on main): CC-FAIL unknown type name 'NovaOpt_Nova_Vec____nova_byte_p'.
+// EXPECT_STDOUT len=1
+// expected: `check` passes AND the C build succeeds — a `None` literal pushed
+//   into []Option[[]u8] takes the element type from context.
+// got: `check` passes, the C build fails: the literal is instantiated as
+//   Option[int]:
+//   error: passing 'NovaOpt_nova_int' to parameter of incompatible type
+//   'NovaOpt_Nova_Vec____nova_byte_p'
+//   (a typed binding `ro n Option[[]u8] = None` lowers correctly — that is
+//   the workaround used in src/session.nv raw_values)
+// command: ./nova.sh check repro-local/none_slice_lower/src/main.nv → ok
+//          ./nova.sh build repro-local/none_slice_lower/src/main.nv -o target/nsl.exe → C error above
+module main
+
+fn main() {
+    mut out []Option[[]u8] = []Option[[]u8].new()
+    out.push(None)
+    println("len=${out.len()}")
+}

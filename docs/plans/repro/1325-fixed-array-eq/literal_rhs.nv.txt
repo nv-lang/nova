@@ -1,0 +1,13 @@
+// EXPECT_STDOUT eq
+// Carrier 1 of #1325: [4]u8 compared with an array literal. The literal is
+// lowered as a Vec[int], and clang refuses:
+//   error: passing '_NovaFixArr_4_9_nova_byte' ... to parameter of
+//   incompatible type 'Nova_Vec____nova_int *'
+fn main() Io -> () {
+    ro a [4]u8 = [1, 2, 3, 4]
+    if a == [1, 2, 3, 4] {
+        println("eq")
+    } else {
+        println("ne")
+    }
+}

@@ -1,0 +1,11 @@
+// #1328 control: canonical `consume priv` -- oracle PASS, novac only the named subset refusal (274.7 B13), no parser fallback.
+// Run: `nova check <file>` (oracle) and `novac/target/novac.exe check <file>` from the root of Carina's tree at 979ba60eb.
+type Job consume priv {
+    n int
+}
+
+fn Job consume @close() -> () {
+}
+
+fn main() -> () {
+}

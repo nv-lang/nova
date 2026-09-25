@@ -1,0 +1,34 @@
+// #1333 carrier: `for consume x in xs { @put(x) }` with a copying/consuming pair on the receiver -- nova check: D156-iter-not-consumed on `x`.
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> int => @id
+
+type Bin[T consume] {
+    n int
+}
+
+fn Bin[T] mut @put(v T) -> int => 1
+
+fn Bin[T consume] mut @put(consume v T) -> int {
+    sink(v)
+    2
+}
+
+fn sink[T consume](consume x T) -> () {
+    sink2(x)
+}
+
+fn sink2[T consume](consume x T) -> () {
+    sink(x)
+}
+
+fn Bin[T consume] mut @put_all(consume xs Vec[T]) -> () {
+    for consume x in xs {
+        @put(x)
+    }
+}
+
+fn main() -> () {
+}

@@ -1,0 +1,8 @@
+// #1328 control: canonical `value priv` -- both compilers accept.
+// Run: `nova check <file>` (oracle) and `novac/target/novac.exe check <file>` from the root of Carina's tree at 979ba60eb.
+type Job value priv {
+    n int
+}
+
+fn main() -> () {
+}

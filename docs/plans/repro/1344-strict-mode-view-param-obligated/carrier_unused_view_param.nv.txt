@@ -1,0 +1,7 @@
+// #1344 carrier: an unused view parameter `x T` of a `[T consume]` free fn -- nova check: [D156-strict-forget] `x` (type T) not consumed.
+// EXPECT_STDOUT n=2
+fn one[T consume](x T) -> int => 2
+
+fn main() Io -> () {
+    print("n=${one(3)}")
+}

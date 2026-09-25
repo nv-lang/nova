@@ -1,0 +1,19 @@
+// #1332 carrier: a free-function pair over a record type, plain binding -- refused the same way.
+// EXPECT_STDOUT x
+module standalone.f_free_plain_binding
+
+type Box {
+    n int
+}
+
+fn put(v Box) -> Box => { n: 1 }
+
+fn put(consume v Box) -> Box => v
+
+
+fn main() Io -> () {
+
+    ro x = Box { n: 5 }
+    ro k = put(x)
+    print("form=${k.n} x=${x.n}")
+}

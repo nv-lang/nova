@@ -571,6 +571,25 @@ Do not use them for other purposes.
   own cleanup that walks the elements and, per
   [D432](decisions/02-types.md#d432), becomes affine — you may forget it, the
   compiler inserts the call.
+- **An empty `Vec` and an empty slice allocate nothing** ([D232 amendment
+  2026-09-24](decisions/02-types.md#d232-vect--nova-native-generic-growable-array)): `Vec[T].new()`
+  and a zero-length `[]T` have a null data pointer and `cap == len == 0`; memory is allocated only
+  on the first `push` / `reserve` / `cap(n)`. At `len == 0` the pointer carries no data contract:
+  it is never dereferenced or handed to `memcpy` as a source; across FFI emptiness is the pair
+  `(NULL, 0)`. An empty `str`'s pointer is unspecified (the `""` literal is interned); judge it by
+  `byte_len()`.
+- **A plain `[T]` admits only ordinary types** ([D156 amendment,
+  2026-09-24](decisions/02-types.md#d156)): a must-consume type is substituted only into a
+  `[T consume]` parameter, whose body the compiler checks strictly. A container is declared
+  `type Vec[T consume]`; its methods that drop or duplicate elements are written with a plain
+  `[T]` and are simply unavailable for a must-consume element. In such a type a plain-`[T]`
+  method may not take `consume x T`: the consuming form is written once, with `[T consume]`
+  (`E_CONSUME_PARAM_UNBOUNDED`, amendment point 6, 2026-09-25). A method may have a pair of
+  forms that differ only by the marker -- a general `[T consume]` and a fast plain `[T]`: an
+  ordinary `T` takes `[T]`, a must-consume one `[T consume]`, and the results must agree (point 7,
+  [D464 amendment 2026-09-25](decisions/10-overloading.md#d464--бáунд-как-фильтр-отбора-отсев-без-ранжирования-2026-08-16)).
+  Order (point 8): `for consume x in v` goes from the first element to the last, while a
+  `Cleanup` container's cleanup goes from the last to the first, LIFO like `defer` (D161).
 - **Auto-`@cleanup` frees ONE binding form, not everything except a list**
   ([D432 amendment 2026-08-21](decisions/02-types.md#d432), registry 221.1
   #672). The s.2 exemption lifts the obligation only from `consume X = e;`
@@ -1189,6 +1208,8 @@ match open() {
 }
 ```
 
+Where the grammar forces the transfer there is no decision to document, so the marker is not needed (D157, amendment 2026-09-24): a payload name used exactly once, as an arm's tail, a `return`, or a constructor argument — `Ok(s) => s`, `Ok(v) => Ok(v)`. Any other use, as `r.close()` above, still needs `consume`. Implementation: plan 293.
+
 **Exhaustiveness check.** The compiler checks that the match covers all
 possible cases. If not — an error naming the uncovered variant. This works
 for sum types and bool. For general types (`int`, `str`) you need either a
@@ -1533,6 +1554,15 @@ fn ptr_read[T](p *T) -> ref T          // сквозь неё читают: ме
 
 ```
 
+**Linearity through a pointer** ([D216 amendment 2026-09-25](decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo)):
+`p.write(v)` / `p.write_at(i, v)` and `p.read()` / `p.read_at(i)` copy, for an ordinary `T` only;
+`p.write_consume(v)` / `p.write_consume_at(i, v)` moves ownership into memory, for any `T`;
+`p.read_consume()` / `p.read_consume_at(i)` is a move out with an owned result; to look without
+taking the value out, `p.view(f)` / `p.view_at(i, f)` lends the element to a closure as a view
+parameter. The rules are the same in safe and unsafe code.
+
+**What `mut` on a parameter means** (D326 Р3, amendment 2026-09-24): the right to change the value RECEIVED, not a link to the caller's variable. For a value type the value is the caller's storage — assigning it is visible outside. For a heap type the value is the object: changing the object is visible, while assigning the parameter only rebinds the local name, and the compiler warns `W_MUT_HEAP_PARAM_REBIND`.
+
 ```nova
 type Account {
     ro id u64                // никогда не меняется (D36)
@@ -1874,7 +1904,7 @@ fn min[T protocol { @compare(other Self) -> int, @equal(other Self) -> bool }](x
 If the pattern repeats — extracted into a named protocol (`type Ord
 protocol { ... }`).
 
-**A bound in overload selection is a filter, not a ranking** ([D464](decisions/10-overloading.md#d464--бáунд-как-фильтр-отбора-отсев-без-ранжирования-2026-08-16)). A candidate whose bound does not hold on the inferred substitution drops out; a single survivor is taken silently; more than one survivor without structural dominance (concrete over generic, D84) is an ambiguity error — "whose bound is narrower" is never compared; no survivor is a bound error (D72). Checked in the checker from the bound itself, before monomorphisation; codegen receives a settled decision.
+**A bound in overload selection is a filter, not a ranking** ([D464](decisions/10-overloading.md#d464--бáунд-как-фильтр-отбора-отсев-без-ранжирования-2026-08-16)). A candidate whose bound does not hold on the inferred substitution drops out; a single survivor is taken silently; more than one survivor without structural dominance (concrete over generic, D84) is an ambiguity error — "whose bound is narrower" is never compared; no survivor is a bound error (D72). Checked in the checker from the bound itself, before monomorphisation; codegen receives a settled decision. The one exception is the linearity axis (amendment 2026-09-25): for a `[T]` / `[T consume]` pair an ordinary `T` takes `[T]` -- two values, a total order, no protocols compared; linearity decides after the mode axis and only between forms equal in everything else, and in a generic caller the form is chosen by the caller's bound, in the checker.
 
 ### Type-set — a bound by membership, not by structure
 

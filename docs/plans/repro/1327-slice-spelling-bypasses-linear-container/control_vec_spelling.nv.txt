@@ -1,0 +1,21 @@
+// #1327 control: the same as carrier_slice_no_drain, spelled `Vec[Res]` -- refused E_CONSUME_KEYWORD_MISSING.
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> () { () }
+
+fn mk(i int) -> Res => { id: i }
+
+fn drain(consume v []Res) -> () {
+    for consume r in v {
+        r.close()
+    }
+}
+
+fn main() -> () {
+    mut v = Vec[Res].new()
+    v.push(mk(1))
+    v.push(mk(2))
+
+}

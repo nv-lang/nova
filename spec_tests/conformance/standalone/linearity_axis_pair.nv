@@ -1,0 +1,46 @@
+// EXPECT_STDOUT method=1,2 generic=2 closed=5
+//
+// D464 amendment 2026-09-25 (linearity axis, plan 246): two declarations that
+// differ only by the linearity marker of a type parameter -- a plain `[T]`
+// against `[T consume]` -- are a pair, not a duplicate. An ordinary `T` takes
+// the plain form (it returns 1 here), a must-consume `T` the `[T consume]` form
+// (it returns 2). Inside generic code over `[T consume]` the form is chosen by
+// the caller's own bound, so `int` gets 2 there (point 6, variant (a)): `@via`
+// calls `@find` from a `Bag[T consume]` body. A pair of generic FREE fns is
+// not covered: codegen keys their monomorphs by name (registry, the named gap).
+
+module standalone.linearity_axis_pair
+
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> int => @id
+
+type Bag[T consume] consume {
+    n int
+}
+
+fn Bag[T consume] consume @done() -> () {
+}
+
+fn Bag[T] @find(v T) -> int => 1
+
+fn Bag[T consume] @find(v T) -> int => 2
+
+fn Bag[T consume] @via(v T) -> int => @find(v)
+
+fn main() Io -> () {
+    consume bi Bag[int] = { n: 0 }
+    ro m1 = bi.find(3)
+    ro g = bi.via(4)
+    bi.done()
+
+    consume br Bag[Res] = { n: 0 }
+    consume r = Res { id: 5 }
+    ro m2 = br.find(r)
+    br.done()
+
+    ro closed = r.close()
+    print("method=${m1},${m2} generic=${g} closed=${closed}")
+}

@@ -1,0 +1,12 @@
+// #739 carrier (2026-09-25): use-after-consume of `r` inside `${}` -- nova check reports it at 1:1 (the note `consumed here` is right, 9:12).
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> int => @id
+
+fn main() Io -> () {
+    consume r = Res { id: 1 }
+    ro k = r.close()
+    print("k=${k} again=${r.id}")
+}

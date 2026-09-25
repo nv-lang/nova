@@ -1,0 +1,23 @@
+// EXPECT_COMPILE_WARNING W_MUT_HEAP_PARAM_REBIND
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// D326 Р3 amendment (2026-09-24, owner): `mut` is the right to change the value
+// received, not an in-out link to the caller's variable. For a heap type the value
+// is the object, so assigning to a `mut` parameter only rebinds the local name and
+// the caller never sees it -- W_MUT_HEAP_PARAM_REBIND. Carrier: the nova-postgres
+// smoke, where `pending = pending[consumed..]` did not reach the caller.
+
+module neg.mut_heap_param_rebind_warn
+
+fn drop_first(mut v []u8) -> () {
+    // W_MUT_HEAP_PARAM_REBIND here: the caller keeps its own slice
+    v = v[1..]
+}
+
+fn main() Io -> () {
+    mut b = []u8.new()
+    b.push(1)
+    b.push(2)
+    drop_first(b)
+    println("${b.len()}")
+}

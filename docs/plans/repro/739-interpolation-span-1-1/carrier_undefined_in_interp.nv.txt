@@ -1,0 +1,5 @@
+// #739 carrier (2026-09-25): undefined identifier inside `${}` -- nova check reports it at 1:1.
+fn main() Io -> () {
+    ro a = 1
+    print("a=${a} b=${nope}")
+}

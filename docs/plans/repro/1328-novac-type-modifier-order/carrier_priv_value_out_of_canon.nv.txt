@@ -1,0 +1,8 @@
+// #1328 carrier: out-of-canon `priv value`. Oracle E_MODIFIER_ORDER; novac: "undeclared type name `priv`" plus a parser fallback.
+// Run: `nova check <file>` (oracle) and `novac/target/novac.exe check <file>` from the root of Carina's tree at 979ba60eb.
+type Job priv value {
+    n int
+}
+
+fn main() -> () {
+}

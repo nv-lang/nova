@@ -1,0 +1,48 @@
+// EXPECT_STDOUT value_assign=9 heap_method=1 local_copy=0 caller=3
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// D326 Р3 amendment (2026-09-24, owner): what `mut` on a parameter means, by
+// observation. A value type's value IS the caller's storage, so assigning it is
+// visible to the caller. A heap type's value is the object: changing the object
+// is visible. A private working copy is an explicit local, and assigning the
+// local draws no W_MUT_HEAP_PARAM_REBIND (the rebinding case itself is the
+// negative fixture neg/mut_heap_param_rebind_warn.nv).
+
+module standalone.mut_param_value_vs_heap_semantics
+
+type Pt value {
+    x int
+}
+
+fn set_value(mut p Pt) -> () {
+    p = Pt { x: 9 }
+}
+
+fn keep_first(mut v []u8) -> () {
+    v.truncate(1)
+}
+
+fn work_on_copy(v []u8) -> int {
+    mut w = v.clone()
+    w = []u8.new()
+    w.len()
+}
+
+fn main() Io -> () {
+    mut p = Pt { x: 1 }
+    set_value(p)
+
+    mut a = []u8.new()
+    a.push(1)
+    a.push(2)
+    a.push(3)
+    keep_first(a)
+
+    mut b = []u8.new()
+    b.push(1)
+    b.push(2)
+    b.push(3)
+    ro n = work_on_copy(b)
+
+    println("value_assign=${p.x} heap_method=${a.len()} local_copy=${n} caller=${b.len()}")
+}

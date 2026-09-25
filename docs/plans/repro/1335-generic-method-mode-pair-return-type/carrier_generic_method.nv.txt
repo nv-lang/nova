@@ -1,0 +1,21 @@
+// #1335 carrier: `fn Bag[T] @put(v T) -> int` / `fn Bag[T] @put(consume v T) -> T`, temporary argument -- nova test: CC-FAIL `member reference base type 'nova_int' is not a structure or union` (the copying form's return type).
+// EXPECT_STDOUT temp=7 plain=1
+type Box {
+    n int
+}
+
+type Bag[T] {
+    k int
+}
+
+fn Bag[T] @put(v T) -> int => 1
+
+fn Bag[T] @put(consume v T) -> T => v
+
+fn main() Io -> () {
+    ro g Bag[Box] = { k: 0 }
+    ro r = g.put(Box { n: 7 })
+    ro b = Box { n: 3 }
+    ro q = g.put(b)
+    print("temp=${r.n} plain=${q}")
+}

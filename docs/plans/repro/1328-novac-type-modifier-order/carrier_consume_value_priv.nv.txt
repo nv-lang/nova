@@ -1,0 +1,11 @@
+// #1328 carrier: canonical `consume value priv` -- the form of std/src/net/tcp.nv and udp.nv. Oracle PASS; novac: parser fallback at `value`.
+// Run: `nova check <file>` (oracle) and `novac/target/novac.exe check <file>` from the root of Carina's tree at 979ba60eb.
+type Job consume value priv {
+    n int
+}
+
+fn Job consume @close() -> () {
+}
+
+fn main() -> () {
+}

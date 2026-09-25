@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR использование потреблённой переменной `r`
+//
+// Registry 221.1 #739: a diagnostic on an expression inside `${...}` used to
+// be reported at 1:1 -- the sub-parsed body kept offsets relative to itself,
+// not to the file. The line-pinned marker below holds the line: before the
+// fix the error landed on line 1 and the marker did not match. An escape
+// before the interpolation (`\n`) keeps the check honest: the lexed string
+// is shorter than the source text, so offsets must come from the source.
+module neg.interp_diag_line_neg
+
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> int => @id
+
+fn main() Io -> () {
+    consume r = Res { id: 1 }
+    ro k = r.close()
+    // nova:expect D131 -- `r` was consumed by `close()` above; the error must point at this line, not at 1:1
+    print("k=\n${k} again=${r.id}")
+}

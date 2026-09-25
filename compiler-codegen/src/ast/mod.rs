@@ -66,6 +66,18 @@ pub struct Module {
     /// stale (already-consumed) outer value. Populated by `alpha_rename`;
     /// empty (`Default`) for any module without this pattern.
     pub consume_reuse_spans: std::collections::HashSet<crate::diag::Span>,
+    /// Registry 221.1 #1331 (D157, `spec/decisions/05-memory.md` lines
+    /// 992-1016): spans of `match consume <expr>`'s SCRUTINEE expression --
+    /// the explicit-consume match (contrast the default view-match, D133).
+    /// Populated live by the parser (`parse_match`'s `KwConsume` check),
+    /// unlike its siblings above which `alpha_rename` fills post-parse --
+    /// there is no rename pass to hook here, and the parser already has the
+    /// scrutinee's span in hand right after parsing it. Read by the
+    /// consume-checker's `ExprKind::Match` arm (`types/mod.rs`) to mark the
+    /// scrutinee Consumed once all arms are walked (mirrors `for consume x
+    /// in iter`'s post-loop `iter` mark_consumed, D156). Empty (`Default`)
+    /// for any module with no `match consume`.
+    pub consume_match_scrutinees: std::collections::HashSet<crate::diag::Span>,
 
     /// Registry 822: «прелюд ожидался и не найден» — готовая диагностика или
     /// `None`. ПРИЗНАК, а не отказ, и это третья редакция фикса: отказ в

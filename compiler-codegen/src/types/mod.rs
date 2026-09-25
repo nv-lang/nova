@@ -1406,17 +1406,27 @@ fn check_module_impl(
                 // ось различается — overload валиден.
                 // Plan 135: receiver-mutability is a valid overload axis.
                 // `fn T @m()` and `fn T mut @m()` are distinct overloads.
-                let new_recv_mut = fd.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
+                // Registry 221.1 #1334: the receiver MODE is the whole triple
+                // {ro, mut, consume} (D84 mode-axis amendment 2026-07-06, R14:
+                // `@` is the zeroth parameter), so `fn T @m()` and
+                // `fn T consume @m()` are distinct overloads too. The key used
+                // to compare only `mutable` and refused that pair as a duplicate.
+                let new_recv_mut = fd.receiver.as_ref()
+                    .map(|r| (r.mutable, r.consume)).unwrap_or((false, false));
                 // Plan 184 (Р13/Р14): parameter MODE {ro,mut,consume} is a valid
                 // overload axis too (unified with the receiver axis: `@` is the
                 // zeroth parameter). `f(x T)` / `f(mut x T)` / `f(consume x T)`
                 // are DISTINCT overloads — dispatch by argument-binding mutability
                 // / last-use (D84 amendment). Two params are mode-equal iff same
                 // `is_mut` AND same `consume`.
+                // D464 amendment 2026-09-25 (linearity axis): a plain `[T]` and a
+                // `[T consume]` of the same name are a pair, not a duplicate.
                 let dup_existing = entry.iter().find(|existing| {
                     // Plan 135: if receiver-mutability differs, NOT a duplicate.
-                    let existing_recv_mut = existing.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
+                    let existing_recv_mut = existing.receiver.as_ref()
+                        .map(|r| (r.mutable, r.consume)).unwrap_or((false, false));
                     if existing_recv_mut != new_recv_mut { return false; }
+                    if linearity_pair_differs(existing, fd) { return false; }
                     // Arity + arg-types + param-modes одинаковы?
                     let args_equal = existing.params.len() == fd.params.len()
                         && existing.params.iter().zip(fd.params.iter())
@@ -1438,8 +1448,10 @@ fn check_module_impl(
                     // in both user file and the merged-via-prelude
                     // std/collections/range.nv. User wins.
                     let dup_pos = entry.iter().position(|existing| {
-                        let existing_recv_mut = existing.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
+                        let existing_recv_mut = existing.receiver.as_ref()
+                            .map(|r| (r.mutable, r.consume)).unwrap_or((false, false));
                         if existing_recv_mut != new_recv_mut { return false; }
+                        if linearity_pair_differs(existing, fd) { return false; }
                         let args_equal = existing.params.len() == fd.params.len()
                             && existing.params.iter().zip(fd.params.iter())
                                 .all(|(p, np)| typeref_equal(&p.ty, &np.ty)
@@ -10924,6 +10936,7 @@ impl<'a> TypeCheckCtx<'a> {
                     if matches!(
                         name.as_str(),
                         "write" | "write_at" | "write_unaligned" | "write_volatile"
+                            | "write_consume" | "write_consume_at"
                             | "copy_from" | "copy_from_nonoverlapping"
                     ) {
                         if let Some(ty) = self.infer_expr_type(obj, scope) {
@@ -10988,6 +11001,7 @@ impl<'a> TypeCheckCtx<'a> {
                     if !matches!(
                         name.as_str(),
                         "write" | "write_at" | "write_unaligned" | "write_volatile"
+                            | "write_consume" | "write_consume_at"
                             | "copy_from" | "copy_from_nonoverlapping"
                     ) {
                         if let Some(ty) = self.infer_expr_type(obj, scope) {
@@ -11511,19 +11525,59 @@ impl<'a> TypeCheckCtx<'a> {
                                     {
                                         let result_rt: Option<ResolvedType> = match method.as_str() {
                                             "read" | "read_unaligned" | "read_volatile"
+                                            | "read_consume"
                                                 if args.is_empty() =>
                                             {
                                                 Some((**inner).clone())
                                             }
-                                            "read_at" if args.len() == 1 => {
+                                            "read_at" | "read_consume_at" if args.len() == 1 => {
                                                 Some((**inner).clone())
                                             }
+                                            // D216 амендмент 2026-09-25 п. 3 (план 246):
+                                            // `p.view(f)` / `p.view_at(i, f)` → `R`, тип
+                                            // возврата `f fn(T) -> R`. Лямбда-литерал уже
+                                            // аннотирован `R::Func{[T], R}` (посев `T` в
+                                            // `closure_arg_param_seeds` + C6b выше, args
+                                            // обходятся ДО этого producer'а); имя функции /
+                                            // значение-функция — через `infer_expr_type`.
+                                            "view" | "view_at"
+                                                if args.len()
+                                                    == if method == "view" { 1 } else { 2 } =>
+                                            {
+                                                let f = args[args.len() - 1].expr();
+                                                let from_buf = if f.id.is_set() {
+                                                    match self.resolved_types_buf.borrow().get(&f.id) {
+                                                        Some(ResolvedType::Func { ret, .. }) => {
+                                                            Some((**ret).clone())
+                                                        }
+                                                        _ => None,
+                                                    }
+                                                } else {
+                                                    None
+                                                };
+                                                from_buf.or_else(|| {
+                                                    match self.infer_expr_type(f, scope)? {
+                                                        TypeRef::Func { return_type, span, .. } => {
+                                                            let r = return_type
+                                                                .map(|b| *b)
+                                                                .unwrap_or(TypeRef::Unit(span));
+                                                            Some(Self::mark_type_params(
+                                                                ResolvedType::from_type_ref(&r),
+                                                                gs,
+                                                            ))
+                                                        }
+                                                        _ => None,
+                                                    }
+                                                })
+                                                .filter(|r| self.rt_is_closed(r))
+                                            }
                                             "write" | "write_unaligned" | "write_volatile"
+                                            | "write_consume"
                                                 if args.len() == 1 =>
                                             {
                                                 Some(ResolvedType::Unit)
                                             }
-                                            "write_at" if args.len() == 2 => {
+                                            "write_at" | "write_consume_at" if args.len() == 2 => {
                                                 Some(ResolvedType::Unit)
                                             }
                                             "copy_from" | "copy_from_nonoverlapping"
@@ -12979,8 +13033,11 @@ impl<'a> TypeCheckCtx<'a> {
                         set.insert(n);
                     }
                 }
+                // #1332: `if Ok(consume s) = ...` -- see `bind_pattern_consume_names`.
+                let consume_snapshot = self.bind_pattern_consume_names(pattern);
                 self.f1_block(then, gs, scope, errors);
                 *self.ro_binding_names.borrow_mut() = ro_snapshot;
+                *self.consume_binding_names.borrow_mut() = consume_snapshot;
                 for (n, prev) in saved {
                     match prev {
                         Some(t) => { scope.insert(n, t); }
@@ -13143,6 +13200,8 @@ impl<'a> TypeCheckCtx<'a> {
                             set.insert(n);
                         }
                     }
+                    // #1332: `Ok(consume s) => ...` -- see `bind_pattern_consume_names`.
+                    let consume_snapshot = self.bind_pattern_consume_names(&arm.pattern);
                     match &arm.body {
                         MatchArmBody::Expr(e) => {
                             self.f1_expr(e, gs, scope, errors)
@@ -13152,6 +13211,7 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                     }
                     *self.ro_binding_names.borrow_mut() = ro_snapshot;
+                    *self.consume_binding_names.borrow_mut() = consume_snapshot;
                     for (n, prev) in saved {
                         match prev {
                             Some(t) => { scope.insert(n, t); }
@@ -13482,7 +13542,7 @@ impl<'a> TypeCheckCtx<'a> {
                 // D221-проверка выше). Закрывает Index:i:<v> кластер (v[i] в теле).
                 self.f1_for_body(&elem_ty, pattern, body, gs, scope, errors);
             }
-            ExprKind::For { pattern, iter, body, elem_type, .. } => {
+            ExprKind::For { pattern, iter, body, elem_type, iter_consume, .. } => {
                 self.f1_expr(iter, gs, scope, errors);
                 // Plan 87 Ф.3: явная аннотация типа элемента — checked
                 // assertion против фактического типа элемента итератора.
@@ -13498,7 +13558,21 @@ impl<'a> TypeCheckCtx<'a> {
                 // 172.1.2 (for-var в scope, 2026-07-03): loop-переменная типизируется
                 // и БЕЗ явной аннотации — inferred elem_ty (тот же источник, что
                 // D221-проверка выше). Закрывает Index:i:<v> кластер (v[i] в теле).
+                // Plan 246 / #1332: the loop variable of `for consume x in it`
+                // owns its element, so it is a `consume` binding for D84 mode
+                // rule 3 inside the body (`@push(x)` takes the consuming form).
+                // Block-scoped: restored after the body.
+                let consume_snapshot = self.consume_binding_names.borrow().clone();
+                if *iter_consume {
+                    let mut names = Vec::new();
+                    consume_pattern_names(pattern, &mut names);
+                    let mut set = self.consume_binding_names.borrow_mut();
+                    for n in names {
+                        if n != "_" { set.insert(n); }
+                    }
+                }
                 self.f1_for_body(&elem_ty, pattern, body, gs, scope, errors);
+                *self.consume_binding_names.borrow_mut() = consume_snapshot;
             }
             ExprKind::While { cond, body, .. } => {
                 self.f1_expr(cond, gs, scope, errors);
@@ -15244,6 +15318,28 @@ impl<'a> TypeCheckCtx<'a> {
     /// pattern shape) gets no L1 launder-table entry either; registering one
     /// anyway would be a name in `ro_binding_names` with no matching `scope`
     /// entry — harmless in isolation, but an inconsistency with no upside.
+    /// Registry 221.1 #1332: a pattern's `consume name` binding
+    /// (`Ok(consume s)`, `Some(consume f)`) is a consume-spelled binding too
+    /// -- rule 3 of the D84 mode axis (10-overloading.md) sends it to the
+    /// CONSUMING form of a mode pair, the same as `consume x = ...`. Before
+    /// this the arm's names never reached `consume_binding_names`, so the
+    /// dispatch picked the copying form while the consume pass treated the
+    /// argument as moved: `f(s)` ran the view body and the resource leaked.
+    /// Updates the set for every name the pattern binds (a plain name
+    /// shadows an outer consume-spelled one) and returns the snapshot the
+    /// caller restores when the arm ends.
+    fn bind_pattern_consume_names(&self, pattern: &Pattern) -> std::collections::HashSet<String> {
+        let snapshot = self.consume_binding_names.borrow().clone();
+        let mut set = self.consume_binding_names.borrow_mut();
+        for (n, _is_mut, is_consume) in pattern_capture_names(pattern) {
+            set.remove(&n);
+            if is_consume {
+                set.insert(n);
+            }
+        }
+        snapshot
+    }
+
     fn pattern_bind_mutability(pattern: &Pattern) -> Vec<(String, bool)> {
         match pattern {
             Pattern::Ident { name, is_mut, .. } => vec![(name.clone(), *is_mut)],
@@ -16133,7 +16229,15 @@ impl<'a> TypeCheckCtx<'a> {
     /// Anything else (a temporary) is not a place at all.
     fn expr_mode_axis_mutable_place(&self, e: &Expr) -> bool {
         match &e.kind {
-            ExprKind::Ident(name) => !self.ro_binding_names.borrow().contains(name),
+            // Registry 221.1 #1332: a `consume`-spelled binding is mutable
+            // (02-types.md, Plan 108.2 table: "`consume X = ...` implicitly
+            // means mut -- the owner may mutate"), although it also sits in
+            // `ro_binding_names` (that set only records "not spelled `mut`").
+            // Without this a `mut @` overload pair was ineligible on a
+            // `consume b Bag[Res]` receiver, the axis gave no verdict, and
+            // codegen fell back to the first (copying) declaration.
+            ExprKind::Ident(name) => !self.ro_binding_names.borrow().contains(name)
+                || self.consume_binding_names.borrow().contains(name),
             ExprKind::SelfAccess => self.current_recv_is_mut.get(),
             ExprKind::Member { obj, .. } => self.expr_mode_axis_mutable_place(obj),
             ExprKind::Index { obj, .. } => self.expr_mode_axis_mutable_place(obj),
@@ -16217,11 +16321,17 @@ impl<'a> TypeCheckCtx<'a> {
         if !same_shape {
             return ModeAxisVerdict::NoVerdict;
         }
-        let recv_mut = |f: &FnDecl| f.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
+        // Registry 221.1 #1334: the receiver axis is the full {ro, mut,
+        // consume} triple (D84 mode-axis amendment, R14: `@` is the zeroth
+        // parameter) -- `fn T @m()` / `fn T consume @m()` differ on it too.
+        let recv_mode = |f: &FnDecl| f.receiver.as_ref()
+            .map(|r| (r.mutable, r.consume)).unwrap_or((false, false));
         let axis_differs = compat_fns.windows(2).any(|w| {
-            recv_mut(w[0]) != recv_mut(w[1])
+            recv_mode(w[0]) != recv_mode(w[1])
                 || w[0].params.iter().zip(w[1].params.iter())
                     .any(|(a, b)| (a.consume, a.is_mut) != (b.consume, b.is_mut))
+                // D464 amendment 2026-09-25: the linearity axis ([T] / [T consume]).
+                || linearity_pair_differs(w[0], w[1])
         });
         if !axis_differs {
             return ModeAxisVerdict::NoVerdict;
@@ -16233,7 +16343,16 @@ impl<'a> TypeCheckCtx<'a> {
         let mut scored: Vec<(&FnDecl, Vec<u8>)> = Vec::new();
         'cand: for f in compat_fns {
             let mut ranks: Vec<u8> = Vec::with_capacity(f.params.len() + 1);
-            if recv_mut(f) {
+            let (r_mut, r_consume) = recv_mode(f);
+            if r_consume {
+                // #1334, rule 3 on the zeroth parameter: the consuming receiver
+                // form takes a temporary or a `consume`-spelled binding only; a
+                // `ro`/`mut` binding keeps the copying form and stays live.
+                if !obj.map(|o| self.expr_mode_axis_consume_eligible(o)).unwrap_or(false) {
+                    continue 'cand;
+                }
+                ranks.push(2);
+            } else if r_mut {
                 if !obj_mut { continue 'cand; }
                 ranks.push(1);
             } else {
@@ -16256,14 +16375,28 @@ impl<'a> TypeCheckCtx<'a> {
             0 => ModeAxisVerdict::NoVerdict, // zero eligible — legacy's honest gap
             1 => ModeAxisVerdict::Winner(scored[0].0.span),
             _ => {
+                // D464 amendment 2026-09-25, point 5: linearity decides only
+                // between candidates whose mode vectors are EQUAL, after the
+                // mode axis -- never in one dominance vector with it. A plain
+                // `[T]` (rank 1) is narrower than `[T consume]` (rank 0); the
+                // caller's `linearity_filter` already dropped a plain form whose
+                // `T` is not provably ordinary.
+                let lin_rank = |f: &FnDecl| -> Vec<u8> {
+                    linearity_marks(f).iter().map(|c| if *c { 0 } else { 1 }).collect()
+                };
+                let dominates = |r: &[u8], s: &[u8]| {
+                    r.len() == s.len()
+                        && r.iter().zip(s.iter()).all(|(a, b)| a >= b)
+                        && r.iter().zip(s.iter()).any(|(a, b)| a > b)
+                };
                 'outer: for (f, r) in &scored {
                     for (g, s) in &scored {
                         if f.span == g.span {
                             continue;
                         }
-                        let ge_all = r.iter().zip(s.iter()).all(|(a, b)| a >= b);
-                        let gt_any = r.iter().zip(s.iter()).any(|(a, b)| a > b);
-                        if !(ge_all && gt_any) {
+                        let beats = dominates(r, s)
+                            || (r == s && dominates(&lin_rank(f), &lin_rank(g)));
+                        if !beats {
                             continue 'outer;
                         }
                     }
@@ -16515,6 +16648,189 @@ impl<'a> TypeCheckCtx<'a> {
         None
     }
 
+    /// Registry 221.1 #1334: does `method` on the receiver type `ty` have two
+    /// declarations that differ in the receiver's `consume` (a receiver-mode
+    /// pair, D84 mode axis, R14)? Only gates the receiver-type fallback in
+    /// `check_instance_overload`.
+    /// D464 amendment 2026-09-25 (linearity axis): `t` is PROVABLY an ordinary
+    /// (not must-consume) type. A type parameter of the enclosing scope is
+    /// ordinary exactly when it has no `consume` bound (D156 point 1); a
+    /// declared type when it is not `type X consume` and all its arguments are
+    /// ordinary (a container is linear when its argument is); a primitive is.
+    /// Anything unknown is NOT proven -- the caller then keeps the general
+    /// `[T consume]` form, which is correct for every `T`.
+    fn ty_provably_ordinary(&self, t: &TypeRef, gs: &GenericScope) -> bool {
+        match t {
+            TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) => self.ty_provably_ordinary(i, gs),
+            TypeRef::Array(i, _) | TypeRef::FixedArray(_, i, _) => self.ty_provably_ordinary(i, gs),
+            TypeRef::Tuple(items, _) => items.iter().all(|x| self.ty_provably_ordinary(x, gs)),
+            TypeRef::Named { path, generics, .. } if path.len() == 1 => {
+                let name = path[0].as_str();
+                if let Some(g) = gs.get(name) {
+                    return !g.consume_bound;
+                }
+                if let Some(td) = self.types_get_here(name) {
+                    return !td.consume && generics.iter().all(|x| self.ty_provably_ordinary(x, gs));
+                }
+                generics.is_empty() && crate::protocols::auto_derive::is_primitive_type(name)
+            }
+            _ => false,
+        }
+    }
+
+    /// D464 amendment 2026-09-25 (linearity axis), filter 2b: when the
+    /// candidates differ in the linearity marks of their type parameters, a
+    /// candidate with a plain `[T]` stays only if the type bound to that `T` is
+    /// provably ordinary -- the receiver's type argument at that carrier
+    /// position, or the argument passed to a parameter typed exactly `T`. In a
+    /// generic caller `T` is the caller's own parameter, judged by its declared
+    /// bound (point 6, variant (a)). A set with equal marks passes unchanged.
+    fn linearity_filter<'f>(
+        &self,
+        recv_ty: Option<&TypeRef>,
+        fns: &[&'f FnDecl],
+        args: &[CallArg],
+        gs: &GenericScope,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Vec<&'f FnDecl> {
+        if fns.len() < 2 {
+            return fns.to_vec();
+        }
+        if fns.iter().all(|f| !linearity_pair_differs(fns[0], f)) {
+            return fns.to_vec();
+        }
+        let mut rt = recv_ty;
+        while let Some(TypeRef::Readonly(i, _) | TypeRef::Mut(i, _)) = rt {
+            rt = Some(i);
+        }
+        let recv_args: Vec<TypeRef> = match rt {
+            Some(TypeRef::Named { generics, .. }) => generics.clone(),
+            Some(TypeRef::Array(i, _)) | Some(TypeRef::FixedArray(_, i, _)) => vec![(**i).clone()],
+            _ => Vec::new(),
+        };
+        // A candidate's linearity TWIN: another one equal in every mode and
+        // differing only in the markers. Only against a twin does an UNKNOWN
+        // type argument drop the plain form (the general one is right for
+        // every `T`); a pair that also differs in a mode is decided by the
+        // mode axis, the markers acting there only as filter 2b.
+        let modes = |f: &FnDecl| (
+            f.receiver.as_ref().map(|r| (r.mutable, r.consume)),
+            f.params.iter().map(|p| (p.consume, p.is_mut)).collect::<Vec<_>>(),
+        );
+        let has_twin = |f: &FnDecl| fns.iter().any(|g| g.span != f.span
+            && linearity_pair_differs(f, g) && modes(f) == modes(g));
+        // The positions (carrier params first, then the fn's own) where some
+        // candidate of the same shape has `consume` -- only there is a plain
+        // marker a choice to judge; a `[K]` plain in every form is not.
+        let marks: Vec<Vec<bool>> = fns.iter().map(|f| linearity_marks(f)).collect();
+        fns.iter().copied().enumerate().filter(|(fi, f)| {
+            let n_recv = f.receiver.as_ref().map_or(0, |r| r.generics.len());
+            for (pos, is_consume) in marks[*fi].iter().enumerate() {
+                if *is_consume {
+                    continue;
+                }
+                let contested = marks.iter().any(|m| m.len() == marks[*fi].len() && m[pos]);
+                if !contested {
+                    continue;
+                }
+                // The type bound to the parameter at `pos`.
+                let bound: Option<TypeRef> = if pos < n_recv {
+                    recv_args.get(pos).cloned()
+                } else {
+                    let name = &f.generics[pos - n_recv].name;
+                    f.params.iter().zip(args.iter()).find_map(|(p, a)| {
+                        let at = BoundCtx::infer_arg_ty(a.expr(), scope)?;
+                        bind_type_param(&p.ty, &at, name)
+                    })
+                };
+                match bound {
+                    Some(t) if self.ty_provably_ordinary(&t, gs) => {}
+                    None if !has_twin(f) => {}
+                    _ => return false,
+                }
+            }
+            true
+        }).map(|(_, f)| f).collect()
+    }
+
+    /// D464 amendment 2026-09-25: the type's method `method` has a linearity
+    /// pair (a plain `[T]` and a `[T consume]` form). Opens the same full
+    /// receiver typing as `has_recv_consume_pair` -- a shape refused as a
+    /// duplicate before the amendment, so every other call site is unchanged.
+    fn has_linearity_pair(&self, ty: &TypeRef, method: &str) -> bool {
+        let mut rt = ty;
+        while let TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) = rt {
+            rt = i;
+        }
+        let name = match rt {
+            TypeRef::Named { path, .. } if path.len() == 1 => path[0].as_str(),
+            TypeRef::Array(..) => "Vec",
+            _ => return false,
+        };
+        self.sig.method_table.get(name)
+            .and_then(|m| m.get(method))
+            .map_or(false, |fs| fs.iter().any(|f| linearity_pair_differs(f, fs[0])))
+    }
+
+    fn has_recv_consume_pair(&self, ty: &TypeRef, method: &str) -> bool {
+        let mut rt = ty;
+        while let TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) = rt {
+            rt = i;
+        }
+        let TypeRef::Named { path, .. } = rt else { return false };
+        if path.len() != 1 {
+            return false;
+        }
+        self.sig.method_table.get(&path[0])
+            .and_then(|m| m.get(method))
+            .map_or(false, |fs| {
+                let consume_of = |f: &&FnDecl| f.receiver.as_ref().map_or(false, |r| r.consume);
+                fs.iter().any(|f| consume_of(f)) && fs.iter().any(|f| !consume_of(f))
+            })
+    }
+
+    /// Registry 221.1 #1334: the owning sum of a tuple-variant constructor call
+    /// of a GENERIC user sum (`Som(Res { id: 5 })` -> `Opt`), which
+    /// `infer_expr_type` deliberately leaves `None` (generic sums stay on
+    /// codegen's mono path; see `infer_call_sum_variant_stays_unknown`). Feeds
+    /// ONLY the receiver-mode-pair fallback of `check_instance_overload`: a
+    /// constructor call is the plainest temporary receiver, and without its
+    /// type the pair got no verdict. Exactly one owning sum or `None` -- a
+    /// variant name shared by two generic sums is not guessed; the callee name
+    /// must not be a local or a declared free fn.
+    fn generic_sum_ctor_owner(
+        &self,
+        e: &Expr,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Option<TypeRef> {
+        let ExprKind::Call { func, args, .. } = &e.kind else { return None };
+        let ExprKind::Ident(name) = &func.kind else { return None };
+        if scope.contains_key(name)
+            || self.sig.fn_decls.get(name)
+                .map_or(false, |ov| ov.iter().any(|f| f.receiver.is_none()))
+        {
+            return None;
+        }
+        let owners: Vec<&String> = self.types.iter()
+            .filter_map(|(type_name, td)| match &td.kind {
+                TypeDeclKind::Sum(variants)
+                    if !td.generics.is_empty()
+                        && variants.iter().any(|v| &v.name == name && matches!(&v.kind,
+                            SumVariantKind::Tuple(fields) if fields.len() == args.len())) =>
+                    Some(type_name),
+                _ => None,
+            })
+            .collect();
+        match owners.as_slice() {
+            [only] => Some(TypeRef::Named {
+                path: vec![(*only).clone()],
+                generics: Vec::new(),
+                span: e.span,
+            }),
+            _ => None,
+        }
+    }
+
     fn check_instance_overload(
         &self,
         obj: &Expr,
@@ -16569,7 +16885,19 @@ impl<'a> TypeCheckCtx<'a> {
             if matches!(obj.kind, ExprKind::Member { .. }) {
                 self.infer_expr_type(obj, scope)
             } else {
-                None
+                // Registry 221.1 #1334: a receiver-mode pair (`fn T @m()` /
+                // `fn T consume @m()`) is resolved by the RECEIVER's shape (rule 3:
+                // a temporary takes the consuming form), and the commonest
+                // temporary -- a call result (`mk().take()`, `x.id().take()`) --
+                // is exactly what the lightweight probe misses. Without a verdict
+                // here codegen fell back to the first (copying) declaration.
+                // Gated to a type whose method HAS such a pair, a shape refused as
+                // a duplicate before #1334, so every other call site stays
+                // byte-identical (see the `Member`-only rationale above).
+                self.infer_expr_type(obj, scope)
+                    .or_else(|| self.generic_sum_ctor_owner(obj, scope))
+                    .filter(|t| self.has_recv_consume_pair(t, method_name)
+                        || self.has_linearity_pair(t, method_name))
             }
         }) else { return; };
         // Plan 172.2: normalize the receiver to a single `type_name`, mapping
@@ -16868,6 +17196,31 @@ impl<'a> TypeCheckCtx<'a> {
                 None => {} // arity-fail for this candidate
             }
         }
+        // Registry 221.1 #1341: rule 3 of the D84 mode axis (10-overloading.md)
+        // excludes a candidate whose `consume` parameter (or `consume @`
+        // receiver) would take a `ro`/`mut` binding, a field or `@` -- "otherwise
+        // (a ro/mut binding) the consume candidate is excluded". The exclusion
+        // was applied only inside `mode_axis_tiebreak`, i.e. only between
+        // candidates with IDENTICAL parameter types; with a type-differing
+        // sibling (`fn Vec[T consume] mut @append(consume other Vec[T])` beside
+        // the copying `fn Vec[T] mut @append[S AsSlice[T]](other S)`) the
+        // "concrete beats generic" step below picked the consuming form for
+        // `v.append(other)` with `mut other` -- and the bulk-move append then
+        // emptied the caller's live `other`. Applied only when a candidate
+        // survives it: a lone consuming overload keeps taking the binding (D131).
+        {
+            let rule3_ok = |f: &FnDecl| -> bool {
+                let recv_ok = !f.receiver.as_ref().map_or(false, |r| r.consume)
+                    || self.expr_mode_axis_consume_eligible(obj);
+                recv_ok && f.params.iter().zip(args.iter()).all(|(p, a)| {
+                    !p.consume || self.expr_mode_axis_consume_eligible(a.expr())
+                })
+            };
+            if compat_fns.iter().any(|f| rule3_ok(f)) && !compat_fns.iter().all(|f| rule3_ok(f)) {
+                compat_fns.retain(|f| rule3_ok(f));
+                compat_spans = compat_fns.iter().map(|f| f.span).collect();
+            }
+        }
         let any_compat = !compat_spans.is_empty();
         // D84 "concrete beats generic" (precedent already established at the
         // array-facade site above, ~12196): when a concrete (non-generic)
@@ -16953,7 +17306,12 @@ impl<'a> TypeCheckCtx<'a> {
             // `mode_axis_tiebreak`) before giving up. №857: a genuine tie on
             // that axis is no longer a silent fall-through — D84's mode-axis
             // amendment orders the rejection, with the candidates listed.
-            match self.mode_axis_tiebreak(Some(obj), &compat_fns, args) {
+            // D464 amendment 2026-09-25: a plain-`[T]` twin stays only for a
+            // provably ordinary `T` (filter 2b), then the mode and linearity axes.
+            let lin_fns = self.linearity_filter(Some(&recv_ty), &compat_fns, args, gs, scope);
+            let single = (lin_fns.len() == 1 && compat_fns.len() > 1)
+                .then(|| ModeAxisVerdict::Winner(lin_fns[0].span));
+            match single.unwrap_or_else(|| self.mode_axis_tiebreak(Some(obj), &lin_fns, args)) {
                 ModeAxisVerdict::Winner(sp) => Some(sp),
                 ModeAxisVerdict::GenuineTie(cands) => {
                     errors.push(Diagnostic::new(
@@ -17502,7 +17860,12 @@ impl<'a> TypeCheckCtx<'a> {
                                     // №857: a genuine tie is the D84-ordered
                                     // rejection, not a silent legacy pick.
                                     let fns: Vec<&FnDecl> = compat.iter().map(|f| **f).collect();
-                                    match self.mode_axis_tiebreak(None, &fns, args) {
+                                    // D464 amendment 2026-09-25: linearity axis, filter 2b.
+                                    let lin_single = fns.len() > 1;
+                                    let fns = self.linearity_filter(None, &fns, args, gs, scope);
+                                    let single = (lin_single && fns.len() == 1)
+                                        .then(|| ModeAxisVerdict::Winner(fns[0].span));
+                                    match single.unwrap_or_else(|| self.mode_axis_tiebreak(None, &fns, args)) {
                                         ModeAxisVerdict::Winner(sp) =>
                                             compat.iter().find(|f| f.span == sp).copied(),
                                         ModeAxisVerdict::GenuineTie(cands) => {
@@ -24919,9 +25282,27 @@ impl<'a> TypeCheckCtx<'a> {
                 let a = arity?;
                 let cands: Vec<&&FnDecl> =
                     many.iter().filter(|f| f.params.len() == a).collect();
+                // Registry 221.1 #1336: a D84 MODE pair (`fn Option[Result[T, E]]
+                // @tp()` / `fn Option[Result[T consume, E consume]] consume @tp()`,
+                // or `@put(v T)` / `@put(consume v T)`) has the same arity and
+                // parameter types, so the arg-type dispatch below found no
+                // unique candidate (zero-arg: no first argument at all) and the
+                // call got no return type -- codegen then typed the binding as
+                // `nova_int`. The checker's own choice for this call
+                // (`resolved_callees`, written by `mode_axis_tiebreak`) decides.
+                // No choice recorded -> the old path (an honest miss, not a guess
+                // at a form: the halves may differ in the return type too).
+                let mode_pick: Option<&FnDecl> = if cands.len() > 1 {
+                    call_id
+                        .and_then(|id| self.resolved_callees.borrow().get(&id).copied())
+                        .and_then(|sp| cands.iter().find(|f| f.span == sp).map(|f| **f))
+                } else {
+                    None
+                };
                 match cands.as_slice() {
                     [] => return None,
                     [one] => *one,
+                    _ if mode_pick.is_some() => mode_pick?,
                     same_arity => {
                         // 172.1.2 arg-type dispatch: тип ПЕРВОГО аргумента против
                         // КОНКРЕТНОГО param0 кандидатов — ровно одно совпадение.
@@ -25680,6 +26061,42 @@ impl<'a> TypeCheckCtx<'a> {
     /// (Ident/SelfAccess/literal). Returns None for non-method-call exprs, ctor forms (handled by
     /// `infer_expr_type`'s ctor arms), and anything `resolve_instance_method_return` bails on
     /// (container/unbound-carrier/multi-overload/static).
+    /// Registry 221.1 #1339: record the D84 mode-axis choice for the method
+    /// call `id` (`obj.method(args)`) if it has none yet -- for a consumer that
+    /// runs before the call's own `check_instance_overload` (the closure-param
+    /// seed, `closure_arg_param_seeds`). Same rule, same inputs, so the later
+    /// check records the same span. Only a genuine mode-axis set gets a verdict
+    /// (`mode_axis_tiebreak` requires identical parameter types), so a
+    /// type-differentiated overload set is left alone.
+    fn prime_mode_axis_choice(
+        &self,
+        recv_ty: &TypeRef,
+        method: &str,
+        obj: &Expr,
+        args: &[CallArg],
+        id: crate::ast::ExprId,
+    ) {
+        if self.resolved_callees.borrow().contains_key(&id) {
+            return;
+        }
+        let mut peeled = recv_ty;
+        while let TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) = peeled {
+            peeled = i;
+        }
+        let TypeRef::Named { path, .. } = peeled else { return };
+        if path.len() != 1 {
+            return;
+        }
+        let Some(overloads) = self.method_overloads(&path[0], method) else { return };
+        let cands: Vec<&FnDecl> = overloads.iter()
+            .filter(|f| f.params.len() == args.len())
+            .copied()
+            .collect();
+        if let ModeAxisVerdict::Winner(sp) = self.mode_axis_tiebreak(Some(obj), &cands, args) {
+            self.resolved_callees.borrow_mut().insert(id, sp);
+        }
+    }
+
     fn infer_method_call_channel_type(
         &self,
         e: &Expr,
@@ -25983,13 +26400,68 @@ impl<'a> TypeCheckCtx<'a> {
                 _ => break,
             }
         }
+        // D216 амендмент 2026-09-25 п. 3 (план 246): `p.view(f)` /
+        // `p.view_at(i, f)`, `f fn(T) -> R` — встроенные операции указателя,
+        // у них нет `Item::Fn`-объявления, поэтому подпись `fn(T)` задаётся
+        // здесь: параметр лямбды-литерала получает тип элемента `T` (pointee
+        // без модификатора `mut`/`ro`/`uninit`). Дальше — общий путь C6b:
+        // тело f1-обходится с типизированным параметром, а сам closure-arg
+        // аннотируется `R::Func{[T], R}` (канал для `view`-producer'а ниже
+        // и для emit_lambda).
+        if let TypeRef::Pointer(inner, _) = peeled {
+            let f_idx = match name.as_str() {
+                "view" if args.len() == 1 => Some(0usize),
+                "view_at" if args.len() == 2 => Some(1usize),
+                _ => None,
+            };
+            if let Some(ix) = f_idx {
+                let mut elem: &TypeRef = inner;
+                loop {
+                    match elem {
+                        TypeRef::Readonly(i, _) | TypeRef::Mut(i, _)
+                        | TypeRef::Uninit(i, _) => elem = i,
+                        _ => break,
+                    }
+                }
+                if let ExprKind::ClosureLight { params: cp, .. } = &args[ix].expr().kind {
+                    if cp.len() == 1
+                        && cp[0].name != "_"
+                        && !matches!(elem, TypeRef::Unit(_))
+                    {
+                        out.push((ix, vec![(cp[0].name.clone(), elem.clone())]));
+                    }
+                }
+            }
+            return out;
+        }
         let type_name: String = match peeled {
             TypeRef::Named { path, .. } if path.len() == 1 => path[0].clone(),
             TypeRef::Array(_, _) | TypeRef::FixedArray(_, _, _) => "Vec".to_string(),
             _ => return out,
         };
         let Some(overloads) = self.method_overloads(&type_name, name) else { return out };
-        let [f] = overloads.as_slice() else { return out };
+        let f: &FnDecl = match overloads.as_slice() {
+            [f] => *f,
+            // Registry 221.1 #1339: a D84 mode pair (`fn Option[T] @map[U](f
+            // fn(T) -> U)` / `fn Option[T consume] consume @map[U consume](..)`)
+            // is two declarations, and without a seed the closure's params stay
+            // untyped, its body is not typed, and the method generic `U` gets no
+            // binding -- every `.map(|s| ..)` in a program broke in C the moment
+            // std declared the pair. The mode-axis choice (the same rule the
+            // dispatch uses, `mode_axis_tiebreak`) names the one overload; this
+            // runs before the call's own `check_instance_overload`, so make that
+            // choice now.
+            multi => {
+                if e.id.is_set() {
+                    self.prime_mode_axis_choice(&recv_ty, name, obj, args, e.id);
+                }
+                let chosen = self.resolved_callees.borrow().get(&e.id).copied();
+                match chosen.and_then(|sp| multi.iter().find(|c| c.span == sp)) {
+                    Some(f) => *f,
+                    None => return out,
+                }
+            }
+        };
         let Some(recv) = f.receiver.as_ref() else { return out };
         if !matches!(recv.kind, ReceiverKind::Instance) {
             return out;
@@ -31266,8 +31738,29 @@ impl<'a> BoundCtx<'a> {
             let Some(methods_for_recv) = self.sig.method_table.get(key.as_str()) else { continue; };
             let Some(overloads) = methods_for_recv.get(method_name) else { continue; };
             // Take single match (skip if multiple overloads — codegen разрулит).
-            match overloads.as_slice() {
-                [single] => { hit = Some((key.as_str(), single)); break; }
+            // Plan 246 (the consuming `append(consume other Vec[T])` beside the
+            // bounded `append[S AsSlice[T]](other S)`): with several overloads,
+            // D84 filter 2 comes first -- drop a candidate of the wrong arity or
+            // whose concrete parameter type names a different type than the
+            // KNOWN argument type. A second overload used to switch the bound
+            // check off for every call of the name (m381 / p386 fixtures).
+            let applicable: Vec<&FnDecl> = overloads.iter().copied().filter(|f| {
+                f.params.len() == args.len()
+                    && f.params.iter().zip(args.iter()).all(|(p, a)| {
+                        let generic = |n: &str| f.generics.iter().any(|g| g.name == n)
+                            || f.receiver.as_ref().map_or(false, |r| r.generics.iter().any(|t|
+                                matches!(t, TypeRef::Named { path, .. } if path.len() == 1 && path[0] == n)));
+                        let TypeRef::Named { path: pp, .. } = &p.ty else { return true };
+                        if pp.len() != 1 || generic(&pp[0]) { return true; }
+                        match Self::infer_arg_ty(a.expr(), scope).or_else(|| self.call_return_ty(a.expr())) {
+                            Some(TypeRef::Named { path: ap, .. }) => ap.last() == pp.last(),
+                            Some(TypeRef::Array(..)) => pp[0] == "Vec",
+                            _ => true,
+                        }
+                    })
+            }).collect();
+            match applicable.as_slice() {
+                [single] => { hit = Some((key.as_str(), *single)); break; }
                 _ => return, // ambiguous under the key that DOES have this name — bail (best-effort)
             }
         }
@@ -38956,7 +39449,10 @@ enum ModeAxisVerdict {
 /// №857: one overload candidate as the D84 rejection lists it — name plus
 /// parameters with their declared modes, e.g. `f(consume a int, b int, c int)`.
 fn mode_axis_candidate_desc(f: &FnDecl) -> String {
-    let recv = f.receiver.as_ref().map(|r| if r.mutable { "mut @" } else { "@" }).unwrap_or("");
+    // #1334: the receiver mode is the full {ro, mut, consume} triple.
+    let recv = f.receiver.as_ref()
+        .map(|r| if r.consume { "consume @" } else if r.mutable { "mut @" } else { "@" })
+        .unwrap_or("");
     let params: Vec<String> = f.params.iter().map(|p| {
         let mode = if p.consume { "consume " } else if p.is_mut { "mut " } else { "" };
         format!("{}{} {}", mode, p.name, render_type_ref(&p.ty))
@@ -41395,6 +41891,63 @@ fn check_linearity_markers(
 }
 
 /// Реестр consume-аннотаций: user-module + runtime-stdlib.
+/// Registry 221.1 #1332: one declaration's parameter shape — per position,
+/// `(declared consume, declared type)`. See `ConsumeRegistry::fn_mode_shapes`.
+type ModeShape = Vec<(bool, TypeRef)>;
+
+fn mode_shape_of(fd: &FnDecl) -> ModeShape {
+    fd.params.iter().map(|p| (p.consume, p.ty.clone())).collect()
+}
+
+/// Registry 221.1 #1332: positions at which a name's declarations form a
+/// COPYING/CONSUMING pair on the D84 mode axis — two declarations of the same
+/// arity whose parameter types are pairwise identical (`typeref_equal`, the
+/// same guard `TypeCheckCtx::mode_axis_tiebreak` applies before it resolves
+/// the axis) and that differ in `consume` at that position. At such a
+/// position the call's argument, not the name, decides the form (rule 3).
+fn mode_pair_positions(shapes: Option<&Vec<ModeShape>>) -> Vec<usize> {
+    let Some(shapes) = shapes else { return Vec::new() };
+    let mut out: Vec<usize> = Vec::new();
+    for (ai, a) in shapes.iter().enumerate() {
+        for b in shapes.iter().skip(ai + 1) {
+            if a.len() != b.len()
+                || !a.iter().zip(b.iter()).all(|(x, y)| typeref_equal(&x.1, &y.1))
+            {
+                continue;
+            }
+            for (i, (x, y)) in a.iter().zip(b.iter()).enumerate() {
+                if x.0 != y.0 && !out.contains(&i) {
+                    out.push(i);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Registry 221.1 #1334: the receiver twin of `mode_pair_positions` -- do a
+/// method's declarations form a COPYING/CONSUMING pair on the RECEIVER (two
+/// declarations of the same arity, pairwise identical parameter types by
+/// `typeref_equal`, one with a `consume @` receiver and one without)? Then the
+/// receiver expression, not the name, decides the form (rule 3, R14).
+fn recv_mode_pair(shapes: Option<&Vec<(bool, ModeShape)>>) -> bool {
+    let Some(shapes) = shapes else { return false };
+    shapes.iter().enumerate().any(|(ai, (ac, a))| {
+        shapes.iter().skip(ai + 1).any(|(bc, b)| {
+            ac != bc
+                && a.len() == b.len()
+                && a.iter().zip(b.iter()).all(|(x, y)| typeref_equal(&x.1, &y.1))
+        })
+    })
+}
+
+/// Registry 221.1 #1332: which callee a call's consume positions are asked
+/// for — see `ConsumeCtx::callee_consume_idxs`.
+enum ConsumeCallee<'k> {
+    Fn(&'k str),
+    Method(&'k str, &'k str),
+}
+
 struct ConsumeRegistry {
     /// `(receiver_type, method_name)` — consume-методы.
     methods: HashSet<(String, String)>,
@@ -41406,6 +41959,22 @@ struct ConsumeRegistry {
     /// Для var-type инференса `let x = factory()` — расширяет резолв
     /// consume-метода за пределы очевидных конструкторов.
     fn_return_types: HashMap<String, String>,
+    /// Registry 221.1 #1326: a free fn whose declared return is a bare type
+    /// parameter (`fn pass[T consume](consume x T) -> T`) maps to the index of
+    /// the parameter spelled `T`. The binding's type is then inferred from
+    /// THAT argument; the declared name `T` is never used as a type (it is
+    /// not one), which is what made `consume r = pass(Res {..})` look
+    /// unconsumed after `r.close()`.
+    fn_return_param_idx: HashMap<String, usize>,
+    /// #1326, method twin of `fn_return_param_idx`; the type parameter may
+    /// come from the receiver (`fn Cell[T consume] @put(consume v T) -> T`).
+    method_return_param_idx: HashMap<(String, String), usize>,
+    /// #1326 (nested tail): callees whose declared return is a generic type
+    /// whose arguments mention a type parameter (`-> Option[T]`,
+    /// `-> Result[Option[T], E]`). This pass does not substitute them, so it
+    /// does not know whether such a value is must-consume.
+    fn_generic_wrapped_return: HashSet<String>,
+    method_generic_wrapped_return: HashSet<(String, String)>,
     /// D86-followup (2026-07-14): free-fn name → Ok/Some-inner type name,
     /// companion of `fn_return_types` — see `unwrapped_method_return_types`
     /// doc for rationale (same `Result[T,E]`/`Option[T]` unwrap, free-fn side).
@@ -41535,6 +42104,25 @@ struct ConsumeRegistry {
     /// with ≥2 declarations (covers the receiver-mode-overload combo too,
     /// e.g. `fn T @combo(x T)` / `fn T mut @combo(mut x T)`).
     method_overload_names: HashSet<(String, String)>,
+    /// Registry 221.1 #1332: every declaration's parameter SHAPE per free-fn
+    /// name — `(consume flag, declared type)` per position. `fn_params` keeps
+    /// ONE consume-index set per name, so a copying/consuming pair
+    /// (`fn put(v T)` / `fn put(consume v T)`) looked like "position 0 always
+    /// consumes" and a plain binding passed to it was declared consumed,
+    /// although rule 3 (10-overloading.md, D84 mode axis) dispatches it to the
+    /// COPYING form. The shapes let `ConsumeCtx::callee_consume_idxs` see the
+    /// pair; see `mode_pair_positions`.
+    fn_mode_shapes: HashMap<String, Vec<ModeShape>>,
+    /// #1332, method twin of `fn_mode_shapes`, keyed `(receiver_type, method)`.
+    method_mode_shapes: HashMap<(String, String), Vec<ModeShape>>,
+    /// Registry 221.1 #1334: the receiver twin of `method_mode_shapes` --
+    /// per declaration, `(receiver declared consume, parameter shape)`. `methods`
+    /// keeps one "consumes its receiver" bit per `(type, method)`, so a
+    /// receiver-mode pair (`fn Box @take()` / `fn Box consume @take()`) looked
+    /// like "the receiver is always consumed", although rule 3 (10-overloading.md,
+    /// D84 mode axis, R14: `@` is the zeroth parameter) sends a `ro`/`mut`
+    /// binding to the copying form. See `recv_mode_pair`.
+    method_recv_shapes: HashMap<(String, String), Vec<(bool, ModeShape)>>,
     /// D246-амендмент §72 ([M-ro-launder-fullstack-value-exemption], Ф.2,
     /// 2026-07-24): name-keyed companion of `is_fully_stack_value`
     /// (types/mod.rs free fn) for the call-ARGUMENT ro-launder position,
@@ -41642,6 +42230,100 @@ struct ConsumeRegistry {
 /// Used to populate `unwrapped_method_return_types`/`unwrapped_fn_return_types`
 /// — see those fields' docs for why this must be a SEPARATE map rather than
 /// changing `method_return_types`/`fn_return_types` in place.
+/// Registry 221.1 #1326: if `fd`'s declared return is a bare type parameter
+/// (of the fn itself or of its receiver), `Some(idx)` where `idx` is the first
+/// parameter whose type is exactly that parameter, `Some(None)` when none is;
+/// `None` when the return is not a type parameter at all.
+fn generic_return_param_idx(fd: &FnDecl) -> Option<Option<usize>> {
+    let Some(TypeRef::Named { path, .. }) = &fd.return_type else { return None };
+    if path.len() != 1 { return None; }
+    let name = &path[0];
+    let mut generic = fd.generics.iter().any(|g| &g.name == name);
+    if let Some(r) = &fd.receiver {
+        generic |= r.generics.iter().any(|g| matches!(g,
+            TypeRef::Named { path: p, .. } if p.len() == 1 && &p[0] == name));
+        generic |= r.carrier_bounds.iter().any(|g| &g.name == name);
+    }
+    if !generic { return None; }
+    Some(fd.params.iter().position(|p| matches!(&p.ty,
+        TypeRef::Named { path: p2, .. } if p2.len() == 1 && &p2[0] == name)))
+}
+
+/// D464 amendment 2026-09-25 (linearity axis): the `consume` marker of every
+/// type parameter of `fd` -- the receiver's carrier brackets first, then the
+/// fn's own. Two declarations that differ only here are a pair, not a
+/// duplicate (D84); `false` is a plain `[T]`, which admits only ordinary types.
+/// D464 amendment 2026-09-25: `a` and `b` are a LINEARITY PAIR -- the same
+/// number of type parameters, differing only in their `consume` markers. A
+/// generic fn beside a concrete sibling (`[T]` vs none) is not one.
+pub(crate) fn linearity_pair_differs(a: &FnDecl, b: &FnDecl) -> bool {
+    let (ma, mb) = (linearity_marks(a), linearity_marks(b));
+    ma.len() == mb.len() && ma != mb
+}
+
+pub(crate) fn linearity_marks(fd: &FnDecl) -> Vec<bool> {
+    // `carrier_bounds` holds only the bounded carrier params, so the marks go
+    // by the carrier's positions (`generics`), looked up by name.
+    let mut out: Vec<bool> = fd.receiver.as_ref()
+        .map(|r| r.generics.iter().map(|g| match g {
+            TypeRef::Named { path, .. } if path.len() == 1 => r.carrier_bounds.iter()
+                .any(|b| b.name == path[0] && b.consume_bound),
+            _ => false,
+        }).collect())
+        .unwrap_or_default();
+    out.extend(fd.generics.iter().map(|g| g.consume_bound));
+    out
+}
+
+/// D464 amendment 2026-09-25: the type bound to the type parameter `name` when
+/// the declared `param` is matched structurally against the argument type
+/// `arg` (`T` ~ `int` -> `int`; `Bag[T]` ~ `Bag[Res]` -> `Res`; `[]T` ~ `[]u8`).
+/// `None` when `name` does not occur or the shapes disagree.
+fn bind_type_param(param: &TypeRef, arg: &TypeRef, name: &str) -> Option<TypeRef> {
+    let mut a = arg;
+    while let TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) = a {
+        a = i;
+    }
+    match (param, a) {
+        (TypeRef::Named { path, generics, .. }, _) if path.len() == 1 && path[0] == name
+            && generics.is_empty() => Some(a.clone()),
+        (TypeRef::Named { path: pp, generics: pg, .. }, TypeRef::Named { path: ap, generics: ag, .. })
+            if pp == ap && pg.len() == ag.len() =>
+            pg.iter().zip(ag.iter()).find_map(|(x, y)| bind_type_param(x, y, name)),
+        (TypeRef::Array(pi, _), TypeRef::Array(ai, _)) => bind_type_param(pi, ai, name),
+        (TypeRef::Tuple(ps, _), TypeRef::Tuple(as_, _)) if ps.len() == as_.len() =>
+            ps.iter().zip(as_.iter()).find_map(|(x, y)| bind_type_param(x, y, name)),
+        _ => None,
+    }
+}
+
+/// Registry 221.1 #1326 (nested tail): true when `fd`'s declared return is a
+/// generic type whose arguments mention one of `fd`'s type parameters (of the
+/// fn itself or of its receiver) -- `-> Option[T]`, `-> Result[Option[T], E]`.
+fn generic_wrapped_return(fd: &FnDecl) -> bool {
+    let Some(TypeRef::Named { generics, .. }) = &fd.return_type else { return false };
+    let mut params: Vec<&str> = fd.generics.iter().map(|g| g.name.as_str()).collect();
+    if let Some(r) = &fd.receiver {
+        for g in &r.generics {
+            if let TypeRef::Named { path, .. } = g {
+                if path.len() == 1 { params.push(path[0].as_str()); }
+            }
+        }
+        params.extend(r.carrier_bounds.iter().map(|g| g.name.as_str()));
+    }
+    fn mentions(t: &TypeRef, ps: &[&str]) -> bool {
+        match t {
+            TypeRef::Named { path, generics, .. } =>
+                (path.len() == 1 && ps.contains(&path[0].as_str()))
+                    || generics.iter().any(|g| mentions(g, ps)),
+            TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => mentions(inner, ps),
+            TypeRef::Tuple(items, _) => items.iter().any(|g| mentions(g, ps)),
+            _ => false,
+        }
+    }
+    generics.iter().any(|g| mentions(g, &params))
+}
+
 fn unwrap_result_option_name(rt: &TypeRef, self_ty: &str) -> Option<String> {
     if let TypeRef::Named { path, generics, .. } = rt {
         if path.len() == 1
@@ -41736,6 +42418,10 @@ impl ConsumeRegistry {
         let mut method_param_output_keys: HashMap<(String, String), Vec<String>> = HashMap::new();
         let mut method_params: HashMap<(String, String), Vec<usize>> = HashMap::new();
         let mut fn_return_types: HashMap<String, String> = HashMap::new();
+        let mut fn_return_param_idx: HashMap<String, usize> = HashMap::new();
+        let mut method_return_param_idx: HashMap<(String, String), usize> = HashMap::new();
+        let mut fn_generic_wrapped_return: HashSet<String> = HashSet::new();
+        let mut method_generic_wrapped_return: HashSet<(String, String)> = HashSet::new();
         // D86-followup: unwrapped (Ok/Some-inner) companion maps — see field docs.
         let mut unwrapped_fn_return_types: HashMap<String, String> = HashMap::new();
         let mut unwrapped_method_return_types: HashMap<(String, String), String> = HashMap::new();
@@ -41768,6 +42454,12 @@ impl ConsumeRegistry {
         // `fn_overload_names` field doc for the false-positive it prevents.
         let mut fn_decl_counts: HashMap<String, usize> = HashMap::new();
         let mut method_decl_counts: HashMap<(String, String), usize> = HashMap::new();
+        // Registry 221.1 #1332: per-name parameter shapes (see field doc).
+        let mut fn_mode_shapes: HashMap<String, Vec<ModeShape>> = HashMap::new();
+        let mut method_mode_shapes: HashMap<(String, String), Vec<ModeShape>> = HashMap::new();
+        // #1334: per-(type, method) receiver mode + parameter shape.
+        let mut method_recv_shapes: HashMap<(String, String), Vec<(bool, ModeShape)>> =
+            HashMap::new();
         // Plan 118.5 V2 [M-118.5-arg-coerce-unsafe]: non-unsafe-T params
         // indices (positions where param's outer wrapper is NOT Unsafe).
         let mut fn_non_unsafe_params: HashMap<String, Vec<usize>> = HashMap::new();
@@ -41965,6 +42657,14 @@ impl ConsumeRegistry {
                         *method_decl_counts
                             .entry((r.type_name.clone(), fd.name.clone()))
                             .or_insert(0) += 1;
+                        method_mode_shapes
+                            .entry((r.type_name.clone(), fd.name.clone()))
+                            .or_default()
+                            .push(mode_shape_of(fd));
+                        method_recv_shapes
+                            .entry((r.type_name.clone(), fd.name.clone()))
+                            .or_default()
+                            .push((r.consume, mode_shape_of(fd)));
                         if r.consume {
                             methods.insert((r.type_name.clone(), fd.name.clone()));
                         }
@@ -41993,7 +42693,16 @@ impl ConsumeRegistry {
                         // `fn Mutex mut @lock() -> MutexGuard consume` → ("Mutex","lock") → "MutexGuard".
                         // Resolve "Self" → receiver type so that `consume b = a.clone()`
                         // correctly infers b's type as the receiver type (e.g. "StringBuilder").
-                        if let Some(TypeRef::Named { path, .. }) = &fd.return_type {
+                        let gen_ret = generic_return_param_idx(fd);
+                        if let Some(Some(i)) = gen_ret {
+                            method_return_param_idx
+                                .insert((r.type_name.clone(), fd.name.clone()), i);
+                        }
+                        if generic_wrapped_return(fd) {
+                            method_generic_wrapped_return
+                                .insert((r.type_name.clone(), fd.name.clone()));
+                        }
+                        if let (None, Some(TypeRef::Named { path, .. })) = (gen_ret, &fd.return_type) {
                             if path.len() == 1 {
                                 let ret = if path[0] == "Self" {
                                     r.type_name.clone()
@@ -42051,6 +42760,8 @@ impl ConsumeRegistry {
                         // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1):
                         // count this free-fn declaration — ANY mode.
                         *fn_decl_counts.entry(fd.name.clone()).or_insert(0) += 1;
+                        fn_mode_shapes.entry(fd.name.clone()).or_default()
+                            .push(mode_shape_of(fd));
                         if !consume_idx.is_empty() {
                             fn_params.insert(fd.name.clone(), consume_idx);
                         }
@@ -42063,7 +42774,14 @@ impl ConsumeRegistry {
                             fn_non_unsafe_params.insert(fd.name.clone(), non_unsafe_idx);
                         }
                         // Plan 73 followup: return-тип свободной функции.
-                        if let Some(TypeRef::Named { path, .. }) = &fd.return_type {
+                        let gen_ret = generic_return_param_idx(fd);
+                        if let Some(Some(i)) = gen_ret {
+                            fn_return_param_idx.insert(fd.name.clone(), i);
+                        }
+                        if generic_wrapped_return(fd) {
+                            fn_generic_wrapped_return.insert(fd.name.clone());
+                        }
+                        if let (None, Some(TypeRef::Named { path, .. })) = (gen_ret, &fd.return_type) {
                             if path.len() == 1 {
                                 fn_return_types
                                     .insert(fd.name.clone(), path[0].clone());
@@ -42183,10 +42901,13 @@ impl ConsumeRegistry {
         ConsumeRegistry {
             method_param_output_keys,
             methods, fn_params, method_params, fn_return_types, recv_returning,
+            fn_return_param_idx, method_return_param_idx,
+            fn_generic_wrapped_return, method_generic_wrapped_return,
             fn_view_params, method_return_types, mut_methods, ro_methods,
             mut_methods_arity, ro_methods_arity, recv_returning_arity,
             fn_mut_params, method_mut_params,
             fn_overload_names, method_overload_names, stack_value_type_names,
+            fn_mode_shapes, method_mode_shapes, method_recv_shapes,
             fn_non_unsafe_params, method_non_unsafe_params,
             record_consume_fields, record_field_names, record_field_types,
             unwrapped_method_return_types, unwrapped_fn_return_types,
@@ -42253,7 +42974,16 @@ impl ConsumeRegistry {
                     if r.consume {
                         self.methods.insert((r.type_name.clone(), fd.name.clone()));
                     }
-                    if let Some(TypeRef::Named { path, .. }) = &fd.return_type {
+                    let gen_ret = generic_return_param_idx(fd);
+                    if let Some(Some(i)) = gen_ret {
+                        self.method_return_param_idx
+                            .entry((r.type_name.clone(), fd.name.clone())).or_insert(i);
+                    }
+                    if generic_wrapped_return(fd) {
+                        self.method_generic_wrapped_return
+                            .insert((r.type_name.clone(), fd.name.clone()));
+                    }
+                    if let (None, Some(TypeRef::Named { path, .. })) = (gen_ret, &fd.return_type) {
                         if path.len() == 1 {
                             let ret = if path[0] == "Self" {
                                 r.type_name.clone()
@@ -42294,11 +43024,24 @@ impl ConsumeRegistry {
                             .entry((r.type_name.clone(), fd.name.clone()))
                             .or_insert(consume_idx);
                     }
+                    // #1332: builtin declarations join the per-name shapes, so
+                    // a builtin copying/consuming pair is seen as one.
+                    self.method_mode_shapes
+                        .entry((r.type_name.clone(), fd.name.clone()))
+                        .or_default()
+                        .push(mode_shape_of(fd));
+                    // #1334: and to the receiver shapes.
+                    self.method_recv_shapes
+                        .entry((r.type_name.clone(), fd.name.clone()))
+                        .or_default()
+                        .push((r.consume, mode_shape_of(fd)));
                 }
                 None => {
                     if !consume_idx.is_empty() {
                         self.fn_params.entry(fd.name.clone()).or_insert(consume_idx);
                     }
+                    self.fn_mode_shapes.entry(fd.name.clone()).or_default()
+                        .push(mode_shape_of(fd));
                 }
             }
         }
@@ -42587,6 +43330,16 @@ struct ConsumeCtx<'a> {
     /// Plan 100.1 (D133 / D9): локальные переменные объявленные с
     /// `consume tx = ...` — обязаны быть Consumed до scope-exit.
     consume_obligations: HashSet<String>,
+    /// Registry 221.1 #1332: names whose CURRENT binding is spelled `consume`
+    /// -- a `consume x = ...` let with a plain identifier pattern, or a
+    /// `consume` parameter. Mirror of `TypeCheckCtx.consume_binding_names`
+    /// (the set the dispatch's `expr_mode_axis_consume_eligible` asks), kept
+    /// here because this pass runs before the checker, and maintained at the
+    /// same three points the checker maintains its set: a `let` with a plain
+    /// identifier pattern replaces the entry (inserted iff the let is
+    /// `consume`), fn entry seeds the `consume` parameters, and a nested block
+    /// restores the set on exit. Read ONLY by `arg_takes_consuming_form`.
+    consume_bound_names: HashSet<String>,
     /// Plan 100.8 (D166): accumulates ALL consume-binding names ever declared
     /// in this scope (never cleared, unlike `consume_obligations`).  Used by
     /// `check_d162_coverage` which runs AFTER `consume_walk_block` has already
@@ -42737,6 +43490,7 @@ impl<'a> ConsumeCtx<'a> {
             consume_obligations: HashSet::new(),
             all_declared_consume: HashSet::new(),
             binding_origin: HashMap::new(),
+            consume_bound_names: HashSet::new(),
             field_states: HashMap::new(),
             consume_bound_generics: HashSet::new(),
             view_params: HashSet::new(),
@@ -42956,6 +43710,36 @@ impl<'a> ConsumeCtx<'a> {
         turbofish_ctor_type_ref(&decl.value)
     }
 
+    /// #1326 (nested tail): the value is a call whose declared return is a
+    /// generic type over the callee's type parameters (`wrap(r)` with
+    /// `-> Option[T]`, `o.map(f)` with `-> Option[U]`). The bare name this
+    /// pass infers (`Option`) says nothing about the payload, so "the RHS is
+    /// not must-consume" cannot be concluded from it.
+    fn rhs_generic_wrapped_return(&self, e: &Expr) -> bool {
+        let ExprKind::Call { func, .. } = &e.kind else { return false };
+        match &func.kind {
+            ExprKind::Ident(fname) => self.reg.fn_generic_wrapped_return.contains(fname),
+            ExprKind::Path(parts) if parts.len() >= 2 => self.reg.method_generic_wrapped_return
+                .contains(&(parts[parts.len() - 2].clone(), parts[parts.len() - 1].clone())),
+            ExprKind::Member { obj, name: method } => {
+                let recv_ty = match &obj.kind {
+                    ExprKind::Ident(recv) if recv == "self" => self.self_type.clone(),
+                    ExprKind::Ident(recv) => {
+                        let canon = self.canonical(recv);
+                        self.var_types.get(&canon)
+                            .or_else(|| self.var_types.get(recv.as_str()))
+                            .cloned()
+                    }
+                    ExprKind::SelfAccess => self.self_type.clone(),
+                    _ => self.infer_value_type(obj),
+                };
+                recv_ty.map(|rty| self.reg.method_generic_wrapped_return
+                    .contains(&(rty, method.clone()))).unwrap_or(false)
+            }
+            _ => false,
+        }
+    }
+
     /// Best-effort тип выражения — только синтаксически очевидные формы.
     fn infer_value_type(&self, e: &Expr) -> Option<String> {
         match &e.kind {
@@ -42982,7 +43766,7 @@ impl<'a> ConsumeCtx<'a> {
             ExprKind::StrLit(_) => Some("str".to_string()),
             ExprKind::CharLit(_) => Some("char".to_string()),
             // Конструктор `Type.new(...)` / `.with_capacity` / `.from` и т.п.
-            ExprKind::Call { func, .. } => {
+            ExprKind::Call { func, args, .. } => {
                 if let ExprKind::Path(parts) = &func.kind {
                     if parts.len() == 2 && matches!(parts[1].as_str(),
                         "new" | "with_capacity" | "from" | "default" | "filled")
@@ -43027,6 +43811,10 @@ impl<'a> ConsumeCtx<'a> {
                 // Plan 73 followup: свободная функция с известным
                 // return-типом (`let x = make_builder()`).
                 if let ExprKind::Ident(fname) = &func.kind {
+                    // #1326: a generic return takes the type of its argument.
+                    if let Some(&i) = self.reg.fn_return_param_idx.get(fname) {
+                        return args.get(i).and_then(|a| match a { CallArg::Item(e) => self.infer_value_type(e), _ => None });
+                    }
                     if let Some(rt) = self.reg.fn_return_types.get(fname) {
                         return Some(rt.clone());
                     }
@@ -43064,6 +43852,12 @@ impl<'a> ConsumeCtx<'a> {
                         _ => self.infer_value_type(obj),
                     };
                     if let Some(rty) = recv_ty {
+                        // #1326: a generic return takes the type of its argument.
+                        if let Some(&i) = self.reg.method_return_param_idx
+                            .get(&(rty.clone(), method.clone()))
+                        {
+                            return args.get(i).and_then(|a| match a { CallArg::Item(e) => self.infer_value_type(e), _ => None });
+                        }
                         if let Some(ret) = self.reg.method_return_types
                             .get(&(rty, method.clone()))
                         {
@@ -43374,13 +44168,72 @@ impl<'a> ConsumeCtx<'a> {
     /// каноническому имени alias-класса).
     fn is_consume_method(&self, recv_var: &str, method: &str) -> bool {
         self.var_types.get(&self.canonical(recv_var))
-            .map(|ty| self.reg.methods.contains(&(ty.clone(), method.to_string())))
+            .map(|ty| self.recv_takes_consuming_form(ty, method, recv_var))
             .unwrap_or(false)
+    }
+
+    /// Registry 221.1 #1334: the ONE place the consume pass asks "does this
+    /// call of `ty.method` on the NAMED receiver `recv_var` consume it?".
+    /// Without a receiver-mode pair it is the old per-name answer
+    /// (`reg.methods`). With a pair (`fn Box @take()` / `fn Box consume
+    /// @take()`, `recv_mode_pair`) rule 3 of the D84 mode axis (R14: `@` is
+    /// the zeroth parameter) lets the receiver choose: a `consume`-spelled
+    /// binding takes the consuming form and is consumed, a `ro`/`mut`
+    /// binding takes the copying form and stays live -- the mirror of the
+    /// dispatch's `expr_mode_axis_consume_eligible` on an `Ident` receiver.
+    fn recv_takes_consuming_form(&self, ty: &str, method: &str, recv_var: &str) -> bool {
+        let key = (ty.to_string(), method.to_string());
+        if !self.reg.methods.contains(&key) {
+            return false;
+        }
+        !recv_mode_pair(self.reg.method_recv_shapes.get(&key))
+            || self.consume_bound_names.contains(recv_var)
     }
 
     /// Пометить аргументы в consume-позициях как потреблённые.
     /// Аргументы уже walk'нуты вызывающим (use-after-consume проверен) —
     /// здесь только переход состояния alias-класса.
+    /// Registry 221.1 #1332: the ONE place a call's consume positions are
+    /// computed for the consume pass. The name's registered consume indices
+    /// (`fn_params` / `method_params`) are narrowed at every position where
+    /// the name has a copying/consuming PAIR (`mode_pair_positions`): there
+    /// rule 3 (10-overloading.md, D84 mode axis) lets the ARGUMENT choose --
+    /// a temporary or a `consume`-spelled binding takes the consuming form
+    /// and is consumed, any other binding takes the copying form and stays
+    /// live. A position with only a consuming declaration is unchanged.
+    fn callee_consume_idxs(&self, callee: ConsumeCallee<'_>, args: &[CallArg]) -> Vec<usize> {
+        let (raw, shapes) = match callee {
+            ConsumeCallee::Fn(name) => (
+                self.reg.fn_params.get(name),
+                self.reg.fn_mode_shapes.get(name),
+            ),
+            ConsumeCallee::Method(ty, method) => {
+                let key = (ty.to_string(), method.to_string());
+                (self.reg.method_params.get(&key), self.reg.method_mode_shapes.get(&key))
+            }
+        };
+        let Some(raw) = raw else { return Vec::new() };
+        let paired = mode_pair_positions(shapes);
+        if paired.is_empty() {
+            return raw.clone();
+        }
+        raw.iter().copied()
+            .filter(|i| !paired.contains(i) || self.arg_takes_consuming_form(args.get(*i)))
+            .collect()
+    }
+
+    /// #1332: rule 3's argument classes -- mirror of
+    /// `TypeCheckCtx::expr_mode_axis_consume_eligible` (the dispatch side),
+    /// so the pass and the dispatch cannot disagree about the form chosen.
+    fn arg_takes_consuming_form(&self, arg: Option<&CallArg>) -> bool {
+        let Some(arg) = arg else { return true };
+        match &arg.expr().kind {
+            ExprKind::Ident(name) => self.consume_bound_names.contains(name.as_str()),
+            ExprKind::SelfAccess | ExprKind::Member { .. } | ExprKind::Index { .. } => false,
+            _ => true,
+        }
+    }
+
     fn consume_args(&mut self, args: &[CallArg], idxs: &[usize], span: Span) {
         for &i in idxs {
             if let Some(CallArg::Item(arg)) = args.get(i) {
@@ -45193,6 +46046,11 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                     // consume params получают неявно mut (по spec).
                     let effective_mut = p.is_mut || p.consume;
                     ctx.param_mut.insert(p.name.clone(), effective_mut);
+                    // #1332: a `consume` parameter is a consume-spelled binding
+                    // (the checker's fn-entry seed of `consume_binding_names`).
+                    if p.consume {
+                        ctx.consume_bound_names.insert(p.name.clone());
+                    }
                     // Plan 118.5 V2 [M-118.5-arg-coerce-unsafe]: track
                     // unsafe-T-annotated params (outer Unsafe wrapper detected
                     // before any Pointer wrapper).
@@ -45388,6 +46246,15 @@ fn scan_defer_coverage(b: &Block) -> (bool, bool) {
     (has_errdefer, has_okdefer)
 }
 
+/// `f` (or its receiver's carrier) has a type parameter bounded by
+/// `Cleanup[..]` (D156 amendment 2026-08-04, family 2).
+fn fn_has_cleanup_bounded_param(f: &FnDecl) -> bool {
+    let is_cleanup = |g: &GenericParam| g.bounds.iter().any(|b| matches!(b,
+        TypeRef::Named { path, .. } if path.last().map_or(false, |p| p == "Cleanup")));
+    f.generics.iter().any(is_cleanup)
+        || f.receiver.as_ref().map_or(false, |r| r.carrier_bounds.iter().any(is_cleanup))
+}
+
 /// Plan 100.8 (D166): Simplified D162 coverage check.
 ///
 /// Emits `D162-uncovered-error-path` when a failable function (`Fail[E]`
@@ -45442,6 +46309,15 @@ fn check_d162_coverage(
             // covered on EVERY exit path by the compiler-inserted call,
             // errdefer redundant. See `has_any_cleanup` doc.
             if lin_reg.has_any_cleanup(&ty) {
+                continue;
+            }
+            // D156 amendment 2026-08-04, family 2 (plan 246): in a fn over a
+            // `[T consume Cleanup[E]]` parameter the loop variable of `for
+            // consume x in @` is a `T` -- this pass does not type it (`ty` is
+            // empty), but such a `T` carries its own cleanup (D432), so it is
+            // covered like any declared-`@cleanup` binding. Narrow: only an
+            // untyped binding, only under a Cleanup-bounded type parameter.
+            if ty.is_empty() && fn_has_cleanup_bounded_param(f) {
                 continue;
             }
             let methods = lin_reg.consume_methods_for(&ty);
@@ -45859,7 +46735,10 @@ fn implicit_return_consume_vars(ctx: &ConsumeCtx, e: &Expr) -> Vec<String> {
 }
 
 fn consume_walk_block(ctx: &mut ConsumeCtx, b: &Block, errors: &mut Vec<Diagnostic>) {
+    // #1332: block-scoped like the checker's `consume_binding_names` snapshot.
+    let bound_before = ctx.consume_bound_names.clone();
     consume_walk_block_inner(ctx, b, errors, false);
+    ctx.consume_bound_names = bound_before;
 }
 
 /// Plan 73.1 V3: variant taking `is_fn_body_trailing` flag.  When true,
@@ -45975,6 +46854,13 @@ fn consume_require_pattern_binding(
             ));
         }
         return;
+    }
+    // #1332: a pattern's `consume name` is consume-spelled whatever its type
+    // (mirror of the checker's `bind_pattern_consume_names`; rule 3 of the
+    // D84 mode axis sends it to the consuming form of a mode pair).
+    ctx.consume_bound_names.remove(name);
+    if is_consume {
+        ctx.consume_bound_names.insert(name.to_string());
     }
     if !must_consume {
         ctx.declare(name, ty);
@@ -46300,6 +47186,14 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
     match s {
         Stmt::Let(decl) => {
             consume_walk_expr(ctx, &decl.value, errors);
+            // #1332: the binding's spelling, for rule 3 of the mode axis --
+            // same shape as the checker's `consume_binding_names` update.
+            if let Some(name) = pattern_simple_name(&decl.pattern) {
+                ctx.consume_bound_names.remove(&name);
+                if decl.consume {
+                    ctx.consume_bound_names.insert(name);
+                }
+            }
             let mut names = Vec::new();
             consume_pattern_names(&decl.pattern, &mut names);
             // Plan 108.2 (D36 enforcement) + 108.3 (per-name mut):
@@ -46526,6 +47420,7 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
             // skip (sound: false-negative permissive, не false-positive).
             else if decl.consume && !rhs_yields_consume_type && !alias_obligated
                 && names.len() == 1
+                && !ctx.rhs_generic_wrapped_return(&decl.value)
                 && inferred_ty_d180.as_ref().map(|ty| {
                     ctx.lin_reg.local_type_names.contains(ty.as_str())
                 }).unwrap_or(false)
@@ -47661,7 +48556,8 @@ impl RefPlace {
 /// `consume_walk_expr`'s `Call`-рукав: `Member{obj:Ident}` метод, свободная
 /// `Ident` fn, `Path` (`Type.static` / `module.fn`)). Используется ТОЛЬКО
 /// read-only сканом `scan_guard_rec` — не мутирует `ctx`.
-fn call_consume_idxs(ctx: &ConsumeCtx, func_kind: &ExprKind) -> Vec<usize> {
+fn call_consume_idxs(ctx: &ConsumeCtx, func_kind: &ExprKind, args: &[CallArg]) -> Vec<usize> {
+    // #1332: every lookup goes through `callee_consume_idxs` (mode pairs).
     match func_kind {
         ExprKind::Member { obj, name: method } => {
             if let ExprKind::Ident(recv) = &obj.kind {
@@ -47670,25 +48566,23 @@ fn call_consume_idxs(ctx: &ConsumeCtx, func_kind: &ExprKind) -> Vec<usize> {
                     .or_else(|| ctx.var_types.get(recv.as_str()))
                     .cloned();
                 if let Some(ty) = ty {
-                    return ctx.reg.method_params
-                        .get(&(ty, method.clone())).cloned().unwrap_or_default();
+                    return ctx.callee_consume_idxs(ConsumeCallee::Method(&ty, method), args);
                 }
             }
             Vec::new()
         }
         ExprKind::Ident(fname) => {
-            ctx.reg.fn_params.get(fname.as_str()).cloned().unwrap_or_default()
+            ctx.callee_consume_idxs(ConsumeCallee::Fn(fname), args)
         }
         ExprKind::Path(parts) => {
-            if parts.len() == 2 {
-                if let Some(v) = ctx.reg.method_params
-                    .get(&(parts[0].clone(), parts[1].clone()))
-                {
-                    return v.clone();
-                }
+            if parts.len() == 2
+                && ctx.reg.method_params.contains_key(&(parts[0].clone(), parts[1].clone()))
+            {
+                return ctx.callee_consume_idxs(
+                    ConsumeCallee::Method(&parts[0], &parts[1]), args);
             }
             if let Some(last) = parts.last() {
-                return ctx.reg.fn_params.get(last).cloned().unwrap_or_default();
+                return ctx.callee_consume_idxs(ConsumeCallee::Fn(last), args);
             }
             Vec::new()
         }
@@ -47737,7 +48631,7 @@ fn scan_guard_rec(
         }
         ExprKind::Call { func, args, trailing } => {
             let func_u = func.unwrap_turbofish();
-            let consume_idxs = call_consume_idxs(ctx, &func_u.kind);
+            let consume_idxs = call_consume_idxs(ctx, &func_u.kind, args);
             if let ExprKind::Member { obj, .. } = &func_u.kind {
                 scan_guard_rec(ctx, obj, canon, occ, closures);
             } else if !matches!(func_u.kind, ExprKind::Ident(_) | ExprKind::Path(_)) {
@@ -48106,6 +49000,33 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
 
         // ─── Вызовы — точки consume ───
         ExprKind::Call { func, args, trailing } => {
+            // D216 amendment 2026-09-25 (plan 246): `write_consume` /
+            // `write_consume_at` consume their value argument whatever the
+            // receiver is. The bare-name receiver (`p.write_consume_at(i, v)`) is
+            // handled in the `Member { obj: Ident }` branch below; this covers a
+            // FIELD or other expression receiver (`@data.write_consume_at(i, v)`,
+            // `buf.data.write_consume_at(k, x)`) -- the form every container body
+            // uses -- which that branch never reaches.
+            // The receiver and the arguments are walked FIRST, then the value
+            // is marked consumed -- marking before the walk would report the
+            // argument itself as a use after consume.
+            if let ExprKind::Member { obj, name: method } = &func.kind {
+                if !matches!(obj.kind, ExprKind::Ident(_)) {
+                    let value_idx = if method == "write_consume" && args.len() == 1 {
+                        Some(0)
+                    } else if method == "write_consume_at" && args.len() == 2 {
+                        Some(1)
+                    } else {
+                        None
+                    };
+                    if let Some(i) = value_idx {
+                        consume_walk_expr(ctx, obj, errors);
+                        for a in args { consume_walk_expr(ctx, a.expr(), errors); }
+                        ctx.consume_args(args, &[i], e.span);
+                        return;
+                    }
+                }
+            }
             // №598: ЗАИМСТВУЮЩИЙ МЕТОД НЕ МОЖЕТ ПОТРЕБИТЬ СВОЙ ЖЕ ПРИЁМНИК.
             //
             // Обещание системы `consume` — «отдал один раз». Оно обходилось
@@ -48123,9 +49044,14 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
             if let (Some((self_ty, self_is_consume)), ExprKind::Member { obj, name }) =
                 (ctx.self_recv.clone(), &func.kind)
             {
+                // #1334: with a receiver-mode pair `@.m()` takes the copying
+                // form (`@` is not consume-eligible, rule 3) -- nothing is
+                // consumed, so there is nothing to refuse.
                 if !self_is_consume
                     && matches!(obj.kind, ExprKind::SelfAccess)
                     && ctx.reg.methods.contains(&(self_ty.clone(), name.clone()))
+                    && !recv_mode_pair(ctx.reg.method_recv_shapes
+                        .get(&(self_ty.clone(), name.clone())))
                 {
                     errors.push(Diagnostic::new(
                         format!(
@@ -48555,6 +49481,24 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                 }
                             }
                         }
+                        // D216 амендмент 2026-09-25 (план 246): `p.write_consume(v)` /
+                        // `p.write_consume_at(i, v)` — значение-аргумент (последний)
+                        // ПОТРЕБЛЯЕТСЯ, ровно как передача в consume-параметр функции
+                        // (см. `consume_args`, тот же примитив, которым выше в этом
+                        // файле помечается арг ChanWriter.send'а, §1a). Раскрытие по
+                        // ИМЕНИ метода, а не по типу receiver'а: `p` — сырой указатель
+                        // (`TypedPtr`/`Pointer`), а не именной тип из `self.types`, и
+                        // `ctx.var_types`/`method_params` (ключ — nominal type name)
+                        // никогда не заводят на него запись — тот же разрыв, из-за
+                        // которого `write`/`write_at` до этого амендмента НИКОГДА не
+                        // потребляли свой аргумент. Встроенная операция (§21 п.8, не
+                        // `Item::Fn`), поэтому нет и не может быть родного
+                        // `method_params`-реестра, откуда взять индекс иначе.
+                        if method == "write_consume" && args.len() == 1 {
+                            ctx.consume_args(args, &[0], e.span);
+                        } else if method == "write_consume_at" && args.len() == 2 {
+                            ctx.consume_args(args, &[1], e.span);
+                        }
                         // consume-метод → receiver (весь alias-класс)
                         // потребляется.
                         if ctx.is_consume_method(&recv, method) {
@@ -48582,11 +49526,10 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                         }
                         // consume-параметры метода.
                         if let Some(ty) = ctx.var_types.get(&ctx.canonical(&recv)).cloned() {
-                            if let Some(idxs) = ctx.reg
-                                .method_params.get(&(ty.clone(), method.clone())).cloned()
-                            {
-                                ctx.consume_args(args, &idxs, e.span);
-                            }
+                            // #1332: mode-pair aware (`callee_consume_idxs`).
+                            let idxs = ctx.callee_consume_idxs(
+                                ConsumeCallee::Method(&ty, method), args);
+                            ctx.consume_args(args, &idxs, e.span);
                             // Plan 108.1 followup ([M-108.1-readonly-to-explicit-mut-coerce]):
                             // E_READONLY_COERCE — передача readonly-binding в mut-param метода.
                             if let Some(mut_idxs) = ctx.reg
@@ -48616,9 +49559,7 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                             // key ∈ arg's finalize-output-keys" credit, keyed
                             // by (type, method) via `method_param_output_keys`
                             // instead of by bare fn name.
-                            let already_consumed_idxs = ctx.reg
-                                .method_params.get(&(ty.clone(), method.clone())).cloned()
-                                .unwrap_or_default();
+                            let already_consumed_idxs = idxs;
                             if let Some(param_keys) = ctx.reg
                                 .method_param_output_keys.get(&(ty, method.clone())).cloned()
                             {
@@ -48642,11 +49583,16 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                             for a in args { consume_walk_expr(ctx, a.expr(), errors); }
                             if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
                             // Если метод — consume-метод типа поля → mark field Consumed.
+                            // #1334: a field receiver is not consume-eligible
+                            // (rule 3), so with a receiver-mode pair the call
+                            // takes the copying form and consumes nothing.
                             let is_consume_method = ctx.lin_reg.consume_levels.iter()
                                 .filter(|(_, lvl)| **lvl == ConsumeLevel::MustConsume)
                                 .any(|(ty, _)| ctx.lin_reg.consume_methods
                                     .get(ty.as_str())
-                                    .map_or(false, |ms| ms.contains(method)));
+                                    .map_or(false, |ms| ms.contains(method))
+                                    && !recv_mode_pair(ctx.reg.method_recv_shapes
+                                        .get(&(ty.clone(), method.clone()))));
                             if is_consume_method {
                                 // Verify field indeed tracked (is a consume-field).
                                 if ctx.field_states.contains_key(field_name.as_str()) {
@@ -48713,11 +49659,9 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                     ctx.mark_consumed(&root, e.span);
                                 }
                                 // Also: consume-param indexes for chain-receiver consume args.
-                                if let Some(idxs) = ctx.reg.method_params
-                                    .get(&(ty, method.clone())).cloned()
-                                {
-                                    ctx.consume_args(args, &idxs, e.span);
-                                }
+                                let idxs = ctx.callee_consume_idxs(
+                                    ConsumeCallee::Method(&ty, method), args);
+                                ctx.consume_args(args, &idxs, e.span);
                             }
                         }
                     }
@@ -48727,9 +49671,8 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                     // Plan 100.3 (D157): view-borrow semantics for free-fn calls.
                     // consume_obligations var passed to NON-consume param = view-borrow → OK.
                     // Rvalue (call returning consume-type) passed to view-param → D133-consume-rvalue-in-view.
-                    let consume_idxs = ctx.reg.fn_params.get(fname.as_str())
-                        .cloned()
-                        .unwrap_or_default();
+                    // #1332: mode-pair aware (`callee_consume_idxs`).
+                    let consume_idxs = ctx.callee_consume_idxs(ConsumeCallee::Fn(fname), args);
                     let view_idxs = ctx.reg.fn_view_params.get(fname.as_str())
                         .cloned()
                         .unwrap_or_default();
@@ -48904,11 +49847,10 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                     for a in args { consume_walk_expr(ctx, a.expr(), errors); }
                     if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
                     if parts.len() == 2 {
-                        if let Some(idxs) = ctx.reg.method_params
-                            .get(&(parts[0].clone(), parts[1].clone())).cloned()
-                        {
-                            ctx.consume_args(args, &idxs, e.span);
-                        }
+                        // #1332: mode-pair aware (`callee_consume_idxs`).
+                        let idxs = ctx.callee_consume_idxs(
+                            ConsumeCallee::Method(&parts[0], &parts[1]), args);
+                        ctx.consume_args(args, &idxs, e.span);
                         // Owner fix 2026-08-09 (closes №468): `CONST.method(...)`
                         // — an UPPERCASE-named receiver (the conventional const
                         // naming style) parses as `Path(["CONST","method"])`,
@@ -48956,9 +49898,8 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                         }
                     }
                     if let Some(last) = parts.last() {
-                        if let Some(idxs) = ctx.reg.fn_params.get(last).cloned() {
-                            ctx.consume_args(args, &idxs, e.span);
-                        }
+                        let idxs = ctx.callee_consume_idxs(ConsumeCallee::Fn(last), args);
+                        ctx.consume_args(args, &idxs, e.span);
                     }
                 }
                 _ => {
@@ -49150,6 +50091,39 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                 });
             }
             ctx.states = joined.unwrap_or(saved);
+            // Registry #1331 (D157, `spec/decisions/05-memory.md` lines
+            // 992-1016): `match consume <expr>` marks its SCRUTINEE Consumed
+            // once every arm has been walked and joined -- the explicit-
+            // consume half of D157 (contrast the default view-match above,
+            // which leaves the scrutinee's own state untouched: arms only
+            // ever declare/consume THEIR OWN pattern bindings, never the
+            // scrutinee itself). Mirrors `consume_walk_consume_for`'s
+            // post-loop `iter` mark_consumed (D156) -- same idea, `match`
+            // instead of `for`. Must run AFTER the `ctx.states = joined...`
+            // line above, else the join (which restores whatever state the
+            // scrutinee had going INTO the match) would immediately
+            // overwrite the mark. Two scrutinee shapes are recognized (the
+            // only two the parser's `consume_match_scrutinees` side-table is
+            // ever populated for a genuine `match consume` -- see
+            // `parse_match`): a local binding (`match consume o`), and a
+            // receiver field (`match consume @file`, D157's own example --
+            // `mark_field_consumed` is itself a no-op unless `field_name` is
+            // a tracked consume-field, so this is safe to call unconditionally).
+            // A bare `match consume @` (the receiver itself, D157's sum-typed
+            // case) falls through the `_` arm: there is no existing notion of
+            // "the whole receiver is Consumed" to update (the method's own
+            // `consume @` already transferred that receiver in as a whole).
+            if ctx.module.consume_match_scrutinees.contains(&scrutinee.span) {
+                match &scrutinee.kind {
+                    ExprKind::Ident(name) => ctx.mark_consumed(name, scrutinee.span),
+                    ExprKind::Member { obj, name: field_name }
+                        if matches!(obj.kind, ExprKind::SelfAccess) =>
+                    {
+                        ctx.mark_field_consumed(field_name, scrutinee.span);
+                    }
+                    _ => {}
+                }
+            }
         }
 
         // ─── select ───
@@ -49198,7 +50172,14 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
             if *iter_consume {
                 // Plan 100.2 (D156): consume-iteration — each loop var is an
                 // obligation; iter marked Consumed after loop.
+                // Plan 246 / #1332: the loop var is a `consume` binding for D84
+                // mode rule 3 -- mirror of the checker's `consume_binding_names`.
+                let bound_before = ctx.consume_bound_names.clone();
+                for n in &names {
+                    if n != "_" { ctx.consume_bound_names.insert(n.clone()); }
+                }
                 consume_walk_consume_for(ctx, iter, &names, body, errors);
+                ctx.consume_bound_names = bound_before;
             } else {
                 consume_walk_expr(ctx, iter, errors);
                 consume_walk_loop(ctx, &names, body, errors);
@@ -55374,6 +56355,15 @@ fn is_raw_pointer_intrinsic_method(name: &str) -> bool {
         "read" | "write" | "read_at" | "write_at"
             | "read_unaligned" | "write_unaligned"
             | "read_volatile" | "write_volatile"
+            // D216 амендмент 2026-09-25 (план 246): consume-формы —
+            // те же raw-pointer intrinsics, тот же unsafe-контур
+            // (§21), просто владение вместо копии (см. doc-comment
+            // выше и `check_consume`'s `write_consume`/
+            // `write_consume_at` arg-consuming special-case).
+            | "read_consume" | "write_consume"
+            | "read_consume_at" | "write_consume_at"
+            // D216 амендмент 2026-09-25 п. 3: просмотр без изъятия.
+            | "view" | "view_at"
             | "offset" | "dist"
             | "copy_from" | "copy_from_nonoverlapping"
             | "copy_to" | "copy_to_nonoverlapping"
@@ -57142,6 +58132,7 @@ mod named_tuple_ctor_infer_tests {
             doc: None,
             rebind_shadows: std::collections::HashMap::new(),
             consume_reuse_spans: std::collections::HashSet::new(),
+            consume_match_scrutinees: std::collections::HashSet::new(),
             prelude_missing: None,
         }
     }
@@ -57424,6 +58415,7 @@ mod named_tuple_ctor_infer_tests {
             doc: None,
             rebind_shadows: std::collections::HashMap::new(),
             consume_reuse_spans: std::collections::HashSet::new(),
+            consume_match_scrutinees: std::collections::HashSet::new(),
             prelude_missing: None,
         };
         let arena = FnDeclArena::new();

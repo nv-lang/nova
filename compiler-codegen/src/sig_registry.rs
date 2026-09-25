@@ -52,6 +52,11 @@ pub struct CodegenView {
     pub param_defaults: Vec<Option<String>>,
     /// `fn Type mut @method` ⇒ receiver is mutable.
     pub recv_mutable: bool,
+    /// Registry 221.1 #1334: `fn Type consume @method` -- the third value of
+    /// the receiver mode axis (D84 mode-axis amendment, R14). `fn T @m()` and
+    /// `fn T consume @m()` share `param_c_types` and `recv_mutable`, so without
+    /// it `mangle_fn` resolved both bodies to the first one's C symbol.
+    pub recv_consume: bool,
     /// Plan 184 (Р13/Р14): per-parameter passing mode {ro,mut,consume},
     /// encoded 0=ro, 1=mut, 2=consume, parallel to `param_c_types`. Mode is an
     /// overload axis: `f(x T)` / `f(mut x T)` / `f(consume x T)` are distinct
@@ -279,6 +284,7 @@ impl<'a> SigRegistry<'a> {
                     is_instance,
                     is_external: f.is_external,
                     recv_mutable: f.receiver.as_ref().map(|r| r.mutable).unwrap_or(false),
+                    recv_consume: is_consume,
                     // Plan 184 (Р13/Р14): parameter-mode overload axis.
                     param_modes: f.params.iter()
                         .map(|p| if p.consume { 2u8 } else if p.is_mut { 1u8 } else { 0u8 })

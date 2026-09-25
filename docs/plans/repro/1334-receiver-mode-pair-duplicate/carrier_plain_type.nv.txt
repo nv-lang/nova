@@ -1,0 +1,16 @@
+// #1334 carrier: `fn Box @take()` / `fn Box consume @take()` -- nova test: duplicate definition `Box.take` with same signature.
+// EXPECT_STDOUT a=1 b=2
+type Box {
+    n int
+}
+
+fn Box @take() -> int => 1
+
+fn Box consume @take() -> int => 2
+
+fn main() Io -> () {
+    ro x = Box { n: 0 }
+    ro a = x.take()
+    ro b = Box { n: 0 }.take()
+    print("a=${a} b=${b}")
+}

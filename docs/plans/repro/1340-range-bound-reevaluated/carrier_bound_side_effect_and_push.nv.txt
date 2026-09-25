@@ -1,0 +1,27 @@
+// #1340 carrier: the upper bound of `for i in a..b` is re-evaluated on every iteration -- nova test prints `calls=4 iters=3 seen=4 len=4`; D58 gives `calls=1 iters=3 seen=3 len=4`.
+// EXPECT_STDOUT calls=1 iters=3 seen=3 len=4
+type Box {
+    mut n int
+}
+
+fn Box mut @hi() -> int {
+    @n += 1
+    3
+}
+
+fn main() Io -> () {
+    mut b = Box { n: 0 }
+    mut iters = 0
+    for i in 0..b.hi() {
+        iters += 1
+    }
+    mut v = Vec[int].of(1, 2, 3)
+    mut seen = 0
+    for i in 0..v.len() {
+        if i == 0 {
+            v.push(9)
+        }
+        seen += 1
+    }
+    print("calls=${b.n} iters=${iters} seen=${seen} len=${v.len()}")
+}

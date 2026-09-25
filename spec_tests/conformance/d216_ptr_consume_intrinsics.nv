@@ -1,0 +1,88 @@
+// D216 amendment 2026-09-25 (plan 246, owner decision) -- new pointer
+// intrinsics `write_consume`/`write_consume_at`/`read_consume`/
+// `read_consume_at`/`view`/`view_at` (spec/decisions/02-types.md,
+// section "AMENDMENT 2026-09-25 (owner decision, plan 246) -- linearity
+// and pointer operations"; `view`/`view_at` is the owner's later rename
+// of what the amendment text still spells `lend`/`lend_at` at the time
+// this fixture was written -- the spec sync is the owner's own edit,
+// not this window's).
+//
+// The oracle (this Rust compiler) only has to ACCEPT these forms --
+// strict linearity checking is the self-hosted compiler's job (owner
+// decision, plan 246). This fixture proves:
+//   1. `write_consume`/`write_consume_at` write exactly like `write`/
+//      `write_at` for an ordinary (non-must-consume) `int`.
+//   2. `read_consume`/`read_consume_at` read exactly like `read`/
+//      `read_at`.
+//   3. `write_consume_at`'s value argument discharges a must-consume
+//      value's D133 obligation, the same way passing it into a
+//      consume-parameter would.
+//
+// `view`/`view_at` are covered by `d216_ptr_view_intrinsic.nv` (lowered
+// in codegen to `f(p.read())` / `f(p.read_at(i))`); the note below is why
+// no pre-check AST rewrite was used for them. Both `desugar::desugar_module` and
+// `callnorm::normalize_module` run AFTER `check_module`/`check_consume`
+// succeed, never before (see `check_pipeline.rs`'s own doc comment on
+// why: the checker is designed to understand sugar directly instead of
+// needing a pre-check rewrite), and `check_module`/`check_consume` take
+// `module: &Module` (immutable) so no in-place AST rewrite is possible
+// from inside the checker either. Wiring a brand-new pre-check rewrite
+// pass into `check_pipeline::prepare_module_for_check` would need its
+// own full generic recursive expression walker (the existing one in
+// `desugar.rs`, `desugar_children`, is ~180 lines covering every
+// `ExprKind` variant) shared by every entry point (nova check/build/
+// test/lsp) -- out of scope for a minimal, honest pointer-intrinsics
+// change (see the integrator report for this window).
+module spec_tests.conformance
+
+import std.runtime.raw_mem.{RawMem}
+
+test "write_consume_at / read_consume_at round-trip like write_at / read_at" {
+    mut buf []int = [1, 2, 3, 4]
+    unsafe {
+        mut p = buf.ptr()
+        p.write_consume_at(0, 100)
+        p.write_consume_at(1, 200)
+        assert(p.read_consume_at(0) == 100)
+        assert(p.read_consume_at(1) == 200)
+        // consume-forms and plain forms read the same slot.
+        assert(p.read_at(0) == 100)
+        assert(p.read_at(1) == 200)
+    }
+    assert(buf[0] == 100 && buf[1] == 200)
+}
+
+test "write_consume / read_consume round-trip like write / read" {
+    mut buf []int = [9]
+    unsafe {
+        mut p = buf.ptr()
+        p.write_consume(777)
+        assert(p.read_consume() == 777)
+        assert(p.read() == 777)
+    }
+    assert(buf[0] == 777)
+}
+
+// Must-consume value, written into a typed buffer via `write_consume_at`
+// and never explicitly `.close()`d -- the A/B probe for item 2 of the
+// plan brief: with the `check_consume` fix, this compiles clean (the
+// write discharges the obligation); reverting only that fix turns this
+// test red with `[D133-not-consumed]` (checked by hand, not asserted by
+// this file -- see the integrator report).
+type D216ConsumePtrRes consume {
+    id int,
+}
+
+fn D216ConsumePtrRes consume @close() -> () { () }
+
+fn d216_make_res(i int) -> D216ConsumePtrRes => { id: i }
+
+test "write_consume_at discharges a must-consume value's D133 obligation" {
+    unsafe {
+        mut p = RawMem.alloc(size_of[D216ConsumePtrRes]()) as *mut D216ConsumePtrRes
+        consume r = d216_make_res(7)
+        p.write_consume_at(0, r)
+        // no `r.close()` here -- the write above must already have
+        // satisfied the obligation, or this fixture fails to compile.
+    }
+}

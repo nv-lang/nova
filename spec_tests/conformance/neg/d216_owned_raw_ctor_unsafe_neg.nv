@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_UNSAFE_CALL_REQUIRES_WRAP
+//
+// D216 §8 (owner 2026-09-25, plan 246): the OWNED raw constructor
+// `Vec[T].new(ptr *mut T, len int, cap int) -> Self` is an `unsafe fn`, like
+// its read-only VIEW sibling `new(ptr *T, len int)` -- the caller asserts that
+// `ptr` holds `cap` slots with `len` initialised and that the memory outlives
+// the vector, so a call without an `unsafe { }` wrap is refused. Companion of
+// d216_generic_static_unsafe_overload_neg.nv (the view overload).
+
+module neg.d216_owned_raw_ctor_unsafe_neg
+
+import std.collections.vec.{Vec}
+
+test "calling the owned Vec[T].new(ptr, len, cap) without unsafe wrap" {
+    mut buf []u8 = [1, 2, 3]
+    ro p = buf.ptr()
+    // nova:expect E_UNSAFE_CALL_REQUIRES_WRAP -- the owned raw constructor is unsafe (D216 §8)
+    ro v = Vec[u8].new(p, 3, 3)
+    assert(v.len() == 3)
+}

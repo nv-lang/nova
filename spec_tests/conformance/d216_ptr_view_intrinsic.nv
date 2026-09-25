@@ -1,0 +1,127 @@
+// D216 amendment 2026-09-25 (plan 246, owner decision) -- pointer
+// intrinsics `view(f)` / `view_at(i, f)` (spec/decisions/02-types.md,
+// D216, section "AMENDMENT 2026-09-25 (owner decision, plan 246) --
+// linearity and pointer operations", item 3): `f fn(T) -> R`, the result
+// is `R`; the element is lent to `f` as a view parameter and the slot is
+// NOT extracted. Semantically `p.view(f)` == `f(p.read())` and
+// `p.view_at(i, f)` == `f(p.read_at(i))`.
+//
+// The oracle (this Rust compiler) only has to ACCEPT the form and give
+// the right result -- strict linearity checking is the self-hosted
+// compiler's job (owner decision, plan 246). This fixture proves:
+//   1. `view_at(i, |x| ...)` and `view(|x| ...)` with a lambda literal
+//      whose parameter is un-annotated (it takes the pointee type `T`).
+//   2. A lambda capturing an outer local (`|x| x == target`), result
+//      type `bool` differing from the element type.
+//   3. A named function (`d216_view_dbl`) and a function-typed local as
+//      `f`.
+//   4. The un-annotated lambda parameter takes the pointee type `T`
+//      (an `f64` buffer: `x * 2.0` would not type-check with `int`).
+//   5. A block-bodied lambda, a typed `fn(x int) -> int => ...` literal,
+//      and a lambda with an early `return` (which must leave the closure,
+//      not the enclosing test body).
+//   6. The slot is untouched: reading it after the view gives the
+//      original value.
+module spec_tests.conformance
+
+import std.runtime.raw_mem.{RawMem}
+
+fn d216_view_dbl(x int) -> int => x * 2
+
+test "view_at with a lambda literal returns f(p.read_at(i))" {
+    unsafe {
+        mut p = RawMem.alloc(size_of[int]() * 4) as *mut int
+        p.write_at(0, 1)
+        p.write_at(1, 2)
+        p.write_at(2, 3)
+        p.write_at(3, 4)
+        assert(p.view_at(0, |x| x * 10) == 10)
+        assert(p.view_at(3, |x| x * 10) == 40)
+        // the slot is not extracted: it still holds the original value.
+        assert(p.read_at(3) == 4)
+    }
+}
+
+test "view with a lambda literal returns f(p.read())" {
+    unsafe {
+        mut p = RawMem.alloc(size_of[int]()) as *mut int
+        p.write(41)
+        assert(p.view(|x| x + 1) == 42)
+        assert(p.read() == 41)
+    }
+}
+
+test "view_at with a capturing lambda yields a result of another type" {
+    unsafe {
+        mut p = RawMem.alloc(size_of[int]() * 3) as *mut int
+        p.write_at(0, 5)
+        p.write_at(1, 7)
+        p.write_at(2, 9)
+        ro target = 7
+        assert(!p.view_at(0, |x| x == target))
+        assert(p.view_at(1, |x| x == target))
+        ro found = p.view_at(2, |e| e == target)
+        assert(!found)
+    }
+}
+
+test "the un-annotated lambda parameter takes the pointee type (f64, not int)" {
+    unsafe {
+        mut p = RawMem.alloc(size_of[f64]() * 2) as *mut f64
+        p.write_at(0, 1.5)
+        p.write_at(1, 2.25)
+        assert(p.view_at(0, |x| x * 2.0) == 3.0)
+        assert(p.view(|x| x + 0.5) == 2.0)
+        assert(p.view_at(1, |e| e > 2.0))
+    }
+}
+
+test "view_at with a block-bodied lambda (bound once, then called)" {
+    unsafe {
+        mut p = RawMem.alloc(size_of[int]() * 2) as *mut int
+        p.write_at(0, 3)
+        p.write_at(1, 4)
+        ro k = 100
+        assert(p.view_at(1, |x| {
+            ro y = x + 1
+            y * k
+        }) == 500)
+        assert(p.read_at(1) == 4)
+    }
+}
+
+test "view_at with a typed closure literal and with an early return" {
+    unsafe {
+        mut p = RawMem.alloc(size_of[int]() * 2) as *mut int
+        p.write_at(0, -6)
+        p.write_at(1, 6)
+        assert(p.view_at(1, fn(x int) -> int => x + 1) == 7)
+        // `return` leaves the CLOSURE, not the test body: the literal is
+        // bound once to a temporary and called, never substituted.
+        assert(p.view_at(0, |x| {
+            if x < 0 {
+                return 0 - x
+            }
+            x
+        }) == 6)
+        assert(p.view_at(1, |x| {
+            if x < 0 {
+                return 0 - x
+            }
+            x
+        }) == 6)
+    }
+}
+
+test "view / view_at with a named function and a function value" {
+    unsafe {
+        mut p = RawMem.alloc(size_of[int]() * 2) as *mut int
+        p.write_at(0, 21)
+        p.write_at(1, 50)
+        assert(p.view(d216_view_dbl) == 42)
+        assert(p.view_at(1, d216_view_dbl) == 100)
+        ro g = d216_view_dbl
+        assert(p.view_at(0, g) == 42)
+        assert(p.read_at(1) == 50)
+    }
+}
