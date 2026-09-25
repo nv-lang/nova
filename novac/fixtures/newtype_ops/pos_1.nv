@@ -1,0 +1,18 @@
+module newtype_ops.pos_1
+
+// OPERATORS INSIDE ONE NEWTYPE (D52 amendment 2026-09-04, rules 1 and 2):
+// arithmetic and comparison between operands of the SAME newtype over a number
+// are defined without an impl, the result of arithmetic is the newtype, and a
+// bare literal takes the newtype. novac refused them all as "dispatches
+// through a protocol" until 2026-09-25 -- the form its own source writes for
+// every typed index (`TyId`, `FnRow`, `DeclId`).
+
+type Row int
+
+fn step(a Row, b Row) -> Row => a + b - 1
+
+fn main() {
+    ro r = step(Row(3), Row(4))
+    println(r < Row(10))
+    println(r == Row(6))
+}

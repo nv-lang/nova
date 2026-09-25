@@ -25,7 +25,7 @@ module novac.emit_c
 
 import ../lex.{is_ident_start, is_ident_byte, is_space}
 import ../sem.{LitPool}
-import ../sem.{unescape_dollar}
+import ../sem.{literal_as_c_text}
 import ../sem.{InteropTable}
 import ../diag.{ice}
 import ../lower.{FnBuilder, Lowerer}
@@ -149,19 +149,19 @@ fn render(lits []str, body str) -> str {
 ///
 /// One of TWO places a Nova literal becomes C text (the other is the
 /// contract prologue's message slot) -- both go through the one
-/// unescape_dollar door in sem/mangle (hunt 2026-09-02, P1).
+/// literal_as_c_text door in sem/mangle (hunt 2026-09-02, P1).
 fn emit_strlit_defs(mut out StringBuilder, lits []str) -> () {
     mut i = 0
     for raw in lits {
         // raw is the token text INCLUDING quotes. Nova's subset escape set
         // (\" \\ \n \t \r) matches C's one for one -- check refuses everything
-        // else BY NAME -- with a single exception: `\$`. Nova spells an escaped
-        // dollar that way so a literal `${` does not open an interpolation; C
-        // has no such escape and would take it as undefined. So the backslash
-        // is dropped HERE, at the one place that writes a literal into C, and
-        // the rest of the text is passed through untouched.
+        // else BY NAME -- with two exceptions, both translated by the door:
+        // `\$` (Nova's escaped dollar, so a literal `${` does not open an
+        // interpolation; C has no such escape) and the line continuation (D467
+        // section 3 eats the next line's indentation, which C's splice keeps).
+        // The rest of the text is passed through untouched.
         out.append("static const uint8_t _novac_strlit_${i}_buf[] = ")
-        out.append(unescape_dollar(raw))
+        out.append(literal_as_c_text(raw))
         out.append(";\n")
         out.append("static const nova_str _novac_strlit_${i} = { .ptr = _novac_strlit_${i}_buf, .len = sizeof(_novac_strlit_${i}_buf) - 1 };\n")
         i += 1

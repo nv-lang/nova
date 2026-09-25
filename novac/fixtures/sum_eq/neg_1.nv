@@ -1,0 +1,15 @@
+module sum_eq.neg_1
+
+// `==` on a sum with no `#impl(Equal)`: a LANGUAGE error (274.7 wave R). D363 routes
+// equality through Equal; a sum is a value type (D477, AMEND D32) and opts in, with
+// no identity fallback. The oracle accepts this today (registry #1352).
+
+// NOVAC_EXPECT `==` on a sum needs the type to implement `Equal` (D363)
+
+type Color enum Red | Green | Blue
+
+fn same(a Color, b Color) -> bool => a == b
+
+fn main() {
+    println(same(Color.Red, Color.Red))
+}

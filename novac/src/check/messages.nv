@@ -384,6 +384,16 @@ const RANGE_MSG = "outside the subset: a range is a `for` head here, not a value
 /// WHERE does this range stand.
 const SLICE_MSG = "outside the subset: a slice `x[lo..hi]` is read but not compiled yet (E2-b)"
 
+/// A newtype over a number mixed with another newtype or with a value of its
+/// representation (check/operators.nv) -- D52's amendment of 2026-09-04, rule 3:
+/// a LANGUAGE error, not a subset limit, and the words name the way out.
+const NEWTYPE_MIX_MSG = "the operands are different types -- a newtype does not mix with another newtype or with a value of its representation (D52): convert one side with `as`"
+
+/// An index or a slice bound of a type other than `int` (check/binds.nv). One text
+/// for both: measured against the oracle, it accepts a `u8` index and a `u8` slice
+/// bound alike (2026-08-30 and 2026-09-25), so the refusal says SUBSET, not language.
+const INT_INDEX_MSG = "outside the subset: only an `int` index is compiled yet -- the language allows other integer types here (E2-b, with the numeric family)"
+
 /// The ONE text of the rule, so that the two doors cannot drift apart.
 const FOR_HEAD_MSG = "outside the subset: the head of a `for` is a range `lo..hi` here; a collection head arrives with generics (E2-b)"
 
@@ -451,3 +461,21 @@ const SYNTAX_MSG = "novac did not parse this -- and it cannot tell whether the f
 /// undeclared name goes to the author's sentence first (`@report_if_ret_ref_undeclared`);
 /// what is left is a type parameter of a generic body, not substituted there yet.
 const HANDLER_RET_UNRESOLVED_MSG = "outside the subset: a handler-literal op's return type is not resolved here -- inside a generic body its type parameters are not substituted by this door yet (E4, handler-literal wave)"
+
+/// A handler literal outside the two positions whose doors judge it (registry 1312).
+/// `@type_handler_lit` is called by the `with` binding's handler slot and by a local
+/// binding's initializer, and by nothing else: in a `=>` body, after `return`, as a
+/// match arm, an argument, a block tail or an if branch no door typed the literal at
+/// all -- silent on an unknown op, an ICE on a legal literal, or somebody else's cause.
+/// The refusal is said by the walk gate, `@walk`'s HandlerLit arm (check/check.nv).
+/// The spec calls those positions legal (`04-effects.md`, `Effect[E]` as a value); the
+/// plan defers them (274.11 E.5), so the answer there is this name, not silence.
+const HANDLER_LIT_POSITION_MSG = "outside the subset: a handler literal is compiled only as a `with` binding's handler or a local binding's initializer (`ro h = effect E { ... }`) -- a handler value in any other position is not compiled yet (E4, boundary E.5 of plan 274.11)"
+
+/// `break` or `continue` with no loop around it (274.7 wave B10): a language error --
+/// the jump has no target. A handler op's body counts as its own function.
+const LOOP_CTL_OUTSIDE_MSG = "`break` and `continue` stand only inside the body of a `for` or `while` loop -- there is no loop around this one"
+
+/// `==` / `!=` on a sum with no `Equal` in its `#impl(...)` (274.7 wave R): a LANGUAGE
+/// error -- D363 routes equality through `Equal`, and a sum is a value type that opts in.
+const SUM_EQ_NEEDS_EQUAL_MSG = "`==` on a sum needs the type to implement `Equal` (D363): a sum is a value type (D477) and opts in -- add `#impl(Equal)` above its declaration"

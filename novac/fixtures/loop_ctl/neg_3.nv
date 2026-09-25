@@ -1,0 +1,18 @@
+module loop_ctl.neg_3
+
+// `while true` WITH a `break` aimed at it falls through (274.7 wave B10), so a
+// function whose body ends in that loop ends without a value. The oracle passes
+// `check` and dies in C ("initializing nova_int with nova_unit").
+
+// NOVAC_EXPECT fn declares a return type but its body ends without a value
+
+fn g(n int) -> int {
+    while true {
+        if n > 0 { break }
+        return 1
+    }
+}
+
+fn main() {
+    println(g(0))
+}

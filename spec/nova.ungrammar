@@ -201,6 +201,10 @@ ForStmt =
 RetStmt =
   'return' Expr?
 
+// Bare, as the language has them (274.7 wave B10): no label, no value.
+LoopCtl =
+  'break' | 'continue'
+
 BindStmt =
   ('mut' | 'ro' | 'consume') 'ident' TypeRefLeaves? '=' Expr
 

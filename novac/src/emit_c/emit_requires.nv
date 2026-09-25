@@ -22,7 +22,7 @@
 
 module novac.emit_c
 
-import ../sem.{branch_children, unescape_dollar}
+import ../sem.{branch_children, literal_as_c_text}
 import ../diag.{ice}
 import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
@@ -69,7 +69,7 @@ fn contract_msg_c(rk []Node) -> str {
             // EXCEPT `\$`, whose backslash must not reach clang -- the
             // hunt's req_msg_dollar showed both doors in one emission,
             // pool unescaped, prologue not (#872).
-            if t.kind == TokenKind.StrLit { return unescape_dollar(t.text) }
+            if t.kind == TokenKind.StrLit { return literal_as_c_text(t.text) }
             // Not a string: the required door already carried the refusal.
         }
         Branch { .. } => {

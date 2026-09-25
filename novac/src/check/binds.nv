@@ -32,7 +32,7 @@ import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, 
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
-import ../sem.{ty_source_name, variants_named}
+import ../sem.{ty_source_name, variants_named, is_closed_slice_bin}
 import ../types.{TyId, no_ty, is_ty}
 
 /// A binding. The initializer's type is decided BEFORE the initializer's own
@@ -130,8 +130,11 @@ fn Checker mut @type_bind(st Node) -> () {
     if ik == NodeKind.ArrayLit {
         ro lit_t = @type_array_lit(init)
         // SILENT-OK: the refusal was already reported inside type_array_lit, by
-        // name; a literal with no type has nothing to record and binds no name.
-        if !is_ty(lit_t) { return }
+        // name; a literal with no type records nothing and binds the name POISONED.
+        if !is_ty(lit_t) {
+            @bind_poisoned(vname, kids)
+            return
+        }
         @record(init, lit_t)
         @scope.bind(vname, lit_t, bind_mode_at(kids))
         // SILENT-OK: recorded and bound above, the literal is fully decided; the
@@ -148,12 +151,19 @@ fn Checker mut @type_bind(st Node) -> () {
     if ik == NodeKind.TupleExpr {
         ro before2 = @out.len()
         @type_expr(init)
-        if @out.len() > before2 { return }
+        if @out.len() > before2 {
+            @bind_poisoned(vname, kids)
+            return
+        }
         ro pt = @chan.type_if_known(init.id_of())
         // SILENT-OK: a pair with an unanswerable component was already refused
-        // (or the hole is named) inside type_expr; nothing to bind.
-        if !is_ty(pt) { return }
+        // (or the hole is named) inside type_expr; the name is bound POISONED.
+        if !is_ty(pt) {
+            @bind_poisoned(vname, kids)
+            return
+        }
         @scope.bind(vname, pt, bind_mode_at(kids))
+        // SILENT-OK: typed and bound above, so this branch is fully decided
         return
     }
     // A HANDLER LITERAL routes explicitly, the TupleExpr precedent exactly:
@@ -165,12 +175,19 @@ fn Checker mut @type_bind(st Node) -> () {
     if ik == NodeKind.HandlerLit {
         ro before2 = @out.len()
         @type_expr(init)
-        if @out.len() > before2 { return }
+        if @out.len() > before2 {
+            @bind_poisoned(vname, kids)
+            return
+        }
         ro ht = @chan.type_if_known(init.id_of())
         // SILENT-OK: a refused literal was reported inside the typist, by
-        // name; nothing to bind.
-        if !is_ty(ht) { return }
+        // name; the name is bound POISONED.
+        if !is_ty(ht) {
+            @bind_poisoned(vname, kids)
+            return
+        }
         @scope.bind(vname, ht, bind_mode_at(kids))
+        // SILENT-OK: typed and bound above, so this branch is fully decided
         return
     }
     // AN INDEX DECIDES ITS OWN TYPE HERE for the same reason the literal above
@@ -192,9 +209,13 @@ fn Checker mut @type_bind(st Node) -> () {
         ro if_t = @chan.type_if_known(init.id_of())
         // SILENT-OK: a refused `if` (no else, disagreeing branches, a branch
         // without a value) was reported inside `@type_if_value`, by name; it
-        // has nothing to record and binds no name.
-        if !is_ty(if_t) { return }
+        // records nothing and binds the name POISONED.
+        if !is_ty(if_t) {
+            @bind_poisoned(vname, kids)
+            return
+        }
         @scope.bind(vname, if_t, bind_mode_at(kids))
+        // SILENT-OK: typed and bound above, so this branch is fully decided
         return
     } else {
         // Not an `if`: the arms below decide.
@@ -202,10 +223,14 @@ fn Checker mut @type_bind(st Node) -> () {
     if ik == NodeKind.Index {
         ro idx_t = @type_index(init)
         // SILENT-OK: refused inside `@type_index`, by name; an index with no
-        // type has nothing to record and binds no name.
-        if !is_ty(idx_t) { return }
+        // type records nothing and binds the name POISONED.
+        if !is_ty(idx_t) {
+            @bind_poisoned(vname, kids)
+            return
+        }
         @record(init, idx_t)
         @scope.bind(vname, idx_t, bind_mode_at(kids))
+        // SILENT-OK: typed and bound above, so this branch is fully decided
         return
     } else {
         // Not an index: the lattice answers below.
@@ -224,7 +249,10 @@ fn Checker mut @type_bind(st Node) -> () {
         // the ice this fix removes.
         ro mmark = @out.len()
         @type_match(init)
-        if @out.len() > mmark { return }
+        if @out.len() > mmark {
+            @bind_poisoned(vname, kids)
+            return
+        }
     } else {
         // Not a match: nothing decides before the lattice is asked.
     }
@@ -321,6 +349,18 @@ fn Checker mut @judge_record_ctor(ctor Node, vtype TyId) -> () {
     }
 }
 
+/// Bind a name whose initializer was REFUSED, with no type -- so its later uses
+/// raise nothing (one cause, one diagnostic). Every refusal exit of `@type_bind`
+/// goes through here: until 2026-09-25 only the plain-expression exit and the
+/// undeclared-constructor exit bound the name, and six others (array literal,
+/// tuple, handler literal, `if`, index, match) returned without it -- measured on
+/// novac's own source in module mode, `mut kids = []Node.of(@take())` refused
+/// once and every later `kids` became "unknown name" (164 of them, 721 unknown
+/// names that were no constants at all).
+fn Checker mut @bind_poisoned(vname str, kids []Node) -> () {
+    @scope.bind(vname, no_ty(), bind_mode_at(kids))
+}
+
 /// The type of `xs[i]` — the ELEMENT of the receiver's application (274.5 B10).
 ///
 /// The door was already there: an applied type keeps its arguments in the
@@ -381,6 +421,19 @@ fn Checker mut @type_index(e Node) -> TyId {
         // Nothing said about the receiver: its type is a fair question.
     }
     ro recv_t = type_of(kids[0], @ctx, @scope, @chan)
+    // A SLICE OVER AN UNTYPED RECEIVER IS REFUSED ALOUD (plan 274.7 wave U-1).
+    // The SILENT-OK below assumes the receiver was refused already; the mark
+    // above says it was NOT, and measured 2026-09-25 the untyped receiver
+    // exists with no word said -- `@ctx.fns.params[a..b]` in check/typeref_rules
+    // and emit_c/emit_c.nv, a field chain through a type of another module.
+    // Silence there let two files pass check with a slice nothing typed, which
+    // emission could only answer with an ICE. The slice keeps its refusal.
+    if is_closed_slice_bin(kids[2]) && !is_ty(recv_t) {
+        @report_first_leaf_of(kids, SLICE_MSG)
+        return no_ty()
+    } else {
+        // Not a slice, or a typed receiver: the ordinary path below.
+    }
     if !is_ty(recv_t) {
         // SILENT-OK: the receiver was refused already, and one cause gets one
         // diagnostic. Its refusal names the position; a second one here would
@@ -388,6 +441,15 @@ fn Checker mut @type_index(e Node) -> TyId {
         return no_ty()
     } else {
         // A typed receiver: its shape decides.
+    }
+    // A CLOSED SLICE `s[lo..hi]` (plan 274.7 wave U-1) is the call
+    // `s.index(Range { start: lo, end: hi })` of D470 section 5. Asked here and
+    // not earlier because the answer needs the receiver's TYPE, which the walk
+    // (which let the slice through, check.nv's Bin arm) does not have.
+    if is_closed_slice_bin(kids[2]) {
+        return @type_str_slice(kids, recv_t)
+    } else {
+        // An ordinary index: judged below.
     }
     if @ctx.tys.kind_of(recv_t) != TypeKind.TkApp {
         @report_first_leaf_of(kids, "outside the subset: indexing is compiled for `[]T` only -- this receiver is not an applied type")
@@ -413,7 +475,7 @@ fn Checker mut @type_index(e Node) -> TyId {
     // not exist -- the same defect this window spent the day removing from
     // other refusals, written by hand into a new one.
     if is_ty(idx_t) && idx_t != @ctx.prims.int_id {
-        @report_first_leaf_of(kids, "outside the subset: only an `int` index is compiled yet -- the language allows other integer types here (E2-b, with the numeric family)")
+        @report_first_leaf_of(kids, INT_INDEX_MSG)
         return no_ty()
     } else {
         // Either an int, or already refused where it was typed.
@@ -435,6 +497,55 @@ fn Checker mut @type_index(e Node) -> TyId {
     // change to the program being compiled.
     @report_first_leaf_of(kids, "outside the subset: indexing is read but not compiled yet (E2-b) -- the interop shell carries no `index` for this instance, so widen novac/probe/shell_probe.nv")
     no_ty()
+}
+
+/// The type of a CLOSED slice `s[lo..hi]`, or `no_ty()` after a named refusal
+/// (plan 274.7 wave U-1).
+///
+/// Only a `str` receiver is compiled: the shell carries `Nova_str_method_index`,
+/// and the result is `str` -- a byte range (D249; D144's older codepoint wording
+/// carries a pointer to it since 2026-09-25). Out-of-range and a cut through a
+/// code point are RUN-TIME panics of std's own contract (`slice.nv`), not
+/// diagnostics, so nothing here judges the numbers. Every other receiver keeps
+/// the slice refusal it had in the walk, by the same text (wave U-3).
+fn Checker mut @type_str_slice(kids []Node, recv_t TyId) -> TyId {
+    if recv_t != @ctx.prims.str_id {
+        @report_first_leaf_of(kids, SLICE_MSG)
+        return no_ty()
+    } else {
+        // A `str` receiver: its two bounds decide.
+    }
+    ro bounds = branch_children(kids[2])
+    if !@slice_bound_is_int(bounds[0]) || !@slice_bound_is_int(bounds[2]) {
+        // SILENT-OK: the bound that failed was refused inside, by name.
+        return no_ty()
+    } else {
+        // Both bounds are `int`.
+    }
+    @ctx.prims.str_id
+}
+
+/// Types one slice bound and says whether it is an `int`; anything else is
+/// refused by the index's own text -- measured 2026-09-25, the oracle accepts a
+/// `u8` bound, so the language is wider and the refusal says SUBSET.
+fn Checker mut @slice_bound_is_int(b Node) -> bool {
+    ro before = @out.len()
+    @type_expr(b)
+    if @out.len() > before { return false }
+    ro t = type_of(b, @ctx, @scope, @chan)
+    if !is_ty(t) {
+        // SILENT-OK: an untyped bound was refused where it was typed.
+        return false
+    } else {
+        // A typed bound: its type decides.
+    }
+    if t != @ctx.prims.int_id {
+        @report_first_leaf_of([]Node.of(b), INT_INDEX_MSG)
+        return false
+    } else {
+        // An `int` bound.
+    }
+    true
 }
 
 /// The type of an array literal, or `no_ty()` after a NAMED refusal.

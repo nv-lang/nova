@@ -16,8 +16,9 @@ module novac.check
 import ../tree.{Node, BinOp, bin_op_of, un_op_of}
 import ../sem.{LitArg, leaf_kind, leaf_text}
 import ../sem.{carrier_of, is_int_prim, is_numeric_prim, prim_row_of}
-import ../types.{TyId, no_ty}
-import ../builtins.{EQUAL_METHOD, BuiltinType}
+import ../types.{TyId, no_ty, is_ty}
+import ../builtins.{EQUAL_METHOD, EQUAL_PROTO, BuiltinType, TypeKind}
+import ../sem.{gate_names, decl_of_ty, is_value_sum}
 import ../resolve.{FnLookup}
 import ../sem.{ArgSpec, ArgClass, CallForm, CalleeTarget, ty_source_name, c_shell_method}
 import ../sem.{identity_slots, branch_children, ParamMode}
@@ -108,6 +109,15 @@ fn Checker mut @accept_equality_row(e Node, kids []Node, lhs_t TyId, row FnRow) 
     @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new(), identity_slots(2))
 }
 
+/// The operators D52's newtype rule covers: arithmetic and comparison (its
+/// amendment of 2026-09-04, rule 1). Logic and bits are outside it.
+fn is_arith_or_compare(op BinOp) -> bool {
+    match op {
+        Add | Sub | Mul | Div | Modulo | Less | LessEq | Greater | GreaterEq | Equal | NotEqual => true
+        AndAlso | OrElse | BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight | Range => false
+    }
+}
+
 /// True for `==` and `!=` -- the pair that dispatches through
 /// the `Equal` protocol (D46).
 fn is_equality(op BinOp) -> bool {
@@ -149,6 +159,14 @@ fn equality_key(lhs_t TyId, rhs_t TyId) -> []ArgSpec => [
 fn Checker mut @report_if_operator_needs_protocol(kids []Node) -> bool {
     ro lt0 = type_of(kids[0], @ctx, @scope, @chan)
     ro rt0 = type_of(kids[2], @ctx, @scope, @chan)
+    // A POISONED OPERAND is a cause already spoken (one cause, one diagnostic):
+    // no type means it was refused where it was typed -- or it is a name bound
+    // poisoned after its initializer's refusal. Answering "dispatches through
+    // a protocol" about it named the wrong cause a second time: measured
+    // 2026-09-25, `kids.len() < 2` over `ro kids = branch_children(st)` (a body
+    // of another module, refused) drew it in every function of check/. The
+    // operator counts as refused, so nothing downstream records it.
+    if !is_ty(lt0) || !is_ty(rt0) { return true }
     // D227/D405: a bare numeric literal takes the OTHER operand's type. The
     // lattice's door decides (adapt_operand, one door for both readers); the
     // walk RECORDS the decision here and judges the literal's range against
@@ -185,13 +203,40 @@ fn Checker mut @report_if_operator_needs_protocol(kids []Node) -> bool {
     ro ints = lt == rt && is_int_prim(@ctx.tys, lt)
     ro bools = lt == @ctx.prims.bool_id && rt == @ctx.prims.bool_id
     ro same_prim = lt == rt && @is_primitive(lt)
+    // A NEWTYPE OVER A NUMBER (D52 amendment 2026-09-04). Rule 1: arithmetic and
+    // comparison are defined between operands of ONE newtype -- the operators of
+    // its representation, no impl written. Rule 3: the newtype beside another
+    // newtype, or beside a value of its representation, is a LANGUAGE error
+    // naming `as` -- a bare literal was already adapted above (rule 2), so what
+    // reaches this test mixed is a real mix.
+    ro lt_nt = @ctx.tys.kind_of(lt) == TypeKind.TkNewtype && @is_numeric(numeric_rep(@ctx.tys, lt))
+    ro rt_nt = @ctx.tys.kind_of(rt) == TypeKind.TkNewtype && @is_numeric(numeric_rep(@ctx.tys, rt))
+    ro same_nt = lt == rt && lt_nt
+    if (lt_nt || rt_nt) && lt != rt && is_arith_or_compare(op) {
+        match kids[1] {
+            Leaf(t) => @reject(t, NEWTYPE_MIX_MSG)
+            Branch { .. } => {}
+        }
+        return true
+    } else {
+        // No newtype mix: the table below decides.
+    }
+    // A SUM UNDER `==` / `!=` (274.7 wave R): no `Equal` is a language error,
+    // said here; with it the table below admits a payload-free sum.
+    ro one_sum = lt == rt && @ctx.tys.kind_of(lt) == TypeKind.TkSum
+    if is_equality(op) && one_sum && @report_if_sum_lacks_equal(kids[1], lt) {
+        return true
+    } else {
+        // Not equality over one sum, or the sum declares Equal: the table decides.
+    }
+    ro tag_eq = one_sum && is_value_sum(@ctx, lt)
     // Each operator states WHICH operands the subset can emit for it. The
     // match is exhaustive, so a new operator cannot slip in without an
     // answer -- and the answer is a refusal, never a guess.
     match op {
-        Add | Sub | Mul | Div | Modulo => { if numeric { return false } }
-        Less | LessEq | Greater | GreaterEq => { if numeric { return false } }
-        Equal | NotEqual => { if same_prim { return false } }
+        Add | Sub | Mul | Div | Modulo => { if numeric || same_nt { return false } }
+        Less | LessEq | Greater | GreaterEq => { if numeric || same_nt { return false } }
+        Equal | NotEqual => { if same_prim || same_nt || tag_eq { return false } }
         AndAlso | OrElse => { if bools { return false } }
         BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight => { if ints { return false } }
         Range => { if numeric { return false } }
@@ -273,5 +318,21 @@ fn Checker mut @report_if_unary_needs_protocol(kids []Node) -> bool {
         Leaf(tk) => @refuse(tk, "outside the subset: this prefix operator on this operand dispatches through a protocol (D46: @neg / @bitnot), and protocol dispatch arrives with bounds")
         Branch { .. } => {}
     }
+    true
+}
+
+/// `==` / `!=` over ONE sum with no `Equal` in its `#impl(...)` (274.7 wave R):
+/// a LANGUAGE error, and true when said. D363 routes equality through `Equal`,
+/// and a sum is a value type (D477, AMEND D32 of 2026-09-25): it opts in and gets
+/// no identity fallback. A sum that DOES declare Equal goes on to the table: a
+/// payload-free one compiles as a tag compare (emit_expr.nv); one with payload,
+/// a generic or a runtime-ABI one keeps the protocol-dispatch refusal -- its
+/// `@equal` compares payloads, and novac does not synthesize it yet.
+fn Checker mut @report_if_sum_lacks_equal(op_leaf Node, t TyId) -> bool {
+    ro td = decl_of_ty(@ctx, t)
+    if gate_names(@ctx.gates, td.gate_off, td.gate_cnt, EQUAL_PROTO) {
+        return false
+    }
+    @reject_first_leaf_of([]Node.of(op_leaf), SUM_EQ_NEEDS_EQUAL_MSG)
     true
 }

@@ -448,6 +448,118 @@ test "interpolation format spec `:?`: named refusal, not the anonymous parser fa
     assert(diagnose(control) == 0, "plain interpolation must stay clean")
 }
 
+test "operators inside ONE newtype over a number are defined; a mix is D52's language error" {
+    // D52 amendment 2026-09-04: arithmetic and comparison between operands of
+    // the same newtype need no impl, a literal adapts to the newtype, and the
+    // newtype beside another newtype or a value of its representation is a
+    // compile error naming `as`. Fixtures: novac/fixtures/newtype_ops.
+    ro ok = "module m\n\ntype Row int\n\nfn f(a Row, b Row) -> bool => a + b - 1 < b\n"
+    assert(diagnose(ok) == 0, diagnose_first_msg(ok))
+    ro mix = "module m\n\ntype Row int\n\nfn f(a Row, n int) -> bool => a < n\n"
+    assert(diagnose_first_msg(mix).contains("a newtype does not mix"), diagnose_first_msg(mix))
+}
+
+test "`break` and `continue` are read inside a loop and refused outside one (274.7 B10)" {
+    // Until 2026-09-25 the lexer read both words as NAMES: every one of the 330
+    // in novac's own source said "unknown name". Fixtures: novac/fixtures/loop_ctl.
+    ro ok = "module m\n\nfn f(n int) -> int {\n    mut s = 0\n    for x in 0..n {\n        if x == 0 { continue }\n        if x > 9 { break }\n        s += x\n    }\n    s\n}\n"
+    assert(diagnose(ok) == 0, diagnose_first_msg(ok))
+    ro arm = "module m\n\nfn f(n int) -> int {\n    mut s = 0\n    for x in 0..n {\n        ro v = match x {\n            0 => continue\n            _ => x\n        }\n        s += v\n    }\n    s\n}\n"
+    assert(diagnose(arm) == 0, diagnose_first_msg(arm))
+    // OUTSIDE a loop -- and AFTER one, where the depth must be back at zero.
+    ro after = "module m\n\nfn f() -> int {\n    while false {\n        continue\n    }\n    break\n    1\n}\n"
+    assert(diagnose_first_msg(after).contains("stand only inside the body"), diagnose_first_msg(after))
+    // `while true` WITH a `break` for itself falls through: the body ends without a value.
+    ro wt = "module m\n\nfn f(n int) -> int {\n    while true {\n        if n > 0 { break }\n        return 1\n    }\n}\n"
+    assert(diagnose_first_msg(wt).contains("ends without a value"), diagnose_first_msg(wt))
+    // CONTROL: a `break` of an INNER loop does not let the outer `while true` out.
+    ro inner = "module m\n\nfn f(n int) -> int {\n    while true {\n        for i in 0..n {\n            if i > 2 { break }\n        }\n        return n\n    }\n}\n"
+    assert(diagnose(inner) == 0, diagnose_first_msg(inner))
+}
+
+test "a refused initializer binds its name POISONED in every form -- one cause, one diagnostic" {
+    // `@type_bind` bound the name with no type only after a refused PLAIN
+    // expression; the array literal, tuple, handler literal, `if`, index and
+    // match exits returned without binding, so each later use added "unknown
+    // name" (164 `kids` over novac's own source in module mode).
+    ro arr = "module m\n\nfn f() -> int {\n    ro xs = [nosuch(1)]\n    ro n = xs\n    1\n}\n"
+    assert(diagnose(arr) == 1, diagnose_first_msg(arr))
+    ro idx = "module m\n\nfn f() -> int {\n    ro v = nosuch(1)[0]\n    ro w = v\n    1\n}\n"
+    assert(diagnose(idx) == 1, diagnose_first_msg(idx))
+    // AND AN OPERATOR over the poisoned name says nothing more: the operator
+    // judge used to answer "dispatches through a protocol" about an operand
+    // with no type -- the wrong cause, a second time.
+    ro op = "module m\n\nfn f() -> bool {\n    ro xs = [nosuch(1)]\n    ro n = xs\n    n < 2\n}\n"
+    assert(diagnose(op) == 1, diagnose_first_msg(op))
+}
+
+test "an overload set left undecided by a POISONED argument says nothing more -- one cause, one diagnostic" {
+    // The poisoned name fits every overload, so the set does not narrow; the
+    // earlier refusal is the cause. "not narrowed" was said about it 271 times
+    // over novac's own source, and silence here iced in `type_of` until the
+    // lattice asked the same question (`args_read_poisoned`).
+    ro m = "module m\n\ntype Box { v int }\n\nfn Box @put(x int) -> int => x\n\nfn Box @put(x str) -> int => 1\n\nfn f(b Box) -> int {\n    ro xs = [nosuch(1)]\n    ro n = b.put(xs)\n    n\n}\n"
+    assert(diagnose(m) == 1, diagnose_first_msg(m))
+    ro fr = "module m\n\nfn g(x int) -> int => x\n\nfn g(x str) -> int => 1\n\nfn f() -> int {\n    ro xs = [nosuch(1)]\n    ro n = g(xs)\n    n\n}\n"
+    assert(diagnose(fr) == 1, diagnose_first_msg(fr))
+}
+
+test "`==` on a sum goes through `Equal` by `#impl(Equal)`: a tag compare, a language error without it (274.7 R)" {
+    // D363 + the value-type rule + D477: a sum opts in, no identity fallback.
+    // Fixtures: novac/fixtures/sum_eq.
+    ro ok = "module m\n\n#impl(Equal)\ntype C enum A | B\n\nfn f(x C, y C) -> bool => x != y\n"
+    assert(diagnose(ok) == 0, diagnose_first_msg(ok))
+    ro bare = "module m\n\ntype C enum A | B\n\nfn f(x C, y C) -> bool => x == y\n"
+    assert(diagnose_first_msg(bare).contains("needs the type to implement `Equal`"), diagnose_first_msg(bare))
+    // CONTROL: a payload sum declaring Equal keeps the dispatch refusal, never a tag compare.
+    ro pay = "module m\n\n#impl(Equal)\ntype S enum P(int) | Q\n\nfn f(x S, y S) -> bool => x == y\n"
+    assert(diagnose_first_msg(pay).contains("dispatches through a protocol"), diagnose_first_msg(pay))
+}
+
+test "a bare `return` is the early exit of a body that returns no value, and stays refused where a value is promised" {
+    // Fixtures: novac/fixtures/bare_return.
+    ro unit = "module m\n\nfn f(n int) -> () {\n    if n < 0 {\n        return\n    }\n    println(n)\n}\n"
+    assert(diagnose(unit) == 0, diagnose_first_msg(unit))
+    ro value = "module m\n\nfn f(n int) -> int {\n    if n > 0 {\n        return\n    }\n    n\n}\n"
+    assert(diagnose_first_msg(value).contains("must carry a value"), diagnose_first_msg(value))
+}
+
+test "a closed `str` slice is compiled; other receivers, open bounds and non-int bounds keep their refusals (274.7 U-1)" {
+    // D470 section 5: `s[lo..hi]` is `s.index(Range { start: lo, end: hi })`, a
+    // byte range of type `str` (D249). Wave U-1 compiles the closed form over
+    // `str` -- the shell carries `Nova_str_method_index` -- in every position the
+    // inventory of novac's own source found.
+    ro ok = "module m\n\nfn f(s str, a int) -> str {\n    ro t = s[a..3]\n    return t[0..1]\n}\n"
+    assert(diagnose(ok) == 0, diagnose_first_msg(ok))
+    // CONTROL: a receiver that is not `str` keeps the slice refusal (wave U-3).
+    ro other = "module m\n\nfn f(n int) -> int => n[1..3]\n"
+    assert(diagnose_first_msg(other).contains("a slice `x[lo..hi]`"), diagnose_first_msg(other))
+    // CONTROL: an open bound stays refused in the walk until wave U-2.
+    ro open = "module m\n\nfn f(s str) -> str => s[1..]\n"
+    assert(diagnose_first_msg(open).contains("a slice `x[lo..hi]`"), diagnose_first_msg(open))
+    // CONTROL: a bound of another type gets the index's own SUBSET text -- the
+    // oracle accepts a `u8` bound (measured 2026-09-25).
+    ro wide = "module m\n\nfn f(s str, b bool) -> str => s[b..3]\n"
+    assert(diagnose_first_msg(wide).contains("only an `int` index"), diagnose_first_msg(wide))
+}
+
+test "a line continuation on a CRLF file is one continuation, not an unknown escape on the CR (registry 1324)" {
+    // D467 section 3's `\` + line break, in a file whose line ending is
+    // `\r\n`. The lexer read it as one continuation; the escape door knew
+    // only `\` + `\n` and refused the `\r` -- four of novac's own test files
+    // were rejected in every CRLF checkout and accepted in an LF one.
+    ro crlf = "module m\r\n\r\nfn f() -> str {\r\n    \"ab\\\r\ncd\"\r\n}\r\n"
+    assert(diagnose(crlf) == 0, diagnose_first_msg(crlf))
+    // CONTROL, the reason the rule checks the LF after the CR: a lone `\`+CR
+    // with no line break is no continuation, and stays an unknown escape.
+    ro lone_cr = "module m\n\nfn f() -> str {\n    \"ab\\\rcd\"\n}\n"
+    ro refused = diagnose_first_msg(lone_cr).contains("this string escape is not compiled yet")
+    assert(refused, "a bare CR after a backslash must stay refused")
+    // CONTROL: the LF continuation that already worked must stay clean.
+    ro lf = "module m\n\nfn f() -> str {\n    \"ab\\\ncd\"\n}\n"
+    assert(diagnose(lf) == 0, diagnose_first_msg(lf))
+}
+
 test "unknown escape inside an interpolated string's literal piece is refused, not silently accepted (registry #TBD)" {
     // `report_if_bad_escape` used to walk only `Lit`-node children (the plain
     // StrLit path in `check.nv`'s `Lit` arm) -- an interpolated string never

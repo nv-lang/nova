@@ -1,0 +1,6 @@
+fn main() {
+    println("ab\
+cd")
+    println("x\
+  y")
+}

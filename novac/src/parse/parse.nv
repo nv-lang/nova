@@ -712,6 +712,12 @@ fn Cursor mut @stmt() -> Node {
         }
         return @node(NodeKind.IfStmt, kids)
     }
+    if @peek() == TokenKind.KwBreak || @peek() == TokenKind.KwContinue {
+        // BARE, as the language has them (274.7 wave B10): no label and no
+        // value (labels are an open question, Q-labeled-loops; a `break`
+        // value is outside the language). The keyword is the node's one child.
+        return @node(NodeKind.LoopCtl, []Node.of(@take()))
+    }
     if @peek() == TokenKind.KwReturn {
         mut kids = []Node.of(@take())
         if @peek() != TokenKind.RBrace && @peek_same_line() {

@@ -46,10 +46,11 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, NodeId, bin_op_of, un_op_of}
 import ../diag.{Diagnostic, ice}
 import ../builtins.{COERCE_ATTR, REALTIME_ATTR}
-import ../builtins.{IMPL_ATTR, DISPLAY_PROTO}
+import ../builtins.{IMPL_ATTR, DISPLAY_PROTO, EQUAL_PROTO}
 import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind}
-import ../sem.{expr_leaf_name, attr_kids_name, attr_args_all, attr_has_args, recv_type_name, is_value_record}
+import ../sem.{expr_leaf_name, attr_kids_name, attr_args_among, attr_has_args, recv_type_name, is_value_record}
 import ../sem.{file_decls}
+import ../sem.{is_closed_slice_bin}
 // Where an arm keeps its body -- the door the lowering has read for waves.
 import ../sem.{arm_body_at, array_of_lparen_at}
 import ../types.{TyId, no_ty}
@@ -143,6 +144,10 @@ type Checker {
     /// around the handler expression exactly like `value_expect` is around
     /// call arguments.
     link_check bool
+    /// Loops around the node being walked (274.7 B10): `break`/`continue` at 0 are refused.
+    loop_depth int
+    /// The body being typed returns no value (`-> ()` or none declared): a bare `return` is legal.
+    ret_unit bool
 }
 
 /// Walk the tree and collect subset diagnostics.
@@ -159,12 +164,20 @@ type Checker {
 /// form and the fn-parameter rules — a declared type, no variadic — do
 /// not apply. The literal's own typist binds these positionally against
 /// the effect's schema, the same division WithStmt keeps for its pieces.
+/// handler_pos: a handler literal standing here is JUDGED -- the `with`
+/// binding's handler slot and a local binding's initializer, the only two
+/// doors that call `@type_handler_lit` (registry 1312). Not init_pos: that
+/// flag is also open in a `=>` body and an op body, where no door types the
+/// literal, and a position flag that says "judged" where nothing judges is
+/// the class this flag closes.
 fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                      arg_pos bool = false, index_pos bool = false,
-                     arm_pos bool = false, handler_param bool = false) -> () {
+                     arm_pos bool = false, handler_param bool = false,
+                     handler_pos bool = false) -> () {
     match n {
         Leaf(t) => @report_if_error_token(t)
         Branch { kind, children, .. } => {
+            ro depth_before = @loop_depth // restored after the children: see LoopCtl
             // ONE subject, ONE match (P31 p.2, owner 2026-08-17: "combine
             // several ifs into a match"). The chain this replaces had
             // fourteen `if kind == ...` in a row, each a decision about the
@@ -315,6 +328,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                 }
                 ForStmt => {
                     @report_if_bad_for_head(children)
+                    @loop_depth += 1
                     // The head is walked SEPARATELY, skipping index 3: a range
                     // is legal there and nowhere else in the subset, and the
                     // rule below would otherwise refuse the very form this
@@ -330,7 +344,17 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                         }
                         i += 1
                     }
+                    @loop_depth = depth_before
                     return
+                }
+                // `break` / `continue` (274.7 B10): legal only inside a loop body.
+                // A handler op's body is another function: its depth starts at 0.
+                LoopCtl => {
+                    @report_if_loop_ctl_outside(children)
+                    return
+                }
+                WhileStmt => {
+                    @loop_depth += 1
                 }
                 Field => {
                     @report_if_missing_type(children, "outside the E1 subset: field must declare a type")
@@ -475,7 +499,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                         // form does not exist, as opposed to "not read yet".
                         @reject_first_leaf_of(children, IMPL_NO_PROTOCOLS_MSG)
                     } else if attr_kids_name(children, IMPL_ATTR)
-                              && attr_args_all(children, DISPLAY_PROTO) {
+                              && attr_args_among(children, []str.of(DISPLAY_PROTO, EQUAL_PROTO)) {
                         // `#impl(P)` (D186) -- the author's opt-in, READ ONLY FOR
                         // THE PROTOCOL THE SUBSET JUDGES, which today is `Display`
                         // (wave B1b). `#impl(Serialize)` stands in novac's own
@@ -640,6 +664,23 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // like WithStmt: op bodies get their statement
                     // position, malformed pieces are Err children the
                     // generic branch names.
+                    //
+                    // ONLY WHERE A DOOR JUDGES IT (registry 1312). Before this
+                    // gate the walk let the literal through in EVERY position
+                    // on the word that typing judges it, while typing skipped
+                    // it outside two positions on the word that the walk had
+                    // refused it: each door pointed at the other, and in a `=>`
+                    // body, after `return`, as an arm, an argument, a block
+                    // tail or an if branch nobody judged it -- an unknown op
+                    // passed in silence, a legal literal died in an ICE. The
+                    // gate is the RecordCtor/IfExpr shape: one flag, computed
+                    // where the position is, and a named refusal elsewhere.
+                    if !handler_pos {
+                        @report_first_leaf_of(children, HANDLER_LIT_POSITION_MSG)
+                        return
+                    } else {
+                        // A judged position: descended below.
+                    }
                 }
                 HandlerOp => {
                     // ONE piece of a HandlerLit, judged by the literal's own
@@ -647,6 +688,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // standalone: the walk descends so the body statements
                     // carry their positions, exactly like the
                     // WithStmt/HandlerLit arms above.
+                    @loop_depth = 0
                 }
                 SupervisedStmt => {
                     // READ and TYPED (E4 wave, 274.11 Э.7 item 4): the
@@ -747,9 +789,14 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     } else {
                         // No declared type: the ordinary binding.
                     }
+                    // The initializer is also a JUDGED handler position:
+                    // `@type_bind` routes a HandlerLit to its typist
+                    // (check/binds.nv), which is why only this loop -- not
+                    // LetDecl's or FnExprBody's -- opens handler_pos.
                     mut i = 0
                     for c in children {
-                        @walk(c, init_pos: i == children.len() - 1)
+                        @walk(c, init_pos: i == children.len() - 1,
+                              handler_pos: i == children.len() - 1)
                         i += 1
                     }
                     return
@@ -797,10 +844,20 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // the oracle accepts it -- so the subset refuses it BY NAME
                     // instead of dying on it. Inside a for-head the walk never
                     // gets here: that arm walks its children itself.
-                    @report_if_range_outside_for(children, index_pos: index_pos)
+                    //
+                    // A CLOSED SLICE (`s[lo..hi]`) is judged where its
+                    // receiver's type is known -- `@type_index` (check/binds.nv,
+                    // plan 274.7 wave U-1) types a `str` slice and refuses the
+                    // rest by the same SLICE_MSG. An open bound stays refused
+                    // here until wave U-2 tells it from a real parse error.
+                    if index_pos && is_closed_slice_bin(n) {
+                        // Typed by `@type_index`, below this walk.
+                    } else {
+                        @report_if_range_outside_for(children, index_pos: index_pos)
+                    }
                 }
                 LeafNode | File | ModuleDecl | IfStmt => {}
-                AssignStmt | WhileStmt | FieldAccess | CtorField | CtorSpread => {}
+                AssignStmt | FieldAccess | CtorField | CtorSpread => {}
                 MatchArm | Pattern | ArraySpread | Guard => {}
                 Recv | Generics | Unary | Paren | Name => {}
                 // A protocol's signatures are judged together with the
@@ -898,6 +955,12 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                       // own typist binds these against the effect schema).
                       handler_param: kind == NodeKind.HandlerOp &&
                                      c.kind_of() == NodeKind.Param,
+                      // THE `with` BINDING'S HANDLER SLOT (registry 1312):
+                      // every other direct child of a WithStmt is a leaf
+                      // (`with`, name, `=`, `,`) or the body Block, so a
+                      // literal standing directly under it IS in the slot
+                      // `@type_with_stmt` types.
+                      handler_pos: kind == NodeKind.WithStmt,
                       // ELSE-IF CHAIN CONTINUATION (registry #1243): a nested
                       // `IfExpr` sitting in an `if`-value's own else-arm is
                       // the SAME value position as its parent -- `else if` is
@@ -917,6 +980,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                                 (kind == NodeKind.HandlerOp && at == children.len() - 1))
                 at += 1
             }
+            @loop_depth = depth_before
         }
     }
 }

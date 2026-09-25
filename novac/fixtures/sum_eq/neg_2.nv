@@ -1,0 +1,17 @@
+module sum_eq.neg_2
+
+// `==` on a sum WITH payload that declares Equal: legal Nova, but the synthesized
+// `@equal` compares payloads and novac does not write it yet -- it keeps the
+// protocol-dispatch refusal, and is never compiled as a tag compare, which would
+// call `Circle(1)` equal to `Circle(2)`.
+
+// NOVAC_EXPECT this operator on these operands dispatches through a protocol
+
+#impl(Equal)
+type Shape enum Circle(int) | Square(int)
+
+fn same(a Shape, b Shape) -> bool => a == b
+
+fn main() {
+    println(same(Shape.Circle(1), Shape.Circle(1)))
+}

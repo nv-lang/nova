@@ -1,0 +1,15 @@
+module newtype_ops.neg_2
+
+// A NEWTYPE beside a VALUE of its representation (D52 amendment, rule 3): an
+// `int` variable is not a literal, so it does not adapt -- a compile error
+// naming `as`. Rule 2's literal is pos_1's `a + b - 1`.
+
+// NOVAC_EXPECT a newtype does not mix with another newtype
+
+type Row int
+
+fn below(a Row, n int) -> bool => a < n
+
+fn main() {
+    println(1)
+}

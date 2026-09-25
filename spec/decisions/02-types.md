@@ -3306,9 +3306,20 @@ Receiver mut-ABI column added Plan 128 Ф.5, 2026-06-05):**
 | Tuples (positional или named) | `type X(T1, T2)`, `type Vec3(x f64, ...)` | **stack** | by value (копия) | `NovaTuple_<X>*` pointer (Plan 128 Ф.2) — `&v`/hoist+`&temp` call-site |
 | Value records | `type X value { ... }` | **stack** | by value (копия) | `NovaValue_<X>*` pointer (D228) — `&v`/hoist+`&temp` call-site |
 | Records | `type X { ... }` | **managed heap** | by reference (указатель) | `Nova_<X>*` pointer (unchanged — already by-reference) |
-| Sum types | `type X \| A \| B` | managed heap | by reference | `Nova_<X>*` pointer |
+| Sum types | `type X enum A \| B` | **stack** (по значению, [D477](#d477-размещение-суммы-и-маркер-косвенности-indirect-решение-владельца-2026-09-13)); рекурсия — `indirect` на варианте | **by value (копия)** | не нормировано здесь — см. D477 |
 | Arrays | `[]T` | managed heap (handle inline) | by reference | `Nova_<X>*` pointer |
 | **`str`** (Plan 139) | `str` | **stack** (16-байт value `{ptr,len}`; буфер на heap/rodata) | **by value (копия)** | `nova_str` value — handle-copy |
+
+> **AMEND (2026-09-25, D32; форма — интегратор, текст — окно Карины): строка «Sum types»
+> приведена к D477.** Она стояла как `type X | A | B` / «managed heap» / «by reference» /
+> `Nova_<X>*` — протухла дважды: синтаксис объявления суммы — `type X enum A | B`, а
+> размещение — ПО ЗНАЧЕНИЮ, рекурсия разрывается маркером `indirect` на варианте (D477,
+> решение владельца 2026-09-13; подтверждено владельцем 2026-09-25). Следствие, ради
+> которого правка понадобилась: сумма — value-тип, и `==` на ней идёт через `Equal` по
+> заявке `#impl(Equal)` БЕЗ identity-фоллбэка — правило value-типов
+> (08-runtime.md, «Value-record / NamedTuple … `#impl(P)` opt-in»), а не heap-record.
+> Оракул сегодня пропускает `==` без заявки — реестр 221.1 №1352. Колонка mut-ABI для
+> суммы здесь не нормирована: прежнее `Nova_<X>*` описывало кучу.
 
 > **`str` reclassified (Plan 139, 2026-06-11):** ранее `str` стоял в одной
 > строке с `[]T` как «managed heap / by reference». Теперь `str` — **value
@@ -7634,6 +7645,14 @@ Capture-rules:
 UTF-8 → byte offsets; structurally идентично `nova_str_slice`, но с
 **panic при OOB** вместо clamp).
 
+> **ОТОЗВАНО D249-амендментом (2026-06-13): срез `str` БАЙТОВЫЙ, не codepoint.** Абзац выше
+> описывает прежнюю семантику, развёрнутую D238-амендментом по D249
+> (`03-syntax.md:11179-11183`, `:11603-11607`; `open-questions.ru.md:4192-4196`): `str`
+> реализует только `Index[Range, str]`, границы — байтовые смещения, граница внутри кодовой
+> точки — паника (D470 §8); тело — `std/src/runtime/string/slice.nv:66`. Пометка-указатель
+> добавлена 2026-09-25 (окно Карины, форма согласована с интегратором): два места D144
+> противоречили D249 без пометки об отмене, и это нашёл разбор волны срезов (274.7 §У).
+
 ### 5 форм Range (Rust `RangeBounds` parity)
 
 | Форма | Семантика | Open-ended? |
@@ -7730,6 +7749,9 @@ single-type-design'ом).
 Bracket-форма унифицирует idiom: `arr[a..b]` ≡ `str[a..b]`.
 Codepoint-indexed (как существующий `nova_str_slice` метод).
 **Panic при OOB** (consistent с `arr[a..b]`).
+
+> **ОТОЗВАНО D249-амендментом (2026-06-13):** срез `str[a..b]` байтовый, а не codepoint-indexed —
+> см. указатель в разделе «Семантика — sub-slice view» выше.
 
 Старый `s.slice(a, b)` метод — **сохраняется** с clamp-семантикой
 для backwards-compat; align на panic откладывается в Plan 94

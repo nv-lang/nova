@@ -182,6 +182,10 @@ fn Checker mut @judge_method_lookup(e Node, t Token, key []ArgSpec, found FnLook
                 // this too -- by the spec's word if not yet by its own (#857).
                 @refuse(t,
                     "this call fits more than one method and none is more specific -- an ambiguity is refused, never chosen (D84)")
+            } else if args_read_poisoned(branch_children(e), 3, @scope) {
+                // SILENT-OK: the untyped slot reads a name bound POISONED after
+                // an earlier refusal -- that refusal is the cause, and saying
+                // "not narrowed" about it is the same cause a second time.
             } else {
                 // An argument novac could not type matches EVERY overload, so
                 // the set did not narrow -- novac's ignorance, not the
@@ -540,4 +544,36 @@ fn Checker mut @type_effect_op_call(e Node, kids []Node) -> bool {
     // question, not this door's.
     @record(e, sig.ret_id)
     true
+}
+
+/// Whether `n` reads a name bound POISONED -- bound with no type after its own
+/// initializer was refused (`@bind_poisoned`, binds.nv). Such a name reaches a
+/// call silently: re-reading it raises nothing new, so the call's own mark does
+/// not move, and only this question tells the cascade from novac's ignorance.
+fn reads_poisoned(n Node, scope Scope) -> bool {
+    match n {
+        Leaf(_) => false
+        Branch { kind, children, .. } => {
+            if kind == NodeKind.Name {
+                ro nm = expr_leaf_name(n)
+                return scope.is_bound(nm) && !is_ty(scope.type_of_name(nm))
+            }
+            for c in children {
+                if reads_poisoned(c, scope) { return true }
+            }
+            false
+        }
+    }
+}
+
+/// Whether any argument of a call, from slot `from` on, reads a poisoned name:
+/// the overload set then did not narrow because of an EARLIER refusal, and the
+/// call has nothing of its own to say (one cause, one diagnostic). The lattice
+/// asks it too (`type_of`, the undecided method call): the same silence has to
+/// read as "no type" there, not as a broken pass order.
+fn args_read_poisoned(kids []Node, from int, scope Scope) -> bool {
+    for i in from..kids.len() {
+        if reads_poisoned(kids[i], scope) { return true }
+    }
+    false
 }

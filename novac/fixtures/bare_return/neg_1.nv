@@ -1,0 +1,15 @@
+module bare_return.neg_1
+
+// A bare `return` in a body that PROMISES a value (`-> int`) stays refused.
+
+// NOVAC_EXPECT `return` must carry a value
+
+fn f(n int) -> int {
+    if n > 0 {
+        return
+    }
+    n
+}
+fn main() {
+    println(f(1))
+}

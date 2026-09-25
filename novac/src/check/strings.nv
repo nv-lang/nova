@@ -64,12 +64,29 @@ fn Checker mut @report_if_bad_escape(kids []Node) -> () {
             // migrates novac's own tests to -- so novac has to read it, or the
             // migration cannot be canonical in the tree that novac reads.
             //
-            // Nothing else changes for it, and that was MEASURED: the lexer
-            // already survives the form (its escape branch consumes both bytes
-            // BEFORE the end-of-line test, so the literal continues -- the
-            // probe is refused by THIS door, not by lex), and the emitter
-            // passes the bytes through while C splices backslash-newline in
-            // translation phase 2. Same semantics, nothing to translate.
+            // The lexer already survives the form (its escape branch consumes
+            // both bytes BEFORE the end-of-line test, so the literal continues
+            // -- the probe was refused by THIS door, not by lex). The emitter
+            // TRANSLATES it (`literal_as_c_text`, sem/mangle.nv): this comment
+            // used to say C's phase-2 splice gives the same semantics, and it
+            // does not -- the splice keeps the next line's indentation, D467
+            // eats it (registry #TBD, measured with the behaviour smoke).
+            //
+            // THE SAME CONTINUATION ON A CRLF FILE (registry 1324): `\` followed
+            // by the file's own `\r\n` is ONE continuation -- the lexer already
+            // reads it so (`lex/lex.nv`, the CRLF branch of its escape scan),
+            // and this door knew only `\` + `\n`, so a literal the lexer had
+            // accepted was refused here as an unknown escape on the `\r`. Four
+            // of novac's own test files were rejected that way in every CRLF
+            // checkout and accepted in an LF one: the self-build count depended
+            // on how git wrote the tree. C splices it the same way -- phase 1
+            // reads `\r\n` as the line end before phase 2 joins the lines.
+            if e == CR && i + 2 < n && b[i + 2] == NEWLINE {
+                i += 3
+                continue
+            } else {
+                // Not a CRLF continuation: the ordinary two-byte escape below.
+            }
             ro known = e == QUOTE || e == BACKSLASH || e == LOWER_N ||
                 e == LOWER_T || e == LOWER_R || e == DOLLAR || e == NEWLINE
             if !known {
@@ -95,6 +112,7 @@ const DOLLAR u8 = 0x24     // $
 // `Nova_const_novac_lex_B_LF`, undeclared in this translation unit. The local
 // naming (`BACKSLASH`, `QUOTE`, `LOWER_N`) is what this file uses anyway.
 const NEWLINE u8 = 0x0A    // the newline a line continuation swallows
+const CR u8 = 0x0D         // the carriage return a CRLF file puts before it
 
 /// One text for the rule above.
 const ESCAPE_MSG = "outside the subset: this string escape is not compiled yet (the subset knows only \\\" \\\\ \\n \\t \\r)"

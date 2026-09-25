@@ -328,8 +328,11 @@ if [ "$self_total" -gt 0 ]; then
         src=99
     fi
     if [ "$src" -le 2 ]; then
-        self_rej=$(cat "$T/self.out" "$T/self.err" 2>/dev/null \
-            | grep -o '"file":"[^"]*"' | sort -u | wc -l | tr -d '[:space:]')
+        # The file field may come absolute (the arguments are): cut it to the
+        # `novac/src/...` form the unit count below compares against.
+        cat "$T/self.out" "$T/self.err" 2>/dev/null | grep -o '"file":"[^"]*"' \
+            | sed 's/^"file":"//; s/"$//; s#^.*novac/src/#novac/src/#' | sort -u > "$T/self.rejfiles"
+        self_rej=$(wc -l < "$T/self.rejfiles" | tr -d '[:space:]')
     else
         # РЕЖИМ СМЕНИЛСЯ (реестр №1122): пофайловый откат спрашивает «стоит ли
         # файл САМ ПО СЕБЕ», а не «отвергла ли его пачка» — межфайловые импорты
@@ -349,11 +352,42 @@ if [ "$self_total" -gt 0 ]; then
         done
     fi
 fi
+# THE UNIT, NOT THE FILE, IS WHAT IS ACCEPTED (registry 221.1 №1350). A unit of
+# the batch is one module -- one text -- and `novac/src/check/run.nv` types a
+# text only on a CLEAN walk verdict ("A refused file is not typed"). One walk
+# refusal in ANY file of a unit therefore switches typing off for the WHOLE
+# unit, and its silent files were judged by nobody. Measured 2026-09-25 on
+# `novac/src/check/`: four walk-refused files, 11 diagnostics, 24 "accepted"
+# files; the same unit without those four types and reports about 2000. The
+# per-file count stays, labelled for what it is -- the WALK level.
+self_units_total=0
+self_units_clean=0
+self_unit_files=0
+if [ "$self_mode" = "batch-unit" ]; then
+    for f in "$ROOT"/novac/src/*/*.nv "$ROOT"/novac/src/*.nv; do
+        [ -f "$f" ] || continue
+        printf '%s\n' "${f#"$ROOT"/}"
+    done > "$T/self.all"
+    [ -f "$T/self.rejfiles" ] || : > "$T/self.rejfiles"
+    awk -v rejf="$T/self.rejfiles" '
+        BEGIN { while ((getline l < rejf) > 0) rej[l] = 1 }
+        { u = $0; sub(/\/[^\/]*$/, "", u); n[u]++; if ($0 in rej) r[u]++ }
+        END { for (u in n) printf "%s %d %d\n", u, n[u], (u in r) ? r[u] : 0 }
+    ' "$T/self.all" | sort > "$T/self.units"
+    self_units_total=$(wc -l < "$T/self.units" | tr -d '[:space:]')
+    self_units_clean=$(awk '$3 == 0' "$T/self.units" | wc -l | tr -d '[:space:]')
+    self_unit_files=$(awk '$3 == 0 { s += $2 } END { print s + 0 }' "$T/self.units")
+fi
 wall=$(( ( $(date +%s%N) - wall0 ) / 1000000 ))
 
 echo "novac-diff-corpus: файлов $N — совпали-приняли $acc · совпали-отвергли $rej · отставание $subset · вне-точки $outpoint · заблокировано-оракулом $blocked · DANGER $danger · PANIC $panic · allow $allowed"
 if [ "$self_mode" = "batch-unit" ]; then
-    echo "novac-diff-corpus: поведенчески совпали $beh из $acc · самосборка (БАТЧ, МОДУЛЯМИ): отвергнуто $self_rej из $self_total"
+    echo "novac-diff-corpus: поведенчески совпали $beh из $acc · самосборка (БАТЧ, МОДУЛЯМИ): единиц чисто $self_units_clean из $self_units_total, файлов в чистых единицах $self_unit_files из $self_total (уровень обхода: отвергнуто $self_rej из $self_total -- молчащий файл единицы с диагностиками НЕ судился, №1350)"
+    # One line per unit: the guard recomputes the headline from these and
+    # reddens if a file of a unit with diagnostics was counted accepted.
+    while read -r u un ur; do
+        echo "novac-diff-corpus self-unit: $u files $un rejected $ur"
+    done < "$T/self.units"
 else
     echo "novac-diff-corpus: поведенчески совпали $beh из $acc · самосборка (ПОФАЙЛОВЫЙ ОТКАТ -- пачка дала ICE или умерла, код $src, числа НЕ сравнимы с батчевым режимом, реестр №1122): отвергнуто $self_rej из $self_total (частичный счёт краха: $self_rej_partial, недостоверен)"
 fi
@@ -375,6 +409,6 @@ fi
 if [ -s "$T/note" ]; then
     cat "$T/note"
 fi
-echo "novac-diff-corpus baseline-numbers: contract-match=$((acc+rej)) behavior-match=$beh no-entry=$noentry behavior-allowed=$behallow out-of-point=$outpoint oracle-blocked=$blocked self-distance=$self_rej/$self_total self-mode=$self_mode"
+echo "novac-diff-corpus baseline-numbers: contract-match=$((acc+rej)) behavior-match=$beh no-entry=$noentry behavior-allowed=$behallow out-of-point=$outpoint oracle-blocked=$blocked self-units=$self_units_clean/$self_units_total self-unit-files=$self_unit_files/$self_total self-distance=$self_rej/$self_total self-mode=$self_mode"
 echo "novac-diff-corpus ok"
 exit 0

@@ -172,6 +172,12 @@ def main() -> int:
     decl, bad = declarations(root)
     diff = sorted((spec - lexer) | (lexer - spec))
     undeclared = [w for w in diff if w not in decl]
+    # ОБЪЯВЛЕНИЕ, ПЕРЕЖИВШЕЕ СВОЮ РАЗНИЦУ (2026-09-25, волна В10-б): лексер выучил
+    # `break`/`continue`, а строки «debt (274.7 B10)» остались и продолжали
+    # засчитываться в «объявлено» — страж видел 30 объявлений на 28 живых разниц и
+    # молчал. Протухшее объявление врёт в обратную сторону: оно называет долгом то,
+    # что уже сделано, и следующее окно идёт «закрывать» закрытое.
+    stale = sorted(w for w in decl if w not in diff)
 
     want = read_baseline(baseline, "undeclared")
     if want is None:
@@ -183,6 +189,14 @@ def main() -> int:
         for i, w, why in bad:
             print(f"    lex.nv:{i}  {w}: {why}", file=sys.stderr)
         print("  Вид — одно из: debt (со скобкой-этапом), by design, retracted, spec-gap.", file=sys.stderr)
+        return 1
+
+    if stale:
+        print(f"{NAME}: FAIL — объявление без разницы (слово уже одинаково в спеке и лексере):",
+              file=sys.stderr)
+        for w in stale:
+            print(f"    lex.nv:{decl[w][1]}  {w}", file=sys.stderr)
+        print("  Сними строку KEYWORD-PARITY: долг закрыт, объявлять больше нечего.", file=sys.stderr)
         return 1
 
     if len(undeclared) > want:

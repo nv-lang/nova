@@ -60,13 +60,21 @@ COST="$FIX/scripts/guards/novac-iteration-cost.baseline"
 # которой в природе нет — та же дыра, что закрывает F9, только этажом ниже.
 # Что форма не разошлась, судит блок «обманка не разошлась с раннером» ниже.
 # $1 contract-match, $2 behavior-match, $3 стена прогона (мс)
+# Units of the self-build (registry №1350): one line per unit, and the headline
+# fields the guard recomputes from them. Defaults agree; the unit cells below
+# change them to make the headline lie.
+UNITS='novac/src/a files 10 rejected 0
+novac/src/b files 8 rejected 0'
+SU='2/2'
+SUF='18/18'
 corpus_out() {
     {
         printf 'novac-diff-corpus: oracle-pin=c5a0bc425 oracle-HEAD=abcdef123 spec-point=2026-08-14 spec-queue=0 (в nova.toml: 0) сборка novac=single-file корпус=examples\n'
         printf 'novac-diff-corpus: файлов 60 — совпали-приняли %s · совпали-отвергли 0 · отставание 40 · вне-точки 0 · заблокировано-оракулом 9 · DANGER 0 · PANIC 0 · allow 0\n' "$1"
         printf 'novac-diff-corpus: поведенчески совпали %s из %s · самосборка: отвергнуто 0 из 18\n' "$2" "$1"
+        printf '%s\n' "$UNITS" | sed 's/^/novac-diff-corpus self-unit: /'
         printf 'novac-diff-corpus: цена прогона — novac 40000ms, оракул 20000ms, стена %sms\n' "$3"
-        printf 'novac-diff-corpus baseline-numbers: contract-match=%s behavior-match=%s out-of-point=0 oracle-blocked=9 self-distance=0/18 self-mode=%s\n' "$1" "$2" "${4:-batch-unit}"
+        printf 'novac-diff-corpus baseline-numbers: contract-match=%s behavior-match=%s out-of-point=0 oracle-blocked=9 self-units=%s self-unit-files=%s self-distance=0/18 self-mode=%s\n' "$1" "$2" "$SU" "$SUF" "${4:-batch-unit}"
         printf 'novac-diff-corpus ok\n'
     } > "$FIX/corpus.out.fixture"
 }
@@ -86,6 +94,9 @@ hasF "$REAL" 'behavior-match=' "второе число храповика зо�
 hasF "$REAL" 'out-of-point=' "корзина «вне точки» зовётся так же"
 hasF "$REAL" 'self-distance=' "хвост машинной строки тот же"
 hasF "$REAL" 'self-mode=' "поле режима самосборки зовётся так же (№1310)"
+hasF "$REAL" 'self-units=' "поле чистых единиц зовётся так же (№1350)"
+hasF "$REAL" 'self-unit-files=' "поле файлов в чистых единицах зовётся так же (№1350)"
+hasF "$REAL" 'novac-diff-corpus self-unit: ' "строка единицы зовётся так же (№1350)"
 hasF "$REAL" 'novac-diff-corpus: цена прогона' "строка цены зовётся так же"
 hasE "$REAL" 'стена .*ms' "стена печатается в мс — её и парсит бюджет П14"
 hasF "$REAL" 'novac-diff-corpus: поведенчески совпали' "строка поведения зовётся так же"
@@ -148,6 +159,26 @@ has "$TMP/err" 'поля нет в строке раннера' "пропажа 
 # нельзя: число снова ответило бы на другой вопрос под тем же именем.
 corpus_out 11 5 68000 batch
 check "self-mode=batch (пофайловая пачка, прежняя мера) — красный" "$(run)" "1"
+corpus_out 11 5 68000
+
+echo "== принимается единица, а не файл (реестр №1350) =="
+check "счёт единиц сходится со строками — зелёный" "$(run)" "0"
+has "$TMP/out" 'по единицам: чисто 2 из 2' "счёт единиц напечатан в вердикте"
+# ПРОБА ПРИЁМКИ ИНТЕГРАТОРА: единица b несёт один отказ, а заголовок засчитал
+# принятыми и её файлы -- именно то, что мера делала до №1350.
+UNITS='novac/src/a files 10 rejected 0
+novac/src/b files 8 rejected 1'
+corpus_out 11 5 68000
+check "файл единицы с отказом засчитан принятым — красный" "$(run)" "1"
+has "$TMP/err" 'засчитан принятым' "ложный счёт назван"
+SU='1/2'; SUF='10/18'; corpus_out 11 5 68000
+check "та же единица, счёт честный (1/2, файлов 10) — зелёный" "$(run)" "0"
+sed -i 's/ self-units=[0-9\/]*//; s/ self-unit-files=[0-9\/]*//' "$FIX/corpus.out.fixture"
+check "полей self-units / self-unit-files нет — красный" "$(run)" "1"
+has "$TMP/err" 'нет self-units' "пропажа полей названа"
+UNITS='novac/src/a files 10 rejected 0
+novac/src/b files 8 rejected 0'
+SU='2/2'; SUF='18/18'
 corpus_out 11 5 68000
 
 echo "== ловит непарсимое =="

@@ -24,7 +24,7 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, NodeId, no_node}
 import ../sem.{branch_children, is_expr_kind, leaf_kind, ret_is_unit, is_value_tail_kind, expr_leaf_name}
 import ../types.{TyId, no_ty, is_ty}
-import ../sem.{iflet_body_at, iflet_else_at}
+import ../sem.{iflet_body_at, iflet_else_at, loop_ctl_is_break}
 import ../builtins.{is_true_literal}
 
 /// Does this statement END the function on every path?
@@ -40,16 +40,18 @@ import ../builtins.{is_true_literal}
 /// and that is exactly the shape the oracle refuses too.
 fn stmt_terminates(st Node) -> bool {
     ro k = st.kind_of()
-    if k == NodeKind.RetStmt { return true }
+    // `break`/`continue` leave the block too (274.7 B10): control never reaches the
+    // next statement -- where it goes is the LOOP's question, asked below.
+    if k == NodeKind.RetStmt || k == NodeKind.LoopCtl { return true }
     // AN INFINITE `while true { ... }` NEVER FALLS THROUGH (hunt novac/
     // check x K6, registry #1253): the terminator was enumerated by FORM
     // (`RetStmt`/`IfLet`/`IfStmt`) rather than by the PROPERTY "control
     // does not reach past this statement", and `while` was simply never
-    // added to the list. Safe to answer unconditionally without walking
-    // the body: `break` is not a form novac reads at all yet (no
-    // `BreakStmt`/`KwBreak` anywhere in `tree`/`parse`), so a literal-
-    // `true` condition admits no OTHER way out than a `return` somewhere
-    // inside, or looping forever -- both leave control right here. A
+    // added to the list. The body IS walked since novac reads `break`
+    // (274.7 B10): a `break` aimed at THIS loop is the one other way out
+    // of a literal-`true` condition, and then control falls through. The
+    // note that stood here said "safe without walking: novac reads no
+    // `break`" -- true until the day it read one. A
     // non-literal condition (`while n > 0 { ... }`) is NOT covered: the
     // loop can exit through the condition falling false, which is
     // exactly the fall-through an `if` without `else` already refuses.
@@ -57,7 +59,9 @@ fn stmt_terminates(st Node) -> bool {
         ro wk = branch_children(st)
         if wk.len() < 2 { return false }
         ro cond = wk[1]
-        return cond.kind_of() == NodeKind.Name && is_true_literal(expr_leaf_name(cond))
+        if wk.len() < 3 { return false }
+        return cond.kind_of() == NodeKind.Name && is_true_literal(expr_leaf_name(cond)) &&
+               !breaks_out(wk[2])
     }
     // An if-let ends the function when BOTH its branches do (wave W1): the
     // then-block and the else. Without an else the None path falls through,
@@ -105,6 +109,25 @@ fn block_terminates(b Node) -> bool {
     }
     false
 }
+
+/// Whether `n` holds a `break` aimed at the loop AROUND it (274.7 B10): nested loops
+/// take their own `break`s, and a handler op's body is another function.
+fn breaks_out(n Node) -> bool {
+    match n {
+        Leaf(_) => false
+        Branch { kind, children, .. } => {
+            if kind == NodeKind.LoopCtl { return loop_ctl_is_break(n) }
+            if kind == NodeKind.ForStmt || kind == NodeKind.WhileStmt || kind == NodeKind.HandlerOp {
+                return false
+            }
+            for c in children {
+                if breaks_out(c) { return true }
+            }
+            false
+        }
+    }
+}
+
 /// Type a tail `if` as a VALUE: both branches, and the type they agree on.
 ///
 /// The agreement is the whole rule. `if c { 1 } else { "s" }` has no type, and a
@@ -352,7 +375,9 @@ fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
         // `is_value_tail_kind` (sem) is `is_expr_kind` plus the one positional
         // record literal the tail chain returns since step 4b -- ONE door for
         // this rule, the `=>` body's typing and the emitter's body arm (#974).
-        if k == NodeKind.RetStmt || is_value_tail_kind(k) || k == NodeKind.IfStmt { return }
+        if k == NodeKind.RetStmt || k == NodeKind.LoopCtl || is_value_tail_kind(k) || k == NodeKind.IfStmt {
+            return
+        }
         // `IfLet` JOINS with registry 1189, and it joins WITH A CONDITION: only
         // the shape that has an `else`. Without one the None path produces no
         // value and this door's own refusal is still the true thing to say.
@@ -376,6 +401,13 @@ fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
         // cause named (274.7 B3 measurement). The tail is let through to the walk
         // that owns the real answer.
         if k == NodeKind.Index { return }
+        // A HANDLER-LITERAL tail is a value on the same terms (registry 1312):
+        // the walk gate (`@walk`'s HandlerLit arm, check/check.nv) refuses it
+        // by name outside the two judged positions,
+        // and this door answering first put a second, FALSE cause ("ends
+        // without a value") on the same byte -- measured on the hunt's
+        // hl-block-tail probe, two diagnostics for one literal.
+        if k == NodeKind.HandlerLit { return }
         @report_first_leaf_of([]Node.of(tail_node), TAIL_NO_VALUE_MSG)
         return
     }

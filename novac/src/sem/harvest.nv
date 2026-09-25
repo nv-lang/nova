@@ -396,6 +396,11 @@ fn harvest_fn(kids []Node, handed_from str, types []TypeDef, mut defs DefTable, 
     // call asks the name table first (`defs.def_of`), so a handed free function
     // stands there too.
     if is_free && !defs.def_of(mname).is_none() { return }
+    // THE SAME RULE FOR A METHOD (registry 1354, 2026-09-26): a handed method
+    // identical to one the file declares is the file's own method read a
+    // second time -- in module mode the unit is inside `NOVAC_SELF_PATH`, and
+    // every call of its own methods was an ambiguity (237 over novac's source).
+    if !is_free && fns.file_declares_method(mname, param_ids) { return }
     fns.add(mname, ret_t, !is_free, param_ids, tps, bounds, handed_from: handed_from)
     if is_free {
         defs.add(mname, DefTarget.DefFn(FnRow(fns.rows.len() - 1)))

@@ -165,12 +165,32 @@ fn lit_arg_of(e Node) -> LitArg {
 #realtime nogc
 fn adapt_operand(e Node, own TyId, other TyId, tys Interner) -> TyId {
     if !is_ty(other) { return same_ty(own) }
+    // A NEWTYPE over a number takes the literal too (D52 amendment 2026-09-04,
+    // rule 2: `a + 1` with `a FnRow` is legal and gives `FnRow`): the literal is
+    // asked of the representation, and the operand takes the newtype itself.
+    ro rep = numeric_rep(tys, other)
     match lit_arg_of(e) {
         NotLit => { return same_ty(own) }
-        IntLitArg => { if !is_numeric_prim(tys, other) { return same_ty(own) } }
-        FloatLitArg => { if !is_float_prim(tys, other) { return same_ty(own) } }
+        IntLitArg => { if !is_numeric_prim(tys, rep) { return same_ty(own) } }
+        FloatLitArg => { if !is_float_prim(tys, rep) { return same_ty(own) } }
     }
     same_ty(other)
+}
+
+/// The type a value COMPUTES as for D52's operators: a newtype is peeled to its
+/// representation (one level per step, a chain peels fully), anything else is
+/// itself. Asked of the interner, the door this file already has: the
+/// representation is argument zero of a newtype's term (`representation_of`).
+fn numeric_rep(tys Interner, t TyId) -> TyId {
+    mut cur = t
+    mut steps = 0
+    // Bounded: each step moves to a different term, and a cycle among newtypes
+    // is a declaration the checker refuses before any operator is typed.
+    while is_ty(cur) && tys.kind_of(cur) == TypeKind.TkNewtype && steps < 64 {
+        cur = tys.arg(cur, 0)
+        steps += 1
+    }
+    cur
 }
 
 /// The TARGET type of a cast, resolved from the type written after `as`.
@@ -300,6 +320,10 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
             // silence as a violation.
             ro recv_t = type_of(kids[0], ctx, scope, chan)
             if !is_ty(recv_t) { return no_ty() }
+            // A POISONED ARGUMENT is the same legal silence one slot later: the
+            // judge left an overload set undecided because an argument reads a
+            // name an earlier refusal bound with no type (`args_read_poisoned`).
+            if args_read_poisoned(kids, 3, scope) { return no_ty() }
             ice("check: method call reached type_of with no decision in the channel (274.4 pass-order)")
         }
         return ctx.fns.rows[raw_row(chan.callee_of(nid).callable_row())].ret_id
@@ -424,6 +448,15 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         }
         ro lt0 = type_of(kids[0], ctx, scope, chan)
         ro rt0 = type_of(kids[2], ctx, scope, chan)
+        // A POISONED OPERAND poisons the expression (registry 1322's follow-up):
+        // no type means refused where it was typed, and the lattice answers
+        // `no_ty()` -- the tolerant rule every recorded kind above follows.
+        // Measured 2026-09-25: once handed records' fields were read,
+        // `fd.param_off + rslot` with `fd` bound poisoned by an index refusal
+        // reached the invariant below and iced three files of novac's own
+        // check/ (params, option_rules, methods). The ICE stays for what it was
+        // written for: a TYPED operand that is not numeric.
+        if !is_ty(lt0) || !is_ty(rt0) { return no_ty() }
         // A bare literal on one side takes the other side's type (the one
         // door the judge records through -- see adapt_operand).
         ro lt = adapt_operand(kids[0], lt0, rt0, ctx.tys)
@@ -433,6 +466,9 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // str/bool/records is not a silent int (#652 class), it is an
         // invariant break here.
         if lt == rt && is_numeric_prim(ctx.tys, lt) { return lt }
+        // ONE NEWTYPE over a number on both sides (D52 amendment, rule 1): the
+        // result is the newtype itself -- `FnRow + FnRow` is a `FnRow`.
+        if lt == rt && is_numeric_prim(ctx.tys, numeric_rep(ctx.tys, lt)) { return lt }
         // Two numeric operands of DIFFERENT types: the operator judge refused
         // this node (spec/conversions.md, wave B4), and a refusal is also a
         // decision (274.4 step 2) -- the left operand's type is what the
@@ -480,7 +516,7 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
                 // needs `match` in a tail to reproduce.
                 ro body = ak[at]
                 ro bk = body.kind_of()
-                if bk == NodeKind.Block || bk == NodeKind.RetStmt {
+                if bk == NodeKind.Block || bk == NodeKind.RetStmt || bk == NodeKind.LoopCtl {
                     // THE NEXT ARM IS ASKED, not the match abandoned
                     // (registry 1190). An arm that leaves yields no value,
                     // which is not the same as the MATCH having none: in

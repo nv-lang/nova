@@ -535,7 +535,8 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
     // into a place that had never been asked. Teaching the parser a form
     // is half the work; the other half is every judge the form now
     // reaches.
-    if body.kind_of() == NodeKind.RetStmt {
+    // `None => continue` leaves the same way (274.7 B10): no value to offer either.
+    if body.kind_of() == NodeKind.RetStmt || body.kind_of() == NodeKind.LoopCtl {
         @type_stmt(body)
         @scope.release(mark)
         // SILENT-OK: the statement judged itself, and the arm has no type

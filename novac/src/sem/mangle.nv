@@ -910,15 +910,42 @@ export fn char_literal_code(t str) -> str {
 const BACKSLASH_BYTE u8 = 0x5C  // backslash
 const DOLLAR_BYTE u8 = 0x24     // $
 
-/// A Nova string literal's text as C text: the ONE dollar rule. Nova's
-/// subset escape set (\" \\ \n \t \r) matches C's one for one -- check
-/// refuses everything else by name -- with a single exception, `\$`, whose
-/// backslash must not reach clang. TWO readers spell literals into C: the
-/// shell's literal pool and the contract prologue's message slot -- the
-/// hunt (2026-09-02, its P1 contradiction) caught the pool claiming to be
-/// `the only place` while the prologue shipped the backslash through; one
-/// door ends that argument by construction.
-export fn unescape_dollar(s str) -> str =>
+/// A Nova string literal's text as C text -- the ONE door every literal takes
+/// into C. Nova's subset escape set (\" \\ \n \t \r) matches C's one for one
+/// -- check refuses everything else by name -- with two exceptions whose Nova
+/// spelling C does not share: the line continuation and `\$`. THREE readers
+/// spell literals into C: the shell's literal pool, the contract prologue's
+/// message slot and an interpolated string's pieces -- the hunt (2026-09-02,
+/// its P1 contradiction) caught the pool claiming to be `the only place`
+/// while the prologue shipped the backslash through; one door ends that
+/// argument by construction.
+export fn literal_as_c_text(s str) -> str => unescape_dollar(splice_continuations(s))
+
+/// D467 section 3: `\` right before a line break eats the break AND the
+/// leading spaces and tabs of the next line (the oracle's lexer, the same
+/// bytes). Until registry 1324 this was left to C, whose phase-2 splice
+/// joins the lines but KEEPS the next line's indentation: `"x\` + newline +
+/// `  y"` printed `x  y` where the oracle prints `xy` -- a silent wrong
+/// string, measured with the behaviour smoke on an LF and a CRLF file.
+///
+/// Written with `@replace` and no cursor, the rule of the door below, and for
+/// one more reason: this module is part of novac's own source, and a byte
+/// cursor over a slice is a form novac does not compile yet (registry 1170).
+/// A `\` before a raw line break is always a continuation in a literal the
+/// lexer accepted: an escaped `\\` followed by a raw break is a raw newline
+/// in a literal, refused before emission (D467 section 4).
+fn splice_continuations(s str) -> str {
+    if !s.contains("\\\n") && !s.contains("\\\r\n") { return s }
+    mut t = s.replace("\\\r\n", "\\\n")
+    while t.contains("\\\n ") || t.contains("\\\n\t") {
+        t = t.replace("\\\n ", "\\\n").replace("\\\n\t", "\\\n")
+    }
+    t.replace("\\\n", "")
+}
+
+/// The `\$` half of the door above. Kept apart so the continuation rule and
+/// the dollar rule each read as one sentence.
+fn unescape_dollar(s str) -> str =>
     // ONE CALL, not a cursor. The first version walked the bytes through a
     // reusable one-byte buffer, and the owner asked the obvious question
     // (2026-09-04): std already answers this. `@replace` takes every

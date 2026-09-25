@@ -271,6 +271,16 @@ fn Emitter mut @print_chain(f Fn, at BlockId, stop BlockId, head_continues bool,
                 @print_switch(f, t, printed)
                 cur = t.join
             }
+            // `break` / `continue` (274.7 wave B10): the chain ends here, as it does
+            // after a return -- what follows in the source is unreachable.
+            Break => {
+                @body.append("    break;\n")
+                return
+            }
+            Continue => {
+                @body.append("    continue;\n")
+                return
+            }
             Unreached => ice("emit: an unsealed block reached the printer")
         }
     }
@@ -350,6 +360,8 @@ fn Emitter mut @print_switch(f Fn, t SwitchTerm, mut printed []bool) -> () {
                     Goto(_) => ice("emit: a guarded arm whose block gotos instead of branching")
                     Loop(_) => ice("emit: a guarded arm whose block heads a loop instead of branching")
                     Switch(_) => ice("emit: a guarded arm whose block switches instead of branching")
+                    Break => ice("emit: a guarded arm whose block breaks instead of branching")
+                    Continue => ice("emit: a guarded arm whose block continues instead of branching")
                     Unreached => ice("emit: a guarded arm whose block was never sealed")
                 }
             }

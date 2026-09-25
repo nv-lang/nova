@@ -1,0 +1,11 @@
+module loop_ctl.neg_1
+
+// `break` with no loop around it (274.7 wave B10): a language error -- the jump
+// has no target. The spec names no code for it (plan 274.7 B10, open question);
+// the oracle passes `check` and dies in C.
+
+// NOVAC_EXPECT stand only inside the body of a `for` or `while` loop
+
+fn main() {
+    break
+}

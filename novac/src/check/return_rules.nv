@@ -23,6 +23,10 @@ import ../sem.{FnRow, raw_row, branch_children, ty_source_name, prim_row_of, Lit
 import ../sem.{Ctx, expr_leaf_name, is_value_record}
 import ../builtins.{TypeKind, RECV_BINDING}
 
+/// Whether a declared return (a callable row's `ret_id`) promises NO value: `()`,
+/// or nothing declared (the entry point). A bare `return` is legal there.
+fn Checker @returns_unit(rid TyId) -> bool => !is_ty(rid) || rid == @ctx.prims.unit_id
+
 /// THE RETURN A BODY MUST PRODUCE, or `no_ty()` when nothing is judged: no
 /// declared value (unit, or none), or a type PARAMETER -- the instance types
 /// its own body under its substitution, and the generic shape answers "I do
@@ -257,5 +261,16 @@ fn Checker mut @walk_ret_stmt(children []Node) -> () {
     for c in children {
         @walk(c, init_pos: i == children.len() - 1)
         i += 1
+    }
+}
+
+/// `break` / `continue` with no loop around them (274.7 wave B10). The spec names
+/// no code for it (the plan's open question); the language has no such jump, so it
+/// is a language error. The oracle passes `check` and dies in C on it.
+fn Checker mut @report_if_loop_ctl_outside(children []Node) -> () {
+    if @loop_depth == 0 {
+        @reject_first_leaf_of(children, LOOP_CTL_OUTSIDE_MSG)
+    } else {
+        // Inside a loop: the jump has a target, nothing to say.
     }
 }

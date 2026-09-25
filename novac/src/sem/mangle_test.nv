@@ -214,3 +214,18 @@ test "an INSTANCE is spelled the oracle's way -- interop named, measured off the
     ro of_of = ctx.tys.app(vec, []TyId.of(of_int))
     assert(c_struct(ctx, of_of) == "Nova_Vec____Nova_Vec____nova_int_p")
 }
+
+test "a literal's line continuation eats the break AND the next line's indentation (D467 section 3, registry 1324)" {
+    // The door every literal takes into C. C's own phase-2 splice would keep
+    // the indentation, and the program printed `x  y` where the oracle prints
+    // `xy` -- measured with the behaviour smoke on an LF and a CRLF file.
+    assert(literal_as_c_text("\"x\\\n  y\"") == "\"xy\"", literal_as_c_text("\"x\\\n  y\""))
+    // The CRLF spelling of the same continuation, a tab in the indentation.
+    assert(literal_as_c_text("\"x\\\r\n\t y\"") == "\"xy\"", literal_as_c_text("\"x\\\r\n\t y\""))
+    // Two continuations in a row, the middle line holding only indentation.
+    assert(literal_as_c_text("\"a\\\n   \\\nb\"") == "\"ab\"", literal_as_c_text("\"a\\\n   \\\nb\""))
+    // CONTROL: an escaped backslash followed by an ordinary escape is not a
+    // continuation, and a literal without one comes back byte for byte.
+    assert(literal_as_c_text("\"a\\\\nb\"") == "\"a\\\\nb\"", literal_as_c_text("\"a\\\\nb\""))
+    assert(literal_as_c_text("\"plain\"") == "\"plain\"", "a literal with no continuation must pass through")
+}

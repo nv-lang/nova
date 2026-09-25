@@ -1426,6 +1426,40 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1306
+max=1354
+# 2026-09-26, Carina window: row 1354 added and closed (number from integrator) --
+# module mode registered every own method twice. rows 1305->1306, max 1353->1354.
+rows=1305
+max=1353
+# 2026-09-25, Carina window: row 1353 added (number from integrator nova-73) --
+# the oracle cannot build a value sum with #impl(Equal). rows 1304->1305,
+# max 1352->1353.
+rows=1304
+max=1352
+# 2026-09-25, Carina window: row 1352 added (number from integrator nova-73) --
+# the oracle accepts `==` on a sum with no `#impl(Equal)`. rows 1303->1304,
+# max 1351->1352.
+rows=1303
+max=1351
+# 2026-09-25, Carina window: row 1351 added (number from integrator nova-73) --
+# the oracle's check judges neither `break`/`continue` position nor a `while true`
+# that a `break` leaves. rows 1302->1303, max 1350->1351.
+rows=1302
+max=1350
+# 2026-09-25, Carina window: row 1350 added -- the unit-mode 0.2 measure counted a
+# file of an untyped unit as accepted (fix 807958429). rows 1301->1302, max 1349->1350.
+rows=1301
+max=1349
+# 2026-09-25, Carina window, merge of main into p274-novac: rows 1323 and 1324
+# (f9a69c3bf, e583aba20 -- written on the branch before main's 1325-1349) join
+# main's table. rows 1299->1301, max stays 1349. The branch-side entry they
+# arrived with, kept as it was:
+# 2026-09-23, Carina window: rows 1323 and 1324 added -- 1323 (a handler
+# literal typed E[E] instead of Effect[E], f9a69c3bf) and 1324 (a string line
+# continuation kept the next line's indentation, a silent wrong string, and
+# was refused on a CRLF file, e583aba20), both closed with their fixes.
+# rows 1274->1276, max 1322->1324.
 rows=1299
 max=1349
 # 2026-09-25, integrator: rows 1348-1349 added (from nova-postgres D8b repro-local:
@@ -1739,7 +1773,7 @@ stale_gaps=0
 # nomer I v gaps=, I so strokoy schitaetsya 'protuhshey dyroy'.
 # 2026-09-21: №1209 ПРИЕХАЛ и СНЯТ из gaps=
 # (писал интегратор, как и планировалось). №1210-1211 всё ещё ждёт Карину.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1323-1324
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding

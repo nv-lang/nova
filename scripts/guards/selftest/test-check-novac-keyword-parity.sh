@@ -14,7 +14,9 @@
 #   4. вид объявления не назван — красная (иначе «KEYWORD-PARITY: loop -- потом»
 #      проходит и выглядит объявлением);
 #   5. обратная разница (слово в лексере, которого нет в списке спеки) считается
-#      тоже — иначе страж слеп к половине предмета.
+#      тоже — иначе страж слеп к половине предмета;
+#   6. объявление слова, которое разницей уже НЕ является, — красное (протухший
+#      долг: лексер выучил слово, строка «debt» осталась; 2026-09-25).
 export LC_ALL=C
 GD="$(cd "$(dirname "$0")/.." && pwd)"
 G="$GD/check-novac-keyword-parity.py"
@@ -133,8 +135,24 @@ else
         || bad "красный, но не про обратную разницу: $(cat "$T/err")"
 fi
 
+# --- 6. объявление без разницы — красный ----------------------------------
+# `if` лексер знает и спека называет: разницы нет, а объявление её утверждает.
+cat > "$T.decl" <<'DECL'
+// KEYWORD-PARITY: loop -- debt (274.7 B10)
+// KEYWORD-PARITY: true -- by design (a boolean literal)
+// KEYWORD-PARITY: extern -- spec-gap (absent from the list)
+// KEYWORD-PARITY: if -- debt (274.7 B10)
+DECL
+mkroot 0
+if run; then
+    bad "протухшее объявление 'if' прошло — долг назван долгом после закрытия"
+else
+    grep -q " if" "$T/err" && ok "объявление без разницы поймано и НАЗВАНО" \
+        || bad "красный, но слово не названо: $(cat "$T/err")"
+fi
+
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-keyword-parity: ok (5)"
+    echo "test-check-novac-keyword-parity: ok (6)"
     exit 0
 fi
 echo "test-check-novac-keyword-parity: FAIL ($fails)" >&2

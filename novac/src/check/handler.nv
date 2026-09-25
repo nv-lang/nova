@@ -118,7 +118,17 @@ fn Checker mut @type_handler_resolved(e Node, kids []Node, name str, edecl DeclI
     // own head term as the argument) -- the same term a `make() ->
     // Effect[Fs]` value carries, so every reader of the channel sees one
     // type for one concept.
-    @record(e, @ctx.tys.app(edecl, []TyId.of(@ctx.types[raw_decl(edecl)].ty_id)))
+    //
+    // THE HEAD IS THE SEED, found by the one name door a signature's
+    // `-> Effect[Fs]` resolves through (registry 1323). This line used to
+    // apply `edecl` -- the effect ITSELF -- as the head, so the literal was
+    // recorded as `Fs[Fs]`: the comment above promised the seed's row and
+    // the code interned a different term, and `ro h = effect Fs { ... }`
+    // handed on by `return` or as an argument was refused against the
+    // declared `Effect[Fs]` with that malformed name in the sentence. The
+    // with slot never noticed: its rule admits every application kind.
+    ro seed = @ctx.defs.type_decl("Effect") ?? ice("check: the Effect seed is not registered (sem/sem.nv `seed_effect_ctor`)")
+    @record(e, @ctx.tys.app(seed, []TyId.of(@ctx.types[raw_decl(edecl)].ty_id)))
 }
 
 /// Name the first undeclared type name in a handler op's `-> T`, through the door
@@ -290,7 +300,9 @@ fn Checker mut @type_handler_op(op Node, eff_name str, schema EffectDef) -> () {
     }
     ro saved_ret = same_ty(@ret_expect)
     ro saved_tail = @tail_value_body
+    ro saved_unit = @ret_unit
     @ret_expect = same_ty(sig.ret_id)
+    @ret_unit = @returns_unit(sig.ret_id)
     // THE BODY against the schema's return, through the fn body's own
     // doors: `@ret_expect` is set so `return` operands and the tail value
     // are judged by `@judge_return` (check/return_rules.nv:126) exactly as
@@ -308,6 +320,7 @@ fn Checker mut @type_handler_op(op Node, eff_name str, schema EffectDef) -> () {
         @type_block(body)
         @ret_expect = saved_ret
         @tail_value_body = saved_tail
+        @ret_unit = saved_unit
         @scope.release(pmark)
         // SILENT-OK: the block body was typed and its tail judged inside
         // `@type_block` through the very doors a fn body uses -- the
@@ -324,6 +337,7 @@ fn Checker mut @type_handler_op(op Node, eff_name str, schema EffectDef) -> () {
     }
     @ret_expect = saved_ret
     @tail_value_body = saved_tail
+    @ret_unit = saved_unit
     @scope.release(pmark)
 }
 
