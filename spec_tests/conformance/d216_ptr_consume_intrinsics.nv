@@ -18,8 +18,9 @@
 //      value's D133 obligation, the same way passing it into a
 //      consume-parameter would.
 //
-// `view`/`view_at` are deliberately NOT covered here -- not implemented
-// in this window. Both `desugar::desugar_module` and
+// `view`/`view_at` are covered by `d216_ptr_view_intrinsic.nv` (lowered
+// in codegen to `f(p.read())` / `f(p.read_at(i))`); the note below is why
+// no pre-check AST rewrite was used for them. Both `desugar::desugar_module` and
 // `callnorm::normalize_module` run AFTER `check_module`/`check_consume`
 // succeed, never before (see `check_pipeline.rs`'s own doc comment on
 // why: the checker is designed to understand sugar directly instead of

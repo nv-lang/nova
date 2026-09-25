@@ -11521,6 +11521,44 @@ impl<'a> TypeCheckCtx<'a> {
                                             "read_at" | "read_consume_at" if args.len() == 1 => {
                                                 Some((**inner).clone())
                                             }
+                                            // D216 амендмент 2026-09-25 п. 3 (план 246):
+                                            // `p.view(f)` / `p.view_at(i, f)` → `R`, тип
+                                            // возврата `f fn(T) -> R`. Лямбда-литерал уже
+                                            // аннотирован `R::Func{[T], R}` (посев `T` в
+                                            // `closure_arg_param_seeds` + C6b выше, args
+                                            // обходятся ДО этого producer'а); имя функции /
+                                            // значение-функция — через `infer_expr_type`.
+                                            "view" | "view_at"
+                                                if args.len()
+                                                    == if method == "view" { 1 } else { 2 } =>
+                                            {
+                                                let f = args[args.len() - 1].expr();
+                                                let from_buf = if f.id.is_set() {
+                                                    match self.resolved_types_buf.borrow().get(&f.id) {
+                                                        Some(ResolvedType::Func { ret, .. }) => {
+                                                            Some((**ret).clone())
+                                                        }
+                                                        _ => None,
+                                                    }
+                                                } else {
+                                                    None
+                                                };
+                                                from_buf.or_else(|| {
+                                                    match self.infer_expr_type(f, scope)? {
+                                                        TypeRef::Func { return_type, span, .. } => {
+                                                            let r = return_type
+                                                                .map(|b| *b)
+                                                                .unwrap_or(TypeRef::Unit(span));
+                                                            Some(Self::mark_type_params(
+                                                                ResolvedType::from_type_ref(&r),
+                                                                gs,
+                                                            ))
+                                                        }
+                                                        _ => None,
+                                                    }
+                                                })
+                                                .filter(|r| self.rt_is_closed(r))
+                                            }
                                             "write" | "write_unaligned" | "write_volatile"
                                             | "write_consume"
                                                 if args.len() == 1 =>
@@ -26022,6 +26060,40 @@ impl<'a> TypeCheckCtx<'a> {
                 TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) => peeled = i,
                 _ => break,
             }
+        }
+        // D216 амендмент 2026-09-25 п. 3 (план 246): `p.view(f)` /
+        // `p.view_at(i, f)`, `f fn(T) -> R` — встроенные операции указателя,
+        // у них нет `Item::Fn`-объявления, поэтому подпись `fn(T)` задаётся
+        // здесь: параметр лямбды-литерала получает тип элемента `T` (pointee
+        // без модификатора `mut`/`ro`/`uninit`). Дальше — общий путь C6b:
+        // тело f1-обходится с типизированным параметром, а сам closure-arg
+        // аннотируется `R::Func{[T], R}` (канал для `view`-producer'а ниже
+        // и для emit_lambda).
+        if let TypeRef::Pointer(inner, _) = peeled {
+            let f_idx = match name.as_str() {
+                "view" if args.len() == 1 => Some(0usize),
+                "view_at" if args.len() == 2 => Some(1usize),
+                _ => None,
+            };
+            if let Some(ix) = f_idx {
+                let mut elem: &TypeRef = inner;
+                loop {
+                    match elem {
+                        TypeRef::Readonly(i, _) | TypeRef::Mut(i, _)
+                        | TypeRef::Uninit(i, _) => elem = i,
+                        _ => break,
+                    }
+                }
+                if let ExprKind::ClosureLight { params: cp, .. } = &args[ix].expr().kind {
+                    if cp.len() == 1
+                        && cp[0].name != "_"
+                        && !matches!(elem, TypeRef::Unit(_))
+                    {
+                        out.push((ix, vec![(cp[0].name.clone(), elem.clone())]));
+                    }
+                }
+            }
+            return out;
         }
         let type_name: String = match peeled {
             TypeRef::Named { path, .. } if path.len() == 1 => path[0].clone(),
@@ -55664,6 +55736,8 @@ fn is_raw_pointer_intrinsic_method(name: &str) -> bool {
             // `write_consume_at` arg-consuming special-case).
             | "read_consume" | "write_consume"
             | "read_consume_at" | "write_consume_at"
+            // D216 амендмент 2026-09-25 п. 3: просмотр без изъятия.
+            | "view" | "view_at"
             | "offset" | "dist"
             | "copy_from" | "copy_from_nonoverlapping"
             | "copy_to" | "copy_to_nonoverlapping"

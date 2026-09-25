@@ -44670,6 +44670,39 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let idx_c = self.emit_expr(args[0].expr())?;
                         return Ok(format!("(*(({}) + ({})))", obj_c, idx_c));
                     }
+                    // D216 амендмент 2026-09-25 п. 3 (план 246): `view(f)` /
+                    // `view_at(i, f)` ≡ `f(p.read())` / `f(p.read_at(i))` —
+                    // опускается в синтетический блок (`ptr_view_synth`),
+                    // инференс-близнец — `infer_call_ret_c` B11d.
+                    if method == "view" || method == "view_at" {
+                        let tag = self.fresh_tmp_named("view");
+                        if let Some(synth) = Self::ptr_view_synth(obj, method, args, &tag) {
+                            // Путь временной: сигнатура `__nova_view_f<tag>`
+                            // нужна пробе типа блока ДО emit'а его `let`
+                            // (см. `ptr_view_temp_ret_c`).
+                            let f_name = format!("__nova_view_f{}", tag);
+                            let is_temp = matches!(&synth.kind, ExprKind::Block(b)
+                                if matches!(b.stmts.first(), Some(Stmt::Let(d))
+                                    if matches!(&d.pattern, Pattern::Ident { name, .. } if *name == f_name)));
+                            let mut pre = None;
+                            if is_temp {
+                                let elem_c = obj_ty.trim_start_matches("const ")
+                                    .strip_suffix('*').unwrap_or_default().trim().to_string();
+                                let f = args[args.len() - 1].expr();
+                                if let Some(ret_c) = self.ptr_view_temp_ret_c(f, &elem_c, Some(call_id)) {
+                                    pre = Some(self.fn_param_sigs.insert(f_name.clone(), (vec![elem_c], ret_c)));
+                                }
+                            }
+                            let r = self.emit_expr(&synth);
+                            if let Some(prev) = pre {
+                                match prev {
+                                    Some(old) => { self.fn_param_sigs.insert(f_name, old); }
+                                    None => { self.fn_param_sigs.remove(&f_name); }
+                                }
+                            }
+                            return r;
+                        }
+                    }
                     if (method == "write_at" || method == "write_consume_at") && args.len() == 2 {
                         if is_const {
                             let msg = "error: [E_POINTER_RO_ASSIGN] cannot `.write_at()` \
@@ -54832,6 +54865,197 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         format!("_nv_tmp_{}", n)
     }
 
+    /// D216 амендмент 2026-09-25 п. 3 (план 246): `p.view(f)` /
+    /// `p.view_at(i, f)`, `f fn(T) -> R`, результат `R`. По смыслу
+    /// `p.view(f)` ≡ `f(p.read())`, `p.view_at(i, f)` ≡ `f(p.read_at(i))` —
+    /// ровно так операция и опускается: строится синтетическое выражение
+    /// из уже поддержанных форм, и emit / инференс типа идут по нему (одно
+    /// дерево на оба пути — рассинхрона C-типа нет). Элемент сначала
+    /// кладётся во временную `__nova_view_e<tag>` (индекс и приёмник
+    /// вычисляются ДО привязки имени параметра — `p.view_at(x, |x| …)` не
+    /// путает внешний `x` с параметром).
+    ///
+    /// Формы `f`:
+    /// - литерал с одним параметром (`|x| expr`, `|x| { … }`,
+    ///   `fn(x T) -> R => …`) без `return` в теле — подставляется на месте:
+    ///   `{ ro __e = p.read_at(i); ro x [T] = __e; тело }` (при `-> R` тело
+    ///   привязывается к `ro __r R`). Кодоген не умеет вызывать литерал
+    ///   замыкания на месте (`(|x| x+1)(v)` — E_CODEGEN_TYPE_UNKNOWN), а
+    ///   подстановка сохраняет захваты как есть (внешние имена видны в блоке);
+    /// - имя (функция или локал-значение-функция) — `f(__e)`;
+    /// - прочее (литерал с `return` в теле — подстановка изменила бы его
+    ///   смысл; вызов, вернувший функцию; поле) — `f` вычисляется ОДИН раз
+    ///   во временную `__nova_view_f<tag>`, затем `__nova_view_f<tag>(__e)`.
+    ///
+    /// Элемент не изымается и ничем не помечается: оракул только принимает
+    /// форму (решение владельца, план 246); линейность проверяет Карина.
+    fn ptr_view_synth(obj: &Expr, method: &str, args: &[CallArg], tag: &str) -> Option<Expr> {
+        let (idx, f) = match (method, args) {
+            ("view", [f]) => (None, f.expr()),
+            ("view_at", [i, f]) => (Some(i.expr()), f.expr()),
+            _ => return None,
+        };
+        let sp = obj.span;
+        let let_ro = |name: &str, value: Expr| Stmt::Let(LetDecl {
+            mutable: false,
+            pattern: Pattern::Ident { name: name.to_string(), span: sp, is_mut: false, is_consume: false },
+            ty: None,
+            value,
+            span: sp,
+            is_ghost: false,
+            consume: false,
+        });
+        let read_name = if idx.is_some() { "read_at" } else { "read" };
+        let elem = Expr::new(
+            ExprKind::Call {
+                func: Box::new(Expr::new(
+                    ExprKind::Member { obj: Box::new(obj.clone()), name: read_name.to_string() },
+                    sp,
+                )),
+                args: idx.map(|i| vec![CallArg::Item(i.clone())]).unwrap_or_default(),
+                trailing: None,
+            },
+            sp,
+        );
+        let e_name = format!("__nova_view_e{}", tag);
+        let e_ident = Expr::new(ExprKind::Ident(e_name.clone()), sp);
+        let mut stmts = vec![let_ro(&e_name, elem)];
+        // Литерал с одним параметром: (имя, аннотация параметра, тело,
+        // аннотация результата). Тело-блок заворачивается в `Expr::Block`.
+        let literal: Option<(&str, Option<TypeRef>, Expr, Option<TypeRef>)> = match &f.kind {
+            ExprKind::ClosureLight { params, body } if params.len() == 1 => Some((
+                params[0].name.as_str(),
+                None,
+                match body {
+                    ClosureBody::Expr(be) => (**be).clone(),
+                    ClosureBody::Block(b) => Expr::new(ExprKind::Block(b.clone()), b.span),
+                },
+                None,
+            )),
+            ExprKind::Lambda { params, body, return_type, .. } if params.len() == 1 => Some((
+                params[0].name.as_str(),
+                params[0].ty.clone(),
+                (**body).clone(),
+                return_type.clone(),
+            )),
+            ExprKind::ClosureFull(sb) if sb.params.len() == 1 => match &sb.body {
+                FnBody::Expr(be) => Some((
+                    sb.params[0].name.as_str(),
+                    Some(sb.params[0].ty.clone()),
+                    be.clone(),
+                    sb.return_type.clone(),
+                )),
+                FnBody::Block(b) => Some((
+                    sb.params[0].name.as_str(),
+                    Some(sb.params[0].ty.clone()),
+                    Expr::new(ExprKind::Block(b.clone()), b.span),
+                    sb.return_type.clone(),
+                )),
+                FnBody::External => None,
+            },
+            _ => None,
+        };
+        // `return` в теле литерала выходит из ЗАМЫКАНИЯ; после подстановки он
+        // вышел бы из объемлющей функции — такой литерал идёт путём
+        // временной. Поиск по Debug-печати консервативен: ложное совпадение
+        // (строка-литерал с тем же текстом) лишь уводит на путь временной.
+        let literal = literal.filter(|(_, _, body, _)| !format!("{:?}", body).contains("Return {"));
+        let trailing = match literal {
+            Some((pname, pty, body, ret_ty)) => {
+                if pname != "_" {
+                    let mut d = let_ro(pname, e_ident);
+                    if let Stmt::Let(ld) = &mut d { ld.ty = pty; }
+                    stmts.push(d);
+                }
+                match ret_ty {
+                    // `-> R` литерала — результат приводится к `R`, как
+                    // приводился бы `return` замыкания.
+                    Some(rt) => {
+                        let r_name = format!("__nova_view_r{}", tag);
+                        let mut d = let_ro(&r_name, body);
+                        if let Stmt::Let(ld) = &mut d { ld.ty = Some(rt); }
+                        stmts.push(d);
+                        Expr::new(ExprKind::Ident(r_name), sp)
+                    }
+                    None => body,
+                }
+            }
+            None if matches!(&f.kind, ExprKind::Ident(_) | ExprKind::Path(_)) => Expr::new(
+                ExprKind::Call {
+                    func: Box::new(f.clone()),
+                    args: vec![CallArg::Item(e_ident)],
+                    trailing: None,
+                },
+                sp,
+            ),
+            _ => {
+                let f_name = format!("__nova_view_f{}", tag);
+                // `f` вычисляется ДО элемента — порядок `f(p.read_at(i))`.
+                stmts.insert(0, let_ro(&f_name, f.clone()));
+                Expr::new(
+                    ExprKind::Call {
+                        func: Box::new(Expr::new(ExprKind::Ident(f_name), sp)),
+                        args: vec![CallArg::Item(e_ident)],
+                        trailing: None,
+                    },
+                    sp,
+                )
+            }
+        };
+        Some(Expr::new(
+            ExprKind::Block(Block { stmts, trailing: Some(Box::new(trailing)), span: sp, is_unsafe: false }),
+            sp,
+        ))
+    }
+
+    /// Путь временной `ptr_view_synth` (`f` — не подставляемый литерал и не
+    /// имя): C-тип результата `R` для вызова `__nova_view_f<tag>(__e)`.
+    /// Проба типа блока (`emit_block_expr` / `infer_expr_c_type`) идёт ДО
+    /// того, как `let __nova_view_f = f` зарегистрирует сигнатуру в
+    /// `fn_param_sigs`, и без этого ответа даёт пустой тип. Порядок: канал
+    /// чекера на самом вызове → канал замыкания (`R::Func` на `f`) →
+    /// аннотация `-> R` литерала → тело литерала при параметре типа элемента
+    /// (тот же приём, что B10c в `infer_call_ret_c`).
+    fn ptr_view_temp_ret_c(&self, f: &Expr, elem_c: &str, call_id: Option<ExprId>) -> Option<String> {
+        let ok = |s: String| if s.is_empty() || s == "void*" { None } else { Some(s) };
+        if let Some(id) = call_id.filter(|i| i.is_set()) {
+            if let Some(rt) = self.resolved_types.get(&id) {
+                if let Some(c) = self.resolved_type_to_c(rt).ok().and_then(ok) {
+                    return Some(c);
+                }
+            }
+        }
+        if let Some(c) = self.closure_channel_ret_c(f.id).and_then(ok) {
+            return Some(c);
+        }
+        let (pname, body): (&str, Expr) = match &f.kind {
+            ExprKind::ClosureFull(sb) => {
+                return match &sb.return_type {
+                    Some(t) => self.type_ref_to_c(t).ok().and_then(ok),
+                    None => Some("nova_unit".into()),
+                };
+            }
+            ExprKind::Lambda { return_type: Some(t), .. } => {
+                return self.type_ref_to_c(t).ok().and_then(ok);
+            }
+            ExprKind::Lambda { params, body, .. } if params.len() == 1 => {
+                (params[0].name.as_str(), (**body).clone())
+            }
+            ExprKind::ClosureLight { params, body } if params.len() == 1 => (
+                params[0].name.as_str(),
+                match body {
+                    ClosureBody::Expr(be) => (**be).clone(),
+                    ClosureBody::Block(b) => Expr::new(ExprKind::Block(b.clone()), b.span),
+                },
+            ),
+            _ => return None,
+        };
+        self.closure_param_type_overrides.borrow_mut().insert(pname.to_string(), elem_c.to_string());
+        let r = self.infer_expr_c_type(&body);
+        self.closure_param_type_overrides.borrow_mut().remove(pname);
+        ok(r)
+    }
+
     /// Clear the heap-promoted var_boxed registry at function exit.
     /// No #undef needed — var_boxed uses ExprKind::Ident rewriting, not macros.
     fn flush_boxed_vars(&mut self) {
@@ -62160,6 +62384,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                             if (method == "write_at" || method == "write_consume_at") && args.len() == 2 {
                                 return "nova_unit".into();
+                            }
+                            // D216 амендмент 2026-09-25 п. 3: `view(f)` /
+                            // `view_at(i, f)` → C-тип `R` — инференс ТОГО ЖЕ
+                            // синтетического блока, что эмитит emit_call
+                            // (`ptr_view_synth`; имя временной на тип не влияет).
+                            if method == "view" || method == "view_at" {
+                                if let Some(synth) = Self::ptr_view_synth(obj, method, args, "") {
+                                    let t = self.infer_expr_c_type(&synth);
+                                    if !t.is_empty() {
+                                        return t;
+                                    }
+                                    // Путь временной: сигнатура `f` ещё не
+                                    // зарегистрирована — см. `ptr_view_temp_ret_c`.
+                                    let elem_c = obj_ty.trim_start_matches("const ")
+                                        .strip_suffix('*').unwrap_or_default().trim().to_string();
+                                    if let Some(r) = self.ptr_view_temp_ret_c(
+                                        args[args.len() - 1].expr(), &elem_c, Some(expr.id))
+                                    {
+                                        return r;
+                                    }
+                                    return t;
+                                }
                             }
                             // Model A (sign-off 2026-06-22): `.offset(n)` does
                             // NOT degrade the receiver type (`*T`→`*T`,
