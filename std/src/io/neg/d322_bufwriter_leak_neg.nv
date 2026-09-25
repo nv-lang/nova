@@ -1,29 +1,31 @@
-// EXPECT_COMPILE_ERROR D133
-// Updated 2026-08-04 (№315 fix): D432 §1 amendment made `BufWriter[W]`
-// auto-`@cleanup`-eligible in general (std/src/io/buffered.nv's type doc) —
-// a leftover `BufWriter` is normally NOT a compile error anymore, it
-// auto-closes, and the flush error becomes a DIRECT `Fail[IoError]` effect
-// the triggering function must declare (same mechanism/regression-guard as
-// File: spec_tests/conformance/d315_fallible_cleanup_effects.nv). This
-// SPECIFIC file still fails as `D133-not-consumed` (unchanged) because its
-// `consume bw = BufWriter[BytesWriter].new(sink)` init shape (explicit
-// turbofish generic constructor) hits a PRE-EXISTING, orthogonal gap: the
-// checker's leftover-binding type inference records an EMPTY type name for
-// this exact shape, so the new eligibility lookup (keyed by type name)
-// silently misses it and the old strict-linear path fires instead — a
-// fail-safe (stricter than necessary), not a soundness bug, but NOT the
-// same code path spec_tests/conformance's regression guard exercises.
-// Found and left as-is (out of №315's scope) while rolling out the D432
-// amendment for File/BufWriter — flagged for a future window.
+// EXPECT_COMPILE_ERROR E_D432_CLEANUP_EFFECT_NOT_DECLARED
+// D432 §1 amendment (2026-08-04, №315): `BufWriter[W]` is auto-`@cleanup`
+// eligible -- a leftover one auto-closes at scope exit, and its cleanup's
+// flush error becomes a DIRECT `Fail[IoError]` effect of the function that
+// leaves it (std/src/io/buffered.nv:104). So the negative case is a function
+// that leaves a `BufWriter` WITHOUT declaring `Fail[IoError]`.
+//
+// History (registry 221.1 #1345, 2026-09-25): until then this file expected
+// `D133-not-consumed` inside a `test` block. That verdict was a gap, and this
+// file's own comment named it: the consume pass recorded an EMPTY type for the
+// `BufWriter[BytesWriter].new(sink)` init shape, so the D432 eligibility lookup
+// missed it and the strict-linear path fired. #1345 gave the pass the binding's
+// full type; the `test` block (which handles `Fail` itself) now correctly
+// accepts the leftover writer, and the real D432 rule is pinned here instead.
 
 module neg.d322_bufwriter_leak_neg
 
 import std.io.{BytesWriter, BufWriter}
 
-test "BufWriter never closed -> D133-not-consumed" {
+// nova:expect E_D432_CLEANUP_EFFECT_NOT_DECLARED -- the leftover BufWriter's cleanup can fail with IoError, which this fn does not declare
+fn leak() -> () {
     mut sink = BytesWriter.new()
     consume bw = BufWriter[BytesWriter].new(sink)
-    mut d []u8 = []u8.new(); d.push(0x41 as u8)
+    mut d []u8 = []u8.new()
+    d.push(0x41 as u8)
     ro _ = bw.write(d)
-    // bw never closed
+}
+
+fn main() Io -> () {
+    leak()
 }
