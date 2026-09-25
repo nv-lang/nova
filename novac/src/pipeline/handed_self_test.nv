@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Role: the compiled file's OWN declarations arriving a second time as handed
+//   ones -- the self-build hands the whole source through NOVAC_SELF_PATH, the
+//   compiled unit among it (registry TBD, 2026-09-26).
+// Used by: nova test novac/src/pipeline (the module-test batch of the gate).
+// Guarded by: check-novac-module-tests, check-novac-file-size.py.
+//
+// Why a file of its own: the rule is a pair -- D125 for free functions had been
+// written, its method twin had not -- and each half needs a handed text that
+// repeats the compiled file.
+
+module novac.pipeline
+
+/// The compiled text handed back as a declaration of the same module, the shape
+/// `NOVAC_SELF_PATH` produces for every unit of the self-build.
+fn self_decls(src str) -> []str {
+    mut decls = std_decls()
+    decls.push(src)
+    decls
+}
+
+test "a method of the file handed back to it is ONE method, not a tie (D125's method twin)" {
+    // Until 2026-09-26 the handed copy added a second identical row, and every
+    // call of the file's own methods was "fits more than one method" -- 237
+    // times over novac's own source in module mode.
+    ro src = "module u\ntype Box { v int }\nfn Box @get() -> int => @v\nfn apply(b Box) -> int => b.get()\nfn main() {\n println(1)\n}"
+    ro ds = compile_with(src, parse_decls(self_decls(src)), interop_surface())
+    assert(ds.len() == 0, messages(ds))
+    // The free-function half, D125 as it stood: kept green beside its twin.
+    ro fsrc = "module u\nfn twice(n int) -> int => n * 2\nfn apply(n int) -> int => twice(n)\nfn main() {\n println(1)\n}"
+    ro fs = compile_with(fsrc, parse_decls(self_decls(fsrc)), interop_surface())
+    assert(fs.len() == 0, messages(fs))
+}
+
+test "a REAL overload stays a tie: a handed method with other parameters is not the file's" {
+    // CONTROL: the rule compares receiver, name and every parameter's type and
+    // mode. A handed `@get(n int)` beside the file's `@get()` is a different
+    // method, and it does not vanish: `b.get(3)` resolves to it. What stops the
+    // call is its BODY (novac compiles no handed body, E2-b2) -- the refusal
+    // names the method it FOUND, which is neither a tie nor "no such method".
+    ro src = "module u\ntype Box { v int }\nfn Box @get() -> int => @v\nfn apply(b Box) -> int => b.get(3)\nfn main() {\n println(1)\n}"
+    mut decls = std_decls()
+    decls.push("module u\ntype Box { v int }\nfn Box @get() -> int => @v\nfn Box @get(n int) -> int => n\n")
+    ro ds = compile_with(src, parse_decls(decls), interop_surface())
+    assert(ds.len() == 1, messages(ds))
+    assert(ds[0].message.contains("carries no `get` for Box"), messages(ds))
+}

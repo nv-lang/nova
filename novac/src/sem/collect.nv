@@ -672,7 +672,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // whatever `harvest_methods` adds next is a signature, not a body of ours.
     // Setting it anywhere else would make the invariant depend on call order.
     mut own = fns
-    own.own_cnt = own.rows.len()
+    own.seal_own()
     Ctx { types, foreign_types_cnt, tys, prims, defs, fields, variant_rows, variant_names, payload_types, gates,
           fn_decl_rows, fns: own,
           module_c: module_path_c(file), builtin_names, coerces, protos, effects: fx, consts,

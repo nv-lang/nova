@@ -316,12 +316,15 @@ export type FnTable {
     rows []FnDef /// every callable, in registration order; a row index is what `DefTarget.DefFn` carries
     params []ParamDef /// parameters of every callable -- type AND mode in one row, addressed by FnDef.param_off/param_cnt
     own_cnt int /// how many LEADING rows this file declared; the rest are signatures read from declarations
+    own_methods NameTable /// method name -> the first of this file's own rows declaring a method of that name (sealed with own_cnt)
+    own_next []int /// per own row: the next own method row of the same name, -1 at the end of the chain
 }
 
 /// An empty callable registry.
 export fn FnTable.new() -> FnTable =>
     { rows: []FnDef.new(), params: []ParamDef.new(),
-      tparams: []str.new(), tbounds: []str.new(), own_cnt: 0 }
+      tparams: []str.new(), tbounds: []str.new(), own_cnt: 0,
+      own_methods: NameTable.new(NamespaceId.NsDefs), own_next: []int.new() }
 
 /// Does novac compile this callable's BODY?
 ///
@@ -340,6 +343,56 @@ export fn FnTable.new() -> FnTable =>
 /// so the subset declines it by name instead of emitting C that cannot link.
 #realtime nogc
 export fn FnTable @compiles_body(row FnRow) -> bool => raw_row(row) < @own_cnt
+
+/// Does THIS FILE already declare a method of this name with exactly these
+/// parameters -- receiver first, type AND mode? A handed copy of the file's own
+/// module then adds nothing: `NOVAC_SELF_PATH` hands the whole source, the
+/// compiled unit among it, and two identical rows are a tie the lookup refuses
+/// (D84) about a call the author wrote once. The method twin of D125's rule for
+/// free functions in `harvest_fn`. Asked of the file's rows only (`own_cnt` is
+/// fixed before any harvest), so a real overload handed from elsewhere stays.
+#realtime nogc
+export fn FnTable @file_declares_method(name str, params []ParamDef) -> bool {
+    // ONE name lookup, then the same-name chain BY ROW (the variant table's
+    // shape): no name is compared twice.
+    mut r = @own_methods.find(name)
+    while r >= 0 {
+        ro d = @rows[r]
+        if d.param_cnt == params.len() && @same_params(d.param_off, params) { return true }
+        r = @own_next[r]
+    }
+    false
+}
+
+/// Seal the file's own rows: fix `own_cnt` and chain its METHOD rows by name for
+/// `file_declares_method`. Called once, where the collector fixes the boundary.
+export fn FnTable mut @seal_own() -> () {
+    @own_cnt = @rows.len()
+    for _ in 0..@own_cnt {
+        @own_next.push(-1)
+    }
+    // Walked from the END so each name's chain starts at its FIRST row.
+    mut r = @own_cnt - 1
+    while r >= 0 {
+        if @rows[r].has_recv {
+            @own_next[r] = @own_methods.find(@rows[r].name)
+            @own_methods.put(@rows[r].name, r)
+        } else {
+            // A free function: D125 answers for it through `defs`.
+        }
+        r -= 1
+    }
+}
+
+/// Whether the parameters stored from `off` equal `params`, type and mode each.
+#realtime nogc
+fn FnTable @same_params(off int, params []ParamDef) -> bool {
+    for i in 0..params.len() {
+        ro p = @params[off + i]
+        if p.type_id != params[i].type_id || p.mode != params[i].mode { return false }
+    }
+    true
+}
 
 // `FnTable.tparam_index` lived here until 2026-08-22 and is gone for the reason
 // that removed `candidates_from` and `same_vrow` before it: EXPORTED, and called

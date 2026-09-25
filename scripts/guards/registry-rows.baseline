@@ -1426,6 +1426,10 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1306
+max=1354
+# 2026-09-26, Carina window: row 1354 added and closed (number from integrator) --
+# module mode registered every own method twice. rows 1305->1306, max 1353->1354.
 rows=1305
 max=1353
 # 2026-09-25, Carina window: row 1353 added (number from integrator nova-73) --
