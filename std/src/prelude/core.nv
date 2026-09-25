@@ -29,12 +29,12 @@ module prelude.core
 /// Optional value — `Some(v)` or `None`. Idiomatic way for
 /// fallible operations without exceptions / null.
 #stable(since = "0.1")
-export type Option[T] enum Some(T) | None
+export type Option[T consume] enum Some(T) | None
 
 /// Result of fallible computation. `Ok(v)` — success, `Err(e)` —
 /// failure with typed error payload `e: E`.
 #stable(since = "0.1")
-export type Result[T, E] enum Ok(T) | Err(E)
+export type Result[T consume, E consume] enum Ok(T) | Err(E)
 
 /// A call site: which file and line a call was made from (D468).
 /// Produced by the built-in `caller_loc()` and passed around as an
@@ -130,7 +130,7 @@ type str value priv(type) {
 
 /// True if the Option contains a value.
 #stable(since = "0.1")
-fn Option[T] @is_some() -> bool => match @ { Some(_) => true, None => false }
+fn Option[T consume] @is_some() -> bool => match @ { Some(_) => true, None => false }
 
 // Option[T].new() declined — codegen не поддерживает generic static
 // методы на builtin sum-types (Option/Result). Workaround: use `None`
@@ -138,7 +138,7 @@ fn Option[T] @is_some() -> bool => match @ { Some(_) => true, None => false }
 
 /// True if the Option is empty (None).
 #stable(since = "0.1")
-fn Option[T] @is_none() -> bool => match @ { Some(_) => false, None => true }
+fn Option[T consume] @is_none() -> bool => match @ { Some(_) => false, None => true }
 
 // [M-unwrap-twins-retraction] (2026-07-07): `@unwrap()` /
 // `@unwrap_or(default)` / `@unwrap_or_else(f)` ретрактированы — дублировали
@@ -192,11 +192,11 @@ fn Option[T] @filter(pred fn(T) -> bool) -> Option[T]
 
 /// True if the Result is the Ok variant.
 #stable(since = "0.1")
-fn Result[T, E] @is_ok() -> bool => match @ { Ok(_) => true, Err(_) => false }
+fn Result[T consume, E consume] @is_ok() -> bool => match @ { Ok(_) => true, Err(_) => false }
 
 /// True if the Result is the Err variant.
 #stable(since = "0.1")
-fn Result[T, E] @is_err() -> bool => match @ { Ok(_) => false, Err(_) => true }
+fn Result[T consume, E consume] @is_err() -> bool => match @ { Ok(_) => false, Err(_) => true }
 
 // [M-unwrap-twins-retraction] (2026-07-07): `@unwrap()` /
 // `@unwrap_or(default)` / `@unwrap_or_else(f)` ретрактированы —

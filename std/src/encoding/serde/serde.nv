@@ -282,7 +282,7 @@ fn f32.deserialize[D Deserializer](mut d D) -> Result[f32, DeError] {
 
 /// Option[T]: Some(v) -> v; None -> serialize_none (JSON null). Deser: null -> None.
 #unstable
-fn Option[T Serialize] @serialize[S Serializer](mut s S) -> Result[(), SerError] {
+fn Option[T consume Serialize] @serialize[S Serializer](mut s S) -> Result[(), SerError] {
     match @ {
         None    => s.serialize_none()
         Some(v) => v.serialize(s)
@@ -290,7 +290,7 @@ fn Option[T Serialize] @serialize[S Serializer](mut s S) -> Result[(), SerError]
 }
 
 #unstable
-fn Option[T Deserialize].deserialize[D Deserializer](mut d D) -> Result[Option[T], DeError] {
+fn Option[T consume Deserialize].deserialize[D Deserializer](mut d D) -> Result[Option[T], DeError] {
     if d.is_null()? {
         Ok(None)
     } else {

@@ -13,15 +13,21 @@ module collections.vec
 
 // Internal driver: bottom-up STABLE merge sort by `cmp`. Not exported.
 // Equal elements keep input order (`cmp(a, b) <= 0` takes the left run first).
-fn Vec[T] mut @msort(cmp fn(T, T) -> int) -> @ {
+fn Vec[T consume] mut @msort(cmp fn(T, T) -> int) -> @ {
     ro n = @len
     if n < 2 {
         return
     }
-    mut buf = Vec[T].new(cap: n)
+    // Elements are MOVED through the scratch buffer -- `read_consume_at` out of
+    // one buffer, `write_consume_at` into the other -- and comparisons LEND both
+    // elements (D216 amendment 2026-09-25), so a must-consume element is never
+    // duplicated. `buf.len` stays 0: its slots are raw storage for the pass.
+    consume buf = Vec[T].new(cap: n)
+    ro src = @data
+    ro tmp = buf.data
     mut width = 1
     while width < n {
-        buf.clear()
+        mut k = 0
         mut i = 0
         while i < n {
             ro mid = (i + width).min(n)
@@ -29,54 +35,52 @@ fn Vec[T] mut @msort(cmp fn(T, T) -> int) -> @ {
             mut a = i
             mut b = mid
             while a < mid && b < hi {
-                ro ea = unsafe { @data.read_at(a) }
-                ro eb = unsafe { @data.read_at(b) }
-                if cmp(ea, eb) <= 0 {
-                    buf.push(ea)
+                ro c = unsafe { src.view_at(a, |ea| src.view_at(b, |eb| cmp(ea, eb))) }
+                if c <= 0 {
+                    unsafe { tmp.write_consume_at(k, src.read_consume_at(a)) }
                     a += 1
                 } else {
-                    buf.push(eb)
+                    unsafe { tmp.write_consume_at(k, src.read_consume_at(b)) }
                     b += 1
                 }
+                k += 1
             }
             while a < mid {
-                ro ea = unsafe { @data.read_at(a) }
-                buf.push(ea)
+                unsafe { tmp.write_consume_at(k, src.read_consume_at(a)) }
                 a += 1
+                k += 1
             }
             while b < hi {
-                ro eb = unsafe { @data.read_at(b) }
-                buf.push(eb)
+                unsafe { tmp.write_consume_at(k, src.read_consume_at(b)) }
                 b += 1
+                k += 1
             }
             i = i + width + width
         }
         for j in 0..n {
-            ro bj = unsafe { buf.data.read_at(j) }
-            unsafe { @data.write_at(j, bj) }
+            unsafe { src.write_consume_at(j, tmp.read_consume_at(j)) }
         }
         width += width
     }
+    buf.destroy_empty()
 }
 
 // Internal: sift element at `root` down a max-heap over [0, end). Iterative.
 // Max-heap by `cmp` (`cmp(a,b) < 0` ⇒ a precedes b ⇒ a is "smaller"), so the
 // largest element bubbles to index 0.
-fn Vec[T] mut @sift_down(root_in int, end int, cmp fn(T, T) -> int) -> @ {
+fn Vec[T consume] mut @sift_down(root_in int, end int, cmp fn(T, T) -> int) -> @ {
+    // Comparisons LEND both elements; the move is `@swap` (D216 amendment 2026-09-25).
+    ro data = @data
     mut root = root_in
     mut child = root + root + 1
     while child < end {
         mut sel = child
         if child + 1 < end {
-            ro lc = unsafe { @data.read_at(child) }
-            ro rc = unsafe { @data.read_at(child + 1) }
-            if cmp(lc, rc) < 0 {
+            if unsafe { data.view_at(child, |lc| data.view_at(child + 1, |rc| cmp(lc, rc))) } < 0 {
                 sel = child + 1
             }
         }
-        ro rootv = unsafe { @data.read_at(root) }
-        ro selv = unsafe { @data.read_at(sel) }
-        if cmp(rootv, selv) >= 0 {
+        if unsafe { data.view_at(root, |rootv| data.view_at(sel, |selv| cmp(rootv, selv))) } >= 0 {
             return
         }
         @swap(root, sel)
@@ -87,7 +91,7 @@ fn Vec[T] mut @sift_down(root_in int, end int, cmp fn(T, T) -> int) -> @ {
 
 // Internal: in-place UNSTABLE heapsort by `cmp` (ascending). Build a max-heap,
 // then pop the max to the shrinking tail. O(n log n) worst, O(1) extra space.
-fn Vec[T] mut @heapsort(cmp fn(T, T) -> int) -> @ {
+fn Vec[T consume] mut @heapsort(cmp fn(T, T) -> int) -> @ {
     ro n = @len
     if n < 2 {
         return
@@ -106,17 +110,19 @@ fn Vec[T] mut @heapsort(cmp fn(T, T) -> int) -> @ {
 }
 
 // Internal: insertion sort for small slices [lo, hi).
-fn Vec[T] mut @ins_sort_range(lo int, hi int, cmp fn(T, T) -> int) -> @ {
+fn Vec[T consume] mut @ins_sort_range(lo int, hi int, cmp fn(T, T) -> int) -> @ {
+    // `key` is MOVED out of slot `i`, the run shifts right by moves, and `key`
+    // is moved back into the hole; comparisons lend (D216 amendment 2026-09-25).
+    ro data = @data
     for i in lo + 1..hi {
-        ro key = unsafe { @data.read_at(i) }
+        consume key = unsafe { data.read_consume_at(i) }
         mut j = i - 1
         while j >= lo {
-            ro ej = unsafe { @data.read_at(j) }
-            if cmp(ej, key) <= 0 { break }
-            unsafe { @data.write_at(j + 1, ej) }
+            if unsafe { data.view_at(j, |ej| cmp(ej, key)) } <= 0 { break }
+            unsafe { data.write_consume_at(j + 1, data.read_consume_at(j)) }
             j -= 1
         }
-        unsafe { @data.write_at(j + 1, key) }
+        unsafe { data.write_consume_at(j + 1, key) }
     }
 }
 
@@ -134,7 +140,7 @@ fn pdq_ilog2(n int) -> int {
 // Internal: iterative pdqsort over the full Vec by `cmp`.
 // Uses an explicit work-stack (Vec of int pairs lo/hi) to avoid recursion.
 // Threshold PDQ_SMALL=16 for insertion sort; depth_limit=2*ilog2(n) for heapsort fallback.
-fn Vec[T] mut @pdqsort(cmp fn(T, T) -> int) -> @ {
+fn Vec[T consume] mut @pdqsort(cmp fn(T, T) -> int) -> @ {
     ro n = @len
     if n < 2 {
         return
@@ -158,31 +164,29 @@ fn Vec[T] mut @pdqsort(cmp fn(T, T) -> int) -> @ {
                         } else if size <= 16 {
                             @ins_sort_range(lo, hi, cmp)
                         } else if stack.len >= depth_limit {
-                            // depth guard: heapsort this range via temp Vec
-                            mut tmp = Vec[T].new(cap: size)
+                            // depth guard: heapsort this range via a temp Vec; the
+                            // range is MOVED in and back (D216 amendment 2026-09-25)
+                            consume tmp = Vec[T].new(cap: size)
                             for ci in lo..hi {
-                                tmp.push(unsafe { @data.read_at(ci) })
+                                tmp.push(unsafe { @data.read_consume_at(ci) })
                             }
                             tmp.heapsort(cmp)
                             mut wi = lo
-                            mut ti = 0
-                            while wi < hi {
-                                ro tv = unsafe { tmp.data.read_at(ti) }
-                                unsafe { @data.write_at(wi, tv) }
+                            for consume x in tmp {
+                                unsafe { @data.write_consume_at(wi, x) }
                                 wi += 1
-                                ti += 1
                             }
                         } else {
                             // median-of-3 pivot to position hi-1
                             ro mid = lo + size / 2
                             @median3_to_end(lo, mid, hi - 1, cmp)
-                            ro pivot = unsafe { @data.read_at(hi - 1) }
-                            // Lomuto partition [lo, hi-1) around pivot
+                            // Lomuto partition [lo, hi-1) around the pivot at hi-1;
+                            // both elements are LENT for the comparison
+                            ro data = @data
                             mut i = lo
                             mut j = lo
                             while j < hi - 1 {
-                                ro ej = unsafe { @data.read_at(j) }
-                                if cmp(ej, pivot) < 0 {
+                                if unsafe { data.view_at(j, |ej| data.view_at(hi - 1, |pv| cmp(ej, pv))) } < 0 {
                                     if i != j {
                                         @swap(i, j)
                                     }
@@ -223,23 +227,23 @@ fn Vec[T] mut @pdqsort(cmp fn(T, T) -> int) -> @ {
 }
 
 /// Sort in place ascending by the element's own `Compare` (stable). O(n log n).
-export fn Vec[T Compare] mut @sort() -> @ => @msort(|a, b| a.compare(b))
+export fn Vec[T consume Compare] mut @sort() -> @ => @msort(|a, b| a.compare(b))
 
 /// Sort in place by a custom comparator `cmp(a, b)` (`<0`/`0`/`>0`), stable.
-export fn Vec[T] mut @sort_by(cmp fn(T, T) -> int) -> @ => @msort(cmp)
+export fn Vec[T consume] mut @sort_by(cmp fn(T, T) -> int) -> @ => @msort(cmp)
 
 /// Sort in place by a projected key, ordered by the key type's `Compare`, stable.
-export fn Vec[T] mut @sort_by_key[K Compare](key fn(T) -> K) -> @ => @msort(|a, b| key(a).compare(key(b)))
+export fn Vec[T consume] mut @sort_by_key[K Compare](key fn(T) -> K) -> @ => @msort(|a, b| key(a).compare(key(b)))
 
 /// Unstable in-place sort by the element's own `Compare` — pdqsort, O(n log n),
 /// O(log n) stack (no scratch buffer, unlike `@sort`). No equal-order guarantee.
-export fn Vec[T Compare] mut @sort_unstable() -> @ => @pdqsort(|a, b| a.compare(b))
+export fn Vec[T consume Compare] mut @sort_unstable() -> @ => @pdqsort(|a, b| a.compare(b))
 
 /// Unstable in-place sort by comparator `cmp(a, b)` (`<0`/`0`/`>0`) — pdqsort.
-export fn Vec[T] mut @sort_unstable_by(cmp fn(T, T) -> int) -> @ => @pdqsort(cmp)
+export fn Vec[T consume] mut @sort_unstable_by(cmp fn(T, T) -> int) -> @ => @pdqsort(cmp)
 
 /// Unstable in-place sort by projected key — pdqsort.
-export fn Vec[T] mut @sort_unstable_by_key[K Compare](key fn(T) -> K) -> @ => @pdqsort(|a, b| key(a).compare(key(b)))
+export fn Vec[T consume] mut @sort_unstable_by_key[K Compare](key fn(T) -> K) -> @ => @pdqsort(|a, b| key(a).compare(key(b)))
 
 // ─── dedup + partition (Plan 153.3 reordering) ────────────────────────
 
@@ -307,11 +311,10 @@ export fn Vec[T] mut @dedup_by_key[K Equal](key fn(T) -> K) -> @ {
 /// Reorder in place so every element satisfying `pred` precedes those that do
 /// not; returns the partition point (the count of satisfying elements).
 /// UNSTABLE (swap-based; does not preserve relative order). O(n).
-export fn Vec[T] mut @partition(pred fn(T) -> bool) -> int {
+export fn Vec[T consume] mut @partition(pred fn(T) -> bool) -> int {
     mut i = 0
     for j in 0..@len {
-        ro ej = unsafe { @data.read_at(j) }
-        if pred(ej) {
+        if unsafe { @data.view_at(j, pred) } {
             if i != j {
                 @swap(i, j)
             }
@@ -325,14 +328,14 @@ export fn Vec[T] mut @partition(pred fn(T) -> bool) -> int {
 
 // Internal: move the median of @data[a]/@data[b]/@data[c] to index `c`
 // (median-of-three pivot — kills the sorted/reverse O(n²) quickselect case).
-fn Vec[T] mut @median3_to_end(a int, b int, c int, cmp fn(T, T) -> int) -> @ {
-    ro va = unsafe { @data.read_at(a) }
-    ro vb = unsafe { @data.read_at(b) }
-    ro vc = unsafe { @data.read_at(c) }
-    ro med = if cmp(va, vb) < 0 {
-        if cmp(vb, vc) < 0 { b } else { if cmp(va, vc) < 0 { c } else { a } }
+fn Vec[T consume] mut @median3_to_end(a int, b int, c int, cmp fn(T, T) -> int) -> @ {
+    // Every comparison LENDS both elements (D216 amendment 2026-09-25).
+    ro data = @data
+    ro c2 = fn(p int, q int) -> int => unsafe { data.view_at(p, |x| data.view_at(q, |y| cmp(x, y))) }
+    ro med = if c2(a, b) < 0 {
+        if c2(b, c) < 0 { b } else { if c2(a, c) < 0 { c } else { a } }
     } else {
-        if cmp(va, vc) < 0 { a } else { if cmp(vb, vc) < 0 { c } else { b } }
+        if c2(a, c) < 0 { a } else { if c2(b, c) < 0 { c } else { b } }
     }
     if med != c {
         @swap(med, c)
@@ -341,14 +344,13 @@ fn Vec[T] mut @median3_to_end(a int, b int, c int, cmp fn(T, T) -> int) -> @ {
 
 // Internal: Lomuto partition of [lo, hi) around a median-of-three pivot.
 // Returns the pivot's final index `p`; [lo, p) < pivot ≤ [p, hi).
-fn Vec[T] mut @partition_range(lo int, hi int, cmp fn(T, T) -> int) -> int {
+fn Vec[T consume] mut @partition_range(lo int, hi int, cmp fn(T, T) -> int) -> int {
     ro mid = lo + (hi - lo) / 2
     @median3_to_end(lo, mid, hi - 1, cmp)
-    ro pivot = unsafe { @data.read_at(hi - 1) }
+    ro data = @data
     mut i = lo
     for j in lo..hi - 1 {
-        ro ej = unsafe { @data.read_at(j) }
-        if cmp(ej, pivot) < 0 {
+        if unsafe { data.view_at(j, |ej| data.view_at(hi - 1, |pv| cmp(ej, pv))) } < 0 {
             if i != j {
                 @swap(i, j)
             }
@@ -362,7 +364,7 @@ fn Vec[T] mut @partition_range(lo int, hi int, cmp fn(T, T) -> int) -> int {
 // Internal: introselect over [lo, hi) for global index `k`. Quickselect with a
 // depth guard: on exhaustion fall back to the O(n log n) heapsort (after a full
 // sort the k-th order statistic sits at index k). Average O(n), worst O(n log n).
-fn Vec[T] mut @qselect(lo_in int, hi_in int, k int, depth_in int, cmp fn(T, T) -> int) -> @ {
+fn Vec[T consume] mut @qselect(lo_in int, hi_in int, k int, depth_in int, cmp fn(T, T) -> int) -> @ {
     mut lo = lo_in
     mut hi = hi_in
     mut depth = depth_in

@@ -1,0 +1,66 @@
+// EXPECT_STDOUT made=7 closed=7 order=5,4,3,2,1 exchanged=9 lent=4
+//
+// Plan 246, wave `Vec[T consume]`: a vector of must-consume elements goes
+// through every moving method, and each resource is closed exactly once.
+// Taking out: pop / remove / swap_remove / exchange / drain; reordering:
+// reverse / sort_by; looking: lend; ending: `for consume` and destroy_empty.
+module standalone.vec_linear_elements
+
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> int => @id
+
+fn close_all(consume v Vec[Res]) -> int {
+    mut n = 0
+    for consume r in v {
+        r.close()
+        n += 1
+    }
+    n
+}
+
+fn main() Io -> () {
+    mut made = 0
+    mut closed = 0
+    consume v = Vec[Res].new()
+    for i in 1..6 {
+        v.push(Res { id: i })
+        made += 1
+    }
+    v.reverse()
+    mut order = ""
+    for i in 0..v.len() {
+        ro id = v.view(i, |r| r.id)
+        order = if i == 0 { "${id}" } else { "${order},${id}" }
+    }
+    v.sort_by(|a, b| a.id - b.id)
+    ro lent = v.view(3, |r| r.id)
+    consume old = v.exchange(0, Res { id: 9 })
+    made += 1
+    old.close()
+    closed += 1
+    ro exchanged = v.view(0, |r| r.id)
+    match consume v.pop() {
+        Some(consume last) => {
+            last.close()
+            closed += 1
+        }
+        None => { }
+    }
+    consume first = v.remove(0)
+    first.close()
+    closed += 1
+    consume any = v.swap_remove(0)
+    any.close()
+    closed += 1
+    consume tail = v.drain(0..1)
+    closed += close_all(tail)
+    closed += close_all(v)
+    made += 1
+    consume extra = Vec[Res].new()
+    extra.push(Res { id: 0 })
+    closed += close_all(extra)
+    print("made=${made} closed=${closed} order=${order} exchanged=${exchanged} lent=${lent}")
+}
