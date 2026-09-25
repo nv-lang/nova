@@ -1,0 +1,18 @@
+// control: the same program with `consume o` -- correct, both compilers accept (oracle PASS 2026-09-25).
+// Carina must refuse (D180 E_CONSUME_KEYWORD_MISSING): `o` holds Option[Res], a must-consume value, bound without `consume`.
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> int => @id
+
+fn wrap[T consume](consume x T) -> Option[T] => Some(x)
+
+fn main() Io -> () {
+    consume o = wrap(Res { id: 1 })
+    ro n = match consume o {
+        Some(consume r) => r.close()
+        None => 0
+    }
+    print("${n}")
+}
