@@ -383,6 +383,7 @@ par_add "$ROOT/scripts/guards/check-novac-selftest-interpreter.py" "самоте
 par_add "$ROOT/scripts/guards/check-novac-smoke-wrapper.sh" "POSIX-обёртка перехвата clang-argv сломана — эта машина ею не ходит (274 §9.1д К3)"
 par_add "$ROOT/scripts/guards/check-novac-local-only-work.sh" "работа живёт ровно на одном диске: ветка с невлитым и без копии на origin (274 §9.1д К7)"
 par_add "$ROOT/scripts/guards/check-novac-legacy-workarounds.py" "обход бага оракула в novac без маркера/с закрытым багом (274 §1.5)"
+par_add "$ROOT/scripts/guards/check-novac-oracle-tax-link.py" "маркер [LEGACY-#N] в novac/src разошёлся со списком плана 274.10 (274.10, Порядок работы п.1)"
 par_add "$ROOT/scripts/guards/check-guard-honesty.py" "страж может соврать или промолчать вместо проверки"
 par_add "$ROOT/scripts/guards/check-diag-paths.py" "текст компилятора ссылает пользователя на несуществующий файл (№1109)"
 par_add "$ROOT/scripts/guards/check-lint-rule-covered.py" "правило линта не названо ни одной фикстурой (№1114)"
