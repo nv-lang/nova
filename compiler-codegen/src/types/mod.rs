@@ -26036,6 +26036,42 @@ impl<'a> TypeCheckCtx<'a> {
     /// (Ident/SelfAccess/literal). Returns None for non-method-call exprs, ctor forms (handled by
     /// `infer_expr_type`'s ctor arms), and anything `resolve_instance_method_return` bails on
     /// (container/unbound-carrier/multi-overload/static).
+    /// Registry 221.1 #1339: record the D84 mode-axis choice for the method
+    /// call `id` (`obj.method(args)`) if it has none yet -- for a consumer that
+    /// runs before the call's own `check_instance_overload` (the closure-param
+    /// seed, `closure_arg_param_seeds`). Same rule, same inputs, so the later
+    /// check records the same span. Only a genuine mode-axis set gets a verdict
+    /// (`mode_axis_tiebreak` requires identical parameter types), so a
+    /// type-differentiated overload set is left alone.
+    fn prime_mode_axis_choice(
+        &self,
+        recv_ty: &TypeRef,
+        method: &str,
+        obj: &Expr,
+        args: &[CallArg],
+        id: crate::ast::ExprId,
+    ) {
+        if self.resolved_callees.borrow().contains_key(&id) {
+            return;
+        }
+        let mut peeled = recv_ty;
+        while let TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) = peeled {
+            peeled = i;
+        }
+        let TypeRef::Named { path, .. } = peeled else { return };
+        if path.len() != 1 {
+            return;
+        }
+        let Some(overloads) = self.method_overloads(&path[0], method) else { return };
+        let cands: Vec<&FnDecl> = overloads.iter()
+            .filter(|f| f.params.len() == args.len())
+            .copied()
+            .collect();
+        if let ModeAxisVerdict::Winner(sp) = self.mode_axis_tiebreak(Some(obj), &cands, args) {
+            self.resolved_callees.borrow_mut().insert(id, sp);
+        }
+    }
+
     fn infer_method_call_channel_type(
         &self,
         e: &Expr,
@@ -26379,7 +26415,28 @@ impl<'a> TypeCheckCtx<'a> {
             _ => return out,
         };
         let Some(overloads) = self.method_overloads(&type_name, name) else { return out };
-        let [f] = overloads.as_slice() else { return out };
+        let f: &FnDecl = match overloads.as_slice() {
+            [f] => *f,
+            // Registry 221.1 #1339: a D84 mode pair (`fn Option[T] @map[U](f
+            // fn(T) -> U)` / `fn Option[T consume] consume @map[U consume](..)`)
+            // is two declarations, and without a seed the closure's params stay
+            // untyped, its body is not typed, and the method generic `U` gets no
+            // binding -- every `.map(|s| ..)` in a program broke in C the moment
+            // std declared the pair. The mode-axis choice (the same rule the
+            // dispatch uses, `mode_axis_tiebreak`) names the one overload; this
+            // runs before the call's own `check_instance_overload`, so make that
+            // choice now.
+            multi => {
+                if e.id.is_set() {
+                    self.prime_mode_axis_choice(&recv_ty, name, obj, args, e.id);
+                }
+                let chosen = self.resolved_callees.borrow().get(&e.id).copied();
+                match chosen.and_then(|sp| multi.iter().find(|c| c.span == sp)) {
+                    Some(f) => *f,
+                    None => return out,
+                }
+            }
+        };
         let Some(recv) = f.receiver.as_ref() else { return out };
         if !matches!(recv.kind, ReceiverKind::Instance) {
             return out;
