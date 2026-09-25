@@ -1426,6 +1426,11 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1303
+max=1351
+# 2026-09-25, Carina window: row 1351 added (number from integrator nova-73) --
+# the oracle's check judges neither `break`/`continue` position nor a `while true`
+# that a `break` leaves. rows 1302->1303, max 1350->1351.
 rows=1302
 max=1350
 # 2026-09-25, Carina window: row 1350 added -- the unit-mode 0.2 measure counted a
