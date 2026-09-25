@@ -294,11 +294,8 @@ export fn Vec[T consume] consume @destroy_empty() -> ()
 /// is cleaned first (D161) needs `Option[E]` in this body, which the oracle
 /// does not monomorphize yet (registry 1346).
 export fn Vec[T consume Cleanup[E]] consume @cleanup(outcome ScopeOutcome) Fail[E] -> () {
-    while true {
-        match @pop() {
-            Some(consume x) => x.cleanup(outcome)
-            None => break
-        }
+    while Some(consume x) = @pop() {
+        x.cleanup(outcome)
     }
     @destroy_empty()
 }
