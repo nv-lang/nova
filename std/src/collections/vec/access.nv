@@ -85,6 +85,20 @@ export fn Vec[T consume] @contains(v T) -> bool {
     false
 }
 
+/// Fast form for an ordinary `T` (D464 linearity axis, plan 246): reads each
+/// element directly; the result equals the general `[T consume]` form above.
+export fn Vec[T] @contains(v T) -> bool {
+    // Typed local so `==` dispatches on element type `T`; a method/operator kept
+    // *inside* the `unsafe` deref misresolves in codegen (same idiom as @equal).
+    for i in 0..@len {
+        ro e = unsafe { @data.read_at(i) }
+        if e == v {
+            return true
+        }
+    }
+    false
+}
+
 // ─── Search & query (read-only) ───────────────────────────────────────
 
 /// First index whose element equals `v`, or `None`. Linear O(n) `==` scan
@@ -104,10 +118,34 @@ export fn Vec[T consume] @index_of(v T) -> Option[int] {
     None
 }
 
+/// Fast form for an ordinary `T` (D464 linearity axis, plan 246): reads each
+/// element directly; the result equals the general `[T consume]` form above.
+export fn Vec[T] @index_of(v T) -> Option[int] {
+    for i in 0..@len {
+        ro e = unsafe { @data.read_at(i) }
+        if e == v {
+            return Some(i)
+        }
+    }
+    None
+}
+
 /// First index whose element satisfies `pred`, or `None`. Linear O(n).
 export fn Vec[T consume] @position(pred fn(T) -> bool) -> Option[int] {
     for i in 0..@len {
         if unsafe { @data.view_at(i, pred) } {
+            return Some(i)
+        }
+    }
+    None
+}
+
+/// Fast form for an ordinary `T` (D464 linearity axis, plan 246): reads each
+/// element directly; the result equals the general `[T consume]` form above.
+export fn Vec[T] @position(pred fn(T) -> bool) -> Option[int] {
+    for i in 0..@len {
+        ro e = unsafe { @data.read_at(i) }
+        if pred(e) {
             return Some(i)
         }
     }
@@ -121,6 +159,20 @@ export fn Vec[T consume] @rposition(pred fn(T) -> bool) -> Option[int] {
     while i > 0 {
         i -= 1
         if unsafe { @data.view_at(i, pred) } {
+            return Some(i)
+        }
+    }
+    None
+}
+
+/// Fast form for an ordinary `T` (D464 linearity axis, plan 246): reads each
+/// element directly; the result equals the general `[T consume]` form above.
+export fn Vec[T] @rposition(pred fn(T) -> bool) -> Option[int] {
+    mut i = @len
+    while i > 0 {
+        i -= 1
+        ro e = unsafe { @data.read_at(i) }
+        if pred(e) {
             return Some(i)
         }
     }
@@ -144,6 +196,22 @@ export fn Vec[T consume Compare] @is_sorted() -> bool {
     true
 }
 
+/// Fast form for an ordinary `T` (D464 linearity axis, plan 246): reads each
+/// element directly; the result equals the general `[T consume]` form above.
+export fn Vec[T Compare] @is_sorted() -> bool {
+    if @len < 2 {
+        return true
+    }
+    for i in 1..@len {
+        ro a = unsafe { @data.read_at(i - 1) }
+        ro b = unsafe { @data.read_at(i) }
+        if a.compare(b) > 0 {
+            return false
+        }
+    }
+    true
+}
+
 /// `true` if non-decreasing under `cmp` (`cmp(a, b) <= 0` for every adjacent
 /// pair). `cmp` returns `<0` / `0` / `>0` (no `Ordering` type). O(n).
 export fn Vec[T consume] @is_sorted_by(cmp fn(T, T) -> int) -> bool {
@@ -154,6 +222,22 @@ export fn Vec[T consume] @is_sorted_by(cmp fn(T, T) -> int) -> bool {
     for i in 1..@len {
         ro c = unsafe { data.view_at(i - 1, |a| data.view_at(i, |b| cmp(a, b))) }
         if c > 0 {
+            return false
+        }
+    }
+    true
+}
+
+/// Fast form for an ordinary `T` (D464 linearity axis, plan 246): reads each
+/// element directly; the result equals the general `[T consume]` form above.
+export fn Vec[T] @is_sorted_by(cmp fn(T, T) -> int) -> bool {
+    if @len < 2 {
+        return true
+    }
+    for i in 1..@len {
+        ro a = unsafe { @data.read_at(i - 1) }
+        ro b = unsafe { @data.read_at(i) }
+        if cmp(a, b) > 0 {
             return false
         }
     }
@@ -187,6 +271,27 @@ export fn Vec[T consume Compare] @binary_search(x T) -> Result[int, int] {
     Err(lo)
 }
 
+/// Fast form for an ordinary `T` (D464 linearity axis, plan 246): reads each
+/// element directly; the result equals the general `[T consume]` form above.
+export fn Vec[T Compare] @binary_search(x T) -> Result[int, int] {
+    mut lo = 0
+    mut hi = @len
+    while lo < hi {
+        ro mid = lo + (hi - lo) / 2
+        ro e = unsafe { @data.read_at(mid) }
+        ro c = e.compare(x)
+        if c == 0 {
+            return Ok(mid)
+        }
+        if c < 0 {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    Err(lo)
+}
+
 /// Binary search with a comparator: `cmp(elem)` returns the order of `elem`
 /// **relative to the target** (`<0` elem before target, `>0` after, `0` match).
 /// `Ok(i)` / `Err(insertion_point)`. O(log n).
@@ -208,6 +313,27 @@ export fn Vec[T consume] @binary_search_by(cmp fn(T) -> int) -> Result[int, int]
     Err(lo)
 }
 
+/// Fast form for an ordinary `T` (D464 linearity axis, plan 246): reads each
+/// element directly; the result equals the general `[T consume]` form above.
+export fn Vec[T] @binary_search_by(cmp fn(T) -> int) -> Result[int, int] {
+    mut lo = 0
+    mut hi = @len
+    while lo < hi {
+        ro mid = lo + (hi - lo) / 2
+        ro e = unsafe { @data.read_at(mid) }
+        ro c = cmp(e)
+        if c == 0 {
+            return Ok(mid)
+        }
+        if c < 0 {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    Err(lo)
+}
+
 /// Binary search by a projected key: compares `key(elem)` against `k` via the
 /// key type's own `Compare`. `Ok(i)` / `Err(insertion_point)`. O(log n) plus the
 /// `key` cost per probe.
@@ -217,6 +343,28 @@ export fn Vec[T consume] @binary_search_by_key[K Compare](key fn(T) -> K, k K) -
     while lo < hi {
         ro mid = lo + (hi - lo) / 2
         ro c = unsafe { @data.view_at(mid, |e| key(e).compare(k)) }
+        if c == 0 {
+            return Ok(mid)
+        }
+        if c < 0 {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    Err(lo)
+}
+
+/// Fast form for an ordinary `T` (D464 linearity axis, plan 246): reads each
+/// element directly; the result equals the general `[T consume]` form above.
+export fn Vec[T] @binary_search_by_key[K Compare](key fn(T) -> K, k K) -> Result[int, int] {
+    mut lo = 0
+    mut hi = @len
+    while lo < hi {
+        ro mid = lo + (hi - lo) / 2
+        ro e = unsafe { @data.read_at(mid) }
+        ro ek = key(e)
+        ro c = ek.compare(k)
         if c == 0 {
             return Ok(mid)
         }

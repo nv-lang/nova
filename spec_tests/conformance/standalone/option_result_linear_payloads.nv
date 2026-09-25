@@ -1,0 +1,65 @@
+// EXPECT_STDOUT linear=45 plain=2,2,3,3
+//
+// Plan 246, wave Vec[T consume]: the consuming forms of the Option / Result
+// combinators. Each is the `consume @` half of a receiver-mode pair (D84 mode
+// axis, spec/decisions/10-overloading.md, R14): a temporary or a `consume`
+// binding takes it, and for a must-consume payload it is the only applicable
+// form. Linear side: every resource made (ids 1..9) is closed exactly once --
+// the sum 45 proves no payload was skipped or closed twice. Plain side: a `ro`
+// binding of an ordinary payload takes the copying form and stays alive, so it
+// is used twice.
+
+module standalone.option_result_linear_payloads
+
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> int => @id
+
+type Fault consume {
+    code int
+}
+
+fn Fault consume @close() -> int => @code
+
+fn close_opt(consume o Option[Res]) -> int => match consume o { Some(consume r) => r.close(), None => 0 }
+
+fn close_res(consume o Result[Res, Fault]) -> int => match consume o {
+    Ok(consume r) => r.close()
+    Err(consume e) => e.close()
+}
+
+fn main() Io -> () {
+    mut sum = 0
+    consume o1 = Some(Res { id: 1 })
+    sum = sum + close_opt(o1.map(|r| Res { id: r.close() }))
+    consume o2 = Some(Res { id: 2 })
+    sum = sum + close_opt(o2.flat_map(|r| Some(r)))
+    consume o3 = Some(Res { id: 3 })
+    consume r3 = o3.ok_or(0)
+    sum = sum + match consume r3 { Ok(consume r) => r.close(), Err(_) => 0 }
+    consume a4 Result[Res, Fault] = Ok(Res { id: 4 })
+    sum = sum + close_res(a4.map(|r| r))
+    consume a5 Result[Res, Fault] = Err(Fault { code: 5 })
+    sum = sum + close_res(a5.map_err(|e| e))
+    consume a6 Result[Res, Fault] = Ok(Res { id: 6 })
+    sum = sum + close_res(a6.flat_map(|r| Ok(r)))
+    consume a7 Result[Res, Fault] = Err(Fault { code: 7 })
+    sum = sum + close_res(a7.flat_map_err(|e| Err(e)))
+    consume a8 Result[Res, int] = Ok(Res { id: 8 })
+    sum = sum + close_opt(a8.ok())
+    consume a9 Result[int, Res] = Err(Res { id: 9 })
+    sum = sum + close_opt(a9.err())
+    consume t Option[Result[Res, Fault]] = None
+    consume tt = t.transpose()
+    sum = sum + match consume tt { Ok(consume x) => close_opt(x), Err(consume e) => e.close() }
+
+    ro p = Some(1)
+    ro m1 = p.map(|x| x + 1) ?? 0
+    ro m2 = p.map(|x| x + 1) ?? 0
+    ro q Result[int, str] = Ok(2)
+    ro k1 = q.map(|x| x + 1) ?? 0
+    ro k2 = q.map(|x| x + 1) ?? 0
+    print("linear=${sum} plain=${m1},${m2},${k1},${k2}")
+}
