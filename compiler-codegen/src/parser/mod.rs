@@ -171,6 +171,13 @@ pub struct Parser {
     /// файлу. Это меняет разбор, только если в ОДНОМ файле есть и тип `X`, и
     /// значение `X`, — и тогда индексация всё равно вероятнее.
     value_names: std::collections::HashSet<String>,
+    /// Registry #1331 (D157, `spec/decisions/05-memory.md` lines 992-1016):
+    /// spans of `match consume <expr>`'s scrutinee, collected live by
+    /// `parse_match` (mirrors `parse_for`'s `iter_consume` flag one level
+    /// up, but this form needs the SPAN kept, not just a bool -- there is
+    /// more than one `match` per module). Drained into `Module`'s field of
+    /// the same name when the module is built (`parse_module`).
+    consume_match_scrutinees: std::collections::HashSet<Span>,
 }
 
 /// **Plan 138.5 / D216 V2/V3 simplification (2026-06-11):** build the
@@ -403,6 +410,7 @@ impl Parser {
             last_carrier_slot_types: Vec::new(),
             depth: 0,
             value_names: std::collections::HashSet::new(),
+            consume_match_scrutinees: std::collections::HashSet::new(),
         }
     }
 
@@ -799,6 +807,10 @@ impl Parser {
             doc: module_doc,
             rebind_shadows: std::collections::HashMap::new(),
             consume_reuse_spans: std::collections::HashSet::new(),
+            // Registry #1331 (D157): the REAL accumulator -- populated live
+            // by `parse_match`'s `KwConsume` check, drained here (the parser
+            // is done with it; `Module` owns it from this point on).
+            consume_match_scrutinees: std::mem::take(&mut self.consume_match_scrutinees),
             prelude_missing: None,
         })
     }
@@ -11049,7 +11061,21 @@ impl Parser {
 
     fn parse_match(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.expect(&TokenKind::KwMatch)?.span;
+        // Registry #1331 (D157, `spec/decisions/05-memory.md` lines
+        // 992-1016): `match consume <expr>` -- explicit-consume match.
+        // Mirrors `parse_for`'s `iter_consume` (`for consume x in iter`,
+        // D156) a few dozen lines below: eat an optional `consume` right
+        // after the introducer keyword, before the scrutinee. The AST's
+        // `ExprKind::Match` node is unchanged (158 call sites) -- the
+        // scrutinee's span goes into a side-table instead (mirrors
+        // `rebind_shadows`/`consume_reuse_spans`), read by the consume-
+        // checker (`types/mod.rs`) to tell an explicit-consume match from
+        // the default view-match (D133).
+        let is_consume_match = self.eat(&TokenKind::KwConsume).is_some();
         let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
+        if is_consume_match {
+            self.consume_match_scrutinees.insert(scrutinee.span);
+        }
         self.expect(&TokenKind::LBrace)?;
         let mut arms = Vec::new();
         self.skip_newlines();

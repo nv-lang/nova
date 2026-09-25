@@ -1,0 +1,68 @@
+// EXPECT_STDOUT closed=3
+//
+// #1331 (registry 221.1; D157, spec/decisions/05-memory.md lines 992-1016):
+// `match consume <expr>` -- explicit-consume match. The parser used to
+// reject the `consume` keyword right after `match` ("unexpected `consume`
+// in expression"); this fixture is the positive proof once it parses --
+// THREE scrutinee shapes, each with an explicit `consume` sub-pattern in
+// the arm (D157's own `Some(consume f) => f.close()` shape, or its analog):
+//   1. a receiver FIELD scrutinee (`match consume @file`) -- D157's own
+//      example (05-memory.md:1009-1013): `Service` is a record with a
+//      `consume`-marked field, and the enclosing method is itself
+//      `consume @` (the "@file Consumed" side of the spec's own example).
+//   2. a LOCAL binding scrutinee (`match consume o`) -- the mirror of the
+//      D133-not-consumed CONTROL carrier (a plain `match o` leaves `o`
+//      Live; `match consume o` must not).
+//   3. the receiver ITSELF as scrutinee (`match consume @`), on a SUM-typed
+//      receiver -- D157's rule is shape-agnostic between record and sum
+//      receivers; `Full`/`Empty` play the role `Some`/`None` play above.
+// All three close their payload exactly once; the total is printed as one
+// line, so a wrong count (a payload silently skipped, or double-closed by
+// some other path) shows up as a stdout mismatch, not just a green run.
+
+module standalone.match_consume_scrutinee
+
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> int => 1
+
+// Position 1: receiver FIELD scrutinee.
+type Service consume {
+    consume file Option[Res]
+}
+
+fn Service consume @close_file() -> int {
+    match consume @file {
+        Some(consume f) => f.close()
+        None => 0
+    }
+}
+
+// Position 3: the receiver ITSELF as scrutinee, sum-typed.
+type Holder consume enum Full(Res) | Empty
+
+fn Holder consume @close_holder() -> int {
+    match consume @ {
+        Full(consume f) => f.close()
+        Empty => 0
+    }
+}
+
+fn main() Io -> () {
+    consume s = Service { file: Some(Res { id: 1 }) }
+    ro n1 = s.close_file()
+
+    // Position 2: LOCAL binding scrutinee.
+    consume o = Some(Res { id: 2 })
+    ro n2 = match consume o {
+        Some(consume f) => f.close()
+        None => 0
+    }
+
+    consume h = Full(Res { id: 3 })
+    ro n3 = h.close_holder()
+
+    print("closed=${n1 + n2 + n3}")
+}

@@ -49206,6 +49206,39 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                 });
             }
             ctx.states = joined.unwrap_or(saved);
+            // Registry #1331 (D157, `spec/decisions/05-memory.md` lines
+            // 992-1016): `match consume <expr>` marks its SCRUTINEE Consumed
+            // once every arm has been walked and joined -- the explicit-
+            // consume half of D157 (contrast the default view-match above,
+            // which leaves the scrutinee's own state untouched: arms only
+            // ever declare/consume THEIR OWN pattern bindings, never the
+            // scrutinee itself). Mirrors `consume_walk_consume_for`'s
+            // post-loop `iter` mark_consumed (D156) -- same idea, `match`
+            // instead of `for`. Must run AFTER the `ctx.states = joined...`
+            // line above, else the join (which restores whatever state the
+            // scrutinee had going INTO the match) would immediately
+            // overwrite the mark. Two scrutinee shapes are recognized (the
+            // only two the parser's `consume_match_scrutinees` side-table is
+            // ever populated for a genuine `match consume` -- see
+            // `parse_match`): a local binding (`match consume o`), and a
+            // receiver field (`match consume @file`, D157's own example --
+            // `mark_field_consumed` is itself a no-op unless `field_name` is
+            // a tracked consume-field, so this is safe to call unconditionally).
+            // A bare `match consume @` (the receiver itself, D157's sum-typed
+            // case) falls through the `_` arm: there is no existing notion of
+            // "the whole receiver is Consumed" to update (the method's own
+            // `consume @` already transferred that receiver in as a whole).
+            if ctx.module.consume_match_scrutinees.contains(&scrutinee.span) {
+                match &scrutinee.kind {
+                    ExprKind::Ident(name) => ctx.mark_consumed(name, scrutinee.span),
+                    ExprKind::Member { obj, name: field_name }
+                        if matches!(obj.kind, ExprKind::SelfAccess) =>
+                    {
+                        ctx.mark_field_consumed(field_name, scrutinee.span);
+                    }
+                    _ => {}
+                }
+            }
         }
 
         // ─── select ───
@@ -57198,6 +57231,7 @@ mod named_tuple_ctor_infer_tests {
             doc: None,
             rebind_shadows: std::collections::HashMap::new(),
             consume_reuse_spans: std::collections::HashSet::new(),
+            consume_match_scrutinees: std::collections::HashSet::new(),
             prelude_missing: None,
         }
     }
@@ -57480,6 +57514,7 @@ mod named_tuple_ctor_infer_tests {
             doc: None,
             rebind_shadows: std::collections::HashMap::new(),
             consume_reuse_spans: std::collections::HashSet::new(),
+            consume_match_scrutinees: std::collections::HashSet::new(),
             prelude_missing: None,
         };
         let arena = FnDeclArena::new();

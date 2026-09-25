@@ -1,0 +1,26 @@
+// EXPECT_COMPILE_ERROR использование потреблённой переменной `o`
+//
+// #1331 (registry 221.1; D157, spec/decisions/05-memory.md lines 992-1016):
+// `match consume <expr>` marks its scrutinee Consumed after the match --
+// the explicit-consume half of D157 (contrast the positive fixture's
+// D133-not-consumed CONTROL carrier, where a plain `match o` leaves `o`
+// Live). This is the mirror negative: `o` really is consumed by
+// `match consume o` below, so reading it afterward must be use-after-
+// consume (D131), not silently accepted.
+module neg.match_consume_then_use_neg
+
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> () { () }
+
+fn main() -> () {
+    consume o = Some(Res { id: 1 })
+    match consume o {
+        Some(consume f) => f.close()
+        None => ()
+    }
+    // nova:expect D131 -- `o` was consumed by `match consume o` above (D157); this read is use-after-consume
+    ro _seen = o.is_some()
+}
