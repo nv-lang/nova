@@ -1282,7 +1282,7 @@ for (i, x) in list.iter().enumerate() { ... }   // индекс через itera
 
 while cond { ... }                // условный цикл
 loop { ... }                      // бесконечный, выход через break/return
-ro a = loop { ... break v }       // loop is an expression: the loop's value (D485)
+ro a = loop { ... break v }       // loop — выражение: значение цикла (D485)
 ```
 
 **An explicit element type — `for x TYPE in iter`** — is optional and
