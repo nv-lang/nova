@@ -474,7 +474,7 @@ export type MutIndex[K, V] protocol {
 /// assert(a == [1, 2, 3, 4, 5])
 /// ```
 #stable(since = "0.1")
-export type AsSlice[T] protocol {
+export type AsSlice[T consume] protocol {
     @ptr() -> *T
     @len() -> int
 }

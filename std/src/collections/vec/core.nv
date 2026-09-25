@@ -266,11 +266,11 @@ export fn Vec[T consume] consume @destroy_empty() -> ()
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Ensure room for at least `additional` more elements beyond the current
-/// length. Grows the buffer with a ×2 strategy (initial capacity 8) when the
-/// current capacity does not suffice. No-op when `additional <= 0` or capacity
-/// already covers `len + additional`. This is the sole *amortised* growth method
-/// (rounds the buffer up to a ×2 capacity for O(1)-amortised push); the exact,
-/// un-rounded capacity setter is `@cap(n)`.
+/// length. When the current capacity does not suffice, grows it in one step to
+/// the largest of twice the capacity, 8 (D232: ×2 growth, initial capacity 8)
+/// and `len + additional`. No-op when `additional <= 0` or capacity already
+/// covers `len + additional`. This is the sole *amortised* growth method
+/// (doubling keeps push O(1) amortised); the exact capacity setter is `@cap(n)`.
 ///
 /// Returns `@` (self) for fluent chaining — `v.reserve(10).append(xs).sort()`
 /// (fluent convention, precedent `StringBuilder.@append`).
@@ -279,12 +279,8 @@ export fn Vec[T consume] mut @reserve(additional int) -> @ {
     if needed <= @cap {
         return
     }
-    mut new_cap = if @cap == 0 { 8 } else { @cap * 2 }
-    // KEEP as while: non-unit-step (×2 doubling), not a `0..@len` index loop.
-    while new_cap < needed {
-        new_cap *= 2
-    }
-    @cap(new_cap)
+    // D232: ×2 growth, initial capacity 8 -- and never less than needed.
+    @cap((@cap * 2).max(8).max(needed))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -292,7 +288,7 @@ export fn Vec[T consume] mut @reserve(additional int) -> @ {
 // ──────────────────────────────────────────────────────────────────────────
 
 // Allocate a zeroed `*mut T` buffer of `n` element slots. `n > 0`.
-fn alloc_buf[T](n int) -> *mut T {
+fn alloc_buf[T consume](n int) -> *mut T {
     unsafe {
         RawMem.alloc(n * size_of[T]()) as *mut T
     }
