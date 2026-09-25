@@ -1,0 +1,65 @@
+diff --git a/std/src/collections/vec/mutate.nv b/std/src/collections/vec/mutate.nv
+index c6a2ff7be..93b615266 100644
+--- a/std/src/collections/vec/mutate.nv
++++ b/std/src/collections/vec/mutate.nv
+@@ -55,20 +55,34 @@ export fn Vec[T consume] mut @insert(i int, consume v T) -> @
+ }
+ 
+ /// Move every element of `other` to the end, taking ownership of `other` --
+-/// the consuming form of `append`. Elements move one by one (`for consume`,
+-/// D156), so a must-consume element is never duplicated.
++/// the consuming form of `append`. One bulk move of the buffer
++/// (`RawMem.copy_n`; D216 amendment 2026-09-25: a bulk move is outside
++/// linearity and the module keeps it correct): every element changes owner
++/// exactly once, then `other` is ended without touching its elements.
+ export fn Vec[T consume] mut @append(consume other Vec[T]) -> @ {
+-    @reserve(other.len())
+-    for consume x in other {
++    ro m = other.len()
++    if m > 0 {
++        @reserve(m)
+         unsafe {
+-            @data.write_consume_at(@len, x)
++            RawMem.copy_n(other.data, @data.offset(@len), m)
+         }
+-        @len += 1
++        @len += m
+     }
++    other.forget_moved()
++    other.destroy_empty()
++}
++
++// The elements of this vector were moved out by a bulk copy (`append`,
++// `splice`): forget them, so `destroy_empty` can end the vector without
++// touching them. Module-private: called anywhere else it would lose the
++// elements silently.
++fn Vec[T consume] mut @forget_moved() -> () {
++    @len = 0
+ }
+ 
+ /// Move every element of `other` into this vector at index `i`, taking
+-/// ownership of `other` -- the consuming form of `splice`. Panics if `i > len`.
++/// ownership of `other` -- the consuming form of `splice`, one bulk move like
++/// the consuming `append`. Panics if `i > len`.
+ export fn Vec[T consume] mut @splice(i int, consume other Vec[T]) -> @
+     requires 0 <= i && i <= @len
+ {
+@@ -80,14 +94,14 @@ export fn Vec[T consume] mut @splice(i int, consume other Vec[T]) -> @
+             RawMem.copy_n(@data.offset(i), @data.offset(i + n), tail)
+         }
+     }
+-    mut k = i
+-    for consume x in other {
++    if n > 0 {
+         unsafe {
+-            @data.write_consume_at(k, x)
++            RawMem.copy_n(other.data, @data.offset(i), n)
+         }
+-        k += 1
+     }
+     @len += n
++    other.forget_moved()
++    other.destroy_empty()
+ }
+ 
+ /// Replace the element at `i` with `v` and hand the old one back -- a take

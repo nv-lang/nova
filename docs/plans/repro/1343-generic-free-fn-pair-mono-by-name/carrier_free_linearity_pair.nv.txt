@@ -1,0 +1,32 @@
+// #1343 carrier: a linearity pair of generic FREE fns -- the checker picks `pick[T]` for Bag[int], the program prints free=2,2 (expected free=1,2): codegen keys monomorphs by name, the second form overwrites the first.
+// EXPECT_STDOUT free=1,2
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> int => @id
+
+type Bag[T consume] consume {
+    n int
+}
+
+fn Bag[T consume] consume @done() -> () {
+}
+
+fn pick[T](consume b Bag[T]) -> int {
+    b.done()
+    1
+}
+
+fn pick[T consume](consume b Bag[T]) -> int {
+    b.done()
+    2
+}
+
+fn main() Io -> () {
+    consume bi Bag[int] = { n: 0 }
+    ro f1 = pick(bi)
+    consume br Bag[Res] = { n: 0 }
+    ro f2 = pick(br)
+    print("free=${f1},${f2}")
+}

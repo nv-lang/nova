@@ -1,0 +1,6 @@
+// #1342 carrier: `${v:>12}` on a Vec[int] -- nova test: E_BAD_FORMAT_SPEC ... `Vec____nova_int` ... does not implement Display; bare `${v}` prints `Vec[1, 22]`.
+// EXPECT_STDOUT probe
+fn main() Io -> () {
+    ro v = Vec[int].of(1, 22)
+    print("<${v:>12}> <${v:<12}> <${v:?}> <${1:>4}>")
+}

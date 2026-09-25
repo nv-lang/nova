@@ -1426,6 +1426,11 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1294
+max=1344
+# 2026-09-25, integrator: rows 1341-1344 added (bulk append codegen panic;
+# format spec on a generic type; generic free fn monomorphs by name; strict mode
+# obligating a view parameter). rows 1290->1294, max 1340->1344.
 rows=1290
 max=1340
 # 2026-09-25, integrator: row 1340 added (a for-range bound is re-evaluated on
