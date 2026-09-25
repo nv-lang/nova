@@ -12983,8 +12983,11 @@ impl<'a> TypeCheckCtx<'a> {
                         set.insert(n);
                     }
                 }
+                // #1332: `if Ok(consume s) = ...` -- see `bind_pattern_consume_names`.
+                let consume_snapshot = self.bind_pattern_consume_names(pattern);
                 self.f1_block(then, gs, scope, errors);
                 *self.ro_binding_names.borrow_mut() = ro_snapshot;
+                *self.consume_binding_names.borrow_mut() = consume_snapshot;
                 for (n, prev) in saved {
                     match prev {
                         Some(t) => { scope.insert(n, t); }
@@ -13147,6 +13150,8 @@ impl<'a> TypeCheckCtx<'a> {
                             set.insert(n);
                         }
                     }
+                    // #1332: `Ok(consume s) => ...` -- see `bind_pattern_consume_names`.
+                    let consume_snapshot = self.bind_pattern_consume_names(&arm.pattern);
                     match &arm.body {
                         MatchArmBody::Expr(e) => {
                             self.f1_expr(e, gs, scope, errors)
@@ -13156,6 +13161,7 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                     }
                     *self.ro_binding_names.borrow_mut() = ro_snapshot;
+                    *self.consume_binding_names.borrow_mut() = consume_snapshot;
                     for (n, prev) in saved {
                         match prev {
                             Some(t) => { scope.insert(n, t); }
@@ -15248,6 +15254,28 @@ impl<'a> TypeCheckCtx<'a> {
     /// pattern shape) gets no L1 launder-table entry either; registering one
     /// anyway would be a name in `ro_binding_names` with no matching `scope`
     /// entry — harmless in isolation, but an inconsistency with no upside.
+    /// Registry 221.1 #1332: a pattern's `consume name` binding
+    /// (`Ok(consume s)`, `Some(consume f)`) is a consume-spelled binding too
+    /// -- rule 3 of the D84 mode axis (10-overloading.md) sends it to the
+    /// CONSUMING form of a mode pair, the same as `consume x = ...`. Before
+    /// this the arm's names never reached `consume_binding_names`, so the
+    /// dispatch picked the copying form while the consume pass treated the
+    /// argument as moved: `f(s)` ran the view body and the resource leaked.
+    /// Updates the set for every name the pattern binds (a plain name
+    /// shadows an outer consume-spelled one) and returns the snapshot the
+    /// caller restores when the arm ends.
+    fn bind_pattern_consume_names(&self, pattern: &Pattern) -> std::collections::HashSet<String> {
+        let snapshot = self.consume_binding_names.borrow().clone();
+        let mut set = self.consume_binding_names.borrow_mut();
+        for (n, _is_mut, is_consume) in pattern_capture_names(pattern) {
+            set.remove(&n);
+            if is_consume {
+                set.insert(n);
+            }
+        }
+        snapshot
+    }
+
     fn pattern_bind_mutability(pattern: &Pattern) -> Vec<(String, bool)> {
         match pattern {
             Pattern::Ident { name, is_mut, .. } => vec![(name.clone(), *is_mut)],
@@ -16137,7 +16165,15 @@ impl<'a> TypeCheckCtx<'a> {
     /// Anything else (a temporary) is not a place at all.
     fn expr_mode_axis_mutable_place(&self, e: &Expr) -> bool {
         match &e.kind {
-            ExprKind::Ident(name) => !self.ro_binding_names.borrow().contains(name),
+            // Registry 221.1 #1332: a `consume`-spelled binding is mutable
+            // (02-types.md, Plan 108.2 table: "`consume X = ...` implicitly
+            // means mut -- the owner may mutate"), although it also sits in
+            // `ro_binding_names` (that set only records "not spelled `mut`").
+            // Without this a `mut @` overload pair was ineligible on a
+            // `consume b Bag[Res]` receiver, the axis gave no verdict, and
+            // codegen fell back to the first (copying) declaration.
+            ExprKind::Ident(name) => !self.ro_binding_names.borrow().contains(name)
+                || self.consume_binding_names.borrow().contains(name),
             ExprKind::SelfAccess => self.current_recv_is_mut.get(),
             ExprKind::Member { obj, .. } => self.expr_mode_axis_mutable_place(obj),
             ExprKind::Index { obj, .. } => self.expr_mode_axis_mutable_place(obj),
@@ -41399,6 +41435,47 @@ fn check_linearity_markers(
 }
 
 /// Реестр consume-аннотаций: user-module + runtime-stdlib.
+/// Registry 221.1 #1332: one declaration's parameter shape — per position,
+/// `(declared consume, declared type)`. See `ConsumeRegistry::fn_mode_shapes`.
+type ModeShape = Vec<(bool, TypeRef)>;
+
+fn mode_shape_of(fd: &FnDecl) -> ModeShape {
+    fd.params.iter().map(|p| (p.consume, p.ty.clone())).collect()
+}
+
+/// Registry 221.1 #1332: positions at which a name's declarations form a
+/// COPYING/CONSUMING pair on the D84 mode axis — two declarations of the same
+/// arity whose parameter types are pairwise identical (`typeref_equal`, the
+/// same guard `TypeCheckCtx::mode_axis_tiebreak` applies before it resolves
+/// the axis) and that differ in `consume` at that position. At such a
+/// position the call's argument, not the name, decides the form (rule 3).
+fn mode_pair_positions(shapes: Option<&Vec<ModeShape>>) -> Vec<usize> {
+    let Some(shapes) = shapes else { return Vec::new() };
+    let mut out: Vec<usize> = Vec::new();
+    for (ai, a) in shapes.iter().enumerate() {
+        for b in shapes.iter().skip(ai + 1) {
+            if a.len() != b.len()
+                || !a.iter().zip(b.iter()).all(|(x, y)| typeref_equal(&x.1, &y.1))
+            {
+                continue;
+            }
+            for (i, (x, y)) in a.iter().zip(b.iter()).enumerate() {
+                if x.0 != y.0 && !out.contains(&i) {
+                    out.push(i);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Registry 221.1 #1332: which callee a call's consume positions are asked
+/// for — see `ConsumeCtx::callee_consume_idxs`.
+enum ConsumeCallee<'k> {
+    Fn(&'k str),
+    Method(&'k str, &'k str),
+}
+
 struct ConsumeRegistry {
     /// `(receiver_type, method_name)` — consume-методы.
     methods: HashSet<(String, String)>,
@@ -41549,6 +41626,17 @@ struct ConsumeRegistry {
     /// with ≥2 declarations (covers the receiver-mode-overload combo too,
     /// e.g. `fn T @combo(x T)` / `fn T mut @combo(mut x T)`).
     method_overload_names: HashSet<(String, String)>,
+    /// Registry 221.1 #1332: every declaration's parameter SHAPE per free-fn
+    /// name — `(consume flag, declared type)` per position. `fn_params` keeps
+    /// ONE consume-index set per name, so a copying/consuming pair
+    /// (`fn put(v T)` / `fn put(consume v T)`) looked like "position 0 always
+    /// consumes" and a plain binding passed to it was declared consumed,
+    /// although rule 3 (10-overloading.md, D84 mode axis) dispatches it to the
+    /// COPYING form. The shapes let `ConsumeCtx::callee_consume_idxs` see the
+    /// pair; see `mode_pair_positions`.
+    fn_mode_shapes: HashMap<String, Vec<ModeShape>>,
+    /// #1332, method twin of `fn_mode_shapes`, keyed `(receiver_type, method)`.
+    method_mode_shapes: HashMap<(String, String), Vec<ModeShape>>,
     /// D246-амендмент §72 ([M-ro-launder-fullstack-value-exemption], Ф.2,
     /// 2026-07-24): name-keyed companion of `is_fully_stack_value`
     /// (types/mod.rs free fn) for the call-ARGUMENT ro-launder position,
@@ -41803,6 +41891,9 @@ impl ConsumeRegistry {
         // `fn_overload_names` field doc for the false-positive it prevents.
         let mut fn_decl_counts: HashMap<String, usize> = HashMap::new();
         let mut method_decl_counts: HashMap<(String, String), usize> = HashMap::new();
+        // Registry 221.1 #1332: per-name parameter shapes (see field doc).
+        let mut fn_mode_shapes: HashMap<String, Vec<ModeShape>> = HashMap::new();
+        let mut method_mode_shapes: HashMap<(String, String), Vec<ModeShape>> = HashMap::new();
         // Plan 118.5 V2 [M-118.5-arg-coerce-unsafe]: non-unsafe-T params
         // indices (positions where param's outer wrapper is NOT Unsafe).
         let mut fn_non_unsafe_params: HashMap<String, Vec<usize>> = HashMap::new();
@@ -42000,6 +42091,10 @@ impl ConsumeRegistry {
                         *method_decl_counts
                             .entry((r.type_name.clone(), fd.name.clone()))
                             .or_insert(0) += 1;
+                        method_mode_shapes
+                            .entry((r.type_name.clone(), fd.name.clone()))
+                            .or_default()
+                            .push(mode_shape_of(fd));
                         if r.consume {
                             methods.insert((r.type_name.clone(), fd.name.clone()));
                         }
@@ -42091,6 +42186,8 @@ impl ConsumeRegistry {
                         // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1):
                         // count this free-fn declaration — ANY mode.
                         *fn_decl_counts.entry(fd.name.clone()).or_insert(0) += 1;
+                        fn_mode_shapes.entry(fd.name.clone()).or_default()
+                            .push(mode_shape_of(fd));
                         if !consume_idx.is_empty() {
                             fn_params.insert(fd.name.clone(), consume_idx);
                         }
@@ -42232,6 +42329,7 @@ impl ConsumeRegistry {
             mut_methods_arity, ro_methods_arity, recv_returning_arity,
             fn_mut_params, method_mut_params,
             fn_overload_names, method_overload_names, stack_value_type_names,
+            fn_mode_shapes, method_mode_shapes,
             fn_non_unsafe_params, method_non_unsafe_params,
             record_consume_fields, record_field_names, record_field_types,
             unwrapped_method_return_types, unwrapped_fn_return_types,
@@ -42344,11 +42442,19 @@ impl ConsumeRegistry {
                             .entry((r.type_name.clone(), fd.name.clone()))
                             .or_insert(consume_idx);
                     }
+                    // #1332: builtin declarations join the per-name shapes, so
+                    // a builtin copying/consuming pair is seen as one.
+                    self.method_mode_shapes
+                        .entry((r.type_name.clone(), fd.name.clone()))
+                        .or_default()
+                        .push(mode_shape_of(fd));
                 }
                 None => {
                     if !consume_idx.is_empty() {
                         self.fn_params.entry(fd.name.clone()).or_insert(consume_idx);
                     }
+                    self.fn_mode_shapes.entry(fd.name.clone()).or_default()
+                        .push(mode_shape_of(fd));
                 }
             }
         }
@@ -42637,6 +42743,16 @@ struct ConsumeCtx<'a> {
     /// Plan 100.1 (D133 / D9): локальные переменные объявленные с
     /// `consume tx = ...` — обязаны быть Consumed до scope-exit.
     consume_obligations: HashSet<String>,
+    /// Registry 221.1 #1332: names whose CURRENT binding is spelled `consume`
+    /// -- a `consume x = ...` let with a plain identifier pattern, or a
+    /// `consume` parameter. Mirror of `TypeCheckCtx.consume_binding_names`
+    /// (the set the dispatch's `expr_mode_axis_consume_eligible` asks), kept
+    /// here because this pass runs before the checker, and maintained at the
+    /// same three points the checker maintains its set: a `let` with a plain
+    /// identifier pattern replaces the entry (inserted iff the let is
+    /// `consume`), fn entry seeds the `consume` parameters, and a nested block
+    /// restores the set on exit. Read ONLY by `arg_takes_consuming_form`.
+    consume_bound_names: HashSet<String>,
     /// Plan 100.8 (D166): accumulates ALL consume-binding names ever declared
     /// in this scope (never cleared, unlike `consume_obligations`).  Used by
     /// `check_d162_coverage` which runs AFTER `consume_walk_block` has already
@@ -42787,6 +42903,7 @@ impl<'a> ConsumeCtx<'a> {
             consume_obligations: HashSet::new(),
             all_declared_consume: HashSet::new(),
             binding_origin: HashMap::new(),
+            consume_bound_names: HashSet::new(),
             field_states: HashMap::new(),
             consume_bound_generics: HashSet::new(),
             view_params: HashSet::new(),
@@ -43441,6 +43558,47 @@ impl<'a> ConsumeCtx<'a> {
     /// Пометить аргументы в consume-позициях как потреблённые.
     /// Аргументы уже walk'нуты вызывающим (use-after-consume проверен) —
     /// здесь только переход состояния alias-класса.
+    /// Registry 221.1 #1332: the ONE place a call's consume positions are
+    /// computed for the consume pass. The name's registered consume indices
+    /// (`fn_params` / `method_params`) are narrowed at every position where
+    /// the name has a copying/consuming PAIR (`mode_pair_positions`): there
+    /// rule 3 (10-overloading.md, D84 mode axis) lets the ARGUMENT choose --
+    /// a temporary or a `consume`-spelled binding takes the consuming form
+    /// and is consumed, any other binding takes the copying form and stays
+    /// live. A position with only a consuming declaration is unchanged.
+    fn callee_consume_idxs(&self, callee: ConsumeCallee<'_>, args: &[CallArg]) -> Vec<usize> {
+        let (raw, shapes) = match callee {
+            ConsumeCallee::Fn(name) => (
+                self.reg.fn_params.get(name),
+                self.reg.fn_mode_shapes.get(name),
+            ),
+            ConsumeCallee::Method(ty, method) => {
+                let key = (ty.to_string(), method.to_string());
+                (self.reg.method_params.get(&key), self.reg.method_mode_shapes.get(&key))
+            }
+        };
+        let Some(raw) = raw else { return Vec::new() };
+        let paired = mode_pair_positions(shapes);
+        if paired.is_empty() {
+            return raw.clone();
+        }
+        raw.iter().copied()
+            .filter(|i| !paired.contains(i) || self.arg_takes_consuming_form(args.get(*i)))
+            .collect()
+    }
+
+    /// #1332: rule 3's argument classes -- mirror of
+    /// `TypeCheckCtx::expr_mode_axis_consume_eligible` (the dispatch side),
+    /// so the pass and the dispatch cannot disagree about the form chosen.
+    fn arg_takes_consuming_form(&self, arg: Option<&CallArg>) -> bool {
+        let Some(arg) = arg else { return true };
+        match &arg.expr().kind {
+            ExprKind::Ident(name) => self.consume_bound_names.contains(name.as_str()),
+            ExprKind::SelfAccess | ExprKind::Member { .. } | ExprKind::Index { .. } => false,
+            _ => true,
+        }
+    }
+
     fn consume_args(&mut self, args: &[CallArg], idxs: &[usize], span: Span) {
         for &i in idxs {
             if let Some(CallArg::Item(arg)) = args.get(i) {
@@ -45253,6 +45411,11 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                     // consume params получают неявно mut (по spec).
                     let effective_mut = p.is_mut || p.consume;
                     ctx.param_mut.insert(p.name.clone(), effective_mut);
+                    // #1332: a `consume` parameter is a consume-spelled binding
+                    // (the checker's fn-entry seed of `consume_binding_names`).
+                    if p.consume {
+                        ctx.consume_bound_names.insert(p.name.clone());
+                    }
                     // Plan 118.5 V2 [M-118.5-arg-coerce-unsafe]: track
                     // unsafe-T-annotated params (outer Unsafe wrapper detected
                     // before any Pointer wrapper).
@@ -45919,7 +46082,10 @@ fn implicit_return_consume_vars(ctx: &ConsumeCtx, e: &Expr) -> Vec<String> {
 }
 
 fn consume_walk_block(ctx: &mut ConsumeCtx, b: &Block, errors: &mut Vec<Diagnostic>) {
+    // #1332: block-scoped like the checker's `consume_binding_names` snapshot.
+    let bound_before = ctx.consume_bound_names.clone();
     consume_walk_block_inner(ctx, b, errors, false);
+    ctx.consume_bound_names = bound_before;
 }
 
 /// Plan 73.1 V3: variant taking `is_fn_body_trailing` flag.  When true,
@@ -46035,6 +46201,13 @@ fn consume_require_pattern_binding(
             ));
         }
         return;
+    }
+    // #1332: a pattern's `consume name` is consume-spelled whatever its type
+    // (mirror of the checker's `bind_pattern_consume_names`; rule 3 of the
+    // D84 mode axis sends it to the consuming form of a mode pair).
+    ctx.consume_bound_names.remove(name);
+    if is_consume {
+        ctx.consume_bound_names.insert(name.to_string());
     }
     if !must_consume {
         ctx.declare(name, ty);
@@ -46360,6 +46533,14 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
     match s {
         Stmt::Let(decl) => {
             consume_walk_expr(ctx, &decl.value, errors);
+            // #1332: the binding's spelling, for rule 3 of the mode axis --
+            // same shape as the checker's `consume_binding_names` update.
+            if let Some(name) = pattern_simple_name(&decl.pattern) {
+                ctx.consume_bound_names.remove(&name);
+                if decl.consume {
+                    ctx.consume_bound_names.insert(name);
+                }
+            }
             let mut names = Vec::new();
             consume_pattern_names(&decl.pattern, &mut names);
             // Plan 108.2 (D36 enforcement) + 108.3 (per-name mut):
@@ -47721,7 +47902,8 @@ impl RefPlace {
 /// `consume_walk_expr`'s `Call`-рукав: `Member{obj:Ident}` метод, свободная
 /// `Ident` fn, `Path` (`Type.static` / `module.fn`)). Используется ТОЛЬКО
 /// read-only сканом `scan_guard_rec` — не мутирует `ctx`.
-fn call_consume_idxs(ctx: &ConsumeCtx, func_kind: &ExprKind) -> Vec<usize> {
+fn call_consume_idxs(ctx: &ConsumeCtx, func_kind: &ExprKind, args: &[CallArg]) -> Vec<usize> {
+    // #1332: every lookup goes through `callee_consume_idxs` (mode pairs).
     match func_kind {
         ExprKind::Member { obj, name: method } => {
             if let ExprKind::Ident(recv) = &obj.kind {
@@ -47730,25 +47912,23 @@ fn call_consume_idxs(ctx: &ConsumeCtx, func_kind: &ExprKind) -> Vec<usize> {
                     .or_else(|| ctx.var_types.get(recv.as_str()))
                     .cloned();
                 if let Some(ty) = ty {
-                    return ctx.reg.method_params
-                        .get(&(ty, method.clone())).cloned().unwrap_or_default();
+                    return ctx.callee_consume_idxs(ConsumeCallee::Method(&ty, method), args);
                 }
             }
             Vec::new()
         }
         ExprKind::Ident(fname) => {
-            ctx.reg.fn_params.get(fname.as_str()).cloned().unwrap_or_default()
+            ctx.callee_consume_idxs(ConsumeCallee::Fn(fname), args)
         }
         ExprKind::Path(parts) => {
-            if parts.len() == 2 {
-                if let Some(v) = ctx.reg.method_params
-                    .get(&(parts[0].clone(), parts[1].clone()))
-                {
-                    return v.clone();
-                }
+            if parts.len() == 2
+                && ctx.reg.method_params.contains_key(&(parts[0].clone(), parts[1].clone()))
+            {
+                return ctx.callee_consume_idxs(
+                    ConsumeCallee::Method(&parts[0], &parts[1]), args);
             }
             if let Some(last) = parts.last() {
-                return ctx.reg.fn_params.get(last).cloned().unwrap_or_default();
+                return ctx.callee_consume_idxs(ConsumeCallee::Fn(last), args);
             }
             Vec::new()
         }
@@ -47797,7 +47977,7 @@ fn scan_guard_rec(
         }
         ExprKind::Call { func, args, trailing } => {
             let func_u = func.unwrap_turbofish();
-            let consume_idxs = call_consume_idxs(ctx, &func_u.kind);
+            let consume_idxs = call_consume_idxs(ctx, &func_u.kind, args);
             if let ExprKind::Member { obj, .. } = &func_u.kind {
                 scan_guard_rec(ctx, obj, canon, occ, closures);
             } else if !matches!(func_u.kind, ExprKind::Ident(_) | ExprKind::Path(_)) {
@@ -48660,11 +48840,10 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                         }
                         // consume-параметры метода.
                         if let Some(ty) = ctx.var_types.get(&ctx.canonical(&recv)).cloned() {
-                            if let Some(idxs) = ctx.reg
-                                .method_params.get(&(ty.clone(), method.clone())).cloned()
-                            {
-                                ctx.consume_args(args, &idxs, e.span);
-                            }
+                            // #1332: mode-pair aware (`callee_consume_idxs`).
+                            let idxs = ctx.callee_consume_idxs(
+                                ConsumeCallee::Method(&ty, method), args);
+                            ctx.consume_args(args, &idxs, e.span);
                             // Plan 108.1 followup ([M-108.1-readonly-to-explicit-mut-coerce]):
                             // E_READONLY_COERCE — передача readonly-binding в mut-param метода.
                             if let Some(mut_idxs) = ctx.reg
@@ -48694,9 +48873,7 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                             // key ∈ arg's finalize-output-keys" credit, keyed
                             // by (type, method) via `method_param_output_keys`
                             // instead of by bare fn name.
-                            let already_consumed_idxs = ctx.reg
-                                .method_params.get(&(ty.clone(), method.clone())).cloned()
-                                .unwrap_or_default();
+                            let already_consumed_idxs = idxs;
                             if let Some(param_keys) = ctx.reg
                                 .method_param_output_keys.get(&(ty, method.clone())).cloned()
                             {
@@ -48791,11 +48968,9 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                     ctx.mark_consumed(&root, e.span);
                                 }
                                 // Also: consume-param indexes for chain-receiver consume args.
-                                if let Some(idxs) = ctx.reg.method_params
-                                    .get(&(ty, method.clone())).cloned()
-                                {
-                                    ctx.consume_args(args, &idxs, e.span);
-                                }
+                                let idxs = ctx.callee_consume_idxs(
+                                    ConsumeCallee::Method(&ty, method), args);
+                                ctx.consume_args(args, &idxs, e.span);
                             }
                         }
                     }
@@ -48805,9 +48980,8 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                     // Plan 100.3 (D157): view-borrow semantics for free-fn calls.
                     // consume_obligations var passed to NON-consume param = view-borrow → OK.
                     // Rvalue (call returning consume-type) passed to view-param → D133-consume-rvalue-in-view.
-                    let consume_idxs = ctx.reg.fn_params.get(fname.as_str())
-                        .cloned()
-                        .unwrap_or_default();
+                    // #1332: mode-pair aware (`callee_consume_idxs`).
+                    let consume_idxs = ctx.callee_consume_idxs(ConsumeCallee::Fn(fname), args);
                     let view_idxs = ctx.reg.fn_view_params.get(fname.as_str())
                         .cloned()
                         .unwrap_or_default();
@@ -48982,11 +49156,10 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                     for a in args { consume_walk_expr(ctx, a.expr(), errors); }
                     if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
                     if parts.len() == 2 {
-                        if let Some(idxs) = ctx.reg.method_params
-                            .get(&(parts[0].clone(), parts[1].clone())).cloned()
-                        {
-                            ctx.consume_args(args, &idxs, e.span);
-                        }
+                        // #1332: mode-pair aware (`callee_consume_idxs`).
+                        let idxs = ctx.callee_consume_idxs(
+                            ConsumeCallee::Method(&parts[0], &parts[1]), args);
+                        ctx.consume_args(args, &idxs, e.span);
                         // Owner fix 2026-08-09 (closes №468): `CONST.method(...)`
                         // — an UPPERCASE-named receiver (the conventional const
                         // naming style) parses as `Path(["CONST","method"])`,
@@ -49034,9 +49207,8 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                         }
                     }
                     if let Some(last) = parts.last() {
-                        if let Some(idxs) = ctx.reg.fn_params.get(last).cloned() {
-                            ctx.consume_args(args, &idxs, e.span);
-                        }
+                        let idxs = ctx.callee_consume_idxs(ConsumeCallee::Fn(last), args);
+                        ctx.consume_args(args, &idxs, e.span);
                     }
                 }
                 _ => {

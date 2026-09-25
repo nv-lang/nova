@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR использование потреблённой переменной `t`
+//
+// Registry 221.1 #1332 (D84 mode axis, rule 3, spec/decisions/10-overloading.md):
+// the mirror of `standalone/mode_pair_plain_binding_copies.nv`. For the pair
+// `@put(v int)` / `@put(consume v int)` a PLAIN binding takes the copying form
+// and stays live -- but a `consume`-spelled binding takes the CONSUMING form,
+// so reading it after the call is use-after-consume (D131). The fix narrows
+// the consume pass to the argument's form; it must not stop consuming the
+// binding that really moves.
+module neg.mode_pair_consume_binding_then_use_neg
+
+type Bag {
+    n int
+}
+
+fn Bag @put(v int) -> int => 1
+
+fn Bag @put(consume v int) -> int => v
+
+fn main() Io -> () {
+    ro b = Bag { n: 0 }
+    consume t = 9
+    ro k = b.put(t)
+    // nova:expect D131 -- `t` is consume-spelled, so `b.put(t)` above took the consuming form (rule 3); this read is use-after-consume
+    ro seen = t + k
+    print("${seen}")
+}

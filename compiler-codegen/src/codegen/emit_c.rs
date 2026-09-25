@@ -7938,12 +7938,21 @@ impl CEmitter {
                         // passing a `nova_str` into a `nova_int` param (CC-FAIL). Same
                         // declaration re-supplied via builtin+import has identical param
                         // types → still deduped.
+                        // Registry 221.1 #1332: compare the parameter MODE too
+                        // (`consume` / `mut`, the D84 mode axis). A copying/consuming
+                        // pair (`fn Bag[T] mut @put(v T)` / `fn Bag[T consume] mut
+                        // @put(consume v T)`) has identical param types, so without
+                        // the mode it collapsed to the FIRST (copying) declaration:
+                        // the checker's choice of the consuming form found no FnDecl
+                        // with its span here and every call ran the copying body.
+                        // A re-supplied declaration has the same modes -> still deduped.
                         let dup = entry.iter().any(|g| {
                             g.name == f.name
                                 && g.params.len() == f.params.len()
                                 && g.params.iter().zip(f.params.iter()).all(|(gp, fp)|
                                     Self::type_ref_overload_key(&gp.ty)
-                                        == Self::type_ref_overload_key(&fp.ty))
+                                        == Self::type_ref_overload_key(&fp.ty)
+                                        && (gp.consume, gp.is_mut) == (fp.consume, fp.is_mut))
                                 && g.receiver.as_ref().map(|r| {
                                     (r.mutable, matches!(r.kind, crate::ast::ReceiverKind::Static))
                                 }) == f.receiver.as_ref().map(|r| {
