@@ -1,0 +1,24 @@
+// Seen fixing #1345 (not caused by it): an ANNOTATED `consume v Vec[Res]` -- once the
+// consume pass knows `v`'s type, its name-keyed method tables conflate same-name Vec
+// overloads: `consume first = v.remove(0)` is taken for the `-> @` form `remove(i, n)`
+// (a MOVE of `v`) and `first` is typed `Vec`. nova check: D131 on `v`, D133-not-consumed
+// and W_CONSUME_KEYWORD_UNNECESSARY on `first`. Unannotated, the same program checks.
+// EXPECT_STDOUT 
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> int => @id
+
+fn main() Io -> () {
+    consume v Vec[Res] = Vec[Res].new()
+    v.push(Res { id: 1 })
+    v.push(Res { id: 2 })
+    match consume v.pop() {
+        Some(consume last) => { last.close() }
+        None => { }
+    }
+    consume first = v.remove(0)
+    first.close()
+    v.destroy_empty()
+}

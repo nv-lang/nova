@@ -1,0 +1,23 @@
+// Seen fixing #1345 (not caused by it; a plain type, no container): a bare auto-cleanup
+// binding returned as the block's TRAILING expression is not disarmed -- `make()` runs
+// `v.@cleanup` at its own exit and the caller then owns a cleaned value. nova test:
+// stdout ` 7m` (expected `m 7`). The same with `return v` passes (the return path
+// disarms, emit_c.rs `disarm_var_for`); the fn-body trailing path does not.
+// EXPECT_STDOUT m 7
+type Res consume {
+    id int
+}
+
+fn Res consume @cleanup(outcome ScopeOutcome) -> () {
+    print(" ${@id}")
+}
+
+fn make() -> Res {
+    consume v = Res { id: 7 }
+    v
+}
+
+fn main() Io -> () {
+    consume w = make()
+    print("m")
+}

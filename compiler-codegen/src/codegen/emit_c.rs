@@ -1937,6 +1937,15 @@ pub struct CEmitter {
     /// (types/mod.rs) — must stay in sync (both scan the same `f.name ==
     /// "cleanup" && recv.consume && Instance && effects.is_empty()` shape).
     auto_cleanup_types: HashSet<String>,
+    /// Registry 221.1 #1345 (D156 amendment 2026-08-04, family 2): a GENERIC
+    /// container whose `consume @cleanup(outcome ScopeOutcome)` is declared
+    /// under a `Cleanup` bound on its element (`fn Vec[T consume Cleanup[E]]
+    /// consume @cleanup`) -> (positions of the gated carrier parameters, the
+    /// cleanup declaration). Such a container is NOT in `auto_cleanup_types`:
+    /// it is affine only per instantiation (`auto_cleanup_generic_instance`),
+    /// and its cleanup is a monomorph, not the erased `Nova_Vec_consume_cleanup`.
+    /// Mirrors the checker's `LinearityRegistry::cleanup_arg_gates`.
+    auto_cleanup_generic: HashMap<String, (Vec<usize>, crate::ast::FnDecl)>,
     /// Plan 217: arm-sites for bare `consume X = e;` (non-block) bindings of
     /// an auto-cleanup-eligible type, collected by `enter_defer_scope`'s
     /// prologue scan (keyed by the `LetDecl`'s span — stable within one
@@ -2865,6 +2874,7 @@ impl CEmitter {
             defer_scopes: Vec::new(),
             defer_block_counter: 0,
             auto_cleanup_types: HashSet::new(),
+            auto_cleanup_generic: HashMap::new(),
             auto_cleanup_arm_sites: HashMap::new(),
             free_fn_consume_param_positions: HashMap::new(),
             method_consume_param_positions: HashMap::new(),
@@ -5763,7 +5773,26 @@ impl CEmitter {
                                 && matches!(recv.kind, ReceiverKind::Instance)
                                 && is_cleanup_protocol_shape
                             {
-                                self.auto_cleanup_types.insert(recv.type_name.clone());
+                                // #1345: a `Cleanup`-bounded carrier parameter
+                                // makes the cleanup per-instantiation.
+                                let gated: Vec<usize> = recv.generics.iter().enumerate()
+                                    .filter_map(|(i, g)| {
+                                        let TypeRef::Named { path, .. } = g else { return None };
+                                        let name = path.last()?;
+                                        recv.carrier_bounds.iter()
+                                            .find(|b| &b.name == name)
+                                            .filter(|b| b.bounds.iter().any(|t| matches!(t,
+                                                TypeRef::Named { path, .. }
+                                                    if path.last().map_or(false, |x| x == "Cleanup"))))
+                                            .map(|_| i)
+                                    })
+                                    .collect();
+                                if gated.is_empty() {
+                                    self.auto_cleanup_types.insert(recv.type_name.clone());
+                                } else {
+                                    self.auto_cleanup_generic
+                                        .insert(recv.type_name.clone(), (gated, f.clone()));
+                                }
                             }
                         }
                     }
@@ -30822,11 +30851,46 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             .strip_prefix("NovaValue_")
             .map(|s| s.to_string())
             .unwrap_or(type_name);
-        if self.auto_cleanup_types.contains(&type_name) {
+        if self.auto_cleanup_types.contains(&type_name)
+            || self.auto_cleanup_generic_instance(&type_name).is_some()
+        {
             Some(init_c_type)
         } else {
             None
         }
+    }
+
+    /// Registry 221.1 #1345: `type_name` (a mono name such as
+    /// `Vec____Nova_Res_p`) is an instantiation of a bound-gated container
+    /// (`auto_cleanup_generic`) whose every gated type argument is itself
+    /// auto-cleanup eligible -> the container's template type substitution
+    /// and its cleanup declaration. `Vec[int]` and a `Vec` of a linear type
+    /// without `@cleanup` (family 1, drained explicitly) -> `None`.
+    fn auto_cleanup_generic_instance(&self, type_name: &str)
+        -> Option<(Vec<(String, String)>, crate::ast::FnDecl)>
+    {
+        let (base, args) = self.generic_type_instance_info.borrow()
+            .get(&format!("Nova_{}", type_name)).cloned()?;
+        let (gates, fd) = self.auto_cleanup_generic.get(&base)?.clone();
+        let args_c: Vec<String> = args.iter().map(|a| self.arg_c(a)).collect();
+        for &i in &gates {
+            let arg = args_c.get(i)?;
+            let arg_name = {
+                let t = self.debt_strip_nova_trim_start(arg);
+                t.strip_prefix("NovaValue_").map(|x| x.to_string()).unwrap_or(t)
+            };
+            if !self.auto_cleanup_types.contains(&arg_name)
+                && self.auto_cleanup_generic_instance(&arg_name).is_none()
+            {
+                return None;
+            }
+        }
+        let tmpl = self.generic_type_templates.get(&base)?;
+        let subst: Vec<(String, String)> = tmpl.generics.iter()
+            .zip(args_c.iter())
+            .map(|(g, c)| (g.name.clone(), c.clone()))
+            .collect();
+        Some((subst, fd))
     }
 
     /// Plan 217: does this block contain at least one bare consume-let that
@@ -31970,7 +32034,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// cancel-shield unconditionally, and compose per §4a via `tail`.
     fn emit_consume_entry_cleanup(&mut self, policy: &ConsumePolicy, outcome: DeferOutcome, df: &str, tail: ConsumeTail) {
         // §0: cleanup symbol derived from the type name (pinned R2), never hardcoded.
-        let cleanup_sym = format!("Nova_{}_consume_cleanup", policy.type_name);
+        let mut cleanup_sym = format!("Nova_{}_consume_cleanup", policy.type_name);
+        // #1345: a bound-gated container's cleanup is its monomorph, named and
+        // registered the way the generic-instance method dispatch does it.
+        let generic_cleanup = self.auto_cleanup_generic_instance(&policy.type_name);
+        if let Some((subst, fd)) = &generic_cleanup {
+            cleanup_sym = format!("{}_method_cleanup", policy.type_name);
+            self.register_mono_method_instance(fd, subst.clone(), &cleanup_sym, &policy.type_name);
+        }
         // Plan 173 Ф.4 #6 (model B): FAIL/INTERRUPT run-sites = cleanup during
         // unwind → mark the frame so throw dispatch bypasses handlers (failure
         // composes into the pocket). LEAVE/EARLY (Success) = normal exit → the
@@ -32038,7 +32109,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // up — while leaving the surrounding exactly-once/fail-frame/
         // shield/watchdog protocol untouched, so a genuine consume type's
         // behavior (extern or not) is byte-identical.
-        if self.consume_cleanup_declared_types.contains(&policy.type_name) {
+        if self.consume_cleanup_declared_types.contains(&policy.type_name)
+            || generic_cleanup.is_some()
+        {
             self.line(&format!("{}({}, {});", cleanup_sym, policy.c_binding, o_local));
         } else {
             self.line(&format!(

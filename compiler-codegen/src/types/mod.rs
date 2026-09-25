@@ -41411,6 +41411,14 @@ struct LinearityRegistry {
     /// в своей сигнатуре — проверяется отдельно (`missing_cleanup_effect_names`
     /// + `check_obligations_at_exit` / `validate_consume_scope_init`).
     cleanup_effect_rows: HashMap<String, Vec<TypeRef>>,
+    /// Registry 221.1 #1345 (D156 amendment 2026-08-04, family 2): a GENERIC
+    /// container whose `@cleanup` is declared under a `Cleanup` bound on its
+    /// element (`fn Vec[T consume Cleanup[E]] consume @cleanup(..)`) is affine
+    /// only for an instantiation that meets the bound. Maps the container's
+    /// name to the positions of its gated type arguments. `Vec[int]` or a
+    /// `Vec` of a linear type without `@cleanup` (family 1) stays outside;
+    /// see `cleanup_effects_for`.
+    cleanup_arg_gates: HashMap<String, Vec<usize>>,
 }
 
 impl LinearityRegistry {
@@ -41419,6 +41427,7 @@ impl LinearityRegistry {
         let mut consume_methods: HashMap<String, Vec<String>> = HashMap::new();
         let mut local_type_names = HashSet::new();
         let mut cleanup_effect_rows: HashMap<String, Vec<TypeRef>> = HashMap::new();
+        let mut cleanup_arg_gates: HashMap<String, Vec<usize>> = HashMap::new();
 
         // Plan 217 §8а п.1 / D432-амендмент 2026-08-04 (№315): `@cleanup`
         // (метод `cleanup` на consume-receiver'е, instance-kind, protocol-
@@ -41444,6 +41453,23 @@ impl LinearityRegistry {
                 && is_cleanup_protocol_shape
             {
                 cleanup_effect_rows.insert(recv.type_name.clone(), fd.effects.clone());
+                // #1345: positions of the carrier parameters bounded by
+                // `Cleanup` -- the container's cleanup exists only for them.
+                let gated: Vec<usize> = recv.generics.iter().enumerate()
+                    .filter_map(|(i, g)| {
+                        let TypeRef::Named { path, .. } = g else { return None };
+                        let name = path.last()?;
+                        recv.carrier_bounds.iter()
+                            .find(|b| &b.name == name)
+                            .filter(|b| b.bounds.iter().any(|t| matches!(t,
+                                TypeRef::Named { path, .. }
+                                    if path.last().map_or(false, |x| x == "Cleanup"))))
+                            .map(|_| i)
+                    })
+                    .collect();
+                if !gated.is_empty() {
+                    cleanup_arg_gates.insert(recv.type_name.clone(), gated);
+                }
             }
         };
 
@@ -41496,7 +41522,42 @@ impl LinearityRegistry {
             consume_methods,
             local_type_names,
             cleanup_effect_rows,
+            cleanup_arg_gates,
         }
+    }
+
+    /// Registry 221.1 #1345: the effective `@cleanup` effect row of a value of
+    /// type `full` (bare name `ty`), if it is auto-cleanup eligible at all. A
+    /// plain type: its declared row (`cleanup_effects`). A bound-gated generic
+    /// container (`cleanup_arg_gates`): eligible only when EVERY gated type
+    /// argument is itself eligible, and its row is theirs (D28: the
+    /// container's cleanup runs the elements' cleanups -- `Fail[E]` there is
+    /// the element's `Fail[..]`). No type arguments known -> not eligible
+    /// (the honest answer; the binding stays linear).
+    fn cleanup_effects_for(&self, ty: &str, full: Option<&TypeRef>) -> Option<Vec<TypeRef>> {
+        // An unannotated binding has no bare name in `var_types`; the full
+        // type carries it.
+        let ty: &str = match (ty.is_empty(), full) {
+            (true, Some(TypeRef::Named { path, .. })) if path.len() == 1 => &path[0],
+            _ => ty,
+        };
+        let Some(gates) = self.cleanup_arg_gates.get(ty) else {
+            return self.cleanup_effects(ty).cloned();
+        };
+        let Some(TypeRef::Named { generics, .. }) = full else { return None };
+        let mut row: Vec<TypeRef> = Vec::new();
+        for &i in gates {
+            let arg = generics.get(i)?;
+            let TypeRef::Named { path, .. } = arg else { return None };
+            let arg_name = path.last()?;
+            let arg_row = self.cleanup_effects_for(arg_name, Some(arg))?;
+            for eff in arg_row {
+                if !row.iter().any(|r| typeref_equal(r, &eff)) {
+                    row.push(eff);
+                }
+            }
+        }
+        Some(row)
     }
 
     /// D432-амендмент 2026-08-04 (№315 fix): declared `@cleanup`'s effect
@@ -41959,6 +42020,9 @@ struct ConsumeRegistry {
     /// Для var-type инференса `let x = factory()` — расширяет резолв
     /// consume-метода за пределы очевидных конструкторов.
     fn_return_types: HashMap<String, String>,
+    /// #1345: the declared return type of a free fn with ONE declaration and
+    /// no type parameters (`fn make() -> Vec[Res]`), for `call_return_type_ref`.
+    fn_return_type_refs: HashMap<String, TypeRef>,
     /// Registry 221.1 #1326: a free fn whose declared return is a bare type
     /// parameter (`fn pass[T consume](consume x T) -> T`) maps to the index of
     /// the parameter spelled `T`. The binding's type is then inferred from
@@ -42418,6 +42482,9 @@ impl ConsumeRegistry {
         let mut method_param_output_keys: HashMap<(String, String), Vec<String>> = HashMap::new();
         let mut method_params: HashMap<(String, String), Vec<usize>> = HashMap::new();
         let mut fn_return_types: HashMap<String, String> = HashMap::new();
+        // #1345: full declared return types; a name declared twice is dropped.
+        let mut fn_return_type_refs: HashMap<String, TypeRef> = HashMap::new();
+        let mut fn_return_type_ref_dups: HashSet<String> = HashSet::new();
         let mut fn_return_param_idx: HashMap<String, usize> = HashMap::new();
         let mut method_return_param_idx: HashMap<(String, String), usize> = HashMap::new();
         let mut fn_generic_wrapped_return: HashSet<String> = HashSet::new();
@@ -42787,6 +42854,13 @@ impl ConsumeRegistry {
                                     .insert(fd.name.clone(), path[0].clone());
                             }
                         }
+                        if let Some(rt @ TypeRef::Named { .. }) = &fd.return_type {
+                            if fd.generics.is_empty()
+                                && fn_return_type_refs.insert(fd.name.clone(), rt.clone()).is_some()
+                            {
+                                fn_return_type_ref_dups.insert(fd.name.clone());
+                            }
+                        }
                         // D86-followup: Ok/Some-inner companion (see field doc).
                         if let Some(rt) = &fd.return_type {
                             if let Some(inner) = unwrap_result_option_name(rt, "") {
@@ -42901,6 +42975,12 @@ impl ConsumeRegistry {
         ConsumeRegistry {
             method_param_output_keys,
             methods, fn_params, method_params, fn_return_types, recv_returning,
+            fn_return_type_refs: {
+                for d in &fn_return_type_ref_dups {
+                    fn_return_type_refs.remove(d);
+                }
+                fn_return_type_refs
+            },
             fn_return_param_idx, method_return_param_idx,
             fn_generic_wrapped_return, method_generic_wrapped_return,
             fn_view_params, method_return_types, mut_methods, ro_methods,
@@ -43306,6 +43386,12 @@ struct ConsumeCtx<'a> {
     /// напрямую; place Ident — через эту карту). Неизвестно → None (sound:
     /// false-negative, не false-positive).
     var_unwrapped_types: HashMap<String, String>,
+    /// Registry 221.1 #1345: the FULL type of a single-name binding when this
+    /// pass knows it (annotation, a `Type[Args].ctor(..)` value, or a call of
+    /// a free fn with a declared return) -- `var_types` keeps only the bare
+    /// name, and the auto-cleanup decision for a bound-gated container
+    /// (`cleanup_effects_for`) needs the element type.
+    var_type_refs: HashMap<String, TypeRef>,
     /// Plan 216 tails (Err-payload follow-up, 2026-07-21): companion of
     /// `var_unwrapped_types` — best-effort Err/E-INNER type name (`Option`
     /// has no Err arm, always absent). Same fill discipline (explicit
@@ -43483,6 +43569,7 @@ impl<'a> ConsumeCtx<'a> {
             states: HashMap::new(),
             var_types: HashMap::new(),
             var_unwrapped_types: HashMap::new(),
+            var_type_refs: HashMap::new(),
             var_unwrapped_err_types: HashMap::new(),
             var_unwrapped_tuple_types: HashMap::new(),
             var_unwrapped_err_tuple_types: HashMap::new(),
@@ -43702,6 +43789,15 @@ impl<'a> ConsumeCtx<'a> {
     /// it just was never fed a generics-carrying `TypeRef` at a binding
     /// site. This closes exactly that gap, for ANY generic container (std
     /// or user-defined), not a hardcoded name list.
+    /// #1345: the declared return type of a call of a free fn with a single
+    /// declaration and no type parameters (`make()` -> `Vec[Res]`). Anything
+    /// else -> `None`.
+    fn call_return_type_ref(&self, e: &Expr) -> Option<TypeRef> {
+        let ExprKind::Call { func, .. } = &e.kind else { return None };
+        let ExprKind::Ident(name) = &func.kind else { return None };
+        self.reg.fn_return_type_refs.get(name.as_str()).cloned()
+    }
+
     fn infer_let_type_ref(&self, decl: &LetDecl) -> Option<TypeRef> {
         // Явная аннотация уже несёт generics as-is.
         if let Some(ty @ TypeRef::Named { .. }) = &decl.ty {
@@ -44430,7 +44526,19 @@ impl<'a> ConsumeCtx<'a> {
             // раньше. Типы БЕЗ `@cleanup` (StringBuilder и т.п., §1) —
             // строгая линейность без изменений (`cleanup_effects` даёт
             // `None` для них).
-            let cleanup_row = if is_strict_generic { None } else { self.lin_reg.cleanup_effects(&ty) };
+            // #1345: bound-gated containers (`Vec[T consume Cleanup[E]]`) are
+            // eligible only for an element that has a cleanup (family 2).
+            let full_ty = self.var_type_refs.get(name)
+                .or_else(|| self.var_type_refs.get(&canon));
+            let ty = if ty.is_empty() {
+                match full_ty {
+                    Some(TypeRef::Named { path, .. }) if path.len() == 1 => path[0].clone(),
+                    _ => ty,
+                }
+            } else { ty };
+            let cleanup_row_owned = if is_strict_generic { None }
+                else { self.lin_reg.cleanup_effects_for(&ty, full_ty) };
+            let cleanup_row = cleanup_row_owned.as_ref();
             // №672 (2026-08-21, решение владельца) — ГЛАВНАЯ СТРОЧКА ПРАВКИ.
             // Исключение D432 §2 спрашивает ПРОИСХОЖДЕНИЕ биндинга, а не
             // транзиентный флаг вокруг ОДНОГО вызова (№667). Кодоген
@@ -46308,7 +46416,9 @@ fn check_d162_coverage(
             // type (ЛЮБОЙ declared `@cleanup`, pure or fallible) — already
             // covered on EVERY exit path by the compiler-inserted call,
             // errdefer redundant. See `has_any_cleanup` doc.
-            if lin_reg.has_any_cleanup(&ty) {
+            // #1345: a bound-gated container counts only for an eligible element.
+            if lin_reg.cleanup_effects_for(&ty, ctx.var_type_refs.get(name.as_str())
+                .or_else(|| ctx.var_type_refs.get(&canon))).is_some() {
                 continue;
             }
             // D156 amendment 2026-08-04, family 2 (plan 246): in a fn over a
@@ -46376,7 +46486,9 @@ fn check_d162_coverage(
                 // D432-амендмент 2026-08-04 (№315 fix): same skip as the
                 // error-path loop above — auto-cleanup-eligible type is
                 // already covered on every exit path.
-                if lin_reg.has_any_cleanup(&ty) {
+                // #1345: a bound-gated container counts only for an eligible element.
+                if lin_reg.cleanup_effects_for(&ty, ctx.var_type_refs.get(name.as_str())
+                    .or_else(|| ctx.var_type_refs.get(&canon))).is_some() {
                     continue;
                 }
                 let methods = lin_reg.consume_methods_for(&ty);
@@ -47322,7 +47434,9 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
             let rhs_yields_consume_type = inferred_ty_d180.as_ref()
                 .map(|ty| ctx.lin_reg.is_must_consume_name(ty))
                 .unwrap_or(false);
-            let container_ty_ref_d325 = ctx.infer_let_type_ref(decl);
+            // #1345: a call of a fn declared `-> Vec[Res]` carries the element too.
+            let container_ty_ref_d325 = ctx.infer_let_type_ref(decl)
+                .or_else(|| ctx.call_return_type_ref(&decl.value));
             let rhs_yields_consume_type = rhs_yields_consume_type
                 || container_ty_ref_d325.as_ref()
                     .map(|tyref| ctx.lin_reg.type_is_consume(tyref, ctx.module))
@@ -47492,7 +47606,23 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                     ctx.var_unwrapped_err_tuple_types.insert(names[0].clone(), u);
                 }
             } else {
+                // #1345: the full type too (see `var_type_refs`); an unannotated
+                // `Vec[Res].new()` had no bare name either and was untyped.
+                // `var_types` is deliberately NOT filled from it: the pass's
+                // name-keyed method tables (`recv_returning`,
+                // `method_return_types`) conflate same-name overloads, and a
+                // newly typed `v` sent `consume first = v.remove(0)` down the
+                // `-> @` (`remove(i, n)`) alias path. `cleanup_effects_for`
+                // reads the bare name from `var_type_refs` instead.
+                let full_ty = ctx.infer_let_type_ref(decl)
+                    .or_else(|| ctx.call_return_type_ref(&decl.value));
                 let ty = ctx.infer_let_type(decl);
+                if names.len() == 1 {
+                    match &full_ty {
+                        Some(t) => { ctx.var_type_refs.insert(names[0].clone(), t.clone()); }
+                        None => { ctx.var_type_refs.remove(&names[0]); }
+                    }
+                }
                 // Consume-волна А (D157-амендмент, 2026-07-19): best-effort
                 // Ok/Some-inner тип для D156-пропагации через match/if-let на
                 // именной place-скрутини (`ro sess Result[TcpStream, E] = …`
