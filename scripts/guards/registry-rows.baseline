@@ -1426,6 +1426,10 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1285
+max=1335
+# 2026-09-25, integrator: row 1335 added (a generic method's mode pair whose
+# forms differ by return type: codegen takes the copying form's type). rows 1284->1285, max 1334->1335.
 rows=1284
 max=1334
 # 2026-09-25, integrator: row 1334 added (a receiver-mode pair @m / consume @m

@@ -1,0 +1,16 @@
+// #1335 control: the same pair as free functions -- nova test PASS (temp=7 plain=1).
+// EXPECT_STDOUT temp=7 plain=1
+type Box {
+    n int
+}
+
+fn put(v Box) -> int => 1
+
+fn put(consume v Box) -> Box => v
+
+fn main() Io -> () {
+    ro r = put(Box { n: 7 })
+    ro b = Box { n: 3 }
+    ro q = put(b)
+    print("temp=${r.n} plain=${q}")
+}
