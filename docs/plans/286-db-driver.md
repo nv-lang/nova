@@ -1376,7 +1376,7 @@ SCRAM-SHA-256, простой запрос, `RowDescription` разобран. (
 диалогом (`examples/session-check/src/main.nv:1699`), но НЕ вживую — живой пример идёт
 `BEGIN` → `ROLLBACK`; перенесено в Д8в. Четыре файла `repro-local/` перезапущены — все
 воспроизводятся: реестр №1348 (C-тип `Option[[]u8]`), №1349 (хвост функции с
-`Result[(), E]`). Мелочь: два неиспользуемых импорта в примерах (`QueryError`, `Connection`).
+`Result[(), E]`). Мелочь: два неиспользуемых импорта в примерах (`QueryError`, `Connection`). Опубликован на GitHub (`nv-lang/nova-postgres`, `main`@`5827088`, `ls-remote` сверен). Бриф Д8в для исполнителя — `nova-postgres/BRIEF-D8c.md` (локальный, в `.gitignore`, как прежние).
 
 ### Д8в. Срез: TLS соединения через `nova-tls` и структурные ошибки адаптера
 
