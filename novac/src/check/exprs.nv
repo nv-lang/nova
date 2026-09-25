@@ -595,12 +595,17 @@ fn Checker mut @type_expr(e Node) -> () {
         // is a type the checker already established here. Before this, the
         // emission asked the channel, got nothing and printed `->` for a value
         // record -- `(a->n)` on a struct, which clang refuses (2026-08-23).
-        if is_ty(owner) {
-            @record(kids[0], owner)
-        } else {
-            // The operand's type is unknown -- the refusal above named it, and a
-            // hole is not something to record.
+        // A POISONED OWNER says nothing more (one cause, one diagnostic): the
+        // operand typed without a new refusal and still has no type, so it is a
+        // name an earlier refusal bound with none (`@bind_poisoned`) -- the
+        // method call's receiver has the same silence (type_of.nv). Asking the
+        // record door about it answered "unknown field" for a field that exists:
+        // `ro r = t.rows[i]` refused at the index, then `r.a` refused again.
+        if !is_ty(owner) {
+            // SILENT-OK: the earlier refusal that poisoned the operand already spoke.
+            return
         }
+        @record(kids[0], owner)
         // A POSITIONAL owner is judged before the record door, by its SHAPE.
         // The anonymous term has no declaration for `has_field` to ask, and
         // its arity is what the term's head stores (B15 step 4a). The

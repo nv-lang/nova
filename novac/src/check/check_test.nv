@@ -524,6 +524,14 @@ test "a bare `return` is the early exit of a body that returns no value, and sta
     assert(diagnose_first_msg(value).contains("must carry a value"), diagnose_first_msg(value))
 }
 
+test "a field read on a POISONED name says nothing more -- one cause, one diagnostic" {
+    // `ro r = <refused>` binds `r` with no type; `r.a` used to add "unknown
+    // field" about a field that exists (the index-then-field cascade over
+    // novac's own source).
+    ro src = "module m\n\nfn f() -> int {\n    ro r = nosuch(1)\n    r.a\n}\n"
+    assert(diagnose(src) == 1, diagnose_first_msg(src))
+}
+
 test "a closed `str` slice is compiled; other receivers, open bounds and non-int bounds keep their refusals (274.7 U-1)" {
     // D470 section 5: `s[lo..hi]` is `s.index(Range { start: lo, end: hi })`, a
     // byte range of type `str` (D249). Wave U-1 compiles the closed form over
