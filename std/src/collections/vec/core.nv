@@ -66,7 +66,12 @@ import std.runtime.raw_mem.{RawMem}
 /// ```
 export type Vec[T consume] priv {
     // Raw element buffer. `cap` elements wide; first `len` are live.
-    // Never read/written outside `unsafe` blocks in this module.
+    // Never read/written outside `unsafe` blocks in this module. The
+    // canonical empty Vec (`new()`, or `@cap(0)`) carries the NULL typed
+    // pointer with `len == cap == 0` (D232 amend 2026-09-24) — every use
+    // below is len-guarded so the null is never dereferenced or memcpy'd
+    // from (offset arithmetic on it is a harmless integer add: at len 0
+    // the result is never read, owner ruling 2026-09-25).
     //
     // Declared `mut data *mut T` under the THREE-AXIS pointer model:
     //   - L1 binding-mut (`mut` before the name) makes the *field* reassignable
@@ -92,19 +97,30 @@ export type Vec[T consume] priv {
 // Constructors
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Create a `Vec[T]` — always a single allocation of `cap.max(1)` element
-/// slots (`len == 0`), no rounding. `cap == 0` (default,
-/// `Vec[T].new()`): logically empty (`@cap() == 0`) but backed by a 1-slot
-/// placeholder buffer — same non-null-pointer-always invariant the old
-/// placeholder (ex-null_buf) path gave, just folded into this one expression; the slot is
-/// never read/written until the first `@push`/`@reserve` grows it. `cap: n`
-/// (`n > 0`): exactly `n` pre-allocated element slots. Equivalent to
-/// `Vec[T].new().cap(n)` but one call, one allocation — the canonical
-/// pre-sizing spelling (`Vec[T].new(cap: 1024)`, or positionally
-/// `Vec[T].new(1024)`).
+/// Create a `Vec[T]` (D232 amend 2026-09-24: the empty Vec is null-backed,
+/// zero-allocation).
+///
+/// `Vec[T].new()` (default `cap == 0`): the canonical empty state — `data`
+/// is the null typed pointer (`0 as *mut T`, D227 Rule 7), `len == cap ==
+/// 0`, and NO allocation happens until the first `@push`/`@reserve`/`@cap(n)`
+/// grows it (measured: ~24 B per kept-alive empty Vec, down from ~51 with
+/// the retired 1-slot placeholder). The consumer contract is len-guarded
+/// access: at `len == 0` the data pointer carries no data contract — never
+/// dereference it, do pointer arithmetic on it, or hand it to `memcpy` as a
+/// source; a zero-length access is a domain no-op, not an error.
+///
+/// `cap: n` (`n > 0`): exactly `n` pre-allocated element slots, one
+/// allocation. Equivalent to `Vec[T].new().cap(n)` but one call, one
+/// allocation — the canonical pre-sizing spelling (`Vec[T].new(cap: 1024)`,
+/// or positionally `Vec[T].new(1024)`).
 export fn Vec[T consume].new(cap int = 0) -> Self
     requires cap >= 0
-    => { data: alloc_buf[T](cap.max(1)), len: 0, cap }
+{
+    if cap == 0 {
+        return { data: 0 as *mut T, len: 0, cap: 0 }
+    }
+    { data: alloc_buf[T](cap), len: 0, cap }
+}
 
 /// VIEW-form (owner 2026-07-17): zero-copy read-only view over a foreign
 /// buffer — `cap == len` (does not grow), returns `ro Self` (L2: push/index-
@@ -229,9 +245,11 @@ export fn Vec[T consume] mut @cap(n int) -> @
 {
     if n == @cap { return }
     if n == 0 {
-        // 1-slot non-null placeholder (как в `new(cap=0)`): никогда не
-        // разыменовывается — `len`/`cap` гардят каждый доступ.
-        @data = alloc_buf[T](1)
+        // Shrink-to-empty returns to the canonical empty state (D232
+        // amend 2026-09-24): null data, cap 0 — an emptied Vec releases
+        // its buffer. Requires `n >= @len` guarantees `len == 0` here, so
+        // no live element is dropped by releasing.
+        @data = 0 as *mut T
         @cap = 0
         return
     }
@@ -240,9 +258,13 @@ export fn Vec[T consume] mut @cap(n int) -> @
     // `dst`) are distinct GC-tracked buffers, so `copy_nonoverlapping` (memcpy)
     // is safe and faster than a per-element loop. Pointer-valued elements move
     // bitwise; both buffers are reachable during the copy so the GC keeps every
-    // referent alive.
-    unsafe {
-        RawMem.copy_n_nonoverlapping(@data, dst, @len)
+    // referent alive. SKIPPED ENTIRELY at `len == 0`: the source may be the
+    // null empty-state pointer, and `memcpy(NULL, dst, 0)` is formally UB in
+    // C — a zero-length copy is a no-op, so the guard costs nothing.
+    if @len > 0 {
+        unsafe {
+            RawMem.copy_n_nonoverlapping(@data, dst, @len)
+        }
     }
     @data = dst
     @cap = n
@@ -294,7 +316,7 @@ fn alloc_buf[T consume](n int) -> *mut T {
     }
 }
 
-// (empty-cap
-// placeholder = `alloc_buf[T](1)` напрямую: non-null, never-dereferenced,
-// `len`/`cap` гардят каждый доступ.)
+// (empty-cap is NOT special here anymore: `new()` hands out the null
+// zero-allocation empty state directly, D232 amend 2026-09-24 — there is
+// no placeholder buffer left to fold in.)
 

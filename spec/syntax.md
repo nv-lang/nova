@@ -571,6 +571,13 @@ Do not use them for other purposes.
   own cleanup that walks the elements and, per
   [D432](decisions/02-types.md#d432), becomes affine — you may forget it, the
   compiler inserts the call.
+- **An empty `Vec` and an empty slice allocate nothing** ([D232 amendment
+  2026-09-24](decisions/02-types.md#d232-vect--nova-native-generic-growable-array)): `Vec[T].new()`
+  and a zero-length `[]T` have a null data pointer and `cap == len == 0`; memory is allocated only
+  on the first `push` / `reserve` / `cap(n)`. At `len == 0` the pointer carries no data contract:
+  it is never dereferenced or handed to `memcpy` as a source; across FFI emptiness is the pair
+  `(NULL, 0)`. An empty `str`'s pointer is unspecified (the `""` literal is interned); judge it by
+  `byte_len()`.
 - **A plain `[T]` admits only ordinary types** ([D156 amendment,
   2026-09-24](decisions/02-types.md#d156)): a must-consume type is substituted only into a
   `[T consume]` parameter, whose body the compiler checks strictly. A container is declared
