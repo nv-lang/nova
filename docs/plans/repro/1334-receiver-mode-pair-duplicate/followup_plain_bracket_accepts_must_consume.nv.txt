@@ -1,0 +1,30 @@
+// Seen fixing #1334: D156 amendment 2026-09-24 point 4 (spec/decisions/02-types.md) -- a
+// method whose receiver is written with a plain `[T]` is available only for an ordinary `T`
+// (point 1: `E_CONSUME_TYPE_ARG_UNBOUNDED`). The oracle does not enforce it: `nova check`
+// PASSES this file, where the ONLY `mapx` is the plain `[T]` form and it is called on an
+// `Opt[Res]` (must-consume payload) -- the copying body runs over a linear value. The code
+// `E_CONSUME_TYPE_ARG_UNBOUNDED` does not occur anywhere in compiler-codegen/src.
+// Expected per the amendment: a refusal at the call.
+// EXPECT_COMPILE_ERROR E_CONSUME_TYPE_ARG_UNBOUNDED
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> int => @id
+
+type Opt[T consume] enum Som(T) | Non
+
+fn Opt[T] @mapx[U](f fn(T) -> U) -> Opt[U] => match @ {
+    Som(v) => Som(f(v))
+    Non => Non
+}
+
+fn fin(consume o Opt[Res]) -> int => match consume o {
+    Som(consume x) => x.close()
+    Non => 0
+}
+
+fn main() Io -> () {
+    consume r2 Opt[Res] = Som(Res { id: 6 }).mapx(|x| x)
+    println("k2=${fin(r2)}")
+}

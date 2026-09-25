@@ -1406,7 +1406,13 @@ fn check_module_impl(
                 // ось различается — overload валиден.
                 // Plan 135: receiver-mutability is a valid overload axis.
                 // `fn T @m()` and `fn T mut @m()` are distinct overloads.
-                let new_recv_mut = fd.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
+                // Registry 221.1 #1334: the receiver MODE is the whole triple
+                // {ro, mut, consume} (D84 mode-axis amendment 2026-07-06, R14:
+                // `@` is the zeroth parameter), so `fn T @m()` and
+                // `fn T consume @m()` are distinct overloads too. The key used
+                // to compare only `mutable` and refused that pair as a duplicate.
+                let new_recv_mut = fd.receiver.as_ref()
+                    .map(|r| (r.mutable, r.consume)).unwrap_or((false, false));
                 // Plan 184 (Р13/Р14): parameter MODE {ro,mut,consume} is a valid
                 // overload axis too (unified with the receiver axis: `@` is the
                 // zeroth parameter). `f(x T)` / `f(mut x T)` / `f(consume x T)`
@@ -1415,7 +1421,8 @@ fn check_module_impl(
                 // `is_mut` AND same `consume`.
                 let dup_existing = entry.iter().find(|existing| {
                     // Plan 135: if receiver-mutability differs, NOT a duplicate.
-                    let existing_recv_mut = existing.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
+                    let existing_recv_mut = existing.receiver.as_ref()
+                        .map(|r| (r.mutable, r.consume)).unwrap_or((false, false));
                     if existing_recv_mut != new_recv_mut { return false; }
                     // Arity + arg-types + param-modes одинаковы?
                     let args_equal = existing.params.len() == fd.params.len()
@@ -1438,7 +1445,8 @@ fn check_module_impl(
                     // in both user file and the merged-via-prelude
                     // std/collections/range.nv. User wins.
                     let dup_pos = entry.iter().position(|existing| {
-                        let existing_recv_mut = existing.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
+                        let existing_recv_mut = existing.receiver.as_ref()
+                            .map(|r| (r.mutable, r.consume)).unwrap_or((false, false));
                         if existing_recv_mut != new_recv_mut { return false; }
                         let args_equal = existing.params.len() == fd.params.len()
                             && existing.params.iter().zip(fd.params.iter())
@@ -16309,9 +16317,13 @@ impl<'a> TypeCheckCtx<'a> {
         if !same_shape {
             return ModeAxisVerdict::NoVerdict;
         }
-        let recv_mut = |f: &FnDecl| f.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
+        // Registry 221.1 #1334: the receiver axis is the full {ro, mut,
+        // consume} triple (D84 mode-axis amendment, R14: `@` is the zeroth
+        // parameter) -- `fn T @m()` / `fn T consume @m()` differ on it too.
+        let recv_mode = |f: &FnDecl| f.receiver.as_ref()
+            .map(|r| (r.mutable, r.consume)).unwrap_or((false, false));
         let axis_differs = compat_fns.windows(2).any(|w| {
-            recv_mut(w[0]) != recv_mut(w[1])
+            recv_mode(w[0]) != recv_mode(w[1])
                 || w[0].params.iter().zip(w[1].params.iter())
                     .any(|(a, b)| (a.consume, a.is_mut) != (b.consume, b.is_mut))
         });
@@ -16325,7 +16337,16 @@ impl<'a> TypeCheckCtx<'a> {
         let mut scored: Vec<(&FnDecl, Vec<u8>)> = Vec::new();
         'cand: for f in compat_fns {
             let mut ranks: Vec<u8> = Vec::with_capacity(f.params.len() + 1);
-            if recv_mut(f) {
+            let (r_mut, r_consume) = recv_mode(f);
+            if r_consume {
+                // #1334, rule 3 on the zeroth parameter: the consuming receiver
+                // form takes a temporary or a `consume`-spelled binding only; a
+                // `ro`/`mut` binding keeps the copying form and stays live.
+                if !obj.map(|o| self.expr_mode_axis_consume_eligible(o)).unwrap_or(false) {
+                    continue 'cand;
+                }
+                ranks.push(2);
+            } else if r_mut {
                 if !obj_mut { continue 'cand; }
                 ranks.push(1);
             } else {
@@ -16607,6 +16628,69 @@ impl<'a> TypeCheckCtx<'a> {
         None
     }
 
+    /// Registry 221.1 #1334: does `method` on the receiver type `ty` have two
+    /// declarations that differ in the receiver's `consume` (a receiver-mode
+    /// pair, D84 mode axis, R14)? Only gates the receiver-type fallback in
+    /// `check_instance_overload`.
+    fn has_recv_consume_pair(&self, ty: &TypeRef, method: &str) -> bool {
+        let mut rt = ty;
+        while let TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) = rt {
+            rt = i;
+        }
+        let TypeRef::Named { path, .. } = rt else { return false };
+        if path.len() != 1 {
+            return false;
+        }
+        self.sig.method_table.get(&path[0])
+            .and_then(|m| m.get(method))
+            .map_or(false, |fs| {
+                let consume_of = |f: &&FnDecl| f.receiver.as_ref().map_or(false, |r| r.consume);
+                fs.iter().any(|f| consume_of(f)) && fs.iter().any(|f| !consume_of(f))
+            })
+    }
+
+    /// Registry 221.1 #1334: the owning sum of a tuple-variant constructor call
+    /// of a GENERIC user sum (`Som(Res { id: 5 })` -> `Opt`), which
+    /// `infer_expr_type` deliberately leaves `None` (generic sums stay on
+    /// codegen's mono path; see `infer_call_sum_variant_stays_unknown`). Feeds
+    /// ONLY the receiver-mode-pair fallback of `check_instance_overload`: a
+    /// constructor call is the plainest temporary receiver, and without its
+    /// type the pair got no verdict. Exactly one owning sum or `None` -- a
+    /// variant name shared by two generic sums is not guessed; the callee name
+    /// must not be a local or a declared free fn.
+    fn generic_sum_ctor_owner(
+        &self,
+        e: &Expr,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Option<TypeRef> {
+        let ExprKind::Call { func, args, .. } = &e.kind else { return None };
+        let ExprKind::Ident(name) = &func.kind else { return None };
+        if scope.contains_key(name)
+            || self.sig.fn_decls.get(name)
+                .map_or(false, |ov| ov.iter().any(|f| f.receiver.is_none()))
+        {
+            return None;
+        }
+        let owners: Vec<&String> = self.types.iter()
+            .filter_map(|(type_name, td)| match &td.kind {
+                TypeDeclKind::Sum(variants)
+                    if !td.generics.is_empty()
+                        && variants.iter().any(|v| &v.name == name && matches!(&v.kind,
+                            SumVariantKind::Tuple(fields) if fields.len() == args.len())) =>
+                    Some(type_name),
+                _ => None,
+            })
+            .collect();
+        match owners.as_slice() {
+            [only] => Some(TypeRef::Named {
+                path: vec![(*only).clone()],
+                generics: Vec::new(),
+                span: e.span,
+            }),
+            _ => None,
+        }
+    }
+
     fn check_instance_overload(
         &self,
         obj: &Expr,
@@ -16661,7 +16745,18 @@ impl<'a> TypeCheckCtx<'a> {
             if matches!(obj.kind, ExprKind::Member { .. }) {
                 self.infer_expr_type(obj, scope)
             } else {
-                None
+                // Registry 221.1 #1334: a receiver-mode pair (`fn T @m()` /
+                // `fn T consume @m()`) is resolved by the RECEIVER's shape (rule 3:
+                // a temporary takes the consuming form), and the commonest
+                // temporary -- a call result (`mk().take()`, `x.id().take()`) --
+                // is exactly what the lightweight probe misses. Without a verdict
+                // here codegen fell back to the first (copying) declaration.
+                // Gated to a type whose method HAS such a pair, a shape refused as
+                // a duplicate before #1334, so every other call site stays
+                // byte-identical (see the `Member`-only rationale above).
+                self.infer_expr_type(obj, scope)
+                    .or_else(|| self.generic_sum_ctor_owner(obj, scope))
+                    .filter(|t| self.has_recv_consume_pair(t, method_name))
             }
         }) else { return; };
         // Plan 172.2: normalize the receiver to a single `type_name`, mapping
@@ -39082,7 +39177,10 @@ enum ModeAxisVerdict {
 /// №857: one overload candidate as the D84 rejection lists it — name plus
 /// parameters with their declared modes, e.g. `f(consume a int, b int, c int)`.
 fn mode_axis_candidate_desc(f: &FnDecl) -> String {
-    let recv = f.receiver.as_ref().map(|r| if r.mutable { "mut @" } else { "@" }).unwrap_or("");
+    // #1334: the receiver mode is the full {ro, mut, consume} triple.
+    let recv = f.receiver.as_ref()
+        .map(|r| if r.consume { "consume @" } else if r.mutable { "mut @" } else { "@" })
+        .unwrap_or("");
     let params: Vec<String> = f.params.iter().map(|p| {
         let mode = if p.consume { "consume " } else if p.is_mut { "mut " } else { "" };
         format!("{}{} {}", mode, p.name, render_type_ref(&p.ty))
@@ -41555,6 +41653,22 @@ fn mode_pair_positions(shapes: Option<&Vec<ModeShape>>) -> Vec<usize> {
     out
 }
 
+/// Registry 221.1 #1334: the receiver twin of `mode_pair_positions` -- do a
+/// method's declarations form a COPYING/CONSUMING pair on the RECEIVER (two
+/// declarations of the same arity, pairwise identical parameter types by
+/// `typeref_equal`, one with a `consume @` receiver and one without)? Then the
+/// receiver expression, not the name, decides the form (rule 3, R14).
+fn recv_mode_pair(shapes: Option<&Vec<(bool, ModeShape)>>) -> bool {
+    let Some(shapes) = shapes else { return false };
+    shapes.iter().enumerate().any(|(ai, (ac, a))| {
+        shapes.iter().skip(ai + 1).any(|(bc, b)| {
+            ac != bc
+                && a.len() == b.len()
+                && a.iter().zip(b.iter()).all(|(x, y)| typeref_equal(&x.1, &y.1))
+        })
+    })
+}
+
 /// Registry 221.1 #1332: which callee a call's consume positions are asked
 /// for — see `ConsumeCtx::callee_consume_idxs`.
 enum ConsumeCallee<'k> {
@@ -41729,6 +41843,14 @@ struct ConsumeRegistry {
     fn_mode_shapes: HashMap<String, Vec<ModeShape>>,
     /// #1332, method twin of `fn_mode_shapes`, keyed `(receiver_type, method)`.
     method_mode_shapes: HashMap<(String, String), Vec<ModeShape>>,
+    /// Registry 221.1 #1334: the receiver twin of `method_mode_shapes` --
+    /// per declaration, `(receiver declared consume, parameter shape)`. `methods`
+    /// keeps one "consumes its receiver" bit per `(type, method)`, so a
+    /// receiver-mode pair (`fn Box @take()` / `fn Box consume @take()`) looked
+    /// like "the receiver is always consumed", although rule 3 (10-overloading.md,
+    /// D84 mode axis, R14: `@` is the zeroth parameter) sends a `ro`/`mut`
+    /// binding to the copying form. See `recv_mode_pair`.
+    method_recv_shapes: HashMap<(String, String), Vec<(bool, ModeShape)>>,
     /// D246-амендмент §72 ([M-ro-launder-fullstack-value-exemption], Ф.2,
     /// 2026-07-24): name-keyed companion of `is_fully_stack_value`
     /// (types/mod.rs free fn) for the call-ARGUMENT ro-launder position,
@@ -42015,6 +42137,9 @@ impl ConsumeRegistry {
         // Registry 221.1 #1332: per-name parameter shapes (see field doc).
         let mut fn_mode_shapes: HashMap<String, Vec<ModeShape>> = HashMap::new();
         let mut method_mode_shapes: HashMap<(String, String), Vec<ModeShape>> = HashMap::new();
+        // #1334: per-(type, method) receiver mode + parameter shape.
+        let mut method_recv_shapes: HashMap<(String, String), Vec<(bool, ModeShape)>> =
+            HashMap::new();
         // Plan 118.5 V2 [M-118.5-arg-coerce-unsafe]: non-unsafe-T params
         // indices (positions where param's outer wrapper is NOT Unsafe).
         let mut fn_non_unsafe_params: HashMap<String, Vec<usize>> = HashMap::new();
@@ -42216,6 +42341,10 @@ impl ConsumeRegistry {
                             .entry((r.type_name.clone(), fd.name.clone()))
                             .or_default()
                             .push(mode_shape_of(fd));
+                        method_recv_shapes
+                            .entry((r.type_name.clone(), fd.name.clone()))
+                            .or_default()
+                            .push((r.consume, mode_shape_of(fd)));
                         if r.consume {
                             methods.insert((r.type_name.clone(), fd.name.clone()));
                         }
@@ -42458,7 +42587,7 @@ impl ConsumeRegistry {
             mut_methods_arity, ro_methods_arity, recv_returning_arity,
             fn_mut_params, method_mut_params,
             fn_overload_names, method_overload_names, stack_value_type_names,
-            fn_mode_shapes, method_mode_shapes,
+            fn_mode_shapes, method_mode_shapes, method_recv_shapes,
             fn_non_unsafe_params, method_non_unsafe_params,
             record_consume_fields, record_field_names, record_field_types,
             unwrapped_method_return_types, unwrapped_fn_return_types,
@@ -42581,6 +42710,11 @@ impl ConsumeRegistry {
                         .entry((r.type_name.clone(), fd.name.clone()))
                         .or_default()
                         .push(mode_shape_of(fd));
+                    // #1334: and to the receiver shapes.
+                    self.method_recv_shapes
+                        .entry((r.type_name.clone(), fd.name.clone()))
+                        .or_default()
+                        .push((r.consume, mode_shape_of(fd)));
                 }
                 None => {
                     if !consume_idx.is_empty() {
@@ -43714,8 +43848,26 @@ impl<'a> ConsumeCtx<'a> {
     /// каноническому имени alias-класса).
     fn is_consume_method(&self, recv_var: &str, method: &str) -> bool {
         self.var_types.get(&self.canonical(recv_var))
-            .map(|ty| self.reg.methods.contains(&(ty.clone(), method.to_string())))
+            .map(|ty| self.recv_takes_consuming_form(ty, method, recv_var))
             .unwrap_or(false)
+    }
+
+    /// Registry 221.1 #1334: the ONE place the consume pass asks "does this
+    /// call of `ty.method` on the NAMED receiver `recv_var` consume it?".
+    /// Without a receiver-mode pair it is the old per-name answer
+    /// (`reg.methods`). With a pair (`fn Box @take()` / `fn Box consume
+    /// @take()`, `recv_mode_pair`) rule 3 of the D84 mode axis (R14: `@` is
+    /// the zeroth parameter) lets the receiver choose: a `consume`-spelled
+    /// binding takes the consuming form and is consumed, a `ro`/`mut`
+    /// binding takes the copying form and stays live -- the mirror of the
+    /// dispatch's `expr_mode_axis_consume_eligible` on an `Ident` receiver.
+    fn recv_takes_consuming_form(&self, ty: &str, method: &str, recv_var: &str) -> bool {
+        let key = (ty.to_string(), method.to_string());
+        if !self.reg.methods.contains(&key) {
+            return false;
+        }
+        !recv_mode_pair(self.reg.method_recv_shapes.get(&key))
+            || self.consume_bound_names.contains(recv_var)
     }
 
     /// Пометить аргументы в consume-позициях как потреблённые.
@@ -48554,9 +48706,14 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
             if let (Some((self_ty, self_is_consume)), ExprKind::Member { obj, name }) =
                 (ctx.self_recv.clone(), &func.kind)
             {
+                // #1334: with a receiver-mode pair `@.m()` takes the copying
+                // form (`@` is not consume-eligible, rule 3) -- nothing is
+                // consumed, so there is nothing to refuse.
                 if !self_is_consume
                     && matches!(obj.kind, ExprKind::SelfAccess)
                     && ctx.reg.methods.contains(&(self_ty.clone(), name.clone()))
+                    && !recv_mode_pair(ctx.reg.method_recv_shapes
+                        .get(&(self_ty.clone(), name.clone())))
                 {
                     errors.push(Diagnostic::new(
                         format!(
@@ -49088,11 +49245,16 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                             for a in args { consume_walk_expr(ctx, a.expr(), errors); }
                             if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
                             // Если метод — consume-метод типа поля → mark field Consumed.
+                            // #1334: a field receiver is not consume-eligible
+                            // (rule 3), so with a receiver-mode pair the call
+                            // takes the copying form and consumes nothing.
                             let is_consume_method = ctx.lin_reg.consume_levels.iter()
                                 .filter(|(_, lvl)| **lvl == ConsumeLevel::MustConsume)
                                 .any(|(ty, _)| ctx.lin_reg.consume_methods
                                     .get(ty.as_str())
-                                    .map_or(false, |ms| ms.contains(method)));
+                                    .map_or(false, |ms| ms.contains(method))
+                                    && !recv_mode_pair(ctx.reg.method_recv_shapes
+                                        .get(&(ty.clone(), method.clone()))));
                             if is_consume_method {
                                 // Verify field indeed tracked (is a consume-field).
                                 if ctx.field_states.contains_key(field_name.as_str()) {

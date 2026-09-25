@@ -1,0 +1,32 @@
+// Seen fixing #1334 (not caused by it): an UNANNOTATED binding of a user generic sum's
+// constructor is untyped in the checker (`infer_expr_type` leaves a generic sum ctor `None`
+// on purpose), so a method call on it gets no checker verdict. With a must-consume payload
+// codegen also loses the binding's type -- `nova test`: CODEGEN-FAIL
+// [E_CODEGEN_TYPE_UNKNOWN] method call `.mapx` return type unknown; obj_ty="uint32_t" obj=Ident(r).
+// ONE declaration of `mapx` here -- no receiver-mode pair -- so this is not the #1334 class.
+// Control: `consume r Opt[Res] = Som(Res { id: 5 })` (annotated) compiles and prints k=5.
+// For the #1334 pair the same gap means an unannotated `ro a = Som(3)` receiver is resolved by
+// codegen's legacy "first declaration" rule, not by rule 3.
+// EXPECT_STDOUT k=5
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> int => @id
+
+type Opt[T consume] enum Som(T) | Non
+
+fn Opt[T consume] consume @mapx[U consume](f fn(T) -> U) -> Opt[U] => match consume @ {
+    Som(consume v) => Som(f(v))
+    Non => Non
+}
+
+fn main() Io -> () {
+    consume r = Som(Res { id: 5 })
+    consume r2 Opt[Res] = r.mapx(|x| x)
+    ro k = match consume r2 {
+        Som(consume x) => x.close()
+        Non => 0
+    }
+    print("k=${k}")
+}

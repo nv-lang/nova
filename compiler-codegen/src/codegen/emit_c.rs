@@ -7090,6 +7090,7 @@ impl CEmitter {
                     // marker (FFI/runtime entries) — default false. Ф.2 can extend
                     // ExternalDecl/ExternalRegistry to carry mutability if needed.
                     recv_mutable: false,
+                    recv_consume: false,
                     // Plan 184 (Р13/Р14): external entries carry no per-param mode
                     // markers — empty vector degrades matchers to pre-184 behaviour.
                     param_modes: Vec::new(),
@@ -7953,10 +7954,15 @@ impl CEmitter {
                                     Self::type_ref_overload_key(&gp.ty)
                                         == Self::type_ref_overload_key(&fp.ty)
                                         && (gp.consume, gp.is_mut) == (fp.consume, fp.is_mut))
+                                // #1334: the receiver mode is the full triple --
+                                // `fn Opt[T] @mapx` / `fn Opt[T consume] consume @mapx`
+                                // are two declarations, not one re-supplied twice.
                                 && g.receiver.as_ref().map(|r| {
-                                    (r.mutable, matches!(r.kind, crate::ast::ReceiverKind::Static))
+                                    (r.mutable, r.consume,
+                                     matches!(r.kind, crate::ast::ReceiverKind::Static))
                                 }) == f.receiver.as_ref().map(|r| {
-                                    (r.mutable, matches!(r.kind, crate::ast::ReceiverKind::Static))
+                                    (r.mutable, r.consume,
+                                     matches!(r.kind, crate::ast::ReceiverKind::Static))
                                 })
                         });
                         if !dup {
@@ -8474,6 +8480,7 @@ impl CEmitter {
                         param_defaults,
                         // Plan 128 Ф.1: free fns have no receiver — false.
                         recv_mutable: false,
+                        recv_consume: false,
                         // Plan 184 (Р13/Р14): parameter-mode overload axis.
                         param_modes: Self::fn_param_modes(f),
                         // U.4.3 c2.2: source FnDecl identity for the dispatch consume.
@@ -8741,6 +8748,7 @@ impl CEmitter {
                         param_defaults,
                         // Plan 128 Ф.1: capture recv.mutable for downstream ABI dispatch.
                         recv_mutable: recv.mutable,
+                        recv_consume: recv.consume,  // #1334: receiver-consume axis
                         // Plan 184 (Р13/Р14): parameter-mode overload axis.
                         param_modes: Self::fn_param_modes(f),
                         // U.4.3 c2.2: source FnDecl identity — the KEY site for the
@@ -8840,6 +8848,7 @@ impl CEmitter {
                         // the original (Ф.2 will use this when shaping the
                         // proxy's nova_self ABI).
                         recv_mutable: base_sig.recv_mutable,
+                        recv_consume: base_sig.recv_consume,  // #1334: receiver-consume axis
                         // Plan 184 (Р13/Р14): proxy inherits base method's param modes.
                         param_modes: base_sig.param_modes.clone(),
                         // U.4.3 c2.2: D39 embed proxy is synthesized (no single FnDecl).
@@ -11926,6 +11935,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Using it here for correctness; checker enforcement (Ф.2)
                         // will wire full mut-receiver dispatch for protocol methods.
                         recv_mutable: m.receiver_mut,
+                        recv_consume: false,
                         // Plan 184 (Р13/Р14): protocol-default params default to `ro`.
                         param_modes: vec![0u8; param_c_tys.len()],
                         // U.4.3 c2.2: protocol-default method is synthesized (no FnDecl).
@@ -17479,6 +17489,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // demand. Inherit from FnDecl recv.mutable; concrete mono'd
                     // emission will use this when registering the real sig.
                     recv_mutable: recv.mutable,
+                    recv_consume: recv.consume,  // #1334: receiver-consume axis
                     // Plan 184 (Р13/Р14): generic mono-sentinel — carry the source
                     // param modes so a concrete mono method can still be mode-matched.
                     param_modes: Self::fn_param_modes(f),
@@ -19905,17 +19916,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // mode-overload (`fn T @m(x H)` vs `fn T mut @m(mut x H)`) emits
                     // its OWN body under its OWN mangled symbol.
                     let want_modes = Self::fn_param_modes(f);
-                    // Pass 0: exact match on params + recv_mutable + param_modes.
+                    // Registry 221.1 #1334: the receiver-consume axis too --
+                    // `fn T @m()` / `fn T consume @m()` share params and
+                    // `recv_mutable`, so without it both bodies took the
+                    // first one's symbol (C redefinition).
+                    let want_recv_consume = recv.consume;
+                    // Pass 0: exact match on params + receiver mode + param_modes.
                     for sig in overloads.iter() {
                         if sig.param_c_types == want_params
                             && sig.recv_mutable == want_recv_mut
+                            && sig.recv_consume == want_recv_consume
                             && sig.param_modes == want_modes {
                             return sig.c_name.clone();
                         }
                     }
-                    // First pass: exact match on both params + recv_mutable.
+                    // First pass: exact match on both params + receiver mode.
                     for sig in overloads.iter() {
-                        if sig.param_c_types == want_params && sig.recv_mutable == want_recv_mut {
+                        if sig.param_c_types == want_params && sig.recv_mutable == want_recv_mut
+                            && sig.recv_consume == want_recv_consume {
                             return sig.c_name.clone();
                         }
                     }
