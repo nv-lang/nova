@@ -1059,6 +1059,15 @@ type SqlType enum
 The box is invisible at the use site: a `match` arm binds the inner value directly,
 and no `unsafe` is required.
 
+**Value placement is Carina's to implement** (plan 274, T2); the oracle has none
+planned — the owner's criterion is to change the oracle only for what Carina
+cannot build without, and a heap sum does not block her. **As of D477 sec 5b
+(2026-09-25) the oracle PARSES the marker** — the token is accepted and
+discarded, the sum stays on the heap as always — which unblocks code written
+against the future syntax (plan 286) without granting placement:
+`E_RECURSIVE_NEEDS_INDIRECT` and `E_RECURSIVE_NO_BASE_CASE` below are Carina's
+only, too.
+
 ```nova
 match t {
     SqlType.TList(inner) => …      // inner : SqlType

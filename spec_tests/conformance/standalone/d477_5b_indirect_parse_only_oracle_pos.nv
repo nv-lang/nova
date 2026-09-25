@@ -1,0 +1,23 @@
+// EXPECT_STDOUT node(leaf(1),leaf(2))
+module standalone.d477_5b_indirect_parse_only_oracle_pos
+// D477 §5б (2026-09-25): the oracle PARSES `indirect` on a sum variant and
+// discards it -- placement is unchanged (still heap, always), so this
+// fixture only proves the marker does not break parse/build/run. It is NOT
+// the D477 §5 positive fixture (that one proves stack placement and still
+// belongs to Carina's own merge). A recursive sum WITHOUT the marker would
+// build identically on the oracle today; this file exists so a package that
+// writes `indirect` for Carina's sake (plan 286's SqlType) still compiles
+// here too.
+type Tree enum
+    | Leaf(int)
+    | indirect Node(Tree, Tree)
+
+fn describe(t Tree) -> str => match t {
+    Tree.Leaf(n) => "leaf(${n})"
+    Tree.Node(l, r) => "node(${describe(l)},${describe(r)})"
+}
+
+fn main() Io -> () => {
+    ro t = Tree.Node(Tree.Leaf(1), Tree.Leaf(2))
+    print(describe(t))
+}

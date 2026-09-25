@@ -5790,6 +5790,22 @@ impl Parser {
                 break;
             }
         }
+        // D477 (owner 2026-09-25, parse-only carve-out to §5): `indirect` on a
+        // variant is Carina's marker for breaking recursion when a sum places
+        // by value. The oracle places every sum on the heap unconditionally
+        // (types/mod.rs, boxing short-circuit "A Sum is ALWAYS heap") and §5
+        // keeps it that way -- there is no placement decision here for the
+        // marker to change. Accepting and discarding the token is the whole
+        // change: it lets a package written against the target syntax (plan
+        // 286's `SqlType.TList`, docs/plans/286-db-driver.md:924) at least
+        // PARSE on the oracle instead of hard-failing on an unknown token,
+        // with zero effect on emission. `indirect` is a contextual keyword
+        // (Ident match), same device as `value` above in this file, and
+        // carries the same backward-compat trade-off; a corpus-wide search
+        // turned up no variant actually named `indirect` today.
+        if matches!(self.peek().kind, TokenKind::Ident(ref s) if s == "indirect") {
+            self.bump();
+        }
         let (name, name_span) = self.parse_ident()?;
         let kind = match self.peek().kind {
             TokenKind::LParen => {

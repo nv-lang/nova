@@ -463,7 +463,15 @@
 # already-accepted behavior, nothing NEW for self-hosting to catch up on
 # semantically, but novac/src/parse/expr.nv's variant-pattern loop still
 # needs the parser fix itself (this row hands it to Carina's window).
-#   spec-queue: 129
+# 129 -> 130 (2026-09-25, integrator): D477 sec 5b -- the oracle now PARSES
+# the `indirect` marker on a sum variant and discards it; placement stays
+# heap, unchanged, sec 5's "oracle work not planned" still holds for that.
+# Nothing new for self-hosting to catch up on: Carina's own `indirect` work
+# (real value placement, D477 sec 1-5a) is untouched by this row. Recorded
+# here only because check-dblock-numbers counts every spec/decisions touch,
+# and this commit edits 02-types.md (D477) plus the two syntax.md overview
+# pages.
+#   spec-queue: 130
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,
