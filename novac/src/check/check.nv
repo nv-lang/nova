@@ -50,6 +50,7 @@ import ../builtins.{IMPL_ATTR, DISPLAY_PROTO}
 import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind}
 import ../sem.{expr_leaf_name, attr_kids_name, attr_args_all, attr_has_args, recv_type_name, is_value_record}
 import ../sem.{file_decls}
+import ../sem.{is_closed_slice_bin}
 // Where an arm keeps its body -- the door the lowering has read for waves.
 import ../sem.{arm_body_at, array_of_lparen_at}
 import ../types.{TyId, no_ty}
@@ -826,7 +827,17 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // the oracle accepts it -- so the subset refuses it BY NAME
                     // instead of dying on it. Inside a for-head the walk never
                     // gets here: that arm walks its children itself.
-                    @report_if_range_outside_for(children, index_pos: index_pos)
+                    //
+                    // A CLOSED SLICE (`s[lo..hi]`) is judged where its
+                    // receiver's type is known -- `@type_index` (check/binds.nv,
+                    // plan 274.7 wave U-1) types a `str` slice and refuses the
+                    // rest by the same SLICE_MSG. An open bound stays refused
+                    // here until wave U-2 tells it from a real parse error.
+                    if index_pos && is_closed_slice_bin(n) {
+                        // Typed by `@type_index`, below this walk.
+                    } else {
+                        @report_if_range_outside_for(children, index_pos: index_pos)
+                    }
                 }
                 LeafNode | File | ModuleDecl | IfStmt => {}
                 AssignStmt | WhileStmt | FieldAccess | CtorField | CtorSpread => {}

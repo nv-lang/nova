@@ -84,6 +84,11 @@ export const CALLER_LOC_FN = "caller_loc"
 export const PAREN_RECORD_C_PREFIX = "NovaTuple_"
 
 export const OPTION_SUM = "Option"
+/// The prelude's range record (`std/src/collections/range/core.nv`): a slice
+/// `x[lo..hi]` is the call `x.index(Range { start: lo, end: hi })` (D470 section 5),
+/// so the emitter builds one. Its C type comes from the registry through `c_type`;
+/// only the LANGUAGE name is data here (plan 274.7 wave U).
+export const RANGE_TYPE = "Range"
 export const OPTION_FAMILY_C = "NovaOpt_"
 export const OPTION_SOME_TAG_C = "NOVA_TAG_Option_Some"
 /// The shell's tag of an absent Option (read off shell.tpl.c, wave W4): the

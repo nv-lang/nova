@@ -384,6 +384,11 @@ const RANGE_MSG = "outside the subset: a range is a `for` head here, not a value
 /// WHERE does this range stand.
 const SLICE_MSG = "outside the subset: a slice `x[lo..hi]` is read but not compiled yet (E2-b)"
 
+/// An index or a slice bound of a type other than `int` (check/binds.nv). One text
+/// for both: measured against the oracle, it accepts a `u8` index and a `u8` slice
+/// bound alike (2026-08-30 and 2026-09-25), so the refusal says SUBSET, not language.
+const INT_INDEX_MSG = "outside the subset: only an `int` index is compiled yet -- the language allows other integer types here (E2-b, with the numeric family)"
+
 /// The ONE text of the rule, so that the two doors cannot drift apart.
 const FOR_HEAD_MSG = "outside the subset: the head of a `for` is a range `lo..hi` here; a collection head arrives with generics (E2-b)"
 

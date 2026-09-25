@@ -28,8 +28,8 @@ import ../sem.{shape_of}
 import ../sem.{int_literal_c_text, char_literal_code, interp_slices}
 import ../tree.{raw_node}
 import ../sem.{c_tag, c_maker, VariantRow, raw_vrow, no_vrow, call_arg_at, raw_row, slot_default_of, no_row}
-import ../sem.{is_value_record}
-import ../builtins.{EQUAL_METHOD, PRINT_FN, bool_c_literal, RECV_C_NAME}
+import ../sem.{is_value_record, is_closed_slice_bin}
+import ../builtins.{EQUAL_METHOD, PRINT_FN, bool_c_literal, RECV_C_NAME, RANGE_TYPE}
 import ../types.{TyId, is_ty}
 import ../sem.{prim_row_of, is_int_prim}
 import ../builtins.{BuiltinType}
@@ -675,6 +675,32 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // parameter is the CHECKER's decision, and this reads it.
         @emit_bound_args(kids, 1, false, e.id_of(), callee_row_or_none(cr))
         @body.append(")")
+    } else if k == NodeKind.Index {
+        // A CLOSED `str` SLICE (plan 274.7 wave U-1): `s[lo..hi]` is the call
+        // `s.index(Range { start: lo, end: hi })` of D470 section 5, printed as the
+        // shell's method over a `Range` compound literal. The checker admits this
+        // one index form and records its type (`str`); every other index was
+        // refused there, so reaching this arm with anything else is a broken
+        // contract, not a program.
+        ro kids = branch_children(e)
+        ro st = @out.type_if_known(e.id_of())
+        if kids.len() < 3 || !is_closed_slice_bin(kids[2]) || !is_ty(st) {
+            ice("emit: an index other than a checked closed slice reached emission")
+        } else {
+            // A checked slice: printed below.
+        }
+        ro rng = @ctx.ty_of_name(RANGE_TYPE) ?? ice("emit: the prelude's `Range` is not in the registry")
+        ro bounds = branch_children(kids[2])
+        @body.append(c_method_symbol(@ctx, st, "index"))
+        @body.append("(")
+        @emit_expr(kids[0])
+        // POSITIONAL, in `Range`'s declaration order (`start`, then `end` --
+        // `std/src/collections/range/core.nv`, the shell's struct reads the same).
+        @body.append(", ((${c_type(@ctx, rng)}){ ")
+        @emit_expr(bounds[0])
+        @body.append(", ")
+        @emit_expr(bounds[2])
+        @body.append(" }))")
     } else if k == NodeKind.Cast {
         // Unwrapping a newtype is FREE: the value is already the
         // representation, so the emission is the operand and nothing else. C

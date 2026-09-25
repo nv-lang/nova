@@ -448,6 +448,25 @@ test "interpolation format spec `:?`: named refusal, not the anonymous parser fa
     assert(diagnose(control) == 0, "plain interpolation must stay clean")
 }
 
+test "a closed `str` slice is compiled; other receivers, open bounds and non-int bounds keep their refusals (274.7 U-1)" {
+    // D470 section 5: `s[lo..hi]` is `s.index(Range { start: lo, end: hi })`, a
+    // byte range of type `str` (D249). Wave U-1 compiles the closed form over
+    // `str` -- the shell carries `Nova_str_method_index` -- in every position the
+    // inventory of novac's own source found.
+    ro ok = "module m\n\nfn f(s str, a int) -> str {\n    ro t = s[a..3]\n    return t[0..1]\n}\n"
+    assert(diagnose(ok) == 0, diagnose_first_msg(ok))
+    // CONTROL: a receiver that is not `str` keeps the slice refusal (wave U-3).
+    ro other = "module m\n\nfn f(n int) -> int => n[1..3]\n"
+    assert(diagnose_first_msg(other).contains("a slice `x[lo..hi]`"), diagnose_first_msg(other))
+    // CONTROL: an open bound stays refused in the walk until wave U-2.
+    ro open = "module m\n\nfn f(s str) -> str => s[1..]\n"
+    assert(diagnose_first_msg(open).contains("a slice `x[lo..hi]`"), diagnose_first_msg(open))
+    // CONTROL: a bound of another type gets the index's own SUBSET text -- the
+    // oracle accepts a `u8` bound (measured 2026-09-25).
+    ro wide = "module m\n\nfn f(s str, b bool) -> str => s[b..3]\n"
+    assert(diagnose_first_msg(wide).contains("only an `int` index"), diagnose_first_msg(wide))
+}
+
 test "a line continuation on a CRLF file is one continuation, not an unknown escape on the CR (registry 1324)" {
     // D467 section 3's `\` + line break, in a file whose line ending is
     // `\r\n`. The lexer read it as one continuation; the escape door knew

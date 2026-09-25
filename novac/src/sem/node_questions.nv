@@ -133,3 +133,20 @@ export fn is_println_call(e Node) -> bool {
     if e.kind_of() != NodeKind.Call { return false }
     call_callee_text(branch_children(e)) == PRINT_FN
 }
+
+/// Is this the bracket content of a CLOSED slice -- `lo..hi`, both bounds
+/// written (plan 274.7 wave U-1)?
+///
+/// A slice's content is the same `Bin` a range is (`..` operator); an OPEN
+/// bound is not a missing child but a zero-width `Err` node the parser plants
+/// (`parse/expr.nv`, the leading-`..` branch, registry #1241), so "closed" is
+/// asked of BOTH sides here rather than of the operator alone. One door for the
+/// checker, which types the slice, and the emitter, which prints it: the two
+/// agree by asking the same question, not by remembering each other.
+export fn is_closed_slice_bin(n Node) -> bool {
+    if n.kind_of() != NodeKind.Bin { return false }
+    ro kids = branch_children(n)
+    if kids.len() != 3 { return false }
+    if leaf_kind(kids[1]) != TokenKind.DotDot { return false }
+    kids[0].kind_of() != NodeKind.Err && kids[2].kind_of() != NodeKind.Err
+}
