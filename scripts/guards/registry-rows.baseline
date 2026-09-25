@@ -1426,6 +1426,10 @@
 # литерал как выражение не читается) и #1267 (интегратор, два стража
 # сборки novac красили CI реально -- shell.tpl.c протух, объём эмиссии
 # разошёлся с базой, оба починены).
+rows=1290
+max=1340
+# 2026-09-25, integrator: row 1340 added (a for-range bound is re-evaluated on
+# every iteration). rows 1289->1290, max 1339->1340.
 rows=1289
 max=1339
 # 2026-09-25, integrator: row 1339 added (a receiver-mode pair on the builtin
