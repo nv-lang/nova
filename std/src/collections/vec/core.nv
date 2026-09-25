@@ -163,7 +163,7 @@ export unsafe fn Vec[T consume].new(ptr *T, len int) -> ro Self
 /// result `ro` enforces this at L2) — passing a genuinely read-only `*T`
 /// through the `*mut T` param is itself the caller's `unsafe` obligation,
 /// same as before.
-export fn Vec[T consume].new(ptr *mut T, len int, cap int) -> Self
+export unsafe fn Vec[T consume].new(ptr *mut T, len int, cap int) -> Self
     requires len >= 0 && cap >= len
 => { data: ptr, len, cap }
 
