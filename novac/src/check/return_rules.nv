@@ -259,3 +259,14 @@ fn Checker mut @walk_ret_stmt(children []Node) -> () {
         i += 1
     }
 }
+
+/// `break` / `continue` with no loop around them (274.7 wave B10). The spec names
+/// no code for it (the plan's open question); the language has no such jump, so it
+/// is a language error. The oracle passes `check` and dies in C on it.
+fn Checker mut @report_if_loop_ctl_outside(children []Node) -> () {
+    if @loop_depth == 0 {
+        @reject_first_leaf_of(children, LOOP_CTL_OUTSIDE_MSG)
+    } else {
+        // Inside a loop: the jump has a target, nothing to say.
+    }
+}

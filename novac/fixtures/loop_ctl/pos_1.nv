@@ -1,0 +1,104 @@
+module loop_ctl.pos_1
+
+// `break` and `continue` (274.7 wave B10) in every position novac reads them:
+// a `for` over a collection and over a range, `while` with a condition and
+// `while true`, nested loops, and a `match` arm as a statement and as an
+// initializer. Behaviour byte-for-byte with the oracle (novac-e1-smoke).
+
+fn sum_skip_zero(xs []int) -> int {
+    mut s = 0
+    for x in xs {
+        match x {
+            0 => continue
+            _ => { s += x }
+        }
+    }
+    s
+}
+
+fn first_over(xs []int, lim int) -> int {
+    mut found = 0 - 1
+    for x in xs {
+        if x > lim {
+            found = x
+            break
+        }
+    }
+    found
+}
+
+fn range_odd(n int) -> int {
+    mut s = 0
+    for i in 0..n {
+        if i % 2 == 0 {
+            continue
+        }
+        s += i
+    }
+    s
+}
+
+fn while_break(n int) -> int {
+    mut i = 0
+    while true {
+        i += 1
+        if i >= n {
+            break
+        }
+    }
+    i
+}
+
+fn while_continue(n int) -> int {
+    mut i = 0
+    mut s = 0
+    while i < n {
+        i += 1
+        if i % 3 == 0 {
+            continue
+        }
+        s += i
+    }
+    s
+}
+
+fn nested(n int) -> int {
+    mut c = 0
+    for i in 0..n {
+        for j in 0..n {
+            if j > i {
+                break
+            }
+            c += 1
+        }
+        if i == 3 {
+            break
+        }
+    }
+    c
+}
+
+fn arm_init(xs []int) -> int {
+    mut s = 0
+    for x in xs {
+        ro v = match x {
+            0 => continue
+            5 => break
+            _ => x * 10
+        }
+        s += v
+    }
+    s
+}
+
+fn main() {
+    ro xs = []int.of(1, 0, 2, 0, 3, 5, 7)
+    println(sum_skip_zero(xs))
+    println(first_over(xs, 2))
+    println(first_over(xs, 100))
+    println(range_odd(10))
+    println(while_break(7))
+    println(while_continue(10))
+    println(nested(6))
+    println(arm_init(xs))
+}

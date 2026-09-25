@@ -791,14 +791,12 @@ fn fill_one_handed(c Node, exported bool, same_module bool, foreign_cnt int, mut
 /// pair: a tuple in a signature is a form novac does not compile yet, and this
 /// file is part of its own source.
 fn priv_marker_at(nk []Node) -> int {
-    mut i = 0
-    while i < nk.len() {
+    for i in 0..nk.len() {
         if nk[i].kind_of() == NodeKind.LeafNode && leaf_text(nk[i]) == PRIV_MARKER {
             return i
         } else {
             // Not the marker: keep looking.
         }
-        i += 1
     }
     0 - 1
 }

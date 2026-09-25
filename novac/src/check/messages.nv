@@ -471,3 +471,7 @@ const HANDLER_RET_UNRESOLVED_MSG = "outside the subset: a handler-literal op's r
 /// The spec calls those positions legal (`04-effects.md`, `Effect[E]` as a value); the
 /// plan defers them (274.11 E.5), so the answer there is this name, not silence.
 const HANDLER_LIT_POSITION_MSG = "outside the subset: a handler literal is compiled only as a `with` binding's handler or a local binding's initializer (`ro h = effect E { ... }`) -- a handler value in any other position is not compiled yet (E4, boundary E.5 of plan 274.11)"
+
+/// `break` or `continue` with no loop around it (274.7 wave B10): a language error --
+/// the jump has no target. A handler op's body counts as its own function.
+const LOOP_CTL_OUTSIDE_MSG = "`break` and `continue` stand only inside the body of a `for` or `while` loop -- there is no loop around this one"

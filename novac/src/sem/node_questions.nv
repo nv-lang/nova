@@ -150,3 +150,8 @@ export fn is_closed_slice_bin(n Node) -> bool {
     if leaf_kind(kids[1]) != TokenKind.DotDot { return false }
     kids[0].kind_of() != NodeKind.Err && kids[2].kind_of() != NodeKind.Err
 }
+
+/// Whether a `LoopCtl` node is `break` rather than `continue` (274.7 wave B10). ONE door
+/// for the lowering, which picks the terminator, and the tail rule, which asks whether a
+/// `while true` has a way out: the keyword leaf is the node's one child.
+export fn loop_ctl_is_break(n Node) -> bool => leaf_kind(branch_children(n)[0]) == TokenKind.KwBreak

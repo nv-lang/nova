@@ -392,6 +392,8 @@ export type Terminator enum
     | If(IfTerm) // two-way branch with a named join (M2b-1)
     | Loop(LoopTerm) // header of a loop with a named exit (M2b-1)
     | Switch(SwitchTerm) // a match: first arm whose test holds, one join (M2b-1d)
+    | Break // leaves the innermost loop: C's `break;` inside a structural loop (274.7 B10)
+    | Continue // the innermost loop's next turn: C's `continue;` (274.7 B10)
     | Unreached // reserved, not yet sealed -- never survives `finish`
 
 /// What `begin_if` hands back and `begin_else` / `end_if` take: the three
@@ -640,6 +642,8 @@ export fn FnBuilder mut @seal(b BlockId, term Terminator) -> () {
         If(_) => ice("lower: a block sealed twice (it already branches)")
         Loop(_) => ice("lower: a block sealed twice (it already loops)")
         Switch(_) => ice("lower: a block sealed twice (it already switches)")
+        Break => ice("lower: a block sealed twice (it already breaks)")
+        Continue => ice("lower: a block sealed twice (it already continues)")
     }
     @blocks[i] = Block { stmts: @cur, term }
     @cur = []Stmt.new()
@@ -835,6 +839,22 @@ export fn FnBuilder mut @ret() -> () {
     @close(Terminator.Return, next)
 }
 
+/// `break` (274.7 wave B10): the current block leaves the innermost loop, and
+/// what is placed next -- dead code the source may still hold -- goes to a fresh
+/// block, exactly as after `ret`. C's `break;` needs no target: the loops print
+/// as structural C, and a match prints as an if-chain, not a `switch`.
+export fn FnBuilder mut @break_loop() -> () {
+    ro next = @reserve()
+    @close(Terminator.Break, next)
+}
+
+/// `continue`, the same shape as `break_loop`: C's `continue;` inside a `for`
+/// runs the increment first, which is the language's next turn.
+export fn FnBuilder mut @continue_loop() -> () {
+    ro next = @reserve()
+    @close(Terminator.Continue, next)
+}
+
 /// The end of the body: the current block returns. After this `finish` holds.
 export fn FnBuilder mut @end_body() -> () {
     @seal(@cur_id, Terminator.Return)
@@ -854,6 +874,8 @@ export fn FnBuilder @finish() -> Fn {
             If(_) => { } // sealed
             Loop(_) => { } // sealed
             Switch(_) => { } // sealed
+            Break => { } // sealed
+            Continue => { } // sealed
         }
     }
     Fn { @locals, @blocks }

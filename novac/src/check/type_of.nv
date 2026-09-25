@@ -512,7 +512,7 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
                 // needs `match` in a tail to reproduce.
                 ro body = ak[at]
                 ro bk = body.kind_of()
-                if bk == NodeKind.Block || bk == NodeKind.RetStmt {
+                if bk == NodeKind.Block || bk == NodeKind.RetStmt || bk == NodeKind.LoopCtl {
                     // THE NEXT ARM IS ASKED, not the match abandoned
                     // (registry 1190). An arm that leaves yields no value,
                     // which is not the same as the MATCH having none: in

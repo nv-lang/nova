@@ -144,6 +144,8 @@ type Checker {
     /// around the handler expression exactly like `value_expect` is around
     /// call arguments.
     link_check bool
+    /// Loops around the node being walked (274.7 B10): `break`/`continue` at 0 are refused.
+    loop_depth int
 }
 
 /// Walk the tree and collect subset diagnostics.
@@ -173,6 +175,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
     match n {
         Leaf(t) => @report_if_error_token(t)
         Branch { kind, children, .. } => {
+            ro depth_before = @loop_depth // restored after the children: see LoopCtl
             // ONE subject, ONE match (P31 p.2, owner 2026-08-17: "combine
             // several ifs into a match"). The chain this replaces had
             // fourteen `if kind == ...` in a row, each a decision about the
@@ -323,6 +326,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                 }
                 ForStmt => {
                     @report_if_bad_for_head(children)
+                    @loop_depth += 1
                     // The head is walked SEPARATELY, skipping index 3: a range
                     // is legal there and nowhere else in the subset, and the
                     // rule below would otherwise refuse the very form this
@@ -338,7 +342,17 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                         }
                         i += 1
                     }
+                    @loop_depth = depth_before
                     return
+                }
+                // `break` / `continue` (274.7 B10): legal only inside a loop body.
+                // A handler op's body is another function: its depth starts at 0.
+                LoopCtl => {
+                    @report_if_loop_ctl_outside(children)
+                    return
+                }
+                WhileStmt => {
+                    @loop_depth += 1
                 }
                 Field => {
                     @report_if_missing_type(children, "outside the E1 subset: field must declare a type")
@@ -672,6 +686,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // standalone: the walk descends so the body statements
                     // carry their positions, exactly like the
                     // WithStmt/HandlerLit arms above.
+                    @loop_depth = 0
                 }
                 SupervisedStmt => {
                     // READ and TYPED (E4 wave, 274.11 Э.7 item 4): the
@@ -840,7 +855,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     }
                 }
                 LeafNode | File | ModuleDecl | IfStmt => {}
-                AssignStmt | WhileStmt | FieldAccess | CtorField | CtorSpread => {}
+                AssignStmt | FieldAccess | CtorField | CtorSpread => {}
                 MatchArm | Pattern | ArraySpread | Guard => {}
                 Recv | Generics | Unary | Paren | Name => {}
                 // A protocol's signatures are judged together with the
@@ -963,6 +978,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                                 (kind == NodeKind.HandlerOp && at == children.len() - 1))
                 at += 1
             }
+            @loop_depth = depth_before
         }
     }
 }

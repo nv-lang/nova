@@ -459,6 +459,24 @@ test "operators inside ONE newtype over a number are defined; a mix is D52's lan
     assert(diagnose_first_msg(mix).contains("a newtype does not mix"), diagnose_first_msg(mix))
 }
 
+test "`break` and `continue` are read inside a loop and refused outside one (274.7 B10)" {
+    // Until 2026-09-25 the lexer read both words as NAMES: every one of the 330
+    // in novac's own source said "unknown name". Fixtures: novac/fixtures/loop_ctl.
+    ro ok = "module m\n\nfn f(n int) -> int {\n    mut s = 0\n    for x in 0..n {\n        if x == 0 { continue }\n        if x > 9 { break }\n        s += x\n    }\n    s\n}\n"
+    assert(diagnose(ok) == 0, diagnose_first_msg(ok))
+    ro arm = "module m\n\nfn f(n int) -> int {\n    mut s = 0\n    for x in 0..n {\n        ro v = match x {\n            0 => continue\n            _ => x\n        }\n        s += v\n    }\n    s\n}\n"
+    assert(diagnose(arm) == 0, diagnose_first_msg(arm))
+    // OUTSIDE a loop -- and AFTER one, where the depth must be back at zero.
+    ro after = "module m\n\nfn f() -> int {\n    while false {\n        continue\n    }\n    break\n    1\n}\n"
+    assert(diagnose_first_msg(after).contains("stand only inside the body"), diagnose_first_msg(after))
+    // `while true` WITH a `break` for itself falls through: the body ends without a value.
+    ro wt = "module m\n\nfn f(n int) -> int {\n    while true {\n        if n > 0 { break }\n        return 1\n    }\n}\n"
+    assert(diagnose_first_msg(wt).contains("ends without a value"), diagnose_first_msg(wt))
+    // CONTROL: a `break` of an INNER loop does not let the outer `while true` out.
+    ro inner = "module m\n\nfn f(n int) -> int {\n    while true {\n        for i in 0..n {\n            if i > 2 { break }\n        }\n        return n\n    }\n}\n"
+    assert(diagnose(inner) == 0, diagnose_first_msg(inner))
+}
+
 test "a refused initializer binds its name POISONED in every form -- one cause, one diagnostic" {
     // `@type_bind` bound the name with no type only after a refused PLAIN
     // expression; the array literal, tuple, handler literal, `if`, index and

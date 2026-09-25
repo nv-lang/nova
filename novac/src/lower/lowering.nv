@@ -20,7 +20,7 @@ import ../sem.{pattern_head_slot}
 import ../sem.{iflet_binder_at, iflet_body_at, iflet_else_at, iflet_init_at}
 import ../sem.{payload_as_seen}
 // Which arguments have an observable order (F65) -- the checker's own door.
-import ../sem.{contains_call}
+import ../sem.{contains_call, loop_ctl_is_break}
 
 
 /// THE LOWERING (274.8 M3). Everything here used to be methods on `Emitter`, the printer's own
@@ -310,6 +310,14 @@ fn Lowerer mut @lower_stmt(st Node) -> () {
         @lower_while(st)
     } else if k == NodeKind.RetStmt {
         @lower_return(st)
+    } else if k == NodeKind.LoopCtl {
+        // `break` / `continue` (274.7 B10): the block ends with the jump, what the
+        // source wrote after it lands in a fresh block -- `@lower_return`'s shape.
+        if loop_ctl_is_break(st) {
+            @ir.break_loop()
+        } else {
+            @ir.continue_loop()
+        }
     } else if k == NodeKind.BindStmt {
         @lower_bind(st)
     } else if k == NodeKind.AssignStmt {

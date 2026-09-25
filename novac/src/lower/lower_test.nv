@@ -21,6 +21,8 @@ fn goes_to(t Terminator, to BlockId) -> bool {
         If(_) => false
         Loop(_) => false
         Switch(_) => false
+        Break => false
+        Continue => false
         Unreached => false
     }
 }
@@ -33,6 +35,8 @@ fn returns(t Terminator) -> bool {
         If(_) => false
         Loop(_) => false
         Switch(_) => false
+        Break => false
+        Continue => false
         Unreached => false
     }
 }
@@ -169,6 +173,8 @@ test "an if without else: the else branch IS the join, and end_if seals the bran
         Goto(_) => assert(false)
         Loop(_) => assert(false)
         Switch(_) => assert(false)
+        Break => assert(false)
+        Continue => assert(false)
         Unreached => assert(false)
     }
     assert(f.blocks[raw_block(c.then)].stmts.len() == 1)
@@ -202,6 +208,8 @@ test "an if with else: three blocks of its own, both branches jump to the one jo
         Goto(_) => assert(false)
         Loop(_) => assert(false)
         Switch(_) => assert(false)
+        Break => assert(false)
+        Continue => assert(false)
         Unreached => assert(false)
     }
     assert(f.blocks[raw_block(c.then)].stmts.len() == 1)
@@ -251,6 +259,8 @@ test "an if-let chain: the else block carries the Option temporary before its If
         Goto(_) => assert(false)
         Loop(_) => assert(false)
         Switch(_) => assert(false)
+        Break => assert(false)
+        Continue => assert(false)
         Unreached => assert(false)
     }
 }
@@ -287,6 +297,8 @@ test "an else-if chain: the else block carries no statement, its If shares the o
         Goto(_) => assert(false)
         Loop(_) => assert(false)
         Switch(_) => assert(false)
+        Break => assert(false)
+        Continue => assert(false)
         Unreached => assert(false)
     }
     assert(goes_to(f.blocks[raw_block(inner.then)].term, outer.join))
@@ -320,6 +332,8 @@ test "a while loop: the header is its own empty block, the body jumps back to it
         Goto(_) => assert(false)
         If(_) => assert(false)
         Switch(_) => assert(false)
+        Break => assert(false)
+        Continue => assert(false)
         Unreached => assert(false)
     }
     assert(goes_to(f.blocks[raw_block(c.body)].term, c.head))
@@ -346,6 +360,8 @@ test "a range loop keeps its variable -- a binding local -- and its bounds in th
         Goto(_) => assert(false)
         If(_) => assert(false)
         Switch(_) => assert(false)
+        Break => assert(false)
+        Continue => assert(false)
         Unreached => assert(false)
     }
 }
@@ -397,6 +413,8 @@ test "a for over a collection: the header carries vec/idx/elem locals, the body 
         Goto(_) => assert(false)
         If(_) => assert(false)
         Switch(_) => assert(false)
+        Break => assert(false)
+        Continue => assert(false)
         Unreached => assert(false)
     }
     assert(f.blocks[raw_block(c.body)].stmts.len() == 1)
@@ -440,6 +458,8 @@ test "an if-let: the Option lands in a binding, the If tests IsSome of it, the b
         Goto(_) => assert(false)
         Loop(_) => assert(false)
         Switch(_) => assert(false)
+        Break => assert(false)
+        Continue => assert(false)
         Unreached => assert(false)
     }
     assert(f.blocks[0].stmts.len() == 1)

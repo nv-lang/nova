@@ -262,7 +262,8 @@ fn Lowerer mut @lower_arm_body(arm_e Node, dest Local) -> () {
     // form, carries no recorded type, and `is_ty` below answers `false` for
     // it -- the same as before this door existed.
     ro block_places_value = arm_e.kind_of() == NodeKind.Block && is_ty(@out.type_if_known(arm_e.id_of()))
-    ro leaves = arm_e.kind_of() == NodeKind.RetStmt || (arm_e.kind_of() == NodeKind.Block && !block_places_value)
+    ro leaves = arm_e.kind_of() == NodeKind.RetStmt || arm_e.kind_of() == NodeKind.LoopCtl ||
+                (arm_e.kind_of() == NodeKind.Block && !block_places_value)
     if dest != no_local() && !leaves && !block_places_value {
         // The arm's value lands in the match local through the one door.
         @lower_place(arm_e, dest)

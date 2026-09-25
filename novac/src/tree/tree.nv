@@ -63,6 +63,9 @@ export type NodeKind enum
     | Lit
     | IfStmt
     | RetStmt
+    /// `break` or `continue` (274.7 wave B10): ONE kind, the keyword leaf inside
+    /// says which -- the two share every rule but the jump's target.
+    | LoopCtl
     | BindStmt
     | AssignStmt
     | ForStmt

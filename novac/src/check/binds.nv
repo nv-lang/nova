@@ -163,6 +163,7 @@ fn Checker mut @type_bind(st Node) -> () {
             return
         }
         @scope.bind(vname, pt, bind_mode_at(kids))
+        // SILENT-OK: typed and bound above, so this branch is fully decided
         return
     }
     // A HANDLER LITERAL routes explicitly, the TupleExpr precedent exactly:
@@ -186,6 +187,7 @@ fn Checker mut @type_bind(st Node) -> () {
             return
         }
         @scope.bind(vname, ht, bind_mode_at(kids))
+        // SILENT-OK: typed and bound above, so this branch is fully decided
         return
     }
     // AN INDEX DECIDES ITS OWN TYPE HERE for the same reason the literal above
@@ -213,6 +215,7 @@ fn Checker mut @type_bind(st Node) -> () {
             return
         }
         @scope.bind(vname, if_t, bind_mode_at(kids))
+        // SILENT-OK: typed and bound above, so this branch is fully decided
         return
     } else {
         // Not an `if`: the arms below decide.
@@ -227,6 +230,7 @@ fn Checker mut @type_bind(st Node) -> () {
         }
         @record(init, idx_t)
         @scope.bind(vname, idx_t, bind_mode_at(kids))
+        // SILENT-OK: typed and bound above, so this branch is fully decided
         return
     } else {
         // Not an index: the lattice answers below.

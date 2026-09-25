@@ -55,6 +55,8 @@ export type TokenKind enum
     | KwRo
     | KwConsume
     | KwWhile
+    | KwBreak /// `break`: leaves the innermost loop (274.7 wave B10)
+    | KwContinue /// `continue`: the innermost loop's next turn (274.7 wave B10)
     | KwType
     | KwMatch
     | KwAs
@@ -154,6 +156,8 @@ export fn spelling_of(k TokenKind) -> Option[str] => match k {
     KwRo => Some("`ro`")
     KwConsume => Some("`consume`")
     KwWhile => Some("`while`")
+    KwBreak => Some("`break`")
+    KwContinue => Some("`continue`")
     KwType => Some("`type`")
     KwMatch => Some("`match`")
     KwAs => Some("`as`")
@@ -358,7 +362,7 @@ export fn paren_delta(k TokenKind) -> int {
         RParen => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwConsume | KwWhile | KwType | KwMatch |
         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | Hash | Ident |
-        IntLit | FloatLit | CharLit | StrFrag | InterpOpen | InterpClose |
+        KwBreak | KwContinue | IntLit | FloatLit | CharLit | StrFrag | InterpOpen | InterpClose |
         StrLit | LBrace | RBrace | EmptyBrackets | LBracket | RBracket | Dot | Comma | Plus | Minus |
         Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq |
         Question2 | Question | AmpAmp | PipePipe | Amp | Caret |
@@ -375,7 +379,7 @@ export fn bracket_delta(k TokenKind) -> int {
         RBracket => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwConsume | KwWhile | KwType | KwMatch |
         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | Hash | Ident |
-        IntLit | FloatLit | CharLit | StrFrag | InterpOpen | InterpClose |
+        KwBreak | KwContinue | IntLit | FloatLit | CharLit | StrFrag | InterpOpen | InterpClose |
         StrLit | LParen | RParen | LBrace | RBrace | EmptyBrackets | Dot | Comma | Plus | Minus |
         Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq |
         Question2 | Question | AmpAmp | PipePipe | Amp | Caret |
@@ -393,7 +397,7 @@ export fn brace_delta(k TokenKind) -> int {
         RBrace => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwConsume | KwWhile | KwType | KwMatch |
         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | Hash | Ident |
-        IntLit | FloatLit | CharLit | StrFrag | InterpOpen | InterpClose |
+        KwBreak | KwContinue | IntLit | FloatLit | CharLit | StrFrag | InterpOpen | InterpClose |
         StrLit | LParen | RParen | EmptyBrackets | LBracket | RBracket | Dot | Comma | Plus | Minus |
         Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq |
         Question2 | Question | AmpAmp | PipePipe | Amp | Caret |
@@ -443,8 +447,6 @@ export fn brace_delta(k TokenKind) -> int {
 // KEYWORD-PARITY: and -- debt (274.7 B10)
 // KEYWORD-PARITY: or -- debt (274.7 B10)
 // KEYWORD-PARITY: not -- debt (274.7 B10)
-// KEYWORD-PARITY: break -- debt (274.7 B10)
-// KEYWORD-PARITY: continue -- debt (274.7 B10)
 //
 // THE EFFECTS AND CONSUME FAMILY, fifteen words with ONE home, quoted rather than
 // guessed. Plan 274, section E2: "Horizons: basics in full -> control/records/sums ->
@@ -511,6 +513,12 @@ fn keyword_kind(t str) -> TokenKind => match t {
     // program through that the shipped compiler rejects.
     "consume" => TokenKind.KwConsume
     "while" => TokenKind.KwWhile
+    // `break` and `continue` (274.7 wave B10): until 2026-09-25 they lexed as
+    // NAMES, so novac's loops had no early exit and every one of the 330 in its
+    // own source read "unknown name" -- the second mask of the class this table
+    // keeps meeting (`else`, `extern`, `unsafe`).
+    "break" => TokenKind.KwBreak
+    "continue" => TokenKind.KwContinue
     "type" => TokenKind.KwType
     "match" => TokenKind.KwMatch
     // `as` was NOT a keyword until 2026-08-18, so `1 as u8` lexed as two

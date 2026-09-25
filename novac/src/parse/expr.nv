@@ -554,6 +554,10 @@ fn Cursor mut @match_expr() -> Node {
         // emitter have read a Block arm body since wave B5.
         if @peek() == TokenKind.LBrace && !@brace_opens_ctor() {
             ak.push(@block())
+        } else if @peek() == TokenKind.KwBreak || @peek() == TokenKind.KwContinue {
+            // `None => continue` (274.7 wave B10): a statement as the arm body,
+            // through the one statement door, exactly as `return` below.
+            ak.push(@stmt())
         } else if @peek() == TokenKind.KwReturn {
             // A BARE `return` AS THE ARM BODY: `None => return no_ty()`.
             // An arm body is an expression here, and `return` is a

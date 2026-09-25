@@ -702,6 +702,9 @@ fn Checker mut @type_stmt(st Node) -> () {
         @type_supervised_stmt(st)
     } else if is_expr_kind(k) {
         @type_expr(st)
+    } else if k == NodeKind.LoopCtl {
+        // SILENT-OK: `break`/`continue` carry no operand (274.7 B10), so there is
+        // nothing to type; the walk already judged the position (inside a loop).
     } else {
         // SILENT-OK: a statement kind outside the subset is refused at the
         // emitter's door, so this walk has no answer to record for it.
