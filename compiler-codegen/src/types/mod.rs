@@ -13530,7 +13530,7 @@ impl<'a> TypeCheckCtx<'a> {
                 // D221-проверка выше). Закрывает Index:i:<v> кластер (v[i] в теле).
                 self.f1_for_body(&elem_ty, pattern, body, gs, scope, errors);
             }
-            ExprKind::For { pattern, iter, body, elem_type, .. } => {
+            ExprKind::For { pattern, iter, body, elem_type, iter_consume, .. } => {
                 self.f1_expr(iter, gs, scope, errors);
                 // Plan 87 Ф.3: явная аннотация типа элемента — checked
                 // assertion против фактического типа элемента итератора.
@@ -13546,7 +13546,21 @@ impl<'a> TypeCheckCtx<'a> {
                 // 172.1.2 (for-var в scope, 2026-07-03): loop-переменная типизируется
                 // и БЕЗ явной аннотации — inferred elem_ty (тот же источник, что
                 // D221-проверка выше). Закрывает Index:i:<v> кластер (v[i] в теле).
+                // Plan 246 / #1332: the loop variable of `for consume x in it`
+                // owns its element, so it is a `consume` binding for D84 mode
+                // rule 3 inside the body (`@push(x)` takes the consuming form).
+                // Block-scoped: restored after the body.
+                let consume_snapshot = self.consume_binding_names.borrow().clone();
+                if *iter_consume {
+                    let mut names = Vec::new();
+                    consume_pattern_names(pattern, &mut names);
+                    let mut set = self.consume_binding_names.borrow_mut();
+                    for n in names {
+                        if n != "_" { set.insert(n); }
+                    }
+                }
                 self.f1_for_body(&elem_ty, pattern, body, gs, scope, errors);
+                *self.consume_binding_names.borrow_mut() = consume_snapshot;
             }
             ExprKind::While { cond, body, .. } => {
                 self.f1_expr(cond, gs, scope, errors);
@@ -48418,6 +48432,33 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
 
         // ─── Вызовы — точки consume ───
         ExprKind::Call { func, args, trailing } => {
+            // D216 amendment 2026-09-25 (plan 246): `write_consume` /
+            // `write_consume_at` consume their value argument whatever the
+            // receiver is. The bare-name receiver (`p.write_consume_at(i, v)`) is
+            // handled in the `Member { obj: Ident }` branch below; this covers a
+            // FIELD or other expression receiver (`@data.write_consume_at(i, v)`,
+            // `buf.data.write_consume_at(k, x)`) -- the form every container body
+            // uses -- which that branch never reaches.
+            // The receiver and the arguments are walked FIRST, then the value
+            // is marked consumed -- marking before the walk would report the
+            // argument itself as a use after consume.
+            if let ExprKind::Member { obj, name: method } = &func.kind {
+                if !matches!(obj.kind, ExprKind::Ident(_)) {
+                    let value_idx = if method == "write_consume" && args.len() == 1 {
+                        Some(0)
+                    } else if method == "write_consume_at" && args.len() == 2 {
+                        Some(1)
+                    } else {
+                        None
+                    };
+                    if let Some(i) = value_idx {
+                        consume_walk_expr(ctx, obj, errors);
+                        for a in args { consume_walk_expr(ctx, a.expr(), errors); }
+                        ctx.consume_args(args, &[i], e.span);
+                        return;
+                    }
+                }
+            }
             // №598: ЗАИМСТВУЮЩИЙ МЕТОД НЕ МОЖЕТ ПОТРЕБИТЬ СВОЙ ЖЕ ПРИЁМНИК.
             //
             // Обещание системы `consume` — «отдал один раз». Оно обходилось
@@ -49553,7 +49594,14 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
             if *iter_consume {
                 // Plan 100.2 (D156): consume-iteration — each loop var is an
                 // obligation; iter marked Consumed after loop.
+                // Plan 246 / #1332: the loop var is a `consume` binding for D84
+                // mode rule 3 -- mirror of the checker's `consume_binding_names`.
+                let bound_before = ctx.consume_bound_names.clone();
+                for n in &names {
+                    if n != "_" { ctx.consume_bound_names.insert(n.clone()); }
+                }
                 consume_walk_consume_for(ctx, iter, &names, body, errors);
+                ctx.consume_bound_names = bound_before;
             } else {
                 consume_walk_expr(ctx, iter, errors);
                 consume_walk_loop(ctx, &names, body, errors);
