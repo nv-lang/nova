@@ -1,0 +1,74 @@
+// EXPECT_STDOUT len=2|idx0=Some|idx1=None|iter_count=1|field=Some|param=None|ret=Some
+// Реестр 221.1 №1348: C-тип `Option[[]u8]` не объявлялся, когда он возникал
+// ТОЛЬКО из позиции элемента контейнера (`[]Option[[]u8]`) — codegen эмитировал
+// typedef `NovaOpt_<T>` лениво, по встрече бинарной формы (локал/параметр/
+// возврат), и пропускал случай, где `Option[[]u8]` не встречается НИГДЕ, кроме
+// как элемент `[]`/`Vec`. Носители (docs/plans/repro/1348-option-byte-slice-c-type/):
+// `carrier_none_pushed.nv.txt` (голый `None`, положенный в `[]Option[[]u8]`) и
+// `carrier_for_over_vec.nv.txt` (`for x in` по такому же вектору) — оба валились
+// на `nova check` зелёным, `nova build` красным C (`unknown type name
+// 'NovaOpt_Nova_Vec____nova_byte_p'`).
+//
+// Эта фикстура — ХРАНИТЕЛЬ ПОЗИЦИЙ: та же пара типов (`Option[[]u8]` и его
+// контейнер `[]Option[[]u8]`) в ПЯТИ местах, где C-тип может понадобиться:
+// элемент `[]` (push Some/None, индекс, `for x in`), поле записи, параметр,
+// возврат функции. Родственно №1021 (голый вариант-конструктор в замыкании
+// типизируется по умолчанию, не по объявленному контексту) — тот же класс
+// «пропущенный typedef/erasure», другая форма; №1021 не закрывается этой
+// фикстурой (см. AGENTS.md «оговорка про носителя»).
+module standalone.option_byte_slice_element
+
+type Holder { ro o Option[[]u8] }
+
+fn show_param(o Option[[]u8]) Io -> () {
+    match o {
+        Some(_) => print("param=Some")
+        None => print("param=None")
+    }
+}
+
+fn make_ret() -> Option[[]u8] => Some("ret".bytes())
+
+fn main() Io -> () {
+    mut v []Option[[]u8] = []Option[[]u8].new()
+    v.push(Some("a".bytes()))
+    v.push(None)
+    print("len=${v.len()}|")
+
+    match v[0] {
+        Some(_) => print("idx0=Some|")
+        None => print("idx0=None|")
+    }
+    match v[1] {
+        Some(_) => print("idx1=Some|")
+        None => print("idx1=None|")
+    }
+
+    mut count = 0
+    for x in v {
+        match x {
+            Some(_) => { count += 1 }
+            None => ()
+        }
+    }
+    print("iter_count=${count}|")
+
+    ro h = Holder { o: Some("f".bytes()) }
+    match h.o {
+        Some(_) => print("field=Some|")
+        None => print("field=None|")
+    }
+
+    // Typed local, not a bare `None` call-argument (registry №1021's own
+    // documented workaround for the SEPARATE "bare variant ctor ignores
+    // declared context" class — a plain free-fn call argument is not a
+    // container-element site, so it is out of THIS fixture's scope).
+    ro none_val Option[[]u8] = None
+    show_param(none_val)
+    print("|")
+
+    match make_ret() {
+        Some(_) => print("ret=Some")
+        None => print("ret=None")
+    }
+}

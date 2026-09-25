@@ -1,0 +1,87 @@
+// EXPECT_STDOUT plain: 3 2 1 | fail: 6 5 4 | fail2: 10 9 | built: 8 7 | ints: 0 | total=10
+//
+// Registry 221.1 #1345: D156 amendment 2026-08-04, family 2
+// (spec/decisions/02-types.md) + D432. A `Vec[T consume Cleanup[E]]` declares
+// its own `@cleanup`, so a vector of cleanup-carrying elements is AFFINE: left
+// to scope exit without being consumed, the compiler inserts its cleanup,
+// which ends every element exactly once, last to first (D156 point 8, LIFO
+// like `defer`). Before the fix the oracle refused such a forgotten vector
+// (D133-not-consumed, and D162-uncovered-error-path in a failable fn), and an
+// unannotated `consume v = Vec[Res].new()` was untyped in the consume pass.
+//
+// Covered: a plain fn with an unannotated binding (pure element cleanup); a
+// failable fn with an annotated and one with an unannotated binding (the
+// element's cleanup is `Fail[str]`, so the fn declares it); a vector built by a function and
+// forgotten by its caller; a `Vec[int]`, which has no cleanup at all. Family 1
+// (a linear element WITHOUT `@cleanup`) stays linear:
+// neg/vec_linear_forgotten_neg.nv.
+module standalone.vec_cleanup_affine
+
+type Pure consume {
+    id int
+}
+
+fn Pure consume @cleanup(outcome ScopeOutcome) -> () {
+    print(" ${@id}")
+}
+
+type Res consume {
+    id int
+}
+
+fn Res consume @cleanup(outcome ScopeOutcome) Fail[str] -> () {
+    print(" ${@id}")
+}
+
+fn plain() Io -> () {
+    consume v = Vec[Pure].new()
+    v.push(Pure { id: 1 })
+    v.push(Pure { id: 2 })
+    v.push(Pure { id: 3 })
+    print("plain:")
+}
+
+fn failable() Io Fail[str] -> () {
+    consume v Vec[Res] = Vec[Res].new()
+    v.push(Res { id: 4 })
+    v.push(Res { id: 5 })
+    v.push(Res { id: 6 })
+    print(" | fail:")
+}
+
+fn failable_unannotated() Io Fail[str] -> () {
+    consume v = Vec[Res].new()
+    v.push(Res { id: 9 })
+    v.push(Res { id: 10 })
+    print(" | fail2:")
+}
+
+fn build() -> Vec[Pure] {
+    consume v = Vec[Pure].new()
+    v.push(Pure { id: 7 })
+    v.push(Pure { id: 8 })
+    return v
+}
+
+fn forget_built() Io -> () {
+    consume w = build()
+    print(" | built:")
+}
+
+fn ints() Io -> int {
+    mut v = Vec[int].of(1, 2, 3)
+    v.push(4)
+    print(" | ints:")
+    0
+}
+
+fn main() Io -> () {
+    plain()
+    with Fail[str] = |e| {} {
+        failable()
+        failable_unannotated()
+    }
+    forget_built()
+    ro z = ints()
+    print(" ${z} | total=10")
+}

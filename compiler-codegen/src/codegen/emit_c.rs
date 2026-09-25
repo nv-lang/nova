@@ -1937,6 +1937,15 @@ pub struct CEmitter {
     /// (types/mod.rs) — must stay in sync (both scan the same `f.name ==
     /// "cleanup" && recv.consume && Instance && effects.is_empty()` shape).
     auto_cleanup_types: HashSet<String>,
+    /// Registry 221.1 #1345 (D156 amendment 2026-08-04, family 2): a GENERIC
+    /// container whose `consume @cleanup(outcome ScopeOutcome)` is declared
+    /// under a `Cleanup` bound on its element (`fn Vec[T consume Cleanup[E]]
+    /// consume @cleanup`) -> (positions of the gated carrier parameters, the
+    /// cleanup declaration). Such a container is NOT in `auto_cleanup_types`:
+    /// it is affine only per instantiation (`auto_cleanup_generic_instance`),
+    /// and its cleanup is a monomorph, not the erased `Nova_Vec_consume_cleanup`.
+    /// Mirrors the checker's `LinearityRegistry::cleanup_arg_gates`.
+    auto_cleanup_generic: HashMap<String, (Vec<usize>, crate::ast::FnDecl)>,
     /// Plan 217: arm-sites for bare `consume X = e;` (non-block) bindings of
     /// an auto-cleanup-eligible type, collected by `enter_defer_scope`'s
     /// prologue scan (keyed by the `LetDecl`'s span — stable within one
@@ -2865,6 +2874,7 @@ impl CEmitter {
             defer_scopes: Vec::new(),
             defer_block_counter: 0,
             auto_cleanup_types: HashSet::new(),
+            auto_cleanup_generic: HashMap::new(),
             auto_cleanup_arm_sites: HashMap::new(),
             free_fn_consume_param_positions: HashMap::new(),
             method_consume_param_positions: HashMap::new(),
@@ -5763,7 +5773,26 @@ impl CEmitter {
                                 && matches!(recv.kind, ReceiverKind::Instance)
                                 && is_cleanup_protocol_shape
                             {
-                                self.auto_cleanup_types.insert(recv.type_name.clone());
+                                // #1345: a `Cleanup`-bounded carrier parameter
+                                // makes the cleanup per-instantiation.
+                                let gated: Vec<usize> = recv.generics.iter().enumerate()
+                                    .filter_map(|(i, g)| {
+                                        let TypeRef::Named { path, .. } = g else { return None };
+                                        let name = path.last()?;
+                                        recv.carrier_bounds.iter()
+                                            .find(|b| &b.name == name)
+                                            .filter(|b| b.bounds.iter().any(|t| matches!(t,
+                                                TypeRef::Named { path, .. }
+                                                    if path.last().map_or(false, |x| x == "Cleanup"))))
+                                            .map(|_| i)
+                                    })
+                                    .collect();
+                                if gated.is_empty() {
+                                    self.auto_cleanup_types.insert(recv.type_name.clone());
+                                } else {
+                                    self.auto_cleanup_generic
+                                        .insert(recv.type_name.clone(), (gated, f.clone()));
+                                }
                             }
                         }
                     }
@@ -7787,6 +7816,7 @@ impl CEmitter {
                 }
             }
             let mut seen_vec_mono: HashSet<String> = HashSet::new();
+            let mut seen_novaopt_container_fwd: HashSet<String> = HashSet::new();
             for elem in &array_elems {
                 // Resolve elem → C type. As a side effect this also enqueues the
                 // Vec[elem] instance (the Array arm of type_ref_to_c).
@@ -7799,6 +7829,29 @@ impl CEmitter {
                 // analogous concrete-mono carve-out used in the Option/Named arms.
                 if self.debt_skip_array_fwd_decl(&elem_c) {
                     continue;
+                }
+                // [221.1 #1348] `elem_c` for an `Option[T]` element is already the
+                // NovaOpt_<sani> VALUE-type name (`resolved_named_to_c`'s "Option" arm
+                // → `opt_repr_c_type` → `register_novaopt_decl`) — but that registration
+                // only ever queues the typedef into `novaopt_typedefs_buf`, spliced at
+                // `/*__NOVAOPT_TYPEDEFS__*/`, which sits TEXTUALLY AFTER
+                // `/*__GENERIC_TYPE_DEFS__*/` (compare the `self.line(...)` call order:
+                // `/*__GENERIC_TYPE_DEFS__*/` at the top of this function vs
+                // `/*__NOVAOPT_TYPEDEFS__*/` far below it). The Vec[Option[T]] struct
+                // BODY is spliced at `__GENERIC_TYPE_DEFS__` and references
+                // `NovaOpt_<sani>*` as its `data` field — a pointer field only needs a
+                // FORWARD typedef, so emit one into `user_type_fwd_decls` (an early
+                // marker, same buffer this loop already uses for the Vec mono itself)
+                // whenever the collected element resolves to a NovaOpt_ value type. Was
+                // previously registered only when Option[T] ALSO appeared as a bare
+                // local/param/return elsewhere in the SAME file (those sites are function
+                // bodies/signatures, emitted much later, so the ordering never bit them);
+                // an Option used ONLY as a container element had no such second site.
+                if elem_c.starts_with("NovaOpt_")
+                    && seen_novaopt_container_fwd.insert(elem_c.clone())
+                {
+                    self.user_type_fwd_decls.push_str(&format!(
+                        "typedef struct {0} {0};\n", elem_c));
                 }
                 let type_args_c = vec![elem_c];
                 let mangled = Self::compute_generic_type_c_name("Vec", &type_args_c);
@@ -30798,11 +30851,46 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             .strip_prefix("NovaValue_")
             .map(|s| s.to_string())
             .unwrap_or(type_name);
-        if self.auto_cleanup_types.contains(&type_name) {
+        if self.auto_cleanup_types.contains(&type_name)
+            || self.auto_cleanup_generic_instance(&type_name).is_some()
+        {
             Some(init_c_type)
         } else {
             None
         }
+    }
+
+    /// Registry 221.1 #1345: `type_name` (a mono name such as
+    /// `Vec____Nova_Res_p`) is an instantiation of a bound-gated container
+    /// (`auto_cleanup_generic`) whose every gated type argument is itself
+    /// auto-cleanup eligible -> the container's template type substitution
+    /// and its cleanup declaration. `Vec[int]` and a `Vec` of a linear type
+    /// without `@cleanup` (family 1, drained explicitly) -> `None`.
+    fn auto_cleanup_generic_instance(&self, type_name: &str)
+        -> Option<(Vec<(String, String)>, crate::ast::FnDecl)>
+    {
+        let (base, args) = self.generic_type_instance_info.borrow()
+            .get(&format!("Nova_{}", type_name)).cloned()?;
+        let (gates, fd) = self.auto_cleanup_generic.get(&base)?.clone();
+        let args_c: Vec<String> = args.iter().map(|a| self.arg_c(a)).collect();
+        for &i in &gates {
+            let arg = args_c.get(i)?;
+            let arg_name = {
+                let t = self.debt_strip_nova_trim_start(arg);
+                t.strip_prefix("NovaValue_").map(|x| x.to_string()).unwrap_or(t)
+            };
+            if !self.auto_cleanup_types.contains(&arg_name)
+                && self.auto_cleanup_generic_instance(&arg_name).is_none()
+            {
+                return None;
+            }
+        }
+        let tmpl = self.generic_type_templates.get(&base)?;
+        let subst: Vec<(String, String)> = tmpl.generics.iter()
+            .zip(args_c.iter())
+            .map(|(g, c)| (g.name.clone(), c.clone()))
+            .collect();
+        Some((subst, fd))
     }
 
     /// Plan 217: does this block contain at least one bare consume-let that
@@ -31946,7 +32034,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// cancel-shield unconditionally, and compose per §4a via `tail`.
     fn emit_consume_entry_cleanup(&mut self, policy: &ConsumePolicy, outcome: DeferOutcome, df: &str, tail: ConsumeTail) {
         // §0: cleanup symbol derived from the type name (pinned R2), never hardcoded.
-        let cleanup_sym = format!("Nova_{}_consume_cleanup", policy.type_name);
+        let mut cleanup_sym = format!("Nova_{}_consume_cleanup", policy.type_name);
+        // #1345: a bound-gated container's cleanup is its monomorph, named and
+        // registered the way the generic-instance method dispatch does it.
+        let generic_cleanup = self.auto_cleanup_generic_instance(&policy.type_name);
+        if let Some((subst, fd)) = &generic_cleanup {
+            cleanup_sym = format!("{}_method_cleanup", policy.type_name);
+            self.register_mono_method_instance(fd, subst.clone(), &cleanup_sym, &policy.type_name);
+        }
         // Plan 173 Ф.4 #6 (model B): FAIL/INTERRUPT run-sites = cleanup during
         // unwind → mark the frame so throw dispatch bypasses handlers (failure
         // composes into the pocket). LEAVE/EARLY (Success) = normal exit → the
@@ -32014,7 +32109,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // up — while leaving the surrounding exactly-once/fail-frame/
         // shield/watchdog protocol untouched, so a genuine consume type's
         // behavior (extern or not) is byte-identical.
-        if self.consume_cleanup_declared_types.contains(&policy.type_name) {
+        if self.consume_cleanup_declared_types.contains(&policy.type_name)
+            || generic_cleanup.is_some()
+        {
             self.line(&format!("{}({}, {});", cleanup_sym, policy.c_binding, o_local));
         } else {
             self.line(&format!(
@@ -46434,6 +46531,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 }
                                             }
                                         }
+                                        // [221.1 #1348 follow-up] a bare `None` argument
+                                        // (e.g. `vec_of_Option_X.push(None)`) carries no
+                                        // type of its own — `emit_expr` defaults it to
+                                        // `NovaOpt_nova_int` (Plan 39 Issue A's documented
+                                        // fallback). The callee's OWN param type (`Option[X]`,
+                                        // X bound to the concrete element via the ACTIVE
+                                        // `current_type_subst` at this point — same window
+                                        // the RecordLit branch above already reads
+                                        // `param_decl.ty` in) names the correct target; reuse
+                                        // it exactly like the RecordLit `expected_record_type`
+                                        // hook, narrowed to the literal `None` ident so every
+                                        // other arg (Result/Option/scalar — see the
+                                        // `emit_expr_with_target_type` mis-wrap note on the
+                                        // sibling turbofish-arg loop) stays byte-identical.
+                                        if matches!(&a.expr().kind, ExprKind::Ident(n) if n == "None") {
+                                            if let Ok(pc) = self.type_ref_to_c(&param_decl.ty) {
+                                                if let Some(sani) = pc.strip_prefix("NovaOpt_") {
+                                                    arg_strs.push(self.option_none_expr(sani));
+                                                    self.expected_record_type = saved_er;
+                                                    continue;
+                                                }
+                                            }
+                                        }
                                         // [M-generic-reflect-call-inside-sibling-struct-
                                         // literal] (ICE-пачка п.5): `a.expr()` is an
                                         // ordinary CALLER-scope expression — restore
@@ -51264,7 +51384,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // `_p` as part of their field-encoding suffix, NOT as a
                     // pointer marker. They are value types stored by value in
                     // the NovaOpt — do not desanitize them.
-                    let binding_c_ty = if elem_c_ty.starts_with("_NovaTuple_") {
+                    // [221.1 #1348] a NESTED Option element (`for x in
+                    // []Option[T]` — `T` bound so the iterator's own `Option[T]`
+                    // payload IS `NovaOpt_<sani(T)>`) makes `elem_c_ty` itself a
+                    // `NovaOpt_<...>` VALUE-type struct name. When `sani(T)` was
+                    // built from a POINTER `T` (e.g. `T = []u8`), that name
+                    // already ends in `_p` as part of its OWN identity
+                    // (`NovaOpt_Nova_Vec____nova_byte_p`) — not as the
+                    // pointer-sanitization marker `desanitize_c_from_ident`
+                    // assumes. Stripping it there rebuilds a DIFFERENT,
+                    // undeclared pointer type (`NovaOpt_..._byte*`) instead of
+                    // the actual (non-pointer) struct the `.value` field holds.
+                    // Same carve-out shape as the `_NovaTuple_` exception right
+                    // above it — a NovaOpt_ name is already the correct, final
+                    // C spelling and must never be re-desanitized.
+                    let binding_c_ty = if elem_c_ty.starts_with("_NovaTuple_")
+                        || elem_c_ty.starts_with("NovaOpt_")
+                    {
                         elem_c_ty.clone()
                     } else {
                         Self::desanitize_c_from_ident(&elem_c_ty)

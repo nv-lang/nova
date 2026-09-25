@@ -1,0 +1,23 @@
+// EXPECT_COMPILE_ERROR D133-not-consumed
+//
+// Registry 221.1 #1345, the other half: D156 amendment 2026-08-04, family 1
+// (spec/decisions/02-types.md). A `Vec` of a must-consume element WITHOUT
+// `@cleanup` is LINEAR, drained explicitly (like Austral): the container's
+// `@cleanup` exists only under the `Cleanup` bound, so it does not apply here
+// and forgetting the vector is refused. The mirror of
+// standalone/vec_cleanup_affine.nv, where the element has a cleanup and the
+// forgotten vector is cleaned automatically.
+module neg.vec_linear_forgotten_neg
+
+type Lin consume {
+    id int
+}
+
+fn Lin consume @done() -> int => @id
+
+// nova:expect D133-not-consumed -- reported at the scope of `v`: `Lin` has no @cleanup, so `Vec[Lin]` is family 1 (linear) and forgetting it is an error
+fn main() Io -> () {
+    consume v Vec[Lin] = Vec[Lin].new()
+    v.push(Lin { id: 1 })
+    print("x")
+}
