@@ -50724,6 +50724,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             let s = self.emit_expr(start)?;
             let e = self.emit_expr(end)?;
+            // Registry 221.1 #1340 (D58: `for x in c` calls `c.iter()` ONCE and
+            // `a..b` is the value `Range { start: a, end: b }`): the bounds are
+            // evaluated once, before the first iteration. The start already is
+            // (the for-init); a non-literal end used to sit in the condition and
+            // run again on every iteration. A literal stays inline (no change).
+            let e = if Self::loop_bound_int_literal(end).is_some() {
+                e
+            } else {
+                let end_tmp = self.fresh_tmp();
+                self.line(&format!("nova_int {} = {};", end_tmp, e));
+                end_tmp
+            };
             let cmp = if *inclusive { "<=" } else { "<" };
             // [M-opt-preempt-strided-loop] Part A: provably-short const-bound
             // range loop → omit the per-iteration preempt-check so clang can
