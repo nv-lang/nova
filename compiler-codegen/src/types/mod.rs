@@ -31505,8 +31505,29 @@ impl<'a> BoundCtx<'a> {
             let Some(methods_for_recv) = self.sig.method_table.get(key.as_str()) else { continue; };
             let Some(overloads) = methods_for_recv.get(method_name) else { continue; };
             // Take single match (skip if multiple overloads — codegen разрулит).
-            match overloads.as_slice() {
-                [single] => { hit = Some((key.as_str(), single)); break; }
+            // Plan 246 (the consuming `append(consume other Vec[T])` beside the
+            // bounded `append[S AsSlice[T]](other S)`): with several overloads,
+            // D84 filter 2 comes first -- drop a candidate of the wrong arity or
+            // whose concrete parameter type names a different type than the
+            // KNOWN argument type. A second overload used to switch the bound
+            // check off for every call of the name (m381 / p386 fixtures).
+            let applicable: Vec<&FnDecl> = overloads.iter().copied().filter(|f| {
+                f.params.len() == args.len()
+                    && f.params.iter().zip(args.iter()).all(|(p, a)| {
+                        let generic = |n: &str| f.generics.iter().any(|g| g.name == n)
+                            || f.receiver.as_ref().map_or(false, |r| r.generics.iter().any(|t|
+                                matches!(t, TypeRef::Named { path, .. } if path.len() == 1 && path[0] == n)));
+                        let TypeRef::Named { path: pp, .. } = &p.ty else { return true };
+                        if pp.len() != 1 || generic(&pp[0]) { return true; }
+                        match Self::infer_arg_ty(a.expr(), scope).or_else(|| self.call_return_ty(a.expr())) {
+                            Some(TypeRef::Named { path: ap, .. }) => ap.last() == pp.last(),
+                            Some(TypeRef::Array(..)) => pp[0] == "Vec",
+                            _ => true,
+                        }
+                    })
+            }).collect();
+            match applicable.as_slice() {
+                [single] => { hit = Some((key.as_str(), *single)); break; }
                 _ => return, // ambiguous under the key that DOES have this name — bail (best-effort)
             }
         }
