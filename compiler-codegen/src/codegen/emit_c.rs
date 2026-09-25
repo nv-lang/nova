@@ -7964,6 +7964,10 @@ impl CEmitter {
                                     (r.mutable, r.consume,
                                      matches!(r.kind, crate::ast::ReceiverKind::Static))
                                 })
+                                // D464 amendment 2026-09-25: the linearity axis --
+                                // `fn Vec[T] @index_of` / `fn Vec[T consume] @index_of`
+                                // are two declarations too.
+                                && !crate::types::linearity_pair_differs(g, f)
                         });
                         if !dup {
                             entry.push(f.clone());
@@ -8723,8 +8727,24 @@ impl CEmitter {
                             .map(|sigs| sigs.iter().any(|s|
                                 s.c_name == cand && s.param_modes != new_modes))
                             .unwrap_or(false);
-                        if collides {
+                        let cand = if collides {
                             format!("{}__{}", cand, Self::param_mode_tag(f))
+                        } else {
+                            cand
+                        };
+                        // D464 amendment 2026-09-25: a linearity pair (`[T]` /
+                        // `[T consume]`) shares params, receiver and param modes,
+                        // so it still collides here; the second one registered
+                        // gets a tag. Only a real collision triggers it.
+                        let lin_collides = self.method_overloads.get(&key)
+                            .map(|sigs| sigs.iter().any(|s| s.c_name == cand))
+                            .unwrap_or(false);
+                        if lin_collides {
+                            if crate::types::linearity_marks(f).iter().any(|c| *c) {
+                                format!("{cand}__lin")
+                            } else {
+                                format!("{cand}__plain")
+                            }
                         } else {
                             cand
                         }
@@ -19921,6 +19941,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // `recv_mutable`, so without it both bodies took the
                     // first one's symbol (C redefinition).
                     let want_recv_consume = recv.consume;
+                    // D464 amendment 2026-09-25: a linearity pair is identical in
+                    // everything the passes below compare, so the declaration's own
+                    // registration (its span) decides first.
+                    if let Some(sig) = overloads.iter().find(|s| s.fn_span == Some(f.span)) {
+                        return sig.c_name.clone();
+                    }
                     // Pass 0: exact match on params + receiver mode + param_modes.
                     for sig in overloads.iter() {
                         if sig.param_c_types == want_params

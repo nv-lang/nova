@@ -1419,11 +1419,14 @@ fn check_module_impl(
                 // are DISTINCT overloads — dispatch by argument-binding mutability
                 // / last-use (D84 amendment). Two params are mode-equal iff same
                 // `is_mut` AND same `consume`.
+                // D464 amendment 2026-09-25 (linearity axis): a plain `[T]` and a
+                // `[T consume]` of the same name are a pair, not a duplicate.
                 let dup_existing = entry.iter().find(|existing| {
                     // Plan 135: if receiver-mutability differs, NOT a duplicate.
                     let existing_recv_mut = existing.receiver.as_ref()
                         .map(|r| (r.mutable, r.consume)).unwrap_or((false, false));
                     if existing_recv_mut != new_recv_mut { return false; }
+                    if linearity_pair_differs(existing, fd) { return false; }
                     // Arity + arg-types + param-modes одинаковы?
                     let args_equal = existing.params.len() == fd.params.len()
                         && existing.params.iter().zip(fd.params.iter())
@@ -1448,6 +1451,7 @@ fn check_module_impl(
                         let existing_recv_mut = existing.receiver.as_ref()
                             .map(|r| (r.mutable, r.consume)).unwrap_or((false, false));
                         if existing_recv_mut != new_recv_mut { return false; }
+                        if linearity_pair_differs(existing, fd) { return false; }
                         let args_equal = existing.params.len() == fd.params.len()
                             && existing.params.iter().zip(fd.params.iter())
                                 .all(|(p, np)| typeref_equal(&p.ty, &np.ty)
@@ -16326,6 +16330,8 @@ impl<'a> TypeCheckCtx<'a> {
             recv_mode(w[0]) != recv_mode(w[1])
                 || w[0].params.iter().zip(w[1].params.iter())
                     .any(|(a, b)| (a.consume, a.is_mut) != (b.consume, b.is_mut))
+                // D464 amendment 2026-09-25: the linearity axis ([T] / [T consume]).
+                || linearity_pair_differs(w[0], w[1])
         });
         if !axis_differs {
             return ModeAxisVerdict::NoVerdict;
@@ -16369,14 +16375,28 @@ impl<'a> TypeCheckCtx<'a> {
             0 => ModeAxisVerdict::NoVerdict, // zero eligible — legacy's honest gap
             1 => ModeAxisVerdict::Winner(scored[0].0.span),
             _ => {
+                // D464 amendment 2026-09-25, point 5: linearity decides only
+                // between candidates whose mode vectors are EQUAL, after the
+                // mode axis -- never in one dominance vector with it. A plain
+                // `[T]` (rank 1) is narrower than `[T consume]` (rank 0); the
+                // caller's `linearity_filter` already dropped a plain form whose
+                // `T` is not provably ordinary.
+                let lin_rank = |f: &FnDecl| -> Vec<u8> {
+                    linearity_marks(f).iter().map(|c| if *c { 0 } else { 1 }).collect()
+                };
+                let dominates = |r: &[u8], s: &[u8]| {
+                    r.len() == s.len()
+                        && r.iter().zip(s.iter()).all(|(a, b)| a >= b)
+                        && r.iter().zip(s.iter()).any(|(a, b)| a > b)
+                };
                 'outer: for (f, r) in &scored {
                     for (g, s) in &scored {
                         if f.span == g.span {
                             continue;
                         }
-                        let ge_all = r.iter().zip(s.iter()).all(|(a, b)| a >= b);
-                        let gt_any = r.iter().zip(s.iter()).any(|(a, b)| a > b);
-                        if !(ge_all && gt_any) {
+                        let beats = dominates(r, s)
+                            || (r == s && dominates(&lin_rank(f), &lin_rank(g)));
+                        if !beats {
                             continue 'outer;
                         }
                     }
@@ -16632,6 +16652,126 @@ impl<'a> TypeCheckCtx<'a> {
     /// declarations that differ in the receiver's `consume` (a receiver-mode
     /// pair, D84 mode axis, R14)? Only gates the receiver-type fallback in
     /// `check_instance_overload`.
+    /// D464 amendment 2026-09-25 (linearity axis): `t` is PROVABLY an ordinary
+    /// (not must-consume) type. A type parameter of the enclosing scope is
+    /// ordinary exactly when it has no `consume` bound (D156 point 1); a
+    /// declared type when it is not `type X consume` and all its arguments are
+    /// ordinary (a container is linear when its argument is); a primitive is.
+    /// Anything unknown is NOT proven -- the caller then keeps the general
+    /// `[T consume]` form, which is correct for every `T`.
+    fn ty_provably_ordinary(&self, t: &TypeRef, gs: &GenericScope) -> bool {
+        match t {
+            TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) => self.ty_provably_ordinary(i, gs),
+            TypeRef::Array(i, _) | TypeRef::FixedArray(_, i, _) => self.ty_provably_ordinary(i, gs),
+            TypeRef::Tuple(items, _) => items.iter().all(|x| self.ty_provably_ordinary(x, gs)),
+            TypeRef::Named { path, generics, .. } if path.len() == 1 => {
+                let name = path[0].as_str();
+                if let Some(g) = gs.get(name) {
+                    return !g.consume_bound;
+                }
+                if let Some(td) = self.types_get_here(name) {
+                    return !td.consume && generics.iter().all(|x| self.ty_provably_ordinary(x, gs));
+                }
+                generics.is_empty() && crate::protocols::auto_derive::is_primitive_type(name)
+            }
+            _ => false,
+        }
+    }
+
+    /// D464 amendment 2026-09-25 (linearity axis), filter 2b: when the
+    /// candidates differ in the linearity marks of their type parameters, a
+    /// candidate with a plain `[T]` stays only if the type bound to that `T` is
+    /// provably ordinary -- the receiver's type argument at that carrier
+    /// position, or the argument passed to a parameter typed exactly `T`. In a
+    /// generic caller `T` is the caller's own parameter, judged by its declared
+    /// bound (point 6, variant (a)). A set with equal marks passes unchanged.
+    fn linearity_filter<'f>(
+        &self,
+        recv_ty: Option<&TypeRef>,
+        fns: &[&'f FnDecl],
+        args: &[CallArg],
+        gs: &GenericScope,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Vec<&'f FnDecl> {
+        if fns.len() < 2 {
+            return fns.to_vec();
+        }
+        if fns.iter().all(|f| !linearity_pair_differs(fns[0], f)) {
+            return fns.to_vec();
+        }
+        let mut rt = recv_ty;
+        while let Some(TypeRef::Readonly(i, _) | TypeRef::Mut(i, _)) = rt {
+            rt = Some(i);
+        }
+        let recv_args: Vec<TypeRef> = match rt {
+            Some(TypeRef::Named { generics, .. }) => generics.clone(),
+            Some(TypeRef::Array(i, _)) | Some(TypeRef::FixedArray(_, i, _)) => vec![(**i).clone()],
+            _ => Vec::new(),
+        };
+        // A candidate's linearity TWIN: another one equal in every mode and
+        // differing only in the markers. Only against a twin does an UNKNOWN
+        // type argument drop the plain form (the general one is right for
+        // every `T`); a pair that also differs in a mode is decided by the
+        // mode axis, the markers acting there only as filter 2b.
+        let modes = |f: &FnDecl| (
+            f.receiver.as_ref().map(|r| (r.mutable, r.consume)),
+            f.params.iter().map(|p| (p.consume, p.is_mut)).collect::<Vec<_>>(),
+        );
+        let has_twin = |f: &FnDecl| fns.iter().any(|g| g.span != f.span
+            && linearity_pair_differs(f, g) && modes(f) == modes(g));
+        // The positions (carrier params first, then the fn's own) where some
+        // candidate of the same shape has `consume` -- only there is a plain
+        // marker a choice to judge; a `[K]` plain in every form is not.
+        let marks: Vec<Vec<bool>> = fns.iter().map(|f| linearity_marks(f)).collect();
+        fns.iter().copied().enumerate().filter(|(fi, f)| {
+            let n_recv = f.receiver.as_ref().map_or(0, |r| r.generics.len());
+            for (pos, is_consume) in marks[*fi].iter().enumerate() {
+                if *is_consume {
+                    continue;
+                }
+                let contested = marks.iter().any(|m| m.len() == marks[*fi].len() && m[pos]);
+                if !contested {
+                    continue;
+                }
+                // The type bound to the parameter at `pos`.
+                let bound: Option<TypeRef> = if pos < n_recv {
+                    recv_args.get(pos).cloned()
+                } else {
+                    let name = &f.generics[pos - n_recv].name;
+                    f.params.iter().zip(args.iter()).find_map(|(p, a)| {
+                        let at = BoundCtx::infer_arg_ty(a.expr(), scope)?;
+                        bind_type_param(&p.ty, &at, name)
+                    })
+                };
+                match bound {
+                    Some(t) if self.ty_provably_ordinary(&t, gs) => {}
+                    None if !has_twin(f) => {}
+                    _ => return false,
+                }
+            }
+            true
+        }).map(|(_, f)| f).collect()
+    }
+
+    /// D464 amendment 2026-09-25: the type's method `method` has a linearity
+    /// pair (a plain `[T]` and a `[T consume]` form). Opens the same full
+    /// receiver typing as `has_recv_consume_pair` -- a shape refused as a
+    /// duplicate before the amendment, so every other call site is unchanged.
+    fn has_linearity_pair(&self, ty: &TypeRef, method: &str) -> bool {
+        let mut rt = ty;
+        while let TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) = rt {
+            rt = i;
+        }
+        let name = match rt {
+            TypeRef::Named { path, .. } if path.len() == 1 => path[0].as_str(),
+            TypeRef::Array(..) => "Vec",
+            _ => return false,
+        };
+        self.sig.method_table.get(name)
+            .and_then(|m| m.get(method))
+            .map_or(false, |fs| fs.iter().any(|f| linearity_pair_differs(f, fs[0])))
+    }
+
     fn has_recv_consume_pair(&self, ty: &TypeRef, method: &str) -> bool {
         let mut rt = ty;
         while let TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) = rt {
@@ -16756,7 +16896,8 @@ impl<'a> TypeCheckCtx<'a> {
                 // byte-identical (see the `Member`-only rationale above).
                 self.infer_expr_type(obj, scope)
                     .or_else(|| self.generic_sum_ctor_owner(obj, scope))
-                    .filter(|t| self.has_recv_consume_pair(t, method_name))
+                    .filter(|t| self.has_recv_consume_pair(t, method_name)
+                        || self.has_linearity_pair(t, method_name))
             }
         }) else { return; };
         // Plan 172.2: normalize the receiver to a single `type_name`, mapping
@@ -17140,7 +17281,12 @@ impl<'a> TypeCheckCtx<'a> {
             // `mode_axis_tiebreak`) before giving up. №857: a genuine tie on
             // that axis is no longer a silent fall-through — D84's mode-axis
             // amendment orders the rejection, with the candidates listed.
-            match self.mode_axis_tiebreak(Some(obj), &compat_fns, args) {
+            // D464 amendment 2026-09-25: a plain-`[T]` twin stays only for a
+            // provably ordinary `T` (filter 2b), then the mode and linearity axes.
+            let lin_fns = self.linearity_filter(Some(&recv_ty), &compat_fns, args, gs, scope);
+            let single = (lin_fns.len() == 1 && compat_fns.len() > 1)
+                .then(|| ModeAxisVerdict::Winner(lin_fns[0].span));
+            match single.unwrap_or_else(|| self.mode_axis_tiebreak(Some(obj), &lin_fns, args)) {
                 ModeAxisVerdict::Winner(sp) => Some(sp),
                 ModeAxisVerdict::GenuineTie(cands) => {
                     errors.push(Diagnostic::new(
@@ -17689,7 +17835,12 @@ impl<'a> TypeCheckCtx<'a> {
                                     // №857: a genuine tie is the D84-ordered
                                     // rejection, not a silent legacy pick.
                                     let fns: Vec<&FnDecl> = compat.iter().map(|f| **f).collect();
-                                    match self.mode_axis_tiebreak(None, &fns, args) {
+                                    // D464 amendment 2026-09-25: linearity axis, filter 2b.
+                                    let lin_single = fns.len() > 1;
+                                    let fns = self.linearity_filter(None, &fns, args, gs, scope);
+                                    let single = (lin_single && fns.len() == 1)
+                                        .then(|| ModeAxisVerdict::Winner(fns[0].span));
+                                    match single.unwrap_or_else(|| self.mode_axis_tiebreak(None, &fns, args)) {
                                         ModeAxisVerdict::Winner(sp) =>
                                             compat.iter().find(|f| f.span == sp).copied(),
                                         ModeAxisVerdict::GenuineTie(cands) => {
@@ -42014,6 +42165,54 @@ fn generic_return_param_idx(fd: &FnDecl) -> Option<Option<usize>> {
     if !generic { return None; }
     Some(fd.params.iter().position(|p| matches!(&p.ty,
         TypeRef::Named { path: p2, .. } if p2.len() == 1 && &p2[0] == name)))
+}
+
+/// D464 amendment 2026-09-25 (linearity axis): the `consume` marker of every
+/// type parameter of `fd` -- the receiver's carrier brackets first, then the
+/// fn's own. Two declarations that differ only here are a pair, not a
+/// duplicate (D84); `false` is a plain `[T]`, which admits only ordinary types.
+/// D464 amendment 2026-09-25: `a` and `b` are a LINEARITY PAIR -- the same
+/// number of type parameters, differing only in their `consume` markers. A
+/// generic fn beside a concrete sibling (`[T]` vs none) is not one.
+pub(crate) fn linearity_pair_differs(a: &FnDecl, b: &FnDecl) -> bool {
+    let (ma, mb) = (linearity_marks(a), linearity_marks(b));
+    ma.len() == mb.len() && ma != mb
+}
+
+pub(crate) fn linearity_marks(fd: &FnDecl) -> Vec<bool> {
+    // `carrier_bounds` holds only the bounded carrier params, so the marks go
+    // by the carrier's positions (`generics`), looked up by name.
+    let mut out: Vec<bool> = fd.receiver.as_ref()
+        .map(|r| r.generics.iter().map(|g| match g {
+            TypeRef::Named { path, .. } if path.len() == 1 => r.carrier_bounds.iter()
+                .any(|b| b.name == path[0] && b.consume_bound),
+            _ => false,
+        }).collect())
+        .unwrap_or_default();
+    out.extend(fd.generics.iter().map(|g| g.consume_bound));
+    out
+}
+
+/// D464 amendment 2026-09-25: the type bound to the type parameter `name` when
+/// the declared `param` is matched structurally against the argument type
+/// `arg` (`T` ~ `int` -> `int`; `Bag[T]` ~ `Bag[Res]` -> `Res`; `[]T` ~ `[]u8`).
+/// `None` when `name` does not occur or the shapes disagree.
+fn bind_type_param(param: &TypeRef, arg: &TypeRef, name: &str) -> Option<TypeRef> {
+    let mut a = arg;
+    while let TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) = a {
+        a = i;
+    }
+    match (param, a) {
+        (TypeRef::Named { path, generics, .. }, _) if path.len() == 1 && path[0] == name
+            && generics.is_empty() => Some(a.clone()),
+        (TypeRef::Named { path: pp, generics: pg, .. }, TypeRef::Named { path: ap, generics: ag, .. })
+            if pp == ap && pg.len() == ag.len() =>
+            pg.iter().zip(ag.iter()).find_map(|(x, y)| bind_type_param(x, y, name)),
+        (TypeRef::Array(pi, _), TypeRef::Array(ai, _)) => bind_type_param(pi, ai, name),
+        (TypeRef::Tuple(ps, _), TypeRef::Tuple(as_, _)) if ps.len() == as_.len() =>
+            ps.iter().zip(as_.iter()).find_map(|(x, y)| bind_type_param(x, y, name)),
+        _ => None,
+    }
 }
 
 /// Registry 221.1 #1326 (nested tail): true when `fd`'s declared return is a
