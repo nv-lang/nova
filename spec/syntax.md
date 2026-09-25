@@ -577,7 +577,10 @@ Do not use them for other purposes.
   `type Vec[T consume]`; its methods that drop or duplicate elements are written with a plain
   `[T]` and are simply unavailable for a must-consume element. In such a type a plain-`[T]`
   method may not take `consume x T`: the consuming form is written once, with `[T consume]`
-  (`E_CONSUME_PARAM_UNBOUNDED`, amendment point 6, 2026-09-25).
+  (`E_CONSUME_PARAM_UNBOUNDED`, amendment point 6, 2026-09-25). A method may have a pair of
+  forms that differ only by the marker -- a general `[T consume]` and a fast plain `[T]`: an
+  ordinary `T` takes `[T]`, a must-consume one `[T consume]`, and the results must agree (point 7,
+  [D464 amendment 2026-09-25](decisions/10-overloading.md#d464--бáунд-как-фильтр-отбора-отсев-без-ранжирования-2026-08-16)).
 - **Auto-`@cleanup` frees ONE binding form, not everything except a list**
   ([D432 amendment 2026-08-21](decisions/02-types.md#d432), registry 221.1
   #672). The s.2 exemption lifts the obligation only from `consume X = e;`
@@ -1892,7 +1895,7 @@ fn min[T protocol { @compare(other Self) -> int, @equal(other Self) -> bool }](x
 If the pattern repeats — extracted into a named protocol (`type Ord
 protocol { ... }`).
 
-**A bound in overload selection is a filter, not a ranking** ([D464](decisions/10-overloading.md#d464--бáунд-как-фильтр-отбора-отсев-без-ранжирования-2026-08-16)). A candidate whose bound does not hold on the inferred substitution drops out; a single survivor is taken silently; more than one survivor without structural dominance (concrete over generic, D84) is an ambiguity error — "whose bound is narrower" is never compared; no survivor is a bound error (D72). Checked in the checker from the bound itself, before monomorphisation; codegen receives a settled decision.
+**A bound in overload selection is a filter, not a ranking** ([D464](decisions/10-overloading.md#d464--бáунд-как-фильтр-отбора-отсев-без-ранжирования-2026-08-16)). A candidate whose bound does not hold on the inferred substitution drops out; a single survivor is taken silently; more than one survivor without structural dominance (concrete over generic, D84) is an ambiguity error — "whose bound is narrower" is never compared; no survivor is a bound error (D72). Checked in the checker from the bound itself, before monomorphisation; codegen receives a settled decision. The one exception is the linearity axis (amendment 2026-09-25): for a `[T]` / `[T consume]` pair an ordinary `T` takes `[T]` -- two values, a total order, no protocols compared.
 
 ### Type-set — a bound by membership, not by structure
 
