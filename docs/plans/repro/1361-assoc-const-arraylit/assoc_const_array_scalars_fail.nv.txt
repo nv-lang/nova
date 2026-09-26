@@ -1,0 +1,7 @@
+module standalone.repro701.scalars
+type Box { tag int }
+export const Box.NUMS []int = [1, 2, 3]
+
+fn main() Io -> () {
+    print("${Box.NUMS.len()} ${Box.NUMS[1]}")
+}
