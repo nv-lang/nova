@@ -1,0 +1,73 @@
+// EXPECT_STDOUT explicit: 4 3 2 1 -> e3 | forgotten: 7 6 5 -> e6 | param: 9 8 -> e8 | done
+//
+// Registry 221.1 #1346 + D161 ("LIFO continues after partial failure"): the
+// container's `@cleanup` (`fn Vec[T consume Cleanup[E]] consume @cleanup(..)
+// Fail[E]`) keeps cleaning after an element's cleanup fails, and raises the
+// FIRST error afterwards. Elements go last to first, so the first failure is
+// that of the highest failing id. Its body accumulates the error in
+// `mut first Option[E]` -- `E` is introduced only by the bound
+// `Cleanup[E]`, and the oracle left it unsubstituted in the monomorph
+// (CC-FAIL on `NovaOpt_Nova_E_p`) before #1346; it is bound from the
+// element's own cleanup (`Fail[str]` -> `E = str`).
+//
+// Three vectors: one cleaned by an explicit call, one forgotten (affine,
+// D432, #1345), one a `consume` parameter cleaned explicitly. Every element
+// is cleaned even when one fails.
+module standalone.vec_cleanup_partial_failure
+
+type Res consume {
+    id int
+    fails bool
+}
+
+fn Res consume @cleanup(outcome ScopeOutcome) Fail[str] -> () {
+    print(" ${@id}")
+    if @fails {
+        throw "e${@id}"
+    }
+}
+
+fn explicit() Io Fail[str] -> () {
+    consume v Vec[Res] = Vec[Res].new()
+    v.push(Res { id: 1, fails: true })
+    v.push(Res { id: 2, fails: false })
+    v.push(Res { id: 3, fails: true })
+    v.push(Res { id: 4, fails: false })
+    print("explicit:")
+    v.cleanup(Success)
+}
+
+// A parameter is not an auto-cleanup binding: the explicit call alone
+// instantiates the container's cleanup here.
+fn close_param(consume v Vec[Res]) Io Fail[str] -> () {
+    print(" | param:")
+    v.cleanup(Success)
+}
+
+fn make_param() -> Vec[Res] {
+    consume v = Vec[Res].new()
+    v.push(Res { id: 8, fails: true })
+    v.push(Res { id: 9, fails: false })
+    return v
+}
+
+fn forgotten() Io Fail[str] -> () {
+    consume v Vec[Res] = Vec[Res].new()
+    v.push(Res { id: 5, fails: true })
+    v.push(Res { id: 6, fails: true })
+    v.push(Res { id: 7, fails: false })
+    print(" | forgotten:")
+}
+
+fn main() Io -> () {
+    with Fail[str] = |e| { print(" -> ${e}") } {
+        explicit()
+    }
+    with Fail[str] = |e| { print(" -> ${e}") } {
+        forgotten()
+    }
+    with Fail[str] = |e| { print(" -> ${e}") } {
+        close_param(make_param())
+    }
+    print(" | done")
+}

@@ -1946,6 +1946,11 @@ pub struct CEmitter {
     /// and its cleanup is a monomorph, not the erased `Nova_Vec_consume_cleanup`.
     /// Mirrors the checker's `LinearityRegistry::cleanup_arg_gates`.
     auto_cleanup_generic: HashMap<String, (Vec<usize>, crate::ast::FnDecl)>,
+    /// Registry 221.1 #1346: the signature (params, effects, return) of every
+    /// instance method of a NON-generic receiver type, keyed `(type, method)`
+    /// -- what `bound_introduced_subst` unifies a protocol's method against to
+    /// learn the protocol's type arguments for a concrete element type.
+    instance_method_sigs: HashMap<(String, String), (Vec<TypeRef>, Vec<TypeRef>, Option<TypeRef>)>,
     /// Plan 217: arm-sites for bare `consume X = e;` (non-block) bindings of
     /// an auto-cleanup-eligible type, collected by `enter_defer_scope`'s
     /// prologue scan (keyed by the `LetDecl`'s span — stable within one
@@ -2875,6 +2880,7 @@ impl CEmitter {
             defer_block_counter: 0,
             auto_cleanup_types: HashSet::new(),
             auto_cleanup_generic: HashMap::new(),
+            instance_method_sigs: HashMap::new(),
             auto_cleanup_arm_sites: HashMap::new(),
             free_fn_consume_param_positions: HashMap::new(),
             method_consume_param_positions: HashMap::new(),
@@ -5796,6 +5802,31 @@ impl CEmitter {
                             }
                         }
                     }
+                }
+            };
+            collect(&module.items);
+            for pf in &module.peer_files {
+                collect(&pf.items_here);
+            }
+        }
+
+        // #1346: instance-method signatures of non-generic receivers (see the
+        // field doc of `instance_method_sigs`).
+        {
+            let mut collect = |items: &[Item]| {
+                for item in items {
+                    let Item::Fn(f) = item else { continue };
+                    let Some(recv) = &f.receiver else { continue };
+                    if !recv.generics.is_empty() || !matches!(recv.kind, ReceiverKind::Instance) {
+                        continue;
+                    }
+                    self.instance_method_sigs
+                        .entry((recv.type_name.clone(), f.name.clone()))
+                        .or_insert_with(|| (
+                            f.params.iter().map(|p| p.ty.clone()).collect(),
+                            f.effects.clone(),
+                            f.return_type.clone(),
+                        ));
                 }
             };
             collect(&module.items);
@@ -30866,6 +30897,105 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// auto-cleanup eligible -> the container's template type substitution
     /// and its cleanup declaration. `Vec[int]` and a `Vec` of a linear type
     /// without `@cleanup` (family 1, drained explicitly) -> `None`.
+    /// Registry 221.1 #1346: bindings for type parameters introduced ONLY by
+    /// a carrier bound -- `E` in `fn Vec[T consume Cleanup[E]] consume
+    /// @cleanup(..) Fail[E]` is neither a template parameter of `Vec` nor a
+    /// method generic, so `subst` (the template's `T -> Nova_Res*`) left it
+    /// unbound and a body mentioning it (`mut first Option[E]`) lowered `E` as
+    /// the type name `Nova_E*`. The protocol of the bound (`Cleanup[E]`) says
+    /// where `E` comes from: its methods are unified against the element
+    /// type's own implementation (`instance_method_sigs`) -- `Res consume
+    /// @cleanup(..) Fail[str]` gives `E = str`. A protocol parameter the
+    /// implementation does not mention (a pure cleanup, D188: `E = Never`)
+    /// binds to `never`.
+    fn bound_introduced_subst(&self, fd: &crate::ast::FnDecl, subst: &[(String, String)])
+        -> Vec<(String, String)>
+    {
+        fn unify(pat: &TypeRef, conc: &TypeRef, tparams: &[String],
+                 out: &mut HashMap<String, TypeRef>) {
+            match (pat, conc) {
+                (TypeRef::Named { path: pp, generics: pg, .. }, _)
+                    if pp.len() == 1 && pg.is_empty() && tparams.contains(&pp[0]) =>
+                {
+                    out.entry(pp[0].clone()).or_insert_with(|| conc.clone());
+                }
+                (TypeRef::Named { path: pp, generics: pg, .. },
+                 TypeRef::Named { path: cp, generics: cg, .. })
+                    if pp.last() == cp.last() && pg.len() == cg.len() =>
+                {
+                    for (a, b) in pg.iter().zip(cg.iter()) {
+                        unify(a, b, tparams, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out: Vec<(String, String)> = Vec::new();
+        let Some(recv) = &fd.receiver else { return out };
+        for b in &recv.carrier_bounds {
+            let Some((_, elem_c)) = subst.iter().find(|(n, _)| n == &b.name) else { continue };
+            let elem_name = {
+                let t = self.debt_strip_nova_trim_start(elem_c);
+                t.strip_prefix("NovaValue_").map(|x| x.to_string()).unwrap_or(t)
+            };
+            for bound in &b.bounds {
+                let TypeRef::Named { path, generics: bargs, .. } = bound else { continue };
+                let Some(pname) = path.last() else { continue };
+                let Some((tparams, methods)) = self.protocol_method_registry.get(pname) else {
+                    continue;
+                };
+                let want: Vec<(usize, String)> = bargs.iter().enumerate()
+                    .filter_map(|(i, a)| match a {
+                        TypeRef::Named { path, generics, .. }
+                            if path.len() == 1 && generics.is_empty()
+                                && !subst.iter().any(|(n, _)| n == &path[0])
+                                && !fd.generics.iter().any(|g| g.name == path[0])
+                                && !out.iter().any(|(n, _)| n == &path[0]) =>
+                            Some((i, path[0].clone())),
+                        _ => None,
+                    })
+                    .collect();
+                if want.is_empty() {
+                    continue;
+                }
+                let mut bound_to: HashMap<String, TypeRef> = HashMap::new();
+                for m in methods {
+                    let Some((params, effects, ret)) =
+                        self.instance_method_sigs.get(&(elem_name.clone(), m.name.clone()))
+                    else { continue };
+                    for (pp, ip) in m.params.iter().zip(params.iter()) {
+                        unify(&pp.ty, ip, tparams, &mut bound_to);
+                    }
+                    for pe in &m.effects {
+                        let TypeRef::Named { path: ep, .. } = pe else { continue };
+                        if let Some(ie) = effects.iter().find(|ie| matches!(ie,
+                            TypeRef::Named { path, .. } if path.last() == ep.last()))
+                        {
+                            unify(pe, ie, tparams, &mut bound_to);
+                        }
+                    }
+                    if let (Some(pr), Some(ir)) = (&m.return_type, ret) {
+                        unify(pr, ir, tparams, &mut bound_to);
+                    }
+                }
+                for (i, name) in want {
+                    let Some(tp) = tparams.get(i) else { continue };
+                    let never = TypeRef::Named {
+                        path: vec!["never".to_string()], generics: Vec::new(),
+                        span: crate::diag::Span::default(),
+                    };
+                    let t = bound_to.get(tp).unwrap_or(&never);
+                    if let Ok(c) = self.type_ref_to_c(t) {
+                        if !c.is_empty() {
+                            out.push((name, c));
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
     fn auto_cleanup_generic_instance(&self, type_name: &str)
         -> Option<(Vec<(String, String)>, crate::ast::FnDecl)>
     {
@@ -30886,10 +31016,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
         let tmpl = self.generic_type_templates.get(&base)?;
-        let subst: Vec<(String, String)> = tmpl.generics.iter()
+        let mut subst: Vec<(String, String)> = tmpl.generics.iter()
             .zip(args_c.iter())
             .map(|(g, c)| (g.name.clone(), c.clone()))
             .collect();
+        // #1346: `E` of `[T consume Cleanup[E]]`.
+        let extra = self.bound_introduced_subst(&fd, &subst);
+        subst.extend(extra);
         Some((subst, fd))
     }
 
@@ -46378,6 +46511,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 // method-param mono логика). Identical behavior;
                                 // helper переиспользуется builtin Option/Result
                                 // `DeclaredBody`-dispatch (Plan 99.1 Ф.2/Ф.3).
+                                // #1346: type parameters introduced only by a carrier
+                                // bound (`E` of `[T consume Cleanup[E]]`).
+                                {
+                                    let extra = self.bound_introduced_subst(&fn_decl, &type_subst);
+                                    type_subst.extend(extra);
+                                }
                                 let method_extra_subst = self.resolve_method_level_subst(
                                     &fn_decl, args, &type_subst,
                                     &format!("{}.{}", rt_trimmed, method),

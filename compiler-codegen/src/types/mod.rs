@@ -46159,6 +46159,12 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                     if p.consume {
                         ctx.consume_bound_names.insert(p.name.clone());
                     }
+                    // #1346 (the #1345 gap it exposed): a parameter's declared type
+                    // is its full type -- a `consume v Vec[Res]` parameter is as
+                    // cleanup-eligible (`cleanup_effects_for`) as a `consume r Res`.
+                    if let TypeRef::Named { .. } = &p.ty {
+                        ctx.var_type_refs.insert(p.name.clone(), p.ty.clone());
+                    }
                     // Plan 118.5 V2 [M-118.5-arg-coerce-unsafe]: track
                     // unsafe-T-annotated params (outer Unsafe wrapper detected
                     // before any Pointer wrapper).
