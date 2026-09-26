@@ -26,7 +26,7 @@ import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
 import ../builtins.{SLICE_HEAD, SELF_TYPE, UNIT_TYPE_NAME}
 import ../names.{DeclId, raw_decl}
-import ../types.{TyId, no_ty, is_ty, same_ty, Interner}
+import ../types.{TyId, no_ty, is_ty, Interner}
 
 /// A TYPE REFERENCE starting at `pk[at]`, resolved to a term -- including an
 /// APPLICATION (step B2): `Vec[int]` is `app(vec_decl, [int])`, and `[]int` is
@@ -145,11 +145,10 @@ fn ref_leaf_ty(c Node, recv_t TyId, tps []str, param_rows []TyId,
     // (`fn Vec[T] mut @push(v T) -> @`); std writes both, and reading only the
     // word dropped every `-> @` signature -- `push` was "no such method"
     // (measured 2026-08-26, sub-plan L2). The sign is judged BEFORE the
-    // identifier gate below, which it is not. `same_ty`, not `recv_t`:
-    // [LEGACY-#760-newtype-ro-launder].
-    if leaf_kind(c) == TokenKind.At { return same_ty(recv_t) }
+    // identifier gate below, which it is not.
+    if leaf_kind(c) == TokenKind.At { return recv_t }
     if leaf_kind(c) != TokenKind.Ident { return no_ty() }
-    if leaf_text(c) == SELF_TYPE { return same_ty(recv_t) }
+    if leaf_text(c) == SELF_TYPE { return recv_t }
     ty_of_type_name(leaf_text(c), tps, param_rows, types, defs)
 }
 

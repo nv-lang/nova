@@ -15,7 +15,7 @@
 module novac.check
 
 import ../tree.{Node, NodeKind, assign_op_of}
-import ../types.{TyId, no_ty, is_ty, same_ty}
+import ../types.{TyId, no_ty, is_ty}
 import ../builtins.{TypeKind}
 import ../sem.{leaf_kind, carrier_of, is_numeric_prim, ty_source_name, expr_leaf_name, branch_children, ParamMode}
 
@@ -119,11 +119,7 @@ fn Checker mut @assigned_operand_type(kids []Node) -> TyId {
 /// narrowing, E7301 for every other mismatch. Answers `no_ty()` when it refused.
 fn Checker mut @assigned_value_type(kids []Node, rt0 TyId) -> TyId {
     ro tt = type_of(kids[0], @ctx, @scope, @chan)
-    // `same_ty`, not the parameter itself, on every hand-back path:
-    // [LEGACY-#760-newtype-ro-launder] (the test CU of this module is compiled
-    // by the oracle, whose readonly analysis refuses a bare `return` of a ro-bound
-    // `TyId`).
-    if !is_ty(tt) || !is_ty(rt0) { return same_ty(rt0) }
+    if !is_ty(tt) || !is_ty(rt0) { return rt0 }
     ro adapted = adapt_operand(kids[2], rt0, carrier_of(@ctx, tt), @ctx.tys)
     if adapted != rt0 {
         if !@lit_fits_or_refuse(kids[2], adapted) { return no_ty() }
@@ -134,11 +130,11 @@ fn Checker mut @assigned_value_type(kids []Node, rt0 TyId) -> TyId {
     ro want = @concrete(tt)
     if @ctx.tys.kind_of(t) == TypeKind.TkParam || @ctx.tys.kind_of(want) == TypeKind.TkParam {
         // A type parameter is not judged: the instance judges its own body.
-        return same_ty(adapted)
+        return adapted
     } else {
         // Both concrete: compared by name below.
     }
-    if t == want { return same_ty(adapted) }
+    if t == want { return adapted }
     ro from = ty_source_name(@ctx, t)
     ro to = ty_source_name(@ctx, want)
     ro msg = if int_narrows(@ctx.tys, t, want) {

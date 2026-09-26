@@ -22,7 +22,7 @@ module novac.check
 import ../tree.{Node}
 import ../builtins.{TypeKind}
 import ../sem.{Ctx, carrier_of, decl_of_ty, representation_of, branch_children}
-import ../types.{TyId, no_ty, is_ty, same_ty}
+import ../types.{TyId, no_ty, is_ty}
 
 /// A CAST, and the one shape the subset compiles: unwrapping a NEWTYPE into its
 /// representation (`r as int` for `type Row int`).
@@ -78,12 +78,11 @@ fn Checker mut @type_cast(e Node) -> () {
 /// about a type that may well be an ordinary one, and "it is not a newtype" is
 /// an ANSWER here rather than a broken invariant.
 fn Checker @representation_of_or_self(t TyId) -> TyId {
-    // `same_ty` on both hand-backs: [LEGACY-#760-newtype-ro-launder].
-    if !is_ty(t) { return same_ty(t) }
+    if !is_ty(t) { return t }
     match @ctx.tys.kind_of(t) {
         TkNewtype => representation_of(@ctx, t)
         // TkEffect: an effect is not a newtype -- nothing to unwrap, itself.
-        TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkTuple | TkEffect => same_ty(t)
+        TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkTuple | TkEffect => t
     }
 }
 
