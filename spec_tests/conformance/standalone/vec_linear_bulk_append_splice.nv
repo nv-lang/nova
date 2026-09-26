@@ -53,10 +53,10 @@ fn main() Io -> () {
     }
 
     // ordinary elements: a mut binding takes the copying forms and stays live
-    mut a = Vec[int].of(1, 2, 3)
-    mut other = Vec[int].of(6, 7)
+    mut a = [1, 2, 3]
+    mut other = [6, 7]
     a.append(other)
-    mut more = Vec[int].of(8, 9)
+    mut more = [8, 9]
     a.splice(1, more)
 
     print("made=${made.len()} closed=${closed} sum=${sum} order=${order} other=${other.len()} kept=${more.len()}")

@@ -16,11 +16,11 @@ type Cell {
 }
 
 fn Cell @display(mut f Fmt) -> () {
-    f.pad("${@n}".bytes())
+    f.pad("${@n}")
 }
 
 fn Cell @debug(mut f Fmt) -> () {
-    f.pad("${@n}".bytes())
+    f.pad("${@n}")
 }
 
 type Wrap {

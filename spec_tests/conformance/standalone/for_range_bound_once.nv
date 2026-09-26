@@ -25,7 +25,7 @@ fn main() Io -> () {
     for i in 0..b.hi() {
         iters += 1
     }
-    mut v = Vec[int].of(1, 2, 3)
+    mut v = [1, 2, 3]
     mut seen = 0
     for i in 0..v.len() {
         if i == 0 {
@@ -33,7 +33,7 @@ fn main() Io -> () {
         }
         seen += 1
     }
-    mut w = Vec[int].of(1, 2)
+    mut w = [1, 2]
     mut each = 0
     for x in w {
         if each == 0 {

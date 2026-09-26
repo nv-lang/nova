@@ -69,7 +69,7 @@ fn forget_built() Io -> () {
 }
 
 fn ints() Io -> int {
-    mut v = Vec[int].of(1, 2, 3)
+    mut v = [1, 2, 3]
     v.push(4)
     print(" | ints:")
     0
