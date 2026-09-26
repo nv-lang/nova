@@ -27,7 +27,7 @@ fn empty_file_p() -> Node => branch(0, NodeKind.File, []Node.new())
 /// A plain `ro` parameter of this type -- same helper mangle_test carries:
 /// `ro` is the language's default, so this is what "just a parameter" means.
 fn ro_param(t TyId) -> ParamDef =>
-    { name: "p", type_id: t, mode: ParamMode.ModeRo, default_expr: []Node.new() }
+    { name: "p", type_id: t, mode: ParamMode.ModeRo, default_expr: None }
 
 
 test "a type WITH the required method satisfies the contract" {
@@ -100,7 +100,7 @@ test "a FREE function of the same name does not satisfy a method requirement" {
 /// A parameter of this type in this mode -- the overload tests vary only modes,
 /// so the type is the same int everywhere and the mode is the whole story.
 fn mode_param(t TyId, m ParamMode) -> ParamDef =>
-    { name: "p", type_id: t, mode: m, default_expr: []Node.new() }
+    { name: "p", type_id: t, mode: m, default_expr: None }
 
 /// An argument of this type in this class, passed positionally.
 fn class_arg(t TyId, c ArgClass) -> ArgSpec => { type_id: t, cls: c, name: "" }

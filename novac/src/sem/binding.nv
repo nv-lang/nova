@@ -82,29 +82,20 @@ export fn ParamMode @specificity() -> int => match @ {
 /// D102 evaluates it at the call site, each call anew, so a stored value would
 /// be the wrong thing to store.
 ///
-/// WHY A VECTOR OF AT MOST ONE AND NOT `Option[Node]`, which is what this field
-/// means. INTEROP, not taste: the ORACLE CANNOT COMPILE a record field whose
-/// type is a generic SUM instance. Measured 2026-08-23 on three independent
-/// probes -- `Option[int]`, `Option[Nd]` and `Result[int, str]` as a field, in
-/// a `value` record and a plain one alike -- and the emission is wrong in two
-/// different ways: the record literal casts the maker to `nova_int`
-/// (`_nv_tmp.default_expr = (nova_int)(intptr_t)nova_make_Option_None()`) and an
-/// `if Some(v) = r.d` binding comes out typed as the wrong scalar. A plain sum
-/// field and a generic RECORD field both build, so the hole is narrow and it is
-/// the oracle's, not the language's: nothing in `std` or in novac had ever
-/// written an optional FIELD, so the form was simply never tried. Filed in the
-/// registry as CLASS "a field's generic-sum instantiation is lost in codegen".
-///
-/// The END CONDITION is written here so the shape cannot quietly become the
-/// pattern: this field becomes `Option[Node]` the day the oracle compiles one --
-/// or the day novac compiles itself, whichever comes first. Until then the
-/// "at most one" reading lives in ONE door (`param_default_of`), so no caller
-/// has to remember it.
+/// WAS A VECTOR OF AT MOST ONE, NOT `Option[Node]` -- registry №763, CLOSED
+/// 2026-09-26 (interop hole in the oracle, not the language): a record field
+/// typed as a generic SUM instance used to miscompile (measured 2026-08-23:
+/// the record literal cast the maker to `nova_int`, and an `if Some(v) = r.d`
+/// binding came out typed as the wrong scalar). Re-probed 2026-09-21 (the
+/// minimal repro, `type Row { d Option[int] }` with `if Some(v) = r.d`,
+/// compiles and prints correctly) and again 2026-09-26 before this change --
+/// the oracle already builds this shape; the vector-of-one-element workaround
+/// outlived its cause.
 export type ParamDef value {
     name str /// as written; `""` when the shape carries no readable name (recovery debris)
     type_id TyId /// the parameter's type; `no_ty()` = unreadable, and backends ice on it rather than invent one
     mode ParamMode /// as written; `ModeRo` when the declaration writes nothing
-    default_expr []Node /// the DEFAULT written for it (`by int = 2`): EMPTY = required, one element = declared
+    default_expr Option[Node] /// the DEFAULT written for it (`by int = 2`): `None` = required, `Some` = declared
 }
 
 /// WHAT an argument IS at a call site -- the classes rule P14 filters on.
@@ -251,22 +242,15 @@ export fn bind_slot_of(params []ParamDef, off int, cnt int, args []ArgSpec, s in
 }
 
 /// Does this slot REQUIRE an argument — that is, does its declaration write no
-/// default? The "at most one element" reading of `ParamDef.default_expr` lives
-/// HERE and nowhere else (see the field's own note on why it is a vector).
+/// default?
 #realtime nogc
 export fn slot_is_required(params []ParamDef, off int, s int) -> bool =>
-    params[off + s].default_expr.len() == 0
+    params[off + s].default_expr.is_none()
 
 /// The DEFAULT expression declared for a slot, or `None` when it is required.
-/// The other half of the same reading, for the emitter.
 #realtime nogc
-export fn slot_default_of(params []ParamDef, off int, s int) -> Option[Node] {
-    if params[off + s].default_expr.len() == 0 {
-        None
-    } else {
-        Some(params[off + s].default_expr[0])
-    }
-}
+export fn slot_default_of(params []ParamDef, off int, s int) -> Option[Node] =>
+    params[off + s].default_expr
 
 /// WHY these arguments do not bind to these parameters — the whole of D102's
 /// call rules in one place, in the order a reader meets them.

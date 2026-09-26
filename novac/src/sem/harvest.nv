@@ -347,7 +347,7 @@ fn harvest_fn(kids []Node, handed_from str, types []TypeDef, mut defs DefTable, 
     // call site could say and no `=` a declaration could write.
     if !is_free {
         param_ids.push(ParamDef { name: RECV_BINDING, type_id: recv_t,
-                                  mode: recv_mode_at(kids), default_expr: []Node.new() })
+                                  mode: recv_mode_at(kids), default_expr: None })
     } else {
         // A free function has no receiver slot: its parameters start at zero.
     }

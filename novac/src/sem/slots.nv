@@ -221,25 +221,23 @@ fn param_name_of(pk []Node) -> str {
     if Some(n) = param_name_at(pk) { leaf_text(pk[n]) } else { "" }
 }
 
-/// The DEFAULT expression written for this parameter (`by int = 2`), in the
-/// shape the row stores it: EMPTY when the declaration writes none.
+/// The DEFAULT expression written for this parameter (`by int = 2`), or
+/// `None` when the declaration writes none.
 ///
 /// The parser leaves `=` as a leaf and the expression right after it, so the
 /// door reads the pair rather than a fixed index -- a parameter's children are
 /// mode, name, one or more type nodes, then this.
-///
-/// The vector shape is the oracle's constraint, not a choice: see `ParamDef`.
-export fn param_default_slot(pk []Node) -> []Node {
+export fn param_default_slot(pk []Node) -> Option[Node] {
     mut seen_assign = false
     for c in pk {
         // The child right after the `=` IS the default; everything before it is
         // the mode, the name and the type.
-        if seen_assign { return []Node.of(c) }
+        if seen_assign { return Some(c) }
         if c.kind_of() != NodeKind.LeafNode { continue }
         if leaf_kind(c) != TokenKind.Assign { continue }
         seen_assign = true
     }
-    []Node.new()
+    None
 }
 
 /// The NAME slot of a fn DECLARATION: the first identifier leaf after the
