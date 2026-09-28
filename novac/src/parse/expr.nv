@@ -709,6 +709,44 @@ fn Cursor mut @atom() -> Node {
     // under its own kind: the emitter writes the statement directly and needs a
     // temporary for the expression, so conflating them would emit silence.
     if @peek() == TokenKind.KwIf {
+        // AN IF-LET HEAD IN VALUE POSITION (the if-let-value wave): `ro d =
+        // if Some(v) = e { v } else { return false }` -- the SAME node shape
+        // the statement door builds (`@stmt`, parse.nv), the head asked
+        // through the ONE door (`@iflet_head_shape`), so sem/slots.nv's
+        // `iflet_*_at` doors, the checker's value typist and the lowering's
+        // value door all read it unchanged. The `else if` chain recurses
+        // into THIS reader, exactly as the plain value `if` below does.
+        ro iflet = @iflet_head_shape()
+        if iflet > 0 {
+            mut kids = []Node.of(@take(), @take())
+            if iflet == 2 {
+                kids.push(@take()) // `.`
+                kids.push(@take()) // the qualified variant's own ident
+            } else {
+                // Bare head: nothing stands between the name and `(`.
+            }
+            kids.push(@take()) // `(`
+            kids.push(@take()) // binder ident
+            kids.push(@take()) // `)`
+            kids.push(@take()) // `=`
+            kids.push(@head_expr())
+            kids.push(@block())
+            if @peek() == TokenKind.KwElse {
+                kids.push(@take())
+                if @peek() == TokenKind.KwIf {
+                    kids.push(@atom())
+                } else if @peek() == TokenKind.LBrace {
+                    kids.push(@block())
+                } else {
+                    kids.push(@missing_of(TokenKind.ErrorTok))
+                }
+            } else {
+                // No else: check names a value if-let without one
+                // (IFLET_VALUE_NEEDS_ELSE_MSG); the absent node is what lets
+                // it see the absence.
+            }
+            return @node(NodeKind.IfLet, kids)
+        }
         mut kids = []Node.of(@take())
         kids.push(@head_expr())
         if @peek() == TokenKind.LBrace { kids.push(@block()) } else { kids.push(@missing_of(TokenKind.ErrorTok)) }

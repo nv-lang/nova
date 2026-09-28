@@ -774,11 +774,50 @@ fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
         }
         // The binder lives in the SOME branch only, which is why the mark is
         // released before the else is typed rather than after both.
+        //
+        // A BRANCH THAT LEAVES through `return` IMPOSES NO TYPE on the value
+        // (the binding-initializer carrier of the if-let-value wave:
+        // `ro d = if Some(v) = param_default_slot(pk) { v } else { return
+        // false }`, check/rules.nv): control reaches past the `if let` only
+        // from the branch that STAYS, so that branch's type is the value's.
+        // The leaving branch is still typed -- as statements, its `return`
+        // judged by its own door. Both branches leaving produces no value at
+        // all; that shape records nothing, exactly as a branch refused below.
+        ro some_term = block_terminates(kids[body_at])
+        ro none_term = block_terminates(kids[else_at])
         ro vmark = @scope.mark()
         @scope.bind(leaf_text(kids[binder_at]), payload, ParamMode.ModeRo)
-        ro some_t = @type_branch_value(kids[body_at])
+        ro some_t = if some_term {
+            @type_block(kids[body_at])
+            no_ty()
+        } else {
+            @type_branch_value(kids[body_at])
+        }
         @scope.release(vmark)
-        ro none_t = @type_branch_value(kids[else_at])
+        ro none_t = if none_term {
+            @type_body(kids[else_at])
+            no_ty()
+        } else {
+            @type_branch_value(kids[else_at])
+        }
+        if some_term || none_term {
+            // ONE branch left: the other alone decides. Both left: neither
+            // does, and there is nothing to record -- SILENT-OK only when both
+            // left, because the refused branch already said its word above.
+            ro lone_t = if some_term { none_t } else { some_t }
+            if some_term && none_term { return }
+            if !is_ty(lone_t) {
+                // SILENT-OK: the staying branch was refused inside
+                // `@type_branch_value`, by name; one cause, one diagnostic.
+                return
+            } else {
+                // The staying branch's type is the `if let`'s.
+            }
+            @record(st, lone_t)
+            return
+        } else {
+            // Both branches stay: they must agree, below.
+        }
         if !is_ty(some_t) || !is_ty(none_t) {
             // SILENT-OK: the branch without a value was refused inside
             // `@type_branch_value`, by name; one cause, one diagnostic.

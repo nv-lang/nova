@@ -641,24 +641,33 @@ fn Cursor mut @head_expr() -> Node {
     e
 }
 
+/// IF-LET HEAD, asked in ONE place (registry #1259's lookahead, extracted for
+/// the if-let-value wave): 0 = not an if-let, 1 = bare `if Some(v) =`, 2 =
+/// qualified `if Sum.Variant(binder) =`. The statement door (`@stmt`) and the
+/// value door (`@atom`, expr.nv) both ask here -- an ordinary `if` head can
+/// never carry an `=` at either offset, so the lookahead alone tells an
+/// if-let from an expression, and two doors computing it would drift on the
+/// first change to either (the #991 class).
+fn Cursor @iflet_head_shape() -> int {
+    if @peek() != TokenKind.KwIf || @peek(skip: 1) != TokenKind.Ident { return 0 }
+    if @peek(skip: 2) == TokenKind.LParen && @peek(skip: 3) == TokenKind.Ident &&
+       @peek(skip: 4) == TokenKind.RParen && @peek(skip: 5) == TokenKind.Assign { return 1 }
+    if @peek(skip: 2) == TokenKind.Dot && @peek(skip: 3) == TokenKind.Ident &&
+       @peek(skip: 4) == TokenKind.LParen && @peek(skip: 5) == TokenKind.Ident &&
+       @peek(skip: 6) == TokenKind.RParen && @peek(skip: 7) == TokenKind.Assign { return 2 }
+    0
+}
+
 /// Parse one statement: if/while/return/mut/ro/for, or an expression (assignment).
 fn Cursor mut @stmt() -> Node {
     // IF-LET head lookahead, bare OR QUALIFIED (registry #1259): `if
     // Sum.Variant(binder) = expr` is the same class already fixed for
     // match's own pattern head and for `const Type.NAME` -- a variant's
     // head is read in more than one place, and this was the one that had
-    // not learned the qualifier yet. An ordinary `if` head can never carry
-    // an `=` at either offset, so the lookahead alone still tells an
-    // if-let from an expression; it is only WIDENED to look two tokens
-    // further when a `.` stands where a bare head's `(` would.
-    ro iflet_head = @peek() == TokenKind.KwIf && @peek(skip: 1) == TokenKind.Ident
-    ro iflet_bare = iflet_head &&
-       @peek(skip: 2) == TokenKind.LParen && @peek(skip: 3) == TokenKind.Ident &&
-       @peek(skip: 4) == TokenKind.RParen && @peek(skip: 5) == TokenKind.Assign
-    ro iflet_qualified = iflet_head && !iflet_bare &&
-       @peek(skip: 2) == TokenKind.Dot && @peek(skip: 3) == TokenKind.Ident &&
-       @peek(skip: 4) == TokenKind.LParen && @peek(skip: 5) == TokenKind.Ident &&
-       @peek(skip: 6) == TokenKind.RParen && @peek(skip: 7) == TokenKind.Assign
+    // not learned the qualifier yet. Asked through the ONE door above.
+    ro iflet_shape = @iflet_head_shape()
+    ro iflet_bare = iflet_shape == 1
+    ro iflet_qualified = iflet_shape == 2
     if iflet_bare || iflet_qualified {
         // IF-LET (wave: if-let + Option family): `if Some(v) = expr { ... }`.
         // Its own kind, the B14 discipline; which variants the subset takes

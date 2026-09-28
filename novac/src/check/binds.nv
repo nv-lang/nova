@@ -166,6 +166,32 @@ fn Checker mut @type_bind(st Node) -> () {
         // SILENT-OK: typed and bound above, so this branch is fully decided
         return
     }
+    // AN IF-LET initializer routes explicitly, the TupleExpr precedent: IfLet
+    // is not in is_expr_kind -- it is a statement kind that also STANDS in
+    // value position (`ro d = if Some(v) = param_default_slot(pk) { v } else
+    // { return false }`, check/rules.nv's own carrier, the if-let-value
+    // wave) -- so the general path never sees it, and the fallthrough's
+    // `type_of` would ice on a kind the lattice has no rule for. Typed by its
+    // own door AS A VALUE; the bind takes what the door records.
+    if ik == NodeKind.IfLet {
+        ro before3 = @out.len()
+        @type_if_let(init, as_value: true)
+        if @out.len() > before3 {
+            @bind_poisoned(vname, kids)
+            return
+        }
+        ro lt = @chan.type_if_known(init.id_of())
+        // SILENT-OK: an if-let whose branches both leave records no type (the
+        // staying branch was refused inside the door, by name); the name is
+        // bound POISONED.
+        if !is_ty(lt) {
+            @bind_poisoned(vname, kids)
+            return
+        }
+        @scope.bind(vname, lt, bind_mode_at(kids))
+        // SILENT-OK: typed and bound above, so this branch is fully decided
+        return
+    }
     // A HANDLER LITERAL routes explicitly, the TupleExpr precedent exactly:
     // not in is_expr_kind (E.5 defers first-class handler values), so the
     // general path never sees it, and the fallthrough's `type_of` would
