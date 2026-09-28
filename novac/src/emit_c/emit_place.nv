@@ -28,7 +28,7 @@ import ../sem.{c_type, c_instance_method, raw_vrow, is_value_record}
 // callee spell, what are the children) and the output printer asks the carrier of a type.
 import ../sem.{branch_children, is_expr_kind, carrier_of}
 import ../types.{TyId, is_ty}
-import ../lower.{Local, LocalDecl, AssignStmt, StoreStmt, Rvalue, Operand, OutputStmt}
+import ../lower.{Local, LocalDecl, AssignStmt, StoreStmt, Rvalue, Operand, OutputStmt, no_local}
 import ../builtins.{VEC_GET_METHOD}
 
 
@@ -251,7 +251,7 @@ fn Emitter mut @emit_store(st StoreStmt) -> () {
         Set => {
             match built {
                 Some(t) => @body.append(t)
-                None => @emit_expr(st.src)
+                None => @emit_store_src(st)
             }
         }
         Update(op) => {
@@ -264,19 +264,33 @@ fn Emitter mut @emit_store(st StoreStmt) -> () {
                 @body.append(") ")
                 @body.append(form)
                 @body.append(" (")
-                @emit_expr(st.src)
+                @emit_store_src(st)
                 @body.append("))")
             } else {
                 @body.append(form)
                 @body.append("(")
                 @emit_expr(st.target)
                 @body.append(", ")
-                @emit_expr(st.src)
+                @emit_store_src(st)
                 @body.append(")")
             }
         }
     }
     @body.append(";\n")
+}
+
+/// The SOURCE of a store, printed as the local the lowering hoisted it into
+/// when there is one (the if-value wave: an `if` as the right side lays down
+/// blocks, so it is lowered before the store is recorded and read back by
+/// name -- `@hoist_sealed_args`' own precedent, asked at the argument door
+/// since F65), and as the tree otherwise.
+fn Emitter mut @emit_store_src(st StoreStmt) -> () {
+    ro hl = @lo.ir.local_of_node(st.src.id_of())
+    if hl != no_local() {
+        @body.append(@lo.ir.decl_of(hl).name)
+    } else {
+        @emit_expr(st.src)
+    }
 }
 
 

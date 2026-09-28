@@ -240,7 +240,13 @@ fn Checker mut @type_branch_value(b Node) -> TyId {
             Leaf(_) => {}
             Branch { .. } => {
                 if i == last {
-                    if is_expr_kind(c.kind_of()) {
+                    if is_value_tail_kind(c.kind_of()) {
+                        // A TUPLE tail places a value too (`{ (no_vrow(), 0) }`
+                        // -- the destructure carriers of the if-value wave):
+                        // `is_value_tail_kind` is `is_expr_kind` plus the one
+                        // positional record/tuple the tail chain has returned
+                        // since B15 step 4b, and the emitter builds it through
+                        // the same `build_value` dispatch.
                         // THE LATTICE IS ASKED ONLY WHEN NOTHING WAS REFUSED
                         // (#902's rule): a refused tail -- an unknown callee,
                         // a construction the registry has no row for -- has

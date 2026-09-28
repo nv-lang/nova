@@ -326,7 +326,27 @@ fn Lowerer mut @lower_stmt(st Node) -> () {
         // a compound store from the one form table, the target as an
         // expression (a name and `@field` on one path).
         ro kids = branch_children(st)
-        @lower_store(kids[0], assign_op_of(leaf_kind(kids[1])), kids[2])
+        ro src = kids[2]
+        // AN `if` AS THE SOURCE LOWERS BEFORE THE STORE IS RECORDED (the
+        // if-value wave): it lays down blocks of the body, and a printer
+        // asked to lower would push into a FINISHED builder -- the exact
+        // precedent of `@hoist_sealed_args`, whose hoist the store's printer
+        // reads back through `@lo.ir.local_of_node`, so the recorded store
+        // below needs no new shape.
+        if src.kind_of() == NodeKind.IfExpr {
+            ro sty = @out.type_if_known(src.id_of())
+            if is_ty(sty) {
+                match @lower_value_source(src, sty) {
+                    Some(l) => @ir.remember_hoist(src.id_of(), l)
+                    None => {}
+                }
+            } else {
+                // SILENT-OK: refused where it was typed; nothing to hoist.
+            }
+        } else {
+            // An ordinary source prints inline, as before.
+        }
+        @lower_store(kids[0], assign_op_of(leaf_kind(kids[1])), src)
     } else if k == NodeKind.ForStmt {
         ro kids = branch_children(st)
         if kids[3].kind_of() == NodeKind.Call || kids[3].kind_of() == NodeKind.MethodCall ||
