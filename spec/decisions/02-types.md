@@ -131,6 +131,11 @@ shorthand. Если переменной нет в scope — compile error.
 
 **Partial pattern matching** — две эквивалентные формы:
 
+> **AMEND 2026-09-28 ([D486](03-syntax.md#d486) §3): неявная форма
+> РЕТРАКТИРОВАНА.** `..` обязателен при частичном списке полей во ВСЕХ
+> позициях — match, биндинг, if/while-let, for (`E_RECORD_PATTERN_NEEDS_REST`).
+> Текст ниже сохранён как история решения.
+
 ```nova
 // явная — с маркером ..
 match @buckets[idx] {
