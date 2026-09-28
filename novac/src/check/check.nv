@@ -613,8 +613,21 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // wave B8). `arm_pos` is computed generically by `@walk`
                     // (2026-09-20, for `match`/`if` as an arm body) and was
                     // simply never asked here.
+                    //
+                    // THE TAIL OF A VALUE BODY and the RIGHT SIDE OF `=` JOIN
+                    // THEM (registry #TBD, the record-position wave): a fn
+                    // body block whose declaration promises a value places its
+                    // tail through `@lower_place` -- the same door the arm
+                    // body above took -- and a plain store prints its source
+                    // through the same inline door an initializer's own
+                    // constructor takes. `tail_at` marks the first below
+                    // (`@tail_value_body`, the id typing.nv has read for
+                    // waves); the AssignStmt arm marks the second, and ONLY
+                    // there: opening init_pos on every right side would wave a
+                    // `match` through to a store that cannot lay its blocks
+                    // down.
                     if !init_pos && !arg_pos && !arm_pos {
-                        @report_first_leaf_of(children, "outside the subset: a record constructor is compiled only as a binding initializer, a call argument or the body of a match arm -- other positions are not compiled yet (E2, the records/sums horizon)")
+                        @report_first_leaf_of(children, "outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)")
                         return
                     } else {
                         // Initializer, argument or arm body: legal, and the
@@ -857,7 +870,27 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     }
                 }
                 LeafNode | File | ModuleDecl | IfStmt => {}
-                AssignStmt | FieldAccess | CtorField | CtorSpread => {}
+                AssignStmt => {
+                    // THE RIGHT SIDE OF A PLAIN `=` IS A VALUE POSITION for a
+                    // record constructor (registry #TBD, the record-position
+                    // wave): the store prints its source through the same
+                    // inline door an initializer's own constructor takes, and
+                    // the carriers are novac's own (`fx.ops[oi] = EffectOpSig
+                    // { .. }` and six more). ONLY the plain `=` and ONLY the
+                    // constructor -- a compound `op=` has no record meaning,
+                    // and opening init_pos for the whole right side would wave
+                    // a `match` through to a store that cannot lay its blocks
+                    // down. Everything else is walked exactly as before.
+                    mut ai = 0
+                    for c in children {
+                        @walk(c, init_pos: ai == 2 &&
+                                     leaf_kind(children[1]) == TokenKind.Assign &&
+                                     c.kind_of() == NodeKind.RecordCtor)
+                        ai += 1
+                    }
+                    return
+                }
+                FieldAccess | CtorField | CtorSpread => {}
                 MatchArm | Pattern | ArraySpread | Guard => {}
                 Recv | Generics | Unary | Paren | Name => {}
                 // A protocol's signatures are judged together with the
@@ -907,10 +940,16 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
             // constructor standing in it.
             //
             // Computed once, like the two slots above, and ONLY when this
-            // Block really is an arm's body that does not leave through
-            // `return` on every path: a terminating block's tail is dead code,
-            // and a value position there would be a promise nothing keeps.
-            ro tail_at = if arm_pos && kind == NodeKind.Block && !block_terminates(n) {
+            // Block really is an arm's body -- or the VALUE BODY of a fn
+            // (`@tail_value_body`, the same id the typing walk reads at
+            // typing.nv:356; a fn whose block body ends in a record
+            // constructor returns it, and the lowering places that tail
+            // through `@lower_place` exactly like an arm's) -- that does not
+            // leave through `return` on every path: a terminating block's tail
+            // is dead code, and a value position there would be a promise
+            // nothing keeps.
+            ro tail_at = if kind == NodeKind.Block && !block_terminates(n) &&
+                            (arm_pos || n.id_of() == @tail_value_body) {
                 last_branch_of(children)
             } else {
                 0 - 1

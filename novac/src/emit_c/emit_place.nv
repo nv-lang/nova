@@ -233,11 +233,27 @@ fn Emitter mut @emit_eval(rv Rvalue) -> () {
 /// once made `f += 0.25` call an integer helper on doubles (hunt emit_c x K1,
 /// H5).
 fn Emitter mut @emit_store(st StoreStmt) -> () {
+    // A CONSTRUCTION AS THE SOURCE OF A PLAIN `=` builds FIRST, exactly as at
+    // an assignment of the lowered body (`@emit_assign` above): a record
+    // constructor or an array literal is several C statements, and the store
+    // line reads the temporary they filled (the record-position wave --
+    // `@locals[i] = LocalDecl { .. }` and six more of novac's own). Computed
+    // before the head is printed, or the construction's own statements would
+    // land in the middle of the line they belong before.
+    ro built = match st.op {
+        Set => @build_value(st.src, @out.type_of(st.src.id_of()))
+        Update(_) => None
+    }
     @body.append("    ")
     @emit_expr(st.target)
     @body.append(" = ")
     match st.op {
-        Set => @emit_expr(st.src)
+        Set => {
+            match built {
+                Some(t) => @body.append(t)
+                None => @emit_expr(st.src)
+            }
+        }
         Update(op) => {
             ro row = @arith_row(@out.type_of(st.src.id_of()))
             ro is_float = is_float_row(row)
