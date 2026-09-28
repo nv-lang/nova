@@ -596,7 +596,29 @@ fn Cursor mut @block() -> Node {
         // must exit, not spin. This role used to be played by an assert in
         // take(), which meant death.
         ro before = @i
+        // A BARE `;` IS NOT A STATEMENT -- D49's own line: «Пустые `;`
+        // запрещены -- всегда баг» (spec/decisions/03-syntax.md:3430), found
+        // by the spec-reader during this wave after the oracle measured
+        // ACCEPTING `fn main() { ; }` (2026-09-28; the divergence of the
+        // oracle from its own spec is registry 221.1 #TBD). The byte is
+        // still TAKEN here, into an Err node: with no door at all the
+        // Semicolon leaf stalls @stmt and the block loop spins forever on
+        // exactly this input (measured on a broken build during the wave).
+        // One Err, one token, the checker's error-node door names it.
+        if @peek() == TokenKind.Semicolon {
+            kids.push(@node(NodeKind.Err, []Node.of(@take())))
+            continue
+        } else {
+            // A real statement: parsed below.
+        }
         kids.push(@stmt())
+        // `;` IS A STATEMENT END (D85's grammar: `statement-end = ';' |
+        // NEWLINE | look-ahead '}'`). The newline form never surfaces here
+        // (trivia), so without this line the byte was a Semicolon leaf with
+        // no door and the second statement of `{ i += 2; kind = Tilde }`
+        // fell to the parser's fallback -- forty carriers in lex.nv alone.
+        // Kept in the tree, as every other separator is.
+        @push_if(kids, TokenKind.Semicolon)
         if @i == before { break }
     }
     @push_expected(kids, TokenKind.RBrace)

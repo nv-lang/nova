@@ -91,6 +91,13 @@ export type TokenKind enum
     | RBracket
     | Dot
     | Comma
+    /// `;` — the statement terminator of D85's grammar (`statement-end =
+    /// ';' | NEWLINE | look-ahead '}'`): a newline is trivia and `}` is its
+    /// own token, so the third form needs a kind of its own. Read in by the
+    /// semicolon wave (2026-09-28): lex.nv's own byte match arms
+    /// (`0x5D => { i += 2; kind = ... }`) carry forty of the parser
+    /// fallback's carriers, all on this one byte.
+    | Semicolon
     | Plus
     | Minus
     | Star
@@ -187,6 +194,7 @@ export fn spelling_of(k TokenKind) -> Option[str] => match k {
     RBracket => Some("`]`")
     Dot => Some("`.`")
     Comma => Some("`,`")
+    Semicolon => Some("`;`")
     Plus => Some("`+`")
     Minus => Some("`-`")
     Star => Some("`*`")
@@ -363,7 +371,7 @@ export fn paren_delta(k TokenKind) -> int {
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwConsume | KwWhile | KwType | KwMatch |
         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | Hash | Ident |
         KwBreak | KwContinue | IntLit | FloatLit | CharLit | StrFrag | InterpOpen | InterpClose |
-        StrLit | LBrace | RBrace | EmptyBrackets | LBracket | RBracket | Dot | Comma | Plus | Minus |
+        StrLit | LBrace | RBrace | EmptyBrackets | LBracket | RBracket | Dot | Comma | Semicolon | Plus | Minus |
         Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq |
         Question2 | Question | AmpAmp | PipePipe | Amp | Caret |
         Shl | Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
@@ -380,7 +388,7 @@ export fn bracket_delta(k TokenKind) -> int {
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwConsume | KwWhile | KwType | KwMatch |
         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | Hash | Ident |
         KwBreak | KwContinue | IntLit | FloatLit | CharLit | StrFrag | InterpOpen | InterpClose |
-        StrLit | LParen | RParen | LBrace | RBrace | EmptyBrackets | Dot | Comma | Plus | Minus |
+        StrLit | LParen | RParen | LBrace | RBrace | EmptyBrackets | Dot | Comma | Semicolon | Plus | Minus |
         Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq |
         Question2 | Question | AmpAmp | PipePipe | Amp | Caret |
         Shl | Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
@@ -398,7 +406,7 @@ export fn brace_delta(k TokenKind) -> int {
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwConsume | KwWhile | KwType | KwMatch |
         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | Hash | Ident |
         KwBreak | KwContinue | IntLit | FloatLit | CharLit | StrFrag | InterpOpen | InterpClose |
-        StrLit | LParen | RParen | EmptyBrackets | LBracket | RBracket | Dot | Comma | Plus | Minus |
+        StrLit | LParen | RParen | EmptyBrackets | LBracket | RBracket | Dot | Comma | Semicolon | Plus | Minus |
         Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq |
         Question2 | Question | AmpAmp | PipePipe | Amp | Caret |
         Shl | Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
@@ -570,6 +578,7 @@ fn punct_kind(b u8) -> TokenKind => match b {
     0x5D => TokenKind.RBracket  // ]
     0x2E => TokenKind.Dot       // .
     0x2C => TokenKind.Comma     // ,
+    0x3B => TokenKind.Semicolon // ;
     0x23 => TokenKind.Hash      // #
     0x3A => TokenKind.Colon     // :
     0x40 => TokenKind.At        // @
