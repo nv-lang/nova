@@ -676,31 +676,60 @@ fn Emitter mut @emit_expr(e Node) -> () {
         @emit_bound_args(kids, 1, false, e.id_of(), callee_row_or_none(cr))
         @body.append(")")
     } else if k == NodeKind.Index {
-        // A CLOSED `str` SLICE (plan 274.7 wave U-1): `s[lo..hi]` is the call
-        // `s.index(Range { start: lo, end: hi })` of D470 section 5, printed as the
-        // shell's method over a `Range` compound literal. The checker admits this
-        // one index form and records its type (`str`); every other index was
-        // refused there, so reaching this arm with anything else is a broken
-        // contract, not a program.
+        // Two checked forms, one door (D470 section 5: an index is the call
+        // `xs.index(i)`; a closed slice is `xs.index(Range { start, end })`):
+        //
+        // - A CLOSED SLICE `s[lo..hi]` on a `str` receiver (plan 274.7 wave
+        //   U-1), printed over a `Range` compound literal. The checker records
+        //   the node's own type (`str`), which is the receiver's type too, so
+        //   the symbol question goes to it.
+        // - A PLAIN INDEX `xs[i]` on a `[]T` receiver whose instance the shell
+        //   carries (`Vec____nova_int_method_index`, wave 274.5); the checker
+        //   records the ELEMENT as the node's type, so the symbol question
+        //   goes to the RECEIVER's recorded type, not the node's.
+        //
+        // Every other index was refused by the checker, named; reaching this
+        // arm with one is a broken contract, not a program.
         ro kids = branch_children(e)
-        ro st = @out.type_if_known(e.id_of())
-        if kids.len() < 3 || !is_closed_slice_bin(kids[2]) || !is_ty(st) {
-            ice("emit: an index other than a checked closed slice reached emission")
+        if kids.len() < 3 {
+            ice("emit: an index with fewer than a receiver, `[` and an operand reached emission")
         } else {
-            // A checked slice: printed below.
+            // The three children the checker judged.
         }
-        ro rng = @ctx.ty_of_name(RANGE_TYPE) ?? ice("emit: the prelude's `Range` is not in the registry")
-        ro bounds = branch_children(kids[2])
-        @body.append(c_method_symbol(@ctx, st, "index"))
-        @body.append("(")
-        @emit_expr(kids[0])
-        // POSITIONAL, in `Range`'s declaration order (`start`, then `end` --
-        // `std/src/collections/range/core.nv`, the shell's struct reads the same).
-        @body.append(", ((${c_type(@ctx, rng)}){ ")
-        @emit_expr(bounds[0])
-        @body.append(", ")
-        @emit_expr(bounds[2])
-        @body.append(" }))")
+        if is_closed_slice_bin(kids[2]) {
+            ro st = @out.type_if_known(e.id_of())
+            if !is_ty(st) {
+                ice("emit: a closed slice the checker did not type reached emission")
+            } else {
+                // A checked slice: printed below.
+            }
+            ro rng = @ctx.ty_of_name(RANGE_TYPE) ?? ice("emit: the prelude's `Range` is not in the registry")
+            ro bounds = branch_children(kids[2])
+            @body.append(c_method_symbol(@ctx, st, "index"))
+            @body.append("(")
+            @emit_expr(kids[0])
+            // POSITIONAL, in `Range`'s declaration order (`start`, then `end` --
+            // `std/src/collections/range/core.nv`, the shell's struct reads the same).
+            @body.append(", ((${c_type(@ctx, rng)}){ ")
+            @emit_expr(bounds[0])
+            @body.append(", ")
+            @emit_expr(bounds[2])
+            @body.append(" }))")
+        } else {
+            // A plain index: `xs.index(i)`, the receiver's instance spelling.
+            ro rt = @out.type_if_known(kids[0].id_of())
+            if !is_ty(rt) {
+                ice("emit: an index whose receiver type the checker did not record reached emission")
+            } else {
+                // The receiver's type decides the symbol, below.
+            }
+            @body.append(c_method_symbol(@ctx, rt, "index"))
+            @body.append("(")
+            @emit_expr(kids[0])
+            @body.append(", ")
+            @emit_expr(kids[2])
+            @body.append(")")
+        }
     } else if k == NodeKind.Cast {
         // Unwrapping a newtype is FREE: the value is already the
         // representation, so the emission is the operand and nothing else. C

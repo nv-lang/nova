@@ -31,7 +31,7 @@ import ../sem.{Ctx, CheckOut, param_name_at, param_type_at, branch_children, cal
 import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of}
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
-import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
+import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method, c_method_symbol}
 import ../sem.{ty_source_name, variants_named, is_closed_slice_bin}
 import ../types.{TyId, no_ty, is_ty}
 
@@ -480,23 +480,29 @@ fn Checker mut @type_index(e Node) -> TyId {
     } else {
         // Either an int, or already refused where it was typed.
     }
-    // READ, BUT NOT COMPILED YET -- and said by name rather than accepted.
-    //
-    // The element type above is correct and the receiver is a real vector; what
-    // is missing is on the EMITTER's side: the interop shell carries no `index`
-    // for this instance. Measured 2026-08-31 -- `grep Vec____nova_int_method_index
-    // novac/src/emit_c/shell.tpl.c` finds nothing, while `_method_get` (which
-    // answers `Option[T]`) and `_method_len` are there. `@index(i int) -> T`
-    // does exist in std (`std/src/collections/vec/access.nv:30`); the shell only
-    // carries what the probe program uses.
-    //
-    // Accepting the form anyway is the shape the differential guard calls the
-    // worst kind of green: `check` clean, `emit` an ICE ("binding initializer is
-    // neither a match, a ctor nor an expression"). So the subset refuses, and the
-    // refusal names WHAT is missing and WHERE -- the fix is a wider probe, not a
-    // change to the program being compiled.
-    @report_first_leaf_of(kids, "outside the subset: indexing is read but not compiled yet (E2-b) -- the interop shell carries no `index` for this instance, so widen novac/probe/shell_probe.nv")
-    no_ty()
+    // THE SHELL DECIDES, by name — the same shape as the array literal above
+    // (line ~632). A plain `xs[i]` is the call `xs.index(i)` (D470 section 5,
+    // the same door the closed slice walks through); the element type is the
+    // application's argument and the receiver's spelling is `c_method_symbol`'s
+    // question. Measured 2026-08-31 the shell carried no `index` at all; wave
+    // 274.5 taught the probe `three().index(1)` for `Vec[int]`
+    // (`Vec____nova_int_method_index`, shell.tpl.c:2001), so the instance this
+    // subset needs exists — and any other instance is refused by the name the
+    // shell does not carry, not accepted into an emit ICE.
+    ro sym = c_method_symbol(@ctx, recv_t, "index")
+    if !@ctx.interop.has(sym) {
+        @report_first_leaf_of(kids, "outside the subset: the shell novac links into carries no `index` for ${ty_source_name(@ctx, recv_t)} -- the interop surface is the probe program (novac/probe/shell_probe.nv, E2-b); an index of this instance arrives when the probe uses one")
+        return no_ty()
+    } else {
+        // Carried: the emitter prints exactly this name — and it reads the
+    // RECEIVER's type back off the channel to build that name, so the type
+    // the judgement below already holds is recorded on the receiver node.
+    // Measured 2026-09-28: without the line the emit arm ICEd ("an index whose
+    // receiver type the checker did not record"), because a plain identifier
+    // receiver is typed by the lattice without a recording writer of its own.
+    }
+    @chan.record_type(kids[0].id_of(), recv_t)
+    @ctx.tys.arg(recv_t, 0)
 }
 
 /// The type of a CLOSED slice `s[lo..hi]`, or `no_ty()` after a named refusal
