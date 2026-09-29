@@ -247,7 +247,9 @@ export type Stmt enum
 export type Cond enum
     | Expr(Node) // a boolean expression, printed from the tree
     | IsSome(Local) // the Option in the local is Some
-    | NotSome(Local) // the Option in the local is None -- the while-let's exit test (wave P4): spelled `!<some-test>` through the same one Option door
+    // the Option in the local is None -- the while-let's exit test (wave P4):
+    // spelled `!<some-test>` through the same one Option door
+    | NotSome(Local)
 
 /// WHAT KIND OF `else` AN `if` HAS -- three states, and the fourth is gone because it never
 /// existed. Until 2026-09-13 the doors took two booleans, `has_else` and `els_braced`, which
@@ -329,7 +331,10 @@ export type LoopHead enum
     | While(Node) // `while cond`
     | Range(RangeHead) // `for v in lo..hi`
     | Each(EachHead) // `for v in <collection>`: index walk over len/get
-    | Forever // `while (1)` -- the while-let's head (wave P4): the loop's real test is the per-iteration pattern match in its body, so the head carries no expression at all (and none is forged)
+    // `while (1)` -- the while-let's head (wave P4): the loop's real test is
+    // the per-iteration pattern match in its body, so the head carries no
+    // expression at all (and none is forged)
+    | Forever
 
 /// A loop (wave M2b-1). The block carrying this terminator IS the header: it
 /// holds no statements, tests the head, enters `body` or `exit`; the body's
