@@ -24,6 +24,7 @@ import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
+import ../builtins.{VEC_INDEX_METHOD}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
 import ../sem.{shape_of}
@@ -516,7 +517,7 @@ fn Checker mut @type_index(e Node) -> TyId {
     // (`Vec____nova_int_method_index`, shell.tpl.c:2001), so the instance this
     // subset needs exists — and any other instance is refused by the name the
     // shell does not carry, not accepted into an emit ICE.
-    ro sym = c_method_symbol(@ctx, recv_t, "index")
+    ro sym = c_method_symbol(@ctx, recv_t, VEC_INDEX_METHOD)
     if !@ctx.interop.has(sym) {
         @report_first_leaf_of(kids, "outside the subset: the shell novac links into carries no `index` for ${ty_source_name(@ctx, recv_t)} -- the interop surface is the probe program (novac/probe/shell_probe.nv, E2-b); an index of this instance arrives when the probe uses one")
         return no_ty()
