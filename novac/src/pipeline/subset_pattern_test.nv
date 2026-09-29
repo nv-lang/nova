@@ -181,3 +181,76 @@ fn main() {\n\
     assert(d3.len() >= 1)
     assert(d3[0].message.contains("takes variant alternatives only"))
 }
+
+test "a destructuring binding reads the ONE pattern door; refutable forms refuse by position (D486 P2b)" {
+    // The binding position takes the same Pattern tree the match arm reads:
+    // a NESTED tuple binds through a temporary per level, `_` binds nothing,
+    // and `mut` on one binder overrides the keyword's default (D486 §4's
+    // single mode rule). Asserted on the diagnostics and the C shapes.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn three() -> (int, (int, int)) {\n\
+ (1, (2, 3))\n\
+}\n\
+fn main() {\n\
+ ro (a, (b, c)) = three()\n\
+ println(a + b + c)\n\
+ ro (x, _) = (4, 5)\n\
+ println(x)\n\
+ ro (mut m, n) = (6, 7)\n\
+ m = m + n\n\
+ println(m)\n\
+ consume (p, q) = (8, 9)\n\
+ println(p + q)\n\
+}", std)
+    assert(d.len() == 0, messages(d))
+    assert(c.contains(".f0;"))
+    assert(c.contains(".f1;"))
+
+    // The Option carrier is handed IN, as in the if-let tests: the tiny
+    // std_decls knows no `get`, and a refusal about the SETUP would test
+    // nothing about the position.
+    mut std2 = std_decls()
+    std2.push("module std.v\n\
+export type Vec[T] { n int }\n\
+export fn Vec[T] @get(i int) -> Option[T] => None\n\
+export type Option[T] enum Some(T) | None\n")
+    // A VARIANT pattern can fail to match, and a binding has no `else`:
+    // refused by the POSITION, with D486's own diagnostic code.
+    ro (d2, _) = compile_to_c("fn main() {\n\
+ ro xs = [1]\n\
+ ro o = xs.get(0)\n\
+ ro Some(x) = o\n\
+ println(x)\n\
+}", std2)
+    assert(d2.len() >= 1)
+    assert(d2[0].message.contains("irrefutable pattern"))
+    assert(d2[0].message.contains("E_REFUTABLE_BINDING"))
+
+    // An ARRAY pattern is refutable the same way (its length is not static).
+    ro (d3, _) = compile_to_c("fn main() {\n\
+ ro xs = [1, 2]\n\
+ ro [a, b] = xs\n\
+ println(a)\n\
+}", std2)
+    assert(d3.len() >= 1)
+    assert(d3[0].message.contains("irrefutable pattern"))
+
+    // A qualified head takes the same refusal (the lookahead's `.`-walk is
+    // what lets it here at all, instead of breaking as an ordinary binding).
+    ro (d4, _) = compile_to_c("fn main() {\n\
+ ro xs = [1]\n\
+ ro o = xs.get(0)\n\
+ ro Option.Some(x) = o\n\
+ println(x)\n\
+}", std2)
+    assert(d4.len() >= 1)
+    assert(d4[0].message.contains("irrefutable pattern"))
+
+    // And the no-cascade rule: after the refusal the name still BINDS, so a
+    // use downstream does not echo "unknown name" over the one mistake.
+    mut unknown = false
+    for g in d2 {
+        if g.message.contains("is not a callable novac knows") { unknown = true } else {}
+    }
+    assert(!unknown)
+}

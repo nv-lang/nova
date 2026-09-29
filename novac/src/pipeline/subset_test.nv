@@ -461,9 +461,7 @@ fn main() {\n\
  println(a)\n\
 }", std)
     assert(d2.len() >= 1)
-    for g in d2 {
-        assert(g.message.contains("arity mismatch"))
-    }
+    assert(d2[0].message.contains("arity disagrees"))
 
     ro (d3, _) = compile_to_c("fn main() {\n\
  ro (a, b) = 5\n\
@@ -473,24 +471,27 @@ fn main() {\n\
     // The FIRST diagnostic is the root cause (d0 everywhere in the smoke
     // logs); a use after the refusal may add a follower, and asserting every
     // row would test the cascade, not the judge.
-    assert(d3[0].message.contains("needs a TUPLE initializer"))
+    assert(d3[0].message.contains("needs a positional tuple scrutinee"))
 }
 
-test "a collection head walks the vector by len/get; a scalar head refuses (B16)" {
+test "a collection head walks the vector by len/index; a scalar head refuses (B16)" {
     // `for x in mk()`: the head runs ONCE into a temporary, the loop guards
-    // on _method_len and reads _method_get(...).value -- the .value is the
-    // shell's Option ABI (interop), never a language Option. Asserted on the
-    // C shapes; behavior is the corpus carriers' to hold. The generic Vec
-    // head is handed IN -- the tiny std_decls carries no types, and the
-    // slice sugar cannot intern []int without it (the same hand-in the
-    // literal tests above use).
+    // on _method_len and reads _method_index(...) -- the DIRECT read: the
+    // header's `i < len` proves the index, so `@index` is the method and no
+    // Option stands here (owner, 2026-09-29: proven access is `@index`,
+    // `get` is the access nobody proved; the B16 interim `get(...).value`
+    // predated the shell's `index`). Asserted on the C shapes; behavior is
+    // the corpus carriers' to hold. The generic Vec head is handed IN --
+    // the tiny std_decls carries no types, and the slice sugar cannot
+    // intern []int without it (the same hand-in the literal tests above
+    // use).
     //
     // OWNER'S DIRECTION (2026-09-29): `for x in xs` is the ITERATOR protocol
     // (`@iter()`/`@next() -> Option[T]`, the loop ends at `@next() == None`)
     // -- and so is `for x in a..b`, formally: a Range iterates by index
     // THROUGH the same protocol (walking a counter without materializing the
     // Range is only an allowed optimization; bounds are computed ONCE). The
-    // len/get walk asserted here is the interim door until that wave;
+    // len/index walk asserted here is the interim door until that wave;
     // recorded in plan 274.5 §5й.
     mut std = std_decls()
     std.push("module std.v\n\
@@ -506,8 +507,7 @@ fn main() {\n\
 }", std)
     assert(d.len() == 0)
     assert(c.contains("_method_len("))
-    assert(c.contains("_method_get("))
-    assert(c.contains(").value;"))
+    assert(c.contains("_method_index("))
 
     // A NAME head takes the same door.
     ro (d2, c2) = compile_to_c("fn main() {\n\
@@ -517,7 +517,7 @@ fn main() {\n\
  }\n\
 }", std)
     assert(d2.len() == 0)
-    assert(c2.contains("_method_get("))
+    assert(c2.contains("_method_index("))
 
     // A call that hands back a SCALAR has no element: refused by name.
     ro (d3, _) = compile_to_c("fn one() -> int {\n\

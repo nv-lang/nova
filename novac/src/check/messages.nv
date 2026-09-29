@@ -204,9 +204,7 @@ const IFLET_INIT_MSG = "the initializer of `if Some(...) = ...` must be an Optio
 /// that counter's scope is wave B11's subject.
 const FOR_CALL_HEAD_MSG = "outside the subset: the head of this `for` is a call that does not return a vector, and novac walks a collection by index, so it needs `[]T` -- the iterator protocol D58 asks for is not compiled yet (274.7 B12)"
 
-/// See DESTR_NOT_TUPLE_MSG above; this is the arity half.
-const DESTR_ARITY_MSG = "destructuring arity mismatch: the pattern names a different count than the tuple carries (D123, E_TUPLE_DESTRUCTURE_ARITY class)"
-
+/// B15 bounds: a tuple parameter's call-site ABI is unmeasured and novac
 /// B15 bounds: a tuple parameter's call-site ABI is unmeasured and novac
 /// itself carries none -- the boundary is a judge, not unreachability.
 const TUPLE_PARAM_MSG = "outside the subset: a tuple as a PARAMETER is not compiled yet (B15 bounds) -- return one, or pass the components"

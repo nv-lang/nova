@@ -324,24 +324,27 @@ fn Checker mut @bind_arm_pattern(ak []Node, scr_t TyId) -> bool {
         @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern")
         return false
     }
-    @bind_pattern(ak[0], scr_t, ak)
+    @bind_pattern(ak[0], scr_t, ak, ParamMode.ModeRo)
 }
 
 /// ONE pattern against ONE type. `ak` travels for report POSITIONS only:
 /// every refusal of the arm points at the arm's first leaf, exactly as the
-/// flat walk pointed. The shape is asked through the one door
+/// flat walk pointed. `dmode` is the DEFAULT binder mode of the POSITION
+/// (D486 §4's single mode rule): the match arm's is `ro`, the destructuring
+/// binding's is its own keyword, and a binder's mode word overrides it.
+/// The shape is asked through the one door
 /// (sem/pattern.nv) and matched exhaustively -- a form the subset cannot
 /// judge is refused BY NAME in its own arm below, never fallen through
 /// (the #652 class: a silent default on a closed set).
-fn Checker mut @bind_pattern(pat Node, ty TyId, ak []Node) -> bool {
+fn Checker mut @bind_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode) -> bool {
     match pattern_shape(pat) {
         Lit => @bind_lit_pattern(pat, ak)
         Wild => true
-        Bind => @bind_name_pattern(pat, ty, ak)
-        Variant => @bind_variant_pattern(pat, ty, ak)
-        Record => @bind_record_pattern(pat, ty, ak)
-        Tuple => @bind_tuple_pattern(pat, ty, ak)
-        Array => @bind_array_pattern(pat, ty, ak)
+        Bind => @bind_name_pattern(pat, ty, ak, dmode)
+        Variant => @bind_variant_pattern(pat, ty, ak, dmode)
+        Record => @bind_record_pattern(pat, ty, ak, dmode)
+        Tuple => @bind_tuple_pattern(pat, ty, ak, dmode)
+        Array => @bind_array_pattern(pat, ty, ak, dmode)
         Disj => @bind_disj_pattern(pat, ty, ak)
     }
 }
@@ -376,7 +379,7 @@ fn Checker mut @bind_lit_pattern(pat Node, ak []Node) -> bool {
 /// the same text the qualified case uses: one rule, two spellings.
 /// The binder is recorded with its type ON the Name node -- the emitter has
 /// no scope and reads the channel, which is the discipline the record keeps.
-fn Checker mut @bind_name_pattern(pat Node, ty TyId, ak []Node) -> bool {
+fn Checker mut @bind_name_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode) -> bool {
     ro nm = pattern_head_text(pat)
     if is_vrow(variant_in_sum(@ctx, ty, nm) ?? no_vrow()) {
         // A payload-less variant binds nothing.
@@ -388,7 +391,7 @@ fn Checker mut @bind_name_pattern(pat Node, ty TyId, ak []Node) -> bool {
     }
     ro mode = match pattern_mode_word(pat) {
         Some(k) => if k == TokenKind.KwMut { ParamMode.ModeMut } else { ParamMode.ModeConsume }
-        None => ParamMode.ModeRo
+        None => dmode
     }
     @record(pattern_name_node(pat), ty)
     @scope.bind(nm, ty, mode)
@@ -399,7 +402,7 @@ fn Checker mut @bind_name_pattern(pat Node, ty TyId, ak []Node) -> bool {
 /// SUM (wave B6, #964), then every payload position is bound RECURSIVELY --
 /// a position may itself be a tuple, record or variant pattern (D157), which
 /// is the nesting the flat walk read as one long run of binders.
-fn Checker mut @bind_variant_pattern(pat Node, ty TyId, ak []Node) -> bool {
+fn Checker mut @bind_variant_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode) -> bool {
     ro head = pattern_head_text(pat)
     // THE TYPE IS ASKED ONLY WHEN THERE IS ONE: a poisoned scrutinee is
     // `TyId(-1)`, and asking the interner for its name walked off the end
@@ -433,7 +436,7 @@ fn Checker mut @bind_variant_pattern(pat Node, ty TyId, ak []Node) -> bool {
         // `int`, and binding the parameter instead made the arms disagree
         // and the mangler assert.
         ro pt = payload_as_seen(@ctx, ty, @ctx.payload_types[vr.payload_off + i])
-        if !@bind_pattern(sub, pt, ak) { ok = false } else { // The position bound; the arm stays sound.
+        if !@bind_pattern(sub, pt, ak, dmode) { ok = false } else { // The position bound; the arm stays sound.
         }
         i += 1
     }
@@ -444,7 +447,7 @@ fn Checker mut @bind_variant_pattern(pat Node, ty TyId, ak []Node) -> bool {
 /// same door the destructuring binding asks (`tys.arg`). A round pattern on
 /// anything named is refused -- D486: the round form is the positional
 /// tuple's own, a named tuple is destructured by the brace form.
-fn Checker mut @bind_tuple_pattern(pat Node, ty TyId, ak []Node) -> bool {
+fn Checker mut @bind_tuple_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode) -> bool {
     ro anon_positional = match shape_of(@ctx, ty) {
         AnonPositionalTuple => true
         Record | ValueRecord | NamedTuple | PositionalTuple | AnonNamedTuple => false
@@ -462,7 +465,7 @@ fn Checker mut @bind_tuple_pattern(pat Node, ty TyId, ak []Node) -> bool {
     mut ok = true
     for sub in subs {
         if i >= @ctx.tys.arg_count(ty) { break }
-        if !@bind_pattern(sub, @ctx.tys.arg(ty, i), ak) { ok = false } else { // The position bound; the arm stays sound.
+        if !@bind_pattern(sub, @ctx.tys.arg(ty, i), ak, dmode) { ok = false } else { // The position bound; the arm stays sound.
         }
         i += 1
     }
@@ -475,7 +478,7 @@ fn Checker mut @bind_tuple_pattern(pat Node, ty TyId, ak []Node) -> bool {
 /// and the judgment is the destructuring binding's own (D411/D486): every
 /// named field must exist, a partial list needs `..`, a renamed or nested
 /// field binds its subpattern against the field's type.
-fn Checker mut @bind_record_pattern(pat Node, ty TyId, ak []Node) -> bool {
+fn Checker mut @bind_record_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode) -> bool {
     if pattern_head_text(pat) != "" {
         @report_first_leaf_of(ak, RECORD_VARIANT_MSG)
         return false
@@ -507,13 +510,13 @@ fn Checker mut @bind_record_pattern(pat Node, ty TyId, ak []Node) -> bool {
         }
         match patfield_sub(f) {
             Some(sub) => {
-                if !@bind_pattern(sub, ft, ak) { ok = false } else { // The field bound; the arm stays sound.
+                if !@bind_pattern(sub, ft, ak, dmode) { ok = false } else { // The field bound; the arm stays sound.
                 }
             }
             None => {
                 ro mode = match pattern_mode_word(f) {
                     Some(k) => if k == TokenKind.KwMut { ParamMode.ModeMut } else { ParamMode.ModeConsume }
-                    None => ParamMode.ModeRo
+                    None => dmode
                 }
                 @record(patfield_name_node(f), ft)
                 @scope.bind(fname, ft, mode)
@@ -537,7 +540,7 @@ fn Checker mut @bind_record_pattern(pat Node, ty TyId, ak []Node) -> bool {
 /// ADJACENT to its DotDot, with no comma between -- binds the remainder as a
 /// slice of the same type. One `..` at most; the length question (exact, or
 /// at-least with a rest) is the emitter's, asked of the same tree.
-fn Checker mut @bind_array_pattern(pat Node, ty TyId, ak []Node) -> bool {
+fn Checker mut @bind_array_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode) -> bool {
     // The HEAD DECLARATION's name, not the source spelling: `ty_source_name`
     // of an application answers "Vec[int]", which is why the first version of
     // this test refused every real slice.
@@ -570,7 +573,7 @@ fn Checker mut @bind_array_pattern(pat Node, ty TyId, ak []Node) -> bool {
                         @report_first_leaf_of(ak, ARRAY_REST_BIND_MSG)
                         ok = false
                     } else {
-                        if !@bind_pattern(c, elem_t, ak) { ok = false } else { // The element bound; the arm stays sound.
+                        if !@bind_pattern(c, elem_t, ak, dmode) { ok = false } else { // The element bound; the arm stays sound.
                         }
                     }
                     prev_dotdot = false

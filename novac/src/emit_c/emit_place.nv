@@ -29,7 +29,7 @@ import ../sem.{c_type, c_instance_method, raw_vrow, is_value_record}
 import ../sem.{branch_children, is_expr_kind, carrier_of}
 import ../types.{TyId, is_ty}
 import ../lower.{Local, LocalDecl, AssignStmt, StoreStmt, Rvalue, Operand, OutputStmt, no_local}
-import ../builtins.{VEC_GET_METHOD, VEC_INDEX_METHOD, VEC_LEN_METHOD}
+import ../builtins.{VEC_INDEX_METHOD, VEC_LEN_METHOD}
 
 
 /// Prints ONE step of output: the printer of the value's CARRIER around the value.
@@ -150,11 +150,16 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
             }
         }
         IndexPayload(r) => {
-            // The shell's `get` of the collection's instance hands back the
-            // Option BY VALUE and the loop header proved the index in range,
-            // so `.value` is always the element -- INTEROP (emit_option.nv).
-            // NOTE (owner, 2026-09-29): `for x in xs` is the ITERATOR
-            // protocol (`@iter()`/`@next() -> Option[T]`, the loop ends when
+            // The DIRECT read (`@index`), exactly as IndexConst below: the
+            // loop header guards `i < len(vec)`, so the index is proven in
+            // range and no Option stands here to unwrap -- `get(...).value`
+            // was the B16 interim from before the shell grew `index`, and it
+            // was wrong twice: the unproven-access method for a proven
+            // access, and an Option unwrap the semantics never had (owner,
+            // 2026-09-29: proven access is `@index`, `get` is the access
+            // nobody proved).
+            // NOTE: `for x in xs` itself is the ITERATOR protocol
+            // (`@iter()`/`@next() -> Option[T]`, the loop ends when
             // `@next() == None`) -- and so is `for x in a..b`, formally: a
             // Range iterates by index THROUGH the same protocol, walking a
             // counter without materializing the Range is only an allowed
@@ -162,9 +167,9 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
             // collection head to @iter/@next is its own wave (shell ABI),
             // recorded in plan 274.5 §5й.
             ro vd = @lo.ir.decl_of(r.vec)
-            ro get_c = c_instance_method(@ctx, vd.ty, VEC_GET_METHOD)
+            ro index_c = c_instance_method(@ctx, vd.ty, VEC_INDEX_METHOD)
             @emit_assign_head(d)
-            @body.append("${get_c}(${vd.name}, ${@lo.ir.decl_of(r.idx).name}).value;\n")
+            @body.append("${index_c}(${vd.name}, ${@lo.ir.decl_of(r.idx).name});\n")
         }
         IndexConst(r) => {
             // The DIRECT read (`@index`, D470): the arm's length test proved
