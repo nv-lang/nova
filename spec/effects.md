@@ -478,6 +478,15 @@ The compiler does not work out who calls from where: every entry into
 concurrency demands the property from what it accepts. Details and rationale —
 [D446](decisions/06-concurrency.md#d446).
 
+How the compiler judges it today (D446, amendment 2026-09-30): EVERY function
+and method gets a "safe" tag; what is not proven is unsafe
+(`E_FIBER_UNSAFE_CALL` on a call inside `spawn`/`detach`/`parallel for`, with
+the chain to the cause); the tag rests on no shared mutable state, a live lock,
+or a checked safe type. **Named limit:** an indirect call (a closure held in a
+local, a parameter or a field) is not judged by default yet — registry #866;
+the direction is accepted: a safety marker in the type of a function value
+(like Swift's `@Sendable`), its form a separate decision.
+
 ## Roles — `throw` / `Fail[E]` / handler
 
 To avoid confusing the layers, three participants in error handling:
