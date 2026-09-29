@@ -129,7 +129,8 @@ fn Lowerer @pattern_of(pat Node, scr_t TyId) -> Pattern {
             }
         }
         Variant => {
-            ro vrow = variant_in_sum(@ctx, scr_t, pattern_head_text(pat)) ?? ice("lower: a variant pattern the checker accepted names no variant of the matched sum")
+            ro found = variant_in_sum(@ctx, scr_t, pattern_head_text(pat))
+            ro vrow = found ?? ice("lower: @pattern_of got a variant pattern naming no variant of the matched sum")
             Pattern.Variant(VariantMatch { head: vrow, also: []VariantRow.new() })
         }
         Disj => {
@@ -183,7 +184,8 @@ fn Lowerer mut @lower_pattern_bind(pat Node, ty TyId, base Local) -> () {
             @ir.copy(l, base)
         }
         Variant => {
-            ro vrow = variant_in_sum(@ctx, ty, pattern_head_text(pat)) ?? ice("lower: a variant pattern the checker accepted names no variant of the matched sum")
+            ro found = variant_in_sum(@ctx, ty, pattern_head_text(pat))
+            ro vrow = found ?? ice("lower: @lower_pattern_bind got a variant pattern naming no variant of the sum")
             ro vr = @ctx.variant_rows[raw_vrow(vrow)]
             // THE PAYLOAD READ HAS TWO ABI DOORS (the differential's E1 smoke,
             // wave P3): a SHELL Option stores its payload as `.value`
@@ -256,12 +258,13 @@ fn Lowerer mut @lower_pattern_bind(pat Node, ty TyId, base Local) -> () {
             mut after = false
             for c in branch_children(pat) {
                 match c {
-                    Leaf(_) => { if is_dotdot(c) { after = true } else { // Elements before the rest count from the front.
-                        }
+                    Leaf(_) => {
+                        // Elements before the rest count from the front.
+                        if is_dotdot(c) { after = true } else { }
                     }
                     Branch { .. } => {
-                        if after && c.kind_of() == NodeKind.Pattern { suffix += 1 } else { // A prefix element or a gap is not the suffix.
-                        }
+                        // A prefix element or a gap is not the suffix.
+                        if after && c.kind_of() == NodeKind.Pattern { suffix += 1 } else { }
                     }
                 }
             }
