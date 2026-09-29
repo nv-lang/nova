@@ -868,7 +868,11 @@ fn Cursor mut @stmt() -> Node {
     }
     if @peek() == TokenKind.KwFor {
         mut kids = []Node.of(@take())
-        @push_expected(kids, TokenKind.Ident)
+        // The header reads its pattern through the ONE door (wave P5, D486
+        // s1/s4: the for-header is a binding position, and no binding
+        // position has its own grammar) -- `for x`, `for (k, v)`, `for
+        // { a, .. }`, `for mut x` are the same tree the match arm reads.
+        kids.push(@pattern())
         @push_expected(kids, TokenKind.KwIn)
         kids.push(@head_expr())
         if @peek() == TokenKind.LBrace {

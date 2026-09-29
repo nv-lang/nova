@@ -232,6 +232,12 @@ const WHILELET_COND_FORM_MSG = "outside the subset: a `while` condition takes a 
 /// that counter's scope is wave B11's subject.
 const FOR_CALL_HEAD_MSG = "outside the subset: the head of this `for` is a call that does not return a vector, and novac walks a collection by index, so it needs `[]T` -- the iterator protocol D58 asks for is not compiled yet (274.7 B12)"
 
+/// The for-header's OWN predicate (wave P5, D486 s4: the header is a binding
+/// position, and a binding position is irrefutable): a variant, a literal, an
+/// array or a disjunction can fail to match, and the loop has no `else` for
+/// the failure. The language's own code, as in REFUTABLE_BINDING_MSG.
+const FOR_REFUTABLE_MSG = "a `for` header takes an irrefutable pattern -- this form can fail to match, and the loop has no `else` (D486 s4, E_REFUTABLE_BINDING)"
+
 /// B15 bounds: a tuple parameter's call-site ABI is unmeasured and novac
 /// B15 bounds: a tuple parameter's call-site ABI is unmeasured and novac
 /// itself carries none -- the boundary is a judge, not unreachability.

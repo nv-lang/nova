@@ -416,3 +416,103 @@ fn main() {\n\
     assert(d4.len() >= 1)
     assert(d4[0].message.contains("must be an Option instance"))
 }
+
+test "a for header reads the ONE pattern door; refutable forms refuse by position (D486 P5)" {
+    mut std = std_decls()
+    std.push("module std.v\n\
+export type Vec[T] { n int }\n")
+
+    // A RECORD pattern in the header: the element lands in a temporary and
+    // the fields bind by name through the one recursive door.
+    ro (d, c) = compile_to_c("type Pair { a int, b int }\n\
+fn show(rs []Pair) -> () {\n\
+ for { a, .. } in rs {\n\
+  println(a)\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(1)\n\
+}", std)
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("_method_index("), c)
+    assert(c.contains(".a"), c)
+
+    // A `_` header counts without reading the slot: no element read at all.
+    ro (d0, c0) = compile_to_c("fn show(xs []int) -> () {\n\
+ for _ in xs {\n\
+  println(1)\n\
+ }\n\
+}\n\
+fn main() {\n\
+ ro xs = [4]\n\
+ show(xs)\n\
+}", std)
+    assert(d0.len() == 0, messages(d0))
+    // The pin is DIFFERENTIAL (the C carries the shell's prelude, so an
+    // absence pin against the whole text is meaningless): the same loop
+    // with a NAMED binder emits the element read -- one line the `_`
+    // version provably does not pay.
+    ro (d0b, c0b) = compile_to_c("fn show(xs []int) -> () {\n\
+ for x in xs {\n\
+  println(x)\n\
+ }\n\
+}\n\
+fn main() {\n\
+ ro xs = [4]\n\
+ show(xs)\n\
+}", std)
+    assert(d0b.len() == 0, messages(d0b))
+    ro sb0 = c0b.find("novac_fn_show") ?? -1
+    assert(sb0 >= 0)
+    assert(c0b[sb0..c0b.byte_len()].contains("_method_index("))
+    assert(c0.byte_len() < c0b.byte_len())
+
+    // The range bound is evaluated ONCE: the upper bound is placed into a
+    // temporary BEFORE the loop, and the header spells the temporary (the
+    // owner's rule -- formally the loop iterates one Range value).
+    ro (d1, c1) = compile_to_c("fn count(n int) -> int {\n\
+ mut s = 0\n\
+ for i in 0..n {\n\
+  s += i\n\
+ }\n\
+ s\n\
+}\n\
+fn main() {\n\
+ println(count(3))\n\
+}", std)
+    assert(d1.len() == 0, messages(d1))
+    assert(c1.contains("= n;"), c1)
+    assert(c1.contains("for (nova_int i = "), c1)
+    assert(!c1.contains("i < n;"), c1)
+
+    // THE POSITION'S PREDICATE (D486 s4): the header is a binding position,
+    // irrefutable -- a constructor, an array, a literal or a disjunction can
+    // fail to match, and the loop has no `else`. The oracle ACCEPTS `for
+    // Some(x) in ys` (measured 2026-09-29) -- a recorded divergence FROM the
+    // spec's own table; the refusal here carries the spec's code.
+    ro (d2, _) = compile_to_c("fn main() {\n\
+ for Some(x) in 0..3 {\n\
+  println(x)\n\
+ }\n\
+}", std)
+    assert(d2.len() >= 1)
+    assert(d2[0].message.contains("irrefutable pattern"), d2[0].message)
+    ro (d3, _) = compile_to_c("fn main() {\n\
+ ro xs = []int.of(1, 2)\n\
+ for [a, b] in xs {\n\
+  println(a)\n\
+ }\n\
+}", std)
+    assert(d3.len() >= 1)
+    assert(d3[0].message.contains("irrefutable pattern"), d3[0].message)
+
+    // A structured pattern against the counter's `int` is the shared door's
+    // own refusal, not the position's.
+    ro (d4, _) = compile_to_c("fn main() {\n\
+ for (a, b) in 0..3 {\n\
+  println(a)\n\
+ }\n\
+}", std)
+    assert(d4.len() >= 1)
+    assert(d4[0].message.contains("positional tuple scrutinee"), d4[0].message)
+}

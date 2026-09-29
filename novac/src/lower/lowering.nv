@@ -18,6 +18,7 @@ import ../sem.{leaf_text, literal_prim_of, raw_vrow, variant_in_sum}
 import ../sem.{iflet_pattern_at, iflet_body_at, iflet_else_at, iflet_init_at}
 import ../sem.{whilelet_pattern_at, whilelet_init_at, whilelet_body_at}
 import ../sem.{payload_as_seen}
+import ../sem.{pattern_shape, pattern_head_text, PatShape}
 // Which arguments have an observable order (F65) -- the checker's own door.
 import ../sem.{contains_call, loop_ctl_is_break}
 
@@ -602,15 +603,27 @@ fn Lowerer mut @lower_while_let(st Node) -> () {
 }
 
 /// One `for v in lo..hi`: the loop variable is a binding local of the body,
-/// the bounds stay tree expressions (the M1 bridge), the header carries the
-/// range form so the printer spells C's `for` and not a `while`.
+/// the header carries the range form so the printer spells C's `for` and not
+/// a `while`. The UPPER BOUND IS EVALUATED ONCE (wave P5, the owner's rule --
+/// formally `lo..hi` is a `Range` value and the loop is its iteration, so a
+/// bound re-read per turn would be a second semantics): it is placed into a
+/// temporary BEFORE the loop, and the header spells the temporary. The lower
+/// bound stands in C's init clause, which is already once.
 fn Lowerer mut @lower_for_range(kids []Node) -> () {
-    ro v = leaf_text(kids[1])
+    ro pat = kids[1]
     ro range = branch_children(kids[3]) // Bin: [lo, .., hi]
-    // The loop variable is a binding local of the body, and the head is printed from the
-    // record that carries it (M2b-2 step 3a).
-    ro lv = @ir.named(@ctx.prims.int_id, v)
-    ro head = LoopHead.Range(RangeHead { var: lv, lo: range[0], hi: range[2] })
+    ro hi_l = @ir.temp(@ctx.prims.int_id)
+    @lower_place(range[2], hi_l)
+    // A plain binder keeps the author's name on the counter; a `_` header
+    // binds nothing, and the counter is a temporary nobody spells. (A
+    // structured pattern never reaches here against `int` -- the checker's
+    // own door refused it.)
+    ro lv = if pattern_shape(pat) == PatShape.Bind {
+        @ir.named(@ctx.prims.int_id, pattern_head_text(pat))
+    } else {
+        @ir.temp(@ctx.prims.int_id)
+    }
+    ro head = LoopHead.Range(RangeHead { var: lv, lo: range[0], hi: hi_l })
     ro c = @ir.begin_loop(head)
     @lower_block_stmts_fn(kids[4], false)
     @ir.end_loop(c)
@@ -631,17 +644,37 @@ fn Lowerer mut @lower_for_each(kids []Node) -> () {
     ro ht = @out.type_of(head.id_of())
     ro elem_t = for_head_elem(@ctx, ht)
     // Both the collection and the index are TEMPORARIES of the body, named by their
-    // indices (274.8 M3). Only the element keeps `named`: `for v in xs` -- `v` is the
-    // author's word, and that is the one question `LocalKind` still answers.
+    // indices (274.8 M3).
     ro lv = @ir.temp(ht)
     @lower_place(head, lv)
     // All three locals of the walk exist before the head is printed, because the head is
     // printed FROM the record that names them (M2b-2 step 3a).
     ro li = @ir.temp(@ctx.prims.int_id)
-    ro le = @ir.named(elem_t, leaf_text(kids[1]))
+    ro pat = kids[1]
+    ro shape = pattern_shape(pat)
+    // A PLAIN BINDER keeps the author's word on the element local itself (wave
+    // P5): no temporary between the slot read and the name, so the B16 C of
+    // every existing carrier is byte-unchanged. A STRUCTURED pattern (a tuple
+    // or a record -- the rest the checker's predicate refused) reads the
+    // element into a temporary first and binds through the one recursive door
+    // (`@lower_pattern_bind`, the "scrutinee once" contract). `_` reads
+    // nothing: the walk counts, and an unread slot read would be waste.
+    ro le = if shape == PatShape.Bind {
+        @ir.named(elem_t, pattern_head_text(pat))
+    } else {
+        @ir.temp(elem_t)
+    }
     ro lh = LoopHead.Each(EachHead { vec: lv, idx: li, elem: le })
     ro c = @ir.begin_loop(lh)
-    @ir.take_elem(le, lv, li)
+    if shape == PatShape.Wild {
+        // Nothing binds the element.
+    } else {
+        @ir.take_elem(le, lv, li)
+        if shape != PatShape.Bind {
+            @lower_pattern_bind(pat, elem_t, le)
+        } else { // The element local IS the author's name, bound directly.
+        }
+    }
     @lower_block_stmts_fn(kids[4], false)
     @ir.end_loop(c)
 }

@@ -299,11 +299,15 @@ export type IfTerm value {
 /// walk's own state at the moment it recurses into an unbraced else.
 
 /// `for v in lo..hi`: the loop variable -- a binding of the body, created
-/// through `named` like any other -- and its bounds, as the tree spells them.
+/// through `named` like any other -- and its bounds. The lower bound stays
+/// the tree's spelling (it stands in C's init clause, evaluated once); the
+/// UPPER bound is a LOCAL the lowering placed the tree into BEFORE the loop
+/// (wave P5 -- the bound is evaluated once, formally the loop iterates one
+/// `Range` value).
 export type RangeHead value {
     var Local /// the loop variable, a `Binding` local of the body
     lo Node /// the lower bound, inclusive
-    hi Node /// the upper bound, exclusive
+    hi Local /// the upper bound, exclusive -- placed once, before the loop
 }
 
 /// `for v in <collection>` (wave M2b-1c): the collection's value lands in a

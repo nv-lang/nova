@@ -100,11 +100,10 @@ fn Emitter mut @print_loop_head(head LoopHead) -> () {
         }
         Range(r) => {
             ro v = @lo.ir.decl_of(r.var).name
+            ro h = @lo.ir.decl_of(r.hi).name
             @body.append("    for (nova_int ${v} = ")
             @emit_expr(r.lo)
-            @body.append("; ${v} < ")
-            @emit_expr(r.hi)
-            @body.append("; ${v}++) {\n")
+            @body.append("; ${v} < ${h}; ${v}++) {\n")
         }
         Each(e) => {
             ro vd = @lo.ir.decl_of(e.vec)

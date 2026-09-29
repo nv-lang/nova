@@ -645,6 +645,25 @@ fn Checker mut @type_stmt(st Node) -> () {
             assert(@out.len() > 0, "check: a malformed for head reached typing with no refusal")
             return
         }
+        ro pat = kids[1]
+        if pat.kind_of() != NodeKind.Pattern {
+            // A recovery gap stands where the pattern should be: the parser's
+            // own marker already said what was expected here.
+            return
+        }
+        // THE POSITION'S PREDICATE (wave P5, D486 s4): the for-header is a
+        // BINDING position, irrefutable like a destructuring binding -- the
+        // loop has no `else` for a failed match. The tree is the same tree
+        // the match arm binds; the refusal is about WHERE it stands.
+        match pattern_shape(pat) {
+            Tuple | Record | Bind | Wild => {}
+            Lit | Variant | Array | Disj => {
+                @report_first_leaf_of(kids, FOR_REFUTABLE_MSG)
+                // The names still BIND (to no type), the no-cascade rule.
+                @bind_names_untyped(pat)
+                return
+            }
+        }
         ro head = kids[3]
         if head.kind_of() == NodeKind.Call || head.kind_of() == NodeKind.MethodCall ||
            head.kind_of() == NodeKind.Name || head.kind_of() == NodeKind.FieldAccess {
@@ -664,11 +683,16 @@ fn Checker mut @type_stmt(st Node) -> () {
             }
             @record(head, ht)
             ro cmark = @scope.mark()
-            @scope.bind(leaf_text(kids[1]), elem, ParamMode.ModeRo)
+            // The element pattern binds through the ONE door, fresh each
+            // iteration (the mark is the loop's, released after the body).
+            if !@bind_pattern(pat, elem, kids, ParamMode.ModeRo) {
+                @bind_names_untyped(pat)
+            } else { // Every name bound with its decided type.
+            }
             @type_block(kids[4])
             @scope.release(cmark)
             // SILENT-OK: the collection head is fully decided -- head typed
-            // and recorded, variable bound, body typed; the range arm below
+            // and recorded, pattern bound, body typed; the range arm below
             // is the other form.
             return
         }
@@ -684,8 +708,12 @@ fn Checker mut @type_stmt(st Node) -> () {
         // the body -- the emitter's order (a range expression cannot see
         // the variable it defines).
         ro mark = @scope.mark()
-        // A loop variable is a fresh value each turn, bound read-only.
-        @scope.bind(leaf_text(kids[1]), @ctx.prims.int_id, ParamMode.ModeRo)
+        // A loop variable is a fresh value each turn, bound read-only --
+        // through the same pattern door, against the counter's int.
+        if !@bind_pattern(pat, @ctx.prims.int_id, kids, ParamMode.ModeRo) {
+            @bind_names_untyped(pat)
+        } else { // Every name bound with its decided type.
+        }
         @type_block(kids[4])
         @scope.release(mark)
     } else if k == NodeKind.MatchExpr {

@@ -344,7 +344,10 @@ test "a while loop: the header is its own empty block, the body jumps back to it
 test "a range loop keeps its variable -- a binding local -- and its bounds in the header" {
     mut b = FnBuilder.new(TyId(3))
     ro i = b.named(TyId(3), "i")
-    ro c = b.begin_loop(LoopHead.Range(RangeHead { var: i, lo: stand_in_expr(), hi: stand_in_expr() }))
+    // The upper bound is a LOCAL since wave P5: the lowering places it before
+    // the loop, and the header spells the local (evaluated once).
+    ro h = b.named(TyId(3), "hi")
+    ro c = b.begin_loop(LoopHead.Range(RangeHead { var: i, lo: stand_in_expr(), hi: h }))
     b.end_loop(c)
     b.end_body()
     ro f = b.finish()
@@ -353,6 +356,7 @@ test "a range loop keeps its variable -- a binding local -- and its bounds in th
             Range(r) => {
                 assert(r.var == i)
                 assert(f.locals[raw_local(r.var)].name == "i")
+                assert(r.hi == h)
             }
             While(_) => assert(false)
             Each(_) => assert(false)

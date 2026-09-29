@@ -68,7 +68,7 @@ export type NodeKind enum
     | LoopCtl
     | BindStmt
     | AssignStmt
-    | ForStmt
+    | ForStmt /// `for <pattern> in expr { ... }` (wave P5, D486 s4's first column -- the header is a binding position): KwFor, Pattern, KwIn, head-expr, body-block. The pattern is read by the ONE door (`@pattern()`) and judged by the ONE binder; irrefutable forms only, the loop has no `else`
     | WhileStmt
     | WhileLet /// `while <pattern> = expr { ... }` (wave P4, D486 s4's third column): KwWhile, Pattern, Assign, initializer, body-block. The same fixed layout as IfLet (the condition judgment is one; a while-let has no `else`), slots are the constants of sem/slots.nv. Semantics: the initializer is evaluated and the pattern tested ONCE PER ITERATION; the loop ends the first time the match fails
     /// A handler-installation statement: `with Fs = h, Os = h2 { body }`
