@@ -596,8 +596,8 @@ fn Cursor mut @block() -> Node {
         // must exit, not spin. This role used to be played by an assert in
         // take(), which meant death.
         ro before = @i
-        // A BARE `;` IS NOT A STATEMENT -- D49's own line: «Пустые `;`
-        // запрещены -- всегда баг» (spec/decisions/03-syntax.md:3430), found
+        // A BARE `;` IS NOT A STATEMENT -- D49's own line: "Empty `;` are
+        // forbidden -- always a bug" (spec/decisions/03-syntax.md:3430), found
         // by the spec-reader during this wave after the oracle measured
         // ACCEPTING `fn main() { ; }` (2026-09-28; the divergence of the
         // oracle from its own spec is registry 221.1 #TBD). The byte is
@@ -605,6 +605,9 @@ fn Cursor mut @block() -> Node {
         // Semicolon leaf stalls @stmt and the block loop spins forever on
         // exactly this input (measured on a broken build during the wave).
         // One Err, one token, the checker's error-node door names it.
+        // RECOVERY-BOUNDED: only a Semicolon is ever taken here -- the
+        // @peek() guard above admits nothing else, so no enclosing closer
+        // can be eaten by this take.
         if @peek() == TokenKind.Semicolon {
             kids.push(@node(NodeKind.Err, []Node.of(@take())))
             continue

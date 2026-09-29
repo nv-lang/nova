@@ -495,7 +495,12 @@ fn Cursor mut @pattern_primary() -> Node {
         // A qualified payload-less variant: the head leaves are the pattern.
         return @node(NodeKind.Pattern, hk)
     }
-    // Recovery: one Err, one token, the arm loop keeps advancing.
+    // Recovery: one Err, one token, the arm loop keeps advancing. A closing
+    // token is NOT consumed: it belongs to the enclosing form (274.3/F15),
+    // so a terminator gets the zero-width marker instead.
+    if is_terminator(@peek()) {
+        return @error_node(TokenKind.ErrorTok)
+    }
     @node(NodeKind.Err, []Node.of(@take()))
 }
 
