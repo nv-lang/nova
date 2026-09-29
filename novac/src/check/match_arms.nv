@@ -30,7 +30,7 @@ import ../sem.{ty_source_name}
 import ../sem.{PatShape, pattern_shape, pattern_head_text, pattern_qualifier, pattern_subpatterns}
 import ../sem.{pattern_fields, patfield_name, patfield_sub, pattern_rest, pattern_mode_word}
 import ../sem.{pattern_name_node, patfield_name_node}
-import ../sem.{shape_of, binder_text, field_range_of, no_frow}
+import ../sem.{shape_of, field_range_of, no_frow}
 import ../builtins.{SLICE_HEAD}
 // The payload of an APPLIED sum, with the application's arguments put in.
 import ../sem.{payload_as_seen}
