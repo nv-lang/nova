@@ -1,0 +1,3 @@
+[package]
+name = "p8b"
+version = "0.1.0"

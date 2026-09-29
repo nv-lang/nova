@@ -1,0 +1,4 @@
+[package]
+name = "variant-record-collision"
+version = "0.1.0"
+description = "compiler probe: enum variant vs same-named record in another module"
