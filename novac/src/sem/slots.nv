@@ -586,5 +586,9 @@ export fn iflet_else_at(kids []Node) -> int => 6
 /// is one, and a second set of numbers would be the slot arithmetic this arc
 /// exists to delete.
 export fn whilelet_pattern_at(kids []Node) -> int => 1
+
+/// The slot of the initializer expression (the matched value).
 export fn whilelet_init_at(kids []Node) -> int => 3
+
+/// The slot of the loop body block.
 export fn whilelet_body_at(kids []Node) -> int => 4
