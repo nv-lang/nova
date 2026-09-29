@@ -38,8 +38,8 @@ fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
     }
     ro pat = kids[iflet_pattern_at(kids)]
     if pat.kind_of() != NodeKind.Pattern {
-        // A recovery gap stands where the pattern should be: the parser's
-        // own marker already said what was expected here.
+        // SILENT-OK: a recovery gap stands where the pattern should be --
+        // the parser's own marker already said what was expected here.
         return
     }
     ro shape = pattern_shape(pat)
@@ -103,6 +103,8 @@ fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
         ro vmark = @scope.mark()
         if !@bind_pattern(pat, ot, kids, ParamMode.ModeRo) {
             @scope.release(vmark)
+            // SILENT-OK: `@bind_pattern` is the shared judge and it refused
+            // by name; a second report here would be the cascade.
             return
         } else { // Every payload name bound with its decided type.
         }
@@ -121,9 +123,11 @@ fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
         }
         if some_term || none_term {
             // ONE branch left: the other alone decides. Both left: neither
-            // does, and there is nothing to record -- SILENT-OK only when both
-            // left, because the refused branch already said its word above.
+            // does, and there is nothing to record; the leaving branch was
+            // typed as statements above, so nothing is owed here.
             ro lone_t = if some_term { none_t } else { some_t }
+            // SILENT-OK: both branches left the function, so no value exists
+            // to record -- each one's `return` was judged by its own door.
             if some_term && none_term { return }
             if !is_ty(lone_t) {
                 // SILENT-OK: the staying branch was refused inside
@@ -133,6 +137,8 @@ fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
                 // The staying branch's type is the `if let`'s.
             }
             @record(st, lone_t)
+            // SILENT-OK: the record just above IS the decision -- the
+            // staying branch's type is the value's, and nothing remains.
             return
         } else {
             // Both branches stay: they must agree, below.
@@ -158,6 +164,8 @@ fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
     ro mark = @scope.mark()
     if !@bind_pattern(pat, ot, kids, ParamMode.ModeRo) {
         @scope.release(mark)
+        // SILENT-OK: `@bind_pattern` is the shared judge and it refused
+        // by name; a second report here would be the cascade.
         return
     } else { // Every payload name bound with its decided type.
     }
@@ -188,8 +196,8 @@ fn Checker mut @type_while_let(st Node) -> () {
     }
     ro pat = kids[whilelet_pattern_at(kids)]
     if pat.kind_of() != NodeKind.Pattern {
-        // A recovery gap stands where the pattern should be: the parser's
-        // own marker already said what was expected here.
+        // SILENT-OK: a recovery gap stands where the pattern should be --
+        // the parser's own marker already said what was expected here.
         return
     }
     ro shape = pattern_shape(pat)
@@ -226,6 +234,8 @@ fn Checker mut @type_while_let(st Node) -> () {
     ro mark = @scope.mark()
     if !@bind_pattern(pat, ot, kids, ParamMode.ModeRo) {
         @scope.release(mark)
+        // SILENT-OK: `@bind_pattern` is the shared judge and it refused
+        // by name; a second report here would be the cascade.
         return
     } else { // Every payload name bound with its decided type.
     }

@@ -69,8 +69,8 @@ fn Checker mut @type_destructure_bind(st Node) -> () {
     @record(init, pt)
     ro pat = kids[1]
     if pat.kind_of() != NodeKind.Pattern {
-        // A recovery gap stands where the pattern should be: the parser's
-        // own marker already said what was expected here.
+        // SILENT-OK: a recovery gap stands where the pattern should be --
+        // the parser's own marker already said what was expected here.
         return
     }
     // THE POSITION'S PREDICATE (D486 §4): irrefutable forms only. The tree
