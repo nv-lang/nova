@@ -326,6 +326,7 @@ test "a while loop: the header is its own empty block, the body jumps back to it
                 While(_) => { } // the head handed in
                 Range(_) => assert(false)
                 Each(_) => assert(false)
+                Forever => assert(false)
             }
         }
         Return => assert(false)
@@ -355,6 +356,7 @@ test "a range loop keeps its variable -- a binding local -- and its bounds in th
             }
             While(_) => assert(false)
             Each(_) => assert(false)
+            Forever => assert(false)
         }
         Return => assert(false)
         Goto(_) => assert(false)
@@ -410,6 +412,7 @@ test "a for over a collection: the header carries vec/idx/elem locals, the body 
             }
             While(_) => assert(false)
             Range(_) => assert(false)
+            Forever => assert(false)
         }
         Return => assert(false)
         Goto(_) => assert(false)
@@ -457,6 +460,7 @@ test "an if-let: the Option lands in a binding, the If tests IsSome of it, the b
         If(t) => match t.cond {
             IsSome(l) => assert(l == o)
             Expr(_) => assert(false)
+            NotSome(_) => assert(false)
         }
         Return => assert(false)
         Goto(_) => assert(false)

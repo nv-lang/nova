@@ -351,3 +351,68 @@ fn main() {\n\
     assert(d6.len() >= 1)
     assert(d6[0].message.contains("`ro` word"))
 }
+
+test "a while-let reads the ONE pattern door; per-iteration test and exit (D486 P4)" {
+    mut std = std_decls()
+    std.push("module std.v\n\
+export type Vec[T] { n int }\n\
+export fn Vec[T] @get(i int) -> Option[T] => None\n\
+export type Option[T] enum Some(T) | None\n")
+
+    // The C shape is the witness: an unconditional head, the Option into its
+    // own temporary PER ITERATION, the negated Some-test as the exit, the
+    // payload bound through the shell's `.value`.
+    ro (d, c) = compile_to_c("fn show(xs Vec[int]) -> () {\n\
+ while Some(v) = xs.get(0) {\n\
+  println(v)\n\
+ }\n\
+}\n\
+fn main() {\n\
+ ro xs = [5]\n\
+ show(xs)\n\
+}", std)
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("while (1) {"), c)
+    assert(c.contains("break;"), c)
+    assert(c.contains(".value"), c)
+
+    // A qualified head through the same door.
+    ro (d1, _) = compile_to_c("fn show(o Option[int]) -> () {\n\
+ while Option.Some(v) = o {\n\
+  println(v)\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(1)\n\
+}", std)
+    assert(d1.len() == 0, messages(d1))
+
+    // The condition judgment is the if-let's own third column (D486 s4),
+    // worded for its position: a name binding and the non-variant shapes are
+    // refused BY NAME, a non-Option initializer is named too.
+    ro (d2, _) = compile_to_c("fn show(o Option[int]) -> () {\n\
+ while x = o {\n\
+  println(1)\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(1)\n\
+}", std)
+    assert(d2.len() >= 1)
+    assert(d2[0].message.contains("a name binding in a `while` condition"))
+    ro (d3, _) = compile_to_c("fn main() {\n\
+ ro t = (1, 2)\n\
+ while (a, b) = t {\n\
+  println(a)\n\
+ }\n\
+}", std)
+    assert(d3.len() >= 1)
+    assert(d3[0].message.contains("a `while` condition takes a variant pattern"))
+    ro (d4, _) = compile_to_c("fn main() {\n\
+ while Some(v) = 5 {\n\
+  println(v)\n\
+ }\n\
+}", std)
+    assert(d4.len() >= 1)
+    assert(d4[0].message.contains("must be an Option instance"))
+}

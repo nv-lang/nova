@@ -276,6 +276,11 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                 WhileStmt => {
                     @loop_depth += 1
                 }
+                WhileLet => {
+                    // A while-let's body is a loop body for `break`/`continue`
+                    // exactly like a plain while's (wave P4).
+                    @loop_depth += 1
+                }
                 Field => {
                     @report_if_missing_type(children, "outside the E1 subset: field must declare a type")
                 }

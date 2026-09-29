@@ -696,6 +696,30 @@ fn Cursor mut @iflet_try(in_value bool = false) -> Option[Node] {
     Some(@node(NodeKind.IfLet, kids))
 }
 
+/// WHILE-LET OR PLAIN WHILE (wave P4): the same one question as `@iflet_try`
+/// -- a PATTERN through the one door, then `=` -- over the same rewind
+/// discipline (both counters restored; D486 s8). A while-let has no `else`:
+/// the None path is the loop's exit, not a branch.
+fn Cursor mut @whilelet_try() -> Option[Node] {
+    if @peek() != TokenKind.KwWhile { return None }
+    ro save_i = @i
+    ro save_id = @next_id
+    mut kids = []Node.of(@take())
+    ro pat = @pattern()
+    if @peek() != TokenKind.Assign {
+        @i = save_i
+        @next_id = save_id
+        return None
+    }
+    kids.push(pat)
+    kids.push(@take()) // `=`
+    // The initializer is a HEAD expression for the same reason as the
+    // if-let's (wave W1): the `{` after it opens the body.
+    kids.push(@head_expr())
+    kids.push(@block())
+    Some(@node(NodeKind.WhileLet, kids))
+}
+
 /// Does the identifier under the cursor open a PATTERN (D486)? Asked by the
 /// binding dispatch: after `ro`/`mut`/`consume` an identifier can start an
 /// ordinary binding (`ro x = ...`, `ro x int = ...`, `ro x mod.Type = ...`)
@@ -825,6 +849,12 @@ fn Cursor mut @stmt() -> Node {
         return @node(NodeKind.BindStmt, kids)
     }
     if @peek() == TokenKind.KwWhile {
+        // WHILE-LET (wave P4, D486): the one question lives in
+        // `@whilelet_try` above -- the same door the if-let asks through.
+        match @whilelet_try() {
+            Some(n) => return n
+            None => {}
+        }
         mut kids = []Node.of(@take())
         kids.push(@head_expr())
         if @peek() == TokenKind.LBrace {

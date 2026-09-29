@@ -1,0 +1,232 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Role: the CONDITION forms' typing -- `if <pattern> = expr` and
+// `while <pattern> = expr`, cut from typing.nv when that file crossed the
+// thousand-line cap (wave P4). One module, one namespace: these are `Checker`
+// methods exactly as before, only their file is their own.
+// Used by: typing.nv (the statement dispatch calls them); nothing else may.
+// Guarded by: check-novac-file-size.py (this file exists because typing.nv
+// crossed 1000 lines).
+// novac/src/check/cond_forms.nv
+
+module novac.check
+
+import ../tree.{Node, NodeKind}
+import ../builtins.{OPTION_SOME_VARIANT}
+import ../sem.{branch_children, ParamMode}
+import ../sem.{iflet_pattern_at, iflet_init_at, iflet_body_at, iflet_else_at}
+import ../sem.{whilelet_pattern_at, whilelet_init_at, whilelet_body_at}
+import ../sem.{pattern_shape, pattern_head_text, PatShape, option_payload}
+import ../types.{TyId, no_ty, is_ty}
+
+/// `if <pattern> = expr { ... }` (wave P3, D486 §4's third column): the
+/// condition is ONE Pattern, read by the parser's one door and judged here.
+/// The subset compiles a VARIANT pattern -- the head judged against the
+/// initializer's Option, the payload bound RECURSIVELY through the match
+/// arm's own judge (`@bind_pattern`), so a nested payload pattern
+/// (`if Some((a, b)) = ...`) is the same tree all the way down. Every other
+/// shape is refused BY NAME (IFLET_COND_*): a position the lowering does
+/// not carry gets a named refusal with the wave's tag, never a fall-through.
+/// The initializer's type is RECORDED for the emitter's strict door -- the
+/// same lesson every wave since B15 step 5 pays once.
+fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
+    ro kids = branch_children(st)
+    if kids.len() < iflet_body_at(kids) + 1 {
+        assert(@out.len() > 0, "check: a malformed if-let reached typing with no refusal")
+        return
+    }
+    ro pat = kids[iflet_pattern_at(kids)]
+    if pat.kind_of() != NodeKind.Pattern {
+        // A recovery gap stands where the pattern should be: the parser's
+        // own marker already said what was expected here.
+        return
+    }
+    ro shape = pattern_shape(pat)
+    if shape == PatShape.Bind {
+        @report_first_leaf_of(kids, IFLET_COND_BIND_MSG)
+        return
+    }
+    if shape != PatShape.Variant {
+        @report_first_leaf_of(kids, IFLET_COND_FORM_MSG)
+        return
+    }
+    // The subset's boundary among variants (its carriers use `Some` alone);
+    // the qualifier, if written, is judged by the shared door below.
+    if pattern_head_text(pat) != OPTION_SOME_VARIANT {
+        @report_first_leaf_of(kids, IFLET_VARIANT_MSG)
+        return
+    }
+    ro init = kids[iflet_init_at(kids)]
+    ro before = @out.len()
+    match init {
+        Leaf(_) => {
+            // SILENT-OK: a recovery gap -- the parser already said what was
+            // expected in the initializer's place.
+            return
+        }
+        Branch { .. } => @type_expr(init)
+    }
+    if @out.len() > before { return }
+    ro ot = type_of(init, @ctx, @scope, @chan)
+    ro payload = option_payload(@ctx, ot)
+    if !is_ty(payload) {
+        @reject_first_leaf_of(kids, IFLET_INIT_MSG)
+        return
+    }
+    @record(init, ot)
+    ro body_at = iflet_body_at(kids)
+    ro else_at = iflet_else_at(kids)
+    if as_value {
+        // AS A VALUE: an `else` is not optional -- without it the None path
+        // produces nothing and the function would fall off its end. The plain
+        // tail `if` says the same thing in the same words (274.7 B14).
+        if kids.len() <= else_at {
+            @report_first_leaf_of(kids, IFLET_VALUE_NEEDS_ELSE_MSG)
+            return
+        } else {
+            // Both paths written: each one's tail is a value below.
+        }
+        // The binder lives in the SOME branch only, which is why the mark is
+        // released before the else is typed rather than after both.
+        //
+        // A BRANCH THAT LEAVES through `return` IMPOSES NO TYPE on the value
+        // (the binding-initializer carrier of the if-let-value wave:
+        // `ro d = if Some(v) = param_default_slot(pk) { v } else { return
+        // false }`, check/rules.nv): control reaches past the `if let` only
+        // from the branch that STAYS, so that branch's type is the value's.
+        // The leaving branch is still typed -- as statements, its `return`
+        // judged by its own door. Both branches leaving produces no value at
+        // all; that shape records nothing, exactly as a branch refused below.
+        ro some_term = block_terminates(kids[body_at])
+        ro none_term = block_terminates(kids[else_at])
+        ro vmark = @scope.mark()
+        if !@bind_pattern(pat, ot, kids, ParamMode.ModeRo) {
+            @scope.release(vmark)
+            return
+        } else { // Every payload name bound with its decided type.
+        }
+        ro some_t = if some_term {
+            @type_block(kids[body_at])
+            no_ty()
+        } else {
+            @type_branch_value(kids[body_at])
+        }
+        @scope.release(vmark)
+        ro none_t = if none_term {
+            @type_body(kids[else_at])
+            no_ty()
+        } else {
+            @type_branch_value(kids[else_at])
+        }
+        if some_term || none_term {
+            // ONE branch left: the other alone decides. Both left: neither
+            // does, and there is nothing to record -- SILENT-OK only when both
+            // left, because the refused branch already said its word above.
+            ro lone_t = if some_term { none_t } else { some_t }
+            if some_term && none_term { return }
+            if !is_ty(lone_t) {
+                // SILENT-OK: the staying branch was refused inside
+                // `@type_branch_value`, by name; one cause, one diagnostic.
+                return
+            } else {
+                // The staying branch's type is the `if let`'s.
+            }
+            @record(st, lone_t)
+            return
+        } else {
+            // Both branches stay: they must agree, below.
+        }
+        if !is_ty(some_t) || !is_ty(none_t) {
+            // SILENT-OK: the branch without a value was refused inside
+            // `@type_branch_value`, by name; one cause, one diagnostic.
+            return
+        } else {
+            // Both produced a type: they must be the same one.
+        }
+        if some_t != none_t {
+            @report_first_leaf_of(kids, IFLET_VALUE_DISAGREE_MSG)
+            return
+        } else {
+            // Agreed: the `if let` carries that type.
+        }
+        @record(st, some_t)
+        return
+    } else {
+        // As a statement: the branches are blocks, typed below.
+    }
+    ro mark = @scope.mark()
+    if !@bind_pattern(pat, ot, kids, ParamMode.ModeRo) {
+        @scope.release(mark)
+        return
+    } else { // Every payload name bound with its decided type.
+    }
+    @type_block(kids[body_at])
+    @scope.release(mark)
+    // The ELSE branch (wave W1) is typed with the binder OUT of scope -- it is
+    // the None arm, and the payload's name means nothing there. A block or a
+    // chained if / if-let: the one door for "a body is a block or a statement".
+    if kids.len() > else_at {
+        @type_body(kids[else_at])
+    } else {
+        // No else branch was written.
+    }
+}
+
+/// `while <pattern> = expr { ... }` (wave P4, D486 s4's third column): the
+/// SAME condition judgment as the if-let -- a variant pattern against the
+/// initializer's Option, the payload bound through `@bind_pattern` -- asked
+/// once per iteration. The binder's scope is ONE ITERATION's body: bound
+/// before `@type_block`, released after, exactly the if-let's then-branch
+/// discipline (the next iteration re-evaluates the initializer and rebinds).
+/// There is no else: the None path is the loop's exit.
+fn Checker mut @type_while_let(st Node) -> () {
+    ro kids = branch_children(st)
+    if kids.len() < whilelet_body_at(kids) + 1 {
+        assert(@out.len() > 0, "check: a malformed while-let reached typing with no refusal")
+        return
+    }
+    ro pat = kids[whilelet_pattern_at(kids)]
+    if pat.kind_of() != NodeKind.Pattern {
+        // A recovery gap stands where the pattern should be: the parser's
+        // own marker already said what was expected here.
+        return
+    }
+    ro shape = pattern_shape(pat)
+    if shape == PatShape.Bind {
+        @report_first_leaf_of(kids, WHILELET_COND_BIND_MSG)
+        return
+    }
+    if shape != PatShape.Variant {
+        @report_first_leaf_of(kids, WHILELET_COND_FORM_MSG)
+        return
+    }
+    if pattern_head_text(pat) != OPTION_SOME_VARIANT {
+        @report_first_leaf_of(kids, WHILELET_VARIANT_MSG)
+        return
+    }
+    ro init = kids[whilelet_init_at(kids)]
+    ro before = @out.len()
+    match init {
+        Leaf(_) => {
+            // SILENT-OK: a recovery gap -- the parser already said what was
+            // expected in the initializer's place.
+            return
+        }
+        Branch { .. } => @type_expr(init)
+    }
+    if @out.len() > before { return }
+    ro ot = type_of(init, @ctx, @scope, @chan)
+    ro payload = option_payload(@ctx, ot)
+    if !is_ty(payload) {
+        @reject_first_leaf_of(kids, WHILELET_INIT_MSG)
+        return
+    }
+    @record(init, ot)
+    ro mark = @scope.mark()
+    if !@bind_pattern(pat, ot, kids, ParamMode.ModeRo) {
+        @scope.release(mark)
+        return
+    } else { // Every payload name bound with its decided type.
+    }
+    @type_block(kids[whilelet_body_at(kids)])
+    @scope.release(mark)
+}

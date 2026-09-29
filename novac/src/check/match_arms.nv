@@ -647,19 +647,14 @@ fn Checker mut @bind_disj_pattern(pat Node, ty TyId, ak []Node) -> bool {
                 // The head IS a variant of this sum -- but a disjunction binds
                 // NOTHING, so its payload may hold `_` only: `A(x) | B(x)`
                 // would need both alternatives to agree on `x`.
-                match pattern_shape(sub) {
-                    PatShape.Variant => {
-                        for psub in pattern_subpatterns(sub) {
-                            match pattern_shape(psub) {
-                                PatShape.Wild => {}
-                                _ => {
-                                    @report_first_leaf_of(ak, DISJ_BINDER_MSG)
-                                    return false
-                                }
-                            }
+                if pattern_shape(sub) == PatShape.Variant {
+                    for psub in pattern_subpatterns(sub) {
+                        if pattern_shape(psub) != PatShape.Wild {
+                            @report_first_leaf_of(ak, DISJ_BINDER_MSG)
+                            return false
                         }
                     }
-                    _ => {}
+                } else { // A bare-name alternative carries no payload to judge.
                 }
             }
             Tuple | Array | Disj => {

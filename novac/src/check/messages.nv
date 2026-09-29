@@ -212,6 +212,15 @@ const IFLET_COND_FORM_MSG = "outside the subset: an `if` condition takes a varia
 /// unlisted word used to fall into the `else` arm).
 const RO_WORD_PATTERN_MSG = "outside the subset: the `ro` word on a pattern binder stands only in an `if`/`while` condition (274.5 P3, the condition-forms wave)"
 
+/// The while-let judges (wave P4): the SAME third column of D486 s4 as the
+/// if-let's, worded for its own position -- a while-let is the if-let's
+/// condition asked once per iteration, so the judgments are one and the
+/// messages name the form the author wrote.
+const WHILELET_VARIANT_MSG = "outside the subset: `while <pattern> = ...` takes only `Some(name)` here -- other variants arrive with their carriers (274.5 P4)"
+const WHILELET_INIT_MSG = "the initializer of `while Some(...) = ...` must be an Option instance -- this expression's type is not one"
+const WHILELET_COND_BIND_MSG = "outside the subset: a name binding in a `while` condition is read but not compiled yet -- the condition takes a variant pattern (274.5 P4, the condition-forms wave)"
+const WHILELET_COND_FORM_MSG = "outside the subset: a `while` condition takes a variant pattern here -- other pattern forms in conditions arrive with the condition-forms wave (274.5 P4)"
+
 /// The for-CALL head judge's answer (wave B16): the head must hand back a
 /// vector -- an instance of arity one -- or the loop has no element type.
 ///

@@ -579,3 +579,12 @@ export fn iflet_body_at(kids []Node) -> int => 4
 
 /// The slot of the ELSE-branch, when there is one.
 export fn iflet_else_at(kids []Node) -> int => 6
+
+/// The WhileLet layout (wave P4, D486): the SAME fixed shape as IfLet minus
+/// the else -- `[KwWhile, Pattern, Assign, initializer, body-block]`. The
+/// doors are the same constants for the same reason: the condition judgment
+/// is one, and a second set of numbers would be the slot arithmetic this arc
+/// exists to delete.
+export fn whilelet_pattern_at(kids []Node) -> int => 1
+export fn whilelet_init_at(kids []Node) -> int => 3
+export fn whilelet_body_at(kids []Node) -> int => 4

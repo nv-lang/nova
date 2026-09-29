@@ -70,6 +70,7 @@ export type NodeKind enum
     | AssignStmt
     | ForStmt
     | WhileStmt
+    | WhileLet /// `while <pattern> = expr { ... }` (wave P4, D486 s4's third column): KwWhile, Pattern, Assign, initializer, body-block. The same fixed layout as IfLet (the condition judgment is one; a while-let has no `else`), slots are the constants of sem/slots.nv. Semantics: the initializer is evaluated and the pattern tested ONCE PER ITERATION; the loop ends the first time the match fails
     /// A handler-installation statement: `with Fs = h, Os = h2 { body }`
     /// (D61; wave 274.11 Э.4). Contextual word, not a lexer keyword.
     | WithStmt
