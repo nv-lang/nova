@@ -15,7 +15,7 @@
 
 **В ПОЛЁТЕ:**
 - ветка `spec-d486-followup` (`89da9c46c`, дерево `nova-specd486`) — спек-доработка D486 по решениям владельца 4–6, стоит ПОВЕРХ `nova-kim`; сливать ПОСЛЕ `nova-kim`. `spec-queue` там 135, в `main` 134 — при слиянии пересчитать;
-- ветка `nova-kim` — НЕ ПРИНЯТА, доработка отдана окну Kim (`C:\Users\Евгений\.kimi-code\sessions\wd_nova-kim_92201c622fb8\integrator-reply-D486.md`; спеку окно НЕ трогает — её сделал интегратор);
+- ветка `nova-kim` — НЕ ПРИНЯТА, доработка отдана окну Kim (`%USERPROFILE%\.kimi-code\sessions\<сессия nova-kim>\integrator-reply-D486.md`; спеку окно НЕ трогает — её сделал интегратор);
 - ветка `ci-green-0930` (дерево `nova-cigreen`, фоновый агент opus) — 5 из 7 причин красного `nova-gate` починены (`c1e63f75a`, `95b507f66`, `f83ab647f`); идёт `merge-precheck --branch`. При слиянии выдать №1370–№1373 четырём строкам `№TBD` (порядок строк ветки) и поднять `registry-rows.baseline`. Остаток: слово `workaround` в `novac/src/sem/binding.nv:92` — окну Карины (снимет и `registry-counts`).
 
 **НЕЗАКОММИЧЕНО:** ничего, кроме этой записки.

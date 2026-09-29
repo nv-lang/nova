@@ -82,11 +82,11 @@ ro v = b.release()         // ✓
 
 ```nova
 consume conn = PlainConn { fd: 7 }
-consume conn = conn.upgrade()      // ✓ upgrade — consume-метод: старый conn потреблён раньше
+consume conn = conn.upgrade()      // ✓ upgrade is a consume method: old conn consumed first
 ro fd = conn.close()
 
 consume c = PlainConn { fd: 7 }
-consume c = PlainConn { fd: 8 }    // ✗ E_REBIND_LIVE_CONSUME: первый c ещё жив
+consume c = PlainConn { fd: 8 }    // ✗ E_REBIND_LIVE_CONSUME: the first c is still live
 ```
 
 Новое связывание `consume`/`ro`/`mut` может взять прежнее имя (D347), и тип при

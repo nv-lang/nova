@@ -284,11 +284,11 @@ remains an assignment to a `mut` variable, not a new name.
 
 ```nova
 ro input = read_line()
-ro input = parse_request(input)?     // str → Request, the old input is gone below
-mut work = work                      // "unfreeze" ro → mut
+ro input = parse_request(input)?     // str → Request, прежний input ниже недоступен
+mut work = work                      // «разморозка» ro → mut
 
 consume conn = PlainConn.connect(addr)?
-consume conn = conn.upgrade()        // ✓ upgrade is a consume method: the old conn is already consumed
+consume conn = conn.upgrade()        // ✓ upgrade — consume-метод: старый conn уже потреблён
 ```
 
 One restriction: a consume variable cannot be shadowed while its obligation is
