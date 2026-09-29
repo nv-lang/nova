@@ -484,6 +484,14 @@ test "a collection head walks the vector by len/get; a scalar head refuses (B16)
     // head is handed IN -- the tiny std_decls carries no types, and the
     // slice sugar cannot intern []int without it (the same hand-in the
     // literal tests above use).
+    //
+    // OWNER'S DIRECTION (2026-09-29): `for x in xs` is the ITERATOR protocol
+    // (`@iter()`/`@next() -> Option[T]`, the loop ends at `@next() == None`)
+    // -- and so is `for x in a..b`, formally: a Range iterates by index
+    // THROUGH the same protocol (walking a counter without materializing the
+    // Range is only an allowed optimization; bounds are computed ONCE). The
+    // len/get walk asserted here is the interim door until that wave;
+    // recorded in plan 274.5 §5й.
     mut std = std_decls()
     std.push("module std.v\n\
 export type Vec[T] { n int }")
@@ -566,39 +574,6 @@ fn main() {\n\
 }", std)
     assert(d3.len() >= 1)
     assert(d3[0].message.contains("takes only `Some(name)`"))
-}
-
-test "pattern alternatives OR their tag tests; a named binder refuses (disjunction wave)" {
-    // `B(_) | C(_) => 1`: one arm, two tag tests ORed -- asserted on the C
-    // shape; the alternative PATH is held by the corpus carrier, which sends
-    // a value through the second head.
-    ro std = std_decls()
-    ro (d, c) = compile_to_c("type Tri enum A(int) | B(int) | C(int)\n\
-fn f(s Tri) -> int {\n\
- match s {\n\
-  A(_) => 0\n\
-  B(_) | C(_) => 1\n\
- }\n\
-}\n\
-fn main() {\n\
- println(f(C(7)))\n\
-}", std)
-    assert(d.len() == 0)
-    assert(c.contains(" || "))
-
-    // A named binder inside a disjunction refuses by name: alternatives
-    // would have to agree on the binder, and no carrier needs that.
-    ro (d2, _) = compile_to_c("type Tri enum A(int) | B(int)\n\
-fn f(s Tri) -> int {\n\
- match s {\n\
-  A(x) | B(x) => x\n\
- }\n\
-}\n\
-fn main() {\n\
- println(f(B(5)))\n\
-}", std)
-    assert(d2.len() >= 1)
-    assert(d2[0].message.contains("takes `_` binders only"))
 }
 
 test "a requires clause guards the body through the shell's contract helper (requires wave)" {

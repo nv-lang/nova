@@ -12,11 +12,9 @@ module novac.lower
 import ../tree.{Node, NodeKind, assign_op_of}
 import ../types.{TyId, is_ty}
 import ../diag.{ice}
-import ../sem.{arm_body_at, binder_text, brace_pattern, branch_children, disj_head_slots, for_head_elem}
+import ../sem.{arm_body_at, binder_text, brace_pattern, branch_children, for_head_elem}
 import ../sem.{is_expr_kind, is_ident_leaf, is_int_lit, is_println_call, is_value_tail_kind, leaf_kind}
-import ../sem.{leaf_text, literal_prim_of, pattern_binders, pattern_has_disj, raw_vrow, variant_in_sum}
-// The head of a flat pattern, through the same door the checker asks (1190).
-import ../sem.{pattern_head_slot}
+import ../sem.{leaf_text, literal_prim_of, pattern_binders, raw_vrow, variant_in_sum}
 import ../sem.{iflet_binder_at, iflet_body_at, iflet_else_at, iflet_init_at}
 import ../sem.{payload_as_seen}
 // Which arguments have an observable order (F65) -- the checker's own door.

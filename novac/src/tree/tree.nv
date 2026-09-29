@@ -109,6 +109,11 @@ export type NodeKind enum
     | MatchExpr
     | MatchArm
     | Pattern
+    // One field of a record PATTERN (`{ x }`, `{ f: sub }`, D486): a Name
+    // for the shorthand binder, or `Ident : Pattern` for a renamed or
+    // nested field. `NodeKind.Field` is taken by type DECLARATIONS, and a
+    // pattern field is neither a declaration nor a constructor argument.
+    | PatField
     | ArrayLit
     | ArraySpread
     | Guard

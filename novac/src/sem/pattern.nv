@@ -122,3 +122,195 @@ export fn binder_text(b Node) -> str {
     if kids.len() == 0 { return "" }
     leaf_text(kids[0])
 }
+
+/// A leaf of exactly this kind, or false -- the two-step question ("a leaf,
+/// and of this kind") asked in one place instead of at every call site.
+fn is_leaf_kind(n Node, k TokenKind) -> bool {
+    match n {
+        Leaf(t) => t.kind == k
+        Branch { .. } => false
+    }
+}
+
+/// THE SHAPE of a pattern, DECIDED ONCE (D486 §2, the BinOpKind precedent of
+/// tree.nv): the parser records the form, this sum is the answer, and every
+/// consumer matches on it exhaustively -- a new pattern form becomes a
+/// compile error at each place that must decide, not a silent default.
+///
+/// `Bind` covers every Name-wrapped name: a bare binder AND a bare
+/// payload-less variant head share it, because telling them apart is a
+/// question about the names table, not the tree -- the checker answers it
+/// (`variant_in_sum`), exactly as the flat pattern's identifier head was
+/// answered before. A QUALIFIED head keeps its own leaves, so `Variant` and
+/// `Record` carry their heads directly.
+export type PatShape enum
+    | Lit      /// an int / string / char literal
+    | Wild     /// `_`
+    | Bind     /// `[mode-leaf?, Name]` -- binder or bare unit-variant head
+    | Variant  /// head leaves + `( subpattern, ... )`, or a qualified unit head
+    | Record   /// `[head leaves?] { field, name: sub, .. }`
+    | Tuple    /// `( subpattern, ... [, ..] )`
+    | Array    /// `[ elem, ... [, ..] ]`, `[]` included
+    | Disj     /// `sub | sub | ...`
+
+/// The ONE decision. Recovery shapes (an Err child, no children at all)
+/// answer `Wild`: they bind nothing, which is what a recovery gap means.
+export fn pattern_shape(pat Node) -> PatShape {
+    ro kids = branch_children(pat)
+    for c in kids {
+        // A pipe at this level separates disjunction alternatives; pipes of
+        // nested patterns sit inside their own Pattern branches and are
+        // never seen here.
+        if is_leaf_kind(c, TokenKind.Pipe) { return PatShape.Disj }
+    }
+    if kids.len() == 0 { return PatShape.Wild }
+    ro k0 = kids[0]
+    match k0 {
+        Leaf(t) => {
+            if t.kind == TokenKind.IntLit || t.kind == TokenKind.StrLit ||
+               t.kind == TokenKind.CharLit { return PatShape.Lit }
+            if t.kind == TokenKind.EmptyBrackets ||
+               t.kind == TokenKind.LBracket { return PatShape.Array }
+            if t.kind == TokenKind.LParen { return PatShape.Tuple }
+            if t.kind == TokenKind.LBrace { return PatShape.Record }
+            if t.kind == TokenKind.KwMut ||
+               t.kind == TokenKind.KwConsume { return PatShape.Bind }
+            if t.kind == TokenKind.Ident {
+                if kids.len() == 1 && t.text == "_" { return PatShape.Wild }
+                // A head: ident leaves, then an opener. Braces say record,
+                // parens say variant payload, neither says a qualified
+                // payload-less variant.
+                for c in kids {
+                    if is_leaf_kind(c, TokenKind.LBrace) { return PatShape.Record }
+                    if is_leaf_kind(c, TokenKind.LParen) { return PatShape.Variant }
+                }
+                return PatShape.Variant
+            }
+            // Any other opening leaf is a recovery gap.
+            PatShape.Wild
+        }
+        Branch { .. } => PatShape.Bind
+    }
+}
+
+/// THE HEAD NAME of a variant or record pattern: the last identifier before
+/// the opener (`Shape.Circle { .. }` answers `Circle`). For the `Bind` shape
+/// it is the binder's own name -- one question, one door, the checker
+/// decides what the name MEANS.
+export fn pattern_head_text(pat Node) -> str {
+    mut out = ""
+    for c in branch_children(pat) {
+        match c {
+            Leaf(t) => {
+                if t.kind == TokenKind.LParen || t.kind == TokenKind.LBrace ||
+                   t.kind == TokenKind.LBracket { return out }
+                if t.kind == TokenKind.Ident { out = t.text } else { // Punctuation keeps the previous candidate.
+                }
+            }
+            Branch { .. } => {
+                if c.kind_of() == NodeKind.Name { return binder_text(c) }
+            }
+        }
+    }
+    out
+}
+
+/// THE QUALIFIER of a head: `Shape.Circle` answers `Shape`, a bare head
+/// answers "". Replaces `pattern_head_slot`'s slot arithmetic with the
+/// question itself (registry 1190's class: a slot count and the meaning of
+/// what sits there are two doors for one question).
+export fn pattern_qualifier(pat Node) -> str {
+    ro kids = branch_children(pat)
+    if kids.len() < 3 { return "" }
+    if !kids[0].is_ident() { return "" }
+    if !is_leaf_kind(kids[1], TokenKind.Dot) { return "" }
+    leaf_text(kids[0])
+}
+
+/// THE SUBPATTERNS of a pattern, in written order: a variant's payload
+/// elements, a tuple's or array's elements, a disjunction's alternatives.
+/// Punctuation and head leaves are not returned; record fields are not
+/// subpatterns (they carry a field name -- `pattern_fields` is their door).
+export fn pattern_subpatterns(pat Node) -> []Node {
+    mut out = []Node.new()
+    for c in branch_children(pat) {
+        if c.kind_of() == NodeKind.Pattern { out.push(c) } else { // Leaves and PatField nodes are not subpatterns.
+        }
+    }
+    out
+}
+
+/// THE FIELDS of a record pattern (PatField nodes), in written order.
+export fn pattern_fields(pat Node) -> []Node {
+    mut out = []Node.new()
+    for c in branch_children(pat) {
+        if c.kind_of() == NodeKind.PatField { out.push(c) } else { // Subpatterns and punctuation are not fields.
+        }
+    }
+    out
+}
+
+/// The FIELD NAME a pattern field matches against: the shorthand `{ x }`
+/// names `x` (and binds it), the renamed `{ f: sub }` names `f`.
+export fn patfield_name(f Node) -> str {
+    ro kids = branch_children(f)
+    if kids.len() == 0 { return "" }
+    match kids[0] {
+        Leaf(t) => t.text
+        Branch { .. } => binder_text(kids[0])
+    }
+}
+
+/// The SUBPATTERN of a renamed field (`{ f: sub }`); None for the shorthand
+/// `{ x }`, whose binder IS the whole field.
+export fn patfield_sub(f Node) -> Option[Node] {
+    for c in branch_children(f) {
+        if c.kind_of() == NodeKind.Pattern { return Some(c) }
+    }
+    None
+}
+
+/// Does the pattern carry `..` at THIS level? Nested rests sit inside their
+/// own Pattern branches and are not this pattern's answer.
+export fn pattern_rest(pat Node) -> bool {
+    for c in branch_children(pat) {
+        if is_leaf_kind(c, TokenKind.DotDot) { return true }
+    }
+    false
+}
+
+/// The MODE WORD written before a binder (`mut` / `consume`), or None.
+/// The parser records the word; what it MEANS in this position is the
+/// checker's judgment (D486 §4-§5), not the tree's.
+export fn pattern_mode_word(pat Node) -> Option[TokenKind] {
+    ro kids = branch_children(pat)
+    if kids.len() == 0 { return None }
+    match kids[0] {
+        Leaf(t) => {
+            if t.kind == TokenKind.KwMut || t.kind == TokenKind.KwConsume {
+                return Some(t.kind)
+            }
+            None
+        }
+        Branch { .. } => None
+    }
+}
+
+/// The NAME node of a Bind-shape pattern: the binder the checker RECORDS
+/// the type on and the emitter reads (the channel discipline -- the emitter
+/// has no scope, so the decision travels on the node).
+export fn pattern_name_node(pat Node) -> Node {
+    for c in branch_children(pat) {
+        if c.kind_of() == NodeKind.Name { return c }
+    }
+    ice("sem: a Bind-shape pattern without a Name node -- the parser wraps every binder")
+}
+
+/// The NAME node of a shorthand pattern field (`{ x }`); renamed fields
+/// bind through their subpattern instead (`patfield_sub`).
+export fn patfield_name_node(f Node) -> Node {
+    for c in branch_children(f) {
+        if c.kind_of() == NodeKind.Name { return c }
+    }
+    ice("sem: a shorthand pattern field without a Name node -- the parser wraps every binder")
+}

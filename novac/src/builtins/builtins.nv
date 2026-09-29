@@ -111,6 +111,11 @@ export const RESULT_OK_VARIANT = "Ok"
 /// P5: std names live here, the emitter must not spell them itself).
 export const VEC_LEN_METHOD = "len"
 export const VEC_GET_METHOD = "get"
+/// The DIRECT element read (`v[i]`'s method, panics on OOB): for the access
+/// whose in-range is already proven -- a match arm's length test over an
+/// array pattern. `get` is for the access nobody proved (D470: it answers
+/// Option), and `for x in xs` is the iterator protocol, not either door.
+export const VEC_INDEX_METHOD = "index"
 
 /// The method `==` lowers to. A NAME OF THE LANGUAGE, so it lives here with
 /// the others (P5): the emitter must not spell std names itself, and the

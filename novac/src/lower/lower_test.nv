@@ -387,6 +387,8 @@ test "a for over a collection: the header carries vec/idx/elem locals, the body 
                 Use(_) => assert(false)
                 VariantField(_) => assert(false)
                 Read(_) => assert(false)
+                IndexConst(_) => assert(false)
+                IndexFromEnd(_) => assert(false)
             }
         }
         Eval(_) => assert(false)
@@ -438,6 +440,8 @@ test "an if-let: the Option lands in a binding, the If tests IsSome of it, the b
                 IndexPayload(_) => assert(false)
                 VariantField(_) => assert(false)
                 Read(_) => assert(false)
+                IndexConst(_) => assert(false)
+                IndexFromEnd(_) => assert(false)
             }
         }
         Eval(_) => assert(false)

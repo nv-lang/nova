@@ -143,6 +143,8 @@ export type Rvalue enum
     | Expr(Node) // a tree expression, printed by the emitter (the M1 bridge)
     | SomePayload(Local) // the payload of the Some the local holds (if-let binder)
     | IndexPayload(ElemRead) // the element of a collection local at an index local (for-each binder)
+    | IndexConst(ConstRead) // the element at a CONSTANT index (an array pattern's prefix binder)
+    | IndexFromEnd(EndRead) // the element at `len - k` (an array pattern's suffix binder)
     | VariantField(VariantRead) // field `index` of variant `vrow` of the sum in `scr` (match binder)
     | Read(PlaceRead) // one projection of a local, read as a value (destructuring binder)
 
@@ -344,6 +346,29 @@ export type Pattern enum
     | Variant(VariantMatch) // a variant head, plus the alternatives of a disjunction
     | Bind // a plain binder: matches anything, the scrutinee under a new name
     | Wild // `_`: matches anything, binds nothing
+    | ArrayP(ArrayMatch) // an array pattern: a LENGTH test (the elements are the arm's bindings, not the test)
+
+/// The length an array pattern requires of the scrutinee (D59): `exact >=
+/// 0` means `len == exact` (no `..` written); otherwise `len >= at_least`,
+/// the written element count -- the rest covers the remainder.
+export type ArrayMatch value {
+    exact int /// `len == exact` when non-negative
+    at_least int /// `len >= at_least` when `exact` is negative
+}
+
+/// A constant-index element read (array pattern prefix): the index is part
+/// of the pattern, not a computed local, so it travels in the read itself.
+export type ConstRead value {
+    vec Local /// the collection local
+    idx int /// the constant index
+}
+
+/// A from-the-end element read (array pattern suffix): `len - from_end`,
+/// computed at match time.
+export type EndRead value {
+    vec Local /// the collection local
+    from_end int /// 1 is the last element
+}
 
 /// The variant heads an arm accepts: the first written and the rest of a
 /// disjunction (empty when the pattern names one variant).
@@ -598,6 +623,19 @@ export fn FnBuilder mut @take_payload(dest Local, opt Local) -> () {
 /// just opened, where the index is in range by the header's test.
 export fn FnBuilder mut @take_elem(dest Local, vec Local, idx Local) -> () {
     @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.IndexPayload(ElemRead { vec, idx }) }))
+}
+
+/// The element of a collection local at a CONSTANT index (an array
+/// pattern's prefix binder): the index is part of the pattern, not a
+/// computed local, so it travels in the read itself.
+export fn FnBuilder mut @take_elem_at(dest Local, vec Local, idx int) -> () {
+    @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.IndexConst(ConstRead { vec, idx }) }))
+}
+
+/// The element at `len - k` of a collection local (an array pattern's
+/// suffix binder), the position computed at match time.
+export fn FnBuilder mut @take_elem_end(dest Local, vec Local, from_end int) -> () {
+    @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.IndexFromEnd(EndRead { vec, from_end }) }))
 }
 
 /// Records one step of output: this operand goes to the printer here, in this position of

@@ -15,27 +15,19 @@
 
 module novac.lower
 
-import ../sem.{pattern_has_disj}
-
 import ../sem.{arm_body_at}
-
-import ../sem.{disj_head_slots}
-
-import ../sem.{leaf_text}
-
-import ../sem.{variant_in_sum}
-
+import ../sem.{variant_in_sum, is_vrow, no_vrow, VariantRow}
 import ../diag.{ice}
-
-import ../sem.{is_ident_leaf}
-
-import ../sem.{is_int_lit}
-
-import ../sem.{pattern_head_slot}
-
 import ../sem.{branch_children}
 import ../sem.{raw_vrow}
 import ../sem.{payload_as_seen}
+// The pattern tree's doors (D486): the shape asked ONCE, the parts through
+// their own doors -- never slot arithmetic.
+import ../sem.{PatShape, pattern_shape, pattern_head_text, pattern_subpatterns}
+import ../sem.{pattern_fields, patfield_name, patfield_sub, pattern_rest}
+import ../sem.{pattern_name_node, patfield_name_node}
+import ../sem.{is_dotdot}
+import ../tree.{NodeKind}
 
 // `is_ty` (registry #TBD, the block-tail-arm wave): `@lower_arm_body` reads
 // whether the checker recorded a type for a Block arm's body through the
@@ -121,32 +113,203 @@ fn Lowerer @guard_of(ak []Node) -> Option[Node] {
 /// What the arm's pattern IS -- decided once, before anything is printed. The
 /// head is asked of the MATCHED SUM through the checker's own door (wave B6,
 /// #964): the emitter does not consult the name table, so the two passes
-/// cannot disagree on which row a head names. A disjunction's other heads
-/// travel with the variant; the checker held every binder of one to `_`.
-fn Lowerer @pattern_of(pat []Node, scr_t TyId) -> Pattern {
-    // THE SAME DOOR THE CHECKER USES (registry 1190). Reading slot 0 here
-    // made a qualified arm a binder, and a binder matches everything.
-    ro p0 = pat[pattern_head_slot(pat)]
-    if is_int_lit(p0) {
-        return Pattern.Lit(p0)
-    }
-    if !is_ident_leaf(p0) {
-        ice("emit_c: match pattern is neither an int literal nor an identifier")
-    }
-    match variant_in_sum(@ctx, scr_t, leaf_text(p0)) {
-        Some(vrow) => {
+/// cannot disagree on which row a head names. The shape is asked through the
+/// ONE door of the pattern tree (D486) and matched exhaustively.
+fn Lowerer @pattern_of(pat Node, scr_t TyId) -> Pattern {
+    match pattern_shape(pat) {
+        Lit => Pattern.Lit(branch_children(pat)[0])
+        Wild => Pattern.Wild
+        Bind => {
+            // A name the sum knows is a payload-less variant; any other name
+            // binds the scrutinee.
+            match variant_in_sum(@ctx, scr_t, pattern_head_text(pat)) {
+                Some(vrow) => Pattern.Variant(VariantMatch { head: vrow, also: []VariantRow.new() })
+                None => Pattern.Bind
+            }
+        }
+        Variant => {
+            ro vrow = variant_in_sum(@ctx, scr_t, pattern_head_text(pat)) ?? ice("lower: a variant pattern the checker accepted names no variant of the matched sum")
+            Pattern.Variant(VariantMatch { head: vrow, also: []VariantRow.new() })
+        }
+        Disj => {
+            // The checker held every alternative to a variant of this sum:
+            // the first head is the test, the rest travel as `also`.
             mut also = []VariantRow.new()
-            for hi in disj_head_slots(pat) {
-                match variant_in_sum(@ctx, scr_t, leaf_text(pat[hi])) {
+            mut head = no_vrow()
+            mut first = true
+            for sub in pattern_subpatterns(pat) {
+                match variant_in_sum(@ctx, scr_t, pattern_head_text(sub)) {
                     None => {}
-                    Some(hrow) => also.push(hrow)
+                    Some(hrow) => {
+                        if first { head = hrow; first = false } else { also.push(hrow) }
+                    }
                 }
             }
-            Pattern.Variant(VariantMatch { head: vrow, also })
+            Pattern.Variant(VariantMatch { head, also })
         }
-        None => {
-            // Not a variant head: a name binds the scrutinee, `_` binds nothing.
-            if leaf_text(p0) != "_" { Pattern.Bind } else { Pattern.Wild }
+        // A tuple or record pattern matches everything of its type: there is
+        // no test, only the bindings the arm lays down.
+        Tuple | Record => Pattern.Wild
+        Array => Pattern.ArrayP(array_match_of(pat))
+    }
+}
+
+/// The LENGTH an array pattern requires of the scrutinee: exact when no
+/// `..` is written, otherwise at least the written element count (the rest
+/// covers the remainder). Asked of the same tree the checker judged.
+fn array_match_of(pat Node) -> ArrayMatch {
+    ro subs = pattern_subpatterns(pat)
+    if pattern_rest(pat) {
+        ArrayMatch { exact: -1, at_least: subs.len() }
+    } else {
+        ArrayMatch { exact: subs.len(), at_least: 0 }
+    }
+}
+
+/// Bind whatever a pattern introduces, RECURSIVELY (D486): a binder reads
+/// the base; a variant's payload, a tuple's components, a record's fields
+/// and an array's elements each read their piece and hand it down. A
+/// subpattern that is itself structured reads its piece into a TEMPORARY
+/// first -- the same "scrutinee once" contract the destructuring binding
+/// holds (M3c), one level per nesting.
+fn Lowerer mut @lower_pattern_bind(pat Node, ty TyId, base Local) -> () {
+    match pattern_shape(pat) {
+        Lit | Wild | Disj => {}
+        Bind => {
+            ro nm = pattern_head_text(pat)
+            if is_vrow(variant_in_sum(@ctx, ty, nm) ?? no_vrow()) { return }
+            ro l = @ir.named(@out.type_of(pattern_name_node(pat).id_of()), nm)
+            @ir.copy(l, base)
+        }
+        Variant => {
+            ro vrow = variant_in_sum(@ctx, ty, pattern_head_text(pat)) ?? ice("lower: a variant pattern the checker accepted names no variant of the matched sum")
+            ro vr = @ctx.variant_rows[raw_vrow(vrow)]
+            mut i = 0
+            for sub in pattern_subpatterns(pat) {
+                if i >= vr.payload_cnt { break }
+                // AS THE SCRUTINEE SEES IT, the same door the checker asks:
+                // for `Option[int]` the payload `T` is `int`.
+                ro pt = payload_as_seen(@ctx, ty, @ctx.payload_types[vr.payload_off + i])
+                match pattern_shape(sub) {
+                    Wild | Lit | Disj => {}
+                    Bind => {
+                        // A plain payload binder reads its field directly --
+                        // no temporary between the union and the author's name.
+                        ro lb = @ir.named(@out.type_of(pattern_name_node(sub).id_of()), pattern_head_text(sub))
+                        @ir.take_field(lb, base, vrow, i)
+                    }
+                    Variant | Record | Tuple | Array => {
+                        ro t = @ir.temp(pt)
+                        @ir.take_field(t, base, vrow, i)
+                        @lower_pattern_bind(sub, pt, t)
+                    }
+                }
+                i += 1
+            }
+        }
+        Tuple => {
+            mut i = 0
+            for sub in pattern_subpatterns(pat) {
+                if i >= @ctx.tys.arg_count(ty) { break }
+                ro et = @ctx.tys.arg(ty, i)
+                @lower_proj_bind(sub, et, base, Projection.Elem(i))
+                i += 1
+            }
+        }
+        Record => {
+            for f in pattern_fields(pat) {
+                ro fname = patfield_name(f)
+                // THE CHANNEL, and nothing else: the checker recorded the
+                // field's type on the PatField node; this door only spells
+                // the decision (the FieldAccess lesson -- the emitter may
+                // not ask the field's row, and neither may the lowering).
+                ro ft = @out.type_of(f.id_of())
+                match patfield_sub(f) {
+                    Some(sub) => {
+                        ro t = @ir.temp(ft)
+                        @ir.read(t, base, Projection.Field(fname))
+                        @lower_pattern_bind(sub, ft, t)
+                    }
+                    None => {
+                        ro l = @ir.named(@out.type_of(patfield_name_node(f).id_of()), fname)
+                        @ir.read(l, base, Projection.Field(fname))
+                    }
+                }
+            }
+        }
+        Array => {
+            ro elem_t = @ctx.tys.arg(ty, 0)
+            // The suffix length first: elements after the `..` count from
+            // the end, and their `len - k` needs the count up front.
+            mut suffix = 0
+            mut after = false
+            for c in branch_children(pat) {
+                match c {
+                    Leaf(_) => { if is_dotdot(c) { after = true } else { // Elements before the rest count from the front.
+                        }
+                    }
+                    Branch { .. } => {
+                        if after && c.kind_of() == NodeKind.Pattern { suffix += 1 } else { // A prefix element or a gap is not the suffix.
+                        }
+                    }
+                }
+            }
+            mut idx = 0
+            mut sj = 0
+            mut seen_rest = false
+            for c in branch_children(pat) {
+                match c {
+                    Leaf(_) => { if is_dotdot(c) { seen_rest = true } else { // Any other leaf keeps the current side.
+                        }
+                    }
+                    Branch { .. } => {
+                        if c.kind_of() == NodeKind.Pattern {
+                            if seen_rest {
+                                @lower_elem_bind(c, elem_t, base, suffix - sj, true)
+                                sj += 1
+                            } else {
+                                @lower_elem_bind(c, elem_t, base, idx, false)
+                                idx += 1
+                            }
+                        } else { // A non-Pattern branch (a recovery gap) binds nothing.
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Bind one subpattern read out of `base` through one projection step (a
+/// tuple's `.fN`, a record's `.field`).
+fn Lowerer mut @lower_proj_bind(sub Node, ty TyId, base Local, proj Projection) -> () {
+    match pattern_shape(sub) {
+        Wild | Lit | Disj => {}
+        Bind => {
+            ro l = @ir.named(@out.type_of(pattern_name_node(sub).id_of()), pattern_head_text(sub))
+            @ir.read(l, base, proj)
+        }
+        Variant | Record | Tuple | Array => {
+            ro t = @ir.temp(ty)
+            @ir.read(t, base, proj)
+            @lower_pattern_bind(sub, ty, t)
+        }
+    }
+}
+
+/// Bind one array element: a constant index from the front, or `len - n`
+/// from the back (the suffix of a `[a, .., z]`).
+fn Lowerer mut @lower_elem_bind(sub Node, elem_t TyId, base Local, n int, from_end bool) -> () {
+    match pattern_shape(sub) {
+        Wild | Lit | Disj => {}
+        Bind => {
+            ro l = @ir.named(@out.type_of(pattern_name_node(sub).id_of()), pattern_head_text(sub))
+            if from_end { @ir.take_elem_end(l, base, n) } else { @ir.take_elem_at(l, base, n) }
+        }
+        Variant | Record | Tuple | Array => {
+            ro t = @ir.temp(elem_t)
+            if from_end { @ir.take_elem_end(t, base, n) } else { @ir.take_elem_at(t, base, n) }
+            @lower_pattern_bind(sub, elem_t, t)
         }
     }
 }
@@ -160,67 +323,17 @@ fn Lowerer @pattern_of(pat []Node, scr_t TyId) -> Pattern {
 /// so that a single later walk can print every arm without reading the tree again.
 fn Lowerer mut @lower_arm(arm Node, scr_t TyId, ls Local, c SwitchCtx, dest Local) -> () {
     ro ak = branch_children(arm)
-    ro pat = branch_children(ak[0])
     ro arm_e = ak[arm_body_at(ak) ?? ice("emit_c: a match arm with no body reached the emitter")]
     ro guard = @guard_of(ak)
-    ro pattern = @pattern_of(pat, scr_t)
+    ro pattern = @pattern_of(ak[0], scr_t)
     // Recorded first, printed from the record (M2b-2 step 3a). The test itself already
     // read the IR -- `emit_pattern_test` takes the `Pattern` -- so what moves here is the
     // PLACE of the printing, which is what lets one walk print every arm later.
     @ir.begin_arm(c, pattern, guard)
-    match pattern {
-        Variant(vm) => {
-            if !pattern_has_disj(pat) {
-                // Unpack payload fields onto the arm's binders, in order:
-                // binder names sit after '(' in the pattern; field types are
-                // the variant's rows of the flat context. Each binder is a
-                // Binding local assigned the field through the one assignment
-                // printer (M2b-1d).
-                mut binders = []str.new()
-                // FROM THE HEAD (registry 1190), exactly as the checker counts:
-                // a payload binder follows the head and its `(`, which is slot 2
-                // for a bare head and slot 4 for a qualified one. The two passes
-                // agree because they ask the same door, not because both
-                // remember the same constant -- which is how this defect lived.
-                for j in pattern_head_slot(pat) + 2..pat.len() {
-                    match pat[j].ident_str() {
-                        Some(binder) => binders.push(binder)
-                        None => {}
-                    }
-                }
-                mut pi = 0
-                for bname in binders {
-                    // AS THE SCRUTINEE SEES IT, the same door the checker asks:
-                    // for `Option[int]` the payload `T` is `int`. Without the
-                    // substitution the emitter asked the layout of a type
-                    // PARAMETER and died -- `mangle: c_type of a type parameter,
-                    // layout is asked before substitution`. The checker had the
-                    // substitution and the lowering did not, which is the same
-                    // two-doors-one-question shape as the pattern head above.
-                    ro braw = @ctx.payload_types[@ctx.variant_rows[raw_vrow(vm.head)].payload_off + pi]
-                    ro bt = payload_as_seen(@ctx, scr_t, braw)
-                    ro lb = @ir.named(bt, bname)
-                    @ir.take_field(lb, ls, vm.head, pi)
-                    pi += 1
-                }
-            } else {
-                // A disjunction unpacks nothing: the checker held every
-                // binder to `_`.
-            }
-        }
-        Bind => {
-            // Plain binder: the scrutinee under a new name -- the first real
-            // use of the operand rvalue.
-            ro lb = @ir.named(scr_t, leaf_text(pat[0]))
-            @ir.copy(lb, ls)
-        }
-        Lit(_) => {
-            // An int literal introduces no name: the test IS the whole arm.
-        }
-        Wild => {
-            // The wildcard introduces no name either.
-        }
-    }
+    // THE BINDINGS, recursively: whatever the pattern introduces is read
+    // out of the scrutinee local -- payload fields, tuple components,
+    // record fields, array elements, or the scrutinee under a new name.
+    @lower_pattern_bind(ak[0], scr_t, ls)
     match guard {
         Some(g) => {
             // The guard's head is an `if` like any other: it goes through the ONE head

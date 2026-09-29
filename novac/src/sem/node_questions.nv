@@ -56,6 +56,11 @@ export fn is_int_lit(n Node) -> bool => leaf_kind(n) == TokenKind.IntLit
 /// and both questions belong to the channel.
 export fn is_ident_leaf(n Node) -> bool => leaf_kind(n) == TokenKind.Ident
 
+/// Is this leaf the REST marker `..`? The same move and the same reason as
+/// `is_int_lit` above: an array pattern's lowering asks which side of the
+/// marker an element stands on, and `lower` has no edge to `lex`.
+export fn is_dotdot(n Node) -> bool => leaf_kind(n) == TokenKind.DotDot
+
 /// Node kinds that stand as expressions (argument/operand positions).
 export fn is_expr_kind(k NodeKind) -> bool {
     // Wrapped with a TRAILING operator only: probed 2026-08-17 -- a leading

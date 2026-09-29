@@ -1,0 +1,183 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: subset_test.nv -- the same acceptance habit (a test asserts the
+// property, not the byte); NOT taken: golden-file assertions.
+// Role: acceptance tests of the pattern arc (D486, plan 274.5 §5й) -- the
+// disjunction wave first; every P1-P5 wave's witnesses land here.
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file -- and it EXISTS because
+// subset_test.nv crossed the 1000-line limit (decision 12) the same way
+// pipeline_test.nv once did: the cut is by MEANING (the pattern arc's
+// acceptance block), not by counting lines.
+// novac/src/pipeline/subset_pattern_test.nv -- what the pattern waves promised, held.
+
+module novac.pipeline
+
+import ../tree.{Node, NodeKind, raw_node}
+import ../parse.{parse}
+import ../sem.{branch_children, leaf_text, is_value_record, InteropTable}
+import ../source.{SourceText}
+import ../diag.{ice}
+import ../check.{check_instance}
+import ../types.{TyId, no_ty}
+
+test "pattern alternatives OR their tag tests; a named binder refuses (disjunction wave)" {
+    // `B(_) | C(_) => 1`: one arm, two tag tests ORed -- asserted on the C
+    // shape; the alternative PATH is held by the corpus carrier, which sends
+    // a value through the second head.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("type Tri enum A(int) | B(int) | C(int)\n\
+fn f(s Tri) -> int {\n\
+ match s {\n\
+  A(_) => 0\n\
+  B(_) | C(_) => 1\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(f(C(7)))\n\
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains(" || "))
+
+    // A named binder inside a disjunction refuses by name: alternatives
+    // would have to agree on the binder, and no carrier needs that.
+    ro (d2, _) = compile_to_c("type Tri enum A(int) | B(int)\n\
+fn f(s Tri) -> int {\n\
+ match s {\n\
+  A(x) | B(x) => x\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(f(B(5)))\n\
+}", std)
+    assert(d2.len() >= 1)
+    assert(d2[0].message.contains("takes `_` binders only"))
+}
+
+test "a tuple pattern binds by position, nested tuples recurse (D486 P1+P2)" {
+    // The ONE door's own shape: `(a, b)` over a structural tuple, and the
+    // nesting `(a, (b, c))` the flat walk could not say at all.
+    ro std = std_decls()
+    ro (d, _) = compile_to_c("fn main() {\n\
+ ro p = (3, 4)\n\
+ ro r = match p {\n\
+  (a, b) => a + b\n\
+ }\n\
+ println(r)\n\
+}", std)
+    assert(d.len() == 0, messages(d))
+    ro (d2, _) = compile_to_c("fn main() {\n\
+ ro p = (1, (2, 3))\n\
+ ro r = match p {\n\
+  (a, (b, c)) => a + b + c\n\
+ }\n\
+ println(r)\n\
+}", std)
+    assert(d2.len() == 0, messages(d2))
+}
+
+test "a record pattern binds by name; a record pattern inside a payload recurses (D486 P1+P2)" {
+    // `{ w, h }` over a record scrutinee, and `Point({ w, h })` -- the
+    // variant's payload read into a temporary first ("scrutinee once"),
+    // then destructured by the same recursive judgment.
+    ro std = std_decls()
+    ro (d, _) = compile_to_c("type Size { w int, h int }\n\
+fn f(s Size) -> int {\n\
+ match s {\n\
+  { w, h } => w + h\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(f(Size { w: 3, h: 4 }))\n\
+}", std)
+    assert(d.len() == 0, messages(d))
+    ro (d2, _) = compile_to_c("type Size { w int, h int }\n\
+type Shape enum Point(Size) | Dot\n\
+fn f(s Shape) -> int {\n\
+ match s {\n\
+  Point({ w, h }) => w + h\n\
+  Dot => 0\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(f(Point(Size { w: 3, h: 4 })))\n\
+}", std)
+    assert(d2.len() == 0, messages(d2))
+}
+
+test "an array pattern tests the length and reads elements DIRECTLY (@index); the rest binder refuses (D486 P1+P2)" {
+    // `[a, b, ..]`: the arm's length test is `_method_len(_) >= 2`, and the
+    // proven element read is `_method_index` -- the owner's rule (2026-09-29):
+    // `@index` for the access somebody proved, `get` for the one nobody did.
+    mut std = std_decls()
+    std.push("module std.v\n\
+export type Vec[T] { n int }")
+    ro (d, c) = compile_to_c("fn main() {\n\
+ ro xs = [10, 20, 30]\n\
+ ro r = match xs {\n\
+  [a, b, ..] => a + b\n\
+  _ => 0\n\
+ }\n\
+ println(r)\n\
+}", std)
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("_method_len("))
+    assert(c.contains("_method_index("))
+
+    // The `..rest` BINDER needs the shell's slice view (`Vec @index(Range)`),
+    // which the subset has not grown -- refused BY NAME until it has.
+    ro (d2, _) = compile_to_c("fn main() {\n\
+ ro xs = [1, 2, 3]\n\
+ ro r = match xs {\n\
+  [h, ..rest] => h\n\
+  _ => 0\n\
+ }\n\
+ println(r)\n\
+}", std)
+    assert(d2.len() >= 1)
+    assert(d2[0].message.contains("needs the shell's slice view"))
+}
+
+test "pattern arity, a partial record without `..`, a literal alternative: three named refusals (D486 P1+P2)" {
+    ro std = std_decls()
+    // The payload count is the variant's declaration, exactly.
+    ro (d, _) = compile_to_c("type E enum P(int, int) | Q\n\
+fn f(s E) -> int {\n\
+ match s {\n\
+  P(x) => x\n\
+  Q => 0\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(f(P(1, 2)))\n\
+}", std)
+    assert(d.len() >= 1)
+    assert(d[0].message.contains("payload count disagrees"))
+
+    // D486 section 3, in every position: a partial field list needs `..`.
+    ro (d2, _) = compile_to_c("type Size { w int, h int }\n\
+fn f(s Size) -> int {\n\
+ match s {\n\
+  { w } => w\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(f(Size { w: 3, h: 4 }))\n\
+}", std)
+    assert(d2.len() >= 1)
+    assert(d2[0].message.contains("field(s)"))
+
+    // A literal alternative asks for an or-test the lowering does not build;
+    // the flat walk IGNORED it (the #652 class), the door refuses by name.
+    ro (d3, _) = compile_to_c("type Tri enum A(int) | B(int) | C(int)\n\
+fn f(s Tri) -> int {\n\
+ match s {\n\
+  A(_) | 1 => 0\n\
+  B(_) | C(_) => 1\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(f(C(7)))\n\
+}", std)
+    assert(d3.len() >= 1)
+    assert(d3[0].message.contains("takes variant alternatives only"))
+}
