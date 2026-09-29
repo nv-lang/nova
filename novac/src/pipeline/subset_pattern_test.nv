@@ -167,7 +167,8 @@ fn main() {\n\
     assert(d2[0].message.contains("field(s)"))
 
     // A literal alternative asks for an or-test the lowering does not build;
-    // the flat walk IGNORED it (the #652 class), the door refuses by name.
+    // the flat walk IGNORED it (the #652 class), the door refuses by name
+    // (novac/src/check/match_arms.nv:870).
     ro (d3, _) = compile_to_c("type Tri enum A(int) | B(int) | C(int)\n\
 fn f(s Tri) -> int {\n\
  match s {\n\
@@ -336,7 +337,8 @@ fn main() {\n\
     assert(d5[0].message.contains("takes a variant pattern"))
 
     // The `ro` word outside a condition: the oracle refuses it in a match
-    // arm (measured 2026-09-29), and the mode doors would otherwise read it
+    // arm (measured 2026-09-29, door at novac/src/check/match_arms.nv:392),
+    // and the mode doors would otherwise read it
     // as `consume` -- refused BY NAME instead.
     ro (d6, _) = compile_to_c("type E enum A(int) | B\n\
 fn f(e E) -> int {\n\
