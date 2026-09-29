@@ -100,7 +100,7 @@ ro parsed = parse[int]("42")?
 
 ---
 
-## D19. Match-arms через `=>`, не `->`
+## D19. Match-arms через `=>`, не `->` {#d19}
 
 ### Что
 В `match` разделитель «образец → результат» — **`=>`**, не `->`. Match-arm
@@ -1583,7 +1583,7 @@ binding управляет «можно ли модифицировать **пе
 
 ---
 
-## D34. Pattern-bind в `if`/`while` conditions — unified grammar с match arms
+## D34. Pattern-bind в `if`/`while` conditions — unified grammar с match arms {#d34}
 
 > Status: active (Rust 1:1, 2026-05-27); amended Plan 114 D184 (2026-05-31):
 > drop outer `let` keyword; identifier-pattern требует `ro`/`mut`;
@@ -4444,7 +4444,7 @@ for x in it { ... }                  // it.iter() → self → next() (trivial)
 
 ---
 
-## D59. Array, tuple и позиционные partial patterns
+## D59. Array, tuple и позиционные partial patterns {#d59}
 
 > **AMEND 2026-09-28 ([D486](#d486) §3): правило 2 tuple-паттернов «`..` в
 > tuple запрещён» РЕТРАКТИРОВАНО** — `..` разрешён в кортеже во всех позициях
@@ -7910,7 +7910,7 @@ fn process_order(data Data) Fail[OrderErr] Db -> Receipt {
 
 ---
 
-## D184. Keyword refresh: `ro`/`mut`/`consume` bindings, `const` narrowed + generalized, no `let`, `readonly` → `ro`
+## D184. Keyword refresh: `ro`/`mut`/`consume` bindings, `const` narrowed + generalized, no `let`, `readonly` → `ro` {#d184}
 
 > 📌 **Полная модель мутабельности — [D246](02-types.md#d246-три-оси-мутабельности-l1-binding--l2-view--l3-pointee)** (3 оси: L1 binding / L2 content-view / L3 pointee). Этот D-блок описывает только **синтаксис binding-ключевых слов (`ro`/`mut`/`consume`) и переименование `readonly` → `ro`**. Для семантики, дефолтов и error-кодов читай D246.
 
@@ -12327,7 +12327,7 @@ Rust C-CONV — источник старого правила (итератор
 > ниже, `[M-primitive-receiver-bounded-blanket-dispatch]`-зависимость закрыта
 > 196.8/196.9). Грепы `@as_` = 0 в `std/time/duration.nv`.
 
-## D411. Record-деструктуризация в биндингах `ro`/`mut` (2026-07-07)
+## D411. Record-деструктуризация в биндингах `ro`/`mut` (2026-07-07) {#d411}
 
 > **Status:** ✅ IMPLEMENTED 2026-07-07 (решение владельца, предложено на живом коде —
 > паре `ro line = @line; ro col = @col` в json-лексере). Парсер переиспользует
@@ -12741,7 +12741,7 @@ embedded».
 * **[D38](#d38)** — сахар литерала массива; трогать его запятые запрещено
   («Почему» §4).
 
-## D461. `_`-имя нельзя использовать; линейное значение нельзя выбросить (2026-08-15)
+## D461. `_`-имя нельзя использовать; линейное значение нельзя выбросить (2026-08-15) {#d461}
 
 > **Status:** accepted (решение владельца, 2026-08-15 — разбор вокруг реестра
 > 221.1 №667/№673). Реализация — реестр №674 (чекер + фикстуры), **до тега
