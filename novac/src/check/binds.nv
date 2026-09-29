@@ -45,7 +45,7 @@ import ../types.{TyId, no_ty, is_ty}
 fn Checker mut @type_bind(st Node) -> () {
     ro kids = branch_children(st)
     if kids.len() < 2 {
-        @report_first_leaf_of(kids, "outside the subset: a binding needs a name and an initializer")
+        @report_first_leaf_of(kids, "outside the subset: a binding needs a name and an initializer (274.5 P3)")
         return
     }
     ro vname = leaf_text(kids[1])
@@ -427,7 +427,7 @@ fn Checker mut @type_index(e Node) -> TyId {
             // wave, so the refusal NAMES the form instead of calling the head
             // an unbound value -- which is what it used to say, and it was a
             // lie about which thing was missing.
-            @report_first_leaf_of(kids, "outside the subset: a type applied to arguments is read but not compiled yet")
+            @report_first_leaf_of(kids, "outside the subset: a type applied to arguments is read but not compiled yet (274.5 P4)")
             return no_ty()
         } else {
             // Not a type: an ordinary receiver, typed below.
@@ -483,13 +483,13 @@ fn Checker mut @type_index(e Node) -> TyId {
         // An ordinary index: judged below.
     }
     if @ctx.tys.kind_of(recv_t) != TypeKind.TkApp {
-        @report_first_leaf_of(kids, "outside the subset: indexing is compiled for `[]T` only -- this receiver is not an applied type")
+        @report_first_leaf_of(kids, "outside the subset: indexing is compiled for `[]T` only -- this receiver is not an applied type (274.5 P4)")
         return no_ty()
     } else {
         // An application: `Vec[T]` and its `[]T` spelling both land here.
     }
     if @ctx.tys.arg_count(recv_t) != 1 {
-        @report_first_leaf_of(kids, "outside the subset: indexing is compiled for a ONE-argument application (`[]T`), and this receiver has more")
+        @report_first_leaf_of(kids, "outside the subset: indexing is compiled for a ONE-argument application (`[]T`), and this receiver has more (274.5 P4)")
         return no_ty()
     } else {
         // One argument: it is the element.
@@ -600,7 +600,7 @@ fn Checker mut @type_array_lit(init Node) -> TyId {
     ro elems = literal_elems(kids)
     if Some(ctor) = literal_ctor_name(kids) {
         if ctor != LITERAL_CTOR {
-            @report_first_leaf_of(kids, "outside the subset: a typed array literal is written `[]T.${LITERAL_CTOR}(...)` -- this constructor is not the literal form")
+            @report_first_leaf_of(kids, "outside the subset: a typed array literal is written `[]T.${LITERAL_CTOR}(...)` -- this constructor is not the literal form (274.5 P3)")
             return no_ty()
         } else {
             // The literal constructor: judged as a literal below.
@@ -609,17 +609,17 @@ fn Checker mut @type_array_lit(init Node) -> TyId {
         // The bracket form has no constructor to judge.
     }
     if elems.len() == 0 {
-        @report_first_leaf_of(kids, "outside the subset: an empty array literal -- the oracle panics on it at run time (`${LITERAL_CTOR}` requires at least one element), and novac refuses rather than diverge")
+        @report_first_leaf_of(kids, "outside the subset: an empty array literal -- the oracle panics on it at run time (`${LITERAL_CTOR}` requires at least one element), and novac refuses rather than diverge (274.5 P3)")
         return no_ty()
     } else {
         // At least one element: its type leads.
     }
     for e in elems {
         if e.kind_of() == NodeKind.ArraySpread {
-            @report_first_leaf_of(kids, "outside the subset: a spread `...xs` inside an array literal is not compiled yet")
+            @report_first_leaf_of(kids, "outside the subset: a spread `...xs` inside an array literal is not compiled yet (274.5 P5)")
             return no_ty()
         } else if e.kind_of() == NodeKind.NamedArg {
-            @report_first_leaf_of(kids, "outside the subset: an array literal takes positional elements only")
+            @report_first_leaf_of(kids, "outside the subset: an array literal takes positional elements only (274.5 P3)")
             return no_ty()
         } else {
             // An expression element: typed below.
@@ -630,7 +630,7 @@ fn Checker mut @type_array_lit(init Node) -> TyId {
     if Some(hn) = literal_head_name(kids) {
         elem_t = @ctx.ty_of_name(hn) ?? no_ty()
         if !is_ty(elem_t) {
-            @report_first_leaf_of(kids, "outside the subset: novac does not know this element type yet")
+            @report_first_leaf_of(kids, "outside the subset: novac does not know this element type yet (274.5 P3)")
             return no_ty()
         } else {
             // A known element type: every element must be of it.
@@ -647,7 +647,7 @@ fn Checker mut @type_array_lit(init Node) -> TyId {
         if !is_ty(elem_t) {
             elem_t = et
         } else if et != elem_t {
-            @report_first_leaf_of(kids, "outside the subset: element ${i + 1} is ${ty_source_name(@ctx, et)}, but the literal's elements are ${ty_source_name(@ctx, elem_t)}")
+            @report_first_leaf_of(kids, "outside the subset: element ${i + 1} is ${ty_source_name(@ctx, et)}, but the literal's elements are ${ty_source_name(@ctx, elem_t)} (274.5 P4)")
             return no_ty()
         } else {
             // Same type as the literal's: fine.
@@ -656,7 +656,7 @@ fn Checker mut @type_array_lit(init Node) -> TyId {
     }
     ro lit_t = slice_term_of(elem_t, @ctx.types, @ctx.defs, @ctx.tys)
     if !is_ty(lit_t) {
-        @report_first_leaf_of(kids, "outside the subset: the slice head `${SLICE_HEAD}` is not among the declarations novac was handed")
+        @report_first_leaf_of(kids, "outside the subset: the slice head `${SLICE_HEAD}` is not among the declarations novac was handed (274.5 P5)")
         return no_ty()
     } else {
         // The term exists; whether the SHELL can build it is the last question.

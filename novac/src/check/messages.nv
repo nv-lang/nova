@@ -174,7 +174,7 @@ const DISJ_BINDER_MSG = "outside the subset: a `|` pattern takes `_` binders onl
 
 const LITERAL_ARM_MSG = "outside the subset: a `match` arm on a string or char literal is read but not compiled yet (E2-b, with the string family)"
 
-const IFLET_VARIANT_MSG = "outside the subset: `if <pattern> = ...` takes only `Some(name)` here -- other variants arrive with their carriers"
+const IFLET_VARIANT_MSG = "outside the subset: `if <pattern> = ...` takes only `Some(name)` here -- other variants arrive with their carriers (274.5 P4)"
 
 /// A tail `if let` used as a VALUE with no `else` (registry 1189).
 ///

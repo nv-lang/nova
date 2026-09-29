@@ -473,7 +473,7 @@ const COALESCE_RESULT_MSG = "outside the subset: `??` over a `Result` is not com
 /// measured 2026-09-03), so refusing it keeps novac on the fixed point instead
 /// of inventing a construction the language does not compile. The call form is
 /// the one that works.
-const PAREN_FORM_BRACE_MSG = "this type is declared in the parenthesised form, so it is constructed by call -- `Pair(1, 2)`, not `Pair { x: 1 }`"
+const PAREN_FORM_BRACE_MSG = "this type is declared in the parenthesised form, so it is constructed by call -- `Pair(1, 2)`, not `Pair { x: 1 }` (the brace form for it arrives with 274.5 P4)"
 
 // --- the two LITERAL JUDGES, moved here from exprs.nv on 2026-09-20 -------
 //
