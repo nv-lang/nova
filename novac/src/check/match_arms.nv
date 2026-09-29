@@ -389,6 +389,19 @@ fn Checker mut @bind_name_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode)
         @report_first_leaf_of(ak, WRONG_SUM_ARM_MSG)
         return false
     }
+    // The `ro` word is refused BY NAME here (wave P3): it stands only in an
+    // if/while condition, and the mapping below would otherwise read it as
+    // `consume` -- the `else` arm's silent default.
+    match pattern_mode_word(pat) {
+        Some(k) => {
+            if k == TokenKind.KwRo {
+                @report_first_leaf_of(ak, RO_WORD_PATTERN_MSG)
+                return false
+            } else { // `mut`/`consume` are mapped by the door below.
+            }
+        }
+        None => {}
+    }
     ro mode = match pattern_mode_word(pat) {
         Some(k) => if k == TokenKind.KwMut { ParamMode.ModeMut } else { ParamMode.ModeConsume }
         None => dmode
@@ -406,9 +419,12 @@ fn Checker mut @bind_variant_pattern(pat Node, ty TyId, ak []Node, dmode ParamMo
     ro head = pattern_head_text(pat)
     // THE TYPE IS ASKED ONLY WHEN THERE IS ONE: a poisoned scrutinee is
     // `TyId(-1)`, and asking the interner for its name walked off the end
-    // (measured within a minute of writing the line that did).
+    // (measured within a minute of writing the line that did). The qualifier
+    // is compared with the DECLARATION's head name, not the applied spelling:
+    // `ty_source_name` of `Option[int]` answers "Option[int]", which no
+    // source qualifier ever writes (wave P3, if-let on `Option.Some`).
     ro wrong_qualifier = pattern_qualifier(pat) != "" && is_ty(ty) &&
-                         pattern_qualifier(pat) != ty_source_name(@ctx, ty)
+                         pattern_qualifier(pat) != decl_of_ty(@ctx, ty).name
     ro vrow = variant_in_sum(@ctx, ty, head) ?? no_vrow()
     if wrong_qualifier || (!is_vrow(vrow) && variants_named(@ctx, head).1 > 0) {
         @report_first_leaf_of(ak, WRONG_SUM_ARM_MSG)
@@ -514,12 +530,28 @@ fn Checker mut @bind_record_pattern(pat Node, ty TyId, ak []Node, dmode ParamMod
                 }
             }
             None => {
-                ro mode = match pattern_mode_word(f) {
-                    Some(k) => if k == TokenKind.KwMut { ParamMode.ModeMut } else { ParamMode.ModeConsume }
-                    None => dmode
+                // The `ro`-word refusal, the bind_name_pattern twin (wave P3).
+                mut ro_word = false
+                match pattern_mode_word(f) {
+                    Some(k) => {
+                        if k == TokenKind.KwRo {
+                            @report_first_leaf_of(ak, RO_WORD_PATTERN_MSG)
+                            ro_word = true
+                            ok = false
+                        } else { // `mut`/`consume` are mapped by the door below.
+                        }
+                    }
+                    None => {}
                 }
-                @record(patfield_name_node(f), ft)
-                @scope.bind(fname, ft, mode)
+                if !ro_word {
+                    ro mode = match pattern_mode_word(f) {
+                        Some(k) => if k == TokenKind.KwMut { ParamMode.ModeMut } else { ParamMode.ModeConsume }
+                        None => dmode
+                    }
+                    @record(patfield_name_node(f), ft)
+                    @scope.bind(fname, ft, mode)
+                } else { // Refused above, by name.
+                }
             }
         }
         named += 1

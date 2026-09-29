@@ -21,6 +21,7 @@ import ../diag.{ice}
 import ../sem.{branch_children}
 import ../sem.{raw_vrow}
 import ../sem.{payload_as_seen}
+import ../sem.{option_payload}
 // The pattern tree's doors (D486): the shape asked ONCE, the parts through
 // their own doors -- never slot arithmetic.
 import ../sem.{PatShape, pattern_shape, pattern_head_text, pattern_subpatterns}
@@ -184,6 +185,16 @@ fn Lowerer mut @lower_pattern_bind(pat Node, ty TyId, base Local) -> () {
         Variant => {
             ro vrow = variant_in_sum(@ctx, ty, pattern_head_text(pat)) ?? ice("lower: a variant pattern the checker accepted names no variant of the matched sum")
             ro vr = @ctx.variant_rows[raw_vrow(vrow)]
+            // THE PAYLOAD READ HAS TWO ABI DOORS (the differential's E1 smoke,
+            // wave P3): a SHELL Option stores its payload as `.value`
+            // (`take_payload`, emit_option's door), a novac sum as a union
+            // member (`take_field`). The question is the SAME one typing
+            // asked to let the pattern here at all (`option_payload`) --
+            // one judgment, so the two passes cannot disagree. Before P3 no
+            // caller reached this arm with a shell Option (match on applied
+            // sums is refused, E2-b2), and the if-let read its payload by
+            // hand -- which is exactly the second-tree shape the arc removes.
+            ro as_option = is_ty(option_payload(@ctx, ty))
             mut i = 0
             for sub in pattern_subpatterns(pat) {
                 if i >= vr.payload_cnt { break }
@@ -196,11 +207,11 @@ fn Lowerer mut @lower_pattern_bind(pat Node, ty TyId, base Local) -> () {
                         // A plain payload binder reads its field directly --
                         // no temporary between the union and the author's name.
                         ro lb = @ir.named(@out.type_of(pattern_name_node(sub).id_of()), pattern_head_text(sub))
-                        @ir.take_field(lb, base, vrow, i)
+                        if as_option { @ir.take_payload(lb, base) } else { @ir.take_field(lb, base, vrow, i) }
                     }
                     Variant | Record | Tuple | Array => {
                         ro t = @ir.temp(pt)
-                        @ir.take_field(t, base, vrow, i)
+                        if as_option { @ir.take_payload(t, base) } else { @ir.take_field(t, base, vrow, i) }
                         @lower_pattern_bind(sub, pt, t)
                     }
                 }

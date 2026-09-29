@@ -193,6 +193,25 @@ const IFLET_VALUE_DISAGREE_MSG = "outside the subset: the branches of a value `i
 /// See IFLET_VARIANT_MSG above; the initializer half.
 const IFLET_INIT_MSG = "the initializer of `if Some(...) = ...` must be an Option instance -- this expression's type is not one"
 
+/// The if-let condition's PATTERN door (wave P3, D486 §4's third column):
+/// the condition takes a variant pattern -- judged against the initializer's
+/// sum and lowered through the same doors as a match arm. Every other shape
+/// is refused BY NAME rather than fallen through: a NAME binding (bare or
+/// with a mode word -- the oracle's E_AMBIGUOUS_IDENT_PATTERN /
+/// E_CONSUME_IN_CONDITION territory) is read but not lowered yet, and a
+/// tuple/record/array/literal/`_` condition the lowering has no test for.
+const IFLET_COND_BIND_MSG = "outside the subset: a name binding in an `if` condition is read but not compiled yet -- the condition takes a variant pattern (274.5 P3, the condition-forms wave)"
+const IFLET_COND_FORM_MSG = "outside the subset: an `if` condition takes a variant pattern here -- tuple, record, array, literal, `_` and `|` conditions arrive with the condition-forms wave (274.5 P3)"
+
+/// The `ro` word on a pattern binder OUTSIDE an if/while condition (wave P3):
+/// the word is read everywhere so the condition can take it (the oracle's
+/// E_AMBIGUOUS_IDENT_PATTERN names the bare form there), but a match arm or a
+/// destructuring binding has no use for it -- the oracle refuses the arm form
+/// (`expected pattern, got ro`, measured 2026-09-29), and a refusal by name
+/// beats a silent mis-read as `consume` (the two mode doors map words, and an
+/// unlisted word used to fall into the `else` arm).
+const RO_WORD_PATTERN_MSG = "outside the subset: the `ro` word on a pattern binder stands only in an `if`/`while` condition (274.5 P3, the condition-forms wave)"
+
 /// The for-CALL head judge's answer (wave B16): the head must hand back a
 /// vector -- an instance of arity one -- or the loop has no element type.
 ///

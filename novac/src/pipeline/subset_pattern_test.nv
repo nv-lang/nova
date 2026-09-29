@@ -254,3 +254,100 @@ export type Option[T] enum Some(T) | None\n")
     }
     assert(!unknown)
 }
+
+test "an if-let reads the ONE pattern door; other condition shapes refuse by name (D486 P3)" {
+    // The Option carrier is handed IN (the tiny std_decls knows no `get`) --
+    // the if-let tests' own precedent.
+    mut std = std_decls()
+    std.push("module std.v\n\
+export type Vec[T] { n int }\n\
+export fn Vec[T] @get(i int) -> Option[T] => None\n\
+export type Option[T] enum Some(T) | None\n")
+
+    // A QUALIFIED head through the new door (the statement old shape 2 read
+    // by hand), and a NESTED payload pattern -- `Some((a, b))` -- which the
+    // slot layout could not even say: the payload binds through the match
+    // arm's own recursive judgment now.
+    ro (d, _) = compile_to_c("fn main() {\n\
+ ro xs = [1]\n\
+ if Option.Some(v) = xs.get(0) {\n\
+  println(v)\n\
+ } else {\n\
+  println(0)\n\
+ }\n\
+}", std)
+    assert(d.len() == 0, messages(d))
+    // A NESTED payload pattern -- `Some(A(x))` -- the slot layout could
+    // not say it: the payload binds through the match arm's own recursive
+    // judgment now. (A tuple payload, `Some((a, b))`, is the same door and
+    // compiles on the ORACLE -- measured 2026-09-29; the subset cannot spell
+    // `Option[(int, int)]` -- an applied type with a tuple argument is
+    // typeref's own earlier boundary, not this wave's.)
+    ro (d1, _) = compile_to_c("type Inner enum A(int) | B\n\
+fn show(o Option[Inner]) -> () {\n\
+ if Some(A(x)) = o {\n\
+  println(x)\n\
+ } else {\n\
+  println(0)\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(1)\n\
+}", std)
+    assert(d1.len() == 0, messages(d1))
+
+    // A NAME binding in the condition (bare, or with a mode word -- the
+    // oracle's E_AMBIGUOUS_IDENT_PATTERN / E_CONSUME_IN_CONDITION territory)
+    // is read but not lowered yet: refused BY NAME with the wave's tag.
+    ro (d2, _) = compile_to_c("fn main() {\n\
+ ro xs = [1]\n\
+ if x = xs.get(0) {\n\
+  println(1)\n\
+ }\n\
+}", std)
+    assert(d2.len() >= 1)
+    assert(d2[0].message.contains("a name binding in an `if` condition"))
+    ro (d3, _) = compile_to_c("fn main() {\n\
+ ro xs = [1]\n\
+ if consume x = xs.get(0) {\n\
+  println(1)\n\
+ }\n\
+}", std)
+    assert(d3.len() >= 1)
+    assert(d3[0].message.contains("a name binding in an `if` condition"))
+
+    // A tuple / wildcard condition: the lowering has no test for them --
+    // named, never fallen through.
+    ro (d4, _) = compile_to_c("fn main() {\n\
+ ro t = (1, 2)\n\
+ if (a, b) = t {\n\
+  println(a)\n\
+ }\n\
+}", std)
+    assert(d4.len() >= 1)
+    assert(d4[0].message.contains("takes a variant pattern"))
+    ro (d5, _) = compile_to_c("fn main() {\n\
+ ro xs = [1]\n\
+ if _ = xs.get(0) {\n\
+  println(1)\n\
+ }\n\
+}", std)
+    assert(d5.len() >= 1)
+    assert(d5[0].message.contains("takes a variant pattern"))
+
+    // The `ro` word outside a condition: the oracle refuses it in a match
+    // arm (measured 2026-09-29), and the mode doors would otherwise read it
+    // as `consume` -- refused BY NAME instead.
+    ro (d6, _) = compile_to_c("type E enum A(int) | B\n\
+fn f(e E) -> int {\n\
+ match e {\n\
+  ro x => x\n\
+  B => 0\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(f(B))\n\
+}", std)
+    assert(d6.len() >= 1)
+    assert(d6[0].message.contains("`ro` word"))
+}

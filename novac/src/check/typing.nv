@@ -43,7 +43,8 @@ import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_o
 import ../sem.{ty_source_name, c_shell_method, is_value_record}
 import ../types.{TyId, no_ty, is_ty, same_ty}
 import ../sem.{option_payload, for_head_elem}
-import ../sem.{iflet_variant_at, iflet_binder_at, iflet_init_at, iflet_body_at, iflet_else_at}
+import ../sem.{iflet_pattern_at, iflet_init_at, iflet_body_at, iflet_else_at}
+import ../sem.{pattern_shape, pattern_head_text, PatShape}
 import ../sem.{shape_of}
 
 // ---- the type channel: what the checker decided ---------------------------
@@ -717,28 +718,41 @@ fn Checker mut @type_stmt(st Node) -> () {
         // emitter's door, so this walk has no answer to record for it.
     }
 }
-/// `if Some(v) = expr { ... }` (if-let wave): the initializer must be an
-/// Option INSTANCE, the variant must be `Some` (the subset's boundary -- its
-/// carriers use nothing else), and the binder takes the payload type inside
-/// the then-block. The initializer's type is RECORDED for the emitter's
-/// strict door -- the same lesson every wave since B15 step 5 pays once.
+/// `if <pattern> = expr { ... }` (wave P3, D486 §4's third column): the
+/// condition is ONE Pattern, read by the parser's one door and judged here.
+/// The subset compiles a VARIANT pattern -- the head judged against the
+/// initializer's Option, the payload bound RECURSIVELY through the match
+/// arm's own judge (`@bind_pattern`), so a nested payload pattern
+/// (`if Some((a, b)) = ...`) is the same tree all the way down. Every other
+/// shape is refused BY NAME (IFLET_COND_*): a position the lowering does
+/// not carry gets a named refusal with the wave's tag, never a fall-through.
+/// The initializer's type is RECORDED for the emitter's strict door -- the
+/// same lesson every wave since B15 step 5 pays once.
 fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
     ro kids = branch_children(st)
-    // The minimum length is the BODY slot plus one -- the same slot a
-    // qualified head shifts by two (registry #1259, `iflet_*_at` in
-    // `sem/slots.nv`), so the bound below is honest for both shapes.
     if kids.len() < iflet_body_at(kids) + 1 {
         assert(@out.len() > 0, "check: a malformed if-let reached typing with no refusal")
         return
     }
-    ro variant_at = iflet_variant_at(kids)
-    if leaf_text(kids[variant_at]) != OPTION_SOME_VARIANT {
-        match kids[variant_at] {
-            Leaf(t) => @refuse(t, IFLET_VARIANT_MSG)
-            // SILENT-OK: the parser puts a LEAF in the variant slot by
-            // construction; a branch here is its recovery, already named.
-            Branch { .. } => {}
-        }
+    ro pat = kids[iflet_pattern_at(kids)]
+    if pat.kind_of() != NodeKind.Pattern {
+        // A recovery gap stands where the pattern should be: the parser's
+        // own marker already said what was expected here.
+        return
+    }
+    ro shape = pattern_shape(pat)
+    if shape == PatShape.Bind {
+        @report_first_leaf_of(kids, IFLET_COND_BIND_MSG)
+        return
+    }
+    if shape != PatShape.Variant {
+        @report_first_leaf_of(kids, IFLET_COND_FORM_MSG)
+        return
+    }
+    // The subset's boundary among variants (its carriers use `Some` alone);
+    // the qualifier, if written, is judged by the shared door below.
+    if pattern_head_text(pat) != OPTION_SOME_VARIANT {
+        @report_first_leaf_of(kids, IFLET_VARIANT_MSG)
         return
     }
     ro init = kids[iflet_init_at(kids)]
@@ -759,7 +773,6 @@ fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
         return
     }
     @record(init, ot)
-    ro binder_at = iflet_binder_at(kids)
     ro body_at = iflet_body_at(kids)
     ro else_at = iflet_else_at(kids)
     if as_value {
@@ -786,7 +799,11 @@ fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
         ro some_term = block_terminates(kids[body_at])
         ro none_term = block_terminates(kids[else_at])
         ro vmark = @scope.mark()
-        @scope.bind(leaf_text(kids[binder_at]), payload, ParamMode.ModeRo)
+        if !@bind_pattern(pat, ot, kids, ParamMode.ModeRo) {
+            @scope.release(vmark)
+            return
+        } else { // Every payload name bound with its decided type.
+        }
         ro some_t = if some_term {
             @type_block(kids[body_at])
             no_ty()
@@ -837,7 +854,11 @@ fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
         // As a statement: the branches are blocks, typed below.
     }
     ro mark = @scope.mark()
-    @scope.bind(leaf_text(kids[binder_at]), payload, ParamMode.ModeRo)
+    if !@bind_pattern(pat, ot, kids, ParamMode.ModeRo) {
+        @scope.release(mark)
+        return
+    } else { // Every payload name bound with its decided type.
+    }
     @type_block(kids[body_at])
     @scope.release(mark)
     // The ELSE branch (wave W1) is typed with the binder OUT of scope -- it is

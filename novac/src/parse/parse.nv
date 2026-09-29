@@ -641,21 +641,59 @@ fn Cursor mut @head_expr() -> Node {
     e
 }
 
-/// IF-LET HEAD, asked in ONE place (registry #1259's lookahead, extracted for
-/// the if-let-value wave): 0 = not an if-let, 1 = bare `if Some(v) =`, 2 =
-/// qualified `if Sum.Variant(binder) =`. The statement door (`@stmt`) and the
-/// value door (`@atom`, expr.nv) both ask here -- an ordinary `if` head can
-/// never carry an `=` at either offset, so the lookahead alone tells an
-/// if-let from an expression, and two doors computing it would drift on the
-/// first change to either (the #991 class).
-fn Cursor @iflet_head_shape() -> int {
-    if @peek() != TokenKind.KwIf || @peek(skip: 1) != TokenKind.Ident { return 0 }
-    if @peek(skip: 2) == TokenKind.LParen && @peek(skip: 3) == TokenKind.Ident &&
-       @peek(skip: 4) == TokenKind.RParen && @peek(skip: 5) == TokenKind.Assign { return 1 }
-    if @peek(skip: 2) == TokenKind.Dot && @peek(skip: 3) == TokenKind.Ident &&
-       @peek(skip: 4) == TokenKind.LParen && @peek(skip: 5) == TokenKind.Ident &&
-       @peek(skip: 6) == TokenKind.RParen && @peek(skip: 7) == TokenKind.Assign { return 2 }
-    0
+/// IF-LET OR PLAIN IF, asked in ONE place (D486 §4, wave P3): take the KwIf,
+/// read a PATTERN through the one door (`@pattern`, expr.nv), and if the
+/// token after it is `=` the statement is an if-let -- otherwise rewind and
+/// read an ordinary `if`. An `=` can never follow a condition expression
+/// (assignment is a statement, D-grammar), so the question has exactly one
+/// honest answer. The rewind restores BOTH counters: `i` (tokens) and
+/// `next_id` (node identities) -- the trial parse spent both, and ids must
+/// stay dense and in creation order (the checker's channel is sized from the
+/// last one). `@pattern` touches no other cursor state: it never recurses
+/// into `@expr`, so `no_ctor`, `depth` and `depth_told` are untouched by the
+/// trial. The cost is a double read of a short prefix, measured against the
+/// alternatives (a hand-rolled lookahead per form was registry #1259's second
+/// tree, which this wave exists to delete).
+fn Cursor mut @iflet_try(in_value bool = false) -> Option[Node] {
+    if @peek() != TokenKind.KwIf { return None }
+    ro save_i = @i
+    ro save_id = @next_id
+    mut kids = []Node.of(@take())
+    ro pat = @pattern()
+    if @peek() != TokenKind.Assign {
+        @i = save_i
+        @next_id = save_id
+        return None
+    }
+    kids.push(pat)
+    kids.push(@take()) // `=`
+    // The initializer is a HEAD expression (wave W1, 274.7): a `{` after it
+    // opens the then-block, never a record constructor.
+    kids.push(@head_expr())
+    kids.push(@block())
+    // `else` after an if-let (wave W1): [.. then-block, KwElse, <Block |
+    // IfStmt | IfLet>]. The layout is FIXED now -- the pattern is one child
+    // wherever its head stood -- so the slots are plain constants
+    // (sem/slots.nv), and registry #1259's qualifier shift is gone with the
+    // second tree that needed it.
+    if @peek() == TokenKind.KwElse {
+        kids.push(@take())
+        if @peek() == TokenKind.KwIf {
+            // A chained `if` in VALUE position is an IfExpr/IfLet (the value
+            // door's own chain, registry #1243), in statement position an
+            // IfStmt/IfLet -- each chain recurses into ITS door.
+            if in_value { kids.push(@atom()) } else { kids.push(@stmt()) }
+        } else if @peek() == TokenKind.LBrace {
+            kids.push(@block())
+        } else {
+            // `else` with neither a block nor a chained `if`: incomplete,
+            // and the tree must SAY so or check finds nothing wrong.
+            kids.push(@error_node(TokenKind.ErrorTok))
+        }
+    } else {
+        // No else branch: the if-let is complete on its own.
+    }
+    Some(@node(NodeKind.IfLet, kids))
 }
 
 /// Does the identifier under the cursor open a PATTERN (D486)? Asked by the
@@ -676,58 +714,12 @@ fn Cursor @pattern_head_ahead() -> bool {
 
 /// Parse one statement: if/while/return/mut/ro/for, or an expression (assignment).
 fn Cursor mut @stmt() -> Node {
-    // IF-LET head lookahead, bare OR QUALIFIED (registry #1259): `if
-    // Sum.Variant(binder) = expr` is the same class already fixed for
-    // match's own pattern head and for `const Type.NAME` -- a variant's
-    // head is read in more than one place, and this was the one that had
-    // not learned the qualifier yet. Asked through the ONE door above.
-    ro iflet_shape = @iflet_head_shape()
-    ro iflet_bare = iflet_shape == 1
-    ro iflet_qualified = iflet_shape == 2
-    if iflet_bare || iflet_qualified {
-        // IF-LET (wave: if-let + Option family): `if Some(v) = expr { ... }`.
-        // Its own kind, the B14 discipline; which variants the subset takes
-        // is typing's question.
-        mut kids = []Node.of(@take(), @take())
-        if iflet_qualified {
-            kids.push(@take()) // `.`
-            kids.push(@take()) // the qualified variant's own ident
-        } else {
-            // Bare head: nothing stands between the name and `(`.
-        }
-        kids.push(@take()) // `(`
-        kids.push(@take()) // binder ident
-        kids.push(@take()) // `)`
-        kids.push(@take()) // `=`
-        // The initializer is a HEAD expression (wave W1, 274.7): a `{` after it
-        // opens the then-block, never a record constructor -- `if Some(v) = o {`
-        // used to read `o { ... }` as a construction and the if-let vanished
-        // into a false "record constructor only as..." refusal; a call there
-        // (`= g(n) {`) was a syntax error.
-        kids.push(@head_expr())
-        kids.push(@block())
-        // `else` after an if-let (wave W1): the same two shapes as after an
-        // `if`, hung off the same node -- [.. then-block, KwElse, <Block | IfStmt
-        // | IfLet>]. A reader no longer counts children by a fixed number
-        // (registry #1259 widened the head by two slots for the qualified
-        // form): `sem/slots.nv`'s `iflet_*_at` doors answer WHERE each part
-        // stands, bare or qualified alike. Eight of novac's own files write
-        // the bare form.
-        if @peek() == TokenKind.KwElse {
-            kids.push(@take())
-            if @peek() == TokenKind.KwIf {
-                kids.push(@stmt())
-            } else if @peek() == TokenKind.LBrace {
-                kids.push(@block())
-            } else {
-                // `else` with neither a block nor a chained `if`: incomplete,
-                // and the tree must SAY so or check finds nothing wrong.
-                kids.push(@error_node(TokenKind.ErrorTok))
-            }
-        } else {
-            // No else branch: the if-let is complete on its own.
-        }
-        return @node(NodeKind.IfLet, kids)
+    // IF-LET (wave P3, D486): the one question -- a PATTERN through the one
+    // door, then `=` -- lives in `@iflet_try` above and is shared with the
+    // value door (`@atom`, expr.nv).
+    match @iflet_try() {
+        Some(n) => return n
+        None => {}
     }
     if @peek() == TokenKind.KwIf {
         mut kids = []Node.of(@take())

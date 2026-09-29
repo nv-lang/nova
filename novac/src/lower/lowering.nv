@@ -15,7 +15,7 @@ import ../diag.{ice}
 import ../sem.{arm_body_at, branch_children, for_head_elem}
 import ../sem.{is_expr_kind, is_ident_leaf, is_int_lit, is_println_call, is_value_tail_kind, leaf_kind}
 import ../sem.{leaf_text, literal_prim_of, raw_vrow, variant_in_sum}
-import ../sem.{iflet_binder_at, iflet_body_at, iflet_else_at, iflet_init_at}
+import ../sem.{iflet_pattern_at, iflet_body_at, iflet_else_at, iflet_init_at}
 import ../sem.{payload_as_seen}
 // Which arguments have an observable order (F65) -- the checker's own door.
 import ../sem.{contains_call, loop_ctl_is_break}
@@ -181,7 +181,6 @@ fn Lowerer mut @lower_if_let_value(n Node, res_t TyId) -> Local {
     ro kids = branch_children(n)
     ro init = kids[iflet_init_at(kids)]
     ro ot = @out.type_of(init.id_of())
-    ro payload = @ctx.tys.arg(ot, 0)
     ro t = @ir.temp(res_t)
     @ir.declare_zeroed(t)
     // The Option is a temporary of the BODY, named by its index (274.8 M3):
@@ -189,10 +188,10 @@ fn Lowerer mut @lower_if_let_value(n Node, res_t TyId) -> Local {
     ro lo = @ir.temp(ot)
     @lower_place(init, lo)
     ro c = @ir.begin_if(Cond.IsSome(lo), ElseShape.Braced)
-    // The binder: the checker bound it to the payload type, this door spells
-    // what was decided.
-    ro bv = @ir.named(payload, leaf_text(kids[iflet_binder_at(kids)]))
-    @ir.take_payload(bv, lo)
+    // The pattern binds through the match arm's own door (wave P3): a binder
+    // reads the payload, a nested pattern reads its piece -- one judgment,
+    // recorded by the checker, spelled here.
+    @lower_pattern_bind(kids[iflet_pattern_at(kids)], ot, lo)
     @lower_block_value(kids[iflet_body_at(kids)], t)
     @ir.begin_else(c)
     @lower_block_value(kids[iflet_else_at(kids)], t)
@@ -501,7 +500,6 @@ fn Lowerer mut @lower_if_let(st Node, outer Option[IfCtx]) -> () {
     ro kids = branch_children(st)
     ro init = kids[iflet_init_at(kids)]
     ro ot = @out.type_of(init.id_of())
-    ro payload = @ctx.tys.arg(ot, 0)
     ro else_at = iflet_else_at(kids)
     ro has_else = kids.len() > else_at
     // THE ELSE BRANCH IS OPENED BY THE DOOR, NOT HERE (fix 2026-09-08, ICE «a block sealed
@@ -552,10 +550,9 @@ fn Lowerer mut @lower_if_let(st Node, outer Option[IfCtx]) -> () {
     // keeps its indent. Measured, not reasoned: passing `chained_of(outer)` here made the
     // corpus C differ in exactly one file (fixtures/iflet_else/pos_2), the hunk being this
     // lost indent.
-    // The binder: the checker bound it to the payload type, this door spells
-    // what was decided.
-    ro bv = @ir.named(payload, leaf_text(kids[iflet_binder_at(kids)]))
-    @ir.take_payload(bv, lo)
+    // The pattern binds through the match arm's own door (wave P3) -- the
+    // value door above says why.
+    @lower_pattern_bind(kids[iflet_pattern_at(kids)], ot, lo)
     @lower_block_stmts_fn(kids[iflet_body_at(kids)], false)
     if has_else {
         @lower_else_tail(c, kids[else_at])

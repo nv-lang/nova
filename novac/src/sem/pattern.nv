@@ -173,8 +173,8 @@ export fn pattern_shape(pat Node) -> PatShape {
                t.kind == TokenKind.LBracket { return PatShape.Array }
             if t.kind == TokenKind.LParen { return PatShape.Tuple }
             if t.kind == TokenKind.LBrace { return PatShape.Record }
-            if t.kind == TokenKind.KwMut ||
-               t.kind == TokenKind.KwConsume { return PatShape.Bind }
+            if t.kind == TokenKind.KwMut || t.kind == TokenKind.KwConsume ||
+               t.kind == TokenKind.KwRo { return PatShape.Bind }
             if t.kind == TokenKind.Ident {
                 if kids.len() == 1 && t.text == "_" { return PatShape.Wild }
                 // A head: ident leaves, then an opener. Braces say record,
@@ -279,15 +279,18 @@ export fn pattern_rest(pat Node) -> bool {
     false
 }
 
-/// The MODE WORD written before a binder (`mut` / `consume`), or None.
+/// The MODE WORD written before a binder (`ro` / `mut` / `consume`), or None.
 /// The parser records the word; what it MEANS in this position is the
-/// checker's judgment (D486 §4-§5), not the tree's.
+/// checker's judgment (D486 §4-§5), not the tree's. `ro` is read since wave
+/// P3 -- the if/while condition takes it (the oracle's E_AMBIGUOUS_IDENT_PATTERN
+/// names the bare form) -- and every other position refuses it by name.
 export fn pattern_mode_word(pat Node) -> Option[TokenKind] {
     ro kids = branch_children(pat)
     if kids.len() == 0 { return None }
     match kids[0] {
         Leaf(t) => {
-            if t.kind == TokenKind.KwMut || t.kind == TokenKind.KwConsume {
+            if t.kind == TokenKind.KwMut || t.kind == TokenKind.KwConsume ||
+               t.kind == TokenKind.KwRo {
                 return Some(t.kind)
             }
             None
