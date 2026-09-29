@@ -481,9 +481,9 @@ fn Checker mut @bind_tuple_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode
     mut ok = true
     for sub in subs {
         if i >= @ctx.tys.arg_count(ty) { break }
-        if !@bind_pattern(sub, @ctx.tys.arg(ty, i), ak, dmode) { ok = false } else {
+        if @bind_pattern(sub, @ctx.tys.arg(ty, i), ak, dmode) {
             // The position bound; the arm stays sound.
-        }
+        } else { ok = false }
         i += 1
     }
     ok
@@ -590,12 +590,12 @@ fn Checker mut @bind_array_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode
     for c in branch_children(pat) {
         match c {
             Leaf(t) => {
-                if t.kind == TokenKind.DotDot { rests += 1; prev_dotdot = true } else {
+                if t.kind != TokenKind.DotDot {
                     // Only the rest marker opens a rest position.
-                }
-                if t.kind == TokenKind.Comma { prev_dotdot = false } else {
+                } else { rests += 1; prev_dotdot = true }
+                if t.kind != TokenKind.Comma {
                     // Without a comma the next element still follows its `..`.
-                }
+                } else { prev_dotdot = false }
             }
             Branch { .. } => {
                 if c.kind_of() == NodeKind.Pattern {
@@ -608,9 +608,9 @@ fn Checker mut @bind_array_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode
                         @report_first_leaf_of(ak, ARRAY_REST_BIND_MSG)
                         ok = false
                     } else {
-                        if !@bind_pattern(c, elem_t, ak, dmode) { ok = false } else {
+                        if @bind_pattern(c, elem_t, ak, dmode) {
                             // The element bound; the arm stays sound.
-                        }
+                        } else { ok = false }
                     }
                     prev_dotdot = false
                 } else { // A non-Pattern branch (a recovery gap) binds nothing.
