@@ -20,7 +20,7 @@ ro v = x.release()         // ✓ consume via method
 ```
 
 - **Владение** передаётся через `consume X = …`.
-- **Связывание-псевдоним** запрещено внутри тела функции (`let Y = X`).
+- **Связывание-псевдоним** запрещено внутри тела функции (`ro Y = X`).
 - **Заём-представление (view-borrow)** разрешён ТОЛЬКО как параметр функции.
 - Каждое consume-связывание должно быть потреблено до выхода из области
   видимости.
@@ -56,7 +56,7 @@ consume t = Token.new(7)    // ✓
 Компилятор статически определяет, когда связывание получает значение
 потребляемого типа, и требует ключевое слово `consume`.
 
-### Правило 2 — `let Y = consume_var` запрещено в теле функции
+### Правило 2 — `ro Y = consume_var` запрещено в теле функции
 
 ```nova
 consume sb = StringBuilder.new()
@@ -138,8 +138,8 @@ ro s = sb.append("a").append("b").as_str()   // chain + consume
 
 | Код                              | Триггер                                     |
 | --------------------------------- | ------------------------------------------- |
-| `E_CONSUME_KEYWORD_MISSING`       | `let X = ctor()`, когда ctor возвращает consume-тип |
-| `E_VIEW_BINDING_FORBIDDEN`        | `let Y = consume_var` в теле функции        |
+| `E_CONSUME_KEYWORD_MISSING`       | `ro X = ctor()`, когда ctor возвращает consume-тип |
+| `E_VIEW_BINDING_FORBIDDEN`        | `ro Y = consume_var` в теле функции        |
 | `W_CONSUME_KEYWORD_UNNECESSARY`   | `consume X = …`, когда правая часть не consume-типа |
 | `D133-not-consumed`               | выход из области видимости с неудовлетворённым обязательством |
 | `D133-use-after-consume`          | использование потреблённого связывания      |
