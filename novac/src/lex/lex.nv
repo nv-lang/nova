@@ -772,7 +772,8 @@ export fn lex(src str) -> []Token {
             }
             // A LIVE interpolation splits the literal into fragment tokens
             // (wave I2) -- unless we are already inside a slot, where a
-            // nested string lexes whole and the checker refuses its slots.
+            // nested string lexes whole and the checker refuses its slots
+            // (`check/literal_rules.nv:490`, `@judge_interp_lit`).
             if closed && has_interp && !interp_mode {
                 mut sfs = start
                 mut j = start + 1

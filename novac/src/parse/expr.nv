@@ -322,7 +322,8 @@ fn Cursor mut @primary() -> Node {
             // suffix with no right-hand side, at the SAME tier as `??` so the
             // two chain left to right (`a? ?? b`, `a ?? b?`) instead of one
             // silently winning by being parsed first. Reaches the tree as
-            // its own kind -- the checker refuses it BY NAME (E2), not the
+            // its own kind -- the checker refuses it BY NAME (E2,
+            // `check/exprs.nv:170`, the `Try` arm of `@type_expr`), not the
             // lexer as a syntax error, mirroring `?? return`'s own rule two
             // lines below.
             e = @node(NodeKind.Try, []Node.of(e, @take()))
@@ -818,7 +819,8 @@ fn Cursor mut @atom() -> Node {
                 // No argument list: check names the shape.
             }
         } else {
-            // A bare `[]`: an empty literal, judged by check.
+            // A bare `[]`: an empty literal, judged by check
+            // (`check/binds.nv:598`, `@type_array_lit`).
         }
         return @node(NodeKind.ArrayLit, kids)
     }
@@ -873,7 +875,8 @@ fn Cursor mut @atom() -> Node {
             // tell an index from a type application; only what the left name
             // RESOLVES TO can, and resolution is the checker's root, not the
             // parser's (`naming a type is the registry's answer`, above).
-            // So the run is read losslessly and judged by name later. Before
+            // So the run is read losslessly and judged by name later
+            // (`check/binds.nv:405`, `@type_index`). Before
             // this, the comma alone cost four refusals from one line.
             ik.push(@expr())
             while @peek() == TokenKind.Comma {

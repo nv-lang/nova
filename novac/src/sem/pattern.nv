@@ -195,7 +195,8 @@ export fn pattern_rest(pat Node) -> bool {
 /// The parser records the word; what it MEANS in this position is the
 /// checker's judgment (D486 §4-§5), not the tree's. `ro` is read since wave
 /// P3 -- the if/while condition takes it (the oracle's E_AMBIGUOUS_IDENT_PATTERN
-/// names the bare form) -- and every other position refuses it by name.
+/// names the bare form) -- and every other position refuses it by name
+/// (`check/match_arms.nv:400`, the `KwRo` refusal).
 export fn pattern_mode_word(pat Node) -> Option[TokenKind] {
     ro kids = branch_children(pat)
     if kids.len() == 0 { return None }

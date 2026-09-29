@@ -242,7 +242,8 @@ fn main() { println(1) }", std)
 
     // THE SECOND SHAPE of the same class, and it had a different root: here the
     // receiver is a call to a name that does NOT exist. The walk refuses it by
-    // name, and the index door then asked `type_of` about it anyway -- and
+    // name, and the index door (`check/binds.nv:405`, `@type_index`) then asked
+    // `type_of` about it anyway -- and
     // `type_of` on a call whose name is not in the registry raises an ice. So
     // the refusal was correct and the crash came after it, which is why no
     // probe on a well-formed program could find this.
@@ -427,7 +428,8 @@ fn main() {\n\
     assert(c.contains("    return _novac_tmp_t"))
 
     // A tuple PARAMETER stays outside the wave (B15 bounds): today the
-    // parameter FORM rule refuses it upstream, and the bind judge holds the
+    // parameter FORM rule refuses it upstream (`check/messages.nv:245`,
+    // `TUPLE_PARAM_MSG`), and the bind judge holds the
     // same boundary for the day the form rule narrows.
     ro (d2, _) = compile_to_c("fn f(p (int, int)) -> int {\n\
  p.0\n\
@@ -805,7 +807,8 @@ fn main() {\n\
 test "a binding that names a visible variant refuses as refutable (#875)" {
     // `ro Dot = 3` under `type Kind enum Dot | Dash` used to shadow the
     // variant in silence -- the oracle refuses it as a one-variant pattern
-    // (D411). A payload-carrying variant's bare name stays a binder.
+    // (D411; novac's own door: `check/destructure.nv:36`,
+    // `REFUTABLE_BINDING_MSG`). A payload-carrying variant's bare name stays a binder.
     ro std = std_decls()
     ro (dvs, _) = compile_to_c("type Kind enum Dot | Dash\n\
 fn main() {\n\
