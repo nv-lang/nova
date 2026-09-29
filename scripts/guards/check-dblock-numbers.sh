@@ -76,6 +76,32 @@ extract() {   # stdin: текст файла; $1 — метка места
         }'
 }
 
+# ПРАВКА ЗАГОЛОВКА — НЕ ЗАЯВКА НА НОМЕР (2026-09-29, интегратор). Дописать
+# якорь `{#d19}` к существующему `## D19. …` — это в diff'е пара `-## D19…` /
+# `+## D19…`, и прежний признак («есть строка `+## D19`») читал её как новый
+# блок: столкновение с базой на ровном месте. Поймано на ветке `nova-kim`, которая
+# дописала якоря шести блокам по требованию СОСЕДНЕГО стража (`check-dead-anchors`:
+# короткая ссылка `(#dNNN)` работает только при явном `{#dNNN}`) — два стража
+# противоречили друг другу, и красным становился `main` у всех окон.
+# Признак теперь счётный: номер ЗАЯВЛЕН, если заголовков с ним ДОБАВЛЕНО больше,
+# чем удалено в том же diff'е. Правка (+1/−1) — не заявка; правка плюс вторая
+# копия номера (+2/−1) — заявка, и отказ остаётся. ЧЕГО ПРИЗНАК НЕ ЛОВИТ,
+# названо: ветка, которая удалила блок и под тем же номером написала другой
+# (+1/−1 с новым предметом), — это ретракция с перезаписью, её видно в спеке и в
+# обзоре, но не здесь.
+# stdin: текст diff'а; stdout: строки добавленных заголовков (без `+`) тех номеров,
+# где добавлений больше, чем удалений.
+claimed_headers() {
+    awk '
+        /^-#+ *D[0-9]+/ { n = $0; sub(/^-#+ *D/, "", n); sub(/[^0-9].*$/, "", n); rem[n]++; next }
+        /^\+#+ *D[0-9]+/ {
+            l = $0; sub(/^\+/, "", l)
+            n = l; sub(/^#+ *D/, "", n); sub(/[^0-9].*$/, "", n)
+            add[n]++; line[++k] = l; num[k] = n
+        }
+        END { for (i = 1; i <= k; i++) if (add[num[i]] > rem[num[i]] + 0) print line[i] }'
+}
+
 BLOCKS=0
 # `ISSUED-NUMBERS.md` ИЗ ВЫБОРКИ ЗАГОЛОВКОВ ИСКЛЮЧЁН НАМЕРЕННО: это реестр брони,
 # он ГОВОРИТ о номерах, а не объявляет их. Страж, считающий текст про свой
@@ -148,10 +174,7 @@ for r in $REFS $EXTRA_REFS; do
     # столкновение номеров стоило нам трёх случаев за сутки,
     # а лишний отказ стоит одного взгляда человека.]
     ADDED=$(git diff "$BASE_REF...$r" -- spec/decisions 2>/dev/null)  # [3DOT-OK: sprashivaetsya imenno "chto VETKA DOBAVILA ot obshchego predka" -- eto i est semantika A...B, a ne vopros o vlitosti, radi kotorogo zavedyon branch-absorbed.sh; pri neskol'kih bazah sliyaniya git voz'myot proizvol'nuyu, i bolee staraya pokazhet uzhe vlityy zagolovok kak dobavlennyy -- eto LOZHNAYA TREVOGA, a ne propusk, to est oshibka idyot V STORONU GROMKOSTI]
-    printf '%s\n' "$ADDED" \
-        | grep -E "^\+#{2,3} *D[0-9]+" \
-        | sed -E "s/^\+//" \
-        | extract "$r" >> "$PAIRS"
+    printf '%s\n' "$ADDED" | claimed_headers | extract "$r" >> "$PAIRS"
 done
 # Добавленное САМИМ рабочим деревом (ещё не закоммиченное) — тоже сторона, но
 # сравнивать его надо с ТОЧКОЙ РАСХОЖДЕНИЯ, а не с вершиной базы.
@@ -164,8 +187,7 @@ done
 # сравнение шло с вершиной; теперь одинаково.
 MB=$(git merge-base "$BASE_REF" HEAD 2>/dev/null || echo "$BASE_REF")
 git diff "$MB" -- spec/decisions 2>/dev/null \
-    | grep -E "^\+#{2,3} *D[0-9]+" | sed -E "s/^\+//" \
-    | extract "дерево(незакоммиченное)" >> "$PAIRS"
+    | claimed_headers | extract "дерево(незакоммиченное)" >> "$PAIRS"
 BLOCKS=$(grep -c . "$PAIRS" || true)
 
 # --- таблица выданных номеров ------------------------------------------------

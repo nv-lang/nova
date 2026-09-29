@@ -161,5 +161,38 @@ else
     bad "7: отставание прочитано как столкновение: $(cat "$TMP/.err")"
 fi
 
+# --- пара 8: ВЕТКА ПРАВИТ ЗАГОЛОВОК БАЗЫ (дописывает якорь) — не заявка ------
+# Поймано 2026-09-29 на `nova-kim`: якоря `{#d19}` … по требованию
+# `check-dead-anchors` читались как шесть новых блоков, и `main` краснел у всех.
+setup_base
+git_q checkout -q -b anchor main
+printf '## D100. Base block {#d100}\n\ntext\n' > "$R/spec/decisions/02-types.md"
+git_q add spec/decisions/02-types.md
+git_q commit -qm "якорь к заголовку базы"
+git_q checkout -q main
+run
+if [ $? -eq 0 ]; then
+    ok "ветка дописала якорь к заголовку базы — не заявка, зелёный"
+else
+    bad "8: правка заголовка прочитана как столкновение: $(cat "$TMP/.err")"
+fi
+
+# --- пара 8б: правка заголовка ПЛЮС вторая копия того же номера — красно ----
+# Контроль к 8: счётный признак (+2/−1) обязан остаться громким — правка одного
+# заголовка не прикрывает настоящую заявку на тот же номер в другом файле.
+setup_base
+git_q checkout -q -b anchor-and-dup main
+printf '## D100. Base block {#d100}\n\ntext\n' > "$R/spec/decisions/02-types.md"
+printf '## D100. A second block under the same number\n\ntext\n' > "$R/spec/decisions/03-syntax.md"
+git_q add spec/decisions/02-types.md spec/decisions/03-syntax.md
+git_q commit -qm "якорь и дубль"
+git_q checkout -q main
+run
+if [ $? -ne 0 ] && grep -q "D100" "$TMP/.err"; then
+    ok "правка заголовка плюс второй D100 — красный"
+else
+    bad "8б: правка заголовка прикрыла вторую копию номера: $(cat "$TMP/.out") $(cat "$TMP/.err")"
+fi
+
 echo "селфтест check-dblock-numbers: $OKN/$OKN ok"
 [ "$FAILED" -eq 0 ] || { echo "селфтест check-dblock-numbers: ЕСТЬ ПРОВАЛЫ" >&2; exit 1; }
