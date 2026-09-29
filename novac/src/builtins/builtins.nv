@@ -107,10 +107,9 @@ export const RESULT_SUM = "Result"
 /// (D86), so nothing reads the failing variant by name.
 export const RESULT_OK_VARIANT = "Ok"
 
-/// The vector methods the for-over-a-call emission walks with (B16 wave,
-/// P5: std names live here, the emitter must not spell them itself).
+/// The vector length method the for-over-a-call emission walks with (B16
+/// wave, P5: std names live here, the emitter must not spell them itself).
 export const VEC_LEN_METHOD = "len"
-export const VEC_GET_METHOD = "get"
 /// The DIRECT element read (`v[i]`'s method, panics on OOB): for the access
 /// whose in-range is already proven -- a match arm's length test over an
 /// array pattern. `get` is for the access nobody proved (D470: it answers

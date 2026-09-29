@@ -13,7 +13,7 @@ import ../tree.{Node, NodeKind, assign_op_of}
 import ../types.{TyId, is_ty}
 import ../diag.{ice}
 import ../sem.{arm_body_at, branch_children, for_head_elem}
-import ../sem.{is_expr_kind, is_ident_leaf, is_int_lit, is_println_call, is_value_tail_kind, leaf_kind}
+import ../sem.{is_expr_kind, is_println_call, is_value_tail_kind, leaf_kind}
 import ../sem.{leaf_text, literal_prim_of, raw_vrow, variant_in_sum}
 import ../sem.{iflet_pattern_at, iflet_body_at, iflet_else_at, iflet_init_at}
 import ../sem.{whilelet_pattern_at, whilelet_init_at, whilelet_body_at}
@@ -34,10 +34,11 @@ import ../sem.{contains_call, loop_ctl_is_break}
 /// recursive set one method at a time would leave a tree that does not build at every step.
 ///
 /// WHAT THIS FILE MAY NOT DO. It is `lower`, so the architecture table allows it `tree`, `sem`,
-/// `types` and `diag` and nothing else. Two questions that used to reach past that -- a leaf's
-/// token kind and the name of `println` -- are now asked of the channel (`sem.is_int_lit`,
-/// `sem.is_ident_leaf`, `sem.is_println_call`), which is where questions about what a node MEANS
-/// belong anyway.
+/// `types` and `diag` and nothing else. A question that used to reach past that -- the name of
+/// `println` -- is now asked of the channel (`sem.is_println_call`), which is where questions
+/// about what a node MEANS belong anyway. Its one-time companions (`sem.is_int_lit`,
+/// `sem.is_ident_leaf`) left with the D486 arc (2026-09-29): the `@pattern()` door reads the
+/// tree directly, and an export nobody asks is code nobody runs (P35).
 
 /// tail=true: the LAST expression statement of an int fn body is its return
 /// value (Nova tail-expression semantics; arithmetic.nv relies on it).

@@ -40,25 +40,12 @@ export fn is_arg_node(c Node) -> bool =>
 /// and a kind put into it moves silently into every general arm (B13).
 export fn is_value_tail_kind(k NodeKind) -> bool => is_expr_kind(k) || k == NodeKind.TupleExpr
 
-/// Is this leaf an INTEGER LITERAL? A question about what the node MEANS, so the
-/// channel answers it and not the consumer.
-///
-/// Written 2026-09-10 for the lowering's move: `lower` has no edge to `lex` in the
-/// architecture table, and `pattern_of` compared the leaf's kind against
-/// `TokenKind.IntLit` directly. Asking for a NEW edge would mean changing the
-/// architecture for the sake of one comparison -- the owner's words; asking the
-/// channel through a predicate is both allowed and right, since it already answers
-/// the neighbouring questions about a leaf (`leaf_kind`, `literal_prim_of`).
-export fn is_int_lit(n Node) -> bool => leaf_kind(n) == TokenKind.IntLit
-
-/// Is this leaf an IDENTIFIER? The pair to `is_int_lit`, written by the same move
-/// and for the same reason: an arm's pattern is either a literal or a variant name,
-/// and both questions belong to the channel.
-export fn is_ident_leaf(n Node) -> bool => leaf_kind(n) == TokenKind.Ident
-
-/// Is this leaf the REST marker `..`? The same move and the same reason as
-/// `is_int_lit` above: an array pattern's lowering asks which side of the
-/// marker an element stands on, and `lower` has no edge to `lex`.
+/// Is this leaf the REST marker `..`? A question about what the node MEANS, so
+/// the channel answers it and not the consumer: an array pattern's lowering
+/// asks which side of the marker an element stands on, and `lower` has no
+/// edge to `lex`. (Its companions `is_int_lit` / `is_ident_leaf`, written by
+/// the same move, left with the D486 arc 2026-09-29 -- an export nobody asks
+/// is code nobody runs, P35.)
 export fn is_dotdot(n Node) -> bool => leaf_kind(n) == TokenKind.DotDot
 
 /// Node kinds that stand as expressions (argument/operand positions).
