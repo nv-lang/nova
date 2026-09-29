@@ -274,6 +274,28 @@ ro alice = User { id: 1, name: "alice" }       // record-литерал
 ro cfg = { "host": "localhost", "port": 8080 } // dict-литерал
 ```
 
+## Re-binding a name — `ro x = …` once more
+
+Declaring the same name again in the same block with the full form
+`ro`/`mut`/`consume x = …` is allowed: each declaration is a new variable with its
+own type and mode; the old one is unreachable further down. The right-hand side
+still sees the old one (`ro x = x + 1` reads the previous `x`). A bare `x = v`
+remains an assignment to a `mut` variable, not a new name.
+
+```nova
+ro input = read_line()
+ro input = parse_request(input)?     // str → Request, the old input is gone below
+mut work = work                      // "unfreeze" ro → mut
+
+consume conn = PlainConn.connect(addr)?
+consume conn = conn.upgrade()        // ✓ upgrade is a consume method: the old conn is already consumed
+```
+
+One restriction: a consume variable cannot be shadowed while its obligation is
+live — the value would be lost silently (`E_REBIND_LIVE_CONSUME`). Consume the old
+value before re-binding (like `upgrade` above — by the right-hand side itself) or
+give the new one a different name. Details — [D347](decisions/03-syntax.md#d347).
+
 ## Return: `->` is mandatory, `()` is optional
 
 ```nova

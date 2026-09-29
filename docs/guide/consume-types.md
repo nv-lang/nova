@@ -70,6 +70,22 @@ ro v = b.release()         // ✓
 After the move, `a` is consumed; using it triggers a
 `use-after-consume` diagnostic.
 
+### Rule 3a — re-binding the same name is fine once the old value is consumed
+
+```nova
+consume conn = PlainConn { fd: 7 }
+consume conn = conn.upgrade()      // ✓ upgrade is a consume method: old conn consumed first
+ro fd = conn.close()
+
+consume c = PlainConn { fd: 7 }
+consume c = PlainConn { fd: 8 }    // ✗ E_REBIND_LIVE_CONSUME: the first c is still live
+```
+
+A new `consume`/`ro`/`mut` binding may reuse a name (D347), and its type may
+differ. The only thing forbidden is hiding a live obligation — consume the old
+value first (the right-hand side may do it, as `upgrade` does) or pick another
+name.
+
 ### Rule 4 — view-borrow via function parameters only
 
 ```nova

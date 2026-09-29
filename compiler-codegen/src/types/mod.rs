@@ -44418,14 +44418,18 @@ impl<'a> ConsumeCtx<'a> {
             let ty_disp = if ty.is_empty() { "?".to_string() } else { ty };
             errors.push(crate::diag::Diagnostic::new(
                 format!(
-                    "[E_REBIND_LIVE_CONSUME] переменная `{sh}` (тип `{ty}`) имеет \
-                     непотреблённое consume-обязательство — повторное связывание того \
-                     же имени скрыло бы его (D347 R2). Потребите переменную \
-                     (consume-метод / `return` / передача в consume-param) до \
-                     re-binding, либо дайте новой переменной другое имя.",
+                    "[E_REBIND_LIVE_CONSUME] `{sh}` (type `{ty}`) still carries an \
+                     unconsumed consume obligation; re-binding the same name would \
+                     hide it (D347 R2). Consume it before re-binding (a consume \
+                     method, `return`, or passing it to a consume parameter), or give \
+                     the new binding a different name.",
                     sh = sh, ty = ty_disp
                 ),
                 span,
+            ).with_note(
+                "shadowing is allowed when the right-hand side consumes the old \
+                 value: `consume conn = conn.upgrade()`, where `upgrade` is a consume \
+                 method, binds the new `conn` after the old one is consumed",
             ));
             // Diagnostic MOVES here — suppress the duplicate exit-time D133.
             self.consume_obligations.remove(&sh);
