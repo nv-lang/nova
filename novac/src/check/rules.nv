@@ -100,7 +100,8 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
                 }
                 Branch { .. } => {
                     // A generics node after the name: judged by the loop
-                    // below.
+                    // below in this same `@report_if_missing_type(kids, msg)`,
+                    // whose `Branch { .. }` arm gives the same answer.
                     return
                 }
             }

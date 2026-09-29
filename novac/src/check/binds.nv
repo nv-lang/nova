@@ -51,7 +51,9 @@ fn Checker mut @type_bind(st Node) -> () {
     ro vname = leaf_text(kids[1])
     // A NAME that is a visible payload-less variant is not a binder in the
     // language: the binding is a refutable one-variant pattern, and the
-    // oracle refuses it (D411; hunt var_shadow, #875). Judged before the
+    // oracle refuses it (D411; hunt var_shadow, #875) -- the subset's own
+    // refusal stands just below (`@reject_first_leaf_of(kids, REFUTABLE_BIND_MSG)`).
+    // Judged before the
     // initializer -- the shadowing itself is the mistake.
     // Asked of the SUMS (wave B6, #964): any sum's payload-less variant of this
     // name makes the binding a refutable pattern; the first row stands for all.
@@ -117,7 +119,8 @@ fn Checker mut @type_bind(st Node) -> () {
     // wrong; that is the shape a silent miscompilation takes.
     //
     // Until the spec says what the form means (escalated with the probe), the
-    // subset refuses it. Rust reads the OUTER binding here (`let x = x + 1`),
+    // subset refuses it -- the refusal is the `@report_first_leaf_of` with
+    // SELF_INIT_MSG a few lines below. Rust reads the OUTER binding here (`let x = x + 1`),
     // which is the reading I expect to win, but expecting is not knowing.
     @self_probe.clear()
     @self_probe.put(vname, 0)

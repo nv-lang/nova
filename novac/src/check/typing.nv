@@ -522,8 +522,9 @@ fn unknown_args(kids []Node, from int, scope Scope) -> []ArgSpec {
 fn Checker @concrete(t TyId) -> TyId => subst_type(@ctx, t, @substs)
 
 /// One statement. A kind the subset does not know is NOT typed and NOT iced:
-/// the emitter refuses it at its own door, and a second death here would only
-/// move the message.
+/// the emitter refuses it at its own door (`ice("emit: statement kind outside
+/// the subset")` in novac/src/lower/lowering.nv), and a second death here would
+/// only move the message.
 fn Checker mut @type_stmt(st Node) -> () {
     ro k = st.kind_of()
     if k == NodeKind.Call {

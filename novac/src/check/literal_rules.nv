@@ -509,7 +509,8 @@ fn Checker mut @judge_interp_lit(e Node) -> () {
 /// The char-literal judge (the char wave). The lexer finds the closing quote
 /// and keeps the run VERBATIM, so WIDTH is judged here: `'ab'` is one CharLit
 /// token, and the oracle refuses it at its own lexer -- this walk is novac's
-/// stage for the same verdict. Legal: one codepoint (any UTF-8 length), or
+/// stage for the same verdict, and its door is the width test inside
+/// `@judge_char_lit(e)` below. Legal: one codepoint (any UTF-8 length), or
 /// one simple escape; the unicode escape is legal Nova the subset defers.
 fn Checker mut @judge_char_lit(e Node) -> () {
     ro kids = branch_children(e)

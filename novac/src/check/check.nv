@@ -36,7 +36,8 @@
 // produces exactly one diagnostic: no cascades by construction, which is what
 // check-novac-no-cascade.sh will hold once fixtures exist.
 //
-// Poisoning discipline (§7): an Err branch is already-reported by definition;
+// Poisoning discipline (§7): an Err branch is already-reported by definition
+// (the report door is `@report_err_branch(children)` in the Err arm below);
 // nothing else looks inside it. There is no permissive unknown here to
 // swallow anything (the №652 lesson) — the subset checker either understands
 // a node kind or reports it, an exhaustive match with no silent default.
@@ -396,7 +397,9 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     return
                 }
                 ExportDecl => {
-                    // JUDGED BY ITS CONTENTS, not refused (2026-08-23). Inside
+                    // JUDGED BY ITS CONTENTS, not refused (2026-08-23) -- the
+                    // generic walk of `@walk(n)` simply descends into the
+                    // declaration under the wrapper. Inside
                     // ONE compilation unit `export` says nothing novac has to
                     // act on -- it is what makes a name reachable from ANOTHER
                     // module, and that question arrives with `import`. Refusing
@@ -780,7 +783,8 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // F35: `ro a = 0..3` used to reach an ice ("a range is not
                     // an expression outside a for-head"). It is legal Nova --
                     // the oracle accepts it -- so the subset refuses it BY NAME
-                    // instead of dying on it. Inside a for-head the walk never
+                    // instead of dying on it, through `@report_if_range_outside_for`
+                    // below. Inside a for-head the walk never
                     // gets here: that arm walks its children itself.
                     //
                     // A CLOSED SLICE (`s[lo..hi]`) is judged where its

@@ -157,8 +157,9 @@ fn Checker mut @report_if_path_head_unknown(kids []Node) -> bool {
     true
 }
 
-/// A record CONSTRUCTOR's name (`Point { x: 1 }`), judged by the same rule and
-/// answered with the same sentence as every other type position.
+/// A record CONSTRUCTOR's name (`Point { x: 1 }`), judged by the same rule
+/// (`@type_name_is_declared(name, tps)` above) and answered with the same
+/// sentence as every other type position.
 ///
 /// WHY IT IS HERE AND NOT A COPY: this file's whole claim is "one door, every
 /// position, one sentence" (registry #970), and the constructor was the position

@@ -545,7 +545,8 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // follows IS the no-arms case the ice below was written for.
         if arms > 0 { return no_ty() }
         // [LEGACY-#700-user-error-as-ice until:E2b3] `match x { }` is a USER error;
-        // neither parse nor check refuses it today.
+        // neither parse nor check refuses it today -- the parser door
+        // `@match_expr()` (novac/src/parse/expr.nv) grows the named refusal with E2b3.
         ice("check: match without arms past check")
     }
     if k == NodeKind.Call {

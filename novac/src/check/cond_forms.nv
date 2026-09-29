@@ -52,7 +52,8 @@ fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
         return
     }
     // The subset's boundary among variants (its carriers use `Some` alone);
-    // the qualifier, if written, is judged by the shared door below.
+    // the qualifier, if written, is judged by the shared door `@bind_pattern`
+    // below.
     if pattern_head_text(pat) != OPTION_SOME_VARIANT {
         @report_first_leaf_of(kids, IFLET_VARIANT_MSG)
         return
@@ -96,7 +97,8 @@ fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
         // false }`, check/rules.nv): control reaches past the `if let` only
         // from the branch that STAYS, so that branch's type is the value's.
         // The leaving branch is still typed -- as statements, its `return`
-        // judged by its own door. Both branches leaving produces no value at
+        // judged by its own door (`@judge_return` in check/return_rules.nv).
+        // Both branches leaving produces no value at
         // all; that shape records nothing, exactly as a branch refused below.
         ro some_term = block_terminates(kids[body_at])
         ro none_term = block_terminates(kids[else_at])
