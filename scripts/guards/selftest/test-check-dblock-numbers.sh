@@ -194,5 +194,57 @@ else
     bad "8б: правка заголовка прикрыла вторую копию номера: $(cat "$TMP/.out") $(cat "$TMP/.err")"
 fi
 
+# --- пара 9: СТОПКА ВЕТОК — надстройка над НЕВЛИТОЙ веткой наследует её блок --
+# Поймано 2026-09-30 (реестр №1369): `spec-d486-followup` заведена от невлитой
+# `nova-kim`, где родился D486, и страж назвал D486 заявкой ОБЕИХ веток — `main`
+# покраснел у всех окон, хотя номер заявлен один раз.
+setup_base
+branch_adds lower 500 02-types.md
+git_q checkout -q -b upper lower
+printf '\nmore text under D500\n' >> "$R/spec/decisions/02-types.md"
+git_q add spec/decisions/02-types.md
+git_q commit -qm "надстройка правит текст, номеров не заводит"
+git_q checkout -q main
+run
+if [ $? -eq 0 ]; then
+    ok "надстройка унаследовала D500 от невлитой основы — одна заявка, зелёный"
+else
+    bad "9: унаследованный блок прочитан как вторая заявка: $(cat "$TMP/.err")"
+fi
+
+# --- пара 9б: надстройка ЗАВЕЛА второй D500 с другим предметом — красно -------
+# Контроль к 9: общая история прощает только ТОТ ЖЕ заголовок, а не номер.
+setup_base
+branch_adds lower 500 02-types.md
+git_q checkout -q -b upper lower
+printf '## D500. Another subject under the same number\n\ntext\n' > "$R/spec/decisions/03-syntax.md"
+git_q add spec/decisions/03-syntax.md
+git_q commit -qm "второй D500"
+git_q checkout -q main
+run
+if [ $? -ne 0 ] && grep -q "D500" "$TMP/.err"; then
+    ok "надстройка завела второй D500 — красный"
+else
+    bad "9б: второй блок под унаследованным номером не пойман: $(cat "$TMP/.out") $(cat "$TMP/.err")"
+fi
+
+# --- пара 9в: ОДИНАКОВЫЙ заголовок в двух НЕСВЯЗАННЫХ ветках — красно ---------
+# Контроль к 9: одинаковость текста без общей невлитой истории — два окна,
+# независимо взявшие номер, и прощать это нельзя.
+setup_base
+for b in solo-a solo-b; do
+    git_q checkout -q -b "$b" main
+    printf '\n## D600. Same title twice\n\ntext\n' >> "$R/spec/decisions/02-types.md"
+    git_q add spec/decisions/02-types.md
+    git_q commit -qm "D600 in $b"
+    git_q checkout -q main
+done
+run
+if [ $? -ne 0 ] && grep -q "D600" "$TMP/.err"; then
+    ok "одинаковый заголовок в несвязанных ветках — красный"
+else
+    bad "9в: совпадение текста простило независимые заявки: $(cat "$TMP/.out") $(cat "$TMP/.err")"
+fi
+
 echo "селфтест check-dblock-numbers: $OKN/$OKN ok"
 [ "$FAILED" -eq 0 ] || { echo "селфтест check-dblock-numbers: ЕСТЬ ПРОВАЛЫ" >&2; exit 1; }
