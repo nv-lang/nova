@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: none -- the if-let/while-let condition judgment is Nova's own form
+// (D486 s4), with no reference implementation to point at.
 // Role: the CONDITION forms' typing -- `if <pattern> = expr` and
 // `while <pattern> = expr`, cut from typing.nv when that file crossed the
 // thousand-line cap (wave P4). One module, one namespace: these are `Checker`

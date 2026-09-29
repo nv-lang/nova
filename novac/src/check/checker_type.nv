@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc FnCtxt -- taken (one explicit receiver per check run, holding
+// the state its walk rides on, beside Go's *Checker and Roslyn's Binder).
 // Role: the Checker RECEIVER type -- the state of one check run, cut from
 // check.nv 2026-09-29 (decision 12, the file-size cap): check.nv keeps the
 // shape walk, this peer keeps the state the walk rides on. One module, one
 // namespace -- the type is visible to every peer exactly as before.
 // Used by: the whole check module; nothing outside imports it.
+// Guarded by: check-novac-file-size.py (this file exists because check.nv
+// crossed the cap).
 // novac/src/check/checker_type.nv
 
 module novac.check
