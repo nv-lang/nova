@@ -20,6 +20,7 @@ mod static_blanket; // registry 221.1 #895 (second carrier), see its doc
 mod self_value; // #1395: `Self` by position, see its doc
 mod opt_eq_split; // #1405: `nova_opt_eq` body late, see its doc
 mod decl_module_symbol; // #1097: free-fn symbol by declaring module (D134), see its doc
+mod generic_overload_mono; // #1343: generic free-fn monomorph by declaration, see its doc
 mod method_key; mod default_dispatch; // #1413 method key; #1414 value default method
 mod type_repr_early; // #761: newtype/alias representation before any consumer, see its doc
 
@@ -2061,6 +2062,7 @@ pub struct CEmitter {
     /// Plan 48: generic FnDecls for monomorphization worklist drain.
     /// Key = Nova fn name (e.g. "within"). Populated during pre-pass.
     mono_fn_decls: HashMap<String, crate::ast::FnDecl>,
+    generic_overloads: generic_overload_mono::GenericOverloads, // #1343: per declaration
     /// Plan 184 Р10: free-fn name → per-positional-param "is by-pointer in-out"
     /// flag (a value/primitive `mut x T` param). Drives call-site address-of
     /// injection in `synthesize_inout_refargs`. Populated for every free fn
@@ -2901,7 +2903,7 @@ impl CEmitter {
             file_priv_fn_c_names: HashMap::new(),
             file_priv_free_fn_decls: HashMap::new(),
             current_emit_file_id: None,
-            mono_fn_decls: HashMap::new(),
+            mono_fn_decls: HashMap::new(), generic_overloads: Default::default(),
             free_fn_inout_params: HashMap::new(),
             value_struct_field_tys: HashMap::new(),
             free_fn_byref_params: HashMap::new(),
@@ -8962,7 +8964,7 @@ impl CEmitter {
                     self.generic_fns.insert(f.name.clone());
                     if f.receiver.is_none() {
                         // Plan 48: store for monomorphization worklist drain
-                        self.mono_fn_decls.insert(f.name.clone(), f.clone());
+                        self.note_generic_free_fn(f);
                     }
                 }
             }
@@ -9389,7 +9391,7 @@ impl CEmitter {
                         }
                         continue;
                     }
-                    if let Some(fn_decl) = self.mono_fn_decls.get(&fn_name).cloned() {
+                    if let Some(fn_decl) = self.mono_fn_decl_for_instance(&fn_name, &mono_name) {
                         self.emit_monomorphized_fn(&fn_decl, type_subst, &mono_name)?;
                     }
                 }
@@ -17551,11 +17553,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
         // Plan 48: Generic free functions → store for monomorphization; no erased forward decl.
-        // №129: insert-time ошибка на одноимённость ОТКАЧЕНА приёмкой — красила
-        // легальные module-private одноимённые fn (check_ok ×2 в мега-CU).
-        // Дефект last-wins жив: [M-mono-fn-decls-module-qualified-key].
+        // №129 last-wins закрыт №1343: каждое объявление хранится отдельно, вызов
+        // берёт то, что выбрал чекер (`emit_c/generic_overload_mono.rs`); запись
+        // по имени в `mono_fn_decls` осталась для прочих читателей.
         if !f.generics.is_empty() && f.receiver.is_none() {
-            self.mono_fn_decls.insert(f.name.clone(), f.clone());
+            self.note_generic_free_fn(f);
             // Track tuple return arity so call sites can populate tuple_element_types
             if let Some(TypeRef::Tuple(elems, _)) = &f.return_type {
                 self.generic_fn_tuple_arity.insert(f.name.clone(), elems.len());
@@ -21698,25 +21700,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             .get(&(caller_fid, name.to_string()))
             .map(|d| d.generics.is_empty())
             .unwrap_or(false)
-    }
-
-    /// [Facet-B D307 §1/§3] The FnDecl to actually monomorphize for a same-
-    /// named generic call: prefer the CALLER's own file-local `priv(file)`
-    /// generic (the only `priv(file)` decl a caller may legally reference)
-    /// over the bare-name `mono_fn_decls` entry, which is last-registration-
-    /// wins across ALL peer files and can silently hand back an UNRELATED
-    /// peer's same-named generic FnDecl (wrong body / wrong declaring file
-    /// for mono-name purposes). Falls back to the legacy global lookup when
-    /// the caller's file has no local candidate — the normal cross-file
-    /// exported-generic case, untouched (byte-identical).
-    fn facetb_mono_fn_decl_for_call(
-        &self, caller_fid: crate::diag::FileId, name: &str,
-    ) -> Option<crate::ast::FnDecl> {
-        self.file_priv_free_fn_decls
-            .get(&(caller_fid, name.to_string()))
-            .filter(|d| !d.generics.is_empty())
-            .cloned()
-            .or_else(|| self.mono_fn_decls.get(name).cloned())
     }
 
     /// Plan 63 Fix F+: get C-name of callee for fn_result_ok_inner_types lookup.
@@ -26628,6 +26611,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.top_level_storage(), ret_c, mono_name, params_str
         ));
         // Enqueue for body emission (A1‴: carrier is RT-typed; lift string subst at the boundary)
+        self.note_mono_fn_instance(mono_name, fn_decl);
         self.mono_worklist.push((fn_decl.name.clone(), Self::subst_vec_from_c_pairs(&type_subst), mono_name.to_string()));
     }
 
@@ -48515,7 +48499,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             };
 
         if let Some(ref fn_name) = mono_fn_name_opt {
-            if let Some(fn_decl) = self.facetb_mono_fn_decl_for_call(caller_fid, fn_name) {
+            if let Some(fn_decl) = self.mono_fn_decl_for_call(caller_fid, fn_name, Some(call_id)) {
                 // Plan 59.1 (2026-06-01): bailout «skip monomorphization for
                 // tuple-returning generics» удалён. Plan 48 V1 fallback на
                 // legacy `_NovaTupleN` (nova_int placeholders) был актуален
@@ -48530,7 +48514,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Ф.0: resolve type args
                 match self.resolve_mono_type_args_ch(&fn_decl, &turbofish_type_refs, args, call_id) {
                     Ok(type_subst) => {
-                        let base_c_name = self.free_fn_c_name(fn_name);
+                        let base_c_name = self.mono_fn_base_c_name(&fn_decl);
                         // Plan 172.12 A1″: structural RT seed (byte-identity-guarded) for
                         // the inner-subst — the call `args` carry `ExprId` → channel RT.
                         let a1pp_names: Vec<String> =
@@ -61654,7 +61638,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if self.generic_fns.contains(name.as_str())
                             && !self.facetb_file_local_concrete_overload(facetb_caller_fid, name)
                         {
-                            if let Some(fn_decl) = self.facetb_mono_fn_decl_for_call(facetb_caller_fid, name) {
+                            if let Some(fn_decl) = self.mono_fn_decl_for_call(facetb_caller_fid, name, Some(expr.id)) {
                                 self.icr_trace("B10j_generic_fn_mono_resolve");
                                 // Plan 59.1 (2026-06-01): tuple-returning bailout
                                 // (was: return "void*") удалён. Plan 59 Ф.7.5

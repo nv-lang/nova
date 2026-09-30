@@ -1,4 +1,4 @@
-// №129 Task C regression probe (companion to
+// №129 Task C / #1343 regression peer (companion to
 // `crossmod_samename_typecheck_bleed` — same class of cross-module
 // same-name bleed, here for a GENERIC FREE FUNCTION rather than a type).
 // Peer `mfd_a`: exports its OWN `helper[T]`, body returns 111.

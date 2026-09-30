@@ -1,0 +1,35 @@
+// №TBD (found by the #1343 window): a `mut x T` parameter of a GENERIC free
+// function does not reach the caller -- the monomorph takes `x` BY VALUE, so the
+// write is lost. A concrete `mut x int` is in-out (prints 3); the generic one,
+// single or in a D84 mode pair, prints 1. Silent wrong value, `check` is clean.
+// EXPECT_STDOUT concrete=3
+// EXPECT_STDOUT single=2
+// EXPECT_STDOUT pair=mut/5
+module standalone.generic_mut_param_lost
+
+fn bump[T](mut x T, v T) -> () {
+    x = v
+}
+
+fn setp[T](x T, v T) -> str => "ro"
+
+fn setp[T](mut x T, v T) -> str {
+    x = v
+    "mut"
+}
+
+fn bumpi(mut x int, v int) -> () {
+    x = v
+}
+
+fn main() Io -> () {
+    mut c = 1
+    bumpi(c, 3)
+    println("concrete=${c}")
+    mut a = 1
+    bump(a, 2)
+    println("single=${a}")
+    mut b = 1
+    ro w = setp(b, 5)
+    println("pair=${w}/${b}")
+}
