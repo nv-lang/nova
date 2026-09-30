@@ -62282,6 +62282,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     return ret_ty.clone();
                                 }
                             }
+                            // #1390: ≥2 same-arity namesakes, different returns, no resolved callee -- `user_fn_sigs` would type the call by ANOTHER fn (silently wrong when the C types convert); refuse.
+                            if exact.len() >= 2 && exact.iter().any(|(_, r)| r != &exact[0].1) {
+                                self.fatal_codegen_type_unknown(&format!("call `{}`: {} same-name free fns of arity {} differ in return type and the checker resolved none; the result type is not guessed by name (#1390)", name, exact.len(), args.len()), expr.span)
+                            }
                         }
                         // A bare `name(...)` call (func is Ident, not Member) targets
                         // a FREE function. The `fn_ret_<name>` table below is keyed by
@@ -62295,14 +62299,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if let Some((_, ret_ty)) = self.user_fn_sigs.get(name) {
                             if !ret_ty.is_empty() && ret_ty != "void*" && !self.debt_is_generic_stub_c(ret_ty) {
                                 self.icr_trace("B10f_user_fn_sigs");
-                                // [196-capstone2] Детач+panic ПРОБОВАЛСЯ (2026-07-17) — panic
-                                // СРАБОТАЛ на examples/flagship/aggregator: name="splitmix64_step"
-                                // ret_ty="uint64_t" (тот самый 206/splitmix64 прецедент из
-                                // CLAUDE.md — conformance не ловит app-регрессии). p196-rtbuf-
-                                // producers' bare-free-fn producer НЕ покрывает этот call-сайт
-                                // (вероятно gs-гейт/single-candidate-дисциплина отклоняет форму) —
-                                // легаси остаётся ЕДИНСТВЕННЫМ верным источником здесь. ЖИВАЯ,
-                                // не трогать. Реестр НЕ снижен для этой ветки.
+                                // [196-capstone2] Детач+panic ПРОБОВАЛСЯ (2026-07-17) и СРАБОТАЛ на
+                                // examples/flagship/aggregator (splitmix64_step, uint64_t): bare-free-fn
+                                // producer этот call-сайт не покрывает — легаси здесь ЕДИНСТВЕННЫЙ
+                                // верный источник. ЖИВАЯ, не трогать. Реестр НЕ снижен.
                                 return ret_ty.clone();
                             }
                         }
