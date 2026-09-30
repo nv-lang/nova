@@ -45,7 +45,7 @@ fn f_for_call(root P1413Node) -> int {
     mut n = 0
     for c in p1413_decls(root) {
         ro k = c.kind_of()
-        if k == P1413Nk.NL { n = n + 1 }
+        if k == P1413Nk.NL { n += 1 }
     }
     n
 }
@@ -55,7 +55,7 @@ fn f_for_local(root P1413Node) -> int {
     ro ds = p1413_decls(root)
     for c in ds {
         ro k = c.kind_of()
-        if k == P1413Nk.NL { n = n + 1 }
+        if k == P1413Nk.NL { n += 1 }
     }
     n
 }
@@ -64,7 +64,7 @@ fn f_for_param(ds []P1413Node) -> int {
     mut n = 0
     for c in ds {
         ro k = c.kind_of()
-        if k == P1413Nk.NL { n = n + 1 }
+        if k == P1413Nk.NL { n += 1 }
     }
     n
 }
@@ -78,7 +78,7 @@ fn f_index(root P1413Node) -> bool {
 fn f_expr(root P1413Node) -> int {
     mut n = 0
     for c in p1413_decls(root) {
-        if c.kind_of() == P1413Nk.NL { n = n + 1 }
+        if c.kind_of() == P1413Nk.NL { n += 1 }
     }
     n
 }
@@ -86,7 +86,7 @@ fn f_expr(root P1413Node) -> int {
 fn f_arg(root P1413Node) -> int {
     mut n = 0
     for c in p1413_decls(root) {
-        if p1413_is_nl(c.kind_of()) { n = n + 1 }
+        if p1413_is_nl(c.kind_of()) { n += 1 }
     }
     n
 }
@@ -96,7 +96,7 @@ fn f_match(root P1413Node) -> int {
     match root {
         Branch(_, kids) => for c in kids {
             ro k = c.kind_of()
-            if k == P1413Nk.NL { n = n + 1 }
+            if k == P1413Nk.NL { n += 1 }
         }
         Leaf(_) => {}
     }
@@ -115,7 +115,7 @@ fn f_other(xs []P1413Intr) -> int {
     mut n = 0
     for c in xs {
         ro k = c.kind_of(1)
-        if k == P1413Tk.TB { n = n + 1 }
+        if k == P1413Tk.TB { n += 1 }
     }
     n
 }

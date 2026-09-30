@@ -1,6 +1,6 @@
 // EXPECT_STDOUT true|false|false|true|true|true|true|true
 //
-// [M-126-sum-equal-rich] / [M-126-sum-hash-rich] / [M-126-sum-clone-rich]: the
+// M-126-sum-equal-rich / M-126-sum-hash-rich / M-126-sum-clone-rich (closed): the
 // synthesized `@equal`, `@hash` and `@clone` of a SUM with payload work by variant
 // and payload, not as the V1 placeholders (identity, literal 0, self) the backlog
 // still recorded as OPEN; docs/history/simplifications-closed.md says they closed
