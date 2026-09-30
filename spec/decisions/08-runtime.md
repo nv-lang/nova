@@ -3615,6 +3615,14 @@ identity-eq fallback'а (tuple никогда не heap-allocated).
 
 **Sum-type** — V1 placeholder: identity-comparison для `Equal`,
 `@compare` returns `0`, `@clone` returns `@`.
+
+> **АМЕНДМЕНТ 2026-09-30 (реестр №1352) — «identity-comparison для `Equal`» УСТАРЕЛО.**
+> Сумма без `Equal` до сравнения больше не доходит: `==`/`!=` на ней — ошибка
+> `E_EQ_WITHOUT_EQUAL` ([D363](03-syntax.md#d363-operator-dispatch-via-protocols--замена-magic-methods-plan-918b)). Сумма с
+> `#impl(Equal)` сравнивается синтезированным `@equal` по варианту и payload — так
+> записано сверкой 2026-08-05 в `docs/plans/backlog-followups.md` («работает на текущем
+> бинаре»), где маркер `[M-126-sum-equal-rich]` ещё числится OPEN до подтверждения
+> фикстурой; снятие маркера — отдельно от этой пометки.
 Rich variant-tag + payload recursion — followup
 [M-126-sum-{equal,hash,clone,compare,fmt}-rich].
 
