@@ -1,0 +1,53 @@
+// EXPECT_STDOUT 7|20|9|sn3|21|100|20
+//
+// Registry 221.1 #1399: a module-level `const` or `ro` read inside a closure
+// was taken for a CAPTURE (the emitter's `var_types` holds module values beside
+// locals), and the closure's env init wrote its bare source name --
+// `_env->_nv_fv_0_k = k;` -- a name C never declares (the value lives under
+// its own symbol). CC-FAIL "use of undeclared identifier" for every closure
+// form. A module value is not a capture: the body reads its symbol. A LOCAL of
+// the same name still is (`by_local_same_name`, 100), decided by the frames of
+// #1397.
+// Scalar, string, record and lazy values; closure as an expression, a block, a
+// nested closure, a light `|v|` closure and a `spawn` body.
+module standalone.p1399_module_value_in_closure
+
+type P1399Pt { x int, y int }
+
+fn p1399_three() -> int => 3
+
+const k = 7
+const s = "s"
+ro r = p1399_three() + 10
+ro p = P1399Pt { x: p1399_three(), y: 2 }
+ro nm = "n${p1399_three()}"
+
+fn p1399_call(f fn() -> int) -> int => f()
+fn p1399_calls(f fn() -> str) -> str => f()
+fn p1399_call1(f fn(int) -> int) -> int => f(1)
+fn p1399_py(q P1399Pt) -> int => q.y
+
+fn by_expr() -> int => p1399_call(fn() -> int => k)
+fn by_block() -> int => p1399_call(fn() -> int {
+    ro a = k + r
+    a
+})
+fn by_nested() -> int => p1399_call(fn() -> int => p1399_call(fn() -> int => k + p1399_py(p)))
+fn by_str() -> str => p1399_calls(fn() -> str => s + nm)
+fn by_light() -> int => p1399_call1(|v| v + k + r)
+fn by_local_same_name() -> int {
+    ro k = 100
+    p1399_call(fn() -> int => k)
+}
+fn by_spawn() -> int {
+    supervised {
+        spawn {
+            assert(k + r == 20)
+        }
+    }
+    k + r
+}
+
+fn main() {
+    print("${by_expr()}|${by_block()}|${by_nested()}|${by_str()}|${by_light()}|${by_local_same_name()}|${by_spawn()}")
+}
