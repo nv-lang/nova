@@ -20,8 +20,23 @@ module novac.check
 import ../tree.{Node, NodeKind}
 import ../types.{TyId, no_ty, is_ty, Interner, same_ty}
 import ../sem.{FnRow, raw_row, branch_children, ty_source_name, prim_row_of, LitArg}
-import ../sem.{Ctx, expr_leaf_name, is_value_record}
+import ../sem.{Ctx, expr_leaf_name, is_value_record, ret_is_unit}
 import ../builtins.{TypeKind, RECV_BINDING}
+
+/// A written `-> T` whose type the collector's reference door could not read
+/// (`ret_id` is no type) -- a form inside a tuple the door does not know yet
+/// (`fn(...)`, `*T`) -- refused by name at the return type (registry 1383). A
+/// declaration with no `->` and `-> ()` are not this case.
+fn Checker mut @report_if_return_unread(fkids []Node, rid TyId) -> () {
+    if is_ty(rid) { return }
+    for c in fkids {
+        if c.kind_of() != NodeKind.RetType { continue }
+        ro rk = branch_children(c)
+        if ret_is_unit(rk) { return }
+        @report_first_leaf_of(rk, TYPE_FORM_MSG)
+        return
+    }
+}
 
 /// Whether a declared return (a callable row's `ret_id`) promises NO value: `()`,
 /// or nothing declared (the entry point). A bare `return` is legal there.

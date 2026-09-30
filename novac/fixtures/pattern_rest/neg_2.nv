@@ -1,0 +1,21 @@
+module pattern_rest.neg_2
+
+// `..` in a variant payload stands ALONE, as in `Cons(..)` (D59, D486 s2,
+// registry 1382). `Pr(.., z)` bound `z` to the FIRST payload until 2026-09-30.
+
+// NOVAC_EXPECT `..` in a variant payload stands alone
+
+type Two enum
+    | Pr(int, int)
+    | No
+
+fn last(t Two) -> int {
+    match t {
+        Pr(.., z) => z
+        No => 0
+    }
+}
+
+fn main() {
+    println(last(Pr(20, 30)))
+}

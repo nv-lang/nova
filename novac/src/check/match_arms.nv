@@ -29,7 +29,7 @@ import ../sem.{ty_source_name}
 // class: a slot count and the meaning of what sits there are two doors).
 import ../sem.{PatShape, pattern_shape, pattern_head_text, pattern_qualifier, pattern_subpatterns}
 import ../sem.{pattern_fields, patfield_name, patfield_sub, pattern_rest, pattern_mode_word}
-import ../sem.{pattern_name_node, patfield_name_node}
+import ../sem.{pattern_name_node, patfield_name_node, rest_is_trailing}
 import ../sem.{shape_of, field_range_of, no_frow}
 import ../builtins.{SLICE_HEAD}
 // The payload of an APPLIED sum, with the application's arguments put in.
@@ -324,7 +324,12 @@ fn Checker mut @bind_arm_pattern(ak []Node, scr_t TyId) -> bool {
         @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern")
         return false
     }
-    @bind_pattern(ak[0], scr_t, ak, ParamMode.ModeRo)
+    if @bind_pattern(ak[0], scr_t, ak, ParamMode.ModeRo) { return true }
+    // A REFUSED arm pattern still binds its names, with no type: a statement arm
+    // walks its body regardless, and `z` there said "unknown name" a second time
+    // (registry 1382's `(a, .., z)`) -- the destructuring binding's own rule.
+    @bind_names_untyped(ak[0])
+    false
 }
 
 /// ONE pattern against ONE type. `ak` travels for report POSITIONS only:
@@ -439,6 +444,15 @@ fn Checker mut @bind_variant_pattern(pat Node, ty TyId, ak []Node, dmode ParamMo
     }
     ro vr = @ctx.variant_rows[raw_vrow(vrow)]
     ro subs = pattern_subpatterns(pat)
+    // `..` IN A PAYLOAD STANDS ALONE (D486 §2, registry 1382): the constructor
+    // pattern lists its positions, and `Cons(..)` is D59's one partial form.
+    // `Pr(.., z)` bound z to the FIRST payload.
+    if pattern_rest(pat) && subs.len() > 0 {
+        @reject_first_leaf_of(ak, PAYLOAD_REST_MSG)
+        return false
+    } else {
+        // No rest, or the rest alone: the arity rule below decides.
+    }
     // `Cons(..)` -- D59's positional partial -- takes any payload arity.
     if subs.len() != vr.payload_cnt && !pattern_rest(pat) {
         @report_first_leaf_of(ak, PAYLOAD_ARITY_MSG)
@@ -473,6 +487,14 @@ fn Checker mut @bind_tuple_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode
         return false
     }
     ro subs = pattern_subpatterns(pat)
+    // `..` IN A TUPLE STANDS LAST (D486 §2, registry 1382): positions bind from
+    // the front, so a binder after the rest named the wrong element.
+    if pattern_rest(pat) && !rest_is_trailing(pat) {
+        @reject_first_leaf_of(ak, REST_LAST_MSG)
+        return false
+    } else {
+        // No rest, or a trailing one: the arity rule below decides.
+    }
     if subs.len() != @ctx.tys.arg_count(ty) && !pattern_rest(pat) {
         @report_first_leaf_of(ak, TUPLE_ARITY_MSG)
         return false

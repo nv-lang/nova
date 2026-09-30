@@ -28,6 +28,35 @@ import ../builtins.{SLICE_HEAD, SELF_TYPE, UNIT_TYPE_NAME}
 import ../names.{DeclId, raw_decl}
 import ../types.{TyId, no_ty, is_ty, Interner}
 
+/// The type ARGUMENTS of a flat `[ a, b ]` run starting at `open` (the `[`): each
+/// argument read at its own start position by `ty_of_type_ref`, a comma at depth
+/// one separating them, nested brackets and parens counted so an inner comma is
+/// not a separator. An unclosed run answers what it read (the caller judges).
+fn flat_type_args(pk []Node, open int, recv_t TyId, tps []str, param_rows []TyId,
+                  types []TypeDef, defs DefTable, mut tys Interner) -> []TyId {
+    mut args = []TyId.new()
+    mut depth = 0
+    for i in open..pk.len() {
+        ro c = pk[i]
+        if is_leaf_kind(c, TokenKind.LBracket) || is_leaf_kind(c, TokenKind.LParen) {
+            depth += 1
+            if depth == 1 {
+                args.push(ty_of_type_ref(pk, i + 1, recv_t, tps, param_rows, types, defs, tys))
+            } else {
+                // A nested run opens inside an argument: that argument's read covers it.
+            }
+        } else if is_leaf_kind(c, TokenKind.RBracket) || is_leaf_kind(c, TokenKind.RParen) {
+            depth -= 1
+            if depth == 0 { return args }
+        } else if depth == 1 && is_leaf_kind(c, TokenKind.Comma) {
+            args.push(ty_of_type_ref(pk, i + 1, recv_t, tps, param_rows, types, defs, tys))
+        } else {
+            // Inside an argument: its own read consumed it.
+        }
+    }
+    args
+}
+
 /// A TYPE REFERENCE starting at `pk[at]`, resolved to a term -- including an
 /// APPLICATION (step B2): `Vec[int]` is `app(vec_decl, [int])`, and `[]int` is
 /// the same term through the D239 sugar (`[]T` IS `Vec[T]`).
@@ -71,6 +100,15 @@ export fn ty_of_type_ref(pk []Node, at int, recv_t TyId, tps []str, param_rows [
             ro c = pk[i]
             match c {
                 Leaf(t) => match t.kind {
+                    // A BRACKET RUN INSIDE A COMPONENT (`Vec[int]`, `Map[str, int]`)
+                    // is depth too (registry 1383): a comma inside it separates
+                    // type arguments, not tuple components.
+                    LBracket => {
+                        depth += 1
+                    }
+                    RBracket => {
+                        depth -= 1
+                    }
                     LParen => {
                         depth += 1
                         if depth == 1 {
@@ -116,6 +154,21 @@ export fn ty_of_type_ref(pk []Node, at int, recv_t TyId, tps []str, param_rows [
     // `@` is the receiver's type spelled as a sign (`-> @`); it reaches the
     // leaf door with `Self`, and every other non-identifier is no type.
     if leaf_kind(head) != TokenKind.Ident && leaf_kind(head) != TokenKind.At { return no_ty() }
+    // `Name [ Args ]` INSIDE A PAREN RUN arrives FLAT -- `[`, the arguments, `]`
+    // as leaves (type_ref.nv keeps a tuple's run flat) -- where outside it is a
+    // Generics branch. Until 2026-09-30 only the branch was read, so
+    // `-> (int, Option[int])` came back as no type and every call of the fn
+    // iced (registry 1383). Each argument is read by THIS door, recursively.
+    if at + 1 < pk.len() && is_leaf_kind(pk[at + 1], TokenKind.LBracket) {
+        ro fargs = flat_type_args(pk, at + 1, recv_t, tps, param_rows, types, defs, tys)
+        for a in fargs {
+            if !is_ty(a) { return no_ty() }
+        }
+        if fargs.len() == 0 { return no_ty() }
+        return app_term_of(leaf_text(head), fargs, types, defs, tys)
+    } else {
+        // Not a flat argument run: the Generics branch or a plain name below.
+    }
     // `Name[Args]`: the Generics branch, when written, stands right after the
     // head -- the parser keeps the pair adjacent.
     if at + 1 < pk.len() && pk[at + 1].kind_of() == NodeKind.Generics {

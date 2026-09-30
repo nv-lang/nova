@@ -191,6 +191,25 @@ export fn pattern_rest(pat Node) -> bool {
     false
 }
 
+/// Is this level's `..` the LAST element -- no subpattern written after it?
+/// D486 §2: a tuple's rest is trailing only. A subpattern after it could only
+/// mean counting from the end, which the tuple pattern does not have -- and a
+/// binder that read it from the front bound the wrong element (registry 1382:
+/// `ro (a, .., z) = (10, 20, 30)` gave z = 20).
+export fn rest_is_trailing(pat Node) -> bool {
+    mut seen = false
+    for c in branch_children(pat) {
+        if is_leaf_kind(c, TokenKind.DotDot) {
+            seen = true
+        } else if seen && c.kind_of() == NodeKind.Pattern {
+            return false
+        } else {
+            // Before the rest, or punctuation after it.
+        }
+    }
+    true
+}
+
 /// The MODE WORD written before a binder (`ro` / `mut` / `consume`), or None.
 /// The parser records the word; what it MEANS in this position is the
 /// checker's judgment (D486 §4-§5), not the tree's. `ro` is read since wave

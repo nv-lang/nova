@@ -532,6 +532,32 @@ test "a field read on a POISONED name says nothing more -- one cause, one diagno
     assert(diagnose(src) == 1, diagnose_first_msg(src))
 }
 
+test "`..` stands last in a `(a, b, ..)` pattern and alone in a payload (D486, registry 1382)" {
+    // Fixtures: novac/fixtures/pattern_rest. Both forms used to bind the name
+    // after `..` counting from the FRONT -- the wrong element, no diagnostic.
+    ro mid = "module m\n\nfn f() -> int {\n    ro t = (10, 20, 30)\n    ro (a, .., z) = t\n    z\n}\n"
+    assert(diagnose_first_msg(mid).contains("stands only last"), diagnose_first_msg(mid))
+    assert(diagnose(mid) == 1, diagnose_first_msg(mid))
+    ro pay = "module m\n\ntype T enum\n    | P(int, int)\n    | N\n\nfn f(t T) -> int {\n    match t {\n        P(.., z) => z\n        N => 0\n    }\n}\n"
+    assert(diagnose_first_msg(pay).contains("stands alone"), diagnose_first_msg(pay))
+    // CONTROLS: the trailing tuple rest and `P(..)` alone stay legal.
+    ro tail = "module m\n\nfn f() -> int {\n    ro t = (10, 20, 30)\n    ro (a, ..) = t\n    a\n}\n"
+    assert(diagnose(tail) == 0, diagnose_first_msg(tail))
+    ro alone = "module m\n\ntype T enum\n    | P(int, int)\n    | N\n\nfn f(t T) -> int {\n    match t {\n        P(..) => 1\n        N => 0\n    }\n}\n"
+    assert(diagnose(alone) == 0, diagnose_first_msg(alone))
+}
+
+test "a `-> (A, B)` return with an applied component is read, and an unreadable one is named at the declaration (registry 1383)" {
+    // Fixtures: novac/fixtures/tuple_ret -- pos_1 carries the APPLIED component
+    // (`Option[int]` needs std, which this harness does not hand); before the fix
+    // the call of such a fn iced in type_of. CONTROL here: a plain tuple return.
+    ro app = "module m\n\nfn f(n int) -> (int, bool) {\n    f(n)\n}\n\nfn g() -> int {\n    ro p = f(1)\n    p.0\n}\n"
+    assert(diagnose(app) == 0, diagnose_first_msg(app))
+    ro ptr = "module m\n\nfn f() -> (int, *u8) {\n    f()\n}\n\nfn g() -> int {\n    ro p = f()\n    1\n}\n"
+    assert(diagnose(ptr) == 1, diagnose_first_msg(ptr))
+    assert(diagnose_first_msg(ptr).contains("type form is not compiled yet"), diagnose_first_msg(ptr))
+}
+
 test "a closed `str` slice is compiled; other receivers, open bounds and non-int bounds keep their refusals (274.7 U-1)" {
     // D470 section 5: `s[lo..hi]` is `s.index(Range { start: lo, end: hi })`, a
     // byte range of type `str` (D249). Wave U-1 compiles the closed form over

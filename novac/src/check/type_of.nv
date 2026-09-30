@@ -576,7 +576,10 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
             ro nid = e.id_of()
             ro row = if chan.has_callee(nid) { raw_row(chan.callee_of(nid).callable_row()) } else { raw_row(decl_row) }
             ro ret = ctx.fns.rows[row].ret_id
-            assert(ret >= 0, "check: call of a fn without a declared return type (#652 class)")
+            // A RETURN THE COLLECTOR COULD NOT READ was refused by name at the
+            // declaration (`@report_if_return_unread`, registry 1383): the call is
+            // poisoned, not a broken invariant.
+            if !is_ty(ret) { return no_ty() }
             // A generic callee returns `-> T`: the concrete type is the one
             // this CALL's substitution puts in that slot, through the one door
             // that applies a substitution. An ordinary call carries an empty

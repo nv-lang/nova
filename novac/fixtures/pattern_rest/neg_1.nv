@@ -1,0 +1,13 @@
+module pattern_rest.neg_1
+
+// `..` in a tuple pattern stands only LAST (D486 s2, registry 1382): a position
+// after it would count from the end, which the tuple pattern does not have.
+// novac bound `z` to the SECOND element here (20, not 30) until 2026-09-30.
+
+// NOVAC_EXPECT pattern stands only last (D486)
+
+fn main() {
+    ro t = (10, 20, 30)
+    ro (a, .., z) = t
+    println(z)
+}

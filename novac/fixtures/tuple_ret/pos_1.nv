@@ -1,0 +1,23 @@
+module tuple_ret.pos_1
+
+// A tuple return with an APPLIED component (`Option[int]`): inside a paren run
+// the arguments arrive flat, and until 2026-09-30 the reference door read only
+// the Generics branch -- no return type, and every call iced (registry 1383).
+// Behaviour byte for byte with the oracle.
+
+fn pair(n int) -> (int, Option[int]) {
+    if n > 0 {
+        return (n, Some(n * 2))
+    }
+    (0, Some(0))
+}
+
+fn first(n int) -> int {
+    ro p = pair(n)
+    p.0
+}
+
+fn main() {
+    println(first(3))
+    println(first(0))
+}

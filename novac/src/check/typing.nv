@@ -217,6 +217,12 @@ fn Checker mut @type_fn(f Node) -> () {
         Some(r) => r
     }
     @ret_expect = @return_expectation(row)
+    // A WRITTEN RETURN THE REFERENCE DOOR COULD NOT READ is named HERE, at the
+    // declaration (registry 1383). The walk's return-form judge lets every
+    // paren run through and promises "an unreadable spelling is named at the
+    // point of use" -- and the point of use, a call, met a row with no return
+    // type and iced. One refusal where the spelling is, and the call is silent.
+    @report_if_return_unread(kids, @ctx.fns.rows[raw_row(row)].ret_id)
     @ret_unit = @returns_unit(@ctx.fns.rows[raw_row(row)].ret_id)
     // The ROW decides, not the spelling: an overload of `main` binds its
     // parameters like any other callable. Until 2026-08-22 this read
@@ -802,6 +808,11 @@ fn Checker mut @type_call_stmt(call Node) -> () {
             // 2026-08-20). The question is about THIS expression.
             if @out.len() > before { return }
             ro at = type_of(c, @ctx, @scope, @chan)
+            if !is_ty(at) {
+                // SILENT-OK: typed without a new refusal and still no type -- a name an
+                // earlier refusal bound poisoned (one cause, one diagnostic).
+                return
+            }
             // The printer set is int/str/bool/f64. Every other primitive is
             // NAMEABLE (the universe holds all fifteen) but not yet
             // printable, and that boundary belongs here -- the emitter's ice
