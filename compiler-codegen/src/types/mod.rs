@@ -50142,6 +50142,42 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
             // Consume-волна А + Plan 216 tails: resolve ОДИН раз, переиспользуется
             // всеми armами (rvalue-скрутини — Call resolved напрямую; place — по имени).
             let scrut = ctx.scrutinee_unwrapped(scrutinee);
+            // Registry #1331 (D157, `spec/decisions/05-memory.md` lines
+            // 992-1016): `match consume <expr>` marks its SCRUTINEE Consumed
+            // -- the explicit-consume half of D157 (contrast the default
+            // view-match, which leaves the scrutinee's own state untouched:
+            // arms only ever declare/consume THEIR OWN pattern bindings).
+            //
+            // ON ENTRY, BEFORE THE ARMS (registry #1386). The mark used to be
+            // set after the arms were walked and joined, so an exit from INSIDE
+            // an arm -- `Err(_) => panic(..)`, `return` -- still saw the
+            // scrutinee Live, and the unconditional arm exit-check below
+            // reported a false D133-not-consumed on it. Ownership moves into
+            // the arms when the match is entered (D157: "binding'и в arm'ах
+            // carry ownership"), so every arm starts with it Consumed; `saved`
+            // is taken after the mark, and the join restores that state.
+            //
+            // Two scrutinee shapes are recognized (the only two the parser's
+            // `consume_match_scrutinees` side-table is ever populated for --
+            // see `parse_match`): a local binding (`match consume o`), and a
+            // receiver field (`match consume @file`, D157's own example --
+            // `mark_field_consumed` is itself a no-op unless `field_name` is
+            // a tracked consume-field, so this is safe to call unconditionally).
+            // A bare `match consume @` (the receiver itself, D157's sum-typed
+            // case) falls through the `_` arm: there is no existing notion of
+            // "the whole receiver is Consumed" to update (the method's own
+            // `consume @` already transferred that receiver in as a whole).
+            if ctx.module.consume_match_scrutinees.contains(&scrutinee.span) {
+                match &scrutinee.kind {
+                    ExprKind::Ident(name) => ctx.mark_consumed(name, scrutinee.span),
+                    ExprKind::Member { obj, name: field_name }
+                        if matches!(obj.kind, ExprKind::SelfAccess) =>
+                    {
+                        ctx.mark_field_consumed(field_name, scrutinee.span);
+                    }
+                    _ => {}
+                }
+            }
             let saved = ctx.states.clone();
             let mut joined: Option<HashMap<String, VarState>> = None;
             for arm in arms {
@@ -50231,39 +50267,6 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                 });
             }
             ctx.states = joined.unwrap_or(saved);
-            // Registry #1331 (D157, `spec/decisions/05-memory.md` lines
-            // 992-1016): `match consume <expr>` marks its SCRUTINEE Consumed
-            // once every arm has been walked and joined -- the explicit-
-            // consume half of D157 (contrast the default view-match above,
-            // which leaves the scrutinee's own state untouched: arms only
-            // ever declare/consume THEIR OWN pattern bindings, never the
-            // scrutinee itself). Mirrors `consume_walk_consume_for`'s
-            // post-loop `iter` mark_consumed (D156) -- same idea, `match`
-            // instead of `for`. Must run AFTER the `ctx.states = joined...`
-            // line above, else the join (which restores whatever state the
-            // scrutinee had going INTO the match) would immediately
-            // overwrite the mark. Two scrutinee shapes are recognized (the
-            // only two the parser's `consume_match_scrutinees` side-table is
-            // ever populated for a genuine `match consume` -- see
-            // `parse_match`): a local binding (`match consume o`), and a
-            // receiver field (`match consume @file`, D157's own example --
-            // `mark_field_consumed` is itself a no-op unless `field_name` is
-            // a tracked consume-field, so this is safe to call unconditionally).
-            // A bare `match consume @` (the receiver itself, D157's sum-typed
-            // case) falls through the `_` arm: there is no existing notion of
-            // "the whole receiver is Consumed" to update (the method's own
-            // `consume @` already transferred that receiver in as a whole).
-            if ctx.module.consume_match_scrutinees.contains(&scrutinee.span) {
-                match &scrutinee.kind {
-                    ExprKind::Ident(name) => ctx.mark_consumed(name, scrutinee.span),
-                    ExprKind::Member { obj, name: field_name }
-                        if matches!(obj.kind, ExprKind::SelfAccess) =>
-                    {
-                        ctx.mark_field_consumed(field_name, scrutinee.span);
-                    }
-                    _ => {}
-                }
-            }
         }
 
         // ─── select ───
