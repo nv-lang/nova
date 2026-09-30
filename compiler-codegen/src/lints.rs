@@ -6893,8 +6893,114 @@ fn conv_bare_to_str_call(e: &Expr) -> Option<Span> {
     Some(obj.span)
 }
 
+// Registry 221.1 #1393: THE RULE FIRES ONLY WHEN THE RECEIVER'S TYPE IS KNOWN TO
+// INTERPOLATE ON ITS OWN. It used to fire on the method NAME alone and, under
+// `--deny`, refused `${n.to_str()}` for an `n` whose type nobody here knew --
+// e.g. a closure parameter typed by the overload the call resolves to, which is
+// exactly what `arity_overload_*` fixtures test. This pass has no checker types
+// (pure AST), so the type is read off the SOURCE, conservatively: a literal; a
+// name whose ONLY binding in the fn is an annotated parameter / `ro`/`mut` of a
+// primitive interpolatable type; a field of such a record, by its declaration.
+// Anything else -- an unannotated binding, a pattern or closure binder, a
+// second binding of the name, a call -- is "type unknown" and not a finding.
+// A binder this collector misses errs toward the OLD behaviour (a finding), not
+// toward silence.
+
+/// Primitive types whose own `${x}` is the text `x.to_str()` would give.
+fn conv_interp_prim(t: &TypeRef) -> bool {
+    matches!(t, TypeRef::Named { path, generics, .. } if generics.is_empty() && path.len() == 1
+        && matches!(path[0].as_str(), "int" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16"
+            | "u32" | "u64" | "usize" | "isize" | "byte" | "f32" | "f64" | "bool" | "str" | "char"))
+}
+
+/// Name -> its annotated type when that annotation is the name's ONLY binding
+/// in the walked body; `None` once the name is bound unannotated or twice.
+type ConvBindEnv = HashMap<String, Option<TypeRef>>;
+
+fn conv_bind(env: &mut ConvBindEnv, name: &str, ty: Option<&TypeRef>) {
+    // A second binding keeps the type only when both are the SAME primitive
+    // annotation (`fn(n int)` in three sibling closures); anything else is unknown.
+    let prim = |t: &TypeRef| match t {
+        TypeRef::Named { path, generics, .. } if generics.is_empty() && path.len() == 1 => Some(path[0].clone()),
+        _ => None,
+    };
+    match env.get_mut(name) {
+        Some(slot) => {
+            let same = matches!((slot.as_ref().and_then(|a| prim(a)), ty.and_then(|b| prim(b))), (Some(a), Some(b)) if a == b);
+            if !same { *slot = None; }
+        }
+        None => { env.insert(name.to_string(), ty.cloned()); }
+    }
+}
+
+fn conv_bind_pattern(env: &mut ConvBindEnv, p: &Pattern) {
+    match p {
+        Pattern::Ident { name, .. } => conv_bind(env, name, None),
+        Pattern::Binding { name, inner, .. } => { conv_bind(env, name, None); conv_bind_pattern(env, inner); }
+        Pattern::Tuple(ps, _) => ps.iter().for_each(|s| conv_bind_pattern(env, s)),
+        Pattern::Or { alternatives, .. } => alternatives.iter().for_each(|s| conv_bind_pattern(env, s)),
+        Pattern::Record { fields, .. } => for f in fields {
+            match &f.pattern { Some(s) => conv_bind_pattern(env, s), None => conv_bind(env, &f.name, None) }
+        },
+        Pattern::Variant { kind: VariantPatternKind::Tuple { patterns, .. }, .. } =>
+            patterns.iter().for_each(|s| conv_bind_pattern(env, s)),
+        _ => {}
+    }
+}
+
+fn conv_bind_env(params: &[crate::ast::Param], walk: &mut dyn FnMut(&mut dyn FnMut(&Stmt, bool), &mut dyn FnMut(&Expr, bool))) -> ConvBindEnv {
+    let env = std::cell::RefCell::new(ConvBindEnv::new());
+    for p in params { conv_bind(&mut env.borrow_mut(), &p.name, Some(&p.ty)); }
+    walk(
+        &mut |s, _| if let Stmt::Let(l) = s {
+            match (&l.pattern, &l.ty) {
+                (Pattern::Ident { name, .. }, Some(t)) => conv_bind(&mut env.borrow_mut(), name, Some(t)),
+                (p, _) => conv_bind_pattern(&mut env.borrow_mut(), p),
+            }
+        },
+        &mut |e, _| {
+            let env = &mut env.borrow_mut();
+            match &e.kind {
+                ExprKind::Match { arms, .. } => arms.iter().for_each(|a| conv_bind_pattern(env, &a.pattern)),
+                ExprKind::IfLet { pattern, .. } | ExprKind::WhileLet { pattern, .. }
+                | ExprKind::For { pattern, .. } | ExprKind::ParallelFor { pattern, .. } => conv_bind_pattern(env, pattern),
+                ExprKind::ClosureLight { params, .. } => params.iter().for_each(|p| conv_bind(env, &p.name, None)),
+                ExprKind::Lambda { params, .. } => params.iter().for_each(|p| conv_bind(env, &p.name, p.ty.as_ref())),
+                ExprKind::ClosureFull(f) => f.params.iter().for_each(|p| conv_bind(env, &p.name, Some(&p.ty))),
+                _ => {}
+            }
+        },
+    );
+    env.into_inner()
+}
+
+/// The receiver's type as far as the SOURCE states it; `None` = unknown.
+fn conv_syntactic_ty(e: &Expr, env: &ConvBindEnv, m: &Module) -> Option<TypeRef> {
+    let prim = |n: &str| Some(TypeRef::Named { path: vec![n.to_string()], generics: Vec::new(), span: e.span });
+    match &e.kind {
+        ExprKind::IntLit(_) => prim("int"),
+        ExprKind::FloatLit(_) => prim("f64"),
+        ExprKind::BoolLit(_) => prim("bool"),
+        ExprKind::StrLit(_) => prim("str"),
+        ExprKind::CharLit(_) => prim("char"),
+        ExprKind::Ident(n) => env.get(n).cloned().flatten(),
+        ExprKind::Member { obj, name } => {
+            let Some(TypeRef::Named { path, generics, .. }) = conv_syntactic_ty(obj, env, m) else { return None };
+            if !generics.is_empty() || path.len() != 1 { return None; }
+            m.items.iter().find_map(|it| match it {
+                Item::Type(td) if td.name == path[0] => match &td.kind {
+                    TypeDeclKind::Record(fields) => fields.iter().find(|f| &f.name == name).map(|f| f.ty.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+        }
+        _ => None,
+    }
+}
+
 fn conv_redundant_to_str_interp(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
-    fn check(e: &Expr, out: &mut Vec<LintWarning>) {
+    fn check(e: &Expr, env: &ConvBindEnv, m: &Module, out: &mut Vec<LintWarning>) {
         let ExprKind::InterpolatedStr { parts } = &e.kind else { return };
         for p in parts {
             let crate::ast::InterpStrPart::Expr { expr, spec } = p else { continue };
@@ -6904,6 +7010,10 @@ fn conv_redundant_to_str_interp(m: &Module, _o: &ConvLintOptions, out: &mut Vec<
                 continue;
             }
             let Some(recv_span) = conv_bare_to_str_call(expr) else { continue };
+            // #1393: the receiver's type must be KNOWN to interpolate on its own.
+            let ExprKind::Call { func, .. } = &expr.kind else { continue };
+            let ExprKind::Member { obj, .. } = &func.kind else { continue };
+            if !conv_syntactic_ty(obj, env, m).as_ref().map_or(false, conv_interp_prim) { continue; }
             out.push(LintWarning {
                 rule: "W_REDUNDANT_TO_STR_INTERP",
                 diag: Diagnostic::new(
@@ -6932,10 +7042,12 @@ fn conv_redundant_to_str_interp(m: &Module, _o: &ConvLintOptions, out: &mut Vec<
         }
     }
     for f in conv_all_fns(m) {
-        conv_walk_fn(f, &mut |_, _| {}, &mut |e, _| check(e, out));
+        let env = conv_bind_env(&f.params, &mut |s, x| conv_walk_fn(f, s, x));
+        conv_walk_fn(f, &mut |_, _| {}, &mut |e, _| check(e, &env, m, out));
     }
     for tb in conv_all_test_bodies(m) {
-        conv_walk_block(tb, false, &mut |_, _| {}, &mut |e, _| check(e, out));
+        let env = conv_bind_env(&[], &mut |s, x| conv_walk_block(tb, false, s, x));
+        conv_walk_block(tb, false, &mut |_, _| {}, &mut |e, _| check(e, &env, m, out));
     }
 }
 
@@ -11496,6 +11608,46 @@ mod tests {
             to_str_interp_hits(&ws).len(), 1,
             "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>()
         );
+    }
+
+    // #1393: the receiver's type must be KNOWN from the source to interpolate.
+    fn to_str_interp_count(src: &str) -> usize {
+        let m = parse(src);
+        to_str_interp_hits(&run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None)).len()
+    }
+
+    #[test]
+    fn to_str_interp_1393_pos_annotated_let() {
+        assert_eq!(to_str_interp_count("module foo\n\
+             fn run() -> str {\n    ro n int = 5\n    \"v=${n.to_str()}\"\n}\n"), 1);
+    }
+
+    #[test]
+    fn to_str_interp_1393_neg_unannotated_closure_param() {
+        // The carrier: `n`'s type comes from the overload the call resolves to.
+        assert_eq!(to_str_interp_count("module foo\n\
+             fn run(g fn(fn(int) -> str) -> str) -> str => g(|n| { \"len=${n.to_str()}\" })\n"), 0);
+    }
+
+    #[test]
+    fn to_str_interp_1393_neg_unannotated_let() {
+        assert_eq!(to_str_interp_count("module foo\n\
+             fn mk() -> int => 5\n\
+             fn run() -> str {\n    ro n = mk()\n    \"v=${n.to_str()}\"\n}\n"), 0);
+    }
+
+    #[test]
+    fn to_str_interp_1393_neg_non_primitive_type() {
+        // №520's case: a type without Display -- dropping the call would not compile.
+        assert_eq!(to_str_interp_count("module foo\n\
+             fn run(sb StringBuilder) -> str => \"v=${sb.to_str()}\"\n"), 0);
+    }
+
+    #[test]
+    fn to_str_interp_1393_neg_shadowed_by_pattern() {
+        // An annotated param re-bound by a match pattern: the name's type is no longer one thing.
+        assert_eq!(to_str_interp_count("module foo\n\
+             fn run(n int, o Option[str]) -> str {\n    match o {\n        Some(n) => \"${n.to_str()}\"\n        None => \"\"\n    }\n}\n"), 0);
     }
 
     #[test]
