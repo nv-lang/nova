@@ -1,0 +1,55 @@
+// EXPECT_STDOUT P1402 ret-value=outer ret-unit=outer ret-in-expr=outer
+//
+// Registry 221.1 #1402: an early `return` out of a `with` body must remove the
+// handler that `with` installed (and pop its interrupt frame), exactly as the
+// normal fall-through does. Before the fix the restore epilogue sat after the
+// body, so `return` skipped it: the inner handler stayed installed after the
+// function returned and answered the caller's later operation instead of the
+// caller's own (outer) handler -- `inner` printed where `outer` belongs.
+//
+// Cells: `return v`, bare `return` (unit), `return` from a `with` used as an
+// expression value.
+module standalone.p1402_with_early_exit_return
+
+type P1402Say effect { fn say() -> str }
+
+fn p1402_ask() P1402Say -> str => P1402Say.say()
+
+fn p1402_ret_value() -> int {
+    with P1402Say = effect P1402Say { say() -> str { "inner" } } {
+        return 7
+    }
+}
+
+fn p1402_ret_unit(n int) -> () {
+    with P1402Say = effect P1402Say { say() -> str { "inner" } } {
+        if n > 0 {
+            return
+        }
+        println("unreached")
+    }
+}
+
+fn p1402_ret_in_expr(n int) -> int {
+    ro v = with P1402Say = effect P1402Say { say() -> str { "inner" } } {
+        if n > 0 {
+            return 3
+        }
+        5
+    }
+    v + 1
+}
+
+fn main() Io -> () {
+    with P1402Say = effect P1402Say { say() -> str { "outer" } } {
+        ro a = p1402_ret_value()
+        ro s1 = p1402_ask()
+        p1402_ret_unit(1)
+        ro s2 = p1402_ask()
+        ro b = p1402_ret_in_expr(1)
+        ro s3 = p1402_ask()
+        if a + b == 10 {
+            println("P1402 ret-value=${s1} ret-unit=${s2} ret-in-expr=${s3}")
+        }
+    }
+}

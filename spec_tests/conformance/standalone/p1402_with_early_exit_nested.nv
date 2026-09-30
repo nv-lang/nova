@@ -1,0 +1,63 @@
+// EXPECT_STDOUT P1402 nested-a=outer-a nested-b=outer-b multi-a=outer-a multi-b=outer-b mid=mid-a
+//
+// Registry 221.1 #1402: a `return` out of NESTED `with` blocks must restore
+// every handler both blocks installed, innermost first, and a `with` that
+// installs several handlers at once must restore all of them. Before the fix
+// neither block's restore epilogue ran on `return`, so the inner handlers
+// answered the caller's later operations.
+//
+// Cells: nested `with` of two effects, one `with` binding two effects, and a
+// same-effect nest where only the inner block is left early -- the middle
+// handler must answer again, not the innermost one and not the caller's.
+module standalone.p1402_with_early_exit_nested
+
+type P1402NA effect { fn a() -> str }
+type P1402NB effect { fn b() -> str }
+
+fn p1402_ask_a() P1402NA -> str => P1402NA.a()
+fn p1402_ask_b() P1402NB -> str => P1402NB.b()
+
+fn p1402_nested() -> int {
+    with P1402NA = effect P1402NA { a() -> str { "inner-a" } } {
+        with P1402NB = effect P1402NB { b() -> str { "inner-b" } } {
+            return 1
+        }
+    }
+}
+
+fn p1402_multi() -> int {
+    with P1402NA = effect P1402NA { a() -> str { "inner-a" } }, P1402NB = effect P1402NB { b() -> str { "inner-b" } } {
+        return 2
+    }
+}
+
+fn p1402_inner_only(n int) P1402NA -> int {
+    with P1402NA = effect P1402NA { a() -> str { "innermost-a" } } {
+        if n > 0 {
+            return 3
+        }
+    }
+    4
+}
+
+fn p1402_mid() -> str {
+    with P1402NA = effect P1402NA { a() -> str { "mid-a" } } {
+        ro _n = p1402_inner_only(1)
+        p1402_ask_a()
+    }
+}
+
+fn main() Io -> () {
+    with P1402NA = effect P1402NA { a() -> str { "outer-a" } }, P1402NB = effect P1402NB { b() -> str { "outer-b" } } {
+        ro x = p1402_nested()
+        ro s1 = p1402_ask_a()
+        ro s2 = p1402_ask_b()
+        ro y = p1402_multi()
+        ro s3 = p1402_ask_a()
+        ro s4 = p1402_ask_b()
+        ro s5 = p1402_mid()
+        if x + y == 3 {
+            println("P1402 nested-a=${s1} nested-b=${s2} multi-a=${s3} multi-b=${s4} mid=${s5}")
+        }
+    }
+}

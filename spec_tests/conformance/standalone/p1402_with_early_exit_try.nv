@@ -1,0 +1,49 @@
+// EXPECT_STDOUT P1402 try-result=outer try-option=outer defer-ran=1
+//
+// Registry 221.1 #1402: `?` inside a `with` body is an early return (D85:
+// `Err(e) => return Err(e)`, `None => return None`) and must remove the
+// handler that `with` installed. Before the fix `?` emitted a bare C `return`
+// that skipped the restore epilogue (and every pending `defer` with it): the
+// inner handler stayed installed after the function returned -- `inner`
+// printed where `outer` belongs, and the defer never ran.
+//
+// Cells: `?` on a Result, `?` on an Option, `?` under a pending `defer`.
+module standalone.p1402_with_early_exit_try
+
+type P1402TSay effect { fn say() -> str }
+
+fn p1402_ask() P1402TSay -> str => P1402TSay.say()
+
+fn p1402_try_result(r Result[int, str]) -> Result[int, str] {
+    with P1402TSay = effect P1402TSay { say() -> str { "inner" } } {
+        ro v = r?
+        Ok(v + 1)
+    }
+}
+
+fn p1402_try_option(o Option[int]) -> Option[int] {
+    with P1402TSay = effect P1402TSay { say() -> str { "inner" } } {
+        ro v = o?
+        Some(v + 1)
+    }
+}
+
+fn p1402_try_defer(r Result[int, str], mut counter int) -> Result[int, str] {
+    defer { counter = counter + 1 }
+    ro v = r?
+    Ok(v)
+}
+
+fn main() Io -> () {
+    with P1402TSay = effect P1402TSay { say() -> str { "outer" } } {
+        ro a = p1402_try_result(Err("no"))
+        ro s1 = p1402_ask()
+        ro b = p1402_try_option(None)
+        ro s2 = p1402_ask()
+        mut c = 0
+        ro d = p1402_try_defer(Err("no"), c)
+        if a.is_err() && b.is_none() && d.is_err() {
+            println("P1402 try-result=${s1} try-option=${s2} defer-ran=${c}")
+        }
+    }
+}
