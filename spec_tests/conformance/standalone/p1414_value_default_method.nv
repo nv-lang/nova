@@ -2,15 +2,17 @@
 // did not dispatch at all. The call site names the receiver's type from its C
 // type to synthesize the default body, and stripped only the heap prefix
 // `Nova_` -- a value record / payload-less sum (`NovaValue_X`) or a named tuple
-// (`NovaTuple_X`) matched nothing, and `a.near(b)` was emitted as a FIELD
+// (`NovaTuple_X`) matched nothing, and `a.is_close(b)` was emitted as a FIELD
 // access: "no member named 'near' in 'struct NovaValue_X'". A heap record was
 // fine and is the control below. The bodies have `Self` in a parameter and in
 // the return, so the cells also hold the #1395 lowering (`Self` is the value).
 module standalone.p1414_value_default_method
 
+// The method was `near` in the branch; renamed: `near` is a macro in the Windows
+// headers, and the protocol's vtable field took the name verbatim (registry #1440).
 type P1414Near protocol {
     @dist(other Self) -> int
-    @near(other Self) -> bool => @dist(other) < 2
+    @is_close(other Self) -> bool => @dist(other) < 2
     @pick(other Self) -> Self => other
 }
 
@@ -34,27 +36,27 @@ fn p1414_mk(x int) -> P1414Pv => { x }
 
 test "a default method dispatches on a value record, also on an rvalue receiver (#1414)" {
     ro a = P1414Pv { x: 1 }
-    assert(a.near(P1414Pv { x: 2 }))
-    assert(!a.near(P1414Pv { x: 9 }))
+    assert(a.is_close(P1414Pv { x: 2 }))
+    assert(!a.is_close(P1414Pv { x: 9 }))
     assert(a.pick(P1414Pv { x: 4 }).x == 4)
-    assert(p1414_mk(3).near(p1414_mk(4)))
+    assert(p1414_mk(3).is_close(p1414_mk(4)))
 }
 
 test "a default method dispatches on a payload-less sum (#1414)" {
-    assert(P1414Lv.Lo.near(P1414Lv.Lo))
-    assert(!P1414Lv.Lo.near(P1414Lv.Hi))
+    assert(P1414Lv.Lo.is_close(P1414Lv.Lo))
+    assert(!P1414Lv.Lo.is_close(P1414Lv.Hi))
     assert(P1414Lv.Mid.pick(P1414Lv.Hi) == P1414Lv.Hi)
 }
 
 test "a default method dispatches on a named tuple (#1414)" {
-    assert(P1414Tv(1, 2).near(P1414Tv(1, 7)))
-    assert(!P1414Tv(1, 2).near(P1414Tv(3, 2)))
+    assert(P1414Tv(1, 2).is_close(P1414Tv(1, 7)))
+    assert(!P1414Tv(1, 2).is_close(P1414Tv(3, 2)))
     assert(P1414Tv(1, 2).pick(P1414Tv(3, 4)) == P1414Tv(3, 4))
 }
 
 test "control: a heap record answers the same cells (#1414)" {
     ro h = P1414Hv { x: 1 }
-    assert(h.near(P1414Hv { x: 2 }))
-    assert(!h.near(P1414Hv { x: 9 }))
+    assert(h.is_close(P1414Hv { x: 2 }))
+    assert(!h.is_close(P1414Hv { x: 9 }))
     assert(h.pick(P1414Hv { x: 7 }).x == 7)
 }
