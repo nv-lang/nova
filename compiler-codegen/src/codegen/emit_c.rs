@@ -48842,6 +48842,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 .unwrap_or_default(),
             _ => Vec::new(),
         };
+        // [221.1 №1021 shape 2] a bare `None`/`Ok(v)`/`Err(e)` argument to a
+        // PLAIN (non-generic) free fn: `user_fn_sigs` (concrete param C
+        // types, registered per free fn at :17817 / pre-seeded :9107) is the
+        // one channel that names THIS callee's own param type before we
+        // reach the per-arg loop below. Without it, `self.emit_expr(a.expr())`
+        // recurses into `emit_call`'s own None/Ok/Err dispatch (:41235-
+        // :41317), which reads `self.current_fn_return_ty` — still the
+        // ENCLOSING fn/closure's return type at a call-ARGUMENT position, not
+        // this callee's param type (`show_param(None)` at an
+        // `Option[[]u8]`-param `show_param` mistyped the arg as the erased
+        // default `NovaOpt_nova_int`).
+        let callee_arg_c_tys: Vec<String> = match &func.kind {
+            ExprKind::Ident(name) => self
+                .user_fn_sigs
+                .get(name)
+                .map(|(p, _)| p.clone())
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
         let mut arg_strs = Vec::new();
         for (arg_idx, a) in args.iter().enumerate() {
             let a: &CallArg = a;
@@ -48869,6 +48888,39 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             .collect();
                         let v = self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None, a.expr().id)?;
                         arg_strs.push(v);
+                        continue;
+                    }
+                }
+            }
+            // [221.1 №1021 shape 2] bare variant-ctor gate — see doc on
+            // `callee_arg_c_tys` above. Narrow: only a LITERAL `None`/`Ok(v)`/
+            // `Err(e)` at this exact arg position, only when the callee's OWN
+            // resolved param type is Option/Result-like. Every other arg
+            // shape is byte-identical — still built by the unchanged
+            // `self.emit_expr(a.expr())` below.
+            let is_bare_variant_ctor = match &a.expr().kind {
+                ExprKind::Ident(n) => n == "None",
+                ExprKind::Call { func: cf, args: cargs, .. } => match &cf.kind {
+                    ExprKind::Ident(n) if n == "None" => cargs.is_empty(),
+                    ExprKind::Ident(n) if n == "Ok" || n == "Err" => cargs.len() == 1,
+                    _ => false,
+                },
+                _ => false,
+            };
+            if is_bare_variant_ctor {
+                if let Some(pty) = callee_arg_c_tys.get(arg_idx) {
+                    if pty.starts_with("NovaOpt_") || Self::is_result_like(pty) {
+                        // Same technique as the closure-return-type fix
+                        // (shape 1, this file): temporarily point
+                        // `current_fn_return_ty` at THIS callee's param type
+                        // so the EXISTING None/Ok/Err dispatch in `emit_call`
+                        // resolves against it, instead of whatever the
+                        // enclosing fn/closure had set.
+                        let saved_fn_return_ty = std::mem::replace(
+                            &mut self.current_fn_return_ty, Some(pty.clone()));
+                        let v = self.emit_expr(a.expr());
+                        self.current_fn_return_ty = saved_fn_return_ty;
+                        arg_strs.push(v?);
                         continue;
                     }
                 }
@@ -56443,7 +56495,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
             }
         }
+        // [221.1 №1021, shape 1] A bare variant constructor inside this
+        // closure's own body (`None`/`Ok(v)`/`Err(e)` — see the `emit_call`
+        // top-level dispatch's `current_fn_return_ty`-priority arms, e.g.
+        // `name == "None" && rt.starts_with("NovaOpt_")`) is typed from
+        // `current_fn_return_ty`. This field was left UNTOUCHED for the
+        // closure body's duration — still whatever the OUTER fn/closure had
+        // set (or `None`), never this closure's OWN resolved `ret_c_ty` above
+        // (annotated, channel-derived, or body-inferred — all three paths
+        // converge on `ret_c_ty` before this point). A bare `None` at the
+        // closure's tail/`return` then fell through the `rt.starts_with(
+        // "NovaOpt_")` check to the erased int-boxed default, mistyped
+        // regardless of the closure's declared `-> Option[..]`. Every OTHER
+        // body-emitting fn path already saves/sets/restores this same field
+        // around its own body (named fns: ~27208/~28787/~29579) — closures
+        // were the one body-emission site that skipped it.
+        let saved_fn_return_ty =
+            std::mem::replace(&mut self.current_fn_return_ty, Some(ret_c_ty.clone()));
         let body_val = self.emit_expr(body)?;
+        self.current_fn_return_ty = saved_fn_return_ty;
         if ret_c_ty == "nova_unit" {
             self.line(&format!("{};", body_val));
             self.line("return NOVA_UNIT;");
