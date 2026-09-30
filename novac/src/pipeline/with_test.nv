@@ -244,6 +244,69 @@ test "handler literal: the gate leaves a JUDGED position to the typist (registry
     assert(d[0].message.contains("is not an operation of effect `Fs`"), d[0].message)
 }
 
+// ---------------------------------------------------------------------------
+// THE LITERAL LOWERED (E.9 step 3, plan 274.11): the operations are functions
+// of their own, the value is D474's -- no captures: one allocation and a NULL
+// context; captures: ONE block, the context at the aligned tail of the table,
+// `mut` bindings by address, the rest by copy. The checker says which reads
+// are captures (the binding row below the literal's mark); the op's own
+// parameters and locals never are.
+// The shell carries the oracle's own literal allocations (real_fs builds an
+// `NovaVtable_Fs` the same way), so the C is judged by COUNT against a control
+// program with no literal, never by mere presence.
+// ---------------------------------------------------------------------------
+
+/// The C of the same harness with no handler literal -- the shell's own count.
+fn control_c() -> str {
+    ro src = "fn g() -> int {\n 0\n}\nfn main() {\n println(g())\n}"
+    ro (d, c) = compile_to_c_with(src, parse_decls(handler_fx()), interop_surface())
+    assert(d.len() == 0, messages(d))
+    c
+}
+
+test "handler literal: no captures -- one allocation, a NULL context, the op in its slot (E.9 step 3, D474 case 2)" {
+    ro src = "fn g() -> int {\n with Fs = effect Fs { read(p str) -> str {\n  ro q = p\n  q\n } } {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}"
+    ro (d, c) = compile_to_c_with(src, parse_decls(handler_fx()), interop_surface())
+    assert(d.len() == 0, messages(d))
+    ro vt = effect_vtable_c("Fs")
+    ro c0 = control_c()
+    ro alloc = "(${vt}*)nova_alloc(sizeof(${vt}));"
+    assert(c.matches(alloc).len() == c0.matches(alloc).len() + 1, c)
+    assert(c.matches("->ctx = NULL;").len() == c0.matches("->ctx = NULL;").len() + 1, c)
+    // The op's own parameter `p` and local `q` are bound ABOVE the literal's
+    // mark: no context, no alignment arithmetic.
+    assert(!c.contains("_Alignof("), c)
+    assert(c.contains("->read = "), c)
+}
+
+test "handler literal: captures -- one block, aligned tail, `mut` by address, `ro` by copy (E.9 step 3, D474 case 3)" {
+    ro src = "fn g() -> int {\n mut n = 1\n ro b = 2\n with Fs = effect Fs { read(p str) -> str {\n  n += b\n  p\n } } {\n  1\n }\n n\n}\nfn main() {\n println(g())\n}"
+    ro (d, c) = compile_to_c_with(src, parse_decls(handler_fx()), interop_surface())
+    assert(d.len() == 0, messages(d))
+    ro vt = effect_vtable_c("Fs")
+    // ONE allocation for the table and the context, the offset aligned.
+    assert(c.contains("(sizeof(${vt}) + _Alignof("), c)
+    ro c0 = control_c()
+    ro alloc = "(${vt}*)nova_alloc(sizeof(${vt}));"
+    assert(c.matches(alloc).len() == c0.matches(alloc).len(), c)
+    assert(c.matches("->ctx = NULL;").len() == c0.matches("->ctx = NULL;").len(), c)
+    assert(c.contains("->n = &n;"), c)
+    assert(c.contains("->b = b;"), c)
+}
+
+test "handler literal: a HELD literal capturing a `mut` binding is refused by the position's name (E.9 step 3, E.5)" {
+    // A held value may outlive the frame its `mut` capture points into.
+    ro src = "fn g() -> int {\n mut n = 1\n ro h = effect Fs { read(p str) -> str {\n  n += 1\n  p\n } }\n n\n}\nfn main() {\n println(g())\n}"
+    ro (d, _) = compile_to_c_with(src, parse_decls(handler_fx()), interop_surface())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("that captures no `mut` binding"), d[0].message)
+    // CONTROL: the same held literal capturing a `ro` binding is compiled.
+    ro ok_src = "fn g() -> int {\n ro n = 1\n ro h = effect Fs { read(p str) -> str {\n  println(n)\n  p\n } }\n n\n}\nfn main() {\n println(g())\n}"
+    ro (d2, c2) = compile_to_c_with(ok_src, parse_decls(handler_fx()), interop_surface())
+    assert(d2.len() == 0, messages(d2))
+    assert(c2.contains("->n = n;"), c2)
+}
+
 
 // ---------------------------------------------------------------------------
 // THE EFFECT-OPERATION CALL (E.4 item 2, plan 274.11): `Fs.read("p")` types

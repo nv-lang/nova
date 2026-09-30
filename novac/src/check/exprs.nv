@@ -80,6 +80,20 @@ fn Checker mut @const_type_of(name str) -> TyId {
     type_of(cd.init[0], @ctx, @scope, @chan)
 }
 
+/// A read of `name` from a handler literal's op body, bound OUTSIDE the
+/// literal: record the capture (E.9 step 3) -- by address for a `mut`
+/// binding, which the op may write, by copy otherwise.
+fn Checker mut @note_if_capture(e Node, name str) -> () {
+    if @lit_rows < 0 { return }
+    ro row = @scope.row_of(name)
+    if row < 0 || row >= @lit_rows { return }
+    ro by_ref = match @scope.mode_of_name(name) {
+        ModeMut => true
+        ModeRo | ModeConsume => false
+    }
+    @chan.record_capture(@lit_node, e.id_of(), name, row, @scope.type_of_name(name), by_ref)
+}
+
 /// Is `name` a module value whose initializer was refused? Its type was
 /// never recorded in the file's channel, where every initializer is typed
 /// before any function; outside the file's channel (an instance) nothing is
@@ -491,8 +505,11 @@ fn Checker mut @type_expr(e Node) -> () {
                 // unbound. The order is deliberate -- a local shadows a
                 // constant, which is what every reader expects.
                 if is_bool_literal(t.text) || @scope.is_bound(t.text) {
-                    // Bound, or `true`/`false`: nothing to refuse and nothing
-                    // to record -- the lattice reads a Name from the scope.
+                    // Bound, or `true`/`false`: nothing to refuse -- the
+                    // lattice reads a Name from the scope. A binding made
+                    // OUTSIDE the handler literal being typed is a capture,
+                    // and the emitter must know it (E.9 step 3).
+                    @note_if_capture(e, t.text)
                 } else if @settle_module_value(t.text) {
                     // A module value read while its own initializer is being
                     // typed: a CYCLE, which no order computes (274.5 S6).

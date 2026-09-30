@@ -1,0 +1,236 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Koka's evidence passing -- a handler is a record of operation
+// functions plus the environment they close over, built where the literal is
+// written; Go's closure conversion for the environment (a struct of captured
+// variables, shared ones by address). The allocation follows D474, not any
+// compiler's habit: one block for the table and the context, none for an
+// empty context.
+// Role: emission of a HANDLER LITERAL `effect E { op(...) -> T { ... } }`
+//   (E.9 step 3, plan 274.11): each literal of a reached function gets a C
+//   number; its context type (`novac_hctx_<N>`, only when it captures), the
+//   prototypes of its operation functions before the file's functions, their
+//   bodies after them (`novac_hop_<N>_<op>(void* ctx, params)`), and the value
+//   built where the literal stands -- the effect's table (the shell's
+//   `NovaVtable_E`) with its context. A captured name is read through the
+//   context (`@emit_capture_read`).
+// Used by: emit_c.nv (`emit`, around the file's functions), emit_place.nv
+//   (`build_value`), emit_expr.nv (the Name arm).
+// Guarded by: nova test novac/src/pipeline/with_test.nv (the C shape) and
+//   check-novac-differential.sh over novac/fixtures/with_lit.
+
+module novac.emit_c
+
+import ../tree.{Node, NodeKind}
+import ../diag.{ice}
+import ../sem.{branch_children, leaf_text, param_name_at, decl_fn_row, file_decls, c_type, is_unit_ty}
+import ../sem.{effect_vtable_c, CaptureRow, EffectDef}
+import ../types.{TyId}
+import ../lower.{FnBuilder}
+
+/// Every handler literal of the functions mono reached, in the order of the
+/// file -- the index is the literal's C number. A literal of an unreached
+/// function is not emitted: its op bodies' callees were never marked.
+fn Emitter mut @collect_handler_lits(file Node) -> () {
+    for c in file_decls(file) {
+        if c.kind_of() != NodeKind.FnDecl { continue }
+        match decl_fn_row(c, @ctx) {
+            None => continue
+            Some(row) => {
+                if !@reach.has(row) { continue }
+                collect_lits(c, @hlits)
+            }
+        }
+    }
+}
+
+/// The handler literals under `n`, pre-order.
+fn collect_lits(n Node, mut out []Node) -> () {
+    if n.kind_of() == NodeKind.LeafNode { return }
+    if n.kind_of() == NodeKind.HandlerLit {
+        out.push(n)
+    } else {
+        // Not a literal itself; one may stand below it.
+    }
+    for c in branch_children(n) {
+        collect_lits(c, out)
+    }
+}
+
+/// A literal's C number -- its index among the collected ones.
+fn Emitter @lit_number(lit Node) -> int {
+    for i in 0..@hlits.len() {
+        if @hlits[i].id_of() == lit.id_of() { return i }
+    }
+    ice("emit: a handler literal outside the reached functions reached the emitter")
+}
+
+/// The effect a literal handles (its second child, after `effect`).
+fn lit_effect(lit Node) -> str => leaf_text(branch_children(lit)[1])
+
+/// The operation a literal's HandlerOp defines (its first child).
+fn op_name_of(op Node) -> str => leaf_text(branch_children(op)[0])
+
+/// The operations a literal defines, in its own order.
+fn lit_ops(lit Node) -> []Node {
+    mut out = []Node.new()
+    for c in branch_children(lit) {
+        if c.kind_of() == NodeKind.HandlerOp {
+            out.push(c)
+        } else {
+            // The `effect` keyword and the effect's name.
+        }
+    }
+    out
+}
+
+/// The schema row of the operation `op` implements -- the scan the checker
+/// made over the schema's own range; a literal that reached the emitter
+/// passed `@type_handler_op`, so every op has its row.
+fn Emitter @op_sig_at(schema EffectDef, op Node) -> int {
+    ro opname = op_name_of(op)
+    mut sig_at = 0 - 1
+    for i in schema.op_off..schema.op_off + schema.op_cnt {
+        if @ctx.effects.ops[i].name == opname {
+            sig_at = i
+        } else {
+            // Not this one; the next operation may carry the name.
+        }
+    }
+    assert(sig_at >= 0, "emit: a handler-literal op outside its effect's schema reached the emitter")
+    sig_at
+}
+
+/// The schema of the effect a literal handles.
+fn Emitter @lit_schema(lit Node) -> EffectDef =>
+    @ctx.effects.def_of(lit_effect(lit)) ?? ice("emit: a handler literal of an effect with no schema")
+
+/// The C signature of one operation function, without the trailing `;`/`{`.
+fn Emitter @op_signature(n int, op Node, sig_at int) -> str {
+    ro sig = @ctx.effects.ops[sig_at]
+    consume s = StringBuilder.new()
+    s.append("static ${c_type(@ctx, sig.ret_id)} novac_hop_${n}_${sig.name}(void* _novac_ctx")
+    mut j = 0
+    for p in branch_children(op) {
+        if p.kind_of() != NodeKind.Param { continue }
+        ro pk = branch_children(p)
+        ro pname = leaf_text(pk[param_name_at(pk) ?? ice("emit: a handler op parameter without a name")])
+        s.append(", ${c_type(@ctx, @ctx.effects.op_params[sig.param_off + j])} ${pname}")
+        j += 1
+    }
+    s.append(")")
+    s.into_str()
+}
+
+/// For each literal: its context type (only when it captures) and the
+/// prototypes of its operation functions -- before the file's functions,
+/// which build the literals and so name the functions.
+fn Emitter mut @emit_handler_protos() -> () {
+    for n in 0..@hlits.len() {
+        ro lit = @hlits[n]
+        ro caps = @out.captures_of(lit.id_of())
+        if caps.len() > 0 {
+            @body.append("typedef struct {\n")
+            for c in caps {
+                ro star = if c.by_ref { "*" } else { "" }
+                @body.append("    ${c_type(@ctx, c.type_id)}${star} ${c.name};\n")
+            }
+            @body.append("} novac_hctx_${n};\n")
+        } else {
+            // No captures: no context type -- D474 case 2, `ctx` is NULL.
+        }
+        ro schema = @lit_schema(lit)
+        for op in lit_ops(lit) {
+            @body.append("${@op_signature(n, op, @op_sig_at(schema, op))};\n")
+        }
+    }
+}
+
+/// The operation functions, after the file's functions (an op body may call
+/// them). Each body is lowered through the one body door, with the context
+/// cast back to its type when the literal captures.
+fn Emitter mut @emit_handler_ops() -> () {
+    for n in 0..@hlits.len() {
+        ro lit = @hlits[n]
+        ro has_caps = @out.captures_of(lit.id_of()).len() > 0
+        ro schema = @lit_schema(lit)
+        for op in lit_ops(lit) {
+            @emit_op_fn(n, op, @op_sig_at(schema, op), has_caps)
+        }
+    }
+}
+
+/// One operation function: the signature, the context, the lowered body.
+fn Emitter mut @emit_op_fn(n int, op Node, sig_at int, has_caps bool) -> () {
+    ro ret = @ctx.effects.ops[sig_at].ret_id
+    @body.append("${@op_signature(n, op, sig_at)} {\n")
+    if has_caps {
+        @body.append("    novac_hctx_${n}* _novac_cap = (novac_hctx_${n}*)_novac_ctx;\n")
+    } else {
+        @body.append("    (void)_novac_ctx;\n")
+    }
+    ro ok = branch_children(op)
+    ro body = ok[ok.len() - 1]
+    @lo.ir = FnBuilder.new(ret)
+    @lower_op_body(body, ret)
+    @lo.ir.end_body()
+    @print_body(@lo.ir.finish())
+    @body.append("}\n")
+}
+
+/// An op body through the doors a fn body uses: a block (its tail a value
+/// only when the op declares one -- the checker's `value_body_of`), or an
+/// expression landing in the return place. The two shapes are a statement
+/// sequence, the checker's `@type_handler_op` precedent (P21).
+fn Emitter mut @lower_op_body(body Node, ret TyId) -> () {
+    if body.kind_of() == NodeKind.Block {
+        @lo.lower_block_stmts_fn(body, !is_unit_ty(@ctx, ret))
+        // SILENT-OK: the block is lowered; the expression form below is
+        // the other shape, not a fallback.
+        return
+    }
+    @lo.lower_place(body, @lo.ir.ret_place())
+}
+
+/// The VALUE of a handler literal, built where it stands (D474): the table
+/// of the shell's `NovaVtable_E`, its context, the operation functions in
+/// the schema's order. Answers the C name of the table pointer.
+fn Emitter mut @emit_handler_lit(lit Node) -> str {
+    ro n = @lit_number(lit)
+    ro vt = effect_vtable_c(lit_effect(lit))
+    ro caps = @out.captures_of(lit.id_of())
+    ro v = "_novac_hv${@fresh_uniq()}"
+    if caps.len() == 0 {
+        // D474 case 2: one allocation, no context.
+        @body.append("    ${vt}* ${v} = (${vt}*)nova_alloc(sizeof(${vt}));\n")
+        @body.append("    ${v}->ctx = NULL;\n")
+    } else {
+        // D474 case 3: ONE block, the context at the aligned end of the table.
+        ro cx = "novac_hctx_${n}"
+        @body.append("    size_t ${v}_off = (sizeof(${vt}) + _Alignof(${cx}) - 1) / _Alignof(${cx}) * _Alignof(${cx});\n")
+        @body.append("    char* ${v}_blk = (char*)nova_alloc(${v}_off + sizeof(${cx}));\n")
+        @body.append("    ${vt}* ${v} = (${vt}*)${v}_blk;\n")
+        @body.append("    ${cx}* ${v}_cx = (${cx}*)(${v}_blk + ${v}_off);\n")
+        for c in caps {
+            ro amp = if c.by_ref { "&" } else { "" }
+            @body.append("    ${v}_cx->${c.name} = ${amp}${c.name};\n")
+        }
+        @body.append("    ${v}->ctx = ${v}_cx;\n")
+    }
+    // An operation the literal does not define stays NULL: the table is
+    // zeroed by the allocator, and the effect's dispatcher never reaches it.
+    for op in lit_ops(lit) {
+        ro opn = op_name_of(op)
+        @body.append("    ${v}->${opn} = novac_hop_${n}_${opn};\n")
+    }
+    v
+}
+
+/// A Name read that is a CAPTURE (E.9 step 3): through the op function's
+/// context -- the value for a copy, the pointee for a `mut` binding.
+fn Emitter mut @emit_capture_read(c CaptureRow) -> () {
+    if c.by_ref {
+        @body.append("(*_novac_cap->${c.name})")
+    } else {
+        @body.append("_novac_cap->${c.name}")
+    }
+}

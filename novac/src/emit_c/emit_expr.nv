@@ -408,6 +408,18 @@ fn Emitter mut @emit_expr(e Node) -> () {
         }
         @body.append(rtmp)
     } else if k == NodeKind.Name {
+        // A CAPTURE (E.9 step 3): a binding of the scope a handler literal
+        // was written in, read from one of its op bodies -- through the op
+        // function's context, as the checker recorded it.
+        match @out.capture_at(e.id_of()) {
+            Some(c) => {
+                @emit_capture_read(c)
+                return
+            }
+            None => {
+                // An ordinary name: a constant, a variant value or a local, below.
+            }
+        }
         // A CONSTANT IS SUBSTITUTED, not referenced (274.5 wave B2): it has no
         // C symbol of its own, and WHICH constant this is came from the
         // channel -- the emitter resolves no names (274.4 rule E).

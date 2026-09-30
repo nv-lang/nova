@@ -250,6 +250,19 @@ export type CheckOut {
     subst_args []TyId /// Flat pool of substitution arguments (type ids), addressed by SubstRef.
     arg_slots []SlotBind /// Flat pool of argument BINDINGS: per parameter slot, WHICH argument fills it and through WHICH declared conversion (see SlotBind).
     mv_order []int /// module values (constant-table rows) in the order their initializers run: every value after the values it reads (274.5 S6, D200 topological order). One writer: check.
+    captures []CaptureRow /// the bindings each handler literal captures, one row per (literal, name) -- E.9 step 3. One writer: check.
+    cap_at []int /// NodeId -> the capture row a Name read inside a literal op body is, -1 = none. One writer: check.
+}
+
+/// One binding a handler literal CAPTURES from the scope it is written in
+/// (E.9 step 3, D474 section 0): read by the literal's op bodies, laid in its
+/// context -- by copy, or by address for a `mut` binding.
+export type CaptureRow value {
+    lit NodeId /// the handler literal that captures
+    name str /// the captured binding, as the source names it -- its C name in the context
+    bind_row int /// the binding's row in the checker's scope: two reads of one binding share it, a shadowing one does not
+    type_id TyId /// its type
+    by_ref bool /// a `mut` binding: captured by address, read and written through it
 }
 
 /// An empty channel sized for a file of `node_count` branch nodes. The size
@@ -260,13 +273,16 @@ export fn CheckOut.new(node_count int) -> CheckOut {
     mut types = []TyId.new()
     mut res = []Resolution.new()
     mut implicit = []Resolution.new()
+    mut cap_at = []int.new()
     for _ in 0..node_count {
         types.push(no_ty())
         res.push(Resolution.Unresolved)
         implicit.push(Resolution.Unresolved)
+        cap_at.push(0 - 1)
     }
     CheckOut { entry: no_row(), types, res, implicit, subst_args: []TyId.new(), arg_slots: []SlotBind.new(),
-               contract_notes: []ContractNote.new(), mv_order: []int.new() }
+               contract_notes: []ContractNote.new(), mv_order: []int.new(),
+               captures: []CaptureRow.new(), cap_at }
 }
 
 /// THE ENTRY DECISION (274.4 step 2): which row is this program's entry
@@ -282,6 +298,48 @@ export fn CheckOut mut @record_entry(row FnRow) -> () {
 /// depth-first walk finishes a value only after its dependencies.
 export fn CheckOut mut @record_module_value(row int) -> () {
     @mv_order.push(row)
+}
+
+/// A READ of a binding captured by handler literal `lit` (E.9 step 3): the
+/// literal's capture row for `name` -- made on its first read, shared by the
+/// rest -- and this read's node pointing at it.
+export fn CheckOut mut @record_capture(lit NodeId, read NodeId, name str, bind_row int, ty TyId, by_ref bool) -> () {
+    mut at = 0 - 1
+    for i in 0..@captures.len() {
+        ro c = @captures[i]
+        if c.lit == lit && c.bind_row == bind_row {
+            at = i
+        } else {
+            // Another literal's capture, or another name.
+        }
+    }
+    if at < 0 {
+        at = @captures.len()
+        @captures.push(CaptureRow { lit, name, bind_row, type_id: ty, by_ref })
+    } else {
+        // The name was captured by an earlier read of this literal.
+    }
+    @cap_at[raw_node(read)] = at
+}
+
+/// The capture a Name read is, or None when it reads an ordinary binding.
+export fn CheckOut @capture_at(id NodeId) -> Option[CaptureRow] {
+    ro at = @cap_at[raw_node(id)]
+    if at < 0 { return None }
+    Some(@captures[at])
+}
+
+/// The captures of one handler literal, in the order their first reads were met.
+export fn CheckOut @captures_of(lit NodeId) -> []CaptureRow {
+    mut out = []CaptureRow.new()
+    for c in @captures {
+        if c.lit == lit {
+            out.push(c)
+        } else {
+            // Another literal's capture.
+        }
+    }
+    out
 }
 
 /// The module values in initialization order (constant-table rows).

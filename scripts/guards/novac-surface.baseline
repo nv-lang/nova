@@ -868,7 +868,11 @@ resolve 15
 #   effect_vtable_c, effect_slot_c, effect_op_dispatcher_c — ОДНА дверь на каждое
 #   C-имя эффекта (читают lower, emit_c, check); EffectOpRef и @effect_op_of —
 #   цель вызова операции в канале (пишет check, читает emit_c).
-sem 278
+# sem 278 -> 282 (2026-09-30, Carina window, E.9 step 3): CaptureRow and
+#   CheckOut.@record_capture / @capture_at / @captures_of -- the captures of a
+#   handler literal (D474 section 0): written by check, which alone knows the
+#   scope; read by emit_c for the context type and every captured read.
+sem 282
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
