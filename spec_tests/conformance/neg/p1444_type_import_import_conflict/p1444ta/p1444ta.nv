@@ -1,0 +1,3 @@
+module p1444_type_import_import_conflict.p1444ta
+
+export type P1444Pick { a int }
