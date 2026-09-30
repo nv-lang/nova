@@ -31,6 +31,7 @@ import ../sem.{is_expr_kind}
 import ../sem.{c_method_symbol, impl_of_proto, ty_source_name, decl_of_ty}
 import ../sem.{option_payload}
 import ../sem.{expr_leaf_name, type_admits}
+import ../sem.{EffectOpRef, identity_slots, effect_op_dispatcher_c}
 
 /// The lookup key of a method call: the receiver's type in position ZERO, then
 /// one slot per written argument, each carrying its TYPE (E2-b3 M1).
@@ -530,12 +531,24 @@ fn Checker mut @type_effect_op_call(e Node, kids []Node) -> bool {
             return true
         }
     }
+    // (d) THE LINK (E.9 step 2): the call is emitted as the SHELL's dispatcher
+    // of this operation, so the shell has to carry it -- W6's question, asked
+    // of the dispatcher's symbol, with W6's kind of sentence. The shell
+    // carries the dispatchers of the effects its probe uses.
+    ro disp = effect_op_dispatcher_c(head_name, opname)
+    if !@ctx.interop.has(disp) {
+        @refuse(onm, effect_without_runtime_msg(head_name))
+        return true
+    } else {
+        // The shell dispatches it: the call is recorded below.
+    }
     @record_arg_types(kids, 3)
-    // THE CALL'S TYPE is the operation's declared return -- recorded for
-    // every reader of the channel, the same decision a resolved call
-    // writes. What the emitter DOES with the call is the lowering wave's
-    // question, not this door's.
+    // THE CALL'S TYPE is the operation's declared return, and WHICH
+    // operation it is -- the emitter prints the dispatcher from this record
+    // and looks nothing up (274.4 rule E).
     @record(e, sig.ret_id)
+    @chan.record_callee(e.id_of(), CalleeTarget.CalleeEffectOp(EffectOpRef { eff: head_name, op: opname }),
+        []TyId.new(), identity_slots(args.len()))
     true
 }
 

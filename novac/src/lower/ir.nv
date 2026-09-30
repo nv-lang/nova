@@ -82,6 +82,7 @@ export type LocalKind enum
 /// reader who believed it would write a new door that ignores `decl_at` and print four
 /// spaces where eight belong. A number in a doc that nobody recounts lives exactly until
 /// the first reader who trusts it.
+#impl(Equal)
 export type DeclAt enum
     | FirstAssign // the first assignment declares it
     | Zeroed // a `Stmt.Decl` declares it, zeroed
@@ -239,6 +240,10 @@ export type Stmt enum
     | Decl(Local) // the local's declaration point (donor: rustc MIR `StorageLive`)
     | Output(OutputStmt) // one value handed to output, in this position of the sequence
     | OutputEnd // the newline that closes a `println` -- once, at the end
+    | SetHandler(HandlerSwap) // `prev = slot; slot = handler` -- a `with` binding installs
+    | RestoreHandler(HandlerSwap) // `slot = prev` -- on EVERY exit of the `with` (E.9 step 2)
+    | PushFrame(int) // the `with`'s interrupt frame N, declared and pushed
+    | PopFrame // the innermost interrupt frame popped -- paired with a PushFrame on every exit
 
 /// What an `If` tests (wave M2b-1b): a boolean expression as the tree spells
 /// it (the M1 bridge until M3), or "the Option held by this local carries a
@@ -250,6 +255,9 @@ export type Cond enum
     // the Option in the local is None -- the while-let's exit test (wave P4):
     // spelled `!<some-test>` through the same one Option door
     | NotSome(Local)
+    // the `setjmp` of the `with` frame N returned 0: the body runs (E.9 step 2);
+    // a longjmp into the frame -- an interrupt -- takes the other branch
+    | FrameEntered(int)
 
 /// WHAT KIND OF `else` AN `if` HAS -- three states, and the fourth is gone because it never
 /// existed. Until 2026-09-13 the doors took two booleans, `has_else` and `els_braced`, which
@@ -487,6 +495,9 @@ export type FnBuilder {
     switches int /// how many matches this body has opened -- the source of `SwitchTerm.uniq`
     hoisted_at []int /// node ids whose value is already in a local (F65), parallel to `hoisted_to`
     hoisted_to []Local /// the local holding the node at the same index of `hoisted_at`
+    scopes []WithScope /// the open `with` scopes, innermost last (E.9 step 2)
+    loops int /// the loops open at the current point -- see WithScope.loops
+    frames int /// interrupt frames this body has opened -- the source of their names
 }
 
 /// A NODE WHOSE VALUE IS ALREADY IN A LOCAL, or `no_local()` (F65).
@@ -533,7 +544,7 @@ export fn FnBuilder.new(ret_ty TyId) -> FnBuilder {
     mut hoisted_at = []int.new()
     mut hoisted_to = []Local.new()
     FnBuilder { locals, blocks, cur, cur_id: BlockId(0), open_arms, arm_start, switches: 0,
-                hoisted_at, hoisted_to }
+                hoisted_at, hoisted_to, scopes: []WithScope.new(), loops: 0, frames: 0 }
 }
 
 /// The block the next statement lands in.
@@ -789,6 +800,7 @@ export fn FnBuilder mut @begin_loop(head LoopHead) -> LoopCtx {
     ro exit = @reserve()
     @close(Terminator.Goto(h), h)
     @close(Terminator.Loop(LoopTerm { head, body, exit }), body)
+    @loops += 1
     LoopCtx { head: h, body, exit }
 }
 
@@ -796,6 +808,7 @@ export fn FnBuilder mut @begin_loop(head LoopHead) -> LoopCtx {
 /// edge), and what is placed next belongs to the exit.
 export fn FnBuilder mut @end_loop(c LoopCtx) -> () {
     @close(Terminator.Goto(c.head), c.exit)
+    @loops -= 1
 }
 
 /// A binder of a matched variant (wave M2b-1d): `dest = field index of the
@@ -884,6 +897,10 @@ export fn FnBuilder mut @end_switch(c SwitchCtx) -> () {
 /// `end_body` seals (rustc does the same: statements after a return are
 /// unreachable but still have a block).
 export fn FnBuilder mut @ret() -> () {
+    // The value is already in the return place: the open `with` scopes are left
+    // AFTER it was computed (its handlers were live while it was) and before
+    // control leaves the function (E.9 step 2).
+    @leave_all_scopes()
     ro next = @reserve()
     @close(Terminator.Return, next)
 }
@@ -893,6 +910,7 @@ export fn FnBuilder mut @ret() -> () {
 /// block, exactly as after `ret`. C's `break;` needs no target: the loops print
 /// as structural C, and a match prints as an if-chain, not a `switch`.
 export fn FnBuilder mut @break_loop() -> () {
+    @leave_loop_scopes()
     ro next = @reserve()
     @close(Terminator.Break, next)
 }
@@ -900,12 +918,16 @@ export fn FnBuilder mut @break_loop() -> () {
 /// `continue`, the same shape as `break_loop`: C's `continue;` inside a `for`
 /// runs the increment first, which is the language's next turn.
 export fn FnBuilder mut @continue_loop() -> () {
+    @leave_loop_scopes()
     ro next = @reserve()
     @close(Terminator.Continue, next)
 }
 
 /// The end of the body: the current block returns. After this `finish` holds.
 export fn FnBuilder mut @end_body() -> () {
+    if @scopes.len() > 0 {
+        ice("lower: a function body ended inside an open with scope")
+    }
     @seal(@cur_id, Terminator.Return)
 }
 

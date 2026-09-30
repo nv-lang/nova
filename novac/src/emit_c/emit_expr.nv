@@ -15,6 +15,7 @@
 module novac.emit_c
 
 import ../sem.{c_free_symbol}
+import ../sem.{effect_op_dispatcher_c}
 // The absent local (F65): a node that was not hoisted.
 import ../lower.{no_local}
 
@@ -306,6 +307,8 @@ fn callee_row_or_none(cr CalleeRef) -> FnRow {
         // A synthesized display has no row to give: the program wrote no
         // function, and the emitter prints the field sequence from the TYPE.
         CalleeSynthDisplay(_) => no_row()
+        // An effect operation has none either: the shell's dispatcher serves it.
+        CalleeEffectOp(_) => no_row()
     }
 }
 
@@ -405,6 +408,18 @@ fn Emitter mut @emit_expr(e Node) -> () {
         }
         @body.append(rtmp)
     } else if k == NodeKind.Name {
+        // A CAPTURE (E.9 step 3): a binding of the scope a handler literal
+        // was written in, read from one of its op bodies -- through the op
+        // function's context, as the checker recorded it.
+        match @out.capture_at(e.id_of()) {
+            Some(c) => {
+                @emit_capture_read(c)
+                return
+            }
+            None => {
+                // An ordinary name: a constant, a variant value or a local, below.
+            }
+        }
         // A CONSTANT IS SUBSTITUTED, not referenced (274.5 wave B2): it has no
         // C symbol of its own, and WHICH constant this is came from the
         // channel -- the emitter resolves no names (274.4 rule E).
@@ -427,7 +442,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
                                 @body.append("${c_maker(@ctx, v)}()")
                             }
                         }
-                        CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) =>
+                        CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) =>
                             ice("emit: a bare name resolved to a non-variant callee")
                     }
                 } else {
@@ -490,7 +505,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
                     }
                     return
                 }
-                CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) =>
+                CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) =>
                     ice("emit: a field access resolved to a non-variant callee")
             }
         } else {
@@ -561,6 +576,15 @@ fn Emitter mut @emit_expr(e Node) -> () {
                 // An ordinary method call: the row below is the decision.
             }
             CalleeSynthDisplay(_) => ice("emit: a method call resolved to a synthesized display -- the synthesis is recorded on an INTERPOLATION SLOT, and a written call has a row")
+            CalleeEffectOp(op) => {
+                // `Os.arg_count()` (E.9 step 2): the shell's dispatcher, which
+                // runs the installed handler or the effect's default one --
+                // the handler is never looked up at the call site.
+                @body.append("${effect_op_dispatcher_c(op.eff, op.op)}(")
+                @emit_bound_args(kids, 3, false, e.id_of(), no_row())
+                @body.append(")")
+                return
+            }
         }
         // The SUBSTITUTION comes from the same record as the row: one question
         // ("which instance does this call name"), one read. An ordinary call
@@ -618,6 +642,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
             // its C 2026-09-03), never a call to a C function that exists
             // nowhere. One expression, so nothing is hoisted (274.6 V2b).
             CalleeSynthDisplay(_) => ice("emit: a call hoist for a synthesized display -- the synthesis is a slot, not a written call")
+            CalleeEffectOp(_) => ice("emit: a call hoist for an effect operation -- an operation call is a method-call form, printed by its own arm")
             CalleeFn(row) => {
                 ro rt = @ctx.fns.rows[raw_row(row)].ret_id
                 // Same deferral as the checker's routing door: only the

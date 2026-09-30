@@ -35,11 +35,11 @@ module novac.check
 
 import ../tree.{Node, NodeKind}
 import ../diag.{ice}
-import ../builtins.{TypeKind}
+import ../builtins.{TypeKind, HANDLER_CTOR}
 import ../names.{raw_decl}
 import ../sem.{branch_children, leaf_text, param_name_at, param_mode_at, ty_source_name}
 import ../sem.{EffectDef, EffectTable, effect_op_ret_type_of}
-import ../types.{TyId, no_ty, is_ty, same_ty}
+import ../types.{TyId, no_ty, is_ty}
 
 /// ONE handler literal: resolve the effect name, judge every op against
 /// the effect's schema, record the literal's own type (`Effect[Fs]` -- the
@@ -104,6 +104,14 @@ fn Checker mut @type_handler_lit(e Node) -> () {
 fn Checker mut @type_handler_resolved(e Node, kids []Node, name str, edecl DeclId) -> () {
     ro schema = @ctx.effects.def_of(name) ?? ice("check: an effect declaration with no op schema reached the handler-literal typist")
     ro before = @out.len()
+    // THE CAPTURE MARK (E.9 step 3): every binding that exists now is
+    // outside this literal, so a read of one from an op body is a capture
+    // (`exprs.nv`, the Name arm, records it). Saved and restored: a literal
+    // may stand inside another literal's op body.
+    ro saved_rows = @lit_rows
+    ro saved_lit = @lit_node
+    @lit_rows = @scope.row_count()
+    @lit_node = e.id_of()
     for c in kids {
         if c.kind_of() != NodeKind.HandlerOp { continue }
         @type_handler_op(c, name, schema)
@@ -112,6 +120,8 @@ fn Checker mut @type_handler_resolved(e Node, kids []Node, name str, edecl DeclI
         // "unknown name" about the op's own parameters would be the second
         // word about one cause.
     }
+    @lit_rows = saved_rows
+    @lit_node = saved_lit
     if @out.len() > before { return }
     // THE LITERAL'S OWN TYPE is the handler-type application `Effect[Fs]`,
     // interned through the one door (the Effect seed's row, the effect's
@@ -127,7 +137,7 @@ fn Checker mut @type_handler_resolved(e Node, kids []Node, name str, edecl DeclI
     // handed on by `return` or as an argument was refused against the
     // declared `Effect[Fs]` with that malformed name in the sentence. The
     // with slot never noticed: its rule admits every application kind.
-    ro seed = @ctx.defs.type_decl("Effect") ?? ice("check: the Effect seed is not registered (sem/sem.nv `seed_effect_ctor`)")
+    ro seed = @ctx.defs.type_decl(HANDLER_CTOR) ?? ice("check: the Effect seed is not registered (sem/sem.nv `seed_effect_ctor`)")
     @record(e, @ctx.tys.app(seed, []TyId.of(@ctx.types[raw_decl(edecl)].ty_id)))
 }
 
@@ -296,10 +306,10 @@ fn Checker mut @type_handler_op(op Node, eff_name str, schema EffectDef) -> () {
         @scope.release(pmark)
         return
     }
-    ro saved_ret = same_ty(@ret_expect)
+    ro saved_ret = @ret_expect
     ro saved_tail = @tail_value_body
     ro saved_unit = @ret_unit
-    @ret_expect = same_ty(sig.ret_id)
+    @ret_expect = sig.ret_id
     @ret_unit = @returns_unit(sig.ret_id)
     // THE BODY against the schema's return, through the fn body's own
     // doors: `@ret_expect` is set so `return` operands and the tail value
@@ -313,7 +323,10 @@ fn Checker mut @type_handler_op(op Node, eff_name str, schema EffectDef) -> () {
     // two shapes are a statement sequence, the
     // `@type_body` precedent -- no `else` after the variant test (P21).
     if body.kind_of() == NodeKind.Block {
-        @tail_value_body = body.id_of()
+        // The tail is a VALUE only when the op declares one -- the fn body's
+        // own door (`value_body_of`): an op `-> ()` whose block ends in a
+        // `println(...)` was typed as returning that call (E.9 step 3).
+        @tail_value_body = value_body_of(okids)
         @type_block(body)
         @ret_expect = saved_ret
         @tail_value_body = saved_tail

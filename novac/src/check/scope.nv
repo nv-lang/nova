@@ -132,6 +132,16 @@ fn Scope @is_ro_param(name str) -> bool {
     }
 }
 
+/// How many bindings exist right now -- the mark a handler literal takes at
+/// its start: a name found BELOW it was bound outside the literal, so a read
+/// of it from an op body is a CAPTURE (E.9 step 3).
+#realtime nogc
+fn Scope @row_count() -> int => @binds.len()
+
+/// The row of the binding `name` resolves to now, -1 when unbound.
+#realtime nogc
+fn Scope @row_of(name str) -> int => @names.find(name)
+
 /// Is this name bound in the current scope? The TOLERANT half of the pair
 /// (the same shape as `type_id`/`type_id_of`, 274.3/F-B4): `check` asks
 /// before it types, so an unbound name becomes a DIAGNOSTIC at the name's own

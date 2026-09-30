@@ -222,6 +222,18 @@ fn Checker mut @type_bind(st Node) -> () {
             @bind_poisoned(vname, kids)
             return
         }
+        // A HELD literal may outlive its frame; a `mut` capture is an
+        // address into that frame (E.9 step 3). Refused by the position
+        // boundary's own name until handler values box it (E.5).
+        for c in @chan.captures_of(init.id_of()) {
+            if c.by_ref {
+                @report_first_leaf_of([]Node.of(init), HANDLER_LIT_POSITION_MSG)
+                @bind_poisoned(vname, kids)
+                return
+            } else {
+                // A copy lives in the context itself: nothing outlives it.
+            }
+        }
         @scope.bind(vname, ht, bind_mode_at(kids))
         // SILENT-OK: typed and bound above, so this branch is fully decided
         return

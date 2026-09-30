@@ -42,8 +42,14 @@ QUOTED = re.compile(r'"[A-Za-z_][A-Za-z0-9_]*(?:\$\{[^}]*\})?[A-Za-z0-9_]*"')
 # length-prefixed; оболочка сама несёт `_NovaTuple_2_8_nova_int_8_nova_int`).
 # Появилось у novac с волной B15 шаг 4a; существование имени стережёт
 # дифф-корпус (носитель tuple_mixed_pair_typedef краснеет без typedef-хода).
+# `NovaVtable_` и `_nova_handler_` -- пространство ОРАКУЛА для эффектов (Э.9 шаг 2,
+# 274.11): таблица операций эффекта и поточный слот установленного обработчика.
+# Их пишет шелл (регистрация `nova_register_effect_storage`), novac их только
+# называет -- одной дверью `effect_vtable_c`/`effect_slot_c` в sem/mangle.nv;
+# существование стережёт check-novac-shell-freshness (шелл == эмиссия оракула по
+# пробе, а проба ставит `with Fs/Os`).
 ALLOWED_PREFIX = ("Nova_", "NovaValue_", "nova_", "novac_", "NOVAC_", "_novac_",
-                  "_NovaTuple")
+                  "_NovaTuple", "NovaVtable_", "_nova_handler_")
 ALLOWED_EXACT = {"void", "_", "equal", "fmod",
                  "__NOVAC_BODY__", "__NOVAC_STRLITS__", "NOVA_UNIT",
                  # Разделители имени в c_callable — куски, а не имена (см. шапку).

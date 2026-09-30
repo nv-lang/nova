@@ -223,7 +223,7 @@ fn Checker mut @adapt_literal_args(e Node, kids []Node, from int, recv_rows int)
         CalleeFn(r) => r
         // A construction, a variant or a SYNTHESIZED display has no callable
         // row -- the last one because the program wrote no function at all.
-        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) => no_row()
+        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => no_row()
     }
     if raw_row(row) < 0 { return }
     ro fd = @ctx.fns.rows[raw_row(row)]

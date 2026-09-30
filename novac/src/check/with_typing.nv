@@ -113,7 +113,15 @@ fn Checker mut @type_with_stmt(st Node) -> () {
                 } else {
                     // Not a value-type kind: a protocol/generic/unknown
                     // instance is accepted this wave, per the deferred
-                    // handler-type machinery noted above (E.5).
+                    // handler-type machinery noted above (E.5). Its type is
+                    // RECORDED when typing did not (a call records its callee,
+                    // not always its value): the lowering holds the handler in
+                    // a local of this type (E.9 step 2, lower/lower_with.nv).
+                    if !is_ty(@chan.type_if_known(kids[bi + 2].id_of())) {
+                        @record(kids[bi + 2], hty)
+                    } else {
+                        // Typing recorded it already.
+                    }
                 }
             } else {
                 // No tail type recorded -- an unresolved or deferred

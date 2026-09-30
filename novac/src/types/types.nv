@@ -105,26 +105,6 @@ export fn no_ty() -> TyId => TyId(-1)
 #realtime nogc
 export fn is_ty(t TyId) -> bool => raw_ty(t) >= 0
 
-/// [LEGACY-#760-newtype-ro-launder] THE SAME id, rebuilt -- because the oracle
-/// refuses to RETURN a `ro`-bound newtype even when its carrier is a primitive.
-///
-/// Measured 2026-08-21 on a three-line file: `fn pass_int(v int) -> int => v`
-/// compiles, `fn pass_row(r Row) -> Row => r` is `E_READONLY_COERCE`
-/// ("returning a ro-bound source with a non-ro return type would let the
-/// caller's `mut w = f()` write where the source can see it", D246 amendment
-/// [M-ro-launder-via-mut-binding]). For a newtype over `int` there is nothing
-/// to launder: a newtype IS its representation at runtime (zero cost), so the
-/// caller's binding holds an int-sized COPY, exactly as for `int` itself. The
-/// analysis does not peel the newtype to its carrier the way the printer and
-/// the layout do -- so wrapping ANY primitive index space makes `return t`
-/// illegal, and this door is what a wave of wrapping costs until it is fixed.
-///
-/// Reconstruction is free (the C is the same integer), so the cost is the NAME:
-/// this one, greppable, with the reason attached. When the oracle peels the
-/// carrier, every call of this door becomes `t` and the door goes.
-#realtime nogc
-export fn same_ty(t TyId) -> TyId => TyId(raw_ty(t))
-
 /// Number of kinds — bucket arithmetic below needs it as a plain integer.
 fn kind_ordinal(k TypeKind) -> int {
     match k {
@@ -435,18 +415,18 @@ export fn Interner mut @subst(t TyId, args []TyId) -> TyId {
     ro row = @rows[raw_ty(t)]
     match row.kind {
         TkPrim => { return t }
-        TkRecord => { return same_ty(t) }
-        TkSum => { return same_ty(t) }
-        TkInfer => { return same_ty(t) }
+        TkRecord => { return t }
+        TkSum => { return t }
+        TkInfer => { return t }
         // A NEWTYPE is nominal: its identity does not depend on a
         // substitution, and its representation cannot mention a parameter
         // while the subset has no generic newtypes. When it does, the
         // representation substitutes exactly as an application's arguments do,
         // and this arm grows the same three lines.
-        TkNewtype => { return same_ty(t) }
+        TkNewtype => { return t }
         // TkEffect: a MARKER kind over a declaration, with nothing in its term
         // a substitution could rewrite -- identity, as the record nominal.
-        TkEffect => { return same_ty(t) }
+        TkEffect => { return t }
         TkParam => {
             if row.head_id < 0 || row.head_id >= args.len() {
                 ice("types: subst with a partial argument vector — a Param has no argument")
@@ -467,7 +447,7 @@ export fn Interner mut @subst(t TyId, args []TyId) -> TyId {
         changed = changed || s != a
                 new_args.push(s)
             }
-            if !changed { return same_ty(t) }
+            if !changed { return t }
             return @intern(row.kind, row.head_id, new_args)
         }
     }

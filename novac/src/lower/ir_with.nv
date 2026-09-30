@@ -1,0 +1,107 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Koka's evidence passing -- a handler is a record installed for a
+// dynamic extent and removed on ANY exit of it; Go's `defer` for the "every
+// exit" rule, placed by the compiler at each exit rather than run by a stack.
+// Role: the `with` SCOPE of the lowered body (E.9 step 2, plan 274.11): the
+//   handler swaps a `with` performs, the scope record the builder keeps while
+//   its body is lowered, and the doors that open it, close it and leave it on
+//   every exit. Split out of ir.nv (the 1000-line cap) by meaning: this is the
+//   one part of the builder that is about effects.
+// Used by: lower/lower_with.nv (open/close); ir.nv's `ret`, `break_loop` and
+//   `continue_loop` (leave); the printer reads the statements (emit_flow.nv).
+// Guarded by: nova test novac/src/lower/lower_test.nv (the restore on every
+//   exit), check-novac-differential.sh over the with_* fixtures.
+
+module novac.lower
+import ../diag.{ice}
+
+/// One handler a `with` installs (E.9 step 2, 274.11): the effect whose thread
+/// slot it takes, the local that keeps the handler it displaced, and the local
+/// holding the new one. INSTALL and RESTORE read the same record, so the slot a
+/// `with` restores is the one it took -- by construction, not by care.
+export type HandlerSwap value {
+    eff str /// the effect bound, as the `with` names it
+    prev Local /// the handler displaced, restored on every exit
+    handler Local /// the handler installed
+}
+
+/// An OPEN `with` scope while its body is lowered: the handlers it installed,
+/// its interrupt frame, and how many loops were open when it began -- a `break`
+/// or `continue` leaves exactly the scopes opened inside the loop it leaves.
+export type WithScope {
+    swaps []HandlerSwap /// installed in order, restored in reverse
+    frame int /// the interrupt frame's number
+    loops int /// open loops at entry
+}
+
+/// What `begin_with` hands back and `end_with` takes.
+export type WithCtx value {
+    cond IfCtx /// the `setjmp` test around the body
+    scope int /// the scope's depth, checked at close
+}
+
+/// Opens a `with` (E.9 step 2): each handler is installed into its effect's
+/// slot, the interrupt frame is pushed, and the body is placed under the
+/// frame's `setjmp` test. Every exit of the body restores the handlers and
+/// pops the frame -- falling through (`end_with`), `return` (`ret`), `break`
+/// and `continue` (their doors) -- because the scope is on the builder's
+/// stack, not in the caller's memory. Donor: Koka's evidence passing -- the
+/// handler is a record installed for a dynamic extent and removed on ANY exit
+/// of it; Go's `defer` placement for the "every exit" rule.
+export fn FnBuilder mut @begin_with(swaps []HandlerSwap) -> WithCtx {
+    for s in swaps {
+        @cur.push(Stmt.SetHandler(s))
+    }
+    ro f = @frames
+    @frames += 1
+    @cur.push(Stmt.PushFrame(f))
+    @scopes.push(WithScope { swaps, frame: f, @loops })
+    ro c = @begin_if(Cond.FrameEntered(f), ElseShape.NoElse)
+    WithCtx { cond: c, scope: @scopes.len() - 1 }
+}
+
+/// Closes a `with`: the body falls through to the join, where the handlers
+/// are restored in reverse and the frame is popped -- also the path an
+/// interrupt (a longjmp into the frame) takes.
+export fn FnBuilder mut @end_with(c WithCtx) -> () {
+    @end_if(c.cond)
+    if @scopes.len() - 1 != c.scope {
+        ice("lower: a with scope closed out of order")
+    }
+    @leave_scope(c.scope)
+    ro _ = @scopes.pop()
+}
+
+/// The statements that leave scope `i`: its handlers restored in reverse of
+/// installation, then its frame popped.
+fn FnBuilder mut @leave_scope(i int) -> () {
+    ro sc = @scopes[i]
+    ro swaps = sc.swaps
+    mut k = swaps.len() - 1
+    while k >= 0 {
+        @cur.push(Stmt.RestoreHandler(swaps[k]))
+        k -= 1
+    }
+    @cur.push(Stmt.PopFrame)
+}
+
+/// Leave every open scope, innermost first -- the way out of a `return`.
+fn FnBuilder mut @leave_all_scopes() -> () {
+    mut i = @scopes.len() - 1
+    while i >= 0 {
+        @leave_scope(i)
+        i -= 1
+    }
+}
+
+/// Leave the scopes opened inside the innermost loop, innermost first -- the
+/// way out of a `break` or `continue`; a scope around the loop stays open.
+fn FnBuilder mut @leave_loop_scopes() -> () {
+    mut i = @scopes.len() - 1
+    while i >= 0 {
+        ro sc = @scopes[i]
+        if sc.loops != @loops { break }
+        @leave_scope(i)
+        i -= 1
+    }
+}

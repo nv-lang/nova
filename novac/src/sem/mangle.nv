@@ -31,7 +31,7 @@ import ../diag.{ice}
 import ../names.{raw_decl}
 import ../builtins.{prim_c_name, is_runtime_abi_sum, prim_name, OPTION_FAMILY_C, OPTION_SUM}
 import ../builtins.{FMT_PROTO, FMT_IMPL}
-import ../builtins.{PAREN_RECORD_C_PREFIX}
+import ../builtins.{PAREN_RECORD_C_PREFIX, HANDLER_CTOR, TypeKind}
 import ../types.{TyId, no_ty, is_ty}
 
 /// The REPRESENTATION of a newtype: the type it is laid out as.
@@ -289,6 +289,12 @@ export fn c_type(ctx Ctx, t TyId) -> str {
             // itself; its struct is spelled the oracle's way (interop -- see
             // `instance_struct_name`).
             TkApp => {
+                // A HANDLER VALUE (`Effect[Os]`) is the shell's vtable pointer for
+                // its effect -- INTEROP, the oracle's `NovaVtable_Os*` (E.9 step 2):
+                // the table and its registration live in the shell, novac only
+                // holds and installs the pointer.
+                ro eff = handled_effect_name(ctx, t)
+                if eff != "" { return "${effect_vtable_c(eff)}*" }
                 ro fam = family_instance_name(ctx, t)
                 if fam != "" { return fam }
                 return "${instance_struct_name(ctx, t)}*"
@@ -377,6 +383,28 @@ export fn c_struct(ctx Ctx, t TyId) -> str {
 /// of guessing a name a linker would then find. No program reaches it today: an
 /// instance of a handed-over sum cannot be constructed (its variants are not
 /// harvested), so nothing carrying one is ever emitted.
+/// The EFFECT a handler type `Effect[E]` handles, or "" for any other type.
+export fn handled_effect_name(ctx Ctx, t TyId) -> str {
+    if ctx.tys.kind_of(t) != TypeKind.TkApp { return "" }
+    if decl_of_ty(ctx, t).name != HANDLER_CTOR { return "" }
+    if ctx.tys.arg_count(t) != 1 { return "" }
+    decl_of_ty(ctx, ctx.tys.arg(t, 0)).name
+}
+
+/// THE C NAMES OF AN EFFECT'S RUNTIME PIECES -- all three are the shell's
+/// (interop, E.9 step 2): the vtable struct an `Effect[E]` points at, the
+/// thread slot a `with` installs into (`_nova_handler_E`), and the dispatcher
+/// an operation call goes through (`Nova_E_op`, which runs the installed
+/// handler or the effect's `#default_handler`). One door each, so a `with`
+/// and an operation call cannot spell the same slot two ways.
+export fn effect_vtable_c(eff str) -> str => "NovaVtable_${eff}"
+
+/// The thread slot of the installed handler of `eff` -- see `effect_vtable_c`.
+export fn effect_slot_c(eff str) -> str => "_nova_handler_${eff}"
+
+/// The shell's dispatcher of operation `op` of `eff` -- see `effect_vtable_c`.
+export fn effect_op_dispatcher_c(eff str, op str) -> str => "Nova_${eff}_${op}"
+
 /// The FAMILY spelling of a generic-sum instance, or "" for everything else:
 /// `Option[int]` is the shell's `NovaOpt_nova_int`, BY VALUE (its methods hand
 /// it back so), with no `Nova_` prefix and no star -- INTEROP, read off the

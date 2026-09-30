@@ -24,7 +24,7 @@ import ../builtins.{ENTRY_FN, PRINT_FN, CALLER_LOC_FN, is_bool_literal}
 import ../sem.{Ctx, CheckOut, declares_receiver, generics_have_consume, generics_have_protocol_bound, param_type_at}
 // The tree question that decides what a hoist must order (F65).
 import ../sem.{contains_call}
-import ../sem.{decl_of_ty}
+import ../sem.{decl_of_ty, decl_name_at}
 import ../sem.{branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
 import ../sem.{generic_bounds, effect_marker_of}
 import ../sem.{is_arg_node}
@@ -527,10 +527,9 @@ fn Checker mut @report_if_consume_type(kids []Node) -> () {
     }
 }
 
-/// An EFFECT declaration parses (2026-09-21) and is refused BY NAME, the same
-/// shape as consume above: novac types no effect-system form at all -- no
-/// `with`, no handler, no operation call -- so accepting the declaration
-/// would promise a body the compiler cannot yet run. Reading it turns a WRONG
+/// An EFFECT declaration parses (2026-09-21) and is refused BY NAME: its
+/// runtime pieces (table, slot, dispatchers) are not emitted by novac -- the
+/// shell carries std's (`effect_without_runtime_msg`, E.9 step 2). Reading it turns a WRONG
 /// diagnostic into an HONEST one: before this the form fell into the alias
 /// tail (`type Name Y`), and `effect` was refused as "undeclared type name"
 /// -- a misspelling nobody made, about an import nobody was missing
@@ -541,7 +540,14 @@ fn Checker mut @report_if_consume_type(kids []Node) -> () {
 /// classify on the same marker, and one scan serves all three readers (P18).
 fn Checker mut @report_if_effect_type(decl Node) -> () {
     match effect_marker_of(decl) {
-        Some(marker) => @report_first_leaf_of([]Node.of(marker), EFFECT_TYPE_MSG)
+        Some(marker) => {
+            ro dk = branch_children(decl)
+            ro nm = match decl_name_at(dk) {
+                Some(i) => leaf_text(dk[i])
+                None => "?"
+            }
+            @report_first_leaf_of([]Node.of(marker), effect_without_runtime_msg(nm))
+        }
         None => {}
     }
 }

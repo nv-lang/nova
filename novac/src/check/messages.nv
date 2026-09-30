@@ -121,9 +121,12 @@ const RO_FOR_CONSTEXPR_MSG = "a module-level `ro` whose initializer is known at 
 const CONST_NOT_CONSTEXPR_MSG = "a `const` initializer is known at compile time -- literals, operators over constants, record literals and sum constructors of them (D184, E_CONST_NOT_CONSTEXPR); a value that needs the runtime -- a call, an allocation such as an array literal -- is written `ro`"
 
 /// Module values whose initializers read each other in a CYCLE (274.5 S6):
-/// D200 initializes them once, in dependency order (`02-types.md:9319`), and
-/// a cycle has no such order. A language error; the spec names no code.
-const MODULE_VALUE_CYCLE_MSG = "module values whose initializers read each other in a cycle have no order that computes them (D200: once, before main, in dependency order) -- break the cycle"
+/// the D184 amendment of 2026-09-30 (`03-syntax.md:8137`) initializes them in
+/// dependency order, and a cycle has none -- E_MODULE_INIT_CYCLE, a language
+/// error, with the path in the text as the oracle prints it.
+fn module_init_cycle_msg(path str) -> str =>
+    "module-level `ro` initializers form a cycle: ${path} -- no initialization order computes them (D184 amendment 2026-09-30, E_MODULE_INIT_CYCLE)"
+
 const INTERP_CONST_MSG = "outside the subset: a constant whose initializer interpolates is not compiled yet (E2-b3)"
 
 
@@ -449,12 +452,18 @@ const FOR_HEAD_MSG = "outside the subset: the head of a `for` is a range `lo..hi
 /// missing guarantee nobody does.
 const CONSUME_TYPE_MSG = "outside the subset: `type X consume` declares a must-consume type, and novac checks no consumption obligation anywhere -- accepting the declaration would promise a guarantee it does not give; not compiled yet (274.7 B13)"
 
-/// See @report_if_effect_type: an honest refusal to replace the wrong one
-/// ("undeclared type name `effect`") that stood here until 2026-09-21. No
-/// generic parameter on the declaration -- D456, in force -- is a SEPARATE
-/// question this message does not reach: the whole form is refused before
-/// generics are asked about at all.
-const EFFECT_TYPE_MSG = "outside the subset: `type X effect { ... }` declares an effect, and novac types no effect-system form yet -- no `with`, no handler, no operation call -- so accepting the declaration would promise a body the compiler cannot run; not compiled yet (E2-b, effects)"
+/// ONE CAUSE, TWO POSITIONS (E.9 step 2, 2026-09-30): an effect's runtime
+/// pieces -- its operation table, its thread slot, its dispatchers -- are the
+/// SHELL's, and the shell carries them only for the std effects its probe
+/// uses. An effect a file DECLARES (`type X effect { ... }`, refused at the
+/// declaration by @report_if_effect_type) and an operation of an effect the
+/// shell does not carry (refused at the call, check/methods.nv) are the same
+/// gap, so they say the same sentence. Until this wave the declaration's text
+/// claimed novac typed no `with`, handler or operation call -- false since E4
+/// and E.9. No generic parameter on the declaration -- D456 -- is a separate
+/// question this message does not reach.
+fn effect_without_runtime_msg(name str) -> str =>
+    "outside the subset: effect `${name}` has no runtime pieces in the shell novac links into -- its operation table, thread slot and dispatchers are the shell's, carried for the std effects its probe uses; an effect a file declares is not emitted yet (E5, effect declarations)"
 
 /// Type parameters in the wrong PLACE -- a different mistake from type
 /// parameters not being compiled yet, and the message must not confuse them.
@@ -513,7 +522,13 @@ const HANDLER_RET_UNRESOLVED_MSG = "outside the subset: a handler-literal op's r
 /// The refusal is said by the walk gate, `@walk`'s HandlerLit arm (check/check.nv).
 /// The spec calls those positions legal (`04-effects.md`, `Effect[E]` as a value); the
 /// plan defers them (274.11 E.5), so the answer there is this name, not silence.
-const HANDLER_LIT_POSITION_MSG = "outside the subset: a handler literal is compiled only as a `with` binding's handler or a local binding's initializer (`ro h = effect E { ... }`) -- a handler value in any other position is not compiled yet (E4, boundary E.5 of plan 274.11)"
+/// ONE BOUNDARY, TWO DOORS (E.9 step 3): a literal HELD by a local binding is a
+/// handler value too, and one capturing a `mut` binding is refused by this same
+/// name (`@type_bind`, check/binds.nv). A `mut` capture is taken by ADDRESS, the
+/// `with` body ends inside the frame that address points into, a held value does
+/// not have to (`ro h = ...` and then `h` returned); the box that keeps it alive
+/// (D474 section 0, the closure scheme) is the handler-value wave's.
+const HANDLER_LIT_POSITION_MSG = "outside the subset: a handler literal is compiled only as a `with` binding's handler or a local binding's initializer (`ro h = effect E { ... }`) that captures no `mut` binding -- a handler value in any other position, and a held one whose `mut` capture would be an address into its frame, is not compiled yet (E4, boundary E.5 of plan 274.11)"
 
 /// `break` or `continue` with no loop around it (274.7 wave B10): a language error --
 /// the jump has no target. A handler op's body counts as its own function.

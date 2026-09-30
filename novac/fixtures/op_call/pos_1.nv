@@ -1,0 +1,15 @@
+module op_call.pos_1
+
+// An operation call `Effect.op()` (E.9 step 2): the shell's dispatcher runs the
+// installed handler, or the effect's `#default_handler` when none is -- the
+// handler is never looked up at the call site. Called with no `with` in sight
+// and inside one. Behaviour byte-for-byte with the oracle (novac-e1-smoke).
+
+import std.os.{real_os}
+
+fn main() {
+    println(Os.arg_count())
+    with Os = real_os() {
+        println(Os.arg_count())
+    }
+}

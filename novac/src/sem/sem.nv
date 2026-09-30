@@ -56,7 +56,7 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, NodeId, raw_node, is_node}
 import ../diag.{ice}
 import ../names.{NameTable, NamespaceId, DeclId, raw_decl, no_decl, is_decl}
-import ../builtins.{TypeKind, COERCE_ATTR, UNIT_TYPE_NAME}
+import ../builtins.{TypeKind, COERCE_ATTR, UNIT_TYPE_NAME, HANDLER_CTOR}
 import ../types.{Interner, TyId, no_ty, is_ty}
 
 /// WHICH ROWS a type declaration owns, and IN WHICH SPACE.
@@ -314,9 +314,9 @@ fn seed_effect_ctor(mut types []TypeDef, mut defs DefTable, mut tys Interner) ->
     // the same named simplification the TkEffect terms ride on.
     ro ty_id = tys.record(id)
     types.push(TypeDef { kind: TypeKind.TkRecord, shape: RecordShape.Record,
-                         tparam_cnt: 1, ty_id, name: "Effect", gate_off: 0, gate_cnt: 0,
+                         tparam_cnt: 1, ty_id, name: HANDLER_CTOR, gate_off: 0, gate_cnt: 0,
                          rows: TypeRows.NoRows })
-    defs.add("Effect", DefTarget.DefType(id))
+    defs.add(HANDLER_CTOR, DefTarget.DefType(id))
     id
 }
 

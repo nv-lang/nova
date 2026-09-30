@@ -66,18 +66,10 @@ fn Emitter mut @emit_output_end() -> () {
 
 /// Records a store into a place the tree names and prints it at once.
 
-/// Prints the statement recorded last, by its IR kind -- the one dispatch on
-/// statement kind the printer has.
-fn Emitter mut @emit_last_stmt() -> () {
-    match @lo.ir.last_stmt() {
-        Assign(a) => @emit_assign(a)
-        Eval(rv) => @emit_eval(rv)
-        Store(st) => @emit_store(st)
-        Decl(l) => @emit_decl(l)
-        Output(o) => @emit_output(o)
-        OutputEnd => @emit_output_end()
-    }
-}
+/// Prints the statement recorded last -- through THE statement printer
+/// (`@print_stmt`, emit_flow.nv), not a copy of its dispatch: the copy grew
+/// four arms with the E.9 `with` statements and the second-door guard named it.
+fn Emitter mut @emit_last_stmt() -> () => @print_stmt(@lo.ir.last_stmt())
 
 /// The declaration of a result temporary: `T name = (T){0};` at the body's indent. The
 /// zero is not decoration -- see `DeclAt.Zeroed` for the three forms that need it and why
@@ -350,6 +342,11 @@ fn Emitter mut @build_value(e Node, ty TyId) -> Option[str] {
     }
     if k == NodeKind.ArrayLit {
         return Some(@emit_array_lit(e, ty))
+    }
+    if k == NodeKind.HandlerLit {
+        // A handler value (E.9 step 3): its table and context are built
+        // here, before the line that reads the table pointer.
+        return Some(@emit_handler_lit(e))
     }
     @hoist_array_lits(e)
     None

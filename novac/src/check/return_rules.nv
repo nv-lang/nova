@@ -18,7 +18,7 @@
 module novac.check
 
 import ../tree.{Node, NodeKind}
-import ../types.{TyId, no_ty, is_ty, Interner, same_ty}
+import ../types.{TyId, no_ty, is_ty, Interner}
 import ../sem.{FnRow, raw_row, branch_children, ty_source_name, prim_row_of, LitArg}
 import ../sem.{Ctx, expr_leaf_name, is_value_record, ret_is_unit}
 import ../builtins.{TypeKind, RECV_BINDING}
@@ -102,7 +102,7 @@ fn Checker mut @type_tail_value(e Node) -> () {
     // -- or in an arm of a tail match/if -- is an instance of the declared
     // return; a call CLEARS it around its arguments (option_rules), so
     // `f(None)` in the tail is not typed as the fn's own return.
-    @value_expect = same_ty(@ret_expect)
+    @value_expect = @ret_expect
     @type_expr(e)
     @value_expect = no_ty()
 }
@@ -113,14 +113,14 @@ fn Checker mut @type_tail_value(e Node) -> () {
 /// Asked only when typing refused nothing (the caller's mark), for #902's reason.
 fn Checker @tail_type_of(e Node) -> TyId {
     ro rec = @chan.type_if_known(e.id_of())
-    if is_ty(rec) { return same_ty(rec) }
+    if is_ty(rec) { return rec }
     // An ANONYMOUS constructor (`=> { n: 1 }` for `-> Bytes`) has no type of its
     // own: the language types it by its expectation, and the lattice, asked
     // about it, ices ("anonymous constructor without a spread"). Its type IS the
     // declared return; the field door judges its fields against that record.
     if e.kind_of() == NodeKind.RecordCtor {
         ro ck = branch_children(e)
-        if ck.len() > 0 && ck[0].kind_of() != NodeKind.Name { return same_ty(@ret_expect) }
+        if ck.len() > 0 && ck[0].kind_of() != NodeKind.Name { return @ret_expect }
         // A NAMED constructor (`Bytes { n: 1 }`) has its own type: the lattice answers.
     } else {
         // Any other expression: the lattice answers.
