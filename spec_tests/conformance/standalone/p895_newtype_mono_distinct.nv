@@ -1,0 +1,34 @@
+// EXPECT_STDOUT row=101 int=2 row2=102
+//
+// Registry 221.1 #895, the heavier consequence named in the row: the mono
+// instance was keyed by the C representation, so `mk[P895Row]` and `mk[int]`
+// (`type P895Row int`) were ONE instance and could only ever call one of the
+// two statics. Owner's direction (2026-09-18): the Nova type goes into the
+// instance NAME, the C parameter stays `int`.
+//
+// Both statics exist here and add different offsets: one shared instance
+// would print the same offset twice. `row2` calls the newtype instance a
+// second time, after the `int` one, so an instance keyed first-come would
+// also show.
+module standalone.p895_newtype_mono_distinct
+
+type P895Ordinal protocol {
+    @ordinal() -> int
+    .from_ordinal(i int) -> Self
+}
+
+type P895Row int
+fn P895Row @ordinal() -> int => @ as int
+fn P895Row.from_ordinal(i int) -> P895Row => (i + 100) as P895Row
+
+fn int @ordinal() -> int => @
+fn int.from_ordinal(i int) -> int => i + 1
+
+fn mk[I P895Ordinal](n int) -> I => I.from_ordinal(n)
+
+fn main() Io -> () {
+    ro a = mk[P895Row](1)
+    ro b = mk[int](1)
+    ro c = mk[P895Row](2)
+    print("row=${a.ordinal()} int=${b.ordinal()} row2=${c.ordinal()}")
+}
