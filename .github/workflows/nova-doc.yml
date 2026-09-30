@@ -22,7 +22,7 @@ on:
       - "nova-cli/src/main.rs"
       - ".github/workflows/nova-doc.yml"
   push:
-    branches: [main]
+    branches: [main, integrate]
 
 jobs:
   doc-check:
