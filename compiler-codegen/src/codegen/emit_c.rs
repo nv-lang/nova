@@ -16,7 +16,7 @@ mod variant_ctor_channel;
 mod variant_ctor_disarm; // #666, see its doc
 mod sum_placement; // Plan 172.14 F.2 A4, see its doc
 mod self_value; // #1395: `Self` by position, see its doc
-mod opt_eq_split; // #1405: `nova_opt_eq` body late, see its doc
+mod opt_eq_split; mod method_key; // #1405 `nova_opt_eq` body late; #1413 colliding receiver's method key
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
@@ -61588,7 +61588,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 "nova_f64"  => "f64".to_string(),
                                                 "nova_f32"  => "f32".to_string(),
                                                 "nova_byte" => "u8".to_string(),
-                                                other       => other.to_string(),
+                                                other       => self.method_key_type_name(other), // #1413
                                             };
                                             // Plan 138.4 Ф.3 (G-B): receiver mutability at
                                             // the call-site for the recv-mut return-type tiebreak.

@@ -1,0 +1,29 @@
+// #1413 carrier, TREE module -- see `../p1413_method_local_type.nv`. `P1413Node`
+// is declared here AND, privately, in `p1413_types` (a D381 collision), so its C
+// base is module-qualified; `@kind_of` here answers `P1413Nk`.
+module p1413_method_local_type.p1413_tree
+
+export type P1413Nk enum
+    | NA
+    | NB
+    | NL
+
+export fn p1413_all_nk() -> []P1413Nk => [P1413Nk.NA]
+
+export type P1413Node enum
+    | Leaf(P1413Nk)
+    | Branch(P1413Nk, []P1413Node)
+
+export fn P1413Node @kind_of() -> P1413Nk {
+    match @ {
+        Leaf(k) => k
+        Branch(k, _) => k
+    }
+}
+
+export fn p1413_decls(n P1413Node) -> []P1413Node {
+    match n {
+        Leaf(_) => [n]
+        Branch(_, kids) => kids
+    }
+}
