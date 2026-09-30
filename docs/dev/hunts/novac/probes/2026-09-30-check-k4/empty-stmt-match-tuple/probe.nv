@@ -1,0 +1,9 @@
+// An empty match in STATEMENT position on a tuple: the value door refuses an
+// empty match by its own rule, the statement door reaches the coverage rule,
+// which returns early on a non-sum, non-scalar scrutinee.
+fn main() Io -> () {
+    ro t = (1, 2)
+    match t {
+    }
+    println("after")
+}

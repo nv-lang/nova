@@ -1,0 +1,11 @@
+// `true | false` on a bool: the coverage rule has a bool-disjunction branch
+// reading both as literals; the disjunction binder reads them as names.
+fn pick(b bool) -> int {
+    match b {
+        true | false => 1
+    }
+}
+
+fn main() {
+    println(pick(false))
+}

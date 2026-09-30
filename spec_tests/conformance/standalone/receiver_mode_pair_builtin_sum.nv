@@ -24,12 +24,14 @@ type Res consume {
     id int
 }
 
+// nova:allow W_CONSUME_NAKED_NAME -- #1355: prelude consume-conversion naming (pair of forms) is undecided; remove with the decision
 fn Res consume @close() -> int => @id
 
 // -- a zero-argument pair on Option and on Result -----------------------------
 
 fn Option[T] @mm() -> int => 1
 
+// nova:allow W_CONSUME_NAKED_NAME -- #1355: prelude consume-conversion naming (pair of forms) is undecided; remove with the decision
 fn Option[T consume] consume @mm() -> int => match consume @ {
     Some(consume v) => 2
     None => 0
@@ -37,6 +39,7 @@ fn Option[T consume] consume @mm() -> int => match consume @ {
 
 fn Result[T, E] @mm() -> int => 1
 
+// nova:allow W_CONSUME_NAKED_NAME -- #1355: prelude consume-conversion naming (pair of forms) is undecided; remove with the decision
 fn Result[T consume, E consume] consume @mm() -> int => match consume @ {
     Ok(consume v) => 2
     Err(consume e) => 3
@@ -52,6 +55,7 @@ fn Option[T] @mapy[U](mut log []str, map_fn fn(T) -> U) -> Option[U] {
     }
 }
 
+// nova:allow W_CONSUME_NAKED_NAME -- #1355: prelude consume-conversion naming (pair of forms) is undecided; remove with the decision
 fn Option[T consume] consume @mapy[U consume](mut log []str, map_fn fn(T) -> U) -> Option[U] {
     log.push("move")
     match consume @ {

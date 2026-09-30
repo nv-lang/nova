@@ -1,0 +1,14 @@
+// Probe 1: `ro b []u8 = <str-valued CALL>` -- `nova check` passes, `nova build` fails in C
+// ("initializing 'Nova_Vec____nova_byte *' with an expression of incompatible type 'nova_str'").
+// Same for a FIELD read (`ro b []u8 = rec.name`) and for `mut b []u8 = nm()`.
+// Works: literal, plain identifier, interpolation, and any expression as a CALL ARGUMENT.
+// D55/D429 R6: a str expression of any form is accepted in a `let`-annotation position.
+module probe1
+
+fn nm() -> str => "abc"
+
+fn main() Io -> () {
+    ro b []u8 = nm()
+    assert(b.len() == 3)
+    print("ok")
+}

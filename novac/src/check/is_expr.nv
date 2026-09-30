@@ -1,0 +1,81 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Kotlin's `is` with smart casts (a type test that narrows the tested
+// name inside the branch that proved it); rustc's `matches!` for the sum half
+// (a tag test with no binding). D54 is the norm, not a donor's habit.
+// Role: typing of `expr is Type` (E.9 step 4b, plan 274.11; D54,
+//   spec/decisions/03-syntax.md:3564): a value of type `any` against a type
+//   with a fixed runtime id, or a sum against one of ITS variants; anything
+//   else is E_IS_NON_ANY (:4218). The value is a `bool`. The narrowing of
+//   the tested name in an `if`'s then-branch is `sem.narrowing_of`, read by
+//   typing and lowering alike.
+// Used by: exprs.nv (`@type_expr`'s IsTest arm).
+// Guarded by: nova test novac/src/check/check_test.nv (the `is` tests) and
+//   check-novac-differential.sh over novac/fixtures/any_is.
+
+module novac.check
+
+import ../tree.{Node}
+import ../builtins.{TypeKind}
+import ../sem.{branch_children, variant_in_sum, is_any_ty, any_tid_c, type_ref_last_ident}
+import ../sem.{narrowing_of, ParamMode, is_target_of}
+import ../types.{TyId, is_ty}
+
+/// `x is T`: the operand typed, the right side judged against it, `bool`
+/// recorded. The TARGET type is `sem.is_target_of`'s answer -- the door the
+/// narrowing and the emitter ask too.
+fn Checker mut @type_is_test(e Node) -> () {
+    ro kids = branch_children(e)
+    assert(kids.len() >= 3, "check: an is-test without operand, keyword and type reached typing")
+    ro before = @out.len()
+    @type_expr(kids[0])
+    if @out.len() > before { return }
+    ro lt = type_of(kids[0], @ctx, @scope, @chan)
+    // RECORDED on the operand's node: a bound name's type otherwise lives in
+    // the scope alone, and the narrowing door reads the channel (sem/any_is.nv).
+    @record(kids[0], lt)
+    ro rhs = kids[2]
+    if is_any_ty(@ctx.tys, lt) {
+        ro target = is_target_of(e, @ctx)
+        if !is_ty(target) {
+            @reject_first_leaf_of([]Node.of(rhs), undeclared_type_msg(type_ref_last_ident(rhs)))
+            return
+        }
+        match any_tid_c(@ctx, target) {
+            Some(_) => {}
+            None => {
+                @report_first_leaf_of([]Node.of(rhs), IS_TARGET_MSG)
+                return
+            }
+        }
+        @record(e, @ctx.prims.bool_id)
+        return
+    }
+    if is_ty(lt) && @ctx.tys.kind_of(lt) == TypeKind.TkSum {
+        // The sum half: the right side names one of THIS sum's variants, by
+        // its last identifier (`Shape.Circle` or `Circle`).
+        match variant_in_sum(@ctx, lt, type_ref_last_ident(rhs)) {
+            Some(_) => {
+                @record(e, @ctx.prims.bool_id)
+            }
+            None => @reject_first_leaf_of([]Node.of(rhs), IS_NOT_VARIANT_MSG)
+        }
+        return
+    }
+    @reject_first_leaf_of(kids, IS_NON_ANY_MSG)
+}
+
+/// The then-branch of an `if` (or the body of a `while`): typed as a block,
+/// with the tested name narrowed first when the condition is `x is T` on an
+/// `any` (D54, 03-syntax.md:3935) -- a binding of the same name, released after
+/// the branch. The lowering asks the same door (`sem.narrowing_of`) and unboxes.
+fn Checker mut @type_then_branch(cond Node, block Node) -> () {
+    match narrowing_of(cond, @chan, @ctx) {
+        Some(nw) => {
+            ro nmark = @scope.mark()
+            @scope.bind(nw.name, nw.target, ParamMode.ModeRo)
+            @type_block(block)
+            @scope.release(nmark)
+        }
+        None => @type_block(block)
+    }
+}

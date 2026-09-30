@@ -1,0 +1,27 @@
+module any_is.pos_1
+
+// `err is str` on the `any` a child's failure arrives as (E.9 steps 4 and
+// 4b, plan 274.11; D54): a spawned child fails on a division by zero, its
+// scope hands the failure to the installed `Supervisor`, whose
+// `on_child_fail(idx, err)` narrows `err` to `str` in the then-branch and
+// stops the escalation -- the shape of the carrier, novac/src/main.nv:286.
+// Behaviour byte-for-byte with the oracle (novac-e1-smoke).
+
+fn main() {
+    ro base = 40
+    with Supervisor = effect Supervisor {
+        on_child_fail(idx, err) -> Decision {
+            if err is str {
+                println("caught: ", err)
+            }
+            Decision.Stop
+        }
+    } {
+        supervised {
+            spawn {
+                println(base / (base - 40))
+            }
+        }
+    }
+    println("after")
+}

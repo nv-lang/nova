@@ -133,10 +133,12 @@ fn Cursor mut @expr_bp_inner(min_bp int) -> Node {
     // A CAST binds looser than the postfix chain and tighter than every binary
     // operator: `s.len() as u8 + 1` is `((s.len() as u8) + 1)`. Its right side
     // is a TYPE, so it goes through the type door and not through @expr.
-    while @peek() == TokenKind.KwAs {
+    // `is` (D54) binds exactly as a cast does: the right side is a type.
+    while @peek() == TokenKind.KwAs || @peek() == TokenKind.KwIs {
+        ro kind = if @peek() == TokenKind.KwIs { NodeKind.IsTest } else { NodeKind.Cast }
         mut ck = []Node.of(left, @take())
         ck.append(@type_ref())
-        left = @node(NodeKind.Cast, ck)
+        left = @node(kind, ck)
     }
     while is_binop(@peek()) {
         ro bp = binding_power(bin_op_of(@peek()))

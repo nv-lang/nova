@@ -1,0 +1,24 @@
+// Inside an op body, a HELD literal (`ro q = effect ...`) whose op reads a
+// capture of the OUTER literal (a copy, `ro base`) -- the held literal's
+// context is filled from the outer op's context.
+fn main() {
+    ro base = 40
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label str) -> () {
+            ro q = effect Random {
+                u64() -> u64 {
+                    println(label, " ", base)
+                    7
+                }
+            }
+            with Random = q {
+                println(Random.u64())
+            }
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {
+            println(label)
+        }
+    } {
+        ResourceTrace.on_resource_enter("a")
+    }
+}

@@ -1,0 +1,25 @@
+// A handler literal inside a METHOD whose op body reads and writes the
+// receiver's field through `@` -- the receiver is a binding of the building
+// function, so it is a capture too.
+type Ctr { n int }
+
+fn Ctr mut @run() -> () {
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label str) -> () {
+            @n = @n + 1
+            println(label, " ", @n)
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {
+            println(label)
+        }
+    } {
+        ResourceTrace.on_resource_enter("a")
+        ResourceTrace.on_resource_enter("b")
+    }
+}
+
+fn main() {
+    mut c = Ctr { n: 0 }
+    c.run()
+    println(c.n)
+}

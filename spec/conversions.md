@@ -382,9 +382,10 @@ ro d Row = Row(n)              // ok
 ro e Row = n as Row            // ok
 ```
 
-Sums are untouched: `SqlValue.I(x)` is still inserted for a variable -- there
-the compiler DERIVES the only matching variant instead of inventing the author's
-claim. For the old softness on your own newtype, declare it as a
+Sums are untouched: `SqlValue.I(x)` is still inserted for ANY expression the
+checker accepts -- a variable, a call, a field read, not only a literal (D55,
+clarified 2026-10-01) -- there the compiler DERIVES the only matching variant
+instead of inventing the author's claim. For the old softness on your own newtype, declare it as a
 [`#coerce`](decisions/02-types.md#d429) pair.
 
 **Operators on a newtype stay inside the newtype ([D52](decisions/02-types.md#d52) amend,
@@ -473,6 +474,10 @@ import std.runtime.write_buffer.{WriteBuffer}
 fn write_greeting(mut wb WriteBuffer, s str) -> () =>
     wb.write_bytes(s)   // s неявно .bytes() — не пишем это руками
 ```
+
+Any `str` expression passes this way — a literal, a variable, a call result
+(owner's decision 2026-10-01, D55 amendment): the pair is a zero-copy `ro []u8`
+view, so it does not apply where a mutable `mut []u8` is required.
 
 Two "lanes", both guaranteed zero-cost:
 - **view** — a non-`consume` method with a `ro` return (a borrow, no allocation);

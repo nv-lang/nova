@@ -1,0 +1,24 @@
+// Captures read in an `if` condition and a `while` condition inside an op body.
+fn main() {
+    mut seen = 0
+    ro limit = 3
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label str) -> () {
+            if seen > 0 {
+                println(label, " again")
+            } else {
+                println(label, " first")
+            }
+            while seen < limit {
+                seen += 1
+            }
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {
+            println(label)
+        }
+    } {
+        ResourceTrace.on_resource_enter("a")
+        ResourceTrace.on_resource_enter("b")
+    }
+    println(seen)
+}

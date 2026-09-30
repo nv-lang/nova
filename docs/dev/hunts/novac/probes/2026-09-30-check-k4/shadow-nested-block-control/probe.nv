@@ -1,0 +1,10 @@
+// Control for cap-ro-x-eq-x: `ro base = base + 1` in a NESTED block of an
+// ordinary function (not the same scope as the outer binding).
+fn main() {
+    ro base = 40
+    if base > 0 {
+        ro base = base + 1
+        println(base)
+    }
+    println(base)
+}
