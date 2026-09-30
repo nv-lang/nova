@@ -1,0 +1,18 @@
+module pc.m
+
+type Target enum
+    | ToRow(Row)
+    | Nothing
+
+type Row int
+
+fn row_int(t Target) -> int {
+    match t {
+        ToRow(r) => r as int
+        Nothing => -1
+    }
+}
+
+fn main() {
+    println("row=${row_int(Target.ToRow(7 as Row))}")
+}

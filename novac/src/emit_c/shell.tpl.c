@@ -2226,41 +2226,41 @@ __thread NovaVtable_Io* _nova_handler_Io = NULL;
 
 static NovaVtable_Io* nova_fn_3std2io7real_io(void);
 static inline NovaRes_nova_int_NovaValue_IoError* Nova_Io_read_in(Nova_Vec____nova_byte* buf) {
-    if (!_nova_handler_Io) { _nova_handler_Io = nova_fn_3std2io7real_io(); }
+    if (!_nova_handler_Io) { _nova_handler_Io = (NovaVtable_Io*)nova_gc_pin(nova_fn_3std2io7real_io()); }
     if (!_nova_handler_Io) { nv_panic(nova_str_from_cstr("unhandled effect `Io.read_in`: no active handler (missing `with Io = …` around this call)")); return (NovaRes_nova_int_NovaValue_IoError*){0}; } return _nova_handler_Io->read_in(_nova_handler_Io->ctx, buf);
 }
 
 static inline NovaRes_nova_int_NovaValue_IoError* Nova_Io_write_out(Nova_Vec____nova_byte* data) {
-    if (!_nova_handler_Io) { _nova_handler_Io = nova_fn_3std2io7real_io(); }
+    if (!_nova_handler_Io) { _nova_handler_Io = (NovaVtable_Io*)nova_gc_pin(nova_fn_3std2io7real_io()); }
     if (!_nova_handler_Io) { nv_panic(nova_str_from_cstr("unhandled effect `Io.write_out`: no active handler (missing `with Io = …` around this call)")); return (NovaRes_nova_int_NovaValue_IoError*){0}; } return _nova_handler_Io->write_out(_nova_handler_Io->ctx, data);
 }
 
 static inline NovaRes_nova_int_NovaValue_IoError* Nova_Io_write_err(Nova_Vec____nova_byte* data) {
-    if (!_nova_handler_Io) { _nova_handler_Io = nova_fn_3std2io7real_io(); }
+    if (!_nova_handler_Io) { _nova_handler_Io = (NovaVtable_Io*)nova_gc_pin(nova_fn_3std2io7real_io()); }
     if (!_nova_handler_Io) { nv_panic(nova_str_from_cstr("unhandled effect `Io.write_err`: no active handler (missing `with Io = …` around this call)")); return (NovaRes_nova_int_NovaValue_IoError*){0}; } return _nova_handler_Io->write_err(_nova_handler_Io->ctx, data);
 }
 
 static NovaVtable_Time* nova_fn_4time8duration9real_time(void);
 static inline nova_unit Nova_Time_sleep(NovaValue_Duration d) {
-    if (!_nova_handler_Time) { _nova_handler_Time = nova_fn_4time8duration9real_time(); }
+    if (!_nova_handler_Time) { _nova_handler_Time = (NovaVtable_Time*)nova_gc_pin(nova_fn_4time8duration9real_time()); }
     if (_nova_handler_Time->sleep) { return _nova_handler_Time->sleep(_nova_handler_Time->ctx, d.nanos); }
     return time_sleep_ms((nova_int)((d.nanos + 999999) / 1000000));
 }
 
 static inline NovaValue_Timestamp Nova_Time_now(void) {
-    if (!_nova_handler_Time) { _nova_handler_Time = nova_fn_4time8duration9real_time(); }
+    if (!_nova_handler_Time) { _nova_handler_Time = (NovaVtable_Time*)nova_gc_pin(nova_fn_4time8duration9real_time()); }
     if (_nova_handler_Time->now) { int64_t _nv_w = _nova_handler_Time->now(_nova_handler_Time->ctx); return (NovaValue_Timestamp){ .nanos = _nv_w }; }
     return (NovaValue_Timestamp){ .nanos = time_wall_unix_ms() * (int64_t)1000000 };
 }
 
 static inline NovaValue_Monotonic Nova_Time_now_monotonic(void) {
-    if (!_nova_handler_Time) { _nova_handler_Time = nova_fn_4time8duration9real_time(); }
+    if (!_nova_handler_Time) { _nova_handler_Time = (NovaVtable_Time*)nova_gc_pin(nova_fn_4time8duration9real_time()); }
     if (_nova_handler_Time->now_monotonic) { int64_t _nv_w = _nova_handler_Time->now_monotonic(_nova_handler_Time->ctx); return (NovaValue_Monotonic){ .nanos = _nv_w }; }
     return (NovaValue_Monotonic){ .nanos = time_monotonic_ns() };
 }
 
 static inline nova_int Nova_Time_local_offset_sec(void) {
-    if (!_nova_handler_Time) { _nova_handler_Time = nova_fn_4time8duration9real_time(); }
+    if (!_nova_handler_Time) { _nova_handler_Time = (NovaVtable_Time*)nova_gc_pin(nova_fn_4time8duration9real_time()); }
     if (_nova_handler_Time->local_offset_sec) { return _nova_handler_Time->local_offset_sec(_nova_handler_Time->ctx); }
     return time_local_offset_sec();
 }
@@ -2303,132 +2303,132 @@ __thread NovaVtable_Fs* _nova_handler_Fs = NULL;
 
 static NovaVtable_Fs* nova_fn_3std2fs7real_fs(void);
 static inline nova_int Nova_Fs_open(Nova_Vec____nova_byte* path, nova_int flags, nova_int mode) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.open`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->open(_nova_handler_Fs->ctx, path, flags, mode);
 }
 
 static inline nova_int Nova_Fs_close(nova_int fd) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.close`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->close(_nova_handler_Fs->ctx, fd);
 }
 
 static inline nova_int Nova_Fs_read(nova_int fd, Nova_Vec____nova_byte* buf) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.read`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->read(_nova_handler_Fs->ctx, fd, buf);
 }
 
 static inline nova_int Nova_Fs_write(nova_int fd, Nova_Vec____nova_byte* data) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.write`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->write(_nova_handler_Fs->ctx, fd, data);
 }
 
 static inline nova_int Nova_Fs_read_at(nova_int fd, Nova_Vec____nova_byte* buf, nova_int offset) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.read_at`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->read_at(_nova_handler_Fs->ctx, fd, buf, offset);
 }
 
 static inline nova_int Nova_Fs_write_at(nova_int fd, Nova_Vec____nova_byte* data, nova_int offset) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.write_at`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->write_at(_nova_handler_Fs->ctx, fd, data, offset);
 }
 
 static inline int64_t Nova_Fs_seek(nova_int fd, int64_t offset, nova_int whence) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.seek`: no active handler (missing `with Fs = …` around this call)")); return (int64_t){0}; } return _nova_handler_Fs->seek(_nova_handler_Fs->ctx, fd, offset, whence);
 }
 
 static inline nova_int Nova_Fs_sync_all(nova_int fd) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.sync_all`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->sync_all(_nova_handler_Fs->ctx, fd);
 }
 
 static inline nova_int Nova_Fs_sync_data(nova_int fd) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.sync_data`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->sync_data(_nova_handler_Fs->ctx, fd);
 }
 
 static inline nova_int Nova_Fs_stat(Nova_Vec____nova_byte* path, Nova_Vec____nova_byte* img) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.stat`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->stat(_nova_handler_Fs->ctx, path, img);
 }
 
 static inline nova_int Nova_Fs_lstat(Nova_Vec____nova_byte* path, Nova_Vec____nova_byte* img) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.lstat`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->lstat(_nova_handler_Fs->ctx, path, img);
 }
 
 static inline nova_int Nova_Fs_fstat(nova_int fd, Nova_Vec____nova_byte* img) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.fstat`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->fstat(_nova_handler_Fs->ctx, fd, img);
 }
 
 static inline nova_int Nova_Fs_mkdir(Nova_Vec____nova_byte* path, nova_int mode) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.mkdir`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->mkdir(_nova_handler_Fs->ctx, path, mode);
 }
 
 static inline nova_int Nova_Fs_remove_file(Nova_Vec____nova_byte* path) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.remove_file`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->remove_file(_nova_handler_Fs->ctx, path);
 }
 
 static inline nova_int Nova_Fs_remove_dir(Nova_Vec____nova_byte* path) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.remove_dir`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->remove_dir(_nova_handler_Fs->ctx, path);
 }
 
 static inline nova_int Nova_Fs_rename(Nova_Vec____nova_byte* src, Nova_Vec____nova_byte* dst) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.rename`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->rename(_nova_handler_Fs->ctx, src, dst);
 }
 
 static inline nova_int Nova_Fs_symlink(Nova_Vec____nova_byte* target, Nova_Vec____nova_byte* link) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.symlink`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->symlink(_nova_handler_Fs->ctx, target, link);
 }
 
 static inline nova_int Nova_Fs_chmod(Nova_Vec____nova_byte* path, nova_int mode) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.chmod`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->chmod(_nova_handler_Fs->ctx, path, mode);
 }
 
 static inline nova_int Nova_Fs_copy_file(Nova_Vec____nova_byte* src, Nova_Vec____nova_byte* dst) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.copy_file`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->copy_file(_nova_handler_Fs->ctx, src, dst);
 }
 
 static inline nova_int Nova_Fs_fsync_dir(Nova_Vec____nova_byte* path) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.fsync_dir`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->fsync_dir(_nova_handler_Fs->ctx, path);
 }
 
 static inline nova_int Nova_Fs_scandir_open(Nova_Vec____nova_byte* path) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.scandir_open`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->scandir_open(_nova_handler_Fs->ctx, path);
 }
 
 static inline nova_int Nova_Fs_scandir_next(nova_int h) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.scandir_next`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->scandir_next(_nova_handler_Fs->ctx, h);
 }
 
 static inline nova_str Nova_Fs_scandir_name(nova_int h) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.scandir_name`: no active handler (missing `with Fs = …` around this call)")); return (nova_str){0}; } return _nova_handler_Fs->scandir_name(_nova_handler_Fs->ctx, h);
 }
 
 static inline nova_int Nova_Fs_scandir_kind(nova_int h) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.scandir_kind`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->scandir_kind(_nova_handler_Fs->ctx, h);
 }
 
 static inline nova_unit Nova_Fs_scandir_close(nova_int h) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.scandir_close`: no active handler (missing `with Fs = …` around this call)")); return (nova_unit){0}; } return _nova_handler_Fs->scandir_close(_nova_handler_Fs->ctx, h);
 }
 
 static inline _NovaTuple_2_8_nova_int_8_nova_str Nova_Fs_realpath(Nova_Vec____nova_byte* path) {
-    if (!_nova_handler_Fs) { _nova_handler_Fs = nova_fn_3std2fs7real_fs(); }
+    if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
     if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.realpath`: no active handler (missing `with Fs = …` around this call)")); return (_NovaTuple_2_8_nova_int_8_nova_str){0}; } return _nova_handler_Fs->realpath(_nova_handler_Fs->ctx, path);
 }
 
@@ -2461,87 +2461,87 @@ __thread NovaVtable_Os* _nova_handler_Os = NULL;
 
 static NovaVtable_Os* nova_fn_3std2os7real_os(void);
 static inline nova_int Nova_Os_arg_count(void) {
-    if (!_nova_handler_Os) { _nova_handler_Os = nova_fn_3std2os7real_os(); }
+    if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
     if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.arg_count`: no active handler (missing `with Os = …` around this call)")); return (nova_int){0}; } return _nova_handler_Os->arg_count(_nova_handler_Os->ctx);
 }
 
 static inline nova_str Nova_Os_arg_at(nova_int i) {
-    if (!_nova_handler_Os) { _nova_handler_Os = nova_fn_3std2os7real_os(); }
+    if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
     if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.arg_at`: no active handler (missing `with Os = …` around this call)")); return (nova_str){0}; } return _nova_handler_Os->arg_at(_nova_handler_Os->ctx, i);
 }
 
 static inline NovaOpt_nova_str Nova_Os_env_get(Nova_Vec____nova_byte* key) {
-    if (!_nova_handler_Os) { _nova_handler_Os = nova_fn_3std2os7real_os(); }
+    if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
     if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.env_get`: no active handler (missing `with Os = …` around this call)")); return (NovaOpt_nova_str){0}; } return _nova_handler_Os->env_get(_nova_handler_Os->ctx, key);
 }
 
 static inline nova_bool Nova_Os_env_has(Nova_Vec____nova_byte* key) {
-    if (!_nova_handler_Os) { _nova_handler_Os = nova_fn_3std2os7real_os(); }
+    if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
     if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.env_has`: no active handler (missing `with Os = …` around this call)")); return (nova_bool){0}; } return _nova_handler_Os->env_has(_nova_handler_Os->ctx, key);
 }
 
 static inline nova_int Nova_Os_env_set(Nova_Vec____nova_byte* key, Nova_Vec____nova_byte* val) {
-    if (!_nova_handler_Os) { _nova_handler_Os = nova_fn_3std2os7real_os(); }
+    if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
     if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.env_set`: no active handler (missing `with Os = …` around this call)")); return (nova_int){0}; } return _nova_handler_Os->env_set(_nova_handler_Os->ctx, key, val);
 }
 
 static inline nova_int Nova_Os_env_remove(Nova_Vec____nova_byte* key) {
-    if (!_nova_handler_Os) { _nova_handler_Os = nova_fn_3std2os7real_os(); }
+    if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
     if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.env_remove`: no active handler (missing `with Os = …` around this call)")); return (nova_int){0}; } return _nova_handler_Os->env_remove(_nova_handler_Os->ctx, key);
 }
 
 static inline nova_int Nova_Os_env_len(void) {
-    if (!_nova_handler_Os) { _nova_handler_Os = nova_fn_3std2os7real_os(); }
+    if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
     if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.env_len`: no active handler (missing `with Os = …` around this call)")); return (nova_int){0}; } return _nova_handler_Os->env_len(_nova_handler_Os->ctx);
 }
 
 static inline nova_str Nova_Os_env_key_at(nova_int i) {
-    if (!_nova_handler_Os) { _nova_handler_Os = nova_fn_3std2os7real_os(); }
+    if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
     if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.env_key_at`: no active handler (missing `with Os = …` around this call)")); return (nova_str){0}; } return _nova_handler_Os->env_key_at(_nova_handler_Os->ctx, i);
 }
 
 static inline nova_str Nova_Os_env_val_at(nova_int i) {
-    if (!_nova_handler_Os) { _nova_handler_Os = nova_fn_3std2os7real_os(); }
+    if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
     if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.env_val_at`: no active handler (missing `with Os = …` around this call)")); return (nova_str){0}; } return _nova_handler_Os->env_val_at(_nova_handler_Os->ctx, i);
 }
 
 static inline nova_str Nova_Os_cwd(void) {
-    if (!_nova_handler_Os) { _nova_handler_Os = nova_fn_3std2os7real_os(); }
+    if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
     if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.cwd`: no active handler (missing `with Os = …` around this call)")); return (nova_str){0}; } return _nova_handler_Os->cwd(_nova_handler_Os->ctx);
 }
 
 static inline nova_int Nova_Os_set_cwd(Nova_Vec____nova_byte* path) {
-    if (!_nova_handler_Os) { _nova_handler_Os = nova_fn_3std2os7real_os(); }
+    if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
     if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.set_cwd`: no active handler (missing `with Os = …` around this call)")); return (nova_int){0}; } return _nova_handler_Os->set_cwd(_nova_handler_Os->ctx, path);
 }
 
 static inline nova_str Nova_Os_temp_dir(void) {
-    if (!_nova_handler_Os) { _nova_handler_Os = nova_fn_3std2os7real_os(); }
+    if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
     if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.temp_dir`: no active handler (missing `with Os = …` around this call)")); return (nova_str){0}; } return _nova_handler_Os->temp_dir(_nova_handler_Os->ctx);
 }
 
 static inline nova_str Nova_Os_home_dir(void) {
-    if (!_nova_handler_Os) { _nova_handler_Os = nova_fn_3std2os7real_os(); }
+    if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
     if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.home_dir`: no active handler (missing `with Os = …` around this call)")); return (nova_str){0}; } return _nova_handler_Os->home_dir(_nova_handler_Os->ctx);
 }
 
 static inline nova_int Nova_Os_exit(nova_int code) {
-    if (!_nova_handler_Os) { _nova_handler_Os = nova_fn_3std2os7real_os(); }
+    if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
     if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.exit`: no active handler (missing `with Os = …` around this call)")); return (nova_int){0}; } return _nova_handler_Os->exit(_nova_handler_Os->ctx, code);
 }
 
 static inline nova_int Nova_Os_pid(void) {
-    if (!_nova_handler_Os) { _nova_handler_Os = nova_fn_3std2os7real_os(); }
+    if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
     if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.pid`: no active handler (missing `with Os = …` around this call)")); return (nova_int){0}; } return _nova_handler_Os->pid(_nova_handler_Os->ctx);
 }
 
 static inline nova_str Nova_Os_hostname(void) {
-    if (!_nova_handler_Os) { _nova_handler_Os = nova_fn_3std2os7real_os(); }
+    if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
     if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.hostname`: no active handler (missing `with Os = …` around this call)")); return (nova_str){0}; } return _nova_handler_Os->hostname(_nova_handler_Os->ctx);
 }
 
 static inline _NovaTuple_2_8_nova_int_8_nova_int Nova_Os_process_run(Nova_Vec____nova_byte* program, Nova_Vec____nova_byte* argv, nova_int argc, Nova_Vec____nova_byte* env, nova_int envc, nova_bool use_env, Nova_Vec____nova_byte* cwd) {
-    if (!_nova_handler_Os) { _nova_handler_Os = nova_fn_3std2os7real_os(); }
+    if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
     if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.process_run`: no active handler (missing `with Os = …` around this call)")); return (_NovaTuple_2_8_nova_int_8_nova_int){0}; } return _nova_handler_Os->process_run(_nova_handler_Os->ctx, program, argv, argc, env, envc, use_env, cwd);
 }
 
@@ -2559,12 +2559,12 @@ __thread NovaVtable_Random* _nova_handler_Random = NULL;
 
 static NovaVtable_Random* nova_fn_7prelude7effects11real_random(void);
 static inline uint64_t Nova_Random_u64(void) {
-    if (!_nova_handler_Random) { _nova_handler_Random = nova_fn_7prelude7effects11real_random(); }
+    if (!_nova_handler_Random) { _nova_handler_Random = (NovaVtable_Random*)nova_gc_pin(nova_fn_7prelude7effects11real_random()); }
     if (!_nova_handler_Random) { nv_panic(nova_str_from_cstr("unhandled effect `Random.u64`: no active handler (missing `with Random = …` around this call)")); return (uint64_t){0}; } return _nova_handler_Random->u64(_nova_handler_Random->ctx);
 }
 
 static inline Nova_Vec____nova_byte* Nova_Random_bytes(nova_int n) {
-    if (!_nova_handler_Random) { _nova_handler_Random = nova_fn_7prelude7effects11real_random(); }
+    if (!_nova_handler_Random) { _nova_handler_Random = (NovaVtable_Random*)nova_gc_pin(nova_fn_7prelude7effects11real_random()); }
     if (!_nova_handler_Random) { nv_panic(nova_str_from_cstr("unhandled effect `Random.bytes`: no active handler (missing `with Random = …` around this call)")); return (Nova_Vec____nova_byte*){0}; } return _nova_handler_Random->bytes(_nova_handler_Random->ctx, n);
 }
 

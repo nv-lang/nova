@@ -57,6 +57,13 @@ void  nova_free_uncollectable(void* ptr);
  * Under malloc/RC backends: no-op (nothing is collected). */
 void  nova_gc_add_root(void* lo, void* hi);
 
+/* 221.1 №1420: pin `p` and its whole object graph for the rest of the process;
+ * returns `p`. For an object whose only other reference is a thread-local slot
+ * -- Boehm does not scan TLS under GC_set_no_dls(1), so without the pin the
+ * first collection frees it. Never released: call it once per (thread, object),
+ * not per call. Under malloc: returns `p` unchanged. */
+void* nova_gc_pin(void* p);
+
 /* Instrumentation — available in all alloc implementations.
  * nova_gc_alloc_count : total allocations since nova_gc_init
  * nova_gc_free_count  : total frees/releases since nova_gc_init

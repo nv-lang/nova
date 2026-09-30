@@ -21,6 +21,7 @@ mod self_value; // #1395: `Self` by position, see its doc
 mod opt_eq_split; // #1405: `nova_opt_eq` body late, see its doc
 mod decl_module_symbol; // #1097: free-fn symbol by declaring module (D134), see its doc
 mod method_key; mod default_dispatch; // #1413 method key; #1414 value default method
+mod type_repr_early; // #761: newtype/alias representation before any consumer, see its doc
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
@@ -7789,6 +7790,7 @@ impl CEmitter {
             }
         }
 
+        self.preregister_type_repr_aliases(module); // #761, see type_repr_early.rs
         // Plan 138.1 Ф.1 (D239): `[]T` ≡ `Vec[T]`. Record/sum fields and fn
         // signatures that mention `[]T` now resolve (via type_ref_to_c) to
         // `Nova_Vec____<elem_c>*`. Those record struct DEFINITIONS are emitted
@@ -18770,15 +18772,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // lazily construct + install it the first time ANY op dispatches
             // with no `with X = …` in scope for this thread — mirrors a
             // closure's lazy-box-promotion pattern (compute once, memoized in
-            // the TLS slot itself; a real `with` still overrides normally,
-            // since `emit_with` always overwrites `_nova_handler_X` on entry
+            // the TLS slot, pinned by `nova_gc_pin` -- TLS is no GC root, №1420;
+            // a real `with` still overrides: `emit_with` overwrites it on entry
             // and restores the PRIOR value — NULL or the default — on exit).
             // No registered default → falls through to the null-check +
             // `nv_panic` guard below (№158) — controlled panic, not NULL-deref.
             if let Some(fn_name) = self.default_handler_fns.get(name).cloned() {
                 let ctor_c_name = self.free_fn_c_name(&fn_name);
                 self.line(&format!(
-                    "if (!_nova_handler_{name}) {{ _nova_handler_{name} = {ctor}(); }}",
+                    "if (!_nova_handler_{name}) {{ _nova_handler_{name} = (NovaVtable_{name}*)nova_gc_pin({ctor}()); }}",
                     name = name, ctor = ctor_c_name,
                 ));
             }
