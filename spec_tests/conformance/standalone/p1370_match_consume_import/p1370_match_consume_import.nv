@@ -1,0 +1,15 @@
+// Registry 221.1 #1370 carrier, IMPORT half: `match consume x` over a local in
+// an IMPORTED folder-module must consume `x` there too (D157,
+// spec/decisions/05-memory.md:994-996). The imported peers' items used to be
+// merged without their parser side-table `consume_match_scrutinees` (#1331),
+// so the checker read the construct in `p1370_mci_lib/` as a view-match and
+// reported a false `D133-not-consumed`. The folder half is
+// `p1370_match_consume_peer/`.
+module standalone.p1370_match_consume_import
+
+import ./p1370_mci_lib.{p1370_mci_close}
+
+test "match consume over a local, in an IMPORTED module, consumes it (#1370)" {
+    assert(p1370_mci_close(4) == 4)
+    assert(p1370_mci_close(0) == 0)
+}

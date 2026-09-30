@@ -75,7 +75,9 @@
 # ВЫХОД: 0 — все фикстуры идентичны (с точностью до известных исключений);
 # 1 — реальное расхождение хотя бы в одной фикстуре, ЛИБО `nova build`/
 # `nova test-build` упали сами по себе; 2 — ошибка использования/окружения
-# (не найден `nova`/python, файл фикстуры не существует и т.п.).
+# (не найден `nova`/python, файл фикстуры не существует и т.п.) ЛИБО «НЕ СУДИЛ»:
+# сборка прошла, но `.c` не найден однозначно или компаратор не прочёл вход —
+# сравнивать было нечего, и это НЕ вердикт о компиляторе.
 #
 # НЕ в gate.sh (решение владельца 2026-08-04): требует ДВУХ полных сборок
 # на каждую фикстуру — дорого для гейта, который гоняется многократно за
@@ -113,6 +115,19 @@ PY="$(find_py)" || {
     exit 2
 }
 
+# --- режим --compare A B: только сравнение, без сборки (самотест) ---
+# СТОИТ ДО ПОИСКА nova (правка 2026-09-23, реестр №1236): сравнению двух готовых
+# .c компилятор не нужен, а стоявший выше поиск отказывал кодом 2 в любом дереве
+# без собранного nova — свежий worktree, CI-клон. Самотест там краснел девятью
+# отказами, ни один из которых не касался сравнения.
+if [ "${1:-}" = "--compare" ]; then
+    if [ "$#" -ne 3 ]; then
+        err "--compare требует ровно два пути: --compare A.c B.c"
+        exit 2
+    fi
+    exec "$PY" "$COMPARATOR" "$2" "$3"
+fi
+
 # --- найти собранный nova ---
 find_nova_bin() {
     if [ -n "${NOVA_BIN:-}" ]; then
@@ -134,15 +149,6 @@ NOVA_BIN_RESOLVED="$(find_nova_bin)" || {
     err "собрать: (cd \"$REPO_ROOT/nova-cli\" && cargo build --release)"
     exit 2
 }
-
-# --- режим --compare A B: только сравнение, без сборки (самотест) ---
-if [ "${1:-}" = "--compare" ]; then
-    if [ "$#" -ne 3 ]; then
-        err "--compare требует ровно два пути: --compare A.c B.c"
-        exit 2
-    fi
-    exec "$PY" "$COMPARATOR" "$2" "$3"
-fi
 
 # --- полный прогон: разобрать --keep, собрать список фикстур ---
 keep=0
@@ -185,7 +191,17 @@ echo "check-build-test-identity: python = $PY"
 echo "check-build-test-identity: рабочий каталог = $WORK_ROOT"
 echo
 
-overall=0
+# ТРИ ИСХОДА ФИКСТУРЫ, И СЧИТАЮТСЯ ОНИ ПОРОЗНЬ (правка 2026-09-23, реестр
+# №1236). Был один `overall=1` на всё: не найденный `.c` уезжал в итог строкой
+# «FAIL — расхождение… чинить в компиляторе», то есть ОТКАЗ СУДИТЬ читался
+# вердиктом о компиляторе, которого никто не сравнивал. Шапка же обещала за
+# «ошибку окружения» код 2. Теперь:
+#   diverged — сравнили, C разный            -> код 1, чинить компилятор;
+#   crashed  — `nova build`/`test-build` упал -> код 1 (шапка: «упали сами»);
+#   unjudged — `.c` не найден однозначно      -> код 2, инструмент НЕ СУДИЛ.
+# Вердикт (1) старше отказа (2): если хоть одна фикстура разошлась или упала,
+# код 1, но неосуждённые названы в итоге отдельной строкой, а не растворены.
+diverged=0; crashed=0; unjudged=0
 declare -a summary_lines=()
 
 for fpath in "${resolved_fixtures[@]}"; do
@@ -223,7 +239,7 @@ for fpath in "${resolved_fixtures[@]}"; do
         echo "  FAIL: nova build упал (exit=$build_rc), хвост лога:"
         tail -n 15 "$build_log" | sed 's/^/    /'
         summary_lines+=("$name: FAIL (nova build упал)")
-        overall=1
+        crashed=$((crashed + 1))
         echo
         continue
     fi
@@ -231,44 +247,45 @@ for fpath in "${resolved_fixtures[@]}"; do
         echo "  FAIL: nova test-build упал (exit=$test_rc), хвост лога:"
         tail -n 15 "$test_log" | sed 's/^/    /'
         summary_lines+=("$name: FAIL (nova test-build упал)")
-        overall=1
+        crashed=$((crashed + 1))
         echo
         continue
     fi
 
     mapfile -t build_c_candidates < <(find "$tmproot" -iname "*.c" 2>/dev/null)
     if [ "${#build_c_candidates[@]}" -ne 1 ]; then
-        echo "  ERROR: ожидался ровно один .c от build-стороны под $tmproot, найдено ${#build_c_candidates[@]}:"
+        echo "  НЕ СУДИЛ: ожидался ровно один .c от build-стороны под $tmproot, найдено ${#build_c_candidates[@]}:"
         printf '    %s\n' "${build_c_candidates[@]}"
-        summary_lines+=("$name: ERROR (не найден build .c однозначно)")
-        overall=1
+        summary_lines+=("$name: НЕ СУДИЛ (build .c не найден однозначно — сравнивать нечего)")
+        unjudged=$((unjudged + 1))
         echo
         continue
     fi
     build_c="${build_c_candidates[0]}"
     mapfile -t test_c_candidates < <(find "$ttmproot" -iname "*.c" 2>/dev/null)
     if [ "${#test_c_candidates[@]}" -ne 1 ]; then
-        echo "  ERROR: ozhidalsya rovno odin .c ot test-storony pod $ttmproot"
+        echo "  НЕ СУДИЛ: ожидался ровно один .c от test-стороны под $ttmproot, найдено ${#test_c_candidates[@]}:"
         printf '    %s\n' "${test_c_candidates[@]}"
-        summary_lines+=("$name: ERROR (ne nayden test .c odnoznachno)")
-        overall=1
+        summary_lines+=("$name: НЕ СУДИЛ (test .c не найден однозначно — сравнивать нечего)")
+        unjudged=$((unjudged + 1))
         echo
         continue
     fi
     test_c="${test_c_candidates[0]}"
-    if [ ! -f "$test_c" ]; then
-        echo "  ERROR: не найден test-build .c: $test_c"
-        summary_lines+=("$name: ERROR (не найден test .c)")
-        overall=1
-        echo
-        continue
-    fi
 
-    if "$PY" "$COMPARATOR" "$build_c" "$test_c"; then
+    # Компаратор отвечает тремя кодами (check-build-test-identity.py, main):
+    # 0 — совпало, 1 — разошлось, 2 — не смог прочесть вход. Третий — тоже отказ
+    # судить, а не расхождение.
+    "$PY" "$COMPARATOR" "$build_c" "$test_c"
+    cmp_rc=$?
+    if [ "$cmp_rc" -eq 0 ]; then
         summary_lines+=("$name: PASS (build и test-build породили идентичный C)")
-    else
+    elif [ "$cmp_rc" -eq 1 ]; then
         summary_lines+=("$name: FAIL (build и test-build породили РАЗНЫЙ C — см. вывод выше)")
-        overall=1
+        diverged=$((diverged + 1))
+    else
+        summary_lines+=("$name: НЕ СУДИЛ (компаратор отказал кодом $cmp_rc — см. вывод выше)")
+        unjudged=$((unjudged + 1))
     fi
     echo
 done
@@ -277,9 +294,16 @@ echo "=== итог ==="
 for line in "${summary_lines[@]}"; do
     echo "  $line"
 done
-if [ "$overall" -eq 0 ]; then
-    echo "check-build-test-identity: PASS — build и test-build идентичны на всех ${#resolved_fixtures[@]} фикстур(ах)"
-else
-    echo "check-build-test-identity: FAIL — расхождение (см. выше); красный = build и test-build разошлись в конвейере, чинить в компиляторе (не здесь)"
+n_fix=${#resolved_fixtures[@]}
+if [ "$diverged" -gt 0 ] || [ "$crashed" -gt 0 ]; then
+    [ "$diverged" -gt 0 ] && echo "check-build-test-identity: FAIL — расхождение в $diverged из $n_fix фикстур(ах): build и test-build разошлись в конвейере, чинить в компиляторе (не здесь)"
+    [ "$crashed" -gt 0 ] && echo "check-build-test-identity: FAIL — сборка упала в $crashed из $n_fix фикстур(ах): это не расхождение C, а падение компилятора (лог выше)"
+    [ "$unjudged" -gt 0 ] && echo "check-build-test-identity: и НЕ СУДИЛ $unjudged из $n_fix фикстур(ах) — о них вердикта нет"
+    exit 1
 fi
-exit "$overall"
+if [ "$unjudged" -gt 0 ]; then
+    echo "check-build-test-identity: НЕ СУДИЛ — в $unjudged из $n_fix фикстур(ах) инструмент не нашёл, что сравнивать; это НЕ вердикт о компиляторе, а отказ инструмента (код 2)"
+    exit 2
+fi
+echo "check-build-test-identity: PASS — build и test-build идентичны на всех $n_fix фикстур(ах)"
+exit 0

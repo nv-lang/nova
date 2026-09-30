@@ -19,6 +19,16 @@
 # те же соображения, что у остальных стражей: самотест обязан быть лёгким
 # и переносимым). Настоящий прогон на реальном компиляторе — отдельно,
 # вручную, при приёмке (см. заголовок check-build-test-identity.sh).
+# Плюс (6): ОТКАЗ СУДИТЬ НЕ ВЫДАЁТСЯ ЗА ВЕРДИКТ — сборка прошла, а `.c` нет:
+#       код 2 и «НЕ СУДИЛ», а не «FAIL — расхождение».
+# Плюс (7): `--compare` работает в дереве БЕЗ собранного nova.
+#
+# ПРАВКА 2026-09-23..30 (реестр №1236). Заглушка клала test-`.c` рядом с
+# исходником, а инструмент с f922bf930 ищет его под `$TEMP`. Инструмент не
+# находил `.c`, выдавал это за расхождение (код 1), и случай 5а зеленел ПО
+# ЧУЖОЙ ПРИЧИНЕ: он спрашивал только код и слово FAIL. Теперь 5а требует ещё
+# имя разошедшейся функции и отсутствие «НЕ СУДИЛ», а отказ судить держит
+# свой случай 6.
 #
 # Запуск: scripts/guards/selftest/test-check-build-test-identity.sh
 # Выход: 0 — инструмент исправен, 1 — сломан (печатает, какое свойство упало).
@@ -156,8 +166,14 @@ case "\$cmd" in
         cp "$build_c_src" "\$out_dir/\$stem.c"
         ;;
     test-build)
-        stem_path="\${src%.nv}"
-        cp "$test_c_src" "\$stem_path.c"
+        # Туда же, где test-.c ищет инструмент: под TEMP, свежим каталогом.
+        # Пустой третий аргумент make_fake_nova — сборка «прошла», а .c нет.
+        if [ -n "$test_c_src" ]; then
+            out_dir="\${TEMP:-\${TMP:-/tmp}}/nova_tests-\$\$/test-fakehash"
+            mkdir -p "\$out_dir"
+            stem="\$(basename "\$src" .nv)"
+            cp "$test_c_src" "\$out_dir/\$stem.c"
+        fi
         ;;
     *)
         echo "fake_nova: unknown command \$cmd" >&2
@@ -186,6 +202,14 @@ grep -q "FAIL" "$tmp/orch1.log" || {
     echo "  ПРОВАЛ: итог оркестратора не содержит FAIL при реальном расхождении" >&2
     fails=$((fails + 1))
 }
+# Красный ПО СВОЕЙ причине: сравнение дошло до тел и назвало функцию, а не
+# сорвалось раньше на поиске .c.
+if grep -q "nova_fn_bar" "$tmp/orch1.log" && ! grep -q "НЕ СУДИЛ" "$tmp/orch1.log"; then
+    echo "  ok: красный 5а — по расхождению (названа nova_fn_bar), а не по отказу судить"
+else
+    echo "  ПРОВАЛ: 5а красный не по своей причине — нет nova_fn_bar или есть «НЕ СУДИЛ»" >&2
+    fails=$((fails + 1))
+fi
 
 # (5б) НЕ ловит на чистой паре: build-стаб и test-build-стаб кладут
 # ОДИНАКОВЫЙ .c — итог PASS, код 0.
@@ -196,6 +220,28 @@ grep -q "PASS" "$tmp/orch2.log" || {
     echo "  ПРОВАЛ: итог оркестратора не содержит PASS на чистой паре" >&2
     fails=$((fails + 1))
 }
+
+# (6) ОТКАЗ СУДИТЬ: test-build «прошёл», но .c не оставил. Сравнивать нечего —
+# код 2 и «НЕ СУДИЛ»; строка «расхождение» здесь была бы вердиктом о
+# компиляторе, которого никто не сравнивал.
+fake_noc="$(make_fake_nova "$tmp" "$tmp/a_base.c" "")"
+NOVA_BIN="$fake_noc" "$TOOL" "$tmp/fixture_pkg/probe.nv" >"$tmp/orch3.log" 2>&1
+check "нет test-.c — отказ судить, код 2 (поддельный nova)" 2 $?
+if grep -q "НЕ СУДИЛ" "$tmp/orch3.log" && ! grep -q "FAIL" "$tmp/orch3.log"; then
+    echo "  ok: отказ назван «НЕ СУДИЛ», слова FAIL нет"
+else
+    echo "  ПРОВАЛ: отказ судить не назван «НЕ СУДИЛ» или выдан за FAIL" >&2
+    fails=$((fails + 1))
+fi
+
+# (7) --compare БЕЗ СОБРАННОГО nova. Копия инструмента в пустом корне — там
+# нет nova-cli/target, и NOVA_BIN не задан: так выглядит свежий worktree и
+# CI-клон. Сравнению двух готовых .c компилятор не нужен.
+mkdir -p "$tmp/bare/scripts/tools"
+cp "$TOOL" "$REPO_ROOT/scripts/tools/check-build-test-identity.py" "$tmp/bare/scripts/tools/"
+env -u NOVA_BIN bash "$tmp/bare/scripts/tools/check-build-test-identity.sh" \
+    --compare "$tmp/a_base.c" "$tmp/a_divergent.c" >"$tmp/bare.log" 2>&1
+check "--compare работает без собранного nova (расхождение -> 1)" 1 $?
 
 if [ "$fails" -ne 0 ]; then
     echo "самотест ПРОВАЛЕН: $fails свойств(а) инструмента не выполняются" >&2

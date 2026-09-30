@@ -46,8 +46,8 @@ test "rvalue match Ok({ a: consume x, b }) — a consume, b — plain view" {
 }
 
 test "place-скрутини — именная Option-переменная, тот же record consume-паттерн" {
-    ro attempt = maybe_p216_record(2)
-    match attempt {
+    consume attempt = maybe_p216_record(2)
+    match consume attempt {
         Some({ a: consume x, b }) => {
             assert(b == 20)
             x.close()

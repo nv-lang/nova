@@ -855,6 +855,10 @@ pub fn resolve_imports_inline_ex(
     let mut visited: HashMap<Vec<String>, Vec<String>> = HashMap::new();
 
     let mut merged_items: Vec<Item> = Vec::new();
+    // Registry #1370: `consume_match_scrutinees` of every IMPORTED peer,
+    // collected by `resolve_one` beside its items (see the entry-folder
+    // merge below).
+    let mut merged_consume_scrutinees: HashSet<crate::diag::Span> = HashSet::new();
 
     // Plan 42 Sub-plan 42.4 шаг 2 (2026-05-14): per-peer attribution.
     // Entry's PeerFile регистрируется первым (file_id = MAIN_FILE_ID = 0).
@@ -1247,6 +1251,7 @@ pub fn resolve_imports_inline_ex(
             &mut in_progress,
             &mut import_chain,
             &mut merged_items,
+            &mut merged_consume_scrutinees,
             &mut peer_files,
             &mut next_file_id,
             include_test_peers,
@@ -1289,6 +1294,7 @@ pub fn resolve_imports_inline_ex(
                 &mut in_progress,
                 &mut import_chain,
                 &mut merged_items,
+                &mut merged_consume_scrutinees,
                 &mut peer_files,
                 &mut next_file_id,
                 include_test_peers,
@@ -1381,6 +1387,20 @@ pub fn resolve_imports_inline_ex(
         new_items.append(&mut sib.module.items);
     }
     module.items = new_items;
+    // Registry #1370: a side-table the PARSER fills per file does not survive
+    // the merge unless it is carried here with the items. The only such
+    // table on `Module` is `consume_match_scrutinees` (#1331, D157): before
+    // this, `match consume x` over a local was honoured only in the file
+    // passed to `nova check`/`nova test`, and every sibling or imported peer
+    // got a false D133-not-consumed (the mega-CU, whose entry is one file,
+    // saw it for every other file of the folder). Spans carry their
+    // `file_id`, so the union cannot collide. The other `Module` side-tables
+    // (`rebind_shadows`, `consume_reuse_spans`) are filled by `alpha_rename`
+    // AFTER this merge and are not affected.
+    for sib in siblings.iter_mut() {
+        module.consume_match_scrutinees.extend(sib.module.consume_match_scrutinees.drain());
+    }
+    module.consume_match_scrutinees.extend(merged_consume_scrutinees.drain());
 
     // [M-assoc-const-out-of-body-syntax] (D200 AMEND, окно №66): fold
     // module-level `const Type.NAME <Тип> = <значение>` decls (parser
@@ -1470,6 +1490,10 @@ fn resolve_one(
     in_progress: &mut HashSet<Vec<String>>,
     import_chain: &mut Vec<Vec<String>>,
     merged_items: &mut Vec<Item>,
+    // Registry #1370: the parser's per-file `consume_match_scrutinees`
+    // side-table of every merged peer -- see the entry-folder merge in
+    // `resolve_imports_inline_ex` for why it must travel with the items.
+    merged_consume_scrutinees: &mut HashSet<crate::diag::Span>,
     peer_files: &mut Vec<PeerFile>,
     next_file_id: &mut FileId,
     include_test_peers: bool,
@@ -2221,6 +2245,7 @@ fn resolve_one(
                 in_progress,
                 import_chain,
                 merged_items,
+                merged_consume_scrutinees,
                 peer_files,
                 next_file_id,
                 include_test_peers,
@@ -2283,6 +2308,9 @@ fn resolve_one(
         // caller (peer/entry который написал `imp`) получает их в свой
         // visible scope. Это и есть «import притащил эти имена».
         let _tmerge = crate::perf_timer::PerfTimer::new("imports-merge");
+        // Registry #1370: the peer's `match consume` spans travel with its
+        // items -- the checker reads them off the merged module.
+        merged_consume_scrutinees.extend(peer_module.consume_match_scrutinees.iter().copied());
         for item in peer_module.items {
             // Plan 81 Ф.1: извлекаем is_export вместе с именем.
             let (name, is_export) = match &item {
