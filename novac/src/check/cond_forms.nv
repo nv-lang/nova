@@ -43,11 +43,26 @@ fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
         return
     }
     ro shape = pattern_shape(pat)
-    if shape == PatShape.Bind {
-        @report_first_leaf_of(kids, IFLET_COND_BIND_MSG)
+    // A BARE NAME is a binder or a payload-less variant -- asked of the one door
+    // (registry 1380): `if None = o` is a variant pattern, not a name binding.
+    ro names_variant = shape == PatShape.Bind && @names_a_variant(pattern_head_text(pat))
+    if shape == PatShape.Bind && !names_variant {
+        // Without `ro`/`mut` a LANGUAGE error; with it, the grammar's form the
+        // subset does not compile yet (registry 1381).
+        if !@refused_bare_cond_name(pat, kids) {
+            @report_first_leaf_of(kids, IFLET_COND_BIND_MSG)
+        } else {
+            // Refused as a language error by the door just asked.
+        }
         return
     }
-    if shape != PatShape.Variant {
+    if shape != PatShape.Variant && !names_variant {
+        // `_`, a literal, `|` at the root: LANGUAGE errors; the rest is debt.
+        if @refused_cond_root(pat, kids) {
+            // SILENT-OK: the door just asked reported the language error
+            // itself; a second word here would be a cascade.
+            return
+        }
         @report_first_leaf_of(kids, IFLET_COND_FORM_MSG)
         return
     }
@@ -103,7 +118,7 @@ fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
         ro some_term = block_terminates(kids[body_at])
         ro none_term = block_terminates(kids[else_at])
         ro vmark = @scope.mark()
-        if !@bind_pattern(pat, ot, kids, ParamMode.ModeRo) {
+        if !@bind_pattern(pat, ot, kids, ParamMode.ModeRo, PatPos.PosCond) {
             @scope.release(vmark)
             // SILENT-OK: `@bind_pattern` is the shared judge and it refused
             // by name; a second report here would be the cascade.
@@ -164,7 +179,7 @@ fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
         // As a statement: the branches are blocks, typed below.
     }
     ro mark = @scope.mark()
-    if !@bind_pattern(pat, ot, kids, ParamMode.ModeRo) {
+    if !@bind_pattern(pat, ot, kids, ParamMode.ModeRo, PatPos.PosCond) {
         @scope.release(mark)
         // SILENT-OK: `@bind_pattern` is the shared judge and it refused
         // by name; a second report here would be the cascade.
@@ -203,11 +218,23 @@ fn Checker mut @type_while_let(st Node) -> () {
         return
     }
     ro shape = pattern_shape(pat)
-    if shape == PatShape.Bind {
-        @report_first_leaf_of(kids, WHILELET_COND_BIND_MSG)
+    // The same one door as the if-let above (registry 1380).
+    ro names_variant = shape == PatShape.Bind && @names_a_variant(pattern_head_text(pat))
+    if shape == PatShape.Bind && !names_variant {
+        // The if-let's rule (registry 1381).
+        if !@refused_bare_cond_name(pat, kids) {
+            @report_first_leaf_of(kids, WHILELET_COND_BIND_MSG)
+        } else {
+            // Refused as a language error by the door just asked.
+        }
         return
     }
-    if shape != PatShape.Variant {
+    if shape != PatShape.Variant && !names_variant {
+        if @refused_cond_root(pat, kids) {
+            // SILENT-OK: the door just asked reported the language error
+            // itself; a second word here would be a cascade.
+            return
+        }
         @report_first_leaf_of(kids, WHILELET_COND_FORM_MSG)
         return
     }
@@ -234,7 +261,7 @@ fn Checker mut @type_while_let(st Node) -> () {
     }
     @record(init, ot)
     ro mark = @scope.mark()
-    if !@bind_pattern(pat, ot, kids, ParamMode.ModeRo) {
+    if !@bind_pattern(pat, ot, kids, ParamMode.ModeRo, PatPos.PosCond) {
         @scope.release(mark)
         // SILENT-OK: `@bind_pattern` is the shared judge and it refused
         // by name; a second report here would be the cascade.

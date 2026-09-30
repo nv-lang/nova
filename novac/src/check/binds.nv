@@ -57,8 +57,13 @@ fn Checker mut @type_bind(st Node) -> () {
     // initializer -- the shadowing itself is the mistake.
     // Asked of the SUMS (wave B6, #964): any sum's payload-less variant of this
     // name makes the binding a refutable pattern; the first row stands for all.
-    ro (vfirst, vn) = variants_named(@ctx, vname)
-    if vn >= 1 && @ctx.variant_rows[raw_vrow(vfirst)].payload_cnt == 0 {
+    // Through the ONE door (registry 1380), with no scrutinee type yet.
+    ro vrow = match @name_in_pattern(vname, no_ty()) {
+        NameBinder => no_vrow()
+        NameOwnVariant(v) => v
+        NameForeignVariant(v) => v
+    }
+    if is_vrow(vrow) && @ctx.variant_rows[raw_vrow(vrow)].payload_cnt == 0 {
         @reject_first_leaf_of(kids, REFUTABLE_BIND_MSG)
         return
     } else {

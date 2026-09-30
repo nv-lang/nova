@@ -1,0 +1,15 @@
+module cond_lang.neg_2
+
+// A bare name as the whole condition pattern needs `ro` or `mut` (D486 s4
+// amendment 2026-09-30 p.3, E_AMBIGUOUS_IDENT_PATTERN; registry 1381):
+// `if n = f()` reads as a mistyped `==`.
+
+// NOVAC_EXPECT a bare name as the whole condition pattern needs `ro` or `mut`
+
+fn f() -> int => 3
+
+fn main() {
+    if n = f() {
+        println(n)
+    }
+}

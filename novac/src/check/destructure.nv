@@ -73,21 +73,10 @@ fn Checker mut @type_destructure_bind(st Node) -> () {
         // the parser's own marker already said what was expected here.
         return
     }
-    // THE POSITION'S PREDICATE (D486 §4): irrefutable forms only. The tree
-    // is the same tree the match arm binds -- the refusal is about WHERE it
-    // stands, not about what it is.
-    match pattern_shape(pat) {
-        Tuple | Record | Bind | Wild => {}
-        Lit | Variant | Array | Disj => {
-            @report_first_leaf_of(kids, REFUTABLE_BINDING_MSG)
-            // The names still BIND (to no type): a use downstream would
-            // otherwise cascade "unknown name" over the one mistake already
-            // named here -- the no-cascade rule this walk holds everywhere.
-            @bind_names_untyped(pat)
-            return
-        }
-    }
-    if !@bind_pattern(pat, pt, kids, bind_mode_at(kids)) {
+    // THE POSITION'S PREDICATE (D486 §4) is judged by `@bind_pattern` at every
+    // node (PatPos.PosBind, registry 1379): the root-only check that stood here
+    // let `ro (a, Some(b)) = p` through. A refusal binds the names untyped below.
+    if !@bind_pattern(pat, pt, kids, bind_mode_at(kids), PatPos.PosBind) {
         // The shared judgment refused (a wrong scrutinee shape, an arity or
         // field disagreement); the binds below keep the uses from cascading
         // over the one mistake it already named.
