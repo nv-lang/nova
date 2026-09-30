@@ -541,25 +541,6 @@ export fn digit_index(text str) -> int {
     v
 }
 
-/// The SLOTS of the extra disjunction heads inside a flat match pattern:
-/// every identifier standing right after a `|` leaf (the pattern-alternatives
-/// wave). Slot 0 is NOT here -- the first head keeps its original readers;
-/// this door feeds the exhaustiveness count and the emitter's OR-chain with
-/// the alternatives only. Two readers, one walk (P18).
-/// WHICH LEAF OF A FLAT PATTERN IS ITS HEAD -- the one question two passes
-/// used to answer separately and wrongly in the same way.
-///
-/// A bare head is slot 0 (`A => ...`). A QUALIFIED head is slot 2, because
-/// the parser writes the three leaves `Kind`, `.`, `B` and the variant is the
-/// last of them. Before 2026-09-20 both the checker and the lowering read
-/// slot 0 and found the TYPE name, which names no variant -- so both fell
-/// through to "a plain binder", and a plain binder matches everything. The
-/// first arm of every qualified match won, in a program that compiled
-/// cleanly and printed a wrong answer.
-///
-/// The qualifier itself is left at slot 0 for the caller that has to check
-/// it names the matched type -- a question this door does not answer,
-/// because it has no `Ctx`.
 /// DOES THIS SUBTREE CALL ANYTHING? An argument that calls something is an
 /// argument whose evaluation ORDER is observable.
 ///
@@ -581,92 +562,33 @@ export fn contains_call(n Node) -> bool {
     }
 }
 
-/// WHICH LEAF OF A FLAT PATTERN IS ITS HEAD -- slot 0 for a bare head, slot
-/// 2 for a qualified one (`Kind`, `.`, `B`).
-///
-/// Its doc paragraph ended up above `disj_head_slots` when that door was
-/// written beside it -- the same displacement, in the other direction, that
-/// the neighbour's own doc records. Registry 1190 is why the door exists:
-/// reading slot 0 found the TYPE name, which names no variant, so both the
-/// checker and the lowering fell through to "a plain binder" -- and a
-/// binder matches everything.
-export fn pattern_head_slot(pat []Node) -> int {
-    if pat.len() < 3 { return 0 }
-    if !pat[0].is_ident() { return 0 }
-    if leaf_kind(pat[1]) != TokenKind.Dot { return 0 }
-    if !pat[2].is_ident() { return 0 }
-    2
-}
-
-/// THE ALTERNATIVE HEADS of a disjunction -- the slot right after each pipe.
-///
-/// Its doc paragraph lived above it until `pattern_head_slot` was inserted
-/// here and took it: a door written directly above another inherits the one
-/// thing that was never its own.
-export fn disj_head_slots(pat []Node) -> []int {
-    mut slots = []int.new()
-    for i in 1..pat.len() {
-        ro prev = pat[i - 1]
-        ro cur = pat[i]
-        match prev {
-            Leaf(t) => {
-                // Only an identifier right after a pipe is an alternative
-                // head; anything else is the pattern body or a recovery gap.
-                if t.kind != TokenKind.Pipe { continue }
-                if !cur.is_ident() { continue }
-                slots.push(i)
-            }
-            Branch { .. } => {}
-        }
-    }
-    slots
-}
-
-/// Does this flat pattern carry a disjunction at all? One pipe answers; the
-/// binder judge and the payload unpack both gate on it.
-export fn pattern_has_disj(pat []Node) -> bool {
-    for c in pat {
-        match c {
-            Leaf(t) => {
-                if t.kind == TokenKind.Pipe { return true }
-            }
-            Branch { .. } => {}
-        }
-    }
-    false
-}
-
-/// Does this `IfLet`'s head carry a QUALIFIER -- `if Sum.Variant(b) = e`,
-/// not bare `if Variant(b) = e` (registry #1259)? Slot 2 is `.` for the
-/// qualified form and `(` for the bare one; the parser writes no other
-/// shape. The same class already fixed for match's own pattern head
-/// (`pattern_head_slot` above) and for `const Type.NAME` -- a variant's
-/// head is read in more than one place in this grammar, and if-let's was
-/// the one that had not learned the qualifier yet.
-export fn iflet_is_qualified(kids []Node) -> bool {
-    kids.len() > 2 && kids[2].kind_of() == NodeKind.LeafNode && leaf_kind(kids[2]) == TokenKind.Dot
-}
-
-/// The QUALIFIER'S WIDTH: 2 extra slots (`.` + the variant ident) stand
-/// before everything the bare head already had, when there is one. Every
-/// other `iflet_*_at` door below is the bare offset plus this.
-fn iflet_shift(kids []Node) -> int {
-    if iflet_is_qualified(kids) { 2 } else { 0 }
-}
-
-/// The slot of the VARIANT name -- 1 for a bare head, 3 for a qualified one.
-export fn iflet_variant_at(kids []Node) -> int => 1 + iflet_shift(kids)
-
-/// The slot of the BINDER name inside the parens.
-export fn iflet_binder_at(kids []Node) -> int => 3 + iflet_shift(kids)
+/// The IfLet layout (wave P3, D486): FIXED, because the head is ONE Pattern
+/// child wherever its tokens stood -- `[KwIf, Pattern, Assign, initializer,
+/// then-block, (KwElse, else-branch)?]`. Registry #1259's qualifier shift
+/// died with the second tree that needed it: the qualifier now lives INSIDE
+/// the Pattern, and the doors below are plain constants. The else door says
+/// WHERE the branch stands, not WHETHER it does -- callers still check
+/// `kids.len()` against it.
+export fn iflet_pattern_at(kids []Node) -> int => 1
 
 /// The slot of the INITIALIZER expression, the head after `=`.
-export fn iflet_init_at(kids []Node) -> int => 6 + iflet_shift(kids)
+export fn iflet_init_at(kids []Node) -> int => 3
 
-/// The slot of the THEN-block (the `Some`/binder branch).
-export fn iflet_body_at(kids []Node) -> int => 7 + iflet_shift(kids)
+/// The slot of the THEN-block (the matched branch).
+export fn iflet_body_at(kids []Node) -> int => 4
 
-/// The slot of the ELSE-branch (the `None` branch), when there is one --
-/// callers still check `kids.len()` against it; this door only says WHERE
-/// it would stand, not WHETHER it does.
-export fn iflet_else_at(kids []Node) -> int => 9 + iflet_shift(kids)
+/// The slot of the ELSE-branch, when there is one.
+export fn iflet_else_at(kids []Node) -> int => 6
+
+/// The WhileLet layout (wave P4, D486): the SAME fixed shape as IfLet minus
+/// the else -- `[KwWhile, Pattern, Assign, initializer, body-block]`. The
+/// doors are the same constants for the same reason: the condition judgment
+/// is one, and a second set of numbers would be the slot arithmetic this arc
+/// exists to delete.
+export fn whilelet_pattern_at(kids []Node) -> int => 1
+
+/// The slot of the initializer expression (the matched value).
+export fn whilelet_init_at(kids []Node) -> int => 3
+
+/// The slot of the loop body block.
+export fn whilelet_body_at(kids []Node) -> int => 4

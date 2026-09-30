@@ -35,19 +35,15 @@
 # there would be nothing to run it against and no way to tell a real pass
 # from a script that silently does nothing.
 #
-# KNOWN BROKEN, 2026-09-21 (Carina's window, registry 221.1 #TBD): the batch
-# call this script and novac-diff-corpus.sh both rely on ICEs on this tree
-# (`E_NOVAC_ICE types.nv:244: kind_of asked for a type id outside the
-# interner`, isolated to `check/binds.nv`'s `@type_index`, unconfirmed
-# mechanism -- possibly the self-declaration interner growing mid-typecheck).
-# That means EVERY run so far has silently taken the per-file fallback below,
-# and the fallback has its OWN distortion: each file is checked ALONE, so a
-# type declared in a sibling file of the same novac module reads as
-# "undeclared" -- a false rejection with nothing to do with real subset debt.
-# CI's 83/99 and this script's own 11/99 are both numbers from a broken
-# measure, not a subset-debt count. Do not trust either until the interner
-# ICE is fixed (then the batch mode's whole-tree visibility becomes
-# meaningful) or the fallback is changed to check by MODULE, not by file.
+# FIXED, 2026-09-28 (nova-kim window): the interner ICE this block used to
+# name no longer reproduces — the module-mode batch (NOVAC_UNIT=1) now runs
+# to completion on the whole self-source: 110 files, 30 refused / 80 accepted,
+# zero E_NOVAC_ICE. The per-file fallback below is therefore untaken on the
+# current tree; the distortion it warns about (a sibling file's type read as
+# "undeclared") is historical until the batch breaks again, and the numbers
+# from it (CI's 83/99, this script's own 11/99) stay what they were: measures
+# from the broken era, not subset debt. The 30/110 above IS a module-mode
+# whole-tree number and means what it says.
 #
 # Usage: sh scripts/tools/double-build.sh
 # Cost: one novac process over ~99 files, a few seconds -- see

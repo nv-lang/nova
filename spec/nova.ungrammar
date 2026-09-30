@@ -195,6 +195,14 @@ IfLet =
 WhileStmt =
   'while' cond:Expr (Block | Err)
 
+// поправка 2026-09-29 (дуга D486, волна P4): цикл по образцу. Голова
+// читается той же одной дверью @pattern(), что и if-let (`parse.nv:706`,
+// @whilelet_try); `else` у while-let нет: None -- это выход из цикла,
+// а не ветка. Вид стоял в перечислении без правила, страж видов кинул
+// красным, строка его и закрывает.
+WhileLet =
+  'while' Pattern '=' scrutinee:Expr (Block | Err)
+
 ForStmt =
   'for' binder:'ident' 'in' iter:Expr (Block | Err)
 
@@ -278,8 +286,20 @@ Pattern =
   ( 'int'
   | '[]'
   | '[' ('ident' | '..' | Err)* ']'
+  | '{' (PatField | '..' | Err)* '}'
   | 'ident' BalancedRun? ('(' 'ident' (',' 'ident')* ')')?
       ('|' 'ident' ('(' 'ident' (',' 'ident')* ')')?)*
+      ('{' (PatField | '..' | Err)* '}')?
+  )
+
+// поправка 2026-09-29 (дуга D486): поле record-образца. Сокращение `{ x }`
+// -- один Name; поле с модным словом `{ mut y }` / `{ consume y }`;
+// переименование или вложение `{ f: sub }` (`expr.nv:542-568`,
+// @record_pattern). Вид стоял в перечислении без правила, страж видов
+// кинул красным, строка его и закрывает.
+PatField =
+  ( ('mut' | 'consume')? Name
+  | 'ident' ':' Pattern
   )
 
 Guard =

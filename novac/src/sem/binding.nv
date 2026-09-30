@@ -89,8 +89,8 @@ export fn ParamMode @specificity() -> int => match @ {
 /// binding came out typed as the wrong scalar). Re-probed 2026-09-21 (the
 /// minimal repro, `type Row { d Option[int] }` with `if Some(v) = r.d`,
 /// compiles and prints correctly) and again 2026-09-26 before this change --
-/// the oracle already builds this shape; the vector-of-one-element workaround
-/// outlived its cause.
+/// the oracle already builds this shape, so `Option[Node]` is the lawful form
+/// here -- the field is absent or present, exactly what the option models.
 export type ParamDef value {
     name str /// as written; `""` when the shape carries no readable name (recovery debris)
     type_id TyId /// the parameter's type; `no_ty()` = unreadable, and backends ice on it rather than invent one

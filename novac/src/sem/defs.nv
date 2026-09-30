@@ -198,7 +198,8 @@ export fn DefTable @const_row(name str) -> Option[ConstRow] {
 /// type. Collection is DELIBERATELY tolerant of broken input
 /// (274.3/F-B4): the file picture is built for check too, and check
 /// must issue a diagnostic, not die in an ICE. check is the judge (the
-/// rule "a type in type position must be declared"); sem invents
+/// rule "a type in type position must be declared" -- check/typeref_rules.nv:89,
+/// `@undeclared_in_type_ref`); sem invents
 /// nothing — it just does not register what it did not understand.
 #realtime nogc
 export fn DefTable @type_decl(name str) -> Option[DeclId] {

@@ -84,11 +84,13 @@ test "`??` is judged: a non-Option left side and `?? return` refuse by name (coa
     // is the CARRIER's -- examples/basics/coalesce.nv, held byte-for-byte by
     // the corpus smoke. It cannot live here: these shared decls are poor (no
     // Vec, so no `get`), and the subset's only Option source is a std method.
-    // What belongs here is the JUDGE, and it speaks without any Option at all.
+    // What belongs here is the JUDGE (`check/literal_rules.nv:420`, the `??`
+    // judge's own two refusals), and it speaks without any Option at all.
     ro std = std_decls()
 
     // `?? return` is retracted (D86 amend): read by the parser, refused by
-    // name here -- the oracle refuses it in its checker for the same reason.
+    // name here -- the oracle refuses it in its checker for the same reason
+    // (novac's own door: `check/literal_rules.nv:420`).
     ro (dr, _) = compile_to_c("fn main() {\n\
  ro n = 1\n\
  ro v = n ?? return 0\n\

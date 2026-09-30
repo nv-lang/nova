@@ -1,0 +1,520 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: subset_test.nv -- the same acceptance habit (a test asserts the
+// property, not the byte); NOT taken: golden-file assertions.
+// Role: acceptance tests of the pattern arc (D486, plan 274.5 §5й) -- the
+// disjunction wave first; every P1-P5 wave's witnesses land here.
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file -- and it EXISTS because
+// subset_test.nv crossed the 1000-line limit (decision 12) the same way
+// pipeline_test.nv once did: the cut is by MEANING (the pattern arc's
+// acceptance block), not by counting lines.
+// novac/src/pipeline/subset_pattern_test.nv -- what the pattern waves promised, held.
+
+module novac.pipeline
+
+import ../tree.{Node, NodeKind, raw_node}
+import ../parse.{parse}
+import ../sem.{branch_children, leaf_text, is_value_record, InteropTable}
+import ../source.{SourceText}
+import ../diag.{ice}
+import ../check.{check_instance}
+import ../types.{TyId, no_ty}
+
+test "pattern alternatives OR their tag tests; a named binder refuses (disjunction wave)" {
+    // `B(_) | C(_) => 1`: one arm, two tag tests ORed -- asserted on the C
+    // shape; the alternative PATH is held by the corpus carrier, which sends
+    // a value through the second head.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("type Tri enum A(int) | B(int) | C(int)\n\
+fn f(s Tri) -> int {\n\
+ match s {\n\
+  A(_) => 0\n\
+  B(_) | C(_) => 1\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(f(C(7)))\n\
+}", std)
+    assert(d.len() == 0)
+    assert(c.contains(" || "))
+
+    // A named binder inside a disjunction refuses by name: alternatives
+    // would have to agree on the binder, and no carrier needs that.
+    ro (d2, _) = compile_to_c("type Tri enum A(int) | B(int)\n\
+fn f(s Tri) -> int {\n\
+ match s {\n\
+  A(x) | B(x) => x\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(f(B(5)))\n\
+}", std)
+    assert(d2.len() >= 1)
+    assert(d2[0].message.contains("takes `_` binders only"))
+}
+
+test "a tuple pattern binds by position, nested tuples recurse (D486 P1+P2)" {
+    // The ONE door's own shape: `(a, b)` over a structural tuple, and the
+    // nesting `(a, (b, c))` the flat walk could not say at all.
+    ro std = std_decls()
+    ro (d, _) = compile_to_c("fn main() {\n\
+ ro p = (3, 4)\n\
+ ro r = match p {\n\
+  (a, b) => a + b\n\
+ }\n\
+ println(r)\n\
+}", std)
+    assert(d.len() == 0, messages(d))
+    ro (d2, _) = compile_to_c("fn main() {\n\
+ ro p = (1, (2, 3))\n\
+ ro r = match p {\n\
+  (a, (b, c)) => a + b + c\n\
+ }\n\
+ println(r)\n\
+}", std)
+    assert(d2.len() == 0, messages(d2))
+}
+
+test "a record pattern binds by name; a record pattern inside a payload recurses (D486 P1+P2)" {
+    // `{ w, h }` over a record scrutinee, and `Point({ w, h })` -- the
+    // variant's payload read into a temporary first ("scrutinee once"),
+    // then destructured by the same recursive judgment.
+    ro std = std_decls()
+    ro (d, _) = compile_to_c("type Size { w int, h int }\n\
+fn f(s Size) -> int {\n\
+ match s {\n\
+  { w, h } => w + h\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(f(Size { w: 3, h: 4 }))\n\
+}", std)
+    assert(d.len() == 0, messages(d))
+    ro (d2, _) = compile_to_c("type Size { w int, h int }\n\
+type Shape enum Point(Size) | Dot\n\
+fn f(s Shape) -> int {\n\
+ match s {\n\
+  Point({ w, h }) => w + h\n\
+  Dot => 0\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(f(Point(Size { w: 3, h: 4 })))\n\
+}", std)
+    assert(d2.len() == 0, messages(d2))
+}
+
+test "an array pattern tests the length and reads elements DIRECTLY (@index); the rest binder refuses (D486 P1+P2)" {
+    // `[a, b, ..]`: the arm's length test is `_method_len(_) >= 2`, and the
+    // proven element read is `_method_index` -- the owner's rule (2026-09-29):
+    // `@index` for the access somebody proved, `get` for the one nobody did.
+    mut std = std_decls()
+    std.push("module std.v\n\
+export type Vec[T] { n int }")
+    ro (d, c) = compile_to_c("fn main() {\n\
+ ro xs = [10, 20, 30]\n\
+ ro r = match xs {\n\
+  [a, b, ..] => a + b\n\
+  _ => 0\n\
+ }\n\
+ println(r)\n\
+}", std)
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("_method_len("))
+    assert(c.contains("_method_index("))
+
+    // The `..rest` BINDER needs the shell's slice view (`Vec @index(Range)`),
+    // which the subset has not grown -- refused BY NAME until it has.
+    ro (d2, _) = compile_to_c("fn main() {\n\
+ ro xs = [1, 2, 3]\n\
+ ro r = match xs {\n\
+  [h, ..rest] => h\n\
+  _ => 0\n\
+ }\n\
+ println(r)\n\
+}", std)
+    assert(d2.len() >= 1)
+    assert(d2[0].message.contains("needs the shell's slice view"))
+}
+
+test "pattern arity, a partial record without `..`, a literal alternative: three named refusals (D486 P1+P2)" {
+    ro std = std_decls()
+    // The payload count is the variant's declaration, exactly.
+    ro (d, _) = compile_to_c("type E enum P(int, int) | Q\n\
+fn f(s E) -> int {\n\
+ match s {\n\
+  P(x) => x\n\
+  Q => 0\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(f(P(1, 2)))\n\
+}", std)
+    assert(d.len() >= 1)
+    assert(d[0].message.contains("payload count disagrees"))
+
+    // D486 section 3, in every position: a partial field list needs `..`.
+    ro (d2, _) = compile_to_c("type Size { w int, h int }\n\
+fn f(s Size) -> int {\n\
+ match s {\n\
+  { w } => w\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(f(Size { w: 3, h: 4 }))\n\
+}", std)
+    assert(d2.len() >= 1)
+    assert(d2[0].message.contains("field(s)"))
+
+    // A literal alternative asks for an or-test the lowering does not build;
+    // the flat walk IGNORED it (the #652 class), the door refuses by name
+    // (novac/src/check/match_arms.nv:870).
+    ro (d3, _) = compile_to_c("type Tri enum A(int) | B(int) | C(int)\n\
+fn f(s Tri) -> int {\n\
+ match s {\n\
+  A(_) | 1 => 0\n\
+  B(_) | C(_) => 1\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(f(C(7)))\n\
+}", std)
+    assert(d3.len() >= 1)
+    assert(d3[0].message.contains("takes variant alternatives only"))
+}
+
+test "a destructuring binding reads the ONE pattern door; refutable forms refuse by position (D486 P2b)" {
+    // The binding position takes the same Pattern tree the match arm reads:
+    // a NESTED tuple binds through a temporary per level, `_` binds nothing,
+    // and `mut` on one binder overrides the keyword's default (D486 §4's
+    // single mode rule). Asserted on the diagnostics and the C shapes.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn three() -> (int, (int, int)) {\n\
+ (1, (2, 3))\n\
+}\n\
+fn main() {\n\
+ ro (a, (b, c)) = three()\n\
+ println(a + b + c)\n\
+ ro (x, _) = (4, 5)\n\
+ println(x)\n\
+ ro (mut m, n) = (6, 7)\n\
+ m = m + n\n\
+ println(m)\n\
+ consume (p, q) = (8, 9)\n\
+ println(p + q)\n\
+}", std)
+    assert(d.len() == 0, messages(d))
+    assert(c.contains(".f0;"))
+    assert(c.contains(".f1;"))
+
+    // The Option carrier is handed IN, as in the if-let tests: the tiny
+    // std_decls knows no `get`, and a refusal about the SETUP would test
+    // nothing about the position.
+    mut std2 = std_decls()
+    std2.push("module std.v\n\
+export type Vec[T] { n int }\n\
+export fn Vec[T] @get(i int) -> Option[T] => None\n\
+export type Option[T] enum Some(T) | None\n")
+    // A VARIANT pattern can fail to match, and a binding has no `else`:
+    // refused by the POSITION, with D486's own diagnostic code.
+    ro (d2, _) = compile_to_c("fn main() {\n\
+ ro xs = [1]\n\
+ ro o = xs.get(0)\n\
+ ro Some(x) = o\n\
+ println(x)\n\
+}", std2)
+    assert(d2.len() >= 1)
+    assert(d2[0].message.contains("irrefutable pattern"))
+    assert(d2[0].message.contains("E_REFUTABLE_BINDING"))
+
+    // An ARRAY pattern is refutable the same way (its length is not static).
+    ro (d3, _) = compile_to_c("fn main() {\n\
+ ro xs = [1, 2]\n\
+ ro [a, b] = xs\n\
+ println(a)\n\
+}", std2)
+    assert(d3.len() >= 1)
+    assert(d3[0].message.contains("irrefutable pattern"))
+
+    // A qualified head takes the same refusal (the lookahead's `.`-walk is
+    // what lets it here at all, instead of breaking as an ordinary binding).
+    ro (d4, _) = compile_to_c("fn main() {\n\
+ ro xs = [1]\n\
+ ro o = xs.get(0)\n\
+ ro Option.Some(x) = o\n\
+ println(x)\n\
+}", std2)
+    assert(d4.len() >= 1)
+    assert(d4[0].message.contains("irrefutable pattern"))
+
+    // And the no-cascade rule: after the refusal the name still BINDS, so a
+    // use downstream does not echo "unknown name" over the one mistake.
+    mut unknown = false
+    for g in d2 {
+        if g.message.contains("is not a callable novac knows") { unknown = true } else {}
+    }
+    assert(!unknown)
+}
+
+test "an if-let reads the ONE pattern door; other condition shapes refuse by name (D486 P3)" {
+    // The Option carrier is handed IN (the tiny std_decls knows no `get`) --
+    // the if-let tests' own precedent.
+    mut std = std_decls()
+    std.push("module std.v\n\
+export type Vec[T] { n int }\n\
+export fn Vec[T] @get(i int) -> Option[T] => None\n\
+export type Option[T] enum Some(T) | None\n")
+
+    // A QUALIFIED head through the new door (the statement old shape 2 read
+    // by hand), and a NESTED payload pattern -- `Some((a, b))` -- which the
+    // slot layout could not even say: the payload binds through the match
+    // arm's own recursive judgment now.
+    ro (d, _) = compile_to_c("fn main() {\n\
+ ro xs = [1]\n\
+ if Option.Some(v) = xs.get(0) {\n\
+  println(v)\n\
+ } else {\n\
+  println(0)\n\
+ }\n\
+}", std)
+    assert(d.len() == 0, messages(d))
+    // A NESTED payload pattern -- `Some(A(x))` -- the slot layout could
+    // not say it: the payload binds through the match arm's own recursive
+    // judgment now. (A tuple payload, `Some((a, b))`, is the same door and
+    // compiles on the ORACLE -- measured 2026-09-29; the subset cannot spell
+    // `Option[(int, int)]` -- an applied type with a tuple argument is
+    // typeref's own earlier boundary, not this wave's.)
+    ro (d1, _) = compile_to_c("type Inner enum A(int) | B\n\
+fn show(o Option[Inner]) -> () {\n\
+ if Some(A(x)) = o {\n\
+  println(x)\n\
+ } else {\n\
+  println(0)\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(1)\n\
+}", std)
+    assert(d1.len() == 0, messages(d1))
+
+    // A NAME binding in the condition (bare, or with a mode word -- the
+    // oracle's E_AMBIGUOUS_IDENT_PATTERN / E_CONSUME_IN_CONDITION territory)
+    // is read but not lowered yet: refused BY NAME with the wave's tag.
+    ro (d2, _) = compile_to_c("fn main() {\n\
+ ro xs = [1]\n\
+ if x = xs.get(0) {\n\
+  println(1)\n\
+ }\n\
+}", std)
+    assert(d2.len() >= 1)
+    assert(d2[0].message.contains("a name binding in an `if` condition"))
+    ro (d3, _) = compile_to_c("fn main() {\n\
+ ro xs = [1]\n\
+ if consume x = xs.get(0) {\n\
+  println(1)\n\
+ }\n\
+}", std)
+    assert(d3.len() >= 1)
+    assert(d3[0].message.contains("a name binding in an `if` condition"))
+
+    // A tuple / wildcard condition: the lowering has no test for them --
+    // named, never fallen through.
+    ro (d4, _) = compile_to_c("fn main() {\n\
+ ro t = (1, 2)\n\
+ if (a, b) = t {\n\
+  println(a)\n\
+ }\n\
+}", std)
+    assert(d4.len() >= 1)
+    assert(d4[0].message.contains("takes a variant pattern"))
+    ro (d5, _) = compile_to_c("fn main() {\n\
+ ro xs = [1]\n\
+ if _ = xs.get(0) {\n\
+  println(1)\n\
+ }\n\
+}", std)
+    assert(d5.len() >= 1)
+    assert(d5[0].message.contains("takes a variant pattern"))
+
+    // The `ro` word outside a condition: the oracle refuses it in a match
+    // arm (measured 2026-09-29, door at novac/src/check/match_arms.nv:392),
+    // and the mode doors would otherwise read it
+    // as `consume` -- refused BY NAME instead.
+    ro (d6, _) = compile_to_c("type E enum A(int) | B\n\
+fn f(e E) -> int {\n\
+ match e {\n\
+  ro x => x\n\
+  B => 0\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(f(B))\n\
+}", std)
+    assert(d6.len() >= 1)
+    assert(d6[0].message.contains("`ro` word"))
+}
+
+test "a while-let reads the ONE pattern door; per-iteration test and exit (D486 P4)" {
+    mut std = std_decls()
+    std.push("module std.v\n\
+export type Vec[T] { n int }\n\
+export fn Vec[T] @get(i int) -> Option[T] => None\n\
+export type Option[T] enum Some(T) | None\n")
+
+    // The C shape is the witness: an unconditional head, the Option into its
+    // own temporary PER ITERATION, the negated Some-test as the exit, the
+    // payload bound through the shell's `.value`.
+    ro (d, c) = compile_to_c("fn show(xs Vec[int]) -> () {\n\
+ while Some(v) = xs.get(0) {\n\
+  println(v)\n\
+ }\n\
+}\n\
+fn main() {\n\
+ ro xs = [5]\n\
+ show(xs)\n\
+}", std)
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("while (1) {"), c)
+    assert(c.contains("break;"), c)
+    assert(c.contains(".value"), c)
+
+    // A qualified head through the same door.
+    ro (d1, _) = compile_to_c("fn show(o Option[int]) -> () {\n\
+ while Option.Some(v) = o {\n\
+  println(v)\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(1)\n\
+}", std)
+    assert(d1.len() == 0, messages(d1))
+
+    // The condition judgment is the if-let's own third column (D486 s4),
+    // worded for its position: a name binding and the non-variant shapes are
+    // refused BY NAME, a non-Option initializer is named too.
+    ro (d2, _) = compile_to_c("fn show(o Option[int]) -> () {\n\
+ while x = o {\n\
+  println(1)\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(1)\n\
+}", std)
+    assert(d2.len() >= 1)
+    assert(d2[0].message.contains("a name binding in a `while` condition"))
+    ro (d3, _) = compile_to_c("fn main() {\n\
+ ro t = (1, 2)\n\
+ while (a, b) = t {\n\
+  println(a)\n\
+ }\n\
+}", std)
+    assert(d3.len() >= 1)
+    assert(d3[0].message.contains("a `while` condition takes a variant pattern"))
+    ro (d4, _) = compile_to_c("fn main() {\n\
+ while Some(v) = 5 {\n\
+  println(v)\n\
+ }\n\
+}", std)
+    assert(d4.len() >= 1)
+    assert(d4[0].message.contains("must be an Option instance"))
+}
+
+test "a for header reads the ONE pattern door; refutable forms refuse by position (D486 P5)" {
+    mut std = std_decls()
+    std.push("module std.v\n\
+export type Vec[T] { n int }\n")
+
+    // A RECORD pattern in the header: the element lands in a temporary and
+    // the fields bind by name through the one recursive door.
+    ro (d, c) = compile_to_c("type Pair { a int, b int }\n\
+fn show(rs []Pair) -> () {\n\
+ for { a, .. } in rs {\n\
+  println(a)\n\
+ }\n\
+}\n\
+fn main() {\n\
+ println(1)\n\
+}", std)
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("_method_index("), c)
+    assert(c.contains(".a"), c)
+
+    // A `_` header counts without reading the slot: no element read at all.
+    ro (d0, c0) = compile_to_c("fn show(xs []int) -> () {\n\
+ for _ in xs {\n\
+  println(1)\n\
+ }\n\
+}\n\
+fn main() {\n\
+ ro xs = [4]\n\
+ show(xs)\n\
+}", std)
+    assert(d0.len() == 0, messages(d0))
+    // The pin is DIFFERENTIAL (the C carries the shell's prelude, so an
+    // absence pin against the whole text is meaningless): the same loop
+    // with a NAMED binder emits the element read -- one line the `_`
+    // version provably does not pay.
+    ro (d0b, c0b) = compile_to_c("fn show(xs []int) -> () {\n\
+ for x in xs {\n\
+  println(x)\n\
+ }\n\
+}\n\
+fn main() {\n\
+ ro xs = [4]\n\
+ show(xs)\n\
+}", std)
+    assert(d0b.len() == 0, messages(d0b))
+    ro sb0 = c0b.find("novac_fn_show") ?? -1
+    assert(sb0 >= 0)
+    assert(c0b[sb0..c0b.byte_len()].contains("_method_index("))
+    assert(c0.byte_len() < c0b.byte_len())
+
+    // The range bound is evaluated ONCE: the upper bound is placed into a
+    // temporary BEFORE the loop, and the header spells the temporary (the
+    // owner's rule -- formally the loop iterates one Range value).
+    ro (d1, c1) = compile_to_c("fn count(n int) -> int {\n\
+ mut s = 0\n\
+ for i in 0..n {\n\
+  s += i\n\
+ }\n\
+ s\n\
+}\n\
+fn main() {\n\
+ println(count(3))\n\
+}", std)
+    assert(d1.len() == 0, messages(d1))
+    assert(c1.contains("= n;"), c1)
+    assert(c1.contains("for (nova_int i = "), c1)
+    assert(!c1.contains("i < n;"), c1)
+
+    // THE POSITION'S PREDICATE (D486 s4): the header is a binding position,
+    // irrefutable -- a constructor, an array, a literal or a disjunction can
+    // fail to match, and the loop has no `else`. The oracle ACCEPTS `for
+    // Some(x) in ys` (measured 2026-09-29) -- a recorded divergence FROM the
+    // spec's own table; the refusal here carries the spec's code.
+    ro (d2, _) = compile_to_c("fn main() {\n\
+ for Some(x) in 0..3 {\n\
+  println(x)\n\
+ }\n\
+}", std)
+    assert(d2.len() >= 1)
+    assert(d2[0].message.contains("irrefutable pattern"), d2[0].message)
+    ro (d3, _) = compile_to_c("fn main() {\n\
+ ro xs = []int.of(1, 2)\n\
+ for [a, b] in xs {\n\
+  println(a)\n\
+ }\n\
+}", std)
+    assert(d3.len() >= 1)
+    assert(d3[0].message.contains("irrefutable pattern"), d3[0].message)
+
+    // A structured pattern against the counter's `int` is the shared door's
+    // own refusal, not the position's.
+    ro (d4, _) = compile_to_c("fn main() {\n\
+ for (a, b) in 0..3 {\n\
+  println(a)\n\
+ }\n\
+}", std)
+    assert(d4.len() >= 1)
+    assert(d4[0].message.contains("positional tuple scrutinee"), d4[0].message)
+}

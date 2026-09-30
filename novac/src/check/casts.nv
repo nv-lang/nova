@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Donor: rustc `check_expr_cast` / `CastCheck` for the SHAPE of the question --
-// a cast is judged by the PAIR (source type, target type), not by the target
+// a cast is judged by the PAIR (source type, target type) in the one door of
+// this file, `@type_cast(e)`, not by the target
 // alone. The RULE is Nova's own: a newtype and its representation are the same
 // value, so unwrapping is free and everything else is not a cast at all.
 // NOT taken: rustc's cast kinds and its coercion lattice (D55 says widening is

@@ -130,7 +130,8 @@ fn Checker mut @refuse_free_call(kids []Node, cname str, key []ArgSpec) -> () {
 /// registry #1255: WHY a mode (P14: `ro`/`mut`/`consume`) refuses this
 /// argument's class, worded like the D102 binding refusals beside it -- no
 /// "outside the subset" prefix, because a class mismatch is not a subset
-/// limit either: the oracle refuses it too, under its own name
+/// limit either: the oracle refuses it too, under its own name, and the
+/// parity of the two verdicts is what check-novac-differential holds
 /// (`E_MUT_ARG_NOT_MUTABLE`, checked directly against
 /// `nova-cli/target/release/nova.exe check` on the carrier below).
 /// `ModeRo` never reaches here -- `mode_admits(ModeRo, _)` is unconditionally

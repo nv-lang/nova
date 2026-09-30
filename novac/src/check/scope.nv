@@ -150,7 +150,8 @@ fn Scope @type_of_name(name str) -> TyId {
 }
 
 /// How this name was BOUND -- the half of a binding rule P14 reads. An unbound
-/// name is the same ice as above: the walk refuses it long before this is asked.
+/// name is the same ice as above: the walk refuses it long before this is asked
+/// (the unknown-name `@refuse(t, ...)` in check/exprs.nv).
 #realtime nogc
 fn Scope @mode_of_name(name str) -> ParamMode {
     ro row = @names.find(name)

@@ -5,7 +5,8 @@
 // Donor: none for the rules -- the escape set is Nova's own (D249 for the byte
 // lens, and the language's `\${` for an escaped interpolation). The SHAPE is
 // clang's: a literal is judged by its BYTES, not by re-lexing it, because the
-// lexer already answered what a token is.
+// lexer already answered what a token is; the doors are `@report_if_bad_escape`
+// and `@report_if_interpolated` below.
 // Role: layer 7 (check), the subset rules of one subject -- a string literal.
 //       Everything else in `rules.nv` judges the shape of a TREE; these two rules
 //       judge the bytes inside one leaf, and they carry their own alphabet.

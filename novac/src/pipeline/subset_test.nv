@@ -242,7 +242,8 @@ fn main() { println(1) }", std)
 
     // THE SECOND SHAPE of the same class, and it had a different root: here the
     // receiver is a call to a name that does NOT exist. The walk refuses it by
-    // name, and the index door then asked `type_of` about it anyway -- and
+    // name, and the index door (`check/binds.nv:405`, `@type_index`) then asked
+    // `type_of` about it anyway -- and
     // `type_of` on a call whose name is not in the registry raises an ice. So
     // the refusal was correct and the crash came after it, which is why no
     // probe on a well-formed program could find this.
@@ -427,7 +428,8 @@ fn main() {\n\
     assert(c.contains("    return _novac_tmp_t"))
 
     // A tuple PARAMETER stays outside the wave (B15 bounds): today the
-    // parameter FORM rule refuses it upstream, and the bind judge holds the
+    // parameter FORM rule refuses it upstream (`check/messages.nv:245`,
+    // `TUPLE_PARAM_MSG`), and the bind judge holds the
     // same boundary for the day the form rule narrows.
     ro (d2, _) = compile_to_c("fn f(p (int, int)) -> int {\n\
  p.0\n\
@@ -461,9 +463,7 @@ fn main() {\n\
  println(a)\n\
 }", std)
     assert(d2.len() >= 1)
-    for g in d2 {
-        assert(g.message.contains("arity mismatch"))
-    }
+    assert(d2[0].message.contains("arity disagrees"))
 
     ro (d3, _) = compile_to_c("fn main() {\n\
  ro (a, b) = 5\n\
@@ -473,17 +473,28 @@ fn main() {\n\
     // The FIRST diagnostic is the root cause (d0 everywhere in the smoke
     // logs); a use after the refusal may add a follower, and asserting every
     // row would test the cascade, not the judge.
-    assert(d3[0].message.contains("needs a TUPLE initializer"))
+    assert(d3[0].message.contains("needs a positional tuple scrutinee"))
 }
 
-test "a collection head walks the vector by len/get; a scalar head refuses (B16)" {
+test "a collection head walks the vector by len/index; a scalar head refuses (B16)" {
     // `for x in mk()`: the head runs ONCE into a temporary, the loop guards
-    // on _method_len and reads _method_get(...).value -- the .value is the
-    // shell's Option ABI (interop), never a language Option. Asserted on the
-    // C shapes; behavior is the corpus carriers' to hold. The generic Vec
-    // head is handed IN -- the tiny std_decls carries no types, and the
-    // slice sugar cannot intern []int without it (the same hand-in the
-    // literal tests above use).
+    // on _method_len and reads _method_index(...) -- the DIRECT read: the
+    // header's `i < len` proves the index, so `@index` is the method and no
+    // Option stands here (owner, 2026-09-29: proven access is `@index`,
+    // `get` is the access nobody proved; the B16 interim `get(...).value`
+    // predated the shell's `index`). Asserted on the C shapes; behavior is
+    // the corpus carriers' to hold. The generic Vec head is handed IN --
+    // the tiny std_decls carries no types, and the slice sugar cannot
+    // intern []int without it (the same hand-in the literal tests above
+    // use).
+    //
+    // OWNER'S DIRECTION (2026-09-29): `for x in xs` is the ITERATOR protocol
+    // (`@iter()`/`@next() -> Option[T]`, the loop ends at `@next() == None`)
+    // -- and so is `for x in a..b`, formally: a Range iterates by index
+    // THROUGH the same protocol (walking a counter without materializing the
+    // Range is only an allowed optimization; bounds are computed ONCE). The
+    // len/index walk asserted here is the interim door until that wave;
+    // recorded in plan 274.5 §5й.
     mut std = std_decls()
     std.push("module std.v\n\
 export type Vec[T] { n int }")
@@ -498,8 +509,7 @@ fn main() {\n\
 }", std)
     assert(d.len() == 0)
     assert(c.contains("_method_len("))
-    assert(c.contains("_method_get("))
-    assert(c.contains(").value;"))
+    assert(c.contains("_method_index("))
 
     // A NAME head takes the same door.
     ro (d2, c2) = compile_to_c("fn main() {\n\
@@ -509,7 +519,7 @@ fn main() {\n\
  }\n\
 }", std)
     assert(d2.len() == 0)
-    assert(c2.contains("_method_get("))
+    assert(c2.contains("_method_index("))
 
     // A call that hands back a SCALAR has no element: refused by name.
     ro (d3, _) = compile_to_c("fn one() -> int {\n\
@@ -566,39 +576,6 @@ fn main() {\n\
 }", std)
     assert(d3.len() >= 1)
     assert(d3[0].message.contains("takes only `Some(name)`"))
-}
-
-test "pattern alternatives OR their tag tests; a named binder refuses (disjunction wave)" {
-    // `B(_) | C(_) => 1`: one arm, two tag tests ORed -- asserted on the C
-    // shape; the alternative PATH is held by the corpus carrier, which sends
-    // a value through the second head.
-    ro std = std_decls()
-    ro (d, c) = compile_to_c("type Tri enum A(int) | B(int) | C(int)\n\
-fn f(s Tri) -> int {\n\
- match s {\n\
-  A(_) => 0\n\
-  B(_) | C(_) => 1\n\
- }\n\
-}\n\
-fn main() {\n\
- println(f(C(7)))\n\
-}", std)
-    assert(d.len() == 0)
-    assert(c.contains(" || "))
-
-    // A named binder inside a disjunction refuses by name: alternatives
-    // would have to agree on the binder, and no carrier needs that.
-    ro (d2, _) = compile_to_c("type Tri enum A(int) | B(int)\n\
-fn f(s Tri) -> int {\n\
- match s {\n\
-  A(x) | B(x) => x\n\
- }\n\
-}\n\
-fn main() {\n\
- println(f(B(5)))\n\
-}", std)
-    assert(d2.len() >= 1)
-    assert(d2[0].message.contains("takes `_` binders only"))
 }
 
 test "a requires clause guards the body through the shell's contract helper (requires wave)" {
@@ -761,28 +738,43 @@ test "an unknown form in println's argument position refuses instead of falling 
     // neither walk's list, so it was filed under punctuation by BOTH the
     // checker and the emitter. A branch is never punctuation.
     //
-    // 2026-09-22, registry #1303: the index now COUNTS as an argument
-    // (`is_expr_kind` learned NodeKind.Index), so it no longer dies with
-    // the generic "argument position" text -- it is typed and reaches its
-    // own named door, the indexing subset gap (E2-b, binds.nv). The Vec
-    // head is handed beside the poor shared decls so the form reaches THAT
-    // door instead of dying earlier on the missing slice head -- measured
-    // 2026-09-22 with a debug probe: without it the compile gives two
-    // refusals ("slice head `Vec` is not among the declarations" and
-    // "unknown name" for the never-established binding) and the index's
-    // own door is never reached. The pinned substring is the stable part
-    // of the door's text; the "interop shell carries no `index`" suffix
-    // is volatile on purpose -- the shell already carries `Vec[int].index`
-    // (probe widened, 67c935c3b) and indexing task (2) rewords it.
+    // 2026-09-28, the indexing wave (E2-b, binds.nv `@type_index` + the
+    // emitter's NodeKind.Index arm): a plain `v[1]` on `Vec[int]` COMPILES
+    // now -- the shell has carried `Vec____nova_int_method_index` since the
+    // probe widened (67c935c3b), and the checker's last gate ("the shell
+    // carries no `index` for this instance", refused by name) opened for the
+    // instances the probe uses. The test's first half pins the NEW contract:
+    // zero diagnostics and the instance symbol in the emission, arguments
+    // printed in order ("a", the element, "b" -- the #870 fall-out class
+    // stays closed because the index is an expression both walks count).
     mut std = std_decls()
     std.push("module std.v\n\
 export type Vec[T] { n int }")
-    ro (dpr, _) = compile_to_c("fn main() {\n\
+    ro (dpr, cpr) = compile_to_c("fn main() {\n\
  ro v = []int.of(10, 20, 30)\n\
  println(\"a\", v[1], \"b\")\n\
 }", std)
-    assert(dpr.len() == 1)
-    assert(dpr[0].message.contains("indexing is read but not compiled yet"))
+    assert(dpr.len() == 0)
+    assert(cpr.contains("Vec____nova_int_method_index"))
+
+    // The gate's other side, pinned in the same test so both halves travel
+    // together: an instance the shell does NOT carry (`[]str` -- the probe
+    // never indexes one) keeps the named refusal instead of reaching an
+    // emit ICE. The receiver is a PARAMETER so the array-literal gate is not
+    // in play and the index door is reached; `main` does not CALL `first` and
+    // does not build a `[]str` literal, because the shell-literal gate would
+    // add its own refusal and drown the one pin (measured 2026-09-28: two
+    // diagnostics instead of one; the probe_tmp witnesses are since wiped
+    // per the scratch rule).
+    ro (dn, cn) = compile_to_c("fn first(xs []str) -> str {\n\
+ xs[0]\n\
+}\n\
+fn main() {\n\
+ println(\"x\")\n\
+}", std)
+    assert(dn.len() == 1)
+    assert(dn[0].message.contains("carries no `index` for Vec[str]"))
+    assert(cn == "")
 
     // The literal tuple falls in the same class (the second carrier the
     // hunt named); the refusal is the same door. TupleExpr is consciously
@@ -815,7 +807,8 @@ fn main() {\n\
 test "a binding that names a visible variant refuses as refutable (#875)" {
     // `ro Dot = 3` under `type Kind enum Dot | Dash` used to shadow the
     // variant in silence -- the oracle refuses it as a one-variant pattern
-    // (D411). A payload-carrying variant's bare name stays a binder.
+    // (D411; novac's own door: `check/destructure.nv:36`,
+    // `REFUTABLE_BINDING_MSG`). A payload-carrying variant's bare name stays a binder.
     ro std = std_decls()
     ro (dvs, _) = compile_to_c("type Kind enum Dot | Dash\n\
 fn main() {\n\

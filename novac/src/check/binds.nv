@@ -24,6 +24,7 @@ import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
+import ../builtins.{VEC_INDEX_METHOD}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
 import ../sem.{shape_of}
@@ -31,7 +32,8 @@ import ../sem.{Ctx, CheckOut, param_name_at, param_type_at, branch_children, cal
 import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of}
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
-import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
+import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of}
+import ../sem.{c_instance_ctor, c_instance_method, c_method_symbol}
 import ../sem.{ty_source_name, variants_named, is_closed_slice_bin}
 import ../types.{TyId, no_ty, is_ty}
 
@@ -43,13 +45,15 @@ import ../types.{TyId, no_ty, is_ty}
 fn Checker mut @type_bind(st Node) -> () {
     ro kids = branch_children(st)
     if kids.len() < 2 {
-        @report_first_leaf_of(kids, "outside the subset: a binding needs a name and an initializer")
+        @report_first_leaf_of(kids, "outside the subset: a binding needs a name and an initializer (274.5 P3)")
         return
     }
     ro vname = leaf_text(kids[1])
     // A NAME that is a visible payload-less variant is not a binder in the
     // language: the binding is a refutable one-variant pattern, and the
-    // oracle refuses it (D411; hunt var_shadow, #875). Judged before the
+    // oracle refuses it (D411; hunt var_shadow, #875) -- the subset's own
+    // refusal stands just below (`@reject_first_leaf_of(kids, REFUTABLE_BIND_MSG)`).
+    // Judged before the
     // initializer -- the shadowing itself is the mistake.
     // Asked of the SUMS (wave B6, #964): any sum's payload-less variant of this
     // name makes the binding a refutable pattern; the first row stands for all.
@@ -115,7 +119,8 @@ fn Checker mut @type_bind(st Node) -> () {
     // wrong; that is the shape a silent miscompilation takes.
     //
     // Until the spec says what the form means (escalated with the probe), the
-    // subset refuses it. Rust reads the OUTER binding here (`let x = x + 1`),
+    // subset refuses it -- the refusal is the `@report_first_leaf_of` with
+    // SELF_INIT_MSG a few lines below. Rust reads the OUTER binding here (`let x = x + 1`),
     // which is the reading I expect to win, but expecting is not knowing.
     @self_probe.clear()
     @self_probe.put(vname, 0)
@@ -163,6 +168,32 @@ fn Checker mut @type_bind(st Node) -> () {
             return
         }
         @scope.bind(vname, pt, bind_mode_at(kids))
+        // SILENT-OK: typed and bound above, so this branch is fully decided
+        return
+    }
+    // AN IF-LET initializer routes explicitly, the TupleExpr precedent: IfLet
+    // is not in is_expr_kind -- it is a statement kind that also STANDS in
+    // value position (`ro d = if Some(v) = param_default_slot(pk) { v } else
+    // { return false }`, check/rules.nv's own carrier, the if-let-value
+    // wave) -- so the general path never sees it, and the fallthrough's
+    // `type_of` would ice on a kind the lattice has no rule for. Typed by its
+    // own door AS A VALUE; the bind takes what the door records.
+    if ik == NodeKind.IfLet {
+        ro before3 = @out.len()
+        @type_if_let(init, as_value: true)
+        if @out.len() > before3 {
+            @bind_poisoned(vname, kids)
+            return
+        }
+        ro lt = @chan.type_if_known(init.id_of())
+        // SILENT-OK: an if-let whose branches both leave records no type (the
+        // staying branch was refused inside the door, by name); the name is
+        // bound POISONED.
+        if !is_ty(lt) {
+            @bind_poisoned(vname, kids)
+            return
+        }
+        @scope.bind(vname, lt, bind_mode_at(kids))
         // SILENT-OK: typed and bound above, so this branch is fully decided
         return
     }
@@ -396,7 +427,7 @@ fn Checker mut @type_index(e Node) -> TyId {
             // wave, so the refusal NAMES the form instead of calling the head
             // an unbound value -- which is what it used to say, and it was a
             // lie about which thing was missing.
-            @report_first_leaf_of(kids, "outside the subset: a type applied to arguments is read but not compiled yet")
+            @report_first_leaf_of(kids, "outside the subset: a type applied to arguments is read but not compiled yet (274.5 P4)")
             return no_ty()
         } else {
             // Not a type: an ordinary receiver, typed below.
@@ -452,13 +483,13 @@ fn Checker mut @type_index(e Node) -> TyId {
         // An ordinary index: judged below.
     }
     if @ctx.tys.kind_of(recv_t) != TypeKind.TkApp {
-        @report_first_leaf_of(kids, "outside the subset: indexing is compiled for `[]T` only -- this receiver is not an applied type")
+        @report_first_leaf_of(kids, "outside the subset: indexing is compiled for `[]T` only -- this receiver is not an applied type (274.5 P4)")
         return no_ty()
     } else {
         // An application: `Vec[T]` and its `[]T` spelling both land here.
     }
     if @ctx.tys.arg_count(recv_t) != 1 {
-        @report_first_leaf_of(kids, "outside the subset: indexing is compiled for a ONE-argument application (`[]T`), and this receiver has more")
+        @report_first_leaf_of(kids, "outside the subset: indexing is compiled for a ONE-argument application (`[]T`), and this receiver has more (274.5 P4)")
         return no_ty()
     } else {
         // One argument: it is the element.
@@ -480,23 +511,29 @@ fn Checker mut @type_index(e Node) -> TyId {
     } else {
         // Either an int, or already refused where it was typed.
     }
-    // READ, BUT NOT COMPILED YET -- and said by name rather than accepted.
-    //
-    // The element type above is correct and the receiver is a real vector; what
-    // is missing is on the EMITTER's side: the interop shell carries no `index`
-    // for this instance. Measured 2026-08-31 -- `grep Vec____nova_int_method_index
-    // novac/src/emit_c/shell.tpl.c` finds nothing, while `_method_get` (which
-    // answers `Option[T]`) and `_method_len` are there. `@index(i int) -> T`
-    // does exist in std (`std/src/collections/vec/access.nv:30`); the shell only
-    // carries what the probe program uses.
-    //
-    // Accepting the form anyway is the shape the differential guard calls the
-    // worst kind of green: `check` clean, `emit` an ICE ("binding initializer is
-    // neither a match, a ctor nor an expression"). So the subset refuses, and the
-    // refusal names WHAT is missing and WHERE -- the fix is a wider probe, not a
-    // change to the program being compiled.
-    @report_first_leaf_of(kids, "outside the subset: indexing is read but not compiled yet (E2-b) -- the interop shell carries no `index` for this instance, so widen novac/probe/shell_probe.nv")
-    no_ty()
+    // THE SHELL DECIDES, by name — the same shape as the array literal above
+    // (line ~632). A plain `xs[i]` is the call `xs.index(i)` (D470 section 5,
+    // the same door the closed slice walks through); the element type is the
+    // application's argument and the receiver's spelling is `c_method_symbol`'s
+    // question. Measured 2026-08-31 the shell carried no `index` at all; wave
+    // 274.5 taught the probe `three().index(1)` for `Vec[int]`
+    // (`Vec____nova_int_method_index`, shell.tpl.c:2001), so the instance this
+    // subset needs exists — and any other instance is refused by the name the
+    // shell does not carry, not accepted into an emit ICE.
+    ro sym = c_method_symbol(@ctx, recv_t, VEC_INDEX_METHOD)
+    if !@ctx.interop.has(sym) {
+        @report_first_leaf_of(kids, "outside the subset: the shell novac links into carries no `index` for ${ty_source_name(@ctx, recv_t)} -- the interop surface is the probe program (novac/probe/shell_probe.nv, E2-b); an index of this instance arrives when the probe uses one")
+        return no_ty()
+    } else {
+        // Carried: the emitter prints exactly this name — and it reads the
+    // RECEIVER's type back off the channel to build that name, so the type
+    // the judgement below already holds is recorded on the receiver node.
+    // Measured 2026-09-28: without the line the emit arm ICEd ("an index whose
+    // receiver type the checker did not record"), because a plain identifier
+    // receiver is typed by the lattice without a recording writer of its own.
+    }
+    @chan.record_type(kids[0].id_of(), recv_t)
+    @ctx.tys.arg(recv_t, 0)
 }
 
 /// The type of a CLOSED slice `s[lo..hi]`, or `no_ty()` after a named refusal
@@ -563,7 +600,7 @@ fn Checker mut @type_array_lit(init Node) -> TyId {
     ro elems = literal_elems(kids)
     if Some(ctor) = literal_ctor_name(kids) {
         if ctor != LITERAL_CTOR {
-            @report_first_leaf_of(kids, "outside the subset: a typed array literal is written `[]T.${LITERAL_CTOR}(...)` -- this constructor is not the literal form")
+            @report_first_leaf_of(kids, "outside the subset: a typed array literal is written `[]T.${LITERAL_CTOR}(...)` -- this constructor is not the literal form (274.5 P3)")
             return no_ty()
         } else {
             // The literal constructor: judged as a literal below.
@@ -572,17 +609,17 @@ fn Checker mut @type_array_lit(init Node) -> TyId {
         // The bracket form has no constructor to judge.
     }
     if elems.len() == 0 {
-        @report_first_leaf_of(kids, "outside the subset: an empty array literal -- the oracle panics on it at run time (`${LITERAL_CTOR}` requires at least one element), and novac refuses rather than diverge")
+        @report_first_leaf_of(kids, "outside the subset: an empty array literal -- the oracle panics on it at run time (`${LITERAL_CTOR}` requires at least one element), and novac refuses rather than diverge (274.5 P3)")
         return no_ty()
     } else {
         // At least one element: its type leads.
     }
     for e in elems {
         if e.kind_of() == NodeKind.ArraySpread {
-            @report_first_leaf_of(kids, "outside the subset: a spread `...xs` inside an array literal is not compiled yet")
+            @report_first_leaf_of(kids, "outside the subset: a spread `...xs` inside an array literal is not compiled yet (274.5 P5)")
             return no_ty()
         } else if e.kind_of() == NodeKind.NamedArg {
-            @report_first_leaf_of(kids, "outside the subset: an array literal takes positional elements only")
+            @report_first_leaf_of(kids, "outside the subset: an array literal takes positional elements only (274.5 P3)")
             return no_ty()
         } else {
             // An expression element: typed below.
@@ -593,7 +630,7 @@ fn Checker mut @type_array_lit(init Node) -> TyId {
     if Some(hn) = literal_head_name(kids) {
         elem_t = @ctx.ty_of_name(hn) ?? no_ty()
         if !is_ty(elem_t) {
-            @report_first_leaf_of(kids, "outside the subset: novac does not know this element type yet")
+            @report_first_leaf_of(kids, "outside the subset: novac does not know this element type yet (274.5 P3)")
             return no_ty()
         } else {
             // A known element type: every element must be of it.
@@ -610,7 +647,7 @@ fn Checker mut @type_array_lit(init Node) -> TyId {
         if !is_ty(elem_t) {
             elem_t = et
         } else if et != elem_t {
-            @report_first_leaf_of(kids, "outside the subset: element ${i + 1} is ${ty_source_name(@ctx, et)}, but the literal's elements are ${ty_source_name(@ctx, elem_t)}")
+            @report_first_leaf_of(kids, "outside the subset: element ${i + 1} is ${ty_source_name(@ctx, et)}, but the literal's elements are ${ty_source_name(@ctx, elem_t)} (274.5 P4)")
             return no_ty()
         } else {
             // Same type as the literal's: fine.
@@ -619,7 +656,7 @@ fn Checker mut @type_array_lit(init Node) -> TyId {
     }
     ro lit_t = slice_term_of(elem_t, @ctx.types, @ctx.defs, @ctx.tys)
     if !is_ty(lit_t) {
-        @report_first_leaf_of(kids, "outside the subset: the slice head `${SLICE_HEAD}` is not among the declarations novac was handed")
+        @report_first_leaf_of(kids, "outside the subset: the slice head `${SLICE_HEAD}` is not among the declarations novac was handed (274.5 P5)")
         return no_ty()
     } else {
         // The term exists; whether the SHELL can build it is the last question.

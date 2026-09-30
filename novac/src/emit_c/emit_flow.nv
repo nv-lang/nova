@@ -71,6 +71,13 @@ fn Emitter mut @print_if_head(cond Cond, chained bool) -> () {
             ro d = @lo.ir.decl_of(l)
             @body.append(@option_some_test(d.ty, d.name))
         }
+        NotSome(l) => {
+            // The negation of the same door's test (wave P4's while-let exit):
+            // `!nova_opt_..._is_some(x)` -- one door, two polarities.
+            ro d = @lo.ir.decl_of(l)
+            @body.append("!")
+            @body.append(@option_some_test(d.ty, d.name))
+        }
     }
     @body.append(") {\n")
 }
@@ -93,17 +100,21 @@ fn Emitter mut @print_loop_head(head LoopHead) -> () {
         }
         Range(r) => {
             ro v = @lo.ir.decl_of(r.var).name
+            ro h = @lo.ir.decl_of(r.hi).name
             @body.append("    for (nova_int ${v} = ")
             @emit_expr(r.lo)
-            @body.append("; ${v} < ")
-            @emit_expr(r.hi)
-            @body.append("; ${v}++) {\n")
+            @body.append("; ${v} < ${h}; ${v}++) {\n")
         }
         Each(e) => {
             ro vd = @lo.ir.decl_of(e.vec)
             ro i = @lo.ir.decl_of(e.idx).name
             ro len_c = c_instance_method(@ctx, vd.ty, VEC_LEN_METHOD)
             @body.append("    for (nova_int ${i} = 0; ${i} < ${len_c}(${vd.name}); ${i}++) {\n")
+        }
+        Forever => {
+            // The while-let's head (wave P4): the real test is in the body,
+            // so the head spells an unconditional loop.
+            @body.append("    while (1) {\n")
         }
     }
 }

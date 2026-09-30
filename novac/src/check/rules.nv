@@ -82,7 +82,7 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
                         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern |
                         KwUnsafe | Hash | Ident | IntLit | FloatLit | StrLit | CharLit | Question2 | Question |
                         KwBreak | KwContinue | StrFrag | InterpOpen | InterpClose | RParen | LBrace |
-                        RBrace | RBracket | Dot | Comma | Plus | Minus | Slash | Lt | Le | Gt |
+                        RBrace | RBracket | Dot | Comma | Semicolon | Plus | Minus | Slash | Lt | Le | Gt |
                         Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret | Shl |
                         Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign |
                         MinusAssign | StarAssign | SlashAssign | PercentAssign | AmpAssign |
@@ -100,7 +100,8 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
                 }
                 Branch { .. } => {
                     // A generics node after the name: judged by the loop
-                    // below.
+                    // below in this same `@report_if_missing_type(kids, msg)`,
+                    // whose `Branch { .. }` arm gives the same answer.
                     return
                 }
             }

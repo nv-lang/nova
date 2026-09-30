@@ -113,7 +113,8 @@ export fn coalesce_payload(ctx Ctx, t TyId) -> TyId {
 }
 
 /// The ELEMENT a for-head vector carries: the single-argument door under its
-/// wave's name (B16) -- the head kind was already judged by the caller.
+/// wave's name (B16) -- the head kind was already judged by the caller
+/// (`check/typing.nv:680`).
 export fn for_head_elem(ctx Ctx, t TyId) -> TyId => single_type_arg(ctx, t)
 
 /// Is this the UNIT type -- the `()` a callable declares when it returns
