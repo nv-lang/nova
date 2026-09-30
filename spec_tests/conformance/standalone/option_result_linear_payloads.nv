@@ -15,12 +15,14 @@ type Res consume {
     id int
 }
 
+// nova:allow W_CONSUME_NAKED_NAME -- #1355: prelude consume-conversion naming (pair of forms) is undecided; remove with the decision
 fn Res consume @close() -> int => @id
 
 type Fault consume {
     code int
 }
 
+// nova:allow W_CONSUME_NAKED_NAME -- #1355: prelude consume-conversion naming (pair of forms) is undecided; remove with the decision
 fn Fault consume @close() -> int => @code
 
 fn close_opt(consume o Option[Res]) -> int => match consume o { Some(consume r) => r.close(), None => 0 }

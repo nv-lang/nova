@@ -1,0 +1,18 @@
+// `mut seen = seen` inside an op body: the op's own copy of a captured
+// `mut`; writes to it must NOT reach the outer binding.
+fn main() {
+    mut seen = 5
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label str) -> () {
+            mut seen = seen
+            seen += 100
+            println(label, " ", seen)
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {
+            println(label)
+        }
+    } {
+        ResourceTrace.on_resource_enter("a")
+    }
+    println(seen)
+}

@@ -256,6 +256,9 @@ Unary =
 Cast =
   Expr 'as' TypeRefLeaves
 
+IsTest =
+  Expr 'is' TypeRefLeaves
+
 Coalesce =
   lhs:Expr '??' (rhs:Expr | 'return' Expr?)
 

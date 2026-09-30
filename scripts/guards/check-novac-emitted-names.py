@@ -48,8 +48,11 @@ QUOTED = re.compile(r'"[A-Za-z_][A-Za-z0-9_]*(?:\$\{[^}]*\})?[A-Za-z0-9_]*"')
 # называет -- одной дверью `effect_vtable_c`/`effect_slot_c` в sem/mangle.nv;
 # существование стережёт check-novac-shell-freshness (шелл == эмиссия оракула по
 # пробе, а проба ставит `with Fs/Os`).
+# `NOVA_TID_` -- the RUNTIME's fixed type ids (`nova_rt/typeid.h`, E.9 step 4b):
+# novac only names them, through the one door `any_tid_c` in sem/mangle.nv,
+# and only for the primitives `has_fixed_tid` lists (builtins.nv).
 ALLOWED_PREFIX = ("Nova_", "NovaValue_", "nova_", "novac_", "NOVAC_", "_novac_",
-                  "_NovaTuple", "NovaVtable_", "_nova_handler_")
+                  "_NovaTuple", "NovaVtable_", "_nova_handler_", "NOVA_TID_")
 ALLOWED_EXACT = {"void", "_", "equal", "fmod",
                  "__NOVAC_BODY__", "__NOVAC_STRLITS__", "NOVA_UNIT",
                  # Разделители имени в c_callable — куски, а не имена (см. шапку).

@@ -1,0 +1,99 @@
+// EXPECT_STDOUT cap40|loc1|out40|cap6|loc101|out6|in101|cap6|out6|41|40|107|6
+//
+// Registry 221.1 #1441: a body that reads a capture and THEN declares a local of
+// the same name. In a handler op body the oracle did not capture the name at all
+// (the capture scan subtracted every name bound anywhere in the body), and the
+// first read became an undeclared C name -- `nova_print_int(base)`; with the
+// capture unpacked as a C local of the same name, the later local was a C
+// redeclaration; and a `mut` capture lives in a box the emitter reaches by NAME,
+// so reads and `+=` after `mut seen = 100` would have gone to the captured
+// variable, silently. Now: a name read before its local is a capture; each read
+// is decided by whether it is bound where it stands (not by name for the whole
+// body); and the body sits in its own C block so the local is a legal shadow.
+// Cells: op body with `ro` and with `mut`, a shadow inside a nested block of an
+// op body (after the block the capture is read again), a closure with `ro` and
+// with `mut`. `out...` shows the outer variable was not touched by the local.
+module standalone.p1441_capture_then_local_of_same_name
+
+fn p1441_apply(f fn() -> int) -> int => f()
+
+fn op_ro() {
+    ro base = 40
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label str) -> () {
+            print("cap${base}|")
+            ro base = 1
+            print("loc${base}|")
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {}
+    } {
+        ResourceTrace.on_resource_enter("a")
+    }
+    print("out${base}|")
+}
+
+fn op_mut() {
+    mut seen = 5
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label str) -> () {
+            seen += 1
+            print("cap${seen}|")
+            mut seen = 100
+            seen += 1
+            print("loc${seen}|")
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {}
+    } {
+        ResourceTrace.on_resource_enter("a")
+    }
+    print("out${seen}|")
+}
+
+fn op_block() {
+    mut seen = 5
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label str) -> () {
+            if label == "a" {
+                mut seen = 100
+                seen += 1
+                print("in${seen}|")
+            }
+            seen += 1
+            print("cap${seen}|")
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {}
+    } {
+        ResourceTrace.on_resource_enter("a")
+    }
+    print("out${seen}|")
+}
+
+fn closure_ro() {
+    ro base = 40
+    ro r = p1441_apply(fn() -> int {
+        ro a = base
+        ro base = 1
+        a + base
+    })
+    print("${r}|${base}|")
+}
+
+fn closure_mut() {
+    mut seen = 5
+    ro r = p1441_apply(fn() -> int {
+        seen += 1
+        ro a = seen
+        mut seen = 100
+        seen += 1
+        a + seen
+    })
+    print("${r}|${seen}")
+}
+
+fn main() Io -> () {
+    op_ro()
+    op_mut()
+    op_block()
+    closure_ro()
+    closure_mut()
+}

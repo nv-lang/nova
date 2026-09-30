@@ -19,8 +19,8 @@ import ../builtins.{TypeKind}
 import ../names.{raw_decl}
 import ../sem.{branch_children, leaf_text}
 import ../sem.{leaf_kind}
-import ../sem.{ty_source_name}
-import ../types.{is_ty}
+import ../sem.{ty_source_name, decl_of_ty}
+import ../types.{TyId, is_ty}
 
 /// Type a `with` statement (E4 wave, 274.11): the effect bindings resolve, the
 /// handler value is judged against the effect, and the body is a block.
@@ -153,6 +153,48 @@ fn Checker mut @type_with_stmt(st Node) -> () {
     }
 }
 
+/// A `spawn` body (E.9 step 4). It stands inside a `supervised` body (D50:
+/// the oracle refuses a bare one in codegen, measured 2026-09-30), and it
+/// runs in a NEW fiber, so what it reads from outside is a CAPTURE -- the
+/// capture-mark stack of the handler literal (step 3), with this spawn as
+/// the owner. A `mut` capture crosses the fiber boundary only for a type
+/// vouched mut-alias-safe (`#share`, 06-concurrency.md:7370 section 2).
+fn Checker mut @type_spawn_body(skids []Node, st Node, sbody Node) -> () {
+    if @sup_depth == 0 {
+        @reject_first_leaf_of(skids, SPAWN_OUTSIDE_SUPERVISED_MSG)
+        return
+    }
+    @cap_marks.push(@scope.row_count())
+    @cap_owners.push(st.id_of())
+    @type_block(sbody)
+    ro _ = @cap_marks.pop()
+    ro _ = @cap_owners.pop()
+    for c in @chan.captures_of(st.id_of()) {
+        // A POISONED binding (no type) was refused where it was bound: one
+        // cause, one diagnostic -- "not safe" about it would be the second.
+        if !is_ty(c.type_id) { continue }
+        if c.by_ref && !@is_mut_alias_safe(c.type_id) {
+            @reject_first_leaf_of(skids, concurrent_mut_capture_msg(c.name))
+            return
+        } else {
+            // A copy (`ro`), or a `mut` of a vouched type: it may cross.
+        }
+    }
+}
+
+/// May a `mut` binding of type `t` be aliased for mutation from another
+/// fiber? Only a declaration vouched `#share` answers yes; everything else
+/// -- a primitive (`mut int` is the motivating race), an unvouched record,
+/// a generic application -- answers no. Conservative V1 (06-concurrency.md
+/// section 1): the memberwise derivation for records is not read yet.
+fn Checker @is_mut_alias_safe(t TyId) -> bool {
+    ro k = @ctx.tys.kind_of(t)
+    if k == TypeKind.TkRecord || k == TypeKind.TkNewtype || k == TypeKind.TkSum {
+        return decl_of_ty(@ctx, t).share
+    }
+    false
+}
+
 /// Type a `supervised` or `spawn` statement (E4 wave, 274.11 Э.7 item 4): its
 /// one body Block is typed as an ordinary block.
 fn Checker mut @type_supervised_stmt(st Node) -> () {
@@ -172,7 +214,14 @@ fn Checker mut @type_supervised_stmt(st Node) -> () {
     }
     ro sbody = skids[skids.len() - 1]
     if sbody.kind_of() == NodeKind.Block {
+        if st.kind_of() == NodeKind.SpawnStmt {
+            @type_spawn_body(skids, st, sbody)
+            // SILENT-OK: the spawn body was typed and judged by its own door.
+            return
+        }
+        @sup_depth += 1
         @type_block(sbody)
+        @sup_depth -= 1
     } else {
         // A missing body is the parser's error node, reported by the
         // shape walk's generic Err arm, `@report_err_branch`

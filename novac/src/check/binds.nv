@@ -24,7 +24,7 @@ import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
-import ../builtins.{VEC_INDEX_METHOD}
+import ../builtins.{VEC_INDEX_METHOD, VEC_LEN_METHOD}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
 import ../sem.{shape_of}
@@ -34,7 +34,7 @@ import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, 
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of}
 import ../sem.{c_instance_ctor, c_instance_method, c_method_symbol}
-import ../sem.{ty_source_name, variants_named, is_closed_slice_bin}
+import ../sem.{ty_source_name, variants_named, slice_shape_of}
 import ../types.{TyId, no_ty, is_ty}
 
 /// A binding. The initializer's type is decided BEFORE the initializer's own
@@ -476,7 +476,8 @@ fn Checker mut @type_index(e Node) -> TyId {
     // and emit_c/emit_c.nv, a field chain through a type of another module.
     // Silence there let two files pass check with a slice nothing typed, which
     // emission could only answer with an ICE. The slice keeps its refusal.
-    if is_closed_slice_bin(kids[2]) && !is_ty(recv_t) {
+    ro slice = slice_shape_of(kids[2])
+    if slice.is_some() && !is_ty(recv_t) {
         @report_first_leaf_of(kids, SLICE_MSG)
         return no_ty()
     } else {
@@ -490,12 +491,12 @@ fn Checker mut @type_index(e Node) -> TyId {
     } else {
         // A typed receiver: its shape decides.
     }
-    // A CLOSED SLICE `s[lo..hi]` (plan 274.7 wave U-1) is the call
-    // `s.index(Range { start: lo, end: hi })` of D470 section 5. Asked here and
-    // not earlier because the answer needs the receiver's TYPE, which the walk
-    // (which let the slice through, check.nv's Bin arm) does not have.
-    if is_closed_slice_bin(kids[2]) {
-        return @type_str_slice(kids, recv_t)
+    // A SLICE `s[lo..hi]`, either side open (plan 274.7 waves U-1..U-3) is the
+    // call `s.index(Range { start: lo, end: hi })` of D470 section 5. Asked here
+    // and not earlier because the answer needs the receiver's TYPE, which the
+    // walk (which let the slice through, check.nv's Bin arm) does not have.
+    if Some(sh) = slice {
+        return @type_slice(kids, recv_t, sh)
     } else {
         // An ordinary index: judged below.
     }
@@ -539,7 +540,7 @@ fn Checker mut @type_index(e Node) -> TyId {
     // shell does not carry, not accepted into an emit ICE.
     ro sym = c_method_symbol(@ctx, recv_t, VEC_INDEX_METHOD)
     if !@ctx.interop.has(sym) {
-        @report_first_leaf_of(kids, "outside the subset: the shell novac links into carries no `index` for ${ty_source_name(@ctx, recv_t)} -- the interop surface is the probe program (novac/probe/shell_probe.nv, E2-b); an index of this instance arrives when the probe uses one")
+        @report_first_leaf_of(kids, no_shell_method_msg(VEC_INDEX_METHOD, ty_source_name(@ctx, recv_t)))
         return no_ty()
     } else {
         // Carried: the emitter prints exactly this name — and it reads the
@@ -553,51 +554,19 @@ fn Checker mut @type_index(e Node) -> TyId {
     @ctx.tys.arg(recv_t, 0)
 }
 
-/// The type of a CLOSED slice `s[lo..hi]`, or `no_ty()` after a named refusal
-/// (plan 274.7 wave U-1).
-///
-/// Only a `str` receiver is compiled: the shell carries `Nova_str_method_index`,
-/// and the result is `str` -- a byte range (D249; D144's older codepoint wording
-/// carries a pointer to it since 2026-09-25). Out-of-range and a cut through a
-/// code point are RUN-TIME panics of std's own contract (`slice.nv`), not
-/// diagnostics, so nothing here judges the numbers. Every other receiver keeps
-/// the slice refusal it had in the walk, by the same text (wave U-3).
-fn Checker mut @type_str_slice(kids []Node, recv_t TyId) -> TyId {
-    if recv_t != @ctx.prims.str_id {
-        @report_first_leaf_of(kids, SLICE_MSG)
-        return no_ty()
-    } else {
-        // A `str` receiver: its two bounds decide.
-    }
-    ro bounds = branch_children(kids[2])
-    if !@slice_bound_is_int(bounds[0]) || !@slice_bound_is_int(bounds[2]) {
-        // SILENT-OK: the bound that failed was refused inside, by name.
-        return no_ty()
-    } else {
-        // Both bounds are `int`.
-    }
-    @ctx.prims.str_id
-}
-
-/// Types one slice bound and says whether it is an `int`; anything else is
-/// refused by the index's own text -- measured 2026-09-25, the oracle accepts a
-/// `u8` bound, so the language is wider and the refusal says SUBSET.
-fn Checker mut @slice_bound_is_int(b Node) -> bool {
-    ro before = @out.len()
-    @type_expr(b)
-    if @out.len() > before { return false }
-    ro t = type_of(b, @ctx, @scope, @chan)
-    if !is_ty(t) {
-        // SILENT-OK: an untyped bound was refused where it was typed.
-        return false
-    } else {
-        // A typed bound: its type decides.
-    }
-    if t != @ctx.prims.int_id {
-        @report_first_leaf_of([]Node.of(b), INT_INDEX_MSG)
-        return false
-    } else {
-        // An `int` bound.
+/// Does the shell carry what a `for` over a vector of type `ht` reads -- the
+/// instance's `len` and its element `index` (the loop header and the
+/// `take_elem` read, emit_c/emit_flow.nv)? Refused by the shell's name
+/// otherwise, the door every interop call asks. Found 2026-10-01: a `for`
+/// over `[]str` passed check and died in clang on `Vec____nova_str_method_index`.
+fn Checker mut @walk_carried(kids []Node, ht TyId) -> bool {
+    for m in []str.of(VEC_LEN_METHOD, VEC_INDEX_METHOD) {
+        if !@ctx.interop.has(c_method_symbol(@ctx, ht, m)) {
+            @report_first_leaf_of(kids, no_shell_method_msg(m, ty_source_name(@ctx, ht)))
+            return false
+        } else {
+            // Carried: the emitter prints exactly this name.
+        }
     }
     true
 }
@@ -730,6 +699,22 @@ const METHOD_DECL_MSG = "outside the subset: novac does not declare methods yet 
 /// One text for the exhaustiveness rule; the oracle's own code is named so a
 /// reader can find the other half of the story.
 const NOT_EXHAUSTIVE_MSG = "match on a sum leaves a variant uncovered -- the language makes exhaustiveness an ERROR, not a warning (04-effects.md amendment 2026-08-16, registry 703); the oracle let it through check and build and returned silent garbage"
+
+/// A `match` with NO arms in a value position (#700 triage 2026-09-30): no arm
+/// produces the value, so no scrutinee is covered -- `_` or every case is
+/// required (syntax.ru.md:1317), and exhaustiveness is an error (04-effects.md
+/// amendment 2026-08-16). The oracle refuses `match s { }` on a sum with this
+/// code; on an `int` it lets the form through (measured 2026-09-30).
+const EMPTY_MATCH_MSG = "a `match` with no arms produces no value and covers no case -- a `_` arm or every case is required (syntax.ru.md exhaustiveness, E_MATCH_NON_EXHAUSTIVE)"
+
+/// A `true` / `false` pattern against a scrutinee that is not `bool`.
+const BOOL_PATTERN_TYPE_MSG = "a `true` / `false` pattern matches a `bool` value only -- the value matched here is of another type"
+
+/// A match on `bool` missing `true` or `false` and without a catch-all.
+const BOOL_NOT_EXHAUSTIVE_MSG = "a `match` on `bool` must cover both `true` and `false` (or have a `_` arm) -- the spec's exhaustiveness check covers sums and bool (syntax.ru.md, E_MATCH_NON_EXHAUSTIVE)"
+
+/// A match on an open scalar with no catch-all arm (`@report_if_not_exhaustive`).
+const OPEN_NOT_EXHAUSTIVE_MSG = "a `match` on a type whose values cannot all be listed (`int`, `str`, ...) needs a `_` arm -- without one a value no arm covers has no result (syntax.ru.md exhaustiveness, E_MATCH_NON_EXHAUSTIVE; the oracle lets it through, registry 1415)"
 
 /// One text for the rule: the reader must not guess whether two wordings
 /// mean two limits.

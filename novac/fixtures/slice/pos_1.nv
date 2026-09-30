@@ -1,0 +1,19 @@
+module slice.pos_1
+
+// A `str` slice in every bound shape (registry #1170, plan 274.7 waves U-1..U-3):
+// both bounds written, the upper one open (`end_index()`), the lower one open (`0`).
+// Byte offsets (D249). `tail_from` is the shape of novac's own `base_name`
+// (main.nv): an open slice over a parameter.
+fn tail_from(path str, cut int) -> str {
+    path[cut..]
+}
+
+fn main() {
+    ro s = "carina/novac/main.nv"
+    println(s[7..12])
+    println(s[..6])
+    ro k = 13
+    println(s[k..])
+    println(tail_from(s, 7))
+    println(tail_from("plain", 0))
+}

@@ -9,10 +9,22 @@ use std::collections::HashSet;
 thread_local! {
     /// #1397: names the collector saw read as BOUND while `frame_reads` runs.
     static BOUND_READS: RefCell<Option<HashSet<String>>> = const { RefCell::new(None) };
+    /// #1441: the ExprIds of those reads, while `bound_read_ids` runs.
+    static BOUND_READ_IDS: RefCell<Option<HashSet<ExprId>>> = const { RefCell::new(None) };
 }
 
 /// #1397: every name a body reads, split into (read-as-bound, read-as-free); `params` are bound in it and `walk`
 /// runs the collector over the body. The emitter's local frames (`codegen/local_frames.rs`) are built from this.
+/// #1441: the reads in a body (its params bound) that are bound WHERE THEY STAND -- a param, or a local declared
+/// before the read in an enclosing scope. A body that reads a capture and later declares a local of the same name
+/// reads the capture first and the local after; the emitter asks this per read, not per name.
+pub fn bound_read_ids(params: &[&str], walk: impl FnOnce(&mut HashSet<String>, &mut HashSet<String>)) -> HashSet<ExprId> {
+    let mut bound: HashSet<String> = params.iter().map(|p| p.to_string()).collect();
+    BOUND_READ_IDS.with(|r| *r.borrow_mut() = Some(HashSet::new()));
+    walk(&mut bound, &mut HashSet::new());
+    BOUND_READ_IDS.with(|r| r.borrow_mut().take()).unwrap_or_default()
+}
+
 pub fn frame_reads(params: &[&str], walk: impl FnOnce(&mut HashSet<String>, &mut HashSet<String>)) -> (HashSet<String>, HashSet<String>) {
     let mut bound: HashSet<String> = params.iter().map(|p| p.to_string()).collect();
     let mut free = HashSet::new();
@@ -54,6 +66,7 @@ pub fn collect_truly_free_idents(
                 out.insert(n.clone());
             } else {
                 BOUND_READS.with(|r| if let Some(set) = r.borrow_mut().as_mut() { set.insert(n.clone()); }); // #1397
+                BOUND_READ_IDS.with(|r| if let Some(set) = r.borrow_mut().as_mut() { set.insert(expr.id); }); // #1441
             }
         }
         ExprKind::Path(parts) if parts.len() == 2 => { out.insert(format!("{}.{}", parts[0], parts[1])); } // D184 amend: `Type.NAME` read

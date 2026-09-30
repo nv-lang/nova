@@ -1,0 +1,25 @@
+// The outer literal captures `seen`; its op body SHADOWS `seen` with a local,
+// and an inner literal built there reads the local, not the outer binding.
+fn main() {
+    mut seen = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label str) -> () {
+            seen += 1
+            mut seen = 1000
+            with Random = effect Random {
+                u64() -> u64 {
+                    seen += 1
+                    7
+                }
+            } {
+                println(label, " ", Random.u64(), " ", seen)
+            }
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {
+            println(label)
+        }
+    } {
+        ResourceTrace.on_resource_enter("a")
+    }
+    println(seen)
+}

@@ -2181,8 +2181,10 @@ ro msg = "id=${user_id}"                    // sugar над str.from(user_id) �
 - `T.from` — арифметика, парсинг, валидация: `Fahrenheit.from(c)`,
   `User.from(json)`.
 
-**Граница D73 vs D55:** D55 — automatic coercion для record/sum-литералов
-в позиции с известным типом (`ro u User = { id: 1, name: "x" }`).
+**Граница D73 vs D55:** D55 — automatic coercion в позиции с известным
+типом: для record-литералов (`ro u User = { id: 1, name: "x" }`) и для
+значения любого выражения, принимаемого правилом sum-обёртки (литерал,
+переменная, вызов, чтение поля — уточнение 2026-10-01).
 `T.from(v)` — explicit method call для произвольных типов.
 
 **Граница применимости sum-lift (уточнена 2026-08-04).** Авто-обёртка в
