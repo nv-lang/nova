@@ -1,0 +1,16 @@
+# ci-accepted-red.list -- red CI jobs that do NOT stop main from moving, each held by an OPEN registry row.
+#
+# Read by scripts/guards/check-push-proven-by-ci.py (pre-push on refs/heads/main). Owner's decision
+# 2026-09-30: main moves only to a commit GitHub CI has judged green. A red job listed here is
+# accepted ONLY while its registry row (docs/plans/221.1-bug-sweep.md) is open: once the row is
+# closed, missing or has no status field, the entry is STALE and the guard refuses every push to
+# main until it is removed -- the exemption leaves together with its reason.
+#
+# Form (one entry per line, `#` at line start = comment):
+#   <workflow> / <job name prefix> #NNNN <why>
+# <workflow> is the workflow `name:` exactly; the job name is matched by PREFIX, so the long
+# parenthesised tail of a job name need not be copied.
+#
+# Not here on purpose: nova-lint and `nova-gate / gate.sh tier push` -- their red (#1355) is
+# silenced point-wise in the tree, not accepted.
+nova-gate / novac-gate #1442 differential cut by its limit without a verdict (stage 3 does not grow with the corpus) and shell.tpl.c stale after oracle emission changes

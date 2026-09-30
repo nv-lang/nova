@@ -29,12 +29,14 @@ type Res consume {
     id int
 }
 
+// nova:allow W_CONSUME_NAKED_NAME -- #1355: prelude consume-conversion naming (pair of forms) is undecided; remove with the decision
 fn Res consume @close() -> int => @id
 
 type Fault consume {
     code int
 }
 
+// nova:allow W_CONSUME_NAKED_NAME -- #1355: prelude consume-conversion naming (pair of forms) is undecided; remove with the decision
 fn Fault consume @close() -> int => @code
 
 // -- the logging pair ---------------------------------------------------------
@@ -77,6 +79,7 @@ fn Option[Result[T consume, E consume]] consume @tp() -> Result[Option[T], E]
 
 fn Option[Result[T, E]] @form() -> int => 1
 
+// nova:allow W_CONSUME_NAKED_NAME -- #1355: prelude consume-conversion naming (pair of forms) is undecided; remove with the decision
 fn Option[Result[T consume, E consume]] consume @form() -> str => "move"
 
 // -- helpers ------------------------------------------------------------------

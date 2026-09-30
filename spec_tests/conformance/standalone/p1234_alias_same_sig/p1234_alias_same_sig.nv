@@ -1,0 +1,19 @@
+// EXPECT_STDOUT 3001|4001|4002|3002|4101
+//
+// Registry 221.1 #1234, the silent cell: an own `serve(int)` and an imported
+// `serve(int)` reached through an alias. With equal signatures nothing
+// downstream can notice a wrong binding -- the value is the only witness,
+// so every call here returns a distinct number: 3xxx is the own `serve`,
+// 4xxx the imported one. A call and a fn value, through the alias and not,
+// and the imported module calling its own `serve` by its own name.
+module standalone.p1234_alias_same_sig
+
+import ./p1234s_net.{serve as net_serve, p1234s_bump}
+
+fn serve(a int) -> int => 3000 + a
+
+fn main() Io -> () {
+    ro h = net_serve
+    ro own = serve
+    print("${serve(1)}|${net_serve(1)}|${h(2)}|${own(2)}|${p1234s_bump(1)}")
+}

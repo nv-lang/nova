@@ -1,0 +1,3 @@
+module p1234_import_import_conflict.p1234ia
+
+export fn p1234_pick(a int) -> int => 100 + a

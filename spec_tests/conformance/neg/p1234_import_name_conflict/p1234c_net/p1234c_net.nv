@@ -1,0 +1,3 @@
+module p1234_import_name_conflict.p1234c_net
+
+export fn serve(a int) -> int => 4000 + a

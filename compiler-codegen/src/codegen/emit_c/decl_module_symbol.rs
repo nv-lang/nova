@@ -130,6 +130,16 @@ impl CEmitter {
             .unwrap_or_else(|| self.free_fn_c_name(name))
     }
 
+    /// #1090 + #1419/#1234: the per-module symbol of the declaration the checker
+    /// resolved this call to (`resolved_callees[call_id]`), keyed by the
+    /// DECLARING file. Asked before the caller-file lookup, so a call through an
+    /// alias or `m.f` from a file whose own module declares a same-signature `f`
+    /// reaches `m.f`, not the own one.
+    pub(super) fn callee_file_c_name(&self, name: &str, call_id: Option<ExprId>) -> Option<String> {
+        let decl_span = self.resolved_callees.get(&call_id?)?;
+        self.file_priv_fn_c_names.get(&(decl_span.file_id, name.to_string())).cloned()
+    }
+
     /// Plan 14 Ф.3: a free fn named as a first-class value (`ro f = inc`,
     /// `xs.map(inc)`) becomes a closure value `(void*)NovaClos_X*` over an envless
     /// thunk `<symbol>_thunk(void* env, args...)` emitted once per SYMBOL.

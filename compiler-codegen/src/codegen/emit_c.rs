@@ -1537,6 +1537,7 @@ pub struct CEmitter {
     pub(crate) pending_assoc_consts: Vec<(String, crate::ast::AssocConst)>,
     /// #1397: per emitted body (fn / test / closure), (names read as BOUND, names read as FREE) -- see `is_local_read`.
     pub(crate) local_frames: Vec<(HashSet<String>, HashSet<String>)>,
+    pub(crate) local_read_ids: HashSet<crate::ast::ExprId>, // #1441: see `enter_capture_body`
     /// #1158: final C qualifiers (`c_name`) of lazy consts -- laziness of ONE const, not of a name.
     lazy_const_syms: HashSet<String>,
     pub(crate) module_value_tys: HashMap<String, String>, // #1410: see `reset_module_value_types`
@@ -2798,7 +2799,7 @@ impl CEmitter {
             user_fn_variadic: HashSet::new(),
             suppress_variadic_routing: false,
             emitted_fn_thunks: HashSet::new(),
-            lazy_consts: HashSet::new(), pending_assoc_consts: Vec::new(), local_frames: Vec::new(), lazy_const_syms: HashSet::new(), module_value_tys: HashMap::new(),
+            lazy_consts: HashSet::new(), pending_assoc_consts: Vec::new(), local_frames: Vec::new(), local_read_ids: HashSet::new(), lazy_const_syms: HashSet::new(), module_value_tys: HashMap::new(),
             pending_const_inits: Vec::new(),
             record_field_fn_sigs: HashMap::new(),
             trailing_block_counter: 0,
@@ -13317,7 +13318,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if method_param_names.contains(&name) {
                     continue;
                 }
-                if bound.contains(&name) {
+                if bound.contains(&name) && !Self::read_before_bound(m, &name) { // #1441
                     continue;
                 }
                 if resolved_fn_call_names.contains(&name) {
@@ -13777,7 +13778,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 Self::debt_struct_name_from_c_type(&ret_ty));
             let saved_op_post_label = self.contracts_post_label.take();
             let saved_op_exits = self.swap_exit_scopes(Default::default());
-
+            let op_scope = self.enter_capture_body(&m.params.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), !all_captures.is_empty(), |bd, fr| match &m.body { HandlerMethodBody::Expr(e) => crate::free_idents::collect_truly_free_idents(e, bd, fr), HandlerMethodBody::Block(b) => crate::free_idents::collect_truly_free_idents_block(b, bd, fr) }); // #1441
             match &m.body {
                 HandlerMethodBody::Expr(e) => {
                     let v = self.emit_expr(e)?;
@@ -13826,6 +13827,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                 }
             }
+            self.leave_capture_body(op_scope);
 
             // Plan 175 handler-annot: restore enclosing-fn type context.
             self.current_fn_return_ty = saved_op_ret_ty;
@@ -21782,26 +21784,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // file-private helper shadows a same-named module symbol within its own file.
         // (current_emit_file_id is set during the function-definition emit and during
         // call-site lowering; both share the declaring file for a file-local helper.)
-        if let Some(fid) = self.current_emit_file_id {
-            if let Some(mangled) = self.file_priv_fn_c_names.get(&(fid, name.to_string())) {
-                return mangled.clone();
-            }
-        }
         // [реестр 221.1 №1090] ТОТ ЖЕ ЛООКАП, но ключом служит файл
         // ОБЪЯВИВШЕГО, взятый из канала 196 — тот самый ключ, по
         // которому ищет ОПРЕДЕЛЕНИЕ (`mangle_fn`: `f.span.file_id`).
-        // Срабатывает только на промахе файлового лоокапа выше, то есть
-        // ровно в случае вызова ИЗ ДРУГОГО МОДУЛЯ, где до этой правки
-        // выходило голое `nova_fn_<name>`. Подробно — в докстроке
-        // `free_fn_c_name_at_call`.
-        if let Some(cid) = call_id {
-            if let Some(decl_span) = self.resolved_callees.get(&cid) {
-                if let Some(mangled) = self
-                    .file_priv_fn_c_names
-                    .get(&(decl_span.file_id, name.to_string()))
-                {
-                    return mangled.clone();
-                }
+        // №1419/№1234: канал спрашивается ПЕРВЫМ — вызов через алиас/`m.f`
+        // из файла со СВОИМ одноимённым `f` иначе получал символ своего.
+        if let Some(mangled) = self.callee_file_c_name(name, call_id) {
+            return mangled;
+        }
+        if let Some(fid) = self.current_emit_file_id {
+            if let Some(mangled) = self.file_priv_fn_c_names.get(&(fid, name.to_string())) {
+                return mangled.clone();
             }
         }
         // Plan 103.1 Ф.6: ExternalRegistry builtins (fence, etc.) always
@@ -36309,7 +36302,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Ctx/env-field box values (`_c->…`, `_env->…`) have no local of
                 // that name in the emitted function and are never NULL, so they
                 // keep the plain deref.
-                if let Some(box_var) = self.var_boxed.get(name) {
+                if let Some(box_var) = self.var_boxed.get(name).filter(|_| !self.local_read_ids.contains(&expr.id)) { // #1441
                     if self.lazy_detach_boxes.contains(box_var) {
                         return Ok(format!(
                             "(*({bx} ? {bx} : &{local}))",
@@ -55927,6 +55920,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
             }
         }
+        let clo_scope = self.enter_capture_body(&params.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), !free_vars.is_empty(), |bd, fr| crate::free_idents::collect_truly_free_idents(body, bd, fr)); // #1441
         let body_val = self.emit_expr_in_place(body, &ret_c_ty)?;
         if ret_c_ty == "nova_unit" {
             self.line(&format!("{};", body_val));
@@ -55934,6 +55928,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         } else {
             self.line(&format!("return {};", body_val));
         }
+        self.leave_capture_body(clo_scope);
         self.indent = 0;
         self.line("}");
         self.line("");

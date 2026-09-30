@@ -1633,7 +1633,7 @@ fn cmd_check_explain_cache(
         };
         // Run pipeline до cache_module.
         let _ = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
-        nova_codegen::types::annotate_map_literals(&mut module);
+        nova_codegen::types::annotate_map_literals(&mut module, &check_env);
         nova_codegen::desugar::desugar_module(&mut module);
         nova_codegen::types::infer_effects(&mut module);
         nova_codegen::callnorm::normalize_module(&mut module, &check_env.resolved_callees);
@@ -1744,7 +1744,7 @@ fn cmd_check_telemetry_cache(
             Err(_) => { skipped_files += 1; continue; }
         };
         let _ = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
-        nova_codegen::types::annotate_map_literals(&mut module);
+        nova_codegen::types::annotate_map_literals(&mut module, &check_env);
         nova_codegen::desugar::desugar_module(&mut module);
         nova_codegen::types::infer_effects(&mut module);
         nova_codegen::callnorm::normalize_module(&mut module, &check_env.resolved_callees);
@@ -5300,7 +5300,7 @@ fn cmd_build(
             // Plan 52 Ф.4: десугаринг map-литералов `[k: v]` → block-expr.
             {
                 let _t = nova_codegen::perf_timer::PerfTimer::new("annotate-maps");
-                nova_codegen::types::annotate_map_literals(&mut module);
+                nova_codegen::types::annotate_map_literals(&mut module, &build_env);
             }
             {
                 let _t = nova_codegen::perf_timer::PerfTimer::new("desugar");

@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_IMPORT_NAME_CONFLICT
+//
+// Registry 221.1 #1234, D29, the other half of the sentence: an imported name
+// that equals ANOTHER import of the same file. Before the fix the call below
+// was resolved by nothing but luck of the candidate list (#1097 narrowing kept
+// both imported candidates, and equal signatures left the choice to the
+// emitter's by-name fallback).
+module neg.p1234_import_import_conflict
+
+import ./p1234ia.{p1234_pick}
+// nova:expect E_IMPORT_NAME_CONFLICT -- a second import brings another `p1234_pick`; D29 wants one of them renamed with `as`
+import ./p1234ib.{p1234_pick}
+
+fn main() Io -> () {
+    print("${p1234_pick(1)}")
+}

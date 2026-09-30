@@ -4864,7 +4864,7 @@ fn codegen_to_c(
     }
     {
         let _t = crate::perf_timer::PerfTimer::new("annotate-maps");
-        types::annotate_map_literals(&mut module);
+        types::annotate_map_literals(&mut module, &module_env);
     }
     {
         let _t = crate::perf_timer::PerfTimer::new("desugar");

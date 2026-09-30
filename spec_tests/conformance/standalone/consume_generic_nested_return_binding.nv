@@ -15,6 +15,7 @@ type Res consume {
     id int
 }
 
+// nova:allow W_CONSUME_NAKED_NAME -- #1355: prelude consume-conversion naming (pair of forms) is undecided; remove with the decision
 fn Res consume @close() -> int => @id
 
 fn wrap[T consume](consume x T) -> Option[T] => Some(x)

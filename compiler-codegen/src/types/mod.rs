@@ -25,6 +25,7 @@ mod fail_reach;
 /// `static_blanket.rs`'s module doc.
 mod static_blanket;
 mod fn_visibility; // #1097: a same-name free fn by the caller's imports, see its doc
+mod import_conflict; // #1234: D29 imported name vs own declaration / other import
 
 /// Plan 196 (gs-bounds migration, spike `docs/plans/wip/196-gs-spike.md`):
 /// `gs` ("generics in scope") used to be `HashSet<String>` — ONLY the names of the
@@ -942,6 +943,18 @@ pub struct ModuleEnv {
     /// exclusive. Lifted from `TypeCheckCtx::resolved_variant_ctors_buf`
     /// after the check pass (mirrors `pattern_variant_types`).
     pub resolved_variant_ctors: HashMap<crate::ast::ExprId, (String, usize)>,
+    /// Registry 221.1 #1260: per-expr sum-coercion kind channel. When `assignable`
+    /// accepts an expression by the D55 single-wrapper SUM rule, the checker's own
+    /// verdict about that expression's `WrapKind` (from the scope-aware
+    /// `infer_expr_type`) is recorded here, keyed by the expression's `ExprId`.
+    /// `annotate_map_literals` reads it to MATERIALIZE the wrap it accepted: its own
+    /// `var_types` only knew parameters and annotated/literal `let`s, so a value
+    /// bound by a pattern (`match`/`if Leaf(t) = ..`/`for`), an unannotated `let` of
+    /// a call result, a field read or a call result was accepted by the checker and
+    /// passed through UNWRAPPED -- a `Tok*` handed over where `Nd*` was expected, a
+    /// silent miscompile. A fact about the expression, not about the position, so a
+    /// speculative `assignable` probe (overload filtering) cannot poison it.
+    pub sum_wrap_kinds: HashMap<crate::ast::ExprId, WrapKind>,
     /// Plan 172.1 U.3.4: per-call resolved-CALLEE channel (call-site `ExprId` → chosen
     /// callee `FnDecl` declaration `Span`). The checker resolves each call's overload
     /// ONCE (it already does, for arg-checking) and records WHICH `FnDecl` it picked;
@@ -2169,6 +2182,8 @@ fn check_module_impl(
     env.pattern_variant_types = type_check_ctx.pattern_variant_types_buf.take();
     // №658: lift the bare-variant-ctor channel (mirrors pattern_variant_types).
     env.resolved_variant_ctors = type_check_ctx.resolved_variant_ctors_buf.take();
+    // #1260: lift the sum-coercion kind channel (read by `annotate_map_literals`).
+    env.sum_wrap_kinds = type_check_ctx.sum_wrap_kinds_buf.take();
     // Plan 104.10 Ф.2 (D379): lift the opt-in IDE per-expression type map. Empty unless
     // `record_expr_types` was set (i.e. via check_module_with_expr_types) — zero-overhead
     // guarantee for the normal compile path.
@@ -4251,6 +4266,11 @@ struct TypeCheckCtx<'a> {
     /// E_UNKNOWN_TYPE-гейт (RecordLit variant-ctor) обязан видеть variant-имя
     /// вне зависимости от того, чья одноимённая сумма победила слот в `types`.
     sum_variant_names: HashSet<String>,
+    /// Registry 221.1 #1260: variant name -> every sum declaring it (same
+    /// lossless walk as `sum_variant_names`, duplicates kept). Read by
+    /// `bare_variant_ctor_type`: a bare `Leaf(x)` is typed only when exactly one
+    /// sum declares `Leaf`, so a shared name (`Empty`, №962) stays untyped.
+    variant_owners: HashMap<String, Vec<String>>,
     /// [M-198-f4c-1-privfile-type-not-discriminated] (originally `priv(file)
     /// type`-only) + [M-fmt-write-protocol-collision-cycle-adjacent] (2026-07-21,
     /// broadened to EVERY type decl): lossless per-file overlay — same
@@ -4278,6 +4298,8 @@ struct TypeCheckCtx<'a> {
     file_imports: HashMap<crate::diag::FileId, Vec<Vec<String>>>,
     /// #1097: (import path, item name) of every unaliased selective import item, per file.
     file_fn_imports: HashMap<crate::diag::FileId, Vec<(Vec<String>, String)>>,
+    /// #1419: alias references rewritten by `alpha_rename` (`Module::import_alias_refs`).
+    import_alias_refs: HashMap<Span, crate::ast::ImportAliasRef>,
     /// W6 (№705): канонический путь файла — вторая половина того же ответа.
     /// В `d78_dup_decl_type_cross_import` оба кандидата объявляют ОДИН И ТОТ
     /// ЖЕ модуль `neg.kind` и различаются ТОЛЬКО физическим путём (`a/` vs
@@ -4578,6 +4600,8 @@ struct TypeCheckCtx<'a> {
     /// written on genuine, unambiguous resolution; consulted FIRST by
     /// codegen, never exclusively — the legacy heuristics stay the fallback.
     resolved_variant_ctors_buf: std::cell::RefCell<HashMap<crate::ast::ExprId, (String, usize)>>,
+    /// Registry 221.1 #1260: lifted into `ModuleEnv.sum_wrap_kinds` (see there).
+    sum_wrap_kinds_buf: std::cell::RefCell<HashMap<crate::ast::ExprId, WrapKind>>,
     /// Plan 221.1 №286 residual gap (window p286, 2026-08-04): a BARE
     /// `Channel.new(cap)` (no turbofish, no `ChanWriter[T]`/`ChanReader[T]`
     /// annotation) left `T` permanently untracked (window p-chan, №143/№286
@@ -4876,6 +4900,9 @@ impl<'a> TypeCheckCtx<'a> {
         // обязан видеть variant-имя вне зависимости от того, чья одноимённая
         // сумма победила слот в `types`.
         let mut sum_variant_names: HashSet<String> = HashSet::new();
+        // #1260: every sum declaring each variant name (same lossless walk) --
+        // a bare ctor `Leaf(x)` names ONE sum only when exactly one declares it.
+        let mut variant_owners: HashMap<String, Vec<String>> = HashMap::new();
         for item in &module.items {
             match item {
                 Item::Fn(f) => {
@@ -4954,6 +4981,7 @@ impl<'a> TypeCheckCtx<'a> {
                     if let TypeDeclKind::Sum(vs) = &td.kind {
                         for v in vs {
                             sum_variant_names.insert(v.name.clone());
+                            variant_owners.entry(v.name.clone()).or_default().push(td.name.clone());
                         }
                     }
                 }
@@ -4974,6 +5002,7 @@ impl<'a> TypeCheckCtx<'a> {
                     if let TypeDeclKind::Sum(vs) = &td.kind {
                         for v in vs {
                             sum_variant_names.insert(v.name.clone());
+                            variant_owners.entry(v.name.clone()).or_default().push(td.name.clone());
                         }
                     }
                 }
@@ -5461,7 +5490,7 @@ impl<'a> TypeCheckCtx<'a> {
                 *ret = None;
             }
         }
-        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, module_const_names, types: TypeTable::new(types, colliding_type_names.clone()), const_types, assoc_const_types, coerce_pairs, generic_coerce_patterns, current_coerce_decl_span: std::cell::RefCell::new(None), sum_variant_names, file_local_types, file_imports, file_fn_imports, file_paths,
+        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, module_const_names, types: TypeTable::new(types, colliding_type_names.clone()), const_types, assoc_const_types, coerce_pairs, generic_coerce_patterns, current_coerce_decl_span: std::cell::RefCell::new(None), sum_variant_names, variant_owners, file_local_types, file_imports, file_fn_imports, import_alias_refs: module.import_alias_refs.clone(), file_paths,
             colliding_type_names, imported_modules,
             current_file: std::cell::Cell::new(None),
             current_fail_payload: std::cell::RefCell::new(None),
@@ -5502,6 +5531,7 @@ impl<'a> TypeCheckCtx<'a> {
             pattern_variant_types_buf: std::cell::RefCell::new(HashMap::new()),
             // №658: empty bare-variant-ctor channel; filled during the check walk.
             resolved_variant_ctors_buf: std::cell::RefCell::new(HashMap::new()),
+            sum_wrap_kinds_buf: std::cell::RefCell::new(HashMap::new()),
             // Plan 221.1 №286 residual gap (window p286): empty first-send
             // T-inference hint channel; filled per-block during the check walk.
             channel_bare_send_elem_hint: std::cell::RefCell::new(HashMap::new()),
@@ -6118,6 +6148,7 @@ impl<'a> TypeCheckCtx<'a> {
         }
         // D184 amendment 2026-09-30: a cycle of module-level `ro` initializers.
         check_module_init_cycles(module, errors);
+        self.check_import_name_conflicts(module, errors); // #1234, D29
         // Plan 157 (D200 amend): associated `ro Type.NAME` — same strict
         // const/ro partition symmetry as bare module-level `ro`
         // (`check_ro_module_partition` above, [M-114.4-strict-partition]).
@@ -18228,7 +18259,9 @@ impl<'a> TypeCheckCtx<'a> {
                     // foo`, per `10-overloading.md` §«LLM-критерий») stays
                     // fully visible — `is_own` is true for BOTH declaring
                     // files, so neither is filtered out.
-                    if filtered.iter().any(is_own) {
+                    if let Some(t) = self.alias_import_target(base.span, &filtered) {
+                        t // #1419/#1234: an alias names the imported fn, not the own one
+                    } else if filtered.iter().any(is_own) {
                         filtered.into_iter().filter(|c| is_own(c)).collect()
                     } else {
                         self.narrow_by_fn_imports(caller_file_id, n, filtered) // #1097
@@ -22481,6 +22514,11 @@ impl<'a> TypeCheckCtx<'a> {
                             && !is_untyped_const_expr(expr)
                             && !d55_newtype_strict_disabled();
                         if !newtype_refused {
+                            // #1260: the rewrite pass materializes this wrap from
+                            // the checker's own kind, not from its narrower guess.
+                            if matches!(target, WrapTarget::SumVariant(..)) && expr.id.is_set() {
+                                self.sum_wrap_kinds_buf.borrow_mut().insert(expr.id, found_kind.clone());
+                            }
                             return self.assignable_direct(expr, inner_ty, expr_gs, exp_gs, scope);
                         }
                     }
@@ -23876,6 +23914,40 @@ impl<'a> TypeCheckCtx<'a> {
         ResolvedType::resolved_to_typeref(rt, span)
     }
 
+    /// Registry 221.1 #1260: the type of a qualified variant constructor
+    /// `Sum.Variant(args)` -- `Sum` when it names a declared NON-generic sum
+    /// with a tuple variant `Variant` of exactly `arity` fields and no static
+    /// method of that name. `None` otherwise (generic sums keep their own
+    /// mono-aware path; an ambiguous shape stays untyped, as before).
+    fn qualified_variant_ctor_type(&self, sum: &str, variant: &str, arity: usize, span: Span) -> Option<TypeRef> {
+        self.variant_ctor_type(sum, variant, arity, span)
+    }
+
+    /// Registry 221.1 #1260: the type of a BARE variant constructor `Variant(args)`
+    /// -- the one sum that declares `Variant`, under the same conditions as the
+    /// qualified form. A name in scope, a declared free fn, a type name, or a
+    /// variant name two sums share is left untyped, as before.
+    fn bare_variant_ctor_type(&self, name: &str, arity: usize, scope: &HashMap<String, TypeRef>, span: Span) -> Option<TypeRef> {
+        if scope.contains_key(name) || self.sig.fn_decls.contains_key(name) || self.types_get_here(name).is_some() {
+            return None;
+        }
+        let owners = self.variant_owners.get(name)?;
+        let [owner] = owners.as_slice() else { return None };
+        self.variant_ctor_type(owner, name, arity, span)
+    }
+
+    fn variant_ctor_type(&self, sum: &str, variant: &str, arity: usize, span: Span) -> Option<TypeRef> {
+        let td = self.types_get_here(sum)?;
+        if !td.generics.is_empty() || self.method_overloads(sum, variant).is_some() {
+            return None;
+        }
+        let TypeDeclKind::Sum(variants) = &td.kind else { return None };
+        let hit = variants.iter().any(|v| {
+            v.name == variant && matches!(&v.kind, SumVariantKind::Tuple(tys) if tys.len() == arity)
+        });
+        hit.then(|| TypeRef::Named { path: vec![sum.to_string()], generics: Vec::new(), span })
+    }
+
     /// Ф.1: best-effort вывод типа выражения (для не-литералов).
     fn infer_expr_type(
         &self,
@@ -24634,6 +24706,20 @@ impl<'a> TypeCheckCtx<'a> {
                     _ => None,
                 };
                 if let Some((eff, op_name)) = eff_op {
+                    // Registry 221.1 #1260: a QUALIFIED variant constructor
+                    // `Nd.Leaf(tok)` of a concrete (non-generic) declared sum is a
+                    // value of that sum. It was left untyped, so `ro node =
+                    // Nd.Leaf(tok)` bound `node` to nothing, `match node {
+                    // Leaf(t) => .. }` bound `t` to nothing, and every check on
+                    // `t` in the arm went permissive: `leaf_text(t)` was accepted
+                    // without the single-wrapper decision that materializes
+                    // `Nd.Leaf(t)`, and the bare `Tok*` reached a `Nd*` parameter.
+                    // Same shapes as the effect-op arm below; arity must match a
+                    // tuple variant, and a same-named static method keeps its own
+                    // (method) inference.
+                    if let Some(sum_ty) = self.qualified_variant_ctor_type(eff, op_name, outer_call_args.len(), expr.span) {
+                        return Some(sum_ty);
+                    }
                     if let Some(td) = self.types_get_here(eff) {
                         if let TypeDeclKind::Effect(ops) = &td.kind {
                             if let Some(op) = ops.iter().find(|m| m.name == op_name) {
@@ -25024,6 +25110,10 @@ impl<'a> TypeCheckCtx<'a> {
                     // instead; this arm stays return-type-free for method calls.
                 }
                 if let ExprKind::Ident(name) = &func.kind {
+                    // #1260: `ro node = Leaf(tok)` -- see `bare_variant_ctor_type`.
+                    if let Some(sum_ty) = self.bare_variant_ctor_type(name, outer_call_args.len(), scope, expr.span) {
+                        return Some(sum_ty);
+                    }
                     if let Some(td) = self.types_get_here(name) {
                         // Plan 128.1 Ф.2 — D215 NamedTuple constructor (`Vec3(1,2,3)`)
                         // is type-producing наряду с Newtype/Alias. Без этого
@@ -28534,7 +28624,7 @@ fn single_wrap_candidates(
 /// ambiguous instead of wrapping to `I(1)`. Aliases transparently resolve
 /// to their underlying kind (depth-guarded).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum WrapKind {
+pub enum WrapKind {
     IntFamily,
     Float,
     Bool,
@@ -54056,12 +54146,17 @@ fn simple_types_compatible(a: &TypeRef, b: &TypeRef) -> bool {
 /// Plan 52 Ф.7: пройти по AST mutable, записать inferred K/V для каждого
 /// `MapLit`. Вызывается ПОСЛЕ `check_module` (errors уже emitted), ДО
 /// `desugar_module` (читает inferred K/V для turbofish).
-pub fn annotate_map_literals(module: &mut Module) {
+///
+/// `env` is the checker's verdict on this module: the single-wrapper sum rewrite
+/// materializes exactly what `assignable` accepted (#1260, `ModuleEnv.sum_wrap_kinds`).
+pub fn annotate_map_literals(module: &mut Module, env: &ModuleEnv) {
     let ctx = MapLitCtx::build(module);
     let mut ann = MapLitAnnotator {
         ctx,
         fn_generics: HashSet::new(),
         var_types: HashMap::new(),
+        sum_wrap_kinds: &env.sum_wrap_kinds,
+        resolved_types: &env.resolved_types,
         current_fn_return_ty: None,
         current_fn_span: None,
     };
@@ -54076,7 +54171,7 @@ pub fn annotate_map_literals(module: &mut Module) {
 }
 
 /// Mutable AST walker для аннотации MapLit-узлов inferred K/V.
-struct MapLitAnnotator {
+struct MapLitAnnotator<'e> {
     /// Immutable type-таблицы (#from_fields, param-types).
     ctx: MapLitCtx,
     /// Generic-параметры текущей функции — для permissive Hashable.
@@ -54086,6 +54181,18 @@ struct MapLitAnnotator {
     /// аннотации: чтобы отличить map-spread от array-spread, нужен тип
     /// spread-источника. Сбрасывается на границе каждого item'а.
     var_types: HashMap<String, TypeRef>,
+    /// Registry 221.1 #1260: the checker's `WrapKind` for every expression it
+    /// accepted by the single-wrapper sum rule (`ModuleEnv.sum_wrap_kinds`).
+    /// Authoritative over `var_types` in `try_wrap_leaf`: accept and
+    /// materialization must judge the same expression the same way.
+    sum_wrap_kinds: &'e HashMap<crate::ast::ExprId, WrapKind>,
+    /// Registry 221.1 #1260: the checker's per-expression type channel
+    /// (`ModuleEnv.resolved_types`). A name whose type the checker knew from its
+    /// scope -- a pattern binding, an unannotated `let` of a call -- is absent
+    /// from `var_types`; its kind is read here instead, so a position the
+    /// checker does not route through `assignable` (a record-literal field)
+    /// still wraps a pattern-bound name exactly like a parameter.
+    resolved_types: &'e HashMap<crate::ast::ExprId, ResolvedType>,
     /// Plan 214 (D429): the CURRENT function's declared return type — set on
     /// `Item::Fn` entry, cleared on exit. Lets `Stmt::Return { value: Some(v)
     /// }` propagate `expected` (found empirically: without this, `return sb`
@@ -54111,7 +54218,7 @@ struct MapLitAnnotator {
     current_fn_span: Option<Span>,
 }
 
-impl MapLitAnnotator {
+impl MapLitAnnotator<'_> {
     fn walk_module(&mut self, module: &mut Module) {
         self.walk_items(&mut module.items);
     }
@@ -54145,7 +54252,13 @@ impl MapLitAnnotator {
                     // `try_coerce_leaf`'s self-exclusion for GENERIC patterns.
                     self.current_fn_span = Some(f.span);
                     match &mut f.body {
-                        FnBody::Expr(e) => self.walk_expr(e, return_ty.as_ref()),
+                        FnBody::Expr(e) => {
+                            self.walk_expr(e, return_ty.as_ref());
+                            // #1260: the leaves of an `if`/`match` body are returns too.
+                            if let Some(rt) = return_ty.as_ref() {
+                                self.wrap_return_tail(e, rt);
+                            }
+                        }
                         FnBody::Block(b) => self.walk_fn_body_block(b),
                         FnBody::External => {}
                     }
@@ -54202,6 +54315,48 @@ impl MapLitAnnotator {
         }
     }
 
+    /// Registry 221.1 #1260: the single-wrapper rewrite on every LEAF of a
+    /// returned value -- the tails of `if`/`if let`/`match`/block, exactly the
+    /// leaves `TypeCheckCtx::check_return_compat_tail` judges with `assignable`.
+    /// One set of "what is a return" for accept and for materialization; a
+    /// container itself is never wrapped (the leaves are).
+    fn wrap_return_tail(&mut self, e: &mut Expr, ret_ty: &TypeRef) {
+        match &mut e.kind {
+            ExprKind::If { then, else_, .. } | ExprKind::IfLet { then, else_, .. } => {
+                if let Some(t) = &mut then.trailing {
+                    self.wrap_return_tail(t, ret_ty);
+                }
+                match else_ {
+                    Some(ElseBranch::Block(b)) => {
+                        if let Some(t) = &mut b.trailing {
+                            self.wrap_return_tail(t, ret_ty);
+                        }
+                    }
+                    Some(ElseBranch::If(x)) => self.wrap_return_tail(x, ret_ty),
+                    None => {}
+                }
+            }
+            ExprKind::Match { arms, .. } => {
+                for arm in arms.iter_mut() {
+                    match &mut arm.body {
+                        MatchArmBody::Expr(x) => self.wrap_return_tail(x, ret_ty),
+                        MatchArmBody::Block(b) => {
+                            if let Some(t) = &mut b.trailing {
+                                self.wrap_return_tail(t, ret_ty);
+                            }
+                        }
+                    }
+                }
+            }
+            ExprKind::Block(b) => {
+                if let Some(t) = &mut b.trailing {
+                    self.wrap_return_tail(t, ret_ty);
+                }
+            }
+            _ => self.try_wrap_leaf(e, ret_ty),
+        }
+    }
+
     /// Plan 214 (D429): identical to `walk_block`, EXCEPT the block's own
     /// trailing expression ALSO gets a direct `try_coerce_leaf` pass against
     /// `current_fn_return_ty` — used ONLY for a `FnBody::Block`'s OUTERMOST
@@ -54225,6 +54380,13 @@ impl MapLitAnnotator {
     /// `try_coerce_leaf` directly against the return type. Silently widening
     /// single-wrapper's OWN scope to cover return position would be an
     /// undiscussed, un-spec'd behavior change beyond Plan 214's mandate.
+    /// Correction (registry 221.1 #1260): return IS a position of that rule --
+    /// the D55 amend lists `return` beside `let`/call-arg/element, and the
+    /// checker accepts it there (`check_return_compat_tail`). Accept without
+    /// rewrite handed the bare payload to a sum-typed return, so the
+    /// single-wrapper rewrite now runs on the returned leaves
+    /// (`wrap_return_tail`); `walk_expr(t, None)` stays, for the other
+    /// mechanisms this paragraph is about.
     fn walk_fn_body_block(&mut self, b: &mut Block) {
         for s in &mut b.stmts {
             self.walk_stmt(s);
@@ -54232,6 +54394,11 @@ impl MapLitAnnotator {
         if let Some(t) = &mut b.trailing {
             self.walk_expr(t, None);
             if let Some(ret_ty) = self.current_fn_return_ty.clone() {
+                // #1260: `return` is a position of the single-wrapper rule
+                // (D55 amend: `let`/`const`, `return`, call-arg, element), and
+                // the checker accepts it there (`check_return_compat_tail`); a
+                // missing rewrite handed the bare payload to a sum-typed return.
+                self.wrap_return_tail(t, &ret_ty);
                 self.try_coerce_leaf(t, &ret_ty);
             }
         }
@@ -54323,6 +54490,8 @@ impl MapLitAnnotator {
                 if let Some(v) = value {
                     self.walk_expr(v, None);
                     if let Some(ret_ty) = self.current_fn_return_ty.clone() {
+                        // #1260: see `walk_fn_body_block` -- return is a wrap position.
+                        self.wrap_return_tail(v, &ret_ty);
                         self.try_coerce_leaf(v, &ret_ty);
                     }
                 }
@@ -54433,8 +54602,16 @@ impl MapLitAnnotator {
     /// exprs, ambiguous (≥2) or unmatched (0) candidates, or a Newtype
     /// target (accepted at check-time already, nothing to materialize —
     /// same C representation, D52).
+    ///
+    /// Registry 221.1 #1260: when the checker accepted `e` by this very rule its
+    /// recorded kind decides, for ANY expression shape -- a pattern-bound name
+    /// (`match`/`if Leaf(t) = ..`/`for`), an unannotated `let` of a call, a field
+    /// read, a call. Before, only literals and `var_types` names were wrapped, and
+    /// everything else the checker had accepted reached codegen as the bare
+    /// payload (`Tok*` where `Nd*` was expected: an empty string, or a crash).
     fn try_wrap_leaf(&mut self, e: &mut Expr, expected: &TypeRef) {
-        let found_kind = match &e.kind {
+        let checker_kind = if e.id.is_set() { self.sum_wrap_kinds.get(&e.id).cloned() } else { None };
+        let found_kind = if let Some(k) = checker_kind { k } else { match &e.kind {
             ExprKind::IntLit(_) => WrapKind::IntFamily,
             ExprKind::Unary { op: UnOp::Neg, operand }
                 if matches!(operand.kind, ExprKind::IntLit(_)) =>
@@ -54445,12 +54622,19 @@ impl MapLitAnnotator {
             ExprKind::BoolLit(_) => WrapKind::Bool,
             ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => WrapKind::Str,
             ExprKind::Ident(name) => {
-                let Some(ty) = self.var_types.get(name) else { return };
                 let lookup = |n: &str| self.ctx.wrap_types.get(n).cloned();
-                wrap_kind_of(ty, &lookup, 0)
+                let checker_ty = if e.id.is_set() {
+                    self.resolved_types.get(&e.id).and_then(|rt| ResolvedType::resolved_to_typeref(rt, e.span))
+                } else {
+                    None
+                };
+                match checker_ty.as_ref().or_else(|| self.var_types.get(name)) {
+                    Some(ty) => wrap_kind_of(ty, &lookup, 0),
+                    None => return,
+                }
             }
             _ => return,
-        };
+        } };
         let lookup = |n: &str| self.ctx.wrap_types.get(n).cloned();
         let candidates = single_wrap_candidates(&lookup, expected);
         if candidates.is_empty() {
@@ -58841,6 +59025,7 @@ mod named_tuple_ctor_infer_tests {
             consume_reuse_spans: std::collections::HashSet::new(),
             consume_match_scrutinees: std::collections::HashSet::new(),
             prelude_missing: None,
+            import_alias_refs: Default::default(),
         }
     }
 
@@ -59124,6 +59309,7 @@ mod named_tuple_ctor_infer_tests {
             consume_reuse_spans: std::collections::HashSet::new(),
             consume_match_scrutinees: std::collections::HashSet::new(),
             prelude_missing: None,
+            import_alias_refs: Default::default(),
         };
         let arena = FnDeclArena::new();
         let sig = crate::sig_registry::SigRegistry::build_base(&m);
