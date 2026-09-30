@@ -1,0 +1,10 @@
+// An empty match in STATEMENT position on a record: the second spelling of
+// empty-stmt-match-tuple (any non-sum, non-scalar scrutinee).
+type Pt { x int, y int }
+
+fn main() {
+    ro p = Pt { x: 1, y: 2 }
+    match p {
+    }
+    println(p.x)
+}

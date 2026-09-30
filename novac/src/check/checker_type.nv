@@ -96,12 +96,16 @@ type Checker {
     /// The module values being typed right now, outermost first -- the path a
     /// cycle is named by (`a -> b -> a`, D184 amendment 2026-09-30).
     mv_stack []int
-    /// Bindings that existed when the handler literal being typed began, -1
-    /// outside one: a name read from its op bodies and found below this row
-    /// was bound OUTSIDE the literal -- a capture (E.9 step 3).
-    lit_rows int
-    /// The handler literal being typed; meaningful while `lit_rows >= 0`.
-    lit_node NodeId
+    /// The capture MARKS of the handler literals being typed, outermost
+    /// first: the bindings that existed when each began. A name read below
+    /// a literal's mark was bound OUTSIDE it -- a capture of that literal
+    /// and of every enclosing one whose mark it is also below (E.9 step 3).
+    cap_marks []int
+    /// The literal each mark belongs to, at the same index.
+    cap_owners []NodeId
+    /// How many `supervised` bodies enclose the statement being typed: a
+    /// `spawn` needs one (D50), and the oracle refuses a bare one.
+    sup_depth int
     /// Constant-table rows of the file's module values and, at the same index,
     /// their declarations -- where a cycle's diagnostic stands.
     mv_decl_rows []int

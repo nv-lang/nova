@@ -1,0 +1,15 @@
+// A spawn body that only ASSIGNS a captured `mut int` -- the motivating race
+// (06-concurrency), spelled without a read.
+fn g() -> int {
+    mut n = 0
+    supervised {
+        spawn {
+            n = 5
+        }
+    }
+    n
+}
+
+fn main() {
+    println(g())
+}

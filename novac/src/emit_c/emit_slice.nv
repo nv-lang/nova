@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Swift's range subscript -- `a[lo...]` is one call taking a range whose
+// open side is the collection's own `endIndex`; here the call is std's
+// `index(r Range)` and the open side `end_index()` (plan 284).
+// Role: emission of a slice `x[lo..hi]`, either side possibly open (registry
+//   #1170, plan 274.7 waves U-1..U-3): `<index(Range) symbol>(x, (Range){ lo,
+//   hi })`, an open lower side printed `0`, an open upper side printed as the
+//   receiver's `end_index()`. The symbol is `sem.range_index_symbol`'s answer,
+//   the door the checker asked before admitting the slice.
+// Used by: emit_expr.nv (`@emit_expr`'s Index arm).
+// Guarded by: nova test novac/src/check/check_test.nv and the fixture
+//   novac/fixtures/slice through check-novac-differential.sh.
+
+module novac.emit_c
+
+import ../tree.{Node}
+import ../diag.{ice}
+import ../builtins.{RANGE_TYPE, END_INDEX_METHOD}
+import ../sem.{slice_shape_of, range_index_symbol, c_method_symbol, c_type, branch_children}
+import ../types.{is_ty}
+
+/// `x[lo..hi]` as the call `index(x, Range { start: lo, end: hi })`.
+fn Emitter mut @emit_slice(kids []Node) -> () {
+    ro sh = slice_shape_of(kids[2]) ?? ice("emit: a slice arm reached with no slice under the brackets")
+    ro st = @out.type_if_known(kids[0].id_of())
+    if !is_ty(st) {
+        ice("emit: a slice whose receiver type the checker did not record reached emission")
+    } else {
+        // A checked slice: printed below.
+    }
+    ro sym = range_index_symbol(@ctx, st) ?? ice("emit: a slice over a type whose `index(Range)` the shell does not carry reached emission")
+    ro rng = @ctx.ty_of_name(RANGE_TYPE) ?? ice("emit: the prelude's `Range` is not in the registry")
+    ro bounds = branch_children(kids[2])
+    @body.append("${sym}(")
+    @emit_expr(kids[0])
+    // POSITIONAL, in `Range`'s declaration order (`start`, then `end` --
+    // `std/src/collections/range/core.nv`, the shell's struct reads the same).
+    @body.append(", ((${c_type(@ctx, rng)}){ ")
+    if sh.lo_open {
+        @body.append("0")
+    } else {
+        @emit_expr(bounds[0])
+    }
+    @body.append(", ")
+    if sh.hi_open {
+        // The receiver a second time: the checker admitted an open end over a
+        // NAME only, so the second read is of the same binding.
+        @body.append("${c_method_symbol(@ctx, st, END_INDEX_METHOD)}(")
+        @emit_expr(kids[0])
+        @body.append(")")
+    } else {
+        @emit_expr(bounds[2])
+    }
+    @body.append(" }))")
+}

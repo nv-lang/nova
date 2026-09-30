@@ -1,0 +1,16 @@
+// A match on int whose catch-all name is also a payload-less variant of a
+// sum in scope: binder (it covers the rest) or a variant of another type?
+type Sh enum
+    | A
+    | B
+
+fn pick(n int) -> int {
+    match n {
+        0 => 10
+        A => 20
+    }
+}
+
+fn main() {
+    println(pick(3))
+}

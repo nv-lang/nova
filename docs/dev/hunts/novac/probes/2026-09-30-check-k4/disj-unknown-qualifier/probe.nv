@@ -1,0 +1,14 @@
+// A disjunction alternative qualified by a name that is no type at all.
+type Sh enum
+    | A
+    | B
+
+fn pick(s Sh) -> int {
+    match s {
+        Zzz.A | B => 1
+    }
+}
+
+fn main() {
+    println(pick(B))
+}

@@ -233,6 +233,7 @@ fn display_call_of(row BuiltinType) -> DisplayCall {
                           tail: "((nova_int)0LL), ((nova_int)10LL), false, false, false, false, nova_make_Align_Left(), (nova_char)(32U)" }
         }
         PfUnit => ice("emit_c: a unit interpolation slot passed the checker")
+        PfAny => ice("emit_c: an any interpolation slot passed the checker")
     }
 }
 

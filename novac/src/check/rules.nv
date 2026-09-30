@@ -27,7 +27,7 @@ import ../sem.{contains_call}
 import ../sem.{decl_of_ty, decl_name_at}
 import ../sem.{branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name}
 import ../sem.{generic_bounds, effect_marker_of}
-import ../sem.{is_arg_node}
+import ../sem.{is_arg_node, is_collection_head}
 import ../sem.{ret_is_unit, param_default_slot, interp_slices}
 import ../types.{TyId, no_ty, is_ty}
 
@@ -80,7 +80,7 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
                         EmptyBrackets |
                         KwConsume | KwModule | KwIf | KwReturn | KwFor | KwIn | KwWhile | KwType | KwMatch |
                         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern |
-                        KwUnsafe | Hash | Ident | IntLit | FloatLit | StrLit | CharLit | Question2 | Question |
+                        KwIs | KwUnsafe | Hash | Ident | IntLit | FloatLit | StrLit | CharLit | Question2 | Question |
                         KwBreak | KwContinue | StrFrag | InterpOpen | InterpClose | RParen | LBrace |
                         RBrace | RBracket | Dot | Comma | Semicolon | Plus | Minus | Slash | Lt | Le | Gt |
                         Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret | Shl |
@@ -428,8 +428,7 @@ fn Checker mut @report_if_bad_for_head(kids []Node) -> () {
     // A CALL head is a legal form since the for-CALL wave (B16): the callee
     // hands back a vector and typing judges exactly that -- the form rule
     // only stops the shapes nothing downstream can judge.
-    if head.kind_of() == NodeKind.Call || head.kind_of() == NodeKind.MethodCall ||
-       head.kind_of() == NodeKind.Name || head.kind_of() == NodeKind.FieldAccess {
+    if is_collection_head(head) {
         return
     }
     if head.kind_of() != NodeKind.Bin {

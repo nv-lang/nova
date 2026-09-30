@@ -401,6 +401,10 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         }
         ice("check: anonymous constructor without a spread")
     }
+    if k == NodeKind.IsTest {
+        // A type test is a `bool` (D54); its legality was the walk's.
+        return ctx.prims.bool_id
+    }
     if k == NodeKind.Cast {
         // The value of a cast is the TARGET type -- resolved by name, because a
         // cast writes the type it wants. Legality is the WALK's business
@@ -473,8 +477,10 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // Until 2026-09-05 `int` beside `f64` answered `f64` here, on the
         // oracle's measured behaviour and against the spec.
         if is_numeric_prim(ctx.tys, lt) && is_numeric_prim(ctx.tys, rt) { return lt }
-        // [LEGACY-#700-user-error-as-ice until:E2b3] `"a" + 1` is a USER error; check
-        // has no operand typing yet, so today it reaches here.
+        // An INVARIANT (#700 triage 2026-09-30): `"a" + 1` is refused by
+        // `@report_if_operator_needs_protocol` (check/operators.nv), which
+        // returns before exprs.nv records this node's type -- the only road
+        // here. Pinned by pipeline/handed_fields_test.nv and check_test.nv.
         ice("check: binary arithmetic on non-numeric operands past check (#652 class)")
     }
     if k == NodeKind.MatchExpr {
@@ -541,9 +547,9 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // The then-branch leaves, so no `else` is owed (P31 form 2): what
         // follows IS the no-arms case the ice below was written for.
         if arms > 0 { return no_ty() }
-        // [LEGACY-#700-user-error-as-ice until:E2b3] `match x { }` is a USER error;
-        // neither parse nor check refuses it today -- the parser door
-        // `@match_expr()` (novac/src/parse/expr.nv) grows the named refusal with E2b3.
+        // An INVARIANT (#700 triage 2026-09-30): a value `match` with no arms
+        // is refused by `@type_match` (check/match_arms.nv, EMPTY_MATCH_MSG)
+        // before its type is recorded. Pinned by check/check_test.nv.
         ice("check: match without arms past check")
     }
     if k == NodeKind.Call {

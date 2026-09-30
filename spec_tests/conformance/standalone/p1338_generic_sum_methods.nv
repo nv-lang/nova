@@ -1,0 +1,309 @@
+// EXPECT_STDOUT c01=4
+// EXPECT_STDOUT c02=5
+// EXPECT_STDOUT c03=30
+// EXPECT_STDOUT c04=40
+// EXPECT_STDOUT c05=n5
+// EXPECT_STDOUT c06=7
+// EXPECT_STDOUT c07=14
+// EXPECT_STDOUT c08=9
+// EXPECT_STDOUT c09=abcd
+// EXPECT_STDOUT c10=13
+// EXPECT_STDOUT c11=10
+// EXPECT_STDOUT c12=10
+// EXPECT_STDOUT c13=5
+// EXPECT_STDOUT c14=6
+// EXPECT_STDOUT c15=15
+// EXPECT_STDOUT c18=18
+// EXPECT_STDOUT c19=s19
+// EXPECT_STDOUT c20=20
+// EXPECT_STDOUT c21=21
+// EXPECT_STDOUT c22=22
+// EXPECT_STDOUT c23=23
+// Registry 221.1 #1338/#1337: a user GENERIC sum (`type Opt[T] enum Som(T) |
+// Non`) -- its constructor, its methods' results and a `match` over them --
+// is typed by the checker's channel, not re-derived by the emitter.
+// Before: `match b { Som(v) => v }` over `b Opt[int]` read the payload as
+// `void*`/`nova_str` (segfault, or `p.x` printed as 0) unless some signature
+// earlier in the file happened to name the same instance; a method with no
+// own parameter (`-> Opt[T]`) failed in C (`Nova_Opt____Nova_T_p`); an
+// unannotated `ro a = Som(3)` / `consume r = SomC(Res { .. })` bound nothing,
+// so the call on it had no verdict (a must-consume payload printed 0).
+// Cells: method with an own parameter (`mapx[U]`) and without (`same`,
+// `samec`); the result in `match`, `if Som(x) = ..`, `ro` with and without an
+// annotation, an argument, a return; payload int, str, record, value record,
+// must-consume record; receiver an unannotated ctor binding, an annotated
+// binding, a temporary, another call's result; a nested sum, a two-parameter
+// sum whose open parameter takes its D88 default; builtin `Option`/`Result`
+// with determinable types as the control. Each cell prints its value.
+
+module standalone.p1338_generic_sum_methods
+
+type Opt[T] enum Som(T) | Non
+
+fn Opt[T] @mapx[U](f fn(T) -> U) -> Opt[U] => match @ {
+    Som(v) => Som(f(v))
+    Non => Non
+}
+
+fn Opt[T] @same(f fn(T) -> T) -> Opt[T] => match @ {
+    Som(v) => Som(f(v))
+    Non => Non
+}
+
+fn Opt[T] @or(d T) -> T => match @ {
+    Som(v) => v
+    Non => d
+}
+
+type Pt { x int, y int }
+
+type PtV value { ro x int, ro y int }
+
+type Res consume {
+    id int
+}
+
+fn Res consume @into_close() -> int => @id
+
+type OptC[T consume] enum SomC(T) | NonC
+
+fn OptC[T consume] consume @mapc[U consume](f fn(T) -> U) -> OptC[U] => match consume @ {
+    SomC(consume v) => SomC(f(v))
+    NonC => NonC
+}
+
+fn OptC[T consume] consume @samec(f fn(T) -> T) -> OptC[T] => match consume @ {
+    SomC(consume v) => SomC(f(v))
+    NonC => NonC
+}
+
+fn unw(o Opt[int]) -> int => match o {
+    Som(v) => v
+    Non => 0
+}
+
+fn mk(n int) -> Opt[int] => Som(n)
+
+fn ret15() -> Opt[int] {
+    ro a = Som(15)
+    a.mapx(|x| x)
+}
+
+type Eith[L, R = str] enum Lft(L) | Rgt(R)
+
+fn Eith[L, R] @swapd() -> Eith[R, L] => match @ {
+    Lft(v) => Rgt(v)
+    Rgt(v) => Lft(v)
+}
+
+fn mkr() -> Option[Result[int, str]] => Some(Ok(23))
+
+// match on own-param result, int, unannotated ctor receiver
+fn c01() Io -> () {
+    ro a = Som(3)
+    ro b = a.mapx(|x| x + 1)
+    ro r = match b {
+        Som(v) => v
+        Non => 0
+    }
+    println("c01=${r}")
+}
+
+// match on own-param result, int, annotated receiver, annotated result
+fn c02() Io -> () {
+    ro a Opt[int] = Som(3)
+    ro b Opt[int] = a.mapx(|x| x + 2)
+    ro r = match b {
+        Som(v) => v
+        Non => 0
+    }
+    println("c02=${r}")
+}
+
+// no-own-param method, int, match
+fn c03() Io -> () {
+    ro a Opt[int] = Som(3)
+    ro b = a.same(|x| x * 10)
+    ro r = match b {
+        Som(v) => v
+        Non => 0
+    }
+    println("c03=${r}")
+}
+
+// no-own-param method, unannotated receiver
+fn c04() Io -> () {
+    ro a = Som(4)
+    ro b = a.same(|x| x * 10)
+    println("c04=${b.or(0)}")
+}
+
+// if-let on result, int -> str (own param)
+fn c05() Io -> () {
+    ro a = Som(5)
+    if Som(s) = a.mapx(|x| "n${x}") {
+        println("c05=${s}")
+    }
+}
+
+// temporary receiver
+fn c06() Io -> () {
+    ro r = Som(6).mapx(|x| x + 1).or(0)
+    println("c06=${r}")
+}
+
+// receiver is another call result
+fn c07() Io -> () {
+    ro r = mk(7).mapx(|x| x * 2).or(0)
+    println("c07=${r}")
+}
+
+// result as argument
+fn c08() Io -> () {
+    println("c08=${unw(Som(8).mapx(|x| x + 1))}")
+}
+
+// str payload, match
+fn c09() Io -> () {
+    ro a = Som("ab")
+    ro b = a.mapx(|s| "${s}cd")
+    ro r = match b {
+        Som(v) => v
+        Non => "-"
+    }
+    println("c09=${r}")
+}
+
+// record payload
+fn c10() Io -> () {
+    ro a = Som(Pt { x: 1, y: 2 })
+    ro b = a.mapx(|p| Pt { x: p.x + 10, y: p.y })
+    ro r = match b {
+        Som(p) => p.x + p.y
+        Non => 0
+    }
+    println("c10=${r}")
+}
+
+// value-record payload
+fn c11() Io -> () {
+    ro a = Som(PtV { x: 3, y: 4 })
+    ro b = a.same(|p| PtV { x: p.x * 2, y: p.y })
+    ro r = match b {
+        Som(p) => p.x + p.y
+        Non => 0
+    }
+    println("c11=${r}")
+}
+
+// int -> record via own param, annotated result
+fn c12() Io -> () {
+    ro a = Som(5)
+    ro b Opt[Pt] = a.mapx(|x| Pt { x, y: x })
+    if Som(p) = b {
+        println("c12=${p.x + p.y}")
+    }
+}
+
+// must-consume payload, unannotated ctor receiver
+fn c13() Io -> () {
+    consume r = SomC(Res { id: 5 })
+    consume r2 = r.mapc(|x| x)
+    ro k = match consume r2 {
+        SomC(consume x) => x.into_close()
+        NonC => 0
+    }
+    println("c13=${k}")
+}
+
+// must-consume payload, no-own-param method, annotated
+fn c14() Io -> () {
+    consume r OptC[Res] = SomC(Res { id: 6 })
+    consume r2 = r.samec(|x| x)
+    ro k = match consume r2 {
+        SomC(consume x) => x.into_close()
+        NonC => 0
+    }
+    println("c14=${k}")
+}
+
+// result of a method returned from a fn
+fn c15() Io -> () {
+    println("c15=${unw(ret15())}")
+}
+
+// match on user generic sum payload bound annotated (no method)
+fn c18() Io -> () {
+    ro b Opt[int] = Som(18)
+    ro r = match b {
+        Som(v) => v
+        Non => 0
+    }
+    println("c18=${r}")
+}
+
+// int -> str own param, match
+fn c19() Io -> () {
+    ro b = Som(19).mapx(|x| "s${x}")
+    ro r = match b {
+        Som(v) => v
+        Non => "-"
+    }
+    println("c19=${r}")
+}
+
+// nested generic sum ctor, unannotated temporary receiver
+fn c20() Io -> () {
+    ro r = Som(Som(20)).mapx(|o| o.or(0)).or(-1)
+    println("c20=${r}")
+}
+
+// two-param sum, D88 default fills the open parameter
+fn c21() Io -> () {
+    ro e = Lft(21)
+    ro r = match e.swapd() {
+        Rgt(v) => v
+        Lft(_) => 0
+    }
+    println("c21=${r}")
+}
+
+// builtin Option temporaries with determinable types (control)
+fn c22() Io -> () {
+    ro b = Some(4).map(|x| x + 18)
+    println("c22=${b ?? 0}")
+}
+
+// builtin Option[Result] receiver typed by a call (control)
+fn c23() Io -> () {
+    ro x = mkr().transpose()
+    ro r = match x {
+        Ok(Some(v)) => v
+        _ => 0
+    }
+    println("c23=${r}")
+}
+
+fn main() Io -> () {
+    c01()
+    c02()
+    c03()
+    c04()
+    c05()
+    c06()
+    c07()
+    c08()
+    c09()
+    c10()
+    c11()
+    c12()
+    c13()
+    c14()
+    c15()
+    c18()
+    c19()
+    c20()
+    c21()
+    c22()
+    c23()
+}

@@ -27,6 +27,7 @@ mod static_blanket;
 mod fn_visibility; // #1097: a same-name free fn by the caller's imports, see its doc
 mod import_conflict; // #1234: D29 imported name vs own declaration / other import
 mod duplicate_decls; // #1179/#1183/#1186: one duplicate check for the compiled module
+mod generic_sum; // #1337/#1338: a user generic sum's ctor, payload and expected type
 
 /// Plan 196 (gs-bounds migration, spike `docs/plans/wip/196-gs-spike.md`):
 /// `gs` ("generics in scope") used to be `HashSet<String>` — ONLY the names of the
@@ -15751,7 +15752,11 @@ impl<'a> TypeCheckCtx<'a> {
                             ("Result", "Err") if generics.len() == 2 => {
                                 Some(generics[1].clone())
                             }
-                            _ if generics.is_empty() => {
+                            // #1338: a user GENERIC sum -- see `generic_sum_payload`.
+                            _ if !generics.is_empty() => {
+                                self.generic_sum_payload(sum_name, variant, generics)
+                            }
+                            _ => {
                                 self.types_get_here(sum_name).and_then(|td| {
                                     if !td.generics.is_empty() { return None; }
                                     if let TypeDeclKind::Sum(variants) = &td.kind {
@@ -15766,7 +15771,6 @@ impl<'a> TypeCheckCtx<'a> {
                                     } else { None }
                                 })
                             }
-                            _ => None,
                         };
                         if let Some(p) = payload {
                             out.push((bind.clone(), p));
@@ -21154,7 +21158,9 @@ impl<'a> TypeCheckCtx<'a> {
             Self::ts_member(&rt, constraint_solver::TypeSet::Primitive)
                 || self.types_get_here_contains(last)
         } else {
-            generics.iter().all(|g| {
+            // #1338: `Opt[T]` in a generic body is a declaration spelling, not a
+            // type the erased body can lower -- see `expected_args_closed`.
+            self.expected_args_closed(generics) && generics.iter().all(|g| {
                 let rt = ResolvedType::from_type_ref(g);
                 Self::ts_member(
                     &rt,
@@ -23892,30 +23898,36 @@ impl<'a> TypeCheckCtx<'a> {
     /// Registry 221.1 #1260: the type of a qualified variant constructor
     /// `Sum.Variant(args)` -- `Sum` when it names a declared NON-generic sum
     /// with a tuple variant `Variant` of exactly `arity` fields and no static
-    /// method of that name. `None` otherwise (generic sums keep their own
-    /// mono-aware path; an ambiguous shape stays untyped, as before).
-    fn qualified_variant_ctor_type(&self, sum: &str, variant: &str, arity: usize, span: Span) -> Option<TypeRef> {
-        self.variant_ctor_type(sum, variant, arity, span)
+    /// method of that name; a GENERIC sum is typed from the arguments (#1337,
+    /// `generic_variant_ctor_type`). `None` otherwise (an ambiguous shape stays
+    /// untyped, as before).
+    fn qualified_variant_ctor_type(&self, sum: &str, variant: &str, args: &[CallArg], scope: &HashMap<String, TypeRef>, span: Span) -> Option<TypeRef> {
+        self.variant_ctor_type(sum, variant, args, scope, span)
     }
 
     /// Registry 221.1 #1260: the type of a BARE variant constructor `Variant(args)`
     /// -- the one sum that declares `Variant`, under the same conditions as the
     /// qualified form. A name in scope, a declared free fn, a type name, or a
     /// variant name two sums share is left untyped, as before.
-    fn bare_variant_ctor_type(&self, name: &str, arity: usize, scope: &HashMap<String, TypeRef>, span: Span) -> Option<TypeRef> {
+    fn bare_variant_ctor_type(&self, name: &str, args: &[CallArg], scope: &HashMap<String, TypeRef>, span: Span) -> Option<TypeRef> {
         if scope.contains_key(name) || self.sig.fn_decls.contains_key(name) || self.types_get_here(name).is_some() {
             return None;
         }
         let owners = self.variant_owners.get(name)?;
         let [owner] = owners.as_slice() else { return None };
-        self.variant_ctor_type(owner, name, arity, span)
+        self.variant_ctor_type(owner, name, args, scope, span)
     }
 
-    fn variant_ctor_type(&self, sum: &str, variant: &str, arity: usize, span: Span) -> Option<TypeRef> {
+    fn variant_ctor_type(&self, sum: &str, variant: &str, args: &[CallArg], scope: &HashMap<String, TypeRef>, span: Span) -> Option<TypeRef> {
         let td = self.types_get_here(sum)?;
-        if !td.generics.is_empty() || self.method_overloads(sum, variant).is_some() {
+        if self.method_overloads(sum, variant).is_some() {
             return None;
         }
+        // #1337: a generic sum is typed from its arguments (`generic_sum.rs`).
+        if !td.generics.is_empty() {
+            return self.generic_variant_ctor_type(td, sum, variant, args, scope, span);
+        }
+        let arity = args.len();
         let TypeDeclKind::Sum(variants) = &td.kind else { return None };
         let hit = variants.iter().any(|v| {
             v.name == variant && matches!(&v.kind, SumVariantKind::Tuple(tys) if tys.len() == arity)
@@ -24692,7 +24704,7 @@ impl<'a> TypeCheckCtx<'a> {
                     // Same shapes as the effect-op arm below; arity must match a
                     // tuple variant, and a same-named static method keeps its own
                     // (method) inference.
-                    if let Some(sum_ty) = self.qualified_variant_ctor_type(eff, op_name, outer_call_args.len(), expr.span) {
+                    if let Some(sum_ty) = self.qualified_variant_ctor_type(eff, op_name, outer_call_args, scope, expr.span) {
                         return Some(sum_ty);
                     }
                     if let Some(td) = self.types_get_here(eff) {
@@ -25086,7 +25098,7 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 if let ExprKind::Ident(name) = &func.kind {
                     // #1260: `ro node = Leaf(tok)` -- see `bare_variant_ctor_type`.
-                    if let Some(sum_ty) = self.bare_variant_ctor_type(name, outer_call_args.len(), scope, expr.span) {
+                    if let Some(sum_ty) = self.bare_variant_ctor_type(name, outer_call_args, scope, expr.span) {
                         return Some(sum_ty);
                     }
                     if let Some(td) = self.types_get_here(name) {

@@ -1,0 +1,14 @@
+// Control: the HELD form of the same literal -- the form the binding door refuses.
+fn main() {
+    mut seen = 0
+    ro q = effect Random {
+        u64() -> u64 {
+            seen += 1
+            7
+        }
+    }
+    with Random = q {
+        println(Random.u64())
+    }
+    println(seen)
+}

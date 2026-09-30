@@ -148,6 +148,7 @@ export type Rvalue enum
     | IndexFromEnd(EndRead) // the element at `len - k` (an array pattern's suffix binder)
     | VariantField(VariantRead) // field `index` of variant `vrow` of the sum in `scr` (match binder)
     | Read(PlaceRead) // one projection of a local, read as a value (destructuring binder)
+    | AnyData(Node) // the value the `any` the tree names holds, read as the destination's type (D54)
 
 /// ONE STEP OF A PLACE (wave M3c): a named field, or a positional component.
 ///
@@ -244,6 +245,9 @@ export type Stmt enum
     | RestoreHandler(HandlerSwap) // `slot = prev` -- on EVERY exit of the `with` (E.9 step 2)
     | PushFrame(int) // the `with`'s interrupt frame N, declared and pushed
     | PopFrame // the innermost interrupt frame popped -- paired with a PushFrame on every exit
+    | ScopeOpen(int) // `supervised` scope N opened: its fiber queue, the early deadline armed (E.9 step 4)
+    | ScopeJoin(int) // scope N joined -- its children run to the end; on EVERY exit of the body
+    | Spawn(SpawnSite) // one `spawn`: its context filled, its fiber handed to the scope's queue
 
 /// What an `If` tests (wave M2b-1b): a boolean expression as the tree spells
 /// it (the M1 bridge until M3), or "the Option held by this local carries a
