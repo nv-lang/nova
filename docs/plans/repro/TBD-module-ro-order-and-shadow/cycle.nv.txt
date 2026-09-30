@@ -1,0 +1,10 @@
+module probe
+
+fn three() -> int => 3
+
+ro a = b + three()
+ro b = a + three()
+
+fn main() {
+    println(a)
+}

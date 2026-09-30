@@ -1,0 +1,14 @@
+module probe
+
+fn three() -> int {
+    println("three")
+    3
+}
+
+ro second = first + 1
+ro first = three()
+
+fn main() {
+    println(second)
+    println(first)
+}

@@ -1,0 +1,12 @@
+module probe
+
+fn three() -> int => 3
+
+ro k = three()
+
+fn plus_one(k int) -> int => k + 1
+
+fn main() {
+    println(plus_one(10))
+    println(k)
+}
