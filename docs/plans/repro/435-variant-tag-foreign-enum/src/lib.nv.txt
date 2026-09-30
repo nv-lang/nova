@@ -1,0 +1,32 @@
+module lib
+
+// The PostgresError shape: a value record whose single field is a
+// payload-enum with 9 variants (mixed payload/no-payload).
+
+export type Kind enum
+    | UnknownTag { tag int }
+    | LengthOverflow { len int }
+    | BadLength { len int }
+    | Truncated { what str }
+    | Malformed { what str }
+    | Auth { what str }
+    | BadServerSignature
+    | Utf8 { what str }
+    | Protocol { what str }
+
+export type Boxed value {
+    kind Kind
+}
+
+export fn Boxed @to_str() -> str =>
+    match @kind {
+        UnknownTag { tag } => "unknown ${tag}"
+        LengthOverflow { len } => "overflow ${len}"
+        BadLength { len } => "badlen ${len}"
+        Truncated { what } => "truncated ${what}"
+        Malformed { what } => "malformed ${what}"
+        Auth { what } => "auth ${what}"
+        BadServerSignature => "bss"
+        Utf8 { what } => "utf8 ${what}"
+        Protocol { what } => "protocol ${what}"
+    }

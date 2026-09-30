@@ -1,0 +1,5 @@
+[package]
+name = "loop-tail"
+version = "0.1.0"
+description = "compiler probe: loop{} as tail of a Result fn is wrapped into Ok"
+[dependencies]

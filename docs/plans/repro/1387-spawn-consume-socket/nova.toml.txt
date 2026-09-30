@@ -1,0 +1,5 @@
+[package]
+name = "spawn-consume-socket"
+version = "0.1.0"
+description = "feature probe: spawn consume with a live socket (D415 section 4)"
+[dependencies]

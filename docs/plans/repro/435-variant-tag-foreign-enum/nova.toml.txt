@@ -1,0 +1,5 @@
+[package]
+name = "record-enum-tag"
+version = "0.1.0"
+description = "compiler probe: enum field of a cross-module record - discriminant misread"
+[dependencies]
