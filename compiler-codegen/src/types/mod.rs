@@ -8248,6 +8248,68 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
+    /// №1352 (реестр 221.1, PHASE 1 measurement): `a == b` / `a != b` on a
+    /// value-type without `#impl(Equal)` must be refused — D363 (`==` →
+    /// `@equal` through the protocol) + the value-type rule in
+    /// `08-runtime.md` (opt-in `#impl(P)`, no identity-eq fallback; the
+    /// fallback is named ONLY for heap-record). Checks each operand
+    /// independently and reports the FIRST offending side only (avoids a
+    /// duplicate diagnostic on `same_sum_var == same_sum_var`).
+    ///
+    /// Diagnostic code `E_EQ_WITHOUT_EQUAL` — no existing `E_*` fit (grepped
+    /// spec + compiler for `E_*EQUAL*`, empty at PHASE 1); name confirmed by
+    /// the integrator at PHASE 2 (registry 221.1 #1352).
+    fn check_eq_requires_equal_impl(
+        &self,
+        bin_expr: &Expr,
+        left: &Expr,
+        right: &Expr,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let offending = |side: &Expr| -> Option<String> {
+            let tr = self.infer_expr_type(side, scope)?;
+            let TypeRef::Named { path, .. } = &tr else { return None };
+            let base = path.last()?;
+            // Built-in generic sums with hardcoded codegen equality (bypass
+            // the synthesized `@equal` entirely) and `str` (also a
+            // value-record structurally — `type str value priv {..}` in
+            // prelude — but its `==` is `Nova_str_method_equal`, not
+            // `@equal` dispatch). Same exclusion idiom as `check_is_operand`
+            // above (~8224).
+            if base == "Option" || base == "Result" || base == "str" || base == "any" {
+                return None;
+            }
+            let td = self.types_get_here(base)?;
+            let is_sum = matches!(td.kind, TypeDeclKind::Sum(_));
+            let is_value_record = matches!(td.kind, TypeDeclKind::Record(_))
+                && td.allocation == AllocKind::Value;
+            if !is_sum && !is_value_record {
+                return None;
+            }
+            let has_equal = td
+                .impl_protocols
+                .iter()
+                .any(|p| impl_spec_base_name(p) == "Equal");
+            if has_equal {
+                return None;
+            }
+            Some(typeref_render(&tr))
+        };
+        let Some(ty_name) = offending(left).or_else(|| offending(right)) else { return };
+        errors.push(Diagnostic::new(
+            format!(
+                "[E_EQ_WITHOUT_EQUAL] `==`/`!=` на value-типе `{}` требует \
+                 `#impl(Equal)` (D363: `a == b` -> `a.@equal(b)`; 08-runtime.md — \
+                 value-типы БЕЗ identity-фоллбэка, в отличие от heap-record). \
+                 Добавьте `#impl(Equal)` к объявлению типа, либо сравнивайте \
+                 через `match`.",
+                ty_name
+            ),
+            bin_expr.span,
+        ));
+    }
+
     /// Q-infinite-value-type: compact display of a `TypeRef` for the diagnostic
     /// message (`Option[Node]`, `*Node`, `[]Node`, `Node`). Best-effort — only
     /// the common shapes; falls back to the leading segment name.
@@ -12357,6 +12419,23 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f1_expr(right, gs, scope, errors);
                 self.f4_check_value(left, scope, errors);
                 self.f4_check_value(right, scope, errors);
+                // №1352 (реестр 221.1, PHASE 1 measurement): `==`/`!=` на value-типе
+                // (sum любой формы — с payload и без, value-record) без `#impl(Equal)`
+                // обязаны получить отказ по D363 (spec/decisions/03-syntax.md:3153,
+                // `a == b` → `a.@equal(b)`) + правилу value-типов
+                // (spec/decisions/08-runtime.md:3611-3613 — opt-in, БЕЗ identity-
+                // фоллбэка). Heap-record легально падает на identity-eq
+                // (08-runtime.md:3608-3609) — не трогаем, поэтому фильтр ниже смотрит
+                // ТОЛЬКО на `TypeDeclKind::Sum` и `TypeDeclKind::Record` с
+                // `allocation == AllocKind::Value`. `Option`/`Result`/`str` — тоже
+                // value-типы структурно (`str` — `type str value priv {..}` в
+                // prelude), но их равенство уже зашито в кодоген напрямую
+                // (`nova_opt_eq_*`, `Nova_str_method_equal`) и НЕ проходит через
+                // синтезированный `@equal` — исключены по имени, как это уже делает
+                // `check_is_operand` (~8224: `base == "Option" || base == "Result"`).
+                if matches!(op, BinOp::Eq | BinOp::Neq) {
+                    self.check_eq_requires_equal_impl(e, left, right, scope, errors);
+                }
                 // Plan 172.1.1 (U.4.5 — Binary arm): materialize the binary expr's resolved type
                 // into the channel so codegen READS it instead of re-deriving via legacy.
                 // `infer_expr_type` has NO Binary arm (→ None), so compute the result type INLINE
