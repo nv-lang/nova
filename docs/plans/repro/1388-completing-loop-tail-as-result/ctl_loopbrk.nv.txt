@@ -1,0 +1,10 @@
+module probe
+
+fn f(stop bool) -> Result[int, str] {
+    if stop { return Ok(1) }
+    loop { break }
+}
+
+test "t" {
+    assert(f(true).is_ok())
+}
