@@ -1,0 +1,230 @@
+// EXPECT_STDOUT P1409 int=42,42,42,42,42,42 str=s42,s42,s42,s42,s42,s42 val=42,42,42,42,42 heap=42,42,42,42,42,42 opt=42,42,42,42,42
+//
+// Registry 221.1 #1409: a `with` used as a VALUE must yield its tail
+// expression's value whatever the tail's form and type. The value slot is
+// sized from the tail's type BEFORE the body's own statements are emitted, so
+// that type must come from the checker channel -- and the channel had nothing
+// for a call of a local bound to a closure literal (the local was untyped in
+// the checker scope: `f(21)` became `unit`, the block yielded 0, a str/record/
+// Option tail did not compile) nor for a call through a record field holding a
+// closure (typed by the field NAME: with several records holding a field `f`,
+// the wrong record's return won).
+//
+// Cells, per type (int, str, value record, heap record, Option[int]), in this
+// order: a call of a local closure, a call of a fn-typed parameter, a call
+// through a record field holding a closure, a method call on a local, a plain
+// expression over a local (control), and a call of a local zero-param light
+// closure (`|| ...`). The light cell is absent for the value record and
+// Option: such a closure does not compile even outside a `with` (its call is
+// typed `nova_int`) -- a separate defect, reported next to #1409.
+module standalone.p1409_with_value_tail_call
+
+type P1409E effect { fn tag() -> int }
+
+type P1409V value { n int }
+
+type P1409H { n int }
+
+type P1409FInt { f fn(int) -> int }
+type P1409FStr { f fn(int) -> str }
+type P1409FVal { f fn(int) -> P1409V }
+type P1409FHeap { f fn(int) -> P1409H }
+type P1409FOpt { f fn(int) -> Option[int] }
+
+fn P1409V @twice() -> int => @n * 2
+fn P1409V @label() -> str => "s${@n * 2}"
+fn P1409V @doubled() -> P1409V => { n: @n * 2 }
+fn P1409V @heap() -> P1409H => { n: @n * 2 }
+fn P1409V @opt() -> Option[int] => Some(@n * 2)
+
+// ---- int ----
+fn p1409_int_light() -> int {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        ro k = 21
+        ro f = || k * 2
+        f()
+    }
+}
+fn p1409_int_local() -> int {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        ro f = fn(x int) -> int { x * 2 }
+        f(21)
+    }
+}
+fn p1409_int_param(g fn(int) -> int) -> int {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        g(21)
+    }
+}
+fn p1409_int_field() -> int {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        ro h = P1409FInt { f: fn(x int) -> int { x * 2 } }
+        h.f(21)
+    }
+}
+fn p1409_int_method() -> int {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        ro v = P1409V { n: 21 }
+        v.twice()
+    }
+}
+fn p1409_int_plain() -> int {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        ro x = 21
+        x * 2
+    }
+}
+
+// ---- str ----
+fn p1409_str_light() -> str {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        ro k = 21
+        ro f = || "s${k * 2}"
+        f()
+    }
+}
+fn p1409_str_local() -> str {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        ro f = fn(x int) -> str { "s${x * 2}" }
+        f(21)
+    }
+}
+fn p1409_str_param(g fn(int) -> str) -> str {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        g(21)
+    }
+}
+fn p1409_str_field() -> str {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        ro h = P1409FStr { f: fn(x int) -> str { "s${x * 2}" } }
+        h.f(21)
+    }
+}
+fn p1409_str_method() -> str {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        ro v = P1409V { n: 21 }
+        v.label()
+    }
+}
+fn p1409_str_plain() -> str {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        ro x = 21
+        "s${x * 2}"
+    }
+}
+
+// ---- value record ----
+fn p1409_val_local() -> P1409V {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        ro f = fn(x int) -> P1409V { P1409V { n: x * 2 } }
+        f(21)
+    }
+}
+fn p1409_val_param(g fn(int) -> P1409V) -> P1409V {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        g(21)
+    }
+}
+fn p1409_val_field() -> P1409V {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        ro h = P1409FVal { f: fn(x int) -> P1409V { P1409V { n: x * 2 } } }
+        h.f(21)
+    }
+}
+fn p1409_val_method() -> P1409V {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        ro v = P1409V { n: 21 }
+        v.doubled()
+    }
+}
+fn p1409_val_plain() -> P1409V {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        ro x = 21
+        P1409V { n: x * 2 }
+    }
+}
+
+// ---- heap record ----
+fn p1409_heap_light() -> P1409H {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        ro k = 21
+        ro f = || P1409H { n: k * 2 }
+        f()
+    }
+}
+fn p1409_heap_local() -> P1409H {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        ro f = fn(x int) -> P1409H { P1409H { n: x * 2 } }
+        f(21)
+    }
+}
+fn p1409_heap_param(g fn(int) -> P1409H) -> P1409H {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        g(21)
+    }
+}
+fn p1409_heap_field() -> P1409H {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        ro h = P1409FHeap { f: fn(x int) -> P1409H { P1409H { n: x * 2 } } }
+        h.f(21)
+    }
+}
+fn p1409_heap_method() -> P1409H {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        ro v = P1409V { n: 21 }
+        v.heap()
+    }
+}
+fn p1409_heap_plain() -> P1409H {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        ro x = 21
+        P1409H { n: x * 2 }
+    }
+}
+
+// ---- Option[int] ----
+fn p1409_opt_local() -> Option[int] {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        ro f = fn(x int) -> Option[int] { Some(x * 2) }
+        f(21)
+    }
+}
+fn p1409_opt_param(g fn(int) -> Option[int]) -> Option[int] {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        g(21)
+    }
+}
+fn p1409_opt_field() -> Option[int] {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        ro h = P1409FOpt { f: fn(x int) -> Option[int] { Some(x * 2) } }
+        h.f(21)
+    }
+}
+fn p1409_opt_method() -> Option[int] {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        ro v = P1409V { n: 21 }
+        v.opt()
+    }
+}
+fn p1409_opt_plain() -> Option[int] {
+    with P1409E = effect P1409E { tag() -> int { 0 } } {
+        ro x = 21
+        Some(x * 2)
+    }
+}
+
+fn p1409_show_opt(o Option[int]) -> str {
+    match o {
+        Some(v) => "${v}"
+        None => "none"
+    }
+}
+
+fn main() Io -> () {
+    ro i = "${p1409_int_local()},${p1409_int_param(fn(x int) -> int { x * 2 })},${p1409_int_field()},${p1409_int_method()},${p1409_int_plain()},${p1409_int_light()}"
+    ro s = "${p1409_str_local()},${p1409_str_param(fn(x int) -> str { "s${x * 2}" })},${p1409_str_field()},${p1409_str_method()},${p1409_str_plain()},${p1409_str_light()}"
+    ro v = "${p1409_val_local().n},${p1409_val_param(fn(x int) -> P1409V { P1409V { n: x * 2 } }).n},${p1409_val_field().n},${p1409_val_method().n},${p1409_val_plain().n}"
+    ro h = "${p1409_heap_local().n},${p1409_heap_param(fn(x int) -> P1409H { P1409H { n: x * 2 } }).n},${p1409_heap_field().n},${p1409_heap_method().n},${p1409_heap_plain().n},${p1409_heap_light().n}"
+    ro o = "${p1409_show_opt(p1409_opt_local())},${p1409_show_opt(p1409_opt_param(fn(x int) -> Option[int] { Some(x * 2) }))},${p1409_show_opt(p1409_opt_field())},${p1409_show_opt(p1409_opt_method())},${p1409_show_opt(p1409_opt_plain())}"
+    println("P1409 int=${i} str=${s} val=${v} heap=${h} opt=${o}")
+}

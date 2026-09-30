@@ -9666,6 +9666,95 @@ impl<'a> TypeCheckCtx<'a> {
         s
     }
 
+    /// Registry 221.1 #1409: the scope type of a local bound to a closure
+    /// LITERAL (`ro f = fn(x int) -> int { .. }`, `ro g = || 42`). Neither
+    /// `infer_expr_type` (no closure arm) nor the channel fallback of the let
+    /// registration (`resolved_to_typeref` gives up on `R::Func`) could name it,
+    /// so the local was left UNTYPED in `scope`: a later call `f(21)` never
+    /// reached the fn-value producer of `f1_expr_inner` (`scope.get(fname)` ->
+    /// `Func` -> its return into the channel), and every consumer that asks
+    /// before the emitter has registered `f` -- the value slot of a `with` whose
+    /// tail is `f(21)`, emitted before the body's statements -- typed the call
+    /// as `unit`: the value was dropped and the block yielded 0.
+    /// `ClosureFull` is typed by its grammar (every param annotated, `-> R` or
+    /// unit, its own effect row); a `ClosureLight` is typed from the `Func` the
+    /// checker already put into the channel for the literal's own id, else --
+    /// zero params, expression body -- from its body typed in `scope`. A shape
+    /// that does not convert stays `None` -- unchanged behaviour.
+    /// KILL SWITCH `NOVA_KILL_1409=1` removes the fix whole (proof both ways).
+    fn closure_literal_fn_typeref(
+        &self,
+        value: &Expr,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Option<TypeRef> {
+        if std::env::var_os("NOVA_KILL_1409").is_some() {
+            return None;
+        }
+        match &value.kind {
+            ExprKind::ClosureFull(sb) => Some(TypeRef::Func {
+                params: sb.params.iter().map(|p| p.ty.clone()).collect(),
+                effects: sb.effects.clone(),
+                return_type: Some(Box::new(
+                    sb.return_type.clone().unwrap_or(TypeRef::Unit(value.span)),
+                )),
+                extern_abi: None,
+                span: value.span,
+            }),
+            ExprKind::ClosureLight { params: lp, body, .. } => {
+                let from_channel = value.id.is_set().then(|| {
+                    let rt = self.resolved_types_buf.borrow().get(&value.id).cloned()?;
+                    let ResolvedType::Func { params, ret, .. } = rt else { return None };
+                    let params = params.iter()
+                        .map(|p| Self::resolved_to_typeref_tp(p, value.span))
+                        .collect::<Option<Vec<_>>>()?;
+                    Some((params, Self::resolved_to_typeref_tp(&ret, value.span)?))
+                }).flatten();
+                // The channel entry for `|| body` is primitive-gated (it also types
+                // the closure VALUE); the local's scope type needs no such gate:
+                // zero params, so the body types in the very scope it is bound in.
+                let (params, ret) = from_channel.or_else(|| match body {
+                    ClosureBody::Expr(be) if lp.is_empty() => {
+                        Some((Vec::new(), self.infer_expr_type(be, scope)?))
+                    }
+                    _ => None,
+                })?;
+                Some(TypeRef::Func {
+                    params,
+                    effects: Vec::new(),
+                    return_type: Some(Box::new(ret)),
+                    extern_abi: None,
+                    span: value.span,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// Registry 221.1 #1409: the declared return of `obj.name(..)` when `name`
+    /// is a record FIELD of fn type, not a method -- the guard and the answer of
+    /// `infer_expr_type`'s field-call arm, for the channel producer in
+    /// `f1_expr_inner`. `func` is the call's own `Member` callee.
+    fn field_closure_call_return(
+        &self,
+        obj: &Expr,
+        name: &str,
+        func: &Expr,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Option<TypeRef> {
+        let mut peeled = self.infer_expr_type(obj, scope)?;
+        while let TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) = peeled {
+            peeled = *i;
+        }
+        let TypeRef::Named { path, .. } = &peeled else { return None };
+        if path.len() != 1 || self.method_overloads(&path[0], name).is_some() {
+            return None;
+        }
+        match self.infer_expr_type(func, scope)? {
+            TypeRef::Func { return_type: Some(rt), .. } => Some(*rt),
+            _ => None,
+        }
+    }
+
     /// [реестр 221.1 №493, K1] D45 (`03-syntax.md`): "block-body — `-> T`
     /// обязателен, если тип не unit". Before this fix that half of D45 was
     /// NOT enforced anywhere: a block-body function with no `-> T` at all
@@ -10004,6 +10093,7 @@ impl<'a> TypeCheckCtx<'a> {
                             drop(buf);
                             Self::resolved_to_typeref_tp(&rt, d.value.span)
                         })
+                        .or_else(|| self.closure_literal_fn_typeref(&d.value, scope))
                     {
                         Some(t) => { scope.insert(name, t); }
                         None => { scope.remove(&name); }
@@ -11532,6 +11622,24 @@ impl<'a> TypeCheckCtx<'a> {
                                         .borrow_mut()
                                         .entry(e.id)
                                         .or_insert(rt);
+                                }
+                            }
+                        }
+                        // Registry 221.1 #1409: a call through a RECORD FIELD holding
+                        // a closure (`h.f(21)`, `type H { f fn(int) -> str }`) had no
+                        // producer here -- `infer_expr_type` types it (field-call arm,
+                        // "RECORD FIELD holding a first-class function value") but only
+                        // for inline checks. Codegen then typed the call by the FIELD
+                        // NAME alone whenever `h` was not yet a registered local -- the
+                        // value slot of a `with` whose tail is `h.f(21)` is sized before
+                        // the body declares `h` -- and with two records each holding a
+                        // closure field `f` the other record's return won. Same guard as
+                        // that arm: no METHOD of this name on the receiver type.
+                        if e.id.is_set() && std::env::var_os("NOVA_KILL_1409").is_none() {
+                            if let Some(ret) = self.field_closure_call_return(mo, method, func, scope) {
+                                if !typeref_mentions_any(&ret, gs) {
+                                    let rt = ResolvedType::from_type_ref(&ret);
+                                    self.resolved_types_buf.borrow_mut().entry(e.id).or_insert(rt);
                                 }
                             }
                         }
