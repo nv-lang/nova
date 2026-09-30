@@ -1,0 +1,21 @@
+// EXPECT_STDOUT 11|10|3
+//
+// D184 amendment 2026-09-30, review of #1396: the init-order graph is keyed by
+// MODULE and name, not by the bare name. This CU merges two modules. Here
+// `d184_x` reads `d184_y` (declared after it: a real edge, `y` first), and
+// `d184_y` calls this module's fn `d184_z`. The side module declares the
+// opposite pair: an `ro d184_z` that calls ITS fn `d184_x`. By bare name the
+// three reads close a cycle x -> y -> z -> x that does not exist: the checker
+// reported E_MODULE_INIT_CYCLE, and the runtime order, falling back to source
+// order on the false cycle, computed x before y (1, not 11).
+module standalone.d184_module_ro_two_modules
+
+import ./d184_mrt_side.{d184_side}
+
+ro d184_x = d184_y + 1
+ro d184_y = d184_z() * 10
+fn d184_z() -> int => 1
+
+fn main() Io -> () {
+    print("${d184_x}|${d184_y}|${d184_side()}")
+}

@@ -1,0 +1,24 @@
+// EXPECT_STDOUT three|14|13|3
+//
+// D184 amendment 2026-09-30: bare module-level `ro` and associated
+// `ro Type.NAME` (D200) are ONE dependency graph. `total` reads `D184A.BASE`,
+// which reads `d184a_seed`; all three are declared in the opposite order. The
+// oracle used to initialize every `ro Type.NAME` after every bare `ro` and to
+// build the runtime init order from a collector that never saw a `Type.NAME`
+// read -- `total` silently came out as 1 (it read a 0), not 14.
+module standalone.d184_module_ro_assoc_order
+
+type D184A { ro n int }
+
+fn d184a_three() -> int {
+    print("three|")
+    3
+}
+
+ro d184a_total = D184A.BASE + 1
+ro D184A.BASE int = d184a_seed + 10
+ro d184a_seed = d184a_three()
+
+fn main() Io -> () {
+    print("${d184a_total}|${D184A.BASE}|${d184a_seed}")
+}
