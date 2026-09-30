@@ -307,7 +307,10 @@ fn main() {\n\
  }\n\
 }", std)
     assert(d2.len() >= 1)
-    assert(d2[0].message.contains("a name binding in an `if` condition"))
+    // #1381: a bare name as the whole condition pattern is a LANGUAGE error
+    // (D486 amendment 2026-09-30 p.3), no longer the subset's debt text.
+    assert(d2[0].message.contains("needs `ro` or `mut` before it"), d2[0].message)
+    assert(d2[0].code == "E_NOVAC_LANG", d2[0].code)
     ro (d3, _) = compile_to_c("fn main() {\n\
  ro xs = [1]\n\
  if consume x = xs.get(0) {\n\
@@ -334,7 +337,10 @@ fn main() {\n\
  }\n\
 }", std)
     assert(d5.len() >= 1)
-    assert(d5[0].message.contains("takes a variant pattern"))
+    // #1381: `_` as the whole condition pattern is a LANGUAGE error (D486 s4),
+    // not the subset's condition-forms debt.
+    assert(d5[0].message.contains("always matches"), d5[0].message)
+    assert(d5[0].code == "E_NOVAC_LANG", d5[0].code)
 
     // The `ro` word outside a condition: the oracle refuses it in a match
     // arm (measured 2026-09-29, door at novac/src/check/match_arms.nv:392),
@@ -351,7 +357,9 @@ fn main() {\n\
  println(f(B))\n\
 }", std)
     assert(d6.len() >= 1)
-    assert(d6[0].message.contains("`ro` word"))
+    // #1381: `ro` off a whole-condition bare name is a LANGUAGE error now.
+    assert(d6[0].message.contains("`ro` stands only before a bare name"), d6[0].message)
+    assert(d6[0].code == "E_NOVAC_LANG", d6[0].code)
 }
 
 test "a while-let reads the ONE pattern door; per-iteration test and exit (D486 P4)" {
@@ -401,7 +409,10 @@ fn main() {\n\
  println(1)\n\
 }", std)
     assert(d2.len() >= 1)
-    assert(d2[0].message.contains("a name binding in a `while` condition"))
+    // #1381: a bare name as the whole condition pattern is a LANGUAGE error
+    // (D486 amendment 2026-09-30 p.3), no longer the subset's debt text.
+    assert(d2[0].message.contains("needs `ro` or `mut` before it"), d2[0].message)
+    assert(d2[0].code == "E_NOVAC_LANG", d2[0].code)
     ro (d3, _) = compile_to_c("fn main() {\n\
  ro t = (1, 2)\n\
  while (a, b) = t {\n\
