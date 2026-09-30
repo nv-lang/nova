@@ -1,0 +1,9 @@
+=== SUBJECT: novac check
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"D:/Temp/hunt-check-k4/probes/int-arm-foreign-variant-name/probe.nv","start":242,"end":243},"message":"this arm names a variant of a different sum than the value matched on (registry #964) -- write a variant of the matched sum, or a binder","poisoned_by":null}
+novac rc=1
+=== ORACLE: nova check
+[32mok:[0m D:/Temp/hunt-check-k4/probes/int-arm-foreign-variant-name/probe.nv
+
+===== SUMMARY =====
+[32mPASS[0m: 1  FAIL: 0
+oracle check rc=0

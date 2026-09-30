@@ -1,0 +1,16 @@
+// A spawn body writing a FIELD of a captured `mut` record (not #share).
+type Ctr { n int }
+
+fn g() -> int {
+    mut c = Ctr { n: 0 }
+    supervised {
+        spawn {
+            c.n = 5
+        }
+    }
+    c.n
+}
+
+fn main() {
+    println(g())
+}

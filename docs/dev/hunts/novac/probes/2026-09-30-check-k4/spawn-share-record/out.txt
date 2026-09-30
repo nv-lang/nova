@@ -1,0 +1,9 @@
+=== SUBJECT: novac check
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"D:/Temp/hunt-check-k4/probes/spawn-share-record/probe.nv","start":77,"end":78},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+novac rc=1
+=== ORACLE: nova check
+[32mok:[0m D:/Temp/hunt-check-k4/probes/spawn-share-record/probe.nv
+
+===== SUMMARY =====
+[32mPASS[0m: 1  FAIL: 0
+oracle check rc=0

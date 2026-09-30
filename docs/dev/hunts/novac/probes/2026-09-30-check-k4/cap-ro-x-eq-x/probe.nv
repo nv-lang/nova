@@ -1,0 +1,17 @@
+// `ro base = base + 1` inside an op body: the initializer reads the OUTER
+// binding (a capture), the new binding shadows it after.
+fn main() {
+    ro base = 40
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label str) -> () {
+            ro base = base + 1
+            println(label, " ", base)
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {
+            println(label)
+        }
+    } {
+        ResourceTrace.on_resource_enter("a")
+    }
+    println(base)
+}
