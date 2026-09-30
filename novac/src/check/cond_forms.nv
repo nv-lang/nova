@@ -58,7 +58,11 @@ fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
     }
     if shape != PatShape.Variant && !names_variant {
         // `_`, a literal, `|` at the root: LANGUAGE errors; the rest is debt.
-        if @refused_cond_root(pat, kids) { return }
+        if @refused_cond_root(pat, kids) {
+            // SILENT-OK: the door just asked reported the language error
+            // itself; a second word here would be a cascade.
+            return
+        }
         @report_first_leaf_of(kids, IFLET_COND_FORM_MSG)
         return
     }
@@ -226,7 +230,11 @@ fn Checker mut @type_while_let(st Node) -> () {
         return
     }
     if shape != PatShape.Variant && !names_variant {
-        if @refused_cond_root(pat, kids) { return }
+        if @refused_cond_root(pat, kids) {
+            // SILENT-OK: the door just asked reported the language error
+            // itself; a second word here would be a cascade.
+            return
+        }
         @report_first_leaf_of(kids, WHILELET_COND_FORM_MSG)
         return
     }
