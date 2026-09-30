@@ -21,7 +21,7 @@ import ../sem.{whilelet_pattern_at, whilelet_init_at, whilelet_body_at}
 import ../sem.{payload_as_seen}
 import ../sem.{pattern_shape, pattern_head_text, PatShape}
 // Which arguments have an observable order (F65) -- the checker's own door.
-import ../sem.{contains_call, loop_ctl_is_break}
+import ../sem.{contains_call, loop_ctl_is_break, is_collection_head}
 
 
 /// THE LOWERING (274.8 M3). Everything here used to be methods on `Emitter`, the printer's own
@@ -361,8 +361,7 @@ fn Lowerer mut @lower_stmt(st Node) -> () {
         @lower_store(kids[0], assign_op_of(leaf_kind(kids[1])), src)
     } else if k == NodeKind.ForStmt {
         ro kids = branch_children(st)
-        if kids[3].kind_of() == NodeKind.Call || kids[3].kind_of() == NodeKind.MethodCall ||
-           kids[3].kind_of() == NodeKind.Name || kids[3].kind_of() == NodeKind.FieldAccess {
+        if is_collection_head(kids[3]) {
             // A COLLECTION head (wave B16) walks a vector by index: a loop
             // of the lowered body whose header carries the collection, the
             // index and the element locals (274.8 M2b-1c, emit_flow.nv). A

@@ -34,7 +34,7 @@ import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, 
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of}
 import ../sem.{c_instance_ctor, c_instance_method, c_method_symbol}
-import ../sem.{ty_source_name, variants_named, is_closed_slice_bin}
+import ../sem.{ty_source_name, variants_named, slice_shape_of}
 import ../types.{TyId, no_ty, is_ty}
 
 /// A binding. The initializer's type is decided BEFORE the initializer's own
@@ -476,7 +476,8 @@ fn Checker mut @type_index(e Node) -> TyId {
     // and emit_c/emit_c.nv, a field chain through a type of another module.
     // Silence there let two files pass check with a slice nothing typed, which
     // emission could only answer with an ICE. The slice keeps its refusal.
-    if is_closed_slice_bin(kids[2]) && !is_ty(recv_t) {
+    ro slice = slice_shape_of(kids[2])
+    if slice.is_some() && !is_ty(recv_t) {
         @report_first_leaf_of(kids, SLICE_MSG)
         return no_ty()
     } else {
@@ -490,12 +491,12 @@ fn Checker mut @type_index(e Node) -> TyId {
     } else {
         // A typed receiver: its shape decides.
     }
-    // A CLOSED SLICE `s[lo..hi]` (plan 274.7 wave U-1) is the call
-    // `s.index(Range { start: lo, end: hi })` of D470 section 5. Asked here and
-    // not earlier because the answer needs the receiver's TYPE, which the walk
-    // (which let the slice through, check.nv's Bin arm) does not have.
-    if is_closed_slice_bin(kids[2]) {
-        return @type_str_slice(kids, recv_t)
+    // A SLICE `s[lo..hi]`, either side open (plan 274.7 waves U-1..U-3) is the
+    // call `s.index(Range { start: lo, end: hi })` of D470 section 5. Asked here
+    // and not earlier because the answer needs the receiver's TYPE, which the
+    // walk (which let the slice through, check.nv's Bin arm) does not have.
+    if Some(sh) = slice {
+        return @type_slice(kids, recv_t, sh)
     } else {
         // An ordinary index: judged below.
     }
@@ -539,7 +540,7 @@ fn Checker mut @type_index(e Node) -> TyId {
     // shell does not carry, not accepted into an emit ICE.
     ro sym = c_method_symbol(@ctx, recv_t, VEC_INDEX_METHOD)
     if !@ctx.interop.has(sym) {
-        @report_first_leaf_of(kids, "outside the subset: the shell novac links into carries no `index` for ${ty_source_name(@ctx, recv_t)} -- the interop surface is the probe program (novac/probe/shell_probe.nv, E2-b); an index of this instance arrives when the probe uses one")
+        @report_first_leaf_of(kids, no_shell_method_msg(VEC_INDEX_METHOD, ty_source_name(@ctx, recv_t)))
         return no_ty()
     } else {
         // Carried: the emitter prints exactly this name — and it reads the
@@ -551,55 +552,6 @@ fn Checker mut @type_index(e Node) -> TyId {
     }
     @chan.record_type(kids[0].id_of(), recv_t)
     @ctx.tys.arg(recv_t, 0)
-}
-
-/// The type of a CLOSED slice `s[lo..hi]`, or `no_ty()` after a named refusal
-/// (plan 274.7 wave U-1).
-///
-/// Only a `str` receiver is compiled: the shell carries `Nova_str_method_index`,
-/// and the result is `str` -- a byte range (D249; D144's older codepoint wording
-/// carries a pointer to it since 2026-09-25). Out-of-range and a cut through a
-/// code point are RUN-TIME panics of std's own contract (`slice.nv`), not
-/// diagnostics, so nothing here judges the numbers. Every other receiver keeps
-/// the slice refusal it had in the walk, by the same text (wave U-3).
-fn Checker mut @type_str_slice(kids []Node, recv_t TyId) -> TyId {
-    if recv_t != @ctx.prims.str_id {
-        @report_first_leaf_of(kids, SLICE_MSG)
-        return no_ty()
-    } else {
-        // A `str` receiver: its two bounds decide.
-    }
-    ro bounds = branch_children(kids[2])
-    if !@slice_bound_is_int(bounds[0]) || !@slice_bound_is_int(bounds[2]) {
-        // SILENT-OK: the bound that failed was refused inside, by name.
-        return no_ty()
-    } else {
-        // Both bounds are `int`.
-    }
-    @ctx.prims.str_id
-}
-
-/// Types one slice bound and says whether it is an `int`; anything else is
-/// refused by the index's own text -- measured 2026-09-25, the oracle accepts a
-/// `u8` bound, so the language is wider and the refusal says SUBSET.
-fn Checker mut @slice_bound_is_int(b Node) -> bool {
-    ro before = @out.len()
-    @type_expr(b)
-    if @out.len() > before { return false }
-    ro t = type_of(b, @ctx, @scope, @chan)
-    if !is_ty(t) {
-        // SILENT-OK: an untyped bound was refused where it was typed.
-        return false
-    } else {
-        // A typed bound: its type decides.
-    }
-    if t != @ctx.prims.int_id {
-        @report_first_leaf_of([]Node.of(b), INT_INDEX_MSG)
-        return false
-    } else {
-        // An `int` bound.
-    }
-    true
 }
 
 /// The type of an array literal, or `no_ty()` after a NAMED refusal.

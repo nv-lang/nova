@@ -1,0 +1,77 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Swift's `Collection` subscript by a range (`a[lo..<hi]`, `a[lo...]`) --
+// the bracket form is sugar for ONE method taking a range, and an open side is
+// filled from the collection's own index space (`startIndex`/`endIndex`), not
+// from a length field. std says the same through `@index(r Range)` and
+// `@end_index()` (plan 284, the `RangeIndex` role).
+// Role: the ONE reading of a slice `x[lo..hi]` (registry #1170, plan 274.7
+//   wave U-2/U-3): which bounds are written, and which C symbol the shell
+//   carries for the `index(Range)` call a slice is (D470 section 5). The
+//   checker, which types a slice, and the emitter, which prints it, both ask
+//   here -- they agree by asking the same question, not by remembering each
+//   other (the closed-form door this one replaced followed the same rule).
+// Used by: check/check.nv (the walk's Bin arm), check/slice.nv (typing),
+//   emit_c/emit_slice.nv (the call's C).
+// Guarded by: nova test novac/src/check/check_test.nv and the fixture
+//   novac/fixtures/slice through check-novac-differential.sh.
+
+module novac.sem
+
+import ../lex.{TokenKind}
+import ../tree.{Node, NodeKind}
+import ../builtins.{TypeKind, RANGE_TYPE, VEC_INDEX_METHOD}
+import ../types.{TyId}
+
+/// Which sides of a slice's bracket content are written.
+export type SliceShape value {
+    lo_open bool /// `x[..hi]`: the lower bound is `0`
+    hi_open bool /// `x[lo..]`: the upper bound is the receiver's `end_index()`
+}
+
+/// The shape of a slice's bracket content `lo..hi`, or `None` when the node is
+/// not a slice: not a `..` Bin, or a side that is a REAL parse error rather
+/// than the zero-width gap an open bound leaves.
+export fn slice_shape_of(n Node) -> Option[SliceShape] {
+    if n.kind_of() != NodeKind.Bin { return None }
+    ro kids = branch_children(n)
+    if kids.len() != 3 { return None }
+    if leaf_kind(kids[1]) != TokenKind.DotDot { return None }
+    ro lo_open = is_open_bound(kids[0])
+    ro hi_open = is_open_bound(kids[2])
+    if kids[0].kind_of() == NodeKind.Err && !lo_open { return None }
+    if kids[2].kind_of() == NodeKind.Err && !hi_open { return None }
+    Some(SliceShape { lo_open, hi_open })
+}
+
+/// An OPEN bound: the gap the parser plants where a slice side is not written
+/// -- one `Err` holding one EMPTY leaf (`parse.nv @missing_of`; the leading
+/// `..` branch of `parse/expr.nv @primary`, registry #1241, and the `]` a
+/// right side finds instead of a value). A real parse error holds the token it
+/// ate, so its leaf is never empty.
+fn is_open_bound(n Node) -> bool {
+    if n.kind_of() != NodeKind.Err { return false }
+    ro kids = branch_children(n)
+    kids.len() == 1 && kids[0].kind_of() == NodeKind.LeafNode && leaf_text(kids[0]) == ""
+}
+
+/// The C symbol of the `index(Range)` call a slice of `recv_t` is, or `None`
+/// when the shell carries none.
+///
+/// INTEROP, ends when novac emits the prelude itself: the oracle spells an
+/// OVERLOADED method with its parameter's C type appended
+/// (`Vec____nova_byte_method_index__NovaValue_Range`, beside the `int`
+/// overload's plain `..._index`) and a method declared once without it
+/// (`Nova_str_method_index`). The overloaded spelling is asked first; the plain
+/// one only on a receiver that is not a generic instance -- on `[]T` the plain
+/// name is the ELEMENT read, and taking it would call the wrong overload.
+export fn range_index_symbol(ctx Ctx, recv_t TyId) -> Option[str] {
+    ro plain = c_method_symbol(ctx, recv_t, VEC_INDEX_METHOD)
+    if Some(rng) = ctx.ty_of_name(RANGE_TYPE) {
+        ro overloaded = "${plain}__${c_type(ctx, rng)}"
+        if ctx.interop.has(overloaded) { return Some(overloaded) }
+    } else {
+        // No prelude `Range` handed: no overloaded spelling to ask for.
+    }
+    if ctx.tys.kind_of(recv_t) != TypeKind.TkApp && ctx.interop.has(plain) { return Some(plain) }
+    None
+}

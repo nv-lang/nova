@@ -42,7 +42,7 @@ import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, 
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
 import ../sem.{ty_source_name, c_shell_method, is_value_record}
 import ../types.{TyId, no_ty, is_ty}
-import ../sem.{option_payload, for_head_elem}
+import ../sem.{option_payload, for_head_elem, is_collection_head}
 import ../sem.{let_decl_of, const_init_at, const_full_name}
 import ../sem.{iflet_pattern_at, iflet_init_at, iflet_body_at, iflet_else_at}
 import ../sem.{whilelet_pattern_at, whilelet_init_at, whilelet_body_at}
@@ -822,8 +822,7 @@ fn Checker mut @type_stmt(st Node) -> () {
         // every node of the tree (PatPos.PosFor, registry 1379) -- a check of
         // the ROOT alone stood here and let `for (k, Some(v)) in xs` through.
         ro head = kids[3]
-        if head.kind_of() == NodeKind.Call || head.kind_of() == NodeKind.MethodCall ||
-           head.kind_of() == NodeKind.Name || head.kind_of() == NodeKind.FieldAccess {
+        if is_collection_head(head) {
             // A COLLECTION head (wave B16): a call, a name or a field hands
             // back a VECTOR, the
             // loop variable is its element. The call's type is RECORDED --

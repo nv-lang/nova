@@ -29,8 +29,8 @@ import ../sem.{shape_of}
 import ../sem.{int_literal_c_text, char_literal_code, interp_slices}
 import ../tree.{raw_node}
 import ../sem.{c_tag, c_maker, VariantRow, raw_vrow, no_vrow, call_arg_at, raw_row, slot_default_of, no_row}
-import ../sem.{is_value_record, is_closed_slice_bin, is_value_sum}
-import ../builtins.{EQUAL_METHOD, PRINT_FN, bool_c_literal, RECV_C_NAME, RANGE_TYPE, VEC_INDEX_METHOD}
+import ../sem.{is_value_record, slice_shape_of, is_value_sum}
+import ../builtins.{EQUAL_METHOD, PRINT_FN, bool_c_literal, RECV_C_NAME, VEC_INDEX_METHOD}
 import ../types.{TyId, is_ty}
 import ../sem.{prim_row_of, is_int_prim}
 import ../builtins.{BuiltinType}
@@ -708,12 +708,10 @@ fn Emitter mut @emit_expr(e Node) -> () {
         @body.append(")")
     } else if k == NodeKind.Index {
         // Two checked forms, one door (D470 section 5: an index is the call
-        // `xs.index(i)`; a closed slice is `xs.index(Range { start, end })`):
+        // `xs.index(i)`; a slice is `xs.index(Range { start, end })`):
         //
-        // - A CLOSED SLICE `s[lo..hi]` on a `str` receiver (plan 274.7 wave
-        //   U-1), printed over a `Range` compound literal. The checker records
-        //   the node's own type (`str`), which is the receiver's type too, so
-        //   the symbol question goes to it.
+        // - A SLICE `s[lo..hi]`, either side open (plan 274.7 waves U-1..U-3):
+        //   `@emit_slice` (emit_slice.nv), over the receiver's recorded type.
         // - A PLAIN INDEX `xs[i]` on a `[]T` receiver whose instance the shell
         //   carries (`Vec____nova_int_method_index`, wave 274.5); the checker
         //   records the ELEMENT as the node's type, so the symbol question
@@ -727,25 +725,8 @@ fn Emitter mut @emit_expr(e Node) -> () {
         } else {
             // The three children the checker judged.
         }
-        if is_closed_slice_bin(kids[2]) {
-            ro st = @out.type_if_known(e.id_of())
-            if !is_ty(st) {
-                ice("emit: a closed slice the checker did not type reached emission")
-            } else {
-                // A checked slice: printed below.
-            }
-            ro rng = @ctx.ty_of_name(RANGE_TYPE) ?? ice("emit: the prelude's `Range` is not in the registry")
-            ro bounds = branch_children(kids[2])
-            @body.append(c_method_symbol(@ctx, st, VEC_INDEX_METHOD))
-            @body.append("(")
-            @emit_expr(kids[0])
-            // POSITIONAL, in `Range`'s declaration order (`start`, then `end` --
-            // `std/src/collections/range/core.nv`, the shell's struct reads the same).
-            @body.append(", ((${c_type(@ctx, rng)}){ ")
-            @emit_expr(bounds[0])
-            @body.append(", ")
-            @emit_expr(bounds[2])
-            @body.append(" }))")
+        if slice_shape_of(kids[2]).is_some() {
+            @emit_slice(kids)
         } else {
             // A plain index: `xs.index(i)`, the receiver's instance spelling.
             ro rt = @out.type_if_known(kids[0].id_of())

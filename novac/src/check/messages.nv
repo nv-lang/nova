@@ -415,6 +415,14 @@ const DEFAULT_ORDER_MSG = "a parameter with a default value stands before one wi
 /// reader was sent looking for a binding that was never meant to exist.
 const CAST_MSG = "outside the subset: a cast `expr as T` is not compiled yet (E2-b, with the numeric family)"
 
+/// THE SHELL CARRIES NO SYMBOL for this method of this type -- ONE text for one
+/// refusal. Until 2026-10-01 five sites spelled it five ways (`index` in
+/// binds.nv, two in methods.nv, the slice's `index(Range)` and `end_index` in
+/// slice.nv), with three different tails for one remedy: the interop surface
+/// is the probe program, and the method arrives when the probe uses it.
+fn no_shell_method_msg(method str, ty str) -> str =>
+    "outside the subset: the shell novac links into carries no `${method}` for ${ty} -- the interop surface is the probe program (novac/probe/shell_probe.nv, E2-b); the method arrives when the probe uses it"
+
 /// A range that is not the head of a `for`.
 const RANGE_MSG = "outside the subset: a range is a `for` head here, not a value (E2-b)"
 

@@ -120,6 +120,11 @@ export const VEC_LEN_METHOD = "len"
 /// array pattern. `get` is for the access nobody proved (D470: it answers
 /// Option), and `for x in xs` is the iterator protocol, not either door.
 export const VEC_INDEX_METHOD = "index"
+/// The upper bound an open slice `x[lo..]` takes: the second method of std's
+/// `RangeIndex` role beside `index(r Range)` -- the receiver's OWN answer, not
+/// a `len` field (plan 284; `std/src/collections/vec/slice.nv`,
+/// `std/src/runtime/string/slice.nv`).
+export const END_INDEX_METHOD = "end_index"
 
 /// The method `==` lowers to. A NAME OF THE LANGUAGE, so it lives here with
 /// the others (P5): the emitter must not spell std names itself, and the
