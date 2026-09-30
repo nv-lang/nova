@@ -9126,10 +9126,11 @@ impl CEmitter {
             },
             _ => {}
         } }
-        let deps: Vec<(String, String, Vec<String>)> = nodes.iter().map(|(k, v, _, _)| {
+        let deps: Vec<(String, String, Vec<String>)> = nodes.iter().map(|(k, v, l, a)| {
+            let fid = l.map_or_else(|| a.map_or(v.span.file_id, |(_, ac)| ac.span.file_id), |l| l.span.file_id);
             let mut f = HashSet::new();
-            Self::collect_truly_free_idents(v, &mut HashSet::new(), &mut f);
-            (k.clone(), String::new(), f.into_iter().collect())
+            crate::free_idents::collect_truly_free_idents(v, &mut HashSet::new(), &mut f);
+            (self.init_dep_sym(fid, k), String::new(), f.iter().map(|r| self.init_dep_sym(fid, r)).collect())
         }).collect();
         for i in Self::topo_sort_const_inits(&deps) {
             let (key, value, bare, assoc) = (&nodes[i].0, nodes[i].1, nodes[i].2, nodes[i].3);
@@ -10554,9 +10555,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// bare name, a lazy `lex.B_BACKSLASH` turned constexpr `json.B_BACKSLASH` reads lazy.
     pub(crate) fn lazy_const_sym(&self, file_id: crate::diag::FileId, name: &str) -> Option<String> {
         if !self.lazy_consts.contains(name) { return None; }
-        let q = self.private_const_c_names.get(&(file_id, name.to_string())).cloned()
-            .or_else(|| self.const_qualified_by_name.get(name).cloned()).unwrap_or_else(|| name.to_string());
+        let q = self.init_dep_sym(file_id, name);
         self.lazy_const_syms.contains(&q).then_some(q)
+    }
+
+    /// D184 amend: the init-order key of a read `r` in `file_id` -- the C symbol it resolves to (`Type.NAME` ->
+    /// `Type_NAME`), so two modules' same-named `ro`s are two nodes, as in the checker's graph (#1158 class).
+    fn init_dep_sym(&self, file_id: crate::diag::FileId, r: &str) -> String {
+        if r.contains('.') { return r.replace('.', "_"); }
+        self.private_const_c_names.get(&(file_id, r.to_string())).or_else(|| self.const_qualified_by_name.get(r)).cloned().unwrap_or_else(|| r.to_string())
     }
 
     pub(crate) fn emit_lazy_const(&mut self, name: &str, c_name: &str, ty_c: &str, value: &Expr) -> Result<(), String> {
@@ -10686,9 +10693,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // just other consts) — filtered down against the final `lazy_consts`
         // set once every module has been processed.
         let mut free_idents = HashSet::new();
-        // D184 amend 2026-09-30: the scope-aware collector, and a `Type.NAME` read keyed as its init symbol `Type_NAME`.
-        Self::collect_truly_free_idents(value, &mut HashSet::new(), &mut free_idents);
-        self.pending_const_inits.push((name.to_string(), body, free_idents.into_iter().map(|k| k.replace('.', "_")).collect()));
+        crate::free_idents::collect_truly_free_idents(value, &mut HashSet::new(), &mut free_idents);
+        // Keyed by C symbol, deps resolved in the initializer's file (#1396 review: same-named `ro`s of two modules).
+        let deps = free_idents.iter().map(|r| self.init_dep_sym(value.span.file_id, r)).collect();
+        self.pending_const_inits.push((c_name.to_string(), body, deps));
         Ok(())
     }
 
@@ -55638,388 +55646,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // Plan 62.D bis-1 (2026-05-18): scope-aware free-variable collector.
-    // The original `collect_free_idents` is misnamed — it returns ALL
-    // identifiers in an expression, including ones bound by inner `let`s,
-    // pattern matches, and nested lambdas. Used as-is for closure-capture
-    // analysis (emit_lambda line ~16670), the resulting filter
-    // (`var_types.contains_key`) incorrectly treats inner-shadowed names as
-    // captures from the outer scope when those names ALSO happen to be in
-    // `var_types` (e.g. `s` from a prior `let s = ...` in another function
-    // body — `var_types` is a global HashMap that doesn't reset per-fn).
-    //
-    // The fix: track inner bindings (let-statements, lambda params, match
-    // patterns) and exclude them from the free set. We use a `bound` HashSet
-    // that's pushed/popped as we descend.
-    //
-    // Production semantics: in a sequence of `let`s, the lexical scope of
-    // `let x = ...` covers the rest of the block. So binding order matters:
-    // `let s = ...; let f = || s + 1` — `s` IS free in `f`'s body. But
-    // `let f = || { let s = ...; s + 1 }` — `s` is locally bound, NOT free.
-    //
-    // The collector descends through blocks, growing `bound` as it visits
-    // each `let` BEFORE visiting subsequent statements (matches lexical scope).
-    pub(crate) fn collect_truly_free_idents(
-        expr: &Expr,
-        bound: &mut HashSet<String>,
-        out: &mut HashSet<String>,
-    ) {
-        match &expr.kind {
-            ExprKind::Ident(n) => {
-                if !bound.contains(n) {
-                    out.insert(n.clone());
-                }
-            }
-            ExprKind::Path(parts) if parts.len() == 2 => { out.insert(format!("{}.{}", parts[0], parts[1])); } // D184 amend: `Type.NAME` read
-            ExprKind::Binary { left, right, .. } => {
-                Self::collect_truly_free_idents(left, bound, out);
-                Self::collect_truly_free_idents(right, bound, out);
-            }
-            ExprKind::Unary { operand, .. } => {
-                Self::collect_truly_free_idents(operand, bound, out);
-            }
-            ExprKind::Call { func, args, .. } => {
-                Self::collect_truly_free_idents(func, bound, out);
-                for a in args { Self::collect_truly_free_idents(a.expr(), bound, out); }
-            }
-            ExprKind::Member { obj, .. } => {
-                Self::collect_truly_free_idents(obj, bound, out);
-            }
-            ExprKind::Index { obj, index } => {
-                Self::collect_truly_free_idents(obj, bound, out);
-                Self::collect_truly_free_idents(index, bound, out);
-            }
-            ExprKind::Block(b) => {
-                Self::collect_truly_free_idents_block(b, bound, out);
-            }
-            ExprKind::If { cond, then, else_, .. } => {
-                Self::collect_truly_free_idents(cond, bound, out);
-                Self::collect_truly_free_idents_block(then, bound, out);
-                if let Some(e) = else_ {
-                    match e {
-                        ElseBranch::Block(b) =>
-                            Self::collect_truly_free_idents_block(b, bound, out),
-                        ElseBranch::If(ex) =>
-                            Self::collect_truly_free_idents(ex, bound, out),
-                    }
-                }
-            }
-            ExprKind::Lambda { params, body, .. } => {
-                // Inner lambda: its params shadow outer scope inside the body.
-                // Snapshot bound, add params, recurse, restore.
-                let saved: Vec<String> = params.iter()
-                    .filter_map(|p| if bound.insert(p.name.clone()) { Some(p.name.clone()) } else { None })
-                    .collect();
-                Self::collect_truly_free_idents(body, bound, out);
-                for n in saved { bound.remove(&n); }
-            }
-            ExprKind::ClosureLight { params, body } => {
-                let saved: Vec<String> = params.iter()
-                    .filter_map(|p| if bound.insert(p.name.clone()) { Some(p.name.clone()) } else { None })
-                    .collect();
-                match body {
-                    crate::ast::ClosureBody::Expr(e) =>
-                        Self::collect_truly_free_idents(e, bound, out),
-                    crate::ast::ClosureBody::Block(b) =>
-                        Self::collect_truly_free_idents_block(b, bound, out),
-                }
-                for n in saved { bound.remove(&n); }
-            }
-            ExprKind::ClosureFull(c) => {
-                let saved: Vec<String> = c.params.iter()
-                    .filter_map(|p| if bound.insert(p.name.clone()) { Some(p.name.clone()) } else { None })
-                    .collect();
-                match &c.body {
-                    crate::ast::FnBody::Expr(e) =>
-                        Self::collect_truly_free_idents(e, bound, out),
-                    crate::ast::FnBody::Block(b) =>
-                        Self::collect_truly_free_idents_block(b, bound, out),
-                    crate::ast::FnBody::External => {}
-                }
-                for n in saved { bound.remove(&n); }
-            }
-            ExprKind::TupleLit(elems) => {
-                for e in elems { Self::collect_truly_free_idents(e, bound, out); }
-            }
-            ExprKind::Detach(b) | ExprKind::Blocking(b) => {
-                Self::collect_truly_free_idents_block(b, bound, out);
-            }
-            ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
-                Self::collect_truly_free_idents_block(body, bound, out);
-                if let Some(c) = cancel {
-                    Self::collect_truly_free_idents(c, bound, out);
-                }
-                if let Some(dl) = deadline {
-                    Self::collect_truly_free_idents(&dl.expr, bound, out);
-                }
-                if let Some(oh) = on_timeout {
-                    Self::collect_truly_free_idents(oh, bound, out);
-                }
-            }
-            ExprKind::Select { arms } => {
-                for arm in arms {
-                    match &arm.op {
-                        SelectOp::Recv { chan, .. } =>
-                            Self::collect_truly_free_idents(chan, bound, out),
-                        SelectOp::Send { chan, value } => {
-                            Self::collect_truly_free_idents(chan, bound, out);
-                            Self::collect_truly_free_idents(value, bound, out);
-                        }
-                        SelectOp::Default => {}
-                    }
-                    if let Some(g) = &arm.guard {
-                        Self::collect_truly_free_idents(g, bound, out);
-                    }
-                    Self::collect_truly_free_idents_block(&arm.body, bound, out);
-                }
-            }
-            ExprKind::Match { scrutinee, arms } => {
-                Self::collect_truly_free_idents(scrutinee, bound, out);
-                for arm in arms {
-                    // Pattern bindings shadow the outer scope inside the arm body.
-                    let mut pat_binds: HashSet<String> = HashSet::new();
-                    Self::collect_pattern_bindings(&arm.pattern, &mut pat_binds);
-                    let added: Vec<String> = pat_binds.iter()
-                        .filter_map(|n| if bound.insert(n.clone()) { Some(n.clone()) } else { None })
-                        .collect();
-                    if let Some(g) = &arm.guard {
-                        Self::collect_truly_free_idents(g, bound, out);
-                    }
-                    match &arm.body {
-                        MatchArmBody::Expr(e) =>
-                            Self::collect_truly_free_idents(e, bound, out),
-                        MatchArmBody::Block(b) =>
-                            Self::collect_truly_free_idents_block(b, bound, out),
-                    }
-                    for n in added { bound.remove(&n); }
-                }
-            }
-            // Plan 153.2 gap B: control-flow arms were missing here, so any name
-            // referenced ONLY inside a `while`/`for`/`loop`/`while let`/`if let`
-            // body that is captured by an enclosing closure was never collected
-            // as a free variable (fell through to `_ => {}`). This mirrors the
-            // canonical complete visitor `collect_idents_expr`, but preserves
-            // scope discipline (loop-var / pattern bindings shadow captures).
-            ExprKind::While { cond, body, .. } => {
-                Self::collect_truly_free_idents(cond, bound, out);
-                Self::collect_truly_free_idents_block(body, bound, out);
-            }
-            ExprKind::Loop { body, .. } => {
-                Self::collect_truly_free_idents_block(body, bound, out);
-            }
-            ExprKind::For { pattern, iter, body, .. }
-            | ExprKind::ParallelFor { pattern, iter, body, .. } => {
-                // `iter` is evaluated in the OUTER scope (loop var not yet bound).
-                Self::collect_truly_free_idents(iter, bound, out);
-                let mut pat_binds: HashSet<String> = HashSet::new();
-                Self::collect_pattern_bindings(pattern, &mut pat_binds);
-                let added: Vec<String> = pat_binds.iter()
-                    .filter_map(|n| if bound.insert(n.clone()) { Some(n.clone()) } else { None })
-                    .collect();
-                Self::collect_truly_free_idents_block(body, bound, out);
-                for n in added { bound.remove(&n); }
-            }
-            ExprKind::WhileLet { pattern, scrutinee, guard, body, .. } => {
-                // scrutinee evaluated before the pattern binds.
-                Self::collect_truly_free_idents(scrutinee, bound, out);
-                let mut pat_binds: HashSet<String> = HashSet::new();
-                Self::collect_pattern_bindings(pattern, &mut pat_binds);
-                let added: Vec<String> = pat_binds.iter()
-                    .filter_map(|n| if bound.insert(n.clone()) { Some(n.clone()) } else { None })
-                    .collect();
-                // guard sees the pattern bindings.
-                if let Some(g) = guard {
-                    Self::collect_truly_free_idents(g, bound, out);
-                }
-                Self::collect_truly_free_idents_block(body, bound, out);
-                for n in added { bound.remove(&n); }
-            }
-            ExprKind::IfLet { pattern, scrutinee, guard, then, else_ } => {
-                // scrutinee evaluated before the pattern binds.
-                Self::collect_truly_free_idents(scrutinee, bound, out);
-                let mut pat_binds: HashSet<String> = HashSet::new();
-                Self::collect_pattern_bindings(pattern, &mut pat_binds);
-                let added: Vec<String> = pat_binds.iter()
-                    .filter_map(|n| if bound.insert(n.clone()) { Some(n.clone()) } else { None })
-                    .collect();
-                // guard sees the pattern bindings.
-                if let Some(g) = guard {
-                    Self::collect_truly_free_idents(g, bound, out);
-                }
-                Self::collect_truly_free_idents_block(then, bound, out);
-                for n in added { bound.remove(&n); }
-                // else branch does NOT see the pattern bindings.
-                if let Some(e) = else_ {
-                    match e {
-                        ElseBranch::Block(b) =>
-                            Self::collect_truly_free_idents_block(b, bound, out),
-                        ElseBranch::If(ex) =>
-                            Self::collect_truly_free_idents(ex, bound, out),
-                    }
-                }
-            }
-            // Remaining sub-expr-bearing arms (robustness: future captures inside
-            // these constructs are now collected). No new bindings introduced.
-            ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::Throw(e)
-            | ExprKind::Spawn(e) | ExprKind::As(e, _) | ExprKind::Is(e, _) => {
-                Self::collect_truly_free_idents(e, bound, out);
-            }
-            ExprKind::Coalesce(l, r) => {
-                Self::collect_truly_free_idents(l, bound, out);
-                Self::collect_truly_free_idents(r, bound, out);
-            }
-            ExprKind::TurboFish { base, .. } => {
-                Self::collect_truly_free_idents(base, bound, out);
-            }
-            ExprKind::Range { start, end, .. } => {
-                if let Some(s) = start { Self::collect_truly_free_idents(s, bound, out); }
-                if let Some(e) = end { Self::collect_truly_free_idents(e, bound, out); }
-            }
-            ExprKind::ArrayLit(elems) => {
-                for elem in elems {
-                    match elem {
-                        ArrayElem::Item(x) | ArrayElem::Spread(x) =>
-                            Self::collect_truly_free_idents(x, bound, out),
-                    }
-                }
-            }
-            ExprKind::MapLit { elems, .. } => {
-                for me in elems {
-                    match me {
-                        crate::ast::MapElem::Pair(k, v) => {
-                            Self::collect_truly_free_idents(k, bound, out);
-                            Self::collect_truly_free_idents(v, bound, out);
-                        }
-                        crate::ast::MapElem::Spread(e) =>
-                            Self::collect_truly_free_idents(e, bound, out),
-                    }
-                }
-            }
-            ExprKind::RecordLit { fields, .. } => {
-                // Spread `...expr` is encoded as a field with is_spread=true and
-                // value=Some(expr), so recursing every f.value covers it.
-                for f in fields {
-                    if let Some(v) = &f.value { Self::collect_truly_free_idents(v, bound, out); }
-                }
-            }
-            ExprKind::With { bindings, body } => {
-                for b in bindings { Self::collect_truly_free_idents(&b.handler, bound, out); }
-                Self::collect_truly_free_idents_block(body, bound, out);
-            }
-            ExprKind::Interrupt(Some(v)) => {
-                Self::collect_truly_free_idents(v, bound, out);
-            }
-            // Владелец 2026-07-21 (найдено при str-concat-lint канонизации,
-            // [M-str-interp-closure-capture-miss]): та же дыра, что и в
-            // `collect_idents_expr` выше (см. её комментарий) — `${expr}`
-            // внутри interpolated-string не обходился, идентификатор,
-            // упомянутый ТОЛЬКО там, не попадал в closure free-var/capture
-            // set → C codegen "use of undeclared identifier". Это ГЛАВНЫЙ
-            // путь для `flat_map(|x| "...${captured}...")`-формы (emit_lambda,
-            // не emit_spawn) — репро: `resolve_addr` (examples/flagship/
-            // aggregator/src/main.nv).
-            ExprKind::InterpolatedStr { parts } => {
-                for p in parts {
-                    if let crate::ast::InterpStrPart::Expr { expr, .. } = p {
-                        Self::collect_truly_free_idents(expr, bound, out);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn collect_truly_free_idents_block(
-        block: &Block,
-        bound: &mut HashSet<String>,
-        out: &mut HashSet<String>,
-    ) {
-        // Lexical scope: each `let x = ...` binds `x` for SUBSEQUENT stmts/trailing.
-        // We collect inserted names and pop them all on block exit (block-local).
-        let mut added: Vec<String> = Vec::new();
-        for s in &block.stmts {
-            match s {
-                Stmt::Let(d) => {
-                    // Value expression evaluated in scope BEFORE binding x.
-                    Self::collect_truly_free_idents(&d.value, bound, out);
-                    // After this let, x is bound for the rest of the block.
-                    let mut pat_binds: HashSet<String> = HashSet::new();
-                    Self::collect_pattern_bindings(&d.pattern, &mut pat_binds);
-                    for n in pat_binds {
-                        if bound.insert(n.clone()) {
-                            added.push(n);
-                        }
-                    }
-                }
-                Stmt::Assign { target, value, .. } => {
-                    Self::collect_truly_free_idents(target, bound, out);
-                    Self::collect_truly_free_idents(value, bound, out);
-                }
-                Stmt::Expr(e) =>
-                    Self::collect_truly_free_idents(e, bound, out),
-                Stmt::Return { value: Some(e), .. } =>
-                    Self::collect_truly_free_idents(e, bound, out),
-                _ => {}
-            }
-        }
-        if let Some(t) = &block.trailing {
-            Self::collect_truly_free_idents(t, bound, out);
-        }
-        // Pop block-local bindings.
-        for n in added { bound.remove(&n); }
-    }
-
-    /// Collect names introduced by a pattern (used by closure free-var collector
-    /// and by future scope analyses). Recursively visits sub-patterns; for `Or`,
-    /// takes the union (any alternative's bindings count as introduced). Wildcard,
-    /// literals, and unit-variants introduce nothing.
-    fn collect_pattern_bindings(pat: &Pattern, out: &mut HashSet<String>) {
-        match pat {
-            Pattern::Wildcard(_) | Pattern::Literal(..) => {}
-            Pattern::Ident { name, .. } => { out.insert(name.clone()); }
-            Pattern::Binding { name, inner, .. } => {
-                out.insert(name.clone());
-                Self::collect_pattern_bindings(inner, out);
-            }
-            Pattern::Or { alternatives, .. } => {
-                for alt in alternatives {
-                    Self::collect_pattern_bindings(alt, out);
-                }
-            }
-            Pattern::Variant { kind, .. } => {
-                match kind {
-                    VariantPatternKind::Tuple { patterns, .. } => {
-                        for p in patterns { Self::collect_pattern_bindings(p, out); }
-                    }
-                    VariantPatternKind::Unit => {}
-                }
-            }
-            Pattern::Record { fields, .. } => {
-                for f in fields {
-                    if let Some(inner) = &f.pattern {
-                        Self::collect_pattern_bindings(inner, out);
-                    } else {
-                        // shorthand `{ name }` — binds `name`.
-                        out.insert(f.name.clone());
-                    }
-                }
-            }
-            Pattern::Tuple(pats, _) => {
-                for p in pats { Self::collect_pattern_bindings(p, out); }
-            }
-            Pattern::Array { elems, .. } => {
-                for el in elems {
-                    match el {
-                        ArrayPatternElem::Item(p) => Self::collect_pattern_bindings(p, out),
-                        ArrayPatternElem::Rest => {}
-                        ArrayPatternElem::RestBind(name) => { out.insert(name.clone()); }
-                    }
-                }
-            }
-        }
-    }
-
     /// Emit a lambda expression. Returns the C expression (a function pointer or closure pointer).
     ///
     /// `closure_id` — 197.3 (Q3 A, channel-first migration): the ORIGINAL
@@ -56110,7 +55736,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let param_names: HashSet<String> = params.iter().map(|p| p.name.clone()).collect();
         let mut body_idents = HashSet::new();
         let mut initial_bound = param_names.clone();
-        Self::collect_truly_free_idents(body, &mut initial_bound, &mut body_idents);
+        crate::free_idents::collect_truly_free_idents(body, &mut initial_bound, &mut body_idents);
         // Free vars = body idents that exist in var_types and are not lambda params
         //
         // [investigated M-closure-ctx-freefn-callee-unresolved-fnnt, №96]: a

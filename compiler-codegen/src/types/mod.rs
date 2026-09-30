@@ -2508,51 +2508,28 @@ fn check_const_constexpr_ex(
     }
 }
 
-/// Plan 148 Ф.3 ([M-114.4-strict-partition]): forward direction of the
-/// strict module-level `const`/`ro` partition (spec D199 / 03-syntax
-/// «Strict module-level partition»).
-///
-/// `E_CONST_NOT_CONSTEXPR` (reverse direction) already rejects a module-level
-/// `const X = …` whose RHS is *not* constexpr-eligible. This helper is the
-/// forward direction: a module-level `ro X = …` whose RHS *is* fully
-/// constexpr-eligible must instead be declared `const` — the keyword is not
-/// a user choice, it follows the RHS. Such a binding is flagged with
-/// `E_RO_FOR_CONSTEXPR_PREFER_CONST`.
-///
-/// Scope is deliberately narrow — this matches the spec, which restricts the
-/// strict partition to **module-level** bindings only (scope-local `ro x = 5`
-/// and `const x = 5` are both valid, with different guarantees):
-///   - Only module-level `Item::Let` (which, post-D184, can only originate
-///     from the `ro` keyword — `let`/`mut`/`consume` are rejected at module
-///     level by the parser).
-///   - Only a single named binding (`Pattern::Ident`, or — for the usual
-///     UPPER_CASE constant name — a single-segment unit `Pattern::Variant`,
-///     see the NB in the body); `const` has no destructuring form, so
-///     `ro (a, b) = …` is never convertible and is left alone.
-///   - `ghost` bindings are spec-only and never emitted — left alone.
-///   - The RHS must be *fully* constexpr-eligible per the very same
-///     `check_const_constexpr_ex` predicate that drives `E_CONST_NOT_CONSTEXPR`,
-///     so the two directions can never disagree about what «constexpr» means.
-///
-/// Returns `Some(diagnostic)` when the binding should be `const`, else `None`.
 /// D184 amendment 2026-09-30: module-level `ro` initializers run in DEPENDENCY
 /// order (codegen sorts them); a CYCLE of dependencies -- including a value
 /// reading itself -- has no order and is `E_MODULE_INIT_CYCLE`. An edge
-/// `a -> b` is a read of the name of module-level `ro b` anywhere in `a`'s
-/// initializer (closures inside it included), found by the SAME function the
-/// codegen orders by (`CEmitter::collect_truly_free_idents`, scope-aware), so the two cannot
-/// disagree -- and the same edge novac draws (a read met while typing the
+/// `a -> b` is a read of module-level `ro b` anywhere in `a`'s initializer
+/// (closures inside it included), found by the SAME function the codegen
+/// orders by (`free_idents::collect_truly_free_idents`, scope-aware), so the two
+/// cannot disagree -- and the same edge novac draws (a read met while typing the
 /// initializer, bada5540e). Named limit: a read through a CALLED fn's body
 /// (`ro a = f()`, `f` reads `a`) is not an edge; Go counts it, Nova does not.
 /// Reported once per cycle, at the declaration whose read closes it.
-fn check_module_init_cycles(items: &[Item], errors: &mut Vec<Diagnostic>) {
-    // Nodes: bare module-level `ro` (key = its name) and associated
-    // `ro Type.NAME` (key = `Type.NAME`) -- ONE graph (the Carina window's
-    // point: two graphs sharing vertices would each miss a bare <-> Type.NAME
-    // cycle). The collector reports a `Type.NAME` read under that same key.
-    struct Node<'a> { key: String, value: &'a Expr, span: Span }
+fn check_module_init_cycles(module: &Module, errors: &mut Vec<Diagnostic>) {
+    // Nodes: bare module-level `ro` (key = its name) and associated `ro Type.NAME`
+    // (key = `Type.NAME`) -- ONE graph (the Carina window's point: two graphs
+    // sharing vertices would each miss a bare <-> Type.NAME cycle). Each node is
+    // keyed WITH its declaring module: the CU is merged, and two modules'
+    // same-named `ro`s are two values, not one (class #1158; the emitter keys the
+    // same graph by C symbol, `init_dep_sym`).
+    struct Node<'a> { module: &'a [String], key: String, value: &'a Expr, span: Span }
+    let peer_of: HashMap<crate::diag::FileId, &PeerFile> = module.peer_files.iter().map(|p| (p.file_id, p)).collect();
+    let mod_of = |sp: Span| peer_of.get(&sp.file_id).map(|p| p.module_name.as_slice()).unwrap_or(&[]);
     let mut lets: Vec<Node> = Vec::new();
-    for it in items {
+    for it in &module.items {
         match it {
             Item::Let(l) if !l.is_ghost => {
                 let key = match &l.pattern {
@@ -2560,10 +2537,10 @@ fn check_module_init_cycles(items: &[Item], errors: &mut Vec<Diagnostic>) {
                     Pattern::Variant { path, kind: VariantPatternKind::Unit, .. } if path.len() == 1 => Some(path[0].clone()),
                     _ => None,
                 };
-                if let Some(key) = key { lets.push(Node { key, value: &l.value, span: l.span }); }
+                if let Some(key) = key { lets.push(Node { module: mod_of(l.span), key, value: &l.value, span: l.span }); }
             }
             Item::Type(t) => for ac in t.assoc_consts.iter().filter(|a| a.is_lazy_ro) {
-                lets.push(Node { key: format!("{}.{}", t.name, ac.name), value: &ac.value, span: ac.span });
+                lets.push(Node { module: mod_of(ac.span), key: format!("{}.{}", t.name, ac.name), value: &ac.value, span: ac.span });
             },
             _ => {}
         }
@@ -2572,12 +2549,33 @@ fn check_module_init_cycles(items: &[Item], errors: &mut Vec<Diagnostic>) {
     // assoc list, not at its own line): the walk starts at the earliest, so the
     // declaration whose read closes a cycle is the later one -- as in novac.
     lets.sort_by_key(|n| (n.span.file_id, n.span.start));
-    let index: HashMap<&str, usize> = lets.iter().enumerate().map(|(i, n)| (n.key.as_str(), i)).collect();
+    let index: HashMap<(&[String], &str), usize> = lets.iter().enumerate().map(|(i, n)| ((n.module, n.key.as_str()), i)).collect();
+    // A read resolves in the READING file: its own module's node, else the node a
+    // direct `import` of that file names -- a selective item (`import ./m.{x}`,
+    // alias honoured) or `m.x` through a whole-module import; the imported module
+    // is matched by its last segment, as `import_prefix_to_module_last` does.
+    let resolve = |n: &Node, r: &str| -> Option<usize> {
+        if let Some(&i) = index.get(&(n.module, r)) { return Some(i); }
+        let (head, rest) = match r.split_once('.') { Some((h, t)) => (h, Some(t)), None => (r, None) };
+        peer_of.get(&n.span.file_id)?.imports.iter().find_map(|imp| {
+            let last = imp.path.last()?;
+            let key = match (&imp.items, rest) {
+                (Some(items), _) => {
+                    let it = items.iter().find(|it| it.alias.as_deref().unwrap_or(&it.name) == head)?;
+                    rest.map_or_else(|| it.name.clone(), |t| format!("{}.{}", it.name, t))
+                }
+                (None, Some(t)) if imp.alias.as_deref().unwrap_or(last) == head => t.to_string(),
+                _ => return None,
+            };
+            lets.iter().position(|m| m.module.last() == Some(last) && m.key == key)
+        })
+    };
     let adj: Vec<Vec<usize>> = lets.iter().map(|n| {
         let mut free = HashSet::new();
-        crate::codegen::emit_c::CEmitter::collect_truly_free_idents(n.value, &mut HashSet::new(), &mut free);
-        let mut d: Vec<usize> = free.iter().filter_map(|n| index.get(n.as_str()).copied()).collect();
+        crate::free_idents::collect_truly_free_idents(n.value, &mut HashSet::new(), &mut free);
+        let mut d: Vec<usize> = free.iter().filter_map(|r| resolve(n, r)).collect();
         d.sort_unstable();
+        d.dedup();
         d
     }).collect();
     // 0 = unvisited, 1 = on the DFS stack, 2 = done.
@@ -2619,6 +2617,33 @@ fn check_module_init_cycles(items: &[Item], errors: &mut Vec<Diagnostic>) {
     }
 }
 
+/// Plan 148 Ф.3 ([M-114.4-strict-partition]): forward direction of the
+/// strict module-level `const`/`ro` partition (spec D199 / 03-syntax
+/// «Strict module-level partition»).
+///
+/// `E_CONST_NOT_CONSTEXPR` (reverse direction) already rejects a module-level
+/// `const X = …` whose RHS is *not* constexpr-eligible. This helper is the
+/// forward direction: a module-level `ro X = …` whose RHS *is* fully
+/// constexpr-eligible must instead be declared `const` — the keyword is not
+/// a user choice, it follows the RHS. Such a binding is flagged with
+/// `E_RO_FOR_CONSTEXPR_PREFER_CONST`.
+///
+/// Scope is deliberately narrow — this matches the spec, which restricts the
+/// strict partition to **module-level** bindings only (scope-local `ro x = 5`
+/// and `const x = 5` are both valid, with different guarantees):
+///   - Only module-level `Item::Let` (which, post-D184, can only originate
+///     from the `ro` keyword — `let`/`mut`/`consume` are rejected at module
+///     level by the parser).
+///   - Only a single named binding (`Pattern::Ident`, or — for the usual
+///     UPPER_CASE constant name — a single-segment unit `Pattern::Variant`,
+///     see the NB in the body); `const` has no destructuring form, so
+///     `ro (a, b) = …` is never convertible and is left alone.
+///   - `ghost` bindings are spec-only and never emitted — left alone.
+///   - The RHS must be *fully* constexpr-eligible per the very same
+///     `check_const_constexpr_ex` predicate that drives `E_CONST_NOT_CONSTEXPR`,
+///     so the two directions can never disagree about what «constexpr» means.
+///
+/// Returns `Some(diagnostic)` when the binding should be `const`, else `None`.
 fn check_ro_module_partition(
     decl: &crate::ast::LetDecl,
     known_consts: &HashSet<String>,
@@ -5990,7 +6015,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
         // D184 amendment 2026-09-30: a cycle of module-level `ro` initializers.
-        check_module_init_cycles(&module.items, errors);
+        check_module_init_cycles(module, errors);
         // Plan 157 (D200 amend): associated `ro Type.NAME` — same strict
         // const/ro partition symmetry as bare module-level `ro`
         // (`check_ro_module_partition` above, [M-114.4-strict-partition]).
