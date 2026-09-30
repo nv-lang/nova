@@ -22,7 +22,7 @@ mod opt_eq_split; // #1405: `nova_opt_eq` body late, see its doc
 mod decl_module_symbol; // #1097: free-fn symbol by declaring module (D134), see its doc
 mod generic_overload_mono; // #1343: generic free-fn monomorph by declaration, see its doc
 mod method_key; mod default_dispatch; // #1413 method key; #1414 value default method
-mod type_repr_early; // #761: newtype/alias representation before any consumer, see its doc
+mod type_repr_early; mod generic_sum_schema; // #761: newtype/alias representation before any consumer; #1338: generic sum payload layout from the channel
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
@@ -39895,7 +39895,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Desugar: if let Pat = expr [&& guard] { then } else { else_ }
                 // → evaluate scrutinee, check pattern cond, bind, [check guard,] run then or else_
                 let scr = self.emit_expr(scrutinee)?;
-                let scr_ty = self.infer_expr_c_type(scrutinee);
+                self.ensure_channel_sum_schema(scrutinee); let scr_ty = self.infer_expr_c_type(scrutinee); // #1338
                 let scr_tmp = self.fresh_tmp_named("scr");
                 self.var_types.insert(scr_tmp.clone(), scr_ty.clone());
                 self.line(&format!("{} {} = {};", scr_ty, scr_tmp, scr));
@@ -51451,7 +51451,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let matched_tmp = self.fresh_tmp_named("matched");
 
         // №1353: a value type's pointer carrier (`other Self`) is matched through its value, as `@` is (`(*nova_self)`).
-        let scr_ty = self.infer_expr_c_type(scrutinee);
+        self.ensure_channel_sum_schema(scrutinee); let scr_ty = self.infer_expr_c_type(scrutinee); // #1338: payload layout from the channel
         let (scr_ty, scr_val) = if Self::is_value_struct_ptr(&scr_ty) { (scr_ty.trim_end_matches('*').to_string(), format!("(*{})", scr)) } else { (scr_ty, scr.clone()) };
         self.var_types.insert(scr_tmp.clone(), scr_ty.clone());
         self.line(&format!("{} {} = {};", scr_ty, scr_tmp, scr_val));
