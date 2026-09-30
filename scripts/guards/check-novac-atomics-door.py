@@ -38,6 +38,14 @@ def main():
         # дверь: всё, что лежит в atomics/, не судится
         if "atomics" in p.relative_to(src).parts:
             continue
+        # ШАБЛОН ШЕЛЛА НЕ СУДИТСЯ (2026-09-30, Э.9 шаг 1): emit_c/shell.tpl.c —
+        # дословная эмиссия ОРАКУЛА по пробе (scripts/tools/novac-regen-shell.sh),
+        # novac не пишет в нём ни строки, а побайтно его держит
+        # check-novac-shell-freshness.sh. С `supervised`/`spawn` в пробе он несёт
+        # структуры файберов рантайма (`nova_atomic_int` в их полях) — это ABI
+        # рантайма, а не атомик novac мимо двери. Правило судит КОД novac.
+        if p.relative_to(src).as_posix() == "emit_c/shell.tpl.c":
+            continue
         n += 1
         try:
             text = p.read_text(encoding="utf-8", errors="replace")

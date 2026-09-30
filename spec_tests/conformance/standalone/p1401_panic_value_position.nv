@@ -1,0 +1,109 @@
+// EXPECT_STDOUT ok 0 0 0 1 2 5
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for registry 221.1 #1401: a diverging expression (`panic`, type
+// `never`) in value position must take the C type of its PLACE. It used to be
+// lowered with the int-family dummy `(nova_int)0LL`, so a fn or lambda whose
+// tail is `panic(...)` and whose return type is a value struct (value record,
+// payload-less sum, tuple, Option/Result over a value record) failed C
+// compilation: "returning 'nova_int' from a function with incompatible result
+// type 'NovaValue_X'". A heap record hid it (pointer place).
+//
+// Cells: tail of a named fn (arrow and block body), tail of a lambda, an `if`
+// branch and a `match` arm -- each over value record / payload-less sum /
+// tuple / Option / Result, plus the heap-record control. The panicking paths
+// are built but never called here (calling them panics; measured separately).
+module standalone.p1401_panic_value_position
+
+type P1401V value { n int }
+type P1401H { n int }
+type P1401Colour enum P1401Red | P1401Green
+
+// fn tail
+fn p1401_v_tail() -> P1401V => panic("v")
+fn p1401_h_tail() -> P1401H => panic("h")
+fn p1401_c_tail() -> P1401Colour => panic("c")
+fn p1401_t_tail() -> (int, int) => panic("t")
+fn p1401_o_tail() -> Option[P1401V] => panic("o")
+fn p1401_r_tail() -> Result[P1401V, str] => panic("r")
+fn p1401_v_blk() -> P1401V {
+    ro k = 1
+    panic("vb ${k}")
+}
+
+// if branch
+fn p1401_v_if(go bool) -> P1401V => if go { panic("vi") } else { P1401V { n: 1 } }
+fn p1401_c_if(go bool) -> P1401Colour => if go { panic("ci") } else { P1401Red }
+fn p1401_t_if(go bool) -> (int, int) => if go { panic("ti") } else { (1, 2) }
+fn p1401_o_if(go bool) -> Option[P1401V] => if go { panic("oi") } else { None }
+fn p1401_r_if(go bool) -> Result[P1401V, str] => if go { panic("ri") } else { Err("e") }
+
+// match arm
+fn p1401_v_m(k int) -> P1401V => match k {
+    0 => P1401V { n: 0 }
+    _ => panic("vm")
+}
+fn p1401_c_m(k int) -> P1401Colour => match k {
+    0 => P1401Green
+    _ => panic("cm")
+}
+fn p1401_t_m(k int) -> (int, int) => match k {
+    0 => (0, 0)
+    _ => panic("tm")
+}
+fn p1401_o_m(k int) -> Option[P1401V] => match k {
+    0 => None
+    _ => panic("om")
+}
+fn p1401_r_m(k int) -> Result[P1401V, str] => match k {
+    0 => Err("e")
+    _ => panic("rm")
+}
+
+fn p1401_run_v(f fn() -> P1401V, go bool) -> int => if go { f().n } else { 0 }
+fn p1401_run_h(f fn() -> P1401H, go bool) -> int => if go { f().n } else { 0 }
+fn p1401_run_c(f fn() -> P1401Colour, go bool) -> int => if go { 1 } else { 0 }
+fn p1401_run_t(f fn() -> (int, int), go bool) -> int => if go { 1 } else { 0 }
+fn p1401_run_o(f fn() -> Option[P1401V], go bool) -> int => if go { 1 } else { 0 }
+fn p1401_run_r(f fn() -> Result[P1401V, str], go bool) -> int => if go { 1 } else { 0 }
+
+fn main() Io -> () {
+    // named fn values (never called)
+    ro a1 = p1401_run_v(p1401_v_tail, false) + p1401_run_h(p1401_h_tail, false)
+    ro a2 = p1401_run_c(p1401_c_tail, false) + p1401_run_t(p1401_t_tail, false)
+    ro a3 = p1401_run_o(p1401_o_tail, false) + p1401_run_r(p1401_r_tail, false)
+    ro a = a1 + a2 + a3 + p1401_run_v(p1401_v_blk, false)
+    // lambda tails (never called)
+    ro b = p1401_run_v(fn() -> P1401V => panic("lv"), false) + p1401_run_h(fn() -> P1401H => panic("lh"), false)
+    ro c = p1401_run_c(fn() -> P1401Colour => panic("lc"), false)
+    ro d = p1401_run_t(fn() -> (int, int) => panic("lt"), false)
+    ro e1 = p1401_run_o(fn() -> Option[P1401V] => panic("lo"), false)
+    ro e = e1 + p1401_run_r(fn() -> Result[P1401V, str] => panic("lr"), false)
+    // the non-panicking paths of the if / match cells
+    ro x = p1401_v_if(false).n + p1401_v_m(0).n
+    ro y = match p1401_c_if(false) {
+        P1401Red => 0
+        P1401Green => 1
+    }
+    ro y2 = match p1401_c_m(0) {
+        P1401Red => 0
+        P1401Green => 1
+    }
+    ro z = p1401_t_if(false).0 + p1401_t_m(0).0
+    ro w = match p1401_o_if(false) {
+        Some(v) => v.n
+        None => 2
+    }
+    ro w2 = match p1401_o_m(0) {
+        Some(v) => v.n
+        None => 3
+    }
+    ro q = match p1401_r_if(false) {
+        Ok(v) => v.n
+        Err(_) => 0
+    }
+    ro q2 = match p1401_r_m(0) {
+        Ok(v) => v.n
+        Err(_) => 0
+    }
+    println("ok ${a} ${b + c} ${d + e} ${x} ${y + y2 + z + q + q2} ${w + w2}")
+}

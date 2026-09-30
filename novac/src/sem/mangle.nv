@@ -497,6 +497,16 @@ export fn c_shell_method(ctx Ctx, t TyId, name str) -> str =>
 
 /// A FREE function of a handed module as the SHELL spells it (wave W6): the
 /// oracle's `nova_fn_` + each module segment length-prefixed + the name
+/// The C cell of a MODULE VALUE (`ro NAME = expr`, 274.5 section 6) and the
+/// function that computes it once. OURS, not interop: the cell never
+/// crosses the ABI, so it carries novac's own prefix (P24). A qualified name
+/// (`Type.NAME`) spells its dot as a double underscore -- no Nova identifier
+/// holds one, so two names cannot meet in one spelling.
+export fn module_value_c_name(name str) -> str => "novac_mv_${name.replace(".", "__")}"
+
+/// The initializer function of a module value's cell: see `module_value_c_name`.
+export fn module_value_init_c_name(name str) -> str => "novac_mvinit_${name.replace(".", "__")}"
+
 /// length-prefixed -- `nova_fn_8encoding5utf1617is_high_surrogate` for
 /// `encoding.utf16.is_high_surrogate` (D134; a Nova identifier never starts
 /// with a digit, so the length and the segment cannot run together). INTEROP,

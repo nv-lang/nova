@@ -1547,29 +1547,68 @@ mod tests {
     // `export_file` is O(names in this one file), independent of `n`.
     #[test]
     fn p215_edge_export_file_cost_independent_of_shared_bucket_size() {
-        let index = ReferencesIndex::default();
-        // Many files all sharing the identifier `fn_marker` (simulates a
-        // token, like a Nova keyword-as-identifier, common to nearly every
-        // file in a large workspace).
-        let n = 4000;
-        for i in 0..n {
-            let uri = make_uri(&format!("shared{i}.nv"));
-            index.index_file(uri, "fn_marker fn_marker fn_marker\n");
+        // Registry #1159/#1154: an ABSOLUTE 50ms threshold here judges the
+        // MACHINE scheduling this test, not whether export_file scales with
+        // the shared bucket — which is the actual property this test exists
+        // to catch (the Plan 215 O(workspace) regression described above).
+        // Fix: build two indexes of very different bucket size, measure
+        // export_file on each IN THE SAME RUN, and assert the cost RATIO
+        // stays flat. An O(n) (or worse) regression would make the ratio
+        // track the bucket-size ratio (or its square); a true
+        // O(names-in-this-file) implementation keeps it near 1 regardless
+        // of machine load, because load inflates both arms together.
+        fn build(n: usize) -> (ReferencesIndex, Url) {
+            let index = ReferencesIndex::default();
+            // Many files all sharing the identifier `fn_marker` (simulates a
+            // token, like a Nova keyword-as-identifier, common to nearly
+            // every file in a large workspace).
+            for i in 0..n {
+                let uri = make_uri(&format!("shared{i}.nv"));
+                index.index_file(uri, "fn_marker fn_marker fn_marker\n");
+            }
+            // One more file — export_file on it must be cheap regardless of `n`.
+            let target = make_uri("target.nv");
+            index.index_file(target.clone(), "fn_marker only_here\n");
+            (index, target)
         }
-        // One more file — export_file on it must be cheap regardless of `n`.
-        let target = make_uri("target.nv");
-        index.index_file(target.clone(), "fn_marker only_here\n");
 
-        let t0 = std::time::Instant::now();
-        let exported = index.export_file(&target);
-        let elapsed = t0.elapsed();
+        fn time_export(index: &ReferencesIndex, target: &Url) -> std::time::Duration {
+            let mut best = std::time::Duration::MAX;
+            for _ in 0..5 {
+                let t0 = std::time::Instant::now();
+                let _ = index.export_file(target);
+                best = best.min(t0.elapsed());
+            }
+            best
+        }
 
+        let n_small = 100;
+        let n_big = 4000;
+
+        let (small_index, small_target) = build(n_small);
+        let (big_index, big_target) = build(n_big);
+
+        // The deterministic half — correctness — does not depend on any clock.
+        let exported = big_index.export_file(&big_target);
         let names: Vec<&str> = exported.iter().map(|(n, _)| n.as_str()).collect();
         assert!(names.contains(&"fn_marker"));
         assert!(names.contains(&"only_here"));
+
+        let small = time_export(&small_index, &small_target);
+        let big = time_export(&big_index, &big_target);
+
+        let small_ns = (small.as_nanos() as f64).max(1_000.0);
+        let big_ns = big.as_nanos() as f64;
+        let ratio = big_ns / small_ns;
+
         assert!(
-            elapsed.as_millis() < 50,
-            "export_file for one file must not scale with the {n}-file shared bucket, took {elapsed:?}"
+            ratio < 8.0,
+            "export_file cost grew {ratio:.1}x when the shared bucket grew {}x \
+             ({n_small} -> {n_big} files) — expected roughly flat cost (export_file \
+             is meant to be O(names in this one file), independent of the bucket); \
+             this looks like a real O(workspace)-or-worse regression, not machine \
+             load (registry #1159, small={small:?}, big={big:?})",
+            n_big / n_small,
         );
     }
 

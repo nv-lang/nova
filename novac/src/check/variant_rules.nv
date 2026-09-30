@@ -169,9 +169,24 @@ fn Checker mut @judge_type_head_variant(e Node, kids []Node, arg_from int) -> bo
                 if arg_from < 0 {
                     ro qname = "${ty_source_name(@ctx, head_t)}.${vt.text}"
                     if @ctx.defs.const_row(qname).is_some() {
+                        // The bare name's three questions, in its order
+                        // (exprs.nv): a cycle of module values, a value
+                        // whose initializer was refused, then the type AND
+                        // which constant it is -- without the second record
+                        // the emitter printed this as a field access.
+                        if @settle_module_value(qname) {
+                            @reject(vt, MODULE_VALUE_CYCLE_MSG)
+                            return true
+                        } else {
+                            // No cycle; a value not typed yet is typed now.
+                        }
+                        // SILENT-OK: its initializer's refusal is the one cause.
+                        if @is_poisoned_module_value(qname) { return true }
                         ro ct = @const_type_of(qname)
                         if is_ty(ct) {
                             @record(e, ct)
+                            ro crow = @ctx.defs.const_row(qname) ?? ice("check: a qualified constant lost its row")
+                            @chan.record_const(e.id_of(), crow)
                             return true
                         } else {
                             // Registered but untypeable (a refused

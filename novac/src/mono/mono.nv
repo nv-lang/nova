@@ -17,7 +17,7 @@ module novac.mono
 
 import ../tree.{Node, NodeKind, is_node}
 import ../sem.{decl_fn_row, subst_type, Ctx, CheckOut, ParamDef, FnRow, raw_row, branch_children, file_decls}
-import ../sem.{CalleeRef}
+import ../sem.{CalleeRef, let_decl_of}
 import ../types.{TyId}
 import ../diag.{ice}
 
@@ -156,6 +156,17 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
     // Hoisted out of the fixpoint on purpose: the door builds a vector, and the
     // set of declarations does not change between rounds.
     ro decls_of_file = file_decls(file)
+    // MODULE VALUES ARE ROOTS TOO (274.5 section 6) -- the `#[used]` static
+    // named above: each initializer runs once before `main`, whether or not
+    // anything reads it, so what it calls must be emitted. Marked once,
+    // before the fixpoint; the functions it reaches are walked by it.
+    for c in decls_of_file {
+        if Some(lk) = let_decl_of(c) {
+            ro _ = mark_callees(lk, ctx, out, seen, inst, subst, ptypes)
+        } else {
+            // Not a module value: the fixpoint below judges it.
+        }
+    }
     mut grew = true
     while grew {
         grew = false

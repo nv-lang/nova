@@ -71,16 +71,35 @@ else
     REAL_CLANG="${NOVA_CLANG:-$(command -v clang || printf 'clang')}"
 fi
 
-# ---- 1. oracle binary + captured argv, cached ---------------------------
+# ---- 0. the SHELL's effect count: the flags must be built for IT ----------
+# ЧИСЛО ЭФФЕКТОВ БЕРЁТСЯ У ШЕЛЛА, НЕ У ФИКСТУРЫ (2026-09-30, Э.9 шаг 1). Флаги
+# перехватывались у сборки оракулом САМОЙ фикстуры, а в них стоит
+# -DNOVA_MAX_EFFECT_STORAGES=<число эффектов ЭТОЙ программы>, и по нему же
+# выбран архив рантайма. Эмиссия novac несёт шелл целиком, и шелл регистрирует
+# СВОИ эффекты (маркер `nova-effect-count: N` в его первой строке). Пока оба
+# числа случайно были 6, всё сходилось; шелл с Fs/Os дал 10, и каждая программа
+# novac падала при запуске «effect-registry overflow (count=6, max=6)». Флаги,
+# архив и PCH теперь берутся у сборки ПРОБЫ шелла (её эмиссия и есть шелл, N
+# то же по построению), и ключ кэша несёт N.
+EFFN=$(sed -n '1s/.*nova-effect-count: \([0-9][0-9]*\).*/\1/p' "$ROOT/novac/src/emit_c/shell.tpl.c")
+[ -n "$EFFN" ] || fail "в первой строке novac/src/emit_c/shell.tpl.c нет маркера nova-effect-count"
+FLAGKEY="$ORACLE_STAMP-e$EFFN"
+
+# ---- 1. oracle binary (per file) + captured argv (per oracle and shell) ---
 KEY=$(cksum < "$FILE" | cut -d' ' -f1)-$ORACLE_STAMP
 ORACLE_EXE="$CACHE/oracle-$KEY.exe"
-LINKCMD="$CACHE/link-$ORACLE_STAMP.argv"
-CFLAGS="$CACHE/cflags-$ORACLE_STAMP.argv"
-PCH="$CACHE/prelude-$ORACLE_STAMP.pch"
-if [ ! -f "$ORACLE_EXE" ] || [ ! -f "$LINKCMD" ]; then
+LINKCMD="$CACHE/link-$FLAGKEY.argv"
+CFLAGS="$CACHE/cflags-$FLAGKEY.argv"
+PCH="$CACHE/prelude-$FLAGKEY.pch"
+if [ ! -f "$ORACLE_EXE" ]; then
     STEM=$(basename "$FILE" .nv)
     mkdir -p "$T/pkgless"
     sed "s/^module [a-zA-Z_.]*${STEM}\$/module ${STEM}/" "$FILE" > "$T/pkgless/$STEM.nv"
+    "$ORACLE" build "$T/pkgless/$STEM.nv" -o "$T/oracle.exe" >"$T/oracle.out" 2>&1 \
+        || fail "оракул не собрал $FILE: $(tail -3 "$T/oracle.out")"
+    cp "$T/oracle.exe" "$ORACLE_EXE"
+fi
+if [ ! -f "$LINKCMD" ]; then
     LOG="$T/cc.log"; : > "$LOG"
     # ПЕРЕХВАТ clang-argv — ОДНА идея в ДВУХ формах, и вторая появилась по
     # красному CI 2026-08-23 (класс К3, план 274 §9.1д): обёртка была только
@@ -98,37 +117,45 @@ if [ ! -f "$ORACLE_EXE" ] || [ ! -f "$LINKCMD" ]; then
         chmod +x "$T/clang-log.sh"
         WRAPPER="$T/clang-log.sh"
     fi
-    NOVA_CLANG="$WRAPPER" "$ORACLE" build "$T/pkgless/$STEM.nv" -o "$T/oracle.exe" >"$T/oracle.out" 2>&1 \
-        || fail "оракул не собрал $FILE: $(tail -3 "$T/oracle.out")"
-    cp "$T/oracle.exe" "$ORACLE_EXE"
-    if [ ! -f "$LINKCMD" ]; then
-        # link argv: everything but -o/<exe>/<input>; -g dropped; lld added
-        awk 'BEGIN{skip=0} /^__END__/{exit} skip{skip=0; next} /^-o$/{skip=1; next} /\.c"?$/{next} /^-g$/{next} {print}' "$LOG" \
-            | tr -d '\r' | sed 's|\\|/|g' > "$LINKCMD"
-        printf '%s\n' "-fuse-ld=lld" >> "$LINKCMD"
-        grep -q "libnova_rt" "$LINKCMD" || fail "перехват clang-argv не сработал"
-        # compile-only flags (for the PCH and the -c step): no libs/linker flags
-        # `.a`/`.so` РЯДОМ С `.lib` (2026-08-23, по красному CI). Фильтр знал
-        # только Windows-имена библиотек, и на Linux архивы `libnova_rt.a` и
-        # `libuv.a` оставались в CFLAGS — то есть в команду сборки PCH попадал
-        # ВХОД, а не флаг, и clang отвечал «cannot specify -o when generating
-        # multiple output files». Отказ выглядел как поломка перехвата, хотя
-        # перехват работал: он честно записал argv, а фильтр вырезал не всё.
-        grep -vE '\.lib$|\.a$|\.so$|^-l|^-L$|/lib$|Wl,|^-ffunction-sections|^-fdata-sections|^-fuse-ld' "$LINKCMD" > "$CFLAGS"
-    fi
+    # The shell probe, built as the regenerator builds it (a package-less copy).
+    mkdir -p "$T/probe"
+    sed 's/^module probe\.shell_probe$/module shell_probe/' "$ROOT/novac/probe/shell_probe.nv" > "$T/probe/shell_probe.nv"
+    NOVA_CLANG="$WRAPPER" "$ORACLE" build "$T/probe/shell_probe.nv" -o "$T/probe.exe" >"$T/probe.out" 2>&1 \
+        || fail "оракул не собрал пробу шелла: $(tail -3 "$T/probe.out")"
+    # link argv: everything but -o/<exe>/<input>; -g dropped; lld added.
+    # THE CALL THAT LINKS THE RUNTIME, not the first call: a fresh effect
+    # count makes the oracle build its runtime archive first, in calls of its
+    # own -- the program's call is the one naming libnova_rt.
+    awk '/^__END__/{ if (hit) { for (i = 1; i <= n; i++) print buf[i]; exit } n = 0; hit = 0; skip = 0; next }
+         /libnova_rt/{ hit = 1 }
+         skip{ skip = 0; next } /^-o$/{ skip = 1; next } /\.c"?$/{ next } /^-g$/{ next }
+         { buf[++n] = $0 }' "$LOG" \
+        | tr -d '\r' | sed 's|\\|/|g' > "$LINKCMD"
+    printf '%s\n' "-fuse-ld=lld" >> "$LINKCMD"
+    grep -q "libnova_rt" "$LINKCMD" || fail "перехват clang-argv не сработал"
+    # compile-only flags (for the PCH and the -c step): no libs/linker flags
+    # `.a`/`.so` РЯДОМ С `.lib` (2026-08-23, по красному CI). Фильтр знал
+    # только Windows-имена библиотек, и на Linux архивы `libnova_rt.a` и
+    # `libuv.a` оставались в CFLAGS — то есть в команду сборки PCH попадал
+    # ВХОД, а не флаг, и clang отвечал «cannot specify -o when generating
+    # multiple output files». Отказ выглядел как поломка перехвата, хотя
+    # перехват работал: он честно записал argv, а фильтр вырезал не всё.
+    grep -vE '\.lib$|\.a$|\.so$|^-l|^-L$|/lib$|Wl,|^-ffunction-sections|^-fdata-sections|^-fuse-ld' "$LINKCMD" > "$CFLAGS"
+    grep -q -- "-DNOVA_MAX_EFFECT_STORAGES=$EFFN" "$CFLAGS" \
+        || fail "флаги пробы шелла не несут -DNOVA_MAX_EFFECT_STORAGES=$EFFN (маркер шелла): шелл устарел относительно пробы -- sh scripts/tools/novac-regen-shell.sh"
 fi
 
 # ---- 2. PCH of the runtime prelude, once per oracle ----------------------
 if [ ! -f "$PCH" ]; then
     # the PCH records its source header's path — keep it in the cache too
-    printf '#include "nova_rt/nova_rt.h"\n' > "$CACHE/prelude-$ORACLE_STAMP.h"
+    printf '#include "nova_rt/nova_rt.h"\n' > "$CACHE/prelude-$FLAGKEY.h"
     # ОТКАЗ ОБЯЗАН ПОКАЗАТЬ ПЕРЕХВАЧЕННЫЕ ФЛАГИ (2026-08-23). На CI (Linux) этот
     # шаг ответил «cannot specify -o when generating multiple output files» — то
     # есть в CFLAGS попал ВХОД, а не только флаги, — и по одному этому
     # сообщению нельзя сказать, какой именно: argv оракула на Linux другой, а
     # машины под рукой нет. Теперь отказ несёт первые строки CFLAGS, и разбор
     # идёт по факту, а не по догадке.
-    eval "\"$REAL_CLANG\" $(tr '\n' ' ' < "$CFLAGS") -x c-header \"$CACHE/prelude-$ORACLE_STAMP.h\" -o \"$PCH\"" > "$T/pch.out" 2>&1 \
+    eval "\"$REAL_CLANG\" $(tr '\n' ' ' < "$CFLAGS") -x c-header \"$CACHE/prelude-$FLAGKEY.h\" -o \"$PCH\"" > "$T/pch.out" 2>&1 \
         || fail "PCH не собрался: $(head -3 "$T/pch.out") | перехваченные CFLAGS ($(grep -c '' "$CFLAGS") строк): $(tr '\n' ' ' < "$CFLAGS" | head -c 400)"
 fi
 
