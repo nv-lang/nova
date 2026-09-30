@@ -1,0 +1,26 @@
+module main
+
+// A `loop {}` as the TAIL expression of a Result-returning function: every
+// arm `return`s, the loop itself diverges, yet codegen wraps the loop's
+// (unit) value into Ok(...):
+//   error: passing 'NovaRes_nova_str_nova_str *' ... to parameter of
+//   incompatible type 'nova_str' in nova_make_NovaRes_nova_str_nova_str_Ok
+//   (emitted as `Ok(((_nv_loop_N), NULL))` after the loop).
+// Same family as repro-local/qmark_tail (tail expression coerced into Ok).
+// Workaround used in examples/smoke: an explicit `Err("unreachable")` tail
+// after the loop.
+fn f(x int) -> Result[str, str] {
+    loop {
+        if x > 0 {
+            return Ok("pos")
+        }
+        return Err("neg")
+    }
+}
+
+fn main() {
+    match f(1) {
+        Ok(s) => println("ok ${s}")
+        Err(e) => println("err ${e}")
+    }
+}

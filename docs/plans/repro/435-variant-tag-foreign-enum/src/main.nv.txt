@@ -1,0 +1,19 @@
+module main
+
+import lib.{Boxed, Kind}
+import lib2.{Outer}
+
+fn main() {
+    ro a = Boxed { kind: Kind.Protocol { what: "server closed" } }
+    println("a='${a.to_str()}' (want 'protocol server closed')")
+    ro o = Outer.Protocol { inner: a }
+    println("o='${o.to_str()}' (want 'outer-protocol protocol server closed')")
+    ro o2 = Outer.Malformed { code: 7 }
+    println("o2='${o2.to_str()}' (want 'outer-malformed 7')")
+    // control: same-named variant match OUTSIDE any method, in main:
+    ro s = match o2 {
+        Outer.Malformed { code } => "M${code}"
+        _ => "other"
+    }
+    println("s='${s}' (want 'M7')")
+}

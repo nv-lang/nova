@@ -34,13 +34,10 @@ test "rvalue match Ok(consume x) — ownership явный, mut-capable, consume-
 }
 
 test "place-скрутини — именная Result-переменная, тот же consume-паттерн" {
-    // `Result` (голый, вне generic-контекста присвоения) сам по себе НЕ
-    // must-consume (D133 generic-заразность на этой гранулярности — вне
-    // объёма этой волны, честный pre-existing predел); consume-волна А
-    // резолвит unwrapped-тип payload'а из RHS независимо от `ro`/`consume`
-    // на самом binding'е.
-    ro attempt = dial_consume_a(2)
-    match attempt {
+    // `Result` с consume-нагрузкой сам consume «через wrap» (D133,
+    // 02-types.md), поэтому binding здесь пишется `consume` — D180 Rule 1.
+    consume attempt = dial_consume_a(2)
+    match consume attempt {
         Ok(consume tcp) => { tcp.close() }
         Err(_e) => {}
     }

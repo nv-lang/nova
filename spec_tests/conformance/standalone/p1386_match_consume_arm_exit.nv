@@ -1,0 +1,43 @@
+// Registry 221.1 #1386: the scrutinee of `match consume x` is handed over when
+// the match is ENTERED (D157, spec/decisions/05-memory.md:994-996 -- the arms'
+// bindings carry ownership), so an exit from inside an arm must not find `x`
+// still Live. The checker used to mark `x` Consumed only after the arms were
+// walked and joined; the arm exit-check (which runs even on a diverging arm)
+// then reported a false D133-not-consumed on `x` at `panic(..)` and at
+// `return` inside an arm. Both exits are covered here; the panic arm is never
+// taken at run time, the return arm is.
+module standalone.p1386_match_consume_arm_exit
+
+type P1386Res consume {
+    id int,
+}
+
+fn P1386Res consume @into_close() -> int { self.id }
+
+fn p1386_open(v int) -> Result[P1386Res, str] =>
+    if v > 0 { Ok(P1386Res { id: v }) } else { Err("no") }
+
+fn via_panic_arm(v int) -> int {
+    consume attempt = p1386_open(v)
+    match consume attempt {
+        Ok(consume r) => r.into_close()
+        Err(_e) => panic("unexpected")
+    }
+}
+
+fn via_return_arm(v int) -> int {
+    consume attempt = p1386_open(v)
+    match consume attempt {
+        Ok(consume r) => r.into_close()
+        Err(_e) => { return -1 }
+    }
+}
+
+test "panic inside an arm of match consume: the scrutinee is already handed over (#1386)" {
+    assert(via_panic_arm(5) == 5)
+}
+
+test "return inside an arm of match consume: the scrutinee is already handed over (#1386)" {
+    assert(via_return_arm(0) == -1)
+    assert(via_return_arm(3) == 3)
+}

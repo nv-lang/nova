@@ -5,11 +5,18 @@
 // must-consume — an EXISTING, pre-325 rule, spec/decisions/02-types.md
 // D133 §"Generic-заразность"), via the established D157-амендмент payload-
 // propagation path (`Ok(consume x)`/`Some(consume x)` pattern-binding),
-// which this window did not touch. What this window's fix does NOT do:
-// it never fires for a plain (non-TurboFish, non-explicitly-annotated)
-// function-call RHS like `File.open(path)` — exactly the shape
-// `std/src/fs/fs.nv`'s `Result[File, IoError]` callers use everywhere.
-// Guards the real regression risk named in the brief.
+// which this window did not touch.
+//
+// A plain function-call RHS is NOT exempt, and never was by the spec (D133
+// "Generic-заразность"; D180 Rule 1 and its 2026-07-21 amendment name
+// "Call на free-fn с известным return-типом" among the RHS it must see).
+// This header used to promise the opposite -- "never fires for a plain
+// function-call RHS" -- which described a gap of the implementation, not a
+// rule. Since bac9387ed (#1345) Rule 1 sees the declared return type of a
+// free function called by name, so the binding below must be `consume`.
+// NAMED LIMIT, not the norm: a method or type-static call (`File.open(...)`)
+// does not yet go through `call_return_type_ref` (a bare-name call only),
+// so its `Result[File, IoError]` is still not seen on this path (#1370).
 
 module spec_tests.conformance
 
@@ -26,8 +33,8 @@ fn p325_inherit_make_result(ok bool) -> Result[P325InheritCtrlRes, str] {
 }
 
 test "Result[T,E] of a must-consume T — plain call-RHS, unaffected by the container fix" {
-    mut r = p325_inherit_make_result(true)
-    match r {
+    consume r = p325_inherit_make_result(true)
+    match consume r {
         Ok(consume x) => { x.into_finish() }
         Err(_e) => {}
     }

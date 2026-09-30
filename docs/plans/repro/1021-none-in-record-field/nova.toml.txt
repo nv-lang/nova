@@ -1,0 +1,5 @@
+[package]
+name = "enum-opt-slice"
+version = "0.1.0"
+description = "compiler probe: Option[[]u8] inside an enum payload vs the enum's vec storage"
+[dependencies]

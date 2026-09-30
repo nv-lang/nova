@@ -1,0 +1,54 @@
+module main
+
+// Option[[]u8] inside an enum payload, stored in a Vec of that enum:
+// historically "silently corrupts the enum's vec storage". Standalone
+// form; green = the defect is CU-content-sensitive (see the report).
+
+type Ev enum
+    | Data { payload Option[[]u8], tag int }
+    | Marker
+
+fn render(e Ev) -> str =>
+    match e {
+        Data { payload, tag } => match payload {
+            Some(b) => "data ${tag} ${b.len()}"
+            None => "data ${tag} null"
+        }
+        Marker => "marker"
+    }
+
+fn main() {
+    mut v []Ev = []Ev.new()
+    mut i = 0
+    while i < 1000 {
+        if i % 3 == 0 {
+            v.push(Ev.Data { payload: None, tag: i })
+        } else if i % 3 == 1 {
+            mut b = []u8.new()
+            b.push(97 as u8)
+            b.push(98 as u8)
+            b.push(99 as u8)
+            b.push(100 as u8)
+            v.push(Ev.Data { payload: Some(b), tag: i })
+        } else {
+            v.push(Ev.Marker)
+        }
+        i += 1
+    }
+    mut bad = 0
+    mut j = 0
+    while j < v.len() {
+        ro s = render(v[j])
+        ro want = if j % 3 == 0 { "data ${j} null" } else if j % 3 == 1 { "data ${j} 4" } else { "marker" }
+        if s != want {
+            println("MISMATCH at ${j}: '${s}' want '${want}'")
+            bad += 1
+        }
+        j += 1
+    }
+    if bad > 0 {
+        println("enum_opt_slice CORRUPT: ${bad} bad of ${v.len()}")
+        return ()
+    }
+    println("enum_opt_slice OK (${v.len()} events)")
+}

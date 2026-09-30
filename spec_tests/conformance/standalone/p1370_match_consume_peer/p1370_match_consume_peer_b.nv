@@ -1,0 +1,20 @@
+// #1370 carrier -- see `p1370_match_consume_peer_a.nv` header. Same module,
+// DIFFERENT file: the only `match consume` over a local binding is here.
+module standalone.p1370_match_consume_peer
+
+type P1370Res consume {
+    id int,
+}
+
+fn P1370Res consume @into_close() -> int { self.id }
+
+fn p1370_open(v int) -> Result[P1370Res, str] =>
+    if v > 0 { Ok(P1370Res { id: v }) } else { Err("no") }
+
+export fn close_via_match_consume(v int) -> int {
+    consume attempt = p1370_open(v)
+    match consume attempt {
+        Ok(consume r) => r.into_close()
+        Err(_e) => 0
+    }
+}

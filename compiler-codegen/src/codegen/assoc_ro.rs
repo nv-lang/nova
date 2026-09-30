@@ -16,7 +16,7 @@
 //! Plan 152.4, only keyed by the qualified `Type_NAME` symbol instead of a
 //! bare name).
 
-use crate::ast::{Item, Module};
+use crate::ast::{AssocConst, Item, Module};
 use super::emit_c::CEmitter;
 
 impl CEmitter {
@@ -59,5 +59,52 @@ impl CEmitter {
             }
         }
         Ok(())
+    }
+
+    /// [fix #1361] Non-lazy (strict) assoc `const Type.NAME` entry, called
+    /// from `emit_type_decl`'s (emit_c.rs) `assoc_consts` loop for every
+    /// entry NOT marked `is_lazy_ro`. Registry #1361 / backlog
+    /// `[M-assoc-const-arraylit-codegen-gap]`: `emit_const_expr`/
+    /// `_typed` (emit_c.rs) have no `ExprKind::ArrayLit` arm — an assoc
+    /// `const Type.NAME []T = [...]` RHS fell into their safety-net
+    /// `_ => Err(...)` and hard-failed codegen even though the checker
+    /// accepted it, while the byte-identical array literal on a MODULE-level
+    /// `const NAME []T = [...]` already compiles: `emit_const_decl`
+    /// (emit_c.rs) reacts to that SAME `Err` by desugaring into
+    /// `emit_lazy_const`'s eager-init-at-startup global (Plan 14 Ф.2), whose
+    /// `Nova_Vec____`/`_NovaFixArr_` branch (реестр №998/№1003/№1008) builds
+    /// the array via `emit_expr_with_target_type` instead. This entry point
+    /// gives assoc `const` the SAME two-step behaviour, reusing BOTH
+    /// existing machines verbatim (no new emission code, no ArrayLit arm
+    /// added anywhere): try true constexpr `.rodata` first — the D200
+    /// intent, and still what every scalar/record assoc const emits,
+    /// byte-identical — falling back to the lazy-static-global path (same
+    /// `Type_NAME` symbol as both the Nova-level key and the C-name
+    /// qualifier, exactly the convention `emit_assoc_ro_lazy_globals` above
+    /// already uses for `ro Type.NAME`) only when the RHS isn't
+    /// constexpr-representable.
+    pub(super) fn emit_assoc_const_entry(&mut self, type_name: &str, ac: &AssocConst) -> Result<(), String> {
+        let symbol = format!("{}_{}", type_name, ac.name);
+        let ty_c = if let Some(ty) = &ac.ty {
+            self.type_ref_to_c(ty)?
+        } else {
+            self.infer_expr_c_type(&ac.value)
+        };
+        match self.emit_const_expr_typed(&ac.value, Some(&ty_c)) {
+            Ok(val) => {
+                self.line(&format!(
+                    "{}const {} {} = {};",
+                    self.top_level_storage(), ty_c, symbol, val
+                ));
+                self.var_types.insert(symbol, ty_c);
+                Ok(())
+            }
+            Err(e) => self.emit_lazy_const(&symbol, &symbol, &ty_c, &ac.value).map_err(|e2| {
+                format!(
+                    "assoc const `{}.{}` codegen failed: {} (lazy fallback also failed: {})",
+                    type_name, ac.name, e, e2
+                )
+            }),
+        }
     }
 }

@@ -1,0 +1,38 @@
+module main
+
+import std.net.{TcpStream, real_net}
+import std.concurrency.supervisor as sup
+
+// RED probe (2026-09-30, for the integrator; owner's §7 answer says
+// `spawn consume` moves a socket into a fiber, D415 §4).
+//
+//   spawn consume x = 5 { ... }            — GREEN (int)
+//   spawn consume s = Sock{...} { ... }    — GREEN (local consume record)
+//   spawn consume s = <TcpStream> { ... }  — RED: the C build fails,
+//     'initializing nova_int with nova_unit' + 'returning nova_int from
+//     a nova_unit function' inside the emitted fiber body — the std
+//     consume stream mis-lowers under spawn consume even with an EMPTY
+//     body and no socket calls.
+//
+// The connect target is refused on purpose: the defect is at compile
+// time; the runtime path is never reached.
+
+fn main() {
+    with Net = real_net() {
+        consume s = match TcpStream.connect("127.0.0.1:1") {
+            Ok(consume x) => x
+            Err(e) => {
+                println("connect refused (expected): ${e.to_str()}")
+                return ()
+            }
+        }
+        with Supervisor = sup.stop() {
+            supervised {
+                spawn consume stream = s {
+                    println("fiber owns the socket")
+                }
+            }
+        }
+        println("spawn_consume_socket OK")
+    }
+}

@@ -1,0 +1,17 @@
+module lib2
+
+import lib.{Boxed}
+
+// RED form: variant names overlap with lib.Kind
+// (PostgresErrorKind.Protocol vs ConnError.Protocol in the real package).
+export type Outer enum
+    | RefusedTls
+    | Protocol { inner Boxed }
+    | Malformed { code int }
+
+export fn Outer @to_str() -> str =>
+    match @ {
+        RefusedTls => "refused"
+        Protocol { inner } => "outer-protocol ${inner.to_str()}"
+        Malformed { code } => "outer-malformed ${code}"
+    }
