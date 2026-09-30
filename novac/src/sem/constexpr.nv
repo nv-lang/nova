@@ -12,9 +12,9 @@
 //   (03-syntax.md:1344-1352 and 8047-8056), not the oracle's predicate: the
 //   oracle is wrong both ways (the integrator's ruling of 2026-09-30).
 // Used by: check/check.nv -- the ConstDecl and LetDecl arms of the walk.
-// Guarded by: pipeline/module_value_test.nv (both directions, each listed
-//   shape and the unlisted ones); the self-build (no `const` of novac's own
-//   source is refused).
+// Guarded by: nova test novac/src/pipeline/module_value_test.nv (both
+//   directions, each listed shape and the unlisted ones); the self-build
+//   (no `const` of novac's own source is refused).
 
 module novac.sem
 
@@ -79,15 +79,7 @@ fn qualified_constexpr(e Node, ctx Ctx) -> bool {
 fn variant_ctor_constexpr(e Node, ctx Ctx) -> bool {
     ro kids = branch_children(e)
     if kids.len() == 0 { return false }
-    ro callee = kids[0]
-    ro is_ctor = if callee.kind_of() == NodeKind.Name {
-        names_a_variant(expr_leaf_name(callee), ctx)
-    } else if callee.kind_of() == NodeKind.FieldAccess {
-        qualified_constexpr(callee, ctx) && !names_a_constant_path(callee, ctx)
-    } else {
-        false
-    }
-    if !is_ctor { return false }
+    if !callee_is_variant(kids[0], ctx) { return false }
     mut i = 0
     for c in kids {
         i += 1
@@ -101,6 +93,16 @@ fn variant_ctor_constexpr(e Node, ctx Ctx) -> bool {
         if !is_constexpr(c, ctx) { return false }
     }
     true
+}
+
+/// Does this callee name a sum-type CONSTRUCTOR -- bare (`Pair`) or through
+/// its sum (`Fam.Pair`)? Any other callee is a function: not constexpr.
+fn callee_is_variant(callee Node, ctx Ctx) -> bool {
+    if callee.kind_of() == NodeKind.Name { return names_a_variant(expr_leaf_name(callee), ctx) }
+    if callee.kind_of() == NodeKind.FieldAccess {
+        return qualified_constexpr(callee, ctx) && !names_a_constant_path(callee, ctx)
+    }
+    false
 }
 
 /// A record literal: every field value constexpr, no spread. The type name at

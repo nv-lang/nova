@@ -185,7 +185,8 @@ fn Checker mut @judge_type_head_variant(e Node, kids []Node, arg_from int) -> bo
                         ro ct = @const_type_of(qname)
                         if is_ty(ct) {
                             @record(e, ct)
-                            @chan.record_const(e.id_of(), @ctx.defs.const_row(qname) ?? ice("check: a qualified constant the registry just answered"))
+                            ro crow = @ctx.defs.const_row(qname) ?? ice("check: a qualified constant lost its row")
+                            @chan.record_const(e.id_of(), crow)
                             return true
                         } else {
                             // Registered but untypeable (a refused

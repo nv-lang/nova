@@ -12,9 +12,9 @@
 //   `main` (the INIT slot). A read of the value is the cell's name
 //   (emit_expr.nv, the constant arm).
 // Used by: emit_c.nv -- `emit`, around the file's functions.
-// Guarded by: novac/fixtures/module_ro/pos_1.nv through the smoke and the
-//   differential (the value computed once, before main), and
-//   pipeline/module_value_test.nv (the C shape).
+// Guarded by: check-novac-differential.sh over novac/fixtures/module_ro/pos_1.nv
+//   (the value computed once, before main), and nova test
+//   novac/src/pipeline/module_value_test.nv (the C shape, the order).
 
 module novac.emit_c
 
@@ -75,7 +75,11 @@ fn Emitter @module_value_init_calls() -> str {
     consume s = StringBuilder.new()
     mut cells = 0
     for cd in @ctx.consts.rows {
-        if cd.once { cells += 1 }
+        if cd.once {
+            cells += 1
+        } else {
+            // A constant has no cell: it is substituted at its reads.
+        }
     }
     ro order = @out.module_value_order()
     assert(order.len() == cells, "emit: a module value the checker never ordered")
@@ -85,5 +89,5 @@ fn Emitter @module_value_init_calls() -> str {
         s.append("    nova_gc_add_root(&${c}, (char*)(&${c}) + sizeof(${c}));\n")
         s.append("    ${c} = ${module_value_init_c_name(cd.name)}();\n")
     }
-    s.into_str()
+    s
 }

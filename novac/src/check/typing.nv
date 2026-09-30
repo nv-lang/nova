@@ -168,7 +168,10 @@ fn Checker mut @settle_module_value(name str) -> bool {
 fn Checker mut @type_module_value(init Node) -> () {
     ro mark = @out.len()
     @type_expr(init)
+    // SILENT-OK: the initializer was refused just now; its refusal is the
+    // one cause, and its reads stay silent (`@is_poisoned_module_value`).
     if @out.len() != mark { return }
+    // SILENT-OK: typing already recorded the value's type -- nothing to add.
     if is_ty(@chan.type_if_known(init.id_of())) { return }
     ro t = @tail_type_of(init)
     if is_ty(t) {

@@ -80,7 +80,9 @@ test "D184 partition: constexpr is `const`, runtime is `ro` -- both directions, 
     // CONTROLS: each side of the line in its own keyword is right -- no
     // partition diagnostic (this std-less harness may refuse an array for
     // want of the Vec surface, which is not the question here).
-    for src in []str.of("const a = 2\nconst b = a * 3\n", "const k Fam = Fam.FInt\n", "ro v = three()\nro w = v + 1\n", "ro xs = [1, 2]\n") {
+    ro controls = []str.of("const a = 2\nconst b = a * 3\n", "const k Fam = Fam.FInt\n",
+        "ro v = three()\nro w = v + 1\n", "ro xs = [1, 2]\n")
+    for src in controls {
         ro (d, _) = compile_to_c("${fx}${src}${main_src}", std_decls())
         assert(!messages(d).contains("D184"), "${src}: ${messages(d)}")
     }
