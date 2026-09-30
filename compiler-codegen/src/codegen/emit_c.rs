@@ -21,6 +21,7 @@ mod self_value; // #1395: `Self` by position, see its doc
 mod opt_eq_split; // #1405: `nova_opt_eq` body late, see its doc
 mod decl_module_symbol; // #1097: free-fn symbol by declaring module (D134), see its doc
 mod method_key; mod default_dispatch; // #1413 method key; #1414 value default method
+mod type_repr_early; // #761: newtype/alias representation before any consumer, see its doc
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
@@ -7790,6 +7791,7 @@ impl CEmitter {
             }
         }
 
+        self.preregister_type_repr_aliases(module); // #761, see type_repr_early.rs
         // Plan 138.1 Ф.1 (D239): `[]T` ≡ `Vec[T]`. Record/sum fields and fn
         // signatures that mention `[]T` now resolve (via type_ref_to_c) to
         // `Nova_Vec____<elem_c>*`. Those record struct DEFINITIONS are emitted
@@ -18772,15 +18774,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // lazily construct + install it the first time ANY op dispatches
             // with no `with X = …` in scope for this thread — mirrors a
             // closure's lazy-box-promotion pattern (compute once, memoized in
-            // the TLS slot itself; a real `with` still overrides normally,
-            // since `emit_with` always overwrites `_nova_handler_X` on entry
+            // the TLS slot, pinned by `nova_gc_pin` -- TLS is no GC root, №1420;
+            // a real `with` still overrides: `emit_with` overwrites it on entry
             // and restores the PRIOR value — NULL or the default — on exit).
             // No registered default → falls through to the null-check +
             // `nv_panic` guard below (№158) — controlled panic, not NULL-deref.
             if let Some(fn_name) = self.default_handler_fns.get(name).cloned() {
                 let ctor_c_name = self.free_fn_c_name(&fn_name);
                 self.line(&format!(
-                    "if (!_nova_handler_{name}) {{ _nova_handler_{name} = {ctor}(); }}",
+                    "if (!_nova_handler_{name}) {{ _nova_handler_{name} = (NovaVtable_{name}*)nova_gc_pin({ctor}()); }}",
                     name = name, ctor = ctor_c_name,
                 ));
             }
@@ -21782,26 +21784,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // file-private helper shadows a same-named module symbol within its own file.
         // (current_emit_file_id is set during the function-definition emit and during
         // call-site lowering; both share the declaring file for a file-local helper.)
-        if let Some(fid) = self.current_emit_file_id {
-            if let Some(mangled) = self.file_priv_fn_c_names.get(&(fid, name.to_string())) {
-                return mangled.clone();
-            }
-        }
         // [реестр 221.1 №1090] ТОТ ЖЕ ЛООКАП, но ключом служит файл
         // ОБЪЯВИВШЕГО, взятый из канала 196 — тот самый ключ, по
         // которому ищет ОПРЕДЕЛЕНИЕ (`mangle_fn`: `f.span.file_id`).
-        // Срабатывает только на промахе файлового лоокапа выше, то есть
-        // ровно в случае вызова ИЗ ДРУГОГО МОДУЛЯ, где до этой правки
-        // выходило голое `nova_fn_<name>`. Подробно — в докстроке
-        // `free_fn_c_name_at_call`.
-        if let Some(cid) = call_id {
-            if let Some(decl_span) = self.resolved_callees.get(&cid) {
-                if let Some(mangled) = self
-                    .file_priv_fn_c_names
-                    .get(&(decl_span.file_id, name.to_string()))
-                {
-                    return mangled.clone();
-                }
+        // №1419/№1234: канал спрашивается ПЕРВЫМ — вызов через алиас/`m.f`
+        // из файла со СВОИМ одноимённым `f` иначе получал символ своего.
+        if let Some(mangled) = self.callee_file_c_name(name, call_id) {
+            return mangled;
+        }
+        if let Some(fid) = self.current_emit_file_id {
+            if let Some(mangled) = self.file_priv_fn_c_names.get(&(fid, name.to_string())) {
+                return mangled.clone();
             }
         }
         // Plan 103.1 Ф.6: ExternalRegistry builtins (fence, etc.) always

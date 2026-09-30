@@ -1,0 +1,9 @@
+// #1234 carrier -- see `../p1234_alias_same_sig.nv`: the SAME signature as
+// the importer's own `serve`, so only the declaring module tells them apart.
+module p1234_alias_same_sig.p1234s_net
+
+export fn serve(a int) -> int => 4000 + a
+
+// This module calls its own `serve` by name: the alias in the importer must
+// not rename it (#1419).
+export fn p1234s_bump(a int) -> int => serve(a) + 100

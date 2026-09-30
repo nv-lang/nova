@@ -71,6 +71,25 @@ impl<'a> TypeCheckCtx<'a> {
         if narrowed.is_empty() { cands } else { narrowed }
     }
 
+    /// #1419/#1234: a bare name that `alpha_rename` rewrote from an import alias
+    /// (`import m.{f as g}` ... `g(..)`, now `f(..)` at `at`) denotes `m`'s `f`
+    /// and nothing else -- not the caller's own module's `f`, which №534 would
+    /// otherwise prefer. `None` when `at` is no alias reference, or when no
+    /// candidate comes from the imported module (the pre-alias path decides).
+    pub(super) fn alias_import_target<'b>(&self, at: Span, cands: &[&'b FnDecl]) -> Option<Vec<&'b FnDecl>> {
+        let r = self.import_alias_refs.get(&at)?;
+        let modules = self.file_modules.borrow();
+        let hit: Vec<&'b FnDecl> = cands
+            .iter()
+            .copied()
+            .filter(|c| {
+                modules.get(&c.span.file_id).map_or(false, |m| m == &r.path)
+                    || self.file_paths.get(&c.span.file_id).map_or(false, |p| Self::path_matches_import(p, &r.path))
+            })
+            .collect();
+        if hit.is_empty() { None } else { Some(hit) }
+    }
+
     /// For a bare Ident naming a free fn with several declarations: the one it
     /// denotes in its file (file-private visibility, own module, then imports),
     /// recorded as `resolved_callees[ident.id]` when exactly one remains.
@@ -92,7 +111,13 @@ impl<'a> TypeCheckCtx<'a> {
         }
         let own: Vec<&FnDecl> =
             visible.iter().copied().filter(|c| self.same_physical_module(caller, c.span.file_id)).collect();
-        let pick = if own.is_empty() { self.narrow_by_fn_imports(caller, name, visible) } else { own };
+        let pick = if let Some(t) = self.alias_import_target(e.span, &visible) {
+            t
+        } else if own.is_empty() {
+            self.narrow_by_fn_imports(caller, name, visible)
+        } else {
+            own
+        };
         if let [only] = pick.as_slice() {
             self.resolved_callees.borrow_mut().insert(e.id, only.span);
         }

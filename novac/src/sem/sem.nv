@@ -161,6 +161,28 @@ export fn decl_fn_row(f Node, ctx Ctx) -> Option[FnRow] {
 // and needs no second lookup. The half stayed behind exported and callerless,
 // which is exactly the shape a "complete the set" habit leaves.
 
+/// THE row of a record's FIELD in `Ctx.field_rows`.
+///
+/// A space of its own, and the criterion the previous wave produced says why it
+/// deserves the wrapper while the `defs` row did not: this one is STORED --
+/// `FieldDef.next_row` holds it, so the same-name chain WALKS the space instead
+/// of merely stepping through it. A value that lives in a field is an identity;
+/// one that dies on the next line is a step (§9.1g.1, wave B4).
+export type FieldRow int
+
+/// The index inside -- the ONE unwrapping door for this space.
+#realtime nogc
+export fn raw_frow(f FieldRow) -> int => f as int
+
+/// "No field", as a value: the END of a same-name chain, which is where the
+/// walk stops.
+#realtime nogc
+export fn no_frow() -> FieldRow => FieldRow(-1)
+
+/// Is this an actual field row? Asked by the chain walk, where the end is a
+/// legal answer.
+#realtime nogc
+export fn is_frow(f FieldRow) -> bool => raw_frow(f) >= 0
 
 /// One record field; a field row is this record's index in Ctx.field_rows.
 export type FieldDef value {
@@ -189,6 +211,30 @@ export fn FieldTable.new() -> FieldTable =>
 export fn FieldTable mut @add(owner_id TyId, name str, type_id TyId) -> () {
     @rows.push(FieldDef { name, type_id, owner_id })
 }
+
+/// THE row of a sum's VARIANT in `Ctx.variant_rows` -- a space of its own since
+/// wave B2 (2026-08-22), and the last bare `int` in the arms of `DefTarget` and
+/// `CalleeTarget`.
+///
+/// Its neighbours were wrapped first for a reason the plan states: one wrapped
+/// space protects only against itself, and this one shares its arms with two
+/// others. `DefVariant(int)` beside `DefFn(FnRow)` and `DefType(DeclId)` meant
+/// the sum still admitted "a variant row where a callable row belongs" through
+/// the one arm that had no type.
+export type VariantRow int
+
+/// The index inside -- the ONE unwrapping door for this space.
+#realtime nogc
+export fn raw_vrow(v VariantRow) -> int => v as int
+
+/// "No variant", as a value rather than a −1 the caller has to know. The
+/// pattern-head walk needs it: most heads are binders and name no variant.
+#realtime nogc
+export fn no_vrow() -> VariantRow => VariantRow(-1)
+
+/// Does this name a variant at all? Asked where "no" is a legal answer.
+#realtime nogc
+export fn is_vrow(v VariantRow) -> bool => raw_vrow(v) >= 0
 
 /// One sum_id variant; a variant row is this record's index in Ctx.variant_rows.
 export type VariantDef value {

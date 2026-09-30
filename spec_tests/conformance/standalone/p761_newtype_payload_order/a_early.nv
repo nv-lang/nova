@@ -1,0 +1,65 @@
+// EXPECT_STDOUT early_fn=1
+// EXPECT_STDOUT early_method=2
+// EXPECT_STDOUT late_fn=3
+// EXPECT_STDOUT late_method=4
+// EXPECT_STDOUT same_file_fn=5
+// EXPECT_STDOUT same_file_method=6
+// EXPECT_STDOUT late_tuple=7:8
+// EXPECT_STDOUT late_alias=9
+// EXPECT_STDOUT none=ok
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 #761, plan 274.10 item 5. A newtype (or alias) standing in the
+// payload of a sum arm had ONE C representation before the emitter reached its
+// declaration (`Nova_Row*`, the heap-record default) and ANOTHER after it
+// (`nova_int`). A sum declared ABOVE the newtype stored its payload the first
+// way; `Option[Row]` in a signature was lowered the second way; and `Some(r)`
+// built from a PATTERN BINDING of the arm carried the first into the second:
+//   assigning to 'NovaOpt_nova_int' from incompatible type 'NovaOpt_Nova_Row_p'
+// Declaration order decided whether the program compiled. Carina's self-build
+// kept `ConstRow`, `FieldRow` and `VariantRow` in an early-sorting file for it.
+//
+// THE FILE ORDER IS PART OF EVERY CELL, and the file names set it: peers of a
+// folder module are processed SORTED (`nova-cli/src/main.rs`, `files.sort()`).
+//   a_early.nv     -- sorts FIRST: `EarlyRow` is declared BEFORE the sums that
+//                     carry it (the order that always worked; the control);
+//   m_consumers.nv -- the sums, the free functions and the methods; it also
+//                     declares `SameRow` BELOW the sum that carries it (the
+//                     same defect inside one file);
+//   z_late.nv      -- sorts LAST: `LateRow` and `LateAlias` are declared AFTER
+//                     every consumer (the order that broke).
+// Each cell reads the payload out of the arm by binding and wraps it in `Some`
+// -- the one step the integrator's four earlier probes did not take, and the
+// reason they stayed green. Cells: `fn` = a free function, `method` = a method
+// of a record; `tuple` = `Option[(LateRow, int)]` (Carina's `variant_range_of`);
+// `alias` = the same class for `type X alias int`.
+module standalone.p761_newtype_payload_order
+
+export type EarlyRow int
+
+fn show(o Option[int]) -> str {
+    match o {
+        Some(v) => "${v}"
+        None => "none"
+    }
+}
+
+fn main() {
+    ro book = Book { early: EarlyTarget.EarlyAt(2 as EarlyRow), late: LateTarget.LateAt(4 as LateRow), same: SameTarget.SameAt(6 as SameRow) }
+    println("early_fn=${show(early_of(EarlyTarget.EarlyAt(1 as EarlyRow)).map(|r| r as int))}")
+    println("early_method=${show(book.early_row().map(|r| r as int))}")
+    println("late_fn=${show(late_of(LateTarget.LateAt(3 as LateRow)).map(|r| r as int))}")
+    println("late_method=${show(book.late_row().map(|r| r as int))}")
+    println("same_file_fn=${show(same_of(SameTarget.SameAt(5 as SameRow)).map(|r| r as int))}")
+    println("same_file_method=${show(book.same_row().map(|r| r as int))}")
+    match late_range(LateTarget.LateRange(7 as LateRow, 8)) {
+        Some((r, n)) => println("late_tuple=${r as int}:${n}")
+        None => println("late_tuple=none")
+    }
+    println("late_alias=${show(alias_of(AliasTarget.AliasAt(9 as LateAlias)).map(|r| r as int))}")
+    if late_of(LateTarget.LateNone).is_none() { println("none=ok") } else { println("none=WRONG") }
+}
+
+test "an arm payload wrapped in Some keeps one representation in both file orders (#761)" {
+    assert(late_of(LateTarget.LateAt(3 as LateRow)).map(|r| r as int) == Some(3))
+}

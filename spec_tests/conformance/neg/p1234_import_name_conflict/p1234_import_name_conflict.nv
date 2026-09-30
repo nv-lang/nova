@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR E_IMPORT_NAME_CONFLICT
+//
+// Registry 221.1 #1234, D29 ("name conflicts", spec/decisions/07-modules.md):
+// an imported name that equals a declaration of the importing module is a
+// compile error, resolved with `as`. Before the fix this compiled and `serve(1)`
+// silently ran the OWN `serve` (3001), never the imported one: the nova-polaris
+// facade shape, where the signatures differed and the wrong binding surfaced
+// only as a C arity error. The positive half, the alias, is
+// `standalone/p1234_alias_same_sig` and `standalone/p1234_alias_diff_sig`.
+module neg.p1234_import_name_conflict
+
+// nova:expect E_IMPORT_NAME_CONFLICT -- `serve` is imported and also declared below; D29 makes that an error and names `as` as the fix
+import ./p1234c_net.{serve}
+
+fn serve(a int) -> int => 3000 + a
+
+fn main() Io -> () {
+    print("${serve(1)}")
+}

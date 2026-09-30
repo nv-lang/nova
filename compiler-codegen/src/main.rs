@@ -288,7 +288,7 @@ fn cmd_check(path: &PathBuf, explain_cache: bool) -> Result<()> {
     // Plan 162.2 Ф.2: collect cross-module signatures before type-check so
     // that is_known_type / is_known_fn can suppress false-positive diagnostics
     // for symbols from transitively imported modules.
-    {
+    let check_env = {
         let sig_table = nova_codegen::test_runner::find_repo_root_from(path)
             .map(|repo| {
                 let stdlib_dir = nova_codegen::manifest::resolve_std_path(repo.as_ref());
@@ -334,7 +334,7 @@ fn cmd_check(path: &PathBuf, explain_cache: bool) -> Result<()> {
 
     // Plan 123.5 (D217 §6 amend): emit field-cache analysis report.
     if explain_cache {
-        nova_codegen::types::annotate_map_literals(&mut module);
+        nova_codegen::types::annotate_map_literals(&mut module, &check_env);
         nova_codegen::desugar::desugar_module(&mut module);
         nova_codegen::types::infer_effects(&mut module);
         nova_codegen::callnorm::normalize_module(&mut module, &std::collections::HashMap::new());
@@ -487,7 +487,7 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
     // (above); this pass skips it (the method is already provided). User-explicit
     // methods always win.
     nova_codegen::protocols::auto_derive::inject_synthesized_methods(&mut module);
-    nova_codegen::types::annotate_map_literals(&mut module);
+    nova_codegen::types::annotate_map_literals(&mut module, &module_env);
     nova_codegen::desugar::desugar_module(&mut module);
     // D28: effect inference для private fn — добавить `Fail` если throw
     // в теле и нет явного Fail в effect-row.

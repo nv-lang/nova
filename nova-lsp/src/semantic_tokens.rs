@@ -1176,11 +1176,11 @@ fn cached_field_spans(src: &str) -> Vec<(usize, usize, HashSet<String>)> {
     // Plan 181 (D347): alpha-rename before the pipeline so field-cache analysis
     // sees the same unique-named AST as the real build. No-op without a rebind.
     nova_codegen::alpha_rename::alpha_rename(&mut module);
-    if nova_codegen::types::check_module(&module).is_err() {
+    let Ok(env) = nova_codegen::types::check_module(&module) else {
         return Vec::new();
-    }
+    };
     let _ = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
-    nova_codegen::types::annotate_map_literals(&mut module);
+    nova_codegen::types::annotate_map_literals(&mut module, &env);
     nova_codegen::desugar::desugar_module(&mut module);
     nova_codegen::types::infer_effects(&mut module);
     nova_codegen::callnorm::normalize_module(&mut module, &std::collections::HashMap::new());

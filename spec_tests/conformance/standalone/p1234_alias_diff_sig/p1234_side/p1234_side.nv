@@ -1,0 +1,13 @@
+// #1234: imports `p1234_net` by plain name and is imported FIRST, so the
+// aliased import in `../p1234_alias_diff_sig.nv` meets an already-merged
+// module -- as in nova-polaris, where the facade's peer imports `polaris.net`.
+module p1234_alias_diff_sig.p1234_side
+
+import ../p1234_net.{p1234_listen}
+
+export fn p1234_side_port() -> int {
+    consume l = p1234_listen(5)
+    ro p = l.port
+    l.close()
+    p
+}

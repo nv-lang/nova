@@ -321,7 +321,7 @@ fn static_estimate(file: &Path) -> Result<(u64, StaticLayerBreakdown)> {
         Err(_) => return Ok((0, StaticLayerBreakdown::default())),
     };
     let _ = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
-    nova_codegen::types::annotate_map_literals(&mut module);
+    nova_codegen::types::annotate_map_literals(&mut module, &check_env);
     nova_codegen::desugar::desugar_module(&mut module);
     nova_codegen::types::infer_effects(&mut module);
     nova_codegen::callnorm::normalize_module(&mut module, &check_env.resolved_callees);

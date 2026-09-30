@@ -6,7 +6,7 @@ name: nova-test-regression
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, integrate]
   schedule:
     - cron: '0 3 * * *'
 

@@ -1,0 +1,12 @@
+// #1419 carrier -- see `../p1419_import_alias_file_local.nv`. The importer
+// calls `p1419_f` and `LIMIT` by aliases; this module keeps calling them by their
+// own names.
+module p1419_import_alias_file_local.p1419_src
+
+export const LIMIT = 7
+
+export fn p1419_f(x int) -> int => x + 10
+
+export fn twice(x int) -> int => p1419_f(p1419_f(x))
+
+export fn limit_plus(x int) -> int => x + LIMIT

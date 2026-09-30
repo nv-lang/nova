@@ -49,6 +49,13 @@ pub struct RebindTables {
     /// `consume x = expr` `Stmt::Let`s whose prior binding for `x` is found
     /// in an ENCLOSING (not the current) scope — see [`Renamer::declare_consume`].
     pub consume_reuse_spans: HashSet<Span>,
+    /// Registry #1419 (`crate::import_alias`): per importing file, the fn/const
+    /// aliases of its selective imports -- an input, filled before renaming.
+    pub file_aliases: HashMap<crate::diag::FileId, HashMap<String, crate::ast::ImportAliasRef>>,
+    /// The file of the item being renamed (keys `file_aliases`).
+    pub cur_file: crate::diag::FileId,
+    /// Output: every free Ident rewritten from an alias to the declared name.
+    pub alias_refs: HashMap<Span, crate::ast::ImportAliasRef>,
 }
 
 /// Alpha-rename same-scope re-bindings in every function body of `module`.
@@ -59,14 +66,19 @@ pub struct RebindTables {
 /// identically — their side-table entries coincide.
 pub fn alpha_rename(module: &mut Module) -> RebindTables {
     let mut tables = RebindTables::default();
+    tables.file_aliases = crate::import_alias::file_aliases(module);
     for item in &mut module.items {
+        tables.cur_file = crate::import_alias::item_file(item);
         rename_item(item, &mut tables);
     }
     for pf in &mut module.peer_files {
         for item in &mut pf.items_here {
+            tables.cur_file = crate::import_alias::item_file(item);
             rename_item(item, &mut tables);
         }
     }
+    // Extend, not replace: a second run finds `f` already rewritten.
+    module.import_alias_refs.extend(std::mem::take(&mut tables.alias_refs));
     // Publish the shadow map on the module so the consume-checker (R2) can read
     // it without a separate threading channel (§2). `module.items` and the
     // `peer_files` copies rename identically, so their entries coincide.
@@ -483,6 +495,12 @@ impl<'t> Renamer<'t> {
             ExprKind::Ident(name) => {
                 if let Some(u) = self.resolve(name) {
                     *name = u;
+                } else if let Some(r) =
+                    self.tables.file_aliases.get(&self.tables.cur_file).and_then(|m| m.get(name.as_str())).cloned()
+                {
+                    // #1419: a free `g` of `import m.{f as g}` -- see `crate::import_alias`.
+                    *name = r.name.clone();
+                    self.tables.alias_refs.insert(e.span, r);
                 }
             }
             // `Module.name` / `Type.method` — the head is a type/module, never a

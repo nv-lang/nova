@@ -1,0 +1,258 @@
+// EXPECT_STDOUT fresh ZERO
+// EXPECT_STDOUT a1 ZERO
+// EXPECT_STDOUT a2 VAL
+// EXPECT_STDOUT a3 STR
+// EXPECT_STDOUT a4 multi 7 true 3
+// EXPECT_STDOUT b1 ZERO
+// EXPECT_STDOUT b2 VAL
+// EXPECT_STDOUT b3 STR
+// EXPECT_STDOUT b4 multi 7 true 3
+// EXPECT_STDOUT c1 ZERO
+// EXPECT_STDOUT c1 ONE
+// EXPECT_STDOUT c2 ZERO
+// EXPECT_STDOUT c2 ONE
+// EXPECT_STDOUT d1 ZERO
+// EXPECT_STDOUT d2 ZERO
+// EXPECT_STDOUT d3 STR
+// EXPECT_STDOUT d4 multi 7 true 3
+// EXPECT_STDOUT e1 ZERO
+// EXPECT_STDOUT e2 VAL
+// EXPECT_STDOUT f1 ZERO
+// EXPECT_STDOUT f2 STR
+// EXPECT_STDOUT g1 ZERO
+// EXPECT_STDOUT g2 ZERO
+// EXPECT_STDOUT h1 MK
+// EXPECT_STDOUT h2 HELD
+// EXPECT_STDOUT h3 MK
+// EXPECT_STDOUT i1 BARE
+// EXPECT_STDOUT j1 ZERO
+// EXPECT_STDOUT j2 ZERO
+// Registry 221.1 #1260: a value taken OUT of a sum by a pattern and handed
+// back where the same sum is expected must be auto-wrapped (D55 amend,
+// "Obvious single-wrapper coercion", sum half: `W.C(expr)`). The checker
+// accepted it, but the rewrite that materializes `W.C(expr)` only knew
+// parameters and annotated/literal `let`s -- a pattern-bound name reached
+// codegen bare, a `Tok*` passed where `Nd*` was expected: an empty string
+// (or a crash) and exit 0. And `Nd.Leaf(tok)` itself was untyped, so a match
+// over it bound nothing the checker could judge.
+// Cells: payload kind (heap record 1, value record 2, str 3, multi-field
+// record 4) x extraction (`match` a, `if let` b, a `for` binding over `[]Nd`
+// c -- inside a `match`, and handed straight to a sum over `Nd`) x way back
+// (argument a-c, return d, array-literal element e, record field f), a sum
+// whose variant carries a sum (g), other shapes the checker accepts (h: an
+// unannotated `let` of a call, a field read, a call), a scrutinee built by
+// the BARE constructor `Leaf(..)` (i), a `match` whose arm hands the payload
+// back as the value of an annotated `let` and of an argument (j), and the
+// control: a fresh value that never went through a pattern.
+
+module standalone.p1260_sumwrap_roundtrip
+
+type Tok { text str }
+
+type VTok value { ro text str }
+
+type Multi { name str, n int, ok bool, xs []int }
+
+type Nd enum
+    | Leaf(Tok)
+    | Branch { children []Nd }
+
+type VNd enum
+    | VLeaf(VTok)
+    | VNone
+
+type SNd enum
+    | SLeaf(str)
+    | SNone
+
+type MNd enum
+    | MLeaf(Multi)
+    | MNone
+
+type Outer enum
+    | Wrap(Nd)
+    | Empty
+
+type Holder { node Nd }
+
+type Held { tok Tok }
+
+fn leaf_text(n Nd) -> str {
+    match n {
+        Leaf(t) => t.text
+        Branch { .. } => "not a leaf"
+    }
+}
+
+fn vleaf_text(n VNd) -> str {
+    match n {
+        VLeaf(t) => t.text
+        VNone => "none"
+    }
+}
+
+fn sleaf_text(n SNd) -> str {
+    match n {
+        SLeaf(s) => s
+        SNone => "none"
+    }
+}
+
+fn mleaf_text(n MNd) -> str {
+    match n {
+        MLeaf(m) => "${m.name} ${m.n} ${m.ok} ${m.xs.len()}"
+        MNone => "none"
+    }
+}
+
+fn outer_text(o Outer) -> str {
+    match o {
+        Wrap(n) => leaf_text(n)
+        Empty => "empty"
+    }
+}
+
+// d: the way back is a return -- a trailing leaf of a `match`, an explicit
+// `return`, a plain trailing name.
+fn back_by_arm(n Nd) -> ro Nd {
+    match n {
+        Leaf(t) => t
+        Branch { .. } => n
+    }
+}
+
+fn back_by_return(n Nd) -> ro Nd {
+    if Leaf(t) = n {
+        return t
+    }
+    n
+}
+
+fn sback(n SNd) -> ro SNd {
+    match n {
+        SLeaf(s) => s
+        SNone => n
+    }
+}
+
+fn mback(n MNd) -> ro MNd {
+    match n {
+        MLeaf(m) => m
+        MNone => n
+    }
+}
+
+fn outer_back(o Outer) -> ro Outer {
+    match o {
+        Wrap(n) => n
+        Empty => o
+    }
+}
+
+fn mk_tok() -> Tok => { text: "MK" }
+
+fn main() Io -> () {
+    ro tok = Tok { text: "ZERO" }
+    println("fresh ${leaf_text(tok)}")
+
+    ro node = Nd.Leaf(tok)
+    ro vnode = VNd.VLeaf(VTok { text: "VAL" })
+    ro snode = SNd.SLeaf("STR")
+    ro mnode = MNd.MLeaf(Multi { name: "multi", n: 7, ok: true, xs: [1, 2, 3] })
+
+    match node {
+        Leaf(t) => println("a1 ${leaf_text(t)}")
+        Branch { .. } => println("a1 branch")
+    }
+    match vnode {
+        VLeaf(t) => println("a2 ${vleaf_text(t)}")
+        VNone => println("a2 none")
+    }
+    match snode {
+        SLeaf(s) => println("a3 ${sleaf_text(s)}")
+        SNone => println("a3 none")
+    }
+    match mnode {
+        MLeaf(m) => println("a4 ${mleaf_text(m)}")
+        MNone => println("a4 none")
+    }
+
+    if Leaf(t) = node { println("b1 ${leaf_text(t)}") }
+    if VLeaf(t) = vnode { println("b2 ${vleaf_text(t)}") }
+    if SLeaf(s) = snode { println("b3 ${sleaf_text(s)}") }
+    if MLeaf(m) = mnode { println("b4 ${mleaf_text(m)}") }
+
+    ro nodes []Nd = [node, Nd.Leaf(Tok { text: "ONE" })]
+    for n in nodes {
+        match n {
+            Leaf(t) => println("c1 ${leaf_text(t)}")
+            Branch { .. } => println("c1 branch")
+        }
+    }
+    for n in nodes { println("c2 ${outer_text(n)}") }
+
+    println("d1 ${leaf_text(back_by_arm(node))}")
+    println("d2 ${leaf_text(back_by_return(node))}")
+    println("d3 ${sleaf_text(sback(snode))}")
+    println("d4 ${mleaf_text(mback(mnode))}")
+
+    match node {
+        Leaf(t) => {
+            ro again []Nd = [t]
+            println("e1 ${leaf_text(again[0])}")
+        }
+        Branch { .. } => println("e1 branch")
+    }
+    match vnode {
+        VLeaf(t) => {
+            ro again []VNd = [t]
+            println("e2 ${vleaf_text(again[0])}")
+        }
+        VNone => println("e2 none")
+    }
+
+    match node {
+        Leaf(t) => {
+            ro h = Holder { node: t }
+            println("f1 ${leaf_text(h.node)}")
+        }
+        Branch { .. } => println("f1 branch")
+    }
+    match snode {
+        SLeaf(s) => {
+            ro back_s SNd = s
+            println("f2 ${sleaf_text(back_s)}")
+        }
+        SNone => println("f2 none")
+    }
+
+    ro outer = Outer.Wrap(node)
+    match outer {
+        Wrap(n) => println("g1 ${outer_text(n)}")
+        Empty => println("g1 empty")
+    }
+    println("g2 ${outer_text(outer_back(outer))}")
+
+    ro made = mk_tok()
+    println("h1 ${leaf_text(made)}")
+    ro held = Held { tok: Tok { text: "HELD" } }
+    println("h2 ${leaf_text(held.tok)}")
+    println("h3 ${leaf_text(mk_tok())}")
+
+    ro bnode = Leaf(Tok { text: "BARE" })
+    match bnode {
+        Leaf(t) => println("i1 ${leaf_text(t)}")
+        Branch { .. } => println("i1 branch")
+    }
+
+    ro jx Nd = match node {
+        Leaf(t) => t
+        Branch { .. } => node
+    }
+    println("j1 ${leaf_text(jx)}")
+    ro jy = leaf_text(match node {
+        Leaf(t) => t
+        Branch { .. } => node
+    })
+    println("j2 ${jy}")
+}

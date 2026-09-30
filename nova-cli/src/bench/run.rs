@@ -129,7 +129,7 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
         eprintln!("warning: {}:{}:{}: {} [{}]",
             bench_path.display(), line, col, msg, w.rule);
     }
-    nova_codegen::types::annotate_map_literals(&mut module);
+    nova_codegen::types::annotate_map_literals(&mut module, &bench_env);
     nova_codegen::desugar::desugar_module(&mut module);
     nova_codegen::callnorm::normalize_module(&mut module, &bench_env.resolved_callees);
     nova_codegen::chain_norm::normalize_chains_module(
@@ -431,7 +431,7 @@ pub fn compile_for_profile(opts: &BenchRunOpts) -> Result<std::path::PathBuf> {
     // breaks exactly where the bench build did.
     nova_codegen::self_return_lower::lower_module(&mut module);
     nova_codegen::types::infer_effects(&mut module);
-    nova_codegen::types::annotate_map_literals(&mut module);
+    nova_codegen::types::annotate_map_literals(&mut module, &bench_env);
     nova_codegen::desugar::desugar_module(&mut module);
     nova_codegen::callnorm::normalize_module(&mut module, &bench_env.resolved_callees);
     nova_codegen::chain_norm::normalize_chains_module(

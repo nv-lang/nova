@@ -15,7 +15,7 @@ on:
       - "spec_tests/soundness/**"
       - ".github/workflows/contracts-z3.yml"
   push:
-    branches: [main]
+    branches: [main, integrate]
 
 jobs:
   contracts-trivial:

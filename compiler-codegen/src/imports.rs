@@ -1983,6 +1983,12 @@ fn resolve_one(
         for exported_name in module_exports {
             if import_selects(imp, exported_name) {
                 visible_acc.insert(exported_name.clone());
+                // #1419: the alias too -- a module merged by an earlier import
+                // never went through the rename below, so `{f as g}` of an
+                // already-visited module left `g` unknown to this file.
+                if let Some(a) = imp.items.iter().flatten().find(|it| &it.name == exported_name).and_then(|it| it.alias.as_ref()) {
+                    visible_acc.insert(a.clone());
+                }
             }
         }
         return Ok(());
@@ -2346,13 +2352,30 @@ fn resolve_one(
                     // вызывать приватный helper из того же модуля).
                     // is_export + selective list влияют на visibility,
                     // но НЕ на codegen-scope.
-                    let final_name = if let Some(new_name) = rename_map.get(&item_name) {
-                        let renamed = rename_item(item, new_name.clone());
-                        merged_items.push(renamed);
-                        new_name.clone()
-                    } else {
-                        merged_items.push(item);
-                        item_name.clone()
+                    // Registry 221.1 #1419: a fn/const alias (`{f as g}`) is the
+                    // IMPORTING file's name for `f`, not a new name of the
+                    // declaration -- renaming it here broke every call `m` makes
+                    // to its own `f` (undefined symbol) and every other importer.
+                    // The declaration merges unchanged; `alpha_rename` rewrites
+                    // `g` to `f` in the importing file and marks the reference
+                    // (`Module::import_alias_refs`), and the checker resolves it
+                    // to the imported module's `f`. A TYPE alias still renames
+                    // the declaration (type positions are not rewritten yet), and
+                    // so does an `export import` alias (a facade's public name).
+                    let is_type = matches!(item, Item::Type(_)) || imp.is_export;
+                    let final_name = match rename_map.get(&item_name) {
+                        Some(new_name) if is_type => {
+                            merged_items.push(rename_item(item, new_name.clone()));
+                            new_name.clone()
+                        }
+                        Some(alias) => {
+                            merged_items.push(item);
+                            alias.clone()
+                        }
+                        None => {
+                            merged_items.push(item);
+                            item_name.clone()
+                        }
                     };
                     // Plan 81 Ф.1: виден caller'у если модуль не использует
                     // явную экспорт-аннотацию (!module_has_exports) ИЛИ
@@ -2368,6 +2391,11 @@ fn resolve_one(
                         // for the dedup path in visited map.
                         module_exports_cache.push(item_name.clone());
                         if import_selects(imp, &item_name) {
+                            // #1419: after the rewrite the importing file names
+                            // an aliased fn/const by its declared name.
+                            if final_name != item_name && !is_type {
+                                visible_acc.insert(item_name.clone());
+                            }
                             visible_acc.insert(final_name);
                         }
                     }

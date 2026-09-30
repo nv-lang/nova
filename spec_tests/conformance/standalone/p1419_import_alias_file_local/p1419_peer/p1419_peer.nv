@@ -1,0 +1,6 @@
+// #1419: a second importer of `p1419_src.f`, by its declared name.
+module p1419_import_alias_file_local.p1419_peer
+
+import ../p1419_src.{p1419_f}
+
+export fn peer_calls_f(x int) -> int => p1419_f(x)

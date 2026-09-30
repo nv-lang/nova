@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// #761 fixture, the LATE declarations -- see `a_early.nv`. This file sorts LAST
+// among the peers, so both declarations below come AFTER every consumer in
+// `m_consumers.nv`: the order that used to break.
+module standalone.p761_newtype_payload_order
+
+export type LateRow int
+
+export type LateAlias alias int

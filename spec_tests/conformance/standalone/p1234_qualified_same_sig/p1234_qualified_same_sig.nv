@@ -1,0 +1,16 @@
+// EXPECT_STDOUT 3001|4001|4003
+//
+// Registry 221.1 #1234: a module-qualified call `qn.serve(..)` from a module
+// that declares its own same-signature `serve`. The checker resolved the call
+// to `p1234q_net.serve` (scoped by the prefix), but the emitter looked the
+// symbol up by the CALLER's file first and emitted the own `serve`: measured
+// `3001|3001` before the fix.
+module standalone.p1234_qualified_same_sig
+
+import ./p1234q_net as qn
+
+fn serve(a int) -> int => 3000 + a
+
+fn main() Io -> () {
+    print("${serve(1)}|${qn.serve(1)}|${qn.serve(3)}")
+}

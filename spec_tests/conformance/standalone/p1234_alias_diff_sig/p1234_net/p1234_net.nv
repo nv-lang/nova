@@ -1,0 +1,15 @@
+// #1234 carrier -- see `../p1234_alias_diff_sig.nv`. The same shape as
+// `polaris.net.serve`: the first parameter is a must-consume listener.
+module p1234_alias_diff_sig.p1234_net
+
+export type P1234Lst consume { port int }
+
+export fn P1234Lst consume @close() -> () { () }
+
+export fn p1234_listen(port int) -> P1234Lst => { port }
+
+export fn serve(consume l P1234Lst, b int) -> str {
+    ro p = l.port
+    l.close()
+    "net:${p + b}"
+}
