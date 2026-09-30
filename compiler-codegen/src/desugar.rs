@@ -125,7 +125,7 @@ impl DesugarCtx {
                     self.desugar_stmt(s);
                 }
             }
-            Item::Type(_) => {}
+            Item::Type(t) => for ac in &mut t.assoc_consts { self.desugar_expr(&mut ac.value) }, // #1412: a `const/ro Type.NAME` initializer is a module value's initializer too.
             // Plan 33.3 Ф.13: lemma — spec-only declaration, body имеет
             // proof-statements (Apply/Calc); карты литералов внутри
             // proof-выражений не имеют смысла (lemma эрейзится в codegen),
