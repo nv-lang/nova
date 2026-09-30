@@ -56,3 +56,14 @@ fn Lowerer mut @lower_with(st Node) -> () {
     @lower_block_stmts_fn(body, false)
     @ir.end_with(c)
 }
+
+/// `supervised { body }` (E.9 step 4): the scope opened, the body lowered, the
+/// scope joined -- the builder joins it on every other exit too.
+fn Lowerer mut @lower_supervised(st Node) -> () {
+    ro kids = branch_children(st)
+    ro body = kids[kids.len() - 1]
+    assert(body.kind_of() == NodeKind.Block, "lower: a supervised statement without its body block reached the lowering")
+    ro at = @ir.begin_supervised()
+    @lower_block_stmts_fn(body, false)
+    @ir.end_supervised(at)
+}

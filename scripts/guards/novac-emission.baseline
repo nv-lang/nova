@@ -126,8 +126,8 @@
 # DCE оракула заглушку именно по совпадению имени — НЕ проверено (названный пробел).
 # Собственная эмиссия novac не изменилась: hello минус шаблон = 6 строк и до, и
 # после (8938-8932, 9048-9042).
-match_demo 14635
-records 14565
+match_demo 14834
+records 14764
 # strings 6082 -> 6073 (2026-08-18, Э2-б2): заработал коллектор достижимого.
 # Девять строк -- это ровно те функции фикстуры, до которых из `main` нет
 # пути. Храповик двусторонний, и опускать базу СНИЖЕНИЕМ обязательно: иначе
@@ -153,7 +153,7 @@ records 14565
 # `i < _novac_l2` в условии) — норма D58 («выражение после `in` вычисляется один раз, до первой
 # итерации», амендмент 2026-09-30), пришла с дугой D486 (слияние nova-kim 2ba3a552c). Замер — diff
 # эмиссии novac до слияния (00cd06da9) и после: ровно эта строка. Рост — цена нормы.
-arithmetic 14558
+arithmetic 14757
 # 2026-09-30 (Carina window, batch 5): +5465 lines on EVERY fixture, all of it
 #   the shell, novac's own emission unchanged. +5446 came with E.9 step 1
 #   (75b205fe0): the shell probe imports std.fs/std.os and exercises args, an
@@ -167,7 +167,10 @@ arithmetic 14558
 # 2026-09-30 (Carina window, batch 5, second regeneration): +13 on every
 #   fixture, the shell again: #1395 (a value-type method's `Self` is a value)
 #   and #1405 (nova_opt_eq built late) from main 30cc17793.
-hello 14526
+# 2026-09-30 (Carina window, p274-e9s4 on main 97ab70f5d): +21 on every fixture,
+#   the shell regenerated on that oracle (#1412, #1409, #1097, #1415 in it);
+#   novac's own emission unchanged.
+hello 14725
 # match_demo 6197 -> 6373, records 6127 -> 6303, arithmetic 6117 -> 6293, hello 6088 -> 6264 (2026-09-05, волна 274.7 В7): реген shell.tpl.c — проба оболочки получила
 # `Vec[f64]` (`reals = [1.5, 2.5]`, ради `Vec[Meters]` -> `Nova_Vec____nova_f64`, №940), и в
 # шаблон въехали инстанс Vec[f64] с его методами плюс всё, что оракул сам добавил в прелюдию с
@@ -183,3 +186,7 @@ hello 14526
 #   decode_surrogate_pair), чтобы DCE оракула оставил их символы `nova_fn_8encoding5utf16…` в эмиссии;
 #   объём каждого файла C растёт ровно на оболочку (+295/−206 строк шаблона), собственная эмиссия novac
 #   по этим четырём файлам не менялась (дифф C корпуса до/после M2a пуст, W6 эмиттер печати не трогал).
+# 2026-10-01, окно Карины (ветка p274-e9s4): +178 строк на каждом из четырёх файлов -- ровно рост
+#   оболочки 14542 -> 14720: проба получила срез `[]str` (открытый и закрытый), `for` по срезу и
+#   `index` у Vec[str]/Vec[u8] (№1170), и эмиссия оракула пришла с №1420 и №761 (синк с main
+#   33f11c73d). Эмиссия самого novac по этим файлам не менялась.

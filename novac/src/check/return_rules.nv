@@ -241,11 +241,11 @@ fn int_narrows(tys Interner, from TyId, to TyId) -> bool {
     }
     ro from_int = match fr.family {
         PfInt => true
-        PfFloat | PfStr | PfBool | PfChar | PfUnit => false
+        PfFloat | PfStr | PfBool | PfChar | PfUnit | PfAny => false
     }
     ro to_int = match tr.family {
         PfInt => true
-        PfFloat | PfStr | PfBool | PfChar | PfUnit => false
+        PfFloat | PfStr | PfBool | PfChar | PfUnit | PfAny => false
     }
     if !from_int || !to_int { return false }
     tr.bits < fr.bits || (tr.bits == fr.bits && tr.signed != fr.signed)

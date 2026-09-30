@@ -180,7 +180,7 @@ fn harvest_types(decls []Node, mut types []TypeDef, mut gates []str, mut defs De
                                      ty_id: tys.sum(id), name: tname,
                                      gate_off: gates.len(),
                                      gate_cnt: push_gates(gates, decls_here, c.id_of()),
-                                     rows: TypeRows.NoRows })
+                                     share: share_marked_before(decls_here, c.id_of()), rows: TypeRows.NoRows })
                 continue
             }
             // Everything else -- a record, an alias, a newtype, a protocol from
@@ -202,7 +202,7 @@ fn harvest_types(decls []Node, mut types []TypeDef, mut gates []str, mut defs De
                                      ty_id: tys.record(id), name: tname,
                                      gate_off: gates.len(),
                                      gate_cnt: push_gates(gates, decls_here, c.id_of()),
-                                     rows: TypeRows.NoRows })
+                                     share: false, rows: TypeRows.NoRows })
                 fill_harvested_effect_ops(fx, c, tname, types, defs, tys)
                 continue
             }
@@ -211,7 +211,7 @@ fn harvest_types(decls []Node, mut types []TypeDef, mut gates []str, mut defs De
                                  ty_id: tys.record(id), name: tname,
                                  gate_off: gates.len(),
                                  gate_cnt: push_gates(gates, decls_here, c.id_of()),
-                                 rows: TypeRows.NoRows })
+                                 share: share_marked_before(decls_here, c.id_of()), rows: TypeRows.NoRows })
         }
     }
 }
