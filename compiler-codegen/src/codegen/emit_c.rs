@@ -18770,15 +18770,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // lazily construct + install it the first time ANY op dispatches
             // with no `with X = …` in scope for this thread — mirrors a
             // closure's lazy-box-promotion pattern (compute once, memoized in
-            // the TLS slot itself; a real `with` still overrides normally,
-            // since `emit_with` always overwrites `_nova_handler_X` on entry
+            // the TLS slot, pinned by `nova_gc_pin` -- TLS is no GC root, №1420;
+            // a real `with` still overrides: `emit_with` overwrites it on entry
             // and restores the PRIOR value — NULL or the default — on exit).
             // No registered default → falls through to the null-check +
             // `nv_panic` guard below (№158) — controlled panic, not NULL-deref.
             if let Some(fn_name) = self.default_handler_fns.get(name).cloned() {
                 let ctor_c_name = self.free_fn_c_name(&fn_name);
                 self.line(&format!(
-                    "if (!_nova_handler_{name}) {{ _nova_handler_{name} = {ctor}(); }}",
+                    "if (!_nova_handler_{name}) {{ _nova_handler_{name} = (NovaVtable_{name}*)nova_gc_pin({ctor}()); }}",
                     name = name, ctor = ctor_c_name,
                 ));
             }

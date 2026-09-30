@@ -58,6 +58,8 @@ void nova_free_uncollectable(void* ptr) {
 /* Plan 152.4: no-op under malloc — nothing is collected, so static-storage
  * pointers never need explicit rooting. */
 void nova_gc_add_root(void* lo, void* hi) { (void)lo; (void)hi; }
+/* 221.1 №1420: nothing is collected under malloc -- pinning is a no-op. */
+void* nova_gc_pin(void* p) { return p; }
 
 /* RC stubs — no-ops in malloc mode (no free, so free_count stays 0). */
 void nova_retain(void* ptr)  { (void)ptr; }

@@ -302,6 +302,36 @@ void nova_gc_add_root(void* lo, void* hi) {
     GC_add_roots((char*)lo, (char*)hi);
 }
 
+/* 221.1 №1420: pin `p` (and everything reachable from it) for the rest of the
+ * process. The pin is a one-pointer GC_malloc_uncollectable cell that is never
+ * freed: Boehm always marks uncollectable objects and scans them for
+ * pointers, so the cell is a root on its own -- no list, no lock, no
+ * per-thread bookkeeping, and it does not matter which thread's slot, fiber
+ * snapshot or register the pointer is copied into later.
+ *
+ * Used for objects whose only other reference is a thread-local slot: under
+ * GC_set_no_dls(1) (nova_gc_init) a TLS block is not a root -- measured on
+ * Linux for the main thread (a worker's static TLS happens to sit inside its
+ * scanned pthread stack block), reported on Windows for every thread -- so
+ * such an object is collected by the first sweep. The one user today is the lazy
+ * `#default_handler` install in the generated effect dispatchers
+ * (`_nova_handler_<E> = nova_gc_pin(<ctor>())`, emit_effect_type): it runs
+ * once per (thread, effect), so the retained memory is bounded by
+ * threads x effects, and a default handler lives as long as its thread
+ * anyway. Not for per-call objects -- the cell is never released. */
+void* nova_gc_pin(void* p) {
+    if (!p) return p;
+    void** cell = (void**)GC_malloc_uncollectable(sizeof(void*));
+    if (!cell) {
+        fprintf(stderr, "nova: out of memory (gc pin)\n");
+        fflush(stdout);
+        fflush(stderr);
+        abort();
+    }
+    *cell = p;
+    return p;
+}
+
 void nova_free_uncollectable(void* ptr) {
     if (!ptr) return;
     /* [M-mn-spawnctx-corruption-cancel-wake] дискриминатор (opt-in,
