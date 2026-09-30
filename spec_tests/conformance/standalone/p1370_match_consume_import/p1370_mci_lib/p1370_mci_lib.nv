@@ -5,7 +5,7 @@ type P1370MciRes consume {
     id int,
 }
 
-fn P1370MciRes consume @close() -> int { self.id }
+fn P1370MciRes consume @into_close() -> int { self.id }
 
 fn p1370_mci_open(v int) -> Result[P1370MciRes, str] =>
     if v > 0 { Ok(P1370MciRes { id: v }) } else { Err("no") }
@@ -13,7 +13,7 @@ fn p1370_mci_open(v int) -> Result[P1370MciRes, str] =>
 export fn p1370_mci_close(v int) -> int {
     consume attempt = p1370_mci_open(v)
     match consume attempt {
-        Ok(consume r) => r.close()
+        Ok(consume r) => r.into_close()
         Err(_e) => 0
     }
 }

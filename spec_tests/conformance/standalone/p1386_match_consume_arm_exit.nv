@@ -12,7 +12,7 @@ type P1386Res consume {
     id int,
 }
 
-fn P1386Res consume @close() -> int { self.id }
+fn P1386Res consume @into_close() -> int { self.id }
 
 fn p1386_open(v int) -> Result[P1386Res, str] =>
     if v > 0 { Ok(P1386Res { id: v }) } else { Err("no") }
@@ -20,7 +20,7 @@ fn p1386_open(v int) -> Result[P1386Res, str] =>
 fn via_panic_arm(v int) -> int {
     consume attempt = p1386_open(v)
     match consume attempt {
-        Ok(consume r) => r.close()
+        Ok(consume r) => r.into_close()
         Err(_e) => panic("unexpected")
     }
 }
@@ -28,7 +28,7 @@ fn via_panic_arm(v int) -> int {
 fn via_return_arm(v int) -> int {
     consume attempt = p1386_open(v)
     match consume attempt {
-        Ok(consume r) => r.close()
+        Ok(consume r) => r.into_close()
         Err(_e) => { return -1 }
     }
 }
