@@ -51,6 +51,16 @@ awk '/^par_run\(\) \{/,/^\}/' "$GATE" > "$TMP/par_run.sh"
 [ -s "$TMP/par_run.sh" ] || { echo "не извлёк par_run из гейта" >&2; exit 1; }
 awk '/^is_desync\(\) \{/,/^\}/' "$GATE" > "$TMP/is_desync.sh"
 [ -s "$TMP/is_desync.sh" ] || { echo "не извлёк is_desync из гейта" >&2; exit 1; }
+# ЧТО ЕЩЁ НУЖНО par_run (правка 2026-09-23, реестр №1236). С 66a56f766 она берёт
+# предел стража у `floor_for` и `PAR_DEADLINE_DEFAULT`, определённых В ГЕЙТЕ вне
+# неё. Без них предел выходил нулевым, `with-deadline.sh` отказывал («предел
+# должен быть больше нуля»), заглушка стража не запускалась, и самотест краснел
+# словами «не нашёл ОБРЫВ» — не о том. Значение берётся строкой ИЗ ГЕЙТА, а не
+# вписывается сюда: вторая копия числа разошлась бы с первой молча.
+awk '/^floor_for\(\) \{/,/^\}/' "$GATE" > "$TMP/floor_for.sh"
+[ -s "$TMP/floor_for.sh" ] || { echo "не извлёк floor_for из гейта" >&2; exit 1; }
+grep -m1 '^PAR_DEADLINE_DEFAULT=' "$GATE" > "$TMP/par_deadline.sh"
+[ -s "$TMP/par_deadline.sh" ] || { echo "не извлёк PAR_DEADLINE_DEFAULT из гейта" >&2; exit 1; }
 
 # ── Заглушки вместо стражей ──────────────────────────────────────────────────
 # ОБРЫВ моделируется честно: заглушка убивает СВОЮ подоболочку, поэтому
@@ -91,6 +101,8 @@ run_case() { # <файл-заглушки> <сообщение-стража> -> 
         fail()   { echo "СВОДКА-FAIL: $1"; }
         desync() { echo "СВОДКА-DESYNC: $1"; }
         # shellcheck disable=SC1090
+        . "$TMP/par_deadline.sh"
+        . "$TMP/floor_for.sh"
         . "$TMP/is_desync.sh"
         . "$TMP/par_run.sh"
         mkdir -p "$PAR_DIR"
