@@ -21,6 +21,7 @@ mod self_value; // #1395: `Self` by position, see its doc
 mod opt_eq_split; // #1405: `nova_opt_eq` body late, see its doc
 mod decl_module_symbol; // #1097: free-fn symbol by declaring module (D134), see its doc
 mod method_key; mod default_dispatch; // #1413 method key; #1414 value default method
+mod type_repr_early; // #761: newtype/alias representation before any consumer, see its doc
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
@@ -7789,6 +7790,7 @@ impl CEmitter {
             }
         }
 
+        self.preregister_type_repr_aliases(module); // #761, see type_repr_early.rs
         // Plan 138.1 Ф.1 (D239): `[]T` ≡ `Vec[T]`. Record/sum fields and fn
         // signatures that mention `[]T` now resolve (via type_ref_to_c) to
         // `Nova_Vec____<elem_c>*`. Those record struct DEFINITIONS are emitted

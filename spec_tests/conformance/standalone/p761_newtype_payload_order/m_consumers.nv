@@ -1,0 +1,89 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// #761 fixture, the CONSUMERS -- see `a_early.nv` for the cells and the order.
+// Sorts between the two declaring files: `EarlyRow` (a_early.nv) is declared
+// before this file, `LateRow`/`LateAlias` (z_late.nv) after it, and `SameRow`
+// below its own sum right here.
+module standalone.p761_newtype_payload_order
+
+type EarlyTarget enum
+    | EarlyAt(EarlyRow)
+    | EarlyNone
+
+type LateTarget enum
+    | LateAt(LateRow)
+    | LateRange(LateRow, int)
+    | LateNone
+
+type AliasTarget enum
+    | AliasAt(LateAlias)
+    | AliasNone
+
+type SameTarget enum
+    | SameAt(SameRow)
+    | SameNone
+
+// Declared BELOW the sum that carries it: the same order defect in one file.
+type SameRow int
+
+type Book {
+    early EarlyTarget
+    late LateTarget
+    same SameTarget
+}
+
+fn early_of(t EarlyTarget) -> Option[EarlyRow] {
+    match t {
+        EarlyAt(r) => Some(r)
+        EarlyNone => None
+    }
+}
+
+fn late_of(t LateTarget) -> Option[LateRow] {
+    match t {
+        LateAt(r) => Some(r)
+        LateRange(_, _) | LateNone => None
+    }
+}
+
+fn late_range(t LateTarget) -> Option[(LateRow, int)] {
+    match t {
+        LateRange(r, n) => Some((r, n))
+        LateAt(_) | LateNone => None
+    }
+}
+
+fn alias_of(t AliasTarget) -> Option[LateAlias] {
+    match t {
+        AliasAt(r) => Some(r)
+        AliasNone => None
+    }
+}
+
+fn same_of(t SameTarget) -> Option[SameRow] {
+    match t {
+        SameAt(r) => Some(r)
+        SameNone => None
+    }
+}
+
+fn Book @early_row() -> Option[EarlyRow] {
+    match @early {
+        EarlyAt(r) => Some(r)
+        EarlyNone => None
+    }
+}
+
+fn Book @late_row() -> Option[LateRow] {
+    match @late {
+        LateAt(r) => Some(r)
+        LateRange(_, _) | LateNone => None
+    }
+}
+
+fn Book @same_row() -> Option[SameRow] {
+    match @same {
+        SameAt(r) => Some(r)
+        SameNone => None
+    }
+}
