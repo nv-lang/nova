@@ -33,6 +33,7 @@
 
 module spec_tests.conformance
 
+#impl(Equal)
 export type BTree enum
     | BLeaf(int)
     | BNode { left BTree, right BTree }

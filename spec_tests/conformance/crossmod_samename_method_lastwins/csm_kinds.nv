@@ -2,5 +2,7 @@
 // variant names do NOT collide; the collision under test is the METHOD name.
 module crossmod_samename_method_lastwins.csm_kinds
 
+#impl(Equal)
 export type NodeKind enum Leaf | Branch
+#impl(Equal)
 export type TypeKind enum Prim | Record

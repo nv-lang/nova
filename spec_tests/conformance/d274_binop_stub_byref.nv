@@ -13,6 +13,7 @@ type D274Pt value { x i64, y i64 }
 
 fn D274Pt.new(x i64, y i64) -> D274Pt => { x, y }
 
+#impl(Equal)
 type D274Rt value { a D274Pt, b D274Pt }          // C-size 32Б => auto-byref
 
 fn D274Rt.new(a D274Pt, b D274Pt) -> D274Rt {

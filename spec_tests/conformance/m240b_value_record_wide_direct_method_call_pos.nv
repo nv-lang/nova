@@ -6,6 +6,7 @@
 //
 module spec_tests.conformance
 
+#impl(Equal)
 type M240bPt value { x i64, y i64 }
 
 fn M240bPt.new(x i64, y i64) -> M240bPt => { x, y }

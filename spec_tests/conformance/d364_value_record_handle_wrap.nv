@@ -19,10 +19,16 @@
 module spec_tests.conformance
 
 // Шаг 1 — opaque handle: newtype over `*()` (void*); typed FFI boundary (D214).
+// Newtype auto-derive is unsupported (E_AUTO_DERIVE_UNSUPPORTED_KIND) — #1352
+// gives it an explicit `@equal` below instead of `#impl(Equal)` auto-derive.
 type D364CTcpListener(*())
+
+fn D364CTcpListener @equal(other D364CTcpListener) -> bool =>
+    (@ as *()) == (other as *())
 
 // Шаг 3 — public value-record wrapping the opaque handle; `handle` is a field-level
 // `priv` field → TYPE-private (D220/D281): only own-type methods may touch it.
+#impl(Equal)
 type D364TcpListener value {
     priv handle D364CTcpListener
 }

@@ -3,6 +3,7 @@
 // (Option-payload) через per-type by-value обёртку (receiver NovaValue_X*).
 module spec_tests.conformance
 
+#impl(Equal)
 type D237Vp value { a int, b int }
 fn D237Vp @equal(other D237Vp) -> bool => @a == other.a  // b игнорируется намеренно
 

@@ -74,6 +74,7 @@ test "static Result-returning ctor (-> Result[Self, E]) + instance method coexis
 // already use, just made to see through one more layer of tupling.
 export type SctPair271(x int, y int)
 
+#impl(Equal)
 export type SctPair271Err enum ZeroX
 
 export fn SctPair271 @equal(other SctPair271) -> bool => @x == other.x && @y == other.y
