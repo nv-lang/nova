@@ -225,7 +225,10 @@
 # builtins 48 -> 49 (2026-09-25, окно Карины, 274.7 Р):
 #   builtins.EQUAL_PROTO -- имя протокола `Equal`, которое судья `==` над суммой
 #     спрашивает у `#impl(...)` (check/operators.nv) и чтение атрибута (check/check.nv).
-builtins 49
+# builtins 49 -> 50 (2026-09-30, окно Карины, Э.9 шаг 2): HANDLER_CTOR — имя
+#   конструктора обработчика `Effect`; читают sem (засев), mangle (C-тип) и два
+#   места чекера, где стоял литерал (страж no-name-hardcode их назвал).
+builtins 50
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -313,7 +316,10 @@ lex 11
 #     элементов, считающие спереди и от конца, парные `take_elem`). Наружу --
 #     потому что их зовёт emit_c (emit_match.nv печатает арм массива на одних
 #     событиях билдера) и судит lower_test.
-lower 81
+# lower 81 -> 86 (2026-09-30, окно Карины, Э.9 шаг 2): HandlerSwap, WithScope,
+#   WithCtx, @begin_with, @end_with — область `with` построителя (ir_with.nv);
+#   зовёт lower_with.nv, печатает emit_c (HandlerSwap в операторах IR).
+lower 86
 main 0
 # mono -- НОВЫЙ модуль (2026-08-18, Э2-б2): коллектор достижимого.
 # Наружу три имени: тип Reach, вопрос @has (эмиттер спрашивает про каждую
@@ -858,7 +864,15 @@ resolve 15
 #     направления (спека, 03-syntax.md:1378); спрашивает check/check.nv;
 #   CheckOut.@record_module_value / @module_value_order — порядок
 #     инициализации (D200, топологический): пишет check, читает emit_c.
-sem 272
+# sem 272 -> 278 (2026-09-30, окно Карины, Э.9 шаг 2): handled_effect_name,
+#   effect_vtable_c, effect_slot_c, effect_op_dispatcher_c — ОДНА дверь на каждое
+#   C-имя эффекта (читают lower, emit_c, check); EffectOpRef и @effect_op_of —
+#   цель вызова операции в канале (пишет check, читает emit_c).
+# sem 278 -> 282 (2026-09-30, Carina window, E.9 step 3): CaptureRow and
+#   CheckOut.@record_capture / @capture_at / @captures_of -- the captures of a
+#   handler literal (D474 section 0): written by check, which alone knows the
+#   scope; read by emit_c for the context type and every captured read.
+sem 282
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
@@ -920,7 +934,12 @@ tree 25
 # TupleExpr (шаг 4) и дедукция по кортежу живут в check/ и sem/, а единственный
 # писатель термов — интернер в types/. Голова терма — АРНОСТЬ, не DeclId:
 # синтетическая декларация лгала бы каждой двери, спрашивающей реестр.
-types 27
+# types 27 -> 26 (2026-09-30): `same_ty` СНЯТА — дверь была ровно обходом
+# №760 ([LEGACY-#760-newtype-ro-launder], заведена волной В1 21-08 как имя
+# №6, см. запись "types 21 -> 22" выше), и реестр закрыл дефект 2026-09-17.
+# Оракул больше не отвергает возврат ro-связанного newtype над примитивом, так
+# что все вызовы `same_ty(t)` в 9 файлах заменены на прямой возврат `t`.
+types 26
 # builtins 7 -> 9 (2026-08-16): `is_bool_literal` и `bool_c_literal` — язык
 # спрашивают ЗДЕСЬ. Вопрос владельца про список литералов вскрыл, что булев
 # литерал в подмножестве вообще нельзя было написать: bool получался только из

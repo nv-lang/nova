@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_MATCH_NON_EXHAUSTIVE
+//
+// Registry 221.1 #1415: found while fixing it -- `bool` was NOT checked
+// either. `bool` is not a declared sum, so the sum-only analysis returned
+// early and `match b { true => 1 }` passed check and build. `bool` is finite
+// and is decided exactly: both literals or a catch-all.
+
+module neg.p1415_bool_value_neg
+
+fn main() Io -> () {
+    ro b = false
+    // nova:expect E_MATCH_NON_EXHAUSTIVE -- `false` is not covered and there is no `_` arm
+    ro m = match b { true => 1 }
+    println("${m}")
+}

@@ -2,6 +2,7 @@
 // field-by-field, via the single `emit_field_eq` dispatcher (§0).
 module spec_tests.conformance
 
+#impl(Equal)
 type D328Point value { x int, y int }
 
 test "value-record == is structural, not reference (D328)" {

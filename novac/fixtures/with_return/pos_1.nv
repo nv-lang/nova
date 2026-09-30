@@ -1,0 +1,21 @@
+module with_return.pos_1
+
+// A `return` from inside a `with` body (E.9 step 2): the value is computed
+// while the handler is installed, then the handler is restored and the frame
+// popped BEFORE control leaves -- the carrier `compiler_argv`
+// (novac/src/main.nv:350). The same operation is then called outside any
+// `with`. Behaviour byte-for-byte with the oracle; the oracle itself leaves the
+// handler installed on this path (registry #1402), which stdout cannot see.
+
+import std.os.{args, real_os}
+
+fn argv() -> []str {
+    with Os = real_os() {
+        return args()
+    }
+}
+
+fn main() {
+    println(argv().len())
+    println(args().len())
+}

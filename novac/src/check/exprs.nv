@@ -45,7 +45,7 @@ import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, 
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
 import ../sem.{ty_source_name, c_shell_method, digit_index}
 import ../sem.{interp_slices, const_init_interpolates}
-import ../types.{TyId, no_ty, is_ty, same_ty}
+import ../types.{TyId, no_ty, is_ty}
 import ../sem.{coalesce_payload, option_payload}
 import ../sem.{shape_of}
 import ../sem.{is_int_prim, is_numeric_prim, prim_row_of}
@@ -73,11 +73,25 @@ fn Checker mut @const_type_of(name str) -> TyId {
     // never typed the initializer, so the lattice answers there.
     if cd.once {
         ro rec = @chan.type_if_known(cd.init[0].id_of())
-        if is_ty(rec) { return same_ty(rec) }
+        if is_ty(rec) { return rec }
     } else {
         // A constant: typed by its initializer at every use, below.
     }
     type_of(cd.init[0], @ctx, @scope, @chan)
+}
+
+/// A read of `name` from a handler literal's op body, bound OUTSIDE the
+/// literal: record the capture (E.9 step 3) -- by address for a `mut`
+/// binding, which the op may write, by copy otherwise.
+fn Checker mut @note_if_capture(e Node, name str) -> () {
+    if @lit_rows < 0 { return }
+    ro row = @scope.row_of(name)
+    if row < 0 || row >= @lit_rows { return }
+    ro by_ref = match @scope.mode_of_name(name) {
+        ModeMut => true
+        ModeRo | ModeConsume => false
+    }
+    @chan.record_capture(@lit_node, e.id_of(), name, row, @scope.type_of_name(name), by_ref)
 }
 
 /// Is `name` a module value whose initializer was refused? Its type was
@@ -491,14 +505,17 @@ fn Checker mut @type_expr(e Node) -> () {
                 // unbound. The order is deliberate -- a local shadows a
                 // constant, which is what every reader expects.
                 if is_bool_literal(t.text) || @scope.is_bound(t.text) {
-                    // Bound, or `true`/`false`: nothing to refuse and nothing
-                    // to record -- the lattice reads a Name from the scope.
+                    // Bound, or `true`/`false`: nothing to refuse -- the
+                    // lattice reads a Name from the scope. A binding made
+                    // OUTSIDE the handler literal being typed is a capture,
+                    // and the emitter must know it (E.9 step 3).
+                    @note_if_capture(e, t.text)
                 } else if @settle_module_value(t.text) {
                     // A module value read while its own initializer is being
                     // typed: a CYCLE, which no order computes (274.5 S6).
                     // Asked BEFORE the type -- settling a value not typed
                     // yet is what gives it one.
-                    @reject(t, MODULE_VALUE_CYCLE_MSG)
+                    @report_module_cycle(t.text)
                 } else if @is_poisoned_module_value(t.text) {
                     // SILENT-OK: a module value whose initializer was refused;
                     // that refusal is the one cause, and a read of it saying

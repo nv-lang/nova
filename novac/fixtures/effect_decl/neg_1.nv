@@ -13,11 +13,13 @@ module effect_decl.neg_1
 // wrong message rather than staying silent.
 //
 // THE SUBSTRING PINNED IS THE DISTINGUISHING PART, not the whole sentence
-// (check-novac-fixture-expect.sh's own contract): "declares an effect" is
-// specific to this refusal and cannot be produced by the old alias-tail
-// path, which named `effect` itself as the undeclared thing.
+// (check-novac-fixture-expect.sh's own contract): "an effect a file declares"
+// is specific to this refusal and cannot be produced by the old alias-tail
+// path, which named `effect` itself as the undeclared thing. The sentence is
+// shared since E.9 step 2 with an operation of an effect the shell lacks --
+// one cause, one text (check/messages.nv, effect_without_runtime_msg).
 
-// NOVAC_EXPECT declares an effect
+// NOVAC_EXPECT an effect a file declares
 
 type Counter effect {
     fn log(msg str) -> ()

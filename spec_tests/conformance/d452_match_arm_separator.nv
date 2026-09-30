@@ -20,7 +20,7 @@ test "match arms: multi-line, newline alone separates (D452)" {
 
 test "match arms: single line, comma-separated (D452)" {
     ro code = 200
-    ro label = match code { 200 => "ok", 404 => "not found" }
+    ro label = match code { 200 => "ok", 404 => "not found", _ => "unknown" }
     assert(label == "ok")
 }
 

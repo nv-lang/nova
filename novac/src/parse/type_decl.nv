@@ -94,7 +94,7 @@ fn Cursor mut @type_decl() -> Node {
     // word `effect` fell into the newtype/alias tail below as an ordinary
     // type name, the brace body behind it became junk, and `check` refused
     // `effect` as "undeclared type name" -- a misspelling nobody made. `check`
-    // still refuses the declaration (novac types no effect-system form yet),
+    // still refuses the declaration (novac emits no effect's runtime pieces),
     // but by NAME now, which is what makes the refusal honest rather than
     // wrong (registry TBD, found surveying rung 0.3).
     if @peek_ident(EFFECT_MARKER) {
@@ -396,7 +396,7 @@ fn Cursor mut @proto_method() -> Node {
 /// retracted). The mirror of `@proto_method` one line up, `fn` standing
 /// where `@` stands: a signature and nothing else, no body, no default.
 /// `check` still refuses an in-source effect declaration WHOLESALE by name
-/// (rules.nv EFFECT_TYPE_MSG) -- but the signature is no longer junk-shaped,
+/// (messages.nv effect_without_runtime_msg) -- but the signature is no longer junk-shaped,
 /// because the wave that types handler literals READS the declaration as the
 /// effect's op SCHEMA (sem/effects.nv): this reader's job is to keep every
 /// op, moded params included, in a shape the schema filler can read.

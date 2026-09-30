@@ -17,6 +17,9 @@ mod variant_ctor_disarm; // #666, see its doc
 mod sum_placement; // Plan 172.14 F.2 A4, see its doc
 mod mono_nominal; // registry 221.1 #895, see its doc
 mod static_blanket; // registry 221.1 #895 (second carrier), see its doc
+mod self_value; // #1395: `Self` by position, see its doc
+mod opt_eq_split; // #1405: `nova_opt_eq` body late, see its doc
+mod decl_module_symbol; // #1097: free-fn symbol by declaring module (D134), see its doc
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
@@ -1383,6 +1386,7 @@ pub struct CEmitter {
     /// `false` (existing pointer-form behavior) everywhere else so mono/
     /// generic-instance paths this doesn't touch stay byte-identical.
     current_receiver_is_static: bool,
+    fluent_ret_spans: HashSet<Span>, // #1395: `-> @` return TypeRefs (emit_c/self_value.rs)
     /// Expected struct type для anonymous record literal `=> { ... }` —
     /// устанавливается при эмите function body, когда нужно использовать
     /// declared return type как target для anonymous record (D55).
@@ -1642,11 +1646,6 @@ pub struct CEmitter {
     /// Interior mutability: используется из `&self`-методов
     /// (type_ref_to_c, infer_expr_c_type).
     novaopt_typedefs_buf: std::cell::RefCell<String>,
-    /// Set when generating nova_opt_eq_ body (inside ensure_opt_typedef).
-    /// In this mode, emit_field_eq uses pointer equality for sum types to
-    /// avoid "incomplete type" C errors: opt_eq fns are emitted before the
-    /// sum type struct definitions, so member access is forbidden.
-    novaopt_early_gen: std::cell::RefCell<bool>,
     /// [M-153.2-flat-map-inner-option]: NovaOpt typedefs where the payload is a
     /// value-record (NovaValue_… by-value, needs complete struct before use in
     /// field decl). Spliced at /*__NOVAOPT_VR_TYPEDEFS__*/ which is placed AFTER
@@ -2776,6 +2775,7 @@ impl CEmitter {
             in_recv_ptr_return_position: std::cell::Cell::new(false),
             current_receiver_is_mut: false,
             current_receiver_is_static: false,
+            fluent_ret_spans: HashSet::new(),
             expected_record_type: None,
             expected_sum_hint: None,
             expected_option_elem_hint: None,
@@ -2819,7 +2819,6 @@ impl CEmitter {
             // Для прочих — typedef эмитится в novaopt_typedefs_buf и
             // splice'ится через маркер /*__NOVAOPT_TYPEDEFS__*/.
             novaopt_typedefs_buf: std::cell::RefCell::new(String::new()),
-            novaopt_early_gen: std::cell::RefCell::new(false),
             novaopt_vr_typedefs_buf: std::cell::RefCell::new(String::new()),
             novaopt_eq_fns_buf: std::cell::RefCell::new(String::new()),
             vr_ueq_protos_buf: std::cell::RefCell::new(String::new()),
@@ -5196,11 +5195,11 @@ impl CEmitter {
                 // the type instead (value-form for named-tuple/value-record —
                 // matches how the constructor body's record-literal `return
                 // Type(...)` is actually emitted). An INSTANCE method's `Self`
-                // (fluent `-> Self`/`-> @`, returning the receiver itself)
-                // is UNCHANGED — stays on `receiver_c_type`, byte-identical.
+                // is the type itself too (#1395, D182/D326): only `-> @` keeps
+                // the receiver carrier, answered before this arm (`fluent_ret_c`).
                 Some(recv) if self.current_receiver_is_static =>
                     self.resolved_named_to_c(recv, &[], &[])?,
-                Some(recv) => self.receiver_c_type(recv, false),
+                Some(recv) => self.self_value_c(recv),
                 // U.4.8: `Self` outside a receiver context — carry the SAME Err the deleted
                 // `type_ref_to_c_impl` produced (Plan 11 follow-up: hard error, not a fallback,
                 // so it never silently lowers to a bogus `Nova_Self*`).
@@ -6010,10 +6009,8 @@ impl CEmitter {
         }
 
         // Plan 81 Ф.6.2: атрибуция свободных функций к объявляющим
-        // модулям — для symbol mangling `nova_fn_<modpath>_<name>`.
-        // Первый peer с данным именем побеждает (cross-module overload
-        // с одним именем — редкий edge; param-суффикс всё равно
-        // разводит C-имена).
+        // модулям. Первый peer с данным именем побеждает ЗДЕСЬ, но D84-реестр
+        // берёт базу у объявившего модуля — №1097, `emit_c/decl_module_symbol.rs`.
         //
         // [M-exp-promotion-blockers: uuid_namespace duplicate-symbol]
         // "первый побеждает" — это глобальный, keyed-только-по-имени кэш
@@ -8485,19 +8482,21 @@ impl CEmitter {
                     // mode-differing decl (`f(x H)` vs `f(mut x H)` — same param
                     // C-types + return) is NOT a duplicate; include modes in the
                     // dedup key so all three register (and get distinct C symbols).
+                    // #1097: a duplicate (and a suffix neighbour) only within ONE module; an extern is one symbol anywhere.
                     let new_modes = Self::fn_param_modes(f);
                     if let Some(existing) = self.method_overloads.get(&key) {
                         let is_dup = existing.iter().any(|s|
                             s.param_c_types == param_c_types
                             && s.return_c_type == return_c_type
-                            && s.param_modes == new_modes);
+                            && s.param_modes == new_modes
+                            && (f.is_external || self.same_decl_module(s.fn_span, f)));
                         if is_dup {
                             continue;
                         }
                     }
                     let existing_count = self.method_overloads.get(&key)
-                        .map(|v| v.len()).unwrap_or(0);
-                    let base_c_name = self.free_fn_c_name(&f.name);
+                        .map(|v| v.iter().filter(|s| f.is_external || self.same_decl_module(s.fn_span, f)).count()).unwrap_or(0);
+                    let base_c_name = self.decl_base_c_name(f);
                     let c_name = if existing_count == 0 {
                         base_c_name.clone()
                     } else {
@@ -8643,7 +8642,7 @@ impl CEmitter {
                     let return_c_type = match &f.return_type {
                         Some(TypeRef::Named { path, .. }) if path.len() == 1 && path[0] == "Self" => {
                             // Plan 128 Ф.1: thread recv.mutable flag (Ф.2 consumes).
-                            self.receiver_c_type(&recv.type_name, recv.mutable)
+                            self.self_ret_c(&recv.type_name, recv.mutable, f.returns_receiver)
                         }
                         Some(t) if is_generic_recv => {
                             self.erased_type_ref_c(&Some(t.clone()), &recv_type_params)
@@ -9138,6 +9137,7 @@ impl CEmitter {
         self.build_free_fn_byref_map(module);
         // [M-172.14-methods-byref]: тот же пре-пасс для методов (receiver.is_some()).
         self.build_method_byref_map(module);
+        self.collect_fluent_ret_spans(module); // #1395
         // 2. Forward declarations for all functions (types are now known)
         for item in &module.items {
             if let Item::Fn(f) = item {
@@ -11900,7 +11900,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.current_receiver_type = Some(t_name.to_string());
             self.sync_receiver_rt();
             // Substitute `Self` → `t_name` для resolution в default body.
-            self.current_type_subst.insert("Self".to_string(), Self::lift_c_name(t_c_ty.to_string()));
+            let self_val_c = Self::value_form_of_receiver_c(t_c_ty.to_string()); // #1395
+            self.current_type_subst.insert("Self".to_string(), Self::lift_c_name(self_val_c.clone()));
             // Plan 172.1.1 (U.4.5 substrate, mono-side gap #1): для default-body на КОНКРЕТНОМ
             // generic-типе T (`Lru[str,int]`) populate generic-params в subst (`K→nova_str`,
             // `V→nova_int`), а не только `Self` — иначе `resolved_type_to_c(K)`/`type_ref_to_c(K)`
@@ -11932,11 +11933,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             };
             let param_c_results: Vec<_> = m.params.iter()
                 .map(|p| {
-                    // Self in param position → t_c_ty (same as receiver).
+                    // Self in param position → the type itself, by value (#1395).
                     let is_self = matches!(&p.ty, TypeRef::Named { path, .. }
                         if path.len() == 1 && path[0] == "Self");
                     if is_self {
-                        Ok(t_c_ty.to_string())
+                        Ok(self_val_c.clone())
                     } else {
                         self.type_ref_to_c(&p.ty)
                     }
@@ -12270,6 +12271,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// (Endgame U.6.1 — collapsing this `TypeRef`→`ResolvedType` adapter hop at the ~120
     /// declared-type call sites — is intentionally OUT of U.4.8 scope.)
     pub(crate) fn type_ref_to_c(&self, ty: &TypeRef) -> Result<String, String> {
+        if let Some(c) = self.fluent_ret_c(ty) { return Ok(c); } // #1395 `-> @`
         self.resolved_type_to_c(&crate::types::ResolvedType::from_type_ref(ty))
     }
 
@@ -20079,6 +20081,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             let key = ("".to_string(), f.name.clone());
             if let Some(overloads) = self.method_overloads.get(&key) {
                 if overloads.len() > 1 {
+                    if let Some(sig) = Self::own_registry_sig(overloads, f) {
+                        return sig.c_name.clone(); // #1097: its own entry, not a param-type guess
+                    }
                     let want_params: Vec<String> = f.params.iter()
                         .map(|p| self.type_ref_to_c(&p.ty)
                             .unwrap_or_else(|_| "nova_int".into()))
@@ -22631,14 +22636,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // handled in emit_binary (`&mut`); HERE we are `&self`, so we cannot trigger
             // the `&mut` mono instantiation directly — record the request in
             // `pending_container_eq_monos` (drained post-emission, register_container_eq_mono).
-            // Under `novaopt_early_gen` (early opt path, before the mono fn-fwd-decls) the
-            // mono proto isn't visible → bail to identity; the structural-LATE opt path
-            // (debt_opt_payload_needs_structural_eq) reaches us with early_gen off and splices
-            // the eq fn AFTER the mono fwd-decls.
+            // Every `nova_opt_eq` body is spliced AFTER the mono fwd-decls (#1405).
             if type_name.starts_with("Vec____") || type_name.starts_with("HashMap____") {
-                if *self.novaopt_early_gen.borrow() {
-                    return format!("(({}) == ({}))", l, r);
-                }
                 let cont_c = cty.trim_end_matches('*').to_string(); // Nova_<container>____<args>
                 if self.container_eq_requested.borrow_mut().insert(cont_c.clone()) {
                     self.pending_container_eq_monos.borrow_mut().push(cont_c);
@@ -22673,21 +22672,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // record-field recursion via record_schemas. Records are NOT auto-
             // `@equal`'d, so a record compared only structurally (e.g. via
             // `Option[Rec]==` or as a sum/Result field) reaches the record branch
-            // below ([M-172.1-option-eq-record-structural] L2).
-            //
-            // Guard: when novaopt_early_gen is set we are inside the EARLY opt path
-            // (emits into novaopt_typedefs_buf — BEFORE sum/record struct bodies).
-            // Accessing ->tag / ->payload / ->field here causes clang "incomplete
-            // type" errors. Fall back to pointer identity (the function calling us
-            // is in an early opt_eq context where struct members are unavailable).
-            // The structural-late opt path (debt_opt_payload_needs_structural_eq) does
-            // NOT set early_gen, so it reaches the real recursion below.
-            if *self.novaopt_early_gen.borrow()
-                && (self.sum_schemas.contains_key(&type_name)
-                    || self.record_schemas.contains_key(&type_name))
-            {
-                return format!("(({}) == ({}))", l, r);
-            }
+            // below ([M-172.1-option-eq-record-structural] L2). No early-zone
+            // identity bail: every `nova_opt_eq` body is built late (#1405).
             // [M-result-direct-recursive-enum] / [M-option-self-recursive-record-mono]
             // (Plan 186, recursive-mono): a genuine cycle (self- or mutually-
             // recursive heap type ALREADY being expanded up this call chain) is
@@ -34215,7 +34201,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // NOVA_CLOS_CALL_* macro (так же как для lambda).
                 if let ExprKind::Ident(rhs_name) = &decl.value.kind {
                     if !self.var_types.contains_key(rhs_name) {
-                        if let Some(sig) = self.user_fn_sigs.get(rhs_name).cloned() {
+                        if let Some(sig) = self.fn_value_param_sig(rhs_name, decl.value.id) {
                             self.fn_param_sigs.insert(binding.clone(), sig);
                         }
                         // [Plan 228 Ф.2(a) снос, реестр 221.1 №94-v2, было fix
@@ -36390,10 +36376,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let is_local_var = self.var_types.contains_key(name);
                 let is_user_fn = self.var_types.contains_key(&format!("fn_ret_{}", name));
                 if is_user_fn && !is_local_var {
-                    if let Some(closure_value) = self.emit_free_fn_value(name) {
+                    self.refuse_unresolved_fn_value(name, expr.id)?; // #1097
+                    if let Some(closure_value) = self.emit_free_fn_value(name, expr.id) {
                         return Ok(closure_value);
                     }
-                    return Ok(self.free_fn_c_name(name));
+                    return Ok(self.fn_value_c_name(name, expr.id));
                 }
                 // Plan 91.12: module-private const C-name via (use-site file_id, name); the pre-pass covers every
                 // peer of the module group. A same-named LOCAL is caught above (#1397) -- the old note here
@@ -47125,81 +47112,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         if let Some(recv_g) = recv_g {
                                             let mut type_subst: Vec<(String, String)> = Vec::new();
                                             type_subst.push((recv_g.name.clone(), concrete_t.clone()));
-                                            // Bind inner typevars from protocol bounds (e.g. T in Next[T]).
-                                            for bound in &recv_g.bounds {
-                                                if let crate::ast::TypeRef::Named {
-                                                    path: bpath, generics: bgens, ..
-                                                } = bound {
-                                                    let proto_method = bpath.last()
-                                                        .map(|s| s.to_lowercase())
-                                                        .unwrap_or_default();
-                                                    let proto_base = bpath.last().cloned()
-                                                        .unwrap_or_default();
-                                                    // [M-next-collect-value-record] Bind the
-                                                    // blanket's inner typevar (`T` in `Next[T]`)
-                                                    // to the receiver's element. Primary source:
-                                                    // the generic-instance `@next()` return
-                                                    // inference (MapIter/FilterIter/… — receiver
-                                                    // C-type carries `____`-type-args). Fallback
-                                                    // for a CONCRETE `value priv(type)` iterator
-                                                    // like `CharsIter` (no type-args, so the
-                                                    // generic inference returns None): read the
-                                                    // element straight from the receiver's own
-                                                    // `#impl(Next[<elem>])` spec — the
-                                                    // authoritative concrete binding in
-                                                    // `type_impl_protocols`. Without a bound `T`,
-                                                    // the `collect` body's `Vec[T].new()` erases
-                                                    // to `Vec____Nova_T` (record schema missing →
-                                                    // codegen error).
-                                                    let elem_opt: Option<String> = self
-                                                        .infer_mono_method_ret_with_args(
-                                                            &recv_obj_ty, &proto_method, &[])
-                                                        .map(|opt_ret| opt_ret
-                                                            .strip_prefix("NovaOpt_")
-                                                            .unwrap_or(&opt_ret)
-                                                            .to_string())
-                                                        .or_else(|| {
-                                                            self.type_impl_protocols
-                                                                .get(recv_base)
-                                                                .and_then(|specs| specs.iter()
-                                                                    .find(|s| impl_spec_base_name(s)
-                                                                        == proto_base.as_str())
-                                                                    .cloned())
-                                                                .and_then(|s| s.find('[').and_then(
-                                                                    |i| s.rfind(']').map(|j|
-                                                                        s[i + 1..j].to_string())))
-                                                                .map(|inner| inner.split(',').next()
-                                                                    .unwrap_or("").trim().to_string())
-                                                                .filter(|a| !a.is_empty())
-                                                                .and_then(|arg| self.type_ref_to_c(
-                                                                    &crate::ast::TypeRef::Named {
-                                                                        path: vec![arg],
-                                                                        generics: vec![],
-                                                                        span: crate::diag::Span::dummy(),
-                                                                    }).ok())
-                                                                .filter(|c| !c.is_empty()
-                                                                    && c != "void*")
-                                                        });
-                                                    if let Some(elem) = elem_opt {
-                                                        for bg in bgens {
-                                                            if let crate::ast::TypeRef::Named {
-                                                                path: gp, generics: gg, ..
-                                                            } = bg {
-                                                                if gg.is_empty() {
-                                                                    if let Some(tv) = gp.last() {
-                                                                        if tv.len() <= 2
-                                                                            && tv.chars().all(|c|
-                                                                                c.is_ascii_uppercase())
-                                                                        {
-                                                                            type_subst.push((tv.clone(), elem.clone()));
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
+                                            type_subst.extend(self.blanket_bound_elem_bindings(&fn_decl, &recv_g.name, &recv_obj_ty));
                                             let mono_name = format!("Nova_{}_method_{}", concrete_t, method);
                                             let recv_type_key = tvname.clone();
                                             self.register_mono_method_instance(
@@ -47331,40 +47244,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     .or_else(|| fn_decl.generics.first());
                                 if let Some(recv_g) = recv_g {
                                     type_subst.push((recv_g.name.clone(), concrete_t.clone()));
-                                    // Plan 161 V2 [M-161-parametric-return]: bind inner
-                                    // typevars from protocol bounds.
-                                    // For `fn[I Next[T]] I @m`, the receiver generic `I` has
-                                    // bound `Next[T]`. Bind the inner typevar `T` to the
-                                    // element type by inferring `@next()` return on the
-                                    // concrete receiver and stripping the `NovaOpt_` wrapper.
-                                    for bound in &recv_g.bounds {
-                                        if let crate::ast::TypeRef::Named { path: bpath, generics: bgens, .. } = bound {
-                                            let proto_method = bpath.last()
-                                                .map(|s| s.to_lowercase())
-                                                .unwrap_or_default();
-                                            if let Some(opt_ret) = self.infer_mono_method_ret_with_args(
-                                                &obj_ty, &proto_method, &[])
-                                            {
-                                                // opt_ret = "NovaOpt_<elem>" for Next[T].
-                                                // Strip the Option wrapper to get the concrete elem.
-                                                let elem = opt_ret
-                                                    .strip_prefix("NovaOpt_")
-                                                    .unwrap_or(&opt_ret)
-                                                    .to_string();
-                                                for bg in bgens {
-                                                    if let crate::ast::TypeRef::Named { path: gp, generics: gg, .. } = bg {
-                                                        if gg.is_empty() {
-                                                            if let Some(tv) = gp.last() {
-                                                                if tv.len() <= 2 && tv.chars().all(|c| c.is_ascii_uppercase()) {
-                                                                    type_subst.push((tv.clone(), elem.clone()));
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
+                                    type_subst.extend(self.blanket_bound_elem_bindings(&fn_decl, &recv_g.name, &obj_ty));
                                 }
                                 let mono_name = format!("Nova_{}_method_{}", concrete_t, method);
                                 let recv_type = type_name.clone();
@@ -55749,6 +55629,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // regardless; only the bogus capture-field init was the bug).
                 !resolved_fn_call_names.contains(*n)
             })
+            .filter(|n| !self.is_module_value_read(body.span.file_id, n)) // #1399
             .map(|n| (n.clone(), self.var_types.get(n).cloned().unwrap_or_else(|| "nova_int".into())))
             .collect();
         // [M-hashmap-order-bare-variant-flake] (2026-07-13): `body_idents` is a
@@ -56507,73 +56388,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         Ok(format!("(void*)({})", clos_tmp))
     }
 
-    /// Plan 14 Ф.3: emit free fn name as first-class value.
-    ///
-    /// `let f = inc` или `xs.map(inc)` — `inc` нужно превратить в
-    /// closure-value `(void*)NovaClos_X*` чтобы callers (HOF, fn-typed
-    /// params, fn_param_sigs-driven calls через NOVA_CLOS_CALL_*) работали.
-    ///
-    /// Generates:
-    ///   1. **Thunk** (один раз на user fn, deduped через
-    ///      `emitted_fn_thunks`): envless adapter
-    ///      `static <ret> nova_fn_<name>_thunk(void* env, args...)
-    ///      { (void)env; return nova_fn_<name>(args...); }`.
-    ///      Игнорирует `env` (free fn без захвата).
-    ///   2. **Closure-литерал** на use-site: alloc'ает `NovaClos_X*` с
-    ///      `fn = &nova_fn_<name>_thunk, env = NULL`. Возвращается как
-    ///      `(void*)clos_ptr`.
-    ///
-    /// Если sig user fn'а отсутствует в `user_fn_sigs` (не free fn —
-    /// generic, метод, и т.д.) — возвращает `None`, caller должен
-    /// fallback'ить на старое поведение (`nova_fn_<name>` raw pointer).
-    fn emit_free_fn_value(&mut self, fn_name: &str) -> Option<String> {
-        let (param_c_tys, ret_c_ty) = self.user_fn_sigs.get(fn_name).cloned()?;
-        // Emit thunk one-time (deduped).
-        if !self.emitted_fn_thunks.contains(fn_name) {
-            let thunk_name = format!("{}_thunk", self.free_fn_c_name(fn_name));
-            // Build params: void* env, T0 p0, T1 p1, ...
-            let mut params = vec!["void* _env".to_string()];
-            for (i, ty) in param_c_tys.iter().enumerate() {
-                params.push(format!("{} p{}", ty, i));
-            }
-            let params_str = params.join(", ");
-            // Forward decl into lambda_forward_decls.
-            self.lambda_forward_decls
-                .push_str(&format!("{}{} {}({});\n", self.top_level_storage(), ret_c_ty, thunk_name, params_str));
-            // Body — call original nova_fn_<name>.
-            let mut impl_buf = String::new();
-            impl_buf.push_str(&format!("{}{} {}({}) {{\n", self.top_level_storage(), ret_c_ty, thunk_name, params_str));
-            impl_buf.push_str("    (void)_env;\n");
-            let call_args: Vec<String> = (0..param_c_tys.len())
-                .map(|i| format!("p{}", i))
-                .collect();
-            if ret_c_ty == "nova_unit" {
-                impl_buf.push_str(&format!("    {}({});\n", self.free_fn_c_name(fn_name), call_args.join(", ")));
-                impl_buf.push_str("    return NOVA_UNIT;\n");
-            } else {
-                impl_buf.push_str(&format!("    return {}({});\n", self.free_fn_c_name(fn_name), call_args.join(", ")));
-            }
-            impl_buf.push_str("}\n\n");
-            self.lambda_impls.push_str(&impl_buf);
-            self.emitted_fn_thunks.insert(fn_name.to_string());
-        }
-        // Emit closure-struct on use site.
-        let clos_struct = Self::clos_struct_name(&param_c_tys, &ret_c_ty);
-        let clos_fn_ty = Self::clos_fn_ty(&param_c_tys, &ret_c_ty);
-        let clos_tmp = self.fresh_tmp();
-        let thunk_name = format!("{}_thunk", self.free_fn_c_name(fn_name));
-        self.line(&format!(
-            "{}* {} = ({}*)nova_alloc(sizeof({}));",
-            clos_struct, clos_tmp, clos_struct, clos_struct
-        ));
-        self.line(&format!(
-            "{}->fn = ({})({});",
-            clos_tmp, clos_fn_ty, thunk_name
-        ));
-        self.line(&format!("{}->env = (void*)0;", clos_tmp));
-        Some(format!("(void*)({})", clos_tmp))
-    }
-
 
     /// Look up the C type of a record variant field.
     fn get_record_variant_field_type(&self, type_name: &str, variant_name: &str, field_name: &str) -> Option<String> {
@@ -56805,6 +56619,45 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     #[allow(dead_code)]
     fn infer_mono_method_ret(&mut self, obj_ty: &str, method: &str) -> Option<String> {
         self.infer_mono_method_ret_with_args(obj_ty, method, &[])
+    }
+
+    /// Bindings of a blanket's bound typevars from the receiver `recv_c`, CHAINED
+    /// through sibling bounds: `fn[C Iter[I], I Next[T]] C @collect()` binds `I` from
+    /// `C`'s `@iter()` and then `T` from `I`'s `@next()` (registry 221.1 #1403 -- the
+    /// three call sites each copied the one-level half, `T` stayed free and every
+    /// `[]X.collect()` typed `Vec[nova_int]`: a `[]Rec` sorted with the int stride).
+    /// Per bound: the generic-instance `@<proto>()` return (Option payload), else the
+    /// receiver's own `#impl(Proto[<elem>])` spec, for a CONCRETE implementor like
+    /// `CharsIter` with no type-args ([M-next-collect-value-record]).
+    fn blanket_bound_elem_bindings(&self, fd: &FnDecl, recv_tv: &str, recv_c: &str) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = Vec::new();
+        let mut work = vec![(recv_tv.to_string(), recv_c.to_string())];
+        while let Some((tv, c)) = work.pop() {
+            let Some(g) = fd.generics.iter().find(|g| g.name == tv) else { continue };
+            let key = self.recv_key_from_c(&c);
+            let base = key.find("____").map_or(key.as_str(), |i| &key[..i]);
+            for bound in &g.bounds {
+                let TypeRef::Named { path: bpath, generics: bgens, .. } = bound else { continue };
+                let proto = bpath.last().cloned().unwrap_or_default();
+                let elem = self.infer_mono_method_ret_with_args(&c, &proto.to_lowercase(), &[]).or_else(|| {
+                    let specs = self.type_impl_protocols.get(&key).or_else(|| self.type_impl_protocols.get(base))?;
+                    let s = specs.iter().find(|s| impl_spec_base_name(s) == proto.as_str())?;
+                    let arg = s[s.find('[')? + 1..s.rfind(']')?].split(',').next()?.trim().to_string();
+                    let tr = TypeRef::Named { path: vec![arg], generics: vec![], span: crate::diag::Span::dummy() };
+                    self.type_ref_to_c(&tr).ok().filter(|c| !c.is_empty() && c != "void*")
+                });
+                let Some(elem) = elem.map(|r| r.strip_prefix("NovaOpt_").map_or(r.clone(), str::to_string)) else { continue };
+                for bg in bgens {
+                    let TypeRef::Named { path: gp, generics: gg, .. } = bg else { continue };
+                    let Some(v) = gp.last().filter(|v| gg.is_empty() && v.len() <= 2 && v.chars().all(|c| c.is_ascii_uppercase())) else { continue };
+                    if v != recv_tv && !out.iter().any(|(t, _)| t == v) {
+                        out.push((v.clone(), elem.clone()));
+                        work.push((v.clone(), elem.clone()));
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// Plan 48 method-param mono (Plan 63 followup, 2026-05-17 EOD): variant
@@ -57791,17 +57644,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // unsoundness as the old tuple/sum eq. Route the payload comparison
         // through emit_field_eq (which handles scalar/float/str/tuple/record/
         // sum by C-type). Scalars/pointers keep the direct `==` fast path.
-        let cmp_body = if is_scalar || is_pointer {
-            "a.value == b.value".to_string()
-        } else {
-            // Set novaopt_early_gen so emit_field_eq uses pointer equality for
-            // sum types — these opt_eq functions are emitted before sum type
-            // struct definitions, so member access would be an "incomplete type".
-            *self.novaopt_early_gen.borrow_mut() = true;
-            let body = self.emit_field_eq(c_ty, "a.value", "b.value", 0);
-            *self.novaopt_early_gen.borrow_mut() = false;
-            body
-        };
+        // #1405: the composite body is built LATE (emit_c/opt_eq_split.rs).
+        if !force_npo && !is_scalar && !is_pointer {
+            return self.emit_opt_eq_split(sanitized, c_ty, "0");
+        }
+        let cmp_body = "a.value == b.value".to_string();
         let eq_fn = if force_npo {
             format!(
                 "{storage}nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
@@ -57898,7 +57745,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // record/field `@equal` method prototype only after the fn-forward-decls, so the eq
         // FN goes to the LATE buffer spliced at /*__NOVAOPT_EQ_FNS__*/ (after struct bodies
         // AND method protos) where `emit_field_eq` — the single comparison dispatcher — can
-        // dereference (no `novaopt_early_gen` bail) and call a record `@equal` without an
+        // dereference and call a record `@equal` without an
         // implicit decl. The NPO layout (single pointer, NULL=None) is UNCHANGED → eq-only,
         // no ABI change. Without this the early path emitted `a.value == b.value` (addresses)
         // → `Option[Sum/Record]==` false for equal values.
@@ -58004,17 +57851,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Plan 141: composite Option payloads (tuple/record/sum/nova_str)
         // compare structurally via emit_field_eq, not memcmp (float/padding/
         // identity unsoundness). Scalars/pointers keep the direct `==`.
-        let cmp_body = if is_scalar || is_pointer || is_newtype_ptr {
-            "a.value == b.value".to_string()
-        } else {
-            // Set novaopt_early_gen so emit_field_eq uses pointer equality for
-            // sum types — these opt_eq functions are emitted before sum type
-            // struct definitions, so member access would be an "incomplete type".
-            *self.novaopt_early_gen.borrow_mut() = true;
-            let body = self.emit_field_eq(c_ty, "a.value", "b.value", 0);
-            *self.novaopt_early_gen.borrow_mut() = false;
-            body
-        };
+        // #1405: the composite body is built LATE (emit_c/opt_eq_split.rs).
+        if !is_npo && !is_scalar {
+            return self.emit_opt_eq_split(sanitized, c_ty, "NOVA_TAG_Option_None");
+        }
+        let cmp_body = "a.value == b.value".to_string();
         let eq_fn = if is_npo {
             // NPO eq: value-based identity (NULL == NULL = None equal;
             // p1 == p2 for Some). No tag field.
@@ -61545,90 +61386,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         // overrides and emits the properly typed mono tuple.
                                         // Restore overrides afterwards. String-subst below is
                                         // kept as a fallback for pointer-return shapes.
-                                        let mut tv_elem_bindings: Vec<(String, String)> = Vec::new();
-                                        // Plan 164 fix: find the receiver generic by name
-                                        // (blanket_tvname), not by position (first()). When the
-                                        // blanket fn is declared as `fn[T Compare, I Next[T]]`,
-                                        // the receiver is `I` but generics[0] is `T`. Using first()
-                                        // would expand T's bounds (Compare→compare) instead of
-                                        // I's bounds (Next[T]→next), failing to bind the elem TV.
-                                        let recv_g_ref = fd.generics.iter()
-                                            .find(|g| g.name == blanket_tvname)
-                                            .or_else(|| fd.generics.first());
-                                        if let Some(recv_g) = recv_g_ref {
-                                            for bound in &recv_g.bounds {
-                                                if let crate::ast::TypeRef::Named { path: bpath, generics: bgens, .. } = bound {
-                                                    let proto_method = bpath.last()
-                                                        .map(|s| s.to_lowercase())
-                                                        .unwrap_or_default();
-                                                    let proto_base = bpath.last().cloned()
-                                                        .unwrap_or_default();
-                                                    let recv_ptr = format!("Nova_{}*", rt);
-                                                    // [M-next-collect-value-record] mirror (see the
-                                                    // sibling dispatch-site fallback ~34565): for a
-                                                    // CONCRETE (non-generic-mono) `Next[T]`
-                                                    // implementor — `SplitIter`/`RSplitIter`/
-                                                    // `CharsIter` and friends, `rt` carries no
-                                                    // `____` mono separator — `infer_mono_method_
-                                                    // ret_with_args` bails immediately (it only
-                                                    // understands `generic_type_templates`-backed
-                                                    // mono types). Without this fallback the
-                                                    // element type `T` is never bound here, so the
-                                                    // LET-BINDING'S declared C type for e.g.
-                                                    // `ro got = "a,b".split(",").collect()` silently
-                                                    // erased to the `nova_int` default while the
-                                                    // callee itself (dispatch-site path, already
-                                                    // fixed) correctly returns `Vec[str]` — a
-                                                    // pointer-type mismatch at the call site
-                                                    // (CC-FAIL, or a silently wrong element type
-                                                    // when the two mono Vecs happen to share layout).
-                                                    // Read the element straight from the receiver's
-                                                    // own `#impl(Next[<elem>])` spec instead.
-                                                    let opt_ret_opt = self.infer_mono_method_ret_with_args(
-                                                        &recv_ptr, &proto_method, &[])
-                                                        .or_else(|| {
-                                                            self.type_impl_protocols
-                                                                .get(&rt)
-                                                                .and_then(|specs| specs.iter()
-                                                                    .find(|s| impl_spec_base_name(s)
-                                                                        == proto_base.as_str())
-                                                                    .cloned())
-                                                                .and_then(|s| s.find('[').and_then(
-                                                                    |i| s.rfind(']').map(|j|
-                                                                        s[i + 1..j].to_string())))
-                                                                .map(|inner| inner.split(',').next()
-                                                                    .unwrap_or("").trim().to_string())
-                                                                .filter(|a| !a.is_empty())
-                                                                .and_then(|arg| self.type_ref_to_c(
-                                                                    &crate::ast::TypeRef::Named {
-                                                                        path: vec![arg],
-                                                                        generics: vec![],
-                                                                        span: crate::diag::Span::dummy(),
-                                                                    }).ok())
-                                                                .filter(|c| !c.is_empty()
-                                                                    && c != "void*")
-                                                        });
-                                                    if let Some(opt_ret) = opt_ret_opt
-                                                    {
-                                                        let elem = opt_ret
-                                                            .strip_prefix("NovaOpt_")
-                                                            .unwrap_or(&opt_ret)
-                                                            .to_string();
-                                                        for bg in bgens {
-                                                            if let crate::ast::TypeRef::Named { path: gp, generics: gg, .. } = bg {
-                                                                if gg.is_empty() {
-                                                                    if let Some(tv) = gp.last() {
-                                                                        if tv.len() <= 2 && tv.chars().all(|c| c.is_ascii_uppercase()) {
-                                                                            tv_elem_bindings.push((tv.clone(), elem.clone()));
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
+                                        let tv_elem_bindings = self.blanket_bound_elem_bindings(&fd, &blanket_tvname, &format!("Nova_{}*", rt));
                                         // Install bindings in type_subst_overrides so
                                         // type_ref_to_c (and its Tuple arm) sees them.
                                         let saved_overrides = if !tv_elem_bindings.is_empty() {
@@ -61657,66 +61415,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             }
                                         }
                                         if let Ok(raw_c) = type_ref_result {
-                                            // Plan 161 V2 [M-161-parametric-return]: string-subst
-                                            // fallback for pointer-return shapes (Nova_T* / Nova_T_p).
-                                            // For tuple returns the overrides above already produce
-                                            // the correct concrete C type in raw_c.
-                                            // Plan 164 fix: use blanket_tvname to find the
-                                            // receiver generic for string-subst fallback too.
-                                            let recv_g_str = fd.generics.iter()
-                                                .find(|g| g.name == blanket_tvname)
-                                                .or_else(|| fd.generics.first());
-                                            let c = if let Some(recv_g_s) = recv_g_str {
-                                                let mut resolved = raw_c.clone();
-                                                for (tv, elem) in &tv_elem_bindings {
-                                                    let elem_mangled = Self::sanitize_c_for_ident(elem);
-                                                    let tv_mangled = format!("Nova_{}_p", tv);
-                                                    let tv_ptr = format!("Nova_{}*", tv);
-                                                    resolved = resolved
-                                                        .replace(&tv_mangled, &elem_mangled)
-                                                        .replace(&tv_ptr, elem);
-                                                }
-                                                // Also substitute the receiver generic (I → concrete recv)
-                                                // via existing bound-based logic if not already done.
-                                                if tv_elem_bindings.is_empty() {
-                                                    for bound in &recv_g_s.bounds {
-                                                        if let crate::ast::TypeRef::Named { path: bpath, generics: bgens, .. } = bound {
-                                                            let proto_method = bpath.last()
-                                                                .map(|s| s.to_lowercase())
-                                                                .unwrap_or_default();
-                                                            let recv_ptr = format!("Nova_{}*", rt);
-                                                            if let Some(opt_ret) = self.infer_mono_method_ret_with_args(
-                                                                &recv_ptr, &proto_method, &[])
-                                                            {
-                                                                let elem = opt_ret
-                                                                    .strip_prefix("NovaOpt_")
-                                                                    .unwrap_or(&opt_ret)
-                                                                    .to_string();
-                                                                let elem_mangled = Self::sanitize_c_for_ident(&elem);
-                                                                for bg in bgens {
-                                                                    if let crate::ast::TypeRef::Named { path: gp, generics: gg, .. } = bg {
-                                                                        if gg.is_empty() {
-                                                                            if let Some(tv) = gp.last() {
-                                                                                if tv.len() <= 2 && tv.chars().all(|c| c.is_ascii_uppercase()) {
-                                                                                    let tv_mangled2 = format!("Nova_{}_p", tv);
-                                                                                    let tv_ptr2 = format!("Nova_{}*", tv);
-                                                                                    resolved = resolved
-                                                                                        .replace(&tv_mangled2, &elem_mangled)
-                                                                                        .replace(&tv_ptr2, &elem);
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                let _ = recv_g_s; // suppress unused warning
-                                                resolved
-                                            } else {
-                                                raw_c
-                                            };
+                                            // Plan 161 V2 [M-161-parametric-return]: string-subst fallback for pointer-return
+                                            // shapes (Nova_T* / Nova_T_p); tuple returns are already concrete via the overrides.
+                                            let mut c = raw_c;
+                                            for (tv, elem) in &tv_elem_bindings {
+                                                c = c.replace(&format!("Nova_{}_p", tv), &Self::sanitize_c_for_ident(elem)).replace(&format!("Nova_{}*", tv), elem);
+                                            }
                                             if !c.is_empty() && c != "void*" {
                                                 self.icr_trace("B08r_blanket_protocol_return");
                                                 return c;

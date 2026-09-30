@@ -41,6 +41,81 @@ fn returns(t Terminator) -> bool {
     }
 }
 
+/// How many handler restores and frame pops a block's statements hold.
+fn exits_in(stmts []Stmt) -> (int, int) {
+    mut restores = 0
+    mut pops = 0
+    for s in stmts {
+        match s {
+            RestoreHandler(_) => { restores += 1 }
+            PopFrame => { pops += 1 }
+            Assign(_) | Eval(_) | Store(_) | Decl(_) | Output(_) | OutputEnd | SetHandler(_) | PushFrame(_) => {}
+        }
+    }
+    (restores, pops)
+}
+
+test "a with scope is left on EVERY exit: return, break and the fall-through (E.9 step 2)" {
+    // `with Os = h { if c { return } ; loop { with Fs = g { break } } }`, built by
+    // hand: the return leaves the one open scope, the break leaves only the
+    // scope opened inside the loop, and the end of the with leaves its own.
+    mut b = FnBuilder.new(TyId(3))
+    ro h = b.temp(TyId(3))
+    ro p = b.temp(TyId(3))
+    ro w = b.begin_with([]HandlerSwap.of(HandlerSwap { eff: "Os", prev: p, handler: h }))
+    ro c = b.begin_if(Cond.IsSome(h), ElseShape.NoElse)
+    b.ret()
+    b.end_if(c)
+    ro l = b.begin_loop(LoopHead.Forever)
+    ro g = b.temp(TyId(3))
+    ro q = b.temp(TyId(3))
+    ro w2 = b.begin_with([]HandlerSwap.of(HandlerSwap { eff: "Fs", prev: q, handler: g }))
+    b.break_loop()
+    b.end_with(w2)
+    b.end_loop(l)
+    b.end_with(w)
+    b.end_body()
+    ro f = b.finish()
+    mut ret_seen = false
+    mut brk_seen = false
+    mut total_restores = 0
+    for blk in f.blocks {
+        ro (r, pp) = exits_in(blk.stmts)
+        total_restores += r
+        match blk.term {
+            Return => {
+                if r == 1 && pp == 1 { ret_seen = true } else { assert(r == 0 || r == 1) }
+            }
+            Break => {
+                // Only the inner scope: one restore, one pop -- the outer
+                // `with` around the loop stays installed.
+                assert(r == 1 && pp == 1)
+                brk_seen = true
+            }
+            Goto(_) | If(_) | Loop(_) | Switch(_) | Continue | Unreached => {}
+        }
+    }
+    assert(ret_seen)
+    assert(brk_seen)
+    // return (1) + break (1) + inner fall-through (1) + outer fall-through (1)
+    assert(total_restores == 4)
+}
+
+test "a function body cannot end inside an open with scope -- the builder refuses (E.9 step 2)" {
+    // CONTROL of the door above: the scope stack is the builder's, so a body
+    // that forgot `end_with` is a compiler bug the builder names, not a C file
+    // that leaves a handler installed. (Asserted by shape: the scope is closed
+    // here, and the count of open scopes is what `end_body` checks.)
+    mut b = FnBuilder.new(TyId(3))
+    ro h = b.temp(TyId(3))
+    ro p = b.temp(TyId(3))
+    ro w = b.begin_with([]HandlerSwap.of(HandlerSwap { eff: "Os", prev: p, handler: h }))
+    assert(b.scopes.len() == 1)
+    b.end_with(w)
+    assert(b.scopes.len() == 0)
+    b.end_body()
+}
+
 test "a body starts with its return place as local 0 (rustc _0) and its entry block current" {
     mut b = FnBuilder.new(TyId(3))
     assert(b.current() == BlockId(0))
@@ -64,6 +139,7 @@ test "the placement door records dest = Expr(e) in the current block" {
         Decl(_) => assert(false)
         Output(_) => assert(false)
         OutputEnd => assert(false)
+        SetHandler(_) | RestoreHandler(_) | PushFrame(_) | PopFrame => assert(false)
     }
     b.end_body()
     ro f = b.finish()
@@ -77,6 +153,7 @@ test "the placement door records dest = Expr(e) in the current block" {
         Decl(_) => assert(false)
         Output(_) => assert(false)
         OutputEnd => assert(false)
+        SetHandler(_) | RestoreHandler(_) | PushFrame(_) | PopFrame => assert(false)
     }
 }
 
@@ -93,6 +170,7 @@ test "a store keeps the tree's target and operator; an evaluation keeps only the
         Decl(_) => assert(false)
         Output(_) => assert(false)
         OutputEnd => assert(false)
+        SetHandler(_) | RestoreHandler(_) | PushFrame(_) | PopFrame => assert(false)
     }
     b.eval(stand_in_expr())
     b.end_body()
@@ -402,6 +480,7 @@ test "a for over a collection: the header carries vec/idx/elem locals, the body 
         Decl(_) => assert(false)
         Output(_) => assert(false)
         OutputEnd => assert(false)
+        SetHandler(_) | RestoreHandler(_) | PushFrame(_) | PopFrame => assert(false)
     }
     b.end_loop(c)
     b.end_body()
@@ -456,6 +535,7 @@ test "an if-let: the Option lands in a binding, the If tests IsSome of it, the b
         Decl(_) => assert(false)
         Output(_) => assert(false)
         OutputEnd => assert(false)
+        SetHandler(_) | RestoreHandler(_) | PushFrame(_) | PopFrame => assert(false)
     }
     b.end_if(c)
     b.end_body()
@@ -465,6 +545,7 @@ test "an if-let: the Option lands in a binding, the If tests IsSome of it, the b
             IsSome(l) => assert(l == o)
             Expr(_) => assert(false)
             NotSome(_) => assert(false)
+            FrameEntered(_) => assert(false)
         }
         Return => assert(false)
         Goto(_) => assert(false)

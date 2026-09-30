@@ -1,0 +1,12 @@
+// #1405 carrier, KIND module -- see `../p1405_opt_eq_late.nv`. The sum is
+// fenced from A4 value placement (it is a slice element below), so it stays a
+// heap `Nova_P1405Kind*`, exactly like Carina's `TypeKind`.
+module p1405_opt_eq_late.p1405_kind
+
+#impl(Equal)
+export type P1405Kind enum
+    | KPrim
+    | KRecord
+    | KSum
+
+export fn p1405_kinds() -> []P1405Kind => [P1405Kind.KPrim, P1405Kind.KSum]

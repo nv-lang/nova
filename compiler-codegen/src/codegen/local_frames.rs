@@ -55,4 +55,11 @@ impl CEmitter {
             if self.var_types.get(n) != Some(t) { self.var_types.insert(n.clone(), t.clone()); }
         }
     }
+
+    /// #1399: is a read of `name` in `file_id` a MODULE value with a C symbol of its own (a lazy `ro`, a
+    /// module-private or qualified `const`) rather than a local? Such a read is not a closure capture: the body
+    /// reads the symbol, and the capture's env init wrote the bare source name -- undeclared in C.
+    pub(crate) fn is_module_value_read(&self, file_id: crate::diag::FileId, name: &str) -> bool {
+        !self.is_local_read(name) && (self.lazy_const_sym(file_id, name).is_some() || self.init_dep_sym(file_id, name) != name)
+    }
 }

@@ -215,6 +215,7 @@ export fn JsonObjectIter mut @next() -> Option[(str, JsonValue)] {
 /// p320_phase4_jsonvalue_sumlift_pos.nv` for the full repro/diagnosis of
 /// both gaps.
 #stable(since = "0.1")
+#impl(Equal)
 export type JsonValue enum
     | Null
     | Bool(bool)
@@ -337,6 +338,7 @@ export fn JsonValue @object() -> Option[JsonObject] =>
 // Lexer — token type и tokenization
 // ──────────────────────────────────────────────────────────────────────────
 
+#impl(Equal)
 type Token enum
     | LBrace      // {
     | RBrace      // }

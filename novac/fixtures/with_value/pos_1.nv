@@ -1,0 +1,20 @@
+module with_value.pos_1
+
+// `with E = factory() { body }` -- the VALUE form of a handler (E.9 step 2,
+// plan 274.11): the factory's handler is installed into its effect's slot for
+// the body and the previous one restored after it. Two bindings in one `with`,
+// the carrier's shape (novac/src/main.nv:358). Behaviour byte-for-byte with
+// the oracle (novac-e1-smoke).
+
+import std.fs.{real_fs}
+import std.os.{args, real_os}
+
+fn main() {
+    with Os = real_os() {
+        println(args().len())
+    }
+    with Fs = real_fs(), Os = real_os() {
+        println(args().len() + 1)
+    }
+    println(args().len() + 2)
+}

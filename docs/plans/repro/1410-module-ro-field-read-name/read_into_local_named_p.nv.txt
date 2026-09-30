@@ -1,0 +1,16 @@
+module probe
+
+type Pt { x int, y int }
+
+fn three() -> int => 3
+
+ro p = Pt { x: three(), y: 2 }
+
+fn direct() -> int {
+    ro v = p.y
+    v
+}
+
+fn main() {
+    print("${direct()}")
+}

@@ -1,0 +1,12 @@
+#!/bin/bash
+# #1412 grid: for each cell, build+run the module form and the associated form; SAME when outputs agree.
+P=/c/Users/B7E3~1/AppData/Local/Temp/claude/d--Sources-nv-lang-nova/2ed7d346-7886-4768-b532-3cd5bde9137b/scratchpad
+R=$P/p1399/run.sh
+python $P/p1412/grid.py > /dev/null
+for c in $(ls $P/p1412/cells); do
+    [ -n "$1" ] && [ "$c" != "$1" ] && continue
+    m=$(bash $R $P/p1412/cells/$c/mod/probe.nv | tr '\n' ' ' | sed 's#[^ ]*probe\.[nvc]*:##g' | cut -c1-110)
+    a=$(bash $R $P/p1412/cells/$c/assoc/probe.nv | tr '\n' ' ' | sed 's#[^ ]*probe\.[nvc]*:##g' | cut -c1-150)
+    [ "$m" = "$a" ] && v=SAME || v=DIFF
+    printf "%-4s %-16s mod[%s]\n                      assoc[%s]\n" $v $c "$m" "$a"
+done

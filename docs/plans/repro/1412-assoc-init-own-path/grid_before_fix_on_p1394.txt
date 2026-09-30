@@ -1,0 +1,22 @@
+    Finished `release` profile [optimized] target(s) in 5m 08s
+DIFF c_arith_modref   mod[run: 6 ]
+                      assoc[BUILD FAIL: error: codegen error: [INTERNAL-PANIC] [E_CODEGEN_TYPE_UNKNOWN] Ident `LIT` not in var_types / not a sum-variant — unknown type ]
+DIFF c_cfn            mod[run: 16 ]
+                      assoc[BUILD FAIL: error: compiler error: lld-link: error: undefined symbol: nova_fn_5probe2sq clang: error: linker command failed with exit code 1 (use -v t]
+--
+DIFF c_rec            mod[run: 10|10 ]
+                      assoc[BUILD FAIL: error: compiler error: 1398:23: error: initialization of non-aggregate type 'const Nova_Pt *' (aka 'const struct Nova_Pt *') with a design]
+--
+DIFF r_bag            mod[BUILD FAIL: error: codegen error: [INTERNAL-PANIC] [E_CODEGEN_TYPE_UNKNOWN] Path call return type unknown (no ]
+                      assoc[BUILD FAIL: error: codegen error: [INTERNAL-PANIC] [E_CODEGEN_TYPE_UNKNOWN] Index element type unknown for obj_ty=""; expr.id=ExprId(23216) ]
+DIFF r_call           mod[run: 4 ]
+                      assoc[BUILD FAIL: error: compiler error: lld-link: error: undefined symbol: nova_fn_5probe5three clang: error: linker command failed with exit code 1 (use -]
+--
+DIFF r_mkpt           mod[run: 6|3 ]
+                      assoc[BUILD FAIL: error: compiler error: lld-link: error: undefined symbol: nova_fn_5probe4mkpt clang: error: linker command failed with exit code 1 (use -v]
+DIFF r_pts            mod[BUILD FAIL: error: codegen error: cannot infer type argument `T` for generic function `copy_n_nonoverlapping` ]
+                      assoc[BUILD FAIL: error: codegen error: cannot infer type argument `T` for generic function `copy_n_nonoverlapping` — appears in param `src` (#0), param `]
+DIFF r_str            mod[run: n3|2 ]
+                      assoc[BUILD FAIL: error: compiler error: 8227:29: error: assigning to 'int' from incompatible type 'nova_str' 1 error generated. ]
+
+[exited with code 0]

@@ -41,7 +41,7 @@ import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, 
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
 import ../sem.{ty_source_name, c_shell_method, is_value_record}
-import ../types.{TyId, no_ty, is_ty, same_ty}
+import ../types.{TyId, no_ty, is_ty}
 import ../sem.{option_payload, for_head_elem}
 import ../sem.{let_decl_of, const_init_at, const_full_name}
 import ../sem.{iflet_pattern_at, iflet_init_at, iflet_body_at, iflet_else_at}
@@ -88,6 +88,19 @@ fn Checker mut @type_file(file Node) -> () {
             // value's own calls are recorded.
             for c in file_decls(file) {
                 if Some(lk) = let_decl_of(c) {
+                    ro row = @module_value_row(branch_children(lk))
+                    if row >= 0 {
+                        @mv_decl_rows.push(row)
+                        @mv_decl_nodes.push(lk)
+                    } else {
+                        // A name the collector skipped: no row, no cycle to name.
+                    }
+                } else {
+                    // Not a module value.
+                }
+            }
+            for c in file_decls(file) {
+                if Some(lk) = let_decl_of(c) {
                     ro kids = branch_children(lk)
                     ro row = @module_value_row(kids)
                     if row >= 0 && @mv_state[row] == 0 {
@@ -126,7 +139,8 @@ fn Checker @module_value_row(kids []Node) -> int {
 fn Checker mut @type_module_value_at(row int) -> () {
     ro cd = @ctx.consts.rows[row]
     @mv_state[row] = 1
-    ro saved_expect = same_ty(@value_expect)
+    @mv_stack.push(row)
+    ro saved_expect = @value_expect
     @value_expect = no_ty()
     if cd.init.len() > 0 {
         @type_module_value(cd.init[0])
@@ -134,6 +148,7 @@ fn Checker mut @type_module_value_at(row int) -> () {
         // No initializer: the parser's own refusal named it.
     }
     @value_expect = saved_expect
+    ro _ = @mv_stack.pop()
     @mv_state[row] = 2
     @chan.record_module_value(row)
 }
@@ -156,6 +171,51 @@ fn Checker mut @settle_module_value(name str) -> bool {
         // Typed already.
     }
     false
+}
+
+/// `a -> b -> a` -- the path a cycle diagnostic names.
+fn arrow_path(names []str) -> str {
+    consume out = StringBuilder.new()
+    mut first = true
+    for n in names {
+        out.append(if first { "" } else { " -> " })
+        out.append(n)
+        first = false
+    }
+    out
+}
+
+/// A read of module value `name` closed a CYCLE: refuse it as the language
+/// does (D184 amendment 2026-09-30, E_MODULE_INIT_CYCLE) -- on the
+/// declaration whose read closes the cycle, the value being typed right now,
+/// with the path from `name` round to itself.
+fn Checker mut @report_module_cycle(name str) -> () {
+    ro row = raw_crow(@ctx.defs.const_row(name) ?? ice("check: a module value in a cycle lost its row"))
+    mut from = 0 - 1
+    for i in 0..@mv_stack.len() {
+        if from < 0 && @mv_stack[i] == row {
+            from = i
+        } else {
+            // Not the first occurrence of the row the read names.
+        }
+    }
+    assert(from >= 0, "check: a module value in a cycle is not on the typing stack")
+    mut names = []str.new()
+    for i in from..@mv_stack.len() {
+        names.push(@ctx.consts.rows[@mv_stack[i]].name)
+    }
+    names.push(name)
+    ro msg = module_init_cycle_msg(arrow_path(names))
+    ro closing = @mv_stack[@mv_stack.len() - 1]
+    for i in 0..@mv_decl_rows.len() {
+        if @mv_decl_rows[i] == closing {
+            @reject_first_leaf_of(branch_children(@mv_decl_nodes[i]), msg)
+            return
+        } else {
+            // Another module value's declaration.
+        }
+    }
+    ice("check: a module value in a cycle without its declaration")
 }
 
 /// A module value's initializer, typed ONCE into the file's channel
@@ -411,7 +471,7 @@ fn Checker mut @type_fn(f Node) -> () {
             if e.kind_of() == NodeKind.MatchExpr {
                 @type_match(e)
             } else if if_body {
-                @value_expect = same_ty(@ret_expect)
+                @value_expect = @ret_expect
                 @type_if_value(e)
                 @value_expect = no_ty()
             } else if is_value_tail_kind(e.kind_of()) {

@@ -93,6 +93,20 @@ type Checker {
     /// depth-first walk that yields the topological order. Empty in an
     /// instance checker, which types no initializer.
     mv_state []int
+    /// The module values being typed right now, outermost first -- the path a
+    /// cycle is named by (`a -> b -> a`, D184 amendment 2026-09-30).
+    mv_stack []int
+    /// Bindings that existed when the handler literal being typed began, -1
+    /// outside one: a name read from its op bodies and found below this row
+    /// was bound OUTSIDE the literal -- a capture (E.9 step 3).
+    lit_rows int
+    /// The handler literal being typed; meaningful while `lit_rows >= 0`.
+    lit_node NodeId
+    /// Constant-table rows of the file's module values and, at the same index,
+    /// their declarations -- where a cycle's diagnostic stands.
+    mv_decl_rows []int
+    /// See `mv_decl_rows`.
+    mv_decl_nodes []Node
     /// The body being typed returns no value (`-> ()` or none declared): a bare `return` is legal.
     ret_unit bool
 }
