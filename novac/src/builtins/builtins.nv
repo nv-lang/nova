@@ -355,13 +355,15 @@ export type BuiltinType value {
 // called it too. A module-level `ro` binding is initialized once and read
 // forever; the type system keeps it read-only).
 //
-// Module-private, not exported, and that is NOT the wanted shape: probed
-// 2026-08-16 — `export ro` of a vector is not importable across a module
-// boundary in the oracle (`undefined identifier` at the use site), and
-// `export const` refuses `.of(...)` (E_CONST_NOT_CONSTEXPR: literals only).
-// So the table stays private and the ONE reader door below hands it out.
-// [LEGACY-#701-export-ro-vector] goes when the oracle exports `ro` values.
-ro universe = []BuiltinType.of(
+// THE CANONICAL FORM (274.5 section 6, step 3; LEGACY-#701 retired 2026-09-30):
+// an ASSOCIATED module value, exported. `ro` and not `const`, and that is the
+// spec's word, not a taste: an array literal is an allocation, and D184 keeps
+// allocations out of `const` (03-syntax.md:1353; the integrator's ruling of
+// 2026-09-30). It is ONE cell, computed once before `main` (D200,
+// 02-types.md:9319), and every reader reads that cell -- the private table
+// and its reader door `builtin_types()` that stood here while the oracle
+// could not export a `ro` vector are gone.
+export ro BuiltinType.ALL = [
     BuiltinType { name: "int", c_name: "nova_int", family: PrimFamily.PfInt, bits: 64, signed: true },
     BuiltinType { name: "str", c_name: "nova_str", family: PrimFamily.PfStr, bits: 0, signed: false },
     BuiltinType { name: "bool", c_name: "nova_bool", family: PrimFamily.PfBool, bits: 0, signed: false },
@@ -385,7 +387,7 @@ ro universe = []BuiltinType.of(
     //
     // It goes LAST so no seeded ordinal moves: `Prims` reads the first four by
     // index, and an insertion above would have silently renamed them.
-    BuiltinType { name: "()", c_name: "nova_unit", family: PrimFamily.PfUnit, bits: 0, signed: false })
+    BuiltinType { name: "()", c_name: "nova_unit", family: PrimFamily.PfUnit, bits: 0, signed: false }]
 
 /// THE ROW of a primitive by its universe ordinal -- family, width, signedness
 /// and both spellings in one value, for the doors in `sem/type_shape` that
@@ -397,9 +399,9 @@ ro universe = []BuiltinType.of(
 /// allocates nothing, so the door keeps П18.
 #realtime nogc
 export fn prim_row(ordinal int) -> BuiltinType
-    requires ordinal >= 0 && ordinal < universe.len(), "builtins: primitive ordinal outside the universe"
+    requires ordinal >= 0 && ordinal < BuiltinType.ALL.len(), "builtins: primitive ordinal outside the universe"
 {
-    universe[ordinal]
+    BuiltinType.ALL[ordinal]
 }
 
 /// The runtime ABI spelling of a primitive by its universe ordinal — THE
@@ -410,9 +412,9 @@ export fn prim_row(ordinal int) -> BuiltinType
 /// TkPrim term, so the round trip is prim term -> ordinal -> ABI name.
 #realtime nogc
 export fn prim_c_name(ordinal int) -> str
-    requires ordinal >= 0 && ordinal < universe.len(), "builtins: primitive ordinal outside the universe"
+    requires ordinal >= 0 && ordinal < BuiltinType.ALL.len(), "builtins: primitive ordinal outside the universe"
 {
-    universe[ordinal].c_name
+    BuiltinType.ALL[ordinal].c_name
 }
 
 /// The SOURCE spelling of a primitive by its universe ordinal — the name a
@@ -424,24 +426,10 @@ export fn prim_c_name(ordinal int) -> str
 /// message that printed the ABI name would name a type the author never wrote.
 #realtime nogc
 export fn prim_name(ordinal int) -> str
-    requires ordinal >= 0 && ordinal < universe.len(), "builtins: primitive ordinal outside the universe"
+    requires ordinal >= 0 && ordinal < BuiltinType.ALL.len(), "builtins: primitive ordinal outside the universe"
 {
-    universe[ordinal].name
+    BuiltinType.ALL[ordinal].name
 }
-
-/// The universe as a whole, for the seed loop in sem — the SAME vector, not a
-/// copy (a `[]T` is a header; the rows live once). Exists only because the
-/// oracle cannot export a `ro` vector yet (see `universe`).
-///
-/// The return type carries `ro` (owner's review 2026-08-17). Handing a `ro`
-/// binding out as a plain `[]T` launders it: the caller gets a MUTABLE alias
-/// of read-only data. Probed the same day — the oracle accepts the laundered
-/// form silently AND the mutation lands: pushing through the alias grows the
-/// `ro` table itself (repro in docs/plans/274.12-novac-divergences.md). Until that is
-/// fixed the compiler cannot enforce this for us, so the signature states it:
-/// `-> ro []BuiltinType`, the same shape std uses for its own views
-/// (`str @bytes() -> ro []u8`, `IoCapture @out_bytes() -> ro []u8`).
-export fn builtin_types() -> ro []BuiltinType => universe
 
 /// The two bool literals of the language, named ONCE.
 ///

@@ -24,7 +24,7 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, NodeId, raw_node, is_node}
 import ../diag.{ice}
 import ../names.{NameTable, NamespaceId, DeclId, raw_decl, no_decl, is_decl}
-import ../builtins.{TypeKind, builtin_types, COERCE_ATTR, UNIT_TYPE_NAME, PRIV_MARKER}
+import ../builtins.{TypeKind, BuiltinType, COERCE_ATTR, UNIT_TYPE_NAME, PRIV_MARKER}
 import ../types.{Interner, TyId, no_ty, is_ty}
 
 /// The type and declaration registry of ONE file (without methods:
@@ -195,7 +195,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // below and shared by every declaration (see the comment there).
     mut param_rows = []TyId.new()
     mut ordinal = 0
-    for bt in builtin_types() {
+    for bt in BuiltinType.ALL {
         seeded.push(seed(types, defs, tys, bt.name, ordinal))
         builtin_names.put(bt.name, ordinal)
         ordinal += 1
@@ -203,7 +203,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // THE HANDLER CONSTRUCTOR, right after the universe and before the handed
     // declarations: a signature may name `Effect[Fs]` (the self-build carrier
     // does), and the seed must precede the harvest the way the prims do. It
-    // is NOT part of `builtin_types()`: that table is the PRIMITIVE universe,
+    // is NOT part of `BuiltinType.ALL`: that table is the PRIMITIVE universe,
     // ordinals and all, and `Effect` has no ordinal -- it is a generic
     // constructor with its own seed door (see `seed_effect_ctor`).
     seed_effect_ctor(types, defs, tys)
