@@ -15961,9 +15961,7 @@ impl<'a> TypeCheckCtx<'a> {
         // №1415: open types (`int`, `str`, `char`, floats, tuples holding one)
         // and the empty `match` -- decided here, before the sum analysis below,
         // which only knows named sums and gives up silently on everything else.
-        if std::env::var("NOVA_KILL_1415").as_deref() != Ok("1")
-            && self.check_match_open_or_empty(scrut_ty, arms, span, errors)
-        {
+        if self.check_match_open_or_empty(scrut_ty, arms, span, errors) {
             return;
         }
         // 1. Тип скрутини — именованная сумма? Generic-инстанс (`Option[T]`)
