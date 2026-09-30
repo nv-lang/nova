@@ -251,6 +251,7 @@ impl CEmitter {
         // scope — captures here are resolved via `current_spawn_captures`
         // (`_c->name`), not `var_boxed`; a stale outer entry would shadow it.
         let saved_var_boxed_detach = std::mem::take(&mut self.var_boxed);
+        let saved_exits_detach = self.swap_exit_scopes(Default::default());
 
         self.line(&format!("{}void {}(mco_coro* _co) {{", self.top_level_storage(), detach_id));
         self.indent += 1;
@@ -368,6 +369,7 @@ impl CEmitter {
         self.indent = saved_indent;
         self.out = saved_out;
         self.var_boxed = saved_var_boxed_detach;
+        self.swap_exit_scopes(saved_exits_detach);
         self.deferred_impls.push_str(&entry_fn_text);
 
         // ── Call site: heap-alloc ctx, fill captures, spawn_orphan ──

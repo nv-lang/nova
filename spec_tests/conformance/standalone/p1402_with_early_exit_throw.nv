@@ -1,0 +1,66 @@
+// EXPECT_STDOUT P1402 bang=outer throw=outer fail-with-return=caught
+//
+// Registry 221.1 #1402: an error propagated OUT of a `with` body by `!!` or
+// `throw` leaves the block just as early as `return` does, and must remove the
+// handler that `with` installed. Before the fix only a `with Fail` block had a
+// landing pad, so a throw through any other `with` skipped its restore
+// epilogue: the inner handler stayed installed after the catching block --
+// `inner` printed where `outer` belongs.
+//
+// Last cell: a `return` out of a `with Fail` body left that block's Fail
+// handler installed and its frames on the fail/interrupt stacks; the next
+// throw, still inside the caller's own `with Fail`, was answered by the
+// returned block's handler and jumped into a returned stack frame. After the
+// fix the caller's live handler catches it.
+module standalone.p1402_with_early_exit_throw
+
+type P1402XSay effect { fn say() -> str }
+
+fn p1402_ask() P1402XSay -> str => P1402XSay.say()
+
+fn p1402_bang(r Result[int, str]) Fail -> int {
+    with P1402XSay = effect P1402XSay { say() -> str { "inner" } } {
+        r!!
+    }
+}
+
+fn p1402_throw(n int) Fail -> int {
+    with P1402XSay = effect P1402XSay { say() -> str { "inner" } } {
+        if n > 0 {
+            throw "boom"
+        }
+        n
+    }
+}
+
+fn p1402_fail_with_return() -> int {
+    with Fail = effect Fail { fail(_m) -> never { interrupt 0 } } {
+        return 1
+    }
+}
+
+fn p1402_throw_now() Fail -> int {
+    throw "late"
+}
+
+fn main() Io -> () {
+    with P1402XSay = effect P1402XSay { say() -> str { "outer" } } {
+        ro a = with Fail = effect Fail { fail(_m) -> never { interrupt 10 } } {
+            p1402_bang(Err("no"))
+        }
+        ro s1 = p1402_ask()
+        ro b = with Fail = effect Fail { fail(_m) -> never { interrupt 20 } } {
+            p1402_throw(1)
+        }
+        ro s2 = p1402_ask()
+        mut r = 0
+        ro c = with Fail = effect Fail { fail(_m) -> never { interrupt 30 } } {
+            r = p1402_fail_with_return()
+            p1402_throw_now()
+        }
+        ro s3 = if c == 30 { "caught" } else { "lost" }
+        if a == 10 && b == 20 && r == 1 {
+            println("P1402 bang=${s1} throw=${s2} fail-with-return=${s3}")
+        }
+    }
+}

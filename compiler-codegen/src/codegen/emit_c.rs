@@ -2017,44 +2017,13 @@ pub struct CEmitter {
     // гасит, ветка-непотребитель оставляет — MaybeConsumed-safe) НИКУДА не
     // делся: это и есть C-переменная `_defer_<c-имя>_active`, объявляемая
     // рядом с переменной. Ушёл только реестр, который её РАЗЫСКИВАЛ.
-    /// [M-217-break-continue-loop-boundary-bleed] BUGFIX: one entry per
-    /// currently-open loop body (`for`/`while`/bare `loop`), pushed/popped by
-    /// `emit_loop_body_inline_ex` alongside its own `enter_defer_scope`/
-    /// `leave_defer_scope` call — `true` iff THAT call actually pushed a real
-    /// `DeferScope` (i.e. the loop's OWN top-level statements contain a
-    /// `defer` or an auto-cleanup-qualifying bare `consume` let). `enter_
-    /// defer_scope` early-returns `block_id=0` (no scope, no C boilerplate)
-    /// for a loop body with neither — a deliberate perf optimization for the
-    /// (common) trivial-loop case. But `Stmt::Break`/`Stmt::Continue`'s
-    /// `emit_early_exit_cleanup(stop_at_loop=true)` walks `self.defer_scopes`
-    /// from the top looking for the NEAREST `is_loop_body` scope to stop at —
-    /// when the loop being broken registered NO scope of its own, that
-    /// marker is simply ABSENT from the stack, so the walk "overshoots" past
-    /// the (nonexistent) loop boundary straight into whatever ENCLOSING,
-    /// still-open scope happens to be on top instead (e.g. the spawn/fn
-    /// body's own auto-cleanup consume-let scope) — firing that OUTER
-    /// scope's `@cleanup` prematurely (the outer scope has not actually
-    /// exited; a `break` out of a nested trivial loop should touch NOTHING
-    /// beyond the loop's own — absent — boundary). Found via `[M-217-spawn-
-    /// closure-consume-cleanup-undefined]` follow-up regression
-    /// (`readguard_writeguard_separated.nv`'s "multiple ReadGuards can
-    /// coexist": `consume rg = rw.read(); loop { … if … { break } … };
-    /// rg.unlock()` — the CAS-retry loop's `break` wrongly fired `rg`'s
-    /// `@cleanup` early, then the manual `.unlock()` after the loop fired
-    /// AGAIN → double-release, "read_unlock() called without a matching
-    /// read()"). Reproducible with NO spawn involved at all (plain `fn
-    /// main`) — a pre-existing gap in the shared break/continue early-exit
-    /// machinery, merely never exercised via a spawn/parallel-for body
-    /// before (spawn bodies never registered a real auto-cleanup scope
-    /// prior to this same wave's `emit_spawn` fix). `Stmt::Break`/`Continue`
-    /// consult `.last()`: `Some(false)` (nearest loop registered no scope)
-    /// → skip `emit_early_exit_cleanup` entirely (sound: a loop with no
-    /// scope of its own can, by construction, have nothing nested inside it
-    /// still open on `self.defer_scopes` at this point); `Some(true)` or
-    /// empty (defensive fallback, preserves old behavior) → proceed as
-    /// before, which already correctly stops AT a genuinely-registered loop
-    /// scope.
-    loop_body_has_scope: Vec<bool>,
+    /// One entry per open loop body: `defer_scopes.len()` when it began.
+    /// `break`/`continue` leave exactly the scopes above it -- defer blocks
+    /// and (#1402) `with` bodies nested in the loop -- and nothing enclosing
+    /// the loop. Replaces a per-loop `has_scope` flag
+    /// ([M-217-break-continue-loop-boundary-bleed]), under which a loop with
+    /// no defer of its own skipped the walk and lost the scopes nested in it.
+    loop_scope_floor: Vec<usize>,
     /// Closure mut-capture heap-box registry. Maps variable name → C box-pointer
     /// variable name (`_box_<name>`). When a mut local is captured by a closure,
     /// it is heap-promoted: a `T* _box_x = nova_alloc(sizeof(T)); *_box_x = x;`
@@ -2581,7 +2550,11 @@ enum DeferOutcome<'a> {
 /// + проверки на `entries.iter().any(_)`), но сохраняются как diagnostic
 /// metadata + точки расширения для будущей debug-инфраструктуры.
 #[allow(dead_code)]
+#[derive(Default)]
 struct DeferScope {
+    /// #1402: `Some` = not a defer block but an open `with` body; every exit
+    /// path leaves it through `emit_with_leave` (no entries, no frames here).
+    with_leave: Option<WithLeave>,
     /// Unique block ID for naming.
     block_id: usize,
     /// All `defer` entries registered in this block, in textual order.
@@ -2606,9 +2579,19 @@ struct DeferScope {
     /// Plan 20 Ф.8 (2): name of C `int` "interrupt-frame popped" flag
     /// (set to 1 by early-exit cleanup / interrupt-path handler).
     intframe_popped_var: String,
-    /// `true` if this scope is loop-body — break/continue stop here
-    /// rather than walking outer scopes.
+    /// `true` if this scope is loop-body (diagnostic; break/continue walk
+    /// down to `loop_scope_floor`).
     is_loop_body: bool,
+}
+
+/// #1402: what leaving one `with` block takes -- see `emit_with_leave`.
+#[derive(Clone)]
+struct WithLeave {
+    iframe: String,
+    fframe: Option<String>,
+    caught: Option<String>,
+    app_fs: Option<(String, String)>,
+    active_scope: Option<String>,
 }
 
 /// Plan 209 Ф.1 (A4): result of `CEmitter::emit_module_multi_tu`. See that
@@ -2886,7 +2869,7 @@ impl CEmitter {
             method_consume_param_positions: HashMap::new(),
             consume_receiver_methods: HashMap::new(),
             zero_on_move_types: HashMap::new(),
-            loop_body_has_scope: Vec::new(),
+            loop_scope_floor: Vec::new(),
             var_boxed: HashMap::new(),
             lazy_detach_boxes: std::collections::HashSet::new(),
             detach_box_hoist: None,
@@ -12948,7 +12931,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             WithResultCategory::UnitVoid => "nova_int".to_string(),
         };
         self.line(&format!("{} {};", result_decl_ty, result_tmp));
-        self.line(&format!("nova_interrupt_push(&{});", iframe));
+        // #1402: the frame carries how to take this block's handlers back out
+        // (a generated restore over the saved values) -- `nova_interrupt_leave`
+        // runs it on EVERY exit path, see `emit_with_leave`.
+        let restore_fn = format!("_nv_with_restore_{}", iframe);
+        let prevs: Vec<&str> = saves.iter().map(|(_, p, _)| p.as_str()).collect();
+        self.line(&format!("void* {}_prevs[] = {{ {} }};", iframe, prevs.join(", ")));
+        self.line(&format!("extern void {}(void** p);", restore_fn));
+        let _ = writeln!(self.deferred_impls, "void {}(void** p) {{", restore_fn);
+        for (i, (eff, _, _)) in saves.iter().enumerate().rev() {
+            let _ = writeln!(self.deferred_impls, "    _nova_handler_{eff} = (NovaVtable_{eff}*)p[{i}];");
+        }
+        let _ = writeln!(self.deferred_impls, "}}\n");
+        self.line(&format!("nova_interrupt_push_with(&{0}, {1}, {0}_prevs);", iframe, restore_fn));
 
         // Plan 61 followup #1: attach owner_iframe для Fail-shaped handlers,
         // чтобы handler-arm `interrupt v` resolve'тся в OUR with-block, не в
@@ -12993,6 +12988,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // arg-only inference can't see the OTHER Result[T,E] side.
         let new_fail_e_hint = self.active_fail_e_hint(bindings);
         let saved_fail_e_hint = std::mem::replace(&mut self.current_fail_e_hint, new_fail_e_hint);
+        let leave = WithLeave {
+            iframe: iframe.clone(), fframe: fframe.clone(), caught: caught_var.clone(),
+            app_fs: application_fs_var.clone().zip(application_fs_prev.clone()),
+            active_scope: active_scope_save.clone(),
+        };
+        // #1402: open for the body -- an early exit leaves it like fall-through.
+        self.defer_scopes.push(DeferScope { with_leave: Some(leave.clone()), ..Default::default() });
         let with_block_id = self.enter_defer_scope(body, false);
         for stmt in &body.stmts {
             self.emit_stmt(stmt)?;
@@ -13044,6 +13046,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
         self.leave_defer_scope(with_block_id);
+        self.defer_scopes.pop();
         self.current_fail_e_hint = saved_fail_e_hint;
         self.indent -= 1;
         self.line("}");
@@ -13070,7 +13073,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("}");
 
         // Close fail-frame outer if we opened it
-        if let Some(ff) = &fframe {
+        if fframe.is_some() {
             self.indent -= 1;
             self.line("} else {");
             self.indent += 1;
@@ -13097,75 +13100,45 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             self.indent -= 1;
             self.line("}");
-            // [race-state-dump 2026-07-13] `nova_fail_pop()` here is WRONG:
-            // it assumes `_nova_fail_top == &ff` (single-level pop), which only
-            // holds when the throw was caught DIRECTLY at this with-block's own
-            // setjmp. When the body called into nested Fail-signature functions
-            // (each pushing its OWN NovaFailFrame deeper on the C stack) and the
-            // handler recovered via `interrupt` (nova_interrupt() in effects.c
-            // longjmps straight to the nearest NovaInterruptFrame — see D61
-            // comment there — WITHOUT touching `_nova_fail_top`), those nested
-            // frames' own `nova_fail_pop()` epilogues never ran (their C stack
-            // was discarded by the longjmp). `_nova_fail_top` is then left
-            // dangling at one of those now-dead stack frames. A naive
-            // `nova_fail_pop()` here walks ONE level from that dangling pointer
-            // instead of restoring the true pre-entry value, so the corruption
-            // survives this with-block and (in a merged multi-test-block C
-            // process) later gets treated as a live NovaFailFrame — the next
-            // throw writes its error fields through the dangling pointer
-            // (corrupting whatever unrelated local/test now occupies that stack
-            // slot) and longjmps to a garbage `jmp_buf` (crash at a
-            // composition-dependent point). `ff.prev` was captured ONCE at
-            // `nova_fail_push(&ff)` time and never mutated since — restoring
-            // directly to it is a correct hard-reset in EVERY case (identical
-            // to the old single-level pop when `_nova_fail_top == &ff` still
-            // holds, and self-healing when it doesn't).
+        }
+
+        self.emit_with_leave(&leave);
+        Ok(result_tmp)
+    }
+
+    /// #1402: THE way out of a `with` block -- emitted at its fall-through /
+    /// interrupt / caught landing AND, via its scope on `defer_scopes`, before
+    /// every `return`/`break`/`continue`/`?` leaving the body
+    /// (`emit_early_exit_cleanup`). Before, only the landing had it, and an
+    /// early exit left the handlers installed and both frames on their stacks.
+    fn emit_with_leave(&mut self, w: &WithLeave) {
+        // [race-state-dump 2026-07-13] hard reset, not `nova_fail_pop()`: an
+        // `interrupt` longjmps here past nested Fail functions' frames without
+        // popping them, and a one-level pop from that dangling top kept the
+        // corruption alive into the next throw. `ff.prev` is set once at push.
+        if let Some(ff) = &w.fframe {
             self.line(&format!("_nova_fail_top = {}.prev;", ff));
         }
-
-        // Restore handlers (regardless of path)
-        for (effect_name, prev_var, _hv) in saves.iter().rev() {
-            self.line(&format!("_nova_handler_{eff} = {prev};",
-                eff = effect_name, prev = prev_var));
-        }
-        self.line("nova_interrupt_pop();");
-
-        // Plan 173 Ф.2.C: ЕДИНАЯ точка терминальной политики (CATCH). Выполняется
-        // ПОСЛЕ pop(fail) + restore(handlers) + pop(interrupt) — site-специфичный
-        // пролог сделан (контракт nova_scope_exit). Для USER/USER_TYPED helper
-        // возвращается (result уже = default); для PANIC/CANCEL — re-throw нагору
-        // (longjmp), минуя finalizer-fire ниже (сохраняет прежний порядок:
-        // CANCEL/PANIC re-throw НЕ запускал Application-finalizer'ы). Порядок
-        // restore-vs-interrupt_pop vs прежним (pop→intpop→restore) не наблюдаем —
-        // независимые TLS-слоты.
-        if let Some(ff) = &fframe {
-            let cv = caught_var.as_ref().expect("caught_var present when fframe is");
+        // Handlers restored + frame dropped by the frame's own restore (the
+        // runtime runs the same door for with-blocks an interrupt routes past).
+        self.line(&format!("nova_interrupt_leave(&{});", w.iframe));
+        // Plan 173 Ф.2.C: the ONE terminal-policy point (CATCH), after the pops
+        // and restores (nova_scope_exit contract). USER: returns (result is the
+        // default); PANIC/CANCEL: re-throw upward, skipping the finalizers below
+        // as before. `caught` is 0 on every other path.
+        if let (Some(ff), Some(cv)) = (&w.fframe, &w.caught) {
             self.line(&format!("if ({}) {{ nova_scope_exit(&{}, NOVA_SCOPE_EXIT_CATCH); }}", cv, ff));
         }
-
-        // Plan 110.9.3 V1.1 [M-110.9.3-register-finalizer-lifo]: fire
-        // finalizers LIFO + restore prev TLS. Runs unconditionally на
-        // both normal completion AND throw path (D195 spec). Already
-        // past the throw-catch logic above — at this point we either
-        // completed normally OR caught a throw that was handled.
-        if let (Some(fs_var), Some(prev_var)) = (&application_fs_var, &application_fs_prev) {
-            self.line(&format!(
-                "nova_finalizer_fire_lifo(&{fs});  /* Plan 110.9.3 V1.1 LIFO fire */",
-                fs = fs_var
-            ));
-            self.line(&format!(
-                "_nova_active_finalizer_stack = {prev};",
-                prev = prev_var
-            ));
+        // Plan 110.9.3 V1.1 [M-110.9.3-register-finalizer-lifo]: fire LIFO +
+        // restore the prev TLS stack, on every exit (D195).
+        if let Some((fs, prev)) = &w.app_fs {
+            self.line(&format!("nova_finalizer_fire_lifo(&{});  /* Plan 110.9.3 V1.1 LIFO fire */", fs));
+            self.line(&format!("_nova_active_finalizer_stack = {};", prev));
         }
-
-        // Plan 174 (D349): restore the with-entry active scope (see snapshot at
-        // the top). Runs on both normal completion and handled-throw paths.
-        if let Some(sv) = &active_scope_save {
+        // Plan 174 (D349): restore the with-entry active scope.
+        if let Some(sv) = &w.active_scope {
             self.line(&format!("_nova_active_scope = {};", sv));
         }
-
-        Ok(result_tmp)
     }
 
     /// Plan 19, C8 codegen (D31-rev): desugar handler-лямбды
@@ -13801,6 +13774,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 &mut self.expected_record_type,
                 Self::debt_struct_name_from_c_type(&ret_ty));
             let saved_op_post_label = self.contracts_post_label.take();
+            let saved_op_exits = self.swap_exit_scopes(Default::default());
 
             match &m.body {
                 HandlerMethodBody::Expr(e) => {
@@ -13855,6 +13829,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.current_fn_return_ty = saved_op_ret_ty;
             self.expected_record_type = saved_op_expected;
             self.contracts_post_label = saved_op_post_label;
+            self.swap_exit_scopes(saved_op_exits);
 
             // Restore var_boxed (per-op isolation — see take() above; no
             // `#undef` needed, common closure-capture path uses `var_boxed`
@@ -14047,6 +14022,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Strategy (mirrors emit_handler_lit): swap out, emit, swap back.
         let saved_out = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
+        let saved_exits = self.swap_exit_scopes(Default::default());
         self.indent = 0;
 
         for m in methods {
@@ -14163,6 +14139,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let impl_code = std::mem::replace(&mut self.out, saved_out);
         self.deferred_impls.push_str(&impl_code);
         self.indent = saved_indent;
+        self.swap_exit_scopes(saved_exits);
 
         Ok(box_var)
     }
@@ -14675,6 +14652,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // its own body) so this spawn's captures are resolved ONLY via its
         // own ctx struct; restored below.
         let saved_var_boxed_spawn = std::mem::take(&mut self.var_boxed);
+        let saved_exits_spawn = self.swap_exit_scopes(Default::default());
 
         // Plan 48 Ф.4 ([M-mono-spawn-fwd-decls]): pre-scan `scan_expr_fwd`
         // emits forward declarations for every spawn-body it sees in the
@@ -14960,6 +14938,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.deferred_impls.push_str(&entry_code);
         self.indent = saved_indent;
         self.var_boxed = saved_var_boxed_spawn;
+        self.swap_exit_scopes(saved_exits_spawn);
 
         // spawn evaluates to unit.
         Ok("NOVA_UNIT".to_string())
@@ -16005,6 +15984,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // ── (c) entry function → deferred_impls (out-swap like emit_spawn).
         let saved_out = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
+        let saved_exits_pf = self.swap_exit_scopes(Default::default());
         self.indent = 0;
         // [M-mono-spawn-fwd-decls] parity: inside a monomorphized fn body the
         // pre-pass never saw this drain — push the decl to the mono splice.
@@ -16123,6 +16103,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let entry_code = std::mem::replace(&mut self.out, saved_out);
         self.deferred_impls.push_str(&entry_code);
         self.indent = saved_indent;
+        self.swap_exit_scopes(saved_exits_pf);
         Ok(())
     }
 
@@ -16259,6 +16240,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // isolate `var_boxed` — this work-fn body resolves captures via
         // `current_spawn_captures`, not `var_boxed`.
         let saved_var_boxed_blk = std::mem::take(&mut self.var_boxed);
+        let saved_exits_blk = self.swap_exit_scopes(Default::default());
 
         self.line(&format!("{}void {}(void* _blk_arg) {{", self.top_level_storage(), blk_id));
         self.indent += 1;
@@ -16316,6 +16298,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.deferred_impls.push_str(&blk_code);
         self.indent = saved_indent;
         self.var_boxed = saved_var_boxed_blk;
+        self.swap_exit_scopes(saved_exits_blk);
 
         if has_result {
             Ok(format!("{}._nova_result", ctx_var))
@@ -16460,6 +16443,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // through Ident resolution rather than the plain `_c->param` args
         // built below) must not see a stale outer box entry.
         let saved_var_boxed_blk = std::mem::take(&mut self.var_boxed);
+        let saved_exits_blk = self.swap_exit_scopes(Default::default());
 
         self.line(&format!("{}void {}(void* _blk_arg) {{", self.top_level_storage(), blk_id));
         self.indent += 1;
@@ -16485,6 +16469,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.deferred_impls.push_str(&blk_code);
         self.indent = saved_indent;
         self.var_boxed = saved_var_boxed_blk;
+        self.swap_exit_scopes(saved_exits_blk);
 
         if has_result {
             Ok(format!("{}._nova_result", ctx_var))
@@ -29317,13 +29302,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// pattern bindings are strictly body-local) and returns the previous
     /// contents; `exit` restores them, so LAZY re-entrant emission (a mono
     /// drain or default-method synthesis triggered MID-body of an outer
-    /// function) hands the outer context back exactly what it had.
+    /// function) hands the outer context back exactly what it had. #1402: the
+    /// open exit scopes (defers, `with` bodies) are per-function the same way.
     fn override_maps_scope_enter(
-        &self,
-    ) -> (HashMap<String, String>, HashMap<String, String>) {
+        &mut self,
+    ) -> (HashMap<String, String>, HashMap<String, String>, (Vec<DeferScope>, Vec<usize>)) {
         (
-            std::mem::take(&mut *self.closure_param_type_overrides.borrow_mut()),
-            std::mem::take(&mut *self.pattern_binding_overrides.borrow_mut()),
+            std::mem::take(self.closure_param_type_overrides.get_mut()),
+            std::mem::take(self.pattern_binding_overrides.get_mut()),
+            self.swap_exit_scopes(Default::default()),
         )
     }
 
@@ -29335,8 +29322,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// and discarded by the restore below either way). On a failed emission
     /// (caller aborts or rolls back) intermediate entries are expected.
     fn override_maps_scope_exit(
-        &self,
-        saved: (HashMap<String, String>, HashMap<String, String>),
+        &mut self,
+        saved: (HashMap<String, String>, HashMap<String, String>, (Vec<DeferScope>, Vec<usize>)),
         emitted_ok: bool,
     ) {
         if emitted_ok {
@@ -29361,6 +29348,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         *self.closure_param_type_overrides.borrow_mut() = saved.0;
         *self.pattern_binding_overrides.borrow_mut() = saved.1;
+        self.swap_exit_scopes(saved.2);
     }
 
     fn emit_fn(&mut self, f: &FnDecl) -> Result<(), String> {
@@ -31539,7 +31527,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             next_idx: 0,
             // Plan 173 Ф.1 (#4): fail-frame ставится всегда при наличии defer
             // (не только при path-selective, коих больше нет); поле diagnostic-only.
-            needs_failframe: false,
+            needs_failframe: false, with_leave: None,
             failframe_var,
             failframe_popped_var,
             intframe_var,
@@ -31692,29 +31680,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("}");
     }
 
-    /// Emit defer-cleanup for an early exit (return/break/continue) walking
-    /// scopes from innermost outward. `stop_at_loop` means walk only inner
-    /// scopes up to (but not including) the first loop-body scope — used by
-    /// break/continue. `stop_at_loop=false` means walk ALL scopes — used by
-    /// return.
-    /// Emit defer-cleanup for an early exit:
-    ///   - return: walk ALL scopes (fn-level exit; ALL leave_defer_scope's
-    ///     remaining cleanup will NOT run, so pop fail-frames manually).
-    ///   - break/continue: walk ONLY the innermost loop-body scope (the C
-    ///     `break`/`continue` exits one loop level — outer scopes remain
-    ///     active and clean themselves up later via their own leave_defer_scope).
-    ///
-    /// In both cases we DEACTIVATE the defer flag (`= 0`) so that the eventual
-    /// leave_defer_scope or fail-frame longjmp handler doesn't re-invoke.
-    fn emit_early_exit_cleanup(&mut self, stop_at_loop: bool) {
-        // Plan cleanup без clone(): сначала вытаскиваем scopes из
-        // self.defer_scopes (mem::take заменяет на пустой Vec, освобождая
-        // borrow), iterate over них, emit, потом возвращаем обратно.
-        // Это позволяет вызывать &mut-методы (self.line, emit_defer_body_void)
-        // внутри loop'а без borrow conflict.
+    /// Cleanup for an early exit (return/break/continue/`?`): leaves every open
+    /// scope above `floor`, innermost first -- `return` passes 0 (all of them),
+    /// break/continue the nearest loop's `loop_scope_floor`. Defer flags are
+    /// DEACTIVATED (`= 0`) and frames marked popped so the scope's own
+    /// leave/landing code cannot run them again; a `with` body is left
+    /// through `emit_with_leave`, the same door as its fall-through (#1402).
+    fn emit_early_exit_cleanup(&mut self, floor: usize) {
+        // Taken out of self so &mut-methods can run inside the loop.
         let scopes = std::mem::take(&mut self.defer_scopes);
-        'outer: for scope in scopes.iter().rev() {
-            // Early exit via return — run all defers (Plan 173 Ф.1 #4: plain-only).
+        for scope in scopes[floor..].iter().rev() {
+            if let Some(w) = &scope.with_leave {
+                self.emit_with_leave(w);
+                continue;
+            }
+            // Early exit — run all defers (Plan 173 Ф.1 #4: plain-only).
             for (i, entry) in scope.entries.iter().enumerate().rev() {
                 // Plan 173 Ф.2.B3-merge (D314 §3): consume-flavored entry → run
                 // `@cleanup(Success)` + policy on the early exit (return/break/
@@ -31739,25 +31719,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.indent -= 1;
                 self.line("}");
             }
-            // For return: pop fail-frames as we go (control will never reach
-            // leave_defer_scope of these scopes again). For break/continue:
-            // ONLY the innermost loop scope gets the pop (we walk just one).
-            // Outer scopes remain active, will pop normally at their own
-            // leave_defer_scope.
-            // Fail-frame теперь всегда push'нут (Ф.8 follow-up).
+            // Control never reaches these scopes' leave_defer_scope on this
+            // path: pop their frames (always pushed, Ф.8) and mark them popped.
             self.line("nova_fail_pop();");
             self.line(&format!("{} = 1;", scope.failframe_popped_var));
-            // Plan 20 Ф.8 (2): pop interrupt-frame для early-exit тоже.
             self.line("nova_interrupt_pop();");
             self.line(&format!("{} = 1;", scope.intframe_popped_var));
-            if stop_at_loop && scope.is_loop_body {
-                break 'outer;
-            }
         }
-        // Восстанавливаем scopes — early-exit cleanup НЕ pop'ает scopes из
-        // стека (это разные операции; pop scope происходит только в
-        // leave_defer_scope).
+        // Scopes stay on the stack: only leave_defer_scope pops them.
         self.defer_scopes = scopes;
+    }
+
+    /// #1402: a nested C function (lambda, handler op) opens with no exit
+    /// scopes -- its `return` leaves its own, never the enclosing function's.
+    fn swap_exit_scopes(&mut self, to: (Vec<DeferScope>, Vec<usize>)) -> (Vec<DeferScope>, Vec<usize>) {
+        (std::mem::replace(&mut self.defer_scopes, to.0), std::mem::replace(&mut self.loop_scope_floor, to.1))
+    }
+
+    /// `?`'s early return (D85) is a `return` and leaves the open scopes the
+    /// same way (#1402: it used to skip every defer and `with` restore).
+    fn emit_try_return(&mut self, cond: &str, head: &str, ret: &str) {
+        if self.defer_scopes.is_empty() {
+            self.line(&format!("if ({}) {{ {}return {}; }}", cond, head, ret));
+            return;
+        }
+        self.line(&format!("if ({}) {{ {}", cond, head));
+        self.indent += 1;
+        self.emit_early_exit_cleanup(0);
+        self.line(&format!("return {};", ret));
+        self.indent -= 1;
+        self.line("}");
     }
 
     /// Emit a loop-body block (for/while/loop): integrates defer-scope around
@@ -31777,12 +31768,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// CPU-bound fiber on a large/unbounded loop monopolises its worker,
     /// exactly what the per-iteration safepoint prevents).
     fn emit_loop_body_inline_ex(&mut self, body: &Block, skip_preempt: bool) -> Result<(), String> {
+        self.loop_scope_floor.push(self.defer_scopes.len());
         let block_id = self.enter_defer_scope(body, true);
-        // [M-217-break-continue-loop-boundary-bleed]: record whether THIS
-        // loop actually registered a real defer-scope (`block_id != 0`) so
-        // `Stmt::Break`/`Stmt::Continue` can tell a genuine loop-boundary
-        // marker from an absent one — see `loop_body_has_scope` field doc.
-        self.loop_body_has_scope.push(block_id != 0);
         // Plan 44.7: preemption safepoint at the loop backedge. Emitted as
         // the first statement of the body so it runs at the start of every
         // iteration — this also covers the `continue` edge (continue jumps
@@ -31801,7 +31788,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.line(&format!("(void)({});", v));
         }
         self.leave_defer_scope(block_id);
-        self.loop_body_has_scope.pop();
+        self.loop_scope_floor.pop();
         Ok(())
     }
 
@@ -32413,7 +32400,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 consume_policy: Some(policy),
             }],
             next_idx: 0,
-            needs_failframe: false,
+            needs_failframe: false, with_leave: None,
             failframe_var,
             failframe_popped_var,
             intframe_var,
@@ -35071,7 +35058,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // потом goto. Если defers пустой — просто assign + goto.
                         self.line(&format!("_nova_result = {};", val));
                         if !self.defer_scopes.is_empty() {
-                            self.emit_early_exit_cleanup(/*stop_at_loop=*/false);
+                            self.emit_early_exit_cleanup(0);
                         }
                         self.line(&format!("goto {};", label));
                     } else if self.defer_scopes.is_empty() {
@@ -35083,50 +35070,32 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Plan 59: mono'd tuple type mismatch — field-wise copy.
                         let val_ty = self.infer_expr_c_type(v);
                         self.emit_tuple_return_stash(&ret_ty, &tmp, &val, &val_ty);
-                        self.emit_early_exit_cleanup(/*stop_at_loop=*/false);
+                        self.emit_early_exit_cleanup(0);
                         self.line(&format!("return {};", tmp));
                     }
                 } else {
                     if let Some(label) = post_label {
                         // Contracts mode unit-return.
                         if !self.defer_scopes.is_empty() {
-                            self.emit_early_exit_cleanup(/*stop_at_loop=*/false);
+                            self.emit_early_exit_cleanup(0);
                         }
                         self.line(&format!("goto {};", label));
                     } else {
                         if !self.defer_scopes.is_empty() {
-                            self.emit_early_exit_cleanup(/*stop_at_loop=*/false);
+                            self.emit_early_exit_cleanup(0);
                         }
                         self.line("return NOVA_UNIT;");
                     }
                 }
             }
-            Stmt::Break(_) => {
-                // [M-217-break-continue-loop-boundary-bleed]: only walk when
-                // the NEAREST enclosing loop actually registered a defer-
-                // scope of its own (`loop_body_has_scope`'s top). A trivial
-                // loop (no `defer`/auto-cleanup consume-let at ITS OWN top
-                // level) registers none — `self.defer_scopes` at this point
-                // holds only OUTER, still-open scopes that this `break`
-                // must NOT touch (they haven't exited; see field doc).
-                // `unwrap_or(true)` is a defensive fallback for the (should
-                // never happen outside a loop) empty-stack case — preserves
-                // the pre-fix behavior rather than silently under-cleaning.
-                if !self.defer_scopes.is_empty()
-                    && self.loop_body_has_scope.last().copied().unwrap_or(true)
-                {
-                    self.emit_early_exit_cleanup(/*stop_at_loop=*/true);
+            Stmt::Break(_) | Stmt::Continue(_) => {
+                // Leave exactly the scopes opened inside the nearest loop body
+                // (`loop_scope_floor`), `with` bodies included (#1402).
+                let floor = self.loop_scope_floor.last().copied().unwrap_or(0);
+                if self.defer_scopes.len() > floor {
+                    self.emit_early_exit_cleanup(floor);
                 }
-                self.line("break;");
-            }
-            Stmt::Continue(_) => {
-                // [M-217-break-continue-loop-boundary-bleed]: see Stmt::Break above.
-                if !self.defer_scopes.is_empty()
-                    && self.loop_body_has_scope.last().copied().unwrap_or(true)
-                {
-                    self.emit_early_exit_cleanup(/*stop_at_loop=*/true);
-                }
-                self.line("continue;");
+                self.line(if matches!(stmt, Stmt::Break(_)) { "break;" } else { "continue;" });
             }
             Stmt::Throw { value, span } => {
                 // `throw expr` — Fail.fail(expr). D25/D62/D65.
@@ -38455,7 +38424,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let inner_sani = inner_ty.strip_prefix("NovaOpt_").unwrap_or(&inner_ty);
                     let none_check = self.option_is_none_check(&try_tmp, inner_sani);
                     self.line(&format!("{} {} = {};", inner_ty, try_tmp, val));
-                    self.line(&format!("if ({}) {{ return {}; }}", none_check, none_expr));
+                    self.emit_try_return(&none_check, "", &none_expr);
                     Ok(format!("({}.value)", try_tmp))
                 } else if Self::is_result_like(&inner_ty) {
                     // Result?: if Err, propagate Err; else extract Ok value.
@@ -38548,12 +38517,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let err_ctor = self.result_ctor_name(&ret_result_ty, "Err");
                         // [M-173-error-return-trace]: push перед early-return
                         // Err — value-mode звено той же `?`-цепочки.
-                        self.line(&format!(
-                            "if ({tmp}->tag == NOVA_TAG_Result_Err) {{ {push} return {ctor}({tmp}->payload.Err._0); }}",
-                            tmp = try_tmp,
-                            push = self.throw_stamp(
-                                "nova_throw_trace_push", &trace_file, trace_line)?,
-                            ctor = err_ctor));
+                        let push = self.throw_stamp("nova_throw_trace_push", &trace_file, trace_line)?;
+                        self.emit_try_return(
+                            &format!("{}->tag == NOVA_TAG_Result_Err", try_tmp),
+                            &format!("{} ", push),
+                            &format!("{}({}->payload.Err._0)", err_ctor, try_tmp));
                     }
                     Ok(format!("({}->payload.Ok._0)", try_tmp))
                 } else {
@@ -56401,6 +56369,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // codebase; its captures are unpacked via `var_boxed`/plain locals
         // instead), restored on exit.
         let saved_ref_params = std::mem::take(&mut self.ref_params);
+        let saved_exits = self.swap_exit_scopes(Default::default());
         self.indent = 0;
 
         // Env struct declaration
@@ -56496,6 +56465,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.var_boxed = saved_var_boxed;
         // Restore caller-scope ref_params (see the `std::mem::take` above).
         self.ref_params = saved_ref_params;
+        self.swap_exit_scopes(saved_exits);
         self.lambda_impls.push_str(&impl_str);
 
         // Restore params and fn_param_sigs

@@ -1,0 +1,77 @@
+// EXPECT_STDOUT P1402 break=outer continue=outer break-defer=outer defer-ran=2 block-defer-ran=1
+//
+// Registry 221.1 #1402: `break` / `continue` out of a `with` nested in a loop
+// must remove the handler that `with` installed, exactly as the normal
+// fall-through does. Before the fix the restore epilogue sat after the body and
+// the C `break`/`continue` jumped over it: the inner handler stayed installed
+// for the rest of the function -- `inner` printed where `outer` belongs.
+//
+// Cells: `break` from a trivial loop (no defer scope of its own), `continue`,
+// and `break` from a loop whose body carries a `defer` (the defer still runs
+// exactly once per iteration). Last cell, same walk: `break` from a block with
+// a `defer`, nested in a loop with none of its own -- the walk used to be
+// skipped for such a loop, so the defer never ran.
+module standalone.p1402_with_early_exit_loop
+
+type P1402LSay effect { fn say() -> str }
+
+fn p1402_break(n int) P1402LSay -> str {
+    mut i = 0
+    loop {
+        with P1402LSay = effect P1402LSay { say() -> str { "inner" } } {
+            if i >= n {
+                break
+            }
+        }
+        i = i + 1
+    }
+    P1402LSay.say()
+}
+
+fn p1402_continue() P1402LSay -> str {
+    mut hits = 0
+    for i in 0..3 {
+        with P1402LSay = effect P1402LSay { say() -> str { "inner" } } {
+            if i < 2 {
+                continue
+            }
+            hits = hits + 1
+        }
+    }
+    if hits == 1 { P1402LSay.say() } else { "wrong-hits" }
+}
+
+fn p1402_break_defer(mut counter int) P1402LSay -> str {
+    mut i = 0
+    loop {
+        defer { counter = counter + 1 }
+        with P1402LSay = effect P1402LSay { say() -> str { "inner" } } {
+            if i >= 1 {
+                break
+            }
+        }
+        i = i + 1
+    }
+    P1402LSay.say()
+}
+
+fn p1402_block_defer_break(mut ran int) -> () {
+    loop {
+        if ran >= 0 {
+            defer { ran = ran + 1 }
+            break
+        }
+    }
+}
+
+fn main() Io -> () {
+    with P1402LSay = effect P1402LSay { say() -> str { "outer" } } {
+        ro s1 = p1402_break(2)
+        ro s2 = p1402_continue()
+        mut c = 0
+        ro s3 = p1402_break_defer(c)
+        mut d = 0
+        p1402_block_defer_break(d)
+        println("P1402 break=${s1} continue=${s2} break-defer=${s3} defer-ran=${c} block-defer-ran=${d}")
+    }
+}

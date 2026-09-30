@@ -288,8 +288,10 @@ void nova_interrupt(nova_int value) {
             p = p->prev;
         }
         if (!has_defer_between) {
+            /* #1402: every with-block routed past is left through its door
+             * (its handlers restored) -- this stack is still live here. */
             while (_nova_interrupt_top && _nova_interrupt_top != _nova_current_handler_iframe) {
-                _nova_interrupt_top = _nova_interrupt_top->prev;
+                nova_interrupt_leave(_nova_interrupt_top);
             }
             NovaInterruptFrame* f = _nova_current_handler_iframe;
             /* Restore saved handler iframe so the with-block recovery code
@@ -374,7 +376,7 @@ void nova_interrupt_ptr(void* value) {
         }
         if (!has_defer_between) {
             while (_nova_interrupt_top && _nova_interrupt_top != _nova_current_handler_iframe) {
-                _nova_interrupt_top = _nova_interrupt_top->prev;
+                nova_interrupt_leave(_nova_interrupt_top);  /* #1402 */
             }
             NovaInterruptFrame* f = _nova_current_handler_iframe;
             _nova_current_handler_iframe = f->saved_handler_iframe;
