@@ -35,23 +35,26 @@ test "module value: a constant is still substituted, not given a cell (274.5 sec
     assert(!c.contains("novac_mv_K"), c)
 }
 
-test "module value: an initializer reads an EARLIER value; a later one is refused by name (274.5 section 6)" {
-    // Values run in declaration order this wave: an earlier value is computed
-    // when a later initializer reads it, a later one is not -- so that read is
-    // refused, never compiled to a read of an uncomputed cell. The values call
-    // `three()`: a literal initializer is a CONSTANT and belongs in `const`.
+test "module value: initializers run in DEPENDENCY order; a cycle is refused (274.5 S6, D200)" {
+    // D200 initializes module values once, before main, in dependency order
+    // (02-types.md:9319): a value read by another's initializer is computed
+    // first, wherever it is declared. The values call `three()`: a literal
+    // initializer is a CONSTANT and belongs in `const`.
     ro fx = "fn three() -> int => 3\n"
-    ro (d0, c0) = compile_to_c("${fx}ro first = three()\nro second = first + 1\nfn main() {\n println(second)\n}", std_decls())
-    assert(d0.len() == 0, messages(d0))
-    assert(c0.contains("novac_mv_first"), c0)
-    ro (d1, _) = compile_to_c("${fx}ro second = first + 1\nro first = three()\nfn main() {\n println(second)\n}", std_decls())
-    assert(d1.len() == 1, messages(d1))
-    assert(messages(d1).contains("declared at or after it"), messages(d1))
-    // A value reading ITSELF is the same refusal, and the read in `main` of the
-    // refused value stays silent -- one cause, one diagnostic.
-    ro (d2, _) = compile_to_c("${fx}ro first = first + three()\nfn main() {\n println(first)\n}", std_decls())
-    assert(d2.len() == 1, messages(d2))
-    assert(messages(d2).contains("declared at or after it"), messages(d2))
+    // Declared AFTER its reader: still computed first.
+    ro (d1, c1) = compile_to_c("${fx}ro second = first + 1\nro first = three()\nfn main() {\n println(second)\n}", std_decls())
+    assert(d1.len() == 0, messages(d1))
+    ro at_first = c1.find("novac_mv_first = novac_mvinit_first();") ?? 0 - 1
+    ro at_second = c1.find("novac_mv_second = novac_mvinit_second();") ?? 0 - 1
+    assert(at_first >= 0 && at_second > at_first, "the INIT slot computes `first` before `second`")
+    // A value reading ITSELF, and two values reading each other: no order
+    // computes them -- a language error, and the read in `main` stays silent.
+    for src in []str.of("ro a = a + three()\n", "ro a = b + three()\nro b = a + three()\n") {
+        ro (d, _) = compile_to_c("${fx}${src}fn main() {\n println(a)\n}", std_decls())
+        assert(d.len() == 1, "${src}: ${messages(d)}")
+        assert(d[0].code == "E_NOVAC_LANG", d[0].code)
+        assert(d[0].message.contains("in a cycle"), d[0].message)
+    }
 }
 
 test "D184 partition: constexpr is `const`, runtime is `ro` -- both directions, one predicate (274.5 section 6)" {

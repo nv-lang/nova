@@ -120,11 +120,10 @@ const INTERP_U64_MSG = "outside the subset: an unsigned 64-bit interpolation slo
 const RO_FOR_CONSTEXPR_MSG = "a module-level `ro` whose initializer is known at compile time is written `const` (D184, E_RO_FOR_CONSTEXPR_PREFER_CONST) -- `ro` is for a value that needs the runtime: a call, an allocation"
 const CONST_NOT_CONSTEXPR_MSG = "a `const` initializer is known at compile time -- literals, operators over constants, tuple/array/record literals of them (D184, E_CONST_NOT_CONSTEXPR); a value that needs the runtime is written `ro`"
 
-/// A module value's initializer reading a module value declared at or after
-/// it (274.5 section 6). Nova orders module initialization by dependency
-/// (D200, `02-types.md:9319`); novac runs values in declaration order this
-/// wave, so such a read would see an uncomputed cell -- refused by name.
-const MODULE_VALUE_ORDER_MSG = "outside the subset: a module value's initializer reads a module value declared at or after it -- novac initializes module values in declaration order; the dependency order arrives with the module-value wave (274.5 S6)"
+/// Module values whose initializers read each other in a CYCLE (274.5 S6):
+/// D200 initializes them once, in dependency order (`02-types.md:9319`), and
+/// a cycle has no such order. A language error; the spec names no code.
+const MODULE_VALUE_CYCLE_MSG = "module values whose initializers read each other in a cycle have no order that computes them (D200: once, before main, in dependency order) -- break the cycle"
 const INTERP_CONST_MSG = "outside the subset: a constant whose initializer interpolates is not compiled yet (E2-b3)"
 
 

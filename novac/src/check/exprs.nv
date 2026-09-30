@@ -80,17 +80,6 @@ fn Checker mut @const_type_of(name str) -> TyId {
     type_of(cd.init[0], @ctx, @scope, @chan)
 }
 
-/// Is `name` a module value that the initializer being typed may not read
-/// yet -- declared at or after it (274.5 section 6)?
-fn Checker @reads_uncomputed_value(name str) -> bool {
-    if @mv_row < 0 { return false }
-    ro row = match @ctx.defs.const_row(name) {
-        None => return false
-        Some(r) => r
-    }
-    @ctx.consts.rows[raw_crow(row)].once && raw_crow(row) >= @mv_row
-}
-
 /// Is `name` a module value whose initializer was refused? Its type was
 /// never recorded in the file's channel, where every initializer is typed
 /// before any function; outside the file's channel (an instance) nothing is
@@ -504,11 +493,12 @@ fn Checker mut @type_expr(e Node) -> () {
                 if is_bool_literal(t.text) || @scope.is_bound(t.text) {
                     // Bound, or `true`/`false`: nothing to refuse and nothing
                     // to record -- the lattice reads a Name from the scope.
-                } else if @reads_uncomputed_value(t.text) {
-                    // A module value's initializer reading a value that is
-                    // not computed yet (274.5 section 6): asked BEFORE its
-                    // type, which does not exist yet either.
-                    @refuse(t, MODULE_VALUE_ORDER_MSG)
+                } else if @settle_module_value(t.text) {
+                    // A module value read while its own initializer is being
+                    // typed: a CYCLE, which no order computes (274.5 S6).
+                    // Asked BEFORE the type -- settling a value not typed
+                    // yet is what gives it one.
+                    @reject(t, MODULE_VALUE_CYCLE_MSG)
                 } else if @is_poisoned_module_value(t.text) {
                     // SILENT-OK: a module value whose initializer was refused;
                     // that refusal is the one cause, and a read of it saying

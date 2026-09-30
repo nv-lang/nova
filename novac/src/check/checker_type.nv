@@ -87,10 +87,12 @@ type Checker {
     value_expect TyId
     /// Loops around the node being walked (274.7 B10): `break`/`continue` at 0 are refused.
     loop_depth int
-    /// The constant-table row of the module value whose initializer is being
-    /// typed, -1 outside one (274.5 section 6): a read of a module value at or
-    /// after this row is refused, because values run in declaration order.
-    mv_row int
+    /// Per constant-table row, where its module value's initializer stands
+    /// (274.5 S6): 0 not typed, 1 being typed, 2 typed. A read of a value at 1
+    /// closes a cycle; a read of a value at 0 types it first -- the
+    /// depth-first walk that yields the topological order. Empty in an
+    /// instance checker, which types no initializer.
+    mv_state []int
     /// The body being typed returns no value (`-> ()` or none declared): a bare `return` is legal.
     ret_unit bool
 }
