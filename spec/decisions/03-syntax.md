@@ -8125,9 +8125,14 @@ ro COMPUTED int = make()                   // ✓ (runtime call — `ro` кор�
 fn f() { ro x = 4096 }                     // ✓ (scope-local — partition не применяется)
 ```
 
-> Codegen module-level **runtime** `ro X = expr()` (non-constexpr) пока не
+> ~~Codegen module-level **runtime** `ro X = expr()` (non-constexpr) пока не
 > lowered (pre-existing gap, не часть этого правила); checker корректно его
-> принимает (не флагает), что и проверяется на уровне `check`.
+> принимает (не флагает), что и проверяется на уровне `check`.~~
+> **УСТАРЕЛО (пометка 2026-09-30):** машина построена — модульный `ro NAME = EXPR`
+> понижается как однократная инициализация до `main` («eager once-init», Plan 152.4,
+> `emit_lazy_const`), и на неё ссылается D200 (`02-types.md`, таблица «Инициализация»:
+> «переиспользует существующую машину module-level `ro NAME = EXPR`»). Нашло окно Карины
+> (spec-reader) при подготовке волны «значение модуля» (274.5 §6).
 
 ### Правило: `const` generalization (Ф.10)
 
