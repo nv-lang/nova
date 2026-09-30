@@ -1,0 +1,53 @@
+// Registry 221.1 #1395, payload-less SUM half (a value type, A4 placement):
+// the same cells as `p1395_value_self_record.nv`, and they failed the same
+// way -- an instance method's `Self` was lowered to the receiver's pointer
+// carrier (`NovaValue_X*`) in every position, while the spec gives the
+// carrier to `-> @` alone (spec/decisions/02-types.md, D326 R1; the `-> Self`
+// row: "owned-by-caller"). A direct `a.equal(b)`, `a.clone()`, `a < b`,
+// `a.compare(b)` and a user `fn T @m(other Self) -> Self` did not compile.
+module standalone.p1395_value_self_sum
+
+#impl(Equal + Clone + Compare)
+type P1395Lvl enum Low | Mid | High
+
+fn P1395Lvl @same_lvl(other Self) -> bool => @ == other
+fn P1395Lvl @flip(other Self) -> Self => match other {
+    Low => P1395Lvl.High
+    Mid => P1395Lvl.Mid
+    High => P1395Lvl.Low
+}
+
+test "Equal on a payload-less sum: operator and direct call agree (#1395)" {
+    ro a = P1395Lvl.Low
+    ro b = P1395Lvl.High
+    assert(a == P1395Lvl.Low)
+    assert(a != b)
+    assert(a.equal(P1395Lvl.Low))
+    assert(!a.equal(b))
+}
+
+test "Clone on a payload-less sum returns a value (#1395)" {
+    ro a = P1395Lvl.Mid
+    ro c = a.clone()
+    assert(c == a)
+    assert(c != P1395Lvl.Low)
+}
+
+test "Compare on a payload-less sum: operator and direct call agree (#1395)" {
+    ro a = P1395Lvl.Low
+    ro b = P1395Lvl.High
+    assert(a < b)
+    assert(!(b < a))
+    assert(b >= a)
+    assert(a.compare(b) < 0)
+    assert(b.compare(a) > 0)
+    assert(P1395Lvl.Mid.compare(P1395Lvl.Mid) == 0)
+}
+
+test "a user method with `other Self` and `-> Self`, called directly (#1395)" {
+    ro a = P1395Lvl.Low
+    assert(a.same_lvl(P1395Lvl.Low))
+    assert(!a.same_lvl(P1395Lvl.Mid))
+    assert(a.flip(P1395Lvl.Low) == P1395Lvl.High)
+    assert(a.flip(P1395Lvl.Mid).flip(P1395Lvl.High) == P1395Lvl.Low)
+}

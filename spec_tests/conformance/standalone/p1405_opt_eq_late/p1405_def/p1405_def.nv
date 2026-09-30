@@ -1,0 +1,17 @@
+// #1405 carrier, DEF module -- see `../p1405_opt_eq_late.nv`. A value record
+// with a field of the other module's `#impl(Equal)` sum, compared through
+// `Option` inside a body (Carina's `TypeDef` in `novac/src/sem/`).
+module p1405_opt_eq_late.p1405_def
+
+import ../p1405_kind.{P1405Kind}
+
+export type P1405Def value {
+    kind P1405Kind
+    n int
+}
+
+export fn p1405_same(a P1405Def, b P1405Def) -> bool {
+    ro oa Option[P1405Def] = Some(a)
+    ro ob Option[P1405Def] = Some(b)
+    oa == ob
+}

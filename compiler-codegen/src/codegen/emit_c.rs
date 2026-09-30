@@ -17,6 +17,8 @@ mod variant_ctor_disarm; // #666, see its doc
 mod sum_placement; // Plan 172.14 F.2 A4, see its doc
 mod mono_nominal; // registry 221.1 #895, see its doc
 mod static_blanket; // registry 221.1 #895 (second carrier), see its doc
+mod self_value; // #1395: `Self` by position, see its doc
+mod opt_eq_split; // #1405: `nova_opt_eq` body late, see its doc
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
@@ -1383,6 +1385,7 @@ pub struct CEmitter {
     /// `false` (existing pointer-form behavior) everywhere else so mono/
     /// generic-instance paths this doesn't touch stay byte-identical.
     current_receiver_is_static: bool,
+    fluent_ret_spans: HashSet<Span>, // #1395: `-> @` return TypeRefs (emit_c/self_value.rs)
     /// Expected struct type для anonymous record literal `=> { ... }` —
     /// устанавливается при эмите function body, когда нужно использовать
     /// declared return type как target для anonymous record (D55).
@@ -1639,11 +1642,6 @@ pub struct CEmitter {
     /// Interior mutability: используется из `&self`-методов
     /// (type_ref_to_c, infer_expr_c_type).
     novaopt_typedefs_buf: std::cell::RefCell<String>,
-    /// Set when generating nova_opt_eq_ body (inside ensure_opt_typedef).
-    /// In this mode, emit_field_eq uses pointer equality for sum types to
-    /// avoid "incomplete type" C errors: opt_eq fns are emitted before the
-    /// sum type struct definitions, so member access is forbidden.
-    novaopt_early_gen: std::cell::RefCell<bool>,
     /// [M-153.2-flat-map-inner-option]: NovaOpt typedefs where the payload is a
     /// value-record (NovaValue_… by-value, needs complete struct before use in
     /// field decl). Spliced at /*__NOVAOPT_VR_TYPEDEFS__*/ which is placed AFTER
@@ -2773,6 +2771,7 @@ impl CEmitter {
             in_recv_ptr_return_position: std::cell::Cell::new(false),
             current_receiver_is_mut: false,
             current_receiver_is_static: false,
+            fluent_ret_spans: HashSet::new(),
             expected_record_type: None,
             expected_sum_hint: None,
             expected_option_elem_hint: None,
@@ -2816,7 +2815,6 @@ impl CEmitter {
             // Для прочих — typedef эмитится в novaopt_typedefs_buf и
             // splice'ится через маркер /*__NOVAOPT_TYPEDEFS__*/.
             novaopt_typedefs_buf: std::cell::RefCell::new(String::new()),
-            novaopt_early_gen: std::cell::RefCell::new(false),
             novaopt_vr_typedefs_buf: std::cell::RefCell::new(String::new()),
             novaopt_eq_fns_buf: std::cell::RefCell::new(String::new()),
             vr_ueq_protos_buf: std::cell::RefCell::new(String::new()),
@@ -5193,11 +5191,11 @@ impl CEmitter {
                 // the type instead (value-form for named-tuple/value-record —
                 // matches how the constructor body's record-literal `return
                 // Type(...)` is actually emitted). An INSTANCE method's `Self`
-                // (fluent `-> Self`/`-> @`, returning the receiver itself)
-                // is UNCHANGED — stays on `receiver_c_type`, byte-identical.
+                // is the type itself too (#1395, D182/D326): only `-> @` keeps
+                // the receiver carrier, answered before this arm (`fluent_ret_c`).
                 Some(recv) if self.current_receiver_is_static =>
                     self.resolved_named_to_c(recv, &[], &[])?,
-                Some(recv) => self.receiver_c_type(recv, false),
+                Some(recv) => self.self_value_c(recv),
                 // U.4.8: `Self` outside a receiver context — carry the SAME Err the deleted
                 // `type_ref_to_c_impl` produced (Plan 11 follow-up: hard error, not a fallback,
                 // so it never silently lowers to a bogus `Nova_Self*`).
@@ -8649,7 +8647,7 @@ impl CEmitter {
                     let return_c_type = match &f.return_type {
                         Some(TypeRef::Named { path, .. }) if path.len() == 1 && path[0] == "Self" => {
                             // Plan 128 Ф.1: thread recv.mutable flag (Ф.2 consumes).
-                            self.receiver_c_type(&recv.type_name, recv.mutable)
+                            self.self_ret_c(&recv.type_name, recv.mutable, f.returns_receiver)
                         }
                         Some(t) if is_generic_recv => {
                             self.erased_type_ref_c(&Some(t.clone()), &recv_type_params)
@@ -9144,6 +9142,7 @@ impl CEmitter {
         self.build_free_fn_byref_map(module);
         // [M-172.14-methods-byref]: тот же пре-пасс для методов (receiver.is_some()).
         self.build_method_byref_map(module);
+        self.collect_fluent_ret_spans(module); // #1395
         // 2. Forward declarations for all functions (types are now known)
         for item in &module.items {
             if let Item::Fn(f) = item {
@@ -11906,7 +11905,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.current_receiver_type = Some(t_name.to_string());
             self.sync_receiver_rt();
             // Substitute `Self` → `t_name` для resolution в default body.
-            self.current_type_subst.insert("Self".to_string(), Self::lift_c_name(t_c_ty.to_string()));
+            let self_val_c = Self::value_form_of_receiver_c(t_c_ty.to_string()); // #1395
+            self.current_type_subst.insert("Self".to_string(), Self::lift_c_name(self_val_c.clone()));
             // Plan 172.1.1 (U.4.5 substrate, mono-side gap #1): для default-body на КОНКРЕТНОМ
             // generic-типе T (`Lru[str,int]`) populate generic-params в subst (`K→nova_str`,
             // `V→nova_int`), а не только `Self` — иначе `resolved_type_to_c(K)`/`type_ref_to_c(K)`
@@ -11938,11 +11938,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             };
             let param_c_results: Vec<_> = m.params.iter()
                 .map(|p| {
-                    // Self in param position → t_c_ty (same as receiver).
+                    // Self in param position → the type itself, by value (#1395).
                     let is_self = matches!(&p.ty, TypeRef::Named { path, .. }
                         if path.len() == 1 && path[0] == "Self");
                     if is_self {
-                        Ok(t_c_ty.to_string())
+                        Ok(self_val_c.clone())
                     } else {
                         self.type_ref_to_c(&p.ty)
                     }
@@ -12276,6 +12276,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// (Endgame U.6.1 — collapsing this `TypeRef`→`ResolvedType` adapter hop at the ~120
     /// declared-type call sites — is intentionally OUT of U.4.8 scope.)
     pub(crate) fn type_ref_to_c(&self, ty: &TypeRef) -> Result<String, String> {
+        if let Some(c) = self.fluent_ret_c(ty) { return Ok(c); } // #1395 `-> @`
         self.resolved_type_to_c(&crate::types::ResolvedType::from_type_ref(ty))
     }
 
@@ -22639,14 +22640,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // handled in emit_binary (`&mut`); HERE we are `&self`, so we cannot trigger
             // the `&mut` mono instantiation directly — record the request in
             // `pending_container_eq_monos` (drained post-emission, register_container_eq_mono).
-            // Under `novaopt_early_gen` (early opt path, before the mono fn-fwd-decls) the
-            // mono proto isn't visible → bail to identity; the structural-LATE opt path
-            // (debt_opt_payload_needs_structural_eq) reaches us with early_gen off and splices
-            // the eq fn AFTER the mono fwd-decls.
+            // Every `nova_opt_eq` body is spliced AFTER the mono fwd-decls (#1405).
             if type_name.starts_with("Vec____") || type_name.starts_with("HashMap____") {
-                if *self.novaopt_early_gen.borrow() {
-                    return format!("(({}) == ({}))", l, r);
-                }
                 let cont_c = cty.trim_end_matches('*').to_string(); // Nova_<container>____<args>
                 if self.container_eq_requested.borrow_mut().insert(cont_c.clone()) {
                     self.pending_container_eq_monos.borrow_mut().push(cont_c);
@@ -22681,21 +22676,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // record-field recursion via record_schemas. Records are NOT auto-
             // `@equal`'d, so a record compared only structurally (e.g. via
             // `Option[Rec]==` or as a sum/Result field) reaches the record branch
-            // below ([M-172.1-option-eq-record-structural] L2).
-            //
-            // Guard: when novaopt_early_gen is set we are inside the EARLY opt path
-            // (emits into novaopt_typedefs_buf — BEFORE sum/record struct bodies).
-            // Accessing ->tag / ->payload / ->field here causes clang "incomplete
-            // type" errors. Fall back to pointer identity (the function calling us
-            // is in an early opt_eq context where struct members are unavailable).
-            // The structural-late opt path (debt_opt_payload_needs_structural_eq) does
-            // NOT set early_gen, so it reaches the real recursion below.
-            if *self.novaopt_early_gen.borrow()
-                && (self.sum_schemas.contains_key(&type_name)
-                    || self.record_schemas.contains_key(&type_name))
-            {
-                return format!("(({}) == ({}))", l, r);
-            }
+            // below ([M-172.1-option-eq-record-structural] L2). No early-zone
+            // identity bail: every `nova_opt_eq` body is built late (#1405).
             // [M-result-direct-recursive-enum] / [M-option-self-recursive-record-mono]
             // (Plan 186, recursive-mono): a genuine cycle (self- or mutually-
             // recursive heap type ALREADY being expanded up this call chain) is
@@ -57732,17 +57714,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // unsoundness as the old tuple/sum eq. Route the payload comparison
         // through emit_field_eq (which handles scalar/float/str/tuple/record/
         // sum by C-type). Scalars/pointers keep the direct `==` fast path.
-        let cmp_body = if is_scalar || is_pointer {
-            "a.value == b.value".to_string()
-        } else {
-            // Set novaopt_early_gen so emit_field_eq uses pointer equality for
-            // sum types — these opt_eq functions are emitted before sum type
-            // struct definitions, so member access would be an "incomplete type".
-            *self.novaopt_early_gen.borrow_mut() = true;
-            let body = self.emit_field_eq(c_ty, "a.value", "b.value", 0);
-            *self.novaopt_early_gen.borrow_mut() = false;
-            body
-        };
+        // #1405: the composite body is built LATE (emit_c/opt_eq_split.rs).
+        if !force_npo && !is_scalar && !is_pointer {
+            return self.emit_opt_eq_split(sanitized, c_ty, "0");
+        }
+        let cmp_body = "a.value == b.value".to_string();
         let eq_fn = if force_npo {
             format!(
                 "{storage}nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
@@ -57839,7 +57815,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // record/field `@equal` method prototype only after the fn-forward-decls, so the eq
         // FN goes to the LATE buffer spliced at /*__NOVAOPT_EQ_FNS__*/ (after struct bodies
         // AND method protos) where `emit_field_eq` — the single comparison dispatcher — can
-        // dereference (no `novaopt_early_gen` bail) and call a record `@equal` without an
+        // dereference and call a record `@equal` without an
         // implicit decl. The NPO layout (single pointer, NULL=None) is UNCHANGED → eq-only,
         // no ABI change. Without this the early path emitted `a.value == b.value` (addresses)
         // → `Option[Sum/Record]==` false for equal values.
@@ -57945,17 +57921,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Plan 141: composite Option payloads (tuple/record/sum/nova_str)
         // compare structurally via emit_field_eq, not memcmp (float/padding/
         // identity unsoundness). Scalars/pointers keep the direct `==`.
-        let cmp_body = if is_scalar || is_pointer || is_newtype_ptr {
-            "a.value == b.value".to_string()
-        } else {
-            // Set novaopt_early_gen so emit_field_eq uses pointer equality for
-            // sum types — these opt_eq functions are emitted before sum type
-            // struct definitions, so member access would be an "incomplete type".
-            *self.novaopt_early_gen.borrow_mut() = true;
-            let body = self.emit_field_eq(c_ty, "a.value", "b.value", 0);
-            *self.novaopt_early_gen.borrow_mut() = false;
-            body
-        };
+        // #1405: the composite body is built LATE (emit_c/opt_eq_split.rs).
+        if !is_npo && !is_scalar {
+            return self.emit_opt_eq_split(sanitized, c_ty, "NOVA_TAG_Option_None");
+        }
+        let cmp_body = "a.value == b.value".to_string();
         let eq_fn = if is_npo {
             // NPO eq: value-based identity (NULL == NULL = None equal;
             // p1 == p2 for Some). No tag field.

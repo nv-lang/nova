@@ -1,0 +1,91 @@
+// Registry 221.1 #1395, value-RECORD half: an instance method's `Self` is the
+// type itself, by value, in every position but `-> @` (spec/decisions/
+// 02-types.md, D326 R1: "`-> @` has a concrete type: `-> ref Self` for a stack
+// (value) type"; the `-> Self` row: "owned-by-caller"). The codegen used to
+// lower EVERY instance-method `Self` of a value type to the receiver's pointer
+// carrier (`NovaValue_X*`, D226), while the consumers typed those positions by
+// value -- so C did not compile:
+//   * a direct call `a.equal(b)` / `a.m(b)` with `other Self` passed a value to
+//     a pointer parameter;
+//   * a synthesized `@clone() -> Self` returned a fresh value from a pointer-
+//     returning function;
+//   * the `<` wrapper over `@compare` took the address of a pointer;
+//   * `ro v Self = ...` and `Vec[Self]` in a body were pointers.
+// `==`/`!=` worked (their wrapper adapted). The payload-less sum half is
+// `p1395_value_self_sum.nv`; the heap record below is the control that must
+// not move.
+module standalone.p1395_value_self_record
+
+#impl(Equal + Clone + Compare)
+type P1395Rec value { x int }
+
+fn P1395Rec @same_x(other Self) -> bool => @x == other.x
+fn P1395Rec @plus(other Self) -> Self => { x: other.x + @x }
+
+type P1395Acc value { n int }
+fn P1395Acc mut @add(k int) -> @ { @n = @n + k }
+fn P1395Acc @twice() -> Self {
+    ro v Self = { n: @n * 2 }
+    ro xs Vec[Self] = [v, v]
+    xs[1]
+}
+
+#impl(Equal + Clone + Compare)
+type P1395Heap { x int }
+fn P1395Heap @plus(other Self) -> Self => { x: other.x + @x }
+
+test "Equal on a value record: operator and direct call agree (#1395)" {
+    ro a = P1395Rec { x: 1 }
+    ro b = P1395Rec { x: 2 }
+    assert(a == a)
+    assert(a != b)
+    assert(a.equal(P1395Rec { x: 1 }))
+    assert(!a.equal(b))
+}
+
+test "Clone on a value record returns a value (#1395)" {
+    ro a = P1395Rec { x: 7 }
+    ro c = a.clone()
+    assert(c == a)
+    assert(c.x == 7)
+}
+
+test "Compare on a value record: operator and direct call agree (#1395)" {
+    ro a = P1395Rec { x: 1 }
+    ro b = P1395Rec { x: 2 }
+    assert(a < b)
+    assert(!(b < a))
+    assert(b >= a)
+    assert(a.compare(b) < 0)
+    assert(b.compare(a) > 0)
+    assert(a.compare(P1395Rec { x: 1 }) == 0)
+}
+
+test "a user method with `other Self` and `-> Self`, called directly (#1395)" {
+    ro a = P1395Rec { x: 3 }
+    ro b = P1395Rec { x: 4 }
+    assert(a.same_x(P1395Rec { x: 3 }))
+    assert(!a.same_x(b))
+    ro c = a.plus(b)
+    assert(c.x == 7)
+    assert(a.plus(b).plus(a).x == 10)
+}
+
+test "`-> @` keeps the carrier, `Self` in a body is the value (#1395)" {
+    mut a = P1395Acc { n: 1 }
+    a.add(2).add(3)
+    assert(a.n == 6)
+    ro t = a.twice()
+    assert(t.n == 12)
+    assert(a.n == 6)
+}
+
+test "control: a heap record answers the same cells unchanged (#1395)" {
+    ro a = P1395Heap { x: 1 }
+    ro b = P1395Heap { x: 2 }
+    assert(a.equal(a))
+    assert(a == a.clone())
+    assert(a < b)
+    assert(a.compare(b) < 0)
+    assert(a.plus(b).x == 3)
+}
