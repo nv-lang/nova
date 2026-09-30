@@ -37,7 +37,7 @@ test "place-скрутини — именная Result-переменная, т�
     // `Result` с consume-нагрузкой сам consume «через wrap» (D133,
     // 02-types.md) — binding обязан быть `consume` (D180 Rule 1).
     consume attempt = dial_consume_a(2)
-    match attempt {
+    match consume attempt {
         Ok(consume tcp) => { tcp.close() }
         Err(_e) => {}
     }

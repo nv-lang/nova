@@ -1,0 +1,19 @@
+// #1370 import-half carrier -- see `../p1370_match_consume_import.nv`.
+module p1370_match_consume_import.p1370_mci_lib
+
+type P1370MciRes consume {
+    id int,
+}
+
+fn P1370MciRes consume @close() -> int { self.id }
+
+fn p1370_mci_open(v int) -> Result[P1370MciRes, str] =>
+    if v > 0 { Ok(P1370MciRes { id: v }) } else { Err("no") }
+
+export fn p1370_mci_close(v int) -> int {
+    consume attempt = p1370_mci_open(v)
+    match consume attempt {
+        Ok(consume r) => r.close()
+        Err(_e) => 0
+    }
+}

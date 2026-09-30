@@ -1,0 +1,16 @@
+// Registry 221.1 #1370 carrier: `match consume x` over a LOCAL binding must
+// consume `x` (D157, spec/decisions/05-memory.md:994-996) in EVERY file of a
+// folder-module, not only in the file the run starts from. The parser records
+// the scrutinee's span per file (`consume_match_scrutinees`, #1331); the
+// folder merge used to carry the peers' items and drop that table, so the
+// checker saw `match consume x` in the sibling below as a plain view-match and
+// reported a false `D133-not-consumed` on `x`. This file is the entry and has
+// no `match consume` of its own; the construct lives only in the sibling
+// `p1370_match_consume_peer_b.nv`, so this fixture is green only when the
+// sibling's table survives the merge.
+module standalone.p1370_match_consume_peer
+
+test "match consume over a local, in a SIBLING file, consumes it (#1370)" {
+    assert(close_via_match_consume(7) == 7)
+    assert(close_via_match_consume(0) == 0)
+}
