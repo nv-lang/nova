@@ -1,0 +1,59 @@
+// EXPECT_STDOUT plain=ab value=1:4 str=[s] sum=5 newtype=9 nested=t anon=u arg=v ret=w arr=2 spread=7:3 variant=x:2 self=12 generic=1b widen=40
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 #1448/#1096, POSITIVE half. The record literal's fields now go
+// through `assignable` and a completeness check (negatives:
+// `neg/p1448_record_field_type_neg.nv`, `neg/p1448_record_missing_field_neg.nv`,
+// `neg/p1448_record_unknown_field_neg.nv`). A check that reddens healthy code is
+// switched off by the next window, so every form it must let through is a cell
+// here: each coercion that door already applies (D55 sum auto-wrap of a literal,
+// D55 newtype wrap of an untyped constant, integer widening), a value record with
+// `[N]T`, `str`, nested and anonymous literals in every position, a spread whose
+// donor supplies the rest (D60), a sum's record variant, `Self { .. }`, and a
+// generic record whose arguments come from the fields or from the annotation.
+module standalone.p1448_record_literal_fields_pos
+
+type P1448Pl { a str, b str }
+type P1448Digits value { tag int, digits [4]u8 }
+type P1448Named { s str }
+type P1448Val enum P1448Ival(int) | P1448Sval(str)
+type P1448Box { v P1448Val }
+type P1448Id u64
+type P1448Acct { id P1448Id }
+type P1448Tok { text str }
+type P1448Hold { tok P1448Tok }
+type P1448Pt value { x int, y int }
+type P1448Shape enum P1448Circle { r int } | P1448Sq { side int, name str }
+type P1448Ctr { n int }
+type P1448Pair[A, B] { a A, b B }
+type P1448Wide { big i64 }
+
+fn P1448Ctr @twice() -> P1448Ctr {
+    Self { n: @n * 2 }
+}
+
+fn p1448_text(h P1448Hold) -> str => h.tok.text
+
+fn p1448_make() -> P1448Hold => { tok: { text: "w" } }
+
+fn main() {
+    ro plain = P1448Pl { a: "a", b: "b" }
+    ro d = P1448Digits { tag: 1, digits: [4, 3, 2, 1] }
+    ro st = P1448Named { s: "s" }
+    ro bx = P1448Box { v: 5 }
+    ro sum = match bx.v { P1448Ival(i) => i, P1448Sval(_) => 0 }
+    ro ac = P1448Acct { id: 9 }
+    ro nested = P1448Hold { tok: P1448Tok { text: "t" } }
+    ro anon P1448Hold = { tok: { text: "u" } }
+    ro arr []P1448Hold = [{ tok: { text: "x" } }, p1448_make()]
+    ro donor = P1448Pt { x: 1, y: 3 }
+    ro spread = P1448Pt { ...donor, x: 7 }
+    ro sq = P1448Sq { side: 2, name: "x" }
+    ro variant = match sq { P1448Sq { side, name } => "${name}:${side}", _ => "c" }
+    ro self_lit = P1448Ctr { n: 6 }.twice()
+    ro gp = P1448Pair { a: 1, b: "b" }
+    ro ga P1448Pair[int, str] = { a: gp.a, b: gp.b }
+    ro small i32 = 40
+    ro wide = P1448Wide { big: small }
+    println("plain=${plain.a}${plain.b} value=${d.tag}:${d.digits[0]} str=[${st.s}] sum=${sum} newtype=${ac.id as u64} nested=${nested.tok.text} anon=${anon.tok.text} arg=${p1448_text({ tok: { text: "v" } })} ret=${p1448_make().tok.text} arr=${arr.len()} spread=${spread.x}:${spread.y} variant=${variant} self=${self_lit.n} generic=${ga.a}${ga.b} widen=${wide.big}")
+}
