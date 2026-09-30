@@ -2535,6 +2535,71 @@ fn check_const_constexpr_ex(
 ///     so the two directions can never disagree about what «constexpr» means.
 ///
 /// Returns `Some(diagnostic)` when the binding should be `const`, else `None`.
+/// D184 amendment 2026-09-30: module-level `ro` initializers run in DEPENDENCY
+/// order (codegen sorts them); a CYCLE of dependencies -- including a value
+/// reading itself -- has no order and is `E_MODULE_INIT_CYCLE`. An edge
+/// `a -> b` is a read of the name of module-level `ro b` anywhere in `a`'s
+/// initializer (closures inside it included), found by the SAME function the
+/// codegen orders by (`CEmitter::collect_truly_free_idents`, scope-aware), so the two cannot
+/// disagree -- and the same edge novac draws (a read met while typing the
+/// initializer, bada5540e). Named limit: a read through a CALLED fn's body
+/// (`ro a = f()`, `f` reads `a`) is not an edge; Go counts it, Nova does not.
+/// Reported once per cycle, at the declaration whose read closes it.
+fn check_module_init_cycles(items: &[Item], errors: &mut Vec<Diagnostic>) {
+    let lets: Vec<(String, &crate::ast::LetDecl)> = items.iter().filter_map(|it| match it {
+        Item::Let(l) if !l.is_ghost => match &l.pattern {
+            Pattern::Ident { name, .. } => Some((name.clone(), l)),
+            Pattern::Variant { path, kind: VariantPatternKind::Unit, .. } if path.len() == 1 => Some((path[0].clone(), l)),
+            _ => None,
+        },
+        _ => None,
+    }).collect();
+    let index: HashMap<&str, usize> = lets.iter().enumerate().map(|(i, (n, _))| (n.as_str(), i)).collect();
+    let adj: Vec<Vec<usize>> = lets.iter().map(|(_, l)| {
+        let mut free = HashSet::new();
+        crate::codegen::emit_c::CEmitter::collect_truly_free_idents(&l.value, &mut HashSet::new(), &mut free);
+        let mut d: Vec<usize> = free.iter().filter_map(|n| index.get(n.as_str()).copied()).collect();
+        d.sort_unstable();
+        d
+    }).collect();
+    // 0 = unvisited, 1 = on the DFS stack, 2 = done.
+    let mut state = vec![0u8; lets.len()];
+    let mut stack: Vec<usize> = Vec::new();
+    fn dfs(v: usize, adj: &[Vec<usize>], state: &mut [u8], stack: &mut Vec<usize>,
+           lets: &[(String, &crate::ast::LetDecl)], errors: &mut Vec<Diagnostic>) {
+        state[v] = 1;
+        stack.push(v);
+        for &w in &adj[v] {
+            if state[w] == 1 {
+                let from = stack.iter().position(|&x| x == w).unwrap_or(0);
+                let mut chain: Vec<&str> = stack[from..].iter().map(|&i| lets[i].0.as_str()).collect();
+                chain.push(lets[w].0.as_str());
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_MODULE_INIT_CYCLE] module-level `ro` initializers form a cycle: {} -- \
+                         no initialization order computes them (D184 amendment 2026-09-30)",
+                        chain.join(" -> ")
+                    ),
+                    lets[v].1.span,
+                ).with_note(
+                    "a module-level `ro` initializer may read another module-level `ro` only if \
+                     that one does not depend back on it; break the cycle, or compute one of the \
+                     values inside a function".to_string(),
+                ));
+            } else if state[w] == 0 {
+                dfs(w, adj, state, stack, lets, errors);
+            }
+        }
+        stack.pop();
+        state[v] = 2;
+    }
+    for v in 0..lets.len() {
+        if state[v] == 0 {
+            dfs(v, &adj, &mut state, &mut stack, &lets, errors);
+        }
+    }
+}
+
 fn check_ro_module_partition(
     decl: &crate::ast::LetDecl,
     known_consts: &HashSet<String>,
@@ -5905,6 +5970,8 @@ impl<'a> TypeCheckCtx<'a> {
                 Item::Bench(_) | Item::Lemma(_) => {}
             }
         }
+        // D184 amendment 2026-09-30: a cycle of module-level `ro` initializers.
+        check_module_init_cycles(&module.items, errors);
         // Plan 157 (D200 amend): associated `ro Type.NAME` — same strict
         // const/ro partition symmetry as bare module-level `ro`
         // (`check_ro_module_partition` above, [M-114.4-strict-partition]).

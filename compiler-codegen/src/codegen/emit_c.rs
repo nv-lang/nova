@@ -9111,15 +9111,22 @@ impl CEmitter {
             }
         }
         self.current_emit_file_id = saved_emit_file_id_sigpreseed;
-        for item in &module.items {
-            if let Item::Let(l) = item {
-                if l.is_ghost { continue; }
-                let name = match &l.pattern {
-                    Pattern::Ident { name, .. } => Some(name.clone()),
-                    Pattern::Variant { path, kind: VariantPatternKind::Unit, .. }
-                        if path.len() == 1 => Some(path[0].clone()),
-                    _ => None,
-                };
+        let ro_name = |l: &crate::ast::LetDecl| match &l.pattern {
+            Pattern::Ident { name, .. } => Some(name.clone()),
+            Pattern::Variant { path, kind: VariantPatternKind::Unit, .. } if path.len() == 1 => Some(path[0].clone()),
+            _ => None,
+        };
+        // D184 amend 2026-09-30: module `ro` initializers run in DEPENDENCY order (Kahn, as the init bodies); a cycle is E_MODULE_INIT_CYCLE.
+        let lets: Vec<&crate::ast::LetDecl> = module.items.iter()
+            .filter_map(|it| if let Item::Let(l) = it { (!l.is_ghost).then_some(l) } else { None }).collect();
+        let deps: Vec<(String, String, Vec<String>)> = lets.iter().map(|l| {
+            let mut f = HashSet::new();
+            Self::collect_truly_free_idents(&l.value, &mut HashSet::new(), &mut f);
+            (ro_name(l).unwrap_or_default(), String::new(), f.into_iter().collect())
+        }).collect();
+        for l in Self::topo_sort_const_inits(&deps).into_iter().map(|i| lets[i]) {
+            {
+                let name = ro_name(l);
                 if let Some(name) = name {
                     // Plan 159 Ф.1: skip a `ro` lazy-static global unreachable
                     // from any root. It is in `dead_consts` only when no
@@ -9132,15 +9139,8 @@ impl CEmitter {
                     } else {
                         self.infer_expr_c_type(&l.value)
                     };
-                    // [M-175-lazy-const-crossmodule-collision]: module-level
-                    // `ro NAME = expr` is ALWAYS module-private (LetDecl has
-                    // no `is_export`) — look up the module-qualified name the
-                    // pre-pass above (Step 1, `Item::Let` branch) registered,
-                    // mirroring `emit_const_decl`'s own lookup. Falls back to
-                    // the bare name only if the pre-pass found no entry
-                    // (defensive; should always be present once peer_files is
-                    // non-empty — byte-identical fallback for any edge case
-                    // it doesn't cover).
+                    // [M-175-lazy-const-crossmodule-collision]: module-level `ro` is ALWAYS
+                    // module-private -- the pre-pass's module-qualified name, as emit_const_decl.
                     let c_name = self.private_const_c_names
                         .get(&(l.span.file_id, name.clone()))
                         .cloned()
@@ -55663,7 +55663,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     //
     // The collector descends through blocks, growing `bound` as it visits
     // each `let` BEFORE visiting subsequent statements (matches lexical scope).
-    fn collect_truly_free_idents(
+    pub(crate) fn collect_truly_free_idents(
         expr: &Expr,
         bound: &mut HashSet<String>,
         out: &mut HashSet<String>,
