@@ -48,6 +48,6 @@ export fn Box124 mut @get[R](path str, f fn(int) -> R) -> R {
 
 test "concrete overload dispatches with a ClosureFull-literal argument, generic sibling present" {
     mut b = Box124 { tag: 1 }
-    ro r = b.get("/alpha", fn(n int) -> str { "len=${n.to_str()}" })
+    ro r = b.get("/alpha", fn(n int) -> str { "len=${n}" })
     assert(r == "len=6")
 }

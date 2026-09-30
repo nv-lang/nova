@@ -158,6 +158,18 @@
 #   Ni odna prichina -- ne novaya rabota etoy nochi po yazyku; obе -- gigiena
 #   dok. Nastoyashchaya pochinka klassa (2) -- prostavit' `session:` pristavku
 #   pouchastno; ne sdelano seychas, potomu chto ne blokiruet yazyk.
-dead_hash_refs=863
+# 2026-09-30 (интегратор): 863 -> 888. НЕ рост мёртвых ссылок — ПОЧИНКА МЕРЫ, число
+#   совпало с CI. Гейт CI пуша `dc634c42c` (прогон 36679367917) насчитал 888 при
+#   локальных 863: локально живость считалась по `rev-list --all`, а он видит и
+#   ЛОКАЛЬНУЮ метку `backup-before-scrub-2026-08-13` — страховку вычистки истории
+#   13 августа, которой в origin нет. 25 ссылок на коммиты старой истории
+#   (`PROGRESS-p570/p593/p601/p617`, реестр, doc-conventions) на CI мёртвы.
+#   (Сообщение коммита этой починки называет их «незапушенными ветками» — неверно;
+#   их держит только эта метка, проверено `git for-each-ref --contains`.) Страж
+#   мерил на машине интегратора не то, что на CI, и гейт `main` на CI краснел при
+#   зелёном локальном. Живость теперь = ветки origin + HEAD + локальная `main`
+#   (п.4 в `commit-refs-scan.py`); самотест держит обе стороны: хеш под
+#   `refs/remotes/` жив, хеш только под локальной ссылкой мёртв.
+dead_hash_refs=888
 commit_url_no_context=0
 mirror_links=0

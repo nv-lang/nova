@@ -58,6 +58,11 @@
 set -u
 ROOT="${1:-$(pwd)}"
 
+# ОДИН ГЕЙТ НА ДЕРЕВО (реестр №1389): замок берётся ДО ловушки вердикта — иначе
+# отказанный второй прогон переписал бы своим RC файл вердикта живого первого.
+. "$(dirname "$0")/tools/gate-lock.sh"
+gate_lock_acquire gate-novac "$ROOT" "${NOVAC_TIER:-full}"
+
 GATE_FAILS=""
 GATE_FAIL_N=0
 DESYNC_MSGS=""
@@ -136,6 +141,7 @@ _novac_write_verdict() {
     [ -n "${SEAMS:-}" ] && _tier=novac-sample
     echo "RC=$_rc SEC=$(( $(date +%s) - GATE_T0 )) TIER=$_tier HASH=$NOVAC_VERDICT_HASH BRANCH=$NOVAC_VERDICT_BRANCH$_tail" \
         > "$NOVAC_DONE"
+    gate_lock_release
     return $_rc
 }
 trap _novac_write_verdict EXIT

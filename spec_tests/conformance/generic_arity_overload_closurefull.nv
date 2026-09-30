@@ -55,9 +55,9 @@ export fn Router130 mut @get[R](path str, h fn(int, str, bool) -> R) -> R {
 
 test "№130: generic-vs-generic siblings of arity 1/2/3, ClosureFull dispatch by closure's own param count" {
     mut r = Router130 { tag: 1 }
-    ro r1 = r.get("/alpha", fn(n int) -> str { "n=${n.to_str()}" })
-    ro r2 = r.get("/beta", fn(n int, s str) -> str { "n=${n.to_str()},s=${s}" })
-    ro r3 = r.get("/gamma", fn(n int, s str, b bool) -> str { "n=${n.to_str()},s=${s},b=${b.to_str()}" })
+    ro r1 = r.get("/alpha", fn(n int) -> str { "n=${n}" })
+    ro r2 = r.get("/beta", fn(n int, s str) -> str { "n=${n},s=${s}" })
+    ro r3 = r.get("/gamma", fn(n int, s str, b bool) -> str { "n=${n},s=${s},b=${b}" })
     assert(r1 == "n=6")
     assert(r2 == "n=5,s=/beta")
     assert(r3 == "n=6,s=/gamma,b=true")

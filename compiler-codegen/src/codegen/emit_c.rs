@@ -51620,10 +51620,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let result_tmp = self.fresh_tmp_named("match");
         let matched_tmp = self.fresh_tmp_named("matched");
 
-        // Determine scrutinee C type from its expression
+        // №1353: a value type's pointer carrier (`other Self`) is matched through its value, as `@` is (`(*nova_self)`).
         let scr_ty = self.infer_expr_c_type(scrutinee);
+        let (scr_ty, scr_val) = if Self::is_value_struct_ptr(&scr_ty) { (scr_ty.trim_end_matches('*').to_string(), format!("(*{})", scr)) } else { (scr_ty, scr.clone()) };
         self.var_types.insert(scr_tmp.clone(), scr_ty.clone());
-        self.line(&format!("{} {} = {};", scr_ty, scr_tmp, scr));
+        self.line(&format!("{} {} = {};", scr_ty, scr_tmp, scr_val));
         // Propagate tuple element type info from scrutinee var to scr_tmp
         if let Some(elem_tys) = self.tuple_element_types.get(scr.as_str()).cloned() {
             self.tuple_element_types.insert(scr_tmp.clone(), elem_tys);
