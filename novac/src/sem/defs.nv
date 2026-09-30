@@ -68,6 +68,19 @@ export type ConstDef value {
     once bool /// a module VALUE: one cell, initialized once before main; false = substituted at each use
 }
 
+/// THE row of a module-level constant in `Ctx.consts` (274.5 wave B2).
+export type ConstRow int
+
+/// The row's index, for the one thing a row is for: addressing a vector.
+export fn raw_crow(r ConstRow) -> int => r as int
+
+// `no_crow()` and `is_crow()` are NOT here, and their absence is the rule
+// rather than an oversight (P35): a constant row is answered as `Option`
+// everywhere -- `defs.const_row` and `chan.const_of` both do -- so the
+// sentinel never leaves the storage and nobody has an absence to test. The
+// pair would have been written for symmetry with `FnRow`, and symmetry is
+// exactly what P35 refuses as a reason for a name.
+
 /// THE registry of module-level constants, addressed by `ConstRow`.
 export type ConstTable {
     rows []ConstDef /// every constant of this file, in declaration order
