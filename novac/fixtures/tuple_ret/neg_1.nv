@@ -1,0 +1,16 @@
+module tuple_ret.neg_1
+
+// A return type the reference door does not read yet (a pointer inside a
+// tuple) is refused BY NAME at the declaration (registry 1383) -- and the call
+// of the function stays silent instead of reaching an ICE in type_of.
+
+// NOVAC_EXPECT this type form is not compiled yet
+
+fn f() -> (int, *u8) {
+    f()
+}
+
+fn main() {
+    ro x = f()
+    println(1)
+}

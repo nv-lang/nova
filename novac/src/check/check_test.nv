@@ -547,6 +547,17 @@ test "`..` stands last in a tuple pattern and alone in a payload (D486, registry
     assert(diagnose(alone) == 0, diagnose_first_msg(alone))
 }
 
+test "a tuple return with an applied component is read, and an unreadable one is named at the declaration (registry 1383)" {
+    // Fixtures: novac/fixtures/tuple_ret -- pos_1 carries the APPLIED component
+    // (`Option[int]` needs std, which this harness does not hand); before the fix
+    // the call of such a fn iced in type_of. CONTROL here: a plain tuple return.
+    ro app = "module m\n\nfn f(n int) -> (int, bool) {\n    f(n)\n}\n\nfn g() -> int {\n    ro p = f(1)\n    p.0\n}\n"
+    assert(diagnose(app) == 0, diagnose_first_msg(app))
+    ro ptr = "module m\n\nfn f() -> (int, *u8) {\n    f()\n}\n\nfn g() -> int {\n    ro p = f()\n    1\n}\n"
+    assert(diagnose(ptr) == 1, diagnose_first_msg(ptr))
+    assert(diagnose_first_msg(ptr).contains("type form is not compiled yet"), diagnose_first_msg(ptr))
+}
+
 test "a closed `str` slice is compiled; other receivers, open bounds and non-int bounds keep their refusals (274.7 U-1)" {
     // D470 section 5: `s[lo..hi]` is `s.index(Range { start: lo, end: hi })`, a
     // byte range of type `str` (D249). Wave U-1 compiles the closed form over
