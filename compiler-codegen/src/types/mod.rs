@@ -24,6 +24,7 @@ mod fail_reach;
 /// Registry 221.1 #895: a static type-set blanket called on a primitive — see
 /// `static_blanket.rs`'s module doc.
 mod static_blanket;
+mod fn_visibility; // #1097: a same-name free fn by the caller's imports, see its doc
 
 /// Plan 196 (gs-bounds migration, spike `docs/plans/wip/196-gs-spike.md`):
 /// `gs` ("generics in scope") used to be `HashSet<String>` — ONLY the names of the
@@ -4275,6 +4276,8 @@ struct TypeCheckCtx<'a> {
     /// Нужны, когда одноимённый тип объявлен в нескольких файлах и различить
     /// их может только то, что импортировал использующий файл.
     file_imports: HashMap<crate::diag::FileId, Vec<Vec<String>>>,
+    /// #1097: (import path, item name) of every unaliased selective import item, per file.
+    file_fn_imports: HashMap<crate::diag::FileId, Vec<(Vec<String>, String)>>,
     /// W6 (№705): канонический путь файла — вторая половина того же ответа.
     /// В `d78_dup_decl_type_cross_import` оба кандидата объявляют ОДИН И ТОТ
     /// ЖЕ модуль `neg.kind` и различаются ТОЛЬКО физическим путём (`a/` vs
@@ -5397,11 +5400,18 @@ impl<'a> TypeCheckCtx<'a> {
             HashMap::new();
         let mut file_paths: HashMap<crate::diag::FileId, std::path::PathBuf> =
             HashMap::new();
+        let mut file_fn_imports: HashMap<crate::diag::FileId, Vec<(Vec<String>, String)>> = HashMap::new();
         for pf in &module.peer_files {
             file_paths.insert(pf.file_id, pf.path.clone());
             let e = file_imports.entry(pf.file_id).or_default();
             for imp in &pf.imports {
                 e.push(imp.path.clone());
+            }
+            let fe = file_fn_imports.entry(pf.file_id).or_default();
+            for imp in &pf.imports {
+                for it in imp.items.iter().flatten().filter(|it| it.alias.is_none()) {
+                    fe.push((imp.path.clone(), it.name.clone()));
+                }
             }
         }
         // Имена, объявленные БОЛЕЕ ЧЕМ В ОДНОМ файле. Только для них включается
@@ -5451,7 +5461,7 @@ impl<'a> TypeCheckCtx<'a> {
                 *ret = None;
             }
         }
-        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, module_const_names, types: TypeTable::new(types, colliding_type_names.clone()), const_types, assoc_const_types, coerce_pairs, generic_coerce_patterns, current_coerce_decl_span: std::cell::RefCell::new(None), sum_variant_names, file_local_types, file_imports, file_paths,
+        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, module_const_names, types: TypeTable::new(types, colliding_type_names.clone()), const_types, assoc_const_types, coerce_pairs, generic_coerce_patterns, current_coerce_decl_span: std::cell::RefCell::new(None), sum_variant_names, file_local_types, file_imports, file_fn_imports, file_paths,
             colliding_type_names, imported_modules,
             current_file: std::cell::Cell::new(None),
             current_fail_payload: std::cell::RefCell::new(None),
@@ -10774,6 +10784,7 @@ impl<'a> TypeCheckCtx<'a> {
         // `infer_expr_c_type` mis-fell-back to `nova_int`, codegen now emits the correct type.
         if let ExprKind::Ident(_) = &e.kind {
             if e.id.is_set() {
+                self.record_fn_value_callee(e, scope); // #1097, see fn_visibility.rs
                 if let Some(tr) = self.infer_expr_type(e, scope) {
                     let rt = ResolvedType::from_type_ref(&tr);
                     // Plan 172.1.1: annotate ALL Idents (primitive + non-primitive). The consumer
@@ -18235,7 +18246,7 @@ impl<'a> TypeCheckCtx<'a> {
                     if filtered.iter().any(is_own) {
                         filtered.into_iter().filter(|c| is_own(c)).collect()
                     } else {
-                        filtered
+                        self.narrow_by_fn_imports(caller_file_id, n, filtered) // #1097
                     }
                 });
                 match visible.as_deref() {

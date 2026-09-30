@@ -19,6 +19,7 @@ mod mono_nominal; // registry 221.1 #895, see its doc
 mod static_blanket; // registry 221.1 #895 (second carrier), see its doc
 mod self_value; // #1395: `Self` by position, see its doc
 mod opt_eq_split; // #1405: `nova_opt_eq` body late, see its doc
+mod decl_module_symbol; // #1097: free-fn symbol by declaring module (D134), see its doc
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
@@ -6007,10 +6008,8 @@ impl CEmitter {
         }
 
         // Plan 81 Ф.6.2: атрибуция свободных функций к объявляющим
-        // модулям — для symbol mangling `nova_fn_<modpath>_<name>`.
-        // Первый peer с данным именем побеждает (cross-module overload
-        // с одним именем — редкий edge; param-суффикс всё равно
-        // разводит C-имена).
+        // модулям. Первый peer с данным именем побеждает ЗДЕСЬ, но D84-реестр
+        // берёт базу у объявившего модуля — №1097, `emit_c/decl_module_symbol.rs`.
         //
         // [M-exp-promotion-blockers: uuid_namespace duplicate-symbol]
         // "первый побеждает" — это глобальный, keyed-только-по-имени кэш
@@ -8482,19 +8481,21 @@ impl CEmitter {
                     // mode-differing decl (`f(x H)` vs `f(mut x H)` — same param
                     // C-types + return) is NOT a duplicate; include modes in the
                     // dedup key so all three register (and get distinct C symbols).
+                    // #1097: a duplicate (and a suffix neighbour) only within ONE module; an extern is one symbol anywhere.
                     let new_modes = Self::fn_param_modes(f);
                     if let Some(existing) = self.method_overloads.get(&key) {
                         let is_dup = existing.iter().any(|s|
                             s.param_c_types == param_c_types
                             && s.return_c_type == return_c_type
-                            && s.param_modes == new_modes);
+                            && s.param_modes == new_modes
+                            && (f.is_external || self.same_decl_module(s.fn_span, f)));
                         if is_dup {
                             continue;
                         }
                     }
                     let existing_count = self.method_overloads.get(&key)
-                        .map(|v| v.len()).unwrap_or(0);
-                    let base_c_name = self.free_fn_c_name(&f.name);
+                        .map(|v| v.iter().filter(|s| f.is_external || self.same_decl_module(s.fn_span, f)).count()).unwrap_or(0);
+                    let base_c_name = self.decl_base_c_name(f);
                     let c_name = if existing_count == 0 {
                         base_c_name.clone()
                     } else {
@@ -20079,6 +20080,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             let key = ("".to_string(), f.name.clone());
             if let Some(overloads) = self.method_overloads.get(&key) {
                 if overloads.len() > 1 {
+                    if let Some(sig) = Self::own_registry_sig(overloads, f) {
+                        return sig.c_name.clone(); // #1097: its own entry, not a param-type guess
+                    }
                     let want_params: Vec<String> = f.params.iter()
                         .map(|p| self.type_ref_to_c(&p.ty)
                             .unwrap_or_else(|_| "nova_int".into()))
@@ -34196,7 +34200,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // NOVA_CLOS_CALL_* macro (так же как для lambda).
                 if let ExprKind::Ident(rhs_name) = &decl.value.kind {
                     if !self.var_types.contains_key(rhs_name) {
-                        if let Some(sig) = self.user_fn_sigs.get(rhs_name).cloned() {
+                        if let Some(sig) = self.fn_value_param_sig(rhs_name, decl.value.id) {
                             self.fn_param_sigs.insert(binding.clone(), sig);
                         }
                         // [Plan 228 Ф.2(a) снос, реестр 221.1 №94-v2, было fix
@@ -36371,10 +36375,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let is_local_var = self.var_types.contains_key(name);
                 let is_user_fn = self.var_types.contains_key(&format!("fn_ret_{}", name));
                 if is_user_fn && !is_local_var {
-                    if let Some(closure_value) = self.emit_free_fn_value(name) {
+                    self.refuse_unresolved_fn_value(name, expr.id)?; // #1097
+                    if let Some(closure_value) = self.emit_free_fn_value(name, expr.id) {
                         return Ok(closure_value);
                     }
-                    return Ok(self.free_fn_c_name(name));
+                    return Ok(self.fn_value_c_name(name, expr.id));
                 }
                 // Plan 91.12: module-private const C-name via (use-site file_id, name); the pre-pass covers every
                 // peer of the module group. A same-named LOCAL is caught above (#1397) -- the old note here
@@ -56380,73 +56385,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line(&format!("{}->fn = ({})({});", clos_tmp, clos_fn_ty, body_name));
         self.line(&format!("{}->env = (void*)({});", clos_tmp, env_tmp));
         Ok(format!("(void*)({})", clos_tmp))
-    }
-
-    /// Plan 14 Ф.3: emit free fn name as first-class value.
-    ///
-    /// `let f = inc` или `xs.map(inc)` — `inc` нужно превратить в
-    /// closure-value `(void*)NovaClos_X*` чтобы callers (HOF, fn-typed
-    /// params, fn_param_sigs-driven calls через NOVA_CLOS_CALL_*) работали.
-    ///
-    /// Generates:
-    ///   1. **Thunk** (один раз на user fn, deduped через
-    ///      `emitted_fn_thunks`): envless adapter
-    ///      `static <ret> nova_fn_<name>_thunk(void* env, args...)
-    ///      { (void)env; return nova_fn_<name>(args...); }`.
-    ///      Игнорирует `env` (free fn без захвата).
-    ///   2. **Closure-литерал** на use-site: alloc'ает `NovaClos_X*` с
-    ///      `fn = &nova_fn_<name>_thunk, env = NULL`. Возвращается как
-    ///      `(void*)clos_ptr`.
-    ///
-    /// Если sig user fn'а отсутствует в `user_fn_sigs` (не free fn —
-    /// generic, метод, и т.д.) — возвращает `None`, caller должен
-    /// fallback'ить на старое поведение (`nova_fn_<name>` raw pointer).
-    fn emit_free_fn_value(&mut self, fn_name: &str) -> Option<String> {
-        let (param_c_tys, ret_c_ty) = self.user_fn_sigs.get(fn_name).cloned()?;
-        // Emit thunk one-time (deduped).
-        if !self.emitted_fn_thunks.contains(fn_name) {
-            let thunk_name = format!("{}_thunk", self.free_fn_c_name(fn_name));
-            // Build params: void* env, T0 p0, T1 p1, ...
-            let mut params = vec!["void* _env".to_string()];
-            for (i, ty) in param_c_tys.iter().enumerate() {
-                params.push(format!("{} p{}", ty, i));
-            }
-            let params_str = params.join(", ");
-            // Forward decl into lambda_forward_decls.
-            self.lambda_forward_decls
-                .push_str(&format!("{}{} {}({});\n", self.top_level_storage(), ret_c_ty, thunk_name, params_str));
-            // Body — call original nova_fn_<name>.
-            let mut impl_buf = String::new();
-            impl_buf.push_str(&format!("{}{} {}({}) {{\n", self.top_level_storage(), ret_c_ty, thunk_name, params_str));
-            impl_buf.push_str("    (void)_env;\n");
-            let call_args: Vec<String> = (0..param_c_tys.len())
-                .map(|i| format!("p{}", i))
-                .collect();
-            if ret_c_ty == "nova_unit" {
-                impl_buf.push_str(&format!("    {}({});\n", self.free_fn_c_name(fn_name), call_args.join(", ")));
-                impl_buf.push_str("    return NOVA_UNIT;\n");
-            } else {
-                impl_buf.push_str(&format!("    return {}({});\n", self.free_fn_c_name(fn_name), call_args.join(", ")));
-            }
-            impl_buf.push_str("}\n\n");
-            self.lambda_impls.push_str(&impl_buf);
-            self.emitted_fn_thunks.insert(fn_name.to_string());
-        }
-        // Emit closure-struct on use site.
-        let clos_struct = Self::clos_struct_name(&param_c_tys, &ret_c_ty);
-        let clos_fn_ty = Self::clos_fn_ty(&param_c_tys, &ret_c_ty);
-        let clos_tmp = self.fresh_tmp();
-        let thunk_name = format!("{}_thunk", self.free_fn_c_name(fn_name));
-        self.line(&format!(
-            "{}* {} = ({}*)nova_alloc(sizeof({}));",
-            clos_struct, clos_tmp, clos_struct, clos_struct
-        ));
-        self.line(&format!(
-            "{}->fn = ({})({});",
-            clos_tmp, clos_fn_ty, thunk_name
-        ));
-        self.line(&format!("{}->env = (void*)0;", clos_tmp));
-        Some(format!("(void*)({})", clos_tmp))
     }
 
 
