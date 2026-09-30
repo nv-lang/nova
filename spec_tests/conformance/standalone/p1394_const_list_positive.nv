@@ -1,0 +1,46 @@
+// EXPECT_STDOUT 4|14|2|s|60|5|9|9|40|i|5
+//
+// Registry 221.1 #1394: every item of the 03-syntax.md «`const` требует» list is
+// a `const` -- a literal, arithmetic, a record literal, a sum constructor (a
+// unit variant and one with constexpr args), a reference to a `const`, a
+// `const fn` call -- and so is a `[N]T` literal, a value. The oracle rejected
+// the sum variant in a `const` as a "path expression"; it builds and runs now,
+// at module and at associated level.
+// Not here: associated `const` forms that check but do not BUILD (a record
+// literal, a `const fn` call, a read of a module `const`) -- older emitter gaps,
+// filed separately, not part of the predicate.
+module standalone.p1394_const_list_positive
+
+type P1394Pt { x int, y int }
+type P1394Fam | P1394FInt | P1394FStr
+type P1394Sh | P1394Circle(int) | P1394Sq(int)
+type P1394Tag { n int }
+
+fn p1394_sq(const x int) -> const int => x * x
+
+const P1394_LIT = 4
+const P1394_ARITH = 2 + 3 * 4
+const P1394_REC P1394Pt = { x: 1, y: 2 }
+const P1394_UNIT P1394Fam = P1394Fam.P1394FStr
+const P1394_CTOR P1394Sh = P1394Sh.P1394Sq(6)
+const P1394_REF = P1394_LIT + 1
+const P1394_CFN = p1394_sq(3)
+const P1394_FIXED [3]int = [7, 8, 9]
+const P1394Tag.LIT = 40
+const P1394Tag.UNIT P1394Fam = P1394Fam.P1394FInt
+const P1394Tag.CTOR P1394Sh = P1394Sh.P1394Circle(5)
+
+fn p1394_fam(f P1394Fam) -> str => match f {
+    P1394FInt => "i"
+    P1394FStr => "s"
+}
+fn p1394_sh(s P1394Sh) -> int => match s {
+    P1394Circle(r) => r
+    P1394Sq(a) => a * 10
+}
+
+fn main() Io -> () {
+    print("${P1394_LIT}|${P1394_ARITH}|${P1394_REC.y}|${p1394_fam(P1394_UNIT)}|${p1394_sh(P1394_CTOR)}|")
+    print("${P1394_REF}|${P1394_CFN}|${P1394_FIXED[2]}|")
+    print("${P1394Tag.LIT}|${p1394_fam(P1394Tag.UNIT)}|${p1394_sh(P1394Tag.CTOR)}")
+}
