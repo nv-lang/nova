@@ -1,0 +1,8 @@
+// D486 s2 tuple-pat: '(' pattern (',' pattern)* [',' '..'] ')' -- the `..`
+// is TRAILING only. Here it stands in the middle: z is written after `..`,
+// so it can only mean the LAST element (int) -- or the form is refused.
+fn main() {
+    ro t = (1, "s", 5)
+    ro (a, .., z) = t
+    println(z + 1)
+}

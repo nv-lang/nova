@@ -1,0 +1,7 @@
+// CONTROL: `_` nested inside a constructor in a condition.
+fn main() {
+    ro o = Some(3)
+    if Some(_) = o {
+        println(1)
+    }
+}

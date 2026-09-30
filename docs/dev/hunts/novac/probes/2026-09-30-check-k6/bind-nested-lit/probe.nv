@@ -1,0 +1,8 @@
+// D486 s4: literal in a binding position is E_REFUTABLE_BINDING.
+// The literal stands one level down, inside a tuple pattern.
+fn pair() -> (int, int) => (1, 5)
+
+fn main() {
+    ro (a, 2) = pair()
+    println(a)
+}

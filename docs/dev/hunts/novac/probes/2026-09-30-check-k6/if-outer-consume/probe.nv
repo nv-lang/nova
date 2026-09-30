@@ -1,0 +1,8 @@
+// D486 s4/s5: an OUTER mode before the pattern in a condition is
+// E_CONSUME_IN_CONDITION (the outer `consume` stays forbidden).
+fn main() {
+    ro o = Some(3)
+    if consume Some(x) = o {
+        println(x)
+    }
+}

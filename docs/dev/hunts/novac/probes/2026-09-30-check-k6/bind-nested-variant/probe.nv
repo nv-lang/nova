@@ -1,0 +1,8 @@
+// D486 s4: constructor in a binding position is E_REFUTABLE_BINDING.
+// Here the constructor stands one level down, inside a tuple pattern.
+fn main() {
+    ro o = Some(2)
+    ro p = (1, o)
+    ro (a, Some(b)) = p
+    println(a + b)
+}

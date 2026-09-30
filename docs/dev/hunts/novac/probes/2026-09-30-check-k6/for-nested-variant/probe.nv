@@ -1,0 +1,22 @@
+// D486 s4: for-header rules = binding rules; constructor is E_REFUTABLE_BINDING.
+// The constructor stands one level down, inside a record header pattern.
+type Sh enum
+    | A(int)
+    | B
+
+type Pr {
+    k int
+    s Sh
+}
+
+fn total(xs []Pr) -> int {
+    mut n = 0
+    for { k, s: A(v) } in xs {
+        n += k + v
+    }
+    n
+}
+
+fn main() {
+    println(1)
+}

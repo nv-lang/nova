@@ -1,0 +1,18 @@
+// D486 s3: a partial record pattern needs `..` in EVERY position,
+// the for-header included (E_RECORD_PATTERN_NEEDS_REST).
+type Pr {
+    k int
+    m int
+}
+
+fn total(xs []Pr) -> int {
+    mut n = 0
+    for { k } in xs {
+        n += k
+    }
+    n
+}
+
+fn main() {
+    println(1)
+}

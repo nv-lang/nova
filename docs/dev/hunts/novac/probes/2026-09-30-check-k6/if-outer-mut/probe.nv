@@ -1,0 +1,8 @@
+// D486 s4: outer `mut` before the pattern in a condition is retracted
+// (the "outer-mode" row: E_CONSUME_IN_CONDITION, and outer `mut`).
+fn main() {
+    ro o = Some(3)
+    if mut Some(x) = o {
+        println(x)
+    }
+}

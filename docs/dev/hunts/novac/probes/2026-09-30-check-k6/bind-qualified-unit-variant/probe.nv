@@ -1,0 +1,14 @@
+// D486 s2 qual-head / s4: `ro Sh.B = s` is a constructor in a binding,
+// E_REFUTABLE_BINDING. What does novac answer?
+type Sh enum
+    | A(int)
+    | B
+
+fn qualified(s Sh) -> int {
+    ro Sh.B = s
+    2
+}
+
+fn main() {
+    println(1)
+}

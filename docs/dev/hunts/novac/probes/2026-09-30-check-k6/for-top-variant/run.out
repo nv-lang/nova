@@ -1,0 +1,9 @@
+=== SUBJECT: novac check
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"D:/Temp/hunt-check-k6/for-top-variant/probe.nv","start":285,"end":288},"message":"a `for` header takes an irrefutable pattern -- this form can fail to match, and the loop has no `else` (D486 s4, E_REFUTABLE_BINDING)","poisoned_by":null}
+novac rc=1
+=== ORACLE: nova check
+[32mok:[0m D:/Temp/hunt-check-k6/for-top-variant/probe.nv
+
+===== SUMMARY =====
+[32mPASS[0m: 1  FAIL: 0
+oracle check rc=0

@@ -1,0 +1,8 @@
+// RO_WORD_PATTERN_MSG says: "the `ro` word on a pattern binder stands only
+// in an `if`/`while` condition". Here it stands IN an `if` condition.
+fn main() {
+    ro o = Some(3)
+    if Some(ro x) = o {
+        println(x)
+    }
+}

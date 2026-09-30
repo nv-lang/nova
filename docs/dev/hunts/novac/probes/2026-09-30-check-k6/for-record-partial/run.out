@@ -1,0 +1,9 @@
+=== SUBJECT: novac check
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"D:/Temp/hunt-check-k6/for-record-partial/probe.nv","start":203,"end":206},"message":"record-pattern binding lists 1 of 2 field(s) without `..` (D411, E_RECORD_PATTERN_NEEDS_REST)","poisoned_by":null}
+novac rc=1
+=== ORACLE: nova check
+[32mok:[0m D:/Temp/hunt-check-k6/for-record-partial/probe.nv
+
+===== SUMMARY =====
+[32mPASS[0m: 1  FAIL: 0
+oracle check rc=0

@@ -1,0 +1,7 @@
+// D486 s5: `consume` on a binder INSIDE the pattern in a condition is legal.
+fn main() {
+    ro o = Some(3)
+    if Some(consume x) = o {
+        println(x)
+    }
+}

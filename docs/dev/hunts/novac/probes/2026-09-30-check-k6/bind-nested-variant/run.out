@@ -1,0 +1,14 @@
+=== SUBJECT: novac check
+novac rc=0
+=== ORACLE: nova check
+[31mFAIL:[0m D:/Temp/hunt-check-k6/bind-nested-variant/probe.nv
+  D:/Temp/hunt-check-k6/bind-nested-variant/probe.nv:6:12: error: [E_REFUTABLE_BINDING] refutable pattern in `let`: `Some` is a variant-pattern — match is not statically guaranteed (D52/D59/D411). Use `if let` or `match` instead.
+  6 |     ro (a, Some(b)) = p
+    |            ^^^^^^^
+    note: Plan 53: variant-patterns need a runtime tag-check — `let` guarantees binding, not a fallible match.
+    note: example: `if let Some(..) = <expr> { ... }`
+
+===== SUMMARY =====
+PASS: 0  [31mFAIL[0m: 1  WARN: 0
+[1m[31merror:[0m[0m 1 file(s) failed type-check
+oracle check rc=1
