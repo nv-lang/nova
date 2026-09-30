@@ -1,0 +1,21 @@
+module p2.m
+
+type Row int
+
+type Target enum
+    | ToRow(Row)
+    | Nothing
+
+fn row_of(t Target) -> Option[Row] {
+    match t {
+        ToRow(r) => Some(r)
+        Nothing => None
+    }
+}
+
+fn main() {
+    match row_of(Target.ToRow(7 as Row)) {
+        Some(r) => println("row=${r as int}")
+        None => println("none")
+    }
+}
