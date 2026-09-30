@@ -233,7 +233,8 @@
 #   mut-alias-safe, 06-concurrency.md section 2); names live in builtins (P5).
 # builtins 51 -> 52 (same day, E.9 step 4 emitter): SUPERVISOR_EFFECT -- the
 #   effect whose installed handler sets a scope's has_supervisor.
-builtins 52
+# builtins 52 -> 53 (E.9 step 4b): has_fixed_tid -- which primitives carry the runtime's fixed type id.
+builtins 53
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -328,7 +329,8 @@ lex 11
 #   FnBuilder.@begin_supervised / @end_supervised / @spawn_site -- the
 #   supervised scope and the spawn hand-off of the lowered body, read by
 #   emit_c (the statements' printers, the spawn's C number).
-lower 90
+# lower 90 -> 91 (E.9 step 4b): FnBuilder.@unbox_any -- the narrowed name's unboxing.
+lower 91
 main 0
 # mono -- НОВЫЙ модуль (2026-08-18, Э2-б2): коллектор достижимого.
 # Наружу три имени: тип Reach, вопрос @has (эмиттер спрашивает про каждую
@@ -884,7 +886,10 @@ resolve 15
 # sem 282 -> 283 (2026-09-30, Carina window, check x K4 hunt): pattern_lit_leaf --
 #   the leaf of a literal pattern, `true`/`false` inside their name node
 #   included; read by check (the literal's type) and lower (the arm's test).
-sem 283
+# sem 283 -> 289 (E.9 step 4b, `any` and `is`, D54): is_any_ty, any_tid_c, Narrowing,
+#   narrowing_of, type_ref_last_ident, is_target_of -- one door each for check,
+#   lower and emit_c (+6).
+sem 289
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

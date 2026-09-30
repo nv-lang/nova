@@ -148,6 +148,7 @@ export type Rvalue enum
     | IndexFromEnd(EndRead) // the element at `len - k` (an array pattern's suffix binder)
     | VariantField(VariantRead) // field `index` of variant `vrow` of the sum in `scr` (match binder)
     | Read(PlaceRead) // one projection of a local, read as a value (destructuring binder)
+    | AnyData(Node) // the value the `any` the tree names holds, read as the destination's type (D54)
 
 /// ONE STEP OF A PLACE (wave M3c): a named field, or a positional component.
 ///

@@ -705,7 +705,8 @@ fn Checker mut @type_stmt(st Node) -> () {
             return
         }
         @type_expr(kids[1])
-        @type_block(kids[2])
+        // The then-branch, narrowed by an `is` condition (check/is_expr.nv).
+        @type_then_branch(kids[1], kids[2])
         // The ELSE branch, since the parser learned `else` (2026-08-18).
         // Typing it is not optional: check passed the file and emit ICEd
         // with "sem: no type recorded" -- a decision taken by one layer

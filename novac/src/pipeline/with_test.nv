@@ -505,3 +505,19 @@ test "handler literal: an undeclared return type is the author's error (E4, foun
     assert(d.len() == 1, messages(d))
     assert(messages(d).contains("undeclared type name `Nope`"), messages(d))
 }
+
+test "`is` on an `any`: the runtime's type test, and the narrowed name unboxed at the head of the branch (E.9 step 4b)" {
+    // REACHED code with a name of its own (`x`): the shell's supervisor bridge
+    // already carries `nova_any_is(err, ...)` of its own, so a function nobody
+    // calls, or the name `err`, would make these asserts pass on the shell.
+    mut std = []str.new()
+    std.push("module std.v\nexport type Vec[T] { n int }\n")
+    std.push("module std.fx\nexport type Hk effect { fn hit(x any) -> int }\n")
+    ro inner = "hit(x) -> int {\n  if x is str {\n   println(x)\n   return 1\n  }\n  0\n }"
+    ro src = "fn g() -> int {\n with Hk = effect Hk { ${inner} } {\n  println(1)\n }\n 0\n}\nfn main() {\n println(g())\n}"
+    ro (d, c) = compile_to_c_with(src, parse_decls(std), interop_surface())
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("nova_any_is(x, NOVA_TID_nova_str)"), c)
+    assert(c.contains("*(nova_str*)nova_any_data(x);"), c)
+    assert(c.contains("nova_str x = "), c)
+}

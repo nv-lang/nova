@@ -93,6 +93,7 @@ export fn is_expr_kind(k NodeKind) -> bool {
     // this list is not refused anywhere. It is simply not there.
     k == NodeKind.RecordCtor ||
     k == NodeKind.Cast ||
+    k == NodeKind.IsTest ||
     // AN `if` VALUE joins for the identical reason RecordCtor did (see the
     // comment above): registry #TBD found `pick(if c {10} else {20}))`
     // refused with "this call omits `x`" even after `check.nv`'s shape gate

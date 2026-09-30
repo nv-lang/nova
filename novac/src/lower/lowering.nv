@@ -13,6 +13,7 @@ import ../tree.{Node, NodeKind, assign_op_of}
 import ../types.{TyId, is_ty}
 import ../diag.{ice}
 import ../sem.{arm_body_at, branch_children, for_head_elem}
+import ../sem.{narrowing_of}
 import ../sem.{is_expr_kind, is_println_call, is_value_tail_kind, leaf_kind}
 import ../sem.{leaf_text, literal_prim_of, raw_vrow, variant_in_sum}
 import ../sem.{iflet_pattern_at, iflet_body_at, iflet_else_at, iflet_init_at}
@@ -451,6 +452,17 @@ fn Lowerer mut @lower_if(st Node, outer Option[IfCtx]) -> () {
     }
     // ONE shape of else (M2b-2-0): a chained `if` continues the `} else ` line its
     // caller printed, so it starts without the indent the top-level `if` carries.
+    // A NARROWING `if x is T` (D54): the branch opens with `x` unboxed into a
+    // binding of the same name -- through a temporary, since C reads a
+    // declarator's own name inside its initializer.
+    match narrowing_of(kids[1], @out, @ctx) {
+        Some(nw) => {
+            ro tmp = @ir.temp(nw.target)
+            @ir.unbox_any(tmp, nw.subject)
+            @ir.copy(@ir.named(nw.target, nw.name), tmp)
+        }
+        None => {} // no narrowing: the branch reads the names as they are
+    }
     @lower_block_stmts_fn(kids[2], false)
     if has_else {
         // The closing brace and the `else` share one line -- the one shape of else

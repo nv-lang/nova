@@ -477,6 +477,7 @@ test "a for over a collection: the header carries vec/idx/elem locals, the body 
                 Read(_) => assert(false)
                 IndexConst(_) => assert(false)
                 IndexFromEnd(_) => assert(false)
+                AnyData(_) => assert(false)
             }
         }
         Eval(_) => assert(false)
@@ -533,6 +534,7 @@ test "an if-let: the Option lands in a binding, the If tests IsSome of it, the b
                 Read(_) => assert(false)
                 IndexConst(_) => assert(false)
                 IndexFromEnd(_) => assert(false)
+                AnyData(_) => assert(false)
             }
         }
         Eval(_) => assert(false)

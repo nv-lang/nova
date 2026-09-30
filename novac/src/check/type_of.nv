@@ -401,6 +401,10 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         }
         ice("check: anonymous constructor without a spread")
     }
+    if k == NodeKind.IsTest {
+        // A type test is a `bool` (D54); its legality was the walk's.
+        return ctx.prims.bool_id
+    }
     if k == NodeKind.Cast {
         // The value of a cast is the TARGET type -- resolved by name, because a
         // cast writes the type it wants. Legality is the WALK's business

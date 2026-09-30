@@ -14,7 +14,7 @@
 
 module novac.lower
 import ../diag.{ice}
-import ../tree.{NodeId}
+import ../tree.{Node, NodeId}
 
 /// One handler a `with` installs (E.9 step 2, 274.11): the effect whose thread
 /// slot it takes, the local that keeps the handler it displaced, and the local
@@ -152,4 +152,10 @@ export fn FnBuilder mut @spawn_site(node NodeId) -> () {
         i -= 1
     }
     @cur.push(Stmt.Spawn(SpawnSite { node, scope: q }))
+}
+
+/// `dest = <the value the any at `subject` holds>` -- the unboxing of a
+/// narrowed name at the head of its then-branch (D54, E.9 step 4b).
+export fn FnBuilder mut @unbox_any(dest Local, subject Node) -> () {
+    @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.AnyData(subject) }))
 }

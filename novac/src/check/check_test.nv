@@ -937,3 +937,20 @@ test "an empty STATEMENT match is refused on any scrutinee -- a record included 
     ro src = "module m\n\ntype Pt { x int, y int }\n\nfn f(p Pt) -> int {\n    match p {\n    }\n    p.x\n}\n"
     assert(diagnose_first_msg(src).contains("E_MATCH_NON_EXHAUSTIVE"), diagnose_first_msg(src))
 }
+
+test "`x is T` on an `any` is a bool, and narrows `x` to `T` in the then-branch (D54, E.9 step 4b)" {
+    // `h(err)` takes a `str`: it types only if `err` IS a `str` inside the
+    // branch. Outside it `err` is `any` again.
+    ro ok = "module m\n\nfn h(s str) -> int => 1\n\nfn f(err any) -> int {\n    if err is str {\n        return h(err)\n    }\n    0\n}\n"
+    assert(diagnose(ok) == 0, diagnose_first_msg(ok))
+    ro outside = "module m\n\nfn h(s str) -> int => 1\n\nfn f(err any) -> int {\n    if err is str {\n        return 1\n    }\n    h(err)\n}\n"
+    assert(diagnose(outside) >= 1, "the narrowing leaked out of the then-branch")
+}
+
+test "`is` on a value of a statically known non-sum type is E_IS_NON_ANY (D54)" {
+    ro src = "module m\n\nfn f(x int) -> bool => x is str\n"
+    assert(diagnose_first_msg(src).contains("E_IS_NON_ANY"), diagnose_first_msg(src))
+    // A sum is tested against one of ITS variants.
+    ro sum_ok = "module m\n\ntype C enum A | B\n\nfn f(c C) -> bool => c is A\n"
+    assert(diagnose(sum_ok) == 0, diagnose_first_msg(sum_ok))
+}

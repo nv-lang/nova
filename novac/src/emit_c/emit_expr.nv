@@ -113,7 +113,7 @@ fn c_binary_form(op BinOp, row BuiltinType) -> str {
 fn is_float_row(r BuiltinType) -> bool {
     match r.family {
         PfFloat => true
-        PfInt | PfStr | PfBool | PfChar | PfUnit => false
+        PfInt | PfStr | PfBool | PfChar | PfUnit | PfAny => false
     }
 }
 
@@ -149,7 +149,7 @@ fn Emitter @printer_of(t TyId) -> str {
             return "nova_print_int"
         }
         PfChar => { return "nova_print_char" }
-        PfStr | PfBool | PfUnit => {}
+        PfStr | PfBool | PfUnit | PfAny => {}
     }
     ice("emit_c: printer_of reached a primitive family without a printer (unit; str, bool and char are answered above)")
 }
@@ -761,6 +761,8 @@ fn Emitter mut @emit_expr(e Node) -> () {
             @emit_expr(kids[2])
             @body.append(")")
         }
+    } else if k == NodeKind.IsTest {
+        @emit_is_test(e)
     } else if k == NodeKind.Cast {
         // Unwrapping a newtype is FREE: the value is already the
         // representation, so the emission is the operand and nothing else. C

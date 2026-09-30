@@ -729,6 +729,8 @@ fn Checker mut @type_expr(e Node) -> () {
         @type_free_call(e)
     } else if k == NodeKind.Cast {
         @type_cast(e)
+    } else if k == NodeKind.IsTest {
+        @type_is_test(e)
     } else if k == NodeKind.TupleExpr {
         // A tuple literal: type every component, intern the pair term (the
         // step 3 constructor), record the node. Components are the BRANCH
