@@ -1,0 +1,9 @@
+module probe
+
+fn three() -> int => 3
+
+ro xs = []int.of(1, 2).map(|y| y + three())
+
+fn main() {
+    println(xs.len())
+}
