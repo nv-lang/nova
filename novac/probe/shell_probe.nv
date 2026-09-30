@@ -158,8 +158,9 @@ fn slice_probe(a []str, from int) -> int {
         n += s.byte_len()
     }
     ro head = a[0..0]
-    // The element read the novac `for` walk prints (`take_elem`).
-    ro first = if a.len() > 0 { a[0].byte_len() } else { 0 }
+    // The element read the novac `for` walk prints (`take_elem`). Written as
+    // the METHOD: the oracle inlines `a[0]` and keeps no instance alive.
+    ro first = if a.len() > 0 { a.index(0).byte_len() } else { 0 }
     n + head.len() + first
 }
 
@@ -168,7 +169,8 @@ fn last_slash(path str) -> int {
     ro b = path.bytes()
     mut cut = 0
     for i in 0..b.len() {
-        if b[i] == 0x2F {
+        // The method, not `b[i]`: the oracle inlines the bracket form.
+        if b.index(i) == 0x2F {
             cut = i + 1
         } else {
             // Any other byte belongs to the current segment.
