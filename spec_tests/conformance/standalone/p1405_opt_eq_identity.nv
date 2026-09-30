@@ -1,0 +1,29 @@
+// Registry 221.1 #1405, the SILENT form (the folder fixture
+// `p1405_opt_eq_late/` holds the C-failing one). `Option[V]` of a value record
+// V is named in a signature here, so its `nova_opt_eq_<V>` was registered
+// before the heap sum's `@equal` -- and the early-zone helper compared the
+// sum field by POINTER IDENTITY: two separately built equal values answered
+// `false`. The body is built late now, by the one comparison dispatcher.
+// The sum is a slice element, which keeps it a heap `Nova_*` (A4 fence).
+module standalone.p1405_opt_eq_identity
+
+#impl(Equal)
+type P1405IKind enum
+    | IPrim
+    | ISum
+
+fn p1405i_kinds() -> []P1405IKind => [P1405IKind.IPrim, P1405IKind.ISum]
+
+type P1405IDef value {
+    kind P1405IKind
+    n int
+}
+
+fn p1405i_mk(k P1405IKind, n int) -> Option[P1405IDef] => Some(P1405IDef { kind: k, n })
+
+test "Option of a value record with a heap Equal sum field compares by value (#1405)" {
+    assert(p1405i_mk(P1405IKind.ISum, 1) == p1405i_mk(P1405IKind.ISum, 1))
+    assert(p1405i_mk(P1405IKind.ISum, 1) != p1405i_mk(P1405IKind.IPrim, 1))
+    assert(p1405i_mk(P1405IKind.ISum, 1) != p1405i_mk(P1405IKind.ISum, 2))
+    assert(p1405i_kinds()[1] == P1405IKind.ISum)
+}

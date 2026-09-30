@@ -1424,7 +1424,11 @@ pub fn synthesize_clone<Q: DeriveQuery>(
     type_decl: &TypeDecl,
 ) -> Result<FnDecl, DeriveError> {
     let body_expr = if let Some(fields) = iter_fields(type_decl) {
-        synth_clone_record_body(&type_decl.name, &fields)
+        if matches!(type_decl.kind, TypeDeclKind::NamedTuple(_)) {
+            synth_clone_named_tuple_body(&type_decl.name, &fields)
+        } else {
+            synth_clone_record_body(&type_decl.name, &fields)
+        }
     } else if let Some(variants) = iter_sum_variants(type_decl) {
         // Sum-type clone: match-arm-per-variant reconstruction (Plan 180 Ф.1).
         // [M-126-sum-clone-rich] CLOSED.
@@ -1447,16 +1451,30 @@ pub fn synthesize_clone<Q: DeriveQuery>(
     ))
 }
 
+/// One field of a synthesized clone: `@f` for a primitive (built-in copy),
+/// `@f.clone()` otherwise.
+fn synth_clone_field(f: &DerivedField) -> Expr {
+    if is_primitive_field(&f.ty) {
+        // Primitive: shallow copy via @field — no recursion.
+        self_field(&f.name)
+    } else {
+        member_call(self_field(&f.name), "clone", vec![])
+    }
+}
+
+/// Registry 221.1 #1395 (found with it): a named tuple is built by its
+/// POSITIONAL constructor `T(a, b)` (D215/D102), not a record literal -- the
+/// record literal lowered a value type to a heap `Nova_T*` allocation
+/// (`use of undeclared identifier 'Nova_T'`).
+fn synth_clone_named_tuple_body(type_name: &str, fields: &[DerivedField]) -> Expr {
+    call(ident(type_name), fields.iter().map(synth_clone_field).collect())
+}
+
 fn synth_clone_record_body(type_name: &str, fields: &[DerivedField]) -> Expr {
     let lit_fields: Vec<RecordLitField> = fields
         .iter()
         .map(|f| {
-            let cloned = if is_primitive_field(&f.ty) {
-                // Primitive: shallow copy via @field — no recursion.
-                self_field(&f.name)
-            } else {
-                member_call(self_field(&f.name), "clone", vec![])
-            };
+            let cloned = synth_clone_field(f);
             RecordLitField {
                 name: f.name.clone(),
                 value: Some(cloned),
