@@ -12,6 +12,12 @@
 module probe.shell_probe
 
 import std.encoding.utf16.{is_high_surrogate, is_low_surrogate, decode_surrogate_pair}
+// E.9 step 1 (274.11): the effect surface of the self-build carrier
+// (novac/src/main.nv imports exactly these). Without the import the oracle
+// answers "undefined identifier `real_fs`" and the shell carries no
+// NovaVtable_Fs at all -- measured 2026-09-30, question 1 of E.9.
+import std.fs.{read, read_dir, real_fs}
+import std.os.{args, env, exit_process, real_os}
 
 fn main() {
     // E1 surface: str literals, int printing, checked arithmetic (all four
@@ -128,6 +134,74 @@ fn main() {
     // stays its own, separate gap (a RangeIndex parse/emit form novac does
     // not have at all yet), this line does not claim to close it.
     println("d_idx = ${three().index(1)}")
+
+    // E.9 step 1 (274.11): the shell carries the effect INTEROP of the
+    // self-build carrier -- NovaVtable_Fs/_Os, their dispatchers, the
+    // factories real_fs/real_os, the std wrappers, the Supervisor bridge and
+    // the fiber runtime. The forms mirror novac/src/main.nv:279-354; each is
+    // in a helper so the helper's body, not the cut main, keeps them alive.
+    println("eff = ", eff_door(argv_probe()))
+    supervise_probe()
+}
+
+/// The value form of `with` and a `return` from its body (main.nv:350).
+fn argv_probe() -> []str {
+    with Os = real_os() {
+        return args()
+    }
+}
+
+/// Two bindings in one `with`, every std wrapper the carrier calls, and one
+/// direct operation call (`Os.arg_count()`), main.nv:358.
+fn eff_door(a []str) -> int {
+    with Fs = real_fs(), Os = real_os() {
+        ro dir = env("NOVA_STD_PATH") ?? "std/src"
+        mut n = a.len() + Os.arg_count()
+        match read(dir.to_path()) {
+            Ok(bytes) => { n += bytes.len() }
+            Err(_) => { n += 1 }
+        }
+        match read_dir(dir.to_path()) {
+            Ok(entries) => { n += entries.len() }
+            Err(_) => { n += 2 }
+        }
+        if n < 0 {
+            exit_process(3)
+        } else {
+            // Never negative; the call is here to keep exit_process alive.
+        }
+        return n
+    }
+}
+
+/// A handler literal for Supervisor capturing an atomic, `supervised` and
+/// `spawn`, main.nv:284-338.
+fn supervise_probe() {
+    mut code = AtomicInt.new(0)
+    mut died = AtomicInt.new(0)
+    with Supervisor = effect Supervisor {
+        on_child_fail(idx, err) -> Decision {
+            ro _ = died.fetch_add(1)
+            if err is str {
+                println(err)
+            } else {
+                println("not text")
+            }
+            return Decision.Stop
+        }
+    } {
+        supervised {
+            spawn {
+                code.store(7)
+            }
+        }
+    }
+    if died.load() > 0 {
+        exit_process(2)
+    } else {
+        // The child did not die; nothing to report.
+    }
+    println("code = ", code.load())
 }
 
 /// A Result[int, str] instance for the shell (B1b-3): both arms, because the

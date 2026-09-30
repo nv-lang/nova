@@ -14,6 +14,7 @@
 // novac/src/pipeline/with_test.nv -- the with statement, as novac writes it.
 
 module novac.pipeline
+import ../sem.{InteropTable}
 
 test "with: a handler value of type Effect[Fs], body typed -- accepted (E4)" {
     // POSITIVE: the self-build carrier's shape. `make()` hands a value whose
@@ -25,7 +26,9 @@ test "with: a handler value of type Effect[Fs], body typed -- accepted (E4)" {
     // clean check -- the named debt, not a divergence.
     mut std = std_decls()
     std.push("module std.fx\nexport type Fs effect { fn read(p str) -> []u8 }\nexport fn make() -> Effect[Fs]\n")
-    ro d = compile_with("fn g() -> int {\n with Fs = make() {\n  ro x = 1\n  println(x)\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(std), interop_surface())
+    // The shell carries the factory (`fx_shell`), as it carries real_fs since
+    // E.9 step 1: the handler is link-checked like any call (W6 test below).
+    ro d = compile_with("fn g() -> int {\n with Fs = make() {\n  ro x = 1\n  println(x)\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(std), fx_shell())
     assert(d.len() == 0, messages(d))
 }
 
@@ -36,8 +39,24 @@ test "with: several bindings in one statement (E4)" {
     // the emit ICE on WithStmt is the named debt, not part of this verdict.
     mut std = std_decls()
     std.push("module std.fx\nexport type Fs effect { fn read(p str) -> []u8 }\nexport type Os effect { fn args() -> []str }\nexport fn make() -> Effect[Fs]\nexport fn make_o() -> Effect[Os]\n")
-    ro d = compile_with("fn g() -> int {\n with Fs = make(), Os = make_o() {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(std), interop_surface())
+    ro d = compile_with("fn g() -> int {\n with Fs = make(), Os = make_o() {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(std), fx_shell())
     assert(d.len() == 0, messages(d))
+}
+
+test "with: a handler factory the shell does not carry is refused by W6, as in any position (E.9 step 1)" {
+    // Until 2026-09-30 the handler expression was exempt from the W6
+    // shell-symbol refusal (`link_check = false`), on the premise that no
+    // probe could put real_fs into the shell. The probe lacked only the
+    // import; with the exemption gone, the handler position asks the same
+    // question as every other, and the self-build carrier passes because
+    // the shell now carries its factories (the second half pins that).
+    mut std = std_decls()
+    std.push("module std.fx\nexport type Fs effect { fn read(p str) -> []u8 }\nexport fn make() -> Effect[Fs]\n")
+    ro d = compile_with("fn g() -> int {\n with Fs = make() {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(std), interop_surface())
+    assert(d.len() == 1, messages(d))
+    assert(messages(d).contains("carries no `nova_fn_3std2fx4make`"), messages(d))
+    assert(interop_surface().has("nova_fn_3std2fs7real_fs"), "the shell must carry real_fs (E.9 step 1)")
+    assert(interop_surface().has("nova_fn_3std2os7real_os"), "the shell must carry real_os (E.9 step 1)")
 }
 
 test "with: a KNOWN value type as the handler is refused, naming the cause (E4)" {
@@ -63,7 +82,7 @@ test "with: an unknown effect name is refused as a name (E4)" {
     // second refusal about a value that is not what this door judges.
     mut std = std_decls()
     std.push("module std.fx\nexport type Fs effect { fn read(p str) -> []u8 }\nexport fn make() -> Effect[Fs]\n")
-    ro (d, _) = compile_to_c("fn g() -> int {\n with Nope = make() {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}", std)
+    ro (d, _) = compile_to_c_with("fn g() -> int {\n with Nope = make() {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(std), fx_shell())
     assert(d.len() == 1, messages(d))
     assert(d[0].message.contains("unknown name"), d[0].message)
 }
@@ -238,6 +257,17 @@ test "handler literal: the gate leaves a JUDGED position to the typist (registry
 /// The handed corpus the operation-call tests share: the slice head (the
 /// schema's `[]u8` resolves through it), the effect with a str-parameter
 /// and an int-parameter operation, and a maker the with-binding tests use.
+/// The shell surface plus the fake factories of `module std.fx` these tests
+/// declare. Since E.9 step 1 a `with` handler is link-checked like any call,
+/// so a factory that is not in the shell is refused by W6 -- the fixtures
+/// hand theirs in explicitly, the way the regenerated shell carries real_fs.
+fn fx_shell() -> InteropTable {
+    mut s = interop_surface()
+    s.add("nova_fn_3std2fx4make")
+    s.add("nova_fn_3std2fx6make_o")
+    s
+}
+
 fn opcall_fx() -> []str {
     mut std = []str.new()
     std.push("module std.v\nexport type Vec[T] { n int }\n")
@@ -255,7 +285,7 @@ test "effect op call: no handler in sight -- check is green, the runtime panic i
 }
 
 test "effect op call: inside a with body, the handler installed -- green (E.4 item 2)" {
-    ro d = compile_with("fn g() -> int {\n with Fs = make() {\n  ro b = Fs.read(\"p\")\n  println(Fs.size())\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(opcall_fx()), interop_surface())
+    ro d = compile_with("fn g() -> int {\n with Fs = make() {\n  ro b = Fs.read(\"p\")\n  println(Fs.size())\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(opcall_fx()), fx_shell())
     assert(d.len() == 0, messages(d))
 }
 
