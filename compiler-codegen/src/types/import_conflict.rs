@@ -2,7 +2,7 @@
 //! имён"): "Если импортированное имя совпадает с локальным или другим
 //! импортом — ошибка компиляции. Решается алиасом через `as`".
 //!
-//! Before this check the rule had no enforcement: a file importing
+//! [INV-PROPERTY: neg/p1234_import_name_conflict, neg/p1234_import_import_conflict] Before this check the rule had no enforcement: a file importing
 //! `polaris.net.{serve}` while its own module declared a facade `serve` bound
 //! every call to the facade (№534 "own module shadows"), and with equal
 //! signatures nothing at all was said -- `serve(1)` ran the wrong function.
