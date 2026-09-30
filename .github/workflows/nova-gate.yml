@@ -156,7 +156,15 @@ jobs:
   novac-gate:
     name: novac-gate (self-hosted compiler builds + module tests)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # НОЧНОЙ ПРЕДЕЛ СВОЙ (правка 2026-09-30, реестр №1442). Этап 3 дифференциала
+    # (корпус) переехал в ярус full, то есть в ночной прогон, и тот обязан его
+    # досчитать. Число ВЫВЕДЕНО из замеров частей, а не измерено целым (Г17):
+    # CI 30.09 — подготовка ~3.5 мин, гейт push ~19 мин (c775a97); ярус full
+    # сверх того — самотест-мутации до 10 мин и цена цикла ~2.3 мин (29.09);
+    # шаг модульных тестов ниже на тихой Linux-машине — 1057с (33 файла), на
+    # раннере медленнее. Сумма ~55–60 мин; 75 — с запасом ~25%. Первый ночной
+    # прогон после слияния — замер: число правится по нему. Пуш остаётся 45.
+    timeout-minutes: ${{ github.event_name == 'schedule' && 75 || 45 }}
     steps:
       - name: Checkout nova (submodules recursive — compiler-codegen/nova_rt/libuv)
         uses: actions/checkout@v4

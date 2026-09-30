@@ -190,6 +190,12 @@ floor_for() {
         check-novac-selftest-proves-red.sh)  echo 600 ;;
         check-novac-iteration-cost.sh)       echo 600 ;;
         check-novac-mangle-fixed-point.sh)   echo 300 ;;
+        # Дифференциал в ярусе full несёт этап 3 (корпус), в push — нет (№1442).
+        # Замер CI (калибровка 1, блок novac-behaviour): все три этапа 590с и
+        # ~600с, третий снят пределом 600с на affa00973. Пол 1200 = двойной
+        # замер: этап 3 растёт с корпусом, а предел по умолчанию — нет.
+        check-novac-differential.sh)
+            if [ "${NOVAC_TIER:-push}" = "full" ]; then echo 1200; else echo 0; fi ;;
         *)                                   echo 0 ;;
     esac
 }
@@ -552,6 +558,10 @@ guard --deadline 300 "$ROOT/scripts/guards/check-novac-lint.sh" "$ROOT" || fail 
 if [ "$NOVAC_TIER" != "loop" ]; then
     step "novac-behaviour (запускают novac и корпус: дифф, паники, пачка, чистая сборка)"
     par_reset
+    # Ярус — дифференциалу: в push он судит этапы 1–2, этап 3 (корпус) — в full
+    # (№1442, замер в шапке пола выше и в самом страже). Экспорт только на блок:
+    # самотесты, которые гейт зовёт позже, зовут стража без яруса — всеми тремя.
+    export NOVAC_DIFF_TIER="$NOVAC_TIER"
     par_add "$ROOT/scripts/guards/check-novac-grammar-fixture-coverage.sh" "форма грамматики без наблюдающих фикстур (К7)"
     par_add "$ROOT/scripts/guards/check-novac-differential.sh" "дифф-гейт красный: расхождение поведения вне реестра ЛИБО счётчик spec-queue -- причину называет строка стража выше"
     par_add "$ROOT/scripts/guards/check-novac-no-panic.sh" "паника/крэш novac на фикстурах (решение 11: ноль паник)"
@@ -566,6 +576,7 @@ if [ "$NOVAC_TIER" != "loop" ]; then
     # процесса, а не медленная проверка. Поэтому ярус push, не loop.
     guard --deadline 300 "$ROOT/scripts/guards/check-novac-emitted-unique.py" "$ROOT" || fail "одно C-имя определено дважды в юните (274 §9.1д п.4)"
     par_run
+    unset NOVAC_DIFF_TIER
 fi
 
 if [ "$NOVAC_TIER" != "loop" ]; then
