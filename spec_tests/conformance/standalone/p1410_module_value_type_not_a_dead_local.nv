@@ -1,0 +1,38 @@
+// EXPECT_STDOUT 2|2|8|8|30|3
+//
+// Registry 221.1 #1410: the emitter keeps ONE flat `var_types` table for module
+// values and for the locals of every body, keyed by the bare name, and a body's
+// local never gave its entry back. std has `ro p = ...` locals of value types, so
+// after such a std fn a module `ro p` of a heap record, read as `p.y` in a later
+// fn, was typed by the dead local: `.` on a pointer, CC-FAIL "member reference
+// ... is a pointer"; `ro v = p.y` lost its declared type ("undeclared identifier
+// 'v'"). The same program with the value renamed built and printed 2 -- the name
+// was the whole cause. Every fn and test body now starts and ends with the module
+// values' own types.
+// The names are the ones std's locals use: `p`, `n`, `i`; the reads are a field
+// (in `main` and in a fn), a local bound from a field, a call argument, an index
+// and a method call.
+module standalone.p1410_module_value_type_not_a_dead_local
+
+type P1410Pt { x int, y int }
+
+fn p1410_three() -> int => 3
+fn p1410_mk(k int) -> P1410Pt => { x: k, y: k + 1 }
+fn p1410_y(q P1410Pt) -> int => q.y
+
+ro p = P1410Pt { x: p1410_three(), y: 2 }
+ro n P1410Pt = p1410_mk(7)
+ro i []int = [10, 20, 30]
+
+fn by_local() -> int {
+    ro v = p.y
+    v
+}
+fn by_field() -> int => n.y
+fn by_arg() -> int => p1410_y(n)
+fn by_index() -> int => i[2]
+fn by_method() -> int => i.len()
+
+fn main() Io -> () {
+    print("${p.y}|${by_local()}|${by_field()}|${by_arg()}|${by_index()}|${by_method()}")
+}
