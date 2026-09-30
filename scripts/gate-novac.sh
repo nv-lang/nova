@@ -225,7 +225,7 @@ guard() {
         _fl=$(floor_for "$(basename "$g")")
         deadline=$(( deadline * CAL ))
         [ "$deadline" -ge "$_fl" ] || deadline=$_fl
-        out="$(bash "$ROOT/scripts/tools/with-deadline.sh" "$deadline" "$runner" "$g" "$@" 2>&1)"; rc=$?
+        out="$(NOVAC_STEP_DEADLINE="$deadline" bash "$ROOT/scripts/tools/with-deadline.sh" "$deadline" "$runner" "$g" "$@" 2>&1)"; rc=$?
     else
         out="$("$runner" "$g" "$@" 2>&1)"; rc=$?
     fi
@@ -254,6 +254,15 @@ PAR_DIR="${TMPDIR:-/tmp}/novac-gate-par.$$"
 PAR_N=0
 par_reset() { rm -rf "$PAR_DIR"; mkdir -p "$PAR_DIR"; PAR_N=0; }
 par_add() {
+    # Страж, ПОДМЕНЯЮЩИЙ файлы стражей в дереве, в параллельный блок не
+    # допускается: соседи исполнили бы его заглушку (см. вызов ниже, у яруса
+    # full). Отказ громкий — тихо переставить его в очередь значило бы снова
+    # спрятать гонку.
+    case "$1" in
+        *check-novac-selftest-proves-red.sh)
+            fail "check-novac-selftest-proves-red подменяет стражей в дереве и не может идти параллельно с ними (ci-green-0930)"
+            return 0 ;;
+    esac
     PAR_N=$((PAR_N + 1))
     printf '%s\n' "$1" > "$PAR_DIR/$PAR_N.cmd"
     printf '%s\n' "$2" > "$PAR_DIR/$PAR_N.msg"
@@ -290,7 +299,10 @@ par_run() {
         _pdl=$(floor_for "${_g##*/}")
         _pcal=$(( PAR_DEADLINE_DEFAULT * ${CAL:-1} ))
         [ "$_pdl" -ge "$_pcal" ] || _pdl=$_pcal
-        ( bash "$ROOT/scripts/tools/with-deadline.sh" "$_pdl" bash "$_g" "$ROOT" \
+        # NOVAC_STEP_DEADLINE — предел ЭТОГО шага, отданный стражу: у кого
+        # внутри свой бюджет времени (фаззер), тот обязан уложиться в предел,
+        # а не узнавать о нём по сигналу (реестр №1372, ci-green-0930).
+        ( NOVAC_STEP_DEADLINE="$_pdl" bash "$ROOT/scripts/tools/with-deadline.sh" "$_pdl" bash "$_g" "$ROOT" \
               > "$PAR_DIR/$_i.out" 2>&1
           rc=$?
           # ТРЕТЬЕ СЛОВО РЯДОМ С ВЫЗОВОМ (Г16). Разбор ниже собирает исходы со
@@ -557,9 +569,22 @@ if [ "$NOVAC_TIER" != "loop" ]; then
     par_add "$ROOT/scripts/guards/check-novac-fuzz-zero-panic.sh" "фаззер нашёл падение novac: приёмка Э1 ранга CORE (274.3/F2)"
     par_add "$ROOT/scripts/guards/check-novac-module-tests.sh" "модульный тест novac упал (контракт модуля)"
     par_add "$ROOT/scripts/guards/check-novac-shell-freshness.sh" "shell.tpl.c протух"
-    if [ "$NOVAC_TIER" = "full" ]; then par_add "$ROOT/scripts/guards/check-novac-selftest-proves-red.sh" "самотест стража novac проходит над заглушкой (П16)"; fi
     par_run
 fi
+
+# МУТАЦИОННАЯ ПРОВЕРКА САМОТЕСТОВ ИДЁТ ОДНА, после параллельного блока (правка
+# 2026-09-30, ветка ci-green-0930). Она ПОДМЕНЯЕТ файлы стражей В ДЕРЕВЕ
+# заглушкой `exit 0` — по одному, на время их самотеста. Стоя в одном блоке
+# с мэнглом, фаззером, модульными тестами и свежестью шаблона, она подменяла
+# и ИХ, пока они шли: страж исполнял заглушку, выходил нулём без строки `ok:`,
+# и гейт писал «мэнгл разошёлся», «shell.tpl.c протух», «модульный тест упал»
+# о предметах, которых никто не судил. Замер: ночные прогоны `full`
+# 35834073573, 36110822507, 36306183881, 36399847143, 36545179713 (23..29.09)
+# несут эти отказы (27.09 — дословно «module-tests вышел с нулём, но не
+# напечатал ok:»), а прогон `push` того же коммита f52edcad2 (36213934073,
+# без этой проверки) — ни одного из них. Правило то же, что у `iteration-cost` ниже:
+# проверка, меняющая общий предмет, не делит время с его читателями.
+if [ "$NOVAC_TIER" = "full" ]; then guard --deadline 600 "$ROOT/scripts/guards/check-novac-selftest-proves-red.sh" "$ROOT" || fail "самотест стража novac проходит над заглушкой (П16)"; fi
 
 # `iteration-cost` ИЗМЕРЯЕТ время цикла и потому идёт ОДИН: рядом с фаззером
 # он мерил бы чужую нагрузку и краснел на здоровом дереве.
