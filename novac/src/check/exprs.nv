@@ -67,7 +67,42 @@ fn Checker mut @const_type_of(name str) -> TyId {
     }
     ro cd = @ctx.consts.rows[raw_crow(row)]
     if cd.init.len() == 0 { return no_ty() }
+    // A MODULE VALUE's type was recorded ONCE, when its initializer was
+    // typed (`@type_module_value`): read it there -- the lattice cannot type
+    // an initializer that reads another module value. An instance channel
+    // never typed the initializer, so the lattice answers there.
+    if cd.once {
+        ro rec = @chan.type_if_known(cd.init[0].id_of())
+        if is_ty(rec) { return same_ty(rec) }
+    } else {
+        // A constant: typed by its initializer at every use, below.
+    }
     type_of(cd.init[0], @ctx, @scope, @chan)
+}
+
+/// Is `name` a module value that the initializer being typed may not read
+/// yet -- declared at or after it (274.5 section 6)?
+fn Checker @reads_uncomputed_value(name str) -> bool {
+    if @mv_row < 0 { return false }
+    ro row = match @ctx.defs.const_row(name) {
+        None => return false
+        Some(r) => r
+    }
+    @ctx.consts.rows[raw_crow(row)].once && raw_crow(row) >= @mv_row
+}
+
+/// Is `name` a module value whose initializer was refused? Its type was
+/// never recorded in the file's channel, where every initializer is typed
+/// before any function; outside the file's channel (an instance) nothing is
+/// known about it here, and the ordinary doors answer.
+fn Checker @is_poisoned_module_value(name str) -> bool {
+    if @substs.len() > 0 { return false }
+    ro row = match @ctx.defs.const_row(name) {
+        None => return false
+        Some(r) => r
+    }
+    ro cd = @ctx.consts.rows[raw_crow(row)]
+    cd.once && cd.init.len() > 0 && !is_ty(@chan.type_if_known(cd.init[0].id_of()))
 }
 
 /// May this slot take a GENERIC INSTANCE's `@display` (274.7 B1b-3)?
@@ -469,6 +504,15 @@ fn Checker mut @type_expr(e Node) -> () {
                 if is_bool_literal(t.text) || @scope.is_bound(t.text) {
                     // Bound, or `true`/`false`: nothing to refuse and nothing
                     // to record -- the lattice reads a Name from the scope.
+                } else if @reads_uncomputed_value(t.text) {
+                    // A module value's initializer reading a value that is
+                    // not computed yet (274.5 section 6): asked BEFORE its
+                    // type, which does not exist yet either.
+                    @refuse(t, MODULE_VALUE_ORDER_MSG)
+                } else if @is_poisoned_module_value(t.text) {
+                    // SILENT-OK: a module value whose initializer was refused;
+                    // that refusal is the one cause, and a read of it saying
+                    // "unknown name" as well would be a cascade.
                 } else if @const_type_of(t.text) != no_ty() {
                     // A constant: BOTH decisions are recorded here -- the type
                     // from its initializer, and WHICH constant it is, so the

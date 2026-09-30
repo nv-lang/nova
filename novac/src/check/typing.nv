@@ -43,6 +43,7 @@ import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_o
 import ../sem.{ty_source_name, c_shell_method, is_value_record}
 import ../types.{TyId, no_ty, is_ty, same_ty}
 import ../sem.{option_payload, for_head_elem}
+import ../sem.{let_decl_of, const_init_at, const_full_name}
 import ../sem.{iflet_pattern_at, iflet_init_at, iflet_body_at, iflet_else_at}
 import ../sem.{whilelet_pattern_at, whilelet_init_at, whilelet_body_at}
 import ../sem.{pattern_shape, pattern_head_text, PatShape}
@@ -76,11 +77,66 @@ fn Checker mut @type_file(file Node) -> () {
             // visibility wrapper, so a raw walk types nothing in it -- and the
             // EMITTER then asked the channel for a type nobody had recorded
             // ("no type recorded for this node"). Five walks, one door.
+            //
+            // MODULE VALUES FIRST (274.5 section 6): each initializer is typed
+            // ONCE, here, into the FILE's channel, with nothing in scope --
+            // the emitter lowers it into the cell's initializer function and
+            // mono walks its callees as a root, and both read this channel.
+            // A read inside a function is typed at the read, like a
+            // constant's (`@const_type_of`); this is the one place the
+            // value's own calls are recorded.
+            for c in file_decls(file) {
+                if Some(lk) = let_decl_of(c) {
+                    ro kids = branch_children(lk)
+                    ro at = const_init_at(kids)
+                    if at >= 0 {
+                        @mv_row = @module_value_row(kids)
+                        @type_module_value(kids[at])
+                        @mv_row = 0 - 1
+                    } else {
+                        // No initializer: the parser's own refusal named it.
+                    }
+                } else {
+                    // Not a module value; functions are typed below.
+                }
+            }
             for c in file_decls(file) {
                 if c.kind_of() != NodeKind.FnDecl { continue }
                 @type_fn(c)
             }
         }
+    }
+}
+
+/// The constant-table row of the module value these children declare, -1
+/// when the registry does not hold it (a name the collector skipped).
+fn Checker @module_value_row(kids []Node) -> int {
+    ro n = const_full_name(kids) ?? ""
+    match @ctx.defs.const_row(n) {
+        None => 0 - 1
+        Some(r) => raw_crow(r)
+    }
+}
+
+/// A module value's initializer, typed ONCE into the file's channel
+/// (274.5 section 6). Its OWN type is recorded too, not only what its
+/// parts record: the emitter declares the cell and its initializer
+/// function by it, and a call records its callee but not always its value
+/// (`ro K = add(3, 4)` -- measured). The binding door's shape
+/// (`binds.nv`): what the channel holds wins, else the lattice's answer;
+/// nothing is recorded over a refusal.
+fn Checker mut @type_module_value(init Node) -> () {
+    ro mark = @out.len()
+    @type_expr(init)
+    if @out.len() != mark { return }
+    if is_ty(@chan.type_if_known(init.id_of())) { return }
+    ro t = @tail_type_of(init)
+    if is_ty(t) {
+        @record(init, t)
+    } else {
+        // SILENT-OK: no type and no refusal is the lattice's own hole; the
+        // emitter asks the channel and names it, so nothing is lost here.
+        return
     }
 }
 

@@ -281,6 +281,19 @@ export fn const_decl_of(c Node) -> Option[Node] {
     None
 }
 
+/// The `LetDecl` node itself -- a module value, `ro NAME = expr` -- unwrapped
+/// from its `export` wrapper like `const_decl_of` above. Its children have the
+/// SAME layout as a constant's (the parser reads both with one shape,
+/// `parse/decls.nv`), so the name and initializer doors below answer for both.
+export fn let_decl_of(c Node) -> Option[Node] {
+    if c.kind_of() == NodeKind.LetDecl { return Some(c) }
+    if c.kind_of() != NodeKind.ExportDecl { return None }
+    for k in branch_children(c) {
+        if k.kind_of() == NodeKind.LetDecl { return Some(k) }
+    }
+    None
+}
+
 /// The slot of a constant's NAME: the first identifier leaf after `const`.
 ///
 /// The TERMINATOR is the branch (P21), as in `field_name_at`: a node that is

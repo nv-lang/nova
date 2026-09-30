@@ -1,0 +1,77 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Go package initialization -- a package-level variable is one cell,
+// initialized once before `main`; NOT taken: Go's dependency sort (values run
+// in declaration order this wave, 274.5 section 6 boundaries).
+// Role: acceptance tests of the module-value wave (274.5 section 6, step 1):
+// `ro NAME = expr` at module level is found and typed at a read like a
+// constant, emitted as ONE C cell with an initializer function, run from the
+// shell's INIT slot, and what only its initializer calls is still emitted.
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file; the fixture
+// novac/fixtures/module_ro/pos_1.nv through the smoke and the differential.
+// novac/src/pipeline/module_value_test.nv -- module values, as novac writes them.
+
+module novac.pipeline
+
+test "module value: one cell, computed from the INIT slot, read by name (274.5 section 6)" {
+    ro (d, c) = compile_to_c("fn add(a int, b int) -> int => a + b\nro K = add(3, 4)\nfn main() {\n println(K)\n}", std_decls())
+    assert(d.len() == 0, messages(d))
+    // The cell, declared once before any function reads it.
+    assert(c.contains("static nova_int novac_mv_K;"), c)
+    // Its initializer is a function of its own, and the INIT slot runs it once.
+    assert(c.contains("static nova_int novac_mvinit_K(void) {"), c)
+    assert(c.contains("novac_mv_K = novac_mvinit_K();"), c)
+    assert(c.contains("nova_gc_add_root(&novac_mv_K"), c)
+    // The slot line is gone: the text went into nova_consts_init.
+    assert(!c.contains("__NOVAC_INIT__"), c)
+    // A ROOT: `add` is called ONLY by the initializer, and it is emitted.
+    assert(c.contains("novac_fn_add"), c)
+}
+
+test "module value: a constant is still substituted, not given a cell (274.5 section 6)" {
+    // CONTROL: `const` keeps its semantics -- no cell, the value at the read.
+    ro (d, c) = compile_to_c("const K = 7\nfn main() {\n println(K)\n}", std_decls())
+    assert(d.len() == 0, messages(d))
+    assert(!c.contains("novac_mv_K"), c)
+}
+
+test "module value: an initializer reads an EARLIER value; a later one is refused by name (274.5 section 6)" {
+    // Values run in declaration order this wave: an earlier value is computed
+    // when a later initializer reads it, a later one is not -- so that read is
+    // refused, never compiled to a read of an uncomputed cell. The values call
+    // `three()`: a literal initializer is a CONSTANT and belongs in `const`.
+    ro fx = "fn three() -> int => 3\n"
+    ro (d0, c0) = compile_to_c("${fx}ro first = three()\nro second = first + 1\nfn main() {\n println(second)\n}", std_decls())
+    assert(d0.len() == 0, messages(d0))
+    assert(c0.contains("novac_mv_first"), c0)
+    ro (d1, _) = compile_to_c("${fx}ro second = first + 1\nro first = three()\nfn main() {\n println(second)\n}", std_decls())
+    assert(d1.len() == 1, messages(d1))
+    assert(messages(d1).contains("declared at or after it"), messages(d1))
+    // A value reading ITSELF is the same refusal, and the read in `main` of the
+    // refused value stays silent -- one cause, one diagnostic.
+    ro (d2, _) = compile_to_c("${fx}ro first = first + three()\nfn main() {\n println(first)\n}", std_decls())
+    assert(d2.len() == 1, messages(d2))
+    assert(messages(d2).contains("declared at or after it"), messages(d2))
+}
+
+test "D184 partition: constexpr is `const`, runtime is `ro` -- both directions, one predicate (274.5 section 6)" {
+    ro fx = "fn three() -> int => 3\n"
+    ro main_src = "fn main() {\n println(1)\n}"
+    // `ro` over a literal, over arithmetic on literals, over a plain array
+    // literal: all known at compile time -> E_RO_FOR_CONSTEXPR_PREFER_CONST.
+    for src in []str.of("ro x = 3\n", "ro x = 2 + 3\n", "ro x = [1, 2]\n") {
+        ro (d, _) = compile_to_c("${src}${main_src}", std_decls())
+        assert(d.len() == 1, "${src}: ${messages(d)}")
+        assert(d[0].code == "E_NOVAC_LANG", d[0].code)
+        assert(d[0].message.contains("E_RO_FOR_CONSTEXPR_PREFER_CONST"), d[0].message)
+    }
+    // `const` over a call -> E_CONST_NOT_CONSTEXPR.
+    ro (d1, _) = compile_to_c("${fx}const y = three()\n${main_src}", std_decls())
+    assert(d1.len() == 1, messages(d1))
+    assert(d1[0].message.contains("E_CONST_NOT_CONSTEXPR"), d1[0].message)
+    // CONTROLS: a constant over constants, and a value over a value, are right.
+    ro (d2, _) = compile_to_c("const a = 2\nconst b = a * 3\n${main_src}", std_decls())
+    assert(d2.len() == 0, messages(d2))
+    ro (d3, _) = compile_to_c("${fx}ro v = three()\nro w = v + 1\n${main_src}", std_decls())
+    assert(d3.len() == 0, messages(d3))
+}

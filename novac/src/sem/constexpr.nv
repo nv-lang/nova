@@ -1,0 +1,84 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Rust's `const` item rule -- a const initializer is checked by one
+// const-evaluability predicate, and everything else is a `static`; Go's
+// constant expressions (literals, operators over constants, references to
+// other constants). NOT taken: const fn evaluation and `size_of` intrinsics
+// -- novac's subset has neither, so a call is never constexpr here.
+// Role: THE constexpr-eligibility predicate of D184's strict module-level
+//   partition ("Strict module-level partition", D199): a constexpr RHS must be
+//   written `const` (E_RO_FOR_CONSTEXPR_PREFER_CONST), a non-constexpr one
+//   `ro` (E_CONST_NOT_CONSTEXPR). ONE predicate for both directions, as the
+//   spec requires (spec/decisions/03-syntax.md:1378), so they cannot disagree.
+// Used by: check/check.nv -- the ConstDecl and LetDecl arms of the walk.
+// Guarded by: pipeline/module_value_test.nv (both directions and the
+//   eligible shapes); the self-build (no `const` of novac's own source is
+//   refused -- the oracle compiles it under the same rule).
+
+module novac.sem
+
+import ../tree.{Node, NodeKind}
+
+/// Is `e` constexpr-eligible (D184 / D199)? A literal; a unary, binary or `as`
+/// over constexpr operands; a parenthesised one; a tuple, a plain array
+/// literal or a record literal whose parts are constexpr (no spread); a name
+/// of another module-level `const`. Anything else -- a call, a method call, a
+/// typed `[]T.of(...)` (itself a call), a field access, a module VALUE (`ro`),
+/// an interpolated string -- is runtime work.
+export fn is_constexpr(e Node, ctx Ctx) -> bool {
+    ro k = e.kind_of()
+    if k == NodeKind.Lit { return true }
+    if k == NodeKind.Name { return names_a_constant(expr_leaf_name(e), ctx) }
+    if k == NodeKind.Paren || k == NodeKind.Unary || k == NodeKind.Bin || k == NodeKind.Cast ||
+        k == NodeKind.TupleExpr {
+        return expr_children_constexpr(e, ctx)
+    }
+    if k == NodeKind.ArrayLit {
+        ro kids = branch_children(e)
+        if array_of_lparen_at(kids).is_some() { return false }
+        for c in kids {
+            if c.kind_of() == NodeKind.ArraySpread { return false }
+        }
+        return expr_children_constexpr(e, ctx)
+    }
+    if k == NodeKind.RecordCtor { return record_fields_constexpr(e, ctx) }
+    false
+}
+
+/// Every EXPRESSION child is constexpr. Leaves (operators, punctuation) and
+/// non-expression branches (a type after `as`, a literal's written type) are
+/// not values and are not asked.
+fn expr_children_constexpr(e Node, ctx Ctx) -> bool {
+    for c in branch_children(e) {
+        if c.kind_of() == NodeKind.LeafNode { continue }
+        if !is_expr_kind(c.kind_of()) { continue }
+        if !is_constexpr(c, ctx) { return false }
+    }
+    true
+}
+
+/// A record literal: every field value constexpr, no spread. The type name at
+/// its head is not a value and is not asked; a SHORTHAND field (`{ name }`)
+/// reads the binding of that name, which must be a constant.
+fn record_fields_constexpr(e Node, ctx Ctx) -> bool {
+    for c in branch_children(e) {
+        if c.kind_of() == NodeKind.CtorSpread { return false }
+        if c.kind_of() != NodeKind.CtorField { continue }
+        ro fk = branch_children(c)
+        mut has_value = false
+        for f in fk {
+            if f.kind_of() == NodeKind.LeafNode { continue }
+            has_value = true
+            if !is_constexpr(f, ctx) { return false }
+        }
+        if !has_value && fk.len() > 0 && !names_a_constant(leaf_text(fk[0]), ctx) { return false }
+    }
+    true
+}
+
+/// Is `name` a module-level CONSTANT -- not a module value, which is runtime?
+fn names_a_constant(name str, ctx Ctx) -> bool {
+    match ctx.defs.const_row(name) {
+        None => false
+        Some(r) => !ctx.consts.rows[raw_crow(r)].once
+    }
+}

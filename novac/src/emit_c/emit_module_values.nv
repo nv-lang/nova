@@ -1,0 +1,66 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Go -- package-level variables with a non-constant initializer are
+// computed ONCE, in dependency order, before `main` (Go spec, "Package
+// initialization"), and Rust's `static` -- one cell, a stable address --
+// against `const`, which is substituted at each use. NOT taken: Go's
+// dependency sort across the whole package; values are initialized in
+// declaration order, and a module value read by another module value's
+// initializer is outside this wave (274.5 section 6, boundaries).
+// Role: what a MODULE VALUE (`ro NAME = expr`, D184's `Item::Let`) becomes
+//   in C: a `static` cell declared before any function reads it, a function
+//   that computes it -- its initializer lowered by the same one door as any
+//   value body -- and the lines the shell's `nova_consts_init()` runs before
+//   `main` (the INIT slot). A read of the value is the cell's name
+//   (emit_expr.nv, the constant arm).
+// Used by: emit_c.nv -- `emit`, around the file's functions.
+// Guarded by: novac/fixtures/module_ro/pos_1.nv through the smoke and the
+//   differential (the value computed once, before main), and
+//   pipeline/module_value_test.nv (the C shape).
+
+module novac.emit_c
+
+import ../sem.{c_type, module_value_c_name, module_value_init_c_name}
+import ../lower.{FnBuilder}
+
+/// One `static` cell per module value, declared before any function reads it.
+/// Its type is the INITIALIZER's, recorded once in the file's channel
+/// (`check/typing.nv`, `@type_file`) -- the emitter decides no type.
+fn Emitter mut @emit_module_value_cells() -> () {
+    for cd in @ctx.consts.rows {
+        if !cd.once { continue }
+        ro ty = @out.type_of(cd.init[0].id_of())
+        @body.append("static ${c_type(@ctx, ty)} ${module_value_c_name(cd.name)};\n")
+    }
+}
+
+/// One initializer function per module value: the initializer lands in the
+/// return place through `lower_place`, the same door a `=> expr` body takes,
+/// so every form a value body may hold is a form an initializer may hold.
+/// Written AFTER the file's functions, because an initializer may call them.
+fn Emitter mut @emit_module_value_inits() -> () {
+    for cd in @ctx.consts.rows {
+        if !cd.once { continue }
+        ro ty = @out.type_of(cd.init[0].id_of())
+        @body.append("static ${c_type(@ctx, ty)} ${module_value_init_c_name(cd.name)}(void) {\n")
+        @lo.ir = FnBuilder.new(ty)
+        @lo.lower_place(cd.init[0], @lo.ir.ret_place())
+        @lo.ir.end_body()
+        @print_body(@lo.ir.finish())
+        @body.append("}\n")
+    }
+}
+
+/// The text of the shell's INIT slot: for each module value, in declaration
+/// order, its cell becomes a GC root and is computed. The root is interop --
+/// the runtime's `nova_gc_add_root`, the call the oracle makes for its own
+/// module cells: a cell outside the heap holds the only pointer to its value.
+fn Emitter @module_value_init_calls() -> str {
+    consume s = StringBuilder.new()
+    for cd in @ctx.consts.rows {
+        if !cd.once { continue }
+        ro c = module_value_c_name(cd.name)
+        s.append("    nova_gc_add_root(&${c}, (char*)(&${c}) + sizeof(${c}));\n")
+        s.append("    ${c} = ${module_value_init_c_name(cd.name)}();\n")
+    }
+    s.into_str()
+}

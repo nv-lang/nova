@@ -53,10 +53,19 @@ export type DefTarget enum
 /// no C symbol of its own, so the emitter needs the expression, not a name. A
 /// folded value would also decide, here, a question the emitter answers -- and
 /// the whole point of this compiler is that one question has one owner.
+///
+/// A MODULE VALUE (`ro NAME = expr`, D184's `Item::Let`; 274.5 section 6) is
+/// a row of the SAME registry with `once` set: it is found, typed and
+/// recorded at a use exactly like a constant -- one door for a module-level
+/// name -- and differs only in what the emitter prints. A constant is
+/// substituted; a module value is ONE C cell, computed once before `main`
+/// (D200, `spec/decisions/02-types.md:9319`), because substituting an
+/// allocating initializer would allocate at every read.
 export type ConstDef value {
     name str /// name as written in the declaration
     type_id TyId /// the constant's type: written, or read off the initializer
     init []Node /// the initializer expression, ONE element; the emitter prints THIS at a use
+    once bool /// a module VALUE: one cell, initialized once before main; false = substituted at each use
 }
 
 /// THE registry of module-level constants, addressed by `ConstRow`.
@@ -67,10 +76,11 @@ export type ConstTable {
 /// An empty constant registry.
 export fn ConstTable.new() -> ConstTable => { rows: []ConstDef.new() }
 
-/// Register one constant and answer its row.
-export fn ConstTable mut @add(name str, type_id TyId, init []Node) -> ConstRow {
+/// Register one constant (`once` false) or module value (`once` true) and
+/// answer its row.
+export fn ConstTable mut @add(name str, type_id TyId, init []Node, once bool) -> ConstRow {
     ro row = ConstRow(@rows.len())
-    @rows.push(ConstDef { name, type_id, init })
+    @rows.push(ConstDef { name, type_id, init, once })
     row
 }
 

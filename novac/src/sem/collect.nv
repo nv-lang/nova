@@ -293,10 +293,14 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // a NAME like any other, and the registry is one door for all of them. The
     // TYPE is not resolved here -- an initializer's type is the checker's
     // answer, and sem inventing one would be a second truth about it.
+    // A MODULE VALUE (`ro NAME = expr`) is registered by the same loop with
+    // `once` set (274.5 section 6): one registry for every module-level name.
     for c in decls_of_file {
         ro ck = const_decl_of(c)
-        if !ck.is_some() { continue }
-        ro kids = branch_children(ck ?? c)
+        ro lk = let_decl_of(c)
+        if !ck.is_some() && !lk.is_some() { continue }
+        ro once = lk.is_some()
+        ro kids = branch_children(ck ?? lk ?? c)
         // Same class as `?? break` at this file's own line 391 comment.
         // nova:allow W_MANUAL_COALESCE -- `?? continue` does not parse, Stmt-only RHS
         ro cname = match const_full_name(kids) {
@@ -307,7 +311,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
         ro init_at = const_init_at(kids)
         if init_at < 0 { continue }
         defs.add(cname, DefTarget.DefConst(consts.add(cname, no_ty(),
-                 []Node.of(kids[init_at]))))
+                 []Node.of(kids[init_at]), once)))
     }
     for c in decls_of_file {
         ro k = c.kind_of()
