@@ -1,0 +1,47 @@
+// EXPECT_STDOUT int=42 rec=43 plain=44 nested=45
+//
+// Registry 221.1 #895: a protocol STATIC method called through a type
+// parameter (`I.from_ordinal(n)` in `mk[I P895Ordinal]`) when the argument is
+// a NEWTYPE. `nova check` was green and `nova build` failed: the mono subst
+// carried the newtype's C representation, so the call went to the
+// representation's static (`int.from_ordinal`, E_UNKNOWN_STATIC_METHOD; for a
+// newtype over a record, an undefined `Nova_P895Cell_static_from_ordinal` at
+// link time).
+//
+// Each cell changes one factor:
+//   int    - newtype over a primitive (the first carrier);
+//   rec    - newtype over a record: the same defect, quieter (link error);
+//   plain  - a plain record, no newtype: the control that was always green;
+//   nested - the newtype travels through a SECOND generic (`outer[I]` calls
+//            `mk[I]`): the forwarded param must keep the newtype too.
+// Every static adds a distinct offset, so a call routed to the wrong type's
+// static prints a wrong number instead of passing by coincidence.
+module standalone.p895_static_via_newtype_param
+
+type P895Ordinal protocol {
+    @ordinal() -> int
+    .from_ordinal(i int) -> Self
+}
+
+type P895Row int
+fn P895Row @ordinal() -> int => @ as int
+fn P895Row.from_ordinal(i int) -> P895Row => (i + 1) as P895Row
+
+type P895Cell { v int }
+type P895Wrap P895Cell
+fn P895Wrap @ordinal() -> int => (@ as P895Cell).v
+fn P895Wrap.from_ordinal(i int) -> P895Wrap => P895Cell { v: i + 2 } as P895Wrap
+
+fn P895Cell @ordinal() -> int => @v
+fn P895Cell.from_ordinal(i int) -> P895Cell => { v: i + 3 }
+
+fn mk[I P895Ordinal](n int) -> I => I.from_ordinal(n)
+fn outer[I P895Ordinal](n int) -> I => mk[I](n + 3)
+
+fn main() Io -> () {
+    ro a = mk[P895Row](41)
+    ro b = mk[P895Wrap](41)
+    ro c = mk[P895Cell](41)
+    ro d = outer[P895Row](41)
+    print("int=${a.ordinal()} rec=${b.ordinal()} plain=${c.ordinal()} nested=${d.ordinal()}")
+}

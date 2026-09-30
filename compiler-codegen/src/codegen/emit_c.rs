@@ -15,6 +15,8 @@ mod emit_detach;
 mod variant_ctor_channel;
 mod variant_ctor_disarm; // #666, see its doc
 mod sum_placement; // Plan 172.14 F.2 A4, see its doc
+mod mono_nominal; // registry 221.1 #895, see its doc
+mod static_blanket; // registry 221.1 #895 (second carrier), see its doc
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
@@ -48207,10 +48209,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // (overload-aware через method_overloads ниже). Без
                     // этого `parts.join("_")` давал литеральный
                     // `nova_fn_<T>_<method>` → undefined symbol на линковке.
-                    let recv_seg: String = match self.subst_c(parts[0].as_str()) {
-                        Some(c_ty) => Self::debt_nova_type_name_from_c(&c_ty),
-                        None => parts[0].clone(),
-                    };
+                    // #895: a newtype subst dispatches under its own name (mono_nominal.rs).
+                    let recv_seg: String =
+                        self.subst_static_recv_name(parts[0].as_str()).unwrap_or_else(|| parts[0].clone());
                     // [M-codegen-cross-module-ctor-emission] fix: an explicit
                     // receiver payload-variant call `Sum.Variant(x)` parses as a
                     // 2-segment Path and is otherwise dispatched via the
@@ -48235,6 +48236,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if let Some(call) =
                         self.try_generic_static_ctor_mono(&recv_seg, method_name, args)?
                     {
+                        return Ok(call);
+                    }
+                    // #895: static type-set blanket on a primitive, callee from the checker.
+                    if let Some(call) = self.try_static_set_blanket_call(&recv_seg, method_name, args, call_id)? {
                         return Ok(call);
                     }
                     // Plan 11 Ф.2: используем multi-overload registry —
@@ -48670,11 +48675,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 match self.resolve_mono_type_args_ch(&fn_decl, &turbofish_type_refs, args, call_id) {
                     Ok(type_subst) => {
                         let base_c_name = self.free_fn_c_name(fn_name);
-                        let mono_name = Self::compute_mono_name(&base_c_name, &type_subst);
-                        // Register instance (forward decl + worklist)
-                        self.register_mono_instance(&fn_decl.clone(), type_subst.clone(), &mono_name.clone());
-                        // Emit args WITHOUT boxing — concrete types
-                        // For fn-typed params (closures): set up fn_param_sigs context
                         // Plan 172.12 A1″: structural RT seed (byte-identity-guarded) for
                         // the inner-subst — the call `args` carry `ExprId` → channel RT.
                         let a1pp_names: Vec<String> =
@@ -48682,6 +48682,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let mut a1pp_slots = self.rt_slots_from_call(
                             call_id, fn_decl.params.iter().map(|p| &p.ty), args, &a1pp_names);
                         self.rt_slots_seed_turbofish(&mut a1pp_slots, &turbofish_type_refs);
+                        // #895: a newtype slot keys the instance by the Nova type (mono_nominal.rs).
+                        let nominal = self.mono_nominal_slots(&type_subst, &a1pp_slots);
+                        let mono_name = Self::compute_mono_name_nominal(&base_c_name, &type_subst, &nominal);
+                        // Register instance (forward decl + worklist)
+                        self.register_mono_instance(&fn_decl.clone(), type_subst.clone(), &mono_name.clone());
+                        self.mono_worklist_adopt_nominal(&mono_name, &nominal);
+                        // Emit args WITHOUT boxing — concrete types
+                        // For fn-typed params (closures): set up fn_param_sigs context
                         let mut arg_strs = Vec::new();
                         for (param_decl, a) in fn_decl.params.iter().zip(args.iter()) {
                             if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &param_decl.ty {

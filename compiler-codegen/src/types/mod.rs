@@ -21,6 +21,10 @@ mod fiber_safety;
 /// module doc for the full design/rationale.
 mod fail_reach;
 
+/// Registry 221.1 #895: a static type-set blanket called on a primitive — see
+/// `static_blanket.rs`'s module doc.
+mod static_blanket;
+
 /// Plan 196 (gs-bounds migration, spike `docs/plans/wip/196-gs-spike.md`):
 /// `gs` ("generics in scope") used to be `HashSet<String>` — ONLY the names of the
 /// generic-parameters visible in the current fn/type-decl body, no protocol bounds
@@ -18125,6 +18129,10 @@ impl<'a> TypeCheckCtx<'a> {
                 // external overloads unknown to checker). Annotation is done on the
                 // codegen side via var_types fallback in infer_expr_c_type.
                 if is_primitive_recv && !matches!(overloads, Some(m) if m.len() >= 2) {
+                    // #895: a static set-blanket (`i64.from_ordinal(3)`) answers here.
+                    if overloads.is_none() {
+                        self.record_static_set_blanket_call(&parts[0], &parts[1], call_id);
+                    }
                     return;
                 }
                 // №729 [M-196-static-miss-not-diagnosed]: вызов НЕСУЩЕСТВУЮЩЕГО
