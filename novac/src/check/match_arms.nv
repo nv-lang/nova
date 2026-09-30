@@ -20,7 +20,7 @@ module novac.check
 import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
-import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
+import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, is_true_literal}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{decl_of_ty, decl_fn_row, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at}
 import ../sem.{ty_source_name}
@@ -216,12 +216,21 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
     // reading of the spec 2026-09-30; the oracle lets it through (registry
     // 1415), and a novac value would be the uninitialised temporary above.
     ro open = @is_open_scalar(scr_t)
-    if !open && @ctx.tys.kind_of(scr_t) != TypeKind.TkSum { return }
+    // `bool` is a CLOSED set of two cases (the spec names it beside sums):
+    // covered by `true` and `false`, or a catch-all. Its heads parse as
+    // payload-less variant heads, and `variant_in_sum` answers None for
+    // them -- which the sum scan reads as a binder, so before this rule a
+    // `match b { true => 1 }` passed as covered (registry 1415, the oracle's
+    // half judges the same since that fix).
+    ro is_bool = scr_t == @ctx.prims.bool_id
+    mut saw_true = false
+    mut saw_false = false
+    if !open && !is_bool && @ctx.tys.kind_of(scr_t) != TypeKind.TkSum { return }
     // The count comes from the arm that HOLDS a variant range: a sum with no
     // variants is a shape check does not judge here, and so is anything whose
     // rows are not variants at all.
-    ro vcnt = if open { 0 } else { (variant_range_of(decl_of_ty(@ctx, scr_t)) ?? (no_vrow(), 0)).1 }
-    if !open && vcnt < 1 { return }
+    ro vcnt = if open || is_bool { 0 } else { (variant_range_of(decl_of_ty(@ctx, scr_t)) ?? (no_vrow(), 0)).1 }
+    if !open && !is_bool && vcnt < 1 { return }
     mut covered = 0
     for c in kids {
         if c.kind_of() != NodeKind.MatchArm { continue }
@@ -243,6 +252,13 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
             Lit | Record | Tuple | Array => {}
             Wild => return
             Bind | Variant => {
+                if is_bool {
+                    ro head = pattern_head_text(ak[0])
+                    // A head that is no bool literal is a binder: covers both.
+                    if !is_bool_literal(head) { return }
+                    if is_true_literal(head) { saw_true = true } else { saw_false = true }
+                    continue
+                }
                 match variant_in_sum(@ctx, scr_t, pattern_head_text(ak[0])) {
                     None => return
                     Some(_) => { covered += 1 }
@@ -252,6 +268,14 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
                 // Literal alternatives of an open scalar list some values,
                 // never all of them.
                 if open { continue }
+                if is_bool {
+                    for sub in pattern_subpatterns(ak[0]) {
+                        ro sh = pattern_head_text(sub)
+                        if !is_bool_literal(sh) { return }
+                        if is_true_literal(sh) { saw_true = true } else { saw_false = true }
+                    }
+                    continue
+                }
                 for sub in pattern_subpatterns(ak[0]) {
                     match variant_in_sum(@ctx, scr_t, pattern_head_text(sub)) {
                         None => return
@@ -265,6 +289,11 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
     // above (on a non-sum, `variant_in_sum` answers None for every head).
     if open {
         @reject_first_leaf_of(kids, OPEN_NOT_EXHAUSTIVE_MSG)
+        return
+    }
+    if is_bool {
+        if saw_true && saw_false { return }
+        @reject_first_leaf_of(kids, BOOL_NOT_EXHAUSTIVE_MSG)
         return
     }
     if covered >= vcnt { return }

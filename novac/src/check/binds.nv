@@ -738,7 +738,10 @@ const NOT_EXHAUSTIVE_MSG = "match on a sum leaves a variant uncovered -- the lan
 /// code; on an `int` it lets the form through (measured 2026-09-30).
 const EMPTY_MATCH_MSG = "a `match` with no arms produces no value and covers no case -- a `_` arm or every case is required (syntax.ru.md exhaustiveness, E_MATCH_NON_EXHAUSTIVE)"
 
-/// A match on an open scalar with no catch-all arm (`@report_if_no_catch_all`).
+/// A match on `bool` missing `true` or `false` and without a catch-all.
+const BOOL_NOT_EXHAUSTIVE_MSG = "a `match` on `bool` must cover both `true` and `false` (or have a `_` arm) -- the spec's exhaustiveness check covers sums and bool (syntax.ru.md, E_MATCH_NON_EXHAUSTIVE)"
+
+/// A match on an open scalar with no catch-all arm (`@report_if_not_exhaustive`).
 const OPEN_NOT_EXHAUSTIVE_MSG = "a `match` on a type whose values cannot all be listed (`int`, `str`, ...) needs a `_` arm -- without one a value no arm covers has no result (syntax.ru.md exhaustiveness, E_MATCH_NON_EXHAUSTIVE; the oracle lets it through, registry 1415)"
 
 /// One text for the rule: the reader must not guess whether two wordings

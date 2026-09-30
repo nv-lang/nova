@@ -562,7 +562,21 @@ test "a `match` on an open scalar without a catch-all is E_MATCH_NON_EXHAUSTIVE,
     ro bind = "module m\n\nfn f(x int) -> int {\n    ro m = match x {\n        1 => 5\n        n => n\n    }\n    m\n}\n"
     assert(diagnose(bind) == 0, diagnose_first_msg(bind))
     ro bl = "module m\n\nfn f(b bool) -> int {\n    ro m = match b {\n        true => 5\n        false => 6\n    }\n    m\n}\n"
-    assert(!diagnose_first_msg(bl).contains("cannot all be listed"), diagnose_first_msg(bl))
+    assert(diagnose(bl) == 0, diagnose_first_msg(bl))
+}
+
+test "a `match` on `bool` covers `true` and `false` or has a catch-all -- else E_MATCH_NON_EXHAUSTIVE (#1415)" {
+    ro half = "module m\n\nfn f(b bool) -> int {\n    ro m = match b {\n        true => 5\n    }\n    m\n}\n"
+    assert(diagnose(half) == 1, diagnose_first_msg(half))
+    assert(diagnose_first_msg(half).contains("both `true` and `false`"), diagnose_first_msg(half))
+    // A GUARDED `false` covers nothing.
+    ro guarded = "module m\n\nfn f(b bool, k int) -> int {\n    ro m = match b {\n        true => 5\n        false if k > 0 => 6\n    }\n    m\n}\n"
+    assert(diagnose_first_msg(guarded).contains("E_MATCH_NON_EXHAUSTIVE"), diagnose_first_msg(guarded))
+    // CONTROL: a binder after one case covers the other. (`true | false` is
+    // not a control here: the subset still reads a `|` alternative that is
+    // not `_` as a binder and refuses it by its own name.)
+    ro bind = "module m\n\nfn f(b bool) -> int {\n    ro m = match b {\n        true => 5\n        other => 6\n    }\n    m\n}\n"
+    assert(diagnose(bind) == 0, diagnose_first_msg(bind))
 }
 
 test "a bare `return` is the early exit of a body that returns no value, and stays refused where a value is promised" {
