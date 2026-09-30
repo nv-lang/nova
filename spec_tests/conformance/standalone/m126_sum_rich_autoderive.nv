@@ -1,0 +1,26 @@
+// EXPECT_STDOUT true|false|false|true|true|true|true|true
+//
+// M-126-sum-equal-rich / M-126-sum-hash-rich / M-126-sum-clone-rich (closed): the
+// synthesized `@equal`, `@hash` and `@clone` of a SUM with payload work by variant
+// and payload, not as the V1 placeholders (identity, literal 0, self) the backlog
+// still recorded as OPEN; docs/history/simplifications-closed.md says they closed
+// with Plan 180 F.1 (2026-07-06), and this fixture pins it. Values are built
+// separately (through a fn) so that identity could not make them equal.
+module standalone.m126_sum_rich_autoderive
+
+#impl(Equal + Hash + Clone)
+type M126Sh | M126Circle(int) | M126Sq(int) | M126Dot
+
+fn m126_mk(r int) -> M126Sh => M126Circle(r)
+
+fn main() Io -> () {
+    ro a = m126_mk(1)
+    ro b = m126_mk(1)
+    ro c = m126_mk(2)
+    ro d = M126Sq(1)
+    print("${a == b}|${a == c}|${a == d}|${M126Dot == M126Dot}|${a != c}|")
+    // hash: equal values hash equal (payload-wise, not a constant for everything)
+    print("${a.hash() == b.hash()}|${a.hash() != c.hash() || a.hash() != d.hash()}|")
+    // clone: a copy equal to its source
+    print("${a.clone() == a}")
+}

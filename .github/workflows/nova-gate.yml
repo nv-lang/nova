@@ -74,7 +74,7 @@ name: nova-gate
 
 on:
   push:
-    branches: [main]
+    branches: [main, integrate]
   pull_request:
   workflow_dispatch:
     # Ярус ПО ТРЕБОВАНИЮ (№765, 2026-08-26). До этого единственным каллером

@@ -25,7 +25,7 @@ on:
       - "nova_tests/contracts/**"
       - ".github/workflows/contracts-crosscheck.yml"
   push:
-    branches: [main]
+    branches: [main, integrate]
 
 jobs:
   # ── Cross-check всего корпуса контрактов ───────────────────────────

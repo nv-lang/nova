@@ -15068,14 +15068,13 @@ impl<'a> TypeCheckCtx<'a> {
             }
             // Прочее: если выражение имеет тип `[]T` / `[N]T` — элемент `T`.
             // D176 (Plan 108): `readonly []T` → elements are `T` (primitive copy).
+            // #1413: a call or a local bound from one types as `Vec[T]` (D239
+            // `[]T ≡ Vec[T]`), not `[]T` — `array_elem_type` knows all three
+            // spellings. Without it the loop variable had NO type, so calls on it
+            // had no channel and codegen typed them by the bare method name.
             _ => match self.infer_expr_type(iter, scope)? {
-                TypeRef::Array(inner, _)
-                | TypeRef::FixedArray(_, inner, _) => Some(*inner),
-                TypeRef::Readonly(inner, _) => match *inner {
-                    TypeRef::Array(elem, _) | TypeRef::FixedArray(_, elem, _) => Some(*elem),
-                    _ => None,
-                },
-                _ => None,
+                TypeRef::Readonly(inner, _) => array_elem_type(&inner).cloned(),
+                t => array_elem_type(&t).cloned(),
             },
         }
     }
@@ -54182,7 +54181,14 @@ impl MapLitAnnotator {
                     let ty = l.ty.clone();
                     self.walk_expr(&mut l.value, ty.as_ref());
                 }
-                Item::Type(_) | Item::Lemma(_) => {}
+                // #1416 (the #1412 class): a `const/ro Type.NAME` initializer is a module value's too.
+                Item::Type(t) => for ac in &mut t.assoc_consts {
+                    self.fn_generics.clear();
+                    self.var_types.clear();
+                    let ty = ac.ty.clone();
+                    self.walk_expr(&mut ac.value, ty.as_ref());
+                },
+                Item::Lemma(_) => {}
             }
         }
     }
@@ -54795,7 +54801,22 @@ impl MapLitAnnotator {
                     Some(TypeRef::FixedArray(_, inner, _)) => Some((**inner).clone()),
                     _ => None,
                 };
+                // #1416: an anonymous `{ .. }` element whose element type is a (non-generic) record gets that
+                // record's name -- none of the emitter's array paths hands an element its target (a module `ro`
+                // failed on `copy_n_nonoverlapping`, a local one on "anonymous record literal"), and the named
+                // form builds in all of them. The checker already accepted the literal against this target.
+                let elem_record: Option<Vec<String>> = match &elem_expected {
+                    Some(t @ TypeRef::Named { path, generics, .. }) if generics.is_empty()
+                        && !self.ctx.expected_is_from_fields(t)
+                        && matches!(path.last().and_then(|n| self.ctx.wrap_types.get(n)), Some(TypeDeclKind::Record(_))) => Some(path.clone()),
+                    _ => None,
+                };
                 for el in elems.iter_mut() {
+                    if let (Some(p), ArrayElem::Item(x)) = (&elem_record, &mut *el) {
+                        if let ExprKind::RecordLit { type_name: t @ None, fields, .. } = &mut x.kind {
+                            if !fields.iter().any(|f| f.is_spread) { *t = Some(p.clone()); }
+                        }
+                    }
                     match el {
                         ArrayElem::Item(x) | ArrayElem::Spread(x) => {
                             self.walk_expr(x, elem_expected.as_ref());

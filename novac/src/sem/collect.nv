@@ -556,7 +556,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                 // by position. The TERMINATOR is the branch (P21).
                 if fk[1].kind_of() != NodeKind.Recv { continue }
                 if Some(mrow) = harvest_own_method(fk, types, defs, tys, fns) {
-                    ro mdid = c.id_of()
+                    ro mdid = raw_node(c.id_of())
                     while fn_decl_rows.len() <= mdid { fn_decl_rows.push(no_row()) }
                     fn_decl_rows[mdid] = mrow
                     // A `#coerce` on it declares a PAIR, and the same reader
@@ -646,7 +646,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
             // last-write-wins), so two overloads used to answer with one row --
             // and the emitter wrote two C functions with one name, carrying the
             // other overload's parameter types (owner's review 2026-08-19).
-            ro did = c.id_of()
+            ro did = raw_node(c.id_of())
             while fn_decl_rows.len() <= did { fn_decl_rows.push(no_row()) }
             fn_decl_rows[did] = FnRow(frow)
         } else {

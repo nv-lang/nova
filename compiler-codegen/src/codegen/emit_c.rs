@@ -20,6 +20,7 @@ mod static_blanket; // registry 221.1 #895 (second carrier), see its doc
 mod self_value; // #1395: `Self` by position, see its doc
 mod opt_eq_split; // #1405: `nova_opt_eq` body late, see its doc
 mod decl_module_symbol; // #1097: free-fn symbol by declaring module (D134), see its doc
+mod method_key; mod default_dispatch; // #1413 method key; #1414 value default method
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
@@ -1537,6 +1538,7 @@ pub struct CEmitter {
     pub(crate) local_frames: Vec<(HashSet<String>, HashSet<String>)>,
     /// #1158: final C qualifiers (`c_name`) of lazy consts -- laziness of ONE const, not of a name.
     lazy_const_syms: HashSet<String>,
+    pub(crate) module_value_tys: HashMap<String, String>, // #1410: see `reset_module_value_types`
     /// `[M-lazy-const-init-race]` (2026-07-09): pending lazy-const init
     /// bodies, collected as each lazy const (`const X = <non-constexpr>` /
     /// module-level `ro X = <runtime-expr>`) is emitted, and combined at
@@ -2795,7 +2797,7 @@ impl CEmitter {
             user_fn_variadic: HashSet::new(),
             suppress_variadic_routing: false,
             emitted_fn_thunks: HashSet::new(),
-            lazy_consts: HashSet::new(), pending_assoc_consts: Vec::new(), local_frames: Vec::new(), lazy_const_syms: HashSet::new(),
+            lazy_consts: HashSet::new(), pending_assoc_consts: Vec::new(), local_frames: Vec::new(), lazy_const_syms: HashSet::new(), module_value_tys: HashMap::new(),
             pending_const_inits: Vec::new(),
             record_field_fn_sigs: HashMap::new(),
             trailing_block_counter: 0,
@@ -10184,9 +10186,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // `file_priv_fn_c_names`; входов в пользовательский код ТРИ (main, test, bench), промах был во всех.
         let saved_emit_file_id_test = self.current_emit_file_id;
         self.current_emit_file_id = Some(t.span.file_id);
-        self.local_frames.push(crate::free_idents::frame_reads(&[], |bd, fr| crate::free_idents::collect_truly_free_idents_block(&t.body, bd, fr)));
+        self.enter_body(crate::free_idents::frame_reads(&[], |bd, fr| crate::free_idents::collect_truly_free_idents_block(&t.body, bd, fr)));
         let r = self.emit_test_scoped_inner(t, idx);
-        self.local_frames.pop();
+        self.leave_body();
         self.current_emit_file_id = saved_emit_file_id_test;
         self.override_maps_scope_exit(ovr_saved, r.is_ok());
         r
@@ -10420,7 +10422,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     "{}const nova_str {} = {{(const uint8_t*)\"{}\" , {}}};",
                     self.top_level_storage(), c_name, escaped, len
                 ));
-                self.var_types.insert(c.name.clone(), ty_c.clone());
+                self.note_module_value(&c.name, &ty_c);
                 return Ok(());
             }
         }
@@ -10454,7 +10456,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // use-site инферился с правильным c-типом (например u32-const,
                 // используемый как `let mut h = FOO`, должен дать `uint32_t h`,
                 // а не nova_int — баг был замечен в std/checksums/fnv.nv).
-                self.var_types.insert(c.name.clone(), ty_c.clone());
+                self.note_module_value(&c.name, &ty_c);
                 Ok(())
             }
             Err(_) => {
@@ -10543,7 +10545,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.lazy_const_syms.insert(c_name.to_string());
         // Регистрируем тип, чтобы infer_expr_c_type(Ident(name)) возвращал
         // правильный c-тип (для записи в var_types — как обычный binding).
-        self.var_types.insert(name.to_string(), ty_c.to_string());
+        self.note_module_value(name, ty_c);
         // Эмитим storage (file-scope static; no `_init` flag anymore — the
         // combined `nova_consts_init()` runs it exactly once, eagerly).
         // [M-175-lazy-const-crossmodule-collision]: KEEP the `_nova_const_
@@ -13458,6 +13460,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         self.var_boxed.insert(cap_name.clone(), bv.clone());
                         bv
                     }
+                } else if let Some(boxed) = self.var_boxed.get(cap_name) {
+                    boxed.clone() // #1421: in an op body / closure the name is a capture: its address is the body's box
                 } else {
                     format!("&{}", cap_name)
                 };
@@ -14747,6 +14751,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // any *nested* spawn must not inherit it. Temporarily disable while
         // emitting the body.
         let saved_parfor = self.current_parfor_send.take();
+        // №1437: `return` in the body leaves THIS fiber through the epilogue below (fail-pop, slot free,
+        // pending_remote--), never by a bare C `return` -- and never to the enclosing fn's ensures label.
+        let spawn_ret_label = format!("{}_ret", spawn_id);
+        let saved_spawn_post = self.contracts_post_label.replace(spawn_ret_label.clone());
+        let saved_spawn_ret_ty = self.current_fn_return_ty.replace("nova_unit".to_string());
+        self.line("nova_unit _nova_result = NOVA_UNIT; (void)_nova_result;");
 
         // Emit body, discard its value (spawn returns unit) — UNLESS in parfor
         // mode, where the trailing expression's value is SENT into the collection
@@ -14832,6 +14842,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Restore parfor-send mode so the surrounding emit_parallel_for can clear
         // it after the for-loop body has run.
         self.current_parfor_send = saved_parfor;
+        self.line(&format!("{}:;", spawn_ret_label));
+        self.contracts_post_label = saved_spawn_post;
+        self.current_fn_return_ty = saved_spawn_ret_ty;
 
         self.line("nova_fail_pop();");
         self.indent -= 1;
@@ -16718,7 +16731,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     /// Collect all identifier names referenced inside a handler method body.
-    fn collect_idents_in_handler_method(m: &HandlerMethod) -> Vec<String> {
+    pub(crate) fn collect_idents_in_handler_method(m: &HandlerMethod) -> Vec<String> {
         let mut names = Vec::new();
         match &m.body {
             HandlerMethodBody::Expr(e) => Self::collect_idents_expr(e, &mut names),
@@ -16739,7 +16752,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// Collect all names *introduced* (bound) inside an expression:
     /// let-bindings, for-pattern, match-arm patterns, if-let, while-let.
     /// These names are local to the spawn body and must not be treated as captures.
-    fn collect_bound_names_expr(expr: &Expr, out: &mut std::collections::HashSet<String>) {
+    pub(crate) fn collect_bound_names_expr(expr: &Expr, out: &mut std::collections::HashSet<String>) {
         match &expr.kind {
             ExprKind::Block(b) => Self::collect_bound_names_block(b, out),
             ExprKind::If { then, else_, .. } => {
@@ -16844,7 +16857,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
-    fn collect_bound_names_block(block: &Block, out: &mut std::collections::HashSet<String>) {
+    pub(crate) fn collect_bound_names_block(block: &Block, out: &mut std::collections::HashSet<String>) {
         for stmt in &block.stmts {
             match stmt {
                 Stmt::Let(d) => {
@@ -16942,7 +16955,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
-    fn collect_idents_expr(expr: &Expr, out: &mut Vec<String>) {
+    pub(crate) fn collect_idents_expr(expr: &Expr, out: &mut Vec<String>) {
         match &expr.kind {
             ExprKind::Ident(name) => out.push(name.clone()),
             ExprKind::Binary { left, right, .. } => {
@@ -17102,11 +17115,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                 }
             }
+            // #1421: a nested handler literal / closure -- a capture of a capture (local_frames.rs).
+            ExprKind::HandlerLit { .. } | ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_) => Self::collect_idents_nested(expr, out),
             _ => {}
         }
     }
 
-    fn collect_idents_block(block: &Block, out: &mut Vec<String>) {
+    pub(crate) fn collect_idents_block(block: &Block, out: &mut Vec<String>) {
         for stmt in &block.stmts {
             Self::collect_idents_stmt(stmt, out);
         }
@@ -29331,13 +29346,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // №577/№592: a static array-ext method generic over the receiver's element is no longer emitted erased
         // here -- `emit_fn_scoped_inner` skips it for a real per-element mono (`array_ext_static_generic_fn`, D38).
         let params: Vec<&str> = f.params.iter().map(|p| p.name.as_str()).collect();
-        self.local_frames.push(crate::free_idents::frame_reads(&params, |bd, fr| match &f.body {
+        self.enter_body(crate::free_idents::frame_reads(&params, |bd, fr| match &f.body {
             FnBody::Expr(e) => crate::free_idents::collect_truly_free_idents(e, bd, fr),
             FnBody::Block(b) => crate::free_idents::collect_truly_free_idents_block(b, bd, fr),
             FnBody::External => {}
         }));
         let r = self.emit_fn_scoped_inner(f);
-        self.local_frames.pop();
+        self.leave_body();
         self.override_maps_scope_exit(ovr_saved, r.is_ok());
         r
     }
@@ -31707,6 +31722,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// `?`'s early return (D85) is a `return` and leaves the open scopes the
     /// same way (#1402: it used to skip every defer and `with` restore).
     fn emit_try_return(&mut self, cond: &str, head: &str, ret: &str) {
+        // №1437: under `ensures` (or in a spawn body) `?` exits through the post label like `return` does.
+        if let Some(label) = self.contracts_post_label.clone() {
+            self.line(&format!("if ({}) {{ {}_nova_result = {};", cond, head, ret));
+            self.indent += 1;
+            if !self.defer_scopes.is_empty() { self.emit_early_exit_cleanup(0); }
+            self.line(&format!("goto {}; }}", label));
+            self.indent -= 1;
+            return;
+        }
         if self.defer_scopes.is_empty() {
             self.line(&format!("if ({}) {{ {}return {}; }}", cond, head, ret));
             return;
@@ -46836,12 +46860,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // pre-pass) → synthesis-проба не матчится, дальше name-keyed.
                 {
                     let obj_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
-                    let obj_type_name = self.debt_strip_nova_trim_start_no_ws(&obj_ty);
+                    let (obj_type_name, recv_c_ty, by_addr) = self.default_method_recv(&obj_ty); // #1414
                     if !obj_type_name.is_empty() && !obj_ty.is_empty() {
                         if let Some(c_fn) = self.try_synthesize_default_method(
-                            &obj_type_name, &obj_ty, method,
+                            &obj_type_name, &recv_c_ty, method,
                         ) {
-                            let obj_c = self.emit_expr(obj)?;
+                            let obj_c = self.emit_expr(obj)?; let obj_c = if by_addr { self.prepare_method_recv(&obj_c, &obj_ty, false, Some(obj)) } else { obj_c };
                             let mut call_args = vec![obj_c];
                             for a in args {
                                 call_args.push(self.emit_expr(a.expr())?);
@@ -60918,27 +60942,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // synthesized via protocol default body (because T has no
                         // explicit method AND some protocol provides default), use
                         // that protocol method's return type as the inferred type.
-                        let obj_type_name_for_synth = self.debt_strip_nova_trim_start_no_ws(&obj_ty);
+                        // #1414: the receiver's own type (value kinds too), the `#impl`
+                        // gate the call site's synthesis applies, `Self` = that type.
+                        let obj_type_name_for_synth = self.default_method_recv(&obj_ty).0;
                         if !obj_type_name_for_synth.is_empty()
                             && !self.all_methods.contains(
                                 &(obj_type_name_for_synth.clone(), method_name.to_string()))
                         {
-                            for (_proto_name, (_type_params, methods))
-                                in &self.protocol_method_registry
-                            {
-                                if let Some(m) = methods.iter()
-                                    .find(|m| m.name == *method_name
-                                        && m.default_body.is_some())
-                                {
-                                    self.icr_trace("B03_protocol_default_body_synth");
-                                    if let Some(rt) = &m.return_type {
-                                        if let Ok(c) = self.type_ref_to_c(rt) {
-                                            return c;
-                                        }
-                                    }
-                                    // No return type → nova_unit (void).
-                                    return "nova_unit".into();
-                                }
+                            if let Some(c) = self.default_method_ret_c(&obj_type_name_for_synth, method_name) {
+                                self.icr_trace("B03_protocol_default_body_synth");
+                                return c;
                             }
                         }
                         // Plan 196.2 W1 [gate-1]: B04_novabox_protocol_method REMOVED.
@@ -61048,7 +61061,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 "nova_f64"  => "f64".to_string(),
                                                 "nova_f32"  => "f32".to_string(),
                                                 "nova_byte" => "u8".to_string(),
-                                                other       => other.to_string(),
+                                                other       => self.method_key_type_name(other), // #1413
                                             };
                                             // Plan 138.4 Ф.3 (G-B): receiver mutability at
                                             // the call-site for the recv-mut return-type tiebreak.
