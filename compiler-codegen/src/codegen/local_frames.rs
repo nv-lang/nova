@@ -21,6 +21,33 @@ use std::collections::HashSet;
 use super::emit_c::CEmitter;
 
 impl CEmitter {
+    /// #1441: a capture body (handler op, closure) begins. Its reads that are bound where they stand -- a local
+    /// declared before the read, possibly shadowing a capture of the same name -- read the LOCAL, not the captured
+    /// box (`var_boxed`); and with captures unpacked as C locals of the same names, the body goes into its own C
+    /// block so such a local is a legal C shadow and a read before it still sees the capture.
+    pub(crate) fn enter_capture_body(&mut self, params: &[&str], brace: bool, walk: impl FnOnce(&mut HashSet<String>, &mut HashSet<String>)) -> (HashSet<crate::ast::ExprId>, bool) {
+        let ids = crate::free_idents::bound_read_ids(params, walk);
+        let saved = self.local_read_ids.clone();
+        self.local_read_ids.extend(ids);
+        if brace { self.line("{"); }
+        (saved, brace)
+    }
+
+    pub(crate) fn leave_capture_body(&mut self, (saved, brace): (HashSet<crate::ast::ExprId>, bool)) {
+        if brace { self.line("}"); }
+        self.local_read_ids = saved;
+    }
+
+    /// #1441: does handler op `m` read `name` free somewhere -- before a local of that name is declared?
+    pub(crate) fn read_before_bound(m: &crate::ast::HandlerMethod, name: &str) -> bool {
+        let (mut bound, mut free): (HashSet<String>, HashSet<String>) = (m.params.iter().map(|p| p.name.clone()).collect(), HashSet::new());
+        match &m.body {
+            crate::ast::HandlerMethodBody::Expr(e) => crate::free_idents::collect_truly_free_idents(e, &mut bound, &mut free),
+            crate::ast::HandlerMethodBody::Block(b) => crate::free_idents::collect_truly_free_idents_block(b, &mut bound, &mut free),
+        }
+        free.contains(name)
+    }
+
     /// #1421: what a handler literal or closure nested in a body reads -- minus its own params and locals -- is
     /// read by the body that holds it: a capture of a capture. `collect_idents_expr` stopped at such a node, so an
     /// op body whose nested literal alone read `seen` never captured it, and the inner literal wrote `&seen` for
