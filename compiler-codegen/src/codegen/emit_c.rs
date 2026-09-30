@@ -32548,8 +32548,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             } else {
                 // Stash result in a tmp so defer cleanup runs *before* the return.
                 let tmp = self.fresh_tmp();
-                // Plan 59: mono'd tuple type mismatch — field-wise copy.
-                let trailing_ty = self.infer_expr_c_type(trailing);
+                // Plan 59 tuple field-copy; #1384: a `never` tail (checker channel) is no value, `val` is already ret_ty-typed -- no Ok-wrap.
+                let trailing_ty = if matches!(self.resolved_types.get(&trailing.id), Some(crate::types::ResolvedType::Never)) { ret_ty.to_string() } else { self.infer_expr_c_type(trailing) };
                 self.emit_tuple_return_stash(ret_ty, &tmp, &val, &trailing_ty);
                 self.leave_defer_scope(block_id);
                 self.line(&format!("return {};", tmp));
@@ -63803,18 +63803,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     // with the arm it fed (see docs/plans/196.5-stage-d-notes.md).
 
     pub(crate) fn infer_expr_c_type(&self, expr: &Expr) -> String {
+        // #1384: a loop's C value is unit, also when the checker types a no-exit loop `never`.
+        if matches!(&expr.kind, ExprKind::Loop { .. } | ExprKind::While { .. }) { return "nova_unit".to_string(); }
         // Plan 194 Ф.3 (vrange-роутинг): a bare closed `ExprKind::Range` VALUE
         // (both bounds present — the only shape that can appear as a plain
-        // argument; open-ended is index-syntax-only, Plan 96 Ф.2) is a
-        // CONCRETE, non-generic type whose C representation doesn't depend on
-        // any checker channel / type-subst context — mirrors the materialize
-        // logic in the `ExprKind::Range` emit arm below. Needed because a
-        // CODEGEN-SYNTHESIZED Range node (e.g. the `v[a..b]` -> `v.index(range)`
-        // vrange dispatch in the `ExprKind::Index` arm) has no checker-assigned
-        // `ExprId`, so Channel 1/2 below can't cover it — without this arm the
-        // overload-resolution call site (`same_name` param-C-type compare,
-        // ~36660) sees an unresolved/default type and can mis-pick a same-arity
-        // sibling overload (e.g. `@index(i int)` instead of `@index(r Range)`).
+        // argument) is a CONCRETE type whose C representation doesn't depend on
+        // any checker channel — mirrors the `ExprKind::Range` emit arm below. A
+        // CODEGEN-SYNTHESIZED Range node (the `v[a..b]` -> `v.index(range)`
+        // dispatch) has no checker `ExprId`, so without this arm overload
+        // resolution (~36660) can mis-pick `@index(i int)` over `@index(r Range)`.
         if matches!(&expr.kind, ExprKind::Range { start: Some(_), end: Some(_), .. }) {
             if self.value_record_names.contains("Range") {
                 return "NovaValue_Range".to_string();

@@ -1,0 +1,92 @@
+// Registry 221.1 #1384: a function tail of type `never` is not a value and must
+// not be wrapped into `Ok(...)`. #1349 taught the tail of a `Result[T, E]` fn
+// to wrap a bare Ok payload, deciding by the tail's C type alone; a loop that
+// cannot exit was recorded as `unit` in the checker channel, so its tail got
+// `Ok(((_nv_loop_N), NULL))` -- a C error for a struct payload (`str`, a
+// tuple) and a silently wrong C expression for a pointer or integer one.
+//
+// Width, as the row's acceptance names it: every `never` tail form --
+// `loop` without break, `while true` without break, `return`, `panic(..)` --
+// times `Result[T, E]` and `Result[(), E]`. `str` is the payload on purpose:
+// it is a struct in C, so a stray wrap cannot pass quietly. `loop_tail` is the
+// second carrier, carried over from nova-postgres (docs/plans/repro/
+// 1384-loop-tail-result/): every path of the loop returns. The `panic` tails
+// and the infinite loops are never reached at run time.
+module standalone.p1384_never_tail_result
+
+fn loop_tail(x int) -> Result[str, str] {
+    loop {
+        if x > 0 {
+            return Ok("pos")
+        }
+        return Err("neg")
+    }
+}
+
+fn loop_t(stop bool) -> Result[str, str] {
+    if stop { return Ok("loop") }
+    loop { }
+}
+
+fn loop_u(stop bool) -> Result[(), str] {
+    if stop { return Ok(()) }
+    loop { }
+}
+
+fn while_t(stop bool) -> Result[str, str] {
+    if stop { return Ok("while") }
+    while true { }
+}
+
+fn while_u(stop bool) -> Result[(), str] {
+    if stop { return Ok(()) }
+    while true { }
+}
+
+fn return_t(stop bool) -> Result[str, str] {
+    if stop { return Ok("return") }
+    return Err("ret")
+}
+
+fn return_u(stop bool) -> Result[(), str] {
+    if stop { return Ok(()) }
+    return Err("ret")
+}
+
+fn panic_t(stop bool) -> Result[str, str] {
+    if stop { return Ok("panic") }
+    panic("unreachable in this test")
+}
+
+fn panic_u(stop bool) -> Result[(), str] {
+    if stop { return Ok(()) }
+    panic("unreachable in this test")
+}
+
+fn ok_str(r Result[str, str]) -> str {
+    match r {
+        Ok(s) => s
+        Err(e) => "err:${e}"
+    }
+}
+
+test "loop tail whose every path returns (nova-postgres carrier)" {
+    assert(ok_str(loop_tail(1)) == "pos")
+    assert(ok_str(loop_tail(0)) == "err:neg")
+}
+
+test "never tails of Result[str, str] are not wrapped" {
+    assert(ok_str(loop_t(true)) == "loop")
+    assert(ok_str(while_t(true)) == "while")
+    assert(ok_str(return_t(true)) == "return")
+    assert(ok_str(return_t(false)) == "err:ret")
+    assert(ok_str(panic_t(true)) == "panic")
+}
+
+test "never tails of Result[(), str] are not wrapped" {
+    assert(loop_u(true).is_ok())
+    assert(while_u(true).is_ok())
+    assert(return_u(true).is_ok())
+    assert(return_u(false).is_err())
+    assert(panic_u(true).is_ok())
+}
