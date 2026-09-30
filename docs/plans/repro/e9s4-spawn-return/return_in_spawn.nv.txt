@@ -1,0 +1,13 @@
+fn main() {
+    ro base = 40
+    supervised {
+        spawn {
+            if base > 10 {
+                println("child ", base + 2)
+                return
+            }
+            println("unreached")
+        }
+    }
+    println("after")
+}

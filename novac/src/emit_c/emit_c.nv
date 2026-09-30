@@ -138,6 +138,7 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
     }
     consume e = Emitter { src_name, ctx, out, reach, next_tmp: 0, lo: Lowerer { ctx, out, ir: FnBuilder.new(no_ty()) },
                           lit_tmp: lt, body: StringBuilder.new(), hlits: []Node.new(), cur_lit: 0 - 1,
+                          spawns: []Node.new(), cur_spawn: 0 - 1,
                           fres: FieldIndex.build(ctx.fields),
                           // NAMED explicitly, and the reason is registry #901:
                           // the ORACLE accepts a constructor that omits a field
@@ -156,12 +157,15 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
     // bodies after every function they may call.
     e.collect_handler_lits(file)
     e.emit_handler_protos()
+    e.collect_spawns(file)
+    e.emit_spawn_protos()
     e.emit_instance_protos(insts)
     e.emit_file(file)
     for inst in insts {
         e.emit_instance(inst)
     }
     e.emit_handler_ops()
+    e.emit_spawn_fns()
     e.emit_module_value_inits()
     ro init = e.module_value_init_calls()
     ro (lits, code) = e.into_parts()

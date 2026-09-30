@@ -292,6 +292,9 @@ export const IMPL_ATTR = "impl"
 /// for MUTATION from another fiber (06-concurrency.md:7383, audited vouch):
 /// the sync primitives of std carry it (`Atomic*`, `Mutex`, ...).
 export const SHARE_ATTR = "share"
+/// The effect a `supervised` scope asks about: an installed handler decides
+/// its children's failures (`has_supervisor`, E.9 step 4).
+export const SUPERVISOR_EFFECT = "Supervisor"
 /// The runtime entry that builds a bare `Fmt` context over a builder -- what
 /// the codegen constructs at every user-type slot (measured on the oracle's
 /// emission 2026-09-05: `Nova_FmtCtx_static_bare(sb, 0, false)`). Interop.

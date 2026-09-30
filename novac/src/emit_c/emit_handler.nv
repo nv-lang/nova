@@ -233,15 +233,19 @@ fn Emitter mut @emit_handler_lit(lit Node) -> str {
 /// context: the name is no local there, and the context slot already holds
 /// the pointer (for `mut`) or the copy.
 fn Emitter @capture_source(c CaptureRow) -> str {
-    if @cur_lit >= 0 {
-        for oc in @out.captures_of(@hlits[@cur_lit].id_of()) {
-            if oc.bind_row == c.bind_row { return "_novac_cap->${c.name}" }
-        }
-    } else {
-        // Built in an ordinary function: every capture is a local there.
+    for oc in @owner_captures() {
+        if oc.bind_row == c.bind_row { return "_novac_cap->${c.name}" }
     }
     if c.by_ref { return "&${c.name}" }
     c.name
+}
+
+/// The captures of the closure whose function is being emitted -- a literal's
+/// op or a spawn's body (E.9 step 4) -- none in an ordinary function.
+fn Emitter @owner_captures() -> []CaptureRow {
+    if @cur_lit >= 0 { return @out.captures_of(@hlits[@cur_lit].id_of()) }
+    if @cur_spawn >= 0 { return @out.captures_of(@spawns[@cur_spawn].id_of()) }
+    []CaptureRow.new()
 }
 
 /// A Name read that is a CAPTURE (E.9 step 3): through the op function's

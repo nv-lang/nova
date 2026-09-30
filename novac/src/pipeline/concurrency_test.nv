@@ -117,3 +117,20 @@ test "spawn: a bare word (no brace) is an ordinary name, refused not silent (E4)
     assert(d.len() == 1, messages(d))
     assert(d[0].message.contains("unknown name"), d[0].message)
 }
+
+test "supervised: the scope is joined on EVERY exit -- the fall-through and a `return` out of it (E.9 step 4)" {
+    // Counted against a control with no scope: the shell carries runtime text
+    // of its own, so presence proves nothing.
+    ro c0src = "fn g(k int) -> int {\n    0\n}\nfn main() {\n    println(g(1))\n}"
+    ro (d0, c0) = compile_to_c_with(c0src, parse_decls([]str.new()), interop_surface())
+    assert(d0.len() == 0, messages(d0))
+    ro src = "fn g(k int) -> int {\n    supervised {\n        spawn {\n            println(k)\n        }\n        if k > 0 {\n            return 1\n        }\n    }\n    0\n}\nfn main() {\n    println(g(1))\n}"
+    ro (d, c) = compile_to_c_with(src, parse_decls([]str.new()), interop_surface())
+    assert(d.len() == 0, messages(d))
+    // One scope opened, joined twice: on the `return` and at the end.
+    assert(c.matches("nova_scope_init(&").len() == c0.matches("nova_scope_init(&").len() + 1, c)
+    assert(c.matches("nova_supervised_run(&").len() == c0.matches("nova_supervised_run(&").len() + 2, c)
+    // The child's context starts with the runtime's base, and `k` is copied in.
+    assert(c.matches("NovaSpawnCtxBase _nova_base;").len() == c0.matches("NovaSpawnCtxBase _nova_base;").len() + 1, c)
+    assert(c.contains("->k = k;"), c)
+}

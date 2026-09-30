@@ -1,0 +1,16 @@
+module supervised.pos_1
+
+// `supervised { spawn { ... } }` (E.9 step 4, plan 274.11): the scope opened,
+// the child handed to its queue with an `ro` capture copied into its context,
+// the scope joined before the line after it runs. Behaviour byte-for-byte
+// with the oracle (novac-e1-smoke).
+
+fn main() {
+    ro base = 40
+    supervised {
+        spawn {
+            println("child ", base + 2)
+        }
+    }
+    println("after")
+}

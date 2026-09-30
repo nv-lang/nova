@@ -1,0 +1,19 @@
+module supervised.pos_2
+
+// A `spawn` inside another `spawn`'s body (E.9 step 4): the inner fiber goes to
+// the scope the outer one captured, and it captures `base` -- a capture of the
+// outer spawn -- from the outer body's context. Behaviour byte-for-byte with the
+// oracle (novac-e1-smoke).
+
+fn main() {
+    ro base = 40
+    supervised {
+        spawn {
+            ro inner = base + 1
+            spawn {
+                println("grandchild ", inner, " ", base)
+            }
+        }
+    }
+    println("after")
+}

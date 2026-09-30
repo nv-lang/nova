@@ -1,0 +1,199 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Go's `go` statement lowered to a closure plus a runtime hand-off
+// (the environment in a struct, shared variables by address); Kotlin
+// structured concurrency for the scope that joins its children. The C
+// PROTOCOL itself is the runtime's -- `NovaSpawnCtxBase` first, the entry
+// function's anchor / slot / snapshot / fail-frame / report sequence -- and
+// novac repeats it as interop (274.11 E.9 step 4, question 4: no runtime
+// change), not as a model: it goes when the runtime grows one prologue door.
+// Role: emission of `supervised { ... }` and `spawn { ... }` (E.9 step 4,
+//   plan 274.11). Every `spawn` of a reached function gets a C number; its
+//   context type (`novac_sctx_<N>`: the runtime's base first, then the
+//   captures, then the scope a nested spawn hands its fiber to), its BODY as
+//   a function of its own (`novac_spawnbody_<N>`: a `return` inside ends the
+//   child, D13, and never skips the epilogue), and its ENTRY function
+//   (`novac_spawn_<N>`, the runtime's protocol around the body). The scope and
+//   the hand-off are statements of the lowered body (`ScopeOpen`, `ScopeJoin`,
+//   `Spawn`), printed here.
+// Used by: emit_c.nv (`emit`, around the file's functions), emit_flow.nv
+//   (the three statements' printers).
+// Guarded by: nova test novac/src/pipeline/concurrency_test.nv (the C shape)
+//   and check-novac-differential.sh over novac/fixtures/supervised.
+
+module novac.emit_c
+
+import ../tree.{Node, NodeKind, NodeId}
+import ../diag.{ice}
+import ../builtins.{SUPERVISOR_EFFECT}
+import ../sem.{branch_children, decl_fn_row, file_decls, c_type, effect_slot_c, CaptureRow}
+import ../lower.{FnBuilder, SpawnSite}
+
+/// Every `spawn` of the functions mono reached, in the order of the file --
+/// the index is the spawn's C number.
+fn Emitter mut @collect_spawns(file Node) -> () {
+    for c in file_decls(file) {
+        if c.kind_of() != NodeKind.FnDecl { continue }
+        match decl_fn_row(c, @ctx) {
+            None => continue
+            Some(row) => {
+                if !@reach.has(row) { continue }
+                collect_spawn_nodes(c, @spawns)
+            }
+        }
+    }
+}
+
+/// The `spawn` statements under `n`, pre-order.
+fn collect_spawn_nodes(n Node, mut out []Node) -> () {
+    if n.kind_of() == NodeKind.LeafNode { return }
+    if n.kind_of() == NodeKind.SpawnStmt {
+        out.push(n)
+    } else {
+        // Not a spawn itself; one may stand below it.
+    }
+    for c in branch_children(n) {
+        collect_spawn_nodes(c, out)
+    }
+}
+
+/// A spawn's C number -- its index among the collected ones.
+fn Emitter @spawn_number(id NodeId) -> int {
+    for i in 0..@spawns.len() {
+        if @spawns[i].id_of() == id { return i }
+    }
+    ice("emit: a spawn outside the reached functions reached the emitter")
+}
+
+/// For each spawn: its context type and the prototypes of its body and entry
+/// functions -- before the file's functions, which hand the entry to the
+/// runtime.
+fn Emitter mut @emit_spawn_protos() -> () {
+    for n in 0..@spawns.len() {
+        @body.append("typedef struct {\n    NovaSpawnCtxBase _nova_base;\n")
+        for c in @out.captures_of(@spawns[n].id_of()) {
+            ro star = if c.by_ref { "*" } else { "" }
+            @body.append("    ${c_type(@ctx, c.type_id)}${star} ${c.name};\n")
+        }
+        @body.append("    NovaFiberQueue* _nova_captured_scope_q;\n} novac_sctx_${n};\n")
+        @body.append("static nova_unit novac_spawnbody_${n}(novac_sctx_${n}* _novac_cap);\n")
+        @body.append("static void novac_spawn_${n}(mco_coro* _co);\n")
+    }
+}
+
+/// The body and entry functions, after the file's functions (a body may call
+/// them).
+fn Emitter mut @emit_spawn_fns() -> () {
+    for n in 0..@spawns.len() {
+        @emit_spawn_body(n)
+        @emit_spawn_entry(n)
+    }
+}
+
+/// The spawn's body, lowered through the one body door with the context as
+/// `_novac_cap` -- the name every captured read prints (`@emit_capture_read`).
+fn Emitter mut @emit_spawn_body(n int) -> () {
+    ro kids = branch_children(@spawns[n])
+    ro body = kids[kids.len() - 1]
+    assert(body.kind_of() == NodeKind.Block, "emit: a spawn without its body block reached the emitter")
+    ro unit = @ctx.prims.unit_id
+    @body.append("static nova_unit novac_spawnbody_${n}(novac_sctx_${n}* _novac_cap) {\n    (void)_novac_cap;\n")
+    @lo.ir = FnBuilder.new(unit)
+    @cur_spawn = n
+    @lo.lower_block_stmts_fn(body, false)
+    @lo.ir.end_body()
+    @print_body(@lo.ir.finish())
+    @cur_spawn = 0 - 1
+    @body.append("}\n")
+}
+
+/// The runtime's entry protocol around the body (`nova_rt/fibers.h`,
+/// `NovaSpawnCtxBase`): the anchor a late cancel lands on, the scope slot and
+/// the effect snapshot adopted, a fail frame whose catch reports the child's
+/// failure to its scope (and so to `Supervisor.on_child_fail`), the epilogue
+/// that frees the slot and wakes the scope's driver.
+fn Emitter mut @emit_spawn_entry(n int) -> () {
+    ro b = "_c->_nova_base."
+    @body.append("static void novac_spawn_${n}(mco_coro* _co) {\n")
+    @body.append("    novac_sctx_${n}* _c = (novac_sctx_${n}*)mco_get_user_data(_co);\n")
+    @body.append("    NovaFiberAnchor _nv_anchor;\n    ${b}_nova_fiber_anchor = &_nv_anchor;\n")
+    @body.append("    if (setjmp(_nv_anchor.jmp) == 0) {\n        nova_preempt_check();\n")
+    @body.append("        if (${b}_nova_parent_scope) {\n")
+    @body.append("            _nova_active_slot = nova_scope_alloc_slot(_nova_active_scope, _co);\n")
+    @body.append("            ${b}_nova_worker_slot = _nova_active_slot;\n")
+    @body.append("            ${b}_nova_fiber_scope = _nova_active_scope;\n")
+    @body.append("            if (${b}_nova_init_snapshot && _nova_active_slot >= 0) {\n")
+    @body.append("                _nova_active_scope->fiber_effect_snapshot[_nova_active_slot] = ${b}_nova_init_snapshot;\n")
+    @body.append("                ${b}_nova_init_snapshot = NULL;\n            }\n")
+    @body.append("        } else {\n            ${b}_nova_worker_slot = -1;\n        }\n")
+    @body.append("        NovaFailFrame _ff;\n        nova_fail_push(&_ff);\n")
+    @body.append("        if (setjmp(_ff.jmp) == 0) {\n            (void)novac_spawnbody_${n}(_c);\n            nova_fail_pop();\n")
+    @body.append("        } else {\n            nova_fail_pop();\n")
+    @body.append("            if (_ff.error_msg.ptr && _ff.error_msg.len == 18 && memcmp(_ff.error_msg.ptr, \"__nova_interrupt__\", 18) == 0) {\n")
+    @body.append("                /* an interrupt: the scope already knows, the fiber dies cleanly */\n")
+    @body.append("            } else if (${b}_nova_parent_scope) {\n")
+    @body.append("                nova_fiber_report_child_diag(&_c->_nova_base, _ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr, _ff.error_user_payload, _ff.error_user_type_id, _ff.error_suppressed);\n")
+    @body.append("            } else {\n")
+    @body.append("                nova_fiber_report_error_diag(_ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr, _ff.error_suppressed);\n")
+    @body.append("            }\n        }\n")
+    @body.append("    } else {\n        /* a late cancel with no handler: retire this fiber only */\n")
+    @body.append("        _nova_fail_top = NULL;\n        _nova_interrupt_top = NULL;\n        _nova_current_handler_iframe = NULL;\n    }\n")
+    @body.append("    ${b}_nova_fiber_anchor = NULL;\n    if (${b}_nova_parent_scope) {\n")
+    @body.append("        if (${b}_nova_worker_slot >= 0) {\n")
+    @body.append("            nova_scope_free_slot(_nova_active_scope, ${b}_nova_worker_slot);\n            _nova_active_slot = -1;\n        }\n")
+    @body.append("        (void)nova_aint_inc(&${b}_nova_parent_scope->pending_sweeps);\n")
+    @body.append("        (void)nova_aint_fetch_sub_release(&${b}_nova_parent_scope->pending_remote);\n")
+    @body.append("        nova_runtime_signal_main();\n    }\n}\n")
+}
+
+/// `supervised {` -- the scope's fiber queue, its supervisor flag (an
+/// installed `Supervisor` handler decides child failures), the active scope
+/// saved, the early deadline armed.
+fn Emitter mut @emit_scope_open(q int) -> () {
+    @body.append("    NovaFiberQueue _novac_q${q} = {0};\n")
+    @body.append("    nova_scope_init(&_novac_q${q});\n")
+    @body.append("    _novac_q${q}.has_supervisor = (${effect_slot_c(SUPERVISOR_EFFECT)} != NULL);\n")
+    @body.append("    NovaFiberQueue* _novac_qprev${q} = _nova_active_scope;\n")
+    @body.append("    void* _novac_qdl${q} = nova_scope_arm_early_deadline(&_novac_q${q});\n")
+}
+
+/// A `supervised` exit -- on EVERY exit of its body: the children run to the
+/// end (`nova_supervised_run`), the active scope restored.
+fn Emitter mut @emit_scope_join(q int) -> () {
+    @body.append("    nova_scope_disarm_early_deadline(_novac_qdl${q});\n")
+    @body.append("    nova_supervised_run(&_novac_q${q});\n")
+    @body.append("    _nova_active_scope = _novac_qprev${q};\n")
+}
+
+/// The queue a spawn hands its fiber to: the innermost `supervised` of this
+/// body, or -- a spawn inside another spawn's body -- the scope that one
+/// captured.
+fn Emitter @spawn_queue(s SpawnSite) -> str {
+    if s.scope >= 0 { return "&_novac_q${s.scope}" }
+    assert(@cur_spawn >= 0, "emit: a spawn with no enclosing supervised scope reached the emitter")
+    "_novac_cap->_nova_captured_scope_q"
+}
+
+/// One `spawn`: the context allocated (from the runtime's pool once it is up),
+/// the captures filled -- `mut` by address, the rest by copy -- the slots
+/// cleared, then the M:N hand-off with the effect snapshot taken here, or the
+/// bootstrap one.
+fn Emitter mut @emit_spawn_site(s SpawnSite) -> () {
+    ro n = @spawn_number(s.node)
+    ro v = "_novac_sp${@fresh_uniq()}"
+    ro cx = "novac_sctx_${n}"
+    ro qe = @spawn_queue(s)
+    @body.append("    nova_bool ${v}_init = nova_runtime_is_initialized();\n")
+    @body.append("    ${cx}* ${v} = (${cx}*)(${v}_init ? nova_spawn_pool_acquire(sizeof(${cx})) : nova_alloc(sizeof(${cx})));\n")
+    for c in @out.captures_of(s.node) {
+        @body.append("    ${v}->${c.name} = ${@capture_source(c)};\n")
+    }
+    @body.append("    ${v}->_nova_captured_scope_q = ${qe};\n")
+    @body.append("    ${v}->_nova_base._nova_worker_slot = -1;\n    ${v}->_nova_base._nova_parent_slot = -1;\n")
+    @body.append("    if (${v}_init) {\n        ${v}->_nova_base._nova_parent_scope = ${qe};\n")
+    @body.append("        ${v}->_nova_base._nova_init_snapshot = (NovaEffectSnapshot*)nova_alloc(sizeof(NovaEffectSnapshot));\n")
+    @body.append("        nova_effect_snapshot_save(${v}->_nova_base._nova_init_snapshot);\n")
+    @body.append("        nova_runtime_spawn_into(${qe}, novac_spawn_${n}, ${v});\n")
+    @body.append("    } else {\n        ${v}->_nova_base._nova_parent_scope = NULL;\n")
+    @body.append("        ${v}->_nova_base._nova_init_snapshot = NULL;\n")
+    @body.append("        nova_fiber_spawn_into(${qe}, novac_spawn_${n}, ${v});\n    }\n")
+}

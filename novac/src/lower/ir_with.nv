@@ -14,6 +14,7 @@
 
 module novac.lower
 import ../diag.{ice}
+import ../tree.{NodeId}
 
 /// One handler a `with` installs (E.9 step 2, 274.11): the effect whose thread
 /// slot it takes, the local that keeps the handler it displaced, and the local
@@ -32,6 +33,7 @@ export type WithScope {
     swaps []HandlerSwap /// installed in order, restored in reverse
     frame int /// the interrupt frame's number
     loops int /// open loops at entry
+    sup int /// a `supervised` scope's number (E.9 step 4), -1 for a `with`: its exit joins the children instead
 }
 
 /// What `begin_with` hands back and `end_with` takes.
@@ -55,7 +57,7 @@ export fn FnBuilder mut @begin_with(swaps []HandlerSwap) -> WithCtx {
     ro f = @frames
     @frames += 1
     @cur.push(Stmt.PushFrame(f))
-    @scopes.push(WithScope { swaps, frame: f, @loops })
+    @scopes.push(WithScope { swaps, frame: f, @loops, sup: 0 - 1 })
     ro c = @begin_if(Cond.FrameEntered(f), ElseShape.NoElse)
     WithCtx { cond: c, scope: @scopes.len() - 1 }
 }
@@ -76,6 +78,10 @@ export fn FnBuilder mut @end_with(c WithCtx) -> () {
 /// installation, then its frame popped.
 fn FnBuilder mut @leave_scope(i int) -> () {
     ro sc = @scopes[i]
+    if sc.sup >= 0 {
+        @cur.push(Stmt.ScopeJoin(sc.sup))
+        return
+    }
     ro swaps = sc.swaps
     mut k = swaps.len() - 1
     while k >= 0 {
@@ -104,4 +110,46 @@ fn FnBuilder mut @leave_loop_scopes() -> () {
         @leave_scope(i)
         i -= 1
     }
+}
+
+/// One `spawn` of the lowered body (E.9 step 4): WHICH statement (its body is
+/// a function of its own, emitted by the emitter) and WHICH queue takes it.
+export type SpawnSite value {
+    node NodeId /// the spawn statement -- the key of its captures and its C number
+    scope int /// the innermost `supervised` scope of this body, -1 = the scope the enclosing spawn captured
+}
+
+/// `supervised {`: a scope of its own on the stack the `with` scopes use, so
+/// every exit -- the fall-through, `return`, `break`/`continue` out of it --
+/// joins the children (`@leave_scope`). Numbered from the frame counter: one
+/// source of unique names per body.
+export fn FnBuilder mut @begin_supervised() -> int {
+    ro q = @frames
+    @frames += 1
+    @cur.push(Stmt.ScopeOpen(q))
+    @scopes.push(WithScope { swaps: []HandlerSwap.new(), frame: 0 - 1, @loops, sup: q })
+    @scopes.len() - 1
+}
+
+/// The fall-through exit of a `supervised` body.
+export fn FnBuilder mut @end_supervised(at int) -> ()
+    requires @scopes.len() - 1 == at, "lower: a supervised scope closed out of order"
+{
+    @leave_scope(at)
+    ro _ = @scopes.pop()
+}
+
+/// A `spawn` statement: handed to the innermost `supervised` of this body.
+export fn FnBuilder mut @spawn_site(node NodeId) -> () {
+    mut q = 0 - 1
+    mut i = @scopes.len() - 1
+    while i >= 0 {
+        ro sc = @scopes[i]
+        if sc.sup >= 0 {
+            q = sc.sup
+            break
+        }
+        i -= 1
+    }
+    @cur.push(Stmt.Spawn(SpawnSite { node, scope: q }))
 }
