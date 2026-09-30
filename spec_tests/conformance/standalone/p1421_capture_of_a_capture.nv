@@ -1,0 +1,171 @@
+// EXPECT_STDOUT a41:7|b142:7|202|a7|b7|200|a42|a7|1010|a5|b10|10|9:3|a6|1
+//
+// Registry 221.1 #1421: a handler literal or a closure nested in the body of an
+// op of another handler literal (or in a closure's body) that captures a
+// variable did not build in C -- "use of undeclared identifier 'seen'". Two
+// roots, one class (a capture of a capture): the capture scan of the OUTER body
+// stopped at a nested literal / closure, so the outer literal did not capture
+// what only the inner one reads; and an inline literal's `mut` capture wrote
+// `&seen`, while inside an op body `seen` is itself a capture whose address the
+// body already holds. Carina's rule (E.9 step 3): the outer literal captures what
+// the inner one reads, and the inner context is filled from the outer op's.
+// Cells: Carina's two probes (the outer op moves the counter / does not touch
+// it), `ro` capture, depth 3, a closure in an op body, a literal in a closure
+// body, a literal in a `with` body inside an op body.
+module standalone.p1421_capture_of_a_capture
+
+fn p1421_apply(f fn() -> int) -> int => f()
+
+fn outer_reads() {
+    mut seen = 0
+    ro base = 40
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label str) -> () {
+            seen += 1
+            with Random = effect Random {
+                u64() -> u64 {
+                    seen += 100
+                    7
+                }
+            } {
+                print("${label}${base + seen}:${Random.u64()}|")
+            }
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {}
+    } {
+        ResourceTrace.on_resource_enter("a")
+        ResourceTrace.on_resource_enter("b")
+    }
+    print("${seen}|")
+}
+
+fn outer_silent() {
+    mut seen = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label str) -> () {
+            with Random = effect Random {
+                u64() -> u64 {
+                    seen += 100
+                    7
+                }
+            } {
+                print("${label}${Random.u64()}|")
+            }
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {}
+    } {
+        ResourceTrace.on_resource_enter("a")
+        ResourceTrace.on_resource_enter("b")
+    }
+    print("${seen}|")
+}
+
+fn ro_capture() {
+    ro base = 40
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label str) -> () {
+            with Random = effect Random {
+                u64() -> u64 => (base as u64) + 2
+            } {
+                print("${label}${Random.u64()}|")
+            }
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {}
+    } {
+        ResourceTrace.on_resource_enter("a")
+    }
+}
+
+fn depth_three() {
+    mut seen = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label str) -> () {
+            with Random = effect Random {
+                u64() -> u64 {
+                    with ResourceTrace = effect ResourceTrace {
+                        on_resource_enter(l2 str) -> () {
+                            seen += 1000
+                        }
+                        on_resource_exit(l2 str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {}
+                    } {
+                        ResourceTrace.on_resource_enter("x")
+                    }
+                    seen += 10
+                    7
+                }
+            } {
+                print("${label}${Random.u64()}|")
+            }
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {}
+    } {
+        ResourceTrace.on_resource_enter("a")
+    }
+    print("${seen}|")
+}
+
+fn closure_in_op() {
+    mut seen = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label str) -> () {
+            ro r = p1421_apply(fn() -> int {
+                seen += 5
+                seen
+            })
+            print("${label}${r}|")
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {}
+    } {
+        ResourceTrace.on_resource_enter("a")
+        ResourceTrace.on_resource_enter("b")
+    }
+    print("${seen}|")
+}
+
+fn literal_in_closure() {
+    mut seen = 0
+    ro r = p1421_apply(fn() -> int {
+        with Random = effect Random {
+            u64() -> u64 {
+                seen += 3
+                9
+            }
+        } {
+            Random.u64() as int
+        }
+    })
+    print("${r}:${seen}|")
+}
+
+fn literal_in_with_in_op() {
+    mut seen = 0
+    ro base = 1
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label str) -> () {
+            with Random = effect Random { u64() -> u64 => 5 } {
+                with Random = effect Random {
+                    u64() -> u64 {
+                        seen += base
+                        6
+                    }
+                } {
+                    print("${label}${Random.u64()}|")
+                }
+            }
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {}
+    } {
+        ResourceTrace.on_resource_enter("a")
+    }
+    print("${seen}")
+}
+
+fn main() Io -> () {
+    outer_reads()
+    outer_silent()
+    ro_capture()
+    depth_three()
+    closure_in_op()
+    literal_in_closure()
+    literal_in_with_in_op()
+}

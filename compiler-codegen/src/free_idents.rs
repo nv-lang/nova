@@ -124,6 +124,18 @@ pub fn collect_truly_free_idents(
             }
             for n in saved { bound.remove(&n); }
         }
+        // #1421: a handler literal's op bodies read names like a closure's body (its params bound) -- a closure
+        // holding one must capture what the literal reads.
+        ExprKind::HandlerLit { methods, .. } => for m in methods {
+            let saved: Vec<String> = m.params.iter()
+                .filter_map(|p| if bound.insert(p.name.clone()) { Some(p.name.clone()) } else { None })
+                .collect();
+            match &m.body {
+                crate::ast::HandlerMethodBody::Expr(e) => collect_truly_free_idents(e, bound, out),
+                crate::ast::HandlerMethodBody::Block(b) => collect_truly_free_idents_block(b, bound, out),
+            }
+            for n in saved { bound.remove(&n); }
+        },
         ExprKind::TupleLit(elems) => {
             for e in elems { collect_truly_free_idents(e, bound, out); }
         }

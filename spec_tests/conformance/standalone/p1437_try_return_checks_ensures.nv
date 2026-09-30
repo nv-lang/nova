@@ -1,0 +1,22 @@
+// Registry 221.1 #1437 (the `?` path it named): an early return by `?` (D85) is
+// a return like any other, so a fn's `ensures` must be checked on it too. Here
+// the postcondition is false exactly on the `?` path: `?` on `None` returns
+// `None`, and `ensures result.is_some()` must fail.
+
+module standalone.p1437_try_return_checks_ensures
+
+fn first_positive(x Option[int]) -> Option[int]
+    ensures result.is_some()
+{
+    ro v = x?
+    Some(v + 1)
+}
+
+test "ensures holds on the fall-through path" {
+    assert(first_positive(Some(1)) == Some(2))
+}
+
+test "ensures is checked on the `?` early return" panics "ensures failed:" {
+    ro _ = first_positive(None)
+    println("UNREACHABLE")
+}
