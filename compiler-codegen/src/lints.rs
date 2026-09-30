@@ -893,6 +893,14 @@ pub(crate) fn collect_used_names(items: &[Item], out: &mut HashSet<String>) {
                         collect_expr(me, out);
                     }
                 }
+                // #1412: a `const/ro Type.NAME` initializer is code like a module
+                // `const`/`ro` value's -- a fn called ONLY there was pruned as dead.
+                for ac in &td.assoc_consts {
+                    if let Some(t) = &ac.ty {
+                        collect_tr(t, out);
+                    }
+                    collect_expr(&ac.value, out);
+                }
             }
             Item::Const(c) => {
                 if let Some(t) = &c.ty {

@@ -984,7 +984,8 @@ impl EmbedCtx {
                     self.walk_stmt(s);
                 }
             }
-            Item::Type(_) | Item::Lemma(_) => {}
+            Item::Type(t) => for ac in &mut t.assoc_consts { self.walk_expr(&mut ac.value) }, // #1412: a `const/ro Type.NAME` initializer is a module value's initializer too.
+            Item::Lemma(_) => {}
         }
     }
 

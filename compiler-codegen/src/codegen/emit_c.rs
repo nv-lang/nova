@@ -1530,6 +1530,8 @@ pub struct CEmitter {
     /// Plan 14 Ф.2: SOURCE names of consts with runtime init (init ordering + a fast pre-check).
     /// Whether a READ is lazy is NOT decided by this set -- see `lazy_const_syms` (#1158).
     lazy_consts: HashSet<String>,
+    /// #1412: `const Type.NAME` entries `emit_type_decl` met, emitted by the ordered module-`const` pass.
+    pub(crate) pending_assoc_consts: Vec<(String, crate::ast::AssocConst)>,
     /// #1397: per emitted body (fn / test / closure), (names read as BOUND, names read as FREE) -- see `is_local_read`.
     pub(crate) local_frames: Vec<(HashSet<String>, HashSet<String>)>,
     /// #1158: final C qualifiers (`c_name`) of lazy consts -- laziness of ONE const, not of a name.
@@ -2792,7 +2794,7 @@ impl CEmitter {
             user_fn_variadic: HashSet::new(),
             suppress_variadic_routing: false,
             emitted_fn_thunks: HashSet::new(),
-            lazy_consts: HashSet::new(), local_frames: Vec::new(), lazy_const_syms: HashSet::new(),
+            lazy_consts: HashSet::new(), pending_assoc_consts: Vec::new(), local_frames: Vec::new(), lazy_const_syms: HashSet::new(),
             pending_const_inits: Vec::new(),
             record_field_fn_sigs: HashMap::new(),
             trailing_block_counter: 0,
@@ -8302,18 +8304,9 @@ impl CEmitter {
             }
         }
 
-        // 1b. Const declarations (after types, before fn forward decls)
-        for item in &module.items {
-            if let Item::Const(c) = item {
-                if should_skip_const(c) { continue; }
-                // Plan 159 Ф.1: skip a const unreachable from any root (its
-                // giant `static` table — e.g. an unused Unicode data table —
-                // is omitted). `dead_consts` is empty when reachability DCE is
-                // disabled or in library mode, so this is a no-op there.
-                if dead_consts.contains(&c.name) { continue; }
-                self.emit_const_decl(c)?;
-            }
-        }
+        // 1b. Const declarations (after types, before fn forward decls): module `const` and `const Type.NAME`
+        // in ONE ordered pass (#1412, assoc_ro.rs). Plan 159 Ф.1: a const unreachable from any root is skipped.
+        self.emit_consts_ordered(module, |c| should_skip_const(c) || dead_consts.contains(&c.name))?;
 
         // 1b1. Plan 152.4 (D199 ro-runtime side): module-level `ro NAME = EXPR`
         // lazy-static globals are emitted LATER — see «1b1-moved» just after the
@@ -10377,7 +10370,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
     // ---- const declarations ----
 
-    fn emit_const_decl(&mut self, c: &ConstDecl) -> Result<(), String> {
+    pub(crate) fn emit_const_decl(&mut self, c: &ConstDecl) -> Result<(), String> {
         let ty_c = if let Some(ty) = &c.ty {
             self.type_ref_to_c(ty)? // [M-const-decl-ty] declared type comes from AST TypeRef; checker doesn't write ConstDecl type to resolved_types channel yet
         } else {
@@ -10451,7 +10444,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // поэтому НЕ выбран более дешёвый вариант «статическое хранилище
             // плюс адрес»: запись с полем-строкой (или любым иным ссылочным
             // полем) в статической памяти оказалась бы вне обхода GC.
-            Ok(val) if ty_c.ends_with('*') && val.starts_with('{') => {
+            Ok(val) if !Self::const_value_is_static(&ty_c, &val) => {
                 self.emit_lazy_const(&c.name, &c_name, &ty_c, &c.value)
             }
             Ok(val) => {
@@ -10688,7 +10681,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// itself likely a separate checker error) falls back to appending the
     /// unresolved remainder in declaration order rather than silently
     /// dropping them.
-    fn topo_sort_const_inits(entries: &[(String, String, Vec<String>)]) -> Vec<usize> {
+    pub(crate) fn topo_sort_const_inits(entries: &[(String, String, Vec<String>)]) -> Vec<usize> {
         let n = entries.len();
         let index_of: HashMap<&str, usize> = entries.iter().enumerate()
             .map(|(i, (name, _, _))| (name.as_str(), i))
@@ -18590,14 +18583,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // error the moment a composite value was attempted). Scalar assoc
         // consts are unaffected — they never depended on struct layout.
         for ac in &t.assoc_consts {
-            // Plan 157: `ro Type.NAME` — NOT constexpr-required, handled by
-            // `emit_module`'s ordered module-value loop instead of the
-            // strict-constexpr path below. [fix #1361] non-lazy `const
-            // Type.NAME` now lives in `emit_assoc_const_entry` (assoc_ro.rs).
-            if ac.is_lazy_ro {
-                continue;
+            // Plan 157: `ro Type.NAME` — handled by `emit_module`'s ordered module-value loop. #1412: a
+            // `const Type.NAME` is deferred to the ordered module-`const` pass (it may read a module
+            // `const` or hold a type declared later); `emit_assoc_const_entry` (assoc_ro.rs) emits it.
+            if !ac.is_lazy_ro {
+                self.pending_assoc_consts.push((t.name.clone(), ac.clone()));
             }
-            self.emit_assoc_const_entry(&t.name, ac)?;
         }
         // Plan 124.8 [M-124.8-zero-on-move] (2026-06-03): emit per-type
         // `Nova_T_zero_storage` helper для types помеченных #zero_on_move.
