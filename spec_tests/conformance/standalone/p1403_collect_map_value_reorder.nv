@@ -1,0 +1,157 @@
+// EXPECT_STDOUT [1 2 3 ]=[1 2 3 ] [1 2 3 ]=[1 2 3 ] [2 1 3 ]=[2 1 3 ] [1 3 2 ]=[1 3 2 ] [a1 b2 c3 ]=[a1 b2 c3 ] [a1 b2 c3 ]=[a1 b2 c3 ] [b2 a1 c3 ]=[b2 a1 c3 ] [a1 c3 b2 ]=[a1 c3 b2 ]
+// Registry 221.1 #1403, control rows of the class: `.iter().map(..).collect()`
+// on a value record, then an in-place reorder -- must equal the push-loop form.
+
+module standalone.p1403_collect_map_value_reorder
+
+import std.collections.vec_iter
+
+type P1403Big value { name str, kind str, percent int, used int, note str }
+
+#impl(Compare)
+fn P1403Big @compare(other P1403Big) -> int => @percent - other.percent
+
+fn p1403_show_big(v []P1403Big) -> str {
+    mut s = ""
+    for w in v {
+        s = "${s}${w.name}${w.percent} "
+    }
+    s
+}
+
+type P1403Small value { v int }
+
+#impl(Compare)
+fn P1403Small @compare(other P1403Small) -> int => @v - other.v
+
+fn p1403_show_small(v []P1403Small) -> str {
+    mut s = ""
+    for w in v {
+        s = "${s}${w.v} "
+    }
+    s
+}
+
+fn p1403_map_small_sort_by() -> str {
+    mut ws []P1403Small = []
+    ws.push(P1403Small { v: 3 })
+    ws.push(P1403Small { v: 1 })
+    ws.push(P1403Small { v: 2 })
+    mut out = ws.iter().map(fn(w P1403Small) -> P1403Small => w).collect()
+    out.sort_by(fn(a P1403Small, b P1403Small) -> int => a.v - b.v)
+    mut pushed []P1403Small = []
+    for w in ws {
+        pushed.push(w)
+    }
+    pushed.sort_by(fn(a P1403Small, b P1403Small) -> int => a.v - b.v)
+    "[${p1403_show_small(out)}]=[${p1403_show_small(pushed)}]"
+}
+
+fn p1403_map_small_sort() -> str {
+    mut ws []P1403Small = []
+    ws.push(P1403Small { v: 3 })
+    ws.push(P1403Small { v: 1 })
+    ws.push(P1403Small { v: 2 })
+    mut out = ws.iter().map(fn(w P1403Small) -> P1403Small => w).collect()
+    out.sort()
+    mut pushed []P1403Small = []
+    for w in ws {
+        pushed.push(w)
+    }
+    pushed.sort()
+    "[${p1403_show_small(out)}]=[${p1403_show_small(pushed)}]"
+}
+
+fn p1403_map_small_reverse() -> str {
+    mut ws []P1403Small = []
+    ws.push(P1403Small { v: 3 })
+    ws.push(P1403Small { v: 1 })
+    ws.push(P1403Small { v: 2 })
+    mut out = ws.iter().map(fn(w P1403Small) -> P1403Small => w).collect()
+    out.reverse()
+    mut pushed []P1403Small = []
+    for w in ws {
+        pushed.push(w)
+    }
+    pushed.reverse()
+    "[${p1403_show_small(out)}]=[${p1403_show_small(pushed)}]"
+}
+
+fn p1403_map_small_swap() -> str {
+    mut ws []P1403Small = []
+    ws.push(P1403Small { v: 3 })
+    ws.push(P1403Small { v: 1 })
+    ws.push(P1403Small { v: 2 })
+    mut out = ws.iter().map(fn(w P1403Small) -> P1403Small => w).collect()
+    out.swap(0, 1)
+    mut pushed []P1403Small = []
+    for w in ws {
+        pushed.push(w)
+    }
+    pushed.swap(0, 1)
+    "[${p1403_show_small(out)}]=[${p1403_show_small(pushed)}]"
+}
+
+fn p1403_map_big_sort_by() -> str {
+    mut ws []P1403Big = []
+    ws.push(P1403Big { name: "c", kind: "k", percent: 3, used: 0, note: "n" })
+    ws.push(P1403Big { name: "a", kind: "k", percent: 1, used: 0, note: "n" })
+    ws.push(P1403Big { name: "b", kind: "k", percent: 2, used: 0, note: "n" })
+    mut out = ws.iter().map(fn(w P1403Big) -> P1403Big => w).collect()
+    out.sort_by(fn(a P1403Big, b P1403Big) -> int => a.percent - b.percent)
+    mut pushed []P1403Big = []
+    for w in ws {
+        pushed.push(w)
+    }
+    pushed.sort_by(fn(a P1403Big, b P1403Big) -> int => a.percent - b.percent)
+    "[${p1403_show_big(out)}]=[${p1403_show_big(pushed)}]"
+}
+
+fn p1403_map_big_sort() -> str {
+    mut ws []P1403Big = []
+    ws.push(P1403Big { name: "c", kind: "k", percent: 3, used: 0, note: "n" })
+    ws.push(P1403Big { name: "a", kind: "k", percent: 1, used: 0, note: "n" })
+    ws.push(P1403Big { name: "b", kind: "k", percent: 2, used: 0, note: "n" })
+    mut out = ws.iter().map(fn(w P1403Big) -> P1403Big => w).collect()
+    out.sort()
+    mut pushed []P1403Big = []
+    for w in ws {
+        pushed.push(w)
+    }
+    pushed.sort()
+    "[${p1403_show_big(out)}]=[${p1403_show_big(pushed)}]"
+}
+
+fn p1403_map_big_reverse() -> str {
+    mut ws []P1403Big = []
+    ws.push(P1403Big { name: "c", kind: "k", percent: 3, used: 0, note: "n" })
+    ws.push(P1403Big { name: "a", kind: "k", percent: 1, used: 0, note: "n" })
+    ws.push(P1403Big { name: "b", kind: "k", percent: 2, used: 0, note: "n" })
+    mut out = ws.iter().map(fn(w P1403Big) -> P1403Big => w).collect()
+    out.reverse()
+    mut pushed []P1403Big = []
+    for w in ws {
+        pushed.push(w)
+    }
+    pushed.reverse()
+    "[${p1403_show_big(out)}]=[${p1403_show_big(pushed)}]"
+}
+
+fn p1403_map_big_swap() -> str {
+    mut ws []P1403Big = []
+    ws.push(P1403Big { name: "c", kind: "k", percent: 3, used: 0, note: "n" })
+    ws.push(P1403Big { name: "a", kind: "k", percent: 1, used: 0, note: "n" })
+    ws.push(P1403Big { name: "b", kind: "k", percent: 2, used: 0, note: "n" })
+    mut out = ws.iter().map(fn(w P1403Big) -> P1403Big => w).collect()
+    out.swap(0, 1)
+    mut pushed []P1403Big = []
+    for w in ws {
+        pushed.push(w)
+    }
+    pushed.swap(0, 1)
+    "[${p1403_show_big(out)}]=[${p1403_show_big(pushed)}]"
+}
+
+fn main() Io -> () {
+    print("${p1403_map_small_sort_by()} ${p1403_map_small_sort()} ${p1403_map_small_reverse()} ${p1403_map_small_swap()} ${p1403_map_big_sort_by()} ${p1403_map_big_sort()} ${p1403_map_big_reverse()} ${p1403_map_big_swap()}")
+}

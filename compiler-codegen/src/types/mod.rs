@@ -26219,6 +26219,32 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
             }
+            // Registry 221.1 #1403: a CHAINED bound (`fn[C Iter[I], I Next[T]] C
+            // @collect() -> Vec[T]`) binds `T` only through `I`, which the block
+            // above never reaches from a `[]X` receiver: `T` stayed free, the
+            // call typed `Vec[T]`, and codegen erased it to `Vec[int]` -- a
+            // `[]Rec` sorted with the int stride. Walk the bounds from the
+            // receiver: `Iter[I]` binds `I` to the bound type's `@iter()`,
+            // `Next[T]` binds `T` to its `@next()` payload (same "protocol name,
+            // lowercased, is the method" convention as the bound check above).
+            let mut work = vec![typevar_name.clone()];
+            while let Some(tv) = work.pop() {
+                let (Some(g), Some(have)) = (f.generics.iter().find(|g| g.name == tv), subst.get(&tv).cloned()) else { continue };
+                for b in &g.bounds {
+                    let TypeRef::Named { path: bpath, generics: bgens, .. } = b else { continue };
+                    let Some(TypeRef::Named { path: vp, generics: vg, .. }) = bgens.first() else { continue };
+                    let (Some(proto), Some(v)) = (bpath.last(), vp.last()) else { continue };
+                    if !vg.is_empty() || subst.contains_key(v) || !matches!(proto.as_str(), "Next" | "Iter") { continue; }
+                    let Some(r) = self.resolve_instance_method_return(&have, &proto.to_lowercase()) else { continue };
+                    let bound_to = match (proto.as_str(), r) {
+                        ("Next", TypeRef::Named { path, mut generics, .. }) if path.len() == 1 && path[0] == "Option" && generics.len() == 1 => generics.remove(0),
+                        ("Iter", r) => r,
+                        _ => continue,
+                    };
+                    subst.insert(v.clone(), bound_to);
+                    work.push(v.clone());
+                }
+            }
             let out = crate::const_fn_trampoline::subst_type_ref_pub(ret, &subst);
             // Bail if the substituted return still mentions any unbound method-level
             // generic (e.g. `fn[T] []T @map[U](…) -> []U` — U is unresolved here).
