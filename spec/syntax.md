@@ -2080,8 +2080,10 @@ ro msg = "id=${user_id}"                    // sugar над str.from(user_id) �
 - `T.from` — arithmetic, parsing, validation: `Fahrenheit.from(c)`,
   `User.from(json)`.
 
-**The D73 vs D55 boundary:** D55 — automatic coercion for record/sum-literals
-in a position with a known type (`ro u User = { id: 1, name: "x" }`).
+**The D73 vs D55 boundary:** D55 — automatic coercion in a position with a
+known type: for record literals (`ro u User = { id: 1, name: "x" }`) and for
+the value of any expression the sum-wrap rule accepts (a literal, a variable,
+a call, a field read — clarified 2026-10-01).
 `T.from(v)` — an explicit method call for arbitrary types.
 
 **Where sum-lift stops (clarified 2026-08-04).** Auto-wrapping into the single
