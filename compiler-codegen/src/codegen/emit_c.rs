@@ -15,6 +15,7 @@ mod emit_detach;
 mod variant_ctor_channel;
 mod variant_ctor_disarm; // #666, see its doc
 mod sum_placement; // Plan 172.14 F.2 A4, see its doc
+mod self_value; // #1395: `Self` by position, see its doc
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
@@ -1381,6 +1382,7 @@ pub struct CEmitter {
     /// `false` (existing pointer-form behavior) everywhere else so mono/
     /// generic-instance paths this doesn't touch stay byte-identical.
     current_receiver_is_static: bool,
+    fluent_ret_spans: HashSet<Span>, // #1395: `-> @` return TypeRefs (emit_c/self_value.rs)
     /// Expected struct type для anonymous record literal `=> { ... }` —
     /// устанавливается при эмите function body, когда нужно использовать
     /// declared return type как target для anonymous record (D55).
@@ -2786,6 +2788,7 @@ impl CEmitter {
             in_recv_ptr_return_position: std::cell::Cell::new(false),
             current_receiver_is_mut: false,
             current_receiver_is_static: false,
+            fluent_ret_spans: HashSet::new(),
             expected_record_type: None,
             expected_sum_hint: None,
             expected_option_elem_hint: None,
@@ -5206,11 +5209,11 @@ impl CEmitter {
                 // the type instead (value-form for named-tuple/value-record —
                 // matches how the constructor body's record-literal `return
                 // Type(...)` is actually emitted). An INSTANCE method's `Self`
-                // (fluent `-> Self`/`-> @`, returning the receiver itself)
-                // is UNCHANGED — stays on `receiver_c_type`, byte-identical.
+                // is the type itself too (#1395, D182/D326): only `-> @` keeps
+                // the receiver carrier, answered before this arm (`fluent_ret_c`).
                 Some(recv) if self.current_receiver_is_static =>
                     self.resolved_named_to_c(recv, &[], &[])?,
-                Some(recv) => self.receiver_c_type(recv, false),
+                Some(recv) => self.self_value_c(recv),
                 // U.4.8: `Self` outside a receiver context — carry the SAME Err the deleted
                 // `type_ref_to_c_impl` produced (Plan 11 follow-up: hard error, not a fallback,
                 // so it never silently lowers to a bogus `Nova_Self*`).
@@ -8662,7 +8665,7 @@ impl CEmitter {
                     let return_c_type = match &f.return_type {
                         Some(TypeRef::Named { path, .. }) if path.len() == 1 && path[0] == "Self" => {
                             // Plan 128 Ф.1: thread recv.mutable flag (Ф.2 consumes).
-                            self.receiver_c_type(&recv.type_name, recv.mutable)
+                            self.self_ret_c(&recv.type_name, recv.mutable, f.returns_receiver)
                         }
                         Some(t) if is_generic_recv => {
                             self.erased_type_ref_c(&Some(t.clone()), &recv_type_params)
@@ -9160,6 +9163,7 @@ impl CEmitter {
         self.build_free_fn_byref_map(module);
         // [M-172.14-methods-byref]: тот же пре-пасс для методов (receiver.is_some()).
         self.build_method_byref_map(module);
+        self.collect_fluent_ret_spans(module); // #1395
         // 2. Forward declarations for all functions (types are now known)
         for item in &module.items {
             if let Item::Fn(f) = item {
@@ -11922,7 +11926,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.current_receiver_type = Some(t_name.to_string());
             self.sync_receiver_rt();
             // Substitute `Self` → `t_name` для resolution в default body.
-            self.current_type_subst.insert("Self".to_string(), Self::lift_c_name(t_c_ty.to_string()));
+            let self_val_c = Self::value_form_of_receiver_c(t_c_ty.to_string()); // #1395
+            self.current_type_subst.insert("Self".to_string(), Self::lift_c_name(self_val_c.clone()));
             // Plan 172.1.1 (U.4.5 substrate, mono-side gap #1): для default-body на КОНКРЕТНОМ
             // generic-типе T (`Lru[str,int]`) populate generic-params в subst (`K→nova_str`,
             // `V→nova_int`), а не только `Self` — иначе `resolved_type_to_c(K)`/`type_ref_to_c(K)`
@@ -11954,11 +11959,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             };
             let param_c_results: Vec<_> = m.params.iter()
                 .map(|p| {
-                    // Self in param position → t_c_ty (same as receiver).
+                    // Self in param position → the type itself, by value (#1395).
                     let is_self = matches!(&p.ty, TypeRef::Named { path, .. }
                         if path.len() == 1 && path[0] == "Self");
                     if is_self {
-                        Ok(t_c_ty.to_string())
+                        Ok(self_val_c.clone())
                     } else {
                         self.type_ref_to_c(&p.ty)
                     }
@@ -12292,6 +12297,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// (Endgame U.6.1 — collapsing this `TypeRef`→`ResolvedType` adapter hop at the ~120
     /// declared-type call sites — is intentionally OUT of U.4.8 scope.)
     pub(crate) fn type_ref_to_c(&self, ty: &TypeRef) -> Result<String, String> {
+        if let Some(c) = self.fluent_ret_c(ty) { return Ok(c); } // #1395 `-> @`
         self.resolved_type_to_c(&crate::types::ResolvedType::from_type_ref(ty))
     }
 
