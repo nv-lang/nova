@@ -9116,42 +9116,38 @@ impl CEmitter {
             Pattern::Variant { path, kind: VariantPatternKind::Unit, .. } if path.len() == 1 => Some(path[0].clone()),
             _ => None,
         };
-        // D184 amend 2026-09-30: module `ro` initializers run in DEPENDENCY order (Kahn, as the init bodies); a cycle is E_MODULE_INIT_CYCLE.
-        let lets: Vec<&crate::ast::LetDecl> = module.items.iter()
-            .filter_map(|it| if let Item::Let(l) = it { (!l.is_ghost).then_some(l) } else { None }).collect();
-        let deps: Vec<(String, String, Vec<String>)> = lets.iter().map(|l| {
+        // D184 amend 2026-09-30: module `ro` initializers -- bare AND `ro Type.NAME` (D200), one graph -- run in DEPENDENCY
+        // order (Kahn, as the init bodies); a read key is the bare name or `T.NAME`; a cycle is E_MODULE_INIT_CYCLE.
+        let mut nodes: Vec<(String, &Expr, Option<&crate::ast::LetDecl>, Option<(&str, &crate::ast::AssocConst)>)> = Vec::new();
+        for it in &module.items { match it {
+            Item::Let(l) if !l.is_ghost => if let Some(n) = ro_name(l) { nodes.push((n, &l.value, Some(l), None)); },
+            Item::Type(t) => for ac in t.assoc_consts.iter().filter(|a| a.is_lazy_ro) {
+                nodes.push((format!("{}.{}", t.name, ac.name), &ac.value, None, Some((t.name.as_str(), ac))));
+            },
+            _ => {}
+        } }
+        let deps: Vec<(String, String, Vec<String>)> = nodes.iter().map(|(k, v, _, _)| {
             let mut f = HashSet::new();
-            Self::collect_truly_free_idents(&l.value, &mut HashSet::new(), &mut f);
-            (ro_name(l).unwrap_or_default(), String::new(), f.into_iter().collect())
+            Self::collect_truly_free_idents(v, &mut HashSet::new(), &mut f);
+            (k.clone(), String::new(), f.into_iter().collect())
         }).collect();
-        for l in Self::topo_sort_const_inits(&deps).into_iter().map(|i| lets[i]) {
-            {
-                let name = ro_name(l);
-                if let Some(name) = name {
-                    // Plan 159 Ф.1: skip a `ro` lazy-static global unreachable
-                    // from any root. It is in `dead_consts` only when no
-                    // reachable fn/const names it, so no emitted read routes
-                    // through `nova_const_<name>()` — dropping its storage +
-                    // getter is safe. Empty (no-op) when DCE off / library mode.
-                    if dead_consts.contains(&name) { continue; }
-                    let ty_c = if let Some(ty) = &l.ty {
-                        self.type_ref_to_c(ty)?
-                    } else {
-                        self.infer_expr_c_type(&l.value)
-                    };
-                    // [M-175-lazy-const-crossmodule-collision]: module-level `ro` is ALWAYS
-                    // module-private -- the pre-pass's module-qualified name, as emit_const_decl.
-                    let c_name = self.private_const_c_names
-                        .get(&(l.span.file_id, name.clone()))
-                        .cloned()
-                        .unwrap_or_else(|| name.clone());
-                    self.emit_lazy_const(&name, &c_name, &ty_c, &l.value)?;
-                }
+        for i in Self::topo_sort_const_inits(&deps) {
+            let (key, value, bare, assoc) = (&nodes[i].0, nodes[i].1, nodes[i].2, nodes[i].3);
+            if let Some((tn, ac)) = assoc {
+                // Plan 157: associated `ro Type.NAME` -- storage keyed by the qualified `Type_NAME` symbol.
+                let symbol = format!("{}_{}", tn, ac.name);
+                let ty_c = match &ac.ty { Some(ty) => self.type_ref_to_c(ty)?, None => self.infer_expr_c_type(value) };
+                self.emit_lazy_const(&symbol, &symbol, &ty_c, value).map_err(|e| format!("assoc ro `{}` codegen failed: {}", key, e))?;
+                continue;
             }
+            let Some(l) = bare else { continue };
+            // Plan 159 Ф.1: skip a `ro` lazy-static global unreachable from any root (DCE); no-op when off.
+            if dead_consts.contains(key) { continue; }
+            let ty_c = match &l.ty { Some(ty) => self.type_ref_to_c(ty)?, None => self.infer_expr_c_type(&l.value) };
+            // [M-175-lazy-const-crossmodule-collision]: module-level `ro` is module-private -- the pre-pass's qualified name.
+            let c_name = self.private_const_c_names.get(&(l.span.file_id, key.clone())).cloned().unwrap_or_else(|| key.clone());
+            self.emit_lazy_const(key, &c_name, &ty_c, &l.value)?;
         }
-        // Plan 157: associated `ro Type.NAME` — see assoc_ro.rs (kept out of
-        // emit_c.rs, arch-ratchet precedent `mono_method_registry.rs`).
-        self.emit_assoc_ro_lazy_globals(module)?;
 
         // Plan 172.14 Ф.1: классификация больших (>16Б C-ABI) read-only
         // value-struct параметров free-fn'ов — ДО эмиссии forward-decl'ов
@@ -10690,8 +10686,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // just other consts) — filtered down against the final `lazy_consts`
         // set once every module has been processed.
         let mut free_idents = HashSet::new();
-        Self::collect_free_idents(value, &mut free_idents);
-        self.pending_const_inits.push((name.to_string(), body, free_idents.into_iter().collect()));
+        // D184 amend 2026-09-30: the scope-aware collector, and a `Type.NAME` read keyed as its init symbol `Type_NAME`.
+        Self::collect_truly_free_idents(value, &mut HashSet::new(), &mut free_idents);
+        self.pending_const_inits.push((name.to_string(), body, free_idents.into_iter().map(|k| k.replace('.', "_")).collect()));
         Ok(())
     }
 
@@ -18604,7 +18601,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // consts are unaffected — they never depended on struct layout.
         for ac in &t.assoc_consts {
             // Plan 157: `ro Type.NAME` — NOT constexpr-required, handled by
-            // `emit_assoc_ro_lazy_globals` (assoc_ro.rs) instead of the
+            // `emit_module`'s ordered module-value loop instead of the
             // strict-constexpr path below. [fix #1361] non-lazy `const
             // Type.NAME` now lives in `emit_assoc_const_entry` (assoc_ro.rs).
             if ac.is_lazy_ro {
@@ -55674,6 +55671,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     out.insert(n.clone());
                 }
             }
+            ExprKind::Path(parts) if parts.len() == 2 => { out.insert(format!("{}.{}", parts[0], parts[1])); } // D184 amend: `Type.NAME` read
             ExprKind::Binary { left, right, .. } => {
                 Self::collect_truly_free_idents(left, bound, out);
                 Self::collect_truly_free_idents(right, bound, out);

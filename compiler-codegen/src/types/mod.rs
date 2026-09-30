@@ -2546,18 +2546,36 @@ fn check_const_constexpr_ex(
 /// (`ro a = f()`, `f` reads `a`) is not an edge; Go counts it, Nova does not.
 /// Reported once per cycle, at the declaration whose read closes it.
 fn check_module_init_cycles(items: &[Item], errors: &mut Vec<Diagnostic>) {
-    let lets: Vec<(String, &crate::ast::LetDecl)> = items.iter().filter_map(|it| match it {
-        Item::Let(l) if !l.is_ghost => match &l.pattern {
-            Pattern::Ident { name, .. } => Some((name.clone(), l)),
-            Pattern::Variant { path, kind: VariantPatternKind::Unit, .. } if path.len() == 1 => Some((path[0].clone(), l)),
-            _ => None,
-        },
-        _ => None,
-    }).collect();
-    let index: HashMap<&str, usize> = lets.iter().enumerate().map(|(i, (n, _))| (n.as_str(), i)).collect();
-    let adj: Vec<Vec<usize>> = lets.iter().map(|(_, l)| {
+    // Nodes: bare module-level `ro` (key = its name) and associated
+    // `ro Type.NAME` (key = `Type.NAME`) -- ONE graph (the Carina window's
+    // point: two graphs sharing vertices would each miss a bare <-> Type.NAME
+    // cycle). The collector reports a `Type.NAME` read under that same key.
+    struct Node<'a> { key: String, value: &'a Expr, span: Span }
+    let mut lets: Vec<Node> = Vec::new();
+    for it in items {
+        match it {
+            Item::Let(l) if !l.is_ghost => {
+                let key = match &l.pattern {
+                    Pattern::Ident { name, .. } => Some(name.clone()),
+                    Pattern::Variant { path, kind: VariantPatternKind::Unit, .. } if path.len() == 1 => Some(path[0].clone()),
+                    _ => None,
+                };
+                if let Some(key) = key { lets.push(Node { key, value: &l.value, span: l.span }); }
+            }
+            Item::Type(t) => for ac in t.assoc_consts.iter().filter(|a| a.is_lazy_ro) {
+                lets.push(Node { key: format!("{}.{}", t.name, ac.name), value: &ac.value, span: ac.span });
+            },
+            _ => {}
+        }
+    }
+    // Source order of the DECLARATIONS (an `ro Type.NAME` sits in its type's
+    // assoc list, not at its own line): the walk starts at the earliest, so the
+    // declaration whose read closes a cycle is the later one -- as in novac.
+    lets.sort_by_key(|n| (n.span.file_id, n.span.start));
+    let index: HashMap<&str, usize> = lets.iter().enumerate().map(|(i, n)| (n.key.as_str(), i)).collect();
+    let adj: Vec<Vec<usize>> = lets.iter().map(|n| {
         let mut free = HashSet::new();
-        crate::codegen::emit_c::CEmitter::collect_truly_free_idents(&l.value, &mut HashSet::new(), &mut free);
+        crate::codegen::emit_c::CEmitter::collect_truly_free_idents(n.value, &mut HashSet::new(), &mut free);
         let mut d: Vec<usize> = free.iter().filter_map(|n| index.get(n.as_str()).copied()).collect();
         d.sort_unstable();
         d
@@ -2566,7 +2584,7 @@ fn check_module_init_cycles(items: &[Item], errors: &mut Vec<Diagnostic>) {
     let mut state = vec![0u8; lets.len()];
     let mut stack: Vec<usize> = Vec::new();
     fn dfs(v: usize, adj: &[Vec<usize>], state: &mut [u8], stack: &mut Vec<usize>,
-           lets: &[(String, &crate::ast::LetDecl)], errors: &mut Vec<Diagnostic>) {
+           lets: &[(String, Span)], errors: &mut Vec<Diagnostic>) {
         state[v] = 1;
         stack.push(v);
         for &w in &adj[v] {
@@ -2580,7 +2598,7 @@ fn check_module_init_cycles(items: &[Item], errors: &mut Vec<Diagnostic>) {
                          no initialization order computes them (D184 amendment 2026-09-30)",
                         chain.join(" -> ")
                     ),
-                    lets[v].1.span,
+                    lets[v].1,
                 ).with_note(
                     "a module-level `ro` initializer may read another module-level `ro` only if \
                      that one does not depend back on it; break the cycle, or compute one of the \
@@ -2593,9 +2611,10 @@ fn check_module_init_cycles(items: &[Item], errors: &mut Vec<Diagnostic>) {
         stack.pop();
         state[v] = 2;
     }
-    for v in 0..lets.len() {
+    let keyed: Vec<(String, Span)> = lets.iter().map(|n| (n.key.clone(), n.span)).collect();
+    for v in 0..keyed.len() {
         if state[v] == 0 {
-            dfs(v, &adj, &mut state, &mut stack, &lets, errors);
+            dfs(v, &adj, &mut state, &mut stack, &keyed, errors);
         }
     }
 }
