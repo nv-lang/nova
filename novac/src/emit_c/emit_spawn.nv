@@ -18,7 +18,8 @@
 // Used by: emit_c.nv (`emit`, around the file's functions), emit_flow.nv
 //   (the three statements' printers).
 // Guarded by: nova test novac/src/pipeline/concurrency_test.nv (the C shape)
-//   and check-novac-differential.sh over novac/fixtures/supervised.
+//   and check-novac-differential.sh over novac/fixtures/sup_spawn (a module
+//   name cannot be the keyword `supervised`).
 
 module novac.emit_c
 

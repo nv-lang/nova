@@ -1,4 +1,4 @@
-module supervised.pos_2
+module sup_spawn.pos_2
 
 // A `spawn` inside another `spawn`'s body (E.9 step 4): the inner fiber goes to
 // the scope the outer one captured, and it captures `base` -- a capture of the
