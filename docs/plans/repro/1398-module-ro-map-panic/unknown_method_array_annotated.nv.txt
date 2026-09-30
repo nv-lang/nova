@@ -1,0 +1,7 @@
+module probe
+
+fn main() {
+    ro xs []int = [1, 2]
+    ro n int = xs.frobnicate(1)
+    println(n)
+}

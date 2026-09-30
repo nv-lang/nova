@@ -1,0 +1,5 @@
+module probe
+
+fn main() {
+    print("${[]int.of(1, 2).frobnicate(|v| v + 1).len()}")
+}
