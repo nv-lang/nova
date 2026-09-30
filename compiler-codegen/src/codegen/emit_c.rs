@@ -16,6 +16,7 @@ mod variant_ctor_channel;
 mod variant_ctor_disarm; // #666, see its doc
 mod sum_placement; // Plan 172.14 F.2 A4, see its doc
 mod self_value; // #1395: `Self` by position, see its doc
+mod opt_eq_split; // #1405: `nova_opt_eq` body late, see its doc
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
@@ -1637,11 +1638,6 @@ pub struct CEmitter {
     /// Interior mutability: используется из `&self`-методов
     /// (type_ref_to_c, infer_expr_c_type).
     novaopt_typedefs_buf: std::cell::RefCell<String>,
-    /// Set when generating nova_opt_eq_ body (inside ensure_opt_typedef).
-    /// In this mode, emit_field_eq uses pointer equality for sum types to
-    /// avoid "incomplete type" C errors: opt_eq fns are emitted before the
-    /// sum type struct definitions, so member access is forbidden.
-    novaopt_early_gen: std::cell::RefCell<bool>,
     /// [M-153.2-flat-map-inner-option]: NovaOpt typedefs where the payload is a
     /// value-record (NovaValue_… by-value, needs complete struct before use in
     /// field decl). Spliced at /*__NOVAOPT_VR_TYPEDEFS__*/ which is placed AFTER
@@ -2832,7 +2828,6 @@ impl CEmitter {
             // Для прочих — typedef эмитится в novaopt_typedefs_buf и
             // splice'ится через маркер /*__NOVAOPT_TYPEDEFS__*/.
             novaopt_typedefs_buf: std::cell::RefCell::new(String::new()),
-            novaopt_early_gen: std::cell::RefCell::new(false),
             novaopt_vr_typedefs_buf: std::cell::RefCell::new(String::new()),
             novaopt_eq_fns_buf: std::cell::RefCell::new(String::new()),
             vr_ueq_protos_buf: std::cell::RefCell::new(String::new()),
@@ -22659,14 +22654,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // handled in emit_binary (`&mut`); HERE we are `&self`, so we cannot trigger
             // the `&mut` mono instantiation directly — record the request in
             // `pending_container_eq_monos` (drained post-emission, register_container_eq_mono).
-            // Under `novaopt_early_gen` (early opt path, before the mono fn-fwd-decls) the
-            // mono proto isn't visible → bail to identity; the structural-LATE opt path
-            // (debt_opt_payload_needs_structural_eq) reaches us with early_gen off and splices
-            // the eq fn AFTER the mono fwd-decls.
+            // Every `nova_opt_eq` body is spliced AFTER the mono fwd-decls (#1405).
             if type_name.starts_with("Vec____") || type_name.starts_with("HashMap____") {
-                if *self.novaopt_early_gen.borrow() {
-                    return format!("(({}) == ({}))", l, r);
-                }
                 let cont_c = cty.trim_end_matches('*').to_string(); // Nova_<container>____<args>
                 if self.container_eq_requested.borrow_mut().insert(cont_c.clone()) {
                     self.pending_container_eq_monos.borrow_mut().push(cont_c);
@@ -22701,21 +22690,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // record-field recursion via record_schemas. Records are NOT auto-
             // `@equal`'d, so a record compared only structurally (e.g. via
             // `Option[Rec]==` or as a sum/Result field) reaches the record branch
-            // below ([M-172.1-option-eq-record-structural] L2).
-            //
-            // Guard: when novaopt_early_gen is set we are inside the EARLY opt path
-            // (emits into novaopt_typedefs_buf — BEFORE sum/record struct bodies).
-            // Accessing ->tag / ->payload / ->field here causes clang "incomplete
-            // type" errors. Fall back to pointer identity (the function calling us
-            // is in an early opt_eq context where struct members are unavailable).
-            // The structural-late opt path (debt_opt_payload_needs_structural_eq) does
-            // NOT set early_gen, so it reaches the real recursion below.
-            if *self.novaopt_early_gen.borrow()
-                && (self.sum_schemas.contains_key(&type_name)
-                    || self.record_schemas.contains_key(&type_name))
-            {
-                return format!("(({}) == ({}))", l, r);
-            }
+            // below ([M-172.1-option-eq-record-structural] L2). No early-zone
+            // identity bail: every `nova_opt_eq` body is built late (#1405).
             // [M-result-direct-recursive-enum] / [M-option-self-recursive-record-mono]
             // (Plan 186, recursive-mono): a genuine cycle (self- or mutually-
             // recursive heap type ALREADY being expanded up this call chain) is
@@ -58207,17 +58183,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // unsoundness as the old tuple/sum eq. Route the payload comparison
         // through emit_field_eq (which handles scalar/float/str/tuple/record/
         // sum by C-type). Scalars/pointers keep the direct `==` fast path.
-        let cmp_body = if is_scalar || is_pointer {
-            "a.value == b.value".to_string()
-        } else {
-            // Set novaopt_early_gen so emit_field_eq uses pointer equality for
-            // sum types — these opt_eq functions are emitted before sum type
-            // struct definitions, so member access would be an "incomplete type".
-            *self.novaopt_early_gen.borrow_mut() = true;
-            let body = self.emit_field_eq(c_ty, "a.value", "b.value", 0);
-            *self.novaopt_early_gen.borrow_mut() = false;
-            body
-        };
+        // #1405: the composite body is built LATE (emit_c/opt_eq_split.rs).
+        if !force_npo && !is_scalar && !is_pointer {
+            return self.emit_opt_eq_split(sanitized, c_ty, "0");
+        }
+        let cmp_body = "a.value == b.value".to_string();
         let eq_fn = if force_npo {
             format!(
                 "{storage}nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
@@ -58314,7 +58284,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // record/field `@equal` method prototype only after the fn-forward-decls, so the eq
         // FN goes to the LATE buffer spliced at /*__NOVAOPT_EQ_FNS__*/ (after struct bodies
         // AND method protos) where `emit_field_eq` — the single comparison dispatcher — can
-        // dereference (no `novaopt_early_gen` bail) and call a record `@equal` without an
+        // dereference and call a record `@equal` without an
         // implicit decl. The NPO layout (single pointer, NULL=None) is UNCHANGED → eq-only,
         // no ABI change. Without this the early path emitted `a.value == b.value` (addresses)
         // → `Option[Sum/Record]==` false for equal values.
@@ -58420,17 +58390,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Plan 141: composite Option payloads (tuple/record/sum/nova_str)
         // compare structurally via emit_field_eq, not memcmp (float/padding/
         // identity unsoundness). Scalars/pointers keep the direct `==`.
-        let cmp_body = if is_scalar || is_pointer || is_newtype_ptr {
-            "a.value == b.value".to_string()
-        } else {
-            // Set novaopt_early_gen so emit_field_eq uses pointer equality for
-            // sum types — these opt_eq functions are emitted before sum type
-            // struct definitions, so member access would be an "incomplete type".
-            *self.novaopt_early_gen.borrow_mut() = true;
-            let body = self.emit_field_eq(c_ty, "a.value", "b.value", 0);
-            *self.novaopt_early_gen.borrow_mut() = false;
-            body
-        };
+        // #1405: the composite body is built LATE (emit_c/opt_eq_split.rs).
+        if !is_npo && !is_scalar {
+            return self.emit_opt_eq_split(sanitized, c_ty, "NOVA_TAG_Option_None");
+        }
+        let cmp_body = "a.value == b.value".to_string();
         let eq_fn = if is_npo {
             // NPO eq: value-based identity (NULL == NULL = None equal;
             // p1 == p2 for Some). No tag field.

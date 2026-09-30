@@ -1,0 +1,40 @@
+// Registry 221.1 #1405: `==` over `Option[V]`, V a value record with a field
+// of a heap `#impl(Equal)` sum. The `nova_opt_eq_<V>` helper was built in the
+// EARLY typedef zone, where no struct body and no method prototype is visible
+// yet, so the sum field was compared in one of two wrong ways:
+//   * `@equal` already registered -> the helper CALLED it before its
+//     prototype: C declared it implicitly, then met the `static` definition
+//     ("static declaration of 'Nova_P1405Kind_method_equal' follows
+//     non-static declaration") -- the shape that stopped Carina's self-build
+//     once `TypeKind` carried `#impl(Equal)` (D363);
+//   * not yet registered -> the helper compared the field by POINTER
+//     IDENTITY, and two separately built equal values answered `false`.
+// The helper now gets its prototype early and its body late (after struct
+// bodies and method prototypes), like its sibling branches already did.
+module standalone.p1405_opt_eq_late
+
+import ./p1405_kind.{P1405Kind}
+import ./p1405_def.{P1405Def, p1405_same}
+
+test "Option of a value record with an imported Equal sum field compares by value (#1405)" {
+    assert(p1405_same(P1405Def { kind: P1405Kind.KSum, n: 1 }, P1405Def { kind: P1405Kind.KSum, n: 1 }))
+    assert(!p1405_same(P1405Def { kind: P1405Kind.KSum, n: 1 }, P1405Def { kind: P1405Kind.KPrim, n: 1 }))
+    assert(!p1405_same(P1405Def { kind: P1405Kind.KSum, n: 1 }, P1405Def { kind: P1405Kind.KSum, n: 2 }))
+}
+
+test "two separately built equal values are equal through Option (#1405)" {
+    ro a Option[P1405Def] = Some(P1405Def { kind: P1405Kind.KSum, n: 1 })
+    ro b Option[P1405Def] = Some(P1405Def { kind: P1405Kind.KSum, n: 1 })
+    ro c Option[P1405Def] = Some(P1405Def { kind: P1405Kind.KRecord, n: 1 })
+    ro none Option[P1405Def] = None
+    assert(a == b)
+    assert(a != c)
+    assert(a != none)
+}
+
+test "the field itself: == and a direct equal agree (#1405)" {
+    ro d = P1405Def { kind: P1405Kind.KSum, n: 1 }
+    assert(d.kind == P1405Kind.KSum)
+    assert(d.kind.equal(P1405Kind.KSum))
+    assert(!d.kind.equal(P1405Kind.KPrim))
+}
