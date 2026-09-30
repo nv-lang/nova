@@ -1,0 +1,23 @@
+// Registry 1397 kin (lowercase names: an upper-case local is a variant pattern to the oracle): a LOCAL carries the name of a module value; the op body
+// reads the name -- it is the local (a capture), not the module cell.
+fn announce() -> int {
+    println("init")
+    3
+}
+
+ro base = announce() + 37
+
+fn main() {
+    ro base = 7
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label str) -> () {
+            println(label, " ", base)
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {
+            println(label)
+        }
+    } {
+        ResourceTrace.on_resource_enter("a")
+    }
+    println(base)
+}

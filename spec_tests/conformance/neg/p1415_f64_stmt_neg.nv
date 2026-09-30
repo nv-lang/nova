@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_MATCH_NON_EXHAUSTIVE
+//
+// Registry 221.1 #1415: `f64` is an open type for `match` -- `_` is required.
+// Statement position.
+
+module neg.p1415_f64_stmt_neg
+
+fn main() Io -> () {
+    ro f = 2.5
+    // nova:expect E_MATCH_NON_EXHAUSTIVE -- `f64` values cannot all be listed and there is no `_` arm
+    match f {
+        1.5 => println("one and a half")
+    }
+}

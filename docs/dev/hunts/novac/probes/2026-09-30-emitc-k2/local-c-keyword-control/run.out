@@ -1,0 +1,22 @@
+=== SUBJECT: novac check
+novac check rc=0
+=== SUBJECT: novac emit (handler / capture / module-value / slot lines)
+novac emit rc=0
+3508:    _nova_handler_lit_0_vtable->ctx = _nova_handler_lit_0_ctx;
+4279:    _nova_handler_lit_1_vtable->ctx = _nova_handler_lit_1_ctx;
+4745:    _nova_handler_lit_2_vtable->ctx = _nova_handler_lit_2_ctx;
+5727:    _nova_handler_lit_3_vtable->ctx = _nova_handler_lit_3_ctx;
+11909:    _nova_handler_lit_4_vtable->ctx = _nova_handler_lit_4_ctx;
+12062:    _nova_handler_lit_5_vtable->ctx = _nova_handler_lit_5_ctx;
+=== DIFFERENTIAL: novac-e1-smoke (oracle build+run vs novac C)
+novac-e1-smoke: FAIL — clang -c упал: <hunt>/tmp/novac-smoke.118282/body.c:11917:14: error: 'long type-name' is invalid
+ 11917 |     nova_int long = ((nova_int)5LL);
+       |              ^
+<hunt>/tmp/novac-smoke.118282/body.c:11917:19: error: expected identifier or '('
+ 11917 |     nova_int long = ((nova_int)5LL);
+=== SUBJECT ALONE: novac C compiled and run with the smoke's cached oracle flags
+novac C compile rc=1
+<hunt>/tmp/tmp.2HwwcjwGS0/body.c:11917:14: error: 'long type-name' is invalid
+<hunt>/tmp/tmp.2HwwcjwGS0/body.c:11917:19: error: expected identifier or '('
+<hunt>/tmp/tmp.2HwwcjwGS0/body.c:11918:20: error: expected expression
+3 errors generated.

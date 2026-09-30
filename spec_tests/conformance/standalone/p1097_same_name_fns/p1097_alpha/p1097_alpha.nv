@@ -1,0 +1,22 @@
+// #1097 carrier -- see `../p1097_same_name_fns.nv`. `tag(int)`, the SAME
+// signature as `p1097_beta.tag`: the pair nothing but the declaring module tells
+// apart. Reached only through `run`/`run_val`, never imported by name.
+module p1097_same_name_fns.p1097_alpha
+
+export fn tag(x int) -> int => 100 + x
+
+export fn run() -> int => tag(1)
+
+export fn run_val() -> int {
+    ro f = tag
+    f(2)
+}
+
+// Same name, same signature, only in alpha and beta: the cross-module
+// collision route (per-module symbol map), not the overload registry.
+export fn p1097_mark() -> int => 11
+
+export fn mark_here() -> int {
+    ro k = p1097_mark
+    k()
+}

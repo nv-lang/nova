@@ -203,7 +203,10 @@ fn normalize_item(item: &mut Item, sigs: &Sigs) {
             *sigs.self_type.borrow_mut() = None;
             normalize_expr(&mut l.value, sigs)
         }
-        Item::Type(_) => {}
+        Item::Type(t) => for ac in &mut t.assoc_consts { /* #1412: a `const/ro Type.NAME` initializer is a module value's initializer too. */
+            *sigs.self_type.borrow_mut() = None;
+            normalize_expr(&mut ac.value, sigs)
+        },
         // Ф.4.1: lemma не emit'ится в runtime — нормализацию пропускаем.
         Item::Lemma(_) => {}
     }

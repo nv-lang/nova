@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E_MATCH_NON_EXHAUSTIVE
+//
+// Registry 221.1 #1415: a `match` over `str` without `_`, in statement
+// position. Exhaustiveness is required of every `match`, not only of one that
+// produces a value (spec/syntax.md, exhaustiveness).
+
+module neg.p1415_str_stmt_neg
+
+fn say(s str) Io -> () {
+    // nova:expect E_MATCH_NON_EXHAUSTIVE -- `str` values cannot all be listed and there is no `_` arm
+    match s {
+        "a" => println("a")
+        "b" => println("b")
+    }
+}
+
+fn main() Io -> () => say("c")

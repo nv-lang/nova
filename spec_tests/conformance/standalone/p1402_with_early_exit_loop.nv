@@ -23,7 +23,7 @@ fn p1402_break(n int) P1402LSay -> str {
                 break
             }
         }
-        i = i + 1
+        i += 1
     }
     P1402LSay.say()
 }
@@ -35,7 +35,7 @@ fn p1402_continue() P1402LSay -> str {
             if i < 2 {
                 continue
             }
-            hits = hits + 1
+            hits += 1
         }
     }
     if hits == 1 { P1402LSay.say() } else { "wrong-hits" }
@@ -44,13 +44,13 @@ fn p1402_continue() P1402LSay -> str {
 fn p1402_break_defer(mut counter int) P1402LSay -> str {
     mut i = 0
     loop {
-        defer { counter = counter + 1 }
+        defer { counter += 1 }
         with P1402LSay = effect P1402LSay { say() -> str { "inner" } } {
             if i >= 1 {
                 break
             }
         }
-        i = i + 1
+        i += 1
     }
     P1402LSay.say()
 }
@@ -58,7 +58,7 @@ fn p1402_break_defer(mut counter int) P1402LSay -> str {
 fn p1402_block_defer_break(mut ran int) -> () {
     loop {
         if ran >= 0 {
-            defer { ran = ran + 1 }
+            defer { ran += 1 }
             break
         }
     }

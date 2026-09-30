@@ -22,6 +22,7 @@ module time.civil
 /// across DST — the same wall-time (23/25h elapsed), while `24.to_hours()` —
 /// exactly 24h (D320 R4).
 #stable(since = "0.1")
+#impl(Equal)
 export type Period value {
     ro years i32
     ro months i32

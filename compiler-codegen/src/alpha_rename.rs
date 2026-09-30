@@ -157,8 +157,14 @@ fn rename_item(item: &mut Item, tables: &mut RebindTables) {
             r.expr(&mut l.value);
             r.pop_scope();
         }
-        // No expression bodies with locals (mirror number_exprs / desugar).
-        Item::Type(_) => {}
+        Item::Type(t) => for ac in &mut t.assoc_consts { /* #1412: a `const/ro Type.NAME` initializer is a module value's initializer too. */
+            let mut reserved = HashSet::new();
+            collect_names_expr(&ac.value, &mut reserved);
+            let mut r = Renamer::new(tables, reserved);
+            r.push_scope();
+            r.expr(&mut ac.value);
+            r.pop_scope();
+        },
         Item::Lemma(_) => {}
     }
 }

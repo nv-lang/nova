@@ -95,6 +95,10 @@ pub fn check_effect_erasure(module: &Module, sig: &SigRegistry, errors: &mut Vec
                 check_fn_type_target(d.ty.as_ref(), &d.value, sig, errors);
                 walk_expr(&d.value, None, sig, errors);
             }
+            Item::Type(t) => for ac in &t.assoc_consts { /* #1412: a `const/ro Type.NAME` initializer is a module value's initializer too. */
+                check_fn_type_target(ac.ty.as_ref(), &ac.value, sig, errors);
+                walk_expr(&ac.value, None, sig, errors);
+            },
             _ => {}
         }
     }

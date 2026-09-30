@@ -1,0 +1,8 @@
+module probe
+
+type Pt { x int, y int }
+
+fn main() {
+    ro pts []Pt = [Pt { x: 1, y: 2 }, Pt { x: 5, y: 6 }]
+    print("${pts[1].x}|${pts.len()}")
+}

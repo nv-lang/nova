@@ -1,0 +1,19 @@
+// A handler literal with NO capture inside a generic function, two instances.
+fn show[T](x T, y T, tag str) -> () {
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label str) -> () {
+            println(label)
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {
+            println(label)
+        }
+    } {
+        ResourceTrace.on_resource_enter(tag)
+        println(x + y)
+    }
+}
+
+fn main() {
+    show(5, 6, "int")
+    show(1.5, 2.25, "float")
+}

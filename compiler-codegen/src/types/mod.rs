@@ -24,6 +24,7 @@ mod fail_reach;
 /// Registry 221.1 #895: a static type-set blanket called on a primitive — see
 /// `static_blanket.rs`'s module doc.
 mod static_blanket;
+mod fn_visibility; // #1097: a same-name free fn by the caller's imports, see its doc
 
 /// Plan 196 (gs-bounds migration, spike `docs/plans/wip/196-gs-spike.md`):
 /// `gs` ("generics in scope") used to be `HashSet<String>` — ONLY the names of the
@@ -4275,6 +4276,8 @@ struct TypeCheckCtx<'a> {
     /// Нужны, когда одноимённый тип объявлен в нескольких файлах и различить
     /// их может только то, что импортировал использующий файл.
     file_imports: HashMap<crate::diag::FileId, Vec<Vec<String>>>,
+    /// #1097: (import path, item name) of every unaliased selective import item, per file.
+    file_fn_imports: HashMap<crate::diag::FileId, Vec<(Vec<String>, String)>>,
     /// W6 (№705): канонический путь файла — вторая половина того же ответа.
     /// В `d78_dup_decl_type_cross_import` оба кандидата объявляют ОДИН И ТОТ
     /// ЖЕ модуль `neg.kind` и различаются ТОЛЬКО физическим путём (`a/` vs
@@ -5397,11 +5400,18 @@ impl<'a> TypeCheckCtx<'a> {
             HashMap::new();
         let mut file_paths: HashMap<crate::diag::FileId, std::path::PathBuf> =
             HashMap::new();
+        let mut file_fn_imports: HashMap<crate::diag::FileId, Vec<(Vec<String>, String)>> = HashMap::new();
         for pf in &module.peer_files {
             file_paths.insert(pf.file_id, pf.path.clone());
             let e = file_imports.entry(pf.file_id).or_default();
             for imp in &pf.imports {
                 e.push(imp.path.clone());
+            }
+            let fe = file_fn_imports.entry(pf.file_id).or_default();
+            for imp in &pf.imports {
+                for it in imp.items.iter().flatten().filter(|it| it.alias.is_none()) {
+                    fe.push((imp.path.clone(), it.name.clone()));
+                }
             }
         }
         // Имена, объявленные БОЛЕЕ ЧЕМ В ОДНОМ файле. Только для них включается
@@ -5451,7 +5461,7 @@ impl<'a> TypeCheckCtx<'a> {
                 *ret = None;
             }
         }
-        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, module_const_names, types: TypeTable::new(types, colliding_type_names.clone()), const_types, assoc_const_types, coerce_pairs, generic_coerce_patterns, current_coerce_decl_span: std::cell::RefCell::new(None), sum_variant_names, file_local_types, file_imports, file_paths,
+        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, module_const_names, types: TypeTable::new(types, colliding_type_names.clone()), const_types, assoc_const_types, coerce_pairs, generic_coerce_patterns, current_coerce_decl_span: std::cell::RefCell::new(None), sum_variant_names, file_local_types, file_imports, file_fn_imports, file_paths,
             colliding_type_names, imported_modules,
             current_file: std::cell::Cell::new(None),
             current_fail_payload: std::cell::RefCell::new(None),
@@ -9666,6 +9676,95 @@ impl<'a> TypeCheckCtx<'a> {
         s
     }
 
+    /// Registry 221.1 #1409: the scope type of a local bound to a closure
+    /// LITERAL (`ro f = fn(x int) -> int { .. }`, `ro g = || 42`). Neither
+    /// `infer_expr_type` (no closure arm) nor the channel fallback of the let
+    /// registration (`resolved_to_typeref` gives up on `R::Func`) could name it,
+    /// so the local was left UNTYPED in `scope`: a later call `f(21)` never
+    /// reached the fn-value producer of `f1_expr_inner` (`scope.get(fname)` ->
+    /// `Func` -> its return into the channel), and every consumer that asks
+    /// before the emitter has registered `f` -- the value slot of a `with` whose
+    /// tail is `f(21)`, emitted before the body's statements -- typed the call
+    /// as `unit`: the value was dropped and the block yielded 0.
+    /// `ClosureFull` is typed by its grammar (every param annotated, `-> R` or
+    /// unit, its own effect row); a `ClosureLight` is typed from the `Func` the
+    /// checker already put into the channel for the literal's own id, else --
+    /// zero params, expression body -- from its body typed in `scope`. A shape
+    /// that does not convert stays `None` -- unchanged behaviour.
+    /// KILL SWITCH `NOVA_KILL_1409=1` removes the fix whole (proof both ways).
+    fn closure_literal_fn_typeref(
+        &self,
+        value: &Expr,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Option<TypeRef> {
+        if std::env::var_os("NOVA_KILL_1409").is_some() {
+            return None;
+        }
+        match &value.kind {
+            ExprKind::ClosureFull(sb) => Some(TypeRef::Func {
+                params: sb.params.iter().map(|p| p.ty.clone()).collect(),
+                effects: sb.effects.clone(),
+                return_type: Some(Box::new(
+                    sb.return_type.clone().unwrap_or(TypeRef::Unit(value.span)),
+                )),
+                extern_abi: None,
+                span: value.span,
+            }),
+            ExprKind::ClosureLight { params: lp, body, .. } => {
+                let from_channel = value.id.is_set().then(|| {
+                    let rt = self.resolved_types_buf.borrow().get(&value.id).cloned()?;
+                    let ResolvedType::Func { params, ret, .. } = rt else { return None };
+                    let params = params.iter()
+                        .map(|p| Self::resolved_to_typeref_tp(p, value.span))
+                        .collect::<Option<Vec<_>>>()?;
+                    Some((params, Self::resolved_to_typeref_tp(&ret, value.span)?))
+                }).flatten();
+                // The channel entry for `|| body` is primitive-gated (it also types
+                // the closure VALUE); the local's scope type needs no such gate:
+                // zero params, so the body types in the very scope it is bound in.
+                let (params, ret) = from_channel.or_else(|| match body {
+                    ClosureBody::Expr(be) if lp.is_empty() => {
+                        Some((Vec::new(), self.infer_expr_type(be, scope)?))
+                    }
+                    _ => None,
+                })?;
+                Some(TypeRef::Func {
+                    params,
+                    effects: Vec::new(),
+                    return_type: Some(Box::new(ret)),
+                    extern_abi: None,
+                    span: value.span,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// Registry 221.1 #1409: the declared return of `obj.name(..)` when `name`
+    /// is a record FIELD of fn type, not a method -- the guard and the answer of
+    /// `infer_expr_type`'s field-call arm, for the channel producer in
+    /// `f1_expr_inner`. `func` is the call's own `Member` callee.
+    fn field_closure_call_return(
+        &self,
+        obj: &Expr,
+        name: &str,
+        func: &Expr,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Option<TypeRef> {
+        let mut peeled = self.infer_expr_type(obj, scope)?;
+        while let TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) = peeled {
+            peeled = *i;
+        }
+        let TypeRef::Named { path, .. } = &peeled else { return None };
+        if path.len() != 1 || self.method_overloads(&path[0], name).is_some() {
+            return None;
+        }
+        match self.infer_expr_type(func, scope)? {
+            TypeRef::Func { return_type: Some(rt), .. } => Some(*rt),
+            _ => None,
+        }
+    }
+
     /// [реестр 221.1 №493, K1] D45 (`03-syntax.md`): "block-body — `-> T`
     /// обязателен, если тип не unit". Before this fix that half of D45 was
     /// NOT enforced anywhere: a block-body function with no `-> T` at all
@@ -10004,6 +10103,7 @@ impl<'a> TypeCheckCtx<'a> {
                             drop(buf);
                             Self::resolved_to_typeref_tp(&rt, d.value.span)
                         })
+                        .or_else(|| self.closure_literal_fn_typeref(&d.value, scope))
                     {
                         Some(t) => { scope.insert(name, t); }
                         None => { scope.remove(&name); }
@@ -10684,6 +10784,7 @@ impl<'a> TypeCheckCtx<'a> {
         // `infer_expr_c_type` mis-fell-back to `nova_int`, codegen now emits the correct type.
         if let ExprKind::Ident(_) = &e.kind {
             if e.id.is_set() {
+                self.record_fn_value_callee(e, scope); // #1097, see fn_visibility.rs
                 if let Some(tr) = self.infer_expr_type(e, scope) {
                     let rt = ResolvedType::from_type_ref(&tr);
                     // Plan 172.1.1: annotate ALL Idents (primitive + non-primitive). The consumer
@@ -11532,6 +11633,24 @@ impl<'a> TypeCheckCtx<'a> {
                                         .borrow_mut()
                                         .entry(e.id)
                                         .or_insert(rt);
+                                }
+                            }
+                        }
+                        // Registry 221.1 #1409: a call through a RECORD FIELD holding
+                        // a closure (`h.f(21)`, `type H { f fn(int) -> str }`) had no
+                        // producer here -- `infer_expr_type` types it (field-call arm,
+                        // "RECORD FIELD holding a first-class function value") but only
+                        // for inline checks. Codegen then typed the call by the FIELD
+                        // NAME alone whenever `h` was not yet a registered local -- the
+                        // value slot of a `with` whose tail is `h.f(21)` is sized before
+                        // the body declares `h` -- and with two records each holding a
+                        // closure field `f` the other record's return won. Same guard as
+                        // that arm: no METHOD of this name on the receiver type.
+                        if e.id.is_set() && std::env::var_os("NOVA_KILL_1409").is_none() {
+                            if let Some(ret) = self.field_closure_call_return(mo, method, func, scope) {
+                                if !typeref_mentions_any(&ret, gs) {
+                                    let rt = ResolvedType::from_type_ref(&ret);
+                                    self.resolved_types_buf.borrow_mut().entry(e.id).or_insert(rt);
                                 }
                             }
                         }
@@ -15705,6 +15824,131 @@ impl<'a> TypeCheckCtx<'a> {
     ///
     /// Консервативность сохранена буквально: неизвестная альтернатива ВНУТРИ
     /// `|` снимает проверку так же, как неизвестный арм снаружи.
+    /// №1415 (spec/syntax.ru.md, "Исчерпывающая проверка"): a `match` over a
+    /// type whose values cannot be listed -- `int` and the other integers,
+    /// floats, `char`, `str`, or a tuple holding one of them -- needs `_` (or a
+    /// binding) to be exhaustive, and an empty `match` over any inhabited type
+    /// covers nothing. Before this the sum-only analysis returned early on all
+    /// of these, so `ro m = match x { 1 => 5 }` over `x int` passed check and
+    /// build and produced a value no arm had computed.
+    ///
+    /// The rule stays conservative, like the sum analysis: it reports only
+    /// what is PROVEN uncovered. Every open position of the scrutinee is given
+    /// a value no literal in the arms names (the domain is infinite, so one
+    /// exists); an arm that must reject that value (`Fresh::No`) covers
+    /// nothing, and if EVERY unguarded arm is such, the match is refused. An
+    /// arm that depends on a closed position (`(_, true)`) is `Maybe`, and one
+    /// `Maybe` keeps the checker silent.
+    ///
+    /// `bool` is finite and is decided exactly: both literals, or a catch-all.
+    ///
+    /// Returns true when the verdict is final here (reported or proven fine),
+    /// false to hand the `match` on to the sum analysis.
+    fn check_match_open_or_empty(
+        &self,
+        scrut_ty: Option<&TypeRef>,
+        arms: &[crate::ast::MatchArm],
+        span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) -> bool {
+        use crate::ast::{Literal, Pattern};
+        let Some(ty) = scrut_ty else { return false };
+        let is_bool = matches!(ty, TypeRef::Named { path, generics, .. }
+            if generics.is_empty() && path.len() == 1 && path[0] == "bool");
+        let open = type_has_open_position(ty);
+        if arms.is_empty() {
+            // A named type that is not a builtin is either a sum (the analysis
+            // below lists every variant as missing) or unknown here (a generic
+            // parameter, an unresolved name) -- neither is ours to judge.
+            let decided_here = match ty {
+                TypeRef::Named { path, generics, .. } => {
+                    let name = path.last().map(|s| s.as_str()).unwrap_or("");
+                    is_bool
+                        || open
+                        || (generics.is_empty()
+                            && path.len() == 1
+                            && matches!(
+                                self.types_get_for_file(name, span.file_id).map(|td| &td.kind),
+                                Some(TypeDeclKind::Record(..))
+                            ))
+                }
+                TypeRef::Tuple(..) | TypeRef::Array(..) | TypeRef::FixedArray(..) => true,
+                _ => false,
+            };
+            if !decided_here {
+                return false;
+            }
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_MATCH_NON_EXHAUSTIVE] empty `match` over `{}` covers no value, yet the type has values: \
+                     the `match` would have no result for any of them (registry 221.1 #1415). \
+                     Add the arms, or `_ => ...` for the rest.",
+                    typeref_display(ty)
+                ),
+                span,
+            ));
+            return true;
+        }
+        let live: Vec<&crate::ast::MatchArm> = arms.iter().filter(|a| a.guard.is_none()).collect();
+        if is_bool {
+            let (mut t, mut f) = (false, false);
+            fn walk(p: &Pattern, t: &mut bool, f: &mut bool) -> bool {
+                match p {
+                    Pattern::Wildcard(_) | Pattern::Ident { .. } => { *t = true; *f = true; true }
+                    Pattern::Binding { inner, .. } => walk(inner, t, f),
+                    Pattern::Literal(Literal::Bool(true), _) => { *t = true; true }
+                    Pattern::Literal(Literal::Bool(false), _) => { *f = true; true }
+                    Pattern::Or { alternatives, .. } => alternatives.iter().all(|a| walk(a, t, f)),
+                    _ => false,
+                }
+            }
+            for a in &live {
+                if !walk(&a.pattern, &mut t, &mut f) {
+                    return true; // a form outside this analysis: stay silent
+                }
+            }
+            if t && f {
+                return true;
+            }
+            let missing = if !t && !f { "`true`, `false`" } else if !t { "`true`" } else { "`false`" };
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_MATCH_NON_EXHAUSTIVE] `match` over `bool` does not cover {}: \
+                     the uncovered value would leave the `match` without a result (registry 221.1 #1415). \
+                     Add the arm, or `_ => ...`.",
+                    missing
+                ),
+                span,
+            ));
+            return true;
+        }
+        if !open {
+            return false;
+        }
+        let mut maybe = false;
+        for a in &live {
+            match fresh_match(&a.pattern, ty) {
+                Fresh::Yes => return true,
+                Fresh::Maybe => maybe = true,
+                Fresh::No => {}
+            }
+        }
+        if maybe {
+            return true; // depends on a closed position: not proven, stay silent
+        }
+        errors.push(Diagnostic::new(
+            format!(
+                "[E_MATCH_NON_EXHAUSTIVE] `match` over `{}` is not exhaustive: the values of this type \
+                 cannot all be listed, and no arm catches the ones the arms do not name, \
+                 so for them the `match` has no result (spec/syntax.md, exhaustiveness; registry 221.1 #1415). \
+                 Add `_ => ...` (or a binding) for the rest.",
+                typeref_display(ty)
+            ),
+            span,
+        ));
+        true
+    }
+
     #[allow(clippy::only_used_in_recursion)]
     fn check_match_exhaustive(
         &self,
@@ -15714,6 +15958,12 @@ impl<'a> TypeCheckCtx<'a> {
         errors: &mut Vec<Diagnostic>,
     ) {
         use crate::ast::Pattern;
+        // №1415: open types (`int`, `str`, `char`, floats, tuples holding one)
+        // and the empty `match` -- decided here, before the sum analysis below,
+        // which only knows named sums and gives up silently on everything else.
+        if self.check_match_open_or_empty(scrut_ty, arms, span, errors) {
+            return;
+        }
         // 1. Тип скрутини — именованная сумма? Generic-инстанс (`Option[T]`)
         //    и builtin'ы пока вне разбора: у них свои пути в кодогене.
         let sum_name = match scrut_ty {
@@ -17936,19 +18186,7 @@ impl<'a> TypeCheckCtx<'a> {
                 // co-equal файлами ОДНОГО folder-модуля: `f(int)` в
                 // `a.nv` + `f(str)` в `b.nv` того же `module foo` —
                 // вызов из `a.nv` перестал бы видеть `f(str)` из `b.nv`).
-                let caller_module: Option<Vec<String>> = self.file_modules.borrow()
-                    .get(&caller_file_id).cloned();
-                let is_own = |c: &&FnDecl| -> bool {
-                    if c.span.file_id == caller_file_id {
-                        return true;
-                    }
-                    match &caller_module {
-                        Some(cm) => self.file_modules.borrow()
-                            .get(&c.span.file_id)
-                            .map_or(false, |dm| dm == cm),
-                        None => false, // модуль неизвестен → падаем на file_id (уже false здесь)
-                    }
-                };
+                let is_own = |c: &&FnDecl| -> bool { self.same_physical_module(caller_file_id, c.span.file_id) };
                 let visible: Option<Vec<&FnDecl>> = self.sig.fn_decls.get(n).map(|v| {
                     let filtered: Vec<&FnDecl> = v.iter()
                         .filter(|c| !c.file_private || c.span.file_id == caller_file_id)
@@ -17994,7 +18232,7 @@ impl<'a> TypeCheckCtx<'a> {
                     if filtered.iter().any(is_own) {
                         filtered.into_iter().filter(|c| is_own(c)).collect()
                     } else {
-                        filtered
+                        self.narrow_by_fn_imports(caller_file_id, n, filtered) // #1097
                     }
                 });
                 match visible.as_deref() {
@@ -59859,6 +60097,74 @@ enum ArmCoverage {
 }
 
 /// Разбор одного арма. Рекурсия ровно одна — в альтернативы `|`.
+/// №1415: a scalar whose values cannot be listed in a `match`.
+fn is_open_scalar_name(name: &str) -> bool {
+    matches!(
+        name,
+        "int" | "i8" | "i16" | "i32" | "i64" | "uint" | "u8" | "u16" | "u32" | "u64"
+            | "f32" | "f64" | "char" | "str"
+    )
+}
+
+/// №1415: does the type have a position filled by an open scalar?
+fn type_has_open_position(ty: &TypeRef) -> bool {
+    match ty {
+        TypeRef::Named { path, generics, .. } => {
+            generics.is_empty() && path.len() == 1 && is_open_scalar_name(&path[0])
+        }
+        TypeRef::Tuple(elems, _) => elems.iter().any(type_has_open_position),
+        _ => false,
+    }
+}
+
+/// №1415: how an arm treats a scrutinee whose open positions all hold a value
+/// no literal in the `match` names.
+enum Fresh {
+    /// matches it whatever the closed positions hold
+    Yes,
+    /// cannot match it
+    No,
+    /// depends on the closed positions, or a form outside this analysis
+    Maybe,
+}
+
+fn fresh_match(p: &crate::ast::Pattern, ty: &TypeRef) -> Fresh {
+    use crate::ast::Pattern;
+    match p {
+        Pattern::Wildcard(_) | Pattern::Ident { .. } => Fresh::Yes,
+        Pattern::Binding { inner, .. } => fresh_match(inner, ty),
+        Pattern::Or { alternatives, .. } => {
+            let mut all_no = true;
+            for alt in alternatives {
+                match fresh_match(alt, ty) {
+                    Fresh::Yes => return Fresh::Yes,
+                    Fresh::Maybe => all_no = false,
+                    Fresh::No => {}
+                }
+            }
+            if all_no { Fresh::No } else { Fresh::Maybe }
+        }
+        Pattern::Literal(..) if type_has_open_position(ty) && !matches!(ty, TypeRef::Tuple(..)) => {
+            Fresh::No
+        }
+        Pattern::Tuple(ps, _) => match ty {
+            TypeRef::Tuple(tys, _) if tys.len() == ps.len() => {
+                let mut all_yes = true;
+                for (p, t) in ps.iter().zip(tys) {
+                    match fresh_match(p, t) {
+                        Fresh::No => return Fresh::No,
+                        Fresh::Maybe => all_yes = false,
+                        Fresh::Yes => {}
+                    }
+                }
+                if all_yes { Fresh::Yes } else { Fresh::Maybe }
+            }
+            _ => Fresh::Maybe,
+        },
+        _ => Fresh::Maybe,
+    }
+}
+
 fn arm_coverage(p: &crate::ast::Pattern) -> ArmCoverage {
     use crate::ast::Pattern;
     match p {

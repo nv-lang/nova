@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E_MATCH_NON_EXHAUSTIVE
+//
+// Registry 221.1 #1415: a `match` over `int` without `_` is not exhaustive
+// (spec/syntax.md, exhaustiveness: "for general types (`int`, `str`) either a
+// `_` wildcard is needed..."). The values of `int` cannot all be listed, so
+// `_` or a binding is the only way to cover them. Before the fix this form
+// passed check and build, and `m` got a value no arm computed.
+// Value position; the statement position is p1415_str_stmt_neg.
+
+module neg.p1415_int_value_neg
+
+fn main() Io -> () {
+    ro x = 3
+    // nova:expect E_MATCH_NON_EXHAUSTIVE -- `int` values cannot all be listed and no arm catches `x == 3`
+    ro m = match x { 1 => 5 }
+    println("${m}")
+}

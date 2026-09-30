@@ -1,0 +1,42 @@
+// Registry 221.1 #1395, NAMED-TUPLE half: a named tuple is the third value
+// kind with the pointer receiver carrier (`NovaTuple_X*`, D215/D226), and its
+// `Self` failed in the same positions as the record's and the sum's
+// (`p1395_value_self_record.nv`, `p1395_value_self_sum.nv`): a direct call
+// with `other Self` and a `-> Self` return did not compile. Found with it:
+// the synthesized `#impl(Clone)` body built a named tuple as a RECORD
+// literal, which lowered to a heap `Nova_X*` allocation (`use of undeclared
+// identifier 'Nova_X'`); it is built by the positional constructor now.
+module standalone.p1395_value_self_tuple
+
+#impl(Equal + Clone)
+type P1395Pt(x int, y int)
+
+fn P1395Pt @addp(other Self) -> Self => P1395Pt(@x + other.x, @y + other.y)
+fn P1395Pt @same(other Self) -> bool => @x == other.x && @y == other.y
+
+type P1395Cnt(n int)
+fn P1395Cnt mut @bump() -> @ { @n += 1 }
+
+test "a named tuple's `Self` is a value: direct calls and `-> Self` (#1395)" {
+    ro a = P1395Pt(1, 2)
+    ro b = P1395Pt(3, 4)
+    ro c = a.addp(b)
+    assert(c.x == 4 && c.y == 6)
+    assert(a.same(P1395Pt(1, 2)))
+    assert(!a.same(b))
+    assert(a.equal(P1395Pt(1, 2)))
+    assert(a != b)
+}
+
+test "#impl(Clone) on a named tuple returns an equal value (#1395)" {
+    ro a = P1395Pt(5, 6)
+    ro c = a.clone()
+    assert(c == a)
+    assert(c.y == 6)
+}
+
+test "`-> @` on a named tuple keeps the carrier (#1395)" {
+    mut k = P1395Cnt(1)
+    k.bump().bump()
+    assert(k.n == 3)
+}

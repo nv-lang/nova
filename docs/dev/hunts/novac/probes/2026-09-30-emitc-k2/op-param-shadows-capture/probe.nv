@@ -1,0 +1,16 @@
+// An op PARAMETER carries the name of a binding of the enclosing scope. In
+// the op body the name is the parameter, not a capture.
+fn main() {
+    ro label = "outer"
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label str) -> () {
+            println("enter ", label)
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {
+            println(label)
+        }
+    } {
+        ResourceTrace.on_resource_enter("param")
+    }
+    println(label)
+}

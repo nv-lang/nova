@@ -1,0 +1,82 @@
+// EXPECT_STDOUT 101=101|6=6|16=16|10:10=10:10|9=9|i=i|5=5|abc:3=abc:3|4=4|4:2=4:2|2=2|6:3=6:3|n3:2=n3:2|77|25
+//
+// Registry 221.1 #1412: an associated `const/ro Type.NAME` initializer did not go
+// the way a module `const`/`ro` initializer goes, and forms that build as a
+// module value failed as `Type.NAME`:
+// - a fn called ONLY from a `Type.NAME` initializer was pruned by DCE (the
+//   reachability walk skipped `assoc_consts`) -- link "undefined symbol";
+// - `const Type.NAME` was emitted inside its type's declaration, ahead of the
+//   module `const`s and of the types declared later -- a read of a module
+//   `const` panicked (`Ident LIT not in var_types`);
+// - a braced record value for a pointer type became a `static const`
+//   initializer -- CC-FAIL "non-aggregate type"; the module path sends it to lazy
+//   init;
+// - seven AST passes (desugar, number_exprs, callnorm, alpha_rename,
+//   embed_resolve, const_fn_trampoline, strict_effects) walked a module value's
+//   initializer but not a `Type.NAME` one.
+// The last two values are read through fns NOTHING else calls -- the DCE carrier.
+// Every line pairs the module form (left) with the `P1412Tag.NAME` form (right):
+// both must build and print the same.
+module standalone.p1412_assoc_value_init_like_module
+
+type P1412Pt { x int, y int }
+type P1412Fam | P1412FInt | P1412FStr
+type P1412Sh | P1412Circle(int) | P1412Sq(int)
+type P1412Tag { n int }
+
+fn p1412_three() -> int => 3
+fn p1412_sq(const x int) -> const int => x * x
+fn p1412_mkpt(k int) -> P1412Pt => { x: k, y: k * 2 }
+fn p1412_px(p P1412Pt) -> int => p.x
+fn p1412_only_from_assoc() -> int => 77
+fn p1412_sq_only(const x int) -> const int => x * x
+fn p1412_fam(f P1412Fam) -> str => match f {
+    P1412FInt => "i"
+    P1412FStr => "s"
+}
+fn p1412_sh(s P1412Sh) -> int => match s {
+    P1412Circle(r) => r
+    P1412Sq(a) => a * 10
+}
+
+const P1412_LIT = 4
+const P1412Tag.BASE = 100
+
+const M_ASSOCREF = P1412Tag.BASE + 1
+const P1412Tag.ASSOCREF = P1412Tag.BASE + 1
+const M_MODREF = P1412_LIT + 2
+const P1412Tag.MODREF = P1412_LIT + 2
+const M_CFN = p1412_sq(4)
+const P1412Tag.CFN = p1412_sq(4)
+const M_REC P1412Pt = { x: 10, y: 20 }
+const P1412Tag.REC P1412Pt = { x: 10, y: 20 }
+const M_FIXED [3]int = [7, 8, 9]
+const P1412Tag.FIXED [3]int = [7, 8, 9]
+const M_UNIT P1412Fam = P1412Fam.P1412FInt
+const P1412Tag.UNIT P1412Fam = P1412Fam.P1412FInt
+const M_CTOR P1412Sh = P1412Sh.P1412Circle(5)
+const P1412Tag.CTOR P1412Sh = P1412Sh.P1412Circle(5)
+const M_STR = "abc"
+const P1412Tag.STR = "abc"
+ro M_CALL = p1412_three() + 1
+ro P1412Tag.CALL = p1412_three() + 1
+ro M_HEAP []int = [4, 5]
+ro P1412Tag.HEAP []int = [4, 5]
+ro M_HEAPU = [1, 2]
+ro P1412Tag.HEAPU = [1, 2]
+ro M_MKPT P1412Pt = p1412_mkpt(3)
+ro P1412Tag.MKPT P1412Pt = p1412_mkpt(3)
+ro M_INTERP = "n${p1412_three()}"
+ro P1412Tag.INTERP = "n${p1412_three()}"
+ro P1412Tag.ONLY = p1412_only_from_assoc()
+const P1412Tag.SQ_ONLY = p1412_sq_only(5)
+
+fn main() Io -> () {
+    print("${M_ASSOCREF}=${P1412Tag.ASSOCREF}|${M_MODREF}=${P1412Tag.MODREF}|${M_CFN}=${P1412Tag.CFN}|")
+    print("${M_REC.x}:${p1412_px(M_REC)}=${P1412Tag.REC.x}:${p1412_px(P1412Tag.REC)}|")
+    print("${M_FIXED[2]}=${P1412Tag.FIXED[2]}|${p1412_fam(M_UNIT)}=${p1412_fam(P1412Tag.UNIT)}|")
+    print("${p1412_sh(M_CTOR)}=${p1412_sh(P1412Tag.CTOR)}|${M_STR}:${M_STR.len()}=${P1412Tag.STR}:${P1412Tag.STR.len()}|")
+    print("${M_CALL}=${P1412Tag.CALL}|${M_HEAP[0]}:${M_HEAP.len()}=${P1412Tag.HEAP[0]}:${P1412Tag.HEAP.len()}|")
+    print("${M_HEAPU[1]}=${P1412Tag.HEAPU[1]}|${M_MKPT.y}:${p1412_px(M_MKPT)}=${P1412Tag.MKPT.y}:${p1412_px(P1412Tag.MKPT)}|")
+    print("${M_INTERP}:${M_INTERP.len()}=${P1412Tag.INTERP}:${P1412Tag.INTERP.len()}|${P1412Tag.ONLY}|${P1412Tag.SQ_ONLY}")
+}

@@ -1,0 +1,24 @@
+// A handler literal inside another literal's op body reads `base`, bound in
+// main; the OUTER op body never reads it. The capture is recorded only for
+// the innermost literal (check/exprs.nv @note_if_capture), so the outer
+// literal's context has no `base` for the inner one to copy from.
+fn main() {
+    ro base = 40
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label str) -> () {
+            with Random = effect Random {
+                u64() -> u64 {
+                    println("base ", base)
+                    7
+                }
+            } {
+                println(label, " ", Random.u64())
+            }
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {
+            println(label)
+        }
+    } {
+        ResourceTrace.on_resource_enter("a")
+    }
+}

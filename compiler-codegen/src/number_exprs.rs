@@ -216,7 +216,7 @@ impl Numberer {
             }
             // Mirror desugar: Type has no exprs; Lemma body is spec-only
             // (erased in codegen) — left UNSET, which is sound (no annotation).
-            Item::Type(_) => {}
+            Item::Type(t) => for ac in &mut t.assoc_consts { self.expr(&mut ac.value) }, // #1412: a `const/ro Type.NAME` initializer is a module value's initializer too.
             Item::Lemma(_) => {}
         }
     }

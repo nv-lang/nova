@@ -537,13 +537,17 @@ impl<'a> CollectCtx<'a> {
                 self.maybe_seed(&l.value);
                 self.visit_expr(&l.value);
             }
+            Item::Type(t) => for ac in &t.assoc_consts { /* #1412: a `const/ro Type.NAME` initializer is a module value's initializer too. */
+                self.maybe_seed(&ac.value);
+                self.visit_expr(&ac.value);
+            },
             Item::Test(t) => self.visit_block(&t.body),
             Item::Bench(b) => {
                 for s in &b.setup { self.visit_stmt(s); }
                 self.visit_block(&b.measure_body);
                 for s in &b.teardown { self.visit_stmt(s); }
             }
-            Item::Type(_) | Item::Lemma(_) => {}
+            Item::Lemma(_) => {}
         }
     }
     fn visit_block(&mut self, b: &Block) {
@@ -821,13 +825,14 @@ impl<'a> GenericMutateCtx<'a> {
             }
             Item::Const(c) => self.visit_expr_mut(&mut c.value),
             Item::Let(l) => self.visit_expr_mut(&mut l.value),
+            Item::Type(t) => for ac in &mut t.assoc_consts { self.visit_expr_mut(&mut ac.value) }, // #1412: a `const/ro Type.NAME` initializer is a module value's initializer too.
             Item::Test(t) => self.visit_block_mut(&mut t.body),
             Item::Bench(b) => {
                 for s in &mut b.setup { self.visit_stmt_mut(s); }
                 self.visit_block_mut(&mut b.measure_body);
                 for s in &mut b.teardown { self.visit_stmt_mut(s); }
             }
-            Item::Type(_) | Item::Lemma(_) => {}
+            Item::Lemma(_) => {}
         }
     }
     fn visit_block_mut(&mut self, b: &mut Block) {
@@ -1703,13 +1708,18 @@ impl<'a> RewriteCtx<'a> {
                     self.rewrite_expr(&mut l.value);
                 }
             }
+            Item::Type(t) => for ac in &mut t.assoc_consts { /* #1412: a `const/ro Type.NAME` initializer is a module value's initializer too. */
+                if !self.maybe_rewrite(&mut ac.value) {
+                    self.rewrite_expr(&mut ac.value);
+                }
+            },
             Item::Test(t) => self.rewrite_block(&mut t.body),
             Item::Bench(b) => {
                 for s in &mut b.setup { self.rewrite_stmt(s); }
                 self.rewrite_block(&mut b.measure_body);
                 for s in &mut b.teardown { self.rewrite_stmt(s); }
             }
-            Item::Type(_) | Item::Lemma(_) => {}
+            Item::Lemma(_) => {}
         }
     }
     fn rewrite_block(&mut self, b: &mut Block) {

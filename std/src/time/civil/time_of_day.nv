@@ -14,6 +14,7 @@ import std.time.duration
 /// Time of day (wall-clock, no date/zone) — a value-record, nanoseconds
 /// from midnight. A D319 plain type: NOT a point on the axis.
 #stable(since = "0.1")
+#impl(Equal)
 export type TimeOfDay value {
     ro nanos_of_day i64
 }

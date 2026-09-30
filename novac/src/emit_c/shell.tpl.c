@@ -310,11 +310,7 @@ struct NovaValue_ExitStatus {
 typedef struct Nova_Vec____nova_str Nova_Vec____nova_str;
 typedef struct Nova_Vec____NovaValue_EnvVar Nova_Vec____NovaValue_EnvVar;
 typedef struct NovaOpt_NovaValue_Path { int tag; NovaValue_Path value; } NovaOpt_NovaValue_Path;
-static inline nova_bool nova_opt_eq_NovaValue_Path(NovaOpt_NovaValue_Path a, NovaOpt_NovaValue_Path b) {
-    if (a.tag != b.tag) return 0;
-    if (a.tag == NOVA_TAG_Option_None) return 1;
-    return (((((Nova_Vec____nova_byte*)((a.value).bytes))) == (((Nova_Vec____nova_byte*)((b.value).bytes)))) && (((a.value).style).tag == ((b.value).style).tag));
-}
+static inline nova_bool nova_opt_eq_NovaValue_Path(NovaOpt_NovaValue_Path a, NovaOpt_NovaValue_Path b);
 typedef struct NovaValue_Command NovaValue_Command;
 struct NovaValue_Command {
     nova_str program;
@@ -749,11 +745,7 @@ typedef struct _NovaTuple_2_25__NovaFixArr_4_9_nova_byte_8_nova_int { _NovaFixAr
 
 /* Plan 14 Ф.1: lazy NovaOpt_<T> typedef'ы — для T без NOVA_ARRAY_DECL в runtime. Order: registration */
 typedef struct NovaOpt_NovaValue_IoError { int tag; NovaValue_IoError value; } NovaOpt_NovaValue_IoError;
-static inline nova_bool nova_opt_eq_NovaValue_IoError(NovaOpt_NovaValue_IoError a, NovaOpt_NovaValue_IoError b) {
-    if (a.tag != b.tag) return 0;
-    if (a.tag == NOVA_TAG_Option_None) return 1;
-    return (memcmp(&a.value, &b.value, sizeof(NovaValue_IoError)) == 0);
-}
+static inline nova_bool nova_opt_eq_NovaValue_IoError(NovaOpt_NovaValue_IoError a, NovaOpt_NovaValue_IoError b);
 typedef struct Nova_Vec____nova_byte Nova_Vec____nova_byte;
 typedef struct NovaOpt_Nova_Vec____nova_byte_p { Nova_Vec____nova_byte* value; } NovaOpt_Nova_Vec____nova_byte_p;
 static inline nova_bool nova_opt_eq_Nova_Vec____nova_byte_p(NovaOpt_Nova_Vec____nova_byte_p a, NovaOpt_Nova_Vec____nova_byte_p b);
@@ -762,11 +754,7 @@ static inline nova_bool nova_opt_eq_Nova_Align_p(NovaOpt_Nova_Align_p a, NovaOpt
 typedef struct NovaOpt_Nova_Utf16Error_p { Nova_Utf16Error* value; } NovaOpt_Nova_Utf16Error_p;
 static inline nova_bool nova_opt_eq_Nova_Utf16Error_p(NovaOpt_Nova_Utf16Error_p a, NovaOpt_Nova_Utf16Error_p b);
 typedef struct NovaOpt_nova_unit { int tag; nova_unit value; } NovaOpt_nova_unit;
-static inline nova_bool nova_opt_eq_nova_unit(NovaOpt_nova_unit a, NovaOpt_nova_unit b) {
-    if (a.tag != b.tag) return 0;
-    if (a.tag == NOVA_TAG_Option_None) return 1;
-    return ((void)(a.value), (void)(b.value), 1);
-}
+static inline nova_bool nova_opt_eq_nova_unit(NovaOpt_nova_unit a, NovaOpt_nova_unit b);
 typedef struct Nova_Vec____nova_str Nova_Vec____nova_str;
 typedef struct NovaOpt_Nova_Vec____nova_str_p { Nova_Vec____nova_str* value; } NovaOpt_Nova_Vec____nova_str_p;
 static inline nova_bool nova_opt_eq_Nova_Vec____nova_str_p(NovaOpt_Nova_Vec____nova_str_p a, NovaOpt_Nova_Vec____nova_str_p b);
@@ -774,23 +762,11 @@ typedef struct Nova_Vec____Nova_Vec____nova_byte_p Nova_Vec____Nova_Vec____nova_
 typedef struct NovaOpt_Nova_Vec____Nova_Vec____nova_byte_p_p { Nova_Vec____Nova_Vec____nova_byte_p* value; } NovaOpt_Nova_Vec____Nova_Vec____nova_byte_p_p;
 static inline nova_bool nova_opt_eq_Nova_Vec____Nova_Vec____nova_byte_p_p(NovaOpt_Nova_Vec____Nova_Vec____nova_byte_p_p a, NovaOpt_Nova_Vec____Nova_Vec____nova_byte_p_p b);
 typedef struct NovaOpt_NovaValue_Duration { int tag; NovaValue_Duration value; } NovaOpt_NovaValue_Duration;
-static inline nova_bool nova_opt_eq_NovaValue_Duration(NovaOpt_NovaValue_Duration a, NovaOpt_NovaValue_Duration b) {
-    if (a.tag != b.tag) return 0;
-    if (a.tag == NOVA_TAG_Option_None) return 1;
-    return ((((a.value).nanos) == ((b.value).nanos)));
-}
+static inline nova_bool nova_opt_eq_NovaValue_Duration(NovaOpt_NovaValue_Duration a, NovaOpt_NovaValue_Duration b);
 typedef struct NovaOpt_int64_t { int tag; int64_t value; } NovaOpt_int64_t;
-static inline nova_bool nova_opt_eq_int64_t(NovaOpt_int64_t a, NovaOpt_int64_t b) {
-    if (a.tag != b.tag) return 0;
-    if (a.tag == NOVA_TAG_Option_None) return 1;
-    return ((a.value) == (b.value));
-}
+static inline nova_bool nova_opt_eq_int64_t(NovaOpt_int64_t a, NovaOpt_int64_t b);
 typedef struct NovaOpt_NovaValue_Timestamp { int tag; NovaValue_Timestamp value; } NovaOpt_NovaValue_Timestamp;
-static inline nova_bool nova_opt_eq_NovaValue_Timestamp(NovaOpt_NovaValue_Timestamp a, NovaOpt_NovaValue_Timestamp b) {
-    if (a.tag != b.tag) return 0;
-    if (a.tag == NOVA_TAG_Option_None) return 1;
-    return ((((a.value).nanos) == ((b.value).nanos)));
-}
+static inline nova_bool nova_opt_eq_NovaValue_Timestamp(NovaOpt_NovaValue_Timestamp a, NovaOpt_NovaValue_Timestamp b);
 typedef struct NovaOpt_Nova_File_p { Nova_File* value; } NovaOpt_Nova_File_p;
 static inline nova_bool nova_opt_eq_Nova_File_p(NovaOpt_Nova_File_p a, NovaOpt_Nova_File_p b);
 typedef struct NovaOpt_Nova_Metadata_p { Nova_Metadata* value; } NovaOpt_Nova_Metadata_p;
@@ -799,61 +775,33 @@ typedef struct Nova_Vec____Nova_DirEntry_p Nova_Vec____Nova_DirEntry_p;
 typedef struct NovaOpt_Nova_Vec____Nova_DirEntry_p_p { Nova_Vec____Nova_DirEntry_p* value; } NovaOpt_Nova_Vec____Nova_DirEntry_p_p;
 static inline nova_bool nova_opt_eq_Nova_Vec____Nova_DirEntry_p_p(NovaOpt_Nova_Vec____Nova_DirEntry_p_p a, NovaOpt_Nova_Vec____Nova_DirEntry_p_p b);
 typedef struct NovaOpt_NovaValue_MockProcRule { int tag; NovaValue_MockProcRule value; } NovaOpt_NovaValue_MockProcRule;
-static inline nova_bool nova_opt_eq_NovaValue_MockProcRule(NovaOpt_NovaValue_MockProcRule a, NovaOpt_NovaValue_MockProcRule b) {
-    if (a.tag != b.tag) return 0;
-    if (a.tag == NOVA_TAG_Option_None) return 1;
-    return ((((a.value).code) == ((b.value).code)) && (((a.value).found) == ((b.value).found)) && nova_str_eq((a.value).program, (b.value).program));
-}
+static inline nova_bool nova_opt_eq_NovaValue_MockProcRule(NovaOpt_NovaValue_MockProcRule a, NovaOpt_NovaValue_MockProcRule b);
 typedef struct NovaOpt_NovaValue_ExitStatus { int tag; NovaValue_ExitStatus value; } NovaOpt_NovaValue_ExitStatus;
-static inline nova_bool nova_opt_eq_NovaValue_ExitStatus(NovaOpt_NovaValue_ExitStatus a, NovaOpt_NovaValue_ExitStatus b) {
-    if (a.tag != b.tag) return 0;
-    if (a.tag == NOVA_TAG_Option_None) return 1;
-    return ((((a.value).code) == ((b.value).code)));
-}
+static inline nova_bool nova_opt_eq_NovaValue_ExitStatus(NovaOpt_NovaValue_ExitStatus a, NovaOpt_NovaValue_ExitStatus b);
 typedef struct NovaOpt_Nova_CharError_p { Nova_CharError* value; } NovaOpt_Nova_CharError_p;
 static inline nova_bool nova_opt_eq_Nova_CharError_p(NovaOpt_Nova_CharError_p a, NovaOpt_Nova_CharError_p b);
 typedef struct NovaOpt_Nova_RangeError_p { Nova_RangeError* value; } NovaOpt_Nova_RangeError_p;
 static inline nova_bool nova_opt_eq_Nova_RangeError_p(NovaOpt_Nova_RangeError_p a, NovaOpt_Nova_RangeError_p b);
 typedef struct NovaOpt__NovaTuple_2_8_nova_int_9_nova_char { int tag; _NovaTuple_2_8_nova_int_9_nova_char value; } NovaOpt__NovaTuple_2_8_nova_int_9_nova_char;
-static inline nova_bool nova_opt_eq__NovaTuple_2_8_nova_int_9_nova_char(NovaOpt__NovaTuple_2_8_nova_int_9_nova_char a, NovaOpt__NovaTuple_2_8_nova_int_9_nova_char b) {
-    if (a.tag != b.tag) return 0;
-    if (a.tag == NOVA_TAG_Option_None) return 1;
-    return ((((a.value).f0) == ((b.value).f0)) && (((a.value).f1) == ((b.value).f1)));
-}
+static inline nova_bool nova_opt_eq__NovaTuple_2_8_nova_int_9_nova_char(NovaOpt__NovaTuple_2_8_nova_int_9_nova_char a, NovaOpt__NovaTuple_2_8_nova_int_9_nova_char b);
 typedef struct NovaOpt_NovaValue_Utf8Error { int tag; NovaValue_Utf8Error value; } NovaOpt_NovaValue_Utf8Error;
-static inline nova_bool nova_opt_eq_NovaValue_Utf8Error(NovaOpt_NovaValue_Utf8Error a, NovaOpt_NovaValue_Utf8Error b) {
-    if (a.tag != b.tag) return 0;
-    if (a.tag == NOVA_TAG_Option_None) return 1;
-    return ((((a.value).byte_offset) == ((b.value).byte_offset)));
-}
+static inline nova_bool nova_opt_eq_NovaValue_Utf8Error(NovaOpt_NovaValue_Utf8Error a, NovaOpt_NovaValue_Utf8Error b);
 typedef struct NovaOpt_Nova_ParseIntError_p { Nova_ParseIntError* value; } NovaOpt_Nova_ParseIntError_p;
 static inline nova_bool nova_opt_eq_Nova_ParseIntError_p(NovaOpt_Nova_ParseIntError_p a, NovaOpt_Nova_ParseIntError_p b);
 typedef struct NovaOpt_nova_uint { int tag; nova_uint value; } NovaOpt_nova_uint;
-static inline nova_bool nova_opt_eq_nova_uint(NovaOpt_nova_uint a, NovaOpt_nova_uint b) {
-    if (a.tag != b.tag) return 0;
-    if (a.tag == NOVA_TAG_Option_None) return 1;
-    return (memcmp(&a.value, &b.value, sizeof(nova_uint)) == 0);
-}
+static inline nova_bool nova_opt_eq_nova_uint(NovaOpt_nova_uint a, NovaOpt_nova_uint b);
 typedef struct NovaOpt_Nova_ParseBoolError_p { Nova_ParseBoolError* value; } NovaOpt_Nova_ParseBoolError_p;
 static inline nova_bool nova_opt_eq_Nova_ParseBoolError_p(NovaOpt_Nova_ParseBoolError_p a, NovaOpt_Nova_ParseBoolError_p b);
 typedef struct NovaOpt_Nova_ParseCharError_p { Nova_ParseCharError* value; } NovaOpt_Nova_ParseCharError_p;
 static inline nova_bool nova_opt_eq_Nova_ParseCharError_p(NovaOpt_Nova_ParseCharError_p a, NovaOpt_Nova_ParseCharError_p b);
 typedef struct NovaOpt__NovaTuple_2_8_nova_str_8_nova_str { int tag; _NovaTuple_2_8_nova_str_8_nova_str value; } NovaOpt__NovaTuple_2_8_nova_str_8_nova_str;
-static inline nova_bool nova_opt_eq__NovaTuple_2_8_nova_str_8_nova_str(NovaOpt__NovaTuple_2_8_nova_str_8_nova_str a, NovaOpt__NovaTuple_2_8_nova_str_8_nova_str b) {
-    if (a.tag != b.tag) return 0;
-    if (a.tag == NOVA_TAG_Option_None) return 1;
-    return (nova_str_eq((a.value).f0, (b.value).f0) && nova_str_eq((a.value).f1, (b.value).f1));
-}
+static inline nova_bool nova_opt_eq__NovaTuple_2_8_nova_str_8_nova_str(NovaOpt__NovaTuple_2_8_nova_str_8_nova_str a, NovaOpt__NovaTuple_2_8_nova_str_8_nova_str b);
 typedef struct NovaOpt_Nova_ParseFloatError_p { Nova_ParseFloatError* value; } NovaOpt_Nova_ParseFloatError_p;
 static inline nova_bool nova_opt_eq_Nova_ParseFloatError_p(NovaOpt_Nova_ParseFloatError_p a, NovaOpt_Nova_ParseFloatError_p b);
 typedef struct NovaOpt_Nova_ReadBufferError_p { Nova_ReadBufferError* value; } NovaOpt_Nova_ReadBufferError_p;
 static inline nova_bool nova_opt_eq_Nova_ReadBufferError_p(NovaOpt_Nova_ReadBufferError_p a, NovaOpt_Nova_ReadBufferError_p b);
 typedef struct NovaOpt__NovaTuple_2_8_nova_int_8_nova_int { int tag; _NovaTuple_2_8_nova_int_8_nova_int value; } NovaOpt__NovaTuple_2_8_nova_int_8_nova_int;
-static inline nova_bool nova_opt_eq__NovaTuple_2_8_nova_int_8_nova_int(NovaOpt__NovaTuple_2_8_nova_int_8_nova_int a, NovaOpt__NovaTuple_2_8_nova_int_8_nova_int b) {
-    if (a.tag != b.tag) return 0;
-    if (a.tag == NOVA_TAG_Option_None) return 1;
-    return ((((a.value).f0) == ((b.value).f0)) && (((a.value).f1) == ((b.value).f1)));
-}
+static inline nova_bool nova_opt_eq__NovaTuple_2_8_nova_int_8_nova_int(NovaOpt__NovaTuple_2_8_nova_int_8_nova_int a, NovaOpt__NovaTuple_2_8_nova_int_8_nova_int b);
 typedef struct NovaOpt_Nova_Vec_p { Nova_Vec* value; } NovaOpt_Nova_Vec_p;
 static inline nova_bool nova_opt_eq_Nova_Vec_p(NovaOpt_Nova_Vec_p a, NovaOpt_Nova_Vec_p b) {
     return a.value == b.value;
@@ -3317,10 +3265,20 @@ static nova_unit Nova_RawMem_static_copy_n_nonoverlapping____nova_int(const nova
 static nova_unit Nova_RawMem_static_copy_n_nonoverlapping____nova_f64(const nova_f64* src, nova_f64* dst, nova_int count);
 
 /* [M-172.1-option-eq-record-structural]: structural nova_opt_eq fns for heap user sum/record payloads — after method fwd-decls */
+static inline nova_bool nova_opt_eq_NovaValue_IoError(NovaOpt_NovaValue_IoError a, NovaOpt_NovaValue_IoError b) {
+    if (a.tag != b.tag) return 0;
+    if (a.tag == NOVA_TAG_Option_None) return 1;
+    return (memcmp(&a.value, &b.value, sizeof(NovaValue_IoError)) == 0);
+}
 static inline nova_bool nova_opt_eq_Nova_Vec____nova_byte_p(NovaOpt_Nova_Vec____nova_byte_p a, NovaOpt_Nova_Vec____nova_byte_p b) {
     if ((a.value == NULL) != (b.value == NULL)) return 0;
     if (a.value == NULL) return 1;
     return Vec____nova_byte_method_equal(((Nova_Vec____nova_byte*)(a.value)), ((Nova_Vec____nova_byte*)(b.value)));
+}
+static inline nova_bool nova_opt_eq_NovaValue_Path(NovaOpt_NovaValue_Path a, NovaOpt_NovaValue_Path b) {
+    if (a.tag != b.tag) return 0;
+    if (a.tag == NOVA_TAG_Option_None) return 1;
+    return (Vec____nova_byte_method_equal(((Nova_Vec____nova_byte*)((a.value).bytes)), ((Nova_Vec____nova_byte*)((b.value).bytes))) && (((a.value).style).tag == ((b.value).style).tag));
 }
 static inline nova_bool nova_opt_eq_Nova_Align_p(NovaOpt_Nova_Align_p a, NovaOpt_Nova_Align_p b) {
     if ((a.value == NULL) != (b.value == NULL)) return 0;
@@ -3332,6 +3290,11 @@ static inline nova_bool nova_opt_eq_Nova_Utf16Error_p(NovaOpt_Nova_Utf16Error_p 
     if (a.value == NULL) return 1;
     return (((((Nova_Utf16Error*)(a.value)))->tag == (((Nova_Utf16Error*)(b.value)))->tag) && ((((Nova_Utf16Error*)(a.value)))->tag != NOVA_TAG_Utf16Error_LoneHighSurrogate || ((((((Nova_Utf16Error*)(a.value)))->payload.LoneHighSurrogate._0) == ((((Nova_Utf16Error*)(b.value)))->payload.LoneHighSurrogate._0)))) && ((((Nova_Utf16Error*)(a.value)))->tag != NOVA_TAG_Utf16Error_LoneLowSurrogate || ((((((Nova_Utf16Error*)(a.value)))->payload.LoneLowSurrogate._0) == ((((Nova_Utf16Error*)(b.value)))->payload.LoneLowSurrogate._0)))) && ((((Nova_Utf16Error*)(a.value)))->tag != NOVA_TAG_Utf16Error_TruncatedSurrogatePair || ((((((Nova_Utf16Error*)(a.value)))->payload.TruncatedSurrogatePair._0) == ((((Nova_Utf16Error*)(b.value)))->payload.TruncatedSurrogatePair._0)))));
 }
+static inline nova_bool nova_opt_eq_nova_unit(NovaOpt_nova_unit a, NovaOpt_nova_unit b) {
+    if (a.tag != b.tag) return 0;
+    if (a.tag == NOVA_TAG_Option_None) return 1;
+    return ((void)(a.value), (void)(b.value), 1);
+}
 static inline nova_bool nova_opt_eq_Nova_Vec____nova_str_p(NovaOpt_Nova_Vec____nova_str_p a, NovaOpt_Nova_Vec____nova_str_p b) {
     if ((a.value == NULL) != (b.value == NULL)) return 0;
     if (a.value == NULL) return 1;
@@ -3341,6 +3304,21 @@ static inline nova_bool nova_opt_eq_Nova_Vec____Nova_Vec____nova_byte_p_p(NovaOp
     if ((a.value == NULL) != (b.value == NULL)) return 0;
     if (a.value == NULL) return 1;
     return Vec____Nova_Vec____nova_byte_p_method_equal(((Nova_Vec____Nova_Vec____nova_byte_p*)(a.value)), ((Nova_Vec____Nova_Vec____nova_byte_p*)(b.value)));
+}
+static inline nova_bool nova_opt_eq_NovaValue_Duration(NovaOpt_NovaValue_Duration a, NovaOpt_NovaValue_Duration b) {
+    if (a.tag != b.tag) return 0;
+    if (a.tag == NOVA_TAG_Option_None) return 1;
+    return ((((a.value).nanos) == ((b.value).nanos)));
+}
+static inline nova_bool nova_opt_eq_int64_t(NovaOpt_int64_t a, NovaOpt_int64_t b) {
+    if (a.tag != b.tag) return 0;
+    if (a.tag == NOVA_TAG_Option_None) return 1;
+    return ((a.value) == (b.value));
+}
+static inline nova_bool nova_opt_eq_NovaValue_Timestamp(NovaOpt_NovaValue_Timestamp a, NovaOpt_NovaValue_Timestamp b) {
+    if (a.tag != b.tag) return 0;
+    if (a.tag == NOVA_TAG_Option_None) return 1;
+    return ((((a.value).nanos) == ((b.value).nanos)));
 }
 static inline nova_bool nova_opt_eq_Nova_File_p(NovaOpt_Nova_File_p a, NovaOpt_Nova_File_p b) {
     if ((a.value == NULL) != (b.value == NULL)) return 0;
@@ -3357,6 +3335,16 @@ static inline nova_bool nova_opt_eq_Nova_Vec____Nova_DirEntry_p_p(NovaOpt_Nova_V
     if (a.value == NULL) return 1;
     return Vec____Nova_DirEntry_p_method_equal(((Nova_Vec____Nova_DirEntry_p*)(a.value)), ((Nova_Vec____Nova_DirEntry_p*)(b.value)));
 }
+static inline nova_bool nova_opt_eq_NovaValue_MockProcRule(NovaOpt_NovaValue_MockProcRule a, NovaOpt_NovaValue_MockProcRule b) {
+    if (a.tag != b.tag) return 0;
+    if (a.tag == NOVA_TAG_Option_None) return 1;
+    return ((((a.value).code) == ((b.value).code)) && (((a.value).found) == ((b.value).found)) && nova_str_eq((a.value).program, (b.value).program));
+}
+static inline nova_bool nova_opt_eq_NovaValue_ExitStatus(NovaOpt_NovaValue_ExitStatus a, NovaOpt_NovaValue_ExitStatus b) {
+    if (a.tag != b.tag) return 0;
+    if (a.tag == NOVA_TAG_Option_None) return 1;
+    return ((((a.value).code) == ((b.value).code)));
+}
 static inline nova_bool nova_opt_eq_Nova_CharError_p(NovaOpt_Nova_CharError_p a, NovaOpt_Nova_CharError_p b) {
     if ((a.value == NULL) != (b.value == NULL)) return 0;
     if (a.value == NULL) return 1;
@@ -3367,10 +3355,25 @@ static inline nova_bool nova_opt_eq_Nova_RangeError_p(NovaOpt_Nova_RangeError_p 
     if (a.value == NULL) return 1;
     return ((((Nova_RangeError*)(a.value)))->tag == (((Nova_RangeError*)(b.value)))->tag);
 }
+static inline nova_bool nova_opt_eq__NovaTuple_2_8_nova_int_9_nova_char(NovaOpt__NovaTuple_2_8_nova_int_9_nova_char a, NovaOpt__NovaTuple_2_8_nova_int_9_nova_char b) {
+    if (a.tag != b.tag) return 0;
+    if (a.tag == NOVA_TAG_Option_None) return 1;
+    return ((((a.value).f0) == ((b.value).f0)) && (((a.value).f1) == ((b.value).f1)));
+}
+static inline nova_bool nova_opt_eq_NovaValue_Utf8Error(NovaOpt_NovaValue_Utf8Error a, NovaOpt_NovaValue_Utf8Error b) {
+    if (a.tag != b.tag) return 0;
+    if (a.tag == NOVA_TAG_Option_None) return 1;
+    return ((((a.value).byte_offset) == ((b.value).byte_offset)));
+}
 static inline nova_bool nova_opt_eq_Nova_ParseIntError_p(NovaOpt_Nova_ParseIntError_p a, NovaOpt_Nova_ParseIntError_p b) {
     if ((a.value == NULL) != (b.value == NULL)) return 0;
     if (a.value == NULL) return 1;
     return (((((Nova_ParseIntError*)(a.value)))->tag == (((Nova_ParseIntError*)(b.value)))->tag) && ((((Nova_ParseIntError*)(a.value)))->tag != NOVA_TAG_ParseIntError_InvalidDigit || ((((((Nova_ParseIntError*)(a.value)))->payload.InvalidDigit.at) == ((((Nova_ParseIntError*)(b.value)))->payload.InvalidDigit.at)))));
+}
+static inline nova_bool nova_opt_eq_nova_uint(NovaOpt_nova_uint a, NovaOpt_nova_uint b) {
+    if (a.tag != b.tag) return 0;
+    if (a.tag == NOVA_TAG_Option_None) return 1;
+    return (memcmp(&a.value, &b.value, sizeof(nova_uint)) == 0);
 }
 static inline nova_bool nova_opt_eq_Nova_ParseBoolError_p(NovaOpt_Nova_ParseBoolError_p a, NovaOpt_Nova_ParseBoolError_p b) {
     if ((a.value == NULL) != (b.value == NULL)) return 0;
@@ -3381,6 +3384,11 @@ static inline nova_bool nova_opt_eq_Nova_ParseCharError_p(NovaOpt_Nova_ParseChar
     if ((a.value == NULL) != (b.value == NULL)) return 0;
     if (a.value == NULL) return 1;
     return ((((Nova_ParseCharError*)(a.value)))->tag == (((Nova_ParseCharError*)(b.value)))->tag);
+}
+static inline nova_bool nova_opt_eq__NovaTuple_2_8_nova_str_8_nova_str(NovaOpt__NovaTuple_2_8_nova_str_8_nova_str a, NovaOpt__NovaTuple_2_8_nova_str_8_nova_str b) {
+    if (a.tag != b.tag) return 0;
+    if (a.tag == NOVA_TAG_Option_None) return 1;
+    return (nova_str_eq((a.value).f0, (b.value).f0) && nova_str_eq((a.value).f1, (b.value).f1));
 }
 static inline nova_bool nova_opt_eq_NovaTuple_FloatingDecimal64(NovaOpt_NovaTuple_FloatingDecimal64 a, NovaOpt_NovaTuple_FloatingDecimal64 b) {
     if (a.tag != b.tag) return 0;
@@ -3406,6 +3414,11 @@ static inline nova_bool nova_opt_eq_Nova_ReadBufferError_p(NovaOpt_Nova_ReadBuff
     if ((a.value == NULL) != (b.value == NULL)) return 0;
     if (a.value == NULL) return 1;
     return (((((Nova_ReadBufferError*)(a.value)))->tag == (((Nova_ReadBufferError*)(b.value)))->tag) && ((((Nova_ReadBufferError*)(a.value)))->tag != NOVA_TAG_ReadBufferError_UnexpectedEnd || ((((((Nova_ReadBufferError*)(a.value)))->payload.UnexpectedEnd.wanted) == ((((Nova_ReadBufferError*)(b.value)))->payload.UnexpectedEnd.wanted)) && (((((Nova_ReadBufferError*)(a.value)))->payload.UnexpectedEnd.available) == ((((Nova_ReadBufferError*)(b.value)))->payload.UnexpectedEnd.available)))));
+}
+static inline nova_bool nova_opt_eq__NovaTuple_2_8_nova_int_8_nova_int(NovaOpt__NovaTuple_2_8_nova_int_8_nova_int a, NovaOpt__NovaTuple_2_8_nova_int_8_nova_int b) {
+    if (a.tag != b.tag) return 0;
+    if (a.tag == NOVA_TAG_Option_None) return 1;
+    return ((((a.value).f0) == ((b.value).f0)) && (((a.value).f1) == ((b.value).f1)));
 }
 
 

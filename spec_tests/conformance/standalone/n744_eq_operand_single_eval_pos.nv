@@ -40,6 +40,7 @@ module standalone.n744_eq_operand_single_eval_pos
 
 type Inner { mut k int }
 
+#impl(Equal)
 type Tagged enum
     | Text(str)
     | Num(int)
@@ -47,6 +48,7 @@ type Tagged enum
     | Wrap(Inner)
     | Blank
 
+#impl(Equal)
 type VRec value { ro a int, ro b int }
 
 // Каждая фабрика отмечается в журнале ровно одним push при каждом вызове.

@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_MATCH_NON_EXHAUSTIVE
+//
+// Registry 221.1 #1415: an empty `match` over any inhabited type covers
+// nothing -- here a record.
+
+module neg.p1415_empty_record_neg
+
+type P1415Pt { x int, y int }
+
+fn main() Io -> () {
+    ro p = P1415Pt { x: 1, y: 2 }
+    // nova:expect E_MATCH_NON_EXHAUSTIVE -- an empty `match` covers no value of the record
+    ro m = match p { }
+    println("after")
+}

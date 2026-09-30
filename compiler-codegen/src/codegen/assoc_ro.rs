@@ -16,7 +16,8 @@
 //! Plan 152.4, only keyed by the qualified `Type_NAME` symbol instead of a
 //! bare name).
 
-use crate::ast::AssocConst;
+use crate::ast::{AssocConst, ConstDecl, Expr, Item, Module};
+use std::collections::HashSet;
 use super::emit_c::CEmitter;
 
 impl CEmitter {
@@ -26,6 +27,30 @@ impl CEmitter {
     // is an edge like any other and two separate loops could not order it. The
     // symbol convention is unchanged: `Type_NAME` is both the Nova-level key
     // and the C-name qualifier (`[M-157-assoc-ro-lazy-read]`).
+
+    /// #1412: module `const` and `const Type.NAME` (deferred by `emit_type_decl` into
+    /// `pending_assoc_consts`) in ONE pass, in dependency order -- keys and edges as the module-`ro`
+    /// order (D184 amend): a `const Type.NAME` may read a module `const` and hold a type declared
+    /// after its own, and used to be emitted inside its type's declaration, ahead of both.
+    pub(crate) fn emit_consts_ordered(&mut self, module: &Module, skip: impl Fn(&ConstDecl) -> bool) -> Result<(), String> {
+        let assoc = std::mem::take(&mut self.pending_assoc_consts);
+        let mut nodes: Vec<(crate::diag::FileId, String, &Expr, Result<&ConstDecl, &(String, AssocConst)>)> = Vec::new();
+        for item in &module.items {
+            if let Item::Const(c) = item {
+                if !skip(c) { nodes.push((c.span.file_id, c.name.clone(), &c.value, Ok(c))); }
+            }
+        }
+        for a in &assoc { nodes.push((a.1.span.file_id, format!("{}.{}", a.0, a.1.name), &a.1.value, Err(a))); }
+        let deps: Vec<(String, String, Vec<String>)> = nodes.iter().map(|(fid, k, v, _)| {
+            let mut f = HashSet::new();
+            crate::free_idents::collect_truly_free_idents(v, &mut HashSet::new(), &mut f);
+            (self.init_dep_sym(*fid, k), String::new(), f.iter().map(|r| self.init_dep_sym(*fid, r)).collect())
+        }).collect();
+        for i in Self::topo_sort_const_inits(&deps) {
+            match nodes[i].3 { Ok(c) => self.emit_const_decl(c)?, Err((tn, ac)) => self.emit_assoc_const_entry(tn, ac)? }
+        }
+        Ok(())
+    }
 
     /// [fix #1361] Non-lazy (strict) assoc `const Type.NAME` entry, called
     /// from `emit_type_decl`'s (emit_c.rs) `assoc_consts` loop for every
@@ -57,7 +82,9 @@ impl CEmitter {
             self.infer_expr_c_type(&ac.value)
         };
         match self.emit_const_expr_typed(&ac.value, Some(&ty_c)) {
-            Ok(val) => {
+            // #1412: the module-`const` rule -- a braced value for a POINTER type is a heap record,
+            // not a `static const` initializer; it goes the lazy way like `emit_const_decl`'s.
+            Ok(val) if Self::const_value_is_static(&ty_c, &val) => {
                 self.line(&format!(
                     "{}const {} {} = {};",
                     self.top_level_storage(), ty_c, symbol, val
@@ -65,12 +92,18 @@ impl CEmitter {
                 self.var_types.insert(symbol, ty_c);
                 Ok(())
             }
-            Err(e) => self.emit_lazy_const(&symbol, &symbol, &ty_c, &ac.value).map_err(|e2| {
+            other => self.emit_lazy_const(&symbol, &symbol, &ty_c, &ac.value).map_err(|e2| {
                 format!(
                     "assoc const `{}.{}` codegen failed: {} (lazy fallback also failed: {})",
-                    type_name, ac.name, e, e2
+                    type_name, ac.name, other.err().unwrap_or_default(), e2
                 )
             }),
         }
+    }
+
+    /// `const` value `val` of C type `ty_c` can be a `static const` initializer -- not a braced
+    /// (record) value for a pointer type, which is a heap record and is built by lazy init.
+    pub(crate) fn const_value_is_static(ty_c: &str, val: &str) -> bool {
+        !(ty_c.ends_with('*') && val.starts_with('{'))
     }
 }
