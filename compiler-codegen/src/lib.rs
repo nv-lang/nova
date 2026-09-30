@@ -20,6 +20,7 @@ pub mod escape_analyze;
 pub mod doc;
 pub mod effect_surface;
 pub mod field_cache;
+pub mod free_idents;
 pub mod git_cache;
 pub mod imports;
 pub mod imports_stats;

@@ -1,0 +1,8 @@
+module d184_module_ro_two_modules.d184_mrt_side
+
+// The same names as the importing module, in the opposite roles: here
+// `d184_x` is a fn and `d184_z` the module-level `ro` that calls it.
+fn d184_x() -> int => 2
+ro d184_z = d184_x() + 1
+
+export fn d184_side() -> int => d184_z

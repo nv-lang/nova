@@ -871,6 +871,18 @@ ro cache_root str = compute_root()    // ok -- private form, bare name
 export ro cache_root str = compute_root()   // error: E_EXPORT_RO_UNQUALIFIED
 ```
 
+**Initialization order of module-level values.** Module-level `ro`
+initializers run once before `main` in DEPENDENCY order, not declaration
+order: a value whose name another initializer reads is computed first. A
+dependency cycle (a self-read included) has no order and is
+`E_MODULE_INIT_CYCLE` ([D184, amendment 2026-09-30](decisions/03-syntax.md)):
+
+```nova
+ro second = first + 1        // ok -- first is computed first
+ro first = three()
+ro a = a + 1                 // error: E_MODULE_INIT_CYCLE (a -> a)
+```
+
 **Record fields:** without `priv`, fields of an `export` type are public by
 default (D47). Privacy — the `priv` modifier (`priv`/`priv(type)`/`priv(file)`,
 D220 + D281) on a **field** (`priv internal_id u64`) or on a **type**, setting
