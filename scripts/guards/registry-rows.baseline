@@ -1436,6 +1436,9 @@
 # 2026-10-01, integrator nova-20: rows 1390 -> 1399, max 1448 (merge of Carina's p274-e9s4: #1430-#1436,
 #   #1439, #1443 land beside main's #1441, #1442, #1444-#1448; all of those leave gaps).
 # 2026-10-01, integrator nova-20: rows -> 1401, max -> 1450 (merge of the cloud session's p1343: #1449 (K1, mut x T of a generic free fn loses the write, blocks the tag) and #1450 (K2, overlapping generic overloads T vs []T)).
+# 2026-10-01, integrator nova-20: rows -> 1403, max -> 1452 (merge of spec/d55-str-bytes: #1451 (K2, let/return of a non-identifier str into []u8 fails in C) and #1452 (K1, str accepted in a mut []u8 position -- writes into the string's bytes; blocks the tag)).
+rows=1403
+max=1452
 rows=1401
 max=1450
 rows=1399
