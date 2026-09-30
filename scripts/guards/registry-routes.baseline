@@ -1498,7 +1498,8 @@ no_caveat=0
 # 2026-09-30, интегратор nova-33: 86 -> 85, №1382 закрыт (окно Карины, eba04138a).
 # 2026-10-01, интегратор nova-20: 85 -> 86, заведена №1448 (облачная сессия №1260): значение поля в литерале
 # записи не сверяется с типом поля — программа молча печатает поле чужой записи, К1, тихая мискомпиляция.
-blockers=86
+# 2026-10-01, integrator nova-20: 86 -> 87, merge of the cloud session's p1343: #1449 (K1, mut x T of a generic free fn loses the write, blocks the tag) and #1450 (K2, overlapping generic overloads T vs []T).
+blockers=87
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed

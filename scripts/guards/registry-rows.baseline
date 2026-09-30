@@ -1435,6 +1435,9 @@
 # дефект, а стиль, и `nova check`+`nova test` подтвердили каждую правку.
 # 2026-10-01, integrator nova-20: rows 1390 -> 1399, max 1448 (merge of Carina's p274-e9s4: #1430-#1436,
 #   #1439, #1443 land beside main's #1441, #1442, #1444-#1448; all of those leave gaps).
+# 2026-10-01, integrator nova-20: rows -> 1401, max -> 1450 (merge of the cloud session's p1343: #1449 (K1, mut x T of a generic free fn loses the write, blocks the tag) and #1450 (K2, overlapping generic overloads T vs []T)).
+rows=1401
+max=1450
 rows=1399
 max=1448
 # 2026-10-01, integrator nova-20: rows 1389 -> 1390 (merge of guards/ci-proven-push: #1442, novac-gate red in CI
