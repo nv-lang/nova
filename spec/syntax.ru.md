@@ -885,6 +885,18 @@ ro cache_root str = compute_root()    // ok -- private form, bare name
 export ro cache_root str = compute_root()   // error: E_EXPORT_RO_UNQUALIFIED
 ```
 
+**Порядок инициализации значений уровня модуля.** Инициализаторы
+module-level `ro` исполняются один раз до `main` в порядке ЗАВИСИМОСТЕЙ, а
+не объявления: значение, чьё имя читает другой инициализатор, вычисляется
+первым. Цикл зависимостей (и самочтение) порядка не имеет —
+`E_MODULE_INIT_CYCLE` ([D184, амендмент 2026-09-30](decisions/03-syntax.md)):
+
+```nova
+ro second = first + 1        // ok -- first is computed first
+ro first = three()
+ro a = a + 1                 // error: E_MODULE_INIT_CYCLE (a -> a)
+```
+
 **Поля record:** без `priv` поля `export`-типа публичны по умолчанию
 (D47). Приватность — модификатор `priv` (`priv`/`priv(type)`/`priv(file)`,
 D220 + D281) на **поле** (`priv internal_id u64`) или на **типе**, задавая

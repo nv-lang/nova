@@ -61,6 +61,12 @@ import ../types.{TyId, no_ty}
 /// the walk becomes unconditional, because then its answer on bad input is a
 /// diagnostic and not a death.
 export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) {
+    // One state per constant-table row (274.5 S6): module values are typed
+    // in dependency order, and this is where the walk keeps its place.
+    mut mv_state = []int.new()
+    for _ in 0..ctx.consts.rows.len() {
+        mv_state.push(0)
+    }
     mut c = Checker {
         src, ctx,
         res: FnIndex.build(ctx.fns),
@@ -74,8 +80,8 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
         tail_value_body: no_node(),
         ret_expect: no_ty(),
         value_expect: no_ty(),
-        link_check: true,
         loop_depth: 0,
+        mv_state,
         ret_unit: false,
         substs: []TyId.new(),
     }
@@ -145,8 +151,8 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, substs []TyId, cap 
         tail_value_body: no_node(),
         ret_expect: no_ty(),
         value_expect: no_ty(),
-        link_check: true,
         loop_depth: 0,
+        mv_state: []int.new(),
         ret_unit: false,
         substs,
     }

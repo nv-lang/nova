@@ -285,10 +285,8 @@ fn Checker mut @type_handler_op(op Node, eff_name str, schema EffectDef) -> () {
     // its tail expression is the returned value. BOTH are saved and
     // restored: the literal is typed
     // INSIDE some enclosing fn body whose return expectation must survive
-    // -- the same save/restore `@value_expect` keeps around calls. The
-    // enclosing with-arm's `link_check = false` covers the body: a with
-    // statement is never lowered, so a call inside a handler body has no
-    // link to defend either.
+    // -- the same save/restore `@value_expect` keeps around calls. A call
+    // inside the body is link-checked like any other (E.9 step 1).
     ro body = okids[okids.len() - 1]
     // A missing body is the parser's marker; the walk named it.
     // SILENT-OK: the refusal belongs to the shape walk that planted the
@@ -310,10 +308,9 @@ fn Checker mut @type_handler_op(op Node, eff_name str, schema EffectDef) -> () {
     // its tail expression is the returned value. BOTH are saved and
     // restored: the literal is typed
     // INSIDE some enclosing fn body whose return expectation must survive
-    // -- the same save/restore `@value_expect` keeps around calls. The
-    // enclosing with-arm's `link_check = false` covers the body: a with
-    // statement is never lowered, so a call inside a handler body has no
-    // link to defend either. The two shapes are a statement sequence, the
+    // -- the same save/restore `@value_expect` keeps around calls. A call
+    // inside the body is link-checked like any other (E.9 step 1). The
+    // two shapes are a statement sequence, the
     // `@type_body` precedent -- no `else` after the variant test (P21).
     if body.kind_of() == NodeKind.Block {
         @tail_value_body = body.id_of()

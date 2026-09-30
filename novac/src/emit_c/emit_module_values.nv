@@ -1,0 +1,93 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Go -- package-level variables with a non-constant initializer are
+// computed ONCE, in dependency order, before `main` (Go spec, "Package
+// initialization"), and Rust's `static` -- one cell, a stable address --
+// against `const`, which is substituted at each use. The order is the
+// checker's depth-first finish order over the reads between values
+// (check/typing.nv, `@type_module_value_at`); a cycle is refused there.
+// Role: what a MODULE VALUE (`ro NAME = expr`, D184's `Item::Let`) becomes
+//   in C: a `static` cell declared before any function reads it, a function
+//   that computes it -- its initializer lowered by the same one door as any
+//   value body -- and the lines the shell's `nova_consts_init()` runs before
+//   `main` (the INIT slot). A read of the value is the cell's name
+//   (emit_expr.nv, the constant arm).
+// Used by: emit_c.nv -- `emit`, around the file's functions.
+// Guarded by: check-novac-differential.sh over novac/fixtures/module_ro/pos_1.nv
+//   (the value computed once, before main), and nova test
+//   novac/src/pipeline/module_value_test.nv (the C shape, the order).
+
+module novac.emit_c
+
+import ../sem.{c_type, module_value_c_name, module_value_init_c_name, ConstRow, raw_crow}
+import ../diag.{ice}
+import ../lower.{FnBuilder}
+
+/// THE read of a module-level constant or value, bare (`K`) or qualified
+/// (`Type.K`): a CONSTANT is substituted (274.5 wave B2 -- no C symbol of
+/// its own), a module VALUE is its cell, computed once before `main`. One
+/// door for both read shapes, so the two cannot print a constant two ways.
+fn Emitter mut @emit_const_read(row ConstRow) -> () {
+    ro cd = @ctx.consts.rows[raw_crow(row)]
+    if cd.once {
+        @body.append(module_value_c_name(cd.name))
+    } else if cd.init.len() > 0 {
+        @emit_expr(cd.init[0])
+    } else {
+        ice("emit: a constant recorded with no initializer")
+    }
+}
+
+/// One `static` cell per module value, declared before any function reads it.
+/// Its type is the INITIALIZER's, recorded once in the file's channel
+/// (`check/typing.nv`, `@type_file`) -- the emitter decides no type.
+fn Emitter mut @emit_module_value_cells() -> () {
+    for cd in @ctx.consts.rows {
+        if !cd.once { continue }
+        ro ty = @out.type_of(cd.init[0].id_of())
+        @body.append("static ${c_type(@ctx, ty)} ${module_value_c_name(cd.name)};\n")
+    }
+}
+
+/// One initializer function per module value: the initializer lands in the
+/// return place through `lower_place`, the same door a `=> expr` body takes,
+/// so every form a value body may hold is a form an initializer may hold.
+/// Written AFTER the file's functions, because an initializer may call them.
+fn Emitter mut @emit_module_value_inits() -> () {
+    for cd in @ctx.consts.rows {
+        if !cd.once { continue }
+        ro ty = @out.type_of(cd.init[0].id_of())
+        @body.append("static ${c_type(@ctx, ty)} ${module_value_init_c_name(cd.name)}(void) {\n")
+        @lo.ir = FnBuilder.new(ty)
+        @lo.lower_place(cd.init[0], @lo.ir.ret_place())
+        @lo.ir.end_body()
+        @print_body(@lo.ir.finish())
+        @body.append("}\n")
+    }
+}
+
+/// The text of the shell's INIT slot: for each module value, in the
+/// checker's DEPENDENCY order (`CheckOut.module_value_order`, D200's
+/// topological `nova_consts_init()`), its cell becomes a GC root and is
+/// computed. The root is interop -- the runtime's `nova_gc_add_root`, the call
+/// the oracle makes for its own module cells: a cell outside the heap holds
+/// the only pointer to its value.
+fn Emitter @module_value_init_calls() -> str {
+    consume s = StringBuilder.new()
+    mut cells = 0
+    for cd in @ctx.consts.rows {
+        if cd.once {
+            cells += 1
+        } else {
+            // A constant has no cell: it is substituted at its reads.
+        }
+    }
+    ro order = @out.module_value_order()
+    assert(order.len() == cells, "emit: a module value the checker never ordered")
+    for row in order {
+        ro cd = @ctx.consts.rows[row]
+        ro c = module_value_c_name(cd.name)
+        s.append("    nova_gc_add_root(&${c}, (char*)(&${c}) + sizeof(${c}));\n")
+        s.append("    ${c} = ${module_value_init_c_name(cd.name)}();\n")
+    }
+    s
+}

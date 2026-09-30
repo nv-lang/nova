@@ -1,0 +1,31 @@
+module module_ro.pos_1
+
+// A module value `ro NAME = expr` (274.5 section 6, D184's `Item::Let`): one
+// cell, computed ONCE and BEFORE `main` (D200, spec/decisions/02-types.md:9319).
+// The initializer calls `announce`, which prints -- so the first line of the
+// output must be its line, exactly once, although two functions read the
+// value. Substituting the initializer at each read would print it twice and
+// after `main` began. Behaviour byte-for-byte with the oracle (novac-e1-smoke).
+
+fn announce() -> int {
+    println("init")
+    3
+}
+
+ro NUMS = []int.of(1, 2, announce())
+
+fn total() -> int {
+    mut s = 0
+    for n in NUMS {
+        s += n
+    }
+    s
+}
+
+fn count() -> int => NUMS.len()
+
+fn main() {
+    println("main")
+    println(total())
+    println(count())
+}

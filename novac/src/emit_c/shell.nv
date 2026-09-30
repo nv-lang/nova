@@ -120,13 +120,17 @@ type Emitter consume {
         /// lookup written here (2026-09-04, V3-2)
 }
 
-/// Splice string literals and the emitted body into the shell's two slots.
-fn render(lits []str, body str) -> str {
+/// Splice string literals, the emitted body and the module values'
+/// initialization into the shell's three slots. The INIT slot is the last
+/// line of the shell's `nova_consts_init()`, which `main` runs before the
+/// program (scripts/tools/novac-regen-shell.sh stamps it).
+fn render(lits []str, body str, init str) -> str {
     ro tpl_bytes = shell_template()
     ro tpl = tpl_bytes.to_str() ?? ice("emit: shell.tpl.c is not UTF-8")
     consume out = StringBuilder.new()
     mut emitted_lits = false
     mut emitted_body = false
+    mut emitted_init = false
     for line in tpl.lines() {
         if line.contains("__NOVAC_STRLITS__") {
             emit_strlit_defs(out, lits)
@@ -134,12 +138,15 @@ fn render(lits []str, body str) -> str {
         } else if line.contains("__NOVAC_BODY__") {
             out.append(body)
             emitted_body = true
+        } else if line.contains("__NOVAC_INIT__") {
+            out.append(init)
+            emitted_init = true
         } else {
             out.append(line)
             out.append("\n")
         }
     }
-    assert(emitted_lits && emitted_body, "emit: template slots missing")
+    assert(emitted_lits && emitted_body && emitted_init, "emit: template slots missing")
     out
 }
 /// The two bytes this door compares against; the character is in the comment

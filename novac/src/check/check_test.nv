@@ -108,7 +108,15 @@ test "arg position: a typed array literal's `.of(...)` arguments get it too (reg
     // child after it now gets the same argument position a `Call`'s own
     // children get for free.
     ro src = "module m\n\ntype Point value {\n    x int\n    y int\n}\n\nro pts = []Point.of(Point { x: 1, y: 2 }, Point { x: 3, y: 4 })\n"
-    assert(diagnose(src) == 0, "a record constructor as a `.of(...)` argument is a call argument")
+    // The POSITION is this test's subject. Since 274.5 section 6 a module
+    // value's initializer is also TYPED, and typing names the one true
+    // obstacle this std-less harness has (the `.of` surface of a Vec of a
+    // record the file declares) -- so the pin is: exactly one subset
+    // refusal, and not the position refusal.
+    assert(diagnose(src) == 1, "one refusal, the shell instance: ${diagnose_first_msg(src)}")
+    ro msg = diagnose_first_msg(src)
+    assert(!msg.contains("compiled only as"), "a record constructor as a `.of(...)` argument is a call argument -- got: ${msg}")
+    assert(msg.contains("outside the subset"), msg)
 }
 
 test "match agreement: a later match's disagreeing arms are still checked after an earlier one's own (registry #1249)" {
@@ -237,7 +245,11 @@ test "qualified module constant: `Type.NAME` resolves through its own registry k
     // the resolution branch removed, this same source refused twice (the
     // qualified-name read AND, upstream, the parser's own `E_NOVAC_SUBSET`
     // fallback before `@const_decl`/`@let_decl` learned the `.` branch).
-    ro src = "module m\n\ntype BigInt value {\n    sign int\n}\n\nfn zero() -> BigInt => BigInt { sign: 0 }\n\nconst BigInt.ZERO BigInt = zero()\n\nfn use_it() -> int {\n    BigInt.ZERO.sign\n}\n"
+    // A SCALAR qualified constant since 274.5 section 6: the old `= zero()` is
+    // a CALL, and a call in a `const` is E_CONST_NOT_CONSTEXPR (D184) -- the
+    // program this test held was not Nova. The subject, `Type.NAME` resolving
+    // through its registry key before the "not a sum" refusal, is unchanged.
+    ro src = "module m\n\ntype BigInt value {\n    sign int\n}\n\nconst BigInt.LIMIT int = 7\n\nfn use_it() -> int {\n    BigInt.LIMIT + 1\n}\n"
     assert(diagnose(src) == 0, "a qualified constant's own type must answer its use site, not the sum-variant refusal")
 }
 

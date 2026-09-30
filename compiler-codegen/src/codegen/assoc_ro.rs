@@ -16,50 +16,16 @@
 //! Plan 152.4, only keyed by the qualified `Type_NAME` symbol instead of a
 //! bare name).
 
-use crate::ast::{AssocConst, Item, Module};
+use crate::ast::AssocConst;
 use super::emit_c::CEmitter;
 
 impl CEmitter {
-    /// Emit a lazy-static global (via `emit_lazy_const`) for every
-    /// `is_lazy_ro` entry across all types' `assoc_consts` in `module`.
-    ///
-    /// Called from `emit_module` right after the bare module-level `ro`
-    /// loop — the SAME pipeline position (after `/*__GENERIC_TYPE_DEFS__*/`
-    /// has been spliced in, so a mono'd generic C type — e.g. `[]u32` limbs
-    /// — already has its typedef; method-receiver/generic routing tables are
-    /// also fully populated by then, unlike inside `emit_type_decl`, which
-    /// runs too early for that).
-    ///
-    /// The mangled assoc symbol (`Type_NAME`, same convention as the
-    /// constexpr `const Type.NAME` path in `emit_type_decl`) is passed to
-    /// `emit_lazy_const` as BOTH the Nova-level registry key AND the C-name
-    /// qualifier — it cannot collide with a real Nova source identifier
-    /// (Nova identifiers never contain this type-qualifier underscore) and
-    /// is the exact key `emit_expr`'s Path-2-segment read arm checks against
-    /// `lazy_consts` (`[M-157-assoc-ro-lazy-read]`, emit_c.rs).
-    pub(super) fn emit_assoc_ro_lazy_globals(&mut self, module: &Module) -> Result<(), String> {
-        for item in &module.items {
-            if let Item::Type(t) = item {
-                for ac in &t.assoc_consts {
-                    if !ac.is_lazy_ro {
-                        continue;
-                    }
-                    let symbol = format!("{}_{}", t.name, ac.name);
-                    let ty_c = if let Some(ty) = &ac.ty {
-                        self.type_ref_to_c(ty)?
-                    } else {
-                        self.infer_expr_c_type(&ac.value)
-                    };
-                    self.emit_lazy_const(&symbol, &symbol, &ty_c, &ac.value)
-                        .map_err(|e| format!(
-                            "assoc ro `{}.{}` codegen failed: {}",
-                            t.name, ac.name, e
-                        ))?;
-                }
-            }
-        }
-        Ok(())
-    }
+    // D184 amendment 2026-09-30: `ro Type.NAME` is no longer emitted here in a
+    // loop of its own. It joined the bare module-level `ro` in ONE dependency
+    // graph (`emit_module`, emit_c.rs), because a read between the two kinds
+    // is an edge like any other and two separate loops could not order it. The
+    // symbol convention is unchanged: `Type_NAME` is both the Nova-level key
+    // and the C-name qualifier (`[M-157-assoc-ro-lazy-read]`).
 
     /// [fix #1361] Non-lazy (strict) assoc `const Type.NAME` entry, called
     /// from `emit_type_decl`'s (emit_c.rs) `assoc_consts` loop for every
@@ -80,8 +46,8 @@ impl CEmitter {
     /// intent, and still what every scalar/record assoc const emits,
     /// byte-identical — falling back to the lazy-static-global path (same
     /// `Type_NAME` symbol as both the Nova-level key and the C-name
-    /// qualifier, exactly the convention `emit_assoc_ro_lazy_globals` above
-    /// already uses for `ro Type.NAME`) only when the RHS isn't
+    /// qualifier, exactly the convention `ro Type.NAME` uses in
+    /// `emit_module`'s ordered module-value loop) only when the RHS isn't
     /// constexpr-representable.
     pub(super) fn emit_assoc_const_entry(&mut self, type_name: &str, ac: &AssocConst) -> Result<(), String> {
         let symbol = format!("{}_{}", type_name, ac.name);

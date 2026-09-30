@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E_MODULE_INIT_CYCLE
+//
+// D184 amendment 2026-09-30: two module-level `ro` whose initializers read
+// each other have no initialization order -- a language error, not a panic
+// (the oracle used to die in codegen with INTERNAL-PANIC). The error sits on
+// the declaration whose read closes the cycle and names the chain.
+module neg.d184_module_ro_init_cycle_neg
+
+fn d184c_three() -> int => 3
+
+ro d184c_a = d184c_b + d184c_three()
+// nova:expect E_MODULE_INIT_CYCLE -- d184c_b reads d184c_a, which reads d184c_b: no order computes them
+ro d184c_b = d184c_a + d184c_three()
+
+fn main() Io -> () {
+    println(d184c_a)
+}
