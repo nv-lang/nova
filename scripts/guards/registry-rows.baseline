@@ -1433,6 +1433,13 @@
 # (W_REDUNDANT_OF/W_COERCE_EXPLICIT_REDUNDANT/W_NON_COMPOUND_ASSIGN, унаследованы
 # от волны [T consume] 2026-09-25) почищены мирно, без строки реестра -- они не
 # дефект, а стиль, и `nova check`+`nova test` подтвердили каждую правку.
+# 2026-09-30, интегратор nova-33: rows 1346 -> 1348, max 1395 -> 1400, и дыры 1396-1398
+#   объявлены: номера ВЫДАНЫ помощнику (ветка registry/ro-order-and-shadow — порядок модульного
+#   `ro`, затенение, INTERNAL-PANIC .map), строки живут в ЕГО ветке; при слиянии сократить.
+#   №1399 -- модульная const в лямбде голым именем, №1400 -- импортированная `frame` значением
+#   (окно claude-limits, перемерено; №1400 минимальным повтором НЕ воспроизведён).
+rows=1348
+max=1400
 # 2026-09-30, интегратор nova-33: rows 1345 -> 1346, max 1394 -> 1395. №1395 -- указатель-носитель
 # `Self` у value-типа не доходит до прямого вызова, `-> Self` @clone и обёртки `<` (найдено при №1353).
 rows=1346
@@ -1908,7 +1915,7 @@ stale_gaps=0
 # nomer I v gaps=, I so strokoy schitaetsya 'protuhshey dyroy'.
 # 2026-09-21: №1209 ПРИЕХАЛ и СНЯТ из gaps=
 # (писал интегратор, как и планировалось). №1210-1211 всё ещё ждёт Карину.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1396-1398
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding
