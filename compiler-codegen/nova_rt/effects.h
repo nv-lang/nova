@@ -1119,6 +1119,12 @@ typedef struct NovaInterruptFrame {
      * leaks past the with-block boundary. See effects.c for why this is
      * necessary when interrupt fires inside a Fail handler body. */
     struct NovaInterruptFrame* saved_handler_iframe;
+    /* #1402 (TAIL, same discipline as NovaFailFrame.arm_shield): a with-block
+     * frame puts back the handler slots its block installed -- `restore` is
+     * generated per block and reads the saved values from `restore_prevs`.
+     * NULL for defer frames. Run only through nova_interrupt_leave(). */
+    void (*restore)(void** prevs);
+    void** restore_prevs;
 } NovaInterruptFrame;
 
 #ifdef _MSC_VER
@@ -1142,7 +1148,28 @@ static inline void nova_interrupt_push(NovaInterruptFrame* f) {
     f->kind = NOVA_IFRAME_WITHBLOCK;
     f->prev = _nova_interrupt_top;
     f->saved_handler_iframe = _nova_current_handler_iframe;
+    f->restore = NULL;
     _nova_interrupt_top = f;
+}
+
+/* #1402: a with-block's frame, carrying how to take its handlers back out. */
+static inline void nova_interrupt_push_with(NovaInterruptFrame* f,
+                                            void (*restore)(void**), void** prevs) {
+    nova_interrupt_push(f);
+    f->restore = restore;
+    f->restore_prevs = prevs;
+}
+
+/* #1402: THE door out of a with-block, for every exit path -- fall-through,
+ * `interrupt`, `return`/`break`/`continue`/`?` (codegen), and an interrupt
+ * that nova_interrupt() routes PAST this frame to an outer owner. Before it,
+ * only fall-through restored the handlers: an early exit left the block's
+ * handler installed and its (soon dead) frame on this stack. Resetting to
+ * `f->prev` instead of popping one level also drops frames a longjmp left
+ * above `f` -- the same hard reset `_nova_fail_top = ff.prev` does. */
+static inline void nova_interrupt_leave(NovaInterruptFrame* f) {
+    if (f->restore) f->restore(f->restore_prevs);
+    _nova_interrupt_top = f->prev;
 }
 
 /* Plan 61 followup #1: defer-scope push — sets kind=DEFER_SCOPE так что
@@ -1156,6 +1183,7 @@ static inline void nova_interrupt_push_defer(NovaInterruptFrame* f) {
     f->kind = NOVA_IFRAME_DEFER_SCOPE;
     f->value = 0;
     f->value_ptr = NULL;
+    f->restore = NULL;
     f->prev = _nova_interrupt_top;
     f->saved_handler_iframe = _nova_current_handler_iframe;
     _nova_interrupt_top = f;

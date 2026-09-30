@@ -1,0 +1,24 @@
+// EXPECT_STDOUT i64=3 i32=-7 sum=-4
+//
+// Registry 221.1 #895, second carrier: a STATIC type-set blanket, the form
+// D310 spells out (`fn[T SignedInts] T.parse(...)`). No static blanket
+// existed in std or spec_tests, so the form had never run: `nova check` was
+// green and `nova build` died with
+// `[INTERNAL-PANIC] [E_CODEGEN_TYPE_UNKNOWN] Path call return type unknown`.
+// The blanket is registered under its typevar (`T`), and the call names the
+// primitive (`i64`); the checker accepted it without writing a callee or a
+// type into the channel.
+//
+// Two members of the set, so one mono instance per primitive is required
+// (`i32` has a different C type than `i64`); the instance half of the blanket
+// is called on each result, and the sum crosses both.
+module standalone.p895_static_set_blanket
+
+fn[T SignedInts] T @p895_ordinal() -> int => @ as int
+fn[T SignedInts] T.p895_from_ordinal(i int) -> T => i as T
+
+fn main() Io -> () {
+    ro x = i64.p895_from_ordinal(3)
+    ro y = i32.p895_from_ordinal(-7)
+    print("i64=${x.p895_ordinal()} i32=${y.p895_ordinal()} sum=${x.p895_ordinal() + y.p895_ordinal()}")
+}

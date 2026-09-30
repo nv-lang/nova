@@ -15,21 +15,23 @@
 // Пять клеток ШИРИНЫ: массив скаляров, массив записей (ближайшая к builtins.nv's
 // `universe` форма), пустой массив, вложенный массив (`[][]int`), и обычный
 // (не ассоциированный) массив-const — контроль, что модульный путь не тронут.
+// №1394: литерал `[]T` — выделение в куче, а `const` не бывает выделением (03-syntax.md
+// «`const` требует»), поэтому значения объявлены `ro` — тот же путь ленивой эмиссии.
 module standalone.p1361_assoc_const_arraylit
 
 type Box { tag int }
-const Box.NUMS []int = [1, 2, 3]
-const Box.EMPTY []int = []
+ro Box.NUMS []int = [1, 2, 3]
+ro Box.EMPTY []int = []
 
 type Row { name str, n int }
-const Row.TABLE []Row = [Row { name: "a", n: 1 }, Row { name: "b", n: 2 }]
+ro Row.TABLE []Row = [Row { name: "a", n: 1 }, Row { name: "b", n: 2 }]
 
 type Grid { id int }
-const Grid.MATRIX [][]int = [[1, 2], [3, 4]]
+ro Grid.MATRIX [][]int = [[1, 2], [3, 4]]
 
 // Контроль: обычный модульный const с массивным инициализатором — рабочий путь,
 // который переиспользован фиксом; должен остаться зелёным без изменений.
-const CONTROL []int = [4, 2]
+ro CONTROL []int = [4, 2]
 
 fn main() Io -> () {
     print("${Box.NUMS.len()} ${Box.NUMS[1]}|")

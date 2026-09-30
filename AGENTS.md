@@ -99,6 +99,11 @@ text only is mapped in [rules-for-agents.md §12](docs/dev/rules-for-agents.md).
 
 * `main` belongs to the integrator. You work in **your own branch in your own
   worktree**, and the integrator merges.
+* **Your own working branch MAY be pushed to `origin`** (owner's word 2026-09-30,
+  on the integrator's direct question): `git push origin <your-branch>`, never
+  `--force`, never `main`, never a tag, `origin` only (the mirrors carry `main`).
+  Why: a branch that lives on one disk is invisible to a cloud session and to CI,
+  and `check-novac-local-only-work` reddens the novac gate for it.
 * **Temporary files and scratch directories go in your session's scratchpad, and
   NOWHERE else.** Never at the root of a drive, never beside the repository,
   never in the parent of the working copy. Owner's instruction, 2026-09-09, after

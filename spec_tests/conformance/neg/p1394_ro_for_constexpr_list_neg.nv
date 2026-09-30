@@ -1,0 +1,46 @@
+// EXPECT_COMPILE_ERROR E_RO_FOR_CONSTEXPR_PREFER_CONST
+//
+// Registry 221.1 #1394, the other direction of the same predicate: every item
+// of the 03-syntax.md «`const` требует» list declared `ro` at module level is
+// `E_RO_FOR_CONSTEXPR_PREFER_CONST` («Strict module-level partition»; D200 for
+// `ro Type.NAME`). The oracle rejected a sum variant in a `const` (`Fam.FInt`
+// was a "path expression"), so `ro Fam.K = Fam.FInt` passed -- the partition
+// disagreed with the list both ways. A `[N]T` literal is a value, so its `ro`
+// form is flagged as well.
+module neg.p1394_ro_for_constexpr_list_neg
+
+type P1394Pt { x int, y int }
+type P1394Fam | P1394FInt | P1394FStr
+type P1394Sh | P1394Circle(int) | P1394Sq(int)
+type P1394Tag { n int }
+
+fn p1394r_sq(const x int) -> const int => x * x
+
+const P1394R_LIT = 4
+
+// nova:expect E_RO_FOR_CONSTEXPR_PREFER_CONST -- a literal
+ro P1394R_A = 4
+// nova:expect E_RO_FOR_CONSTEXPR_PREFER_CONST -- a record literal
+ro P1394R_REC P1394Pt = { x: 1, y: 2 }
+// nova:expect E_RO_FOR_CONSTEXPR_PREFER_CONST -- a unit variant: a constructor with no arguments
+ro P1394R_UNIT P1394Fam = P1394Fam.P1394FStr
+// nova:expect E_RO_FOR_CONSTEXPR_PREFER_CONST -- a sum constructor from constexpr args
+ro P1394R_CTOR P1394Sh = P1394Sh.P1394Sq(6)
+// nova:expect E_RO_FOR_CONSTEXPR_PREFER_CONST -- a reference to a `const`
+ro P1394R_REF = P1394R_LIT + 1
+// nova:expect E_RO_FOR_CONSTEXPR_PREFER_CONST -- a `const fn` call
+ro P1394R_CFN = p1394r_sq(3)
+// nova:expect E_RO_FOR_CONSTEXPR_PREFER_CONST -- a `[N]T` literal is a value, not an allocation
+ro P1394R_FIXED [3]int = [7, 8, 9]
+// nova:expect E_RO_FOR_CONSTEXPR_PREFER_CONST -- associated level: a literal
+ro P1394Tag.R_LIT = 40
+// nova:expect E_RO_FOR_CONSTEXPR_PREFER_CONST -- associated level: a unit variant
+ro P1394Tag.R_UNIT P1394Fam = P1394Fam.P1394FInt
+// nova:expect E_RO_FOR_CONSTEXPR_PREFER_CONST -- associated level: a sum constructor
+ro P1394Tag.R_CTOR P1394Sh = P1394Sh.P1394Circle(5)
+// nova:expect E_RO_FOR_CONSTEXPR_PREFER_CONST -- associated level: a `[N]T` literal
+ro P1394Tag.R_FIXED [2]int = [1, 2]
+
+fn main() Io -> () {
+    println(0)
+}
