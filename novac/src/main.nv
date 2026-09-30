@@ -27,7 +27,7 @@
 module novac
 
 import ./sem.{InteropTable}
-import ./pipeline.{compile_with, compile_to_c_with, parse_decls, interop_surface}
+import ./pipeline.{compile_with, compile_to_c_with, parse_decls, interop_surface, mark_program}
 import ./pipeline.{Unit, unit_of, file_of_offset, offset_in_file, same_dir}
 import ./diag.{to_json, json_escape, Diagnostic}
 import std.fs.{read, read_dir, real_fs}
@@ -381,15 +381,21 @@ fn run(a []str) -> int {
         // smokes are untouched. The read file itself lands in the decls too:
         // the registry's last-put-wins shadowing hands its names back to the
         // file (measured before this wave, plan entry names the probe).
-        mut decl_texts = read_decls(std_dir)
-        match env("NOVAC_SELF_PATH") {
-            Some(self_dir) => decl_texts.append(read_decls(self_dir))
-            None => {}
-        }
-        ro decls = parse_decls(decl_texts)
+        mut decls = parse_decls(read_decls(std_dir))
         // The interop surface, lifted from the embedded shell ONCE -- the second
         // input of every compile beside the declarations (sub-plan L).
-        ro interop = interop_surface()
+        mut interop = interop_surface()
+        match env("NOVAC_SELF_PATH") {
+            Some(self_dir) => {
+                // THE PROGRAM's modules are marked on the link surface: their
+                // bodies are the program's, so a call into one is judged by its
+                // signature and named by its owner (274.11 E.10 step 2a).
+                ro self_decls = parse_decls(read_decls(self_dir))
+                mark_program(interop, self_decls)
+                decls.append(self_decls)
+            }
+            None => {}
+        }
         ro argi = 2
         if argi >= a.len() {
             println("usage: novac check <file.nv>... | novac emit <file.nv>")

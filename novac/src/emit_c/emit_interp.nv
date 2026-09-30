@@ -111,7 +111,7 @@ fn Emitter mut @emit_interp_build(e Node) -> str {
                     // so: `undefined symbol: novac_fn_vecd_display__Vec_of_nova_int...`
                     // -- a name for a function nobody defines, because the
                     // program never wrote it.
-                    if @ctx.fns.compiles_body(row) {
+                    if @ctx.in_program(row) {
                         @body.append("    ${c_callable(@ctx, row, targs)}(")
                     } else {
                         @body.append("    ${c_method_symbol(@ctx, slot_t, DISPLAY_METHOD)}(")

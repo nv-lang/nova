@@ -198,7 +198,9 @@ fn Checker mut @judge_method_lookup(e Node, t Token, key []ArgSpec, found FnLook
         FnFound(row) => {
             if @ctx.fns.rows[raw_row(row)].tparam_cnt > 0 {
                 @record_instance_method(e, t, row, key)
-            } else if @ctx.fns.compiles_body(row) {
+            } else if @ctx.in_program(row) {
+                // A row of the PROGRAM -- the file's own, or a method of another
+                // program module (274.11 E.10 step 2a).
                 // The target carries its OWN row: no unwrap here, and no
                 // `DefKind` beside it. Until 2026-08-21 this line handed the
                 // channel a bare int whose meaning depended on a second

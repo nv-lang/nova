@@ -48,3 +48,24 @@ test "a handed free function: resolved, judged like the file's own, spelled as t
     assert(d3.len() == 0, messages(d3))
     assert(c3.contains("novac_fn_is_high_surrogate__"), c3)
 }
+
+test "a function of ANOTHER MODULE OF THE PROGRAM: judged by its signature, named by its owner (274.11 E.10 step 2a)" {
+    // The module is handed like std's -- a signature without a body -- but it is
+    // marked as the PROGRAM's on the link surface: its body is compiled into the
+    // same program, so the call is not refused for want of a shell symbol and
+    // prints the owner's name.
+    ro helpers = "module novac.helpers\nexport fn twice(n int) -> int => n + n\n"
+    mut texts = std_decls()
+    texts.push(helpers)
+    ro decls = parse_decls(texts)
+    mut link = InteropTable.new()
+    mark_program(link, parse_decls([]str.of(helpers)))
+    ro prog = "module novac.user\nimport ../helpers.{twice}\nfn main() {\n println(twice(3))\n}"
+    ro (d0, c0) = compile_to_c_with(prog, decls, link)
+    assert(d0.len() == 0, messages(d0))
+    assert(c0.contains("novac_fn_novac_helpers_twice__"), c0)
+    // CONTROL: the same module NOT marked as the program's -- the old refusal
+    // by name, the module and the missing symbol.
+    ro (d1, _) = compile_to_c_with(prog, decls, InteropTable.new())
+    assert(messages(d1).contains("declared in module `novac.helpers`"), messages(d1))
+}

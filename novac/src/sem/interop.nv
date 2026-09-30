@@ -35,12 +35,14 @@ import ../names.{NameTable, NamespaceId}
 export type InteropTable {
     names NameTable /// identifier -> insertion index; presence is the fact, the index is incidental (NsInterop namespace)
     sym_cnt int /// how many identifiers were lifted; printed by the gate so a shell that lost its symbols is loud
+    modules NameTable /// the PROGRAM's modules, dotted (`novac.sem`): files handed from the program's own root (NOVAC_SELF_PATH), whose bodies the program compiles -- std's are not here (274.11 E.10 step 2a) (NsInterop namespace)
     struct_bodies NameTable /// identifiers the shell defines a `struct <name> {` BODY for -- a forward typedef is NOT here (C11 allows repeating it), so the declaration judge refuses only the real one-unit redefinition (NsInterop namespace)
 }
 
 /// An empty surface -- what a test builds when it wants no interop at all.
 export fn InteropTable.new() -> InteropTable =>
     { names: NameTable.new(NamespaceId.NsInterop), sym_cnt: 0,
+      modules: NameTable.new(NamespaceId.NsInterop),
       struct_bodies: NameTable.new(NamespaceId.NsInterop) }
 
 /// Register one identifier the shell carries. A repeat is a no-op: the shell
@@ -67,3 +69,23 @@ export fn InteropTable mut @add_body(sym str) -> () {
 /// judge's question: a body is the one thing a unit cannot repeat.
 #realtime nogc
 export fn InteropTable @has_body(sym str) -> bool => @struct_bodies.find(sym) >= 0
+
+/// Marks a module of the PROGRAM on the link surface (274.11 E.10 step 2a).
+export fn InteropTable mut @add_module(dotted str) -> () {
+    if @modules.find(dotted) >= 0 { return }
+    @modules.put(dotted, 1)
+}
+
+/// Is this module one of the program's (its bodies are compiled into it)?
+#realtime nogc
+export fn InteropTable @has_module(dotted str) -> bool => @modules.find(dotted) >= 0
+
+/// Is this row's body in the PROGRAM -- the file's own, or a handed row of one of
+/// the program's modules (274.11 E.10 step 2a)? The door that decides whose NAME a
+/// call prints and whether the checker asks the shell; `compiles_body` stays the
+/// door that says whether THIS unit prints the body.
+export fn Ctx @in_program(row FnRow) -> bool {
+    if @fns.compiles_body(row) { return true }
+    ro h = @fns.rows[raw_row(row)].handed_from
+    h != "" && @interop.has_module(h)
+}

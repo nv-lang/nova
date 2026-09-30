@@ -589,7 +589,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // The SUBSTITUTION comes from the same record as the row: one question
         // ("which instance does this call name"), one read. An ordinary call
         // carries an empty one, so there is no branch here to get wrong.
-        if @ctx.fns.compiles_body(cr.callable_row()) {
+        if @ctx.in_program(cr.callable_row()) {
             @body.append(c_callable(@ctx, cr.callable_row(), @out.callee_subst_of(e.id_of())))
         } else {
             // INTEROP (sub-plan L2): a method row with no body of ours is an
@@ -666,7 +666,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
                 // handed module is std's, the shell carries it under the oracle's
                 // spelling, and the checker admitted the call against the lifted
                 // surface; our own spelling is for the rows we compile.
-                if @ctx.fns.rows[raw_row(row)].handed_from != "" {
+                if !@ctx.in_program(row) {
                     @body.append("${c_free_symbol(@ctx, row)}(")
                 } else {
                     @body.append("${c_callable(@ctx, row, @out.callee_subst_of(e.id_of()))}(")
@@ -850,7 +850,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
             // printed `c_callable`, i.e. OUR `novac_fn_equal__...`, and the link
             // failed on an undefined symbol; nobody saw it because not one file
             // of the corpus that novac accepts compares strings (measured).
-            if @ctx.fns.compiles_body(row) {
+            if @ctx.in_program(row) {
                 @body.append(c_callable(@ctx, row, no_subst()))
             } else {
                 @body.append(c_shell_method(@ctx, @out.type_of(kids[0].id_of()), EQUAL_METHOD))
