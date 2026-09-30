@@ -1,0 +1,2 @@
+// Architectural finding arch-second-door-op-schema -- no program reproduces it; cmd.sh prints the
+// two places that answer the same question separately. second door: the emitter re-derives the op schema and the literal's effect by text (#1427)

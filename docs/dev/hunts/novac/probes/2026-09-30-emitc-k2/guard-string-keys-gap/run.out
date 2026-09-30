@@ -1,0 +1,13 @@
+=== novac/src/emit_c/emit_handler.nv:85-240
+9:        if @ctx.effects.ops[i].name == opname {
+51:                @body.append("    ${c_type(@ctx, c.type_id)}${star} ${c.name};\n")
+131:            @body.append("    ${v}_cx->${c.name} = ${amp}${c.name};\n")
+146:fn Emitter mut @emit_capture_read(c CaptureRow) -> () {
+148:        @body.append("(*_novac_cap->${c.name})")
+150:        @body.append("_novac_cap->${c.name}")
+=== novac/src/check/handler.nv:170-180
+7:        if @ctx.effects.ops[i].name == opname {
+=== novac/src/sem/channel.nv:255-265
+6:export type CaptureRow value {
+=== guard verdict on the tree (green = the gap)
+check-novac-no-string-keys ok: файлов .nv: 120, строковых ключей вне закона: 0, синтезированных ключей: 0

@@ -1,0 +1,12 @@
+// A CONSTANT is substituted at its read (emit_module_values.nv
+// @emit_const_read: `@emit_expr(cd.init[0])`). Its initializer reads another
+// constant `step`; at the read site a LOCAL named `step` is in scope. The
+// substituted initializer must still mean the constant.
+const step = 1
+const next = step + 10
+
+fn main() {
+    ro step = 100
+    println(step)
+    println(next)
+}

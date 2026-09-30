@@ -1,0 +1,9 @@
+=== SUBJECT: novac check
+novac check rc=0
+=== SUBJECT: novac emit (handler / capture / module-value / slot lines)
+novac emit rc=2
+1:{"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error (novac bug, not yours): channel.nv:499: assert failed: sem: no type recorded for this node — a hole in the checker's channel (is_ty(t))","poisoned_by":null}
+=== DIFFERENTIAL: novac-e1-smoke (oracle build+run vs novac C)
+novac-e1-smoke: FAIL — novac emit упал: stderr «»; диагностики из stdout (1 шт.): "message":"internal compiler error (novac bug, not yours): channel.nv:499: assert failed: sem: no type recorded for this node — a hole in the checker's channel (is_ty(t))" 
+=== SUBJECT ALONE: novac C compiled and run with the smoke's cached oracle flags
+(skipped: no emission, or no smoke cache yet)

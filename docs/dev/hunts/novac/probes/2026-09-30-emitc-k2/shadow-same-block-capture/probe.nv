@@ -1,0 +1,12 @@
+// Two bindings named `x` in one block; the literal captures the SECOND.
+// The context is filled by the capture's source name -- which C variable
+// does that name denote where the literal is built?
+fn main() {
+    ro x = 1
+    ro x = x + 10
+    with Random = effect Random {
+        u64() -> u64 => x as u64
+    } {
+        println(Random.u64())
+    }
+}

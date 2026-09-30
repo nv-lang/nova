@@ -1,0 +1,8 @@
+=== novac/src/emit_c/emit_handler.nv:60-110
+9:fn lit_effect(lit Node) -> str => leaf_text(branch_children(lit)[1])
+12:fn op_name_of(op Node) -> str => leaf_text(branch_children(op)[0])
+34:        if @ctx.effects.ops[i].name == opname {
+46:    @ctx.effects.def_of(lit_effect(lit)) ?? ice("emit: a handler literal of an effect with no schema")
+=== novac/src/check/handler.nv:100-185
+69:    ro opname = leaf_text(onm)
+77:        if @ctx.effects.ops[i].name == opname {

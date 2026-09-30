@@ -1,0 +1,42 @@
+=== SUBJECT: novac check
+novac check rc=0
+=== SUBJECT: novac emit (handler / capture / module-value / slot lines)
+novac emit rc=0
+3508:    _nova_handler_lit_0_vtable->ctx = _nova_handler_lit_0_ctx;
+4279:    _nova_handler_lit_1_vtable->ctx = _nova_handler_lit_1_ctx;
+4745:    _nova_handler_lit_2_vtable->ctx = _nova_handler_lit_2_ctx;
+5727:    _nova_handler_lit_3_vtable->ctx = _nova_handler_lit_3_ctx;
+11909:    _nova_handler_lit_4_vtable->ctx = _nova_handler_lit_4_ctx;
+11921:static nova_unit novac_hop_0_on_resource_enter(void* _novac_ctx, nova_str label);
+11922:static nova_unit novac_hop_0_on_resource_exit(void* _novac_ctx, nova_str label, Nova_ScopeOutcome* outcome, nova_int duration_ms, nova_bool overrun);
+11925:} novac_hctx_1;
+11926:static uint64_t novac_hop_1_u64(void* _novac_ctx);
+11928:    NovaVtable_ResourceTrace* _novac_hv1 = (NovaVtable_ResourceTrace*)nova_alloc(sizeof(NovaVtable_ResourceTrace));
+11929:    _novac_hv1->ctx = NULL;
+11930:    _novac_hv1->on_resource_enter = novac_hop_0_on_resource_enter;
+11931:    _novac_hv1->on_resource_exit = novac_hop_0_on_resource_exit;
+11932:    NovaVtable_ResourceTrace* _novac_l1 = _novac_hv1;
+11933:    NovaVtable_ResourceTrace* _novac_l2 = _nova_handler_ResourceTrace;
+11944:static nova_unit novac_hop_0_on_resource_enter(void* _novac_ctx, nova_str label) {
+11946:    size_t _novac_hv2_off = (sizeof(NovaVtable_Random) + _Alignof(novac_hctx_1) - 1) / _Alignof(novac_hctx_1) * _Alignof(novac_hctx_1);
+11947:    char* _novac_hv2_blk = (char*)nova_alloc(_novac_hv2_off + sizeof(novac_hctx_1));
+11948:    NovaVtable_Random* _novac_hv2 = (NovaVtable_Random*)_novac_hv2_blk;
+11949:    novac_hctx_1* _novac_hv2_cx = (novac_hctx_1*)(_novac_hv2_blk + _novac_hv2_off);
+11950:    _novac_hv2_cx->label = label;
+11951:    _novac_hv2->ctx = _novac_hv2_cx;
+11952:    _novac_hv2->u64 = novac_hop_1_u64;
+11953:    NovaVtable_Random* _novac_l1 = _novac_hv2;
+11954:    NovaVtable_Random* _novac_l2 = _nova_handler_Random;
+11966:static nova_unit novac_hop_0_on_resource_exit(void* _novac_ctx, nova_str label, Nova_ScopeOutcome* outcome, nova_int duration_ms, nova_bool overrun) {
+11972:static uint64_t novac_hop_1_u64(void* _novac_ctx) {
+11973:    novac_hctx_1* _novac_cap = (novac_hctx_1*)_novac_ctx;
+11975:    nova_print_str(_novac_cap->label);
+12118:    _nova_handler_lit_5_vtable->ctx = _nova_handler_lit_5_ctx;
+=== DIFFERENTIAL: novac-e1-smoke (oracle build+run vs novac C)
+novac-e1-smoke ok: <hunt>/probes/nested-lit-capture-outer-param/probe.nv — поведение идентично оракулу (stdout байт-в-байт, exit 0)
+=== SUBJECT ALONE: novac C compiled and run with the smoke's cached oracle flags
+novac C compile rc=0
+novac link rc=0
+inner sees a
+7
+novac run rc=0
