@@ -1,0 +1,43 @@
+// Registry 221.1 #1395 - evidence, measured 2026-09-30 by the integrator
+// (binary of main with the #1353 fix; the same cells fail WITHOUT it for records).
+// Each block is a separate file in a scratch package `proto` (module proto.<name>).
+// Records and payload-less sums fail in EXACTLY the same cells.
+
+// --- rec_clone_op: `-> Self` of a value type is the receiver's pointer carrier,
+//     the synthesized body returns a fresh value -> "returning 'NovaValue_T' from a
+//     function with incompatible result type 'NovaValue_T *'"
+module proto.rec_clone_op
+#impl(Equal + Clone)
+type TClone value { x int }
+test "t" {
+    ro a = TClone { x: 1 }
+    ro c = a.clone()
+    assert(c == a)
+}
+
+// --- rec_compare_op: the `<` wrapper is emitted as
+//     `nova_vr_binop_..._compare(NovaValue_T a, NovaValue_T* b) { return ..._compare(&a, &b); }`
+//     - `&b` of a pointer
+module proto.rec_compare_op
+#impl(Equal + Compare)
+type TCompare value { x int }
+test "t" {
+    ro a = TCompare { x: 1 }
+    ro b = TCompare { x: 2 }
+    assert(a < b)
+}
+
+// --- rec_equal_direct: a direct call passes the VALUE to the `other Self`
+//     pointer carrier -> "passing 'NovaValue_T' to parameter of incompatible type
+//     'NovaValue_T *'". `==` works (its wrapper takes the address); the direct
+//     call does not. Same for any user `fn T @m(other Self)` called as `a.m(b)`.
+module proto.rec_equal_direct
+#impl(Equal)
+type TEqual value { x int }
+test "t" {
+    ro a = TEqual { x: 1 }
+    assert(a.equal(a))
+}
+
+// Passing cells (control): `==`/`!=`, `.hash()`, "${a}", "${a:?}" - for records
+// and, after #1353, for payload-less sums.

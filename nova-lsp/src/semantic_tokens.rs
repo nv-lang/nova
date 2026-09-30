@@ -1473,21 +1473,54 @@ mod tests {
 
     #[test]
     fn edge_large_file_perf() {
-        let mut src = String::from("module basics.lsp\n");
-        for i in 0..400 {
-            src.push_str(&format!(
-                "fn f{i}(a int, b int) -> int {{\n    ro s = a + b\n    s + {i}\n}}\n"
-            ));
+        // Registry #1159/#1154: an ABSOLUTE wall-clock threshold here judges the
+        // MACHINE (red under a loaded gate, green alone with room to spare), not
+        // the semantic pass. Fix: compare cost at two sizes measured back-to-back
+        // IN THE SAME RUN — load inflates both together, so the RATIO holds even
+        // when the raw seconds do not; a near-linear pass keeps the ratio close
+        // to the 5x size ratio, an O(n^2) regression pushes it toward 25x.
+        fn build(n_fns: usize) -> String {
+            let mut src = String::from("module basics.lsp\n");
+            for i in 0..n_fns {
+                src.push_str(&format!(
+                    "fn f{i}(a int, b int) -> int {{\n    ro s = a + b\n    s + {i}\n}}\n"
+                ));
+            }
+            src
         }
-        let path = write_temp("edge_large", &src);
-        let resolved = resolve_module_for_ide(&path, &src);
-        let start = std::time::Instant::now();
-        let toks = compute_semantic_tokens(&src, &resolved);
-        let elapsed = start.elapsed();
-        assert!(toks.len() > 400 * 8, "expected many tokens, got {}", toks.len());
+
+        fn time_pass(name: &str, src: &str) -> (std::time::Duration, usize) {
+            let path = write_temp(name, src);
+            let resolved = resolve_module_for_ide(&path, src);
+            let mut best = std::time::Duration::MAX;
+            let mut n_toks = 0;
+            for _ in 0..3 {
+                let start = std::time::Instant::now();
+                let toks = compute_semantic_tokens(src, &resolved);
+                best = best.min(start.elapsed());
+                n_toks = toks.len();
+            }
+            (best, n_toks)
+        }
+
+        let small_src = build(80);
+        let big_src = build(400);
+
+        let (small, _) = time_pass("edge_large_small", &small_src);
+        let (big, n_toks) = time_pass("edge_large_big", &big_src);
+
+        assert!(n_toks > 400 * 8, "expected many tokens, got {}", n_toks);
+
+        let small_ns = (small.as_nanos() as f64).max(1_000.0);
+        let big_ns = big.as_nanos() as f64;
+        let ratio = big_ns / small_ns;
+
         assert!(
-            elapsed.as_secs() < 10,
-            "large-file semantic pass should be well under 10s, took {elapsed:?}"
+            ratio < 15.0,
+            "semantic pass cost grew {ratio:.1}x for a 5x larger file (small={small:?}, \
+             big={big:?}) — expected near-linear scaling (~5x); this looks like an \
+             O(n^2) regression in the semantic-tokens pass, not machine load \
+             (registry #1159)"
         );
     }
 

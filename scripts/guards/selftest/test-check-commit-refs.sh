@@ -32,14 +32,22 @@ LIVE="$(git -C "$ROOT" rev-parse --short=11 HEAD)"
 # видна каждому соседнему дереву. `check-novac-local-only-work` считает локальные
 # ветки с невлитой работой без копии на origin -- и 2026-09-15 покраснел при базе 0
 # на `selftest/commit-refs-<pid>`, уронив гейт яруса push. Живость ядро считает
-# через `rev-list --all`, а он покрывает ВСЕ ссылки под `refs/`: проба в
-# изолированной репе дала 1 совпадение в `rev-list --all` и НОЛЬ в `git branch`.
-SIDE_REF="refs/selftest/commit-refs-$$"
+# через `rev-list --remotes` (2026-09-30, п.4 ядра): ссылка под `refs/remotes/`
+# — это ветка origin, как `origin/p274-novac` в №894, и `git branch` её не видит.
+# ОБРАТНАЯ клетка (LOCAL): тот же коммит только под локальной ссылкой — ветка,
+# живущая на одном диске. На CI её нет, значит хеш мёртв и локально (888 vs 863).
+SIDE_REF="refs/remotes/selftest/commit-refs-$$"
+LOCAL_REF="refs/selftest/commit-refs-local-$$"
 SIDE="$(git -C "$ROOT" commit-tree "$(git -C "$ROOT" rev-parse HEAD^{tree})" -p HEAD -m "selftest side commit (commit-refs)" 2>/dev/null || true)"
-if [ -n "$SIDE" ]; then
+LOCAL="$(git -C "$ROOT" commit-tree "$(git -C "$ROOT" rev-parse HEAD^{tree})" -p HEAD -m "selftest local-only commit (commit-refs)" 2>/dev/null || true)"
+if [ -n "$SIDE" ] && [ -n "$LOCAL" ]; then
     git -C "$ROOT" update-ref "$SIDE_REF" "$SIDE"
+    git -C "$ROOT" update-ref "$LOCAL_REF" "$LOCAL"
     SIDE="$(git -C "$ROOT" rev-parse --short=11 "$SIDE")"
-    trap 'git -C "$ROOT" update-ref -d "$SIDE_REF" >/dev/null 2>&1; rm -rf "$TMP"' EXIT
+    LOCAL="$(git -C "$ROOT" rev-parse --short=11 "$LOCAL")"
+    trap 'git -C "$ROOT" update-ref -d "$SIDE_REF" >/dev/null 2>&1; git -C "$ROOT" update-ref -d "$LOCAL_REF" >/dev/null 2>&1; rm -rf "$TMP"' EXIT
+else
+    SIDE=""; LOCAL=""
 fi
 
 FIX="$TMP/fix"
@@ -57,6 +65,7 @@ cat > "$FIX/docs/plans/probe.md" <<EOF
 10 id задания CronCreate: \`task:b0b843e5\`
 11 tagged-template Nova, не ссылка: ro b = bytes\`deadbeef\`
 12 мёртвый хеш рядом со словом «сессия» и «handoff» — всё равно хеш: \`deadbee5678\`
+13 хеш ветки, живущей только на этом диске: \`${LOCAL:-deadbee9abc}\`
 EOF
 
 OUT="$(python "$CORE" "$ROOT" "$FIX")"
@@ -95,6 +104,7 @@ check "id задания с приставкой не считается"       
 check "tagged-template bytes\`…\` не ссылка на коммит" "$(line R2 11)" "0"
 if [ -n "$SIDE" ]; then
     check "хеш соседней ветки не мёртв (№942)" "$(line R2 8)" "0"
+    check "хеш ветки только на этом диске мёртв, как на CI" "$(line R2 13)" "1"
 else
     echo "  SKIP хеш соседней ветки: commit-tree недоступен" >&2
 fi
@@ -104,10 +114,10 @@ printf 'dead_hash_refs=0\ncommit_url_no_context=0\nmirror_links=0\n' > "$TMP/zer
 NOVA_COMMITREFS_BASELINE="$TMP/zero.baseline" bash "$GUARD" "$ROOT" "$FIX" >/dev/null 2>&1
 check "выше базы — падает" "$?" "1"
 
-# R2 в фикстуре ДВА: строка 1 (голый мёртвый хеш) и строка 12 (мёртвый хеш
-# рядом со словами про сессию — контроль против ослабления). Число здесь
-# держит форму «база = ровно текущий счёт»: на своей базе страж молчит.
-printf 'dead_hash_refs=2\ncommit_url_no_context=1\nmirror_links=1\n' > "$TMP/one.baseline"
+# R2 в фикстуре ТРИ: строка 1 (голый мёртвый хеш), строка 12 (мёртвый хеш
+# рядом со словами про сессию — контроль против ослабления) и строка 13 (хеш
+# ветки только на этом диске). Число держит форму «база = ровно текущий счёт».
+printf 'dead_hash_refs=3\ncommit_url_no_context=1\nmirror_links=1\n' > "$TMP/one.baseline"
 NOVA_COMMITREFS_BASELINE="$TMP/one.baseline" bash "$GUARD" "$ROOT" "$FIX" >/dev/null 2>&1
 check "на базе — проходит" "$?" "0"
 

@@ -1,0 +1,9 @@
+module probe
+
+fn apply(f fn(int) -> int) -> int => f(2)
+
+ro xs = apply(|xs| xs + 1)
+
+fn main() {
+    println(xs)
+}

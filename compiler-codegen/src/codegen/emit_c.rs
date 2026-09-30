@@ -1522,11 +1522,13 @@ pub struct CEmitter {
     /// { return nova_fn_<name>(args); }`). Дедупликация — несколько
     /// references к одной fn делят один thunk.
     emitted_fn_thunks: HashSet<String>,
-    /// Plan 14 Ф.2: имена const'ов с runtime-init (record-литерал, call,
-    /// и т.д.). На use-site `Ident(name)` для них эмитится `nova_const_<name>()`
-    /// (lazy-init геттер) вместо имени переменной. Тип сохраняется в
-    /// `var_types[name]` (как для обычных const'ов).
+    /// Plan 14 Ф.2: SOURCE names of consts with runtime init (init ordering + a fast pre-check).
+    /// Whether a READ is lazy is NOT decided by this set -- see `lazy_const_syms` (#1158).
     lazy_consts: HashSet<String>,
+    /// #1397: per emitted body (fn / test / closure), (names read as BOUND, names read as FREE) -- see `is_local_read`.
+    pub(crate) local_frames: Vec<(HashSet<String>, HashSet<String>)>,
+    /// #1158: final C qualifiers (`c_name`) of lazy consts -- laziness of ONE const, not of a name.
+    lazy_const_syms: HashSet<String>,
     /// `[M-lazy-const-init-race]` (2026-07-09): pending lazy-const init
     /// bodies, collected as each lazy const (`const X = <non-constexpr>` /
     /// module-level `ro X = <runtime-expr>`) is emitted, and combined at
@@ -2806,7 +2808,7 @@ impl CEmitter {
             user_fn_variadic: HashSet::new(),
             suppress_variadic_routing: false,
             emitted_fn_thunks: HashSet::new(),
-            lazy_consts: HashSet::new(),
+            lazy_consts: HashSet::new(), local_frames: Vec::new(), lazy_const_syms: HashSet::new(),
             pending_const_inits: Vec::new(),
             record_field_fn_sigs: HashMap::new(),
             trailing_block_counter: 0,
@@ -9111,47 +9113,44 @@ impl CEmitter {
             }
         }
         self.current_emit_file_id = saved_emit_file_id_sigpreseed;
-        for item in &module.items {
-            if let Item::Let(l) = item {
-                if l.is_ghost { continue; }
-                let name = match &l.pattern {
-                    Pattern::Ident { name, .. } => Some(name.clone()),
-                    Pattern::Variant { path, kind: VariantPatternKind::Unit, .. }
-                        if path.len() == 1 => Some(path[0].clone()),
-                    _ => None,
-                };
-                if let Some(name) = name {
-                    // Plan 159 Ф.1: skip a `ro` lazy-static global unreachable
-                    // from any root. It is in `dead_consts` only when no
-                    // reachable fn/const names it, so no emitted read routes
-                    // through `nova_const_<name>()` — dropping its storage +
-                    // getter is safe. Empty (no-op) when DCE off / library mode.
-                    if dead_consts.contains(&name) { continue; }
-                    let ty_c = if let Some(ty) = &l.ty {
-                        self.type_ref_to_c(ty)?
-                    } else {
-                        self.infer_expr_c_type(&l.value)
-                    };
-                    // [M-175-lazy-const-crossmodule-collision]: module-level
-                    // `ro NAME = expr` is ALWAYS module-private (LetDecl has
-                    // no `is_export`) — look up the module-qualified name the
-                    // pre-pass above (Step 1, `Item::Let` branch) registered,
-                    // mirroring `emit_const_decl`'s own lookup. Falls back to
-                    // the bare name only if the pre-pass found no entry
-                    // (defensive; should always be present once peer_files is
-                    // non-empty — byte-identical fallback for any edge case
-                    // it doesn't cover).
-                    let c_name = self.private_const_c_names
-                        .get(&(l.span.file_id, name.clone()))
-                        .cloned()
-                        .unwrap_or_else(|| name.clone());
-                    self.emit_lazy_const(&name, &c_name, &ty_c, &l.value)?;
-                }
+        let ro_name = |l: &crate::ast::LetDecl| match &l.pattern {
+            Pattern::Ident { name, .. } => Some(name.clone()),
+            Pattern::Variant { path, kind: VariantPatternKind::Unit, .. } if path.len() == 1 => Some(path[0].clone()),
+            _ => None,
+        };
+        // D184 amend 2026-09-30: module `ro` initializers -- bare AND `ro Type.NAME` (D200), one graph -- run in DEPENDENCY
+        // order (Kahn, as the init bodies); a read key is the bare name or `T.NAME`; a cycle is E_MODULE_INIT_CYCLE.
+        let mut nodes: Vec<(String, &Expr, Option<&crate::ast::LetDecl>, Option<(&str, &crate::ast::AssocConst)>)> = Vec::new();
+        for it in &module.items { match it {
+            Item::Let(l) if !l.is_ghost => if let Some(n) = ro_name(l) { nodes.push((n, &l.value, Some(l), None)); },
+            Item::Type(t) => for ac in t.assoc_consts.iter().filter(|a| a.is_lazy_ro) {
+                nodes.push((format!("{}.{}", t.name, ac.name), &ac.value, None, Some((t.name.as_str(), ac))));
+            },
+            _ => {}
+        } }
+        let deps: Vec<(String, String, Vec<String>)> = nodes.iter().map(|(k, v, l, a)| {
+            let fid = l.map_or_else(|| a.map_or(v.span.file_id, |(_, ac)| ac.span.file_id), |l| l.span.file_id);
+            let mut f = HashSet::new();
+            crate::free_idents::collect_truly_free_idents(v, &mut HashSet::new(), &mut f);
+            (self.init_dep_sym(fid, k), String::new(), f.iter().map(|r| self.init_dep_sym(fid, r)).collect())
+        }).collect();
+        for i in Self::topo_sort_const_inits(&deps) {
+            let (key, value, bare, assoc) = (&nodes[i].0, nodes[i].1, nodes[i].2, nodes[i].3);
+            if let Some((tn, ac)) = assoc {
+                // Plan 157: associated `ro Type.NAME` -- storage keyed by the qualified `Type_NAME` symbol.
+                let symbol = format!("{}_{}", tn, ac.name);
+                let ty_c = match &ac.ty { Some(ty) => self.type_ref_to_c(ty)?, None => self.infer_expr_c_type(value) };
+                self.emit_lazy_const(&symbol, &symbol, &ty_c, value).map_err(|e| format!("assoc ro `{}` codegen failed: {}", key, e))?;
+                continue;
             }
+            let Some(l) = bare else { continue };
+            // Plan 159 Ф.1: skip a `ro` lazy-static global unreachable from any root (DCE); no-op when off.
+            if dead_consts.contains(key) { continue; }
+            let ty_c = match &l.ty { Some(ty) => self.type_ref_to_c(ty)?, None => self.infer_expr_c_type(&l.value) };
+            // [M-175-lazy-const-crossmodule-collision]: module-level `ro` is module-private -- the pre-pass's qualified name.
+            let c_name = self.private_const_c_names.get(&(l.span.file_id, key.clone())).cloned().unwrap_or_else(|| key.clone());
+            self.emit_lazy_const(key, &c_name, &ty_c, &l.value)?;
         }
-        // Plan 157: associated `ro Type.NAME` — see assoc_ro.rs (kept out of
-        // emit_c.rs, arch-ratchet precedent `mono_method_registry.rs`).
-        self.emit_assoc_ro_lazy_globals(module)?;
 
         // Plan 172.14 Ф.1: классификация больших (>16Б C-ABI) read-only
         // value-struct параметров free-fn'ов — ДО эмиссии forward-decl'ов
@@ -9969,13 +9968,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     fn emit_bench(&mut self, b: &BenchDecl, idx: usize) -> Result<(), String> {
         // [race-198 class-closure]: см. override_maps_scope_enter doc.
         let ovr_saved = self.override_maps_scope_enter();
-        // Реестр 221.1 №1090, тот же класс, что у `emit_nova_main`: тело
-        // эмитится БЕЗ `current_emit_file_id`, поэтому `free_fn_c_name` не
-        // находит мангл в `file_priv_fn_c_names` и уходит в голое
-        // `nova_fn_<имя>` — символ, которого никто не определяет. Входов в
-        // пользовательский код ТРИ (main, test, bench), и промах был во всех
-        // трёх; второй носитель (`derive_span_collision_test`) остался красным
-        // после починки одного `main` и этим класс и показал.
+        // №1090 (как у `emit_nova_main`): без `current_emit_file_id` `free_fn_c_name` не находит мангл в
+        // `file_priv_fn_c_names`; входов в пользовательский код ТРИ (main, test, bench), промах был во всех.
         let saved_emit_file_id_bench = self.current_emit_file_id;
         self.current_emit_file_id = Some(b.span.file_id);
         let r = self.emit_bench_scoped_inner(b, idx);
@@ -10208,16 +10202,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     fn emit_test(&mut self, t: &TestDecl, idx: usize) -> Result<(), String> {
         // [race-198 class-closure]: см. override_maps_scope_enter doc.
         let ovr_saved = self.override_maps_scope_enter();
-        // Реестр 221.1 №1090, тот же класс, что у `emit_nova_main`: тело
-        // эмитится БЕЗ `current_emit_file_id`, поэтому `free_fn_c_name` не
-        // находит мангл в `file_priv_fn_c_names` и уходит в голое
-        // `nova_fn_<имя>` — символ, которого никто не определяет. Входов в
-        // пользовательский код ТРИ (main, test, bench), и промах был во всех
-        // трёх; второй носитель (`derive_span_collision_test`) остался красным
-        // после починки одного `main` и этим класс и показал.
+        // №1090 (как у `emit_nova_main`): без `current_emit_file_id` `free_fn_c_name` не находит мангл в
+        // `file_priv_fn_c_names`; входов в пользовательский код ТРИ (main, test, bench), промах был во всех.
         let saved_emit_file_id_test = self.current_emit_file_id;
         self.current_emit_file_id = Some(t.span.file_id);
+        self.local_frames.push(crate::free_idents::frame_reads(&[], |bd, fr| crate::free_idents::collect_truly_free_idents_block(&t.body, bd, fr)));
         let r = self.emit_test_scoped_inner(t, idx);
+        self.local_frames.pop();
         self.current_emit_file_id = saved_emit_file_id_test;
         self.override_maps_scope_exit(ovr_saved, r.is_ok());
         r
@@ -10552,10 +10543,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// reachable in one CU since Plan 175 Ф.2-v3 made `std.time.duration`
     /// transitively pulled into every CU) no longer collide into one
     /// `_nova_const_ZERO_value` C global.
+    /// #1158: the ONE place a read decides whether it reads a LAZY const: the use site's
+    /// qualifier (per-file private mangle -> colliding-export qualifier -> bare name, the
+    /// resolution `emit_const_decl` names the const with) must itself be lazy. Keyed by the
+    /// bare name, a lazy `lex.B_BACKSLASH` turned constexpr `json.B_BACKSLASH` reads lazy.
+    pub(crate) fn lazy_const_sym(&self, file_id: crate::diag::FileId, name: &str) -> Option<String> {
+        if !self.lazy_consts.contains(name) { return None; }
+        let q = self.init_dep_sym(file_id, name);
+        self.lazy_const_syms.contains(&q).then_some(q)
+    }
+
+    /// D184 amend: the init-order key of a read `r` in `file_id` -- the C symbol it resolves to (`Type.NAME` ->
+    /// `Type_NAME`), so two modules' same-named `ro`s are two nodes, as in the checker's graph (#1158 class).
+    fn init_dep_sym(&self, file_id: crate::diag::FileId, r: &str) -> String {
+        if r.contains('.') { return r.replace('.', "_"); }
+        self.private_const_c_names.get(&(file_id, r.to_string())).or_else(|| self.const_qualified_by_name.get(r)).cloned().unwrap_or_else(|| r.to_string())
+    }
+
     pub(crate) fn emit_lazy_const(&mut self, name: &str, c_name: &str, ty_c: &str, value: &Expr) -> Result<(), String> {
-        // Регистрируем имя как lazy — use-site Ident(name) станет голым
-        // чтением `c_name`.
         self.lazy_consts.insert(name.to_string());
+        self.lazy_const_syms.insert(c_name.to_string());
         // Регистрируем тип, чтобы infer_expr_c_type(Ident(name)) возвращал
         // правильный c-тип (для записи в var_types — как обычный binding).
         self.var_types.insert(name.to_string(), ty_c.to_string());
@@ -10680,8 +10687,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // just other consts) — filtered down against the final `lazy_consts`
         // set once every module has been processed.
         let mut free_idents = HashSet::new();
-        Self::collect_free_idents(value, &mut free_idents);
-        self.pending_const_inits.push((name.to_string(), body, free_idents.into_iter().collect()));
+        crate::free_idents::collect_truly_free_idents(value, &mut HashSet::new(), &mut free_idents);
+        // Keyed by C symbol, deps resolved in the initializer's file (#1396 review: same-named `ro`s of two modules).
+        let deps = free_idents.iter().map(|r| self.init_dep_sym(value.span.file_id, r)).collect();
+        self.pending_const_inits.push((c_name.to_string(), body, deps));
         Ok(())
     }
 
@@ -18594,7 +18603,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // consts are unaffected — they never depended on struct layout.
         for ac in &t.assoc_consts {
             // Plan 157: `ro Type.NAME` — NOT constexpr-required, handled by
-            // `emit_assoc_ro_lazy_globals` (assoc_ro.rs) instead of the
+            // `emit_module`'s ordered module-value loop instead of the
             // strict-constexpr path below. [fix #1361] non-lazy `const
             // Type.NAME` now lives in `emit_assoc_const_entry` (assoc_ro.rs).
             if ac.is_lazy_ro {
@@ -21524,7 +21533,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         match &f.body {
             FnBody::Expr(e) => {
                 self.emit_source_annotation_for_expr(e);
-                let val = self.emit_expr(e)?;
+                let val = self.emit_expr_in_place(e, &ret_c)?;
                 if ret_c == "nova_unit" {
                     self.line(&format!("{};", val));
                     self.line("return NOVA_UNIT;");
@@ -27343,7 +27352,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if !bridge_emitted { match &body_clone {
             FnBody::Expr(e) => {
                 self.emit_source_annotation_for_expr(e);
-                let val = self.emit_expr(e)?;
+                let val = self.emit_expr_in_place(e, &ret_c)?;
                 if ret_c == "nova_unit" {
                     self.line(&format!("{};", val));
                     // Plan 140 cgfix: ensures on a unit-return expr body.
@@ -27446,9 +27455,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // this correctly (decodes `_NovaTuple_` elem types, recurses
                     // per element) — it just wasn't reached from here. See
                     // docs/plans/wip/closure-megacu-fix-notes.md.
-                    let val = if ret_c.starts_with("NovaOpt_") || ret_c.starts_with("_NovaFixArr_")
-                        || ret_c.starts_with("_NovaTuple_")
-                        || Self::is_typed_integer(&ret_c) || Self::is_bytes_slice_c_ty(&ret_c) {
+                    let val = if self.tail_takes_place_type(&ret_c, trailing) {
                         self.emit_expr_with_target_type(trailing, &ret_c)?
                     } else {
                         self.emit_expr(trailing)?
@@ -28819,7 +28826,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         match &body_clone {
             FnBody::Expr(e) => {
                 self.emit_source_annotation_for_expr(e);
-                let val = self.emit_expr(e)?;
+                let val = self.emit_expr_in_place(e, &ret_c)?;
                 if ret_c == "nova_unit" {
                     self.line(&format!("{};", val));
                     self.line("return NOVA_UNIT;");
@@ -28859,9 +28866,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // this correctly (decodes `_NovaTuple_` elem types, recurses
                     // per element) — it just wasn't reached from here. See
                     // docs/plans/wip/closure-megacu-fix-notes.md.
-                    let val = if ret_c.starts_with("NovaOpt_") || ret_c.starts_with("_NovaFixArr_")
-                        || ret_c.starts_with("_NovaTuple_")
-                        || Self::is_typed_integer(&ret_c) || Self::is_bytes_slice_c_ty(&ret_c) {
+                    let val = if self.tail_takes_place_type(&ret_c, trailing) {
                         self.emit_expr_with_target_type(trailing, &ret_c)?
                     } else {
                         self.emit_expr(trailing)?
@@ -29356,20 +29361,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     fn emit_fn(&mut self, f: &FnDecl) -> Result<(), String> {
         // [race-198 class-closure]: см. override_maps_scope_enter doc.
         let ovr_saved = self.override_maps_scope_enter();
-        // Реестр 221.1 №577/№592 (маркер [M-array-ext-static-erased-body-no-
-        // generic-dispatch], CLOSED by №592): a STATIC array-ext method with
-        // its OWN generic bound to the receiver's element (`fn[T Reflect] []T
-        // .reflect() -> TypeShape => Arr(T.reflect())`) used to be emitted
-        // ONCE, erased, under a name that LOOKED like a genuine `[]int`
-        // instantiation (`receiver_type_c_ident`'s `_ => "nova_int"` catch-
-        // all) but served every element — wrong for any non-int element.
-        // `emit_fn_scoped_inner`'s top-of-fn dispatch now skips this shape's
-        // erased emission entirely (both instance and static), in favor of a
-        // real per-element mono driven by `array_ext_static_generic_fn` +
-        // the `Path(["__array", elem])` call site (D38) — no seeding needed
-        // here anymore, the seed used to matter only for the erased body this
-        // function no longer reaches for this shape.
+        // №577/№592: a static array-ext method generic over the receiver's element is no longer emitted erased
+        // here -- `emit_fn_scoped_inner` skips it for a real per-element mono (`array_ext_static_generic_fn`, D38).
+        let params: Vec<&str> = f.params.iter().map(|p| p.name.as_str()).collect();
+        self.local_frames.push(crate::free_idents::frame_reads(&params, |bd, fr| match &f.body {
+            FnBody::Expr(e) => crate::free_idents::collect_truly_free_idents(e, bd, fr),
+            FnBody::Block(b) => crate::free_idents::collect_truly_free_idents_block(b, bd, fr),
+            FnBody::External => {}
+        }));
         let r = self.emit_fn_scoped_inner(f);
+        self.local_frames.pop();
         self.override_maps_scope_exit(ovr_saved, r.is_ok());
         r
     }
@@ -29976,9 +29977,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // gate above (`emit_block_stmts` trailing) for the full rationale;
                 // same tuple-embeds-fixarr nested-literal `[P67] nova_int collapse`
                 // ICE, same fix (docs/plans/wip/closure-megacu-fix-notes.md).
-                let val = if ret.starts_with("NovaOpt_") || ret.starts_with("_NovaFixArr_")
-                    || ret.starts_with("_NovaTuple_")
-                    || Self::is_typed_integer(&ret) || Self::is_bytes_slice_c_ty(&ret) {
+                let val = if self.tail_takes_place_type(&ret, e) {
                     self.emit_expr_with_target_type(e, &ret)?
                 } else {
                     self.emit_expr(e)?
@@ -32494,15 +32493,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // работала; при `-> str` не совпадали, и пользователь получал
             // ошибку чужого компилятора при зелёном `nova check`. То есть
             // громкий отказ был везением, а не проверкой.
-            //
-            // Новой логики эмиссии не добавляется: типизированная заглушка
-            // (`emit_divergent_with_target_125` + `typed_zero_value_125`, дающая
-            // `((T){0})` для структур) уже написана, до неё просто не доходил
-            // маршрут — `emit_expr_with_target_type` сам переадресует на неё.
-            let val = if ret_ty.starts_with("NovaOpt_") || ret_ty.starts_with("_NovaFixArr_")
-                || ret_ty.starts_with("_NovaTuple_")
-                || Self::is_typed_integer(ret_ty) || Self::is_bytes_slice_c_ty(ret_ty)
-                || self.expr_diverges_125(trailing) {
+            // №1401: №720 closed only THIS sink; the gate is `tail_takes_place_type`, shared by every tail sink.
+            let val = if self.tail_takes_place_type(ret_ty, trailing) {
                 self.emit_expr_with_target_type(trailing, ret_ty)?
             } else {
                 self.emit_expr(trailing)?
@@ -36099,7 +36091,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Lazy-const Ident может лоуериться в не-адресуемую форму —
                 // принудительный hoist (зеркало prepare_method_recv guard'а).
                 let is_lazy_const_ident = matches!(&inner.kind,
-                    ExprKind::Ident(name) if self.lazy_consts.contains(name));
+                    ExprKind::Ident(name) if self.lazy_const_sym(inner.span.file_id, name).is_some());
                 // Адресуемое место (включая ref-параметры: `&((*p))` ≡ `p`) —
                 // прямое взятие адреса (легаси-поведение, Р10/D326).
                 if !is_lazy_const_ident && Self::is_lvalue_receiver(inner) {
@@ -36424,20 +36416,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // map is ALSO consulted, unwrapped, for EAGER private
                 // consts further below — a different C-naming convention;
                 // see `emit_const_decl`/`emit_lazy_const`).
-                if self.lazy_consts.contains(name) {
-                    // [fix M-samename-export-const-cross-module-c-symbol-
-                    // collision, реестр 221.1 №151]: `private_const_c_names`
-                    // only covers non-export/file-priv consts (per-file key);
-                    // a colliding EXPORT const's qualifier lives in
-                    // `const_qualified_by_name` (global-by-name — see its
-                    // field doc for the reference-resolution rationale +
-                    // known limit) — consulted as the SECOND fallback, before
-                    // the bare-name default.
-                    let qualifier = self.private_const_c_names
-                        .get(&(expr.span.file_id, name.clone()))
-                        .cloned()
-                        .or_else(|| self.const_qualified_by_name.get(name).cloned())
-                        .unwrap_or_else(|| name.clone());
+                // [№151] the qualifier resolution (per-file private -> colliding export
+                // -> bare) and [#1158] "is THIS const lazy" both live in `lazy_const_sym`.
+                // #1397: a LOCAL of the same name (param, closure param, `ro`/`mut`, pattern) is not the module
+                // value nor the free fn -- all three lookups below used to answer by name alone (4 for 11).
+                if self.is_local_read(name) { return Ok(Self::mangle_field_name(name)); }
+                if let Some(qualifier) = self.lazy_const_sym(expr.span.file_id, name) {
                     return Ok(format!("_nova_const_{}_value", qualifier));
                 }
                 let is_local_var = self.var_types.contains_key(name);
@@ -36448,21 +36432,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                     return Ok(self.free_fn_c_name(name));
                 }
-                // Plan 91.12 [M-91.12-const-resolution-via-types] (closed
-                // 2026-06-01, production-grade): module-private const C-name
-                // substitution через direct (file_id, name) lookup. Pre-pass
-                // в emit_module populated map ДЛЯ ВСЕХ peers module-group
-                // (Rule C: peers share decls namespace), поэтому lookup
-                // (use-site file_id, name) однозначно резолвится к const'у
-                // в module-group без single-candidate fallback или ambiguity.
-                //
-                // is_local_var bypass нужен: var_types популируется и для
-                // module-level const'ов (emit_const_decl вставляет name→type
-                // для type inference), что иначе заглушало бы const lookup
-                // при unrelated locals. Module-group resolution дает корректный
-                // mangled name; local var shadow case покрывается тем что
-                // emit_const_decl mangle'ит C-name → local var с тем же
-                // source-level name не shadow'ит mangled symbol.
+                // Plan 91.12: module-private const C-name via (use-site file_id, name); the pre-pass covers every
+                // peer of the module group. A same-named LOCAL is caught above (#1397) -- the old note here
+                // claimed the mangling alone covered that case; it did not.
                 if let Some(mangled) = self.private_const_c_names
                     .get(&(expr.span.file_id, name.clone()))
                 {
@@ -36687,7 +36659,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // const'ов нужно `_nova_const_FACTOR_value->x` вместо
                 // `FACTOR_x` (last segment — record-поле) — bare read, eager
                 // init guarantees it's already populated (see emit_lazy_const).
-                if parts.len() >= 2 && self.lazy_consts.contains(&parts[0]) {
+                if parts.len() >= 2 && self.lazy_const_sym(expr.span.file_id, &parts[0]).is_some() {
                     let const_ty = self.var_types.get(&parts[0]).cloned()
                         .unwrap_or_default();
                     let accessor = if Self::is_value_type(&const_ty) { "." } else { "->" };
@@ -40951,7 +40923,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             ExprKind::Ident(n) => {
                 if self.var_mutable.contains(n)
                     || self.var_boxed.contains_key(n)
-                    || self.lazy_consts.contains(n)
+                    || self.lazy_const_sym(e.span.file_id, n).is_some()
                 {
                     return false;
                 }
@@ -48138,7 +48110,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         && parts[0].chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false)
                 };
                 if parts.len() == 2 && !is_assoc_const_symbol
-                    && (self.lazy_consts.contains(&parts[0]) || self.var_types.contains_key(&parts[0]))
+                    && (self.lazy_const_sym(func.span.file_id, &parts[0]).is_some() || self.var_types.contains_key(&parts[0]))
                 {
                     let new_obj = Expr {
                         kind: ExprKind::Ident(parts[0].clone()),
@@ -49426,6 +49398,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Fallback: rebuild comma-expr explicitly. This still produces
         // semantically-divergent code — control never reaches the dummy.
         Ok(format!("(({}), {})", raw, typed_zero))
+    }
+
+    /// Registry #1401 (class): a `never` expr (checker channel `resolved_types` `Never`, or the divergence walk)
+    /// takes the C type of its PLACE, not the `(nova_int)0LL` dummy a value-struct place rejects. Every tail sink
+    /// routes here: `emit_expr_in_place` (fn/lambda arrow bodies), `tail_takes_place_type` (the four block-trailing gates).
+    fn is_never_125(&self, e: &Expr) -> bool { matches!(self.resolved_types.get(&e.id), Some(crate::types::ResolvedType::Never)) || self.expr_diverges_125(e) }
+    fn emit_expr_in_place(&mut self, e: &Expr, place_c: &str) -> Result<String, String> {
+        if self.is_never_125(e) { self.emit_divergent_with_target_125(e, place_c) } else { self.emit_expr(e) }
+    }
+    fn tail_takes_place_type(&self, ret: &str, tail: &Expr) -> bool {
+        ret.starts_with("NovaOpt_") || ret.starts_with("_NovaFixArr_") || ret.starts_with("_NovaTuple_")
+            || Self::is_typed_integer(ret) || Self::is_bytes_slice_c_ty(ret) || self.is_never_125(tail)
     }
 
     /// Plan 125 followup [M-125-codegen-never-cast]: target-typed zero
@@ -51616,10 +51600,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let result_tmp = self.fresh_tmp_named("match");
         let matched_tmp = self.fresh_tmp_named("matched");
 
-        // Determine scrutinee C type from its expression
+        // №1353: a value type's pointer carrier (`other Self`) is matched through its value, as `@` is (`(*nova_self)`).
         let scr_ty = self.infer_expr_c_type(scrutinee);
+        let (scr_ty, scr_val) = if Self::is_value_struct_ptr(&scr_ty) { (scr_ty.trim_end_matches('*').to_string(), format!("(*{})", scr)) } else { (scr_ty, scr.clone()) };
         self.var_types.insert(scr_tmp.clone(), scr_ty.clone());
-        self.line(&format!("{} {} = {};", scr_ty, scr_tmp, scr));
+        self.line(&format!("{} {} = {};", scr_ty, scr_tmp, scr_val));
         // Propagate tuple element type info from scrutinee var to scr_tmp
         if let Some(elem_tys) = self.tuple_element_types.get(scr.as_str()).cloned() {
             self.tuple_element_types.insert(scr_tmp.clone(), elem_tys);
@@ -55642,387 +55627,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // Plan 62.D bis-1 (2026-05-18): scope-aware free-variable collector.
-    // The original `collect_free_idents` is misnamed — it returns ALL
-    // identifiers in an expression, including ones bound by inner `let`s,
-    // pattern matches, and nested lambdas. Used as-is for closure-capture
-    // analysis (emit_lambda line ~16670), the resulting filter
-    // (`var_types.contains_key`) incorrectly treats inner-shadowed names as
-    // captures from the outer scope when those names ALSO happen to be in
-    // `var_types` (e.g. `s` from a prior `let s = ...` in another function
-    // body — `var_types` is a global HashMap that doesn't reset per-fn).
-    //
-    // The fix: track inner bindings (let-statements, lambda params, match
-    // patterns) and exclude them from the free set. We use a `bound` HashSet
-    // that's pushed/popped as we descend.
-    //
-    // Production semantics: in a sequence of `let`s, the lexical scope of
-    // `let x = ...` covers the rest of the block. So binding order matters:
-    // `let s = ...; let f = || s + 1` — `s` IS free in `f`'s body. But
-    // `let f = || { let s = ...; s + 1 }` — `s` is locally bound, NOT free.
-    //
-    // The collector descends through blocks, growing `bound` as it visits
-    // each `let` BEFORE visiting subsequent statements (matches lexical scope).
-    fn collect_truly_free_idents(
-        expr: &Expr,
-        bound: &mut HashSet<String>,
-        out: &mut HashSet<String>,
-    ) {
-        match &expr.kind {
-            ExprKind::Ident(n) => {
-                if !bound.contains(n) {
-                    out.insert(n.clone());
-                }
-            }
-            ExprKind::Binary { left, right, .. } => {
-                Self::collect_truly_free_idents(left, bound, out);
-                Self::collect_truly_free_idents(right, bound, out);
-            }
-            ExprKind::Unary { operand, .. } => {
-                Self::collect_truly_free_idents(operand, bound, out);
-            }
-            ExprKind::Call { func, args, .. } => {
-                Self::collect_truly_free_idents(func, bound, out);
-                for a in args { Self::collect_truly_free_idents(a.expr(), bound, out); }
-            }
-            ExprKind::Member { obj, .. } => {
-                Self::collect_truly_free_idents(obj, bound, out);
-            }
-            ExprKind::Index { obj, index } => {
-                Self::collect_truly_free_idents(obj, bound, out);
-                Self::collect_truly_free_idents(index, bound, out);
-            }
-            ExprKind::Block(b) => {
-                Self::collect_truly_free_idents_block(b, bound, out);
-            }
-            ExprKind::If { cond, then, else_, .. } => {
-                Self::collect_truly_free_idents(cond, bound, out);
-                Self::collect_truly_free_idents_block(then, bound, out);
-                if let Some(e) = else_ {
-                    match e {
-                        ElseBranch::Block(b) =>
-                            Self::collect_truly_free_idents_block(b, bound, out),
-                        ElseBranch::If(ex) =>
-                            Self::collect_truly_free_idents(ex, bound, out),
-                    }
-                }
-            }
-            ExprKind::Lambda { params, body, .. } => {
-                // Inner lambda: its params shadow outer scope inside the body.
-                // Snapshot bound, add params, recurse, restore.
-                let saved: Vec<String> = params.iter()
-                    .filter_map(|p| if bound.insert(p.name.clone()) { Some(p.name.clone()) } else { None })
-                    .collect();
-                Self::collect_truly_free_idents(body, bound, out);
-                for n in saved { bound.remove(&n); }
-            }
-            ExprKind::ClosureLight { params, body } => {
-                let saved: Vec<String> = params.iter()
-                    .filter_map(|p| if bound.insert(p.name.clone()) { Some(p.name.clone()) } else { None })
-                    .collect();
-                match body {
-                    crate::ast::ClosureBody::Expr(e) =>
-                        Self::collect_truly_free_idents(e, bound, out),
-                    crate::ast::ClosureBody::Block(b) =>
-                        Self::collect_truly_free_idents_block(b, bound, out),
-                }
-                for n in saved { bound.remove(&n); }
-            }
-            ExprKind::ClosureFull(c) => {
-                let saved: Vec<String> = c.params.iter()
-                    .filter_map(|p| if bound.insert(p.name.clone()) { Some(p.name.clone()) } else { None })
-                    .collect();
-                match &c.body {
-                    crate::ast::FnBody::Expr(e) =>
-                        Self::collect_truly_free_idents(e, bound, out),
-                    crate::ast::FnBody::Block(b) =>
-                        Self::collect_truly_free_idents_block(b, bound, out),
-                    crate::ast::FnBody::External => {}
-                }
-                for n in saved { bound.remove(&n); }
-            }
-            ExprKind::TupleLit(elems) => {
-                for e in elems { Self::collect_truly_free_idents(e, bound, out); }
-            }
-            ExprKind::Detach(b) | ExprKind::Blocking(b) => {
-                Self::collect_truly_free_idents_block(b, bound, out);
-            }
-            ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
-                Self::collect_truly_free_idents_block(body, bound, out);
-                if let Some(c) = cancel {
-                    Self::collect_truly_free_idents(c, bound, out);
-                }
-                if let Some(dl) = deadline {
-                    Self::collect_truly_free_idents(&dl.expr, bound, out);
-                }
-                if let Some(oh) = on_timeout {
-                    Self::collect_truly_free_idents(oh, bound, out);
-                }
-            }
-            ExprKind::Select { arms } => {
-                for arm in arms {
-                    match &arm.op {
-                        SelectOp::Recv { chan, .. } =>
-                            Self::collect_truly_free_idents(chan, bound, out),
-                        SelectOp::Send { chan, value } => {
-                            Self::collect_truly_free_idents(chan, bound, out);
-                            Self::collect_truly_free_idents(value, bound, out);
-                        }
-                        SelectOp::Default => {}
-                    }
-                    if let Some(g) = &arm.guard {
-                        Self::collect_truly_free_idents(g, bound, out);
-                    }
-                    Self::collect_truly_free_idents_block(&arm.body, bound, out);
-                }
-            }
-            ExprKind::Match { scrutinee, arms } => {
-                Self::collect_truly_free_idents(scrutinee, bound, out);
-                for arm in arms {
-                    // Pattern bindings shadow the outer scope inside the arm body.
-                    let mut pat_binds: HashSet<String> = HashSet::new();
-                    Self::collect_pattern_bindings(&arm.pattern, &mut pat_binds);
-                    let added: Vec<String> = pat_binds.iter()
-                        .filter_map(|n| if bound.insert(n.clone()) { Some(n.clone()) } else { None })
-                        .collect();
-                    if let Some(g) = &arm.guard {
-                        Self::collect_truly_free_idents(g, bound, out);
-                    }
-                    match &arm.body {
-                        MatchArmBody::Expr(e) =>
-                            Self::collect_truly_free_idents(e, bound, out),
-                        MatchArmBody::Block(b) =>
-                            Self::collect_truly_free_idents_block(b, bound, out),
-                    }
-                    for n in added { bound.remove(&n); }
-                }
-            }
-            // Plan 153.2 gap B: control-flow arms were missing here, so any name
-            // referenced ONLY inside a `while`/`for`/`loop`/`while let`/`if let`
-            // body that is captured by an enclosing closure was never collected
-            // as a free variable (fell through to `_ => {}`). This mirrors the
-            // canonical complete visitor `collect_idents_expr`, but preserves
-            // scope discipline (loop-var / pattern bindings shadow captures).
-            ExprKind::While { cond, body, .. } => {
-                Self::collect_truly_free_idents(cond, bound, out);
-                Self::collect_truly_free_idents_block(body, bound, out);
-            }
-            ExprKind::Loop { body, .. } => {
-                Self::collect_truly_free_idents_block(body, bound, out);
-            }
-            ExprKind::For { pattern, iter, body, .. }
-            | ExprKind::ParallelFor { pattern, iter, body, .. } => {
-                // `iter` is evaluated in the OUTER scope (loop var not yet bound).
-                Self::collect_truly_free_idents(iter, bound, out);
-                let mut pat_binds: HashSet<String> = HashSet::new();
-                Self::collect_pattern_bindings(pattern, &mut pat_binds);
-                let added: Vec<String> = pat_binds.iter()
-                    .filter_map(|n| if bound.insert(n.clone()) { Some(n.clone()) } else { None })
-                    .collect();
-                Self::collect_truly_free_idents_block(body, bound, out);
-                for n in added { bound.remove(&n); }
-            }
-            ExprKind::WhileLet { pattern, scrutinee, guard, body, .. } => {
-                // scrutinee evaluated before the pattern binds.
-                Self::collect_truly_free_idents(scrutinee, bound, out);
-                let mut pat_binds: HashSet<String> = HashSet::new();
-                Self::collect_pattern_bindings(pattern, &mut pat_binds);
-                let added: Vec<String> = pat_binds.iter()
-                    .filter_map(|n| if bound.insert(n.clone()) { Some(n.clone()) } else { None })
-                    .collect();
-                // guard sees the pattern bindings.
-                if let Some(g) = guard {
-                    Self::collect_truly_free_idents(g, bound, out);
-                }
-                Self::collect_truly_free_idents_block(body, bound, out);
-                for n in added { bound.remove(&n); }
-            }
-            ExprKind::IfLet { pattern, scrutinee, guard, then, else_ } => {
-                // scrutinee evaluated before the pattern binds.
-                Self::collect_truly_free_idents(scrutinee, bound, out);
-                let mut pat_binds: HashSet<String> = HashSet::new();
-                Self::collect_pattern_bindings(pattern, &mut pat_binds);
-                let added: Vec<String> = pat_binds.iter()
-                    .filter_map(|n| if bound.insert(n.clone()) { Some(n.clone()) } else { None })
-                    .collect();
-                // guard sees the pattern bindings.
-                if let Some(g) = guard {
-                    Self::collect_truly_free_idents(g, bound, out);
-                }
-                Self::collect_truly_free_idents_block(then, bound, out);
-                for n in added { bound.remove(&n); }
-                // else branch does NOT see the pattern bindings.
-                if let Some(e) = else_ {
-                    match e {
-                        ElseBranch::Block(b) =>
-                            Self::collect_truly_free_idents_block(b, bound, out),
-                        ElseBranch::If(ex) =>
-                            Self::collect_truly_free_idents(ex, bound, out),
-                    }
-                }
-            }
-            // Remaining sub-expr-bearing arms (robustness: future captures inside
-            // these constructs are now collected). No new bindings introduced.
-            ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::Throw(e)
-            | ExprKind::Spawn(e) | ExprKind::As(e, _) | ExprKind::Is(e, _) => {
-                Self::collect_truly_free_idents(e, bound, out);
-            }
-            ExprKind::Coalesce(l, r) => {
-                Self::collect_truly_free_idents(l, bound, out);
-                Self::collect_truly_free_idents(r, bound, out);
-            }
-            ExprKind::TurboFish { base, .. } => {
-                Self::collect_truly_free_idents(base, bound, out);
-            }
-            ExprKind::Range { start, end, .. } => {
-                if let Some(s) = start { Self::collect_truly_free_idents(s, bound, out); }
-                if let Some(e) = end { Self::collect_truly_free_idents(e, bound, out); }
-            }
-            ExprKind::ArrayLit(elems) => {
-                for elem in elems {
-                    match elem {
-                        ArrayElem::Item(x) | ArrayElem::Spread(x) =>
-                            Self::collect_truly_free_idents(x, bound, out),
-                    }
-                }
-            }
-            ExprKind::MapLit { elems, .. } => {
-                for me in elems {
-                    match me {
-                        crate::ast::MapElem::Pair(k, v) => {
-                            Self::collect_truly_free_idents(k, bound, out);
-                            Self::collect_truly_free_idents(v, bound, out);
-                        }
-                        crate::ast::MapElem::Spread(e) =>
-                            Self::collect_truly_free_idents(e, bound, out),
-                    }
-                }
-            }
-            ExprKind::RecordLit { fields, .. } => {
-                // Spread `...expr` is encoded as a field with is_spread=true and
-                // value=Some(expr), so recursing every f.value covers it.
-                for f in fields {
-                    if let Some(v) = &f.value { Self::collect_truly_free_idents(v, bound, out); }
-                }
-            }
-            ExprKind::With { bindings, body } => {
-                for b in bindings { Self::collect_truly_free_idents(&b.handler, bound, out); }
-                Self::collect_truly_free_idents_block(body, bound, out);
-            }
-            ExprKind::Interrupt(Some(v)) => {
-                Self::collect_truly_free_idents(v, bound, out);
-            }
-            // Владелец 2026-07-21 (найдено при str-concat-lint канонизации,
-            // [M-str-interp-closure-capture-miss]): та же дыра, что и в
-            // `collect_idents_expr` выше (см. её комментарий) — `${expr}`
-            // внутри interpolated-string не обходился, идентификатор,
-            // упомянутый ТОЛЬКО там, не попадал в closure free-var/capture
-            // set → C codegen "use of undeclared identifier". Это ГЛАВНЫЙ
-            // путь для `flat_map(|x| "...${captured}...")`-формы (emit_lambda,
-            // не emit_spawn) — репро: `resolve_addr` (examples/flagship/
-            // aggregator/src/main.nv).
-            ExprKind::InterpolatedStr { parts } => {
-                for p in parts {
-                    if let crate::ast::InterpStrPart::Expr { expr, .. } = p {
-                        Self::collect_truly_free_idents(expr, bound, out);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn collect_truly_free_idents_block(
-        block: &Block,
-        bound: &mut HashSet<String>,
-        out: &mut HashSet<String>,
-    ) {
-        // Lexical scope: each `let x = ...` binds `x` for SUBSEQUENT stmts/trailing.
-        // We collect inserted names and pop them all on block exit (block-local).
-        let mut added: Vec<String> = Vec::new();
-        for s in &block.stmts {
-            match s {
-                Stmt::Let(d) => {
-                    // Value expression evaluated in scope BEFORE binding x.
-                    Self::collect_truly_free_idents(&d.value, bound, out);
-                    // After this let, x is bound for the rest of the block.
-                    let mut pat_binds: HashSet<String> = HashSet::new();
-                    Self::collect_pattern_bindings(&d.pattern, &mut pat_binds);
-                    for n in pat_binds {
-                        if bound.insert(n.clone()) {
-                            added.push(n);
-                        }
-                    }
-                }
-                Stmt::Assign { target, value, .. } => {
-                    Self::collect_truly_free_idents(target, bound, out);
-                    Self::collect_truly_free_idents(value, bound, out);
-                }
-                Stmt::Expr(e) =>
-                    Self::collect_truly_free_idents(e, bound, out),
-                Stmt::Return { value: Some(e), .. } =>
-                    Self::collect_truly_free_idents(e, bound, out),
-                _ => {}
-            }
-        }
-        if let Some(t) = &block.trailing {
-            Self::collect_truly_free_idents(t, bound, out);
-        }
-        // Pop block-local bindings.
-        for n in added { bound.remove(&n); }
-    }
-
-    /// Collect names introduced by a pattern (used by closure free-var collector
-    /// and by future scope analyses). Recursively visits sub-patterns; for `Or`,
-    /// takes the union (any alternative's bindings count as introduced). Wildcard,
-    /// literals, and unit-variants introduce nothing.
-    fn collect_pattern_bindings(pat: &Pattern, out: &mut HashSet<String>) {
-        match pat {
-            Pattern::Wildcard(_) | Pattern::Literal(..) => {}
-            Pattern::Ident { name, .. } => { out.insert(name.clone()); }
-            Pattern::Binding { name, inner, .. } => {
-                out.insert(name.clone());
-                Self::collect_pattern_bindings(inner, out);
-            }
-            Pattern::Or { alternatives, .. } => {
-                for alt in alternatives {
-                    Self::collect_pattern_bindings(alt, out);
-                }
-            }
-            Pattern::Variant { kind, .. } => {
-                match kind {
-                    VariantPatternKind::Tuple { patterns, .. } => {
-                        for p in patterns { Self::collect_pattern_bindings(p, out); }
-                    }
-                    VariantPatternKind::Unit => {}
-                }
-            }
-            Pattern::Record { fields, .. } => {
-                for f in fields {
-                    if let Some(inner) = &f.pattern {
-                        Self::collect_pattern_bindings(inner, out);
-                    } else {
-                        // shorthand `{ name }` — binds `name`.
-                        out.insert(f.name.clone());
-                    }
-                }
-            }
-            Pattern::Tuple(pats, _) => {
-                for p in pats { Self::collect_pattern_bindings(p, out); }
-            }
-            Pattern::Array { elems, .. } => {
-                for el in elems {
-                    match el {
-                        ArrayPatternElem::Item(p) => Self::collect_pattern_bindings(p, out),
-                        ArrayPatternElem::Rest => {}
-                        ArrayPatternElem::RestBind(name) => { out.insert(name.clone()); }
-                    }
-                }
-            }
-        }
-    }
-
     /// Emit a lambda expression. Returns the C expression (a function pointer or closure pointer).
     ///
     /// `closure_id` — 197.3 (Q3 A, channel-first migration): the ORIGINAL
@@ -56036,6 +55640,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         params: &[LambdaParam],
         body: &Expr,
         context_param_tys: Option<&[(String, String)]>, // (param_c_ty, ret_c_ty) from outer fn sig context
+        return_type_ann: Option<&TypeRef>,
+        closure_id: ExprId,
+    ) -> Result<String, String> {
+        // #1397: the closure's own parameters are local in its body, whatever the module names.
+        let ps: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
+        self.local_frames.push(crate::free_idents::frame_reads(&ps, |bd, fr| crate::free_idents::collect_truly_free_idents(body, bd, fr)));
+        let r = self.emit_lambda_inner(params, body, context_param_tys, return_type_ann, closure_id);
+        self.local_frames.pop();
+        r
+    }
+
+    fn emit_lambda_inner(
+        &mut self,
+        params: &[LambdaParam],
+        body: &Expr,
+        context_param_tys: Option<&[(String, String)]>,
         return_type_ann: Option<&TypeRef>,
         closure_id: ExprId,
     ) -> Result<String, String> {
@@ -56113,7 +55733,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let param_names: HashSet<String> = params.iter().map(|p| p.name.clone()).collect();
         let mut body_idents = HashSet::new();
         let mut initial_bound = param_names.clone();
-        Self::collect_truly_free_idents(body, &mut initial_bound, &mut body_idents);
+        crate::free_idents::collect_truly_free_idents(body, &mut initial_bound, &mut body_idents);
         // Free vars = body idents that exist in var_types and are not lambda params
         //
         // [investigated M-closure-ctx-freefn-callee-unresolved-fnnt, №96]: a
@@ -56432,7 +56052,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
             }
         }
-        let body_val = self.emit_expr(body)?;
+        let body_val = self.emit_expr_in_place(body, &ret_c_ty)?;
         if ret_c_ty == "nova_unit" {
             self.line(&format!("{};", body_val));
             self.line("return NOVA_UNIT;");
@@ -59672,7 +59292,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // rather than risk a new address-of-static-global path this guard was
         // never exercised against.
         let is_lazy_const_ident = matches!(&obj_ast.map(|e| &e.kind),
-            Some(ExprKind::Ident(name)) if self.lazy_consts.contains(name));
+            Some(ExprKind::Ident(name)) if obj_ast.map_or(false, |e| self.lazy_const_sym(e.span.file_id, name).is_some()));
         let addressable = !is_lazy_const_ident && obj_ast
             .map(|e| Self::is_lvalue_receiver(e))
             .unwrap_or_else(|| Self::looks_like_ident_str(obj_c));
@@ -62282,6 +61902,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     return ret_ty.clone();
                                 }
                             }
+                            // #1390: ≥2 same-arity namesakes, different returns, no resolved callee -- `user_fn_sigs` would type the call by ANOTHER fn (silently wrong when the C types convert); refuse.
+                            if exact.len() >= 2 && exact.iter().any(|(_, r)| r != &exact[0].1) {
+                                self.fatal_codegen_type_unknown(&format!("call `{}`: {} same-name free fns of arity {} differ in return type and the checker resolved none; the result type is not guessed by name (#1390)", name, exact.len(), args.len()), expr.span)
+                            }
                         }
                         // A bare `name(...)` call (func is Ident, not Member) targets
                         // a FREE function. The `fn_ret_<name>` table below is keyed by
@@ -62295,14 +61919,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if let Some((_, ret_ty)) = self.user_fn_sigs.get(name) {
                             if !ret_ty.is_empty() && ret_ty != "void*" && !self.debt_is_generic_stub_c(ret_ty) {
                                 self.icr_trace("B10f_user_fn_sigs");
-                                // [196-capstone2] Детач+panic ПРОБОВАЛСЯ (2026-07-17) — panic
-                                // СРАБОТАЛ на examples/flagship/aggregator: name="splitmix64_step"
-                                // ret_ty="uint64_t" (тот самый 206/splitmix64 прецедент из
-                                // CLAUDE.md — conformance не ловит app-регрессии). p196-rtbuf-
-                                // producers' bare-free-fn producer НЕ покрывает этот call-сайт
-                                // (вероятно gs-гейт/single-candidate-дисциплина отклоняет форму) —
-                                // легаси остаётся ЕДИНСТВЕННЫМ верным источником здесь. ЖИВАЯ,
-                                // не трогать. Реестр НЕ снижен для этой ветки.
+                                // [196-capstone2] Детач+panic ПРОБОВАЛСЯ (2026-07-17) и СРАБОТАЛ на
+                                // examples/flagship/aggregator (splitmix64_step, uint64_t): bare-free-fn
+                                // producer этот call-сайт не покрывает — легаси здесь ЕДИНСТВЕННЫЙ
+                                // верный источник. ЖИВАЯ, не трогать. Реестр НЕ снижен.
                                 return ret_ty.clone();
                             }
                         }
@@ -65480,7 +65100,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // the receiver type resolves via `var_types[lazyconst]`.
             if let ExprKind::Call { func, args, trailing } = &expr.kind {
                 if let ExprKind::Path(parts) = &func.kind {
-                    if parts.len() == 2 && self.lazy_consts.contains(&parts[0]) {
+                    if parts.len() == 2 && self.lazy_const_sym(func.span.file_id, &parts[0]).is_some() {
                         let new_obj = Expr {
                             kind: ExprKind::Ident(parts[0].clone()),
                             span: func.span, id: crate::ast::ExprId::UNSET, debug_only: false,

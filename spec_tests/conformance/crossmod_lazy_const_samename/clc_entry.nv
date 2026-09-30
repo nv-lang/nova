@@ -1,0 +1,26 @@
+// Registry 221.1 #1158: the FORM of one module's constant initialiser must not
+// decide how SAME-NAMED constants of OTHER modules are emitted or read.
+//
+// Three modules each declare a private `C1158 u8`. One initialiser is not a
+// constexpr (`'\\' as u8`), so that constant goes the lazy way (storage plus
+// runtime init, `_nova_const_<q>_value`); the other two are plain C constants.
+// Laziness used to be recorded and asked for by the BARE NAME, so once one
+// `C1158` was lazy every read of every `C1158` went the lazy way and named a
+// `_nova_const_<its own qualifier>_value` that was never declared -- a C error
+// in the modules that did nothing but share a name (the novac lexer carried
+// this as `[LEGACY-#1158]` on `B_BACKSLASH`, shared with std json and fs).
+//
+// The values differ on purpose (92, 9, 10): same-typed file-scope statics can
+// be merged by C into one object, and a shared value would pass a test that
+// compared only one of them.
+module crossmod_lazy_const_samename.clc_entry
+
+import ./clc_lazy.{clc_lazy_value}
+import ./clc_eager_a.{clc_eager_a_value}
+import ./clc_eager_b.{clc_eager_b_value}
+
+test "three same-named private consts, one lazy: each module reads its own (#1158)" {
+    assert(clc_lazy_value() == 92 as u8)
+    assert(clc_eager_a_value() == 9 as u8)
+    assert(clc_eager_b_value() == 10 as u8)
+}

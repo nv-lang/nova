@@ -1,0 +1,32 @@
+// EXPECT_COMPILE_ERROR E_CODEGEN_TYPE_UNKNOWN
+//
+// Registry 221.1 #1390, the CLASS half. Two imported free fns share a name
+// and an arity and differ in return type, and the checker could not pick one
+// (the argument is a `with` value whose body has a statement, which the
+// checker does not type -- the conservative bound of the #1390 checker fix).
+// Codegen used to type such a call by NAME (`user_fn_sigs`, last declaration
+// wins): the call went to the right fn, the result took the other fn's type,
+// and with `int` against `bool` the program printed a wrong value in silence.
+// Now it refuses loudly and names the call. The value-typed half is
+// `p1390_same_name_import/`.
+module standalone.p1390_same_name_refuse
+
+import ./p1390_rc.{pick}
+import ./p1390_rf.{pick}
+
+type P1390RSrc effect {
+    fn items() -> []str
+}
+
+fn p1390_rsrc() -> Effect[P1390RSrc] => effect P1390RSrc {
+    items() -> []str => ["a", "b", "c"]
+}
+
+test "an unresolved call over same-arity namesakes is refused, not typed by name" {
+    ro all = with P1390RSrc = p1390_rsrc() {
+        ro xs = P1390RSrc.items()
+        xs
+    }
+    ro n = pick(all)
+    assert(n + 10 == 13)
+}

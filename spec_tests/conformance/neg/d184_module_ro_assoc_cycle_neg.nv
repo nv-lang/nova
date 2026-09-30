@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E_MODULE_INIT_CYCLE
+//
+// D184 amendment 2026-09-30: a bare module-level `ro` and an associated
+// `ro Type.NAME` reading each other are a cycle of ONE graph -- two graphs
+// sharing vertices would each miss it (the Carina window's point).
+module neg.d184_module_ro_assoc_cycle_neg
+
+type D184C { ro n int }
+
+fn d184ac_three() -> int => 3
+
+ro d184ac_bare = D184C.K + d184ac_three()
+// nova:expect E_MODULE_INIT_CYCLE -- D184C.K reads d184ac_bare, which reads D184C.K: no order computes them
+ro D184C.K int = d184ac_bare + d184ac_three()
+
+fn main() Io -> () {
+    println(d184ac_bare)
+}

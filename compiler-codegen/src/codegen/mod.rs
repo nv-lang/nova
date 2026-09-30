@@ -2,6 +2,7 @@ pub mod assoc_ro;
 pub mod emit_c;
 pub mod external_registry;
 pub mod gc_layout;
+pub mod local_frames;
 pub mod may_gc;
 pub mod mono_method_registry;
 pub mod operator_dispatch;

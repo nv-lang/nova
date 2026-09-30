@@ -1,0 +1,50 @@
+// EXPECT_STDOUT 11|41|51|60|30|20|200|9|10|3|7|100
+//
+// Registry 221.1 #1397 (K1): a LOCAL name equal to a module value's name must
+// read the local. Codegen resolved an Ident read by name alone -- a lazy
+// module `ro`, a module-private `const`, a free fn -- so every binder below
+// silently read the MODULE value: before the fix this printed
+// `4|4|4|4|8|40|400|8|10|4|7|100` (the parameter `k` of `by_param(10)` read
+// the module `k` = 3). Every binder form is covered: fn parameter, `ro`, `mut`,
+// `match` and `for` patterns, a light and a full closure parameter, a
+// parameter shadowing a `const`, and one shadowing a free fn's name.
+module standalone.p1397_local_shadows_module_value
+
+fn p1397_three() -> int => 3
+fn p1397_apply(f fn(int) -> int) -> int => f(2)
+fn width() -> int => 100
+
+ro k = p1397_three()
+const c = 7
+
+fn by_param(k int) -> int => k + 1
+fn by_ro() -> int {
+    ro k = 40
+    k + 1
+}
+fn by_mut() -> int {
+    mut k = 50
+    k += 1
+    k
+}
+fn by_match(o Option[int]) -> int {
+    match o {
+        Some(k) => k
+        None => 0
+    }
+}
+fn by_for() -> int {
+    mut s = 0
+    for k in []int.of(10, 20) {
+        s += k
+    }
+    s
+}
+fn by_light() -> int => p1397_apply(|k| k * 10)
+fn by_full() -> int => p1397_apply(fn(k int) -> int { k * 100 })
+fn by_const_shadow(c int) -> int => c + 1
+fn by_fn_shadow(width int) -> int => width + 1
+
+fn main() Io -> () {
+    print("${by_param(10)}|${by_ro()}|${by_mut()}|${by_match(Some(60))}|${by_for()}|${by_light()}|${by_full()}|${by_const_shadow(8)}|${by_fn_shadow(9)}|${k}|${c}|${width()}")
+}

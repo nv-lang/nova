@@ -2508,6 +2508,115 @@ fn check_const_constexpr_ex(
     }
 }
 
+/// D184 amendment 2026-09-30: module-level `ro` initializers run in DEPENDENCY
+/// order (codegen sorts them); a CYCLE of dependencies -- including a value
+/// reading itself -- has no order and is `E_MODULE_INIT_CYCLE`. An edge
+/// `a -> b` is a read of module-level `ro b` anywhere in `a`'s initializer
+/// (closures inside it included), found by the SAME function the codegen
+/// orders by (`free_idents::collect_truly_free_idents`, scope-aware), so the two
+/// cannot disagree -- and the same edge novac draws (a read met while typing the
+/// initializer, bada5540e). Named limit: a read through a CALLED fn's body
+/// (`ro a = f()`, `f` reads `a`) is not an edge; Go counts it, Nova does not.
+/// Reported once per cycle, at the declaration whose read closes it.
+fn check_module_init_cycles(module: &Module, errors: &mut Vec<Diagnostic>) {
+    // Nodes: bare module-level `ro` (key = its name) and associated `ro Type.NAME`
+    // (key = `Type.NAME`) -- ONE graph (the Carina window's point: two graphs
+    // sharing vertices would each miss a bare <-> Type.NAME cycle). Each node is
+    // keyed WITH its declaring module: the CU is merged, and two modules'
+    // same-named `ro`s are two values, not one (class #1158; the emitter keys the
+    // same graph by C symbol, `init_dep_sym`).
+    struct Node<'a> { module: &'a [String], key: String, value: &'a Expr, span: Span }
+    let peer_of: HashMap<crate::diag::FileId, &PeerFile> = module.peer_files.iter().map(|p| (p.file_id, p)).collect();
+    let mod_of = |sp: Span| peer_of.get(&sp.file_id).map(|p| p.module_name.as_slice()).unwrap_or(&[]);
+    let mut lets: Vec<Node> = Vec::new();
+    for it in &module.items {
+        match it {
+            Item::Let(l) if !l.is_ghost => {
+                let key = match &l.pattern {
+                    Pattern::Ident { name, .. } => Some(name.clone()),
+                    Pattern::Variant { path, kind: VariantPatternKind::Unit, .. } if path.len() == 1 => Some(path[0].clone()),
+                    _ => None,
+                };
+                if let Some(key) = key { lets.push(Node { module: mod_of(l.span), key, value: &l.value, span: l.span }); }
+            }
+            Item::Type(t) => for ac in t.assoc_consts.iter().filter(|a| a.is_lazy_ro) {
+                lets.push(Node { module: mod_of(ac.span), key: format!("{}.{}", t.name, ac.name), value: &ac.value, span: ac.span });
+            },
+            _ => {}
+        }
+    }
+    // Source order of the DECLARATIONS (an `ro Type.NAME` sits in its type's
+    // assoc list, not at its own line): the walk starts at the earliest, so the
+    // declaration whose read closes a cycle is the later one -- as in novac.
+    lets.sort_by_key(|n| (n.span.file_id, n.span.start));
+    let index: HashMap<(&[String], &str), usize> = lets.iter().enumerate().map(|(i, n)| ((n.module, n.key.as_str()), i)).collect();
+    // A read resolves in the READING file: its own module's node, else the node a
+    // direct `import` of that file names -- a selective item (`import ./m.{x}`,
+    // alias honoured) or `m.x` through a whole-module import; the imported module
+    // is matched by its last segment, as `import_prefix_to_module_last` does.
+    let resolve = |n: &Node, r: &str| -> Option<usize> {
+        if let Some(&i) = index.get(&(n.module, r)) { return Some(i); }
+        let (head, rest) = match r.split_once('.') { Some((h, t)) => (h, Some(t)), None => (r, None) };
+        peer_of.get(&n.span.file_id)?.imports.iter().find_map(|imp| {
+            let last = imp.path.last()?;
+            let key = match (&imp.items, rest) {
+                (Some(items), _) => {
+                    let it = items.iter().find(|it| it.alias.as_deref().unwrap_or(&it.name) == head)?;
+                    rest.map_or_else(|| it.name.clone(), |t| format!("{}.{}", it.name, t))
+                }
+                (None, Some(t)) if imp.alias.as_deref().unwrap_or(last) == head => t.to_string(),
+                _ => return None,
+            };
+            lets.iter().position(|m| m.module.last() == Some(last) && m.key == key)
+        })
+    };
+    let adj: Vec<Vec<usize>> = lets.iter().map(|n| {
+        let mut free = HashSet::new();
+        crate::free_idents::collect_truly_free_idents(n.value, &mut HashSet::new(), &mut free);
+        let mut d: Vec<usize> = free.iter().filter_map(|r| resolve(n, r)).collect();
+        d.sort_unstable();
+        d.dedup();
+        d
+    }).collect();
+    // 0 = unvisited, 1 = on the DFS stack, 2 = done.
+    let mut state = vec![0u8; lets.len()];
+    let mut stack: Vec<usize> = Vec::new();
+    fn dfs(v: usize, adj: &[Vec<usize>], state: &mut [u8], stack: &mut Vec<usize>,
+           lets: &[(String, Span)], errors: &mut Vec<Diagnostic>) {
+        state[v] = 1;
+        stack.push(v);
+        for &w in &adj[v] {
+            if state[w] == 1 {
+                let from = stack.iter().position(|&x| x == w).unwrap_or(0);
+                let mut chain: Vec<&str> = stack[from..].iter().map(|&i| lets[i].0.as_str()).collect();
+                chain.push(lets[w].0.as_str());
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_MODULE_INIT_CYCLE] module-level `ro` initializers form a cycle: {} -- \
+                         no initialization order computes them (D184 amendment 2026-09-30)",
+                        chain.join(" -> ")
+                    ),
+                    lets[v].1,
+                ).with_note(
+                    "a module-level `ro` initializer may read another module-level `ro` only if \
+                     that one does not depend back on it; break the cycle, or compute one of the \
+                     values inside a function".to_string(),
+                ));
+            } else if state[w] == 0 {
+                dfs(w, adj, state, stack, lets, errors);
+            }
+        }
+        stack.pop();
+        state[v] = 2;
+    }
+    let keyed: Vec<(String, Span)> = lets.iter().map(|n| (n.key.clone(), n.span)).collect();
+    for v in 0..keyed.len() {
+        if state[v] == 0 {
+            dfs(v, &adj, &mut state, &mut stack, &keyed, errors);
+        }
+    }
+}
+
 /// Plan 148 Ф.3 ([M-114.4-strict-partition]): forward direction of the
 /// strict module-level `const`/`ro` partition (spec D199 / 03-syntax
 /// «Strict module-level partition»).
@@ -5905,6 +6014,8 @@ impl<'a> TypeCheckCtx<'a> {
                 Item::Bench(_) | Item::Lemma(_) => {}
             }
         }
+        // D184 amendment 2026-09-30: a cycle of module-level `ro` initializers.
+        check_module_init_cycles(module, errors);
         // Plan 157 (D200 amend): associated `ro Type.NAME` — same strict
         // const/ro partition symmetry as bare module-level `ro`
         // (`check_ro_module_partition` above, [M-114.4-strict-partition]).
@@ -23685,6 +23796,35 @@ impl<'a> TypeCheckCtx<'a> {
             }
             // Block with statements and no trailing expr → unit. Trailing is inferred above.
             ExprKind::Block(b) if b.trailing.is_none() => Some(TypeRef::Unit(expr.span)),
+            // Registry #1390: a `with` block's value (D61 §8, 04-effects.md "Алгоритм
+            // типизации with-блока"): W = lub(T_body, IRT of every handler), and a
+            // handler that never `interrupt`s has IRT = never (D87: `Effect[E]` ≡
+            // `Effect[E, never]`), which lub absorbs. So W = T_body exactly when every
+            // handler's type is a known `Effect[E]` / `Effect[E, never]`; anything else
+            // (a handler literal, an unknown type, a real IRT) stays None, as before.
+            // Same conservatism as the Block arm above: only a body with NO statements,
+            // so the trailing cannot name a binding absent from the outer `scope`.
+            // Without this, `ro all = with Os = real_os() { args() }` had no type, a
+            // call `parse(all)` over two same-named imported fns got no resolved
+            // callee, and codegen typed its result by NAME -- the other fn (#1390).
+            ExprKind::With { bindings, body } if body.stmts.is_empty() => {
+                let irt_never = bindings.iter().all(|b| {
+                    match self.infer_expr_type(&b.handler, scope) {
+                        Some(TypeRef::Named { path, generics, .. })
+                            if path.last().map(|s| s.as_str()) == Some("Effect") =>
+                        {
+                            generics.len() == 1
+                                || (generics.len() == 2 && type_ref_is_never(&generics[1]))
+                        }
+                        _ => false,
+                    }
+                });
+                if irt_never {
+                    body.trailing.as_ref().and_then(|t| self.infer_expr_type(t, scope))
+                } else {
+                    None
+                }
+            }
             // Plan 172.1 §0a: `if cond { then } else { … }` expression type = type of
             // then-branch trailing expr (branches must be type-compatible per checker).
             // Gate: else_ must exist (otherwise If = unit, no value type).

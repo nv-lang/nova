@@ -1,0 +1,35 @@
+// Registry 221.1 #1353: a payload-less sum is a value type (A4, D477), and the
+// synthesized `@equal(other Self)` matched on `other` - a pointer carrier
+// `NovaValue_X*` in the method ABI - through `.`, so C did not compile ("member
+// reference type 'NovaValue_X *' is a pointer"). Every #impl list containing Equal
+// failed with it. The receiver `@` was already matched through its value
+// `(*nova_self)`; the fix gives any value-type pointer carrier in scrutinee position
+// the same treatment.
+// After the fix a payload-less sum answers exactly as a value record does. What still
+// fails for BOTH (Clone's `-> Self`, Compare, a direct call `a.equal(b)` passing a
+// value to the pointer carrier) is a separate value-type class - registry #1395.
+module spec_tests.conformance
+
+#impl(Equal + Hash + Display + Debug)
+type P1353Color enum Red | Green | Blue
+
+test "derived Equal on a payload-less sum compares variants" {
+    ro r = P1353Color.Red
+    ro b = P1353Color.Blue
+    assert(r == r)
+    assert(r != b)
+    assert(!(r == b))
+}
+
+test "derived Hash agrees with Equal on a payload-less sum" {
+    ro g = P1353Color.Green
+    ro g2 = P1353Color.Green
+    assert(g == g2)
+    assert(g.hash() == g2.hash())
+}
+
+test "derived Display and Debug print the variant name" {
+    ro b = P1353Color.Blue
+    assert("${b}" == "Blue")
+    assert("${b:?}" == "Blue")
+}

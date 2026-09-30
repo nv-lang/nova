@@ -1,0 +1,4 @@
+// #1390 carrier -- see `../p1390_same_name_import.nv`. The number of items.
+module p1390_same_name_import.p1390_count
+
+export fn pick(xs []str) -> int => xs.len()

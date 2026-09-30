@@ -1,0 +1,34 @@
+// Registry 221.1 #1390: two IMPORTED free fns share a name, and the call's
+// argument is the value of a `with` block bound without an annotation. The
+// checker had no type for a `with` value, so it could not pick the overload
+// and left the call unresolved; codegen then called the right fn but typed its
+// RESULT by name -- the other fn's return. With `int` against `bool` C converts
+// silently: `pick(all)` read back as `true` (1) instead of 3.
+//
+// The `with` value's type is the type of its body when every handler never
+// `interrupt`s (D61 §8, D87: `Effect[E]` ≡ `Effect[E, never]`), so `all` is a
+// `[]str`, `pick([]str) -> int` is the only overload that applies, and the call
+// is typed by the fn it actually calls. Three strings, so a stray `bool`
+// reads 1 and cannot pass by accident.
+module standalone.p1390_same_name_import
+
+import ./p1390_count.{pick}
+import ./p1390_flag.{pick}
+
+type P1390Src effect {
+    fn items() -> []str
+}
+
+fn p1390_src() -> Effect[P1390Src] => effect P1390Src {
+    items() -> []str => ["a", "b", "c"]
+}
+
+test "a with-block value picks the right same-name import, and the result is typed by it (#1390)" {
+    ro all = with P1390Src = p1390_src() { P1390Src.items() }
+    ro n = pick(all)
+    assert(n + 10 == 13)
+}
+
+test "control: the other overload is still reachable by its own argument type" {
+    assert(pick("x"))
+}
