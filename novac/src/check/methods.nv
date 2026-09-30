@@ -222,8 +222,7 @@ fn Checker mut @judge_method_lookup(e Node, t Token, key []ArgSpec, found FnLook
                         bind_slots(@ctx.fns.params, mfd.param_off, mfd.param_cnt, key))
                     @record(e, mfd.ret_id)
                 } else {
-                    @refuse(t,
-                        "outside the subset: the shell novac links into carries no `${t.text}` for ${ty_source_name(@ctx, key[0].type_id)} -- novac read the signature but has no body to emit")
+                    @refuse(t, no_shell_method_msg(t.text, ty_source_name(@ctx, key[0].type_id)))
                     // A refusal is ALSO a decision (274.4 step 2): the row is
                     // known, so its declared return goes into the channel. The
                     // walk continues past a refusal (poisoning discipline), and
@@ -273,7 +272,7 @@ fn Checker mut @record_instance_method(e Node, t Token, row FnRow, key []ArgSpec
         if @ctx.defs.declared_by_file(rname) {
             @refuse(t, "outside the subset: `${t.text}` on `${rname}`, a type THIS FILE declares, is not compiled yet -- a generic method reaches novac only through the shell, and the shell cannot carry one for a type it has never seen (274.7 B1b-2)")
         } else {
-            @refuse(t, "outside the subset: the shell novac links into carries no `${t.text}` for ${rname} -- the interop surface is the probe program (novac/probe/shell_probe.nv); the method arrives when the probe calls it (274.7 B1b-2)")
+            @refuse(t, no_shell_method_msg(t.text, rname))
         }
         // Refused, but judged: the deduced return is this node's type
         // (274.4 §2 -- a refusal records its decision too).

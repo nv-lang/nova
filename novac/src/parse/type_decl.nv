@@ -329,7 +329,7 @@ fn Cursor mut @type_decl() -> Node {
             @push_if(kids, TokenKind.Comma)
         }
         @push_expected(kids, TokenKind.RParen)
-    } else if @peek() != TokenKind.Eof && !TOP_LEVEL_STOPS.contains(@peek()) {
+    } else if @peek() != TokenKind.Eof && !DECL_STARTS.contains(@peek()) {
         // A NEWTYPE or an ALIAS: `type Row int`, `type Row alias int`. The tail
         // is a TYPE REFERENCE, and one branch reads both -- the `alias` word is
         // kept as a leaf and `sem` tells the two apart (a newtype is a distinct

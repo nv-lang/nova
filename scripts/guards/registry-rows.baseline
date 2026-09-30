@@ -1433,6 +1433,26 @@
 # (W_REDUNDANT_OF/W_COERCE_EXPLICIT_REDUNDANT/W_NON_COMPOUND_ASSIGN, унаследованы
 # от волны [T consume] 2026-09-25) почищены мирно, без строки реестра -- они не
 # дефект, а стиль, и `nova check`+`nova test` подтвердили каждую правку.
+# 2026-10-01, integrator nova-20: rows 1390 -> 1399, max 1448 (merge of Carina's p274-e9s4: #1430-#1436,
+#   #1439, #1443 land beside main's #1441, #1442, #1444-#1448; all of those leave gaps).
+# 2026-10-01, integrator nova-20: rows -> 1401, max -> 1450 (merge of the cloud session's p1343: #1449 (K1, mut x T of a generic free fn loses the write, blocks the tag) and #1450 (K2, overlapping generic overloads T vs []T)).
+# 2026-10-01, integrator nova-20: rows -> 1403, max -> 1452 (merge of spec/d55-str-bytes: #1451 (K2, let/return of a non-identifier str into []u8 fails in C) and #1452 (K1, str accepted in a mut []u8 position -- writes into the string's bytes; blocks the tag)).
+# 2026-10-01, integrator nova-20: rows -> 1406, max -> 1456 (merge of the cloud session's p1338: #1454 (K2, constructor receiver with an undetermined parameter), #1455 (K1, arithmetic on a void* operand emits a silent 0 -- blocks the tag), #1456 (K3, unknown Option method passes the checker); 1453 reserved for the handler-capture regression, leaves gaps).
+rows=1406
+max=1456
+rows=1403
+max=1452
+rows=1401
+max=1450
+rows=1399
+max=1448
+# 2026-10-01, integrator nova-20: rows 1389 -> 1390 (merge of guards/ci-proven-push: #1442, novac-gate red in CI
+#   without a verdict and with a stale shell); 1442 leaves gaps.
+rows=1390
+# 2026-10-01, помощник nova-88 (номер — интегратор): rows 1388 -> 1389, max 1448 (без изменений);
+#   дыра 1441 из `gaps` убрана: строка №1441 (затенение захвата локалом, К1) едет с фиксом.
+rows=1389
+max=1448
 # 2026-10-01, integrator nova-20: rows 1387 -> 1388, max -> 1448 (merge of the cloud session's p1260: #1448, a record
 #   literal field value is not checked against the field type).
 rows=1388
@@ -1440,6 +1460,11 @@ max=1448
 # 2026-10-01, integrator nova-20: rows 1386 -> 1387 (merge of p1234-import-alias: #1444, the type-alias half
 #   of #1419); 1444 leaves gaps.
 rows=1387
+# 2026-10-01, окно Карины (синк с main 33f11c73d): rows 1386 -> 1395, max 1447. Строки №1430-№1436,
+#   №1439 и №1443 (ветка p274-e9s4) легли рядом с №1445-№1447 интегратора; из gaps= сняты 1430-1436,
+#   1439, 1443; дыры 1441 (помощник), 1442 (агент стражей), 1444 (агент №1234) остаются.
+# (superseded) rows=1395
+# (superseded) max=1447
 # 2026-10-01, integrator nova-20: rows 1383 -> 1386, max -> 1447 (merge of the cloud session's p1420:
 #   #1445-#1447 found on the way); gaps 1441 (assistant), 1442 (guards agent), 1443 (Carina), 1444 (#1234 agent).
 rows=1386
@@ -2010,7 +2035,7 @@ stale_gaps=0
 # nomer I v gaps=, I so strokoy schitaetsya 'protuhshey dyroy'.
 # 2026-09-21: №1209 ПРИЕХАЛ и СНЯТ из gaps=
 # (писал интегратор, как и планировалось). №1210-1211 всё ещё ждёт Карину.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1430-1436,1439,1441,1442,1443
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1453
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding

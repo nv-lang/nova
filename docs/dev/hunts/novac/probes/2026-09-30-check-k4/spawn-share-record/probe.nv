@@ -1,0 +1,18 @@
+// A spawn body capturing a `mut` of a record declared `#share` in the file.
+#share
+type Cell { n int }
+
+fn g() -> int {
+    mut c = Cell { n: 0 }
+    supervised {
+        spawn {
+            ro k = c.n
+            println(k)
+        }
+    }
+    c.n
+}
+
+fn main() {
+    println(g())
+}

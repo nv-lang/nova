@@ -27,6 +27,7 @@ module novac.sem
 import ../tree.{Node, NodeKind}
 import ../diag.{ice}
 import ../lex.{TokenKind}
+import ../builtins.{is_bool_literal}
 
 /// The NAME a binder carries: its single identifier child.
 export fn binder_text(b Node) -> str {
@@ -101,7 +102,15 @@ export fn pattern_shape(pat Node) -> PatShape {
             // Any other opening leaf is a recovery gap.
             PatShape.Wild
         }
-        Branch { .. } => PatShape.Bind
+        // `true` / `false` reach the pattern as a NAME node, and they are the
+        // bool's LITERALS, not binders: one answer for every door that asks
+        // the shape (check x K4 hunt 2026-09-30 -- the exhaustiveness rule read
+        // them as literals by text while binding, the condition and the
+        // lowering bound a variable named `true`).
+        Branch { .. } => {
+            if kids.len() == 1 && is_bool_literal(pattern_head_text(pat)) { return PatShape.Lit }
+            PatShape.Bind
+        }
     }
 }
 
@@ -125,6 +134,14 @@ export fn pattern_head_text(pat Node) -> str {
         }
     }
     out
+}
+
+/// THE LEAF of a literal pattern: the token itself (`3`, `"s"`), or, for
+/// `true` / `false`, the identifier inside the name node they arrive in.
+export fn pattern_lit_leaf(pat Node) -> Node {
+    ro k0 = branch_children(pat)[0]
+    if k0.kind_of() == NodeKind.Name { return branch_children(k0)[0] }
+    k0
 }
 
 /// THE QUALIFIER of a head: `Shape.Circle` answers `Shape`, a bare head

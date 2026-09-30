@@ -15,6 +15,10 @@
 # Обход — осознанный и явный: NOVA_SKIP_CI_CHECK=1 git push ...
 # (нужен, когда внешний гейт красный по чужой причине и это уже разобрано).
 # Отсутствие `gh`/сети хук НЕ роняет — check-ci-status.sh отвечает SKIP.
+#
+# С 2026-09-30 перед этим стоит ВТОРОЙ вопрос, строже: доказан ли CI сам
+# отправляемый коммит (check-push-proven-by-ci.py, ключ NOVA_PUSH_UNPROVEN).
+# Там отсутствие `gh` — отказ, а не SKIP: main без доказательства не двигается.
 export LC_ALL=C
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
@@ -28,9 +32,10 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 # что проверялось (реестр №635). Заботы разные, ключи разные, порядок теперь
 # тоже: сперва определяем цель, потом каждая проверка решает про себя сама.
 PUSHING_MAIN=0
+MAIN_SHA=""
 while read -r _lref _lsha rref _rsha; do
     case "$rref" in
-        refs/heads/main) PUSHING_MAIN=1 ;;
+        refs/heads/main) PUSHING_MAIN=1; MAIN_SHA="$_lsha" ;;
     esac
 done
 [ "$PUSHING_MAIN" -eq 1 ] || exit 0
@@ -44,6 +49,56 @@ if [ -f "$TREE_GUARD" ]; then
         exit 1
     fi
 fi
+
+# ── main переезжает только на коммит, доказанный CI (владелец, 2026-09-30) ──
+# Схема: кандидат уходит в ветку `integrate` на origin, CI судит его там, и main
+# двигается на ТОТ ЖЕ коммит, когда CI зелёный. Страж судит ЛОКАЛЬНЫЙ sha
+# отправляемого main — то, что уедет, а не то, что уже лежит на origin (это
+# вопрос check-ci-status.sh ниже). Стоит ДО NOVA_SKIP_CI_CHECK намеренно: у
+# него свой ключ NOVA_PUSH_UNPROVEN="<причина #NNNN>" (номер обязателен), и
+# чужой ключ его не выключает — 2026-09-30 все пуши дня ушли с
+# NOVA_SKIP_CI_CHECK=1. Удаление main (нулевой sha) доказывать нечего.
+# Самотест: scripts/guards/selftest/test-check-push-proven-by-ci.sh.
+PROVEN_GUARD="$REPO_ROOT/scripts/guards/check-push-proven-by-ci.py"
+case "$MAIN_SHA" in
+    ""|0000000000000000000000000000000000000000) ;;
+    *)
+    if [ -f "$PROVEN_GUARD" ]; then
+        # Интерпретатор по ФАКТУ исполнения (заглушка Microsoft Store под
+        # именем python3 существует и не делает ничего; на Linux нет `python`).
+        PY_BIN=""
+        for _cand in python3 python; do
+            if command -v "$_cand" >/dev/null 2>&1 && [ "$("$_cand" -c 'print(42)' 2>/dev/null)" = "42" ]; then
+                PY_BIN="$_cand"; break
+            fi
+        done
+        if [ -z "$PY_BIN" ]; then
+            case "${NOVA_PUSH_UNPROVEN:-}" in
+                *[#][0-9][0-9]*)
+                    echo "pre-push: доказательство CI не проверено (нет python), NOVA_PUSH_UNPROVEN: $NOVA_PUSH_UNPROVEN" ;;
+                *)
+                    echo "pre-push ОСТАНОВИЛ отправку: нет рабочего python/python3 — доказательство CI для main прочесть нечем." >&2
+                    echo "  Обход осознанный: NOVA_PUSH_UNPROVEN=\"<причина #NNNN>\" git push ..." >&2
+                    exit 1 ;;
+            esac
+        elif ! "$PY_BIN" "$PROVEN_GUARD" "$MAIN_SHA"; then
+            cat >&2 <<'EOF'
+
+pre-push ОСТАНОВИЛ отправку: main переезжает только на коммит, который CI
+на GitHub уже судил и признал зелёным (решение владельца 2026-09-30).
+
+Что делать:
+  * положить этот коммит в ветку `integrate` на origin и дождаться CI;
+  * красное задание, которое разобрано и держится ОТКРЫТОЙ строкой реестра,
+    назвать в scripts/guards/ci-accepted-red.list;
+  * GitHub лежит или иное осознанное исключение —
+      NOVA_PUSH_UNPROVEN="<причина #NNNN>" git push …
+    (номер строки реестра обязателен; NOVA_SKIP_CI_CHECK этот страж не выключает).
+EOF
+            exit 1
+        fi
+    fi ;;
+esac
 
 if [ "${NOVA_SKIP_CI_CHECK:-0}" = "1" ]; then
     echo "pre-push: проверка внешнего гейта пропущена (NOVA_SKIP_CI_CHECK=1)"

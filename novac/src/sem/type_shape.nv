@@ -180,7 +180,7 @@ export fn is_float_prim(tys Interner, t TyId) -> bool {
 fn row_is_int(r BuiltinType) -> bool {
     match r.family {
         PfInt => true
-        PfFloat | PfStr | PfBool | PfChar | PfUnit => false
+        PfFloat | PfStr | PfBool | PfChar | PfUnit | PfAny => false
     }
 }
 
@@ -188,7 +188,7 @@ fn row_is_int(r BuiltinType) -> bool {
 fn row_is_float(r BuiltinType) -> bool {
     match r.family {
         PfFloat => true
-        PfInt | PfStr | PfBool | PfChar | PfUnit => false
+        PfInt | PfStr | PfBool | PfChar | PfUnit | PfAny => false
     }
 }
 
@@ -209,5 +209,14 @@ export fn lit_admits(tys Interner, lit LitArg, want TyId) -> bool {
         NotLit => false
         IntLitArg => is_numeric_prim(tys, want)
         FloatLitArg => is_float_prim(tys, want)
+    }
+}
+
+/// Is `t` the top type `any` (D53)? The family of its universe row says so.
+export fn is_any_ty(tys Interner, t TyId) -> bool {
+    if !is_ty(t) || tys.kind_of(t) != TypeKind.TkPrim { return false }
+    match prim_row(tys.prim_ordinal_of(t)).family {
+        PfAny => true
+        PfInt | PfFloat | PfStr | PfBool | PfChar | PfUnit => false
     }
 }

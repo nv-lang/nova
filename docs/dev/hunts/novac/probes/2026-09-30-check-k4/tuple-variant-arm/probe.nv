@@ -1,0 +1,15 @@
+// A variant inside a tuple arm: the arm matches only (A(_), _).
+type Sh enum
+    | A(int)
+    | B
+
+fn pick(s Sh, n int) -> int {
+    match (s, n) {
+        (A(v), _) => v
+        (_, m) => 100 + m
+    }
+}
+
+fn main() Io -> () {
+    println("${pick(B, 7)}")
+}

@@ -1,0 +1,15 @@
+// A captured `mut` that the op body only ASSIGNS (plain `=`, never read).
+fn main() {
+    mut seen = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label str) -> () {
+            seen = 7
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {
+            println(label)
+        }
+    } {
+        ResourceTrace.on_resource_enter("a")
+    }
+    println(seen)
+}

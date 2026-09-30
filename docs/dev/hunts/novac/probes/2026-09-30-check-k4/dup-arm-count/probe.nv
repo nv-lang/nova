@@ -1,0 +1,15 @@
+// The same variant written twice: coverage is a COUNT of heads, not a set.
+type Sh enum
+    | A
+    | B
+
+fn pick(s Sh) -> int {
+    match s {
+        A => 1
+        A => 2
+    }
+}
+
+fn main() Io -> () {
+    println("${pick(B)}")
+}
