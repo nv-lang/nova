@@ -15,7 +15,7 @@
 - функция через фасад (проба вне фикстуры, `export import ./fsrc.{mk as make}`) -> до: CC-FAIL `undefined reference to nova_fn_..fsrc2mk` / после: PASS
 - `neg/p1444_type_import_conflict`, `neg/p1444_type_import_import_conflict` -> до: PASS / после: PASS (D29 для типов уже держал код №1234) /
 
-ЦЕНА: std 0, novac 0, conformance 0 — `nova check` по `std/src`, `novac`, `spec_tests/conformance` новым бинарём и бинарём `origin/integrate` (ed90b4073 до слияния — c775a975d), вывод std/novac побайтно равен, в conformance различаются только новые фикстуры; сателлиты — выборочных `as`-импортов и `export import … as` нет ни в одном. /
+ЦЕНА: std 0, novac 0, conformance 0 — `nova check` по `std/src`, `novac`, `spec_tests/conformance` новым бинарём и бинарём `origin/integrate` на c775a975d (до слияния), вывод std/novac побайтно равен, в conformance различаются только новые фикстуры; сателлиты — выборочных `as`-импортов и `export import … as` нет ни в одном. /
 
 ФИКСТУРЫ: `spec_tests/conformance/standalone/p1444_type_import_alias/` (источник `ta_src`, пир `ta_peer`, фасад `ta_facade`, входы `p1444_a_peer_first`, `p1444_b_alias_first`, `p1444_c_facade`, `p1444_d_facade_alias`); `spec_tests/conformance/neg/p1444_type_import_conflict/`, `spec_tests/conformance/neg/p1444_type_import_import_conflict/` (построчные `nova:expect E_IMPORT_NAME_CONFLICT`). Соседи зелёные: p1419, p1234, p1390, import, alias, crossmod, d78_, same_name, facade, export. Линт своих `.nv` — 0 находок. /
 
