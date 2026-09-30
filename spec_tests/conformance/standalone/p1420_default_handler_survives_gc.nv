@@ -1,0 +1,146 @@
+// EXPECT_STDOUT io-a
+// EXPECT_STDOUT io-b
+// EXPECT_STDOUT main true true true true true true 8 8
+// EXPECT_STDOUT with 7 8 true true
+// EXPECT_STDOUT workers 8 8
+//
+// Registry 221.1 №1420: a `#default_handler` is installed lazily into the
+// thread-local slot `_nova_handler_<E>`, and that slot was the ONLY reference
+// to the handler's vtable and ctx. The Boehm runtime runs with
+// GC_set_no_dls(1) and registers its roots by hand, and a TLS block is not
+// one of them, so the first collection freed the handler and the next effect
+// call jumped through garbage (claude-limits `--serve`: 0xC0000005 in
+// Nova_Random_u64, TOML text in the registers).
+//
+// CLASS: a GC object reachable only from a thread-local slot is not a root.
+// The fix pins the handler at install time (`nova_gc_pin`, alloc_boehm.c) —
+// one uncollectable cell per (thread, effect), which keeps the whole ctx graph
+// alive wherever the pointer is copied afterwards (another fiber's snapshot,
+// another worker's slot).
+//
+// What each line guards:
+//   main    — every `#default_handler` effect of std (Random, Time, Os, Fs, Io,
+//             Net) plus a user-defined one (`Tally`, whose ctx holds a heap
+//             string) is called, then collected + churned, then called again
+//             on the main thread; `true` means the second call worked and
+//             agreed with the first. `squeeze` is what makes a freed block get
+//             REUSED — a collection alone frees it and nothing overwrites it.
+//   with    — control for the override: a real `with` still shadows the
+//             default (7, not 8), the default comes back on exit (8), and a
+//             seeded Random is deterministic across a collection.
+//   workers — the same calls from eight fibers on the M:N worker pool, each
+//             worker installing its own default; 8 = all passed, 8 = all ran
+//             on a worker (worker id >= 0).
+//
+// Proven both ways on one tree (Linux, 2026-09-30), with a temporary switch
+// in `nova_gc_pin` that skipped the pin: this file 10/10 Segmentation fault
+// with the switch, 0/60 without it. The worker line alone did NOT fail on
+// Linux with the switch (0/20): there glibc places a worker's static TLS
+// inside its pthread stack block, which Boehm scans; the main thread's TLS is
+// not scanned. On Windows every thread's TLS is outside the scan.
+//
+// M:N uses `supervised` + `spawn`, not `parallel for`: `parallel for` with a
+// collection in its body crashes or hangs on its own (1-2 in 60, in
+// `nova_chan_writer_send`), a separate defect filed next to №1420.
+
+module standalone.p1420_default_handler_survives_gc
+
+import std.fs.{Fs}
+import std.os.{Os}
+import std.net.{Net}
+import std.testing.handlers.core.{seeded}
+
+type Tally effect {
+    fn read() -> int
+}
+
+// The ctx carries a heap string, so the pin has to keep a graph alive, not
+// just the vtable block.
+#default_handler
+fn real_tally() -> Effect[Tally] {
+    ro tag = "tally-${40 + 2}"
+    effect Tally {
+        read() -> int => tag.byte_len()
+    }
+}
+
+fn fixed_tally() -> Effect[Tally] {
+    effect Tally {
+        read() -> int => 7
+    }
+}
+
+fn churn(n int) -> int {
+    mut acc = 0
+    for i in 0..n {
+        ro s = "c${i}"
+        acc += s.byte_len()
+    }
+    acc
+}
+
+fn squeeze() -> () {
+    gc.collect()
+    ro _ = churn(5000)
+    gc.collect()
+}
+
+fn main() Io Random Time Os Fs Net -> () {
+    ro on_main = runtime.current_worker_id() < 0
+    ro r1 = Random.u64()
+    ro t1 = Time.now_monotonic()
+    ro p1 = Os.pid()
+    ro f1 = Fs.close(-1)
+    ro line_a = "io-a\n".bytes()
+    ro w1 = Io.write_out(line_a)
+    ro host = "127.0.0.1".bytes()
+    ro n1 = Net.lookup(host, 80)
+    ro k1 = Tally.read()
+    squeeze()
+    ro r2 = Random.u64()
+    ro t2 = Time.now_monotonic()
+    ro p2 = Os.pid()
+    ro f2 = Fs.close(-1)
+    ro line_b = "io-b\n".bytes()
+    ro w2 = Io.write_out(line_b)
+    ro n2 = Net.lookup(host, 80)
+    ro k2 = Tally.read()
+    ro same_io = w1.is_ok() && w2.is_ok()
+    ro same_net = n1.is_ok() == n2.is_ok()
+    println("main ${on_main} ${r1 != r2} ${t2.nanos() >= t1.nanos()} ${p1 == p2 && f1 == f2} ${same_io} ${same_net} ${k1} ${k2}")
+
+    ro c1 = with Tally = fixed_tally() {
+        squeeze()
+        Tally.read()
+    }
+    squeeze()
+    ro c2 = Tally.read()
+    ro s1 = with Random = seeded(42) { Random.u64() }
+    squeeze()
+    ro s2 = with Random = seeded(42) { Random.u64() }
+    ro r3 = Random.u64()
+    println("with ${c1} ${c2} ${s1 == s2} ${r3 != s1}")
+
+    mut ok = AtomicInt.new(0)
+    mut on_worker = AtomicInt.new(0)
+    supervised {
+        for _i in 0..8 {
+            spawn {
+                ro a = Random.u64()
+                ro ka = Tally.read()
+                ro pa = Os.pid()
+                ro ta = Time.now_monotonic()
+                squeeze()
+                ro b = Random.u64()
+                ro kb = Tally.read()
+                ro pb = Os.pid()
+                ro tb = Time.now_monotonic()
+                if a != b && ka == 8 && kb == 8 && pa == pb && tb.nanos() >= ta.nanos() {
+                    ok.fetch_add(1)
+                }
+                if runtime.current_worker_id() >= 0 { on_worker.fetch_add(1) }
+            }
+        }
+    }
+    println("workers ${ok.load()} ${on_worker.load()}")
+}
