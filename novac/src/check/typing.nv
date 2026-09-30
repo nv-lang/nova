@@ -658,19 +658,9 @@ fn Checker mut @type_stmt(st Node) -> () {
             // the parser's own marker already said what was expected here.
             return
         }
-        // THE POSITION'S PREDICATE (wave P5, D486 s4): the for-header is a
-        // BINDING position, irrefutable like a destructuring binding -- the
-        // loop has no `else` for a failed match. The tree is the same tree
-        // the match arm binds; the refusal is about WHERE it stands.
-        match pattern_shape(pat) {
-            Tuple | Record | Bind | Wild => {}
-            Lit | Variant | Array | Disj => {
-                @report_first_leaf_of(kids, FOR_REFUTABLE_MSG)
-                // The names still BIND (to no type), the no-cascade rule.
-                @bind_names_untyped(pat)
-                return
-            }
-        }
+        // THE POSITION'S PREDICATE (D486 s4) is judged by `@bind_pattern` at
+        // every node of the tree (PatPos.PosFor, registry 1379) -- a check of
+        // the ROOT alone stood here and let `for (k, Some(v)) in xs` through.
         ro head = kids[3]
         if head.kind_of() == NodeKind.Call || head.kind_of() == NodeKind.MethodCall ||
            head.kind_of() == NodeKind.Name || head.kind_of() == NodeKind.FieldAccess {
@@ -692,7 +682,7 @@ fn Checker mut @type_stmt(st Node) -> () {
             ro cmark = @scope.mark()
             // The element pattern binds through the ONE door, fresh each
             // iteration (the mark is the loop's, released after the body).
-            if !@bind_pattern(pat, elem, kids, ParamMode.ModeRo) {
+            if !@bind_pattern(pat, elem, kids, ParamMode.ModeRo, PatPos.PosFor) {
                 @bind_names_untyped(pat)
             } else { // Every name bound with its decided type.
             }
@@ -717,7 +707,7 @@ fn Checker mut @type_stmt(st Node) -> () {
         ro mark = @scope.mark()
         // A loop variable is a fresh value each turn, bound read-only --
         // through the same pattern door, against the counter's int.
-        if !@bind_pattern(pat, @ctx.prims.int_id, kids, ParamMode.ModeRo) {
+        if !@bind_pattern(pat, @ctx.prims.int_id, kids, ParamMode.ModeRo, PatPos.PosFor) {
             @bind_names_untyped(pat)
         } else { // Every name bound with its decided type.
         }

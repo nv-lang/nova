@@ -1,0 +1,125 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc -- irrefutability is judged over the whole pattern for a given
+// position (check_irrefutable), and a bare path in a pattern is resolved ONCE as a
+// binding or a unit variant (resolve's pattern binding mode).
+// Role: WHERE a pattern stands and WHAT a bare name in it is -- the position's
+// predicate at every node (registry 1379) and the one binder-or-variant door
+// (registry 1380). Cut from match_arms.nv when it crossed the thousand-line cap.
+// One module, one namespace: these are `Checker` methods like their neighbours.
+// Used by: match_arms.nv (@bind_pattern, @bind_name_pattern), binds.nv,
+// cond_forms.nv, destructure.nv, typing.nv (the positions name themselves).
+// Guarded by: check-novac-file-size.py (this file exists because match_arms.nv
+// crossed 1000 lines).
+// novac/src/check/pattern_position.nv
+
+module novac.check
+
+import ../tree.{Node}
+import ../types.{TyId, no_ty, is_ty}
+import ../sem.{pattern_shape, PatShape, pattern_mode_word}
+import ../sem.{variant_in_sum, no_vrow, is_vrow, variants_named, VariantRow}
+
+/// WHERE a pattern stands (D486 §4): the three columns of the position table plus
+/// the match arm, which takes every form. Named by the caller once and handed down
+/// the recursion, so the predicate is judged at every node (registry 1379).
+type PatPos enum
+    | PosArm /// a match arm: every form
+    | PosBind /// a destructuring binding: irrefutable forms only
+    | PosFor /// a `for` header: irrefutable forms only, the loop has no `else`
+    | PosCond /// an if/while condition: no literal and no `|` at any depth; `_` inside is legal
+
+/// The position's predicate at ONE node, true when refused (D486 §4). A binding
+/// and a `for` header refuse every refutable form; a condition refuses the forms
+/// that compare with a VALUE -- a literal or `|` -- and keeps `_` inside (the
+/// amendment's one exception: only a pattern that IS `_` means nothing, and the
+/// condition's own door refuses that at the root). These are LANGUAGE errors.
+fn Checker mut @refused_at_position(pat Node, ak []Node, pos PatPos) -> bool {
+    ro refutable = match pattern_shape(pat) {
+        Lit | Variant | Array | Disj => true
+        Tuple | Record | Bind | Wild => false
+    }
+    ro compares_value = match pattern_shape(pat) {
+        Lit | Disj => true
+        Tuple | Record | Bind | Wild | Variant | Array => false
+    }
+    match pos {
+        PosArm => false
+        PosBind => @reject_if(refutable, ak, REFUTABLE_BINDING_MSG)
+        PosFor => @reject_if(refutable, ak, FOR_REFUTABLE_MSG)
+        PosCond => @reject_if(compares_value, ak, COND_VALUE_PATTERN_MSG)
+    }
+}
+
+/// Refuse as a LANGUAGE error when `bad`, and say whether it did.
+fn Checker mut @reject_if(bad bool, ak []Node, msg str) -> bool {
+    if bad {
+        @reject_first_leaf_of(ak, msg)
+        return true
+    }
+    false
+}
+
+/// A payload-less variant named in a pattern: refused where the position takes
+/// irrefutable forms only (a binding, a `for` header), true when refused.
+fn Checker mut @refused_unit_variant(ak []Node, pos PatPos) -> bool {
+    match pos {
+        PosArm | PosCond => false
+        PosBind => @reject_if(true, ak, REFUTABLE_BINDING_MSG)
+        PosFor => @reject_if(true, ak, FOR_REFUTABLE_MSG)
+    }
+}
+
+/// WHAT a bare name in a pattern IS (D411, D486 §2; registry 1380): a binder, a
+/// variant of the matched sum, or a variant of some OTHER sum -- ONE door for the
+/// three positions that used to decide it each on its own (a binding before its
+/// initializer, the match arm, the condition, which did not ask at all and called
+/// `if None = o` a name binding).
+type NameInPattern enum
+    | NameBinder /// no variant of this name is visible: the name binds
+    | NameOwnVariant(VariantRow) /// a variant of the matched sum
+    | NameForeignVariant(VariantRow) /// a variant of another sum, or of any sum when the type is not known yet
+
+/// Ask what `nm` is where a value of type `ty` is matched; `no_ty()` when the
+/// scrutinee is not typed yet (a binding judged before its initializer), and then
+/// any sum's variant of that name answers.
+fn Checker @name_in_pattern(nm str, ty TyId) -> NameInPattern {
+    if is_ty(ty) {
+        ro own = variant_in_sum(@ctx, ty, nm) ?? no_vrow()
+        if is_vrow(own) { return NameInPattern.NameOwnVariant(own) }
+    } else {
+        // No scrutinee type yet: the sums below answer for every one of them.
+    }
+    ro (vfirst, vn) = variants_named(@ctx, nm)
+    if vn >= 1 { return NameInPattern.NameForeignVariant(vfirst) }
+    NameInPattern.NameBinder
+}
+
+/// Does a bare name in a condition's pattern name a variant (of any sum)? The
+/// condition is judged before its initializer is typed, so no sum is preferred.
+fn Checker @names_a_variant(nm str) -> bool {
+    match @name_in_pattern(nm, no_ty()) {
+        NameBinder => false
+        NameOwnVariant(_) => true
+        NameForeignVariant(_) => true
+    }
+}
+
+/// The ROOT of a condition's pattern refused as a LANGUAGE error (D486 §4, §7;
+/// registry 1381), true when refused: `_` alone matches always, a literal or `|`
+/// compares with a value. A tuple, record or array root is the subset's debt,
+/// said by the caller -- that form exists, these three do not.
+fn Checker mut @refused_cond_root(pat Node, kids []Node) -> bool {
+    ro s = pattern_shape(pat)
+    if s == PatShape.Wild { return @reject_if(true, kids, COND_WILD_ROOT_MSG) }
+    @reject_if(s == PatShape.Lit || s == PatShape.Disj, kids, COND_VALUE_PATTERN_MSG)
+}
+
+/// A bare name as the whole condition pattern with no mode word (D486 §4
+/// amendment p.3; registry 1381): a LANGUAGE error, true when refused. With `ro`
+/// or `mut` it is the grammar's form, which the caller refuses as subset debt.
+fn Checker mut @refused_bare_cond_name(pat Node, kids []Node) -> bool {
+    match pattern_mode_word(pat) {
+        None => @reject_if(true, kids, COND_BARE_NAME_MSG)
+        Some(_) => false
+    }
+}

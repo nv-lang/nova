@@ -1,0 +1,14 @@
+module pattern_depth.neg_1
+
+// The binding position's predicate at DEPTH (D486 s4 amendment 2026-09-30 p.1,
+// registry 1379): `ro (a, Some(b)) = p` is as refutable as `ro Some(b) = p`.
+// novac judged the root alone and let the nested variant through.
+
+// NOVAC_EXPECT a destructuring binding takes an irrefutable pattern
+
+fn main() {
+    ro o = Some(7)
+    ro p = (1, o)
+    ro (a, Some(b)) = p
+    println(a + b)
+}

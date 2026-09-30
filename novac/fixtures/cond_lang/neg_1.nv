@@ -1,0 +1,13 @@
+module cond_lang.neg_1
+
+// A condition whose WHOLE pattern is `_` always matches (D486 s4, s7; registry
+// 1381): a LANGUAGE error, not debt of a wave to come.
+
+// NOVAC_EXPECT a condition whose whole pattern is `_` always matches
+
+fn main() {
+    ro o = Some(3)
+    if _ = o {
+        println(1)
+    }
+}
