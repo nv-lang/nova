@@ -13460,6 +13460,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         self.var_boxed.insert(cap_name.clone(), bv.clone());
                         bv
                     }
+                } else if let Some(boxed) = self.var_boxed.get(cap_name) {
+                    boxed.clone() // #1421: in an op body / closure the name is a capture: its address is the body's box
                 } else {
                     format!("&{}", cap_name)
                 };
@@ -16729,7 +16731,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     /// Collect all identifier names referenced inside a handler method body.
-    fn collect_idents_in_handler_method(m: &HandlerMethod) -> Vec<String> {
+    pub(crate) fn collect_idents_in_handler_method(m: &HandlerMethod) -> Vec<String> {
         let mut names = Vec::new();
         match &m.body {
             HandlerMethodBody::Expr(e) => Self::collect_idents_expr(e, &mut names),
@@ -16750,7 +16752,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// Collect all names *introduced* (bound) inside an expression:
     /// let-bindings, for-pattern, match-arm patterns, if-let, while-let.
     /// These names are local to the spawn body and must not be treated as captures.
-    fn collect_bound_names_expr(expr: &Expr, out: &mut std::collections::HashSet<String>) {
+    pub(crate) fn collect_bound_names_expr(expr: &Expr, out: &mut std::collections::HashSet<String>) {
         match &expr.kind {
             ExprKind::Block(b) => Self::collect_bound_names_block(b, out),
             ExprKind::If { then, else_, .. } => {
@@ -16855,7 +16857,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
-    fn collect_bound_names_block(block: &Block, out: &mut std::collections::HashSet<String>) {
+    pub(crate) fn collect_bound_names_block(block: &Block, out: &mut std::collections::HashSet<String>) {
         for stmt in &block.stmts {
             match stmt {
                 Stmt::Let(d) => {
@@ -16953,7 +16955,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
-    fn collect_idents_expr(expr: &Expr, out: &mut Vec<String>) {
+    pub(crate) fn collect_idents_expr(expr: &Expr, out: &mut Vec<String>) {
         match &expr.kind {
             ExprKind::Ident(name) => out.push(name.clone()),
             ExprKind::Binary { left, right, .. } => {
@@ -17113,11 +17115,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                 }
             }
+            // #1421: a nested handler literal / closure -- a capture of a capture (local_frames.rs).
+            ExprKind::HandlerLit { .. } | ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_) => Self::collect_idents_nested(expr, out),
             _ => {}
         }
     }
 
-    fn collect_idents_block(block: &Block, out: &mut Vec<String>) {
+    pub(crate) fn collect_idents_block(block: &Block, out: &mut Vec<String>) {
         for stmt in &block.stmts {
             Self::collect_idents_stmt(stmt, out);
         }

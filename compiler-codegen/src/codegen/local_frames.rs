@@ -21,6 +21,42 @@ use std::collections::HashSet;
 use super::emit_c::CEmitter;
 
 impl CEmitter {
+    /// #1421: what a handler literal or closure nested in a body reads -- minus its own params and locals -- is
+    /// read by the body that holds it: a capture of a capture. `collect_idents_expr` stopped at such a node, so an
+    /// op body whose nested literal alone read `seen` never captured it, and the inner literal wrote `&seen` for
+    /// a name that is no C local there.
+    pub(crate) fn collect_idents_nested(expr: &crate::ast::Expr, out: &mut Vec<String>) {
+        use crate::ast::{ClosureBody, ExprKind, FnBody, HandlerMethodBody};
+        let (mut inner, mut own) = (Vec::new(), HashSet::new());
+        match &expr.kind {
+            ExprKind::HandlerLit { methods, .. } => for m in methods {
+                let (names, mut bound): (_, HashSet<String>) = (Self::collect_idents_in_handler_method(m), m.params.iter().map(|p| p.name.clone()).collect());
+                match &m.body {
+                    HandlerMethodBody::Expr(e) => Self::collect_bound_names_expr(e, &mut bound),
+                    HandlerMethodBody::Block(b) => Self::collect_bound_names_block(b, &mut bound),
+                }
+                out.extend(names.into_iter().filter(|n| !bound.contains(n)));
+            },
+            ExprKind::ClosureLight { params, body } => {
+                match body {
+                    ClosureBody::Expr(e) => { Self::collect_idents_expr(e, &mut inner); Self::collect_bound_names_expr(e, &mut own) }
+                    ClosureBody::Block(b) => { Self::collect_idents_block(b, &mut inner); Self::collect_bound_names_block(b, &mut own) }
+                }
+                own.extend(params.iter().map(|p| p.name.clone()));
+            }
+            ExprKind::ClosureFull(c) => {
+                match &c.body {
+                    FnBody::Expr(e) => { Self::collect_idents_expr(e, &mut inner); Self::collect_bound_names_expr(e, &mut own) }
+                    FnBody::Block(b) => { Self::collect_idents_block(b, &mut inner); Self::collect_bound_names_block(b, &mut own) }
+                    FnBody::External => {}
+                }
+                own.extend(c.params.iter().map(|p| p.name.clone()));
+            }
+            _ => {}
+        }
+        out.extend(inner.into_iter().filter(|n| !own.contains(n)));
+    }
+
     /// Is a read of `name` here a local binding? See the module doc.
     pub(crate) fn is_local_read(&self, name: &str) -> bool {
         self.local_frames.iter().any(|(bound, free)| bound.contains(name) && !free.contains(name))
