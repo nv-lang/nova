@@ -10555,7 +10555,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
     /// D184 amend: the init-order key of a read `r` in `file_id` -- the C symbol it resolves to (`Type.NAME` ->
     /// `Type_NAME`), so two modules' same-named `ro`s are two nodes, as in the checker's graph (#1158 class).
-    fn init_dep_sym(&self, file_id: crate::diag::FileId, r: &str) -> String {
+    pub(crate) fn init_dep_sym(&self, file_id: crate::diag::FileId, r: &str) -> String {
         if r.contains('.') { return r.replace('.', "_"); }
         self.private_const_c_names.get(&(file_id, r.to_string())).or_else(|| self.const_qualified_by_name.get(r)).cloned().unwrap_or_else(|| r.to_string())
     }
@@ -55781,6 +55781,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // regardless; only the bogus capture-field init was the bug).
                 !resolved_fn_call_names.contains(*n)
             })
+            .filter(|n| !self.is_module_value_read(body.span.file_id, n)) // #1399
             .map(|n| (n.clone(), self.var_types.get(n).cloned().unwrap_or_else(|| "nova_int".into())))
             .collect();
         // [M-hashmap-order-bare-variant-flake] (2026-07-13): `body_idents` is a
