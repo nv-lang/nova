@@ -31717,6 +31717,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// `?`'s early return (D85) is a `return` and leaves the open scopes the
     /// same way (#1402: it used to skip every defer and `with` restore).
     fn emit_try_return(&mut self, cond: &str, head: &str, ret: &str) {
+        // №1437: under `ensures` (or in a spawn body) `?` exits through the post label like `return` does.
+        if let Some(label) = self.contracts_post_label.clone() {
+            self.line(&format!("if ({}) {{ {}_nova_result = {};", cond, head, ret));
+            self.indent += 1;
+            if !self.defer_scopes.is_empty() { self.emit_early_exit_cleanup(0); }
+            self.line(&format!("goto {}; }}", label));
+            self.indent -= 1;
+            return;
+        }
         if self.defer_scopes.is_empty() {
             self.line(&format!("if ({}) {{ {}return {}; }}", cond, head, ret));
             return;
