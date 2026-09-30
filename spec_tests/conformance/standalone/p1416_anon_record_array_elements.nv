@@ -1,0 +1,34 @@
+// EXPECT_STDOUT 5|2|6|2|7|2|8|2|9|2|10|2|11|2
+//
+// Registry 221.1 #1416: an anonymous record literal `{ .. }` as an element of a
+// `[]T` whose `T` is a record was accepted by the checker (D55: the target types
+// it) and failed in the emitter -- a module `ro` on "cannot infer type argument
+// `T` for generic function `copy_n_nonoverlapping`", a local `ro` on "anonymous
+// record literal without spread not supported in codegen"; the same elements
+// written `P1416Pt { .. }` built everywhere. None of the emitter's array paths
+// handed an element its target. The literal annotator, which already walks each
+// element with the element's expected type, now gives such an element the
+// record's name. Every position the element type comes from: a module `ro`, an
+// associated `ro Type.NAME`, a local `ro` and `mut`, a call argument, a return
+// value and a record field.
+module standalone.p1416_anon_record_array_elements
+
+type P1416Pt { x int, y int }
+type P1416Bag { pts []P1416Pt }
+type P1416Tag { n int }
+
+ro P1416_MOD []P1416Pt = [{ x: 1, y: 2 }, { x: 5, y: 6 }]
+ro P1416Tag.PTS []P1416Pt = [{ x: 1, y: 2 }, { x: 6, y: 7 }]
+
+fn p1416_last_x(ps []P1416Pt) -> int => ps[ps.len() - 1].x
+fn p1416_ret() -> []P1416Pt => [{ x: 1, y: 2 }, { x: 10, y: 11 }]
+
+fn main() Io -> () {
+    ro local []P1416Pt = [{ x: 1, y: 2 }, { x: 7, y: 8 }]
+    mut m []P1416Pt = [{ x: 1, y: 2 }, { x: 8, y: 9 }]
+    ro bag = P1416Bag { pts: [{ x: 1, y: 2 }, { x: 11, y: 12 }] }
+    print("${P1416_MOD[1].x}|${P1416_MOD.len()}|${P1416Tag.PTS[1].x}|${P1416Tag.PTS.len()}|")
+    print("${local[1].x}|${local.len()}|${m[1].x}|${m.len()}|")
+    print("${p1416_last_x([{ x: 1, y: 2 }, { x: 9, y: 3 }])}|2|")
+    print("${p1416_ret()[1].x}|${p1416_ret().len()}|${bag.pts[1].x}|${bag.pts.len()}")
+}
