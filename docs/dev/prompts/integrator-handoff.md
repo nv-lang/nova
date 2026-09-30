@@ -20,7 +20,8 @@
 
 **ДОПОЛНЕНИЕ 04:01 — ВСЁ ВЛИТО, ПУШ НЕ СДЕЛАН:** `nova-kim` (`2ba3a552c`, №1375–№1378, №1374 закрыт),
 охота `check × К6` (№1379–№1383, №1382 — К1, тихо неверный `..` в кортеже; отчёт-свёртка `check-k4`),
-`p1021-closure-ret-ty` (`32ef21cc0`, №1021 закрыт), `spec-d486-followup` (`fe680bd3d`, spec-queue 138).
+`p1021-closure-ret-ty` (`32ef21cc0` — ОТКАЧЕНО в 04:05: гейт push, arch-ratchet «emit_c must not grow»,
+фикс должен идти каналом чекера; №1021 снова открыт с записью попытки, ветка сохранена), `spec-d486-followup` (`fe680bd3d`, spec-queue 138).
 Удалённый `nova-duckdb` выложен на три зеркала (`370448d`). `nova-polaris` — ждёт своего прогона тестов
 (коммит `fec918a` меняет `src/serve/facade.nv`). Незакоммиченная правка `check-build-test-identity.sh`
 осталась в дереве `nova-wt-research` (с ней самотест хуже). ДАЛЬШЕ: гейт `NOVA_GATE_TIER=push` на
