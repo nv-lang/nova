@@ -32,7 +32,7 @@ module novac.check
 import ../lex.{Token}
 import ../tree.{Node}
 import ../names.{DeclId}
-import ../types.{TyId, no_ty, is_ty, same_ty}
+import ../types.{TyId, no_ty, is_ty}
 import ../builtins.{TypeKind}
 import ../sem.{CalleeTarget, VariantRow, raw_vrow, decl_of_ty, decl_index_of_ty, identity_slots, is_expr_kind, ArgSpec}
 
@@ -61,7 +61,7 @@ fn Checker mut @type_variant_call(e Node, kids []Node, v VariantRow) -> () {
     ro vbefore = @out.len()
     // The tail's expectation does not reach INTO a call: `f(None)` in a tail
     // is not the fn's own return.
-    ro saved = same_ty(@value_expect)
+    ro saved = @value_expect
     @value_expect = no_ty()
     for c in kids {
         if !is_expr_kind(c.kind_of()) { continue }
@@ -148,6 +148,6 @@ fn Checker mut @type_bare_variant_value(e Node, t Token, v VariantRow) -> () {
     for i in 0..@ctx.tys.arg_count(ex) {
         subst.push(@ctx.tys.arg(ex, i))
     }
-    @record(e, same_ty(ex))
+    @record(e, ex)
     @chan.record_callee(e.id_of(), CalleeTarget.CalleeVariant(v), subst, identity_slots(0))
 }

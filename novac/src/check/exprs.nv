@@ -45,7 +45,7 @@ import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, 
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
 import ../sem.{ty_source_name, c_shell_method, digit_index}
 import ../sem.{interp_slices, const_init_interpolates}
-import ../types.{TyId, no_ty, is_ty, same_ty}
+import ../types.{TyId, no_ty, is_ty}
 import ../sem.{coalesce_payload, option_payload}
 import ../sem.{shape_of}
 import ../sem.{is_int_prim, is_numeric_prim, prim_row_of}
@@ -73,7 +73,7 @@ fn Checker mut @const_type_of(name str) -> TyId {
     // never typed the initializer, so the lattice answers there.
     if cd.once {
         ro rec = @chan.type_if_known(cd.init[0].id_of())
-        if is_ty(rec) { return same_ty(rec) }
+        if is_ty(rec) { return rec }
     } else {
         // A constant: typed by its initializer at every use, below.
     }

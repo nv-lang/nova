@@ -41,7 +41,7 @@ import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, 
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
 import ../sem.{ty_source_name, c_shell_method, is_value_record}
-import ../types.{TyId, no_ty, is_ty, same_ty}
+import ../types.{TyId, no_ty, is_ty}
 import ../sem.{option_payload, for_head_elem}
 import ../sem.{let_decl_of, const_init_at, const_full_name}
 import ../sem.{iflet_pattern_at, iflet_init_at, iflet_body_at, iflet_else_at}
@@ -126,7 +126,7 @@ fn Checker @module_value_row(kids []Node) -> int {
 fn Checker mut @type_module_value_at(row int) -> () {
     ro cd = @ctx.consts.rows[row]
     @mv_state[row] = 1
-    ro saved_expect = same_ty(@value_expect)
+    ro saved_expect = @value_expect
     @value_expect = no_ty()
     if cd.init.len() > 0 {
         @type_module_value(cd.init[0])
@@ -411,7 +411,7 @@ fn Checker mut @type_fn(f Node) -> () {
             if e.kind_of() == NodeKind.MatchExpr {
                 @type_match(e)
             } else if if_body {
-                @value_expect = same_ty(@ret_expect)
+                @value_expect = @ret_expect
                 @type_if_value(e)
                 @value_expect = no_ty()
             } else if is_value_tail_kind(e.kind_of()) {
