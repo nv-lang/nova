@@ -28,7 +28,7 @@
 module novac.sem
 
 import ../tree.{Node, NodeId, NodeKind}
-import ../builtins.{COERCE_ATTR, IMPL_ATTR}
+import ../builtins.{COERCE_ATTR, IMPL_ATTR, SHARE_ATTR}
 import ../lex.{TokenKind}
 import ../types.{TyId, is_ty}
 
@@ -286,6 +286,23 @@ fn impl_protocols_before(kids []Node, id NodeId) -> []str {
         pending = []str.new()
     }
     []str.new()
+}
+
+/// Does the attribute RUN right before declaration `id` hold `#share`?
+/// Unlike the `#impl` gate (the last attribute wins), a vouch is one mark
+/// among several: std writes `#stable(...)`, `#share`, `#no_copy` stacked
+/// above one type, so every attribute of the run is asked.
+fn share_marked_before(kids []Node, id NodeId) -> bool {
+    mut seen = false
+    for c in kids {
+        if c.kind_of() == NodeKind.AttrDecl {
+            seen = seen || attr_kids_name(branch_children(c), SHARE_ATTR)
+            continue
+        }
+        if c.id_of() == id { return seen }
+        seen = false
+    }
+    false
 }
 
 /// The identifiers inside an attribute's argument list, in source order.

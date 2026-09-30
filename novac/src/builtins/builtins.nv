@@ -288,6 +288,10 @@ export const EQUAL_PROTO = "Equal"
 /// NOT enough for a bare `${x}` -- at least one of (type author, use site) must
 /// say so out loud, and this attribute is how the author does.
 export const IMPL_ATTR = "impl"
+/// `#share` -- the author vouches that a value of this type may be aliased
+/// for MUTATION from another fiber (06-concurrency.md:7383, audited vouch):
+/// the sync primitives of std carry it (`Atomic*`, `Mutex`, ...).
+export const SHARE_ATTR = "share"
 /// The runtime entry that builds a bare `Fmt` context over a builder -- what
 /// the codegen constructs at every user-type slot (measured on the oracle's
 /// emission 2026-09-05: `Nova_FmtCtx_static_bare(sb, 0, false)`). Interop.

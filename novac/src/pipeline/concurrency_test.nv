@@ -18,6 +18,8 @@
 
 module novac.pipeline
 
+import ../sem.{InteropTable}
+
 /// The carrier's shape, reduced to the subset's vocabulary: a nested
 /// spawn inside supervised, bodies of ordinary statements. Judged on the
 /// CHECK path (`compile_with`) -- the emit-side ICE before the concurrency
@@ -33,12 +35,49 @@ test "supervised { spawn { ... } }: the carrier's shape types clean (E4)" {
     assert(d.len() == 0, messages(d))
 }
 
-test "spawn: a bare statement outside supervised types clean (E4)" {
-    // POSITIVE: the plan scopes the wave to the statement forms
-    // themselves; a bare `spawn { ... }` is the same door, and the oracle
-    // accepts it wherever a statement stands.
+test "spawn: a bare statement outside supervised is refused by name (D50, E.9 step 4)" {
+    // Until 2026-09-30 this test said the oracle accepts a bare `spawn`
+    // "wherever a statement stands". Measured that day (274.11 question 3):
+    // the oracle's checker lets it through and its CODEGEN refuses it --
+    // "spawn is only allowed inside `supervised` ... (D50)". novac says the
+    // same at check, where a refusal belongs.
     ro d = compile_with("fn g() -> int {\n    spawn {\n        println(1)\n    }\n    0\n}\nfn main() {\n    println(g())\n}", parse_decls([]str.new()), interop_surface())
-    assert(d.len() == 0, messages(d))
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("only allowed inside `supervised`"), d[0].message)
+}
+
+/// A handed std with ONE vouched type: `#share` stacked among other
+/// attributes, as std/runtime/sync.nv writes it.
+fn share_fx() -> []str {
+    mut std = []str.new()
+    std.push("module std.s\n#stable(since = \"0.1\")\n#share\n#no_copy\nexport type AtomicInt value priv { v int }\nexport fn mk_atomic() -> AtomicInt\n")
+    std
+}
+
+/// The shell surface plus the fake `std.s` maker: a call is link-checked
+/// (W6), and a maker the shell lacks would poison the binding before the
+/// capture rule is ever asked.
+fn share_shell() -> InteropTable {
+    mut s = interop_surface()
+    s.add("nova_fn_3std1s9mk_atomic")
+    s
+}
+
+test "spawn: a `mut` capture crosses the fiber only for a `#share` type -- E_CONCURRENT_MUT_CAPTURE (E.9 step 4)" {
+    // `mut int` read from a spawn body is the motivating race (06-concurrency.md:7351).
+    ro race = "fn g() -> int {\n    mut n = 0\n    supervised {\n        spawn {\n            ro k = n\n            println(k)\n        }\n    }\n    n\n}\nfn main() {\n    println(g())\n}"
+    ro d = compile_with(race, parse_decls(share_fx()), share_shell())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("E_CONCURRENT_MUT_CAPTURE"), d[0].message)
+    assert(d[0].message.contains("`n`"), d[0].message)
+    // CONTROLS: a `mut` of a vouched type (the carrier's `mut AtomicInt`),
+    // and an `ro` capture of anything -- a deep-immutable view.
+    ro atomic = "fn g() -> int {\n    mut a = mk_atomic()\n    supervised {\n        spawn {\n            ro b = a\n        }\n    }\n    0\n}\nfn main() {\n    println(g())\n}"
+    ro d2 = compile_with(atomic, parse_decls(share_fx()), share_shell())
+    assert(d2.len() == 0, messages(d2))
+    ro ro_src = "fn g() -> int {\n    ro n = 1\n    supervised {\n        spawn {\n            println(n)\n        }\n    }\n    0\n}\nfn main() {\n    println(g())\n}"
+    ro d3 = compile_with(ro_src, parse_decls(share_fx()), share_shell())
+    assert(d3.len() == 0, messages(d3))
 }
 
 test "supervised: nested blocks, a binding scoped to the spawn body (E4)" {

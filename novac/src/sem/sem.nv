@@ -121,6 +121,7 @@ export type TypeDef value {
     rows TypeRows /// WHICH rows this declaration owns and in WHICH space -- one field, because the space and the range are one fact (see TypeRows)
     tparam_cnt int /// how many type parameters the declaration binds; 0 = not generic. A FIELD and not a derivation: a handed-over declaration's NODE is not retained after collect, so the count cannot be re-read -- and it is the one fact of the generics a HEAD needs (step B1)
     gate_off int /// First protocol name of THIS declaration's `#impl(...)` gate in `Ctx.gates`; 0 with gate_cnt 0 = no gate
+    share bool /// PER ROW: `#share` vouches the type mut-alias-safe (06-concurrency.md:7348): a `mut` binding of it may be captured by a `spawn` body. A FIELD for the reason `tparam_cnt` is: the declaration's node is gone after collect
     gate_cnt int /// How many protocols the gate lists. A LIST and not a bool, deliberately: D186 spells `#impl(A + B + C)`, and the protocols may be the program's OWN. Which of them this compiler READS is a question of coverage and moves with the subset; how many a type may opt into is a question of the LANGUAGE, and a bit would have answered it wrongly in the representation itself. A FIELD and not a derivation for the same reason as `tparam_cnt`: the declaration's NODE is gone after collect, and the slot judge holds a TyId, not a node
 }
 
@@ -277,7 +278,7 @@ fn seed(mut types []TypeDef, mut defs DefTable, mut tys Interner, name str, ordi
                          // A primitive displays through its universe row, never through a
                          // gate: D422 has every primitive family implement Display itself.
                          ty_id, name, tparam_cnt: 0, gate_off: 0, gate_cnt: 0,
-                         rows: TypeRows.NoRows })
+                         share: false, rows: TypeRows.NoRows })
     defs.add(name, DefTarget.DefType(id))
     id
 }
@@ -315,7 +316,7 @@ fn seed_effect_ctor(mut types []TypeDef, mut defs DefTable, mut tys Interner) ->
     ro ty_id = tys.record(id)
     types.push(TypeDef { kind: TypeKind.TkRecord, shape: RecordShape.Record,
                          tparam_cnt: 1, ty_id, name: HANDLER_CTOR, gate_off: 0, gate_cnt: 0,
-                         rows: TypeRows.NoRows })
+                         share: false, rows: TypeRows.NoRows })
     defs.add(HANDLER_CTOR, DefTarget.DefType(id))
     id
 }

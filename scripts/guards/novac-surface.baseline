@@ -228,7 +228,10 @@
 # builtins 49 -> 50 (2026-09-30, окно Карины, Э.9 шаг 2): HANDLER_CTOR — имя
 #   конструктора обработчика `Effect`; читают sem (засев), mangle (C-тип) и два
 #   места чекера, где стоял литерал (страж no-name-hardcode их назвал).
-builtins 50
+# builtins 50 -> 51 (2026-09-30, Carina window, E.9 step 4): SHARE_ATTR -- the
+#   `#share` attribute's name, read by sem's collect (the vouch of a type
+#   mut-alias-safe, 06-concurrency.md section 2); names live in builtins (P5).
+builtins 51
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует

@@ -514,6 +514,13 @@ const SYNTAX_MSG = "novac did not parse this -- and it cannot tell whether the f
 /// what is left is a type parameter of a generic body, not substituted there yet.
 const HANDLER_RET_UNRESOLVED_MSG = "outside the subset: a handler-literal op's return type is not resolved here -- inside a generic body its type parameters are not substituted by this door yet (E4, handler-literal wave)"
 
+/// A `spawn` outside a `supervised` body (D50; the oracle refuses it in codegen).
+const SPAWN_OUTSIDE_SUPERVISED_MSG = "`spawn` is only allowed inside `supervised` (D50) -- wrap the code in `supervised { ... }` so the fiber has a scope that waits for it"
+
+/// A `spawn` body capturing a `mut` binding of a type not vouched `#share`.
+fn concurrent_mut_capture_msg(name str) -> str =>
+    "a `spawn` body captures the `mut` binding `${name}`, whose type is not safe to mutate from two fibers -- a race; share it through a `#share` type (`AtomicInt`, `Mutex`, ...) or a channel (06-concurrency.md section 2, E_CONCURRENT_MUT_CAPTURE)"
+
 /// A handler literal outside the two positions whose doors judge it (registry 1312).
 /// `@type_handler_lit` is called by the `with` binding's handler slot and by a local
 /// binding's initializer, and by nothing else: in a `=>` body, after `return`, as a

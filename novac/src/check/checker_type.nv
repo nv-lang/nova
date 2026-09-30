@@ -103,6 +103,9 @@ type Checker {
     cap_marks []int
     /// The literal each mark belongs to, at the same index.
     cap_owners []NodeId
+    /// How many `supervised` bodies enclose the statement being typed: a
+    /// `spawn` needs one (D50), and the oracle refuses a bare one.
+    sup_depth int
     /// Constant-table rows of the file's module values and, at the same index,
     /// their declarations -- where a cycle's diagnostic stands.
     mv_decl_rows []int

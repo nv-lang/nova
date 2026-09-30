@@ -169,6 +169,7 @@ fn register_sum_variants(c Node, mut types []TypeDef, mut defs DefTable,
                                           gate_off: types[raw_decl(sum_decl)].gate_off,
                                           gate_cnt: types[raw_decl(sum_decl)].gate_cnt,
                                           ty_id: sum_ty, name: sname,
+                                          share: types[raw_decl(sum_decl)].share,
                                           rows: TypeRows.VariantRows(VariantRow(off), vcnt) }
 }
 
@@ -337,7 +338,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                                  // does not decide coverage. Whether the synthesis READS it is
                                  // the checker's question, and the variant tag is separate work.
                                  gate_off: gates.len(), gate_cnt: push_gates(gates, decls_of_file, c.id_of()),
-                                 rows: TypeRows.NoRows })
+                                 share: share_marked_before(decls_of_file, c.id_of()), rows: TypeRows.NoRows })
             continue
         }
         // AN EFFECT DECLARATION is classified as its own kind BEFORE the shape
@@ -365,7 +366,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                                  tparam_cnt: generic_names(nk).len(),
                                  ty_id: tys.record(d), name: tname,
                                  gate_off: gates.len(), gate_cnt: push_gates(gates, decls_of_file, c.id_of()),
-                                 rows: TypeRows.NoRows })
+                                 share: false, rows: TypeRows.NoRows })
             continue
         }
         match shape_of_decl(c) {
@@ -404,7 +405,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                                      // is a SIBLING of the declaration, so the question is
                                      // positional and gets one answer from the same door.
                                      gate_off: gates.len(), gate_cnt: push_gates(gates, decls_of_file, c.id_of()),
-                                     rows: TypeRows.NoRows })
+                                     share: share_marked_before(decls_of_file, c.id_of()), rows: TypeRows.NoRows })
             }
             ShapeNewtype => {
                 // The row exists now; its TERM waits for pass 2, because the
@@ -417,7 +418,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                                      // Display; the gate is stored all the same, because storing
                                      // is not reading.
                                      gate_off: gates.len(), gate_cnt: push_gates(gates, decls_of_file, c.id_of()),
-                                     rows: TypeRows.NoRows })
+                                     share: share_marked_before(decls_of_file, c.id_of()), rows: TypeRows.NoRows })
             }
             ShapeAlias => {
                 // AN ALIAS IS NOT A TYPE: no row, and no id of its own. Its name
@@ -504,7 +505,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                                     gate_off: types[raw_decl(owner_id)].gate_off,
                                     gate_cnt: types[raw_decl(owner_id)].gate_cnt,
                                     ty_id: tys.newtype(owner_id, ty_of_row(types, spec.under_decl)),
-                                    name: tname, rows: TypeRows.NoRows }
+                                    name: tname, share: types[raw_decl(owner_id)].share, rows: TypeRows.NoRows }
                             } else {
                                 // The representation names a declaration outside
                                 // the table -- nothing to intern, and check is
@@ -719,7 +720,7 @@ fn fill_record_fields(c Node, owner_id DeclId, tname str, mut types []TypeDef, d
                                           tparam_cnt: mine.tparam_cnt,
                                           gate_off: mine.gate_off, gate_cnt: mine.gate_cnt,
                                           ty_id: mine.ty_id, name: tname,
-                                          rows: TypeRows.FieldRows(FieldRow(off), cnt) }
+                                          share: mine.share, rows: TypeRows.FieldRows(FieldRow(off), cnt) }
 }
 
 /// The FIELDS OF HANDED RECORDS, filled where the language lets the compiled
