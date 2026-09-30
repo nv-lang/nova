@@ -731,6 +731,16 @@ const METHOD_DECL_MSG = "outside the subset: novac does not declare methods yet 
 /// reader can find the other half of the story.
 const NOT_EXHAUSTIVE_MSG = "match on a sum leaves a variant uncovered -- the language makes exhaustiveness an ERROR, not a warning (04-effects.md amendment 2026-08-16, registry 703); the oracle let it through check and build and returned silent garbage"
 
+/// A `match` with NO arms in a value position (#700 triage 2026-09-30): no arm
+/// produces the value, so no scrutinee is covered -- `_` or every case is
+/// required (syntax.ru.md:1317), and exhaustiveness is an error (04-effects.md
+/// amendment 2026-08-16). The oracle refuses `match s { }` on a sum with this
+/// code; on an `int` it lets the form through (measured 2026-09-30).
+const EMPTY_MATCH_MSG = "a `match` with no arms produces no value and covers no case -- a `_` arm or every case is required (syntax.ru.md exhaustiveness, E_MATCH_NON_EXHAUSTIVE)"
+
+/// A match on an open scalar with no catch-all arm (`@report_if_no_catch_all`).
+const OPEN_NOT_EXHAUSTIVE_MSG = "a `match` on a type whose values cannot all be listed (`int`, `str`, ...) needs a `_` arm -- without one a value no arm covers has no result (syntax.ru.md exhaustiveness, E_MATCH_NON_EXHAUSTIVE; the oracle lets it through, registry 1415)"
+
 /// One text for the rule: the reader must not guess whether two wordings
 /// mean two limits.
 const ARMS_DISAGREE_MSG = "outside the subset: match arms produce different types (no arm coercion before E2-b3)"

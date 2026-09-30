@@ -139,6 +139,14 @@ fn Checker mut @type_arm_stmt(arm Node, scr_t TyId) -> () {
     @scope.release(mark)
 }
 
+/// Does the match carry at least one arm?
+fn has_match_arm(kids []Node) -> bool {
+    for c in kids {
+        if c.kind_of() == NodeKind.MatchArm { return true }
+    }
+    false
+}
+
 /// A match: the scrutinee's type is the answer the emitter needs (it declares
 /// the C temporary with it); the arms bind their binders and are typed after.
 fn Checker mut @type_match(m Node) -> () {
@@ -160,6 +168,12 @@ fn Checker mut @type_match(m Node) -> () {
     // No `else` is owed after a terminator (P31 form 2): what follows IS
     // the plain-sum case, and an empty else here says it twice.
     if @report_if_applied_sum(kids, scr_t) { return }
+    // NO ARMS, NO VALUE (#700): refused here, before the lattice counts
+    // arms for the value type and meets none (type_of.nv's MatchExpr arm).
+    if !has_match_arm(kids) {
+        @reject_first_leaf_of(kids, EMPTY_MATCH_MSG)
+        return
+    }
     ro before_arms = @out.len()
     mut first_t = None
     for c in kids {
@@ -195,12 +209,19 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
     // the guard started returning early and this rule stopped judging. That is
     // how a check gets QUIETER without anyone touching it.
     if !is_ty(scr_t) { return }
-    if @ctx.tys.kind_of(scr_t) != TypeKind.TkSum { return }
+    // AN OPEN SCALAR (`int`, `str`, ...) is judged by the same scan: its
+    // values cannot all be listed, so only an unguarded `_` or binder arm
+    // covers it (syntax.ru.md:1317, "for `int`, `str` a `_` wildcard is
+    // needed"). E_MATCH_NON_EXHAUSTIVE as on a sum -- the integrator's
+    // reading of the spec 2026-09-30; the oracle lets it through (registry
+    // 1415), and a novac value would be the uninitialised temporary above.
+    ro open = @is_open_scalar(scr_t)
+    if !open && @ctx.tys.kind_of(scr_t) != TypeKind.TkSum { return }
     // The count comes from the arm that HOLDS a variant range: a sum with no
     // variants is a shape check does not judge here, and so is anything whose
     // rows are not variants at all.
-    ro vcnt = (variant_range_of(decl_of_ty(@ctx, scr_t)) ?? (no_vrow(), 0)).1
-    if vcnt < 1 { return }
+    ro vcnt = if open { 0 } else { (variant_range_of(decl_of_ty(@ctx, scr_t)) ?? (no_vrow(), 0)).1 }
+    if !open && vcnt < 1 { return }
     mut covered = 0
     for c in kids {
         if c.kind_of() != NodeKind.MatchArm { continue }
@@ -228,6 +249,9 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
                 }
             }
             Disj => {
+                // Literal alternatives of an open scalar list some values,
+                // never all of them.
+                if open { continue }
                 for sub in pattern_subpatterns(ak[0]) {
                     match variant_in_sum(@ctx, scr_t, pattern_head_text(sub)) {
                         None => return
@@ -237,9 +261,20 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
             }
         }
     }
+    // An open scalar reaching here met no catch-all: a binder or `_` returned
+    // above (on a non-sum, `variant_in_sum` answers None for every head).
+    if open {
+        @reject_first_leaf_of(kids, OPEN_NOT_EXHAUSTIVE_MSG)
+        return
+    }
     if covered >= vcnt { return }
     @reject_first_leaf_of(kids, NOT_EXHAUSTIVE_MSG)
 }
+
+/// A scalar with no closed set of values -- every primitive but `bool` and
+/// `()`: its cases cannot all be listed, so only a catch-all covers it.
+fn Checker @is_open_scalar(t TyId) -> bool =>
+    @ctx.tys.kind_of(t) == TypeKind.TkPrim && t != @ctx.prims.bool_id && t != @ctx.prims.unit_id
 
 /// (rule lives in @type_match now) Every arm of a match must produce the SAME type -- and until 2026-08-17
 /// nobody checked, because `type_of` took the FIRST arm's type and the

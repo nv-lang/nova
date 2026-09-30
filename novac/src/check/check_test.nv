@@ -528,6 +528,43 @@ test "`==` on a sum goes through `Equal` by `#impl(Equal)`: a tag compare, a lan
     assert(diagnose_first_msg(pay).contains("dispatches through a protocol"), diagnose_first_msg(pay))
 }
 
+test "`\"a\" + 1` is refused by the operator door, never the lattice's ice (#700 triage)" {
+    // The lattice's `Bin` arm ices on non-numeric operands (type_of.nv): an
+    // invariant only because this door returns first. One diagnostic, not the ice.
+    ro src = "module m\n\nfn f() -> int {\n    ro s = \"a\" + 1\n    0\n}\n"
+    assert(diagnose(src) == 1, diagnose_first_msg(src))
+    assert(diagnose_first_msg(src).contains("dispatches through a protocol"), diagnose_first_msg(src))
+}
+
+test "a value `match` with no arms is E_MATCH_NON_EXHAUSTIVE by name, never the lattice's ice (#700 triage)" {
+    ro src = "module m\n\nfn f(x int) -> int {\n    ro m = match x { }\n    0\n}\n"
+    assert(diagnose(src) == 1, diagnose_first_msg(src))
+    assert(diagnose_first_msg(src).contains("E_MATCH_NON_EXHAUSTIVE"), diagnose_first_msg(src))
+    // CONTROL: one arm is enough for the door; the value is typed as before.
+    ro one = "module m\n\nfn f(x int) -> int {\n    ro m = match x {\n        _ => 1\n    }\n    m\n}\n"
+    assert(diagnose(one) == 0, diagnose_first_msg(one))
+}
+
+test "a `match` on an open scalar without a catch-all is E_MATCH_NON_EXHAUSTIVE, value and statement (syntax.ru.md:1317, #1415)" {
+    ro val = "module m\n\nfn f(x int) -> int {\n    ro m = match x {\n        1 => 5\n    }\n    m\n}\n"
+    assert(diagnose(val) == 1, diagnose_first_msg(val))
+    assert(diagnose_first_msg(val).contains("E_MATCH_NON_EXHAUSTIVE"), diagnose_first_msg(val))
+    // Statement position; on `int` -- a string-literal arm is still outside the
+    // subset (E2-b), refused by its own name before exhaustiveness is asked.
+    ro stmt = "module m\n\nfn f(x int) -> int {\n    match x {\n        1 => println(1)\n    }\n    0\n}\n"
+    assert(diagnose_first_msg(stmt).contains("E_MATCH_NON_EXHAUSTIVE"), diagnose_first_msg(stmt))
+    // A GUARDED `_` covers nothing: the guard can be false.
+    ro guarded = "module m\n\nfn f(x int) -> int {\n    ro m = match x {\n        1 => 5\n        _ if x > 3 => 6\n    }\n    m\n}\n"
+    assert(diagnose_first_msg(guarded).contains("E_MATCH_NON_EXHAUSTIVE"), diagnose_first_msg(guarded))
+    // CONTROLS: a `_` arm, a binder arm; and `bool`, a closed set, is not this rule's.
+    ro wild = "module m\n\nfn f(x int) -> int {\n    ro m = match x {\n        1 => 5\n        _ => 6\n    }\n    m\n}\n"
+    assert(diagnose(wild) == 0, diagnose_first_msg(wild))
+    ro bind = "module m\n\nfn f(x int) -> int {\n    ro m = match x {\n        1 => 5\n        n => n\n    }\n    m\n}\n"
+    assert(diagnose(bind) == 0, diagnose_first_msg(bind))
+    ro bl = "module m\n\nfn f(b bool) -> int {\n    ro m = match b {\n        true => 5\n        false => 6\n    }\n    m\n}\n"
+    assert(!diagnose_first_msg(bl).contains("cannot all be listed"), diagnose_first_msg(bl))
+}
+
 test "a bare `return` is the early exit of a body that returns no value, and stays refused where a value is promised" {
     // Fixtures: novac/fixtures/bare_return.
     ro unit = "module m\n\nfn f(n int) -> () {\n    if n < 0 {\n        return\n    }\n    println(n)\n}\n"
