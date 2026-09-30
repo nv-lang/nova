@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR E_MATCH_NON_EXHAUSTIVE
+//
+// Registry 221.1 #1415: `char` is an open type for `match` -- `_` is required.
+
+module neg.p1415_char_value_neg
+
+fn main() Io -> () {
+    ro c = 'z'
+    // nova:expect E_MATCH_NON_EXHAUSTIVE -- `char` values are not listed in full and no arm catches the rest
+    ro k = match c { 'a' => 1, 'b' => 2 }
+    println("${k}")
+}

@@ -15705,6 +15705,131 @@ impl<'a> TypeCheckCtx<'a> {
     ///
     /// Консервативность сохранена буквально: неизвестная альтернатива ВНУТРИ
     /// `|` снимает проверку так же, как неизвестный арм снаружи.
+    /// №1415 (spec/syntax.ru.md, "Исчерпывающая проверка"): a `match` over a
+    /// type whose values cannot be listed -- `int` and the other integers,
+    /// floats, `char`, `str`, or a tuple holding one of them -- needs `_` (or a
+    /// binding) to be exhaustive, and an empty `match` over any inhabited type
+    /// covers nothing. Before this the sum-only analysis returned early on all
+    /// of these, so `ro m = match x { 1 => 5 }` over `x int` passed check and
+    /// build and produced a value no arm had computed.
+    ///
+    /// The rule stays conservative, like the sum analysis: it reports only
+    /// what is PROVEN uncovered. Every open position of the scrutinee is given
+    /// a value no literal in the arms names (the domain is infinite, so one
+    /// exists); an arm that must reject that value (`Fresh::No`) covers
+    /// nothing, and if EVERY unguarded arm is such, the match is refused. An
+    /// arm that depends on a closed position (`(_, true)`) is `Maybe`, and one
+    /// `Maybe` keeps the checker silent.
+    ///
+    /// `bool` is finite and is decided exactly: both literals, or a catch-all.
+    ///
+    /// Returns true when the verdict is final here (reported or proven fine),
+    /// false to hand the `match` on to the sum analysis.
+    fn check_match_open_or_empty(
+        &self,
+        scrut_ty: Option<&TypeRef>,
+        arms: &[crate::ast::MatchArm],
+        span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) -> bool {
+        use crate::ast::{Literal, Pattern};
+        let Some(ty) = scrut_ty else { return false };
+        let is_bool = matches!(ty, TypeRef::Named { path, generics, .. }
+            if generics.is_empty() && path.len() == 1 && path[0] == "bool");
+        let open = type_has_open_position(ty);
+        if arms.is_empty() {
+            // A named type that is not a builtin is either a sum (the analysis
+            // below lists every variant as missing) or unknown here (a generic
+            // parameter, an unresolved name) -- neither is ours to judge.
+            let decided_here = match ty {
+                TypeRef::Named { path, generics, .. } => {
+                    let name = path.last().map(|s| s.as_str()).unwrap_or("");
+                    is_bool
+                        || open
+                        || (generics.is_empty()
+                            && path.len() == 1
+                            && matches!(
+                                self.types_get_for_file(name, span.file_id).map(|td| &td.kind),
+                                Some(TypeDeclKind::Record(..))
+                            ))
+                }
+                TypeRef::Tuple(..) | TypeRef::Array(..) | TypeRef::FixedArray(..) => true,
+                _ => false,
+            };
+            if !decided_here {
+                return false;
+            }
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_MATCH_NON_EXHAUSTIVE] empty `match` over `{}` covers no value, yet the type has values: \
+                     the `match` would have no result for any of them (registry 221.1 #1415). \
+                     Add the arms, or `_ => ...` for the rest.",
+                    typeref_display(ty)
+                ),
+                span,
+            ));
+            return true;
+        }
+        let live: Vec<&crate::ast::MatchArm> = arms.iter().filter(|a| a.guard.is_none()).collect();
+        if is_bool {
+            let (mut t, mut f) = (false, false);
+            fn walk(p: &Pattern, t: &mut bool, f: &mut bool) -> bool {
+                match p {
+                    Pattern::Wildcard(_) | Pattern::Ident { .. } => { *t = true; *f = true; true }
+                    Pattern::Binding { inner, .. } => walk(inner, t, f),
+                    Pattern::Literal(Literal::Bool(true), _) => { *t = true; true }
+                    Pattern::Literal(Literal::Bool(false), _) => { *f = true; true }
+                    Pattern::Or { alternatives, .. } => alternatives.iter().all(|a| walk(a, t, f)),
+                    _ => false,
+                }
+            }
+            for a in &live {
+                if !walk(&a.pattern, &mut t, &mut f) {
+                    return true; // a form outside this analysis: stay silent
+                }
+            }
+            if t && f {
+                return true;
+            }
+            let missing = if !t && !f { "`true`, `false`" } else if !t { "`true`" } else { "`false`" };
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_MATCH_NON_EXHAUSTIVE] `match` over `bool` does not cover {}: \
+                     the uncovered value would leave the `match` without a result (registry 221.1 #1415). \
+                     Add the arm, or `_ => ...`.",
+                    missing
+                ),
+                span,
+            ));
+            return true;
+        }
+        if !open {
+            return false;
+        }
+        let mut maybe = false;
+        for a in &live {
+            match fresh_match(&a.pattern, ty) {
+                Fresh::Yes => return true,
+                Fresh::Maybe => maybe = true,
+                Fresh::No => {}
+            }
+        }
+        if maybe {
+            return true; // depends on a closed position: not proven, stay silent
+        }
+        errors.push(Diagnostic::new(
+            format!(
+                "[E_MATCH_NON_EXHAUSTIVE] `match` over `{}` is not exhaustive: the values of this type \
+                 cannot all be listed, and no arm catches the ones the arms do not name, \
+                 so for them the `match` has no result (spec/syntax.md, exhaustiveness; registry 221.1 #1415). \
+                 Add `_ => ...` (or a binding) for the rest.",
+                typeref_display(ty)
+            ),
+            span,
+        ));
+        true
+    }
+
     #[allow(clippy::only_used_in_recursion)]
     fn check_match_exhaustive(
         &self,
@@ -15714,6 +15839,14 @@ impl<'a> TypeCheckCtx<'a> {
         errors: &mut Vec<Diagnostic>,
     ) {
         use crate::ast::Pattern;
+        // №1415: open types (`int`, `str`, `char`, floats, tuples holding one)
+        // and the empty `match` -- decided here, before the sum analysis below,
+        // which only knows named sums and gives up silently on everything else.
+        if std::env::var("NOVA_KILL_1415").as_deref() != Ok("1")
+            && self.check_match_open_or_empty(scrut_ty, arms, span, errors)
+        {
+            return;
+        }
         // 1. Тип скрутини — именованная сумма? Generic-инстанс (`Option[T]`)
         //    и builtin'ы пока вне разбора: у них свои пути в кодогене.
         let sum_name = match scrut_ty {
@@ -59859,6 +59992,74 @@ enum ArmCoverage {
 }
 
 /// Разбор одного арма. Рекурсия ровно одна — в альтернативы `|`.
+/// №1415: a scalar whose values cannot be listed in a `match`.
+fn is_open_scalar_name(name: &str) -> bool {
+    matches!(
+        name,
+        "int" | "i8" | "i16" | "i32" | "i64" | "uint" | "u8" | "u16" | "u32" | "u64"
+            | "f32" | "f64" | "char" | "str"
+    )
+}
+
+/// №1415: does the type have a position filled by an open scalar?
+fn type_has_open_position(ty: &TypeRef) -> bool {
+    match ty {
+        TypeRef::Named { path, generics, .. } => {
+            generics.is_empty() && path.len() == 1 && is_open_scalar_name(&path[0])
+        }
+        TypeRef::Tuple(elems, _) => elems.iter().any(type_has_open_position),
+        _ => false,
+    }
+}
+
+/// №1415: how an arm treats a scrutinee whose open positions all hold a value
+/// no literal in the `match` names.
+enum Fresh {
+    /// matches it whatever the closed positions hold
+    Yes,
+    /// cannot match it
+    No,
+    /// depends on the closed positions, or a form outside this analysis
+    Maybe,
+}
+
+fn fresh_match(p: &crate::ast::Pattern, ty: &TypeRef) -> Fresh {
+    use crate::ast::Pattern;
+    match p {
+        Pattern::Wildcard(_) | Pattern::Ident { .. } => Fresh::Yes,
+        Pattern::Binding { inner, .. } => fresh_match(inner, ty),
+        Pattern::Or { alternatives, .. } => {
+            let mut all_no = true;
+            for alt in alternatives {
+                match fresh_match(alt, ty) {
+                    Fresh::Yes => return Fresh::Yes,
+                    Fresh::Maybe => all_no = false,
+                    Fresh::No => {}
+                }
+            }
+            if all_no { Fresh::No } else { Fresh::Maybe }
+        }
+        Pattern::Literal(..) if type_has_open_position(ty) && !matches!(ty, TypeRef::Tuple(..)) => {
+            Fresh::No
+        }
+        Pattern::Tuple(ps, _) => match ty {
+            TypeRef::Tuple(tys, _) if tys.len() == ps.len() => {
+                let mut all_yes = true;
+                for (p, t) in ps.iter().zip(tys) {
+                    match fresh_match(p, t) {
+                        Fresh::No => return Fresh::No,
+                        Fresh::Maybe => all_yes = false,
+                        Fresh::Yes => {}
+                    }
+                }
+                if all_yes { Fresh::Yes } else { Fresh::Maybe }
+            }
+            _ => Fresh::Maybe,
+        },
+        _ => Fresh::Maybe,
+    }
+}
+
 fn arm_coverage(p: &crate::ast::Pattern) -> ArmCoverage {
     use crate::ast::Pattern;
     match p {

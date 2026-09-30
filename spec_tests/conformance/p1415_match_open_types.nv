@@ -1,0 +1,88 @@
+// Registry 221.1 #1415 -- the legal forms a `match` over an open type
+// (`int`, `str`, `char`, `f64`, a tuple holding one) keeps after the
+// exhaustiveness check learned these types: `_`, a binding, a catch-all
+// inside `|`, and a tuple whose open position is caught by every arm while a
+// closed position is covered by the arms together. The negatives are
+// neg/p1415_*_neg.nv. Spec: spec/syntax.md, exhaustiveness.
+// Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+type P1415Light enum
+    | Red
+    | Amber
+    | Green
+
+test "p1415: int with `_`, value position" {
+    ro x = 3
+    ro m = match x { 1 => 5, _ => 7 }
+    assert(m == 7)
+}
+
+test "p1415: str with a binding catches the rest" {
+    ro s = "c"
+    ro m = match s {
+        "a" => "first"
+        other => other
+    }
+    assert(m == "c")
+}
+
+test "p1415: char and f64 with `_`, statement position" {
+    ro c = 'q'
+    mut hits = 0
+    match c {
+        'a' => { hits = hits + 10 }
+        _   => { hits = hits + 1 }
+    }
+    ro f = 2.5
+    match f {
+        1.5 => { hits = hits + 100 }
+        _   => { hits = hits + 1 }
+    }
+    assert(hits == 2)
+}
+
+test "p1415: `_` inside an or-pattern is a catch-all" {
+    ro x = 9
+    ro m = match x { 1 | _ => 4 }
+    assert(m == 4)
+}
+
+test "p1415: guarded arms plus `_`" {
+    ro x = 12
+    ro m = match x {
+        n if n > 10 => "big"
+        _ => "small"
+    }
+    assert(m == "big")
+}
+
+test "p1415: tuple -- open position always caught, closed position covered together" {
+    ro t = (5, false)
+    ro m = match t {
+        (_, true)  => 1
+        (_, false) => 2
+    }
+    assert(m == 2)
+}
+
+test "p1415: tuple of open types with a full catch-all arm" {
+    ro t = (7, "x")
+    ro m = match t {
+        (1, "a") => 1
+        (_, _)   => 2
+    }
+    assert(m == 2)
+}
+
+test "p1415: control -- a sum and bool keep their exact analysis" {
+    ro l = P1415Light.Amber
+    ro a = match l {
+        Red   => 1
+        Amber => 2
+        Green => 3
+    }
+    ro b = true
+    ro c = match b { true => 10, false => 20 }
+    assert(a + c == 12)
+}
