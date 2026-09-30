@@ -3,7 +3,23 @@
 //! and the emitter's `nova_consts_init` order must read ONE collector, or the two can disagree).
 
 use crate::ast::*;
+use std::cell::RefCell;
 use std::collections::HashSet;
+
+thread_local! {
+    /// #1397: names the collector saw read as BOUND while `frame_reads` runs.
+    static BOUND_READS: RefCell<Option<HashSet<String>>> = const { RefCell::new(None) };
+}
+
+/// #1397: every name a body reads, split into (read-as-bound, read-as-free); `params` are bound in it and `walk`
+/// runs the collector over the body. The emitter's local frames (`codegen/local_frames.rs`) are built from this.
+pub fn frame_reads(params: &[&str], walk: impl FnOnce(&mut HashSet<String>, &mut HashSet<String>)) -> (HashSet<String>, HashSet<String>) {
+    let mut bound: HashSet<String> = params.iter().map(|p| p.to_string()).collect();
+    let mut free = HashSet::new();
+    BOUND_READS.with(|r| *r.borrow_mut() = Some(HashSet::new()));
+    walk(&mut bound, &mut free);
+    (BOUND_READS.with(|r| r.borrow_mut().take()).unwrap_or_default(), free)
+}
 
 // ─────────────────────────────────────────────────────────────────────
 // Plan 62.D bis-1 (2026-05-18): scope-aware free-variable collector.
@@ -36,6 +52,8 @@ pub fn collect_truly_free_idents(
         ExprKind::Ident(n) => {
             if !bound.contains(n) {
                 out.insert(n.clone());
+            } else {
+                BOUND_READS.with(|r| if let Some(set) = r.borrow_mut().as_mut() { set.insert(n.clone()); }); // #1397
             }
         }
         ExprKind::Path(parts) if parts.len() == 2 => { out.insert(format!("{}.{}", parts[0], parts[1])); } // D184 amend: `Type.NAME` read

@@ -1525,6 +1525,8 @@ pub struct CEmitter {
     /// Plan 14 Ф.2: SOURCE names of consts with runtime init (init ordering + a fast pre-check).
     /// Whether a READ is lazy is NOT decided by this set -- see `lazy_const_syms` (#1158).
     lazy_consts: HashSet<String>,
+    /// #1397: per emitted body (fn / test / closure), (names read as BOUND, names read as FREE) -- see `is_local_read`.
+    pub(crate) local_frames: Vec<(HashSet<String>, HashSet<String>)>,
     /// #1158: final C qualifiers (`c_name`) of lazy consts -- laziness of ONE const, not of a name.
     lazy_const_syms: HashSet<String>,
     /// `[M-lazy-const-init-race]` (2026-07-09): pending lazy-const init
@@ -2806,7 +2808,7 @@ impl CEmitter {
             user_fn_variadic: HashSet::new(),
             suppress_variadic_routing: false,
             emitted_fn_thunks: HashSet::new(),
-            lazy_consts: HashSet::new(), lazy_const_syms: HashSet::new(),
+            lazy_consts: HashSet::new(), local_frames: Vec::new(), lazy_const_syms: HashSet::new(),
             pending_const_inits: Vec::new(),
             record_field_fn_sigs: HashMap::new(),
             trailing_block_counter: 0,
@@ -9966,13 +9968,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     fn emit_bench(&mut self, b: &BenchDecl, idx: usize) -> Result<(), String> {
         // [race-198 class-closure]: см. override_maps_scope_enter doc.
         let ovr_saved = self.override_maps_scope_enter();
-        // Реестр 221.1 №1090, тот же класс, что у `emit_nova_main`: тело
-        // эмитится БЕЗ `current_emit_file_id`, поэтому `free_fn_c_name` не
-        // находит мангл в `file_priv_fn_c_names` и уходит в голое
-        // `nova_fn_<имя>` — символ, которого никто не определяет. Входов в
-        // пользовательский код ТРИ (main, test, bench), и промах был во всех
-        // трёх; второй носитель (`derive_span_collision_test`) остался красным
-        // после починки одного `main` и этим класс и показал.
+        // №1090 (как у `emit_nova_main`): без `current_emit_file_id` `free_fn_c_name` не находит мангл в
+        // `file_priv_fn_c_names`; входов в пользовательский код ТРИ (main, test, bench), промах был во всех.
         let saved_emit_file_id_bench = self.current_emit_file_id;
         self.current_emit_file_id = Some(b.span.file_id);
         let r = self.emit_bench_scoped_inner(b, idx);
@@ -10205,16 +10202,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     fn emit_test(&mut self, t: &TestDecl, idx: usize) -> Result<(), String> {
         // [race-198 class-closure]: см. override_maps_scope_enter doc.
         let ovr_saved = self.override_maps_scope_enter();
-        // Реестр 221.1 №1090, тот же класс, что у `emit_nova_main`: тело
-        // эмитится БЕЗ `current_emit_file_id`, поэтому `free_fn_c_name` не
-        // находит мангл в `file_priv_fn_c_names` и уходит в голое
-        // `nova_fn_<имя>` — символ, которого никто не определяет. Входов в
-        // пользовательский код ТРИ (main, test, bench), и промах был во всех
-        // трёх; второй носитель (`derive_span_collision_test`) остался красным
-        // после починки одного `main` и этим класс и показал.
+        // №1090 (как у `emit_nova_main`): без `current_emit_file_id` `free_fn_c_name` не находит мангл в
+        // `file_priv_fn_c_names`; входов в пользовательский код ТРИ (main, test, bench), промах был во всех.
         let saved_emit_file_id_test = self.current_emit_file_id;
         self.current_emit_file_id = Some(t.span.file_id);
+        self.local_frames.push(crate::free_idents::frame_reads(&[], |bd, fr| crate::free_idents::collect_truly_free_idents_block(&t.body, bd, fr)));
         let r = self.emit_test_scoped_inner(t, idx);
+        self.local_frames.pop();
         self.current_emit_file_id = saved_emit_file_id_test;
         self.override_maps_scope_exit(ovr_saved, r.is_ok());
         r
@@ -29367,20 +29361,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     fn emit_fn(&mut self, f: &FnDecl) -> Result<(), String> {
         // [race-198 class-closure]: см. override_maps_scope_enter doc.
         let ovr_saved = self.override_maps_scope_enter();
-        // Реестр 221.1 №577/№592 (маркер [M-array-ext-static-erased-body-no-
-        // generic-dispatch], CLOSED by №592): a STATIC array-ext method with
-        // its OWN generic bound to the receiver's element (`fn[T Reflect] []T
-        // .reflect() -> TypeShape => Arr(T.reflect())`) used to be emitted
-        // ONCE, erased, under a name that LOOKED like a genuine `[]int`
-        // instantiation (`receiver_type_c_ident`'s `_ => "nova_int"` catch-
-        // all) but served every element — wrong for any non-int element.
-        // `emit_fn_scoped_inner`'s top-of-fn dispatch now skips this shape's
-        // erased emission entirely (both instance and static), in favor of a
-        // real per-element mono driven by `array_ext_static_generic_fn` +
-        // the `Path(["__array", elem])` call site (D38) — no seeding needed
-        // here anymore, the seed used to matter only for the erased body this
-        // function no longer reaches for this shape.
+        // №577/№592: a static array-ext method generic over the receiver's element is no longer emitted erased
+        // here -- `emit_fn_scoped_inner` skips it for a real per-element mono (`array_ext_static_generic_fn`, D38).
+        let params: Vec<&str> = f.params.iter().map(|p| p.name.as_str()).collect();
+        self.local_frames.push(crate::free_idents::frame_reads(&params, |bd, fr| match &f.body {
+            FnBody::Expr(e) => crate::free_idents::collect_truly_free_idents(e, bd, fr),
+            FnBody::Block(b) => crate::free_idents::collect_truly_free_idents_block(b, bd, fr),
+            FnBody::External => {}
+        }));
         let r = self.emit_fn_scoped_inner(f);
+        self.local_frames.pop();
         self.override_maps_scope_exit(ovr_saved, r.is_ok());
         r
     }
@@ -36428,6 +36418,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // see `emit_const_decl`/`emit_lazy_const`).
                 // [№151] the qualifier resolution (per-file private -> colliding export
                 // -> bare) and [#1158] "is THIS const lazy" both live in `lazy_const_sym`.
+                // #1397: a LOCAL of the same name (param, closure param, `ro`/`mut`, pattern) is not the module
+                // value nor the free fn -- all three lookups below used to answer by name alone (4 for 11).
+                if self.is_local_read(name) { return Ok(Self::mangle_field_name(name)); }
                 if let Some(qualifier) = self.lazy_const_sym(expr.span.file_id, name) {
                     return Ok(format!("_nova_const_{}_value", qualifier));
                 }
@@ -36439,21 +36432,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                     return Ok(self.free_fn_c_name(name));
                 }
-                // Plan 91.12 [M-91.12-const-resolution-via-types] (closed
-                // 2026-06-01, production-grade): module-private const C-name
-                // substitution через direct (file_id, name) lookup. Pre-pass
-                // в emit_module populated map ДЛЯ ВСЕХ peers module-group
-                // (Rule C: peers share decls namespace), поэтому lookup
-                // (use-site file_id, name) однозначно резолвится к const'у
-                // в module-group без single-candidate fallback или ambiguity.
-                //
-                // is_local_var bypass нужен: var_types популируется и для
-                // module-level const'ов (emit_const_decl вставляет name→type
-                // для type inference), что иначе заглушало бы const lookup
-                // при unrelated locals. Module-group resolution дает корректный
-                // mangled name; local var shadow case покрывается тем что
-                // emit_const_decl mangle'ит C-name → local var с тем же
-                // source-level name не shadow'ит mangled symbol.
+                // Plan 91.12: module-private const C-name via (use-site file_id, name); the pre-pass covers every
+                // peer of the module group. A same-named LOCAL is caught above (#1397) -- the old note here
+                // claimed the mangling alone covered that case; it did not.
                 if let Some(mangled) = self.private_const_c_names
                     .get(&(expr.span.file_id, name.clone()))
                 {
@@ -55659,6 +55640,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         params: &[LambdaParam],
         body: &Expr,
         context_param_tys: Option<&[(String, String)]>, // (param_c_ty, ret_c_ty) from outer fn sig context
+        return_type_ann: Option<&TypeRef>,
+        closure_id: ExprId,
+    ) -> Result<String, String> {
+        // #1397: the closure's own parameters are local in its body, whatever the module names.
+        let ps: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
+        self.local_frames.push(crate::free_idents::frame_reads(&ps, |bd, fr| crate::free_idents::collect_truly_free_idents(body, bd, fr)));
+        let r = self.emit_lambda_inner(params, body, context_param_tys, return_type_ann, closure_id);
+        self.local_frames.pop();
+        r
+    }
+
+    fn emit_lambda_inner(
+        &mut self,
+        params: &[LambdaParam],
+        body: &Expr,
+        context_param_tys: Option<&[(String, String)]>,
         return_type_ann: Option<&TypeRef>,
         closure_id: ExprId,
     ) -> Result<String, String> {
