@@ -4333,6 +4333,11 @@ struct TypeCheckCtx<'a> {
     /// `infer_expr_c_type` `_=>nova_int` fallback bugs (§0/§1; e.g. a `bool` var legacy typed
     /// as `nova_int`). Verified by full regress (the divergence set is bounded — U.4.4-prep.b audit).
     resolved_types_buf: std::cell::RefCell<HashMap<crate::ast::ExprId, ResolvedType>>,
+    /// Registry #1384: one flag per loop the walk is inside, innermost last --
+    /// "a `break` targeting this loop was seen". A `break` has no label, so it
+    /// always targets the innermost loop. Read by `f1_loop_body` to type a
+    /// loop that cannot exit as `never` in `resolved_types_buf`.
+    f1_loop_breaks: std::cell::RefCell<Vec<bool>>,
     /// №279 [M-nested-err-pattern-shared-variant-wrong-enum-tag]: per-pattern
     /// resolved-SUM-NAME channel (bare `Pattern::Variant`'s OWN `span` → the
     /// Nova sum type's simple name it was resolved against, e.g.
@@ -5280,6 +5285,7 @@ impl<'a> TypeCheckCtx<'a> {
             node_substs: std::cell::RefCell::new(HashMap::new()),
             // Plan 172.1 U.4.4(b): empty checker-side resolved-type channel.
             resolved_types_buf: std::cell::RefCell::new(HashMap::new()),
+            f1_loop_breaks: std::cell::RefCell::new(Vec::new()),
             // №279: empty pattern-variant resolved-sum-name channel; filled
             // during the check walk.
             pattern_variant_types_buf: std::cell::RefCell::new(HashMap::new()),
@@ -10080,7 +10086,11 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f4_check_value(value, scope, errors);
                 self.check_throw_payload(value, errors);
             }
-            Stmt::Break(_) | Stmt::Continue(_) | Stmt::Reveal { .. } => {}
+            // Registry #1384: the innermost loop can be left.
+            Stmt::Break(_) => {
+                if let Some(top) = self.f1_loop_breaks.borrow_mut().last_mut() { *top = true; }
+            }
+            Stmt::Continue(_) | Stmt::Reveal { .. } => {}
             Stmt::Defer { body, .. } => {
                 self.f1_expr(body, gs, scope, errors);
             }
@@ -10337,6 +10347,26 @@ impl<'a> TypeCheckCtx<'a> {
             diag = diag.with_suggestion(s);
         }
         errors.push(diag);
+    }
+
+    /// Registry #1384: walk one loop body with its own break flag on
+    /// `f1_loop_breaks`; returns whether a `break` targeting THIS loop was seen
+    /// (a break inside a nested loop sets the nested loop's flag, not this one).
+    fn f1_loop_body(&self, walk: impl FnOnce()) -> bool {
+        self.f1_loop_breaks.borrow_mut().push(false);
+        walk();
+        self.f1_loop_breaks.borrow_mut().pop().unwrap_or(true)
+    }
+
+    /// Registry #1384: a loop that cannot exit is of type `never` (D25 bottom),
+    /// not `unit` -- the preamble of `f1_expr_inner` records every loop as
+    /// `Unit`, and this overwrites it after the body walk has decided. Codegen
+    /// reads it: a `never` fn tail is not a value and is never wrapped into
+    /// `Ok(...)` (#1349's wrap decided by the tail's C type alone).
+    fn f1_mark_never(&self, e: &Expr) {
+        if e.id.is_set() {
+            self.resolved_types_buf.borrow_mut().insert(e.id, ResolvedType::Never);
+        }
     }
 
     fn f1_expr(
@@ -13540,7 +13570,7 @@ impl<'a> TypeCheckCtx<'a> {
                 // 172.1.2 (for-var в scope, 2026-07-03): loop-переменная типизируется
                 // и БЕЗ явной аннотации — inferred elem_ty (тот же источник, что
                 // D221-проверка выше). Закрывает Index:i:<v> кластер (v[i] в теле).
-                self.f1_for_body(&elem_ty, pattern, body, gs, scope, errors);
+                self.f1_loop_body(|| self.f1_for_body(&elem_ty, pattern, body, gs, scope, errors));
             }
             ExprKind::For { pattern, iter, body, elem_type, iter_consume, .. } => {
                 self.f1_expr(iter, gs, scope, errors);
@@ -13571,12 +13601,16 @@ impl<'a> TypeCheckCtx<'a> {
                         if n != "_" { set.insert(n); }
                     }
                 }
-                self.f1_for_body(&elem_ty, pattern, body, gs, scope, errors);
+                self.f1_loop_body(|| self.f1_for_body(&elem_ty, pattern, body, gs, scope, errors));
                 *self.consume_binding_names.borrow_mut() = consume_snapshot;
             }
             ExprKind::While { cond, body, .. } => {
                 self.f1_expr(cond, gs, scope, errors);
-                self.f1_block(body, gs, scope, errors);
+                let broke = self.f1_loop_body(|| self.f1_block(body, gs, scope, errors));
+                // Registry #1384: `while true` without a break cannot exit.
+                if !broke && matches!(cond.kind, ExprKind::BoolLit(true)) {
+                    self.f1_mark_never(e);
+                }
             }
             ExprKind::WhileLet { pattern, scrutinee, body, .. } => {
                 self.f1_expr(scrutinee, gs, scope, errors);
@@ -13585,10 +13619,13 @@ impl<'a> TypeCheckCtx<'a> {
                 self.check_priv_pattern_recursive(pattern, scrut_ty.as_ref(), errors);
                 // №279: resolve nested bare-variant sub-patterns (see fn doc).
                 self.resolve_pattern_variant_types(pattern, scrut_ty.as_ref());
-                self.f1_block(body, gs, scope, errors);
+                self.f1_loop_body(|| self.f1_block(body, gs, scope, errors));
             }
             ExprKind::Loop { body, .. } => {
-                self.f1_block(body, gs, scope, errors)
+                // Registry #1384: `loop` without a break cannot exit.
+                if !self.f1_loop_body(|| self.f1_block(body, gs, scope, errors)) {
+                    self.f1_mark_never(e);
+                }
             }
             ExprKind::Select { arms } => {
                 for arm in arms {
