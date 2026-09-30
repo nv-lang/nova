@@ -15068,14 +15068,13 @@ impl<'a> TypeCheckCtx<'a> {
             }
             // Прочее: если выражение имеет тип `[]T` / `[N]T` — элемент `T`.
             // D176 (Plan 108): `readonly []T` → elements are `T` (primitive copy).
+            // #1413: a call or a local bound from one types as `Vec[T]` (D239
+            // `[]T ≡ Vec[T]`), not `[]T` — `array_elem_type` knows all three
+            // spellings. Without it the loop variable had NO type, so calls on it
+            // had no channel and codegen typed them by the bare method name.
             _ => match self.infer_expr_type(iter, scope)? {
-                TypeRef::Array(inner, _)
-                | TypeRef::FixedArray(_, inner, _) => Some(*inner),
-                TypeRef::Readonly(inner, _) => match *inner {
-                    TypeRef::Array(elem, _) | TypeRef::FixedArray(_, elem, _) => Some(*elem),
-                    _ => None,
-                },
-                _ => None,
+                TypeRef::Readonly(inner, _) => array_elem_type(&inner).cloned(),
+                t => array_elem_type(&t).cloned(),
             },
         }
     }

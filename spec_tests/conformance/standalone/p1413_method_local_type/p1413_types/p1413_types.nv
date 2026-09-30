@@ -1,0 +1,20 @@
+// #1413 carrier, TYPES module -- see `../p1413_method_local_type.nv`. A second,
+// private `P1413Node` (the collision), and a SAME-NAME method `@kind_of` on
+// another type that answers a DIFFERENT type, `P1413Tk`, which carries
+// `#impl(Equal)` -- Carina's `Interner.kind_of -> TypeKind`.
+module p1413_method_local_type.p1413_types
+
+#impl(Equal)
+export type P1413Tk enum
+    | TA
+    | TB
+
+export fn p1413_all_tk() -> []P1413Tk => [P1413Tk.TA]
+
+type P1413Node { n int }
+fn P1413Node @weight() -> int => @n
+
+export fn p1413_local_weight() -> int => P1413Node { n: 3 }.weight()
+
+export type P1413Intr { n int }
+export fn P1413Intr @kind_of(i int) -> P1413Tk => if i == 0 { P1413Tk.TA } else { P1413Tk.TB }

@@ -1,0 +1,142 @@
+// Registry 221.1 #1413: the C type of a method call's result was taken from a
+// SAME-NAME method of ANOTHER type. `ro k = c.kind_of()` on a `P1413Node`
+// (`-> P1413Nk`) was declared `Nova_P1413Tk* k` (`P1413Intr.kind_of ->
+// P1413Tk`), and `k == P1413Nk.NL` then dispatched to P1413Tk's `@equal`,
+// where no P1413Nk tag matches: two counts below answered 0 instead of 2.
+// Carina had the same shape (`Node.kind_of` vs `Interner.kind_of`), and it
+// surfaced the day `TypeKind` got `#impl(Equal)`.
+//
+// Two holes lined up, and each is closed:
+//   * the checker gave NO type to a loop variable whose iterable types as
+//     `Vec[T]` -- a call, or a local bound from one (D239 `[]T ≡ Vec[T]`; a
+//     `[]T` parameter was fine) -- so calls on it had no checker channel;
+//   * codegen's fallback then keyed `method_overloads` by the receiver's C
+//     base, which for a COLLIDING type name (D381) is module-qualified, so
+//     `(<mod>_P1413Node, kind_of)` missed and the lookup fell to the bare
+//     method name, which answers with the last type that registered it.
+// Every receiver form below must type the call by ITS OWN method.
+module standalone.p1413_method_local_type
+
+import ./p1413_tree.{P1413Nk, P1413Node, p1413_all_nk, p1413_decls}
+import ./p1413_types.{P1413Tk, P1413Intr, p1413_all_tk, p1413_local_weight}
+
+type P1413Holder { node P1413Node }
+
+fn p1413_first(root P1413Node) -> P1413Node => p1413_decls(root)[0]
+fn p1413_opt_first(root P1413Node) -> Option[P1413Node] => Some(p1413_first(root))
+fn p1413_is_nl(n P1413Nk) -> bool => n == P1413Nk.NL
+
+fn f_param(n P1413Node) -> bool {
+    ro k = n.kind_of()
+    k == P1413Nk.NL
+}
+
+fn f_field(h P1413Holder) -> bool {
+    ro k = h.node.kind_of()
+    k == P1413Nk.NL
+}
+
+fn f_call(root P1413Node) -> bool {
+    ro k = p1413_first(root).kind_of()
+    k == P1413Nk.NL
+}
+
+fn f_for_call(root P1413Node) -> int {
+    mut n = 0
+    for c in p1413_decls(root) {
+        ro k = c.kind_of()
+        if k == P1413Nk.NL { n = n + 1 }
+    }
+    n
+}
+
+fn f_for_local(root P1413Node) -> int {
+    mut n = 0
+    ro ds = p1413_decls(root)
+    for c in ds {
+        ro k = c.kind_of()
+        if k == P1413Nk.NL { n = n + 1 }
+    }
+    n
+}
+
+fn f_for_param(ds []P1413Node) -> int {
+    mut n = 0
+    for c in ds {
+        ro k = c.kind_of()
+        if k == P1413Nk.NL { n = n + 1 }
+    }
+    n
+}
+
+fn f_index(root P1413Node) -> bool {
+    ro ds = p1413_decls(root)
+    ro k = ds[0].kind_of()
+    k == P1413Nk.NL
+}
+
+fn f_expr(root P1413Node) -> int {
+    mut n = 0
+    for c in p1413_decls(root) {
+        if c.kind_of() == P1413Nk.NL { n = n + 1 }
+    }
+    n
+}
+
+fn f_arg(root P1413Node) -> int {
+    mut n = 0
+    for c in p1413_decls(root) {
+        if p1413_is_nl(c.kind_of()) { n = n + 1 }
+    }
+    n
+}
+
+fn f_match(root P1413Node) -> int {
+    mut n = 0
+    match root {
+        Branch(_, kids) => for c in kids {
+            ro k = c.kind_of()
+            if k == P1413Nk.NL { n = n + 1 }
+        }
+        Leaf(_) => {}
+    }
+    n
+}
+
+fn f_iflet(root P1413Node) -> bool {
+    if Some(x) = p1413_opt_first(root) {
+        ro k = x.kind_of()
+        return k == P1413Nk.NL
+    }
+    false
+}
+
+fn f_other(xs []P1413Intr) -> int {
+    mut n = 0
+    for c in xs {
+        ro k = c.kind_of(1)
+        if k == P1413Tk.TB { n = n + 1 }
+    }
+    n
+}
+
+test "a method call is typed by its own method, not a same-name one, for every receiver form (#1413)" {
+    ro root = P1413Node.Branch(P1413Nk.NA, [P1413Node.Leaf(P1413Nk.NL), P1413Node.Leaf(P1413Nk.NA), P1413Node.Leaf(P1413Nk.NL)])
+    assert(f_param(P1413Node.Leaf(P1413Nk.NL)))
+    assert(f_field(P1413Holder { node: P1413Node.Leaf(P1413Nk.NL) }))
+    assert(f_call(root))
+    assert(f_for_call(root) == 2)
+    assert(f_for_local(root) == 2)
+    assert(f_for_param(p1413_decls(root)) == 2)
+    assert(f_index(root))
+    assert(f_expr(root) == 2)
+    assert(f_arg(root) == 2)
+    assert(f_match(root) == 2)
+    assert(f_iflet(root))
+}
+
+test "the other type's same-name method keeps its own type (#1413)" {
+    assert(P1413Intr { n: 1 }.kind_of(0) == P1413Tk.TA)
+    assert(f_other([P1413Intr { n: 1 }, P1413Intr { n: 2 }]) == 2)
+    assert(p1413_all_tk().len() + p1413_all_nk().len() + p1413_local_weight() == 5)
+}
