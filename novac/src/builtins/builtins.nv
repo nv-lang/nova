@@ -318,6 +318,7 @@ export const SELF_TYPE = "Self"
 /// nowhere (registry #910). The family lives in the table because the table is
 /// the ONE home of primitive facts (P5); a predicate in the checker listing the
 /// members by id would be the copy this module exists to prevent.
+#impl(Equal)
 export type PrimFamily enum
     | PfInt /// a signed or unsigned integer of some width: int, uint, i8..i64, u8..u64
     | PfFloat /// an IEEE float: f32, f64

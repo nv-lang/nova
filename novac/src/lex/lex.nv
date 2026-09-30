@@ -44,6 +44,7 @@ module novac.lex
 
 /// Every lexeme class of the subset; two-char operators lex BEFORE their
 /// one-char prefixes; ErrorTok carries unrecognized bytes losslessly.
+#impl(Equal)
 export type TokenKind enum
     | KwModule
     | KwFn

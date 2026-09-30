@@ -60,6 +60,7 @@ export type ReprSpec value {
 /// register names -- it answers None for a forward reference and the caller
 /// concludes "record". The shape does not need a registry: fields versus a type
 /// reference versus the `alias` marker is a question about leaves.
+#impl(Equal)
 export type DeclShape enum
     | ShapeRecord
     | ShapeNewtype

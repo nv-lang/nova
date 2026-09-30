@@ -31,6 +31,7 @@ import ../diag.{ice}
 
 /// Every branch shape of the green tree (LeafNode is the leaf's own kind —
 /// a leaf is NOT an error; see kind_of below).
+#impl(Equal)
 export type NodeKind enum
     | LeafNode
     | ProtoMethod /// one required signature inside `type X protocol { ... }`: `@name(params) -> T`

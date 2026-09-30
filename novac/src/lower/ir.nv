@@ -82,6 +82,7 @@ export type LocalKind enum
 /// reader who believed it would write a new door that ignores `decl_at` and print four
 /// spaces where eight belong. A number in a doc that nobody recounts lives exactly until
 /// the first reader who trusts it.
+#impl(Equal)
 export type DeclAt enum
     | FirstAssign // the first assignment declares it
     | Zeroed // a `Stmt.Decl` declares it, zeroed
