@@ -30,6 +30,7 @@ module novac.builtins
 /// addresses (record -> fields, sum -> variants; primitives own no rows).
 /// Lives here, not in sem, because the builtin seed rows carry it and sem
 /// imports builtins (no back edge).
+#impl(Equal)
 export type TypeKind enum
     | TkPrim /// a primitive of the universe: int, str, bool, f64
     | TkRecord /// a nominal record declaration, no type parameters applied
