@@ -8,7 +8,8 @@
 # Механика: оракул собирает novac/probe/shell_probe.nv → его полная эмиссия C
 # ложится в артефакты сборки → отсюда вырезается ТОЛЬКО тело
 # nova_fn_main_impl, на его месте штампуются два слота novac
-# (/*__NOVAC_STRLITS__*/ и /*__NOVAC_BODY__*/) → результат становится
+# (/*__NOVAC_STRLITS__*/ и /*__NOVAC_BODY__*/), третий (/*__NOVAC_INIT__*/)
+# встаёт последней строкой тела nova_consts_init → результат становится
 # novac/src/emit_c/shell.tpl.c. Всё остальное — рантайм-прелюдия, typeinfo,
 # vtables эффектов, std-слой, строковые литералы probe (безвредные unused
 # static) и хвост от nova_consts_init — остаётся оракульским байт-в-байт:
@@ -117,6 +118,13 @@ KEY=$(cat "$T/cands")
 
 # Вырезать определение nova_fn_main_impl (до первой '}' в нулевой колонке),
 # на его месте — два слота novac.
+# Третий слот (274.5 §6, 2026-09-30) — /*__NOVAC_INIT__*/ последней строкой
+# тела nova_consts_init: туда novac штампует инициализацию СВОИХ значений
+# модуля (модульный ro, массивный const). Место не выбрано, а задано нормой:
+# значение модуля вычисляется один раз ДО main и ДО арминга M:N-воркеров
+# (spec/decisions/02-types.md:9319, 06-concurrency.md:7686), а main шелла
+# зовёт nova_consts_init() ровно там. Свои строки std идут раньше — std не
+# читает значений novac, обратное верно.
 awk '
     /^static nova_unit nova_fn_main_impl\(void\) \{/ {
         inmain = 1
@@ -126,6 +134,8 @@ awk '
     }
     inmain && /^\}/ { inmain = 0; next }
     inmain { next }
+    /^static void nova_consts_init\(void\) \{/ { inconst = 1; print; next }
+    inconst && /^\}/ { inconst = 0; print "/*__NOVAC_INIT__*/"; print; next }
     { print }
 ' "$KEY" > "$T/shell.tpl.c"
 
@@ -133,6 +143,8 @@ awk '
 fail() { echo "novac-regen-shell: FAIL — $1" >&2; exit 1; }
 grep -q '__NOVAC_STRLITS__' "$T/shell.tpl.c" || fail "слот STRLITS не встал"
 grep -q '__NOVAC_BODY__' "$T/shell.tpl.c" || fail "слот BODY не встал"
+n_init=$(grep -c '^/\*__NOVAC_INIT__\*/$' "$T/shell.tpl.c")
+[ "$n_init" -eq 1 ] || fail "слот INIT встал $n_init раз (ждём ровно 1: nova_consts_init пропала или раздвоилась)"
 n_def=$(grep -c '^static nova_unit nova_fn_main_impl(void) {' "$T/shell.tpl.c")
 [ "$n_def" -eq 0 ] || fail "определение main_impl не вырезано ($n_def)"
 grep -q 'nova_fn_main_impl();' "$T/shell.tpl.c" || fail "вызов main_impl пропал из хвоста"

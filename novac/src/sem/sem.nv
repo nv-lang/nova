@@ -56,7 +56,7 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, NodeId, raw_node, is_node}
 import ../diag.{ice}
 import ../names.{NameTable, NamespaceId, DeclId, raw_decl, no_decl, is_decl}
-import ../builtins.{TypeKind, builtin_types, COERCE_ATTR, UNIT_TYPE_NAME}
+import ../builtins.{TypeKind, COERCE_ATTR, UNIT_TYPE_NAME}
 import ../types.{Interner, TyId, no_ty, is_ty}
 
 /// WHICH ROWS a type declaration owns, and IN WHICH SPACE.
@@ -248,7 +248,7 @@ export type CallForm enum
 /// reference"); every name -> id step goes through a table door.
 export type Ctx {
     module_c str /// THIS file's module path in the shape a C name carries it (`novac.sem` -> `novac_sem`); `""` when the file declares none. Part of a declaration's IDENTITY (plan 274 section 9.1d point 1), which is why it is not derived at each use
-    builtin_names NameTable /// SOURCE names of the language's built-in types (the universe), for the declaration judge: D35 closes them forever, and the defs map cannot answer -- the file's own row overwrites the seeded one (last put wins). Filled by the seed loop, the one place that reads builtin_types()
+    builtin_names NameTable /// SOURCE names of the language's built-in types (the universe), for the declaration judge: D35 closes them forever, and the defs map cannot answer -- the file's own row overwrites the seeded one (last put wins). Filled by the seed loop, the one place that reads BuiltinType.ALL
     coerces []CoercePair /// Implicit conversions declared with `#coerce` (D429), read from declarations.
     types []TypeDef /// The type registry: the pre-seeded primitives, then the HANDED types (harvest), then the file's own in declaration order -- `foreign_types_cnt` marks where the file's own begin.
     foreign_types_cnt int /// How many leading rows of `types` came from OUTSIDE this file (primitives + handed declarations), fixed at `seal_foreign`. The emitter skips exactly these: the shell declares them. NOT `defs.foreign_cnt` -- that counts NAME rows, and handed variants are names without types (measured 2026-09-05: user records vanished from the emission once the variant rows pushed that count past them).

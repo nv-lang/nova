@@ -228,6 +228,7 @@ export type CheckOut {
     contract_notes []ContractNote /// Flat pool of contract displays, addressed by the Contract arm's index.
     subst_args []TyId /// Flat pool of substitution arguments (type ids), addressed by SubstRef.
     arg_slots []SlotBind /// Flat pool of argument BINDINGS: per parameter slot, WHICH argument fills it and through WHICH declared conversion (see SlotBind).
+    mv_order []int /// module values (constant-table rows) in the order their initializers run: every value after the values it reads (274.5 S6, D200 topological order). One writer: check.
 }
 
 /// An empty channel sized for a file of `node_count` branch nodes. The size
@@ -244,7 +245,7 @@ export fn CheckOut.new(node_count int) -> CheckOut {
         implicit.push(Resolution.Unresolved)
     }
     CheckOut { entry: no_row(), types, res, implicit, subst_args: []TyId.new(), arg_slots: []SlotBind.new(),
-               contract_notes: []ContractNote.new() }
+               contract_notes: []ContractNote.new(), mv_order: []int.new() }
 }
 
 /// THE ENTRY DECISION (274.4 step 2): which row is this program's entry
@@ -254,6 +255,16 @@ export fn CheckOut.new(node_count int) -> CheckOut {
 export fn CheckOut mut @record_entry(row FnRow) -> () {
     @entry = row
 }
+
+/// A module value whose initializer is typed -- after every value it reads
+/// (274.5 S6). The order of these calls IS the initialization order: a
+/// depth-first walk finishes a value only after its dependencies.
+export fn CheckOut mut @record_module_value(row int) -> () {
+    @mv_order.push(row)
+}
+
+/// The module values in initialization order (constant-table rows).
+export fn CheckOut @module_value_order() -> ro []int => @mv_order
 
 /// The entry row the checker recorded, or None when the file declares none.
 #realtime nogc

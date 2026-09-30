@@ -409,14 +409,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // C symbol of its own, and WHICH constant this is came from the
         // channel -- the emitter resolves no names (274.4 rule E).
         match @out.const_of(e.id_of()) {
-            Some(row) => {
-                ro cd = @ctx.consts.rows[raw_crow(row)]
-                if cd.init.len() > 0 {
-                    @emit_expr(cd.init[0])
-                } else {
-                    ice("emit: a constant recorded with no initializer")
-                }
-            }
+            Some(row) => @emit_const_read(row)
             None => {
                 if @out.has_callee(e.id_of()) {
                     // A payload-less variant as a value (the variant-value
@@ -471,6 +464,19 @@ fn Emitter mut @emit_expr(e Node) -> () {
         @body.append(leaf_text(kids[1]))
         @body.append(")")
     } else if k == NodeKind.FieldAccess {
+        // A QUALIFIED constant or module value (`Type.NAME`, D200 amend #66):
+        // the checker wrote WHICH one on this node, exactly as on a bare
+        // name -- nothing here is a field read. Until 274.5 S6 the checker
+        // recorded only its type, and this arm printed `Type->NAME`.
+        match @out.const_of(e.id_of()) {
+            Some(row) => {
+                @emit_const_read(row)
+                return
+            }
+            None => {
+                // Not a constant: a variant value or a field, below.
+            }
+        }
         // `Sum.Variant` as a VALUE (the variant-value wave): the checker
         // wrote the variant row on THIS node; nothing here is a field read.
         if @out.has_callee(e.id_of()) {
