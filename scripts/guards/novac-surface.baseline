@@ -881,7 +881,10 @@ resolve 15
 #   CheckOut.@record_capture / @capture_at / @captures_of -- the captures of a
 #   handler literal (D474 section 0): written by check, which alone knows the
 #   scope; read by emit_c for the context type and every captured read.
-sem 282
+# sem 282 -> 283 (2026-09-30, Carina window, check x K4 hunt): pattern_lit_leaf --
+#   the leaf of a literal pattern, `true`/`false` inside their name node
+#   included; read by check (the literal's type) and lower (the arm's test).
+sem 283
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

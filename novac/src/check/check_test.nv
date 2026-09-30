@@ -914,3 +914,26 @@ test "return door: what the oracle accepts stays accepted (registry #1309)" {
     ro shadow = "module m\n\ntype Point { x int }\n\nfn f(p Point) -> Point {\n    ro p = Point { x: 1 }\n    p\n}\n"
     assert(diagnose(shadow) == 0, "a ro local shadowing a parameter is a fresh value")
 }
+
+test "`true` / `false` in a pattern are bool LITERALS -- never binders, never against another type (check x K4)" {
+    // Both halves of the class: on a bool they are cases (the value is typed,
+    // the match is exhaustive); on an `int` a `true` head is a type error, not
+    // a binder named `true` that swallows every value.
+    ro ok = "module m\n\nfn f(b bool) -> int {\n    ro m = match b {\n        true => 5\n        false => 6\n    }\n    m\n}\n"
+    assert(diagnose(ok) == 0, diagnose_first_msg(ok))
+    ro wrong = "module m\n\nfn f(x int) -> int {\n    ro m = match x {\n        true => 5\n        _ => 6\n    }\n    m\n}\n"
+    assert(diagnose_first_msg(wrong).contains("matches a `bool` value only"), diagnose_first_msg(wrong))
+}
+
+test "coverage of a sum is a SET of variants -- a repeated head covers nothing new (check x K4)" {
+    ro dup = "module m\n\ntype C enum A | B\n\nfn f(c C) -> int {\n    ro m = match c {\n        A => 1\n        A => 2\n    }\n    m\n}\n"
+    assert(diagnose_first_msg(dup).contains("leaves a variant uncovered"), diagnose_first_msg(dup))
+    // CONTROL: the two distinct heads cover it.
+    ro both = "module m\n\ntype C enum A | B\n\nfn f(c C) -> int {\n    ro m = match c {\n        A => 1\n        B => 2\n    }\n    m\n}\n"
+    assert(diagnose(both) == 0, diagnose_first_msg(both))
+}
+
+test "an empty STATEMENT match is refused on any scrutinee -- a record included (check x K4)" {
+    ro src = "module m\n\ntype Pt { x int, y int }\n\nfn f(p Pt) -> int {\n    match p {\n    }\n    p.x\n}\n"
+    assert(diagnose_first_msg(src).contains("E_MATCH_NON_EXHAUSTIVE"), diagnose_first_msg(src))
+}
