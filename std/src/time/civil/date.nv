@@ -23,6 +23,7 @@ module time.civil
 /// A D319 type-ladder plain type: NOT a point on the time axis (no zone).
 /// Into `Timestamp` — only explicitly via `Offset`/`TimeZone` (fallible).
 #stable(since = "0.1")
+#impl(Equal)
 export type Date value {
     ro epoch_day i64
 }

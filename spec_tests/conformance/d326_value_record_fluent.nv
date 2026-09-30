@@ -3,6 +3,7 @@
 // Spec: spec/decisions/02-types.md D326/D328. Part of the SINGLE conformance module.
 module spec_tests.conformance
 
+#impl(Equal)
 type P1724Point value { x int, y int }
 fn P1724Point mut @inc(a int) -> @ { @x += a; @y += a }
 

@@ -69,6 +69,7 @@ module time.duration
 /// live in THIS module and keep working unchanged. Reading the raw value is
 /// still public via the `@nanos()` accessor (a method, not field access).
 #stable(since = "0.1")
+#impl(Equal)
 export type Duration value {
     priv nanos i64
 }

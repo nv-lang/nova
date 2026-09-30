@@ -29,9 +29,11 @@
 // ключуется по исходнику, а не по env — правило Г14).
 module standalone.a4_value_sum_pos
 
+#impl(Equal)
 type Colour enum Red | Green | Blue
 
 // Оставляется в куче оградой: используется как элемент Vec.
+#impl(Equal)
 type Shade enum Dark | Light
 
 // Статик со значимой суммой: под `GC_set_no_dls(1)` сегмент данных не

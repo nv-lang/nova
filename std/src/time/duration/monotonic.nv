@@ -43,6 +43,7 @@ module time.duration
 /// `T.to_monotonic_nanos()` below (paired with the pre-existing raw-read
 /// `@nanos()` accessor).
 #stable(since = "0.6")
+#impl(Equal)
 export type Monotonic value {
     priv nanos i64
 }
