@@ -1,0 +1,13 @@
+module cond_lang.neg_3
+
+// `ro` inside a pattern is not a form (D486 s4 amendment p.3; registry 1381):
+// a binder is read-only without the word -- `Some(x)`, not `Some(ro x)`.
+
+// NOVAC_EXPECT `ro` stands only before a bare name that is the whole condition pattern
+
+fn main() {
+    ro o = Some(3)
+    if Some(ro x) = o {
+        println(x)
+    }
+}

@@ -16,7 +16,7 @@ module novac.check
 
 import ../tree.{Node}
 import ../types.{TyId, no_ty, is_ty}
-import ../sem.{pattern_shape, PatShape}
+import ../sem.{pattern_shape, PatShape, pattern_mode_word}
 import ../sem.{variant_in_sum, no_vrow, is_vrow, variants_named, VariantRow}
 
 /// WHERE a pattern stands (D486 §4): the three columns of the position table plus
@@ -101,5 +101,25 @@ fn Checker @names_a_variant(nm str) -> bool {
         NameBinder => false
         NameOwnVariant(_) => true
         NameForeignVariant(_) => true
+    }
+}
+
+/// The ROOT of a condition's pattern refused as a LANGUAGE error (D486 §4, §7;
+/// registry 1381), true when refused: `_` alone matches always, a literal or `|`
+/// compares with a value. A tuple, record or array root is the subset's debt,
+/// said by the caller -- that form exists, these three do not.
+fn Checker mut @refused_cond_root(pat Node, kids []Node) -> bool {
+    ro s = pattern_shape(pat)
+    if s == PatShape.Wild { return @reject_if(true, kids, COND_WILD_ROOT_MSG) }
+    @reject_if(s == PatShape.Lit || s == PatShape.Disj, kids, COND_VALUE_PATTERN_MSG)
+}
+
+/// A bare name as the whole condition pattern with no mode word (D486 §4
+/// amendment p.3; registry 1381): a LANGUAGE error, true when refused. With `ro`
+/// or `mut` it is the grammar's form, which the caller refuses as subset debt.
+fn Checker mut @refused_bare_cond_name(pat Node, kids []Node) -> bool {
+    match pattern_mode_word(pat) {
+        None => @reject_if(true, kids, COND_BARE_NAME_MSG)
+        Some(_) => false
     }
 }

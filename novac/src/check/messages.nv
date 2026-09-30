@@ -202,7 +202,7 @@ const IFLET_INIT_MSG = "the initializer of `if Some(...) = ...` must be an Optio
 /// E_CONSUME_IN_CONDITION territory) is read but not lowered yet, and a
 /// tuple/record/array/literal/`_` condition the lowering has no test for.
 const IFLET_COND_BIND_MSG = "outside the subset: a name binding in an `if` condition is read but not compiled yet -- the condition takes a variant pattern (274.5 P3, the condition-forms wave)"
-const IFLET_COND_FORM_MSG = "outside the subset: an `if` condition takes a variant pattern here -- tuple, record, array, literal, `_` and `|` conditions arrive with the condition-forms wave (274.5 P3)"
+const IFLET_COND_FORM_MSG = "outside the subset: an `if` condition takes a variant pattern here -- tuple, record and array conditions arrive with the condition-forms wave (274.5 P3)"
 
 /// The `ro` word on a pattern binder OUTSIDE an if/while condition (wave P3):
 /// the word is read everywhere so the condition can take it (the oracle's
@@ -211,7 +211,7 @@ const IFLET_COND_FORM_MSG = "outside the subset: an `if` condition takes a varia
 /// (`expected pattern, got ro`, measured 2026-09-29), and a refusal by name
 /// beats a silent mis-read as `consume` (the two mode doors map words, and an
 /// unlisted word used to fall into the `else` arm).
-const RO_WORD_PATTERN_MSG = "outside the subset: the `ro` word on a pattern binder stands only in an `if`/`while` condition (274.5 P3, the condition-forms wave)"
+const RO_WORD_PATTERN_MSG = "`ro` stands only before a bare name that is the whole condition pattern (D486): a binder inside a pattern is read-only without the word -- `Some(x)`, not `Some(ro x)`"
 
 /// The while-let judges (wave P4): the SAME third column of D486 s4 as the
 /// if-let's, worded for its own position -- a while-let is the if-let's
@@ -220,7 +220,7 @@ const RO_WORD_PATTERN_MSG = "outside the subset: the `ro` word on a pattern bind
 const WHILELET_VARIANT_MSG = "outside the subset: `while <pattern> = ...` takes only `Some(name)` here -- other variants arrive with their carriers (274.5 P4)"
 const WHILELET_INIT_MSG = "the initializer of `while Some(...) = ...` must be an Option instance -- this expression's type is not one"
 const WHILELET_COND_BIND_MSG = "outside the subset: a name binding in a `while` condition is read but not compiled yet -- the condition takes a variant pattern (274.5 P4, the condition-forms wave)"
-const WHILELET_COND_FORM_MSG = "outside the subset: a `while` condition takes a variant pattern here -- other pattern forms in conditions arrive with the condition-forms wave (274.5 P4)"
+const WHILELET_COND_FORM_MSG = "outside the subset: a `while` condition takes a variant pattern here -- record, array and positional-group conditions arrive with the condition-forms wave (274.5 P4)"
 
 /// The for-CALL head judge's answer (wave B16): the head must hand back a
 /// vector -- an instance of arity one -- or the loop has no element type.
@@ -522,3 +522,10 @@ const PAYLOAD_REST_MSG = "`..` in a variant payload stands alone, as in `Cons(..
 /// A literal or `|` inside a condition's pattern (D486 §4 amendment 2026-09-30 p.1,
 /// registry 1379): a LANGUAGE error -- it compares with a value.
 const COND_VALUE_PATTERN_MSG = "a condition's pattern does not compare with a value -- a literal or `|` stands in it at no depth (D486): write `== Some(3)` or a guard"
+
+/// A condition whose whole pattern is `_` (D486 §4, §7; registry 1381): a LANGUAGE error.
+const COND_WILD_ROOT_MSG = "a condition whose whole pattern is `_` always matches -- it tests nothing (D486)"
+
+/// A bare name as the whole condition pattern with no `ro`/`mut` (D486 §4 amendment
+/// 2026-09-30 p.3; registry 1381): a LANGUAGE error, the oracle's E_AMBIGUOUS_IDENT_PATTERN.
+const COND_BARE_NAME_MSG = "a bare name as the whole condition pattern needs `ro` or `mut` before it (D486, E_AMBIGUOUS_IDENT_PATTERN): `if n = f()` reads as a mistyped `==`"

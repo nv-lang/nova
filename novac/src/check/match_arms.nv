@@ -411,7 +411,7 @@ fn Checker mut @bind_name_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode,
     match pattern_mode_word(pat) {
         Some(k) => {
             if k == TokenKind.KwRo {
-                @report_first_leaf_of(ak, RO_WORD_PATTERN_MSG)
+                @reject_first_leaf_of(ak, RO_WORD_PATTERN_MSG)
                 return false
             } else { // `mut`/`consume` are mapped by the door below.
             }
@@ -569,7 +569,7 @@ fn Checker mut @bind_record_pattern(pat Node, ty TyId, ak []Node, dmode ParamMod
                 match pattern_mode_word(f) {
                     Some(k) => {
                         if k == TokenKind.KwRo {
-                            @report_first_leaf_of(ak, RO_WORD_PATTERN_MSG)
+                            @reject_first_leaf_of(ak, RO_WORD_PATTERN_MSG)
                             ro_word = true
                             ok = false
                         } else { // `mut`/`consume` are mapped by the door below.

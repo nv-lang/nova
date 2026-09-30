@@ -584,6 +584,20 @@ test "binder or variant is ONE door: a bare variant name in a condition is a var
     assert(diagnose_first_msg(bind).contains("names a variant is refutable"), diagnose_first_msg(bind))
 }
 
+test "what D486 forbids in a condition is a language error, what it allows but novac lacks stays debt (registry 1381)" {
+    // Fixtures: novac/fixtures/cond_lang. `_`/literal/`|` at the root, a bare name
+    // with no `ro`/`mut`, and `ro` inside a pattern were all "outside the subset".
+    ro wild = "module m\n\ntype S enum\n    | P(int)\n    | N\n\nfn f(s S) -> int {\n    if _ = s {\n        return 1\n    }\n    0\n}\n"
+    assert(diagnose_first_msg(wild).contains("always matches"), diagnose_first_msg(wild))
+    ro bare = "module m\n\nfn g() -> int => 3\n\nfn f() -> int {\n    if n = g() {\n        return n\n    }\n    0\n}\n"
+    assert(diagnose_first_msg(bare).contains("needs `ro` or `mut`"), diagnose_first_msg(bare))
+    ro inner = "module m\n\ntype S enum\n    | P(int)\n    | N\n\nfn f(s S) -> int {\n    match s {\n        P(ro x) => x\n        N => 0\n    }\n}\n"
+    assert(diagnose_first_msg(inner).contains("`ro` stands only before a bare name"), diagnose_first_msg(inner))
+    // CONTROL: `if ro n = g()` is the grammar's form -- still the subset's debt.
+    ro form = "module m\n\nfn g() -> int => 3\n\nfn f() -> int {\n    if ro n = g() {\n        return n\n    }\n    0\n}\n"
+    assert(diagnose_first_msg(form).contains("outside the subset"), diagnose_first_msg(form))
+}
+
 test "a closed `str` slice is compiled; other receivers, open bounds and non-int bounds keep their refusals (274.7 U-1)" {
     // D470 section 5: `s[lo..hi]` is `s.index(Range { start: lo, end: hi })`, a
     // byte range of type `str` (D249). Wave U-1 compiles the closed form over
