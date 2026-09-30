@@ -1,0 +1,62 @@
+// Registry 221.1 #1097 (D134): a free function's C symbol is decided by its
+// DECLARING module, never by its bare name.
+//
+// Three modules declare `tag`: `p1097_alpha.tag(int)` and `p1097_beta.tag(int)`
+// share a signature, `p1097_gamma.tag(int, int)` does not. Because the name had
+// two signatures it went through the D84 overload registry, and every
+// declaration there took the FIRST declaring module's symbol: beta's body was
+// emitted under alpha's name (C redefinition), gamma's got alpha's base with a
+// suffix, and a call picked a body by parameter C-types -- first match wins.
+// Measured before the fix: C redefinition, "too many arguments" (gamma's call
+// sent to alpha's one-parameter symbol) and a closure macro typed by gamma's
+// signature; the collision-route cell below hit the #1090 internal panic. That
+// loudness is luck of the shapes -- two collapsed functions with one C type
+// would have nothing left to complain. Every value below is distinct, so a call
+// that reaches another module's function cannot pass by accident.
+module standalone.p1097_same_name_fns
+
+import ./p1097_alpha.{run as run_alpha, run_val as run_val_alpha, mark_here as mark_here_alpha}
+import ./p1097_beta.{tag, p1097_mark, run as run_beta, run_val as run_val_beta}
+import ./p1097_gamma.{run as run_gamma}
+
+type P1097Src effect {
+    fn base() -> int
+}
+
+fn p1097_src() -> Effect[P1097Src] => effect P1097Src {
+    base() -> int => 5
+}
+
+test "same signature, reached transitively: each module calls its own tag (#1097)" {
+    assert(run_alpha() == 101)
+    assert(run_beta() == 201)
+}
+
+test "different arity, reached transitively: the overload keeps its own module (#1097)" {
+    assert(run_gamma() == 301)
+}
+
+test "a call through an import reaches the imported module, not a same-signature namesake (#1097)" {
+    // `tag` is imported from beta only; alpha's `tag(int)` and gamma's
+    // `tag(int, int)` are in the unit too.
+    assert(tag(1) == 201)
+}
+
+test "a call inside a with-block reaches the imported module (#1097)" {
+    ro v = with P1097Src = p1097_src() { tag(P1097Src.base()) }
+    assert(v == 205)
+}
+
+test "a fn value names its own module's tag, in the module and through an import (#1097)" {
+    assert(run_val_alpha() == 102)
+    assert(run_val_beta() == 202)
+    ro f = tag
+    assert(f(3) == 203)
+}
+
+test "a same-signature pair on the collision route: call and value through an import (#1097)" {
+    assert(p1097_mark() == 22)
+    ro k = p1097_mark
+    assert(k() == 22)
+    assert(mark_here_alpha() == 11)
+}

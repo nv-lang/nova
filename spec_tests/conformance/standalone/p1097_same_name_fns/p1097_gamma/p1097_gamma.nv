@@ -1,0 +1,8 @@
+// #1097 carrier -- see `../p1097_same_name_fns.nv`. The third namesake with a
+// DIFFERENT arity: its presence is what sent `tag` down the overload registry,
+// where every declaration took the first declaring module's symbol.
+module p1097_same_name_fns.p1097_gamma
+
+export fn tag(x int, y int) -> int => 300 + x + y
+
+export fn run() -> int => tag(1, 0)
