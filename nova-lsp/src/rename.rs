@@ -1577,21 +1577,72 @@ mod tests {
 
     #[test]
     fn edge_very_long_file() {
-        // 10000 lines — rename must complete without timeout.
-        let mut lines = String::with_capacity(200_000);
-        lines.push_str("fn myFunc() => ()\n");
-        for i in 0..9999 {
-            lines.push_str(&format!("ro _x{} = {}\n", i, i));
+        // 10000 lines — rename must complete without an O(n^2) blow-up.
+        //
+        // Registry #1159: an ABSOLUTE wall-clock threshold here (`elapsed.as_secs()
+        // < 5`) judges the MACHINE, not the rename pass — it reddened under gate
+        // load (a neighbour running) and passed the same test alone at 0.21s, a
+        // 19x headroom either way (2026-09-30). Fix (registry #1154 п.3): compare
+        // cost at two sizes measured BACK-TO-BACK IN THE SAME RUN. Load inflates
+        // both numbers together, so their RATIO holds even when the raw seconds
+        // do not; a near-linear pass keeps the ratio close to the 5x size ratio,
+        // while an O(n^2) regression pushes it toward 5x^2 = 25x — that gap is
+        // what this test is actually meant to catch.
+        fn build(n_extra: usize) -> String {
+            let mut lines = String::with_capacity(n_extra * 20 + 32);
+            lines.push_str("fn myFunc() => ()\n");
+            for i in 0..n_extra {
+                lines.push_str(&format!("ro _x{} = {}\n", i, i));
+            }
+            lines
         }
-        let docs = vec![RenameDoc {
-            uri: Url::parse("file:///big.nv").unwrap(),
-            text: lines,
-            version: None,
-        }];
-        let start = std::time::Instant::now();
-        let _result = cr(&docs, "myFunc", "myFunction");
-        let elapsed = start.elapsed();
-        assert!(elapsed.as_secs() < 5, "rename on 10000-line file took too long: {:?}", elapsed);
+
+        fn time_rename(text: &str) -> std::time::Duration {
+            // Minimum of 3 back-to-back runs: filters transient scheduler
+            // noise while leaving the algorithmic cost intact. This is a
+            // different job than `novac_load_scale`'s median-of-nine (that
+            // estimates MACHINE load from a fixed fork; here both arms are
+            // timed in the same run against each other, so the noise floor
+            // is smaller and a plain minimum is enough — see #1154/#1058
+            // for why "minimum" is the wrong tool for a LOAD estimate.)
+            let mut best = std::time::Duration::MAX;
+            for _ in 0..3 {
+                let docs = vec![RenameDoc {
+                    uri: Url::parse("file:///big.nv").unwrap(),
+                    text: text.to_string(),
+                    version: None,
+                }];
+                let start = std::time::Instant::now();
+                let _result = cr(&docs, "myFunc", "myFunction");
+                best = best.min(start.elapsed());
+            }
+            best
+        }
+
+        let small_text = build(1999); // ~2000 lines
+        let big_text = build(9999); // ~10000 lines — same shape as the old fixed carrier
+
+        let small = time_rename(&small_text);
+        let big = time_rename(&big_text);
+
+        // Floor the denominator so a near-instant small run on a fast/opt
+        // build can't turn a harmless jitter into a division blow-up.
+        let small_ns = (small.as_nanos() as f64).max(1_000.0);
+        let big_ns = big.as_nanos() as f64;
+        let ratio = big_ns / small_ns;
+
+        assert!(
+            ratio < 15.0,
+            "rename cost grew {:.1}x for a 5x larger file (small={:?} for {} lines, \
+             big={:?} for {} lines) — expected near-linear scaling (~5x); this looks \
+             like an O(n^2) regression in the rename pass, not machine load \
+             (registry #1159)",
+            ratio,
+            small,
+            small_text.lines().count(),
+            big,
+            big_text.lines().count(),
+        );
     }
 
     #[test]

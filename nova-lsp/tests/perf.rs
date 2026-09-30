@@ -36,33 +36,48 @@ fn change_event(text: &str) -> TextDocumentContentChangeEvent {
 // pos1: check_workspace 10-file project < 1s (release) / < 30s (debug)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// pos1: check_workspace on 10-file project completes within budget.
-#[test]
-fn pos1_check_workspace_10_files_under_budget() {
+/// Writes `n` synthetic `.nv` files into a fresh temp dir and returns the
+/// minimum-of-3 wall time (ms) for `check_workspace` over it.
+fn measure_check_workspace_ms(n: usize) -> (f64, usize) {
     let dir = tempfile::tempdir().expect("create temp dir");
-    for i in 0..10 {
+    for i in 0..n {
         std::fs::write(dir.path().join(format!("file{i}.nv")), valid_nv(i)).unwrap();
     }
+    let mut best = u128::MAX;
+    let mut n_results = 0;
+    for _ in 0..3 {
+        let start = Instant::now();
+        let results = check_workspace(dir.path());
+        best = best.min(start.elapsed().as_millis());
+        n_results = results.len();
+    }
+    (best as f64, n_results)
+}
 
-    let start = Instant::now();
-    let results = check_workspace(dir.path());
-    let elapsed = start.elapsed();
+/// pos1: check_workspace cost scales roughly linearly with file count.
+///
+/// Registry #1159/#1154 (2026-09-30): this used to assert an ABSOLUTE
+/// wall-clock budget (release<1s / debug<30s), which judges the MACHINE
+/// running the test (red under gate load, green alone), not check_workspace
+/// itself. Fix: measure at two file counts BACK-TO-BACK IN THE SAME RUN and
+/// assert the cost RATIO stays close to the file-count ratio (5x); load
+/// inflates both arms together so the ratio holds even when the raw
+/// milliseconds do not, and an O(n^2) regression still reddens.
+#[test]
+fn pos1_check_workspace_10_files_under_budget() {
+    let (small_ms, small_n) = measure_check_workspace_ms(2);
+    let (big_ms, big_n) = measure_check_workspace_ms(10);
 
-    assert_eq!(results.len(), 10, "expected 10 results");
+    assert_eq!(small_n, 2, "expected 2 results");
+    assert_eq!(big_n, 10, "expected 10 results");
 
-    // Budget: release < 1s, debug < 30s (compiler is slow in debug mode).
-    let budget = if cfg!(debug_assertions) {
-        Duration::from_secs(60) // generous for debug
-    } else {
-        Duration::from_secs(1)
-    };
-
+    let ratio = big_ms / small_ms.max(1.0);
     assert!(
-        elapsed <= budget,
-        "check_workspace took {}ms, budget={}ms (debug={})",
-        elapsed.as_millis(),
-        budget.as_millis(),
-        cfg!(debug_assertions)
+        ratio < 15.0,
+        "check_workspace cost grew {:.1}x for a 5x larger workspace (2-file={} ms, \
+         10-file={} ms) — expected near-linear scaling (~5x); this looks like an \
+         O(n^2) regression, not machine load (registry #1159)",
+        ratio, small_ms, big_ms
     );
 }
 
@@ -70,31 +85,39 @@ fn pos1_check_workspace_10_files_under_budget() {
 // pos2: 1000 incremental edits on 10 KB rope < 100ms (release) / < 5s (debug)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// pos2: 1000 small incremental edits on a 10 KB rope complete within budget.
-#[test]
-fn pos2_1000_incremental_edits_under_budget() {
-    // Build a 10 KB rope (approx).
+/// Applies `n` small incremental edits to a fresh 10 KB rope and returns the
+/// wall time (ms).
+fn measure_incremental_edits_ms(n: usize) -> f64 {
     let initial = "abcdefghij\n".repeat(900); // ~10 KB
     let mut rope = Rope::from_str(&initial);
-
     let start = Instant::now();
-    for _ in 0..1000 {
+    for _ in 0..n {
         // Insert one char at position (0, 0)
         apply_changes(&mut rope, &[change_event("x")]);
     }
-    let elapsed = start.elapsed();
+    start.elapsed().as_millis() as f64
+}
 
-    let budget = if cfg!(debug_assertions) {
-        Duration::from_secs(5)
-    } else {
-        Duration::from_millis(100)
-    };
+/// pos2: 1000 small incremental edits on a 10 KB rope scale roughly linearly
+/// with edit count.
+///
+/// Registry #1159/#1154 (2026-09-30): this used to assert an ABSOLUTE
+/// wall-clock budget (release<100ms / debug<5s), which judges the MACHINE,
+/// not `apply_changes`. Fix: measure at two edit counts BACK-TO-BACK IN THE
+/// SAME RUN and assert the cost RATIO stays close to the count ratio (5x) —
+/// see pos1's doc comment above for the full rationale.
+#[test]
+fn pos2_1000_incremental_edits_under_budget() {
+    let small_ms = measure_incremental_edits_ms(200).max(1.0);
+    let big_ms = measure_incremental_edits_ms(1000);
 
+    let ratio = big_ms / small_ms;
     assert!(
-        elapsed <= budget,
-        "1000 edits took {}ms, budget={}ms",
-        elapsed.as_millis(),
-        budget.as_millis()
+        ratio < 15.0,
+        "1000 edits cost grew {:.1}x vs 200 edits (5x more work) (200={} ms, \
+         1000={} ms) — expected near-linear scaling (~5x); this looks like an \
+         O(n^2) regression in apply_changes, not machine load (registry #1159)",
+        ratio, small_ms, big_ms
     );
 }
 
@@ -102,36 +125,44 @@ fn pos2_1000_incremental_edits_under_budget() {
 // pos3: 1000 debouncer schedule() calls < 100ms overhead
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// pos3: 1000 debouncer schedule() calls complete within 100ms.
-///
-/// This tests the overhead of acquiring the mutex, cancelling, and spawning
-/// tokio tasks — not the work inside them.
-#[tokio::test]
-async fn pos3_1000_debouncer_schedule_calls_under_budget() {
+/// Issues `n` debouncer `schedule()` calls (then cancels them all before
+/// they fire) and returns the wall time (ms) for the scheduling loop alone.
+async fn measure_debouncer_schedule_ms(n: usize) -> f64 {
     let db = Debouncer::new(Duration::from_secs(60)); // large delay — work won't run
     let uri = Url::parse("file:///perf_test.nv").unwrap();
 
     let start = Instant::now();
-    for _ in 0..1000 {
+    for _ in 0..n {
         let u = uri.clone();
         db.schedule(u, |_tok| async {});
     }
-    let elapsed = start.elapsed();
+    let elapsed_ms = start.elapsed().as_millis() as f64;
 
     // Cancel all before they fire (large delay above ensures they don't run).
     db.cancel_all();
+    elapsed_ms
+}
 
-    let budget = if cfg!(debug_assertions) {
-        Duration::from_secs(2)
-    } else {
-        Duration::from_millis(100)
-    };
+/// pos3: debouncer schedule() overhead (mutex + cancel + tokio spawn — not
+/// the work inside them) scales roughly linearly with call count.
+///
+/// Registry #1159/#1154 (2026-09-30): this used to assert an ABSOLUTE
+/// wall-clock budget (release<100ms / debug<2s), which judges the MACHINE,
+/// not `schedule()`. Fix: measure at two call counts BACK-TO-BACK IN THE
+/// SAME RUN and assert the cost RATIO stays close to the count ratio (5x) —
+/// see pos1's doc comment above for the full rationale.
+#[tokio::test]
+async fn pos3_1000_debouncer_schedule_calls_under_budget() {
+    let small_ms = measure_debouncer_schedule_ms(200).await.max(1.0);
+    let big_ms = measure_debouncer_schedule_ms(1000).await;
 
+    let ratio = big_ms / small_ms;
     assert!(
-        elapsed <= budget,
-        "1000 schedule() calls took {}ms, budget={}ms",
-        elapsed.as_millis(),
-        budget.as_millis()
+        ratio < 15.0,
+        "1000 schedule() calls cost grew {:.1}x vs 200 calls (5x more work) \
+         (200={} ms, 1000={} ms) — expected near-linear scaling (~5x); this \
+         looks like an O(n^2) regression, not machine load (registry #1159)",
+        ratio, small_ms, big_ms
     );
 }
 
