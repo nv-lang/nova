@@ -32,7 +32,7 @@ test "rvalue match Err(consume e) — ownership явный, mut-capable, consume
 }
 
 test "place-скрутини — именная Result-переменная, Err(consume e) тот же путь" {
-    ro attempt = dial_p216_err(-2)
+    consume attempt = dial_p216_err(-2)
     match attempt {
         Ok(_v) => {}
         Err(consume e) => { e.log_and_drop() }
