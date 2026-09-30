@@ -27,10 +27,12 @@ fn show_param(o Option[[]u8]) Io -> () {
     }
 }
 
+// nova:allow W_COERCE_EXPLICIT_REDUNDANT -- the explicit `.bytes()` is the test's instrument: it pins the path WITHOUT `#coerce`, and a bare literal would switch the fixture to another codegen path
 fn make_ret() -> Option[[]u8] => Some("ret".bytes())
 
 fn main() Io -> () {
     mut v []Option[[]u8] = []Option[[]u8].new()
+    // nova:allow W_COERCE_EXPLICIT_REDUNDANT -- the explicit `.bytes()` is the test's instrument: it pins the path WITHOUT `#coerce`, and a bare literal would switch the fixture to another codegen path
     v.push(Some("a".bytes()))
     v.push(None)
     print("len=${v.len()}|")
@@ -53,6 +55,7 @@ fn main() Io -> () {
     }
     print("iter_count=${count}|")
 
+    // nova:allow W_COERCE_EXPLICIT_REDUNDANT -- the explicit `.bytes()` is the test's instrument: it pins the path WITHOUT `#coerce`, and a bare literal would switch the fixture to another codegen path
     ro h = Holder { o: Some("f".bytes()) }
     match h.o {
         Some(_) => print("field=Some|")
