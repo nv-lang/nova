@@ -2295,7 +2295,7 @@ fn check_const_constexpr(
     known_consts: &HashSet<String>,
 ) -> Result<(), Diagnostic> {
     let empty: HashSet<String> = HashSet::new();
-    check_const_constexpr_ex(expr, known_consts, &empty, &empty)
+    check_const_constexpr_ex(expr, None, known_consts, &empty, &empty, &|_| None)
 }
 
 /// Plan 114.4.2 (D199): extended constexpr validator с awareness of
@@ -2305,38 +2305,100 @@ fn check_const_constexpr(
 /// backward-compatible с original check_const_constexpr behavior).
 /// `named_tuple_names` — set of named tuple type names; their constructors
 /// are constexpr (D215 amend: pure value construction, no side effects).
-fn check_const_constexpr_ex(
+///
+/// #1394: the list of 03-syntax.md «`const` требует» decides, both ways, and
+/// that needs two facts a syntactic walk lacks. `expected` is the declared type
+/// of the position: an array literal is a `[N]T` VALUE only under a fixed-size
+/// type -- anywhere else it is a `[]T` (`Vec`), a heap allocation, which `const`
+/// never is. `ty_of` resolves a type name (in the current file): a sum variant
+/// `Type.V` / `Type.V(args)` is a constructor (constexpr from constexpr args),
+/// an associated `const Type.NAME` is a reference to a `const`, and the fields
+/// of a record literal get their declared types.
+fn check_const_constexpr_ex<'t>(
     expr: &crate::ast::Expr,
+    expected: Option<&TypeRef>,
     known_consts: &HashSet<String>,
     const_fn_names: &HashSet<String>,
     named_tuple_names: &HashSet<String>,
+    ty_of: &dyn Fn(&str) -> Option<&'t TypeDecl>,
 ) -> Result<(), Diagnostic> {
     use crate::ast::ExprKind as E;
+    let rec = |e: &crate::ast::Expr, t: Option<&TypeRef>| {
+        check_const_constexpr_ex(e, t, known_consts, const_fn_names, named_tuple_names, ty_of)
+    };
+    // `Type.V` of a sum declaration: its payload types (empty for a unit variant).
+    let variant = |ty: &str, v: &str| -> Option<Vec<TypeRef>> {
+        match &ty_of(ty)?.kind {
+            TypeDeclKind::Sum(vs) => vs.iter().find(|x| x.name == v).map(|x| match &x.kind {
+                SumVariantKind::Unit => Vec::new(),
+                SumVariantKind::Tuple(ts) => ts.clone(),
+                SumVariantKind::Record(fs) => fs.iter().map(|f| f.ty.clone()).collect(),
+            }),
+            _ => None,
+        }
+    };
+    // Declared type of field `f` of the record (`[T]`) or record variant (`[T, V]`) `path`.
+    let field_ty = |path: &[String], f: &str| -> Option<TypeRef> {
+        let fields = match (&ty_of(path.first()?)?.kind, path.len()) {
+            (TypeDeclKind::Record(fs), 1) => fs,
+            (TypeDeclKind::Sum(vs), 2) => match &vs.iter().find(|x| x.name == path[1])?.kind {
+                SumVariantKind::Record(fs) => fs,
+                _ => return None,
+            },
+            _ => return None,
+        };
+        fields.iter().find(|x| x.name == f).map(|x| x.ty.clone())
+    };
+    // `Type.V` as a path or as `Ident.name`.
+    let qualified = |e: &crate::ast::Expr| -> Option<(String, String)> {
+        match &e.kind {
+            E::Path(p) if p.len() == 2 => Some((p[0].clone(), p[1].clone())),
+            E::Member { obj, name } => match &obj.kind {
+                E::Ident(t) => Some((t.clone(), name.clone())),
+                _ => None,
+            },
+            _ => None,
+        }
+    };
     match &expr.kind {
         // Literals — всегда constexpr.
         E::IntLit(_) | E::FloatLit(_) | E::StrLit(_) | E::BoolLit(_)
         | E::CharLit(_) | E::UnitLit => Ok(()),
         // Unary над constexpr operand.
-        E::Unary { operand, .. } => check_const_constexpr_ex(operand, known_consts, const_fn_names, named_tuple_names),
+        E::Unary { operand, .. } => rec(operand, None),
         // Binary над constexpr operands.
         E::Binary { left, right, .. } => {
-            check_const_constexpr_ex(left, known_consts, const_fn_names, named_tuple_names)?;
-            check_const_constexpr_ex(right, known_consts, const_fn_names, named_tuple_names)
+            rec(left, None)?;
+            rec(right, None)
         }
         // Plan 114.4.2 D199: `as`-cast — constexpr if inner is constexpr.
-        E::As(inner, _) => check_const_constexpr_ex(inner, known_consts, const_fn_names, named_tuple_names),
+        E::As(inner, _) => rec(inner, None),
         // Tuple-литерал — каждый элемент constexpr.
         E::TupleLit(elems) => {
-            for e in elems {
-                check_const_constexpr_ex(e, known_consts, const_fn_names, named_tuple_names)?;
+            let tys = match expected { Some(TypeRef::Tuple(ts, _)) if ts.len() == elems.len() => Some(ts), _ => None };
+            for (i, e) in elems.iter().enumerate() {
+                rec(e, tys.map(|ts| &ts[i]))?;
             }
             Ok(())
         }
-        // Array-литерал (без spread) — каждый элемент constexpr.
+        // Array-литерал (без spread) — каждый элемент constexpr, и ТОЛЬКО под
+        // типом `[N]T`: иначе это `[]T`, выделение в куче (#1394).
         E::ArrayLit(elems) => {
+            let elem_ty = match expected {
+                Some(TypeRef::FixedArray(_, t, _)) => t.as_ref(),
+                _ => {
+                    return Err(Diagnostic::new(
+                        "[E_CONST_NOT_CONSTEXPR] an array literal of type `[]T` allocates on \
+                         the heap, and a `const` is never an allocation (03-syntax.md «`const` \
+                         требует»). Declare it `ro X = …` (lazy-init runtime value), or give it \
+                         a fixed-size type `[N]T` -- a value, not an allocation (#1394).".to_string(),
+                        expr.span,
+                    ));
+                }
+            };
             for el in elems {
                 match el {
-                    crate::ast::ArrayElem::Item(e) => check_const_constexpr_ex(e, known_consts, const_fn_names, named_tuple_names)?,
+                    crate::ast::ArrayElem::Item(e) => rec(e, Some(elem_ty))?,
                     crate::ast::ArrayElem::Spread(_) => {
                         return Err(Diagnostic::new(
                             "[E_CONST_NOT_CONSTEXPR] spread `...` not allowed \
@@ -2350,8 +2412,12 @@ fn check_const_constexpr_ex(
             }
             Ok(())
         }
-        // Record-литерал — каждое поле constexpr.
-        E::RecordLit { fields, .. } => {
+        // Record-литерал — каждое поле constexpr (по объявленному типу поля).
+        E::RecordLit { type_name, fields, .. } => {
+            let path: Option<Vec<String>> = type_name.clone().or_else(|| match expected {
+                Some(TypeRef::Named { path, .. }) => path.last().map(|l| vec![l.clone()]),
+                _ => None,
+            });
             for f in fields {
                 if f.is_spread {
                     return Err(Diagnostic::new(
@@ -2361,7 +2427,10 @@ fn check_const_constexpr_ex(
                     ));
                 }
                 match &f.value {
-                    Some(v) => check_const_constexpr_ex(v, known_consts, const_fn_names, named_tuple_names)?,
+                    Some(v) => {
+                        let fty = path.as_deref().and_then(|p| field_ty(p, &f.name));
+                        rec(v, fty.as_ref())?
+                    }
                     None => {
                         // Shorthand `{ name }` — refers binding called `name`.
                         if !known_consts.contains(&f.name) {
@@ -2401,9 +2470,16 @@ fn check_const_constexpr_ex(
                 ))
             }
         }
+        // #1394: `Type.V` -- a unit variant of a sum (a constructor with no
+        // arguments), or `Type.NAME` -- an associated `const` (a reference to a
+        // `const`). Both are on the 03-syntax.md list.
+        E::Path(_) | E::Member { .. } if qualified(expr).is_some_and(|(t, v)| {
+            variant(&t, &v).is_some_and(|p| p.is_empty())
+                || ty_of(&t).is_some_and(|td| td.assoc_consts.iter().any(|a| a.name == v && !a.is_lazy_ro))
+        }) => Ok(()),
         // Path (e.g. `Module.NAME` cross-module const, или `LOCAL.field`
         // member-access на local-const). V1 conservative: запрещаем все
-        // Path формы в const-RHS (cross-module — followup
+        // прочие Path формы в const-RHS (cross-module — followup
         // [M-114.4-cross-module-const-ref]; field-access на local-const —
         // runtime-only, эквивалент `ro X = LOCAL.field`).
         E::Path(_) => Err(Diagnostic::new(
@@ -2413,6 +2489,19 @@ fn check_const_constexpr_ex(
              const → use `ro X = …` (runtime ok) (Plan 114.4 Ф.1).".to_string(),
             expr.span,
         )),
+        // #1394: `Type.V(args)` -- a sum constructor: constexpr from constexpr args.
+        E::Call { func, args, trailing: None } if qualified(func).is_some_and(|(t, v)| variant(&t, &v).is_some()) => {
+            let (t, v) = qualified(func).unwrap_or_default();
+            let payload = variant(&t, &v).unwrap_or_default();
+            for (i, a) in args.iter().enumerate() {
+                match a {
+                    crate::ast::CallArg::Item(e) => rec(e, payload.get(i))?,
+                    crate::ast::CallArg::Named { value, .. } => rec(value, None)?,
+                    crate::ast::CallArg::Spread(e) => rec(e, None)?,
+                }
+            }
+            Ok(())
+        }
         // Plan 114.4.2 D199 / Plan 114.4.3 Ф.4 V2: Call к const fn — constexpr,
         // если callee = Ident (или TurboFish<Ident, ...> для generic const fn)
         // и зарегистрирован как const fn, и каждый arg constexpr.
@@ -2442,7 +2531,7 @@ fn check_const_constexpr_ex(
                             crate::ast::CallArg::Named { value, .. } => value,
                             crate::ast::CallArg::Spread(e) => e,
                         };
-                        check_const_constexpr_ex(arg_expr, known_consts, const_fn_names, named_tuple_names)?;
+                        rec(arg_expr, None)?;
                     }
                     return Ok(());
                 }
@@ -2453,9 +2542,7 @@ fn check_const_constexpr_ex(
                                 // Arg recursion должен пройти как constexpr;
                                 // если нет — переэмитим с E_CONST_FN_NON_CONST_ARG
                                 // (per-D199 более информативный код для caller'а).
-                                if let Err(_inner) = check_const_constexpr_ex(
-                                    e, known_consts, const_fn_names, named_tuple_names,
-                                ) {
+                                if let Err(_inner) = rec(e, None) {
                                     return Err(Diagnostic::new(
                                         format!(
                                             "[E_CONST_FN_NON_CONST_ARG] call to \
@@ -2648,11 +2735,12 @@ fn check_module_init_cycles(module: &Module, errors: &mut Vec<Diagnostic>) {
 ///     so the two directions can never disagree about what «constexpr» means.
 ///
 /// Returns `Some(diagnostic)` when the binding should be `const`, else `None`.
-fn check_ro_module_partition(
+fn check_ro_module_partition<'t>(
     decl: &crate::ast::LetDecl,
     known_consts: &HashSet<String>,
     const_fn_names: &HashSet<String>,
     named_tuple_names: &HashSet<String>,
+    ty_of: &dyn Fn(&str) -> Option<&'t TypeDecl>,
 ) -> Option<Diagnostic> {
     // `ghost ro X = …` — spec-only binding, not subject to the partition.
     if decl.is_ghost {
@@ -2683,7 +2771,7 @@ fn check_ro_module_partition(
     // as `E_CONST_NOT_CONSTEXPR`). A runtime call / effect / allocation /
     // reference to another `ro` makes the binding genuinely runtime → `ro`
     // is correct and we stay silent.
-    if check_const_constexpr_ex(&decl.value, known_consts, const_fn_names, named_tuple_names).is_err() {
+    if check_const_constexpr_ex(&decl.value, decl.ty.as_ref(), known_consts, const_fn_names, named_tuple_names, ty_of).is_err() {
         return None;
     }
     Some(Diagnostic::new(
@@ -5981,8 +6069,8 @@ impl<'a> TypeCheckCtx<'a> {
                     // Runtime calls / effects / allocations / non-const
                     // refs → E_CONST_NOT_CONSTEXPR.
                     if let Err(d) = check_const_constexpr_ex(
-                        &cd.value, &partition_known_consts, &partition_const_fn_names,
-                        &partition_named_tuple_names,
+                        &cd.value, cd.ty.as_ref(), &partition_known_consts, &partition_const_fn_names,
+                        &partition_named_tuple_names, &|n| self.types_get_here(n),
                     ) {
                         errors.push(d);
                     }
@@ -6010,7 +6098,7 @@ impl<'a> TypeCheckCtx<'a> {
                     let _file_scope = self.enter_file(ld.span.file_id);
                     if let Some(d) = check_ro_module_partition(
                         ld, &partition_known_consts, &partition_const_fn_names,
-                        &partition_named_tuple_names,
+                        &partition_named_tuple_names, &|n| self.types_get_here(n),
                     ) {
                         errors.push(d);
                     }
@@ -6033,13 +6121,18 @@ impl<'a> TypeCheckCtx<'a> {
         for item in &module.items {
             if let Item::Type(td) = item {
                 for ac in &td.assoc_consts {
+                    let _file_scope = self.enter_file(ac.span.file_id);
+                    let verdict = check_const_constexpr_ex(
+                        &ac.value, ac.ty.as_ref(), &partition_known_consts, &partition_const_fn_names,
+                        &partition_named_tuple_names, &|n| self.types_get_here(n),
+                    );
+                    // #1394: an associated `const Type.NAME` answers to the same list as a
+                    // module `const` -- it used to be judged by nobody but the emitter.
                     if !ac.is_lazy_ro {
+                        if let Err(d) = verdict { errors.push(d); }
                         continue;
                     }
-                    if check_const_constexpr_ex(
-                        &ac.value, &partition_known_consts, &partition_const_fn_names,
-                        &partition_named_tuple_names,
-                    ).is_ok() {
+                    if verdict.is_ok() {
                         errors.push(Diagnostic::new(
                             format!(
                                 "[E_RO_FOR_CONSTEXPR_PREFER_CONST] associated `ro {}.{} = …` \
@@ -8581,7 +8674,8 @@ impl<'a> TypeCheckCtx<'a> {
                     let empty_consts: HashSet<String> = HashSet::new();
                     let empty_nt: HashSet<String> = HashSet::new();
                     if let Err(diag) = check_const_constexpr_ex(
-                        &d.value, &empty_consts, &self.const_fn_names, &empty_nt,
+                        &d.value, d.ty.as_ref(), &empty_consts, &self.const_fn_names, &empty_nt,
+                        &|n| self.types_get_here(n),
                     ) {
                         errors.push(diag);
                     }

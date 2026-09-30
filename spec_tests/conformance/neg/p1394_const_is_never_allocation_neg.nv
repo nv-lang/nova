@@ -1,0 +1,37 @@
+// EXPECT_COMPILE_ERROR E_CONST_NOT_CONSTEXPR
+//
+// Registry 221.1 #1394: `const` answers to the list of 03-syntax.md «`const`
+// требует» -- literals, arithmetic, a record literal, a sum constructor, a
+// reference to a `const`, a `const fn` call -- and is «**не** runtime call,
+// **не** effect, **не** allocation». The oracle's predicate took an array
+// literal for constexpr whatever its type, so `const X []int = [1, 2, 3]` -- a
+// `Vec`, a heap allocation -- was accepted and quietly lowered to lazy init;
+// and an associated `const Type.NAME` was judged by nobody (the emitter only).
+// A `[N]T` literal is a value and stays a `const` (standalone
+// p1394_const_list_positive); `[]T` -- typed, untyped or as a record field -- is
+// `ro`. Module and associated level, the same list.
+module neg.p1394_const_is_never_allocation_neg
+
+type P1394Bag { xs []int }
+type P1394Tag { n int }
+
+fn p1394n_three() -> int => 3
+
+// nova:expect E_CONST_NOT_CONSTEXPR -- a runtime call
+const P1394N_CALL = p1394n_three()
+// nova:expect E_CONST_NOT_CONSTEXPR -- `[]int` literal: a heap allocation
+const P1394N_HEAP []int = [1, 2, 3]
+// nova:expect E_CONST_NOT_CONSTEXPR -- an untyped array literal is `[]int` too
+const P1394N_HEAP_UNTYPED = [1, 2]
+// nova:expect E_CONST_NOT_CONSTEXPR -- a `[]int` literal inside a record field
+const P1394N_HEAP_FIELD P1394Bag = { xs: [1] }
+// nova:expect E_CONST_NOT_CONSTEXPR -- associated level: a runtime call
+const P1394Tag.CALL = p1394n_three()
+// nova:expect E_CONST_NOT_CONSTEXPR -- associated level: `[]int` literal
+const P1394Tag.HEAP []int = [4, 5]
+// nova:expect E_CONST_NOT_CONSTEXPR -- associated level: `[]int` in a record field
+const P1394Tag.HEAP_FIELD P1394Bag = { xs: [2] }
+
+fn main() Io -> () {
+    println(0)
+}
