@@ -1,0 +1,56 @@
+"""#1412 grid: every initializer form x read, declared module-level (`X`) and associated (`Tag.X`).
+Generates cells/<name>/{mod,assoc}/probe.nv; run with grid.sh."""
+import os
+D = os.path.dirname(os.path.abspath(__file__))
+HEAD = """module probe
+
+type Pt { x int, y int }
+type Fam | FInt | FStr
+type Sh | Circle(int) | Sq(int)
+type Tag { n int }
+type Bag { xs []int }
+
+fn three() -> int => 3
+fn sq(const x int) -> const int => x * x
+fn mkpt(k int) -> Pt => { x: k, y: k * 2 }
+fn px(p Pt) -> int => p.x
+fn fam(f Fam) -> str => match f {
+    FInt => "i"
+    FStr => "s"
+}
+fn sh(s Sh) -> int => match s {
+    Circle(r) => r
+    Sq(a) => a * 10
+}
+const LIT = 4
+const Tag.BASE = 100
+"""
+# (name, keyword, type, rhs, reads) -- `{}` in a read is the value's name
+CELLS = [
+    ("c_lit", "const", "", "40", ["{}"]),
+    ("c_arith_modref", "const", "", "LIT + 2", ["{}"]),
+    ("c_arith_assocref", "const", "", "Tag.BASE + 1", ["{}"]),
+    ("c_rec", "const", "Pt", "{ x: 10, y: 20 }", ["{}.x", "px({})"]),
+    ("c_fixed", "const", "[3]int", "[7, 8, 9]", ["{}[2]"]),
+    ("c_unit", "const", "Fam", "Fam.FInt", ["fam({})"]),
+    ("c_ctor", "const", "Sh", "Sh.Circle(5)", ["sh({})"]),
+    ("c_cfn", "const", "", "sq(4)", ["{}"]),
+    ("c_str", "const", "", "\"abc\"", ["{}", "{}.len()"]),
+    ("r_call", "ro", "", "three() + 1", ["{}"]),
+    ("r_heap", "ro", "[]int", "[4, 5]", ["{}[0]", "{}.len()"]),
+    ("r_heap_untyped", "ro", "", "[1, 2]", ["{}[1]"]),
+    ("r_bag", "ro", "Bag", "{ xs: [2, 8] }", ["{}.xs[1]", "{}.xs.len()"]),
+    ("r_mkpt", "ro", "Pt", "mkpt(3)", ["{}.y", "px({})"]),
+    ("r_pts", "ro", "[]Pt", "[{ x: 1, y: 2 }, { x: 5, y: 6 }]", ["{}[1].x", "{}.len()"]),
+    ("r_str", "ro", "", "\"n${three()}\"", ["{}", "{}.len()"]),
+]
+for name, kw, ty, rhs, reads in CELLS:
+    for side in ("mod", "assoc"):
+        v = "V" if side == "mod" else "Tag.V"
+        decl = f"{kw} {v}{' ' + ty if ty else ''} = {rhs}"
+        uses = "|".join("${" + r.format(v) + "}" for r in reads)
+        d = os.path.join(D, "cells", name, side)
+        os.makedirs(d, exist_ok=True)
+        open(os.path.join(d, "probe.nv"), "w", encoding="utf-8").write(
+            HEAD + decl + "\n\nfn main() {\n    print(\"" + uses + "\")\n}\n")
+print(len(CELLS), "cells")
