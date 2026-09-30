@@ -39,7 +39,7 @@ import ../builtins.{TypeKind, HANDLER_CTOR}
 import ../names.{raw_decl}
 import ../sem.{branch_children, leaf_text, param_name_at, param_mode_at, ty_source_name}
 import ../sem.{EffectDef, EffectTable, effect_op_ret_type_of}
-import ../types.{TyId, no_ty, is_ty, same_ty}
+import ../types.{TyId, no_ty, is_ty}
 
 /// ONE handler literal: resolve the effect name, judge every op against
 /// the effect's schema, record the literal's own type (`Effect[Fs]` -- the
@@ -296,10 +296,10 @@ fn Checker mut @type_handler_op(op Node, eff_name str, schema EffectDef) -> () {
         @scope.release(pmark)
         return
     }
-    ro saved_ret = same_ty(@ret_expect)
+    ro saved_ret = @ret_expect
     ro saved_tail = @tail_value_body
     ro saved_unit = @ret_unit
-    @ret_expect = same_ty(sig.ret_id)
+    @ret_expect = sig.ret_id
     @ret_unit = @returns_unit(sig.ret_id)
     // THE BODY against the schema's return, through the fn body's own
     // doors: `@ret_expect` is set so `return` operands and the tail value
