@@ -4,7 +4,7 @@ module pattern_rest.neg_1
 // after it would count from the end, which the tuple pattern does not have.
 // novac bound `z` to the SECOND element here (20, not 30) until 2026-09-30.
 
-// NOVAC_EXPECT `..` in a tuple pattern stands only last (D486)
+// NOVAC_EXPECT pattern stands only last (D486)
 
 fn main() {
     ro t = (10, 20, 30)

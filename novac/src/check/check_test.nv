@@ -532,7 +532,7 @@ test "a field read on a POISONED name says nothing more -- one cause, one diagno
     assert(diagnose(src) == 1, diagnose_first_msg(src))
 }
 
-test "`..` stands last in a tuple pattern and alone in a payload (D486, registry 1382)" {
+test "`..` stands last in a `(a, b, ..)` pattern and alone in a payload (D486, registry 1382)" {
     // Fixtures: novac/fixtures/pattern_rest. Both forms used to bind the name
     // after `..` counting from the FRONT -- the wrong element, no diagnostic.
     ro mid = "module m\n\nfn f() -> int {\n    ro t = (10, 20, 30)\n    ro (a, .., z) = t\n    z\n}\n"
@@ -547,7 +547,7 @@ test "`..` stands last in a tuple pattern and alone in a payload (D486, registry
     assert(diagnose(alone) == 0, diagnose_first_msg(alone))
 }
 
-test "a tuple return with an applied component is read, and an unreadable one is named at the declaration (registry 1383)" {
+test "a `-> (A, B)` return with an applied component is read, and an unreadable one is named at the declaration (registry 1383)" {
     // Fixtures: novac/fixtures/tuple_ret -- pos_1 carries the APPLIED component
     // (`Option[int]` needs std, which this harness does not hand); before the fix
     // the call of such a fn iced in type_of. CONTROL here: a plain tuple return.

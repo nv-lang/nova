@@ -490,7 +490,7 @@ fn Checker mut @bind_tuple_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode
     // `..` IN A TUPLE STANDS LAST (D486 §2, registry 1382): positions bind from
     // the front, so a binder after the rest named the wrong element.
     if pattern_rest(pat) && !rest_is_trailing(pat) {
-        @reject_first_leaf_of(ak, TUPLE_REST_POSITION_MSG)
+        @reject_first_leaf_of(ak, REST_LAST_MSG)
         return false
     } else {
         // No rest, or a trailing one: the arity rule below decides.
