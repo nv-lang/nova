@@ -1,0 +1,41 @@
+// EXPECT_STDOUT 3 2|2 a b|0|2 1 2|2 3|4 2
+// Реестр 221.1 №1361 / backlog [M-assoc-const-arraylit-codegen-gap]: ассоциированный
+// `const Type.NAME []T = [...]` не собирался НИ ПРИ КАКОМ элементе — чекер принимал,
+// `nova build` падал `codegen error: assoc const \`Box.NUMS\` codegen failed:
+// non-constant expression in const declaration: ArrayLit(...)`, потому что
+// `emit_const_expr`/`emit_const_expr_typed` (emit_c.rs) не имели ветки `ExprKind::
+// ArrayLit`. МОДУЛЬНЫЙ (не ассоциированный) `const NAME []T = [...]` уже собирался —
+// рабочий путь эмиссии массивных констант (`emit_lazy_const`'s `Nova_Vec____`/
+// `_NovaFixArr_` branch, реестр №998/№1003/№1008) уже существовал, просто не был
+// переиспользован для assoc-const контекста. Фикс: `emit_assoc_const_entry`
+// (compiler-codegen/src/codegen/assoc_ro.rs) пробует true-constexpr `.rodata` первым
+// (D200), и на его отказе падает в тот же `emit_lazy_const`, что уже используют
+// `ro Type.NAME` и модульный `const` — без новой машинерии эмиссии.
+//
+// Пять клеток ШИРИНЫ: массив скаляров, массив записей (ближайшая к builtins.nv's
+// `universe` форма), пустой массив, вложенный массив (`[][]int`), и обычный
+// (не ассоциированный) массив-const — контроль, что модульный путь не тронут.
+module standalone.p1361_assoc_const_arraylit
+
+type Box { tag int }
+const Box.NUMS []int = [1, 2, 3]
+const Box.EMPTY []int = []
+
+type Row { name str, n int }
+const Row.TABLE []Row = [Row { name: "a", n: 1 }, Row { name: "b", n: 2 }]
+
+type Grid { id int }
+const Grid.MATRIX [][]int = [[1, 2], [3, 4]]
+
+// Контроль: обычный модульный const с массивным инициализатором — рабочий путь,
+// который переиспользован фиксом; должен остаться зелёным без изменений.
+const CONTROL []int = [4, 2]
+
+fn main() Io -> () {
+    print("${Box.NUMS.len()} ${Box.NUMS[1]}|")
+    print("${Row.TABLE.len()} ${Row.TABLE[0].name} ${Row.TABLE[1].name}|")
+    print("${Box.EMPTY.len()}|")
+    print("${Grid.MATRIX.len()} ${Grid.MATRIX[0][0]} ${Grid.MATRIX[0][1]}|")
+    print("${Grid.MATRIX[1].len()} ${Grid.MATRIX[1][0]}|")
+    print("${CONTROL[0]} ${CONTROL[1]}")
+}

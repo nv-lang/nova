@@ -809,7 +809,7 @@ pub struct CEmitter {
     /// These names rewrite to `_c->name`, not `(*_c->name)`.
     current_spawn_capture_by_value: Option<HashSet<String>>,
     /// Maps variable name → C type string (best-effort)
-    var_types: HashMap<String, String>,
+    pub(crate) var_types: HashMap<String, String>, // pub(crate) [fix #1361]: used by assoc_ro.rs
     /// [M-property-testing-rot] (Plan 172.13 батч 3): declared Nova-level
     /// `TypeRef`s of the CURRENTLY-EMITTED monomorphized fn's params
     /// (set/restored by `emit_monomorphized_fn`). A NESTED generic call inside
@@ -3005,7 +3005,7 @@ impl CEmitter {
     /// inclusion (e.g. `nova_typeid_user_name`, per-E throw fast-path) — those
     /// stay hardcoded `"static inline "` always (see 209-recon-notes.md §2).
     #[inline]
-    fn top_level_storage(&self) -> &'static str {
+    pub(crate) fn top_level_storage(&self) -> &'static str { // pub(crate) [fix #1361]: used by assoc_ro.rs
         if self.multi_tu_enabled { "" } else { "static " }
     }
 
@@ -10785,7 +10785,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     ///
     /// `target_ty_c` (если задан) — c-тип целевого const'а. Для integer-литералов
     /// используется чтобы выбрать правильный suffix/cast (unsigned vs signed).
-    fn emit_const_expr_typed(&mut self, expr: &Expr, target_ty_c: Option<&str>) -> Result<String, String> {
+    pub(crate) fn emit_const_expr_typed(&mut self, expr: &Expr, target_ty_c: Option<&str>) -> Result<String, String> { // pub(crate) [fix #1361]: used by assoc_ro.rs
         match &expr.kind {
             ExprKind::IntLit(n) => {
                 let ty_c = target_ty_c.unwrap_or_else(|| panic!("[P67] IntLit without target type context — checker must annotate"));
@@ -18595,23 +18595,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         for ac in &t.assoc_consts {
             // Plan 157: `ro Type.NAME` — NOT constexpr-required, handled by
             // `emit_assoc_ro_lazy_globals` (assoc_ro.rs) instead of the
-            // strict-constexpr path below.
+            // strict-constexpr path below. [fix #1361] non-lazy `const
+            // Type.NAME` now lives in `emit_assoc_const_entry` (assoc_ro.rs).
             if ac.is_lazy_ro {
                 continue;
             }
-            let ty_c = if let Some(ty) = &ac.ty {
-                self.type_ref_to_c(ty)?
-            } else {
-                self.infer_expr_c_type(&ac.value)
-            };
-            let val = self.emit_const_expr_typed(&ac.value, Some(&ty_c))
-                .map_err(|e| format!(
-                    "assoc const `{}.{}` codegen failed: {}",
-                    t.name, ac.name, e
-                ))?;
-            let symbol = format!("{}_{}", t.name, ac.name);
-            self.line(&format!("{}const {} {} = {};", self.top_level_storage(), ty_c, symbol, val));
-            self.var_types.insert(symbol, ty_c);
+            self.emit_assoc_const_entry(&t.name, ac)?;
         }
         // Plan 124.8 [M-124.8-zero-on-move] (2026-06-03): emit per-type
         // `Nova_T_zero_storage` helper для types помеченных #zero_on_move.
@@ -56731,7 +56720,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
-    fn line(&mut self, s: &str) {
+    pub(crate) fn line(&mut self, s: &str) { // pub(crate) [fix #1361]: used by assoc_ro.rs
         let indent = "    ".repeat(self.indent);
         let _ = writeln!(self.out, "{}{}", indent, s);
     }
