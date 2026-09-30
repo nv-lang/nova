@@ -15,7 +15,7 @@ fn P1395Pt @addp(other Self) -> Self => P1395Pt(@x + other.x, @y + other.y)
 fn P1395Pt @same(other Self) -> bool => @x == other.x && @y == other.y
 
 type P1395Cnt(n int)
-fn P1395Cnt mut @bump() -> @ { @n = @n + 1 }
+fn P1395Cnt mut @bump() -> @ { @n += 1 }
 
 test "a named tuple's `Self` is a value: direct calls and `-> Self` (#1395)" {
     ro a = P1395Pt(1, 2)

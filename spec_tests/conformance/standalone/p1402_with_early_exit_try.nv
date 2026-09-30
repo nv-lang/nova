@@ -29,7 +29,7 @@ fn p1402_try_option(o Option[int]) -> Option[int] {
 }
 
 fn p1402_try_defer(r Result[int, str], mut counter int) -> Result[int, str] {
-    defer { counter = counter + 1 }
+    defer { counter += 1 }
     ro v = r?
     Ok(v)
 }

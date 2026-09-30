@@ -37,6 +37,7 @@ fn p1403_iter_small_sort_by() -> str {
     ws.push(P1403Small { v: 2 })
     mut out = ws.iter().collect()
     out.sort_by(fn(a P1403Small, b P1403Small) -> int => a.v - b.v)
+    // nova:allow W_MANUAL_COLLECT -- the push loop IS the reference the fixture compares `.collect()` against (#1403); `.collect()` here would compare the form with itself
     mut pushed []P1403Small = []
     for w in ws {
         pushed.push(w)
@@ -52,6 +53,7 @@ fn p1403_iter_small_sort() -> str {
     ws.push(P1403Small { v: 2 })
     mut out = ws.iter().collect()
     out.sort()
+    // nova:allow W_MANUAL_COLLECT -- the push loop IS the reference the fixture compares `.collect()` against (#1403); `.collect()` here would compare the form with itself
     mut pushed []P1403Small = []
     for w in ws {
         pushed.push(w)
@@ -67,6 +69,7 @@ fn p1403_iter_small_reverse() -> str {
     ws.push(P1403Small { v: 2 })
     mut out = ws.iter().collect()
     out.reverse()
+    // nova:allow W_MANUAL_COLLECT -- the push loop IS the reference the fixture compares `.collect()` against (#1403); `.collect()` here would compare the form with itself
     mut pushed []P1403Small = []
     for w in ws {
         pushed.push(w)
@@ -82,6 +85,7 @@ fn p1403_iter_small_swap() -> str {
     ws.push(P1403Small { v: 2 })
     mut out = ws.iter().collect()
     out.swap(0, 1)
+    // nova:allow W_MANUAL_COLLECT -- the push loop IS the reference the fixture compares `.collect()` against (#1403); `.collect()` here would compare the form with itself
     mut pushed []P1403Small = []
     for w in ws {
         pushed.push(w)
@@ -97,6 +101,7 @@ fn p1403_iter_big_sort_by() -> str {
     ws.push(P1403Big { name: "b", kind: "k", percent: 2, used: 0, note: "n" })
     mut out = ws.iter().collect()
     out.sort_by(fn(a P1403Big, b P1403Big) -> int => a.percent - b.percent)
+    // nova:allow W_MANUAL_COLLECT -- the push loop IS the reference the fixture compares `.collect()` against (#1403); `.collect()` here would compare the form with itself
     mut pushed []P1403Big = []
     for w in ws {
         pushed.push(w)
@@ -112,6 +117,7 @@ fn p1403_iter_big_sort() -> str {
     ws.push(P1403Big { name: "b", kind: "k", percent: 2, used: 0, note: "n" })
     mut out = ws.iter().collect()
     out.sort()
+    // nova:allow W_MANUAL_COLLECT -- the push loop IS the reference the fixture compares `.collect()` against (#1403); `.collect()` here would compare the form with itself
     mut pushed []P1403Big = []
     for w in ws {
         pushed.push(w)
@@ -127,6 +133,7 @@ fn p1403_iter_big_reverse() -> str {
     ws.push(P1403Big { name: "b", kind: "k", percent: 2, used: 0, note: "n" })
     mut out = ws.iter().collect()
     out.reverse()
+    // nova:allow W_MANUAL_COLLECT -- the push loop IS the reference the fixture compares `.collect()` against (#1403); `.collect()` here would compare the form with itself
     mut pushed []P1403Big = []
     for w in ws {
         pushed.push(w)
@@ -142,6 +149,7 @@ fn p1403_iter_big_swap() -> str {
     ws.push(P1403Big { name: "b", kind: "k", percent: 2, used: 0, note: "n" })
     mut out = ws.iter().collect()
     out.swap(0, 1)
+    // nova:allow W_MANUAL_COLLECT -- the push loop IS the reference the fixture compares `.collect()` against (#1403); `.collect()` here would compare the form with itself
     mut pushed []P1403Big = []
     for w in ws {
         pushed.push(w)

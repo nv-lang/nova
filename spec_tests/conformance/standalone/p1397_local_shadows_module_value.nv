@@ -28,6 +28,7 @@ fn by_mut() -> int {
     k
 }
 fn by_match(o Option[int]) -> int {
+    // nova:allow W_MANUAL_COALESCE -- the `match` binder is one of the binder forms this fixture covers (#1397); `??` has no binder and would drop the cell
     match o {
         Some(k) => k
         None => 0

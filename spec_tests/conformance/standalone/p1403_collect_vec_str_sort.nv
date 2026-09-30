@@ -19,6 +19,7 @@ fn main() Io -> () {
     ws.push("b")
     mut out = ws.collect()
     out.sort()
+    // nova:allow W_MANUAL_COLLECT -- the push loop IS the reference the fixture compares `.collect()` against (#1403); `.collect()` here would compare the form with itself
     mut pushed []str = []
     for w in ws {
         pushed.push(w)

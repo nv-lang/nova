@@ -23,7 +23,7 @@ fn P1395Rec @same_x(other Self) -> bool => @x == other.x
 fn P1395Rec @plus(other Self) -> Self => { x: other.x + @x }
 
 type P1395Acc value { n int }
-fn P1395Acc mut @add(k int) -> @ { @n = @n + k }
+fn P1395Acc mut @add(k int) -> @ { @n += k }
 fn P1395Acc @twice() -> Self {
     ro v Self = { n: @n * 2 }
     ro xs Vec[Self] = [v, v]
