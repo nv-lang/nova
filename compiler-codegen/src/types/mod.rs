@@ -8294,6 +8294,14 @@ impl<'a> TypeCheckCtx<'a> {
             if has_equal {
                 return None;
             }
+            // Phase 3 (integrator decision 1): protocols are structural (D53);
+            // 08-runtime.md:3598-3600 puts an explicit `fn T @method` on a par
+            // with `#impl(P)`. A type's own `@equal(other Self) -> bool`
+            // therefore satisfies `Equal` exactly as the tag would, with no
+            // `#impl(Equal)` needed — see `type_has_own_equal_method` below.
+            if self.type_has_own_equal_method(base) {
+                return None;
+            }
             Some(typeref_render(&tr))
         };
         let Some(ty_name) = offending(left).or_else(|| offending(right)) else { return };
@@ -8308,6 +8316,42 @@ impl<'a> TypeCheckCtx<'a> {
             ),
             bin_expr.span,
         ));
+    }
+
+    /// Phase 3 (registry 221.1 #1352, integrator decision 1): does `tname`
+    /// have its OWN instance method `@equal(other Self) -> bool`? Protocols
+    /// are structural (D53) and 08-runtime.md:3598-3600 treats an explicit
+    /// `fn T @method` as equivalent to `#impl(P)` — so this method alone
+    /// satisfies `Equal` for `check_eq_requires_equal_impl` above, without a
+    /// `#impl(Equal)` tag. Deliberately narrow: name `equal`, exactly one
+    /// param whose type is `tname` itself or `Self`, return type bare `bool`
+    /// — a same-shaped method is what `==` would dispatch to (D363), so
+    /// accepting anything looser would accept a method `==` cannot actually
+    /// use.
+    fn type_has_own_equal_method(&self, tname: &str) -> bool {
+        let Some(fd) = self.find_method_decl(tname, "equal") else { return false };
+        // Instance method only (`fn T @equal(...)`) — a same-named STATIC
+        // method (no receiver) cannot be what `a == b` dispatches to.
+        if fd.receiver.is_none() {
+            return false;
+        }
+        if fd.params.len() != 1 {
+            return false;
+        }
+        let param_matches = match &fd.params[0].ty {
+            TypeRef::Named { path, generics, .. } if generics.is_empty() => {
+                matches!(path.last().map(String::as_str), Some(n) if n == tname || n == "Self")
+            }
+            _ => false,
+        };
+        if !param_matches {
+            return false;
+        }
+        matches!(
+            &fd.return_type,
+            Some(TypeRef::Named { path, generics, .. })
+                if generics.is_empty() && path.len() == 1 && path[0] == "bool"
+        )
     }
 
     /// Q-infinite-value-type: compact display of a `TypeRef` for the diagnostic
