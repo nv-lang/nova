@@ -1,0 +1,28 @@
+// EXPECT_STDOUT [a b c ]=[a b c ]
+// Registry 221.1 #1403: `[]str.collect()` typed `Vec[int]` too (same free `T`); a
+// sort then ran with the 8-byte int stride on 16-byte `str` elements.
+
+module standalone.p1403_collect_vec_str_sort
+
+fn p1403_show_str(v []str) -> str {
+    mut s = ""
+    for w in v {
+        s = "${s}${w} "
+    }
+    s
+}
+
+fn main() Io -> () {
+    mut ws []str = []
+    ws.push("c")
+    ws.push("a")
+    ws.push("b")
+    mut out = ws.collect()
+    out.sort()
+    mut pushed []str = []
+    for w in ws {
+        pushed.push(w)
+    }
+    pushed.sort()
+    print("[${p1403_show_str(out)}]=[${p1403_show_str(pushed)}]")
+}
