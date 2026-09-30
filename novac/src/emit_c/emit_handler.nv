@@ -118,7 +118,7 @@ fn Emitter @op_signature(n int, op Node, sig_at int) -> str {
         j += 1
     }
     s.append(")")
-    s.into_str()
+    s
 }
 
 /// For each literal: its context type (only when it captures) and the

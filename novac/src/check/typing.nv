@@ -182,7 +182,7 @@ fn arrow_path(names []str) -> str {
         out.append(n)
         first = false
     }
-    out.into_str()
+    out
 }
 
 /// A read of module value `name` closed a CYCLE: refuse it as the language
