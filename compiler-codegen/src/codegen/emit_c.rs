@@ -14748,6 +14748,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // any *nested* spawn must not inherit it. Temporarily disable while
         // emitting the body.
         let saved_parfor = self.current_parfor_send.take();
+        // №1437: `return` in the body leaves THIS fiber through the epilogue below (fail-pop, slot free,
+        // pending_remote--), never by a bare C `return` -- and never to the enclosing fn's ensures label.
+        let spawn_ret_label = format!("{}_ret", spawn_id);
+        let saved_spawn_post = self.contracts_post_label.replace(spawn_ret_label.clone());
+        let saved_spawn_ret_ty = self.current_fn_return_ty.replace("nova_unit".to_string());
+        self.line("nova_unit _nova_result = NOVA_UNIT; (void)_nova_result;");
 
         // Emit body, discard its value (spawn returns unit) — UNLESS in parfor
         // mode, where the trailing expression's value is SENT into the collection
@@ -14833,6 +14839,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Restore parfor-send mode so the surrounding emit_parallel_for can clear
         // it after the for-loop body has run.
         self.current_parfor_send = saved_parfor;
+        self.line(&format!("{}:;", spawn_ret_label));
+        self.contracts_post_label = saved_spawn_post;
+        self.current_fn_return_ty = saved_spawn_ret_ty;
 
         self.line("nova_fail_pop();");
         self.indent -= 1;

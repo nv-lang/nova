@@ -1,0 +1,63 @@
+// EXPECT_STDOUT a 42
+// EXPECT_STDOUT b defer
+// EXPECT_STDOUT c 2
+// EXPECT_STDOUT d inner
+// EXPECT_STDOUT d outer
+// EXPECT_STDOUT after
+// Registry 221.1 #1437: `return` inside a `spawn` body hung the program. The
+// body is emitted into the fiber's own C function, and `return` became a bare C
+// `return` that skipped the fiber epilogue (fail-frame pop, slot free,
+// pending_remote decrement) -- the enclosing `supervised` waited forever (found
+// by Carina's window at E.9 step 4; Carina prints and exits 0 on cell `a`).
+// Cells, one `supervised` each so the output order is fixed: a plain early
+// return (a), a return that must still run the body's `defer` (b), a return
+// from inside a loop (c), and a return from a nested spawn and from its parent
+// (d).
+
+module standalone.p1437_return_in_spawn
+
+fn main() Io -> () {
+    ro base = 40
+    supervised {
+        spawn {
+            if base > 10 {
+                println("a ${base + 2}")
+                return
+            }
+            println("unreached a")
+        }
+    }
+    supervised {
+        spawn {
+            defer { println("b defer") }
+            if base > 0 {
+                return
+            }
+            println("unreached b")
+        }
+    }
+    supervised {
+        spawn {
+            for i in 0..5 {
+                if i == 2 {
+                    println("c ${i}")
+                    return
+                }
+            }
+            println("unreached c")
+        }
+    }
+    supervised {
+        spawn {
+            supervised {
+                spawn {
+                    println("d inner")
+                    return
+                }
+            }
+            println("d outer")
+            return
+        }
+    }
+    println("after")
+}
