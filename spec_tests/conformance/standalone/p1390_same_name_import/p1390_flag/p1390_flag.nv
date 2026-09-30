@@ -1,0 +1,5 @@
+// #1390 carrier -- see `../p1390_same_name_import.nv`. Same name, a `str`
+// parameter, and a DIFFERENT return type that C converts silently.
+module p1390_same_name_import.p1390_flag
+
+export fn pick(body str) -> bool => body != ""
