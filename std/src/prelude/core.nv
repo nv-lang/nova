@@ -154,6 +154,7 @@ fn Option[T] @map[U](map_fn fn(T) -> U) -> Option[U]
 /// Consuming form (plan 246, D84 mode axis on the receiver): taken by a
 /// temporary or a `consume` binding; the only form for a must-consume `T`.
 #stable(since = "0.1")
+// nova:allow W_CONSUME_NAKED_NAME -- #1355: prelude consume-conversion naming (pair of forms) is undecided; remove with the decision
 fn Option[T consume] consume @map[U consume](map_fn fn(T) -> U) -> Option[U]
   => match consume @ { Some(consume v) => Some(map_fn(v)), None => None }
 
@@ -167,6 +168,7 @@ fn Option[T] @ok_or[E](err E) -> Result[T, E]
 /// temporary or a `consume` binding; the only form for a must-consume `T`.
 /// `err` is an ordinary value: it is dropped when the Option holds a value.
 #stable(since = "0.1")
+// nova:allow W_CONSUME_NAKED_NAME -- #1355: prelude consume-conversion naming (pair of forms) is undecided; remove with the decision
 fn Option[T consume] consume @ok_or[E](err E) -> Result[T, E]
   => match consume @ { Some(consume v) => Ok(v), None => Err(err) }
 
@@ -194,6 +196,7 @@ fn Option[T] @flat_map[U](flat_map_fn fn(T) -> Option[U]) -> Option[U]
 /// Consuming form (plan 246, D84 mode axis on the receiver): taken by a
 /// temporary or a `consume` binding; the only form for a must-consume `T`.
 #stable(since = "0.1")
+// nova:allow W_CONSUME_NAKED_NAME -- #1355: prelude consume-conversion naming (pair of forms) is undecided; remove with the decision
 fn Option[T consume] consume @flat_map[U consume](flat_map_fn fn(T) -> Option[U]) -> Option[U]
   => match consume @ { Some(consume v) => flat_map_fn(v), None => None }
 
@@ -232,6 +235,7 @@ fn Result[T, E] @map[U](map_fn fn(T) -> U) -> Result[U, E]
 /// Consuming form (plan 246, D84 mode axis on the receiver): taken by a
 /// temporary or a `consume` binding; the only form for a must-consume `T`.
 #stable(since = "0.1")
+// nova:allow W_CONSUME_NAKED_NAME -- #1355: prelude consume-conversion naming (pair of forms) is undecided; remove with the decision
 fn Result[T consume, E consume] consume @map[U consume](map_fn fn(T) -> U) -> Result[U, E]
   => match consume @ { Ok(consume v) => Ok(map_fn(v)), Err(consume e) => Err(e) }
 
@@ -244,6 +248,7 @@ fn Result[T, E] @map_err[F](err_fn fn(E) -> F) -> Result[T, F]
 /// Consuming form (plan 246, D84 mode axis on the receiver): taken by a
 /// temporary or a `consume` binding; the only form for a must-consume `T`.
 #stable(since = "0.1")
+// nova:allow W_CONSUME_NAKED_NAME -- #1355: prelude consume-conversion naming (pair of forms) is undecided; remove with the decision
 fn Result[T consume, E consume] consume @map_err[F consume](err_fn fn(E) -> F) -> Result[T, F]
   => match consume @ { Ok(consume v) => Ok(v), Err(consume e) => Err(err_fn(e)) }
 
@@ -259,6 +264,7 @@ fn Result[T, E] @flat_map[U](flat_map_fn fn(T) -> Result[U, E]) -> Result[U, E]
 /// Consuming form (plan 246, D84 mode axis on the receiver): taken by a
 /// temporary or a `consume` binding; the only form for a must-consume `T`.
 #stable(since = "0.1")
+// nova:allow W_CONSUME_NAKED_NAME -- #1355: prelude consume-conversion naming (pair of forms) is undecided; remove with the decision
 fn Result[T consume, E consume] consume @flat_map[U consume](flat_map_fn fn(T) -> Result[U, E]) -> Result[U, E]
   => match consume @ { Ok(consume v) => flat_map_fn(v), Err(consume e) => Err(e) }
 
@@ -276,6 +282,7 @@ fn Result[T, E] @flat_map_err[F](recover_fn fn(E) -> Result[T, F]) -> Result[T, 
 /// Consuming form (plan 246, D84 mode axis on the receiver): taken by a
 /// temporary or a `consume` binding; the only form for a must-consume `T`.
 #stable(since = "0.1")
+// nova:allow W_CONSUME_NAKED_NAME -- #1355: prelude consume-conversion naming (pair of forms) is undecided; remove with the decision
 fn Result[T consume, E consume] consume @flat_map_err[F consume](recover_fn fn(E) -> Result[T, F]) -> Result[T, F]
   => match consume @ { Ok(consume v) => Ok(v), Err(consume e) => recover_fn(e) }
 
@@ -309,6 +316,7 @@ fn Result[T, E] @ok() -> Option[T] => match @ { Ok(v) => Some(v), Err(_) => None
 /// temporary or a `consume` binding; the only form for a must-consume `T`.
 /// The error side is dropped, so `E` stays an ordinary type.
 #stable(since = "0.1")
+// nova:allow W_CONSUME_NAKED_NAME -- #1355: prelude consume-conversion naming (pair of forms) is undecided; remove with the decision
 fn Result[T consume, E] consume @ok() -> Option[T]
   => match consume @ { Ok(consume v) => Some(v), Err(_) => None }
 
@@ -320,6 +328,7 @@ fn Result[T, E] @err() -> Option[E] => match @ { Ok(_) => None, Err(e) => Some(e
 /// temporary or a `consume` binding; the only form for a must-consume `T`.
 /// The value side is dropped, so `T` stays an ordinary type.
 #stable(since = "0.1")
+// nova:allow W_CONSUME_NAKED_NAME -- #1355: prelude consume-conversion naming (pair of forms) is undecided; remove with the decision
 fn Result[T, E consume] consume @err() -> Option[E]
   => match consume @ { Ok(_) => None, Err(consume e) => Some(e) }
 
