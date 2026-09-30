@@ -1,0 +1,32 @@
+module with_loop.pos_1
+
+// `continue` and `break` leaving a `with` inside a loop (E.9 step 2): the
+// scope opened inside the loop is left -- its handler restored, its frame
+// popped -- on the way out, and a `with` around the loop stays open. Behaviour
+// byte-for-byte with the oracle (novac-e1-smoke).
+
+import std.os.{real_os}
+
+fn main() {
+    mut i = 0
+    with Os = real_os() {
+        while i < 5 {
+            i += 1
+            with Os = real_os() {
+                if i == 2 {
+                    continue
+                } else {
+                    // Printed below.
+                }
+                if i == 4 {
+                    break
+                } else {
+                    // Printed below.
+                }
+                println(i + Os.arg_count())
+            }
+        }
+        println(Os.arg_count())
+    }
+    println(i)
+}

@@ -1,0 +1,58 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Koka's evidence passing -- `with E = h { body }` evaluates the handler,
+// installs it for the dynamic extent of the body and removes it on every exit;
+// the slot swap and the interrupt frame are the runtime's ABI (interop), not a
+// design taken from anywhere.
+// Role: lowering of the `with` statement, the value form (a handler VALUE such
+//   as `real_os()`), E.9 step 2 of plan 274.11: each binding's handler is
+//   placed in a local, swapped into its effect's thread slot, and the body runs
+//   under the scope `ir_with.nv` keeps -- which restores the slots on EVERY
+//   exit. A handler LITERAL is step 3 and never reaches here as a literal: its
+//   value is placed through the same `lower_place` door as any expression.
+// Used by: lowering.nv -- `@lower_stmt`, the WithStmt arm.
+// Guarded by: nova test novac/src/pipeline/with_test.nv, and
+//   check-novac-differential.sh over novac/fixtures/with_value, with_return.
+
+module novac.lower
+import ../tree.{Node, NodeKind}
+import ../diag.{ice}
+import ../sem.{branch_children, leaf_text}
+
+/// A `with` statement (E.9 step 2). The parser's geometry, read the way the
+/// checker reads it (`check/with_typing.nv`): `with`, then per binding the
+/// effect's name, `=`, the handler expression and an optional `,`; the body
+/// Block last. The checker accepted every piece before lowering is asked.
+fn Lowerer mut @lower_with(st Node) -> () {
+    ro kids = branch_children(st)
+    mut swaps = []HandlerSwap.new()
+    mut bi = 1
+    while bi + 2 < kids.len() {
+        ro nm = kids[bi]
+        if nm.kind_of() != NodeKind.LeafNode {
+            ice("lower: a with binding without its effect name reached the lowering")
+        }
+        ro hexpr = kids[bi + 2]
+        // The handler, evaluated ONCE into a local of its own type -- the
+        // stack local is the GC root the thread slot is not (the runtime does
+        // not scan thread-local storage).
+        ro hty = @out.type_of(hexpr.id_of())
+        ro h = @ir.temp(hty)
+        @lower_place(hexpr, h)
+        swaps.push(HandlerSwap { eff: leaf_text(nm), prev: @ir.temp(hty), handler: h })
+        bi += 3
+        // The checker's reading (`check/with_typing.nv`): a leaf here is the
+        // `,` before the next binding; the body is a branch.
+        if bi < kids.len() && kids[bi].kind_of() == NodeKind.LeafNode {
+            bi += 1
+        } else {
+            // No `,`: the next child is the body, and the loop ends on its own.
+        }
+    }
+    ro body = kids[kids.len() - 1]
+    if body.kind_of() != NodeKind.Block {
+        ice("lower: a with statement without its body block reached the lowering")
+    }
+    ro c = @ir.begin_with(swaps)
+    @lower_block_stmts_fn(body, false)
+    @ir.end_with(c)
+}

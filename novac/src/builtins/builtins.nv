@@ -83,6 +83,11 @@ export const CALLER_LOC_FN = "caller_loc"
 /// line auditable instead of scattered through the mangler.
 export const PAREN_RECORD_C_PREFIX = "NovaTuple_"
 
+/// The HANDLER constructor's name: `Effect[Fs]` is the type of a handler value
+/// for effect `Fs` (D459). One spelling, read by the seed in sem and by the
+/// mangler that spells the handler's C type (E.9 step 2, 274.11).
+export const HANDLER_CTOR = "Effect"
+
 export const OPTION_SUM = "Option"
 /// The prelude's range record (`std/src/collections/range/core.nv`): a slice
 /// `x[lo..hi]` is the call `x.index(Range { start: lo, end: hi })` (D470 section 5),

@@ -449,12 +449,18 @@ const FOR_HEAD_MSG = "outside the subset: the head of a `for` is a range `lo..hi
 /// missing guarantee nobody does.
 const CONSUME_TYPE_MSG = "outside the subset: `type X consume` declares a must-consume type, and novac checks no consumption obligation anywhere -- accepting the declaration would promise a guarantee it does not give; not compiled yet (274.7 B13)"
 
-/// See @report_if_effect_type: an honest refusal to replace the wrong one
-/// ("undeclared type name `effect`") that stood here until 2026-09-21. No
-/// generic parameter on the declaration -- D456, in force -- is a SEPARATE
-/// question this message does not reach: the whole form is refused before
-/// generics are asked about at all.
-const EFFECT_TYPE_MSG = "outside the subset: `type X effect { ... }` declares an effect, and novac types no effect-system form yet -- no `with`, no handler, no operation call -- so accepting the declaration would promise a body the compiler cannot run; not compiled yet (E2-b, effects)"
+/// ONE CAUSE, TWO POSITIONS (E.9 step 2, 2026-09-30): an effect's runtime
+/// pieces -- its operation table, its thread slot, its dispatchers -- are the
+/// SHELL's, and the shell carries them only for the std effects its probe
+/// uses. An effect a file DECLARES (`type X effect { ... }`, refused at the
+/// declaration by @report_if_effect_type) and an operation of an effect the
+/// shell does not carry (refused at the call, check/methods.nv) are the same
+/// gap, so they say the same sentence. Until this wave the declaration's text
+/// claimed novac typed no `with`, handler or operation call -- false since E4
+/// and E.9. No generic parameter on the declaration -- D456 -- is a separate
+/// question this message does not reach.
+fn effect_without_runtime_msg(name str) -> str =>
+    "outside the subset: effect `${name}` has no runtime pieces in the shell novac links into -- its operation table, thread slot and dispatchers are the shell's, carried for the std effects its probe uses; an effect a file declares is not emitted yet (E5, effect declarations)"
 
 /// Type parameters in the wrong PLACE -- a different mistake from type
 /// parameters not being compiled yet, and the message must not confuse them.

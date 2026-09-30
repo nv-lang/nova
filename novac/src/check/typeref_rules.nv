@@ -37,6 +37,7 @@ module novac.check
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind}
 import ../builtins.{SELF_TYPE, SUM_MARKER, ALIAS_MARKER, VALUE_MARKER, PROTOCOL_MARKER}
+import ../builtins.{HANDLER_CTOR}
 import ../sem.{FnRow, raw_row}
 import ../sem.{branch_children, leaf_kind, leaf_text, generic_names, tparam_slot, param_type_at, field_type_at}
 import ../sem.{param_name_at}
@@ -51,7 +52,7 @@ const UNDECLARED_TYPE_PHRASE = "undeclared type name"
 /// hold. For them "undeclared" would be a lie -- the word exists, novac has not
 /// compiled it -- so they keep the subset refusal of the position they stand in.
 fn is_language_type_word(name str) -> bool =>
-    name == "unit" || name == "never" || name == "any" || name == "Effect"
+    name == "unit" || name == "never" || name == "any" || name == HANDLER_CTOR
 
 /// The sentence, built around the name. `byte` gets its own: the language
 /// removed it (D367) and the canonical spelling is the whole fix.

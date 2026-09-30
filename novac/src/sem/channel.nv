@@ -78,6 +78,18 @@ export type CalleeTarget enum
     // there IS no row: the program never wrote the function, so nothing
     // collected one. The emitter prints the field sequence from the type.
     | CalleeSynthDisplay(TyId)
+    // An OPERATION of an effect (`Os.arg_count()`, E.9 step 2): no callable row
+    // -- the shell's dispatcher runs whichever handler is installed, or the
+    // effect's `#default_handler`. The emitter prints the dispatcher's name.
+    | CalleeEffectOp(EffectOpRef)
+
+/// WHICH operation of WHICH effect a call names (E.9 step 2). Names, not rows:
+/// the dispatcher is the shell's, spelled from the two names
+/// (`effect_op_dispatcher_c`), and nothing of novac's is called.
+export type EffectOpRef value {
+    eff str /// the effect, as the call's head names it
+    op str /// the operation
+}
 
 /// What a resolved `Call` targets, plus the type arguments it was written with
 /// -- so the emitter reads a DECISION instead of repeating the lookup by name.
@@ -117,19 +129,19 @@ fn same_target(a CalleeTarget, b CalleeTarget) -> bool {
         CalleeFn(x) => {
             match b {
                 CalleeFn(y) => x == y
-                CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) => false
+                CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => false
             }
         }
         CalleeVariant(x) => {
             match b {
                 CalleeVariant(y) => x == y
-                CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) => false
+                CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => false
             }
         }
         CalleeCtor(x) => {
             match b {
                 CalleeCtor(y) => x == y
-                CalleeFn(_) | CalleeVariant(_) | CalleeSynthDisplay(_) => false
+                CalleeFn(_) | CalleeVariant(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => false
             }
         }
         // THE FOURTH KIND THE COMMENT ABOVE FORESAW, arrived 2026-09-18. Two
@@ -139,7 +151,15 @@ fn same_target(a CalleeTarget, b CalleeTarget) -> bool {
         CalleeSynthDisplay(x) => {
             match b {
                 CalleeSynthDisplay(y) => x == y
-                CalleeFn(_) | CalleeVariant(_) | CalleeCtor(_) => false
+                CalleeFn(_) | CalleeVariant(_) | CalleeCtor(_) | CalleeEffectOp(_) => false
+            }
+        }
+        // Two operation calls are the same decision when they name the same
+        // operation of the same effect (E.9 step 2).
+        CalleeEffectOp(x) => {
+            match b {
+                CalleeEffectOp(y) => x.eff == y.eff && x.op == y.op
+                CalleeFn(_) | CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) => false
             }
         }
     }
@@ -154,6 +174,7 @@ fn target_present(t CalleeTarget) -> bool {
         CalleeVariant(v) => is_vrow(v)
         CalleeCtor(id) => is_ty(id)
         CalleeSynthDisplay(id) => is_ty(id)
+        CalleeEffectOp(o) => o.eff != "" && o.op != ""
     }
 }
 
@@ -543,6 +564,7 @@ export fn CalleeRef @callable_row() -> FnRow {
         CalleeVariant(_) => ice("sem: the callable row of a variant reference — a variant row is not a callable row")
         CalleeCtor(_) => ice("sem: the callable row of a construction — a type id is not a callable row")
         CalleeSynthDisplay(_) => ice("sem: the callable row of a SYNTHESIZED display — the program wrote no function, so no row exists; ask `synth_display_type` instead")
+        CalleeEffectOp(_) => ice("sem: the callable row of an effect operation -- the shell's dispatcher serves it; ask `effect_op_of` instead")
     }
 }
 
@@ -564,7 +586,16 @@ export fn CalleeRef @callable_row() -> FnRow {
 export fn CalleeRef @synth_display_type() -> Option[TyId] {
     match @target {
         CalleeSynthDisplay(t) => Some(t)
-        CalleeFn(_) | CalleeVariant(_) | CalleeCtor(_) => None
+        CalleeFn(_) | CalleeVariant(_) | CalleeCtor(_) | CalleeEffectOp(_) => None
+    }
+}
+
+/// The effect operation this reference names, or None -- the same exclusivity
+/// as `synth_display_type`: `@callable_row` ices exactly where this answers.
+export fn CalleeRef @effect_op_of() -> Option[EffectOpRef] {
+    match @target {
+        CalleeEffectOp(o) => Some(o)
+        CalleeFn(_) | CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) => None
     }
 }
 

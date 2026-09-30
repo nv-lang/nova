@@ -40,6 +40,8 @@ import ../sem.{branch_children, leaf_text, c_instance_method}
 import ../sem.{is_unit_ty}
 import ../types.{is_ty}
 import ../lower.{IfCtx, LoopHead, Cond, Fn, Stmt, BlockId, SwitchTerm, no_block, raw_block}
+import ../lower.{HandlerSwap}
+import ../sem.{c_type, effect_slot_c}
 import ../builtins.{VEC_LEN_METHOD}
 
 /// Whether this branch continues a `} else ` line its caller printed.
@@ -78,6 +80,8 @@ fn Emitter mut @print_if_head(cond Cond, chained bool) -> () {
             @body.append("!")
             @body.append(@option_some_test(d.ty, d.name))
         }
+        // The `with` body runs when its frame's setjmp returned 0 (E.9 step 2).
+        FrameEntered(f) => @body.append("setjmp(_novac_f${f}.jmp) == 0")
     }
     @body.append(") {\n")
 }
@@ -409,5 +413,37 @@ fn Emitter mut @print_stmt(s Stmt) -> () {
         Decl(l) => @emit_decl(l)
         Output(o) => @emit_output(o)
         OutputEnd => @emit_output_end()
+        SetHandler(s) => @emit_set_handler(s)
+        RestoreHandler(s) => @emit_restore_handler(s)
+        PushFrame(f) => @emit_push_frame(f)
+        PopFrame => @emit_pop_frame()
     }
+}
+
+/// `prev = slot; slot = handler` -- the displaced handler is DECLARED here, its
+/// only assignment, in the block that encloses the whole `with` so every exit
+/// below can restore it (E.9 step 2; the slot and vtable names are the shell's).
+fn Emitter mut @emit_set_handler(s HandlerSwap) -> () {
+    ro p = @lo.ir.decl_of(s.prev)
+    ro h = @lo.ir.decl_of(s.handler)
+    ro slot = effect_slot_c(s.eff)
+    @body.append("    ${c_type(@ctx, p.ty)} ${p.name} = ${slot};\n")
+    @body.append("    ${slot} = ${h.name};\n")
+}
+
+/// `slot = prev` -- a `with` exit.
+fn Emitter mut @emit_restore_handler(s HandlerSwap) -> () {
+    @body.append("    ${effect_slot_c(s.eff)} = ${@lo.ir.decl_of(s.prev).name};\n")
+}
+
+/// The `with`'s interrupt frame, declared and pushed (the runtime's frame
+/// type and stack -- interop, as the oracle installs one on every `with`).
+fn Emitter mut @emit_push_frame(f int) -> () {
+    @body.append("    NovaInterruptFrame _novac_f${f};\n")
+    @body.append("    nova_interrupt_push(&_novac_f${f});\n")
+}
+
+/// The innermost interrupt frame popped -- a `with` exit.
+fn Emitter mut @emit_pop_frame() -> () {
+    @body.append("    nova_interrupt_pop();\n")
 }

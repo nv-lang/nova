@@ -3,8 +3,9 @@
 // the binding-resolution and handler-value doors are novac's own design,
 // measured against the oracle's refusals. NOT taken: the `Effect[E, IRT]`
 // two-argument form (D87/D88) and lowering a with statement at all -- the
-// emitter has no WithStmt arm yet, so these tests judge the CHECK path
-// (`compile_with`) and the emit ICE is the named debt of the next wave.
+// VALUE form of `with` is lowered since E.9 step 2 (its C is pinned by the
+// op-call-and-with test below); a handler LITERAL is lowered in step 3, so
+// the literal's tests still judge the CHECK path (`compile_with`).
 // Role: acceptance tests of the E4 wave (274.11): `with X = h { body }`
 // reads, resolves the binding to an effect declaration, types the handler
 // value and the body, and refuses a KNOWN value type as the handler.
@@ -15,15 +16,15 @@
 
 module novac.pipeline
 import ../sem.{InteropTable}
+import ../sem.{effect_op_dispatcher_c, effect_vtable_c, effect_slot_c}
 
 test "with: a handler value of type Effect[Fs], body typed -- accepted (E4)" {
     // POSITIVE: the self-build carrier's shape. `make()` hands a value whose
     // type is the builtin `Effect[Fs]` -- RESOLVED since the Effect seed
     // (a generic constructor row, arity 1, applied through the ordinary
     // app-term door): the with-rule accepts an application type as a
-    // handler. JUDGED ON THE CHECK PATH (`compile_with`): the emitter has
-    // no WithStmt arm this wave, so `compile_to_c` would ICE after this
-    // clean check -- the named debt, not a divergence.
+    // handler. Judged on the CHECK path (`compile_with`); the same form is
+    // lowered since E.9 step 2 and its C is pinned further down.
     mut std = std_decls()
     std.push("module std.fx\nexport type Fs effect { fn read(p str) -> []u8 }\nexport fn make() -> Effect[Fs]\n")
     // The shell carries the factory (`fx_shell`), as it carries real_fs since
@@ -35,8 +36,8 @@ test "with: a handler value of type Effect[Fs], body typed -- accepted (E4)" {
 test "with: several bindings in one statement (E4)" {
     // `with Fs = make(), Os = make() { ... }` -- the comma-separated form the
     // carrier (main.nv) writes. Every binding resolves independently; one
-    // statement carries both. Judged on the check path like the test above:
-    // the emit ICE on WithStmt is the named debt, not part of this verdict.
+    // statement carries both. Judged on the check path like the test above;
+    // the lowering installs both and restores both in reverse (ir_with.nv).
     mut std = std_decls()
     std.push("module std.fx\nexport type Fs effect { fn read(p str) -> []u8 }\nexport type Os effect { fn args() -> []str }\nexport fn make() -> Effect[Fs]\nexport fn make_o() -> Effect[Os]\n")
     ro d = compile_with("fn g() -> int {\n with Fs = make(), Os = make_o() {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(std), fx_shell())
@@ -91,9 +92,9 @@ test "with: an unknown effect name is refused as a name (E4)" {
 // ---------------------------------------------------------------------------
 // THE HANDLER LITERAL (E4 wave, 274.11): `with Fs = effect Fs {
 // read(p str) -> []u8 => []u8.new() } { ... }`, measured against the oracle
-// 2026-09-22. All of these judge the CHECK path (`compile_with`): the with
-// statement is not lowered this wave, so `compile_to_c` would ICE after a
-// clean check -- the named debt, the same note the tests above carry.
+// 2026-09-22. All of these judge the CHECK path (`compile_with`): a handler
+// LITERAL is lowered in E.9 step 3, so `compile_to_c` would ICE after a
+// clean check -- the named debt of that step.
 // ---------------------------------------------------------------------------
 
 /// The handed corpus the literal tests share: the slice head (the schema's
@@ -265,6 +266,11 @@ fn fx_shell() -> InteropTable {
     mut s = interop_surface()
     s.add("nova_fn_3std2fx4make")
     s.add("nova_fn_3std2fx6make_o")
+    // The dispatchers of the fake `std.fx` Fs operations: since E.9 step 2 an
+    // operation call is emitted as the shell's dispatcher, so the shell carries
+    // it or the call is refused (the W6 test below).
+    s.add(effect_op_dispatcher_c("Fs", "read"))
+    s.add(effect_op_dispatcher_c("Fs", "size"))
     s
 }
 
@@ -280,7 +286,7 @@ test "effect op call: no handler in sight -- check is green, the runtime panic i
     // a `with` anywhere; the absence of a handler is a RUNTIME error in
     // the oracle's semantics, and novac's check must not turn it into a
     // check error. (How the call lowers is the standing emit debt.)
-    ro d = compile_with("fn g() -> int {\n ro b = Fs.read(\"p\")\n println(Fs.size())\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(opcall_fx()), interop_surface())
+    ro d = compile_with("fn g() -> int {\n ro b = Fs.read(\"p\")\n println(Fs.size())\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(opcall_fx()), fx_shell())
     assert(d.len() == 0, messages(d))
 }
 
@@ -289,10 +295,39 @@ test "effect op call: inside a with body, the handler installed -- green (E.4 it
     assert(d.len() == 0, messages(d))
 }
 
+test "effect op call: an operation whose dispatcher the shell does not carry is refused, W6's way (E.9 step 2)" {
+    // The call is emitted as the SHELL's dispatcher `Nova_Fs_size`; a shell
+    // without it is a link that cannot happen, refused by name at the
+    // operation. The control is the test above: the same call with a shell
+    // that carries it is green.
+    ro d = compile_with("fn g() -> int {\n ro n = Fs.size() + 1\n println(n)\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(opcall_fx()), interop_surface())
+    assert(d.len() == 1, messages(d))
+    // One sentence for the gap (check/messages.nv, effect_without_runtime_msg):
+    // the shell carries the dispatchers of EVERY operation of each effect it
+    // carries (Os 17 of 17, Fs 26 of 26, measured 2026-09-30), so in a real
+    // program the missing piece is the whole effect. The fake `std.fx` Fs
+    // declares an operation the real one lacks -- the same refusal.
+    assert(messages(d).contains("effect `Fs` has no runtime pieces"), messages(d))
+}
+
+test "effect op call and with: the C holds the dispatcher, the slot swap, the frame, and the restore (E.9 step 2)" {
+    // The value form lowered: the handler in a local, swapped into the slot,
+    // the body under the frame's setjmp, the slot restored and the frame
+    // popped after it; the operation printed as the shell's dispatcher.
+    ro (d, c) = compile_to_c_with("fn g() -> int {\n with Fs = make() {\n  println(Fs.size())\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(opcall_fx()), fx_shell())
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("${effect_vtable_c("Fs")}*"), c)
+    assert(c.contains(" = ${effect_slot_c("Fs")};"), c)
+    assert(c.contains("nova_interrupt_push(&_novac_f0);"), c)
+    assert(c.contains("setjmp(_novac_f0.jmp) == 0"), c)
+    assert(c.contains("${effect_op_dispatcher_c("Fs", "size")}()"), c)
+    assert(c.contains("nova_interrupt_pop();"), c)
+}
+
 test "effect op call: the operation's return type is the call's type (E.4 item 2)" {
     // `size()` declares `-> int`: the recorded type flows into arithmetic,
     // so a wrong record would refuse here -- the channel is the answer.
-    ro d = compile_with("fn g() -> int {\n ro n = Fs.size() + 1\n println(n)\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(opcall_fx()), interop_surface())
+    ro d = compile_with("fn g() -> int {\n ro n = Fs.size() + 1\n println(n)\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(opcall_fx()), fx_shell())
     assert(d.len() == 0, messages(d))
 }
 
