@@ -27,6 +27,7 @@ module time.duration
 /// unaffected). `@unix_nanos()` accessor remains the public raw-value
 /// escape hatch.
 #stable(since = "0.1")
+#impl(Equal)
 export type Timestamp value {
     priv nanos i64
 }

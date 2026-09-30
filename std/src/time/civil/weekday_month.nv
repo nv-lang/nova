@@ -11,6 +11,7 @@ module time.civil
 
 /// A day of the week, ISO-8601: Mon=1 .. Sun=7.
 #stable(since = "0.1")
+#impl(Equal)
 export type Weekday enum
     | Mon
     | Tue
@@ -74,6 +75,7 @@ export fn Weekday @compare(other Weekday) -> int {
 
 /// A month of the Gregorian calendar: Jan=1 .. Dec=12.
 #stable(since = "0.1")
+#impl(Equal)
 export type Month enum
     | Jan
     | Feb
