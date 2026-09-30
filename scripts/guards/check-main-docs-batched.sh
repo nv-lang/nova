@@ -34,6 +34,7 @@
 set -u
 export LC_ALL=C
 NAME=check-main-docs-batched
+pass() { echo "$NAME ok: $1"; exit 0; }   # страж доказывает шаг строкой ok: (№645)
 
 ROOT="${1:-$(git rev-parse --show-toplevel 2>/dev/null)}"
 [ -n "$ROOT" ] && cd "$ROOT" 2>/dev/null || { echo "$NAME: не git-дерево: ${ROOT:-<пусто>}" >&2; exit 1; }
@@ -43,12 +44,12 @@ ROOT="${1:-$(git rev-parse --show-toplevel 2>/dev/null)}"
 $(git rev-parse --path-format=absolute --git-dir --git-common-dir --symbolic-full-name HEAD 2>/dev/null)
 EOF
 [ -n "${GD:-}" ] && [ -n "${GCD:-}" ] || { echo "$NAME: git не назвал каталоги репозитория" >&2; exit 1; }
-[ "$GD" -ef "$GCD" ] || exit 0                      # worktree исполнителя
-[ "${BR:-}" = "refs/heads/main" ] || exit 0
-[ -f "$GD/MERGE_HEAD" ] && exit 0                   # бумага в коммите слияния — законно
+[ "$GD" -ef "$GCD" ] || pass "worktree — не главное дерево, не судится"
+[ "${BR:-}" = "refs/heads/main" ] || pass "ветка ${BR#refs/heads/} — не main, не судится"
+[ -f "$GD/MERGE_HEAD" ] && pass "идёт слияние (MERGE_HEAD) — бумага в коммите слияния законна"
 
 PATHS=$(git diff --cached --name-only --no-renames 2>/dev/null)
-[ -n "$PATHS" ] || exit 0
+[ -n "$PATHS" ] || pass "индекс пуст"
 
 N=0
 while IFS= read -r p; do
@@ -56,17 +57,16 @@ while IFS= read -r p; do
     N=$((N + 1))
     case "$p" in
         docs/plans/221.1-bug-sweep.md|scripts/guards/registry-rows.baseline) ;;
-        docs/dev/prompts/*/*) exit 0 ;;             # подкаталог — не бумага из набора
+        docs/dev/prompts/*/*) pass "в коммите есть путь вне бумажного набора ($p)" ;;
         docs/dev/prompts/*-handoff.md|docs/dev/prompts/controller-*.md) ;;
-        *) exit 0 ;;                                # есть не-бумага — не наш случай
+        *) pass "в коммите есть путь вне бумажного набора ($p)" ;;
     esac
 done <<EOF
 $PATHS
 EOF
 
 if [ -n "${NOVA_DOCS_BATCH:-}" ]; then
-    echo "$NAME: пакетный бумажный коммит в main ($N путей) по ключу NOVA_DOCS_BATCH: $NOVA_DOCS_BATCH"
-    exit 0
+    pass "пакетный бумажный коммит в main ($N путей) по ключу NOVA_DOCS_BATCH: $NOVA_DOCS_BATCH"
 fi
 
 {
