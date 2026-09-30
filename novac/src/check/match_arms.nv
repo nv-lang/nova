@@ -23,9 +23,15 @@ import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{decl_of_ty, decl_fn_row, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at}
-import ../sem.{disj_head_slots, pattern_has_disj}
-// The head of a flat pattern, through the one door (registry 1190).
-import ../sem.{pattern_head_slot, ty_source_name}
+import ../sem.{ty_source_name}
+// The pattern tree's doors (D486): the shape asked ONCE, the head and the
+// parts through their own doors -- never slot arithmetic (registry 1190's
+// class: a slot count and the meaning of what sits there are two doors).
+import ../sem.{PatShape, pattern_shape, pattern_head_text, pattern_qualifier, pattern_subpatterns}
+import ../sem.{pattern_fields, patfield_name, patfield_sub, pattern_rest, pattern_mode_word}
+import ../sem.{pattern_name_node, patfield_name_node}
+import ../sem.{shape_of, field_range_of, no_frow}
+import ../builtins.{SLICE_HEAD}
 // The payload of an APPLIED sum, with the application's arguments put in.
 import ../sem.{payload_as_seen}
 import ../sem.{branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, raw_vrow, no_vrow}
@@ -205,33 +211,30 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
             has_guard = has_guard || g.kind_of() == NodeKind.Guard
         }
         if has_guard { continue }
-        ro pat = branch_children(ak[0])
-        if pat.len() < 1 { continue }
-        // `is_ident` and not `ident_str` HERE: the answer to "not an
-        // identifier" is `continue`, and `continue` is not an expression, so
-        // the Option form would have to be a manual match -- which the linter
-        // reads as drift from `X ?? D` (W_MANUAL_COALESCE), and rightly.
-        // THE HEAD, through the one door (registry 1190). Reading slot 0 made
-        // a qualified arm look like a non-variant -- which this scan reads as
-        // "a binder covering everything" and RETURNS, so a match missing half
-        // its variants passed exhaustiveness in silence.
-        ro hs = pattern_head_slot(pat)
-        if !pat[hs].is_ident() { continue }
-        // EVERY alternative head of a disjunction counts too (the
-        // pattern-alternatives wave): heads stand right after each pipe.
-        // Heads are asked of the MATCHED SUM (wave B6, #964): a head that is
-        // no variant of it is a binder (covers everything -- done) or a
-        // variant of another sum, which `@bind_arm_pattern(ak, scr_t)` refused
-        // already; this rule says nothing on top (one cause, one diagnostic).
-        for hi in disj_head_slots(pat) {
-            match variant_in_sum(@ctx, scr_t, leaf_text(pat[hi])) {
-                None => {}
-                Some(_) => { covered += 1 }
+        if ak[0].kind_of() != NodeKind.Pattern { continue }
+        // EVERY head the arm accepts counts -- a disjunction's alternatives
+        // as much as the first one (the pattern-alternatives wave). Heads are
+        // asked of the MATCHED SUM (wave B6, #964): a head that is no variant
+        // of it is a binder (covers everything -- done) or a variant of
+        // another sum, which `@bind_arm_pattern(ak, scr_t)` refused already;
+        // this rule says nothing on top (one cause, one diagnostic).
+        match pattern_shape(ak[0]) {
+            Lit | Record | Tuple | Array => {}
+            Wild => return
+            Bind | Variant => {
+                match variant_in_sum(@ctx, scr_t, pattern_head_text(ak[0])) {
+                    None => return
+                    Some(_) => { covered += 1 }
+                }
             }
-        }
-        match variant_in_sum(@ctx, scr_t, leaf_text(pat[hs])) {
-            None => return
-            Some(_) => { covered += 1 }
+            Disj => {
+                for sub in pattern_subpatterns(ak[0]) {
+                    match variant_in_sum(@ctx, scr_t, pattern_head_text(sub)) {
+                        None => return
+                        Some(_) => { covered += 1 }
+                    }
+                }
+            }
         }
     }
     if covered >= vcnt { return }
@@ -309,151 +312,360 @@ fn Checker mut @agree_arm_type(arm Node, at TyId, first Option[TyId], before_arm
 /// the binders of a pattern live only until `release(mark)` below, so the
 /// body's type can be computed HERE and nowhere later. The first version of
 /// the arm-agreement rule (F36) asked for it after the walk, outside the
-/// scope, and turned a clean `match s { A(r) => r  B(w, h) => w * h }` into a
-/// diagnostic -- the binders were gone by then.
-/// Bind one arm's PATTERN into the scope: the variant's payload binders, or
-/// the whole scrutinee under a plain binder. ONE door for both arm variants
-/// (value and statement, 274.5 wave B5) -- the second copy of this walk is
-/// exactly what would drift. Answers false when the pattern is refused.
+/// scope, and turned a clean `match s { A(r) => r  B(w, h) => w * h }` into
+/// a diagnostic -- the binders were gone by then.
+/// Bind one arm's PATTERN into the scope. ONE recursive judgment over the
+/// pattern tree (D486 §2): the flat slot walk this replaces was one of three
+/// readers of a single grammar, and the tree is what lets the destructuring
+/// binding, the conditions and the for header share this door as the arc
+/// reaches them. Answers false when the pattern is refused.
 fn Checker mut @bind_arm_pattern(ak []Node, scr_t TyId) -> bool {
-    ro pat = branch_children(ak[0])
-    if pat.len() < 1 {
+    if ak[0].kind_of() != NodeKind.Pattern {
         @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern")
         return false
     }
-    // THE HEAD, through the one door (registry 1190): a qualified arm keeps
-    // its variant in slot 2, and reading slot 0 found the TYPE name -- which
-    // is a variant of nothing, so the arm became a catch-all binder.
-    ro hslot = pattern_head_slot(pat)
-    ro p0 = pat[hslot]
-    // A STRING OR CHAR LITERAL PATTERN is refused BY NAME until the lowering
-    // can compare one (registry 1190). Until 2026-09-20 08:11 it passed here
-    // and died in the emitter with `emit_c: match pattern is neither an int
-    // literal nor an identifier` -- an ice on a program whose only fault was
-    // being ahead of the emitter. A refusal names the form; an ice names the
-    // compiler and tells the reader nothing about their code.
+    @bind_pattern(ak[0], scr_t, ak, ParamMode.ModeRo)
+}
+
+/// ONE pattern against ONE type. `ak` travels for report POSITIONS only:
+/// every refusal of the arm points at the arm's first leaf, exactly as the
+/// flat walk pointed. `dmode` is the DEFAULT binder mode of the POSITION
+/// (D486 §4's single mode rule): the match arm's is `ro`, the destructuring
+/// binding's is its own keyword, and a binder's mode word overrides it.
+/// The shape is asked through the one door
+/// (sem/pattern.nv) and matched exhaustively -- a form the subset cannot
+/// judge is refused BY NAME in its own arm below, never fallen through
+/// (the #652 class: a silent default on a closed set).
+fn Checker mut @bind_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode) -> bool {
+    match pattern_shape(pat) {
+        Lit => @bind_lit_pattern(pat, ak)
+        Wild => true
+        Bind => @bind_name_pattern(pat, ty, ak, dmode)
+        Variant => @bind_variant_pattern(pat, ty, ak, dmode)
+        Record => @bind_record_pattern(pat, ty, ak, dmode)
+        Tuple => @bind_tuple_pattern(pat, ty, ak, dmode)
+        Array => @bind_array_pattern(pat, ty, ak, dmode)
+        Disj => @bind_disj_pattern(pat, ty, ak)
+    }
+}
+
+/// A LITERAL pattern. A string or char literal is refused BY NAME until the
+/// lowering can compare one (registry 1190) -- it used to die in the emitter
+/// with an ice, and a refusal names the form where an ice names the compiler.
+/// The integer magnitude door is asked here too (#1251): a `Pattern` node is
+/// never a `Lit` node, so the generic literal walk never visits it, and a
+/// 23-digit text once reached the C comparison verbatim, which clang refused
+/// -- the failure #810 exists to prevent, at one position nobody had visited.
+fn Checker mut @bind_lit_pattern(pat Node, ak []Node) -> bool {
+    ro p0 = branch_children(pat)[0]
     ro lk0 = leaf_kind(p0)
     if lk0 == TokenKind.StrLit || lk0 == TokenKind.CharLit {
         @report_first_leaf_of(ak, LITERAL_ARM_MSG)
         return false
-    } else if lk0 == TokenKind.IntLit {
-        // THE MAGNITUDE DOOR, ASKED HERE TOO (registry #1251) -- and
-        // deliberately NOT the row door (`@lit_fits_or_refuse`, #1249's
-        // sibling for out-of-range values): the oracle itself does not apply
-        // D227 rule 3 at a pattern's position (`match x { 300 => .. }` on
-        // `x u8` compiles clean on BOTH compilers today, an always-false
-        // comparison the oracle tolerates -- the neighbour the hunt measured
-        // and did not file, because there the oracle agrees with novac).
-        // What the oracle DOES refuse is a literal too wide for ANY row at
-        // all -- 23 decimal digits, `E_LIT` at the oracle's own check -- and
-        // that is exactly `int_text_fits`'s question (#1250: bounded by
-        // `u64`, the widest row), asked everywhere else from the generic
-        // `Lit` walk. A `Pattern` node is never a `Lit` node, so that walk
-        // never visits it; `check` stayed clean and the EMITTER wrote the
-        // 23-digit text verbatim into a C comparison, which clang then
-        // refused outright -- the exact failure #810 exists to prevent,
-        // reopened at one position nobody had visited yet.
-        if !int_text_fits(leaf_text(p0)) {
-            @report_first_leaf_of(ak, INT_TOO_LARGE_MSG)
-            return false
-        } else {
-            // Within the widest row's bound: this position asks no more.
-        }
-    } else {
-        // An identifier head or punctuation: judged below.
     }
-    ro is_ident = leaf_kind(p0) == TokenKind.Ident
-    // A QUALIFIER NAMING ANOTHER TYPE, asked here and answered by the SAME
-    // door as the bare case below -- they are one rule ('this arm belongs to
-    // another sum') and two spellings of it. Two `@report` sites would be two
-    // places one text can leave from, which is what the debt measure counts
-    // and, more to the point, what drifts.
-    //
-    // THE TYPE IS ASKED ONLY WHEN THERE IS ONE: `ty_source_name` reads the
-    // interner by id, and a poisoned scrutinee is `TyId(-1)` -- asking it for
-    // a name walked off the end and the checker died with "index 211 out of
-    // bounds for length 211" on a program whose only fault was a qualified
-    // arm. Measured within a minute of writing the line, which is the whole
-    // argument for probing a fix instead of reading it.
-    ro wrong_qualifier = hslot > 0 && is_ty(scr_t) &&
-                         leaf_text(pat[0]) != ty_source_name(@ctx, scr_t)
-    // ONE question about the pattern head, asked once: which variant row does
-    // it name? -1 answers "none" for every other shape (a plain binder, `_`,
-    // a punctuation leaf), and both branches below read that one answer.
-    // Asked of the MATCHED SUM (wave B6, #964). A head that names a variant of
-    // ANOTHER sum is refused here, at the arm -- until 2026-09-05 it fell
-    // through as a binder and the match was refused as non-exhaustive instead.
-    ro vrow = if is_ident { variant_in_sum(@ctx, scr_t, leaf_text(p0)) ?? no_vrow() } else { no_vrow() }
-    if wrong_qualifier ||
-       (is_ident && !is_vrow(vrow) && variants_named(@ctx, leaf_text(p0)).1 > 0) {
-        @report_first_leaf_of(ak, WRONG_SUM_ARM_MSG)
+    // THE ROW DOOR IS DELIBERATELY NOT ASKED: the oracle itself does not
+    // apply D227 rule 3 at a pattern's position (`match x { 300 => .. }` on
+    // `x u8` compiles clean on BOTH compilers), so this position asks only
+    // what fits the widest row at all.
+    if !int_text_fits(leaf_text(p0)) {
+        @report_first_leaf_of(ak, INT_TOO_LARGE_MSG)
         return false
-    } else {
-        // A variant of this sum, or a plain binder: both bind below.
     }
-    if pattern_has_disj(pat) {
-        // A disjunction binds NOTHING: two alternatives would have to agree
-        // on the binder's name AND payload type, and no carrier needs that.
-        // Any identifier of the pattern that is neither `_` nor a variant
-        // head refuses by name; `_` slots leave nothing to put in scope.
-        for c in pat {
-            match c.ident_str() {
-                Some(nm) => {
-                    if nm == "_" { continue }
-                    ro is_var = is_vrow(variant_in_sum(@ctx, scr_t, nm) ?? no_vrow())
-                    if !is_var {
-                        @report_first_leaf_of(ak, DISJ_BINDER_MSG)
-                        return false
-                    }
-                }
-                None => {}
-            }
-        }
+    true
+}
+
+/// A NAME-WRAPPED pattern: a binder, or a payload-less variant head -- the
+/// names table decides which (D19). A variant of ANOTHER sum is refused by
+/// the same text the qualified case uses: one rule, two spellings.
+/// The binder is recorded with its type ON the Name node -- the emitter has
+/// no scope and reads the channel, which is the discipline the record keeps.
+fn Checker mut @bind_name_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode) -> bool {
+    ro nm = pattern_head_text(pat)
+    if is_vrow(variant_in_sum(@ctx, ty, nm) ?? no_vrow()) {
+        // A payload-less variant binds nothing.
         return true
     }
-    if is_vrow(vrow) {
-        mut pi = 0
-        // `for` over the RANGE, not a hand-advanced cursor (owner 2026-08-22):
-        // the walk advances by exactly one every time, so the counter carried no
-        // information -- and a hand-advanced cursor makes "forgot to advance" a
-        // possible bug, which the range form deletes rather than documents.
-        // FROM THE HEAD, not from slot two (registry 1190). A payload binder
-        // sits after the head and its `(`, which is slot 2 for a bare head and
-        // slot 4 for a qualified one. Counting from a constant made `Kind.B`
-        // hand its own variant name to the payload table as a binder, and a
-        // variant with no payload indexed one past its end: the checker died
-        // with "index 211 out of bounds for length 211" on three correct lines.
-        for j in hslot + 2..pat.len() {
-            ro pj = pat[j]
-            // ONE question -- is this child a binder leaf? Two nested ifs
-            // asked it in two steps and neither named its second branch.
-            // Punctuation leaves of the pattern name no binder; a guard says
-            // it without branching on a variant test (no-default-branch keeps
-            // that shape for `match`).
-            // The test and the TEXT are one question, so one door answers
-            // both: `ident_str` gives the name or None, and None is exactly
-            // the pattern's parentheses and commas -- leaves that bind
-            // nothing, so the payload cursor must not move.
-            match pj.ident_str() {
-                Some(binder) => {
-                    // A payload binder holds a value of the arm, read-only:
-                    // nothing in the subset writes through it.
-                    // AS THE SCRUTINEE SEES IT: for `Option[int]` the payload
-                    // `T` is `int`, and binding the parameter instead made the
-                    // arms disagree and the mangler assert.
-                    ro praw = @ctx.payload_types[@ctx.variant_rows[raw_vrow(vrow)].payload_off + pi]
-                    @scope.bind(binder, payload_as_seen(@ctx, scr_t, praw), ParamMode.ModeRo)
-                    pi += 1
-                }
-                None => {}
+    if variants_named(@ctx, nm).1 > 0 {
+        @report_first_leaf_of(ak, WRONG_SUM_ARM_MSG)
+        return false
+    }
+    // The `ro` word is refused BY NAME here (wave P3): it stands only in an
+    // if/while condition, and the mapping below would otherwise read it as
+    // `consume` -- the `else` arm's silent default.
+    match pattern_mode_word(pat) {
+        Some(k) => {
+            if k == TokenKind.KwRo {
+                @report_first_leaf_of(ak, RO_WORD_PATTERN_MSG)
+                return false
+            } else { // `mut`/`consume` are mapped by the door below.
             }
         }
-    } else if is_ident && leaf_text(p0) != "_" {
-        // The scrutinee under a new name: the arm reads it, so `ro`.
-        @scope.bind(leaf_text(p0), scr_t, ParamMode.ModeRo)
-    } else {
-        // `_` and a non-identifier head bind nothing by definition: an arm
-        // sees the scrutinee only through a name, and there is no name here.
+        None => {}
+    }
+    ro mode = match pattern_mode_word(pat) {
+        Some(k) => if k == TokenKind.KwMut { ParamMode.ModeMut } else { ParamMode.ModeConsume }
+        None => dmode
+    }
+    @record(pattern_name_node(pat), ty)
+    @scope.bind(nm, ty, mode)
+    true
+}
+
+/// A VARIANT pattern with a payload: the head is judged against the MATCHED
+/// SUM (wave B6, #964), then every payload position is bound RECURSIVELY --
+/// a position may itself be a tuple, record or variant pattern (D157), which
+/// is the nesting the flat walk read as one long run of binders.
+fn Checker mut @bind_variant_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode) -> bool {
+    ro head = pattern_head_text(pat)
+    // THE TYPE IS ASKED ONLY WHEN THERE IS ONE: a poisoned scrutinee is
+    // `TyId(-1)`, and asking the interner for its name walked off the end
+    // (measured within a minute of writing the line that did). The qualifier
+    // is compared with the DECLARATION's head name, not the applied spelling:
+    // `ty_source_name` of `Option[int]` answers "Option[int]", which no
+    // source qualifier ever writes (wave P3, if-let on `Option.Some`).
+    ro wrong_qualifier = pattern_qualifier(pat) != "" && is_ty(ty) &&
+                         pattern_qualifier(pat) != decl_of_ty(@ctx, ty).name
+    ro vrow = variant_in_sum(@ctx, ty, head) ?? no_vrow()
+    if wrong_qualifier || (!is_vrow(vrow) && variants_named(@ctx, head).1 > 0) {
+        @report_first_leaf_of(ak, WRONG_SUM_ARM_MSG)
+        return false
+    }
+    if !is_vrow(vrow) {
+        // `Foo(x)` where Foo is no variant of anything: the flat walk bound
+        // Foo as a catch-all binder and silently dropped the payload -- a
+        // refusal names the form instead (the #652 class again).
+        @report_first_leaf_of(ak, VARIANT_PATTERN_MSG)
+        return false
+    }
+    ro vr = @ctx.variant_rows[raw_vrow(vrow)]
+    ro subs = pattern_subpatterns(pat)
+    // `Cons(..)` -- D59's positional partial -- takes any payload arity.
+    if subs.len() != vr.payload_cnt && !pattern_rest(pat) {
+        @report_first_leaf_of(ak, PAYLOAD_ARITY_MSG)
+        return false
+    }
+    mut i = 0
+    mut ok = true
+    for sub in subs {
+        if i >= vr.payload_cnt { break }
+        // AS THE SCRUTINEE SEES IT: for `Option[int]` the payload `T` is
+        // `int`, and binding the parameter instead made the arms disagree
+        // and the mangler assert.
+        ro pt = payload_as_seen(@ctx, ty, @ctx.payload_types[vr.payload_off + i])
+        if !@bind_pattern(sub, pt, ak, dmode) { ok = false } else { // The position bound; the arm stays sound.
+        }
+        i += 1
+    }
+    ok
+}
+
+/// A TUPLE pattern against a structural tuple: positions bind by index, the
+/// same door the destructuring binding asks (`tys.arg`). A round pattern on
+/// anything named is refused -- D486: the round form is the positional
+/// tuple's own, a named tuple is destructured by the brace form.
+fn Checker mut @bind_tuple_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode) -> bool {
+    ro anon_positional = match shape_of(@ctx, ty) {
+        AnonPositionalTuple => true
+        Record | ValueRecord | NamedTuple | PositionalTuple | AnonNamedTuple => false
+    }
+    if !anon_positional {
+        @report_first_leaf_of(ak, TUPLE_PATTERN_MSG)
+        return false
+    }
+    ro subs = pattern_subpatterns(pat)
+    if subs.len() != @ctx.tys.arg_count(ty) && !pattern_rest(pat) {
+        @report_first_leaf_of(ak, TUPLE_ARITY_MSG)
+        return false
+    }
+    mut i = 0
+    mut ok = true
+    for sub in subs {
+        if i >= @ctx.tys.arg_count(ty) { break }
+        if @bind_pattern(sub, @ctx.tys.arg(ty, i), ak, dmode) {
+            // The position bound; the arm stays sound.
+        } else { ok = false }
+        i += 1
+    }
+    ok
+}
+
+/// A RECORD pattern. A head (`Circle { radius }`) names a record-form
+/// VARIANT, which the subset does not compile at all yet -- the same refusal
+/// as at the declaration. Head-less, the pattern reads the scrutinee itself,
+/// and the judgment is the destructuring binding's own (D411/D486): every
+/// named field must exist, a partial list needs `..`, a renamed or nested
+/// field binds its subpattern against the field's type.
+fn Checker mut @bind_record_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode) -> bool {
+    if pattern_head_text(pat) != "" {
+        @report_first_leaf_of(ak, RECORD_VARIANT_MSG)
+        return false
+    }
+    ro named_form = match shape_of(@ctx, ty) {
+        Record | ValueRecord | NamedTuple | AnonNamedTuple => true
+        PositionalTuple | AnonPositionalTuple => false
+    }
+    if !named_form {
+        @report_first_leaf_of(ak, RECORD_PATTERN_MSG)
+        return false
+    }
+    mut named = 0
+    mut ok = true
+    for f in pattern_fields(pat) {
+        ro fname = patfield_name(f)
+        ro ft = if @fres.has_field(@ctx.fields, ty, fname) {
+            @fres.field_type(@ctx.fields, ty, fname)
+        } else {
+            @report_first_leaf_of(ak, DESTR_NO_FIELD_PATTERN_MSG)
+            ok = false
+            no_ty()
+        }
+        // THE PATFIELD NODE CARRIES THE TYPE TOO: the lowering reads it for
+        // the temporary a nested subpattern is read into (the channel is the
+        // only table it may ask). On the refusal path `ft` is no_ty() and the
+        // run stops here -- recording it would poison the channel instead.
+        if is_ty(ft) { @record(f, ft) } else { // The refusal above already said it.
+        }
+        match patfield_sub(f) {
+            Some(sub) => {
+                if !@bind_pattern(sub, ft, ak, dmode) { ok = false } else { // The field bound; the arm stays sound.
+                }
+            }
+            None => {
+                // The `ro`-word refusal, the bind_name_pattern twin (wave P3).
+                mut ro_word = false
+                match pattern_mode_word(f) {
+                    Some(k) => {
+                        if k == TokenKind.KwRo {
+                            @report_first_leaf_of(ak, RO_WORD_PATTERN_MSG)
+                            ro_word = true
+                            ok = false
+                        } else { // `mut`/`consume` are mapped by the door below.
+                        }
+                    }
+                    None => {}
+                }
+                if !ro_word {
+                    ro mode = match pattern_mode_word(f) {
+                        Some(k) => if k == TokenKind.KwMut { ParamMode.ModeMut } else { ParamMode.ModeConsume }
+                        None => dmode
+                    }
+                    @record(patfield_name_node(f), ft)
+                    @scope.bind(fname, ft, mode)
+                } else { // Refused above, by name.
+                }
+            }
+        }
+        named += 1
+    }
+    if !ok { return false }
+    // THE `..` RULE (D411, D486 §3 -- in every position now): a partial field
+    // list is legal only when the pattern says the rest is meant.
+    ro fr = field_range_of(decl_of_ty(@ctx, ty)) ?? (no_frow(), 0)
+    if named < fr.1 && !pattern_rest(pat) {
+        @report_first_leaf_of(ak, destr_needs_rest_msg(named, fr.1))
+        return false
+    }
+    true
+}
+
+/// An ARRAY pattern (D59): the scrutinee must be a slice, elements bind
+/// against the element type, and the `..rest` binder -- a subpattern written
+/// ADJACENT to its DotDot, with no comma between -- binds the remainder as a
+/// slice of the same type. One `..` at most; the length question (exact, or
+/// at-least with a rest) is the emitter's, asked of the same tree.
+fn Checker mut @bind_array_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode) -> bool {
+    // The HEAD DECLARATION's name, not the source spelling: `ty_source_name`
+    // of an application answers "Vec[int]", which is why the first version of
+    // this test refused every real slice.
+    ro is_slice = is_ty(ty) && @ctx.tys.kind_of(ty) == TypeKind.TkApp &&
+                  decl_of_ty(@ctx, ty).name == SLICE_HEAD
+    if !is_slice {
+        @report_first_leaf_of(ak, ARRAY_PATTERN_MSG)
+        return false
+    }
+    ro elem_t = @ctx.tys.arg(ty, 0)
+    mut rests = 0
+    mut prev_dotdot = false
+    mut ok = true
+    for c in branch_children(pat) {
+        match c {
+            Leaf(t) => {
+                if t.kind != TokenKind.DotDot {
+                    // Only the rest marker opens a rest position.
+                } else { rests += 1; prev_dotdot = true }
+                if t.kind != TokenKind.Comma {
+                    // Without a comma the next element still follows its `..`.
+                } else { prev_dotdot = false }
+            }
+            Branch { .. } => {
+                if c.kind_of() == NodeKind.Pattern {
+                    if prev_dotdot {
+                        // A `..rest` BINDER needs the shell's slice call
+                        // wired (`Vec @index(Range)`), which the subset has
+                        // not grown -- refused BY NAME until it has (the
+                        // LITERAL_ARM_MSG precedent). The length test and
+                        // the prefix/suffix elements are compiled today.
+                        @report_first_leaf_of(ak, ARRAY_REST_BIND_MSG)
+                        ok = false
+                    } else {
+                        if @bind_pattern(c, elem_t, ak, dmode) {
+                            // The element bound; the arm stays sound.
+                        } else { ok = false }
+                    }
+                    prev_dotdot = false
+                } else { // A non-Pattern branch (a recovery gap) binds nothing.
+                }
+            }
+        }
+    }
+    if rests > 1 {
+        @report_first_leaf_of(ak, ARRAY_REST_TWICE_MSG)
+        return false
+    }
+    ok
+}
+
+/// A DISJUNCTION binds NOTHING: two alternatives would have to agree on the
+/// binder's name AND payload type, and no carrier needs that. Every
+/// alternative must be a variant of the matched sum, a literal, or `_`; any
+/// other name refuses by name, exactly as the flat walk refused it.
+fn Checker mut @bind_disj_pattern(pat Node, ty TyId, ak []Node) -> bool {
+    for sub in pattern_subpatterns(pat) {
+        match pattern_shape(sub) {
+            Lit | Wild => {
+                // A literal or wildcard ALTERNATIVE asks for an or-test the
+                // lowering does not build -- and a `_` arm would silently
+                // swallow the alternatives beside it. Refused BY NAME rather
+                // than compiled half-way (the flat walk's behavior was to
+                // ignore them, which is the #652 class).
+                @report_first_leaf_of(ak, DISJ_ALT_MSG)
+                return false
+            }
+            Bind | Variant | Record => {
+                ro nm = pattern_head_text(sub)
+                if nm == "_" { continue }
+                if !is_vrow(variant_in_sum(@ctx, ty, nm) ?? no_vrow()) {
+                    @report_first_leaf_of(ak, DISJ_BINDER_MSG)
+                    return false
+                }
+                // The head IS a variant of this sum -- but a disjunction binds
+                // NOTHING, so its payload may hold `_` only: `A(x) | B(x)`
+                // would need both alternatives to agree on `x`.
+                if pattern_shape(sub) == PatShape.Variant {
+                    for psub in pattern_subpatterns(sub) {
+                        if pattern_shape(psub) != PatShape.Wild {
+                            @report_first_leaf_of(ak, DISJ_BINDER_MSG)
+                            return false
+                        }
+                    }
+                } else { // A bare-name alternative carries no payload to judge.
+                }
+            }
+            Tuple | Array | Disj => {
+                @report_first_leaf_of(ak, DISJ_BINDER_MSG)
+                return false
+            }
+        }
     }
     true
 }
@@ -658,4 +870,14 @@ const AMBIGUOUS_VARIANT_MSG = "this variant name is declared by more than one su
 /// until 2026-09-05 the head was looked up by bare name and the match was then
 /// refused as non-exhaustive -- the wrong cause. Refused HERE, at the arm; the
 /// exhaustiveness rule then says nothing (one cause, one diagnostic).
+const ARRAY_REST_BIND_MSG = "outside the subset: a `..rest` binding in an array pattern needs the shell's slice view wired -- the length test and prefix/suffix elements compile today (E2-b, with the slice view)"
+const DISJ_ALT_MSG = "outside the subset: a `|` pattern takes variant alternatives only -- a literal or `_` alternative is not compiled yet (E2-b, with literal matching)"
+const VARIANT_PATTERN_MSG = "a pattern with a payload names no variant of the matched sum -- a plain binder pattern takes no payload"
+const PAYLOAD_ARITY_MSG = "the pattern's payload count disagrees with the variant's declaration -- match every payload field, or mark the rest with `..` (D59)"
+const TUPLE_PATTERN_MSG = "a tuple pattern needs a positional tuple scrutinee -- a named form is destructured by name, with braces (D486)"
+const TUPLE_ARITY_MSG = "the tuple pattern's arity disagrees with the scrutinee's type (D123's arity class)"
+const RECORD_PATTERN_MSG = "a brace pattern needs a record or named-tuple scrutinee -- a positional tuple is destructured by position, with parens (D486)"
+const DESTR_NO_FIELD_PATTERN_MSG = "a brace pattern names a field this type does not declare (D411)"
+const ARRAY_PATTERN_MSG = "an array pattern needs a slice scrutinee (`[]T`)"
+const ARRAY_REST_TWICE_MSG = "an array pattern takes one `..` at most (D59) -- a second one is ambiguous"
 const WRONG_SUM_ARM_MSG = "this arm names a variant of a different sum than the value matched on (registry #964) -- write a variant of the matched sum, or a binder"

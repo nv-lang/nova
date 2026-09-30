@@ -1,0 +1,3 @@
+module standalone.repro701.owner
+type Row { name str, n int }
+export const Row.TABLE []Row = [Row { name: "a", n: 1 }, Row { name: "b", n: 2 }]

@@ -99,14 +99,16 @@ fn register_sum_variants(c Node, mut types []TypeDef, mut defs DefTable,
     for v in branch_children(c) {
         // Only Variant children carry a row. The `enum` marker, the sum's own
         // name leaf and the `|` separators share this list, and recovery
-        // debris is check's to report -- sem registers only what it understood
+        // debris is check's to report (its door is `@report_err_branch`,
+        // check/rules.nv:787) -- sem registers only what it understood
         // (274.3/F-B4). A guard says that once; an `else` here would be a
         // branch on a VARIANT test, which the no-default-branch rule reserves
         // for `match`.
         if v.kind_of() != NodeKind.Variant { continue }
         ro vk = branch_children(v)
         // A variant with no name (recovery after a broken sum_id): skipped --
-        // check is the judge, sem does not fail (274.3/F-B4).
+        // check is the judge (`@report_err_branch`, check/rules.nv:787),
+        // sem does not fail (274.3/F-B4).
         if vk.len() < 1 { continue }
         // The name is the FIRST identifier leaf, not a fixed index. Both shapes
         // exist: `| Red(int)` puts a pipe leaf ahead of it, `type Color enum
@@ -590,8 +592,8 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                 param_rows.push(tys.param(pslot))
             }
             // no_ty() = no declared return. Legal ONLY for main (check
-            // refuses it elsewhere); backends ice on it as the second floor —
-            // never a silent int (#652 class).
+            // refuses it at `check/rules.nv:653`); backends ice on it as the
+            // second floor — never a silent int (#652 class).
             ro ret = ret_ty_of_decl(fk, tps, param_rows, types, defs, tys)
             // A file function is a callable with no receiver (plan 273):
             // same row shape as a read method signature, same table.

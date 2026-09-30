@@ -553,6 +553,7 @@ M-flagship-spawn-capture-value-struct-ptr-mismatch
 M-flagship-spawn-throw-segfault
 M-float-roundtrip-printing
 M-fmt-buf-module-path
+M-fmt-nested-element-spec
 M-fmt-rich-spec-primitive-fresh-sb-redundant
 M-fmt-write-protocol-collision-cycle-adjacent
 M-fn-return-value-bound-var-call-broken

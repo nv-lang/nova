@@ -15,7 +15,7 @@ ro v = x.release()         // ✓ consume via method
 ```
 
 - **Ownership** moves via `consume X = …`.
-- **Alias binding** is forbidden inside a function body (`let Y = X`).
+- **Alias binding** is forbidden inside a function body (`ro Y = X`).
 - **View-borrow** is allowed ONLY as a function parameter.
 - Every consume-binding must be consumed before scope exit.
 
@@ -49,7 +49,7 @@ consume t = Token.new(7)    // ✓
 The compiler statically detects when a binding receives a consume-type
 value and requires the `consume` keyword.
 
-### Rule 2 — `let Y = consume_var` forbidden in function body
+### Rule 2 — `ro Y = consume_var` forbidden in function body
 
 ```nova
 consume sb = StringBuilder.new()
@@ -69,6 +69,22 @@ ro v = b.release()         // ✓
 
 After the move, `a` is consumed; using it triggers a
 `use-after-consume` diagnostic.
+
+### Rule 3a — re-binding the same name is fine once the old value is consumed
+
+```nova
+consume conn = PlainConn { fd: 7 }
+consume conn = conn.upgrade()      // ✓ upgrade is a consume method: old conn consumed first
+ro fd = conn.close()
+
+consume c = PlainConn { fd: 7 }
+consume c = PlainConn { fd: 8 }    // ✗ E_REBIND_LIVE_CONSUME: the first c is still live
+```
+
+A new `consume`/`ro`/`mut` binding may reuse a name (D347), and its type may
+differ. The only thing forbidden is hiding a live obligation — consume the old
+value first (the right-hand side may do it, as `upgrade` does) or pick another
+name.
 
 ### Rule 4 — view-borrow via function parameters only
 
@@ -113,8 +129,8 @@ chain root's consume-obligation is satisfied by the implicit return
 
 | Code                              | Trigger                                     |
 | --------------------------------- | ------------------------------------------- |
-| `E_CONSUME_KEYWORD_MISSING`       | `let X = ctor()` when ctor returns consume |
-| `E_VIEW_BINDING_FORBIDDEN`        | `let Y = consume_var` in function body     |
+| `E_CONSUME_KEYWORD_MISSING`       | `ro X = ctor()` when ctor returns consume |
+| `E_VIEW_BINDING_FORBIDDEN`        | `ro Y = consume_var` in function body     |
 | `W_CONSUME_KEYWORD_UNNECESSARY`   | `consume X = …` when RHS is non-consume    |
 | `D133-not-consumed`               | scope-exit with unsatisfied obligation     |
 | `D133-use-after-consume`          | use of consumed binding                    |

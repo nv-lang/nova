@@ -82,7 +82,7 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
                         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern |
                         KwUnsafe | Hash | Ident | IntLit | FloatLit | StrLit | CharLit | Question2 | Question |
                         KwBreak | KwContinue | StrFrag | InterpOpen | InterpClose | RParen | LBrace |
-                        RBrace | RBracket | Dot | Comma | Plus | Minus | Slash | Lt | Le | Gt |
+                        RBrace | RBracket | Dot | Comma | Semicolon | Plus | Minus | Slash | Lt | Le | Gt |
                         Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret | Shl |
                         Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign |
                         MinusAssign | StarAssign | SlashAssign | PercentAssign | AmpAssign |
@@ -100,7 +100,8 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
                 }
                 Branch { .. } => {
                     // A generics node after the name: judged by the loop
-                    // below.
+                    // below in this same `@report_if_missing_type(kids, msg)`,
+                    // whose `Branch { .. }` arm gives the same answer.
                     return
                 }
             }
@@ -245,7 +246,7 @@ fn Checker mut @report_if_default_order(kids []Node) -> () {
     for c in kids {
         if c.kind_of() != NodeKind.Param { continue }
         ro pk = branch_children(c)
-        if param_default_slot(pk).len() > 0 {
+        if param_default_slot(pk).is_some() {
             seen_default = true
         } else {
             if seen_default {
@@ -271,13 +272,8 @@ fn Checker mut @report_if_default_order(kids []Node) -> () {
 /// the same mistake -- `by int = "s".len()` came out as the subset refusal AND
 /// as "no such method", which is the cascade check-novac-no-cascade.sh forbids.
 fn Checker mut @report_if_default_not_value(pk []Node) -> bool {
-    ro d = param_default_slot(pk)
-    if d.len() == 0 {
-        return false
-    } else {
-        // A default is written: its shape decides.
-    }
-    if default_is_value(d[0]) {
+    ro d = if Some(v) = param_default_slot(pk) { v } else { return false }
+    if default_is_value(d) {
         return false
     } else {
         // Any other expression would be read in the caller's scope.
@@ -287,7 +283,7 @@ fn Checker mut @report_if_default_not_value(pk []Node) -> bool {
     // Everything else is refused because reading the caller's scope would be an
     // accident; this reads it on purpose, and a compiler whose `ice()` cannot
     // name its own line is the carrier we measured (#1145, #1146).
-    if default_is_caller_loc(d[0]) {
+    if default_is_caller_loc(d) {
         return false
     } else {
         // Not the one admitted call either: the refusal below speaks.

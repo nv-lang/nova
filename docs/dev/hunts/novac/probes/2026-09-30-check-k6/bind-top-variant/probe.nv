@@ -1,0 +1,7 @@
+// CONTROL: D486 s4 constructor at the TOP of a destructuring binding.
+// Expected: E_REFUTABLE_BINDING on both compilers.
+fn main() {
+    ro b = Some(2)
+    ro Some(c) = b
+    println(c)
+}

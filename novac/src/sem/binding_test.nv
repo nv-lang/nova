@@ -26,9 +26,9 @@ import ../names.{DeclId}
 /// PRESENCE, and the emitter is what reads the value (held by the fixture).
 fn bump_params(int_id TyId) -> []ParamDef => []ParamDef.of(
     ParamDef { name: "x", type_id: int_id, mode: ParamMode.ModeRo,
-               default_expr: []Node.new() },
+               default_expr: None },
     ParamDef { name: "by", type_id: int_id, mode: ParamMode.ModeRo,
-               default_expr: []Node.of(branch(0, NodeKind.Lit, []Node.new())) })
+               default_expr: Some(branch(0, NodeKind.Lit, []Node.new())) })
 
 /// A positional argument of type `int`.
 fn pos_arg(int_id TyId) -> ArgSpec =>
@@ -127,9 +127,7 @@ test "more positional arguments than parameters is refused" {
 test "the DEFAULT is read from the row, and only where one is written" {
     mut ctx = collect_types(branch(0, NodeKind.File, []Node.new()))
     ro ps = bump_params(ctx.prims.int_id)
-    // The two halves of one reading (`ParamDef.default_expr` is a vector only
-    // because the oracle cannot compile the `Option` this means -- see the
-    // field's own note): required means no default, and defaulted means one.
+    // The two halves of one reading: required means `None`, defaulted means `Some`.
     assert(slot_is_required(ps, 0, 0))
     assert(!slot_is_required(ps, 0, 1))
     assert(slot_default_of(ps, 0, 0).is_none())

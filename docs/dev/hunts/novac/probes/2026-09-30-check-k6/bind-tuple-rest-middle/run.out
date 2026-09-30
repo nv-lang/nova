@@ -1,0 +1,13 @@
+=== SUBJECT: novac check
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"D:/Temp/hunt-check-k6/bind-tuple-rest-middle/probe.nv","start":296,"end":297},"message":"outside the subset: this operator on these operands dispatches through a protocol (D46: @plus / @compare / @equal), and protocol dispatch arrives with bounds","poisoned_by":null}
+novac rc=1
+=== ORACLE: nova check
+[31mFAIL:[0m D:/Temp/hunt-check-k6/bind-tuple-rest-middle/probe.nv
+  D:/Temp/hunt-check-k6/bind-tuple-rest-middle/probe.nv:6:12: error: expected pattern, got `..`
+  6 |     ro (a, .., z) = t
+    |            ^^
+
+===== SUMMARY =====
+PASS: 0  [31mFAIL[0m: 1  WARN: 0
+[1m[31merror:[0m[0m 1 file(s) failed type-check
+oracle check rc=1

@@ -1639,6 +1639,7 @@ static nova_int nova_fn_8encoding5utf1621decode_surrogate_pair(nova_int hi, nova
 static void* Nova_Vec_method_index(Nova_Vec* nova_self, nova_int i);
 static NovaOpt_nova_int Nova_Vec_method_get(Nova_Vec* nova_self, nova_int i);
 static nova_unit Nova_Vec_method_index__nova_int_void_p(Nova_Vec* nova_self, nova_int i, void* val);
+static NovaOpt_nova_int Nova_Vec_method_first(Nova_Vec* nova_self);
 static nova_bool Nova_Vec_method_contains(Nova_Vec* nova_self, void* v);
 static nova_bool Nova_Vec_method_contains__void_p(Nova_Vec* nova_self, void* v);
 static const Nova_T** Nova_Vec_method_ptr(Nova_Vec* nova_self);
@@ -2121,6 +2122,11 @@ static nova_unit Nova_Vec_method_index__nova_int_void_p(Nova_Vec* nova_self, nov
     (void)i;
     (void)val;
     return NOVA_UNIT;
+}
+
+static NovaOpt_nova_int Nova_Vec_method_first(Nova_Vec* nova_self) {
+    (void)nova_self;
+    return (NovaOpt_nova_int){0};
 }
 
 static nova_bool Nova_Vec_method_contains(Nova_Vec* nova_self, void* v) {

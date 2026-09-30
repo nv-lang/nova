@@ -1,0 +1,21 @@
+// ONE rule (D486 s4 / D411: a constructor in a binding is E_REFUTABLE_BINDING),
+// two spellings (the qualified one: novac parser fallback, see bind-qualified-unit-variant). Which DiagKind does novac give each? (E_NOVAC_LANG =
+// permanent language error, E_NOVAC_SUBSET = subset debt, not yet compiled.)
+type Sh enum
+    | A(int)
+    | B
+
+fn bare(s Sh) -> int {
+    ro B = s
+    1
+}
+
+
+fn payload(s Sh) -> int {
+    ro A(v) = s
+    v
+}
+
+fn main() {
+    println(1)
+}

@@ -1,0 +1,14 @@
+=== SUBJECT: novac check
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"D:/Temp/hunt-check-k6/bind-ro-binder/probe.nv","start":148,"end":150},"message":"outside the subset: the `ro` word on a pattern binder stands only in an `if`/`while` condition (274.5 P3, the condition-forms wave)","poisoned_by":null}
+{"id":"d1","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"D:/Temp/hunt-check-k6/bind-ro-binder/probe.nv","start":177,"end":178},"message":"outside the subset: println covers int, str, bool and f64 today","poisoned_by":null}
+novac rc=1
+=== ORACLE: nova check
+[31mFAIL:[0m D:/Temp/hunt-check-k6/bind-ro-binder/probe.nv
+  D:/Temp/hunt-check-k6/bind-ro-binder/probe.nv:5:9: error: expected pattern, got `ro`
+  5 |     ro (ro a, b) = p
+    |         ^^
+
+===== SUMMARY =====
+PASS: 0  [31mFAIL[0m: 1  WARN: 0
+[1m[31merror:[0m[0m 1 file(s) failed type-check
+oracle check rc=1

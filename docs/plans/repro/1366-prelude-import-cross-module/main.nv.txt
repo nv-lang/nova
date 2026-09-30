@@ -1,0 +1,8 @@
+module main
+
+import ./helper.{greet}
+
+fn main() Io -> () {
+    println("main says hi")
+    greet()
+}

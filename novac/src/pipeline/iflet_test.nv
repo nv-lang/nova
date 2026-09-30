@@ -56,8 +56,8 @@ test "if-let: a QUALIFIED variant head (`Option.Some(v)`), not just the bare hea
     // RParen Assign` -- a BARE head. `if Option.Some(v) = o` writes `.` where
     // the lookahead expected `(`, missed the whole match, and fell into the
     // unnamed parser fallback ("did not parse this") instead of parsing at
-    // all. Same class already fixed for match's own pattern head
-    // (`pattern_head_slot`) and for `const Type.NAME`.
+    // all. Same class already fixed for match's own pattern head (the head
+    // door, D486's `@pattern`) and for `const Type.NAME`.
     ro (d0, c0) = compile_to_c("fn show(o Option[int]) -> () {\n if Option.Some(v) = o {\n  println(v)\n } else {\n  println(0)\n }\n}\nfn main() {\n ro xs = [5, 9]\n show(xs.get(1))\n}", std)
     assert(d0.len() == 0, messages(d0))
     assert(c0.contains("    } else {"), c0)

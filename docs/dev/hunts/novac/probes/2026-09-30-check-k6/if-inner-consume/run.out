@@ -1,0 +1,8 @@
+=== SUBJECT: novac check
+novac rc=0
+=== ORACLE: nova check
+[32mok:[0m D:/Temp/hunt-check-k6/if-inner-consume/probe.nv
+
+===== SUMMARY =====
+[32mPASS[0m: 1  FAIL: 0
+oracle check rc=0

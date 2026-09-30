@@ -326,6 +326,7 @@ test "a while loop: the header is its own empty block, the body jumps back to it
                 While(_) => { } // the head handed in
                 Range(_) => assert(false)
                 Each(_) => assert(false)
+                Forever => assert(false)
             }
         }
         Return => assert(false)
@@ -343,7 +344,10 @@ test "a while loop: the header is its own empty block, the body jumps back to it
 test "a range loop keeps its variable -- a binding local -- and its bounds in the header" {
     mut b = FnBuilder.new(TyId(3))
     ro i = b.named(TyId(3), "i")
-    ro c = b.begin_loop(LoopHead.Range(RangeHead { var: i, lo: stand_in_expr(), hi: stand_in_expr() }))
+    // The upper bound is a LOCAL since wave P5: the lowering places it before
+    // the loop, and the header spells the local (evaluated once).
+    ro h = b.named(TyId(3), "hi")
+    ro c = b.begin_loop(LoopHead.Range(RangeHead { var: i, lo: stand_in_expr(), hi: h }))
     b.end_loop(c)
     b.end_body()
     ro f = b.finish()
@@ -352,9 +356,11 @@ test "a range loop keeps its variable -- a binding local -- and its bounds in th
             Range(r) => {
                 assert(r.var == i)
                 assert(f.locals[raw_local(r.var)].name == "i")
+                assert(r.hi == h)
             }
             While(_) => assert(false)
             Each(_) => assert(false)
+            Forever => assert(false)
         }
         Return => assert(false)
         Goto(_) => assert(false)
@@ -387,6 +393,8 @@ test "a for over a collection: the header carries vec/idx/elem locals, the body 
                 Use(_) => assert(false)
                 VariantField(_) => assert(false)
                 Read(_) => assert(false)
+                IndexConst(_) => assert(false)
+                IndexFromEnd(_) => assert(false)
             }
         }
         Eval(_) => assert(false)
@@ -408,6 +416,7 @@ test "a for over a collection: the header carries vec/idx/elem locals, the body 
             }
             While(_) => assert(false)
             Range(_) => assert(false)
+            Forever => assert(false)
         }
         Return => assert(false)
         Goto(_) => assert(false)
@@ -438,6 +447,8 @@ test "an if-let: the Option lands in a binding, the If tests IsSome of it, the b
                 IndexPayload(_) => assert(false)
                 VariantField(_) => assert(false)
                 Read(_) => assert(false)
+                IndexConst(_) => assert(false)
+                IndexFromEnd(_) => assert(false)
             }
         }
         Eval(_) => assert(false)
@@ -453,6 +464,7 @@ test "an if-let: the Option lands in a binding, the If tests IsSome of it, the b
         If(t) => match t.cond {
             IsSome(l) => assert(l == o)
             Expr(_) => assert(false)
+            NotSome(_) => assert(false)
         }
         Return => assert(false)
         Goto(_) => assert(false)

@@ -1,0 +1,8 @@
+module helper
+
+import std.prelude.{Vec}
+
+export fn greet() Io -> () {
+    ro v = Vec[int].new()
+    println("helper len ${v.len()}")
+}

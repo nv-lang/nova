@@ -1,0 +1,15 @@
+module main
+
+import core.{Event, push_notify}
+
+// A record whose NAME matches the enum's variant in the other module.
+export type Notification value {
+    ro pid int
+    ro channel str
+}
+
+fn main() {
+    mut evs []Event = []Event.new()
+    push_notify(evs, 1, "c")
+    println("ok ${evs.len()}")
+}

@@ -1,0 +1,12 @@
+module core
+
+// An enum with a payload-carrying variant named `Notification`.
+export type Event enum
+    | Ready
+    | Notification { pid int, channel str }
+
+// The real-case shape: the variant constructor is passed to Vec.push
+// (expected type Event, supplied the variant's own type).
+export fn push_notify(mut events []Event, pid int, channel str) -> () {
+    events.push(Event.Notification { pid, channel })
+}

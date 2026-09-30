@@ -274,6 +274,28 @@ ro alice = User { id: 1, name: "alice" }       // record-литерал
 ro cfg = { "host": "localhost", "port": 8080 } // dict-литерал
 ```
 
+## Re-binding a name — `ro x = …` once more
+
+Declaring the same name again in the same block with the full form
+`ro`/`mut`/`consume x = …` is allowed: each declaration is a new variable with its
+own type and mode; the old one is unreachable further down. The right-hand side
+still sees the old one (`ro x = x + 1` reads the previous `x`). A bare `x = v`
+remains an assignment to a `mut` variable, not a new name.
+
+```nova
+ro input = read_line()
+ro input = parse_request(input)?     // str → Request, прежний input ниже недоступен
+mut work = work                      // «разморозка» ro → mut
+
+consume conn = PlainConn.connect(addr)?
+consume conn = conn.upgrade()        // ✓ upgrade — consume-метод: старый conn уже потреблён
+```
+
+One restriction: a consume variable cannot be shadowed while its obligation is
+live — the value would be lost silently (`E_REBIND_LIVE_CONSUME`). Consume the old
+value before re-binding (like `upgrade` above — by the right-hand side itself) or
+give the new one a different name. Details — [D347](decisions/03-syntax.md#d347).
+
 ## Return: `->` is mandatory, `()` is optional
 
 ```nova
@@ -1194,6 +1216,23 @@ form is refused (`E_MATCH_CONST_PATTERN`): a comparison is written as a guard --
 ([D19](decisions/03-syntax.md#d19), amendment 2026-09-18): a form absent from the
 table above is not accepted.
 
+**One pattern grammar for all five sites** ([D486](decisions/03-syntax.md#d486),
+2026-09-28): a match arm, a `ro`/`mut`/`consume` binding, an `if` condition, a
+`while` condition and a `for` header share one production; the sites differ only
+by positional predicates: a binding and `for` are irrefutable (no literals,
+variants, arrays, disjunctions), a condition has no literals, `_` or
+disjunctions, and a bare name there needs `ro`/`mut` (D34). **`..` is the only
+marker of a deliberate skip and is required for a partial destructuring in every
+form and position** — record (`User { id, .. }`), tuple (`(a, ..)`, positional
+only; a named tuple is destructured with the brace form `{ x, .. }`), array
+(`[a, .., z]`); the implicit field skip, formerly legal in `match`, is retracted
+(`E_RECORD_PATTERN_NEEDS_REST` in every position). `consume` on a binder inside a
+pattern is allowed in conditions too (`if Some(consume x) = opt { … }`); only the
+mode before the whole pattern is refused (`E_CONSUME_IN_CONDITION`). Any name in a
+pattern may carry a type (`ro (a int, b) = pair`, `for (k str, v) in pairs`): the
+type is only checked — never converted, never used as a filter (D486 amendment
+2026-09-30).
+
 **A `_`-prefixed name may not be used, and `_` may not discard a linear
 value** ([D461](decisions/03-syntax.md#d461)). The prefix is a promise that the
 value is not needed, and the compiler holds you to it -- for any type, not only
@@ -1250,18 +1289,16 @@ ro entry = Entry { key, value, extra: "data" }  // можно смешивать
 // `Entry { key: key }` — ОШИБКА: используйте shorthand `{ key }`.
 ```
 
-**Partial pattern matching** — specifying only the needed fields:
+**Partial destructuring** — list only the needed fields, and then `..` is required:
 
 ```nova
 match @buckets[idx] {
-    Occupied { value }     => Some(value)        // partial: key игнорируется
-    Occupied { value, .. } => Some(value)        // явный .. — то же самое
+    Occupied { value, .. } => Some(value)        // key пропущен явно
     _                      => None
 }
+// Occupied { value } => … — ОШИБКА E_RECORD_PATTERN_NEEDS_REST:
+// неявный пропуск полей ретрактирован (D486 §3), во всех позициях.
 ```
-
-Both forms are valid (`..` or without) — a choice by context. `..` —
-a signal "the type has more fields". Without — shorter.
 
 **Renaming on destructuring:**
 
@@ -1292,7 +1329,17 @@ not match the iterator's actual element type — a compile error. That makes it
 a *checked assertion* (pins the expectation; a change of the source type →
 a loud error), not a silent documenting sugar. Go/Rust/TS
 do not give a loop-variable annotation at all — Nova has it as a strict,
-checkable superset.
+checkable superset. The annotation only checks — it neither converts the value
+nor filters elements.
+
+**A `for` header is a pattern** ([D486](decisions/03-syntax.md#d486)): the same
+grammar as a `ro`/`mut`/`consume` binding and the same rules — the position is
+irrefutable, so a literal, a variant (`for Some(x) in …`), an array and a
+disjunction are refused (`E_REFUTABLE_BINDING`), while a tuple and a record are
+allowed (`for (k, v) in pairs`, `for { id, .. } in users`), and a partial
+destructuring needs `..`. Any name of the pattern may carry a type:
+`for (k str, v) in pairs`. The expression after `in` (a range `a..b` included) is
+evaluated once, before the first iteration (D58).
 
 A variable in `for x in iter` — an **immutable binding** (like `ro`, no
 `mut`), receiving a **new value** on each iteration. It cannot be
@@ -1354,7 +1401,14 @@ if Some(user) = lookup(id) && user.is_active {
 Local bindings (`data`, `user`, `line`) are available **only in the block
 body**. After the closing `}` — unavailable.
 
-Details — [D34](decisions/03-syntax.md#d34).
+**`while` with a pattern** ([D486](decisions/03-syntax.md#d486) §1, amendment
+2026-09-30): the condition expression is evaluated again before every iteration;
+the names it binds live one iteration and are bound afresh each time; the loop
+ends at the first mismatch; there is no `else` branch; the loop has no value —
+`break <value>` inside it is `E_BREAK_VALUE_OUTSIDE_LOOP_EXPR` (only `loop` yields
+a value, D485).
+
+Details — [D34](decisions/03-syntax.md#d34), [D486](decisions/03-syntax.md#d486).
 
 ## Instance methods and static functions
 

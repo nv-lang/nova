@@ -30,7 +30,7 @@ import ../tree.{Node, NodeKind, BinOp, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
 import ../builtins.{EQUAL_METHOD, OPTION_SOME_VARIANT}
-import ../sem.{LitArg, raw_crow, field_range_of, decl_of_ty, no_frow, brace_pattern, has_rest}
+import ../sem.{LitArg, raw_crow, field_range_of, decl_of_ty, no_frow}
 import ../resolve.{FnLookup}
 import ../names.{NameTable, NamespaceId, raw_decl}
 import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
@@ -43,7 +43,9 @@ import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_o
 import ../sem.{ty_source_name, c_shell_method, is_value_record}
 import ../types.{TyId, no_ty, is_ty, same_ty}
 import ../sem.{option_payload, for_head_elem}
-import ../sem.{iflet_variant_at, iflet_binder_at, iflet_init_at, iflet_body_at, iflet_else_at}
+import ../sem.{iflet_pattern_at, iflet_init_at, iflet_body_at, iflet_else_at}
+import ../sem.{whilelet_pattern_at, whilelet_init_at, whilelet_body_at}
+import ../sem.{pattern_shape, pattern_head_text, PatShape}
 import ../sem.{shape_of}
 
 // ---- the type channel: what the checker decided ---------------------------
@@ -520,8 +522,9 @@ fn unknown_args(kids []Node, from int, scope Scope) -> []ArgSpec {
 fn Checker @concrete(t TyId) -> TyId => subst_type(@ctx, t, @substs)
 
 /// One statement. A kind the subset does not know is NOT typed and NOT iced:
-/// the emitter refuses it at its own door, and a second death here would only
-/// move the message.
+/// the emitter refuses it at its own door (`ice("emit: statement kind outside
+/// the subset")` in novac/src/lower/lowering.nv), and a second death here would
+/// only move the message.
 fn Checker mut @type_stmt(st Node) -> () {
     ro k = st.kind_of()
     if k == NodeKind.Call {
@@ -643,6 +646,25 @@ fn Checker mut @type_stmt(st Node) -> () {
             assert(@out.len() > 0, "check: a malformed for head reached typing with no refusal")
             return
         }
+        ro pat = kids[1]
+        if pat.kind_of() != NodeKind.Pattern {
+            // SILENT-OK: a recovery gap stands where the pattern should be --
+            // the parser's own marker already said what was expected here.
+            return
+        }
+        // THE POSITION'S PREDICATE (wave P5, D486 s4): the for-header is a
+        // BINDING position, irrefutable like a destructuring binding -- the
+        // loop has no `else` for a failed match. The tree is the same tree
+        // the match arm binds; the refusal is about WHERE it stands.
+        match pattern_shape(pat) {
+            Tuple | Record | Bind | Wild => {}
+            Lit | Variant | Array | Disj => {
+                @report_first_leaf_of(kids, FOR_REFUTABLE_MSG)
+                // The names still BIND (to no type), the no-cascade rule.
+                @bind_names_untyped(pat)
+                return
+            }
+        }
         ro head = kids[3]
         if head.kind_of() == NodeKind.Call || head.kind_of() == NodeKind.MethodCall ||
            head.kind_of() == NodeKind.Name || head.kind_of() == NodeKind.FieldAccess {
@@ -662,11 +684,16 @@ fn Checker mut @type_stmt(st Node) -> () {
             }
             @record(head, ht)
             ro cmark = @scope.mark()
-            @scope.bind(leaf_text(kids[1]), elem, ParamMode.ModeRo)
+            // The element pattern binds through the ONE door, fresh each
+            // iteration (the mark is the loop's, released after the body).
+            if !@bind_pattern(pat, elem, kids, ParamMode.ModeRo) {
+                @bind_names_untyped(pat)
+            } else { // Every name bound with its decided type.
+            }
             @type_block(kids[4])
             @scope.release(cmark)
             // SILENT-OK: the collection head is fully decided -- head typed
-            // and recorded, variable bound, body typed; the range arm below
+            // and recorded, pattern bound, body typed; the range arm below
             // is the other form.
             return
         }
@@ -682,8 +709,12 @@ fn Checker mut @type_stmt(st Node) -> () {
         // the body -- the emitter's order (a range expression cannot see
         // the variable it defines).
         ro mark = @scope.mark()
-        // A loop variable is a fresh value each turn, bound read-only.
-        @scope.bind(leaf_text(kids[1]), @ctx.prims.int_id, ParamMode.ModeRo)
+        // A loop variable is a fresh value each turn, bound read-only --
+        // through the same pattern door, against the counter's int.
+        if !@bind_pattern(pat, @ctx.prims.int_id, kids, ParamMode.ModeRo) {
+            @bind_names_untyped(pat)
+        } else { // Every name bound with its decided type.
+        }
         @type_block(kids[4])
         @scope.release(mark)
     } else if k == NodeKind.MatchExpr {
@@ -703,6 +734,8 @@ fn Checker mut @type_stmt(st Node) -> () {
         @type_destructure_bind(st)
     } else if k == NodeKind.IfLet {
         @type_if_let(st)
+    } else if k == NodeKind.WhileLet {
+        @type_while_let(st)
     } else if k == NodeKind.WithStmt {
         @type_with_stmt(st)
     } else if k == NodeKind.SupervisedStmt || k == NodeKind.SpawnStmt {
@@ -715,99 +748,6 @@ fn Checker mut @type_stmt(st Node) -> () {
     } else {
         // SILENT-OK: a statement kind outside the subset is refused at the
         // emitter's door, so this walk has no answer to record for it.
-    }
-}
-/// `if Some(v) = expr { ... }` (if-let wave): the initializer must be an
-/// Option INSTANCE, the variant must be `Some` (the subset's boundary -- its
-/// carriers use nothing else), and the binder takes the payload type inside
-/// the then-block. The initializer's type is RECORDED for the emitter's
-/// strict door -- the same lesson every wave since B15 step 5 pays once.
-fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
-    ro kids = branch_children(st)
-    // The minimum length is the BODY slot plus one -- the same slot a
-    // qualified head shifts by two (registry #1259, `iflet_*_at` in
-    // `sem/slots.nv`), so the bound below is honest for both shapes.
-    if kids.len() < iflet_body_at(kids) + 1 {
-        assert(@out.len() > 0, "check: a malformed if-let reached typing with no refusal")
-        return
-    }
-    ro variant_at = iflet_variant_at(kids)
-    if leaf_text(kids[variant_at]) != OPTION_SOME_VARIANT {
-        match kids[variant_at] {
-            Leaf(t) => @refuse(t, IFLET_VARIANT_MSG)
-            // SILENT-OK: the parser puts a LEAF in the variant slot by
-            // construction; a branch here is its recovery, already named.
-            Branch { .. } => {}
-        }
-        return
-    }
-    ro init = kids[iflet_init_at(kids)]
-    ro before = @out.len()
-    match init {
-        Leaf(_) => {
-            // SILENT-OK: a recovery gap -- the parser already said what was
-            // expected in the initializer's place.
-            return
-        }
-        Branch { .. } => @type_expr(init)
-    }
-    if @out.len() > before { return }
-    ro ot = type_of(init, @ctx, @scope, @chan)
-    ro payload = option_payload(@ctx, ot)
-    if !is_ty(payload) {
-        @reject_first_leaf_of(kids, IFLET_INIT_MSG)
-        return
-    }
-    @record(init, ot)
-    ro binder_at = iflet_binder_at(kids)
-    ro body_at = iflet_body_at(kids)
-    ro else_at = iflet_else_at(kids)
-    if as_value {
-        // AS A VALUE: an `else` is not optional -- without it the None path
-        // produces nothing and the function would fall off its end. The plain
-        // tail `if` says the same thing in the same words (274.7 B14).
-        if kids.len() <= else_at {
-            @report_first_leaf_of(kids, IFLET_VALUE_NEEDS_ELSE_MSG)
-            return
-        } else {
-            // Both paths written: each one's tail is a value below.
-        }
-        // The binder lives in the SOME branch only, which is why the mark is
-        // released before the else is typed rather than after both.
-        ro vmark = @scope.mark()
-        @scope.bind(leaf_text(kids[binder_at]), payload, ParamMode.ModeRo)
-        ro some_t = @type_branch_value(kids[body_at])
-        @scope.release(vmark)
-        ro none_t = @type_branch_value(kids[else_at])
-        if !is_ty(some_t) || !is_ty(none_t) {
-            // SILENT-OK: the branch without a value was refused inside
-            // `@type_branch_value`, by name; one cause, one diagnostic.
-            return
-        } else {
-            // Both produced a type: they must be the same one.
-        }
-        if some_t != none_t {
-            @report_first_leaf_of(kids, IFLET_VALUE_DISAGREE_MSG)
-            return
-        } else {
-            // Agreed: the `if let` carries that type.
-        }
-        @record(st, some_t)
-        return
-    } else {
-        // As a statement: the branches are blocks, typed below.
-    }
-    ro mark = @scope.mark()
-    @scope.bind(leaf_text(kids[binder_at]), payload, ParamMode.ModeRo)
-    @type_block(kids[body_at])
-    @scope.release(mark)
-    // The ELSE branch (wave W1) is typed with the binder OUT of scope -- it is
-    // the None arm, and the payload's name means nothing there. A block or a
-    // chained if / if-let: the one door for "a body is a block or a statement".
-    if kids.len() > else_at {
-        @type_body(kids[else_at])
-    } else {
-        // No else branch was written.
     }
 }
 

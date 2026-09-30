@@ -33,27 +33,27 @@ fn close_res(consume o Result[Res, Fault]) -> int => match consume o {
 fn main() Io -> () {
     mut sum = 0
     consume o1 = Some(Res { id: 1 })
-    sum = sum + close_opt(o1.map(|r| Res { id: r.close() }))
+    sum += close_opt(o1.map(|r| Res { id: r.close() }))
     consume o2 = Some(Res { id: 2 })
-    sum = sum + close_opt(o2.flat_map(|r| Some(r)))
+    sum += close_opt(o2.flat_map(|r| Some(r)))
     consume o3 = Some(Res { id: 3 })
     consume r3 = o3.ok_or(0)
-    sum = sum + match consume r3 { Ok(consume r) => r.close(), Err(_) => 0 }
+    sum += match consume r3 { Ok(consume r) => r.close(), Err(_) => 0 }
     consume a4 Result[Res, Fault] = Ok(Res { id: 4 })
-    sum = sum + close_res(a4.map(|r| r))
+    sum += close_res(a4.map(|r| r))
     consume a5 Result[Res, Fault] = Err(Fault { code: 5 })
-    sum = sum + close_res(a5.map_err(|e| e))
+    sum += close_res(a5.map_err(|e| e))
     consume a6 Result[Res, Fault] = Ok(Res { id: 6 })
-    sum = sum + close_res(a6.flat_map(|r| Ok(r)))
+    sum += close_res(a6.flat_map(|r| Ok(r)))
     consume a7 Result[Res, Fault] = Err(Fault { code: 7 })
-    sum = sum + close_res(a7.flat_map_err(|e| Err(e)))
+    sum += close_res(a7.flat_map_err(|e| Err(e)))
     consume a8 Result[Res, int] = Ok(Res { id: 8 })
-    sum = sum + close_opt(a8.ok())
+    sum += close_opt(a8.ok())
     consume a9 Result[int, Res] = Err(Res { id: 9 })
-    sum = sum + close_opt(a9.err())
+    sum += close_opt(a9.err())
     consume t Option[Result[Res, Fault]] = None
     consume tt = t.transpose()
-    sum = sum + match consume tt { Ok(consume x) => close_opt(x), Err(consume e) => e.close() }
+    sum += match consume tt { Ok(consume x) => close_opt(x), Err(consume e) => e.close() }
 
     ro p = Some(1)
     ro m1 = p.map(|x| x + 1) ?? 0

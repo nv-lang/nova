@@ -1,0 +1,6 @@
+module standalone.repro701.module_level
+const NUMS []int = [1, 2, 3]
+
+fn main() Io -> () {
+    print("${NUMS.len()} ${NUMS[1]}")
+}

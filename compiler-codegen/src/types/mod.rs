@@ -44418,14 +44418,18 @@ impl<'a> ConsumeCtx<'a> {
             let ty_disp = if ty.is_empty() { "?".to_string() } else { ty };
             errors.push(crate::diag::Diagnostic::new(
                 format!(
-                    "[E_REBIND_LIVE_CONSUME] переменная `{sh}` (тип `{ty}`) имеет \
-                     непотреблённое consume-обязательство — повторное связывание того \
-                     же имени скрыло бы его (D347 R2). Потребите переменную \
-                     (consume-метод / `return` / передача в consume-param) до \
-                     re-binding, либо дайте новой переменной другое имя.",
+                    "[E_REBIND_LIVE_CONSUME] `{sh}` (type `{ty}`) still carries an \
+                     unconsumed consume obligation; re-binding the same name would \
+                     hide it (D347 R2). Consume it before re-binding (a consume \
+                     method, `return`, or passing it to a consume parameter), or give \
+                     the new binding a different name.",
                     sh = sh, ty = ty_disp
                 ),
                 span,
+            ).with_note(
+                "shadowing is allowed when the right-hand side consumes the old \
+                 value: `consume conn = conn.upgrade()`, where `upgrade` is a consume \
+                 method, binds the new `conn` after the old one is consumed",
             ));
             // Diagnostic MOVES here — suppress the duplicate exit-time D133.
             self.consume_obligations.remove(&sh);
@@ -46158,6 +46162,12 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                     // (the checker's fn-entry seed of `consume_binding_names`).
                     if p.consume {
                         ctx.consume_bound_names.insert(p.name.clone());
+                    }
+                    // #1346 (the #1345 gap it exposed): a parameter's declared type
+                    // is its full type -- a `consume v Vec[Res]` parameter is as
+                    // cleanup-eligible (`cleanup_effects_for`) as a `consume r Res`.
+                    if let TypeRef::Named { .. } = &p.ty {
+                        ctx.var_type_refs.insert(p.name.clone(), p.ty.clone());
                     }
                     // Plan 118.5 V2 [M-118.5-arg-coerce-unsafe]: track
                     // unsafe-T-annotated params (outer Unsafe wrapper detected

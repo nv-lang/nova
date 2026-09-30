@@ -1,0 +1,107 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc FnCtxt -- taken (one explicit receiver per check run, holding
+// the state its walk rides on, beside Go's *Checker and Roslyn's Binder).
+// Role: the Checker RECEIVER type -- the state of one check run, cut from
+// check.nv 2026-09-29 (decision 12, the file-size cap): check.nv keeps the
+// shape walk, this peer keeps the state the walk rides on. One module, one
+// namespace -- the type is visible to every peer exactly as before.
+// Used by: the whole check module; nothing outside imports it.
+// Guarded by: check-novac-file-size.py (this file exists because check.nv
+// crossed the cap).
+// novac/src/check/checker_type.nv
+
+module novac.check
+
+/// State of one check run: the source (for positions), the semantic context
+/// and the diagnostics collected so far. A receiver, not a triple of
+/// parameters on every function — the shape of every reference (Go
+/// `*Checker`, Roslyn `Binder`, rustc `FnCtxt`, Zig `*Sema`).
+///
+/// WHY NOT AN EFFECT (owner's question, 2026-08-16). Nova's effects model
+/// CAPABILITIES and control — `Fs`, `Os`, `Fail`, `Supervisor`; the
+/// compilation context is pure data. An ambient context (a) hides the data
+/// flow, and the §3/§4 map rests on that flow being visible ("what flows
+/// along the edge" is guarded), (b) pays a TLS-vtable cost on every read
+/// in the hot `type_of` loop, under П14 "speed is priority #1", (c)
+/// diverges from the references: rustc keeps `TyCtxt` explicit, and the
+/// ambient `ty::tls` is left only for diagnostics and debugging.
+type Checker {
+    src SourceText /// the file text: the one source of positions
+    ctx Ctx /// type registry and callable table, read from the declarations
+    /// THE name index over ctx.fns (274.4 step 2): built here, held here, and
+    /// nowhere else -- emit_c and mono get a Ctx and no index, so resolution
+    /// after the checker is not merely forbidden, there is nothing to call.
+    res FnIndex
+    /// THE name index over ctx.fields (274.4 step 3): the same lock for the
+    /// field root -- fields resolve only through a receiver type, and only
+    /// the checker can ask.
+    fres FieldIndex
+    /// The FIRST gap seen in this file — a refusal whose run has zero width,
+    /// that is, a token the grammar required and nobody wrote. Held rather
+    /// than said at once: a gap points at nothing the author typed, so it is
+    /// the LAST thing worth saying about a file, and only when nothing with
+    /// width was said. `gap_at < 0` means none seen.
+    gap_at int
+    /// WHAT was wanted at `gap_at`, when the door that planted the gap knew.
+    /// `TokenKind.ErrorTok` means it did not: gaps planted by recovery carry no
+    /// expectation, and the refusal then says only that the text is not a form
+    /// of the language -- the message this field exists to improve on (#850).
+    gap_kind TokenKind
+    out []Diagnostic /// diagnostics collected by this run
+    chan CheckOut /// THE channel this run publishes: what the checker decided (sem.CheckOut)
+    scope Scope /// locals of the function body being typed; reset per function
+    /// One-entry table reused by the self-initializer check (274.3/F28). It is
+    /// a FIELD and not a local because the lookup door must not build anything
+    /// (P18/P14): a table allocated per binding turns an O(1) question into an
+    /// allocation on the hot path of every `ro`/`mut` in the file.
+    self_probe NameTable
+    /// Top-level names already seen in THIS file (#811). sem cannot report --
+    /// it holds no diagnostics -- and it silently keeps the FIRST declaration
+    /// of a repeated name, so the second one has to be refused here or not at
+    /// all. One table per run, the same shape `self_probe` is.
+    seen_decls NameTable
+    /// The instance's substitution: `substs[i]` is the concrete type standing
+    /// in type-parameter slot `i`. EMPTY for an ordinary run over a file, and
+    /// that emptiness is what tells `type_fn` to skip a generic body -- there
+    /// is nothing to type it under. One copy of the body is typed per
+    /// instance (Go stenciling), so nothing here is parametric afterwards.
+    substs []TyId
+    /// The ONE block whose tail call is a returned value: the body of the fn
+    /// being walked, when that fn declares a return type (274.5 wave B4). Set
+    /// by the FnDecl arm of each phase, read by the Block arm; there are no
+    /// nested fns, so one slot is the whole state.
+    tail_value_body NodeId
+    /// THE RETURN THE BODY BEING TYPED MUST PRODUCE (274.7 B5, registry #960):
+    /// the declared return type of the fn under `type_fn`, concrete for an
+    /// instance, `no_ty()` when there is nothing to judge -- no declaration, a
+    /// unit return, or a type parameter (an instance judges its own body;
+    /// "I do not judge" is the answer for the generic shape). Read by the
+    /// return door at every tail and every `return`. One slot, like
+    /// `tail_value_body`, for the same reason: there are no nested fns.
+    ret_expect TyId
+    /// The type the value being typed RIGHT NOW is expected to have, or
+    /// `no_ty()`: set by the return door around a tail or `return` operand
+    /// (to `ret_expect`), cleared by a call around its arguments. Read by the
+    /// one form the language types from its context alone -- a bare variant of
+    /// a GENERIC sum (`None`, wave W4), whose instance is not in the token.
+    value_expect TyId
+    /// Whether a call typed RIGHT NOW is link-checked against the shell
+    /// surface (W6/B1b interop refusals). TRUE everywhere except one
+    /// position: a `with` handler value (E4 wave, 274.11). The with statement
+    /// is read and typed, but lowering installs no handler this wave — the
+    /// emitter has no WithStmt arm — so a call in handler position is NEVER
+    /// linked, and the shell-symbol refusal would defend a link error that
+    /// cannot happen. MEASURED 2026-09-22: without the exemption the
+    /// self-build carrier's `with Fs = real_fs()` is refused because
+    /// `nova_fn_3std2fs7real_fs` is not in the shell — and real_fs's symbol
+    /// is not in the shell for the ORACLE's emission either, so no probe can
+    /// ever add it. The W6 rule itself is untouched: every ordinary position
+    /// keeps the refusal (handed_free_test pins it). Saved and restored
+    /// around the handler expression exactly like `value_expect` is around
+    /// call arguments.
+    link_check bool
+    /// Loops around the node being walked (274.7 B10): `break`/`continue` at 0 are refused.
+    loop_depth int
+    /// The body being typed returns no value (`-> ()` or none declared): a bare `return` is legal.
+    ret_unit bool
+}

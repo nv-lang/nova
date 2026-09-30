@@ -1,0 +1,15 @@
+=== SUBJECT: novac check
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"D:/Temp/hunt-check-k6/if-outer-consume/probe.nv","start":169,"end":176},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+{"id":"d1","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"D:/Temp/hunt-check-k6/if-outer-consume/probe.nv","start":206,"end":207},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+{"id":"d2","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"D:/Temp/hunt-check-k6/if-outer-consume/probe.nv","start":208,"end":209},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+novac rc=1
+=== ORACLE: nova check
+[31mFAIL:[0m D:/Temp/hunt-check-k6/if-outer-consume/probe.nv
+  D:/Temp/hunt-check-k6/if-outer-consume/probe.nv:5:8: error: [E_CONSUME_IN_CONDITION] `consume` binding не разрешён в if/while condition — consume требует scope-exit tracking, который complicated в condition-position. Use match arm or extract в statement (Plan 114 D184).
+  5 |     if consume Some(x) = o {
+    |        ^^^^^^^
+
+===== SUMMARY =====
+PASS: 0  [31mFAIL[0m: 1  WARN: 0
+[1m[31merror:[0m[0m 1 file(s) failed type-check
+oracle check rc=1

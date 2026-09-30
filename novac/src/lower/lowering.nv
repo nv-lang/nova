@@ -12,13 +12,13 @@ module novac.lower
 import ../tree.{Node, NodeKind, assign_op_of}
 import ../types.{TyId, is_ty}
 import ../diag.{ice}
-import ../sem.{arm_body_at, binder_text, brace_pattern, branch_children, disj_head_slots, for_head_elem}
-import ../sem.{is_expr_kind, is_ident_leaf, is_int_lit, is_println_call, is_value_tail_kind, leaf_kind}
-import ../sem.{leaf_text, literal_prim_of, pattern_binders, pattern_has_disj, raw_vrow, variant_in_sum}
-// The head of a flat pattern, through the same door the checker asks (1190).
-import ../sem.{pattern_head_slot}
-import ../sem.{iflet_binder_at, iflet_body_at, iflet_else_at, iflet_init_at}
+import ../sem.{arm_body_at, branch_children, for_head_elem}
+import ../sem.{is_expr_kind, is_println_call, is_value_tail_kind, leaf_kind}
+import ../sem.{leaf_text, literal_prim_of, raw_vrow, variant_in_sum}
+import ../sem.{iflet_pattern_at, iflet_body_at, iflet_else_at, iflet_init_at}
+import ../sem.{whilelet_pattern_at, whilelet_init_at, whilelet_body_at}
 import ../sem.{payload_as_seen}
+import ../sem.{pattern_shape, pattern_head_text, PatShape}
 // Which arguments have an observable order (F65) -- the checker's own door.
 import ../sem.{contains_call, loop_ctl_is_break}
 
@@ -34,10 +34,11 @@ import ../sem.{contains_call, loop_ctl_is_break}
 /// recursive set one method at a time would leave a tree that does not build at every step.
 ///
 /// WHAT THIS FILE MAY NOT DO. It is `lower`, so the architecture table allows it `tree`, `sem`,
-/// `types` and `diag` and nothing else. Two questions that used to reach past that -- a leaf's
-/// token kind and the name of `println` -- are now asked of the channel (`sem.is_int_lit`,
-/// `sem.is_ident_leaf`, `sem.is_println_call`), which is where questions about what a node MEANS
-/// belong anyway.
+/// `types` and `diag` and nothing else. A question that used to reach past that -- the name of
+/// `println` -- is now asked of the channel (`sem.is_println_call`), which is where questions
+/// about what a node MEANS belong anyway. Its one-time companions (`sem.is_int_lit`,
+/// `sem.is_ident_leaf`) left with the D486 arc (2026-09-29): the `@pattern()` door reads the
+/// tree directly, and an export nobody asks is code nobody runs (P35).
 
 /// tail=true: the LAST expression statement of an int fn body is its return
 /// value (Nova tail-expression semantics; arithmetic.nv relies on it).
@@ -183,7 +184,6 @@ fn Lowerer mut @lower_if_let_value(n Node, res_t TyId) -> Local {
     ro kids = branch_children(n)
     ro init = kids[iflet_init_at(kids)]
     ro ot = @out.type_of(init.id_of())
-    ro payload = @ctx.tys.arg(ot, 0)
     ro t = @ir.temp(res_t)
     @ir.declare_zeroed(t)
     // The Option is a temporary of the BODY, named by its index (274.8 M3):
@@ -191,10 +191,10 @@ fn Lowerer mut @lower_if_let_value(n Node, res_t TyId) -> Local {
     ro lo = @ir.temp(ot)
     @lower_place(init, lo)
     ro c = @ir.begin_if(Cond.IsSome(lo), ElseShape.Braced)
-    // The binder: the checker bound it to the payload type, this door spells
-    // what was decided.
-    ro bv = @ir.named(payload, leaf_text(kids[iflet_binder_at(kids)]))
-    @ir.take_payload(bv, lo)
+    // The pattern binds through the match arm's own door (wave P3): a binder
+    // reads the payload, a nested pattern reads its piece -- one judgment,
+    // recorded by the checker, spelled here.
+    @lower_pattern_bind(kids[iflet_pattern_at(kids)], ot, lo)
     @lower_block_value(kids[iflet_body_at(kids)], t)
     @ir.begin_else(c)
     @lower_block_value(kids[iflet_else_at(kids)], t)
@@ -308,6 +308,8 @@ fn Lowerer mut @lower_stmt(st Node) -> () {
         @lower_if(st, None)
     } else if k == NodeKind.WhileStmt {
         @lower_while(st)
+    } else if k == NodeKind.WhileLet {
+        @lower_while_let(st)
     } else if k == NodeKind.RetStmt {
         @lower_return(st)
     } else if k == NodeKind.LoopCtl {
@@ -326,7 +328,27 @@ fn Lowerer mut @lower_stmt(st Node) -> () {
         // a compound store from the one form table, the target as an
         // expression (a name and `@field` on one path).
         ro kids = branch_children(st)
-        @lower_store(kids[0], assign_op_of(leaf_kind(kids[1])), kids[2])
+        ro src = kids[2]
+        // AN `if` AS THE SOURCE LOWERS BEFORE THE STORE IS RECORDED (the
+        // if-value wave): it lays down blocks of the body, and a printer
+        // asked to lower would push into a FINISHED builder -- the exact
+        // precedent of `@hoist_sealed_args`, whose hoist the store's printer
+        // reads back through `@lo.ir.local_of_node`, so the recorded store
+        // below needs no new shape.
+        if src.kind_of() == NodeKind.IfExpr {
+            ro sty = @out.type_if_known(src.id_of())
+            if is_ty(sty) {
+                match @lower_value_source(src, sty) {
+                    Some(l) => @ir.remember_hoist(src.id_of(), l)
+                    None => {}
+                }
+            } else {
+                // SILENT-OK: refused where it was typed; nothing to hoist.
+            }
+        } else {
+            // An ordinary source prints inline, as before.
+        }
+        @lower_store(kids[0], assign_op_of(leaf_kind(kids[1])), src)
     } else if k == NodeKind.ForStmt {
         ro kids = branch_children(st)
         if kids[3].kind_of() == NodeKind.Call || kids[3].kind_of() == NodeKind.MethodCall ||
@@ -375,56 +397,27 @@ fn Lowerer mut @lower_bind(st Node) -> () {
     @lower_place(init, l)
 }
 
-/// A destructuring binding: the scrutinee lands in a temporary ONCE, and each
-/// name becomes a plain C local read out of it.
+/// A destructuring binding: the scrutinee lands in a temporary ONCE, and the
+/// pattern binds out of it through the ONE recursive door (D486,
+/// lower_match.nv) -- the same walk the match arm takes, minus the tests:
+/// the checker held this position to irrefutable forms (D486 §4), so there
+/// is nothing to test, only bindings to lay down.
 ///
 /// ONCE is the whole contract, and it is the same one V3-1 proved for the
 /// constructor: `ro (a, b) = mk()` calls `mk` a single time, so a side effect
 /// in it prints once. A shape that re-read the scrutinee per name would be
 /// correct on pure values and silently wrong on effectful ones.
-///
-/// The two shapes differ in ONE question -- how a name finds its value. By
-/// POSITION it is the mono struct's `.fN`; by NAME it is the field itself,
-/// reached with `.` on an inline value and `->` on a GC pointer, exactly as
-/// every other field access is spelled.
 fn Lowerer mut @lower_destructure_bind(st Node) -> () {
     ro kids = branch_children(st)
+    ro pat = kids[1]
     ro init = kids[kids.len() - 1]
     ro pt = @out.type_of(init.id_of())
-    // The value's form is the printer's ONE dispatch (274.8 M1, emit_place.nv):
-    // a construction builds into a temporary of its own and that temporary IS
-    // the source; any other initializer lands in a fresh binding of the pair's
-    // type through the one door -- and only then, `??` short-circuits (D86).
-    // The lowering door comes FIRST (prerequisite 5): a `match`/`if` initializer lays
-    // down blocks, and its local is the source. Only then the printing forms, and only
-    // then the fresh binding -- `??` short-circuits in that order (D86).
     // ALWAYS THROUGH A LOCAL (M3c). The construction case no longer needs its own line
     // here: `@ir.place` records the initializer, and the assignment printer builds a
     // construction in its own `Expr` arm. One door instead of two, and the base of every
     // projection below is a LOCAL -- which is what lets the reads become statements.
     ro base = @lower_value_source(init, pt) ?? @bind_pair_temp(init, pt)
-    ro by_name = brace_pattern(kids)
-    mut i = 0
-    for b in pattern_binders(kids) {
-        // THE CHANNEL, and nothing else. The checker decided this binder's
-        // type -- which field it names, or which component -- and recorded it
-        // on the binder node; this door only spells the decision. Until
-        // 2026-09-04 it asked the field index itself, which the channel guard
-        // refuses by name and was right to: a second asker becomes a second
-        // answer the day the two spellings drift.
-        ro nm = binder_text(b)
-        // THE BINDER IS A LOCAL OF THE BODY, and its read is a STATEMENT (M3c) -- not a
-        // line printed while lowering. Printed straight, these reads landed above the
-        // assignment they read once the walk of step 3b took over the printing: use before
-        // declaration, C that does not compile.
-        ro l = @ir.named(@out.type_of(b.id_of()), nm)
-        if by_name {
-            @ir.read(l, base, Projection.Field(nm))
-        } else {
-            @ir.read(l, base, Projection.Elem(i))
-        }
-        i += 1
-    }
+    @lower_pattern_bind(pat, pt, base)
 }
 
 /// One `if` statement with its `else` / `else if` chain. `outer` is the
@@ -512,7 +505,6 @@ fn Lowerer mut @lower_if_let(st Node, outer Option[IfCtx]) -> () {
     ro kids = branch_children(st)
     ro init = kids[iflet_init_at(kids)]
     ro ot = @out.type_of(init.id_of())
-    ro payload = @ctx.tys.arg(ot, 0)
     ro else_at = iflet_else_at(kids)
     ro has_else = kids.len() > else_at
     // THE ELSE BRANCH IS OPENED BY THE DOOR, NOT HERE (fix 2026-09-08, ICE «a block sealed
@@ -563,10 +555,9 @@ fn Lowerer mut @lower_if_let(st Node, outer Option[IfCtx]) -> () {
     // keeps its indent. Measured, not reasoned: passing `chained_of(outer)` here made the
     // corpus C differ in exactly one file (fixtures/iflet_else/pos_2), the hunk being this
     // lost indent.
-    // The binder: the checker bound it to the payload type, this door spells
-    // what was decided.
-    ro bv = @ir.named(payload, leaf_text(kids[iflet_binder_at(kids)]))
-    @ir.take_payload(bv, lo)
+    // The pattern binds through the match arm's own door (wave P3) -- the
+    // value door above says why.
+    @lower_pattern_bind(kids[iflet_pattern_at(kids)], ot, lo)
     @lower_block_stmts_fn(kids[iflet_body_at(kids)], false)
     if has_else {
         @lower_else_tail(c, kids[else_at])
@@ -586,16 +577,54 @@ fn Lowerer mut @lower_while(st Node) -> () {
     @ir.end_loop(c)
 }
 
+/// One `while <pattern> = expr { ... }` (wave P4, D486): an UNCONDITIONAL
+/// head (`LoopHead.Forever` -- the real test is the body's, so no expression
+/// is forged for the head), then per iteration: the initializer into its own
+/// temporary through the placement door, the exit test `if (!some) break;`
+/// through the one Option door (`Cond.NotSome`), the pattern bound through
+/// the match arm's own door, and the body. The C is what a reader writes by
+/// hand: `while (1) { T lo = <init>; if (!is_some(lo)) break; ... }`.
+fn Lowerer mut @lower_while_let(st Node) -> () {
+    ro kids = branch_children(st)
+    ro init = kids[whilelet_init_at(kids)]
+    ro ot = @out.type_of(init.id_of())
+    // A temporary of the body, named by its index (274.8 M3): the Option of a
+    // `while let` is the compiler's, not the author's -- the if-let's own
+    // discipline, one loop iteration wide.
+    ro lo = @ir.temp(ot)
+    // Recorded first, printed from the record (M2b-2 step 3a).
+    ro c = @ir.begin_loop(LoopHead.Forever)
+    @lower_place(init, lo)
+    ro exit_c = @ir.begin_if(Cond.NotSome(lo), ElseShape.NoElse)
+    @ir.break_loop()
+    @ir.end_if(exit_c)
+    @lower_pattern_bind(kids[whilelet_pattern_at(kids)], ot, lo)
+    @lower_block_stmts_fn(kids[whilelet_body_at(kids)], false)
+    @ir.end_loop(c)
+}
+
 /// One `for v in lo..hi`: the loop variable is a binding local of the body,
-/// the bounds stay tree expressions (the M1 bridge), the header carries the
-/// range form so the printer spells C's `for` and not a `while`.
+/// the header carries the range form so the printer spells C's `for` and not
+/// a `while`. The UPPER BOUND IS EVALUATED ONCE (wave P5, the owner's rule --
+/// formally `lo..hi` is a `Range` value and the loop is its iteration, so a
+/// bound re-read per turn would be a second semantics): it is placed into a
+/// temporary BEFORE the loop, and the header spells the temporary. The lower
+/// bound stands in C's init clause, which is already once.
 fn Lowerer mut @lower_for_range(kids []Node) -> () {
-    ro v = leaf_text(kids[1])
+    ro pat = kids[1]
     ro range = branch_children(kids[3]) // Bin: [lo, .., hi]
-    // The loop variable is a binding local of the body, and the head is printed from the
-    // record that carries it (M2b-2 step 3a).
-    ro lv = @ir.named(@ctx.prims.int_id, v)
-    ro head = LoopHead.Range(RangeHead { var: lv, lo: range[0], hi: range[2] })
+    ro hi_l = @ir.temp(@ctx.prims.int_id)
+    @lower_place(range[2], hi_l)
+    // A plain binder keeps the author's name on the counter; a `_` header
+    // binds nothing, and the counter is a temporary nobody spells. (A
+    // structured pattern never reaches here against `int` -- the checker's
+    // own door refused it.)
+    ro lv = if pattern_shape(pat) == PatShape.Bind {
+        @ir.named(@ctx.prims.int_id, pattern_head_text(pat))
+    } else {
+        @ir.temp(@ctx.prims.int_id)
+    }
+    ro head = LoopHead.Range(RangeHead { var: lv, lo: range[0], hi: hi_l })
     ro c = @ir.begin_loop(head)
     @lower_block_stmts_fn(kids[4], false)
     @ir.end_loop(c)
@@ -616,17 +645,37 @@ fn Lowerer mut @lower_for_each(kids []Node) -> () {
     ro ht = @out.type_of(head.id_of())
     ro elem_t = for_head_elem(@ctx, ht)
     // Both the collection and the index are TEMPORARIES of the body, named by their
-    // indices (274.8 M3). Only the element keeps `named`: `for v in xs` -- `v` is the
-    // author's word, and that is the one question `LocalKind` still answers.
+    // indices (274.8 M3).
     ro lv = @ir.temp(ht)
     @lower_place(head, lv)
     // All three locals of the walk exist before the head is printed, because the head is
     // printed FROM the record that names them (M2b-2 step 3a).
     ro li = @ir.temp(@ctx.prims.int_id)
-    ro le = @ir.named(elem_t, leaf_text(kids[1]))
+    ro pat = kids[1]
+    ro shape = pattern_shape(pat)
+    // A PLAIN BINDER keeps the author's word on the element local itself (wave
+    // P5): no temporary between the slot read and the name, so the B16 C of
+    // every existing carrier is byte-unchanged. A STRUCTURED pattern (a tuple
+    // or a record -- the rest the checker's predicate refused) reads the
+    // element into a temporary first and binds through the one recursive door
+    // (`@lower_pattern_bind`, the "scrutinee once" contract). `_` reads
+    // nothing: the walk counts, and an unread slot read would be waste.
+    ro le = if shape == PatShape.Bind {
+        @ir.named(elem_t, pattern_head_text(pat))
+    } else {
+        @ir.temp(elem_t)
+    }
     ro lh = LoopHead.Each(EachHead { vec: lv, idx: li, elem: le })
     ro c = @ir.begin_loop(lh)
-    @ir.take_elem(le, lv, li)
+    if shape == PatShape.Wild {
+        // Nothing binds the element.
+    } else {
+        @ir.take_elem(le, lv, li)
+        if shape != PatShape.Bind {
+            @lower_pattern_bind(pat, elem_t, le)
+        } else { // The element local IS the author's name, bound directly.
+        }
+    }
     @lower_block_stmts_fn(kids[4], false)
     @ir.end_loop(c)
 }

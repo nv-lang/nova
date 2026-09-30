@@ -21,8 +21,8 @@ fn at(r Result[int, int]) -> int => match r {
 }
 
 fn main() Io -> () {
-    ro v = Vec[int].of(10, 20, 30, 20)
-    ro s = Vec[int].of(10, 20, 30, 40)
+    ro v = [10, 20, 30, 20]
+    ro s = [10, 20, 30, 40]
     ro ip = v.position(|x| x == 20) ?? -1
     ro ir = v.rposition(|x| x == 20) ?? -1
     ro ic = if v.contains(20) { 3 } else { 0 }

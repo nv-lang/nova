@@ -1,0 +1,7 @@
+// Side observation (not K6): a fn returning a tuple that holds an Option.
+fn pair() -> (int, Option[int]) => (1, None)
+
+fn main() {
+    ro p = pair()
+    println(p.0)
+}

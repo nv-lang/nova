@@ -1,0 +1,9 @@
+// D486 s4: constructor in a while-condition is allowed. `None` is a
+// payload-less constructor, not a name binding.
+fn main() {
+    ro o = Some(3)
+    while None = o {
+        println(0)
+    }
+    println(1)
+}

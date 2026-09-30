@@ -434,8 +434,7 @@ export fn Interner @is_concrete(t TyId) -> bool {
 export fn Interner mut @subst(t TyId, args []TyId) -> TyId {
     ro row = @rows[raw_ty(t)]
     match row.kind {
-        // `same_ty`, not `t`: see [LEGACY-#760-newtype-ro-launder] above.
-        TkPrim => { return same_ty(t) }
+        TkPrim => { return t }
         TkRecord => { return same_ty(t) }
         TkSum => { return same_ty(t) }
         TkInfer => { return same_ty(t) }

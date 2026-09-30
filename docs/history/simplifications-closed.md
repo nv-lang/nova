@@ -29901,8 +29901,8 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   build-from-source путь, который до сих пор НИКОГДА реально не выполнялся
   на этой машине — ни через `nova test`, ни тем более через `nova build`):
   `build_vendor_ffi_lib`'s cl.exe/lib.exe response-файлы писались как голый
-  UTF-8 БЕЗ BOM → на профиле с кириллицей в имени пользователя (`C:\Users\
-  Евгений\...`, откуда резолвится git-кэш nova-tls) cl.exe читает `.rsp` в
+  UTF-8 БЕЗ BOM → на профиле с кириллицей в имени пользователя (`%USERPROFILE%\
+  ...`, откуда резолвится git-кэш nova-tls) cl.exe читает `.rsp` в
   ANSI-кодовой странице процесса (тут cp1251) и коверкает путь →
   `C1083: file not found` на КАЖДОМ `.c`-файле mbedTLS. Фикс: `\u{FEFF}`
   (UTF-8 BOM) префикс на обоих `.rsp` (compile + lib/archive) — cl.exe/

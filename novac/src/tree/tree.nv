@@ -68,8 +68,9 @@ export type NodeKind enum
     | LoopCtl
     | BindStmt
     | AssignStmt
-    | ForStmt
+    | ForStmt /// `for <pattern> in expr { ... }` (wave P5, D486 s4's first column -- the header is a binding position): KwFor, Pattern, KwIn, head-expr, body-block. The pattern is read by the ONE door (`@pattern()`) and judged by the ONE binder; irrefutable forms only, the loop has no `else`
     | WhileStmt
+    | WhileLet /// `while <pattern> = expr { ... }` (wave P4, D486 s4's third column): KwWhile, Pattern, Assign, initializer, body-block. The same fixed layout as IfLet (the condition judgment is one; a while-let has no `else`), slots are the constants of sem/slots.nv. Semantics: the initializer is evaluated and the pattern tested ONCE PER ITERATION; the loop ends the first time the match fails
     /// A handler-installation statement: `with Fs = h, Os = h2 { body }`
     /// (D61; wave 274.11 Э.4). Contextual word, not a lexer keyword.
     | WithStmt
@@ -109,6 +110,11 @@ export type NodeKind enum
     | MatchExpr
     | MatchArm
     | Pattern
+    // One field of a record PATTERN (`{ x }`, `{ f: sub }`, D486): a Name
+    // for the shorthand binder, or `Ident : Pattern` for a renamed or
+    // nested field. `NodeKind.Field` is taken by type DECLARATIONS, and a
+    // pattern field is neither a declaration nor a constructor argument.
+    | PatField
     | ArrayLit
     | ArraySpread
     | Guard
@@ -136,8 +142,8 @@ export type NodeKind enum
     // the other needs a temporary it does not build yet.
     | IfExpr
     | TupleExpr
-    | DestructureBind /// destructuring binding: `ro (a, b) = e` by position or `ro { x, y } = e` / `ro { x, .. } = e` by name. ONE kind for both, because D411 gives the language ONE pattern grammar -- the opening leaf says which shape was written, and the checker judges the shape against the type
-    | IfLet /// `if Some(v) = expr { ... } [else ...]` (if-let wave; else -- W1; qualified head -- #1259): KwIf, variant ident (or, when qualified, sum ident + `.` + variant ident), LParen, binder ident, RParen, Assign, initializer, then-block, then optionally KwElse and a Block or a chained if / if-let. `sem/slots.nv`'s `iflet_*_at` doors answer where each part sits -- the qualifier shifts everything after it by two, so no fixed offset here is honest for both shapes
+    | DestructureBind /// destructuring binding: `ro (a, b) = e`, `ro { x, .. } = e`, and every other pattern the ONE grammar reads (D486): children are the mode keyword, ONE Pattern node, `=`, the initializer. The checker holds the position to irrefutable forms (D486 §4, E_REFUTABLE_BINDING); the shape question lives in sem's `pattern_shape`, not in an opening leaf
+    | IfLet /// `if <pattern> = expr { ... } [else ...]` (if-let wave; else -- W1; ONE Pattern child -- wave P3, D486): KwIf, Pattern, Assign, initializer, then-block, then optionally KwElse and a Block or a chained if / if-let. Fixed slots now -- `sem/slots.nv`'s `iflet_*_at` doors are plain constants, the qualifier lives inside the Pattern
     | Requires /// a `requires <expr>, "<text>"` clause between signature and body (contracts): word leaf, condition expr, comma, message StrLit
     | EffectItem /// one effect in a signature's effect_list (D3/D209, `spec/decisions/04-effects.md`): `Fs`, `Fail[E]` -- a bare type reference, sitting as a FnDecl child between `)` and the optional `-> T`/body. Zero or more, space-separated, no markers -- the boundary is structural (D3's own phrase), so there is no wrapping list node: each effect is its own sibling, in source order, the same way `Requires` clauses stack.
     // `@field` -- a field of the receiver, inside a method body.

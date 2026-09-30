@@ -1,0 +1,15 @@
+=== SUBJECT: novac check
+{"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"D:/Temp/hunt-check-k6/bind-top-unit-variant/probe.nv","start":216,"end":218},"message":"a binding pattern that names a variant is refutable -- rename the binding, or match on the value (D411)","poisoned_by":null}
+novac rc=1
+=== ORACLE: nova check
+[31mFAIL:[0m D:/Temp/hunt-check-k6/bind-top-unit-variant/probe.nv
+  D:/Temp/hunt-check-k6/bind-top-unit-variant/probe.nv:8:8: error: [E_REFUTABLE_BINDING] refutable pattern in `let`: `B` is a variant-pattern — match is not statically guaranteed (D52/D59/D411). Use `if let` or `match` instead.
+  8 |     ro B = s
+    |        ^
+    note: Plan 53: variant-patterns need a runtime tag-check — `let` guarantees binding, not a fallible match.
+    note: example: `if let B(..) = <expr> { ... }`
+
+===== SUMMARY =====
+PASS: 0  [31mFAIL[0m: 1  WARN: 0
+[1m[31merror:[0m[0m 1 file(s) failed type-check
+oracle check rc=1

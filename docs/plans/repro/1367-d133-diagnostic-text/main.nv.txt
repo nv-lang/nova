@@ -1,0 +1,60 @@
+// EXPECT_STDOUT accepted: hello
+// expected: a consume enum holding a TcpStream dispatches reads and writes
+//   like the bare socket: the listener accepts "hello".
+// got: build diagnostics with an EMPTY resolved type for the enum
+//   ("переменная `boxed` (тип ``)") and, when coerced past, segfault /
+//   empty results — the enum payload (a consume record of raw pointers)
+//   is mis-handled (observed in pgnet's ConnStream: Require->RefusedTls
+//   worked because no Connection was built; every path constructing
+//   Connection{Plain|Tls} then using it crashed or produced garbage).
+// command: ./nova.sh build repro-local/enum_consume_socket/src/main.nv -o target/ecs.exe && ./target/ecs.exe
+module main
+
+import std.net.{TcpStream, TcpListener, real_net}
+
+type Boxed consume enum
+    | S(TcpStream)
+
+fn write_it(mut b Boxed, data []u8) Net -> Result[(), str] {
+    match b {
+        S(s) => match s.write_all(data) {
+            Ok(()) => Ok(())
+            Err(e) => Err("write: ${e}")
+        }
+    }
+}
+
+fn main() {
+    with Net = real_net() {
+        match go() {
+            Ok(msg) => println("accepted: ${msg}")
+            Err(e) => println("FAIL: ${e}")
+        }
+    }
+}
+
+fn go() Net -> Result[str, str] {
+    consume listener = match TcpListener.bind("127.0.0.1:0") {
+        Ok(consume l) => l
+        Err(e) => return Err("bind: ${e}")
+    }
+    ro port = listener.local_port()
+    consume stream = match TcpStream.connect("127.0.0.1:${port}") {
+        Ok(consume s) => s
+        Err(e) => return Err("connect: ${e}")
+    }
+    consume boxed = Boxed.S(stream)
+    write_it(boxed, "hello".bytes())?
+    consume conn = match listener.accept() {
+        Ok(consume c) => c
+        Err(e) => return Err("accept: ${e}")
+    }
+    ro buf = match conn.read_bytes(5) {
+        Ok(b) => b
+        Err(e) => return Err("read: ${e}")
+    }
+    match buf.to_str() {
+        Ok(t) => Ok(t)
+        Err(_) => Ok("not utf8")
+    }
+}

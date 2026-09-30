@@ -322,7 +322,8 @@ fn Cursor mut @primary() -> Node {
             // suffix with no right-hand side, at the SAME tier as `??` so the
             // two chain left to right (`a? ?? b`, `a ?? b?`) instead of one
             // silently winning by being parsed first. Reaches the tree as
-            // its own kind -- the checker refuses it BY NAME (E2), not the
+            // its own kind -- the checker refuses it BY NAME (E2,
+            // `check/exprs.nv:170`, the `Try` arm of `@type_expr`), not the
             // lexer as a syntax error, mirroring `?? return`'s own rule two
             // lines below.
             e = @node(NodeKind.Try, []Node.of(e, @take()))
@@ -351,58 +352,11 @@ fn Cursor mut @primary() -> Node {
     }
     e
 }
-
-/// ONE element of a variant's payload pattern (D157, spec amendment for
-/// registry #1240): a binder -- optionally `mut` -- or a NESTED sub-pattern,
-/// `(a, b)` for a tuple payload or `{a, b}` for a record one. Pushed FLAT
-/// into `pk`, the convention the array pattern already uses a few lines
-/// down (`[b1, b2, ..]`): the checker re-reads the delimiter leaves
-/// structurally, so nesting costs no new node kind here, only a door that
-/// recurses instead of stopping at the first `Ident`.
-///
-/// `Some((first, cnt))` used to fall through this loop entirely -- it read
-/// ONLY a flat, comma-separated run of `Ident`, so a leading `(` (the start
-/// of the nested tuple) matched no branch and the whole arm dropped into
-/// the parser's unnamed fallback (registry #1240, three cascaded
-/// diagnostics from one mistake). The grammar was never narrower than
-/// this -- D157 already named the form legal on 2026-07-21 -- the parser
-/// simply had not read that far.
-fn Cursor mut @variant_payload_elem(mut pk []Node) -> () {
-    if @peek() == TokenKind.KwMut {
-        pk.push(@take())
-    } else {
-        // No mode word: the binder is `ro` by the pattern's own default.
-    }
-    if @peek() == TokenKind.LParen {
-        pk.push(@take())
-        while @peek() == TokenKind.Ident || @peek() == TokenKind.KwMut ||
-              @peek() == TokenKind.LParen || @peek() == TokenKind.LBrace {
-            @variant_payload_elem(pk)
-            @push_if(pk, TokenKind.Comma)
-        }
-        @push_expected(pk, TokenKind.RParen)
-    } else if @peek() == TokenKind.LBrace {
-        // The record sub-pattern is FLAT (D157: `"{" IDENT ("," IDENT)*
-        // "}"`) -- a nested tuple or record inside a record field is not
-        // part of the norm this amendment names, so it is not read here.
-        pk.push(@take())
-        while @peek() == TokenKind.Ident {
-            pk.push(@take())
-            @push_if(pk, TokenKind.Comma)
-        }
-        @push_expected(pk, TokenKind.RBrace)
-    } else if @peek() == TokenKind.Ident {
-        pk.push(@take())
-    } else {
-        @push_expected(pk, TokenKind.Ident)
-    }
-}
-
 /// `match scrutinee { arm* }` — an arm is `pattern [if guard] => expr`.
-/// Patterns of the subset: int literal · binder ident (`_` included — the
-/// emitter treats any binder named `_` as bindless) · `Variant(b1, b2)`,
-/// each payload position itself a binder or a nested tuple/record
-/// sub-pattern (D157, `@variant_payload_elem` above).
+/// The pattern is read by `@pattern()` below -- the ONE door of the whole
+/// pattern grammar (D486 §2): literals, binders (`_` included), variants
+/// with payload subpatterns of any nesting (D157), record/tuple/array
+/// forms, disjunctions.
 /// Arm separators are newlines (D452 land); the tree does not care — arms
 /// run to the closing brace, lossless either way.
 fn Cursor mut @match_expr() -> Node {
@@ -412,132 +366,12 @@ fn Cursor mut @match_expr() -> Node {
     while !@at_eof() && @peek() != TokenKind.RBrace {
         ro before = @i
         mut ak = []Node.new()
-        // pattern
-        // A LITERAL PATTERN -- integer, string or char. One leaf each, and
-        // the three stand together because they are one form of the
-        // grammar: D19 lists `literal` as a single alternative of `pattern`,
-        // not three.
-        //
-        // THE INTEGER ONE WAS READ AND THE OTHER TWO WERE NOT, which is a
-        // difference nothing in the language justifies -- it is simply where
-        // the subset had got to. Measured 2026-09-20: last two of the four
-        // arm shapes the parser stopped at, one file each
-        // (`lex/lex.nv:462` matches keyword spellings against string
-        // literals, `diag/diag.nv:110` escapes characters against char
-        // literals) -- and those two files are where the remaining
-        // self-hosting diagnostics are most concentrated.
-        if @peek() == TokenKind.IntLit || @peek() == TokenKind.StrLit ||
-           @peek() == TokenKind.CharLit {
-            ak.push(@node(NodeKind.Pattern, []Node.of(@take())))
-        } else if @peek() == TokenKind.EmptyBrackets {
-            // The empty array pattern is one token now.
-            ak.push(@node(NodeKind.Pattern, []Node.of(@take())))
-        } else if @peek() == TokenKind.LBracket {
-            // Array pattern: `[]` (empty) or `[b1, b2, ..]` (prefix binders
-            // + optional rest). Leaves in order; the emitter reads binders
-            // as Ident leaves and `..` as the rest marker.
-            mut pk = []Node.of(@take())
-            while !@at_eof() && @peek() != TokenKind.RBracket {
-                if @peek() == TokenKind.Ident || @peek() == TokenKind.DotDot {
-                    pk.push(@take())
-                } else {
-                    // RECOVERY-BOUNDED: the loop above stops at `]`, so the array
-                    // pattern's own closer never reaches this take. Other closers CAN
-                    // be eaten here, and that is the known width of this bound rather
-                    // than an oversight -- the enclosing form re-reads them at its own
-                    // level. Measured 2026-09-04: this site never reaches
-                    // `is_terminator`, so a holder built on it passes with the rule
-                    // stubbed out.
-                    pk.push(@node(NodeKind.Err, []Node.of(@take())))
-                }
-                @push_if(pk, TokenKind.Comma)
-            }
-            @push_expected(pk, TokenKind.RBracket)
-            ak.push(@node(NodeKind.Pattern, pk))
-        } else if @peek() == TokenKind.Ident {
-            mut pk = []Node.of(@take())
-            // A QUALIFIED variant: `K.A => ...`, the sum named before the
-            // variant. Read as two more leaves in the same Pattern node, the
-            // way `sem` already reads a qualified name elsewhere -- the
-            // parser records the shape and the checker decides what it means.
-            //
-            // MEASURED 2026-09-20, and this is why it is first of four. The
-            // parser's fallback was 143 of the 332 diagnostics left after the
-            // peers wave -- a BUCKET, not a form. Taking the FIRST refusal of
-            // each file (plan 274:3056: later spans are recovery debris) left
-            // nineteen places, and they were one family: match-arm patterns.
-            // A matrix of one shape per file then named the four the parser
-            // stops at, of which this is one:
-            //   `K.A => 1`            qualified variant   <- here
-            //   `Some(v) => return v` a bare return body
-            //   `"a" => 1`            a string literal
-            //   `'a' => 1`            a char literal
-            // while a bare variant, `_` and an integer literal were read
-            // already. Carriers: `check/check.nv:313` (`DiagKind.LangError`),
-            // `lower/ir.nv:646` (`ElseShape.NoElse`).
-            if @peek() == TokenKind.Dot && @peek(skip: 1) == TokenKind.Ident {
-                pk.push(@take())
-                pk.push(@take())
-            } else {
-                // An unqualified head: the branches below answer for it.
-            }
-            // A record-form variant in PATTERN position: `Circle { radius }`.
-            // D54 (#719) makes this the only legal way to destructure such a
-            // variant -- the positional form is refused by the oracle since
-            // 2026-08-17 -- so the parser must know the brace shape to let
-            // the checker say anything about either.
-            if @peek() == TokenKind.LBrace {
-                mut depth = 0
-                while !@at_eof() {
-                    depth += brace_delta(@peek())
-                    pk.push(@take())
-                    if depth == 0 { break }
-                }
-            } else {
-                // Not a record-form pattern: the paren form below answers.
-            }
-            if @peek() == TokenKind.LParen {
-                pk.push(@take())
-                while @peek() == TokenKind.Ident || @peek() == TokenKind.KwMut ||
-                      @peek() == TokenKind.LParen || @peek() == TokenKind.LBrace {
-                    @variant_payload_elem(pk)
-                    @push_if(pk, TokenKind.Comma)
-                }
-                @push_expected(pk, TokenKind.RParen)
-            } else {
-                // A bare identifier pattern: a binder (`_` included) or a
-                // payload-less variant. The two are told apart by the names
-                // table, not by the parser -- both are one leaf here.
-            }
-            // A DISJUNCTION (`A | B(_)` -- the pattern-alternatives wave):
-            // every alternative is one more head after a pipe, flat in the
-            // same Pattern node; the checker judges the binders and the
-            // emitter ORs the tag tests. IntLit alternatives arrive with a
-            // carrier.
-            while @peek() == TokenKind.Pipe {
-                pk.push(@take())
-                @push_expected(pk, TokenKind.Ident)
-                if @peek() == TokenKind.LParen {
-                    pk.push(@take())
-                    while @peek() == TokenKind.Ident || @peek() == TokenKind.KwMut ||
-                          @peek() == TokenKind.LParen || @peek() == TokenKind.LBrace {
-                        @variant_payload_elem(pk)
-                        @push_if(pk, TokenKind.Comma)
-                    }
-                    @push_expected(pk, TokenKind.RParen)
-                } else {
-                    // A bare alternative: one leaf, exactly as the first head.
-                }
-            }
-            ak.push(@node(NodeKind.Pattern, pk))
-        } else {
-            // Recovery: one Err, one token, keep the arm loop advancing.
-            // RECOVERY-BOUNDED: the arm loop stops at `}`, the match's own
-            // closer, so it is never taken here; the non-advancement guard
-            // below keeps the loop honest when nothing moves.
-            kids.push(@node(NodeKind.Err, []Node.of(@take())))
-            continue
-        }
+        // THE PATTERN, through the ONE door (D486 §2): the same recursive
+        // reader serves every destructuring site -- the flat per-form chain
+        // that stood here (literal / array / ident-head, with
+        // `@variant_payload_elem` for payloads) was the parser half of the
+        // "three readers of one grammar" class the pattern arc removes.
+        ak.push(@pattern())
         if @peek() == TokenKind.KwIf {
             mut gk = []Node.of(@take())
             gk.push(@expr())
@@ -590,6 +424,154 @@ fn Cursor mut @match_expr() -> Node {
     }
     @push_expected(kids, TokenKind.RBrace)
     @node(NodeKind.MatchExpr, kids)
+}
+
+/// ONE PATTERN DOOR for the whole grammar (D486 §2): every destructuring
+/// site reads a pattern here -- the match arm today; the destructuring
+/// binding, the if/while condition and the for header as the pattern arc
+/// reaches them (plan 274.5 §5y). A disjunction is the top level:
+/// `primary (| primary)*`, one Pattern whose children are the alternatives.
+///
+/// The tree stays lossless: every token is a leaf, subpatterns are Pattern
+/// branches, every binding name is a Name node (the invariant
+/// sem/pattern.nv enforces). What a bare name MEANS -- binder or
+/// payload-less variant -- is the checker's question (the names table
+/// answers it), never the parser's.
+fn Cursor mut @pattern() -> Node {
+    mut kids = []Node.of(@pattern_primary())
+    while @peek() == TokenKind.Pipe {
+        kids.push(@take())
+        kids.push(@pattern_primary())
+    }
+    if kids.len() == 1 { return kids[0] }
+    @node(NodeKind.Pattern, kids)
+}
+
+/// One pattern alternative. The FIRST TOKEN decides the form -- the grammar
+/// is LL(1) here, so recognition is a lookup, not a search: a literal, `[]`,
+/// `(`, `[`, `{`, a mode word, or an identifier head.
+fn Cursor mut @pattern_primary() -> Node {
+    ro t = @peek()
+    // A LITERAL PATTERN -- integer, string or char (D19's single
+    // `literal` alternative), and the empty array pattern `[]`, which is
+    // one token now and the Array shape's zero-element case.
+    if t == TokenKind.IntLit || t == TokenKind.StrLit || t == TokenKind.CharLit ||
+       t == TokenKind.EmptyBrackets {
+        return @node(NodeKind.Pattern, []Node.of(@take()))
+    }
+    // A tuple or array pattern: subpatterns and the `..` rest marker.
+    if t == TokenKind.LParen { return @seq_pattern(TokenKind.RParen) }
+    if t == TokenKind.LBracket { return @seq_pattern(TokenKind.RBracket) }
+    // A mode word binds exactly one name: `ro x`, `mut x`, `consume x`
+    // (D34; `ro` read since wave P3 for the if/while condition -- D486 §4).
+    if t == TokenKind.KwMut || t == TokenKind.KwConsume || t == TokenKind.KwRo {
+        mut mk = []Node.of(@take())
+        @push_binder(mk)
+        return @node(NodeKind.Pattern, mk)
+    }
+    // A head-less record pattern: `{ name, age }` against the scrutinee
+    // itself (D34's condition form; the oracle reads it in match arms too).
+    if t == TokenKind.LBrace { return @record_pattern([]Node.new()) }
+    if t == TokenKind.Ident {
+        // A HEAD is an ident that a `.`, `(` or `{` follows: `Some(..)`,
+        // `Circle { .. }`, `mod.Type.Variant(..)` -- qualified to any
+        // depth (D486 §2). Anything else is a lone name: the wildcard, or
+        // a Name-wrapped binder-or-unit-variant (the checker decides which).
+        ro is_head = (@peek(skip:1) == TokenKind.Dot && @peek(skip:2) == TokenKind.Ident) ||
+                     @peek(skip:1) == TokenKind.LParen ||
+                     @peek(skip:1) == TokenKind.LBrace
+        if !is_head {
+            if @peek_text() == "_" {
+                return @node(NodeKind.Pattern, []Node.of(@take()))
+            }
+            return @node(NodeKind.Pattern, []Node.of(@node(NodeKind.Name, []Node.of(@take()))))
+        }
+        mut hk = []Node.of(@take())
+        while @peek() == TokenKind.Dot && @peek(skip:1) == TokenKind.Ident {
+            hk.push(@take())
+            hk.push(@take())
+        }
+        if @peek() == TokenKind.LBrace { return @record_pattern(hk) }
+        if @peek() == TokenKind.LParen { return @variant_pattern(hk) }
+        // A qualified payload-less variant: the head leaves are the pattern.
+        return @node(NodeKind.Pattern, hk)
+    }
+    // Recovery: one Err, one token, the arm loop keeps advancing. A closing
+    // token is NOT consumed: it belongs to the enclosing form (274.3/F15),
+    // so a terminator gets the zero-width marker instead.
+    if is_terminator(@peek()) {
+        return @error_node(TokenKind.ErrorTok)
+    }
+    @node(NodeKind.Err, []Node.of(@take()))
+}
+
+/// A variant's payload: `( subpattern, ... )` after the head leaves.
+/// `Cons(..)` -- a payload that is only the rest marker -- is D59's
+/// positional partial form and reads here too.
+fn Cursor mut @variant_pattern(mut kids []Node) -> Node {
+    kids.push(@take()) // the `(`
+    while !@at_eof() && @peek() != TokenKind.RParen {
+        if @peek() == TokenKind.DotDot {
+            kids.push(@take())
+        } else {
+            kids.push(@pattern())
+        }
+        @push_if(kids, TokenKind.Comma)
+    }
+    @push_expected(kids, TokenKind.RParen)
+    @node(NodeKind.Pattern, kids)
+}
+
+/// A tuple or array pattern body: `open subpattern, .. close` -- the two
+/// share every rule but the bracket (D59: positions, one `..`, `[..rest]`
+/// binding spelled as the DotDot leaf followed by its binder subpattern).
+fn Cursor mut @seq_pattern(close TokenKind) -> Node {
+    mut kids = []Node.of(@take()) // the opener
+    while !@at_eof() && @peek() != close {
+        if @peek() == TokenKind.DotDot {
+            kids.push(@take())
+        } else {
+            kids.push(@pattern())
+        }
+        @push_if(kids, TokenKind.Comma)
+    }
+    @push_expected(kids, close)
+    @node(NodeKind.Pattern, kids)
+}
+
+/// A record pattern body: `{ x, f: sub, mut y, .. }` after any head leaves.
+/// A field is a PatField node: a Name (shorthand binder), a mode word with
+/// its Name, or `ident : subpattern` for a renamed or nested field.
+fn Cursor mut @record_pattern(mut kids []Node) -> Node {
+    kids.push(@take()) // the `{`
+    while !@at_eof() && @peek() != TokenKind.RBrace {
+        if @peek() == TokenKind.DotDot {
+            kids.push(@take())
+        } else if @peek() == TokenKind.Ident {
+            mut fk = []Node.new()
+            if @peek(skip:1) == TokenKind.Colon {
+                fk.push(@take()) // the field's name
+                fk.push(@take()) // the `:`
+                fk.push(@pattern())
+            } else {
+                fk.push(@node(NodeKind.Name, []Node.of(@take())))
+            }
+            kids.push(@node(NodeKind.PatField, fk))
+        } else if @peek() == TokenKind.KwMut || @peek() == TokenKind.KwConsume {
+            mut fk = []Node.of(@take())
+            @push_binder(fk)
+            kids.push(@node(NodeKind.PatField, fk))
+        } else {
+            // RECOVERY-BOUNDED: the loop stops at `}`, the pattern's own
+            // closer, so it is never taken here; other closers can be eaten
+            // and are re-read by the enclosing form, the known width of
+            // every bound of this shape.
+            kids.push(@node(NodeKind.Err, []Node.of(@take())))
+        }
+        @push_if(kids, TokenKind.Comma)
+    }
+    @push_expected(kids, TokenKind.RBrace)
+    @node(NodeKind.Pattern, kids)
 }
 
 /// Constructor field list after the opening brace: `name: expr`, punning
@@ -709,6 +691,14 @@ fn Cursor mut @atom() -> Node {
     // under its own kind: the emitter writes the statement directly and needs a
     // temporary for the expression, so conflating them would emit silence.
     if @peek() == TokenKind.KwIf {
+        // AN IF-LET IN VALUE POSITION: the same one door as the statement
+        // (`@iflet_try`, parse.nv) -- the node shape is one, only the else
+        // chain recurses into THIS reader (`in_value`), exactly as the plain
+        // value `if` below does.
+        match @iflet_try(in_value: true) {
+            Some(n) => return n
+            None => {}
+        }
         mut kids = []Node.of(@take())
         kids.push(@head_expr())
         if @peek() == TokenKind.LBrace { kids.push(@block()) } else { kids.push(@missing_of(TokenKind.ErrorTok)) }
@@ -829,7 +819,8 @@ fn Cursor mut @atom() -> Node {
                 // No argument list: check names the shape.
             }
         } else {
-            // A bare `[]`: an empty literal, judged by check.
+            // A bare `[]`: an empty literal, judged by check
+            // (`check/binds.nv:598`, `@type_array_lit`).
         }
         return @node(NodeKind.ArrayLit, kids)
     }
@@ -884,7 +875,8 @@ fn Cursor mut @atom() -> Node {
             // tell an index from a type application; only what the left name
             // RESOLVES TO can, and resolution is the checker's root, not the
             // parser's (`naming a type is the registry's answer`, above).
-            // So the run is read losslessly and judged by name later. Before
+            // So the run is read losslessly and judged by name later
+            // (`check/binds.nv:405`, `@type_index`). Before
             // this, the comma alone cost four refusals from one line.
             ik.push(@expr())
             while @peek() == TokenKind.Comma {
