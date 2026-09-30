@@ -21534,7 +21534,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         match &f.body {
             FnBody::Expr(e) => {
                 self.emit_source_annotation_for_expr(e);
-                let val = self.emit_expr(e)?;
+                let val = self.emit_expr_in_place(e, &ret_c)?;
                 if ret_c == "nova_unit" {
                     self.line(&format!("{};", val));
                     self.line("return NOVA_UNIT;");
@@ -27353,7 +27353,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if !bridge_emitted { match &body_clone {
             FnBody::Expr(e) => {
                 self.emit_source_annotation_for_expr(e);
-                let val = self.emit_expr(e)?;
+                let val = self.emit_expr_in_place(e, &ret_c)?;
                 if ret_c == "nova_unit" {
                     self.line(&format!("{};", val));
                     // Plan 140 cgfix: ensures on a unit-return expr body.
@@ -27456,9 +27456,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // this correctly (decodes `_NovaTuple_` elem types, recurses
                     // per element) — it just wasn't reached from here. See
                     // docs/plans/wip/closure-megacu-fix-notes.md.
-                    let val = if ret_c.starts_with("NovaOpt_") || ret_c.starts_with("_NovaFixArr_")
-                        || ret_c.starts_with("_NovaTuple_")
-                        || Self::is_typed_integer(&ret_c) || Self::is_bytes_slice_c_ty(&ret_c) {
+                    let val = if self.tail_takes_place_type(&ret_c, trailing) {
                         self.emit_expr_with_target_type(trailing, &ret_c)?
                     } else {
                         self.emit_expr(trailing)?
@@ -28829,7 +28827,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         match &body_clone {
             FnBody::Expr(e) => {
                 self.emit_source_annotation_for_expr(e);
-                let val = self.emit_expr(e)?;
+                let val = self.emit_expr_in_place(e, &ret_c)?;
                 if ret_c == "nova_unit" {
                     self.line(&format!("{};", val));
                     self.line("return NOVA_UNIT;");
@@ -28869,9 +28867,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // this correctly (decodes `_NovaTuple_` elem types, recurses
                     // per element) — it just wasn't reached from here. See
                     // docs/plans/wip/closure-megacu-fix-notes.md.
-                    let val = if ret_c.starts_with("NovaOpt_") || ret_c.starts_with("_NovaFixArr_")
-                        || ret_c.starts_with("_NovaTuple_")
-                        || Self::is_typed_integer(&ret_c) || Self::is_bytes_slice_c_ty(&ret_c) {
+                    let val = if self.tail_takes_place_type(&ret_c, trailing) {
                         self.emit_expr_with_target_type(trailing, &ret_c)?
                     } else {
                         self.emit_expr(trailing)?
@@ -29986,9 +29982,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // gate above (`emit_block_stmts` trailing) for the full rationale;
                 // same tuple-embeds-fixarr nested-literal `[P67] nova_int collapse`
                 // ICE, same fix (docs/plans/wip/closure-megacu-fix-notes.md).
-                let val = if ret.starts_with("NovaOpt_") || ret.starts_with("_NovaFixArr_")
-                    || ret.starts_with("_NovaTuple_")
-                    || Self::is_typed_integer(&ret) || Self::is_bytes_slice_c_ty(&ret) {
+                let val = if self.tail_takes_place_type(&ret, e) {
                     self.emit_expr_with_target_type(e, &ret)?
                 } else {
                     self.emit_expr(e)?
@@ -32504,15 +32498,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // работала; при `-> str` не совпадали, и пользователь получал
             // ошибку чужого компилятора при зелёном `nova check`. То есть
             // громкий отказ был везением, а не проверкой.
-            //
-            // Новой логики эмиссии не добавляется: типизированная заглушка
-            // (`emit_divergent_with_target_125` + `typed_zero_value_125`, дающая
-            // `((T){0})` для структур) уже написана, до неё просто не доходил
-            // маршрут — `emit_expr_with_target_type` сам переадресует на неё.
-            let val = if ret_ty.starts_with("NovaOpt_") || ret_ty.starts_with("_NovaFixArr_")
-                || ret_ty.starts_with("_NovaTuple_")
-                || Self::is_typed_integer(ret_ty) || Self::is_bytes_slice_c_ty(ret_ty)
-                || self.expr_diverges_125(trailing) {
+            // №1401: №720 closed only THIS sink; the gate is `tail_takes_place_type`, shared by every tail sink.
+            let val = if self.tail_takes_place_type(ret_ty, trailing) {
                 self.emit_expr_with_target_type(trailing, ret_ty)?
             } else {
                 self.emit_expr(trailing)?
@@ -49427,6 +49414,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         Ok(format!("(({}), {})", raw, typed_zero))
     }
 
+    /// Registry #1401 (class): a `never` expr (checker channel `resolved_types` `Never`, or the divergence walk)
+    /// takes the C type of its PLACE, not the `(nova_int)0LL` dummy a value-struct place rejects. Every tail sink
+    /// routes here: `emit_expr_in_place` (fn/lambda arrow bodies), `tail_takes_place_type` (the four block-trailing gates).
+    fn is_never_125(&self, e: &Expr) -> bool { matches!(self.resolved_types.get(&e.id), Some(crate::types::ResolvedType::Never)) || self.expr_diverges_125(e) }
+    fn emit_expr_in_place(&mut self, e: &Expr, place_c: &str) -> Result<String, String> {
+        if self.is_never_125(e) { self.emit_divergent_with_target_125(e, place_c) } else { self.emit_expr(e) }
+    }
+    fn tail_takes_place_type(&self, ret: &str, tail: &Expr) -> bool {
+        ret.starts_with("NovaOpt_") || ret.starts_with("_NovaFixArr_") || ret.starts_with("_NovaTuple_")
+            || Self::is_typed_integer(ret) || Self::is_bytes_slice_c_ty(ret) || self.is_never_125(tail)
+    }
+
     /// Plan 125 followup [M-125-codegen-never-cast]: target-typed zero
     /// value expression. Used as the unreachable-but-type-correct value of
     /// a comma-expression wrapping a divergent side-effect.
@@ -56432,7 +56431,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
             }
         }
-        let body_val = self.emit_expr(body)?;
+        let body_val = self.emit_expr_in_place(body, &ret_c_ty)?;
         if ret_c_ty == "nova_unit" {
             self.line(&format!("{};", body_val));
             self.line("return NOVA_UNIT;");
