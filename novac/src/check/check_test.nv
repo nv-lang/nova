@@ -570,6 +570,20 @@ test "the position's predicate is judged at every depth, `_` inside a condition 
     assert(diagnose(cond) == 0, diagnose_first_msg(cond))
 }
 
+test "binder or variant is ONE door: a bare variant name in a condition is a variant pattern (registry 1380)" {
+    // `if N = s` was called "a name binding" -- the condition never asked whether
+    // the name is a variant; the binding and the match arm each asked their own way.
+    ro unit = "module m\n\ntype S enum\n    | P(int)\n    | N\n\nfn f(s S) -> int {\n    if N = s {\n        return 1\n    }\n    0\n}\n"
+    assert(!diagnose_first_msg(unit).contains("name binding"), diagnose_first_msg(unit))
+    assert(diagnose_first_msg(unit).contains("takes only"), diagnose_first_msg(unit))
+    // CONTROL: a name that is no variant stays a binder in the condition.
+    ro name = "module m\n\ntype S enum\n    | P(int)\n    | N\n\nfn f(s S) -> int {\n    if ro x = s {\n        return 1\n    }\n    0\n}\n"
+    assert(diagnose_first_msg(name).contains("name binding"), diagnose_first_msg(name))
+    // The binding position asks the same door: a payload-less variant refuses.
+    ro bind = "module m\n\ntype S enum\n    | P(int)\n    | N\n\nfn f(s S) -> int {\n    ro N = s\n    0\n}\n"
+    assert(diagnose_first_msg(bind).contains("names a variant is refutable"), diagnose_first_msg(bind))
+}
+
 test "a closed `str` slice is compiled; other receivers, open bounds and non-int bounds keep their refusals (274.7 U-1)" {
     // D470 section 5: `s[lo..hi]` is `s.index(Range { start: lo, end: hi })`, a
     // byte range of type `str` (D249). Wave U-1 compiles the closed form over

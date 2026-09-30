@@ -35,7 +35,7 @@ import ../builtins.{SLICE_HEAD}
 // The payload of an APPLIED sum, with the application's arguments put in.
 import ../sem.{payload_as_seen}
 import ../sem.{branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, raw_vrow, no_vrow}
-import ../sem.{is_vrow, variant_range_of, variant_in_sum, variants_named}
+import ../sem.{is_vrow, variant_range_of, variant_in_sum, variants_named, VariantRow}
 import ../types.{TyId, no_ty, is_ty}
 
 /// A match in STATEMENT position (274.5 wave B5): the scrutinee is typed and
@@ -393,15 +393,17 @@ fn Checker mut @bind_lit_pattern(pat Node, ak []Node) -> bool {
 /// no scope and reads the channel, which is the discipline the record keeps.
 fn Checker mut @bind_name_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode, pos PatPos) -> bool {
     ro nm = pattern_head_text(pat)
-    if is_vrow(variant_in_sum(@ctx, ty, nm) ?? no_vrow()) {
+    // BINDER OR VARIANT through the one door (registry 1380).
+    match @name_in_pattern(nm, ty) {
         // A payload-less variant binds nothing -- and it IS a variant pattern:
         // as refutable as `A(x)` where the position takes irrefutable forms
         // only, at any depth (registry 1379: `ro (a, None) = p`, `for B in xs`).
-        return !@refused_unit_variant(ak, pos)
-    }
-    if variants_named(@ctx, nm).1 > 0 {
-        @report_first_leaf_of(ak, WRONG_SUM_ARM_MSG)
-        return false
+        NameOwnVariant(_) => { return !@refused_unit_variant(ak, pos) }
+        NameForeignVariant(_) => {
+            @report_first_leaf_of(ak, WRONG_SUM_ARM_MSG)
+            return false
+        }
+        NameBinder => {}
     }
     // The `ro` word is refused BY NAME here (wave P3): it stands only in an
     // if/while condition, and the mapping below would otherwise read it as
@@ -912,53 +914,3 @@ const DESTR_NO_FIELD_PATTERN_MSG = "a brace pattern names a field this type does
 const ARRAY_PATTERN_MSG = "an array pattern needs a slice scrutinee (`[]T`)"
 const ARRAY_REST_TWICE_MSG = "an array pattern takes one `..` at most (D59) -- a second one is ambiguous"
 const WRONG_SUM_ARM_MSG = "this arm names a variant of a different sum than the value matched on (registry #964) -- write a variant of the matched sum, or a binder"
-
-/// WHERE a pattern stands (D486 §4): the three columns of the position table plus
-/// the match arm, which takes every form. Named by the caller once and handed down
-/// the recursion, so the predicate is judged at every node (registry 1379).
-type PatPos enum
-    | PosArm /// a match arm: every form
-    | PosBind /// a destructuring binding: irrefutable forms only
-    | PosFor /// a `for` header: irrefutable forms only, the loop has no `else`
-    | PosCond /// an if/while condition: no literal and no `|` at any depth; `_` inside is legal
-
-/// The position's predicate at ONE node, true when refused (D486 §4). A binding
-/// and a `for` header refuse every refutable form; a condition refuses the forms
-/// that compare with a VALUE -- a literal or `|` -- and keeps `_` inside (the
-/// amendment's one exception: only a pattern that IS `_` means nothing, and the
-/// condition's own door refuses that at the root). These are LANGUAGE errors.
-fn Checker mut @refused_at_position(pat Node, ak []Node, pos PatPos) -> bool {
-    ro refutable = match pattern_shape(pat) {
-        Lit | Variant | Array | Disj => true
-        Tuple | Record | Bind | Wild => false
-    }
-    ro compares_value = match pattern_shape(pat) {
-        Lit | Disj => true
-        Tuple | Record | Bind | Wild | Variant | Array => false
-    }
-    match pos {
-        PosArm => false
-        PosBind => @reject_if(refutable, ak, REFUTABLE_BINDING_MSG)
-        PosFor => @reject_if(refutable, ak, FOR_REFUTABLE_MSG)
-        PosCond => @reject_if(compares_value, ak, COND_VALUE_PATTERN_MSG)
-    }
-}
-
-/// Refuse as a LANGUAGE error when `bad`, and say whether it did.
-fn Checker mut @reject_if(bad bool, ak []Node, msg str) -> bool {
-    if bad {
-        @reject_first_leaf_of(ak, msg)
-        return true
-    }
-    false
-}
-
-/// A payload-less variant named in a pattern: refused where the position takes
-/// irrefutable forms only (a binding, a `for` header), true when refused.
-fn Checker mut @refused_unit_variant(ak []Node, pos PatPos) -> bool {
-    match pos {
-        PosArm | PosCond => false
-        PosBind => @reject_if(true, ak, REFUTABLE_BINDING_MSG)
-        PosFor => @reject_if(true, ak, FOR_REFUTABLE_MSG)
-    }
-}
