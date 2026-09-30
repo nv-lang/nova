@@ -819,6 +819,7 @@ impl Parser {
             // is done with it; `Module` owns it from this point on).
             consume_match_scrutinees: std::mem::take(&mut self.consume_match_scrutinees),
             prelude_missing: None,
+            import_alias_refs: Default::default(),
         })
     }
 

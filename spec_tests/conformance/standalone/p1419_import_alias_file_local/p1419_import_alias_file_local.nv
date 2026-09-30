@@ -1,0 +1,24 @@
+// EXPECT_STDOUT 11|22|31|7|8|15
+//
+// Registry 221.1 #1419: `import m.{f as g}` names `m.f` as `g` in THIS file
+// only. The import resolver used to rename the declaration itself, for the
+// whole compile unit: `p1419_src`'s own `twice` calls `p1419_f`, and so does
+// `p1419_peer` through a plain `import ../p1419_src.{p1419_f}` -- both then
+// pointed at a symbol nobody emitted (measured before the fix with the alias
+// import first: `lld-link: undefined symbol: nova_fn_..9p1419_src1f`). A const
+// alias (`LIMIT as MAX`) takes the same road, and so does a fn VALUE taken
+// through the alias (`ro k = g`).
+//
+// `p1419_peer` is imported FIRST on purpose: it merges `p1419_src` before this
+// file's aliased import is resolved, so the alias meets an already-visited
+// module -- the path that never applied the alias at all (measured before the
+// fix: `[E_CODEGEN_TYPE_UNKNOWN] Ident `g` not in var_types`).
+module standalone.p1419_import_alias_file_local
+
+import ./p1419_peer.{peer_calls_f}
+import ./p1419_src.{p1419_f as g, twice, LIMIT as MAX, limit_plus}
+
+fn main() Io -> () {
+    ro k = g
+    print("${g(1)}|${twice(2)}|${peer_calls_f(21)}|${MAX}|${limit_plus(1)}|${k(5)}")
+}

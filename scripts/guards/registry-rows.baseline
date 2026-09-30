@@ -1433,6 +1433,9 @@
 # (W_REDUNDANT_OF/W_COERCE_EXPLICIT_REDUNDANT/W_NON_COMPOUND_ASSIGN, унаследованы
 # от волны [T consume] 2026-09-25) почищены мирно, без строки реестра -- они не
 # дефект, а стиль, и `nova check`+`nova test` подтвердили каждую правку.
+# 2026-10-01, integrator nova-20: rows 1386 -> 1387 (merge of p1234-import-alias: #1444, the type-alias half
+#   of #1419); 1444 leaves gaps.
+rows=1387
 # 2026-10-01, integrator nova-20: rows 1383 -> 1386, max -> 1447 (merge of the cloud session's p1420:
 #   #1445-#1447 found on the way); gaps 1441 (assistant), 1442 (guards agent), 1443 (Carina), 1444 (#1234 agent).
 rows=1386
@@ -2003,7 +2006,7 @@ stale_gaps=0
 # nomer I v gaps=, I so strokoy schitaetsya 'protuhshey dyroy'.
 # 2026-09-21: №1209 ПРИЕХАЛ и СНЯТ из gaps=
 # (писал интегратор, как и планировалось). №1210-1211 всё ещё ждёт Карину.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1430-1436,1439,1441,1442,1443,1444
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1430-1436,1439,1441,1442,1443
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding

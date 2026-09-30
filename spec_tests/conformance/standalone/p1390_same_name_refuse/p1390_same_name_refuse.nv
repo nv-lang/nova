@@ -1,6 +1,6 @@
 // EXPECT_COMPILE_ERROR E_CODEGEN_TYPE_UNKNOWN
 //
-// Registry 221.1 #1390, the CLASS half. Two imported free fns share a name
+// Registry 221.1 #1390, the CLASS half. Two imported overloads share a name
 // and an arity and differ in return type, and the checker could not pick one
 // (the argument is a `with` value whose body has a statement, which the
 // checker does not type -- the conservative bound of the #1390 checker fix).
@@ -9,10 +9,16 @@
 // and with `int` against `bool` the program printed a wrong value in silence.
 // Now it refuses loudly and names the call. The value-typed half is
 // `p1390_same_name_import/`.
+//
+// #1234 (D29, 07-modules.md "name conflicts"; 10-overloading.md: all overloads
+// of a name in ONE module): `pick` used to be imported from `p1390_rc` AND
+// `p1390_rf`, now a compile error of its own that would mask the refusal this
+// fixture pins. The overload set lives in `p1390_rc`; `p1390_rf`'s `pick` is
+// imported under an alias, which must not disturb the refusal.
 module standalone.p1390_same_name_refuse
 
 import ./p1390_rc.{pick}
-import ./p1390_rf.{pick}
+import ./p1390_rf.{pick as rf_pick}
 
 type P1390RSrc effect {
     fn items() -> []str
@@ -29,4 +35,8 @@ test "an unresolved call over same-arity namesakes is refused, not typed by name
     }
     ro n = pick(all)
     assert(n + 10 == 13)
+}
+
+test "the aliased namesake from the other module is reachable by its alias" {
+    assert(rf_pick("x"))
 }

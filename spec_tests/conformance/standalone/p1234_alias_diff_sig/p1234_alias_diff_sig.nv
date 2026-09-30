@@ -1,0 +1,23 @@
+// EXPECT_STDOUT 3001|net:4002|5
+//
+// Registry 221.1 #1234, second half (the nova-polaris shape): this module
+// declares its own `serve` and reaches the imported one through an alias. D29
+// ("name conflicts", spec/decisions/07-modules.md) makes the alias the way to
+// have both. Before the fix the checker bound `net_serve(l, 2)` to the OWN
+// `serve` (registry No. 534: the caller's module shadows every other one), so
+// the must-consume `l` was never consumed -- the nova-polaris window measured
+// `[D133-not-consumed] listener` for exactly this form on 2026-09-30.
+// `p1234_side` is imported first, so the alias meets an already-merged module
+// (the resolver's dedup path, which never applied the alias at all).
+module standalone.p1234_alias_diff_sig
+
+import ./p1234_side.{p1234_side_port}
+import ./p1234_net.{serve as net_serve, p1234_listen}
+
+fn serve(a int) -> int => 3000 + a
+
+fn main() Io -> () {
+    consume l = p1234_listen(4000)
+    ro s = net_serve(l, 2)
+    print("${serve(1)}|${s}|${p1234_side_port()}")
+}

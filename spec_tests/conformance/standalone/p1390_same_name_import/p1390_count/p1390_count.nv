@@ -1,4 +1,11 @@
-// #1390 carrier -- see `../p1390_same_name_import.nv`. The number of items.
+// #1390 carrier -- see `../p1390_same_name_import.nv`. The overload set of
+// `pick`: the number of items, and a `str` parameter with a DIFFERENT return
+// type that C converts silently. Both in ONE module since #1234 (D29: one name
+// imported from two modules is a compile error; 10-overloading.md
+// "LLM-criterion" keeps all overloads of a name together). The `str` overload
+// is true only for "x", so it differs from `p1390_flag`'s `pick` on "y".
 module p1390_same_name_import.p1390_count
 
 export fn pick(xs []str) -> int => xs.len()
+
+export fn pick(body str) -> bool => body == "x"

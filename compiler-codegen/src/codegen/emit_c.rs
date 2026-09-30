@@ -21782,26 +21782,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // file-private helper shadows a same-named module symbol within its own file.
         // (current_emit_file_id is set during the function-definition emit and during
         // call-site lowering; both share the declaring file for a file-local helper.)
-        if let Some(fid) = self.current_emit_file_id {
-            if let Some(mangled) = self.file_priv_fn_c_names.get(&(fid, name.to_string())) {
-                return mangled.clone();
-            }
-        }
         // [реестр 221.1 №1090] ТОТ ЖЕ ЛООКАП, но ключом служит файл
         // ОБЪЯВИВШЕГО, взятый из канала 196 — тот самый ключ, по
         // которому ищет ОПРЕДЕЛЕНИЕ (`mangle_fn`: `f.span.file_id`).
-        // Срабатывает только на промахе файлового лоокапа выше, то есть
-        // ровно в случае вызова ИЗ ДРУГОГО МОДУЛЯ, где до этой правки
-        // выходило голое `nova_fn_<name>`. Подробно — в докстроке
-        // `free_fn_c_name_at_call`.
-        if let Some(cid) = call_id {
-            if let Some(decl_span) = self.resolved_callees.get(&cid) {
-                if let Some(mangled) = self
-                    .file_priv_fn_c_names
-                    .get(&(decl_span.file_id, name.to_string()))
-                {
-                    return mangled.clone();
-                }
+        // №1419/№1234: канал спрашивается ПЕРВЫМ — вызов через алиас/`m.f`
+        // из файла со СВОИМ одноимённым `f` иначе получал символ своего.
+        if let Some(mangled) = self.callee_file_c_name(name, call_id) {
+            return mangled;
+        }
+        if let Some(fid) = self.current_emit_file_id {
+            if let Some(mangled) = self.file_priv_fn_c_names.get(&(fid, name.to_string())) {
+                return mangled.clone();
             }
         }
         // Plan 103.1 Ф.6: ExternalRegistry builtins (fence, etc.) always
