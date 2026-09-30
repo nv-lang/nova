@@ -1221,7 +1221,13 @@ table above is not accepted.
 `while` condition and a `for` header share one production; the sites differ only
 by positional predicates: a binding and `for` are irrefutable (no literals,
 variants, arrays, disjunctions), a condition has no literals, `_` or
-disjunctions, and a bare name there needs `ro`/`mut` (D34). **`..` is the only
+disjunctions, and a bare name there needs `ro`/`mut` (D34). The predicate judges
+the whole pattern at any depth: `ro (a, Some(b)) = p` and `if Some(3) = o` are
+refused like their top-level forms; the one exception is `_` inside a condition
+pattern, which is legal (`if Some(_) = o`) — only a pattern that is `_` as a whole
+is meaningless. A word before a bare name in a condition is the binder's mode
+(`if ro n = f() && n > 0`); before a constructor it is refused (`if mut Some(x)` →
+`if Some(mut x)`). **`..` is the only
 marker of a deliberate skip and is required for a partial destructuring in every
 form and position** — record (`User { id, .. }`), tuple (`(a, ..)`, positional
 only; a named tuple is destructured with the brace form `{ x, .. }`), array
