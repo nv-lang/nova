@@ -16,7 +16,7 @@ mod variant_ctor_channel;
 mod variant_ctor_disarm; // #666, see its doc
 mod sum_placement; // Plan 172.14 F.2 A4, see its doc
 mod self_value; // #1395: `Self` by position, see its doc
-mod opt_eq_split; mod method_key; // #1405 `nova_opt_eq` body late; #1413 colliding receiver's method key
+mod opt_eq_split; mod method_key; mod default_dispatch; // #1405 opt_eq late; #1413 method key; #1414 value default method
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
@@ -46897,12 +46897,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // pre-pass) → synthesis-проба не матчится, дальше name-keyed.
                 {
                     let obj_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
-                    let obj_type_name = self.debt_strip_nova_trim_start_no_ws(&obj_ty);
+                    let (obj_type_name, recv_c_ty, by_addr) = self.default_method_recv(&obj_ty); // #1414
                     if !obj_type_name.is_empty() && !obj_ty.is_empty() {
                         if let Some(c_fn) = self.try_synthesize_default_method(
-                            &obj_type_name, &obj_ty, method,
+                            &obj_type_name, &recv_c_ty, method,
                         ) {
-                            let obj_c = self.emit_expr(obj)?;
+                            let obj_c = self.emit_expr(obj)?; let obj_c = if by_addr { self.prepare_method_recv(&obj_c, &obj_ty, false, Some(obj)) } else { obj_c };
                             let mut call_args = vec![obj_c];
                             for a in args {
                                 call_args.push(self.emit_expr(a.expr())?);
@@ -61458,27 +61458,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // synthesized via protocol default body (because T has no
                         // explicit method AND some protocol provides default), use
                         // that protocol method's return type as the inferred type.
-                        let obj_type_name_for_synth = self.debt_strip_nova_trim_start_no_ws(&obj_ty);
+                        // #1414: the receiver's own type (value kinds too), the `#impl`
+                        // gate the call site's synthesis applies, `Self` = that type.
+                        let obj_type_name_for_synth = self.default_method_recv(&obj_ty).0;
                         if !obj_type_name_for_synth.is_empty()
                             && !self.all_methods.contains(
                                 &(obj_type_name_for_synth.clone(), method_name.to_string()))
                         {
-                            for (_proto_name, (_type_params, methods))
-                                in &self.protocol_method_registry
-                            {
-                                if let Some(m) = methods.iter()
-                                    .find(|m| m.name == *method_name
-                                        && m.default_body.is_some())
-                                {
-                                    self.icr_trace("B03_protocol_default_body_synth");
-                                    if let Some(rt) = &m.return_type {
-                                        if let Ok(c) = self.type_ref_to_c(rt) {
-                                            return c;
-                                        }
-                                    }
-                                    // No return type → nova_unit (void).
-                                    return "nova_unit".into();
-                                }
+                            if let Some(c) = self.default_method_ret_c(&obj_type_name_for_synth, method_name) {
+                                self.icr_trace("B03_protocol_default_body_synth");
+                                return c;
                             }
                         }
                         // Plan 196.2 W1 [gate-1]: B04_novabox_protocol_method REMOVED.
