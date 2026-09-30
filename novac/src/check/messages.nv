@@ -512,3 +512,9 @@ const LOOP_CTL_OUTSIDE_MSG = "`break` and `continue` stand only inside the body 
 /// `==` / `!=` on a sum with no `Equal` in its `#impl(...)` (274.7 wave R): a LANGUAGE
 /// error -- D363 routes equality through `Equal`, and a sum is a value type that opts in.
 const SUM_EQ_NEEDS_EQUAL_MSG = "`==` on a sum needs the type to implement `Equal` (D363): a sum is a value type (D477) and opts in -- add `#impl(Equal)` above its declaration"
+
+/// `..` in a tuple pattern before a position (D486 §2, registry 1382): a LANGUAGE error.
+const TUPLE_REST_POSITION_MSG = "`..` in a tuple pattern stands only last (D486): a position written after it would count from the end, which the tuple pattern does not have -- name the element by its position"
+
+/// `..` in a variant payload beside positions (D486 §2, registry 1382): a LANGUAGE error.
+const PAYLOAD_REST_MSG = "`..` in a variant payload stands alone, as in `Cons(..)` (D59, D486): a payload that names some positions lists them all"

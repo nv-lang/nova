@@ -802,6 +802,11 @@ fn Checker mut @type_call_stmt(call Node) -> () {
             // 2026-08-20). The question is about THIS expression.
             if @out.len() > before { return }
             ro at = type_of(c, @ctx, @scope, @chan)
+            if !is_ty(at) {
+                // SILENT-OK: typed without a new refusal and still no type -- a name an
+                // earlier refusal bound poisoned (one cause, one diagnostic).
+                return
+            }
             // The printer set is int/str/bool/f64. Every other primitive is
             // NAMEABLE (the universe holds all fifteen) but not yet
             // printable, and that boundary belongs here -- the emitter's ice
