@@ -1433,6 +1433,10 @@
 # (W_REDUNDANT_OF/W_COERCE_EXPLICIT_REDUNDANT/W_NON_COMPOUND_ASSIGN, унаследованы
 # от волны [T consume] 2026-09-25) почищены мирно, без строки реестра -- они не
 # дефект, а стиль, и `nova check`+`nova test` подтвердили каждую правку.
+# 2026-10-01, integrator nova-20: rows 1387 -> 1388, max -> 1448 (merge of the cloud session's p1260: #1448, a record
+#   literal field value is not checked against the field type).
+rows=1388
+max=1448
 # 2026-10-01, integrator nova-20: rows 1386 -> 1387 (merge of p1234-import-alias: #1444, the type-alias half
 #   of #1419); 1444 leaves gaps.
 rows=1387
