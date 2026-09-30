@@ -35,8 +35,7 @@ test "rvalue match Ok(consume x) — ownership явный, mut-capable, consume-
 
 test "place-скрутини — именная Result-переменная, тот же consume-паттерн" {
     // `Result` с consume-нагрузкой сам consume «через wrap» (D133,
-    // 02-types.md) — binding обязан быть `consume` (D180 Rule 1).
-    // [INV-GUARD: E_CONSUME_KEYWORD_MISSING]
+    // 02-types.md), поэтому binding здесь пишется `consume` — D180 Rule 1.
     consume attempt = dial_consume_a(2)
     match consume attempt {
         Ok(consume tcp) => { tcp.close() }
