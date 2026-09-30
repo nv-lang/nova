@@ -1,0 +1,30 @@
+module with_lit.pos_3
+
+// A handler literal inside another literal's op body captures `seen`, which
+// the OUTER op never reads itself (E.9 step 3): the outer literal must still
+// capture it -- the inner context is filled from the outer op's context, and
+// `seen` is no local there. Behaviour byte-for-byte with the oracle
+// (novac-e1-smoke).
+
+fn main() {
+    mut seen = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label str) -> () {
+            with Random = effect Random {
+                u64() -> u64 {
+                    seen += 100
+                    7
+                }
+            } {
+                println(label, " ", Random.u64())
+            }
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {
+            println(label)
+        }
+    } {
+        ResourceTrace.on_resource_enter("a")
+        ResourceTrace.on_resource_enter("b")
+    }
+    println(seen)
+}

@@ -106,12 +106,12 @@ fn Checker mut @type_handler_resolved(e Node, kids []Node, name str, edecl DeclI
     ro before = @out.len()
     // THE CAPTURE MARK (E.9 step 3): every binding that exists now is
     // outside this literal, so a read of one from an op body is a capture
-    // (`exprs.nv`, the Name arm, records it). Saved and restored: a literal
-    // may stand inside another literal's op body.
-    ro saved_rows = @lit_rows
-    ro saved_lit = @lit_node
-    @lit_rows = @scope.row_count()
-    @lit_node = e.id_of()
+    // (`exprs.nv`, the Name arm, records it). A STACK: a literal may stand
+    // inside another literal's op body, and a name the inner one captures
+    // from outside both is the outer one's capture too -- the inner
+    // context is filled from the outer op's context.
+    @cap_marks.push(@scope.row_count())
+    @cap_owners.push(e.id_of())
     for c in kids {
         if c.kind_of() != NodeKind.HandlerOp { continue }
         @type_handler_op(c, name, schema)
@@ -120,8 +120,8 @@ fn Checker mut @type_handler_resolved(e Node, kids []Node, name str, edecl DeclI
         // "unknown name" about the op's own parameters would be the second
         // word about one cause.
     }
-    @lit_rows = saved_rows
-    @lit_node = saved_lit
+    ro _ = @cap_marks.pop()
+    ro _ = @cap_owners.pop()
     if @out.len() > before { return }
     // THE LITERAL'S OWN TYPE is the handler-type application `Effect[Fs]`,
     // interned through the one door (the Effect seed's row, the effect's

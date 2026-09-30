@@ -294,6 +294,22 @@ test "handler literal: captures -- one block, aligned tail, `mut` by address, `r
     assert(c.contains("->b = b;"), c)
 }
 
+test "handler literal: a literal inside another literal's op takes the outer capture from that op's context (E.9 step 3)" {
+    // The OUTER op never reads `n`; only the inner literal does. The outer
+    // literal must still capture it (the capture-mark stack), and the inner
+    // context is filled from the outer op's context, not from `&n` -- no such
+    // local exists in the op function. Two fills of `n`, one of them `&n`:
+    // without the stack the outer fill is missing (one fill), without the
+    // emitter half both are `&n`.
+    ro inner = "with Fs2 = effect Fs2 { read(q str) -> str {\n   n += 1\n   q\n  } } {\n   println(1)\n  }\n"
+    ro src = "fn g() -> int {\n mut n = 1\n with Fs = effect Fs { read(p str) -> str {\n  ${inner}  p\n } } {\n  println(2)\n }\n n\n}\nfn main() {\n println(g())\n}"
+    ro (d, c) = compile_to_c_with(src, parse_decls(handler_fx()), interop_surface())
+    assert(d.len() == 0, messages(d))
+    ro c0 = control_c()
+    assert(c.matches("->n = ").len() == c0.matches("->n = ").len() + 2, c)
+    assert(c.matches("->n = &n;").len() == c0.matches("->n = &n;").len() + 1, c)
+}
+
 test "handler literal: a HELD literal capturing a `mut` binding is refused by the position's name (E.9 step 3, E.5)" {
     // A held value may outlive the frame its `mut` capture points into.
     ro src = "fn g() -> int {\n mut n = 1\n ro h = effect Fs { read(p str) -> str {\n  n += 1\n  p\n } }\n n\n}\nfn main() {\n println(g())\n}"

@@ -171,9 +171,11 @@ fn Emitter mut @emit_op_fn(n int, op Node, sig_at int, has_caps bool) -> () {
     ro ok = branch_children(op)
     ro body = ok[ok.len() - 1]
     @lo.ir = FnBuilder.new(ret)
+    @cur_lit = n
     @lower_op_body(body, ret)
     @lo.ir.end_body()
     @print_body(@lo.ir.finish())
+    @cur_lit = 0 - 1
     @body.append("}\n")
 }
 
@@ -211,8 +213,7 @@ fn Emitter mut @emit_handler_lit(lit Node) -> str {
         @body.append("    ${vt}* ${v} = (${vt}*)${v}_blk;\n")
         @body.append("    ${cx}* ${v}_cx = (${cx}*)(${v}_blk + ${v}_off);\n")
         for c in caps {
-            ro amp = if c.by_ref { "&" } else { "" }
-            @body.append("    ${v}_cx->${c.name} = ${amp}${c.name};\n")
+            @body.append("    ${v}_cx->${c.name} = ${@capture_source(c)};\n")
         }
         @body.append("    ${v}->ctx = ${v}_cx;\n")
     }
@@ -223,6 +224,24 @@ fn Emitter mut @emit_handler_lit(lit Node) -> str {
         @body.append("    ${v}->${opn} = novac_hop_${n}_${opn};\n")
     }
     v
+}
+
+/// What a capture is filled from where the literal is BUILT. A binding of
+/// the building function: its address for `mut`, its value otherwise. A
+/// literal built inside ANOTHER literal's op body that captures what the
+/// outer literal captured -- the same scope row -- takes it from that op's
+/// context: the name is no local there, and the context slot already holds
+/// the pointer (for `mut`) or the copy.
+fn Emitter @capture_source(c CaptureRow) -> str {
+    if @cur_lit >= 0 {
+        for oc in @out.captures_of(@hlits[@cur_lit].id_of()) {
+            if oc.bind_row == c.bind_row { return "_novac_cap->${c.name}" }
+        }
+    } else {
+        // Built in an ordinary function: every capture is a local there.
+    }
+    if c.by_ref { return "&${c.name}" }
+    c.name
 }
 
 /// A Name read that is a CAPTURE (E.9 step 3): through the op function's

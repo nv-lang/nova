@@ -82,16 +82,25 @@ fn Checker mut @const_type_of(name str) -> TyId {
 
 /// A read of `name` from a handler literal's op body, bound OUTSIDE the
 /// literal: record the capture (E.9 step 3) -- by address for a `mut`
-/// binding, which the op may write, by copy otherwise.
+/// binding, which the op may write, by copy otherwise. Every enclosing
+/// literal whose mark the binding is below captures it too, outermost
+/// first, so the read itself points at the INNERMOST one's row -- the
+/// context it is read through.
 fn Checker mut @note_if_capture(e Node, name str) -> () {
-    if @lit_rows < 0 { return }
+    if @cap_marks.len() == 0 { return }
     ro row = @scope.row_of(name)
-    if row < 0 || row >= @lit_rows { return }
+    if row < 0 { return }
     ro by_ref = match @scope.mode_of_name(name) {
         ModeMut => true
         ModeRo | ModeConsume => false
     }
-    @chan.record_capture(@lit_node, e.id_of(), name, row, @scope.type_of_name(name), by_ref)
+    for i in 0..@cap_marks.len() {
+        if row < @cap_marks[i] {
+            @chan.record_capture(@cap_owners[i], e.id_of(), name, row, @scope.type_of_name(name), by_ref)
+        } else {
+            // Bound inside this literal (or deeper): not its capture.
+        }
+    }
 }
 
 /// Is `name` a module value whose initializer was refused? Its type was
