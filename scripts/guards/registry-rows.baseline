@@ -1433,6 +1433,10 @@
 # (W_REDUNDANT_OF/W_COERCE_EXPLICIT_REDUNDANT/W_NON_COMPOUND_ASSIGN, унаследованы
 # от волны [T consume] 2026-09-25) почищены мирно, без строки реестра -- они не
 # дефект, а стиль, и `nova check`+`nova test` подтвердили каждую правку.
+# 2026-09-30, интегратор nova-33: rows 1364 -> 1365, max 1415 -> 1417. №1417 -- лёгкое замыкание с непримитивным
+#   возвратом типизировано nova_int (агент №1409). Дыра 1416 -- номер выдан помощнику (ветка реестра registry/1410-1412).
+rows=1365
+max=1417
 # 2026-09-30, интегратор nova-33: rows 1363 -> 1364, max 1414 -> 1415. №1415 -- match по int/str без `_` принят
 #   оракулом вопреки syntax.ru.md:1317 (окно Карины).
 rows=1364
@@ -1960,7 +1964,7 @@ stale_gaps=0
 # nomer I v gaps=, I so strokoy schitaetsya 'protuhshey dyroy'.
 # 2026-09-21: №1209 ПРИЕХАЛ и СНЯТ из gaps=
 # (писал интегратор, как и планировалось). №1210-1211 всё ещё ждёт Карину.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1410,1412
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1410,1412,1416
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding
