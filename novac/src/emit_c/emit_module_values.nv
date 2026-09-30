@@ -18,8 +18,24 @@
 
 module novac.emit_c
 
-import ../sem.{c_type, module_value_c_name, module_value_init_c_name}
+import ../sem.{c_type, module_value_c_name, module_value_init_c_name, ConstRow, raw_crow}
+import ../diag.{ice}
 import ../lower.{FnBuilder}
+
+/// THE read of a module-level constant or value, bare (`K`) or qualified
+/// (`Type.K`): a CONSTANT is substituted (274.5 wave B2 -- no C symbol of
+/// its own), a module VALUE is its cell, computed once before `main`. One
+/// door for both read shapes, so the two cannot print a constant two ways.
+fn Emitter mut @emit_const_read(row ConstRow) -> () {
+    ro cd = @ctx.consts.rows[raw_crow(row)]
+    if cd.once {
+        @body.append(module_value_c_name(cd.name))
+    } else if cd.init.len() > 0 {
+        @emit_expr(cd.init[0])
+    } else {
+        ice("emit: a constant recorded with no initializer")
+    }
+}
 
 /// One `static` cell per module value, declared before any function reads it.
 /// Its type is the INITIALIZER's, recorded once in the file's channel

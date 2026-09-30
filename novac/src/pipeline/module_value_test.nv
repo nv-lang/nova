@@ -57,24 +57,46 @@ test "module value: initializers run in DEPENDENCY order; a cycle is refused (27
     }
 }
 
-test "D184 partition: constexpr is `const`, runtime is `ro` -- both directions, one predicate (274.5 section 6)" {
-    ro fx = "fn three() -> int => 3\n"
+test "D184 partition: constexpr is `const`, runtime is `ro` -- both directions, one predicate (274.5 S6)" {
+    // The spec's list, word for word (03-syntax.md:1344-1352): literals,
+    // operators over constants, record literals and SUM CONSTRUCTORS of them,
+    // references to constants. An ARRAY literal allocates, and a tuple is not
+    // in the list: both are runtime values.
+    ro fx = "fn three() -> int => 3\ntype Fam enum\n | FInt\n | FStr\n"
     ro main_src = "fn main() {\n println(1)\n}"
-    // `ro` over a literal, over arithmetic on literals, over a plain array
-    // literal: all known at compile time -> E_RO_FOR_CONSTEXPR_PREFER_CONST.
-    for src in []str.of("ro x = 3\n", "ro x = 2 + 3\n", "ro x = [1, 2]\n") {
-        ro (d, _) = compile_to_c("${src}${main_src}", std_decls())
+    // `ro` over a compile-time value -> E_RO_FOR_CONSTEXPR_PREFER_CONST.
+    for src in []str.of("ro x = 3\n", "ro x = 2 + 3\n", "ro x = Fam.FInt\n", "ro x = FStr\n") {
+        ro (d, _) = compile_to_c("${fx}${src}${main_src}", std_decls())
         assert(d.len() == 1, "${src}: ${messages(d)}")
         assert(d[0].code == "E_NOVAC_LANG", d[0].code)
         assert(d[0].message.contains("E_RO_FOR_CONSTEXPR_PREFER_CONST"), d[0].message)
     }
-    // `const` over a call -> E_CONST_NOT_CONSTEXPR.
-    ro (d1, _) = compile_to_c("${fx}const y = three()\n${main_src}", std_decls())
-    assert(d1.len() == 1, messages(d1))
-    assert(d1[0].message.contains("E_CONST_NOT_CONSTEXPR"), d1[0].message)
-    // CONTROLS: a constant over constants, and a value over a value, are right.
-    ro (d2, _) = compile_to_c("const a = 2\nconst b = a * 3\n${main_src}", std_decls())
-    assert(d2.len() == 0, messages(d2))
-    ro (d3, _) = compile_to_c("${fx}ro v = three()\nro w = v + 1\n${main_src}", std_decls())
-    assert(d3.len() == 0, messages(d3))
+    // `const` over a runtime value -> E_CONST_NOT_CONSTEXPR.
+    for src in []str.of("const y = three()\n", "const y = [1, 2]\n", "const y = (1, 2)\n") {
+        ro (d, _) = compile_to_c("${fx}${src}${main_src}", std_decls())
+        assert(d.len() >= 1, "${src}: ${messages(d)}")
+        assert(d[0].message.contains("E_CONST_NOT_CONSTEXPR"), "${src}: ${d[0].message}")
+    }
+    // CONTROLS: each side of the line in its own keyword is right -- no
+    // partition diagnostic (this std-less harness may refuse an array for
+    // want of the Vec surface, which is not the question here).
+    for src in []str.of("const a = 2\nconst b = a * 3\n", "const k Fam = Fam.FInt\n", "ro v = three()\nro w = v + 1\n", "ro xs = [1, 2]\n") {
+        ro (d, _) = compile_to_c("${fx}${src}${main_src}", std_decls())
+        assert(!messages(d).contains("D184"), "${src}: ${messages(d)}")
+    }
+    ro (d9, _) = compile_to_c("${fx}const k Fam = Fam.FInt\nro v = three()\n${main_src}", std_decls())
+    assert(d9.len() == 0, messages(d9))
+}
+
+test "qualified reads: `Type.NAME` of a constant is substituted, of a module value is its cell (274.5 S6, D200 #66)" {
+    // Until 274.5 S6 the checker recorded only the TYPE of a qualified read,
+    // and the emitter printed `Row->N` -- a field access on a C name that does
+    // not exist. It records WHICH constant now, as on a bare name.
+    ro fx = "type Row value {\n a int\n}\nfn seven() -> int => 7\n"
+    ro (d0, c0) = compile_to_c("${fx}const Row.LIMIT int = 40\nro Row.N = seven()\nfn main() {\n println(Row.LIMIT + Row.N)\n}", std_decls())
+    assert(d0.len() == 0, messages(d0))
+    assert(!c0.contains("Row->"), c0)
+    assert(c0.contains("novac_mv_Row__N"), c0)
+    assert(c0.contains("novac_mv_Row__N = novac_mvinit_Row__N();"), c0)
+    assert(!c0.contains("novac_mv_Row__LIMIT"), c0)
 }

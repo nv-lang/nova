@@ -2,54 +2,101 @@
 // Donor: Rust's `const` item rule -- a const initializer is checked by one
 // const-evaluability predicate, and everything else is a `static`; Go's
 // constant expressions (literals, operators over constants, references to
-// other constants). NOT taken: const fn evaluation and `size_of` intrinsics
-// -- novac's subset has neither, so a call is never constexpr here.
+// other constants). NOT taken: const fn evaluation -- novac's subset has no
+// `const fn`, so a call to a function is never constexpr here.
 // Role: THE constexpr-eligibility predicate of D184's strict module-level
-//   partition ("Strict module-level partition", D199): a constexpr RHS must be
-//   written `const` (E_RO_FOR_CONSTEXPR_PREFER_CONST), a non-constexpr one
-//   `ro` (E_CONST_NOT_CONSTEXPR). ONE predicate for both directions, as the
-//   spec requires (spec/decisions/03-syntax.md:1378), so they cannot disagree.
+//   partition, both directions over ONE predicate as the spec requires
+//   (spec/decisions/03-syntax.md:1378): a constexpr RHS is written `const`
+//   (E_RO_FOR_CONSTEXPR_PREFER_CONST), a non-constexpr one `ro`
+//   (E_CONST_NOT_CONSTEXPR). The list is the spec's, word for word
+//   (03-syntax.md:1344-1352 and 8047-8056), not the oracle's predicate: the
+//   oracle is wrong both ways (the integrator's ruling of 2026-09-30).
 // Used by: check/check.nv -- the ConstDecl and LetDecl arms of the walk.
-// Guarded by: pipeline/module_value_test.nv (both directions and the
-//   eligible shapes); the self-build (no `const` of novac's own source is
-//   refused -- the oracle compiles it under the same rule).
+// Guarded by: pipeline/module_value_test.nv (both directions, each listed
+//   shape and the unlisted ones); the self-build (no `const` of novac's own
+//   source is refused).
 
 module novac.sem
 
 import ../tree.{Node, NodeKind}
 
-/// Is `e` constexpr-eligible (D184 / D199)? A literal; a unary, binary or `as`
-/// over constexpr operands; a parenthesised one; a tuple, a plain array
-/// literal or a record literal whose parts are constexpr (no spread); a name
-/// of another module-level `const`. Anything else -- a call, a method call, a
-/// typed `[]T.of(...)` (itself a call), a field access, a module VALUE (`ro`),
-/// an interpolated string -- is runtime work.
+/// Is `e` constexpr-eligible (D184 / D199)? The spec's list and nothing else:
+/// a literal of a primitive type; arithmetic, bitwise or comparison over
+/// constexpr operands (unary included), and an `as` between primitives
+/// (D199's constexpr body); a record literal of constexpr fields; a sum-type
+/// constructor of constexpr arguments -- a payload-less variant is one with
+/// none; a reference to another `const`. NOT: a call to a function, an effect,
+/// an ALLOCATION (a `[...]` array literal is a Vec on the heap, so it is never
+/// constexpr, whatever its elements), a tuple literal (not in the list), a
+/// module VALUE (`ro`), an interpolated string.
 export fn is_constexpr(e Node, ctx Ctx) -> bool {
     ro k = e.kind_of()
     if k == NodeKind.Lit { return true }
-    if k == NodeKind.Name { return names_a_constant(expr_leaf_name(e), ctx) }
-    if k == NodeKind.Paren || k == NodeKind.Unary || k == NodeKind.Bin || k == NodeKind.Cast ||
-        k == NodeKind.TupleExpr {
-        return expr_children_constexpr(e, ctx)
+    if k == NodeKind.Name {
+        ro n = expr_leaf_name(e)
+        return names_a_constant(n, ctx) || names_a_variant(n, ctx)
     }
-    if k == NodeKind.ArrayLit {
-        ro kids = branch_children(e)
-        if array_of_lparen_at(kids).is_some() { return false }
-        for c in kids {
-            if c.kind_of() == NodeKind.ArraySpread { return false }
-        }
+    if k == NodeKind.FieldAccess { return qualified_constexpr(e, ctx) }
+    if k == NodeKind.Paren || k == NodeKind.Unary || k == NodeKind.Bin || k == NodeKind.Cast {
         return expr_children_constexpr(e, ctx)
     }
     if k == NodeKind.RecordCtor { return record_fields_constexpr(e, ctx) }
+    if k == NodeKind.Call { return variant_ctor_constexpr(e, ctx) }
     false
 }
 
 /// Every EXPRESSION child is constexpr. Leaves (operators, punctuation) and
-/// non-expression branches (a type after `as`, a literal's written type) are
-/// not values and are not asked.
+/// non-expression branches (the type after `as`) are not values and are not
+/// asked; a named argument is asked for its value.
 fn expr_children_constexpr(e Node, ctx Ctx) -> bool {
     for c in branch_children(e) {
         if c.kind_of() == NodeKind.LeafNode { continue }
+        if c.kind_of() == NodeKind.NamedArg {
+            if !expr_children_constexpr(c, ctx) { return false }
+            continue
+        }
+        if !is_expr_kind(c.kind_of()) { continue }
+        if !is_constexpr(c, ctx) { return false }
+    }
+    true
+}
+
+/// `Type.NAME`: a qualified CONSTANT, or a payload-less VARIANT named through
+/// its sum (`Fam.FInt`). A field of a value (`p.x`) is neither.
+fn qualified_constexpr(e Node, ctx Ctx) -> bool {
+    ro kids = branch_children(e)
+    if kids.len() < 3 { return false }
+    if kids[0].kind_of() != NodeKind.Name { return false }
+    if kids[2].kind_of() != NodeKind.LeafNode { return false }
+    ro head = expr_leaf_name(kids[0])
+    ro member = leaf_text(kids[2])
+    if names_a_constant("${head}.${member}", ctx) { return true }
+    names_a_type(head, ctx) && names_a_variant(member, ctx)
+}
+
+/// A call is constexpr only as a SUM-TYPE CONSTRUCTOR of constexpr arguments
+/// (`Pair(1, 2)`, `Fam.Pair(1, 2)`); a call to a function is runtime work.
+fn variant_ctor_constexpr(e Node, ctx Ctx) -> bool {
+    ro kids = branch_children(e)
+    if kids.len() == 0 { return false }
+    ro callee = kids[0]
+    ro is_ctor = if callee.kind_of() == NodeKind.Name {
+        names_a_variant(expr_leaf_name(callee), ctx)
+    } else if callee.kind_of() == NodeKind.FieldAccess {
+        qualified_constexpr(callee, ctx) && !names_a_constant_path(callee, ctx)
+    } else {
+        false
+    }
+    if !is_ctor { return false }
+    mut i = 0
+    for c in kids {
+        i += 1
+        if i == 1 { continue }
+        if c.kind_of() == NodeKind.LeafNode { continue }
+        if c.kind_of() == NodeKind.NamedArg {
+            if !expr_children_constexpr(c, ctx) { return false }
+            continue
+        }
         if !is_expr_kind(c.kind_of()) { continue }
         if !is_constexpr(c, ctx) { return false }
     }
@@ -80,5 +127,28 @@ fn names_a_constant(name str, ctx Ctx) -> bool {
     match ctx.defs.const_row(name) {
         None => false
         Some(r) => !ctx.consts.rows[raw_crow(r)].once
+    }
+}
+
+/// Is this `Type.NAME` path a qualified constant (and not a variant)?
+fn names_a_constant_path(e Node, ctx Ctx) -> bool {
+    ro kids = branch_children(e)
+    names_a_constant("${expr_leaf_name(kids[0])}.${leaf_text(kids[2])}", ctx)
+}
+
+/// Is `name` the name of a variant of some sum in scope?
+fn names_a_variant(name str, ctx Ctx) -> bool {
+    ro (_, n) = variants_named(ctx, name)
+    n >= 1
+}
+
+/// Is `name` a declared TYPE (the head of `Type.Variant`)?
+fn names_a_type(name str, ctx Ctx) -> bool {
+    match ctx.defs.def_of(name) {
+        None => false
+        Some(d) => match d.target {
+            DefType(_) => true
+            DefFn(_) | DefConst(_) => false
+        }
     }
 }
