@@ -689,6 +689,19 @@ test "a `str` slice is compiled in every bound shape the shell carries; the rest
     assert(diagnose_in(wide, shell).contains("only an `int` index"), diagnose_in(wide, shell))
 }
 
+test "a match on a POISONED scrutinee says nothing about its arms -- no `different sum` cascade (2026-10-01)" {
+    // The shape of the carrier (types.nv `ro row = @rows[..]`): the refusal
+    // stands on the BINDING, and the name reaches the `match` silently untyped.
+    // The arms, bare and with a payload, used to add "names a variant of a
+    // different sum" each -- there is no sum to differ from. One cause, one
+    // diagnostic.
+    ro src = "module m\n\ntype S enum\n    | A\n    | B(int)\n\nfn f() -> int {\n    ro r = nosuch()\n    match r {\n        A => 1\n        B(n) => n\n    }\n}\n"
+    assert(diagnose(src) == 1, "${diagnose(src)}: ${diagnose_first_msg(src)}")
+    // CONTROL: a TYPED scrutinee of another sum still gets the refusal.
+    ro typed = "module m\n\ntype S enum\n    | A\n    | B\n\ntype T enum\n    | C\n    | D\n\nfn f(t T) -> int {\n    match t {\n        A => 1\n        _ => 2\n    }\n}\n"
+    assert(diagnose_first_msg(typed).contains("different sum"), diagnose_first_msg(typed))
+}
+
 /// The first diagnostic's message ("" when clean) against a shell that carries
 /// exactly `syms` -- for the rules where THE SHELL DECIDES.
 fn diagnose_in(text str, syms []str) -> str {
