@@ -93,6 +93,14 @@ type Checker {
     /// depth-first walk that yields the topological order. Empty in an
     /// instance checker, which types no initializer.
     mv_state []int
+    /// The module values being typed right now, outermost first -- the path a
+    /// cycle is named by (`a -> b -> a`, D184 amendment 2026-09-30).
+    mv_stack []int
+    /// Constant-table rows of the file's module values and, at the same index,
+    /// their declarations -- where a cycle's diagnostic stands.
+    mv_decl_rows []int
+    /// See `mv_decl_rows`.
+    mv_decl_nodes []Node
     /// The body being typed returns no value (`-> ()` or none declared): a bare `return` is legal.
     ret_unit bool
 }

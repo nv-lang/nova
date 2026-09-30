@@ -121,9 +121,12 @@ const RO_FOR_CONSTEXPR_MSG = "a module-level `ro` whose initializer is known at 
 const CONST_NOT_CONSTEXPR_MSG = "a `const` initializer is known at compile time -- literals, operators over constants, record literals and sum constructors of them (D184, E_CONST_NOT_CONSTEXPR); a value that needs the runtime -- a call, an allocation such as an array literal -- is written `ro`"
 
 /// Module values whose initializers read each other in a CYCLE (274.5 S6):
-/// D200 initializes them once, in dependency order (`02-types.md:9319`), and
-/// a cycle has no such order. A language error; the spec names no code.
-const MODULE_VALUE_CYCLE_MSG = "module values whose initializers read each other in a cycle have no order that computes them (D200: once, before main, in dependency order) -- break the cycle"
+/// the D184 amendment of 2026-09-30 (`03-syntax.md:8137`) initializes them in
+/// dependency order, and a cycle has none -- E_MODULE_INIT_CYCLE, a language
+/// error, with the path in the text as the oracle prints it.
+fn module_init_cycle_msg(path str) -> str =>
+    "module-level `ro` initializers form a cycle: ${path} -- no initialization order computes them (D184 amendment 2026-09-30, E_MODULE_INIT_CYCLE)"
+
 const INTERP_CONST_MSG = "outside the subset: a constant whose initializer interpolates is not compiled yet (E2-b3)"
 
 

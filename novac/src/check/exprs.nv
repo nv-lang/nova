@@ -498,7 +498,7 @@ fn Checker mut @type_expr(e Node) -> () {
                     // typed: a CYCLE, which no order computes (274.5 S6).
                     // Asked BEFORE the type -- settling a value not typed
                     // yet is what gives it one.
-                    @reject(t, MODULE_VALUE_CYCLE_MSG)
+                    @report_module_cycle(t.text)
                 } else if @is_poisoned_module_value(t.text) {
                     // SILENT-OK: a module value whose initializer was refused;
                     // that refusal is the one cause, and a read of it saying

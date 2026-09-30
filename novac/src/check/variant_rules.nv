@@ -175,7 +175,7 @@ fn Checker mut @judge_type_head_variant(e Node, kids []Node, arg_from int) -> bo
                         // which constant it is -- without the second record
                         // the emitter printed this as a field access.
                         if @settle_module_value(qname) {
-                            @reject(vt, MODULE_VALUE_CYCLE_MSG)
+                            @report_module_cycle(qname)
                             return true
                         } else {
                             // No cycle; a value not typed yet is typed now.
