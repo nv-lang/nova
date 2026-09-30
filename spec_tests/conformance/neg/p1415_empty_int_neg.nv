@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_MATCH_NON_EXHAUSTIVE
+//
+// Registry 221.1 #1415, case (a): an empty `match` over `int`. Before the fix
+// it passed check and build, and the program printed and exited 0 -- the
+// `match` "produced" a value with no arm at all. The same empty `match` over a
+// sum was already refused.
+
+module neg.p1415_empty_int_neg
+
+fn main() Io -> () {
+    ro x = 3
+    // nova:expect E_MATCH_NON_EXHAUSTIVE -- an empty `match` covers no value of `int`
+    ro m = match x { }
+    println("after")
+}

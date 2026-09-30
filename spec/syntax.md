@@ -1268,6 +1268,7 @@ Where the grammar forces the transfer there is no decision to document, so the m
 possible cases. If not — an error naming the uncovered variant. This works
 for sum types and bool. For general types (`int`, `str`) you need either a
 `_`-wildcard or an explicit check of all considered values.
+The error code is `E_MATCH_NON_EXHAUSTIVE`, one for sums, `bool` and open types (`int`, `str`, `char`, `f64`, tuples holding them); an empty `match` over an inhabited type is the same error (registry 221.1 #1415).
 
 ```nova
 type Color enum Red | Green | Blue

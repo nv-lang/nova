@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_MATCH_NON_EXHAUSTIVE
+//
+// Registry 221.1 #1415: a tuple holding an open type. Every arm names a
+// literal in the `int` position, so a pair whose first element none of them
+// names -- `(7, "x")` -- matches no arm, whatever the second element is.
+
+module neg.p1415_tuple_value_neg
+
+fn main() Io -> () {
+    ro t = (7, "x")
+    // nova:expect E_MATCH_NON_EXHAUSTIVE -- every arm fixes the `int` position to a literal; `(7, _)` is not covered
+    ro r = match t { (1, _) => 1, (2, "x") => 2 }
+    println("${r}")
+}
