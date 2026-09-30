@@ -1,0 +1,4 @@
+// #1390 refusal carrier -- see `../p1390_same_name_refuse.nv`.
+module p1390_same_name_refuse.p1390_rf
+
+export fn pick(body str) -> bool => body != ""

@@ -1522,11 +1522,11 @@ pub struct CEmitter {
     /// { return nova_fn_<name>(args); }`). Дедупликация — несколько
     /// references к одной fn делят один thunk.
     emitted_fn_thunks: HashSet<String>,
-    /// Plan 14 Ф.2: имена const'ов с runtime-init (record-литерал, call,
-    /// и т.д.). На use-site `Ident(name)` для них эмитится `nova_const_<name>()`
-    /// (lazy-init геттер) вместо имени переменной. Тип сохраняется в
-    /// `var_types[name]` (как для обычных const'ов).
+    /// Plan 14 Ф.2: SOURCE names of consts with runtime init (init ordering + a fast pre-check).
+    /// Whether a READ is lazy is NOT decided by this set -- see `lazy_const_syms` (#1158).
     lazy_consts: HashSet<String>,
+    /// #1158: final C qualifiers (`c_name`) of lazy consts -- laziness of ONE const, not of a name.
+    lazy_const_syms: HashSet<String>,
     /// `[M-lazy-const-init-race]` (2026-07-09): pending lazy-const init
     /// bodies, collected as each lazy const (`const X = <non-constexpr>` /
     /// module-level `ro X = <runtime-expr>`) is emitted, and combined at
@@ -2806,7 +2806,7 @@ impl CEmitter {
             user_fn_variadic: HashSet::new(),
             suppress_variadic_routing: false,
             emitted_fn_thunks: HashSet::new(),
-            lazy_consts: HashSet::new(),
+            lazy_consts: HashSet::new(), lazy_const_syms: HashSet::new(),
             pending_const_inits: Vec::new(),
             record_field_fn_sigs: HashMap::new(),
             trailing_block_counter: 0,
@@ -10552,10 +10552,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// reachable in one CU since Plan 175 Ф.2-v3 made `std.time.duration`
     /// transitively pulled into every CU) no longer collide into one
     /// `_nova_const_ZERO_value` C global.
+    /// #1158: the ONE place a read decides whether it reads a LAZY const: the use site's
+    /// qualifier (per-file private mangle -> colliding-export qualifier -> bare name, the
+    /// resolution `emit_const_decl` names the const with) must itself be lazy. Keyed by the
+    /// bare name, a lazy `lex.B_BACKSLASH` turned constexpr `json.B_BACKSLASH` reads lazy.
+    pub(crate) fn lazy_const_sym(&self, file_id: crate::diag::FileId, name: &str) -> Option<String> {
+        if !self.lazy_consts.contains(name) { return None; }
+        let q = self.private_const_c_names.get(&(file_id, name.to_string())).cloned()
+            .or_else(|| self.const_qualified_by_name.get(name).cloned()).unwrap_or_else(|| name.to_string());
+        self.lazy_const_syms.contains(&q).then_some(q)
+    }
+
     pub(crate) fn emit_lazy_const(&mut self, name: &str, c_name: &str, ty_c: &str, value: &Expr) -> Result<(), String> {
-        // Регистрируем имя как lazy — use-site Ident(name) станет голым
-        // чтением `c_name`.
         self.lazy_consts.insert(name.to_string());
+        self.lazy_const_syms.insert(c_name.to_string());
         // Регистрируем тип, чтобы infer_expr_c_type(Ident(name)) возвращал
         // правильный c-тип (для записи в var_types — как обычный binding).
         self.var_types.insert(name.to_string(), ty_c.to_string());
@@ -36099,7 +36109,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Lazy-const Ident может лоуериться в не-адресуемую форму —
                 // принудительный hoist (зеркало prepare_method_recv guard'а).
                 let is_lazy_const_ident = matches!(&inner.kind,
-                    ExprKind::Ident(name) if self.lazy_consts.contains(name));
+                    ExprKind::Ident(name) if self.lazy_const_sym(inner.span.file_id, name).is_some());
                 // Адресуемое место (включая ref-параметры: `&((*p))` ≡ `p`) —
                 // прямое взятие адреса (легаси-поведение, Р10/D326).
                 if !is_lazy_const_ident && Self::is_lvalue_receiver(inner) {
@@ -36424,20 +36434,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // map is ALSO consulted, unwrapped, for EAGER private
                 // consts further below — a different C-naming convention;
                 // see `emit_const_decl`/`emit_lazy_const`).
-                if self.lazy_consts.contains(name) {
-                    // [fix M-samename-export-const-cross-module-c-symbol-
-                    // collision, реестр 221.1 №151]: `private_const_c_names`
-                    // only covers non-export/file-priv consts (per-file key);
-                    // a colliding EXPORT const's qualifier lives in
-                    // `const_qualified_by_name` (global-by-name — see its
-                    // field doc for the reference-resolution rationale +
-                    // known limit) — consulted as the SECOND fallback, before
-                    // the bare-name default.
-                    let qualifier = self.private_const_c_names
-                        .get(&(expr.span.file_id, name.clone()))
-                        .cloned()
-                        .or_else(|| self.const_qualified_by_name.get(name).cloned())
-                        .unwrap_or_else(|| name.clone());
+                // [№151] the qualifier resolution (per-file private -> colliding export
+                // -> bare) and [#1158] "is THIS const lazy" both live in `lazy_const_sym`.
+                if let Some(qualifier) = self.lazy_const_sym(expr.span.file_id, name) {
                     return Ok(format!("_nova_const_{}_value", qualifier));
                 }
                 let is_local_var = self.var_types.contains_key(name);
@@ -36687,7 +36686,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // const'ов нужно `_nova_const_FACTOR_value->x` вместо
                 // `FACTOR_x` (last segment — record-поле) — bare read, eager
                 // init guarantees it's already populated (see emit_lazy_const).
-                if parts.len() >= 2 && self.lazy_consts.contains(&parts[0]) {
+                if parts.len() >= 2 && self.lazy_const_sym(expr.span.file_id, &parts[0]).is_some() {
                     let const_ty = self.var_types.get(&parts[0]).cloned()
                         .unwrap_or_default();
                     let accessor = if Self::is_value_type(&const_ty) { "." } else { "->" };
@@ -40951,7 +40950,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             ExprKind::Ident(n) => {
                 if self.var_mutable.contains(n)
                     || self.var_boxed.contains_key(n)
-                    || self.lazy_consts.contains(n)
+                    || self.lazy_const_sym(e.span.file_id, n).is_some()
                 {
                     return false;
                 }
@@ -48138,7 +48137,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         && parts[0].chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false)
                 };
                 if parts.len() == 2 && !is_assoc_const_symbol
-                    && (self.lazy_consts.contains(&parts[0]) || self.var_types.contains_key(&parts[0]))
+                    && (self.lazy_const_sym(func.span.file_id, &parts[0]).is_some() || self.var_types.contains_key(&parts[0]))
                 {
                     let new_obj = Expr {
                         kind: ExprKind::Ident(parts[0].clone()),
@@ -59672,7 +59671,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // rather than risk a new address-of-static-global path this guard was
         // never exercised against.
         let is_lazy_const_ident = matches!(&obj_ast.map(|e| &e.kind),
-            Some(ExprKind::Ident(name)) if self.lazy_consts.contains(name));
+            Some(ExprKind::Ident(name)) if obj_ast.map_or(false, |e| self.lazy_const_sym(e.span.file_id, name).is_some()));
         let addressable = !is_lazy_const_ident && obj_ast
             .map(|e| Self::is_lvalue_receiver(e))
             .unwrap_or_else(|| Self::looks_like_ident_str(obj_c));
@@ -62282,6 +62281,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     return ret_ty.clone();
                                 }
                             }
+                            // #1390: ≥2 same-arity namesakes, different returns, no resolved callee -- `user_fn_sigs` would type the call by ANOTHER fn (silently wrong when the C types convert); refuse.
+                            if exact.len() >= 2 && exact.iter().any(|(_, r)| r != &exact[0].1) {
+                                self.fatal_codegen_type_unknown(&format!("call `{}`: {} same-name free fns of arity {} differ in return type and the checker resolved none; the result type is not guessed by name (#1390)", name, exact.len(), args.len()), expr.span)
+                            }
                         }
                         // A bare `name(...)` call (func is Ident, not Member) targets
                         // a FREE function. The `fn_ret_<name>` table below is keyed by
@@ -62295,14 +62298,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if let Some((_, ret_ty)) = self.user_fn_sigs.get(name) {
                             if !ret_ty.is_empty() && ret_ty != "void*" && !self.debt_is_generic_stub_c(ret_ty) {
                                 self.icr_trace("B10f_user_fn_sigs");
-                                // [196-capstone2] Детач+panic ПРОБОВАЛСЯ (2026-07-17) — panic
-                                // СРАБОТАЛ на examples/flagship/aggregator: name="splitmix64_step"
-                                // ret_ty="uint64_t" (тот самый 206/splitmix64 прецедент из
-                                // CLAUDE.md — conformance не ловит app-регрессии). p196-rtbuf-
-                                // producers' bare-free-fn producer НЕ покрывает этот call-сайт
-                                // (вероятно gs-гейт/single-candidate-дисциплина отклоняет форму) —
-                                // легаси остаётся ЕДИНСТВЕННЫМ верным источником здесь. ЖИВАЯ,
-                                // не трогать. Реестр НЕ снижен для этой ветки.
+                                // [196-capstone2] Детач+panic ПРОБОВАЛСЯ (2026-07-17) и СРАБОТАЛ на
+                                // examples/flagship/aggregator (splitmix64_step, uint64_t): bare-free-fn
+                                // producer этот call-сайт не покрывает — легаси здесь ЕДИНСТВЕННЫЙ
+                                // верный источник. ЖИВАЯ, не трогать. Реестр НЕ снижен.
                                 return ret_ty.clone();
                             }
                         }
@@ -65480,7 +65479,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // the receiver type resolves via `var_types[lazyconst]`.
             if let ExprKind::Call { func, args, trailing } = &expr.kind {
                 if let ExprKind::Path(parts) = &func.kind {
-                    if parts.len() == 2 && self.lazy_consts.contains(&parts[0]) {
+                    if parts.len() == 2 && self.lazy_const_sym(func.span.file_id, &parts[0]).is_some() {
                         let new_obj = Expr {
                             kind: ExprKind::Ident(parts[0].clone()),
                             span: func.span, id: crate::ast::ExprId::UNSET, debug_only: false,

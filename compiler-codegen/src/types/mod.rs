@@ -23685,6 +23685,35 @@ impl<'a> TypeCheckCtx<'a> {
             }
             // Block with statements and no trailing expr → unit. Trailing is inferred above.
             ExprKind::Block(b) if b.trailing.is_none() => Some(TypeRef::Unit(expr.span)),
+            // Registry #1390: a `with` block's value (D61 §8, 04-effects.md "Алгоритм
+            // типизации with-блока"): W = lub(T_body, IRT of every handler), and a
+            // handler that never `interrupt`s has IRT = never (D87: `Effect[E]` ≡
+            // `Effect[E, never]`), which lub absorbs. So W = T_body exactly when every
+            // handler's type is a known `Effect[E]` / `Effect[E, never]`; anything else
+            // (a handler literal, an unknown type, a real IRT) stays None, as before.
+            // Same conservatism as the Block arm above: only a body with NO statements,
+            // so the trailing cannot name a binding absent from the outer `scope`.
+            // Without this, `ro all = with Os = real_os() { args() }` had no type, a
+            // call `parse(all)` over two same-named imported fns got no resolved
+            // callee, and codegen typed its result by NAME -- the other fn (#1390).
+            ExprKind::With { bindings, body } if body.stmts.is_empty() => {
+                let irt_never = bindings.iter().all(|b| {
+                    match self.infer_expr_type(&b.handler, scope) {
+                        Some(TypeRef::Named { path, generics, .. })
+                            if path.last().map(|s| s.as_str()) == Some("Effect") =>
+                        {
+                            generics.len() == 1
+                                || (generics.len() == 2 && type_ref_is_never(&generics[1]))
+                        }
+                        _ => false,
+                    }
+                });
+                if irt_never {
+                    body.trailing.as_ref().and_then(|t| self.infer_expr_type(t, scope))
+                } else {
+                    None
+                }
+            }
             // Plan 172.1 §0a: `if cond { then } else { … }` expression type = type of
             // then-branch trailing expr (branches must be type-compatible per checker).
             // Gate: else_ must exist (otherwise If = unit, no value type).
