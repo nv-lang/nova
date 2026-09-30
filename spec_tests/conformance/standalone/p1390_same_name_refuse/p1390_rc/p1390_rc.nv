@@ -1,4 +1,8 @@
-// #1390 refusal carrier -- see `../p1390_same_name_refuse.nv`.
+// #1390 refusal carrier -- see `../p1390_same_name_refuse.nv`. Both overloads
+// in ONE module since #1234 (D29: one name imported from two modules is a
+// compile error; 10-overloading.md keeps all overloads of a name together).
 module p1390_same_name_refuse.p1390_rc
 
 export fn pick(xs []str) -> int => xs.len()
+
+export fn pick(body str) -> bool => body != ""

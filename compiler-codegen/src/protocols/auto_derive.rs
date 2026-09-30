@@ -4705,6 +4705,7 @@ mod tests {
             consume_reuse_spans: std::collections::HashSet::new(),
             consume_match_scrutinees: std::collections::HashSet::new(),
             prelude_missing: None,
+            import_alias_refs: Default::default(),
         }
     }
 

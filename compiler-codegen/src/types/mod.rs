@@ -25,6 +25,7 @@ mod fail_reach;
 /// `static_blanket.rs`'s module doc.
 mod static_blanket;
 mod fn_visibility; // #1097: a same-name free fn by the caller's imports, see its doc
+mod import_conflict; // #1234: D29 imported name vs own declaration / other import
 
 /// Plan 196 (gs-bounds migration, spike `docs/plans/wip/196-gs-spike.md`):
 /// `gs` ("generics in scope") used to be `HashSet<String>` — ONLY the names of the
@@ -4278,6 +4279,8 @@ struct TypeCheckCtx<'a> {
     file_imports: HashMap<crate::diag::FileId, Vec<Vec<String>>>,
     /// #1097: (import path, item name) of every unaliased selective import item, per file.
     file_fn_imports: HashMap<crate::diag::FileId, Vec<(Vec<String>, String)>>,
+    /// #1419: alias references rewritten by `alpha_rename` (`Module::import_alias_refs`).
+    import_alias_refs: HashMap<Span, crate::ast::ImportAliasRef>,
     /// W6 (№705): канонический путь файла — вторая половина того же ответа.
     /// В `d78_dup_decl_type_cross_import` оба кандидата объявляют ОДИН И ТОТ
     /// ЖЕ модуль `neg.kind` и различаются ТОЛЬКО физическим путём (`a/` vs
@@ -5461,7 +5464,7 @@ impl<'a> TypeCheckCtx<'a> {
                 *ret = None;
             }
         }
-        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, module_const_names, types: TypeTable::new(types, colliding_type_names.clone()), const_types, assoc_const_types, coerce_pairs, generic_coerce_patterns, current_coerce_decl_span: std::cell::RefCell::new(None), sum_variant_names, file_local_types, file_imports, file_fn_imports, file_paths,
+        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, module_const_names, types: TypeTable::new(types, colliding_type_names.clone()), const_types, assoc_const_types, coerce_pairs, generic_coerce_patterns, current_coerce_decl_span: std::cell::RefCell::new(None), sum_variant_names, file_local_types, file_imports, file_fn_imports, import_alias_refs: module.import_alias_refs.clone(), file_paths,
             colliding_type_names, imported_modules,
             current_file: std::cell::Cell::new(None),
             current_fail_payload: std::cell::RefCell::new(None),
@@ -6118,6 +6121,7 @@ impl<'a> TypeCheckCtx<'a> {
         }
         // D184 amendment 2026-09-30: a cycle of module-level `ro` initializers.
         check_module_init_cycles(module, errors);
+        self.check_import_name_conflicts(module, errors); // #1234, D29
         // Plan 157 (D200 amend): associated `ro Type.NAME` — same strict
         // const/ro partition symmetry as bare module-level `ro`
         // (`check_ro_module_partition` above, [M-114.4-strict-partition]).
@@ -18229,7 +18233,9 @@ impl<'a> TypeCheckCtx<'a> {
                     // foo`, per `10-overloading.md` §«LLM-критерий») stays
                     // fully visible — `is_own` is true for BOTH declaring
                     // files, so neither is filtered out.
-                    if filtered.iter().any(is_own) {
+                    if let Some(t) = self.alias_import_target(base.span, &filtered) {
+                        t // #1419/#1234: an alias names the imported fn, not the own one
+                    } else if filtered.iter().any(is_own) {
                         filtered.into_iter().filter(|c| is_own(c)).collect()
                     } else {
                         self.narrow_by_fn_imports(caller_file_id, n, filtered) // #1097
@@ -58820,6 +58826,7 @@ mod named_tuple_ctor_infer_tests {
             consume_reuse_spans: std::collections::HashSet::new(),
             consume_match_scrutinees: std::collections::HashSet::new(),
             prelude_missing: None,
+            import_alias_refs: Default::default(),
         }
     }
 
@@ -59103,6 +59110,7 @@ mod named_tuple_ctor_infer_tests {
             consume_reuse_spans: std::collections::HashSet::new(),
             consume_match_scrutinees: std::collections::HashSet::new(),
             prelude_missing: None,
+            import_alias_refs: Default::default(),
         };
         let arena = FnDeclArena::new();
         let sig = crate::sig_registry::SigRegistry::build_base(&m);

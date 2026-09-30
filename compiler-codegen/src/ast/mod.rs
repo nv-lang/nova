@@ -89,6 +89,24 @@ pub struct Module {
     /// Поле ХВОСТОВОЕ намеренно: структуру видит снимок `novac`, и поле,
     /// поставленное не в конец, сдвигает раскладку (№693(2)).
     pub prelude_missing: Option<String>,
+    /// Registry 221.1 #1419: every reference that named a selectively imported
+    /// fn/const by its ALIAS (`import m.{f as g}` ... `g(1)`), keyed by the
+    /// Ident's span. `alpha_rename` rewrites such an Ident to the declared name
+    /// `f` and records the import here; the checker resolves it to `m`'s `f`
+    /// even where the file's own module declares an `f` too. Tail field, as
+    /// `prelude_missing` above explains.
+    pub import_alias_refs: std::collections::HashMap<Span, ImportAliasRef>,
+}
+
+/// Registry 221.1 #1419: the import a rewritten alias reference came from.
+#[derive(Debug, Clone)]
+pub struct ImportAliasRef {
+    /// The name the importing file wrote (`g`).
+    pub alias: String,
+    /// The declared name in the imported module (`f`).
+    pub name: String,
+    /// The import's module path, as written (`m`, or `p` for `./p`).
+    pub path: Vec<String>,
 }
 
 /// Plan 42 Sub-plan 42.4 (шаг 1, 2026-05-14): per-peer source attribution.

@@ -682,7 +682,7 @@ fn lint_unused_imports(m: &Module) -> Vec<LintWarning> {
     let mut warnings = Vec::new();
     if m.peer_files.is_empty() {
         // Pre-resolution / single-file без populated peer_files — flat.
-        check_imports_unused(&m.imports, &m.items, &mut warnings);
+        check_imports_unused(&m.imports, &m.items, &alias_uses(m, None), &mut warnings);
     } else {
         // Per-peer (Plan 42.15 Rule C — импорты изолированы по peer'ам),
         // но ТОЛЬКО ENTRY-модуля собственные co-equal peer'ы
@@ -708,18 +708,25 @@ fn lint_unused_imports(m: &Module) -> Vec<LintWarning> {
         // (`collect_prelude_visibility`-consumer выше, `escape_analyze.rs`)
         // — тот же идиом, применяем его и здесь.
         for pf in m.peer_files.iter().filter(|pf| pf.is_entry_module) {
-            check_imports_unused(&pf.imports, &pf.items_here, &mut warnings);
+            check_imports_unused(&pf.imports, &pf.items_here, &alias_uses(m, Some(pf.file_id)), &mut warnings);
         }
     }
     warnings
 }
 
+/// #1419: aliases `alpha_rename` rewrote to the declared name in `file` (all
+/// files when `None`) -- used, though the name no longer appears in the AST.
+fn alias_uses(m: &Module, file: Option<crate::diag::FileId>) -> HashSet<String> {
+    m.import_alias_refs.iter().filter(|(sp, _)| file.map_or(true, |f| sp.file_id == f)).map(|(_, r)| r.alias.clone()).collect()
+}
+
 fn check_imports_unused(
     imports: &[Import],
     items: &[Item],
+    alias_used: &HashSet<String>,
     warnings: &mut Vec<LintWarning>,
 ) {
-    let mut used: HashSet<String> = HashSet::new();
+    let mut used: HashSet<String> = alias_used.clone();
     collect_used_names(items, &mut used);
     for imp in imports {
         // `export import` — re-export: имена и есть API, «используются».
