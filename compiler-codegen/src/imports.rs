@@ -2362,7 +2362,7 @@ fn resolve_one(
                     // to the imported module's `f`. A TYPE alias still renames
                     // the declaration (type positions are not rewritten yet), and
                     // so does an `export import` alias (a facade's public name).
-                    let is_type = matches!(item, Item::Type(_)) || imp.is_export || crate::import_alias::fix_disabled();
+                    let is_type = matches!(item, Item::Type(_)) || imp.is_export;
                     let final_name = match rename_map.get(&item_name) {
                         Some(new_name) if is_type => {
                             merged_items.push(rename_item(item, new_name.clone()));

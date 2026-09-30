@@ -24,27 +24,9 @@ use crate::ast::{ImportAliasRef, Item, Module};
 use crate::diag::FileId;
 use std::collections::{HashMap, HashSet};
 
-/// Kill switch for the both-ways probe: `NOVA_KILL_1419=1` restores the old
-/// declaration rename and the emitter's caller-file-first symbol lookup.
-pub fn fix_disabled() -> bool {
-    use std::sync::OnceLock;
-    static OFF: OnceLock<bool> = OnceLock::new();
-    *OFF.get_or_init(|| std::env::var("NOVA_KILL_1419").map(|v| !v.is_empty() && v != "0").unwrap_or(false))
-}
-
-/// Kill switch for the D29 import-name conflict (`types/import_conflict.rs`).
-pub fn conflict_check_disabled() -> bool {
-    use std::sync::OnceLock;
-    static OFF: OnceLock<bool> = OnceLock::new();
-    *OFF.get_or_init(|| std::env::var("NOVA_KILL_D29_IMPORT").map(|v| !v.is_empty() && v != "0").unwrap_or(false))
-}
-
 /// Per importing file: alias -> the import it came from. Only selective
 /// imports with an `as`, and only aliases that do not name a (renamed) type.
 pub fn file_aliases(module: &Module) -> HashMap<FileId, HashMap<String, ImportAliasRef>> {
-    if fix_disabled() {
-        return HashMap::new();
-    }
     let type_names: HashSet<&str> = module
         .items
         .iter()

@@ -21785,16 +21785,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // которому ищет ОПРЕДЕЛЕНИЕ (`mangle_fn`: `f.span.file_id`).
         // №1419/№1234: канал спрашивается ПЕРВЫМ — вызов через алиас/`m.f`
         // из файла со СВОИМ одноимённым `f` иначе получал символ своего.
-        if let Some(mangled) = self.callee_file_c_name(name, call_id, true) {
+        if let Some(mangled) = self.callee_file_c_name(name, call_id) {
             return mangled;
         }
         if let Some(fid) = self.current_emit_file_id {
             if let Some(mangled) = self.file_priv_fn_c_names.get(&(fid, name.to_string())) {
                 return mangled.clone();
             }
-        }
-        if let Some(mangled) = self.callee_file_c_name(name, call_id, false) {
-            return mangled;
         }
         // Plan 103.1 Ф.6: ExternalRegistry builtins (fence, etc.) always
         // use nova_fn_<name> — they live in nova_rt/*.h, not user modules.

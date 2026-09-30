@@ -46,9 +46,6 @@ impl<'a> TypeCheckCtx<'a> {
     }
 
     pub(super) fn check_import_name_conflicts(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
-        if crate::import_alias::conflict_check_disabled() {
-            return;
-        }
         let mut decls: HashMap<&str, Vec<Decl>> = HashMap::new();
         for it in &module.items {
             let (name, d) = match it {
