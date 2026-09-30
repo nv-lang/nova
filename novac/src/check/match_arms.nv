@@ -324,7 +324,7 @@ fn Checker mut @bind_arm_pattern(ak []Node, scr_t TyId) -> bool {
         @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern")
         return false
     }
-    if @bind_pattern(ak[0], scr_t, ak, ParamMode.ModeRo) { return true }
+    if @bind_pattern(ak[0], scr_t, ak, ParamMode.ModeRo, PatPos.PosArm) { return true }
     // A REFUSED arm pattern still binds its names, with no type: a statement arm
     // walks its body regardless, and `z` there said "unknown name" a second time
     // (registry 1382's `(a, .., z)`) -- the destructuring binding's own rule.
@@ -341,15 +341,22 @@ fn Checker mut @bind_arm_pattern(ak []Node, scr_t TyId) -> bool {
 /// (sem/pattern.nv) and matched exhaustively -- a form the subset cannot
 /// judge is refused BY NAME in its own arm below, never fallen through
 /// (the #652 class: a silent default on a closed set).
-fn Checker mut @bind_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode) -> bool {
+///
+/// `pos` is WHERE the pattern stands (D486 §4, amendment 2026-09-30 p.1): the
+/// position's predicate is judged at EVERY node of the tree, not at the root
+/// alone (registry 1379) -- `ro (a, Some(b)) = p` is as refutable as
+/// `ro Some(b) = p`, and `if Some(3) = o` compares a value exactly as `if 3 = o`.
+/// The callers name the position once; none of them repeats the predicate.
+fn Checker mut @bind_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode, pos PatPos) -> bool {
+    if @refused_at_position(pat, ak, pos) { return false }
     match pattern_shape(pat) {
         Lit => @bind_lit_pattern(pat, ak)
         Wild => true
-        Bind => @bind_name_pattern(pat, ty, ak, dmode)
-        Variant => @bind_variant_pattern(pat, ty, ak, dmode)
-        Record => @bind_record_pattern(pat, ty, ak, dmode)
-        Tuple => @bind_tuple_pattern(pat, ty, ak, dmode)
-        Array => @bind_array_pattern(pat, ty, ak, dmode)
+        Bind => @bind_name_pattern(pat, ty, ak, dmode, pos)
+        Variant => @bind_variant_pattern(pat, ty, ak, dmode, pos)
+        Record => @bind_record_pattern(pat, ty, ak, dmode, pos)
+        Tuple => @bind_tuple_pattern(pat, ty, ak, dmode, pos)
+        Array => @bind_array_pattern(pat, ty, ak, dmode, pos)
         Disj => @bind_disj_pattern(pat, ty, ak)
     }
 }
@@ -384,11 +391,13 @@ fn Checker mut @bind_lit_pattern(pat Node, ak []Node) -> bool {
 /// the same text the qualified case uses: one rule, two spellings.
 /// The binder is recorded with its type ON the Name node -- the emitter has
 /// no scope and reads the channel, which is the discipline the record keeps.
-fn Checker mut @bind_name_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode) -> bool {
+fn Checker mut @bind_name_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode, pos PatPos) -> bool {
     ro nm = pattern_head_text(pat)
     if is_vrow(variant_in_sum(@ctx, ty, nm) ?? no_vrow()) {
-        // A payload-less variant binds nothing.
-        return true
+        // A payload-less variant binds nothing -- and it IS a variant pattern:
+        // as refutable as `A(x)` where the position takes irrefutable forms
+        // only, at any depth (registry 1379: `ro (a, None) = p`, `for B in xs`).
+        return !@refused_unit_variant(ak, pos)
     }
     if variants_named(@ctx, nm).1 > 0 {
         @report_first_leaf_of(ak, WRONG_SUM_ARM_MSG)
@@ -420,7 +429,7 @@ fn Checker mut @bind_name_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode)
 /// SUM (wave B6, #964), then every payload position is bound RECURSIVELY --
 /// a position may itself be a tuple, record or variant pattern (D157), which
 /// is the nesting the flat walk read as one long run of binders.
-fn Checker mut @bind_variant_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode) -> bool {
+fn Checker mut @bind_variant_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode, pos PatPos) -> bool {
     ro head = pattern_head_text(pat)
     // THE TYPE IS ASKED ONLY WHEN THERE IS ONE: a poisoned scrutinee is
     // `TyId(-1)`, and asking the interner for its name walked off the end
@@ -466,7 +475,7 @@ fn Checker mut @bind_variant_pattern(pat Node, ty TyId, ak []Node, dmode ParamMo
         // `int`, and binding the parameter instead made the arms disagree
         // and the mangler assert.
         ro pt = payload_as_seen(@ctx, ty, @ctx.payload_types[vr.payload_off + i])
-        if !@bind_pattern(sub, pt, ak, dmode) { ok = false } else { // The position bound; the arm stays sound.
+        if !@bind_pattern(sub, pt, ak, dmode, pos) { ok = false } else { // The position bound; the arm stays sound.
         }
         i += 1
     }
@@ -477,7 +486,7 @@ fn Checker mut @bind_variant_pattern(pat Node, ty TyId, ak []Node, dmode ParamMo
 /// same door the destructuring binding asks (`tys.arg`). A round pattern on
 /// anything named is refused -- D486: the round form is the positional
 /// tuple's own, a named tuple is destructured by the brace form.
-fn Checker mut @bind_tuple_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode) -> bool {
+fn Checker mut @bind_tuple_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode, pos PatPos) -> bool {
     ro anon_positional = match shape_of(@ctx, ty) {
         AnonPositionalTuple => true
         Record | ValueRecord | NamedTuple | PositionalTuple | AnonNamedTuple => false
@@ -503,7 +512,7 @@ fn Checker mut @bind_tuple_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode
     mut ok = true
     for sub in subs {
         if i >= @ctx.tys.arg_count(ty) { break }
-        if @bind_pattern(sub, @ctx.tys.arg(ty, i), ak, dmode) {
+        if @bind_pattern(sub, @ctx.tys.arg(ty, i), ak, dmode, pos) {
             // The position bound; the arm stays sound.
         } else { ok = false }
         i += 1
@@ -517,7 +526,7 @@ fn Checker mut @bind_tuple_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode
 /// and the judgment is the destructuring binding's own (D411/D486): every
 /// named field must exist, a partial list needs `..`, a renamed or nested
 /// field binds its subpattern against the field's type.
-fn Checker mut @bind_record_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode) -> bool {
+fn Checker mut @bind_record_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode, pos PatPos) -> bool {
     if pattern_head_text(pat) != "" {
         @report_first_leaf_of(ak, RECORD_VARIANT_MSG)
         return false
@@ -549,7 +558,7 @@ fn Checker mut @bind_record_pattern(pat Node, ty TyId, ak []Node, dmode ParamMod
         }
         match patfield_sub(f) {
             Some(sub) => {
-                if !@bind_pattern(sub, ft, ak, dmode) { ok = false } else { // The field bound; the arm stays sound.
+                if !@bind_pattern(sub, ft, ak, dmode, pos) { ok = false } else { // The field bound, the arm sound.
                 }
             }
             None => {
@@ -595,7 +604,7 @@ fn Checker mut @bind_record_pattern(pat Node, ty TyId, ak []Node, dmode ParamMod
 /// ADJACENT to its DotDot, with no comma between -- binds the remainder as a
 /// slice of the same type. One `..` at most; the length question (exact, or
 /// at-least with a rest) is the emitter's, asked of the same tree.
-fn Checker mut @bind_array_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode) -> bool {
+fn Checker mut @bind_array_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode, pos PatPos) -> bool {
     // The HEAD DECLARATION's name, not the source spelling: `ty_source_name`
     // of an application answers "Vec[int]", which is why the first version of
     // this test refused every real slice.
@@ -630,7 +639,7 @@ fn Checker mut @bind_array_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode
                         @report_first_leaf_of(ak, ARRAY_REST_BIND_MSG)
                         ok = false
                     } else {
-                        if @bind_pattern(c, elem_t, ak, dmode) {
+                        if @bind_pattern(c, elem_t, ak, dmode, pos) {
                             // The element bound; the arm stays sound.
                         } else { ok = false }
                     }
@@ -903,3 +912,53 @@ const DESTR_NO_FIELD_PATTERN_MSG = "a brace pattern names a field this type does
 const ARRAY_PATTERN_MSG = "an array pattern needs a slice scrutinee (`[]T`)"
 const ARRAY_REST_TWICE_MSG = "an array pattern takes one `..` at most (D59) -- a second one is ambiguous"
 const WRONG_SUM_ARM_MSG = "this arm names a variant of a different sum than the value matched on (registry #964) -- write a variant of the matched sum, or a binder"
+
+/// WHERE a pattern stands (D486 §4): the three columns of the position table plus
+/// the match arm, which takes every form. Named by the caller once and handed down
+/// the recursion, so the predicate is judged at every node (registry 1379).
+type PatPos enum
+    | PosArm /// a match arm: every form
+    | PosBind /// a destructuring binding: irrefutable forms only
+    | PosFor /// a `for` header: irrefutable forms only, the loop has no `else`
+    | PosCond /// an if/while condition: no literal and no `|` at any depth; `_` inside is legal
+
+/// The position's predicate at ONE node, true when refused (D486 §4). A binding
+/// and a `for` header refuse every refutable form; a condition refuses the forms
+/// that compare with a VALUE -- a literal or `|` -- and keeps `_` inside (the
+/// amendment's one exception: only a pattern that IS `_` means nothing, and the
+/// condition's own door refuses that at the root). These are LANGUAGE errors.
+fn Checker mut @refused_at_position(pat Node, ak []Node, pos PatPos) -> bool {
+    ro refutable = match pattern_shape(pat) {
+        Lit | Variant | Array | Disj => true
+        Tuple | Record | Bind | Wild => false
+    }
+    ro compares_value = match pattern_shape(pat) {
+        Lit | Disj => true
+        Tuple | Record | Bind | Wild | Variant | Array => false
+    }
+    match pos {
+        PosArm => false
+        PosBind => @reject_if(refutable, ak, REFUTABLE_BINDING_MSG)
+        PosFor => @reject_if(refutable, ak, FOR_REFUTABLE_MSG)
+        PosCond => @reject_if(compares_value, ak, COND_VALUE_PATTERN_MSG)
+    }
+}
+
+/// Refuse as a LANGUAGE error when `bad`, and say whether it did.
+fn Checker mut @reject_if(bad bool, ak []Node, msg str) -> bool {
+    if bad {
+        @reject_first_leaf_of(ak, msg)
+        return true
+    }
+    false
+}
+
+/// A payload-less variant named in a pattern: refused where the position takes
+/// irrefutable forms only (a binding, a `for` header), true when refused.
+fn Checker mut @refused_unit_variant(ak []Node, pos PatPos) -> bool {
+    match pos {
+        PosArm | PosCond => false
+        PosBind => @reject_if(true, ak, REFUTABLE_BINDING_MSG)
+        PosFor => @reject_if(true, ak, FOR_REFUTABLE_MSG)
+    }
+}

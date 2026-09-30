@@ -1,0 +1,14 @@
+module pattern_depth.neg_2
+
+// A condition's pattern does not compare with a value at ANY depth (D486 s4
+// amendment 2026-09-30 p.1, registry 1379): `if Some(3) = o` is refused as
+// `if 3 = o` is -- the comparison is written `== Some(3)` or with a guard.
+
+// NOVAC_EXPECT a condition's pattern does not compare with a value
+
+fn main() {
+    ro o = Some(3)
+    if Some(3) = o {
+        println(1)
+    }
+}

@@ -558,6 +558,18 @@ test "a `-> (A, B)` return with an applied component is read, and an unreadable 
     assert(diagnose_first_msg(ptr).contains("type form is not compiled yet"), diagnose_first_msg(ptr))
 }
 
+test "the position's predicate is judged at every depth, `_` inside a condition stays legal (D486 s4, registry 1379)" {
+    // Fixtures: novac/fixtures/pattern_depth. The three callers checked the ROOT
+    // alone; the recursive judge now carries the position.
+    ro bind = "module m\n\ntype S enum\n    | P(int)\n    | N\n\nfn f(s S) -> int {\n    ro t = (1, s)\n    ro (a, P(b)) = t\n    a\n}\n"
+    assert(diagnose_first_msg(bind).contains("irrefutable pattern"), diagnose_first_msg(bind))
+    ro unit = "module m\n\ntype S enum\n    | P(int)\n    | N\n\nfn f(s S) -> int {\n    ro t = (1, s)\n    ro (a, N) = t\n    a\n}\n"
+    assert(diagnose_first_msg(unit).contains("irrefutable pattern"), diagnose_first_msg(unit))
+    ro cond = "module m\n\ntype S enum\n    | P(int)\n    | N\n\nfn f(s S) -> int {\n    ro t = (1, s)\n    ro (a, b) = t\n    match b {\n        P(3) => 1\n        _ => 0\n    }\n}\n"
+    // CONTROL: the match arm takes every form, a literal inside included.
+    assert(diagnose(cond) == 0, diagnose_first_msg(cond))
+}
+
 test "a closed `str` slice is compiled; other receivers, open bounds and non-int bounds keep their refusals (274.7 U-1)" {
     // D470 section 5: `s[lo..hi]` is `s.index(Range { start: lo, end: hi })`, a
     // byte range of type `str` (D249). Wave U-1 compiles the closed form over

@@ -103,7 +103,7 @@ fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
         ro some_term = block_terminates(kids[body_at])
         ro none_term = block_terminates(kids[else_at])
         ro vmark = @scope.mark()
-        if !@bind_pattern(pat, ot, kids, ParamMode.ModeRo) {
+        if !@bind_pattern(pat, ot, kids, ParamMode.ModeRo, PatPos.PosCond) {
             @scope.release(vmark)
             // SILENT-OK: `@bind_pattern` is the shared judge and it refused
             // by name; a second report here would be the cascade.
@@ -164,7 +164,7 @@ fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
         // As a statement: the branches are blocks, typed below.
     }
     ro mark = @scope.mark()
-    if !@bind_pattern(pat, ot, kids, ParamMode.ModeRo) {
+    if !@bind_pattern(pat, ot, kids, ParamMode.ModeRo, PatPos.PosCond) {
         @scope.release(mark)
         // SILENT-OK: `@bind_pattern` is the shared judge and it refused
         // by name; a second report here would be the cascade.
@@ -234,7 +234,7 @@ fn Checker mut @type_while_let(st Node) -> () {
     }
     @record(init, ot)
     ro mark = @scope.mark()
-    if !@bind_pattern(pat, ot, kids, ParamMode.ModeRo) {
+    if !@bind_pattern(pat, ot, kids, ParamMode.ModeRo, PatPos.PosCond) {
         @scope.release(mark)
         // SILENT-OK: `@bind_pattern` is the shared judge and it refused
         // by name; a second report here would be the cascade.

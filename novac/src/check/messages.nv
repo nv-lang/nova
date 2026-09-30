@@ -518,3 +518,7 @@ const REST_LAST_MSG = "`..` in a `(a, b, ..)` pattern stands only last (D486): a
 
 /// `..` in a variant payload beside positions (D486 §2, registry 1382): a LANGUAGE error.
 const PAYLOAD_REST_MSG = "`..` in a variant payload stands alone, as in `Cons(..)` (D59, D486): a payload that names some positions lists them all"
+
+/// A literal or `|` inside a condition's pattern (D486 §4 amendment 2026-09-30 p.1,
+/// registry 1379): a LANGUAGE error -- it compares with a value.
+const COND_VALUE_PATTERN_MSG = "a condition's pattern does not compare with a value -- a literal or `|` stands in it at no depth (D486): write `== Some(3)` or a guard"
