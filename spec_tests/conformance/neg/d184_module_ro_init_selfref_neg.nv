@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_MODULE_INIT_CYCLE
+//
+// D184 amendment 2026-09-30: a module-level `ro` whose initializer reads the
+// value itself is the shortest cycle -- no order computes it.
+module neg.d184_module_ro_init_selfref_neg
+
+fn d184s_three() -> int => 3
+
+// nova:expect E_MODULE_INIT_CYCLE -- the initializer reads the value it defines
+ro d184s_a = d184s_a + d184s_three()
+
+fn main() Io -> () {
+    println(d184s_a)
+}

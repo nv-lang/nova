@@ -1,0 +1,26 @@
+// EXPECT_STDOUT three|4|3|4
+//
+// D184 amendment 2026-09-30: module-level `ro` initializers run in DEPENDENCY
+// order, once, before `main` -- not in declaration order. `second` reads
+// `first` and is declared BEFORE it, so `first` is computed first. The oracle
+// used to emit the values in source order and panicked on the read
+// (INTERNAL-PANIC `Ident first not in var_types`); `third` reads `first` from
+// inside a `match`, so the dependency is found there too.
+// Carina's probe (the window's report of 2026-09-30), verbatim in its order.
+module standalone.d184_module_ro_dependency_order
+
+fn d184_three() -> int {
+    print("three|")
+    3
+}
+
+ro d184_second = d184_first + 1
+ro d184_third = match d184_three() {
+    3 => d184_first + 1
+    _ => 0
+}
+ro d184_first = d184_three()
+
+fn main() Io -> () {
+    print("${d184_second}|${d184_first}|${d184_third}")
+}
