@@ -142,6 +142,39 @@ fn main() {
     // in a helper so the helper's body, not the cut main, keeps them alive.
     println("eff = ", eff_door(argv_probe()))
     supervise_probe()
+
+    // Registry #1170 (274.7 U-3): the slice forms of the self-build carrier --
+    // `for path in a[argi..]` over `[]str` (main.nv:412) and `b[i]` over the
+    // bytes of a path (main.nv `base_name`). Each keeps its instance alive:
+    // `index(Range)` and `end_index` of Vec[str], the walk's `len`/`get`, and
+    // the element read of Vec[u8].
+    println("sl = ", slice_probe(argv_probe(), 0), " ", last_slash("a/b"))
+}
+
+/// A `for` over an open slice of `[]str`, and a closed one (main.nv:412).
+fn slice_probe(a []str, from int) -> int {
+    mut n = 0
+    for s in a[from..] {
+        n += s.byte_len()
+    }
+    ro head = a[0..0]
+    // The element read the novac `for` walk prints (`take_elem`).
+    ro first = if a.len() > 0 { a[0].byte_len() } else { 0 }
+    n + head.len() + first
+}
+
+/// The element read of a byte vector, the shape of `base_name` (main.nv:61).
+fn last_slash(path str) -> int {
+    ro b = path.bytes()
+    mut cut = 0
+    for i in 0..b.len() {
+        if b[i] == 0x2F {
+            cut = i + 1
+        } else {
+            // Any other byte belongs to the current segment.
+        }
+    }
+    cut
 }
 
 /// The value form of `with` and a `return` from its body (main.nv:350).

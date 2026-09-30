@@ -837,6 +837,7 @@ fn Checker mut @type_stmt(st Node) -> () {
                 @report_first_leaf_of(kids, FOR_CALL_HEAD_MSG)
                 return
             }
+            if !@walk_carried(kids, ht) { return }
             @record(head, ht)
             ro cmark = @scope.mark()
             // The element pattern binds through the ONE door, fresh each
