@@ -18186,19 +18186,7 @@ impl<'a> TypeCheckCtx<'a> {
                 // co-equal файлами ОДНОГО folder-модуля: `f(int)` в
                 // `a.nv` + `f(str)` в `b.nv` того же `module foo` —
                 // вызов из `a.nv` перестал бы видеть `f(str)` из `b.nv`).
-                let caller_module: Option<Vec<String>> = self.file_modules.borrow()
-                    .get(&caller_file_id).cloned();
-                let is_own = |c: &&FnDecl| -> bool {
-                    if c.span.file_id == caller_file_id {
-                        return true;
-                    }
-                    match &caller_module {
-                        Some(cm) => self.file_modules.borrow()
-                            .get(&c.span.file_id)
-                            .map_or(false, |dm| dm == cm),
-                        None => false, // модуль неизвестен → падаем на file_id (уже false здесь)
-                    }
-                };
+                let is_own = |c: &&FnDecl| -> bool { self.same_physical_module(caller_file_id, c.span.file_id) };
                 let visible: Option<Vec<&FnDecl>> = self.sig.fn_decls.get(n).map(|v| {
                     let filtered: Vec<&FnDecl> = v.iter()
                         .filter(|c| !c.file_private || c.span.file_id == caller_file_id)

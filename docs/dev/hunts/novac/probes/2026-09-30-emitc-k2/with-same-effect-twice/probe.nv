@@ -1,0 +1,12 @@
+// Two bindings of ONE effect in one `with`: the swaps are keyed by the
+// effect name (ir_with.nv HandlerSwap.eff); restore runs in reverse, so the
+// slot must end as it began, and the body sees the LAST binding.
+fn main() {
+    with Random = effect Random {
+        u64() -> u64 => 1
+    }, Random = effect Random {
+        u64() -> u64 => 2
+    } {
+        println(Random.u64())
+    }
+}

@@ -1,0 +1,11 @@
+=== SUBJECT: novac check
+novac check rc=0
+=== SUBJECT: novac emit (handler / capture / module-value / slot lines)
+novac emit rc=2
+1:{"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error (novac bug, not yours): channel.nv:499: assert failed: sem: no type recorded for this node — a hole in the checker's channel (is_ty(t))","poisoned_by":null}
+=== DIFFERENTIAL: novac-e1-smoke (oracle build+run vs novac C)
+novac-e1-smoke: FAIL — оракул не собрал <hunt>/probes/generic-lit-capture-T-held/probe.nv: [1m[31merror:[0m[0m \\?\<hunt>\tmp\novac-smoke.119494\pkgless\probe.nv:16:5: error: [E_READONLY_COERCE] возврат `x` — источник связан как `ro` (L1-binding — явный `ro x = ...` либо параметр без `mut`, D176-дефолт, P7 freeze), но объявленный тип возврата НЕ `ro` (mut-дефолт биндинга у caller'а, D184): `mut w = f()` у caller'а дал бы запись, видимую внутреннему источнику `x` (D246-амендмент, [M-ro-launder-via-mut-binding], Ф.1б). Решения: (a) если `x` должен быть mut-параметром — in-out по D326-ревизии §Р3, сама функция это НЕ решает изнутри для собственного параметра; поменяй сигнатуру функции на `mut x T`, если это правильная семантика; (b) верни явную независимую копию — `x.clone()` (D230); (c) объяви возврат `-> ro T`, если источник действительно должен остаться заморожен и у caller'а.
+16 |     x
+  |     ^
+=== SUBJECT ALONE: novac C compiled and run with the smoke's cached oracle flags
+(skipped: no emission, or no smoke cache yet)

@@ -1,0 +1,50 @@
+=== SUBJECT: novac check
+novac check rc=0
+=== SUBJECT: novac emit (handler / capture / module-value / slot lines)
+novac emit rc=0
+3508:    _nova_handler_lit_0_vtable->ctx = _nova_handler_lit_0_ctx;
+4279:    _nova_handler_lit_1_vtable->ctx = _nova_handler_lit_1_ctx;
+4745:    _nova_handler_lit_2_vtable->ctx = _nova_handler_lit_2_ctx;
+5727:    _nova_handler_lit_3_vtable->ctx = _nova_handler_lit_3_ctx;
+11909:    _nova_handler_lit_4_vtable->ctx = _nova_handler_lit_4_ctx;
+11923:} novac_hctx_0;
+11924:static nova_unit novac_hop_0_on_resource_enter(void* _novac_ctx, nova_str label);
+11925:static nova_unit novac_hop_0_on_resource_exit(void* _novac_ctx, nova_str label, Nova_ScopeOutcome* outcome, nova_int duration_ms, nova_bool overrun);
+11928:} novac_hctx_1;
+11929:static uint64_t novac_hop_1_u64(void* _novac_ctx);
+11932:    size_t _novac_hv1_off = (sizeof(NovaVtable_ResourceTrace) + _Alignof(novac_hctx_0) - 1) / _Alignof(novac_hctx_0) * _Alignof(novac_hctx_0);
+11933:    char* _novac_hv1_blk = (char*)nova_alloc(_novac_hv1_off + sizeof(novac_hctx_0));
+11934:    NovaVtable_ResourceTrace* _novac_hv1 = (NovaVtable_ResourceTrace*)_novac_hv1_blk;
+11935:    novac_hctx_0* _novac_hv1_cx = (novac_hctx_0*)(_novac_hv1_blk + _novac_hv1_off);
+11936:    _novac_hv1_cx->seen = &seen;
+11937:    _novac_hv1->ctx = _novac_hv1_cx;
+11938:    _novac_hv1->on_resource_enter = novac_hop_0_on_resource_enter;
+11939:    _novac_hv1->on_resource_exit = novac_hop_0_on_resource_exit;
+11940:    NovaVtable_ResourceTrace* _novac_l2 = _novac_hv1;
+11941:    NovaVtable_ResourceTrace* _novac_l3 = _nova_handler_ResourceTrace;
+11954:static nova_unit novac_hop_0_on_resource_enter(void* _novac_ctx, nova_str label) {
+11955:    novac_hctx_0* _novac_cap = (novac_hctx_0*)_novac_ctx;
+11956:    (*_novac_cap->seen) = nova_int_checked_add((*_novac_cap->seen), ((nova_int)1LL));
+11957:    size_t _novac_hv2_off = (sizeof(NovaVtable_Random) + _Alignof(novac_hctx_1) - 1) / _Alignof(novac_hctx_1) * _Alignof(novac_hctx_1);
+11958:    char* _novac_hv2_blk = (char*)nova_alloc(_novac_hv2_off + sizeof(novac_hctx_1));
+11959:    NovaVtable_Random* _novac_hv2 = (NovaVtable_Random*)_novac_hv2_blk;
+11960:    novac_hctx_1* _novac_hv2_cx = (novac_hctx_1*)(_novac_hv2_blk + _novac_hv2_off);
+11961:    _novac_hv2_cx->seen = &seen;
+11962:    _novac_hv2->ctx = _novac_hv2_cx;
+11963:    _novac_hv2->u64 = novac_hop_1_u64;
+11964:    NovaVtable_Random* _novac_l1 = _novac_hv2;
+11965:    NovaVtable_Random* _novac_l2 = _nova_handler_Random;
+11979:static nova_unit novac_hop_0_on_resource_exit(void* _novac_ctx, nova_str label, Nova_ScopeOutcome* outcome, nova_int duration_ms, nova_bool overrun) {
+11980:    novac_hctx_0* _novac_cap = (novac_hctx_0*)_novac_ctx;
+11985:static uint64_t novac_hop_1_u64(void* _novac_ctx) {
+11986:    novac_hctx_1* _novac_cap = (novac_hctx_1*)_novac_ctx;
+11987:    (*_novac_cap->seen) = nova_int_checked_add((*_novac_cap->seen), ((nova_int)100LL));
+12129:    _nova_handler_lit_5_vtable->ctx = _nova_handler_lit_5_ctx;
+=== DIFFERENTIAL: novac-e1-smoke (oracle build+run vs novac C)
+novac-e1-smoke: FAIL — оракул не собрал <hunt>/probes/nested-lit-capture-outer-cap/probe.nv:  8211 |     _nova_handler_lit_2_ctx->_nv_fv__nova_handler_lit_2_seen = &seen;
+      |                                                                 ^~~~
+1 error generated.
+=== SUBJECT ALONE: novac C compiled and run with the smoke's cached oracle flags
+novac C compile rc=1
+<hunt>/tmp/tmp.SIVfQZcGeT/body.c:11960:28: error: use of undeclared identifier 'seen'
+1 error generated.

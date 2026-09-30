@@ -1,0 +1,42 @@
+=== SUBJECT: novac check
+novac check rc=0
+=== SUBJECT: novac emit (handler / capture / module-value / slot lines)
+novac emit rc=0
+3508:    _nova_handler_lit_0_vtable->ctx = _nova_handler_lit_0_ctx;
+4279:    _nova_handler_lit_1_vtable->ctx = _nova_handler_lit_1_ctx;
+4745:    _nova_handler_lit_2_vtable->ctx = _nova_handler_lit_2_ctx;
+5727:    _nova_handler_lit_3_vtable->ctx = _nova_handler_lit_3_ctx;
+11909:    _nova_handler_lit_4_vtable->ctx = _nova_handler_lit_4_ctx;
+11923:static nova_int novac_mv_BASE;
+11926:} novac_hctx_0;
+11927:static nova_unit novac_hop_0_on_resource_enter(void* _novac_ctx, nova_str label);
+11928:static nova_unit novac_hop_0_on_resource_exit(void* _novac_ctx, nova_str label, Nova_ScopeOutcome* outcome, nova_int duration_ms, nova_bool overrun);
+11937:    size_t _novac_hv1_off = (sizeof(NovaVtable_ResourceTrace) + _Alignof(novac_hctx_0) - 1) / _Alignof(novac_hctx_0) * _Alignof(novac_hctx_0);
+11938:    char* _novac_hv1_blk = (char*)nova_alloc(_novac_hv1_off + sizeof(novac_hctx_0));
+11939:    NovaVtable_ResourceTrace* _novac_hv1 = (NovaVtable_ResourceTrace*)_novac_hv1_blk;
+11940:    novac_hctx_0* _novac_hv1_cx = (novac_hctx_0*)(_novac_hv1_blk + _novac_hv1_off);
+11941:    _novac_hv1_cx->BASE = BASE;
+11942:    _novac_hv1->ctx = _novac_hv1_cx;
+11943:    _novac_hv1->on_resource_enter = novac_hop_0_on_resource_enter;
+11944:    _novac_hv1->on_resource_exit = novac_hop_0_on_resource_exit;
+11945:    NovaVtable_ResourceTrace* _novac_l2 = _novac_hv1;
+11946:    NovaVtable_ResourceTrace* _novac_l3 = _nova_handler_ResourceTrace;
+11959:static nova_unit novac_hop_0_on_resource_enter(void* _novac_ctx, nova_str label) {
+11960:    novac_hctx_0* _novac_cap = (novac_hctx_0*)_novac_ctx;
+11963:    nova_print_int(_novac_cap->BASE);
+11967:static nova_unit novac_hop_0_on_resource_exit(void* _novac_ctx, nova_str label, Nova_ScopeOutcome* outcome, nova_int duration_ms, nova_bool overrun) {
+11968:    novac_hctx_0* _novac_cap = (novac_hctx_0*)_novac_ctx;
+12115:    _nova_handler_lit_5_vtable->ctx = _nova_handler_lit_5_ctx;
+14448:    nova_gc_add_root(&novac_mv_BASE, (char*)(&novac_mv_BASE) + sizeof(novac_mv_BASE));
+14449:    novac_mv_BASE = novac_mvinit_BASE();
+=== DIFFERENTIAL: novac-e1-smoke (oracle build+run vs novac C)
+novac-e1-smoke: FAIL — оракул не собрал <hunt>/probes/mv-shadowed-by-captured-local/probe.nv:   |        ^^^^
+  note: Plan 53: variant-patterns need a runtime tag-check — `let` guarantees binding, not a fallible match.
+  note: example: `if let BASE(..) = <expr> { ... }`
+=== SUBJECT ALONE: novac C compiled and run with the smoke's cached oracle flags
+novac C compile rc=0
+novac link rc=0
+init
+a 7
+7
+novac run rc=0

@@ -1,0 +1,17 @@
+// A handler literal as a MODULE VALUE's initializer: the literal stands
+// outside every function, and the emitter collects literals only from
+// reached functions (emit_handler.nv @collect_handler_lits).
+ro QUIET = effect ResourceTrace {
+    on_resource_enter(label str) -> () {
+        println("quiet ", label)
+    }
+    on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {
+        println(label)
+    }
+}
+
+fn main() {
+    with ResourceTrace = QUIET {
+        ResourceTrace.on_resource_enter("a")
+    }
+}

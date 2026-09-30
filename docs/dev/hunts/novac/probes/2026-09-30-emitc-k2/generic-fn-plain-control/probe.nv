@@ -1,0 +1,10 @@
+// Control for generic-fn-lit-capture-T: the same generic body, NO handler
+// literal -- `x + y` printed directly, two instances.
+fn show[T](x T, y T, tag str) -> () {
+    println(tag, " ", x + y)
+}
+
+fn main() {
+    show(5, 6, "int")
+    show(1.5, 2.25, "float")
+}

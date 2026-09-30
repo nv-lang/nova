@@ -1,0 +1,46 @@
+
+
+// `with E = effect E { ... }` -- a HANDLER LITERAL (E.9 step 3, plan 274.11):
+// its operations are functions of their own, its table and context follow
+// D474 (no captures: one allocation and a NULL context; captures: one block).
+// Two nested `with` of one effect, the operation called before, inside and
+// after the inner one: leaving the inner body restores the outer literal.
+// Captures: `mut seen` by address (both literals move it), `ro base` by copy.
+// A held literal (`ro quiet = ...`) with no captures, installed by name, and
+// an operation that answers a value. Behaviour byte-for-byte with the oracle
+// (novac-e1-smoke).
+
+fn main() {
+    mut seen = 0
+    ro base = 40
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label str) -> () {
+            seen += 1
+            println(label, " outer ", base + seen)
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {
+            println(label)
+        }
+    } {
+        ResourceTrace.on_resource_enter("a")
+        with ResourceTrace = effect ResourceTrace {
+            on_resource_enter(label str) -> () {
+                seen += 10
+                println(label, " inner ", seen)
+            }
+            on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {
+                println(label)
+            }
+        } {
+            ResourceTrace.on_resource_enter("b")
+        }
+        ResourceTrace.on_resource_enter("c")
+    }
+    ro quiet = effect Random {
+        u64() -> u64 => 7
+    }
+    with Random = quiet {
+        println(Random.u64())
+    }
+    println(seen)
+}

@@ -1,0 +1,2 @@
+// Architectural finding guard-string-keys-gap -- no program reproduces it; cmd.sh prints the
+// two places that answer the same question separately. guard gap: check-novac-no-string-keys.py does not see a `.name ==` scan nor a string name used as a C identifier (#1428)

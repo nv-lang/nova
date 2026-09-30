@@ -21,6 +21,28 @@
 use super::*;
 
 impl<'a> TypeCheckCtx<'a> {
+    /// №534's "own module" for a bare-name call, by PHYSICAL identity: the same
+    /// file, or the same declared module in the same directory (the co-equal files
+    /// of one folder module). D78 rev-4 lets physically distinct modules share one
+    /// declaration (`a/neg/kind.nv` and `b/neg/kind.nv` both `module neg.kind`,
+    /// `d78_dup_decl_type_axis`) -- by name alone each file's private `classify`
+    /// was "own" to the other, the call went unresolved, and #1390 refused it.
+    /// With no path on record for either file, the module name decides as before.
+    pub(super) fn same_physical_module(&self, caller: crate::diag::FileId, decl: crate::diag::FileId) -> bool {
+        if decl == caller {
+            return true;
+        }
+        let modules = self.file_modules.borrow();
+        let (Some(cm), Some(dm)) = (modules.get(&caller), modules.get(&decl)) else { return false };
+        if cm != dm {
+            return false;
+        }
+        match (self.file_paths.get(&caller), self.file_paths.get(&decl)) {
+            (Some(cp), Some(dp)) => cp.parent() == dp.parent(),
+            _ => true,
+        }
+    }
+
     /// Candidates the caller's file imports by `name` (`import path.{name}`),
     /// matched by declaring module or by the declaring file's path (relative
     /// imports). Returns `cands` unchanged when no candidate is imported so.
@@ -68,18 +90,8 @@ impl<'a> TypeCheckCtx<'a> {
         if visible.len() < 2 {
             return;
         }
-        let own: Vec<&FnDecl> = {
-            let modules = self.file_modules.borrow();
-            let caller_mod = modules.get(&caller);
-            visible
-                .iter()
-                .copied()
-                .filter(|c| {
-                    c.span.file_id == caller
-                        || (caller_mod.is_some() && modules.get(&c.span.file_id) == caller_mod)
-                })
-                .collect()
-        };
+        let own: Vec<&FnDecl> =
+            visible.iter().copied().filter(|c| self.same_physical_module(caller, c.span.file_id)).collect();
         let pick = if own.is_empty() { self.narrow_by_fn_imports(caller, name, visible) } else { own };
         if let [only] = pick.as_slice() {
             self.resolved_callees.borrow_mut().insert(e.id, only.span);

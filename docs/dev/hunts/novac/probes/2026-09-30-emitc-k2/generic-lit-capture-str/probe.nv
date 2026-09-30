@@ -1,0 +1,20 @@
+// A handler literal inside a GENERIC function, capturing only a NON-generic
+// binding (`tag str`); T is used outside the literal. Two instances.
+fn wrap[T](x T, tag str) -> T {
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label str) -> () {
+            println(label, " ", tag)
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {
+            println(label)
+        }
+    } {
+        ResourceTrace.on_resource_enter("in")
+    }
+    x
+}
+
+fn main() {
+    println(wrap(5, "int"))
+    println(wrap(true, "bool"))
+}
