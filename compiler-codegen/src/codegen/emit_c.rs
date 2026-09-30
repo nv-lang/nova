@@ -1537,6 +1537,7 @@ pub struct CEmitter {
     pub(crate) local_frames: Vec<(HashSet<String>, HashSet<String>)>,
     /// #1158: final C qualifiers (`c_name`) of lazy consts -- laziness of ONE const, not of a name.
     lazy_const_syms: HashSet<String>,
+    pub(crate) module_value_tys: HashMap<String, String>, // #1410: see `reset_module_value_types`
     /// `[M-lazy-const-init-race]` (2026-07-09): pending lazy-const init
     /// bodies, collected as each lazy const (`const X = <non-constexpr>` /
     /// module-level `ro X = <runtime-expr>`) is emitted, and combined at
@@ -2795,7 +2796,7 @@ impl CEmitter {
             user_fn_variadic: HashSet::new(),
             suppress_variadic_routing: false,
             emitted_fn_thunks: HashSet::new(),
-            lazy_consts: HashSet::new(), pending_assoc_consts: Vec::new(), local_frames: Vec::new(), lazy_const_syms: HashSet::new(),
+            lazy_consts: HashSet::new(), pending_assoc_consts: Vec::new(), local_frames: Vec::new(), lazy_const_syms: HashSet::new(), module_value_tys: HashMap::new(),
             pending_const_inits: Vec::new(),
             record_field_fn_sigs: HashMap::new(),
             trailing_block_counter: 0,
@@ -10184,9 +10185,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // `file_priv_fn_c_names`; входов в пользовательский код ТРИ (main, test, bench), промах был во всех.
         let saved_emit_file_id_test = self.current_emit_file_id;
         self.current_emit_file_id = Some(t.span.file_id);
-        self.local_frames.push(crate::free_idents::frame_reads(&[], |bd, fr| crate::free_idents::collect_truly_free_idents_block(&t.body, bd, fr)));
+        self.enter_body(crate::free_idents::frame_reads(&[], |bd, fr| crate::free_idents::collect_truly_free_idents_block(&t.body, bd, fr)));
         let r = self.emit_test_scoped_inner(t, idx);
-        self.local_frames.pop();
+        self.leave_body();
         self.current_emit_file_id = saved_emit_file_id_test;
         self.override_maps_scope_exit(ovr_saved, r.is_ok());
         r
@@ -10420,7 +10421,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     "{}const nova_str {} = {{(const uint8_t*)\"{}\" , {}}};",
                     self.top_level_storage(), c_name, escaped, len
                 ));
-                self.var_types.insert(c.name.clone(), ty_c.clone());
+                self.note_module_value(&c.name, &ty_c);
                 return Ok(());
             }
         }
@@ -10454,7 +10455,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // use-site инферился с правильным c-типом (например u32-const,
                 // используемый как `let mut h = FOO`, должен дать `uint32_t h`,
                 // а не nova_int — баг был замечен в std/checksums/fnv.nv).
-                self.var_types.insert(c.name.clone(), ty_c.clone());
+                self.note_module_value(&c.name, &ty_c);
                 Ok(())
             }
             Err(_) => {
@@ -10543,7 +10544,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.lazy_const_syms.insert(c_name.to_string());
         // Регистрируем тип, чтобы infer_expr_c_type(Ident(name)) возвращал
         // правильный c-тип (для записи в var_types — как обычный binding).
-        self.var_types.insert(name.to_string(), ty_c.to_string());
+        self.note_module_value(name, ty_c);
         // Эмитим storage (file-scope static; no `_init` flag anymore — the
         // combined `nova_consts_init()` runs it exactly once, eagerly).
         // [M-175-lazy-const-crossmodule-collision]: KEEP the `_nova_const_
@@ -29331,13 +29332,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // №577/№592: a static array-ext method generic over the receiver's element is no longer emitted erased
         // here -- `emit_fn_scoped_inner` skips it for a real per-element mono (`array_ext_static_generic_fn`, D38).
         let params: Vec<&str> = f.params.iter().map(|p| p.name.as_str()).collect();
-        self.local_frames.push(crate::free_idents::frame_reads(&params, |bd, fr| match &f.body {
+        self.enter_body(crate::free_idents::frame_reads(&params, |bd, fr| match &f.body {
             FnBody::Expr(e) => crate::free_idents::collect_truly_free_idents(e, bd, fr),
             FnBody::Block(b) => crate::free_idents::collect_truly_free_idents_block(b, bd, fr),
             FnBody::External => {}
         }));
         let r = self.emit_fn_scoped_inner(f);
-        self.local_frames.pop();
+        self.leave_body();
         self.override_maps_scope_exit(ovr_saved, r.is_ok());
         r
     }
