@@ -1,0 +1,6 @@
+// #1158 carrier -- see `clc_entry.nv`. A plain constexpr of the same name.
+module crossmod_lazy_const_samename.clc_eager_a
+
+const C1158 u8 = 9
+
+export fn clc_eager_a_value() -> u8 => C1158

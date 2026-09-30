@@ -1,0 +1,7 @@
+// #1158 carrier -- see `clc_entry.nv`. The canonical form of a printable byte
+// (the one the novac lexer could not write): not a constexpr, so it is lazy.
+module crossmod_lazy_const_samename.clc_lazy
+
+const C1158 u8 = '\\' as u8
+
+export fn clc_lazy_value() -> u8 => C1158
