@@ -487,7 +487,7 @@
 # rule for a sum that declares Equal -- debt, the next wave.
 # (renumbered at the merge of local main into p274-novac, 2026-09-26: both
 # sides had written 129 -> 130 independently; three spec/decisions commits in all)
-#   spec-queue: 134
+#   spec-queue: 137
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,
