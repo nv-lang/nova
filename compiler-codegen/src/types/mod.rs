@@ -21311,8 +21311,7 @@ impl<'a> TypeCheckCtx<'a> {
             // Each element gets `T`, the literal gets the position's type.
             ExprKind::ArrayLit(items)
                 if !items.is_empty()
-                    && items.iter().all(|it| matches!(it, ArrayElem::Item(x) if is_untyped_const_expr(x)))
-                    && std::env::var_os("NOVA_KILL_1532").is_none() =>
+                    && items.iter().all(|it| matches!(it, ArrayElem::Item(x) if is_untyped_const_expr(x))) =>
             {
                 let Some(elem) = array_elem_type(expected) else { return };
                 if !Self::ts_member(&ResolvedType::from_type_ref(elem), constraint_solver::TypeSet::Primitive) {
@@ -55026,8 +55025,7 @@ impl MapLitAnnotator<'_> {
                     // literal stays anonymous: the emitter's own target (the fn's return, D55)
                     // builds it, as it did before the naming existed.
                     if generics.is_empty() && !self.ctx.expected_is_from_fields(exp) && !fields.iter().any(|f| f.is_spread)
-                        && (!path.last().is_some_and(|n| self.ctx.ambiguous_type_names.contains(n))
-                            || std::env::var_os("NOVA_KILL_1533").is_some())
+                        && !path.last().is_some_and(|n| self.ctx.ambiguous_type_names.contains(n))
                         && matches!(path.last().and_then(|n| self.ctx.wrap_types.get(n)), Some(TypeDeclKind::Record(_))) {
                         *tn = Some(path.clone());
                     }
