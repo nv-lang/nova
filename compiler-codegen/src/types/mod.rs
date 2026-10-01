@@ -24210,16 +24210,30 @@ impl<'a> TypeCheckCtx<'a> {
                 // (lexicographically smallest) one — same source now ALWAYS produces the
                 // same C, so a genuinely-ambiguous corpus fails (or passes) the SAME way on
                 // every run instead of flaking.
-                let mut candidates: Vec<&String> = self.types.iter()
+                let owners: Vec<(&String, crate::diag::FileId)> = self.types.iter()
                     .filter_map(|(type_name, td)| {
                         if let TypeDeclKind::Sum(variants) = &td.kind {
                             if td.generics.is_empty() && variants.iter().any(|v| &v.name == name) {
-                                return Some(type_name);
+                                return Some((type_name, td.span.file_id));
                             }
                         }
                         None
                     })
                     .collect();
+                // Registry 221.1 #1555: a bare variant is first the variant of a sum
+                // of the READING module. The tie-break below ran over the whole merged
+                // CU, so a library's `Get` (its own `Method`) became the importer's
+                // `HttpMethod.Get` -- "HttpMethod" sorts before "Method" -- and since
+                // #1517 checks a constructor's payload against its instance, the
+                // library's `Ok(match s { "GET" => Get, .. })` was E7301. A module that
+                // imports the library does not change what the library's names mean.
+                let here = self.module_value_files.get(&expr.span.file_id).copied();
+                let own: Vec<&String> = owners.iter()
+                    .filter(|(_, fid)| here.is_some() && self.module_value_files.get(fid).copied() == here)
+                    .map(|(n, _)| *n)
+                    .collect();
+                let mut candidates: Vec<&String> =
+                    if own.is_empty() { owners.iter().map(|(n, _)| *n).collect() } else { own };
                 candidates.sort();
                 if let Some(type_name) = candidates.into_iter().next() {
                     return Some(TypeRef::Named {
