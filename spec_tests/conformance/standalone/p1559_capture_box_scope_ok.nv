@@ -1,0 +1,75 @@
+// EXPECT_STDOUT p1559 92 97 92 85 52 97 shared 15 55 15
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for registry 221.1 #1559: a variable captured by two closures, each
+// under its own `with`, shares ONE heap box -- and that box is declared at the top
+// of the C function, not inside the first `with`'s C block. Before: the second
+// closure (or a read after the block) named `_box_<name>` out of its C scope and
+// clang refused the program: a record parameter (passed by pointer), a `mut`
+// scalar, a `mut` record, an arrow-bodied fn; a capture in an untaken branch
+// followed by a read and a second capture; a write through one closure seen by
+// the other and by the function after both.
+module standalone.p1559_capture_box_scope_ok
+
+type Where value {
+    ro dir str
+    ro file str
+}
+
+type Ask effect {
+    ask() -> int
+}
+
+fn forty() -> Effect[Ask] => effect Ask { ask() -> int { 40 } }
+
+fn run_ask(f fn() Ask -> int) -> int => f()
+
+fn bit(flag bool) -> int => if flag { 1 } else { 0 }
+
+fn record_param(at Where, flag bool) -> int {
+    ro n = 2
+    ro a = with Ask = forty() { run_ask(fn() Ask -> int => Ask.ask() + at.dir.byte_len() + n + bit(flag)) }
+    ro m = 3
+    ro b = with Ask = forty() { run_ask(fn() Ask -> int => Ask.ask() + at.file.byte_len() + m + bit(flag)) }
+    a + b
+}
+
+fn mut_scalar(flag bool) -> int {
+    mut k = 5
+    ro a = with Ask = forty() { run_ask(fn() Ask -> int => Ask.ask() + k + 2 + bit(flag)) }
+    ro b = with Ask = forty() { run_ask(fn() Ask -> int => Ask.ask() + k + 3 + bit(flag)) }
+    a + b
+}
+
+fn mut_record(at0 Where, flag bool) -> int {
+    mut at = at0
+    ro a = with Ask = forty() { run_ask(fn() Ask -> int => Ask.ask() + at.dir.byte_len() + 2 + bit(flag)) }
+    ro b = with Ask = forty() { run_ask(fn() Ask -> int => Ask.ask() + at.file.byte_len() + 3 + bit(flag)) }
+    a + b
+}
+
+fn arrow(at Where) -> int =>
+    (with Ask = forty() { run_ask(fn() Ask -> int => Ask.ask() + at.dir.byte_len()) }) + (with Ask = forty() { run_ask(fn() Ask -> int => Ask.ask() + at.file.byte_len()) })
+
+fn untaken(flag bool) -> int {
+    mut k = 5
+    mut a = 0
+    if flag {
+        a = with Ask = forty() { run_ask(fn() Ask -> int => Ask.ask() + k) }
+    }
+    k += 1
+    ro b = with Ask = forty() { run_ask(fn() Ask -> int => Ask.ask() + k) }
+    a + b + k
+}
+
+fn main() Io {
+    ro w = Where{ dir: "ab", file: "cde" }
+    mut k = 5
+    ro a = with Ask = forty() {
+        run_ask(fn() Ask -> int {
+            k += 10
+            k
+        })
+    }
+    ro b = with Ask = forty() { run_ask(fn() Ask -> int => Ask.ask() + k) }
+    println("p1559 ${record_param(w, true)} ${mut_scalar(true)} ${mut_record(w, true)} ${arrow(w)} ${untaken(false)} ${untaken(true)} shared ${a} ${b} ${k}")
+}
