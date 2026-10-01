@@ -10485,6 +10485,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.lazy_const_syms.contains(&q).then_some(q)
     }
 
+    /// Registry 221.1 #1549: THE C identifier of a read of `name` in `file_id` that is
+    /// not a local -- a module const, wherever it is read: a body (`emit_expr`) or the
+    /// initialiser of another const (`emit_const_expr`). Three steps, in the order the
+    /// definition (`emit_const_decl`) names the symbol: the module-private /
+    /// file-keyed qualified name (Plan 91.12); a colliding `export const`'s qualified
+    /// name (#151); else the name through the C-name door (#1440/#1446), which is
+    /// how an unqualified definition is emitted (#1498). The const initialiser used
+    /// to stop after step one and emit the bare name -- `DAY_MS` against `nv_DAY_MS`.
+    fn const_ref_c_name(&self, file_id: crate::diag::FileId, name: &str) -> String {
+        if let Some(mangled) = self.private_const_c_names.get(&(file_id, name.to_string())) {
+            return mangled.clone();
+        }
+        if self.colliding_const_names.contains(name) {
+            if let Some(mangled) = self.const_qualified_by_name.get(name) {
+                return mangled.clone();
+            }
+        }
+        Self::mangle_field_name(name)
+    }
+
     /// D184 amend: the init-order key of a read `r` in `file_id` -- the C symbol it resolves to (`Type.NAME` ->
     /// `Type_NAME`), so two modules' same-named `ro`s are two nodes, as in the checker's graph (#1158 class).
     pub(crate) fn init_dep_sym(&self, file_id: crate::diag::FileId, r: &str) -> String {
@@ -10958,13 +10978,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // `private_const_c_names` keyed by this expression's file_id (peers
             // in the same module-group all carry the group's consts). Fall back
             // to the bare name for exported consts (emitted under their own name).
-            ExprKind::Ident(name) => {
-                let mangled = self.private_const_c_names
-                    .get(&(expr.span.file_id, name.clone()))
-                    .cloned()
-                    .unwrap_or_else(|| name.clone());
-                Ok(mangled)
-            }
+            // #1549: through the SAME door as a read in a body (`const_ref_c_name`).
+            // The bare-name fallback here missed the C-name door (#1440/#1446), which
+            // escapes an ALL-CAPS name: `export const WEEK_MS = 7 * DAY_MS` emitted
+            // `nv_DAY_MS` for the definition and `DAY_MS` for this reference.
+            ExprKind::Ident(name) => Ok(self.const_ref_c_name(expr.span.file_id, name)),
             // [M-d200-assoc-const-composite-value]: constructor-call RHS
             // (`= StatusCode.mk(200)`) is NOT extended to constexpr — a call
             // is a runtime dispatch regardless of purity; D200 composite
@@ -36250,31 +36268,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                     return Ok(self.fn_value_c_name(name, expr.id));
                 }
-                // Plan 91.12: module-private const C-name via (use-site file_id, name); the pre-pass covers every
-                // peer of the module group. A same-named LOCAL is caught above (#1397) -- the old note here
-                // claimed the mangling alone covered that case; it did not.
-                if let Some(mangled) = self.private_const_c_names
-                    .get(&(expr.span.file_id, name.clone()))
-                {
-                    return Ok(mangled.clone());
-                }
-                // [fix №151] EAGER (constexpr-initialiser) colliding export
-                // const — mirrors the lazy branch's `const_qualified_by_name`
-                // fallback above (this map's value IS the final eager symbol
-                // itself, no `_nova_const_..._value` wrapper — same
-                // convention `emit_const_decl`'s eager arm already uses).
-                if self.colliding_const_names.contains(name) {
-                    if let Some(mangled) = self.const_qualified_by_name.get(name) {
-                        return Ok(mangled.clone());
-                    }
-                }
-                // [M-c-keyword-ident-collision] (Plan 172.13): plain local-var/
-                // param read (and, since Stmt::Assign lowers its target via
-                // `emit_expr`, assignment TARGETS too) — the universal fallthrough
-                // for "this identifier is a real local". Mangle the OUTPUT text
-                // only; all lookups above (var_types/private_const_c_names/etc.)
-                // already ran against the RAW `name`, so this must stay last.
-                Ok(Self::mangle_field_name(name))
+                // A module const, or (the universal fallthrough) a real local -- one door
+                // with the const initialiser's reference (`const_ref_c_name`, #1549).
+                // A same-named LOCAL is caught above (#1397).
+                Ok(self.const_ref_c_name(expr.span.file_id, name))
             }
             ExprKind::Path(parts) => {
                 // Plan 38: numeric type constants — `int.MAX`, `f64.NAN`, etc.
