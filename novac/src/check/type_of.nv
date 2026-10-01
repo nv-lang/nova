@@ -108,8 +108,27 @@ fn arg_class(e Node, scope Scope) -> ArgClass {
         return class_of_binding(binding_name_of(e), scope)
     }
     if k == NodeKind.Paren { return arg_class(branch_children(e)[1], scope) }
-    if k == NodeKind.FieldAccess { return ArgClass.ArgRo }
+    // A FIELD of a place is as mutable as its OWNER: `@xs.push(x)` in a `mut`
+    // method, `b.xs.push(1)` on a `mut b`. Until 2026-10-01 a `FieldAccess`
+    // answered `ro` and a `@field` (`SelfField`) fell to the temporary below,
+    // so every `mut` method called on a field of a `mut` receiver had no
+    // candidate -- "this type has no such method", ten times over novac's own
+    // source (`@args.append`, `@rows.push`, `@map.insert`, `@heads.put`, ...).
+    // Any other owner still answers `ro`: the conservative class every mode
+    // accepts.
+    if k == NodeKind.SelfField { return field_class(class_of_binding(RECV_BINDING, scope)) }
+    if k == NodeKind.FieldAccess { return field_class(arg_class(branch_children(e)[0], scope)) }
     ArgClass.ArgOwnedTemp
+}
+
+/// The class of a field of a place whose owner has class `owner`: mutable when
+/// the owner is a `mut` place, a read-only place otherwise.
+#realtime nogc
+fn field_class(owner ArgClass) -> ArgClass {
+    match owner {
+        ArgMut => ArgClass.ArgMut
+        ArgRo | ArgConsume | ArgOwnedTemp => ArgClass.ArgRo
+    }
 }
 
 /// The class of an argument whose call is ALREADY TYPED: a call that hands out
