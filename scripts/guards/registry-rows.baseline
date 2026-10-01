@@ -1462,6 +1462,9 @@
 # 2026-10-01, background agent of the integrator (p1498-c-ident-bypass): rows -> 1448, max -> 1499 (#1498 (K2, regression of #1440: a local/param name written into C past the door c_ident) lands, out of gaps; number given by the integrator).
 # 2026-10-01, integrator nova-20: rows -> 1452, max -> 1504 (merge of p1498 (agent): #1498 lands; #1501-#1504 filed from its grid (#1502/#1503 K1 silent wrong value -- block the oracle tag); 1500 issued to Carina, in gaps).
 # 2026-10-01, integrator nova-20: rows -> 1453, max -> 1504 (merge of p1494 (assistant): #1494 lands (out of gaps), #1489 fixed in the branch).
+# 2026-10-01, integrator nova-20: rows -> 1455, max -> 1506 (merge of the cloud session's p1461: #1461 fixed; #1505 (Carina: an unreadable std declarations file is skipped silently) and #1506 (runtime byte buffers allocated scannable) numbered here).
+rows=1455
+max=1506
 rows=1453
 max=1504
 rows=1452
