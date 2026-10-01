@@ -1,0 +1,70 @@
+module vec_new.pos_1
+
+// `[]T.new()` -- the EMPTY vector constructor (registry 221.1 #1457) -- with
+// primitive element types (`int`, `str`), in every value position novac reads: a binding
+// initializer, the right side of `=`, a call argument, the value a fn
+// returns (body tail and `return`). Each vector is built empty, pushed to,
+// counted, walked, re-assigned empty and counted again. `[]bool.new()` is NOT
+// here: the shell carries no `Vec[bool]` instance, and the checker refuses it by
+// that name -- an honest subset refusal, not this form's. Behaviour
+// byte-for-byte with the oracle (novac-e1-smoke).
+
+fn sum(xs []int) -> int {
+    mut s = 0
+    for x in xs {
+        s += x
+    }
+    s
+}
+
+fn count(xs []int) -> int => xs.len()
+
+fn fresh() -> []int {
+    []int.new()
+}
+
+fn fresh_ret(n int) -> []int {
+    if n > 0 {
+        return []int.new()
+    }
+    mut ys = []int.new()
+    ys.push(n)
+    ys
+}
+
+fn words() -> int {
+    mut ws = []str.new()
+    ws.push("a")
+    ws.push("bc")
+    mut n = 0
+    for w in ws {
+        n += w.byte_len()
+    }
+    ws = []str.new()
+    n * 10 + ws.len()
+}
+
+fn main() {
+    mut xs = []int.new()
+    println(xs.len())
+    xs.push(3)
+    xs.push(4)
+    xs.push(5)
+    println(xs.len())
+    println(sum(xs))
+    for x in xs {
+        println(x)
+    }
+    xs = []int.new()
+    println(xs.len())
+    xs.push(9)
+    println(sum(xs))
+    println(count([]int.new()))
+    ro f = fresh()
+    println(f.len())
+    println(fresh_ret(1).len())
+    println(fresh_ret(0).len())
+    ro e = []int.new()
+    println(e.len())
+    println(words())
+}

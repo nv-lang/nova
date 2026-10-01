@@ -24,7 +24,7 @@ import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
-import ../builtins.{VEC_INDEX_METHOD, VEC_LEN_METHOD}
+import ../builtins.{VEC_INDEX_METHOD, VEC_LEN_METHOD, EMPTY_CTOR}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
 import ../sem.{shape_of}
@@ -585,7 +585,12 @@ fn Checker mut @type_array_lit(init Node) -> TyId {
     ro kids = branch_children(init)
     ro elems = literal_elems(kids)
     if Some(ctor) = literal_ctor_name(kids) {
-        if ctor != LITERAL_CTOR {
+        if ctor == EMPTY_CTOR {
+            // `[]T.new()`: the EMPTY vector (registry 221.1 #1457). Not a
+            // literal, so its door is its own -- but it builds through the
+            // literal's emitter (constructor, zero elements, no push).
+            return @type_empty_vec(kids, elems)
+        } else if ctor != LITERAL_CTOR {
             @report_first_leaf_of(kids, "outside the subset: a typed array literal is written `[]T.${LITERAL_CTOR}(...)` -- this constructor is not the literal form (274.5 P3)")
             return no_ty()
         } else {
@@ -659,6 +664,58 @@ fn Checker mut @type_array_lit(init Node) -> TyId {
         // Carried: the emitter prints exactly these two names.
     }
     lit_t
+}
+
+/// The type of `[]T.new()`, the EMPTY vector constructor, or `no_ty()` after a
+/// NAMED refusal (registry 221.1 #1457).
+///
+/// Before this door `new` fell into the literal's "not the literal form" refusal:
+/// 14 diagnostics of novac's own sources in the one-process unit measure and 123
+/// in `novac-self-residual.sh` (2026-10-01, on integrate ed90b40) -- the form is
+/// how novac itself starts every collector. It is NOT the empty literal the door above
+/// refuses: the oracle panics on `[]T.of()` (its contract wants an element) and
+/// builds `[]T.new()` as `Vec[T].new(cap: 0)`, an empty vector, with no run-time
+/// question at all.
+///
+/// Two refusals, each named: an argument (`new(cap)` -- a capacity, or the
+/// unsafe raw-parts overloads -- the emitter's capacity is the literal's
+/// element count, so a written one has nowhere to go yet), and an element type
+/// the shell carries no constructor for. Only the CONSTRUCTOR is asked of the
+/// shell: nothing here pushes, and every later `push`/`len`/`for` on the value
+/// asks the shell for its own method at its own call site.
+fn Checker mut @type_empty_vec(kids []Node, elems []Node) -> TyId {
+    if elems.len() > 0 {
+        @report_first_leaf_of(kids, "outside the subset: `[]T.${EMPTY_CTOR}(...)` takes no arguments here -- a capacity (or the raw-parts form) is not compiled yet; write `[]T.${EMPTY_CTOR}()` (274.5 P3, registry 221.1 #1457)")
+        return no_ty()
+    } else {
+        // The empty constructor: its element type is the written one.
+    }
+    mut elem_t = no_ty()
+    if Some(hn) = literal_head_name(kids) {
+        elem_t = @ctx.ty_of_name(hn) ?? no_ty()
+    } else {
+        // No written element name: refused just below.
+    }
+    if !is_ty(elem_t) {
+        @report_first_leaf_of(kids, "outside the subset: novac does not know this element type yet (274.5 P3)")
+        return no_ty()
+    } else {
+        // A known element type.
+    }
+    ro vec_t = slice_term_of(elem_t, @ctx.types, @ctx.defs, @ctx.tys)
+    if !is_ty(vec_t) {
+        @report_first_leaf_of(kids, "outside the subset: the slice head `${SLICE_HEAD}` is not among the declarations novac was handed (274.5 P5)")
+        return no_ty()
+    } else {
+        // The term exists; the shell decides whether it can be built.
+    }
+    if !@ctx.interop.has(c_instance_ctor(@ctx, vec_t)) {
+        @report_first_leaf_of(kids, "outside the subset: the shell novac links into carries no `${SLICE_HEAD}` instance for ${ty_source_name(@ctx, elem_t)} -- the interop surface is the probe program (novac/probe/shell_probe.nv, E2-b); a vector of this element type arrives when the probe uses one, or with the prelude")
+        return no_ty()
+    } else {
+        // Carried: the emitter prints exactly this name.
+    }
+    vec_t
 }
 
 /// One text for the rule.

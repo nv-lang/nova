@@ -1438,6 +1438,11 @@
 # 2026-10-01, integrator nova-20: rows -> 1401, max -> 1450 (merge of the cloud session's p1343: #1449 (K1, mut x T of a generic free fn loses the write, blocks the tag) and #1450 (K2, overlapping generic overloads T vs []T)).
 # 2026-10-01, integrator nova-20: rows -> 1403, max -> 1452 (merge of spec/d55-str-bytes: #1451 (K2, let/return of a non-identifier str into []u8 fails in C) and #1452 (K1, str accepted in a mut []u8 position -- writes into the string's bytes; blocks the tag)).
 # 2026-10-01, integrator nova-20: rows -> 1406, max -> 1456 (merge of the cloud session's p1338: #1454 (K2, constructor receiver with an undetermined parameter), #1455 (K1, arithmetic on a void* operand emits a silent 0 -- blocks the tag), #1456 (K3, unknown Option method passes the checker); 1453 reserved for the handler-capture regression, leaves gaps).
+# 2026-10-01, cloud session p1457 (number issued by the integrator): rows 1406 -> 1407, max 1456 -> 1457.
+#   #1457 (K2, novac: `[]T.new()` refused as "not the literal form", its `=` as "only as an
+#   initializer"); fixed on the same branch. No new gaps: 1453 is already declared.
+rows=1407
+max=1457
 rows=1406
 max=1456
 rows=1403

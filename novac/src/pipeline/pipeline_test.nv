@@ -889,6 +889,26 @@ export type Vec[T] { n int }")
     assert(d5[0].message.contains("println covers"))
 }
 
+test "the empty vector `[]T.new()` is built from the shell's constructor, as a value and on the right of `=`" {
+    // Registry 221.1 #1457. `new` was refused as "not the literal form" -- 14 of
+    // novac's own carriers -- and its assignment `@cur = []Stmt.new()` as "only
+    // as an initializer". Same handed `Vec` head as the literal test above.
+    mut std = std_decls()
+    std.push("module std.v\n\
+export type Vec[T] { n int }")
+    ro (d1, _) = compile_to_c("fn take(xs []int) -> int => 1\nfn mk() -> []int => []int.new()\nfn main() {\n mut v = []int.new()\n v = []int.new()\n println(take(v))\n println(take([]int.new()))\n println(take(mk()))\n}", std)
+    assert(d1.len() == 0)
+    // A capacity argument: the oracle takes it, the subset does not -- named.
+    ro (d2, _) = compile_to_c("fn main() {\n ro v = []int.new(4)\n println(1)\n}", std)
+    assert(d2.len() == 1)
+    assert(d2[0].message.contains("takes no arguments"))
+    // An element type the shell carries no instance for: the shell's refusal,
+    // not the form's.
+    ro (d3, _) = compile_to_c("type P { n int }\nfn main() {\n ro v = []P.new()\n println(1)\n}", std)
+    assert(d3.len() == 1)
+    assert(d3[0].message.contains("carries no"))
+}
+
 test "an instance method of the shell: deduced on the receiver, named by the shell, refused where the shell has none" {
     mut std = std_decls()
     std.push("module std.v\n\

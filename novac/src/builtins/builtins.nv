@@ -244,6 +244,15 @@ export const SLICE_HEAD = "Vec"
 /// drift from the first.
 export const LITERAL_CTOR = "of"
 
+/// The std constructor of an EMPTY vector: `[]int.new()` (registry 221.1 #1457).
+/// Not a literal -- it takes no elements and pushes nothing -- but it is built
+/// through the same two names a literal is (the shell's instance constructor,
+/// capacity zero), so the checker reads it beside `of` and the emitter prints
+/// it with the same door. The oracle's `Vec[T].new(cap int = 0)`
+/// (std/src/collections/vec/core.nv) is the donor; the subset takes the
+/// zero-argument call only.
+export const EMPTY_CTOR = "new"
+
 /// The std method the literal LOWERS to, one call per element (the oracle
 /// builds `[7, 8]` as `static_new(0)` + `push` + `push`; measured 2026-08-26 on
 /// its own emission). Spelled once, here.
