@@ -27,6 +27,7 @@ mod static_blanket;
 mod fn_visibility; // #1097: a same-name free fn by the caller's imports, see its doc
 mod import_conflict; // #1234: D29 imported name vs own declaration / other import
 mod duplicate_decls; // #1179/#1183/#1186: one duplicate check for the compiled module
+mod record_lit_schema; // #1448/#1096: a record literal against its record's fields
 mod generic_sum; // #1337/#1338: a user generic sum's ctor, payload and expected type
 
 /// Plan 196 (gs-bounds migration, spike `docs/plans/wip/196-gs-spike.md`):
@@ -8965,16 +8966,7 @@ impl<'a> TypeCheckCtx<'a> {
                                         .collect();
                                     if !missing.is_empty() {
                                         errors.push(Diagnostic::new(
-                                            format!(
-                                                "[E_MISSING_FIELD_IN_LITERAL] record literal \
-                                                 `{}{{ … }}` does not initialise {}: {}. \
-                                                 Construction requires every declared field \
-                                                 (D02 §Construction); add it, or copy the rest \
-                                                 from another value with `...other`.",
-                                                last,
-                                                if missing.len() == 1 { "field" } else { "fields" },
-                                                missing.join(", "),
-                                            ),
+                                            record_lit_schema::missing_field_message(last, &missing),
                                             e.span,
                                         ));
                                     }
@@ -11464,6 +11456,9 @@ impl<'a> TypeCheckCtx<'a> {
                                     Compat::CoerceConflict { msg } => {
                                         errors.push(Diagnostic::new(msg, arg.expr().span));
                                     }
+                                    Compat::RecordLit { faults } => {
+                                        errors.extend(faults.into_iter().map(|(m, s)| Diagnostic::new(m, s)));
+                                    }
                                     Compat::Ok | Compat::Unknown => {}
                                 }
                             }
@@ -12812,7 +12807,7 @@ impl<'a> TypeCheckCtx<'a> {
                                                                     &fn_generic_scope(f),
                                                                     scope,
                                                                 ),
-                                                                Compat::Bad { .. }
+                                                                Compat::Bad { .. } | Compat::RecordLit { .. }
                                                             )
                                                     })
                                                     .collect();
@@ -13714,6 +13709,11 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             ExprKind::RecordLit { type_name, fields, .. } => {
+                // #1448/#1096: every field against its declared type, and
+                // completeness where #1142's site does not reach.
+                if let Some(path) = type_name {
+                    self.check_named_record_lit(e, path, fields, gs, scope, errors);
+                }
                 for f in fields {
                     if let Some(v) = &f.value {
                         self.f1_expr(v, gs, scope, errors);
@@ -14388,6 +14388,9 @@ impl<'a> TypeCheckCtx<'a> {
             // doc).
             Compat::CoerceConflict { msg } => {
                 errors.push(Diagnostic::new(msg, value.span));
+            }
+            Compat::RecordLit { faults } => {
+                errors.extend(faults.into_iter().map(|(m, s)| Diagnostic::new(m, s)));
             }
             Compat::Ok | Compat::Unknown => {}
         }
@@ -16716,7 +16719,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
             if matches!(
                 self.assignable(arg.expr(), &param.ty, gs, &callee_gs, scope),
-                Compat::Bad { .. }
+                Compat::Bad { .. } | Compat::RecordLit { .. }
             ) {
                 return Some(false);
             }
@@ -18008,6 +18011,9 @@ impl<'a> TypeCheckCtx<'a> {
                                     ),
                                 );
                             }
+                            Compat::RecordLit { faults } if generic_param => {
+                                errors.extend(faults.into_iter().map(|(m, s)| Diagnostic::new(m, s)));
+                            }
                             Compat::CoerceConflict { msg } if generic_param => {
                                 errors.push(
                                     Diagnostic::new(msg, arg.expr().span).with_note_at(
@@ -18128,6 +18134,9 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 Compat::CoerceConflict { msg } => {
                     errors.push(Diagnostic::new(msg, arg_expr.span));
+                }
+                Compat::RecordLit { faults } => {
+                    errors.extend(faults.into_iter().map(|(m, s)| Diagnostic::new(m, s)));
                 }
                 Compat::Ok | Compat::Unknown => {}
             }
@@ -19263,6 +19272,9 @@ impl<'a> TypeCheckCtx<'a> {
                             param.span,
                         ),
                     );
+                }
+                Compat::RecordLit { faults } => {
+                    errors.extend(faults.into_iter().map(|(m, s)| Diagnostic::new(m, s)));
                 }
                 Compat::Ok | Compat::Unknown => {
                     // [M-generic-arg-type-mismatch-silent] The Ty/TyCat lowering
@@ -21868,6 +21880,9 @@ impl<'a> TypeCheckCtx<'a> {
             Compat::CoerceConflict { msg } => {
                 errors.push(Diagnostic::new(msg, value.span));
             }
+            Compat::RecordLit { faults } => {
+                errors.extend(faults.into_iter().map(|(m, s)| Diagnostic::new(m, s)));
+            }
             Compat::Ok | Compat::Unknown => {}
         }
     }
@@ -23109,6 +23124,13 @@ impl<'a> TypeCheckCtx<'a> {
                             }
                         }
                     }
+                }
+            }
+            // #1448/#1096: `{ .. }` at a record-typed position is checked field
+            // by field against that record (`record_lit_schema.rs`).
+            ExprKind::RecordLit { type_name: None, fields, .. } => {
+                if let Some(v) = self.anon_record_lit_compat(expr, fields, expected, expr_gs, exp_gs, scope) {
+                    return v;
                 }
             }
             ExprKind::IntLit(v) => {
@@ -28357,6 +28379,11 @@ enum Compat {
     /// of which declaration provides it (see `generic_coerce_lookup` doc for
     /// why decl-time R3 dedup can't catch this for generic patterns).
     CoerceConflict { msg: String },
+    /// Registry 221.1 #1448/#1096: an anonymous record literal against a
+    /// record type, with the faults of its fields (wrong type, missing,
+    /// undeclared) as ready diagnostics, each at its own span
+    /// (`record_lit_schema.rs`).
+    RecordLit { faults: Vec<(String, Span)> },
 }
 
 /// Plan 142 (D227 Rule 3/6): диапазон `[min, max]` для sized-int типа.

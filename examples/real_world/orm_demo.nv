@@ -314,7 +314,7 @@ export fn Repo[T] @fetch_page(after Option[u64], size int) Db Fail[RepoError] ->
     }
     ro q Sql = {
         template: "SELECT * FROM ${@table} WHERE 1 = 1 ${cursor_predicate.template} ORDER BY id ASC LIMIT ?",
-        args: [...cursor_predicate.args, (size + 1) as i64],
+        args: [...cursor_predicate.args, SqlValue.I((size + 1) as i64)],
     }
     ro items = @list_with(q)
 
@@ -341,12 +341,12 @@ export fn users_repo() -> Repo[User] =>
     }
 
 fn row_to_user(row DbRow) Fail[RepoError] -> User {
-    ro id        = row.get_int("id")
-    ro name      = row.get_str("name")
-    ro email     = row.get_str("email")
-    ro balance   = row.get_int("balance")
-    ro version   = row.get_int("version")
-    ro ts        = row.get_int("created_at")
+    ro id        = row.get_int("id")!!
+    ro name      = row.get_str("name")!!
+    ro email     = row.get_str("email")!!
+    ro balance   = row.get_int("balance")!!
+    ro version   = row.get_int("version")!!
+    ro ts        = row.get_int("created_at")!!
 
     User {
         id: id as UserId,
@@ -378,11 +378,11 @@ export fn posts_repo() -> Repo[Post] =>
     }
 
 fn row_to_post(row DbRow) Fail[RepoError] -> Post {
-    ro id      = row.get_int("id")
-    ro user_id = row.get_int("user_id")
-    ro title   = row.get_str("title")
-    ro body    = row.get_str("body")
-    ro ts      = row.get_int("created_at")
+    ro id      = row.get_int("id")!!
+    ro user_id = row.get_int("user_id")!!
+    ro title   = row.get_str("title")!!
+    ro body    = row.get_str("body")!!
+    ro ts      = row.get_int("created_at")!!
 
     Post {
         id: id as PostId,
