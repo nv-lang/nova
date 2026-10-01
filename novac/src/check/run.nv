@@ -198,7 +198,28 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, row FnRow, substs [
         inst_row: row,
         ret_self: false,
     }
-    c.type_fn(decl)
+    // THE SAME TWO PASSES AS THE FILE, over the BODY (registry 221.1 #1539): the
+    // shape walk, then typing on a clean verdict. An instance used to be TYPED
+    // only, so a form the subset walk refuses in a file of its own -- `ro s str
+    // = @len()`, "a declared local type is not compiled yet" -- passed in an
+    // instance and was emitted (printed 0; the oracle says E7301). The BODY and
+    // not the declaration: the declaration's own judges (a generic declaration
+    // is not compiled, the extern form, the tail rule) belong to the file that
+    // wrote it, and an instance is generic by definition.
+    c.tail_value_body = value_body_of(branch_children(decl))
+    for k in branch_children(decl) {
+        if k.kind_of() == NodeKind.Block || k.kind_of() == NodeKind.FnExprBody {
+            c.walk(k)
+        } else {
+            // The name, the receiver, the parameters, the return type, a
+            // contract: the declaration's, judged where it was written.
+        }
+    }
+    if c.out.len() == 0 {
+        c.type_fn(decl)
+    } else {
+        // Refused by the walk: the refusals are the verdict, as for the file.
+    }
     (c.out, c.chan)
 }
 

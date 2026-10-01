@@ -142,3 +142,21 @@ fn main() {\n ro v = [1, 2]\n println(v.head())\n println(head(v))\n}", decls)
     // CONTROL: the file's own generic of the same name keeps the file's module.
     assert(c0.contains("novac_fn_hp_head__"), c0)
 }
+
+test "an instance body passes the subset walk, not typing alone (#1539)" {
+    // The hunt's instance-skips-subset-walk: `ro s str = @len()` is refused in a
+    // file of its own ("a declared local type is not compiled yet"), and the
+    // oracle says E7301; in an instance it was typed only, accepted, emitted.
+    ro geo = "module hp.geo\nexport fn Vec[T] @bad() -> int {\n ro s str = @len()\n 0\n}\n"
+    ro (d0, _) = compile_beside("module hp\nimport ./geo\nfn main() {\n ro v = [7]\n println(v.bad())\n}", geo)
+    assert(d0.len() == 1, messages(d0))
+    assert(d0[0].message.contains("in the instance of `bad`"), messages(d0))
+    assert(d0[0].message.contains("declared local type"), messages(d0))
+    // CONTROL: the walk is the BODY's -- a generic declaration is not refused
+    // as "generic parameters are not compiled yet", and a clean body still
+    // compiles to its instance.
+    ro ok = "module hp.geo\nexport fn Vec[T] @good() -> int {\n ro s = @len()\n s + 1\n}\n"
+    ro (d1, c1) = compile_beside("module hp\nimport ./geo\nfn main() {\n ro v = [7]\n println(v.good())\n}", ok)
+    assert(d1.len() == 0, messages(d1))
+    assert(c1.contains("novac_fn_hp_geo_good__"), c1)
+}

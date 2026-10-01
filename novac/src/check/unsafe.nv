@@ -15,7 +15,7 @@
 module novac.check
 
 import ../tree.{Node}
-import ../builtins.{PTR_READ_AT, PTR_WRITE_AT, PTR_WRITE_CONSUME_AT, PTR_OFFSET}
+import ../builtins.{PTR_WRITE_AT, PTR_WRITE_CONSUME_AT, PTR_OFFSET, is_ptr_method}
 import ../sem.{branch_children, leaf_text, is_expr_kind}
 import ../types.{TyId, is_ty}
 
@@ -54,7 +54,7 @@ fn Checker mut @type_ptr_method(e Node, kids []Node, recv_t TyId) -> () {
     // `offset(n) -> *T` (D216): address arithmetic in elements, the type kept
     // (registry 1557 -- std's `Vec[T] @index(r Range)` builds its view with it).
     ro offsets = leaf_text(kids[2]) == PTR_OFFSET
-    if leaf_text(kids[2]) != PTR_READ_AT && !writes && !offsets {
+    if !is_ptr_method(leaf_text(kids[2])) {
         // A pointer method IS an operation that needs the context, compiled
         // or not: without the count the enclosing block was also called
         // unused -- a second diagnostic, and a false one, for one cause.
