@@ -1,5 +1,5 @@
 // EXPECT_COMPILE_ERROR E_LIT_OUT_OF_RANGE
-// Regression for registry 221.1 #1593 (D55, amendment 2026-10-02): a literal takes the
+// Regression for registry 221.1 #1593 (D489): a literal takes the
 // type of its position only if its EXACT value is representable there; an integer
 // literal in a float only if exact (E_LIT_INEXACT), a fraction not past infinity
 // (E_LIT_OUT_OF_RANGE). Before, the number was silently replaced. Positive half:

@@ -1,5 +1,5 @@
 //! Registry 221.1 #1593: a literal takes the type of its position only if its EXACT value
-//! is representable there (D55, amendment 2026-10-02, owner's decision).
+//! is representable there (D489, owner's decision of 2026-10-02).
 //!
 //! Before: an integer literal in a float position was accepted whatever its size --
 //! `ro a f32 = 16777217` held `16777216`, `ro a f64 = 9007199254740993` held `...992`, and
@@ -30,7 +30,7 @@ pub(super) fn int_literal_into_float(val: i128, width: u8) -> Option<String> {
         format!(
             "[E_LIT_INEXACT] the integer literal {val} is not exactly representable in `{ty}` \
              (it would become {near}) -- a literal takes the type of its position only if its \
-             exact value fits (D55, amendment 2026-10-02); write the fraction form `{val}.0` if \
+             exact value fits (D489); write the fraction form `{val}.0` if \
              rounding is meant, or use a wider type"
         )
     })
@@ -47,7 +47,7 @@ pub(super) fn float_literal_into_float(f: f64, width: u8) -> Option<String> {
     inf.then(|| {
         format!(
             "[E_LIT_OUT_OF_RANGE] the float literal {f:e} overflows `{ty}` to infinity \
-             (|{ty}| <= {max}) -- D55, amendment 2026-10-02"
+             (|{ty}| <= {max}) -- D489"
         )
     })
 }
@@ -72,7 +72,7 @@ fn is_number_literal(e: &Expr) -> bool {
 
 impl<'a> TypeCheckCtx<'a> {
     /// #1593: the second operand of a comparison or an arithmetic operator is a typed
-    /// position too (D55, amendment 2026-10-02): a literal there takes the other operand's
+    /// position too (D489): a literal there takes the other operand's
     /// type only if its exact value fits -- judged by the same `assignable` arms as an
     /// annotated declaration. Only the out-of-range / inexact verdict is reported here;
     /// a kind mismatch (`x == 'a'` with `x u8`) stays with the existing type checks.

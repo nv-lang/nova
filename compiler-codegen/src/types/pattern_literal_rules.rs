@@ -64,7 +64,7 @@ fn literal_shown(l: &Literal) -> (String, &'static str) {
     }
 }
 
-/// #1593 (D55, amendment 2026-10-02): a literal of the right kind still has to hold its
+/// #1593 (D489): a literal of the right kind still has to hold its
 /// exact value in the scrutinee's type -- the same rule as every other typed position
 /// (`literal_exact.rs`): an integer over a float only if exact, a fraction over `f32`
 /// not past infinity, an integer over a sized integer within its range.
