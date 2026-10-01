@@ -1,0 +1,9 @@
+module unsafe_block.neg_2
+
+// A raw pointer's `read_at` OUTSIDE `unsafe { }` is a LANGUAGE error (D216,
+// E_UNSAFE_REQUIRED): the address arithmetic is where the type stops
+// answering, so the block is required (274.11 E.10 step 3c).
+
+// NOVAC_EXPECT a raw-pointer operation requires an `unsafe { }` block
+
+fn first_byte(s str) -> u8 => s.ptr().read_at(0)

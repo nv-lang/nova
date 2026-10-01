@@ -548,6 +548,13 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // The C receiver prefix follows the oracle's mono naming: str ->
         // Nova_str_method_, []int -> Vec____nova_int_method_.
         ro kids = branch_children(e)
+        // A RAW POINTER's method is the language's own (emit_ptr.nv, D216).
+        if @is_ptr_receiver(kids[0]) {
+            @emit_ptr_op(kids)
+            return
+        } else {
+            // A method of a type: the row the checker decided, below.
+        }
         // The ROW the checker decided on, not a name rebuilt from the receiver's
         // type: after the checker, nobody infers.
         ro cr = @out.callee_of(e.id_of())

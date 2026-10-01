@@ -388,6 +388,11 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // else, disagreeing branches), and readers act on `no_ty()`.
         return chan.type_if_known(e.id_of())
     }
+    if k == NodeKind.Unsafe {
+        // `@type_unsafe` records the block's tail type before anyone asks (274.11
+        // E.10 step 3c); silence is a refused block or a statement-shaped one.
+        return chan.type_if_known(e.id_of())
+    }
     if k == NodeKind.RecordCtor {
         ro kids = branch_children(e)
         if kids[0].kind_of() == NodeKind.Name {

@@ -1,0 +1,11 @@
+module unsafe_block.neg_1
+
+// An `unsafe` block with NO operation that needs one is a LANGUAGE error, the
+// oracle's too (D216 section 21 map, E_UNSAFE_UNUSED) -- novac must refuse it,
+// not accept a program the language rejects (274.11 E.10 step 3c).
+
+// NOVAC_EXPECT contains no operation that requires unsafe context
+
+fn f(a int) -> int {
+    unsafe { a + 1 }
+}

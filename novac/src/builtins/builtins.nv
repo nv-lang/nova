@@ -122,6 +122,11 @@ export const VEC_LEN_METHOD = "len"
 /// array pattern. `get` is for the access nobody proved (D470: it answers
 /// Option), and `for x in xs` is the iterator protocol, not either door.
 export const VEC_INDEX_METHOD = "index"
+/// The raw-pointer READ of D216 (the "all through methods" amendment):
+/// `p.read_at(i) -> T`, legal only inside `unsafe { }` -- std's `Vec[T]` body
+/// reads its elements so (`unsafe { @data.read_at(i) }`, 274.11 E.10 step 3c).
+export const PTR_READ_AT = "read_at"
+
 /// The upper bound an open slice `x[lo..]` takes: the second method of std's
 /// `RangeIndex` role beside `index(r Range)` -- the receiver's OWN answer, not
 /// a `len` field (plan 284; `std/src/collections/vec/slice.nv`,

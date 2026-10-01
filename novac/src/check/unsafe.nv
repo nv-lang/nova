@@ -1,0 +1,86 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `rustc_mir_build::check_unsafety` -- an unsafe block opens a
+// context, an operation that needs one is checked against it, and a block that
+// opened one for nothing is reported (`unused_unsafe`); NOT taken: rustc's
+// unused_unsafe is a LINT, Nova's E_UNSAFE_UNUSED is an error (D216 s21).
+// Role: typing of `unsafe { ... }` and of a raw pointer's `read_at` (274.11
+//   E.10 step 3c; D216): the block's value is its tail (s8), a pointer
+//   operation outside a block is E_UNSAFE_REQUIRED, a block with none inside is
+//   E_UNSAFE_UNUSED -- both LANGUAGE errors, the oracle's own.
+// Used by: exprs.nv (`@type_expr`'s Unsafe arm) and methods.nv (a method call
+//   whose receiver is a raw pointer), while a body is typed.
+// Guarded by: nova test novac/src/check/check_test.nv (the unsafe tests) and
+//   check-novac-differential.sh over novac/fixtures/unsafe_block.
+
+module novac.check
+
+import ../tree.{Node}
+import ../builtins.{PTR_READ_AT}
+import ../sem.{branch_children, leaf_text, is_expr_kind}
+import ../types.{TyId, is_ty}
+
+/// `unsafe { ... }`: the block typed inside an unsafe context; its value, when
+/// its tail is one, recorded on the node.
+fn Checker mut @type_unsafe(e Node) -> () {
+    ro uk = branch_children(e)
+    assert(uk.len() >= 2, "check: an unsafe block without its body reached typing")
+    ro ops_before = @unsafe_ops
+    @unsafe_depth += 1
+    ro mark = @scope.mark()
+    ro bt = @type_arm_block_value(uk[1])
+    @scope.release(mark)
+    @unsafe_depth -= 1
+    if @unsafe_ops == ops_before {
+        @reject_first_leaf_of(uk, UNSAFE_UNUSED_MSG)
+        return
+    } else {
+        // An operation inside needed the context.
+    }
+    if is_ty(bt) {
+        @record(e, bt)
+    } else {
+        // SILENT-OK: a statement-shaped block -- its tail is no value, and
+        // every statement in it was judged by the block's own typing.
+    }
+}
+
+/// A method call on a RAW POINTER (D216): `read_at` -- one `int` index, the
+/// pointee's type -- inside `unsafe { }`; every other method refused by name.
+fn Checker mut @type_ptr_method(e Node, kids []Node, recv_t TyId) -> () {
+    if leaf_text(kids[2]) != PTR_READ_AT {
+        @report_first_leaf_of(kids, PTR_METHOD_MSG)
+        return
+    } else {
+        // `read_at`: judged below.
+    }
+    if @unsafe_depth == 0 {
+        @reject_first_leaf_of(kids, UNSAFE_REQUIRED_MSG)
+        return
+    } else {
+        @unsafe_ops += 1
+    }
+    mut args = 0
+    mut i = 0
+    for c in kids {
+        if i > 2 && is_expr_kind(c.kind_of()) {
+            args += 1
+            ro at = type_of(c, @ctx, @scope, @chan)
+            if is_ty(at) && at != @ctx.prims.int_id {
+                @report_first_leaf_of([]Node.of(c), INT_INDEX_MSG)
+                return
+            } else {
+                // An `int` index, or one already refused where it was typed.
+            }
+        } else {
+            // The receiver, the dot, the name and the punctuation.
+        }
+        i += 1
+    }
+    if args != 1 {
+        @reject_first_leaf_of(kids, "`read_at` takes one index (D216)")
+        return
+    } else {
+        // One index.
+    }
+    @record(e, @ctx.tys.arg(recv_t, 0))
+}

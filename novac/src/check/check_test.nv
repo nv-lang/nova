@@ -146,7 +146,11 @@ test "generic receiver: refused after an unrelated earlier refusal too (registry
     // `fn[T Serialize] []T @serialize[S Serializer](...)`. Fixed the same
     // way: `before = @out.len()` taken right before the call this gate
     // judges.
-    ro src = "module m\n\nfn broken() -> int {\n    unsafe {\n    }\n}\n\nfn[T] []T @dup(n int) -> []T {\n    @\n}\n"
+    // Since 274.11 E.10 step 3c an `unsafe` STATEMENT passes the walk (typing
+    // judges it); the walk still refuses one standing as an OPERAND, and a
+    // binding tail still breaks the tail rule -- `broken`'s TWO walk refusals in
+    // the same subset pass this test is about.
+    ro src = "module m\n\nfn broken() -> int {\n    ro x = 1 + unsafe {\n    }\n}\n\nfn[T] []T @dup(n int) -> []T {\n    @\n}\n"
     assert(diagnose(src) == 3, "broken's two refusals plus dup's own generic-receiver refusal, not just broken's")
 }
 

@@ -1,0 +1,8 @@
+module unsafe_required
+
+// D216: a raw pointer read_at outside unsafe { } must be E_UNSAFE_REQUIRED.
+fn first_byte(s str) -> u8 => s.ptr().read_at(0)
+
+fn main() {
+    println(first_byte("A"))
+}

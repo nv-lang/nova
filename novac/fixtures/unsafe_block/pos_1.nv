@@ -1,0 +1,18 @@
+module unsafe_block.pos_1
+
+// `unsafe { ... }` is an EXPRESSION whose value is its block's tail (D216 s8),
+// and a pointer's `read_at` is legal only inside one (D216, the methods
+// amendment). The pointer is std's own -- `str @ptr() -> *u8` -- so this cell
+// holds the block and the read the self-build needs for std's `Vec[T]` body
+// (`unsafe { @data.read_at(i) }`, 274.11 E.10 step 3).
+fn first_byte(s str) -> u8 => unsafe { s.ptr().read_at(0) }
+
+fn second_byte(s str) -> u8 {
+    ro b = unsafe { s.ptr().read_at(1) }
+    b
+}
+
+fn main() {
+    println(first_byte("A"))
+    println(second_byte("xy"))
+}

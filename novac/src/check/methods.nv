@@ -387,6 +387,14 @@ fn Checker mut @type_method_call(e Node) -> () {
         } else {
             // A real type: the lookup below may proceed.
         }
+        // A RAW POINTER's method is no row of anyone's: D216's methods are the
+        // language's own (unsafe.nv, 274.11 E.10 step 3c).
+        if @ctx.tys.kind_of(recv_t) == TypeKind.TkPtr {
+            @type_ptr_method(e, kids, recv_t)
+            return
+        } else {
+            // A receiver with methods of its own: the row lookup below.
+        }
         // The DECISION, not a hint: which row this method call goes to.
         // Until 2026-08-18 nobody made it -- check only asked whether the
         // NAME existed anywhere, and the emitter rebuilt the C name from

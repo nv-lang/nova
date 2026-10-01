@@ -25,10 +25,14 @@ import ../builtins.{TypeKind, RECV_BINDING}
 
 /// A written `-> T` whose type the collector's reference door could not read
 /// (`ret_id` is no type) -- a form inside a tuple the door does not know yet
-/// (`fn(...)`, `*T`) -- refused by name at the return type (registry 1383). A
-/// declaration with no `->` and `-> ()` are not this case.
+/// (`fn(...)`) -- refused by name at the return type (registry 1383). A
+/// declaration with no `->` and `-> ()` are not this case. A RAW POINTER
+/// anywhere in it (`-> (int, *u8)`) is refused the same way: the door reads
+/// `*T` since 274.11 E.10 step 3b for std's declarations, and a pointer in
+/// THIS file's own signature is not compiled yet -- its C spelling inside an
+/// instance or a tuple name is not measured on the shell.
 fn Checker mut @report_if_return_unread(fkids []Node, rid TyId) -> () {
-    if is_ty(rid) { return }
+    if is_ty(rid) && !@holds_ptr(rid) { return }
     for c in fkids {
         if c.kind_of() != NodeKind.RetType { continue }
         ro rk = branch_children(c)
@@ -288,4 +292,15 @@ fn Checker mut @report_if_loop_ctl_outside(children []Node) -> () {
     } else {
         // Inside a loop: the jump has a target, nothing to say.
     }
+}
+
+/// Does this type hold a RAW POINTER anywhere -- itself, or an argument of an
+/// application, a tuple or a pointer?
+fn Checker @holds_ptr(t TyId) -> bool {
+    if !is_ty(t) { return false }
+    if @ctx.tys.kind_of(t) == TypeKind.TkPtr { return true }
+    for i in 0..@ctx.tys.arg_count(t) {
+        if @holds_ptr(@ctx.tys.arg(t, i)) { return true }
+    }
+    false
 }

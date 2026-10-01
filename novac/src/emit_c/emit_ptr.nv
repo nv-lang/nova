@@ -1,0 +1,40 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: C itself -- `p.read_at(i)` is `*(p + i)`, the address arithmetic the
+// language moved from operators to methods (D216, the methods amendment);
+// NOT taken: a runtime helper per operation -- the C operator is the operation.
+// Role: emission of a raw pointer's `read_at` (274.11 E.10 step 3c): the
+//   checker admitted it inside `unsafe { }` and recorded the pointee's type;
+//   the spelling is `(*((p) + (i)))`.
+// Used by: emit_expr.nv (`@emit_expr`'s MethodCall arm) when a receiver of
+//   pointer type is printed.
+// Guarded by: check-novac-differential.sh over novac/fixtures/unsafe_block.
+
+module novac.emit_c
+
+import ../tree.{Node}
+import ../builtins.{TypeKind}
+import ../sem.{is_expr_kind}
+import ../types.{is_ty}
+
+/// Is this method call's receiver a raw pointer (its recorded type)?
+fn Emitter @is_ptr_receiver(recv Node) -> bool {
+    ro t = @out.type_if_known(recv.id_of())
+    is_ty(t) && @ctx.tys.kind_of(t) == TypeKind.TkPtr
+}
+
+/// `p.read_at(i)` as `(*((p) + (i)))` -- the one pointer method the checker admits.
+fn Emitter mut @emit_ptr_op(kids []Node) -> () {
+    @body.append("(*((")
+    @emit_expr(kids[0])
+    @body.append(") + (")
+    mut i = 0
+    for c in kids {
+        if i > 2 && is_expr_kind(c.kind_of()) {
+            @emit_expr(c)
+        } else {
+            // The receiver, the dot, the name and the punctuation.
+        }
+        i += 1
+    }
+    @body.append(")))")
+}

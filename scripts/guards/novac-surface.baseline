@@ -237,7 +237,9 @@
 # builtins 53 -> 54 (2026-10-01, окно Карины, срезы №1170): END_INDEX_METHOD -- имя второго
 #   метода роли RangeIndex std (`end_index`), спрашивают его check/slice.nv и emit_c/emit_slice.nv;
 #   имя языка/std живёт в builtins (П5), а не строкой у двух потребителей.
-builtins 54
+# builtins 54 -> 55 (2026-10-01, окно Карины, 274.11 Э.10 шаг 3в): PTR_READ_AT -- имя метода
+#   указателя D216 `read_at`, его спрашивают check/unsafe.nv; имя языка живёт в builtins (П5).
+builtins 55
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -408,7 +410,9 @@ parse 1
 #   которые иначе были бы вписаны в три модуля руками. Именно этот класс ловит
 #   `check-novac-no-name-hardcode`: имя в строке расходится с собой же тихо.
 #
-pipeline 11
+# pipeline 11 -> 12 (2026-10-01, окно Карины, Э.10 шаг 2а): mark_program -- отмечает модули
+#   ПРОГРАММЫ на поверхности линковки; зовёт его main.nv (объявления из NOVAC_SELF_PATH).
+pipeline 12
 # 2026-08-28 (274.4 step 3): the field root gets the same cut. sem 171 -> 169:
 # has_field and field_type moved OUT to resolve (FieldIndex); resolve 11 -> 15:
 # FieldIndex, build, has_field, field_type.
@@ -897,7 +901,11 @@ resolve 15
 #   check/binds.nv, check/slice.nv и emit_c/emit_slice.nv), +is_collection_head (одна дверь
 #   головы `for` для check/rules.nv, check/typing.nv и lower/lowering.nv вместо трёх копий);
 #   -is_closed_slice_bin (заменена slice_shape_of).
-sem 292
+# sem 292 -> 295 (2026-10-01, окно Карины, Э.10 шаг 2а): InteropTable.@add_module/@has_module
+#   (модули программы рядом с символами шелла) и Ctx.@in_program -- одна дверь «тело этой строки
+#   есть в программе», её спрашивают check/calls.nv, check/methods.nv, emit_c/emit_expr.nv и
+#   emit_c/emit_interp.nv вместо compiles_body.
+sem 295
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
@@ -964,7 +972,9 @@ tree 25
 # №6, см. запись "types 21 -> 22" выше), и реестр закрыл дефект 2026-09-17.
 # Оракул больше не отвергает возврат ro-связанного newtype над примитивом, так
 # что все вызовы `same_ty(t)` в 9 файлах заменены на прямой возврат `t`.
-types 26
+# types 26 -> 28 (2026-10-01, Karina window, 274.11 E.10 step 3a): Interner.@ptr (the pointer term, asked by sem/typeref.nv)
+#   and Interner.@ptr_is_mut (its mutability, asked by sem/binding.nv and sem/mangle.nv).
+types 28
 # builtins 7 -> 9 (2026-08-16): `is_bool_literal` и `bool_c_literal` — язык
 # спрашивают ЗДЕСЬ. Вопрос владельца про список литералов вскрыл, что булев
 # литерал в подмножестве вообще нельзя было написать: bool получался только из

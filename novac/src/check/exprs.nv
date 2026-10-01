@@ -228,6 +228,8 @@ fn Checker mut @type_expr(e Node) -> () {
         @type_expr(tk[0])
         if @out.len() > before { return }
         @report_first_leaf_of(tk, TRY_MSG)
+    } else if k == NodeKind.Unsafe {
+        @type_unsafe(e)
     } else if k == NodeKind.IfExpr {
         // A CALL ARGUMENT is a legal position too (registry #TBD, the B14
         // door widened the same way B13's record constructor was): this

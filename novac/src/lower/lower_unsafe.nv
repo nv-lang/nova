@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc MIR building -- an `unsafe` block lowers as the block it wraps;
+// the unsafety was a CHECK, and nothing of it reaches the lowered body.
+// Role: lowering of `unsafe { ... }` (274.11 E.10 step 3c; D216 s8): as a
+//   value, its block placed into a temporary through the one block-value door;
+//   as a statement, its block's statements. The pointer operations inside are
+//   ordinary expressions the printer spells (emit_c/emit_ptr.nv).
+// Used by: lowering.nv (`@lower_value_source`, `@lower_stmt`) when a body is
+//   lowered after check.
+// Guarded by: check-novac-differential.sh over novac/fixtures/unsafe_block.
+
+module novac.lower
+
+import ../tree.{Node}
+import ../sem.{branch_children}
+import ../types.{TyId}
+
+/// `unsafe { ... }` as a VALUE: the block placed into a temporary of `ty`.
+fn Lowerer mut @lower_unsafe_value(e Node, ty TyId) -> Local {
+    ro t = @ir.temp(ty)
+    @lower_block_stmts_value(branch_children(e)[1], t)
+    t
+}
+
+/// `unsafe { ... }` as a STATEMENT: its block's statements, run for effect.
+fn Lowerer mut @lower_unsafe_stmt(st Node) -> () {
+    @lower_block_stmts_fn(branch_children(st)[1], false)
+}

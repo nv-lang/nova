@@ -291,7 +291,9 @@ fn Lowerer mut @lower_block_value(b Node, t Local) -> () {
 /// Emit one statement by node kind (call/if/while/return/bind/assign/for/expr).
 fn Lowerer mut @lower_stmt(st Node) -> () {
     ro k = st.kind_of()
-    if k == NodeKind.MatchExpr {
+    if k == NodeKind.Unsafe {
+        @lower_unsafe_stmt(st)
+    } else if k == NodeKind.MatchExpr {
         // A match in STATEMENT position (274.5 wave B5): the arms run for
         // effect. No result temporary is declared -- nobody asked this match
         // for a value, and emitting a variable to hold an answer no one wants
@@ -940,6 +942,7 @@ fn Lowerer mut @lower_value_source(e Node, ty TyId) -> Option[Local] {
         // The same pair with the Option machinery around it (registry 1189).
         return Some(@lower_if_let_value(e, ty))
     }
+    if k == NodeKind.Unsafe { return Some(@lower_unsafe_value(e, ty)) }
     None
 }
 
