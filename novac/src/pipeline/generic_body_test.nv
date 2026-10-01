@@ -28,9 +28,9 @@ export fn Vec[T] @nope() -> int => @n\n")
     std
 }
 
-/// How many instances of the row named `name` the set holds after the
+/// How many instances of the row named `want` the set holds after the
 /// pipeline's instance walk -- and how many the FILE's walk alone found.
-fn instances_named(prog str, std []str, name str) -> (int, int) {
+fn instances_named(prog str, std []str, want str) -> (int, int) {
     ro decls = parse_decls(std)
     ro interop = described_surface(std)
     ro src = SourceText { text: prog }
@@ -41,13 +41,13 @@ fn instances_named(prog str, std []str, name str) -> (int, int) {
     mut reach = reachable(tree, ctx, chan)
     mut before = 0
     for it in reach.instances() {
-        before += if ctx.fns.rows[raw_row(it.row)].name == name { 1 } else { 0 }
+        before += if ctx.fns.rows[raw_row(it.row)].name == want { 1 } else { 0 }
     }
     ro (idiags, _) = instances_of(tree, src, ctx, reach, decls)
     assert(idiags.len() == 0, messages(idiags))
     mut after = 0
     for it in reach.instances() {
-        after += if ctx.fns.rows[raw_row(it.row)].name == name { 1 } else { 0 }
+        after += if ctx.fns.rows[raw_row(it.row)].name == want { 1 } else { 0 }
     }
     (before, after)
 }
