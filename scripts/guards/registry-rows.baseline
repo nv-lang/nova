@@ -1484,6 +1484,9 @@
 # 2026-10-01, integrator nova-20: rows -> 1503, max -> 1553 (2026-10-01 integrator: merge hunt/novac-match-1001 -- TBD rows numbered 1550-1553; 1421-1428/1441 folded links).
 # 2026-10-01, integrator nova-20: rows -> 1504, max -> 1554 (2026-10-01 integrator: row 1554 -- oracle accepts return <value> in a -> @ body (hunter observation)).
 # 2026-10-01, integrator nova-20: rows -> 1505, max -> 1555 (2026-10-01 integrator: row 1555 -- regression: bare variant bound to the importer's same-name variant (nova-63)).
+# 2026-10-01, integrator nova-20: rows -> 1509, max -> 1559 (2026-10-01 integrator: rows 1556-1559 (strarm interpolation, mono-k2 index ICE and 1524 rest, nova-63 _box_ capture)).
+rows=1509
+max=1559
 rows=1505
 max=1555
 rows=1504

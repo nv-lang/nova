@@ -34,6 +34,7 @@ mod record_lit_schema; // #1448/#1096: a record literal against its record's fie
 mod generic_sum; // #1337/#1338: a user generic sum's ctor, payload and expected type
 mod raw_ptr_ops; // #1473: raw-pointer address arithmetic outside unsafe (D216 part 1)
 mod as_cast_rules; // #1547: the `as` rules of D54 in the checker, not the emitter
+mod pattern_literal_rules; // #1535: a literal pattern has the scrutinee's type
 pub(crate) mod reserved_names; // D487: a declared name outside the compiler's C namespaces (called by the parser)
 pub(crate) mod coerce_door; // #1451/#1452: one door for `#coerce` -- checker decides, rewrite reads
 mod const_names; // #1488: the type of a module-level `const`/`ro` read by its bare name
@@ -9522,7 +9523,11 @@ impl<'a> TypeCheckCtx<'a> {
                     // 2026-07-23): 3rd position of the norm — RETURN.
                     // №717 дыра (2): через хвостовое семейство — хвост ветви
                     // if/match тоже есть возврат.
-                    self.check_ro_launder_tail(e, ret, &scope, errors);
+                    // #1554: the tail of a `-> @` body is DISCARDED (D409), not returned -- `=> o`
+                    // with a `ro o` launders nothing.
+                    if !fd.returns_receiver {
+                        self.check_ro_launder_tail(e, ret, &scope, errors);
+                    }
                     // №959 (2026-09-05): тело против ОБЪЯВЛЕННОГО ВОЗВРАТА —
                     // тем же `assignable`, каким судятся аргумент и биндинг.
                     // Строкой выше в этом же файле стояло «return-type compat
@@ -9562,7 +9567,11 @@ impl<'a> TypeCheckCtx<'a> {
                         self.check_closure_scalar_return(trailing, ret, errors);
                         // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1б).
                         // №717 дыра (2): см. `check_ro_launder_tail`.
-                        self.check_ro_launder_tail(trailing, ret, &scope, errors);
+                        // #1554: the tail of a `-> @` body is DISCARDED (D409), not returned -- `=> o`
+                        // with a `ro o` launders nothing.
+                        if !fd.returns_receiver {
+                            self.check_ro_launder_tail(trailing, ret, &scope, errors);
+                        }
                         // №959: хвостовое выражение блочного тела — тот же
                         // возврат, что и arrow-body.
                         if !fd.returns_receiver {
@@ -13501,6 +13510,9 @@ impl<'a> TypeCheckCtx<'a> {
                 // непокрытый вариант проходил check и build и давал ТИХО
                 // неверный результат (код 0).
                 self.check_match_exhaustive(scrut_ty.as_ref(), arms, e.span, errors);
+                for arm in arms {
+                    self.check_pattern_literal_type(&arm.pattern, scrut_ty.as_ref(), errors); // #1535
+                }
                 // РЕЕСТР 221.1 №762/№1157, решение владельца 2026-09-18 (вариант
                 // «б» — ОТВЕРГАТЬ): ИМЯ МОДУЛЬНОЙ КОНСТАНТЫ В ПОЗИЦИИ ОБРАЗЦА
                 // НЕ ФОРМА ЯЗЫКА.
@@ -45639,6 +45651,12 @@ fn check_no_explicit_self_return_block(
     if let Some(t) = &b.trailing {
         if expr_is_bare_self(t) {
             errors.push(e_explicit_self_return(t.span, method_name));
+        } else {
+            // #1554: a tail that is not the receiver is discarded (D409), but it may
+            // HOLD a `return <value>` -- `if k > 10 { return o }` as the last
+            // expression of the body was never descended into, and `return o`
+            // returned `o`, `return 5` crashed (rc 139).
+            check_no_explicit_self_return_expr(t, fluent, recv_type, method_name, errors);
         }
     }
 }
@@ -45657,10 +45675,10 @@ fn check_no_explicit_self_return_stmt(
             } else if !expr_always_returns_receiver(v, fluent, recv_type) {
                 errors.push(Diagnostic::new(
                     format!(
-                        "метод `{}` объявлен `-> @` (fluent-return, D132/D409): \
-                         `return` с явным значением, отличным от приёмника, — \
-                         ошибка. Используй голый `return` (авто-возврат D409) \
-                         или `return <вызов другого `-> @` метода>`.",
+                        "[E_FLUENT_RETURN_VALUE] method `{}` is declared `-> @`: returning \
+                         anything but the receiver is an error (D409 rule 2, D132). Use a bare \
+                         `return` (the receiver is returned automatically) or delegate \
+                         to another `-> @` method: `return @other_fluent()`.",
                         method_name),
                     *span,
                 ));
