@@ -29,6 +29,7 @@ mod import_conflict; // #1234: D29 imported name vs own declaration / other impo
 mod duplicate_decls; // #1179/#1183/#1186: one duplicate check for the compiled module
 mod record_lit_schema; // #1448/#1096: a record literal against its record's fields
 mod generic_sum; // #1337/#1338: a user generic sum's ctor, payload and expected type
+mod raw_ptr_ops; // #1473: raw-pointer address arithmetic outside unsafe (D216 part 1)
 
 /// Plan 196 (gs-bounds migration, spike `docs/plans/wip/196-gs-spike.md`):
 /// `gs` ("generics in scope") used to be `HashSet<String>` — ONLY the names of the
@@ -2071,7 +2072,12 @@ fn check_module_impl(
     // и это стоило владельцу ложного доклада «SMT = 47 %». Верификация теперь
     // меряется своей меткой выше; здесь — только то, что здесь и происходит.
     perf.mark("tail of post-check passes (после verify, до unsafe-context)");
-    check_unsafe_context_in_module(module, &type_check_ctx.resolved_callees.borrow(), &mut errors);
+    check_unsafe_context_in_module(
+        module,
+        &type_check_ctx.resolved_callees.borrow(),
+        raw_ptr_ops::pointer_typed_exprs(&type_check_ctx.resolved_types_buf.borrow()),
+        &mut errors,
+    );
     perf.mark("check_unsafe_context_in_module");
 
     // Plan 221.1 п.11 №428 (D62/№113 "форма vs свойство"): `[E_BANG_
@@ -57392,6 +57398,7 @@ fn fn_sig_has_raw_ptr(fd: &FnDecl) -> bool {
 pub(crate) fn check_unsafe_context_in_module(
     module: &crate::ast::Module,
     resolved_calls: &HashMap<crate::ast::ExprId, Span>,
+    ptr_exprs: HashSet<crate::ast::ExprId>,
     errors: &mut Vec<Diagnostic>,
 ) {
     use crate::ast::{Item, FnBody};
@@ -57588,6 +57595,7 @@ pub(crate) fn check_unsafe_context_in_module(
         unsafe_fn_ptr_vars: vec![HashSet::new()],
         in_call_arg: false,
         unsafe_block_used: Vec::new(),
+        ptr_exprs,
     };
     // peer_files mode: walk only entry peers items_here (Plan 62.A pattern)
     let entry_items: Vec<&Item> = if module.peer_files.is_empty() {
@@ -57738,6 +57746,8 @@ struct UnsafeCtx {
     /// lexical block) never pushes a frame — the fn-attr itself is not
     /// linted, only explicit `unsafe {{ }}` blocks are (Rust precedent).
     unsafe_block_used: Vec<bool>,
+    /// #1473: ids the checker typed as a raw pointer (`raw_ptr_ops`).
+    ptr_exprs: HashSet<crate::ast::ExprId>,
 }
 
 impl UnsafeCtx {
@@ -57898,6 +57908,12 @@ impl UnsafeCtx {
             ExprKind::Call { func, args, .. } if args.is_empty() => {
                 matches!(&func.kind, ExprKind::Member { name, .. }
                     if name == "ptr" || name == "as_ptr")
+            }
+            // #1473: `p.offset(n)` is the same pointer type (D216 Model A),
+            // so `ro q = p.offset(2)` registers `q` as a pointer local.
+            ExprKind::Call { func, args, .. } if args.len() == 1 => {
+                matches!(&func.kind, ExprKind::Member { obj, name }
+                    if name == "offset" && self.expr_is_typed_pointer(obj))
             }
             _ => false,
         }
@@ -58408,6 +58424,15 @@ impl UnsafeCtx {
                 // no type inference at this pass) — deliberately permissive
                 // to avoid false positives on unrelated `.read()`/`.write()`
                 // methods (e.g. `io.Read`/`io.Write`).
+                // #1473: address arithmetic on a pointer-typed receiver is
+                // gated, not only counted (D216 part 1, `raw_ptr_ops`).
+                if let ExprKind::Member { obj, name: mname } = &func.kind {
+                    if self.depth == 0 && raw_ptr_ops::is_address_arithmetic(mname)
+                        && (self.ptr_exprs.contains(&obj.id) || self.expr_is_typed_pointer(obj))
+                    {
+                        errors.push(raw_ptr_ops::required(mname, e.span));
+                    }
+                }
                 if unsafe_callee_name.is_none() && self.depth > 0 {
                     if let ExprKind::Member { name: mname, .. } = &func.kind {
                         if is_raw_pointer_intrinsic_method(mname) {
