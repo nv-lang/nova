@@ -1486,6 +1486,9 @@
 # 2026-10-01, integrator nova-20: rows -> 1505, max -> 1555 (2026-10-01 integrator: row 1555 -- regression: bare variant bound to the importer's same-name variant (nova-63)).
 # 2026-10-01, integrator nova-20: rows -> 1509, max -> 1559 (2026-10-01 integrator: rows 1556-1559 (strarm interpolation, mono-k2 index ICE and 1524 rest, nova-63 _box_ capture)).
 # 2026-10-01, integrator nova-20: rows -> 1519, max -> 1569 (2026-10-01 integrator: rows 1560-1569 (sweep, k1, strarm findings)).
+# 2026-10-01, integrator nova-20: rows -> 1526, max -> 1586 (spec-track merge: rows 1580-1586 (spec hunt, six topics + std type-name leak)).
+rows=1526
+max=1586
 rows=1519
 max=1569
 rows=1509

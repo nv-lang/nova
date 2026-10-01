@@ -23,7 +23,7 @@ mk_root() {
     mkdir -p "$T/docs/plans" "$T/docs/dev/hunts/novac/probes/2026-08-30-lex-k2/x" \
              "$T/docs/dev/hunts/novac/probes/2026-08-30-lex-k2/y" \
              "$T/docs/dev/hunts/novac/probes/2026-08-30-lex-k2/z" \
-             "$T/docs/dev/hunts/oracle" "$T/docs/dev/hunts/guards"
+             "$T/docs/dev/hunts/oracle" "$T/docs/dev/hunts/guards" "$T/docs/dev/hunts/spec"
     printf 'proba x\n' > "$T/docs/dev/hunts/novac/probes/2026-08-30-lex-k2/x/p.nv"
     printf 'proba y\n' > "$T/docs/dev/hunts/novac/probes/2026-08-30-lex-k2/y/p.nv"
     printf 'proba z\n' > "$T/docs/dev/hunts/novac/probes/2026-08-30-lex-k2/z/p.nv"
@@ -196,6 +196,24 @@ printf '%s\n' 'СВЁРНУТО | 2026-09-01-lex-k1 | lex | К1 | находок
 if ! sh "$GUARD" "$T" >"$T.o15" 2>&1; then
     echo "FAIL: три пустые охоты одной клетки прочитаны как неокупаемость всей охоты:" >&2
     tail -2 "$T.o15" | sed 's/^/    /' >&2
+    rc=1
+fi
+
+# 16. трек spec: метка «(spec)» без находки в отчётах трека — метка без источника, красный;
+mk_root
+printf '| 1 | t | НАЙДЕНО ОХОТНИКОМ 2026-08-30 (novac). Детали. |\n| 2 | t | НАЙДЕНО ОХОТНИКОМ 2026-10-01 (spec). Детали. |\n' \
+    > "$T/docs/plans/221.1-bug-sweep.md"
+if sh "$GUARD" "$T" >"$T.o16" 2>&1 || ! grep -q "трека spec" "$T.o16"; then
+    echo "FAIL: метка (spec) без отчёта трека spec прошла или красный не назвал трек" >&2
+    rc=1
+fi
+# 17. та же метка при отчёте трека spec с находкой и тремя пробами — зелёный.
+P="$T/docs/dev/hunts/spec/probes/2026-10-01-topic-c2"
+mkdir -p "$P/a" "$P/b" "$P/c"
+printf 'grep -nF one spec/x.md\n' > "$P/a/cmd.sh"; printf 'grep -nF two spec/x.md\n' > "$P/b/cmd.sh"; printf 'grep -nF three spec/x.md\n' > "$P/c/cmd.sh"
+printf 'КЛЕТКА | topic | С2\nНАХОДКА | С2 | topic | a | место А / место Б | детали\n' > "$T/docs/dev/hunts/spec/2026-10-01-topic-c2.md"
+if ! sh "$GUARD" "$T" >"$T.o17" 2>&1; then
+    echo "FAIL: здоровый отчёт трека spec красный:" >&2; tail -2 "$T.o17" | sed 's/^/    /' >&2
     rc=1
 fi
 
