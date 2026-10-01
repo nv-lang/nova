@@ -306,7 +306,7 @@ fn Checker mut @report_if_unary_needs_protocol(kids []Node) -> bool {
                 Some(row) => {
                     if row.family == PfInt && !row.signed {
                         match kids[0] {
-                            Leaf(tk) => @refuse(tk, NEG_UNSIGNED_MSG)
+                            Leaf(tk) => @reject(tk, NEG_UNSIGNED_MSG)
                             Branch { .. } => {}
                         }
                         return true
