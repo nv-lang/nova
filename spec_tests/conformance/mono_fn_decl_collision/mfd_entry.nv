@@ -1,0 +1,18 @@
+// №129 Task C / registry 221.1 #1343: `mfd_a` and `mfd_b` (peer files here)
+// each declare their OWN generic free function `helper[T]` -- legal Nova (two
+// modules, two symbols; `mfd_a_call` means `mfd_a`'s `helper`, `mfd_b_call`
+// means `mfd_b`'s). Codegen kept generic monomorphs under the bare name
+// (`mono_fn_decls`), so `mfd_b`'s registration overwrote `mfd_a`'s and
+// `mfd_a_call()` returned 222. №129 parked this repro under docs/plans/wip
+// after its insert-time error was rolled back; #1343 keys each monomorph by
+// the declaration the checker resolved the call to
+// (`emit_c/generic_overload_mono.rs`), so each call now runs its own body.
+module mono_fn_decl_collision.mfd_entry
+
+import ./mfd_a.{mfd_a_call}
+import ./mfd_b.{mfd_b_call}
+
+test "cross-module same-name generic free fn — each call must run its OWN module's body (129 Task C)" {
+    assert(mfd_a_call() == 111)
+    assert(mfd_b_call() == 222)
+}

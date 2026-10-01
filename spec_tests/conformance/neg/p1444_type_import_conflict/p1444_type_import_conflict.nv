@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E_IMPORT_NAME_CONFLICT
+//
+// Registry 221.1 #1444, D29 ("name conflicts", spec/decisions/07-modules.md)
+// for TYPES: an imported type that equals a type declared in the importing
+// module is a compile error, resolved with `as`. The positive half, the alias,
+// is `standalone/p1444_type_import_alias`.
+module neg.p1444_type_import_conflict
+
+// nova:expect E_IMPORT_NAME_CONFLICT -- `Box` is imported and also declared below; D29 makes that an error and names `as` as the fix
+import ./p1444tc_src.{Box}
+
+type Box { w int }
+
+fn main() Io -> () {
+    ro b = Box { w: 1 }
+    print("${b.w}")
+}

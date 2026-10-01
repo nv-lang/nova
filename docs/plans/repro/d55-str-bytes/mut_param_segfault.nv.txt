@@ -1,0 +1,17 @@
+// Probe 3: a str (literal, variable or call result) is accepted by `nova check` in a `mut []u8`
+// PARAMETER position and the program writes into the immutable str buffer -- exit 139 (SIGSEGV)
+// for a literal (.rodata); for a heap-built str it would silently mutate the string.
+// D429 R2/R6: the pair is `str -> ro []u8` (view) and `ro O` does NOT match a `mut` position;
+// expected: a compile error (plain type mismatch), as for any other non-matching position.
+// The same holds for `mut b []u8 = s` (binding) -- see mut_let_segfault.nv.txt.
+module probe3
+
+fn zap(mut b []u8) -> int {
+    b[0] = 65 as u8
+    return b.len()
+}
+
+fn main() Io -> () {
+    assert(zap("abc") == 3)
+    print("ok")
+}

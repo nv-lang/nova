@@ -1,0 +1,8 @@
+// #1444: a facade that re-exports `ta_src.Box` under the public name `Crate`
+// and `ta_src.mk` as `make_box` (07-modules.md, D29 "Re-export": `export import
+// ... as ...`). The facade's own code names them by those names too.
+module p1444_type_import_alias.ta_facade
+
+export import ./ta_src.{Box as Crate, mk as make_box}
+
+export fn facade_mk(v int) -> Crate => make_box(v * 10)

@@ -1,0 +1,20 @@
+// №TBD (found by the #1343 window): `f[T](x T)` and `f[T](xs []T)` both apply to
+// an array argument. D84 filter 4 names no rule that ranks one generic form over
+// the other, so by the letter the call is `ambiguous overload`; the checker
+// neither picks nor refuses (no `resolved_callees` entry), and codegen matches
+// by ERASED C types: `ty([1, 2, 3])` hits the `[]T` form only because an erased
+// `[]T` is `Vec[int]`, and `ty(["a", "b"])` dies in codegen with
+// "no matching overload for `ty(Nova_Vec____nova_str*)`". With a turbofish
+// (`ty[str](["a", "b"])`) only `[]T` applies and it works.
+// EXPECT_STDOUT many/3
+// EXPECT_STDOUT many/2
+module standalone.generic_overlap_t_vs_array_t
+
+fn ty[T](x T) -> str => "one/${x}"
+
+fn ty[T](xs []T) -> str => "many/${xs.len()}"
+
+fn main() Io -> () {
+    println(ty([1, 2, 3]))
+    println(ty(["a", "b"]))
+}
