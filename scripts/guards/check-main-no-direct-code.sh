@@ -22,6 +22,11 @@
 # обязателен, причина печатается. Голое «1» — отказ: обход без причины
 # неотличим от забывчивости.
 #
+# АДРЕС В РЕЕСТРЕ: реестр 221.1 №1478 — дыры этого стража, найденные охотой
+# guards 2026-10-01 (docs/dev/hunts/guards/2026-10-01-main-path-promises.md);
+# правило для агентов — docs/dev/rules-for-agents.md. Своего плана у решения
+# владельца нет: оно записано здесь и в той строке.
+#
 # ИСПОЛЬЗОВАНИЕ: bash scripts/guards/check-main-no-direct-code.sh [КОРЕНЬ]
 # Самотест: scripts/guards/selftest/test-check-main-no-direct-code.sh
 
