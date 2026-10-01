@@ -117,13 +117,23 @@ fn Checker mut @refuse_method_call(e Node, t Token, key []ArgSpec) -> () {
     ro kids = branch_children(e)
     mut single_row = no_row()
     if Some(row) = @res.only_row_of(t.text) {
-        if Some(why) = @binding_refusal(row, key) {
-            @refuse(t, why)
-            return
+        // THE ONE METHOD OF THIS NAME MAY BELONG TO ANOTHER TYPE (2026-10-01):
+        // `code.store(7)` on an `AtomicInt` beside the program's own
+        // `FnBuilder @store(target, op, src)` was refused as "this call omits
+        // `op`" -- the binding rule of a method the call never addressed.
+        // A row whose receiver is a concrete type other than this call's is no
+        // candidate, and the arity question below names the real cause.
+        if @receiver_is_foreign(row, key) {
+            // Another type's method: neither its binding nor its slots apply.
         } else {
-            // It binds -- so the receiver's type, an argument's type, or an
-            // argument's BINDING CLASS is the cause, named below.
-            single_row = row
+            if Some(why) = @binding_refusal(row, key) {
+                @refuse(t, why)
+                return
+            } else {
+                // It binds -- so the receiver's type, an argument's type, or an
+                // argument's BINDING CLASS is the cause, named below.
+                single_row = row
+            }
         }
     } else {
         // Unknown or overloaded: the arity question below answers.
@@ -152,6 +162,18 @@ fn Checker mut @refuse_method_call(e Node, t Token, key []ArgSpec) -> () {
             "outside the subset: no overload of this method accepts these argument types")
         FnFound(row) => @refuse_arg_type(kids, row, key, CallForm.MethodCall)
     }
+}
+
+/// Is this row a method of a DIFFERENT concrete type than the call's receiver?
+/// Slot 0 of a method row and of a method key is the receiver. A generic
+/// receiver (`Vec[T]`) or an untyped one answers no: whether it fits is the
+/// lookup's question, not this one's.
+fn Checker @receiver_is_foreign(row FnRow, key []ArgSpec) -> bool {
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    if fd.param_cnt == 0 || key.len() == 0 { return false }
+    ro want = @ctx.fns.params[fd.param_off].type_id
+    ro got = key[0].type_id
+    is_ty(want) && is_ty(got) && @ctx.tys.is_concrete(want) && want != got
 }
 
 /// The whole verdict of one method lookup, in one place: record it, or decline
