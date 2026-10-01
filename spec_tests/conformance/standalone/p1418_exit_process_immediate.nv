@@ -1,0 +1,50 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_STDOUT exiting with fibers parked
+// EXPECT_EXIT_CODE 7
+// EXPECT_TIMEOUT_MS 60000
+// ENV NOVA_ORPHAN_DRAIN_GRACE_SECS=0
+//
+// Registry 221.1 №1418: `exit_process(code)` is specified as an immediate exit
+// (std/src/os/os.nv, D-block in 04-effects.md: Go `os.Exit` / Rust
+// `process::exit` — pending fibers are not run). It used to call C `exit()`,
+// whose atexit chain runs the runtime's orphan drain: with a detached fiber
+// parked for good (here: in `accept()`, in a channel `recv`, in a long sleep)
+// the process waited in `pre-exit-drain` instead of exiting. The grace knob is
+// set to 0 (wait forever) so a drain on this path shows as a runner timeout,
+// not as a ten-second delay. The exit code must be the one passed.
+module standalone.p1418_exit_process_immediate
+
+import std.concurrency.nvchan.{Chan, ChanRx}
+import std.net.{TcpListener}
+import std.os.{real_os, exit_process}
+import std.time.duration
+
+// Parks in `recv` for good (nothing is ever sent).
+fn wait_forever(rx ChanRx[int]) -> () {
+    ro _ = rx.recv()
+}
+
+fn main() Io Net Time Detach {
+    consume l = match TcpListener.bind("127.0.0.1:0") {
+        Ok(consume x) => x
+        Err(e) => panic("bind ${e}")
+    }
+    detach consume l {
+        match l.accept() {
+            Ok(consume s) => s.close()
+            Err(e) => println("accept ${e}")
+        }
+        l.close()
+    }
+    ro idle = Chan[int].new(1)
+    ro idle_rx = idle.rx
+    detach { wait_forever(idle_rx) }
+    detach { 60000.to_millis().sleep() }
+    supervised {
+        spawn { wait_forever(idle_rx) }
+        20.to_millis().sleep()
+        println("exiting with fibers parked")
+        with Os = real_os() { exit_process(7) }
+    }
+    println("unreachable")
+}

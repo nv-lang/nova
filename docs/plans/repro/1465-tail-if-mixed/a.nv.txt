@@ -1,0 +1,24 @@
+// Registry 221.1 #1465, the carrier: a fn with NO `-> T` whose tail is an `if`
+// with an `int` branch and a `str` branch. `nova check` passes it (no
+// E_MISSING_RETURN_TYPE); `nova build` fails in C:
+//   error: operand of type 'nova_str' where arithmetic or pointer type is required
+// Measured 2026-10-01 on main's binary (01:52) and on p1443 alike.
+fn side(n int) -> int {
+    print("side${n}|")
+    n
+}
+fn sides(s str) -> str {
+    print("sides${s}|")
+    s
+}
+fn f(b bool) {
+    if b {
+        side(1)
+    } else {
+        sides("e")
+    }
+}
+fn main() Io -> () {
+    f(true)
+    f(false)
+}

@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR E_DUPLICATE_DECL
+//
+// Registry 221.1 #1179/#1183/#1186: two peer files of ONE module (D281 Rule C)
+// both declare the same top-level module value; `b_peer.nv` holds the second one.
+// That is a duplicate, refused with the same code in `nova check`, `nova
+// build` and `nova test`.
+//
+// The `dup_*_serde` siblings are the same pair with an import that declares the name.
+//
+// This file sorts first (entry) and carries the pinned expectation: the
+// refusal sits on the first declaration, its note on the repeat.
+
+module p1179_duplicate_decls.dup_ro
+
+// nova:expect E_DUPLICATE_DECL -- `b_peer.nv` declares this module value again in the same module
+ro TABLE = make_a()
+
+fn make_a() -> []int => [1]
+
+test "unreachable: the module does not compile" {
+    assert(1 == 1)
+}

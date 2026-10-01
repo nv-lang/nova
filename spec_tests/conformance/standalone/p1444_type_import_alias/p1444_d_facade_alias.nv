@@ -1,0 +1,16 @@
+// EXPECT_STDOUT 5|60
+//
+// Registry 221.1 #1444: a file may alias the facade's public name again
+// (`{Crate as Kiste, make_box as pack}`); `Kiste` is then `ta_src.Box` and
+// `pack` is `ta_src.mk`, in this file only. See
+// `p1444_c_facade.nv` for the re-export itself.
+module p1444_type_import_alias.p1444_d_facade_alias
+
+import ./ta_facade.{Crate as Kiste, make_box as pack, facade_mk}
+
+fn big(k Kiste) -> Kiste => { v: k.v * 2 }
+
+fn main() Io -> () {
+    ro k Kiste = pack(5)
+    print("${k.v}|${big(facade_mk(3)).v}")
+}

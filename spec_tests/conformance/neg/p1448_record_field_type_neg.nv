@@ -1,0 +1,57 @@
+// EXPECT_COMPILE_ERROR E7301
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 #1448: a record literal's field value was never compared with
+// the declared field type. `Hold { tok: Other { .. } }` at `tok Tok` passed
+// `nova check`, built, and printed the `s` of the foreign record as `text`.
+// Every position that already had a door (argument, `let`, return, array
+// element) goes through `assignable`; the field of a record literal now does
+// too, with the same coercions (positive half: `standalone/p1448_record_literal_fields_pos.nv`).
+// One line per cell of the class, each at the value that is wrong.
+module neg.p1448_record_field_type_neg
+
+type P1448Tok { text str }
+type P1448Other { s str, k int }
+type P1448Hold { tok P1448Tok }
+type P1448Num value { n int }
+type P1448Id u64
+type P1448Acct { id P1448Id }
+type P1448Pair[A, B] { a A, b B }
+type P1448Shape enum P1448Circle { r int } | P1448Sq { side int, name str }
+
+fn p1448_show(h P1448Hold) -> str => h.tok.text
+
+fn p1448_make() -> P1448Hold => {
+    // nova:expect E7301 -- return position: the anonymous literal's field `text` is `str`, the value is `int`
+    tok: { text: 3 }
+}
+
+fn P1448Num @bumped() -> P1448Num {
+    // nova:expect E7301 -- `Self { .. }` literal: `n int` gets a `str`
+    Self { n: "one" }
+}
+
+fn main() {
+    // nova:expect E7301 -- the #1448 carrier: a foreign record where `P1448Tok` is declared
+    ro h = P1448Hold { tok: P1448Other { s: "a", k: 3 } }
+    // nova:expect E7301 -- a scalar of the wrong kind: `str` into `n int` (was a C compiler error)
+    ro n = P1448Num { n: "seven" }
+    // nova:expect E7301 -- an anonymous literal nested in a named one, checked against `P1448Tok`
+    ro h2 = P1448Hold { tok: { text: 5 } }
+    // nova:expect E7301 -- a record variant of a sum: `side int` gets a `str`
+    ro sq = P1448Sq { side: "x", name: "n" }
+    ro raw int = 7
+    // nova:expect E7301 -- D55 newtype auto-wrap covers untyped constants only; a typed `int` variable needs `P1448Id(raw)`
+    ro a = P1448Acct { id: raw }
+    // nova:expect E7301 -- the target's type arguments are known: `b` is `str`
+    ro p P1448Pair[int, str] = { a: 1, b: 2 }
+    // nova:expect E7301 -- argument position: an anonymous literal against the parameter's record type
+    println(p1448_show({ tok: { text: false } }))
+    // nova:expect E7301 -- array element: each `{ .. }` against the element record
+    ro hs []P1448Hold = [{ tok: { text: 1.5 } }]
+    ro other = P1448Other { s: "o", k: 1 }
+    // nova:expect E7301 -- D60: the source of `...` is of the literal's own type, not a foreign record
+    ro sp = P1448Hold { ...other, tok: { text: "t" } }
+    println("${h.tok.text}${n.n}${h2.tok.text}${a.id as u64}${p.a}${hs.len()}${p1448_make().tok.text}${sp.tok.text}")
+    match sq { P1448Sq { side, name } => println("${side}${name}"), _ => println("c") }
+}

@@ -23,7 +23,11 @@ module slice_vs_range.neg_1
 //
 // The form stays refused until slices are compiled; the file is negative on
 // purpose, and when they are, the property moves rather than disappears.
+// MOVED 2026-10-01 (slices compiled, waves U-1..U-3): `p[c..]` over `[]u8` is
+// now refused for the one symbol the SLICE needs and the shell lacks --
+// `end_index` of `Vec[u8]` -- which is still a slice's own word, never the
+// range text of `neg_2.nv`; the distinction holds.
 
-// NOVAC_EXPECT a slice `x[lo..hi]` is read but not compiled yet
+// NOVAC_EXPECT carries no `end_index` for Vec[u8]
 
 fn f(p []u8, c int) -> []u8 => p[c..]

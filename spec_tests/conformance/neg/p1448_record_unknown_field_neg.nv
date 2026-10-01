@@ -1,0 +1,23 @@
+// EXPECT_COMPILE_ERROR E_RECORD_UNKNOWN_FIELD
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 #1448, same class: a record literal naming a field its record
+// does not declare passed `nova check` and failed only in the C compiler
+// ("no member named 'age'"). D52 example (02-types.md): `ro u User = { id: 2,
+// name: "Bob", age: 30 }` -- "unknown field `age`". Named, anonymous and
+// sum-variant literals, one line each.
+module neg.p1448_record_unknown_field_neg
+
+type P1448User { id u64, name str }
+type P1448Shape enum P1448Circle { r int } | P1448Sq { side int }
+
+fn main() {
+    // nova:expect E_RECORD_UNKNOWN_FIELD -- named literal
+    ro a = P1448User { id: 1, name: "a", age: 30 }
+    // nova:expect E_RECORD_UNKNOWN_FIELD -- anonymous literal typed by the annotation
+    ro b P1448User = { id: 2, name: "b", age: 31 }
+    // nova:expect E_RECORD_UNKNOWN_FIELD -- record variant of a sum
+    ro s = P1448Sq { side: 1, depth: 2 }
+    println("${a.id}${b.id}")
+    match s { P1448Sq { side } => println("${side}"), _ => println("c") }
+}

@@ -1,0 +1,17 @@
+// c2: a closure inside a lambda writes the lambda's `mut x`; the lambda reads x after.
+// On main: clang `undeclared identifier 'x'` (door 1). With door 1 fixed alone the
+// lambda's own read skipped the box the closure writes and printed `c2 0` (door 2).
+module hcap.c2_closure_in_lambda_box
+
+fn run(body fn() -> int) -> int => body()
+
+fn main() Io {
+    ro got = run(fn() -> int {
+        mut x = 0
+        ro bump = fn() -> () { x += 1 }
+        bump()
+        bump()
+        x
+    })
+    println("c2 ${got}")
+}

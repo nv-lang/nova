@@ -1,0 +1,36 @@
+// EXPECT_RUNTIME_PANIC p1100 cleanup fired
+//
+// Registry 221.1 #1100, D432 §4 point 2 (receiver call `X.method()`): `g.settle(1)`
+// resolves to the view-receiver overload, so `g` is not consumed and its
+// auto-`@cleanup` must run at the end of `run` (panic = sentinel). Before
+// #1100 the disarm asked "does SOME `settle` on `Boom` take a consume receiver"
+// and the never-called `fn Boom consume @settle()` disarmed `g`.
+
+module standalone.p1100_receiver_two_overloads_view_called
+
+type Boom consume { id int }
+
+fn Boom consume @cleanup(_o ScopeOutcome) -> () {
+    panic("p1100 cleanup fired")
+}
+
+fn Boom consume @defuse() -> () { }
+
+fn mk(v int) -> Boom => { id: v }
+
+fn Boom consume @settle() -> () {
+    @defuse()
+}
+
+fn Boom @settle(_tag int) -> () { }
+
+fn run() -> int {
+    consume g = mk(7)
+    g.settle(1)
+    1
+}
+
+fn main() Io -> () {
+    ro r = run()
+    println("p1100 result=${r} no cleanup")
+}

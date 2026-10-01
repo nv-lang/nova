@@ -1,0 +1,22 @@
+// EXPECT_STDOUT 7|2|30|8
+//
+// Registry 221.1 #1444, the re-export half: `export import ./ta_src.{Box as
+// Crate, mk as make_box}` makes `Crate` and `make_box` the facade's PUBLIC names
+// (D29 "Re-export": "as if it were declared in it"), so this file writes them
+// and gets `ta_src.Box` and `ta_src.mk`, while `ta_src` and `ta_peer` keep
+// calling them `Box` and `mk`. Measured before the fix: CODEGEN-FAIL
+// `[E_UNKNOWN_TYPE] unknown type 'Box' in record literal` in `ta_src` -- the
+// re-export renamed the declarations for the whole unit (`ta_peer`'s `mk`, the
+// fn half, was an undefined symbol at link time, as in #1419).
+module p1444_type_import_alias.p1444_c_facade
+
+import ./ta_facade.{Crate, make_box, facade_mk}
+import ./ta_peer.{peer_mk, peer_get}
+
+fn get(c Crate) -> int => c.v
+
+fn main() Io -> () {
+    ro c Crate = make_box(7)
+    ro d = Crate { v: 8 }
+    print("${get(c)}|${peer_get(peer_mk(1))}|${facade_mk(3).get()}|${d.v}")
+}

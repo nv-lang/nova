@@ -78,6 +78,10 @@ bool  nova_driver_is_started(void);
 int   nova_runtime_current_worker_id(void);
 void  nova_runtime_worker_pump_scope(struct NovaFiberQueue* scope);
 void  nova_spawn_pool_release(void* ctx, size_t size);
+void  nova_runtime_poke_bootstrap_driver(void);
+struct uv_loop_s;
+bool  nova_runtime_main_wake_hold(struct uv_loop_s* loop);
+void  nova_runtime_main_wake_unhold(void);
 #ifdef __cplusplus
 }
 #endif
