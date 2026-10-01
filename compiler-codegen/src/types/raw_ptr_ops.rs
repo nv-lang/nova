@@ -61,7 +61,7 @@ pub(super) fn required(method: &str, span: Span) -> Diagnostic {
             "[E_UNSAFE_REQUIRED] raw-pointer `.{}()` is address arithmetic: it requires an \
              `unsafe {{ }}` block (D216 amendment 2026-09-20, part 1 -- access through a valid \
              pointer is safe, arithmetic on its address is not). Wrap the call in \
-             `unsafe {{ ... }}` or mark the enclosing fn `#unsafe`.",
+             `unsafe {{ ... }}` or declare the enclosing fn `unsafe fn`.",
             method
         ),
         span,
