@@ -160,13 +160,6 @@ const VARIANT_VALUE_NEEDS_ARGS_MSG = "outside the subset: this variant carries a
 
 /// The if-let judges' two answers (if-let wave). The subset takes exactly
 /// the shape its carriers write: `Some` and an Option-instance initializer.
-/// A `match` arm whose pattern is a STRING or CHAR literal (registry 1190).
-///
-/// The parser reads the form since 2026-09-20 and the checker judges it, but
-/// the lowering compares patterns as int literals or variant tags only -- and
-/// a form that reaches an emitter with no arm for it ICEs. The refusal is
-/// louder than the crash and quieter than a wrong answer, which is the whole
-/// order of preference here.
 /// A `match` whose scrutinee is an APPLIED sum -- `Option[int]`, `Result[T, E]`.
 ///
 /// The form is recognised now (the arm's head is found through the
@@ -185,7 +178,21 @@ const VARIANT_VALUE_NEEDS_ARGS_MSG = "outside the subset: this variant carries a
 /// in `match_arms.nv` that already has `@ctx` -- a static string here named
 /// `Option[int]` regardless of which applied sum actually fired the gate.
 
-const LITERAL_ARM_MSG = "outside the subset: a `match` arm on a string or char literal is read but not compiled yet (E2-b, with the string family)"
+/// A LITERAL pattern against a value of another type (the string family,
+/// E2-b): `'a'` over a `str`, `"a"` over a `char` or an `int`, `3` over a
+/// `str`. D128 keeps `char` apart from `int`, and the spec's pattern table
+/// says a literal compares "by value" (syntax.ru.md, pattern kinds) -- a value
+/// of ANOTHER type is no comparison at all. The oracle has no check of its
+/// own here: it prints `scr.len == ...` over an int and clang refuses the C.
+const LIT_PATTERN_TYPE_MSG = "a literal pattern compares with a value of its own type -- a string literal with a `str`, a char literal with a `char` (D128: `char` is not `int`); the value matched here is of another type"
+
+/// A literal standing INSIDE a `match` arm's pattern -- `A(3)`, `Some(x)`
+/// with a literal payload, `(1, y)`. Legal Nova (D486 s2), and refused BY NAME
+/// because the lowering tests the arm's ROOT only: the tag of `A(3)` was
+/// tested and the `3` was dropped, so `A(4)` took the arm (measured on the
+/// day the string arms opened, 2026-10-01). Opening string literals at the
+/// root without this door would have inherited the same silent wrong answer.
+const NESTED_LITERAL_ARM_MSG = "outside the subset: a literal inside a `match` arm's pattern (`A(3)`) is read but not compiled yet -- the lowering tests the arm's root only (E2-b, with nested pattern tests)"
 
 const IFLET_VARIANT_MSG = "outside the subset: `if <pattern> = ...` takes only `Some(name)` here -- other variants arrive with their carriers (274.5 P4)"
 

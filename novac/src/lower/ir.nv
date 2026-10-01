@@ -365,7 +365,7 @@ export type LoopTerm value {
 /// heads of a disjunction `A | B`), a plain binder (any value, under a new
 /// name), the wildcard.
 export type Pattern enum
-    | Lit(Node) // an int literal, compared with the scrutinee
+    | Lit(Node) // a literal (int, bool, str, char), compared with the scrutinee
     | Variant(VariantMatch) // a variant head, plus the alternatives of a disjunction
     | Bind // a plain binder: matches anything, the scrutinee under a new name
     | Wild // `_`: matches anything, binds nothing

@@ -317,16 +317,29 @@ fn Checker mut @bind_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode, pos 
     }
 }
 
-/// A LITERAL pattern. A string or char literal is refused BY NAME until the
-/// lowering can compare one (registry 1190) -- it used to die in the emitter
-/// with an ice, and a refusal names the form where an ice names the compiler.
+/// A LITERAL pattern. Each literal kind compares with a value of ITS OWN
+/// type (`LIT_PATTERN_TYPE_MSG`): a string with a `str`, by content -- the
+/// spec's "by value" (syntax.ru.md, pattern kinds), the oracle's `len` plus
+/// `memcmp` -- and a char with a `char`, by codepoint. Until the string
+/// family (E2-b) both were refused by name: the lowering could compare
+/// neither, and the form used to die in the emitter with an ice.
+/// A literal BELOW the arm's root is refused by name (`NESTED_LITERAL_ARM_MSG`):
+/// the lowering tests the root only, and a dropped test is a wrong answer.
 /// The integer magnitude door is asked here too (#1251): a `Pattern` node is
 /// never a `Lit` node, so the generic literal walk never visits it, and a
 /// 23-digit text once reached the C comparison verbatim, which clang refused
 /// -- the failure #810 exists to prevent, at one position nobody had visited.
+/// The same holds for the char and string judges: their walks never reach a
+/// pattern either, so this door asks them itself.
 fn Checker mut @bind_lit_pattern(pat Node, ty TyId, ak []Node) -> bool {
     ro p0 = pattern_lit_leaf(pat)
     ro lk0 = leaf_kind(p0)
+    if pat.id_of() != ak[0].id_of() {
+        @report_first_leaf_of(ak, NESTED_LITERAL_ARM_MSG)
+        return false
+    } else {
+        // The arm's root: the one position the lowering tests.
+    }
     // `true` / `false`: a LITERAL of `bool` (sem/pattern.nv), never a binder
     // named `true` (check x K4 hunt 2026-09-30: `nova_bool true = ...` in C).
     if is_bool_literal(leaf_text(p0)) {
@@ -335,8 +348,15 @@ fn Checker mut @bind_lit_pattern(pat Node, ty TyId, ak []Node) -> bool {
         return false
     }
     if lk0 == TokenKind.StrLit || lk0 == TokenKind.CharLit {
-        @report_first_leaf_of(ak, LITERAL_ARM_MSG)
+        return @bind_text_lit_pattern(p0, lk0, ty, ak)
+    }
+    if ty == @ctx.prims.str_id {
+        // An integer literal over a `str`: no comparison exists (the oracle
+        // prints `scr == 3LL` on a `nova_str`, and clang refuses).
+        @reject_first_leaf_of(ak, LIT_PATTERN_TYPE_MSG)
         return false
+    } else {
+        // An integer scrutinee, or one the rows below do not judge.
     }
     // THE ROW DOOR IS DELIBERATELY NOT ASKED: the oracle itself does not
     // apply D227 rule 3 at a pattern's position (`match x { 300 => .. }` on
@@ -347,6 +367,32 @@ fn Checker mut @bind_lit_pattern(pat Node, ty TyId, ak []Node) -> bool {
         return false
     }
     true
+}
+
+/// A STRING or CHAR literal pattern: the scrutinee must be of the literal's
+/// own type, and the literal itself passes the judge its kind passes in an
+/// expression -- the escape alphabet for a string, one codepoint for a char.
+/// A POISONED scrutinee says nothing more: its refusal stands where it was
+/// typed (the cascade rule of `@bind_variant_pattern`).
+fn Checker mut @bind_text_lit_pattern(p0 Node, lk0 TokenKind, ty TyId, ak []Node) -> bool {
+    if !is_ty(ty) {
+        // SILENT-OK: a POISONED scrutinee -- refused where it was typed.
+        return false
+    } else {
+        // A typed scrutinee: the literal's own type judges it.
+    }
+    ro own = if lk0 == TokenKind.StrLit { @ctx.prims.str_id } else { @ctx.prims.char_id }
+    if ty != own {
+        @reject_first_leaf_of(ak, LIT_PATTERN_TYPE_MSG)
+        return false
+    }
+    ro before = @out.len()
+    if lk0 == TokenKind.StrLit {
+        @report_if_bad_escape([p0])
+    } else {
+        @judge_char_leaf(p0, ak)
+    }
+    @out.len() == before
 }
 
 /// A NAME-WRAPPED pattern: a binder, or a payload-less variant head -- the
