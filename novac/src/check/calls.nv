@@ -947,24 +947,26 @@ fn Checker mut @type_free_call(e Node) -> () {
     @adapt_literal_args(e, kids, 1, 0)
 }
 
-/// The names THIS file imported (registry 221.1 #1493, D29): one `<last segment of
-/// the module path>|<name>` key per name in a brace list, for `FnIndex.build_for`.
-/// Read from the import DECLARATIONS, never from the source text, where `import`
-/// in a comment would count. An import without a brace list brings the module's
-/// name, not its functions; `file_decls` unwraps `export import` like any export.
-fn visible_imports(file Node) -> []str {
+/// What THIS file imported (registry 221.1 #1493, D29), for `FnIndex.build_for`:
+/// with `seg` false every name in a brace list, with `seg` true the last segment
+/// of the module path each of them came from -- two parallel lists, one walk
+/// each. Read from the import DECLARATIONS, never from the source text, where
+/// `import` in a comment would count. An import without a brace list brings the
+/// module's name, not its functions; `file_decls` unwraps `export import`.
+fn import_parts(file Node, seg bool) -> []str {
     mut out = []str.new()
     for d in file_decls(file) {
         if d.kind_of() != NodeKind.ImportDecl { continue }
-        out.append(import_keys(branch_children(d)))
+        out.append(import_parts_of(branch_children(d), seg))
     }
     out
 }
 
-/// The keys of ONE import: the last identifier of the path before the brace list,
-/// joined with every name inside it. An aliased import is refused before typing
-/// (`@walk_import`), so `as` and its alias never reach a lookup.
-fn import_keys(kids []Node) -> []str {
+/// The parts of ONE import: the last identifier of the path before the brace
+/// list, once per name inside it (`seg`), or the names themselves. An aliased
+/// import is refused before typing (`@walk_import`), so `as` never reaches a
+/// lookup.
+fn import_parts_of(kids []Node, seg bool) -> []str {
     mut res = []str.new()
     mut last = ""
     mut in_braces = false
@@ -980,7 +982,7 @@ fn import_keys(kids []Node) -> []str {
             in_braces = false
         } else if in_braces {
             if t != "," && t != "as" {
-                res.push("${last}|${t}")
+                res.push(if seg { last } else { t })
             } else {
                 // The separator, or the `as` before an alias.
             }

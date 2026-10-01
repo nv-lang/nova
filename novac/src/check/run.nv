@@ -69,7 +69,7 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
     }
     mut c = Checker {
         src, ctx,
-        res: FnIndex.build_for(ctx.fns, visible_imports(file), ctx.module_c), // #1493: D29 visibility
+        res: FnIndex.build_for(ctx.fns, import_parts(file, false), import_parts(file, true), ctx.module_c), // #1493
         fres: FieldIndex.build(ctx.fields),
         gap_at: -1,
         gap_kind: TokenKind.ErrorTok,
