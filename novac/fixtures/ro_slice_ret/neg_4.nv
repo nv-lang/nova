@@ -1,0 +1,15 @@
+module ro_slice_ret.neg_4
+
+// ONE seeded cause: a write through index on a FIELD declared `ro` (D176:
+// `type Wrapper { field ro []u8 }`) -- E_READONLY_CONTENT, though the binding
+// that holds the record is `mut`. The oracle refuses the same way. Registry 1458.
+
+// NOVAC_EXPECT cannot write through index on a `ro` view
+
+type Wrap { xs ro []int }
+
+fn main() {
+    mut w = Wrap { xs: []int.of(1, 2) }
+    w.xs[0] = 9
+    println(w.xs.len())
+}

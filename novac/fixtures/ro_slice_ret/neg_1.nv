@@ -1,0 +1,14 @@
+module ro_slice_ret.neg_1
+
+// ONE seeded cause: a write through index on the `ro` view a function hands
+// out (D176: `view[i] = x` is E_READONLY_CONTENT). The oracle refuses it with
+// the same code at the same `=`. Registry 1458.
+
+// NOVAC_EXPECT cannot write through index on a `ro` view
+
+fn nums(xs []int) -> ro []int => xs
+
+fn main() {
+    nums([]int.of(1, 2))[0] = 9
+    println(1)
+}

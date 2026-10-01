@@ -278,6 +278,9 @@ const CTOR_UNKNOWN_FIELD_MSG = "this record construction names a field the type 
 
 const CTOR_FIELD_TWICE_MSG = "this record construction names a field twice, so another declared field is missing (#812)"
 
+/// `ro x ro T` -- the oracle's E_REDUNDANT_TYPE_MODIFIER (registry 1458).
+const REDUNDANT_TYPE_RO_MSG = "`ro` after a `ro` binding is redundant -- the `ro` binding already makes the content read-only (D33/D176 amendment, Plan 124.8, E_REDUNDANT_TYPE_MODIFIER); write `ro x T` instead of `ro x ro T`"
+
 const TYPE_FORM_MSG = "outside the subset: this type form is not compiled yet (slices, tuples, fn types and qualifiers arrive with generics, E2-b)"
 
 

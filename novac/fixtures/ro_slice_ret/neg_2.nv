@@ -1,0 +1,14 @@
+module ro_slice_ret.neg_2
+
+// ONE seeded cause: a `ro` view bound `mut` -- removing readonly is not
+// allowed (D176, E_READONLY_COERCE; the oracle refuses it at the
+// initializer). Registry 1458.
+
+// NOVAC_EXPECT cannot bind a `ro` view to a `mut` binding
+
+fn nums(xs []int) -> ro []int => xs
+
+fn main() {
+    mut a = nums([]int.of(1, 2))
+    println(a.len())
+}
