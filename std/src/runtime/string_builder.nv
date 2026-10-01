@@ -258,7 +258,7 @@ export fn StringBuilder mut @reserve(n int) -> @
 /// of the raw-write protocol: `reserve(n)` → `spare()` → write ≤n bytes →
 /// `advance(k)`. Rust parity `spare_capacity_mut`. Dereferencing is unsafe;
 /// the pointer itself is valid until the next reallocation (`reserve`/`append`).
-export fn StringBuilder mut @spare() -> *mut u8 => @buf.ptr().offset(@buf.len())
+export fn StringBuilder mut @spare() -> *mut u8 => unsafe { @buf.ptr().offset(@buf.len()) }
 
 // Commit `n` bytes of previously-`@reserve`d spare capacity to the live
 // length — the second half of the zero-copy digit-loop protocol.
