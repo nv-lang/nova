@@ -9,6 +9,7 @@
 module standalone.p1595_match_widen_sentinel_ok
 
 fn pick(o Option[u32]) -> int {
+    // nova:allow W_MANUAL_COALESCE -- the match form is what #1595 pins (`??` is another construct)
     ro r = match o {
         Some(v) => v
         None => -1
@@ -18,11 +19,13 @@ fn pick(o Option[u32]) -> int {
 
 fn main() Io {
     ro none Option[u32] = None
+    // nova:allow W_MANUAL_COALESCE -- the match form is what #1595 pins (`??` is another construct)
     ro r = match none {
         Some(v) => v
         None => -1
     }
     ro some Option[u32] = Some(7)
+    // nova:allow W_MANUAL_COALESCE -- the match form is what #1595 pins (`??` is another construct)
     ro s = match some {
         Some(v) => v
         None => -1
