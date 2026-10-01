@@ -138,7 +138,10 @@ export fn ty_source_name(ctx Ctx, t TyId) -> str {
         TkTuple => anon_record_source_name(ctx, t)
         TkInfer => "an inference variable"
         // A POINTER reads as written: `*mut T` / `*T`.
-        TkPtr => if ctx.tys.ptr_is_mut(t) { "*mut ${ty_source_name(ctx, ctx.tys.arg(t, 0))}" } else { "*${ty_source_name(ctx, ctx.tys.arg(t, 0))}" }
+        TkPtr => {
+            ro under = ty_source_name(ctx, ctx.tys.arg(t, 0))
+            if ctx.tys.ptr_is_mut(t) { "*mut ${under}" } else { "*${under}" }
+        }
     }
 }
 
@@ -723,6 +726,15 @@ fn instance_tag(ctx Ctx, t TyId, subst []TyId) -> str {
     s
 }
 
+/// A POINTER's tag inside one of OUR names: `_ptr_` or `_mutptr_`, then the
+/// pointee's tag -- pieces, like `_of_` and `_and_` above, never a name.
+fn ptr_tag(ctx Ctx, t TyId, subst []TyId) -> str {
+    consume s = StringBuilder.new(cap: 32)
+    s.append(if ctx.tys.ptr_is_mut(t) { "_mutptr_" } else { "_ptr_" })
+    s.append(type_tag(ctx, ctx.tys.arg(t, 0), subst))
+    s
+}
+
 /// An identifier-safe tag for a type, for use INSIDE a C name.
 ///
 /// `c_type` cannot serve here: it answers with C syntax (`Nova_Pt*`), and a
@@ -765,9 +777,9 @@ fn type_tag(ctx Ctx, t TyId, subst []TyId) -> str
         // TkEffect: unreachable while the with-doors refuse non-handler values;
         // ice, not a fallback (E4 wave). A callable named BY an effect type is a
         // with-typing question, not a mangle guess.
-        // A POINTER in one of OUR names: the pointee's tag behind a word that
-        // cannot be a parameter separator -- `ptr_of_nova_int`, `mutptr_of_..`.
-        TkPtr => "${if ctx.tys.ptr_is_mut(t) { "mutptr_of_" } else { "ptr_of_" }}${type_tag(ctx, ctx.tys.arg(t, 0), subst)}"
+        // A POINTER in one of OUR names: the pointee's tag behind a piece that
+        // cannot be a parameter separator (`ptr_tag`).
+        TkPtr => ptr_tag(ctx, t, subst)
         TkEffect => ice("mangle: type_tag of an EFFECT type — an effect value reaches a callable name only through a with-door bug (E4 wave)")
     }
 }

@@ -13,7 +13,7 @@ module novac.emit_c
 
 import ../tree.{Node}
 import ../builtins.{TypeKind}
-import ../sem.{is_expr_kind}
+import ../sem.{call_arg_at}
 import ../types.{is_ty}
 
 /// Is this method call's receiver a raw pointer (its recorded type)?
@@ -27,14 +27,7 @@ fn Emitter mut @emit_ptr_op(kids []Node) -> () {
     @body.append("(*((")
     @emit_expr(kids[0])
     @body.append(") + (")
-    mut i = 0
-    for c in kids {
-        if i > 2 && is_expr_kind(c.kind_of()) {
-            @emit_expr(c)
-        } else {
-            // The receiver, the dot, the name and the punctuation.
-        }
-        i += 1
-    }
+    // The one index the checker admitted: the first argument after the `(`.
+    @emit_expr(call_arg_at(kids, 3, 0))
     @body.append(")))")
 }

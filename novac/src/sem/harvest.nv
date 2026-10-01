@@ -32,6 +32,7 @@ module novac.sem
 import ../tree.{Node, NodeKind}
 import ../builtins.{COERCE_ATTR, SELF_TYPE, UNIT_TYPE_NAME, RECV_BINDING}
 import ../types.{TyId, no_ty, is_ty}
+import ../names.{raw_decl, DeclId}
 
 /// Read a METHOD declared in THIS file: the same reader std declarations go
 /// through, plus the node -> row entry the emitter needs to find the body.
@@ -183,7 +184,7 @@ fn harvest_types(decls []Node, mut types []TypeDef, mut gates []str, mut defs De
                                      share: share_marked_before(decls_here, c.id_of()), rows: TypeRows.NoRows })
                 continue
             }
-            // Everything else -- a record, an alias, a newtype, a protocol from
+            // Everything else -- a record, an alias, a protocol from
             // elsewhere -- registers as a RECORD with no fields, which is the
             // honest "a type novac knows of and knows nothing about". Refusing
             // here would drop the declaration and take the methods that mention
@@ -205,6 +206,26 @@ fn harvest_types(decls []Node, mut types []TypeDef, mut gates []str, mut defs De
                                      share: false, rows: TypeRows.NoRows })
                 fill_harvested_effect_ops(fx, c, tname, types, defs, tys)
                 continue
+            }
+            // AFTER the effect test on purpose: `type Fs effect { .. }` reads as a
+            // newtype to the shape reader (an identifier tail), and the effect is the
+            // truer answer -- measured by with_test the first time this stood above.
+            // A NEWTYPE from elsewhere is a NEWTYPE here too (2026-10-01): it
+            // used to register as a record below, so `FnRow` of another module
+            // -- `type FnRow int` -- was laid out as a pointer `Nova_FnRow*`
+            // and its `[]FnRow` asked the shell for an instance that does not
+            // exist (`Vec[FnRow]` is `Vec[int]` by the canon). Its TERM waits,
+            // exactly as the file's own newtype's does: `fill_handed_newtypes`
+            // interns it once every handed name exists.
+            if shape_of_decl(c) == DeclShape.ShapeNewtype {
+                types.push(TypeDef { kind: TypeKind.TkNewtype, shape: RecordShape.Record,
+                                     tparam_cnt: 0, ty_id: no_ty(), name: tname,
+                                     gate_off: gates.len(),
+                                     gate_cnt: push_gates(gates, decls_here, c.id_of()),
+                                     share: share_marked_before(decls_here, c.id_of()), rows: TypeRows.NoRows })
+                continue
+            } else {
+                // Not a newtype: the record row below.
             }
             types.push(TypeDef { kind: TypeKind.TkRecord, shape: shape_of_record_decl(c),
                                  tparam_cnt: tp_cnt,
@@ -459,4 +480,41 @@ fn recv_head_at(rk []Node, at int) -> int {
 fn is_mode_leaf(n Node) -> bool {
     if n.kind_of() != NodeKind.LeafNode { return false }
     leaf_kind(n) == TokenKind.KwRo || leaf_kind(n) == TokenKind.KwMut
+}
+
+/// The TERMS of the handed NEWTYPES, interned once every handed name exists --
+/// the handed half of the file's own pass 2 (`collect_types_with`), through the
+/// same representation door (`repr_of_decl`). A representation novac cannot
+/// read leaves the row without a term, exactly as for the file's own.
+fn fill_handed_newtypes(decls []Node, mut types []TypeDef, defs DefTable, mut tys Interner) -> () {
+    for d in decls {
+        for c in file_decls(d) {
+            if c.kind_of() != NodeKind.TypeDecl { continue }
+            if shape_of_decl(c) != DeclShape.ShapeNewtype { continue }
+            ro nk = branch_children(c)
+            if nk.len() < 2 || nk[1].kind_of() != NodeKind.LeafNode { continue }
+            if Some(owner) = defs.type_decl(leaf_text(nk[1])) {
+                fill_handed_newtype(c, owner, types, defs, tys)
+            } else {
+                // Not a registered type name: nothing to fill.
+            }
+        }
+    }
+}
+
+/// One handed newtype's term, when its row still waits for one.
+fn fill_handed_newtype(c Node, owner DeclId, mut types []TypeDef, defs DefTable, mut tys Interner) -> () {
+    if types[raw_decl(owner)].kind != TypeKind.TkNewtype || is_ty(types[raw_decl(owner)].ty_id) { return }
+    if Some(spec) = repr_of_decl(c, defs) {
+        if raw_decl(spec.under_decl) < types.len() && is_ty(ty_of_row(types, spec.under_decl)) {
+            mut row = types[raw_decl(owner)]
+            row.ty_id = tys.newtype(owner, ty_of_row(types, spec.under_decl))
+            types[raw_decl(owner)] = row
+        } else {
+            // A representation outside the table or without a term: the row
+            // keeps no term, and every use is judged where it stands.
+        }
+    } else {
+        // A representation novac does not read: no term, as for the file's own.
+    }
 }

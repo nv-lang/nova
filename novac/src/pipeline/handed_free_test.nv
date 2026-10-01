@@ -15,7 +15,10 @@
 // novac/src/pipeline/handed_free_test.nv -- free functions of handed modules.
 
 module novac.pipeline
-import ../sem.{InteropTable}
+import ../sem.{InteropTable, representation_of}
+import ../builtins.{TypeKind}
+import ../diag.{ice}
+import ../parse.{parse}
 
 test "a handed free function: resolved, judged like the file's own, spelled as the shell's symbol (W6)" {
     mut std = std_decls()
@@ -87,3 +90,25 @@ test "a POINTER in a handed declaration is read: a std record with a `*mut` fiel
     ro (d1, _) = compile_to_c_with("import std.cellm.{Cell}\nfn g(c Cell) -> int => c.data\nfn main() {\n println(1)\n}", decls, InteropTable.new())
     assert(messages(d1).contains("*mut int"), messages(d1))
 }
+
+test "a NEWTYPE of a handed module is a newtype here: laid out as its representation, not as a record pointer (2026-10-01)" {
+    // `type Row int` in another module used to register as a RECORD with no
+    // fields: `Row` was laid out as a pointer `Nova_Row*` -- a C signature that
+    // disagrees with the owner's `nova_int` -- and `[]Row` asked the shell for a
+    // `Vec____Nova_Row_p` that cannot exist (10 refusals of the 0.2 measure:
+    // `Vec[FnRow]`, `Vec[TyId]`, `Vec[FieldRow]`). A newtype is laid out as its
+    // representation, so a parameter of type `Row` is a `nova_int` in C.
+    mut texts = std_decls()
+    texts.push("module std.rowm\nexport type Row int\n")
+    ro decls = parse_decls(texts)
+    // The REGISTRY is asked, not the C text (P24): `Row` is a newtype whose
+    // representation is `int` -- the layout and the instance spelling follow.
+    ro prog = "import std.rowm.{Row}\nfn same(r Row) -> Row => r\nfn main() {\n ro r = same(Row(3))\n println(1)\n}"
+    ro (d0, _) = compile_to_c_with(prog, decls, InteropTable.new())
+    assert(d0.len() == 0, messages(d0))
+    ro ctx = context(parse(tokens_of(prog)), decls, InteropTable.new())
+    ro row = ctx.ty_of_name("Row") ?? ice("test: the handed `Row` is not in the registry")
+    assert(ctx.tys.kind_of(row) == TypeKind.TkNewtype, "a handed newtype registered as another kind")
+    assert(representation_of(ctx, row) == ctx.prims.int_id, "the handed newtype's representation is not `int`")
+}
+

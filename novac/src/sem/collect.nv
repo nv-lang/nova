@@ -247,6 +247,9 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
             register_sum_variants(c, types, defs, variant_rows, payload_types, variant_names, tys)
         }
     }
+    // THE HANDED NEWTYPES' TERMS, before the file's own pass 2 reads a field or a
+    // representation that names one (2026-10-01: they used to be records).
+    fill_handed_newtypes(decls, types, defs, tys)
     // THE TYPE BOUNDARY IS FIXED HERE, beside the name boundary, because the two
     // are DIFFERENT numbers: `defs.foreign_cnt` counts name rows (types AND the
     // handed variants registered just above), `foreign_types_cnt` counts type rows.
