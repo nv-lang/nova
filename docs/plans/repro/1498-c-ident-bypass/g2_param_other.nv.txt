@@ -1,0 +1,14 @@
+// Registry #1498 -- CONTROL for g1: the same program, the parameter named `c`
+// (a name the door leaves unchanged). Green before and after the fix: `g2 x-y`.
+type Ctx value {
+    ro a str
+    ro b str
+}
+
+fn joined(sep str, c Ctx) -> str => "${c.a}${sep}${c.b}"
+
+fn sample() -> Ctx => { a: "x", b: "y" }
+
+fn main() Io {
+    println("g2 ${joined("-", sample())}")
+}

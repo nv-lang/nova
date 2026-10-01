@@ -1,0 +1,17 @@
+// Registry #1498 -- carrier (claude-limits server/routes.nv, `refuse_method(allow
+// str, ctx Ctx)`) cut down: a value-record parameter named `ctx`, its fields read.
+// A value record over 16 bytes is passed by pointer; the signature went through
+// the door `c_ident` (`NovaValue_Ctx* nv_ctx`), the read did not (`(*ctx).a`).
+// Before the fix: clang "use of undeclared identifier 'ctx'". After: `g1 x-y`.
+type Ctx value {
+    ro a str
+    ro b str
+}
+
+fn joined(sep str, ctx Ctx) -> str => "${ctx.a}${sep}${ctx.b}"
+
+fn sample() -> Ctx => { a: "x", b: "y" }
+
+fn main() Io {
+    println("g1 ${joined("-", sample())}")
+}
