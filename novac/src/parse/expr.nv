@@ -162,8 +162,8 @@ fn Cursor mut @expr_bp_inner(min_bp int) -> Node {
 /// of the mapping read the same shape — one question, one answer.
 /// Does the `{` at the cursor open an anonymous CONSTRUCTOR, or a block?
 ///
-/// A constructor starts with a field -- `name:` -- or with a spread `...`;
-/// anything else after the brace is statements. Read without consuming, like
+/// A constructor starts with a field -- `name:` or `@name,` -- or with a
+/// spread `...`; anything else after the brace is statements. Read without consuming, like
 /// `after_bracket_run` (274.5 wave B8): the cursor invariant is that `take()`
 /// is the only advancer. Measured 2026-08-30: 29 of the 50 "record constructor
 /// only" marks in novac's own sources stood on ARM and IF bodies, which
@@ -172,6 +172,14 @@ fn Cursor mut @expr_bp_inner(min_bp int) -> Node {
 fn Cursor @brace_opens_ctor() -> bool {
     if @peek() != TokenKind.LBrace { return false }
     if @peek(skip: 1) == TokenKind.Ellipsis { return true }
+    // RECEIVER PUNNING FOLLOWED BY A COMMA, `{ @x, ... }` (D52 rule 1, #1459):
+    // no statement starts with `@x,`, so the brace is a constructor. A LONE
+    // `{ @x }` stays a block: it reads as either, the oracle picks by the
+    // expected type, and this reader has no type to ask.
+    if @peek(skip: 1) == TokenKind.At && @peek(skip: 2) == TokenKind.Ident &&
+       @peek(skip: 3) == TokenKind.Comma {
+        return true
+    }
     if @peek(skip: 1) != TokenKind.Ident { return false }
     @peek(skip: 2) == TokenKind.Colon
 }
@@ -577,7 +585,8 @@ fn Cursor mut @record_pattern(mut kids []Node) -> Node {
 }
 
 /// Constructor field list after the opening brace: `name: expr`, punning
-/// `name`, spread `...expr` — comma-separated; the closing brace ends it.
+/// `name`, receiver punning `@name`, spread `...expr` — comma-separated; the
+/// closing brace ends it.
 fn Cursor mut @ctor_fields(mut kids []Node) -> () {
     while !@at_eof() && @peek() != TokenKind.RBrace {
         ro before = @i
@@ -585,6 +594,18 @@ fn Cursor mut @ctor_fields(mut kids []Node) -> () {
             mut sk = []Node.of(@take())
             sk.push(@expr())
             kids.push(@node(NodeKind.CtorSpread, sk))
+        } else if @peek() == TokenKind.At && @peek(skip: 1) == TokenKind.Ident {
+            // RECEIVER PUNNING `{ @end }` (D52 rule 1): the field `end`, its
+            // value the receiver's own `@end`. The CtorField holds ONE child,
+            // the SelfField node itself -- not two leaves, which every reader
+            // indexing `fk[0]` as the name would take for a field called `@`.
+            // The name is the SelfField's second leaf (`ctor_field_name`), the
+            // value is the SelfField, typed and printed like any `@end`.
+            // Before this arm the `@` fell to recovery, and novac's own
+            // `Fn { @locals, @blocks }` was "novac did not parse this" (#1459).
+            mut sf = []Node.of(@take())
+            sf.push(@take())
+            kids.push(@node(NodeKind.CtorField, []Node.of(@node(NodeKind.SelfField, sf))))
         } else if @peek() == TokenKind.Ident {
             mut fk = []Node.of(@take())
             if @peek() == TokenKind.Colon {

@@ -912,7 +912,10 @@ resolve 16
 #   (модули программы рядом с символами шелла) и Ctx.@in_program -- одна дверь «тело этой строки
 #   есть в программе», её спрашивают check/calls.nv, check/methods.nv, emit_c/emit_expr.nv и
 #   emit_c/emit_interp.nv вместо compiles_body.
-sem 295
+# sem 295 -> 296 (2026-10-01, integrator, merge of the cloud session's #1459): `ctor_field_name`
+#   -- one door for a constructor field's name in both forms (`name` and `@name`); check/literal_rules.nv
+#   and emit_c/emit_c.nv ask it. The branch raised 292 -> 293 on its own base; Carina's +3 and this +1 add.
+sem 296
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
@@ -1085,3 +1088,6 @@ types 28
 #     `check/exprs.nv`; оставить внутри `sem` значило бы завести вторую дверь
 #     к той же цепи вариантов в `check` — ровно то, что запрещает «одна дверь на корень» (274.4).
 # sem 240 -> 248 (2026-09-21, накопленный рост дня, несколько окон -- согласовано с интегратором, полный поимённый список не составлялся: рост размазан по нескольким сегодняшним слияниям в novac/src, не одному коммиту).
+# sem 292 -> 293 (2026-10-01, облачная сессия, №1459): `ctor_field_name` -- имя поля, которое пишет
+#   CtorField; у узла две формы (`x`/`x: e` и получательская `@x`, D52 правило 1), и спрашивают
+#   его ДВА модуля вне sem (`check/literal_rules.nv`, `emit_c/emit_c.nv`) -- две копии разошлись бы.

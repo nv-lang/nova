@@ -622,8 +622,14 @@ fn Checker mut @type_expr(e Node) -> () {
                 Branch { .. } => {}
             }
         } else {
-            // No receiver bound: `@field` outside a method body is refused
-            // by the subset walk; nothing to decide here.
+            // No receiver bound: `@field` outside a method body has nothing
+            // to read from (D458: `@` is bound by the method's receiver
+            // parameter). Until #1459 this branch said "refused by the subset
+            // walk" -- and the walk's SelfField arm defers to THIS place, so
+            // nobody refused it: `ro v = @x` in a free fn passed check, and
+            // the oracle's check passes it too, then fails in C on an
+            // undeclared `nova_self`. Refused here, the same way bare `@` is.
+            @reject_first_leaf_of(kids, SELF_FIELD_OUTSIDE_MSG)
         }
     } else if k == NodeKind.FieldAccess {
         // REACHABLE, unlike the three above: `s.` with nothing after the dot

@@ -648,6 +648,35 @@ test "shape: a signature without a body ends where the next declaration begins (
     assert(roundtrip(src), "the tree lost bytes")
 }
 
+/// How many constructor fields in this tree are RECEIVER PUNNING (`@f`): a
+/// CtorField whose only child is a SelfField over `@` and the name.
+fn count_recv_puns(n Node) -> int {
+    mut c = 0
+    if n.kind_of() == NodeKind.CtorField {
+        ro fk = branch_children_of(n)
+        if fk.len() == 1 && fk[0].kind_of() == NodeKind.SelfField && branch_children_of(fk[0]).len() == 2 {
+            c += 1
+        }
+    }
+    for k in branch_children_of(n) {
+        c += count_recv_puns(k)
+    }
+    c
+}
+
+test "shape: receiver punning `T { @f }` is a CtorField over the SelfField, not the fallback (#1459, D52 rule 1)" {
+    // novac's own `Fn { @locals, @blocks }` (lower/ir.nv) used to drop the `@`
+    // into recovery: "novac did not parse this", and the file went untyped.
+    // Every form D52 rule 1 allows: alone, several, mixed with a written
+    // field, name punning and a spread, the anonymous brace, and an arm body
+    // whose brace opens with `@x,`.
+    ro src = "fn T @a() -> T {\n    ro p = T { @x }\n    ro q = T { @x, @y }\n    ro r = T { y, @x, z: @z + 1, ...@ }\n    r\n}\nfn T @b() -> T => { @x, y: @x }\nfn T @c(k int) -> T => match k {\n    0 => { @x, @y }\n    _ => T { @y, x: 1 }\n}\n"
+    ro f = parse(lex(src))
+    assert(count_err(f) == 0, "errs ${count_err(f)}")
+    assert(count_recv_puns(f) == 8, "puns ${count_recv_puns(f)}")
+    assert(roundtrip(src), "the tree lost bytes")
+}
+
 /// The children of a branch, none of a leaf.
 fn branch_children_of(n Node) -> []Node {
     match n {
