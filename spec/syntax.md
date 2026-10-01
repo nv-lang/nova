@@ -1283,7 +1283,9 @@ only; a named tuple is destructured with the brace form `{ x, .. }`), array
 (`[a, .., z]`); the implicit field skip, formerly legal in `match`, is retracted
 (`E_RECORD_PATTERN_NEEDS_REST` in every position). `consume` on a binder inside a
 pattern is allowed in conditions too (`if Some(consume x) = opt { … }`); only the
-mode before the whole pattern is refused (`E_CONSUME_IN_CONDITION`). Any name in a
+mode before the whole pattern is refused (`E_CONSUME_IN_CONDITION`; `ro`/`mut` before a
+constructor or destructuring pattern — `E_OUTER_RO_IN_CONDITION` / `E_OUTER_MUT_IN_CONDITION`,
+they stand only before a bare name: `if ro n = f()`). Any name in a
 pattern may carry a type (`ro (a int, b) = pair`, `for (k str, v) in pairs`): the
 type is only checked — never converted, never used as a filter (D486 amendment
 2026-09-30).

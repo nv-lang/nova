@@ -1642,7 +1642,7 @@ if user = compute_user() { ... }                       // ✗ E_AMBIGUOUS_IDENT_
 
 // Guard через && (Plan 106, D34 amend 2026-06-17)
 if Some(x) = cache.get(key) && x > 5 { use(x) }
-if ro Some(user) = db.find(id) && user.is_active { process(user) }
+if Some(user) = db.find(id) && user.is_active { process(user) }   // `ro` перед конструктором — ❌ E_OUTER_RO_IN_CONDITION (D486 §4)
 while Some(item) = queue.pop() && item.valid { handle(item) }
 
 // else-if
@@ -14097,6 +14097,11 @@ match-арма нет места под outer-режим: `ro (mut a, b) => …`
 >    `if mut Some(x) = e` — ❌ (`E_OUTER_MUT_IN_CONDITION`, пишется `Some(mut x)`),
 >    `if consume Some(x) = e` — ❌ (`E_CONSUME_IN_CONDITION`). Внутри паттерна `ro` не
 >    пишется вовсе — биндер без слова и так `ro` (`Some(ro x)` — не форма).
+>    **Амендмент 2026-10-02** (находка охоты spec 2026-10-01, решение интегратора):
+>    `ro` перед паттерном-конструктором или разбором в условии — тоже outer-режим и
+>    отвергается: `if ro Some(x) = e` — ❌ (`E_OUTER_RO_IN_CONDITION`, пишется
+>    `if Some(x) = e`); `if ro consume Some(x) = e` — ❌ (`E_CONSUME_IN_CONDITION`). То же
+>    в `while`. До амендмента оракул все три формы принимал.
 > 4. **Где кончается правая часть условного паттерна** (вопрос владельца: `if ro n =
 >    f() && n > 0` — это `(ro n = f()) && n > 0` или `ro n = (f() && n > 0)`?).
 >    Грамматика D34 `cond-pattern "=" expr ("&&" expr)?` этого не говорила, а для
