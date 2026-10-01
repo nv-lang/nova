@@ -1452,6 +1452,10 @@
 # 2026-10-01, integrator nova-20: rows -> 1432, max -> 1482 (merge of the cloud session's p1458: #1458 lands (out of gaps)).
 # 2026-10-01, integrator nova-20: rows -> 1433, max -> 1482 (merge of the cloud session's p1459: #1459 lands (out of gaps)).
 # 2026-10-01, integrator nova-20: rows -> 1435, max -> 1484 (merge of the cloud session's p1459: #1483 (oracle: @field outside a method passes check, fails in C) and #1484 (Carina: anonymous constructor in a match arm ICEs) numbered here).
+# 2026-10-01, assistant nova-88: rows -> 1436, max -> 1485 (#1485 (K3, under GC_PRINT_STATS parallel processes of
+#   one Nova binary hang on the shared <exe>.gc.log -- not the #1461 kind, measured), number given by integrator nova-20).
+rows=1436
+max=1485
 rows=1435
 max=1484
 rows=1433

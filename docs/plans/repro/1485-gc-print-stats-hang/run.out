@@ -1,0 +1,3 @@
+A shared log (GC_PRINT_STATS=1): rcs 0 124 124 124 124 124 124 124 
+B no GC_PRINT_STATS (control): rcs 0 0 0 0 0 0 0 0 
+C own GC_LOG_FILE per process: rcs 0 0 0 0 0 0 0 0 
