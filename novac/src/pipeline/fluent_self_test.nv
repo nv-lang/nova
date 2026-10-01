@@ -79,3 +79,23 @@ test "a HANDED `-> @` body: the instance the unit makes returns its receiver on 
     }
     assert(returns - 1 >= 4, c1)
 }
+
+test "an EXPLICIT self-return in a `-> @` body is refused: tail `@`, `return @`, `=> @` (D409 rule 3, #1538)" {
+    ro std = std_decls()
+    // The oracle says E_EXPLICIT_SELF_RETURN for each; Carina accepted all three.
+    ro forms = []str.of("fn Ctr mut @set() -> @ {\n @n = 1\n @\n}",
+                        "fn Ctr mut @set() -> @ {\n @n = 1\n return @\n}",
+                        "fn Ctr @set() -> @ => @")
+    for f in forms {
+        ro (ds, _) = compile_to_c("type Ctr { n int }\n${f}\nfn main() {\n mut c = Ctr { n: 0 }\n println(c.set().n)\n}", std)
+        assert(ds.len() == 1, messages(ds))
+        assert(ds[0].message.contains("E_EXPLICIT_SELF_RETURN"), messages(ds))
+    }
+    // CONTROL: a DELEGATION is a call, not a self-return (D409's exception), and
+    // a bare `return` IS `return @` -- both stay accepted.
+    ro (dc, _) = compile_to_c("type Ctr { n int }\nfn Ctr mut @inc() -> @ {\n @n += 1\n}\n\
+fn Ctr mut @twice(b bool) -> @ {\n if b {\n  return @inc()\n }\n @inc()\n}\n\
+fn Ctr mut @thrice() -> @ => @inc()\n\
+fn main() {\n mut c = Ctr { n: 0 }\n println(c.twice(true).n)\n println(c.thrice().n)\n}", std)
+    assert(dc.len() == 0, messages(dc))
+}

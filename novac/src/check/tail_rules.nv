@@ -468,3 +468,73 @@ fn promises_tail_value(fk []Node) -> bool {
     }
     false
 }
+
+/// D409 rule 3 (registry 221.1 #1538): a `-> @` body WRITES no self-return --
+/// the receiver is returned automatically, so an explicit one is refused, the
+/// oracle's E_EXPLICIT_SELF_RETURN. Three spellings: `@` as the tail, `return @`,
+/// and `=> @`. A DELEGATION is not one of them (`=> @write()`, `return
+/// @other()`): that is a call whose value happens to be the receiver, and the
+/// tree spells it as a `MethodCall`, never as a bare `SelfExpr`.
+///
+/// Asked of the FILE's bodies, by the subset walk, beside the tail rule and
+/// through the same door (`returns_receiver`): an instance of a handed body is
+/// std's or another unit's, and its own file judged it.
+const EXPLICIT_SELF_RETURN_MSG = "E_EXPLICIT_SELF_RETURN: this method is declared `-> @`, and the receiver is returned automatically (D409) -- remove the explicit `@` / `return @` / `=> @` (a bare `return` is `return @`)"
+
+/// Refuse every explicit self-return of a `-> @` declaration `fk` (D409 rule 3).
+fn Checker mut @report_if_explicit_self_return(fk []Node) -> () {
+    if !returns_receiver(fk) { return }
+    for c in fk {
+        ro k = c.kind_of()
+        if k == NodeKind.FnExprBody {
+            ro ek = branch_children(c)
+            if ek.len() > 0 && is_bare_self(ek[ek.len() - 1]) {
+                @reject_first_leaf_of([]Node.of(ek[ek.len() - 1]), EXPLICIT_SELF_RETURN_MSG)
+            } else {
+                // A delegation, or any other value: rule 2 (a value that is not
+                // the receiver) is the typing walk's, not this judge's.
+            }
+        } else if k == NodeKind.Block {
+            ro bk = branch_children(c)
+            ro last = last_branch_of(bk)
+            if last >= 0 && is_bare_self(bk[last]) {
+                @reject_first_leaf_of([]Node.of(bk[last]), EXPLICIT_SELF_RETURN_MSG)
+            } else {
+                // The tail is a statement or a delegation: nothing to refuse there.
+            }
+            @reject_return_self_in(c)
+        } else {
+            // The name, the parameters, the return type: no body to judge.
+        }
+    }
+}
+
+/// Refuse every `return @` under `n` -- but not inside a body that is ANOTHER
+/// function's: a handler operation, a handler literal, a spawned fiber (D13).
+fn Checker mut @reject_return_self_in(n Node) -> () {
+    match n {
+        Leaf(_) => {}
+        Branch { kind, children, .. } => {
+            if kind == NodeKind.HandlerOp || kind == NodeKind.HandlerLit || kind == NodeKind.SpawnStmt {
+                // SILENT-OK: a nested function's `return` is its own, not this method's.
+                return
+            }
+            if kind == NodeKind.RetStmt {
+                if children.len() >= 2 && is_bare_self(children[1]) {
+                    @reject_first_leaf_of(children, EXPLICIT_SELF_RETURN_MSG)
+                } else {
+                    // A bare `return` (= `return @`, D409) or a delegation.
+                }
+                // SILENT-OK: a `return` holds no further `return`.
+                return
+            }
+            for c in children {
+                @reject_return_self_in(c)
+            }
+        }
+    }
+}
+
+/// Is `n` the receiver itself, written bare (`@`)? `@field` is a `SelfField`
+/// and `@m()` a `MethodCall`, so only the one-leaf `SelfExpr` answers yes.
+fn is_bare_self(n Node) -> bool => n.kind_of() == NodeKind.SelfExpr
