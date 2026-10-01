@@ -50,6 +50,7 @@ import ../builtins.{TypeKind}
 /// the argument is, not by its type. The receiver is parameter zero (plan 273),
 /// so the same axis answers `@m` / `mut @m` / `consume @m` -- which is how std
 /// declares `Vec[T] @ptr() -> *T` beside `Vec[T] mut @ptr() -> *mut T`.
+#impl(Equal)
 export type ParamMode enum
     | ModeRo /// the default: a read-only view, nothing is written through it
     | ModeMut /// mutation the caller sees (in-out)
