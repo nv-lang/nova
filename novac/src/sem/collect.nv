@@ -91,6 +91,12 @@ fn register_sum_variants(c Node, mut types []TypeDef, mut defs DefTable,
     if raw_decl(sum_decl) >= types.len() { return }
     ro srow = types[raw_decl(sum_decl)]
     if srow.name != sname { return } // a duplicate name owns no row here
+    // THE ROW MUST BE A SUM (registry 221.1 #1491): a private sum of another
+    // module is not registered by its bare name (D281), so its name may answer
+    // with another module's RECORD of the same name -- std's private json
+    // `Token` against novac's `lex.Token`. Hanging the sum's variants on that
+    // record replaced its fields, and every `t.kind` was "unknown field".
+    if srow.kind != TypeKind.TkSum { return }
     // The term came from the pass that built the row: the variants carry it,
     // and nobody re-interns it.
     ro sum_ty = srow.ty_id
@@ -225,7 +231,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // harvest below, this file's own in pass 2, the ProtoTable two-pass
     // contract. Declared BEFORE the harvest because the harvest fills it.
     mut fx = EffectTable.new()
-    harvest_types(decls, types, gates, defs, tys, fx)
+    harvest_types(decls, types, gates, defs, tys, fx, module_dotted(file))
     // THE VARIANTS OF HANDED SUMS, through the same door the file's own sums
     // take below (274.5 wave "variants of handed sums", 2026-09-04). Until this
     // loop `harvest_types` registered a handed sum's NAME and skipped its

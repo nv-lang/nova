@@ -29,7 +29,7 @@
 
 module novac.sem
 
-import ../tree.{Node, NodeKind}
+import ../tree.{Node, NodeKind, NodeId}
 import ../builtins.{COERCE_ATTR, SELF_TYPE, UNIT_TYPE_NAME, RECV_BINDING}
 import ../types.{TyId, no_ty, is_ty}
 import ../names.{raw_decl, DeclId}
@@ -140,8 +140,22 @@ fn harvest_in(n Node, handed_from str, types []TypeDef, mut defs DefTable, mut t
 /// not compile (`iter.pos`), so reading them now would be a capability with no
 /// obligation (K7). The name and the KIND are what a type in a signature needs.
 fn harvest_types(decls []Node, mut types []TypeDef, mut gates []str, mut defs DefTable,
-                        mut tys Interner, mut fx EffectTable) -> () {
+                        mut tys Interner, mut fx EffectTable, own_module str) -> () {
     for d in decls {
+        // WHICH declarations of this file other modules may NAME (D281, registry
+        // 221.1 #1491): the exported ones -- a type not exported is its module's
+        // own. Registering it by its bare name in the one table every module
+        // reads let std's private json `Token` stand where novac's `lex.Token`
+        // was meant (three false #812 refusals in parse/parse.nv). A file of
+        // the compiled file's OWN module sees all of them.
+        ro same_module = module_dotted(d) == own_module
+        mut exported = []NodeId.new()
+        for w in branch_children(d) {
+            if w.kind_of() != NodeKind.ExportDecl { continue }
+            for inner in branch_children(w) {
+                exported.push(inner.id_of())
+            }
+        }
         // THE GATES of std's types, read where the DECLARATION LIST is (D186).
         // Std goes through the same door as the compiled file deliberately:
         // reading the gate in only one of the two would leave a std type
@@ -156,6 +170,8 @@ fn harvest_types(decls []Node, mut types []TypeDef, mut gates []str, mut defs De
             if nk.len() < 2 { continue }
             if nk[1].kind_of() != NodeKind.LeafNode { continue }
             ro tname = leaf_text(nk[1])
+            // SILENT-OK: a private type of another module is invisible here by D281 -- its own module reads it.
+            if !same_module && !is_among(exported, c.id_of()) { continue }
             // A GENERIC declaration registers as a HEAD (step B1): the row
             // carries how many parameters it binds, and the RESOLVER is what
             // keeps a bare `Vec` from becoming a type -- `ty_or_none` answers
@@ -542,3 +558,13 @@ fn fill_handed_newtype(c Node, owner DeclId, mut types []TypeDef, defs DefTable,
         // A representation novac does not read: no term, as for the file's own.
     }
 }
+
+/// Is node `id` among `ids`? A file's EXPORTED declarations, a handful per
+/// file -- the list is bounded by one file's top level.
+fn is_among(ids []NodeId, id NodeId) -> bool {
+    for x in ids {
+        if x == id { return true }
+    }
+    false
+}
+
