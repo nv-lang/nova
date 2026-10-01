@@ -276,6 +276,8 @@ fn Checker mut @resolve_coerce_or_refuse(e Node, kids []Node, cname str, key []A
     while raw_row(row) >= 0 {
         ro here = row
         row = @res.next_row_of(row)
+        // The asker's view (#1521): a row its body cannot name is no candidate.
+        if !@res.free_candidate(@ctx.fns, here) { continue }
         if !@coerces_into(here, key) { continue }
         if raw_row(winner) < 0 {
             winner = here
@@ -485,7 +487,7 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
     // VISIBILITY FIRST (#1493, D29): a function of another module is callable only
     // when this file imported it -- a LANGUAGE error, not subset debt.
     ro vfd = @ctx.fns.rows[raw_row(row)]
-    if !@res.sees(vfd.handed_from, vfd.name) {
+    if !@res.sees_row(@ctx.fns, row) {
         @reject_first_leaf_of(kids, "undefined identifier `${vfd.name}`: it is declared in module `${vfd.handed_from}` and this file does not import it -- a name of another module is visible only through `import <module>.{${vfd.name}}` (D29)")
         return
     }

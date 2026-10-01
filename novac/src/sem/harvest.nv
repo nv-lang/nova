@@ -46,7 +46,7 @@ import ../names.{raw_decl, DeclId}
 export fn harvest_own_method(kids []Node, types []TypeDef, mut defs DefTable,
                              mut tys Interner, mut fns FnTable) -> Option[FnRow] {
     ro before = fns.rows.len()
-    harvest_fn(kids, "", types, defs, tys, fns)
+    harvest_fn(kids, "", "", types, defs, tys, fns)
     if fns.rows.len() > before {
         Some(FnRow(fns.rows.len() - 1))
     } else {
@@ -60,7 +60,7 @@ export fn harvest_own_method(kids []Node, types []TypeDef, mut defs DefTable,
 /// does not become a subset method and gets an honest rejection at the
 /// point of use. Overloads (two signatures for one (receiver, name))
 /// are marked and also rejected — silent choosing is not allowed.
-fn harvest_methods(decls []Node, types []TypeDef, mut defs DefTable, mut tys Interner,
+fn harvest_methods(decls []Node, own_module str, types []TypeDef, mut defs DefTable, mut tys Interner,
                    mut fns FnTable, mut coerces []CoercePair, mut bodies HandedBodies) -> () {
     mut tree = 0
     for d in decls {
@@ -68,7 +68,7 @@ fn harvest_methods(decls []Node, types []TypeDef, mut defs DefTable, mut tys Int
         // (wave W6): a free function of that module is emitted as the shell's
         // symbol, which the oracle spells from the module path. The TREE's index
         // travels too (E.10 step 4a): the row's body lives there.
-        harvest_in(d, module_dotted(d), types, defs, tys, fns, coerces, tree, bodies)
+        harvest_in(d, module_dotted(d), own_module, types, defs, tys, fns, coerces, tree, bodies)
         tree += 1
     }
 }
@@ -79,14 +79,14 @@ fn harvest_methods(decls []Node, types []TypeDef, mut defs DefTable, mut tys Int
 /// tail of the file). Until recovery is fixed in wave 2, signature
 /// collection must not depend on it: a declaration is found wherever
 /// it ended up.
-fn harvest_in(n Node, handed_from str, types []TypeDef, mut defs DefTable, mut tys Interner,
+fn harvest_in(n Node, handed_from str, own_module str, types []TypeDef, mut defs DefTable, mut tys Interner,
               mut fns FnTable, mut coerces []CoercePair, tree int, mut bodies HandedBodies) -> () {
     match n {
         Leaf(_) => {}
         Branch { kind, children, .. } => {
             if kind == NodeKind.FnDecl {
                 ro before = fns.rows.len()
-                harvest_fn(children, handed_from, types, defs, tys, fns)
+                harvest_fn(children, handed_from, own_module, types, defs, tys, fns)
                 if fns.rows.len() > before {
                     // The row this declaration became, and where its body lives.
                     bodies.note(FnRow(before), tree, n)
@@ -108,7 +108,7 @@ fn harvest_in(n Node, handed_from str, types []TypeDef, mut defs DefTable, mut t
             for c in children {
                 if c.kind_of() == NodeKind.AttrDecl { continue }
                 ro before = fns.rows.len()
-                harvest_in(c, handed_from, types, defs, tys, fns, coerces, tree, bodies)
+                harvest_in(c, handed_from, own_module, types, defs, tys, fns, coerces, tree, bodies)
                 if is_attr_marked(marked, c.id_of()) && fns.rows.len() > before {
                     harvest_coerce_pair(fns, coerces, FnRow(fns.rows.len() - 1))
                 } else {
@@ -261,7 +261,7 @@ fn harvest_types(decls []Node, mut types []TypeDef, mut gates []str, mut defs De
 /// the receiver AND the return are already known to the registry —
 /// otherwise the method does not enter the subset and gets an
 /// honest rejection at the point of use.
-fn harvest_fn(kids []Node, handed_from str, types []TypeDef, mut defs DefTable, mut tys Interner,
+fn harvest_fn(kids []Node, handed_from str, own_module str, types []TypeDef, mut defs DefTable, mut tys Interner,
               mut fns FnTable) -> () {
     mut recv_name = ""
     mut recv_kids = []Node.new()
@@ -446,7 +446,33 @@ fn harvest_fn(kids []Node, handed_from str, types []TypeDef, mut defs DefTable, 
     // the holder: `fn is_high_surrogate` beside std's). The expression-position
     // call asks the name table first (`defs.def_of`), so a handed free function
     // stands there too.
-    if is_free && !defs.def_of(mname).is_none() { return }
+    //
+    // THE RULE IS PER MODULE (registry 221.1 #1521). A same-named function of
+    // ANOTHER module is not the file's twice: it is that module's, and the
+    // bodies written there name it -- `helper()` in `hp.geo`'s `Vec[T] @tag`
+    // means `hp.geo`'s helper even when `hp` declares one. Until #1521 it got no
+    // row at all, and the instance's call went to the caller's `helper`. So it
+    // is registered as a ROW, and the name table keeps the entry it has; who may
+    // name which row is the callable index's view of the asker (D29 + D125,
+    // `FnIndex @free_view`). A copy of the file's OWN module (the self-build
+    // hands the unit back) still adds nothing, and so does a name the table
+    // holds as a type or a constant.
+    mut row_only = false
+    if is_free {
+        match defs.def_of(mname) {
+            None => {}
+            Some(d) => {
+                if handed_from == own_module { return }
+                match d.target {
+                    DefFn(_) => { row_only = true }
+                    DefType(_) => return
+                    DefConst(_) => return
+                }
+            }
+        }
+    } else {
+        // A method: judged by the rule below.
+    }
     // THE SAME RULE FOR A METHOD (registry 1354, 2026-09-26): a handed method
     // identical to one the file declares is the file's own method read a
     // second time -- in module mode the unit is inside `NOVAC_SELF_PATH`, and
@@ -459,7 +485,7 @@ fn harvest_fn(kids []Node, handed_from str, types []TypeDef, mut defs DefTable, 
                 ret_ro: ret_is_ro(ret_kids))
     }
     fns.mark_linear(linear)
-    if is_free {
+    if is_free && !row_only {
         defs.add(mname, DefTarget.DefFn(FnRow(fns.rows.len() - 1)))
     } else {
         // A method is reached through its receiver, a static one through its

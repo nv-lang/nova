@@ -123,7 +123,7 @@ test "an instance types its body under the substitution, in its own channel (E2-
     ro decl = generic_decl_of(tree, "twice")
     ro row = decl_fn_row(decl, ctx) ?? ice("test: `twice` owns no row")
     ro (diags, chan) = check_instance(decl, SourceText { text: src }, ctx, row,
-        []TyId.of(ctx.prims.int_id), raw_node(tree.id_of()) + 1)
+        []TyId.of(ctx.prims.int_id), raw_node(tree.id_of()) + 1, tree, "")
     assert(diags.len() == 0)
     // The tail is `x + x`, and its recorded type is the SUBSTITUTED one: int.
     // A bare name would prove nothing here -- the channel deliberately does

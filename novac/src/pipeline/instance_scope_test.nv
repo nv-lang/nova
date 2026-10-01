@@ -38,3 +38,45 @@ test "a refusal INSIDE an instance names the body's file and the body's span (#1
     assert(own.len() == 1, messages(own))
     assert(own[0].file == "", "the file's own refusal names `${own[0].file}`")
 }
+
+/// The program module `hp.geo` of the hunt's probes, with a PRIVATE `helper`
+/// and `weight` its generic method calls, and a vector type to extend.
+fn geo_texts(geo str) -> []str {
+    mut texts = std_decls()
+    texts.push("module std.v\nexport type Vec[T] { n int }\nexport fn Vec[T] @len() -> int => @n\n")
+    texts.push(geo)
+    texts
+}
+
+/// Compile `prog` as module `hp` beside the program module `geo`.
+fn compile_beside(prog str, geo str) -> ([]Diagnostic, str) {
+    ro texts = geo_texts(geo)
+    mut link = described_surface(texts)
+    mark_program(link, parse_decls([]str.of(geo)))
+    compile_to_c_with(prog, parse_decls(texts), link)
+}
+
+test "a free name in an instance is resolved in the BODY's module, not the caller's (#1521)" {
+    ro geo = "module hp.geo\n\
+fn helper() -> int => 2\n\
+fn weight(x int) -> int => x * 2\n\
+export fn Vec[T] @tag() -> int => helper()\n\
+export fn Vec[T] @w() -> int => weight(@len())\n"
+    // The hunt's hygiene-helper-fn and -overload: the caller declares the same
+    // names. Until #1521 the instance called the caller's `helper` (printed 1,
+    // the oracle 2) and the caller's `weight` (3000, the oracle 6).
+    ro prog = "module hp\nimport ./geo\nfn helper() -> int => 1\nfn weight(x int) -> int => x * 1000\n\
+fn main() {\n ro v = [7, 8, 9]\n println(v.tag())\n println(v.w())\n println(helper())\n}"
+    ro (d0, c0) = compile_beside(prog, geo)
+    assert(d0.len() == 0, messages(d0))
+    assert(c0.contains("return novac_fn_hp_geo_helper__to_nova_int();"), c0)
+    assert(c0.contains("novac_fn_hp_geo_weight__nova_int__to_nova_int("), c0)
+    // CONTROL (D125): the caller's OWN call still names the caller's helper --
+    // its module's name shadows the one of `hp.geo`, which it does not import.
+    assert(c0.contains("nova_print_int(novac_fn_hp_helper__to_nova_int());"), c0)
+    assert(!c0.contains("novac_fn_hp_weight__nova_int__to_nova_int(Vec"), c0)
+    // CONTROL: no shadow in the caller -- the body's helper, as before #1521.
+    ro (d1, c1) = compile_beside("module hp\nimport ./geo\nfn main() {\n ro v = [7]\n println(v.tag())\n}", geo)
+    assert(d1.len() == 0, messages(d1))
+    assert(c1.contains("return novac_fn_hp_geo_helper__to_nova_int();"), c1)
+}
