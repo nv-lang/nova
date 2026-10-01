@@ -27,8 +27,10 @@ import ../types.{TyId, no_ty, is_ty}
 /// prelude:
 ///   * `Option[int]` is `NovaOpt_nova_int`, with no `Nova_` prefix;
 ///   * `Result[[]u8, IoError]` is `NovaRes_Nova_Vec____nova_byte_p_NovaValue_IoError`
-///     -- each argument as its C type with a star spelled `_p`, joined by `_`
 ///     (2026-10-01, the carrier: a `match` on what a std call hands back).
+/// Each argument is its C type with a star spelled `_p` -- the one rule both
+/// families share (`NovaOpt_Nova_Rec_p`, `..._Nova_Utf16Error_p`), written in
+/// the same shape the Option spelling had before Result joined it.
 /// Every other generic sum still reaches the instance_body ice below by name.
 /// WHETHER the instance travels by value or behind a pointer is the other
 /// door's question (`family_instance_type`): the struct name is the same.
@@ -41,13 +43,12 @@ fn family_instance_name(ctx Ctx, t TyId) -> str {
     }
     if !is_sum { return "" }
     ro n = ctx.tys.arg_count(t)
-    if head.name == OPTION_SUM && n == 1 {
-        return "${OPTION_FAMILY_C}${family_arg_spelling(ctx, ctx.tys.arg(t, 0))}"
-    }
     if head.name == RESULT_SUM && n == 2 {
-        return "${RESULT_FAMILY_C}${family_arg_spelling(ctx, ctx.tys.arg(t, 0))}_${family_arg_spelling(ctx, ctx.tys.arg(t, 1))}"
+        return "${RESULT_FAMILY_C}${c_type(ctx, ctx.tys.arg(t, 0)).replace("*", "_p")}_${c_type(ctx, ctx.tys.arg(t, 1)).replace("*", "_p")}"
     }
-    ""
+    if head.name != OPTION_SUM { return "" }
+    if n != 1 { return "" }
+    "${OPTION_FAMILY_C}${c_type(ctx, ctx.tys.arg(t, 0)).replace("*", "_p")}"
 }
 
 /// The C TYPE of a generic-sum instance, or "" for everything else: an Option
@@ -58,10 +59,6 @@ fn family_instance_type(ctx Ctx, t TyId) -> str {
     if fam == "" { return "" }
     if decl_of_ty(ctx, t).name == RESULT_SUM { "${fam}*" } else { fam }
 }
-
-/// One argument inside a family name: its C type, a star spelled `_p` -- the
-/// one rule both families share (`NovaOpt_Nova_Rec_p`, `..._Nova_Utf16Error_p`).
-fn family_arg_spelling(ctx Ctx, a TyId) -> str => c_type(ctx, a).replace("*", "_p")
 
 /// The oracle's spelling of a generic-record instance struct
 /// (`Nova_Vec____nova_int`): interop, lifted off the shell 2026-08-26.
