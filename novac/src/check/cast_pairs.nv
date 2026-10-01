@@ -23,7 +23,7 @@
 module novac.check
 
 import ../tree.{Node, NodeKind}
-import ../builtins.{BuiltinType, PrimFamily}
+import ../builtins.{BuiltinType, PrimFamily, INT_TYPE_NAME, UINT_TYPE_NAME}
 import ../sem.{branch_children, leaf_kind, leaf_text, prim_row_of}
 import ../lex.{TokenKind}
 import ../types.{TyId}
@@ -71,7 +71,7 @@ fn prim_cast_verdict(operand Node, fr BuiltinType, tr BuiltinType, in_unsafe boo
         // `int as uint`: D54 (amendment 2026-09-04, point 1) takes the low
         // bits like every other integer pair, the oracle saturates a negative
         // to 0 (`nova_int_to_uint`, cast.h). Two answers -- held, not chosen.
-        if fr.name == "int" && tr.name == "uint" { return CastVerdict.CvHeld }
+        if is_address_sized(fr) && fr.signed && is_address_sized(tr) && !tr.signed { return CastVerdict.CvHeld }
         return CastVerdict.CvLegal
     }
     // `as any` boxes a value (D53); that is not this wave's family.
@@ -88,7 +88,7 @@ fn prim_cast_verdict(operand Node, fr BuiltinType, tr BuiltinType, in_unsafe boo
         if lit_kind_of(operand) == TokenKind.CharLit { return CastVerdict.CvLegal }
         // `char as u8` is D54's by name; inside `unsafe { }` D54 allows it and
         // the oracle refuses the block as unused (E_UNSAFE_UNUSED) -- held.
-        if tr.name == "u8" {
+        if tr.bits == 8 && !tr.signed {
             if in_unsafe { return CastVerdict.CvHeld }
             return CastVerdict.CvForbidden(CAST_CHAR_U8_WHY)
         }
@@ -109,6 +109,11 @@ fn prim_cast_verdict(operand Node, fr BuiltinType, tr BuiltinType, in_unsafe boo
     // a bool into itself -- has no rule in D54, and "no rule" is its error.
     CastVerdict.CvForbidden(CAST_NO_RULE_WHY)
 }
+
+/// Is this integer row `int` or `uint` -- ADDRESS-SIZED (D129/D130), distinct
+/// from `i64`/`u64` by type though not by width? The universe table is the one
+/// place that knows the names (builtins.nv), so the question is asked of it.
+fn is_address_sized(r BuiltinType) -> bool => r.name == INT_TYPE_NAME || r.name == UINT_TYPE_NAME
 
 /// The refusal of a forbidden pair, the pair named in the source's spelling.
 fn cast_pair_msg(from str, to str, why str) -> str =>

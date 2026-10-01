@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Donor: none -- the C of a numeric cast is the RUNTIME's and the oracle's
-// (compiler-codegen/src/codegen/emit_c.rs, the `ExprKind::As` arm, plan 07):
-// a C cast for every integer and float pair, and the saturating helper
-// `nova_<f32|f64>_to_<int row>` of `nova_rt/cast.h` for a float into an
-// integer, because a C cast there is undefined out of range and D54 defines
-// it (saturation, NaN -> 0). This file repeats that spelling as interop.
+// Donor: none -- the C of a numeric cast is the RUNTIME's: a C cast for every
+// integer and float pair, and the saturating helper `nova_<f32|f64>_to_<int
+// row>` of `nova_rt/cast.h` for a float into an integer, because a C cast
+// there is undefined out of range and D54 defines it (saturation, NaN -> 0).
+// This file repeats the runtime's spelling as interop.
 // Role: emission of `expr as T` (D54): a newtype's unwrap (the operand, free),
 //   a pointer cast, and the cast between two primitives the checker admitted
 //   (check/cast_pairs.nv).
@@ -53,7 +52,10 @@ fn Emitter mut @emit_cast(e Node) -> () {
         // A recorded operand of another type: a primitive pair, or a newtype.
     }
     match prim_row_of(@ctx.tys, from) {
-        Some(fr) => @emit_prim_cast(kids[0], fr, prim_row_of(@ctx.tys, to) ?? ice("emit: a primitive cast whose target has no row"))
+        Some(fr) => {
+            ro tr = prim_row_of(@ctx.tys, to) ?? ice("emit: a primitive cast whose target has no row")
+            @emit_prim_cast(kids[0], fr, tr)
+        }
         None => @emit_expr(kids[0])
     }
 }
@@ -74,13 +76,14 @@ fn Emitter mut @emit_prim_cast(operand Node, fr BuiltinType, tr BuiltinType) -> 
     @body.append("))")
 }
 
-/// The helper's name for an integer row. `int` and `uint` are address-sized,
-/// 64 bits on every target novac emits for (D129/D130), and the runtime names
-/// their helpers by the fixed width -- the oracle maps them the same way.
+/// The helper's name for an integer row: the runtime names its helpers by
+/// SIGN AND WIDTH (`i8`..`u64`), so the suffix is built from the row's own two
+/// facts and not from its name. `int` and `uint` are address-sized, 64 bits on
+/// every target novac emits for (D129/D130), and take `i64`/`u64` -- the
+/// oracle's emission of the same casts, measured 2026-10-01, spells them so.
 fn saturating_suffix(tr BuiltinType) -> str {
-    if tr.name == "int" { return "i64" }
-    if tr.name == "uint" { return "u64" }
-    tr.name
+    ro sign = if tr.signed { "i" } else { "u" }
+    "${sign}${tr.bits}"
 }
 
 /// A float row (`f32`, `f64`).

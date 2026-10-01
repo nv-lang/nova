@@ -389,6 +389,13 @@ export type BuiltinType value {
     signed bool /// a signed integer; false for unsigned and for every non-integer row
 }
 
+/// The two ADDRESS-SIZED integer rows by name (D129/D130): `int` and `uint`
+/// are distinct types from `i64`/`u64` with the same width, so a rule that
+/// singles them out (the cast pair `int as uint`, check/cast_pairs.nv) asks by
+/// name -- and the names live here, beside the table that spells them.
+export const INT_TYPE_NAME = "int"
+export const UINT_TYPE_NAME = "uint"
+
 // The universe, in Prims order; the seed hands the ACTUAL ids back
 // (CommonTypes model, no hard-coded indexes).
 // THE universe table, built ONCE at module load. It is the WHOLE primitive
