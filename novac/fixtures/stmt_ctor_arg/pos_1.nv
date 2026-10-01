@@ -1,0 +1,24 @@
+module stmt_ctor_arg.pos_1
+
+// A METHOD CALL AS A STATEMENT whose argument is a CONSTRUCTION: the
+// constructor is a multi-statement build and must be hoisted before the line
+// that evaluates the call. Until 2026-10-01 the statement door did not hoist,
+// and this file passed check and iced in emission ("a record constructor in
+// expression position was never hoisted"); found by vec_own/pos_1's
+// `xs.push(Pt { x: i })`. The call's value is dropped in the first statement
+// and printed in the second -- both doors.
+type Pt {
+    x int
+}
+
+type Bag {
+    n int
+}
+
+fn Bag @take(p Pt) -> int => p.x + @n
+
+fn main() {
+    ro b = Bag { n: 1 }
+    b.take(Pt { x: 1 })
+    println(b.take(Pt { x: 2 }))
+}

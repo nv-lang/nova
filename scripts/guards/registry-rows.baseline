@@ -1459,8 +1459,10 @@
 # 2026-10-01, integrator nova-20: rows -> 1442, max -> 1493 (merge of hunt/novac-1001 (novac x sem x K1 over wave E.10): #1490-#1493; 1488 and 1489 issued (agent, assistant), leave gaps).
 # 2026-10-01, integrator nova-20: rows -> 1443, max -> 1493 (merge of p1489 (assistant): #1489 lands (old, not a regression), out of gaps).
 # 2026-10-01, integrator nova-20: rows -> 1447, max -> 1499 (merge of p1488 (agent): #1488 lands (out of gaps); #1495/#1496 from the cloud reports #1458/#1457 and #1499 (qualified module constant in C) filed; 1494, 1497, 1498 issued, in gaps).
-rows=1447
-max=1499
+# 2026-10-01, Carina window: rows -> 1448, max -> 1500 (#1500: a method call statement with a constructor argument
+#   iced in emission -- fixed in the same commit; number given by integrator nova-20).
+rows=1448
+max=1500
 rows=1443
 max=1493
 rows=1442
