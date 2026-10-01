@@ -13,8 +13,8 @@
 // Used by: check/match_arms.nv (`@bind_record_pattern`, a headed pattern),
 //   check/binds.nv (`@judge_record_ctor`), check/typeref_rules.nv (the
 //   constructor-name door), check/check.nv (the constructor's position).
-// Guarded by: novac/fixtures/record_variant (pos byte-for-byte with the
-//   oracle, neg pinned).
+// Guarded by: check-novac-fixture-expect.sh (novac/fixtures/record_variant neg
+//   pinned) and scripts/tools/novac-e1-smoke.sh on its pos (byte-for-byte with the oracle).
 //
 // A FILE OF ITS OWN because the form is one question -- a variant addressed by
 // field names -- asked from four places, and match_arms.nv and binds.nv are
@@ -50,7 +50,8 @@ fn Checker mut @bind_headed_record_pattern(pat Node, ty TyId, ak []Node, dmode P
         // The record's own name: the fields of the record, as if no head were
         // written (D486: the head is optional).
         if head == sum_name && pattern_qualifier(pat) == "" { return @bind_record_fields(pat, ty, ak, dmode, pos) }
-        @reject_first_leaf_of(ak, if variants_named(@ctx, head).1 > 0 { WRONG_SUM_ARM_MSG } else { VARIANT_PATTERN_MSG })
+        ro msg = if variants_named(@ctx, head).1 > 0 { WRONG_SUM_ARM_MSG } else { VARIANT_PATTERN_MSG }
+        @reject_first_leaf_of(ak, msg)
         return false
     }
     // A variant is REFUTABLE: a binding or a `for` header takes none.

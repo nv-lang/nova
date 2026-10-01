@@ -424,7 +424,10 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
     if k == NodeKind.RecordCtor {
         ro kids = branch_children(e)
         // A record-form VARIANT's construction is a value of its SUM.
-        if Some(v) = ctor_head_variant(ctx, kids[0]) { return ctx.variant_rows[raw_vrow(v)].sum_id } else { // A record's own name, or the anonymous form below.
+        if Some(v) = ctor_head_variant(ctx, kids[0]) {
+            return ctx.variant_rows[raw_vrow(v)].sum_id
+        } else {
+            // A record's own name, or the anonymous form below.
         }
         if kids[0].kind_of() == NodeKind.Name {
             return ctx.ty_of_name_or_ice(expr_leaf_name(kids[0]))

@@ -370,6 +370,7 @@ export fn payload_as_seen(ctx Ctx, scr_t TyId, pt TyId) -> TyId {
 export fn payload_named(ctx Ctx, vrow VariantRow, name str) -> int {
     ro vr = ctx.variant_rows[raw_vrow(vrow)]
     for i in 0..vr.payload_cnt {
+        // BINDER-OK: the scan is bounded by ONE variant's own field count, not a registry lookup
         if ctx.payload_names[vr.payload_off + i] == name { return i }
     }
     -1

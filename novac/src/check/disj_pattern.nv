@@ -67,7 +67,7 @@ fn Checker mut @bind_disj_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode,
     }
     mut ok = true
     for sub in alts {
-        if !@bind_pattern(sub, ty, ak, dmode, pos) { ok = false } else { // The alternative bound; its types are compared below.
+        if !@bind_pattern(sub, ty, ak, dmode, pos) { ok = false } else { // Bound; its types are compared below.
         }
     }
     if !ok { return false }

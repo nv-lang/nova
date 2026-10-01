@@ -24,7 +24,6 @@ import ../lex.{TokenKind}
 import ../sem.{leaf_kind}
 import ../diag.{ice}
 import ../sem.{c_type, c_instance_method, raw_vrow, is_value_record, c_maker, VariantRow, ctor_field_name}
-import ../sem.{CalleeTarget}
 // M3a: lowering `println` asks the tree three questions (is this an argument, what does the
 // callee spell, what are the children) and the output printer asks the carrier of a type.
 import ../sem.{branch_children, is_expr_kind, carrier_of}
@@ -393,7 +392,7 @@ fn Emitter mut @emit_variant_ctor(e Node, v VariantRow, ty TyId) -> str {
             if slots[j].arg_row == vals.len() { at = j } else { // Another field's position.
             }
         }
-        if at < 0 { ice("emit: a record-form variant field the checker bound to no payload position") }
+        assert(at >= 0, "emit: a record-form variant field the checker bound to no payload position")
         ro fk = branch_children(c)
         ro tmp = "_novac_tmp_t${@fresh_uniq()}"
         if fk.len() > 1 { @hoist_array_lits(fk[2]) } else { // Punning hoists nothing.

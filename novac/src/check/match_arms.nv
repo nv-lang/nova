@@ -845,7 +845,7 @@ const AMBIGUOUS_VARIANT_MSG = "this variant name is declared by more than one su
 /// refused as non-exhaustive -- the wrong cause. Refused HERE, at the arm; the
 /// exhaustiveness rule then says nothing (one cause, one diagnostic).
 const ARRAY_REST_BIND_MSG = "outside the subset: a `..rest` binding in an array pattern needs the shell's slice view wired -- the length test and prefix/suffix elements compile today (E2-b, with the slice view)"
-const DISJ_ALT_MSG = "outside the subset: a `|` pattern takes variant alternatives only -- a literal, `_`, binder, tuple, array or nested `|` alternative is not compiled yet (E2-b, with the general or-test)"
+const DISJ_ALT_MSG = "outside the subset: a `|` pattern takes variant alternatives only -- a literal, `_`, binder, parenthesized, array or nested `|` alternative is not compiled yet (E2-b, with the general or-test)"
 const VARIANT_PATTERN_MSG = "a pattern with a payload names no variant of the matched sum -- a plain binder pattern takes no payload"
 const PAYLOAD_ARITY_MSG = "the pattern's payload count disagrees with the variant's declaration -- match every payload field, or mark the rest with `..` (D59)"
 const TUPLE_PATTERN_MSG = "a tuple pattern needs a positional tuple scrutinee -- a named form is destructured by name, with braces (D486)"

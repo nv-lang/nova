@@ -53,6 +53,37 @@ fn push_gates(mut gates []str, decls []Node, id NodeId) -> int {
 /// lookup allocates nothing (P18) and the filler around it does.
 #realtime nogc
 fn chain_head(variant_names NameTable, vname str) -> int => variant_names.find(vname)
+/// The type of one piece of a variant's payload list. A RECORD-FORM variant's
+/// field (`| Branch { id NodeId }`, read by the parser as a `Field` node) is
+/// typed by the one reference door a record field takes; a positional payload
+/// names a declared type OR one of the sum's own type parameters. A name that
+/// is neither, and the punctuation of the list, give no type -- collection is
+/// tolerant, and the use site names the refusal. The payload stays POSITIONAL
+/// in the layout either way: the field's place is its index, so the sum's
+/// emission is the paren form's exactly.
+fn payload_type_of(pj Node, tps []str, prow []TyId, types []TypeDef, defs DefTable, mut tys Interner) -> TyId {
+    if pj.kind_of() == NodeKind.Field {
+        ro fk = branch_children(pj)
+        ro fnat = field_name_at(fk) ?? -1
+        ro ftat = field_type_at(fk) ?? -1
+        if fnat < 0 || ftat < 0 { return no_ty() }
+        return ty_of_type_ref(fk, ftat, no_ty(), tps, prow, types, defs, tys)
+    }
+    if pj.kind_of() != NodeKind.LeafNode || leaf_kind(pj) != TokenKind.Ident { return no_ty() }
+    ty_of_type_name(leaf_text(pj), tps, prow, types, defs)
+}
+
+/// The NAME of one payload: a record-form field's own name; a positional
+/// payload has none, and `""` keeps `payload_names` in step with
+/// `payload_types` -- only the construction and the pattern ask for it.
+fn payload_name_of(pj Node) -> str {
+    if pj.kind_of() != NodeKind.Field { return "" }
+    ro fk = branch_children(pj)
+    ro fnat = field_name_at(fk) ?? -1
+    if fnat < 0 { return "" }
+    leaf_text(fk[fnat])
+}
+
 
 /// Register the VARIANTS of one sum declaration: a `VariantDef` row per variant, chained by name (B6)
 /// (the name door), its payload types, and the sum's row rewritten to point at
@@ -135,34 +166,10 @@ fn register_sum_variants(c Node, mut types []TypeDef, mut defs DefTable,
         // payload type names sit between '(' and ')'
         for j in name_at + 1..vk.len() {
             ro pj = vk[j]
-            // A RECORD-FORM variant's field (`| Branch { id NodeId }`, read by
-            // the parser as a `Field` node): a payload with a NAME, typed by
-            // the one reference door a record field takes. The payload stays
-            // POSITIONAL in the layout -- the field's place is its index -- so
-            // the sum's emission is the paren form's exactly; only the
-            // construction and the pattern ask for the name.
-            if pj.kind_of() == NodeKind.Field {
-                ro fk = branch_children(pj)
-                ro fnat = field_name_at(fk) ?? -1
-                ro ftat = field_type_at(fk) ?? -1
-                if fnat < 0 || ftat < 0 { continue }
-                ro ft = ty_of_type_ref(fk, ftat, no_ty(), tps, prow, types, defs, tys)
-                if !is_ty(ft) { continue }
-                payload_types.push(ft)
-                payload_names.push(leaf_text(fk[fnat]))
-                pcnt += 1
-                continue
-            }
-            if pj.kind_of() != NodeKind.LeafNode { continue }
-            if leaf_kind(pj) != TokenKind.Ident { continue }
-            // A payload names a declared type OR one of the sum's own type
-            // parameters; a name that is neither is skipped -- collection is
-            // tolerant, and the use site names the refusal.
-            ro pt = ty_of_type_name(leaf_text(pj), tps, prow, types, defs)
+            ro pt = payload_type_of(pj, tps, prow, types, defs, tys)
             if !is_ty(pt) { continue }
             payload_types.push(pt)
-            // A positional payload has no name: `""` keeps the two tables in step.
-            payload_names.push("")
+            payload_names.push(payload_name_of(pj))
             pcnt += 1
         }
         // THE SAME-NAME CHAIN (B6, #964): the table holds the head, a new row of
@@ -708,7 +715,8 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // Setting it anywhere else would make the invariant depend on call order.
     mut own = fns
     own.seal_own()
-    Ctx { types, foreign_types_cnt, tys, prims, defs, fields, variant_rows, variant_names, payload_types, payload_names, gates,
+    Ctx { types, foreign_types_cnt, tys, prims, defs, fields, variant_rows, variant_names, payload_types,
+          payload_names, gates,
           fn_decl_rows, fns: own,
           module_c: module_path_c(file), builtin_names, coerces, protos, effects: fx, consts,
           interop: InteropTable.new(), handed: HandedBodies.new() }

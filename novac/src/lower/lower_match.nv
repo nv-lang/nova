@@ -151,11 +151,9 @@ fn Lowerer @pattern_of(pat Node, scr_t TyId) -> Pattern {
         }
         // A tuple or record pattern matches everything of its type: there is
         // no test, only the bindings the arm lays down.
-        Tuple => Pattern.Wild
         // A HEADED record pattern naming a variant (`Branch { .. }`) tests the
-        // tag exactly as `Branch(..)` does; any other record pattern is a
-        // record's, with no test.
-        Record => {
+        // tag exactly as `Branch(..)` does; a head-less one names no variant.
+        Tuple | Record => {
             match variant_in_sum(@ctx, scr_t, pattern_head_text(pat)) {
                 Some(vrow) => Pattern.Variant(VariantMatch { head: vrow, also: []VariantRow.new() })
                 None => Pattern.Wild
