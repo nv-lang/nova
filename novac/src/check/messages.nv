@@ -556,7 +556,9 @@ const SYNTAX_MSG = "novac did not parse this -- and it cannot tell whether the f
 const HANDLER_RET_UNRESOLVED_MSG = "outside the subset: a handler-literal op's return type is not resolved here -- inside a generic body its type parameters are not substituted by this door yet (E4, handler-literal wave)"
 
 /// `x is T` on a value whose type is known statically and is not a sum (D54).
-const IS_NON_ANY_MSG = "`is` tests a value of type `any` or a sum -- the type of this value is known statically, so the test answers nothing (D54, E_IS_NON_ANY)"
+/// Says what the value is NOT rather than what it is: until registry 1544 it also
+/// fired on `Option[int]` -- a sum -- and read as if the sum were not one.
+const IS_NON_ANY_MSG = "`is` tests a value of type `any` or a sum -- this value is neither: its type is known statically, so the test answers nothing (D54, E_IS_NON_ANY)"
 
 /// `s is V` on a sum where V is not one of its variants.
 const IS_NOT_VARIANT_MSG = "`is` on a sum names one of its variants -- this is not a variant of the tested sum (D54)"

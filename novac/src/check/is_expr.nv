@@ -4,8 +4,11 @@
 // (a tag test with no binding). D54 is the norm, not a donor's habit.
 // Role: typing of `expr is Type` (E.9 step 4b, plan 274.11; D54,
 //   spec/decisions/03-syntax.md:3564): a value of type `any` against a type
-//   with a fixed runtime id, or a sum against one of ITS variants; anything
-//   else is E_IS_NON_ANY (:4218). The value is a `bool`. The narrowing of
+//   with a fixed runtime id, or a sum against one of ITS variants -- a plain
+//   sum, or an APPLIED one whose tags the shell spells (`Option`, `Result`;
+//   registry 1544), the same list a `match` asks; any other applied sum is
+//   refused by name as outside the subset; anything else is E_IS_NON_ANY
+//   (:4218). The value is a `bool`. The narrowing of
 //   the tested name in an `if`'s then-branch is `sem.narrowing_of`, read by
 //   typing and lowering alike.
 // Used by: exprs.nv (`@type_expr`'s IsTest arm).
@@ -17,7 +20,7 @@ module novac.check
 import ../tree.{Node}
 import ../builtins.{TypeKind}
 import ../sem.{branch_children, variant_in_sum, is_any_ty, any_tid_c, type_ref_last_ident}
-import ../sem.{narrowing_of, ParamMode, is_target_of}
+import ../sem.{narrowing_of, ParamMode, is_target_of, is_shell_applied_sum, decl_of_ty}
 import ../types.{TyId, is_ty}
 
 /// `x is T`: the operand typed, the right side judged against it, `bool`
@@ -50,7 +53,14 @@ fn Checker mut @type_is_test(e Node) -> () {
         @record(e, @ctx.prims.bool_id)
         return
     }
-    if is_ty(lt) && @ctx.tys.kind_of(lt) == TypeKind.TkSum {
+    // AN APPLIED SUM the emitter cannot spell (`Outcome[int]`): a sum, so not
+    // E_IS_NON_ANY -- refused by name and stage, as a `match` on it is.
+    if is_ty(lt) && @ctx.tys.kind_of(lt) == TypeKind.TkApp && decl_of_ty(@ctx, lt).kind == TypeKind.TkSum &&
+       !is_shell_applied_sum(@ctx, lt) {
+        @report_applied_sum(kids, "`is`", lt)
+        return
+    }
+    if is_ty(lt) && (@ctx.tys.kind_of(lt) == TypeKind.TkSum || is_shell_applied_sum(@ctx, lt)) {
         // The sum half: the right side names one of THIS sum's variants, by
         // its last identifier (`Shape.Circle` or `Circle`).
         match variant_in_sum(@ctx, lt, type_ref_last_ident(rhs)) {

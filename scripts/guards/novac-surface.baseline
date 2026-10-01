@@ -944,7 +944,7 @@ resolve 19
 # 2026-10-01, cloud session p274-carina-strarm (registry 1556): sem 324 -> 325 (merged onto main's 324):
 # `pattern_is_interp` -- the pattern position reads an interpolated string, and the
 # checker asks this one door to refuse it by name (a pattern's literal is not interpolated).
-sem 325
+sem 326
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
@@ -1139,3 +1139,9 @@ types 30
 #     `c_tag`; спрашивает `emit_c/emit_applied_sum.nv`, а все C-имена живут в двери мэнглинга (П24);
 #   builtins.RESULT_FAMILY_C -- префикс семейства `NovaRes_`, рядом с `OPTION_FAMILY_C`; читает
 #     `sem/mangle_instance.nv`, а имена, которые компилятор обязан знать сам, живут в builtins (П5).
+# sem 324 -> 325 (2026-10-01, облачная сессия p274-carina-appsum, решение интегратора по стражу
+#   mangling-one-way): sem.c_is_pointer -- «передаётся ли тип указателем», спрошенное у ТЕРМА, а не
+#   у написания `c_type`. Спрашивает `emit_c/emit_option.nv` (`@option_payload_is_pointer`, форма
+#   Option без тега), до того читавший `.ends_with("*")` на результате двери мэнглинга (П24).
+#   Его пара `c_in_name` (написание типа внутри имени) наружу не выходит: её спрашивают только
+#   `mangle.nv` и `mangle_instance.nv` того же модуля.
