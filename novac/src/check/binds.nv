@@ -755,12 +755,36 @@ fn Checker @init_reads_self(n Node) -> bool {
         Leaf(t) => leaf_kind(n) == TokenKind.Ident && @self_probe.find(t.text) >= 0
         Branch { children, .. } => {
             mut found = false
+            mut i = 0
             for c in children {
                 // A flag that only turns on IS a disjunction (P31).
-                found = found || @init_reads_self(c)
+                if !is_member_label(children, i) { found = found || @init_reads_self(c) }
+                i += 1
             }
             found
         }
+    }
+}
+
+/// Is child `i` an identifier that NAMES A MEMBER rather than reading a
+/// binding? `r.name` and `r.name()` (after `.`), `@name` (after `@`), and the
+/// label of `Row { name: v }` or `f(name: v)` (before `:`) spell a field, a
+/// method or a parameter -- none of them is the binding being declared, and
+/// `ro name = r.name` reads the record, not `name`. Until 2026-10-01 every
+/// identifier leaf counted, and the walk refused that line as a self-read
+/// (D347 R3) -- twice over novac's own resolve.nv, plus the four "unknown
+/// name" refusals of the binding it then never declared.
+fn is_member_label(kids []Node, i int) -> bool {
+    if !leaf_is(kids[i], TokenKind.Ident) { return false }
+    if i > 0 && (leaf_is(kids[i - 1], TokenKind.Dot) || leaf_is(kids[i - 1], TokenKind.At)) { return true }
+    i + 1 < kids.len() && leaf_is(kids[i + 1], TokenKind.Colon)
+}
+
+/// Is this node a LEAF of token kind `k`? A branch is no token at all.
+fn leaf_is(n Node, k TokenKind) -> bool {
+    match n {
+        Leaf(t) => t.kind == k
+        Branch { .. } => false
     }
 }
 
