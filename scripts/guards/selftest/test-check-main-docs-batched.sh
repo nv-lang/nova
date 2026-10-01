@@ -58,6 +58,9 @@ expect "удаление одной записки -> FAIL" 1 "FAIL"
 reset_index; stage "$REG"
 NOVA_DOCS_BATCH="rows #1442, #1355 and the handoff" expect "тот же реестр с ключом -> ok, опись напечатана" 0 "rows #1442, #1355 and the handoff"
 NOVA_DOCS_BATCH= expect "пустой ключ — не ключ -> FAIL" 1 "FAIL"
+# №1479: пробел и голое число — не опись.
+NOVA_DOCS_BATCH=" " expect "ключ из пробела -> FAIL" 1 "без описи"
+NOVA_DOCS_BATCH=1 expect "ключ «1» -> FAIL" 1 "без описи"
 
 echo "== не наш случай =="
 reset_index; stage "$REG"; stage std/src/a.nv

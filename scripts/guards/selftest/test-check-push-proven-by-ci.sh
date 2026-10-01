@@ -155,6 +155,9 @@ echo "== ключ NOVA_PUSH_UNPROVEN =="
 acc
 run_case "ключ без номера строки -> FAIL" 1 "must name a registry row" "$TMP/red.json" NOVA_PUSH_UNPROVEN=1
 run_case "ключ с номером -> ok, причина напечатана" 0 "SKIPPED by NOVA_PUSH_UNPROVEN: github down #9001" "$TMP/red.json" "NOVA_PUSH_UNPROVEN=github down #9001"
+# #1477: номер обязан называть СУЩЕСТВУЮЩУЮ строку (тот же страж отвергает #00 в списке).
+run_case "ключ с несуществующей строкой -> FAIL" 1 "#9999, which does not exist" "$TMP/red.json" "NOVA_PUSH_UNPROVEN=github down #9999"
+run_case "ключ со знаком № и живой строкой -> ok" 0 "SKIPPED by NOVA_PUSH_UNPROVEN" "$TMP/red.json" "NOVA_PUSH_UNPROVEN=github down №9001"
 
 echo "== живой список против живого реестра =="
 # Настоящий ci-accepted-red.list обязан разбираться, и каждая его запись —

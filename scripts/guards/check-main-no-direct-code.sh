@@ -55,7 +55,14 @@ CODE=$(git diff --cached --name-only --no-renames 2>/dev/null | grep -E \
 N=$(printf '%s\n' "$CODE" | grep -c .)
 KEY="${NOVA_MAIN_DIRECT_CODE:-}"
 if [ -n "$KEY" ]; then
-    if printf '%s' "$KEY" | grep -qE '#[0-9]{2,5}'; then
+    NUM=$(printf '%s' "$KEY" | grep -oE '#[0-9]{2,5}' | head -1 | tr -d '#')
+    if [ -n "$NUM" ]; then
+        # №1477: «номер строки реестра обязателен» — строка обязана СУЩЕСТВОВАТЬ;
+        # прежде проходил любой номер, `#00` и опечатка тоже.
+        REGF="$ROOT/docs/plans/221.1-bug-sweep.md"
+        [ -f "$REGF" ] || { echo "$NAME: FAIL — ключ называет строку #$NUM, а реестра $REGF нет: судить ключ нечем" >&2; exit 1; }
+        grep -q "^| $NUM |" "$REGF" \
+            || { echo "$NAME: FAIL — NOVA_MAIN_DIRECT_CODE называет строку реестра #$NUM, которой нет: '$KEY'" >&2; exit 1; }
         pass "код прямо в main ($N путей) пропущен ключом NOVA_MAIN_DIRECT_CODE: $KEY"
     fi
     echo "$NAME: FAIL — NOVA_MAIN_DIRECT_CODE должен назвать строку реестра (#NNNN), получено: '$KEY'" >&2
