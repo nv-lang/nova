@@ -34,7 +34,7 @@ import ../types.{TyId, no_ty, is_ty}
 /// the argument's term rather than by editing the C type it spells to.
 /// Every other generic sum still reaches the instance_body ice below by name.
 /// WHETHER the instance travels by value or behind a pointer is the other
-/// door's question (`family_instance_type`): the struct name is the same.
+/// question (`family_by_pointer`, read by `c_layout`): the struct name is the same.
 fn family_instance_name(ctx Ctx, t TyId) -> str {
     ro head = decl_of_ty(ctx, t)
     ro is_sum = match head.kind {
@@ -50,15 +50,6 @@ fn family_instance_name(ctx Ctx, t TyId) -> str {
     if head.name != OPTION_SUM { return "" }
     if n != 1 { return "" }
     "${OPTION_FAMILY_C}${c_in_name(ctx, ctx.tys.arg(t, 0))}"
-}
-
-/// The C TYPE of a generic-sum instance, or "" for everything else: an Option
-/// is its struct BY VALUE (its methods hand it back so), a Result is a GC
-/// pointer to its struct (`nova_make_NovaRes_*` allocates and returns `r`).
-fn family_instance_type(ctx Ctx, t TyId) -> str {
-    ro fam = family_instance_name(ctx, t)
-    if fam == "" { return "" }
-    if family_by_pointer(ctx, t) { "${fam}*" } else { fam }
 }
 
 /// The oracle's spelling of a generic-record instance struct

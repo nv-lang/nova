@@ -93,8 +93,17 @@ fn Checker mut @report_if_applied_sum(kids []Node, scr_t TyId) -> bool {
     // already resolved and checked above; naming it costs one call to the
     // same door every sibling message in this file already reads through
     // (`ty_source_name`, line 341).
-    @report_first_leaf_of(kids, "outside the subset: a `match` on an applied sum (`${ty_source_name(@ctx, scr_t)}`) is read but not compiled yet -- novac spells the shell's tags only for `Option` and `Result`, and this sum's belong to the shell too (E2-b2, with generics)")
+    @report_applied_sum(kids, "a `match`", scr_t)
     true
+}
+
+/// An APPLIED sum novac cannot spell (`Outcome[int]`), under either form that
+/// tests its tags -- `form` is "a `match`" (above) or "`is`" (is_expr.nv). ONE
+/// refusal for the two doors, because the cause is one: the shell spells per
+/// instance only `Option` and `Result` (`is_shell_applied_sum`), and a second
+/// copy of the sentence would be a second debt line for one debt.
+fn Checker mut @report_applied_sum(kids []Node, form str, sum_t TyId) -> () {
+    @report_first_leaf_of(kids, "outside the subset: ${form} on an applied sum (`${ty_source_name(@ctx, sum_t)}`) is read but not compiled yet -- novac spells the shell's tags only for `Option` and `Result`, and this sum's belong to the shell too (E2-b2, with generics)")
 }
 
 /// THE SHARED HEAD of both match doors (`@type_match_stmt`, `@type_match`):

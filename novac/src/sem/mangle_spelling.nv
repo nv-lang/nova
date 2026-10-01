@@ -24,61 +24,27 @@
 
 module novac.sem
 
-import ../diag.{ice}
 import ../builtins.{TypeKind, RESULT_SUM}
-import ../types.{TyId, is_ty}
+import ../types.{TyId}
 
-/// IS THE C TYPE OF `t` A POINTER -- asked of the TERM, by the same rules
-/// `c_type` writes the star by, never of the spelling `c_type` returned:
-///   * a pointer (`*T`, `*mut T`) -- yes;
-///   * a plain record -- yes; a value record and the paren forms -- no
-///     (`is_value_record`; a protocol is laid out as its implementor);
-///   * a sum -- unless it is a value sum (A4, `is_value_sum`);
-///   * a newtype -- as its representation;
-///   * an application -- a handler value (the shell's vtable pointer) yes; the
-///     Option family no (by value), the Result family yes (`family_by_pointer`);
-///     every other instance yes (a GC pointer to its struct);
-///   * a primitive and a structural term -- no, they live inline.
-/// A type parameter, an inference variable and an effect have no layout; asking
-/// is the same broken invariant `c_type` ices on, and this door says so.
-export fn c_is_pointer(ctx Ctx, t TyId) -> bool {
-    if !is_ty(t) { ice("mangle: c_is_pointer asked for `no type`") }
-    ro k = ctx.tys.kind_of(t)
-    if k == TypeKind.TkParam || k == TypeKind.TkInfer || k == TypeKind.TkEffect {
-        ice("mangle: c_is_pointer of a term with no layout -- a parameter, a variable or an effect")
-    }
-    if k == TypeKind.TkPtr { return true }
-    if k == TypeKind.TkNewtype { return c_is_pointer(ctx, representation_of(ctx, t)) }
-    if k == TypeKind.TkRecord { return !is_value_record(ctx, impl_of_proto(ctx, t)) }
-    if k == TypeKind.TkSum { return !is_value_sum(ctx, t) }
-    if k == TypeKind.TkApp {
-        if handled_effect_name(ctx, t) != "" { return true }
-        if family_instance_name(ctx, t) != "" { return family_by_pointer(ctx, t) }
-        return true
-    }
-    // What remains is a primitive or a structural mono struct (D123: by value):
-    // both are written inline, with no star.
-    false
-}
+/// IS THE C TYPE OF `t` A POINTER -- the answer of the SAME match that writes
+/// the star (`c_layout`, mangle.nv), never a reading of the spelling `c_type`
+/// returned. A type parameter, an inference variable and an effect have no
+/// layout, and `c_layout` ices on them exactly as `c_type` always did.
+export fn c_is_pointer(ctx Ctx, t TyId) -> bool => c_layout(ctx, t).by_ptr
 
 /// HOW `t` IS WRITTEN INSIDE AN INSTANCE NAME: its C type when that is no
-/// pointer, otherwise the pointee's struct with the star spelled `_p`
+/// pointer, otherwise its layout's base with `_p` for the star
 /// (`Nova_Vec____nova_int*` -> `Nova_Vec____nova_int_p`, `Nova_Rec*` ->
-/// `Nova_Rec_p`) -- built from the term's own struct door, so no C name is read
-/// back. A raw pointer keeps the oracle's `const` word, as `c_type` writes it.
+/// `Nova_Rec_p`). A raw pointer's base is its pointee's C type, which may carry
+/// stars of its own, so it is written from the pointee's own in-name spelling
+/// (`const` kept, as `c_type` writes it).
 fn c_in_name(ctx Ctx, t TyId) -> str {
-    if !c_is_pointer(ctx, t) { return c_type(ctx, t) }
-    ro k = ctx.tys.kind_of(t)
-    if k == TypeKind.TkPtr {
-        ro under = c_in_name(ctx, ctx.tys.arg(t, 0))
-        return if ctx.tys.ptr_is_mut(t) { "${under}_p" } else { "const ${under}_p" }
-    }
-    if k == TypeKind.TkNewtype { return c_in_name(ctx, representation_of(ctx, t)) }
-    if k == TypeKind.TkApp {
-        ro eff = handled_effect_name(ctx, t)
-        if eff != "" { return "${effect_vtable_c(eff)}_p" }
-    }
-    "${c_struct(ctx, impl_of_proto(ctx, t))}_p"
+    ro l = c_layout(ctx, t)
+    if !l.by_ptr { return l.base }
+    if ctx.tys.kind_of(t) != TypeKind.TkPtr { return "${l.base}_p" }
+    ro under = c_in_name(ctx, ctx.tys.arg(t, 0))
+    if ctx.tys.ptr_is_mut(t) { "${under}_p" } else { "const ${under}_p" }
 }
 
 /// Does a generic-sum FAMILY instance travel behind a pointer: the Result

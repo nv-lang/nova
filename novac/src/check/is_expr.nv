@@ -20,7 +20,7 @@ module novac.check
 import ../tree.{Node}
 import ../builtins.{TypeKind}
 import ../sem.{branch_children, variant_in_sum, is_any_ty, any_tid_c, type_ref_last_ident}
-import ../sem.{narrowing_of, ParamMode, is_target_of, is_shell_applied_sum, decl_of_ty, ty_source_name}
+import ../sem.{narrowing_of, ParamMode, is_target_of, is_shell_applied_sum, decl_of_ty}
 import ../types.{TyId, is_ty}
 
 /// `x is T`: the operand typed, the right side judged against it, `bool`
@@ -57,7 +57,7 @@ fn Checker mut @type_is_test(e Node) -> () {
     // E_IS_NON_ANY -- refused by name and stage, as a `match` on it is.
     if is_ty(lt) && @ctx.tys.kind_of(lt) == TypeKind.TkApp && decl_of_ty(@ctx, lt).kind == TypeKind.TkSum &&
        !is_shell_applied_sum(@ctx, lt) {
-        @report_first_leaf_of(kids, "outside the subset: `is` on an applied sum (`${ty_source_name(@ctx, lt)}`) is read but not compiled yet -- novac spells the shell's tags only for `Option` and `Result` (E2-b2, with generics)")
+        @report_applied_sum(kids, "`is`", lt)
         return
     }
     if is_ty(lt) && (@ctx.tys.kind_of(lt) == TypeKind.TkSum || is_shell_applied_sum(@ctx, lt)) {
