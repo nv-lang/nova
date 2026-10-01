@@ -1,0 +1,28 @@
+// EXPECT_STDOUT 8 9 3 11
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// D216 part 9: a call needs an `unsafe { }` wrap only when the declaration it
+// REACHES is `unsafe fn`. std carries `export unsafe fn Vec[T consume] mut
+// @advance(n int) -> @` (collections/vec/mutate.nv); a bare call `advance(7)`
+// cannot reach an instance method, yet the checker judged the free-fn call by
+// the name alone and refused this file with E_UNSAFE_CALL_REQUIRES_WRAP
+// (registry 221.1 #1032, carrier nova_tests/contracts/f56_buffer_index_safety).
+// Cells: own safe free fn named like a std unsafe METHOD -- bare call and a
+// call from a closure; own safe method of the same name; the std unsafe
+// method itself, inside its wrap.
+module standalone.d216_free_fn_named_like_unsafe_method
+
+type Cursor { at int }
+
+fn advance(idx int) -> int => idx + 1
+
+fn Cursor @advance(n int) -> int => @at + n
+
+fn main() Io -> () {
+    ro a = advance(7)
+    ro step = fn(k int) -> int => advance(k)
+    ro c = Cursor { at: 1 }
+    mut v = []u8.new()
+    v.reserve(4)
+    unsafe { v.advance(3) }
+    println("${a} ${step(8)} ${v.len()} ${c.advance(10)}")
+}

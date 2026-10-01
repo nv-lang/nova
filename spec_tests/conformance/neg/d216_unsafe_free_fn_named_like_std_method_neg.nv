@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_UNSAFE_CALL_REQUIRES_WRAP
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// D216 part 9: the other half of `standalone/d216_free_fn_named_like_unsafe_method`
+// (registry 221.1 #1032). A free-fn call is judged by the unsafe FREE fns now,
+// not by every unsafe name -- an own `unsafe fn advance` (the name std's
+// unsafe `Vec @advance` also carries) called outside a wrap is still refused.
+module neg.d216_unsafe_free_fn_named_like_std_method_neg
+
+unsafe fn advance(idx int) -> int => idx + 1
+
+fn main() Io -> () {
+    // nova:expect E_UNSAFE_CALL_REQUIRES_WRAP -- the own `advance` IS unsafe; the std method's name changes nothing
+    ro a = advance(7)
+    println("${a}")
+}

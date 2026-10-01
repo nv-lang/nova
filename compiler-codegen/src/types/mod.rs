@@ -57536,6 +57536,15 @@ pub(crate) fn check_unsafe_context_in_module(
     // recognised as "plausibly used" if ANY overload sharing its callee name
     // is unsafe ANYWHERE in scope — never used for enforcement, see the
     // `Call` arm).
+    // #1497 class: a bare `f(..)` call can only reach a RECEIVERLESS declaration, so it is judged against
+    // unsafe FREE fns alone -- not every unsafe name (`advance(7)` met std's unsafe `Vec @advance`).
+    let unsafe_free_fns: HashSet<String> = module.items.iter()
+        .chain(module.peer_files.iter().flat_map(|pf| pf.items_here.iter()))
+        .filter_map(|it| match it {
+            Item::Fn(fd) if fd.receiver.is_none() && unsafe_decl_spans.contains(&fd.span) => Some(fd.name.clone()),
+            _ => None,
+        })
+        .collect();
     let any_unsafe_overload_names: HashSet<String> = unsafe_fns
         .iter()
         .cloned()
@@ -57552,6 +57561,7 @@ pub(crate) fn check_unsafe_context_in_module(
         effect_fns,
         static_arities,
         any_unsafe_overload_names,
+        unsafe_free_fns,
         in_realtime: false,
         ptr_vars: vec![HashSet::new()],
         unsafe_t_vars: vec![HashSet::new()],
@@ -57668,6 +57678,8 @@ struct UnsafeCtx {
     /// necessary `unsafe { }` wrap as E_UNSAFE_UNUSED when precise resolution
     /// isn't available.
     any_unsafe_overload_names: HashSet<String>,
+    /// #1497: unsafe RECEIVERLESS fn names -- the only ones a bare `f(..)` call can name.
+    unsafe_free_fns: HashSet<String>,
     /// Plan 118 A33 enforcement: currently walking body #realtime fn.
     /// Pointer ops (AddrOf, Deref) inside #realtime fn → E_REALTIME_POINTER_OP
     /// — deref может GC trigger (allocation), violates realtime guarantee
@@ -58131,8 +58143,13 @@ impl UnsafeCtx {
                 // so the `depth > 0` (permitted) branch can mark the
                 // enclosing unsafe block used (E_UNSAFE_UNUSED, D216 §21).
                 let unsafe_callee_name: Option<String> = match &func.kind {
-                    ExprKind::Ident(fname) if self.unsafe_fns.contains(fname) => {
-                        Some(fname.clone())
+                    // #1497: a free-fn call is judged by the unsafe FREE fns, channel-first (a resolved safe
+                    // callee is safe whatever unsafe namesake exists); the name decides only on an empty channel.
+                    ExprKind::Ident(fname) if self.unsafe_free_fns.contains(fname) => {
+                        match self.resolved_calls.get(&e.id) {
+                            Some(ds) if !self.unsafe_decl_spans.contains(ds) => None,
+                            _ => Some(fname.clone()),
+                        }
                     }
                     // Static unsafe-method call `Type.m(...)`: receiver is
                     // the literal type identifier. Match the (type, method)
