@@ -1,0 +1,18 @@
+module value_record.neg_1
+
+// NOVAC_EXPECT needs a mutable place
+// ONE seeded cause: a `mut` method on a value record called through a `ro`
+// binding. D488 R3 hands the method the caller's record by pointer, so the
+// binding must be a mutable place (P14) -- a `ro` one is not. The oracle
+// refuses the same call (E_LOCAL_NOT_MUT).
+type Counter value { n int }
+
+fn Counter mut @bump() -> () {
+    @n = @n + 1
+}
+
+fn main() {
+    ro c = Counter { n: 0 }
+    c.bump()
+    println(c.n)
+}
