@@ -1,0 +1,41 @@
+// EXPECT_STDOUT ok 3 3 3 3 3 3 2 515
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for registry 221.1 #1532: an array literal of integer literals
+// passed to a parameter of a narrower element type -- `f([1, 2, 3])` with
+// `f(data []u8)`. `assignable` judges the literal element by element (D44: a
+// literal adapts to its position) and accepts it, but the literal-coercion
+// channel wrote nothing for it: the context-free `Array(int)` stamped by the
+// expression walk stayed, and the generic-argument check of the call read
+// `Vec[int]` back -- "[E_ARG_ELEM_TYPE_MISMATCH] cannot pass `Vec[int]` as
+// argument `data` of type `[]u8`". A free function and a static method with one
+// signature were refused all along; polaris met it once #1488 typed
+// `StatusCode.OK` and the overloaded `ServerResponse.bytes(StatusCode, str,
+// []u8)` became decidable (doc_samples_test.nv:206).
+//
+// Cells: a free fn, a static method, an overloaded static method chosen by an
+// associated const, the same by a typed local, an instance method (accepted
+// before -- control), an overloaded free fn, a `[]u16` element, and a literal
+// with a negative-free sum `[1, 2] -> []i32`.
+module standalone.p1532_array_literal_narrow_elem_arg
+
+type Code value { code int }
+const Code.OK = Code { code: 200 }
+
+type Resp { n int }
+
+fn Resp.bytes(status Code, ct str, data []u8) -> Resp => { n: data.len() }
+fn Resp.bytes(status int, ct str, data []u8) -> Resp => { n: data.len() }
+fn Resp.single(data []u8) -> Resp => { n: data.len() }
+fn Resp @count(data []u8) -> int => data.len()
+
+fn count(data []u8) -> int => data.len()
+fn tally(status Code, data []u8) -> int => data.len()
+fn tally(status int, data []u8) -> int => data.len()
+fn wide(data []u16) -> int => data[0] as int + data[1] as int
+fn pair(data []i32) -> int => data.len()
+
+fn main() Io -> () {
+    ro c = Code { code: 200 }
+    ro r = Resp { n: 0 }
+    println("ok ${count([1, 2, 3])} ${Resp.single([1, 2, 3]).n} ${Resp.bytes(Code.OK, "x", [1, 2, 3]).n} ${Resp.bytes(c, "x", [1, 2, 3]).n} ${r.count([1, 2, 3])} ${tally(c, [1, 2, 3])} ${pair([1, 2])} ${wide([256, 259])}")
+}

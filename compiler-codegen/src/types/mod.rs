@@ -21305,6 +21305,32 @@ impl<'a> TypeCheckCtx<'a> {
             _ => {}
         }
         match &value.kind {
+            // Registry 221.1 #1532: an array literal of untyped literals at a known
+            // `[]T` / `Vec[T]` position with a primitive `T` -- `f([1, 2, 3])` with
+            // `f(data []u8)`. `assignable` judges it element by element (D44: the
+            // literal adapts to its position), but nothing wrote that answer into
+            // the channel: `f1_expr` had stamped the context-free `Array(int)`, and
+            // the generic-argument check of `f1_check_call` read `Vec[int]` back
+            // and refused the call (E_ARG_ELEM_TYPE_MISMATCH). Hidden on polaris
+            // until #1488 typed `StatusCode.OK` and the overload became decidable.
+            // Each element gets `T`, the literal gets the position's type.
+            ExprKind::ArrayLit(items)
+                if !items.is_empty()
+                    && items.iter().all(|it| matches!(it, ArrayElem::Item(x) if is_untyped_const_expr(x))) =>
+            {
+                let Some(elem) = array_elem_type(expected) else { return };
+                if !Self::ts_member(&ResolvedType::from_type_ref(elem), constraint_solver::TypeSet::Primitive) {
+                    return;
+                }
+                for it in items {
+                    if let ArrayElem::Item(x) = it {
+                        self.materialize_literal_coercion(x, elem);
+                    }
+                }
+                if value.id.is_set() {
+                    self.resolved_types_buf.borrow_mut().insert(value.id, ResolvedType::from_type_ref(expected));
+                }
+            }
             ExprKind::IntLit(_) => {
                 if value.id.is_set() {
                     let rt = ResolvedType::from_type_ref(expected);
@@ -52964,6 +52990,12 @@ struct MapLitCtx {
     /// (let/const/call-arg/array-element/tuple/record-field/…) instead of a
     /// parallel pass — one walker, one place.
     wrap_types: HashMap<String, TypeDeclKind>,
+    /// Registry 221.1 #1533: type names declared more than once in the merged CU
+    /// (`type Outcome value` of a program module beside the prelude's generic
+    /// `Outcome[T]`, D455). `wrap_types` keeps the FIRST of them by bare name, so a
+    /// bare name read from it may be the wrong type; the record-literal naming
+    /// below asks this set before writing a bare name into the AST.
+    ambiguous_type_names: HashSet<String>,
     /// Plan 214 (D429): `#coerce` pair registry — I type name → applicable
     /// pairs. Built by `collect_coerce_pairs` (shared with `TypeCheckCtx`'s
     /// accept-path copy). Since #1451 the rewrite no longer decides from it --
@@ -53113,6 +53145,20 @@ impl MapLitCtx {
         // modules — `SqlValue` could in principle live in a peer file, mirrors
         // `record_field_types`'s own peer coverage above).
         let mut wrap_types: HashMap<String, TypeDeclKind> = HashMap::new();
+        // #1533: every declaration of every type name, by its span -- a name with two
+        // is ambiguous by bare name (a peer file's items also sit in `module.items`,
+        // hence a set of spans, not a count).
+        let mut type_decl_spans: HashMap<String, HashSet<Span>> = HashMap::new();
+        for t in module.peer_files.iter().flat_map(|pf| pf.items_here.iter()).chain(module.items.iter()) {
+            if let Item::Type(t) = t {
+                type_decl_spans.entry(t.name.clone()).or_default().insert(t.span);
+            }
+        }
+        let ambiguous_type_names: HashSet<String> = type_decl_spans
+            .into_iter()
+            .filter(|(_, spans)| spans.len() > 1)
+            .map(|(n, _)| n)
+            .collect();
         for pf in &module.peer_files {
             for it in &pf.items_here {
                 if let Item::Type(t) = it {
@@ -53253,6 +53299,7 @@ impl MapLitCtx {
             from_pairs_types,
             record_field_types,
             wrap_types,
+            ambiguous_type_names,
             coerce_pairs,
             coerce_errors,
             from_pairs_errors,
@@ -54985,7 +55032,13 @@ impl MapLitAnnotator<'_> {
                 // `if`/if-let/`match`, ...): no emitter path had to hand it its target, and the named form builds
                 // in all of them. The checker already accepted the literal against this target.
                 if let TypeRef::Named { path, generics, .. } = exp {
+                    // #1533: NOT when the bare name names more than one type of the CU -- the
+                    // emitter reads a named literal by its bare name, and `Outcome` of a program
+                    // module became the prelude's generic `Outcome[int]` (`void*` in C). Such a
+                    // literal stays anonymous: the emitter's own target (the fn's return, D55)
+                    // builds it, as it did before the naming existed.
                     if generics.is_empty() && !self.ctx.expected_is_from_fields(exp) && !fields.iter().any(|f| f.is_spread)
+                        && !path.last().is_some_and(|n| self.ctx.ambiguous_type_names.contains(n))
                         && matches!(path.last().and_then(|n| self.ctx.wrap_types.get(n)), Some(TypeDeclKind::Record(_))) {
                         *tn = Some(path.clone());
                     }
