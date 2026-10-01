@@ -1,0 +1,35 @@
+// ENV NOVA_AUTOARM=0
+// EXPECT_STDOUT spawned 300
+//
+// Registry 221.1 #1486: the bootstrap orphan scope (`detach` before the
+// runtime is armed -- NOVA_AUTOARM=0 here) is a STATIC NovaFiberQueue whose
+// arrays (fibers / fiber_ctx / ...) come from nova_alloc. Under
+// GC_set_no_dls(1) a static is not a GC root, so those arrays were held by
+// nothing the collector scans: the first collection handed them out again,
+// and the scope ran on reused memory. Measured on Windows before the fix:
+// segfault 4 of 4 (the same program armed: 2 of 2 fine); after: 9 of 9.
+// The fix roots the static struct's range once, before its arrays are
+// allocated -- the pattern the worker scopes already have (GC_add_roots on
+// the `_workers` array).
+module standalone.p1486_orphan_scope_rooted
+
+import std.runtime.gc
+
+fn main() Io Detach -> () {
+    for round in 0..300 {
+        detach {
+            mut junk = []str.new()
+            for i in 0..50 {
+                junk.push("d-${round}-${i}")
+            }
+        }
+        mut churn = []str.new()
+        for i in 0..200 {
+            churn.push("c-${round}-${i}")
+        }
+        if round % 10 == 0 {
+            gc.collect()
+        }
+    }
+    println("spawned 300")
+}

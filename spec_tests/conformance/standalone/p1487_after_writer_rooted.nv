@@ -1,0 +1,38 @@
+// EXPECT_STDOUT fired 40 of 40
+//
+// Registry 221.1 #1487: `ChanReader.close_after(d)` (Nova_Time_after) keeps
+// the timer's state in a block libuv owns until the close callback. The
+// block held `tx`, the channel's WRITER -- a separate nova_alloc'd object
+// the channel state does not point back to, while the caller keeps only the
+// READER. The block was raw malloc, which Boehm does not scan, so during the
+// wait the writer was held by nothing the collector sees: collected, its
+// memory reused, and the timer callback wrote through a dangling pointer.
+// Measured on Windows before the fix: segfault 6 of 6 (with and without the
+// explicit collect below); after: 6 of 6 print the line. The block is now
+// GC_malloc_uncollectable -- scanned, never collected, freed in the close
+// callback as before.
+module standalone.p1487_after_writer_rooted
+
+import std.time.duration
+import std.runtime.gc
+
+fn main() Io -> () {
+    supervised {
+        spawn {
+            mut got = 0
+            for round in 0..40 {
+                ro t = ChanReader.close_after(20.to_millis())
+                mut junk = []str.new()
+                for i in 0..4000 {
+                    junk.push("junk-${round}-${i}")
+                }
+                gc.collect()
+                ro v = t.recv()
+                if v is Some {
+                    got += 1
+                }
+            }
+            println("fired ${got} of 40")
+        }
+    }
+}
