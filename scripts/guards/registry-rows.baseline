@@ -1473,6 +1473,15 @@
 # 2026-10-01, integrator nova-20: rows -> 1476, max -> 1531 (2026-10-01 integrator: rows 1528-1531 -- oracle findings of the #1517 cloud session).
 # 2026-10-01, integrator nova-20: rows -> 1481, max -> 1531 (2026-10-01 integrator: merge p274-carina-cloud (Carina e9s4 + ice-expr + 1518/1519) -- rows 1500,1513,1514,1518,1519 land and leave gaps).
 # 2026-10-01, integrator nova-20: rows -> 1483, max -> 1533 (2026-10-01 integrator: rows 1532/1533 -- regressions of #1488 and #1448 found by nova-63, bisected).
+# 2026-10-01, integrator nova-20: rows -> 1485, max -> 1535 (2026-10-01 integrator: rows 1534/1535 -- findings of the cloud strarm session (Carina nested literal K1, oracle pattern literal type)).
+# 2026-10-01, integrator nova-20: rows -> 1486, max -> 1536 (2026-10-01 integrator: row 1536 -- record literal as a lambda body (nova-63)).
+# 2026-10-01, integrator nova-20: rows -> 1487, max -> 1537 (2026-10-01 integrator: row 1537 -- Time.now() without std.time import panics codegen (nova-63)).
+rows=1487
+max=1537
+rows=1486
+max=1536
+rows=1485
+max=1535
 rows=1483
 max=1533
 rows=1481

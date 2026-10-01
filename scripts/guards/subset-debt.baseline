@@ -409,6 +409,14 @@ undated=58
 # lowers it back, and row 1514 keeps that as its open half.
 # 2026-10-01, Carina window, merge of main e448f0193: both notes above stand; the
 #   number is the guard's count on the merged tree.
+# 2026-10-01, cloud session p274-carina-strarm (string family, E2-b): refusals stay 141,
+# ONE REFUSAL TRADED FOR ANOTHER. `LITERAL_ARM_MSG` is gone -- a `match` arm on a string or
+# char literal compiles (fixtures match_str_lit, match_char_lit; 24 refusals off novac's
+# own source in the 0.2 measure, 145 -> 121). `NESTED_LITERAL_ARM_MSG` came in, dated
+# (E2-b): a STRING or CHAR literal below an arm's root -- refused at every depth until
+# today -- stays refused there, because the lowering tests the root only (an int literal
+# below the root is accepted and its test dropped: `A(3)` takes `A(4)`, measured,
+# reported apart). Carriers of the new refusal in novac's own source: zero.
 refusals=141
 # ТРЕТЬЕ ЧИСЛО — БЕССРОЧНЫЕ ПО ДВЕРИ (волна 274.7 В11-б, засев 2026-09-14, окно 274).
 #

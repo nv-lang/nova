@@ -1,0 +1,12 @@
+module match_str_lit.neg_3
+
+// An INTEGER literal in an arm over a `str` value: no comparison exists. Until
+// the string family novac let the arm through and printed `scr == 3LL` on a
+// `nova_str` -- the oracle prints the same and clang refuses it on both.
+
+// NOVAC_EXPECT a literal pattern compares with a value of its own type
+
+fn kind(s str) -> int => match s {
+    3 => 1
+    _ => 0
+}

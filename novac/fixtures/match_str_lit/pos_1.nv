@@ -1,0 +1,57 @@
+module match_str_lit.pos_1
+
+// A `match` on a `str` with STRING-LITERAL arms (the string family, E2-b), in
+// value and in statement position. The arms compare by CONTENT -- length and
+// bytes, the spec's "by value" (syntax.ru.md, pattern kinds) -- never by
+// pointer: every probe below is a literal of its own, so a pointer compare
+// would answer `_` for all of them.
+//
+// The axes, each one a row the lowering could get wrong on its own:
+//   * the EMPTY string, which has no bytes to compare;
+//   * a common PREFIX (`fn`, `fnord`, and the probe `fno`): a compare of the
+//     shorter length only would take the wrong arm;
+//   * escapes (`\n`, `\"`, `\\`) -- the literal goes into the C through the
+//     pool, the one door of novac's string literals;
+//   * non-ASCII UTF-8 (two- and three-byte sequences);
+//   * the ORDER of the arms: the first that matches wins, and `_` takes the
+//     rest. Behaviour byte-for-byte with the oracle (novac-e1-smoke).
+
+fn kind(s str) -> int => match s {
+    "" => 0
+    "fn" => 1
+    "fnord" => 2
+    "\n" => 3
+    "\"q\"" => 4
+    "a\\b" => 5
+    "é" => 6
+    "日本" => 7
+    "fn" => 8
+    _ => 9
+}
+
+fn say(s str) -> () {
+    match s {
+        "module" => println("kw module")
+        "match" => println("kw match")
+        _ => println("ident")
+    }
+}
+
+fn main() {
+    println(kind(""))
+    println(kind("fn"))
+    println(kind("fnord"))
+    println(kind("fno"))
+    println(kind("fnordx"))
+    println(kind("\n"))
+    println(kind("\"q\""))
+    println(kind("a\\b"))
+    println(kind("é"))
+    println(kind("e"))
+    println(kind("日本"))
+    println(kind("日"))
+    say("module")
+    say("match")
+    say("modul")
+    say("")
+}
