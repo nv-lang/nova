@@ -51,18 +51,19 @@ export fn row_recv_by_pointer(ctx Ctx, row FnRow) -> bool {
 /// (8, 8); a `value` record is its fields with C's padding.
 fn c_size_align(ctx Ctx, t TyId) -> (int, int) {
     if !is_ty(t) { return (-1, -1) }
-    match ctx.tys.kind_of(t) {
-        TkPrim => prim_size_align(ctx.tys.prim_ordinal_of(t))
-        TkRecord => {
-            if !is_value_record(ctx, t) { return (8, 8) }
-            value_record_size_align(ctx, t)
-        }
-        TkSum => {
-            if is_value_sum(ctx, t) { return (-1, -1) }
-            (8, 8)
-        }
-        TkApp | TkParam | TkInfer | TkNewtype | TkTuple | TkEffect | TkPtr => (-1, -1)
+    ro k = ctx.tys.kind_of(t)
+    if k == TypeKind.TkPrim { return prim_size_align(ctx.tys.prim_ordinal_of(t)) }
+    if k == TypeKind.TkRecord {
+        if !is_value_record(ctx, t) { return (8, 8) }
+        return value_record_size_align(ctx, t)
     }
+    if k == TypeKind.TkSum {
+        if is_value_sum(ctx, t) { return (-1, -1) }
+        return (8, 8)
+    }
+    // An application, a parameter, a newtype, a structural form, a pointer:
+    // not laid out here -- the caller answers "pointer".
+    (-1, -1)
 }
 
 /// A primitive's C size: the width for a numeric row, the runtime's struct
