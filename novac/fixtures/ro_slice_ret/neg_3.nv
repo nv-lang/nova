@@ -1,0 +1,14 @@
+module ro_slice_ret.neg_3
+
+// ONE seeded cause: `ro x ro T` -- the `ro` binding already freezes the
+// content, so the second `ro` is redundant (D176 amendment, Plan 124.8); the
+// oracle names it E_REDUNDANT_TYPE_MODIFIER at the second `ro`. Registry 1458.
+
+// NOVAC_EXPECT `ro` after a `ro` binding is redundant
+
+fn nums(xs []int) -> ro []int => xs
+
+fn main() {
+    ro a ro []int = nums([]int.of(1, 2))
+    println(a.len())
+}

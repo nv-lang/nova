@@ -198,7 +198,10 @@ fn Checker mut @judge_return(e Node, t0 TyId) -> () {
 /// and a field of the parameter. THE ALIAS `ro y = x` then `y` the oracle refuses
 /// and this door does not see -- the named rest of #1309.
 fn Checker mut @judge_ro_param_return(e Node, t TyId) -> () {
-    if e.kind_of() != NodeKind.Name {
+    if @ret_ro {
+        // `-> ro T` (registry 1458): the result IS a view, so handing the
+        // frozen parameter out through it freezes the caller's copy too.
+    } else if e.kind_of() != NodeKind.Name {
         // Not a bare name: a call, a field, a literal -- a fresh value, or one the
         // oracle does not freeze (measured, see above).
     } else if !ro_return_freezes(@ctx, t) {

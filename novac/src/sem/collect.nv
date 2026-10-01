@@ -638,7 +638,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                 param_ids.push(ParamDef { name: param_name_of(pk), type_id: pt,
                                           mode: param_mode_at(pk), default_expr: param_default_slot(pk) })
             }
-            fns.add(fname, ret, false, param_ids, tps, generic_bounds(fk))
+            fns.add(fname, ret, false, param_ids, tps, generic_bounds(fk), ret_ro: decl_ret_is_ro(fk))
             ro frow = FnRow(fns.rows.len() - 1)
             defs.add(fname, DefTarget.DefFn(frow))
             // The DECLARATION's own row, keyed by its node. Asking `defs` by
@@ -710,7 +710,7 @@ fn fill_record_fields(c Node, owner_id DeclId, tname str, mut types []TypeDef, d
         // a slice type was dropped from the registry.
         ro ft = ty_of_type_ref(fk, ftat, no_ty(), []str.new(), []TyId.new(), types, defs, tys)
         if !is_ty(ft) { continue }
-        fields.add(mine.ty_id, leaf_text(fk[fnat]), ft)
+        fields.add(mine.ty_id, leaf_text(fk[fnat]), ft, ro_view: is_leaf_kind(fk[ftat], TokenKind.KwRo))
         cnt += 1
     }
     // THE LAYOUT AND THE GATE SURVIVE THE REWRITE: this pass replaces the row

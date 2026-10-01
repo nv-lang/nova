@@ -383,6 +383,7 @@ fn Checker mut @type_fn(f Node) -> () {
     // type and iced. One refusal where the spelling is, and the call is silent.
     @report_if_return_unread(kids, @ctx.fns.rows[raw_row(row)].ret_id)
     @ret_unit = @returns_unit(@ctx.fns.rows[raw_row(row)].ret_id)
+    @ret_ro = @ctx.fns.rows[raw_row(row)].ret_ro
     // The ROW decides, not the spelling: an overload of `main` binds its
     // parameters like any other callable. Until 2026-08-22 this read
     // `name != ENTRY_FN`, so the overload's parameters were never bound and its
@@ -767,6 +768,7 @@ fn Checker mut @type_stmt(st Node) -> () {
         }
     } else if k == NodeKind.BindStmt {
         @type_bind(st)
+        @report_if_ro_view_into_mut(st)
     } else if k == NodeKind.AssignStmt {
         ro kids = branch_children(st)
         // A malformed assignment was already refused by the subset walk, and

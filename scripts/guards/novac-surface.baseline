@@ -409,7 +409,11 @@ pipeline 11
 # 2026-08-28 (274.4 step 3): the field root gets the same cut. sem 171 -> 169:
 # has_field and field_type moved OUT to resolve (FieldIndex); resolve 11 -> 15:
 # FieldIndex, build, has_field, field_type.
-resolve 15
+# 2026-10-01 (облачная сессия, реестр 1458), resolve 15 -> 16: `field_is_ro` --
+# «объявлено ли поле видом `f ro T` (D176)». Наружу нужна потому, что спрашивает
+# check (запись через вид, `E_READONLY_CONTENT`), а имена полей резолвятся ТОЛЬКО
+# через FieldIndex (274.4 step 3) -- у check нет другой двери к строке поля.
+resolve 16
 # sem 54 -> 56 (2026-08-18): наружу вышли ДВЕ двери параметра,
 # param_name_at и param_type_at. Имя и тип параметра больше не берутся
 # индексом pk[0]/pk[1]: индекс сдвигается, как только у параметра

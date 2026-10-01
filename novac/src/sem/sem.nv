@@ -190,6 +190,7 @@ export type FieldDef value {
     name str /// Field spelling; the backend uses it for the member name verbatim.
     type_id TyId /// The field's type id.
     owner_id TyId /// Owning type id; the resolver compares this as a type id while walking its chain.
+    ro_view bool /// declared `f ro T` (D176): read through, never written through (registry 1458)
 }
 
 /// Record-field registry: rows and their payload, grouped per type via
@@ -209,8 +210,8 @@ export fn FieldTable.new() -> FieldTable =>
 
 /// Register one field of `owner_id`. The same-name chain is not grown here:
 /// the resolver builds its index FROM these rows (274.4 step 3).
-export fn FieldTable mut @add(owner_id TyId, name str, type_id TyId) -> () {
-    @rows.push(FieldDef { name, type_id, owner_id })
+export fn FieldTable mut @add(owner_id TyId, name str, type_id TyId, ro_view bool = false) -> () {
+    @rows.push(FieldDef { name, type_id, owner_id, ro_view })
 }
 
 /// THE row of a sum's VARIANT in `Ctx.variant_rows` -- a space of its own since

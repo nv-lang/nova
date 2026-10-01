@@ -309,6 +309,8 @@ fn Checker mut @type_handler_op(op Node, eff_name str, schema EffectDef) -> () {
     ro saved_ret = @ret_expect
     ro saved_tail = @tail_value_body
     ro saved_unit = @ret_unit
+    ro saved_ro = @ret_ro
+    @ret_ro = false
     @ret_expect = sig.ret_id
     @ret_unit = @returns_unit(sig.ret_id)
     // THE BODY against the schema's return, through the fn body's own
@@ -331,6 +333,7 @@ fn Checker mut @type_handler_op(op Node, eff_name str, schema EffectDef) -> () {
         @ret_expect = saved_ret
         @tail_value_body = saved_tail
         @ret_unit = saved_unit
+        @ret_ro = saved_ro
         @scope.release(pmark)
         // SILENT-OK: the block body was typed and its tail judged inside
         // `@type_block` through the very doors a fn body uses -- the
@@ -348,6 +351,7 @@ fn Checker mut @type_handler_op(op Node, eff_name str, schema EffectDef) -> () {
     @ret_expect = saved_ret
     @tail_value_body = saved_tail
     @ret_unit = saved_unit
+    @ret_ro = saved_ro
     @scope.release(pmark)
 }
 

@@ -113,4 +113,7 @@ type Checker {
     mv_decl_nodes []Node
     /// The body being typed returns no value (`-> ()` or none declared): a bare `return` is legal.
     ret_unit bool
+    /// The body being typed returns a `ro` VIEW (`-> ro T`, D176): a `ro`
+    /// parameter may be handed out through it (registry 1458).
+    ret_ro bool
 }

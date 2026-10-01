@@ -320,7 +320,8 @@ fn harvest_fn(kids []Node, handed_from str, types []TypeDef, mut defs DefTable, 
     // began at index 1 regardless, met the `ro` leaf, resolved no type and DROPPED
     // the signature: `"Pt".bytes()` was "no such method" (found on the B1b-1
     // carrier). The mode itself is not kept here: a return mode is the caller's
-    // binding question, not the callable's identity.
+    // binding question, not the callable's identity -- but `ro` IS kept on the
+    // row (`ret_ro`, registry 1458): a write through the view is refused.
     ro ret_from = if ret_kids.len() > 1 && is_mode_leaf(ret_kids[1]) { 2 } else { 1 }
     ro ret_t = if ret_unit {
         ty_or_none(types, defs, UNIT_TYPE_NAME)
@@ -401,7 +402,8 @@ fn harvest_fn(kids []Node, handed_from str, types []TypeDef, mut defs DefTable, 
     // second time -- in module mode the unit is inside `NOVAC_SELF_PATH`, and
     // every call of its own methods was an ambiguity (237 over novac's source).
     if !is_free && fns.file_declares_method(mname, param_ids) { return }
-    fns.add(mname, ret_t, !is_free, param_ids, tps, bounds, handed_from: handed_from)
+    fns.add(mname, ret_t, !is_free, param_ids, tps, bounds, handed_from: handed_from,
+            ret_ro: ret_is_ro(ret_kids))
     if is_free {
         defs.add(mname, DefTarget.DefFn(FnRow(fns.rows.len() - 1)))
     } else {

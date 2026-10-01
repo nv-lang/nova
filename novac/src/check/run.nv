@@ -89,6 +89,7 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
         mv_decl_rows: []int.new(),
         mv_decl_nodes: []Node.new(),
         ret_unit: false,
+        ret_ro: false,
         substs: []TyId.new(),
     }
     // THROUGH THE DOOR (P18): a raw walk over a file's children does not see
@@ -166,6 +167,7 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, substs []TyId, cap 
         mv_decl_rows: []int.new(),
         mv_decl_nodes: []Node.new(),
         ret_unit: false,
+        ret_ro: false,
         substs,
     }
     c.type_fn(decl)

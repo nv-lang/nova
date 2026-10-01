@@ -217,6 +217,20 @@ export fn FieldIndex @has_field(fields FieldTable, owner_id TyId, fname str) -> 
     false
 }
 
+/// Is `owner_id`.`fname` declared as a `ro` VIEW (`f ro []T`, D176)? Tolerant
+/// like `has_field`: an unknown field answers false, and the field door names
+/// it (registry 1458).
+#realtime nogc
+export fn FieldIndex @field_is_ro(fields FieldTable, owner_id TyId, fname str) -> bool {
+    mut r = FieldRow(@names.find(fname))
+    while is_frow(r) {
+        ro fd = fields.rows[raw_frow(r)]
+        if fd.owner_id == owner_id { return fd.ro_view }
+        r = @next[raw_frow(r)]
+    }
+    false
+}
+
 /// Type id of `owner_id`.`fname` — an unknown field past check is an ice.
 #realtime nogc
 export fn FieldIndex @field_type(fields FieldTable, owner_id TyId, fname str) -> TyId {

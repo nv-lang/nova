@@ -45,7 +45,7 @@ fn typed_call_key(kids []Node, from int, recv Node, recv_t TyId, ctx Ctx, scope 
     // The receiver is parameter zero (plan 273), so it carries a CLASS like any
     // other argument: `mut b; b.m()` selects the `mut @m` overload, which is
     // the precedent the whole mode axis generalizes from (P14 rule 2).
-    out.push(ArgSpec { type_id: recv_t, cls: arg_class(recv, scope), name: "", lit: LitArg.NotLit })
+    out.push(ArgSpec { type_id: recv_t, cls: typed_arg_class(recv, ctx, scope, chan), name: "", lit: LitArg.NotLit })
     out.append(typed_args(kids, from, ctx, scope, chan))
     out
 }
@@ -68,7 +68,7 @@ fn typed_args(kids []Node, from int, ctx Ctx, scope Scope, chan CheckOut) -> []A
             // the wrapper adds.
             ro ax = arg_expr_of(c)
             out.push(ArgSpec { type_id: type_of(ax, ctx, scope, chan),
-                               cls: arg_class(ax, scope), name: arg_name_of(c), lit: lit_arg_of(ax) })
+                               cls: typed_arg_class(ax, ctx, scope, chan), name: arg_name_of(c), lit: lit_arg_of(ax) })
         } else {
             // Syntax, not an argument: the argument cursor stays put while the
             // child cursor advances.
@@ -110,6 +110,34 @@ fn arg_class(e Node, scope Scope) -> ArgClass {
     if k == NodeKind.Paren { return arg_class(branch_children(e)[1], scope) }
     if k == NodeKind.FieldAccess { return ArgClass.ArgRo }
     ArgClass.ArgOwnedTemp
+}
+
+/// The class of an argument whose call is ALREADY TYPED: a call that hands out
+/// a `ro` VIEW (`-> ro []T`, D176) is a place the caller may only read, so it
+/// answers `ro` where any other call result is an owned temporary -- and a
+/// `mut` receiver or parameter then has no candidate for it, as the spec says
+/// ("forbids calling `mut` methods on a value of type `ro T`", registry 1458).
+/// Every other shape answers what `arg_class` answers.
+fn typed_arg_class(e Node, ctx Ctx, scope Scope, chan CheckOut) -> ArgClass {
+    if call_hands_ro_view(e, ctx, chan) { return ArgClass.ArgRo }
+    arg_class(e, scope)
+}
+
+/// Does this CALL hand out a `ro` view -- is its decided callee a row whose
+/// return is written `-> ro T` (D176, registry 1458)? Read from the channel's
+/// decision, never re-resolved; an undecided call answers false (its refusal
+/// already spoke). Parens are looked through, as `arg_class` does.
+fn call_hands_ro_view(e Node, ctx Ctx, chan CheckOut) -> bool {
+    ro k = e.kind_of()
+    if k == NodeKind.Paren { return call_hands_ro_view(branch_children(e)[1], ctx, chan) }
+    if k != NodeKind.Call && k != NodeKind.MethodCall { return false }
+    if !chan.has_callee(e.id_of()) { return false }
+    match chan.callee_of(e.id_of()).target {
+        CalleeFn(row) => ctx.fns.rows[raw_row(row)].ret_ro
+        // A variant, a construction, a synthesized display and an effect
+        // operation hand out a fresh value: no view.
+        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => false
+    }
 }
 
 /// The name a BOUND expression is looked up under: an identifier's own text,

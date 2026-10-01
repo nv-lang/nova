@@ -1,0 +1,34 @@
+module ro_slice_ret.pos_1
+
+// A free function returning a `ro` VIEW of a vector (`-> ro []int`, D176):
+// the caller reads it -- `.len()`, an index, a `for` -- and writes nothing.
+// Both body shapes, `=> expr` and a block with `return`. Registry 1458: the
+// type door read `ro []T` as no type, and novac refused fifteen of its own
+// signatures. Behaviour byte-for-byte with the oracle (novac-e1-smoke).
+
+fn nums(xs []int) -> ro []int => xs
+
+fn evens(n int) -> ro []int {
+    mut out = []int.of(0)
+    for i in 1..n {
+        if i % 2 == 0 {
+            out.push(i)
+        }
+    }
+    return out
+}
+
+fn main() {
+    ro a = nums([]int.of(4, 5, 6))
+    println(a.len())
+    println(a[1])
+    mut s = 0
+    for e in a {
+        s += e
+    }
+    println(s)
+    for e in evens(7) {
+        println(e)
+    }
+    println(evens(3).len())
+}

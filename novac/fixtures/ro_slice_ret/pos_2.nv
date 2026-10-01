@@ -1,0 +1,27 @@
+module ro_slice_ret.pos_2
+
+// A METHOD returning a `ro` view -- the shape of novac's own
+// `Reach @instances() -> ro []Instance` (mono.nv) -- read through `.len()`, an
+// index and a `for`; and `-> ro Spot`, the qualifier over a RECORD (the shape
+// of `branch_children`'s neighbours `-> ro Node`). A vector of a record type
+// is not in the shell's interop surface yet, so the element here is `str`.
+// Registry 1458. Behaviour byte-for-byte with the oracle (novac-e1-smoke).
+
+type Spot { x int, y int }
+
+type Trail { names []str, home Spot }
+
+fn Trail @names_view() -> ro []str => @names
+
+fn Trail @home_view() -> ro Spot => @home
+
+fn main() {
+    ro t = Trail { names: []str.of("ab", "cde"), home: Spot { x: 3, y: 4 } }
+    ro v = t.names_view()
+    println(v.len())
+    println(v[1])
+    for s in t.names_view() {
+        println(s.byte_len())
+    }
+    println(t.home_view().x + t.home_view().y)
+}
