@@ -1,8 +1,12 @@
 // std/prelude/runtime.nv — runtime functions: panic, exit, assert, print, println.
-// Все declarations — `extern "nova" fn` (zero imports), dispatch через codegen
+// Все declarations — `extern "nova" fn` (один импорт — `CallerLoc`, №971), dispatch через codegen
 // special-case в emit_c.rs.
 
 module prelude.runtime
+
+// #971: `CallerLoc` (the return of `caller_loc()` below) is declared in
+// `prelude.core`; the other prelude files import their core types the same way.
+import std.prelude.core.{CallerLoc}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Runtime functions

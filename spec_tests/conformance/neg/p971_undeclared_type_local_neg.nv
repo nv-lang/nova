@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E_UNKNOWN_TYPE
+//
+// Registry 221.1 #971: an undeclared type name in an annotated LOCAL. Before the fix the
+// checker turned any unknown name into an opaque nominal type and every check
+// in that position went quiet (`check` PASS). The legal forms are pinned by
+// `standalone/p971_visible_type_names_pos`.
+module neg.p971_undeclared_type_local_neg
+
+fn main() Io -> () {
+    // nova:expect E_UNKNOWN_TYPE -- `Nmbr` is declared nowhere; the annotation switched off the assignability check of `= 1`
+    ro x Nmbr = 1
+    println(x)
+}

@@ -1,0 +1,68 @@
+// EXPECT_STDOUT prelude=3 imported=1500 generic=7 bound=6 intrinsic=5 prims=true
+//
+// Registry 221.1 #971, the positive half: every legal way a type name gets into
+// scope in an annotation stays legal after the check that refuses an
+// undeclared one (`neg/p971_undeclared_type_*_neg`). The draft of 2026-09-06
+// refused 6539 names in `std/src`, 6512 of them `T` introduced by a bound --
+// this file pins each legal form so that wave cannot come back silently:
+//   * prelude types with no import (`Option`, `Result`, `Vec`, `str`);
+//   * a type brought in by `import` (`Duration`);
+//   * a generic parameter (`[T]`);
+//   * a type variable a BOUND introduces, D355 §1 (`T` in `fn[I Next[T]]`,
+//     not declared anywhere and forbidden to be);
+//   * a D91 language type with no `.nv` declaration (`ChanReader`);
+//   * every primitive name, `uint` included.
+module standalone.p971_visible_type_names_pos
+
+import std.time.duration.{Duration}
+
+fn prelude_names(v Vec[int], o Option[str], r Result[int, str]) -> int {
+    mut n = v.len()
+    if o.is_none() { n += 1 }
+    match r {
+        Ok(_) => { n -= 1 }
+        Err(_) => {}
+    }
+    n
+}
+
+fn imported_name(d Duration) -> int => d.millis() as int
+
+fn generic_name[T](x T, n int) -> int => n
+
+type P971Counter {
+    mut left int
+}
+
+fn P971Counter mut @next() -> Option[int] {
+    if @left == 0 { return None }
+    @left -= 1
+    Some(@left)
+}
+
+// `T` is introduced by the bound `Next[T]` (D355 §1) and named in the body's
+// annotation below -- an annotation position the check judges.
+fn[I Next[T]] I mut @p971_sum_with(f fn(T) -> int) -> int {
+    mut total = 0
+    while true {
+        match @next() {
+            Some(x) => {
+                ro y T = x
+                total += f(y)
+            }
+            None => return total
+        }
+    }
+    total
+}
+
+fn intrinsic_name(rx ChanReader[int]) -> int => 5
+
+fn prims(a int, b i8, c i16, d i32, e i64, f u8, g u16, h u32, i u64, j uint, k f32, l f64, m bool, n char, o str) -> bool => m
+
+fn main() Io -> () {
+    ro (_tx, rx) = Channel[int].new(1)
+    mut c = P971Counter { left: 4 }
+    ro bound = c.p971_sum_with(fn(x int) -> int => x)
+    println("prelude=${prelude_names([1, 2, 3], None, Ok(1))} imported=${imported_name(1500.to_millis())} generic=${generic_name("x", 7)} bound=${bound} intrinsic=${intrinsic_name(rx)} prims=${prims(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.0, 1.0, true, 'c', "s")}")
+}

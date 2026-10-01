@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_UNKNOWN_TYPE
+//
+// Registry 221.1 #971: an undeclared type name in a SUM VARIANT payload. Before the fix the
+// checker turned any unknown name into an opaque nominal type and every check
+// in that position went quiet (`check` PASS). The legal forms are pinned by
+// `standalone/p971_visible_type_names_pos`.
+module neg.p971_undeclared_type_variant_payload_neg
+
+type P971Shape enum
+    // nova:expect E_UNKNOWN_TYPE -- `Nmbr` in a variant payload is declared nowhere
+    | P971Circle(Nmbr)
+    | P971Dot
+
+fn main() Io -> () {
+    println(1)
+}
