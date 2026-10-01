@@ -1,0 +1,10 @@
+=== SUBJECT: novac check
+novac rc=0
+=== ORACLE: nova check
+[32mok:[0m D:/Temp/hunt-check-k4/probes/array-literal-arg-ice/probe.nv
+
+===== SUMMARY =====
+[32mPASS[0m: 1  FAIL: 0
+oracle check rc=0
+=== SUBJECT: novac emit (lines matching $EMIT)
+1:{"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error (novac bug, not yours): emit: an array literal in expression position was never hoisted (wave B8)","poisoned_by":null}

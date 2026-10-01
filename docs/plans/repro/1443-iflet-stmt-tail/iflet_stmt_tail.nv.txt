@@ -1,0 +1,27 @@
+module iflet_stmt_tail
+
+// Registry #1443: an `if Some(x) = ...` STATEMENT whose branch ENDS in a
+// non-unit expression. The value is discarded -- the statement is `()` -- but
+// the oracle's C assigns the branch's last expression into the statement's
+// `nova_unit` temporary, and clang refuses the unit. Carrier: novac's
+// emit_c/emit_expr.nv Index arm (`@body.append(")")` in the else branch).
+
+fn pick(b bool) -> Option[int] => if b { Some(1) } else { None }
+
+fn side(n int) -> int {
+    println(n)
+    n
+}
+
+fn fill(b bool) -> () {
+    if Some(x) = pick(b) {
+        println(x)
+    } else {
+        side(0)
+    }
+}
+
+fn main() {
+    fill(true)
+    fill(false)
+}

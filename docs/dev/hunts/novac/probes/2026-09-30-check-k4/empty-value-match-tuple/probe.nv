@@ -1,0 +1,7 @@
+// Control for empty-stmt-match-tuple: the same empty match in VALUE position.
+fn main() Io -> () {
+    ro t = (1, 2)
+    ro r = match t {
+    }
+    println("after")
+}

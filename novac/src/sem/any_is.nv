@@ -1,0 +1,76 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Kotlin smart casts -- a name tested with `is` has the tested type
+// inside the branch the test guards, as long as it is not reassigned.
+// Role: the doors of `any` and `is` (D54, E.9 step 4b). The ONE answer to
+//   "does this `if` narrow a name, to what" (D54,
+//   spec/decisions/03-syntax.md:3935; E.9 step 4b): the checker binds the
+//   narrowed name in the then-branch, the lowering unboxes it there -- both
+//   ask this door, so the two cannot disagree (the K4 class).
+// Used by: check/is_expr.nv (typing `is`, the then-branch), lower/lowering.nv
+//   (`@lower_if`), emit_c/emit_is.nv (the test's C).
+// Guarded by: nova test novac/src/check/check_test.nv and the fixture
+//   novac/fixtures/any_is through check-novac-differential.sh.
+
+module novac.sem
+
+import ../tree.{Node, NodeKind}
+import ../builtins.{TypeKind, prim_c_name, has_fixed_tid}
+import ../types.{TyId, is_ty, no_ty}
+
+/// A narrowing: `name` (the tested binding, whose node is `subject`) holds a
+/// value of `target` inside the then-branch.
+export type Narrowing value {
+    subject Node /// the tested name's node -- the `any` the branch unboxes
+    name str /// the binding narrowed
+    target TyId /// the type it has inside the branch
+}
+
+/// `if name is T { ... }` on an `any` narrows `name` to `T` in the
+/// then-branch; any other condition narrows nothing. The operand's type is
+/// read from what the checker RECORDED; the target through `is_target_of`,
+/// the door the checker judged it with.
+export fn narrowing_of(cond Node, out CheckOut, ctx Ctx) -> Option[Narrowing] {
+    if cond.kind_of() != NodeKind.IsTest { return None }
+    ro kids = branch_children(cond)
+    if kids.len() < 3 || kids[0].kind_of() != NodeKind.Name { return None }
+    if !is_any_ty(ctx.tys, out.type_if_known(kids[0].id_of())) { return None }
+    ro target = is_target_of(cond, ctx)
+    if !is_ty(target) { return None }
+    Some(Narrowing { subject: kids[0], name: expr_leaf_name(kids[0]), target })
+}
+
+/// The last identifier of a type reference -- a variant's own name in
+/// `Shape.Circle`, the type's name in `str`. One door for the checker and the
+/// emitter of `is` (D54).
+export fn type_ref_last_ident(n Node) -> str {
+    if n.is_ident() { return leaf_text(n) }
+    mut out = ""
+    for c in branch_children(n) {
+        if c.is_ident() {
+            out = leaf_text(c)
+        } else {
+            // A dot or a bracket: the name before it is not the last one.
+        }
+    }
+    out
+}
+
+/// The TYPE a `x is T` names, by the registry -- `no_ty()` when the name is no
+/// type (a variant of a sum, or an undeclared name). A type reference's leaf
+/// has no row in the channel, so the answer is this door, asked alike by the
+/// checker, the narrowing and the emitter.
+export fn is_target_of(e Node, ctx Ctx) -> TyId {
+    ro kids = branch_children(e)
+    if kids.len() < 3 { return no_ty() }
+    ctx.ty_of_name(type_ref_last_ident(kids[2])) ?? no_ty()
+}
+
+/// The runtime type id a `x is T` on an `any` compares with (D54): the fixed
+/// `NOVA_TID_<c spelling>` of a primitive that has one (`nova_rt/typeid.h`),
+/// None for every other type -- their ids are generated per compilation unit.
+export fn any_tid_c(ctx Ctx, t TyId) -> Option[str] {
+    if !is_ty(t) || ctx.tys.kind_of(t) != TypeKind.TkPrim { return None }
+    ro c = prim_c_name(ctx.tys.prim_ordinal_of(t))
+    if !has_fixed_tid(c) { return None }
+    Some("NOVA_TID_${c}")
+}

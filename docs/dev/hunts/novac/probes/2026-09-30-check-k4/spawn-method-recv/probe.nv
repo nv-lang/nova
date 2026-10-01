@@ -1,0 +1,21 @@
+// A spawn body that mutates a captured `mut` record (not #share) only
+// through a method RECEIVER.
+type Ctr { n int }
+
+fn Ctr mut @bump() -> () {
+    @n = @n + 1
+}
+
+fn g() -> int {
+    mut c = Ctr { n: 0 }
+    supervised {
+        spawn {
+            c.bump()
+        }
+    }
+    c.n
+}
+
+fn main() {
+    println(g())
+}

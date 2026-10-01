@@ -95,7 +95,7 @@ test "E2 strings surface: a std method the shell carries is callable, one it lac
     ro decls = []str.of("fn str @nowhere() -> int => 0\n")
     ro d = compile("fn main() { ro s = \"ab\"\n println(s.nowhere()) }", decls)
     assert(d.len() == 1)
-    assert(d[0].message.contains("has no body to emit"))
+    assert(d[0].message.contains("carries no `nowhere` for str"), d[0].message)
     // The SHAPES are still in the subset: `ro` and `while` alone are clean.
     assert(n_diags("fn main() { mut i = 0\n while i < 1 { i += 1 }\n println(i) }") == 0)
 }
@@ -281,12 +281,12 @@ test "a receiver MODE is read AND judged: a consuming method needs a consuming p
     // refusal is about the call, not about a missing body.
     ro on_ro = compile("type Cel { v f64 }\nfn main() { ro c = Cel { v: 1.5 }\n println(c.into_f64()) }", decls)
     assert(on_ro.len() == 1)
-    assert(!on_ro[0].message.contains("has no body to emit"))
+    assert(!on_ro[0].message.contains("carries no `into_f64`"), on_ro[0].message)
     // A `consume` BINDING is the place it does take -- the signature IS found,
     // and what novac lacks is the method's body.
     ro on_consume = compile("type Cel { v f64 }\nfn main() { consume c = Cel { v: 1.5 }\n println(c.into_f64()) }", decls)
     assert(on_consume.len() == 1)
-    assert(on_consume[0].message.contains("has no body to emit"))
+    assert(on_consume[0].message.contains("carries no `into_f64` for Cel"), on_consume[0].message)
 }
 
 test "`Self` in a declaration is the RECEIVER's type, not a missing one" {
@@ -302,7 +302,7 @@ fn main() { ro c = Cel { v: 1.0 }\n\
     ro diags = compile(src, decls)
     assert(diags.len() == 1)
     // Read, and refused for the reason that is left: novac emits no method body.
-    assert(diags[0].message.contains("has no body to emit"))
+    assert(diags[0].message.contains("carries no `twin` for Cel"), diags[0].message)
 }
 
 test "a BOUND is not a type parameter: the arity is ONE, not two" {

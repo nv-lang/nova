@@ -127,6 +127,9 @@ export type NodeKind enum
     // `expr as Type`. The right side is a TYPE, which is why the cast is
     // a node of its own and not a binary operator over two expressions.
     | Cast
+    // `expr is Type` -- the runtime type test (D54): an `any` against a type, a
+    // sum against one of its variants. The right side is a TYPE, as for a cast.
+    | IsTest
     // `import a.b.{X}` and `use a.b.c` -- one node for both spellings,
     // the keyword leaf tells them apart.
     | ImportDecl

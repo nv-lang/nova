@@ -1,0 +1,11 @@
+// A match on bool in STATEMENT position, arms `false` then `true`.
+fn show(b bool) Io -> () {
+    match b {
+        false => println("no")
+        true => println("yes")
+    }
+}
+
+fn main() Io -> () {
+    show(true)
+}

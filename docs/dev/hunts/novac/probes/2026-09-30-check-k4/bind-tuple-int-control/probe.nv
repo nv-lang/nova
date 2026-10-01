@@ -1,0 +1,6 @@
+// Control for bind-tuple-true: an INTEGER literal nested in a destructuring binding.
+fn main() {
+    ro t = (1, 2)
+    ro (a, 2) = t
+    println(a)
+}

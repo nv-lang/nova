@@ -475,6 +475,10 @@ fn write_greeting(mut wb WriteBuffer, s str) -> () =>
     wb.write_bytes(s)   // s неявно .bytes() — не пишем это руками
 ```
 
+Any `str` expression passes this way — a literal, a variable, a call result
+(owner's decision 2026-10-01, D55 amendment): the pair is a zero-copy `ro []u8`
+view, so it does not apply where a mutable `mut []u8` is required.
+
 Two "lanes", both guaranteed zero-cost:
 - **view** — a non-`consume` method with a `ro` return (a borrow, no allocation);
 - **finalize** — a `consume` method with an owning return (a move; the receiver

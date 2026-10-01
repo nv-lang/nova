@@ -1,0 +1,38 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: none -- the C of a type test is the RUNTIME's (`nova_rt/typeid.h`:
+// `x is T : nova_any_is(x, NOVA_TID_<T>)`), and the sum half is the tag test
+// the match arms already print; this file repeats the runtime's spelling as
+// interop, for as long as the shell carries the runtime.
+// Role: emission of `expr is Type` (E.9 step 4b, plan 274.11; D54): an `any`
+//   against the fixed type id of its target, a sum against the tag of one of
+//   its variants. What the checker admitted is all that arrives: an `any`
+//   whose target has a fixed id, or a sum and one of its own variants.
+// Used by: emit_expr.nv (`@emit_expr`'s IsTest arm).
+// Guarded by: nova test novac/src/check/check_test.nv and the fixture
+//   novac/fixtures/any_is through check-novac-differential.sh.
+
+module novac.emit_c
+
+import ../tree.{Node}
+import ../diag.{ice}
+import ../sem.{branch_children, is_any_ty, any_tid_c, variant_in_sum, c_tag, is_value_sum, type_ref_last_ident}
+import ../sem.{is_target_of}
+
+/// `x is T`: `nova_any_is(x, NOVA_TID_<T>)` on an `any`, `(x.tag == TAG)` on
+/// a sum (`->` for a heap sum -- the access follows the placement).
+fn Emitter mut @emit_is_test(e Node) -> () {
+    ro kids = branch_children(e)
+    ro lt = @out.type_of(kids[0].id_of())
+    if is_any_ty(@ctx.tys, lt) {
+        ro tid = any_tid_c(@ctx, is_target_of(e, @ctx)) ?? ice("emit: an is-test on an any whose target has no fixed type id reached the emitter")
+        @body.append("nova_any_is(")
+        @emit_expr(kids[0])
+        @body.append(", ${tid})")
+        return
+    }
+    ro vrow = variant_in_sum(@ctx, lt, type_ref_last_ident(kids[2])) ?? ice("emit: an is-test naming no variant of its sum reached the emitter")
+    ro arrow = if is_value_sum(@ctx, lt) { "." } else { "->" }
+    @body.append("((")
+    @emit_expr(kids[0])
+    @body.append(")${arrow}tag == ${c_tag(@ctx, vrow)})")
+}

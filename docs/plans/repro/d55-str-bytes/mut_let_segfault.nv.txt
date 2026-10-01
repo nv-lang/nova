@@ -1,0 +1,10 @@
+// Probe 4: `mut b []u8 = s` with `s str` -- `nova check` passes, the write through `b` segfaults.
+// Same class as mut_param_segfault.nv.txt (`ro []u8` view accepted where a mutable `[]u8` is required).
+module probe4
+
+fn main() Io -> () {
+    ro s = "abc"
+    mut b []u8 = s
+    b[0] = 65 as u8
+    print("ok")
+}

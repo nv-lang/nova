@@ -115,6 +115,9 @@ type Emitter consume {
     mut lo Lowerer /// THE LOWERING'S RECEIVER (274.8 M3): the builder is no longer the printer's own state -- it lives in `lower/` with the methods that write it, and printing READS it through here. Was `mut ir FnBuilder` (274.8 M1)
     lit_tmp []str /// node id -> the hoisted temporary of an array literal (B8) or a record constructor (B13) in argument position; "" = none
     hlits []Node /// the handler literals of the reached functions; the index is the literal's C number (E.9 step 3)
+    spawns []Node /// the `spawn` statements of the reached functions; the index is the spawn's C number (E.9 step 4)
+    cur_spawn int /// the C number of the spawn whose body function is being emitted, -1 outside one
+    cur_lit int /// the C number of the literal whose op function is being emitted, -1 outside one: a literal built there reads its outer captures through that op's context
     fres FieldIndex /// the SAME field index the checker asks: a destructuring
         /// binding spells one C local per FIELD, and the field's type has to
         /// come from the door that already answers it -- not from a second

@@ -32,7 +32,7 @@ ok()  { echo "  ok: $1"; cases=$((cases+1)); }
 bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
 
 mk() {
-    # mk <корень> — здоровое дерево: три двери, каждая печатает свою голову
+    # mk <корень> — здоровое дерево: пять дверей, каждая печатает свою голову
     rm -rf "$1"; mkdir -p "$1/novac/src/emit_c"
     cat > "$1/novac/src/emit_c/emit_flow.nv" <<'EOF'
 module novac.emit_c
@@ -54,6 +54,15 @@ EOF
 module novac.emit_c
 fn Emitter mut @emit_requires_prologue(kids []Node, name str) -> () {
     @body.append("    if (!(")
+}
+EOF
+    cat > "$1/novac/src/emit_c/emit_spawn.nv" <<'EOF'
+module novac.emit_c
+fn Emitter mut @emit_spawn_entry(n int) -> () {
+    @body.append("    if (setjmp(_nv_anchor.jmp) == 0) {")
+}
+fn Emitter mut @emit_spawn_site(s SpawnSite) -> () {
+    @body.append("    if (${v}_init) {")
 }
 EOF
 }
