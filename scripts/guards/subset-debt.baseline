@@ -147,7 +147,12 @@
 # value, a fn declaration without a name); the ratchet goes down with them.
 # 2026-10-01, Carina window (274.11 E.10 step 4b): undated 62 -> 61. A generic METHOD
 # declared in the file is instantiated like a generic function; its refusal is gone.
-undated=61
+# 2026-10-01, Carina window (record-form variants and `|` binders): undated 61 -> 59. Both
+# refusals are gone: a record-form variant (`| Branch { id NodeId }`) is declared, built and
+# matched by field name, and a `|` pattern binds a name every alternative binds. Two dated
+# refusals stand in their place, both narrower than the form: a record-form variant of a
+# GENERIC sum built by brace, and one built in an argument position (step 4d of 274.11 E.10).
+undated=59
 
 # ВТОРОЕ ЧИСЛО — ОБЩЕЕ, храповик ВНИЗ с целью НОЛЬ (274 §1.3а п. «г»). Заведено
 # 2026-09-13 окном 274; предписано оно было ещё 2026-09-05 планом 274.7 §И («страж
@@ -388,6 +393,9 @@ undated=61
 # value, a fn declaration without a name); the ratchet goes down with them.
 # 2026-10-01, Carina window (274.11 E.10 step 4b): refusals 141 -> 140. A generic METHOD
 # declared in the file is instantiated like a generic function; its refusal is gone.
+# 2026-10-01, Carina window (record-form variants and `|` binders): refusals stay 140. The two
+# undated refusals left (see `undated=`), two DATED ones came in: a brace construction of a
+# generic sum's record-form variant (274.7 W4) and one in an argument position (274.11 E.10 4d).
 refusals=140
 # ТРЕТЬЕ ЧИСЛО — БЕССРОЧНЫЕ ПО ДВЕРИ (волна 274.7 В11-б, засев 2026-09-14, окно 274).
 #
@@ -514,4 +522,8 @@ refusals=140
 # value, a fn declaration without a name); the ratchet goes down with them.
 # 2026-10-01, Carina window (274.11 E.10 step 4b): undated_by_door 77 -> 76. A generic METHOD
 # declared in the file is instantiated like a generic function; its refusal is gone.
-undated_by_door=76
+# 2026-10-01, Carina window (record-form variants and `|` binders): undated_by_door 76 -> 71.
+# Five doors left with the two refusals (three `|`-binder doors, two record-form doors); the
+# language errors the new doors give -- a field the variant does not declare, a variant of
+# another sum, an ambiguous bare name -- go through the LANGUAGE door.
+undated_by_door=71

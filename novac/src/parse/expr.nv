@@ -317,6 +317,17 @@ fn Cursor mut @primary() -> Node {
             kids.push(@take())
             @call_args(kids)
             e = @node(NodeKind.MethodCall, kids)
+        } else if @peek() == TokenKind.LBrace && !@no_ctor && is_qualified_ctor_head(kids) {
+            // A QUALIFIED record-form variant construction, `Node.Branch { id,
+            // kind, children }` (D486's `qual-head`, the pattern's own head):
+            // the head is ONE Name of three leaves -- sum, dot, variant -- so
+            // every reader that asks a constructor for its head Name meets one,
+            // and `ctor_head_variant` (sem) reads the sum and the variant from
+            // it. Gated exactly as the bare `Point {` form is: `@no_ctor`
+            // keeps `if a.b {` a condition and a block.
+            mut ck = []Node.of(@node(NodeKind.Name, []Node.of(only_child(kids[0]), kids[1], kids[2])), @take())
+            @ctor_fields(ck)
+            e = @node(NodeKind.RecordCtor, ck)
         } else {
             e = @node(NodeKind.FieldAccess, kids)
         }
@@ -582,6 +593,24 @@ fn Cursor mut @record_pattern(mut kids []Node) -> Node {
     }
     @push_expected(kids, TokenKind.RBrace)
     @node(NodeKind.Pattern, kids)
+}
+
+/// Is `recv . name` the head of a qualified construction -- a bare name, a dot
+/// and an identifier? Anything deeper (`a.b.C {`) is no head the language has.
+fn is_qualified_ctor_head(kids []Node) -> bool {
+    if kids.len() < 3 { return false }
+    if kids[0].kind_of() != NodeKind.Name { return false }
+    if !only_child(kids[0]).is_ident() { return false }
+    kids[2].is_ident()
+}
+
+/// The one child of a single-child branch (a bare `Name`), or the node itself
+/// when it is not one -- which `is_ident` then answers no for.
+fn only_child(n Node) -> Node {
+    match n {
+        Leaf(_) => n
+        Branch { children, .. } => if children.len() == 1 { children[0] } else { n }
+    }
 }
 
 /// Constructor field list after the opening brace: `name: expr`, punning

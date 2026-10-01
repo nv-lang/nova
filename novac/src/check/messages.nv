@@ -158,11 +158,6 @@ const PRINTLN_ARG_FORM_MSG = "outside the subset: this form is not compiled in a
 /// arguments. A payload-less one is a value and compiles to its maker.
 const VARIANT_VALUE_NEEDS_ARGS_MSG = "outside the subset: this variant carries a payload -- construct it with arguments, `Name(...)`"
 
-/// The disjunction judge's answer (the pattern-alternatives wave): a `|`
-/// pattern names variants only -- a binder would have to agree across every
-/// alternative in both name and payload type, and no carrier needs that.
-const DISJ_BINDER_MSG = "outside the subset: a `|` pattern takes `_` binders only -- name the value in a separate arm"
-
 /// The if-let judges' two answers (if-let wave). The subset takes exactly
 /// the shape its carriers write: `Some` and an Option-instance initializer.
 /// A `match` arm whose pattern is a STRING or CHAR literal (registry 1190).
@@ -332,9 +327,10 @@ fn typed_local_msg(name str, declared bool) -> str {
 /// nothing is lost; compiling it means emitting a format call.
 const INTERP_MSG = "outside the subset: only a bare name is compiled inside an interpolation yet (E2-b3) -- chains, calls and operators arrive with I2"
 
-/// `| Circle { radius f64 }` -- a record-form variant. D54 (#719) rules on how
-/// it may be destructured; the form itself arrives with records in sums.
-const RECORD_VARIANT_MSG = "outside the subset: a record-form variant is not compiled yet"
+/// `Circle(r)` for `| Circle { radius int }`: a record-form variant destructured
+/// by POSITION. D54 makes the brace form normative; the oracle's
+/// E_RECORD_VARIANT_POSITIONAL_PATTERN (registry 719) is the same refusal.
+const RECORD_VARIANT_POSITIONAL_MSG = "this variant is declared in RECORD form and is destructured by position -- write its fields by name, `Circle { radius }` (D54; the oracle's E_RECORD_VARIANT_POSITIONAL_PATTERN, registry 719)"
 
 /// `import a.b.{X}` and `use a.b.c`. The parser reads both spellings; the
 /// subset compiles ONE module, so there is nothing for an import to name yet.

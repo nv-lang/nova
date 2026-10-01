@@ -69,6 +69,7 @@ fn chain_head(variant_names NameTable, vname str) -> int => variant_names.find(v
 /// registered is skipped, as it always was.
 fn register_sum_variants(c Node, mut types []TypeDef, mut defs DefTable,
                          mut variant_rows []VariantDef, mut payload_types []TyId,
+                         mut payload_names []str,
                          mut variant_names NameTable, mut tys Interner) -> () {
     ro skids = branch_children(c)
     if skids.len() < 2 { return }
@@ -134,6 +135,24 @@ fn register_sum_variants(c Node, mut types []TypeDef, mut defs DefTable,
         // payload type names sit between '(' and ')'
         for j in name_at + 1..vk.len() {
             ro pj = vk[j]
+            // A RECORD-FORM variant's field (`| Branch { id NodeId }`, read by
+            // the parser as a `Field` node): a payload with a NAME, typed by
+            // the one reference door a record field takes. The payload stays
+            // POSITIONAL in the layout -- the field's place is its index -- so
+            // the sum's emission is the paren form's exactly; only the
+            // construction and the pattern ask for the name.
+            if pj.kind_of() == NodeKind.Field {
+                ro fk = branch_children(pj)
+                ro fnat = field_name_at(fk) ?? -1
+                ro ftat = field_type_at(fk) ?? -1
+                if fnat < 0 || ftat < 0 { continue }
+                ro ft = ty_of_type_ref(fk, ftat, no_ty(), tps, prow, types, defs, tys)
+                if !is_ty(ft) { continue }
+                payload_types.push(ft)
+                payload_names.push(leaf_text(fk[fnat]))
+                pcnt += 1
+                continue
+            }
             if pj.kind_of() != NodeKind.LeafNode { continue }
             if leaf_kind(pj) != TokenKind.Ident { continue }
             // A payload names a declared type OR one of the sum's own type
@@ -142,6 +161,8 @@ fn register_sum_variants(c Node, mut types []TypeDef, mut defs DefTable,
             ro pt = ty_of_type_name(leaf_text(pj), tps, prow, types, defs)
             if !is_ty(pt) { continue }
             payload_types.push(pt)
+            // A positional payload has no name: `""` keeps the two tables in step.
+            payload_names.push("")
             pcnt += 1
         }
         // THE SAME-NAME CHAIN (B6, #964): the table holds the head, a new row of
@@ -216,6 +237,10 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     mut variant_rows = []VariantDef.new()
     mut variant_names = NameTable.new(NamespaceId.NsVariants)
     mut payload_types = []TyId.new()
+    // A payload's FIELD NAME, one row per `payload_types` row (`""` for a
+    // positional payload): what a record-form variant's construction and
+    // pattern address it by.
+    mut payload_names = []str.new()
     // THE GATES: protocol names written in `#impl(...)`, flattened into one
     // vector and addressed per declaration by (off, cnt) -- the same shape
     // `payload_types` uses for variant payloads.
@@ -244,7 +269,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     for d in decls {
         for c in file_decls(d) {
             if c.kind_of() != NodeKind.SumDecl { continue }
-            register_sum_variants(c, types, defs, variant_rows, payload_types, variant_names, tys)
+            register_sum_variants(c, types, defs, variant_rows, payload_types, payload_names, variant_names, tys)
         }
     }
     // THE HANDED NEWTYPES' TERMS, before the file's own pass 2 reads a field or a
@@ -538,7 +563,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
             // ONE door for the file's own sums and the handed ones (the loop
             // after `harvest_types` above): the variants of a sum are
             // registered by `register_sum_variants`, whichever side declared it.
-            register_sum_variants(c, types, defs, variant_rows, payload_types, variant_names, tys)
+            register_sum_variants(c, types, defs, variant_rows, payload_types, payload_names, variant_names, tys)
         } else if k == NodeKind.FnDecl {
             ro fk = branch_children(c)
             if fk.len() < 2 { continue }
@@ -683,7 +708,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // Setting it anywhere else would make the invariant depend on call order.
     mut own = fns
     own.seal_own()
-    Ctx { types, foreign_types_cnt, tys, prims, defs, fields, variant_rows, variant_names, payload_types, gates,
+    Ctx { types, foreign_types_cnt, tys, prims, defs, fields, variant_rows, variant_names, payload_types, payload_names, gates,
           fn_decl_rows, fns: own,
           module_c: module_path_c(file), builtin_names, coerces, protos, effects: fx, consts,
           interop: InteropTable.new(), handed: HandedBodies.new() }

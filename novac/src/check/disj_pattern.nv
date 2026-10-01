@@ -1,0 +1,185 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `rustc_resolve::late` -- `check_consistent_bindings` (E0408:
+// a name bound in one alternative and not in another; E0409/E0308: the same
+// name with another binding mode or type) judges an or-pattern by the SET of
+// names each alternative introduces, before any alternative is typed against
+// the others; NOT taken: rustc's per-binding-mode check, because Nova has no
+// `ref` and a binder's mode word is judged by the one binder door.
+// Role: layer 4 -- the checker's judgment of a DISJUNCTION pattern (`A(x) |
+//   B(x)`, D486 s2): every alternative binds the same names, of the same
+//   types, and each alternative is a variant of the matched sum.
+// Used by: check/match_arms.nv -- `@bind_pattern`, on the `Disj` shape.
+// Guarded by: novac/fixtures/or_pattern_binder (pos byte-for-byte with the
+//   oracle, neg pinned), check-novac-match-exhaustive.py.
+//
+// A FILE OF ITS OWN because match_arms.nv sits near the thousand-line limit,
+// and the seam is by meaning: the rest of that file binds ONE pattern against
+// ONE type; this door binds SEVERAL alternatives against one type and then
+// asks whether they agree, which is a question of its own.
+
+module novac.check
+
+import ../tree.{Node}
+import ../sem.{pattern_shape, pattern_head_text, pattern_subpatterns}
+import ../sem.{pattern_fields, patfield_name, patfield_sub}
+import ../sem.{pattern_name_node, patfield_name_node}
+import ../sem.{ParamMode}
+import ../types.{TyId, no_ty, is_ty}
+
+/// One name an alternative of a disjunction binds, with the node the checker
+/// records its type on -- the type is read back from the channel, never kept
+/// a second time here.
+type DisjBinder value {
+    name str /// the binder's spelling, as the author wrote it
+    node Node /// the Name node the binder's type is recorded on
+}
+
+/// A DISJUNCTION binds what EVERY alternative binds (D486 s2): `A(x) | B(x)`
+/// binds `x` when both alternatives bind it with one type. Judged in three
+/// steps, and the order is the oracle's: the NAMES first (a language error,
+/// E_OR_PATTERN_BINDING_MISMATCH), then the alternative's FORM (what the
+/// subset compiles: a variant of the matched sum), then each alternative is
+/// bound by the one recursive binder and the TYPES are compared.
+fn Checker mut @bind_disj_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode, pos PatPos) -> bool {
+    ro alts = pattern_subpatterns(pat)
+    // SILENT-OK: a disjunction without alternatives is a recovery gap the
+    // parser already reported; it binds nothing.
+    if alts.len() == 0 { return false }
+    mut first = []DisjBinder.new()
+    @collect_disj_binders(alts[0], first)
+    for i in 1..alts.len() {
+        mut other = []DisjBinder.new()
+        @collect_disj_binders(alts[i], other)
+        if !same_binder_names(first, other) {
+            @reject_first_leaf_of(ak, OR_BINDER_NAMES_MSG)
+            return false
+        }
+    }
+    if !is_ty(ty) {
+        // SILENT-OK: a POISONED scrutinee has no sum to judge the heads
+        // against -- its refusal was said where it was typed (the cascade
+        // rule of `@bind_variant_pattern`); the caller binds every name
+        // with no type, so the arm's body says nothing more either.
+        return false
+    }
+    for sub in alts {
+        if !@disj_alt_form_ok(sub, ty, ak) { return false }
+    }
+    mut ok = true
+    for sub in alts {
+        if !@bind_pattern(sub, ty, ak, dmode, pos) { ok = false } else { // The alternative bound; its types are compared below.
+        }
+    }
+    if !ok { return false }
+    for i in 1..alts.len() {
+        mut other = []DisjBinder.new()
+        @collect_disj_binders(alts[i], other)
+        if !@same_binder_types(first, other) {
+            @reject_first_leaf_of(ak, OR_BINDER_TYPES_MSG)
+            return false
+        }
+    }
+    true
+}
+
+/// The FORM of one alternative: a variant of the matched sum, which is the
+/// test the lowering builds (`tag == head || tag == also...`). Any other form
+/// asks for a general or-test and is refused by name; a variant of ANOTHER
+/// sum is the arm's own refusal, the text the single-head arm gives.
+fn Checker mut @disj_alt_form_ok(sub Node, ty TyId, ak []Node) -> bool {
+    match pattern_shape(sub) {
+        Lit | Wild | Tuple | Array | Disj | Record => {
+            @report_first_leaf_of(ak, DISJ_ALT_MSG)
+            false
+        }
+        Bind => {
+            match @name_in_pattern(pattern_head_text(sub), ty) {
+                NameOwnVariant(_) => true
+                NameForeignVariant(_) => {
+                    @reject_first_leaf_of(ak, WRONG_SUM_ARM_MSG)
+                    false
+                }
+                NameBinder => {
+                    // A binder alternative matches everything: the or-test it
+                    // asks for is the general one, not a tag comparison.
+                    @report_first_leaf_of(ak, DISJ_ALT_MSG)
+                    false
+                }
+            }
+        }
+        // The head is judged by the binder itself (`@bind_variant_pattern`),
+        // with the same texts a single-head arm gets.
+        Variant => true
+    }
+}
+
+/// The names one alternative BINDS, in written order, with their nodes. A bare
+/// name that is a variant of some sum binds nothing (the names door, registry
+/// 1380); a nested disjunction binds what its first alternative binds -- its own
+/// agreement is judged when the binder reaches it.
+fn Checker @collect_disj_binders(pat Node, mut out []DisjBinder) -> () {
+    match pattern_shape(pat) {
+        Lit | Wild => {}
+        Bind => {
+            ro nm = pattern_head_text(pat)
+            match @name_in_pattern(nm, no_ty()) {
+                NameBinder => out.push(DisjBinder { name: nm, node: pattern_name_node(pat) })
+                NameOwnVariant(_) | NameForeignVariant(_) => {}
+            }
+        }
+        Variant | Tuple | Array => {
+            for sub in pattern_subpatterns(pat) {
+                @collect_disj_binders(sub, out)
+            }
+        }
+        Disj => {
+            ro subs = pattern_subpatterns(pat)
+            if subs.len() > 0 { @collect_disj_binders(subs[0], out) } else { // A recovery gap binds nothing.
+            }
+        }
+        Record => {
+            for f in pattern_fields(pat) {
+                match patfield_sub(f) {
+                    Some(sub) => @collect_disj_binders(sub, out)
+                    None => out.push(DisjBinder { name: patfield_name(f), node: patfield_name_node(f) })
+                }
+            }
+        }
+    }
+}
+
+/// Do two alternatives bind the same SET of names? Order is not part of it:
+/// `P(a, b) | Q(b, a)` binds the same two names.
+fn same_binder_names(a []DisjBinder, b []DisjBinder) -> bool {
+    if a.len() != b.len() { return false }
+    for x in a {
+        mut found = false
+        for y in b {
+            found = found || y.name == x.name
+        }
+        if !found { return false }
+    }
+    true
+}
+
+/// Does every name carry the same type in both alternatives? Read from the
+/// channel, where the binder door recorded it; a name with no recorded type
+/// was refused where it was bound, and is not compared a second time.
+fn Checker @same_binder_types(a []DisjBinder, b []DisjBinder) -> bool {
+    for x in a {
+        ro xt = @chan.type_if_known(x.node.id_of())
+        for y in b {
+            if y.name != x.name { continue }
+            ro yt = @chan.type_if_known(y.node.id_of())
+            if is_ty(xt) && is_ty(yt) && xt != yt { return false }
+        }
+    }
+    true
+}
+
+/// Names differ between alternatives: the oracle's E_OR_PATTERN_BINDING_MISMATCH.
+const OR_BINDER_NAMES_MSG = "every alternative of a `|` pattern must bind the same names -- a name one alternative binds and another does not would be unset in the arm (E_OR_PATTERN_BINDING_MISMATCH, registry 1009); bind the same names in each, or split the arms"
+
+/// A name of every alternative with a different type in one of them (registry
+/// 1009's second half; the oracle checks the names only).
+const OR_BINDER_TYPES_MSG = "a name every alternative of a `|` pattern binds must have one type in all of them -- the arm reads it as one variable (E_OR_PATTERN_BINDING_MISMATCH, registry 1009); split the arms"

@@ -23,7 +23,8 @@ import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
 import ../sem.{leaf_kind}
 import ../diag.{ice}
-import ../sem.{c_type, c_instance_method, raw_vrow, is_value_record}
+import ../sem.{c_type, c_instance_method, raw_vrow, is_value_record, c_maker, VariantRow, ctor_field_name}
+import ../sem.{CalleeTarget}
 // M3a: lowering `println` asks the tree three questions (is this an argument, what does the
 // callee spell, what are the children) and the output printer asks the carrier of a type.
 import ../sem.{branch_children, is_expr_kind, carrier_of}
@@ -344,6 +345,17 @@ fn Emitter mut @emit_store_src(st StoreStmt) -> () {
 fn Emitter mut @build_value(e Node, ty TyId) -> Option[str] {
     ro k = e.kind_of()
     if k == NodeKind.RecordCtor {
+        // A record-form VARIANT's construction (`Branch { id, kind }`): the
+        // checker recorded it as a variant callee, and its value is the
+        // variant's maker -- not a record struct.
+        if @out.has_callee(e.id_of()) {
+            match @out.callee_of(e.id_of()).target {
+                CalleeVariant(v) => return Some(@emit_variant_ctor(e, v, ty))
+                CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => {}
+            }
+        } else {
+            // No callee: a record's construction, built below.
+        }
         return Some(@emit_record_ctor(e, ty, false))
     }
     if k == NodeKind.TupleExpr {
@@ -361,3 +373,52 @@ fn Emitter mut @build_value(e Node, ty TyId) -> Option[str] {
     None
 }
 
+/// A RECORD-FORM VARIANT built by brace (`Node.Branch { id, kind, children }`):
+/// every written field is evaluated into its own temporary IN WRITTEN ORDER --
+/// the order the author sees, which a C argument list would not keep -- and the
+/// variant's maker is then called with them in DECLARATION order, the slot
+/// binding the checker recorded saying which written field fills which payload
+/// position. The maker is the one the call form `Branch(i, k, c)` uses, so the
+/// value is the same either way.
+fn Emitter mut @emit_variant_ctor(e Node, v VariantRow, ty TyId) -> str {
+    ro vr = @ctx.variant_rows[raw_vrow(v)]
+    ro slots = @out.slots_of_ref(@out.callee_of(e.id_of()))
+    mut vals = []str.new()
+    for c in branch_children(e) {
+        if c.kind_of() != NodeKind.CtorField { continue }
+        // The payload position this written field fills: the slot whose
+        // argument it is.
+        mut at = -1
+        for j in 0..slots.len() {
+            if slots[j].arg_row == vals.len() { at = j } else { // Another field's position.
+            }
+        }
+        if at < 0 { ice("emit: a record-form variant field the checker bound to no payload position") }
+        ro fk = branch_children(c)
+        ro tmp = "_novac_tmp_t${@fresh_uniq()}"
+        if fk.len() > 1 { @hoist_array_lits(fk[2]) } else { // Punning hoists nothing.
+        }
+        @body.append("    ${c_type(@ctx, @ctx.payload_types[vr.payload_off + at])} ${tmp} = ")
+        if fk.len() > 1 {
+            @emit_expr(fk[2])
+        } else {
+            match fk[0] {
+                // Punning `{ id }` stores the local of that name.
+                Leaf(_) => @body.append(ctor_field_name(c))
+                // Receiver punning `{ @id }`: the SelfField, printed as any `@id`.
+                Branch { .. } => @emit_expr(fk[0])
+            }
+        }
+        @body.append(";\n")
+        vals.push(tmp)
+    }
+    ro out = "_novac_tmp_t${@fresh_uniq()}"
+    @body.append("    ${c_type(@ctx, ty)} ${out} = ${c_maker(@ctx, v)}(")
+    for j in 0..slots.len() {
+        if j > 0 { @body.append(", ") } else { // The first argument has no separator.
+        }
+        @body.append(vals[slots[j].arg_row])
+    }
+    @body.append(");\n")
+    out
+}

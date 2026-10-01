@@ -1,0 +1,179 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `mir_build::matches` -- an or-pattern's bindings are ONE set of
+// locals, written by whichever alternative matched (`bind_matched_candidate`
+// over the alternative's own sub-candidates); NOT taken: rustc's candidate
+// tree, because the subset's alternatives are variant heads of one sum and a
+// second Switch over the same scrutinee states the same decision directly.
+// Role: layer 8 (lower) -- what a DISJUNCTION with binders (`A(x) | B(x)`,
+//   D486 s2) binds: the names are declared once, zeroed, and a Switch over the
+//   scrutinee lets the alternative that holds write them from its own payload.
+// Used by: lower_match.nv -- `@lower_pattern_bind_in`, the Disj arm, and the
+//   sub-pattern doors that ask `@sub_bind_shape`.
+// Guarded by: novac/fixtures/or_pattern_binder (byte-for-byte with the oracle).
+//
+// A FILE OF ITS OWN because lowering.nv sits at the thousand-line limit and the
+// question here is narrow: which locals an alternative writes, and how.
+
+module novac.lower
+
+import ../tree.{Node}
+import ../types.{TyId, is_ty}
+import ../sem.{pattern_shape, pattern_head_text, pattern_subpatterns}
+import ../sem.{pattern_fields, patfield_sub, patfield_name, pattern_name_node, patfield_name_node}
+import ../sem.{payload_named, VariantRow}
+import ../diag.{ice}
+
+/// How a sub-pattern standing in a payload, a component or an element binds.
+/// Asked once, so the three doors that read a piece out of a base agree.
+type SubBind enum
+    | SubNone /// nothing to read: `_`, a literal, or a disjunction binding no name
+    | SubName /// a plain name: the piece is read straight into the binder
+    | SubNested /// a structured pattern: the piece goes to a temporary, then the recursion
+
+/// The binding shape of one sub-pattern. A disjunction is NESTED only when it
+/// binds a name: one that binds none has nothing to read, exactly as before
+/// the disjunction learned binders.
+fn Lowerer @sub_bind_shape(sub Node) -> SubBind {
+    match pattern_shape(sub) {
+        Wild | Lit => SubBind.SubNone
+        Bind => SubBind.SubName
+        Variant | Record | Tuple | Array => SubBind.SubNested
+        Disj => {
+            mut names = []str.new()
+            mut tys = []TyId.new()
+            @disj_binders(sub, names, tys)
+            if names.len() > 0 { SubBind.SubNested } else { SubBind.SubNone }
+        }
+    }
+}
+
+/// A disjunction's binders: declared ONCE above the alternatives (unless an
+/// enclosing disjunction already did -- `pre`), then a Switch over `base` in
+/// which each alternative binds through the same recursion with every name
+/// already declared. The checker proved the names and their types agree
+/// across alternatives (check/disj_pattern.nv), so the first alternative's
+/// nodes name them all.
+fn Lowerer mut @lower_disj_bind(pat Node, ty TyId, base Local, pre []str) -> () {
+    ro alts = pattern_subpatterns(pat)
+    if alts.len() == 0 { return }
+    mut names = []str.new()
+    mut tys = []TyId.new()
+    @disj_binders(alts[0], names, tys)
+    if names.len() == 0 { return }
+    for i in 0..names.len() {
+        if !contains_name(pre, names[i]) {
+            @ir.declare_zeroed(@ir.named(tys[i], names[i]))
+        } else {
+            // An enclosing disjunction declared it; this one only writes it.
+        }
+    }
+    mut all = []str.new()
+    all.append(pre)
+    all.append(names)
+    ro c = @ir.begin_switch(base)
+    for alt in alts {
+        @ir.begin_arm(c, @pattern_of(alt, ty), None)
+        @lower_pattern_bind_in(alt, ty, base, all)
+        @ir.end_arm(c)
+    }
+    @ir.end_switch(c)
+}
+
+/// The names a pattern BINDS, with their types, in written order. A binder is
+/// a name the checker recorded a type on -- a payload-less variant head is not
+/// recorded, and so is not a binder: the channel decides, nothing re-derives.
+fn Lowerer @disj_binders(pat Node, mut names []str, mut tys []TyId) -> () {
+    match pattern_shape(pat) {
+        Lit | Wild => {}
+        Bind => {
+            ro t = @out.type_if_known(pattern_name_node(pat).id_of())
+            if is_ty(t) {
+                names.push(pattern_head_text(pat))
+                tys.push(t)
+            } else {
+                // A variant head: it binds nothing.
+            }
+        }
+        Variant | Tuple | Array => {
+            for sub in pattern_subpatterns(pat) {
+                @disj_binders(sub, names, tys)
+            }
+        }
+        Disj => {
+            ro subs = pattern_subpatterns(pat)
+            if subs.len() > 0 { @disj_binders(subs[0], names, tys) } else { // A recovery gap binds nothing.
+            }
+        }
+        Record => {
+            for f in pattern_fields(pat) {
+                match patfield_sub(f) {
+                    Some(sub) => @disj_binders(sub, names, tys)
+                    None => {
+                        names.push(patfield_name(f))
+                        tys.push(@out.type_of(patfield_name_node(f).id_of()))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The local a binder writes: the one a disjunction declared above (`pre`
+/// names it), or a fresh binding declared by its first assignment.
+fn Lowerer mut @binder_local(t TyId, nm str, pre []str) -> Local {
+    if contains_name(pre, nm) { return @ir.named_declared(t, nm) }
+    @ir.named(t, nm)
+}
+
+/// A binding of the author's name whose declaration is ALREADY printed -- by a
+/// disjunction's `declare_zeroed` above it -- so its assignments are bare: the
+/// same C variable, written by the alternative that held.
+fn FnBuilder mut @named_declared(ty TyId, name str) -> Local {
+    ro l = @named(ty, name)
+    ro d = @locals[raw_local(l)]
+    @locals[raw_local(l)] = LocalDecl { ty: d.ty, kind: d.kind, name: d.name, decl_at: DeclAt.Zeroed }
+    l
+}
+
+/// Is the name among those already declared? A handful of names of one
+/// pattern -- the same bound the binder scans under, not a registry lookup.
+fn contains_name(names []str, nm str) -> bool {
+    for n in names {
+        if n == nm { return true }
+    }
+    false
+}
+
+/// A RECORD-FORM VARIANT's fields (`Branch { id, kind: k, .. }`): each field
+/// reads the payload POSITION its name resolves to -- the one door the checker
+/// asked (`payload_named`) -- straight into its binder, or into a temporary
+/// the sub-pattern then binds from. Here and not in lower_match.nv, which sits
+/// at its size limit; the payload read is the variant arm's own `take_field`.
+fn Lowerer mut @lower_variant_record_bind(pat Node, vrow VariantRow, base Local, pre []str) -> () {
+    for f in pattern_fields(pat) {
+        ro at = payload_named(@ctx, vrow, patfield_name(f))
+        // The checker refused an unknown field before lowering could see it.
+        if at < 0 { ice("lower: a record-form variant pattern names a field the variant does not declare") }
+        ro ft = @out.type_of(f.id_of())
+        match patfield_sub(f) {
+            Some(sub) => {
+                match @sub_bind_shape(sub) {
+                    SubNone => {}
+                    SubName => {
+                        ro lb = @binder_local(@out.type_of(pattern_name_node(sub).id_of()), pattern_head_text(sub), pre)
+                        @ir.take_field(lb, base, vrow, at)
+                    }
+                    SubNested => {
+                        ro t = @ir.temp(ft)
+                        @ir.take_field(t, base, vrow, at)
+                        @lower_pattern_bind_in(sub, ft, t, pre)
+                    }
+                }
+            }
+            None => {
+                ro l = @binder_local(@out.type_of(patfield_name_node(f).id_of()), patfield_name(f), pre)
+                @ir.take_field(l, base, vrow, at)
+            }
+        }
+    }
+}

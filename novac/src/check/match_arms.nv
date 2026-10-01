@@ -34,7 +34,7 @@ import ../sem.{pattern_name_node, patfield_name_node, rest_is_trailing}
 import ../sem.{shape_of, field_range_of, no_frow}
 import ../builtins.{SLICE_HEAD}
 // The payload of an APPLIED sum, with the application's arguments put in.
-import ../sem.{payload_as_seen}
+import ../sem.{payload_as_seen, variant_is_record}
 import ../sem.{branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, raw_vrow, no_vrow}
 import ../sem.{is_vrow, variant_range_of, variant_in_sum, variants_named, VariantRow}
 import ../types.{TyId, no_ty, is_ty}
@@ -181,6 +181,11 @@ fn Checker mut @type_match(m Node) -> () {
         first_t = @fold_arm_type(c, scr_t, first_t, before_arms)
     }
     if @out.len() > before_arms { return }
+    // The agreed type is RECORDED here, where every arm was typed with its
+    // binders in scope; `type_of` reads it back instead of re-asking an arm
+    // body whose binders are gone.
+    if Some(t) = first_t { @record(m, t) } else { // No arm yields a value: nothing to record.
+    }
     @report_if_not_exhaustive(kids, scr_t)
 }
 
@@ -300,7 +305,7 @@ fn Checker mut @bind_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode, pos 
         Record => @bind_record_pattern(pat, ty, ak, dmode, pos)
         Tuple => @bind_tuple_pattern(pat, ty, ak, dmode, pos)
         Array => @bind_array_pattern(pat, ty, ak, dmode, pos)
-        Disj => @bind_disj_pattern(pat, ty, ak)
+        Disj => @bind_disj_pattern(pat, ty, ak, dmode, pos)
     }
 }
 
@@ -418,6 +423,16 @@ fn Checker mut @bind_variant_pattern(pat Node, ty TyId, ak []Node, dmode ParamMo
     }
     ro vr = @ctx.variant_rows[raw_vrow(vrow)]
     ro subs = pattern_subpatterns(pat)
+    // A RECORD-FORM variant read POSITIONALLY (`Circle(r)` of `| Circle {
+    // radius int }`): D54 makes the brace form normative, and the oracle refuses
+    // it by name (E_RECORD_VARIANT_POSITIONAL_PATTERN, registry 719). `Circle(..)`
+    // names no position and stays legal, as it does there.
+    if subs.len() > 0 && variant_is_record(@ctx, vrow) {
+        @reject_first_leaf_of(ak, RECORD_VARIANT_POSITIONAL_MSG)
+        return false
+    } else {
+        // A positional variant, or no position named: the rules below.
+    }
     // `..` IN A PAYLOAD STANDS ALONE (D486 §2, registry 1382): the constructor
     // pattern lists its positions, and `Cons(..)` is D59's one partial form.
     // `Pr(.., z)` bound z to the FIRST payload.
@@ -486,16 +501,20 @@ fn Checker mut @bind_tuple_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode
 }
 
 /// A RECORD pattern. A head (`Circle { radius }`) names a record-form
-/// VARIANT, which the subset does not compile at all yet -- the same refusal
-/// as at the declaration. Head-less, the pattern reads the scrutinee itself,
+/// VARIANT, or the record's own type: that judgment is
+/// `@bind_headed_record_pattern` (record_variant.nv), which comes back here
+/// for the record's own name. Head-less, the pattern reads the scrutinee itself,
 /// and the judgment is the destructuring binding's own (D411/D486): every
 /// named field must exist, a partial list needs `..`, a renamed or nested
 /// field binds its subpattern against the field's type.
 fn Checker mut @bind_record_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode, pos PatPos) -> bool {
-    if pattern_head_text(pat) != "" {
-        @report_first_leaf_of(ak, RECORD_VARIANT_MSG)
-        return false
-    }
+    if pattern_head_text(pat) != "" { return @bind_headed_record_pattern(pat, ty, ak, dmode, pos) }
+    @bind_record_fields(pat, ty, ak, dmode, pos)
+}
+
+/// The FIELDS of a record pattern against a record type -- the head-less form,
+/// and the head that names the record itself (`Point { x, y }`).
+fn Checker mut @bind_record_fields(pat Node, ty TyId, ak []Node, dmode ParamMode, pos PatPos) -> bool {
     ro named_form = match shape_of(@ctx, ty) {
         Record | ValueRecord | NamedTuple | AnonNamedTuple => true
         PositionalTuple | AnonPositionalTuple => false
@@ -527,27 +546,7 @@ fn Checker mut @bind_record_pattern(pat Node, ty TyId, ak []Node, dmode ParamMod
                 }
             }
             None => {
-                // The `ro`-word refusal, the bind_name_pattern twin (wave P3).
-                mut ro_word = false
-                match pattern_mode_word(f) {
-                    Some(k) => {
-                        if k == TokenKind.KwRo {
-                            @reject_first_leaf_of(ak, RO_WORD_PATTERN_MSG)
-                            ro_word = true
-                            ok = false
-                        } else { // `mut`/`consume` are mapped by the door below.
-                        }
-                    }
-                    None => {}
-                }
-                if !ro_word {
-                    ro mode = match pattern_mode_word(f) {
-                        Some(k) => if k == TokenKind.KwMut { ParamMode.ModeMut } else { ParamMode.ModeConsume }
-                        None => dmode
-                    }
-                    @record(patfield_name_node(f), ft)
-                    @scope.bind(fname, ft, mode)
-                } else { // Refused above, by name.
+                if !@bind_field_shorthand(f, ft, ak, dmode) { ok = false } else { // Bound under its own name.
                 }
             }
         }
@@ -561,6 +560,30 @@ fn Checker mut @bind_record_pattern(pat Node, ty TyId, ak []Node, dmode ParamMod
         @report_first_leaf_of(ak, destr_needs_rest_msg(named, fr.1))
         return false
     }
+    true
+}
+
+/// A SHORTHAND field (`{ radius }`, `{ mut n }`): the field binds under its own
+/// name, in the mode its word gives or the position's default. False when the
+/// `ro` word was refused. One door for the record and the record-form variant.
+fn Checker mut @bind_field_shorthand(f Node, ft TyId, ak []Node, dmode ParamMode) -> bool {
+    // The `ro`-word refusal, the bind_name_pattern twin (wave P3).
+    match pattern_mode_word(f) {
+        Some(k) => {
+            if k == TokenKind.KwRo {
+                @reject_first_leaf_of(ak, RO_WORD_PATTERN_MSG)
+                return false
+            } else { // `mut`/`consume` are mapped by the door below.
+            }
+        }
+        None => {}
+    }
+    ro mode = match pattern_mode_word(f) {
+        Some(k) => if k == TokenKind.KwMut { ParamMode.ModeMut } else { ParamMode.ModeConsume }
+        None => dmode
+    }
+    @record(patfield_name_node(f), ft)
+    @scope.bind(patfield_name(f), ft, mode)
     true
 }
 
@@ -619,51 +642,6 @@ fn Checker mut @bind_array_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode
         return false
     }
     ok
-}
-
-/// A DISJUNCTION binds NOTHING: two alternatives would have to agree on the
-/// binder's name AND payload type, and no carrier needs that. Every
-/// alternative must be a variant of the matched sum, a literal, or `_`; any
-/// other name refuses by name, exactly as the flat walk refused it.
-fn Checker mut @bind_disj_pattern(pat Node, ty TyId, ak []Node) -> bool {
-    for sub in pattern_subpatterns(pat) {
-        match pattern_shape(sub) {
-            Lit | Wild => {
-                // A literal or wildcard ALTERNATIVE asks for an or-test the
-                // lowering does not build -- and a `_` arm would silently
-                // swallow the alternatives beside it. Refused BY NAME rather
-                // than compiled half-way (the flat walk's behavior was to
-                // ignore them, which is the #652 class).
-                @report_first_leaf_of(ak, DISJ_ALT_MSG)
-                return false
-            }
-            Bind | Variant | Record => {
-                ro nm = pattern_head_text(sub)
-                if nm == "_" { continue }
-                if !is_vrow(variant_in_sum(@ctx, ty, nm) ?? no_vrow()) {
-                    @report_first_leaf_of(ak, DISJ_BINDER_MSG)
-                    return false
-                }
-                // The head IS a variant of this sum -- but a disjunction binds
-                // NOTHING, so its payload may hold `_` only: `A(x) | B(x)`
-                // would need both alternatives to agree on `x`.
-                if pattern_shape(sub) == PatShape.Variant {
-                    for psub in pattern_subpatterns(sub) {
-                        if pattern_shape(psub) != PatShape.Wild {
-                            @report_first_leaf_of(ak, DISJ_BINDER_MSG)
-                            return false
-                        }
-                    }
-                } else { // A bare-name alternative carries no payload to judge.
-                }
-            }
-            Tuple | Array | Disj => {
-                @report_first_leaf_of(ak, DISJ_BINDER_MSG)
-                return false
-            }
-        }
-    }
-    true
 }
 
 /// A match arm's Block body, typed for its VALUE when the tail places one --
@@ -867,7 +845,7 @@ const AMBIGUOUS_VARIANT_MSG = "this variant name is declared by more than one su
 /// refused as non-exhaustive -- the wrong cause. Refused HERE, at the arm; the
 /// exhaustiveness rule then says nothing (one cause, one diagnostic).
 const ARRAY_REST_BIND_MSG = "outside the subset: a `..rest` binding in an array pattern needs the shell's slice view wired -- the length test and prefix/suffix elements compile today (E2-b, with the slice view)"
-const DISJ_ALT_MSG = "outside the subset: a `|` pattern takes variant alternatives only -- a literal or `_` alternative is not compiled yet (E2-b, with literal matching)"
+const DISJ_ALT_MSG = "outside the subset: a `|` pattern takes variant alternatives only -- a literal, `_`, binder, tuple, array or nested `|` alternative is not compiled yet (E2-b, with the general or-test)"
 const VARIANT_PATTERN_MSG = "a pattern with a payload names no variant of the matched sum -- a plain binder pattern takes no payload"
 const PAYLOAD_ARITY_MSG = "the pattern's payload count disagrees with the variant's declaration -- match every payload field, or mark the rest with `..` (D59)"
 const TUPLE_PATTERN_MSG = "a tuple pattern needs a positional tuple scrutinee -- a named form is destructured by name, with braces (D486)"

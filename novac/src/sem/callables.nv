@@ -26,11 +26,11 @@
 
 module novac.sem
 
-import ../tree.{Node}
+import ../tree.{Node, NodeKind}
 import ../diag.{ice}
 import ../names.{NameTable, NamespaceId}
 // A variant belongs to a DECLARATION, not to a type id (the applied-sum fix).
-import ../names.{DeclId, is_decl, no_decl}
+import ../names.{DeclId, is_decl, no_decl, raw_decl}
 import ../builtins.{ENTRY_FN, TypeKind}
 import ../types.{TyId, no_ty, is_ty, Interner}
 
@@ -360,6 +360,46 @@ export fn payload_as_seen(ctx Ctx, scr_t TyId, pt TyId) -> TyId {
         args.push(ctx.tys.arg(scr_t, i))
     }
     subst_type(ctx, pt, args)
+}
+
+/// The PAYLOAD INDEX a record-form variant gives a field NAME (`id` of
+/// `| Branch { id NodeId, kind NodeKind }` is 0), or -1 when the variant
+/// declares no such field -- a positional variant declares none. The ONE door
+/// the checker and the lowering ask, so the place a pattern reads and the
+/// place a construction writes cannot disagree; the layout is positional.
+export fn payload_named(ctx Ctx, vrow VariantRow, name str) -> int {
+    ro vr = ctx.variant_rows[raw_vrow(vrow)]
+    for i in 0..vr.payload_cnt {
+        if ctx.payload_names[vr.payload_off + i] == name { return i }
+    }
+    -1
+}
+
+/// The VARIANT a constructor's head names (`Branch { .. }`, `Node.Branch { .. }`),
+/// or None when the head is a record type's name -- or names nothing, which the
+/// undeclared-type door judges. The qualified head is ONE Name of three leaves
+/// (the parser's shape, parse/expr.nv): the sum, the dot, the variant. A bare
+/// name is a variant only when no TYPE carries it and exactly one sum declares
+/// it; two sums make it ambiguous, which the checker refuses by name.
+export fn ctor_head_variant(ctx Ctx, head Node) -> Option[VariantRow] {
+    if head.kind_of() != NodeKind.Name { return None }
+    ro hk = branch_children(head)
+    if hk.len() == 3 {
+        ro sd = ctx.defs.type_decl(leaf_text(hk[0])) ?? no_decl()
+        if !is_decl(sd) { return None }
+        return variant_in_sum(ctx, ctx.types[raw_decl(sd)].ty_id, leaf_text(hk[2]))
+    }
+    ro name = leaf_text(hk[0])
+    if ctx.defs.type_decl(name).is_some() { return None }
+    ro (v, n) = variants_named(ctx, name)
+    if n == 1 { Some(v) } else { None }
+}
+
+/// Does the variant declare NAMED payloads (`| Branch { id NodeId }`)? A
+/// variant with no payload declares none, and neither does the paren form.
+export fn variant_is_record(ctx Ctx, vrow VariantRow) -> bool {
+    ro vr = ctx.variant_rows[raw_vrow(vrow)]
+    vr.payload_cnt > 0 && ctx.payload_names[vr.payload_off] != ""
 }
 
 /// THE DECLARATION a sum term names, for `Option[int]` as much as for `Option`
