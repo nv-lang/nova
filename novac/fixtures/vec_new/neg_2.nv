@@ -1,0 +1,13 @@
+module vec_new.neg_2
+
+// `[]T.new(cap)` -- the constructor WITH an argument (registry 221.1 #1457).
+// The oracle takes it (`Vec[T].new(cap int = 0)`), novac takes only the empty
+// call: its emitter sizes a vector by the element count it builds, and a
+// written capacity has nowhere to go yet. Refused by name, not as "not the
+// literal form" and not as an empty literal.
+
+// NOVAC_EXPECT takes no arguments here
+
+fn main() {
+    ro xs = []int.new(4)
+}
