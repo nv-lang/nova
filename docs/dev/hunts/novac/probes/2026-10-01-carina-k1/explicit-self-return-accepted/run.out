@@ -1,0 +1,25 @@
+=== PACKAGE
+./src/main.nv
+=== ORACLE: nova build src/main.nv, run
+oracle build rc=1
+[1m[31merror:[0m[0m <tmp>/pkg/src/main.nv:7:5: error: [E_EXPLICIT_SELF_RETURN] метод `tail` объявлен `-> @`: возврат приёмника автоматический (D409, амендмент владельца 2026-07-06) — явный `@`/`return @` запрещён. Уберите его: голый `return` (в ветке) или просто ничего не пишите (в конце тела).
+<tmp>/pkg/src/main.nv:12:5: error: [E_EXPLICIT_SELF_RETURN] метод `ret` объявлен `-> @`: возврат приёмника автоматический (D409, амендмент владельца 2026-07-06) — явный `@`/`return @` запрещён. Уберите его: голый `return` (в ветке) или просто ничего не пишите (в конце тела).
+<tmp>/pkg/src/main.nv:15:25: error: [E_EXPLICIT_SELF_RETURN] метод `arrow` объявлен `-> @`: возврат приёмника автоматический (D409, амендмент владельца 2026-07-06) — явный `@`/`return @` запрещён. Уберите его: голый `return` (в ветке) или просто ничего не пишите (в конце тела).
+=== SUBJECT: novac check (no NOVAC_SELF_PATH: single file)
+novac check rc=0
+=== SUBJECT: novac emit
+novac emit rc=0
+--- C lines matching: novac_fn_.*(tail|ret|arrow)
+11955:static Nova_Ctr* novac_fn_tail__m_Ctr__to_Ctr(Nova_Ctr* _novac_self) {
+11960:static Nova_Ctr* novac_fn_ret__m_Ctr__to_Ctr(Nova_Ctr* _novac_self) {
+11965:static Nova_Ctr* novac_fn_arrow__Ctr__to_Ctr(Nova_Ctr* _novac_self) {
+11973:    nova_print_int((novac_fn_tail__m_Ctr__to_Ctr(c)->n));
+11975:    nova_print_int((novac_fn_ret__m_Ctr__to_Ctr(c)->n));
+11977:    nova_print_int((novac_fn_arrow__Ctr__to_Ctr(c)->n));
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+1
+2
+2
