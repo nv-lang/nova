@@ -85,7 +85,7 @@ fn Checker mut @note_if_capture(e Node, name str) -> () {
 /// known about it here, and the ordinary doors answer.
 fn Checker @is_poisoned_module_value(name str) -> bool {
     if @substs.len() > 0 { return false }
-    ro row = match @ctx.defs.const_row(name) {
+    ro row = match @const_seen(name) {
         None => return false
         Some(r) => r
     }
@@ -514,7 +514,7 @@ fn Checker mut @type_expr(e Node) -> () {
                     // the name itself (274.4 rule E).
                     // I1 boundary first: an INTERPOLATED initializer would be
                     // substituted where no hoist ran -- refused by name.
-                    match @ctx.defs.const_row(t.text) {
+                    match @const_seen(t.text) {
                         Some(row) => {
                             if const_init_interpolates(@ctx, row) {
                                 @refuse(t, INTERP_CONST_MSG)
@@ -945,7 +945,9 @@ fn Checker @field_visible(owner TyId, name str) -> bool {
             home == "#${@ctx.handed.tree_of(@inst_row)}"
     } else {
         // The file's own body: its module, in the C shape `Ctx.module_c` keeps;
-        // a file-private field of a handed file is never the file's.
-        return home.replace(".", "_") == @ctx.module_c
+        // a file-private field of a handed file is never the file's, and
+        // neither is one whose module reads "" -- std's `#prelude` files --
+        // even when the file has no module line either (D281, #1521).
+        return home != "" && home.replace(".", "_") == @ctx.module_c
     }
 }

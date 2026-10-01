@@ -50,8 +50,9 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
     // values cannot all be listed, so only an unguarded `_` or binder arm
     // covers it (syntax.ru.md:1317, "for `int`, `str` a `_` wildcard is
     // needed"). E_MATCH_NON_EXHAUSTIVE as on a sum -- the integrator's
-    // reading of the spec 2026-09-30; the oracle lets it through (registry
-    // 1415), and a novac value would be the uninitialised temporary above.
+    // reading of the spec 2026-09-30; the oracle answers the same code since
+    // registry 1415 (measured 2026-10-01 on `int`, `str` and `char`), and a
+    // novac value would be the uninitialised temporary above.
     ro open = @is_open_scalar(scr_t)
     // `bool` is a CLOSED set of two cases (the spec names it beside sums):
     // covered by `true` and `false`, or a catch-all. Its heads parse as

@@ -80,9 +80,15 @@ export type FnIndex priv {
     next []FnRow /// parallel to FnTable.rows: next row carrying the SAME name, `no_row()` at the end
     imp_segs []str /// #1493: per import, the last segment of the module path it names
     imp NameTable /// #1493: imported name -> its index in `imp_segs` (D29 forbids two imports of one name)
-    vis_on bool /// #1493: whether `@sees` judges at all -- false for an index built without the file's imports
-    own_c str /// #1493: the file's own module in C spelling (`Ctx.module_c`), whose rows need no import
+    vis_on bool /// #1493: whether `@sees_row` judges at all -- false for an index built without the asker's imports
+    asker str /// #1521: the module the ASKING body was written in (dotted; `PRELUDE_ASKER` for a std body with no module line) -- the file's own, or a handed body's when an instance is typed
+    file_mod str /// #1521: the COMPILED file's module (dotted, "" when it declares none): the home of the rows the file declares itself
 }
+
+/// The asker of a std body read from a file with no module line (std's
+/// `#prelude` files): a name no module path can equal, so the compiled file's
+/// own rows -- whose module may be "" too -- are never such a body's neighbours.
+export const PRELUDE_ASKER = "#prelude"
 
 /// Build the index over these rows: an empty FnIndex, then one registering
 /// pass. Visibility is NOT judged by an index built this way (`@sees` answers
@@ -98,7 +104,7 @@ fn index_of(fns FnTable) -> FnIndex {
     mut im = []str.new()
     mut ix = FnIndex {
         heads: NameTable.new(NamespaceId.NsCallables), imp: NameTable.new(NamespaceId.NsCallables),
-        next: nx, imp_segs: im, vis_on: false, own_c: "",
+        next: nx, imp_segs: im, vis_on: false, asker: "", file_mod: "",
     }
     ix.fill(fns)
     ix
@@ -113,10 +119,16 @@ fn index_of(fns FnTable) -> FnIndex {
 /// (check/calls.nv `import_parts`): each imported name and the last segment of
 /// the module it came from. The names are indexed in a NameTable, so the `@sees`
 /// door asks the table and never scans names nor builds a key (P18).
-export fn FnIndex.build_for(fns FnTable, names []str, segs []str, own_c str) -> FnIndex {
+///
+/// WHO ASKS is a parameter (registry 221.1 #1521): the compiled file asks from
+/// its own module, and an instance of a handed body asks from the module the
+/// body was WRITTEN in, with that body's file's imports -- so `helper()` in
+/// `hp.geo`'s `Vec[T] @tag` names `hp.geo`'s helper, not the caller's.
+export fn FnIndex.build_for(fns FnTable, names []str, segs []str, asker str, file_mod str) -> FnIndex {
     mut ix = index_of(fns)
     ix.vis_on = true
-    ix.own_c = own_c
+    ix.asker = asker
+    ix.file_mod = file_mod
     ix.imp_segs = segs
     ix.index_imports(names)
     ix
@@ -129,27 +141,95 @@ fn FnIndex mut @index_imports(names []str) -> () {
     }
 }
 
-/// May this file call the row of `name` declared in module `handed_from`?
+/// May the ASKING body call free-function row `row`?
 ///
-/// D29 (07-modules.md): the file's OWN rows and those of its module (`handed_from`
-/// empty, or the file's own module) need no import -- folder peers share a
-/// namespace; the PRELUDE is in scope by definition (07-modules.md, "Prelude --
-/// without import"), and its rows come from the `prelude.*` modules; everything
-/// else is visible only when the file imported that name from that module. The
+/// D29 (07-modules.md): the rows of the asker's own module need no import --
+/// folder peers share a namespace; the PRELUDE is in scope by definition
+/// (07-modules.md, "Prelude -- without import"), and its rows come from the
+/// `prelude.*` modules or from a std file with no module line (std's `#prelude`
+/// files); everything else is visible only when the asker's file imported that
+/// name from that module. A row the compiled file declares lives in the FILE's
+/// module (#1521): an instance of another module's body does not see it. The
 /// module is matched by its LAST segment -- a NAMED SIMPLIFICATION (274.11 E.10):
 /// an import is written relative (`../geo`) or absolute (`std.encoding.utf16`),
 /// while a handed row carries the module's own dotted name (`hp.geo`,
 /// `encoding.utf16`); the last segment is what both spellings agree on, and two
 /// modules sharing it are not told apart until import paths resolve to modules.
 #realtime nogc
-export fn FnIndex @sees(handed_from str, name str) -> bool {
-    if !@vis_on || handed_from == "" { return true }
-    if same_module_c(handed_from, @own_c) { return true }
-    if handed_from == "prelude" || handed_from.starts_with("prelude.") { return true }
+export fn FnIndex @sees_row(fns FnTable, row FnRow) -> bool =>
+    @sees_decl(fns.compiles_body(row), fns.rows[raw_row(row)].handed_from, fns.rows[raw_row(row)].name)
+
+/// THE VIEW, for any declaration and not only a callable (#1521): may the
+/// asker name `name`, declared by the compiled file itself (`own`) or by a
+/// handed file of module `handed_from`? The constant door asks it with a
+/// `DefTable` row (`Checker @const_seen`), the callable doors with a `FnRow`.
+#realtime nogc
+export fn FnIndex @sees_decl(own bool, handed_from str, name str) -> bool {
+    if !@vis_on { return true }
+    // A handed declaration with no module: std's prelude files, in scope everywhere.
+    if !own && handed_from == "" { return true }
+    ro home = if own { @file_mod } else { handed_from }
+    if home == @asker { return true }
+    if home == "prelude" || home.starts_with("prelude.") { return true }
     ro i = @imp.find(name)
     if i < 0 { return false }
-    @imp_segs[i] == handed_from[seg_start(handed_from)..]
+    @imp_segs[i] == home[seg_start(home)..]
 }
+
+/// Is `row` declared in the ASKER's own module (#1521)? D125: a name of the
+/// asker's module shadows the same name brought in from anywhere else, so when
+/// such a row exists the others are not candidates at all.
+#realtime nogc
+fn FnIndex @is_home(fns FnTable, row FnRow) -> bool =>
+    @decl_is_home(fns.compiles_body(row), fns.rows[raw_row(row)].handed_from)
+
+/// The same question for any declaration: `own` -- the compiled file's own;
+/// else handed from module `handed_from` ("" = std's prelude files, nobody's home).
+#realtime nogc
+export fn FnIndex @decl_is_home(own bool, handed_from str) -> bool {
+    if !own && handed_from == "" { return false }
+    ro home = if own { @file_mod } else { handed_from }
+    home == @asker
+}
+
+/// Which free rows of `name` the asker may NAME at all (#1521, D29 + D125): 2 --
+/// only its own module's (one exists, and it shadows the rest); 1 -- the
+/// visible ones; 0 -- no visible row, so no filter: the call then reaches
+/// `@record_free_callee`, whose D29 refusal names the module the row is in.
+#realtime nogc
+fn FnIndex @free_view(fns FnTable, name str) -> int {
+    if !@vis_on { return 0 }
+    mut view = 0
+    mut r = @heads.find(name)
+    while r >= 0 {
+        ro row = FnRow(r)
+        r = raw_row(@next[r])
+        ro fd = fns.rows[raw_row(row)]
+        if fd.has_recv || is_ty(fd.owner) { continue }
+        if @is_home(fns, row) { return 2 }
+        if @sees_row(fns, row) {
+            view = 1
+        } else {
+            // Invisible from here: it neither shadows nor widens the view.
+        }
+    }
+    view
+}
+
+/// May a FREE call of the asker reach `row` under the view of its name?
+#realtime nogc
+fn FnIndex @in_view(fns FnTable, row FnRow, view int) -> bool {
+    if view == 0 { return true }
+    if view == 2 { return @is_home(fns, row) }
+    @sees_row(fns, row)
+}
+
+/// The same question for a caller walking the chain itself (`first_row_of` /
+/// `next_row_of`, the coercing stage of D429): is `row` a candidate of a free
+/// call of its name, from this asker?
+#realtime nogc
+export fn FnIndex @free_candidate(fns FnTable, row FnRow) -> bool =>
+    @in_view(fns, row, @free_view(fns, fns.rows[raw_row(row)].name))
 
 /// The byte index where the last segment of a dotted module name starts.
 #realtime nogc
@@ -160,17 +240,6 @@ fn seg_start(dotted str) -> int {
         i -= 1
     }
     0
-}
-
-/// Is the dotted module name `dotted` the C-spelled module `c` (`hp.geo` ~ `hp_geo`)?
-#realtime nogc
-fn same_module_c(dotted str, c str) -> bool {
-    if dotted.byte_len() != c.byte_len() { return false }
-    for i in 0..c.byte_len() {
-        ro d = dotted[i..i + 1]
-        if d != c[i..i + 1] && !(d == "." && c[i..i + 1] == "_") { return false }
-    }
-    true
 }
 
 /// Register every row -- the same chain `FnTable.add` grew in place before
@@ -525,10 +594,18 @@ export fn FnIndex @lookup(fns FnTable, tys Interner, name str, args []ArgSpec, f
     // second walk re-runs `fits` over the whole chain, and paying that on every
     // call to settle a set that almost never occurs is the wrong trade.
     mut met_incomparable = false
+    // THE ASKER'S VIEW (#1521): a free call names only what its body can see,
+    // and its own module's rows shadow the rest (D125). A method is reached
+    // through its receiver, not a scope, and is not filtered.
+    ro view = match form {
+        FreeCall => @free_view(fns, name)
+        MethodCall => 0
+    }
     mut r = @heads.find(name)
     while r >= 0 {
         ro row = FnRow(r)
         r = raw_row(@next[r])
+        if !@in_view(fns, row, view) { continue }
         if !fits(fns, tys, row, args, form) { continue }
         if raw_row(first) < 0 {
             first = row
@@ -567,6 +644,7 @@ export fn FnIndex @lookup(fns FnTable, tys Interner, name str, args []ArgSpec, f
     while v >= 0 {
         ro row = FnRow(v)
         v = raw_row(@next[v])
+        if !@in_view(fns, row, view) { continue }
         if !fits(fns, tys, row, args, form) { continue }
         if row == winner { continue }
         if !dominates(fns, winner, row) {

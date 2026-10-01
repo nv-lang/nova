@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_PATTERN_LITERAL_TYPE
+// Regression for registry 221.1 #1535: a literal pattern has the scrutinee's type --
+// `char`, integers, floats, `bool` and `str` do not mix in a pattern, as in an
+// expression (D128, D405; the integrator's ruling 2026-10-01). Before: refused only
+// by clang, or accepted and matched by the code point. Positive half:
+// spec_tests/conformance/standalone/p1535_pattern_literal_type_ok.nv.
+module neg.p1535_intlit_over_char_neg
+
+fn main() Io -> () {
+    ro c = 'a'
+    match c {
+    // nova:expect E_PATTERN_LITERAL_TYPE -- an integer literal over a `char` scrutinee (D128)
+        97 => println("1")
+        _ => println("0")
+    }
+}

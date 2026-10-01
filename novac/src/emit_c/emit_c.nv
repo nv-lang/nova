@@ -80,7 +80,7 @@ import ../builtins.{PRINT_FN, bool_c_literal, RECV_C_NAME, LITERAL_PUSH, EMPTY_C
 import ../builtins.{OPTION_SOME_TAG_C}
 import ../types.{TyId, is_ty, raw_ty}
 import ../types.{no_ty}
-import ../lower.{FnBuilder, Lowerer, Local, Cond}
+import ../lower.{FnBuilder, Lowerer, Local, Cond, no_local}
 
 /// No type arguments: the ONE spelling of "this instance substitutes nothing",
 /// so the day substitutions arrive there is one place to stop passing it.
@@ -606,7 +606,13 @@ fn Emitter mut @emit_record_ctor(init Node, vtype TyId, positional bool) -> str 
                 // Punning carries a name, and a name hoists nothing.
             }
             @body.append("    ${tmp}${arrow}${fname} = ")
-            if fk.len() > 1 {
+            // A value block the lowering laid down first (`unsafe { .. }`, an
+            // `if`, a `??` -- `@hoist_sealed_args`, registry 1557) is read from
+            // its local, as an argument is.
+            ro hl = if fk.len() > 1 { @lo.ir.local_of_node(fk[2].id_of()) } else { no_local() }
+            if hl != no_local() {
+                @body.append(@lo.ir.decl_of(hl).name)
+            } else if fk.len() > 1 {
                 @emit_expr(fk[2])
             } else {
                 match fk[0] {

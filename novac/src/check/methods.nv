@@ -28,7 +28,7 @@ import ../names.{raw_decl}
 import ../resolve.{FnLookup}
 import ../sem.{LitArg, branch_children, ArgSpec, ArgClass, CallForm, FnRow, CalleeTarget, raw_row, no_row, bind_slots}
 import ../sem.{is_expr_kind}
-import ../sem.{c_method_symbol, impl_of_proto, ty_source_name, decl_of_ty, shell_method_symbol}
+import ../sem.{c_method_symbol, c_overload_symbol, impl_of_proto, ty_source_name, decl_of_ty}
 import ../sem.{row_recv_by_pointer}
 import ../sem.{option_payload}
 import ../sem.{expr_leaf_name, type_admits}
@@ -250,7 +250,9 @@ fn Checker mut @judge_method_lookup(e Node, t Token, key []ArgSpec, found FnLook
                 // of novac and false of the program: the shell links the body.
                 // INTEROP, with the same end condition as the instance path.
                 ro mfd = @ctx.fns.rows[raw_row(row)]
-                ro sym = shell_method_symbol(@ctx, row, key[0].type_id)
+                // THE OVERLOAD, not the name (registry 1558): `sb.append(1)` is
+                // `..._append__nova_int`, not the `str` overload's bare name.
+                ro sym = c_overload_symbol(@ctx, row, key[0].type_id, []TyId.new())
                 if @ctx.interop.has(sym) {
                     @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new(),
                         bind_slots(@ctx.fns.params, mfd.param_off, mfd.param_cnt, key))
@@ -298,7 +300,8 @@ fn Checker mut @record_instance_method(e Node, t Token, row FnRow, key []ArgSpec
     // So is a HANDED generic method whose instance the shell lacks and whose
     // body novac was handed (E.10 step 4c, `Ctx @instantiates`): `Vec[Pt] @len`.
     ro own = @ctx.fns.compiles_body(row) || @ctx.instantiates(row, ids)
-    ro sym = c_method_symbol(@ctx, key[0].type_id, t.text)
+    // The OVERLOAD this call picked, not its name (registry 1524).
+    ro sym = c_overload_symbol(@ctx, row, key[0].type_id, ids)
     if !own && !@ctx.interop.has(sym) {
         // THE ADVICE IS TRUE FOR A HANDED TYPE AND IMPOSSIBLE FOR THIS FILE'S
         // OWN, so it is given only where it can be followed. "The method

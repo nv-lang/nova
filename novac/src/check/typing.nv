@@ -269,6 +269,16 @@ fn Checker mut @type_fn(f Node) -> () {
     // operations need no block of their own (std's `RawMem.copy_n_nonoverlapping`).
     @unsafe_depth = if decl_is_unsafe(kids) { 1 } else { 0 }
     @ret_ro = @ctx.fns.rows[raw_row(row)].ret_ro
+    // WHAT `Self` NAMES HERE (D66, registry 1557): the receiver's type, or the
+    // owner's for a static method -- concrete under an instance's substitution.
+    ro sfd = @ctx.fns.rows[raw_row(row)]
+    @self_ty = if sfd.has_recv && sfd.param_cnt > 0 {
+        @concrete(@ctx.fns.params[sfd.param_off].type_id)
+    } else if is_ty(sfd.owner) {
+        @concrete(sfd.owner)
+    } else {
+        no_ty()
+    }
     // The ROW decides, not the spelling: an overload of `main` binds its
     // parameters like any other callable. Until 2026-08-22 this read
     // `name != ENTRY_FN`, so the overload's parameters were never bound and its
@@ -689,6 +699,9 @@ fn Checker mut @type_stmt(st Node) -> () {
         // is not assignable"). Typed BEFORE the right operand is recorded, so
         // the target's type can decide it (below).
         @type_expr(kids[0])
+        if @out.len() > before { return }
+        // An ELEMENT target writes through its own overload (registry 1524).
+        @judge_index_store(kids[0])
         if @out.len() > before { return }
         // THE TARGET'S ROW DECIDES A COMPOUND ASSIGNMENT (274.7 B7, #932): the
         // door in assign_rules.nv answers the type the operation runs in, or

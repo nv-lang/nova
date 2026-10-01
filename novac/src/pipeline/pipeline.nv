@@ -190,6 +190,13 @@ fn last_sep(path str) -> int {
     last
 }
 
+/// The path's last segment: what the oracle prints as the FILE of a contract
+/// panic (`p.nv:4:`), and the only part of a path the emitted binary should
+/// carry (#874). Moved here from main.nv (#1521): the handed body's path now
+/// reaches the pipeline whole -- its refusals name it -- and its contracts
+/// still print the base name, so the cut is asked in two places, through one door.
+export fn path_base(path str) -> str => path[last_sep(path) + 1..]
+
 /// The two separators, prefixed like everything else this file declares.
 ///
 /// FOURTH COLLISION OF ONE NIGHT, and the prefix is the whole defence: a
@@ -610,8 +617,22 @@ fn instances_of(tree Node, src SourceText, ctx Ctx, mut reach Reach, decls []Nod
             ro it = reach.instances()[k]
             match decl_of_row(tree, ctx, it.row) {
                 Some(decl) => {
-                    ro (idiags, ichan) = check_instance(decl, src, ctx, it.row, reach.subst_of(it), cap)
+                    ro (idiags, ichan) = check_instance(decl, src, ctx, it.row, reach.subst_of(it), cap,
+                                                        tree, module_dotted(tree))
                     diags.append(idiags)
+                    // What THIS instance calls is known under ITS substitution
+                    // only (registry 1522): `xs.is_empty()` in `empty[T]` is
+                    // `Vec[int] @is_empty` in `empty[int]`, an instance the unit
+                    // makes when the shell lacks it -- and the emitter names it
+                    // from this very channel (`Ctx @body_ours`). The file's
+                    // walk saw the body once, under the abstract `T`, where no
+                    // such instance exists; so the set grows here, from the
+                    // concrete channel, through the door a handed body takes.
+                    if idiags.len() == 0 {
+                        ro _ = reach.grow(decl, ctx, ichan)
+                    } else {
+                        // SILENT-OK: the body's refusals are the verdict; its callees are not walked.
+                    }
                     insts.push(Instantiation { decl, row: it.row, subst: reach.subst_of(it),
                                                ptypes: reach.ptypes_of(it), ret_id: it.ret_id, chan: ichan,
                                                src_name: "" })
@@ -635,13 +656,18 @@ fn instances_of(tree Node, src SourceText, ctx Ctx, mut reach Reach, decls []Nod
                     ro hname = ctx.interop.decl_name(t)
                     ro hsrc = SourceText { text: htext }
                     ro hcap = raw_node(htree.id_of()) + 1
-                    ro (idiags, ichan) = check_instance(decl, hsrc, ctx, it.row, reach.subst_of(it), hcap)
-                    // A refusal INSIDE a handed body is about std's text, not
-                    // the unit's: its span would point into the wrong file, so
-                    // it is spoken at the unit's start and NAMES its place.
+                    // The body's OWN file and module decide its names (#1521).
+                    ro (idiags, ichan) = check_instance(decl, hsrc, ctx, it.row, reach.subst_of(it), hcap,
+                                                        htree, module_dotted(tree))
+                    // A refusal INSIDE a handed body is about the text the body
+                    // was written in, not the unit's: its span is an offset into
+                    // THAT file, and the diagnostic names it (#1521) -- as the
+                    // oracle does (`geo.nv:5:9`). Until #1521 it was printed
+                    // against the compiled file at 0..0, the body's file only in
+                    // the message.
                     for d in idiags {
-                        diags.push(Diagnostic { code: d.code, severity: d.severity, lo: 0, hi: 0,
-                                                message: "in the instance of `${ctx.fns.rows[raw_row(it.row)].name}` (${hname}:${line_at(htext, d.lo)}): ${d.message}" })
+                        diags.push(Diagnostic { code: d.code, severity: d.severity, lo: d.lo, hi: d.hi, file: hname,
+                                                message: "in the instance of `${ctx.fns.rows[raw_row(it.row)].name}`: ${d.message}" })
                     }
                     if idiags.len() == 0 {
                         ro _ = reach.grow(decl, ctx, ichan)
@@ -650,7 +676,7 @@ fn instances_of(tree Node, src SourceText, ctx Ctx, mut reach Reach, decls []Nod
                     }
                     insts.push(Instantiation { decl, row: it.row, subst: reach.subst_of(it),
                                                ptypes: reach.ptypes_of(it), ret_id: it.ret_id, chan: ichan,
-                                               src_name: hname })
+                                               src_name: path_base(hname) })
                 }
             }
         }
@@ -687,14 +713,3 @@ export fn compile_to_c_with(text str, decls []Node, interop InteropTable,
     // decisions and cannot ask for a new one (E2-b1).
     (diags, emit(tree, ctx, chan, reach, insts, src_name: src_name))
 }
-
-/// The 1-based line of byte offset `off` in `text`.
-fn line_at(text str, off int) -> int {
-    mut line = 1
-    ro b = text.bytes()
-    for i in 0..off {
-        line += if i < b.len() && b[i] == UNIT_LF { 1 } else { 0 }
-    }
-    line
-}
-

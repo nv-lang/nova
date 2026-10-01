@@ -24,7 +24,7 @@ import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
-import ../builtins.{VEC_INDEX_METHOD, VEC_LEN_METHOD, EMPTY_CTOR}
+import ../builtins.{VEC_INDEX_METHOD, VEC_INDEX_SET_OP, VEC_LEN_METHOD, EMPTY_CTOR, vec_op_method, vec_op_is_overload}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
 import ../sem.{shape_of}
@@ -33,7 +33,7 @@ import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, 
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of}
-import ../sem.{c_instance_ctor, c_method_symbol}
+import ../sem.{c_instance_ctor, c_method_symbol, c_overload_symbol}
 import ../sem.{ty_source_name, variants_named, slice_shape_of, ctor_head_variant}
 import ../types.{TyId, no_ty, is_ty}
 
@@ -818,11 +818,35 @@ const BOOL_PATTERN_TYPE_MSG = "a `true` / `false` pattern matches a `bool` value
 const BOOL_NOT_EXHAUSTIVE_MSG = "a `match` on `bool` must cover both `true` and `false` (or have a `_` arm) -- the spec's exhaustiveness check covers sums and bool (syntax.ru.md, E_MATCH_NON_EXHAUSTIVE)"
 
 /// A match on an open scalar with no catch-all arm (`@report_if_not_exhaustive`).
-const OPEN_NOT_EXHAUSTIVE_MSG = "a `match` on a type whose values cannot all be listed (`int`, `str`, ...) needs a `_` arm -- without one a value no arm covers has no result (syntax.ru.md exhaustiveness, E_MATCH_NON_EXHAUSTIVE; the oracle lets it through, registry 1415)"
+/// Measured 2026-10-01: the oracle refuses `int`, `str` and `char` matches without
+/// a catch-all with the same code -- the text used to say it let them through.
+const OPEN_NOT_EXHAUSTIVE_MSG = "a `match` on a type whose values cannot all be listed (`int`, `str`, ...) needs a `_` arm -- without one a value no arm covers has no result (syntax.ru.md exhaustiveness, E_MATCH_NON_EXHAUSTIVE, the oracle's own code and verdict since registry 1415)"
 
 /// One text for the rule: the reader must not guess whether two wordings
 /// mean two limits.
 const ARMS_DISAGREE_MSG = "outside the subset: match arms produce different types (no arm coercion before E2-b3)"
+
+/// `xs[i] = v` and `xs[i] op= v` WRITE through the overload
+/// `mut @index(i int, val T)` -- std's own doc says it "Powers `v[i] = val`"
+/// -- so the store is judged by THAT overload, not by the read `index(i)` the
+/// target was typed through (registry 1524: until 2026-10-01 the write was
+/// printed as the read's call on the left of `=`, and clang refused it --
+/// "expression is not assignable" -- after check had said yes). Carried by the
+/// shell under its own spelling, made from std's body, or refused by name.
+/// A slice target is not judged here: its refusal is the slice door's.
+fn Checker mut @judge_index_store(target Node) -> () {
+    if target.kind_of() != NodeKind.Index { return }
+    ro kids = branch_children(target)
+    if kids.len() < 3 || slice_shape_of(kids[2]).is_some() { return }
+    ro recv_t = @chan.type_if_known(kids[0].id_of())
+    // SILENT-OK: the read door refused the receiver already, by name.
+    if !is_ty(recv_t) { return }
+    if !@vec_op_carried(recv_t, VEC_INDEX_SET_OP) {
+        @report_first_leaf_of(kids, no_shell_method_msg("${VEC_INDEX_METHOD}(i, v)", ty_source_name(@ctx, recv_t)))
+    } else {
+        // Carried or made: the emitter prints the write through `sem.vec_op_c`.
+    }
+}
 
 /// May the language call vector operation `name` over `vec_t` IMPLICITLY -- a
 /// literal's constructor and push, `xs[i]`, a `for`'s len and index? Yes when
@@ -831,19 +855,42 @@ const ARMS_DISAGREE_MSG = "outside the subset: match arms produce different type
 /// node holds a call for mono to find. The emitter spells the call through
 /// `sem.vec_op_c`, which asks the same two questions in the same order.
 fn Checker mut @vec_op_carried(vec_t TyId, name str) -> bool {
-    ro shell = if name == EMPTY_CTOR { c_instance_ctor(@ctx, vec_t) } else { c_method_symbol(@ctx, vec_t, name) }
-    if @ctx.interop.has(shell) { return true }
-    // THE ROW, through the callable index's chain of this name -- one O(1)
-    // head and the same-name rows after it, never a scan of the registry.
+    // THE ROW FIRST, through the callable index's chain of the method's name --
+    // one O(1) head and the same-name rows after it, never a scan of the
+    // registry. First because the shell is asked about THE OVERLOAD the
+    // operation calls, not about its name (registry 1524: `xs[i] = v` and
+    // `xs[i]` are two overloads of `index`).
     mut row = no_row()
-    mut r = @res.first_row_of(name)
+    mut r = @res.first_row_of(vec_op_method(name))
     while raw_row(r) >= 0 {
         row = if @ctx.is_vec_op_shape(r, name) { r } else { row }
         r = @res.next_row_of(r)
     }
+    ro args = []TyId.of(@ctx.tys.arg(vec_t, 0))
+    // An operation that is an OVERLOAD of another name (the write `index=`) has
+    // no by-name spelling: the bare name is the OTHER overload's, and asking it
+    // answered "carried" for the read (registry 1524). No row, nothing to ask.
+    if raw_row(row) < 0 && vec_op_is_overload(name) { return false }
+    ro shell = if name == EMPTY_CTOR {
+        c_instance_ctor(@ctx, vec_t)
+    } else if raw_row(row) >= 0 {
+        c_overload_symbol(@ctx, row, vec_t, args)
+    } else {
+        c_method_symbol(@ctx, vec_t, vec_op_method(name))
+    }
+    if @ctx.interop.has(shell) {
+        // The emitter spells the overload from the same row (`sem.vec_op_c`).
+        if raw_row(row) >= 0 {
+            @chan.record_vec_op(name, row)
+        } else {
+            // SILENT-OK: no std row of this shape -- the shell's by-name spelling stands.
+        }
+        return true
+    } else {
+        // Not carried: made from std's body, or refused.
+    }
     // SILENT-OK: std declares no such operation -- the caller refuses by the shell's name.
     if raw_row(row) < 0 { return false }
-    ro args = []TyId.of(@ctx.tys.arg(vec_t, 0))
     if !@ctx.instantiates(row, args) { return false }
     @intern_instance_sig(row, args)
     @chan.record_wanted(row, args)

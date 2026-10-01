@@ -243,6 +243,10 @@
 # ("new") -- the empty-vector constructor's name; check/binds.nv judges `[]T.new()` by it, and
 # builtin names live in builtins (the same home as LITERAL_CTOR). The #1457 merge itself missed the raise.
 # 2026-10-01, Carina window (274.11 E.10 steps 4c-2/4d): builtins 56 -> 59: `PTR_WRITE_AT`, `PTR_WRITE_CONSUME_AT`, `SIZE_OF_FN` -- the language's own names std's `Vec[T]` bodies use.
+# 2026-10-01, cloud session p274-carina-sweep: builtins 59 -> 60: `ASSERT_FN` ("assert") -- the
+#   prelude's `assert`, an `extern "nova"` intrinsic; check/calls.nv hands the call to its door by
+#   this name, and language names live in builtins (P5).
+# merge of p274-carina-sweep into p274-carina-mono-k2: builtins 64 (mono-k2) + 1 (sweep) = 65.
 # 2026-10-01, cloud session (branch p274-carina-cast, numeric casts of D54): builtins 59 -> 61:
 #   `INT_TYPE_NAME`, `UINT_TYPE_NAME` -- the names of the two address-sized integer rows
 #   (D129/D130). check/cast_pairs.nv singles the pair `int as uint` out (held: D54 takes the
@@ -253,15 +257,9 @@
 #   integrator's word: D54's low bits; the oracle's saturation is registry 1547), so nothing asks.
 # merge of origin/main 0fed40d0d into p274-carina-cast: the branch's net builtins change is
 #   zero (59 -> 61 -> 59), main's is 59 -> 60 -- the merged base is main's 60.
-# 2026-10-01, cloud session p274-carina-sweep: builtins 59 -> 60: `ASSERT_FN` ("assert") -- the
-#   prelude's `assert`, an `extern "nova"` intrinsic; check/calls.nv hands the call to its door by
-#   this name, and language names live in builtins (P5).
-# 2026-10-01, cloud session p274-carina-sweep, merge of origin/main 0fed40d0d: builtins 60 -> 61 --
-#   this branch's ASSERT_FN and main's own +1 (main 59 -> 60) add; the count is the guard's on the merged tree.
-# merge of origin/p274-carina-sweep 54d377cb4 into p274-carina-cast: the cast branch adds
-#   nothing net to builtins (59 -> 61 -> 59, then main's 60); sweep's 61 already holds main's
-#   +1 and its ASSERT_FN -- the merged base is 61.
-builtins 61
+# merge of p274-carina-cast into the merge train (integrator, 2026-10-01): cast's net builtins
+#   change against main is zero, so the train's 66 stands.
+builtins 66
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -357,7 +355,11 @@ lex 11
 #   supervised scope and the spawn hand-off of the lowered body, read by
 #   emit_c (the statements' printers, the spawn's C number).
 # lower 90 -> 91 (E.9 step 4b): FnBuilder.@unbox_any -- the narrowed name's unboxing.
-lower 91
+# lower 91 -> 93 (2026-10-01, cloud session p274-carina-strarm, registries 1534 and
+#   1542): PatTest (the nested subpattern's test, carried by Cond.Holds and printed by
+#   emit_c's pattern-test door) and FnBuilder.@note_arm_checks (how many nested-test
+#   Ifs an arm opened; emit_c finds the innermost through SwitchArm.checks).
+lower 93
 main 0
 # mono -- НОВЫЙ модуль (2026-08-18, Э2-б2): коллектор достижимого.
 # Наружу три имени: тип Reach, вопрос @has (эмиттер спрашивает про каждую
@@ -408,7 +410,7 @@ parse 1
 #
 #   2026-09-20 (окно Карины), sem 238 -> 238: `pattern_head_slot`.
 #   Наружу он нужен потому, что его спрашивают ДВА МОДУЛЯ — `check` и `lower`, —
-#   и ради этого он и заведён (строка реестра 1190). До него каждый отвечал на вопрос
+#   и ради этого он и заведён (строка реестра 1191). До него каждый отвечал на вопрос
 #   «где голова этого образца» сам, оба отвечали ОДИНАКОВО НЕВЕРНО, и именно их
 #   СОГЛАСИЕ делало дефект невидимым для стражей. Общая дверь дороже одного
 #   имени на поверхности ровно на ту цену, в которую обошлось её отсутствие.
@@ -435,10 +437,15 @@ parse 1
 #
 # pipeline 11 -> 12 (2026-10-01, окно Карины, Э.10 шаг 2а): mark_program -- отмечает модули
 #   ПРОГРАММЫ на поверхности линковки; зовёт его main.nv (объявления из NOVAC_SELF_PATH).
-# 2026-10-01, cloud session p274-carina-sweep: pipeline 12 -> 13: `UnitFile` -- the type of the
-#   exported `Unit.files` and of `file_of_offset` / `offset_in_file`; a private type in a public
-#   signature is E_PRIVATE_TYPE_IN_PUBLIC (D47 amendment, owner 2026-10-01). main.nv reads it.
-pipeline 13
+# pipeline 12 -> 13 (2026-10-01, cloud session p274-carina-k1, registry 1521 step a):
+#   `path_base` -- the base name of a path, moved from main.nv: the pipeline now gets a
+#   handed body's whole PATH (its refusals name it) and still prints the base name in the
+#   body's contracts; main.nv asks the same cut for the compiled file. One door, two askers.
+# merge of origin/integ/merge-train-1001 into p274-carina-cast (2026-10-02): the train's base
+#   plus what the sweep branch exported after the train took its earlier version -- pipeline
+#   `UnitFile` and sem's D488 doors (see the sweep chronicle lines on p274-carina-sweep);
+#   the counts are the guard's on the merged tree.
+pipeline 14
 # 2026-08-28 (274.4 step 3): the field root gets the same cut. sem 171 -> 169:
 # has_field and field_type moved OUT to resolve (FieldIndex); resolve 11 -> 15:
 # FieldIndex, build, has_field, field_type.
@@ -447,7 +454,13 @@ pipeline 13
 # check (запись через вид, `E_READONLY_CONTENT`), а имена полей резолвятся ТОЛЬКО
 # через FieldIndex (274.4 step 3) -- у check нет другой двери к строке поля.
 # 2026-10-01, Carina window (274.11 E.10 steps 4c-2/4d): resolve 18 -> 19 (merged over main's 16 -> 18): `FieldIndex @field_private_to` -- where a handed record's private field is visible from.
-resolve 19
+# 2026-10-01, cloud session p274-carina-k1 (registry 1521, steps b1/b2): resolve 19 -> 23:
+#   `@sees` became `@sees_row` (D29 asked FROM a module); new `@sees_decl` and
+#   `@decl_is_home` (the same view for any declaration -- check's constant door asks them
+#   with a DefTable row), `@free_candidate` (check's D429 coercing walk asks the view) and
+#   `PRELUDE_ASKER` (check_instance's asker for a std body with no module line). All are
+#   asked by check, which owns no index of its own.
+resolve 23
 # sem 54 -> 56 (2026-08-18): наружу вышли ДВЕ двери параметра,
 # param_name_at и param_type_at. Имя и тип параметра больше не берутся
 # индексом pk[0]/pk[1]: индекс сдвигается, как только у параметра
@@ -958,6 +971,9 @@ resolve 19
 #   `is_never_ty` (sem/type_shape.nv) -- is a type the bottom type `never` (D26)? Asked by
 #   check (the tail `if`, the `match` arm, the return): only sem knows the universe row's
 #   family, and a copy of the question in check would be a second door.
+# 2026-10-01, cloud session p274-carina-strarm (registry 1556): sem 324 -> 325 (merged onto main's 324):
+# `pattern_is_interp` -- the pattern position reads an interpolated string, and the
+# checker asks this one door to refuse it by name (a pattern's literal is not interpolated).
 # 2026-10-01, cloud session p274-carina-sweep: sem 322 -> 325: `CheckOut @record_coercion` /
 #   `@coercion_at` (the return door's `#coerce` method on a value, D429 R2 -- written by check,
 #   read by emit_c) and `coerce_shell_symbol` (the shell's C name of a `consume`-receiver pair,
@@ -966,14 +982,17 @@ resolve 19
 #   `shell_method_symbol` -- the shell's C name of a method by its ROW, so a `consume`
 #   receiver gets the shell's `_consume_` spelling; asked by check/methods.nv and
 #   emit_c/emit_expr.nv, and the return door's `coerce_shell_symbol` goes through it.
-# 2026-10-01, cloud session p274-carina-sweep, merge of origin/main 0fed40d0d: sem 326 -> 328 --
-#   main's 322 -> 324 and this branch's 322 -> 326 add; the count is the guard's on the merged tree.
-# 2026-10-01, cloud session p274-carina-sweep (D488): sem 328 -> 331: `RECV_COPY_MAX_BYTES`,
-#   `value_recv_by_pointer`, `row_recv_by_pointer` (sem/value_recv.nv) -- how a `value` record's
-#   receiver crosses a call; asked by check/methods.nv and the emitter's signature, body and call site.
-#   And 331 -> 330: `recv_type_name` (sem/slots_decl.nv) is gone with its one caller, the refusal
-#   of every method on a value record that D488 replaces.
-sem 330
+# merge of p274-carina-sweep into p274-carina-mono-k2: sem 323 (mono-k2) + 4 (sweep) = 327.
+# 2026-10-01, cloud session p274-carina-k1 (registry 1521, step b2): sem 322 -> 327:
+#   `DefTable @first_def` / `@prev_def` / `@def_at` / `@home_at` / `@is_own` -- the
+#   same-named rows of every module, each with its home, walked by check's constant door
+#   (`Checker @const_seen`): a body reads its OWN module's constant, not the caller's.
+# merge of p274-carina-k1 into the merge train (integrator, 2026-10-02): sem 331 (train) + 5 (k1) = 336.
+# merge of origin/integ/merge-train-1001 into p274-carina-cast (2026-10-02): the train's base
+#   plus what the sweep branch exported after the train took its earlier version -- pipeline
+#   `UnitFile` and sem's D488 doors (see the sweep chronicle lines on p274-carina-sweep);
+#   the counts are the guard's on the merged tree.
+sem 338
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
@@ -1168,3 +1187,20 @@ types 30
 #     `c_tag`; спрашивает `emit_c/emit_applied_sum.nv`, а все C-имена живут в двери мэнглинга (П24);
 #   builtins.RESULT_FAMILY_C -- префикс семейства `NovaRes_`, рядом с `OPTION_FAMILY_C`; читает
 #     `sem/mangle_instance.nv`, а имена, которые компилятор обязан знать сам, живут в builtins (П5).
+# sem 324 -> 325 (2026-10-01, облачная сессия p274-carina-appsum, решение интегратора по стражу
+#   mangling-one-way): sem.c_is_pointer -- «передаётся ли тип указателем», спрошенное у ТЕРМА, а не
+#   у написания `c_type`. Спрашивает `emit_c/emit_option.nv` (`@option_payload_is_pointer`, форма
+#   Option без тега), до того читавший `.ends_with("*")` на результате двери мэнглинга (П24).
+#   Его пара `c_in_name` (написание типа внутри имени) наружу не выходит: её спрашивают только
+#   `mangle.nv` и `mangle_instance.nv` того же модуля.
+# builtins 59 -> 61, sem 322 -> 323 (2026-10-01, облачная сессия p274-carina-mono-k2, №1524): шелл
+#   спрашивается о ВЫБРАННОЙ перегрузке, а не об имени. `c_overload_symbol` (sem) -- C-символ
+#   перегрузки; его спрашивают `check/methods.nv`, `check/binds.nv` и `emit_c/emit_expr.nv`, и
+#   вопрос с печатью обязаны идти одной дверью, иначе check и emit назовут разное. `VEC_INDEX_SET_OP`
+#   и `vec_op_method` (builtins) -- ключ неявной операции записи `xs[i] = v` и имя метода, который
+#   она зовёт: их читают `check/binds.nv` и `emit_c/emit_place.nv`, имена std живут в builtins (П5).
+# builtins 61 -> 64 (2026-10-01, облачная сессия p274-carina-mono-k2, №1557): `VEC_INDEX_RANGE_OP`
+#   (ключ неявной операции среза `xs[lo..hi]` -- перегрузка `@index(r Range)`), `vec_op_is_overload`
+#   (у какого ключа нет своего голого имени: запись и срез -- перегрузки `index`) и `PTR_OFFSET`
+#   (`p.offset(n)`, D216). Их читают `check/slice.nv`, `check/binds.nv`, `check/unsafe.nv`,
+#   `sem/handed_bodies.nv`, `emit_c/emit_slice.nv`, `emit_c/emit_ptr.nv`; имена std живут в builtins (П5).

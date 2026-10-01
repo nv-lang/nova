@@ -20,7 +20,7 @@
 module novac.check
 
 import ../tree.{Node}
-import ../sem.{pattern_shape, pattern_head_text, pattern_subpatterns}
+import ../sem.{PatShape, pattern_shape, pattern_head_text, pattern_subpatterns}
 import ../sem.{pattern_fields, patfield_name, patfield_sub}
 import ../sem.{pattern_name_node, patfield_name_node}
 import ../sem.{ParamMode}
@@ -108,9 +108,54 @@ fn Checker mut @disj_alt_form_ok(sub Node, ty TyId, ak []Node) -> bool {
             }
         }
         // The head is judged by the binder itself (`@bind_variant_pattern`),
-        // with the same texts a single-head arm gets.
-        Variant => true
+        // with the same texts a single-head arm gets. A TEST below the head
+        // is refused by name: the disjunction's lowering tests the heads only
+        // (`tag == A || tag == B`), so `Aa(1) | Bb(1)` took `Aa(2)` -- novac
+        // printed 1 where the oracle printed 0 (measured 2026-10-01, the same
+        // class as registry 1534 at the arm's root).
+        Variant => {
+            for s in pattern_subpatterns(sub) {
+                if @tests_something(s) {
+                    @report_first_leaf_of(ak, DISJ_NESTED_TEST_MSG)
+                    return false
+                } else {
+                    // Matches any value of its type: nothing to test.
+                }
+            }
+            true
+        }
     }
+}
+
+/// Does a subpattern test something of its own at any depth -- a literal, a
+/// variant head (a bare payload-less one included), an array length, a nested
+/// `|`? A binder and `_` match anything; a tuple and a record ask their parts.
+fn Checker @tests_something(pat Node) -> bool {
+    ro sh = pattern_shape(pat)
+    if sh == PatShape.Lit || sh == PatShape.Variant || sh == PatShape.Array || sh == PatShape.Disj {
+        return true
+    }
+    if sh == PatShape.Wild { return false }
+    if sh == PatShape.Bind {
+        return match @name_in_pattern(pattern_head_text(pat), no_ty()) {
+            NameBinder => false
+            NameOwnVariant(_) | NameForeignVariant(_) => true
+        }
+    }
+    if sh == PatShape.Record {
+        for f in pattern_fields(pat) {
+            match patfield_sub(f) {
+                Some(s) => { if @tests_something(s) { return true } }
+                None => {}
+            }
+        }
+        return false
+    }
+    // A positional bracket: its parts answer.
+    for s in pattern_subpatterns(pat) {
+        if @tests_something(s) { return true }
+    }
+    false
 }
 
 /// The names one alternative BINDS, in written order, with their nodes. A bare

@@ -208,7 +208,7 @@ test "a HANDED generic method is typed as an instance over a type of the file (2
     assert(ctx.instantiates(row, []TyId.of(pt)), "an instance the shell does not carry is not made by the unit")
     // The ORIGINAL text: a position is a slice's distance from its buffer.
     ro (d, chan) = check_instance(decl, SourceText { text: texts[ctx.handed.tree_of(row)] }, ctx, row,
-                                  []TyId.of(pt), raw_node(tree.id_of()) + 1)
+                                  []TyId.of(pt), raw_node(tree.id_of()) + 1, tree, "")
     assert(d.len() == 0, messages(d))
     assert(first_field_read_type(decl, chan) == pt, "the body's `@v` is not typed `Pt` under the substitution")
 }

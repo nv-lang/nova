@@ -34,7 +34,7 @@ import ../types.{TyId, no_ty, is_ty}
 /// The initializer is typed ONCE, at the declaration (`@type_const_decl`),
 /// not at every read.
 fn Checker mut @const_type_of(name str) -> TyId {
-    ro row = match @ctx.defs.const_row(name) {
+    ro row = match @const_seen(name) {
         None => return no_ty()
         Some(r) => r
     }

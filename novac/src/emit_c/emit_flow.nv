@@ -82,6 +82,9 @@ fn Emitter mut @print_if_head(cond Cond, chained bool) -> () {
         }
         // The `with` body runs when its frame's setjmp returned 0 (E.9 step 2).
         FrameEntered(f) => @body.append("setjmp(_novac_f${f}.jmp) == 0")
+        // A nested subpattern's own test (registries 1534, 1542): the arm head's
+        // printer, on the temporary the value was read into -- one door for both.
+        Holds(pt) => @emit_pattern_test(pt.pat, pt.scr)
     }
     @body.append(") {\n")
 }
@@ -366,32 +369,57 @@ fn Emitter mut @print_switch(f Fn, t SwitchTerm, mut printed []bool) -> () {
         // where it alone can be -- inside the then-branch. The flag is the PRINTER'S property
         // (`SwitchTerm` says so), and the printer may know where it goes; what it may not do
         // is decide the FORM, and the form is still dictated by the record.
+        //
+        // NESTED TESTS (registries 1534, 1542) are the same shape one level more: each
+        // subpattern with a head of its own opened an `If` in the arm's block, the guard's
+        // `If` sits inside the last of them, and `SwitchArm.checks` counts the tests. The
+        // walk below descends `checks` (+1 for a guard) such `If`s -- statements, head,
+        // then-branch -- and the flag goes into the innermost then-branch, the only place
+        // where the whole pattern AND the guard have held.
+        mut levels = a.checks
         match a.guard {
-            Some(_) => {
-                @print_block_stmts(f, a.body, printed)
-                match f.blocks[raw_block(a.body)].term {
-                    If(gt) => {
-                        @print_if_head(gt.cond, false)
-                        @print_chain(f, gt.then, gt.join, false, printed)
-                        @body.append("    _novac_matched_t${t.uniq} = 1;\n    }\n")
-                    }
-                    Return => ice("emit: a guarded arm whose block returns instead of branching")
-                    Goto(_) => ice("emit: a guarded arm whose block gotos instead of branching")
-                    Loop(_) => ice("emit: a guarded arm whose block heads a loop instead of branching")
-                    Switch(_) => ice("emit: a guarded arm whose block switches instead of branching")
-                    Break => ice("emit: a guarded arm whose block breaks instead of branching")
-                    Continue => ice("emit: a guarded arm whose block continues instead of branching")
-                    Unreached => ice("emit: a guarded arm whose block was never sealed")
-                }
-            }
-            None => {
-                @print_chain(f, a.body, t.join, false, printed)
-                @body.append("    _novac_matched_t${t.uniq} = 1;\n")
-            }
+            Some(_) => { levels += 1 }
+            None => {}
+        }
+        if levels == 0 {
+            @print_chain(f, a.body, t.join, false, printed)
+            @body.append("    _novac_matched_t${t.uniq} = 1;\n")
+        } else {
+            @print_tested_arm(f, a.body, levels, t.uniq, printed)
         }
         @body.append("    }\n")
     }
 }
+/// An arm whose body runs inside `levels` nested `If`s -- the nested tests and the
+/// guard: each block's statements (the reads its test needs), its head, then the
+/// then-branch; the body's chain and the first-match flag go into the innermost.
+fn Emitter mut @print_tested_arm(f Fn, first BlockId, levels int, uniq int, mut printed []bool) -> () {
+    mut b = first
+    mut last_join = first
+    for _ in 0..levels {
+        @print_block_stmts(f, b, printed)
+        match f.blocks[raw_block(b)].term {
+            If(gt) => {
+                @print_if_head(gt.cond, false)
+                last_join = gt.join
+                b = gt.then
+            }
+            Return => ice("emit: a tested arm whose block returns instead of branching")
+            Goto(_) => ice("emit: a tested arm whose block gotos instead of branching")
+            Loop(_) => ice("emit: a tested arm whose block heads a loop instead of branching")
+            Switch(_) => ice("emit: a tested arm whose block switches instead of branching")
+            Break => ice("emit: a tested arm whose block breaks instead of branching")
+            Continue => ice("emit: a tested arm whose block continues instead of branching")
+            Unreached => ice("emit: a tested arm whose block was never sealed")
+        }
+    }
+    @print_chain(f, b, last_join, false, printed)
+    @body.append("    _novac_matched_t${uniq} = 1;\n")
+    for _ in 0..levels {
+        @body.append("    }\n")
+    }
+}
+
 // ---- A statement: ONE dispatch on its kind ----
 // The same one that lives in `@emit_last_stmt` (emit_place.nv). It does not disappear -- it
 // moves here; a second copy of that match would be a second door.

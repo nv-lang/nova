@@ -28,10 +28,10 @@ import ../sem.{ty_source_name, is_never_ty}
 // the emitter's tag test (emit_applied_sum.nv), so the two cannot part.
 import ../sem.{is_shell_applied_sum}
 // The pattern tree's doors (D486): the shape asked ONCE, the head and the
-// parts through their own doors -- never slot arithmetic (registry 1190's
+// parts through their own doors -- never slot arithmetic (registry 1191's
 // class: a slot count and the meaning of what sits there are two doors).
 import ../sem.{PatShape, pattern_shape, pattern_head_text, pattern_qualifier, pattern_subpatterns}
-import ../sem.{pattern_lit_leaf}
+import ../sem.{pattern_lit_leaf, pattern_is_interp}
 import ../sem.{pattern_fields, patfield_name, patfield_sub, pattern_rest, pattern_mode_word}
 import ../sem.{pattern_name_node, patfield_name_node, rest_is_trailing}
 import ../sem.{shape_of, field_range_of, no_frow}
@@ -93,8 +93,17 @@ fn Checker mut @report_if_applied_sum(kids []Node, scr_t TyId) -> bool {
     // already resolved and checked above; naming it costs one call to the
     // same door every sibling message in this file already reads through
     // (`ty_source_name`, line 341).
-    @report_first_leaf_of(kids, "outside the subset: a `match` on an applied sum (`${ty_source_name(@ctx, scr_t)}`) is read but not compiled yet -- novac spells the shell's tags only for `Option` and `Result`, and this sum's belong to the shell too (E2-b2, with generics)")
+    @report_applied_sum(kids, "a `match`", scr_t)
     true
+}
+
+/// An APPLIED sum novac cannot spell (`Outcome[int]`), under either form that
+/// tests its tags -- `form` is "a `match`" (above) or "`is`" (is_expr.nv). ONE
+/// refusal for the two doors, because the cause is one: the shell spells per
+/// instance only `Option` and `Result` (`is_shell_applied_sum`), and a second
+/// copy of the sentence would be a second debt line for one debt.
+fn Checker mut @report_applied_sum(kids []Node, form str, sum_t TyId) -> () {
+    @report_first_leaf_of(kids, "outside the subset: ${form} on an applied sum (`${ty_source_name(@ctx, sum_t)}`) is read but not compiled yet -- novac spells the shell's tags only for `Option` and `Result`, and this sum's belong to the shell too (E2-b2, with generics)")
 }
 
 /// THE SHARED HEAD of both match doors (`@type_match_stmt`, `@type_match`):
@@ -357,13 +366,11 @@ fn Checker mut @bind_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode, pos 
 /// `memcmp` -- and a char with a `char`, by codepoint. Until the string
 /// family (E2-b) both were refused by name: the lowering could compare
 /// neither, and the form used to die in the emitter with an ice.
-/// A string or char literal BELOW the arm's root is refused by name
-/// (`NESTED_LITERAL_ARM_MSG`): the lowering tests the root only, and a dropped
-/// test is a wrong answer. An INT or BOOL literal there is still accepted and
-/// still dropped (`A(3)` takes `A(4)`, measured 2026-10-01) -- a defect of its
-/// own, reported, not this door's: the checker's tests hold the position rule
-/// that a literal inside an arm is legal Nova (D486 s2), and a refusal here
-/// would be subset debt the int form never carried.
+/// A literal BELOW the arm's root is legal at any depth (D486 s2): the
+/// lowering reads the value it stands on and tests it by a synthetic condition
+/// (registry 1534, lower_match.nv `@lower_sub`). Until then it tested the root
+/// only -- `A(3)` took `A(4)` -- and string and char literals there were
+/// refused by name rather than handed the same wrong answer.
 /// The integer magnitude door is asked here too (#1251): a `Pattern` node is
 /// never a `Lit` node, so the generic literal walk never visits it, and a
 /// 23-digit text once reached the C comparison verbatim, which clang refused
@@ -371,6 +378,12 @@ fn Checker mut @bind_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode, pos 
 /// The same holds for the char and string judges: their walks never reach a
 /// pattern either, so this door asks them itself.
 fn Checker mut @bind_lit_pattern(pat Node, ty TyId, ak []Node) -> bool {
+    if pattern_is_interp(pat) {
+        @reject_first_leaf_of(ak, INTERP_PATTERN_MSG)
+        return false
+    } else {
+        // A plain literal: its token answers below.
+    }
     ro p0 = pattern_lit_leaf(pat)
     ro lk0 = leaf_kind(p0)
     // `true` / `false`: a LITERAL of `bool` (sem/pattern.nv), never a binder
@@ -381,17 +394,14 @@ fn Checker mut @bind_lit_pattern(pat Node, ty TyId, ak []Node) -> bool {
         return false
     }
     if lk0 == TokenKind.StrLit || lk0 == TokenKind.CharLit {
-        if pat.id_of() != ak[0].id_of() {
-            @report_first_leaf_of(ak, NESTED_LITERAL_ARM_MSG)
-            return false
-        } else {
-            // The arm's root: the one position the lowering tests.
-        }
         return @bind_text_lit_pattern(p0, lk0, ty, ak)
     }
-    if ty == @ctx.prims.str_id {
-        // An integer literal over a `str`: no comparison exists (the oracle
-        // prints `scr == 3LL` on a `nova_str`, and clang refuses).
+    if ty == @ctx.prims.str_id || ty == @ctx.prims.char_id {
+        // An integer literal over a `str` has no comparison at all (the
+        // oracle prints `scr == 3LL` on a `nova_str`, and clang refuses);
+        // over a `char` it is the mixing D128 and D405 forbid in an
+        // expression, and a pattern is no loophole (D486 s2, amendment
+        // 2026-10-01). The oracle runs `97` over `char` -- registry 1535.
         @reject_first_leaf_of(ak, LIT_PATTERN_TYPE_MSG)
         return false
     } else {
@@ -947,6 +957,13 @@ const AMBIGUOUS_VARIANT_MSG = "this variant name is declared by more than one su
 /// refused as non-exhaustive -- the wrong cause. Refused HERE, at the arm; the
 /// exhaustiveness rule then says nothing (one cause, one diagnostic).
 const ARRAY_REST_BIND_MSG = "outside the subset: a `..rest` binding in an array pattern needs the shell's slice view wired -- the length test and prefix/suffix elements compile today (E2-b, with the slice view)"
+/// A subpattern that TESTS something below an alternative of `|` (`Aa(1) |
+/// Bb(1)`, `X(P) | Y`): the disjunction's lowering tests the alternatives'
+/// heads only, and the test below was dropped -- a silent wrong answer, the
+/// class of registry 1534 inside a disjunction. Compiling it means an OR of
+/// per-alternative test chains; until then the form is refused by name.
+const DISJ_NESTED_TEST_MSG = "outside the subset: an alternative of `|` with a literal or a variant below its head is read but not compiled yet -- the disjunction tests the heads only (E2-b, with nested pattern tests)"
+
 const DISJ_ALT_MSG = "outside the subset: a `|` pattern takes variant alternatives only -- a literal, `_`, binder, parenthesized, array or nested `|` alternative is not compiled yet (E2-b, with the general or-test)"
 const VARIANT_PATTERN_MSG = "a pattern with a payload names no variant of the matched sum -- a plain binder pattern takes no payload"
 const PAYLOAD_ARITY_MSG = "the pattern's payload count disagrees with the variant's declaration -- match every payload field, or mark the rest with `..` (D59)"

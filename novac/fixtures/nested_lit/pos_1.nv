@@ -1,0 +1,73 @@
+module nested_lit.pos_1
+
+// A LITERAL BELOW THE ROOT of a `match` arm's pattern (registry 1534): `A(3)`
+// tests the tag AND the payload. The lowering used to test the root only, so
+// `A(4)` took the `A(3)` arm -- the oracle printed 0, novac 1. The payload is
+// read into a temporary (the nested-binder path) and compared by a synthetic
+// condition before the body; a failed comparison falls through to the next arm,
+// exactly as a false guard does.
+//
+// The axes: int, string, char and bool payloads; a nested literal beside a
+// binder (`Pair(0, n)`); a literal arm followed by a binder arm of the same
+// variant (first match wins); a nested literal under a guard; a statement
+// position. Behaviour byte-for-byte with the oracle (novac-e1-smoke). An ARRAY
+// element literal (`[0, ..]`) is tested by novac the same way but is not here:
+// the oracle drops that test and answers the first arm for `[5, 9]` -- its own
+// defect, reported apart, and a byte-for-byte cell cannot hold it.
+
+type Shape enum
+    | Num(int)
+    | Word(str)
+    | Glyph(char)
+    | Flag(bool)
+    | Pair(int, int)
+    | Empty
+
+fn code(s Shape) -> int => match s {
+    Num(3) => 1
+    Num(n) => 10 + n
+    Word("fn") => 2
+    Word("") => 3
+    Glyph('é') => 4
+    Flag(true) => 5
+    Flag(false) => 6
+    Pair(0, n) => 20 + n
+    Pair(m, 0) => 30 + m
+    _ => 0
+}
+
+fn guarded(s Shape, on bool) -> int => match s {
+    Num(7) if on => 70
+    Num(7) => 71
+    _ => 72
+}
+
+fn say(s Shape) -> () {
+    match s {
+        Word("hi") => println("greeting")
+        Word(w) => println("word ${w}")
+        _ => println("other")
+    }
+}
+
+fn main() {
+    println(code(Shape.Num(3)))
+    println(code(Shape.Num(4)))
+    println(code(Shape.Word("fn")))
+    println(code(Shape.Word("fnord")))
+    println(code(Shape.Word("")))
+    println(code(Shape.Glyph('é')))
+    println(code(Shape.Glyph('e')))
+    println(code(Shape.Flag(true)))
+    println(code(Shape.Flag(false)))
+    println(code(Shape.Pair(0, 5)))
+    println(code(Shape.Pair(4, 0)))
+    println(code(Shape.Pair(4, 5)))
+    println(code(Shape.Empty))
+    println(guarded(Shape.Num(7), true))
+    println(guarded(Shape.Num(7), false))
+    println(guarded(Shape.Num(8), true))
+    say(Shape.Word("hi"))
+    say(Shape.Word("yo"))
+    say(Shape.Empty)
+}

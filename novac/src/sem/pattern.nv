@@ -109,6 +109,9 @@ export fn pattern_shape(pat Node) -> PatShape {
         // lowering bound a variable named `true`).
         Branch { .. } => {
             if kids.len() == 1 && is_bool_literal(pattern_head_text(pat)) { return PatShape.Lit }
+            // An INTERPOLATED string is a literal's shape the checker refuses
+            // by name (`pattern_is_interp`, registry 1556).
+            if k0.kind_of() == NodeKind.InterpStr { return PatShape.Lit }
             PatShape.Bind
         }
     }
@@ -138,6 +141,13 @@ export fn pattern_head_text(pat Node) -> str {
 
 /// THE LEAF of a literal pattern: the token itself (`3`, `"s"`), or, for
 /// `true` / `false`, the identifier inside the name node they arrive in.
+export fn pattern_is_interp(pat Node) -> bool {
+    ro kids = branch_children(pat)
+    kids.len() > 0 && kids[0].kind_of() == NodeKind.InterpStr
+}
+
+/// The literal's token. Never asked of an interpolated string: the checker
+/// refuses that form first (`pattern_is_interp`).
 export fn pattern_lit_leaf(pat Node) -> Node {
     ro k0 = branch_children(pat)[0]
     if k0.kind_of() == NodeKind.Name { return branch_children(k0)[0] }
@@ -146,7 +156,7 @@ export fn pattern_lit_leaf(pat Node) -> Node {
 
 /// THE QUALIFIER of a head: `Shape.Circle` answers `Shape`, a bare head
 /// answers "". Replaces `pattern_head_slot`'s slot arithmetic with the
-/// question itself (registry 1190's class: a slot count and the meaning of
+/// question itself (registry 1191's class: a slot count and the meaning of
 /// what sits there are two doors for one question).
 export fn pattern_qualifier(pat Node) -> str {
     ro kids = branch_children(pat)

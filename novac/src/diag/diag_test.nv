@@ -12,6 +12,7 @@ test "to_json carries every schema field" {
         lo: 3,
         hi: 7,
         message: "outside the subset",
+        file: "",
     }
     ro j = to_json(d, 0, "a.nv")
     assert(j.contains("\"id\""))
@@ -23,6 +24,20 @@ test "to_json carries every schema field" {
     assert(j.contains("a.nv"))
     assert(j.contains("\"message\""))
     assert(j.contains("\"poisoned_by\""))
+}
+
+test "a span that names its own file is printed against it, not the compiled file (#1521)" {
+    // An instance of a handed body is refused in the file the body was written
+    // in: the oracle says `geo.nv:5:9`, and so does the primary span now.
+    ro d = Diagnostic { code: "E_NOVAC_SUBSET", severity: Severity.ErrorSev, lo: 3, hi: 7,
+                        message: "unknown name", file: "src/geo/geo.nv" }
+    ro j = to_json(d, 0, "src/main.nv")
+    assert(j.contains("\"file\":\"src/geo/geo.nv\""), j)
+    assert(!j.contains("main.nv"), j)
+    // CONTROL: a span with no file of its own is the compiled file's, as always.
+    ro own = Diagnostic { code: "E_NOVAC_SUBSET", severity: Severity.ErrorSev, lo: 3, hi: 7,
+                          message: "unknown name", file: "" }
+    assert(to_json(own, 0, "src/main.nv").contains("\"file\":\"src/main.nv\""))
 }
 
 test "severity renders as the schema strings" {

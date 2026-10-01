@@ -509,8 +509,8 @@
 # `Sum.Variant` is legal (the D188 example `err is DbError.Deadlock`). Cost to
 # Carina: none left -- the parser reads it in the same commit, the checker
 # already took the last identifier. Value by the pre-commit formula
-# (150 + this commit): the cloud clone is shallow and cannot count the line.
-#   spec-queue: 151
+# (150 + this commit) in the shallow cloud clone; recounted on the full history at the merge.
+#   spec-queue: 155
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,

@@ -17,8 +17,8 @@ module novac.emit_c
 
 import ../tree.{Node}
 import ../diag.{ice}
-import ../builtins.{RANGE_TYPE, END_INDEX_METHOD}
-import ../sem.{slice_shape_of, range_index_symbol, c_method_symbol, c_type, branch_children}
+import ../builtins.{RANGE_TYPE, END_INDEX_METHOD, VEC_INDEX_RANGE_OP}
+import ../sem.{slice_shape_of, range_index_symbol, c_method_symbol, c_type, branch_children, vec_op_c}
 import ../types.{is_ty}
 
 /// `x[lo..hi]` as the call `index(x, Range { start: lo, end: hi })`.
@@ -30,7 +30,9 @@ fn Emitter mut @emit_slice(kids []Node) -> () {
     } else {
         // A checked slice: printed below.
     }
-    ro sym = range_index_symbol(@ctx, st) ?? ice("emit: a slice over a type whose `index(Range)` the shell does not carry reached emission")
+    // The shell's, or the instance this unit made from std's body (the checker
+    // recorded its row, registry 1557) -- `vec_op_c` ices on neither.
+    ro sym = range_index_symbol(@ctx, st) ?? vec_op_c(@ctx, st, VEC_INDEX_RANGE_OP, @out.vec_op_row(VEC_INDEX_RANGE_OP))
     ro rng = @ctx.ty_of_name(RANGE_TYPE) ?? ice("emit: the prelude's `Range` is not in the registry")
     ro bounds = branch_children(kids[2])
     @body.append("${sym}(")
