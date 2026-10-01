@@ -66,16 +66,16 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../mono.{Reach}
-import ../sem.{is_unit_ty}
+import ../sem.{is_unit_ty, returns_receiver}
 import ../sem.{ParamDef, FnRow, raw_row, decl_fn_row, decl_name_at, param_name_at, c_callable, Ctx}
 import ../sem.{carrier_of}
 import ../sem.{CheckOut, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type}
 import ../sem.{interp_slices, ctor_field_name}
 import ../sem.{c_struct, c_tag, c_tag_enum, c_maker, is_value_sum, VariantRow, raw_vrow, no_vrow}
 import ../sem.{field_range_of, variant_range_of, raw_frow, no_frow, file_decls, is_value_record, literal_elems}
-import ../sem.{c_instance_ctor, c_instance_method}
+import ../sem.{vec_op_c}
 import ../sem.{decl_index_of_ty}
-import ../builtins.{PRINT_FN, bool_c_literal, RECV_C_NAME, LITERAL_PUSH}
+import ../builtins.{PRINT_FN, bool_c_literal, RECV_C_NAME, LITERAL_PUSH, EMPTY_CTOR}
 import ../builtins.{OPTION_SOME_TAG_C}
 import ../types.{TyId, is_ty, raw_ty}
 import ../types.{no_ty}
@@ -137,7 +137,8 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
     for _ in 0..out.types.len() {
         lt.push("")
     }
-    consume e = Emitter { src_name, ctx, out, reach, next_tmp: 0, lo: Lowerer { ctx, out, ir: FnBuilder.new(no_ty()) },
+    consume e = Emitter { src_name, ctx, out, reach, next_tmp: 0, ret_self: false,
+                          lo: Lowerer { ctx, out, ir: FnBuilder.new(no_ty()) },
                           lit_tmp: lt, body: StringBuilder.new(), hlits: []Node.new(), cur_lit: 0 - 1,
                           spawns: []Node.new(), cur_spawn: 0 - 1,
                           // NAMED explicitly, and the reason is registry #901:
@@ -159,6 +160,9 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
     e.emit_handler_protos()
     e.collect_spawns(file)
     e.emit_spawn_protos()
+    // The structs of the generic records the unit's own instances use
+    // (274.11 E.10 step 4d), before any prototype names them.
+    e.emit_instance_structs(insts)
     e.emit_instance_protos(insts)
     e.emit_file(file)
     for inst in insts {
@@ -366,6 +370,9 @@ fn Emitter mut @emit_callable(f Node, name str, row FnRow, subst []TyId, ptypes 
     // place, the bindings and the temporaries; every value position records
     // its placement here through the one door and prints it (emit_place.nv).
     @lo.ir = FnBuilder.new(ret)
+    // `-> @` (D409): the receiver is returned automatically -- the tail is a
+    // statement, and a return with no value returns the receiver.
+    @ret_self = returns_receiver(kids)
     @emit_requires_prologue(kids, name)
     mut has_expr_body = false
     for c in kids {
@@ -380,7 +387,7 @@ fn Emitter mut @emit_callable(f Node, name str, row FnRow, subst []TyId, ptypes 
             // iced ("callee_of on a node with nothing recorded"). Nine probes
             // bisected it: the mode of the method and of the binding are not
             // the trigger, the trailing expression in a `-> ()` body is.
-            @lo.lower_block_stmts_fn(c, !@ctx.fns.is_entry_row(row) && !is_unit_ty(@ctx, ret))
+            @lo.lower_block_stmts_fn(c, !@ctx.fns.is_entry_row(row) && !is_unit_ty(@ctx, ret) && !@ret_self)
         } else if ck == NodeKind.FnExprBody {
             has_expr_body = true
             ro ek = branch_children(c)
@@ -468,14 +475,14 @@ fn Emitter mut @emit_array_lit(init Node, vtype TyId) -> str {
     // form with an unknown count arrives (spread), its cap becomes an
     // estimate -- the rule is "exact when known, approximate otherwise".
     ro elems = literal_elems(branch_children(init))
-    @body.append("    ${c_type(@ctx, vtype)} ${tmp} = ${c_instance_ctor(@ctx, vtype)}(${elems.len()});\n")
+    @body.append("    ${c_type(@ctx, vtype)} ${tmp} = ${vec_op_c(@ctx, vtype, EMPTY_CTOR, @out.vec_op_row(EMPTY_CTOR))}(${elems.len()});\n")
     for e in elems {
         // The element may itself be a construction; the walk above no longer
         // descends into this literal (H2), so its OWN emitter hoists what its
         // elements need -- the same line the record constructor has carried
         // since B8 (`@hoist_array_lits(fk[2])`).
         @hoist_array_lits(e)
-        @body.append("    (void)${c_instance_method(@ctx, vtype, LITERAL_PUSH)}(${tmp}, ")
+        @body.append("    (void)${vec_op_c(@ctx, vtype, LITERAL_PUSH, @out.vec_op_row(LITERAL_PUSH))}(${tmp}, ")
         @emit_expr(e)
         @body.append(");\n")
     }

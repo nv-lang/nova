@@ -242,7 +242,8 @@
 # 2026-10-01 (integrator, merge of the cloud session's #1457), builtins 55 -> 56: `EMPTY_CTOR`
 # ("new") -- the empty-vector constructor's name; check/binds.nv judges `[]T.new()` by it, and
 # builtin names live in builtins (the same home as LITERAL_CTOR). The #1457 merge itself missed the raise.
-builtins 56
+# 2026-10-01, Carina window (274.11 E.10 steps 4c-2/4d): builtins 56 -> 59: `PTR_WRITE_AT`, `PTR_WRITE_CONSUME_AT`, `SIZE_OF_FN` -- the language's own names std's `Vec[T]` bodies use.
+builtins 59
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -424,7 +425,8 @@ pipeline 12
 # «объявлено ли поле видом `f ro T` (D176)». Наружу нужна потому, что спрашивает
 # check (запись через вид, `E_READONLY_CONTENT`), а имена полей резолвятся ТОЛЬКО
 # через FieldIndex (274.4 step 3) -- у check нет другой двери к строке поля.
-resolve 18
+# 2026-10-01, Carina window (274.11 E.10 steps 4c-2/4d): resolve 18 -> 19 (merged over main's 16 -> 18): `FieldIndex @field_private_to` -- where a handed record's private field is visible from.
+resolve 19
 # sem 54 -> 56 (2026-08-18): наружу вышли ДВЕ двери параметра,
 # param_name_at и param_type_at. Имя и тип параметра больше не берутся
 # индексом pk[0]/pk[1]: индекс сдвигается, как только у параметра
@@ -923,7 +925,19 @@ resolve 18
 # 2026-10-01, Carina window (274.11 E.10 step 4c): sem 300 -> 305: `Ctx @instantiates` / `@body_ours` (whose body an instance is -- asked by check, mono and the emitter) and `InteropTable @describe_decls` / `@decl_text` / `@decl_name` (the text and file each handed tree came from).
 # sem 305 -> 308 (2026-10-01, integrator, merge of the cloud session's patterns-ab): Carina's
 #   300 -> 305 (step 4c) and the cloud branch's 300 -> 303 (payload_named, variant_is_record, ctor_head_variant) add.
-sem 308
+# 2026-10-01, Carina window (274.11 E.10 steps 4c-2/4d): sem 305 -> 315: `FnTable @add_static`, `FieldTable @add_private`, `Ctx @vec_op_row`, `vec_op_c`, `c_instance_static`, `c_static_symbol`, `instance_struct_c`, `returns_receiver`, `CheckOut @record_wanted` / `@wanted_refs` -- static methods, private fields, the implicit vector operations and the instance structs of 274.11 E.10 steps 4c-2 and 4d.
+# 2026-10-01, Carina window: sem 315 -> 317: `Ctx @is_vec_op_shape` replaces the registry scan `Ctx @vec_op_row`; `CheckOut @record_vec_op` / `@vec_op_row` carry the row from the checker to the emitter (resolve discipline: no linear name scans).
+# 2026-10-01, Carina window (registry 1514): sem 317 -> 318: `repr_is_one_name` -- is a
+#   type declaration's representation ONE name? Asked by sem (`repr_of_decl`, which reads
+#   nothing else) and by check (the refusal of a composite one): two copies would let
+#   sem read a form check accepts -- the defect itself.
+# 2026-10-01, Carina window, merge of main e448f0193: the two lines above add -- main's
+#   sem 308 and this branch's 305 -> 318 meet; the count is the guard's on the merged tree.
+# 2026-10-01, cloud session p274-carina-cloud, merge of p274-ice-expr: sem 321 -> 322:
+#   `is_never_ty` (sem/type_shape.nv) -- is a type the bottom type `never` (D26)? Asked by
+#   check (the tail `if`, the `match` arm, the return): only sem knows the universe row's
+#   family, and a copy of the question in check would be a second door.
+sem 322
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

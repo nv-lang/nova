@@ -191,6 +191,8 @@ export type FieldDef value {
     type_id TyId /// The field's type id.
     owner_id TyId /// Owning type id; the resolver compares this as a type id while walking its chain.
     ro_view bool /// declared `f ro T` (D176): read through, never written through (registry 1458)
+    private bool /// a field of a HANDED record its module keeps private (D281: `priv`, or a record not exported): readable only from inside `private_to` (274.11 E.10 step 4c-2 -- std's `Vec[T]` bodies read `@data`, the program may not)
+    private_to str /// the module path (dotted) a private field is visible from; "" for a module with no `module` line
 }
 
 /// Record-field registry: rows and their payload, grouped per type via
@@ -211,7 +213,14 @@ export fn FieldTable.new() -> FieldTable =>
 /// Register one field of `owner_id`. The same-name chain is not grown here:
 /// the resolver builds its index FROM these rows (274.4 step 3).
 export fn FieldTable mut @add(owner_id TyId, name str, type_id TyId, ro_view bool = false) -> () {
-    @rows.push(FieldDef { name, type_id, owner_id, ro_view })
+    @rows.push(FieldDef { name, type_id, owner_id, ro_view, private: false, private_to: "" })
+}
+
+/// A field of a handed record that its module keeps PRIVATE: registered, so the
+/// module's own bodies a unit instantiates can read it, and visible from
+/// `home` only (274.11 E.10 step 4c-2).
+export fn FieldTable mut @add_private(owner_id TyId, name str, type_id TyId, ro_view bool, home str) -> () {
+    @rows.push(FieldDef { name, type_id, owner_id, ro_view, private: true, private_to: home })
 }
 
 /// THE row of a sum's VARIANT in `Ctx.variant_rows` -- a space of its own since

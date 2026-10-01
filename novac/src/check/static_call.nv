@@ -1,0 +1,183 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `FnCtxt::resolve_fully_qualified_call` -- `Type::f(args)` is a
+// path resolved against the type's associated functions, then checked like
+// any call; NOT taken: rustc's trait-associated lookup (a static method of a
+// Nova type is a declaration of that type, nothing more).
+// Role: typing of a call on a TYPE, `Type.f(args)` -- a STATIC method (274.11
+//   E.10 step 4c-2): std's bodies call `RawMem.alloc(n)` and
+//   `RawMem.copy_n_nonoverlapping(src, dst, n)`, which a `Vec[T]` instance over
+//   a type of the program has to compile. The row is chosen among the type's
+//   static methods of that name by the written arity; a generic one is
+//   deduced from its arguments and made from its body when the shell lacks it.
+// Used by: check/methods.nv `@type_method_call`, before the variant door (the
+//   two share the spelling `Type.name(args)`).
+// Guarded by: nova test novac/src/pipeline/handed_free_test.nv (the static
+//   call tests), check-novac-no-silent-skip.py.
+
+module novac.check
+
+import ../tree.{Node, NodeKind}
+import ../lex.{TokenKind}
+import ../sem.{branch_children, leaf_text, leaf_kind, expr_leaf_name, ty_of_decl, raw_row, no_row, FnRow}
+import ../sem.{CalleeTarget, bind_slots, is_expr_kind, c_static_symbol}
+import ../types.{TyId, no_ty, is_ty}
+
+/// `Type.f(args)` where `Type` names a type with a STATIC method `f`: typed,
+/// recorded, and answered true -- or false when the head names no type, or the
+/// type declares no static `f`, and the other doors of this spelling (a sum's
+/// variant, a method) judge it.
+fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
+    // SILENT-OK: not the spelling `Name.name(args)` -- the other doors judge it.
+    if kids.len() < 4 || kids[0].kind_of() != NodeKind.Name || kids[2].kind_of() != NodeKind.LeafNode { return false }
+    mut head_t = no_ty()
+    match @ctx.defs.def_of(expr_leaf_name(kids[0])) {
+        // SILENT-OK: the head names nothing -- the path-head door refused it already.
+        None => return false
+        Some(hd) => match hd.target {
+            DefType(decl) => { head_t = ty_of_decl(@ctx, decl) }
+            // SILENT-OK: a function or a constant head is no type: the method door judges.
+            DefFn(_) | DefConst(_) => return false
+        }
+    }
+    // SILENT-OK: a head that is no declared type has no static methods to ask.
+    if !is_ty(head_t) || !@ctx.tys.names_a_decl(head_t) { return false }
+    ro head_decl = @ctx.tys.decl_head_of(head_t)
+    ro mname = leaf_text(kids[2])
+    // THE ROW, by name and written arity among the type's static methods --
+    // asked BEFORE the arguments are walked, so a spelling that is not a static
+    // call leaves them to the door that owns it.
+    mut written = 0
+    mut at = 0
+    for c in kids {
+        written += if at > 2 && is_expr_kind(c.kind_of()) { 1 } else { 0 }
+        at += 1
+    }
+    mut row = no_row()
+    mut cnt = 0
+    mut named = 0
+    for i in 0..@ctx.fns.rows.len() {
+        ro fd = @ctx.fns.rows[i]
+        if fd.name != mname || !is_ty(fd.owner) { continue }
+        // A static method of a PRIMITIVE (`int.max_value()`) names no declaration.
+        if !@ctx.tys.names_a_decl(fd.owner) || @ctx.tys.decl_head_of(fd.owner) != head_decl { continue }
+        named += 1
+        // The written arguments fill the leading parameters; the rest must
+        // carry defaults (D102: `Vec[T].new(cap int = 0)` takes `new()`).
+        if written > fd.param_cnt { continue }
+        mut rest_defaulted = true
+        for k in written..fd.param_cnt {
+            rest_defaulted = rest_defaulted && @ctx.fns.params[fd.param_off + k].default_expr.is_some()
+        }
+        if !rest_defaulted { continue }
+        row = FnRow(i)
+        cnt += 1
+    }
+    // SILENT-OK: no static method of this name -- the variant and method doors judge it.
+    if named == 0 { return false }
+    if cnt == 0 {
+        @reject_first_leaf_of(kids, "this type declares a static method of this name, but none takes these arguments")
+        return true
+    } else {
+        // At least one static method takes this many arguments.
+    }
+    ro before = @out.len()
+    at = 0
+    for c in kids {
+        if at > 2 && is_expr_kind(c.kind_of()) {
+            @type_expr(c)
+        } else {
+            // The head, the dot, the name and the punctuation: nothing to type.
+        }
+        at += 1
+    }
+    // SILENT-OK: an argument's own refusal is the call's one cause.
+    if @out.len() > before { return true }
+    // An effectful argument is hoisted into a local, and a local needs its
+    // type (F65) -- the method and free call doors record them the same way.
+    @record_arg_types(kids, 3)
+    if cnt > 1 {
+        @report_first_leaf_of(kids, "outside the subset: this type declares several static methods of this name and arity, and novac does not narrow them by argument type yet (E2-b3)")
+        return true
+    } else {
+        // One static method: judged below.
+    }
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    // AN `unsafe fn` is called inside `unsafe { }` only, and the call is the
+    // operation that makes the block necessary (D216).
+    if @is_unsafe_row(row) {
+        if @unsafe_depth == 0 {
+            @reject_first_leaf_of(kids, UNSAFE_REQUIRED_MSG)
+            return true
+        } else {
+            @unsafe_ops += 1
+        }
+    } else {
+        // A safe static method: callable anywhere.
+    }
+    ro key = typed_args(kids, 3, @ctx, @scope, @chan)
+    mut ids = []TyId.new()
+    if fd.tparam_cnt > 0 {
+        ids = match @deduce_from_args(row, key, kids) {
+            // SILENT-OK: the deduction door named which of its cases it was.
+            None => return true
+            Some(v) => v
+        }
+    } else {
+        // Not generic: no substitution.
+    }
+    // WHOSE BODY: the shell's, or one this unit makes from the body it was
+    // handed -- refused by the shell's name when neither.
+    if !@ctx.instantiates(row, ids) && !@ctx.interop.has(c_static_symbol(@ctx, row, ids)) {
+        @report_first_leaf_of(kids, no_shell_method_msg(mname, expr_leaf_name(kids[0])))
+        return true
+    } else {
+        // Callable: recorded below.
+    }
+    @intern_instance_sig(row, ids)
+    @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), ids,
+        bind_slots(@ctx.fns.params, fd.param_off, fd.param_cnt, key))
+    @record(e, @ctx.tys.subst(fd.ret_id, ids))
+    true
+}
+
+/// Intern the CONCRETE signature of instance `(row, ids)`: every parameter
+/// type and the return under the substitution (274.11 E.10 step 4c-2). Mono
+/// rewrites an instance's signature with `sem.subst_type`, which READS the
+/// interner and calls a missing term a checker hole -- so the checker, which
+/// may intern, interns it where it decides the instance exists. A `*T`
+/// parameter handed a `*mut Pt` names `*Pt`, a term no expression wrote.
+fn Checker mut @intern_instance_sig(row FnRow, ids []TyId) -> () {
+    if ids.len() == 0 { return }
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    for i in 0..fd.param_cnt {
+        ro _ = @ctx.tys.subst(@ctx.fns.params[fd.param_off + i].type_id, ids)
+    }
+    if is_ty(fd.ret_id) {
+        ro _ = @ctx.tys.subst(fd.ret_id, ids)
+    } else {
+        // No declared return: nothing to intern.
+    }
+    if is_ty(fd.owner) {
+        ro _ = @ctx.tys.subst(fd.owner, ids)
+    } else {
+        // Not a static method: no owner term.
+    }
+}
+
+/// Is this row an `unsafe fn` -- the keyword stands among the leaves of its
+/// declaration before the name? A row read from no declaration (a builtin, a
+/// constructor) is not.
+fn Checker @is_unsafe_row(row FnRow) -> bool {
+    ro decl = @ctx.handed.decl_of(row) ?? return false
+    decl_is_unsafe(branch_children(decl))
+}
+
+/// Do these declaration children write `unsafe` before `fn`?
+fn decl_is_unsafe(kids []Node) -> bool {
+    for c in kids {
+        if c.kind_of() != NodeKind.LeafNode { continue }
+        if leaf_kind(c) == TokenKind.KwUnsafe { return true }
+        if leaf_kind(c) == TokenKind.KwFn { return false }
+    }
+    false
+}

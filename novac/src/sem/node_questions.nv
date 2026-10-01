@@ -147,3 +147,15 @@ export fn is_collection_head(n Node) -> bool {
 /// for the lowering, which picks the terminator, and the tail rule, which asks whether a
 /// `while true` has a way out: the keyword leaf is the node's one child.
 export fn loop_ctl_is_break(n Node) -> bool => leaf_kind(branch_children(n)[0]) == TokenKind.KwBreak
+
+/// Does this declaration return its RECEIVER -- `-> @` (D132, D409)? Its body
+/// writes no self-return: a missing tail or a bare `return` IS `return @`
+/// (D409, 274.11 E.10 step 4c-2: std's `Vec[T] @push` and `@reserve`).
+export fn returns_receiver(fk []Node) -> bool {
+    for c in fk {
+        if c.kind_of() != NodeKind.RetType { continue }
+        ro rk = branch_children(c)
+        return rk.len() == 2 && rk[1].kind_of() == NodeKind.LeafNode && leaf_kind(rk[1]) == TokenKind.At
+    }
+    false
+}

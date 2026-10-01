@@ -38,7 +38,7 @@ import ../diag.{ice}
 import ../names.{NameTable, NamespaceId}
 import ../builtins.{ENTRY_FN}
 import ../types.{TyId, is_ty, Interner}
-import ../sem.{FnTable, FnRow, raw_row, no_row, Ctx, ProtoSig, ArgSpec, CallForm, bind_fault}
+import ../sem.{FnTable, FnDef, FnRow, raw_row, no_row, Ctx, ProtoSig, ArgSpec, CallForm, bind_fault}
 import ../sem.{FieldTable, FieldRow, raw_frow, is_frow}
 import ../sem.{bind_slot_of, mode_admits, type_admits, lit_admits}
 import ../sem.{ty_source_name}
@@ -361,6 +361,9 @@ fn fits(fns FnTable, tys Interner, row FnRow, args []ArgSpec, form CallForm) -> 
     } else {
         // The declaration was written in the form the call site uses.
     }
+    // A STATIC method answers neither form: it is reached through its type
+    // (`Vec[T].new`), and a free call of the same name is not a call of it.
+    if is_ty(fd.owner) { return false }
     // ARITY IS NO LONGER EQUALITY (wave 4, D102). A call may write FEWER
     // arguments than the declaration has parameters -- the omitted ones carry
     // defaults -- and it may write them BY NAME, in which case the written
@@ -466,7 +469,34 @@ fn dominates(fns FnTable, a FnRow, b FnRow) -> bool {
             // A tie here decides nothing; some other position must.
         }
     }
-    no_worse && better_somewhere
+    if no_worse && better_somewhere { return true }
+    // THE LINEARITY AXIS (D84 amendment 2026-09-25, registry 1519), and only
+    // where the mode axis cannot tell the two apart (its rule 5: linearity
+    // decides AFTER the modes, between forms alike in all else): the form whose
+    // type parameters are plain beats the `[T consume]` one, position by
+    // position (rule 4). Without it std's `Vec[T] @contains` beside
+    // `Vec[T consume] @contains` was an ambiguity on every vector of a plain T.
+    no_worse && linear_dominates(fns, fa, fb)
+}
+
+/// Does `fa` beat `fb` on the linearity axis -- nowhere `consume` where `fb` is
+/// plain, and plain somewhere `fb` is `consume`? Rows with different numbers of
+/// type parameters are not the pair the axis speaks about.
+#realtime nogc
+fn linear_dominates(fns FnTable, fa FnDef, fb FnDef) -> bool {
+    if fa.tparam_cnt != fb.tparam_cnt { return false }
+    mut narrower = false
+    for i in 0..fa.tparam_cnt {
+        ro la = fns.tlinear[fa.tparam_off + i]
+        ro lb = fns.tlinear[fb.tparam_off + i]
+        if la && !lb { return false }
+        if lb && !la {
+            narrower = true
+        } else {
+            // Alike at this position: some other one decides.
+        }
+    }
+    narrower
 }
 
 /// The candidate row for this call — or why there is none to name.
@@ -660,3 +690,21 @@ export fn FnIndex @has_method_for(t TyId, ctx Ctx, sig ProtoSig) -> bool {
 // reviewed. When a refusal really needs to name the whole candidate set (D420;
 // rustc lists the candidate impls, clang the candidate functions), it comes
 // back with a test that reads the rows back.
+
+/// The module a PRIVATE field of `owner_id` is visible from, or None when the
+/// field is public or absent (274.11 E.10 step 4c-2: a handed record's private
+/// fields are registered for its own module's bodies).
+#realtime nogc
+export fn FieldIndex @field_private_to(fields FieldTable, owner_id TyId, fname str) -> Option[str] {
+    mut r = FieldRow(@names.find(fname))
+    while is_frow(r) {
+        ro fd = fields.rows[raw_frow(r)]
+        if fd.owner_id == owner_id {
+            return if fd.private { Some(fd.private_to) } else { None }
+        } else {
+            // Another type's field of this name: keep walking.
+        }
+        r = @next[raw_frow(r)]
+    }
+    None
+}

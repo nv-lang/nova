@@ -47,5 +47,8 @@ test "a type that is no sum is not told it has variants -- the refusal names the
     ro (d, _) = compile_to_c("fn take(b Box) -> int => 1\nfn main() {\n println(take(Box.new(1)))\n}", decls)
     assert(d.len() >= 1, "a static call in argument position is outside the subset today")
     assert(!messages(d).contains("not one of its variants"), messages(d))
-    assert(messages(d).contains("call on a TYPE"), messages(d))
+    // Since 274.11 E.10 step 4c-2 a static call IS compiled: this one is refused
+    // for its real cause -- the declaration has no body and the shell carries no
+    // `Nova_Box_static_new` -- not as an uncompiled form.
+    assert(messages(d).contains("carries no `new`"), messages(d))
 }

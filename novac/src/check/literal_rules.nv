@@ -179,7 +179,7 @@ fn Checker mut @lit_fits_or_refuse(e Node, t TyId) -> bool {
     ro r = row_opt ?? ice("check: a primitive row vanished between two reads of one Option")
     ro is_int = match r.family {
         PfInt => true
-        PfFloat | PfStr | PfBool | PfChar | PfUnit | PfAny => false
+        PfFloat | PfStr | PfBool | PfChar | PfUnit | PfAny | PfNever => false
     }
     if !is_int { return true }
     ro lk_kids = branch_children(e)
@@ -358,7 +358,7 @@ fn Checker mut @report_if_ctor_fields_wrong(ctor Node, t TyId) -> () {
             named_cnt += 1
             ro fk = branch_children(c)
             ro want = ctor_field_name(c)
-            if !@fres.has_field(@ctx.fields, t, want) {
+            if !@fres.has_field(@ctx.fields, @field_owner(t), want) || !@field_visible(t, want) {
                 @report_first_leaf_of(fk, CTOR_UNKNOWN_FIELD_MSG)
                 return
             } else {

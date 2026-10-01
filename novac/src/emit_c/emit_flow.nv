@@ -35,14 +35,14 @@ module novac.emit_c
 
 import ../tree.{Node, NodeKind}
 import ../diag.{ice}
-import ../sem.{branch_children, leaf_text, c_instance_method}
+import ../sem.{branch_children, leaf_text, vec_op_c}
 // The walk prints a unit return from the type of the return place (2026-09-09).
 import ../sem.{is_unit_ty}
 import ../types.{is_ty}
 import ../lower.{IfCtx, LoopHead, Cond, Fn, Stmt, BlockId, SwitchTerm, no_block, raw_block}
 import ../lower.{HandlerSwap}
 import ../sem.{c_type, effect_slot_c}
-import ../builtins.{VEC_LEN_METHOD}
+import ../builtins.{VEC_LEN_METHOD, RECV_C_NAME}
 
 /// Whether this branch continues a `} else ` line its caller printed.
 fn chained_of(outer Option[IfCtx]) -> bool {
@@ -112,7 +112,7 @@ fn Emitter mut @print_loop_head(head LoopHead) -> () {
         Each(e) => {
             ro vd = @lo.ir.decl_of(e.vec)
             ro i = @lo.ir.decl_of(e.idx).name
-            ro len_c = c_instance_method(@ctx, vd.ty, VEC_LEN_METHOD)
+            ro len_c = vec_op_c(@ctx, vd.ty, VEC_LEN_METHOD, @out.vec_op_row(VEC_LEN_METHOD))
             @body.append("    for (nova_int ${i} = 0; ${i} < ${len_c}(${vd.name}); ${i}++) {\n")
         }
         Forever => {
@@ -226,6 +226,10 @@ fn Emitter mut @print_chain(f Fn, at BlockId, stop BlockId, head_continues bool,
                 ro rt = f.locals[0].ty
                 if !is_ty(rt) || is_unit_ty(@ctx, rt) {
                     @body.append("    return NOVA_UNIT;\n")
+                } else if @ret_self {
+                    // `-> @` (D409): a return with no value returns the receiver; after
+                    // a delegated value return (`return @other()`) the line is unreachable.
+                    @body.append("    return ${RECV_C_NAME};\n")
                 } else {
                     // The assignment to the return place already printed the return.
                 }

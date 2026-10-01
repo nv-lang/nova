@@ -42,7 +42,7 @@ import ../sem.{Ctx, CheckOut, param_name_at, param_type_at, branch_children, cal
 import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of}
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
-import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
+import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor}
 import ../sem.{ty_source_name, c_shell_method, digit_index}
 import ../sem.{interp_slices, const_init_interpolates}
 import ../types.{TyId, no_ty, is_ty}
@@ -719,7 +719,7 @@ fn Checker mut @type_expr(e Node) -> () {
         }
         match kids[2] {
             Leaf(t) => {
-                if !@fres.has_field(@ctx.fields, @field_owner(owner), t.text) {
+                if !@fres.has_field(@ctx.fields, @field_owner(owner), t.text) || !@field_visible(owner, t.text) {
                     @refuse(t, "unknown field: this type has no field with this name")
                 } else {
                     // The field exists -- and ITS TYPE IS A DECISION (274.4
@@ -952,3 +952,24 @@ fn Checker @field_owner(owner TyId) -> TyId {
     decl_of_ty(@ctx, owner).ty_id
 }
 
+/// May THIS body read field `name` of `owner`? A public field, yes; a field its
+/// module keeps private (`FieldTable @add_private`), only from inside that
+/// module -- the file's own module, or the module of the handed body being
+/// instantiated (274.11 E.10 step 4c-2: `Vec[T] @len` reads `@len`). A
+/// private field is answered "unknown" outside, as the oracle answers it.
+fn Checker @field_visible(owner TyId, name str) -> bool {
+    ro home = match @fres.field_private_to(@ctx.fields, @field_owner(owner), name) {
+        None => return true
+        Some(m) => m
+    }
+    if raw_row(@inst_row) >= 0 && !@ctx.fns.compiles_body(@inst_row) {
+        // A handed body: its module, or -- for a file-private field (`#<tree>`)
+        // -- its very declaration tree.
+        return home == @ctx.fns.rows[raw_row(@inst_row)].handed_from ||
+            home == "#${@ctx.handed.tree_of(@inst_row)}"
+    } else {
+        // The file's own body: its module, in the C shape `Ctx.module_c` keeps;
+        // a file-private field of a handed file is never the file's.
+        return home.replace(".", "_") == @ctx.module_c
+    }
+}

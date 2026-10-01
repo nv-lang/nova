@@ -152,7 +152,11 @@
 # matched by field name, and a `|` pattern binds a name every alternative binds. Two dated
 # refusals stand in their place, both narrower than the form: a record-form variant of a
 # GENERIC sum built by brace, and one built in an argument position (step 4d of 274.11 E.10).
-undated=59
+# 2026-10-01, Carina window (274.11 E.10 steps 4c-2/4d): undated 61 -> 60. The
+# call on a TYPE is compiled (check/static_call.nv); its old refusal is a language reject now.
+# 2026-10-01, Carina window, merge of main e448f0193: both notes above stand; the
+#   number is the guard's count on the merged tree.
+undated=58
 
 # ВТОРОЕ ЧИСЛО — ОБЩЕЕ, храповик ВНИЗ с целью НОЛЬ (274 §1.3а п. «г»). Заведено
 # 2026-09-13 окном 274; предписано оно было ещё 2026-09-05 планом 274.7 §И («страж
@@ -396,7 +400,16 @@ undated=59
 # 2026-10-01, Carina window (record-form variants and `|` binders): refusals stay 140. The two
 # undated refusals left (see `undated=`), two DATED ones came in: a brace construction of a
 # generic sum's record-form variant (274.7 W4) and one in an argument position (274.11 E.10 4d).
-refusals=140
+# 2026-10-01, Carina window (registry 1514): refusals 140 -> 141, and it is a RAISE on
+# purpose. The refusal does not join a form that compiled: it REPLACES A WRONG TYPE.
+# `type Ids alias []Id` was read as an alias of `Id`, `type N []int` as a newtype over
+# `int`, `alias IndexMap[str, V]` as the bare head -- accepted in silence. A loud
+# refusal with a stage (E10) is the floor; the form itself (a representation read
+# through the type-reference door, an alias that names a TERM, not a declaration)
+# lowers it back, and row 1514 keeps that as its open half.
+# 2026-10-01, Carina window, merge of main e448f0193: both notes above stand; the
+#   number is the guard's count on the merged tree.
+refusals=141
 # ТРЕТЬЕ ЧИСЛО — БЕССРОЧНЫЕ ПО ДВЕРИ (волна 274.7 В11-б, засев 2026-09-14, окно 274).
 #
 # Два числа выше мерят НАПИСАНИЕ текста отказа, а у предмета есть машинный признак:

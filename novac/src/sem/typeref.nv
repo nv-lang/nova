@@ -508,6 +508,41 @@ export fn ty_of_ret_node(mk []Node, types []TypeDef, defs DefTable, tys Interner
     no_ty()
 }
 
+/// THE LINEARITY of each type parameter of one generics list, in order: true
+/// for `T consume` (`[T consume]`, `[T consume Display]`), false for a plain
+/// `T`. One entry per NAME, so the vector lines up with `names_of_generics`.
+/// Asked by overload resolution (registry 1519): D84's linearity axis
+/// (amendment 2026-09-25) lets `[T]` beat `[T consume]` for a plain `T`.
+fn linear_of_generics(gk []Node) -> []bool {
+    mut out = []bool.new()
+    mut expect_name = true
+    for g in gk {
+        if g.kind_of() != NodeKind.LeafNode { continue }
+        ro k = leaf_kind(g)
+        if k == TokenKind.Comma {
+            expect_name = true
+        } else if k == TokenKind.KwConsume && out.len() > 0 {
+            out[out.len() - 1] = true
+        } else if k == TokenKind.Ident && expect_name {
+            out.push(false)
+            expect_name = false
+        } else {
+            // A protocol of the bound, or punctuation: not linearity.
+        }
+    }
+    out
+}
+
+/// The linearity of a declaration's own generics list, `[]` when it has none.
+fn generic_linear(kids []Node) -> []bool {
+    mut out = []bool.new()
+    for c in kids {
+        if c.kind_of() != NodeKind.Generics { continue }
+        out.append(linear_of_generics(branch_children(c)))
+    }
+    out
+}
+
 /// The bounds of a declaration's generics list, `[]` when it has none.
 export fn generic_bounds(kids []Node) -> []str {
     mut out = []str.new()

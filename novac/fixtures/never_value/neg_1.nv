@@ -1,0 +1,26 @@
+module never_value.neg_1
+
+// ONE seeded cause: two arms of a value `match` that disagree (`int` and `str`),
+// beside a third arm of type `never`. A `never` arm produces no value and does
+// not vote (D26) -- it must not make the arms that DO produce values agree.
+// `pos_1` beside this file shows the `never` arm accepted next to agreeing arms;
+// here the disagreement is still refused, by both compilers.
+
+// NOVAC_EXPECT match arms produce different types
+
+fn boom(msg str) -> never {
+    println(msg)
+    boom(msg)
+}
+
+fn pick(n int) -> int {
+    match n {
+        0 => boom("zero")
+        1 => 1
+        _ => "many"
+    }
+}
+
+fn main() {
+    println("${pick(1)}")
+}

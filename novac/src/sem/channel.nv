@@ -51,6 +51,7 @@ module novac.sem
 import ../diag.{ice}
 import ../tree.{NodeId, raw_node, is_node}
 import ../types.{TyId, no_ty, is_ty}
+import ../names.{NameTable, NamespaceId}
 
 /// WHAT a resolved call targets, and the target CARRIES ITS OWN ROW.
 ///
@@ -252,6 +253,8 @@ export type CheckOut {
     mv_order []int /// module values (constant-table rows) in the order their initializers run: every value after the values it reads (274.5 S6, D200 topological order). One writer: check.
     captures []CaptureRow /// the bindings each handler literal captures, one row per (literal, name) -- E.9 step 3. One writer: check.
     cap_at []int /// NodeId -> the capture row a Name read inside a literal op body is, -1 = none. One writer: check.
+    vec_ops NameTable /// implicit vector operation NAME (`new`, `push`, `len`, `index`) -> the row of std's `Vec[T]` declaration it calls, recorded by the checker where it decided an instance novac makes, read by the emitter to name it (274.11 E.10 step 4c-2) (NsCallables)
+    wanted []CalleeRef /// instances the LANGUAGE calls with no call written -- a vector literal's `new` and `push`, `xs[i]`'s `index`, a `for`'s `len` and `index` over a vector whose instance novac makes itself (274.11 E.10 step 4c-2). A flat list, not by node: no node holds a call for them, and mono reads them all. One writer: check.
 }
 
 /// One binding a handler literal CAPTURES from the scope it is written in
@@ -282,8 +285,35 @@ export fn CheckOut.new(node_count int) -> CheckOut {
     }
     CheckOut { entry: no_row(), types, res, implicit, subst_args: []TyId.new(), arg_slots: []SlotBind.new(),
                contract_notes: []ContractNote.new(), mv_order: []int.new(),
-               captures: []CaptureRow.new(), cap_at }
+               captures: []CaptureRow.new(), cap_at, wanted: []CalleeRef.new(),
+               vec_ops: NameTable.new(NamespaceId.NsCallables) }
 }
+
+/// An instance the language calls IMPLICITLY -- `Vec[Pt] @push` behind a
+/// literal, `@index` behind `xs[i]` -- recorded so mono makes it (274.11 E.10
+/// step 4c-2). The emitter spells the call from the vector's type; this list is
+/// only the decision that the instance exists. A repeat is harmless: mono keys
+/// instances by (row, substitution).
+export fn CheckOut mut @record_wanted(row FnRow, subst []TyId) -> () {
+    ro off = @subst_args.len()
+    @subst_args.append(subst)
+    @wanted.push(CalleeRef { target: CalleeTarget.CalleeFn(row), subst_off: off, subst_cnt: subst.len(),
+                             slot_off: 0, slot_cnt: 0 })
+}
+
+/// The row an implicit vector operation calls when novac makes its instance
+/// (274.11 E.10 step 4c-2): one row per operation name, whatever the element.
+export fn CheckOut mut @record_vec_op(name str, row FnRow) -> () {
+    @vec_ops.put(name, raw_row(row))
+}
+
+/// The row recorded for implicit vector operation `name`, or `no_row()` when
+/// none was (the shell carries every instance of it this channel uses).
+#realtime nogc
+export fn CheckOut @vec_op_row(name str) -> FnRow => FnRow(@vec_ops.find(name))
+
+/// The instances the language calls with no call written (`@record_wanted`).
+export fn CheckOut @wanted_refs() -> ro []CalleeRef => @wanted
 
 /// THE ENTRY DECISION (274.4 step 2): which row is this program's entry
 /// point. It is a name resolution -- the checker's job -- and mono used to

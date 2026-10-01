@@ -29,7 +29,7 @@
 
 module novac.sem
 
-import ../tree.{Node, NodeKind}
+import ../tree.{Node, NodeKind, NodeId, branch, no_node}
 import ../builtins.{COERCE_ATTR, SELF_TYPE, UNIT_TYPE_NAME, RECV_BINDING}
 import ../types.{TyId, no_ty, is_ty}
 import ../names.{raw_decl, DeclId}
@@ -140,8 +140,16 @@ fn harvest_in(n Node, handed_from str, types []TypeDef, mut defs DefTable, mut t
 /// not compile (`iter.pos`), so reading them now would be a capability with no
 /// obligation (K7). The name and the KIND are what a type in a signature needs.
 fn harvest_types(decls []Node, mut types []TypeDef, mut gates []str, mut defs DefTable,
-                        mut tys Interner, mut fx EffectTable) -> () {
+                        mut tys Interner, mut fx EffectTable, own_module str) -> () {
     for d in decls {
+        // WHICH declarations of this file other modules may NAME (D281, registry
+        // 221.1 #1491): the exported ones -- a type not exported is its module's
+        // own. Registering it by its bare name in the one table every module
+        // reads let std's private json `Token` stand where novac's `lex.Token`
+        // was meant (three false #812 refusals in parse/parse.nv). A file of
+        // the compiled file's OWN module sees all of them.
+        ro same_module = module_dotted(d) == own_module
+        ro exported = exported_ids(d)
         // THE GATES of std's types, read where the DECLARATION LIST is (D186).
         // Std goes through the same door as the compiled file deliberately:
         // reading the gate in only one of the two would leave a std type
@@ -156,6 +164,8 @@ fn harvest_types(decls []Node, mut types []TypeDef, mut gates []str, mut defs De
             if nk.len() < 2 { continue }
             if nk[1].kind_of() != NodeKind.LeafNode { continue }
             ro tname = leaf_text(nk[1])
+            // SILENT-OK: a private type of another module is invisible here by D281 -- its own module reads it.
+            if !same_module && !is_among(exported, c.id_of()) { continue }
             // A GENERIC declaration registers as a HEAD (step B1): the row
             // carries how many parameters it binds, and the RESOLVER is what
             // keeps a bare `Vec` from becoming a type -- `ty_or_none` answers
@@ -334,6 +344,8 @@ fn harvest_fn(kids []Node, handed_from str, types []TypeDef, mut defs DefTable, 
     mut bounds = []str.new()
     for _ in 0..recv_tp_cnt { bounds.push("") }
     bounds.append(generic_bounds(kids))
+    mut linear = if is_free { []bool.new() } else { recv_type_linear(recv_kids, recv_at) }
+    linear.append(generic_linear(kids))
     mut prow = []TyId.new()
     for i in 0..tps.len() { prow.push(tys.param(i)) }
     ro recv_t = if is_free { no_ty() } else {
@@ -377,7 +389,14 @@ fn harvest_fn(kids []Node, handed_from str, types []TypeDef, mut defs DefTable, 
     // The RECEIVER carries neither a name nor a default: it is written before
     // the method's name, not in the parameter list, so there is no `name:` a
     // call site could say and no `=` a declaration could write.
-    if !is_free {
+    // A STATIC method (`fn Vec[T].new(cap int)`: the receiver group ends in
+    // `.`, not `@`) takes NO receiver -- it is reached through its type, and
+    // its first parameter is its first written one (274.11 E.10 step 4c-2).
+    // Until this day it was registered as a method whose receiver was the
+    // type: `Vec.new` had a parameter no call passes, and its instance would
+    // have been printed with one.
+    ro is_static = !is_free && recv_kids.len() > 0 && is_leaf_kind(recv_kids[recv_kids.len() - 1], TokenKind.Dot)
+    if !is_free && !is_static {
         param_ids.push(ParamDef { name: RECV_BINDING, type_id: recv_t,
                                   mode: recv_mode_at(kids), default_expr: None })
     } else {
@@ -433,12 +452,18 @@ fn harvest_fn(kids []Node, handed_from str, types []TypeDef, mut defs DefTable, 
     // second time -- in module mode the unit is inside `NOVAC_SELF_PATH`, and
     // every call of its own methods was an ambiguity (237 over novac's source).
     if !is_free && fns.file_declares_method(mname, param_ids) { return }
-    fns.add(mname, ret_t, !is_free, param_ids, tps, bounds, handed_from: handed_from,
-            ret_ro: ret_is_ro(ret_kids))
+    if is_static {
+        fns.add_static(recv_t, mname, ret_t, param_ids, tps, bounds, handed_from, ret_is_ro(ret_kids))
+    } else {
+        fns.add(mname, ret_t, !is_free, param_ids, tps, bounds, handed_from: handed_from,
+                ret_ro: ret_is_ro(ret_kids))
+    }
+    fns.mark_linear(linear)
     if is_free {
         defs.add(mname, DefTarget.DefFn(FnRow(fns.rows.len() - 1)))
     } else {
-        // A method is reached through its receiver, never by bare name.
+        // A method is reached through its receiver, a static one through its
+        // type -- never by bare name.
     }
 }
 
@@ -464,6 +489,23 @@ fn recv_type_params(rk []Node, at int) -> []str {
         ro c = rk[i]
         if c.kind_of() != NodeKind.Generics { continue }
         out.append(names_of_generics(branch_children(c)))
+    }
+    out
+}
+
+/// The linearity of the receiver's type parameters, in `recv_type_params`'
+/// order: `Vec[T consume]` -> [true], `Vec[T]` -> [false].
+fn recv_type_linear(rk []Node, at int) -> []bool {
+    mut out = []bool.new()
+    if at + 1 < rk.len() && rk[at + 1].kind_of() == NodeKind.Generics {
+        out.append(linear_of_generics(branch_children(rk[at + 1])))
+    } else {
+        // A plain receiver (`Cel`, `[]u8`): no parameters of its head.
+    }
+    for i in 0..at {
+        // Slice brackets or the mode keyword are not a parameter list.
+        if rk[i].kind_of() != NodeKind.Generics { continue }
+        out.append(linear_of_generics(branch_children(rk[i])))
     }
     out
 }
@@ -506,7 +548,7 @@ fn fill_handed_newtypes(decls []Node, mut types []TypeDef, defs DefTable, mut ty
             ro nk = branch_children(c)
             if nk.len() < 2 || nk[1].kind_of() != NodeKind.LeafNode { continue }
             if Some(owner) = defs.type_decl(leaf_text(nk[1])) {
-                fill_handed_newtype(c, owner, types, defs, tys)
+                fill_newtype_term(c, owner, types, defs, tys)
             } else {
                 // Not a registered type name: nothing to fill.
             }
@@ -514,8 +556,78 @@ fn fill_handed_newtypes(decls []Node, mut types []TypeDef, defs DefTable, mut ty
     }
 }
 
-/// One handed newtype's term, when its row still waits for one.
-fn fill_handed_newtype(c Node, owner DeclId, mut types []TypeDef, defs DefTable, mut tys Interner) -> () {
+/// The declarations a handed file EXPORTS (D281): the ones another module may
+/// name. One door for the types and the constants, so the two cannot disagree
+/// on what a file shows.
+fn exported_ids(d Node) -> []NodeId {
+    mut exported = []NodeId.new()
+    for w in branch_children(d) {
+        if w.kind_of() != NodeKind.ExportDecl { continue }
+        for inner in branch_children(w) {
+            exported.push(inner.id_of())
+        }
+    }
+    exported
+}
+
+/// THE CONSTANTS OF HANDED FILES (registry 1518, 2026-10-01): a module-level
+/// `const` another module declares, where D281 lets the compiled file see it
+/// (exported, or the same module). Until this pass none was registered, and
+/// every imported constant was "unknown name" -- eight times over novac's own
+/// source (`EFFECT_MARKER`, `ENTRY_FN`, `TYPE_KIND_COUNT`, ...).
+///
+/// ONLY A LITERAL as the initializer: a constant is SUBSTITUTED at each read
+/// (274.5 wave B2), and the literal is registered REBUILT WITHOUT AN IDENTITY
+/// (`handed_literal`) -- its leaves carry no node id, so nothing of the
+/// compiled file's channel can be confused with it. A branch from another
+/// tree carries ids of THAT tree's space, which the file's channel would read
+/// as its own; such a constant stays unregistered and its read is refused by
+/// name, until a handed initializer is typed in a channel of its own.
+fn harvest_consts(decls []Node, mut defs DefTable, mut consts ConstTable, own_module str) -> () {
+    for d in decls {
+        ro same_module = module_dotted(d) == own_module
+        ro exported = exported_ids(d)
+        for c in file_decls(d) {
+            ro ck = const_decl_of(c)
+            if !ck.is_some() { continue }
+            if !same_module && !is_among(exported, c.id_of()) { continue }
+            ro kids = branch_children(ck ?? c)
+            ro init_at = const_init_at(kids)
+            if init_at < 0 { continue }
+            ro lit = handed_literal(kids[init_at])
+            if !lit.is_some() { continue }
+            if Some(cname) = const_full_name(kids) {
+                defs.add(cname, DefTarget.DefConst(consts.add(cname, no_ty(), []Node.of(lit ?? kids[init_at]), false)))
+            } else {
+                // No name: a parse-error shape, refused in its own file.
+            }
+        }
+    }
+}
+
+/// A handed constant's initializer when it is a LITERAL -- a number (negated
+/// too), a string, a char -- rebuilt as a `Lit` with NO identity, or None for any other form. The
+/// parser wraps every literal in a `Lit` branch (`parse/expr.nv`), and the
+/// readers of a literal ask the channel by its id (`type_of`, `@emit_expr`):
+/// the handed tree's id would be read as a node of the compiled file. With
+/// `no_node()` the channel answers nothing, and the literal is its own kind
+/// (D44) -- what an unrecorded literal of the file's own constant gets too.
+fn handed_literal(n Node) -> Option[Node] {
+    if n.kind_of() != NodeKind.Lit { return None }
+    ro kids = branch_children(n)
+    if kids.len() == 0 { return None }
+    ro k = leaf_kind(kids[kids.len() - 1])
+    if k == TokenKind.IntLit || k == TokenKind.FloatLit || k == TokenKind.StrLit || k == TokenKind.CharLit {
+        return Some(branch(no_node(), NodeKind.Lit, kids))
+    }
+    None
+}
+
+/// One newtype's term, when its row still waits for one -- the ONE door for a
+/// handed newtype and for the file's own (`fill_own_reprs`, collect.nv). A
+/// representation that has no term yet leaves the row waiting: the caller
+/// that walks in rounds comes back to it.
+fn fill_newtype_term(c Node, owner DeclId, mut types []TypeDef, defs DefTable, mut tys Interner) -> () {
     if types[raw_decl(owner)].kind != TypeKind.TkNewtype || is_ty(types[raw_decl(owner)].ty_id) { return }
     if Some(spec) = repr_of_decl(c, defs) {
         if raw_decl(spec.under_decl) < types.len() && is_ty(ty_of_row(types, spec.under_decl)) {
@@ -530,3 +642,13 @@ fn fill_handed_newtype(c Node, owner DeclId, mut types []TypeDef, defs DefTable,
         // A representation novac does not read: no term, as for the file's own.
     }
 }
+
+/// Is node `id` among `ids`? A file's EXPORTED declarations, a handful per
+/// file -- the list is bounded by one file's top level.
+fn is_among(ids []NodeId, id NodeId) -> bool {
+    for x in ids {
+        if x == id { return true }
+    }
+    false
+}
+

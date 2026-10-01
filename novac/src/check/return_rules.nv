@@ -20,7 +20,7 @@ module novac.check
 import ../tree.{Node, NodeKind}
 import ../types.{TyId, no_ty, is_ty, Interner}
 import ../sem.{FnRow, raw_row, branch_children, ty_source_name, prim_row_of, LitArg}
-import ../sem.{Ctx, expr_leaf_name, is_value_record, ret_is_unit}
+import ../sem.{Ctx, expr_leaf_name, is_value_record, ret_is_unit, is_never_ty}
 import ../builtins.{TypeKind, RECV_BINDING}
 
 /// A written `-> T` whose type the collector's reference door could not read
@@ -33,6 +33,10 @@ import ../builtins.{TypeKind, RECV_BINDING}
 /// instance or a tuple name is not measured on the shell.
 fn Checker mut @report_if_return_unread(fkids []Node, rid TyId) -> () {
     if is_ty(rid) && !@holds_ptr(rid) { return }
+    // A HANDED body this unit instantiates (274.11 E.10 step 4c-2: std's
+    // `alloc_buf[T] -> *mut T`) is std's signature, not this file's: the
+    // pointer's C spelling in an instance name is OURS (`ptr_tag`).
+    if is_ty(rid) && raw_row(@inst_row) >= 0 && !@ctx.fns.compiles_body(@inst_row) { return }
     for c in fkids {
         if c.kind_of() != NodeKind.RetType { continue }
         ro rk = branch_children(c)
@@ -150,6 +154,24 @@ fn Checker @tail_type_of(e Node) -> TyId {
 fn Checker mut @judge_return(e Node, t0 TyId) -> () {
     if !is_ty(@ret_expect) { return }
     if !is_ty(t0) { return }
+    // AN ANONYMOUS constructor returned (`return { data: 0 as *mut T, .. }` in
+    // std's `Vec[T].new`, 274.11 E.10 step 4c-2) is a construction of the
+    // DECLARED return: its fields are judged and TYPED against it here -- the
+    // expression walk has no type to judge it by, and an untyped field value
+    // was the emitter's "no type recorded".
+    if e.kind_of() == NodeKind.RecordCtor {
+        ro ck = branch_children(e)
+        if ck.len() > 0 && ck[0].kind_of() != NodeKind.Name {
+            ro mark = @out.len()
+            @judge_record_ctor(e, @concrete(@ret_expect))
+            // SILENT-OK: the construction's own door refused it by name.
+            if @out.len() > mark { return }
+        } else {
+            // A named constructor was judged where it was typed.
+        }
+    } else {
+        // Not a constructor: the type comparison below.
+    }
     // An instance's body may still name the PARAMETER (`x T` bound as written):
     // the comparison is between concrete types, through the same door every
     // type of the body takes; a parameter that stays a parameter is not judged.
@@ -172,6 +194,10 @@ fn Checker mut @judge_return(e Node, t0 TyId) -> () {
     // GUARDED and misses it. The guard has to be on the value actually
     // handed to the door, not on its ancestor.
     if !is_ty(t) { return } else {}
+    // A tail of type `never` (D26, B10 part 3): a call that does not return
+    // -- `ice(..)` as the last expression of a `-> TyId` fn -- hands back no
+    // value, so there is nothing to compare with the declared return.
+    if is_never_ty(@ctx.tys, t) { return }
     if @ctx.tys.kind_of(t) == TypeKind.TkParam { return }
     if t == @ret_expect {
         // Same type as the result. What is left is HOW the value is bound (#1309).
@@ -248,11 +274,11 @@ fn int_narrows(tys Interner, from TyId, to TyId) -> bool {
     }
     ro from_int = match fr.family {
         PfInt => true
-        PfFloat | PfStr | PfBool | PfChar | PfUnit | PfAny => false
+        PfFloat | PfStr | PfBool | PfChar | PfUnit | PfAny | PfNever => false
     }
     ro to_int = match tr.family {
         PfInt => true
-        PfFloat | PfStr | PfBool | PfChar | PfUnit | PfAny => false
+        PfFloat | PfStr | PfBool | PfChar | PfUnit | PfAny | PfNever => false
     }
     if !from_int || !to_int { return false }
     tr.bits < fr.bits || (tr.bits == fr.bits && tr.signed != fr.signed)

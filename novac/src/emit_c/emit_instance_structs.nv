@@ -1,0 +1,59 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc monomorphization collects the concrete ADT instances its
+// instances use and gives each one layout -- the TYPE is instantiated with the
+// functions that need it; NOT taken: rustc's layout computation (C lays a
+// struct out; novac only writes its fields in declaration order).
+// Role: the C struct of a generic RECORD instantiated over a type of the
+//   program (274.11 E.10 step 4d): `Nova_Vec____Nova_Pt_p` for `Vec[Pt]` --
+//   the shell defines only the instances its probe used, so a `Vec[Pt]` this
+//   unit makes has no struct until this door writes one: a typedef and a body
+//   with the declaration's fields under the instance's substitution, in the
+//   shell's spelling (`instance_struct_c`).
+// Used by: emit_c.nv `emit`, after the type declarations and before the
+//   instance prototypes (a prototype names the struct).
+// Guarded by: the vec_own fixture (check-novac-differential.sh) and
+//   check-novac-emission-size.sh.
+
+module novac.emit_c
+
+import ../sem.{decl_of_ty, field_range_of, no_frow, raw_frow, c_type, subst_type, instance_struct_c}
+import ../types.{TyId, is_ty}
+import ../builtins.{TypeKind}
+
+/// The struct of every generic RECORD instance an instance this unit makes
+/// takes or returns, when the shell does not define it -- once each.
+fn Emitter mut @emit_instance_structs(insts []Instantiation) -> () {
+    mut done = []TyId.new()
+    for inst in insts {
+        for p in inst.ptypes {
+            @emit_instance_struct_of(p.type_id, done)
+        }
+        @emit_instance_struct_of(inst.ret_id, done)
+    }
+}
+
+/// The struct of `t` when `t` is an instance of a generic record the shell does
+/// not define and this unit has not written yet.
+fn Emitter mut @emit_instance_struct_of(t TyId, mut done []TyId) -> () {
+    if !is_ty(t) || @ctx.tys.kind_of(t) != TypeKind.TkApp { return }
+    ro td = decl_of_ty(@ctx, t)
+    if td.kind != TypeKind.TkRecord { return }
+    ro sn = instance_struct_c(@ctx, t)
+    if @ctx.interop.has_body(sn) { return }
+    for d in done {
+        if d == t { return }
+    }
+    done.push(t)
+    mut args = []TyId.new()
+    for i in 0..@ctx.tys.arg_count(t) {
+        args.push(@ctx.tys.arg(t, i))
+    }
+    @body.append("typedef struct ${sn} ${sn};\n")
+    @body.append("struct ${sn} {\n")
+    ro frange = field_range_of(td) ?? (no_frow(), 0)
+    for j in raw_frow(frange.0)..raw_frow(frange.0) + frange.1 {
+        ro fd = @ctx.fields.rows[j]
+        @body.append("    ${c_type(@ctx, subst_type(@ctx, fd.type_id, args))} ${fd.name};\n")
+    }
+    @body.append("};\n\n")
+}

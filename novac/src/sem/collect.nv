@@ -123,6 +123,12 @@ fn register_sum_variants(c Node, mut types []TypeDef, mut defs DefTable,
     if raw_decl(sum_decl) >= types.len() { return }
     ro srow = types[raw_decl(sum_decl)]
     if srow.name != sname { return } // a duplicate name owns no row here
+    // THE ROW MUST BE A SUM (registry 221.1 #1491): a private sum of another
+    // module is not registered by its bare name (D281), so its name may answer
+    // with another module's RECORD of the same name -- std's private json
+    // `Token` against novac's `lex.Token`. Hanging the sum's variants on that
+    // record replaced its fields, and every `t.kind` was "unknown field".
+    if srow.kind != TypeKind.TkSum { return }
     // The term came from the pass that built the row: the variants carry it,
     // and nobody re-interns it.
     ro sum_ty = srow.ty_id
@@ -257,7 +263,11 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // harvest below, this file's own in pass 2, the ProtoTable two-pass
     // contract. Declared BEFORE the harvest because the harvest fills it.
     mut fx = EffectTable.new()
-    harvest_types(decls, types, gates, defs, tys, fx)
+    harvest_types(decls, types, gates, defs, tys, fx, module_dotted(file))
+    // THE HANDED CONSTANTS, beside the handed types and before the seal: a
+    // file's own constant of the same name is registered after it, and the
+    // last put wins -- the file shadows what it was handed.
+    harvest_consts(decls, defs, consts, module_dotted(file))
     // THE VARIANTS OF HANDED SUMS, through the same door the file's own sums
     // take below (274.5 wave "variants of handed sums", 2026-09-04). Until this
     // loop `harvest_types` registered a handed sum's NAME and skipped its
@@ -464,6 +474,10 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
             }
         }
     }
+    // THE REPRESENTATIONS BEFORE THEIR READERS: every name is registered now,
+    // so an alias can name its target and a newtype intern its term whatever
+    // the order of the file -- and the walk below reads them as decided.
+    fill_own_reprs(decls_of_file, types, defs, tys)
     for c in decls_of_file {
         ro k = c.kind_of()
         if k == NodeKind.TypeDecl {
@@ -521,50 +535,12 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                 // one. The arm is named rather than left to a `_` so that a new
                 // shape still stops the compiler here (P21).
                 ShapeProtocol => {}
-                ShapeRecord => fill_record_fields(c, owner_id, tname, types, defs, fields, tys)
-                ShapeNewtype => {
-                    // The TERM is interned here and not in pass 1: the
-                    // representation is a type reference, so it may point at a
-                    // declaration further down the file.
-                    match repr_of_decl(c, defs) {
-                        None => {
-                            // A representation novac does not know: the row stays
-                            // without a term, and check refuses the declaration at
-                            // its own position rather than sem guessing one.
-                        }
-                        Some(spec) => {
-                            if raw_decl(spec.under_decl) < types.len() {
-                                types[raw_decl(owner_id)] = TypeDef {
-                                    kind: TypeKind.TkNewtype, shape: RecordShape.Record,
-                                    tparam_cnt: 0,
-                                    gate_off: types[raw_decl(owner_id)].gate_off,
-                                    gate_cnt: types[raw_decl(owner_id)].gate_cnt,
-                                    ty_id: tys.newtype(owner_id, ty_of_row(types, spec.under_decl)),
-                                    name: tname, share: types[raw_decl(owner_id)].share, rows: TypeRows.NoRows }
-                            } else {
-                                // The representation names a declaration outside
-                                // the table -- nothing to intern, and check is
-                                // the judge.
-                            }
-                        }
-                    }
-                }
-                ShapeAlias => {
-                    // THE ONE PLACE that may say an alias is not a type: the
-                    // name resolves to the representation's DECLARATION, and
-                    // nothing downstream ever learns a second name existed.
-                    // Registered HERE and not in pass 1 because the
-                    // representation is a type reference: it may point forward,
-                    // and in pass 1 the forward name is not registered yet.
-                    match repr_of_decl(c, defs) {
-                        None => {
-                            // An alias to a type novac does not know: the name
-                            // stays unregistered, and the use site is refused by
-                            // name instead of resolving to a guess.
-                        }
-                        Some(spec) => defs.add(tname, DefTarget.DefType(spec.under_decl))
-                    }
-                }
+                ShapeRecord => fill_record_fields(c, owner_id, tname, types, defs, fields, tys, false, "")
+                // Decided BEFORE this walk, by `fill_own_reprs`: a record
+                // above them in the file reads them, and in file order it
+                // read them undecided (registry 1513). Named, not `_` (P21).
+                ShapeNewtype => {}
+                ShapeAlias => {}
             }
         } else if k == NodeKind.SumDecl {
             // ONE door for the file's own sums and the handed ones (the loop
@@ -674,6 +650,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                                           mode: param_mode_at(pk), default_expr: param_default_slot(pk) })
             }
             fns.add(fname, ret, false, param_ids, tps, generic_bounds(fk), ret_ro: decl_ret_is_ro(fk))
+            fns.mark_linear(generic_linear(fk))
             ro frow = FnRow(fns.rows.len() - 1)
             defs.add(fname, DefTarget.DefFn(frow))
             // The DECLARATION's own row, keyed by its node. Asking `defs` by
@@ -726,7 +703,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
 /// and the handed ones share (registry 1322), so the two cannot read a field
 /// two ways.
 fn fill_record_fields(c Node, owner_id DeclId, tname str, mut types []TypeDef, defs DefTable,
-                      mut fields FieldTable, mut tys Interner) -> () {
+                      mut fields FieldTable, mut tys Interner, private bool, private_to str) -> () {
     ro mine = types[raw_decl(owner_id)]
     ro off = fields.rows.len()
     mut cnt = 0
@@ -755,7 +732,11 @@ fn fill_record_fields(c Node, owner_id DeclId, tname str, mut types []TypeDef, d
         // a slice type was dropped from the registry.
         ro ft = ty_of_type_ref(fk, ftat, no_ty(), tps, prow, types, defs, tys)
         if !is_ty(ft) { continue }
-        fields.add(mine.ty_id, leaf_text(fk[fnat]), ft, ro_view: is_leaf_kind(fk[ftat], TokenKind.KwRo))
+        if private {
+            fields.add_private(mine.ty_id, leaf_text(fk[fnat]), ft, is_leaf_kind(fk[ftat], TokenKind.KwRo), private_to)
+        } else {
+            fields.add(mine.ty_id, leaf_text(fk[fnat]), ft, ro_view: is_leaf_kind(fk[ftat], TokenKind.KwRo))
+        }
         cnt += 1
     }
     // THE LAYOUT AND THE GATE SURVIVE THE REWRITE: this pass replaces the row
@@ -766,6 +747,53 @@ fn fill_record_fields(c Node, owner_id DeclId, tname str, mut types []TypeDef, d
                                           gate_off: mine.gate_off, gate_cnt: mine.gate_cnt,
                                           ty_id: mine.ty_id, name: tname,
                                           share: mine.share, rows: TypeRows.FieldRows(FieldRow(off), cnt) }
+}
+
+/// THE FILE'S OWN REPRESENTATIONS, decided before any field, payload or
+/// signature reads one (registry 1513, 2026-10-01). Until this pass the walk
+/// that fills records filled these too, IN FILE ORDER: a record declared above
+/// `type Id int` read `Id` with no term, its field was dropped, and every
+/// `@b` was "unknown field" about a field written right there -- 18 times in
+/// novac's own types unit (`Interner.args`/`heads`, `TyRow.next_row`, all of
+/// type `TyId`, declared below them). Aliases first, because a newtype may
+/// name one; newtypes in rounds, because one may name another declared below
+/// it -- each round decides at least one, or the walk stops.
+fn fill_own_reprs(decls_of_file []Node, mut types []TypeDef, mut defs DefTable, mut tys Interner) -> () {
+    for c in decls_of_file {
+        if !is_own_type_decl(c, DeclShape.ShapeAlias) { continue }
+        // THE ONE PLACE that may say an alias is not a type: the name resolves
+        // to the representation's DECLARATION, and nothing downstream ever
+        // learns a second name existed.
+        if Some(spec) = repr_of_decl(c, defs) {
+            defs.add(leaf_text(branch_children(c)[1]), DefTarget.DefType(spec.under_decl))
+        } else {
+            // An alias to a type novac does not know: the name stays
+            // unregistered, and the use site is refused by name instead of
+            // resolving to a guess.
+        }
+    }
+    mut moved = true
+    while moved {
+        moved = false
+        for c in decls_of_file {
+            if !is_own_type_decl(c, DeclShape.ShapeNewtype) { continue }
+            if Some(owner) = defs.type_decl(leaf_text(branch_children(c)[1])) {
+                ro waited = !is_ty(types[raw_decl(owner)].ty_id)
+                fill_newtype_term(c, owner, types, defs, tys)
+                moved = moved || (waited && is_ty(types[raw_decl(owner)].ty_id))
+            } else {
+                // Not a registered type name: nothing to fill.
+            }
+        }
+    }
+}
+
+/// Is `c` a type declaration of this shape, with its name where a name stands?
+/// An effect or a protocol is filled by its own door, so it is never asked.
+fn is_own_type_decl(c Node, shape DeclShape) -> bool {
+    if c.kind_of() != NodeKind.TypeDecl || effect_marker_of(c).is_some() { return false }
+    ro nk = branch_children(c)
+    nk.len() >= 2 && nk[1].kind_of() == NodeKind.LeafNode && shape_of_decl(c) == shape
 }
 
 /// The FIELDS OF HANDED RECORDS, filled where the language lets the compiled
@@ -795,18 +823,22 @@ fn fill_handed_fields(file Node, decls []Node, foreign_cnt int, mut types []Type
     ro own_module = module_dotted(file)
     mut seen = []bool.new()
     while seen.len() < foreign_cnt { seen.push(false) }
+    mut tree = 0 - 1
     for d in decls {
+        tree += 1
         ro same_module = module_dotted(d) == own_module
         // The `file_decls` walk, keeping what it drops: whether the declaration
         // stood inside an `export` wrapper -- the other half of D281's rule.
         for w in branch_children(d) {
             if w.kind_of() != NodeKind.ExportDecl {
-                fill_one_handed(w, false, same_module, foreign_cnt, seen, types, defs, fields, tys)
+                fill_one_handed(w, false, same_module, foreign_cnt, seen, types, defs, fields, tys,
+                                module_dotted(d), tree)
                 continue
             }
             for inner in branch_children(w) {
                 if inner.kind_of() == NodeKind.LeafNode { continue }
-                fill_one_handed(inner, true, same_module, foreign_cnt, seen, types, defs, fields, tys)
+                fill_one_handed(inner, true, same_module, foreign_cnt, seen, types, defs, fields, tys,
+                                module_dotted(d), tree)
             }
         }
     }
@@ -815,7 +847,8 @@ fn fill_handed_fields(file Node, decls []Node, foreign_cnt int, mut types []Type
 /// One handed declaration of `fill_handed_fields`: a record whose row it owns,
 /// filled when D281 lets the compiled file see its fields.
 fn fill_one_handed(c Node, exported bool, same_module bool, foreign_cnt int, mut seen []bool,
-                   mut types []TypeDef, defs DefTable, mut fields FieldTable, mut tys Interner) -> () {
+                   mut types []TypeDef, defs DefTable, mut fields FieldTable, mut tys Interner,
+                   home str, tree int) -> () {
     if c.kind_of() != NodeKind.TypeDecl { return }
     if shape_of_decl(c) != DeclShape.ShapeRecord { return }
     ro nk = branch_children(c)
@@ -833,8 +866,17 @@ fn fill_one_handed(c Node, exported bool, same_module bool, foreign_cnt int, mut
     ro has_priv = marker_at >= 0
     ro qualified = has_priv && marker_at + 1 < nk.len() && leaf_kind(nk[marker_at + 1]) == TokenKind.LParen
     ro visible = if same_module { !qualified } else { exported && !has_priv }
-    if !visible { return }
-    fill_record_fields(c, owner_id, tname, types, defs, fields, tys)
+    // A field the file may NOT read is registered all the same, marked private
+    // to its module (274.11 E.10 step 4c-2): a body of that module this unit
+    // instantiates (`Vec[T] @len` reads `@len`) has every right to it. Until
+    // this day such a record got no fields at all, and its own body could not
+    // read them.
+    // WHERE a private field is visible from: its module for a bare `priv` (or a
+    // record not exported), its declaring FILE for a qualified one -- spelled
+    // `#<tree>`, which no module path can equal, so only a body read from that
+    // same tree reads it (`check.Checker @field_visible`).
+    fill_record_fields(c, owner_id, tname, types, defs, fields, tys, !visible,
+                       if qualified { "#${tree}" } else { home })
 }
 
 /// Where a declaration's type-level privacy marker stands (D281), or -1 when it

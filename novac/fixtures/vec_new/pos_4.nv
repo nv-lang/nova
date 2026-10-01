@@ -1,0 +1,20 @@
+module vec_new.pos_4
+
+// `[]T.new()` of the program's OWN record type (registry 221.1 #1457). This
+// file was neg_1 until 2026-10-01: the shell novac links into carries no `Vec`
+// instance for a type it has never seen, and the checker refused it by that
+// name. Since 274.11 E.10 steps 4c-2/4d novac makes the instance itself from
+// std's `Vec[T]` bodies (`new`, `push`, `len`) and writes its struct -- the
+// refusal is gone, and the form compiles byte-for-byte with the oracle.
+
+type Item {
+    w int
+}
+
+fn main() {
+    mut xs = []Item.new()
+    println(xs.len())
+    xs.push(Item { w: 5 })
+    println(xs.len())
+    println(xs[0].w)
+}

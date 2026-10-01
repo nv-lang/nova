@@ -33,7 +33,7 @@ import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, 
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of}
-import ../sem.{c_instance_ctor, c_instance_method, c_method_symbol}
+import ../sem.{c_instance_ctor, c_method_symbol}
 import ../sem.{ty_source_name, variants_named, slice_shape_of, ctor_head_variant}
 import ../types.{TyId, no_ty, is_ty}
 
@@ -546,8 +546,7 @@ fn Checker mut @type_index(e Node) -> TyId {
     // (`Vec____nova_int_method_index`, shell.tpl.c:2001), so the instance this
     // subset needs exists — and any other instance is refused by the name the
     // shell does not carry, not accepted into an emit ICE.
-    ro sym = c_method_symbol(@ctx, recv_t, VEC_INDEX_METHOD)
-    if !@ctx.interop.has(sym) {
+    if !@vec_op_carried(recv_t, VEC_INDEX_METHOD) {
         @report_first_leaf_of(kids, no_shell_method_msg(VEC_INDEX_METHOD, ty_source_name(@ctx, recv_t)))
         return no_ty()
     } else {
@@ -569,7 +568,7 @@ fn Checker mut @type_index(e Node) -> TyId {
 /// over `[]str` passed check and died in clang on `Vec____nova_str_method_index`.
 fn Checker mut @walk_carried(kids []Node, ht TyId) -> bool {
     for m in []str.of(VEC_LEN_METHOD, VEC_INDEX_METHOD) {
-        if !@ctx.interop.has(c_method_symbol(@ctx, ht, m)) {
+        if !@vec_op_carried(ht, m) {
             @report_first_leaf_of(kids, no_shell_method_msg(m, ty_source_name(@ctx, ht)))
             return false
         } else {
@@ -664,9 +663,7 @@ fn Checker mut @type_array_lit(init Node) -> TyId {
     // THE SHELL DECIDES, by name (sub-plan L). Both the constructor and the
     // push must be carried: a literal is built with exactly those two, and
     // asking for one would let the other fail in clang.
-    ro ctor = c_instance_ctor(@ctx, lit_t)
-    ro push = c_instance_method(@ctx, lit_t, LITERAL_PUSH)
-    if !@ctx.interop.has(ctor) || !@ctx.interop.has(push) {
+    if !@vec_op_carried(lit_t, EMPTY_CTOR) || !@vec_op_carried(lit_t, LITERAL_PUSH) {
         @report_first_leaf_of(kids, no_shell_vec_msg(ty_source_name(@ctx, elem_t)))
         return no_ty()
     } else {
@@ -731,7 +728,7 @@ fn Checker mut @type_empty_vec(kids []Node, elems []Node) -> TyId {
     } else {
         // The term exists; the shell decides whether it can be built.
     }
-    if !@ctx.interop.has(c_instance_ctor(@ctx, vec_t)) {
+    if !@vec_op_carried(vec_t, EMPTY_CTOR) {
         @report_first_leaf_of(kids, no_shell_vec_msg(ty_source_name(@ctx, elem_t)))
         return no_ty()
     } else {
@@ -799,3 +796,29 @@ const OPEN_NOT_EXHAUSTIVE_MSG = "a `match` on a type whose values cannot all be 
 /// mean two limits.
 const ARMS_DISAGREE_MSG = "outside the subset: match arms produce different types (no arm coercion before E2-b3)"
 
+/// May the language call vector operation `name` over `vec_t` IMPLICITLY -- a
+/// literal's constructor and push, `xs[i]`, a `for`'s len and index? Yes when
+/// the shell carries the instance, and yes when novac makes it from std's body
+/// (274.11 E.10 step 4c-2): then the instance is RECORDED as wanted, because no
+/// node holds a call for mono to find. The emitter spells the call through
+/// `sem.vec_op_c`, which asks the same two questions in the same order.
+fn Checker mut @vec_op_carried(vec_t TyId, name str) -> bool {
+    ro shell = if name == EMPTY_CTOR { c_instance_ctor(@ctx, vec_t) } else { c_method_symbol(@ctx, vec_t, name) }
+    if @ctx.interop.has(shell) { return true }
+    // THE ROW, through the callable index's chain of this name -- one O(1)
+    // head and the same-name rows after it, never a scan of the registry.
+    mut row = no_row()
+    mut r = @res.first_row_of(name)
+    while raw_row(r) >= 0 {
+        row = if @ctx.is_vec_op_shape(r, name) { r } else { row }
+        r = @res.next_row_of(r)
+    }
+    // SILENT-OK: std declares no such operation -- the caller refuses by the shell's name.
+    if raw_row(row) < 0 { return false }
+    ro args = []TyId.of(@ctx.tys.arg(vec_t, 0))
+    if !@ctx.instantiates(row, args) { return false }
+    @intern_instance_sig(row, args)
+    @chan.record_wanted(row, args)
+    @chan.record_vec_op(name, row)
+    true
+}

@@ -153,3 +153,34 @@ fn instance_arg_spelling(ctx Ctx, a TyId) -> str {
         TkInfer => ice("mangle: an inference variable as an instance argument — a variable escaped its body")
     }
 }
+
+/// A STATIC method's instance as the shell emits it (274.11 E.10 step 4c-2):
+/// `Nova_<owner>_static_<name>`, the owner spelled as its instance body when
+/// it is an application (`Nova_Vec____nova_int_static_new`) and by its name
+/// otherwise (`Nova_RawMem_static_alloc`), then the method's OWN type
+/// arguments as an instance suffix (`..._copy_n_nonoverlapping____nova_int`,
+/// read off the shell). `args` holds the owner's arguments first, the
+/// method's after -- the slot order of the row's type parameters.
+export fn c_static_symbol(ctx Ctx, row FnRow, args []TyId) -> str {
+    ro fd = ctx.fns.rows[raw_row(row)]
+    ro owner_n = ctx.tys.arg_count(fd.owner)
+    consume s = StringBuilder.new(cap: 64)
+    s.append("Nova_")
+    if owner_n > 0 {
+        s.append(instance_body(ctx, subst_type(ctx, fd.owner, args)))
+    } else {
+        s.append(decl_of_ty(ctx, fd.owner).name)
+    }
+    s.append("_static_")
+    s.append(fd.name)
+    for i in owner_n..args.len() {
+        s.append(if i == owner_n { "____" } else { "__" })
+        s.append(instance_arg_spelling(ctx, args[i]))
+    }
+    s
+}
+
+/// The C struct NAME of a generic record instance (`Nova_Vec____Nova_Pt_p`) --
+/// the shell's spelling, for the door that writes the struct when the shell
+/// does not (274.11 E.10 step 4d).
+export fn instance_struct_c(ctx Ctx, t TyId) -> str => instance_struct_name(ctx, t)

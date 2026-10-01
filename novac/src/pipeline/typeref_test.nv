@@ -77,3 +77,33 @@ test "type names: every declared position passes, every undeclared one is refuse
     ro (d12, _) = compile_to_c("fn takes(v unit) -> int => 1\nfn main() {\n println(1)\n}", std)
     assert(d12.len() == 1 && !messages(d12).contains(UNDECLARED), messages(d12))
 }
+
+test "a field whose type is declared BELOW its record keeps the field (registry 1513)" {
+    // `Id` is a newtype declared AFTER `Box`, `Idn` an alias of it, and
+    // `Far` a newtype over a newtype further down still. The walk that filled
+    // records also interned newtype terms, in file order: `Box` read `Id`
+    // undecided, the field was dropped, and `@b` was "unknown field" about a
+    // field written right there -- novac's own `Interner.args` is the carrier.
+    mut std = std_decls()
+    std.push("module std.v\nexport type Vec[T] { n int }\nexport fn Vec[T] @len() -> int => 0\n")
+    ro src = "type Box {\n a []Id\n b Idn\n c Far\n}\ntype Idn alias Id\ntype Far Id\ntype Id int\nfn Box @first() -> Id => @b\nfn Box @far() -> Far => @c\nfn Box @n() -> int => @a.len()\nfn main() {\n ro x = Box { a: [Id(1)], b: Id(2), c: Far(Id(3)) }\n println(x.n())\n}"
+    ro (d, c) = compile_to_c(src, std)
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("first"), c)
+}
+
+test "a newtype or an alias over a COMPOSITE type is refused, not read as its first name (registry 1514)" {
+    // The representation used to be its FIRST identifier: `alias []Id` WAS
+    // `Id` and `[]int` a newtype over `int` -- accepted in silence, a wrong
+    // type. Now one refusal at each declaration, and nothing registered.
+    mut std = std_decls()
+    std.push("module std.v\nexport type Vec[T] { n int }\nexport fn Vec[T] @len() -> int => 0\n")
+    ro (d, _) = compile_to_c("type Ids alias []Id\ntype N []int\ntype Id int\nfn main() {\n println(1)\n}", std)
+    assert(d.len() == 2, messages(d))
+    assert(messages(d).contains("over a composite type"), messages(d))
+    // CONTROL: one declared name stays a newtype and an alias, and a sum of
+    // bare variants is not a "representation" at all.
+    ro (ok, _) = compile_to_c("type Id int\ntype Cel alias Id\ntype Dir enum North | South\nfn main() {\n ro c = Id(1)\n println(1)\n}", std)
+    assert(ok.len() == 0, messages(ok))
+}
+

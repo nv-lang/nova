@@ -16,8 +16,9 @@
 
 module novac.sem
 
-import ../tree.{Node}
-import ../types.{TyId}
+import ../tree.{Node, NodeKind}
+import ../types.{TyId, is_ty, no_ty}
+import ../builtins.{SLICE_HEAD, EMPTY_CTOR, VEC_INDEX_METHOD}
 
 /// The bodies of the handed callables, by row.
 export type HandedBodies {
@@ -69,7 +70,25 @@ export fn Ctx @instantiates(row FnRow, args []TyId) -> bool {
     if @fns.compiles_body(row) { return false }
     if @handed.decl_of(row).is_none() { return false }
     ro fd = @fns.rows[raw_row(row)]
-    if !fd.has_recv || fd.param_cnt == 0 || args.len() != fd.tparam_cnt { return false }
+    if args.len() != fd.tparam_cnt { return false }
+    // A FREE generic function of another module (`alloc_buf[T]`, 274.11 E.10
+    // step 4c-2): the shell's spelling of its instances is not novac's to
+    // compute, so a generic one with a BODY is always this unit's to make --
+    // under OUR name, which cannot collide with the shell's. An `extern` one
+    // has no body to make it from.
+    if !fd.has_recv && !is_ty(fd.owner) {
+        return fd.tparam_cnt > 0 && has_body(@handed.decl_of(row) ?? return false)
+    } else {
+        // A method or a static method: the shell is asked below.
+    }
+    // A STATIC method (`Vec[T].new`) is spelled off its owner type, a method
+    // off its receiver (274.11 E.10 step 4c-2).
+    if is_ty(fd.owner) {
+        return has_body(@handed.decl_of(row) ?? return false) && !@interop.has(c_static_symbol(@, row, args))
+    } else {
+        // A method: its receiver is parameter zero.
+    }
+    if !fd.has_recv || fd.param_cnt == 0 { return false }
     ro recv_t = subst_type(@, @fns.params[fd.param_off].type_id, args)
     !@interop.has(c_method_symbol(@, recv_t, fd.name))
 }
@@ -78,3 +97,41 @@ export fn Ctx @instantiates(row FnRow, args []TyId) -> bool {
 /// own, a handed row of a program module, or an instance this unit makes from
 /// a handed body? The door that decides whose NAME a call prints.
 export fn Ctx @body_ours(row FnRow, args []TyId) -> bool => @in_program(row) || @instantiates(row, args)
+
+/// Is `row` -- a callable NAMED like the implicit vector operation `name` (the
+/// caller walks the name's chain in the callable index) -- the std
+/// declaration of `Vec[T]` that operation calls (274.11 E.10 step 4c-2)? The
+/// overloads are told apart by the SHAPE the implicit call has: the
+/// constructor that takes a capacity (not the unsafe raw-parts ones), the push
+/// that copies (not the consuming one), the index by `int` (not by `Range`).
+export fn Ctx @is_vec_op_shape(row FnRow, name str) -> bool {
+    ro fd = @fns.rows[raw_row(row)]
+    // A HANDED row only: std may be handed without a module line (`handed_from` "").
+    if @fns.compiles_body(row) { return false }
+    ro first = if fd.param_cnt > 0 { @fns.params[fd.param_off].type_id } else { no_ty() }
+    ro on = if is_ty(fd.owner) { fd.owner } else { first }
+    if !is_ty(on) || !@tys.names_a_decl(on) || decl_of_ty(@, on).name != SLICE_HEAD { return false }
+    if name == EMPTY_CTOR {
+        return is_ty(fd.owner) && fd.param_cnt == 1 && @fns.params[fd.param_off].type_id == @prims.int_id
+    } else if fd.param_cnt == 1 {
+        return fd.has_recv
+    } else if fd.param_cnt == 2 {
+        ro second = @fns.params[fd.param_off + 1]
+        ro copying = second.mode != ParamMode.ModeConsume
+        ro by_int = name != VEC_INDEX_METHOD || second.type_id == @prims.int_id
+        return fd.has_recv && copying && by_int
+    } else {
+        // Another arity: not the implicit operation's shape.
+        return false
+    }
+}
+
+/// Does a handed declaration carry a BODY -- a block or `=> expr` -- rather than
+/// being `extern`?
+fn has_body(decl Node) -> bool {
+    for c in branch_children(decl) {
+        if c.kind_of() == NodeKind.Block || c.kind_of() == NodeKind.FnExprBody { return true }
+    }
+    false
+}
+

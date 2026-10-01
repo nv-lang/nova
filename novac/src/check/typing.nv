@@ -34,12 +34,13 @@ import ../sem.{LitArg, field_range_of, decl_of_ty, no_frow}
 import ../resolve.{FnLookup}
 import ../names.{NameTable, NamespaceId, raw_decl}
 import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
+import ../sem.{returns_receiver}
 import ../sem.{Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text}
 import ../sem.{is_value_tail_kind}
 import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of}
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
-import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
+import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor}
 import ../sem.{ty_source_name, c_shell_method, is_value_record}
 import ../types.{TyId, no_ty, is_ty}
 import ../sem.{option_payload, for_head_elem, is_collection_head}
@@ -263,6 +264,10 @@ fn Checker mut @type_fn(f Node) -> () {
     // type and iced. One refusal where the spelling is, and the call is silent.
     @report_if_return_unread(kids, @ctx.fns.rows[raw_row(row)].ret_id)
     @ret_unit = @returns_unit(@ctx.fns.rows[raw_row(row)].ret_id)
+    @ret_self = returns_receiver(kids)
+    // The body of an `unsafe fn` IS an unsafe context (D216): its raw-pointer
+    // operations need no block of their own (std's `RawMem.copy_n_nonoverlapping`).
+    @unsafe_depth = if decl_is_unsafe(kids) { 1 } else { 0 }
     @ret_ro = @ctx.fns.rows[raw_row(row)].ret_ro
     // The ROW decides, not the spelling: an overload of `main` binds its
     // parameters like any other callable. Until 2026-08-22 this read
@@ -614,7 +619,8 @@ fn Checker mut @type_stmt(st Node) -> () {
         // through the `Return` terminator (lowering.nv `@lower_return`): 195
         // of novac's own `return`s were refused here before 2026-09-26. In a
         // body that promises a value it stays refused (P17).
-        if kids.len() < 2 && @ret_unit {
+        // A bare `return` in a `-> @` body IS `return @` (D409).
+        if kids.len() < 2 && (@ret_unit || @ret_self) {
             // SILENT-OK: the early exit of a unit body carries nothing to type.
             return
         }

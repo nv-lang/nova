@@ -42,6 +42,7 @@ import ../sem.{FnRow, raw_row}
 import ../sem.{branch_children, leaf_kind, leaf_text, generic_names, tparam_slot, param_type_at, field_type_at}
 import ../sem.{param_name_at}
 import ../sem.{expr_leaf_name, variants_named}
+import ../sem.{repr_is_one_name}
 
 /// The KEY PHRASE of the refusal. The holder pins this and nothing longer: a
 /// rewording of the rest of the sentence must not redden a test, or the next
@@ -52,7 +53,7 @@ const UNDECLARED_TYPE_PHRASE = "undeclared type name"
 /// hold. For them "undeclared" would be a lie -- the word exists, novac has not
 /// compiled it -- so they keep the subset refusal of the position they stand in.
 fn is_language_type_word(name str) -> bool =>
-    name == "unit" || name == "never" || name == HANDLER_CTOR
+    name == "unit" || name == HANDLER_CTOR
 
 /// The sentence, built around the name. `byte` gets its own: the language
 /// removed it (D367) and the canonical spelling is the whole fix.
@@ -327,6 +328,23 @@ fn Checker mut @report_if_decl_types_undeclared(kids []Node) -> () {
             }
         }
     }
+}
+
+/// The refusal of a COMPOSITE representation, one sentence for the newtype
+/// and the alias (registry 1514).
+const COMPOSITE_REPR_MSG = "outside the subset: a newtype or an alias over a composite type (`[]T`, `T[A]`, `(A, B)`, a pointer) is not compiled yet -- novac reads a representation that is one declared name (E10)"
+
+/// A newtype or an alias over a COMPOSITE type is refused by name (registry
+/// 1514). Before this rule sem read the representation's first identifier as
+/// the whole type: `type Ids alias []Id` WAS `Id`, in silence. Only a
+/// declaration without a body has a representation; a record, a sum, a
+/// protocol answer "not one name" for their bodies and are not asked.
+fn Checker mut @report_if_composite_repr(kids []Node) -> () {
+    if has_err_child(kids) || kids.len() < 2 || repr_is_one_name(kids) { return }
+    for c in kids {
+        if c.kind_of() != NodeKind.LeafNode && c.kind_of() != NodeKind.Generics { return }
+    }
+    @report_first_leaf_of([]Node.of(kids[1]), COMPOSITE_REPR_MSG)
 }
 
 /// Every type name a TYPE declaration writes -- a record's fields, a newtype's

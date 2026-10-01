@@ -18,6 +18,16 @@
 - ветка `nova-kim` — НЕ ПРИНЯТА, доработка отдана окну Kim (`%USERPROFILE%\.kimi-code\sessions\<сессия nova-kim>\integrator-reply-D486.md`; спеку окно НЕ трогает — её сделал интегратор);
 - ветка `ci-green-0930` (дерево `nova-cigreen`, фоновый агент opus) — 5 из 7 причин красного `nova-gate` починены (`c1e63f75a`, `95b507f66`, `f83ab647f`); идёт `merge-precheck --branch`. При слиянии выдать №1370–№1373 четырём строкам `№TBD` (порядок строк ветки) и поднять `registry-rows.baseline`. Остаток: слово `workaround` в `novac/src/sem/binding.nv:92` — окну Карины (снимет и `registry-counts`).
 
+**ДОПОЛНЕНИЕ 2026-10-01 14:52 (nova-20).** main ОПУБЛИКОВАН на origin: 97ab70f5d → f0c5dbdd3 (14:22; CI на integrate
+зелёный целиком, run 36852050418; пуш с NOVA_SKIP_CI_CHECK — ночной красный на заменяемом 97ab70f5d, причина в строке
+№1526, НЕ закоммичена — едет со следующим слиянием). gitverse/sourcecraft ещё на 97ab70f5d: check-push-proven-by-ci берёт
+САМЫЙ СВЕЖИЙ прогон, а пуш в main запустил второй круг CI на том же sha — жду его nova-gate и выкладываю зеркала.
+nova-63 нашёл на f0c5dbdd3 ДВЕ регрессии (тег polaris v0.2.1 держит): Р1 — литерал [1,2,3] в параметр []u8 перегрузки
+даёт E_ARG_ELEM_TYPE_MISMATCH (polaris src/doc_samples_test.nv:206; хорошо на c775a975d); Р2 — claude-limits не
+собирается: литерал записи своего `type Outcome value` эмитится как экземпляр prelude Outcome[int] (хорошо на 04e9fe2d1).
+Бисект — агент sonnet в nova-bisect, лог D:\Temp\bis\log.txt; концы подтверждены (04e9fe2d1: R1, R2 хорошо).
+Следующий номер реестра — 1527.
+
 **ДОПОЛНЕНИЕ 2026-10-01 13:20 (nova-20).** Окно Карины и помощник остановлены владельцем (12:10 / 11:24). Облаку
 отданы: №1517 (prompt-1517, оракул option_ctor) и очередь Карины (prompt-carina-cloud, ветка p274-carina-cloud: ice-expr +
 стражи + №1518/№1519; её b8d501817 запушен мной в origin/p274-e9s4). Влито: охота novac × mono `736d75676` (17 находок,

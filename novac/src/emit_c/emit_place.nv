@@ -23,7 +23,7 @@ import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
 import ../sem.{leaf_kind}
 import ../diag.{ice}
-import ../sem.{c_type, c_instance_method, raw_vrow, is_value_record, c_maker, VariantRow, ctor_field_name}
+import ../sem.{c_type, vec_op_c, raw_vrow, is_value_record, c_maker, VariantRow, ctor_field_name}
 // M3a: lowering `println` asks the tree three questions (is this an argument, what does the
 // callee spell, what are the children) and the output printer asks the carrier of a type.
 import ../sem.{branch_children, is_expr_kind, carrier_of}
@@ -168,7 +168,7 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
             // collection head to @iter/@next is its own wave (shell ABI),
             // recorded in plan 274.5 §5й.
             ro vd = @lo.ir.decl_of(r.vec)
-            ro index_c = c_instance_method(@ctx, vd.ty, VEC_INDEX_METHOD)
+            ro index_c = vec_op_c(@ctx, vd.ty, VEC_INDEX_METHOD, @out.vec_op_row(VEC_INDEX_METHOD))
             @emit_assign_head(d)
             @body.append("${index_c}(${vd.name}, ${@lo.ir.decl_of(r.idx).name});\n")
         }
@@ -177,7 +177,7 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
             // the index in range, so no Option stands here to unwrap -- `get`
             // is the access nobody proved.
             ro vd = @lo.ir.decl_of(r.vec)
-            ro index_c = c_instance_method(@ctx, vd.ty, VEC_INDEX_METHOD)
+            ro index_c = vec_op_c(@ctx, vd.ty, VEC_INDEX_METHOD, @out.vec_op_row(VEC_INDEX_METHOD))
             @emit_assign_head(d)
             @body.append("${index_c}(${vd.name}, ${r.idx});\n")
         }
@@ -186,8 +186,8 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
             // at match time, through the same shell method the for-head asks,
             // and the arm's length test proved the result in range.
             ro vd = @lo.ir.decl_of(r.vec)
-            ro index_c = c_instance_method(@ctx, vd.ty, VEC_INDEX_METHOD)
-            ro len_c = c_instance_method(@ctx, vd.ty, VEC_LEN_METHOD)
+            ro index_c = vec_op_c(@ctx, vd.ty, VEC_INDEX_METHOD, @out.vec_op_row(VEC_INDEX_METHOD))
+            ro len_c = vec_op_c(@ctx, vd.ty, VEC_LEN_METHOD, @out.vec_op_row(VEC_LEN_METHOD))
             @emit_assign_head(d)
             @body.append("${index_c}(${vd.name}, ${len_c}(${vd.name}) - ${r.from_end});\n")
         }
@@ -254,6 +254,13 @@ fn Emitter mut @emit_eval(rv Rvalue) -> () {
         @body.append("    (void)${dropped};\n")
         return
     }
+    // A CONSTRUCTION INSIDE the evaluated expression -- `b.take(Pt { x: 1 })`
+    // as a statement -- is a multi-statement build: hoisted before the line,
+    // as the call-statement door does (`@emit_call_stmt`). Without it a METHOD
+    // call statement with a constructor argument iced in emission after a
+    // green check (found 2026-10-01 by the `vec_own` fixture's
+    // `xs.push(Pt { x: i })`; the same on a method of the file's own type).
+    @hoist_array_lits(e)
     @body.append("    (void)(")
     @emit_expr(e)
     @body.append(");\n")
