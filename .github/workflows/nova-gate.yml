@@ -156,7 +156,15 @@ jobs:
   novac-gate:
     name: novac-gate (self-hosted compiler builds + module tests)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # НОЧНОЙ ПРЕДЕЛ СВОЙ (правка 2026-09-30, реестр №1442). Этап 3 дифференциала
+    # (корпус) переехал в ярус full, то есть в ночной прогон, и тот обязан его
+    # досчитать. Число ВЫВЕДЕНО из замеров частей, а не измерено целым (Г17):
+    # CI 30.09 — подготовка ~3.5 мин, гейт push ~19 мин (c775a97); ярус full
+    # сверх того — самотест-мутации до 10 мин и цена цикла ~2.3 мин (29.09);
+    # шаг модульных тестов ниже на тихой Linux-машине — 1057с (33 файла), на
+    # раннере медленнее. Сумма ~55–60 мин; 75 — с запасом ~25%. Первый ночной
+    # прогон после слияния — замер: число правится по нему. Пуш остаётся 45.
+    timeout-minutes: ${{ github.event_name == 'schedule' && 75 || 45 }}
     steps:
       - name: Checkout nova (submodules recursive — compiler-codegen/nova_rt/libuv)
         uses: actions/checkout@v4
@@ -209,29 +217,13 @@ jobs:
           mkdir -p novac/target
           ./nova-cli/target/release/nova build novac/src/main.nv -o novac/target/novac
 
-      - name: novac module tests (each *_test.nv beside its module)
-        run: |
-          set -uo pipefail
-          rc=0
-          for t in novac/src/*/*_test.nv; do
-            [ -e "$t" ] || continue
-            echo "== $t"
-            out="$(timeout 300 ./nova-cli/target/release/nova test "$t" 2>&1)" || true
-            echo "$out" | tail -20
-            # Вердикт читается ТОЛЬКО из строки PASS:/FAIL — не из кода выхода
-            # обёртки: молчащий раннер не должен читаться как зелёный.
-            line="$(echo "$out" | grep -E '^PASS: [0-9]+ +FAIL: [0-9]+' | tail -1)"
-            if [ -z "$line" ]; then
-              echo "НЕТ строки вердикта у $t — считаем красным"
-              rc=1
-              continue
-            fi
-            case "$line" in
-              *"FAIL: 0"*) ;;
-              *) echo "КРАСНЫЙ: $line"; rc=1 ;;
-            esac
-          done
-          exit $rc
+      # The workflow step "novac module tests" that stood here was removed on
+      # 2026-10-01 (integrator, #1442 cloud measurement): it re-ran the same 33
+      # novac/src/*/*_test.nv files that check-novac-module-tests already judges
+      # inside scripts/gate-novac.sh (novac-heavy), one by one and after the gate,
+      # for 1057 s on a quiet Linux box (~18-25 min on CI) -- that second copy,
+      # not the differential, held the job past its 45-minute limit. One check,
+      # one place: the verdict of the module tests is the guard's.
 
   # ── scripts/gate.sh, ЯРУС loop — текст, без компилятора ─────────────────
   # Plan 275 Ф.3 (docs/plans/275-gate-cost.md). Measurement 2026-08-21: of 81

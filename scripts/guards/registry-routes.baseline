@@ -1501,7 +1501,8 @@ no_caveat=0
 # 2026-10-01, integrator nova-20: 86 -> 87, merge of the cloud session's p1343: #1449 (K1, mut x T of a generic free fn loses the write, blocks the tag) and #1450 (K2, overlapping generic overloads T vs []T).
 # 2026-10-01, integrator nova-20: 87 -> 88, merge of spec/d55-str-bytes: #1451 (K2, let/return of a non-identifier str into []u8 fails in C) and #1452 (K1, str accepted in a mut []u8 position -- writes into the string's bytes; blocks the tag).
 # 2026-10-01, integrator nova-20: 88 -> 89, merge of the cloud session's p1338: #1454 (K2, constructor receiver with an undetermined parameter), #1455 (K1, arithmetic on a void* operand emits a silent 0 -- blocks the tag), #1456 (K3, unknown Option method passes the checker); 1453 reserved for the handler-capture regression, leaves gaps.
-blockers=89
+# 2026-10-01, integrator nova-20: 89 -> 90, merge of the cloud session's p1442: #1461 (K1, novac loses live objects under GC -- the compiler's answer depends on the environment; on the path of Carina's 0.2 double build).
+blockers=90
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed
