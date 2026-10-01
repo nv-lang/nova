@@ -44,7 +44,9 @@ fn family_instance_name(ctx Ctx, t TyId) -> str {
     if !is_sum { return "" }
     ro n = ctx.tys.arg_count(t)
     if head.name == RESULT_SUM && n == 2 {
-        return "${RESULT_FAMILY_C}${c_type(ctx, ctx.tys.arg(t, 0)).replace("*", "_p")}_${c_type(ctx, ctx.tys.arg(t, 1)).replace("*", "_p")}"
+        ro ok_c = c_type(ctx, ctx.tys.arg(t, 0)).replace("*", "_p")
+        ro err_c = c_type(ctx, ctx.tys.arg(t, 1)).replace("*", "_p")
+        return "${RESULT_FAMILY_C}${ok_c}_${err_c}"
     }
     if head.name != OPTION_SUM { return "" }
     if n != 1 { return "" }
