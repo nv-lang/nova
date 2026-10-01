@@ -52,3 +52,42 @@ test "a type that is no sum is not told it has variants -- the refusal names the
     // `Nova_Box_static_new` -- not as an uncompiled form.
     assert(messages(d).contains("carries no `new`"), messages(d))
 }
+
+/// A handed sum whose payload is a handed NEWTYPE, as `sem` hands
+/// `| CalleeFn(FnRow)` with `type FnRow int` (registry 1512).
+fn handed_newtype_sum() -> []str => []str.of("type Rw int\ntype Tg enum\n    | A(Rw)\n    | B(int)\n")
+
+test "a handed sum's payload of a handed NEWTYPE keeps its position (registry 1512)" {
+    // The newtype's term was interned AFTER the handed variants were read, so
+    // `Rw` resolved to nothing and `A` was registered with no payload: the
+    // correct `A(r)` was refused as "payload count disagrees" -- four times
+    // over novac's own mono.nv. Reverse probe: with `fill_handed_newtypes`
+    // back after the variants loop (sem/collect.nv) this case reddens.
+    ro (d, _) = compile_to_c("fn f(t Tg) -> int {\n match t {\n A(r) => 1\n B(n) => n\n }\n}\nfn main() {\n println(f(Tg.B(4)))\n}", handed_newtype_sum())
+    assert(!messages(d).contains("payload count"), messages(d))
+    assert(d.len() == 0, messages(d))
+}
+
+test "a handed payload of a type novac does not know is refused BY THAT TYPE'S NAME, not by arity (registry 1512)" {
+    // CONTROL: the arity rule still speaks for a pattern that really does
+    // write the wrong count.
+    ro dc = []str.of("type Tg enum\n    | A(int)\n    | B(int)\n")
+    ro (d0, _) = compile_to_c("fn f(t Tg) -> int {\n match t {\n A(x, y) => x\n B(n) => n\n }\n}\nfn main() {\n println(f(Tg.B(4)))\n}", dc)
+    assert(messages(d0).contains("payload count disagrees"), messages(d0))
+    // `Ghost` is declared nowhere novac was handed: the position used to be
+    // DROPPED, so `A(x)` met a variant of no payload. Reverse probe: with the
+    // skip restored in `register_sum_variants` the pattern case reddens on
+    // its message (the arity refusal is back).
+    ro dg = []str.of("type Tg enum\n    | A(Ghost)\n    | B(int)\n")
+    ro (d1, _) = compile_to_c("fn f(t Tg) -> int {\n match t {\n A(x) => 1\n B(n) => n\n }\n}\nfn main() {\n println(f(Tg.B(4)))\n}", dg)
+    assert(messages(d1).contains("undeclared type name `Ghost`"), messages(d1))
+    assert(!messages(d1).contains("payload count"), messages(d1))
+    // The construction door, qualified and bare: the same refusal.
+    ro (d2, _) = compile_to_c("fn main() {\n ro t = Tg.A(3)\n println(1)\n}", dg)
+    assert(messages(d2).contains("undeclared type name `Ghost`"), messages(d2))
+    ro (d3, _) = compile_to_c("fn main() {\n ro t = A(3)\n println(1)\n}", dg)
+    assert(messages(d3).contains("undeclared type name `Ghost`"), messages(d3))
+    // `A(..)` binds no payload, so it types none: no refusal from this door.
+    ro (d4, _) = compile_to_c("fn f(t Tg) -> int {\n match t {\n A(..) => 1\n B(n) => n\n }\n}\nfn main() {\n println(f(Tg.B(4)))\n}", dg)
+    assert(!messages(d4).contains("Ghost"), messages(d4))
+}

@@ -35,6 +35,21 @@ import ../sem.{prim_row_of}
 import ../sem.{decl_of_ty}
 import ../sem.{ty_source_name}
 import ../types.{TyId, no_ty, is_ty}
+/// A VARIANT WITH A PAYLOAD NOVAC COULD NOT TYPE (registry 1512): collection
+/// keeps the position, so every door counts the declaration's arity, and names
+/// the type it could not read. A door that types a payload -- a pattern that
+/// binds one, a construction -- asks here first, and the refusal names that
+/// type instead of a payload count that was never the program's mistake. The
+/// sentence is the undeclared-type door's own (`undeclared_type_msg`): it is
+/// the same fact -- no declaration novac was handed carries that name -- seen
+/// from the place that needed it. Answers whether it refused.
+fn Checker mut @refused_lost_payload(kids []Node, v VariantRow) -> bool {
+    ro vd = @ctx.variant_rows[raw_vrow(v)]
+    if vd.lost_type == "" { return false }
+    @report_first_leaf_of(kids, undeclared_type_msg(vd.lost_type))
+    true
+}
+
 /// The payload half of the door above: `Sum.Variant(x)`, and the refusal a
 /// payload-carrying variant earns when it is written with no arguments at all.
 ///
@@ -50,6 +65,7 @@ fn Checker mut @judge_qualified_payload(e Node, kids []Node, vt Token, vrow Vari
         @refuse(vt, VARIANT_VALUE_NEEDS_ARGS_MSG)
         return
     }
+    if @refused_lost_payload(kids, vrow) { return }
     ro before = @out.len()
     mut i = 0
     for c in kids {

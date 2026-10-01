@@ -73,6 +73,37 @@ fn payload_type_of(pj Node, tps []str, prow []TyId, types []TypeDef, defs DefTab
     ty_of_type_name(leaf_text(pj), tps, prow, types, defs)
 }
 
+/// Is this child of a variant one of its PAYLOAD POSITIONS? The parser writes
+/// a positional payload as its type-name leaf and a record-form one as a
+/// `Field` (parse/type_decl.nv); the variant's name, its pipe, the parens and
+/// the commas are the rest.
+fn is_payload_position(pj Node) -> bool {
+    if pj.kind_of() == NodeKind.Field { return true }
+    pj.kind_of() == NodeKind.LeafNode && leaf_kind(pj) == TokenKind.Ident
+}
+
+/// The TYPE NAME a payload position is written with, for the refusal that
+/// names it: the leaf itself, or the first identifier of a field's type.
+fn payload_type_text(pj Node) -> str {
+    if pj.kind_of() != NodeKind.Field { return leaf_text(pj) }
+    ro fk = branch_children(pj)
+    ro ftat = field_type_at(fk) ?? -1
+    if ftat < 0 { return "?" }
+    first_ident_text(fk[ftat])
+}
+
+/// The first identifier leaf under `n`, depth-first; `"?"` when there is none.
+fn first_ident_text(n Node) -> str {
+    if n.kind_of() == NodeKind.LeafNode {
+        return if leaf_kind(n) == TokenKind.Ident { leaf_text(n) } else { "?" }
+    }
+    for k in branch_children(n) {
+        ro t = first_ident_text(k)
+        if t != "?" { return t }
+    }
+    "?"
+}
+
 /// The NAME of one payload: a record-form field's own name; a positional
 /// payload has none, and `""` keeps `payload_names` in step with
 /// `payload_types` -- only the construction and the pattern ask for it.
@@ -169,11 +200,28 @@ fn register_sum_variants(c Node, mut types []TypeDef, mut defs DefTable,
         // would keep only the LAST of two sums' `Red`.
         ro poff = payload_types.len()
         mut pcnt = 0
+        mut lost = ""
         // payload type names sit between '(' and ')'
         for j in name_at + 1..vk.len() {
             ro pj = vk[j]
+            // A POSITION is a record-form field or a type-name leaf; the
+            // parens and commas between them are not.
+            if !is_payload_position(pj) { continue }
             ro pt = payload_type_of(pj, tps, prow, types, defs, tys)
-            if !is_ty(pt) { continue }
+            // A POSITION WHOSE TYPE NOVAC CANNOT READ IS STILL A POSITION
+            // (registry 1512). It used to be skipped -- "collection is
+            // tolerant" -- and the variant came out one payload short: a
+            // correct `CalleeFn(row)` of novac's own mono.nv was refused as
+            // "payload count disagrees", and a bare `CalleeFn` would have
+            // passed as payload-free. The count stays the declaration's, the
+            // slot holds no type, and the NAME is kept for the door that
+            // refuses (`@refused_lost_payload`, check/variant_rules.nv).
+            if !is_ty(pt) && lost == "" {
+                lost = payload_type_text(pj)
+            } else {
+                // Typed, or not the first lost one: the first name is the one
+                // the refusal gives.
+            }
             payload_types.push(pt)
             payload_names.push(payload_name_of(pj))
             pcnt += 1
@@ -183,6 +231,7 @@ fn register_sum_variants(c Node, mut types []TypeDef, mut defs DefTable,
         ro prev = chain_head(variant_names, vname)
         variant_names.put(vname, variant_rows.len())
         variant_rows.push(VariantDef { sum_id: sum_ty, name: vname, payload_off: poff, payload_cnt: pcnt,
+                                      lost_type: lost,
                                       next_same: if prev < 0 { no_vrow() } else { VariantRow(prev) } })
         vcnt += 1
     }
@@ -268,6 +317,12 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // file's own constant of the same name is registered after it, and the
     // last put wins -- the file shadows what it was handed.
     harvest_consts(decls, defs, consts, module_dotted(file))
+    // THE HANDED NEWTYPES' TERMS, before the file's own pass 2 reads a field or a
+    // representation that names one (2026-10-01: they used to be records) -- and
+    // before the handed sums' variants just below, whose payloads name them
+    // (registry 1512): `| CalleeFn(FnRow)` of `sem` read `FnRow` while its row
+    // still had no term, and the variant was registered one position short.
+    fill_handed_newtypes(decls, types, defs, tys)
     // THE VARIANTS OF HANDED SUMS, through the same door the file's own sums
     // take below (274.5 wave "variants of handed sums", 2026-09-04). Until this
     // loop `harvest_types` registered a handed sum's NAME and skipped its
@@ -289,9 +344,6 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
             register_sum_variants(c, types, defs, variant_rows, payload_types, payload_names, variant_names, tys)
         }
     }
-    // THE HANDED NEWTYPES' TERMS, before the file's own pass 2 reads a field or a
-    // representation that names one (2026-10-01: they used to be records).
-    fill_handed_newtypes(decls, types, defs, tys)
     // THE TYPE BOUNDARY IS FIXED HERE, beside the name boundary, because the two
     // are DIFFERENT numbers: `defs.foreign_cnt` counts name rows (types AND the
     // handed variants registered just above), `foreign_types_cnt` counts type rows.
