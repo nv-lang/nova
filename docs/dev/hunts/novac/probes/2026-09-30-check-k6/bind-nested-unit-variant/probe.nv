@@ -1,9 +1,0 @@
-// D486 s4: constructor in a binding position is E_REFUTABLE_BINDING.
-// A payload-less variant head nested in a tuple pattern: `None` is a
-// constructor, not a binder name, and it can fail to match.
-fn main() {
-    ro o = Some(7)
-    ro p = (1, o)
-    ro (a, None) = p
-    println(a)
-}

@@ -1,8 +1,0 @@
-// D486 s4 row "binding (name)", if/while column: "only with ro/mut".
-// RO_WORD_PATTERN_MSG says the `ro` word stands in an if/while condition.
-fn main() {
-    ro o = 3
-    if ro x = o {
-        println(x)
-    }
-}

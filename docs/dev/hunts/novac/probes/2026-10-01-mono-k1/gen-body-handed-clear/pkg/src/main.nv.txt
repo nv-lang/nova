@@ -1,0 +1,13 @@
+fn wipe[T](mut xs []T) -> int {
+    xs.clear()
+    xs.len()
+}
+
+fn main() {
+    mut a = [1, 2]
+    mut b = ["x", "y", "z"]
+    println(wipe(a))
+    println(wipe(b))
+    println(a.len())
+    println(b.len())
+}
