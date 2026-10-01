@@ -391,6 +391,7 @@ fn Checker mut @type_method_call(e Node) -> () {
         // language's own (unsafe.nv, 274.11 E.10 step 3c).
         if @ctx.tys.kind_of(recv_t) == TypeKind.TkPtr {
             @type_ptr_method(e, kids, recv_t)
+            // SILENT-OK: the pointer door DECIDED -- it recorded the call's type or refused it by name.
             return
         } else {
             // A receiver with methods of its own: the row lookup below.
