@@ -1,0 +1,2 @@
+{"103": [{"name": "nova lint (deny) std + conformance", "conclusion": "success"},
+         {"name": "nova lint nova_tests full (informational -- legacy corpus debt, non-blocking)", "conclusion": "failure"}]}

@@ -1,0 +1,13 @@
+=== A. control: registry alone, no key
+check-main-docs-batched: FAIL — одиночный бумажный коммит в main (1 путей: только реестр/база/записки/лог контролёра):
+    docs/plans/221.1-bug-sweep.md
+  Слово владельца 2026-10-01: «9 из 10 коммитов — доки и обвязка». Такие правки
+  едут в коммите слияния или одним пакетным коммитом на выкладку:
+    NOVA_DOCS_BATCH="<что в пакете>" git commit ...
+rc=1
+=== B. registry alone, NOVA_DOCS_BATCH=1
+check-main-docs-batched ok: пакетный бумажный коммит в main (1 путей) по ключу NOVA_DOCS_BATCH: 1
+rc=0
+=== C. registry alone, NOVA_DOCS_BATCH=' '
+check-main-docs-batched ok: пакетный бумажный коммит в main (1 путей) по ключу NOVA_DOCS_BATCH:  
+rc=0

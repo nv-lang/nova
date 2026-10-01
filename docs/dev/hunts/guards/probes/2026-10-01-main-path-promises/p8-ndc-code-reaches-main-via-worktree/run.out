@@ -1,0 +1,24 @@
+=== A. clean: docs only on main
+check-main-no-direct-code ok: main главного дерева, кодовых путей в индексе нет
+rc=0
+=== B. canonical violation: std/src on main
+check-main-no-direct-code: FAIL — коммит кода прямо в main главного дерева (1 путей), например:
+    std/src/a.nv
+  Код в main приезжает только СЛИЯНИЕМ ветки исполнителя (фоновый агент,
+  помощник, окно Карины) — решение владельца 2026-09-30. Сделай ветку в своём
+  worktree и влей её; осознанное исключение —
+    NOVA_MAIN_DIRECT_CODE="<причина #NNNN>" git commit ...
+rc=1
+=== D. build.rs (Rust code compiled into the compiler) on main
+check-main-no-direct-code ok: main главного дерева, кодовых путей в индексе нет
+rc=0
+=== C. main tree parked on 'park', main checked out in a worktree
+-- guard called directly on the worktree:
+check-main-no-direct-code ok: worktree — не главное дерево, не судится
+rc=0
+-- real 'git commit' in the worktree (pre-commit runs):
+check-main-no-direct-code ok: worktree — не главное дерево, не судится
+commit rc=0
+-- files changed by the tip of main:
+code straight onto main
+std/src/a.nv

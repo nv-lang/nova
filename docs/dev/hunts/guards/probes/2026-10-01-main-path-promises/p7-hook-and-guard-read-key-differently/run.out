@@ -1,0 +1,12 @@
+stub check: python3 -c 'print(42)' under stub PATH prints: []
+=== A. guard directly, key: github down №1442
+check-push-proven-by-ci: SKIPPED by NOVA_PUSH_UNPROVEN: github down №1442 (sha 111111111 NOT proven by CI)
+rc=0
+=== B. pre-push, no python, key: github down №1442
+pre-push ОСТАНОВИЛ отправку: нет рабочего python/python3 — доказательство CI для main прочесть нечем.
+  Обход осознанный: NOVA_PUSH_UNPROVEN="<причина #NNNN>" git push ...
+rc=1
+=== C. pre-push, no python, key: github down #1442
+pre-push: доказательство CI не проверено (нет python), NOVA_PUSH_UNPROVEN: github down #1442
+pre-push: проверка внешнего гейта пропущена (NOVA_SKIP_CI_CHECK=1)
+rc=0

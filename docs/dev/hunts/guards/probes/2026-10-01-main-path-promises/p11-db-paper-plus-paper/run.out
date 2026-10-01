@@ -1,0 +1,30 @@
+=== A. control: registry + integrator-handoff
+check-main-docs-batched: FAIL — одиночный бумажный коммит в main (2 путей: только реестр/база/записки/лог контролёра):
+=== B. registry + docs/plans/README.md
+check-main-docs-batched ok: в коммите есть путь вне бумажного набора (docs/plans/README.md)
+rc=0
+=== C. registry + docs/dev/hunts/x/LEDGER.md
+check-main-docs-batched ok: в коммите есть путь вне бумажного набора (docs/dev/hunts/x/LEDGER.md)
+rc=0
+=== D. code staged; git commit --only -- registry (real pre-commit)
+check-main-docs-batched: FAIL — одиночный бумажный коммит в main (1 путей: только реестр/база/записки/лог контролёра):
+    docs/plans/221.1-bug-sweep.md
+   commits on main now: 1 (1 = refused)
+=== E. real history of main since 2026-09-29 (read-only)
+first-parent non-merge commits since 2026-09-29: 152
+all paths in the paper set (guard would judge): 97
+docs-only but with a path outside the set (guard: not ours): 15
+  of them carrying an in-set path too (registry/handoff + other paper): 5
+most frequent outside paths:
+    4 docs/plans/286.2-pg-pool.md
+    2 docs/dev/hunts/novac/LEDGER.md
+    2 docs/plans/274.11-carina-release.md
+    2 docs/plans/274.10-oracle-tax-on-carina.md
+    2 docs/plans/286.1-pg-listen-notify.md
+    1 docs/dev/hunts/novac/2026-09-16-emitc-k7.md
+    1 docs/dev/hunts/novac/2026-09-30-emitc-k2.md
+    1 docs/dev/hunts/novac/probes/2026-09-16-emitc-k7/README.md
+    1 docs/dev/hunts/novac/probes/2026-09-16-emitc-k7/f1-nested-coalesce-not-lowered.md
+    1 docs/dev/hunts/novac/probes/2026-09-16-emitc-k7/f1-nested-coalesce-not-lowered/c1-binary/cmd.sh
+    1 docs/dev/hunts/novac/probes/2026-09-16-emitc-k7/f1-nested-coalesce-not-lowered/c1-binary/m.nv
+    1 docs/dev/hunts/novac/probes/2026-09-16-emitc-k7/f1-nested-coalesce-not-lowered/c2-if-cond/cmd.sh
