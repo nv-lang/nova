@@ -81,10 +81,18 @@ import ../resolve.{FnIndex, FieldIndex}
 /// flag is also open in a `=>` body and an op body, where no door types the
 /// literal, and a position flag that says "judged" where nothing judges is
 /// the class this flag closes.
+/// if_branch / if_tail: a Block that is a branch of an `if` VALUE, and the
+/// value-placing tail of such a Block (registry 221.1 #1457). Read by the
+/// array literal's gate ONLY: `@lower_if_value` places each branch's tail
+/// through `@lower_place`, which builds a literal there, while a record
+/// constructor or a `match` in the same slot still ICEs in typing ("no type
+/// recorded", measured 2026-10-01) -- so the flag is its own, not `arm_pos`,
+/// which those gates also read.
 fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                      arg_pos bool = false, index_pos bool = false,
                      arm_pos bool = false, handler_param bool = false,
-                     handler_pos bool = false) -> () {
+                     handler_pos bool = false, if_branch bool = false,
+                     if_tail bool = false) -> () {
     match n {
         Leaf(t) => @report_if_error_token(t)
         Branch { kind, children, .. } => {
@@ -708,8 +716,13 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // as one, novac's own sources carry them (`@cur =
                     // []Stmt.new()`). The AssignStmt arm opens `init_pos` for
                     // it, as it does for the record constructor.
-                    if !init_pos && !arg_pos && !arm_pos {
-                        @report_first_leaf_of(children, "outside the subset: an array literal is compiled only as an initializer, a call argument, a constructor field, the body of a match arm or the right side of `=` -- other positions are not compiled yet (E2, the basics horizon)")
+                    //
+                    // AND THE TAIL OF AN `if`-VALUE BRANCH (same entry):
+                    // `if is_free { []str.new() } else { ... }` in
+                    // sem/harvest.nv. `if_tail` is this gate's alone -- see
+                    // the flag's doc on `@walk`.
+                    if !init_pos && !arg_pos && !arm_pos && !if_tail {
+                        @report_first_leaf_of(children, "outside the subset: an array literal is compiled only as an initializer, a call argument, a constructor field, the body of a match arm, the right side of `=` or the tail of an `if`-value branch -- other positions are not compiled yet (E2, the basics horizon)")
                         return
                     } else {
                         // A legal position; typing judges the elements and
@@ -933,6 +946,16 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
             } else {
                 0 - 1
             }
+            // THE TAIL OF AN `if`-VALUE BRANCH (registry 221.1 #1457): the
+            // same slot, for the array literal's gate only (`if_tail`).
+            ro if_tail_at = if kind == NodeKind.Block && if_branch && !block_terminates(n) {
+                last_branch_of(children)
+            } else {
+                0 - 1
+            }
+            // An `if` standing as a VALUE: the walk below already refused it
+            // anywhere else, so its Block children are branches of a value.
+            ro value_if = kind == NodeKind.IfExpr && (init_pos || arg_pos || arm_pos)
             mut at = 0
             for c in children {
                 // STATEMENT POSITION is "a direct child of a Block" (274.5
@@ -979,6 +1002,8 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                       // literal standing directly under it IS in the slot
                       // `@type_with_stmt` types.
                       handler_pos: kind == NodeKind.WithStmt,
+                      if_branch: value_if && c.kind_of() == NodeKind.Block,
+                      if_tail: at == if_tail_at,
                       // ELSE-IF CHAIN CONTINUATION (registry #1243): a nested
                       // `IfExpr` sitting in an `if`-value's own else-arm is
                       // the SAME value position as its parent -- `else if` is

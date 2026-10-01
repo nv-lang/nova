@@ -907,6 +907,9 @@ export type Vec[T] { n int }")
     ro (d3, _) = compile_to_c("type P { n int }\nfn main() {\n ro v = []P.new()\n println(1)\n}", std)
     assert(d3.len() == 1)
     assert(d3[0].message.contains("carries no"))
+    // The tail of an `if`-value branch places a literal like a binding does.
+    ro (d4, _) = compile_to_c("fn take(xs []int) -> int => 1\nfn main() {\n ro c = true\n ro v = if c { []int.new() } else { []int.of(1) }\n println(take(v))\n}", std)
+    assert(d4.len() == 0)
 }
 
 test "an instance method of the shell: deduced on the receiver, named by the shell, refused where the shell has none" {
