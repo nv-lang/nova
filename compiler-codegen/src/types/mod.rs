@@ -21300,6 +21300,33 @@ impl<'a> TypeCheckCtx<'a> {
             _ => {}
         }
         match &value.kind {
+            // Registry 221.1 #1532: an array literal of untyped literals at a known
+            // `[]T` / `Vec[T]` position with a primitive `T` -- `f([1, 2, 3])` with
+            // `f(data []u8)`. `assignable` judges it element by element (D44: the
+            // literal adapts to its position), but nothing wrote that answer into
+            // the channel: `f1_expr` had stamped the context-free `Array(int)`, and
+            // the generic-argument check of `f1_check_call` read `Vec[int]` back
+            // and refused the call (E_ARG_ELEM_TYPE_MISMATCH). Hidden on polaris
+            // until #1488 typed `StatusCode.OK` and the overload became decidable.
+            // Each element gets `T`, the literal gets the position's type.
+            ExprKind::ArrayLit(items)
+                if !items.is_empty()
+                    && items.iter().all(|it| matches!(it, ArrayElem::Item(x) if is_untyped_const_expr(x)))
+                    && std::env::var_os("NOVA_KILL_1532").is_none() =>
+            {
+                let Some(elem) = array_elem_type(expected) else { return };
+                if !Self::ts_member(&ResolvedType::from_type_ref(elem), constraint_solver::TypeSet::Primitive) {
+                    return;
+                }
+                for it in items {
+                    if let ArrayElem::Item(x) = it {
+                        self.materialize_literal_coercion(x, elem);
+                    }
+                }
+                if value.id.is_set() {
+                    self.resolved_types_buf.borrow_mut().insert(value.id, ResolvedType::from_type_ref(expected));
+                }
+            }
             ExprKind::IntLit(_) => {
                 if value.id.is_set() {
                     let rt = ResolvedType::from_type_ref(expected);
