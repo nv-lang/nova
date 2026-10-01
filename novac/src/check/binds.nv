@@ -24,7 +24,7 @@ import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
-import ../builtins.{VEC_INDEX_METHOD, VEC_INDEX_SET_OP, VEC_LEN_METHOD, EMPTY_CTOR, vec_op_method}
+import ../builtins.{VEC_INDEX_METHOD, VEC_INDEX_SET_OP, VEC_LEN_METHOD, EMPTY_CTOR, vec_op_method, vec_op_is_overload}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
 import ../sem.{shape_of}
@@ -840,7 +840,7 @@ fn Checker mut @vec_op_carried(vec_t TyId, name str) -> bool {
     // An operation that is an OVERLOAD of another name (the write `index=`) has
     // no by-name spelling: the bare name is the OTHER overload's, and asking it
     // answered "carried" for the read (registry 1524). No row, nothing to ask.
-    if raw_row(row) < 0 && name == VEC_INDEX_SET_OP { return false }
+    if raw_row(row) < 0 && vec_op_is_overload(name) { return false }
     ro shell = if name == EMPTY_CTOR {
         c_instance_ctor(@ctx, vec_t)
     } else if raw_row(row) >= 0 {

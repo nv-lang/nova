@@ -269,6 +269,16 @@ fn Checker mut @type_fn(f Node) -> () {
     // operations need no block of their own (std's `RawMem.copy_n_nonoverlapping`).
     @unsafe_depth = if decl_is_unsafe(kids) { 1 } else { 0 }
     @ret_ro = @ctx.fns.rows[raw_row(row)].ret_ro
+    // WHAT `Self` NAMES HERE (D66, registry 1557): the receiver's type, or the
+    // owner's for a static method -- concrete under an instance's substitution.
+    ro sfd = @ctx.fns.rows[raw_row(row)]
+    @self_ty = if sfd.has_recv && sfd.param_cnt > 0 {
+        @concrete(@ctx.fns.params[sfd.param_off].type_id)
+    } else if is_ty(sfd.owner) {
+        @concrete(sfd.owner)
+    } else {
+        no_ty()
+    }
     // The ROW decides, not the spelling: an overload of `main` binds its
     // parameters like any other callable. Until 2026-08-22 this read
     // `name != ENTRY_FN`, so the overload's parameters were never bound and its

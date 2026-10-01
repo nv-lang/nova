@@ -12,7 +12,7 @@
 module novac.emit_c
 
 import ../tree.{Node}
-import ../builtins.{TypeKind, PTR_WRITE_AT, PTR_WRITE_CONSUME_AT}
+import ../builtins.{TypeKind, PTR_WRITE_AT, PTR_WRITE_CONSUME_AT, PTR_OFFSET}
 import ../sem.{call_arg_at, leaf_text}
 import ../types.{is_ty}
 
@@ -27,6 +27,18 @@ fn Emitter mut @emit_ptr_op(kids []Node) -> () {
     // `write_at` stores and is a unit value: the assignment, then `NOVA_UNIT`
     // (274.11 E.10 step 4c-2).
     ro writes = leaf_text(kids[2]) == PTR_WRITE_AT || leaf_text(kids[2]) == PTR_WRITE_CONSUME_AT
+    // `offset(n)` is the address itself, `n` elements on: C's pointer `+`
+    // scales by the element size, as D216 section 6 says (registry 1557).
+    if leaf_text(kids[2]) == PTR_OFFSET {
+        @body.append("((")
+        @emit_expr(kids[0])
+        @body.append(") + (")
+        @emit_expr(call_arg_at(kids, 3, 0))
+        @body.append("))")
+        return
+    } else {
+        // `read_at` / `write_at`: the element.
+    }
     @body.append(if writes { "((*((" } else { "(*((" })
     @emit_expr(kids[0])
     @body.append(") + (")

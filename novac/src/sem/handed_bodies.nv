@@ -19,7 +19,7 @@ module novac.sem
 import ../tree.{Node, NodeKind}
 import ../types.{TyId, is_ty, no_ty}
 import ../names.{NameTable, NamespaceId, raw_decl}
-import ../builtins.{SLICE_HEAD, EMPTY_CTOR, VEC_INDEX_METHOD, VEC_INDEX_SET_OP}
+import ../builtins.{SLICE_HEAD, EMPTY_CTOR, VEC_INDEX_METHOD, VEC_INDEX_SET_OP, VEC_INDEX_RANGE_OP, RANGE_TYPE}
 
 /// The bodies of the handed callables, by row.
 export type HandedBodies {
@@ -168,6 +168,11 @@ export fn Ctx @is_vec_op_shape(row FnRow, name str) -> bool {
     if !is_ty(on) || !@tys.names_a_decl(on) || decl_of_ty(@, on).name != SLICE_HEAD { return false }
     if name == EMPTY_CTOR {
         return is_ty(fd.owner) && fd.param_cnt == 1 && @fns.params[fd.param_off].type_id == @prims.int_id
+    } else if name == VEC_INDEX_RANGE_OP {
+        // The SLICE: `@index(r Range) -> Self` (registry 1557).
+        if !fd.has_recv || fd.param_cnt != 2 { return false }
+        ro rt = @fns.params[fd.param_off + 1].type_id
+        return is_ty(rt) && @tys.names_a_decl(rt) && decl_of_ty(@, rt).name == RANGE_TYPE
     } else if name == VEC_INDEX_SET_OP {
         if !fd.has_recv || fd.param_cnt != 3 { return false }
         return @fns.params[fd.param_off + 1].type_id == @prims.int_id &&

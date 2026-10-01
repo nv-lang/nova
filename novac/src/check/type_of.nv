@@ -17,7 +17,7 @@ module novac.check
 import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
-import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, RECV_BINDING}
+import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, RECV_BINDING, SELF_TYPE}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{variants_named, ctor_head_variant}
 import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, raw_row, ParamMode, carrier_of, arm_body_at, branch_children}
@@ -430,6 +430,9 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
             // A record's own name, or the anonymous form below.
         }
         if kids[0].kind_of() == NodeKind.Name {
+            // `Self { .. }`: the checker decided the type on the head (D66,
+            // registry 1557) -- `Self` is no registry name.
+            if expr_leaf_name(kids[0]) == SELF_TYPE { return chan.type_if_known(kids[0].id_of()) }
             return ctx.ty_of_name_or_ice(expr_leaf_name(kids[0]))
         }
         // Anonymous `{ ...src, ... }`: the record type is the spread's.

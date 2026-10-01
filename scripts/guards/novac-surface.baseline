@@ -243,7 +243,7 @@
 # ("new") -- the empty-vector constructor's name; check/binds.nv judges `[]T.new()` by it, and
 # builtin names live in builtins (the same home as LITERAL_CTOR). The #1457 merge itself missed the raise.
 # 2026-10-01, Carina window (274.11 E.10 steps 4c-2/4d): builtins 56 -> 59: `PTR_WRITE_AT`, `PTR_WRITE_CONSUME_AT`, `SIZE_OF_FN` -- the language's own names std's `Vec[T]` bodies use.
-builtins 61
+builtins 64
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -1129,3 +1129,8 @@ types 30
 #   вопрос с печатью обязаны идти одной дверью, иначе check и emit назовут разное. `VEC_INDEX_SET_OP`
 #   и `vec_op_method` (builtins) -- ключ неявной операции записи `xs[i] = v` и имя метода, который
 #   она зовёт: их читают `check/binds.nv` и `emit_c/emit_place.nv`, имена std живут в builtins (П5).
+# builtins 61 -> 64 (2026-10-01, облачная сессия p274-carina-mono-k2, №1557): `VEC_INDEX_RANGE_OP`
+#   (ключ неявной операции среза `xs[lo..hi]` -- перегрузка `@index(r Range)`), `vec_op_is_overload`
+#   (у какого ключа нет своего голого имени: запись и срез -- перегрузки `index`) и `PTR_OFFSET`
+#   (`p.offset(n)`, D216). Их читают `check/slice.nv`, `check/binds.nv`, `check/unsafe.nv`,
+#   `sem/handed_bodies.nv`, `emit_c/emit_slice.nv`, `emit_c/emit_ptr.nv`; имена std живут в builtins (П5).

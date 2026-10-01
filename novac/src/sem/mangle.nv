@@ -819,8 +819,11 @@ fn type_tag(ctx Ctx, t TyId, subst []TyId) -> str
         // unique per component list and stable, so overloading by a tuple
         // RETURN type works the D84 way (step 4b). A tuple PARAMETER stays
         // outside the wave's bounds, held by the checker's named refusal in
-        // bind_typed_param, not by this spelling's absence.
-        TkTuple => mono_tuple_name(ctx, t)
+        // bind_typed_param, not by this spelling's absence. SUBSTITUTED first,
+        // like every term with parameters inside: std's `Vec[T] @split_at`
+        // returns `(Self, Self)`, and its instance's name asked the layout of
+        // `T` (ice, registry 1557).
+        TkTuple => mono_tuple_name(ctx, subst_type(ctx, t, subst))
         // An INSTANCE inside one of OUR names: `Vec_of_nova_int`. This is not
         // the shell's spelling (`Vec____nova_int`) on purpose -- a callable's C
         // name is ours (274 section 7.0), and the pieces are chosen so no
