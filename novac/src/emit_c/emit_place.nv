@@ -29,7 +29,7 @@ import ../sem.{c_type, vec_op_c, raw_vrow, is_value_record, c_maker, VariantRow,
 import ../sem.{branch_children, is_expr_kind, carrier_of}
 import ../types.{TyId, is_ty}
 import ../lower.{Local, LocalDecl, AssignStmt, StoreStmt, Rvalue, Operand, OutputStmt, no_local}
-import ../builtins.{VEC_INDEX_METHOD, VEC_LEN_METHOD}
+import ../builtins.{VEC_INDEX_METHOD, VEC_LEN_METHOD, bool_c_literal}
 
 
 /// Prints ONE step of output: the printer of the value's CARRIER around the value.
@@ -100,6 +100,7 @@ fn Emitter @expr_of(rv Rvalue) -> Node {
         VariantField(_) => ice("emit_c: a variant field read reached expr_of -- only an assignment prints it")
         Read(_) => ice("emit_c: a place read reached expr_of -- only an assignment prints it")
         AnyData(_) => ice("emit_c: an unboxing reached expr_of -- only an assignment prints it")
+        Bool(_) => ice("emit_c: a flag constant reached expr_of -- only an assignment prints it")
     }
 }
 
@@ -126,6 +127,11 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
         SomePayload(opt) => {
             @emit_assign_head(d)
             @body.append("${@lo.ir.decl_of(opt).name}.value;\n")
+        }
+        Bool(b) => {
+            // A disjunction's "an alternative held" flag (registry 1568): the C keyword.
+            @emit_assign_head(d)
+            @body.append("${bool_c_literal(b)};\n")
         }
         AnyData(subject) => {
             // The runtime's unboxing (`nova_rt/typeid.h`): the payload of the

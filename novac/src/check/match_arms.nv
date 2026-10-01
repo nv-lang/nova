@@ -930,13 +930,6 @@ const AMBIGUOUS_VARIANT_MSG = "this variant name is declared by more than one su
 /// refused as non-exhaustive -- the wrong cause. Refused HERE, at the arm; the
 /// exhaustiveness rule then says nothing (one cause, one diagnostic).
 const ARRAY_REST_BIND_MSG = "outside the subset: a `..rest` binding in an array pattern needs the shell's slice view wired -- the length test and prefix/suffix elements compile today (E2-b, with the slice view)"
-/// A subpattern that TESTS something below an alternative of `|` (`Aa(1) |
-/// Bb(1)`, `X(P) | Y`): the disjunction's lowering tests the alternatives'
-/// heads only, and the test below was dropped -- a silent wrong answer, the
-/// class of registry 1534 inside a disjunction. Compiling it means an OR of
-/// per-alternative test chains; until then the form is refused by name.
-const DISJ_NESTED_TEST_MSG = "outside the subset: an alternative of `|` with a literal or a variant below its head is read but not compiled yet -- the disjunction tests the heads only (E2-b, with nested pattern tests)"
-
 const DISJ_ALT_MSG = "outside the subset: a `|` pattern takes variant alternatives only -- a literal, `_`, binder, parenthesized, array or nested `|` alternative is not compiled yet (E2-b, with the general or-test)"
 const VARIANT_PATTERN_MSG = "a pattern with a payload names no variant of the matched sum -- a plain binder pattern takes no payload"
 const PAYLOAD_ARITY_MSG = "the pattern's payload count disagrees with the variant's declaration -- match every payload field, or mark the rest with `..` (D59)"

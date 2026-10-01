@@ -208,7 +208,15 @@ fn Lowerer mut @lower_pattern_bind_in(pat Node, ty TyId, base Local, pre []str) 
 fn Lowerer mut @lower_pattern_tests(pat Node, ty TyId, base Local, pre []str, mut opened []IfCtx) -> () {
     match pattern_shape(pat) {
         Lit | Wild => {}
-        Disj => @lower_disj_bind(pat, ty, base, pre)
+        Disj => {
+            // Alternatives that test BELOW their heads raise a flag in the one that
+            // held (registry 1568); heads alone are the arm head's or the parent's.
+            if @alts_test_below(pat, ty) {
+                @lower_disj_tests(pat, ty, base, pre, opened)
+            } else {
+                @lower_disj_bind(pat, ty, base, pre)
+            }
+        }
         Bind => {
             ro nm = pattern_head_text(pat)
             if is_vrow(variant_in_sum(@ctx, ty, nm) ?? no_vrow()) { return }
@@ -425,7 +433,10 @@ fn Lowerer mut @lower_arm(arm Node, scr_t TyId, ls Local, c SwitchCtx, dest Loca
     // `checks` and sets the first-match flag there, as it does for a guard.
     mut opened = []IfCtx.new()
     @lower_pattern_tests(ak[0], scr_t, ls, []str.new(), opened)
-    @ir.note_arm_checks(opened.len())
+    mut heads = []BlockId.new()
+    for o in opened {
+        heads.push(o.head)
+    }
     match guard {
         Some(g) => {
             // The guard's head is an `if` like any other: it goes through the ONE head
@@ -435,10 +446,13 @@ fn Lowerer mut @lower_arm(arm Node, scr_t TyId, ls Local, c SwitchCtx, dest Loca
             // A guard has no else branch at all, and that is now the whole answer: there
             // is no second bit to pass, and no default for anyone to interpret later.
             ro gi = @ir.begin_if(gcond, ElseShape.NoElse)
+            heads.push(gi.head)
+            @ir.note_arm_heads(heads)
             @lower_arm_body(arm_e, dest)
             @ir.end_if(gi)
         }
         None => {
+            @ir.note_arm_heads(heads)
             @lower_arm_body(arm_e, dest)
         }
     }

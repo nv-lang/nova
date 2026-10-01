@@ -424,7 +424,10 @@ undated=58
 # dated (E2-b): a test below an alternative of `|` (`Aa(1) | Bb(1)`) was DROPPED IN
 # SILENCE -- the disjunction tests the heads only; novac printed 1 where the oracle
 # printed 0 (measured). Carriers of the new refusal in novac's own source: zero.
-refusals=141
+# 2026-10-01, the same session (registry 1568): refusals 141 -> 140. `DISJ_NESTED_TEST_MSG`
+# is gone: the alternative whose tests all held raises a flag the arm tests (fixture
+# disj_nested/pos_1, byte-for-byte). A refusal retired, none added.
+refusals=140
 # ТРЕТЬЕ ЧИСЛО — БЕССРОЧНЫЕ ПО ДВЕРИ (волна 274.7 В11-б, засев 2026-09-14, окно 274).
 #
 # Два числа выше мерят НАПИСАНИЕ текста отказа, а у предмета есть машинный признак:

@@ -44,17 +44,19 @@ export type VariantMatch value {
 
 /// One arm of a `Switch`: its pattern, its guard as the tree spells it (the
 /// M1 bridge; the guard is tested by an `If` inside the arm's block), and
-/// the block its binders and body occupy. `checks` counts the `If`s a NESTED
-/// subpattern's tests opened before the guard (registries 1534, 1542): the
-/// root's test is the arm head, a test below it can only run once the value
-/// it reads was read, so it is a synthetic condition in the arm's block,
-/// nested exactly like the guard's -- and the printer sets the first-match
-/// flag inside the innermost of them.
+/// the block its binders and body occupy. `heads` are the blocks whose `If`
+/// terminators test the arm beyond its head -- a NESTED subpattern's tests
+/// (registries 1534, 1542, 1568), then the guard: the root's test is the arm
+/// head, a test below it can only run once the value it reads was read, so it
+/// is a synthetic condition in the arm's block, nested exactly like the
+/// guard's. The printer descends to each head in turn (the blocks between --
+/// a disjunction's switch -- print on the way) and sets the first-match flag
+/// inside the innermost.
 export type SwitchArm value {
     pat Pattern /// what the arm tests
     guard Option[Node] /// the `if` after the pattern, if written
     body BlockId /// the arm's block: binders first, then the body
-    checks int /// the synthetic `If`s of nested tests that open before the guard (1534)
+    heads []BlockId /// the blocks holding the arm's test `If`s: nested tests, then the guard
 }
 
 /// The test of ONE nested subpattern (registries 1534, 1542): the pattern's

@@ -343,7 +343,11 @@ lex 11
 #   1542): PatTest (the nested subpattern's test, carried by Cond.Holds and printed by
 #   emit_c's pattern-test door) and FnBuilder.@note_arm_checks (how many nested-test
 #   Ifs an arm opened; emit_c finds the innermost through SwitchArm.checks).
-lower 93
+# lower 93 -> 94 (2026-10-01, the same session, registry 1568): `@note_arm_checks`
+#   became `@note_arm_heads` (the blocks of an arm's test Ifs -- the printer descends
+#   through a disjunction's switch to each) and `@set_bool` came in: the one constant
+#   the lowering writes, a disjunction's "an alternative held" flag.
+lower 94
 main 0
 # mono -- НОВЫЙ модуль (2026-08-18, Э2-б2): коллектор достижимого.
 # Наружу три имени: тип Reach, вопрос @has (эмиттер спрашивает про каждую

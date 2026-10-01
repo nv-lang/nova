@@ -618,7 +618,7 @@ fn main() {\n\
     assert(!c4.contains("nova_str_eq(_novac_l"), "CONTROL: a binder compares nothing")
 }
 
-test "a literal or a variant BELOW an arm's root is tested, not dropped (registries 1534, 1542, 1556)" {
+test "a literal or a variant BELOW an arm's root is tested, not dropped (registries 1534, 1542, 1556, 1568)" {
     // `A(3)`: the payload is read into a temporary and compared by a synthetic
     // condition (`Cond.Holds`) -- the int compare appears in the C. CONTROL: the
     // same arm with a binder at that position prints no such compare, so the
@@ -672,19 +672,21 @@ fn main() {\n\
     assert(d3.len() == 0, messages(d3))
     assert(!c3.contains("_In_Q)"), "CONTROL: `_` tests no inner tag")
 
-    // A test below an alternative of `|` is refused by name: the disjunction
-    // tests its heads only. CONTROL: binders below the heads compile.
-    ro (d4, _) = compile_to_c("type Two enum Aa(int) | Bb(int) | Cc\n\
+    // A test below an alternative of `|` compiles since registry 1568: the
+    // alternative whose tests all held raises a flag the arm then tests, so the
+    // literal's compare appears in the C. CONTROL: binders below the heads
+    // compare nothing.
+    ro (d4, c4) = compile_to_c("type Two enum Aa(int) | Bb(int) | Cc\n\
 fn k(t Two) -> int => match t {\n\
- Aa(1) | Bb(1) => 1\n\
+ Aa(4321) | Bb(4321) => 1\n\
  _ => 0\n\
 }\n\
 fn main() {\n\
  println(k(Cc))\n\
 }", std)
-    assert(d4.len() == 1, messages(d4))
-    assert(d4[0].message.contains("an alternative of `|` with a literal or a variant below its head"), d4[0].message)
-    ro (d5, _) = compile_to_c("type Two enum Aa(int) | Bb(int) | Cc\n\
+    assert(d4.len() == 0, messages(d4))
+    assert(c4.contains(" == 4321LL)"), "a literal below a `|` head is compared")
+    ro (d5, c5) = compile_to_c("type Two enum Aa(int) | Bb(int) | Cc\n\
 fn k(t Two) -> int => match t {\n\
  Aa(n) | Bb(n) => n\n\
  _ => 0\n\
@@ -693,6 +695,7 @@ fn main() {\n\
  println(k(Cc))\n\
 }", std)
     assert(d5.len() == 0, messages(d5))
+    assert(!c5.contains(" == 4321LL)"), "CONTROL: binders below `|` heads compare nothing")
 
     // An interpolated string in a pattern is refused by name, a language error
     // (D486 s2: a pattern's literal is not interpolated). CONTROL: the plain
