@@ -230,8 +230,8 @@ test "an index UNDER something does not crash the compiler (#652 class)" {
     // holds is not "the form compiles" but "the answer is a REFUSAL, never a
     // crash" -- the form itself is still outside E1 and says so by name.
     ro std = std_decls()
-    ro (d, _) = compile_to_c("type R { xs []int }\n\
-fn f(rs []R, i int) -> int {\n\
+    ro (d, _) = compile_to_c("type Rt { xs []int }\n\
+fn f(rs []Rt, i int) -> int {\n\
  ro v = rs[i].xs[0]\n\
  v\n\
 }\n\

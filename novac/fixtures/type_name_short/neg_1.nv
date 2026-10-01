@@ -1,0 +1,13 @@
+module type_name_short.neg_1
+
+// NOVAC_EXPECT is a single character
+// ONE seeded cause: a type named by one letter. D30 keeps single letters for
+// generic parameters, and the oracle refuses this declaration with
+// E_TYPE_NAME_TOO_SHORT (registry 1562: novac accepted it).
+type A {
+    n int
+}
+
+fn main() {
+    println(1)
+}

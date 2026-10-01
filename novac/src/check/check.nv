@@ -242,6 +242,8 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // the second were never written, and a constructor
                     // resolves against a body its author did not mean.
                     @report_if_name_repeats(children)
+                    // D30: a type name has at least two characters (#1562).
+                    @report_if_type_name_too_short(children)
                     // A PROTOCOL DECLARATION IS JUDGED, NOT REFUSED (wave 3b).
                     // Wave 3a refused it by name -- honest while nothing could
                     // check a contract; now the registry holds the required

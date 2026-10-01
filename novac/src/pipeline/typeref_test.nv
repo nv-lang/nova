@@ -98,7 +98,7 @@ test "a newtype or an alias over a COMPOSITE type is refused, not read as its fi
     // type. Now one refusal at each declaration, and nothing registered.
     mut std = std_decls()
     std.push("module std.v\nexport type Vec[T] { n int }\nexport fn Vec[T] @len() -> int => 0\n")
-    ro (d, _) = compile_to_c("type Ids alias []Id\ntype N []int\ntype Id int\nfn main() {\n println(1)\n}", std)
+    ro (d, _) = compile_to_c("type Ids alias []Id\ntype Nn []int\ntype Id int\nfn main() {\n println(1)\n}", std)
     assert(d.len() == 2, messages(d))
     assert(messages(d).contains("over a composite type"), messages(d))
     // CONTROL: one declared name stays a newtype and an alias, and a sum of

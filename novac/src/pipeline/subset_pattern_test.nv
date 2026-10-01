@@ -140,8 +140,8 @@ export type Vec[T] { n int }")
 test "pattern arity, a partial record without `..`, a literal alternative: three named refusals (D486 P1+P2)" {
     ro std = std_decls()
     // The payload count is the variant's declaration, exactly.
-    ro (d, _) = compile_to_c("type E enum P(int, int) | Q\n\
-fn f(s E) -> int {\n\
+    ro (d, _) = compile_to_c("type Et enum P(int, int) | Q\n\
+fn f(s Et) -> int {\n\
  match s {\n\
   P(x) => x\n\
   Q => 0\n\
@@ -346,8 +346,8 @@ fn main() {\n\
     // arm (measured 2026-09-29, door at novac/src/check/match_arms.nv:392),
     // and the mode doors would otherwise read it
     // as `consume` -- refused BY NAME instead.
-    ro (d6, _) = compile_to_c("type E enum A(int) | B\n\
-fn f(e E) -> int {\n\
+    ro (d6, _) = compile_to_c("type Et enum A(int) | B\n\
+fn f(e Et) -> int {\n\
  match e {\n\
   ro x => x\n\
   B => 0\n\
