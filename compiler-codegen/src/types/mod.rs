@@ -36,6 +36,7 @@ mod raw_ptr_ops; // #1473: raw-pointer address arithmetic outside unsafe (D216 p
 pub(crate) mod reserved_names; // D487: a declared name outside the compiler's C namespaces (called by the parser)
 pub(crate) mod coerce_door; // #1451/#1452: one door for `#coerce` -- checker decides, rewrite reads
 mod const_names; // #1488: the type of a module-level `const`/`ro` read by its bare name
+mod variant_ctor; // #1517: a variant constructor against the sum instance it builds
 
 /// Plan 196 (gs-bounds migration, spike `docs/plans/wip/196-gs-spike.md`):
 /// `gs` ("generics in scope") used to be `HashSet<String>` — ONLY the names of the
@@ -10090,7 +10091,9 @@ impl<'a> TypeCheckCtx<'a> {
                     self.f1_check_assign_let(
                         &d.value, ann, &name, d.mutable, gs, scope, errors,
                     );
-                } else if pattern_simple_name(&d.pattern).is_some() {
+                } else if let Some(name) = pattern_simple_name(&d.pattern) {
+                    // #1517: `ro x = None` -- nothing fixes the sum's parameter.
+                    self.check_untyped_variant_ctor(&d.value, &name, scope, errors);
                     // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1,
                     // 2026-07-23): UNANNOTATED `let` — `mut b = a` / `ro b = a`
                     // — has no `ann` so `f1_check_assign_let` above never runs
@@ -11299,6 +11302,8 @@ impl<'a> TypeCheckCtx<'a> {
         }
         match &e.kind {
             ExprKind::Call { func, args, trailing } => {
+                // #1517: a variant constructor's payload count (`variant_ctor.rs`).
+                self.check_variant_ctor_arity(e, scope, errors);
                 // 172.1.2 Шаг 2: func-позиция — Member здесь = метод-вызов, не field-read.
                 self.in_call_func.set(true);
                 self.f1_expr(func, gs, scope, errors);
@@ -21946,7 +21951,11 @@ impl<'a> TypeCheckCtx<'a> {
                 // ложнит на живом коде, живёт до первого окна, которое её
                 // выключит; проверка, которая молчит на части форм, живёт и
                 // ловит своё.
-                if !ResolvedType::from_type_ref(ret).is_primitive_lowerable() {
+                // #1517: a variant constructor of the declared sum is judged by
+                // its payload (`variant_ctor.rs`) -- a precise verdict, reported.
+                if !ResolvedType::from_type_ref(ret).is_primitive_lowerable()
+                    && !self.is_ctor_of_expected_sum(value, ret, scope)
+                {
                     return;
                 }
                 errors.push(Diagnostic::new(
@@ -23162,6 +23171,10 @@ impl<'a> TypeCheckCtx<'a> {
                 return Compat::Bad { found };
             }
             return Compat::Ok;
+        }
+        // #1517: a constructor of the expected sum -- payload against the instance.
+        if let Some(v) = self.variant_ctor_compat(expr, expected, expr_gs, exp_gs, scope) {
+            return v;
         }
         // Литералы: тип адаптируется к контексту (D44).
         match &expr.kind {

@@ -1467,6 +1467,18 @@
 # 2026-10-01, integrator nova-20: rows -> 1461, max -> 1512 (merge of the cloud session's patterns-ab: #1508 (Carina, record variant and | binders), #1509 (Carina, match tail type), #1510/#1511 (oracle K1: | binders by position, record-variant patterns unjudged), #1512 (Carina, handed sum payload) numbered here).
 # 2026-10-01, integrator nova-20: rows -> 1463, max -> 1516 (merge of p1497 (agent): #1032 fixed in the branch; 1497 stays a gap (the defect was the old #1032, not a regression); #1515 (oracle: nested | does not parse) and #1516 (nova_tests e2402) filed; 1513-1514 issued to Carina).
 # 2026-10-01, integrator nova-20: rows -> 1469, max -> 1525 (2026-10-01 integrator: merge hunt/novac-mono-1001 -- 6 TBD rows numbered 1520-1525; 1517 (cloud option_ctor) and 1518-1519 (cloud p274-carina-cloud) reserved, in gaps until those merges).
+# 2026-10-01, integrator nova-20: rows -> 1470, max -> 1525 (2026-10-01 integrator: merge p1517-variant-ctor-check -- row 1517 lands, 1517 leaves gaps).
+# 2026-10-01, integrator nova-20: rows -> 1471, max -> 1526 (2026-10-01 integrator: row 1526 -- reason of the NOVA_SKIP_CI_CHECK push of f0c5dbdd3 (nightly red on the replaced 97ab70f5d)).
+# 2026-10-01, integrator nova-20: rows -> 1472, max -> 1527 (2026-10-01 integrator: row 1527 -- variant of a foreign sum named like a generic type (nova-63, claude-limits probe)).
+# 2026-10-01, integrator nova-20: rows -> 1476, max -> 1531 (2026-10-01 integrator: rows 1528-1531 -- oracle findings of the #1517 cloud session).
+rows=1476
+max=1531
+rows=1472
+max=1527
+rows=1471
+max=1526
+rows=1470
+max=1525
 rows=1469
 max=1525
 rows=1463
@@ -2116,7 +2128,7 @@ stale_gaps=0
 # nomer I v gaps=, I so strokoy schitaetsya 'protuhshey dyroy'.
 # 2026-09-21: №1209 ПРИЕХАЛ и СНЯТ из gaps=
 # (писал интегратор, как и планировалось). №1210-1211 всё ещё ждёт Карину.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1500,1513-1514,1517-1519
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1500,1513-1514,1518-1519
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding

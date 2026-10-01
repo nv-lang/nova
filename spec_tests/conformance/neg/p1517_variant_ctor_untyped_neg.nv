@@ -1,0 +1,29 @@
+// EXPECT_COMPILE_ERROR E_VARIANT_CTOR_UNTYPED
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 #1517: a bare `None` in a binding with no declared type was
+// accepted and typed by whatever codegen defaulted to. Nothing says which
+// `Option` it is: D55 types an unannotated binding from its value ("выводится
+// тип значения"), and D88 fixes a parameter from the arguments or a default
+// only -- never from a later use. The binding needs its type written
+// (`ro x Option[int] = None`). Same for any generic sum's constructor whose
+// payload leaves a parameter open (`Err(e)` fixes `E`, not `T`). The Carina
+// oracle carrier is `novac/fixtures/option_ctor/neg_1.nv`.
+module neg.p1517_variant_ctor_untyped_neg
+
+type P1517uPair[T] enum P1517uTwo(T, T) | P1517uZero
+
+fn main() {
+    // nova:expect E_VARIANT_CTOR_UNTYPED -- bare `None`, no declared type
+    ro a = None
+    // nova:expect E_VARIANT_CTOR_UNTYPED -- `mut` too: the later assignment does not type it
+    mut b = None
+    b = Some(1)
+    // nova:expect E_VARIANT_CTOR_UNTYPED -- `Err("x")` fixes `E = str`, nothing fixes `T`
+    ro c = Err("x")
+    // nova:expect E_VARIANT_CTOR_UNTYPED -- qualified form of the same
+    ro d = Option.None
+    // nova:expect E_VARIANT_CTOR_UNTYPED -- a user generic sum's unit variant
+    ro e = P1517uZero
+    println(1)
+}

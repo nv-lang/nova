@@ -388,6 +388,19 @@ clarified 2026-10-01) -- there the compiler DERIVES the only matching variant
 instead of inventing the author's claim. For the old softness on your own newtype, declare it as a
 [`#coerce`](decisions/02-types.md#d429) pair.
 
+**A variant constructor is judged against the expected instance (D55 amend,
+2026-10-01).** The payload is checked against the variant's field in the
+INSTANCE the position expects, its arity against the declaration, and a
+constructor with no type source at all is refused rather than given a default:
+
+```nova
+fn bad() -> Option[str] => Some(1)   // ERROR E7301 -- Option[int] is not Option[str]
+ro p = Some(1, 2)                    // ERROR E_VARIANT_CTOR_ARITY
+ro q = None                          // ERROR E_VARIANT_CTOR_UNTYPED -- annotate it
+ro r Option[str] = None              // ok
+ro s = Some(1)                       // ok -- Option[int], from the payload
+```
+
 **Operators on a newtype stay inside the newtype ([D52](decisions/02-types.md#d52) amend,
 2026-09-04).** Arithmetic and comparison are defined between two values of the *same*
 newtype (plus a literal, which adapts); the arithmetic result is that newtype, a

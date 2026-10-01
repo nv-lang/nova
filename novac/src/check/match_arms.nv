@@ -164,6 +164,11 @@ fn has_match_arm(kids []Node) -> bool {
     false
 }
 
+/// No arm typed yet. A function, not a bare `None` in the binding: the oracle
+/// refuses an unannotated `None` (registry 221.1 #1517 -- nothing fixes its `T`),
+/// and a declared local type is outside novac's subset (E2-b3).
+fn no_arm_type() -> Option[TyId] => None
+
 /// A match: the scrutinee's type is the answer the emitter needs (it declares
 /// the C temporary with it); the arms bind their binders and are typed after.
 fn Checker mut @type_match(m Node) -> () {
@@ -175,7 +180,7 @@ fn Checker mut @type_match(m Node) -> () {
         None => return
     }
     ro before_arms = @out.len()
-    mut first_t = None
+    mut first_t = no_arm_type()
     for c in kids {
         if c.kind_of() != NodeKind.MatchArm { continue }
         first_t = @fold_arm_type(c, scr_t, first_t, before_arms)
