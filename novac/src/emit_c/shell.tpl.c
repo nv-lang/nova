@@ -2652,8 +2652,8 @@ static const nova_byte Nova_const_std_fs_B_BACKSLASH = ((nova_byte)92U);
 static const nova_byte Nova_const_std_fs_B_COLON = ((nova_byte)58U);
 static const nova_int Nova_const_runtime_decimal_DIGIT_BUF_MAX_DIGITS = ((nova_int)768LL);
 static const nova_int Nova_const_runtime_decimal_DIGIT_BUF_MAX_DIGITS_WITHOUT_OVERFLOW = ((nova_int)19LL);
-static const nova_int DIGIT_BUF_DECIMAL_POINT_RANGE = ((nova_int)2047LL);
-static const nova_int DECIMAL_MAX_SHIFT = ((nova_int)60LL);
+static const nova_int nv_DIGIT_BUF_DECIMAL_POINT_RANGE = ((nova_int)2047LL);
+static const nova_int nv_DECIMAL_MAX_SHIFT = ((nova_int)60LL);
 static _NovaFixArr_65_8_nova_int _nova_const_Nova_const_runtime_decimal_LEFT_SHIFT_TABLE_value;
 static _NovaFixArr_1308_9_nova_byte _nova_const_Nova_const_runtime_decimal_TABLE_POW5_value;
 static const nova_int Nova_const_runtime_fmt_buf_DOUBLE_POW5_INV_BITCOUNT = ((nova_int)125LL);
@@ -2825,7 +2825,7 @@ static NovaRes_nova_int_NovaValue_IoError* Nova_File_method_write(Nova_File* nov
 static NovaRes_nova_int_NovaValue_IoError* Nova_File_method_read_at(Nova_File* nova_self, Nova_Vec____nova_byte* buf, nova_int offset);
 static NovaRes_nova_int_NovaValue_IoError* Nova_File_method_write_at(Nova_File* nova_self, Nova_Vec____nova_byte* data, nova_int offset);
 static NovaRes_nova_unit_NovaValue_IoError* Nova_File_consume_close(Nova_File* nova_self);
-static nova_unit Nova_File_consume_cleanup(Nova_File* nova_self, Nova_ScopeOutcome* _outcome);
+static nova_unit Nova_File_consume_cleanup(Nova_File* nova_self, Nova_ScopeOutcome* nv__outcome);
 static NovaVtable_Fs* nova_fn_3std2fs7real_fs(void);
 static NovaRes_Nova_Vec____nova_byte_p_NovaValue_IoError* nova_fn_3std2fs4read(NovaValue_Path path);
 static NovaRes_nova_unit_NovaValue_IoError* nova_fn_3std2fs5write(NovaValue_Path path, Nova_Vec____nova_byte* data);
@@ -4721,7 +4721,7 @@ static NovaRes_nova_unit_NovaValue_IoError* Nova_File_consume_close(Nova_File* n
     return _nv_tmp_191;
 }
 
-static nova_unit Nova_File_consume_cleanup(Nova_File* nova_self, Nova_ScopeOutcome* _outcome) {
+static nova_unit Nova_File_consume_cleanup(Nova_File* nova_self, Nova_ScopeOutcome* nv__outcome) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
     if (nova_self && nova_self->_consume_ccount >= 1) { nv_panic(nova_str_from_cstr("D188-on-exit-double-invocation")); }
     if (nova_self) { nova_self->_consume_ccount += 1; }
@@ -7273,10 +7273,10 @@ static nova_int Nova_str_method_compare(nova_str nova_self, nova_str other) {
     nova_preempt_check();
     nova_int an = Nova_str_method_byte_len(nova_self);
     nova_int bn = Nova_str_method_byte_len(other);
-    nova_int min = Nova_int_method_min(an, bn);
+    nova_int nv_min = Nova_int_method_min(an, bn);
     nova_int _nv_tmp_582;
     {
-        _nv_tmp_582 = (nova_int)(Nova_RawMem_static_compare((nova_self.ptr), (other.ptr), min));
+        _nv_tmp_582 = (nova_int)(Nova_RawMem_static_compare((nova_self.ptr), (other.ptr), nv_min));
     }
     nova_int c = _nv_tmp_582;
     nova_unit _nv_if_583;
@@ -8900,7 +8900,7 @@ static Nova_Vec____nova_byte* nova_fn_7runtime7decimal13zeroed_digits(nova_int n
     Nova_Vec____nova_byte* digits = _nv_tmp_836;
     nova_int _nv_tmp_837 = n;
     nova_unit _nv_tmp_838;
-    for (nova_int _i = ((nova_int)0LL); _i < _nv_tmp_837; _i++) {
+    for (nova_int nv__i = ((nova_int)0LL); nv__i < _nv_tmp_837; nv__i++) {
         nova_preempt_check();
         (void)(Vec____nova_byte_method_push__nova_byte(digits, ((nova_byte)0U)));
     }
@@ -9107,7 +9107,7 @@ static nova_unit Nova_DigitBuf_method_right_shift(Nova_DigitBuf* nova_self, nova
     nova_int* _nv_ca_871 = &((nova_self->decimal_point));
     *_nv_ca_871 = nova_int_checked_sub(*_nv_ca_871, nova_int_checked_sub(read_index, ((nova_int)1LL)));
     nova_unit _nv_if_872;
-    if (((nova_self->decimal_point) < nova_int_checked_neg(DIGIT_BUF_DECIMAL_POINT_RANGE))) {
+    if (((nova_self->decimal_point) < nova_int_checked_neg(nv_DIGIT_BUF_DECIMAL_POINT_RANGE))) {
         (nova_self->num_digits) = ((nova_int)0LL);
         (nova_self->decimal_point) = ((nova_int)0LL);
         (nova_self->truncated) = false;
@@ -9172,7 +9172,7 @@ static nova_unit Nova_DigitBuf_method_shift_pow2(Nova_DigitBuf* nova_self, nova_
     while (1) {
         if (!((left > ((nova_int)0LL)))) break;
         nova_preempt_check();
-        nova_int step = Nova_int_method_min(left, DECIMAL_MAX_SHIFT);
+        nova_int step = Nova_int_method_min(left, nv_DECIMAL_MAX_SHIFT);
         nova_unit _nv_if_882;
         if ((e > ((nova_int)0LL))) {
             _nv_if_882 = NOVA_UNIT; (void)(Nova_DigitBuf_method_left_shift(nova_self, step));
@@ -9473,7 +9473,7 @@ static nova_int nova_fn_7runtime7fmt_buf16f64_fixed_needed(nova_f64 v, nova_byte
     }
     (void)(_nv_if_924);
     _NovaTuple_2_8_uint64_t_8_nova_int _nv_tmp_926 = nova_fn_7runtime7fmt_buf13decode_binary(v);
-    uint64_t _m = _nv_tmp_926.f0;
+    uint64_t nv__m = _nv_tmp_926.f0;
     nova_int e2 = _nv_tmp_926.f1;
     Nova_DigitBuf* d = nova_fn_7runtime7fmt_buf16exact_decimal_of(v, nova_fn_7runtime7fmt_buf17digits_needed_for(e2, ((nova_int)17LL), prec));
     (void)(Nova_DigitBuf_method_round_to_digits(d, nova_int_checked_add((d->decimal_point), prec)));
@@ -9688,7 +9688,7 @@ static uint64_t nova_fn_7runtime7fmt_buf12mul_shift_64(uint64_t m, uint64_t mul_
     nova_preempt_check();
     _NovaTuple_2_8_uint64_t_8_uint64_t _nv_tmp_958 = Nova_u64_method_widening_mul(m, mul_lo);
     uint64_t b0_hi = _nv_tmp_958.f0;
-    uint64_t _b0_lo = _nv_tmp_958.f1;
+    uint64_t nv__b0_lo = _nv_tmp_958.f1;
     _NovaTuple_2_8_uint64_t_8_uint64_t _nv_tmp_959 = Nova_u64_method_widening_mul(m, mul_hi);
     uint64_t b2_hi = _nv_tmp_959.f0;
     uint64_t b2_lo = _nv_tmp_959.f1;
@@ -10091,8 +10091,8 @@ static NovaOpt_NovaTuple_FloatingDecimal64 nova_fn_7runtime7fmt_buf19f64_shortes
     NovaOpt_NovaTuple_FloatingDecimal64 _nv_match_1019;
     int _nv_matched_1020 = 0;
     if (!_nv_matched_1020 && ((_nv_scr_1018.tag == NOVA_TAG_Option_Some))) {
-        NovaTuple_FloatingDecimal64 small = _nv_scr_1018.value;
-        NovaTuple_FloatingDecimal64 _nv_tmp_1021 = small;
+        NovaTuple_FloatingDecimal64 nv_small = _nv_scr_1018.value;
+        NovaTuple_FloatingDecimal64 _nv_tmp_1021 = nv_small;
         uint64_t mantissa = _nv_tmp_1021.mantissa;
         nova_int exponent = _nv_tmp_1021.exponent;
         nova_unit _nv_while_1022;
@@ -12797,7 +12797,7 @@ static uint64_t Nova_uint64_t_method_wrapping_mul(uint64_t nova_self, uint64_t r
     _nv_tmp_1492.f1 = _nv_tmp_1491;
     _NovaTuple_2_8_uint64_t_9_nova_bool _nv_tmp_1489 = _nv_tmp_1492;
     uint64_t wrapped = _nv_tmp_1489.f0;
-    nova_bool _overflowed = _nv_tmp_1489.f1;
+    nova_bool nv__overflowed = _nv_tmp_1489.f1;
     return wrapped;
 }
 
@@ -12810,7 +12810,7 @@ static uint64_t Nova_uint64_t_method_wrapping_add(uint64_t nova_self, uint64_t r
     _nv_tmp_1496.f1 = _nv_tmp_1495;
     _NovaTuple_2_8_uint64_t_9_nova_bool _nv_tmp_1493 = _nv_tmp_1496;
     uint64_t wrapped = _nv_tmp_1493.f0;
-    nova_bool _overflowed = _nv_tmp_1493.f1;
+    nova_bool nv__overflowed = _nv_tmp_1493.f1;
     return wrapped;
 }
 
