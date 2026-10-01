@@ -11,7 +11,7 @@
 //
 // Positions: free fn arg (free), method arg (method), `mut`-receiver method arg (mutmethod),
 // protocol-receiver method arg (proto), `ro` let with `[]u8` annotation (rolet), arrow-body
-// return (retarrow), `return` statement (retstmt), `[][]u8` element (elem), record field
+// return `-> ro []u8` (retarrow), `return` statement (retstmt), `[]ro []u8` element (elem), record field `ro []u8`
 // (recfield), assignment to a `mut b ro []u8` (assignro), module-level `const`/`ro` with
 // `[]u8` annotation (modlet). The imported form compares with the constant itself (its value
 // is the Unicode version, not ours to pin).
@@ -122,7 +122,7 @@ import std.unicode.{UNICODE_VERSION}
 
 type P1488Rec { name str }
 
-type P1488Hold { data []u8 }
+type P1488Hold { data ro []u8 }
 
 type P1488Tally { mut got str }
 
@@ -166,9 +166,9 @@ const P1488_GB_LCONST []u8 = P1488_M1
 
 fn via_lconst(mut w P1488Sink) -> () { w.put(P1488_M1) }
 
-fn ra_lconst() -> []u8 => P1488_M1
+fn ra_lconst() -> ro []u8 => P1488_M1
 
-fn rs_lconst(k int) -> []u8 {
+fn rs_lconst(k int) -> ro []u8 {
     if k > 5 {
         return "early"
     }
@@ -193,7 +193,7 @@ fn run_lconst() Io -> () {
     show_lconst("rolet", dec(b))
     show_lconst("retarrow", dec(ra_lconst()))
     show_lconst("retstmt", dec(rs_lconst(0)))
-    ro xs [][]u8 = [P1488_M1, "zz"]
+    ro xs []ro []u8 = [P1488_M1, "zz"]
     show_lconst("elem", dec(xs[0]))
     ro h = P1488Hold { data: P1488_M1 }
     show_lconst("recfield", dec(h.data))
@@ -209,9 +209,9 @@ const P1488_GB_LCONSTANN []u8 = P1488_M2
 
 fn via_lconstann(mut w P1488Sink) -> () { w.put(P1488_M2) }
 
-fn ra_lconstann() -> []u8 => P1488_M2
+fn ra_lconstann() -> ro []u8 => P1488_M2
 
-fn rs_lconstann(k int) -> []u8 {
+fn rs_lconstann(k int) -> ro []u8 {
     if k > 5 {
         return "early"
     }
@@ -236,7 +236,7 @@ fn run_lconstann() Io -> () {
     show_lconstann("rolet", dec(b))
     show_lconstann("retarrow", dec(ra_lconstann()))
     show_lconstann("retstmt", dec(rs_lconstann(0)))
-    ro xs [][]u8 = [P1488_M2, "zz"]
+    ro xs []ro []u8 = [P1488_M2, "zz"]
     show_lconstann("elem", dec(xs[0]))
     ro h = P1488Hold { data: P1488_M2 }
     show_lconstann("recfield", dec(h.data))
@@ -252,9 +252,9 @@ ro P1488_GB_MODRO []u8 = P1488_MR
 
 fn via_modro(mut w P1488Sink) -> () { w.put(P1488_MR) }
 
-fn ra_modro() -> []u8 => P1488_MR
+fn ra_modro() -> ro []u8 => P1488_MR
 
-fn rs_modro(k int) -> []u8 {
+fn rs_modro(k int) -> ro []u8 {
     if k > 5 {
         return "early"
     }
@@ -279,7 +279,7 @@ fn run_modro() Io -> () {
     show_modro("rolet", dec(b))
     show_modro("retarrow", dec(ra_modro()))
     show_modro("retstmt", dec(rs_modro(0)))
-    ro xs [][]u8 = [P1488_MR, "zz"]
+    ro xs []ro []u8 = [P1488_MR, "zz"]
     show_modro("elem", dec(xs[0]))
     ro h = P1488Hold { data: P1488_MR }
     show_modro("recfield", dec(h.data))
@@ -295,9 +295,9 @@ ro P1488_GB_MODROANN []u8 = P1488_MS
 
 fn via_modroann(mut w P1488Sink) -> () { w.put(P1488_MS) }
 
-fn ra_modroann() -> []u8 => P1488_MS
+fn ra_modroann() -> ro []u8 => P1488_MS
 
-fn rs_modroann(k int) -> []u8 {
+fn rs_modroann(k int) -> ro []u8 {
     if k > 5 {
         return "early"
     }
@@ -322,7 +322,7 @@ fn run_modroann() Io -> () {
     show_modroann("rolet", dec(b))
     show_modroann("retarrow", dec(ra_modroann()))
     show_modroann("retstmt", dec(rs_modroann(0)))
-    ro xs [][]u8 = [P1488_MS, "zz"]
+    ro xs []ro []u8 = [P1488_MS, "zz"]
     show_modroann("elem", dec(xs[0]))
     ro h = P1488Hold { data: P1488_MS }
     show_modroann("recfield", dec(h.data))
@@ -338,9 +338,9 @@ const P1488_GB_ASSOC []u8 = P1488Box.K
 
 fn via_assoc(mut w P1488Sink) -> () { w.put(P1488Box.K) }
 
-fn ra_assoc() -> []u8 => P1488Box.K
+fn ra_assoc() -> ro []u8 => P1488Box.K
 
-fn rs_assoc(k int) -> []u8 {
+fn rs_assoc(k int) -> ro []u8 {
     if k > 5 {
         return "early"
     }
@@ -365,7 +365,7 @@ fn run_assoc() Io -> () {
     show_assoc("rolet", dec(b))
     show_assoc("retarrow", dec(ra_assoc()))
     show_assoc("retstmt", dec(rs_assoc(0)))
-    ro xs [][]u8 = [P1488Box.K, "zz"]
+    ro xs []ro []u8 = [P1488Box.K, "zz"]
     show_assoc("elem", dec(xs[0]))
     ro h = P1488Hold { data: P1488Box.K }
     show_assoc("recfield", dec(h.data))
@@ -381,9 +381,9 @@ const P1488_GB_ASSOCUNANN []u8 = P1488Box.K2
 
 fn via_assocunann(mut w P1488Sink) -> () { w.put(P1488Box.K2) }
 
-fn ra_assocunann() -> []u8 => P1488Box.K2
+fn ra_assocunann() -> ro []u8 => P1488Box.K2
 
-fn rs_assocunann(k int) -> []u8 {
+fn rs_assocunann(k int) -> ro []u8 {
     if k > 5 {
         return "early"
     }
@@ -408,7 +408,7 @@ fn run_assocunann() Io -> () {
     show_assocunann("rolet", dec(b))
     show_assocunann("retarrow", dec(ra_assocunann()))
     show_assocunann("retstmt", dec(rs_assocunann(0)))
-    ro xs [][]u8 = [P1488Box.K2, "zz"]
+    ro xs []ro []u8 = [P1488Box.K2, "zz"]
     show_assocunann("elem", dec(xs[0]))
     ro h = P1488Hold { data: P1488Box.K2 }
     show_assocunann("recfield", dec(h.data))
@@ -424,9 +424,9 @@ ro P1488_GB_CONSTFIELD []u8 = P1488_CR.name
 
 fn via_constfield(mut w P1488Sink) -> () { w.put(P1488_CR.name) }
 
-fn ra_constfield() -> []u8 => P1488_CR.name
+fn ra_constfield() -> ro []u8 => P1488_CR.name
 
-fn rs_constfield(k int) -> []u8 {
+fn rs_constfield(k int) -> ro []u8 {
     if k > 5 {
         return "early"
     }
@@ -451,7 +451,7 @@ fn run_constfield() Io -> () {
     show_constfield("rolet", dec(b))
     show_constfield("retarrow", dec(ra_constfield()))
     show_constfield("retstmt", dec(rs_constfield(0)))
-    ro xs [][]u8 = [P1488_CR.name, "zz"]
+    ro xs []ro []u8 = [P1488_CR.name, "zz"]
     show_constfield("elem", dec(xs[0]))
     ro h = P1488Hold { data: P1488_CR.name }
     show_constfield("recfield", dec(h.data))
@@ -467,9 +467,9 @@ ro P1488_GB_ASSOCFIELD []u8 = P1488Box.REC.name
 
 fn via_assocfield(mut w P1488Sink) -> () { w.put(P1488Box.REC.name) }
 
-fn ra_assocfield() -> []u8 => P1488Box.REC.name
+fn ra_assocfield() -> ro []u8 => P1488Box.REC.name
 
-fn rs_assocfield(k int) -> []u8 {
+fn rs_assocfield(k int) -> ro []u8 {
     if k > 5 {
         return "early"
     }
@@ -494,7 +494,7 @@ fn run_assocfield() Io -> () {
     show_assocfield("rolet", dec(b))
     show_assocfield("retarrow", dec(ra_assocfield()))
     show_assocfield("retstmt", dec(rs_assocfield(0)))
-    ro xs [][]u8 = [P1488Box.REC.name, "zz"]
+    ro xs []ro []u8 = [P1488Box.REC.name, "zz"]
     show_assocfield("elem", dec(xs[0]))
     ro h = P1488Hold { data: P1488Box.REC.name }
     show_assocfield("recfield", dec(h.data))
@@ -510,9 +510,9 @@ const P1488_GB_IMPORT []u8 = UNICODE_VERSION
 
 fn via_import(mut w P1488Sink) -> () { w.put(UNICODE_VERSION) }
 
-fn ra_import() -> []u8 => UNICODE_VERSION
+fn ra_import() -> ro []u8 => UNICODE_VERSION
 
-fn rs_import(k int) -> []u8 {
+fn rs_import(k int) -> ro []u8 {
     if k > 5 {
         return "early"
     }
@@ -537,7 +537,7 @@ fn run_import() Io -> () {
     show_import("rolet", dec(b))
     show_import("retarrow", dec(ra_import()))
     show_import("retstmt", dec(rs_import(0)))
-    ro xs [][]u8 = [UNICODE_VERSION, "zz"]
+    ro xs []ro []u8 = [UNICODE_VERSION, "zz"]
     show_import("elem", dec(xs[0]))
     ro h = P1488Hold { data: UNICODE_VERSION }
     show_import("recfield", dec(h.data))
