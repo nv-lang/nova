@@ -31,6 +31,14 @@ for g in $list; do
     [ -f "scripts/guards/$g" ] || { echo "MISSING $g"; bad=$((bad+1)); continue; }
     n=$((n+1))
     case $g in
+        # The commit-message guard takes <message-file> <root>, not a tree:
+        # handed "." it died on Errno 13 (Carina window, 2026-10-01). It gets
+        # the last commit's message, as the header above promises.
+        check-novac-commit-no-simplification.py)
+            msg="$TMPDIR/novac-gate-guards-msg.$$"
+            git log -1 --format=%B > "$msg"
+            out=$(timeout 240 python "scripts/guards/$g" "$msg" . 2>&1); rc=$?
+            rm -f "$msg" ;;
         *.py) out=$(timeout 240 python "scripts/guards/$g" . 2>&1); rc=$? ;;
         *) out=$(timeout 240 bash "scripts/guards/$g" . 2>&1); rc=$? ;;
     esac
