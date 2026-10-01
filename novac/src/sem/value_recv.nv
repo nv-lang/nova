@@ -1,0 +1,109 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: the SysV x86-64 ABI's size rule for aggregates (a struct up to a few
+// eightbytes travels in registers, a larger one by hidden reference) and
+// Rust's `PassMode::Direct` vs `Indirect` choice by layout size -- taken as
+// the shape of the decision; NOT taken: register classes, which C decides.
+// Role: sem -- the D488 receiver rule for a method on a `value` record: how
+//   the receiver crosses the call (R3: a `mut @` always by pointer; R5: a
+//   `ro @` by copy up to three words, by pointer above), and the C layout
+//   size that rule reads.
+// Used by: check/check.nv (the receiver of a method on a value record is no
+//   longer refused), emit_c/emit_c.nv (the signature), emit_c/emit_expr.nv
+//   (the receiver at the call site, `@` and `@field` inside the body).
+// Guarded by: novac/fixtures/value_recv (both sides of the threshold, byte
+//   for byte with the oracle), check-novac-differential.sh.
+
+module novac.sem
+
+import ../types.{TyId, is_ty}
+import ../builtins.{TypeKind, prim_row}
+
+/// D488 R5: the largest `ro @` receiver of a `value` record passed by COPY,
+/// in bytes -- three words. One constant, the oracle's too (it moves to the
+/// same number; until it does it cuts at 16, so 17..24 bytes are not compared).
+export const RECV_COPY_MAX_BYTES = 24
+
+/// Does a method's receiver of type `t` in mode `m` cross the call by POINTER?
+/// Only a `value` record is asked: a plain record is a GC pointer already.
+/// D488 R3: `mut @` (and `consume @`) -- always a pointer, the writes must
+/// land in the caller's record. R5: `ro @` -- by copy when the record's C size
+/// is at most RECV_COPY_MAX_BYTES, by pointer above; a size novac cannot
+/// compute answers "pointer", which no program can tell from a copy for a
+/// read-only receiver.
+export fn value_recv_by_pointer(ctx Ctx, t TyId, m ParamMode) -> bool {
+    if m != ParamMode.ModeRo { return true }
+    ro (size, _) = c_size_align(ctx, t)
+    size < 0 || size > RECV_COPY_MAX_BYTES
+}
+
+/// Does the receiver (parameter zero) of `row` cross by POINTER as a `value`
+/// record? A plain record is a pointer already and answers no; a free
+/// function has no receiver. Asked by the call site and the receiver check.
+export fn row_recv_by_pointer(ctx Ctx, row FnRow) -> bool {
+    ro fd = ctx.fns.rows[raw_row(row)]
+    if !fd.has_recv || fd.param_cnt == 0 { return false }
+    ro p = ctx.fns.params[fd.param_off]
+    is_value_record(ctx, p.type_id) && value_recv_by_pointer(ctx, p.type_id, p.mode)
+}
+
+/// The C (size, alignment) of a type laid out INLINE, or (-1, -1) when novac
+/// does not compute it. A plain record or a sum with a payload is a pointer
+/// (8, 8); a `value` record is its fields with C's padding.
+fn c_size_align(ctx Ctx, t TyId) -> (int, int) {
+    if !is_ty(t) { return (-1, -1) }
+    match ctx.tys.kind_of(t) {
+        TkPrim => prim_size_align(ctx.tys.prim_ordinal_of(t))
+        TkRecord => {
+            if !is_value_record(ctx, t) { return (8, 8) }
+            value_record_size_align(ctx, t)
+        }
+        TkSum => {
+            if is_value_sum(ctx, t) { return (-1, -1) }
+            (8, 8)
+        }
+        TkApp | TkParam | TkInfer | TkNewtype | TkTuple | TkEffect | TkPtr => (-1, -1)
+    }
+}
+
+/// A primitive's C size: the width for a numeric row, the runtime's struct
+/// for `str` (pointer + length, nova_rt.h: "sizeof == 16"), one byte for
+/// `bool` (C `bool`), four for `char` (`uint32_t`).
+fn prim_size_align(ordinal int) -> (int, int) {
+    ro row = prim_row(ordinal)
+    match row.family {
+        PfInt => (row.bits / 8, row.bits / 8)
+        PfFloat => (row.bits / 8, row.bits / 8)
+        PfStr => (16, 8)
+        PfBool => (1, 1)
+        PfChar => (4, 4)
+        PfUnit => (-1, -1)
+        PfAny => (8, 8)
+        PfNever => (-1, -1)
+    }
+}
+
+/// The fields of a `value` record in declaration order, each aligned, the
+/// whole rounded up to the largest alignment -- C's struct layout.
+fn value_record_size_align(ctx Ctx, t TyId) -> (int, int) {
+    match field_range_of(decl_of_ty(ctx, t)) {
+        None => (-1, -1)
+        Some((first, cnt)) => {
+            mut size = 0
+            mut align = 1
+            for i in 0..cnt {
+                ro (fs, fa) = c_size_align(ctx, ctx.fields.rows[raw_frow(first) + i].type_id)
+                if fs < 0 || fa < 1 { return (-1, -1) }
+                if fa > align {
+                    align = fa
+                } else {
+                    // A smaller alignment does not change the record's.
+                }
+                size = round_up(size, fa) + fs
+            }
+            (round_up(size, align), align)
+        }
+    }
+}
+
+/// `n` rounded up to a multiple of `a` (a >= 1).
+fn round_up(n int, a int) -> int => (n + a - 1) / a * a
