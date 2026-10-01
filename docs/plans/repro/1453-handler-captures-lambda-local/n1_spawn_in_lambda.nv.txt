@@ -1,0 +1,21 @@
+// n1: NOT #1453 -- a spawn body inside a lambda: `_nova_spawn_0` undeclared in C.
+// Red on integ 8900d9a61 as well (before #1441); a separate defect, number from the integrator.
+module hcap.n1_spawn_in_lambda
+
+fn run(body fn() -> int) -> int => body()
+
+fn main() Io {
+    ro got = run(fn() -> int {
+        ro base = 7
+        mut t = 3
+        t += base
+        ro seen = t
+        supervised {
+            spawn {
+                println("c4 in ${seen + base}")
+            }
+        }
+        t
+    })
+    println("c4 ${got}")
+}

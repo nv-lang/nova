@@ -3123,6 +3123,55 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
  *
  * Если fiber-error appears — printf to stderr (диагностика), но
  * нормальный exit. */
+/* ─── 221.1 №1406: the main thread's blocking pump wait ────────────────────
+ *
+ * Every "all fibers parked — wait for an event" point on the main thread goes
+ * through here. `_main_wake` (runtime.c) is uv_unref'd so that it never keeps
+ * the loop alive by itself (evloop_close's UV_RUN_DEFAULT drain relies on
+ * that). The price was that `uv_run(UV_RUN_ONCE)` on a loop with no other
+ * referenced handle returns WITHOUT polling at all — the async that workers
+ * send is then never serviced: a `nova_loop_defer_call` marshalled onto the
+ * main loop (a worker fiber reading a stream accepted from a main-bound
+ * listener — every server shape) sat in `_main_call_queue` forever while the
+ * pump spun a core flat out; that was the second hang behind №1406 (probes
+ * a3/b1/b2: the second connection's read never started once the listener had
+ * closed). Holding a reference for the duration of the wait makes the loop
+ * poll, so the pump sleeps in the kernel and ANY cross-thread poke —
+ * fiber-done `nova_runtime_signal_main`, the bootstrap-wake poke, a deferred
+ * close/call — ends the wait and gets its callback run. On a worker the loop
+ * is the worker's own, whose wake handle is referenced already: no-op.
+ *
+ * `deadline_ns` (absolute monotonic ns, 0 = none) bounds the wait with a
+ * timer, so a caller with periodic checks still gets control back. */
+static inline int64_t time_monotonic_ns(void);
+static void _nova_scope_deadline_wait_cb(uv_timer_t* h);
+static inline void _nova_pump_wait_once(uv_loop_t* loop, int64_t deadline_ns) {
+    bool held = nova_runtime_main_wake_hold(loop);
+    if (deadline_ns == 0) {
+        uv_run(loop, UV_RUN_ONCE);
+    } else {
+        int64_t remaining_ns = deadline_ns - time_monotonic_ns();
+        if (remaining_ns <= 0) {
+            uv_run(loop, UV_RUN_NOWAIT);
+        } else {
+            int64_t remaining_ms = remaining_ns / 1000000LL + 1;  /* round up, min 1 */
+            uv_timer_t w;
+            uv_timer_init(loop, &w);
+            uv_timer_start(&w, _nova_scope_deadline_wait_cb, (uint64_t)remaining_ms, 0);
+            uv_run(loop, UV_RUN_ONCE);
+            uv_timer_stop(&w);
+            uv_close((uv_handle_t*)&w, NULL);
+            uv_run(loop, UV_RUN_NOWAIT);  /* release handle via NOWAIT pass */
+        }
+    }
+    if (held) nova_runtime_main_wake_unhold();
+}
+
+/* The exit-time drain below keeps periodic duties (pre-exit dump, orphan-drain
+ * grace), which used to run because the pump spun; with the pump now sleeping
+ * it wakes at least this often for them. */
+#define NOVA_DRAIN_TICK_NS (250LL * 1000000LL)
+
 static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
     int _nv456_diag = getenv("NOVA_DIAG_M456") != NULL;
     long long _nv456_iters = 0;
@@ -3240,12 +3289,14 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
                     nova_runtime_dump_state(_pxwd_buf);
                 }
             }
-            uv_run(nova_current_loop(), UV_RUN_ONCE);
+            _nova_pump_wait_once(nova_current_loop(),
+                                 time_monotonic_ns() + NOVA_DRAIN_TICK_NS);  /* №1406 */
             continue;
         }
         int parked = nova_sched_count_parked(q);
         if (parked > 0 && parked == alive) {
-            uv_run(nova_current_loop(), UV_RUN_ONCE);
+            _nova_pump_wait_once(nova_current_loop(),
+                                 time_monotonic_ns() + NOVA_DRAIN_TICK_NS);  /* №1406 */
         }
     }
     if (_nv456_diag) {
@@ -3366,23 +3417,11 @@ static void _nova_scope_deadline_wait_cb(uv_timer_t* h) { (void)h; }
  * armed-stack-timer + UV_RUN_ONCE pattern of the main-flow Time.sleep loop.
  * deadline_ns==0 → plain UV_RUN_ONCE (byte-identical to legacy behaviour). */
 static inline void _nova_scope_deadline_run_once(int64_t deadline_ns) {
-    uv_loop_t* loop = nova_current_loop();
-    if (deadline_ns == 0) { uv_run(loop, UV_RUN_ONCE); return; }
-    int64_t remaining_ns = deadline_ns - time_monotonic_ns();
-    if (remaining_ns <= 0) {
-        /* Deadline already passed — don't block; pump ready events so
-         * cancellation close_cbs can complete and fibers drain. */
-        uv_run(loop, UV_RUN_NOWAIT);
-        return;
-    }
-    int64_t remaining_ms = remaining_ns / 1000000LL + 1;  /* round up, min 1 */
-    uv_timer_t w;
-    uv_timer_init(loop, &w);
-    uv_timer_start(&w, _nova_scope_deadline_wait_cb, (uint64_t)remaining_ms, 0);
-    uv_run(loop, UV_RUN_ONCE);
-    uv_timer_stop(&w);
-    uv_close((uv_handle_t*)&w, NULL);
-    uv_run(loop, UV_RUN_NOWAIT);  /* release handle via NOWAIT pass */
+    /* Deadline already passed → NOWAIT (don't block; pump ready events so
+     * cancellation close_cbs can complete and fibers drain). The wait itself,
+     * and the main-wake hold that makes it sleep instead of spin, live in
+     * `_nova_pump_wait_once` (221.1 №1406). */
+    _nova_pump_wait_once(nova_current_loop(), deadline_ns);
 }
 
 /* ─── Plan 221.1 №165: early-armed scope-deadline timer ───────────────────

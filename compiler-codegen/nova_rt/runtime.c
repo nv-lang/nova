@@ -719,6 +719,17 @@ void nova_runtime_auto_arm(void) {
 static uv_async_t      _main_wake;
 static bool            _main_wake_inited = false;
 
+/* 221.1 №1406: true only on the thread that initialised `_main_wake` — the
+ * main OS thread, whose `uv_run(UV_RUN_ONCE)` pump drives every bootstrap
+ * scope (`dispatch_ready == NULL`). Read by `nova_runtime_poke_bootstrap_driver`
+ * to skip a self-poke; `_current_worker_id` cannot tell main apart, because the
+ * driver thread and the libuv threadpool threads are -1 as well. */
+#ifdef _MSC_VER
+static __declspec(thread) bool _nova_is_main_thread = false;
+#else
+static __thread bool _nova_is_main_thread = false;
+#endif
+
 /* Plan 83.10.2 (2026-05-26): deferred close queue for main thread's loop.
  * Init'd alongside _main_wake; drained in _main_wake_cb. */
 static NovaDeferredCloseQueue _main_close_queue;
@@ -1983,6 +1994,7 @@ static void _materialize_pool(void) {
          * пока есть active timer/handles из user code (sleep, channels). */
         uv_unref((uv_handle_t*)&_main_wake);
         _main_wake_inited = true;
+        _nova_is_main_thread = true;  /* №1406: this IS the main thread */
         /* Plan 83.10.2: init main-loop deferred-close queue. */
         nova_close_queue_init(&_main_close_queue);
         _main_close_queue_inited = true;
@@ -2401,6 +2413,54 @@ void nova_runtime_signal_main(void) {
     if (_main_wake_inited) {
         uv_async_send(&_main_wake);
     }
+}
+
+/* 221.1 №1406: poke the thread that drives a bootstrap scope after a wake.
+ *
+ * `nova_goready` on a scope with `dispatch_ready == NULL` only flips flags
+ * (parked[slot], fiber_state) and leaves the resume to the scope's driver —
+ * `nova_supervised_run_impl` / `nova_supervised_drain_main_scope` on the main
+ * thread, which idles in `uv_run(nova_current_loop(), UV_RUN_ONCE)` once every
+ * live fiber is parked. That wait is a real blocking syscall whenever the main
+ * loop holds a referenced handle — e.g. a `TcpListener` bound on main while a
+ * detached fiber sits in `accept()` — and `_main_wake` is unref'd, so nothing
+ * but an event on main's OWN loop ends it. A waker on another thread (a
+ * worker's `ChanTx.send` -> `Condvar.notify_one`, a mutex/semaphore release)
+ * published the flags and returned: the main fiber stayed parked until the
+ * next unrelated I/O event (№1406: forever, when none came). Without such a
+ * handle `uv_run` returned at once and the pump merely spun — which is why the
+ * hang needed a parked Net fiber to show.
+ *
+ * Every bootstrap scope under the armed runtime is driven by the main thread
+ * (local fibers exist only in `_nova_main_scope`; orphan and nested scopes
+ * route through workers, whose scopes carry `dispatch_ready`), so the poke is
+ * `_main_wake`. Lost-wake-free: the caller publishes the flags BEFORE this
+ * send; if the pump consumes the async before blocking, the consumption
+ * happens-after the publish and its next step sees the fiber ready; if not,
+ * the async stays pending and `UV_RUN_ONCE` returns at once (the same
+ * argument as the №694 stop-recheck in `_worker_main`). Skipped on main
+ * itself: a wake issued there comes from inside the pump, which re-steps
+ * anyway. No-op before `nova_runtime_init` / in the non-armed runtime, where
+ * the waker is the pump's own thread. */
+void nova_runtime_poke_bootstrap_driver(void) {
+    if (!_nova_is_main_thread) nova_runtime_signal_main();
+}
+
+/* 221.1 №1406: reference `_main_wake` for the duration of one blocking pump
+ * wait on the main thread, so `uv_run(UV_RUN_ONCE)` polls (and sleeps) even
+ * when no user handle keeps the loop alive — see `_nova_pump_wait_once`
+ * (fibers.h). Returns whether a hold was taken; pair a `true` with
+ * `nova_runtime_main_wake_unhold`. Both run on the main thread only, the
+ * thread that owns the loop, so uv_ref/uv_unref are safe here. */
+bool nova_runtime_main_wake_hold(uv_loop_t* loop) {
+    if (!_nova_is_main_thread || !_main_wake_inited) return false;
+    if (loop != _main_wake.loop) return false;
+    uv_ref((uv_handle_t*)&_main_wake);
+    return true;
+}
+
+void nova_runtime_main_wake_unhold(void) {
+    uv_unref((uv_handle_t*)&_main_wake);
 }
 
 /* Plan 83.10.3 (2026-05-26): run one fiber on worker w — extracted logic from

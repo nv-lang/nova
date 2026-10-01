@@ -230,9 +230,15 @@ static inline void nova_goready(mco_coro* co) {
         }
         if (scope && scope->dispatch_ready && mco_status(co) != MCO_DEAD) {
             scope->dispatch_ready(scope->dispatch_ctx, co);
+        } else {
+            /* Bootstrap (dispatch_ready==NULL, or no fiber scope at all — the
+             * main fiber's ctx carries none): supervised_step sees fiber_state
+             * IDLE and resumes the fiber itself — but only once its driver
+             * steps again, and the driver may be blocked in
+             * uv_run(UV_RUN_ONCE) on a loop this thread's wake never touches.
+             * Poke it (221.1 №1406; runtime.c has the full account). */
+            nova_runtime_poke_bootstrap_driver();
         }
-        /* Bootstrap (dispatch_ready==NULL): supervised_step sees parked[slot]
-         * cleared + fiber_state IDLE and resumes the fiber itself. */
         return;
     }
 

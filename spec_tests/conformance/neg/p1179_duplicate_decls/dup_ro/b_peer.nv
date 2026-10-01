@@ -1,0 +1,7 @@
+// Peer of `a_main.nv` (see its header): the second declaration of the same name.
+
+module p1179_duplicate_decls.dup_ro
+
+ro TABLE = make_b()
+
+fn make_b() -> []int => [2]
