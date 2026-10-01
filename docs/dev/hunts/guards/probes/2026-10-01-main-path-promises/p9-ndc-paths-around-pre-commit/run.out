@@ -1,0 +1,25 @@
+=== A. control: plain git commit of std/src on main
+check-main-no-direct-code: FAIL — коммит кода прямо в main главного дерева (1 путей), например:
+    std/src/b.nv
+rc=1
+   main tip: base | files: scripts/githooks/pre-commit scripts/guards/check-main-no-direct-code.sh std/src/a.nv std/src/b.nv | parents: 0
+=== B. git cherry-pick feat (on main, main tree)
+rc=0
+   main tip: feat: code on a branch | files: std/src/a.nv | parents: 1
+=== C. git revert --no-edit of a code commit on main
+rc=0
+   main tip: Revert "keyed code" | files: std/src/b.nv | parents: 1
+=== D. merge --no-commit feat + integrator's OWN edit of std/src/b.nv, then commit
+   MERGE_HEAD present
+check-main-no-direct-code ok: идёт слияние (MERGE_HEAD) — законный путь кода в main
+rc=0
+   main tip: Merge branch 'feat' | files: std/src/b.nv | parents: 2
+   b.nv changed by this merge relative to BOTH parents:
+std/src/b.nv
+std/src/b.nv
+=== E. merge --squash feat + git commit
+   no MERGE_HEAD after --squash
+check-main-no-direct-code: FAIL — коммит кода прямо в main главного дерева (1 путей), например:
+    std/src/c.nv
+rc=1
+   main tip: Merge branch 'feat' | files: std/src/b.nv | parents: 2

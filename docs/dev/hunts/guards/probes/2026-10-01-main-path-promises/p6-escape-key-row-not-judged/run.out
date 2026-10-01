@@ -1,0 +1,12 @@
+=== A. control: accepted list cites #00
+check-push-proven-by-ci: FAIL -- acc-00.list:1: registry row #00 does not exist -- the exemption for nova-gate / novac-gate is stale, remove it together with its reason
+rc=1
+=== B. key NOVA_PUSH_UNPROVEN='x #00'
+check-push-proven-by-ci: SKIPPED by NOVA_PUSH_UNPROVEN: x #00 (sha 111111111 NOT proven by CI)
+rc=0
+=== C. key NOVA_PUSH_UNPROVEN='#99999'
+check-push-proven-by-ci: SKIPPED by NOVA_PUSH_UNPROVEN: #99999 (sha 111111111 NOT proven by CI)
+rc=0
+=== D. check-main-no-direct-code, key NOVA_MAIN_DIRECT_CODE='#00'
+check-main-no-direct-code ok: код прямо в main (1 путей) пропущен ключом NOVA_MAIN_DIRECT_CODE: #00
+rc=0

@@ -1,0 +1,1 @@
+| 9005 | 🔴 К2 | row closed in its OWN status field, written without bold. Статус: ЗАКРЫТ 2026-08-14 (fixed by commit abc). Later prose quotes the field form: rows were closed in prose instead of the field `**Статус:**`, and the scanner counted them as open. |

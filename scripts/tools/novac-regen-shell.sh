@@ -37,7 +37,7 @@
 #   sh scripts/tools/novac-regen-shell.sh --check ФАЙЛ # то же, но сверить с ФАЙЛОМ (шов самотеста)
 # Коды выхода: 0 — записано / совпало; 1 — расхождение либо отказ механики;
 #              2 — неверный вызов; 3 — оракул не собран («судить нечего»).
-# Проверялся: Windows (Git Bash), 2026-08-15.
+# Проверялся: Windows (Git Bash), 2026-08-15; две эмиссии — 2026-10-01.
 export LC_ALL=C
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PROBE="novac/probe/shell_probe.nv"
@@ -85,59 +85,84 @@ grep -qF "\"$PROBE_LIT\"" "$ROOT/$PROBE" \
 # файла). Подмена module — единственная правка копии.
 sed 's/^module probe\.shell_probe$/module shell_probe/' "$ROOT/$PROBE" > "$T/shell_probe.nv"
 
-# Артефакты сборки — в каталог ЭТОГО запуска: оракул кладёт .c в
-# $TEMP|$TMPDIR/nova_tests-<pid>/build-<hash>/, и никто, кроме нас, туда не
-# пишет — это и убирает гонку параллельных окон.
-ART="$T/art"
-mkdir -p "$ART"
-ART_NATIVE="$ART"
-command -v cygpath >/dev/null 2>&1 && ART_NATIVE=$(cygpath -w "$ART")
-TEMP="$ART_NATIVE" TMPDIR="$ART_NATIVE" "$ORACLE" build "$T/shell_probe.nv" \
-    -o "$T/probe.exe" --keep-artifacts > "$T/build.log" 2>&1 \
-    || { echo "novac-regen-shell: оракул не собрал probe (копия $T/shell_probe.nv):" >&2; tail -20 "$T/build.log" >&2; exit 1; }
+# ОДИН ШАБЛОН НА ВСЕ ПЛАТФОРМЫ (2026-10-01, novac-gate в CI). std несёт
+# `#cfg(target_os)` (сегодня ровно `host_style`, std/src/fs/path.nv), и
+# эмиссия, снятая на Windows, была ШЕЛЛОМ WINDOWS: на Linux-CI шаблон всегда
+# «протух», а `host_style` там ещё и возвращал PathStyle_Windows — неверно по
+# поведению, не только по свежести. Теперь probe эмитируется ДВАЖДЫ —
+# NOVA_TARGET_OS=windows и =linux (механизм оракула: current_target_os в
+# compiler-codegen/src/imports.rs), слоты режутся в каждой, и
+# scripts/tools/novac-shell-merge.py сводит две построчно: общее — как есть,
+# каждый различающийся кусок — `#ifdef _WIN32` / windows / `#else` / linux /
+# `#endif`. Результат и режим --check от машины не зависят. Различие в слоте
+# novac или в main — отказ слияния (вопрос окну Карины), а не #ifdef.
+emit_for() {
+    _os="$1"
+    # Артефакты сборки — в каталог ЭТОГО запуска: оракул кладёт .c в
+    # $TEMP|$TMPDIR/nova_tests-<pid>/build-<hash>/, и никто, кроме нас, туда не
+    # пишет — это и убирает гонку параллельных окон.
+    ART="$T/art-$_os"
+    mkdir -p "$ART"
+    ART_NATIVE="$ART"
+    command -v cygpath >/dev/null 2>&1 && ART_NATIVE=$(cygpath -w "$ART")
+    NOVA_TARGET_OS="$_os" TEMP="$ART_NATIVE" TMPDIR="$ART_NATIVE" "$ORACLE" build "$T/shell_probe.nv" \
+        -o "$T/probe-$_os.exe" --keep-artifacts > "$T/build-$_os.log" 2>&1 \
+        || { echo "novac-regen-shell: оракул не собрал probe для $_os (копия $T/shell_probe.nv):" >&2; tail -20 "$T/build-$_os.log" >&2; exit 1; }
 
-# Ключ — по СОДЕРЖИМОМУ: единственный .c артефактов с литералом probe.
-find "$ART" -type f -name '*.c' > "$T/cands.all" 2>/dev/null
-: > "$T/cands"
-while IFS= read -r c; do
-    [ -n "$c" ] || continue
-    grep -qF "\"$PROBE_LIT\"" "$c" && printf '%s\n' "$c" >> "$T/cands"
-done < "$T/cands.all"
-n=$(wc -l < "$T/cands" | tr -d ' ')
-n_all=$(wc -l < "$T/cands.all" | tr -d ' ')
-if [ "$n" -eq 0 ]; then
-    echo "novac-regen-shell: эмиссия probe не найдена — ни один .c в артефактах не содержит \"$PROBE_LIT\" (файлов .c: $n_all)" >&2
-    exit 1
-fi
-if [ "$n" -gt 1 ]; then
-    echo "novac-regen-shell: кандидатов на эмиссию probe $n (из $n_all) — ключ по содержимому неоднозначен:" >&2
-    sed 's/^/  /' "$T/cands" >&2
-    exit 1
-fi
-KEY=$(cat "$T/cands")
+    # Ключ — по СОДЕРЖИМОМУ: единственный .c артефактов с литералом probe.
+    find "$ART" -type f -name '*.c' > "$T/cands-$_os.all" 2>/dev/null
+    : > "$T/cands-$_os"
+    while IFS= read -r c; do
+        [ -n "$c" ] || continue
+        grep -qF "\"$PROBE_LIT\"" "$c" && printf '%s\n' "$c" >> "$T/cands-$_os"
+    done < "$T/cands-$_os.all"
+    n=$(wc -l < "$T/cands-$_os" | tr -d ' ')
+    n_all=$(wc -l < "$T/cands-$_os.all" | tr -d ' ')
+    if [ "$n" -eq 0 ]; then
+        echo "novac-regen-shell: эмиссия probe ($_os) не найдена — ни один .c в артефактах не содержит \"$PROBE_LIT\" (файлов .c: $n_all)" >&2
+        exit 1
+    fi
+    if [ "$n" -gt 1 ]; then
+        echo "novac-regen-shell: кандидатов на эмиссию probe ($_os) $n (из $n_all) — ключ по содержимому неоднозначен:" >&2
+        sed 's/^/  /' "$T/cands-$_os" >&2
+        exit 1
+    fi
+    KEY=$(cat "$T/cands-$_os")
 
-# Вырезать определение nova_fn_main_impl (до первой '}' в нулевой колонке),
-# на его месте — два слота novac.
-# Третий слот (274.5 §6, 2026-09-30) — /*__NOVAC_INIT__*/ последней строкой
-# тела nova_consts_init: туда novac штампует инициализацию СВОИХ значений
-# модуля (модульный ro, массивный const). Место не выбрано, а задано нормой:
-# значение модуля вычисляется один раз ДО main и ДО арминга M:N-воркеров
-# (spec/decisions/02-types.md:9319, 06-concurrency.md:7686), а main шелла
-# зовёт nova_consts_init() ровно там. Свои строки std идут раньше — std не
-# читает значений novac, обратное верно.
-awk '
-    /^static nova_unit nova_fn_main_impl\(void\) \{/ {
-        inmain = 1
-        print "/*__NOVAC_STRLITS__*/"
-        print "/*__NOVAC_BODY__*/"
-        next
-    }
-    inmain && /^\}/ { inmain = 0; next }
-    inmain { next }
-    /^static void nova_consts_init\(void\) \{/ { inconst = 1; print; next }
-    inconst && /^\}/ { inconst = 0; print "/*__NOVAC_INIT__*/"; print; next }
-    { print }
-' "$KEY" > "$T/shell.tpl.c"
+    # Вырезать определение nova_fn_main_impl (до первой '}' в нулевой колонке),
+    # на его месте — два слота novac.
+    # Третий слот (274.5 §6, 2026-09-30) — /*__NOVAC_INIT__*/ последней строкой
+    # тела nova_consts_init: туда novac штампует инициализацию СВОИХ значений
+    # модуля (модульный ro, массивный const). Место не выбрано, а задано нормой:
+    # значение модуля вычисляется один раз ДО main и ДО арминга M:N-воркеров
+    # (spec/decisions/02-types.md:9319, 06-concurrency.md:7686), а main шелла
+    # зовёт nova_consts_init() ровно там. Свои строки std идут раньше — std не
+    # читает значений novac, обратное верно.
+    awk '
+        /^static nova_unit nova_fn_main_impl\(void\) \{/ {
+            inmain = 1
+            print "/*__NOVAC_STRLITS__*/"
+            print "/*__NOVAC_BODY__*/"
+            next
+        }
+        inmain && /^\}/ { inmain = 0; next }
+        inmain { next }
+        /^static void nova_consts_init\(void\) \{/ { inconst = 1; print; next }
+        inconst && /^\}/ { inconst = 0; print "/*__NOVAC_INIT__*/"; print; next }
+        { print }
+    ' "$KEY" > "$T/shell.$_os.c"
+}
+
+emit_for windows
+emit_for linux
+
+PY=""
+for _p in python python3; do
+    if command -v "$_p" >/dev/null 2>&1 && [ "$("$_p" -c 'print("ok")' 2>/dev/null)" = ok ]; then PY="$_p"; break; fi
+done
+[ -n "$PY" ] || { echo "novac-regen-shell: нет рабочего python/python3 — свести две эмиссии нечем" >&2; exit 1; }
+MERGE_OUT=$("$PY" "$ROOT/scripts/tools/novac-shell-merge.py" "$T/shell.windows.c" "$T/shell.linux.c" "$T/shell.tpl.c") \
+    || { echo "novac-regen-shell: две эмиссии не сводятся в один шаблон (см. причину выше)" >&2; exit 1; }
 
 # Самопроверка (урок «оболочка руками»: молчаливое искажение хуже отказа).
 fail() { echo "novac-regen-shell: FAIL — $1" >&2; exit 1; }
@@ -161,7 +186,7 @@ if [ "$MODE" = check ]; then
         exit 1
     fi
     if cmp -s "$T/shell.tpl.c" "$TPL"; then
-        echo "novac-regen-shell --check ok: шаблон совпал с эмиссией оракула по probe ($LINES строк)"
+        echo "novac-regen-shell --check ok: шаблон совпал с эмиссией оракула по probe ($LINES строк, windows + linux)"
         exit 0
     fi
     # ── ОДНА НАЗВАННАЯ ТЕРПИМОСТЬ: НОМЕР СТРОКИ В КОНТРАКТЕ (2026-08-23) ──
@@ -204,5 +229,6 @@ if [ "$MODE" = check ]; then
 fi
 
 cp "$T/shell.tpl.c" "$TPL"
-echo "novac-regen-shell ok: $LINES строк из эмиссии probe ($(basename "$KEY")); пересобери novac и прогони смоуки подмножества"
+echo "novac-regen-shell ok: $LINES строк из эмиссий probe (windows + linux); $MERGE_OUT"
+echo "  пересобери novac и прогони смоуки подмножества"
 exit 0

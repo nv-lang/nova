@@ -1,0 +1,27 @@
+=== push-proven, exemption cites #9005
+check-push-proven-by-ci: note: nova-gate / novac-gate (self-hosted compiler builds + module tests): failure, accepted by open row #9005
+check-push-proven-by-ci: ok: 7/7 required workflows green on 111111111 (1 red job(s) accepted by open rows)
+rc=0
+=== push-proven, exemption cites #9006
+check-push-proven-by-ci: FAIL -- acc-9006.list:1: registry row #9006 is closed -- the exemption for nova-gate / novac-gate is stale, remove it together with its reason
+rc=1
+=== registry-routes-scan on the same file (no_route_list = rows it reads OPEN)
+no_route=1
+no_caveat=1
+blockers=0
+no_route_list:
+  9006
+
+no_caveat_list:
+  9006
+
+blockers_list:
+  
+
+rc=0
+=== D. real registry, both readings side by side (read-only)
+row 651: push-proven=open routes-scan=closed
+row 730: push-proven=closed routes-scan=open
+rows=1420 differ=199
+rows where push-proven says nofield (a refusal if cited) but routes-scan reads a status:
+197

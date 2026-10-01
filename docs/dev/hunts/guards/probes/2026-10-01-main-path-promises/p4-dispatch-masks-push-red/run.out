@@ -1,0 +1,14 @@
+=== runs-push-red-only.json
+  nova-gate / gate.sh tier push (behaviour; tier full on the nightly schedule): failure (run 201)
+check-push-proven-by-ci: FAIL -- 1 finding(s) across the 7 required workflows: 111111111 is not proven green. main moves only to a commit GitHub CI has judged (owner, 2026-09-30); escape: NOVA_PUSH_UNPROVEN="<reason #NNNN>"
+rc=1
+=== runs-push-red-then-dispatch-green.json
+check-push-proven-by-ci: ok: 7/7 required workflows green on 111111111
+rc=0
+=== the guard requests 'event' from gh and never reads it:
+18:     sha (any event: the `integrate` push, a PR, a dispatch); of several runs of
+179:                              "databaseId,workflowName,status,conclusion,event,createdAt,headSha"])
+=== nova-gate dispatch input and the tier it drives:
+91:        options: [push, full, loop]
+271:          NOVA_GATE_TIER: loop
+339:          NOVA_GATE_TIER: ${{ github.event_name == 'schedule' && 'full' || (inputs.tier || 'push') }}

@@ -1,0 +1,7 @@
+=== A. mini tree: all green, empty accepted list
+check-push-proven-by-ci: ok: 7/7 required workflows green on 111111111
+rc=0
+=== B. same green runs, REAL registry + REAL accepted list (read-only measure)
+check-push-proven-by-ci: note: accepted entry `nova-gate / novac-gate #1442` matched no red job on 111111111 -- if the job is green for good, the entry can go
+check-push-proven-by-ci: ok: 7/7 required workflows green on 111111111
+rc=0
