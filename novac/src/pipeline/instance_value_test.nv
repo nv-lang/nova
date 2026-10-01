@@ -21,7 +21,8 @@ export type Option[T] enum Some(T) | None\n\
 export type Vec[T] {\n    data *mut T\n    n int\n}\n\
 export fn Vec[T] @len() -> int => @n\n\
 export fn Vec[T] mut @push(v T) -> @ => @\n\
-export fn Vec[T] @get(i int) -> Option[T] {\n    if i < @n {\n        return Some(unsafe { @data.read_at(i) })\n    }\n    None\n}\n\
+export fn Vec[T] @get(i int) -> Option[T] {\n\
+    if i < @n {\n        return Some(unsafe { @data.read_at(i) })\n    }\n    None\n}\n\
 export fn Vec[T] @peek(i int) -> Option[int] {\n    if i < @n {\n        return Some(@n)\n    }\n    None\n}\n")
     std
 }
