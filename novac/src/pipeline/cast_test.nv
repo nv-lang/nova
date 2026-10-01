@@ -89,10 +89,41 @@ test "`int as uint` takes the low bits, a C cast -- not the oracle's saturation 
     // The oracle's spelling of the same cast is `nova_int_to_uint`, which
     // clamps a negative to 0 -- the defect of registry 1547, not D54.
     assert(!c.contains("nova_int_to_uint"), c)
-    // CONTROL: a pair still unsettled stays HELD under the subset's code --
-    // a bool into a number (D54 has no rule, spec/conversions.md gives true=1).
-    ro (b, _) = compile_to_c("fn main() {\n ro t = true\n println(t as u8)\n}", std)
+    // CONTROL: `as any` is still outside the numeric family -- the subset's
+    // refusal, under its own code.
+    ro (b, _) = compile_to_c("fn main() {\n ro n = 5\n ro a = n as any\n println(1)\n}", std)
     assert(b.len() == 1 && codes(b).contains("E_NOVAC_SUBSET"), messages(b))
+}
+
+test "the owner's word on D54 (amendment 2026-10-01): bool into a number, char value into a wide row, a char literal that fits" {
+    ro std = std_decls()
+    // A bool is 1 or 0 in any number; a char VALUE goes into a row of 32 bits
+    // or more; a char LITERAL into any row that holds its codepoint.
+    ro (d, _) = compile_to_c("fn main() {\n ro t = true\n ro c = 'q'\n println(t as u8)\n println(t as f64)\n println(c as u32)\n println(c as int)\n println('A' as i8)\n}", std)
+    assert(d.len() == 0, messages(d))
+    // CONTROL: the narrow neighbours of each -- a char value into u16, a char
+    // literal past u8 (E_LIT_OUT_OF_RANGE, not the low bits), a number into a
+    // bool -- are the language's errors.
+    ro (v, _) = compile_to_c("fn main() {\n ro c = 'q'\n println(c as u16)\n}", std)
+    assert(v.len() == 1 && messages(v).contains("`char as u16`") && codes(v).contains("E_NOVAC_LANG"), messages(v))
+    ro (l, _) = compile_to_c("fn main() {\n println('\u{100}' as u8)\n}", std)
+    assert(l.len() == 1 && messages(l).contains("E_LIT_OUT_OF_RANGE"), messages(l))
+    ro (b, _) = compile_to_c("fn main() {\n ro n = 1\n println(n as bool)\n}", std)
+    assert(b.len() == 1 && codes(b).contains("E_NOVAC_LANG"), messages(b))
+}
+
+test "a prefix minus binds looser than `as`: `-x as T` is `-(x as T)` (D54 amendment 2026-10-01)" {
+    ro std = std_decls()
+    // `-f as u8` negates a u8 -- the unsigned-minus refusal proves the reading.
+    ro (u, _) = compile_to_c("fn main() {\n ro f = 2.5\n println(-f as u8)\n}", std)
+    assert(u.len() == 1 && messages(u).contains("signed types only"), messages(u))
+    // ... and the literal form too: `-1 as u8` is `-(1 as u8)`.
+    ro (l, _) = compile_to_c("fn main() {\n println(-1 as u8)\n}", std)
+    assert(l.len() == 1 && messages(l).contains("signed types only"), messages(l))
+    // CONTROL: parenthesised, the minus is inside the cast, and the program
+    // is legal.
+    ro (p, _) = compile_to_c("fn main() {\n ro f = 2.5\n println((-f) as u8)\n println((-1) as u8)\n}", std)
+    assert(p.len() == 0, messages(p))
 }
 
 test "inside `unsafe { }` an integer variable may become a char, and that is the block's reason (D54)" {

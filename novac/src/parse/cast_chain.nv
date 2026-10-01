@@ -1,0 +1,38 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc_parse `expr.rs` (`parse_assoc_op_cast`) -- the cast is read as
+// a postfix-like chain right after an operand, before any binary operator;
+// NOT taken: rustc's precedence table, where a prefix `-` binds TIGHTER than
+// `as` -- Nova's is the other way (D54 amendment 2026-10-01).
+//
+// Role: the reader of the CAST CHAIN (`x as A`, `x is T`) after a primary,
+//   asked by the Pratt loop and by a prefix operator for its operand.
+// Used by: expr.nv -- `@expr_bp_inner` and the prefix branch of `@primary`.
+// Guarded by: check-novac-file-size.py (this split), the fixtures
+//   novac/fixtures/cast_prec through check-novac-differential.sh, and
+//   nova test novac/src/pipeline/cast_test.nv.
+//
+// Split out of expr.nv on 2026-10-01 when the prefix operator started to read
+// its operand's casts (D54 amendment 2026-10-01) and the chain gained a second
+// caller -- which pushed expr.nv past the thousand-line limit.
+
+module novac.parse
+
+import ../lex.{TokenKind}
+import ../tree.{Node, NodeKind}
+
+/// A primary WITH its CAST CHAIN: `x as A as B`, `x is T`. A cast binds looser
+/// than the postfix chain and tighter than every binary operator AND every
+/// prefix operator (D54 amendment 2026-10-01): `s.len() as u8 + 1` is
+/// `((s.len() as u8) + 1)`, `-x as T` is `-(x as T)`. Its right side is a
+/// TYPE, so it goes through the type door and not through @expr. `is` (D54)
+/// binds exactly as a cast does: the right side is a type.
+fn Cursor mut @cast_operand() -> Node {
+    mut left = @primary()
+    while @peek() == TokenKind.KwAs || @peek() == TokenKind.KwIs {
+        ro kind = if @peek() == TokenKind.KwIs { NodeKind.IsTest } else { NodeKind.Cast }
+        mut ck = []Node.of(left, @take())
+        ck.append(@type_ref())
+        left = @node(kind, ck)
+    }
+    left
+}

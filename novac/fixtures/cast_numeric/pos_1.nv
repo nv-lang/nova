@@ -4,7 +4,9 @@ module cast_numeric.pos_1
 // with the boundary values D54 defines: integer pairs take the low bits,
 // float into integer saturates (NaN -> 0, below an unsigned -> 0), an integer
 // into a float is the nearest float, a char literal is its codepoint, an
-// integer literal in range is a char. Values come through bindings so the C
+// integer literal in range is a char, a char value is its codepoint in a row
+// of 32 bits or more, a bool is 1 or 0 (D54 amendment 2026-10-01). Values
+// come through bindings so the C
 // compiler cannot fold a cast away from the emitted form.
 fn main() {
     ro big = 300
@@ -23,6 +25,9 @@ fn main() {
     ro three_hundred = 300.0
     ro zero = 0.0
     ro tenbn = 10000000000.0
+    ro letter = 'q'
+    ro yes = true
+    ro no = false
     // integer -> integer: the low bits, read as the target (wrap, bit pattern, sign)
     println(big as u8)
     println(neg as u32)
@@ -62,14 +67,23 @@ fn main() {
     println(big as f64)
     println(small as f32)
     println(neg as f64)
-    // char literal -> integer: the codepoint, its low bits for a narrow target
+    // char literal -> integer: the codepoint, into any row that holds it
     println('A' as int)
     println('A' as u8)
     println('é' as u8)
     println('é' as int)
-    println('Ā' as u8)
     println('€' as u16)
     println('\n' as u8)
+    // char value -> integer: the codepoint, into a row of 32 bits or more
+    println(letter as u32)
+    println(letter as int)
+    println(letter as i64)
+    println(letter as uint)
+    // bool -> number: true is 1, false is 0
+    println(yes as u8)
+    println(no as int)
+    println(yes as f64)
+    println(yes as i64)
     // integer literal -> char: checked at compile time
     println("${65 as char}")
     println("${0x41 as char}")

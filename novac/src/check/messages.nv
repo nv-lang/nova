@@ -441,11 +441,10 @@ const DEFAULT_ORDER_MSG = "a parameter with a default value stands before one wi
 ///
 /// Since the numeric wave (p274-carina-cast, 2026-10-01) the text names what is
 /// still held, because the numeric family itself compiles: `as any`, a sum's
-/// discriminant, an integer into a newtype, and the pairs the owner has yet to
-/// decide (a char variable into an integer wider than `u8`; a bool into a
-/// number, where D54 and its overview page disagree) -- those wait for a
-/// word, not for code. `int as uint` left the list on 2026-10-01.
-const CAST_MSG = "outside the subset: this cast `expr as T` is not compiled yet -- the numeric family is; `as any`, a sum's discriminant, a value into a newtype and the pairs whose answer is not settled (a char variable into an integer, a bool into a number) wait (E2-b)"
+/// discriminant and an integer into a newtype. The pairs once held for a word
+/// (`int as uint`, a char value into an integer, a bool into a number) were all
+/// decided on 2026-10-01 (D54 amendment) and left the list.
+const CAST_MSG = "outside the subset: this cast `expr as T` is not compiled yet -- the numeric family is; `as any`, a sum's discriminant and a value into a newtype wait (E2-b)"
 
 /// THE FORBIDDEN PAIRS of D54 (spec/decisions/03-syntax.md): a permanent
 /// language error, not a debt, so the head carries neither of the debt's
@@ -459,8 +458,10 @@ const CAST_TO_BOOL_WHY = "a bool is not a number; write the comparison (`n != 0`
 /// method on the SOURCE, never cast.
 const CAST_STR_WHY = "a string is parsed or printed by a method on the source (`s.to_int()`, `n.to_str()`), never cast"
 
-/// D54: a char variable may be past 0xFF; the checked form is `c.to_u8()`.
-const CAST_CHAR_U8_WHY = "a char may lie past 0xFF; convert with `c.to_u8()` (a Result), or cast a char LITERAL"
+/// D54 with its 2026-10-01 amendment: a char VALUE goes only into a row that
+/// holds every codepoint (i32/u32/int/uint/i64/u64); the checked narrow form
+/// is `c.to_u8()`.
+const CAST_CHAR_NARROW_WHY = "a char value goes only into an integer that holds every codepoint (i32, u32, int, uint, i64, u64); into a narrower one convert with a checked method (`c.to_u8()`, a Result), or cast a char LITERAL that fits"
 
 /// D54 with its 2026-09-05 amendment: the one door into a char is `to_char()`.
 const CAST_INT_CHAR_WHY = "not every integer is a codepoint; convert with `n.to_char()` (a Result), or cast an integer LITERAL, checked at compile time"

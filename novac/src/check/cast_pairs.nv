@@ -24,7 +24,7 @@ module novac.check
 
 import ../tree.{Node, NodeKind}
 import ../builtins.{BuiltinType, PrimFamily}
-import ../sem.{branch_children, leaf_kind, leaf_text, prim_row_of}
+import ../sem.{branch_children, leaf_kind, leaf_text, prim_row_of, char_literal_code}
 import ../lex.{TokenKind}
 import ../types.{TyId}
 import ../diag.{ice}
@@ -36,7 +36,8 @@ type CastVerdict enum
     | CvLegal /// D54 defines the conversion
     | CvUnsafeLegal /// D54's `unsafe { }` exception: legal, and the block's reason to exist
     | CvForbidden(str) /// D54 forbids it; the payload says what to write instead
-    | CvHeld /// D54 and the oracle answer differently, or D54 is silent: refused until decided
+    | CvLitOutOfRange(str) /// a char LITERAL whose codepoint the target cannot hold; the payload is the whole message
+    | CvHeld /// a form of D54 outside the numeric family (`as any`): the subset's refusal
 
 /// A cast between two PRIMITIVES. The operand's type is recorded beside the
 /// target's, because the emitter's choice between a C cast and a saturating
@@ -57,6 +58,7 @@ fn Checker mut @type_prim_cast(e Node, kids []Node, from TyId, target TyId) -> (
             @record(e, target)
         }
         CvForbidden(why) => @reject_first_leaf_of(kids, cast_pair_msg(fr.name, tr.name, why))
+        CvLitOutOfRange(msg) => @reject_first_leaf_of(kids, msg)
         CvHeld => @report_first_leaf_of(kids, CAST_MSG)
     }
 }
@@ -76,27 +78,30 @@ fn prim_cast_verdict(operand Node, fr BuiltinType, tr BuiltinType, in_unsafe boo
     }
     // `as any` boxes a value (D53); that is not this wave's family.
     if is_any_family(fam_to) { return CastVerdict.CvHeld }
-    // A bool into a number: D54 has no rule for it (and "no rule" is its
-    // error), while its overview page, spec/conversions.md "Bool <->
-    // everything", gives `bool -> int` as `true=1` and the oracle agrees. The
-    // spec disagrees with itself -- held, and asked.
-    if is_bool_family(fam_from) && is_numeric_family(fam_to) { return CastVerdict.CvHeld }
+    // A bool into a number: true -> 1, false -> 0 (D54 amendment 2026-10-01,
+    // the owner's decision; spec/conversions.md "Bool <-> everything" said so
+    // already). The other direction stays forbidden, below.
+    if is_bool_family(fam_from) && is_numeric_family(fam_to) { return CastVerdict.CvLegal }
     if is_any_family(fam_from) { return CastVerdict.CvForbidden(CAST_FROM_ANY_WHY) }
     if is_bool_family(fam_to) { return CastVerdict.CvForbidden(CAST_TO_BOOL_WHY) }
     if is_str_family(fam_from) || is_str_family(fam_to) { return CastVerdict.CvForbidden(CAST_STR_WHY) }
     if is_char_family(fam_from) && is_int_family(fam_to) {
-        if lit_kind_of(operand) == TokenKind.CharLit { return CastVerdict.CvLegal }
-        // `char as u8` is D54's by name; inside `unsafe { }` D54 allows it, and
-        // the cast is the block's operation (the oracle's E_UNSAFE_UNUSED there
-        // is its defect, registry 1547).
-        if tr.bits == 8 && !tr.signed {
-            if in_unsafe { return CastVerdict.CvUnsafeLegal }
-            return CastVerdict.CvForbidden(CAST_CHAR_U8_WHY)
+        // D54 amendment 2026-10-01 (the owner's decision). A char LITERAL goes
+        // into any integer that HOLDS its codepoint -- `'A' as u8` is 65,
+        // `'\u0100' as u8` is E_LIT_OUT_OF_RANGE, not the low bits.
+        if lit_kind_of(operand) == TokenKind.CharLit {
+            ro cp = char_lit_codepoint(operand)
+            if codepoint_fits(cp, tr) { return CastVerdict.CvLegal }
+            return CastVerdict.CvLitOutOfRange(char_lit_unfit_msg(cp, tr))
         }
-        // A char VARIABLE into a wider integer: D54's forbidden table names
-        // only `u8`, while its literal exception names `'A' as int` as if the
-        // variable form were forbidden too. Silent -- held, and asked.
-        return CastVerdict.CvHeld
+        // A char VALUE goes only into a row that holds every codepoint (21
+        // bits): i32/u32/int/uint/i64/u64. Into i8/u8/i16/u16 it is an error;
+        // inside `unsafe { }` D54 allows the forbidden variable casts, and the
+        // cast is the block's operation (the oracle's E_UNSAFE_UNUSED there was
+        // its defect, registry 1547).
+        if tr.bits >= 32 { return CastVerdict.CvLegal }
+        if in_unsafe { return CastVerdict.CvUnsafeLegal }
+        return CastVerdict.CvForbidden(CAST_CHAR_NARROW_WHY)
     }
     if is_int_family(fam_from) && is_char_family(fam_to) {
         if lit_kind_of(operand) == TokenKind.IntLit {
@@ -109,6 +114,34 @@ fn prim_cast_verdict(operand Node, fr BuiltinType, tr BuiltinType, in_unsafe boo
     // Everything else -- a float and a char, a bool into a number, a char or
     // a bool into itself -- has no rule in D54, and "no rule" is its error.
     CastVerdict.CvForbidden(CAST_NO_RULE_WHY)
+}
+
+/// The codepoint of a char literal operand -- through the ONE spelling door
+/// the emitter uses (`char_literal_code`), so the judge and the emission
+/// cannot disagree about which character is written.
+fn char_lit_codepoint(operand Node) -> int {
+    ro lk = branch_children(operand)
+    ro digits = char_literal_code(leaf_text(lk[lk.len() - 1])).bytes()
+    mut v = 0
+    for d in digits {
+        v = v * 10 + digit_value(d)
+    }
+    v
+}
+
+/// Does an integer row hold this codepoint? Every codepoint is at most
+/// 0x10FFFF, so a row of 32 bits or more always does.
+fn codepoint_fits(cp int, tr BuiltinType) -> bool {
+    if tr.bits >= 32 { return true }
+    ro top = if tr.signed { tr.bits - 1 } else { tr.bits }
+    cp < (1 << top)
+}
+
+/// The refusal of a char literal its target cannot hold: the literal range
+/// rule's wording (D227 rule 3), with the codepoint named.
+fn char_lit_unfit_msg(cp int, tr BuiltinType) -> str {
+    ro top = if tr.signed { tr.bits - 1 } else { tr.bits }
+    "this char literal does not fit `${tr.name}` (D54 amendment 2026-10-01, E_LIT_OUT_OF_RANGE): its codepoint is ${cp}, and the type holds at most ${(1 << top) - 1} -- a char literal is not cut to its low bits"
 }
 
 /// The refusal of a forbidden pair, the pair named in the source's spelling.

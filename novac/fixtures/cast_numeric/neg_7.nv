@@ -1,14 +1,12 @@
 module cast_numeric.neg_7
 
-// ONE seeded cause: a bool cast to a number -- a HELD pair, not a forbidden
-// one. D54 lists no such conversion ("arbitrary types without an explicit
-// rule" is its error), while its overview page spec/conversions.md ("Bool <->
-// everything") gives `bool -> int` as `true=1`, and the ORACLE accepts this
-// file and prints 1. The spec disagrees with itself, so novac neither compiles
-// nor forbids it: the subset's refusal, until the question in
-// REPORT-carina-cast.md is answered.
-// NOVAC_EXPECT a bool into a number
+// ONE seeded cause: a char LITERAL whose codepoint the target cannot hold.
+// D54 amendment 2026-10-01 (the owner's decision): a char literal goes into
+// any integer IF it fits -- U+0100 is 256, past `u8` -- and otherwise it is
+// E_LIT_OUT_OF_RANGE, not the low bits (until then novac and the oracle both
+// printed 0 here). A `bool as u8` lived in this file before the same
+// amendment made it legal; it is a cell of pos_1 now.
+// NOVAC_EXPECT this char literal does not fit `u8`
 fn main() {
-    ro t = true
-    println(t as u8)
+    println('Ā' as u8)
 }

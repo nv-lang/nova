@@ -129,17 +129,7 @@ fn Cursor mut @expr_bp(min_bp int) -> Node {
 /// power clears `min_bp`. Split from `@expr_bp` so the depth counter is taken
 /// exactly once per nesting (#807) and this body keeps its single job.
 fn Cursor mut @expr_bp_inner(min_bp int) -> Node {
-    mut left = @primary()
-    // A CAST binds looser than the postfix chain and tighter than every binary
-    // operator: `s.len() as u8 + 1` is `((s.len() as u8) + 1)`. Its right side
-    // is a TYPE, so it goes through the type door and not through @expr.
-    // `is` (D54) binds exactly as a cast does: the right side is a type.
-    while @peek() == TokenKind.KwAs || @peek() == TokenKind.KwIs {
-        ro kind = if @peek() == TokenKind.KwIs { NodeKind.IsTest } else { NodeKind.Cast }
-        mut ck = []Node.of(left, @take())
-        ck.append(@type_ref())
-        left = @node(kind, ck)
-    }
+    mut left = @cast_operand()
     while is_binop(@peek()) {
         ro bp = binding_power(bin_op_of(@peek()))
         if bp < min_bp { return left }
@@ -272,8 +262,13 @@ fn Cursor mut @primary() -> Node {
         return @error_node(TokenKind.ErrorTok)
     }
     if is_unop(@peek()) && !@minus_before_literal() {
+        // A PREFIX OPERATOR BINDS LOOSER THAN `as` (D54 amendment 2026-10-01,
+        // the owner's decision): `-x as T` is `-(x as T)`, so the operand is a
+        // primary WITH its cast chain. Until then novac read `(-x) as T` and
+        // the oracle `-(x as T)` -- `-f as u8` printed 0 in one and -2 in the
+        // other.
         mut kids = []Node.of(@take())
-        kids.push(@primary())
+        kids.push(@cast_operand())
         return @node(NodeKind.Unary, kids)
     }
     mut e = @atom()
