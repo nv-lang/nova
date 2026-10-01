@@ -1025,6 +1025,15 @@ ro x = Some(42)              // позиционный — нужен аргум
 ro y = None                  // unit — без скобок
 ```
 
+A record variant is built with the brace form, and the construction has the same
+head as the pattern ([D54](decisions/03-syntax.md#d54), amendment 2026-10-01): the
+bare variant name, or the name qualified by the sum's name:
+
+```nova
+ro c = Circle { radius: 1.0 }
+ro d = Shape.Circle { radius: 1.0 }   // the same, with a qualified head
+```
+
 Details — [D17](decisions/02-types.md#d17).
 
 ### A temporary `consume` value in a view position (D476)
@@ -1219,7 +1228,15 @@ takes the first one where the pattern matched AND the guard is true.
 | Constructor | `Some(v)`, `Ok(value)`, `None` | destructures a sum-type variant |
 | Record | `User { id, name }` | destructures record fields |
 | Tuple | `(a, b)`, `(_, value)` | destructures a tuple |
+| Disjunction | `Red \| Yellow`, `Aa(n, s) \| Bb(s, n)` | matches when any alternative matches |
 | Guard | `n if n < 0` | a pattern + an extra condition |
+
+**The alternatives of `|` bind the same names, each of one type in every
+alternative, and binding goes BY NAME** ([D486](decisions/03-syntax.md#d486),
+amendment 2026-10-01): in `Aa(n, s) | Bb(s, n)` the name `n` is taken from where the
+matching alternative bound it, not from its position in the first one. Different
+name sets are `E_OR_PATTERN_BINDING_MISMATCH`; different types of one name are an
+error too.
 
 **A bare name in a pattern ALWAYS binds, even when a constant has that name.**
 `match w { MUT_W => 1, _ => 0 }` does not compare `w` against `MUT_W`, so the
