@@ -21,11 +21,9 @@ fn three() -> (int, int) {
 
 fn twenty() -> (int, int) {
     mut fs = Vec[fn() -> int].new()
-    mut i = 0
-    while i < 20 {
+    for i in 0..20 {
         ro k = i
         fs.push(fn() -> int => k)
-        i += 1
     }
     mut s = 0
     mut j = 0
@@ -39,12 +37,10 @@ fn twenty() -> (int, int) {
 
 fn fresh_cells() -> int {
     mut fs = Vec[fn() -> int].new()
-    mut i = 0
-    while i < 3 {
+    for i in 0..3 {
         mut c = i * 10
         fs.push(fn() -> int => c)
         c += 1
-        i += 1
     }
     mut s = 0
     mut j = 0
