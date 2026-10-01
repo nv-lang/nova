@@ -1,10 +1,13 @@
 module cast_numeric.neg_7
 
-// ONE seeded cause: a bool cast to a number. D54 lists no such conversion,
-// and "arbitrary types without an explicit rule" is its error. The ORACLE
-// accepts this file and prints 1 -- a divergence, named in
-// REPORT-carina-cast.md.
-// NOVAC_EXPECT `bool as u8`
+// ONE seeded cause: a bool cast to a number -- a HELD pair, not a forbidden
+// one. D54 lists no such conversion ("arbitrary types without an explicit
+// rule" is its error), while its overview page spec/conversions.md ("Bool <->
+// everything") gives `bool -> int` as `true=1`, and the ORACLE accepts this
+// file and prints 1. The spec disagrees with itself, so novac neither compiles
+// nor forbids it: the subset's refusal, until the question in
+// REPORT-carina-cast.md is answered.
+// NOVAC_EXPECT a bool into a number
 fn main() {
     ro t = true
     println(t as u8)

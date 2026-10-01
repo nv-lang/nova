@@ -87,6 +87,10 @@ test "a pair D54 and the oracle answer differently is HELD under the subset's co
     assert(h.len() == 1, messages(h))
     assert(codes(h).contains("E_NOVAC_SUBSET"), codes(h))
     assert(messages(h).contains("`int as uint`"), messages(h))
+    // A bool into a number is held for the same reason one level up: D54 has
+    // no rule, its overview page spec/conversions.md gives `true=1`.
+    ro (b, _) = compile_to_c("fn main() {\n ro t = true\n println(t as u8)\n}", std)
+    assert(b.len() == 1 && codes(b).contains("E_NOVAC_SUBSET"), messages(b))
     // CONTROL: the neighbouring pair both sides agree on compiles.
     ro (ok, _) = compile_to_c("fn main() {\n ro n = 5 as u64\n println(n as uint)\n}", std)
     assert(ok.len() == 0, messages(ok))

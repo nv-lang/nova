@@ -76,6 +76,11 @@ fn prim_cast_verdict(operand Node, fr BuiltinType, tr BuiltinType, in_unsafe boo
     }
     // `as any` boxes a value (D53); that is not this wave's family.
     if is_any_family(fam_to) { return CastVerdict.CvHeld }
+    // A bool into a number: D54 has no rule for it (and "no rule" is its
+    // error), while its overview page, spec/conversions.md "Bool <->
+    // everything", gives `bool -> int` as `true=1` and the oracle agrees. The
+    // spec disagrees with itself -- held, and asked.
+    if is_bool_family(fam_from) && is_numeric_family(fam_to) { return CastVerdict.CvHeld }
     if is_any_family(fam_from) { return CastVerdict.CvForbidden(CAST_FROM_ANY_WHY) }
     if is_bool_family(fam_to) { return CastVerdict.CvForbidden(CAST_TO_BOOL_WHY) }
     if is_str_family(fam_from) || is_str_family(fam_to) { return CastVerdict.CvForbidden(CAST_STR_WHY) }
