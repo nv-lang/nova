@@ -371,7 +371,9 @@ fn Checker mut @coerce_return(e Node, t TyId) -> bool {
             // A body of OURS must be REACHED: the call is inserted, not written,
             // so mono learns of it from the list of calls the language makes
             // with none written -- the same list a vector literal's `push` is on.
-            if ours { @chan.record_wanted(via, []TyId.new()) } else {
+            if ours {
+                @chan.record_wanted(via, []TyId.new())
+            } else {
                 // The shell's symbol: nothing of ours to reach.
             }
             true

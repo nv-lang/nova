@@ -758,7 +758,11 @@ fn Checker @init_reads_self(n Node) -> bool {
             mut i = 0
             for c in children {
                 // A flag that only turns on IS a disjunction (P31).
-                if !is_member_label(children, i) { found = found || @init_reads_self(c) }
+                if is_member_label(children, i) {
+                    // A member's name, not a read of a binding: nothing to ask.
+                } else {
+                    found = found || @init_reads_self(c)
+                }
                 i += 1
             }
             found

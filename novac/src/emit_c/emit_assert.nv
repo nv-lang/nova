@@ -39,7 +39,9 @@ fn assert_msg_c(kids []Node) -> str {
     mut n = 0
     mut at = 0
     for c in kids {
-        if at >= 1 && is_arg_node(c) { n += 1 } else {
+        if at >= 1 && is_arg_node(c) {
+            n += 1
+        } else {
             // The callee's name, or punctuation: not an argument.
         }
         at += 1
