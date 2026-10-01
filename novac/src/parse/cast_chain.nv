@@ -37,9 +37,12 @@ fn Cursor mut @cast_operand() -> Node {
         mut ck = []Node.of(left, @take())
         if kind == NodeKind.IsTest && @at_qualified_variant() {
             ck.push(@node(NodeKind.Name, []Node.of(@take(), @take(), @take())))
-        } else {
-            ck.append(@type_ref())
+            left = @node(kind, ck)
+            continue
         }
+        // Every other right side -- of `as`, and of `is` when no qualified
+        // variant stands there -- is a type, read by the type door.
+        ck.append(@type_ref())
         left = @node(kind, ck)
     }
     left
