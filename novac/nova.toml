@@ -504,6 +504,12 @@
 # a record-variant construction takes the pattern's qual-head,
 # `Node.Branch { .. }` (same branch). Value by the pre-commit formula (main
 # carried 147 against 148 counted commits).
+# 2026-10-01 (cloud session p274-carina-cast, registry 1570, agreed with the
+# integrator): AMEND D54 -- after `is`, and only there, a qualified variant
+# `Sum.Variant` is legal (the D188 example `err is DbError.Deadlock`). Cost to
+# Carina: none left -- the parser reads it in the same commit, the checker
+# already took the last identifier. Value by the pre-commit formula
+# (150 + this commit) in the shallow cloud clone; recounted on the full history at the merge.
 #   spec-queue: 155
 #   oracle-pin: 2803de2d9
 #   stage: E2

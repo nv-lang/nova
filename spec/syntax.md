@@ -699,7 +699,9 @@ existing mechanisms:
 - `@as_X()` duplicates the `as` keyword (D54) for cheap casts or
   `X.from` for nontrivial ones.
 - `@is_X()` duplicates `v is X` (D54): for sum types and `any`
-  the `is` operator works directly (`shape is Circle`,
+  the `is` operator works directly (`shape is Circle`, or qualified
+  `shape is Shape.Circle` -- the qualifier must name the value's sum, D54 amendment
+  2026-10-01,
   `arg is int` for `arg any`). To extract the variant value
   with a binding — `if X(n) = v` (D34).
 - Field privacy — the `priv` modifier; the `_`-prefix for "privacy by

@@ -66,6 +66,7 @@ export type ConstDef value {
     type_id TyId /// the constant's type: written, or read off the initializer
     init []Node /// the initializer expression, ONE element; the emitter prints THIS at a use
     once bool /// a module VALUE: one cell, initialized once before main; false = substituted at each use
+    decl []Node /// the declaration's children, where a WRITTEN type stands between the name and `=` (#1546); read by text only
 }
 
 /// THE row of a module-level constant in `Ctx.consts` (274.5 wave B2).
@@ -91,9 +92,9 @@ export fn ConstTable.new() -> ConstTable => { rows: []ConstDef.new() }
 
 /// Register one constant (`once` false) or module value (`once` true) and
 /// answer its row.
-export fn ConstTable mut @add(name str, type_id TyId, init []Node, once bool) -> ConstRow {
+export fn ConstTable mut @add(name str, type_id TyId, init []Node, once bool, decl []Node) -> ConstRow {
     ro row = ConstRow(@rows.len())
-    @rows.push(ConstDef { name, type_id, init, once })
+    @rows.push(ConstDef { name, type_id, init, once, decl })
     row
 }
 

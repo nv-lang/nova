@@ -1,0 +1,10 @@
+module cast_numeric.neg_4
+
+// ONE seeded cause: a char VARIABLE cast to a byte. D54 names `char as u8`
+// forbidden -- a char may lie past 0xFF; `c.to_u8()` is the checked form. A
+// char LITERAL is the exception (pos_1). The oracle refuses it as well.
+// NOVAC_EXPECT `char as u8`
+fn main() {
+    ro c = 'q'
+    println(c as u8)
+}

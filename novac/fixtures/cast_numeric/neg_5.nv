@@ -1,0 +1,9 @@
+module cast_numeric.neg_5
+
+// ONE seeded cause: an integer literal past the last codepoint cast to a
+// char. D54: a literal is checked AT COMPILE TIME, and the refusal names the
+// literal. The oracle refuses it as well (in its emitter).
+// NOVAC_EXPECT the literal `0x110000` is no Unicode scalar value
+fn main() {
+    println("${0x110000 as char}")
+}

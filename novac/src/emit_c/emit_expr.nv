@@ -779,19 +779,8 @@ fn Emitter mut @emit_expr(e Node) -> () {
     } else if k == NodeKind.IsTest {
         @emit_is_test(e)
     } else if k == NodeKind.Cast {
-        // Unwrapping a newtype is FREE: the value is already the
-        // representation, so the emission is the operand and nothing else. C
-        // needs no cast between a typedef and its underlying type. A POINTER
-        // target is a C cast (`0 as *mut T`, 274.11 E.10 step 4c-2).
-        // `@is_ptr_receiver` asks whether a node's RECORDED type is a pointer --
-        // here the cast node's own.
-        if @is_ptr_receiver(e) {
-            @body.append("((${c_type(@ctx, @out.type_of(e.id_of()))})(")
-            @emit_expr(branch_children(e)[0])
-            @body.append("))")
-        } else {
-            @emit_expr(branch_children(e)[0])
-        }
+        // A newtype's unwrap, a pointer, a pair of primitives (D54): one door.
+        @emit_cast(e)
     } else if k == NodeKind.Paren {
         @body.append("(")
         @emit_expr(branch_children(e)[1])

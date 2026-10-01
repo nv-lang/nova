@@ -676,7 +676,8 @@ fn harvest_consts(decls []Node, mut defs DefTable, mut consts ConstTable, own_mo
             ro lit = handed_literal(kids[init_at])
             if !lit.is_some() { continue }
             if Some(cname) = const_full_name(kids) {
-                defs.add(cname, DefTarget.DefConst(consts.add(cname, no_ty(), []Node.of(lit ?? kids[init_at]), false)))
+                ro init = []Node.of(lit ?? kids[init_at])
+                defs.add(cname, DefTarget.DefConst(consts.add(cname, no_ty(), init, false, kids)))
             } else {
                 // No name: a parse-error shape, refused in its own file.
             }

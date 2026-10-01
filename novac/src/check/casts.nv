@@ -23,7 +23,7 @@ module novac.check
 import ../tree.{Node}
 import ../builtins.{TypeKind}
 import ../sem.{Ctx, carrier_of, decl_of_ty, representation_of, branch_children, ty_of_type_ref, raw_row}
-import ../sem.{leaf_kind}
+import ../sem.{leaf_kind, prim_row_of}
 import ../lex.{TokenKind}
 import ../types.{TyId, no_ty, is_ty}
 
@@ -36,9 +36,10 @@ import ../types.{TyId, no_ty, is_ty}
 /// direction is NOT this form: `7 as Row` would be the constructor written
 /// sideways, and the constructor is `Row(7)`.
 ///
-/// Everything else keeps the named refusal: the numeric family arrives with its
-/// own rules (widening is not a cast in Nova, D55), and a cast between
-/// unrelated types is a hole the language does not have.
+/// A cast between two PRIMITIVES is D54's table and lives in cast_pairs.nv
+/// (the numeric family, the char pairs, the forbidden pairs). Everything else
+/// keeps the named refusal: a cast between unrelated types is a hole the
+/// language does not have.
 fn Checker mut @type_cast(e Node) -> () {
     ro kids = branch_children(e)
     if kids.len() < 3 {
@@ -70,6 +71,16 @@ fn Checker mut @type_cast(e Node) -> () {
         return
     } else {
         // A target the registry holds: the pair decides.
+    }
+    // TWO PRIMITIVES: the numeric family and its neighbours (D54's table),
+    // judged pair by pair in cast_pairs.nv. A newtype on either end is not a
+    // primitive and goes on to the unwrap rule below.
+    if prim_row_of(@ctx.tys, from).is_some() && prim_row_of(@ctx.tys, target).is_some() {
+        @type_prim_cast(e, kids, from, target)
+        // SILENT-OK: the pair's own door recorded the type or refused it.
+        return
+    } else {
+        // A newtype, a record, a sum: the unwrap rule decides.
     }
     // The ONE legal pair: a newtype unwrapped into what it is laid out as. The
     // carrier door answers transitively, so `type A B` over `type B int` may be

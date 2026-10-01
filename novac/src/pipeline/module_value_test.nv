@@ -124,3 +124,35 @@ test "an imported constant of another module is substituted as its literal (regi
     ro (h, _) = compile_to_c("module kb\nfn main() {\n    println(HIDDEN)\n}", decls)
     assert(h.len() == 1 && messages(h).contains("unknown name"), messages(h))
 }
+
+test "a constant's WRITTEN type is its type at every read, and its literal is judged against it (registry 1546)" {
+    ro std = std_decls()
+    // `const B u8 = 0x0A` read beside a `u8`: one type on both sides, and the
+    // literal is spelled in the declared width where it is substituted.
+    ro (d, c) = compile_to_c("const B u8 = 0x0A\nfn f(b u8) -> bool => b == B\nfn main() {\n println(f(10 as u8))\n}", std)
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("((nova_byte)0x0AULL)"), c)
+    // A literal out of the written type's range is refused once, at the
+    // declaration, even with no read of the constant.
+    ro (r, _) = compile_to_c("const B u8 = 300\nfn main() {\n println(1)\n}", std)
+    assert(r.len() == 1 && messages(r).contains("does not fit `u8`"), messages(r))
+    // CONTROL: with no written type the literal keeps its own `int`, and the
+    // same comparison is the D405 refusal -- so the first case really asks
+    // the written type.
+    ro (n, _) = compile_to_c("const B = 0x0A\nfn f(b u8) -> bool => b == B\nfn main() {\n println(f(10 as u8))\n}", std)
+    assert(n.len() == 1 && messages(n).contains("different numeric types"), messages(n))
+}
+
+test "a constant's initializer of ANOTHER type than the written one is refused at the declaration, in the return door's words (E7301)" {
+    ro std = std_decls()
+    // A `u8` value under `u16`: no implicit widening (D405) -- one refusal at
+    // the declaration, and the read of the constant does not cascade.
+    ro (w, _) = compile_to_c("const C u16 = ('x' as u8)\nfn main() {\n println(C)\n}", std)
+    assert(w.len() == 1 && messages(w).contains("(E7301)") && messages(w).contains("`u16`"), messages(w))
+    // A narrowing is the narrowing refusal.
+    ro (n, _) = compile_to_c("const C u8 = (300 as u16)\nfn main() {\n println(C)\n}", std)
+    assert(n.len() == 1 && messages(n).contains("E_IMPLICIT_NARROWING"), messages(n))
+    // CONTROL: the same initializer under its own type compiles.
+    ro (ok, _) = compile_to_c("const C u8 = ('x' as u8)\nfn main() {\n println(C)\n}", std)
+    assert(ok.len() == 0, messages(ok))
+}

@@ -1,0 +1,18 @@
+module cast_prec.pos_1
+
+// A PREFIX OPERATOR BINDS LOOSER THAN `as` (D54 amendment 2026-10-01, the
+// owner's decision): `-x as T` is `-(x as T)`, and a parenthesised `(-x) as T`
+// is the other reading. The pair is told apart where saturation is not
+// symmetric: `huge as int` saturates to INT_MAX, whose negation is
+// -9223372036854775807; `(-huge) as int` saturates to INT_MIN. A minus before
+// a LITERAL followed by `as` is the prefix operator too: `-1e20 as int` reads
+// the same as `-huge as int`. Binary operators stay looser than `as`.
+fn main() {
+    ro huge = 100000000000000000000.0
+    println(-huge as int)
+    println((-huge) as int)
+    println(-100000000000000000000.0 as int)
+    println((-100000000000000000000.0) as int)
+    ro n = 3
+    println(-n as i64 + 1)
+}

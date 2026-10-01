@@ -2,10 +2,17 @@ module unsigned_neg.neg_1
 
 // ONE seeded cause: unary minus on an UNSIGNED operand -- the spec
 // (conversions.md: "Unary minus is defined for signed types only") makes it a
-// compile error, not a modular wrap. The oracle accepts this program and
-// prints 56 for `-200u8` (registry #926). Wave 274.7 B4. The operand is a
-// parameter because a typed local (`ro u u8 = 200`) is outside novac's subset
-// today (E2-b3) and would be the refusal instead of the seeded one.
+// compile error, not a modular wrap. The oracle accepted this program and
+// printed 56 for `-200u8` (registry #926) until f61183148 (registry 1547) gave
+// it E_NEG_UNSIGNED. Wave 274.7 B4. The operand is a parameter because a typed
+// local (`ro u u8 = 200`) is outside novac's subset today (E2-b3) and would be
+// the refusal instead of the seeded one.
+//
+// THE CODE IS PINNED (2026-10-01): a language error, E_NOVAC_LANG, not the
+// subset's E_NOVAC_SUBSET -- the refusal used to go out under the debt code,
+// as if a later wave would compile it. The marker below pins the oracle's
+// code in the text; pipeline/prims_test pins the diagnostic's own `code`.
+// NOVAC_EXPECT unary minus is defined for signed types only (E_NEG_UNSIGNED
 fn flip(u u8) -> u8 => -u
 
 fn main() {
