@@ -33,6 +33,7 @@ use unknown_type_name::STDLIB_PROTOCOL_ALIASES;
 mod record_lit_schema; // #1448/#1096: a record literal against its record's fields
 mod generic_sum; // #1337/#1338: a user generic sum's ctor, payload and expected type
 mod raw_ptr_ops; // #1473: raw-pointer address arithmetic outside unsafe (D216 part 1)
+mod as_cast_rules; // #1547: the `as` rules of D54 in the checker, not the emitter
 pub(crate) mod reserved_names; // D487: a declared name outside the compiler's C namespaces (called by the parser)
 pub(crate) mod coerce_door; // #1451/#1452: one door for `#coerce` -- checker decides, rewrite reads
 mod const_names; // #1488: the type of a module-level `const`/`ro` read by its bare name
@@ -2090,6 +2091,7 @@ fn check_module_impl(
         module,
         &type_check_ctx.resolved_callees.borrow(),
         raw_ptr_ops::pointer_typed_exprs(&type_check_ctx.resolved_types_buf.borrow()),
+        type_check_ctx.unsafe_gated_casts.borrow().clone(),
         &mut errors,
     );
     perf.mark("check_unsafe_context_in_module");
@@ -4608,6 +4610,9 @@ struct TypeCheckCtx<'a> {
     /// Registry 221.1 #1451/#1452: >0 while `assignable` is asked speculatively
     /// (overload filtering) -- a probe must not leave a coercion in the channel.
     coerce_probe_depth: std::cell::Cell<u32>,
+    /// Registry 221.1 #1547: casts D54 allows only inside `unsafe { }` (`as_cast_rules.rs`),
+    /// with their refusal -- judged by the unsafe pass, which knows the depth.
+    unsafe_gated_casts: std::cell::RefCell<HashMap<crate::ast::ExprId, String>>,
     /// Registry 221.1 #1488: module-level values by name, the module of each
     /// file, and the recursion bound of `const A = B` (`const_names.rs`).
     module_values: HashMap<String, Vec<const_names::ModuleValue<'a>>>,
@@ -5549,6 +5554,7 @@ impl<'a> TypeCheckCtx<'a> {
             sum_wrap_kinds_buf: std::cell::RefCell::new(HashMap::new()),
             coerce_sites_buf: std::cell::RefCell::new(HashMap::new()),
             coerce_probe_depth: std::cell::Cell::new(0),
+            unsafe_gated_casts: std::cell::RefCell::new(HashMap::new()),
             module_values: const_names::collect_module_values(module),
             module_value_files: module.peer_files.iter().map(|p| (p.file_id, p.module_name.as_slice())).collect(),
             module_value_depth: std::cell::Cell::new(0),
@@ -12382,6 +12388,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
             ExprKind::As(inner, cast_ty) => {
                 self.f1_expr(inner, gs, scope, errors);
+                self.check_as_cast(e, inner, cast_ty, scope, errors); // #1547: D54
                 // **№375 (D216 §4 AMEND / D246, Plan 118.6 restored, owner
                 // decision 2026-08-06, spec commit 96100421e, window
                 // p375-ptr2):** `(&place) as *mut T` / `(raw &place) as *mut
@@ -12905,6 +12912,9 @@ impl<'a> TypeCheckCtx<'a> {
                 let is_assign_target_top = self.assign_target_top.replace(false);
                 self.f1_expr(operand, gs, scope, errors);
                 self.f4_check_value(operand, scope, errors);
+                if matches!(op, UnOp::Neg) {
+                    self.check_neg_unsigned(e, operand, scope, errors); // #1547: signed types only
+                }
                 // №367: `*p` DEREF READ on a raw pointer — the READ-form
                 // sibling of the already-closed WRITE retraction (`*p = v`,
                 // №353, `check_target_readonly`'s Deref arm). `nova check`
@@ -57450,6 +57460,7 @@ pub(crate) fn check_unsafe_context_in_module(
     module: &crate::ast::Module,
     resolved_calls: &HashMap<crate::ast::ExprId, Span>,
     ptr_exprs: HashSet<crate::ast::ExprId>,
+    unsafe_gated_casts: HashMap<crate::ast::ExprId, String>,
     errors: &mut Vec<Diagnostic>,
 ) {
     use crate::ast::{Item, FnBody};
@@ -57657,6 +57668,7 @@ pub(crate) fn check_unsafe_context_in_module(
         in_call_arg: false,
         unsafe_block_used: Vec::new(),
         ptr_exprs,
+        unsafe_gated_casts,
     };
     // peer_files mode: walk only entry peers items_here (Plan 62.A pattern)
     let entry_items: Vec<&Item> = if module.peer_files.is_empty() {
@@ -57811,6 +57823,9 @@ struct UnsafeCtx {
     unsafe_block_used: Vec<bool>,
     /// #1473: ids the checker typed as a raw pointer (`raw_ptr_ops`).
     ptr_exprs: HashSet<crate::ast::ExprId>,
+    /// #1547: casts D54 allows only inside `unsafe { }`, with their refusal
+    /// (`as_cast_rules.rs`). Inside: the block's operation; outside: an error.
+    unsafe_gated_casts: HashMap<crate::ast::ExprId, String>,
 }
 
 impl UnsafeCtx {
@@ -58663,6 +58678,15 @@ impl UnsafeCtx {
                 }
             }
             ExprKind::As(inner, ty) => {
+                // #1547: a cast D54 allows only inside `unsafe { }` -- the block's
+                // operation there, an error outside.
+                if let Some(msg) = self.unsafe_gated_casts.get(&e.id) {
+                    if self.depth > 0 {
+                        self.mark_unsafe_used();
+                    } else {
+                        errors.push(Diagnostic::new(msg.clone(), e.span));
+                    }
+                }
                 // unsafe-cluster / E_UNSAFE_UNUSED (D216 §21 map addendum,
                 // 2026-07-11): an `as`-cast to `char` is a value-range-unsafe
                 // scalar conversion — an out-of-range int yields an INVALID

@@ -11,9 +11,10 @@
 //     uint→nova_uint. Ширина+знак НЕ теряются на сайте каста.
 //   • Внутренний widening `… as int` = `((nova_int)(<uint8_t/uint16_t expr>))` — zero-
 //     extend, т.к. промежуточный тип беззнаковый ⇒ 200/40000 остаются положительными.
-//   • `nova_int as uint` (:21850) маршрутизируется в `nova_int_to_uint` (cast.h:173) —
-//     SATURATION neg→0 (документированная D54-семантика, НЕ коллапс): test 4 проверяет
-//     именно её (отрицательный int → uint = 0), чтобы зафиксировать asymmetry-инвариант.
+//   • `nova_int as uint` — МЛАДШИЕ БИТЫ, как у любой пары целых (D54, амендмент 2026-09-04:
+//     «исключений по имени типа нет: `int as uint` — та же операция», D130 Q2 снят тем же
+//     днём). До реестра 221.1 №1547 оракул насыщал (`nova_int_to_uint`, neg → 0), и test 4
+//     закреплял это насыщение; правка №1547 приводит test 4 к норме.
 // `as` биндит ТУЖЕ унарного минуса (см. d54_as_cast_conversions) ⇒ явные скобки.
 // Spec: spec/decisions/02-types.md (D54). Один folder-module inprogress.d406_as_cast_roundtrip_width;
 // все имена D406w-префиксные во избежание top-level-коллизий с соседними файлами CU.
@@ -37,8 +38,10 @@ test "u8-truncation-then-widen: (300 as u8) as int = 44, остаётся пол
     assert(got >= 0)              // беззнаковый промежуточный ⇒ неотрицателен
 }
 
-test "int→uint SATURATION (neg→0), не bit-reinterpret — asymmetry-инвариант (D406)" {
+test "int→uint — младшие биты, как у любой пары целых (D54 амендмент 2026-09-04, №1547)" {
     ro neg = 0 - 5                // отрицательный nova_int (-5)
-    ro got = neg as uint          // nova_int_to_uint: neg → 0 (НЕ 0xFFFF...FFFB)
-    assert(got == 0)              // saturation ; bit-reinterpret дал бы огромное unsigned
+    ro got = neg as uint          // 0xFFFF_FFFF_FFFF_FFFB, НЕ насыщение в 0
+    assert(got == ~(4 as uint))   // ~4 = все единицы, кроме бита 2: ровно 2^64 - 5
+    assert(got != 0)              // насыщение (прежний оракул) дало бы 0
+    assert((got as int) == -5)    // обратный ход: те же 64 бита читаются как -5
 }
