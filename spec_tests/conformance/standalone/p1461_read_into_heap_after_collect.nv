@@ -1,0 +1,58 @@
+// EXPECT_STDOUT reads ok 200
+//
+// Registry 221.1 #1461: a file read lands in a buffer from nova_alloc
+// (GC_malloc, pointer-scanned). Boehm's incremental mode tracks writes to the
+// heap by one of three means; where it is page PROTECTION (Linux without
+// kernel soft-dirty bits -- every arm64 kernel, some cloud kernels -- libgc
+// older than 8.2, macOS), heap pages are made read-only after a mark and a
+// user-space write is caught by a SIGSEGV handler. A write by the KERNEL is
+// not: read()/pread() into a protected page fails with EFAULT, and the read
+// comes back short or as an error. Measured before the fix (Linux 6.18 without
+// CONFIG_MEM_SOFT_DIRTY, libgc 8.2.6): the self-hosted compiler lost a std
+// declaration file this way 19 runs of 20. The fix turns incremental mode on
+// only where the write tracking needs no page protection.
+//
+// This program reads one multi-page file 200 times between collections and
+// heap churn; every read must return the whole file. On a host whose kernel
+// tracks writes itself the program is green with or without the fix -- the
+// red side is reproducible with NOVA_GC_INCREMENTAL=1 on such a host only
+// where the protection path is the one Boehm picks.
+module standalone.p1461_read_into_heap_after_collect
+
+import std.fs
+import std.runtime.gc
+
+fn main() Io -> () {
+    with Fs = fs.real_fs() {
+        supervised {
+            spawn {
+                ro dir = "p1461_scratch".to_path()
+                ro _ = fs.remove_dir_all(dir)
+                match fs.create_dir(dir) { Ok(()) => {}, Err(_) => { println("create_dir failed") } }
+                ro f = dir.join("big.txt")
+                mut text = ""
+                for i in 0..2000 {
+                    text = "${text}line ${i} of the p1461 read probe\n"
+                }
+                match fs.write(f, text) { Ok(()) => {}, Err(_) => { println("write failed") } }
+                mut ok = 0
+                for round in 0..200 {
+                    mut churn = []str.new()
+                    for i in 0..300 {
+                        churn.push("c-${round}-${i}")
+                    }
+                    if round % 4 == 0 {
+                        gc.collect()
+                    }
+                    match fs.read_text(f) {
+                        Ok(s) => { if s == text { ok = ok + 1 } }
+                        Err(_) => {}
+                    }
+                }
+                ro _ = fs.remove_file(f)
+                ro _ = fs.remove_dir(dir)
+                println("reads ok ${ok}")
+            }
+        }
+    }
+}
