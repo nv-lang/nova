@@ -1,0 +1,128 @@
+// EXPECT_STDOUT lin=plain/1
+// EXPECT_STDOUT lin=consume/2
+// EXPECT_STDOUT lin=plain/3
+// EXPECT_STDOUT mode=ro/7
+// EXPECT_STDOUT mode=mut/8
+// EXPECT_STDOUT mode=ro/ab
+// EXPECT_STDOUT mode=mut/cd
+// EXPECT_STDOUT mode=consume/42
+// EXPECT_STDOUT mode=back/42
+// EXPECT_STDOUT mode=consume/ab!
+// EXPECT_STDOUT mode=back/ab!
+// EXPECT_STDOUT ty=one/5
+// EXPECT_STDOUT ty=many/3
+// EXPECT_STDOUT ty=one/x
+// EXPECT_STDOUT ty=many/2
+// EXPECT_STDOUT tz=int/1/2
+// EXPECT_STDOUT tz=str/1/b
+// EXPECT_STDOUT tz=int/a/2
+// EXPECT_STDOUT tz=str/a/b
+// EXPECT_STDOUT ar=1/9
+// EXPECT_STDOUT ar=2/9,10
+// EXPECT_STDOUT ar=1/p
+// EXPECT_STDOUT ar=2/p,q
+// EXPECT_STDOUT solo=11
+// EXPECT_STDOUT solo=s
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 #1343: pairs of GENERIC free functions of one name. Codegen
+// kept their monomorphs under the bare name, so the second declaration
+// overwrote the first and every call ran the surviving body. Each cell below
+// is a legal D84 pair (linearity, parameter mode, parameter types, arity);
+// both members are called in one program, each at two type arguments, and
+// each prints which overload ran. `solo` is the control: one generic fn, no
+// pair.
+module standalone.p1343_generic_overload_mono
+
+type Res consume {
+    id int
+}
+
+fn Res consume @close() -> () {
+}
+
+type Bag[T consume] consume {
+    n int
+}
+
+fn Bag[T consume] consume @done() -> () {
+}
+
+// Linearity axis (D84 amendment 2026-09-25): plain T takes `[T]`.
+fn lin[T](consume b Bag[T]) -> str {
+    ro n = b.n
+    b.done()
+    "plain/${n}"
+}
+
+fn lin[T consume](consume b Bag[T]) -> str {
+    ro n = b.n
+    b.done()
+    "consume/${n}"
+}
+
+// Mode axis (D84, R14).
+fn mode[T](x T) -> str => "ro/${x}"
+
+fn mode[T](mut x T) -> str => "mut/${x}"
+
+fn mode[T](consume x T) Io -> T {
+    println("mode=consume/${x}")
+    x
+}
+
+// Parameter types.
+fn ty[T](x T) -> str => "one/${x}"
+
+fn ty[T](xs []T) -> str => "many/${xs.len()}"
+
+fn tz[T](x T, n int) -> str => "int/${x}/${n}"
+
+fn tz[T](x T, s str) -> str => "str/${x}/${s}"
+
+// Arity.
+fn ar[T](x T) -> str => "1/${x}"
+
+fn ar[T](x T, y T) -> str => "2/${x},${y}"
+
+// Control: a generic fn with no namesake.
+fn solo[T](x T) -> str => "${x}"
+
+fn main() Io -> () {
+    consume bi Bag[int] = { n: 1 }
+    println("lin=${lin(bi)}")
+    consume br Bag[Res] = { n: 2 }
+    println("lin=${lin(br)}")
+    consume bs Bag[str] = { n: 3 }
+    println("lin=${lin(bs)}")
+
+    ro ri = 7
+    mut mi = 8
+    println("mode=${mode(ri)}")
+    println("mode=${mode(mi)}")
+    ro rs = "ab"
+    mut ms = "cd"
+    println("mode=${mode(rs)}")
+    println("mode=${mode(ms)}")
+    ro back = mode(ri + 35)
+    println("mode=back/${back}")
+    ro sback = mode("${rs}!")
+    println("mode=back/${sback}")
+
+    println("ty=${ty(5)}")
+    println("ty=${ty[int]([1, 2, 3])}")
+    println("ty=${ty("x")}")
+    println("ty=${ty[str](["a", "b"])}")
+    println("tz=${tz(1, 2)}")
+    println("tz=${tz(1, "b")}")
+    println("tz=${tz("a", 2)}")
+    println("tz=${tz("a", "b")}")
+
+    println("ar=${ar(9)}")
+    println("ar=${ar(9, 10)}")
+    println("ar=${ar("p")}")
+    println("ar=${ar("p", "q")}")
+
+    println("solo=${solo(11)}")
+    println("solo=${solo("s")}")
+}

@@ -1,0 +1,15 @@
+// A mode word before a payload-less variant's name: binder or variant?
+type Sh enum
+    | A
+    | B
+
+fn pick(s Sh) -> int {
+    match s {
+        mut A => 1
+        B => 0
+    }
+}
+
+fn main() Io -> () {
+    println("${pick(B)}")
+}

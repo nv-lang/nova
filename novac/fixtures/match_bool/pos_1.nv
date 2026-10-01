@@ -1,0 +1,28 @@
+module match_bool.pos_1
+
+// A `match` on `bool` with `true` / `false` arms, in value and in statement
+// position (check x K4 hunt 2026-09-30): the heads are the bool's LITERALS --
+// until then every door but the exhaustiveness rule read them as binders and
+// the C declared a variable named `true`. Behaviour byte-for-byte with the
+// oracle (novac-e1-smoke).
+
+fn pick(b bool) -> int {
+    match b {
+        true => 1
+        false => 2
+    }
+}
+
+fn show(b bool) -> () {
+    match b {
+        false => println("no")
+        true => println("yes")
+    }
+}
+
+fn main() {
+    println(pick(false))
+    println(pick(true))
+    show(true)
+    show(false)
+}

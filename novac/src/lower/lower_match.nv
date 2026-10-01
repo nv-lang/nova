@@ -18,7 +18,7 @@ module novac.lower
 import ../sem.{arm_body_at}
 import ../sem.{variant_in_sum, is_vrow, no_vrow, VariantRow}
 import ../diag.{ice}
-import ../sem.{branch_children}
+import ../sem.{branch_children, pattern_lit_leaf}
 import ../sem.{raw_vrow}
 import ../sem.{payload_as_seen}
 import ../sem.{option_payload}
@@ -118,7 +118,7 @@ fn Lowerer @guard_of(ak []Node) -> Option[Node] {
 /// ONE door of the pattern tree (D486) and matched exhaustively.
 fn Lowerer @pattern_of(pat Node, scr_t TyId) -> Pattern {
     match pattern_shape(pat) {
-        Lit => Pattern.Lit(branch_children(pat)[0])
+        Lit => Pattern.Lit(pattern_lit_leaf(pat))
         Wild => Pattern.Wild
         Bind => {
             // A name the sum knows is a payload-less variant; any other name

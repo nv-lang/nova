@@ -127,4 +127,20 @@ if [ -f "$GUARD" ]; then
   }
 fi
 
+# --- main v glavnom dereve: kod tolko sliyaniem, bumaga paketom -----------
+# Reshenie vladeltsa 2026-09-30: integrator ne pishet kod v main sam -- kod
+# priezzhaet sliyaniem vetki ispolnitelya (klyuch NOVA_MAIN_DIRECT_CODE=
+# "<prichina #NNNN>"). Slovo vladeltsa 2026-10-01 ("9 iz 10 kommitov -- doki i
+# obvyazka"): odinochnyy kommit tolko reestra/bazy/zapisok/loga kontrolyora v
+# main zapreshchyon -- on edet v kommite sliyaniya ili paketom (klyuch
+# NOVA_DOCS_BATCH="<chto v pakete>"). Oba strazha molchat v worktree, na
+# drugoy vetke i pri MERGE_HEAD. Samotesty:
+# scripts/guards/selftest/test-check-main-{no-direct-code,docs-batched}.sh.
+NOVA_TOP="$(git rev-parse --show-toplevel 2>/dev/null)"
+for _g in check-main-no-direct-code.sh check-main-docs-batched.sh; do
+  if [ -f "$NOVA_TOP/scripts/guards/$_g" ]; then
+    bash "$NOVA_TOP/scripts/guards/$_g" "$NOVA_TOP" || exit 1
+  fi
+done
+
 exit 0

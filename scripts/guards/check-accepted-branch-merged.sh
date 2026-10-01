@@ -103,7 +103,13 @@ NAMED=$(grep -aE 'ЗАКРЫТО|ПРИНЯТО|окно p' "$REG" 2>/dev/null \
 
 
 
-MERGED_LIST="$(git -C "$ROOT" branch --merged main --format='%(refname:short)' 2>/dev/null)"
+# Base of the ancestry judgement: local `main`; a CI checkout has no such ref
+# (only the checked-out commit), so there the commit under test stands in --
+# a hash merged into the candidate is merged for the candidate's purposes.
+BASE=main
+git -C "$ROOT" rev-parse --verify -q "refs/heads/main" >/dev/null 2>&1 || BASE=HEAD
+
+MERGED_LIST="$(git -C "$ROOT" branch --merged "$BASE" --format='%(refname:short)' 2>/dev/null)"
 ALL_LIST="$(git -C "$ROOT" branch --format='%(refname:short)' 2>/dev/null)"
 
 BAD=""
@@ -113,7 +119,7 @@ N=0
 # Неизвестный объект НЕ прощается: запись ссылается на то, чего в дереве нет.
 for h in $HASHES; do
     if git -C "$ROOT" cat-file -e "$h^{commit}" 2>/dev/null; then
-        git -C "$ROOT" merge-base --is-ancestor "$h" main 2>/dev/null && continue
+        git -C "$ROOT" merge-base --is-ancestor "$h" "$BASE" 2>/dev/null && continue
         BAD="$BAD хэш:$h(не-предок-main)"
     else
         BAD="$BAD хэш:$h(нет-такого-коммита)"

@@ -1,0 +1,167 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc's match checking (`check_match`: usefulness over the
+// scrutinee's constructors -- a sum's variants, bool's two values, and an
+// "open" constructor set for integers and strings that only a wildcard
+// covers); OCaml's exhaustiveness warning, made an error as the language
+// makes it (04-effects.md amendment 2026-08-16).
+// Role: the EXHAUSTIVENESS rule of `match` (split from match_arms.nv at its
+//   1000-line cap, 2026-09-30): a sum covered as a SET of its variants, bool
+//   by `true` and `false`, an open scalar only by a catch-all; a guard never
+//   covers. Both match doors call it after their arms are typed.
+// Used by: match_arms.nv (`@type_match_stmt`, `@type_match`).
+// Guarded by: nova test novac/src/check/check_test.nv (the exhaustiveness
+//   tests) and check-novac-differential.sh (the outcome against the oracle).
+
+module novac.check
+
+import ../tree.{Node, NodeKind}
+import ../builtins.{TypeKind, is_bool_literal, is_true_literal}
+import ../sem.{decl_of_ty, branch_children, leaf_text}
+import ../sem.{PatShape, pattern_shape, pattern_head_text, pattern_subpatterns, pattern_lit_leaf}
+import ../sem.{variant_range_of, variant_in_sum, VariantRow, raw_vrow, no_vrow}
+import ../types.{TyId, is_ty}
+
+/// A match on a sum must cover every variant -- the rule novac did not have
+/// AT ALL until 2026-08-17, which made it WIDER than the language in the one
+/// direction a subset must never be wide. [INV-GUARD: check-novac-differential]
+/// -- the corpus judges the OUTCOME against the oracle on every file, so a
+/// subset that accepts what the language refuses reddens there, not here.
+///
+/// Measured: `match c { Red(x) => x + 1  Green(x) => x + 2 }` on a three-variant
+/// sum is refused by the oracle (E_MATCH_NON_EXHAUSTIVE, registry #703) and
+/// was accepted by novac with rc=0. The emitted C declares the result
+/// temporary UNINITIALISED, walks the arm chain, and returns it: a program the
+/// oracle refuses to compile became, through novac, a read of uninitialised
+/// automatic storage. Two defects in one -- a divergence from the language and
+/// a silent miscompilation (class K-C).
+///
+/// A wildcard or a plain binder arm covers everything by construction, so the
+/// scan stops there; a guard does NOT count as coverage, because a guard can
+/// be false (the oracle judges it the same way).
+fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
+    // The KIND comes from the interner, and the bound with it. Until wave B8
+    // this line read `raw_ty(scr_t) >= @ctx.types.len()` -- a bound against the
+    // DECLARATION table, which stopped meaning anything the moment a type id
+    // became an interner row: interner ids run past the declaration count, so
+    // the guard started returning early and this rule stopped judging. That is
+    // how a check gets QUIETER without anyone touching it.
+    if !is_ty(scr_t) { return }
+    // AN OPEN SCALAR (`int`, `str`, ...) is judged by the same scan: its
+    // values cannot all be listed, so only an unguarded `_` or binder arm
+    // covers it (syntax.ru.md:1317, "for `int`, `str` a `_` wildcard is
+    // needed"). E_MATCH_NON_EXHAUSTIVE as on a sum -- the integrator's
+    // reading of the spec 2026-09-30; the oracle lets it through (registry
+    // 1415), and a novac value would be the uninitialised temporary above.
+    ro open = @is_open_scalar(scr_t)
+    // `bool` is a CLOSED set of two cases (the spec names it beside sums):
+    // covered by `true` and `false`, or a catch-all. Its heads parse as
+    // payload-less variant heads, and `variant_in_sum` answers None for
+    // them -- which the sum scan reads as a binder, so before this rule a
+    // `match b { true => 1 }` passed as covered (registry 1415, the oracle's
+    // half judges the same since that fix).
+    ro is_bool = scr_t == @ctx.prims.bool_id
+    mut saw_true = false
+    mut saw_false = false
+    if !open && !is_bool && @ctx.tys.kind_of(scr_t) != TypeKind.TkSum { return }
+    // The count comes from the arm that HOLDS a variant range: a sum with no
+    // variants is a shape check does not judge here, and so is anything whose
+    // rows are not variants at all.
+    ro closed_sum = !open && !is_bool
+    ro range = if closed_sum { variant_range_of(decl_of_ty(@ctx, scr_t)) ?? (no_vrow(), 0) } else { (no_vrow(), 0) }
+    ro vcnt = range.1
+    if !open && !is_bool && vcnt < 1 { return }
+    // COVERAGE IS A SET of the sum's variants, not a count of heads (check x K4
+    // hunt 2026-09-30): `A => 1  A => 2` on {A, B} counted two and passed.
+    mut hit = []bool.new()
+    for _ in 0..vcnt {
+        hit.push(false)
+    }
+    for c in kids {
+        if c.kind_of() != NodeKind.MatchArm { continue }
+        ro ak = branch_children(c)
+        if ak.len() < 1 { continue }
+        mut has_guard = false
+        for g in ak {
+            has_guard = has_guard || g.kind_of() == NodeKind.Guard
+        }
+        if has_guard { continue }
+        if ak[0].kind_of() != NodeKind.Pattern { continue }
+        // EVERY head the arm accepts counts -- a disjunction's alternatives
+        // as much as the first one (the pattern-alternatives wave). Heads are
+        // asked of the MATCHED SUM (wave B6, #964): a head that is no variant
+        // of it is a binder (covers everything -- done) or a variant of
+        // another sum, which `@bind_arm_pattern(ak, scr_t)` refused already;
+        // this rule says nothing on top (one cause, one diagnostic).
+        match pattern_shape(ak[0]) {
+            Lit => {
+                // `true` / `false` are LITERALS (the one shape door,
+                // sem/pattern.nv): on a bool they mark a case; any other
+                // literal covers nothing.
+                if is_bool {
+                    if is_true_literal(lit_text(ak[0])) { saw_true = true } else { saw_false = true }
+                } else {
+                    // An int / str / char literal lists one value of many.
+                }
+            }
+            Record | Tuple | Array => {}
+            Wild => return
+            Bind | Variant => {
+                match variant_in_sum(@ctx, scr_t, pattern_head_text(ak[0])) {
+                    None => return
+                    Some(r) => mark_variant(hit, range.0, r)
+                }
+            }
+            Disj => {
+                for sub in pattern_subpatterns(ak[0]) {
+                    if is_bool && pattern_shape(sub) == PatShape.Lit {
+                        if is_true_literal(lit_text(sub)) { saw_true = true } else { saw_false = true }
+                        continue
+                    }
+                    // Literal alternatives of an open scalar list some values,
+                    // never all of them.
+                    if open { continue }
+                    match variant_in_sum(@ctx, scr_t, pattern_head_text(sub)) {
+                        None => return
+                        Some(r) => mark_variant(hit, range.0, r)
+                    }
+                }
+            }
+        }
+    }
+    // An open scalar reaching here met no catch-all: a binder or `_` returned
+    // above (on a non-sum, `variant_in_sum` answers None for every head).
+    if open {
+        @reject_first_leaf_of(kids, OPEN_NOT_EXHAUSTIVE_MSG)
+        return
+    }
+    if is_bool {
+        if saw_true && saw_false { return }
+        @reject_first_leaf_of(kids, BOOL_NOT_EXHAUSTIVE_MSG)
+        return
+    }
+    mut covered = 0
+    for h in hit {
+        if h {
+            covered += 1
+        } else {
+            // A variant no arm names: not covered.
+        }
+    }
+    if covered >= vcnt { return }
+    @reject_first_leaf_of(kids, NOT_EXHAUSTIVE_MSG)
+}
+
+/// Mark the variant `r` covered: its index inside the sum's range from `first`.
+fn mark_variant(mut hit []bool, first VariantRow, r VariantRow) -> () {
+    ro i = raw_vrow(r) - raw_vrow(first)
+    assert(i >= 0 && i < hit.len(), "check: a variant of the matched sum outside its own range")
+    hit[i] = true
+}
+
+/// The text of a literal pattern's one leaf (`3`, `true`).
+fn lit_text(p Node) -> str => leaf_text(pattern_lit_leaf(p))
+
+/// A scalar with no closed set of values -- every primitive but `bool` and
+/// `()`: its cases cannot all be listed, so only a catch-all covers it.
+fn Checker @is_open_scalar(t TyId) -> bool =>
+    @ctx.tys.kind_of(t) == TypeKind.TkPrim && t != @ctx.prims.bool_id && t != @ctx.prims.unit_id

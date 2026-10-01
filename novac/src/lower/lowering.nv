@@ -13,6 +13,7 @@ import ../tree.{Node, NodeKind, assign_op_of}
 import ../types.{TyId, is_ty}
 import ../diag.{ice}
 import ../sem.{arm_body_at, branch_children, for_head_elem}
+import ../sem.{narrowing_of}
 import ../sem.{is_expr_kind, is_println_call, is_value_tail_kind, leaf_kind}
 import ../sem.{leaf_text, literal_prim_of, raw_vrow, variant_in_sum}
 import ../sem.{iflet_pattern_at, iflet_body_at, iflet_else_at, iflet_init_at}
@@ -20,7 +21,7 @@ import ../sem.{whilelet_pattern_at, whilelet_init_at, whilelet_body_at}
 import ../sem.{payload_as_seen}
 import ../sem.{pattern_shape, pattern_head_text, PatShape}
 // Which arguments have an observable order (F65) -- the checker's own door.
-import ../sem.{contains_call, loop_ctl_is_break}
+import ../sem.{contains_call, loop_ctl_is_break, is_collection_head}
 
 
 /// THE LOWERING (274.8 M3). Everything here used to be methods on `Emitter`, the printer's own
@@ -313,6 +314,12 @@ fn Lowerer mut @lower_stmt(st Node) -> () {
     } else if k == NodeKind.WithStmt {
         // E.9 step 2: install, run the body, restore on every exit (lower_with.nv).
         @lower_with(st)
+    } else if k == NodeKind.SupervisedStmt {
+        // E.9 step 4: a fiber scope around the body, joined on every exit.
+        @lower_supervised(st)
+    } else if k == NodeKind.SpawnStmt {
+        // E.9 step 4: the body is a function of its own (emit_c/emit_spawn.nv).
+        @ir.spawn_site(st.id_of())
     } else if k == NodeKind.RetStmt {
         @lower_return(st)
     } else if k == NodeKind.LoopCtl {
@@ -354,8 +361,7 @@ fn Lowerer mut @lower_stmt(st Node) -> () {
         @lower_store(kids[0], assign_op_of(leaf_kind(kids[1])), src)
     } else if k == NodeKind.ForStmt {
         ro kids = branch_children(st)
-        if kids[3].kind_of() == NodeKind.Call || kids[3].kind_of() == NodeKind.MethodCall ||
-           kids[3].kind_of() == NodeKind.Name || kids[3].kind_of() == NodeKind.FieldAccess {
+        if is_collection_head(kids[3]) {
             // A COLLECTION head (wave B16) walks a vector by index: a loop
             // of the lowered body whose header carries the collection, the
             // index and the element locals (274.8 M2b-1c, emit_flow.nv). A
@@ -445,6 +451,17 @@ fn Lowerer mut @lower_if(st Node, outer Option[IfCtx]) -> () {
     }
     // ONE shape of else (M2b-2-0): a chained `if` continues the `} else ` line its
     // caller printed, so it starts without the indent the top-level `if` carries.
+    // A NARROWING `if x is T` (D54): the branch opens with `x` unboxed into a
+    // binding of the same name -- through a temporary, since C reads a
+    // declarator's own name inside its initializer.
+    match narrowing_of(kids[1], @out, @ctx) {
+        Some(nw) => {
+            ro tmp = @ir.temp(nw.target)
+            @ir.unbox_any(tmp, nw.subject)
+            @ir.copy(@ir.named(nw.target, nw.name), tmp)
+        }
+        None => {} // no narrowing: the branch reads the names as they are
+    }
     @lower_block_stmts_fn(kids[2], false)
     if has_else {
         // The closing brace and the `else` share one line -- the one shape of else

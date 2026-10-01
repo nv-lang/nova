@@ -1,0 +1,15 @@
+// #1337 remainder (filed as a new row): the receiver's type has a parameter its
+// constructor's arguments do not fix -- `E` of `Ok(2)` -- and `Result` declares
+// no D88 default, so the checker leaves `o` untyped and the emitter guesses:
+// `ro x` / the scrutinee is typed `nova_int` -- CC-FAIL "member reference type
+// 'nova_int' is not a pointer" (branch p1338 and base c775a975d alike).
+// Control: `ro o Option[Result[int, str]] = Some(Ok(2))` prints 2.
+// EXPECT_STDOUT r=2
+fn main() Io -> () {
+    ro o = Some(Ok(2))
+    ro r = match o.transpose() {
+        Ok(Some(v)) => v
+        _ => 0
+    }
+    println("r=${r}")
+}

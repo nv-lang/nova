@@ -54,10 +54,17 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 NAME = "check-novac-one-branch-head"
 
 # Двери: имя функции -> файл, в котором она обязана жить.
+# E.9 step 4 (2026-09-30): @emit_spawn_entry and @emit_spawn_site print the
+# RUNTIME's fiber protocol -- the entry function's anchor, slot and fail-frame
+# tests and the hand-off's test whether the M:N runtime is up -- fixed interop
+# text, not a branch of a lowered body: the same kind of boundary as the
+# contract prologue.
 DOORS = {
     "@print_if_head": "emit_flow.nv",
     "@print_arm_head": "emit_match.nv",
     "@emit_requires_prologue": "emit_requires.nv",
+    "@emit_spawn_entry": "emit_spawn.nv",
+    "@emit_spawn_site": "emit_spawn.nv",
 }
 
 # `@body.append("` + необязательные пробелы + `if (`  — голова ветвления C.

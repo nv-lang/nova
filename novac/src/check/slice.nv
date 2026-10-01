@@ -1,0 +1,93 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Swift's range subscript (`a[lo...]`) -- one method taking a range,
+// an open side filled from the collection's own index space; std spells the
+// same through `@index(r Range)` and `@end_index()` (plan 284).
+// Role: typing of a slice `x[lo..hi]`, either side possibly open (registry
+//   #1170, plan 274.7 waves U-1..U-3): the call `x.index(Range { .. })` of
+//   D470 section 5, whose result is the receiver's own type (`str @index(r
+//   Range) -> str`, `Vec[T] @index(r Range) -> Self`). Out-of-range and a cut
+//   through a code point are RUN-TIME panics of std's own contract, not
+//   diagnostics, so nothing here judges the numbers.
+// Used by: binds.nv (`@type_index`).
+// Guarded by: nova test novac/src/check/check_test.nv (the slice tests) and
+//   check-novac-differential.sh over novac/fixtures/slice.
+
+module novac.check
+
+import ../tree.{Node, NodeKind}
+import ../builtins.{END_INDEX_METHOD, VEC_INDEX_METHOD}
+import ../sem.{SliceShape, range_index_symbol, c_method_symbol, branch_children, ty_source_name}
+import ../types.{TyId, no_ty, is_ty}
+
+/// The type of a slice over `recv_t`, or `no_ty()` after a named refusal.
+fn Checker mut @type_slice(kids []Node, recv_t TyId, sh SliceShape) -> TyId {
+    if range_index_symbol(@ctx, recv_t).is_none() {
+        @report_first_leaf_of(kids, no_shell_method_msg("${VEC_INDEX_METHOD}(Range)", ty_source_name(@ctx, recv_t)))
+        return no_ty()
+    } else {
+        // Carried: the bounds decide.
+    }
+    if sh.hi_open {
+        // The upper bound is `recv.end_index()`, and the emitter prints the
+        // receiver a SECOND time to ask it. A name reads the same value twice;
+        // a computed receiver would be computed twice, which the oracle does
+        // not do (it spills to a temporary) -- so only a name is compiled.
+        if kids[0].kind_of() != NodeKind.Name {
+            @report_first_leaf_of(kids, SLICE_OPEN_END_MSG)
+            return no_ty()
+        } else {
+            // A name: two reads of one binding.
+        }
+        if !@ctx.interop.has(c_method_symbol(@ctx, recv_t, END_INDEX_METHOD)) {
+            @report_first_leaf_of(kids, no_shell_method_msg(END_INDEX_METHOD, ty_source_name(@ctx, recv_t)))
+            return no_ty()
+        } else {
+            // Carried: printed by the emitter.
+        }
+    } else {
+        // A written upper bound: typed below.
+    }
+    ro bounds = branch_children(kids[2])
+    if !sh.lo_open && !@slice_bound_is_int(bounds[0]) {
+        // SILENT-OK: the bound that failed was refused inside, by name.
+        return no_ty()
+    } else {
+        // Open (it is `0`), or an `int`.
+    }
+    if !sh.hi_open && !@slice_bound_is_int(bounds[2]) {
+        // SILENT-OK: the bound that failed was refused inside, by name.
+        return no_ty()
+    } else {
+        // Open (it is `end_index()`), or an `int`.
+    }
+    // The emitter spells the call off the RECEIVER's type; a plain identifier
+    // receiver is typed by the lattice without a recording writer of its own.
+    @chan.record_type(kids[0].id_of(), recv_t)
+    recv_t
+}
+
+/// An open slice end over a receiver that is not a name.
+const SLICE_OPEN_END_MSG = "outside the subset: an open slice end `x[lo..]` is compiled over a name only -- bind the receiver first (E2-b)"
+
+/// Types one slice bound and says whether it is an `int`; anything else is
+/// refused by the index's own text -- measured 2026-09-25, the oracle accepts a
+/// `u8` bound, so the language is wider and the refusal says SUBSET.
+fn Checker mut @slice_bound_is_int(b Node) -> bool {
+    ro before = @out.len()
+    @type_expr(b)
+    if @out.len() > before { return false }
+    ro t = type_of(b, @ctx, @scope, @chan)
+    if !is_ty(t) {
+        // SILENT-OK: an untyped bound was refused where it was typed.
+        return false
+    } else {
+        // A typed bound: its type decides.
+    }
+    if t != @ctx.prims.int_id {
+        @report_first_leaf_of([]Node.of(b), INT_INDEX_MSG)
+        return false
+    } else {
+        // An `int` bound.
+    }
+    true
+}

@@ -61,6 +61,7 @@ export type TokenKind enum
     | KwType
     | KwMatch
     | KwAs
+    | KwIs /// `is`: the runtime type test of an `any` or a sum (D54)
     | KwImport
     | KwUse
     | KwExport
@@ -169,6 +170,7 @@ export fn spelling_of(k TokenKind) -> Option[str] => match k {
     KwType => Some("`type`")
     KwMatch => Some("`match`")
     KwAs => Some("`as`")
+    KwIs => Some("`is`")
     KwImport => Some("`import`")
     KwUse => Some("`use`")
     KwExport => Some("`export`")
@@ -321,7 +323,7 @@ export fn paren_delta(k TokenKind) -> int {
         RParen => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwConsume | KwWhile | KwType | KwMatch |
         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | Hash | Ident |
-        KwBreak | KwContinue | IntLit | FloatLit | CharLit | StrFrag | InterpOpen | InterpClose |
+        KwIs | KwBreak | KwContinue | IntLit | FloatLit | CharLit | StrFrag | InterpOpen | InterpClose |
         StrLit | LBrace | RBrace | EmptyBrackets | LBracket | RBracket | Dot | Comma | Semicolon | Plus | Minus |
         Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq |
         Question2 | Question | AmpAmp | PipePipe | Amp | Caret |
@@ -338,7 +340,7 @@ export fn bracket_delta(k TokenKind) -> int {
         RBracket => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwConsume | KwWhile | KwType | KwMatch |
         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | Hash | Ident |
-        KwBreak | KwContinue | IntLit | FloatLit | CharLit | StrFrag | InterpOpen | InterpClose |
+        KwIs | KwBreak | KwContinue | IntLit | FloatLit | CharLit | StrFrag | InterpOpen | InterpClose |
         StrLit | LParen | RParen | LBrace | RBrace | EmptyBrackets | Dot | Comma | Semicolon | Plus | Minus |
         Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq |
         Question2 | Question | AmpAmp | PipePipe | Amp | Caret |
@@ -356,7 +358,7 @@ export fn brace_delta(k TokenKind) -> int {
         RBrace => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwConsume | KwWhile | KwType | KwMatch |
         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | Hash | Ident |
-        KwBreak | KwContinue | IntLit | FloatLit | CharLit | StrFrag | InterpOpen | InterpClose |
+        KwIs | KwBreak | KwContinue | IntLit | FloatLit | CharLit | StrFrag | InterpOpen | InterpClose |
         StrLit | LParen | RParen | EmptyBrackets | LBracket | RBracket | Dot | Comma | Semicolon | Plus | Minus |
         Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq |
         Question2 | Question | AmpAmp | PipePipe | Amp | Caret |
@@ -484,6 +486,7 @@ fn keyword_kind(t str) -> TokenKind => match t {
     // names and the refusal read "unknown name" -- about a cast, not a
     // name. A missing keyword does not stay missing quietly.
     "as" => TokenKind.KwAs
+    "is" => TokenKind.KwIs
     // The DECLARATION words. `export` stands in front of most of std, and
     // until 2026-08-18 it lexed as a plain identifier: the top-level loop
     // dropped it into the junk bucket and the file was refused with a

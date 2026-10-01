@@ -1,0 +1,19 @@
+module slice.pos_2
+
+// A slice of `[]str` (registry #1170, plan 274.7 U-3): open and closed, and a
+// `for` over an open slice -- the shape of `for path in a[argi..]` (main.nv).
+fn total(a []str, from int) -> int {
+    mut n = 0
+    for s in a[from..] {
+        n += s.byte_len()
+    }
+    n
+}
+
+fn main() {
+    ro a = []str.of("ab", "cde", "f")
+    println(total(a, 1))
+    ro mid = a[1..2]
+    println(mid.len())
+    println(total(a, 0))
+}

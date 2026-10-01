@@ -50,6 +50,7 @@ fn exits_in(stmts []Stmt) -> (int, int) {
             RestoreHandler(_) => { restores += 1 }
             PopFrame => { pops += 1 }
             Assign(_) | Eval(_) | Store(_) | Decl(_) | Output(_) | OutputEnd | SetHandler(_) | PushFrame(_) => {}
+            ScopeOpen(_) | ScopeJoin(_) | Spawn(_) => {}
         }
     }
     (restores, pops)
@@ -140,6 +141,7 @@ test "the placement door records dest = Expr(e) in the current block" {
         Output(_) => assert(false)
         OutputEnd => assert(false)
         SetHandler(_) | RestoreHandler(_) | PushFrame(_) | PopFrame => assert(false)
+        ScopeOpen(_) | ScopeJoin(_) | Spawn(_) => assert(false)
     }
     b.end_body()
     ro f = b.finish()
@@ -154,6 +156,7 @@ test "the placement door records dest = Expr(e) in the current block" {
         Output(_) => assert(false)
         OutputEnd => assert(false)
         SetHandler(_) | RestoreHandler(_) | PushFrame(_) | PopFrame => assert(false)
+        ScopeOpen(_) | ScopeJoin(_) | Spawn(_) => assert(false)
     }
 }
 
@@ -171,6 +174,7 @@ test "a store keeps the tree's target and operator; an evaluation keeps only the
         Output(_) => assert(false)
         OutputEnd => assert(false)
         SetHandler(_) | RestoreHandler(_) | PushFrame(_) | PopFrame => assert(false)
+        ScopeOpen(_) | ScopeJoin(_) | Spawn(_) => assert(false)
     }
     b.eval(stand_in_expr())
     b.end_body()
@@ -473,6 +477,7 @@ test "a for over a collection: the header carries vec/idx/elem locals, the body 
                 Read(_) => assert(false)
                 IndexConst(_) => assert(false)
                 IndexFromEnd(_) => assert(false)
+                AnyData(_) => assert(false)
             }
         }
         Eval(_) => assert(false)
@@ -481,6 +486,7 @@ test "a for over a collection: the header carries vec/idx/elem locals, the body 
         Output(_) => assert(false)
         OutputEnd => assert(false)
         SetHandler(_) | RestoreHandler(_) | PushFrame(_) | PopFrame => assert(false)
+        ScopeOpen(_) | ScopeJoin(_) | Spawn(_) => assert(false)
     }
     b.end_loop(c)
     b.end_body()
@@ -528,6 +534,7 @@ test "an if-let: the Option lands in a binding, the If tests IsSome of it, the b
                 Read(_) => assert(false)
                 IndexConst(_) => assert(false)
                 IndexFromEnd(_) => assert(false)
+                AnyData(_) => assert(false)
             }
         }
         Eval(_) => assert(false)
@@ -536,6 +543,7 @@ test "an if-let: the Option lands in a binding, the If tests IsSome of it, the b
         Output(_) => assert(false)
         OutputEnd => assert(false)
         SetHandler(_) | RestoreHandler(_) | PushFrame(_) | PopFrame => assert(false)
+        ScopeOpen(_) | ScopeJoin(_) | Spawn(_) => assert(false)
     }
     b.end_if(c)
     b.end_body()

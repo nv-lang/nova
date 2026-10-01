@@ -1,5 +1,0 @@
-fn h() -> u64 => 4
-
-fn main() {
-    println(h())
-}

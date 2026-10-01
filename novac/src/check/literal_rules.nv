@@ -179,7 +179,7 @@ fn Checker mut @lit_fits_or_refuse(e Node, t TyId) -> bool {
     ro r = row_opt ?? ice("check: a primitive row vanished between two reads of one Option")
     ro is_int = match r.family {
         PfInt => true
-        PfFloat | PfStr | PfBool | PfChar | PfUnit => false
+        PfFloat | PfStr | PfBool | PfChar | PfUnit | PfAny => false
     }
     if !is_int { return true }
     ro lk_kids = branch_children(e)

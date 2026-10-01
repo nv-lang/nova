@@ -20,7 +20,7 @@ module novac.check
 import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
-import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal}
+import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, is_true_literal}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{decl_of_ty, decl_fn_row, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at}
 import ../sem.{ty_source_name}
@@ -28,6 +28,7 @@ import ../sem.{ty_source_name}
 // parts through their own doors -- never slot arithmetic (registry 1190's
 // class: a slot count and the meaning of what sits there are two doors).
 import ../sem.{PatShape, pattern_shape, pattern_head_text, pattern_qualifier, pattern_subpatterns}
+import ../sem.{pattern_lit_leaf}
 import ../sem.{pattern_fields, patfield_name, patfield_sub, pattern_rest, pattern_mode_word}
 import ../sem.{pattern_name_node, patfield_name_node, rest_is_trailing}
 import ../sem.{shape_of, field_range_of, no_frow}
@@ -76,17 +77,14 @@ fn Checker mut @report_if_applied_sum(kids []Node, scr_t TyId) -> bool {
     true
 }
 
-/// A `match` in STATEMENT position: its arms run for effect and none of
-/// them yields a value to anyone.
-///
-/// Its pair is `@type_match`, the value door; they differ in what they do
-/// with an arm's type and in nothing else, which is why the applied-sum
-/// question is asked identically in both.
-fn Checker mut @type_match_stmt(m Node) -> () {
-    ro kids = branch_children(m)
+/// THE SHARED HEAD of both match doors (`@type_match_stmt`, `@type_match`):
+/// the scrutinee typed and recorded, then the two refusals the whole match
+/// earns -- an applied sum (said once, at the match) and no arms at all (a
+/// match with none covers no case, in either position). None = refused.
+fn Checker mut @match_head(kids []Node) -> Option[TyId] {
     if kids.len() < 2 {
         @report_first_leaf_of(kids, "outside the subset: a match needs a scrutinee")
-        return
+        return None
     }
     ro scr = kids[1]
     // RELATIVE to THIS call, not absolute (registry #1242, found by a peer
@@ -102,12 +100,31 @@ fn Checker mut @type_match_stmt(m Node) -> () {
     // were the only two that compared against a literal `0`.
     ro before = @out.len()
     @type_expr(scr)
-    if @out.len() > before { return }
+    if @out.len() > before { return None }
     ro scr_t = type_of(scr, @ctx, @scope, @chan)
     @record(scr, scr_t)
-    // No `else` is owed after a terminator (P31 form 2): what follows IS
-    // the plain-sum case, and an empty else here says it twice.
-    if @report_if_applied_sum(kids, scr_t) { return }
+    if @report_if_applied_sum(kids, scr_t) { return None }
+    if !has_match_arm(kids) {
+        @reject_first_leaf_of(kids, EMPTY_MATCH_MSG)
+        return None
+    }
+    Some(scr_t)
+}
+
+/// A `match` in STATEMENT position: its arms run for effect and none of
+/// them yields a value to anyone.
+///
+/// Its pair is `@type_match`, the value door; they differ in what they do
+/// with an arm's type and in nothing else, which is why the applied-sum
+/// question is asked identically in both.
+fn Checker mut @type_match_stmt(m Node) -> () {
+    ro kids = branch_children(m)
+    mut scr_t = no_ty()
+    match @match_head(kids) {
+        Some(t) => { scr_t = t }
+        // SILENT-OK: the head refused the match by name already.
+        None => return
+    }
     ro before_arms = @out.len()
     for c in kids {
         if c.kind_of() != NodeKind.MatchArm { continue }
@@ -139,27 +156,24 @@ fn Checker mut @type_arm_stmt(arm Node, scr_t TyId) -> () {
     @scope.release(mark)
 }
 
+/// Does the match carry at least one arm?
+fn has_match_arm(kids []Node) -> bool {
+    for c in kids {
+        if c.kind_of() == NodeKind.MatchArm { return true }
+    }
+    false
+}
+
 /// A match: the scrutinee's type is the answer the emitter needs (it declares
 /// the C temporary with it); the arms bind their binders and are typed after.
 fn Checker mut @type_match(m Node) -> () {
     ro kids = branch_children(m)
-    if kids.len() < 2 {
-        @report_first_leaf_of(kids, "outside the subset: a match needs a scrutinee")
-        return
+    mut scr_t = no_ty()
+    match @match_head(kids) {
+        Some(t) => { scr_t = t }
+        // SILENT-OK: the head refused the match by name already.
+        None => return
     }
-    ro scr = kids[1]
-    // RELATIVE to THIS call (registry #1242) -- see @type_match_stmt's own
-    // comment above for the full story: `Checker.out` is per-FILE, and a
-    // bare `> 0` made every match after the file's first refusal silently
-    // type no arm at all.
-    ro before = @out.len()
-    @type_expr(scr)
-    if @out.len() > before { return }
-    ro scr_t = type_of(scr, @ctx, @scope, @chan)
-    @record(scr, scr_t)
-    // No `else` is owed after a terminator (P31 form 2): what follows IS
-    // the plain-sum case, and an empty else here says it twice.
-    if @report_if_applied_sum(kids, scr_t) { return }
     ro before_arms = @out.len()
     mut first_t = None
     for c in kids {
@@ -168,77 +182,6 @@ fn Checker mut @type_match(m Node) -> () {
     }
     if @out.len() > before_arms { return }
     @report_if_not_exhaustive(kids, scr_t)
-}
-
-/// A match on a sum must cover every variant -- the rule novac did not have
-/// AT ALL until 2026-08-17, which made it WIDER than the language in the one
-/// direction a subset must never be wide. [INV-GUARD: check-novac-differential]
-/// -- the corpus judges the OUTCOME against the oracle on every file, so a
-/// subset that accepts what the language refuses reddens there, not here.
-///
-/// Measured: `match c { Red(x) => x + 1  Green(x) => x + 2 }` on a three-variant
-/// sum is refused by the oracle (E_MATCH_NON_EXHAUSTIVE, registry #703) and
-/// was accepted by novac with rc=0. The emitted C declares the result
-/// temporary UNINITIALISED, walks the arm chain, and returns it: a program the
-/// oracle refuses to compile became, through novac, a read of uninitialised
-/// automatic storage. Two defects in one -- a divergence from the language and
-/// a silent miscompilation (class K-C).
-///
-/// A wildcard or a plain binder arm covers everything by construction, so the
-/// scan stops there; a guard does NOT count as coverage, because a guard can
-/// be false (the oracle judges it the same way).
-fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
-    // The KIND comes from the interner, and the bound with it. Until wave B8
-    // this line read `raw_ty(scr_t) >= @ctx.types.len()` -- a bound against the
-    // DECLARATION table, which stopped meaning anything the moment a type id
-    // became an interner row: interner ids run past the declaration count, so
-    // the guard started returning early and this rule stopped judging. That is
-    // how a check gets QUIETER without anyone touching it.
-    if !is_ty(scr_t) { return }
-    if @ctx.tys.kind_of(scr_t) != TypeKind.TkSum { return }
-    // The count comes from the arm that HOLDS a variant range: a sum with no
-    // variants is a shape check does not judge here, and so is anything whose
-    // rows are not variants at all.
-    ro vcnt = (variant_range_of(decl_of_ty(@ctx, scr_t)) ?? (no_vrow(), 0)).1
-    if vcnt < 1 { return }
-    mut covered = 0
-    for c in kids {
-        if c.kind_of() != NodeKind.MatchArm { continue }
-        ro ak = branch_children(c)
-        if ak.len() < 1 { continue }
-        mut has_guard = false
-        for g in ak {
-            has_guard = has_guard || g.kind_of() == NodeKind.Guard
-        }
-        if has_guard { continue }
-        if ak[0].kind_of() != NodeKind.Pattern { continue }
-        // EVERY head the arm accepts counts -- a disjunction's alternatives
-        // as much as the first one (the pattern-alternatives wave). Heads are
-        // asked of the MATCHED SUM (wave B6, #964): a head that is no variant
-        // of it is a binder (covers everything -- done) or a variant of
-        // another sum, which `@bind_arm_pattern(ak, scr_t)` refused already;
-        // this rule says nothing on top (one cause, one diagnostic).
-        match pattern_shape(ak[0]) {
-            Lit | Record | Tuple | Array => {}
-            Wild => return
-            Bind | Variant => {
-                match variant_in_sum(@ctx, scr_t, pattern_head_text(ak[0])) {
-                    None => return
-                    Some(_) => { covered += 1 }
-                }
-            }
-            Disj => {
-                for sub in pattern_subpatterns(ak[0]) {
-                    match variant_in_sum(@ctx, scr_t, pattern_head_text(sub)) {
-                        None => return
-                        Some(_) => { covered += 1 }
-                    }
-                }
-            }
-        }
-    }
-    if covered >= vcnt { return }
-    @reject_first_leaf_of(kids, NOT_EXHAUSTIVE_MSG)
 }
 
 /// (rule lives in @type_match now) Every arm of a match must produce the SAME type -- and until 2026-08-17
@@ -350,7 +293,7 @@ fn Checker mut @bind_arm_pattern(ak []Node, scr_t TyId) -> bool {
 fn Checker mut @bind_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode, pos PatPos) -> bool {
     if @refused_at_position(pat, ak, pos) { return false }
     match pattern_shape(pat) {
-        Lit => @bind_lit_pattern(pat, ak)
+        Lit => @bind_lit_pattern(pat, ty, ak)
         Wild => true
         Bind => @bind_name_pattern(pat, ty, ak, dmode, pos)
         Variant => @bind_variant_pattern(pat, ty, ak, dmode, pos)
@@ -368,9 +311,16 @@ fn Checker mut @bind_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode, pos 
 /// never a `Lit` node, so the generic literal walk never visits it, and a
 /// 23-digit text once reached the C comparison verbatim, which clang refused
 /// -- the failure #810 exists to prevent, at one position nobody had visited.
-fn Checker mut @bind_lit_pattern(pat Node, ak []Node) -> bool {
-    ro p0 = branch_children(pat)[0]
+fn Checker mut @bind_lit_pattern(pat Node, ty TyId, ak []Node) -> bool {
+    ro p0 = pattern_lit_leaf(pat)
     ro lk0 = leaf_kind(p0)
+    // `true` / `false`: a LITERAL of `bool` (sem/pattern.nv), never a binder
+    // named `true` (check x K4 hunt 2026-09-30: `nova_bool true = ...` in C).
+    if is_bool_literal(leaf_text(p0)) {
+        if ty == @ctx.prims.bool_id { return true }
+        @reject_first_leaf_of(ak, BOOL_PATTERN_TYPE_MSG)
+        return false
+    }
     if lk0 == TokenKind.StrLit || lk0 == TokenKind.CharLit {
         @report_first_leaf_of(ak, LITERAL_ARM_MSG)
         return false
