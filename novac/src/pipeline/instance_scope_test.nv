@@ -126,3 +126,19 @@ test "a `priv` field of a std type read without a module line is private to a fi
     assert(d1.len() == 0, messages(d1))
     assert(c1.contains("_size__"), c1)
 }
+
+test "an instance of a std body is named by the BODY's module, even when its file opens with `#prelude` (#1567)" {
+    // std's `#prelude` files were read with no module, so an instance of their
+    // bodies took the COMPILED file's module: `v.first()` in module `hp` beside
+    // the file's own `fn first[T]` gave two `novac_fn_hp_first__...` and clang
+    // "redefinition" (the hunt's instance-name-collision-module).
+    mut decls = std_decls()
+    decls.push("#prelude(core, runtime)\nmodule collections.vv\n\
+export type Vec[T] { n int }\nexport fn Vec[T] @len() -> int => @n\nexport fn Vec[T] @head() -> int => @n\n")
+    ro (d0, c0) = compile_to_c("module hp\nfn head[T](xs []T) -> int => 7\n\
+fn main() {\n ro v = [1, 2]\n println(v.head())\n println(head(v))\n}", decls)
+    assert(d0.len() == 0, messages(d0))
+    assert(c0.contains("novac_fn_collections_vv_head__"), c0)
+    // CONTROL: the file's own generic of the same name keeps the file's module.
+    assert(c0.contains("novac_fn_hp_head__"), c0)
+}
