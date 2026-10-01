@@ -5431,7 +5431,11 @@ static NovaRes_Nova_Vec____Nova_DirEntry_p_p_NovaValue_IoError* nova_fn_3std2fs8
 
 static NovaValue_PathStyle nova_fn_3std2fs10host_style(void) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
+#ifdef _WIN32
     return nova_make_PathStyle_Windows();
+#else
+    return nova_make_PathStyle_Posix();
+#endif
 }
 
 static nova_bool nova_fn_3std2fs11byte_is_sep(nova_byte b, NovaValue_PathStyle style) {
