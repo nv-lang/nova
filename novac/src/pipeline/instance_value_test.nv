@@ -1,0 +1,48 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Role: check and emit give ONE verdict about a file whose instance body puts
+//   a value block in an argument (registry 1525): std's `Vec[T] @get` returns
+//   `Some(unsafe { @data.read_at(i) })`; check took it, and the printer had no
+//   arm for `unsafe` in an argument -- "emit: expression kind outside the
+//   subset" for every `get` instance the shell lacks (`d.first() ?? 0.0` over
+//   `Vec[f64]`). The instance set was the same on both sides; the FORM was not.
+// Used by: nova test novac/src/pipeline (the module-test batch of the gate).
+// Guarded by: check-novac-module-tests; the fixture instance_value_arg/pos_1
+//   through the differential.
+
+module novac.pipeline
+
+/// A handed `Vec[T]` whose `get` is std's shape: an `Option` built from an
+/// `unsafe` read of the element pointer -- and a CONTROL `peek` that builds it
+/// from a plain read.
+fn value_std() -> []str {
+    mut std = std_decls()
+    std.push("module std.v\n\
+export type Option[T] enum Some(T) | None\n\
+export type Vec[T] {\n    data *mut T\n    n int\n}\n\
+export fn Vec[T] @len() -> int => @n\n\
+export fn Vec[T] mut @push(v T) -> @ => @\n\
+export fn Vec[T] @get(i int) -> Option[T] {\n    if i < @n {\n        return Some(unsafe { @data.read_at(i) })\n    }\n    None\n}\n\
+export fn Vec[T] @peek(i int) -> Option[int] {\n    if i < @n {\n        return Some(@n)\n    }\n    None\n}\n")
+    std
+}
+
+test "an instance body's `Some(unsafe { .. })` is one verdict on both sides: check and emit say yes (registry 1525)" {
+    ro std = value_std()
+    ro prog = "fn main() {\n ro d = [1.5, 2.5]\n println(d.get(0) ?? 0.0)\n}"
+    // CHECK says yes -- through the same instance walk the emitter takes.
+    ro dc = compile_with(prog, parse_decls(std), described_surface(std))
+    assert(dc.len() == 0, messages(dc))
+    // EMIT says yes too, and the payload is the local the lowering laid down.
+    ro (de, c) = compile_to_c(prog, std)
+    assert(de.len() == 0, messages(de))
+    assert(c.contains("((NovaOpt_nova_f64){.tag = NOVA_TAG_Option_Some, .value = (_novac_"),
+           "the `unsafe` payload is not read from its local")
+}
+
+test "CONTROL: a plain payload of `Some` in an instance body prints from the tree, as before" {
+    ro std = value_std()
+    ro prog = "fn main() {\n ro d = [1.5, 2.5]\n println(d.peek(0) ?? 0)\n}"
+    ro (de, c) = compile_to_c(prog, std)
+    assert(de.len() == 0, messages(de))
+    assert(c.contains(".value = ((_novac_self->n))"), "a plain payload stopped printing inline")
+}
