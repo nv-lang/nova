@@ -212,9 +212,11 @@ fn Checker mut @type_if_value(n Node) -> () {
     // for a branch that terminates above. Both `never`: the `if` is `never`.
     if is_never_ty(@ctx.tys, then_t) {
         @record(n, else_t)
+        // SILENT-OK: the `if` is the else branch's type, recorded just above.
         return
     } else if is_never_ty(@ctx.tys, else_t) {
         @record(n, then_t)
+        // SILENT-OK: the `if` is the then branch's type, recorded just above.
         return
     } else {
         // Neither branch is `never`: the comparison below.

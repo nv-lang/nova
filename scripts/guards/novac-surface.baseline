@@ -933,7 +933,11 @@ resolve 19
 #   sem read a form check accepts -- the defect itself.
 # 2026-10-01, Carina window, merge of main e448f0193: the two lines above add -- main's
 #   sem 308 and this branch's 305 -> 318 meet; the count is the guard's on the merged tree.
-sem 321
+# 2026-10-01, cloud session p274-carina-cloud, merge of p274-ice-expr: sem 321 -> 322:
+#   `is_never_ty` (sem/type_shape.nv) -- is a type the bottom type `never` (D26)? Asked by
+#   check (the tail `if`, the `match` arm, the return): only sem knows the universe row's
+#   family, and a copy of the question in check would be a second door.
+sem 322
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

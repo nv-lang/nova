@@ -332,7 +332,7 @@ fn Checker mut @report_if_decl_types_undeclared(kids []Node) -> () {
 
 /// The refusal of a COMPOSITE representation, one sentence for the newtype
 /// and the alias (registry 1514).
-const COMPOSITE_REPR_MSG = "outside the subset: a newtype or an alias over a composite type (`[]T`, `T[A]`, a tuple, a pointer) is not compiled yet -- novac reads a representation that is one declared name (E10)"
+const COMPOSITE_REPR_MSG = "outside the subset: a newtype or an alias over a composite type (`[]T`, `T[A]`, `(A, B)`, a pointer) is not compiled yet -- novac reads a representation that is one declared name (E10)"
 
 /// A newtype or an alias over a COMPOSITE type is refused by name (registry
 /// 1514). Before this rule sem read the representation's first identifier as
