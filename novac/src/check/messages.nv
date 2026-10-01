@@ -179,21 +179,21 @@ const VARIANT_VALUE_NEEDS_ARGS_MSG = "outside the subset: this variant carries a
 /// `Option[int]` regardless of which applied sum actually fired the gate.
 
 /// A LITERAL pattern against a value of another type (the string family,
-/// E2-b): `'a'` over a `str`, `"a"` over a `char` or an `int`, `3` over a
-/// `str`. D128 keeps `char` apart from `int`, and the spec's pattern table
-/// says a literal compares "by value" (syntax.ru.md, pattern kinds) -- a value
-/// of ANOTHER type is no comparison at all. The oracle has no check of its
-/// own here: it prints `scr.len == ...` over an int and clang refuses the C.
-const LIT_PATTERN_TYPE_MSG = "a literal pattern compares with a value of its own type -- a string literal with a `str`, a char literal with a `char` (D128: `char` is not `int`); the value matched here is of another type"
+/// E2-b): `'a'` over a `str` or an `int`, `"a"` over a `char` or an `int`,
+/// `3` over a `str` or a `char`. D486 s2 (amendment 2026-10-01): a pattern's
+/// literal has the scrutinee's type, and `char` and the integers do not mix
+/// (D128), as in an expression (D405). The oracle has no check of its own
+/// here (registry 1535): it prints `scr.len == ...` over an int and clang
+/// refuses the C, and it runs `97` over a `char`.
+/// A STRING LITERAL WITH A SLOT in a pattern (registry 1556): a pattern's literal
+/// is not interpolated (D486 s2, amendment 2026-10-01) -- it compares with a
+/// FIXED value. The oracle reads the form and compares with the raw text,
+/// `a${x}` byte for byte, so the slot is silently not a slot; the comparison
+/// the author meant is a guard.
+const INTERP_PATTERN_MSG = "a pattern's string literal is not interpolated (D486 s2) -- it compares with a fixed value; write the comparison the slot means as a guard (`s if s == ...`)"
 
-/// A STRING or CHAR literal standing INSIDE a `match` arm's pattern --
-/// `W("x")`, `(c, 'a')`. Legal Nova (D486 s2), and refused BY NAME because the
-/// lowering tests the arm's ROOT only: for an int the tag of `A(3)` is tested
-/// and the `3` dropped, so `A(4)` takes the arm (measured on the day the
-/// string arms opened, 2026-10-01). These two kinds were refused at every
-/// depth until then; opening the root without this door would have handed
-/// them the same silent wrong answer.
-const NESTED_LITERAL_ARM_MSG = "outside the subset: a string or char literal inside a `match` arm's pattern is read but not compiled yet -- the lowering tests the arm's root only (E2-b, with nested pattern tests)"
+const LIT_PATTERN_TYPE_MSG = "a literal pattern compares with a value of its own type -- a string literal with a `str`, a char literal with a `char`, an integer literal with an integer (D486 s2; D128: `char` and the integers do not mix); the value matched here is of another type"
+
 
 const IFLET_VARIANT_MSG = "outside the subset: `if <pattern> = ...` takes only `Some(name)` here -- other variants arrive with their carriers (274.5 P4)"
 

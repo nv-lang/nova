@@ -280,7 +280,7 @@ undated=58
 # ЧЕГО ЭТО НЕ ОПРАВДЫВАЕТ: «поднять базу, раз покраснело». Поднятие законно
 # ТОЛЬКО с замером, показывающим, что предмет храповика не ухудшился; без
 # такого замера правильный ход — снять другой отказ той же волной.
-# 2026-09-20 — refusals 127 -> 128 (окно Карины, строка реестра 1190).
+# 2026-09-20 — refusals 127 -> 128 (окно Карины, строка реестра 1191).
 # НОВЫЙ ОТКАЗ ЗАМЕНЯЕТ ICE, а не добавляется к долгу: плечо `match` на
 # строковом или символьном литерале читалось с этой ночи и доходило до эмиттера,
 # у которого для него арма нет, — `emit_c: match pattern is neither an int literal
@@ -417,6 +417,13 @@ undated=58
 # today -- stays refused there, because the lowering tests the root only (an int literal
 # below the root is accepted and its test dropped: `A(3)` takes `A(4)`, measured,
 # reported apart). Carriers of the new refusal in novac's own source: zero.
+# 2026-10-01, the same session, third pass (registries 1534, 1542): refusals stay 141,
+# ONE REFUSAL TRADED FOR ANOTHER again. `NESTED_LITERAL_ARM_MSG` is gone -- a literal or a
+# variant below an arm's root is tested by a synthetic condition on the value it reads
+# (fixtures nested_lit, nested_variant, literal_arm/pos_1). `DISJ_NESTED_TEST_MSG` came in,
+# dated (E2-b): a test below an alternative of `|` (`Aa(1) | Bb(1)`) was DROPPED IN
+# SILENCE -- the disjunction tests the heads only; novac printed 1 where the oracle
+# printed 0 (measured). Carriers of the new refusal in novac's own source: zero.
 refusals=141
 # ТРЕТЬЕ ЧИСЛО — БЕССРОЧНЫЕ ПО ДВЕРИ (волна 274.7 В11-б, засев 2026-09-14, окно 274).
 #

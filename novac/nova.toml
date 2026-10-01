@@ -504,7 +504,7 @@
 # a record-variant construction takes the pattern's qual-head,
 # `Node.Branch { .. }` (same branch). Value by the pre-commit formula (main
 # carried 147 against 148 counted commits).
-#   spec-queue: 150
+#   spec-queue: 152
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,

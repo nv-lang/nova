@@ -339,7 +339,11 @@ lex 11
 #   supervised scope and the spawn hand-off of the lowered body, read by
 #   emit_c (the statements' printers, the spawn's C number).
 # lower 90 -> 91 (E.9 step 4b): FnBuilder.@unbox_any -- the narrowed name's unboxing.
-lower 91
+# lower 91 -> 93 (2026-10-01, cloud session p274-carina-strarm, registries 1534 and
+#   1542): PatTest (the nested subpattern's test, carried by Cond.Holds and printed by
+#   emit_c's pattern-test door) and FnBuilder.@note_arm_checks (how many nested-test
+#   Ifs an arm opened; emit_c finds the innermost through SwitchArm.checks).
+lower 93
 main 0
 # mono -- НОВЫЙ модуль (2026-08-18, Э2-б2): коллектор достижимого.
 # Наружу три имени: тип Reach, вопрос @has (эмиттер спрашивает про каждую
@@ -390,7 +394,7 @@ parse 1
 #
 #   2026-09-20 (окно Карины), sem 238 -> 238: `pattern_head_slot`.
 #   Наружу он нужен потому, что его спрашивают ДВА МОДУЛЯ — `check` и `lower`, —
-#   и ради этого он и заведён (строка реестра 1190). До него каждый отвечал на вопрос
+#   и ради этого он и заведён (строка реестра 1191). До него каждый отвечал на вопрос
 #   «где голова этого образца» сам, оба отвечали ОДИНАКОВО НЕВЕРНО, и именно их
 #   СОГЛАСИЕ делало дефект невидимым для стражей. Общая дверь дороже одного
 #   имени на поверхности ровно на ту цену, в которую обошлось её отсутствие.
@@ -937,7 +941,10 @@ resolve 19
 #   `is_never_ty` (sem/type_shape.nv) -- is a type the bottom type `never` (D26)? Asked by
 #   check (the tail `if`, the `match` arm, the return): only sem knows the universe row's
 #   family, and a copy of the question in check would be a second door.
-sem 324
+# 2026-10-01, cloud session p274-carina-strarm (registry 1556): sem 324 -> 325 (merged onto main's 324):
+# `pattern_is_interp` -- the pattern position reads an interpolated string, and the
+# checker asks this one door to refuse it by name (a pattern's literal is not interpolated).
+sem 325
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

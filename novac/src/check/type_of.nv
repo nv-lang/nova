@@ -578,7 +578,7 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
                 ro bk = body.kind_of()
                 if bk == NodeKind.Block || bk == NodeKind.RetStmt || bk == NodeKind.LoopCtl {
                     // THE NEXT ARM IS ASKED, not the match abandoned
-                    // (registry 1190). An arm that leaves yields no value,
+                    // (registry 1191). An arm that leaves yields no value,
                     // which is not the same as the MATCH having none: in
                     // `match k { A => return n  B => 7 }` the second arm is
                     // the value and the first merely departs. Returning
@@ -596,7 +596,7 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
             }
         }
         // ARMS THAT ALL LEAVE are not an absence of arms, and telling the two
-        // apart is what this counter is for (registry 1190). `match k { A =>
+        // apart is what this counter is for (registry 1191). `match k { A =>
         // return 1  B => return 2 }` yields the match no value -- a fact, not a
         // fault -- while a match with NO arms is a program nobody can mean. The
         // first version of the scan above walked off the end into the ice below
