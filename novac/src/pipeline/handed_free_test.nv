@@ -213,3 +213,32 @@ test "a HANDED generic method is typed as an instance over a type of the file (2
     assert(first_field_read_type(decl, chan) == pt, "the body's `@v` is not typed `Pt` under the substitution")
 }
 
+
+test "a HANDED function's literal default is emitted without the handed tree's identity (registry 1576, class 1563)" {
+    // The omitted slot is printed AT THE CALL SITE (D102) -- in THIS file -- and
+    // every reader of a literal asks the channel by the node's id. The handed
+    // file is larger than the program, so its default's id points past every
+    // table of the compiled file: "array: index 421 out of bounds for length 6"
+    // before the fix. A string, a negative number and `false` are rebuilt
+    // without an identity (sem/harvest.nv `handed_default`).
+    mut helpers = "module novac.helpers\n"
+    for i in 0..60 {
+        helpers = "${helpers}fn filler${i}(n int) -> int => n + ${i}\n"
+    }
+    helpers = "${helpers}export fn greet(s str = \"dflt\") -> str => s\n\
+export fn flag(v bool = false, k int = -3) -> int => if v { 1 } else { k }\n"
+    mut texts = std_decls()
+    texts.push(helpers)
+    ro decls = parse_decls(texts)
+    mut link = InteropTable.new()
+    mark_program(link, parse_decls([]str.of(helpers)))
+    ro prog = "module novac.user\nimport ../helpers.{greet, flag}\nfn main() {\n println(greet())\n println(flag())\n}"
+    ro (d0, c0) = compile_to_c_with(prog, decls, link)
+    assert(d0.len() == 0, messages(d0))
+    assert(c0.contains("(false, ((nova_int)-3LL))"), "the bool and the negative default print as literals")
+    assert(c0.contains("\"dflt\""), "the string default is the pool's literal")
+    // CONTROL: the slots WRITTEN at the call print what the call wrote.
+    ro (d1, c1) = compile_to_c_with("module novac.user\nimport ../helpers.{flag}\nfn main() {\n println(flag(v: true, k: 7))\n}", decls, link)
+    assert(d1.len() == 0, messages(d1))
+    assert(c1.contains("(true, ((nova_int)7LL))"), "CONTROL: written slots print as written")
+}

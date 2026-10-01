@@ -1,0 +1,112 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc_codegen_ssa `mir/block.rs` `codegen_argument` -- a call's
+// arguments are lowered apart from the expression walk, slot by slot.
+// Role: the ARGUMENTS of a call -- written arguments in slot order, and an
+//   omitted slot's DEFAULT printed at the call site (D102), including a
+//   handed function's default (registry 1576).
+// Used by: emit_expr.nv (free calls, method calls, variant makers), and the
+//   statement doors that print a call.
+// Guarded by: check-novac-file-size.py (this split: emit_expr.nv crossed 1000
+//   lines when the handed default learnt its no-identity door), the default_*
+//   fixtures and pipeline/handed_free_test.nv.
+// novac/src/emit_c/emit_args.nv -- a call's arguments, defaults included.
+
+module novac.emit_c
+
+import ../tree.{Node, NodeId}
+import ../diag.{ice}
+import ../sem.{call_arg_at, raw_row, slot_default_of, no_row, c_callable}
+import ../lower.{no_local}
+
+/// A call's arguments, in SLOT order, with omitted slots filled from the
+/// declaration.
+///
+/// ONE door for both call forms. `from` is the child where the written arguments
+/// begin (1 for a free call, 3 for a method call); `recv_slot` says that
+/// argument zero is the RECEIVER and lives at `kids[0]` rather than in that
+/// range. The row is the callee's, and it is asked only when a slot was left to
+/// its default -- a variant's payload has none, so it may arrive as `no_row()`.
+fn Emitter mut @emit_bound_args(kids []Node, from int, recv_slot bool,
+                                id NodeId, row FnRow) -> () {
+    ro slots = @out.callee_slots_of(id)
+    mut first = true
+    for s in 0..slots.len() {
+        @body.append(if first { "" } else { ", " })
+        first = false
+        ro at = slots[s].arg_row
+        // THE DECLARED CONVERSION, when the checker recorded one (D429 R7): the
+        // emission is a call to the method the program NAMED, never a cast and
+        // never a conversion of our own invention. `#coerce fn str consume
+        // @to_bytes() -> Bytes` becomes exactly that method's C name around the
+        // argument.
+        ro wrap = raw_row(slots[s].via_row) >= 0
+        if wrap {
+            @body.append("${c_callable(@ctx, slots[s].via_row, no_subst())}(")
+        } else {
+            // The type matches as written: nothing stands around the value.
+        }
+        if at < 0 {
+            @emit_slot_default(row, s)
+        } else if recv_slot && at == 0 {
+            @emit_expr(kids[0])
+        } else {
+            // ALREADY IN A LOCAL? (F65) The lowering hoists an effectful
+            // argument into a temporary so the effects run in the order the
+            // source wrote them; here that decision becomes the printed text.
+            //
+            // ASKED HERE AND NOT AT THE HEAD OF `@emit_expr`: there it
+            // substituted the local for the node everywhere, INCLUDING inside
+            // the statement that defines the local, and the emission said so
+            // plainly -- `nova_int _novac_l2 = _novac_l2;`. The question is
+            // about an ARGUMENT, and this is where an argument is printed.
+            ro anode = call_arg_at(kids, from, if recv_slot { at - 1 } else { at })
+            ro hl = @lo.ir.local_of_node(anode.id_of())
+            if hl != no_local() {
+                @body.append(@lo.ir.decl_of(hl).name)
+            } else {
+                @emit_expr(anode)
+            }
+        }
+        if wrap {
+            @body.append(")")
+        } else {
+            // Nothing was opened.
+        }
+    }
+}
+
+/// The DEFAULT of a slot the call omitted, emitted AT THE CALL SITE -- which is
+/// what D102 means by "evaluated at the call site, each call anew".
+///
+/// An absent default here is not a user mistake but a broken channel: the
+/// checker recorded -1 for a slot whose declaration writes nothing, and emitting
+/// anything at all would invent a value. So it ices.
+fn Emitter mut @emit_slot_default(row FnRow, s int) -> () {
+    if raw_row(row) < 0 {
+        ice("emit_c: a call with no callable row left a slot to a default")
+    } else {
+        // A callable row: its declaration is what says the value.
+    }
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    match slot_default_of(@ctx.fns.params, fd.param_off, s) {
+        Some(d) => @emit_expr(d)
+        None => ice("emit_c: a call left a slot to a default its declaration does not write")
+    }
+}
+
+/// The CALLABLE row a decision names, or `no_row()` when it names something
+/// else -- a variant or a type. The emission of the arguments is the same for
+/// all three; only a DEFAULT needs the row, and only a callable has one.
+#realtime nogc
+fn callee_row_or_none(cr CalleeRef) -> FnRow {
+    match cr.target {
+        CalleeFn(row) => row
+        CalleeVariant(_) => no_row()
+        CalleeCtor(_) => no_row()
+        // A synthesized display has no row to give: the program wrote no
+        // function, and the emitter prints the field sequence from the TYPE.
+        CalleeSynthDisplay(_) => no_row()
+        // An effect operation has none either: the shell's dispatcher serves it.
+        CalleeEffectOp(_) => no_row()
+    }
+}
