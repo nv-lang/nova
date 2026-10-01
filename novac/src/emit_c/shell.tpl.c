@@ -10968,11 +10968,11 @@ static Nova_StringBuilder* Nova_StringBuilder_method_append__nova_f64(Nova_Strin
 
 static Nova_StringBuilder* Nova_StringBuilder_method_append__nova_bool(Nova_StringBuilder* nova_self, nova_bool b) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
-    Nova_StringBuilder* _nv_if_1150;
+    nova_unit _nv_if_1150;
     if (b) {
-        _nv_if_1150 = Nova_StringBuilder_method_append(nova_self, _nova_strlit_5b5c98ef514dbfa5);
+        _nv_if_1150 = NOVA_UNIT; (void)(Nova_StringBuilder_method_append(nova_self, _nova_strlit_5b5c98ef514dbfa5));
     } else {
-        _nv_if_1150 = Nova_StringBuilder_method_append(nova_self, _nova_strlit_b5fae2c14238b978);
+        _nv_if_1150 = NOVA_UNIT; (void)(Nova_StringBuilder_method_append(nova_self, _nova_strlit_b5fae2c14238b978));
     }
     (void)(_nv_if_1150);
     Nova_StringBuilder* _nv_tmp_1151 = nova_self;
@@ -11251,7 +11251,7 @@ static nova_unit nova_fn_7runtime14string_builder16f64_display_spec(Nova_StringB
     nova_preempt_check();
     nova_int mark = Nova_StringBuilder_method_byte_len(sb);
     nova_int prefix_len = ((nova_int)0LL);
-    Nova_StringBuilder* _nv_if_1195;
+    nova_unit _nv_if_1195;
     if (has_prec) {
         nova_bool mag_neg = (v < ((nova_f64)0.0));
         nova_bool prefix_neg = ((v < ((nova_f64)0.0)) || ((v == ((nova_f64)0.0)) && ((((nova_f64)1.0) / v) < ((nova_f64)0.0))));
@@ -11297,7 +11297,7 @@ static nova_unit nova_fn_7runtime14string_builder16f64_display_spec(Nova_StringB
             }
             _nv_tmp_1199 = Nova_StringBuilder_method_advance(sb, _nv_tmp_1200);
         }
-        _nv_if_1195 = _nv_tmp_1199;
+        _nv_if_1195 = NOVA_UNIT; (void)(_nv_tmp_1199);
     } else {
         nova_unit _nv_if_1201;
         if ((sign_plus && (v >= ((nova_f64)0.0)))) {
@@ -11323,7 +11323,7 @@ static nova_unit nova_fn_7runtime14string_builder16f64_display_spec(Nova_StringB
             }
             _nv_tmp_1202 = Nova_StringBuilder_method_advance(sb, _nv_tmp_1203);
         }
-        _nv_if_1195 = _nv_tmp_1202;
+        _nv_if_1195 = NOVA_UNIT; (void)(_nv_tmp_1202);
     }
     (void)(_nv_if_1195);
     nova_unit _nv_if_1204;
