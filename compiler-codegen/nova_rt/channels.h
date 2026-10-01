@@ -1283,10 +1283,9 @@ static inline void _nova_after_unregister_from_token(NovaAfterState* st) {
 
 static void _nova_after_close_cb(uv_handle_t* h) {
     NovaAfterState* st = (NovaAfterState*)h->data;
-    /* libuv guarantees no more callbacks for this handle. Free raw alloc.
-     * tx + channel state остаются GC-managed (reachable из user code если
-     * reader ещё держится; иначе Boehm collect'ит). */
-    free(st);
+    /* libuv guarantees no more callbacks for this handle. Free the
+     * uncollectable block (221.1 #1487: see Nova_Time_after). */
+    nova_free_uncollectable(st);
 }
 
 static void _nova_after_timer_cb(uv_timer_t* h) {
@@ -1372,13 +1371,21 @@ static void _nova_after_cancel_resource_cb(void* handle) {
  * select_lost callback stops the timer; otherwise timer fires normally. */
 static inline Nova_ChanReader* Nova_Time_after(nova_int ms) {
     Nova_ChannelPair pair = nova_channel_new(1);
-    /* Plan 44.1 R8: raw malloc, NOT nova_alloc — NovaAfterState owned by libuv
-     * (lifetime = from this call до _nova_after_close_cb). Не GC-managed. */
-    NovaAfterState* st = (NovaAfterState*)malloc(sizeof(NovaAfterState));
-    if (!st) {
-        fprintf(stderr, "nova: Nova_Time_after: malloc failed\n");
-        abort();
-    }
+    /* Plan 44.1 R8: NOT nova_alloc — NovaAfterState is owned by libuv
+     * (lifetime = from this call до _nova_after_close_cb), so it must never be
+     * collected while the timer is pending.
+     *
+     * 221.1 #1487: UNCOLLECTABLE, not raw malloc. `st->tx` is the channel's
+     * writer, a separate nova_alloc'd object; the channel state does not point
+     * back to it, and the caller keeps only the READER. A malloc block is not
+     * scanned by Boehm, so while the timer was pending the writer was held by
+     * nothing the collector sees -- collected, its memory reused, and
+     * `_nova_after_timer_cb` then wrote through a dangling `st->tx`.
+     * GC_malloc_uncollectable keeps the lifetime explicit (freed in
+     * _nova_after_close_cb, as before) AND makes the block a scanned root,
+     * the same pattern as the sync-primitive TLF handles and nova_gc_pin.
+     * nova_alloc_uncollectable aborts itself on OOM. */
+    NovaAfterState* st = (NovaAfterState*)nova_alloc_uncollectable(sizeof(NovaAfterState));
     st->tx = pair.tx;
     st->cancelled = false;
     st->cancel_token_ref = NULL;

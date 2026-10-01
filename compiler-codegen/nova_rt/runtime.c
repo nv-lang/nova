@@ -2977,6 +2977,20 @@ static void _orphan_scope_ensure_init(void) {
          * detach — тот же класс порчи, что worker-scope (стейл ambient
          * deadline навсегда в static-структуре); плюс detach семантически
          * СЕВЕРИТ deadline родителя (D349/D50). */
+#ifdef NOVA_GC_BOEHM
+        /* 221.1 №1486: структура статическая, а её массивы (fibers /
+         * fiber_ctx / fiber_effect_snapshot / …) — из nova_alloc. Под
+         * GC_set_no_dls(1) статик НЕ корень, так что массивы держала только
+         * несканируемая память: первый же сбор отдавал их под новые объекты
+         * (замер: 300 detach под NOVA_AUTOARM=0 — segfault 4/4). Тот же
+         * образец, что у области воркера: один GC_add_roots на контейнер
+         * (_workers, ниже в nova_runtime_init). Регистрируется ДО
+         * инициализации — массивы выделяются по одному, и сбор между ними
+         * забрал бы первый. Корень на всё время процесса: область живёт до
+         * atexit-дренажа. */
+        GC_add_roots(&_nova_orphan_scope,
+                     (char*)&_nova_orphan_scope + sizeof(_nova_orphan_scope));
+#endif
         nova_scope_init_container(&_nova_orphan_scope);
         _nova_orphan_scope_inited = true;
     }
