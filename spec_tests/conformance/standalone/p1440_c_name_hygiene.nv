@@ -1,0 +1,246 @@
+// EXPECT_STDOUT locals 21
+// EXPECT_STDOUT params 21
+// EXPECT_STDOUT record 21
+// EXPECT_STDOUT value 21
+// EXPECT_STDOUT protocol 1114
+// EXPECT_STDOUT protocol value 7 true true
+// EXPECT_STDOUT sum 18
+// EXPECT_STDOUT closure 21
+// EXPECT_STDOUT handler 53
+// EXPECT_STDOUT parfor 42
+// EXPECT_STDOUT spawn 21
+// EXPECT_STDOUT const 7
+// EXPECT_STDOUT linux 10
+// EXPECT_STDOUT linux record 10
+// EXPECT_STDOUT ctx op 2
+// EXPECT_STDOUT schedlink 6
+// EXPECT_STDOUT distinct 17
+// EXPECT_STDOUT bindings 6 6 6 6 7 3
+// EXPECT_STDOUT generic 6 6
+// EXPECT_STDOUT match 7
+//
+// Registry 221.1 #1440 / #1446: a name from Nova source went into C verbatim.
+// #1440: the protocol method `near` became the vtable slot `(*near)`, and the
+// Windows headers define `near` as an empty macro -- CC-FAIL on Windows.
+// #1446: `ro _c = ...` in a `parallel for` body shadowed the generator's ctx
+// pointer `_c`, and `_c->ok` read a `nova_int` -- CC-FAIL everywhere.
+// CLASS: a user identifier emitted without escaping meets a C keyword, a
+// platform macro, or a name of the generator. The fix is ONE door,
+// `c_ident` in compiler-codegen/src/codegen/emit_c/c_name.rs (its doc states
+// the rule), called wherever a source name becomes a C token.
+//
+// One line per place a name becomes a C identifier: locals, parameters,
+// record / value-record fields, protocol methods (vtable slots, also through
+// a protocol VALUE), sum variants and their fields, captures of a closure, a
+// handler literal, a `parallel for` and a `spawn` (ctx fields), effect ops
+// and their parameters, an exported const. Names: C keywords `long`, `auto`;
+// Windows macros `near`, `far`, `interface`, `IN`, `OUT`, `VOID`, `small`,
+// `ERROR`; the generator's `_c`, `_co` (declared in the parfor, spawn and
+// closure bodies -- a `_` name may not be read, D461), `ctx` (the effect
+// vtable's own member), `schedlink` (the spawn ctx's own member), `nova_int`
+// (a runtime type); the glibc/gnu-mode macros `linux`, `unix`, `errno`,
+// `stdin`, which fail on Linux itself; and `long` next to `nv_long` (the old
+// escape `nv_` + keyword was not injective: both were `nv_long`).
+// Bindings too: a `for` variable over a range and over an array, a `match`
+// payload, a tuple `ro`, a closure parameter, a local `const`, the index of a
+// `parallel for`, a generic function's and a protocol default method's
+// parameter.
+// An upper-case name cannot be a local in Nova (`ro IN = ...` is a variant
+// pattern), so `IN` stands in fields, methods, parameters and variants, and
+// `small` stands in for it among the locals.
+//
+// The Windows headers are proven on Linux by compiling this file with
+// `-Dnear= -Dfar= -Dinterface=struct -DIN= -DOUT= -DVOID=void -Dsmall=char
+// -DERROR=0` added to the C compiler (report p1440).
+module standalone.p1440_c_name_hygiene
+
+type Geo protocol {
+    @near(other Self) -> bool
+    @far(other Self) -> bool
+    @long() -> int
+    @auto() -> int
+    @interface() -> int
+    @IN() -> int
+}
+
+#impl(Geo)
+type Rec {
+    long int
+    auto int
+    near int
+    far int
+    interface int
+    IN int
+}
+fn Rec @near(other Self) -> bool => @near == other.near
+fn Rec @far(other Self) -> bool => @far != other.far
+fn Rec @long() -> int => @long
+fn Rec @auto() -> int => @auto
+fn Rec @interface() -> int => @interface
+fn Rec @IN() -> int => @IN
+
+type Val value {
+    long int
+    auto int
+    near int
+    far int
+    interface int
+    IN int
+}
+
+type Shape enum
+    | IN { long int, near int }
+    | OUT { auto int, far int, interface int }
+    | VOID
+
+type Probe effect {
+    fn near(long int, auto int) -> int
+    fn far(interface int, IN int) -> int
+}
+
+type Cx effect {
+    fn ctx(linux int) -> int
+}
+
+type LinuxRec {
+    linux int
+    errno int
+    stdin int
+    ctx int
+}
+
+export const ERROR = 7
+
+fn geo_sum[T Geo](a T, b T) -> int {
+    mut s = a.long() + a.auto() + a.interface() + a.IN()
+    if a.near(b) { s += 100 }
+    if a.far(b) { s += 1000 }
+    s
+}
+
+fn params(long int, auto int, near int, far int, interface int, IN int, _c int, _co int) -> int =>
+    long + auto + near + far + interface + IN
+
+fn shape_sum(s Shape) -> int => match s {
+    IN { long, near } => long + near
+    OUT { auto, far, interface } => auto + far + interface
+    VOID => 0
+}
+
+fn use_probe() Probe -> int => Probe.near(1, 2) + Probe.far(3, 4)
+
+fn use_cx() Cx -> int => Cx.ctx(1)
+
+fn apply(f fn() -> int) -> int => f()
+
+fn apply1(f fn(int) -> int) -> int => f(6)
+
+fn match_plus(o Option[int]) -> int => match o {
+    Some(long) => long + 1
+    None => 0
+}
+
+fn gen_pick[T](x T, near int) -> int => near
+
+type Plus protocol {
+    @base() -> int
+    @plus(long int) -> int => @base() + long
+}
+
+#impl(Plus)
+type Zero { z int }
+fn Zero @base() -> int => @z
+
+fn main() Io -> () {
+    ro long = 1
+    ro auto = 2
+    ro near = 3
+    ro far = 4
+    ro interface = 5
+    ro small = 6
+    ro _c = 7
+    ro _co = 8
+    println("locals ${long + auto + near + far + interface + small}")
+    println("params ${params(long, auto, near, far, interface, small, 0, 0)}")
+
+    ro r = Rec { long: 1, auto: 2, near: 3, far: 4, interface: 5, IN: 6 }
+    ro r2 = Rec { long: 1, auto: 2, near: 3, far: 5, interface: 5, IN: 6 }
+    println("record ${r.long + r.auto + r.near + r.far + r.interface + r.IN}")
+    ro v = Val { long: 1, auto: 2, near: 3, far: 4, interface: 5, IN: 6 }
+    println("value ${v.long + v.auto + v.near + v.far + v.interface + v.IN}")
+    println("protocol ${geo_sum(r, r2)}")
+    ro g Geo = r
+    println("protocol value ${g.long() + g.IN()} ${g.near(r)} ${g.far(r2)}")
+    println("sum ${shape_sum(Shape.IN { long: 1, near: 2 }) + shape_sum(Shape.OUT { auto: 3, far: 4, interface: 8 }) + shape_sum(Shape.VOID)}")
+
+    ro c = apply(fn() -> int {
+        ro _c = 9
+        ro _co = 10
+        long + auto + near + far + interface + small
+    })
+    println("closure ${c}")
+    ro h = with Probe = effect Probe {
+        near(long int, auto int) -> int => long * 10 + auto + near
+        far(interface int, IN int) -> int => interface * 10 + IN + far
+    } {
+        use_probe()
+    }
+    println("handler ${h}")
+
+    mut total = AtomicInt.new(0)
+    parallel for i in 0..2 {
+        ro _c = i
+        ro _co = i
+        total.fetch_add(long + auto + near + far + interface + small)
+    }
+    println("parfor ${total.load()}")
+    mut acc = AtomicInt.new(0)
+    ro schedlink = 5
+    supervised {
+        spawn {
+            ro _c = 1
+            ro _co = 2
+            acc.fetch_add(long + auto + near + far + interface + small)
+        }
+    }
+    println("spawn ${acc.load()}")
+    println("const ${ERROR}")
+
+    ro linux = 1
+    ro unix = 2
+    ro errno = 3
+    ro stdin = 4
+    println("linux ${linux + unix + errno + stdin}")
+    ro lr = LinuxRec { linux: 1, errno: 2, stdin: 3, ctx: 4 }
+    println("linux record ${lr.linux + lr.errno + lr.stdin + lr.ctx}")
+    ro co = with Cx = effect Cx { ctx(linux int) -> int => linux + 1 } { use_cx() }
+    println("ctx op ${co}")
+    mut sl = AtomicInt.new(0)
+    supervised {
+        spawn {
+            sl.fetch_add(schedlink + linux)
+        }
+    }
+    println("schedlink ${sl.load()}")
+    ro nova_int = 7
+    ro nv_long = 9
+    println("distinct ${nova_int + nv_long + long}")
+
+    mut s1 = 0
+    for near in 0..4 {
+        s1 += near
+    }
+    mut s2 = 0
+    for errno in [1, 2, 3] {
+        s2 += errno
+    }
+    ro (far, b) = (6, 0)
+    const ERRNO_MAX = 7
+    mut pf = AtomicInt.new(0)
+    parallel for auto in 0..3 {
+        pf.fetch_add(auto)
+    }
+    println("bindings ${s1} ${s2 + b} ${far} ${apply1(fn(long int) -> int => long)} ${ERRNO_MAX} ${pf.load()}")
+    println("generic ${gen_pick(1, 6)} ${Zero { z: 0 }.plus(6)}")
+    println("match ${match_plus(Some(6))}")
+}
