@@ -106,7 +106,7 @@ test "the owner's word on D54 (amendment 2026-10-01): bool into a number, char v
     // bool -- are the language's errors.
     ro (v, _) = compile_to_c("fn main() {\n ro c = 'q'\n println(c as u16)\n}", std)
     assert(v.len() == 1 && messages(v).contains("`char as u16`") && codes(v).contains("E_NOVAC_LANG"), messages(v))
-    ro (l, _) = compile_to_c("fn main() {\n println('\u{100}' as u8)\n}", std)
+    ro (l, _) = compile_to_c("fn main() {\n println('Ā' as u8)\n}", std)
     assert(l.len() == 1 && messages(l).contains("E_LIT_OUT_OF_RANGE"), messages(l))
     ro (b, _) = compile_to_c("fn main() {\n ro n = 1\n println(n as bool)\n}", std)
     assert(b.len() == 1 && codes(b).contains("E_NOVAC_LANG"), messages(b))
