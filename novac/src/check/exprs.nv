@@ -969,7 +969,9 @@ fn Checker @field_visible(owner TyId, name str) -> bool {
             home == "#${@ctx.handed.tree_of(@inst_row)}"
     } else {
         // The file's own body: its module, in the C shape `Ctx.module_c` keeps;
-        // a file-private field of a handed file is never the file's.
-        return home.replace(".", "_") == @ctx.module_c
+        // a file-private field of a handed file is never the file's, and
+        // neither is one whose module reads "" -- std's `#prelude` files --
+        // even when the file has no module line either (D281, #1521).
+        return home != "" && home.replace(".", "_") == @ctx.module_c
     }
 }

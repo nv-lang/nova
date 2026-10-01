@@ -109,3 +109,20 @@ fn scaled_by(c str, lit str) -> bool {
     }
     false
 }
+
+test "a `priv` field of a std type read without a module line is private to a file without one too (#1521, D281)" {
+    // std's `#prelude` files (`collections/vec/core.nv`) are read with no
+    // module, and so is a file that declares none: "" == "" made `Vec`'s `priv`
+    // fields that file's own, and `v.len` compiled where the oracle says
+    // E_FIELD_MODULE_PRIVATE (the hunt's priv-leak-moduleless).
+    mut decls = std_decls()
+    decls.push("export type Vec[T] priv { n int }\nexport fn Vec[T] @size() -> int => @n\n")
+    ro (d0, _) = compile_to_c("fn main() {\n ro v = [7, 8]\n println(v.n)\n}", decls)
+    assert(d0.len() == 1, messages(d0))
+    assert(d0[0].message.contains("unknown field"), messages(d0))
+    // CONTROL: the type's own body reads its private field -- the instance of
+    // `@size` the unit makes for `Vec[int]`.
+    ro (d1, c1) = compile_to_c("fn main() {\n ro v = [7, 8]\n println(v.size())\n}", decls)
+    assert(d1.len() == 0, messages(d1))
+    assert(c1.contains("_size__"), c1)
+}
