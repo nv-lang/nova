@@ -212,8 +212,13 @@ fn Checker mut @type_match(m Node) -> () {
     mut first_t = no_arm_type()
     for c in kids {
         if c.kind_of() != NodeKind.MatchArm { continue }
+        // EVERY arm starts from the position's expectation: an arm's body may
+        // clear it on its way (a statement, an `if`), and the next arm must not
+        // inherit that -- `Branch { .. } => None` after a block arm was refused.
+        @value_expect = arm_expect
         first_t = @fold_arm_type(c, scr_t, first_t, before_arms)
     }
+    @value_expect = arm_expect
     if @out.len() > before_arms { return }
     // The agreed type is RECORDED here, where every arm was typed with its
     // binders in scope; `type_of` reads it back instead of re-asking an arm
@@ -751,10 +756,15 @@ fn Checker mut @type_arm_block_value(b Node) -> TyId {
     ro last = last_branch_of(kids)
     mut i = 0
     mut out_t = no_ty()
+    // The arm's expectation belongs to the block's TAIL, which is the arm's
+    // value; the statements before it are not (a `ro x = None` there is not
+    // the arm's `None`).
+    ro tail_expect = @value_expect
     for c in kids {
         match c {
             Leaf(_) => {}
             Branch { .. } => {
+                @value_expect = if i == last { tail_expect } else { no_ty() }
                 if i == last && is_expr_kind(c.kind_of()) {
                     ro before = @out.len()
                     @type_expr(c)
@@ -771,6 +781,7 @@ fn Checker mut @type_arm_block_value(b Node) -> TyId {
         }
         i += 1
     }
+    @value_expect = tail_expect
     out_t
 }
 

@@ -27,7 +27,7 @@ import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING,
 import ../builtins.{VEC_INDEX_METHOD, VEC_LEN_METHOD, EMPTY_CTOR}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
-import ../sem.{shape_of}
+import ../sem.{shape_of, ctor_field_name}
 import ../sem.{Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text}
 import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of}
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
@@ -397,7 +397,12 @@ fn Checker mut @judge_record_ctor(ctor Node, vtype TyId) -> () {
         } else if ck == NodeKind.CtorField {
             ro fk = branch_children(c)
             if fk.len() < 3 { continue }
+            // The FIELD's declared type is the value's expectation (E2-b3): a
+            // bare `None` for an `Option[T]` field takes it, as an argument
+            // takes its parameter's (#1565) -- `default_expr: None` in harvest.
+            @value_expect = @ctor_field_expect(vtype, ctor_field_name(c))
             @type_expr(fk[2])
+            @value_expect = no_ty()
         } else {
             // The type name and the braces of the ctor are children too, and
             // they hold no expression to type.
@@ -849,4 +854,12 @@ fn Checker mut @vec_op_carried(vec_t TyId, name str) -> bool {
     @chan.record_wanted(row, args)
     @chan.record_vec_op(name, row)
     true
+}
+
+/// A constructor field's declared type when it is CONCRETE and the record has
+/// the field, else no expectation (an unknown field is refused by its own door).
+fn Checker @ctor_field_expect(vtype TyId, fname str) -> TyId {
+    if !is_ty(vtype) || !@fres.has_field(@ctx.fields, @field_owner(vtype), fname) { return no_ty() }
+    ro ft = @field_under(vtype, @fres.field_type(@ctx.fields, @field_owner(vtype), fname))
+    if is_ty(ft) && @ctx.tys.is_concrete(ft) { ft } else { no_ty() }
 }
