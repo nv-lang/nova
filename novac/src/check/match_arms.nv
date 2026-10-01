@@ -25,7 +25,7 @@ import ../names.{NameTable, NamespaceId}
 import ../sem.{decl_of_ty, decl_fn_row, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at}
 import ../sem.{ty_source_name, is_never_ty}
 // The pattern tree's doors (D486): the shape asked ONCE, the head and the
-// parts through their own doors -- never slot arithmetic (registry 1190's
+// parts through their own doors -- never slot arithmetic (registry 1191's
 // class: a slot count and the meaning of what sits there are two doors).
 import ../sem.{PatShape, pattern_shape, pattern_head_text, pattern_qualifier, pattern_subpatterns}
 import ../sem.{pattern_lit_leaf}
@@ -355,9 +355,12 @@ fn Checker mut @bind_lit_pattern(pat Node, ty TyId, ak []Node) -> bool {
         }
         return @bind_text_lit_pattern(p0, lk0, ty, ak)
     }
-    if ty == @ctx.prims.str_id {
-        // An integer literal over a `str`: no comparison exists (the oracle
-        // prints `scr == 3LL` on a `nova_str`, and clang refuses).
+    if ty == @ctx.prims.str_id || ty == @ctx.prims.char_id {
+        // An integer literal over a `str` has no comparison at all (the
+        // oracle prints `scr == 3LL` on a `nova_str`, and clang refuses);
+        // over a `char` it is the mixing D128 and D405 forbid in an
+        // expression, and a pattern is no loophole (D486 s2, amendment
+        // 2026-10-01). The oracle runs `97` over `char` -- registry 1535.
         @reject_first_leaf_of(ak, LIT_PATTERN_TYPE_MSG)
         return false
     } else {

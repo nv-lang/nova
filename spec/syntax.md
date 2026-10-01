@@ -1222,7 +1222,7 @@ takes the first one where the pattern matched AND the guard is true.
 
 | Form | Example | What it does |
 |---|---|---|
-| Literal | `0`, `"hello"`, `true` | comparison by value |
+| Literal | `0`, `"hello"`, `'a'`, `true` | comparison by value; the literal has the scrutinee's type, `char` and the integers do not mix (D486 §2, amendment 2026-10-01) |
 | Name (binding) | `n`, `x` | catches any value, binds it to a name |
 | Wildcard | `_` | catches any value, binds nothing |
 | Constructor | `Some(v)`, `Ok(value)`, `None` | destructures a sum-type variant |
@@ -1237,6 +1237,21 @@ amendment 2026-10-01): in `Aa(n, s) | Bb(s, n)` the name `n` is taken from where
 matching alternative bound it, not from its position in the first one. Different
 name sets are `E_OR_PATTERN_BINDING_MISMATCH`; different types of one name are an
 error too.
+
+**A pattern's literal has the scrutinee's type** ([D486](decisions/03-syntax.md#d486)
+§2, amendment 2026-10-01): a string literal over a `str` (compared by content), a char
+literal over a `char` (by codepoint), an integer literal over an integer type. `char`
+and the integers do not mix (D128), as in an expression -- `97` over a `char` is a
+type error:
+
+```nova
+fn kind(c char) -> int => match c {
+    'a' => 1        // a char literal over a `char`: compared by codepoint
+    '\n' => 2
+    _ => 0          // `char`, like `str` and `int`, needs a catch-all
+}
+// `match c { 97 => 1  _ => 0 }` is refused: an integer literal over a `char`
+```
 
 **A bare name in a pattern ALWAYS binds, even when a constant has that name.**
 `match w { MUT_W => 1, _ => 0 }` does not compare `w` against `MUT_W`, so the

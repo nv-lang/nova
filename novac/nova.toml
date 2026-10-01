@@ -504,7 +504,12 @@
 # a record-variant construction takes the pattern's qual-head,
 # `Node.Branch { .. }` (same branch). Value by the pre-commit formula (main
 # carried 147 against 148 counted commits).
-#   spec-queue: 149
+# 149 -> 150 (2026-10-01, integrator's word to cloud session p274-carina-strarm,
+# option (A)): AMEND D486 s2 -- a pattern's literal has the scrutinee's type;
+# `char` and the integers do not mix (D128), so `97` over `char` and `'a'` over
+# `int` are type errors. Cost to Carina: zero debt -- the same branch refuses
+# both; the oracle checks no literal type in a pattern (registry 1535).
+#   spec-queue: 150
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,

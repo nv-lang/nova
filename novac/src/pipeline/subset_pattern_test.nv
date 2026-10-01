@@ -580,6 +580,17 @@ fn main() {\n\
 }", std)
     assert(d2.len() == 1, messages(d2))
     assert(d2[0].message.contains("a literal pattern compares with a value of its own type"), d2[0].message)
+    // An INTEGER literal over a `char` is the same mistake (D486 s2, amendment
+    // 2026-10-01; D128): `char` and the integers do not mix in a pattern either.
+    ro (d5, _) = compile_to_c("fn k(c char) -> int => match c {\n\
+ 97 => 1\n\
+ _ => 0\n\
+}\n\
+fn main() {\n\
+ println(k('a'))\n\
+}", std)
+    assert(d5.len() == 1, messages(d5))
+    assert(d5[0].message.contains("a literal pattern compares with a value of its own type"), d5[0].message)
 
     // A string literal BELOW the root is refused by name: the lowering tests
     // the root only. CONTROL: the same sum with a binder at that position
