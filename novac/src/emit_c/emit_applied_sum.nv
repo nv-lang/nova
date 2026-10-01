@@ -8,7 +8,8 @@
 // Role: backend A (layer 11) -- the tag test of a `match` arm whose scrutinee
 //       is an APPLIED sum: renders the checker's decision (the recorded
 //       instance type and the variant row the lowering chose); decides nothing.
-// Used by: emit_match.nv (`@emit_tag_test`, the head of every variant arm).
+// Used by: emit_match.nv (`@emit_tag_test`, the head of every variant arm) and
+//   emit_is.nv (`x is Some` on an applied sum, registry 1544).
 // Guarded by: check-novac-differential.sh (fixtures match_applied_sum/,
 //             byte-for-byte against the oracle), novac/src/pipeline/
 //             match_applied_sum_test.nv (both spellings pinned in the C, with a
@@ -36,12 +37,22 @@ import ../sem.{VariantRow, raw_vrow, c_shell_tag}
 /// `->`, named in the shell's namespace -- the same access `is_value_sum`
 /// would choose for any sum with a payload (A4), written out because the
 /// instance is the shell's and its placement is not ours to decide.
-fn Emitter @applied_sum_tag_test(scr_ty TyId, scr str, vrow VariantRow) -> str {
+fn Emitter @applied_sum_tag_test(scr_ty TyId, scr str, vrow VariantRow) -> str =>
+    "${scr}${@applied_sum_tag_after(scr_ty, vrow)}"
+
+/// The same test WITHOUT its operand: what follows the value in C (`.tag ==
+/// NOVA_TAG_Option_Some`, `.value == NULL`, `->tag == NOVA_TAG_Result_Ok`). Every
+/// shape of both sums is "the operand, then an access", so the split is exact --
+/// and it lets `x is Some` print its operand as an EXPRESSION (once, through the
+/// general door) where a match arm names a temporary.
+fn Emitter @applied_sum_tag_after(scr_ty TyId, vrow VariantRow) -> str {
     if @is_option_inst(scr_ty) {
+        // The Option door spells "<operand><access>"; asked with an empty
+        // operand, it answers the access alone.
         if @ctx.variant_rows[raw_vrow(vrow)].name == OPTION_SOME_VARIANT {
-            return @option_some_test(scr_ty, scr)
+            return @option_some_test(scr_ty, "")
         }
-        return @option_none_test(scr_ty, scr)
+        return @option_none_test(scr_ty, "")
     }
-    "${scr}->tag == ${c_shell_tag(@ctx, vrow)}"
+    "->tag == ${c_shell_tag(@ctx, vrow)}"
 }
