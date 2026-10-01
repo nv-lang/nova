@@ -1,6 +1,0 @@
-// CONTROL: D486 s3 `..` in a tuple pattern, trailing (the grammar's form).
-fn main() {
-    ro t = (1, "s", 5)
-    ro (a, ..) = t
-    println(a + 1)
-}

@@ -1,9 +1,0 @@
-=== SUBJECT: novac check
-{"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error (novac bug, not yours): type_of.nv:579: assert failed: check: call of a fn without a declared return type (#652 class) (ret >= 0)","poisoned_by":null}
-novac rc=2
-=== ORACLE: nova check
-[32mok:[0m D:/Temp/hunt-check-k6/ice-tuple-option-ret/probe.nv
-
-===== SUMMARY =====
-[32mPASS[0m: 1  FAIL: 0
-oracle check rc=0

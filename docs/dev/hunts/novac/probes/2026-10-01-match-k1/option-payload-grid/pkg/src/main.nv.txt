@@ -1,0 +1,80 @@
+type Shape enum
+    | Circle(int)
+    | Square(int)
+
+type Color enum
+    | Red
+    | Green
+
+type Pt value {
+    x int
+    y int
+}
+
+fn osh(f bool) -> Option[Shape] => if f { Some(Shape.Square(7)) } else { None }
+fn ocol(f bool) -> Option[Color] => if f { Some(Color.Green) } else { None }
+fn opt(f bool) -> Option[Pt] => if f { Some(Pt { x: 1, y: 2 }) } else { None }
+fn obool(f bool) -> Option[bool] => if f { Some(false) } else { None }
+fn ochar(f bool) -> Option[char] => if f { Some('q') } else { None }
+fn of64(f bool) -> Option[f64] => if f { Some(2.5) } else { None }
+fn two_hundred() -> u8 => 200
+
+fn ou8(f bool) -> Option[u8] => if f { Some(two_hundred()) } else { None }
+
+fn a(o Option[Shape]) -> int => match o {
+    Some(s) => match s {
+        Circle(r) => r
+        Square(w) => w * 10
+    }
+    None => -1
+}
+
+fn b(o Option[Color]) -> int => match o {
+    Some(k) => match k {
+        Red => 1
+        Green => 2
+    }
+    None => -1
+}
+
+fn c(o Option[Pt]) -> int => match o {
+    Some(p) => p.x * 10 + p.y
+    None => -1
+}
+
+fn d(o Option[bool]) -> int => match o {
+    Some(v) => if v { 1 } else { 0 }
+    None => -1
+}
+
+fn e(o Option[char]) -> int => match o {
+    Some(ch) => if ch == 'q' { 113 } else { 0 }
+    None => -1
+}
+
+fn f(o Option[f64]) -> f64 => match o {
+    Some(v) => v
+    None => -1.0
+}
+
+fn g(o Option[u8]) -> int => match o {
+    Some(v) => if v == 200 { 200 } else { 0 }
+    None => -1
+}
+
+fn main() {
+    println(a(osh(true)))
+    println(a(osh(false)))
+    println(b(ocol(true)))
+    println(b(ocol(false)))
+    println(c(opt(true)))
+    println(c(opt(false)))
+    println(d(obool(true)))
+    println(d(obool(false)))
+    println(e(ochar(true)))
+    println(e(ochar(false)))
+    println(f(of64(true)))
+    println(f(of64(false)))
+    println(g(ou8(true)))
+    println(g(ou8(false)))
+}

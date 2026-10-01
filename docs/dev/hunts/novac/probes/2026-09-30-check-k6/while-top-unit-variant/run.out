@@ -1,9 +1,0 @@
-=== SUBJECT: novac check
-{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"D:/Temp/hunt-check-k6/while-top-unit-variant/probe.nv","start":153,"end":158},"message":"outside the subset: a name binding in a `while` condition is read but not compiled yet -- the condition takes a variant pattern (274.5 P4, the condition-forms wave)","poisoned_by":null}
-novac rc=1
-=== ORACLE: nova check
-[32mok:[0m D:/Temp/hunt-check-k6/while-top-unit-variant/probe.nv
-
-===== SUMMARY =====
-[32mPASS[0m: 1  FAIL: 0
-oracle check rc=0

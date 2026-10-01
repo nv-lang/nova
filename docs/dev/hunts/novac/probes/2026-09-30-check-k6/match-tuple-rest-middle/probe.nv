@@ -1,7 +1,0 @@
-// Same as bind-tuple-rest-middle, in a match arm (D486: one grammar, 5 sites).
-fn main() {
-    ro t = (1, "s", 5)
-    match t {
-        (a, .., z) => println(z + 1)
-    }
-}

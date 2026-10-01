@@ -1,0 +1,12 @@
+module match_char_lit.neg_2
+
+// A `match` on a `char` with literal arms only: `char` is an open scalar like
+// `str`, so a `_` (or a binder) arm is required -- E_MATCH_NON_EXHAUSTIVE on
+// BOTH compilers (syntax.ru.md lists `char` among the open types by name).
+
+// NOVAC_EXPECT E_MATCH_NON_EXHAUSTIVE
+
+fn ck(c char) -> int => match c {
+    'a' => 1
+    'b' => 2
+}

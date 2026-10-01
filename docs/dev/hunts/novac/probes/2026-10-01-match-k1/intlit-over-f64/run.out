@@ -1,0 +1,22 @@
+=== PACKAGE
+./src/main.nv
+=== ORACLE: nova build src/main.nv, run
+oracle build rc=0
+oracle run rc=0
+10
+20
+=== SUBJECT: novac check (no NOVAC_SELF_PATH: single file)
+novac check rc=0
+=== SUBJECT: novac emit
+novac emit rc=0
+--- C lines matching: novac_fn_
+11950:static nova_int novac_fn_g__nova_f64__to_nova_int(nova_f64 x) {
+11965:    nova_print_int(novac_fn_g__nova_f64__to_nova_int(((nova_f64)1.0)));
+11967:    nova_print_int(novac_fn_g__nova_f64__to_nova_int(((nova_f64)1.5)));
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+10
+20
+=== VERDICT: SAME stdout

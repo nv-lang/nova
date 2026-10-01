@@ -1,0 +1,19 @@
+// `-> @` with an EXPRESSION body (`=> e`) whose value is not the receiver:
+// D409 bullet 3 -- a tail that is not the receiver is discarded as a
+// statement, then the receiver is returned. The block-body twin of the same
+// method is in ../fluent-block-body-ctl.
+type Ctr {
+    n int
+}
+
+fn side(x int) -> int {
+    println("side ${x}")
+    x
+}
+
+fn Ctr mut @noisy() -> @ => side(@n)
+
+fn main() {
+    mut c = Ctr { n: 4 }
+    println(c.noisy().n)
+}

@@ -1,0 +1,81 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Role: D409 -- a `-> @` body returns its receiver with no self-return written
+//   (registry 221.1 #1520): a missing tail, a bare `return` and a tail `if`
+//   without `else` are each `return @`, for the file's own body and for a body
+//   novac instantiates from the declarations it was handed.
+// Used by: nova test novac/src/pipeline (the module-test batch of the gate).
+// Guarded by: check-novac-module-tests, check-novac-file-size.py; the fixture
+//   fluent_implicit_self/ through check-novac-differential.
+//
+// Why a file of its own: the defect was TWO answers to one question -- does a
+// body owe a tail value -- one in the typing walk (which knew D409) and one in
+// the subset walk (which did not), so the own body was refused while the same
+// body handed from std was typed. The cells below hold both doors to one answer,
+// and the controls hold the refusal where D409 does not speak.
+
+module novac.pipeline
+
+/// A handed module with `-> @` bodies of the three D409 forms, instantiated by
+/// the unit (274.11 E.10 step 4c) -- the shape std's `Vec @clear`/`@truncate`/
+/// `@dedup` arrive in.
+fn fluent_decls() -> []str {
+    mut std = std_decls()
+    std.push("module std.v\n\
+export type Vec[T] { n int }\n\
+export fn Vec[T] @len() -> int => @n\n\
+export fn Vec[T] mut @wipe() -> @ {\n @n = 0\n}\n\
+export fn Vec[T] mut @trim(k int) -> @ {\n if k < 0 {\n  return\n }\n @n = k\n}\n\
+export fn Vec[T] mut @cut(k int) -> @ {\n if k < @n {\n  @n = k\n }\n}\n")
+    std
+}
+
+test "a `-> @` body of the FILE: no tail, a bare `return`, a tail `if` without `else` are `return @` (D409, #1520)" {
+    ro std = std_decls()
+    // Until #1520 the first two were "fn declares a return type but its body
+    // ends without a value": the subset walk asked its own copy of "does the
+    // body owe a value", which did not know `-> @`.
+    ro src = "type Ctr { n int }\n\
+fn Ctr mut @reset() -> @ {\n @n = 0\n}\n\
+fn Ctr mut @set_pos(x int) -> @ {\n if x < 0 {\n  return\n }\n @n = x\n}\n\
+fn Ctr mut @bump_if(b bool) -> @ {\n if b {\n  @n += 1\n }\n}\n\
+fn main() {\n mut c = Ctr { n: 5 }\n ro a = c.reset()\n println(a.n)\n\
+ ro b = c.set_pos(3)\n println(b.n)\n ro d = c.bump_if(true)\n println(d.n)\n}"
+    ro (d0, c0) = compile_to_c(src, std)
+    assert(d0.len() == 0, messages(d0))
+    // Every exit of each body returns the receiver: nothing falls off the end.
+    assert(c0.contains("return _novac_self;"), c0)
+}
+
+test "CONTROL: a body that promises a VALUE still owes one -- D409 speaks of `-> @` only" {
+    ro std = std_decls()
+    // The same bodies declared `-> int` are the refusals they always were: the
+    // door that lets `-> @` through must not let a value return through with it.
+    ro (d1, _) = compile_to_c("type Ctr { n int }\nfn Ctr mut @reset() -> int {\n @n = 0\n}\nfn main() {\n mut c = Ctr { n: 5 }\n println(c.reset())\n}", std)
+    assert(d1.len() == 1, messages(d1))
+    assert(d1[0].message.contains("ends without a value"), messages(d1))
+    ro (d2, _) = compile_to_c("fn f(x int) -> int {\n if x < 0 {\n  return\n }\n x\n}\nfn main() {\n println(f(1))\n}", std)
+    assert(d2.len() == 1, messages(d2))
+    assert(d2[0].message.contains("must carry a value"), messages(d2))
+    // And a `-> ()` body is no value body either: no refusal, as before.
+    ro (d3, _) = compile_to_c("fn f(x int) -> () {\n if x < 0 {\n  return\n }\n println(x)\n}\nfn main() {\n f(1)\n}", std)
+    assert(d3.len() == 0, messages(d3))
+}
+
+test "a HANDED `-> @` body: the instance the unit makes returns its receiver on every exit (D409, #1520)" {
+    // The forms of std's `clear` (no tail), `dedup` (bare `return`) and
+    // `truncate` (a tail `if` without `else`), instantiated over `Vec[int]`.
+    // The hunt of 2026-10-01 measured the first emitted with no `return` at all
+    // -- a C function falling off its end, a segfault at run time.
+    ro (d1, c1) = compile_to_c("fn main() {\n mut v = [7, 8]\n ro a = v.wipe()\n println(a.len())\n ro b = v.trim(0 - 1)\n println(b.len())\n ro c = v.cut(1)\n println(c.len())\n}", fluent_decls())
+    assert(d1.len() == 0, messages(d1))
+    assert(c1.contains("novac_fn_std_v_wipe"), "the instance of the handed `wipe` is not emitted under our name")
+    assert(c1.contains("novac_fn_std_v_trim"), "the instance of the handed `trim` is not emitted under our name")
+    assert(c1.contains("novac_fn_std_v_cut"), "the instance of the handed `cut` is not emitted under our name")
+    // Three instances, and each returns the receiver: one return per exit of
+    // `trim` (two), one each for `wipe` and `cut`.
+    mut returns = 0
+    for _ in c1.split("return _novac_self;") {
+        returns += 1
+    }
+    assert(returns - 1 >= 4, c1)
+}

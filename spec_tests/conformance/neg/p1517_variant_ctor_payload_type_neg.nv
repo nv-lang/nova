@@ -1,0 +1,69 @@
+// EXPECT_COMPILE_ERROR E7301
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 #1517: a variant constructor's payload was never compared with
+// the field type of the sum INSTANCE the position expects. `fn f() -> Option[str]
+// => Some(1)` passed `nova check` and failed in the C compiler (`NovaOpt_nova_int`
+// returned as `NovaOpt_nova_str`); `ro s P1517Shape = P1517Circle("x")` passed
+// both. D405: `Option[int]` and `Option[str]` are distinct instances, with no
+// implicit conversion between them. Every position with a door goes through
+// `assignable`; the constructor's payload now does too (positive half:
+// `standalone/p1517_variant_ctor_ok.nv`). One line per cell, at the constructor.
+module neg.p1517_variant_ctor_payload_type_neg
+
+type P1517Shape enum P1517Circle(f64) | P1517Sq(int, int) | P1517Dot
+type P1517Pair[T] enum P1517Two(T, T) | P1517Zero
+type P1517Box { o Option[str] }
+
+fn p1517_take(o Option[str]) -> int => 1
+fn p1517_take_r(r Result[int, str]) -> int => 1
+fn p1517_take_s(s P1517Shape) -> int => 1
+
+// nova:expect E7301 -- return position: the payload fixes `Option[int]`, the declaration says `Option[str]` (the Carina oracle carrier `option_ctor/neg_2`)
+fn p1517_ret() -> Option[str] => Some(1)
+
+// nova:expect E7301 -- `Ok` payload against the instance's `T = int`
+fn p1517_ret_ok() -> Result[int, str] => Ok("s")
+
+// nova:expect E7301 -- `Err` payload against the instance's `E = str`
+fn p1517_ret_err() -> Result[int, str] => Err(5)
+
+// nova:expect E7301 -- a user generic sum: `T = str` from the declaration, `int` payloads
+fn p1517_ret_pair() -> P1517Pair[str] => P1517Two(1, 2)
+
+fn p1517_if(c bool) -> Option[str] {
+    // nova:expect E7301 -- the tail of an `if` branch is a return position too
+    if c { Some(2) } else { None }
+}
+
+fn p1517_match(c int) -> Option[str] {
+    match c {
+        // nova:expect E7301 -- the tail of a `match` arm
+        0 => Some(3)
+        _ => None
+    }
+}
+
+fn p1517_stmt() -> Option[str] {
+    // nova:expect E7301 -- a `return` statement
+    return Some(4)
+}
+
+fn main() {
+    // nova:expect E7301 -- `let` with an annotation
+    ro a Option[str] = Some(5)
+    // nova:expect E7301 -- argument position
+    println(p1517_take(Some(6)))
+    // nova:expect E7301 -- argument position, `Err` payload against `E = str`
+    println(p1517_take_r(Err(true)))
+    // nova:expect E7301 -- a non-generic user sum, bare constructor: `f64` field gets a `str`
+    ro s P1517Shape = P1517Circle("x")
+    // nova:expect E7301 -- qualified constructor, second payload slot
+    println(p1517_take_s(P1517Shape.P1517Sq(1, "y")))
+    // nova:expect E7301 -- collection element against `[]Option[str]`
+    ro xs []Option[str] = [Some(7)]
+    // nova:expect E7301 -- record field against `o Option[str]`
+    ro b = P1517Box { o: Some(8) }
+    println("${a ?? "-"}${xs.len()}${b.o ?? "-"}")
+    match s { P1517Circle(r) => println(r), _ => println(0) }
+}

@@ -313,7 +313,7 @@ export fn c_type(ctx Ctx, t TyId) -> str {
                 // holds and installs the pointer.
                 ro eff = handled_effect_name(ctx, t)
                 if eff != "" { return "${effect_vtable_c(eff)}*" }
-                ro fam = family_instance_name(ctx, t)
+                ro fam = family_instance_type(ctx, t)
                 if fam != "" { return fam }
                 return "${instance_struct_name(ctx, t)}*"
             }
@@ -590,6 +590,17 @@ export fn c_tag(ctx Ctx, vrow VariantRow) -> str {
     // into one tag set -- and a tag is an enum constant, so C would have taken
     // the second definition as a redefinition or, worse, silently agreed.
     "NOVAC_TAG_${module_prefix(ctx)}${decl_of_ty(ctx, vd.sum_id).name}_${vd.name}"
+}
+
+/// C name of the SHELL'S tag constant for a variant: `NOVA_TAG_<Sum>_<Variant>`
+/// -- the oracle's namespace, unqualified by module, exactly as the shell
+/// declares it (`r->tag = NOVA_TAG_Result_Ok` in every `nova_make_NovaRes_*`).
+/// Asked for a sum whose instances the SHELL defines (`is_shell_applied_sum`);
+/// novac's own sums keep `c_tag` above. The maker below makes the same split for
+/// a handed sum, by the same reason: the C is the shell's, not ours.
+export fn c_shell_tag(ctx Ctx, vrow VariantRow) -> str {
+    ro vd = ctx.variant_rows[raw_vrow(vrow)]
+    "NOVA_TAG_${decl_of_ty(ctx, vd.sum_id).name}_${vd.name}"
 }
 
 /// C name of a variant's maker function: `novac_make_<Sum>_<Variant>`.

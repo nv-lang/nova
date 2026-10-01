@@ -110,7 +110,7 @@ int < f64      // ошибка — целое против float
 ```nova
 ro n = 1e20 as int             // saturates to INT64_MAX
 ro m = (-1.0) as u32           // saturates to 0
-ro nan = 0.0 / 0.0 as i16      // 0
+ro nan = (0.0 / 0.0) as i16    // 0
 ```
 
 ### Checked narrowing — `to_*` ([D430](decisions/04-effects.md#d430), 2026-07-20)
@@ -374,6 +374,19 @@ ro e Row = n as Row            // ok
 только литерала (D55, уточнение 2026-10-01): там компилятор ВЫВОДИТ
 единственный подходящий вариант, а не придумывает утверждение автора. Нужна прежняя мягкость для своего newtype — объявляется
 парой [`#coerce`](decisions/02-types.md#d429).
+
+**Конструктор варианта судится по ожидаемому инстансу (D55, амендмент
+2026-10-01).** Payload сверяется с полем варианта того ИНСТАНСА, который ждёт
+позиция, число значений — с объявлением, а конструктор вовсе без источника типа
+отвергается, а не получает тип по умолчанию:
+
+```nova
+fn bad() -> Option[str] => Some(1)   // ERROR E7301 -- Option[int] is not Option[str]
+ro p = Some(1, 2)                    // ERROR E_VARIANT_CTOR_ARITY
+ro q = None                          // ERROR E_VARIANT_CTOR_UNTYPED -- annotate it
+ro r Option[str] = None              // ok
+ro s = Some(1)                       // ok -- Option[int], from the payload
+```
 
 **Операторы над newtype не выходят за его пределы ([D52](decisions/02-types.md#d52),
 амендмент 2026-09-04).** Арифметика и сравнение определены между двумя значениями

@@ -1,0 +1,109 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc's `match` on a generic enum instance -- the arms are judged
+// against the DECLARATION's variants with the instance's arguments substituted,
+// and the discriminant read is the instance's own layout; NOT taken: rustc's
+// layout (the instance here is the SHELL's, read off shell.tpl.c).
+// Role: acceptance tests of the wave match_applied_sum (274.11 E2-b2): a
+// `match` on `Option[T]` and `Result[T, E]` passes the checker and is emitted
+// in the SHELL's spelling -- the Option door's two shapes, `->tag ==
+// NOVA_TAG_Result_*` and the Result union -- while every other applied sum
+// keeps its refusal by name, a plain sum keeps novac's own tags, and coverage
+// and foreign arms are judged as on any sum.
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file; fixtures match_applied_sum/
+// and applied_sum_arm/ through check-novac-no-cascade, check-novac-fixture-expect
+// and the differential.
+// novac/src/pipeline/match_applied_sum_test.nv -- a match on an applied sum.
+
+module novac.pipeline
+
+import ../sem.{InteropTable}
+
+/// The handed declarations every case below shares: the two shell sums, one
+/// other applied sum the shell does not name per instance (the prelude's
+/// `Outcome` shape), and a std function handing back a `Result` -- the only way
+/// a program gets one (its own construction is E2-b3).
+fn applied_sum_decls() -> []str {
+    mut std = std_decls()
+    std.push("module std.o\nexport type Option[T] enum Some(T) | None\nexport type Result[T, E] enum Ok(T) | Err(E)\nexport type Outcome[T] enum Finished(T) | Aborted\n")
+    std.push("module res\nexport fn give(f bool) -> Result[int, str] => Err(\"no\")\n")
+    std
+}
+
+test "match on Option: the shell's tag in both shapes, novac's own tag nowhere (match_applied_sum)" {
+    ro std = applied_sum_decls()
+    // The VALUE shape (a primitive payload): `.tag` against the shell's two constants.
+    ro (d0, c0) = compile_to_c("fn pick(f bool) -> Option[int] {\n if f {\n  return Some(3)\n }\n None\n}\nfn of(o Option[int]) -> int => match o {\n Some(v) => v\n None => -1\n}\nfn main() {\n println(of(pick(true)))\n}", std)
+    assert(d0.len() == 0, messages(d0))
+    assert(c0.contains(".tag == NOVA_TAG_Option_Some)"), c0)
+    assert(c0.contains(".tag == NOVA_TAG_Option_None)"), c0)
+    // The payload through the Option door's read, not a union member.
+    assert(c0.contains("nova_int v = "), c0)
+    assert(c0.contains(".value;"), c0)
+    // The measured failure of the refusal's comment: an arrow on a value struct
+    // and novac's own tag for a variant the shell names.
+    assert(!c0.contains("_Option_Some)") || c0.contains("NOVA_TAG_Option_Some"), c0)
+    assert(!c0.contains("NOVAC_TAG_"), c0)
+    // The POINTER shape (a heap record): tagless, tested by `.value`.
+    ro (d1, c1) = compile_to_c("type Box { v int }\nfn boxed(f bool) -> Option[Box] {\n if f {\n  ro b = Box { v: 4 }\n  return Some(b)\n }\n None\n}\nfn main() {\n ro got = match boxed(true) {\n  Some(b) => b.v\n  None => 0\n }\n println(got)\n}", std)
+    assert(d1.len() == 0, messages(d1))
+    assert(c1.contains(".value != NULL)"), c1)
+    assert(c1.contains(".value == NULL)"), c1)
+    assert(!c1.contains("NOVAC_TAG_"), c1)
+}
+
+test "match on Result: the shell's heap instance, its tags and its union (match_applied_sum)" {
+    ro std = applied_sum_decls()
+    mut shell = InteropTable.new()
+    shell.add("nova_fn_3res4give")
+    ro (d0, c0) = compile_to_c_with("import std.res.{give}\nfn of(f bool) -> int => match give(f) {\n Ok(v) => v\n Err(_) => -1\n}\nfn main() {\n println(of(true))\n}", parse_decls(std), shell)
+    assert(d0.len() == 0, messages(d0))
+    // The family spelling of the instance: a GC pointer to `NovaRes_<T>_<E>`.
+    assert(c0.contains("NovaRes_nova_int_nova_str* "), c0)
+    assert(c0.contains("->tag == NOVA_TAG_Result_Ok)"), c0)
+    assert(c0.contains("->tag == NOVA_TAG_Result_Err)"), c0)
+    assert(c0.contains("->payload.Ok._0;"), c0)
+    assert(!c0.contains("NOVAC_TAG_"), c0)
+}
+
+test "match on an applied sum: the CONTROLS -- plain sums, other applied sums, coverage, foreign arms (match_applied_sum)" {
+    ro std = applied_sum_decls()
+    // CONTROL 1: a PLAIN sum keeps novac's own, module-qualified tags -- the
+    // applied-sum door must not take what is not an application.
+    ro (d0, c0) = compile_to_c("type Holder enum Vacant | Full(int)\nfn of(s Holder) -> int => match s {\n Full(v) => v\n Vacant => 0\n}\nfn main() {\n println(of(Full(7)))\n}", std)
+    assert(d0.len() == 0, messages(d0))
+    assert(c0.contains("NOVAC_TAG_"), c0)
+    assert(c0.contains("_Holder_Full)"), c0)
+    assert(!c0.contains("NOVA_TAG_Holder_Full"), c0)
+    // CONTROL 2: an applied sum the shell does NOT name per instance stays
+    // refused, ONCE, by name -- and the name is the sum's, not a fixed one.
+    ro (d1, _) = compile_to_c("fn of(o Outcome[int]) -> int => match o {\n Finished(v) => v\n Aborted => 0\n}\nfn main() {\n println(1)\n}", std)
+    assert(d1.len() == 1, messages(d1))
+    assert(messages(d1).contains("a `match` on an applied sum (`Outcome[int]`)"), messages(d1))
+    // Coverage is judged on an applied sum as on a plain one: `None` uncovered.
+    ro (d2, _) = compile_to_c("fn of(o Option[int]) -> int => match o {\n Some(v) => v\n}\nfn main() {\n println(1)\n}", std)
+    assert(d2.len() == 1, messages(d2))
+    assert(messages(d2).contains("leaves a variant uncovered"), messages(d2))
+    // ...and a catch-all covers it.
+    ro (d3, _) = compile_to_c("fn of(o Option[int]) -> int => match o {\n Some(v) => v\n _ => 0\n}\nfn main() {\n println(1)\n}", std)
+    assert(d3.len() == 0, messages(d3))
+    // A variant of ANOTHER sum in a match on an Option: refused by the arm rule.
+    ro (d4, _) = compile_to_c("fn of(o Option[int]) -> int => match o {\n Some(v) => v\n Ok(_) => 0\n None => 1\n}\nfn main() {\n println(1)\n}", std)
+    assert(d4.len() == 1, messages(d4))
+    assert(messages(d4).contains("a variant of a different sum"), messages(d4))
+}
+
+test "a type argument is read as a TYPE, not as a name: Option[[]int] is not Option[int] (match_applied_sum)" {
+    mut std = applied_sum_decls()
+    // The slice head and its `len`, as typeref_test.nv hands them.
+    std.push("module std.v\nexport type Vec[T] { n int }\nexport fn Vec[T] @len() -> int => 0\n")
+    // The payload of `Option[[]int]` is a slice: `len` is its method. When the
+    // argument was read as a name, the payload was `int` and this was "no such
+    // method", and `-> Option[[]int]` refused `Some(xs)` as `Option[Vec[int]]`.
+    ro (d0, _) = compile_to_c("fn wrap(xs []int) -> Option[[]int] => Some(xs)\nfn of(o Option[[]int]) -> int => match o {\n Some(xs) => xs.len()\n None => 0\n}\nfn main() {\n println(of(wrap([1, 2])))\n}", std)
+    assert(d0.len() == 0, messages(d0))
+    // CONTROL: a type that IS different is still refused -- the fix reads more
+    // types, it does not stop comparing them.
+    ro (d1, _) = compile_to_c("fn wrap(xs []int) -> Option[[]str] => Some(xs)\nfn main() {\n println(1)\n}", std)
+    assert(d1.len() == 1, messages(d1))
+}

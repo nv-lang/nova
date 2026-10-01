@@ -21,7 +21,7 @@ fn prelude_names(v Vec[int], o Option[str], r Result[int, str]) -> int {
     if o.is_none() { n += 1 }
     match r {
         Ok(_) => { n -= 1 }
-        Err(_) => {}
+        Err(_) => { n -= 2 }
     }
     n
 }

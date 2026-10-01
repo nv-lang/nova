@@ -1,0 +1,9 @@
+module hp
+
+fn first[T](xs []T) -> Option[T] => None
+
+fn main() {
+    ro v = [7, 8]
+    println(v.first() ?? 0)
+    println(first(v) ?? 0)
+}

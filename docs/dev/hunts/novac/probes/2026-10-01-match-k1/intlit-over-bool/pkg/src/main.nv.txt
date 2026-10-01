@@ -1,0 +1,9 @@
+fn g(b bool) -> int => match b {
+    1 => 10
+    _ => 20
+}
+
+fn main() {
+    println(g(true))
+    println(g(false))
+}

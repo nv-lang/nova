@@ -10,8 +10,10 @@ module applied_sum_arm.pos_1
 // APPLICATION: `Some` is registered under the generic `Option` and a scrutinee
 // of type `Option[int]` is a different TyId, which the door compared directly.
 //
-// Its pair `neg_1.nv` holds the applied case, which is refused BY NAME now
-// instead of being described wrongly.
+// Its pair `neg_1.nv` holds the applied case novac still cannot spell
+// (`Outcome[int]`), refused BY NAME instead of being described wrongly; the
+// applied cases it CAN spell -- `Option`, `Result` -- live in
+// novac/fixtures/match_applied_sum/ since 2026-10-01.
 
 type Box enum Empty | Full(int)
 

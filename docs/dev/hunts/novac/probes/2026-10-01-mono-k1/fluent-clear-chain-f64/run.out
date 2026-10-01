@@ -1,0 +1,23 @@
+=== PACKAGE
+./src/main.nv
+=== ORACLE: nova build src/main.nv, run
+oracle build rc=0
+oracle run rc=0
+true
+=== SUBJECT: novac check (no NOVAC_SELF_PATH: single file)
+novac check rc=0
+=== SUBJECT: novac emit
+novac emit rc=0
+--- C lines matching: novac_fn_clear|_novac_self->len. = 
+11951:static Nova_Vec____nova_f64* novac_fn_clear__m_Vec_of_nova_f64__to_Vec_of_nova_f64__nova_f64(Nova_Vec____nova_f64* _novac_self);
+11957:    nova_print_bool(novac_fn_is_empty__Vec_of_nova_f64__to_nova_bool__nova_f64(novac_fn_clear__m_Vec_of_nova_f64__to_Vec_of_nova_f64__nova_f64(v)));
+11964:static Nova_Vec____nova_f64* novac_fn_clear__m_Vec_of_nova_f64__to_Vec_of_nova_f64__nova_f64(Nova_Vec____nova_f64* _novac_self) {
+11965:    (_novac_self->len) = ((nova_int)0LL);
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+<repo>/docs/dev/hunts/novac/probes/2026-10-01-mono-k1/fluent-clear-chain-f64/../run-probe.sh: line 87: 298799 Segmentation fault         "$T/n.exe" > "$T/n.run" 2>&1
+novac run rc=139
+=== VERDICT: DIFFERENT stdout (< oracle, > Carina)
+1d0
+< true

@@ -1,0 +1,17 @@
+// `-> @` whose EXPRESSION body is a `match` yielding a value of the
+// receiver's type that is not the receiver: D409 -- the receiver is the only
+// return of a `-> @` method.
+type Ctr {
+    n int
+}
+
+fn Ctr mut @pick(mut o Ctr, k int) -> @ => match k {
+    1 => o
+    _ => o
+}
+
+fn main() {
+    mut c = Ctr { n: 4 }
+    mut d = Ctr { n: 77 }
+    println(c.pick(d, 1).n)
+}

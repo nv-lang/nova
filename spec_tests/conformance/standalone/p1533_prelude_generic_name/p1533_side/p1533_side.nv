@@ -1,0 +1,18 @@
+module p1533_prelude_generic_name.p1533_side
+
+// The side module of `p1533_prelude_generic_name.nv`: its own value record named
+// `Outcome`, the name of the prelude's generic sum `Outcome[T]` (D455), built by
+// an ANONYMOUS literal whose target is the function's return type -- the shape
+// of claude-limits `usage/outcome.nv` -- and as a plain fn body.
+
+export type Outcome value {
+    ro message str
+    ro status int
+}
+
+export fn Outcome.new(message str, status int) -> Outcome =>
+    { message, status }
+
+export fn of_status(status int) -> Outcome => Outcome.new("s", status)
+
+export fn direct(status int) -> Outcome => { message: "d", status }

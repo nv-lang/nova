@@ -1,0 +1,32 @@
+=== PACKAGE
+./src/main.nv
+=== ORACLE: nova build src/main.nv, run
+oracle build rc=0
+oracle run rc=0
+side 10
+2
+side 30
+6
+=== SUBJECT: novac check (no NOVAC_SELF_PATH: single file)
+novac check rc=0
+=== SUBJECT: novac emit
+novac emit rc=0
+--- C lines matching: novac_fn_
+11955:static nova_int novac_fn_side__nova_int__to_nova_int(nova_int x) {
+11965:static Nova_Ctr* novac_fn_m__m_Ctr__nova_int__to_Ctr(Nova_Ctr* _novac_self, nova_int k) {
+11970:    novac_fn_side__nova_int__to_nova_int(((nova_int)10LL));
+11974:    novac_fn_side__nova_int__to_nova_int(((nova_int)20LL));
+11979:static Nova_Ctr* novac_fn_i__m_Ctr__nova_int__to_Ctr(Nova_Ctr* _novac_self, nova_int k) {
+11982:    novac_fn_side__nova_int__to_nova_int(((nova_int)30LL));
+11984:    novac_fn_side__nova_int__to_nova_int(((nova_int)40LL));
+11992:    nova_print_int((novac_fn_m__m_Ctr__nova_int__to_Ctr(c, ((nova_int)1LL))->n));
+11994:    nova_print_int((novac_fn_i__m_Ctr__nova_int__to_Ctr(c, ((nova_int)3LL))->n));
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+side 10
+2
+side 30
+6
+=== VERDICT: SAME stdout

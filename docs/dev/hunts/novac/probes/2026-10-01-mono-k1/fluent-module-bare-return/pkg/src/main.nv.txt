@@ -1,0 +1,11 @@
+module hp
+
+import ./geo
+
+fn main() {
+    mut v = [1, 2, 3]
+    ro w = v.mark_if(false)
+    println(w.len())
+    ro u = v.mark_if(true)
+    println(u.len())
+}

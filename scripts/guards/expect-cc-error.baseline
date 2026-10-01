@@ -27,4 +27,9 @@
 #   `plan103_1_ordering_construct_with_payload_neg` — не задают подстроку
 #   вовсе и зеленеют на ЛЮБОМ отказе Си. Их стоит брать первыми: они не
 #   слабее прочих, они не утверждают ничего.
-cc_error_fixtures=8
+# 2026-10-01 — 8 -> 7 (облачная сессия, ветка p1517-variant-ctor-check, №1517).
+#   `neg/plan103_1_ordering_construct_with_payload_neg` переведена на
+#   `EXPECT_COMPILE_ERROR E_VARIANT_CTOR_ARITY`: число значений payload варианта
+#   теперь судит чекер, и `MemOrdering.Acquire(42)` отказывает в `check`.
+#   Перевод — починкой компилятора, не правкой маркера.
+cc_error_fixtures=7

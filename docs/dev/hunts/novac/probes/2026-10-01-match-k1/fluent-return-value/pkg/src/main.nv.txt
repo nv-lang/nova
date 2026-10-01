@@ -1,0 +1,18 @@
+// D409 rule 2: returning anything but the receiver from a `-> @` body is an
+// error. Here `return 5` stands in a `-> @` body.
+type Ctr {
+    n int
+}
+
+fn Ctr mut @bump(k int) -> @ {
+    @n = @n + k
+    if k > 100 {
+        return 5
+    }
+}
+
+fn main() {
+    mut c = Ctr { n: 1 }
+    println(c.bump(2).n)
+    println(c.bump(200).n)
+}

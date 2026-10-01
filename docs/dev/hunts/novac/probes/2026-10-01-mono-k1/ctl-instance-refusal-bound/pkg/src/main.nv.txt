@@ -1,0 +1,5 @@
+fn main() {
+    ro d = [1.5, 2.5]
+    ro f = d.last()
+    println(f.is_some())
+}

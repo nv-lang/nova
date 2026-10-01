@@ -1,0 +1,30 @@
+=== PACKAGE
+./src/main.nv
+=== ORACLE: nova build src/main.nv, run
+oracle build rc=0
+oracle run rc=0
+202
+202
+2
+-1
+=== SUBJECT: novac check (no NOVAC_SELF_PATH: single file)
+novac check rc=0
+=== SUBJECT: novac emit
+novac emit rc=0
+--- C lines matching: _novac_matched_t[0-9]+ = 
+11985:    int _novac_matched_t0 = 0;
+11988:    _novac_matched_t0 = 1;
+11992:    _novac_matched_t0 = 1;
+11996:    _novac_matched_t0 = 1;
+12009:    int _novac_matched_t0 = 0;
+12012:    _novac_matched_t0 = 1;
+12015:    _novac_matched_t0 = 1;
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+202
+202
+2
+-1
+=== VERDICT: SAME stdout

@@ -1,0 +1,24 @@
+=== PACKAGE
+./src/geo/geo.nv
+./src/main.nv
+=== ORACLE: nova build src/main.nv, run
+oracle build rc=0
+oracle run rc=0
+6
+=== SUBJECT: novac check (NOVAC_SELF_PATH=<pkg>/src)
+novac check rc=0
+=== SUBJECT: novac emit
+novac emit rc=0
+--- C lines matching: weight
+11951:static nova_int novac_fn_hp_weight__nova_int__to_nova_int(nova_int x) {
+11965:    return novac_fn_hp_weight__nova_int__to_nova_int(Vec____nova_int_method_len(_novac_self));
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+3000
+=== VERDICT: DIFFERENT stdout (< oracle, > Carina)
+1c1
+< 6
+---
+> 3000
