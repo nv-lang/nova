@@ -38515,21 +38515,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 //   - NaN → 0
                 //   - ±Infinity → границы
                 //
-                // Plan 08 Ф.5: as-cast restrictions для char/byte/bool.
-                // По D54 запрещены: int as char (use char.try_from), int as bool
-                // (use n != 0), char as byte (use byte.try_from), str ↔ T (use
-                // str.from / T.try_from). Detection через original Nova-имя
-                // target'а (TypeRef::Named path), не через C-имя — char и int
-                // имеют одинаковый C-тип nova_int.
+                // The D54 table of forbidden pairs is the CHECKER's (registry #1547,
+                // types/as_cast_rules.rs): `nova check` refuses them, the emitter
+                // only lowers what passed.
                 let target_nova = if let TypeRef::Named { path, .. } = ty {
                     path.last().cloned()
                 } else { None };
                 let inner_c_ty_for_check = self.infer_expr_c_type(inner);
-                // Получим Nova-имя источника для restrictions check.
-                let src_nova = Self::debt_nova_type_name_from_c(&inner_c_ty_for_check);
-                if let Some(tgt_nova) = target_nova.as_deref() {
-                    Self::check_as_cast_allowed(&src_nova, tgt_nova, &inner.kind, self.unsafe_depth > 0)?;
-                }
                 let target_c = self.type_ref_to_c(ty)
                     .map_err(|e| format!("as-cast type error: {}", e))?;
                 // Plan 180: `None as Option[T]` — emit the target-typed
@@ -38559,11 +38551,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     return Ok(self.emit_any_box(&inner_c_ty, &v));
                 }
 
-                // Plan 70.5 Q2: int → uint saturation (neg → 0).
-                // Only for explicit `uint` target (not u64 — that bit-casts).
-                if inner_c_ty == "nova_int" && target_nova.as_deref() == Some("uint") {
-                    return Ok(format!("nova_int_to_uint({})", v));
-                }
                 let src_suffix = match inner_c_ty.as_str() {
                     "nova_f64" => Some("f64"),
                     "nova_f32" => Some("f32"),
@@ -58007,110 +57994,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     ///
     /// Conservative: если src не определён (void*) или target не в
     /// special-cases — пропускаем (legacy backward-compat).
-    fn check_as_cast_allowed(
-        src_nova: &str,
-        tgt_nova: &str,
-        inner_kind: &ExprKind,
-        is_unsafe: bool,
-    ) -> Result<(), String> {
-        // D54 (amended): inside `unsafe { }` all banned casts are allowed —
-        // programmer takes responsibility for value correctness.
-        if is_unsafe {
-            return Ok(());
-        }
-        // Спецслучай: CharLit. inner это литерал 'A'/'B'/etc — он уже
-        // имеет nova_int представление, но семантически это char.
-        // **Char-literals разрешены к as-cast в любой numeric** —
-        // программист видит codepoint буквально, range-check не нужен.
-        // `'A' as byte`, `'A' as int`, `'A' as u8` — все OK.
-        if matches!(inner_kind, ExprKind::CharLit(_)) {
-            return Ok(());
-        }
-        // Plan 14 Ф.7: IntLit → char для compile-time-known литералов.
-        // По D54 `int as char` запрещён (suggested `char.try_from(n)?`),
-        // но для **литерала** в валидном Unicode-диапазоне range-check
-        // тривиален и checker может его выполнить статически:
-        //   - n ∈ [0, 0x10FFFF]
-        //   - n ∉ [0xD800, 0xDFFF] (surrogate range — invalid scalar)
-        // Off-range литерал → compile error с точным сообщением (вместо
-        // generic «use try_from»).
-        if let ExprKind::IntLit(n) = *inner_kind {
-            if tgt_nova == "char" {
-                if n < 0 || n > 0x10FFFF {
-                    return Err(format!(
-                        "`as`-cast `{} as char` запрещён: codepoint 0x{:X} \
-                        вне диапазона U+0..=U+10FFFF.",
-                        n, n
-                    ));
-                }
-                if (0xD800..=0xDFFF).contains(&n) {
-                    return Err(format!(
-                        "`as`-cast `{} as char` запрещён: codepoint U+{:04X} \
-                        в surrogate range (U+D800..=U+DFFF) — не valid Unicode scalar.",
-                        n, n
-                    ));
-                }
-                return Ok(());
-            }
-        }
-        let src = src_nova;
-
-        // Запрещённые пары:
-        let banned: &[(&str, &str, &str)] = &[
-            // (src, tgt, suggestion)
-            ("int",  "char", "use `char.from(n)?` (range-checked, returns Result[char, _])"),
-            ("i32",  "char", "use `char.from(n)?`"),
-            ("i64",  "char", "use `char.from(n)?`"),
-            ("u32",  "char", "use `char.from(n)?`"),
-            ("u64",  "char", "use `char.from(n)?`"),
-            ("char", "u8", "use `u8.try_from(c)?` (fails if codepoint > 0xFF)"),
-            ("int",  "bool", "use explicit comparison (`n != 0` for truthy-int)"),
-            ("i8",   "bool", "use `n != 0`"),
-            ("i16",  "bool", "use `n != 0`"),
-            ("i32",  "bool", "use `n != 0`"),
-            ("i64",  "bool", "use `n != 0`"),
-            ("u8",   "bool", "use `n != 0`"),
-            ("u16",  "bool", "use `n != 0`"),
-            ("u32",  "bool", "use `n != 0`"),
-            ("u64",  "bool", "use `n != 0`"),
-            ("f64",  "bool", "use `f != 0.0`"),
-            ("f32",  "bool", "use `f != 0.0`"),
-            ("str",  "int",  "use `int.try_from(s)?` (parses decimal)"),
-            ("str",  "i32",  "use `i32.try_from(s)?`"),
-            ("str",  "f64",  "use `f64.try_from(s)?`"),
-            ("str",  "bool", "use `bool.try_from(s)?`"),
-            ("int",  "str",  "use `n.to_str()`"),
-            ("f64",  "str",  "use `f.to_str()`"),
-            ("bool", "str",  "use `b.to_str()`"),
-            ("char", "str",  "use `c.to_str()` (UTF-8 encode)"),
-            // Plan 134: *() cast restrictions (replaces `ptr` — Plan 134).
-            // Allowed: *() ↔ {u64, i64, int} (для integer-storage).
-            // Banned: *() ↔ {str, bool, f32, f64, char}.
-            // NOTE: target_nova for *() = TypeRef::Pointer(Unit) → target_nova=None
-            // so these only fire when src_nova="*()" (from debt_nova_type_name_from_c("void*")).
-            ("*()",  "str",  "[E_PTR_CAST_INVALID_TARGET] `*() as str` запрещён: opaque pointer не имеет string-representation. Если нужно diagnostic-print — cast через u64: `(p as u64) as str`"),
-            ("*()",  "bool", "[E_PTR_CAST_INVALID_TARGET] `*() as bool` запрещён: используйте `p == null ptr` / `p != null ptr` для null check"),
-            ("*()",  "f64",  "[E_PTR_CAST_INVALID_TARGET] `*() as f64` запрещён: pointer→float не имеет semantic meaning"),
-            ("*()",  "f32",  "[E_PTR_CAST_INVALID_TARGET] `*() as f32` запрещён"),
-            ("*()",  "char", "[E_PTR_CAST_INVALID_TARGET] `*() as char` запрещён"),
-            ("*()",  "i8",   "[E_PTR_CAST_INVALID_TARGET] `*() as i8` запрещён: narrows pointer; используйте `as i64` или `as u64`"),
-            ("*()",  "i16",  "[E_PTR_CAST_INVALID_TARGET] `*() as i16` запрещён"),
-            ("*()",  "i32",  "[E_PTR_CAST_INVALID_TARGET] `*() as i32` запрещён"),
-            ("*()",  "u8",   "[E_PTR_CAST_INVALID_TARGET] `*() as u8` запрещён"),
-            ("*()",  "u16",  "[E_PTR_CAST_INVALID_TARGET] `*() as u16` запрещён"),
-            ("*()",  "u32",  "[E_PTR_CAST_INVALID_TARGET] `*() as u32` запрещён"),
-        ];
-        for (s, t, hint) in banned {
-            if &src == s && &tgt_nova == t {
-                return Err(format!(
-                    "`as`-cast `{} as {}` запрещён: {}.",
-                    src, tgt_nova, hint
-                ));
-            }
-        }
-        Ok(())
-    }
-
     /// Plan 08 Ф.4: strict bool-check для `if cond` / `while cond`.
     /// Возвращает Err если `cond_ty` ОЧЕВИДНО non-bool (numeric/string/...).
     /// Type-neutral (`void*`, unknown) — пропускаем (conservative).
