@@ -21,6 +21,7 @@ import ../tree.{Node, NodeKind}
 import ../types.{TyId, no_ty, is_ty, Interner}
 import ../sem.{FnRow, raw_row, branch_children, ty_source_name, prim_row_of, LitArg}
 import ../sem.{Ctx, expr_leaf_name, is_value_record, ret_is_unit, is_never_ty}
+import ../sem.{coerce_row, coerce_shell_symbol, mode_admits}
 import ../builtins.{TypeKind, RECV_BINDING}
 
 /// A written `-> T` whose type the collector's reference door could not read
@@ -204,6 +205,12 @@ fn Checker mut @judge_return(e Node, t0 TyId) -> () {
         @judge_ro_param_return(e, t)
         return
     }
+    // A DECLARED CONVERSION reaches the result too (D429 R2: "return-position
+    // (incl. last-expr)" is one of the coercible positions; R9: the canon there
+    // is the BARE value -- `sb` for a `-> str`, and the lint calls an explicit
+    // `.into_str()` redundant). Taken only when the inserted call names a C
+    // symbol that exists; otherwise the refusal below stands.
+    if @coerce_return(e, t) { return }
     ro from = ty_source_name(@ctx, t)
     ro to = ty_source_name(@ctx, @ret_expect)
     ro msg = if int_narrows(@ctx.tys, t, @ret_expect) {
@@ -332,4 +339,42 @@ fn Checker @holds_ptr(t TyId) -> bool {
         if @holds_ptr(@ctx.tys.arg(t, i)) { return true }
     }
     false
+}
+
+/// The return door's coercing stage (D429): a `#coerce` pair from the value's
+/// type to the declared return makes the result legal, and the method is
+/// RECORDED at the value for the emitter (`record_coercion`). The inserted call
+/// must name a symbol that exists -- a non-generic method whose body this unit
+/// emits, or one the shell carries (`StringBuilder @into_str`, INTEROP until
+/// novac emits the prelude) -- the same rule the argument stage keeps
+/// (`@coerces_into`, check/calls.nv).
+fn Checker mut @coerce_return(e Node, t TyId) -> bool {
+    match coerce_row(@ctx, t, @ret_expect) {
+        None => false
+        Some(via) => {
+            ro fd = @ctx.fns.rows[raw_row(via)]
+            ro ours = @ctx.fns.compiles_body(via) && fd.tparam_cnt == 0
+            if !ours && !@ctx.interop.has(coerce_shell_symbol(@ctx, via)) { return false }
+            // THE FINALIZE LANE MOVES (D429 R2): a `consume` receiver takes the
+            // value's ownership, so the source must be an owned temporary or a
+            // `consume` binding. A `ro` parameter or binding is refused -- the
+            // oracle says E_READONLY_COERCE (measured 2026-10-01 on `fn conv(m
+            // Meters) -> Feet => m`); a `mut` one is refused too, the narrower
+            // side, since a move out of it is not what the binding promised.
+            ro recv = @ctx.fns.params[fd.param_off]
+            if !mode_admits(recv.mode, arg_class(e, @scope)) {
+                @report_first_leaf_of([]Node.of(e),
+                    "this value reaches the declared return only through the `#coerce` method `${fd.name}`, whose receiver takes ownership -- return an owned temporary or a `consume` binding (D429 R2; the oracle's E_READONLY_COERCE)")
+                return true
+            }
+            @chan.record_coercion(e.id_of(), via)
+            // A body of OURS must be REACHED: the call is inserted, not written,
+            // so mono learns of it from the list of calls the language makes
+            // with none written -- the same list a vector literal's `push` is on.
+            if ours { @chan.record_wanted(via, []TyId.new()) } else {
+                // The shell's symbol: nothing of ours to reach.
+            }
+            true
+        }
+    }
 }

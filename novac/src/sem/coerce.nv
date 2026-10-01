@@ -409,3 +409,24 @@ export fn harvest_coerce_pair(fns FnTable, mut coerces []CoercePair, via_row FnR
     coerces.push(CoercePair { from_id: fns.params[fd.param_off].type_id, to_id: fd.ret_id, via_row })
 }
 
+/// The C symbol a SHELL-carried `#coerce` method is called by, when the return
+/// door inserts it (D429 R7; check/return_rules.nv `@coerce_return`). INTEROP:
+/// the shell spells a `consume` receiver `Nova_<T>_consume_<name>` --
+/// `Nova_StringBuilder_consume_into_str`, the symbol the interpolation door
+/// already calls (emit_interp.nv) -- and every other receiver through
+/// `c_method_symbol`. The consume spelling lives here, beside the one pair
+/// that needs it, because `c_shell_method` (mangle.nv) knows only `_method_`:
+/// an explicit `sb.into_str()` is refused for that reason ("the shell carries
+/// no `into_str`"), which is the mangling door's to fix. Goes the day novac
+/// emits the prelude.
+/// The receiver's type is the pair's SOURCE (`harvest_coerce_pair`), so the
+/// symbol is spelled from the row alone -- the converted node needs no type of
+/// its own in the channel.
+export fn coerce_shell_symbol(ctx Ctx, via FnRow) -> str {
+    ro fd = ctx.fns.rows[raw_row(via)]
+    ro t = ctx.fns.params[fd.param_off].type_id
+    if ctx.fns.params[fd.param_off].mode == ParamMode.ModeConsume {
+        return "Nova_${ty_source_name(ctx, t)}_consume_${fd.name}"
+    }
+    c_method_symbol(ctx, t, fd.name)
+}
