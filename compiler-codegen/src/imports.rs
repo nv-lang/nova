@@ -1429,6 +1429,9 @@ pub fn resolve_imports_inline_ex(
         module.attrs.push(attr);
     }
 
+    // Registry #1444: a type alias of an import is the importing file's name.
+    crate::import_alias::rewrite_type_aliases(module);
+
     Ok(())
 }
 
@@ -2267,14 +2270,19 @@ fn resolve_one(
             // селективный фильтр самого caller'а (Plan 42.17 Ф.6): если
             // caller написал `import F.{a}` — он получает только `a` из
             // re-export'ов F, не другие re-exported items.
-            // Note: rename caller'а к re-exported items НЕ применяется —
-            // re-exported item уже в merged_items под именем re-export'а,
-            // переименовать его здесь без рассинхрона с codegen-scope
-            // нельзя. Rename работает для прямых (не re-exported) imports.
+            // #1444: алиас re-export'а (`export import m.{x as y}`) —
+            // публичное имя фасада; объявление `x` не переименовывается,
+            // `crate::import_alias` переписывает `y` в файлах, импортирующих
+            // его из фасада.
             if sub.is_export {
                 for n in &sub_visible {
                     if import_selects(imp, n) {
                         visible_acc.insert(n.clone());
+                        // #1444: a name re-exported as `x as y` keeps its
+                        // declaration `x`, which the caller's rewritten `y` names.
+                        if let Some(it) = sub.items.iter().flatten().find(|it| it.alias.as_ref() == Some(n)) {
+                            visible_acc.insert(it.name.clone());
+                        }
                     }
                 }
             }
@@ -2287,9 +2295,8 @@ fn resolve_one(
             pf.imported_item_names = peer_visible;
         }
 
-        // Plan 42.09: selective rename map. Если import имеет
-        // `.{A as B}` — после merge item с name `A` переименовывается
-        // в `B` в merged scope.
+        // Plan 42.09: selective alias map `.{A as B}`. #1419/#1444: `B` is
+        // what the importing file sees; the item `A` itself is not renamed.
         let rename_map: std::collections::HashMap<String, String> =
             if let Some(items) = &imp.items {
                 items.iter()
@@ -2352,31 +2359,15 @@ fn resolve_one(
                     // вызывать приватный helper из того же модуля).
                     // is_export + selective list влияют на visibility,
                     // но НЕ на codegen-scope.
-                    // Registry 221.1 #1419: a fn/const alias (`{f as g}`) is the
-                    // IMPORTING file's name for `f`, not a new name of the
-                    // declaration -- renaming it here broke every call `m` makes
-                    // to its own `f` (undefined symbol) and every other importer.
-                    // The declaration merges unchanged; `alpha_rename` rewrites
-                    // `g` to `f` in the importing file and marks the reference
-                    // (`Module::import_alias_refs`), and the checker resolves it
-                    // to the imported module's `f`. A TYPE alias still renames
-                    // the declaration (type positions are not rewritten yet), and
-                    // so does an `export import` alias (a facade's public name).
-                    let is_type = matches!(item, Item::Type(_)) || imp.is_export;
-                    let final_name = match rename_map.get(&item_name) {
-                        Some(new_name) if is_type => {
-                            merged_items.push(rename_item(item, new_name.clone()));
-                            new_name.clone()
-                        }
-                        Some(alias) => {
-                            merged_items.push(item);
-                            alias.clone()
-                        }
-                        None => {
-                            merged_items.push(item);
-                            item_name.clone()
-                        }
-                    };
+                    // Registry 221.1 #1419/#1444: an alias (`{f as g}`, `{T as U}`,
+                    // and a re-export's `export import m.{f as g}`) is the
+                    // IMPORTING file's name for the declaration, not a new name of
+                    // it -- renaming it here broke every use `m` makes of its own
+                    // `f`/`T` and every other importer. The declaration merges
+                    // unchanged; `crate::import_alias` says who rewrites `g` back
+                    // to `f` in the files that see the alias.
+                    merged_items.push(item);
+                    let final_name = rename_map.get(&item_name).cloned().unwrap_or_else(|| item_name.clone());
                     // Plan 81 Ф.1: виден caller'у если модуль не использует
                     // явную экспорт-аннотацию (!module_has_exports) ИЛИ
                     // сам item помечен export (is_export). Приватные items
@@ -2391,9 +2382,9 @@ fn resolve_one(
                         // for the dedup path in visited map.
                         module_exports_cache.push(item_name.clone());
                         if import_selects(imp, &item_name) {
-                            // #1419: after the rewrite the importing file names
-                            // an aliased fn/const by its declared name.
-                            if final_name != item_name && !is_type {
+                            // #1419/#1444: after the rewrite the importing file
+                            // names an alias by its declared name.
+                            if final_name != item_name {
                                 visible_acc.insert(item_name.clone());
                             }
                             visible_acc.insert(final_name);
@@ -2752,26 +2743,6 @@ fn collect_root_peers(
     }
     peers.sort();
     Some(peers)
-}
-
-/// Plan 42.09: rename item (Type/Fn/Const) при selective re-import.
-/// `import X.{A as B}` → A in module X становится B в importing module.
-fn rename_item(item: Item, new_name: String) -> Item {
-    match item {
-        Item::Type(mut t) => {
-            t.name = new_name;
-            Item::Type(t)
-        }
-        Item::Fn(mut f) => {
-            f.name = new_name;
-            Item::Fn(f)
-        }
-        Item::Const(mut c) => {
-            c.name = new_name;
-            Item::Const(c)
-        }
-        other => other,
-    }
 }
 
 /// Plan 42 правило L: suggest module name через scan parent dir.

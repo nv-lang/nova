@@ -1,0 +1,47 @@
+// EXPECT_COMPILE_ERROR E_MISSING_FIELD_IN_LITERAL
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 #1096: a record literal without a declared (required) field
+// compiled, and the field stayed uninitialised -- garbage in a `value` record
+// with `[4]u8` (`digits[0] = 240`, 3 runs of 3), zeros in `[8]u8`, an empty
+// `str`. #1142 closed the named literal of a plain record
+// (`neg_record_missing_field.nv`); the other doors -- the ANONYMOUS literal typed
+// by its position (`ro u User = { id: 2 }`, D52 example "missing field `name`"),
+// the record variant of a sum, `Self { .. }` -- stayed open. Record fields have
+// no defaults (`RecordField` carries none), so every declared field is required;
+// a spread (D60) takes the rest from its donor (positive half).
+module neg.p1448_record_missing_field_neg
+
+type P1448Digits value { tag int, digits [4]u8 }
+type P1448User { id u64, name str }
+type P1448Shape enum P1448Circle { r int } | P1448Sq { side int, name str }
+type P1448Hold { user P1448User }
+
+fn p1448_show(u P1448User) -> str => u.name
+
+fn p1448_make() -> P1448User {
+    // nova:expect E_MISSING_FIELD_IN_LITERAL -- return position: `name` is missing
+    { id: 1 }
+}
+
+fn P1448Digits @retag() -> P1448Digits {
+    // nova:expect E_MISSING_FIELD_IN_LITERAL -- `Self { .. }` without `digits`
+    Self { tag: 2 }
+}
+
+fn main() {
+    // nova:expect E_MISSING_FIELD_IN_LITERAL -- the #1096 carrier, anonymous: `digits [4]u8` would stay garbage
+    ro d P1448Digits = { tag: 1 }
+    // nova:expect E_MISSING_FIELD_IN_LITERAL -- the D52 example (02-types.md): `ro u User = { id: 2 }`
+    ro u P1448User = { id: 2 }
+    // nova:expect E_MISSING_FIELD_IN_LITERAL -- a record variant of a sum without `name`
+    ro sq = P1448Sq { side: 1 }
+    // nova:expect E_MISSING_FIELD_IN_LITERAL -- argument position
+    println(p1448_show({ id: 3 }))
+    // nova:expect E_MISSING_FIELD_IN_LITERAL -- array element
+    ro us []P1448User = [{ id: 4 }]
+    // nova:expect E_MISSING_FIELD_IN_LITERAL -- nested: the anonymous literal inside a named one
+    ro h = P1448Hold { user: { id: 5 } }
+    println("${d.tag}${u.id}${us.len()}${h.user.id}${p1448_make().id}")
+    match sq { P1448Sq { side, name } => println("${side}${name}"), _ => println("c") }
+}

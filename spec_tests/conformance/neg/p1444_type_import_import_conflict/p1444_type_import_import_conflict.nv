@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_IMPORT_NAME_CONFLICT
+//
+// Registry 221.1 #1444, D29 for TYPES, the other half of the sentence: an
+// imported type that equals ANOTHER import of the same file.
+module neg.p1444_type_import_import_conflict
+
+import ./p1444ta.{P1444Pick}
+// nova:expect E_IMPORT_NAME_CONFLICT -- a second import brings another type `P1444Pick`; D29 wants one of them renamed with `as`
+import ./p1444tb.{P1444Pick}
+
+fn pick_a(p P1444Pick) -> int => 1
+
+fn main() Io -> () {
+    print("x")
+}

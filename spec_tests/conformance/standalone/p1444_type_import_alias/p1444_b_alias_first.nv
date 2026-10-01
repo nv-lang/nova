@@ -1,0 +1,38 @@
+// EXPECT_STDOUT 5|3|4|2|3|4|10
+// EXPECT_STDOUT 3|0|9|4
+//
+// Registry 221.1 #1444, the other import order -- see `p1444_a_peer_first.nv`.
+// The aliased import comes FIRST and merges `ta_src` (measured before the fix:
+// CODEGEN-FAIL `[E_UNKNOWN_TYPE] unknown type 'Box' in record literal` in
+// `ta_src` -- its own declaration had been renamed to `Crate`).
+module p1444_type_import_alias.p1444_b_alias_first
+
+import ./ta_src.{Box as Crate, Shape as Form, mk, area, src_twice}
+import ./ta_peer.{peer_mk, peer_get, peer_area}
+
+fn get(c Crate) -> int => c.v
+
+fn make(v int) -> Crate => { v }
+
+fn Crate @double() -> int => @v * 2
+
+fn side(f Form) -> int {
+    match f {
+        Form.Dot => 0
+        Form.Sq(n) => n
+    }
+}
+
+fn main() Io -> () {
+    ro c Crate = mk(5)
+    ro d = Crate { v: 4 }
+    ro u = Crate.unit()
+    ro xs []Crate = [c, d, make(6)]
+    ro o Option[Crate] = Some(d)
+    ro n = match o {
+        Some(b) => b.get()
+        None => 0
+    }
+    print("${get(c)}|${peer_get(peer_mk(2))}|${d.get()}|${u.double()}|${xs.len()}|${n}|${src_twice(c)}")
+    print("${side(Form.Sq(3))}|${side(Form.Dot)}|${area(Form.Sq(3))}|${peer_area(3)}")
+}
