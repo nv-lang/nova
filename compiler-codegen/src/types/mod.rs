@@ -26998,8 +26998,13 @@ impl<'a> TypeCheckCtx<'a> {
             // const (types/consts are disjoint Nova DECL namespaces) — a real
             // static/type-namespace Path (`Monotonic.now()`, `Channel.new()`) never
             // collides with a name present in `const_types`.
+            // #1489: any module value is such a receiver -- unannotated, a module
+            // `ro`, an imported one (`const_names.rs`); `const_types` (annotated
+            // consts, CU-wide) stays the fallback for a name the door finds ambiguous.
             ExprKind::Path(parts) if parts.len() == 2 => {
-                let rt = self.const_types.get(parts[0].as_str())?.clone();
+                let rt = self
+                    .module_value_receiver_type(&parts[0], func.span, scope)
+                    .or_else(|| self.const_types.get(parts[0].as_str()).cloned())?;
                 (rt, &parts[1], None)
             }
             // [M-assoc-const-chained-method-call-p67] (окно №73): `Type.CONST.method()`
