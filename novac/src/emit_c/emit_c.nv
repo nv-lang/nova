@@ -140,7 +140,6 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
     consume e = Emitter { src_name, ctx, out, reach, next_tmp: 0, lo: Lowerer { ctx, out, ir: FnBuilder.new(no_ty()) },
                           lit_tmp: lt, body: StringBuilder.new(), hlits: []Node.new(), cur_lit: 0 - 1,
                           spawns: []Node.new(), cur_spawn: 0 - 1,
-                          fres: FieldIndex.build(ctx.fields),
                           // NAMED explicitly, and the reason is registry #901:
                           // the ORACLE accepts a constructor that omits a field
                           // and zero-fills it in silence, so a field forgotten
