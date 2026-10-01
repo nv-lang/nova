@@ -1,0 +1,11 @@
+module cast_numeric.neg_7
+
+// ONE seeded cause: a bool cast to a number. D54 lists no such conversion,
+// and "arbitrary types without an explicit rule" is its error. The ORACLE
+// accepts this file and prints 1 -- a divergence, named in
+// REPORT-carina-cast.md.
+// NOVAC_EXPECT `bool as u8`
+fn main() {
+    ro t = true
+    println(t as u8)
+}

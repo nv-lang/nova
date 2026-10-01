@@ -1,0 +1,100 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: none -- the C of a numeric cast is the RUNTIME's and the oracle's
+// (compiler-codegen/src/codegen/emit_c.rs, the `ExprKind::As` arm, plan 07):
+// a C cast for every integer and float pair, and the saturating helper
+// `nova_<f32|f64>_to_<int row>` of `nova_rt/cast.h` for a float into an
+// integer, because a C cast there is undefined out of range and D54 defines
+// it (saturation, NaN -> 0). This file repeats that spelling as interop.
+// Role: emission of `expr as T` (D54): a newtype's unwrap (the operand, free),
+//   a pointer cast, and the cast between two primitives the checker admitted
+//   (check/cast_pairs.nv).
+// Used by: emit_expr.nv (`@emit_expr`'s Cast arm).
+// Guarded by: the fixtures novac/fixtures/cast_numeric (byte-for-byte against
+//   the oracle through check-novac-differential.sh) and
+//   nova test novac/src/pipeline/cast_test.nv.
+
+module novac.emit_c
+
+import ../tree.{Node}
+import ../sem.{branch_children, c_type, prim_row_of}
+import ../builtins.{BuiltinType, PrimFamily}
+import ../types.{is_ty}
+import ../diag.{ice}
+
+/// A cast. What arrives is what the checker admitted, and the checker recorded
+/// the operand's type beside the target's for every primitive pair.
+///
+/// - A POINTER target is a C cast (`0 as *mut T`, 274.11 E.10 step 4c-2).
+/// - Two primitives of different types: a float into an integer goes through
+///   the runtime's saturating helper (D54: out of range saturates, NaN is 0);
+///   every other pair is a C cast, which IS D54's semantics for them -- the
+///   low bits of an integer (wraparound, bit pattern, sign reinterpretation:
+///   one operation, the 2026-09-04 amendment), IEEE rounding between floats,
+///   the nearest float for an integer, a char's codepoint.
+/// - Anything else -- a newtype unwrapped, a primitive into itself -- is FREE:
+///   the value is already the representation, and C needs no cast between a
+///   typedef and its underlying type.
+fn Emitter mut @emit_cast(e Node) -> () {
+    ro kids = branch_children(e)
+    if @is_ptr_receiver(e) {
+        @body.append("((${c_type(@ctx, @out.type_of(e.id_of()))})(")
+        @emit_expr(kids[0])
+        @body.append("))")
+        return
+    } else {
+        // Not a pointer: the pair decides below.
+    }
+    ro from = @out.type_if_known(kids[0].id_of())
+    ro to = @out.type_of(e.id_of())
+    if !is_ty(from) || from == to {
+        @emit_expr(kids[0])
+        return
+    } else {
+        // A recorded operand of another type: a primitive pair, or a newtype.
+    }
+    match prim_row_of(@ctx.tys, from) {
+        Some(fr) => @emit_prim_cast(kids[0], fr, prim_row_of(@ctx.tys, to) ?? ice("emit: a primitive cast whose target has no row"))
+        None => @emit_expr(kids[0])
+    }
+}
+
+/// The cast between two different primitives: the saturating helper for a
+/// float into an integer, a C cast for the rest.
+fn Emitter mut @emit_prim_cast(operand Node, fr BuiltinType, tr BuiltinType) -> () {
+    if is_float_row_family(fr.family) && is_int_row_family(tr.family) {
+        @body.append("nova_${fr.name}_to_${saturating_suffix(tr)}(")
+        @emit_expr(operand)
+        @body.append(")")
+        return
+    } else {
+        // Not float-to-integer: plain C, below.
+    }
+    @body.append("((${tr.c_name})(")
+    @emit_expr(operand)
+    @body.append("))")
+}
+
+/// The helper's name for an integer row. `int` and `uint` are address-sized,
+/// 64 bits on every target novac emits for (D129/D130), and the runtime names
+/// their helpers by the fixed width -- the oracle maps them the same way.
+fn saturating_suffix(tr BuiltinType) -> str {
+    if tr.name == "int" { return "i64" }
+    if tr.name == "uint" { return "u64" }
+    tr.name
+}
+
+/// A float row (`f32`, `f64`).
+fn is_float_row_family(f PrimFamily) -> bool {
+    match f {
+        PfFloat => true
+        PfInt | PfStr | PfBool | PfChar | PfUnit | PfAny | PfNever => false
+    }
+}
+
+/// An integer row of any width.
+fn is_int_row_family(f PrimFamily) -> bool {
+    match f {
+        PfInt => true
+        PfFloat | PfStr | PfBool | PfChar | PfUnit | PfAny | PfNever => false
+    }
+}

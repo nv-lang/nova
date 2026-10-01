@@ -1,0 +1,9 @@
+module cast_numeric.neg_6
+
+// ONE seeded cause: a surrogate cast to a char -- inside the range, but in
+// the block UTF-16 took (U+D800..U+DFFF), which holds no character. D54:
+// checked at compile time. The oracle refuses it as well (in its emitter).
+// NOVAC_EXPECT the literal `55296` is no Unicode scalar value
+fn main() {
+    println("${55296 as char}")
+}

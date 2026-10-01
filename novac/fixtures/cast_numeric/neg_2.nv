@@ -1,0 +1,9 @@
+module cast_numeric.neg_2
+
+// ONE seeded cause: a number cast to a truth value (D54, the table of
+// forbidden casts: `n != 0` is the form). The oracle refuses it as well.
+// NOVAC_EXPECT `int as bool`
+fn main() {
+    ro n = 1
+    println(n as bool)
+}
