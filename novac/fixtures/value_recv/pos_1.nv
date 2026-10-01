@@ -1,0 +1,66 @@
+module value_recv.pos_1
+
+// A METHOD ON A `value` RECORD (D488): the receiver crosses by COPY for a
+// `ro @` up to three words (R5; `Sm`, 16 bytes), by POINTER for a larger
+// `ro @` (R5; `Lg`, 32 bytes) and for every `mut @` (R3; `Lg @bump`, `Ct @inc`
+// through a field of a heap record). The 17..24-byte cells are left out on
+// purpose: the oracle still cuts at 16 there. The values prove the pointer
+// cases write the CALLER's record (30, then 32 against the untouched copy's 30;
+// 6, 7, 7) and the copy cases read the right one.
+
+type Sm value {
+    a int
+    b int
+}
+
+fn Sm @sum() -> int => @a + @b
+
+fn Sm @twice() -> int => @sum() * 2
+
+type Lg value {
+    a int
+    b int
+    c int
+    d int
+}
+
+fn Lg @sum() -> int => @a + @b + @c + @d
+
+fn Lg mut @bump(by int) -> () {
+    @a += by
+    @d += by
+}
+
+type Ct value {
+    n int
+}
+
+fn Ct mut @inc() -> int {
+    @n += 1
+    @n
+}
+
+type Hold {
+    c Ct
+}
+
+fn show(s Sm) -> int => s.sum()
+
+fn main() {
+    ro s = Sm { a: 1, b: 2 }
+    println(s.sum())
+    println(s.twice())
+    println(show(s))
+    mut l = Lg { a: 1, b: 2, c: 3, d: 4 }
+    println(l.sum())
+    l.bump(10)
+    println(l.sum())
+    ro copy = l
+    l.bump(1)
+    println(copy.sum())
+    println(l.sum())
+    mut h = Hold { c: Ct { n: 5 } }
+    println(h.c.inc())
+    println(h.c.inc())
+    println(h.c.n)
+}

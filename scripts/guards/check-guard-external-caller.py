@@ -86,6 +86,19 @@ def main():
     hooks = sorted(p for p in hooks_dir.glob("*") if p.is_file()) if hooks_dir.is_dir() else []
 
     external = named_in(workflows) | named_in(hooks)
+    # ТЕЛО ХУКА — тоже хук. `scripts/githooks/commit-msg` — тонкая обёртка: она
+    # exec'ит `check-commit-hygiene.sh` и сама пишет «не редактировать здесь — правь
+    # check-commit-hygiene.sh». Страж, которого зовёт это тело, зовётся на каждом
+    # коммите, то есть внешний вызывающий у него есть. До правки (2026-10-02) такой
+    # страж считался сиротой: `check-spec-amend-places.py`, подключённый ровно туда,
+    # покраснил гейт, хотя его нельзя забыть. Транзитивно, до неподвижной точки:
+    # скрипт стражей, названный внешним вызывающим, передаёт внешность тем, кого зовёт.
+    while True:
+        bodies = [gdir / g for g in sorted(external) if (gdir / g).is_file()]
+        grown = external | named_in(bodies)
+        if grown == external:
+            break
+        external = grown
     # Гейт засчитывается ТОЛЬКО если CI его запускает.
     gates_run_by_ci = []
     for gate in sorted((root / "scripts").glob("gate*.sh")):

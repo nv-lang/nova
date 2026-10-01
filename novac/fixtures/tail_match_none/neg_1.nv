@@ -1,0 +1,19 @@
+module tail_match_none.neg_1
+
+// NOVAC_EXPECT a bare `None` here has no type to take
+// ONE seeded cause: the expectation a tail match hands its ARMS does not
+// reach its SCRUTINEE. The head is a value of its own type, and a bare `None`
+// there has no type to take -- typing it as the fn's `Option[int]` would
+// resolve the head by the return, which is the leak this pair guards.
+// The oracle INFERS the head from the arms and accepts this file: novac is
+// narrower here, the legal direction (the subset refuses, it never widens).
+fn f() -> Option[int] {
+    match None {
+        Some(v) => Some(v)
+        None => None
+    }
+}
+
+fn main() {
+    println(f() ?? 0)
+}

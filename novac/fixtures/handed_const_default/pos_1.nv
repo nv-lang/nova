@@ -1,0 +1,17 @@
+module handed_const_default.pos_1
+
+// A HANDED DEFAULT THAT NAMES A CONSTANT OF ITS OWN MODULE (registry 1563):
+// `StringBuilder.new()` leaves `cap` to `= INITIAL_CAPACITY`, a constant
+// private to std. D102 evaluates a default at the call site, reading the
+// DECLARING module's constants -- which this file cannot name. novac used to
+// print the bare name into this file's C (clang: undeclared identifier) while
+// `check` passed; the default now arrives as the constant's literal.
+fn build() -> str {
+    consume sb = StringBuilder.new()
+    sb.append("dflt")
+    sb.into_str()
+}
+
+fn main() {
+    println(build())
+}

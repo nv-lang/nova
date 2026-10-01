@@ -1,0 +1,48 @@
+module coerce_return.pos_1
+
+// A DECLARED CONVERSION AT THE RESULT (D429 R2: the return position, last
+// expression included; R9: the canon there is the BARE value). Two pairs:
+// std's `#coerce fn StringBuilder consume @into_str() -> str`, which the shell
+// carries, as a block tail and as an early `return`; and the program's own
+// `Meters -> Feet`, whose body this unit emits -- from a `consume` parameter
+// and from an owned temporary. `@to_feet` multiplies by 3, a number that
+// appears nowhere else, so 6 and 15 print only if THAT method ran.
+type Meters {
+    v int
+}
+
+type Feet {
+    v int
+}
+
+#coerce fn Meters consume @to_feet() -> Feet => { v: @v * 3 }
+
+fn join(xs []str) -> str {
+    consume out = StringBuilder.new(cap: 16)
+    for x in xs {
+        out.append(x)
+    }
+    out
+}
+
+fn early(n int) -> str {
+    consume sb = StringBuilder.new(cap: 16)
+    sb.append("n=")
+    if n < 0 {
+        return sb
+    }
+    sb.append("pos")
+    sb
+}
+
+fn conv(consume m Meters) -> Feet => m
+
+fn conv2(n int) -> Feet => Meters { v: n }
+
+fn main() {
+    println(join([]str.of("ab", "cd")))
+    println(early(-1))
+    println(early(2))
+    println(conv(Meters { v: 2 }).v)
+    println(conv2(5).v)
+}

@@ -1,0 +1,55 @@
+// EXPECT_STDOUT p1590 cwd Каталог_p1590 | env Жук | vars Жук | removed
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for registry 221.1 #1590: text the OS hands to a program is UTF-8, like
+// Nova's `str`. On Windows the narrow CRT entry points spoke the ANSI code page
+// (cp1251): `cd` into a Cyrillic directory failed or read back as U+FFFD, the
+// environment snapshot and argv came as cp1251 bytes. The runtime now reads and
+// writes through the wide API (nova_rt/os_env.h). The runner passes no arguments,
+// so argv is proven by the probe in docs/plans/repro/1590-windows-os-text-ansi/;
+// here: a Cyrillic directory made with std.fs, entered with `cwd(path)` and read
+// back with `cwd()`, and a Cyrillic environment value set, read, found in `vars()`
+// and removed.
+module standalone.p1590_os_text_utf8_ok
+
+import std.os.{real_os, env, vars, cwd, temp_dir, remove_env, pid}
+import std.fs.{real_fs, create_dir, remove_dir}
+
+fn main() Io {
+    mut out = "p1590"
+    with Os = real_os(), Fs = real_fs() {
+        ro start = cwd()
+        ro dir = temp_dir().join("Каталог_p1590_${pid()}")
+        ro _ = create_dir(dir)
+        match cwd(dir) {
+            Ok(_) => {
+                match cwd() {
+                    Ok(p) => {
+                        ro name = p.file_name() ?? "?"
+                        ro shown = if name.starts_with("Каталог_p1590") { "Каталог_p1590" } else { name }
+                        out = "${out} cwd ${shown}"
+                    }
+                    Err(_) => { out = "${out} cwd err" }
+                }
+            }
+            Err(_) => { out = "${out} cwd set-failed" }
+        }
+        if Ok(p) = start {
+            ro _ = cwd(p)
+        }
+        ro _ = remove_dir(dir)
+        ro _ = env("P1590_KEY", "Жук")
+        match env("P1590_KEY") {
+            Some(s) => { out = "${out} | env ${s}" }
+            None => { out = "${out} | env none" }
+        }
+        for v in vars() {
+            if v.key() == "P1590_KEY" { out = "${out} | vars ${v.value()}" }
+        }
+        ro _ = remove_env("P1590_KEY")
+        match env("P1590_KEY") {
+            Some(_) => { out = "${out} | still-set" }
+            None => { out = "${out} | removed" }
+        }
+    }
+    println(out)
+}

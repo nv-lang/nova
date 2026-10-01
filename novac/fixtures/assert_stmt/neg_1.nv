@@ -1,0 +1,10 @@
+module assert_stmt.neg_1
+
+// NOVAC_EXPECT `assert` takes a condition and an optional message
+// ONE seeded cause: three arguments. The prelude declares `assert` with one
+// and with two parameters (std/prelude/runtime.nv), so no declaration takes
+// this call; the oracle refuses it too.
+fn main() {
+    assert(1 > 0, "a", "b")
+    println(1)
+}

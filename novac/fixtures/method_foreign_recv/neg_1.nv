@@ -1,0 +1,21 @@
+module method_foreign_recv.neg_1
+
+// NOVAC_EXPECT this type has no such method
+// ONE seeded cause: `a.settle(1)` on an `AVal`, and the only `settle` in the program
+// is `BVal`'s. The refusal names the missing method of `AVal` -- not BVal's binding
+// rule ("this call omits `op`"), which is about a call nobody wrote. The
+// oracle refuses this file too (no method `settle` on `AVal`).
+type AVal {
+    n int
+}
+
+type BVal {
+    n int
+}
+
+fn BVal @settle(x int, op int) -> int => x + op + @n
+
+fn main() {
+    ro a = AVal { n: 1 }
+    println(a.settle(1))
+}

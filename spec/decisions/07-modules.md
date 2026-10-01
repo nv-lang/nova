@@ -1072,7 +1072,7 @@ type — visibility limited to module».
 ```nova
 module my_lib
 
-export import std.duration              // вся duration видна пользователям my_lib
+export import std.time.duration.{Duration}   // реэкспорт по именам; модуль целиком — E_REEXPORT_GLOB (D288)
 import std.internal_helpers             // только внутри my_lib
 ```
 

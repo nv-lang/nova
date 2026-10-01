@@ -1,0 +1,19 @@
+module instance_value_arg.pos_1
+
+// check and emit give ONE verdict about a file whose instance body puts a
+// value block in an argument (registry 1525). std's `Vec[T] @get` returns
+// `Some(unsafe { @data.read_at(i) })`; check took the argument and the printer
+// had no arm for it, so every `get` instance the shell lacks -- `Vec[f64]`,
+// reached by `first`, `last` and `get` -- passed check and died in emit
+// ("expression kind outside the subset"). The `??` of the hunter's probe is
+// one carrier: a plain binding of `d.first()` died the same way.
+fn main() {
+    ro d = [1.5, 2.5]
+    println(d.first() ?? 0.0)
+    println(d.last() ?? 0.0)
+    println(d.get(5) ?? -1.0)
+    ro f = d.get(1)
+    println(f ?? 0.0)
+    ro e = []f64.new()
+    println(e.first() ?? 9.5)
+}

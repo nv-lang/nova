@@ -267,7 +267,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // THE HANDED CONSTANTS, beside the handed types and before the seal: a
     // file's own constant of the same name is registered after it, and the
     // last put wins -- the file shadows what it was handed.
-    harvest_consts(decls, defs, consts, module_dotted(file))
+    harvest_consts(decls, defs, consts)
     // THE VARIANTS OF HANDED SUMS, through the same door the file's own sums
     // take below (274.5 wave "variants of handed sums", 2026-09-04). Until this
     // loop `harvest_types` registered a handed sum's NAME and skipped its
@@ -357,7 +357,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
         ro init_at = const_init_at(kids)
         if init_at < 0 { continue }
         defs.add(cname, DefTarget.DefConst(consts.add(cname, no_ty(),
-                 []Node.of(kids[init_at]), once)))
+                 []Node.of(kids[init_at]), once, kids)))
     }
     for c in decls_of_file {
         ro k = c.kind_of()
@@ -826,7 +826,12 @@ fn fill_handed_fields(file Node, decls []Node, foreign_cnt int, mut types []Type
     mut tree = 0 - 1
     for d in decls {
         tree += 1
-        ro same_module = module_dotted(d) == own_module
+        // NO MODULE IS NOBODY'S MODULE (D281, registry 221.1 #1521): a file with
+        // no module line and a handed std file read without one (std's
+        // `#prelude` files -- `collections/vec/core.nv`) both answer "", and
+        // the equality made `Vec`'s `priv` fields the moduleless file's own --
+        // `v.len` compiled where the oracle says E_FIELD_MODULE_PRIVATE.
+        ro same_module = own_module != "" && module_dotted(d) == own_module
         // The `file_decls` walk, keeping what it drops: whether the declaration
         // stood inside an `export` wrapper -- the other half of D281's rule.
         for w in branch_children(d) {

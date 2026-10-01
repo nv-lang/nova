@@ -235,9 +235,12 @@ fn Cursor @at_eof() -> bool => @peek() == TokenKind.Eof
 
 /// Is the cursor at a minus that belongs to a numeric literal? `-1` stays one
 /// literal node (the older shape, and the emitted C constant stays one token);
-/// `-x` becomes a Unary node.
+/// `-x` becomes a Unary node. A literal followed by `as`/`is` is NOT folded:
+/// `-1 as u8` is `-(1 as u8)` (D54 amendment 2026-10-01, `as` binds tighter
+/// than a prefix minus), so the minus is the prefix operator there.
 fn Cursor @minus_before_literal() -> bool =>
-    @peek() == TokenKind.Minus && (@peek(skip: 1) == TokenKind.IntLit || @peek(skip: 1) == TokenKind.FloatLit)
+    @peek() == TokenKind.Minus && (@peek(skip: 1) == TokenKind.IntLit || @peek(skip: 1) == TokenKind.FloatLit) &&
+    @peek(skip: 2) != TokenKind.KwAs && @peek(skip: 2) != TokenKind.KwIs
 
 /// Parse a whole token stream (as produced by lex: Eof-terminated).
 export fn parse(toks []Token) -> Node

@@ -128,10 +128,36 @@ export const VEC_LEN_METHOD = "len"
 /// array pattern. `get` is for the access nobody proved (D470: it answers
 /// Option), and `for x in xs` is the iterator protocol, not either door.
 export const VEC_INDEX_METHOD = "index"
+/// The WRITE `xs[i] = v` as an implicit vector operation: the overload
+/// `mut @index(i int, val T)` of the same name (std access.nv, "Powers
+/// `v[i] = val`"). A KEY of the operation, not a name of the language -- `=`
+/// cannot stand in an identifier, so no method can collide with it; the
+/// method it calls is `vec_op_method`'s answer (registry 1524: the read and
+/// the write are two overloads, and asking by the name sent the write to the
+/// read).
+export const VEC_INDEX_SET_OP = "index="
+
+/// The SLICE `xs[lo..hi]` as an implicit vector operation: the overload
+/// `@index(r Range) -> Self` of the same name (D470 section 5), made from std's
+/// body where the shell lacks it (registry 1557). A key, like `index=`: `.`
+/// cannot stand in an identifier.
+export const VEC_INDEX_RANGE_OP = "index.."
+
+/// Is this implicit operation key an OVERLOAD of another name -- one with no
+/// by-name spelling of its own (the bare name is the other overload's)?
+export fn vec_op_is_overload(op str) -> bool => op == VEC_INDEX_SET_OP || op == VEC_INDEX_RANGE_OP
+
+/// The METHOD NAME an implicit vector operation key calls: the key itself,
+/// except for the write and the slice, which are overloads of `index`.
+export fn vec_op_method(op str) -> str => if vec_op_is_overload(op) { VEC_INDEX_METHOD } else { op }
 /// The raw-pointer READ of D216 (the "all through methods" amendment):
 /// `p.read_at(i) -> T`, legal only inside `unsafe { }` -- std's `Vec[T]` body
 /// reads its elements so (`unsafe { @data.read_at(i) }`, 274.11 E.10 step 3c).
 export const PTR_READ_AT = "read_at"
+
+/// `p.offset(n) -> *T` (D216): the pointer `n` elements on, of the same type --
+/// std's `Vec[T] @index(r Range)` builds its view's data with it (registry 1557).
+export const PTR_OFFSET = "offset"
 
 /// `p.write_at(i, v)` on a `*mut T` (D216): store the element at index `i`; unsafe context only.
 export const PTR_WRITE_AT = "write_at"
@@ -141,6 +167,10 @@ export const PTR_WRITE_CONSUME_AT = "write_consume_at"
 
 /// `size_of[T]()`: the byte size of `T`'s value, an `int` -- the language's intrinsic (D216).
 export const SIZE_OF_FN = "size_of"
+
+/// `assert(cond)` / `assert(cond, msg)`: the prelude's runtime check (D81),
+/// declared `extern "nova"` -- no body, so the call is the language's intrinsic.
+export const ASSERT_FN = "assert"
 
 /// The upper bound an open slice `x[lo..]` takes: the second method of std's
 /// `RangeIndex` role beside `index(r Range)` -- the receiver's OWN answer, not

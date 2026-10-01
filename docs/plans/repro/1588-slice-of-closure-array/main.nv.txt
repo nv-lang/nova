@@ -1,0 +1,13 @@
+// EXPECT_STDOUT g5 3 10
+module e.main
+
+fn main() Io {
+    ro c = 7
+    mut fs []fn() -> int = [fn() -> int => c]
+    mut s = fs[0..0]
+    s.push(fn() -> int => c + 1)
+    s.push(fn() -> int => c + 2)
+    s.push(fn() -> int => c + 3)
+    ro g = s[2]
+    println("g5 ${s.len()} ${g()}")
+}

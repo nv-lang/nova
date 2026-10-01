@@ -1,0 +1,23 @@
+module assert_stmt.pos_1
+
+// THE PRELUDE'S `assert` (D81: always on, a runtime check), both arities the
+// prelude declares (D84): `assert(cond)` and `assert(cond, "msg")`, inside a
+// value body and in `main`. Every condition holds, so the program prints its
+// values; the failing path is the runtime's `nova_assert_loc`, the same call
+// the oracle emits, whose text names the file, the line and the condition.
+fn half(n int) -> int {
+    assert(n % 2 == 0, "half: odd input")
+    n / 2
+}
+
+fn pos(n int) -> int {
+    assert(n > 0)
+    n
+}
+
+fn main() {
+    println(half(10))
+    println(pos(3))
+    assert(half(4) == 2, "two")
+    println(1)
+}

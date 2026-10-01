@@ -8,6 +8,8 @@
 //   its variants. What the checker admitted is all that arrives: an `any`
 //   whose target has a fixed id, or a sum and one of its own variants.
 // Used by: emit_expr.nv (`@emit_expr`'s IsTest arm).
+// An APPLIED sum (`o is Some` on an `Option[int]`, registry 1544) is the shell's
+// and its test is spelled by emit_applied_sum.nv, as a match arm's is.
 // Guarded by: nova test novac/src/check/check_test.nv and the fixture
 //   novac/fixtures/any_is through check-novac-differential.sh.
 
@@ -16,7 +18,7 @@ module novac.emit_c
 import ../tree.{Node}
 import ../diag.{ice}
 import ../sem.{branch_children, is_any_ty, any_tid_c, variant_in_sum, c_tag, is_value_sum, type_ref_last_ident}
-import ../sem.{is_target_of}
+import ../sem.{is_target_of, is_shell_applied_sum}
 
 /// `x is T`: `nova_any_is(x, NOVA_TID_<T>)` on an `any`, `(x.tag == TAG)` on
 /// a sum (`->` for a heap sum -- the access follows the placement).
@@ -31,6 +33,12 @@ fn Emitter mut @emit_is_test(e Node) -> () {
         return
     }
     ro vrow = variant_in_sum(@ctx, lt, type_ref_last_ident(kids[2])) ?? ice("emit: an is-test naming no variant of its sum reached the emitter")
+    if is_shell_applied_sum(@ctx, lt) {
+        @body.append("((")
+        @emit_expr(kids[0])
+        @body.append(")${@applied_sum_tag_after(lt, vrow)})")
+        return
+    }
     ro arrow = if is_value_sum(@ctx, lt) { "." } else { "->" }
     @body.append("((")
     @emit_expr(kids[0])

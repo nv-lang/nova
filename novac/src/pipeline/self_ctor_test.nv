@@ -1,0 +1,57 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Role: `Self { .. }` names the type the body belongs to (D66, registry 1557):
+//   the receiver's in a method, concrete under an instance's substitution. It
+//   was asked of the registry as a name and brought the compiler down
+//   (`#652 class`) -- in a method of the file, and in std's
+//   `Vec[T] @index(r Range)`, which a slice over a vector the shell lacks it
+//   for is now made from (with `p.offset(n)` and a value block as a field).
+// Used by: nova test novac/src/pipeline (the module-test batch of the gate).
+// Guarded by: check-novac-module-tests; fixtures self_ctor/pos_1 and neg_1
+//   through the differential, no-cascade and fixture-expect.
+
+module novac.pipeline
+
+/// A handed `Vec[T]` with std's slice shape: `@index(r Range) -> Self` built
+/// as `Self { data: unsafe { @data.offset(r.start) }, .. }`.
+fn slice_std() -> []str {
+    mut std = std_decls()
+    std.push("module std.v\n\
+export type Range value {\n    start int\n    end int\n}\n\
+export type Vec[T] {\n    data *mut T\n    n int\n}\n\
+export fn Vec[T] @len() -> int => @n\n\
+export fn Vec[T] mut @push(v T) -> @ => @\n\
+export fn Vec[T] @index(i int) -> T => @index(i)\n\
+export fn Vec[T] @index(r Range) -> Self {\n\
+    Self { data: unsafe { @data.offset(r.start) }, n: r.end - r.start }\n}\n")
+    std
+}
+
+test "`Self { .. }` in a method of the file is the receiver's type, not a registry name (registry 1557)" {
+    ro src = "type Pt {\n    x int\n}\n\nfn Pt @twice() -> Self {\n    Self { x: @x * 2 }\n}\n\nfn main() {\n    println(Pt { x: 3 }.twice().x)\n}"
+    ro (d, _) = compile_to_c(src, std_decls())
+    assert(d.len() == 0, messages(d))
+    // CONTROL: the type's own name in the same place, green without the fix.
+    ro named = "type Pt {\n    x int\n}\n\nfn Pt @twice() -> Pt {\n    Pt { x: @x * 2 }\n}\n\nfn main() {\n    println(Pt { x: 3 }.twice().x)\n}"
+    ro (dn, _) = compile_to_c(named, std_decls())
+    assert(dn.len() == 0, messages(dn))
+}
+
+test "`Self { .. }` in a free function is refused by name: it belongs to no type (D66, registry 1557)" {
+    ro src = "type Pt {\n    x int\n}\n\nfn mk(x int) -> Pt {\n    Self { x }\n}\n\nfn main() {\n    println(mk(1).x)\n}"
+    ro d = compile_with(src, parse_decls(std_decls()), described_surface(std_decls()))
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("`Self` names the type a method belongs to"), messages(d))
+}
+
+test "a slice over a vector the shell lacks `index(Range)` for is made from std's body (registry 1557)" {
+    ro std = slice_std()
+    ro (d, c) = compile_to_c("import std.v.{Range}\nfn main() {\n ro v = [1, 2, 3]\n ro s = v[1..3]\n println(s.len())\n}", std)
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("novac_fn_std_v_index__Vec_of_nova_int__"), "the slice does not call std's body")
+    // `offset` is the address `n` elements on: C's pointer `+`.
+    assert(c.contains("((_novac_self->data)) + ("), "`p.offset(n)` is not the pointer moved by `n`")
+    // CONTROL: the element read keeps the shell's name.
+    ro (d0, c0) = compile_to_c("fn main() {\n ro v = [1, 2, 3]\n println(v[1])\n}", std)
+    assert(d0.len() == 0, messages(d0))
+    assert(c0.contains("Vec____nova_int_method_index(v, ((nova_int)1LL))"), "the element read lost the shell's name")
+}

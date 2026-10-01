@@ -19,7 +19,7 @@ module novac.sem
 import ../diag.{ice}
 import ../builtins.{prim_c_name, OPTION_FAMILY_C, OPTION_SUM, RESULT_FAMILY_C, RESULT_SUM}
 import ../builtins.{FMT_PROTO, FMT_IMPL}
-import ../builtins.{TypeKind}
+import ../builtins.{TypeKind, SLICE_HEAD}
 import ../types.{TyId, no_ty, is_ty}
 
 /// The FAMILY spelling of a generic-sum instance's STRUCT, or "" for everything
@@ -28,12 +28,13 @@ import ../types.{TyId, no_ty, is_ty}
 ///   * `Option[int]` is `NovaOpt_nova_int`, with no `Nova_` prefix;
 ///   * `Result[[]u8, IoError]` is `NovaRes_Nova_Vec____nova_byte_p_NovaValue_IoError`
 ///     (2026-10-01, the carrier: a `match` on what a std call hands back).
-/// Each argument is its C type with a star spelled `_p` -- the one rule both
-/// families share (`NovaOpt_Nova_Rec_p`, `..._Nova_Utf16Error_p`), written in
-/// the same shape the Option spelling had before Result joined it.
+/// Each argument is written as a type INSIDE a name (`c_in_name`,
+/// mangle_spelling.nv: a pointer's struct with `_p`) -- the one rule both
+/// families share (`NovaOpt_Nova_Rec_p`, `..._Nova_Utf16Error_p`), built from
+/// the argument's term rather than by editing the C type it spells to.
 /// Every other generic sum still reaches the instance_body ice below by name.
 /// WHETHER the instance travels by value or behind a pointer is the other
-/// door's question (`family_instance_type`): the struct name is the same.
+/// question (`family_by_pointer`, read by `c_layout`): the struct name is the same.
 fn family_instance_name(ctx Ctx, t TyId) -> str {
     ro head = decl_of_ty(ctx, t)
     ro is_sum = match head.kind {
@@ -44,22 +45,11 @@ fn family_instance_name(ctx Ctx, t TyId) -> str {
     if !is_sum { return "" }
     ro n = ctx.tys.arg_count(t)
     if head.name == RESULT_SUM && n == 2 {
-        ro ok_c = c_type(ctx, ctx.tys.arg(t, 0)).replace("*", "_p")
-        ro err_c = c_type(ctx, ctx.tys.arg(t, 1)).replace("*", "_p")
-        return "${RESULT_FAMILY_C}${ok_c}_${err_c}"
+        return "${RESULT_FAMILY_C}${c_in_name(ctx, ctx.tys.arg(t, 0))}_${c_in_name(ctx, ctx.tys.arg(t, 1))}"
     }
     if head.name != OPTION_SUM { return "" }
     if n != 1 { return "" }
-    "${OPTION_FAMILY_C}${c_type(ctx, ctx.tys.arg(t, 0)).replace("*", "_p")}"
-}
-
-/// The C TYPE of a generic-sum instance, or "" for everything else: an Option
-/// is its struct BY VALUE (its methods hand it back so), a Result is a GC
-/// pointer to its struct (`nova_make_NovaRes_*` allocates and returns `r`).
-fn family_instance_type(ctx Ctx, t TyId) -> str {
-    ro fam = family_instance_name(ctx, t)
-    if fam == "" { return "" }
-    if decl_of_ty(ctx, t).name == RESULT_SUM { "${fam}*" } else { fam }
+    "${OPTION_FAMILY_C}${c_in_name(ctx, ctx.tys.arg(t, 0))}"
 }
 
 /// The oracle's spelling of a generic-record instance struct
@@ -99,6 +89,132 @@ export fn c_method_symbol(ctx Ctx, t TyId, name str) -> str {
     // is the honest fallback, same as any other non-instance receiver.
     if is_ty(it) && ctx.tys.kind_of(it) == TypeKind.TkApp { return c_instance_method(ctx, it, name) }
     c_shell_method(ctx, it, name)
+}
+
+/// THE OVERLOAD's shell symbol: the method `row` picks, on receiver `recv_t`,
+/// under the type arguments `args` (registry 1524). `c_method_symbol` answers
+/// for a NAME, and a name is not a function when it is overloaded: `cap()` and
+/// `cap(n)` of `Vec[int]` are `Vec____nova_int_method_cap` and
+/// `Vec____nova_int_method_cap__nova_int`, and the name alone sent `v.cap(100)`
+/// to the first with two arguments. The oracle spells the FIRST overload of a
+/// name on its type bare and every later one with `__` and its parameters' C
+/// types (pointer `*` as `_p`, joined by `_`; none -> `__mut`/`__ro` by the
+/// receiver) -- read off the oracle's generic-method overload mangling in
+/// `emit_c.rs` and off the shell. The same scheme holds for a PLAIN receiver --
+/// a record, a primitive, a newtype (`Nova_StringBuilder_method_append` /
+/// `..._append__nova_int`, `Nova_str_method_contains__nova_char`,
+/// `Nova_Vec_method_ptr__mut`, read off the shell; registry 1558). A sum's,
+/// or a generic sum's FAMILY (`Nova_Option_method_display_nova_str`), was
+/// never measured with a second overload: there the second overload gets a
+/// spelling no C identifier holds, so it is never "carried" -- only the first
+/// overload is ever asked by the bare name.
+///
+/// A spelling the shell does not carry is not a guess that links: the caller
+/// asks `interop.has` of THIS answer, and a miss sends the overload to the body
+/// novac was handed (`Ctx @instantiates`) or to a refusal by name.
+export fn c_overload_symbol(ctx Ctx, row FnRow, recv_t TyId, args []TyId) -> str {
+    // The ROW's spelling first: a `consume` receiver of a plain type is the
+    // shell's `_consume_` (registry 1564, `shell_method_symbol`) -- one truth
+    // for the question `Ctx @instantiates` asks and the name the emitter prints.
+    ro base = shell_method_symbol(ctx, row, recv_t)
+    // AN EXTERN method (`extern "nova" fn AtomicInt @load(..)`, no body) is
+    // spelled by the oracle's OTHER rule (`external_registry.rs`
+    // `mangle_method_c_name`): with two or more overloads on the type, EVERY
+    // one takes `_` and its last parameter's type name; none -> the bare name
+    // (`Nova_AtomicInt_method_load` is `load()`). Registry 1558.
+    if ctx.is_extern_handed(row) {
+        if ctx.overload_count(row) < 2 { return base }
+        ro last = extern_last_param_name(ctx, row, args)
+        return if last == "" { base } else { "${base}_${last}" }
+    } else {
+        // A method with a body: the generic-method overload rule below.
+    }
+    if ctx.overload_ordinal(row) <= 0 { return base }
+    ro it = impl_of_proto(ctx, recv_t)
+    // SILENT-OK: a receiver whose type did not resolve was refused upstream.
+    if !is_ty(it) { return base }
+    ro k = ctx.tys.kind_of(it)
+    ro measured = k == TypeKind.TkPrim || k == TypeKind.TkRecord || k == TypeKind.TkNewtype ||
+        (k == TypeKind.TkApp && decl_of_ty(ctx, it).kind == TypeKind.TkRecord)
+    if !measured { return "${base}__${UNMEASURED_SPELLING}" }
+    ro fd = ctx.fns.rows[raw_row(row)]
+    ro first = if fd.has_recv { 1 } else { 0 }
+    consume s = StringBuilder.new(cap: 64)
+    s.append(base)
+    s.append("__")
+    for p in first..fd.param_cnt {
+        if p > first {
+            s.append("_")
+        } else {
+            // The first parameter follows the separator directly.
+        }
+        match overload_param_spelling(ctx, subst_type(ctx, ctx.fns.params[fd.param_off + p].type_id, args)) {
+            Some(sp) => s.append(sp)
+            // A kind whose in-name spelling the shell was never measured for:
+            // a character no C identifier holds, so the shell is never found
+            // to carry it -- the overload is made from its body or refused by
+            // name, never guessed into a call.
+            None => s.append(UNMEASURED_SPELLING)
+        }
+    }
+    if fd.param_cnt <= first {
+        ro recv_mut = fd.has_recv && ctx.fns.params[fd.param_off].mode != ParamMode.ModeRo
+        s.append(if recv_mut { "mut" } else { "ro" })
+    } else {
+        // The parameters are the suffix.
+    }
+    s
+}
+
+/// The oracle's `last_param_suffix` for an extern method: the Nova NAME of
+/// the last parameter's type -- a named type by its name, a slice of one by
+/// the name plus `s` (`[]u8` -> `u8s`); "" with no parameter. A shape the rule
+/// spells otherwise (`arr`) answers the unmeasured spelling, never a guess.
+fn extern_last_param_name(ctx Ctx, row FnRow, args []TyId) -> str {
+    ro fd = ctx.fns.rows[raw_row(row)]
+    ro first = if fd.has_recv { 1 } else { 0 }
+    if fd.param_cnt <= first { return "" }
+    ro t = subst_type(ctx, ctx.fns.params[fd.param_off + fd.param_cnt - 1].type_id, args)
+    if !is_ty(t) { return UNMEASURED_SPELLING }
+    ro k = ctx.tys.kind_of(t)
+    if k == TypeKind.TkApp {
+        if decl_of_ty(ctx, t).name != SLICE_HEAD || ctx.tys.arg_count(t) != 1 { return UNMEASURED_SPELLING }
+        return "${ty_source_name(ctx, ctx.tys.arg(t, 0))}s"
+    } else if k == TypeKind.TkPrim || k == TypeKind.TkRecord || k == TypeKind.TkSum || k == TypeKind.TkNewtype {
+        return ty_source_name(ctx, t)
+    } else {
+        // SILENT-OK: a shape whose extern spelling was never measured.
+        return UNMEASURED_SPELLING
+    }
+}
+
+/// What an overload's suffix holds for a parameter kind the shell's spelling
+/// was not measured for -- see `c_overload_symbol`.
+const UNMEASURED_SPELLING = "?"
+
+/// The in-name spelling of an overload's PARAMETER type, the oracle's C type
+/// with its pointer star as `_p` -- which is exactly an instance argument's
+/// spelling (`nova_int`, `NovaValue_Range`, `Nova_P_p`,
+/// `Nova_Vec____nova_byte_p`, a newtype as its representation), and an
+/// `Option` by its family (`NovaOpt_nova_int`). `None` for a kind not measured
+/// on the shell; built from the doors, never by editing a spelling (P24).
+///
+/// THE MEASURED KINDS ARE LISTED, the rest answer `None` -- a chain and not a
+/// `match` on purpose: every other kind (a sum, a pointer, an effect, a
+/// structural pair, a parameter left unsubstituted) has the SAME answer, the
+/// safe one, and a kind added tomorrow joins it without a guess about its C.
+fn overload_param_spelling(ctx Ctx, t TyId) -> Option[str] {
+    ro k = ctx.tys.kind_of(t)
+    if k == TypeKind.TkPrim || k == TypeKind.TkRecord || k == TypeKind.TkNewtype {
+        return Some(instance_arg_spelling(ctx, t))
+    } else if k == TypeKind.TkApp {
+        if decl_of_ty(ctx, t).kind != TypeKind.TkSum { return Some(instance_arg_spelling(ctx, t)) }
+        ro fam = family_instance_name(ctx, t)
+        return if fam == "" { None } else { Some(fam) }
+    } else {
+        // SILENT-OK: not measured on the shell -- the overload is not asked of it.
+        return None
+    }
 }
 
 /// The body every instance name is built from: `<Head>____<arg>__<arg>`.

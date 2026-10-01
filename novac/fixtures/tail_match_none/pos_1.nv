@@ -1,0 +1,37 @@
+module tail_match_none.pos_1
+
+// A BARE `None` IN AN ARM OF A TAIL MATCH takes the declared return (274.7
+// E2-b3): the arms of a value match ARE the fn's value, so the position's
+// expectation -- `-> Option[int]` -- is theirs, exactly as it already was for
+// the branches of a tail `if`. Three entrances: a block body whose last
+// statement is the match, an expression body `=> match`, and a nested tail
+// `if` inside an arm. The values printed differ per path (1, 7, 9, 3), so an
+// arm typed or emitted the wrong way cannot print the same text.
+type Kd enum A | B | C
+
+fn block_tail(k Kd) -> Option[int] {
+    match k {
+        A => Some(1)
+        _ => None
+    }
+}
+
+fn expr_tail(k Kd) -> Option[int] => match k {
+    A => Some(2)
+    _ => None
+}
+
+fn nested_if(k Kd, flag bool) -> Option[int] {
+    match k {
+        A => if flag { Some(3) } else { None }
+        B => None
+        C => Some(4)
+    }
+}
+
+fn main() {
+    println(block_tail(Kd.A) ?? 0)
+    println(expr_tail(Kd.B) ?? 7)
+    println(nested_if(Kd.B, true) ?? 9)
+    println(nested_if(Kd.A, true) ?? 0)
+}

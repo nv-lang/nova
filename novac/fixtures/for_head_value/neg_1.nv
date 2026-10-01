@@ -1,0 +1,12 @@
+module for_head_value.neg_1
+
+// NOVAC_EXPECT the head of a `for` is a range
+// ONE seeded cause: a head that is neither a range nor a vector value. An
+// integer literal walks nothing -- the oracle refuses it too, at codegen
+// ("cannot resolve iterator type"). Widening the collection list to two more
+// kinds must not let a plain scalar in.
+fn main() {
+    for x in 5 {
+        println(x)
+    }
+}

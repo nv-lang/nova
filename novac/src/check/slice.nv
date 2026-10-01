@@ -18,17 +18,23 @@
 module novac.check
 
 import ../tree.{Node, NodeKind}
-import ../builtins.{END_INDEX_METHOD, VEC_INDEX_METHOD}
+import ../builtins.{END_INDEX_METHOD, VEC_INDEX_METHOD, VEC_INDEX_RANGE_OP, TypeKind}
 import ../sem.{SliceShape, range_index_symbol, c_method_symbol, branch_children, ty_source_name}
 import ../types.{TyId, no_ty, is_ty}
 
 /// The type of a slice over `recv_t`, or `no_ty()` after a named refusal.
 fn Checker mut @type_slice(kids []Node, recv_t TyId, sh SliceShape) -> TyId {
-    if range_index_symbol(@ctx, recv_t).is_none() {
+    // Carried by the shell -- or, over a vector instance the shell lacks it
+    // for, made from std's body like every implicit vector operation
+    // (registry 1557: `@subst[a..b]` over `[]TyId` was refused here, three
+    // times over novac's own source, while the body was there to make).
+    ro carried = range_index_symbol(@ctx, recv_t).is_some() ||
+        (@ctx.tys.kind_of(recv_t) == TypeKind.TkApp && @vec_op_carried(recv_t, VEC_INDEX_RANGE_OP))
+    if !carried {
         @report_first_leaf_of(kids, no_shell_method_msg("${VEC_INDEX_METHOD}(Range)", ty_source_name(@ctx, recv_t)))
         return no_ty()
     } else {
-        // Carried: the bounds decide.
+        // Carried or made: the bounds decide.
     }
     if sh.hi_open {
         // The upper bound is `recv.end_index()`, and the emitter prints the

@@ -43,16 +43,17 @@ test "Option construction: Some(x) from the payload, None from the expectation, 
     assert(d2.len() == 1, messages(d2))
     assert(messages(d2).contains("bare `None`"), messages(d2))
     // A bare `None` as a call ARGUMENT in a tail is not the fn's own return:
-    // the expectation stops at the call, and the argument is refused by its cause.
-    // `consume o`, not `o` (registry #1309, 2026-09-23): a `ro` parameter returned
-    // through a non-`ro` result is E_READONLY_COERCE in the oracle and in novac --
-    // the helper is not what this case is about, so it is written legally.
+    // the fn's expectation stops at the call -- and since registry 1565 the
+    // argument takes its PARAMETER's instance instead (the oracle's reading).
+    // The parameter here is `Option[str]` while the fn returns `Option[int]`:
+    // were the tail's expectation leaking in, `None` would be typed against the
+    // wrong instance. `consume o` (registry #1309): written legally.
     ro (d3, _) = compile_to_c(
-        "fn take(consume o Option[int]) -> Option[int] => o\nfn f() -> Option[int] => take(None)\nfn main() {\n println(1)\n}",
+        "fn take(consume o Option[str]) -> Option[int] => None\nfn f() -> Option[int] => take(None)\nfn main() {\n println(1)\n}",
         std,
     )
-    assert(d3.len() == 1, messages(d3))
-    assert(messages(d3).contains("bare `None`"), messages(d3))
+    assert(d3.len() == 0, messages(d3))
+    // A parameter of ANOTHER sum is refused by cause: fixture none_arg/neg_1.
     // The payload fixes the instance, and the return door judges it against
     // the declaration -- `Option[int]` is not `Option[str]`.
     ro (d4, _) = compile_to_c("fn bad() -> Option[str] => Some(1)\nfn main() {\n println(1)\n}", std)

@@ -93,8 +93,17 @@ fn Checker mut @report_if_applied_sum(kids []Node, scr_t TyId) -> bool {
     // already resolved and checked above; naming it costs one call to the
     // same door every sibling message in this file already reads through
     // (`ty_source_name`, line 341).
-    @report_first_leaf_of(kids, "outside the subset: a `match` on an applied sum (`${ty_source_name(@ctx, scr_t)}`) is read but not compiled yet -- novac spells the shell's tags only for `Option` and `Result`, and this sum's belong to the shell too (E2-b2, with generics)")
+    @report_applied_sum(kids, "a `match`", scr_t)
     true
+}
+
+/// An APPLIED sum novac cannot spell (`Outcome[int]`), under either form that
+/// tests its tags -- `form` is "a `match`" (above) or "`is`" (is_expr.nv). ONE
+/// refusal for the two doors, because the cause is one: the shell spells per
+/// instance only `Option` and `Result` (`is_shell_applied_sum`), and a second
+/// copy of the sentence would be a second debt line for one debt.
+fn Checker mut @report_applied_sum(kids []Node, form str, sum_t TyId) -> () {
+    @report_first_leaf_of(kids, "outside the subset: ${form} on an applied sum (`${ty_source_name(@ctx, sum_t)}`) is read but not compiled yet -- novac spells the shell's tags only for `Option` and `Result`, and this sum's belong to the shell too (E2-b2, with generics)")
 }
 
 /// THE SHARED HEAD of both match doors (`@type_match_stmt`, `@type_match`):
@@ -194,7 +203,16 @@ fn no_arm_type() -> Option[TyId] => None
 fn Checker mut @type_match(m Node) -> () {
     ro kids = branch_children(m)
     mut scr_t = no_ty()
-    match @match_head(kids) {
+    // THE POSITION'S EXPECTATION IS THE ARMS', NOT THE SCRUTINEE'S (274.7
+    // E2-b3): a tail match of a `-> Option[T]` fn lets an arm's bare `None`
+    // take the declared return, and the scrutinee is a value of its own
+    // type -- an expectation leaking into it would resolve a bare variant
+    // name by the fn's return. Cleared for the head, restored for the arms.
+    ro arm_expect = @value_expect
+    @value_expect = no_ty()
+    ro head = @match_head(kids)
+    @value_expect = arm_expect
+    match head {
         Some(t) => { scr_t = t }
         // SILENT-OK: the head refused the match by name already.
         None => return
@@ -203,8 +221,13 @@ fn Checker mut @type_match(m Node) -> () {
     mut first_t = no_arm_type()
     for c in kids {
         if c.kind_of() != NodeKind.MatchArm { continue }
+        // EVERY arm starts from the position's expectation: an arm's body may
+        // clear it on its way (a statement, an `if`), and the next arm must not
+        // inherit that -- `Branch { .. } => None` after a block arm was refused.
+        @value_expect = arm_expect
         first_t = @fold_arm_type(c, scr_t, first_t, before_arms)
     }
+    @value_expect = arm_expect
     if @out.len() > before_arms { return }
     // The agreed type is RECORDED here, where every arm was typed with its
     // binders in scope; `type_of` reads it back instead of re-asking an arm
@@ -743,10 +766,15 @@ fn Checker mut @type_arm_block_value(b Node) -> TyId {
     ro last = last_branch_of(kids)
     mut i = 0
     mut out_t = no_ty()
+    // The arm's expectation belongs to the block's TAIL, which is the arm's
+    // value; the statements before it are not (a `ro x = None` there is not
+    // the arm's `None`).
+    ro tail_expect = @value_expect
     for c in kids {
         match c {
             Leaf(_) => {}
             Branch { .. } => {
+                @value_expect = if i == last { tail_expect } else { no_ty() }
                 if i == last && is_expr_kind(c.kind_of()) {
                     ro before = @out.len()
                     @type_expr(c)
@@ -763,6 +791,7 @@ fn Checker mut @type_arm_block_value(b Node) -> TyId {
         }
         i += 1
     }
+    @value_expect = tail_expect
     out_t
 }
 
@@ -778,7 +807,15 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
         @report_first_leaf_of(ak, ARM_PATTERN_VALUE_MSG)
         return None
     }
-    if !@bind_arm_pattern(ak, scr_t) { return None }
+    // The pattern and the guard are not the arm's VALUE: the position's
+    // expectation (a tail match's declared return) is the body's alone.
+    ro body_expect = @value_expect
+    @value_expect = no_ty()
+    if !@bind_arm_pattern(ak, scr_t) {
+        @value_expect = body_expect
+        // SILENT-OK: the pattern door refused the arm by name already.
+        return None
+    }
     for g in ak {
         if g.kind_of() != NodeKind.Guard { continue }
         ro gk = branch_children(g)
@@ -787,6 +824,7 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
         if gk.len() < 2 { continue }
         @type_expr(gk[1])
     }
+    @value_expect = body_expect
     ro body = ak[arm_body_at(ak) ?? ice("check: a match arm with no body reached the checker")]
     // A BLOCK BODY IN VALUE POSITION (274.5 wave B9): `0 => { return 1 }` is
     // statements that leave through `return`, so the arm yields NO value to

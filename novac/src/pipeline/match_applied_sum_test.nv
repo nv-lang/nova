@@ -107,3 +107,37 @@ test "a type argument is read as a TYPE, not as a name: Option[[]int] is not Opt
     ro (d1, _) = compile_to_c("fn wrap(xs []int) -> Option[[]str] => Some(xs)\nfn main() {\n println(1)\n}", std)
     assert(d1.len() == 1, messages(d1))
 }
+
+test "`is` on an applied sum: the match's test with the operand as an expression, and the CONTROLS (registry 1544)" {
+    ro std = applied_sum_decls()
+    // Option, both variants: the operand printed once, then the Option door's access.
+    ro (d0, c0) = compile_to_c("fn pick(f bool) -> Option[int] {\n if f {\n  return Some(3)\n }\n None\n}\nfn main() {\n println(pick(true) is Some)\n println(pick(false) is None)\n}", std)
+    assert(d0.len() == 0, messages(d0))
+    assert(c0.contains(").tag == NOVA_TAG_Option_Some)"), c0)
+    assert(c0.contains(").tag == NOVA_TAG_Option_None)"), c0)
+    assert(!c0.contains("NOVAC_TAG_"), c0)
+    // Result: the shell's heap instance, `->tag`.
+    mut shell = InteropTable.new()
+    shell.add("nova_fn_3res4give")
+    ro (d1, c1) = compile_to_c_with("import std.res.{give}\nfn main() {\n println(give(true) is Ok)\n}", parse_decls(std), shell)
+    assert(d1.len() == 0, messages(d1))
+    assert(c1.contains(")->tag == NOVA_TAG_Result_Ok)"), c1)
+    // CONTROL 1: a PLAIN sum keeps novac's own tag.
+    ro (d2, c2) = compile_to_c("type Holder enum Vacant | Full(int)\nfn main() {\n ro h = Full(1)\n println(h is Full)\n}", std)
+    assert(d2.len() == 0, messages(d2))
+    assert(c2.contains("_Holder_Full)"), c2)
+    // CONTROL 2: an applied sum the emitter cannot spell -- refused by name, not E_IS_NON_ANY.
+    ro (d3, _) = compile_to_c("fn f(o Outcome[int]) -> bool => o is Finished\nfn main() {\n println(1)\n}", std)
+    assert(d3.len() == 1, messages(d3))
+    assert(messages(d3).contains("`is` on an applied sum (`Outcome[int]`)"), messages(d3))
+    assert(!messages(d3).contains("E_IS_NON_ANY"), messages(d3))
+    // CONTROL 3: a value that is no sum and no `any` is still E_IS_NON_ANY, and
+    // the text says the value is NEITHER rather than calling a sum something else.
+    ro (d4, _) = compile_to_c("fn main() {\n ro n = 5\n println(n is Some)\n}", std)
+    assert(d4.len() == 1, messages(d4))
+    assert(messages(d4).contains("this value is neither"), messages(d4))
+    // A variant of ANOTHER sum on an Option: the sum half's own refusal.
+    ro (d5, _) = compile_to_c("fn f(o Option[int]) -> bool => o is Ok\nfn main() {\n println(1)\n}", std)
+    assert(d5.len() == 1, messages(d5))
+    assert(messages(d5).contains("not a variant of the tested sum"), messages(d5))
+}

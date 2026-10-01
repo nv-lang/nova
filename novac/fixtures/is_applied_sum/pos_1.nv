@@ -1,0 +1,72 @@
+module is_applied_sum.pos_1
+
+// `x is V` ON AN APPLIED SUM -- `Option[T]` and `Result[T, E]` -- answering
+// exactly as the oracle does (registry 1544).
+//
+// Until this cell, the checker refused `o is Some` on an `Option[int]` with
+// E_IS_NON_ANY, whose text called the value "known statically" as if a sum were
+// not one, while the oracle accepts the program. The test is the same one a
+// `match` arm on these sums prints (emit_applied_sum.nv), with the operand
+// printed as an expression once:
+//   * Option over a primitive and a string -- the tagged value shape;
+//   * Option over a heap record -- the tagless shape, tested by `.value`;
+//   * Option over `[]int` -- an instance the shell's probe never met;
+//   * Result as std `read` hands it back -- the shell's heap instance, `->tag`;
+//   * both variants of each; the test as an `if` condition, a `bool` binding
+//     and an operand of `&&` / `!`.
+//
+// The QUALIFIED form (`o is Option.Some`) is not here: novac does not parse
+// `x is Sum.Variant` on a plain sum either (the parser's fallback), so it is
+// not a property of the applied sum -- named in the wave's report.
+
+import std.fs.{read, real_fs}
+
+type Rec { v int }
+
+fn pick(f bool) -> Option[int] {
+    if f {
+        return Some(3)
+    }
+    None
+}
+
+fn name(f bool) -> Option[str] => if f { Some("yes") } else { None }
+
+fn boxed(f bool) -> Option[Rec] {
+    if f {
+        ro r = Rec { v: 4 }
+        return Some(r)
+    }
+    None
+}
+
+fn listed(f bool, xs []int) -> Option[[]int] {
+    if f {
+        return Some(xs)
+    }
+    None
+}
+
+fn word(b bool) -> str => if b { "yes" } else { "no" }
+
+fn readable(p str) Fs -> bool => read(p.to_path()) is Ok
+
+fn main() {
+    println(word(pick(true) is Some))
+    println(word(pick(false) is Some))
+    println(word(pick(false) is None))
+    ro got = name(true) is Some
+    println(word(got))
+    println(word(name(false) is None))
+    if boxed(true) is Some {
+        println("boxed")
+    }
+    println(word(boxed(false) is None && !(boxed(true) is None)))
+    println(word(listed(true, [1, 2]) is Some))
+    println(word(listed(false, [1]) is Some))
+    with Fs = real_fs() {
+        println(word(readable("novac/fixtures/is_applied_sum/pos_1.nv")))
+        println(word(readable("novac/fixtures/is_applied_sum/no_such_file.nv")))
+        println(word(read("novac/fixtures/is_applied_sum/no_such_file.nv".to_path()) is Err))
+    }
+}

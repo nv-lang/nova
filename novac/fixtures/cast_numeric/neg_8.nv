@@ -1,0 +1,11 @@
+module cast_numeric.neg_8
+
+// ONE seeded cause: a char VALUE into an integer narrower than a codepoint.
+// D54 amendment 2026-10-01: a char value goes only into i32/u32/int/uint/
+// i64/u64; into i8/u8/i16/u16 it is an error (`char as u8`, neg_4, was the
+// first of the four). The oracle on this branch's base still prints 113.
+// NOVAC_EXPECT `char as u16`
+fn main() {
+    ro c = 'q'
+    println(c as u16)
+}

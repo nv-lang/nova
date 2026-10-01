@@ -68,6 +68,13 @@ disagree with:
 - an untyped literal adapts to the float operand beside it (`b + 1` where `b f64`),
   the way an untyped constant does in Go.
 
+One rule stands behind both ([D489](decisions/02-types.md#d489)): **a literal takes the type of its
+position when its exact value is representable there**, and the literal's form sets its kind. An
+integer literal goes to any integer type within range and to a float when exact (`16777217` in
+`f32` is `E_LIT_INEXACT`); a fractional one goes to floats only, so `2.0` in `int` is an error; a
+character goes to `char` only, to a number through `as`. The rule holds in a `match` pattern and
+in the second operand too (`x == 300` with `x u8` is an error).
+
 A value of type `int` next to a value of type `f64` is still an error, literal or not.
 
 **Belonging to one category is not permission to mix inside it.** Both `f32` and `f64`
@@ -380,6 +387,7 @@ ro n = 100
 ro c Row = n                   // ERROR E7301 -- a typed variable
 ro d Row = Row(n)              // ok
 ro e Row = n as Row            // ok
+ro g Row = Row(d)              // ERROR E_NEWTYPE_CTOR_SELF -- d is already Row
 ```
 
 Sums are untouched: `SqlValue.I(x)` is still inserted for ANY expression the

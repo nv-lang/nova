@@ -123,7 +123,7 @@ test "an instance types its body under the substitution, in its own channel (E2-
     ro decl = generic_decl_of(tree, "twice")
     ro row = decl_fn_row(decl, ctx) ?? ice("test: `twice` owns no row")
     ro (diags, chan) = check_instance(decl, SourceText { text: src }, ctx, row,
-        []TyId.of(ctx.prims.int_id), raw_node(tree.id_of()) + 1)
+        []TyId.of(ctx.prims.int_id), raw_node(tree.id_of()) + 1, tree, "")
     assert(diags.len() == 0)
     // The tail is `x + x`, and its recorded type is the SUBSTITUTED one: int.
     // A bare name would prove nothing here -- the channel deliberately does
@@ -350,14 +350,14 @@ fn main() { println(1) }", std_decls())
 }
 
 test "E2 records surface is clean: type decl, ctor, punning, spread, field" {
-    ro src = "type P { a f64 }\nfn main() { ro p = P { a: 1.5 }\n ro q = { ...p, a: 2.5 }\n println(q.a) }"
+    ro src = "type Pt { a f64 }\nfn main() { ro p = Pt { a: 1.5 }\n ro q = { ...p, a: 2.5 }\n println(q.a) }"
     assert(n_diags(src) == 0)
 }
 
 test "record ctor outside a binding initializer is refused in CHECK (E2 boundary)" {
     // The emitter's tmp scheme exists only for the binding-init shape; a
     // green check here would turn into an emitter ice killing the smoke.
-    assert(n_diags("type P { a int }\nfn main() { println(P { a: 1 }) }") == 1)
+    assert(n_diags("type Pt { a int }\nfn main() { println(Pt { a: 1 }) }") == 1)
 }
 
 test "unknown method is an honest subset refusal at the name" {
@@ -372,7 +372,7 @@ test "no silent type defaults: fn without a return type is refused (#652 class)"
 }
 
 test "E2 match surface is clean: sum decl, arms, guards, expression fn" {
-    ro src = "type S\n | A(f64)\n | B(f64, f64)\nfn area(s S) -> f64 => match s {\n A(r) => r\n B(w, h) => w * h\n}\nfn main() { println(area(A(1.5))) }"
+    ro src = "type Sh\n | A(f64)\n | B(f64, f64)\nfn area(s Sh) -> f64 => match s {\n A(r) => r\n B(w, h) => w * h\n}\nfn main() { println(area(A(1.5))) }"
     assert(n_diags(src) == 0)
 }
 
@@ -404,8 +404,8 @@ test "a static method on a GENERIC type is refused by name, never iced" {
     // held by THIS test and by the gate step that runs it, not by anyone's
     // memory: revert the door and this file fails. That is a property of
     // novac alone -- exactly what a module test is for.
-    ro src = "type P[A] { fst A }\n\
-fn P[A].mk(a A) -> int => 1\n\
+    ro src = "type Pg[A] { fst A }\n\
+fn Pg[A].mk(a A) -> int => 1\n\
 fn main() { println(1) }"
     ro (diags, _) = compile_to_c(src, std_decls())
     // Named, and named per FORM: an ice would be `E_NOVAC_ICE`, and a
@@ -559,15 +559,15 @@ test "a `value` record answers is_value_record -- the POSITIVE side of the shape
     // back apart, and check-novac-mangling-one-way refuses Nova-prefixed
     // spellings in test asserts -- the door IS sem's answer about the type.
     ro src = "module m.v\n\
-type P value { n int }\n\
+type Pt value { n int }\n\
 fn main() {\n\
- ro p = P { n: 7 }\n\
+ ro p = Pt { n: 7 }\n\
  println(p.n)\n\
 }"
     ro (diags, _) = compile_to_c(src, []str.new())
     assert(diags.len() == 0)
     ro ctx = context(parse(tokens_of(src)), parse_decls([]str.new()), InteropTable.new())
-    assert(is_value_record(ctx, ctx.ty_of_name("P") ?? no_ty()))
+    assert(is_value_record(ctx, ctx.ty_of_name("Pt") ?? no_ty()))
 }
 
 test "a type nobody declared is still refused by name" {
@@ -868,7 +868,7 @@ export type Vec[T] { n int }")
     assert(d1.len() == 0)
     // The element type the shell has no instance for: refused naming the SHELL
     // and the type -- the fix is in the probe program, not in this file.
-    ro (d2, _) = compile_to_c("type P { n int }\nfn main() {\n ro a = P { n: 1 }\n ro v = [a, a]\n println(1)\n}", std)
+    ro (d2, _) = compile_to_c("type Pt { n int }\nfn main() {\n ro a = Pt { n: 1 }\n ro v = [a, a]\n println(1)\n}", std)
     assert(d2.len() == 1)
     assert(d2[0].message.contains("carries no"))
     // Mixed elements: named by position and by both types.
@@ -905,7 +905,7 @@ export type Vec[T] { n int }")
     assert(d2[0].message.contains("takes no arguments"))
     // An element type the shell carries no instance for: the shell's refusal,
     // not the form's.
-    ro (d3, _) = compile_to_c("type P { n int }\nfn main() {\n ro v = []P.new()\n println(1)\n}", std)
+    ro (d3, _) = compile_to_c("type Pt { n int }\nfn main() {\n ro v = []Pt.new()\n println(1)\n}", std)
     assert(d3.len() == 1)
     assert(d3[0].message.contains("carries no"))
     // The tail of an `if`-value branch places a literal like a binding does.

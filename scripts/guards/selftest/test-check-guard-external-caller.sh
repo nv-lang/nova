@@ -92,6 +92,23 @@ python "$G" "$T/tree" "$T/base" > "$T/o8" 2>&1 \
     && ok "гейт, который CI запускает, засчитан за обоих" \
     || bad "запускаемый гейт не засчитан: [$(head -n 2 "$T/o8")]"
 
+# ── 7б. ТЕЛО ХУКА: хук зовёт скрипт стражей, тот — страж; страж под судьёй ──
+# (2026-10-02: check-spec-amend-places.py, подключённый в тело хука commit-msg,
+# считался сиротой). Контроль той же клетки: тело хука страж НЕ зовёт — сирота.
+mk_tree; mk_base 0
+mkdir -p "$T/tree/scripts/githooks"
+printf '#!/bin/sh\nexec bash scripts/guards/check-a.sh "$1"\n' > "$T/tree/scripts/githooks/commit-msg"
+printf '#!/bin/sh\npython scripts/guards/check-b.sh\necho "check-a ok: body"\n' > "$T/tree/scripts/guards/check-a.sh"
+python "$G" "$T/tree" "$T/base" > "$T/o7b" 2>&1 \
+    && ok "страж, которого зовёт тело хука, засчитан" \
+    || bad "страж из тела хука не засчитан: [$(head -n 2 "$T/o7b")]"
+printf '#!/bin/sh\necho "check-a ok: body"\n' > "$T/tree/scripts/guards/check-a.sh"
+if python "$G" "$T/tree" "$T/base" > "$T/o7c" 2> "$T/e7c"; then
+    bad "контроль: тело хука не зовёт check-b, а он засчитан"
+else
+    grep -q "check-b.sh" "$T/e7c" && ok "контроль: без вызова из тела хука — сирота" || bad "контроль красный, но не про check-b"
+fi
+
 # ── 8. нет базы — красный, а не «нечего судить» ──────────────────────────
 mk_tree
 if python "$G" "$T/tree" "$T/nosuch" > "$T/o9" 2> "$T/e9"; then

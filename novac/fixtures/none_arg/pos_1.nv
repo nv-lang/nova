@@ -1,0 +1,23 @@
+module none_arg.pos_1
+
+// A BARE `None` AS A CALL ARGUMENT takes its PARAMETER's instance (registry
+// 1565): `b.pick(None, 1)` lands in `o Option[int]`, `first(None, "dflt")` in
+// `o Option[str]` -- a method call and a free call. The argument walk leaves
+// it untyped, the lookup decides the callee by the other positions, and the
+// parameter names the instance. Each fallback differs (11, "dflt"), and the
+// `Some(4)` control prints its payload.
+
+type Bx {
+    v int
+}
+
+fn Bx @pick(o Option[int], d int) -> int => o ?? (d + @v)
+
+fn first(o Option[str], d str) -> str => o ?? d
+
+fn main() {
+    ro b = Bx { v: 10 }
+    println(b.pick(None, 1))
+    println(b.pick(Some(4), 1))
+    println(first(None, "dflt"))
+}
