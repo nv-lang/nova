@@ -1,0 +1,6 @@
+fn main() {
+    mut v = [1, 2, 3]
+    v.cap(100)
+    println(v.cap() >= 100)
+    println(v.len())
+}

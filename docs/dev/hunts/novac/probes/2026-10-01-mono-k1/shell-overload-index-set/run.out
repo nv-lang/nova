@@ -1,0 +1,35 @@
+=== PACKAGE
+./src/main.nv
+=== ORACLE: nova build src/main.nv, run
+oracle build rc=0
+oracle run rc=0
+9
+=== SUBJECT: novac check (no NOVAC_SELF_PATH: single file)
+novac check rc=0
+=== SUBJECT: novac emit
+novac emit rc=0
+--- C lines matching: method_index
+2859:static void* Nova_Vec_method_index(Nova_Vec* nova_self, nova_int i);
+2861:static nova_unit Nova_Vec_method_index__nova_int_void_p(Nova_Vec* nova_self, nova_int i, void* val);
+2910:static Nova_Vec* Nova_Vec_method_index__NovaValue_Range(Nova_Vec* nova_self, NovaValue_Range r);
+3064:static nova_str Nova_str_method_index(nova_str nova_self, NovaValue_Range r);
+3224:static Nova_Vec____nova_byte* Vec____nova_byte_method_index__NovaValue_Range(Nova_Vec____nova_byte* nova_self, NovaValue_Range r);
+3225:static Nova_Vec____nova_byte* Vec____nova_byte_method_index__NovaValue_Range__sret(Nova_Vec____nova_byte* nova_self, NovaValue_Range r, Nova_Vec____nova_byte* _out);
+3254:static nova_int Vec____nova_int_method_index(Nova_Vec____nova_int* nova_self, nova_int i);
+3257:static Nova_Vec____nova_str* Vec____nova_str_method_index__NovaValue_Range(Nova_Vec____nova_str* nova_self, NovaValue_Range r);
+3258:static Nova_Vec____nova_str* Vec____nova_str_method_index__NovaValue_Range__sret(Nova_Vec____nova_str* nova_self, NovaValue_Range r, Nova_Vec____nova_str* _out);
+3261:static nova_str Vec____nova_str_method_index(Nova_Vec____nova_str* nova_self, nova_int i);
+3262:static nova_byte Vec____nova_byte_method_index(Nova_Vec____nova_byte* nova_self, nova_int i);
+4992:            _nv_match_292 = Vec____nova_byte_method_append__Nova_Vec____nova_byte_p____Nova_Vec____nova_byte_p(out, Vec____nova_byte_method_index__NovaValue_Range(_nv_tmp_294, _nv_tmp_295));
+5278:        NovaRes_nova_int_NovaValue_IoError* _nv_scr_332 = Nova_File_method_write(f, Vec____nova_byte_method_index__NovaValue_Range(_nv_tmp_330, _nv_tmp_331));
+5779:static void* Nova_Vec_method_index(Nova_Vec* nova_self, nova_int i) {
+5791:static nova_unit Nova_Vec_method_index__nova_int_void_p(Nova_Vec* nova_self, nova_int i, void* val) {
+6086:static Nova_Vec* Nova_Vec_method_index__NovaValue_Range(Nova_Vec* nova_self, NovaValue_Range r) {
+7652:        return ((NovaOpt_nova_str){.tag = NOVA_TAG_Option_Some, .value = (Nova_str_method_index(_nv_tmp_602, _nv_tmp_603))});
+7667:        return ((NovaOpt_nova_str){.tag = NOVA_TAG_Option_Some, .value = (Nova_str_method_index(_nv_tmp_606, _nv_tmp_607))});
+7685:            nova_str seg = Nova_str_method_index(_nv_tmp_611, _nv_tmp_612);
+7707:    NovaOpt_nova_str _nv_tmp_618 = ((NovaOpt_nova_str){.tag = NOVA_TAG_Option_Some, .value = (Nova_str_method_index(_nv_tmp_616, _nv_tmp_617))});
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=1
+<tmp>/body.c:11954:61: error: too many arguments to function call, expected 2, have 3
+1 error generated.

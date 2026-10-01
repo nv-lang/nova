@@ -1,0 +1,5 @@
+module hp.geo
+
+fn weight(x int) -> int => x * 2
+
+export fn Vec[T] @w() -> int => weight(@len())
