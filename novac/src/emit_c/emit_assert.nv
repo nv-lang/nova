@@ -16,7 +16,7 @@
 
 module novac.emit_c
 
-import ../tree.{Node, NodeKind}
+import ../tree.{Node}
 import ../sem.{call_arg_at, is_arg_node, literal_as_c_text}
 import ../lex.{TokenKind}
 import ../diag.{ice}
@@ -51,15 +51,17 @@ fn assert_msg_c(kids []Node) -> str {
 }
 
 /// A plain string literal as C text, else NULL. The parser wraps a literal in
-/// a `Lit` branch (one leaf; two with a sign), so both shapes are asked.
+/// a branch of one leaf, so both shapes are asked.
 fn str_literal_c(m Node) -> str {
     match m {
         Leaf(t) => {
             if t.kind == TokenKind.StrLit { return literal_as_c_text(t.text) }
             // Not a string literal: the runtime prints no message.
         }
-        Branch { kind, children, .. } => {
-            if kind == NodeKind.Lit && children.len() == 1 { return str_literal_c(children[0]) }
+        Branch { children, .. } => {
+            // The literal's own wrapper is the one branch with a single child
+            // (a parenthesised or computed message has more): look inside it.
+            if children.len() == 1 { return str_literal_c(children[0]) }
             // A computed message: the same fallback.
         }
     }
