@@ -38,7 +38,8 @@ test "a `-> @` body of the FILE: no tail, a bare `return`, a tail `if` without `
 fn Ctr mut @reset() -> @ {\n @n = 0\n}\n\
 fn Ctr mut @set_pos(x int) -> @ {\n if x < 0 {\n  return\n }\n @n = x\n}\n\
 fn Ctr mut @bump_if(b bool) -> @ {\n if b {\n  @n += 1\n }\n}\n\
-fn main() {\n mut c = Ctr { n: 5 }\n ro a = c.reset()\n println(a.n)\n ro b = c.set_pos(3)\n println(b.n)\n ro d = c.bump_if(true)\n println(d.n)\n}"
+fn main() {\n mut c = Ctr { n: 5 }\n ro a = c.reset()\n println(a.n)\n\
+ ro b = c.set_pos(3)\n println(b.n)\n ro d = c.bump_if(true)\n println(d.n)\n}"
     ro (d0, c0) = compile_to_c(src, std)
     assert(d0.len() == 0, messages(d0))
     // Every exit of each body returns the receiver: nothing falls off the end.
