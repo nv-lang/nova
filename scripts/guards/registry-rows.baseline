@@ -1442,6 +1442,9 @@
 # 2026-10-01, integrator nova-20: rows -> 1408, max -> 1461 (merge of the cloud session's p1442: #1461 (K1, novac loses live objects under GC -- the compiler's answer depends on the environment; on the path of Carina's 0.2 double build)).
 # 2026-10-01, integrator nova-20: rows -> 1411, max -> 1464 (merge of the cloud session's p1448: #1462 (K1, as into a newtype from a Result prints an address -- blocks the oracle tag), #1463 (K2, curly literal of a named tuple fails in C), #1464 (K3, spread array without D55 element wrap)).
 # 2026-10-01, integrator nova-20: rows -> 1415, max -> 1469 (merge of the cloud session's p1406: #1466 (K1, consume rebinding inside detach/spawn consume closes the capture twice -- a live #480 carrier), #1467-#1469 (K2); 1465 issued to the assistant, leaves gaps).
+# 2026-10-01, integrator nova-20: rows -> 1417, max -> 1471 (merge of the cloud session's p1100: #1470 (K1, the checker judges consume by name, not by the chosen overload) and #1471 (K1, a call through a function value double-cleans) -- both block the oracle tag).
+rows=1417
+max=1471
 rows=1415
 max=1469
 rows=1411

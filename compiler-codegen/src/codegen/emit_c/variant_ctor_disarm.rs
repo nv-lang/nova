@@ -30,7 +30,7 @@ impl CEmitter {
         let ExprKind::Ident(name) = &func.kind else { return };
         // The callee must be a variant name; a colliding free fn wins the
         // other arm (its positions table) -- if it has one, this is not a ctor.
-        if self.free_fn_consume_param_positions.contains_key(name) {
+        if self.decl_consume_modes.free_fn_has_consume_position(name) {
             return;
         }
         if self.sum_schema_registry.variant_sum_candidates(name).is_empty() {

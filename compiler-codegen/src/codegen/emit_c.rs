@@ -21,7 +21,7 @@ mod self_value; // #1395: `Self` by position, see its doc
 mod opt_eq_split; // #1405: `nova_opt_eq` body late, see its doc
 mod decl_module_symbol; // #1097: free-fn symbol by declaring module (D134), see its doc
 mod generic_overload_mono; // #1343: generic free-fn monomorph by declaration, see its doc
-mod method_key; mod default_dispatch; // #1413 method key; #1414 value default method
+mod method_key; mod default_dispatch; mod consume_disarm_resolved; // #1413 method key; #1414 value default method; #1100 disarm by resolved callee
 mod type_repr_early; mod generic_sum_schema; // #761: newtype/alias representation before any consumer; #1338: generic sum payload layout from the channel
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
@@ -1969,24 +1969,10 @@ pub struct CEmitter {
     /// that `Stmt::Let`, to arm the shield + `_active` flag with the exact
     /// C names declared in the prologue. `(block_id, entry_idx, init_c_type)`.
     auto_cleanup_arm_sites: HashMap<Span, (usize, usize, String)>,
-    /// Plan 217 BUGFIX (folder-CU regression `guard_cross_scope_transfer.nv`
-    /// "Guard passed to helper function and consumed there" — MutexGuard
-    /// double-`unlock`): free-fn NAME → set of ARG POSITIONS that are
-    /// `consume`-mode on AT LEAST ONE overload of that name (union across
-    /// overloads — conservative, favors disarming over leaking since the
-    /// alternative, discovered empirically, is an ACTIVE double-cleanup
-    /// crash). `do_work_under_lock(g, counter)` — `g` at position 0 must
-    /// disarm `g`'s auto-cleanup in the CALLER before the call, mirroring
-    /// what the checker's `consume_args`/`consume_idxs` already does for
-    /// the STATIC obligation (this closes the codegen-side gap that left
-    /// `_active` armed after a legitimate transfer).
-    free_fn_consume_param_positions: HashMap<String, HashSet<usize>>,
-    /// Plan 217 BUGFIX (same as above): `(receiver_type_name, method_name)`
-    /// → set of consume-mode ARG positions (0-based, receiver excluded) —
-    /// covers `recv.method(g)` where `g` is an auto-cleanup binding passed
-    /// as a consume-mode argument to a METHOD call (not the receiver
-    /// itself, which `consume_receiver_methods` already handles).
-    method_consume_param_positions: HashMap<(String, String), HashSet<usize>>,
+    /// Plan 217 / #1100: consume modes per DECLARATION (D432 §4 points 2-3 —
+    /// the call-arg and receiver disarm ask the callee the checker resolved,
+    /// `resolved_callees`; see `emit_c/consume_disarm_resolved.rs`).
+    decl_consume_modes: consume_disarm_resolved::DeclConsumeModes,
     /// Plan 217: type_name (plain Nova) → set of method names declared with
     /// a `consume` receiver on that type (mirrors checker's `LinearityRegistry
     /// ::consume_methods`, types/mod.rs). Gates the Stmt::Expr bare-statement
@@ -2877,8 +2863,7 @@ impl CEmitter {
             auto_cleanup_generic: HashMap::new(),
             instance_method_sigs: HashMap::new(),
             auto_cleanup_arm_sites: HashMap::new(),
-            free_fn_consume_param_positions: HashMap::new(),
-            method_consume_param_positions: HashMap::new(),
+            decl_consume_modes: Default::default(),
             consume_receiver_methods: HashMap::new(),
             zero_on_move_types: HashMap::new(),
             loop_scope_floor: Vec::new(),
@@ -5901,50 +5886,9 @@ impl CEmitter {
             }
         }
 
-        // Plan 217 BUGFIX (folder-CU regression, `guard_cross_scope_
-        // transfer.nv` "Guard passed to helper function and consumed
-        // there" — MutexGuard double-`unlock`): pre-pass — collect, per
-        // free-fn NAME and per `(type, method)`, the ARG POSITIONS that are
-        // `consume`-mode on at least one overload (union — conservative).
-        // Drives the call-arg disarm in `disarm_auto_cleanup_receiver_call`
-        // (despite the name, that fn now ALSO handles this case) — without
-        // it, `consume g = mu.lock(); helper(g)` where `helper`'s param IS
-        // `consume`-mode leaves `g`'s `_active` flag armed after a
-        // legitimate ownership transfer, double-firing `@cleanup` at the
-        // caller's scope-exit on top of whatever `helper` itself did.
-        {
-            let mut collect = |items: &[Item]| {
-                for item in items {
-                    if let Item::Fn(f) = item {
-                        let modes = Self::fn_param_modes(f);
-                        let consume_positions: HashSet<usize> = modes.iter()
-                            .enumerate()
-                            .filter(|(_, &m)| m == 2)
-                            .map(|(i, _)| i)
-                            .collect();
-                        if consume_positions.is_empty() { continue; }
-                        match &f.receiver {
-                            None => {
-                                self.free_fn_consume_param_positions
-                                    .entry(f.name.clone())
-                                    .or_default()
-                                    .extend(consume_positions);
-                            }
-                            Some(recv) => {
-                                self.method_consume_param_positions
-                                    .entry((recv.type_name.clone(), f.name.clone()))
-                                    .or_default()
-                                    .extend(consume_positions);
-                            }
-                        }
-                    }
-                }
-            };
-            collect(&module.items);
-            for pf in &module.peer_files {
-                collect(&pf.items_here);
-            }
-        }
+        // Plan 217 / #1100: consume modes per declaration, for the D432 §4
+        // call-arg and receiver disarm (`disarm_auto_cleanup_receiver_call`).
+        self.collect_decl_consume_modes(module);
 
         // `[M-178-consume-field-ctor-from-var]` × D188 v3: pre-pass — collect
         // consume-field names per record type / record-payload sum variant
@@ -32869,8 +32813,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// registered consume-method (`X.method(...)`, gated on
     /// `consume_receiver_methods` — mirrors checker's `is_consume_method`),
     /// or as a direct argument at a `consume`-mode parameter position
-    /// (`helper(X, other)`, gated on `free_fn_consume_param_positions` /
-    /// `method_consume_param_positions` — mirrors checker's `consume_args`/
+    /// (`helper(X, other)`, gated on the RESOLVED callee's modes, #1100
+    /// `resolved_consume_positions` — mirrors checker's `consume_args`/
     /// `consume_idxs`; found necessary via the `guard_cross_scope_transfer.
     /// nv` regression — MutexGuard `g` passed to a `consume`-param helper
     /// left `_active` armed after a legitimate transfer, double-`unlock`ing
@@ -32901,7 +32845,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let is_consuming_call = self.consume_receiver_methods
                     .get(&recv_ty_name)
                     .map_or(false, |ms| ms.contains(method_name));
-                if is_consuming_call {
+                if is_consuming_call && self.resolved_consumes_receiver(e) {
                     if let Some(var) = self.disarm_var_for(recv_name) {
                         self.line(&format!(
                             "{} = 0;  /* Plan 217: consuming-вызов (receiver) — cleanup дизармлен */",
@@ -32911,25 +32855,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
         // (b) direct call-argument at a `consume`-mode parameter position —
-        // free-fn or method (args here EXCLUDE the receiver, matching
-        // `method_consume_param_positions`'s indexing).
-        let consume_positions: Option<HashSet<usize>> = match &func.kind {
-            ExprKind::Ident(name) => self.free_fn_consume_param_positions.get(name).cloned(),
-            ExprKind::Path(path) => path.last()
-                .and_then(|name| self.free_fn_consume_param_positions.get(name))
-                .cloned(),
-            ExprKind::Member { obj, name: method_name } => {
-                let recv_ty = self.infer_expr_c_type(obj);
-                let recv_ty_name = {
-                    let t = self.debt_strip_nova_trim_start(&recv_ty);
-                    t.strip_prefix("NovaValue_").map(|s| s.to_string()).unwrap_or(t)
-                };
-                self.method_consume_param_positions
-                    .get(&(recv_ty_name, method_name.clone()))
-                    .cloned()
-            }
-            _ => None,
-        };
+        // free-fn or method (args here EXCLUDE the receiver); #1100: positions
+        // of the callee THIS call resolves to, not a union by name.
+        let consume_positions: Option<HashSet<usize>> = self.resolved_consume_positions(e);
         if let Some(positions) = consume_positions {
             for (i, a) in args.iter().enumerate() {
                 if !positions.contains(&i) { continue; }
@@ -32995,8 +32923,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
     /// №465 (A8.29): consume-param-arg auto-inject. Mirrors the position-
     /// detection in `disarm_auto_cleanup_receiver_call` branch (b) — same
-    /// `free_fn_consume_param_positions` / `method_consume_param_positions`
-    /// channels — but REWRITES the call's arg list (copy-out-then-zero-
+    /// `resolved_consume_positions` channel (#1100) — but REWRITES the call's arg list (copy-out-then-zero-
     /// source, see `zero_on_move_hoist_and_zero`) instead of just emitting a
     /// disarm flag-write, since the zero call must land strictly AFTER an
     /// independent copy of the argument's value exists (zeroing in place
@@ -33010,23 +32937,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             return None;
         }
         let ExprKind::Call { func, args, trailing } = &e.kind else { return None };
-        let consume_positions: Option<HashSet<usize>> = match &func.kind {
-            ExprKind::Ident(name) => self.free_fn_consume_param_positions.get(name).cloned(),
-            ExprKind::Path(path) => path.last()
-                .and_then(|name| self.free_fn_consume_param_positions.get(name))
-                .cloned(),
-            ExprKind::Member { obj, name: method_name } => {
-                let recv_ty = self.infer_expr_c_type(obj);
-                let recv_ty_name = {
-                    let t = self.debt_strip_nova_trim_start(&recv_ty);
-                    t.strip_prefix("NovaValue_").map(|s| s.to_string()).unwrap_or(t)
-                };
-                self.method_consume_param_positions
-                    .get(&(recv_ty_name, method_name.clone()))
-                    .cloned()
-            }
-            _ => None,
-        };
+        let consume_positions: Option<HashSet<usize>> = self.resolved_consume_positions(e); // #1100
         let positions = consume_positions?;
         let mut new_args: Vec<CallArg> = Vec::with_capacity(args.len());
         let mut rewrote = false;

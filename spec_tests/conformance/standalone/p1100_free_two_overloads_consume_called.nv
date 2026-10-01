@@ -1,0 +1,35 @@
+// EXPECT_STDOUT p1100 result=9 no cleanup
+//
+// Registry 221.1 #1100, D432 §4 point 3, the other half: `use(g)` resolves to
+// the `consume` overload, ownership moves, the callee defuses `g`. The caller's
+// flag must be disarmed -- a cleanup in the caller would panic (a double
+// cleanup of a moved value), so reaching the final line proves both.
+
+module standalone.p1100_free_two_overloads_consume_called
+
+type Boom consume { id int }
+
+fn Boom consume @cleanup(_o ScopeOutcome) -> () {
+    panic("p1100 cleanup fired")
+}
+
+fn Boom consume @defuse() -> () { }
+
+fn mk(v int) -> Boom => { id: v }
+
+fn use(consume x Boom) -> int {
+    x.defuse()
+    9
+}
+
+fn use(x Boom, tag int) -> int => tag
+
+fn run() -> int {
+    consume g = mk(7)
+    use(g)
+}
+
+fn main() Io -> () {
+    ro r = run()
+    println("p1100 result=${r} no cleanup")
+}
