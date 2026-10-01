@@ -2176,6 +2176,8 @@ fn check_module_impl(
     // #1260: lift the sum-coercion kind channel (read by `annotate_map_literals`).
     env.sum_wrap_kinds = type_check_ctx.sum_wrap_kinds_buf.take();
     // #1451/#1452: lift the `#coerce` channel (read by `annotate_map_literals`).
+    // #1480: a view no read-only-by-mode position judged sits in an owned one.
+    type_check_ctx.report_coerce_view_into_owned(&mut errors);
     env.coerce_sites = type_check_ctx.coerce_sites_buf.take();
     // Plan 104.10 Ф.2 (D379): lift the opt-in IDE per-expression type map. Empty unless
     // `record_expr_types` was set (i.e. via check_module_with_expr_types) — zero-overhead
@@ -4600,6 +4602,13 @@ struct TypeCheckCtx<'a> {
     /// Registry 221.1 #1451/#1452: >0 while `assignable` is asked speculatively
     /// (overload filtering) -- a probe must not leave a coercion in the channel.
     coerce_probe_depth: std::cell::Cell<u32>,
+    /// Registry 221.1 #1480: view-lane sites recorded at a position whose type is
+    /// NOT `ro O` -- owned unless a read-only-by-mode position (a `ro` parameter,
+    /// a `ro` binding) judges them; see `coerce_door::CoerceOwnedCandidate`.
+    coerce_owned_candidates:
+        std::cell::RefCell<HashMap<crate::ast::ExprId, coerce_door::CoerceOwnedCandidate>>,
+    /// Registry 221.1 #1480: sites judged by a position that knows its own mode.
+    coerce_judged: std::cell::RefCell<HashSet<crate::ast::ExprId>>,
     /// Plan 221.1 №286 residual gap (window p286, 2026-08-04): a BARE
     /// `Channel.new(cap)` (no turbofish, no `ChanWriter[T]`/`ChanReader[T]`
     /// annotation) left `T` permanently untracked (window p-chan, №143/№286
@@ -5532,6 +5541,8 @@ impl<'a> TypeCheckCtx<'a> {
             sum_wrap_kinds_buf: std::cell::RefCell::new(HashMap::new()),
             coerce_sites_buf: std::cell::RefCell::new(HashMap::new()),
             coerce_probe_depth: std::cell::Cell::new(0),
+            coerce_owned_candidates: std::cell::RefCell::new(HashMap::new()),
+            coerce_judged: std::cell::RefCell::new(HashSet::new()),
             // Plan 221.1 №286 residual gap (window p286): empty first-send
             // T-inference hint channel; filled per-block during the check walk.
             channel_bare_send_elem_hint: std::cell::RefCell::new(HashMap::new()),
@@ -12847,12 +12858,23 @@ impl<'a> TypeCheckCtx<'a> {
                                                     self.resolved_callees
                                                         .borrow_mut()
                                                         .insert(e.id, single.span);
-                                                    self.materialize_coerce(
-                                                        right,
-                                                        &single.params[0].ty,
-                                                        gs,
-                                                        scope,
-                                                    );
+                                                    if self
+                                                        .materialize_coerce(
+                                                            right,
+                                                            &single.params[0].ty,
+                                                            gs,
+                                                            scope,
+                                                        )
+                                                        .is_some()
+                                                    {
+                                                        // #1480: an operator's operand is its parameter.
+                                                        self.check_coerce_view_into_mut(
+                                                            right,
+                                                            coerce_door::param_is_writable(&single.params[0]),
+                                                            &coerce_door::param_position(&single.params[0]),
+                                                            errors,
+                                                        );
+                                                    }
                                                 }
                                             }
                                         }
@@ -22612,7 +22634,7 @@ impl<'a> TypeCheckCtx<'a> {
             if let Some(verdict) = self.coerce_verdict(expr, expected, scope) {
                 return match verdict {
                     Ok(site) => {
-                        self.note_coerce_site(expr, site);
+                        self.note_coerce_site(expr, expected, site);
                         Compat::Ok
                     }
                     Err(msg) => Compat::CoerceConflict { msg },

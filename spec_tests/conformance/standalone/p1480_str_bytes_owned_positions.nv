@@ -1,0 +1,84 @@
+// Registry 221.1 #1480, positive side (D55 amendment 2026-10-01, owner's decision, option (a)):
+// `#coerce str @bytes() -> ro []u8` applies only at a READ-ONLY position. The same three places
+// the negatives refuse (`neg/p1480_str_bytes_owned_*_neg.nv`) -- a return, a collection element,
+// a record field -- are legal in either of two spellings:
+//   * typed `ro []u8` (`-> ro []u8`, `[]ro []u8`, a field `data ro []u8`): the value stays the
+//     zero-copy view of the string's bytes;
+//   * typed `[]u8` with the explicit owned copy `s.bytes().clone()`: the value is the caller's
+//     to write, and the write below changes the copy, never the `str` it came from.
+// Plus the read-only-by-mode positions that keep the bare value: a default (`ro`) parameter and
+// a `ro` binding annotated `[]u8`.
+
+// EXPECT_STDOUT retro lit abc
+// EXPECT_STDOUT retro var abc
+// EXPECT_STDOUT retro call abc
+// EXPECT_STDOUT retstmt early abc
+// EXPECT_STDOUT retclone Abc abc
+// EXPECT_STDOUT elemro abc xy
+// EXPECT_STDOUT elemclone Abc abc
+// EXPECT_STDOUT fieldro abc
+// EXPECT_STDOUT fieldclone Abc abc
+// EXPECT_STDOUT param abc
+// EXPECT_STDOUT rolet abc
+
+module standalone.p1480_str_bytes_owned_positions
+
+type P1480View { data ro []u8 }
+
+type P1480Own { data []u8 }
+
+fn dec(b []u8) -> str => b.to_str() ?? "ERR"
+
+fn nm() -> str => "abc"
+
+fn ro_lit() -> ro []u8 => "abc"
+
+fn ro_var(s str) -> ro []u8 => s
+
+fn ro_call() -> ro []u8 => nm()
+
+fn ro_stmt(k int) -> ro []u8 {
+    if k > 5 {
+        return "early"
+    }
+    return nm()
+}
+
+fn own_clone(s str) -> []u8 => s.bytes().clone()
+
+fn main() Io -> () {
+    ro s = "abc"
+    ro o1 = dec(ro_lit())
+    println("retro lit ${o1}")
+    ro o2 = dec(ro_var(s))
+    println("retro var ${o2}")
+    ro o3 = dec(ro_call())
+    println("retro call ${o3}")
+    ro o4 = dec(ro_stmt(9))
+    ro o5 = dec(ro_stmt(0))
+    println("retstmt ${o4} ${o5}")
+    mut b = own_clone(s)
+    b[0] = 65 as u8
+    ro o6 = dec(b)
+    println("retclone ${o6} ${s}")
+    ro vs []ro []u8 = [s, "xy"]
+    ro o7 = dec(vs[0])
+    ro o8 = dec(vs[1])
+    println("elemro ${o7} ${o8}")
+    mut xs [][]u8 = [s.bytes().clone()]
+    xs[0][0] = 65 as u8
+    ro o9 = dec(xs[0])
+    println("elemclone ${o9} ${s}")
+    ro v = P1480View { data: nm() }
+    ro o10 = dec(v.data)
+    println("fieldro ${o10}")
+    mut h = P1480Own { data: s.bytes().clone() }
+    h.data[0] = 65 as u8
+    ro o11 = dec(h.data)
+    println("fieldclone ${o11} ${s}")
+    ro o12 = dec(s)
+    println("param ${o12}")
+    ro rb []u8 = s
+    ro o13 = dec(rb)
+    println("rolet ${o13}")
+}

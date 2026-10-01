@@ -1,0 +1,36 @@
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+//
+// Registry 221.1 #1480 (D55 amendment 2026-10-01, owner's decision, option (a)): a return typed
+// `-> []u8` (not `-> ro []u8`) is an OWNED position -- the caller may bind the result `mut` and
+// write through it. A `str` reaches `[]u8` only as the read-only view `#coerce str @bytes() ->
+// ro []u8`, so before the fix `mut b = p1480_lit(); b[0] = 65 as u8` wrote into the literal's
+// `.rodata` bytes (SIGSEGV; silent corruption for a heap `str`). Probe:
+// `docs/plans/repro/d55-str-bytes/launder_return_segfault.nv.txt`. The owned spelling is
+// `"abc".bytes().clone()`; the view spelling is `-> ro []u8`
+// (`standalone/p1480_str_bytes_owned_positions.nv`).
+
+module neg.p1480_str_bytes_owned_return_neg
+
+fn p1480_nm() -> str => "abc"
+
+// nova:expect E_READONLY_COERCE -- arrow-body return of a literal into an owned `-> []u8`
+fn p1480_lit() -> []u8 => "abc"
+
+// nova:expect E_READONLY_COERCE -- arrow-body return of a `str` parameter into an owned `-> []u8`
+fn p1480_var(s str) -> []u8 => s
+
+fn p1480_stmt(k int) -> []u8 {
+    if k > 5 {
+        // nova:expect E_READONLY_COERCE -- `return` statement of a literal into an owned `-> []u8`
+        return "early"
+    }
+    // nova:expect E_READONLY_COERCE -- `return` statement of a call result into an owned `-> []u8`
+    return p1480_nm()
+}
+
+fn main() Io -> () {
+    mut b = p1480_lit()
+    b[0] = 65 as u8
+    println(p1480_var("x").len().to_str())
+    println(p1480_stmt(0).len().to_str())
+}
