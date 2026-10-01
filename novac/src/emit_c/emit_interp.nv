@@ -234,6 +234,7 @@ fn display_call_of(row BuiltinType) -> DisplayCall {
         }
         PfUnit => ice("emit_c: a unit interpolation slot passed the checker")
         PfAny => ice("emit_c: an any interpolation slot passed the checker")
+        PfNever => ice("emit_c: a never interpolation slot passed the checker -- it has no value")
     }
 }
 

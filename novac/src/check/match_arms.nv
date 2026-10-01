@@ -23,7 +23,7 @@ import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, is_true_literal}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{decl_of_ty, decl_fn_row, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at}
-import ../sem.{ty_source_name}
+import ../sem.{ty_source_name, is_never_ty}
 // The pattern tree's doors (D486): the shape asked ONCE, the head and the
 // parts through their own doors -- never slot arithmetic (registry 1190's
 // class: a slot count and the meaning of what sits there are two doors).
@@ -237,13 +237,21 @@ fn Checker mut @agree_arm_type(arm Node, at TyId, first Option[TyId], before_arm
         // The first arm with a type sets what the rest must match.
         None => Some(at)
         Some(f) => {
-            if at != f && @out.len() == before_arms {
-                @report_first_leaf_of([]Node.of(arm), ARMS_DISAGREE_MSG)
+            // An arm of type `never` (D26, B10 part 3) produces no value, so it
+            // does not vote: `TkParam => ice(..)` beside `TkPrim => row.head_id`
+            // is a match of `int`. A `never` first arm yields to the first arm
+            // that has a value; a match whose every arm is `never` is `never`.
+            if is_never_ty(@ctx.tys, f) {
+                Some(at)
             } else {
-                // The arm agrees, or a diagnostic already stands: the answer
-                // is the first arm's type either way.
+                if at != f && !is_never_ty(@ctx.tys, at) && @out.len() == before_arms {
+                    @report_first_leaf_of([]Node.of(arm), ARMS_DISAGREE_MSG)
+                } else {
+                    // The arm agrees, is `never`, or a diagnostic already
+                    // stands: the answer is the first arm's type either way.
+                }
+                first
             }
-            first
         }
     }
 }
