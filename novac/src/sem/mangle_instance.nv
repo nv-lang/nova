@@ -88,8 +88,8 @@ export fn c_method_symbol(ctx Ctx, t TyId, name str) -> str {
 /// to the first with two arguments. The oracle spells the FIRST overload of a
 /// name on its type bare and every later one with `__` and its parameters' C
 /// types (pointer `*` as `_p`, joined by `_`; none -> `__mut`/`__ro` by the
-/// receiver) -- read off `emit_c.rs` (`[M-138.2-generic-method-overload-mono]`)
-/// and the shell. Only a generic RECORD instance takes the suffix here: that is
+/// receiver) -- read off the oracle's generic-method overload mangling in
+/// `emit_c.rs` and off the shell. Only a generic RECORD instance takes the suffix here: that is
 /// the spelling measured; a plain receiver and a sum's family spelling are
 /// asked by `c_method_symbol` as before.
 ///
@@ -113,8 +113,14 @@ export fn c_overload_symbol(ctx Ctx, row FnRow, recv_t TyId, args []TyId) -> str
         } else {
             // The first parameter follows the separator directly.
         }
-        ro pt = subst_type(ctx, ctx.fns.params[fd.param_off + p].type_id, args)
-        s.append(c_type(ctx, pt).replace("*", "_p").replace(" ", "_").replace("[", "_arr_").replace("]", ""))
+        match overload_param_spelling(ctx, subst_type(ctx, ctx.fns.params[fd.param_off + p].type_id, args)) {
+            Some(sp) => s.append(sp)
+            // A kind whose in-name spelling the shell was never measured for:
+            // a character no C identifier holds, so the shell is never found
+            // to carry it -- the overload is made from its body or refused by
+            // name, never guessed into a call.
+            None => s.append(UNMEASURED_SPELLING)
+        }
     }
     if fd.param_cnt <= first {
         ro recv_mut = fd.has_recv && ctx.fns.params[fd.param_off].mode != ParamMode.ModeRo
@@ -123,6 +129,35 @@ export fn c_overload_symbol(ctx Ctx, row FnRow, recv_t TyId, args []TyId) -> str
         // The parameters are the suffix.
     }
     s
+}
+
+/// What an overload's suffix holds for a parameter kind the shell's spelling
+/// was not measured for -- see `c_overload_symbol`.
+const UNMEASURED_SPELLING = "?"
+
+/// The in-name spelling of an overload's PARAMETER type, the oracle's C type
+/// with its pointer star as `_p` -- which is exactly an instance argument's
+/// spelling (`nova_int`, `NovaValue_Range`, `Nova_P_p`,
+/// `Nova_Vec____nova_byte_p`, a newtype as its representation), and an
+/// `Option` by its family (`NovaOpt_nova_int`). `None` for a kind not measured
+/// on the shell; built from the doors, never by editing a spelling (P24).
+///
+/// THE MEASURED KINDS ARE LISTED, the rest answer `None` -- a chain and not a
+/// `match` on purpose: every other kind (a sum, a pointer, an effect, a
+/// structural pair, a parameter left unsubstituted) has the SAME answer, the
+/// safe one, and a kind added tomorrow joins it without a guess about its C.
+fn overload_param_spelling(ctx Ctx, t TyId) -> Option[str] {
+    ro k = ctx.tys.kind_of(t)
+    if k == TypeKind.TkPrim || k == TypeKind.TkRecord || k == TypeKind.TkNewtype {
+        return Some(instance_arg_spelling(ctx, t))
+    } else if k == TypeKind.TkApp {
+        if decl_of_ty(ctx, t).kind != TypeKind.TkSum { return Some(instance_arg_spelling(ctx, t)) }
+        ro fam = family_instance_name(ctx, t)
+        return if fam == "" { None } else { Some(fam) }
+    } else {
+        // SILENT-OK: not measured on the shell -- the overload is not asked of it.
+        return None
+    }
 }
 
 /// The body every instance name is built from: `<Head>____<arg>__<arg>`.

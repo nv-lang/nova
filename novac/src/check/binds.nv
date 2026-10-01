@@ -840,7 +840,7 @@ fn Checker mut @vec_op_carried(vec_t TyId, name str) -> bool {
     // An operation that is an OVERLOAD of another name (the write `index=`) has
     // no by-name spelling: the bare name is the OTHER overload's, and asking it
     // answered "carried" for the read (registry 1524). No row, nothing to ask.
-    if raw_row(row) < 0 && vec_op_method(name) != name { return false }
+    if raw_row(row) < 0 && name == VEC_INDEX_SET_OP { return false }
     ro shell = if name == EMPTY_CTOR {
         c_instance_ctor(@ctx, vec_t)
     } else if raw_row(row) >= 0 {

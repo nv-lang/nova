@@ -128,8 +128,8 @@ fn hung_on(ctx Ctx, row FnRow) -> int {
 /// from zero: how many handed methods of the same name on the same type were
 /// read before it. The oracle spells the first overload by the bare name and
 /// every later one with a suffix of its parameter types
-/// (`Vec____nova_int_method_cap` / `..._cap__nova_int`, `emit_c.rs`
-/// `[M-138.2-generic-method-overload-mono]`), so this number is what the shell
+/// (`Vec____nova_int_method_cap` / `..._cap__nova_int`, the generic-method
+/// overload mangling of the oracle's `emit_c.rs`), so this number is what the shell
 /// question is asked by (registry 1524). A walk of the name's chain, never a
 /// scan of the registry; -1 for a row that was not handed.
 fn Ctx @overload_ordinal(row FnRow) -> int {
@@ -170,8 +170,8 @@ export fn Ctx @is_vec_op_shape(row FnRow, name str) -> bool {
         return is_ty(fd.owner) && fd.param_cnt == 1 && @fns.params[fd.param_off].type_id == @prims.int_id
     } else if name == VEC_INDEX_SET_OP {
         if !fd.has_recv || fd.param_cnt != 3 { return false }
-        return @fns.params[fd.param_off + 1].type_id == @prims.int_id
-            && @fns.params[fd.param_off + 2].mode != ParamMode.ModeConsume
+        return @fns.params[fd.param_off + 1].type_id == @prims.int_id &&
+            @fns.params[fd.param_off + 2].mode != ParamMode.ModeConsume
     } else if fd.param_cnt == 1 {
         return fd.has_recv
     } else if fd.param_cnt == 2 {
