@@ -49,7 +49,7 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, NodeId, bin_op_of, un_op_of}
 import ../diag.{Diagnostic, ice}
 import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind}
-import ../sem.{expr_leaf_name, recv_type_name, is_value_record}
+import ../sem.{expr_leaf_name, is_value_record}
 import ../sem.{file_decls}
 import ../sem.{slice_shape_of, ctor_head_variant}
 // Where an arm keeps its body -- the door the lowering has read for waves.
@@ -168,22 +168,9 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                         // An ordinary declaration: the three shape rules below
                         // are its business as before.
                     }
-                    // A METHOD ON A VALUE RECORD, refused by name. The fixed
-                    // point takes such a receiver BY POINTER (`NovaValue_X*` in
-                    // the shell it emits) precisely so a `mut` method can write
-                    // to the caller's record; novac passes a value receiver by
-                    // VALUE, which is what the word means everywhere else in its
-                    // emission -- so `@field` through it does not address
-                    // anything. clang said it first ("member reference type
-                    // 'NovaValue_Counter' ... is not a pointer"), and a form we
-                    // accept and then fail to compile is the class a named
-                    // refusal exists to prevent.
-                    if is_value_record(@ctx, @ctx.ty_of_name(recv_type_name(children) ?? "") ?? no_ty()) {
-                        @report_first_leaf_of(children, VALUE_METHOD_MSG)
-                        return
-                    } else {
-                        // A free function, or a method on a pointer record.
-                    }
+                    // A METHOD ON A VALUE RECORD is compiled since D488: its receiver
+                    // crosses by copy or by pointer (sem/value_recv.nv); until then it
+                    // was refused by name here (VALUE_METHOD_MSG, removed with it).
                     @tail_value_body = value_body_of(children)
                     @report_if_default_order(children)
                     @report_if_generic_decl(children)
@@ -247,6 +234,8 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // the second were never written, and a constructor
                     // resolves against a body its author did not mean.
                     @report_if_name_repeats(children)
+                    // D30: a type name has at least two characters (#1562).
+                    @report_if_type_name_too_short(children)
                     // A PROTOCOL DECLARATION IS JUDGED, NOT REFUSED (wave 3b).
                     // Wave 3a refused it by name -- honest while nothing could
                     // check a contract; now the registry holds the required
@@ -506,7 +495,18 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // there: opening init_pos on every right side would wave a
                     // `match` through to a store that cannot lay its blocks
                     // down.
-                    if !init_pos && !arg_pos && !arm_pos {
+                    //
+                    // THE TAIL OF AN `if`-VALUE BRANCH, for a NAMED constructor
+                    // only (2026-10-01): `if rest { Am { .. } } else { Am { .. } }`
+                    // as a fn's value (lower/lower_match.nv). `@lower_if_value`
+                    // places each branch's tail through `@lower_place`, the door
+                    // above; the named constructor carries its own type. An
+                    // ANONYMOUS one (`{ exact: 1 }`) has none until an expectation
+                    // gives it one, and the branch typing does not hand it any --
+                    // measured: `novac emit` ices "anonymous constructor without a
+                    // spread". It stays refused here.
+                    ro named_tail = if_tail && children.len() > 0 && children[0].kind_of() == NodeKind.Name
+                    if !init_pos && !arg_pos && !arm_pos && !named_tail {
                         @report_first_leaf_of(children, "outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)")
                         return
                     } else {
@@ -886,7 +886,11 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
             }
             // An `if` standing as a VALUE: the walk below already refused it
             // anywhere else, so its Block children are branches of a value.
-            ro value_if = kind == NodeKind.IfExpr && (init_pos || arg_pos || arm_pos)
+            // A TAIL `if` of a value body or an arm body is a value too: the
+            // block's tail slot (`tail_at`) walks it with `arm_pos`, and the
+            // statement spelling (`IfStmt`) is the one a block tail parses to.
+            ro value_if = (kind == NodeKind.IfExpr && (init_pos || arg_pos || arm_pos)) ||
+                          (kind == NodeKind.IfStmt && arm_pos)
             mut at = 0
             for c in children {
                 // STATEMENT POSITION is "a direct child of a Block" (274.5

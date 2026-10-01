@@ -1,0 +1,14 @@
+module consume_shell_method.neg_1
+
+// NOVAC_EXPECT needs ownership
+// ONE seeded cause: the consuming method is called on a `ro` binding, which
+// cannot hand its value over (P14). The shell's symbol exists -- the refusal
+// is the binding's class, not the interop surface.
+fn build() -> str {
+    ro sb = StringBuilder.new(cap: 8)
+    sb.into_str()
+}
+
+fn main() {
+    println(build())
+}

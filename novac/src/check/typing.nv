@@ -357,7 +357,11 @@ fn Checker mut @type_fn(f Node) -> () {
             // check passed, the emitter iced (found by the W4 carrier).
             ro if_body = e.kind_of() == NodeKind.IfExpr
             if e.kind_of() == NodeKind.MatchExpr {
+                // The declared return flows into the arms (E2-b3), as it
+                // does into a tail `if`'s branches just below.
+                @value_expect = @ret_expect
                 @type_match(e)
+                @value_expect = no_ty()
             } else if if_body {
                 @value_expect = @ret_expect
                 @type_if_value(e)
@@ -456,7 +460,11 @@ fn Checker mut @type_block(b Node) -> () {
                     // reason (#902): a refused arm leaves a node the lattice
                     // cannot answer about, and asking anyway is an ice.
                     ro mmark = @out.len()
+                    // The declared return is the arms' expectation (E2-b3):
+                    // an arm's bare `None` takes it, as a tail `if`'s does.
+                    @value_expect = @ret_expect
                     @type_match(c)
+                    @value_expect = no_ty()
                     if @out.len() > mmark {
                         i += 1
                         continue

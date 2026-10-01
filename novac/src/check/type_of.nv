@@ -85,12 +85,9 @@ fn typed_args(kids []Node, from int, ctx Ctx, scope Scope, chan CheckOut) -> []A
 /// owned temporary is a value nobody else holds: a literal, a call result, a
 /// constructor, the value of an operator or of a `match`. A name answers with
 /// its binding, and so does the receiver `@`: it IS a bound name (typing.nv
-/// binds RECV_BINDING to the callable's receiver mode before the body is
-/// walked). A FIELD or an index of something is judged conservatively as
-/// `ro`: it is a place, but whether it is a MUTABLE place is a question about
-/// its owner, and answering it wrongly would hand a caller a write it never
-/// asked for -- `ro` is the class every mode accepts, so a conservative answer
-/// costs specificity and never correctness.
+/// walked). A FIELD -- `x.f`, `@f`, `x.f.g` -- is a place whose mutability is
+/// its ROOT's (`field_class`); an index of something is a temporary here, the
+/// narrower answer.
 #realtime nogc
 fn arg_class(e Node, scope Scope) -> ArgClass {
     ro k = e.kind_of()
@@ -108,8 +105,44 @@ fn arg_class(e Node, scope Scope) -> ArgClass {
         return class_of_binding(binding_name_of(e), scope)
     }
     if k == NodeKind.Paren { return arg_class(branch_children(e)[1], scope) }
-    if k == NodeKind.FieldAccess { return ArgClass.ArgRo }
+    if k == NodeKind.FieldAccess || k == NodeKind.SelfField { return field_class(e, scope) }
     ArgClass.ArgOwnedTemp
+}
+
+/// The class of a FIELD place: its ROOT binding decides (02-types.md:13463-13478,
+/// the `walk_root` of a mut call through a chain; :11978-11981, a field of a
+/// `mut` binding is writable, of a `ro` one is not). A `mut` or `consume` root
+/// makes the field a MUTABLE place -- `ArgMut`, never `ArgConsume`: moving out
+/// of a field is a different question, and `mut` is what the root lends. Any
+/// other root -- `ro`, or a value that is no binding (`f().x`) -- answers `ro`.
+///
+/// Until 2026-10-01 every field answered `ro` "conservatively", on the claim
+/// that `ro` is the class every mode accepts. It is not: a `mut` parameter or
+/// receiver refuses it (P14), so `@ir.temp(t)` inside a `mut` method and
+/// `o.c.bump()` on a `mut` local were refused -- 89 times over novac's own
+/// `lower/` (registry 1560), forms the oracle compiles.
+#realtime nogc
+fn field_class(e Node, scope Scope) -> ArgClass {
+    ro root = if e.kind_of() == NodeKind.SelfField {
+        class_of_binding(RECV_BINDING, scope)
+    } else {
+        // `x.f`: the receiver of the access is child zero.
+        ro base = branch_children(e)[0]
+        ro bk = base.kind_of()
+        if bk == NodeKind.FieldAccess || bk == NodeKind.SelfField || bk == NodeKind.Paren ||
+           bk == NodeKind.Name || bk == NodeKind.SelfExpr {
+            arg_class(base, scope)
+        } else {
+            // A value that is no binding (a call, a literal): no place to lend.
+            ArgClass.ArgRo
+        }
+    }
+    match root {
+        ArgMut => ArgClass.ArgMut
+        ArgConsume => ArgClass.ArgMut
+        ArgRo => ArgClass.ArgRo
+        ArgOwnedTemp => ArgClass.ArgRo
+    }
 }
 
 /// The class of an argument whose call is ALREADY TYPED: a call that hands out

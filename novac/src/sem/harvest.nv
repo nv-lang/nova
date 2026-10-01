@@ -32,7 +32,7 @@ module novac.sem
 import ../tree.{Node, NodeKind, NodeId, branch, no_node}
 import ../builtins.{COERCE_ATTR, SELF_TYPE, UNIT_TYPE_NAME, RECV_BINDING}
 import ../types.{TyId, no_ty, is_ty}
-import ../names.{raw_decl, DeclId}
+import ../names.{raw_decl, DeclId, NameTable, NamespaceId}
 
 /// Read a METHOD declared in THIS file: the same reader std declarations go
 /// through, plus the node -> row entry the emitter needs to find the body.
@@ -68,8 +68,90 @@ fn harvest_methods(decls []Node, types []TypeDef, mut defs DefTable, mut tys Int
         // (wave W6): a free function of that module is emitted as the shell's
         // symbol, which the oracle spells from the module path. The TREE's index
         // travels too (E.10 step 4a): the row's body lives there.
+        ro first = fns.rows.len()
         harvest_in(d, module_dotted(d), types, defs, tys, fns, coerces, tree, bodies)
+        resolve_const_defaults(d, fns, first)
         tree += 1
+    }
+}
+
+/// A HANDED parameter's default that names a CONSTANT of its own file
+/// (`fn StringBuilder.new(cap int = INITIAL_CAPACITY)`, the constant private
+/// to std) becomes that constant's LITERAL (registry 1563). D102: a default is
+/// evaluated at the call site, and may read module-level `const`s -- of the
+/// DECLARING module, which the calling file cannot name. Left as the bare
+/// name, the call printed `INITIAL_CAPACITY` into the caller's C, an
+/// undeclared identifier: `check` clean, clang red. The literal is rebuilt
+/// without an identity (`handed_literal`), as for an imported constant -- and
+/// so is a default that IS a literal (1576). Any other default form stays as
+/// written.
+fn resolve_const_defaults(d Node, mut fns FnTable, first int) -> () {
+    if first >= fns.rows.len() { return }
+    // A LITERAL default is rebuilt without an identity too (registry 1576):
+    // printed as-is it carried its HANDED tree's node id, and the emitter read
+    // that id in the compiled file's channel -- another node's type (a `3` for
+    // `int` printed as that node's `u8`), or past the end of the table.
+    for r in first..fns.rows.len() {
+        ro fd = fns.rows[r]
+        for p in fd.param_off..fd.param_off + fd.param_cnt {
+            if Some(dx) = fns.params[p].default_expr {
+                if Some(lit) = handed_literal(dx) {
+                    mut pd = fns.params[p]
+                    pd.default_expr = Some(lit)
+                    fns.params[p] = pd
+                } else {
+                    // Not a literal: the constant pass below, or as written.
+                }
+            } else {
+                // A required parameter: no default to rebuild.
+            }
+        }
+    }
+    // The file's constants with a literal value, by name, through the ONE
+    // str -> id door: `lits[i]` is the literal of the constant `index` maps to.
+    mut index = NameTable.new(NamespaceId.NsDefs)
+    mut lits = []Node.new()
+    for c in file_decls(d) {
+        if Some(ck) = const_decl_of(c) {
+            ro kids = branch_children(ck)
+            ro init_at = const_init_at(kids)
+            if init_at < 0 { continue }
+            if Some(cname) = const_full_name(kids) {
+                if Some(lit) = handed_literal(kids[init_at]) {
+                    index.put(cname, lits.len())
+                    lits.push(lit)
+                } else {
+                    // A computed constant: no literal to put in a default.
+                }
+            } else {
+                // A nameless constant: a parse-error shape, nothing to index.
+            }
+        } else {
+            // Not a constant declaration.
+        }
+    }
+    if lits.len() == 0 { return }
+    apply_const_defaults(index, lits, fns, first)
+}
+
+/// The lookup half of `resolve_const_defaults`: a parameter default that is a
+/// bare name of an indexed constant becomes the constant's literal.
+#realtime nogc
+fn apply_const_defaults(index NameTable, lits []Node, mut fns FnTable, first int) -> () {
+    for r in first..fns.rows.len() {
+        ro fd = fns.rows[r]
+        for p in fd.param_off..fd.param_off + fd.param_cnt {
+            if Some(dx) = fns.params[p].default_expr {
+                if dx.kind_of() != NodeKind.Name { continue }
+                ro at = index.find(expr_leaf_name(dx))
+                if at < 0 { continue }
+                mut pd = fns.params[p]
+                pd.default_expr = Some(lits[at])
+                fns.params[p] = pd
+            } else {
+                // A required parameter: no default to resolve.
+            }
+        }
     }
 }
 

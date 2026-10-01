@@ -27,6 +27,7 @@ import ../sem.{c_type, vec_op_c, raw_vrow, is_value_record, c_maker, VariantRow,
 // M3a: lowering `println` asks the tree three questions (is this an argument, what does the
 // callee spell, what are the children) and the output printer asks the carrier of a type.
 import ../sem.{branch_children, is_expr_kind, carrier_of}
+import ../sem.{FnRow, raw_row, c_callable, coerce_shell_symbol}
 import ../types.{TyId, is_ty}
 import ../lower.{Local, LocalDecl, AssignStmt, StoreStmt, Rvalue, Operand, OutputStmt, no_local}
 import ../builtins.{VEC_INDEX_METHOD, VEC_LEN_METHOD}
@@ -117,11 +118,22 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
             // line that reads the temporary.
             ro built = @build_value(e, d.ty)
             @emit_assign_head(d)
+            // THE RETURN DOOR'S DECLARED CONVERSION (D429 R7): the method the
+            // program NAMED, around the value -- the checker recorded it, and
+            // only for a symbol that exists (`@coerce_return`).
+            ro via = @out.coercion_at(e.id_of())
+            ro wrap = raw_row(via) >= 0
+            if wrap {
+                @body.append(@coercion_callee(via))
+                @body.append("(")
+            } else {
+                // No conversion: the value as written.
+            }
             match built {
                 Some(t) => @body.append(t)
                 None => @emit_expr(e)
             }
-            @body.append(";\n")
+            @body.append(if wrap { ");\n" } else { ";\n" })
         }
         SomePayload(opt) => {
             @emit_assign_head(d)
@@ -427,4 +439,12 @@ fn Emitter mut @emit_variant_ctor(e Node, v VariantRow, ty TyId) -> str {
     }
     @body.append(");\n")
     out
+}
+
+/// The C name of a recorded `#coerce` method: ours when this unit emits its
+/// body, else the shell's (`coerce_shell_symbol`) -- the same split an
+/// explicit method call takes (emit_expr.nv).
+fn Emitter @coercion_callee(via FnRow) -> str {
+    if @ctx.fns.compiles_body(via) { return c_callable(@ctx, via, no_subst()) }
+    coerce_shell_symbol(@ctx, via)
 }

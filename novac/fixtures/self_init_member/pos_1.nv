@@ -1,0 +1,30 @@
+module self_init_member.pos_1
+
+// A BINDING NAMED LIKE A MEMBER IT READS (274.7 B9's refusal, narrowed): in
+// `ro name = r.name` the right side reads the record `r`, and `name` after
+// the dot spells a FIELD, not the binding being declared. The same holds for
+// a method name after the dot, an `@field` inside a method, and the label of
+// a constructor field. None of them is a self-read (D347 R3 is about the
+// binding's own NAME), so all four are accepted; each prints its own value.
+type Row {
+    name int
+    size int
+}
+
+fn Row @size() -> int => @size * 2
+
+fn Row @name_plus(name int) -> int {
+    ro size = @size
+    name + size
+}
+
+fn main() {
+    ro r = Row { name: 4, size: 3 }
+    ro name = r.name
+    ro size = r.size()
+    ro made = Row { name: 1, size: 2 }
+    println(name)
+    println(size)
+    println(made.name)
+    println(r.name_plus(10))
+}

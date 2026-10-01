@@ -1,0 +1,19 @@
+module self_init_member.neg_1
+
+// NOVAC_EXPECT a binding's initializer refers to the name it binds
+// ONE seeded cause: a REAL self-read. `size` on the right of `ro size = ...`
+// is not after a dot, an `@` or before a `:` -- it reads the outer `size`,
+// legal by D347 R3 and not compiled by the subset yet (274.7 B9). The member
+// narrowing must not swallow it.
+type Row {
+    size int
+}
+
+fn grow(r Row, size int) -> int {
+    ro size = r.size + size
+    size
+}
+
+fn main() {
+    println(grow(Row { size: 1 }, 2))
+}

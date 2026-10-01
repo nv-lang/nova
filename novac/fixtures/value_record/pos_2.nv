@@ -1,0 +1,19 @@
+module value_record.pos_2
+
+// A `mut` METHOD ON A VALUE RECORD (D488 R3, owner 2026-10-01): the receiver
+// crosses BY POINTER, so the write lands in the caller's record and `c.n` is 1.
+// Until D488 this file was `neg_1`: novac passed a value receiver by value and
+// refused the form by name rather than compile a silent no-op; the oracle
+// compiled it all along. The form now compiles, and the same program is the
+// positive half.
+type Counter value { n int }
+
+fn Counter mut @bump() -> () {
+    @n = @n + 1
+}
+
+fn main() {
+    mut c = Counter { n: 0 }
+    c.bump()
+    println(c.n)
+}

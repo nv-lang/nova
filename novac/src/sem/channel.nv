@@ -253,6 +253,7 @@ export type CheckOut {
     mv_order []int /// module values (constant-table rows) in the order their initializers run: every value after the values it reads (274.5 S6, D200 topological order). One writer: check.
     captures []CaptureRow /// the bindings each handler literal captures, one row per (literal, name) -- E.9 step 3. One writer: check.
     cap_at []int /// NodeId -> the capture row a Name read inside a literal op body is, -1 = none. One writer: check.
+    coerce_at []int /// NodeId -> the raw row of the `#coerce` method the RETURN door inserts around this value (D429 R2/R9), -1 = none. One writer: check (`@judge_return`).
     vec_ops NameTable /// implicit vector operation NAME (`new`, `push`, `len`, `index`) -> the row of std's `Vec[T]` declaration it calls, recorded by the checker where it decided an instance novac makes, read by the emitter to name it (274.11 E.10 step 4c-2) (NsCallables)
     wanted []CalleeRef /// instances the LANGUAGE calls with no call written -- a vector literal's `new` and `push`, `xs[i]`'s `index`, a `for`'s `len` and `index` over a vector whose instance novac makes itself (274.11 E.10 step 4c-2). A flat list, not by node: no node holds a call for them, and mono reads them all. One writer: check.
 }
@@ -277,15 +278,17 @@ export fn CheckOut.new(node_count int) -> CheckOut {
     mut res = []Resolution.new()
     mut implicit = []Resolution.new()
     mut cap_at = []int.new()
+    mut coerce_at = []int.new()
     for _ in 0..node_count {
         types.push(no_ty())
         res.push(Resolution.Unresolved)
         implicit.push(Resolution.Unresolved)
         cap_at.push(0 - 1)
+        coerce_at.push(0 - 1)
     }
     CheckOut { entry: no_row(), types, res, implicit, subst_args: []TyId.new(), arg_slots: []SlotBind.new(),
                contract_notes: []ContractNote.new(), mv_order: []int.new(),
-               captures: []CaptureRow.new(), cap_at, wanted: []CalleeRef.new(),
+               captures: []CaptureRow.new(), cap_at, coerce_at, wanted: []CalleeRef.new(),
                vec_ops: NameTable.new(NamespaceId.NsCallables) }
 }
 
@@ -357,6 +360,25 @@ export fn CheckOut @capture_at(id NodeId) -> Option[CaptureRow] {
     ro at = @cap_at[raw_node(id)]
     if at < 0 { return None }
     Some(@captures[at])
+}
+
+/// THE RETURN DOOR'S DECLARED CONVERSION (D429 R2, R9): the value at `id` is
+/// the fn's result through the `#coerce` method `via` -- `return sb` for a
+/// `-> str` is `StringBuilder @into_str()` around `sb`, with nothing written.
+/// A table of its own and not the `implicit` arm: an interpolation slot's
+/// `@display` lives there, and a node may be both a slot's value and nothing
+/// else, while this conversion belongs to the RESULT position alone.
+export fn CheckOut mut @record_coercion(id NodeId, via FnRow) -> ()
+    requires is_node(id) && raw_node(id) < @coerce_at.len(), "sem: channel coercion write outside this file's id space"
+{
+    @coerce_at[raw_node(id)] = raw_row(via)
+}
+
+/// The `#coerce` row the return door inserted at this node, or `no_row()`.
+#realtime nogc
+export fn CheckOut @coercion_at(id NodeId) -> FnRow {
+    if !is_node(id) || raw_node(id) >= @coerce_at.len() { return no_row() }
+    FnRow(@coerce_at[raw_node(id)])
 }
 
 /// The captures of one handler literal, in the order their first reads were met.

@@ -1,0 +1,21 @@
+module coerce_return.neg_1
+
+// NOVAC_EXPECT whose receiver takes ownership
+// ONE seeded cause: the pair's method takes its receiver by `consume`, and the
+// returned value is a `ro` parameter -- it cannot be moved into the
+// conversion. The oracle refuses the same line (E_READONLY_COERCE).
+type Meters {
+    v int
+}
+
+type Feet {
+    v int
+}
+
+#coerce fn Meters consume @to_feet() -> Feet => { v: @v * 3 }
+
+fn conv(m Meters) -> Feet => m
+
+fn main() {
+    println(conv(Meters { v: 2 }).v)
+}

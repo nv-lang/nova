@@ -131,7 +131,11 @@ fn described_surface(decl_texts []str) -> InteropTable {
 /// handed to `to_json` separately, by the door that already knows it. So
 /// nothing in the tree or the channel needs to learn about files -- the door
 /// that prints needs a table.
-type UnitFile value {
+///
+/// EXPORTED because `Unit.files`, `file_of_offset` and `offset_in_file` are:
+/// a module-private type in a public signature or a public record's field is
+/// E_PRIVATE_TYPE_IN_PUBLIC (D47 amendment, owner's decision 2026-10-01).
+export type UnitFile value {
     path str /// the path exactly as the CLI received it
     at int /// where this run begins INSIDE the unit text
     from int /// where that same run began in the file it came from
