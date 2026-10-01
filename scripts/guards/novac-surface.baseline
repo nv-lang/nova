@@ -944,7 +944,11 @@ resolve 19
 #   `@coercion_at` (the return door's `#coerce` method on a value, D429 R2 -- written by check,
 #   read by emit_c) and `coerce_shell_symbol` (the shell's C name of a `consume`-receiver pair,
 #   asked by both check and emit_c, so one spelling).
-sem 325
+# 2026-10-01, cloud session p274-carina-sweep (registry 1564): sem 325 -> 326:
+#   `shell_method_symbol` -- the shell's C name of a method by its ROW, so a `consume`
+#   receiver gets the shell's `_consume_` spelling; asked by check/methods.nv and
+#   emit_c/emit_expr.nv, and the return door's `coerce_shell_symbol` goes through it.
+sem 326
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

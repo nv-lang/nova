@@ -22,7 +22,7 @@ import ../lower.{no_local}
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, raw_node, is_node}
 import ../diag.{ice}
-import ../sem.{raw_crow, carrier_of, c_callable, c_shell_method, c_method_symbol, Ctx}
+import ../sem.{raw_crow, carrier_of, c_callable, c_shell_method, c_method_symbol, Ctx, shell_method_symbol}
 import ../sem.{CheckOut, vec_op_c, c_static_symbol}
 import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct}
 import ../sem.{shape_of}
@@ -602,7 +602,15 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // `body_ours`: the file's own, a program module's, or an instance this
         // unit makes from a handed body (274.11 E.10 step 4c).
         ro static = is_ty(@ctx.fns.rows[raw_row(cr.callable_row())].owner)
-        if @ctx.body_ours(cr.callable_row(), @out.callee_subst_of(e.id_of())) {
+        // A `consume` method the shell carries under ITS spelling (1564) is the
+        // shell's: `instantiates` asks the `_method_` spelling and misses it.
+        ro shell_sym = if static {
+            ""
+        } else {
+            shell_method_symbol(@ctx, cr.callable_row(), @out.type_of(kids[0].id_of()))
+        }
+        ro shells = !static && !@ctx.in_program(cr.callable_row()) && @ctx.interop.has(shell_sym)
+        if !shells && @ctx.body_ours(cr.callable_row(), @out.callee_subst_of(e.id_of())) {
             @body.append(c_callable(@ctx, cr.callable_row(), @out.callee_subst_of(e.id_of())))
         } else if static {
             // A STATIC method the shell carries (274.11 E.10 step 4c-2): no
@@ -614,7 +622,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
             // instance -- `Vec____nova_int_method_len`; the checker admitted
             // it against the lifted surface. Goes the day novac emits the
             // whole prelude.
-            @body.append(c_method_symbol(@ctx, @out.type_of(kids[0].id_of()), leaf_text(kids[2])))
+            @body.append(shell_sym)
         }
         @body.append("(")
         // The receiver is parameter ZERO (plan 273), so it is slot zero of the
