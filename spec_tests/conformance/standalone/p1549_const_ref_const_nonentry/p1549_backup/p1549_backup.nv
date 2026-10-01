@@ -1,0 +1,15 @@
+module p1549_const_ref_const_nonentry.p1549_backup
+
+// Consts whose initialisers read other consts, in a module other than the entry
+// one -- the shape of claude-limits `src/storage/backup.nv`. ALL-CAPS names go
+// through the C-name door (`nv_` prefix, #1440/#1446); a lower-case name does not;
+// a module-private const is qualified by its module.
+
+export const DAY_MS = 86_400_000
+export const WEEK_MS = 7 * DAY_MS
+export const FORTNIGHT_MS = 2 * WEEK_MS
+const HOURS = 24
+export const half_day = HOURS / 2
+
+export fn week() -> int => WEEK_MS
+export fn fortnight() -> int => FORTNIGHT_MS

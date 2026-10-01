@@ -1,0 +1,7 @@
+// EXPECT_STDOUT 604800000 86400000
+module k.main
+import backup.{week}
+import feed.{day}
+fn main() Io -> () {
+    println("${week()} ${day()}")
+}
