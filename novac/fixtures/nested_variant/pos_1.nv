@@ -1,0 +1,52 @@
+module nested_variant.pos_1
+
+// A VARIANT BELOW THE ROOT of a `match` arm's pattern (registry 1542):
+// `X(P(n))` tests the outer tag AND the inner one. The checker accepted the
+// form and the emitter died ("no type recorded") -- the payload-less inner head
+// `X(Q)` was read as a binder. The inner value is read into a temporary and its
+// tag tested by a synthetic condition before the arm's binders below it; a
+// failed test falls through to the next arm.
+//
+// The axes: an inner variant with a payload (`P(n)`), a payload-less inner
+// head (`Q`), two levels of nesting (`X(R(P(n)))`), a nested literal under a
+// nested variant (`X(P(0))`), the arm order (the literal arm first), and the
+// outer payload-less variant `Y`. Behaviour byte-for-byte with the oracle
+// (novac-e1-smoke).
+
+type Inner enum
+    | P(int)
+    | Q
+    | R(Inner)
+
+type Outer enum
+    | X(Inner)
+    | Y
+
+fn pick(o Outer) -> int => match o {
+    X(P(0)) => 100
+    X(P(n)) => n
+    X(Q) => -1
+    X(R(P(n))) => 1000 + n
+    X(R(_)) => -3
+    Y => -2
+}
+
+fn show(o Outer) -> () {
+    match o {
+        X(Q) => println("x of q")
+        X(P(n)) => println("x of p ${n}")
+        _ => println("something else")
+    }
+}
+
+fn main() {
+    println(pick(Outer.X(Inner.P(0))))
+    println(pick(Outer.X(Inner.P(5))))
+    println(pick(Outer.X(Inner.Q)))
+    println(pick(Outer.X(Inner.R(Inner.P(7)))))
+    println(pick(Outer.X(Inner.R(Inner.Q))))
+    println(pick(Outer.Y))
+    show(Outer.X(Inner.Q))
+    show(Outer.X(Inner.P(2)))
+    show(Outer.Y)
+}

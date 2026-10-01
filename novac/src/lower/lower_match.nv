@@ -188,7 +188,24 @@ fn Lowerer mut @lower_pattern_bind(pat Node, ty TyId, base Local) -> () =>
 /// a binder of that name assigns the local already declared instead of
 /// declaring its own, so whichever alternative held, the arm reads ONE `x`
 /// (`@lower_disj_bind`, lower_disj.nv). Empty everywhere else.
+/// A position with NO nested tests: the binding, the conditions, the `for`
+/// header and a disjunction's alternatives. The checker refuses a refutable
+/// subpattern in the first three (D486 s4); a test opened here anyway has no
+/// arm to fall through to, so it is a compiler bug named as such.
 fn Lowerer mut @lower_pattern_bind_in(pat Node, ty TyId, base Local, pre []str) -> () {
+    mut opened = []IfCtx.new()
+    @lower_pattern_tests(pat, ty, base, pre, opened)
+    if opened.len() > 0 {
+        ice("lower: a nested pattern test in a position that has no arm to fall through to")
+    }
+}
+
+/// THE recursion (registries 1534, 1542): whatever the pattern binds is read
+/// out of `base`, and every subpattern with a head of its own -- a literal, a
+/// variant, an array length -- opens a synthetic `If` on the value it was read
+/// into, pushed on `opened` in the order the reads run. The arm closes them
+/// after its body (`@lower_arm`); the root's own test is the arm head.
+fn Lowerer mut @lower_pattern_tests(pat Node, ty TyId, base Local, pre []str, mut opened []IfCtx) -> () {
     match pattern_shape(pat) {
         Lit | Wild => {}
         Disj => @lower_disj_bind(pat, ty, base, pre)
@@ -218,20 +235,8 @@ fn Lowerer mut @lower_pattern_bind_in(pat Node, ty TyId, base Local, pre []str) 
                 // AS THE SCRUTINEE SEES IT, the same door the checker asks:
                 // for `Option[int]` the payload `T` is `int`.
                 ro pt = payload_as_seen(@ctx, ty, @ctx.payload_types[vr.payload_off + i])
-                match @sub_bind_shape(sub) {
-                    SubNone => {}
-                    SubName => {
-                        // A plain payload binder reads its field directly --
-                        // no temporary between the union and the author's name.
-                        ro lb = @binder_local(@out.type_of(pattern_name_node(sub).id_of()), pattern_head_text(sub), pre)
-                        if as_option { @ir.take_payload(lb, base) } else { @ir.take_field(lb, base, vrow, i) }
-                    }
-                    SubNested => {
-                        ro t = @ir.temp(pt)
-                        if as_option { @ir.take_payload(t, base) } else { @ir.take_field(t, base, vrow, i) }
-                        @lower_pattern_bind_in(sub, pt, t, pre)
-                    }
-                }
+                ro rd = if as_option { SubRead.ReadOption } else { SubRead.ReadPayload(vrow, i) }
+                @lower_sub(sub, pt, base, rd, pre, opened)
                 i += 1
             }
         }
@@ -240,14 +245,14 @@ fn Lowerer mut @lower_pattern_bind_in(pat Node, ty TyId, base Local, pre []str) 
             for sub in pattern_subpatterns(pat) {
                 if i >= @ctx.tys.arg_count(ty) { break }
                 ro et = @ctx.tys.arg(ty, i)
-                @lower_proj_bind(sub, et, base, Projection.Elem(i), pre)
+                @lower_sub(sub, et, base, SubRead.ReadProj(Projection.Elem(i)), pre, opened)
                 i += 1
             }
         }
         Record => {
             match variant_in_sum(@ctx, ty, pattern_head_text(pat)) {
                 Some(vrow) => {
-                    @lower_variant_record_bind(pat, vrow, base, pre)
+                    @lower_variant_record_bind(pat, vrow, base, pre, opened)
                     return
                 }
                 None => {}
@@ -260,11 +265,7 @@ fn Lowerer mut @lower_pattern_bind_in(pat Node, ty TyId, base Local, pre []str) 
                 // not ask the field's row, and neither may the lowering).
                 ro ft = @out.type_of(f.id_of())
                 match patfield_sub(f) {
-                    Some(sub) => {
-                        ro t = @ir.temp(ft)
-                        @ir.read(t, base, Projection.Field(fname))
-                        @lower_pattern_bind_in(sub, ft, t, pre)
-                    }
+                    Some(sub) => @lower_sub(sub, ft, base, SubRead.ReadProj(Projection.Field(fname)), pre, opened)
                     None => {
                         ro l = @binder_local(@out.type_of(patfield_name_node(f).id_of()), fname, pre)
                         @ir.read(l, base, Projection.Field(fname))
@@ -301,10 +302,10 @@ fn Lowerer mut @lower_pattern_bind_in(pat Node, ty TyId, base Local, pre []str) 
                     Branch { .. } => {
                         if c.kind_of() == NodeKind.Pattern {
                             if seen_rest {
-                                @lower_elem_bind(c, elem_t, base, suffix - sj, true, pre)
+                                @lower_sub(c, elem_t, base, SubRead.ReadElemEnd(suffix - sj), pre, opened)
                                 sj += 1
                             } else {
-                                @lower_elem_bind(c, elem_t, base, idx, false, pre)
+                                @lower_sub(c, elem_t, base, SubRead.ReadElemAt(idx), pre, opened)
                                 idx += 1
                             }
                         } else { // A non-Pattern branch (a recovery gap) binds nothing.
@@ -316,38 +317,85 @@ fn Lowerer mut @lower_pattern_bind_in(pat Node, ty TyId, base Local, pre []str) 
     }
 }
 
-/// Bind one subpattern read out of `base` through one projection step (a
-/// tuple's `.fN`, a record's `.field`).
-fn Lowerer mut @lower_proj_bind(sub Node, ty TyId, base Local, proj Projection, pre []str) -> () {
+/// HOW one subpattern's value is read out of its parent: a sum's payload slot
+/// (`take_field`), a shell Option's payload (`take_payload`), a tuple element or
+/// a record field (`read`), an array element from the front or the back. The
+/// reads are the binders' own doors -- a nested test reads through the SAME
+/// one, never a second spelling of the payload ABI.
+type SubRead enum
+    | ReadPayload(VariantRow, int)
+    | ReadOption
+    | ReadProj(Projection)
+    | ReadElemAt(int)
+    | ReadElemEnd(int)
+
+/// One read, through the door `rd` names.
+fn Lowerer mut @read_sub(dest Local, base Local, rd SubRead) -> () {
+    match rd {
+        ReadPayload(vrow, slot) => @ir.take_field(dest, base, vrow, slot)
+        ReadOption => @ir.take_payload(dest, base)
+        ReadProj(p) => @ir.read(dest, base, p)
+        ReadElemAt(n) => @ir.take_elem_at(dest, base, n)
+        ReadElemEnd(n) => @ir.take_elem_end(dest, base, n)
+    }
+}
+
+/// ONE subpattern of type `ty`, read out of `base` through `rd` (registries
+/// 1534, 1542). A subpattern with a head of its own goes to a temporary, its
+/// test opens a synthetic `If` (`@open_sub_test`), and the recursion binds
+/// what lies below it INSIDE that `If` -- a payload is read only once its tag
+/// held. A plain name reads straight into the binder; a tuple, a plain record
+/// or a disjunction goes to a temporary and the recursion.
+fn Lowerer mut @lower_sub(sub Node, ty TyId, base Local, rd SubRead, pre []str, mut opened []IfCtx) -> () {
+    if @sub_has_test(sub, ty) {
+        ro t = @ir.temp(ty)
+        @read_sub(t, base, rd)
+        @open_sub_test(sub, ty, t, opened)
+        @lower_pattern_tests(sub, ty, t, pre, opened)
+        return
+    } else {
+        // No head of its own: the binder or the recursion below.
+    }
     match @sub_bind_shape(sub) {
         SubNone => {}
         SubName => {
             ro l = @binder_local(@out.type_of(pattern_name_node(sub).id_of()), pattern_head_text(sub), pre)
-            @ir.read(l, base, proj)
+            @read_sub(l, base, rd)
         }
         SubNested => {
             ro t = @ir.temp(ty)
-            @ir.read(t, base, proj)
-            @lower_pattern_bind_in(sub, ty, t, pre)
+            @read_sub(t, base, rd)
+            @lower_pattern_tests(sub, ty, t, pre, opened)
         }
     }
 }
 
-/// Bind one array element: a constant index from the front, or `len - n`
-/// from the back (the suffix of a `[a, .., z]`).
-fn Lowerer mut @lower_elem_bind(sub Node, elem_t TyId, base Local, n int, from_end bool, pre []str) -> () {
-    match @sub_bind_shape(sub) {
-        SubNone => {}
-        SubName => {
-            ro l = @binder_local(@out.type_of(pattern_name_node(sub).id_of()), pattern_head_text(sub), pre)
-            if from_end { @ir.take_elem_end(l, base, n) } else { @ir.take_elem_at(l, base, n) }
-        }
-        SubNested => {
-            ro t = @ir.temp(elem_t)
-            if from_end { @ir.take_elem_end(t, base, n) } else { @ir.take_elem_at(t, base, n) }
-            @lower_pattern_bind_in(sub, elem_t, t, pre)
-        }
+/// Does the subpattern test something of its own? A literal, a variant head (a
+/// bare payload-less one included -- `X(Q)` read `Q` as a binder and died on a
+/// type nobody recorded, registry 1542), a record headed by a variant, and an
+/// array (its length). A binder, `_`, a tuple and a plain record match any
+/// value; a nested disjunction binds through its own switch (lower_disj.nv).
+fn Lowerer @sub_has_test(sub Node, ty TyId) -> bool {
+    match pattern_shape(sub) {
+        Lit | Variant | Array => true
+        Wild | Tuple | Disj => false
+        Bind | Record => is_vrow(variant_in_sum(@ctx, ty, pattern_head_text(sub)) ?? no_vrow())
     }
+}
+
+/// Opens the synthetic `If` of one subpattern's own test on the temporary `t`.
+/// A shell Option asks the ONE Option door (`IsSome` / `NotSome`, as the
+/// if-let and the while-let do); every other head is the arm head's own test,
+/// `Pattern`, printed by the same printer (`Cond.Holds`).
+fn Lowerer mut @open_sub_test(sub Node, ty TyId, t Local, mut opened []IfCtx) -> () {
+    ro cond = if is_ty(option_payload(@ctx, ty)) {
+        ro found = variant_in_sum(@ctx, ty, pattern_head_text(sub))
+        ro vrow = found ?? ice("lower: an Option subpattern naming no variant of Option")
+        if @ctx.variant_rows[raw_vrow(vrow)].payload_cnt > 0 { Cond.IsSome(t) } else { Cond.NotSome(t) }
+    } else {
+        Cond.Holds(PatTest { pat: @pattern_of(sub, ty), scr: t })
+    }
+    opened.push(@ir.begin_if(cond, ElseShape.NoElse))
 }
 
 /// Lowers ONE arm of a `match`: records it into the IR, prints its head, then binds
@@ -369,7 +417,12 @@ fn Lowerer mut @lower_arm(arm Node, scr_t TyId, ls Local, c SwitchCtx, dest Loca
     // THE BINDINGS, recursively: whatever the pattern introduces is read
     // out of the scrutinee local -- payload fields, tuple components,
     // record fields, array elements, or the scrutinee under a new name.
-    @lower_pattern_bind(ak[0], scr_t, ls)
+    // A subpattern's own test opens a synthetic `If` around everything below
+    // it (registries 1534, 1542); the printer finds the innermost through
+    // `checks` and sets the first-match flag there, as it does for a guard.
+    mut opened = []IfCtx.new()
+    @lower_pattern_tests(ak[0], scr_t, ls, []str.new(), opened)
+    @ir.note_arm_checks(opened.len())
     match guard {
         Some(g) => {
             // The guard's head is an `if` like any other: it goes through the ONE head
@@ -385,6 +438,12 @@ fn Lowerer mut @lower_arm(arm Node, scr_t TyId, ls Local, c SwitchCtx, dest Loca
         None => {
             @lower_arm_body(arm_e, dest)
         }
+    }
+    // The tests close innermost first: each `If` joins into the one around it.
+    mut k = opened.len()
+    while k > 0 {
+        k -= 1
+        @ir.end_if(opened[k])
     }
     @ir.end_arm(c)
 }

@@ -262,6 +262,10 @@ export type Cond enum
     // the `setjmp` of the `with` frame N returned 0: the body runs (E.9 step 2);
     // a longjmp into the frame -- an interrupt -- takes the other branch
     | FrameEntered(int)
+    // a NESTED subpattern's own test holds for the local its value was read
+    // into (registries 1534, 1542): `3` of `A(3)`, `P` of `X(P(n))` -- printed
+    // through the one door of pattern tests, the arm head's (emit_match.nv)
+    | Holds(PatTest)
 
 /// WHAT KIND OF `else` AN `if` HAS -- three states, and the fourth is gone because it never
 /// existed. Until 2026-09-13 the doors took two booleans, `has_else` and `els_braced`, which
@@ -360,25 +364,6 @@ export type LoopTerm value {
     exit BlockId /// entered when it fails
 }
 
-/// What an arm of a `match` tests (wave M2b-1d). One level deep, as the
-/// subset's patterns are: an int literal, a variant head (with the other
-/// heads of a disjunction `A | B`), a plain binder (any value, under a new
-/// name), the wildcard.
-export type Pattern enum
-    | Lit(Node) // a literal (int, bool, str, char), compared with the scrutinee
-    | Variant(VariantMatch) // a variant head, plus the alternatives of a disjunction
-    | Bind // a plain binder: matches anything, the scrutinee under a new name
-    | Wild // `_`: matches anything, binds nothing
-    | ArrayP(ArrayMatch) // an array pattern: a LENGTH test (the elements are the arm's bindings, not the test)
-
-/// The length an array pattern requires of the scrutinee (D59): `exact >=
-/// 0` means `len == exact` (no `..` written); otherwise `len >= at_least`,
-/// the written element count -- the rest covers the remainder.
-export type ArrayMatch value {
-    exact int /// `len == exact` when non-negative
-    at_least int /// `len >= at_least` when `exact` is negative
-}
-
 /// A constant-index element read (array pattern prefix): the index is part
 /// of the pattern, not a computed local, so it travels in the read itself.
 export type ConstRead value {
@@ -391,22 +376,6 @@ export type ConstRead value {
 export type EndRead value {
     vec Local /// the collection local
     from_end int /// 1 is the last element
-}
-
-/// The variant heads an arm accepts: the first written and the rest of a
-/// disjunction (empty when the pattern names one variant).
-export type VariantMatch value {
-    head VariantRow /// the variant written first
-    also []VariantRow /// the other heads of `A | B | C`, in order
-}
-
-/// One arm of a `Switch`: its pattern, its guard as the tree spells it (the
-/// M1 bridge; the guard is tested by an `If` inside the arm's block), and
-/// the block its binders and body occupy.
-export type SwitchArm value {
-    pat Pattern /// what the arm tests
-    guard Option[Node] /// the `if` after the pattern, if written
-    body BlockId /// the arm's block: binders first, then the body
 }
 
 /// A `match` (wave M2b-1d): the first arm whose pattern (and guard) holds is
@@ -859,13 +828,25 @@ export fn FnBuilder mut @begin_arm(c SwitchCtx, pat Pattern, guard Option[Node])
         ice("lower: begin_arm outside of a match")
     }
     ro body = @reserve()
-    @open_arms.push(SwitchArm { pat, guard, body })
+    @open_arms.push(SwitchArm { pat, guard, body, checks: 0 })
     @cur_id = body
 }
 
 /// Closes an arm: its block jumps to the join; the header is current again.
 export fn FnBuilder mut @end_arm(c SwitchCtx) -> () {
     @close(Terminator.Goto(c.join), c.head)
+}
+
+/// Records how many synthetic `If`s the OPEN arm's nested tests opened before its
+/// guard (registries 1534, 1542): the printer reads `SwitchArm.checks` to find the
+/// innermost branch, where the body runs and the first-match flag is set.
+export fn FnBuilder mut @note_arm_checks(n int) -> () {
+    if @open_arms.len() == 0 {
+        ice("lower: note_arm_checks outside of an arm")
+    }
+    ro i = @open_arms.len() - 1
+    ro a = @open_arms[i]
+    @open_arms[i] = SwitchArm { pat: a.pat, guard: a.guard, body: a.body, checks: n }
 }
 
 /// Closes a `match`: the header is sealed with the `Switch` over the arms
