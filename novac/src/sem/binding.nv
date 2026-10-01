@@ -50,6 +50,10 @@ import ../builtins.{TypeKind}
 /// the argument is, not by its type. The receiver is parameter zero (plan 273),
 /// so the same axis answers `@m` / `mut @m` / `consume @m` -- which is how std
 /// declares `Vec[T] @ptr() -> *T` beside `Vec[T] mut @ptr() -> *mut T`.
+/// `#impl(Equal)`: the checker and the lowering compare modes/shapes with `==`,
+/// which D363 (amendment 2026-09-30, E_EQ_WITHOUT_EQUAL) admits only for a sum
+/// that implements `Equal`.
+#impl(Equal)
 export type ParamMode enum
     | ModeRo /// the default: a read-only view, nothing is written through it
     | ModeMut /// mutation the caller sees (in-out)
