@@ -1,0 +1,72 @@
+// EXPECT_STDOUT p1572 flag true | flag true | flag true | flag true | num 4 | err zero | num 7
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for registry 221.1 #1572: the type of a block is the type of its tail.
+// A block arm (or a block expression) with an early `return Err(..)` in an `if`
+// before its tail was typed by that `if` -- `()` -- so `Ok(match ..)` read as
+// `Result[(), str]` and a correct function was refused with E7301 (the carrier:
+// nova-duckdb `QueryResult @value`). A diverging arm beside a value arm is the
+// neighbour form, kept as a control.
+module standalone.p1572_block_tail_type_ok
+
+type Val enum
+    | Flag(bool)
+    | Num(int)
+
+fn arm_block(k int) -> Result[Val, str] {
+    Ok(match k {
+        0 => {
+            mut v = 1
+            v = v + 1
+            if v < 0 { return Err("negative") }
+            Val.Flag(v != 0)
+        }
+        _ => Val.Num(k)
+    })
+}
+
+fn bound_match(k int) -> Result[Val, str] {
+    ro x = match k {
+        0 => {
+            if k < 0 { return Err("negative") }
+            Val.Flag(true)
+        }
+        _ => Val.Num(k)
+    }
+    Ok(x)
+}
+
+fn block_expr(k int) -> Result[Val, str] {
+    Ok({
+        if k < 0 { return Err("negative") }
+        Val.Flag(k == 0)
+    })
+}
+
+fn wrapped(k int) -> Result[Val, str] {
+    ro o = Some(match k {
+        0 => {
+            if k < 0 { return Err("negative") }
+            Val.Flag(true)
+        }
+        _ => Val.Num(k)
+    })
+    Ok(o.unwrap())
+}
+
+fn diverging_arm(k int) -> Result[Val, str] {
+    Ok(match k {
+        0 => return Err("zero")
+        _ => Val.Num(k)
+    })
+}
+
+fn show(r Result[Val, str]) -> str =>
+    match r {
+        Ok(Val.Flag(b)) => "flag ${b}"
+        Ok(Val.Num(n)) => "num ${n}"
+        Err(e) => "err ${e}"
+    }
+
+fn main() Io {
+    println("p1572 ${show(arm_block(0))} | ${show(bound_match(0))} | ${show(block_expr(0))} | ${show(wrapped(0))} | ${show(arm_block(4))} | ${show(diverging_arm(0))} | ${show(diverging_arm(7))}")
+}
