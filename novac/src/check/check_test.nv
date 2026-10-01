@@ -687,10 +687,10 @@ test "a `str` slice is compiled in every bound shape the shell carries; the rest
     // CONTROL: a receiver with no `index(Range)` at all.
     ro other = "module m\n\nfn f(n int) -> int => n[1..3]\n"
     assert(diagnose_in(other, shell).contains("carries no `index(Range)` for int"), diagnose_in(other, shell))
-    // CONTROL: a bound of another type gets the index's own SUBSET text -- the
-    // oracle accepts a `u8` bound (measured 2026-09-25).
+    // CONTROL: a bound of another type gets the index's own text -- a LANGUAGE
+    // error since 2026-10-02 (D238, D405), whatever the oracle accepts.
     ro wide = "module m\n\nfn f(s str, b bool) -> str => s[b..3]\n"
-    assert(diagnose_in(wide, shell).contains("only an `int` index"), diagnose_in(wide, shell))
+    assert(diagnose_in(wide, shell).contains("an index is an `int`"), diagnose_in(wide, shell))
 }
 
 test "a match on a POISONED scrutinee says nothing about its arms -- no `different sum` cascade (2026-10-01)" {
@@ -994,3 +994,4 @@ test "`is` on a value of a statically known non-sum type is E_IS_NON_ANY (D54)" 
     ro sum_ok = "module m\n\ntype Ct enum A | B\n\nfn f(c Ct) -> bool => c is A\n"
     assert(diagnose(sum_ok) == 0, diagnose_first_msg(sum_ok))
 }
+

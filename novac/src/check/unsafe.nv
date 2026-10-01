@@ -88,7 +88,7 @@ fn Checker mut @type_ptr_method(e Node, kids []Node, recv_t TyId) -> () {
             ro want = if args == 1 { @ctx.prims.int_id } else { elem }
             if is_ty(at) && at != want {
                 if args == 1 {
-                    @report_first_leaf_of([]Node.of(c), INT_INDEX_MSG)
+                    @reject_first_leaf_of([]Node.of(c), INT_INDEX_MSG)
                 } else {
                     @reject_first_leaf_of([]Node.of(c), "`write_at` stores a value of the pointee's type (D216)")
                 }

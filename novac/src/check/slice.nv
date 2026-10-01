@@ -93,7 +93,7 @@ fn Checker mut @slice_bound_is_int(b Node) -> bool {
         // A typed bound: its type decides.
     }
     if t != @ctx.prims.int_id {
-        @report_first_leaf_of([]Node.of(b), INT_INDEX_MSG)
+        @reject_first_leaf_of([]Node.of(b), INT_INDEX_MSG)
         return false
     } else {
         // An `int` bound.

@@ -526,13 +526,14 @@ fn Checker mut @type_index(e Node) -> TyId {
     // (the CommonTypes model) -- comparing against a number or against the
     // spelling of a name would be the hard-coded shape this compiler refuses.
     //
-    // And the refusal says SUBSET, not language, because the language is wider:
-    // measured 2026-08-30, the oracle accepts `xs[i]` with `i` of type `u8`.
-    // The earlier wording ("an index must be `int`") stated a rule that does
-    // not exist -- the same defect this window spent the day removing from
-    // other refusals, written by hand into a new one.
+    // The refusal is a LANGUAGE error (2026-10-02, the integrator's ruling): D238
+    // gives `@index` an `int` or a `Range` key, D405 has no implicit numeric
+    // conversion, D52 makes a newtype over `int` a type of its own. Until then it
+    // said SUBSET, because the oracle accepts `xs[i]` with `i u8` (measured
+    // 2026-08-30) -- a measurement of the oracle, which the spec does not back
+    // (docs/plans/repro/TBD-index-key-type).
     if is_ty(idx_t) && idx_t != @ctx.prims.int_id {
-        @report_first_leaf_of(kids, INT_INDEX_MSG)
+        @reject_first_leaf_of(kids, INT_INDEX_MSG)
         return no_ty()
     } else {
         // Either an int, or already refused where it was typed.

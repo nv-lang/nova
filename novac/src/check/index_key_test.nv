@@ -1,0 +1,39 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/check/index_key_test.nv -- the key of an index is an `int` (D238,
+// D405, D52; the integrator's ruling 2026-10-02). Its own file because
+// check_test.nv stands at the 1000-line limit; `diagnose_in` is shared (a
+// folder is one module).
+
+module novac.check
+
+import ../lex.{lex}
+import ../parse.{parse}
+import ../sem.{collect, InteropTable}
+import ../source.{SourceText}
+import ../tree.{Node}
+
+/// The CODE of the first diagnostic -- "the language forbids it" and "not
+/// compiled yet" read alike, and only the code tells them apart.
+fn diagnose_code_in(text str, syms []str) -> str {
+    ro src = SourceText { text }
+    ro tree = parse(lex(text))
+    mut shell = InteropTable.new()
+    for s in syms {
+        shell.add(s)
+    }
+    ro (diags, _) = check(tree, src, collect(tree, []Node.new(), shell))
+    if diags.len() == 0 { return "" }
+    diags[0].code
+}
+
+test "an index key of another type than `int` is a LANGUAGE error (D238, D405, D52; the integrator's ruling 2026-10-02)" {
+    // The key judged through the shell the str slice tests use (a `Range` of
+    // `int` keys, D238): a `u8` bound is the same key question.
+    ro shell = []str.of("Nova_str_method_index", "Nova_str_method_end_index")
+    ro narrow = "module m\n\nfn f(s str, b u8) -> str => s[b..3]\n"
+    assert(diagnose_in(narrow, shell).contains("an index is an `int`"), diagnose_in(narrow, shell))
+    assert(diagnose_code_in(narrow, shell) == "E_NOVAC_LANG", diagnose_code_in(narrow, shell))
+    // CONTROL: the same key converted with `as int` is legal.
+    ro conv = "module m\n\nfn f(s str, b u8) -> str => s[(b as int)..3]\n"
+    assert(diagnose_in(conv, shell) == "", diagnose_in(conv, shell))
+}
