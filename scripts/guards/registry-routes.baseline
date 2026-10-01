@@ -1508,6 +1508,7 @@ no_caveat=0
 # 2026-10-01, integrator nova-20: 95 -> 95, merge of hunt/novac-1001 (novac x sem x K1 over wave E.10): #1490-#1493; 1488 and 1489 issued (agent, assistant), leave gaps.
 # 2026-10-01, integrator nova-20: 95 -> 97, merge of p1498 (agent): #1498 lands; #1501-#1504 filed from its grid (#1502/#1503 K1 silent wrong value -- block the oracle tag); 1500 issued to Carina, in gaps.
 # 2026-10-01, integrator nova-20: 97 -> 98: #1507 (an unknown effect name passes -- blocks by irreversibility, as #971) and #1505/#1506 numbered; #971 still counts until its row is closed by MERGED-AS.
+# 2026-10-01, integrator nova-20: 98 -> 98, merge of the cloud session's patterns-ab: #1508 (Carina, record variant and | binders), #1509 (Carina, match tail type), #1510/#1511 (oracle K1: | binders by position, record-variant patterns unjudged), #1512 (Carina, handed sum payload) numbered here.
 blockers=98
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
