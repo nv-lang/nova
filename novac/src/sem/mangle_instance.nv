@@ -80,6 +80,51 @@ export fn c_method_symbol(ctx Ctx, t TyId, name str) -> str {
     c_shell_method(ctx, it, name)
 }
 
+/// THE OVERLOAD's shell symbol: the method `row` picks, on receiver `recv_t`,
+/// under the type arguments `args` (registry 1524). `c_method_symbol` answers
+/// for a NAME, and a name is not a function when it is overloaded: `cap()` and
+/// `cap(n)` of `Vec[int]` are `Vec____nova_int_method_cap` and
+/// `Vec____nova_int_method_cap__nova_int`, and the name alone sent `v.cap(100)`
+/// to the first with two arguments. The oracle spells the FIRST overload of a
+/// name on its type bare and every later one with `__` and its parameters' C
+/// types (pointer `*` as `_p`, joined by `_`; none -> `__mut`/`__ro` by the
+/// receiver) -- read off `emit_c.rs` (`[M-138.2-generic-method-overload-mono]`)
+/// and the shell. Only a generic RECORD instance takes the suffix here: that is
+/// the spelling measured; a plain receiver and a sum's family spelling are
+/// asked by `c_method_symbol` as before.
+///
+/// A spelling the shell does not carry is not a guess that links: the caller
+/// asks `interop.has` of THIS answer, and a miss sends the overload to the body
+/// novac was handed (`Ctx @instantiates`) or to a refusal by name.
+export fn c_overload_symbol(ctx Ctx, row FnRow, recv_t TyId, args []TyId) -> str {
+    ro base = c_method_symbol(ctx, recv_t, ctx.fns.rows[raw_row(row)].name)
+    ro it = impl_of_proto(ctx, recv_t)
+    if !is_ty(it) || ctx.tys.kind_of(it) != TypeKind.TkApp { return base }
+    if decl_of_ty(ctx, it).kind != TypeKind.TkRecord { return base }
+    if ctx.overload_ordinal(row) <= 0 { return base }
+    ro fd = ctx.fns.rows[raw_row(row)]
+    ro first = if fd.has_recv { 1 } else { 0 }
+    consume s = StringBuilder.new(cap: 64)
+    s.append(base)
+    s.append("__")
+    for p in first..fd.param_cnt {
+        if p > first {
+            s.append("_")
+        } else {
+            // The first parameter follows the separator directly.
+        }
+        ro pt = subst_type(ctx, ctx.fns.params[fd.param_off + p].type_id, args)
+        s.append(c_type(ctx, pt).replace("*", "_p").replace(" ", "_").replace("[", "_arr_").replace("]", ""))
+    }
+    if fd.param_cnt <= first {
+        ro recv_mut = fd.has_recv && ctx.fns.params[fd.param_off].mode != ParamMode.ModeRo
+        s.append(if recv_mut { "mut" } else { "ro" })
+    } else {
+        // The parameters are the suffix.
+    }
+    s
+}
+
 /// The body every instance name is built from: `<Head>____<arg>__<arg>`.
 fn instance_body(ctx Ctx, t TyId) -> str {
     ro head = decl_of_ty(ctx, t)

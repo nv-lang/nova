@@ -122,6 +122,18 @@ export const VEC_LEN_METHOD = "len"
 /// array pattern. `get` is for the access nobody proved (D470: it answers
 /// Option), and `for x in xs` is the iterator protocol, not either door.
 export const VEC_INDEX_METHOD = "index"
+/// The WRITE `xs[i] = v` as an implicit vector operation: the overload
+/// `mut @index(i int, val T)` of the same name (std access.nv, "Powers
+/// `v[i] = val`"). A KEY of the operation, not a name of the language -- `=`
+/// cannot stand in an identifier, so no method can collide with it; the
+/// method it calls is `vec_op_method`'s answer (registry 1524: the read and
+/// the write are two overloads, and asking by the name sent the write to the
+/// read).
+export const VEC_INDEX_SET_OP = "index="
+
+/// The METHOD NAME an implicit vector operation key calls: the key itself,
+/// except for the write, which is an overload of `index`.
+export fn vec_op_method(op str) -> str => if op == VEC_INDEX_SET_OP { VEC_INDEX_METHOD } else { op }
 /// The raw-pointer READ of D216 (the "all through methods" amendment):
 /// `p.read_at(i) -> T`, legal only inside `unsafe { }` -- std's `Vec[T]` body
 /// reads its elements so (`unsafe { @data.read_at(i) }`, 274.11 E.10 step 3c).

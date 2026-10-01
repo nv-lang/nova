@@ -22,7 +22,7 @@ import ../lower.{no_local}
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, raw_node, is_node}
 import ../diag.{ice}
-import ../sem.{raw_crow, carrier_of, c_callable, c_shell_method, c_method_symbol, Ctx}
+import ../sem.{raw_crow, carrier_of, c_callable, c_shell_method, c_overload_symbol, Ctx}
 import ../sem.{CheckOut, vec_op_c, c_static_symbol}
 import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct}
 import ../sem.{shape_of}
@@ -614,7 +614,10 @@ fn Emitter mut @emit_expr(e Node) -> () {
             // instance -- `Vec____nova_int_method_len`; the checker admitted
             // it against the lifted surface. Goes the day novac emits the
             // whole prelude.
-            @body.append(c_method_symbol(@ctx, @out.type_of(kids[0].id_of()), leaf_text(kids[2])))
+            // The OVERLOAD the checker picked, spelled by the same door the
+            // checker asked the shell with (registry 1524).
+            @body.append(c_overload_symbol(@ctx, cr.callable_row(), @out.type_of(kids[0].id_of()),
+                                           @out.callee_subst_of(e.id_of())))
         }
         @body.append("(")
         // The receiver is parameter ZERO (plan 273), so it is slot zero of the

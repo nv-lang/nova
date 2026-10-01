@@ -89,7 +89,7 @@ fn harvest_in(n Node, handed_from str, types []TypeDef, mut defs DefTable, mut t
                 harvest_fn(children, handed_from, types, defs, tys, fns)
                 if fns.rows.len() > before {
                     // The row this declaration became, and where its body lives.
-                    bodies.note(FnRow(before), tree, n)
+                    bodies.note(FnRow(before), fns.rows[before].name, tree, n)
                 } else {
                     // The signature was not taken: no row, no body to note.
                 }

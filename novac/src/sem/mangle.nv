@@ -451,7 +451,15 @@ export fn c_instance_static(ctx Ctx, t TyId, name str) -> str => "Nova_${instanc
 /// instance this unit makes from std's body (the checker admitted it and
 /// recorded it as wanted, so mono made it). One door for every emitter site.
 export fn vec_op_c(ctx Ctx, vec_t TyId, name str, row FnRow) -> str {
-    ro shell = if name == EMPTY_CTOR { c_instance_ctor(ctx, vec_t) } else { c_instance_method(ctx, vec_t, name) }
+    // The OVERLOAD the checker recorded, spelled by the door it asked the shell
+    // with (registry 1524); the bare name only where no row was recorded.
+    ro shell = if name == EMPTY_CTOR {
+        c_instance_ctor(ctx, vec_t)
+    } else if raw_row(row) >= 0 {
+        c_overload_symbol(ctx, row, vec_t, []TyId.of(ctx.tys.arg(vec_t, 0)))
+    } else {
+        c_instance_method(ctx, vec_t, name)
+    }
     if ctx.interop.has(shell) { return shell }
     if raw_row(row) < 0 {
         ice("mangle: an implicit vector operation the shell lacks reached emission with no row recorded")
