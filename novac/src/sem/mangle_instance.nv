@@ -33,7 +33,7 @@ fn family_instance_name(ctx Ctx, t TyId) -> str {
     ro is_sum = match head.kind {
         TkSum => true
         // TkEffect: an effect is not a sum -- no family spelling.
-        TkPrim | TkRecord | TkApp | TkParam | TkInfer | TkNewtype | TkTuple | TkEffect => false
+        TkPrim | TkRecord | TkApp | TkParam | TkInfer | TkNewtype | TkTuple | TkEffect | TkPtr => false
     }
     if !is_sum { return "" }
     if head.name != OPTION_SUM { return "" }
@@ -92,7 +92,7 @@ fn instance_body(ctx Ctx, t TyId) -> str {
         TkSum => ice("mangle: the record-shaped instance body of a generic SUM -- ask `c_instance_method`, which spells a sum by its family")
         // A head is a declaration; these are not declarations a `[T]` can hang on.
         // TkEffect joins them: an effect head owns operations, not an instance body.
-        TkPrim | TkApp | TkParam | TkInfer | TkNewtype | TkTuple | TkEffect =>
+        TkPrim | TkApp | TkParam | TkInfer | TkNewtype | TkTuple | TkEffect | TkPtr =>
             ice("mangle: an application whose head is not a record or sum declaration")
     }
     consume s = StringBuilder.new(cap: 64)
@@ -145,6 +145,7 @@ fn instance_arg_spelling(ctx Ctx, a TyId) -> str {
         // used to be the second answer, an ice after a green check.
         TkNewtype => instance_arg_spelling(ctx, representation_of(ctx, a))
         TkTuple => ice("mangle: a TUPLE as an instance argument — its in-name spelling is not measured on the shell")
+        TkPtr => ice("mangle: a POINTER as an instance argument — its in-name spelling is not measured on the shell")
         // TkEffect: unreachable while the with-doors refuse non-handler values;
         // ice, not a fallback (E4 wave). An effect has no in-name spelling.
         TkEffect => ice("mangle: an EFFECT as an instance argument — an effect value reaches a generic instance only through a with-door bug (E4 wave)")

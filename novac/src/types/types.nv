@@ -120,6 +120,7 @@ fn kind_ordinal(k TypeKind) -> int {
         // term reuses the Record interning (named simplification, E4 wave), the
         // KIND still gets its own bucket.
         TkEffect => 8
+        TkPtr => 9
     }
 }
 
@@ -207,6 +208,12 @@ export fn Interner mut @newtype(decl_id DeclId, under TyId) -> TyId =>
 export fn Interner mut @tuple(components []TyId) -> TyId =>
     @intern(TypeKind.TkTuple, components.len(), components)
 
+/// A raw POINTER to `pointee` (D216): `*mut T` when `is_mut`, `*T` otherwise.
+/// Structural like a tuple -- no declaration; the head carries the mutability,
+/// so `*T` and `*mut T` are two types, and the pointee rides in the args.
+export fn Interner mut @ptr(pointee TyId, is_mut bool) -> TyId =>
+    @intern(TypeKind.TkPtr, if is_mut { 1 } else { 0 }, []TyId.of(pointee))
+
 /// A type PARAMETER by its index in the owner's generics (donor: rustc
 /// `TyKind::Param`) -- a real type since 2026-08-20, which is what lets `-> T`
 /// have an id at all.
@@ -269,6 +276,7 @@ export fn Interner @prim_ordinal_of(t TyId) -> int
         TkParam => ice("types: the prim ordinal of a type PARAMETER -- its head is a slot index")
         TkInfer => ice("types: the prim ordinal of an inference variable -- its head is a vid")
         TkTuple => ice("types: the prim ordinal of a TUPLE -- its head is an arity")
+        TkPtr => ice("types: the prim ordinal of a POINTER -- its head is a mutability")
     }
 }
 
@@ -288,6 +296,7 @@ export fn Interner @param_slot_of(t TyId) -> int
             ice("types: the parameter slot of a NOMINAL term -- its head is a declaration")
         TkInfer => ice("types: the parameter slot of an inference variable -- its head is a vid")
         TkTuple => ice("types: the parameter slot of a TUPLE -- its head is an arity")
+        TkPtr => ice("types: the parameter slot of a POINTER -- its head is a mutability")
     }
 }
 
@@ -314,7 +323,19 @@ export fn Interner @decl_head_of(t TyId) -> DeclId
         TkTuple => ice("types: a TUPLE names no declaration -- its head is an arity")
         TkParam => ice("types: a type PARAMETER names no declaration -- its head is a slot index")
         TkInfer => ice("types: an inference variable names no declaration -- its head is a vid")
+        TkPtr => ice("types: a POINTER names no declaration -- its head is a mutability")
     }
+}
+
+/// Is this POINTER `*mut T` (and not `*T`)? The head of a `TkPtr` term; asked
+/// of any other kind it is an ice, the same discipline as `decl_head_of`.
+#realtime nogc
+export fn Interner @ptr_is_mut(t TyId) -> bool
+    requires is_ty(t) && raw_ty(t) < @rows.len(), "types: ptr_is_mut asked for a type id outside the interner"
+{
+    ro row = @rows[raw_ty(t)]
+    assert(row.kind == TypeKind.TkPtr, "types: ptr_is_mut asked of a term that is not a pointer")
+    row.head_id == 1
 }
 
 /// Does this term NAME a declaration at all?
@@ -338,7 +359,7 @@ export fn Interner @names_a_decl(t TyId) -> bool
         // wave): the interned term reuses the Record interning, so its head
         // IS a declaration.
         TkRecord | TkSum | TkApp | TkNewtype | TkEffect => true
-        TkPrim | TkTuple | TkParam | TkInfer => false
+        TkPrim | TkTuple | TkParam | TkInfer | TkPtr => false
     }
 }
 
@@ -393,8 +414,9 @@ export fn Interner @is_concrete(t TyId) -> bool {
         // distinct, the layout is the representation's (zero cost).
         TkNewtype => { return @is_concrete(@args[row.arg_off]) }
         // A TUPLE is concrete exactly as an application is: when every
-        // component is -- one rule, one arm (B15 step 3).
-        TkApp | TkTuple => {
+        // component is -- one rule, one arm (B15 step 3). A POINTER joins it:
+        // concrete exactly when its pointee is.
+        TkApp | TkTuple | TkPtr => {
             for i in 0..row.arg_cnt {
                 if !@is_concrete(@args[row.arg_off + i]) { return false }
             }
@@ -435,8 +457,10 @@ export fn Interner mut @subst(t TyId, args []TyId) -> TyId {
         }
         // A TUPLE substitutes exactly as an application: through the
         // components, re-interned under its OWN kind -- `row.kind` is that
-        // kind for both arms, so the rule is written once (B15 step 3).
-        TkApp | TkTuple => {
+        // kind for both arms, so the rule is written once (B15 step 3). A
+        // POINTER substitutes the same way: `*mut T` under `T := int` is
+        // `*mut int`, its head (the mutability) kept.
+        TkApp | TkTuple | TkPtr => {
             mut new_args = []TyId.new()
             mut changed = false
             for i in 0..row.arg_cnt {

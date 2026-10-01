@@ -40,6 +40,7 @@ export type TypeKind enum
     | TkInfer /// an inference variable, alive only inside one body (E2-b1)
     | TkNewtype /// a NEWTYPE: a distinct nominal type over a representation (`type Row int`), its underlying type in the interner's args
     | TkTuple /// a structural TUPLE (D123): head = ARITY, components in the interner's args -- no declaration, its identity IS its components (B15 step 3)
+    | TkPtr /// a raw POINTER (D216): `*T` and `*mut T` -- head = 1 for `*mut`, 0 for `*T`; the pointee in the interner's args (274.11 E.10 step 3: std's `Vec[T]` body reads `@data *mut T`)
     | TkEffect /// an EFFECT declaration (E4 wave, 274.11): `type Fs effect { ... }` -- the marker kind: owns operation rows, not field/variant rows; values of handler type are typed by the `with` doors, the term reuses the Record interning until the Effect-type stage lands (named in the with-typing wave)
 
 /// How many kinds there are. The interner's bucket arithmetic multiplies by
@@ -48,7 +49,7 @@ export type TypeKind enum
 /// first thing to drift when a kind is added). Every dispatch on TypeKind is
 /// an exhaustive match, so a tenth kind is a compile error at each site —
 /// and this constant is the ONE place a match cannot reach, hence the note.
-export const TYPE_KIND_COUNT = 9
+export const TYPE_KIND_COUNT = 10
 
 /// Name of the program entry function.
 export const ENTRY_FN = "main"

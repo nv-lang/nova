@@ -70,7 +70,7 @@ export fn carrier_of(ctx Ctx, t TyId) -> TyId {
         ro is_new = match ctx.tys.kind_of(cur) {
             TkNewtype => true
             // TkEffect: an effect is not a newtype -- the peel stops here.
-            TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkTuple | TkEffect => false
+            TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkTuple | TkEffect | TkPtr => false
         }
         if !is_new { return cur }
         cur = representation_of(ctx, cur)
@@ -96,7 +96,7 @@ export fn is_value_sum(ctx Ctx, t TyId) -> bool {
     match ctx.tys.kind_of(t) {
         TkSum => {}
         // TkEffect: an effect is not a sum -- the A4 question answers false.
-        TkPrim | TkRecord | TkApp | TkParam | TkInfer | TkNewtype | TkTuple | TkEffect => { return false }
+        TkPrim | TkRecord | TkApp | TkParam | TkInfer | TkNewtype | TkTuple | TkEffect | TkPtr => { return false }
     }
     ro td = decl_of_ty(ctx, t)
     if is_runtime_abi_sum(td.name) { return false }
@@ -137,6 +137,8 @@ export fn ty_source_name(ctx Ctx, t TyId) -> str {
         TkParam => "a type parameter"
         TkTuple => anon_record_source_name(ctx, t)
         TkInfer => "an inference variable"
+        // A POINTER reads as written: `*mut T` / `*T`.
+        TkPtr => if ctx.tys.ptr_is_mut(t) { "*mut ${ty_source_name(ctx, ctx.tys.arg(t, 0))}" } else { "*${ty_source_name(ctx, ctx.tys.arg(t, 0))}" }
     }
 }
 
@@ -245,7 +247,7 @@ export fn shape_of(ctx Ctx, t TyId) -> RecordShape {
         TkTuple => RecordShape.AnonPositionalTuple
         // TkEffect: an effect is not a record -- it takes the same "declares no
         // record" default as the rest of the residual group.
-        TkPrim | TkSum | TkNewtype | TkApp | TkParam | TkInfer | TkEffect => RecordShape.Record
+        TkPrim | TkSum | TkNewtype | TkApp | TkParam | TkInfer | TkEffect | TkPtr => RecordShape.Record
     }
 }
 
@@ -314,6 +316,13 @@ export fn c_type(ctx Ctx, t TyId) -> str {
             // struct name, no pointer -- the same word `value` means on a
             // record, and the shell's own pair typedefs are structs by value.
             TkTuple => { return mono_tuple_name(ctx, t) }
+            // A POINTER is its pointee's C type with a star -- `*mut T` is `T*`,
+            // `*T` is `const T*` (the oracle's spelling, read off the shell:
+            // `copy_n_nonoverlapping(const nova_int* src, nova_int* dst, ..)`).
+            TkPtr => {
+                ro under = "${c_type(ctx, ctx.tys.arg(t, 0))}*"
+                return if ctx.tys.ptr_is_mut(t) { under } else { "const ${under}" }
+            }
         }
     }
     ice("mangle: type id outside the registry — no silent int default (#652 class)")
@@ -332,6 +341,7 @@ export fn c_struct(ctx Ctx, t TyId) -> str {
     }
     match ctx.tys.kind_of(t) {
         TkPrim => { ice("mangle: a primitive has no struct name") }
+        TkPtr => { ice("mangle: a pointer has no struct name -- it is its pointee's type with a star") }
         // THE SHAPE decides the prefix, and all three spellings are the
         // ORACLE's, measured off its own emission (P25 -- the fixed point of
         // behaviour, and here of the interop name): a plain record is
@@ -669,7 +679,7 @@ export fn subst_type(ctx Ctx, t TyId, subst []TyId) -> TyId {
         // rewrite in it. Named one by one rather than through a wildcard --
         // a new kind must come here and say what it does (P21). TkEffect is
         // one of them: a marker nominal whose term mentions no parameter.
-        TkPrim | TkRecord | TkSum | TkApp | TkInfer | TkNewtype | TkTuple | TkEffect => {}
+        TkPrim | TkRecord | TkSum | TkApp | TkInfer | TkNewtype | TkTuple | TkEffect | TkPtr => {}
     }
     t
 }
@@ -755,6 +765,9 @@ fn type_tag(ctx Ctx, t TyId, subst []TyId) -> str
         // TkEffect: unreachable while the with-doors refuse non-handler values;
         // ice, not a fallback (E4 wave). A callable named BY an effect type is a
         // with-typing question, not a mangle guess.
+        // A POINTER in one of OUR names: the pointee's tag behind a word that
+        // cannot be a parameter separator -- `ptr_of_nova_int`, `mutptr_of_..`.
+        TkPtr => "${if ctx.tys.ptr_is_mut(t) { "mutptr_of_" } else { "ptr_of_" }}${type_tag(ctx, ctx.tys.arg(t, 0), subst)}"
         TkEffect => ice("mangle: type_tag of an EFFECT type — an effect value reaches a callable name only through a with-door bug (E4 wave)")
     }
 }
