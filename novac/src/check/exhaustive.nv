@@ -62,7 +62,7 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
     ro is_bool = scr_t == @ctx.prims.bool_id
     mut saw_true = false
     mut saw_false = false
-    if !open && !is_bool && @ctx.tys.kind_of(scr_t) != TypeKind.TkSum { return }
+    if !open && !is_bool && !@is_sum_scrutinee(scr_t) { return }
     // The count comes from the arm that HOLDS a variant range: a sum with no
     // variants is a shape check does not judge here, and so is anything whose
     // rows are not variants at all.
@@ -163,6 +163,21 @@ fn mark_variant(mut hit []bool, first VariantRow, r VariantRow) -> () {
 
 /// The text of a literal pattern's one leaf (`3`, `true`).
 fn lit_text(p Node) -> str => leaf_text(pattern_lit_leaf(p))
+
+/// A scrutinee whose cases are a SUM'S VARIANTS: a plain sum, or an APPLIED
+/// one (`Option[int]`), whose variants are its declaration's -- the range below
+/// is read off `decl_of_ty`, which answers the head for an application.
+///
+/// Until 2026-10-01 only `TkSum` was asked, and an applied sum returned before
+/// any judgment: harmless while every `match` on one was refused at the head,
+/// a K7 the day `Option`/`Result` passed -- `match o { Some(v) => v }` was
+/// accepted where the oracle says E_MATCH_NON_EXHAUSTIVE (measured on the
+/// first build of that wave, before this line).
+fn Checker @is_sum_scrutinee(t TyId) -> bool {
+    ro k = @ctx.tys.kind_of(t)
+    if k == TypeKind.TkSum { return true }
+    k == TypeKind.TkApp && decl_of_ty(@ctx, t).kind == TypeKind.TkSum
+}
 
 /// A scalar with no closed set of values -- every primitive but `bool` and
 /// `()`: its cases cannot all be listed, so only a catch-all covers it.

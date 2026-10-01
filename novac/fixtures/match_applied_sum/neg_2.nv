@@ -1,0 +1,23 @@
+module match_applied_sum.neg_2
+
+// An arm naming a variant of ANOTHER sum (`Ok` of `Result`) in a `match` on an
+// `Option` -- refused by name, exactly as on a plain sum.
+//
+// Why the cell exists: the arms of a match on an applied sum are judged
+// through the DECLARATION of its head, so `Some` and `None` are found and `Ok`
+// is not. Before this wave the question never arose (the whole match was
+// refused at its head); now it is the one thing that keeps a foreign tag out
+// of the emitted test. The oracle refuses the same program
+// (E_MATCH_FOREIGN_VARIANT).
+
+// NOVAC_EXPECT names a variant of a different sum
+
+fn first(o Option[int]) -> int => match o {
+    Some(v) => v
+    Ok(_) => 0
+    None => 1
+}
+
+fn main() {
+    println(first(Some(1)))
+}

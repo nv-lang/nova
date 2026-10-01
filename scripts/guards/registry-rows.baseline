@@ -1476,6 +1476,9 @@
 # 2026-10-01, integrator nova-20: rows -> 1485, max -> 1535 (2026-10-01 integrator: rows 1534/1535 -- findings of the cloud strarm session (Carina nested literal K1, oracle pattern literal type)).
 # 2026-10-01, integrator nova-20: rows -> 1486, max -> 1536 (2026-10-01 integrator: row 1536 -- record literal as a lambda body (nova-63)).
 # 2026-10-01, integrator nova-20: rows -> 1487, max -> 1537 (2026-10-01 integrator: row 1537 -- Time.now() without std.time import panics codegen (nova-63)).
+# 2026-10-01, integrator nova-20: rows -> 1491, max -> 1544 (2026-10-01 integrator: rows 1541-1544 -- findings of the cloud appsum session; 1538-1540 promised to the k1 session, filed at its merge).
+rows=1491
+max=1544
 rows=1487
 max=1537
 rows=1486
@@ -2143,7 +2146,7 @@ stale_gaps=0
 # nomer I v gaps=, I so strokoy schitaetsya 'protuhshey dyroy'.
 # 2026-09-21: №1209 ПРИЕХАЛ и СНЯТ из gaps=
 # (писал интегратор, как и планировалось). №1210-1211 всё ещё ждёт Карину.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1538-1540
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding
