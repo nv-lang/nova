@@ -1,0 +1,46 @@
+// u3 (#1590): every other point where Windows hands text to the program.
+module hcap.u3_os_points
+
+import std.os.{real_os, env, vars, cwd, temp_dir, home_dir, hostname, remove_env}
+import std.fs.{Path}
+
+fn hex(s str) -> str {
+    mut h = ""
+    ro d = "0123456789abcdef"
+    for b in s.bytes() {
+        ro n = b as int
+        h = "${h}${d[n / 16..n / 16 + 1]}${d[n % 16..n % 16 + 1]}"
+    }
+    h
+}
+
+fn main() Io {
+    with Os = real_os() {
+        ro _ = env("U3_SET", "Жук")
+        match env("U3_SET") {
+            Some(s) => println("set-get ${hex(s)}")
+            None => println("set-get none")
+        }
+        for v in vars() {
+            if v.key() == "U1_PROBE" { println("vars ${hex(v.value())}") }
+        }
+        ro _ = remove_env("U3_SET")
+        match env("U3_SET") {
+            Some(s) => println("removed? ${hex(s)}")
+            None => println("removed none")
+        }
+        match cwd() {
+            Ok(p) => println("cwd-tail ${hex(p.display())}")
+            Err(_) => println("cwd err")
+        }
+        println("temp ${hex(temp_dir().display())}")
+        match home_dir() {
+            Some(p) => println("home ${hex(p.display())}")
+            None => println("home none")
+        }
+        match hostname() {
+            Ok(h) => println("host ${hex(h)}")
+            Err(_) => println("host err")
+        }
+    }
+}

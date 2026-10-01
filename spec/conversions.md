@@ -68,7 +68,7 @@ disagree with:
 - an untyped literal adapts to the float operand beside it (`b + 1` where `b f64`),
   the way an untyped constant does in Go.
 
-One rule stands behind both (D55, amendment 2026-10-02): **a literal takes the type of its
+One rule stands behind both ([D489](decisions/02-types.md#d489)): **a literal takes the type of its
 position when its exact value is representable there**, and the literal's form sets its kind. An
 integer literal goes to any integer type within range and to a float when exact (`16777217` in
 `f32` is `E_LIT_INEXACT`); a fractional one goes to floats only, so `2.0` in `int` is an error; a

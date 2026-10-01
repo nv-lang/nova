@@ -247,6 +247,11 @@ ro x u8 = 200             // 200 это u8
 ro arr []f32 = [1.0, 2.0]
 ```
 
+A literal takes the type of its position only when its exact value is representable there, and
+its form sets its kind ([D489](decisions/02-types.md#d489)): an integer goes to an integer type
+within range and to a float when exact; a fractional one to floats only (`2.0` in `int` is an
+error); a character to `char` only.
+
 **Type-suffixes (`100u32`, `1.5f32`) are not introduced.** For rare
 disambiguation cases — an `as`-cast: `100 as u32`, `0xFF as u8`.
 
