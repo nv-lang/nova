@@ -534,7 +534,7 @@ fn fill_handed_newtypes(decls []Node, mut types []TypeDef, defs DefTable, mut ty
             ro nk = branch_children(c)
             if nk.len() < 2 || nk[1].kind_of() != NodeKind.LeafNode { continue }
             if Some(owner) = defs.type_decl(leaf_text(nk[1])) {
-                fill_handed_newtype(c, owner, types, defs, tys)
+                fill_newtype_term(c, owner, types, defs, tys)
             } else {
                 // Not a registered type name: nothing to fill.
             }
@@ -542,8 +542,11 @@ fn fill_handed_newtypes(decls []Node, mut types []TypeDef, defs DefTable, mut ty
     }
 }
 
-/// One handed newtype's term, when its row still waits for one.
-fn fill_handed_newtype(c Node, owner DeclId, mut types []TypeDef, defs DefTable, mut tys Interner) -> () {
+/// One newtype's term, when its row still waits for one -- the ONE door for a
+/// handed newtype and for the file's own (`fill_own_reprs`, collect.nv). A
+/// representation that has no term yet leaves the row waiting: the caller
+/// that walks in rounds comes back to it.
+fn fill_newtype_term(c Node, owner DeclId, mut types []TypeDef, defs DefTable, mut tys Interner) -> () {
     if types[raw_decl(owner)].kind != TypeKind.TkNewtype || is_ty(types[raw_decl(owner)].ty_id) { return }
     if Some(spec) = repr_of_decl(c, defs) {
         if raw_decl(spec.under_decl) < types.len() && is_ty(ty_of_row(types, spec.under_decl)) {

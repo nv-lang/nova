@@ -77,3 +77,17 @@ test "type names: every declared position passes, every undeclared one is refuse
     ro (d12, _) = compile_to_c("fn takes(v unit) -> int => 1\nfn main() {\n println(1)\n}", std)
     assert(d12.len() == 1 && !messages(d12).contains(UNDECLARED), messages(d12))
 }
+
+test "a field whose type is declared BELOW its record keeps the field (registry 1513)" {
+    // `Id` is a newtype declared AFTER `Box`, `Idn` an alias of it, and
+    // `Far` a newtype over a newtype further down still. The walk that filled
+    // records also interned newtype terms, in file order: `Box` read `Id`
+    // undecided, the field was dropped, and `@b` was "unknown field" about a
+    // field written right there -- novac's own `Interner.args` is the carrier.
+    mut std = std_decls()
+    std.push("module std.v\nexport type Vec[T] { n int }\nexport fn Vec[T] @len() -> int => 0\n")
+    ro src = "type Box {\n a []Id\n b Idn\n c Far\n}\ntype Idn alias Id\ntype Far Id\ntype Id int\nfn Box @first() -> Id => @b\nfn Box @far() -> Far => @c\nfn Box @n() -> int => @a.len()\nfn main() {\n ro x = Box { a: [Id(1)], b: Id(2), c: Far(Id(3)) }\n println(x.n())\n}"
+    ro (d, c) = compile_to_c(src, std)
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("first"), c)
+}
