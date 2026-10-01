@@ -242,7 +242,8 @@
 # 2026-10-01 (integrator, merge of the cloud session's #1457), builtins 55 -> 56: `EMPTY_CTOR`
 # ("new") -- the empty-vector constructor's name; check/binds.nv judges `[]T.new()` by it, and
 # builtin names live in builtins (the same home as LITERAL_CTOR). The #1457 merge itself missed the raise.
-builtins 56
+# 2026-10-01, Carina window (274.11 E.10 steps 4c-2/4d): builtins 56 -> 59: `PTR_WRITE_AT`, `PTR_WRITE_CONSUME_AT`, `SIZE_OF_FN` -- the language's own names std's `Vec[T]` bodies use.
+builtins 59
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -424,7 +425,8 @@ pipeline 12
 # «объявлено ли поле видом `f ro T` (D176)». Наружу нужна потому, что спрашивает
 # check (запись через вид, `E_READONLY_CONTENT`), а имена полей резолвятся ТОЛЬКО
 # через FieldIndex (274.4 step 3) -- у check нет другой двери к строке поля.
-resolve 16
+# 2026-10-01, Carina window (274.11 E.10 steps 4c-2/4d): resolve 16 -> 17: `FieldIndex @field_private_to` -- where a handed record's private field is visible from.
+resolve 17
 # sem 54 -> 56 (2026-08-18): наружу вышли ДВЕ двери параметра,
 # param_name_at и param_type_at. Имя и тип параметра больше не берутся
 # индексом pk[0]/pk[1]: индекс сдвигается, как только у параметра
@@ -921,7 +923,8 @@ resolve 16
 # sem 299 -> 300 (2026-10-01, Karina window): is_payload_free_sum -- the A4 question without the fence
 #   (may tags compare?), asked by check/operators.nv and emit_c/emit_expr.nv; is_value_sum keeps the placement.
 # 2026-10-01, Carina window (274.11 E.10 step 4c): sem 300 -> 305: `Ctx @instantiates` / `@body_ours` (whose body an instance is -- asked by check, mono and the emitter) and `InteropTable @describe_decls` / `@decl_text` / `@decl_name` (the text and file each handed tree came from).
-sem 305
+# 2026-10-01, Carina window (274.11 E.10 steps 4c-2/4d): sem 305 -> 315: `FnTable @add_static`, `FieldTable @add_private`, `Ctx @vec_op_row`, `vec_op_c`, `c_instance_static`, `c_static_symbol`, `instance_struct_c`, `returns_receiver`, `CheckOut @record_wanted` / `@wanted_refs` -- static methods, private fields, the implicit vector operations and the instance structs of 274.11 E.10 steps 4c-2 and 4d.
+sem 315
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

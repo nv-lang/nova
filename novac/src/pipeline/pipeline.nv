@@ -48,7 +48,7 @@ import ../check.{check, check_instance}
 import ../diag.{Diagnostic, ice}
 import ../emit_c.{emit, Instantiation, shell_surface}
 import ../mono.{Reach, reachable}
-import ../sem.{Ctx, collect, decl_fn_row, branch_children, InteropTable, module_dotted}
+import ../sem.{Ctx, collect, decl_fn_row, branch_children, InteropTable, module_dotted, raw_row}
 import ../types.{TyId}
 
 /// A file's semantic context: the file's types + method signatures, READ
@@ -632,7 +632,13 @@ fn instances_of(tree Node, src SourceText, ctx Ctx, mut reach Reach, decls []Nod
                     ro hsrc = SourceText { text: htext }
                     ro hcap = raw_node(htree.id_of()) + 1
                     ro (idiags, ichan) = check_instance(decl, hsrc, ctx, it.row, reach.subst_of(it), hcap)
-                    diags.append(idiags)
+                    // A refusal INSIDE a handed body is about std's text, not
+                    // the unit's: its span would point into the wrong file, so
+                    // it is spoken at the unit's start and NAMES its place.
+                    for d in idiags {
+                        diags.push(Diagnostic { code: d.code, severity: d.severity, lo: 0, hi: 0,
+                                                message: "in the instance of `${ctx.fns.rows[raw_row(it.row)].name}` (${hname}:${line_at(htext, d.lo)}): ${d.message}" })
+                    }
                     if idiags.len() == 0 {
                         ro _ = reach.grow(decl, ctx, ichan)
                     } else {
@@ -677,3 +683,14 @@ export fn compile_to_c_with(text str, decls []Node, interop InteropTable,
     // decisions and cannot ask for a new one (E2-b1).
     (diags, emit(tree, ctx, chan, reach, insts, src_name: src_name))
 }
+
+/// The 1-based line of byte offset `off` in `text`.
+fn line_at(text str, off int) -> int {
+    mut line = 1
+    ro b = text.bytes()
+    for i in 0..off {
+        if i < b.len() && b[i] == UNIT_LF { line += 1 }
+    }
+    line
+}
+

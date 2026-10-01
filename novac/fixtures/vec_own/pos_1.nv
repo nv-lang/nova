@@ -1,0 +1,43 @@
+module vec_own.pos_1
+
+// A VECTOR OF A TYPE OF THE PROGRAM (274.11 E.10 step 4): the shell novac
+// links into carries `Vec` instances only for the element types its probe used,
+// so `[]Pt` has no shell instance at all -- novac makes every one of them from
+// the bodies of std it was handed: the literal's `new` and `push`, `push`'s
+// `reserve` and `cap(n)`, `alloc_buf[Pt]`, `RawMem.copy_n_nonoverlapping[Pt]`,
+// and `len`/`index` behind `xs.len()`, `xs[i]` and `for`. The struct
+// `Nova_Vec____Nova_Pt_p` is written by novac too.
+//
+// The pushes go past the first capacity (8, D232) so `reserve` GROWS the
+// buffer and the copy of the live prefix runs; the reads after the growth
+// prove the elements moved, and the sum proves the `for` walked them all.
+type Pt {
+    x int
+}
+
+fn total(xs []Pt) -> int {
+    mut s = 0
+    for p in xs {
+        s += p.x
+    }
+    s
+}
+
+fn main() {
+    mut xs = []Pt.of(Pt { x: 3 }, Pt { x: 4 })
+    println(xs.len())
+    println(xs[1].x)
+    mut i = 0
+    while i < 10 {
+        xs.push(Pt { x: i })
+        i += 1
+    }
+    println(xs.len())
+    println(xs[0].x)
+    println(xs[11].x)
+    println(total(xs))
+    mut e = []Pt.new()
+    println(e.len())
+    e.push(Pt { x: 7 })
+    println(e[0].x)
+}

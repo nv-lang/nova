@@ -33,6 +33,10 @@ import ../builtins.{TypeKind, RECV_BINDING}
 /// instance or a tuple name is not measured on the shell.
 fn Checker mut @report_if_return_unread(fkids []Node, rid TyId) -> () {
     if is_ty(rid) && !@holds_ptr(rid) { return }
+    // A HANDED body this unit instantiates (274.11 E.10 step 4c-2: std's
+    // `alloc_buf[T] -> *mut T`) is std's signature, not this file's: the
+    // pointer's C spelling in an instance name is OURS (`ptr_tag`).
+    if is_ty(rid) && raw_row(@inst_row) >= 0 && !@ctx.fns.compiles_body(@inst_row) { return }
     for c in fkids {
         if c.kind_of() != NodeKind.RetType { continue }
         ro rk = branch_children(c)
@@ -150,6 +154,24 @@ fn Checker @tail_type_of(e Node) -> TyId {
 fn Checker mut @judge_return(e Node, t0 TyId) -> () {
     if !is_ty(@ret_expect) { return }
     if !is_ty(t0) { return }
+    // AN ANONYMOUS constructor returned (`return { data: 0 as *mut T, .. }` in
+    // std's `Vec[T].new`, 274.11 E.10 step 4c-2) is a construction of the
+    // DECLARED return: its fields are judged and TYPED against it here -- the
+    // expression walk has no type to judge it by, and an untyped field value
+    // was the emitter's "no type recorded".
+    if e.kind_of() == NodeKind.RecordCtor {
+        ro ck = branch_children(e)
+        if ck.len() > 0 && ck[0].kind_of() != NodeKind.Name {
+            ro mark = @out.len()
+            @judge_record_ctor(e, @concrete(@ret_expect))
+            // SILENT-OK: the construction's own door refused it by name.
+            if @out.len() > mark { return }
+        } else {
+            // A named constructor was judged where it was typed.
+        }
+    } else {
+        // Not a constructor: the type comparison below.
+    }
     // An instance's body may still name the PARAMETER (`x T` bound as written):
     // the comparison is between concrete types, through the same door every
     // type of the body takes; a parameter that stays a parameter is not judged.

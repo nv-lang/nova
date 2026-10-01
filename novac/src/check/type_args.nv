@@ -1,0 +1,65 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `FnCtxt::instantiate_value_path` -- a written type argument is
+// resolved in the scope of the body it stands in, so inside a monomorphized
+// body a type parameter names its substitution; NOT taken: rustc's generic
+// args lowering (novac reads a written argument as a name).
+// Role: written TYPE ARGUMENTS inside a body -- `alloc_buf[T](n)` and the
+//   intrinsic `size_of[T]()` in std's `Vec[T]` bodies, which a `Vec[Pt]`
+//   instance has to compile (274.11 E.10 step 4c-2).
+// Used by: check/calls.nv (`@record_free_callee` reads type arguments through
+//   `@type_arg_named`; `@type_free_call` hands `size_of` to `@type_size_of`).
+// Guarded by: nova test novac/src/pipeline/handed_free_test.nv,
+//   check-novac-file-size.py (this file exists because calls.nv neared 1000 lines).
+
+module novac.check
+
+import ../tree.{Node}
+import ../sem.{raw_row, generic_names, is_expr_kind}
+import ../types.{TyId, no_ty, is_ty}
+
+/// The type a written type argument names. Inside an INSTANCE a name of the
+/// instance's own type parameters is its SUBSTITUTION -- `alloc_buf[T](n)` in
+/// `Vec[Pt] @push` is `alloc_buf[Pt]` (274.11 E.10 step 4c-2): one substitution
+/// composed with another, by name. Everywhere else the registry answers.
+fn Checker @type_arg_named(name str) -> TyId {
+    if raw_row(@inst_row) >= 0 {
+        ro fd = @ctx.fns.rows[raw_row(@inst_row)]
+        for i in 0..fd.tparam_cnt {
+            if @ctx.fns.tparams[fd.tparam_off + i] == name && i < @substs.len() { return @substs[i] }
+        }
+    } else {
+        // Not an instance: no parameter of an enclosing declaration is in scope.
+    }
+    @ctx.ty_of_name(name) ?? no_ty()
+}
+
+/// `size_of[T]()`: one type argument, no value arguments, an `int` (D216).
+fn Checker mut @type_size_of(e Node, kids []Node) -> () {
+    ro given = generic_names(kids)
+    mut written = 0
+    for c in kids {
+        if is_expr_kind(c.kind_of()) { written += 1 }
+    }
+    if given.len() != 1 || written > 1 {
+        @reject_first_leaf_of(kids, "`size_of` takes one type argument and no value: `size_of[T]()` (D216)")
+        return
+    } else {
+        // `size_of[T]()`: the type is judged below.
+    }
+    ro t = @type_arg_named(given[0])
+    if !is_ty(t) {
+        @report_type_arg_unknown(kids)
+        return
+    } else {
+        // A known type: its size is the value.
+    }
+    @chan.record_subst(e.id_of(), []TyId.of(t))
+    @record(e, @ctx.prims.int_id)
+}
+
+/// A written type argument that names no type novac knows: ONE door for the
+/// call and for `size_of[T]()`, so the refusal is one refusal however many
+/// forms take a type argument.
+fn Checker mut @report_type_arg_unknown(kids []Node) -> () {
+    @report_first_leaf_of(kids, TYPE_ARG_UNKNOWN_MSG)
+}

@@ -72,6 +72,9 @@ type Checker {
     /// node->row table (`decl_fn_row`) cannot answer for them: it would answer
     /// None, or worse, the row of whichever own declaration shares the id.
     inst_row FnRow
+    /// The body being typed returns its receiver (`-> @`, D409): a bare
+    /// `return` is `return @`, and the tail is a statement.
+    ret_self bool
     /// The ONE block whose tail call is a returned value: the body of the fn
     /// being walked, when that fn declares a return type (274.5 wave B4). Set
     /// by the FnDecl arm of each phase, read by the Block arm; there are no

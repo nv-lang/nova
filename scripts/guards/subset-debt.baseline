@@ -147,7 +147,9 @@
 # value, a fn declaration without a name); the ratchet goes down with them.
 # 2026-10-01, Carina window (274.11 E.10 step 4b): undated 62 -> 61. A generic METHOD
 # declared in the file is instantiated like a generic function; its refusal is gone.
-undated=61
+# 2026-10-01, Carina window (274.11 E.10 steps 4c-2/4d): undated 61 -> 60. The
+# call on a TYPE is compiled (check/static_call.nv); its old refusal is a language reject now.
+undated=60
 
 # ВТОРОЕ ЧИСЛО — ОБЩЕЕ, храповик ВНИЗ с целью НОЛЬ (274 §1.3а п. «г»). Заведено
 # 2026-09-13 окном 274; предписано оно было ещё 2026-09-05 планом 274.7 §И («страж

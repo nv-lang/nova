@@ -299,6 +299,7 @@ fn Checker mut @record_instance_method(e Node, t Token, row FnRow, key []ArgSpec
             // Option: falls through to the ordinary interop recording below.
         }
     }
+    @intern_instance_sig(row, ids)
     @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), ids,
         bind_slots(@ctx.fns.params, fd.param_off, fd.param_cnt, key))
     @record(e, ret)
@@ -337,6 +338,15 @@ fn Checker mut @type_method_call(e Node) -> () {
         return
     } else {
         // The head is no effect: an ordinary call, judged below.
+    }
+    // A STATIC method of a type (`RawMem.alloc(n)`, 274.11 E.10 step 4c-2)
+    // wears the same spelling as a qualified variant: asked first, and it
+    // answers false for a head that has no static method of this name.
+    if @type_static_call(e, kids) {
+        // SILENT-OK: the door DECIDED -- it recorded the call or refused it by name.
+        return
+    } else {
+        // No static method of this name: the variant door below.
     }
     if @judge_type_head_variant(e, kids, 3) {
         // SILENT-OK: the door DECIDED -- it recorded the construction and

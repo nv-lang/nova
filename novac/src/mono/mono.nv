@@ -153,6 +153,10 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
         }
     }
 
+    // The instances the language calls with NO call written (a vector
+    // literal's `new`/`push`, `xs[i]`'s `index` over a vector novac makes
+    // itself, 274.11 E.10 step 4c-2): no node holds them, so they are roots.
+    ro _ = mark_wanted(ctx, out, seen, inst, subst, ptypes)
     // Hoisted out of the fixpoint on purpose: the door builds a vector, and the
     // set of declarations does not change between rounds.
     ro decls_of_file = file_decls(file)
@@ -214,8 +218,31 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
 /// pipeline hands the body and its channel here, and the set grows by what it
 /// reaches (`Vec[Pt] @push` reaching `@reserve`, which reaches `@cap`).
 /// Answers whether anything was newly marked.
-export fn Reach mut @grow(n Node, ctx Ctx, chan CheckOut) -> bool =>
-    mark_callees(n, ctx, chan, @seen, @inst, @subst, @ptypes)
+export fn Reach mut @grow(n Node, ctx Ctx, chan CheckOut) -> bool {
+    mut grew = mark_wanted(ctx, chan, @seen, @inst, @subst, @ptypes)
+    if mark_callees(n, ctx, chan, @seen, @inst, @subst, @ptypes) {
+        grew = true
+    } else {
+        // The body's written calls added nothing; its implicit ones may have.
+    }
+    grew
+}
+
+/// Mark the instances a channel records as called IMPLICITLY (`CheckOut
+/// @record_wanted`: a vector literal's `new`/`push`, `xs[i]`'s `index`) --
+/// the calls no node holds. Answers whether anything was newly marked.
+fn mark_wanted(ctx Ctx, chan CheckOut, mut seen []bool, mut inst []Instance,
+               mut subst []TyId, mut ptypes []ParamDef) -> bool {
+    mut grew = false
+    for cr in chan.wanted_refs() {
+        if mark_ref(cr, ctx, chan, seen, inst, subst, ptypes) {
+            grew = true
+        } else {
+            // Already an instance.
+        }
+    }
+    grew
+}
 
 /// Is this exact instance (row + substitution) missing from the set being
 /// built? Asked over the vectors the walk is still filling, because a `Reach`

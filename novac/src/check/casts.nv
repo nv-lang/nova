@@ -22,7 +22,9 @@ module novac.check
 
 import ../tree.{Node}
 import ../builtins.{TypeKind}
-import ../sem.{Ctx, carrier_of, decl_of_ty, representation_of, branch_children}
+import ../sem.{Ctx, carrier_of, decl_of_ty, representation_of, branch_children, ty_of_type_ref, raw_row}
+import ../sem.{leaf_kind}
+import ../lex.{TokenKind}
 import ../types.{TyId, no_ty, is_ty}
 
 /// A CAST, and the one shape the subset compiles: unwrapping a NEWTYPE into its
@@ -51,9 +53,20 @@ fn Checker mut @type_cast(e Node) -> () {
     @type_expr(kids[0])
     if @out.len() > before { return }
     ro from = type_of(kids[0], @ctx, @scope, @chan)
+    // A POINTER target (`0 as *mut T`, `p as *mut T`) is a type REFERENCE, read
+    // through the one door with the instance's parameters in scope (274.11 E.10
+    // step 4c-2: std's `Vec[T].new` writes `0 as *mut T`); a plain name is the
+    // newtype rule's target, below.
+    if is_ptr_ref(kids) {
+        @type_ptr_cast(e, kids, from)
+        // SILENT-OK: the pointer cast's own door recorded the type or refused it.
+        return
+    } else {
+        // A named target: the newtype rule.
+    }
     ro target = cast_target_of(e, @ctx)
     if !is_ty(target) {
-        @report_first_leaf_of(kids, "outside the subset: a cast to a type novac does not know")
+        @report_cast_target_unknown(kids)
         return
     } else {
         // A target the registry holds: the pair decides.
@@ -87,3 +100,43 @@ fn Checker @representation_of_or_self(t TyId) -> TyId {
     }
 }
 
+/// Is the cast's target written as a pointer type (`*T`, `*mut T`)?
+fn is_ptr_ref(kids []Node) -> bool => kids.len() > 2 && leaf_kind(kids[2]) == TokenKind.Star
+
+/// `x as *T` / `x as *mut T` (D214, D216): from an `int` -- a handle or the
+/// null pointer `0` -- or from another pointer, which may change the pointee
+/// but never GAIN the right to write (`*T as *mut T` is retracted, D216). The
+/// target reads the instance's type parameters as their substitution, so
+/// `*mut T` in `Vec[Pt]`'s instance is `*mut Pt`.
+fn Checker mut @type_ptr_cast(e Node, kids []Node, from TyId) -> () {
+    mut tps = []str.new()
+    if raw_row(@inst_row) >= 0 {
+        ro fd = @ctx.fns.rows[raw_row(@inst_row)]
+        tps.append(@ctx.fns.tparams[fd.tparam_off..fd.tparam_off + fd.tparam_cnt])
+    } else {
+        // A body of the file: no generic is typed outside an instance.
+    }
+    ro target = ty_of_type_ref(kids, 2, no_ty(), tps, @substs, @ctx.types, @ctx.defs, @ctx.tys)
+    if !is_ty(target) || @ctx.tys.kind_of(target) != TypeKind.TkPtr {
+        @report_cast_target_unknown(kids)
+        return
+    } else {
+        // A pointer type: the source decides.
+    }
+    ro from_ptr = is_ty(from) && @ctx.tys.kind_of(from) == TypeKind.TkPtr
+    ro legal = from == @ctx.prims.int_id ||
+        (from_ptr && (!@ctx.tys.ptr_is_mut(target) || @ctx.tys.ptr_is_mut(from)))
+    if !legal {
+        @report_first_leaf_of(kids, CAST_MSG)
+        return
+    } else {
+        // An integer, or a pointer that keeps or drops the right to write.
+    }
+    @record(e, target)
+}
+
+/// A cast whose target names no type novac knows: ONE door for the named and
+/// the pointer target.
+fn Checker mut @report_cast_target_unknown(kids []Node) -> () {
+    @report_first_leaf_of(kids, CAST_UNKNOWN_TYPE_MSG)
+}

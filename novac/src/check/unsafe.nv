@@ -15,7 +15,7 @@
 module novac.check
 
 import ../tree.{Node}
-import ../builtins.{PTR_READ_AT}
+import ../builtins.{PTR_READ_AT, PTR_WRITE_AT, PTR_WRITE_CONSUME_AT}
 import ../sem.{branch_children, leaf_text, is_expr_kind}
 import ../types.{TyId, is_ty}
 
@@ -47,11 +47,21 @@ fn Checker mut @type_unsafe(e Node) -> () {
 /// A method call on a RAW POINTER (D216): `read_at` -- one `int` index, the
 /// pointee's type -- inside `unsafe { }`; every other method refused by name.
 fn Checker mut @type_ptr_method(e Node, kids []Node, recv_t TyId) -> () {
-    if leaf_text(kids[2]) != PTR_READ_AT {
+    // `read_at(i) -> T` and `write_at(i, v)` (D216; `write_at` from 274.11 E.10
+    // step 4c-2 -- std's `Vec[T] @push` writes the element with it).
+    // `write_consume_at` moves the value in: the same store, judged the same way.
+    ro writes = leaf_text(kids[2]) == PTR_WRITE_AT || leaf_text(kids[2]) == PTR_WRITE_CONSUME_AT
+    if leaf_text(kids[2]) != PTR_READ_AT && !writes {
         @report_first_leaf_of(kids, PTR_METHOD_MSG)
         return
     } else {
-        // `read_at`: judged below.
+        // `read_at` or `write_at`: judged below.
+    }
+    if writes && !@ctx.tys.ptr_is_mut(recv_t) {
+        @reject_first_leaf_of(kids, PTR_WRITE_RO_MSG)
+        return
+    } else {
+        // A pointer this method may go through.
     }
     if @unsafe_depth == 0 {
         @reject_first_leaf_of(kids, UNSAFE_REQUIRED_MSG)
@@ -59,28 +69,39 @@ fn Checker mut @type_ptr_method(e Node, kids []Node, recv_t TyId) -> () {
     } else {
         @unsafe_ops += 1
     }
+    ro elem = @ctx.tys.arg(recv_t, 0)
     mut args = 0
     mut i = 0
     for c in kids {
         if i > 2 && is_expr_kind(c.kind_of()) {
             args += 1
             ro at = type_of(c, @ctx, @scope, @chan)
-            if is_ty(at) && at != @ctx.prims.int_id {
-                @report_first_leaf_of([]Node.of(c), INT_INDEX_MSG)
+            // The FIRST argument is the index; `write_at`'s second is the value,
+            // of the pointee's type.
+            ro want = if args == 1 { @ctx.prims.int_id } else { elem }
+            if is_ty(at) && at != want {
+                if args == 1 {
+                    @report_first_leaf_of([]Node.of(c), INT_INDEX_MSG)
+                } else {
+                    @reject_first_leaf_of([]Node.of(c), "`write_at` stores a value of the pointee's type (D216)")
+                }
                 return
             } else {
-                // An `int` index, or one already refused where it was typed.
+                // The type this argument position wants, or one already refused.
             }
         } else {
             // The receiver, the dot, the name and the punctuation.
         }
         i += 1
     }
-    if args != 1 {
+    if writes && args != 2 {
+        @reject_first_leaf_of(kids, "`write_at` takes an index and a value (D216)")
+        return
+    } else if !writes && args != 1 {
         @reject_first_leaf_of(kids, "`read_at` takes one index (D216)")
         return
     } else {
-        // One index.
+        // The arity the method has.
     }
-    @record(e, @ctx.tys.arg(recv_t, 0))
+    @record(e, if writes { @ctx.prims.unit_id } else { elem })
 }

@@ -221,7 +221,11 @@ fn Checker mut @judge_type_head_variant(e Node, kids []Node, arg_from int) -> bo
                     // same line. A refusal with no advice sends the reader
                     // to think; a refusal with false advice sends them in a
                     // circle and spends their time wearing the face of help.
-                    @refuse(vt, "outside the subset: a call on a TYPE (`Type.method(...)`) is not compiled yet -- no position accepts it (274.7, the E2 horizon)")
+                    // A STATIC call IS compiled since 274.11 E.10 step 4c-2
+                    // (check/static_call.nv, asked before this door): reaching
+                    // here means the type declares no static method of this
+                    // name at all -- the program's error.
+                    @reject(vt, "this type declares no static method of this name")
                 }
             }
             Branch { .. } => {}

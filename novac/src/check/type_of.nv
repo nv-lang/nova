@@ -443,6 +443,10 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // cast writes the type it wants. Legality is the WALK's business
         // (`type_cast`), so by the time the lattice is asked the pair has been
         // judged and this is the answer it established.
+        // A POINTER target was typed through the reference door and RECORDED
+        // (`@type_ptr_cast`); the name door below cannot read `*mut T`.
+        ro recorded = chan.type_if_known(e.id_of())
+        if is_ty(recorded) { return recorded }
         return cast_target_of(e, ctx)
     }
     if k == NodeKind.Paren {
@@ -586,6 +590,9 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         ice("check: match without arms past check")
     }
     if k == NodeKind.Call {
+        // `size_of[T]()` (D216) is no row's call: the checker recorded its
+        // type with its substitution (274.11 E.10 step 4c-2).
+        if chan.has_subst(e.id_of()) { return ctx.prims.int_id }
         // ONE lookup answers "what is this name" (the rustc Res model),
         // then the kind decides.
         ro cname = call_callee_text(branch_children(e))

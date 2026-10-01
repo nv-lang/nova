@@ -112,6 +112,7 @@ export type FnDef value {
     tparam_cnt int /// how many type parameters it declares; 0 = not generic
     ret_ro bool /// the return is a `ro` VIEW (`-> ro []T`, D176): the caller reads it and may not write through it (registry 1458)
     handed_from str /// "" for the file's own rows and for constructor rows; the module path of the handed file (`encoding.utf16`) for a signature read from a handed declaration -- the datum its shell symbol is spelled from (W6)
+    owner TyId /// the TYPE a STATIC method is declared on (`fn Vec[T].new(cap int)` -> `Vec[T]`): it takes no receiver and is reached through that type only, never by a free or a method call; `no_ty()` for every other row (274.11 E.10 step 4c-2)
 }
 
 /// IS THIS ROW THE PROGRAM'S ENTRY POINT? Asked of the ROW, never of the
@@ -305,7 +306,21 @@ export fn FnTable mut @add(name str, ret_id TyId, has_recv bool, param_ids []Par
         @tbounds.push(if i < tparam_bounds.len() { tparam_bounds[i] } else { "" })
     }
     @rows.push(FnDef { name, ret_id, param_off: off, param_cnt: param_ids.len(), has_recv,
-                       tparam_off: toff, tparam_cnt: tparam_names.len(), ret_ro, handed_from })
+                       tparam_off: toff, tparam_cnt: tparam_names.len(), ret_ro, handed_from, owner: no_ty() })
+}
+
+/// Register one STATIC method of type `owner` (`fn Vec[T].new(cap int)`): no
+/// receiver, reached through its type only (274.11 E.10 step 4c-2). The row is
+/// `@add`'s, with its owner set -- one registration door, one shape of row.
+export fn FnTable mut @add_static(owner TyId, name str, ret_id TyId, param_ids []ParamDef,
+                                 tparam_names []str, tparam_bounds []str, handed_from str,
+                                 ret_ro bool) -> () {
+    @add(name, ret_id, false, param_ids, tparam_names, tparam_bounds, handed_from: handed_from, ret_ro: ret_ro)
+    ro last = @rows.len() - 1
+    ro fd = @rows[last]
+    @rows[last] = FnDef { name: fd.name, ret_id: fd.ret_id, param_off: fd.param_off, param_cnt: fd.param_cnt,
+                          has_recv: false, tparam_off: fd.tparam_off, tparam_cnt: fd.tparam_cnt,
+                          ret_ro: fd.ret_ro, handed_from: fd.handed_from, owner }
 }
 
 /// THE VARIANT a name denotes INSIDE ONE SUM (274.7 B6, registry #964), or None

@@ -23,6 +23,7 @@ module novac.check
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, NodeId, no_node}
 import ../sem.{branch_children, is_expr_kind, leaf_kind, ret_is_unit, is_value_tail_kind, expr_leaf_name}
+import ../sem.{returns_receiver}
 import ../types.{TyId, no_ty, is_ty}
 import ../sem.{iflet_body_at, iflet_else_at, loop_ctl_is_break}
 import ../builtins.{is_true_literal}
@@ -430,6 +431,9 @@ fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
 /// value at all -- has always lived in this file, and the two halves belong
 /// together.
 fn value_body_of(fk []Node) -> NodeId {
+    // `-> @` (D409): the receiver is returned automatically, the body's tail is
+    // a statement -- no value is demanded of it.
+    if returns_receiver(fk) { return no_node() }
     mut declares = false
     for c in fk {
         // Only the RETURN TYPE answers this; the rest of the declaration is

@@ -127,6 +127,15 @@ export const VEC_INDEX_METHOD = "index"
 /// reads its elements so (`unsafe { @data.read_at(i) }`, 274.11 E.10 step 3c).
 export const PTR_READ_AT = "read_at"
 
+/// `p.write_at(i, v)` on a `*mut T` (D216): store the element at index `i`; unsafe context only.
+export const PTR_WRITE_AT = "write_at"
+
+/// `p.write_consume_at(i, v)`: `write_at` that MOVES `v` in -- the consuming store (D216, D156); the same bits in C.
+export const PTR_WRITE_CONSUME_AT = "write_consume_at"
+
+/// `size_of[T]()`: the byte size of `T`'s value, an `int` -- the language's intrinsic (D216).
+export const SIZE_OF_FN = "size_of"
+
 /// The upper bound an open slice `x[lo..]` takes: the second method of std's
 /// `RangeIndex` role beside `index(r Range)` -- the receiver's OWN answer, not
 /// a `len` field (plan 284; `std/src/collections/vec/slice.nv`,

@@ -276,6 +276,9 @@ fn fits(fns FnTable, tys Interner, row FnRow, args []ArgSpec, form CallForm) -> 
     } else {
         // The declaration was written in the form the call site uses.
     }
+    // A STATIC method answers neither form: it is reached through its type
+    // (`Vec[T].new`), and a free call of the same name is not a call of it.
+    if is_ty(fd.owner) { return false }
     // ARITY IS NO LONGER EQUALITY (wave 4, D102). A call may write FEWER
     // arguments than the declaration has parameters -- the omitted ones carry
     // defaults -- and it may write them BY NAME, in which case the written
@@ -575,3 +578,21 @@ export fn FnIndex @has_method_for(t TyId, ctx Ctx, sig ProtoSig) -> bool {
 // reviewed. When a refusal really needs to name the whole candidate set (D420;
 // rustc lists the candidate impls, clang the candidate functions), it comes
 // back with a test that reads the rows back.
+
+/// The module a PRIVATE field of `owner_id` is visible from, or None when the
+/// field is public or absent (274.11 E.10 step 4c-2: a handed record's private
+/// fields are registered for its own module's bodies).
+#realtime nogc
+export fn FieldIndex @field_private_to(fields FieldTable, owner_id TyId, fname str) -> Option[str] {
+    mut r = FieldRow(@names.find(fname))
+    while is_frow(r) {
+        ro fd = fields.rows[raw_frow(r)]
+        if fd.owner_id == owner_id {
+            return if fd.private { Some(fd.private_to) } else { None }
+        } else {
+            // Another type's field of this name: keep walking.
+        }
+        r = @next[raw_frow(r)]
+    }
+    None
+}

@@ -113,6 +113,7 @@ type Emitter consume {
         /// direction -- a hoist never taking a source name -- holds by the `_novac_`
         /// prefix, which no source identifier may carry, and is not checked here. [INV-TODO: 274.3 F30 -- nothing checks it]
     mut lo Lowerer /// THE LOWERING'S RECEIVER (274.8 M3): the builder is no longer the printer's own state -- it lives in `lower/` with the methods that write it, and printing READS it through here. Was `mut ir FnBuilder` (274.8 M1)
+    ret_self bool /// the callable being printed returns its receiver (`-> @`, D409): a return with no value prints the receiver
     lit_tmp []str /// node id -> the hoisted temporary of an array literal (B8) or a record constructor (B13) in argument position; "" = none
     hlits []Node /// the handler literals of the reached functions; the index is the literal's C number (E.9 step 3)
     spawns []Node /// the `spawn` statements of the reached functions; the index is the spawn's C number (E.9 step 4)

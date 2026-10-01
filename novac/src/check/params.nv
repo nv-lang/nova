@@ -65,7 +65,10 @@ fn Checker mut @bind_typed_param(pk []Node, tat int, row FnRow, slot int) -> boo
     // them, and a second refusal here would be the cascade class.
     ro slice_start = tnode.kind_of() == NodeKind.LeafNode &&
         leaf_kind(tnode) == TokenKind.EmptyBrackets
-    if !tnode.is_ident() && !slice_start {
+    // A RAW POINTER parameter (`src *T`, std's `RawMem.copy_n_nonoverlapping`,
+    // 274.11 E.10 step 4c-2): the row holds its type, so it binds like the rest.
+    ro ptr_start = tnode.kind_of() == NodeKind.LeafNode && leaf_kind(tnode) == TokenKind.Star
+    if !tnode.is_ident() && !slice_start && !ptr_start {
         return true
     } else {
         // An identifier or the slice sugar: the row's type is resolvable.

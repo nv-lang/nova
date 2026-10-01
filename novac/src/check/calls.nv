@@ -32,7 +32,7 @@ import ../sem.{contains_call}
 
 import ../tree.{Node, raw_node}
 import ../diag.{ice}
-import ../builtins.{TypeKind}
+import ../builtins.{TypeKind, SIZE_OF_FN}
 import ../sem.{LitArg, ArgSpec, CallForm, CalleeTarget, decl_of_ty, Ctx, CheckOut, FnRow, raw_row, coerce_row}
 import ../sem.{subst_type, slot_binding_in, representation_of, generic_names, is_expr_kind, branch_children}
 import ../sem.{ty_source_name, bind_fault, bind_slots, identity_slots, no_row, SlotBind}
@@ -593,15 +593,10 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
     // one, #925). A generic handed free function has an instance name the shell
     // would spell by substitution; not this wave.
     ro hfd = @ctx.fns.rows[raw_row(row)]
-    if hfd.handed_from != "" {
-        if hfd.tparam_cnt > 0 {
-            // NOT GATED: generic multi-file is refused in EVERY position this
-            // wave — letting one through reaches mono's "a row this file does
-            // not declare" ice, and the wave's carriers are plain calls.
-            @report_first_leaf_of(kids,
-                "outside the subset: a generic free function of a handed module is not compiled into this unit yet (E2-b2 multi-file)")
-            return
-        }
+    // A GENERIC handed free function is judged once its substitution is known
+    // (below): its instance is made from the body novac was handed (274.11
+    // E.10 step 4c-2, `Ctx @instantiates`), or refused by name there.
+    if hfd.handed_from != "" && hfd.tparam_cnt == 0 {
         ro sym = c_free_symbol(@ctx, row)
         if @ctx.in_program(row) {
             // A function of ANOTHER MODULE OF THE PROGRAM (274.11 E.10 step 2a):
@@ -655,7 +650,7 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
             // As many arguments as the declaration binds: each is resolved below.
         }
         for name in given {
-            ids.push(@ctx.ty_of_name(name) ?? no_ty())
+            ids.push(@type_arg_named(name))
         }
     } else {
         // Deduced above; the judging below is the same for both sources.
@@ -668,11 +663,12 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
     // hunt a typo in correct code, which is the D420 class.
     for id in ids {
         if !is_ty(id) {
-            @report_first_leaf_of(kids, if @substs.len() > 0 {
-                "outside the subset: a type argument inside a generic body is not resolved -- novac composes no substitution with another and infers none (E2-b3)"
+            if @substs.len() > 0 {
+                @report_first_leaf_of(kids,
+                    "outside the subset: a type argument inside a generic body is not resolved -- novac composes no substitution with another and infers none (E2-b3)")
             } else {
-                "outside the subset: a type argument names a type novac does not know"
-            })
+                @report_type_arg_unknown(kids)
+            }
             return
         } else {
             // A type the registry knows: it can stand in the substitution.
@@ -702,6 +698,16 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
     // and `dbl[str]` declare the same `x T`. Both halves are known only HERE --
     // the substitution was just read -- so this is where `dbl[int]("s")` is
     // refused instead of being emitted as an int function taking a string.
+    // A HANDED generic body becomes an instance of this unit's, or the call is
+    // refused by name: the shell's spelling of a generic free instance is not
+    // novac's to guess.
+    if !@ctx.fns.compiles_body(row) && !@ctx.instantiates(row, ids) {
+        @report_first_leaf_of(kids,
+            "outside the subset: a generic free function of a handed module is not compiled into this unit yet (E2-b2 multi-file)")
+        return
+    } else {
+        // The file's own generic, or an instance this unit makes.
+    }
     ro fd = @ctx.fns.rows[raw_row(row)]
     for i in 0..key.len() {
         if subst_type(@ctx, @ctx.fns.params[fd.param_off + i].type_id, ids) == key[i].type_id { continue }
@@ -716,6 +722,7 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
     // per instance under `c_callable(ctx, row, subst)`. Until 2026-08-21 this
     // line was a refusal, because recording a call whose instance nobody
     // emitted would have named a symbol that exists nowhere.
+    @intern_instance_sig(row, ids)
     @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), ids,
         bind_slots(@ctx.fns.params, fd.param_off, fd.param_cnt, key))
 }
@@ -821,6 +828,16 @@ fn Checker mut @type_free_call(e Node) -> () {
         return
     } else {
         // Not a variant: a callable of the name table, below.
+    }
+    // `size_of[T]()` (274.11 E.10 step 4c-2: std's `alloc_buf[T]`): the
+    // language's own intrinsic -- no row of anyone's. Its type argument is
+    // recorded; its value is an `int`.
+    if cname == SIZE_OF_FN && @ctx.defs.def_of(cname).is_none() {
+        @type_size_of(e, kids)
+        // SILENT-OK: the intrinsic's own door recorded its type or refused it by name.
+        return
+    } else {
+        // An ordinary free call.
     }
     ro found = @ctx.defs.def_of(cname)
     // FIRST FLOOR, found by probing the guards above (2026-08-16): a

@@ -489,7 +489,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                 // one. The arm is named rather than left to a `_` so that a new
                 // shape still stops the compiler here (P21).
                 ShapeProtocol => {}
-                ShapeRecord => fill_record_fields(c, owner_id, tname, types, defs, fields, tys)
+                ShapeRecord => fill_record_fields(c, owner_id, tname, types, defs, fields, tys, false, "")
                 ShapeNewtype => {
                     // The TERM is interned here and not in pass 1: the
                     // representation is a type reference, so it may point at a
@@ -693,7 +693,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
 /// and the handed ones share (registry 1322), so the two cannot read a field
 /// two ways.
 fn fill_record_fields(c Node, owner_id DeclId, tname str, mut types []TypeDef, defs DefTable,
-                      mut fields FieldTable, mut tys Interner) -> () {
+                      mut fields FieldTable, mut tys Interner, private bool, private_to str) -> () {
     ro mine = types[raw_decl(owner_id)]
     ro off = fields.rows.len()
     mut cnt = 0
@@ -722,7 +722,11 @@ fn fill_record_fields(c Node, owner_id DeclId, tname str, mut types []TypeDef, d
         // a slice type was dropped from the registry.
         ro ft = ty_of_type_ref(fk, ftat, no_ty(), tps, prow, types, defs, tys)
         if !is_ty(ft) { continue }
-        fields.add(mine.ty_id, leaf_text(fk[fnat]), ft, ro_view: is_leaf_kind(fk[ftat], TokenKind.KwRo))
+        if private {
+            fields.add_private(mine.ty_id, leaf_text(fk[fnat]), ft, is_leaf_kind(fk[ftat], TokenKind.KwRo), private_to)
+        } else {
+            fields.add(mine.ty_id, leaf_text(fk[fnat]), ft, ro_view: is_leaf_kind(fk[ftat], TokenKind.KwRo))
+        }
         cnt += 1
     }
     // THE LAYOUT AND THE GATE SURVIVE THE REWRITE: this pass replaces the row
@@ -762,18 +766,22 @@ fn fill_handed_fields(file Node, decls []Node, foreign_cnt int, mut types []Type
     ro own_module = module_dotted(file)
     mut seen = []bool.new()
     while seen.len() < foreign_cnt { seen.push(false) }
+    mut tree = 0 - 1
     for d in decls {
+        tree += 1
         ro same_module = module_dotted(d) == own_module
         // The `file_decls` walk, keeping what it drops: whether the declaration
         // stood inside an `export` wrapper -- the other half of D281's rule.
         for w in branch_children(d) {
             if w.kind_of() != NodeKind.ExportDecl {
-                fill_one_handed(w, false, same_module, foreign_cnt, seen, types, defs, fields, tys)
+                fill_one_handed(w, false, same_module, foreign_cnt, seen, types, defs, fields, tys,
+                                module_dotted(d), tree)
                 continue
             }
             for inner in branch_children(w) {
                 if inner.kind_of() == NodeKind.LeafNode { continue }
-                fill_one_handed(inner, true, same_module, foreign_cnt, seen, types, defs, fields, tys)
+                fill_one_handed(inner, true, same_module, foreign_cnt, seen, types, defs, fields, tys,
+                                module_dotted(d), tree)
             }
         }
     }
@@ -782,7 +790,8 @@ fn fill_handed_fields(file Node, decls []Node, foreign_cnt int, mut types []Type
 /// One handed declaration of `fill_handed_fields`: a record whose row it owns,
 /// filled when D281 lets the compiled file see its fields.
 fn fill_one_handed(c Node, exported bool, same_module bool, foreign_cnt int, mut seen []bool,
-                   mut types []TypeDef, defs DefTable, mut fields FieldTable, mut tys Interner) -> () {
+                   mut types []TypeDef, defs DefTable, mut fields FieldTable, mut tys Interner,
+                   home str, tree int) -> () {
     if c.kind_of() != NodeKind.TypeDecl { return }
     if shape_of_decl(c) != DeclShape.ShapeRecord { return }
     ro nk = branch_children(c)
@@ -800,8 +809,17 @@ fn fill_one_handed(c Node, exported bool, same_module bool, foreign_cnt int, mut
     ro has_priv = marker_at >= 0
     ro qualified = has_priv && marker_at + 1 < nk.len() && leaf_kind(nk[marker_at + 1]) == TokenKind.LParen
     ro visible = if same_module { !qualified } else { exported && !has_priv }
-    if !visible { return }
-    fill_record_fields(c, owner_id, tname, types, defs, fields, tys)
+    // A field the file may NOT read is registered all the same, marked private
+    // to its module (274.11 E.10 step 4c-2): a body of that module this unit
+    // instantiates (`Vec[T] @len` reads `@len`) has every right to it. Until
+    // this day such a record got no fields at all, and its own body could not
+    // read them.
+    // WHERE a private field is visible from: its module for a bare `priv` (or a
+    // record not exported), its declaring FILE for a qualified one -- spelled
+    // `#<tree>`, which no module path can equal, so only a body read from that
+    // same tree reads it (`check.Checker @field_visible`).
+    fill_record_fields(c, owner_id, tname, types, defs, fields, tys, !visible,
+                       if qualified { "#${tree}" } else { home })
 }
 
 /// Where a declaration's type-level privacy marker stands (D281), or -1 when it

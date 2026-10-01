@@ -30,7 +30,7 @@ module novac.sem
 import ../diag.{ice}
 import ../names.{raw_decl}
 import ../builtins.{prim_c_name, is_runtime_abi_sum, prim_name}
-import ../builtins.{PAREN_RECORD_C_PREFIX, HANDLER_CTOR, TypeKind}
+import ../builtins.{PAREN_RECORD_C_PREFIX, HANDLER_CTOR, TypeKind, EMPTY_CTOR}
 import ../types.{TyId, is_ty}
 
 /// The REPRESENTATION of a newtype: the type it is laid out as.
@@ -438,7 +438,24 @@ export fn effect_op_dispatcher_c(eff str, op str) -> str => "Nova_${eff}_${op}"
 /// end condition as the struct name. Whether the shell CARRIES it for this
 /// instance is the table's question (`Ctx.interop`), asked by check before
 /// anything is printed.
-export fn c_instance_ctor(ctx Ctx, t TyId) -> str => "Nova_${instance_body(ctx, t)}_static_new"
+export fn c_instance_ctor(ctx Ctx, t TyId) -> str => c_instance_static(ctx, t, EMPTY_CTOR)
+
+/// A STATIC method of an instance as the shell emits it: `Nova_<body>_static_<name>`
+/// -- the constructor's spelling, for any static name (274.11 E.10 step 4c-2:
+/// `Ctx @instantiates` asks it of `Vec[T].new`). Interop, same end condition.
+export fn c_instance_static(ctx Ctx, t TyId, name str) -> str => "Nova_${instance_body(ctx, t)}_static_${name}"
+
+/// THE C NAME of a vector operation the language calls IMPLICITLY over `vec_t`
+/// -- the literal's constructor and push, `xs[i]`, a `for`'s len and index
+/// (274.11 E.10 step 4c-2): the shell's instance when it carries one, else the
+/// instance this unit makes from std's body (the checker admitted it and
+/// recorded it as wanted, so mono made it). One door for every emitter site.
+export fn vec_op_c(ctx Ctx, vec_t TyId, name str) -> str {
+    ro shell = if name == EMPTY_CTOR { c_instance_ctor(ctx, vec_t) } else { c_instance_method(ctx, vec_t, name) }
+    if ctx.interop.has(shell) { return shell }
+    ro row = ctx.vec_op_row(name) ?? ice("mangle: an implicit vector operation std does not declare reached emission")
+    c_callable(ctx, row, []TyId.of(ctx.tys.arg(vec_t, 0)))
+}
 
 /// An instance METHOD as the shell emits it: `<body>_method_<name>` -- note the
 /// missing `Nova_` prefix, which is how the oracle spells methods

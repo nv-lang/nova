@@ -377,7 +377,14 @@ fn harvest_fn(kids []Node, handed_from str, types []TypeDef, mut defs DefTable, 
     // The RECEIVER carries neither a name nor a default: it is written before
     // the method's name, not in the parameter list, so there is no `name:` a
     // call site could say and no `=` a declaration could write.
-    if !is_free {
+    // A STATIC method (`fn Vec[T].new(cap int)`: the receiver group ends in
+    // `.`, not `@`) takes NO receiver -- it is reached through its type, and
+    // its first parameter is its first written one (274.11 E.10 step 4c-2).
+    // Until this day it was registered as a method whose receiver was the
+    // type: `Vec.new` had a parameter no call passes, and its instance would
+    // have been printed with one.
+    ro is_static = !is_free && recv_kids.len() > 0 && is_leaf_kind(recv_kids[recv_kids.len() - 1], TokenKind.Dot)
+    if !is_free && !is_static {
         param_ids.push(ParamDef { name: RECV_BINDING, type_id: recv_t,
                                   mode: recv_mode_at(kids), default_expr: None })
     } else {
@@ -433,12 +440,17 @@ fn harvest_fn(kids []Node, handed_from str, types []TypeDef, mut defs DefTable, 
     // second time -- in module mode the unit is inside `NOVAC_SELF_PATH`, and
     // every call of its own methods was an ambiguity (237 over novac's source).
     if !is_free && fns.file_declares_method(mname, param_ids) { return }
-    fns.add(mname, ret_t, !is_free, param_ids, tps, bounds, handed_from: handed_from,
-            ret_ro: ret_is_ro(ret_kids))
+    if is_static {
+        fns.add_static(recv_t, mname, ret_t, param_ids, tps, bounds, handed_from, ret_is_ro(ret_kids))
+    } else {
+        fns.add(mname, ret_t, !is_free, param_ids, tps, bounds, handed_from: handed_from,
+                ret_ro: ret_is_ro(ret_kids))
+    }
     if is_free {
         defs.add(mname, DefTarget.DefFn(FnRow(fns.rows.len() - 1)))
     } else {
-        // A method is reached through its receiver, never by bare name.
+        // A method is reached through its receiver, a static one through its
+        // type -- never by bare name.
     }
 }
 

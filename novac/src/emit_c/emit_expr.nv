@@ -23,7 +23,7 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../sem.{raw_crow, carrier_of, c_callable, c_instance_method, c_shell_method, c_method_symbol, Ctx}
-import ../sem.{CheckOut}
+import ../sem.{CheckOut, vec_op_c, c_static_symbol}
 import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct}
 import ../sem.{shape_of}
 import ../sem.{int_literal_c_text, char_literal_code, interp_slices}
@@ -598,8 +598,13 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // carries an empty one, so there is no branch here to get wrong.
         // `body_ours`: the file's own, a program module's, or an instance this
         // unit makes from a handed body (274.11 E.10 step 4c).
+        ro static = is_ty(@ctx.fns.rows[raw_row(cr.callable_row())].owner)
         if @ctx.body_ours(cr.callable_row(), @out.callee_subst_of(e.id_of())) {
             @body.append(c_callable(@ctx, cr.callable_row(), @out.callee_subst_of(e.id_of())))
+        } else if static {
+            // A STATIC method the shell carries (274.11 E.10 step 4c-2): no
+            // receiver to spell it from -- the row and its substitution are.
+            @body.append(c_static_symbol(@ctx, cr.callable_row(), @out.callee_subst_of(e.id_of())))
         } else {
             // INTEROP (sub-plan L2): a method row with no body of ours is an
             // instance method the SHELL emits, named by the receiver's
@@ -612,8 +617,13 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // The receiver is parameter ZERO (plan 273), so it is slot zero of the
         // recorded binding -- not a special case bolted onto the front. The
         // written arguments start at child 3 (receiver, dot, name).
-        @emit_bound_args(kids, 3, true, e.id_of(), cr.callable_row())
+        // A static method takes no receiver: its slots are its written arguments.
+        @emit_bound_args(kids, 3, !static, e.id_of(), cr.callable_row())
         @body.append(")")
+    } else if k == NodeKind.Call && @out.has_subst(e.id_of()) {
+        // `size_of[T]()` (D216, 274.11 E.10 step 4c-2): the checker recorded
+        // the type argument as the node's substitution; the value is C's size.
+        @body.append("((nova_int)sizeof(${c_type(@ctx, @out.subst_of(e.id_of())[0])}))")
     } else if k == NodeKind.Call {
         ro kids = branch_children(e)
         // THE ROW THE CHECKER DECIDED ON, exactly as the MethodCall branch
@@ -675,7 +685,9 @@ fn Emitter mut @emit_expr(e Node) -> () {
                 // handed module is std's, the shell carries it under the oracle's
                 // spelling, and the checker admitted the call against the lifted
                 // surface; our own spelling is for the rows we compile.
-                if !@ctx.in_program(row) {
+                // An instance this unit makes from a handed body (274.11 E.10
+                // step 4c-2: `alloc_buf[Pt]`) is ours too (`Ctx @body_ours`).
+                if !@ctx.body_ours(row, @out.callee_subst_of(e.id_of())) {
                     @body.append("${c_free_symbol(@ctx, row)}(")
                 } else {
                     @body.append("${c_callable(@ctx, row, @out.callee_subst_of(e.id_of()))}(")
@@ -744,7 +756,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
             } else {
                 // The receiver's type decides the symbol, below.
             }
-            @body.append(c_method_symbol(@ctx, rt, VEC_INDEX_METHOD))
+            @body.append(vec_op_c(@ctx, rt, VEC_INDEX_METHOD))
             @body.append("(")
             @emit_expr(kids[0])
             @body.append(", ")
@@ -756,8 +768,16 @@ fn Emitter mut @emit_expr(e Node) -> () {
     } else if k == NodeKind.Cast {
         // Unwrapping a newtype is FREE: the value is already the
         // representation, so the emission is the operand and nothing else. C
-        // needs no cast between a typedef and its underlying type.
-        @emit_expr(branch_children(e)[0])
+        // needs no cast between a typedef and its underlying type. A POINTER
+        // target is a C cast (`0 as *mut T`, 274.11 E.10 step 4c-2).
+        ro ct = @out.type_of(e.id_of())
+        if @ctx.tys.kind_of(ct) == TypeKind.TkPtr {
+            @body.append("((${c_type(@ctx, ct)})(")
+            @emit_expr(branch_children(e)[0])
+            @body.append("))")
+        } else {
+            @emit_expr(branch_children(e)[0])
+        }
     } else if k == NodeKind.Paren {
         @body.append("(")
         @emit_expr(branch_children(e)[1])

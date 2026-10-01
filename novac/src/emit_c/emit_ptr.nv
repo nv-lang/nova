@@ -12,8 +12,8 @@
 module novac.emit_c
 
 import ../tree.{Node}
-import ../builtins.{TypeKind}
-import ../sem.{call_arg_at}
+import ../builtins.{TypeKind, PTR_WRITE_AT, PTR_WRITE_CONSUME_AT}
+import ../sem.{call_arg_at, leaf_text}
 import ../types.{is_ty}
 
 /// Is this method call's receiver a raw pointer (its recorded type)?
@@ -24,10 +24,20 @@ fn Emitter @is_ptr_receiver(recv Node) -> bool {
 
 /// `p.read_at(i)` as `(*((p) + (i)))` -- the one pointer method the checker admits.
 fn Emitter mut @emit_ptr_op(kids []Node) -> () {
-    @body.append("(*((")
+    // `write_at` stores and is a unit value: the assignment, then `NOVA_UNIT`
+    // (274.11 E.10 step 4c-2).
+    ro writes = leaf_text(kids[2]) == PTR_WRITE_AT || leaf_text(kids[2]) == PTR_WRITE_CONSUME_AT
+    @body.append(if writes { "((*((" } else { "(*((" })
     @emit_expr(kids[0])
     @body.append(") + (")
-    // The one index the checker admitted: the first argument after the `(`.
+    // The index the checker admitted: the first argument after the `(`.
     @emit_expr(call_arg_at(kids, 3, 0))
     @body.append(")))")
+    if writes {
+        @body.append(" = (")
+        @emit_expr(call_arg_at(kids, 3, 1))
+        @body.append("), NOVA_UNIT)")
+    } else {
+        // A read is the element itself.
+    }
 }
