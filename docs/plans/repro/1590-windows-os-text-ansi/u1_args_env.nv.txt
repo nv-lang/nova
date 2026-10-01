@@ -1,0 +1,24 @@
+// u1: what a program sees of a non-ASCII argument and environment value on Windows.
+module hcap.u1_args_env
+
+import std.os.{real_os, args, env}
+
+fn show(label str, s str) Io {
+    mut hex = ""
+    for b in s.bytes() {
+        ro n = b as int
+        ro d = "0123456789abcdef"
+        hex = "${hex}${d[n / 16..n / 16 + 1]}${d[n % 16..n % 16 + 1]}"
+    }
+    println("${label} len=${s.byte_len()} hex=${hex}")
+}
+
+fn main() Io {
+    ro all = with Os = real_os() { args() }
+    if all.len() > 1 { show("arg", all[1]) }
+    ro v = with Os = real_os() { env("U1_PROBE") }
+    match v {
+        Some(s) => show("env", s)
+        None => println("env none")
+    }
+}
