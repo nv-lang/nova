@@ -22,7 +22,7 @@ import ../lower.{no_local}
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, raw_node, is_node}
 import ../diag.{ice}
-import ../sem.{raw_crow, carrier_of, c_callable, c_shell_method, c_method_symbol, Ctx}
+import ../sem.{raw_crow, carrier_of, c_callable, c_method_symbol, Ctx}
 import ../sem.{CheckOut, vec_op_c, c_static_symbol}
 import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct}
 import ../sem.{shape_of}
@@ -886,7 +886,9 @@ fn Emitter mut @emit_expr(e Node) -> () {
             if @ctx.in_program(row) {
                 @body.append(c_callable(@ctx, row, no_subst()))
             } else {
-                @body.append(c_shell_method(@ctx, @out.type_of(kids[0].id_of()), EQUAL_METHOD))
+                // A vector instance is spelled `<Head>____<args>_method_equal`, a
+                // primitive `Nova_<type>_method_equal`: the one door that knows both.
+                @body.append(c_method_symbol(@ctx, @out.type_of(kids[0].id_of()), EQUAL_METHOD))
             }
             @body.append("(")
             @emit_expr(kids[0])

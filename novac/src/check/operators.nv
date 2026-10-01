@@ -17,10 +17,10 @@ import ../tree.{Node, BinOp, bin_op_of, un_op_of}
 import ../sem.{LitArg, leaf_kind, leaf_text}
 import ../sem.{carrier_of, is_int_prim, is_numeric_prim, prim_row_of}
 import ../types.{TyId, no_ty, is_ty}
-import ../builtins.{EQUAL_METHOD, EQUAL_PROTO, BuiltinType, TypeKind}
+import ../builtins.{EQUAL_METHOD, EQUAL_PROTO, BuiltinType, TypeKind, SLICE_HEAD}
 import ../sem.{gate_names, decl_of_ty, is_payload_free_sum}
 import ../resolve.{FnLookup}
-import ../sem.{ArgSpec, ArgClass, CallForm, CalleeTarget, ty_source_name, c_shell_method}
+import ../sem.{ArgSpec, ArgClass, CallForm, CalleeTarget, ty_source_name, c_method_symbol}
 import ../sem.{identity_slots, branch_children, ParamMode}
 
 /// One expression: record what the emitter asks about, walk what it emits.
@@ -37,7 +37,10 @@ fn Checker mut @record_operator_callee(e Node, kids []Node) -> () {
     ro op = bin_op_of(leaf_kind(kids[1]))
     if !is_equality(op) { return }
     ro lhs_t = type_of(kids[0], @ctx, @scope, @chan)
-    if lhs_t != @ctx.prims.str_id { return }
+    // `str` and a VECTOR dispatch to `equal` (D46); a vector compares its
+    // elements, never its pointer -- `@args[a..b] == want` (types.nv) printed
+    // the C `==` of two `Nova_Vec*` before registry 1573.
+    if lhs_t != @ctx.prims.str_id && !@is_vec_inst(lhs_t) { return }
     // P18: a door that ASKS the table builds no text -- the
     // messages live in the refusers below, each with its own
     // reason.
@@ -65,8 +68,13 @@ fn Checker mut @record_operator_callee(e Node, kids []Node) -> () {
 /// declaration that is right there. Its own refuser, like its siblings:
 /// the door that asks the table builds no text (P18).
 fn Checker mut @refuse_equality_rhs(kids []Node) -> () {
-    @report_first_leaf_of(kids, "outside the subset: `==` on `str` takes a `str` right-hand side, and this operand's type is not one `${EQUAL_METHOD}` declares")
+    @report_first_leaf_of(kids, "outside the subset: `==` takes a right-hand side of the left one's type, and this operand's type is not one `${EQUAL_METHOD}` declares")
 }
+
+/// Is `t` an instance of the vector (`Vec[T]`, `[]T`)? The HEAD declaration's
+/// name, as the array pattern asks it (match_arms.nv `@bind_array_pattern`).
+fn Checker @is_vec_inst(t TyId) -> bool =>
+    is_ty(t) && @ctx.tys.kind_of(t) == TypeKind.TkApp && decl_of_ty(@ctx, t).name == SLICE_HEAD
 
 /// More than one `equal` fits a TYPED key: a real D84 tie, refused by
 /// name -- unless an operand novac could not type matched every row,
@@ -74,7 +82,7 @@ fn Checker mut @refuse_equality_rhs(kids []Node) -> () {
 /// call form the subset synthesises).
 fn Checker mut @refuse_equality_overloaded(kids []Node, key []ArgSpec) -> () {
     if key_fully_typed(key) {
-        @reject_first_leaf_of(kids, "`==` on `str` fits more than one `${EQUAL_METHOD}` method and none is more specific -- an ambiguity is refused, never chosen (D84)")
+        @reject_first_leaf_of(kids, "`==` fits more than one `${EQUAL_METHOD}` method and none is more specific -- an ambiguity is refused, never chosen (D84)")
     } else {
         @report_first_leaf_of(kids, "outside the subset: an operand's type is not decided yet, so the `${EQUAL_METHOD}` overloads are not narrowed")
     }
@@ -84,7 +92,7 @@ fn Checker mut @refuse_equality_overloaded(kids []Node, key []ArgSpec) -> () {
 /// so there is nothing to emit `==` on strings with -- and the
 /// compiler must say so, not the linker.
 fn Checker mut @refuse_equality_unknown(kids []Node) -> () {
-    @report_first_leaf_of(kids, "outside the subset: `==` on `str` needs the `${EQUAL_METHOD}` method, and it is not among the declarations novac was handed")
+    @report_first_leaf_of(kids, "outside the subset: `==` here needs the `${EQUAL_METHOD}` method, and it is not among the declarations novac was handed")
 }
 
 /// The row is found; the question left is WHO carries its body.
@@ -96,7 +104,7 @@ fn Checker mut @refuse_equality_unknown(kids []Node) -> () {
 /// `undefined symbol: novac_fn_equal__...`).
 fn Checker mut @accept_equality_row(e Node, kids []Node, lhs_t TyId, row FnRow) -> () {
     if !@ctx.fns.compiles_body(row) {
-        ro sym = c_shell_method(@ctx, lhs_t, EQUAL_METHOD)
+        ro sym = c_method_symbol(@ctx, lhs_t, EQUAL_METHOD)
         if !@ctx.interop.has(sym) {
             @report_first_leaf_of(kids, "outside the subset: `==` on `${ty_source_name(@ctx, lhs_t)}` needs `${sym}`, and the shell it links into does not carry it -- the interop surface is novac/probe/shell_probe.nv")
             return
@@ -233,13 +241,17 @@ fn Checker mut @report_if_operator_needs_protocol(kids []Node) -> bool {
     // moves it to the heap but leaves its value its tag (the emitter reads it by
     // placement, `.` or `->`).
     ro tag_eq = one_sum && is_payload_free_sum(@ctx, lt)
+    // Two vectors of ONE type compare through `equal` (registry 1573): the
+    // callee is recorded by `@record_operator_callee`, which refuses by name
+    // when the shell carries no instance of it.
+    ro vec_eq = lt == rt && @is_vec_inst(lt)
     // Each operator states WHICH operands the subset can emit for it. The
     // match is exhaustive, so a new operator cannot slip in without an
     // answer -- and the answer is a refusal, never a guess.
     match op {
         Add | Sub | Mul | Div | Modulo => { if numeric || same_nt { return false } }
         Less | LessEq | Greater | GreaterEq => { if numeric || same_nt { return false } }
-        Equal | NotEqual => { if same_prim || same_nt || tag_eq { return false } }
+        Equal | NotEqual => { if same_prim || same_nt || tag_eq || vec_eq { return false } }
         AndAlso | OrElse => { if bools { return false } }
         BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight => { if ints { return false } }
         Range => { if numeric { return false } }

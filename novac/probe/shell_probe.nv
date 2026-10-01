@@ -149,7 +149,16 @@ fn main() {
     // `index(Range)` and `end_index` of Vec[str], the walk's `len`/`get`, and
     // the element read of Vec[u8].
     println("sl = ", slice_probe(argv_probe(), 0), " ", last_slash("a/b"))
+
+    // Registry #1573: a slice of `[]int` compared with `==` -- the shape of
+    // `Interner @args_equal` (types.nv: `@args[a..b] == want` over `[]TyId`,
+    // whose newtype element the oracle erases to `nova_int`). Keeps
+    // `index(Range)` and `equal` of Vec[int] alive.
+    println("se = ", slice_eq_probe([]int.of(1, 2, 3), []int.of(1, 2)))
 }
+
+/// A closed slice of `[]int` compared with a vector (registry #1573).
+fn slice_eq_probe(xs []int, want []int) -> bool => xs[0..want.len()] == want
 
 /// A `for` over an open slice of `[]str`, and a closed one (main.nv:412).
 fn slice_probe(a []str, from int) -> int {
