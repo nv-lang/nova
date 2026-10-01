@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E_LIT_OUT_OF_RANGE
+// Regression for registry 221.1 #1593 (D55, amendment 2026-10-02): a literal takes the
+// type of its position only if its EXACT value is representable there; an integer
+// literal in a float only if exact (E_LIT_INEXACT), a fraction not past infinity
+// (E_LIT_OUT_OF_RANGE). Before, the number was silently replaced. Positive half:
+// standalone/p1593_literal_exact_ok.nv.
+module neg.p1593_float_overflow_f32_neg
+
+fn main() Io {
+    // nova:expect E_LIT_OUT_OF_RANGE -- 1e40 overflows f32 to infinity
+    ro a f32 = 1e40
+    println("${a}")
+}

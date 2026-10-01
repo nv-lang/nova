@@ -1,0 +1,23 @@
+// EXPECT_STDOUT p1593 16777216 9007199254740992 0.1 3e+38 true one 3.5 true
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for registry 221.1 #1593 (D55, amendment 2026-10-02): a literal takes the
+// type of its position only if its EXACT value is representable there; an integer
+// literal in a float only if exact (E_LIT_INEXACT), a fraction not past infinity
+// (E_LIT_OUT_OF_RANGE). Before, the number was silently replaced. The legal edge of each rule; negatives:
+// neg/p1593_*_neg.nv.
+module standalone.p1593_literal_exact_ok
+
+fn main() Io {
+    ro a f32 = 16777216
+    ro b f64 = 9007199254740992
+    ro c f32 = 0.1
+    ro d f32 = 3e38
+    ro x u8 = 255
+    ro y f64 = 1.0
+    ro r = match y {
+        1 => "one"
+        _ => "other"
+    }
+    ro z f64 = 2.5
+    println("p1593 ${a} ${b} ${c} ${d} ${x == 255} ${r} ${z + 1} ${y == 1}")
+}

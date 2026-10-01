@@ -64,6 +64,30 @@ fn literal_shown(l: &Literal) -> (String, &'static str) {
     }
 }
 
+/// #1593 (D55, amendment 2026-10-02): a literal of the right kind still has to hold its
+/// exact value in the scrutinee's type -- the same rule as every other typed position
+/// (`literal_exact.rs`): an integer over a float only if exact, a fraction over `f32`
+/// not past infinity, an integer over a sized integer within its range.
+fn literal_value_fault(l: &Literal, s: &str) -> Option<String> {
+    match l {
+        Literal::Int(v) if is_float(s) => {
+            super::literal_exact::int_literal_into_float(*v as i128, if s == "f32" { 32 } else { 64 })
+        }
+        Literal::Float(f) if is_float(s) => {
+            super::literal_exact::float_literal_into_float(*f, if s == "f32" { 32 } else { 64 })
+        }
+        Literal::Int(v) => {
+            if s == "uint" && *v < 0 {
+                return Some(format!("[E_LIT_OUT_OF_RANGE] {v} < uint.MIN (0)"));
+            }
+            // A hex literal past i64::MAX is stored wrapped; an unsigned target reads it back.
+            let v128 = if matches!(s, "u8" | "u16" | "u32" | "u64") && *v < 0 { (*v as u64) as i128 } else { *v as i128 };
+            super::lit_range_check(v128, s).map(|m| format!("[E_LIT_OUT_OF_RANGE] {m}"))
+        }
+        _ => None,
+    }
+}
+
 impl<'a> TypeCheckCtx<'a> {
     /// #1535: every literal of `pattern` reachable without a structural pattern
     /// (itself, `|` alternatives, the inner pattern of `x @ p`) has the type of the
@@ -84,6 +108,8 @@ impl<'a> TypeCheckCtx<'a> {
                         ),
                         *span,
                     ));
+                } else if let Some(msg) = literal_value_fault(l, s) {
+                    errors.push(Diagnostic::new(msg, *span));
                 }
             }
             Pattern::Or { alternatives, .. } => {
