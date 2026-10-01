@@ -1472,6 +1472,11 @@
 #   with this branch, out of gaps; #1513 (a field typed by a declaration below its record
 #   was dropped -- fixed) and #1514 (a composite newtype/alias representation read as its
 #   first name -- refused loud, the form open) land, out of gaps; numbers from nova-20).
+# 2026-10-01, cloud session p274-carina-cloud: rows -> 1467, max -> 1518 (#1518: a constant of another
+#   module was never registered -- "unknown name"; fixed in the branch; number given by the integrator).
+#   1517 is not in the registry and was in no gaps= line: added to gaps.
+rows=1467
+max=1518
 rows=1466
 max=1516
 rows=1463
@@ -2121,7 +2126,7 @@ stale_gaps=0
 # nomer I v gaps=, I so strokoy schitaetsya 'protuhshey dyroy'.
 # 2026-09-21: №1209 ПРИЕХАЛ и СНЯТ из gaps=
 # (писал интегратор, как и планировалось). №1210-1211 всё ещё ждёт Карину.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1517
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding

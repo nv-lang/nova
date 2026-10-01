@@ -264,6 +264,10 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // contract. Declared BEFORE the harvest because the harvest fills it.
     mut fx = EffectTable.new()
     harvest_types(decls, types, gates, defs, tys, fx, module_dotted(file))
+    // THE HANDED CONSTANTS, beside the handed types and before the seal: a
+    // file's own constant of the same name is registered after it, and the
+    // last put wins -- the file shadows what it was handed.
+    harvest_consts(decls, defs, consts, module_dotted(file))
     // THE VARIANTS OF HANDED SUMS, through the same door the file's own sums
     // take below (274.5 wave "variants of handed sums", 2026-09-04). Until this
     // loop `harvest_types` registered a handed sum's NAME and skipped its

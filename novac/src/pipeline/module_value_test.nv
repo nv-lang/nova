@@ -111,3 +111,16 @@ test "qualified reads: `Type.NAME` of a constant is substituted, of a module val
     assert(c0.contains("novac_mv_Row__N = novac_mvinit_Row__N();"), c0)
     assert(!c0.contains("novac_mv_Row__LIMIT"), c0)
 }
+
+test "an imported constant of another module is substituted as its literal (registry 1518)" {
+    // Handed constants were never registered: `import kc.{LIMIT}` and a read of
+    // `LIMIT` was "unknown name" -- eight times over novac's own source.
+    mut decls = std_decls()
+    decls.push("module kc\nexport const LIMIT = 10\nexport const WORD = \"w\"\nconst HIDDEN = 3\n")
+    ro (d, c) = compile_to_c("module kb\nimport kc.{LIMIT, WORD}\nfn main() {\n    println(LIMIT * 2)\n    println(WORD)\n}", decls)
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("10"), c)
+    // CONTROL: a constant its module does not export stays its module's (D281).
+    ro (h, _) = compile_to_c("module kb\nfn main() {\n    println(HIDDEN)\n}", decls)
+    assert(h.len() == 1 && messages(h).contains("unknown name"), messages(h))
+}

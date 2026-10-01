@@ -20,7 +20,7 @@ import ../sem.{effect_op_dispatcher_c}
 import ../lower.{no_local}
 
 import ../lex.{TokenKind}
-import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, raw_node}
+import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, raw_node, is_node}
 import ../diag.{ice}
 import ../sem.{raw_crow, carrier_of, c_callable, c_shell_method, c_method_symbol, Ctx}
 import ../sem.{CheckOut, vec_op_c, c_static_symbol}
@@ -352,7 +352,10 @@ fn Emitter mut @emit_expr(e Node) -> () {
         } else if lk == TokenKind.StrLit {
             // An INTERPOLATED literal was hoisted into its builder chain by
             // the statement's walk (I1); the temporary carries the string.
-            ro itmp = @lit_tmp[raw_node(e.id_of())]
+            // A literal WITHOUT an identity -- a handed constant's
+            // initializer (registry 1518, sem/harvest.nv) -- was never
+            // hoisted: no walk of this file reached it.
+            ro itmp = if is_node(e.id_of()) { @lit_tmp[raw_node(e.id_of())] } else { "" }
             if itmp != "" {
                 @body.append(itmp)
                 return

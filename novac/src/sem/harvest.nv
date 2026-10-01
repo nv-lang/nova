@@ -29,7 +29,7 @@
 
 module novac.sem
 
-import ../tree.{Node, NodeKind, NodeId}
+import ../tree.{Node, NodeKind, NodeId, branch, no_node}
 import ../builtins.{COERCE_ATTR, SELF_TYPE, UNIT_TYPE_NAME, RECV_BINDING}
 import ../types.{TyId, no_ty, is_ty}
 import ../names.{raw_decl, DeclId}
@@ -149,13 +149,7 @@ fn harvest_types(decls []Node, mut types []TypeDef, mut gates []str, mut defs De
         // was meant (three false #812 refusals in parse/parse.nv). A file of
         // the compiled file's OWN module sees all of them.
         ro same_module = module_dotted(d) == own_module
-        mut exported = []NodeId.new()
-        for w in branch_children(d) {
-            if w.kind_of() != NodeKind.ExportDecl { continue }
-            for inner in branch_children(w) {
-                exported.push(inner.id_of())
-            }
-        }
+        ro exported = exported_ids(d)
         // THE GATES of std's types, read where the DECLARATION LIST is (D186).
         // Std goes through the same door as the compiled file deliberately:
         // reading the gate in only one of the two would leave a std type
@@ -540,6 +534,73 @@ fn fill_handed_newtypes(decls []Node, mut types []TypeDef, defs DefTable, mut ty
             }
         }
     }
+}
+
+/// The declarations a handed file EXPORTS (D281): the ones another module may
+/// name. One door for the types and the constants, so the two cannot disagree
+/// on what a file shows.
+fn exported_ids(d Node) -> []NodeId {
+    mut exported = []NodeId.new()
+    for w in branch_children(d) {
+        if w.kind_of() != NodeKind.ExportDecl { continue }
+        for inner in branch_children(w) {
+            exported.push(inner.id_of())
+        }
+    }
+    exported
+}
+
+/// THE CONSTANTS OF HANDED FILES (registry 1518, 2026-10-01): a module-level
+/// `const` another module declares, where D281 lets the compiled file see it
+/// (exported, or the same module). Until this pass none was registered, and
+/// every imported constant was "unknown name" -- eight times over novac's own
+/// source (`EFFECT_MARKER`, `ENTRY_FN`, `TYPE_KIND_COUNT`, ...).
+///
+/// ONLY A LITERAL as the initializer: a constant is SUBSTITUTED at each read
+/// (274.5 wave B2), and the literal is registered REBUILT WITHOUT AN IDENTITY
+/// (`handed_literal`) -- its leaves carry no node id, so nothing of the
+/// compiled file's channel can be confused with it. A branch from another
+/// tree carries ids of THAT tree's space, which the file's channel would read
+/// as its own; such a constant stays unregistered and its read is refused by
+/// name, until a handed initializer is typed in a channel of its own.
+fn harvest_consts(decls []Node, mut defs DefTable, mut consts ConstTable, own_module str) -> () {
+    for d in decls {
+        ro same_module = module_dotted(d) == own_module
+        ro exported = exported_ids(d)
+        for c in file_decls(d) {
+            ro ck = const_decl_of(c)
+            if !ck.is_some() { continue }
+            if !same_module && !is_among(exported, c.id_of()) { continue }
+            ro kids = branch_children(ck ?? c)
+            ro init_at = const_init_at(kids)
+            if init_at < 0 { continue }
+            ro lit = handed_literal(kids[init_at])
+            if !lit.is_some() { continue }
+            if Some(cname) = const_full_name(kids) {
+                defs.add(cname, DefTarget.DefConst(consts.add(cname, no_ty(), []Node.of(lit ?? kids[init_at]), false)))
+            } else {
+                // No name: a parse-error shape, refused in its own file.
+            }
+        }
+    }
+}
+
+/// A handed constant's initializer when it is a LITERAL -- a number (negated
+/// too), a string, a char -- rebuilt as a `Lit` with NO identity, or None for any other form. The
+/// parser wraps every literal in a `Lit` branch (`parse/expr.nv`), and the
+/// readers of a literal ask the channel by its id (`type_of`, `@emit_expr`):
+/// the handed tree's id would be read as a node of the compiled file. With
+/// `no_node()` the channel answers nothing, and the literal is its own kind
+/// (D44) -- what an unrecorded literal of the file's own constant gets too.
+fn handed_literal(n Node) -> Option[Node] {
+    if n.kind_of() != NodeKind.Lit { return None }
+    ro kids = branch_children(n)
+    if kids.len() == 0 { return None }
+    ro k = leaf_kind(kids[kids.len() - 1])
+    if k == TokenKind.IntLit || k == TokenKind.FloatLit || k == TokenKind.StrLit || k == TokenKind.CharLit {
+        return Some(branch(no_node(), NodeKind.Lit, kids))
+    }
+    None
 }
 
 /// One newtype's term, when its row still waits for one -- the ONE door for a
