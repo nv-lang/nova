@@ -12875,9 +12875,25 @@ impl Parser {
                 self.bump();
                 Ok(Pattern::Literal(Literal::Float(f), start))
             }
+            // Registry 221.1 #1556: a string pattern is the literal's VALUE, read by the
+            // expression path -- the lexer's raw body kept `${x}` as text (`"a${x}" =>`
+            // compared with the bytes `a${x}`, silently) and the escaped `\${` as its
+            // SOH sentinel (`"a\${x}" =>` never matched `a${x}`). A pattern literal is
+            // not interpolated (integrator's ruling, 2026-10-01): refused by name here,
+            // where the interpolation is still told apart from an escaped `\${`.
             TokenKind::Str(s) => {
                 self.bump();
-                Ok(Pattern::Literal(Literal::Str(s), start))
+                match self.desugar_string_interpolation(s, start)?.kind {
+                    ExprKind::StrLit(v) => Ok(Pattern::Literal(Literal::Str(v), start)),
+                    _ => Err(Diagnostic::new(
+                        "[E_PATTERN_LITERAL_INTERPOLATED] a string pattern is not interpolated -- \
+                         `${...}` in a pattern would compare with the text `${...}`; match the \
+                         value with a guard (`s if s == \"a${x}\" =>`) or write `\\${` for the \
+                         literal text"
+                            .to_string(),
+                        start,
+                    )),
+                }
             }
             TokenKind::Char(cp) => {
                 self.bump();
