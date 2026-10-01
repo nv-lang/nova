@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E_PATTERN_LITERAL_INTERPOLATED
+// Regression for registry 221.1 #1556: the refusal holds inside a structural
+// pattern too -- the string literal of a variant payload is a pattern literal.
+module neg.p1556_interpolated_nested_pattern_neg
+
+fn kind(o Option[str]) -> int {
+    ro x = "b"
+    match o {
+        // nova:expect E_PATTERN_LITERAL_INTERPOLATED -- a nested string pattern is not interpolated either
+        Some("a${x}") => 1
+        _ => 0
+    }
+}
+
+fn main() Io {
+    println("${kind(Some("ab"))}")
+}
