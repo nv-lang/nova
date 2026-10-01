@@ -20,7 +20,7 @@
 
 module novac.parse
 
-import ../lex.{TokenKind, brace_delta, paren_delta}
+import ../lex.{TokenKind, paren_delta}
 import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, VALUE_MARKER, PRIV_MARKER, SUM_MARKER, EFFECT_MARKER}
 import ../tree.{Node, NodeKind}
 
@@ -179,18 +179,10 @@ fn Cursor mut @type_decl() -> Node {
         // start on it, so it is read here and the loop takes the rest.
         if @peek() == TokenKind.Ident {
             mut vk = []Node.of(@take())
-            // A RECORD-form variant: `| Circle { radius f64 }`. Read as a
-            // balanced brace run -- the fields inside are name/type pairs
-            // and the checker walks them. D54 (#719) rules on how such a
-            // variant may be destructured, and a rule cannot land before
-            // the form is read at all.
+            // A RECORD-form variant: `| Circle { radius f64 }` -- its fields
+            // are read by the record body's own door (`@variant_record_fields`).
             if @peek() == TokenKind.LBrace {
-                mut depth = 0
-                while !@at_eof() {
-                    depth += brace_delta(@peek())
-                    vk.push(@take())
-                    if depth == 0 { break }
-                }
+                @variant_record_fields(vk)
             } else {
                 // Not a record-form variant: the paren form below answers.
             }
@@ -217,18 +209,10 @@ fn Cursor mut @type_decl() -> Node {
         while @peek() == TokenKind.Pipe {
             mut vk = []Node.of(@take()) // '|'
             @push_expected(vk, TokenKind.Ident)
-            // A RECORD-form variant: `| Circle { radius f64 }`. Read as a
-            // balanced brace run -- the fields inside are name/type pairs
-            // and the checker walks them. D54 (#719) rules on how such a
-            // variant may be destructured, and a rule cannot land before
-            // the form is read at all.
+            // A RECORD-form variant: `| Circle { radius f64 }` -- its fields
+            // are read by the record body's own door (`@variant_record_fields`).
             if @peek() == TokenKind.LBrace {
-                mut depth = 0
-                while !@at_eof() {
-                    depth += brace_delta(@peek())
-                    vk.push(@take())
-                    if depth == 0 { break }
-                }
+                @variant_record_fields(vk)
             } else {
                 // Not a record-form variant: the paren form below answers.
             }
@@ -355,6 +339,28 @@ fn Cursor mut @type_decl() -> Node {
         // its own diagnostic instead of being swallowed by this one.
     }
     @node(NodeKind.TypeDecl, kids)
+}
+
+/// The fields of a RECORD-FORM VARIANT: `| Branch { id NodeId, kind NodeKind }`
+/// (D486 s2's `record-pat` names them; the declaration is D54's form). Read as
+/// `Field` nodes by the record body's own reading -- a name, then the type by
+/// the door parameters use -- so the collector and the checker meet the same
+/// node they meet in `type X { ... }`. Until 2026-10-01 the brace run was kept
+/// as raw leaves, and the collector counted every name in it that happened to
+/// be a type as a positional payload. No mode word and no default: a variant's
+/// field is neither written nor defaulted, and a leaf where a field name
+/// belongs falls to the expected-brace recovery below.
+fn Cursor mut @variant_record_fields(mut vk []Node) -> () {
+    vk.push(@take()) // '{'
+    while @peek() == TokenKind.Ident {
+        mut fk = []Node.new()
+        @push_expected(fk, TokenKind.Ident) // field name
+        fk.append(@type_ref())
+        vk.push(@node(NodeKind.Field, fk))
+        // The comma between fields is trivia, as in the record body (#1227).
+        @push_if(vk, TokenKind.Comma)
+    }
+    @push_expected(vk, TokenKind.RBrace)
 }
 
 /// Parse ONE required signature of a protocol body: `@name(params) -> T`.

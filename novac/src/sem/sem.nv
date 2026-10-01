@@ -307,6 +307,7 @@ export type Ctx {
     variant_rows []VariantDef /// Sum variants, grouped per type via TypeDef.rows (the VariantRows arm); same-name rows across sums are chained through `next_same`.
     variant_names NameTable /// THE str -> id door for variants (NsVariants): bare name -> head of its same-name chain in `variant_rows`. Filled by collect (`register_sum_variants`), read by `variant_in_sum` / `variants_named` (274.7 B6, #964).
     payload_types []TyId /// Variant payload rows: type ids, grouped via VariantDef.
+    payload_names []str /// Variant payload rows' FIELD NAMES, one per `payload_types` row: the name a record-form variant (`| Branch { id NodeId }`) declares, `""` for a positional payload. Asked only by the record-form construction and pattern doors.
     fn_decl_rows []FnRow /// NodeId of a FnDecl -> the row it owns in `fns`; `no_row()` = none. See below.
     fns FnTable /// THE callable registry: file functions and read method signatures, one row shape (plan 273).
     protos ProtoTable /// THE protocol registry: contracts and the signatures they require (E2-b3 wave 3b)

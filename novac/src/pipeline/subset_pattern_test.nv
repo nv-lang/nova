@@ -20,7 +20,7 @@ import ../diag.{ice}
 import ../check.{check_instance}
 import ../types.{TyId, no_ty}
 
-test "pattern alternatives OR their tag tests; a named binder refuses (disjunction wave)" {
+test "pattern alternatives OR their tag tests; a named binder binds (disjunction wave)" {
     // `B(_) | C(_) => 1`: one arm, two tag tests ORed -- asserted on the C
     // shape; the alternative PATH is held by the corpus carrier, which sends
     // a value through the second head.
@@ -38,8 +38,9 @@ fn main() {\n\
     assert(d.len() == 0)
     assert(c.contains(" || "))
 
-    // A named binder inside a disjunction refuses by name: alternatives
-    // would have to agree on the binder, and no carrier needs that.
+    // A named binder inside a disjunction BINDS since 2026-10-01 (D486 s2):
+    // every alternative binds `x` with one type, so the arm reads one `x`.
+    // Five carriers in types.nv needed it; the refusal is gone.
     ro (d2, _) = compile_to_c("type Tri enum A(int) | B(int)\n\
 fn f(s Tri) -> int {\n\
  match s {\n\
@@ -49,8 +50,7 @@ fn f(s Tri) -> int {\n\
 fn main() {\n\
  println(f(B(5)))\n\
 }", std)
-    assert(d2.len() >= 1)
-    assert(d2[0].message.contains("takes `_` binders only"))
+    assert(d2.len() == 0, messages(d2))
 }
 
 test "a tuple pattern binds by position, nested tuples recurse (D486 P1+P2)" {

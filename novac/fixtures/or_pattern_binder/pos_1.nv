@@ -1,0 +1,41 @@
+module or_pattern_binder.pos_1
+
+// A `|` PATTERN WHOSE ALTERNATIVES BIND THE SAME NAME (D486 s2): `Circle(r) |
+// Square(r) => r` binds `r` in the arm from whichever alternative matched. The
+// oracle accepts it; novac refused it as "a `|` pattern takes `_` binders only"
+// until 2026-10-01 -- five refusals of the self-build (types.nv, the `TkApp |
+// TkTuple | TkPtr` arms).
+//
+// TWO SHAPES on purpose: the arrow-body match, and the BLOCK-TAIL match, which
+// until the same day lost its type once its arm read a binder and returned 0
+// (the fold now records the agreed type).
+//
+// NOT HERE, and why: two names in a DIFFERENT order (`Pair(a, b) | Swap(b,
+// a)`). novac binds by NAME and prints the swapped alternative's values; the
+// oracle binds by the first alternative's POSITIONS and prints them unswapped
+// (12 where 21 is right), or crashes when the positions differ in type -- a
+// defect of the oracle filed in the registry the same day, not a form to pin.
+
+type Shape enum
+    | Circle(int)
+    | Square(int)
+    | Rect(int, int)
+
+fn size(s Shape) -> int => match s {
+    Circle(r) | Square(r) => r
+    Rect(w, h) => w * h
+}
+
+fn twice(s Shape) -> int {
+    match s {
+        Circle(r) | Square(r) => r * 2
+        Rect(_, _) => 0
+    }
+}
+
+fn main() {
+    println(size(Circle(3)))
+    println(size(Square(4)))
+    println(size(Rect(2, 5)))
+    println(twice(Square(7)))
+}

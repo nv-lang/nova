@@ -103,9 +103,12 @@ fn Checker mut @report_if_not_exhaustive(kids []Node, scr_t TyId) -> () {
                     // An int / str / char literal lists one value of many.
                 }
             }
-            Record | Tuple | Array => {}
+            Tuple | Array => {}
             Wild => return
-            Bind | Variant => {
+            // A headed RECORD pattern (`Branch { .. }`) marks its variant like
+            // `Branch(..)` does; a head-less one -- or the record's own name --
+            // is no variant of a sum, and covers its record whole.
+            Bind | Variant | Record => {
                 match variant_in_sum(@ctx, scr_t, pattern_head_text(ak[0])) {
                     None => return
                     Some(r) => mark_variant(hit, range.0, r)

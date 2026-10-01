@@ -19,7 +19,7 @@ import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, RECV_BINDING}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{variants_named}
+import ../sem.{variants_named, ctor_head_variant}
 import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, raw_row, ParamMode, carrier_of, arm_body_at, branch_children}
 import ../sem.{LitArg}
 // M3a: the literal token -> primitive table lives in `sem`, asked by both consumers.
@@ -423,6 +423,12 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
     }
     if k == NodeKind.RecordCtor {
         ro kids = branch_children(e)
+        // A record-form VARIANT's construction is a value of its SUM.
+        if Some(v) = ctor_head_variant(ctx, kids[0]) {
+            return ctx.variant_rows[raw_vrow(v)].sum_id
+        } else {
+            // A record's own name, or the anonymous form below.
+        }
         if kids[0].kind_of() == NodeKind.Name {
             return ctx.ty_of_name_or_ice(expr_leaf_name(kids[0]))
         }
@@ -517,6 +523,20 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         ice("check: binary arithmetic on non-numeric operands past check (#652 class)")
     }
     if k == NodeKind.MatchExpr {
+        // THE AGREED TYPE, when the value door recorded one (`@type_match`):
+        // it was folded while each arm's binders were IN SCOPE. Re-deriving it
+        // below after the walk asks the first arm's body with its binders
+        // gone, so `P(x) => x` answered "no type" and a block-tail match was
+        // lowered as a statement -- the fn returned 0 (registry entry filed
+        // 2026-10-01 with the `|`-binder wave).
+        ro agreed = chan.type_if_known(e.id_of())
+        if is_ty(agreed) { return agreed }
+        // A POISONED SCRUTINEE: every arm pattern refused silently (the
+        // cascade rule of `@bind_variant_pattern`), so no arm body was walked,
+        // and the first one, asked here, ices on a construction nobody
+        // recorded. The refusal stands where the scrutinee was typed.
+        ro mk = branch_children(e)
+        if mk.len() > 1 && !is_ty(chan.type_if_known(mk[1].id_of())) { return no_ty() }
         // The match's value type: its FIRST arm expression (the corpus arms
         // agree by construction; the type checker wave will judge).
         mut arms = 0

@@ -1,0 +1,22 @@
+module record_variant.neg_1
+
+// A record-form variant destructured BY POSITION (D54): the brace form is the
+// normative one, and both compilers refuse `Circle(r)` as a LANGUAGE error --
+// the oracle's E_RECORD_VARIANT_POSITIONAL_PATTERN (registry 719). Until
+// 2026-10-01 novac refused the whole form as "not compiled yet", so this
+// program got the subset's sentence instead of the language's.
+
+// NOVAC_EXPECT destructured by position
+
+type Shape enum
+    | Circle { radius int }
+    | Dot(int)
+
+fn size(s Shape) -> int => match s {
+    Circle(r) => r
+    Dot(d) => d
+}
+
+fn main() {
+    println(size(Dot(3)))
+}

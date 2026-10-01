@@ -160,7 +160,7 @@ SumDecl =
   ('enum' Variant* | Variant+)
 
 Variant =
-  '|'? 'ident' BalancedRun? ('(' 'ident' (',' 'ident')* ')')?
+  '|'? 'ident' ('{' Field* '}')? ('(' 'ident' (',' 'ident')* ')')?
 
 Field =
   mode:'ident'? 'ident' TypeRefLeaves ('=' Expr)?

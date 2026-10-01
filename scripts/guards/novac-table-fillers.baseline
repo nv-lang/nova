@@ -48,6 +48,7 @@ defs=11:sem
 fields=1:sem
 fn_decl_rows=2:sem
 fns=3:sem
+payload_names=1:sem
 payload_types=1:sem
 protos=1:sem
 # types 10 -> 11 (2026-10-01, окно Карины): терм ПЕРЕДАННОГО нового типа пишется своим проходом
@@ -56,4 +57,6 @@ protos=1:sem
 types=11:sem
 variant_names=1:sem
 variant_rows=1:sem
-total=35
+# total 35 -> 36 (2026-10-01, Carina window, record-form variants): a NEW table `payload_names`
+#   (plan 274 s10.3b row) -- one filler, `register_sum_variants`, beside `payload_types`.
+total=36

@@ -1,0 +1,53 @@
+module record_variant.pos_1
+
+// A RECORD-FORM SUM VARIANT (D54): `| Branch { id int, kind Kind, children
+// []int }`, built by field name -- bare, punned and qualified -- and matched by
+// field name, `Branch { children, .. }` and `Branch { id, kind: k, children }`.
+// The oracle compiles all of it; novac refused the declaration and every
+// pattern as "a record-form variant is not compiled yet" until 2026-10-01 --
+// six refusals of the self-build (tree.nv's `Node`, five patterns of
+// parse_test.nv).
+//
+// THE WRITTEN ORDER IS NOT THE DECLARED ORDER on purpose (`children` first,
+// with side effects): the payload is positional in the layout, and a builder
+// that copied fields by their written position would store `kind` where `id`
+// belongs. `tick` prints the order the values are evaluated in, which must be
+// the written one.
+
+type Kind enum
+    | Plain
+    | Fancy
+
+type Node enum
+    | Leaf(int)
+    | Branch { id int, kind Kind, children []int }
+
+fn tick(n int) -> int {
+    println("tick ${n}")
+    n
+}
+
+fn make(id int, kind Kind, children []int) -> Node =>
+    Node.Branch { id, kind, children }
+
+fn weight(n Node) -> int => match n {
+    Leaf(v) => v
+    Branch { children, .. } => children.len()
+}
+
+fn describe(n Node) -> int => match n {
+    Leaf(_) => -1
+    Branch { id, kind: k, children } => match k {
+        Plain => id * 100 + children.len()
+        Fancy => id * 1000 + children.len()
+    }
+}
+
+fn main() {
+    ro b = Branch { children: [tick(1), 2, 3], kind: Kind.Fancy, id: tick(7) }
+    println(weight(b))
+    println(describe(b))
+    ro m = make(4, Kind.Plain, [9])
+    println(describe(m))
+    println(weight(Leaf(5)))
+}

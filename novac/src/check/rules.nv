@@ -403,21 +403,6 @@ fn default_is_caller_loc(d Node) -> bool {
     args == 0
 }
 
-/// A record-form variant (`| Circle { radius f64 }`) shows up as a brace among
-/// the variant's leaves.
-fn Checker mut @report_if_record_variant(kids []Node) -> () {
-    for c in kids {
-        if c.kind_of() != NodeKind.LeafNode { continue }
-        // The terminator ends this branching (P31 form 2); an `else` after
-        // it would be dead text, and an `else` closing a test BY VARIANT is
-        // what P21 refuses -- both rules point the same way here.
-        if leaf_kind(c) == TokenKind.LBrace {
-            @report_first_leaf_of(kids, RECORD_VARIANT_MSG)
-            return
-        }
-    }
-}
-
 /// `...args []T`: the variadic marker stands before the parameter's name.
 fn has_variadic_mark(kids []Node) -> bool {
     if kids.len() == 0 { return false }

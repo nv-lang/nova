@@ -51,7 +51,7 @@ import ../diag.{Diagnostic, ice}
 import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind}
 import ../sem.{expr_leaf_name, recv_type_name, is_value_record}
 import ../sem.{file_decls}
-import ../sem.{slice_shape_of}
+import ../sem.{slice_shape_of, ctor_head_variant}
 // Where an arm keeps its body -- the door the lowering has read for waves.
 import ../sem.{arm_body_at, array_of_lparen_at}
 import ../sem.{is_constexpr, const_init_at}
@@ -506,6 +506,16 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                         // Initializer, argument or arm body: legal, and the
                         // children are walked below like any other node's.
                     }
+                    // A record-form VARIANT is built where the value is PLACED
+                    // (an initializer, an arm body, a tail, the right of `=`):
+                    // the argument and nested positions print a constructor
+                    // through the record's own builder, which knows no maker.
+                    if !init_pos && !arm_pos && ctor_head_variant(@ctx, children[0]).is_some() {
+                        @report_first_leaf_of(children, VARIANT_CTOR_POSITION_MSG)
+                        return
+                    } else {
+                        // A record, or a variant in a placed position.
+                    }
                 }
                 DepthErr => {
                     // NAMED, not generic (#807/#808): the form is legal Nova
@@ -730,9 +740,9 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     @report_if_interpolated(children)
                 }
                 Variant => {
-                    // A record-form variant carries a brace run among its
-                    // leaves; the ordinary variant does not.
-                    @report_if_record_variant(children)
+                    // Nothing of its own to judge: a record-form variant's
+                    // fields are `Field` nodes (2026-10-01), collected as
+                    // named payloads and judged as fields where they are read.
                 }
                 Bin => {
                     // F35: `ro a = 0..3` used to reach an ice ("a range is not

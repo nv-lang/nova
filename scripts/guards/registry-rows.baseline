@@ -1464,6 +1464,9 @@
 # 2026-10-01, integrator nova-20: rows -> 1453, max -> 1504 (merge of p1494 (assistant): #1494 lands (out of gaps), #1489 fixed in the branch).
 # 2026-10-01, integrator nova-20: rows -> 1455, max -> 1506 (merge of the cloud session's p1461: #1461 fixed; #1505 (Carina: an unreadable std declarations file is skipped silently) and #1506 (runtime byte buffers allocated scannable) numbered here).
 # 2026-10-01, integrator nova-20: rows -> 1456, max -> 1507 (merge of the cloud session's p971: #971 fixed; #1507 (an unknown effect name in an effect row passes) numbered here).
+# 2026-10-01, integrator nova-20: rows -> 1461, max -> 1512 (merge of the cloud session's patterns-ab: #1508 (Carina, record variant and | binders), #1509 (Carina, match tail type), #1510/#1511 (oracle K1: | binders by position, record-variant patterns unjudged), #1512 (Carina, handed sum payload) numbered here).
+rows=1461
+max=1512
 rows=1456
 max=1507
 rows=1455

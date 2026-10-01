@@ -1,0 +1,20 @@
+module or_pattern_binder.neg_1
+
+// Alternatives of a `|` pattern that bind DIFFERENT names (D486 s2, registry
+// 1009): `r` is unset in the arm when `Square(s)` matched. A LANGUAGE error in
+// both compilers -- the oracle's E_OR_PATTERN_BINDING_MISMATCH -- and not the
+// subset refusal novac gave every binder in a `|` pattern until 2026-10-01.
+
+// NOVAC_EXPECT must bind the same names
+
+type Shape enum
+    | Circle(int)
+    | Square(int)
+
+fn size(s Shape) -> int => match s {
+    Circle(r) | Square(s) => r
+}
+
+fn main() {
+    println(size(Circle(3)))
+}
