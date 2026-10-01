@@ -572,7 +572,7 @@ export fn mono_tuple_name(ctx Ctx, t TyId) -> str {
     s.append("_NovaTuple_")
     s.append("${ctx.tys.arg_count(t)}")
     for i in 0..ctx.tys.arg_count(t) {
-        ro spell = c_type(ctx, ctx.tys.arg(t, i)).replace("*", "_p")
+        ro spell = c_in_name(ctx, ctx.tys.arg(t, i))
         s.append("_")
         s.append("${spell.byte_len()}")
         s.append("_")

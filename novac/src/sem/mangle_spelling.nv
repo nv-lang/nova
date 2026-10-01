@@ -1,0 +1,89 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `rustc_symbol_mangling` -- a symbol name is a deterministic
+// function of the ENTITY, and a component of a name is built from the
+// component, never from another name's text; here, how a TYPE is written
+// INSIDE an instance name, and whether its C type is a pointer.
+// Role: the two questions every instance spelling asks of a type argument,
+//   answered from the type term (274.11, integrator's decision 2026-10-01 on
+//   check-novac-mangling-one-way): "is the C type of t a pointer" and "how is
+//   t written inside a name" (the star spelled `_p`). Until this file both
+//   were answered by string operations on the RESULT of `c_type` -- `.replace("*",
+//   "_p")` in the Option/Result family name and the tuple mono name,
+//   `.ends_with("*")` in the Option ABI door -- which is reading a C name back,
+//   the thing P24 forbids, and which the guard missed only because its pattern
+//   stopped at the first `)` of a nested call.
+// Used by: mangle_instance.nv (`family_instance_name`), mangle.nv
+//   (`mono_tuple_name`), emit_c/emit_option.nv (`@option_payload_is_pointer`).
+// Guarded by: check-novac-mangling-one-way.py (no string operation on a
+//   mangling result, nested calls included), check-novac-mangle-fixed-point.sh
+//   (the spellings against the oracle's emission of the probe), the fixtures
+//   option_ctor/ and match_applied_sum/ (both Option shapes, byte-for-byte).
+//
+// INTEROP, as everywhere in this door: the spellings are the shell's, and go the
+// day novac emits the whole prelude.
+
+module novac.sem
+
+import ../diag.{ice}
+import ../builtins.{TypeKind, RESULT_SUM}
+import ../types.{TyId, is_ty}
+
+/// IS THE C TYPE OF `t` A POINTER -- asked of the TERM, by the same rules
+/// `c_type` writes the star by, never of the spelling `c_type` returned:
+///   * a pointer (`*T`, `*mut T`) -- yes;
+///   * a plain record -- yes; a value record and the paren forms -- no
+///     (`is_value_record`; a protocol is laid out as its implementor);
+///   * a sum -- unless it is a value sum (A4, `is_value_sum`);
+///   * a newtype -- as its representation;
+///   * an application -- a handler value (the shell's vtable pointer) yes; the
+///     Option family no (by value), the Result family yes (`family_by_pointer`);
+///     every other instance yes (a GC pointer to its struct);
+///   * a primitive and a structural term -- no, they live inline.
+/// A type parameter, an inference variable and an effect have no layout; asking
+/// is the same broken invariant `c_type` ices on, and this door says so.
+export fn c_is_pointer(ctx Ctx, t TyId) -> bool {
+    if !is_ty(t) { ice("mangle: c_is_pointer asked for `no type`") }
+    ro k = ctx.tys.kind_of(t)
+    if k == TypeKind.TkParam || k == TypeKind.TkInfer || k == TypeKind.TkEffect {
+        ice("mangle: c_is_pointer of a term with no layout -- a parameter, a variable or an effect")
+    }
+    if k == TypeKind.TkPtr { return true }
+    if k == TypeKind.TkNewtype { return c_is_pointer(ctx, representation_of(ctx, t)) }
+    if k == TypeKind.TkRecord { return !is_value_record(ctx, impl_of_proto(ctx, t)) }
+    if k == TypeKind.TkSum { return !is_value_sum(ctx, t) }
+    if k == TypeKind.TkApp {
+        if handled_effect_name(ctx, t) != "" { return true }
+        if family_instance_name(ctx, t) != "" { return family_by_pointer(ctx, t) }
+        return true
+    }
+    // What remains is a primitive or a structural mono struct (D123: by value):
+    // both are written inline, with no star.
+    false
+}
+
+/// HOW `t` IS WRITTEN INSIDE AN INSTANCE NAME: its C type when that is no
+/// pointer, otherwise the pointee's struct with the star spelled `_p`
+/// (`Nova_Vec____nova_int*` -> `Nova_Vec____nova_int_p`, `Nova_Rec*` ->
+/// `Nova_Rec_p`) -- built from the term's own struct door, so no C name is read
+/// back. A raw pointer keeps the oracle's `const` word, as `c_type` writes it.
+fn c_in_name(ctx Ctx, t TyId) -> str {
+    if !c_is_pointer(ctx, t) { return c_type(ctx, t) }
+    ro k = ctx.tys.kind_of(t)
+    if k == TypeKind.TkPtr {
+        ro under = c_in_name(ctx, ctx.tys.arg(t, 0))
+        return if ctx.tys.ptr_is_mut(t) { "${under}_p" } else { "const ${under}_p" }
+    }
+    if k == TypeKind.TkNewtype { return c_in_name(ctx, representation_of(ctx, t)) }
+    if k == TypeKind.TkApp {
+        ro eff = handled_effect_name(ctx, t)
+        if eff != "" { return "${effect_vtable_c(eff)}_p" }
+    }
+    "${c_struct(ctx, impl_of_proto(ctx, t))}_p"
+}
+
+/// Does a generic-sum FAMILY instance travel behind a pointer: the Result
+/// family does (`nova_make_NovaRes_*` allocates and returns `r`), the Option
+/// family does not (its methods hand it back by value). Asked only for a term
+/// `family_instance_name` spells -- one rule, read by the C type and by the
+/// pointer question above.
+fn family_by_pointer(ctx Ctx, t TyId) -> bool => decl_of_ty(ctx, t).name == RESULT_SUM

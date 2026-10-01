@@ -116,6 +116,36 @@ fn is_vec(ctx Ctx, t int) -> bool => c_struct(ctx, t) == "Nova_Vec____nova_int"
 EOF
 run "$T/g12" && bad "сравнение с ABI-именем в КОДЕ прошло" || ok "сравнение с ABI-именем в коде поймано"
 
+# --- ВЛОЖЕННЫЙ вызов в аргументах двери -- операция всё равно поймана -----
+# (2026-10-01: регулярка `[^)]*` останавливалась на первой `)` и пропускала
+# ровно эту форму -- три места дерева жили в этой дыре.)
+mk g13 <<'EOF'
+module a
+fn spell(ctx Ctx, t int) -> str => c_type(ctx, ctx.tys.arg(t, 0)).replace("*", "_p")
+EOF
+run "$T/g13" && bad "операция после вложенного вызова в двери прошла" || ok "вложенный вызов в аргументах двери пойман"
+
+# --- то же с ДВУМЯ уровнями и строкой со скобкой в аргументе ---------------
+mk g14 <<'EOF'
+module a
+fn ptr(ctx Ctx, t int) -> bool => c_in_name(ctx, f(g(t), ")")).ends_with("_p")
+EOF
+run "$T/g14" && bad "два уровня вложенности прошли" || ok "два уровня и скобка в литерале пойманы"
+
+# --- результат двери как АРГУМЕНТ, без операции на нём -- зелёный ---------
+mk g15 <<'EOF'
+module a
+fn name(ctx Ctx, t int) -> str => "${OPT}${c_in_name(ctx, ctx.tys.arg(t, 0))}"
+fn twice(ctx Ctx, t int) -> str => join(c_type(ctx, ctx.tys.arg(t, 0)), c_struct(ctx, h(t)))
+EOF
+run "$T/g15" && ok "вложенный вызов без операции -- зелёный" || bad "ложняк на вложенном вызове: $(cat "$T/err")"
+
+# --- операция на результате двери в *_test.nv -- спецификация, зелёный ----
+d="$T/g16"; mkdir -p "$d/sem"
+printf '%s\n' "module a" 'test "x" { assert(c_callable(ctx, row, f(t)).contains("novac_fn_")) }' > "$d/sem/m_test.nv"
+run "$d" && ok "операция на результате двери в *_test.nv не судится" \
+    || bad "тест-спецификация с операцией покраснела: $(cat "$T/err")"
+
 echo "итог: FAIL $fails"
 if [ "$fails" -eq 0 ]; then
     echo "test-check-novac-mangling-one-way ok: все случаи, включая алгоритм D285 §3"
