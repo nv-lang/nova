@@ -27,6 +27,9 @@ mod static_blanket;
 mod fn_visibility; // #1097: a same-name free fn by the caller's imports, see its doc
 mod import_conflict; // #1234: D29 imported name vs own declaration / other import
 mod duplicate_decls; // #1179/#1183/#1186: one duplicate check for the compiled module
+mod unknown_type_name; // #971: a type name in an annotation must be visible from here
+pub(crate) use unknown_type_name::PRIMITIVE_TYPE_NAMES;
+use unknown_type_name::STDLIB_PROTOCOL_ALIASES;
 mod record_lit_schema; // #1448/#1096: a record literal against its record's fields
 mod generic_sum; // #1337/#1338: a user generic sum's ctor, payload and expected type
 mod raw_ptr_ops; // #1473: raw-pointer address arithmetic outside unsafe (D216 part 1)
@@ -5063,10 +5066,7 @@ impl<'a> TypeCheckCtx<'a> {
         arity.entry("Result".to_string())
             .or_insert(ArityInfo { count: 2, decl_span: None });
         // Примитивы — арность 0 (`int[X]` / `bool[T]` — ошибка).
-        for prim in [
-            "int", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
-            "uint", "f32", "f64", "str", "bool", "char",
-        ] {
+        for prim in PRIMITIVE_TYPE_NAMES.iter().copied() {
             arity.entry(prim.to_string())
                 .or_insert(ArityInfo { count: 0, decl_span: None });
         }
@@ -7446,7 +7446,7 @@ impl<'a> TypeCheckCtx<'a> {
                     if fd_generic_names.contains(leaf_name.as_str()) { continue; }
                     if !reported.insert(leaf_name.clone()) { continue; }
                     let is_shadow = self.types_get_here_contains(&leaf_name)
-                        || Self::is_primitive_scalar_type_name(&leaf_name);
+                        || Self::is_primitive_type_name(&leaf_name);
                     if is_shadow {
                         errors.push(Diagnostic::new(
                             format!(
@@ -7502,6 +7502,14 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
+        // #971 (D355 §1): type variables a bound introduces (`T` in
+        // `fn[I Next[T]]`, `E` in a carrier bound `Cleanup[E]`) are in scope
+        // for the annotation check. Added after the receiver-typevar checks
+        // above so they cannot mask `E_UNDECLARED_TYPEVAR_IN_RECEIVER`.
+        self.add_bound_introduced_vars(&fd.generics, &mut gs);
+        if let Some(r) = &fd.receiver {
+            self.add_bound_introduced_vars(&r.carrier_bounds, &mut gs);
+        }
         // Bounds и defaults generic-параметров.
         for g in &fd.generics {
             for b in &g.bounds {
@@ -7524,7 +7532,7 @@ impl<'a> TypeCheckCtx<'a> {
             self.walk_ref_return(rt, &gs, errors);
         }
         for e in &fd.effects {
-            self.walk_typeref(e, &gs, errors);
+            self.walk_effect_ref(e, &gs, errors);
         }
         for c in &fd.contracts {
             self.walk_expr(&c.expr, &gs, errors);
@@ -7562,6 +7570,7 @@ impl<'a> TypeCheckCtx<'a> {
         for g in &td.generics {
             gs.insert(g.name.clone(), g.clone());
         }
+        self.add_bound_introduced_vars(&td.generics, &mut gs); // #971, D355
         for g in &td.generics {
             for b in &g.bounds {
                 self.walk_typeref(b, &gs, errors);
@@ -7599,6 +7608,7 @@ impl<'a> TypeCheckCtx<'a> {
                     for g in &m.generics {
                         ms.insert(g.name.clone(), g.clone());
                     }
+                    self.add_bound_introduced_vars(&m.generics, &mut ms); // #971, D355
                     for p in &m.params {
                         self.walk_typeref(&p.ty, &ms, errors);
                     }
@@ -7606,7 +7616,7 @@ impl<'a> TypeCheckCtx<'a> {
                         self.walk_ref_return(rt, &ms, errors);
                     }
                     for e in &m.effects {
-                        self.walk_typeref(e, &ms, errors);
+                        self.walk_effect_ref(e, &ms, errors);
                     }
                 }
             }
@@ -7616,6 +7626,7 @@ impl<'a> TypeCheckCtx<'a> {
                     for g in &m.generics {
                         ms.insert(g.name.clone(), g.clone());
                     }
+                    self.add_bound_introduced_vars(&m.generics, &mut ms); // #971, D355
                     for p in &m.params {
                         self.walk_typeref(&p.ty, &ms, errors);
                     }
@@ -7623,7 +7634,7 @@ impl<'a> TypeCheckCtx<'a> {
                         self.walk_ref_return(rt, &ms, errors);
                     }
                     for e in &m.effects {
-                        self.walk_typeref(e, &ms, errors);
+                        self.walk_effect_ref(e, &ms, errors);
                     }
                 }
                 // Plan 101.4: validate embedded protocol type references.
@@ -8048,11 +8059,7 @@ impl<'a> TypeCheckCtx<'a> {
     /// are NOT present in `self.types` (mirrors the size walk's primitive table).
     #[inline]
     fn is_primitive_type_name(name: &str) -> bool {
-        matches!(
-            name,
-            "int" | "i64" | "u64" | "f64" | "i32" | "u32" | "f32" | "i16" | "u16"
-                | "i8" | "u8" | "uint" | "bool" | "char" | "str"
-        )
+        PRIMITIVE_TYPE_NAMES.contains(&name)
     }
 
     /// Plan 172.14 F.2 atom A2 -- would this sum's layout recurse without bound
@@ -8462,8 +8469,15 @@ impl<'a> TypeCheckCtx<'a> {
                 if arity_exempt(name) {
                     return;
                 }
-                // Неизвестное имя — не наша забота (name-resolution).
-                let Some(info) = self.arity.get(name) else { return; };
+                // #971: an unknown name is no longer "not our business" -- it
+                // used to return here and switch off every check in its
+                // position (`unknown_type_name.rs`).
+                let Some(info) = self.arity.get(name) else {
+                    if !self.annotation_type_name_visible(name, gs) {
+                        errors.push(Self::unknown_annotation_type_diag(name, *span));
+                    }
+                    return;
+                };
                 let actual = generics.len();
                 // `actual == 0` — type-аргументы опущены и выводятся из
                 // контекста (`fn f() -> Result { Ok(1) }`, `let x Option`).
@@ -8486,7 +8500,7 @@ impl<'a> TypeCheckCtx<'a> {
                     self.walk_typeref(p, gs, errors);
                 }
                 for e in effects {
-                    self.walk_typeref(e, gs, errors);
+                    self.walk_effect_ref(e, gs, errors);
                 }
                 if let Some(rt) = return_type {
                     self.walk_typeref(rt, gs, errors);
@@ -8501,7 +8515,7 @@ impl<'a> TypeCheckCtx<'a> {
                         self.walk_typeref(&p.ty, gs, errors);
                     }
                     for e in &m.effects {
-                        self.walk_typeref(e, gs, errors);
+                        self.walk_effect_ref(e, gs, errors);
                     }
                     if let Some(rt) = &m.return_type {
                         self.walk_typeref(rt, gs, errors);
@@ -8663,20 +8677,11 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
-    /// Plan 221.1 №88 (iv): primitive scalar type names — same set used
-    /// elsewhere for the "is this a bound-method unbound-receiver type name"
-    /// heuristic (`f3_check_member_ctx`'s `is_type_name` check). A receiver
-    /// carrier slot named `int`/`str`/… is ALSO a shadow (the doctrine bans
-    /// primitives too, not just user types — `self.types` never carries
-    /// primitives, so they need this separate check).
-    fn is_primitive_scalar_type_name(name: &str) -> bool {
-        matches!(
-            name,
-            "int" | "i8" | "i16" | "i32" | "i64"
-                | "u8" | "u16" | "u32" | "u64"
-                | "f32" | "f64" | "bool" | "char" | "str"
-        )
-    }
+    // Plan 221.1 №88 (iv): a receiver carrier slot named `int`/`str`/… is ALSO
+    // a shadow (the doctrine bans primitives too, not just user types —
+    // `self.types` never carries primitives). Its own 14-name list (no `uint`)
+    // was folded into `PRIMITIVE_TYPE_NAMES` by #971; `uint` is a primitive and
+    // shadows like the rest.
 
     // --- Ф.2: walk тел (turbofish / as / is / let-аннотации) ------------
 
@@ -9226,7 +9231,7 @@ impl<'a> TypeCheckCtx<'a> {
             self.walk_typeref(&p.ty, gs, errors);
         }
         for e in &sb.effects {
-            self.walk_typeref(e, gs, errors);
+            self.walk_effect_ref(e, gs, errors);
         }
         if let Some(rt) = &sb.return_type {
             self.walk_typeref(rt, gs, errors);
@@ -30377,17 +30382,11 @@ fn check_generic_bound_declarations(
     // Well-known stdlib alias names (D237: renamed + new protocols).
     // D237: Hashable→Hash, Equatable→Equal, Comparable→Compare, Cloneable→Clone,
     //       Printable→Display, DebugPrintable→Debug.
-    let stdlib_aliases: &[&str] = &[
-        "Ord", "Eq", "ToStr", "TryFrom", "TryInto",
-        "Hash", "Display", "Equal", "Compare", "Clone", "Debug",
-        "Iterable", "From", "Into",
-    ];
-    // Primitive-имена (Q-representation-bound future):
-    let primitives: &[&str] = &[
-        "int", "i8", "i16", "i32", "i64",
-        "u8", "u16", "u32", "u64", "uint",
-        "f32", "f64", "bool", "char", "str", "any", "never",
-    ];
+    // #971: both lists are module-level now (`unknown_type_name.rs`), read by
+    // the annotation check too. `any`/`never` are not primitives (they are the
+    // top/bottom types, `arity_exempt`) -- as bound names they stay legal here,
+    // named explicitly instead of hiding in a list called "primitives".
+    let stdlib_aliases: &[&str] = STDLIB_PROTOCOL_ALIASES;
     // Plan 172.3 (D310), amended by Plan p424: validate type-set DECLARATIONS —
     // members must be concrete types (not protocol/effect), OR another
     // type-set (nested — legalized by the D310 amendment: expanded on
@@ -30460,7 +30459,9 @@ fn check_generic_bound_declarations(
         // Если у имени префикс (`std.collections.Iter`), берём последний.
         // Allowed: protocol, alias, primitive.
         if stdlib_aliases.contains(&name.as_str()) { return; }
-        if primitives.contains(&name.as_str()) { return; }
+        if PRIMITIVE_TYPE_NAMES.contains(&name.as_str()) || matches!(name.as_str(), "any" | "never") {
+            return;
+        }
         match type_kinds.get(name) {
             Some(&"protocol") => { /* OK */ }
             // Plan 172.3 (D310): type-set is a valid generic bound (D72 amended).

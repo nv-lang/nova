@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_UNKNOWN_TYPE
+//
+// Registry 221.1 #971: an undeclared type name in a SLICE element `[]X`. Before the fix the
+// checker turned any unknown name into an opaque nominal type and every check
+// in that position went quiet (`check` PASS). The legal forms are pinned by
+// `standalone/p971_visible_type_names_pos`.
+module neg.p971_undeclared_type_slice_neg
+
+// nova:expect E_UNKNOWN_TYPE -- `Nmbr` under `[]` is still an annotation position
+fn total(v []Nmbr) -> int => 0
+
+fn main() Io -> () {
+    println(1)
+}

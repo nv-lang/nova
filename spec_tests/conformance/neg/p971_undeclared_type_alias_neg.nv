@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_UNKNOWN_TYPE
+//
+// Registry 221.1 #971: an undeclared type name in an ALIAS target. Before the fix the
+// checker turned any unknown name into an opaque nominal type and every check
+// in that position went quiet (`check` PASS). The legal forms are pinned by
+// `standalone/p971_visible_type_names_pos`.
+module neg.p971_undeclared_type_alias_neg
+
+// nova:expect E_UNKNOWN_TYPE -- `Nmbr` as an alias target is declared nowhere
+type P971Num alias Nmbr
+
+fn main() Io -> () {
+    println(1)
+}

@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_UNKNOWN_TYPE
+//
+// Registry 221.1 #971: an undeclared type name in a PARAMETER type, generic head. Before the fix the
+// checker turned any unknown name into an opaque nominal type and every check
+// in that position went quiet (`check` PASS). The legal forms are pinned by
+// `standalone/p971_visible_type_names_pos`.
+module neg.p971_undeclared_type_param_neg
+
+// nova:expect E_UNKNOWN_TYPE -- `Vecc` is one letter from `Vec`; before #971 `takes(42)` compiled and printed 1
+fn takes(v Vecc[int]) -> int => 1
+
+fn main() Io -> () {
+    println(takes(42))
+}
