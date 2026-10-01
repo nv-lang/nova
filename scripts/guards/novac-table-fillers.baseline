@@ -37,14 +37,18 @@
 #   Итого 28 - 1 + 1 + 1 = 29 = факт. Строки таблиц ниже — то же состояние по таблицам.
 builtin_names=1:sem
 coerces=1:sem
-consts=1:sem
+# 2026-10-01, cloud session p274-carina-cloud (registry 1518): consts 1 -> 2, defs 11 -> 12,
+#   total 36 -> 38. The handed constants: `harvest_consts` (sem/harvest.nv) registers a
+#   constant another module exports, beside `harvest_types`, in the same module as the
+#   file's own constants (sem/collect.nv). Growth by design, not a second filler.
+consts=2:sem
 # 2026-09-23, integrator (acceptance of the nova-kim E4 wave, 274.11):
 # defs 9->11, types 7->10, total 29->34. Five new write sites, all in
 # sem (one filler module per table still holds): an effect declaration
 # registers its name and its TkEffect row in sem/collect.nv, the second
 # pass re-reads its shape in sem/harvest.nv, and sem/sem.nv seeds the
 # builtin `Effect` (defs + types). Growth by design, not a second filler.
-defs=11:sem
+defs=12:sem
 fields=1:sem
 fn_decl_rows=2:sem
 fns=3:sem
@@ -59,4 +63,4 @@ variant_names=1:sem
 variant_rows=1:sem
 # total 35 -> 36 (2026-10-01, Carina window, record-form variants): a NEW table `payload_names`
 #   (plan 274 s10.3b row) -- one filler, `register_sum_variants`, beside `payload_types`.
-total=36
+total=38
