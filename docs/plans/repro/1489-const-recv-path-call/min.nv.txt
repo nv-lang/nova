@@ -1,0 +1,13 @@
+// Registry 221.1 #1489: a method on an untyped const receiver, path form -> codegen INTERNAL-PANIC
+// E_CODEGEN_TYPE_UNKNOWN "Path call return type unknown for method=to_nanos". Red on origin/main 97ab70f5d too.
+// Build: nova build min.nv (renamed from .nv.txt).
+module p1489_min
+
+import std.time.duration
+
+const BIG = 9_223_372_036_854_775_807
+
+fn main() Io -> () {
+    ro d = BIG.to_nanos()
+    println("${d.nanos()}")
+}
