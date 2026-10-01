@@ -15,7 +15,7 @@
 // novac/src/pipeline/handed_free_test.nv -- free functions of handed modules.
 
 module novac.pipeline
-import ../sem.{InteropTable, representation_of}
+import ../sem.{InteropTable, representation_of, FnRow}
 import ../builtins.{TypeKind}
 import ../diag.{ice}
 import ../parse.{parse}
@@ -110,5 +110,35 @@ test "a NEWTYPE of a handed module is a newtype here: laid out as its representa
     ro row = ctx.ty_of_name("Row") ?? ice("test: the handed `Row` is not in the registry")
     assert(ctx.tys.kind_of(row) == TypeKind.TkNewtype, "a handed newtype registered as another kind")
     assert(representation_of(ctx, row) == ctx.prims.int_id, "the handed newtype's representation is not `int`")
+}
+
+test "a HANDED callable knows where its body lives: the declaration tree and its FnDecl (274.11 E.10 step 4a)" {
+    // A generic of std over a type of novac's own is instantiated by the
+    // CONSUMER from the body it was handed -- the shell cannot know novac's
+    // types. The registry keeps, per handed row, the tree it was read from and
+    // its declaration node; the file's own rows have none.
+    mut texts = std_decls()
+    texts.push("module std.boxm\nexport type Box[T] { v T }\nexport fn Box[T] @get() -> T => @v\n")
+    ro decls = parse_decls(texts)
+    ro prog = "fn own() -> int => 1\nfn main() {\n println(own())\n}"
+    ro ctx = context(parse(tokens_of(prog)), decls, InteropTable.new())
+    mut handed_get = 0
+    mut own_seen = 0
+    for i in 0..ctx.fns.rows.len() {
+        ro row = FnRow(i)
+        if ctx.fns.rows[i].name == "get" && ctx.fns.rows[i].handed_from == "std.boxm" {
+            handed_get += 1
+            ro body = ctx.handed.decl_of(row) ?? ice("test: the handed `get` has no body noted")
+            assert(body.kind_of() == NodeKind.FnDecl, "the noted node is not a declaration")
+            assert(ctx.handed.tree_of(row) == texts.len() - 1, "the noted tree is not the file it came from")
+        } else if ctx.fns.rows[i].name == "own" {
+            own_seen += 1
+            assert(ctx.handed.decl_of(row).is_none(), "the file's own row has a handed body")
+        } else {
+            // Another row: not this test's subject.
+        }
+    }
+    assert(handed_get == 1, "the handed `get` was not registered once")
+    assert(own_seen == 1, "the file's own `own` was not registered once")
 }
 

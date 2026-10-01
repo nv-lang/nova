@@ -313,6 +313,7 @@ export type Ctx {
     consts ConstTable /// THE module-level constants of this file: name, type, initializer node (274.5 B2).
     gates []str /// Protocol names written in `#impl(...)` gates, grouped per declaration via TypeDef.gate_off/gate_cnt. NAMES and not ids on purpose: a protocol may be declared after the type that opts into it, or live in std, so resolving here would impose an order the language does not have -- and the unknown-protocol judgement (D186 `E_UNKNOWN_PROTOCOL`) is a separate question this subset does not answer yet
     interop InteropTable /// THE interop surface: C identifiers the linked shell carries, read from the embedded shell once per process (sub-plan L).
+    handed HandedBodies /// where each HANDED callable's body lives: its declaration tree and `FnDecl` node (274.11 E.10 step 4a)
 }
 
 /// Seed one pre-declared type: the registry row and the def row are born
@@ -509,7 +510,7 @@ export fn collect(file Node, decls []Node, interop InteropTable) -> Ctx {
     mut ctx = collect_types_with(file, decls)
     // Methods after types, for the neighbouring reason: `harvest_methods` drops a
     // signature whose parameter or return type the registry does not know.
-    harvest_methods(decls, ctx.types, ctx.defs, ctx.tys, ctx.fns, ctx.coerces)
+    harvest_methods(decls, ctx.types, ctx.defs, ctx.tys, ctx.fns, ctx.coerces, ctx.handed)
     // CONSTRUCTORS of the parenthesised record form, and AFTER the collector
     // on purpose: `own_cnt` is fixed inside `collect_types_with` (the last
     // line of it), so a row added there would answer `compiles_body == true`
