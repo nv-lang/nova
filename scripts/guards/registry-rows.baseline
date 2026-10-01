@@ -1441,6 +1441,10 @@
 # 2026-10-01, integrator nova-20: rows -> 1407, max -> 1460 (merge of the cloud session's p1179: #1460 (K2, a function and a type of one name in one module -- verdict depends on order; owner's question); 1457-1459 issued to cloud sessions, leave gaps).
 # 2026-10-01, integrator nova-20: rows -> 1408, max -> 1461 (merge of the cloud session's p1442: #1461 (K1, novac loses live objects under GC -- the compiler's answer depends on the environment; on the path of Carina's 0.2 double build)).
 # 2026-10-01, integrator nova-20: rows -> 1411, max -> 1464 (merge of the cloud session's p1448: #1462 (K1, as into a newtype from a Result prints an address -- blocks the oracle tag), #1463 (K2, curly literal of a named tuple fails in C), #1464 (K3, spread array without D55 element wrap)).
+# 2026-10-01, assistant nova-88: rows -> 1412, max -> 1465 (#1465 (K2, a fn without `-> T` whose tail `if` has
+#   an int and a str branch passes the checker and fails in C; spec decision pending), number given by integrator nova-20).
+rows=1412
+max=1465
 rows=1411
 max=1464
 rows=1408
