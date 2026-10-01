@@ -507,7 +507,11 @@
 # 2026-10-02 (integrator, owner's word): D457 no longer says `pub` is absent from the
 # language -- `pub` exists only as the field modifier of D220/D281. Cost to Carina: none
 # expected, the field modifier is old; checked by the novac gate.
-#   spec-queue: 157
+# 2026-10-02 (integrator, owner's word): D55 amendment -- a literal takes the type of its
+# position when its exact value is representable there; the literal's form sets its kind.
+# Cost to Carina: not measured yet -- the oracle half is row 1593; Carina's half follows by
+# the differential (an integer literal pattern over a float scrutinee becomes legal).
+#   spec-queue: 158
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,
