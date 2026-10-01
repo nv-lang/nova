@@ -589,6 +589,7 @@ fn Checker mut @type_array_lit(init Node) -> TyId {
             // `[]T.new()`: the EMPTY vector (registry 221.1 #1457). Not a
             // literal, so its door is its own -- but it builds through the
             // literal's emitter (constructor, zero elements, no push).
+            // SILENT-OK: the empty vector's own door returns the type it decided or refused by name.
             return @type_empty_vec(kids, elems)
         } else if ctor != LITERAL_CTOR {
             @report_first_leaf_of(kids, "outside the subset: a typed array literal is written `[]T.${LITERAL_CTOR}(...)` -- this constructor is not the literal form (274.5 P3)")
