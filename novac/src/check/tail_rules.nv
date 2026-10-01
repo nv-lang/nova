@@ -342,18 +342,13 @@ const TAIL_NO_VALUE_MSG = "fn declares a return type but its body ends without a
 /// too), which is why the scan looks at top-level statements only and does
 /// not walk into branches.
 fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
-    mut declares_value = false
-    for c in kids {
-        if c.kind_of() != NodeKind.RetType { continue }
-        // `-> ()` is the UNIT return, and unit is not a value. It used to
-        // parse as the arrow ALONE, and the length test below was enough;
-        // since type_ref reads `()` as a balanced run (the tuple form), the
-        // pair reaches the tree and the old test called it a value. The result
-        // was a refusal that told `fn nothing() -> () { }` its body ends
-        // without a value -- a body that is not supposed to produce one.
-        declares_value = declares_value || declares_a_value(branch_children(c))
-    }
-    if !declares_value { return }
+    // THE SAME DOOR the typing walk asks (`value_body_of`), for the file's own
+    // body and for an instance's alike (registry 221.1 #1520): a `-> @` body
+    // promises no tail value (D409), and until this line only the typing half
+    // knew it -- `fn Ctr mut @reset() -> @ { @n = 0 }` was refused here as
+    // "ends without a value" while the same body handed from std was typed
+    // as the statement it is.
+    if !promises_tail_value(kids) { return }
     for c in kids {
         if c.kind_of() != NodeKind.Block { continue }
         ro bk = branch_children(c)
@@ -445,23 +440,31 @@ fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
 /// value at all -- has always lived in this file, and the two halves belong
 /// together.
 fn value_body_of(fk []Node) -> NodeId {
-    // `-> @` (D409): the receiver is returned automatically, the body's tail is
-    // a statement -- no value is demanded of it.
-    if returns_receiver(fk) { return no_node() }
-    mut declares = false
-    for c in fk {
-        // Only the RETURN TYPE answers this; the rest of the declaration is
-        // the body search below. Written as an `else` holding a comment until
-        // 2026-09-04, when P21 called that else "work, not a refusal" -- and
-        // it was right: what had kept it quiet was a coincidence, a `@refuse`
-        // of the NEXT function standing inside the guard's twelve-line window.
-        // A rule that holds by coincidence is not held.
-        if c.kind_of() != NodeKind.RetType { continue }
-        declares = declares_a_value(branch_children(c))
-    }
-    if !declares { return no_node() }
+    if !promises_tail_value(fk) { return no_node() }
     for c in fk {
         if c.kind_of() == NodeKind.Block { return c.id_of() }
     }
     no_node()
+}
+
+/// Does this declaration's body owe a TAIL VALUE? THE one answer for both
+/// questions asked about it -- which block's tail is the returned value
+/// (`value_body_of`, the typing walk, own body and instance alike) and whether
+/// a body that ends without one is refused (`@report_if_tail_has_no_value`,
+/// the subset walk). Two copies of it parted on `-> @` (registry 221.1 #1520):
+/// the typing copy knew D409, the refusing copy did not.
+fn promises_tail_value(fk []Node) -> bool {
+    // `-> @` (D409): the receiver is returned automatically -- a missing tail,
+    // a bare `return` and a tail `if` without `else` are each `return @`, and
+    // a tail expression is a statement. No value is demanded of the body.
+    if returns_receiver(fk) { return false }
+    for c in fk {
+        // Only the RETURN TYPE answers this. `-> ()` is the UNIT return, and
+        // unit is not a value: since type_ref reads `()` as a balanced run (the
+        // tuple form), the pair reaches the tree, and `declares_a_value` is
+        // what tells it from a type.
+        if c.kind_of() != NodeKind.RetType { continue }
+        return declares_a_value(branch_children(c))
+    }
+    false
 }

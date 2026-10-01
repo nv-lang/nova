@@ -1,0 +1,8 @@
+module hp.geo
+
+export fn Vec[T] mut @mark_if(b bool) -> @ {
+    if !b {
+        return
+    }
+    ro x = @len() + 1
+}
