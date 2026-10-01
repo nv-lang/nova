@@ -10,6 +10,7 @@ use std::fmt::Write as FmtWrite;
 // scripts/guards/arch-ratchet.sh only measures this file). See that
 // module's doc comment.
 mod emit_detach;
+mod value_abi; // D488 rule 2: the one threshold of `ro` passing, see its doc
 mod capture_box; // #1559: capture boxes declared at the function top, see its doc
 // №658: setter + channel-first lookup of `resolved_variant_ctors` live in the
 // child module (same ratchet rule; see its doc). Field + two consult sites stay.
@@ -58687,7 +58688,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     /// Plan 172.14 Ф.1: параметр — кандидат auto-by-ref? Read-only (не
-    /// mut/consume/variadic/const) value-struct РАЗМЕРОМ > 16Б по C-ABI
+    /// mut/consume/variadic/const) value-struct РАЗМЕРОМ больше порога
+    /// `value_abi::VALUE_BYREF_THRESHOLD_BYTES` (D488: три слова, 24Б; было 16Б) по C-ABI
     /// (порог владельца: SysV ≤16Б остаётся by-value). `mut` покрыт Р10
     /// (`param_is_inout_ptr`), heap/protocol/скаляры — не структуры.
     fn param_is_auto_byref(&self, p: &crate::ast::Param, ty_c: &str) -> bool {
@@ -58698,7 +58700,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             && Self::is_byref_candidate_c(ty_c)
             && self
                 .value_struct_size_align(ty_c, 0)
-                .map(|(s, _)| s > 16)
+                .map(|(s, _)| s > value_abi::VALUE_BYREF_THRESHOLD_BYTES)
                 .unwrap_or(false)
     }
 
