@@ -74,17 +74,21 @@ fn Checker mut @const_type_of(name str) -> TyId {
 ///   by nobody, exactly as before registry 1546.
 fn Checker mut @type_const_decl(kids []Node) -> () {
     ro at = const_init_at(kids)
+    // SILENT-OK: no initializer -- the parser already refused the declaration.
     if at < 0 { return }
     ro init = kids[at]
     if init.kind_of() != NodeKind.Lit {
         @type_expr(init)
+        // SILENT-OK: the expression door recorded the type or refused it.
         return
     } else {
         // A literal: its type is the written one, when one is written.
     }
     ro wt = @written_const_type(kids)
+    // SILENT-OK: no written type -- the literal keeps its own type (D44).
     if !is_ty(wt) { return }
     ro own = type_of(init, @ctx, @scope, @chan)
+    // SILENT-OK: a literal the written type does not take keeps its own type, read at each use.
     if adapt_operand(init, own, wt, @ctx.tys) != wt { return }
     if @lit_fits_or_refuse(init, wt) && is_node(init.id_of()) {
         @record(init, wt)
