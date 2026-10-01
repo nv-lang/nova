@@ -395,7 +395,7 @@ fn Lowerer mut @lower_arm(arm Node, scr_t TyId, ls Local, c SwitchCtx, dest Loca
 /// the doors that already print those shapes.
 fn Lowerer mut @lower_arm_body(arm_e Node, dest Local) -> () {
     // AN ARM THAT LEAVES PRODUCES NO VALUE, and that is true in value position
-    // too (registry 1190, found by the differential). `match k { A => return n
+    // too (registry 1191, found by the differential). `match k { A => return n
     // B => 7 }` has one arm of each kind: the checker already answers None for
     // the returning one and int for the other, so the match IS a value. This
     // door did not ask, assigned the `return` statement into the result local

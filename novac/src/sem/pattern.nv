@@ -146,7 +146,7 @@ export fn pattern_lit_leaf(pat Node) -> Node {
 
 /// THE QUALIFIER of a head: `Shape.Circle` answers `Shape`, a bare head
 /// answers "". Replaces `pattern_head_slot`'s slot arithmetic with the
-/// question itself (registry 1190's class: a slot count and the meaning of
+/// question itself (registry 1191's class: a slot count and the meaning of
 /// what sits there are two doors for one question).
 export fn pattern_qualifier(pat Node) -> str {
     ro kids = branch_children(pat)
