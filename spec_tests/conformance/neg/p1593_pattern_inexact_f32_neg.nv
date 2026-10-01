@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E_LIT_INEXACT
+// Regression for registry 221.1 #1593 (D489): a literal takes the
+// type of its position only if its EXACT value is representable there; an integer
+// literal in a float only if exact (E_LIT_INEXACT), a fraction not past infinity
+// (E_LIT_OUT_OF_RANGE). Before, the number was silently replaced. Positive half:
+// standalone/p1593_literal_exact_ok.nv.
+module neg.p1593_pattern_inexact_f32_neg
+
+fn main() Io {
+    ro x f32 = 1.0
+    ro r = match x {
+        // nova:expect E_LIT_INEXACT -- the pattern 16777217 has no f32
+        16777217 => "big"
+        _ => "other"
+    }
+    println(r)
+}
