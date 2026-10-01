@@ -19,7 +19,7 @@ module novac.sem
 import ../diag.{ice}
 import ../builtins.{prim_c_name, OPTION_FAMILY_C, OPTION_SUM}
 import ../builtins.{FMT_PROTO, FMT_IMPL}
-import ../builtins.{TypeKind}
+import ../builtins.{TypeKind, SLICE_HEAD}
 import ../types.{TyId, no_ty, is_ty}
 
 /// The FAMILY spelling of a generic-sum instance, or "" for everything else:
@@ -89,9 +89,14 @@ export fn c_method_symbol(ctx Ctx, t TyId, name str) -> str {
 /// name on its type bare and every later one with `__` and its parameters' C
 /// types (pointer `*` as `_p`, joined by `_`; none -> `__mut`/`__ro` by the
 /// receiver) -- read off the oracle's generic-method overload mangling in
-/// `emit_c.rs` and off the shell. Only a generic RECORD instance takes the suffix here: that is
-/// the spelling measured; a plain receiver and a sum's family spelling are
-/// asked by `c_method_symbol` as before.
+/// `emit_c.rs` and off the shell. The same scheme holds for a PLAIN receiver --
+/// a record, a primitive, a newtype (`Nova_StringBuilder_method_append` /
+/// `..._append__nova_int`, `Nova_str_method_contains__nova_char`,
+/// `Nova_Vec_method_ptr__mut`, read off the shell; registry 1558). A sum's,
+/// or a generic sum's FAMILY (`Nova_Option_method_display_nova_str`), was
+/// never measured with a second overload: there the second overload gets a
+/// spelling no C identifier holds, so it is never "carried" -- only the first
+/// overload is ever asked by the bare name.
 ///
 /// A spelling the shell does not carry is not a guess that links: the caller
 /// asks `interop.has` of THIS answer, and a miss sends the overload to the body
@@ -101,10 +106,26 @@ export fn c_overload_symbol(ctx Ctx, row FnRow, recv_t TyId, args []TyId) -> str
     // shell's `_consume_` (registry 1564, `shell_method_symbol`) -- one truth
     // for the question `Ctx @instantiates` asks and the name the emitter prints.
     ro base = shell_method_symbol(ctx, row, recv_t)
-    ro it = impl_of_proto(ctx, recv_t)
-    if !is_ty(it) || ctx.tys.kind_of(it) != TypeKind.TkApp { return base }
-    if decl_of_ty(ctx, it).kind != TypeKind.TkRecord { return base }
+    // AN EXTERN method (`extern "nova" fn AtomicInt @load(..)`, no body) is
+    // spelled by the oracle's OTHER rule (`external_registry.rs`
+    // `mangle_method_c_name`): with two or more overloads on the type, EVERY
+    // one takes `_` and its last parameter's type name; none -> the bare name
+    // (`Nova_AtomicInt_method_load` is `load()`). Registry 1558.
+    if ctx.is_extern_handed(row) {
+        if ctx.overload_count(row) < 2 { return base }
+        ro last = extern_last_param_name(ctx, row, args)
+        return if last == "" { base } else { "${base}_${last}" }
+    } else {
+        // A method with a body: the generic-method overload rule below.
+    }
     if ctx.overload_ordinal(row) <= 0 { return base }
+    ro it = impl_of_proto(ctx, recv_t)
+    // SILENT-OK: a receiver whose type did not resolve was refused upstream.
+    if !is_ty(it) { return base }
+    ro k = ctx.tys.kind_of(it)
+    ro measured = k == TypeKind.TkPrim || k == TypeKind.TkRecord || k == TypeKind.TkNewtype ||
+        (k == TypeKind.TkApp && decl_of_ty(ctx, it).kind == TypeKind.TkRecord)
+    if !measured { return "${base}__${UNMEASURED_SPELLING}" }
     ro fd = ctx.fns.rows[raw_row(row)]
     ro first = if fd.has_recv { 1 } else { 0 }
     consume s = StringBuilder.new(cap: 64)
@@ -132,6 +153,28 @@ export fn c_overload_symbol(ctx Ctx, row FnRow, recv_t TyId, args []TyId) -> str
         // The parameters are the suffix.
     }
     s
+}
+
+/// The oracle's `last_param_suffix` for an extern method: the Nova NAME of
+/// the last parameter's type -- a named type by its name, a slice of one by
+/// the name plus `s` (`[]u8` -> `u8s`); "" with no parameter. A shape the rule
+/// spells otherwise (`arr`) answers the unmeasured spelling, never a guess.
+fn extern_last_param_name(ctx Ctx, row FnRow, args []TyId) -> str {
+    ro fd = ctx.fns.rows[raw_row(row)]
+    ro first = if fd.has_recv { 1 } else { 0 }
+    if fd.param_cnt <= first { return "" }
+    ro t = subst_type(ctx, ctx.fns.params[fd.param_off + fd.param_cnt - 1].type_id, args)
+    if !is_ty(t) { return UNMEASURED_SPELLING }
+    ro k = ctx.tys.kind_of(t)
+    if k == TypeKind.TkApp {
+        if decl_of_ty(ctx, t).name != SLICE_HEAD || ctx.tys.arg_count(t) != 1 { return UNMEASURED_SPELLING }
+        return "${ty_source_name(ctx, ctx.tys.arg(t, 0))}s"
+    } else if k == TypeKind.TkPrim || k == TypeKind.TkRecord || k == TypeKind.TkSum || k == TypeKind.TkNewtype {
+        return ty_source_name(ctx, t)
+    } else {
+        // SILENT-OK: a shape whose extern spelling was never measured.
+        return UNMEASURED_SPELLING
+    }
 }
 
 /// What an overload's suffix holds for a parameter kind the shell's spelling
