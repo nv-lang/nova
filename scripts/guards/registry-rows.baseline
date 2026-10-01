@@ -1438,6 +1438,9 @@
 # 2026-10-01, integrator nova-20: rows -> 1401, max -> 1450 (merge of the cloud session's p1343: #1449 (K1, mut x T of a generic free fn loses the write, blocks the tag) and #1450 (K2, overlapping generic overloads T vs []T)).
 # 2026-10-01, integrator nova-20: rows -> 1403, max -> 1452 (merge of spec/d55-str-bytes: #1451 (K2, let/return of a non-identifier str into []u8 fails in C) and #1452 (K1, str accepted in a mut []u8 position -- writes into the string's bytes; blocks the tag)).
 # 2026-10-01, integrator nova-20: rows -> 1406, max -> 1456 (merge of the cloud session's p1338: #1454 (K2, constructor receiver with an undetermined parameter), #1455 (K1, arithmetic on a void* operand emits a silent 0 -- blocks the tag), #1456 (K3, unknown Option method passes the checker); 1453 reserved for the handler-capture regression, leaves gaps).
+# 2026-10-01, integrator nova-20: rows -> 1407, max -> 1460 (merge of the cloud session's p1179: #1460 (K2, a function and a type of one name in one module -- verdict depends on order; owner's question); 1457-1459 issued to cloud sessions, leave gaps).
+rows=1407
+max=1460
 rows=1406
 max=1456
 rows=1403
@@ -2035,7 +2038,7 @@ stale_gaps=0
 # nomer I v gaps=, I so strokoy schitaetsya 'protuhshey dyroy'.
 # 2026-09-21: №1209 ПРИЕХАЛ и СНЯТ из gaps=
 # (писал интегратор, как и планировалось). №1210-1211 всё ещё ждёт Карину.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1453
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1453,1457-1459
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding

@@ -1,0 +1,5 @@
+// Peer of `a_main.nv` (see its header): the second declaration of the same name.
+
+module p1179_duplicate_decls.dup_fn
+
+fn helper(x int) -> int => x + 2

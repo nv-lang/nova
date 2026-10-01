@@ -1,0 +1,25 @@
+// Registry 221.1 #1179/#1183/#1186, positive control for the duplicate check
+// (`compiler-codegen/src/types/duplicate_decls.rs`, negatives in
+// `neg/p1179_duplicate_decls/`). Two peer files of one module repeat names in
+// the ways D84 and D307 allow, next to an import (`std.encoding.serde`) whose
+// own CU declares names too -- none of this is a duplicate:
+//   * `describe` is overloaded across the two files by argument type (D84);
+//   * `tag` is `priv(file)` in both files (D307: disjoint file scopes).
+
+module standalone.p1179_legal_repeats
+
+import std.encoding.serde.{json_encode}
+
+fn describe(x int) -> str => "int:${x}"
+
+priv(file) fn tag() -> str => "a"
+
+export fn tag_a() -> str => tag()
+
+test "cross-file overload, file-private twins and a serde import are not duplicates" {
+    assert(describe(1) == "int:1")
+    assert(describe("s") == "str:s")
+    assert(tag_a() == "a")
+    assert(tag_b() == "b")
+    assert(json_encode(1).is_ok())
+}

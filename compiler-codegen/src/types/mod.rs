@@ -26,6 +26,7 @@ mod fail_reach;
 mod static_blanket;
 mod fn_visibility; // #1097: a same-name free fn by the caller's imports, see its doc
 mod import_conflict; // #1234: D29 imported name vs own declaration / other import
+mod duplicate_decls; // #1179/#1183/#1186: one duplicate check for the compiled module
 mod generic_sum; // #1337/#1338: a user generic sum's ctor, payload and expected type
 
 /// Plan 196 (gs-bounds migration, spike `docs/plans/wip/196-gs-spike.md`):
@@ -1362,6 +1363,11 @@ fn check_module_impl(
             && file_priv_decl_files.get(name).map_or(false, |s| s.len() >= 2)
     };
 
+    // #1179/#1183/#1186: duplicates among the module's OWN declarations are
+    // judged once, by `duplicate_decls`, whatever the imports merged in; the
+    // loop below only classifies collisions with imported (merged) items.
+    let refused_dups = duplicate_decls::check_duplicate_decls(module, &mut errors);
+
     for item in &module.items {
         match item {
             Item::Type(td) => {
@@ -1394,10 +1400,12 @@ fn check_module_impl(
                             continue;
                         }
                         None => {
-                            errors.push(Diagnostic::new(
-                                format!("duplicate top-level name `{}`", td.name),
-                                td.span,
-                            ));
+                            if !refused_dups.contains(&td.name) {
+                                errors.push(Diagnostic::new(
+                                    format!("duplicate top-level name `{}`", td.name),
+                                    td.span,
+                                ));
+                            }
                         }
                     }
                 }
@@ -1430,8 +1438,7 @@ fn check_module_impl(
                 // `@` is the zeroth parameter), so `fn T @m()` and
                 // `fn T consume @m()` are distinct overloads too. The key used
                 // to compare only `mutable` and refused that pair as a duplicate.
-                let new_recv_mut = fd.receiver.as_ref()
-                    .map(|r| (r.mutable, r.consume)).unwrap_or((false, false));
+                // (The comparison lives in `duplicate_decls::same_overload_sig`.)
                 // Plan 184 (Р13/Р14): parameter MODE {ro,mut,consume} is a valid
                 // overload axis too (unified with the receiver axis: `@` is the
                 // zeroth parameter). `f(x T)` / `f(mut x T)` / `f(consume x T)`
@@ -1440,49 +1447,14 @@ fn check_module_impl(
                 // `is_mut` AND same `consume`.
                 // D464 amendment 2026-09-25 (linearity axis): a plain `[T]` and a
                 // `[T consume]` of the same name are a pair, not a duplicate.
-                let dup_existing = entry.iter().find(|existing| {
-                    // Plan 135: if receiver-mutability differs, NOT a duplicate.
-                    let existing_recv_mut = existing.receiver.as_ref()
-                        .map(|r| (r.mutable, r.consume)).unwrap_or((false, false));
-                    if existing_recv_mut != new_recv_mut { return false; }
-                    if linearity_pair_differs(existing, fd) { return false; }
-                    // Arity + arg-types + param-modes одинаковы?
-                    let args_equal = existing.params.len() == fd.params.len()
-                        && existing.params.iter().zip(fd.params.iter())
-                            .all(|(p, np)| typeref_equal(&p.ty, &np.ty)
-                                && p.is_mut == np.is_mut
-                                && p.consume == np.consume);
-                    if !args_equal { return false; }
-                    // Return-type одинаков? (None / None или Some/Some equal).
-                    match (&existing.return_type, &fd.return_type) {
-                        (None, None) => true,
-                        (Some(a), Some(b)) => typeref_equal(a, b),
-                        _ => false,
-                    }
-                });
+                let dup_existing = entry.iter().find(|existing| duplicate_decls::same_overload_sig(existing, fd));
                 if dup_existing.is_some() {
                     // Plan 62.D bis-1: D29 — duplicate fn signature shadowing
                     // a prelude-imported definition → warning (not error).
                     // E.g. `fn Range @step_by(int) -> StepRangeIter` declared
                     // in both user file and the merged-via-prelude
                     // std/collections/range.nv. User wins.
-                    let dup_pos = entry.iter().position(|existing| {
-                        let existing_recv_mut = existing.receiver.as_ref()
-                            .map(|r| (r.mutable, r.consume)).unwrap_or((false, false));
-                        if existing_recv_mut != new_recv_mut { return false; }
-                        if linearity_pair_differs(existing, fd) { return false; }
-                        let args_equal = existing.params.len() == fd.params.len()
-                            && existing.params.iter().zip(fd.params.iter())
-                                .all(|(p, np)| typeref_equal(&p.ty, &np.ty)
-                                    && p.is_mut == np.is_mut
-                                    && p.consume == np.consume);
-                        if !args_equal { return false; }
-                        match (&existing.return_type, &fd.return_type) {
-                            (None, None) => true,
-                            (Some(a), Some(b)) => typeref_equal(a, b),
-                            _ => false,
-                        }
-                    });
+                    let dup_pos = entry.iter().position(|existing| duplicate_decls::same_overload_sig(existing, fd));
                     // Plan 154 [M-method-override-silent-noop]: переопределение
                     // **метода** (receiver present) с той же сигнатурой, что у
                     // метода из std/prelude/импортированного модуля — это SILENT
@@ -1562,6 +1534,7 @@ fn check_module_impl(
                             }
                             continue;
                         }
+                        None if refused_dups.contains(&key) => {}
                         None => {
                             errors.push(Diagnostic::new(
                                 format!(
@@ -1600,10 +1573,12 @@ fn check_module_impl(
                             continue;
                         }
                         None => {
-                            errors.push(Diagnostic::new(
-                                format!("duplicate top-level name `{}`", cd.name),
-                                cd.span,
-                            ));
+                            if !refused_dups.contains(&cd.name) {
+                                errors.push(Diagnostic::new(
+                                    format!("duplicate top-level name `{}`", cd.name),
+                                    cd.span,
+                                ));
+                            }
                         }
                     }
                 }
