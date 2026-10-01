@@ -1,0 +1,32 @@
+module for_head_value.pos_1
+
+// A `for` HEAD THAT IS A RECEIVER FIELD OR AN ARRAY LITERAL (wave B16's
+// collection head, two kinds more): `@xs` inside a method, the typed literal
+// `[]str.of(...)` and the bare literal `[...]`. Each is a vector value the
+// loop copies once into its temporary and walks by index, the same as a name
+// or a call head. The sums differ per path (12, 6) and the words are printed
+// in order, so a head walked twice, skipped or out of order cannot match.
+type Bag {
+    xs Vec[int]
+}
+
+fn Bag @sum() -> int {
+    mut t = 0
+    for x in @xs {
+        t += x
+    }
+    t
+}
+
+fn main() {
+    ro b = Bag { xs: []int.of(3, 4, 5) }
+    println(b.sum())
+    for w in []str.of("a", "bc") {
+        println(w)
+    }
+    mut s = 0
+    for x in [1, 2, 3] {
+        s += x
+    }
+    println(s)
+}

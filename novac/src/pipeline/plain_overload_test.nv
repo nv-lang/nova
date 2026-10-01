@@ -1,0 +1,97 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Role: the shell is asked about the OVERLOAD a call picks on a PLAIN type too
+//   (registry 1558, the rest of 1524): `sb.append(n)` is
+//   `Nova_StringBuilder_method_append__nova_int`, not the `str` overload's bare
+//   name; the overload's place is counted over DECLARATIONS, a dropped one
+//   included; a sum's second overload, never measured on the shell, is never
+//   asked by a bare name.
+// Used by: nova test novac/src/pipeline (the module-test batch of the gate).
+// Guarded by: check-novac-module-tests.
+
+module novac.pipeline
+
+import ../sem.{FnRow, c_overload_symbol}
+import ../parse.{parse}
+import ../types.{TyId}
+import ../diag.{ice}
+
+/// The rows named `want` of handed module `from`, in reading order.
+fn rows_named(prog str, std []str, from str, want str) -> []FnRow {
+    ro ctx = context(parse(tokens_of(prog)), parse_decls(std), InteropTable.new())
+    mut out = []FnRow.new()
+    for i in 0..ctx.fns.rows.len() {
+        if ctx.fns.rows[i].name == want && ctx.fns.rows[i].handed_from == from { out.push(FnRow(i)) }
+    }
+    out
+}
+
+/// The shell symbol of the `at`-th `want` row of `from` on the type `ty`.
+fn symbol_of(prog str, std []str, from str, want str, ty str, at int) -> str {
+    ro ctx = context(parse(tokens_of(prog)), parse_decls(std), InteropTable.new())
+    ro rows = rows_named(prog, std, from, want)
+    ro t = ctx.ty_of_name(ty) ?? ice("test: the handed type is not in the registry")
+    c_overload_symbol(ctx, rows[at], t, []TyId.new())
+}
+
+test "a PLAIN type's second overload is asked by its own symbol, the first by its name (registry 1558)" {
+    mut std = std_decls()
+    std.push("module std.b\nexport type Box { n int }\n\
+export fn Box mut @put(s str) -> int => 1\n\
+export fn Box mut @put(x int) -> int => x\n")
+    ro prog = "import std.b.{Box}\nfn main() {\n println(1)\n}"
+    // CONTROL: the first overload keeps the bare name -- green without the fix.
+    assert(symbol_of(prog, std, "std.b", "put", "Box", 0) == "Nova_Box_method_put", "the first overload lost its name")
+    assert(symbol_of(prog, std, "std.b", "put", "Box", 1) == "Nova_Box_method_put__nova_int",
+           "the second overload is asked by the first's name")
+}
+
+test "a DROPPED earlier overload keeps its place: the next one is still the SECOND (registry 1558)" {
+    // `Nope` is no type novac knows: harvest drops the first `put`, and the
+    // oracle still spells the second `..._put__nova_int` -- counted by
+    // declaration, not by the rows novac kept.
+    mut std = std_decls()
+    std.push("module std.b\nexport type Box { n int }\n\
+export fn Box mut @put(s Nope) -> int => 1\n\
+export fn Box mut @put(x int) -> int => x\n")
+    ro prog = "import std.b.{Box}\nfn main() {\n println(1)\n}"
+    ro kept = rows_named(prog, std, "std.b", "put")
+    assert(kept.len() == 1, "the unreadable overload was not dropped")
+    assert(symbol_of(prog, std, "std.b", "put", "Box", 0) == "Nova_Box_method_put__nova_int",
+           "the dropped overload's place was lost")
+}
+
+test "a SUM's second overload is never asked by the bare name: its spelling was never measured (registry 1558)" {
+    mut std = std_decls()
+    std.push("module std.s\nexport type Sig enum Go | Stop\n\
+export fn Sig @code() -> int => 1\n\
+export fn Sig @code(x int) -> int => x\n")
+    ro prog = "import std.s.{Sig}\nfn main() {\n println(1)\n}"
+    assert(symbol_of(prog, std, "std.s", "code", "Sig", 0) == "Nova_Sig_method_code", "the first lost its name")
+    ro second = symbol_of(prog, std, "std.s", "code", "Sig", 1)
+    assert(second != "Nova_Sig_method_code", "a sum's second overload is asked by name")
+}
+
+test "an EXTERN method's overloads take the oracle's extern rule: `_` and the last parameter's type (registry 1558)" {
+    // `extern "nova" fn AtomicInt @load()` beside `@load(ord MemOrdering)`: the
+    // shell carries `Nova_AtomicInt_method_load` for the first -- the bare name
+    // with no parameter, whichever place it holds -- and `_fetch_add_int`.
+    mut std = std_decls()
+    std.push("module std.b\nexport type Box { n int }\n\
+export extern \"nova\" fn Box @get(ord int) -> int\n\
+export extern \"nova\" fn Box @get() -> int\n")
+    ro prog = "import std.b.{Box}\nfn main() {\n println(1)\n}"
+    ro with_ord = symbol_of(prog, std, "std.b", "get", "Box", 0)
+    assert(with_ord == "Nova_Box_method_get_int", "the extern overload lost its parameter suffix")
+    ro bare = symbol_of(prog, std, "std.b", "get", "Box", 1)
+    assert(bare == "Nova_Box_method_get", "the parameterless extern overload is not the bare name")
+}
+
+test "each PRIMITIVE is its own type for the overload count: `u8 @mx` is no earlier overload of `int @mx` (registry 1558)" {
+    mut std = std_decls()
+    std.push("module std.b\n\
+export fn u8 @mx(o u8) -> u8 => o\n\
+export fn int @mx(o int) -> int => o\n")
+    ro prog = "fn main() {\n println(1)\n}"
+    ro mx = symbol_of(prog, std, "std.b", "mx", "int", 1)
+    assert(mx == "Nova_int_method_mx", "another primitive's method counted as an overload")
+}

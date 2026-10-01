@@ -43,6 +43,7 @@ import ../sem.{branch_children, leaf_kind, leaf_text, generic_names, tparam_slot
 import ../sem.{param_name_at}
 import ../sem.{expr_leaf_name, variants_named}
 import ../sem.{repr_is_one_name}
+import ../types.{is_ty}
 
 /// The KEY PHRASE of the refusal. The holder pins this and nothing longer: a
 /// rewording of the rest of the sentence must not redden a test, or the next
@@ -54,6 +55,10 @@ const UNDECLARED_TYPE_PHRASE = "undeclared type name"
 /// compiled it -- so they keep the subset refusal of the position they stand in.
 fn is_language_type_word(name str) -> bool =>
     name == "unit" || name == HANDLER_CTOR
+
+/// `Self { .. }` in a function that belongs to no type (D66: `Self` is the type
+/// a method, a static method, an effect or a protocol belongs to).
+const SELF_CTOR_OUTSIDE_MSG = "`Self` names the type a method belongs to (D66) -- this function belongs to no type, so `Self { .. }` constructs nothing; write the type's name"
 
 /// The sentence, built around the name. `byte` gets its own: the language
 /// removed it (D367) and the canonical spelling is the whole fix.
@@ -181,6 +186,22 @@ fn Checker mut @report_if_ctor_type_undeclared(kids []Node) -> bool {
     // declares -- is a record-form variant's construction (record_variant.nv).
     if branch_children(head).len() == 3 { return @report_if_ctor_variant_wrong(kids) }
     ro name = expr_leaf_name(head)
+    // `Self { .. }` (D66) constructs the type the body belongs to. It is not a
+    // registry name: asked there, it brought the compiler down (registry 1557,
+    // the `#652 class` ICE on std's `Vec[T] @index(r Range)` and on any
+    // method of the file). Its type is DECIDED here and recorded on the head,
+    // where `type_of` reads it; a function belonging to no type is refused.
+    if name == SELF_TYPE {
+        if !is_ty(@self_ty) {
+            @reject_first_leaf_of(kids, SELF_CTOR_OUTSIDE_MSG)
+            return true
+        } else {
+            @chan.record_type(head.id_of(), @self_ty)
+            return false
+        }
+    } else {
+        // A written type name: the declaration rule below.
+    }
     if @type_name_is_declared(name, []str.new()) { return false }
     if variants_named(@ctx, name).1 > 0 { return @report_if_ctor_variant_wrong(kids) }
     @report_first_leaf_of(kids, undeclared_type_msg(name))

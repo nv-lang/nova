@@ -1,0 +1,18 @@
+module const_typed.pos_1
+
+// A constant WRITES its type (registry 1546): `const B u8 = 0x0A` is a `u8`
+// at every read, so `b == B` on a `u8` is one type on both sides. Until 1546
+// novac read the type off the initializer alone -- the literal's `int` -- and
+// refused the comparison as two numeric types; the cast-initialized `C` was
+// right all along and is the CONTROL. The oracle prints the same two lines.
+const B u8 = 0x0A
+const C u8 = ('x' as u8)
+
+fn f(b u8) -> bool => b == B
+
+fn g(b u8) -> bool => b == C
+
+fn main() {
+    println(f(10 as u8))
+    println(g(10 as u8))
+}

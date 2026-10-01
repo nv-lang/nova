@@ -1,0 +1,12 @@
+module const_typed.neg_1
+
+// ONE seeded cause: a literal initializer that does not fit the type the
+// constant writes. D55 point 4 / D227 rule 3: the literal takes its target's
+// type, and out of range is E_LIT_OUT_OF_RANGE -- judged once, at the
+// declaration, whether or not the constant is read.
+// NOVAC_EXPECT this literal does not fit `u8`
+const B u8 = 300
+
+fn main() {
+    println(B)
+}

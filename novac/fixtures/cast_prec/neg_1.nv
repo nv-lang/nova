@@ -1,0 +1,12 @@
+module cast_prec.neg_1
+
+// ONE seeded cause: `-f as u8` is `-(f as u8)` (D54 amendment 2026-10-01:
+// `as` binds tighter than a prefix minus), and a minus on an unsigned value
+// is an error (spec/conversions.md: unary minus is defined for signed types
+// only; the oracle's E_NEG_UNSIGNED, registry 1547). Before the amendment
+// novac read `(-f) as u8` and printed 0.
+// NOVAC_EXPECT unary minus is defined for signed types only
+fn main() {
+    ro f = 2.5
+    println(-f as u8)
+}

@@ -15,7 +15,7 @@
 module novac.check
 
 import ../tree.{Node}
-import ../builtins.{PTR_READ_AT, PTR_WRITE_AT, PTR_WRITE_CONSUME_AT}
+import ../builtins.{PTR_READ_AT, PTR_WRITE_AT, PTR_WRITE_CONSUME_AT, PTR_OFFSET}
 import ../sem.{branch_children, leaf_text, is_expr_kind}
 import ../types.{TyId, is_ty}
 
@@ -51,7 +51,14 @@ fn Checker mut @type_ptr_method(e Node, kids []Node, recv_t TyId) -> () {
     // step 4c-2 -- std's `Vec[T] @push` writes the element with it).
     // `write_consume_at` moves the value in: the same store, judged the same way.
     ro writes = leaf_text(kids[2]) == PTR_WRITE_AT || leaf_text(kids[2]) == PTR_WRITE_CONSUME_AT
-    if leaf_text(kids[2]) != PTR_READ_AT && !writes {
+    // `offset(n) -> *T` (D216): address arithmetic in elements, the type kept
+    // (registry 1557 -- std's `Vec[T] @index(r Range)` builds its view with it).
+    ro offsets = leaf_text(kids[2]) == PTR_OFFSET
+    if leaf_text(kids[2]) != PTR_READ_AT && !writes && !offsets {
+        // A pointer method IS an operation that needs the context, compiled
+        // or not: without the count the enclosing block was also called
+        // unused -- a second diagnostic, and a false one, for one cause.
+        @unsafe_ops += 1
         @report_first_leaf_of(kids, PTR_METHOD_MSG)
         return
     } else {
@@ -97,11 +104,19 @@ fn Checker mut @type_ptr_method(e Node, kids []Node, recv_t TyId) -> () {
     if writes && args != 2 {
         @reject_first_leaf_of(kids, "`write_at` takes an index and a value (D216)")
         return
+    } else if offsets && args != 1 {
+        @reject_first_leaf_of(kids, "`offset` takes one element count (D216)")
+        return
     } else if !writes && args != 1 {
         @reject_first_leaf_of(kids, "`read_at` takes one index (D216)")
         return
     } else {
         // The arity the method has.
     }
-    @record(e, if writes { @ctx.prims.unit_id } else { elem })
+    if offsets {
+        // The pointer moved: the same pointer type (D216).
+        @record(e, recv_t)
+    } else {
+        @record(e, if writes { @ctx.prims.unit_id } else { elem })
+    }
 }

@@ -31,8 +31,9 @@ module novac.emit_c
 
 import ../tree.{Node}
 import ../types.{TyId, is_ty}
+import ../lower.{no_local}
 import ../builtins.{TypeKind, OPTION_SUM, OPTION_SOME_TAG_C, OPTION_NONE_TAG_C}
-import ../sem.{c_type, decl_of_ty}
+import ../sem.{c_type, decl_of_ty, c_is_pointer}
 
 /// Is this type an INSTANCE of the language's Option -- the shell's
 /// `NovaOpt_` family? A primitive or a record answers no without asking the
@@ -44,9 +45,10 @@ fn Emitter @is_option_inst(t TyId) -> bool {
 }
 
 /// Does this Option instance carry a POINTER payload -- the shell's tagless
-/// `_p` shape? Read off the payload's C spelling: a heap record is `Nova_X*`.
+/// `_p` shape? Asked of the payload's TERM through the mangling door
+/// (`c_is_pointer`), not read off its C spelling (P24).
 fn Emitter @option_payload_is_pointer(inst TyId) -> bool =>
-    c_type(@ctx, @ctx.tys.arg(inst, 0)).ends_with("*")
+    c_is_pointer(@ctx, @ctx.tys.arg(inst, 0))
 
 /// `Some(x)` as the shell's compound literal for the instance `inst`; `payload`
 /// is the one argument expression, printed by the general expression door.
@@ -57,7 +59,16 @@ fn Emitter mut @emit_option_some(inst TyId, payload Node) -> () {
     } else {
         @body.append("((${ct}){.tag = ${OPTION_SOME_TAG_C}, .value = (")
     }
-    @emit_expr(payload)
+    // A payload the lowering laid down first (`unsafe { .. }`, an `if`, a
+    // `??` -- `@hoist_sealed_args`) is READ from its local, exactly as
+    // `@emit_bound_args` reads an argument: printed from the tree it would
+    // lower inside a finished block (registry 1525).
+    ro hl = @lo.ir.local_of_node(payload.id_of())
+    if hl != no_local() {
+        @body.append(@lo.ir.decl_of(hl).name)
+    } else {
+        @emit_expr(payload)
+    }
     @body.append(")})")
 }
 

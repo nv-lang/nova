@@ -1,0 +1,19 @@
+module method_foreign_recv.pos_1
+
+// CONTROL for neg_1: the same two types, and the call addresses the type that
+// declares the method. The binding rule still speaks for the method's OWN
+// receiver -- only another type's row stopped being asked.
+type AVal {
+    n int
+}
+
+type BVal {
+    n int
+}
+
+fn BVal @settle(x int, op int) -> int => x + op + @n
+
+fn main() {
+    ro b = BVal { n: 1 }
+    println(b.settle(2, 3))
+}

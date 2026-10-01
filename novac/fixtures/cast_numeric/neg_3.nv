@@ -1,0 +1,10 @@
+module cast_numeric.neg_3
+
+// ONE seeded cause: a string cast to a number. D54 (amendment 2026-08-01):
+// a string is parsed by a method on the source, `s.to_int()`, never cast.
+// The oracle refuses it as well.
+// NOVAC_EXPECT `str as int`
+fn main() {
+    ro s = "7"
+    println(s as int)
+}

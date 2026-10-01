@@ -1,0 +1,261 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `rustc_hir_typeck::cast` for the SHAPE of the question -- a cast
+// between primitives is answered by ONE table indexed by the pair of families
+// (int-int, float-int, int-float, float-float, the char pairs), not by rules
+// scattered over the target. The RULES are D54's, pair by pair.
+// NOT taken: rustc's `u8 as char` and `bool as int` -- D54 forbids the first
+// by name and has no rule for the second, and "no rule" is an error there.
+// Role: layer 7 -- the cast between two PRIMITIVES (spec/decisions/03-syntax.md,
+//   D54): the numeric family, a char literal into an integer, an integer
+//   literal into a char, and D54's forbidden pairs, each refused with the pair
+//   named.
+// Used by: casts.nv (`@type_cast`, when both ends of the cast are primitives).
+// Guarded by: nova test novac/src/pipeline/cast_test.nv; the fixtures
+//   novac/fixtures/cast_numeric through check-novac-differential.sh and
+//   check-novac-no-cascade.sh.
+// novac/src/check/cast_pairs.nv -- what a cast between primitives may do.
+//
+// A co-equal file of the `check` module, cut along MEANING: casts.nv holds the
+// one door and the newtype/pointer rules, this file holds D54's TABLE. The
+// semantics of each legal pair -- truncation, sign, saturation -- is the
+// emitter's (emit_c/emit_cast.nv); the checker only says which pairs exist.
+
+module novac.check
+
+import ../tree.{Node, NodeKind}
+import ../builtins.{BuiltinType, PrimFamily}
+import ../sem.{branch_children, leaf_kind, leaf_text, prim_row_of, char_literal_code}
+import ../lex.{TokenKind}
+import ../types.{TyId}
+import ../diag.{ice}
+
+/// WHAT D54 SAYS about one pair -- decided in ONE function, acted on in one
+/// door. A legal pair is recorded, a forbidden one is a language error naming
+/// the pair, a held one keeps the subset refusal.
+type CastVerdict enum
+    | CvLegal /// D54 defines the conversion
+    | CvUnsafeLegal /// D54's `unsafe { }` exception: legal, and the block's reason to exist
+    | CvForbidden(str) /// D54 forbids it; the payload says what to write instead
+    | CvLitOutOfRange(str) /// a char LITERAL whose codepoint the target cannot hold; the payload is the whole message
+    | CvHeld /// a form of D54 outside the numeric family (`as any`): the subset's refusal
+
+/// A cast between two PRIMITIVES. The operand's type is recorded beside the
+/// target's, because the emitter's choice between a C cast and a saturating
+/// helper is a choice over the PAIR (`is_expr.nv` records its operand the same
+/// way).
+fn Checker mut @type_prim_cast(e Node, kids []Node, from TyId, target TyId) -> () {
+    ro fr = prim_row_of(@ctx.tys, from) ?? ice("check: a primitive cast whose source has no row")
+    ro tr = prim_row_of(@ctx.tys, target) ?? ice("check: a primitive cast whose target has no row")
+    ro verdict = prim_cast_verdict(kids[0], fr, tr, @unsafe_depth > 0)
+    match verdict {
+        CvLegal => {
+            @record(kids[0], from)
+            @record(e, target)
+        }
+        CvUnsafeLegal => {
+            @unsafe_ops += 1
+            @record(kids[0], from)
+            @record(e, target)
+        }
+        CvForbidden(why) => @reject_first_leaf_of(kids, cast_pair_msg(fr.name, tr.name, why))
+        CvLitOutOfRange(msg) => @reject_first_leaf_of(kids, msg)
+        CvHeld => @report_first_leaf_of(kids, CAST_MSG)
+    }
+}
+
+/// D54's table, pair by pair. `operand` is asked only whether it is a LITERAL:
+/// D54 makes a char literal and an integer literal exceptions, because the
+/// reader sees the codepoint at write time.
+fn prim_cast_verdict(operand Node, fr BuiltinType, tr BuiltinType, in_unsafe bool) -> CastVerdict {
+    ro fam_from = fr.family
+    ro fam_to = tr.family
+    if is_numeric_family(fam_from) && is_numeric_family(fam_to) {
+        // `int as uint` included: D54 (amendment 2026-09-04, point 1) takes
+        // the low bits like every other integer pair. The oracle saturates a
+        // negative to 0 -- its defect, registry 1547 (the integrator's word,
+        // 2026-10-01), not a second answer to choose between.
+        return CastVerdict.CvLegal
+    }
+    // `as any` boxes a value (D53); that is not this wave's family.
+    if is_any_family(fam_to) { return CastVerdict.CvHeld }
+    // A bool into a number: true -> 1, false -> 0 (D54 amendment 2026-10-01,
+    // the owner's decision; spec/conversions.md "Bool <-> everything" said so
+    // already). The other direction stays forbidden, below.
+    if is_bool_family(fam_from) && is_numeric_family(fam_to) { return CastVerdict.CvLegal }
+    if is_any_family(fam_from) { return CastVerdict.CvForbidden(CAST_FROM_ANY_WHY) }
+    if is_bool_family(fam_to) { return CastVerdict.CvForbidden(CAST_TO_BOOL_WHY) }
+    if is_str_family(fam_from) || is_str_family(fam_to) { return CastVerdict.CvForbidden(CAST_STR_WHY) }
+    if is_char_family(fam_from) && is_int_family(fam_to) {
+        // D54 amendment 2026-10-01 (the owner's decision). A char LITERAL goes
+        // into any integer that HOLDS its codepoint -- `'A' as u8` is 65,
+        // `'\u0100' as u8` is E_LIT_OUT_OF_RANGE, not the low bits.
+        if lit_kind_of(operand) == TokenKind.CharLit {
+            ro cp = char_lit_codepoint(operand)
+            if codepoint_fits(cp, tr) { return CastVerdict.CvLegal }
+            return CastVerdict.CvLitOutOfRange(char_lit_unfit_msg(cp, tr))
+        }
+        // A char VALUE goes only into a row that holds every codepoint (21
+        // bits): i32/u32/int/uint/i64/u64. Into i8/u8/i16/u16 it is an error;
+        // inside `unsafe { }` D54 allows the forbidden variable casts, and the
+        // cast is the block's operation (the oracle's E_UNSAFE_UNUSED there was
+        // its defect, registry 1547).
+        if tr.bits >= 32 { return CastVerdict.CvLegal }
+        if in_unsafe { return CastVerdict.CvUnsafeLegal }
+        return CastVerdict.CvForbidden(CAST_CHAR_NARROW_WHY)
+    }
+    if is_int_family(fam_from) && is_char_family(fam_to) {
+        if lit_kind_of(operand) == TokenKind.IntLit {
+            if is_scalar_value(int_lit_value(operand)) { return CastVerdict.CvLegal }
+            return CastVerdict.CvForbidden("the literal `${lit_source(operand)}` is no Unicode scalar value; a char is a codepoint in U+0..U+10FFFF outside the surrogates U+D800..U+DFFF, checked at compile time")
+        }
+        if in_unsafe { return CastVerdict.CvUnsafeLegal }
+        return CastVerdict.CvForbidden(CAST_INT_CHAR_WHY)
+    }
+    // Everything else -- a float and a char, a bool into a number, a char or
+    // a bool into itself -- has no rule in D54, and "no rule" is its error.
+    CastVerdict.CvForbidden(CAST_NO_RULE_WHY)
+}
+
+/// The codepoint of a char literal operand -- through the ONE spelling door
+/// the emitter uses (`char_literal_code`), so the judge and the emission
+/// cannot disagree about which character is written.
+fn char_lit_codepoint(operand Node) -> int {
+    ro lk = branch_children(operand)
+    ro digits = char_literal_code(leaf_text(lk[lk.len() - 1])).bytes()
+    mut v = 0
+    for d in digits {
+        v = v * 10 + digit_value(d)
+    }
+    v
+}
+
+/// Does an integer row hold this codepoint? Every codepoint is at most
+/// 0x10FFFF, so a row of 32 bits or more always does.
+fn codepoint_fits(cp int, tr BuiltinType) -> bool {
+    if tr.bits >= 32 { return true }
+    ro top = if tr.signed { tr.bits - 1 } else { tr.bits }
+    cp < (1 << top)
+}
+
+/// The refusal of a char literal its target cannot hold: the literal range
+/// rule's wording (D227 rule 3), with the codepoint named.
+fn char_lit_unfit_msg(cp int, tr BuiltinType) -> str {
+    ro top = if tr.signed { tr.bits - 1 } else { tr.bits }
+    "this char literal does not fit `${tr.name}` (D54 amendment 2026-10-01, E_LIT_OUT_OF_RANGE): its codepoint is ${cp}, and the type holds at most ${(1 << top) - 1} -- a char literal is not cut to its low bits"
+}
+
+/// The refusal of a forbidden pair, the pair named in the source's spelling.
+fn cast_pair_msg(from str, to str, why str) -> str =>
+    "${CAST_PAIR_HEAD} `${from} as ${to}` -- ${why} (D54)"
+
+/// The token kind of a LITERAL operand, or `ErrorTok` when the operand is no
+/// literal. A negative literal (`-1`) is a literal too: its kind is the
+/// number's, and its value is judged by `int_lit_value`.
+fn lit_kind_of(operand Node) -> TokenKind {
+    if operand.kind_of() != NodeKind.Lit { return TokenKind.ErrorTok }
+    ro lk = branch_children(operand)
+    leaf_kind(lk[lk.len() - 1])
+}
+
+/// The literal as the author wrote it, sign included -- for the message.
+fn lit_source(operand Node) -> str {
+    ro lk = branch_children(operand)
+    if lk.len() > 1 { return "-${leaf_text(lk[lk.len() - 1])}" }
+    leaf_text(lk[0])
+}
+
+/// The value of an integer literal for the codepoint question: the number, or
+/// -1 for a negative literal and for one past the char range -- the only
+/// question asked of it, so the walk stops before the number could overflow.
+fn int_lit_value(operand Node) -> int {
+    ro lk = branch_children(operand)
+    if lk.len() > 1 { return -1 }
+    ro b = leaf_text(lk[0]).bytes()
+    mut base = 10
+    mut i = 0
+    if b.len() > 2 && b[0] == ZERO_BYTE && b[1] == HEX_X_BYTE {
+        base = 16
+        i = 2
+    } else {
+        // A decimal literal: every byte is a digit or a separator.
+    }
+    mut v = 0
+    while i < b.len() {
+        ro d = digit_value(b[i])
+        i += 1
+        if d < 0 { continue }
+        v = v * base + d
+        if v > CHAR_MAX { return -1 }
+    }
+    v
+}
+
+/// One digit's value, or -1 for the `_` separator.
+fn digit_value(c u8) -> int {
+    if c >= ('0' as u8) && c <= ('9' as u8) { return (c - ('0' as u8)) as int }
+    if c >= ('a' as u8) && c <= ('f' as u8) { return (c - ('a' as u8)) as int + 10 }
+    if c >= ('A' as u8) && c <= ('F' as u8) { return (c - ('A' as u8)) as int + 10 }
+    -1
+}
+
+/// A Unicode scalar value: D54's static range check for `<literal> as char`.
+fn is_scalar_value(v int) -> bool => v >= 0 && v <= CHAR_MAX && (v < SURROGATE_LO || v > SURROGATE_HI)
+
+/// The bounds of that check.
+const CHAR_MAX = 0x10FFFF
+const SURROGATE_LO = 0xD800
+const SURROGATE_HI = 0xDFFF
+
+/// The two bytes that open a hex literal.
+const ZERO_BYTE u8 = 0x30
+const HEX_X_BYTE u8 = 0x78
+
+/// The family questions -- one `match` each, the shape `sem/type_shape.nv`
+/// uses for the same reason: a `match` nested in an arm is a form novac does
+/// not read about itself yet.
+fn is_numeric_family(f PrimFamily) -> bool {
+    match f {
+        PfInt | PfFloat => true
+        PfStr | PfBool | PfChar | PfUnit | PfAny | PfNever => false
+    }
+}
+
+/// An integer of any width or signedness.
+fn is_int_family(f PrimFamily) -> bool {
+    match f {
+        PfInt => true
+        PfFloat | PfStr | PfBool | PfChar | PfUnit | PfAny | PfNever => false
+    }
+}
+
+/// `char`.
+fn is_char_family(f PrimFamily) -> bool {
+    match f {
+        PfChar => true
+        PfInt | PfFloat | PfStr | PfBool | PfUnit | PfAny | PfNever => false
+    }
+}
+
+/// `bool`.
+fn is_bool_family(f PrimFamily) -> bool {
+    match f {
+        PfBool => true
+        PfInt | PfFloat | PfStr | PfChar | PfUnit | PfAny | PfNever => false
+    }
+}
+
+/// `str`.
+fn is_str_family(f PrimFamily) -> bool {
+    match f {
+        PfStr => true
+        PfInt | PfFloat | PfBool | PfChar | PfUnit | PfAny | PfNever => false
+    }
+}
+
+/// `any`.
+fn is_any_family(f PrimFamily) -> bool {
+    match f {
+        PfAny => true
+        PfInt | PfFloat | PfStr | PfBool | PfChar | PfUnit | PfNever => false
+    }
+}

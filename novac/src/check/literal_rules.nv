@@ -260,7 +260,7 @@ const MIXED_NUMERIC_MSG = "the operands are different numeric types -- no implic
 /// `-(x as i16)`." The emitter knew this (only signed rows take
 /// `checked_neg`); until 2026-09-05 the checker did not, and `-u` on a `u8`
 /// passed to the emitter as a plain numeric negation. Wave 274.7 B4.
-const NEG_UNSIGNED_MSG = "unary minus is defined for signed types only (spec/conversions.md): `-x` with an unsigned `x` is an error, not a modular wrap -- write `-(x as i16)` or a wider signed type"
+const NEG_UNSIGNED_MSG = "unary minus is defined for signed types only (E_NEG_UNSIGNED, spec/conversions.md, D405): `-x` with an unsigned `x` is an error, not a modular wrap -- write `-(x as i16)` or a wider signed type"
 
 /// A top-level name declared twice in one file (#811). The name leaf is the
 /// first identifier of the declaration; the table answers "seen already", and

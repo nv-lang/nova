@@ -1,0 +1,38 @@
+module self_ctor.pos_1
+
+// `Self { .. }` constructs the type the body belongs to (D66): the receiver's
+// in a method, and under an instance's substitution the concrete type (a
+// static method of the file is outside the subset for its own reasons). It is no registry name, and asked there it
+// brought the compiler down (registry 1557, `#652 class`) -- in a method of
+// the file as in std's `Vec[T] @index(r Range)`, whose instance every slice
+// over a vector the shell lacks it for now uses: `[]f64` here, and the
+// explicit `v.index(r)` with a `Range` value, and `split_at`, whose `(Self, Self)`
+// return is a tuple of the instance (its C name asked the layout of `T`). Each line prints what it does
+// only when `Self` named the right type and the view shares the right data.
+type Pt {
+    x int
+}
+
+fn Pt @twice() -> Self {
+    Self { x: @x * 2 }
+}
+
+fn main() {
+    ro p = Pt { x: 3 }
+    println(p.twice().x)
+    println(p.twice().twice().x)
+    ro v = [1, 2, 3, 4]
+    ro r = Range { start: 1, end: 3 }
+    ro s = v.index(r)
+    println(s.len())
+    println(s[1])
+    ro f = [1.5, 2.5, 3.5]
+    ro g = f[1..3]
+    println(g.len())
+    println(g[0])
+    ro w = ["a", "b", "c"]
+    println(w[0..2][1])
+    ro (a, b) = v.split_at(1)
+    println(a.len())
+    println(b[0])
+}

@@ -1,0 +1,93 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `assert!` -- a condition checked at run time whose failure
+// message carries the call site's file and line and the condition's source
+// text (`stringify!`); NOT taken: the macro form (Nova's `assert` is a call
+// the prelude declares, D81). The text is the condition's source slice, the
+// way the `requires` door already records it (#871).
+// Role: the prelude's `assert(cond)` / `assert(cond, msg)` (D81: always on, a
+// runtime check; std/prelude/runtime.nv declares both by arity, D84). The
+// declarations are `extern "nova"` -- no body anywhere -- so the call is the
+// language's intrinsic: the condition is typed `bool`, the message `str`, the
+// call `()`, and the condition's display and line go into the channel as a
+// contract note on the CALL node for the emitter (emit_c/emit_assert.nv).
+// Used by: check/calls.nv (`@type_free_call` hands `assert` here when no
+//   declaration of the program takes the name).
+// Guarded by: novac/fixtures/assert_stmt (pos byte-for-byte with the oracle,
+//   neg for the arity), check-novac-differential.sh.
+
+module novac.check
+
+import ../tree.{Node, NodeKind}
+import ../sem.{is_arg_node, call_arg_at}
+import ../source.{Span}
+import ../diag.{ice}
+
+/// `assert(cond)` and `assert(cond, msg)`: the arity, the two types, and the
+/// note the emitter spells. A message that is not a string LITERAL is typed and
+/// then printed as no message at all -- exactly the oracle's rule (its format
+/// string bakes the literal in; anything else falls back to NULL).
+fn Checker mut @type_assert(e Node, kids []Node) -> () {
+    mut n = 0
+    mut at = 0
+    for c in kids {
+        if at >= 1 && is_arg_node(c) {
+            n += 1
+        } else {
+            // The callee's name, or punctuation: not an argument.
+        }
+        at += 1
+    }
+    if n < 1 || n > 2 || has_named_arg(kids) {
+        @reject_first_leaf_of(kids, ASSERT_ARITY_MSG)
+        return
+    }
+    ro cond = call_arg_at(kids, 1, 0)
+    ro mark = @out.len()
+    @type_expr(cond)
+    // SILENT-OK: the condition's own walk refused it by name.
+    if @out.len() > mark { return }
+    ro ct = type_of(cond, @ctx, @scope, @chan)
+    if ct != @ctx.prims.bool_id {
+        @reject_first_leaf_of([]Node.of(cond), ASSERT_COND_MSG)
+        return
+    }
+    @record(cond, ct)
+    if n == 2 {
+        ro msg = call_arg_at(kids, 1, 1)
+        @type_expr(msg)
+        // SILENT-OK: the message's own walk refused it by name.
+        if @out.len() > mark { return }
+        ro mt = type_of(msg, @ctx, @scope, @chan)
+        if mt != @ctx.prims.str_id {
+            @reject_first_leaf_of([]Node.of(msg), ASSERT_MSG_TYPE_MSG)
+            return
+        }
+        @record(msg, mt)
+    } else {
+        // No message: the runtime prints the condition alone.
+    }
+    // THE DISPLAY AND THE LINE are the checker's, as for a `requires` clause:
+    // the condition's exact source slice and the line it starts on.
+    ro lo = @first_leaf_offset(cond)
+    if lo < 0 {
+        ice("check: an assert condition with no leaf reached the note door")
+    }
+    ro hi = @run_end_of([]Node.of(cond), lo)
+    @chan.record_contract(e.id_of(), @src.slice(Span { lo, hi }), @line_at(lo))
+    @record(e, @ctx.prims.unit_id)
+}
+
+/// Does the call pass anything by name? `assert` declares `cond` and `msg`,
+/// but the intrinsic is spelled by position only -- refused with the arity.
+fn has_named_arg(kids []Node) -> bool {
+    for c in kids {
+        if c.kind_of() == NodeKind.NamedArg { return true }
+    }
+    false
+}
+
+const ASSERT_ARITY_MSG = "`assert` takes a condition and an optional message, by position: `assert(cond)` or `assert(cond, \"msg\")` (std/prelude/runtime.nv)"
+
+const ASSERT_COND_MSG = "the condition of `assert` is a `bool` -- this argument is of another type"
+
+const ASSERT_MSG_TYPE_MSG = "the message of `assert` is a `str` -- this argument is of another type"

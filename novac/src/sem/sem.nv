@@ -521,7 +521,7 @@ export fn collect(file Node, decls []Node, interop InteropTable) -> Ctx {
     mut ctx = collect_types_with(file, decls)
     // Methods after types, for the neighbouring reason: `harvest_methods` drops a
     // signature whose parameter or return type the registry does not know.
-    harvest_methods(decls, ctx.types, ctx.defs, ctx.tys, ctx.fns, ctx.coerces, ctx.handed)
+    harvest_methods(decls, module_dotted(file), ctx.types, ctx.defs, ctx.tys, ctx.fns, ctx.coerces, ctx.handed)
     // CONSTRUCTORS of the parenthesised record form, and AFTER the collector
     // on purpose: `own_cnt` is fixed inside `collect_types_with` (the last
     // line of it), so a row added there would answer `compiles_body == true`

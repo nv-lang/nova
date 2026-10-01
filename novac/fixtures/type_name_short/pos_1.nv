@@ -1,0 +1,19 @@
+module type_name_short.pos_1
+
+// CONTROL for neg_1: two characters are enough (`type Ok`, D30's own example),
+// for a record and for a sum alike.
+type Ok {
+    n int
+}
+
+type Kd enum Ka | Kb
+
+fn main() {
+    ro k = Kd.Kb
+    ro o = Ok { n: 2 }
+    println(o.n)
+    match k {
+        Ka => println(1)
+        Kb => println(3)
+    }
+}

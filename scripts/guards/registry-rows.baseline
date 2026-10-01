@@ -1491,6 +1491,9 @@
 # 2026-10-01, integrator nova-20: rows -> 1532, max -> 1591 (d486-cond-outer-mode merge: rows 1588, 1589, 1591).
 # 2026-10-01, integrator nova-20: rows -> 1533, max -> 1591 (row 1590 (Windows argv/env ANSI)).
 # 2026-10-01, integrator nova-20: rows -> 1535, max -> 1593 (rows 1592 (cli error causes), 1593 (literal precision)).
+# 2026-10-01, integrator nova-20: rows -> 1543, max -> 1593 (merge-train merge: rows 1570-1577 (1571-1577 filed at the merge; the train agent was stopped before filing)).
+rows=1543
+max=1593
 rows=1535
 max=1593
 rows=1533

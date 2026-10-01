@@ -131,4 +131,10 @@ type Checker {
     /// The body being typed returns a `ro` VIEW (`-> ro T`, D176): a `ro`
     /// parameter may be handed out through it (registry 1458).
     ret_ro bool
+    /// What `Self` names in the body being typed (D66): the receiver's type in
+    /// a method, the owner's in a static method -- CONCRETE under an
+    /// instance's substitution (`Vec[int]` in the instance of std's
+    /// `Vec[T] @index(r Range)`); `no_ty()` in a free function, which belongs
+    /// to no type. Read by the constructor head `Self { .. }` (registry 1557).
+    self_ty TyId
 }

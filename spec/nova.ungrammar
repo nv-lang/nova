@@ -256,8 +256,14 @@ Unary =
 Cast =
   Expr 'as' TypeRefLeaves
 
+// поправка 2026-10-01 (D54 амендмент того же дня, реестр №1570, согласовано с
+// интегратором): после `is` -- и ТОЛЬКО там -- допустим квалифицированный вариант
+// `Сумма.Вариант` (`'ident' '.' 'ident'`). В дереве это один Name из трёх листьев,
+// та же форма, что у квалифицированной головы конструктора (qual-head, D486 §2);
+// `parse/cast_chain.nv`. TypeRefLeaves не тронут: в прочих типовых позициях
+// точечного имени нет.
 IsTest =
-  Expr 'is' TypeRefLeaves
+  Expr 'is' (TypeRefLeaves | qual:Name)
 
 Coalesce =
   lhs:Expr '??' (rhs:Expr | 'return' Expr?)

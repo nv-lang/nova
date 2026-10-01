@@ -1,0 +1,91 @@
+module cast_numeric.pos_1
+
+// The numeric family of D54 (spec/decisions/03-syntax.md), one line per pair,
+// with the boundary values D54 defines: integer pairs take the low bits,
+// float into integer saturates (NaN -> 0, below an unsigned -> 0), an integer
+// into a float is the nearest float, a char literal is its codepoint, an
+// integer literal in range is a char, a char value is its codepoint in a row
+// of 32 bits or more, a bool is 1 or 0 (D54 amendment 2026-10-01). Values
+// come through bindings so the C
+// compiler cannot fold a cast away from the emitted form.
+fn main() {
+    ro big = 300
+    ro neg = -1
+    ro wide = 131071
+    ro mid = 70000
+    ro small = 200 as u8
+    ro half = 65535 as u16
+    ro tiny = (-1) as i8
+    ro pos = 3.9
+    ro under = -3.9
+    ro huge = 100000000000000000000.0
+    ro low = -100000000000000000000.0
+    ro just = 70000.5
+    ro minus_one = -1.0
+    ro three_hundred = 300.0
+    ro zero = 0.0
+    ro tenbn = 10000000000.0
+    ro letter = 'q'
+    ro yes = true
+    ro no = false
+    // integer -> integer: the low bits, read as the target (wrap, bit pattern, sign)
+    println(big as u8)
+    println(neg as u32)
+    println(neg as u64)
+    println(neg as i8)
+    println(wide as i16)
+    println(mid as u16)
+    println(big as i8)
+    println(half as i16)
+    println(small as i8)
+    println(small as int)
+    println(small as u64)
+    println(tiny as u64)
+    println(tiny as u8)
+    println(neg as i64)
+    println((neg as u64) as int)
+    println((neg as u64) as uint)
+    println(300 as u8)
+    // float -> integer: truncation toward zero, saturation at the bounds, NaN -> 0
+    println(pos as int)
+    println(under as int)
+    println(huge as int)
+    println(low as int)
+    println(just as i16)
+    println(minus_one as u16)
+    println(three_hundred as u8)
+    println(pos as u8)
+    println(huge as uint)
+    println((zero / zero) as int)
+    println((1.0 / zero) as i32)
+    println((-1.0 / zero) as i64)
+    println(3.9 as int)
+    // float -> float, integer -> float
+    println(pos as f32)
+    println((tenbn as f32) as i32)
+    println((pos as f32) as f64)
+    println(big as f64)
+    println(small as f32)
+    println(neg as f64)
+    // char literal -> integer: the codepoint, into any row that holds it
+    println('A' as int)
+    println('A' as u8)
+    println('é' as u8)
+    println('é' as int)
+    println('€' as u16)
+    println('\n' as u8)
+    // char value -> integer: the codepoint, into a row of 32 bits or more
+    println(letter as u32)
+    println(letter as int)
+    println(letter as i64)
+    println(letter as uint)
+    // bool -> number: true is 1, false is 0
+    println(yes as u8)
+    println(no as int)
+    println(yes as f64)
+    println(yes as i64)
+    // integer literal -> char: checked at compile time
+    println("${65 as char}")
+    println("${0x41 as char}")
+    println("${233 as char}")
+}

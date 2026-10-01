@@ -17,27 +17,98 @@
 module novac.sem
 
 import ../tree.{Node, NodeKind}
-import ../types.{TyId, is_ty, no_ty}
-import ../builtins.{SLICE_HEAD, EMPTY_CTOR, VEC_INDEX_METHOD}
+import ../types.{TyId, is_ty, no_ty, Interner, raw_ty}
+import ../names.{NameTable, NamespaceId, raw_decl}
+import ../builtins.{SLICE_HEAD, EMPTY_CTOR, VEC_INDEX_METHOD, VEC_INDEX_SET_OP, VEC_INDEX_RANGE_OP, RANGE_TYPE}
 
 /// The bodies of the handed callables, by row.
 export type HandedBodies {
     slot []int /// per callable row: its index in `trees`/`decls`, or -1 when the row has no handed body
     trees []int /// per noted row: the handed declaration tree it was read from (index into the decls)
     decls []Node /// per noted row: its `FnDecl` node in that tree
+    rows []FnRow /// per noted row: the row itself -- what the same-name chain answers; `no_row()` for a DROPPED declaration (see `@note_dropped`)
+    heads []int /// per noted row: the declaration the method hangs on (its index), -1 for a free function
+    same_prev []int /// per noted row: the noted row of the same NAME read before it (its index here), -1 at the chain's end
+    by_name NameTable /// callable name -> the LAST noted row of that name (its index here): the head of the chain `same_prev` continues
 }
 
 /// No handed body known yet.
-fn HandedBodies.new() -> HandedBodies => { slot: []int.new(), trees: []int.new(), decls: []Node.new() }
+fn HandedBodies.new() -> HandedBodies =>
+    { slot: []int.new(), trees: []int.new(), decls: []Node.new(), rows: []FnRow.new(),
+      heads: []int.new(), same_prev: []int.new(), by_name: NameTable.new(NamespaceId.NsCallables) }
 
-/// Note that `row` was read from the `FnDecl` node `decl` of handed tree `tree`.
-fn HandedBodies mut @note(row FnRow, tree int, decl Node) -> () {
+/// Note that `row`, named `name`, was read from the `FnDecl` node `decl` of
+/// handed tree `tree`. The rows are noted in READING order, so the same-name
+/// chain runs from the latest back to the first -- the order an overload's
+/// shell spelling is decided by (`Ctx @overload_ordinal`).
+fn HandedBodies mut @note(row FnRow, name str, head int, tree int, decl Node) -> () {
     while @slot.len() <= raw_row(row) {
         @slot.push(-1)
     }
     @slot[raw_row(row)] = @trees.len()
+    @chain(row, name, head, tree, decl)
+}
+
+/// Note a method declaration harvest did NOT take (a type it cannot read): no
+/// row, no body to make -- but its PLACE among its name's overloads on `head`,
+/// which is what the oracle's spelling of the later ones counts (registry
+/// 1558). Without it a dropped early overload shifted every later ordinal down,
+/// and the second overload was asked of the shell by the first's bare name.
+fn HandedBodies mut @note_dropped(name str, head int, tree int, decl Node) -> () {
+    @chain(no_row(), name, head, tree, decl)
+}
+
+/// One entry of the same-name chain, in reading order.
+fn HandedBodies mut @chain(row FnRow, name str, head int, tree int, decl Node) -> () {
+    ro s = @trees.len()
     @trees.push(tree)
     @decls.push(decl)
+    @rows.push(row)
+    @heads.push(head)
+    @same_prev.push(@by_name.find(name))
+    @by_name.put(name, s)
+}
+
+/// WHICH type a method hangs on, as one int: the index of the declaration an
+/// application or a nominal names (>= 0), or -- for a term that names no
+/// declaration, a primitive -- its own type id, kept apart below -1; -1 for a
+/// free function's `no_ty()`. Until the primitives had their own key every
+/// method of every primitive shared -1, and `int @max` counted `u8 @max` as an
+/// earlier overload of itself (registry 1558).
+fn head_index(tys Interner, t TyId) -> int {
+    if !is_ty(t) { return -1 }
+    if tys.names_a_decl(t) { return raw_decl(tys.decl_head_of(t)) }
+    -2 - raw_ty(t)
+}
+
+/// How many handed methods of `row`'s name hang on its type -- taken or
+/// dropped, before it or after: the count the oracle's EXTERN spelling asks
+/// (`Ctx @overload_suffix`). 0 for a row that was not handed.
+#realtime nogc
+fn Ctx @overload_count(row FnRow) -> int {
+    ro s = if raw_row(row) >= 0 && raw_row(row) < @handed.slot.len() { @handed.slot[raw_row(row)] } else { -1 }
+    mut n = 0
+    if s >= 0 {
+        ro on = @handed.heads[s]
+        mut p = @handed.by_name.find(@fns.rows[raw_row(row)].name)
+        while p >= 0 {
+            n += if @handed.heads[p] == on { 1 } else { 0 }
+            p = @handed.same_prev[p]
+        }
+    } else {
+        // A row that was not handed: no overload of it was harvested.
+    }
+    n
+}
+
+/// Is `row` a handed declaration with NO body -- `extern "nova" fn` (the
+/// runtime's own, `AtomicInt @load`)? The oracle names those by another rule
+/// (`external_registry.rs`), so the overload spelling must know (registry 1558).
+fn Ctx @is_extern_handed(row FnRow) -> bool {
+    match @handed.decl_of(row) {
+        Some(d) => !has_body(d)
+        None => false
+    }
 }
 
 /// The handed `FnDecl` of `row`, or `None` for a row read from nowhere (the
@@ -90,7 +161,33 @@ export fn Ctx @instantiates(row FnRow, args []TyId) -> bool {
     }
     if !fd.has_recv || fd.param_cnt == 0 { return false }
     ro recv_t = subst_type(@, @fns.params[fd.param_off].type_id, args)
-    !@interop.has(c_method_symbol(@, recv_t, fd.name))
+    // THE OVERLOAD, not the name (registry 1524): `cap()` and `cap(n)` are two
+    // shell functions, and asking by the name answered "carried" for both.
+    !@interop.has(c_overload_symbol(@, row, recv_t, args))
+}
+
+/// WHICH overload of its name `row` is on its type, counted in READING order
+/// from zero: how many handed methods of the same name on the same type were
+/// read before it. The oracle spells the first overload by the bare name and
+/// every later one with a suffix of its parameter types
+/// (`Vec____nova_int_method_cap` / `..._cap__nova_int`, the generic-method
+/// overload mangling of the oracle's `emit_c.rs`), so this number is what the shell
+/// question is asked by (registry 1524). A walk of the name's chain, never a
+/// scan of the registry; -1 for a row that was not handed.
+fn Ctx @overload_ordinal(row FnRow) -> int {
+    if raw_row(row) < 0 || raw_row(row) >= @handed.slot.len() { return -1 }
+    ro s = @handed.slot[raw_row(row)]
+    if s < 0 { return -1 }
+    // Counted over DECLARATIONS, taken or dropped (`@note_dropped`), on the
+    // same type -- the oracle's order (registry 1558).
+    ro on = @handed.heads[s]
+    mut n = 0
+    mut p = @handed.same_prev[s]
+    while p >= 0 {
+        n += if @handed.heads[p] == on { 1 } else { 0 }
+        p = @handed.same_prev[p]
+    }
+    n
 }
 
 /// Is the body of this call's callee compiled into this program -- the file's
@@ -103,7 +200,9 @@ export fn Ctx @body_ours(row FnRow, args []TyId) -> bool => @in_program(row) || 
 /// declaration of `Vec[T]` that operation calls (274.11 E.10 step 4c-2)? The
 /// overloads are told apart by the SHAPE the implicit call has: the
 /// constructor that takes a capacity (not the unsafe raw-parts ones), the push
-/// that copies (not the consuming one), the index by `int` (not by `Range`).
+/// that copies (not the consuming one), the index by `int` (not by `Range`),
+/// and for the WRITE (`VEC_INDEX_SET_OP`) the `mut @index(i int, val T)` that
+/// copies its value in (registry 1524).
 export fn Ctx @is_vec_op_shape(row FnRow, name str) -> bool {
     ro fd = @fns.rows[raw_row(row)]
     // A HANDED row only: std may be handed without a module line (`handed_from` "").
@@ -113,6 +212,15 @@ export fn Ctx @is_vec_op_shape(row FnRow, name str) -> bool {
     if !is_ty(on) || !@tys.names_a_decl(on) || decl_of_ty(@, on).name != SLICE_HEAD { return false }
     if name == EMPTY_CTOR {
         return is_ty(fd.owner) && fd.param_cnt == 1 && @fns.params[fd.param_off].type_id == @prims.int_id
+    } else if name == VEC_INDEX_RANGE_OP {
+        // The SLICE: `@index(r Range) -> Self` (registry 1557).
+        if !fd.has_recv || fd.param_cnt != 2 { return false }
+        ro rt = @fns.params[fd.param_off + 1].type_id
+        return is_ty(rt) && @tys.names_a_decl(rt) && decl_of_ty(@, rt).name == RANGE_TYPE
+    } else if name == VEC_INDEX_SET_OP {
+        if !fd.has_recv || fd.param_cnt != 3 { return false }
+        return @fns.params[fd.param_off + 1].type_id == @prims.int_id &&
+            @fns.params[fd.param_off + 2].mode != ParamMode.ModeConsume
     } else if fd.param_cnt == 1 {
         return fd.has_recv
     } else if fd.param_cnt == 2 {

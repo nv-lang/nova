@@ -1,0 +1,35 @@
+module field_mut_place.pos_1
+
+// A FIELD OF A `mut` ROOT IS A MUTABLE PLACE (registry 1560; 02-types.md:
+// 11978-11981 and the `walk_root` rule of :13463-13478): `@c.bump()` inside a
+// `mut` method, `o.c.bump()` on a `mut` local, and `o.c` handed to a `mut`
+// parameter all write through the root. Each call bumps the SAME counter, so
+// the printed values climb 1, 2, 4 and the last read sees 4 -- a copy written
+// instead of the place would print a smaller number somewhere.
+type Ctr {
+    n int
+}
+
+fn Ctr mut @bump() -> int {
+    @n += 1
+    @n
+}
+
+type Outer {
+    c Ctr
+}
+
+fn Outer mut @go() -> int => @c.bump()
+
+fn twice(mut c Ctr) -> int {
+    c.bump()
+    c.bump()
+}
+
+fn main() {
+    mut o = Outer { c: Ctr { n: 0 } }
+    println(o.go())
+    println(o.c.bump())
+    println(twice(o.c))
+    println(o.c.n)
+}

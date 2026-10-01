@@ -168,7 +168,7 @@ fn Checker mut @judge_type_head_variant(e Node, kids []Node, arg_from int) -> bo
                 // whole coercion path: no call, no wrap, no bug surface.
                 if arg_from < 0 {
                     ro qname = "${ty_source_name(@ctx, head_t)}.${vt.text}"
-                    if @ctx.defs.const_row(qname).is_some() {
+                    if @const_seen(qname).is_some() {
                         // The bare name's three questions, in its order
                         // (exprs.nv): a cycle of module values, a value
                         // whose initializer was refused, then the type AND
@@ -185,7 +185,7 @@ fn Checker mut @judge_type_head_variant(e Node, kids []Node, arg_from int) -> bo
                         ro ct = @const_type_of(qname)
                         if is_ty(ct) {
                             @record(e, ct)
-                            ro crow = @ctx.defs.const_row(qname) ?? ice("check: a qualified constant lost its row")
+                            ro crow = @const_seen(qname) ?? ice("check: a qualified constant lost its row")
                             @chan.record_const(e.id_of(), crow)
                             return true
                         } else {

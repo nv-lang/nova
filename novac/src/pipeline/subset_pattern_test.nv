@@ -140,8 +140,8 @@ export type Vec[T] { n int }")
 test "pattern arity, a partial record without `..`, a literal alternative: three named refusals (D486 P1+P2)" {
     ro std = std_decls()
     // The payload count is the variant's declaration, exactly.
-    ro (d, _) = compile_to_c("type E enum P(int, int) | Q\n\
-fn f(s E) -> int {\n\
+    ro (d, _) = compile_to_c("type Et enum P(int, int) | Q\n\
+fn f(s Et) -> int {\n\
  match s {\n\
   P(x) => x\n\
   Q => 0\n\
@@ -346,8 +346,8 @@ fn main() {\n\
     // arm (measured 2026-09-29, door at novac/src/check/match_arms.nv:392),
     // and the mode doors would otherwise read it
     // as `consume` -- refused BY NAME instead.
-    ro (d6, _) = compile_to_c("type E enum A(int) | B\n\
-fn f(e E) -> int {\n\
+    ro (d6, _) = compile_to_c("type Et enum A(int) | B\n\
+fn f(e Et) -> int {\n\
  match e {\n\
   ro x => x\n\
   B => 0\n\
@@ -596,8 +596,8 @@ fn main() {\n\
     // is read into a temporary and compared by CONTENT, the root's own door.
     // CONTROL: the same sum with a binder at that position compares no string,
     // so the compare is the nested LITERAL's.
-    ro (d3, c3) = compile_to_c("type W enum A(str) | B\n\
-fn k(w W) -> int => match w {\n\
+    ro (d3, c3) = compile_to_c("type Wrap enum A(str) | B\n\
+fn k(w Wrap) -> int => match w {\n\
  A(\"x\") => 1\n\
  _ => 0\n\
 }\n\
@@ -606,8 +606,8 @@ fn main() {\n\
 }", std)
     assert(d3.len() == 0, messages(d3))
     assert(c3.contains("nova_str_eq(_novac_l"), "a nested string compares by content")
-    ro (d4, c4) = compile_to_c("type W enum A(str) | B\n\
-fn k(w W) -> int => match w {\n\
+    ro (d4, c4) = compile_to_c("type Wrap enum A(str) | B\n\
+fn k(w Wrap) -> int => match w {\n\
  A(x) => 1\n\
  _ => 0\n\
 }\n\

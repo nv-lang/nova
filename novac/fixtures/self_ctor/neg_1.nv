@@ -1,0 +1,17 @@
+module self_ctor.neg_1
+
+// `Self` names the type a method belongs to (D66); a free function belongs to
+// none, so `Self { .. }` there constructs nothing -- refused by name, where it
+// brought the compiler down before (registry 1557).
+// NOVAC_EXPECT `Self` names the type a method belongs to
+type Pt {
+    x int
+}
+
+fn mk(x int) -> Pt {
+    Self { x }
+}
+
+fn main() {
+    println(mk(1).x)
+}

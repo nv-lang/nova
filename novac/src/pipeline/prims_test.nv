@@ -98,6 +98,8 @@ test "unary minus on an unsigned operand is an error by the spec; on signed ints
     ro (d, _) = compile_to_c("fn flip(u u8) -> u8 => -u\nfn main() {\n println(flip(200))\n}", std_decls())
     assert(d.len() == 1, messages(d))
     assert(messages(d).contains("signed types only"), messages(d))
+    // A LANGUAGE error, not a debt of the subset: the code says so (D405).
+    assert(d[0].code == "E_NOVAC_LANG", d[0].code)
     ro (d2, _) = compile_to_c("fn ni(s i16) -> i16 => -s\nfn nf(f f64) -> f64 => -f\nfn main() {\n println(ni(200))\n println(nf(2.5))\n}", std_decls())
     assert(d2.len() == 0, messages(d2))
 }
