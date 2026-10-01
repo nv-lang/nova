@@ -25,6 +25,7 @@ fn Checker @type_arg_named(name str) -> TyId {
     if raw_row(@inst_row) >= 0 {
         ro fd = @ctx.fns.rows[raw_row(@inst_row)]
         for i in 0..fd.tparam_cnt {
+            // BINDER-OK: the instance row's own type parameters -- a handful written on one declaration.
             if @ctx.fns.tparams[fd.tparam_off + i] == name && i < @substs.len() { return @substs[i] }
         }
     } else {
@@ -38,7 +39,7 @@ fn Checker mut @type_size_of(e Node, kids []Node) -> () {
     ro given = generic_names(kids)
     mut written = 0
     for c in kids {
-        if is_expr_kind(c.kind_of()) { written += 1 }
+        written += if is_expr_kind(c.kind_of()) { 1 } else { 0 }
     }
     if given.len() != 1 || written > 1 {
         @reject_first_leaf_of(kids, "`size_of` takes one type argument and no value: `size_of[T]()` (D216)")

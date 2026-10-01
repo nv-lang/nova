@@ -22,7 +22,7 @@ import ../lower.{no_local}
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
-import ../sem.{raw_crow, carrier_of, c_callable, c_instance_method, c_shell_method, c_method_symbol, Ctx}
+import ../sem.{raw_crow, carrier_of, c_callable, c_shell_method, c_method_symbol, Ctx}
 import ../sem.{CheckOut, vec_op_c, c_static_symbol}
 import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct}
 import ../sem.{shape_of}
@@ -756,7 +756,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
             } else {
                 // The receiver's type decides the symbol, below.
             }
-            @body.append(vec_op_c(@ctx, rt, VEC_INDEX_METHOD))
+            @body.append(vec_op_c(@ctx, rt, VEC_INDEX_METHOD, @out.vec_op_row(VEC_INDEX_METHOD)))
             @body.append("(")
             @emit_expr(kids[0])
             @body.append(", ")
@@ -770,9 +770,10 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // representation, so the emission is the operand and nothing else. C
         // needs no cast between a typedef and its underlying type. A POINTER
         // target is a C cast (`0 as *mut T`, 274.11 E.10 step 4c-2).
-        ro ct = @out.type_of(e.id_of())
-        if @ctx.tys.kind_of(ct) == TypeKind.TkPtr {
-            @body.append("((${c_type(@ctx, ct)})(")
+        // `@is_ptr_receiver` asks whether a node's RECORDED type is a pointer --
+        // here the cast node's own.
+        if @is_ptr_receiver(e) {
+            @body.append("((${c_type(@ctx, @out.type_of(e.id_of()))})(")
             @emit_expr(branch_children(e)[0])
             @body.append("))")
         } else {

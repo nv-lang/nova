@@ -476,14 +476,14 @@ fn Emitter mut @emit_array_lit(init Node, vtype TyId) -> str {
     // form with an unknown count arrives (spread), its cap becomes an
     // estimate -- the rule is "exact when known, approximate otherwise".
     ro elems = literal_elems(branch_children(init))
-    @body.append("    ${c_type(@ctx, vtype)} ${tmp} = ${vec_op_c(@ctx, vtype, EMPTY_CTOR)}(${elems.len()});\n")
+    @body.append("    ${c_type(@ctx, vtype)} ${tmp} = ${vec_op_c(@ctx, vtype, EMPTY_CTOR, @out.vec_op_row(EMPTY_CTOR))}(${elems.len()});\n")
     for e in elems {
         // The element may itself be a construction; the walk above no longer
         // descends into this literal (H2), so its OWN emitter hoists what its
         // elements need -- the same line the record constructor has carried
         // since B8 (`@hoist_array_lits(fk[2])`).
         @hoist_array_lits(e)
-        @body.append("    (void)${vec_op_c(@ctx, vtype, LITERAL_PUSH)}(${tmp}, ")
+        @body.append("    (void)${vec_op_c(@ctx, vtype, LITERAL_PUSH, @out.vec_op_row(LITERAL_PUSH))}(${tmp}, ")
         @emit_expr(e)
         @body.append(");\n")
     }

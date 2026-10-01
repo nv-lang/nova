@@ -71,7 +71,7 @@ fn Emitter mut @emit_pattern_test(pattern Pattern, scr Local) -> () {
             // -- the length itself is asked through the same shell method
             // the for-head asks (emit_flow's Each).
             ro vd = @lo.ir.decl_of(scr)
-            ro len_c = vec_op_c(@ctx, vd.ty, VEC_LEN_METHOD)
+            ro len_c = vec_op_c(@ctx, vd.ty, VEC_LEN_METHOD, @out.vec_op_row(VEC_LEN_METHOD))
             if am.exact >= 0 {
                 @body.append("(${len_c}(${vd.name}) == ${am.exact})")
             } else {

@@ -112,7 +112,7 @@ fn Emitter mut @print_loop_head(head LoopHead) -> () {
         Each(e) => {
             ro vd = @lo.ir.decl_of(e.vec)
             ro i = @lo.ir.decl_of(e.idx).name
-            ro len_c = vec_op_c(@ctx, vd.ty, VEC_LEN_METHOD)
+            ro len_c = vec_op_c(@ctx, vd.ty, VEC_LEN_METHOD, @out.vec_op_row(VEC_LEN_METHOD))
             @body.append("    for (nova_int ${i} = 0; ${i} < ${len_c}(${vd.name}); ${i}++) {\n")
         }
         Forever => {

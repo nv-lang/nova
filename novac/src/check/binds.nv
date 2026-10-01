@@ -33,7 +33,7 @@ import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, 
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of}
-import ../sem.{c_instance_ctor, c_instance_method, c_method_symbol}
+import ../sem.{c_instance_ctor, c_method_symbol}
 import ../sem.{ty_source_name, variants_named, slice_shape_of}
 import ../types.{TyId, no_ty, is_ty}
 
@@ -797,13 +797,20 @@ const ARMS_DISAGREE_MSG = "outside the subset: match arms produce different type
 fn Checker mut @vec_op_carried(vec_t TyId, name str) -> bool {
     ro shell = if name == EMPTY_CTOR { c_instance_ctor(@ctx, vec_t) } else { c_method_symbol(@ctx, vec_t, name) }
     if @ctx.interop.has(shell) { return true }
-    ro row = match @ctx.vec_op_row(name) {
-        None => return false
-        Some(r) => r
+    // THE ROW, through the callable index's chain of this name -- one O(1)
+    // head and the same-name rows after it, never a scan of the registry.
+    mut row = no_row()
+    mut r = @res.first_row_of(name)
+    while raw_row(r) >= 0 {
+        row = if @ctx.is_vec_op_shape(r, name) { r } else { row }
+        r = @res.next_row_of(r)
     }
+    // SILENT-OK: std declares no such operation -- the caller refuses by the shell's name.
+    if raw_row(row) < 0 { return false }
     ro args = []TyId.of(@ctx.tys.arg(vec_t, 0))
     if !@ctx.instantiates(row, args) { return false }
     @intern_instance_sig(row, args)
     @chan.record_wanted(row, args)
+    @chan.record_vec_op(name, row)
     true
 }

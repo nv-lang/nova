@@ -689,7 +689,7 @@ fn line_at(text str, off int) -> int {
     mut line = 1
     ro b = text.bytes()
     for i in 0..off {
-        if i < b.len() && b[i] == UNIT_LF { line += 1 }
+        line += if i < b.len() && b[i] == UNIT_LF { 1 } else { 0 }
     }
     line
 }

@@ -49,7 +49,7 @@ fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
     mut written = 0
     mut at = 0
     for c in kids {
-        if at > 2 && is_expr_kind(c.kind_of()) { written += 1 }
+        written += if at > 2 && is_expr_kind(c.kind_of()) { 1 } else { 0 }
         at += 1
     }
     mut row = no_row()
@@ -66,7 +66,7 @@ fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
         if written > fd.param_cnt { continue }
         mut rest_defaulted = true
         for k in written..fd.param_cnt {
-            if @ctx.fns.params[fd.param_off + k].default_expr.is_none() { rest_defaulted = false }
+            rest_defaulted = rest_defaulted && @ctx.fns.params[fd.param_off + k].default_expr.is_some()
         }
         if !rest_defaulted { continue }
         row = FnRow(i)
@@ -83,7 +83,11 @@ fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
     ro before = @out.len()
     at = 0
     for c in kids {
-        if at > 2 && is_expr_kind(c.kind_of()) { @type_expr(c) }
+        if at > 2 && is_expr_kind(c.kind_of()) {
+            @type_expr(c)
+        } else {
+            // The head, the dot, the name and the punctuation: nothing to type.
+        }
         at += 1
     }
     // SILENT-OK: an argument's own refusal is the call's one cause.
