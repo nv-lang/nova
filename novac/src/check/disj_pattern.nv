@@ -20,7 +20,7 @@
 module novac.check
 
 import ../tree.{Node}
-import ../sem.{pattern_shape, pattern_head_text, pattern_subpatterns}
+import ../sem.{PatShape, pattern_shape, pattern_head_text, pattern_subpatterns}
 import ../sem.{pattern_fields, patfield_name, patfield_sub}
 import ../sem.{pattern_name_node, patfield_name_node}
 import ../sem.{ParamMode}
@@ -131,31 +131,31 @@ fn Checker mut @disj_alt_form_ok(sub Node, ty TyId, ak []Node) -> bool {
 /// variant head (a bare payload-less one included), an array length, a nested
 /// `|`? A binder and `_` match anything; a tuple and a record ask their parts.
 fn Checker @tests_something(pat Node) -> bool {
-    match pattern_shape(pat) {
-        Lit | Variant | Array | Disj => true
-        Wild => false
-        Bind => {
-            match @name_in_pattern(pattern_head_text(pat), no_ty()) {
-                NameBinder => false
-                NameOwnVariant(_) | NameForeignVariant(_) => true
-            }
-        }
-        Tuple => {
-            for s in pattern_subpatterns(pat) {
-                if @tests_something(s) { return true }
-            }
-            false
-        }
-        Record => {
-            for f in pattern_fields(pat) {
-                match patfield_sub(f) {
-                    Some(s) => { if @tests_something(s) { return true } }
-                    None => {}
-                }
-            }
-            false
+    ro sh = pattern_shape(pat)
+    if sh == PatShape.Lit || sh == PatShape.Variant || sh == PatShape.Array || sh == PatShape.Disj {
+        return true
+    }
+    if sh == PatShape.Wild { return false }
+    if sh == PatShape.Bind {
+        return match @name_in_pattern(pattern_head_text(pat), no_ty()) {
+            NameBinder => false
+            NameOwnVariant(_) | NameForeignVariant(_) => true
         }
     }
+    if sh == PatShape.Record {
+        for f in pattern_fields(pat) {
+            match patfield_sub(f) {
+                Some(s) => { if @tests_something(s) { return true } }
+                None => {}
+            }
+        }
+        return false
+    }
+    // A positional bracket: its parts answer.
+    for s in pattern_subpatterns(pat) {
+        if @tests_something(s) { return true }
+    }
+    false
 }
 
 /// The names one alternative BINDS, in written order, with their nodes. A bare

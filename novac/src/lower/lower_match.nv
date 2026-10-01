@@ -376,11 +376,14 @@ fn Lowerer mut @lower_sub(sub Node, ty TyId, base Local, rd SubRead, pre []str, 
 /// array (its length). A binder, `_`, a tuple and a plain record match any
 /// value; a nested disjunction binds through its own switch (lower_disj.nv).
 fn Lowerer @sub_has_test(sub Node, ty TyId) -> bool {
-    match pattern_shape(sub) {
-        Lit | Variant | Array => true
-        Wild | Tuple | Disj => false
-        Bind | Record => is_vrow(variant_in_sum(@ctx, ty, pattern_head_text(sub)) ?? no_vrow())
+    ro sh = pattern_shape(sub)
+    if sh == PatShape.Lit || sh == PatShape.Variant || sh == PatShape.Array { return true }
+    // A bare name or a record tests exactly when its head names a variant of `ty`.
+    if sh == PatShape.Bind || sh == PatShape.Record {
+        return is_vrow(variant_in_sum(@ctx, ty, pattern_head_text(sub)) ?? no_vrow())
     }
+    // `_`, a positional bracket, a nested `|`: no head of their own.
+    false
 }
 
 /// Opens the synthetic `If` of one subpattern's own test on the temporary `t`.
