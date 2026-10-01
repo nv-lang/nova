@@ -1480,6 +1480,9 @@
 # 2026-10-01, integrator nova-20: rows -> 1494, max -> 1544 (2026-10-01 integrator: merge p274-carina-k1 -- rows 1538-1540 land and leave gaps).
 # 2026-10-01, integrator nova-20: rows -> 1495, max -> 1545 (2026-10-01 integrator: row 1545 -- silent zeros for []Outcome elements named like a prelude generic (assistant)).
 # 2026-10-01, integrator nova-20: rows -> 1498, max -> 1548 (2026-10-01 integrator: rows 1546-1548 -- findings of the cloud cast session).
+# 2026-10-01, integrator nova-20: rows -> 1499, max -> 1549 (2026-10-01 integrator: row 1549 -- const referencing a const in a non-entry module (assistant)).
+rows=1499
+max=1549
 rows=1498
 max=1548
 rows=1495

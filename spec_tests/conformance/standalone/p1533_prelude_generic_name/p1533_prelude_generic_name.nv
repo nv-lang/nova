@@ -11,9 +11,10 @@
 // the entry one. Carrier: claude-limits `usage/outcome.nv`.
 //
 // Cells: the return-position literal through a static constructor, and a literal
-// as a fn body. NOT a cell: the same literals as ELEMENTS of a `[]Outcome` -- on
-// main that silently printed zeros, here it is refused by codegen (no target for
-// an anonymous element); a separate open item of the same name collision.
+// as a fn body. The same literals as ELEMENTS of a `[]Outcome` are #1545
+// (standalone/p1545_anon_elem_generic_name); since #1545 the emitter reads the
+// literal's name by kind (`codegen/emit_c/type_by_role.rs`) and the literal is
+// named again -- the first fix of #1533 left it unnamed.
 module standalone.p1533_prelude_generic_name
 
 import ./p1533_side.{of_status, direct}
