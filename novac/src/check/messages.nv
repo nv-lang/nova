@@ -350,8 +350,19 @@ const IMPORT_ALIAS_MSG = "outside the subset: an `import ... as ...` alias arriv
 /// `#realtime nogc` and its kin.
 const ATTR_MSG = "outside the subset: an effect attribute is read but not compiled yet"
 
-/// `unsafe { ... }` -- D216 s8. Read since 274.5 B10, not compiled yet.
-const UNSAFE_MSG = "outside the subset: an `unsafe` block is read but not compiled yet"
+/// `unsafe { ... }` -- D216 s8. Compiled since 274.11 E.10 step 3c where an `if`
+/// value stands (initializer, argument, a body's tail) and as a statement.
+const UNSAFE_MSG = "outside the subset: an `unsafe` block is compiled as a statement, an initializer, a call argument or a body's tail -- not in this position yet (E2-b)"
+
+/// An `unsafe` block with no operation that needs it -- a LANGUAGE error of the
+/// oracle's too (D216 section 21 map, E_UNSAFE_UNUSED).
+const UNSAFE_UNUSED_MSG = "this `unsafe` block contains no operation that requires unsafe context -- remove it (D216, E_UNSAFE_UNUSED)"
+
+/// A raw-pointer operation outside `unsafe { }` (D216, E_UNSAFE_REQUIRED).
+const UNSAFE_REQUIRED_MSG = "a raw-pointer operation requires an `unsafe { }` block (D216, E_UNSAFE_REQUIRED)"
+
+/// A raw-pointer method novac does not compile yet: only `read_at` is.
+const PTR_METHOD_MSG = "outside the subset: of the raw-pointer methods only `read_at` is compiled yet (D216; E2-b)"
 
 /// `test "name" { ... }`.
 const TEST_MSG = "outside the subset: a `test` block arrives with the test runner"

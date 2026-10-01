@@ -181,6 +181,22 @@ test "the MODULE PATH is part of a C name: two modules, two names" {
     assert(c_callable(ctx, row, []TyId.new()).contains("novac_fn_helper"))
 }
 
+test "a HANDED row is named by ITS module, not the calling file's -- one symbol from every unit (274.11 E.10 step 1)" {
+    // A call into another module of the program must name the symbol the
+    // OWNER's unit defines; the file's own module would give each caller a
+    // different name for one function.
+    mut ctx = collect_types(empty_file())
+    ctx.module_c = "novac_check"
+    ctx.fns.add("helper", ctx.prims.int_id, false, []ParamDef.new(), []str.new(), []str.new(),
+                handed_from: "novac.sem")
+    ro handed = c_callable(ctx, FnRow(ctx.fns.rows.len() - 1), []TyId.new())
+    assert(handed.contains("novac_fn_novac_sem_helper"), handed)
+    // CONTROL: an own row of the same file stays in the file's module.
+    ctx.fns.add("own", ctx.prims.int_id, false, []ParamDef.new(), []str.new(), []str.new())
+    ro own = c_callable(ctx, FnRow(ctx.fns.rows.len() - 1), []TyId.new())
+    assert(own.contains("novac_fn_novac_check_own"), own)
+}
+
 /// A generic RECORD head registered by hand -- the shape `harvest_types` builds
 /// for a handed-over `type Vec[T]`: a row that knows its arity, and a def that
 /// answers the name.

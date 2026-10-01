@@ -1,0 +1,155 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `rustc_symbol_mangling` -- a symbol name is a deterministic
+// function of the entity; here, of a generic INSTANCE and its arguments.
+// Role: the INSTANCE half of the mangling door (moved out of mangle.nv on
+//   2026-10-01, 274.11 E.10 step 3, when the file reached its 1000-line cap and
+//   a new type kind had to add an arm to every match): the shell's spellings of
+//   a generic record or sum instance (`Vec____nova_int`, `NovaOpt_nova_str`)
+//   and the method symbol question; the DOORS of the root (c_instance_ctor,
+//   c_instance_method, c_shell_method) stay in mangle.nv, their home in the
+//   architecture table section 3a. INTEROP, read off the shell -- the same end
+//   condition as mangle.nv: gone the day novac emits the whole prelude.
+// Used by: mangle.nv (c_type, c_struct), check (the shell-carries questions),
+//   emit_c (the names it prints).
+// Guarded by: check-novac-mangle-fixed-point.sh (spellings against the oracle's
+//   emission of the probe), check-novac-mangling-one-way.py, sem/mangle_test.nv.
+
+module novac.sem
+
+import ../diag.{ice}
+import ../builtins.{prim_c_name, OPTION_FAMILY_C, OPTION_SUM}
+import ../builtins.{FMT_PROTO, FMT_IMPL}
+import ../builtins.{TypeKind}
+import ../types.{TyId, no_ty, is_ty}
+
+/// The FAMILY spelling of a generic-sum instance, or "" for everything else:
+/// `Option[int]` is the shell's `NovaOpt_nova_int`, BY VALUE (its methods hand
+/// it back so), with no `Nova_` prefix and no star -- INTEROP, read off the
+/// shell, gone the day novac emits the whole prelude. Result (`NovaRes_`)
+/// joins when a carrier arrives; until then the instance_body ice below still
+/// names any other generic sum.
+fn family_instance_name(ctx Ctx, t TyId) -> str {
+    ro head = decl_of_ty(ctx, t)
+    ro is_sum = match head.kind {
+        TkSum => true
+        // TkEffect: an effect is not a sum -- no family spelling.
+        TkPrim | TkRecord | TkApp | TkParam | TkInfer | TkNewtype | TkTuple | TkEffect | TkPtr => false
+    }
+    if !is_sum { return "" }
+    if head.name != OPTION_SUM { return "" }
+    if ctx.tys.arg_count(t) != 1 { return "" }
+    "${OPTION_FAMILY_C}${c_type(ctx, ctx.tys.arg(t, 0)).replace("*", "_p")}"
+}
+
+/// The oracle's spelling of a generic-record instance struct
+/// (`Nova_Vec____nova_int`): interop, lifted off the shell 2026-08-26.
+fn instance_struct_name(ctx Ctx, t TyId) -> str => "Nova_${instance_body(ctx, t)}"
+
+/// THE IMPLEMENTOR a protocol-typed value is compiled as -- or the type itself
+/// when it is no protocol with a bound implementor. One door for the one pair
+/// novac knows (FMT_PROTO -> FMT_IMPL, interop, see builtins): the checker's
+/// method key, the C type of a parameter and the method symbol all ask here,
+/// so the pair is written once and read three times.
+export fn impl_of_proto(ctx Ctx, t TyId) -> TyId {
+    if !is_ty(t) { return t }
+    if ctx.tys.kind_of(t) != TypeKind.TkRecord { return t }
+    if decl_of_ty(ctx, t).name != FMT_PROTO { return t }
+    match ctx.defs.type_decl(FMT_IMPL) {
+        None => t
+        Some(d) => ty_of_decl(ctx, d)
+    }
+}
+
+/// WHICH spelling a method of a handed type takes: a generic INSTANCE is
+/// `<body>_method_<name>` (no `Nova_` prefix), a PLAIN type is
+/// `Nova_<name>_method_<name>` -- the oracle spells the two differently, and
+/// until 2026-09-05 the checker's interop check and the emitter each chose the
+/// instance form for everything, so a plain std record's method could never
+/// pass (`Nova_FmtCtx_method_write` was asked for as `FmtCtx_____method_write`).
+/// One question, one door; a protocol receiver goes through its implementor.
+export fn c_method_symbol(ctx Ctx, t TyId, name str) -> str {
+    ro it = impl_of_proto(ctx, t)
+    // `it` is `no_ty()` whenever the caller's OWN receiver type did not
+    // resolve (registry: an index into a self-hosted `[]Node` losing its
+    // element type upstream) -- `impl_of_proto` passes that absence straight
+    // through (`return t` on its `!is_ty(t)` branch), and asking the
+    // interner for the KIND of an absent type is the ICE this door used to
+    // reach. Not a type application either way, so the shell-method spelling
+    // is the honest fallback, same as any other non-instance receiver.
+    if is_ty(it) && ctx.tys.kind_of(it) == TypeKind.TkApp { return c_instance_method(ctx, it, name) }
+    c_shell_method(ctx, it, name)
+}
+
+/// The body every instance name is built from: `<Head>____<arg>__<arg>`.
+fn instance_body(ctx Ctx, t TyId) -> str {
+    ro head = decl_of_ty(ctx, t)
+    match head.kind {
+        TkRecord => {}
+        // A SUM never reaches HERE any more: `c_instance_method` answers it with
+        // the family spelling above, without building a record-shaped body. The
+        // ice stays because this door is about the RECORD body specifically, and
+        // a caller that asks it for a sum is asking the wrong door.
+        TkSum => ice("mangle: the record-shaped instance body of a generic SUM -- ask `c_instance_method`, which spells a sum by its family")
+        // A head is a declaration; these are not declarations a `[T]` can hang on.
+        // TkEffect joins them: an effect head owns operations, not an instance body.
+        TkPrim | TkApp | TkParam | TkInfer | TkNewtype | TkTuple | TkEffect | TkPtr =>
+            ice("mangle: an application whose head is not a record or sum declaration")
+    }
+    consume s = StringBuilder.new(cap: 64)
+    s.append(head.name)
+    s.append("____")
+    for i in 0..ctx.tys.arg_count(t) {
+        if i > 0 {
+            s.append("__")
+        } else {
+            // The first argument follows the head's separator directly.
+        }
+        s.append(instance_arg_spelling(ctx, ctx.tys.arg(t, i)))
+    }
+    s
+}
+
+/// How the oracle spells a type ARGUMENT inside an instance name: a primitive by
+/// its C name (`nova_int`), a value record as its struct (`NovaValue_P`), a
+/// heap record as its struct plus the pointer suffix (`Nova_P_p`), a SUM the
+/// same way as a heap record (`Nova_Sig_p` -- a sum is a GC pointer too; read
+/// off the oracle's C for `Vec[Sig]` on 2026-09-04: `Nova_Vec____Nova_Sig_p`,
+/// `Vec____Nova_Sig_p_method_len`), a nested instance recursively with the same
+/// suffix. The other kinds are not measured on the shell and are named rather
+/// than guessed.
+///
+/// The sum arm was an ice until 2026-09-04, and its doc said the shape was
+/// unreachable. novac's OWN sources reach it (`[]TokenKind` and kin), so the
+/// batch self-check iced -- and that one ice sent the self-distance runner into
+/// per-file mode, where a file cannot see its co-equal siblings and 72 of 73
+/// files read as rejected against 27 in the batch. A doc that calls a shape
+/// unreachable when nobody measured it is the same lie as a stale live line,
+/// only quieter. (No quotes around the word: the P24 scanner reads a quoted
+/// identifier-like string in an emitting module as a printed C name.)
+fn instance_arg_spelling(ctx Ctx, a TyId) -> str {
+    match ctx.tys.kind_of(a) {
+        TkPrim => prim_c_name(ctx.tys.prim_ordinal_of(a))
+        TkRecord => {
+            ro nm = decl_of_ty(ctx, a).name
+            if is_value_record(ctx, a) { "NovaValue_${nm}" } else { "Nova_${nm}_p" }
+        }
+        TkApp => "${instance_struct_name(ctx, a)}_p"
+        TkSum => "Nova_${decl_of_ty(ctx, a).name}_p"
+        // A NEWTYPE inside an instance name is its REPRESENTATION (274.7 B7,
+        // #940): `[Meters(1.0), Meters(2.0)]` with `type Meters f64` is
+        // `Nova_Vec____nova_f64` in the oracle's C (measured 2026-09-05, the
+        // kept artifact of the probe), and the SHELL's instances are keyed the
+        // same way -- so this is the spelling that LINKS. The same canon `c_type`
+        // takes for the type itself ("a newtype is a distinct type with the
+        // representation's layout"): one canon, one name (K3), where this arm
+        // used to be the second answer, an ice after a green check.
+        TkNewtype => instance_arg_spelling(ctx, representation_of(ctx, a))
+        TkTuple => ice("mangle: a TUPLE as an instance argument — its in-name spelling is not measured on the shell")
+        TkPtr => ice("mangle: a POINTER as an instance argument — its in-name spelling is not measured on the shell")
+        // TkEffect: unreachable while the with-doors refuse non-handler values;
+        // ice, not a fallback (E4 wave). An effect has no in-name spelling.
+        TkEffect => ice("mangle: an EFFECT as an instance argument — an effect value reaches a generic instance only through a with-door bug (E4 wave)")
+        TkParam => ice("mangle: a type parameter as an instance argument — layout asked before substitution")
+        TkInfer => ice("mangle: an inference variable as an instance argument — a variable escaped its body")
+    }
+}

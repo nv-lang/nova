@@ -435,3 +435,9 @@ behavior-match 58
 #   callable» — неверная причина; теперь подпись в таблице, вызов типизирован как любой свободный,
 #   печатается символом оболочки по D134 (`nova_fn_8encoding5utf1617is_high_surrogate`), probe вырос.
 #   neg_1 (adler32_init — символа в оболочке нет) — в divergences.allow с историей, честная граница E2-b2.
+# self-accepted -- the 0.2 measure (plan 274, 0.2; the integrator named it canonical 2026-10-01):
+# `scripts/tools/double-build.sh` with NOVAC_UNIT=1, files of novac/src novac's check accepts.
+# A POINT OF REFERENCE, not a ratchet: no guard compares against it yet. First point 100/125,
+# 354 diagnostics at eccc8f559 (2026-09-30 23:44, measured by nova-66).
+# This line: 105/128, 165 diagnostics at 3e68e9e9f.
+self-accepted 105/128

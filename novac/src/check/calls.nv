@@ -416,7 +416,7 @@ fn Checker mut @record_newtype_ctor(e Node, kids []Node, type_id TyId) -> () {
     ro is_newtype = match decl_of_ty(@ctx, type_id).kind {
         TkNewtype => true
         // TkEffect: an effect is not a newtype -- no construction by call.
-        TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkTuple | TkEffect => false
+        TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkTuple | TkEffect | TkPtr => false
     }
     if !is_newtype {
         @report_first_leaf_of(kids,
@@ -603,10 +603,16 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
             return
         }
         ro sym = c_free_symbol(@ctx, row)
-        if !@ctx.interop.has(sym) {
+        if @ctx.in_program(row) {
+            // A function of ANOTHER MODULE OF THE PROGRAM (274.11 E.10 step 2a):
+            // its body is the program's, named by its owner's module; the call is
+            // judged by the owner's signature like an own call.
+        } else if !@ctx.interop.has(sym) {
             @report_first_leaf_of(kids,
                 "outside the subset: `${hfd.name}` is declared in module `${hfd.handed_from}`, whose bodies novac does not compile into this unit yet (E2-b2 multi-file), and the shell novac links into carries no `${sym}` for it")
             return
+        } else {
+            // A handed std function the shell carries: called by the shell's name.
         }
     } else {
         // The file's own callable, or a constructor row: nothing to ask the shell.

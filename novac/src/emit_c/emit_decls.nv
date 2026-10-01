@@ -415,6 +415,7 @@ fn Emitter mut @emit_decl_kind(t int, fwd_only bool) -> () {
             // TkEffect: unreachable while the with-doors refuse non-handler values;
             // ice, not a fallback (E4 wave). An effect declares OPERATION rows, not
             // a C struct; its emission arrives with the Effect-type stage.
+        TkPtr => ice("emit_c: declaration of a POINTER type — a pointer is a structural term, nothing declares one")
         TkEffect => ice("emit_c: declaration of an EFFECT type — an effect owns operations, not a C layout; with-doors refuse non-handler values (E4 wave)")
             // A tuple is a structural TERM: nothing ever declares one, so a
             // registry row with this kind is a harvest bug, not a decl to emit.

@@ -146,7 +146,11 @@ test "generic receiver: refused after an unrelated earlier refusal too (registry
     // `fn[T Serialize] []T @serialize[S Serializer](...)`. Fixed the same
     // way: `before = @out.len()` taken right before the call this gate
     // judges.
-    ro src = "module m\n\nfn broken() -> int {\n    unsafe {\n    }\n}\n\nfn[T] []T @dup(n int) -> []T {\n    @\n}\n"
+    // Since 274.11 E.10 step 3c an `unsafe` STATEMENT passes the walk (typing
+    // judges it); the walk still refuses one standing as an OPERAND, and a
+    // binding tail still breaks the tail rule -- `broken`'s TWO walk refusals in
+    // the same subset pass this test is about.
+    ro src = "module m\n\nfn broken() -> int {\n    ro x = 1 + unsafe {\n    }\n}\n\nfn[T] []T @dup(n int) -> []T {\n    @\n}\n"
     assert(diagnose(src) == 3, "broken's two refusals plus dup's own generic-receiver refusal, not just broken's")
 }
 
@@ -687,6 +691,19 @@ test "a `str` slice is compiled in every bound shape the shell carries; the rest
     // oracle accepts a `u8` bound (measured 2026-09-25).
     ro wide = "module m\n\nfn f(s str, b bool) -> str => s[b..3]\n"
     assert(diagnose_in(wide, shell).contains("only an `int` index"), diagnose_in(wide, shell))
+}
+
+test "a match on a POISONED scrutinee says nothing about its arms -- no `different sum` cascade (2026-10-01)" {
+    // The shape of the carrier (types.nv `ro row = @rows[..]`): the refusal
+    // stands on the BINDING, and the name reaches the `match` silently untyped.
+    // The arms, bare and with a payload, used to add "names a variant of a
+    // different sum" each -- there is no sum to differ from. One cause, one
+    // diagnostic.
+    ro src = "module m\n\ntype S enum\n    | A\n    | B(int)\n\nfn f() -> int {\n    ro r = nosuch()\n    match r {\n        A => 1\n        B(n) => n\n    }\n}\n"
+    assert(diagnose(src) == 1, "${diagnose(src)}: ${diagnose_first_msg(src)}")
+    // CONTROL: a TYPED scrutinee of another sum still gets the refusal.
+    ro typed = "module m\n\ntype S enum\n    | A\n    | B\n\ntype T enum\n    | C\n    | D\n\nfn f(t T) -> int {\n    match t {\n        A => 1\n        _ => 2\n    }\n}\n"
+    assert(diagnose_first_msg(typed).contains("different sum"), diagnose_first_msg(typed))
 }
 
 /// The first diagnostic's message ("" when clean) against a shell that carries

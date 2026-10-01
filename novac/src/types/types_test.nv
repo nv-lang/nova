@@ -142,3 +142,21 @@ test "a tuple interns structurally: same components, one row (B15 step 3)" {
     ro st = it.subst(pp, []TyId.of(a))
     assert(st == p1)
 }
+
+test "a POINTER is a structural term: one id per (mutability, pointee), substituted through, concrete with its pointee (274.11 E.10 step 3)" {
+    mut it = Interner.new()
+    ro int_t = it.prim(0)
+    ro mut_int = it.ptr(int_t, true)
+    // interned: the same pointer twice is one id
+    assert(raw_ty(it.ptr(int_t, true)) == raw_ty(mut_int))
+    // the MUTABILITY is part of the type: `*int` is not `*mut int`
+    ro ro_int = it.ptr(int_t, false)
+    assert(raw_ty(ro_int) != raw_ty(mut_int))
+    assert(it.ptr_is_mut(mut_int))
+    assert(!it.ptr_is_mut(ro_int))
+    // `*mut T` under `T := int` is the interned `*mut int` -- std's `data *mut T`
+    ro mut_p = it.ptr(it.param(0), true)
+    assert(!it.is_concrete(mut_p))
+    assert(raw_ty(it.subst(mut_p, []TyId.of(int_t))) == raw_ty(mut_int))
+    assert(it.is_concrete(mut_int))
+}

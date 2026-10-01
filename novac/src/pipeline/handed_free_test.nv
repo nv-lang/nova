@@ -48,3 +48,42 @@ test "a handed free function: resolved, judged like the file's own, spelled as t
     assert(d3.len() == 0, messages(d3))
     assert(c3.contains("novac_fn_is_high_surrogate__"), c3)
 }
+
+test "a function of ANOTHER MODULE OF THE PROGRAM: judged by its signature, named by its owner (274.11 E.10 step 2a)" {
+    // The module is handed like std's -- a signature without a body -- but it is
+    // marked as the PROGRAM's on the link surface: its body is compiled into the
+    // same program, so the call is not refused for want of a shell symbol and
+    // prints the owner's name.
+    ro helpers = "module novac.helpers\nexport fn twice(n int) -> int => n + n\n"
+    mut texts = std_decls()
+    texts.push(helpers)
+    ro decls = parse_decls(texts)
+    mut link = InteropTable.new()
+    mark_program(link, parse_decls([]str.of(helpers)))
+    ro prog = "module novac.user\nimport ../helpers.{twice}\nfn main() {\n println(twice(3))\n}"
+    ro (d0, c0) = compile_to_c_with(prog, decls, link)
+    assert(d0.len() == 0, messages(d0))
+    assert(c0.contains("novac_fn_novac_helpers_twice__"), c0)
+    // CONTROL: the same module NOT marked as the program's -- the old refusal
+    // by name, the module and the missing symbol.
+    ro (d1, _) = compile_to_c_with(prog, decls, InteropTable.new())
+    assert(messages(d1).contains("declared in module `novac.helpers`"), messages(d1))
+}
+
+test "a POINTER in a handed declaration is read: a std record with a `*mut` field is whole (274.11 E.10 step 3b)" {
+    // std's `Vec[T]` keeps `mut data *mut T`; until step 3b the reference door
+    // answered no type for `*`, and a record whose field it could not read was
+    // a record with a hole. The PLAIN field beside it must read as before, and
+    // the program that touches only it must compile.
+    mut texts = std_decls()
+    texts.push("module std.cellm\nexport type Cell { n int, data *mut int }\nexport fn cell_n(c Cell) -> int => c.n\n")
+    ro decls = parse_decls(texts)
+    ro prog = "import std.cellm.{Cell, cell_n}\nfn f(c Cell) -> int => c.n\nfn main() {\n println(1)\n}"
+    ro (d0, _) = compile_to_c_with(prog, decls, InteropTable.new())
+    assert(d0.len() == 0, messages(d0))
+    // The POINTER field has a TYPE now, and the type is the pointer: returned
+    // as an `int`, the mismatch names `*mut int` -- with no type there the
+    // door had nothing to name (the hole read as silence).
+    ro (d1, _) = compile_to_c_with("import std.cellm.{Cell}\nfn g(c Cell) -> int => c.data\nfn main() {\n println(1)\n}", decls, InteropTable.new())
+    assert(messages(d1).contains("*mut int"), messages(d1))
+}

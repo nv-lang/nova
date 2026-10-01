@@ -452,6 +452,13 @@ export fn type_admits(tys Interner, want TyId, got TyId) -> bool {
             }
             return true
         }
+        // A POINTER admits structurally like a tuple, its head the
+        // MUTABILITY: `*mut T` takes only a `*mut`, and the pointees admit.
+        TkPtr => {
+            if tys.kind_of(got) != TypeKind.TkPtr { return false }
+            if tys.ptr_is_mut(want) != tys.ptr_is_mut(got) { return false }
+            return type_admits(tys, tys.arg(want, 0), tys.arg(got, 0))
+        }
         // TkEffect: not a unification variable and nothing structural to
         // unify -- an effect admits only ITSELF, exactly as the nominal
         // kinds in the group.
@@ -496,6 +503,13 @@ export fn slot_binding_in(tys Interner, want TyId, got TyId, slot int) -> TyId {
                 if is_ty(b) { return b }
             }
             return no_ty()
+        }
+        // Deduction walks INTO a pointer's pointee: `*mut T` against `*mut int`
+        // fixes `T = int` (std's `Vec[T]` field `data *mut T`).
+        TkPtr => {
+            if tys.kind_of(got) != TypeKind.TkPtr { return no_ty() }
+            if tys.ptr_is_mut(want) != tys.ptr_is_mut(got) { return no_ty() }
+            return slot_binding_in(tys, tys.arg(want, 0), tys.arg(got, 0), slot)
         }
         // TkEffect: a marker nominal carries no parameter slot anywhere -- no
         // binding, as the kinds in the group.

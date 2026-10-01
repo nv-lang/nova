@@ -48,7 +48,7 @@ import ../check.{check, check_instance}
 import ../diag.{Diagnostic, ice}
 import ../emit_c.{emit, Instantiation, shell_surface}
 import ../mono.{Reach, reachable}
-import ../sem.{Ctx, collect, decl_fn_row, branch_children, InteropTable}
+import ../sem.{Ctx, collect, decl_fn_row, branch_children, InteropTable, module_dotted}
 import ../types.{TyId}
 
 /// A file's semantic context: the file's types + method signatures, READ
@@ -62,6 +62,15 @@ fn context(tree Node, decls []Node, interop InteropTable) -> Ctx => collect(tree
 /// driver calls this beside `parse_decls` and hands both down; a test that wants
 /// the real surface calls it too, one that wants none passes `InteropTable.new()`.
 export fn interop_surface() -> InteropTable => shell_surface()
+
+/// Marks the PROGRAM's modules on the link surface: every declaration tree
+/// handed from the program's own root (NOVAC_SELF_PATH) is a module whose
+/// bodies the program compiles (274.11 E.10 step 2a); std's trees are not.
+export fn mark_program(mut link InteropTable, program_decls []Node) -> () {
+    for d in program_decls {
+        link.add_module(module_dotted(d))
+    }
+}
 
 /// The declaration TEXTS, parsed once.
 ///

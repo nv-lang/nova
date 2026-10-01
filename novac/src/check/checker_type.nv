@@ -106,6 +106,12 @@ type Checker {
     /// How many `supervised` bodies enclose the statement being typed: a
     /// `spawn` needs one (D50), and the oracle refuses a bare one.
     sup_depth int
+    /// How many `unsafe { }` blocks enclose the expression being typed: a
+    /// raw-pointer operation needs one (D216, E_UNSAFE_REQUIRED).
+    unsafe_depth int
+    /// Raw-pointer operations typed so far in this run: an `unsafe` block whose
+    /// typing did not move it held none (D216, E_UNSAFE_UNUSED).
+    unsafe_ops int
     /// Constant-table rows of the file's module values and, at the same index,
     /// their declarations -- where a cycle's diagnostic stands.
     mv_decl_rows []int

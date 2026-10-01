@@ -843,7 +843,8 @@ fn Checker mut @type_stmt(st Node) -> () {
             // iteration (the mark is the loop's, released after the body).
             if !@bind_pattern(pat, elem, kids, ParamMode.ModeRo, PatPos.PosFor) {
                 @bind_names_untyped(pat)
-            } else if !@walk_carried(kids, ht) { // Language first: the shell's walk is asked of an admitted pattern.
+            } else if !@walk_carried(kids, ht) {
+                // SILENT-OK: refused by the shell's name inside @walk_carried, asked of an ADMITTED pattern (language first).
                 @scope.release(cmark)
                 return
             } else { // Every name bound with its decided type.

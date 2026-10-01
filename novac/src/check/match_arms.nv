@@ -350,7 +350,13 @@ fn Checker mut @bind_name_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode,
         // only, at any depth (registry 1379: `ro (a, None) = p`, `for B in xs`).
         NameOwnVariant(_) => { return !@refused_unit_variant(ak, pos) }
         NameForeignVariant(_) => {
-            @report_first_leaf_of(ak, WRONG_SUM_ARM_MSG)
+            if is_ty(ty) {
+                @report_first_leaf_of(ak, WRONG_SUM_ARM_MSG)
+            } else {
+                // SILENT-OK: a POISONED scrutinee has no sum to compare with --
+                // its refusal was said where it was typed, and "a different
+                // sum" here was its cascade (26 of novac's own arms, 2026-10-01).
+            }
             return false
         }
         NameBinder => {}
@@ -391,6 +397,13 @@ fn Checker mut @bind_variant_pattern(pat Node, ty TyId, ak []Node, dmode ParamMo
     // source qualifier ever writes (wave P3, if-let on `Option.Some`).
     ro wrong_qualifier = pattern_qualifier(pat) != "" && is_ty(ty) &&
                          pattern_qualifier(pat) != decl_of_ty(@ctx, ty).name
+    if !is_ty(ty) {
+        // SILENT-OK: a POISONED scrutinee -- the same cascade as a bare
+        // variant name above; its refusal stands where it was typed.
+        return false
+    } else {
+        // A typed scrutinee: its sum judges the head.
+    }
     ro vrow = variant_in_sum(@ctx, ty, head) ?? no_vrow()
     if wrong_qualifier || (!is_vrow(vrow) && variants_named(@ctx, head).1 > 0) {
         @report_first_leaf_of(ak, WRONG_SUM_ARM_MSG)
