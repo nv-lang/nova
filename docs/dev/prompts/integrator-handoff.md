@@ -18,6 +18,21 @@
 - ветка `nova-kim` — НЕ ПРИНЯТА, доработка отдана окну Kim (`%USERPROFILE%\.kimi-code\sessions\<сессия nova-kim>\integrator-reply-D486.md`; спеку окно НЕ трогает — её сделал интегратор);
 - ветка `ci-green-0930` (дерево `nova-cigreen`, фоновый агент opus) — 5 из 7 причин красного `nova-gate` починены (`c1e63f75a`, `95b507f66`, `f83ab647f`); идёт `merge-precheck --branch`. При слиянии выдать №1370–№1373 четырём строкам `№TBD` (порядок строк ветки) и поднять `registry-rows.baseline`. Остаток: слово `workaround` в `novac/src/sem/binding.nv:92` — окну Карины (снимет и `registry-counts`).
 
+**ДОПОЛНЕНИЕ 2026-10-02 00:57 (nova-20).** bacdefa12 на всех трёх зеркалах (00:12). В main после него (не
+опубликовано): спек-охота помощника (83ecacda8, №1580–№1586), №1571 рост массива из cap 0 (fb420523e), D457 `pub` —
+модификатор поля, обзор видимости в paradigm.ru.md (381b17a40, слово владельца), строки №1578/№1579/№1587 и носитель №1456,
+d486-cond-outer-mode (e867ef054: E_OUTER_RO_IN_CONDITION, примеры D34/D157/D47/D54/D430, №1588/№1589/№1591), №1590 (К1,
+Windows argv/env в cp1251, у помощника первым). Поезд слияний веду сам (агента остановил владелец), ветка
+`integ/merge-train-1001` (дерево nova-mtrain, на origin): appsum, mono-k2 со sweep 1–2 (b40478ce0), cast 1–4 (603f826ae;
+`is_expr.nv` сведён — квалификатор сравнивается по `decl_index_of_ty`; обзор `is` дописан; упрощение «не числовые `as`
+отказом» названо), k1 часть 2 — стражи идут (`D:\Temp\chain_mk1.sh`; сведены exprs/const_types/harvest, тест
+`type W` → `Wrap` из-за D30). Дальше: sweep 3–4 (62f799dbf, `D:\Temp\msg-msweep.txt`), strarm 4–5 (7e8d81a1e,
+`msg-mstrarm5.txt`), затем все стражи novac + loop-гейт + слияние поезда в main (пересчитать spec-queue) + integrate + CI.
+k1 ждёт хэш слияния mono-k2 на origin. ВОПРОС ВЛАДЕЛЬЦУ ОТКРЫТ: правило литералов «тип позиции, если значение
+представимо точно» (`scratchpad/literal-rule-draft.md`; пробы `D:\Temp\litprobe`, 28 клеток: молча теряют точность
+16777217→f32, 2^53+1→f64, 1e40→inf; отвергаются без потерь 2.0→int, 'a'→u8, `'a' =>` над u8). До ответа ветку помощника
+`p1535b-intlit-over-float` НЕ вливать. Блоки облачным сессиям — scratchpad `reply-*.md`, `prompt-carina-mono-k2-4.md`.
+
 **ДОПОЛНЕНИЕ 2026-10-01 23:28 (nova-20).** origin/main = `bacdefa12` (23:22; 1559/1556/1572 + strarm 2-3 + 1535/1554 +
 решения владельца по спеке + D488 + страж указателей D-блоков). Доказательство: 7/7, красный только принятый #1442
 (novac differential cut). Зеркала ждут второго круга CI, публикует фон `D:\Temp\mirrors_bac.sh`. nova-63 получил
