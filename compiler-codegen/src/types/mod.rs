@@ -33,9 +33,11 @@ use unknown_type_name::STDLIB_PROTOCOL_ALIASES;
 mod record_lit_schema; // #1448/#1096: a record literal against its record's fields
 mod generic_sum; // #1337/#1338: a user generic sum's ctor, payload and expected type
 mod raw_ptr_ops; // #1473: raw-pointer address arithmetic outside unsafe (D216 part 1)
+mod as_cast_rules; // #1547: the `as` rules of D54 in the checker, not the emitter
 pub(crate) mod reserved_names; // D487: a declared name outside the compiler's C namespaces (called by the parser)
 pub(crate) mod coerce_door; // #1451/#1452: one door for `#coerce` -- checker decides, rewrite reads
 mod const_names; // #1488: the type of a module-level `const`/`ro` read by its bare name
+mod variant_ctor; // #1517: a variant constructor against the sum instance it builds
 
 /// Plan 196 (gs-bounds migration, spike `docs/plans/wip/196-gs-spike.md`):
 /// `gs` ("generics in scope") used to be `HashSet<String>` — ONLY the names of the
@@ -2089,6 +2091,7 @@ fn check_module_impl(
         module,
         &type_check_ctx.resolved_callees.borrow(),
         raw_ptr_ops::pointer_typed_exprs(&type_check_ctx.resolved_types_buf.borrow()),
+        type_check_ctx.unsafe_gated_casts.borrow().clone(),
         &mut errors,
     );
     perf.mark("check_unsafe_context_in_module");
@@ -4607,6 +4610,9 @@ struct TypeCheckCtx<'a> {
     /// Registry 221.1 #1451/#1452: >0 while `assignable` is asked speculatively
     /// (overload filtering) -- a probe must not leave a coercion in the channel.
     coerce_probe_depth: std::cell::Cell<u32>,
+    /// Registry 221.1 #1547: casts D54 allows only inside `unsafe { }` (`as_cast_rules.rs`),
+    /// with their refusal -- judged by the unsafe pass, which knows the depth.
+    unsafe_gated_casts: std::cell::RefCell<HashMap<crate::ast::ExprId, String>>,
     /// Registry 221.1 #1488: module-level values by name, the module of each
     /// file, and the recursion bound of `const A = B` (`const_names.rs`).
     module_values: HashMap<String, Vec<const_names::ModuleValue<'a>>>,
@@ -5548,6 +5554,7 @@ impl<'a> TypeCheckCtx<'a> {
             sum_wrap_kinds_buf: std::cell::RefCell::new(HashMap::new()),
             coerce_sites_buf: std::cell::RefCell::new(HashMap::new()),
             coerce_probe_depth: std::cell::Cell::new(0),
+            unsafe_gated_casts: std::cell::RefCell::new(HashMap::new()),
             module_values: const_names::collect_module_values(module),
             module_value_files: module.peer_files.iter().map(|p| (p.file_id, p.module_name.as_slice())).collect(),
             module_value_depth: std::cell::Cell::new(0),
@@ -10090,7 +10097,9 @@ impl<'a> TypeCheckCtx<'a> {
                     self.f1_check_assign_let(
                         &d.value, ann, &name, d.mutable, gs, scope, errors,
                     );
-                } else if pattern_simple_name(&d.pattern).is_some() {
+                } else if let Some(name) = pattern_simple_name(&d.pattern) {
+                    // #1517: `ro x = None` -- nothing fixes the sum's parameter.
+                    self.check_untyped_variant_ctor(&d.value, &name, scope, errors);
                     // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1,
                     // 2026-07-23): UNANNOTATED `let` — `mut b = a` / `ro b = a`
                     // — has no `ann` so `f1_check_assign_let` above never runs
@@ -11299,6 +11308,8 @@ impl<'a> TypeCheckCtx<'a> {
         }
         match &e.kind {
             ExprKind::Call { func, args, trailing } => {
+                // #1517: a variant constructor's payload count (`variant_ctor.rs`).
+                self.check_variant_ctor_arity(e, scope, errors);
                 // 172.1.2 Шаг 2: func-позиция — Member здесь = метод-вызов, не field-read.
                 self.in_call_func.set(true);
                 self.f1_expr(func, gs, scope, errors);
@@ -12377,6 +12388,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
             ExprKind::As(inner, cast_ty) => {
                 self.f1_expr(inner, gs, scope, errors);
+                self.check_as_cast(e, inner, cast_ty, scope, errors); // #1547: D54
                 // **№375 (D216 §4 AMEND / D246, Plan 118.6 restored, owner
                 // decision 2026-08-06, spec commit 96100421e, window
                 // p375-ptr2):** `(&place) as *mut T` / `(raw &place) as *mut
@@ -12900,6 +12912,9 @@ impl<'a> TypeCheckCtx<'a> {
                 let is_assign_target_top = self.assign_target_top.replace(false);
                 self.f1_expr(operand, gs, scope, errors);
                 self.f4_check_value(operand, scope, errors);
+                if matches!(op, UnOp::Neg) {
+                    self.check_neg_unsigned(e, operand, scope, errors); // #1547: signed types only
+                }
                 // №367: `*p` DEREF READ on a raw pointer — the READ-form
                 // sibling of the already-closed WRITE retraction (`*p = v`,
                 // №353, `check_target_readonly`'s Deref arm). `nova check`
@@ -21300,6 +21315,32 @@ impl<'a> TypeCheckCtx<'a> {
             _ => {}
         }
         match &value.kind {
+            // Registry 221.1 #1532: an array literal of untyped literals at a known
+            // `[]T` / `Vec[T]` position with a primitive `T` -- `f([1, 2, 3])` with
+            // `f(data []u8)`. `assignable` judges it element by element (D44: the
+            // literal adapts to its position), but nothing wrote that answer into
+            // the channel: `f1_expr` had stamped the context-free `Array(int)`, and
+            // the generic-argument check of `f1_check_call` read `Vec[int]` back
+            // and refused the call (E_ARG_ELEM_TYPE_MISMATCH). Hidden on polaris
+            // until #1488 typed `StatusCode.OK` and the overload became decidable.
+            // Each element gets `T`, the literal gets the position's type.
+            ExprKind::ArrayLit(items)
+                if !items.is_empty()
+                    && items.iter().all(|it| matches!(it, ArrayElem::Item(x) if is_untyped_const_expr(x))) =>
+            {
+                let Some(elem) = array_elem_type(expected) else { return };
+                if !Self::ts_member(&ResolvedType::from_type_ref(elem), constraint_solver::TypeSet::Primitive) {
+                    return;
+                }
+                for it in items {
+                    if let ArrayElem::Item(x) = it {
+                        self.materialize_literal_coercion(x, elem);
+                    }
+                }
+                if value.id.is_set() {
+                    self.resolved_types_buf.borrow_mut().insert(value.id, ResolvedType::from_type_ref(expected));
+                }
+            }
             ExprKind::IntLit(_) => {
                 if value.id.is_set() {
                     let rt = ResolvedType::from_type_ref(expected);
@@ -21946,7 +21987,11 @@ impl<'a> TypeCheckCtx<'a> {
                 // ложнит на живом коде, живёт до первого окна, которое её
                 // выключит; проверка, которая молчит на части форм, живёт и
                 // ловит своё.
-                if !ResolvedType::from_type_ref(ret).is_primitive_lowerable() {
+                // #1517: a variant constructor of the declared sum is judged by
+                // its payload (`variant_ctor.rs`) -- a precise verdict, reported.
+                if !ResolvedType::from_type_ref(ret).is_primitive_lowerable()
+                    && !self.is_ctor_of_expected_sum(value, ret, scope)
+                {
                     return;
                 }
                 errors.push(Diagnostic::new(
@@ -23163,6 +23208,10 @@ impl<'a> TypeCheckCtx<'a> {
             }
             return Compat::Ok;
         }
+        // #1517: a constructor of the expected sum -- payload against the instance.
+        if let Some(v) = self.variant_ctor_compat(expr, expected, expr_gs, exp_gs, scope) {
+            return v;
+        }
         // Литералы: тип адаптируется к контексту (D44).
         match &expr.kind {
             // Plan 200 (sql-autoconv) D55 amend: `[a, b, …]` against `[]T` /
@@ -24161,16 +24210,30 @@ impl<'a> TypeCheckCtx<'a> {
                 // (lexicographically smallest) one — same source now ALWAYS produces the
                 // same C, so a genuinely-ambiguous corpus fails (or passes) the SAME way on
                 // every run instead of flaking.
-                let mut candidates: Vec<&String> = self.types.iter()
+                let owners: Vec<(&String, crate::diag::FileId)> = self.types.iter()
                     .filter_map(|(type_name, td)| {
                         if let TypeDeclKind::Sum(variants) = &td.kind {
                             if td.generics.is_empty() && variants.iter().any(|v| &v.name == name) {
-                                return Some(type_name);
+                                return Some((type_name, td.span.file_id));
                             }
                         }
                         None
                     })
                     .collect();
+                // Registry 221.1 #1555: a bare variant is first the variant of a sum
+                // of the READING module. The tie-break below ran over the whole merged
+                // CU, so a library's `Get` (its own `Method`) became the importer's
+                // `HttpMethod.Get` -- "HttpMethod" sorts before "Method" -- and since
+                // #1517 checks a constructor's payload against its instance, the
+                // library's `Ok(match s { "GET" => Get, .. })` was E7301. A module that
+                // imports the library does not change what the library's names mean.
+                let here = self.module_value_files.get(&expr.span.file_id).copied();
+                let own: Vec<&String> = owners.iter()
+                    .filter(|(_, fid)| here.is_some() && self.module_value_files.get(fid).copied() == here)
+                    .map(|(n, _)| *n)
+                    .collect();
+                let mut candidates: Vec<&String> =
+                    if own.is_empty() { owners.iter().map(|(n, _)| *n).collect() } else { own };
                 candidates.sort();
                 if let Some(type_name) = candidates.into_iter().next() {
                     return Some(TypeRef::Named {
@@ -54972,6 +55035,9 @@ impl MapLitAnnotator<'_> {
                 // `if`/if-let/`match`, ...): no emitter path had to hand it its target, and the named form builds
                 // in all of them. The checker already accepted the literal against this target.
                 if let TypeRef::Named { path, generics, .. } = exp {
+                    // #1533 -> #1545: the bare name is safe to write -- the emitter reads a named
+                    // record literal by KIND (`codegen/emit_c/type_by_role.rs`), so the prelude's
+                    // generic sum `Outcome[T]` is never taken for a program's record `Outcome`.
                     if generics.is_empty() && !self.ctx.expected_is_from_fields(exp) && !fields.iter().any(|f| f.is_spread)
                         && matches!(path.last().and_then(|n| self.ctx.wrap_types.get(n)), Some(TypeDeclKind::Record(_))) {
                         *tn = Some(path.clone());
@@ -57408,6 +57474,7 @@ pub(crate) fn check_unsafe_context_in_module(
     module: &crate::ast::Module,
     resolved_calls: &HashMap<crate::ast::ExprId, Span>,
     ptr_exprs: HashSet<crate::ast::ExprId>,
+    unsafe_gated_casts: HashMap<crate::ast::ExprId, String>,
     errors: &mut Vec<Diagnostic>,
 ) {
     use crate::ast::{Item, FnBody};
@@ -57615,6 +57682,7 @@ pub(crate) fn check_unsafe_context_in_module(
         in_call_arg: false,
         unsafe_block_used: Vec::new(),
         ptr_exprs,
+        unsafe_gated_casts,
     };
     // peer_files mode: walk only entry peers items_here (Plan 62.A pattern)
     let entry_items: Vec<&Item> = if module.peer_files.is_empty() {
@@ -57769,6 +57837,9 @@ struct UnsafeCtx {
     unsafe_block_used: Vec<bool>,
     /// #1473: ids the checker typed as a raw pointer (`raw_ptr_ops`).
     ptr_exprs: HashSet<crate::ast::ExprId>,
+    /// #1547: casts D54 allows only inside `unsafe { }`, with their refusal
+    /// (`as_cast_rules.rs`). Inside: the block's operation; outside: an error.
+    unsafe_gated_casts: HashMap<crate::ast::ExprId, String>,
 }
 
 impl UnsafeCtx {
@@ -58621,6 +58692,15 @@ impl UnsafeCtx {
                 }
             }
             ExprKind::As(inner, ty) => {
+                // #1547: a cast D54 allows only inside `unsafe { }` -- the block's
+                // operation there, an error outside.
+                if let Some(msg) = self.unsafe_gated_casts.get(&e.id) {
+                    if self.depth > 0 {
+                        self.mark_unsafe_used();
+                    } else {
+                        errors.push(Diagnostic::new(msg.clone(), e.span));
+                    }
+                }
                 // unsafe-cluster / E_UNSAFE_UNUSED (D216 §21 map addendum,
                 // 2026-07-11): an `as`-cast to `char` is a value-range-unsafe
                 // scalar conversion — an out-of-range int yields an INVALID

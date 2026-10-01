@@ -1046,7 +1046,7 @@ Record-вариант строится фигурной формой, и гол�
 
 ```nova
 ro c = Circle { radius: 1.0 }
-ro d = Shape.Circle { radius: 1.0 }   // то же самое, голова квалифицирована
+ro d = Shape.Circle { radius: 1.0 }   // the same, with a qualified head
 ```
 
 Подробно — [D17](decisions/02-types.md#d17).

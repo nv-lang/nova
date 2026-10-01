@@ -1,15 +1,16 @@
 // Plan 103.1 Ф.6 negative — unit-вариант MemOrdering с payload.
 //
-// EXPECT_CC_ERROR
+// EXPECT_COMPILE_ERROR E_VARIANT_CTOR_ARITY
 //
 // `MemOrdering.Acquire(42)` — unit-вариант вызывается как функция с int
-// аргументом. Codegen эмитит вызов `Nova_MemOrdering_static_Acquire(42)`,
-// которая не существует ни в sync_primitives.h ни в сгенерированном C.
-// С флагом `-Wno-everything` clang допускает implicit decl, но линкер
-// не может resolve undefined symbol → CC error (link phase).
-// `bad()` вызывается из теста чтобы линкер не выкинул её через DCE.
+// аргументом. До реестра 221.1 №1517 это ловил только Си (маркер был
+// `EXPECT_CC_ERROR` без подстроки: codegen эмитил вызов несуществующей
+// `Nova_MemOrdering_static_Acquire(42)`, и отказывал линкер). Теперь число
+// значений payload варианта судит чекер, в любой позиции.
+// `bad()` вызывается из теста, как и прежде.
 
 module neg.plan103_1_ordering_construct_with_payload_neg
+// nova:expect E_VARIANT_CTOR_ARITY -- a unit variant takes no payload value, one is given
 fn bad() -> MemOrdering => MemOrdering.Acquire(42)
 
 test "should not compile" {

@@ -29,6 +29,7 @@ import ../sem.{branch_children, leaf_text, leaf_kind, c_type}
 import ../sem.{int_literal_c_text, char_literal_code}
 import ../lex.{TokenKind}
 import ../sem.{c_tag, is_value_sum, VariantRow, raw_vrow, no_vrow, vec_op_c}
+import ../sem.{is_shell_applied_sum}
 import ../builtins.{bool_c_literal, VEC_LEN_METHOD, is_bool_literal, is_true_literal}
 import ../types.{TyId}
 import ../lower.{Local, Pattern, Cond}
@@ -38,9 +39,19 @@ import ../lower.{Local, Pattern, Cond}
 /// value sum is read with `.`, a heap sum with `->`. Before A4 the arrow was
 /// unconditional, which is exactly the shape that breaks silently the day the
 /// oracle moves a type off the heap.
+///
+/// AN APPLIED SUM IS THE SHELL'S, and its test is spelled by its own door
+/// (emit_applied_sum.nv): novac's `NOVAC_TAG_...` names nothing in the shell's
+/// `NovaOpt_`/`NovaRes_` instances. The question is the checker's own
+/// (`is_shell_applied_sum`), so only a sum the checker let through arrives.
 fn Emitter mut @emit_tag_test(scr Local, vrow VariantRow) -> () {
-    ro arrow = if is_value_sum(@ctx, @lo.ir.decl_of(scr).ty) { "." } else { "->" }
-    @body.append("(${@lo.ir.decl_of(scr).name}${arrow}tag == ${c_tag(@ctx, vrow)})")
+    ro sd = @lo.ir.decl_of(scr)
+    if is_shell_applied_sum(@ctx, sd.ty) {
+        @body.append("(${@applied_sum_tag_test(sd.ty, sd.name, vrow)})")
+        return
+    }
+    ro arrow = if is_value_sum(@ctx, sd.ty) { "." } else { "->" }
+    @body.append("(${sd.name}${arrow}tag == ${c_tag(@ctx, vrow)})")
 }
 
 /// The C of the arm's test, spelled FROM the pattern: an int compare, the tag

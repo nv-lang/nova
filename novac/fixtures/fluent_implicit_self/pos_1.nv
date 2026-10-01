@@ -1,0 +1,66 @@
+module fluent_implicit_self.pos_1
+
+// D409: a `-> @` body writes no self-return -- a missing tail, a bare `return`
+// and a tail `if` without `else` each return the receiver. Judged by ONE door
+// for the file's own body and for a body novac instantiates from std
+// (registry 221.1 #1520): novac refused the own forms as "body ends without a
+// value", and emitted a handed one with no return at all. Behaviour byte for
+// byte with the oracle.
+
+type Ctr {
+    n int
+}
+
+// No tail at all.
+fn Ctr mut @reset() -> @ {
+    @n = 0
+}
+
+// A bare `return` is `return @`.
+fn Ctr mut @set_pos(x int) -> @ {
+    if x < 0 {
+        return
+    }
+    @n = x
+}
+
+// A tail `if` without `else`: the false path falls through to `return @`.
+fn Ctr mut @bump_if(b bool) -> @ {
+    if b {
+        @n += 1
+    }
+}
+
+// A tail expression that is not the receiver is a statement (D409).
+fn Ctr @peek() -> int => @n
+fn Ctr mut @touch() -> @ {
+    @n += 10
+    @peek()
+}
+
+fn main() {
+    mut c = Ctr { n: 5 }
+    ro a = c.reset()
+    println(a.n)
+    ro b = c.set_pos(0 - 3)
+    println(b.n)
+    ro d = c.set_pos(7)
+    println(d.n)
+    ro e = c.bump_if(true)
+    println(e.n)
+    ro f = c.bump_if(false)
+    println(f.n)
+    ro g = c.touch()
+    println(g.n)
+    println(c.set_pos(4).peek())
+    // Handed std bodies of the same forms: no tail (`clear`), a tail `if`
+    // without `else` (`truncate`).
+    mut v = [1, 2, 3]
+    ro w = v.truncate(2)
+    println(w.len())
+    ro x = v.truncate(9)
+    println(x.len())
+    ro y = v.clear()
+    println(y.len())
+    println(v.len())
+}

@@ -1,0 +1,6 @@
+module hp
+
+fn main() {
+    ro v = [1, 2]
+    println(v.is_empty())
+}

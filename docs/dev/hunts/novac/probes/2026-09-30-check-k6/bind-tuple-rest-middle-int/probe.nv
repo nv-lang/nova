@@ -1,8 +1,0 @@
-// D486 s2: the tuple `..` is TRAILING only. With `..` in the middle, `z`
-// is written after the rest and can only mean the LAST element (30).
-// Probe: does novac accept it, and which element does z read?
-fn main() {
-    ro t = (10, 20, 30)
-    ro (a, .., z) = t
-    println(z)
-}

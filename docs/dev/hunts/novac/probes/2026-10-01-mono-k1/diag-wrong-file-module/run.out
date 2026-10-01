@@ -1,0 +1,15 @@
+=== PACKAGE
+./src/geo/geo.nv
+./src/main.nv
+=== ORACLE: nova build src/main.nv, run
+oracle build rc=1
+[1m[31merror:[0m[0m <tmp>\pkg\src\geo\geo.nv:4:5: error: undefined identifier `println`
+=== SUBJECT: novac check (NOVAC_SELF_PATH=<pkg>/src)
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"<tmp>/pkg/src/main.nv","start":55,"end":62},"message":"outside the subset: `println` is not a callable novac knows in an expression -- either it does not exist, or (like `println`) it is a statement-only form novac does not read as a value (E2-b3)","poisoned_by":null}
+novac check rc=1
+=== SUBJECT: novac emit
+novac emit rc=1
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"<tmp>/pkg/src/main.nv","start":55,"end":62},"message":"outside the subset: `println` is not a callable novac knows in an expression -- either it does not exist, or (like `println`) it is a statement-only form novac does not read as a value (E2-b3)","poisoned_by":null}
+--- C lines matching: novac_fn_
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+(skipped: refused by novac, or no smoke cache)

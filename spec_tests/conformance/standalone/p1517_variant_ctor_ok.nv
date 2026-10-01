@@ -1,0 +1,54 @@
+// EXPECT_STDOUT a=3 b=7 c=1 w=5 xs=2 m=q pick=yes res=no u8=200 take=t,z shape=3 nested=4 pair=ab
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 #1517, positive half: the forms the variant-constructor door
+// must keep accepting. The payload fixes the instance with no expected type
+// (`Some(1)` -> `Option[int]`); an annotation, a return type or a parameter
+// gives the instance a bare `None` takes; literals adapt to the field type
+// (`Some(200)` into `Option[u8]`); a generic body's `Some(xs[0])` against
+// `Option[T]`; a constructor nested in another (negatives:
+// `neg/p1517_variant_ctor_*_neg.nv`).
+module standalone.p1517_variant_ctor_ok
+
+type P1517oShape enum P1517oCircle(f64) | P1517oSq(int, int) | P1517oDot
+type P1517oPair[T] enum P1517oTwo(T, T) | P1517oZero
+type P1517oWrap { o Option[int] }
+
+fn p1517o_first[T](xs []T) -> Option[T] {
+    if xs.len() == 0 {
+        return None
+    }
+    Some(xs[0])
+}
+
+fn p1517o_pick(f bool) -> Option[str] => if f { Some("yes") } else { None }
+fn p1517o_res(f bool) -> Result[int, str] => if f { Ok(1) } else { Err("no") }
+fn p1517o_nested() -> Option[Option[int]] => Some(Some(4))
+fn p1517o_u8() -> Option[u8] => Some(200)
+fn p1517o_shape() -> P1517oShape => P1517oSq(3, 4)
+fn p1517o_pair() -> P1517oPair[str] => P1517oTwo("a", "b")
+fn p1517o_take(o Option[str]) -> str => o ?? "z"
+
+fn main() {
+    ro a = Some(3)
+    ro b Option[int] = None
+    ro c = p1517o_first([1, 2])
+    ro w = P1517oWrap { o: Some(5) }
+    ro xs []Option[int] = [Some(1), None]
+    mut m Option[str] = None
+    m = Some("q")
+    ro res = match p1517o_res(false) {
+        Ok(v) => "${v}"
+        Err(e) => e
+    }
+    ro shape = match p1517o_shape() {
+        P1517oSq(x, y) => x
+        _ => 0
+    }
+    ro pair = match p1517o_pair() {
+        P1517oTwo(l, r) => "${l}${r}"
+        P1517oZero => "-"
+    }
+    ro nested = (p1517o_nested() ?? None) ?? 0
+    println("a=${a ?? 0} b=${b ?? 7} c=${c ?? 0} w=${w.o ?? 0} xs=${xs.len()} m=${m ?? "-"} pick=${p1517o_pick(true) ?? "-"} res=${res} u8=${p1517o_u8() ?? 0} take=${p1517o_take(Some("t"))},${p1517o_take(None)} shape=${shape} nested=${nested} pair=${pair}")
+}

@@ -1,0 +1,15 @@
+=== PACKAGE
+./src/main.nv
+=== ORACLE: nova build src/main.nv, run
+oracle build rc=0
+oracle run rc=0
+3
+=== SUBJECT: novac check (no NOVAC_SELF_PATH: single file)
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"<scratch>/tmp.9f9sYymDwo/pkg/src/main.nv","start":223,"end":224},"message":"cannot return value of type `int` from a function declared `-> Ctr` (E7301): no implicit conversion between named types (D405, spec/conversions.md) -- convert with `as`, or fix the declaration","poisoned_by":null}
+novac check rc=1
+=== SUBJECT: novac emit
+novac emit rc=1
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"<scratch>/tmp.9f9sYymDwo/pkg/src/main.nv","start":223,"end":224},"message":"cannot return value of type `int` from a function declared `-> Ctr` (E7301): no implicit conversion between named types (D405, spec/conversions.md) -- convert with `as`, or fix the declaration","poisoned_by":null}
+--- C lines matching: novac_fn_
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+(skipped: refused by novac, or no smoke cache)

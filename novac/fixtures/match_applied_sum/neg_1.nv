@@ -1,0 +1,22 @@
+module match_applied_sum.neg_1
+
+// A `match` on an `Option` that leaves `None` uncovered -- refused, as on any
+// sum, and refused HERE rather than at the C compiler or at run time.
+//
+// Why the cell exists: the coverage rule asked only whether the scrutinee was
+// a plain sum, and an applied one returned before any judgment. That was
+// harmless while every `match` on an applied sum was refused at its head; the
+// day `Option` and `Result` passed, this exact program was ACCEPTED by the
+// first build of the wave, while the oracle says E_MATCH_NON_EXHAUSTIVE -- a
+// silent acceptance of a program whose `None` would have read the result
+// temporary's zero. The pair: pos_1.nv covers every variant and passes.
+
+// NOVAC_EXPECT leaves a variant uncovered
+
+fn first(o Option[int]) -> int => match o {
+    Some(v) => v
+}
+
+fn main() {
+    println(first(Some(1)))
+}

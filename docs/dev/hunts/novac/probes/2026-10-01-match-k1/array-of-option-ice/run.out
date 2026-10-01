@@ -1,0 +1,15 @@
+=== PACKAGE
+./src/main.nv
+=== ORACLE: nova build src/main.nv, run
+oracle build rc=0
+oracle run rc=0
+2
+=== SUBJECT: novac check (no NOVAC_SELF_PATH: single file)
+{"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error (novac bug, not yours): mangle: the record-shaped instance body of a generic SUM -- ask `c_instance_method`, which spells a sum by its family","poisoned_by":null}
+novac check rc=2
+=== SUBJECT: novac emit
+novac emit rc=2
+{"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error (novac bug, not yours): mangle: the record-shaped instance body of a generic SUM -- ask `c_instance_method`, which spells a sum by its family","poisoned_by":null}
+--- C lines matching: novac_fn_
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+(skipped: refused by novac, or no smoke cache)

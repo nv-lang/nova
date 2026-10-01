@@ -1,0 +1,8 @@
+fn main() {
+    ro f = [1.5, 2.5, 3.5]
+    ro s = ["a", "b", "c"]
+    println(s.index(1))
+    println(f.index(1))
+    println(s.index(2))
+    println(f.index(2) + f.index(0))
+}

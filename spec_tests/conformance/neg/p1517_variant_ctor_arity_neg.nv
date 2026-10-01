@@ -1,0 +1,29 @@
+// EXPECT_COMPILE_ERROR E_VARIANT_CTOR_ARITY
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 #1517: the number of payload values of a variant constructor
+// was never counted by the checker. `Some(1, 2)` passed `nova check` and failed
+// in the C compiler ("too many arguments to function call"). A tuple variant
+// declares its payload positionally (D406); the count is judged in every
+// position, with or without an expected type.
+module neg.p1517_variant_ctor_arity_neg
+
+type P1517aShape enum P1517aCircle(f64) | P1517aSq(int, int) | P1517aDot
+
+fn p1517a_take(s P1517aShape) -> int => 1
+
+fn main() {
+    // nova:expect E_VARIANT_CTOR_ARITY -- one payload too many, no expected type
+    ro a = Some(1, 2)
+    // nova:expect E_VARIANT_CTOR_ARITY -- one too many against an annotation
+    ro b Option[int] = Some(1, 2)
+    // nova:expect E_VARIANT_CTOR_ARITY -- one too few, qualified, argument position
+    println(p1517a_take(P1517aShape.P1517aSq(1)))
+    // nova:expect E_VARIANT_CTOR_ARITY -- bare constructor, three values for two
+    ro c P1517aShape = P1517aSq(1, 2, 3)
+    // nova:expect E_VARIANT_CTOR_ARITY -- a unit variant called with a value
+    ro d P1517aShape = P1517aDot(1)
+    // nova:expect E_VARIANT_CTOR_ARITY -- `None` takes no payload
+    ro e Option[int] = None(1)
+    println(1)
+}

@@ -24,6 +24,7 @@ mod generic_overload_mono; // #1343: generic free-fn monomorph by declaration, s
 mod method_key; mod default_dispatch; mod consume_disarm_resolved; // #1413 method key; #1414 value default method; #1100 disarm by resolved callee
 mod type_repr_early; mod generic_sum_schema; // #761: newtype/alias representation before any consumer; #1338: generic sum payload layout from the channel
 mod c_name; // #1440/#1446: the one door "Nova name -> C identifier", see its doc
+mod type_by_role; // #1545/#1527: a bare type name read by the kind its position admits, see its doc
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
@@ -10484,6 +10485,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.lazy_const_syms.contains(&q).then_some(q)
     }
 
+    /// Registry 221.1 #1549: THE C identifier of a read of `name` in `file_id` that is
+    /// not a local -- a module const, wherever it is read: a body (`emit_expr`) or the
+    /// initialiser of another const (`emit_const_expr`). Three steps, in the order the
+    /// definition (`emit_const_decl`) names the symbol: the module-private /
+    /// file-keyed qualified name (Plan 91.12); a colliding `export const`'s qualified
+    /// name (#151); else the name through the C-name door (#1440/#1446), which is
+    /// how an unqualified definition is emitted (#1498). The const initialiser used
+    /// to stop after step one and emit the bare name -- `DAY_MS` against `nv_DAY_MS`.
+    fn const_ref_c_name(&self, file_id: crate::diag::FileId, name: &str) -> String {
+        if let Some(mangled) = self.private_const_c_names.get(&(file_id, name.to_string())) {
+            return mangled.clone();
+        }
+        if self.colliding_const_names.contains(name) {
+            if let Some(mangled) = self.const_qualified_by_name.get(name) {
+                return mangled.clone();
+            }
+        }
+        Self::mangle_field_name(name)
+    }
+
     /// D184 amend: the init-order key of a read `r` in `file_id` -- the C symbol it resolves to (`Type.NAME` ->
     /// `Type_NAME`), so two modules' same-named `ro`s are two nodes, as in the checker's graph (#1158 class).
     pub(crate) fn init_dep_sym(&self, file_id: crate::diag::FileId, r: &str) -> String {
@@ -10957,13 +10978,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // `private_const_c_names` keyed by this expression's file_id (peers
             // in the same module-group all carry the group's consts). Fall back
             // to the bare name for exported consts (emitted under their own name).
-            ExprKind::Ident(name) => {
-                let mangled = self.private_const_c_names
-                    .get(&(expr.span.file_id, name.clone()))
-                    .cloned()
-                    .unwrap_or_else(|| name.clone());
-                Ok(mangled)
-            }
+            // #1549: through the SAME door as a read in a body (`const_ref_c_name`).
+            // The bare-name fallback here missed the C-name door (#1440/#1446), which
+            // escapes an ALL-CAPS name: `export const WEEK_MS = 7 * DAY_MS` emitted
+            // `nv_DAY_MS` for the definition and `DAY_MS` for this reference.
+            ExprKind::Ident(name) => Ok(self.const_ref_c_name(expr.span.file_id, name)),
             // [M-d200-assoc-const-composite-value]: constructor-call RHS
             // (`= StatusCode.mk(200)`) is NOT extended to constexpr — a call
             // is a runtime dispatch regardless of purity; D200 composite
@@ -36249,31 +36268,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                     return Ok(self.fn_value_c_name(name, expr.id));
                 }
-                // Plan 91.12: module-private const C-name via (use-site file_id, name); the pre-pass covers every
-                // peer of the module group. A same-named LOCAL is caught above (#1397) -- the old note here
-                // claimed the mangling alone covered that case; it did not.
-                if let Some(mangled) = self.private_const_c_names
-                    .get(&(expr.span.file_id, name.clone()))
-                {
-                    return Ok(mangled.clone());
-                }
-                // [fix №151] EAGER (constexpr-initialiser) colliding export
-                // const — mirrors the lazy branch's `const_qualified_by_name`
-                // fallback above (this map's value IS the final eager symbol
-                // itself, no `_nova_const_..._value` wrapper — same
-                // convention `emit_const_decl`'s eager arm already uses).
-                if self.colliding_const_names.contains(name) {
-                    if let Some(mangled) = self.const_qualified_by_name.get(name) {
-                        return Ok(mangled.clone());
-                    }
-                }
-                // [M-c-keyword-ident-collision] (Plan 172.13): plain local-var/
-                // param read (and, since Stmt::Assign lowers its target via
-                // `emit_expr`, assignment TARGETS too) — the universal fallthrough
-                // for "this identifier is a real local". Mangle the OUTPUT text
-                // only; all lookups above (var_types/private_const_c_names/etc.)
-                // already ran against the RAW `name`, so this must stay last.
-                Ok(Self::mangle_field_name(name))
+                // A module const, or (the universal fallthrough) a real local -- one door
+                // with the const initialiser's reference (`const_ref_c_name`, #1549).
+                // A same-named LOCAL is caught above (#1397).
+                Ok(self.const_ref_c_name(expr.span.file_id, name))
             }
             ExprKind::Path(parts) => {
                 // Plan 38: numeric type constants — `int.MAX`, `f64.NAN`, etc.
@@ -38517,21 +38515,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 //   - NaN → 0
                 //   - ±Infinity → границы
                 //
-                // Plan 08 Ф.5: as-cast restrictions для char/byte/bool.
-                // По D54 запрещены: int as char (use char.try_from), int as bool
-                // (use n != 0), char as byte (use byte.try_from), str ↔ T (use
-                // str.from / T.try_from). Detection через original Nova-имя
-                // target'а (TypeRef::Named path), не через C-имя — char и int
-                // имеют одинаковый C-тип nova_int.
+                // The D54 table of forbidden pairs is the CHECKER's (registry #1547,
+                // types/as_cast_rules.rs): `nova check` refuses them, the emitter
+                // only lowers what passed.
                 let target_nova = if let TypeRef::Named { path, .. } = ty {
                     path.last().cloned()
                 } else { None };
                 let inner_c_ty_for_check = self.infer_expr_c_type(inner);
-                // Получим Nova-имя источника для restrictions check.
-                let src_nova = Self::debt_nova_type_name_from_c(&inner_c_ty_for_check);
-                if let Some(tgt_nova) = target_nova.as_deref() {
-                    Self::check_as_cast_allowed(&src_nova, tgt_nova, &inner.kind, self.unsafe_depth > 0)?;
-                }
                 let target_c = self.type_ref_to_c(ty)
                     .map_err(|e| format!("as-cast type error: {}", e))?;
                 // Plan 180: `None as Option[T]` — emit the target-typed
@@ -38561,11 +38551,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     return Ok(self.emit_any_box(&inner_c_ty, &v));
                 }
 
-                // Plan 70.5 Q2: int → uint saturation (neg → 0).
-                // Only for explicit `uint` target (not u64 — that bit-casts).
-                if inner_c_ty == "nova_int" && target_nova.as_deref() == Some("uint") {
-                    return Ok(format!("nova_int_to_uint({})", v));
-                }
                 let src_suffix = match inner_c_ty.as_str() {
                     "nova_f64" => Some("f64"),
                     "nova_f32" => Some("f32"),
@@ -52278,7 +52263,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // If struct_name is a base generic type (e.g. "Box"), resolve to the concrete
             // monomorphized name (e.g. "Box____nova_int") using field value types.
             // This enables `Box { value: 42 }` to emit as Nova_Box____nova_int.
-            let struct_name = if self.generic_types.contains(&struct_name) {
+            // #1545/#1533: a record literal builds a RECORD -- a generic template of
+            // another kind with this bare name (the prelude's sum `Outcome[T]`) is not it.
+            let struct_name = if self.generic_template_for(&struct_name, type_by_role::TypeRole::RecordLiteral) {
                 if let Some(template) = self.generic_type_templates.get(&struct_name).cloned() {
                     use crate::ast::TypeDeclKind;
                     let mut type_args_c: Vec<String> = template.generics.iter()
@@ -58007,110 +57994,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     ///
     /// Conservative: если src не определён (void*) или target не в
     /// special-cases — пропускаем (legacy backward-compat).
-    fn check_as_cast_allowed(
-        src_nova: &str,
-        tgt_nova: &str,
-        inner_kind: &ExprKind,
-        is_unsafe: bool,
-    ) -> Result<(), String> {
-        // D54 (amended): inside `unsafe { }` all banned casts are allowed —
-        // programmer takes responsibility for value correctness.
-        if is_unsafe {
-            return Ok(());
-        }
-        // Спецслучай: CharLit. inner это литерал 'A'/'B'/etc — он уже
-        // имеет nova_int представление, но семантически это char.
-        // **Char-literals разрешены к as-cast в любой numeric** —
-        // программист видит codepoint буквально, range-check не нужен.
-        // `'A' as byte`, `'A' as int`, `'A' as u8` — все OK.
-        if matches!(inner_kind, ExprKind::CharLit(_)) {
-            return Ok(());
-        }
-        // Plan 14 Ф.7: IntLit → char для compile-time-known литералов.
-        // По D54 `int as char` запрещён (suggested `char.try_from(n)?`),
-        // но для **литерала** в валидном Unicode-диапазоне range-check
-        // тривиален и checker может его выполнить статически:
-        //   - n ∈ [0, 0x10FFFF]
-        //   - n ∉ [0xD800, 0xDFFF] (surrogate range — invalid scalar)
-        // Off-range литерал → compile error с точным сообщением (вместо
-        // generic «use try_from»).
-        if let ExprKind::IntLit(n) = *inner_kind {
-            if tgt_nova == "char" {
-                if n < 0 || n > 0x10FFFF {
-                    return Err(format!(
-                        "`as`-cast `{} as char` запрещён: codepoint 0x{:X} \
-                        вне диапазона U+0..=U+10FFFF.",
-                        n, n
-                    ));
-                }
-                if (0xD800..=0xDFFF).contains(&n) {
-                    return Err(format!(
-                        "`as`-cast `{} as char` запрещён: codepoint U+{:04X} \
-                        в surrogate range (U+D800..=U+DFFF) — не valid Unicode scalar.",
-                        n, n
-                    ));
-                }
-                return Ok(());
-            }
-        }
-        let src = src_nova;
-
-        // Запрещённые пары:
-        let banned: &[(&str, &str, &str)] = &[
-            // (src, tgt, suggestion)
-            ("int",  "char", "use `char.from(n)?` (range-checked, returns Result[char, _])"),
-            ("i32",  "char", "use `char.from(n)?`"),
-            ("i64",  "char", "use `char.from(n)?`"),
-            ("u32",  "char", "use `char.from(n)?`"),
-            ("u64",  "char", "use `char.from(n)?`"),
-            ("char", "u8", "use `u8.try_from(c)?` (fails if codepoint > 0xFF)"),
-            ("int",  "bool", "use explicit comparison (`n != 0` for truthy-int)"),
-            ("i8",   "bool", "use `n != 0`"),
-            ("i16",  "bool", "use `n != 0`"),
-            ("i32",  "bool", "use `n != 0`"),
-            ("i64",  "bool", "use `n != 0`"),
-            ("u8",   "bool", "use `n != 0`"),
-            ("u16",  "bool", "use `n != 0`"),
-            ("u32",  "bool", "use `n != 0`"),
-            ("u64",  "bool", "use `n != 0`"),
-            ("f64",  "bool", "use `f != 0.0`"),
-            ("f32",  "bool", "use `f != 0.0`"),
-            ("str",  "int",  "use `int.try_from(s)?` (parses decimal)"),
-            ("str",  "i32",  "use `i32.try_from(s)?`"),
-            ("str",  "f64",  "use `f64.try_from(s)?`"),
-            ("str",  "bool", "use `bool.try_from(s)?`"),
-            ("int",  "str",  "use `n.to_str()`"),
-            ("f64",  "str",  "use `f.to_str()`"),
-            ("bool", "str",  "use `b.to_str()`"),
-            ("char", "str",  "use `c.to_str()` (UTF-8 encode)"),
-            // Plan 134: *() cast restrictions (replaces `ptr` — Plan 134).
-            // Allowed: *() ↔ {u64, i64, int} (для integer-storage).
-            // Banned: *() ↔ {str, bool, f32, f64, char}.
-            // NOTE: target_nova for *() = TypeRef::Pointer(Unit) → target_nova=None
-            // so these only fire when src_nova="*()" (from debt_nova_type_name_from_c("void*")).
-            ("*()",  "str",  "[E_PTR_CAST_INVALID_TARGET] `*() as str` запрещён: opaque pointer не имеет string-representation. Если нужно diagnostic-print — cast через u64: `(p as u64) as str`"),
-            ("*()",  "bool", "[E_PTR_CAST_INVALID_TARGET] `*() as bool` запрещён: используйте `p == null ptr` / `p != null ptr` для null check"),
-            ("*()",  "f64",  "[E_PTR_CAST_INVALID_TARGET] `*() as f64` запрещён: pointer→float не имеет semantic meaning"),
-            ("*()",  "f32",  "[E_PTR_CAST_INVALID_TARGET] `*() as f32` запрещён"),
-            ("*()",  "char", "[E_PTR_CAST_INVALID_TARGET] `*() as char` запрещён"),
-            ("*()",  "i8",   "[E_PTR_CAST_INVALID_TARGET] `*() as i8` запрещён: narrows pointer; используйте `as i64` или `as u64`"),
-            ("*()",  "i16",  "[E_PTR_CAST_INVALID_TARGET] `*() as i16` запрещён"),
-            ("*()",  "i32",  "[E_PTR_CAST_INVALID_TARGET] `*() as i32` запрещён"),
-            ("*()",  "u8",   "[E_PTR_CAST_INVALID_TARGET] `*() as u8` запрещён"),
-            ("*()",  "u16",  "[E_PTR_CAST_INVALID_TARGET] `*() as u16` запрещён"),
-            ("*()",  "u32",  "[E_PTR_CAST_INVALID_TARGET] `*() as u32` запрещён"),
-        ];
-        for (s, t, hint) in banned {
-            if &src == s && &tgt_nova == t {
-                return Err(format!(
-                    "`as`-cast `{} as {}` запрещён: {}.",
-                    src, tgt_nova, hint
-                ));
-            }
-        }
-        Ok(())
-    }
-
     /// Plan 08 Ф.4: strict bool-check для `if cond` / `while cond`.
     /// Возвращает Err если `cond_ty` ОЧЕВИДНО non-bool (numeric/string/...).
     /// Type-neutral (`void*`, unknown) — пропускаем (conservative).
@@ -59097,6 +58980,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Инстанс-вызов `obj.method(args)`.
             ExprKind::Member { obj, name } => {
                 let m = name.strip_prefix('@').unwrap_or(name);
+                // #1527: a receiver in TYPE position (`Query[int].from_request(..)`) is
+                // that type -- never the sum of a same-named variant elsewhere in the CU.
+                if let Some(ty) = self.type_position_name(obj) {
+                    return self.synthesize_method_byref_args(&ty, m, args);
+                }
                 let obj_c = self.infer_expr_c_type(obj);
                 let ty = Self::debt_nova_type_name_from_c(&obj_c);
                 if ty.is_empty() {
@@ -63470,7 +63358,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // Plan 62.A.bis Ф.2.2: registry-driven sum variant lookup.
                     if let Some((sum_type_name, _)) = self.sum_schema_registry.find_variant_compat(&struct_name) {
                         self.a4_sum_c_type(&sum_type_name)
-                    } else if self.generic_types.contains(&struct_name) {
+                    } else if self.generic_template_for(&struct_name, type_by_role::TypeRole::RecordLiteral) {
+                        // #1545: by kind -- a generic SUM of this bare name is not a record literal's type.
                         // Generic type: compute concrete mono name from field values.
                         // Check BEFORE record_schemas because record_schemas has the erased form
                         // (with void* fields) for generic types — we want the concrete mono form.

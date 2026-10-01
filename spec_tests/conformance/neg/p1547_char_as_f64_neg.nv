@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E_AS_CAST_NO_RULE
+// Regression for registry 221.1 #1547: D54 `as`, cell `char_as_f64` -- refused by `nova check`,
+// before any C (the table used to live in the emitter, and this cell passed).
+// The positive half: spec_tests/conformance/standalone/p1547_as_d54_legal.nv.
+module neg.p1547_char_as_f64_neg
+
+fn main() Io -> () {
+    ro c = 'A'
+    // nova:expect E_AS_CAST_NO_RULE -- D54 has no rule char -> float
+    println((c as f64).to_str())
+}

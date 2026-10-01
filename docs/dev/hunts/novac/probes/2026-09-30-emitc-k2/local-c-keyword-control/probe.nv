@@ -1,5 +1,0 @@
-// Control: an ordinary local named like a C keyword (`long`), no handler.
-fn main() {
-    ro long = 5
-    println(long)
-}

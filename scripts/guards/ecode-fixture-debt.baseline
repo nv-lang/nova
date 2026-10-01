@@ -21,7 +21,7 @@
 #   ЗАТЕНЁННЫХ СЕГОДНЯ НОЛЬ — пометок `nova:shadowed-by` в дереве ещё нет;
 #   три известных затенённых кода (замер 1187) ждут, когда их пометит тот, кто
 #   чинит, а не тот, кто считает.
-debt=178
+debt=175
 debt_code=E_ADDR_OF_NON_LVALUE
 debt_code=E_ADDR_OF_REMOVED
 debt_code=E_AMBIGUOUS_IDENT_PATTERN
@@ -84,7 +84,6 @@ debt_code=E_CONST_FN_TRAMPOLINE_INTRINSIC
 debt_code=E_CONST_INSTANCE_ACCESS
 debt_code=E_CONST_IN_BODY_RETRACTED
 debt_code=E_CONST_MUT_CONFLICT
-debt_code=E_CONST_NOT_CONSTEXPR
 debt_code=E_CONST_REFERS_NON_CONSTEXPR
 debt_code=E_CONST_RO_REDUNDANT
 debt_code=E_CONST_UNKNOWN_TYPE
@@ -190,11 +189,9 @@ debt_code=E_TYPE_UNKNOWN
 debt_code=E_UNDECLARED_TRANSITIVE_EFFECT
 debt_code=E_UNDECLARED_TYPEVAR_IN_RECEIVER
 debt_code=E_UNKNOWN_PROTOCOL
-debt_code=E_UNKNOWN_TYPE
 debt_code=E_UNKNOWN_TYPE_METHOD
 debt_code=E_UNSAFE_ARG_REQUIRES_WRAP
 debt_code=E_UNSAFE_FN_PTR_COERCION
-debt_code=E_UNSAFE_REQUIRED
 debt_code=E_UNSAFE_T_NARROW_REQUIRES_UNSAFE
 debt_code=E_UNSAFE_T_READ_REQUIRES_WRAP
 debt_code=E_UNUSED_PREFIX_TYPEVAR

@@ -1,8 +1,0 @@
-// while twin of if-nested-ro: the `ro` word on a binder in a while condition.
-fn main() {
-    ro o = Some(3)
-    while Some(ro x) = o {
-        println(x)
-        break
-    }
-}

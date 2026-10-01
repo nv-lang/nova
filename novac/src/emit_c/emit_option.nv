@@ -8,8 +8,8 @@
 // Role: backend A (layer 11) -- renders the checker's decision (the recorded
 //       INSTANCE type and the variant row); decides nothing.
 // Used by: emit_expr.nv (the variant-construction arms of Name, FieldAccess,
-//          Call and MethodCall), emit_flow.nv (the if-let) and emit_c.nv's `??` (the
-//          Some-test).
+//          Call and MethodCall), emit_flow.nv (the if-let), emit_c.nv's `??` (the
+//          Some-test) and emit_applied_sum.nv (a `match` arm's Some/None test).
 // Guarded by: check-novac-differential.sh (fixtures option_ctor/ and the
 //             corpus carrier examples/basics/option_ctor.nv, byte-for-byte
 //             against the oracle), novac/src/pipeline/option_test.nv (both
@@ -68,6 +68,18 @@ fn Emitter mut @emit_option_none(inst TyId) -> () {
         @body.append("((${ct}){.value = NULL})")
     } else {
         @body.append("((${ct}){.tag = ${OPTION_NONE_TAG_C}})")
+    }
+}
+
+/// The C condition "this Option temporary holds NO value", for both shapes --
+/// the mirror of `option_some_test` below, asked by a `match` arm on `None`.
+/// Spelled positively rather than as `!(some)`: the value shape carries the
+/// shell's own None tag, and the pointer shape's absence IS `NULL`.
+fn Emitter @option_none_test(inst TyId, tmp str) -> str {
+    if @option_payload_is_pointer(inst) {
+        "${tmp}.value == NULL"
+    } else {
+        "${tmp}.tag == ${OPTION_NONE_TAG_C}"
     }
 }
 

@@ -1,0 +1,10 @@
+module p1527_variant_named_like_generic.p1527_errs
+
+// A sum with a VARIANT named `Query` -- the shape of `duckdb.errors.DuckError`.
+
+export type DuckError enum Query(str) | Other
+
+export fn describe(e DuckError) -> str => match e {
+    Query(m) => m
+    Other => "other"
+}

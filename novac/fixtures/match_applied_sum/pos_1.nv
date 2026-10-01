@@ -1,0 +1,127 @@
+module match_applied_sum.pos_1
+
+// A `match` ON AN APPLIED SUM -- `Option[T]` and `Result[T, E]`, the two sums
+// whose instances the shell spells by name -- compiled and answering exactly as
+// the oracle does.
+//
+// THE GRID, and why each cell is here:
+//   * Option over a primitive (`int`), a string (`str`) and a heap record
+//     (`Rec`): the shell has TWO Option shapes -- `{ tag, value }` by value and
+//     the tagless `{ T* value }` -- and the test of each arm is spelled from the
+//     shape (`.tag == NOVA_TAG_Option_None` against `.value == NULL`);
+//   * Option over an instance the shell's probe never met (`[]int`): its
+//     typedef is novac's to write, and the type reader must not flatten the
+//     argument into `int` (it did, until this wave);
+//   * Result, as a std call hands it back -- `read` (`Result[[]u8, IoError]`),
+//     its payload read in an arm, and `read_dir` (`Result[[]DirEntry, IoError]`):
+//     the shell's heap instance, tested `->tag == NOVA_TAG_Result_Ok`, the
+//     payload read off its union;
+//   * the positions: a statement, a value body, a binding initializer, a block
+//     tail, an arm of another match; a `_` arm, a binder arm and a guard.
+//
+// What is NOT here, and why: `Result[int, str]` built by the program -- every
+// construction of a Result is refused (E2-b3, the type argument cannot be
+// inferred from the payload), so only a std call can hand one over; and the
+// nested `Some(Some(x))` -- a nested VARIANT pattern ices the emitter on a
+// plain sum as much as on an applied one (named in the wave's report), so it
+// is not a property of this form.
+
+import std.fs.{read, read_dir, real_fs}
+
+type Rec { v int }
+
+fn pick(f bool) -> Option[int] {
+    if f {
+        return Some(3)
+    }
+    None
+}
+
+fn name(f bool) -> Option[str] => if f { Some("yes") } else { None }
+
+fn boxed(f bool) -> Option[Rec] {
+    if f {
+        ro r = Rec { v: 4 }
+        return Some(r)
+    }
+    None
+}
+
+fn listed(f bool, xs []int) -> Option[[]int] {
+    if f {
+        return Some(xs)
+    }
+    None
+}
+
+// A value body.
+fn of_int(o Option[int]) -> int => match o {
+    Some(v) => v
+    None => -1
+}
+
+// A block tail, with a guard and a binder arm.
+fn of_str(o Option[str]) -> str {
+    match o {
+        Some(s) if s == "no" => "said no"
+        Some(s) => s
+        other => "none"
+    }
+}
+
+// A binding initializer, with a `_` arm.
+fn of_rec(o Option[Rec]) -> int {
+    ro got = match o {
+        Some(r) => r.v
+        _ => 0
+    }
+    got + 100
+}
+
+fn of_list(o Option[[]int]) -> int => match o {
+    Some(xs) => xs.len()
+    None => -1
+}
+
+// Result in statement position, its payload used, and a match nested in an arm.
+fn file_text(p str) Fs -> str {
+    mut out = "unread"
+    match read(p.to_path()) {
+        Ok(bytes) => {
+            match pick(bytes.len() > 0) {
+                Some(_) => { out = "read" }
+                None => { out = "empty" }
+            }
+        }
+        Err(_) => { out = "cannot read" }
+    }
+    out
+}
+
+// Result as a value body, the error arm first and a `_` for the rest.
+fn dir_size(p str) Fs -> int => match read_dir(p.to_path()) {
+    Err(_) => -3
+    Ok(entries) => if entries.len() > 0 { 1 } else { 0 }
+}
+
+fn main() {
+    println(of_int(pick(true)))
+    println(of_int(pick(false)))
+    println(of_str(name(true)))
+    println(of_str(name(false)))
+    println(of_rec(boxed(true)))
+    println(of_rec(boxed(false)))
+    println(of_list(listed(true, [1, 2, 3])))
+    println(of_list(listed(false, [1])))
+    // Statement position: the arms run for effect.
+    match pick(true) {
+        Some(x) => println(x + 1)
+        None => println(0)
+    }
+    with Fs = real_fs() {
+        println(file_text("novac/fixtures/match_applied_sum/pos_1.nv"))
+        println(file_text("novac/fixtures/match_applied_sum/no_such_file.nv"))
+        println(dir_size("novac/fixtures/match_applied_sum"))
+        println(dir_size("novac/fixtures/match_applied_sum/no_such_dir"))
+    }
+}

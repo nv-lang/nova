@@ -1,0 +1,19 @@
+// Control for ../fluent-expr-body: the SAME method with a BLOCK body whose
+// tail is the same non-receiver call.
+type Ctr {
+    n int
+}
+
+fn side(x int) -> int {
+    println("side ${x}")
+    x
+}
+
+fn Ctr mut @noisy() -> @ {
+    side(@n)
+}
+
+fn main() {
+    mut c = Ctr { n: 4 }
+    println(c.noisy().n)
+}
