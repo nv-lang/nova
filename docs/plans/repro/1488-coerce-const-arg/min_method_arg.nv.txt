@@ -1,0 +1,13 @@
+// Registry 221.1 #1488: a module `const` of type `str` passed to a `[]u8` parameter.
+// Before the fix: CC-FAIL (`passing 'const nova_str' to parameter of incompatible type
+// 'Nova_Vec____nova_byte *'`), the shape of examples/net/echo_client.nv `stream.write(MESSAGE)`.
+const M = "hi"
+
+type Box { n int }
+
+fn Box @take(data []u8) -> int => data.len()
+
+fn main() Io -> () {
+    ro b = Box { n: 1 }
+    println("${b.take(M)}")
+}

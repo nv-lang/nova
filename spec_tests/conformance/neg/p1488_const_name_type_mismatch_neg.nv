@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E7301
+//
+// Registry 221.1 #1488, the checker half: a module-level `const` read by its bare name has the
+// type of its declaration. Before the fix the checker had no type for the name at all and
+// accepted it at ANY typed position -- `ro x int = P1488_NAME` passed `nova check` and reached C
+// as a `nova_str` stored into an `int`. The positive side (the `#coerce` door now sees the
+// name's `str` and splices `.bytes()` at a `[]u8` position) is
+// `standalone/p1488_coerce_const_arg.nv`.
+
+module neg.p1488_const_name_type_mismatch_neg
+
+const P1488_NAME = "abc"
+
+fn main() Io -> () {
+    // nova:expect E7301 -- the const is a `str`, the binding is an `int`
+    ro x int = P1488_NAME
+    println("${x}")
+}

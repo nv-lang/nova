@@ -1,0 +1,7 @@
+// Registry 221.1 #1488: the same name at a `ro x []u8` binding -- not only a call argument.
+const M str = "hi"
+
+fn main() Io -> () {
+    ro x []u8 = M
+    println("${x.len()}")
+}

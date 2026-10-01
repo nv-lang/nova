@@ -1,0 +1,8 @@
+// Registry 221.1 #1488, the checker half: before the fix `nova check` said ok -- the
+// checker had no type for a const name at all.
+const M = "hi"
+
+fn main() Io -> () {
+    ro x int = M
+    println("${x}")
+}
