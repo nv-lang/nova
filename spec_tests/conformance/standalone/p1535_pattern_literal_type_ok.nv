@@ -1,0 +1,43 @@
+// EXPECT_STDOUT ok c i u s f b
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for registry 221.1 #1535, the legal half: a literal pattern of the
+// scrutinee's own type -- `'a'` over `char`, `97` over `int` and over `u8`, `"a"`
+// over `str`, `1.0` and `1` over `f64` (an integer literal stands in a float
+// position, D44), `true` over `bool`, and an alternative `p | q`. The negatives
+// (one per mixed pair): spec_tests/conformance/neg/p1535_*_neg.nv.
+module standalone.p1535_pattern_literal_type_ok
+
+fn main() Io -> () {
+    ro c = 'a'
+    ro n = 97
+    ro b u8 = 97
+    ro s = "a"
+    ro f = 1.0
+    ro t = true
+    mut out = "ok"
+    match c {
+        'a' => { out = "${out} c" }
+        _ => {}
+    }
+    match n {
+        96 | 97 => { out = "${out} i" }
+        _ => {}
+    }
+    match b {
+        97 => { out = "${out} u" }
+        _ => {}
+    }
+    match s {
+        "a" => { out = "${out} s" }
+        _ => {}
+    }
+    match f {
+        1 => { out = "${out} f" }
+        _ => {}
+    }
+    match t {
+        true => { out = "${out} b" }
+        _ => {}
+    }
+    println(out)
+}

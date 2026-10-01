@@ -1,0 +1,43 @@
+// EXPECT_STDOUT ok 3 7 7 1 3
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for registry 221.1 #1554, the legal half of D409: a TAIL that is not
+// the receiver is discarded and the receiver is returned -- `=> o` with a `mut o`
+// and with a `ro o` (the read-only check no longer judges a discarded tail as a
+// return); a bare `return` in a branch; a delegation `return @other_fluent()`. The
+// negatives: spec_tests/conformance/neg/p1554_*_neg.nv.
+module standalone.p1554_fluent_tail_ok
+
+type Ctr { mut n int }
+
+fn Ctr mut @add(k int) -> @ {
+    @n = @n + k
+    if k > 10 {
+        return
+    }
+}
+
+fn Ctr mut @tail_mut(mut o Ctr) -> @ => o
+fn Ctr mut @tail_ro(o Ctr) -> @ => o
+
+fn Ctr mut @one() -> @ {
+    @n = 1
+}
+
+fn Ctr mut @delegate() -> @ {
+    @n = 2
+    return @one()
+}
+
+fn main() Io -> () {
+    mut a = Ctr { n: 1 }
+    mut b = Ctr { n: 50 }
+    ro c = Ctr { n: 60 }
+    ro x = a.add(2).n
+    a.n = 7
+    ro y = a.tail_mut(b).n
+    ro z = a.tail_ro(c).n
+    ro w = a.delegate().n
+    a.n = 1
+    ro v = a.add(2).n
+    println("ok ${x} ${y} ${z} ${w} ${v}")
+}
