@@ -21,6 +21,21 @@ use std::collections::HashSet;
 use super::emit_c::CEmitter;
 
 impl CEmitter {
+    /// #1443: `e` stands where its value is dropped -- a statement, the tail of a unit body, a block tail into a
+    /// unit temp. An `if` / if-let / `match` there takes the unit type: its branch tails run for their effect and
+    /// are never assigned (an `int` tail and a `str` tail, or a tail next to a unit branch, used to be assigned
+    /// into one temp of the first branch's type -- CC-FAIL). Keyed by the node's id, so only THAT node takes it.
+    pub(crate) fn mark_discard(&mut self, e: &crate::ast::Expr) {
+        use crate::ast::ExprKind;
+        if e.id.is_set() && matches!(e.kind, ExprKind::If { .. } | ExprKind::IfLet { .. } | ExprKind::Match { .. }) {
+            self.discard_id = Some(e.id);
+        }
+    }
+
+    pub(crate) fn take_discard(&mut self, id: crate::ast::ExprId) -> bool {
+        if id.is_set() && self.discard_id == Some(id) { self.discard_id = None; true } else { false }
+    }
+
     /// #1441: a capture body (handler op, closure) begins. Its reads that are bound where they stand -- a local
     /// declared before the read, possibly shadowing a capture of the same name -- read the LOCAL, not the captured
     /// box (`var_boxed`); and with captures unpacked as C locals of the same names, the body goes into its own C

@@ -1538,6 +1538,7 @@ pub struct CEmitter {
     /// #1397: per emitted body (fn / test / closure), (names read as BOUND, names read as FREE) -- see `is_local_read`.
     pub(crate) local_frames: Vec<(HashSet<String>, HashSet<String>)>,
     pub(crate) local_read_ids: HashSet<crate::ast::ExprId>, // #1441: see `enter_capture_body`
+    pub(crate) discard_id: Option<crate::ast::ExprId>, // #1443: see `mark_discard`
     /// #1158: final C qualifiers (`c_name`) of lazy consts -- laziness of ONE const, not of a name.
     lazy_const_syms: HashSet<String>,
     pub(crate) module_value_tys: HashMap<String, String>, // #1410: see `reset_module_value_types`
@@ -2799,7 +2800,7 @@ impl CEmitter {
             user_fn_variadic: HashSet::new(),
             suppress_variadic_routing: false,
             emitted_fn_thunks: HashSet::new(),
-            lazy_consts: HashSet::new(), pending_assoc_consts: Vec::new(), local_frames: Vec::new(), local_read_ids: HashSet::new(), lazy_const_syms: HashSet::new(), module_value_tys: HashMap::new(),
+            lazy_consts: HashSet::new(), pending_assoc_consts: Vec::new(), local_frames: Vec::new(), local_read_ids: HashSet::new(), discard_id: None, lazy_const_syms: HashSet::new(), module_value_tys: HashMap::new(),
             pending_const_inits: Vec::new(),
             record_field_fn_sigs: HashMap::new(),
             trailing_block_counter: 0,
@@ -32479,6 +32480,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // ошибку чужого компилятора при зелёном `nova check`. То есть
             // громкий отказ был везением, а не проверкой.
             // №1401: №720 closed only THIS sink; the gate is `tail_takes_place_type`, shared by every tail sink.
+            if ret_ty == "nova_unit" { self.mark_discard(trailing); } // #1443
             let val = if self.tail_takes_place_type(ret_ty, trailing) {
                 self.emit_expr_with_target_type(trailing, ret_ty)?
             } else {
@@ -34480,6 +34482,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // receiver-call case just above (`g.method()`) is the one
                 // shape proven safe (gated on `consume_receiver_methods`).
                 let active = self.reconsume_active_names();
+                self.mark_discard(e); // #1443
                 let val = if active.is_empty() {
                     self.emit_expr(e)?
                 } else {
@@ -39908,6 +39911,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
             }
             ExprKind::IfLet { pattern, scrutinee, guard, then, else_ } => {
+                let discard = self.take_discard(expr.id); // #1443
                 // Desugar: if let Pat = expr [&& guard] { then } else { else_ }
                 // → evaluate scrutinee, check pattern cond, bind, [check guard,] run then or else_
                 let scr = self.emit_expr(scrutinee)?;
@@ -39919,163 +39923,73 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.tuple_element_types.insert(scr_tmp.clone(), elem_tys);
                 }
 
-                // Plan 125: divergence-aware result-type. If then-branch
-                // diverges (throw/panic/exit/interrupt/user-fn-never/
-                // recursive), pick else-branch's type. Symmetric с
-                // emit_if_expr / infer_If.
+                // #1443 / #1376: the result type and the branch tails go the way `emit_if_expr` does them. The
+                // then-tail is typed with the pattern's bindings in scope (a stale same-named `var_types` entry
+                // typed `v` of `Some(v)` as `str`); a unit branch dominates a non-unit sibling (statement
+                // position: values dropped -- the tail used to be assigned into a `nova_unit` temp); the
+                // checker's type of the whole if-let wins when it has one; every tail goes through
+                // `emit_block_into` / `emit_else_into` (`emit_assign_typed`), not a bare `tmp = v`.
+                let binds = Self::collect_pattern_inner_bindings(pattern, &scr_ty, self);
+                let saved_binds: Vec<(String, Option<String>)> = binds.iter()
+                    .map(|(n, t)| (n.clone(), self.var_types.insert(n.clone(), t.clone()))).collect();
                 let then_diverges = self.block_trailing_diverges(then);
-                let then_ty = then.trailing.as_ref()
-                    .map(|e| self.infer_expr_c_type(e))
-                    .unwrap_or_else(|| "nova_unit".into());
-                let result_ty = if then_diverges {
-                    match else_ {
-                        Some(ElseBranch::Block(b)) => b.trailing.as_ref()
-                            .map(|e| self.infer_expr_c_type(e))
-                            .unwrap_or_else(|| "nova_unit".into()),
-                        Some(ElseBranch::If(e)) => self.infer_expr_c_type(e),
-                        None => then_ty.clone(),
-                    }
-                } else {
-                    then_ty.clone()
+                let then_ty = self.branch_trailing_c_type_with_locals(then);
+                for (n, old) in saved_binds.into_iter().rev() {
+                    match old { Some(t) => { self.var_types.insert(n, t); } None => { self.var_types.remove(&n); } }
+                }
+                let (else_diverges, else_ty): (bool, String) = match else_ {
+                    Some(ElseBranch::Block(b)) => (self.block_trailing_diverges(b), self.branch_trailing_c_type_with_locals(b)),
+                    Some(ElseBranch::If(e)) => (self.expr_diverges_125(e), self.infer_expr_c_type(e)),
+                    None => (false, "nova_unit".into()),
                 };
-                self.debug_if_infer_125("emit_if_let", then_diverges, &then_ty, "<else>", &result_ty);
+                let mut result_ty = if else_.is_none() { "nova_unit".to_string() } else if then_diverges { else_ty.clone() } else { then_ty.clone() };
+                if (!then_diverges && then_ty == "nova_unit") || (!else_diverges && else_ty == "nova_unit") {
+                    result_ty = "nova_unit".into();
+                }
+                if discard { result_ty = "nova_unit".into(); }
+                if result_ty != "nova_unit" {
+                    if let Some(ct) = self.resolved_types.get(&expr.id).and_then(|rt| self.resolved_type_to_c(rt).ok()).filter(|c| !c.is_empty()) {
+                        result_ty = ct;
+                    }
+                }
+                self.debug_if_infer_125("emit_if_let", then_diverges, &then_ty, &else_ty, &result_ty);
                 let result_tmp = self.fresh_tmp_named("if_let");
                 self.line(&format!("{} {};", result_ty, result_tmp));
+                self.var_types.insert(result_tmp.clone(), result_ty.clone());
 
-                // Plan 106: guard codegen.
-                // Without guard: standard if/else on pattern match.
-                // With guard: when guard fails, fall through to else branch.
-                // Strategy with guard:
-                //   if (pattern_cond) {
-                //     bind_vars;
-                //     if (guard) { then_body; goto _done_LABEL; }
-                //   }
-                //   // pattern failed OR guard failed → else
-                //   else_body;
-                //   _done_LABEL:;
+                // Plan 106: guard codegen. With a guard, a failing guard falls through to the else branch:
+                //   if (pattern_cond) { bind_vars; if (guard) { then_body; goto _done_LABEL; } }
+                //   else_body;  _done_LABEL:;
+                let cond = self.pattern_cond(pattern, &scr_tmp)?;
+                self.line(&format!("if ({}) {{", cond));
+                self.indent += 1;
+                // Bind pattern vars BEFORE inferring the guard type so member accesses resolve.
+                self.pattern_bind_typed(pattern, &scr_tmp, None)?;
                 if let Some(guard_expr) = guard {
                     let done_label = self.fresh_tmp_named("iflet_done");
-
-                    let cond = self.pattern_cond(pattern, &scr_tmp)?;
-                    self.line(&format!("if ({}) {{", cond));
-                    self.indent += 1;
-                    // Bind pattern vars BEFORE inferring guard type so that
-                    // member accesses like `user.active` resolve correctly.
-                    self.pattern_bind_typed(pattern, &scr_tmp, None)?;
-                    // Plan 106: bool-check guard after pattern binds are in var_types.
                     let guard_ty = self.infer_expr_c_type(guard_expr);
                     self.check_bool_condition_at(&guard_ty, "if-let guard", guard_expr.span)?;
                     let guard_c = self.emit_expr(guard_expr)?;
                     self.line(&format!("if ({}) {{", guard_c));
                     self.indent += 1;
-                    // then body (guard passed)
-                    let then_block_id = self.enter_defer_scope(then, false);
-                    for stmt in &then.stmts { self.emit_stmt(stmt)?; }
-                    if let Some(trailing) = &then.trailing {
-                        if self.expr_diverges_125(trailing) {
-                            let v = self.emit_expr(trailing)?;
-                            self.line(&format!("(void)({});", v));
-                        } else {
-                            let v = self.emit_expr(trailing)?;
-                            self.line(&format!("{} = {};", result_tmp, v));
-                        }
-                    }
-                    self.leave_defer_scope(then_block_id);
+                    self.emit_block_into(&result_tmp, &result_ty, then)?;
                     self.line(&format!("goto {};", done_label));
                     self.indent -= 1;
                     self.line("}"); // close guard if
                     self.indent -= 1;
                     self.line("}"); // close pattern if
-
-                    // else branch: runs when pattern fails OR guard fails
-                    match else_ {
-                        Some(ElseBranch::Block(b)) => {
-                            let block_id = self.enter_defer_scope(b, false);
-                            for stmt in &b.stmts { self.emit_stmt(stmt)?; }
-                            if let Some(trailing) = &b.trailing {
-                                if self.expr_diverges_125(trailing) {
-                                    let v = self.emit_expr(trailing)?;
-                                    self.line(&format!("(void)({});", v));
-                                } else {
-                                    let v = self.emit_expr(trailing)?;
-                                    self.line(&format!("{} = {};", result_tmp, v));
-                                }
-                            }
-                            self.leave_defer_scope(block_id);
-                        }
-                        Some(ElseBranch::If(e)) => {
-                            if self.expr_diverges_125(e) {
-                                let v = self.emit_expr(e)?;
-                                self.line(&format!("(void)({});", v));
-                            } else {
-                                let v = self.emit_expr(e)?;
-                                self.line(&format!("{} = {};", result_tmp, v));
-                            }
-                        }
-                        None => {}
-                    }
+                    self.emit_else_into(&result_tmp, &result_ty, else_.as_ref())?;
                     self.line(&format!("{}:;", done_label));
                 } else {
-                    // No guard: standard if/else on pattern match.
-                    let cond = self.pattern_cond(pattern, &scr_tmp)?;
-                    self.line(&format!("if ({}) {{", cond));
-                    self.indent += 1;
-                    self.pattern_bind_typed(pattern, &scr_tmp, None)?;
-                    let then_block_id = self.enter_defer_scope(then, false);
-                    for stmt in &then.stmts { self.emit_stmt(stmt)?; }
-                    if let Some(trailing) = &then.trailing {
-                        // Plan 125: divergent-trailing → side-effect only.
-                        if self.expr_diverges_125(trailing) {
-                            let v = self.emit_expr(trailing)?;
-                            self.line(&format!("(void)({});", v));
-                        } else {
-                            let v = self.emit_expr(trailing)?;
-                            self.line(&format!("{} = {};", result_tmp, v));
-                        }
-                    }
-                    self.leave_defer_scope(then_block_id);
+                    self.emit_block_into(&result_tmp, &result_ty, then)?;
                     self.indent -= 1;
-                    match else_ {
-                        Some(ElseBranch::Block(b)) => {
-                            self.line("} else {");
-                            self.indent += 1;
-                            // Plan 20 Ф.4/Ф.8: else-branch body — defer scope.
-                            // Trailing value присваивается ПОСЛЕ defer cleanup
-                            // (defer body не должен влиять на результат branch).
-                            let block_id = self.enter_defer_scope(b, false);
-                            for stmt in &b.stmts { self.emit_stmt(stmt)?; }
-                            if let Some(trailing) = &b.trailing {
-                                // Plan 125: same divergent-trailing guard.
-                                if self.expr_diverges_125(trailing) {
-                                    let v = self.emit_expr(trailing)?;
-                                    self.line(&format!("(void)({});", v));
-                                } else {
-                                    let v = self.emit_expr(trailing)?;
-                                    self.line(&format!("{} = {};", result_tmp, v));
-                                }
-                            }
-                            self.leave_defer_scope(block_id);
-                            self.indent -= 1;
-                            self.line("}");
-                        }
-                        Some(ElseBranch::If(e)) => {
-                            self.line("} else {");
-                            self.indent += 1;
-                            // Plan 125: divergent else-if direct expression.
-                            if self.expr_diverges_125(e) {
-                                let v = self.emit_expr(e)?;
-                                self.line(&format!("(void)({});", v));
-                            } else {
-                                let v = self.emit_expr(e)?;
-                                self.line(&format!("{} = {};", result_tmp, v));
-                            }
-                            self.indent -= 1;
-                            self.line("}");
-                        }
-                        None => {
-                            self.line("}");
-                        }
+                    if else_.is_some() {
+                        self.line("} else {");
+                        self.indent += 1;
+                        self.emit_else_into(&result_tmp, &result_ty, else_.as_ref())?;
+                        self.indent -= 1;
                     }
+                    self.line("}");
                 }
                 Ok(result_tmp)
             }
@@ -49333,6 +49247,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         else_: Option<&ElseBranch>,
         if_id: crate::ast::ExprId,
     ) -> Result<String, String> {
+        let discard = self.take_discard(if_id); // #1443
         // [INV-TODO: №523] Plan 08 Ф.4: strict `if cond: bool`. Spec D54: cond обязан быть
         // bool, не truthy-int (Rust/Swift/Kotlin прецедент). Закрывает
         // silent-bug class. Conservative — error только если ОЧЕВИДНО
@@ -49489,6 +49404,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             },
             _ => None,
         };
+        if discard { if_ty = "nova_unit".into(); } // #1443: a dropped value -- tails for effect only
         let cond_val = self.emit_expr(cond)?;
         let tmp = self.fresh_tmp_named("if");
         self.line(&format!("{} {};", if_ty, tmp));
@@ -49537,6 +49453,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.line(&format!("(void)({});", v));
                 } else {
                     // target-type-aware: literal-cleanup для typed-int if-result.
+                    if if_ty == "nova_unit" { self.mark_discard(e); } // #1443: `else if` of a dropped if
                     let mut v = self.emit_expr_with_target_type(e, &if_ty)?;
                     let ity = if_ty.clone();
                     // [M-http-props-mut-chain-argpos-value-ptr-mismatch] fix
@@ -49553,6 +49470,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
         Ok(tmp)
+    }
+
+    /// #1443: an `else` branch into `tmp` of type `ty`, the way `emit_if_expr` emits one -- a block through
+    /// `emit_block_into`, an `else if` expression through `emit_assign_typed` (a divergent one for its effect only).
+    fn emit_else_into(&mut self, tmp: &str, ty: &str, else_: Option<&ElseBranch>) -> Result<(), String> {
+        match else_ {
+            Some(ElseBranch::Block(b)) => self.emit_block_into(tmp, ty, b),
+            Some(ElseBranch::If(e)) if self.expr_diverges_125(e) => { let v = self.emit_expr(e)?; self.line(&format!("(void)({});", v)); Ok(()) }
+            Some(ElseBranch::If(e)) => {
+                if ty == "nova_unit" { self.mark_discard(e); }
+                let mut v = self.emit_expr_with_target_type(e, ty)?;
+                if self.is_fluent_value_ptr_for_target(e, ty) { v = format!("(*({}))", v); }
+                Self::emit_assign_typed(self, tmp, ty, &v);
+                Ok(())
+            }
+            None => Ok(()),
+        }
     }
 
     /// Emit a block's statements and assign its trailing value (or NOVA_UNIT) into `tmp`.
@@ -49583,6 +49517,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             } else {
                 // target-type-aware emit: для typed-integer ty литералы в Binary
                 // получают «нативный» suffix вместо ((nova_int)NLL).
+                if ty == "nova_unit" { self.mark_discard(trailing); } // #1443
                 let mut v = self.emit_expr_with_target_type(trailing, ty)?;
                 // [M-http-props-mut-chain-argpos-value-ptr-mismatch] fix
                 // (222.7): see `emit_assign_typed`'s own doc comment — deref
@@ -51461,6 +51396,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     // ---- match ----
 
     fn emit_match(&mut self, scrutinee: &Expr, arms: &[MatchArm], match_id: crate::ast::ExprId) -> Result<String, String> {
+        let discard = self.take_discard(match_id); // #1443
         let scr = self.emit_expr(scrutinee)?;
         let scr_tmp = self.fresh_tmp_named("scr");
         let result_tmp = self.fresh_tmp_named("match");
@@ -51595,7 +51531,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // на struct-assignment mismatch (json.nv read_number — match
         // @peek() { Some('0') => { @advance() } /* Option[char] */
         //            Some(c) => { while ... } /* unit */ ... }).
-        if result_ty != "nova_unit" && result_ty != "nova_int" {
+        // #1443: `nova_int` is no exception -- a match in statement position with an `int` arm and a unit arm
+        // assigned the unit into an `int` temp (CC-FAIL), as the if-let did.
+        if result_ty != "nova_unit" {
             let mut any_unit_arm = false;
             for arm in arms {
                 if arm_diverges(self, arm) { continue; }
@@ -51679,6 +51617,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if let Some(rec) = reconciled_result_ty {
             result_ty = rec;
         }
+        if discard { result_ty = "nova_unit".into(); } // #1443
         self.line(&format!("{} {};", result_ty, result_tmp));
         self.var_types.insert(result_tmp.clone(), result_ty.clone());
         // matched flag: tracks if any arm matched (needed for guard fallthrough)
