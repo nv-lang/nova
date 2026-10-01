@@ -1,0 +1,11 @@
+module hp
+
+import ./geo
+
+const SCALE = 100
+
+fn main() {
+    ro v = [1, 2, 3]
+    println(v.scaled())
+    println(SCALE)
+}

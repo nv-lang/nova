@@ -1,0 +1,10 @@
+module hp
+
+import ./geo
+
+fn weight(x int) -> int => x * 1000
+
+fn main() {
+    ro v = [1, 2, 3]
+    println(v.w())
+}
