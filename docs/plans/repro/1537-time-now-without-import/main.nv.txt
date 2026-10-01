@@ -1,0 +1,8 @@
+module hcap.t1
+
+fn stamp() Time -> int => Time.now().unix_millis() as int
+
+fn main() Io {
+    ro f = fn() -> int => stamp()
+    println("t1 ${f() > 0}")
+}

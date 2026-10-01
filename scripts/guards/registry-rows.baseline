@@ -1473,6 +1473,27 @@
 # 2026-10-01, integrator nova-20: rows -> 1476, max -> 1531 (2026-10-01 integrator: rows 1528-1531 -- oracle findings of the #1517 cloud session).
 # 2026-10-01, integrator nova-20: rows -> 1481, max -> 1531 (2026-10-01 integrator: merge p274-carina-cloud (Carina e9s4 + ice-expr + 1518/1519) -- rows 1500,1513,1514,1518,1519 land and leave gaps).
 # 2026-10-01, integrator nova-20: rows -> 1483, max -> 1533 (2026-10-01 integrator: rows 1532/1533 -- regressions of #1488 and #1448 found by nova-63, bisected).
+# 2026-10-01, integrator nova-20: rows -> 1485, max -> 1535 (2026-10-01 integrator: rows 1534/1535 -- findings of the cloud strarm session (Carina nested literal K1, oracle pattern literal type)).
+# 2026-10-01, integrator nova-20: rows -> 1486, max -> 1536 (2026-10-01 integrator: row 1536 -- record literal as a lambda body (nova-63)).
+# 2026-10-01, integrator nova-20: rows -> 1487, max -> 1537 (2026-10-01 integrator: row 1537 -- Time.now() without std.time import panics codegen (nova-63)).
+# 2026-10-01, integrator nova-20: rows -> 1491, max -> 1544 (2026-10-01 integrator: rows 1541-1544 -- findings of the cloud appsum session; 1538-1540 promised to the k1 session, filed at its merge).
+# 2026-10-01, integrator nova-20: rows -> 1494, max -> 1544 (2026-10-01 integrator: merge p274-carina-k1 -- rows 1538-1540 land and leave gaps).
+# 2026-10-01, integrator nova-20: rows -> 1495, max -> 1545 (2026-10-01 integrator: row 1545 -- silent zeros for []Outcome elements named like a prelude generic (assistant)).
+# 2026-10-01, integrator nova-20: rows -> 1498, max -> 1548 (2026-10-01 integrator: rows 1546-1548 -- findings of the cloud cast session).
+rows=1498
+max=1548
+rows=1495
+max=1545
+rows=1494
+max=1544
+rows=1491
+max=1544
+rows=1487
+max=1537
+rows=1486
+max=1536
+rows=1485
+max=1535
 rows=1483
 max=1533
 rows=1481

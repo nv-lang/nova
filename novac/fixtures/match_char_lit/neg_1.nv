@@ -1,0 +1,12 @@
+module match_char_lit.neg_1
+
+// A STRING literal in an arm over a `char` value: a literal compares with a
+// value of its own type. The oracle prints `scr.len == 1 && memcmp(...)` on a
+// `nova_char` and clang refuses the C; novac names the mistake in Nova terms.
+
+// NOVAC_EXPECT a literal pattern compares with a value of its own type
+
+fn ck(c char) -> int => match c {
+    "a" => 1
+    _ => 0
+}

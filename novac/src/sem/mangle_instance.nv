@@ -17,17 +17,23 @@
 module novac.sem
 
 import ../diag.{ice}
-import ../builtins.{prim_c_name, OPTION_FAMILY_C, OPTION_SUM}
+import ../builtins.{prim_c_name, OPTION_FAMILY_C, OPTION_SUM, RESULT_FAMILY_C, RESULT_SUM}
 import ../builtins.{FMT_PROTO, FMT_IMPL}
 import ../builtins.{TypeKind}
 import ../types.{TyId, no_ty, is_ty}
 
-/// The FAMILY spelling of a generic-sum instance, or "" for everything else:
-/// `Option[int]` is the shell's `NovaOpt_nova_int`, BY VALUE (its methods hand
-/// it back so), with no `Nova_` prefix and no star -- INTEROP, read off the
-/// shell, gone the day novac emits the whole prelude. Result (`NovaRes_`)
-/// joins when a carrier arrives; until then the instance_body ice below still
-/// names any other generic sum.
+/// The FAMILY spelling of a generic-sum instance's STRUCT, or "" for everything
+/// else -- INTEROP, read off the shell, gone the day novac emits the whole
+/// prelude:
+///   * `Option[int]` is `NovaOpt_nova_int`, with no `Nova_` prefix;
+///   * `Result[[]u8, IoError]` is `NovaRes_Nova_Vec____nova_byte_p_NovaValue_IoError`
+///     (2026-10-01, the carrier: a `match` on what a std call hands back).
+/// Each argument is its C type with a star spelled `_p` -- the one rule both
+/// families share (`NovaOpt_Nova_Rec_p`, `..._Nova_Utf16Error_p`), written in
+/// the same shape the Option spelling had before Result joined it.
+/// Every other generic sum still reaches the instance_body ice below by name.
+/// WHETHER the instance travels by value or behind a pointer is the other
+/// door's question (`family_instance_type`): the struct name is the same.
 fn family_instance_name(ctx Ctx, t TyId) -> str {
     ro head = decl_of_ty(ctx, t)
     ro is_sum = match head.kind {
@@ -36,9 +42,24 @@ fn family_instance_name(ctx Ctx, t TyId) -> str {
         TkPrim | TkRecord | TkApp | TkParam | TkInfer | TkNewtype | TkTuple | TkEffect | TkPtr => false
     }
     if !is_sum { return "" }
+    ro n = ctx.tys.arg_count(t)
+    if head.name == RESULT_SUM && n == 2 {
+        ro ok_c = c_type(ctx, ctx.tys.arg(t, 0)).replace("*", "_p")
+        ro err_c = c_type(ctx, ctx.tys.arg(t, 1)).replace("*", "_p")
+        return "${RESULT_FAMILY_C}${ok_c}_${err_c}"
+    }
     if head.name != OPTION_SUM { return "" }
-    if ctx.tys.arg_count(t) != 1 { return "" }
+    if n != 1 { return "" }
     "${OPTION_FAMILY_C}${c_type(ctx, ctx.tys.arg(t, 0)).replace("*", "_p")}"
+}
+
+/// The C TYPE of a generic-sum instance, or "" for everything else: an Option
+/// is its struct BY VALUE (its methods hand it back so), a Result is a GC
+/// pointer to its struct (`nova_make_NovaRes_*` allocates and returns `r`).
+fn family_instance_type(ctx Ctx, t TyId) -> str {
+    ro fam = family_instance_name(ctx, t)
+    if fam == "" { return "" }
+    if decl_of_ty(ctx, t).name == RESULT_SUM { "${fam}*" } else { fam }
 }
 
 /// The oracle's spelling of a generic-record instance struct

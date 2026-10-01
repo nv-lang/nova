@@ -1,0 +1,57 @@
+module match_char_lit.pos_1
+
+// A `match` on a `char` with CHAR-LITERAL arms (the string family, E2-b), in
+// value and in statement position. The arms compare the CODEPOINT, spelled
+// by the char literal's one door (sem/mangle.nv `char_literal_code`), as an
+// expression spells it.
+//
+// The axes: ASCII letters and digits; every simple escape the judge admits
+// (`\n`, `\t`, `\\`, `\'`, `\"`, `\0`); non-ASCII codepoints of two, three
+// and four UTF-8 bytes; the ORDER of the arms (the first that matches wins);
+// and `_` for the rest. Behaviour byte-for-byte with the oracle
+// (novac-e1-smoke).
+
+fn ck(c char) -> int => match c {
+    'a' => 1
+    'Z' => 2
+    '7' => 3
+    '\n' => 4
+    '\t' => 5
+    '\\' => 6
+    '\'' => 7
+    '"' => 8
+    '\0' => 9
+    'é' => 10
+    '日' => 11
+    '😀' => 12
+    'a' => 13
+    _ => 0
+}
+
+fn say(c char) -> () {
+    match c {
+        ' ' => println("space")
+        '\n' => println("newline")
+        _ => println("other")
+    }
+}
+
+fn main() {
+    println(ck('a'))
+    println(ck('Z'))
+    println(ck('z'))
+    println(ck('7'))
+    println(ck('\n'))
+    println(ck('\t'))
+    println(ck('\\'))
+    println(ck('\''))
+    println(ck('"'))
+    println(ck('\0'))
+    println(ck('é'))
+    println(ck('e'))
+    println(ck('日'))
+    println(ck('😀'))
+    say(' ')
+    say('\n')
+    say('x')
+}
