@@ -16,7 +16,8 @@
 //! `fn double`).
 //!
 //! Конфликт `fn main`: если оригинальный файл содержит `fn main`, она
-//! автоматически переименовывается в `__orig_main` (textual rewrite),
+//! автоматически переименовывается в `__orig_main` (на дереве после разбора:
+//! D487 не даёт программе объявить имя в `__`, а текст парсер судит как её),
 //! чтобы оставить `fn main` доступной для wrapped test body.
 
 use super::doctree::*;
@@ -142,7 +143,12 @@ fn run_one(t: &DocTest, original_source: Option<&str>, entry_path: Option<&Path>
     let must_verify = modifiers.contains(&DocTestModifier::MustVerify);
 
     let mut module = match parse_result {
-        Ok(m) => m,
+        Ok(mut m) => {
+            if let Some(orig) = original_source {
+                rename_orig_main(&mut m, orig.len());
+            }
+            m
+        }
         Err(d) => {
             if compile_fail {
                 return DocTestOutcome::Passed;
@@ -330,7 +336,8 @@ fn run_one(t: &DocTest, original_source: Option<&str>, entry_path: Option<&Path>
 /// **Ф.21.1**: если предоставлен `original_source` документируемого
 /// файла, используем его как base (рустдок-style `use crate::*`):
 /// - Берём оригинальный source как есть.
-/// - Переименовываем `fn main` (если есть) → `__orig_main` (textual rewrite).
+/// - Переименовываем `fn main` (если есть) → `__orig_main` — на дереве после
+///   разбора (`rename_orig_main`), не в тексте: D487.
 /// - Добавляем test wrapped в новый `fn main`.
 /// Test получает доступ ко всем exports + imports оригинального модуля.
 ///
@@ -348,36 +355,30 @@ fn wrap_source(test_source: &str, original_source: Option<&str>, handlers: Optio
         format!("fn main() -> () => {{\n{}\n}}", test_source)
     };
     match original_source {
-        Some(orig) => {
-            let cleaned = rename_main_in_source(orig);
-            format!("{}\n\n{}\n", cleaned, test_part)
-        }
+        // The original comes FIRST, unchanged: its `fn main` is renamed on
+        // the parsed tree by `rename_orig_main`, which finds it by position.
+        Some(orig) => format!("{}\n\n{}\n", orig, test_part),
         None => format!("module __doctest__\n\n{}\n", test_part),
     }
 }
 
-/// Textual rewrite `fn main(` → `fn __orig_main(` (+ `export fn main(`
-/// variant). Per-line — robust для стандартного Nova formatting. Не
-/// затрагивает строки, начинающиеся с whitespace (тело других функций).
-fn rename_main_in_source(src: &str) -> String {
-    let mut out = String::with_capacity(src.len() + 32);
-    let mut first = true;
-    for line in src.lines() {
-        if !first {
-            out.push('\n');
-        }
-        first = false;
-        if let Some(rest) = line.strip_prefix("fn main(") {
-            out.push_str("fn __orig_main(");
-            out.push_str(rest);
-        } else if let Some(rest) = line.strip_prefix("export fn main(") {
-            out.push_str("export fn __orig_main(");
-            out.push_str(rest);
-        } else {
-            out.push_str(line);
+/// The original's top-level `fn main` (free, declared inside the first
+/// `orig_len` bytes of the synthetic source) gives way to the test's own
+/// `main` as `__orig_main`.
+///
+/// D487: the rename is done on the TREE, not in the text. `__orig_main` is in
+/// the compiler's reserved namespace, and the parser refuses a name there
+/// when it is spelled in the source it reads (`E_RESERVED_NAME`) -- a textual
+/// rewrite (`fn main(` -> `fn __orig_main(`, the form before D487) made the
+/// compiler's name look like the program's.
+fn rename_orig_main(module: &mut crate::ast::Module, orig_len: usize) {
+    for item in &mut module.items {
+        if let crate::ast::Item::Fn(f) = item {
+            if f.name == "main" && f.receiver.is_none() && f.span.start < orig_len {
+                f.name = "__orig_main".to_string();
+            }
         }
     }
-    out
 }
 
 fn has_top_level_decl(source: &str) -> bool {
@@ -491,22 +492,39 @@ mod tests {
         assert!(wrapped.contains("ro r = double(3)"));
     }
 
+    /// D487: the original's `fn main` gives way to the test's own `main` as
+    /// `__orig_main` -- a name in the compiler's reserved namespace, which a
+    /// PROGRAM may not declare. The doc runner is the compiler, so the
+    /// rename must not reach the parser as program text.
+    #[test]
+    fn original_source_with_main_runs_the_test() {
+        let orig = "module my.mod\n\nfn main() -> () => ()\nexport fn double(x int) -> int => x * 2\n";
+        let t = make_test("ro r = double(3)\n", vec![DocTestModifier::NoRun]);
+        let s = run_doc_tests_with_source(std::slice::from_ref(&t), Some(orig));
+        assert_eq!(s.results[0].outcome, DocTestOutcome::Passed, "{:?}", s.results[0].outcome);
+    }
+
+    fn fn_names(orig: &str, test_body: &str) -> Vec<String> {
+        let src = wrap_source(test_body, Some(orig), None);
+        let mut m = crate::parser::parse(&src).expect("synthetic source parses");
+        rename_orig_main(&mut m, orig.len());
+        m.items.iter().filter_map(|i| match i { crate::ast::Item::Fn(f) => Some(f.name.clone()), _ => None }).collect()
+    }
+
     #[test]
     fn rename_main_handles_both_forms() {
-        let s = "fn main() => println(\"hi\")\nfn helper() -> int => 1\n";
-        let r = rename_main_in_source(s);
-        assert!(r.starts_with("fn __orig_main()"));
-        assert!(r.contains("fn helper")); // helper untouched
+        let s = "module x\n\nfn main() -> () => ()\nfn helper() -> int => 1\n";
+        // the original's main gives way; helper and the test's own main stay
+        assert_eq!(fn_names(s, "ro r = 1\n"), vec!["__orig_main", "helper", "main"]);
 
-        let s2 = "export fn main(args []str) -> int => 0\n";
-        let r2 = rename_main_in_source(s2);
-        assert!(r2.starts_with("export fn __orig_main("));
+        let s2 = "module x\n\nexport fn main() -> () => ()\n";
+        assert_eq!(fn_names(s2, "ro r = 1\n"), vec!["__orig_main", "main"]);
     }
 
     #[test]
     fn rename_main_no_main_unchanged() {
-        let s = "module x\n\nexport fn other() => ()\n";
-        assert_eq!(rename_main_in_source(s), s.trim_end());
+        let s = "module x\n\nexport fn other() -> () => ()\n";
+        assert_eq!(fn_names(s, "ro r = 1\n"), vec!["other", "main"]);
     }
 
     // Suppress dead-code warning for Span import.

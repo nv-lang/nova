@@ -803,6 +803,13 @@ impl Parser {
         // Kept for structural compat. module_attrs already has #no_prelude etc.
         let mut all_attrs = module_attrs;
         all_attrs.extend(clause_attrs);
+        // D487: no programmer-declared name in the compiler's own C namespaces
+        // (`_nv_`, `_nova_`, `_at_`, `__`). Judged here, on the tree just built,
+        // because only the token stream tells a written name from a synthesized
+        // one -- see `types/reserved_names.rs`.
+        if let Some(d) = crate::types::reserved_names::check_parsed_module(&items, &self.tokens, &self.src, self.src_base) {
+            return Err(d);
+        }
         Ok(Module {
             name: module_name,
             imports,
