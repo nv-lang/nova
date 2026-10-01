@@ -1,0 +1,7 @@
+module hp
+
+import ./a.{Id}
+
+fn main() {
+    println(Id(7))
+}

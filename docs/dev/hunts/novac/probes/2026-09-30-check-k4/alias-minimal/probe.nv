@@ -1,8 +1,0 @@
-// Out of the cell: the minimal alias -- is `type Num alias int` known at all?
-type Num alias int
-
-fn f(x Num) -> int => x + 1
-
-fn main() {
-    println(f(1))
-}

@@ -1,0 +1,5 @@
+module hp
+
+fn main() {
+    println(is_high_surrogate(55296))
+}

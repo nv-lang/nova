@@ -1,8 +1,0 @@
-// `ro (a, true) = t`: a bool literal nested in a destructuring binding. D486 s4
-// refuses a refutable node at any depth of a binding (registry 1379); the
-// pattern-shape door reads `true` as a binder name.
-fn main() {
-    ro t = (1, false)
-    ro (a, true) = t
-    println(a)
-}

@@ -1,0 +1,9 @@
+module hp
+
+import ./perm.{Permissions}
+
+fn main() {
+    ro p = Permissions { read_only: false, mode: 200 }
+    println(p.read_only)
+    println(p.mode + p.mode)
+}

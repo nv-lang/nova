@@ -1,0 +1,22 @@
+=== PACKAGE
+./src/geo/geo.nv
+./src/main.nv
+=== ORACLE: nova build src/main.nv, run
+oracle build rc=0
+oracle run rc=0
+120
+=== SUBJECT: novac check (NOVAC_SELF_PATH=<pkg>/src)
+novac check rc=0
+=== SUBJECT: novac emit
+novac emit rc=0
+--- C lines matching: Nova_Point
+11951:    Nova_Point* _novac_tmp_t1 = (Nova_Point*)nova_alloc(sizeof(Nova_Point));
+11954:    Nova_Point* p = _novac_tmp_t1;
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=1
+<tmp>/body.c:11950:5: error: use of undeclared identifier 'Nova_Point'
+<tmp>/body.c:11950:17: error: use of undeclared identifier '_novac_tmp_t1'
+<tmp>/body.c:11950:34: error: use of undeclared identifier 'Nova_Point'
+<tmp>/body.c:11950:45: error: expected expression
+<tmp>/body.c:11951:5: error: use of undeclared identifier '_novac_tmp_t1'
+<tmp>/body.c:11952:5: error: use of undeclared identifier '_novac_tmp_t1'

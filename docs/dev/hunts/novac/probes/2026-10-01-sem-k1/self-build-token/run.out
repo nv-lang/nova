@@ -1,0 +1,15 @@
+=== the two declarations
+novac/src/lex/lex.nv:246:export type Token {
+std/src/encoding/json.nv:342:type Token enum
+=== the constructions in parse.nv
+157:        return leaf(Token { kind: TokenKind.Eof, leading: "", text: last.text })
+180:        return leaf(Token { kind: k, leading: "", text: last.text })
+183:    leaf(Token { kind: k, leading: "", text: t.text[..0] })
+=== SUBJECT: NOVAC_UNIT=1 NOVAC_SELF_PATH=novac/src novac check novac/src/parse/*.nv -- the #812 lines
+novac check rc=1
+{"id":"d245","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"novac/src/parse/parse.nv","start":8919,"end":8923},
+{"id":"d250","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"novac/src/parse/parse.nv","start":10008,"end":10012},
+{"id":"d252","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"novac/src/parse/parse.nv","start":10096,"end":10100},
+offset 8919 -> parse.nv line 157
+offset 10008 -> parse.nv line 180
+offset 10096 -> parse.nv line 183

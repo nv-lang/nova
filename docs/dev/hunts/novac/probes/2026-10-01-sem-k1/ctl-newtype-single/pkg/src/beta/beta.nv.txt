@@ -1,0 +1,3 @@
+module hp.beta
+
+export type Id int

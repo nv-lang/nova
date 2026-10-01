@@ -1,9 +1,0 @@
-=== SUBJECT: novac check
-{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"D:/Temp/hunt-check-k4/probes/alias-minimal/probe.nv","start":106,"end":109},"message":"undeclared type name `Num`: no type of this name is declared in this file or in the declarations handed to novac -- a misspelling, or a type from a module this file does not import","poisoned_by":null}
-novac rc=1
-=== ORACLE: nova check
-[32mok:[0m D:/Temp/hunt-check-k4/probes/alias-minimal/probe.nv
-
-===== SUMMARY =====
-[32mPASS[0m: 1  FAIL: 0
-oracle check rc=0

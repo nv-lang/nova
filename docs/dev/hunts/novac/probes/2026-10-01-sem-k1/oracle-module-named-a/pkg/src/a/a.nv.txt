@@ -1,0 +1,3 @@
+module hp.a
+
+export type Id int

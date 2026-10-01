@@ -1,0 +1,8 @@
+module hp
+
+import ./beta.{Id}
+
+fn main() {
+    ro x = Id(200) + Id(100)
+    println(x)
+}
