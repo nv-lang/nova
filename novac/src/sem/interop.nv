@@ -37,13 +37,15 @@ export type InteropTable {
     sym_cnt int /// how many identifiers were lifted; printed by the gate so a shell that lost its symbols is loud
     modules NameTable /// the PROGRAM's modules, dotted (`novac.sem`): files handed from the program's own root (NOVAC_SELF_PATH), whose bodies the program compiles -- std's are not here (274.11 E.10 step 2a) (NsInterop namespace)
     struct_bodies NameTable /// identifiers the shell defines a `struct <name> {` BODY for -- a forward typedef is NOT here (C11 allows repeating it), so the declaration judge refuses only the real one-unit redefinition (NsInterop namespace)
+    decl_names []str /// per handed declaration tree (its index in the decls handed to `collect`): the file name it was read from -- a contract in a body instantiated from it prints that name (274.11 E.10 step 4c); empty when the decls were not described
+    decl_texts []str /// per handed declaration tree: the very text it was parsed from -- a token's position is its slice's distance from THAT buffer (`SourceText.offset_of`), so a copy would not do
 }
 
 /// An empty surface -- what a test builds when it wants no interop at all.
 export fn InteropTable.new() -> InteropTable =>
     { names: NameTable.new(NamespaceId.NsInterop), sym_cnt: 0,
       modules: NameTable.new(NamespaceId.NsInterop),
-      struct_bodies: NameTable.new(NamespaceId.NsInterop) }
+      struct_bodies: NameTable.new(NamespaceId.NsInterop), decl_names: []str.new(), decl_texts: []str.new() }
 
 /// Register one identifier the shell carries. A repeat is a no-op: the shell
 /// mentions a symbol as often as it uses it, and the table records THAT it does.
@@ -69,6 +71,33 @@ export fn InteropTable mut @add_body(sym str) -> () {
 /// judge's question: a body is the one thing a unit cannot repeat.
 #realtime nogc
 export fn InteropTable @has_body(sym str) -> bool => @struct_bodies.find(sym) >= 0
+
+/// Describes the handed declaration trees -- the file each was read from and
+/// the text it was parsed from -- in the order the decls are handed to
+/// `collect` (274.11 E.10 step 4c): a std body this unit instantiates is typed
+/// against its own text and prints its own file in a contract.
+export fn InteropTable mut @describe_decls(names []str, texts []str) -> ()
+    requires names.len() == texts.len(), "sem: a declaration description with names and texts of different lengths"
+{
+    @decl_names = names
+    @decl_texts = texts
+}
+
+/// The text handed declaration tree `tree` was parsed from, or None when the
+/// decls were not described.
+#realtime nogc
+export fn InteropTable @decl_text(tree int) -> Option[str] {
+    if tree < 0 || tree >= @decl_texts.len() { return None }
+    Some(@decl_texts[tree])
+}
+
+/// The file handed declaration tree `tree` was read from, "" when the decls
+/// were not described (asked after `@decl_text` answered).
+#realtime nogc
+export fn InteropTable @decl_name(tree int) -> str {
+    if tree < 0 || tree >= @decl_names.len() { return "" }
+    @decl_names[tree]
+}
 
 /// Marks a module of the PROGRAM on the link surface (274.11 E.10 step 2a).
 export fn InteropTable mut @add_module(dotted str) -> () {

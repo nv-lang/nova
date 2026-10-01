@@ -207,6 +207,16 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
     Reach { seen, inst, subst, ptypes }
 }
 
+/// Mark the callees of one more TYPED BODY -- an instance whose body is not a
+/// declaration of this file (274.11 E.10 step 4c): a std body this unit
+/// instantiates is typed into its own channel by the pipeline, AFTER this walk
+/// found the instance, so what that body calls is known only then. The
+/// pipeline hands the body and its channel here, and the set grows by what it
+/// reaches (`Vec[Pt] @push` reaching `@reserve`, which reaches `@cap`).
+/// Answers whether anything was newly marked.
+export fn Reach mut @grow(n Node, ctx Ctx, chan CheckOut) -> bool =>
+    mark_callees(n, ctx, chan, @seen, @inst, @subst, @ptypes)
+
 /// Is this exact instance (row + substitution) missing from the set being
 /// built? Asked over the vectors the walk is still filling, because a `Reach`
 /// does not exist until the walk ends -- and no second door asks it of a
@@ -263,15 +273,17 @@ fn mark_ref(cr CalleeRef, ctx Ctx, out CheckOut, mut seen []bool, mut inst []Ins
     // next, and the collector would silently stop reaching it.
     match cr.target {
         CalleeFn(row) => {
-            // A generic row WITH a body of ours grows an instance; one
-            // without is an instance method the SHELL compiled (sub-plan
-            // L2) -- nothing to instantiate, and no declaration of it in
-            // this file for `decl_of_row` to look for.
-            if is_generic(ctx, row) && ctx.fns.compiles_body(row) {
+            // A generic row WITH a body of ours grows an instance -- the
+            // file's own, or a HANDED body this unit instantiates because the
+            // shell lacks the instance (274.11 E.10 step 4c, `Ctx
+            // @instantiates`). One without is an instance method the SHELL
+            // compiled (sub-plan L2) -- nothing to instantiate.
+            ro gen = is_generic(ctx, row)
+            ro args = if gen { out.subst_of_ref(cr) } else { []TyId.new() }
+            if gen && (ctx.fns.compiles_body(row) || ctx.instantiates(row, args)) {
                 // A GENERIC callee is reached per SUBSTITUTION: the element
                 // of the set is the instance, and the same call written
                 // twice adds nothing while two type arguments add two.
-                ro args = out.subst_of_ref(cr)
                 if instance_absent(inst, subst, row, args) {
                     ro off = subst.len()
                     subst.append(args)

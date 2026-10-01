@@ -178,6 +178,20 @@ export fn Interner mut @intern(kind TypeKind, head_id int, args []TyId) -> TyId 
     id
 }
 
+/// The id of an ALREADY interned term, or `no_ty()` -- the read-only half of
+/// `@intern`, same bucket walk, nothing pushed. For readers that hold the
+/// interner without the right to grow it (`sem.subst_type`, 274.11 E.10 step
+/// 4c): a term they need was interned by the checker when it typed the code
+/// that needs it.
+export fn Interner @find(kind TypeKind, head_id int, args []TyId) -> TyId {
+    mut r = @head_of_bucket(bucket_of(kind, head_id))
+    while is_ty(r) {
+        if @args_equal(r, args) { return r }
+        r = @rows[raw_ty(r)].next_row
+    }
+    no_ty()
+}
+
 /// A primitive by its ordinal in the universe (int, str, bool, f64 …).
 export fn Interner mut @prim(ordinal int) -> TyId => @intern(TypeKind.TkPrim, ordinal, []TyId.new())
 
@@ -475,4 +489,33 @@ export fn Interner mut @subst(t TyId, args []TyId) -> TyId {
             return @intern(row.kind, row.head_id, new_args)
         }
     }
+}
+
+/// `@subst` among the terms ALREADY interned: the rewritten term, or `no_ty()`
+/// when some term on the way was never interned. Grows nothing, so a reader
+/// without the right to intern can apply a substitution (274.11 E.10 step 4c).
+/// A parameter is its argument; every other term is rewritten through its own
+/// arguments -- a term without any is itself -- and looked up under its kind.
+export fn Interner @subst_known(t TyId, args []TyId) -> TyId {
+    ro row = @rows[raw_ty(t)]
+    if row.kind == TypeKind.TkParam {
+        if row.head_id < 0 || row.head_id >= args.len() {
+            ice("types: subst with a partial argument vector -- a Param has no argument")
+        }
+        return args[row.head_id]
+    } else {
+        // Not a parameter: rewritten through its arguments below.
+    }
+    if row.arg_cnt == 0 { return t }
+    mut new_args = []TyId.new()
+    mut changed = false
+    for i in 0..row.arg_cnt {
+        ro a = @args[row.arg_off + i]
+        ro s = @subst_known(a, args)
+        if !is_ty(s) { return no_ty() }
+        changed = changed || s != a
+        new_args.push(s)
+    }
+    if !changed { return t }
+    @find(row.kind, row.head_id, new_args)
 }

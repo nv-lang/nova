@@ -697,6 +697,15 @@ fn fill_record_fields(c Node, owner_id DeclId, tname str, mut types []TypeDef, d
     ro mine = types[raw_decl(owner_id)]
     ro off = fields.rows.len()
     mut cnt = 0
+    // THE RECORD'S TYPE PARAMETERS are in scope of its fields (274.11 E.10
+    // step 4c): `type Box[T] { v T }` declares a field of type `T`, slot 0 of
+    // the record. Until this day the reference door was handed none, `T` did
+    // not resolve, and the field was dropped by the `is_ty` line below -- in
+    // silence: std's `Vec[T]` lost `data`, and every `@data` in a body novac
+    // instantiates read as "unknown field".
+    ro tps = generic_names(branch_children(c))
+    mut prow = []TyId.new()
+    for i in 0..tps.len() { prow.push(tys.param(i)) }
     for f in branch_children(c) {
         if f.kind_of() != NodeKind.Field { continue }
         ro fk = branch_children(f)
@@ -711,7 +720,7 @@ fn fill_record_fields(c Node, owner_id DeclId, tname str, mut types []TypeDef, d
         // parameter reads it: a plain name, `Name[Args]`, or the `[]Elem` sugar.
         // Reading the leaf text instead saw only the first token, so a field of
         // a slice type was dropped from the registry.
-        ro ft = ty_of_type_ref(fk, ftat, no_ty(), []str.new(), []TyId.new(), types, defs, tys)
+        ro ft = ty_of_type_ref(fk, ftat, no_ty(), tps, prow, types, defs, tys)
         if !is_ty(ft) { continue }
         fields.add(mine.ty_id, leaf_text(fk[fnat]), ft, ro_view: is_leaf_kind(fk[ftat], TokenKind.KwRo))
         cnt += 1

@@ -16,7 +16,7 @@ module novac.pipeline
 
 import ../tree.{Node, NodeKind, raw_node}
 import ../parse.{parse}
-import ../sem.{branch_children, leaf_text, is_value_record, shape_of, InteropTable}
+import ../sem.{branch_children, leaf_text, is_value_record, shape_of, InteropTable, decl_fn_row}
 import ../source.{SourceText}
 import ../diag.{ice}
 import ../check.{check_instance}
@@ -121,7 +121,8 @@ test "an instance types its body under the substitution, in its own channel (E2-
     ro tree = parse(tokens_of(src))
     ro ctx = context(tree, parse_decls(std_decls()), InteropTable.new())
     ro decl = generic_decl_of(tree, "twice")
-    ro (diags, chan) = check_instance(decl, SourceText { text: src }, ctx,
+    ro row = decl_fn_row(decl, ctx) ?? ice("test: `twice` owns no row")
+    ro (diags, chan) = check_instance(decl, SourceText { text: src }, ctx, row,
         []TyId.of(ctx.prims.int_id), raw_node(tree.id_of()) + 1)
     assert(diags.len() == 0)
     // The tail is `x + x`, and its recorded type is the SUBSTITUTED one: int.
@@ -935,10 +936,13 @@ export fn Vec[T] @nope() -> int => 0")
     ro (d3, _) = compile_to_c("fn main() {\n ro v = [7]\n println(v.zzz())\n}", std)
     assert(d3.len() == 1)
     assert(d3[0].message.contains("no such method"))
-    // Declared, generic, and absent from the shell: refused naming the probe.
-    ro (d4, _) = compile_to_c("fn main() {\n ro v = [7]\n println(v.nope())\n}", std)
-    assert(d4.len() >= 1)
-    assert(d4[0].message.contains("shell_probe.nv"))
+    // Declared, generic, and absent from the shell: until 274.11 E.10 step 4c
+    // this was refused naming the probe; now the unit makes the instance from
+    // the body it was handed, and the call names OUR instance, not the shell's.
+    ro (d4, c4) = compile_to_c("fn main() {\n ro v = [7]\n println(v.nope())\n}", std)
+    assert(d4.len() == 0, messages(d4))
+    assert(!c4.contains("Vec____nova_int_method_nope"), "the call names a shell symbol that does not exist")
+    assert(c4.contains("novac_fn_std_v_nope"), "the instance of the handed `nope` is not emitted under our name")
     // A return that is an instance of a sum: the family spelling is not taken.
     // `get` and not a made-up name: the shell IS asked first, and a method the
     // shell lacks is refused for that reason before its return is judged.

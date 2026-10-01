@@ -15,7 +15,11 @@
 // novac/src/pipeline/handed_free_test.nv -- free functions of handed modules.
 
 module novac.pipeline
-import ../sem.{InteropTable, representation_of, FnRow}
+import ../sem.{InteropTable, representation_of, FnRow, CheckOut, branch_children}
+import ../tree.{Node, raw_node}
+import ../source.{SourceText}
+import ../check.{check_instance}
+import ../types.{TyId, no_ty, is_ty}
 import ../diag.{ice}
 import ../parse.{parse}
 
@@ -156,5 +160,56 @@ test "`==` on a payload-free sum compares tags wherever A4 places it -- a fenced
     ro src = "#impl(Equal)\ntype K enum\n    | A\n    | B\n\nfn f(xs []K, k K) -> bool => k == K.A\n\nfn main() {\n    println(1)\n}"
     ro d = compile_with(src, decls, InteropTable.new())
     assert(d.len() == 0, messages(d))
+}
+
+/// The recorded type of the first `@field` read under `n`, or `no_ty()` when
+/// none is recorded -- what the instance test below asks of the channel.
+fn first_field_read_type(n Node, chan CheckOut) -> TyId {
+    if n.kind_of() == NodeKind.SelfField {
+        return chan.type_if_known(n.id_of())
+    } else {
+        // Not a field read: its children are searched.
+    }
+    if n.kind_of() == NodeKind.LeafNode { return no_ty() }
+    for c in branch_children(n) {
+        ro r = first_field_read_type(c, chan)
+        if is_ty(r) { return r }
+    }
+    no_ty()
+}
+
+test "a HANDED generic method is typed as an instance over a type of the file (274.11 E.10 step 4c)" {
+    // std's `Box[T] @get` under `T := Pt`, a type the shell cannot know: the
+    // unit makes the instance from the body it was handed. Two things had to
+    // hold, and each one alone fails this test: the instance's ROW is handed to
+    // the checker (the body's node ids are the std tree's, and the file's
+    // node->row table answers None for them -- the body went untyped), and the
+    // receiver `Box[T]` is SUBSTITUTED through the application (`subst_type`
+    // returned an application unchanged until this day, and the field read
+    // came out `T`).
+    mut texts = std_decls()
+    texts.push("module std.boxm\nexport type Box[T] { v T }\nexport fn Box[T] @get() -> T => @v\n")
+    ro decls = parse_decls(texts)
+    // `Box[Pt]` is named in a signature, so the registry holds the term -- as
+    // it does at every real call site, where it is the receiver's type.
+    ro prog = "import std.boxm.{Box}\n\ntype Pt {\n    x int\n}\n\nfn hold(b Box[Pt]) -> int => 1\n\nfn main() {\n    println(1)\n}"
+    ro ctx = context(parse(tokens_of(prog)), decls, InteropTable.new())
+    mut row = FnRow(-1)
+    for i in 0..ctx.fns.rows.len() {
+        if ctx.fns.rows[i].name == "get" && ctx.fns.rows[i].handed_from == "std.boxm" {
+            row = FnRow(i)
+        } else {
+            // Another row: not this test's subject.
+        }
+    }
+    ro decl = ctx.handed.decl_of(row) ?? ice("test: the handed `get` has no body noted")
+    ro tree = decls[ctx.handed.tree_of(row)]
+    ro pt = ctx.ty_of_name("Pt") ?? ice("test: the file's `Pt` is not in the registry")
+    assert(ctx.instantiates(row, []TyId.of(pt)), "an instance the shell does not carry is not made by the unit")
+    // The ORIGINAL text: a position is a slice's distance from its buffer.
+    ro (d, chan) = check_instance(decl, SourceText { text: texts[ctx.handed.tree_of(row)] }, ctx, row,
+                                  []TyId.of(pt), raw_node(tree.id_of()) + 1)
+    assert(d.len() == 0, messages(d))
+    assert(first_field_read_type(decl, chan) == pt, "the body's `@v` is not typed `Pt` under the substitution")
 }
 
