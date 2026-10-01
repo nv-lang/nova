@@ -716,6 +716,7 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
     @value_expect = no_ty()
     if !@bind_arm_pattern(ak, scr_t) {
         @value_expect = body_expect
+        // SILENT-OK: the pattern door refused the arm by name already.
         return None
     }
     for g in ak {
