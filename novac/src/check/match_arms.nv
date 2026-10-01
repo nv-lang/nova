@@ -28,7 +28,7 @@ import ../sem.{ty_source_name, is_never_ty}
 // parts through their own doors -- never slot arithmetic (registry 1191's
 // class: a slot count and the meaning of what sits there are two doors).
 import ../sem.{PatShape, pattern_shape, pattern_head_text, pattern_qualifier, pattern_subpatterns}
-import ../sem.{pattern_lit_leaf}
+import ../sem.{pattern_lit_leaf, pattern_is_interp}
 import ../sem.{pattern_fields, patfield_name, patfield_sub, pattern_rest, pattern_mode_word}
 import ../sem.{pattern_name_node, patfield_name_node, rest_is_trailing}
 import ../sem.{shape_of, field_range_of, no_frow}
@@ -335,6 +335,12 @@ fn Checker mut @bind_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode, pos 
 /// The same holds for the char and string judges: their walks never reach a
 /// pattern either, so this door asks them itself.
 fn Checker mut @bind_lit_pattern(pat Node, ty TyId, ak []Node) -> bool {
+    if pattern_is_interp(pat) {
+        @reject_first_leaf_of(ak, INTERP_PATTERN_MSG)
+        return false
+    } else {
+        // A plain literal: its token answers below.
+    }
     ro p0 = pattern_lit_leaf(pat)
     ro lk0 = leaf_kind(p0)
     // `true` / `false`: a LITERAL of `bool` (sem/pattern.nv), never a binder

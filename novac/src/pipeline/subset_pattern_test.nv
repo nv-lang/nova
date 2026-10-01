@@ -618,7 +618,7 @@ fn main() {\n\
     assert(!c4.contains("nova_str_eq(_novac_l"), "CONTROL: a binder compares nothing")
 }
 
-test "a literal or a variant BELOW an arm's root is tested, not dropped (registries 1534, 1542)" {
+test "a literal or a variant BELOW an arm's root is tested, not dropped (registries 1534, 1542, 1556)" {
     // `A(3)`: the payload is read into a temporary and compared by a synthetic
     // condition (`Cond.Holds`) -- the int compare appears in the C. CONTROL: the
     // same arm with a binder at that position prints no such compare, so the
@@ -693,4 +693,18 @@ fn main() {\n\
  println(k(Cc))\n\
 }", std)
     assert(d5.len() == 0, messages(d5))
+
+    // An interpolated string in a pattern is refused by name, a language error
+    // (D486 s2: a pattern's literal is not interpolated). CONTROL: the plain
+    // literal compiles (the string-family test above).
+    ro (d6, _) = compile_to_c("fn k(s str, x int) -> int => match s {\n\
+ \"a\${x}\" => 1\n\
+ _ => 0\n\
+}\n\
+fn main() {\n\
+ println(k(\"a\", 1))\n\
+}", std)
+    assert(d6.len() == 1, messages(d6))
+    assert(d6[0].message.contains("not interpolated"), d6[0].message)
+    assert(d6[0].code == "E_NOVAC_LANG", d6[0].code)
 }

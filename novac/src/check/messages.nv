@@ -185,6 +185,13 @@ const VARIANT_VALUE_NEEDS_ARGS_MSG = "outside the subset: this variant carries a
 /// (D128), as in an expression (D405). The oracle has no check of its own
 /// here (registry 1535): it prints `scr.len == ...` over an int and clang
 /// refuses the C, and it runs `97` over a `char`.
+/// A STRING LITERAL WITH A SLOT in a pattern (registry 1556): a pattern's literal
+/// is not interpolated (D486 s2, amendment 2026-10-01) -- it compares with a
+/// FIXED value. The oracle reads the form and compares with the raw text,
+/// `a${x}` byte for byte, so the slot is silently not a slot; the comparison
+/// the author meant is a guard.
+const INTERP_PATTERN_MSG = "a pattern's string literal is not interpolated (D486 s2) -- it compares with a fixed value; write the comparison the slot means as a guard (`s if s == ...`)"
+
 const LIT_PATTERN_TYPE_MSG = "a literal pattern compares with a value of its own type -- a string literal with a `str`, a char literal with a `char`, an integer literal with an integer (D486 s2; D128: `char` and the integers do not mix); the value matched here is of another type"
 
 

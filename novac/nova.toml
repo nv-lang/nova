@@ -509,7 +509,12 @@
 # `char` and the integers do not mix (D128), so `97` over `char` and `'a'` over
 # `int` are type errors. Cost to Carina: zero debt -- the same branch refuses
 # both; the oracle checks no literal type in a pattern (registry 1535).
-#   spec-queue: 150
+# 150 -> 151 (2026-10-01, integrator's decision to the same session): the same
+# D486 s2 amendment gains one sentence -- a pattern's string literal is not
+# interpolated; a `${...}` slot in a pattern is an error. Cost to Carina: zero
+# debt -- the same branch refuses it by name (it used to be "did not parse");
+# the oracle compares with the raw text (registry 1556).
+#   spec-queue: 151
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,
