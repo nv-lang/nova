@@ -1314,7 +1314,9 @@ fn kind(c char) -> int => match c {
 пропуск полей, ранее законный в match, ретрактирован
 (`E_RECORD_PATTERN_NEEDS_REST` во всех позициях). `consume` на биндере внутри
 паттерна разрешён и в условиях (`if Some(consume x) = opt { … }`); запрещён
-только режим перед всем паттерном (`E_CONSUME_IN_CONDITION`).
+только режим перед всем паттерном (`E_CONSUME_IN_CONDITION`; `ro`/`mut` перед
+конструктором или разбором — `E_OUTER_RO_IN_CONDITION` / `E_OUTER_MUT_IN_CONDITION`,
+они стоят только перед голым именем: `if ro n = f()`).
 
 **Payload конструктора сам может быть Tuple- или Record-паттерном** — строки
 «Конструктор» и «Tuple»/«Record» в таблице выше КОМПОНУЮТСЯ, а не только

@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E_CONSUME_IN_CONDITION
+// Regression for the spec hunt 2026-10-01 (rows 1580-1585; the integrator's ruling
+// 2026-10-02): in an if/while condition a word before the pattern is the mode of a
+// BARE NAME only (D486 s4 rule 3). Before, the parser took any pattern after `ro`/`mut`
+// and the program compiled. Positive half: standalone/d486_cond_mode_ok.nv.
+module neg.d486_cond_ro_consume_neg
+
+type Tx consume { n int }
+
+fn Tx consume @into_n() -> int => @n
+
+fn main() Io {
+    ro opt = Some(Tx{ n: 4 })
+    // nova:expect E_CONSUME_IN_CONDITION -- outer `consume` after `ro`
+    if ro consume Some(t) = opt {
+        println("${t.into_n()}")
+    }
+}

@@ -1488,6 +1488,9 @@
 # 2026-10-01, integrator nova-20: rows -> 1519, max -> 1569 (2026-10-01 integrator: rows 1560-1569 (sweep, k1, strarm findings)).
 # 2026-10-01, integrator nova-20: rows -> 1526, max -> 1586 (spec-track merge: rows 1580-1586 (spec hunt, six topics + std type-name leak)).
 # 2026-10-01, integrator nova-20: rows -> 1529, max -> 1587 (rows 1578, 1579, 1587 (strarm question, claude-limits test-only CC-FAIL, cast question 3)).
+# 2026-10-01, integrator nova-20: rows -> 1532, max -> 1591 (d486-cond-outer-mode merge: rows 1588, 1589, 1591).
+rows=1532
+max=1591
 rows=1529
 max=1587
 rows=1526

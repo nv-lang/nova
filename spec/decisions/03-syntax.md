@@ -1642,7 +1642,7 @@ if user = compute_user() { ... }                       // ✗ E_AMBIGUOUS_IDENT_
 
 // Guard через && (Plan 106, D34 amend 2026-06-17)
 if Some(x) = cache.get(key) && x > 5 { use(x) }
-if ro Some(user) = db.find(id) && user.is_active { process(user) }
+if Some(user) = db.find(id) && user.is_active { process(user) }   // `ro` перед конструктором — ❌ E_OUTER_RO_IN_CONDITION (D486 §4)
 while Some(item) = queue.pop() && item.valid { handle(item) }
 
 // else-if
@@ -3604,9 +3604,9 @@ ro y = some_int as f64       // int → f64
 | From → To | Семантика | Пример |
 |---|---|---|
 | `iN → iM` (M < N) | wraparound (modulo 2^M) | `0x1_FFFF as i16 == -1` |
-| `iN → uM` | bit-pattern truncate | `-1i32 as u16 == 65535` |
+| `iN → uM` | bit-pattern truncate | `(-1 as i32) as u16 == 65535` |
 | `uN → uM` (M < N) | wraparound | `0x1_FFFF as u16 == 0xFFFF` |
-| `uN → iM` | bit-pattern, signed reinterpret | `0xFFFFu16 as i16 == -1` |
+| `uN → iM` | bit-pattern, signed reinterpret | `(0xFFFF as u16) as i16 == -1` |
 | `f64 → f32` | IEEE rounding | `1.1 as f32 ≈ 1.1` (с потерей) |
 | **`f → iN`** | **saturation + NaN→0** | `70000.5 as i16 == 32767` |
 | **`f → uN`** | **saturation + NaN→0 + neg→0** | `-1.0 as u16 == 0` |
@@ -3618,10 +3618,10 @@ ro y = some_int as f64       // int → f64
 >
 > **1. Четыре целочисленные строки — ОДНА операция.** «wraparound (modulo 2^M)», «bit-pattern
 > truncate», «signed reinterpret» — три названия одного действия: взять младшие M бит источника и
-> прочитать их как значение целевого типа. `0x1_FFFF as i16 == -1` и `-1i32 as u16 == 65535` —
+> прочитать их как значение целевого типа. `0x1_FFFF as i16 == -1` и `(-1 as i32) as u16 == 65535` —
 > одно и то же правило с разных сторон. Так у Rust `as`, Go, Java, C для беззнаковых. Следствие для
 > читателя: `u64 as u8`, `i32 as u16` **не требуют** `& 0xFF`/`& 0xFFFF` руками — `as` и есть эта
-> маска (проба: `0x1234u64 as u8 == 52`, `70000i32 as u16 == 4464`). Исключений по имени типа нет:
+> маска (проба: `(0x1234 as u64) as u8 == 52`, `(70000 as i32) as u16 == 4464`; суффиксных литералов нет — D44). Исключений по имени типа нет:
 > `int as uint` — та же операция (D130 Q2 снят тем же днём).
 >
 > **2. Пример `i16.try_from(f)?` ниже — мёртвая ссылка.** D77 ретрагирован 2026-07-06, статики
@@ -3746,7 +3746,7 @@ Prune `as`-cast'ов где seemingly-numeric mapping выражает unsafe
 >
 > 1. **Конверсия между конкретными типами — метод на ИСТОЧНИКЕ:** `x.to_T()`
 >    (инфаллибельная), `x.to_T()` (проверяемая, `Result[T, RangeError]`, D430).
->    `s.to_int()`, `n.to_char()`, `c.to_u8()`, `f.to_i16()`, `(300u32).to_u8()`.
+>    `s.to_int()`, `n.to_char()`, `c.to_u8()`, `f.to_i16()`, `(300 as u32).to_u8()`.
 > 2. **Статика на ЦЕЛИ законна ровно в двух случаях:** конструктор `Self` в протоколе, где цель
 >    известна только как параметр типа и метода на источнике быть не может
 >    (`Ordinal.from_ordinal(i int) -> Self`, D143 — `int` не знает, какой `I` из него хотят);
@@ -14097,6 +14097,11 @@ match-арма нет места под outer-режим: `ro (mut a, b) => …`
 >    `if mut Some(x) = e` — ❌ (`E_OUTER_MUT_IN_CONDITION`, пишется `Some(mut x)`),
 >    `if consume Some(x) = e` — ❌ (`E_CONSUME_IN_CONDITION`). Внутри паттерна `ro` не
 >    пишется вовсе — биндер без слова и так `ro` (`Some(ro x)` — не форма).
+>    **Амендмент 2026-10-02** (находка охоты spec 2026-10-01, решение интегратора):
+>    `ro` перед паттерном-конструктором или разбором в условии — тоже outer-режим и
+>    отвергается: `if ro Some(x) = e` — ❌ (`E_OUTER_RO_IN_CONDITION`, пишется
+>    `if Some(x) = e`); `if ro consume Some(x) = e` — ❌ (`E_CONSUME_IN_CONDITION`). То же
+>    в `while`. До амендмента оракул все три формы принимал.
 > 4. **Где кончается правая часть условного паттерна** (вопрос владельца: `if ro n =
 >    f() && n > 0` — это `(ro n = f()) && n > 0` или `ro n = (f() && n > 0)`?).
 >    Грамматика D34 `cond-pattern "=" expr ("&&" expr)?` этого не говорила, а для
