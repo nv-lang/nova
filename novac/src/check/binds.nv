@@ -34,7 +34,7 @@ import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, 
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of}
 import ../sem.{c_instance_ctor, c_method_symbol}
-import ../sem.{ty_source_name, variants_named, slice_shape_of}
+import ../sem.{ty_source_name, variants_named, slice_shape_of, ctor_head_variant}
 import ../types.{TyId, no_ty, is_ty}
 
 /// A binding. The initializer's type is decided BEFORE the initializer's own
@@ -347,6 +347,14 @@ fn Checker mut @type_bind(st Node) -> () {
 /// know it and deriving it again would be the same mistake one level down
 /// (#812: the walk in check.nv sees the node but not the type).
 fn Checker mut @judge_record_ctor(ctor Node, vtype TyId) -> () {
+    // A record-form VARIANT is judged by its own door: its fields are the
+    // variant's, not the sum's (record_variant.nv).
+    if Some(v) = ctor_head_variant(@ctx, branch_children(ctor)[0]) {
+        @judge_variant_ctor(ctor, v)
+        return
+    } else {
+        // A record's construction: the rules below.
+    }
     // A NAMED-TUPLE record (`type Pair(x int, y int)`) is CONSTRUCTED BY CALL,
     // not by brace: the oracle accepts `Pair { x: 1 }` at check but fails to
     // emit it (measured 2026-09-03, step 0 of plan 274.6 V2 -- `undeclared

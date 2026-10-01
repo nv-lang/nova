@@ -923,13 +923,17 @@ resolve 19
 # sem 299 -> 300 (2026-10-01, Karina window): is_payload_free_sum -- the A4 question without the fence
 #   (may tags compare?), asked by check/operators.nv and emit_c/emit_expr.nv; is_value_sum keeps the placement.
 # 2026-10-01, Carina window (274.11 E.10 step 4c): sem 300 -> 305: `Ctx @instantiates` / `@body_ours` (whose body an instance is -- asked by check, mono and the emitter) and `InteropTable @describe_decls` / `@decl_text` / `@decl_name` (the text and file each handed tree came from).
+# sem 305 -> 308 (2026-10-01, integrator, merge of the cloud session's patterns-ab): Carina's
+#   300 -> 305 (step 4c) and the cloud branch's 300 -> 303 (payload_named, variant_is_record, ctor_head_variant) add.
 # 2026-10-01, Carina window (274.11 E.10 steps 4c-2/4d): sem 305 -> 315: `FnTable @add_static`, `FieldTable @add_private`, `Ctx @vec_op_row`, `vec_op_c`, `c_instance_static`, `c_static_symbol`, `instance_struct_c`, `returns_receiver`, `CheckOut @record_wanted` / `@wanted_refs` -- static methods, private fields, the implicit vector operations and the instance structs of 274.11 E.10 steps 4c-2 and 4d.
 # 2026-10-01, Carina window: sem 315 -> 317: `Ctx @is_vec_op_shape` replaces the registry scan `Ctx @vec_op_row`; `CheckOut @record_vec_op` / `@vec_op_row` carry the row from the checker to the emitter (resolve discipline: no linear name scans).
 # 2026-10-01, Carina window (registry 1514): sem 317 -> 318: `repr_is_one_name` -- is a
 #   type declaration's representation ONE name? Asked by sem (`repr_of_decl`, which reads
 #   nothing else) and by check (the refusal of a composite one): two copies would let
 #   sem read a form check accepts -- the defect itself.
-sem 318
+# 2026-10-01, Carina window, merge of main e448f0193: the two lines above add -- main's
+#   sem 308 and this branch's 305 -> 318 meet; the count is the guard's on the merged tree.
+sem 321
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
@@ -1109,3 +1113,9 @@ types 30
 # resolve 16 -> 18 (2026-10-01, помощник nova-88, №1493): `FnIndex.build_for` и `FnIndex @sees` -- индекс
 #   файла знает его импорты (D29), и спрашивает его `check/calls.nv` (`record_free_callee`), а строит
 #   `check/run.nv`: без экспорта видимость судить негде, второй индекс в check был бы второй дверью.
+# sem 300 -> 303 (2026-10-01, облачная сессия, вариант-запись D54/D486): три вопроса о ПОЛЯХ
+#   варианта, и все спрашиваются вне sem: `payload_named` (позиция поля по имени -- `check`,
+#   `lower`, `emit_c` должны разрешать имя ОДНОЙ дверью, иначе позиции разойдутся),
+#   `variant_is_record` (запись ли вариант -- `check/match_arms.nv`, отказ позиционному образцу),
+#   `ctor_head_variant` (голова конструктора `Branch {..}` / `Node.Branch {..}` называет вариант --
+#   `check` в четырёх местах и `emit_c/emit_place.nv`).

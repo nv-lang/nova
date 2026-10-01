@@ -10353,7 +10353,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                 }
-                Self::mangle_field_name(&c.name) // #1440: an exported const is a bare C global, through the door
+                c.name.clone() // #1498: the KEY readers look up (lazy: `_nova_const_<key>_value` already shields it); a bare C global goes through the door below
             });
         if c.is_export && self.colliding_const_names.contains(&c.name) {
             self.const_qualified_by_name.insert(c.name.clone(), c_name.clone());
@@ -10371,7 +10371,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let len = s.len();
                 self.line(&format!(
                     "{}const nova_str {} = {{(const uint8_t*)\"{}\" , {}}};",
-                    self.top_level_storage(), c_name, escaped, len
+                    self.top_level_storage(), if c_name == c.name { Self::mangle_field_name(&c_name) } else { c_name.clone() }, escaped, len
                 ));
                 self.note_module_value(&c.name, &ty_c);
                 return Ok(());
@@ -10402,7 +10402,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.emit_lazy_const(&c.name, &c_name, &ty_c, &c.value)
             }
             Ok(val) => {
-                self.line(&format!("{}const {} {} = {};", self.top_level_storage(), ty_c, c_name, val));
+                self.line(&format!("{}const {} {} = {};", self.top_level_storage(), ty_c, if c_name == c.name { Self::mangle_field_name(&c_name) } else { c_name.clone() }, val));
                 // Регистрируем тип const'а в var_types, чтобы Ident(name) на
                 // use-site инферился с правильным c-типом (например u32-const,
                 // используемый как `let mut h = FOO`, должен дать `uint32_t h`,
@@ -13424,7 +13424,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // var_boxed (only mutable vars are ever registered there),
                 // so the bare read is always the correct current value.
                 self.line(&format!("{ctx}->{field} = {cap};",
-                    ctx = ctx_var, field = field, cap = Self::mangle_field_name(cap_name)));
+                    ctx = ctx_var, field = field, cap = self.field_pun_c(cap_name))); // #1498: a by-ref param is read through its pointer
             }
         }
         // Patch vtable at runtime — use mangled field name for overloaded ops
@@ -13674,7 +13674,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // name from the enclosing fn or a PREVIOUS op's body iteration
             // never leaks in, and so THIS op's captures don't leak to the
             // next op's body. Restored below alongside var_types/fail_e_map.
-            let saved_var_boxed = std::mem::take(&mut self.var_boxed);
+            let saved_var_boxed = std::mem::take(&mut self.var_boxed); let saved_ref_params = std::mem::take(&mut self.ref_params); // #1498: an outer by-ref param is a captured COPY here, as in a closure body
 
             // Unpack context: expose captured variables so body code can use
             // them directly — common closure-capture path (no `#define`):
@@ -13786,7 +13786,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Restore var_boxed (per-op isolation — see take() above; no
             // `#undef` needed, common closure-capture path uses `var_boxed`
             // rewriting rather than macros).
-            self.var_boxed = saved_var_boxed;
+            self.var_boxed = saved_var_boxed; self.ref_params = saved_ref_params;
 
             // Restore var_types state for method params
             for (name, prev) in saved_params {
@@ -36058,7 +36058,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let shadowed_by_spawn_capture = self.current_spawn_captures.as_ref()
                     .map(|c| c.contains(name)).unwrap_or(false);
                 if self.ref_params.contains(name) && !shadowed_by_spawn_capture {
-                    return Ok(format!("(*{})", name));
+                    return Ok(format!("(*{})", Self::mangle_field_name(name))); // #1498: the param is declared through the door
                 }
                 // Plan 61 Ф.3: typed Fail[E] handler-arm parameter — name
                 // resolves через fail-frame typed payload, не как обычная
@@ -50576,17 +50576,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 // Field was heap-boxed (e.g. nova_str* → cast + deref)
                                 let base_ty = fty.trim_end_matches('*');
                                 self.line(&format!("{} {} = *(({}*)(intptr_t){}.f{});",
-                                    base_ty, name, base_ty, tup_tmp, i));
+                                    base_ty, Self::mangle_field_name(name), base_ty, tup_tmp, i));
                                 self.var_types.insert(name.clone(), base_ty.to_string());
                             } else if Self::is_struct_c_type(&fty) {
                                 // Plan 82 followup: tuple-поле уже типа fty
                                 // (мономорф); `(StructTy)(t.fN)` под MSVC = C2440.
                                 self.line(&format!("{} {} = {}.f{};",
-                                    fty, name, tup_tmp, i));
+                                    fty, Self::mangle_field_name(name), tup_tmp, i));
                                 self.var_types.insert(name.clone(), fty.clone());
                             } else {
                                 self.line(&format!("{} {} = ({})({}.f{});",
-                                    fty, name, fty, tup_tmp, i));
+                                    fty, Self::mangle_field_name(name), fty, tup_tmp, i));
                                 self.var_types.insert(name.clone(), fty.clone());
                             }
                         }
@@ -52698,10 +52698,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let val = if let Some(v) = &f.value {
                         self.emit_expr(v)?
                     } else {
-                        f.name.clone()
+                        self.field_pun_c(&f.name) // #1498: a pun reads the local through the door
                     };
                     self.line(&format!("{tmp}->{name} = {val};",
-                        tmp = tmp, name = f.name, val = val));
+                        tmp = tmp, name = Self::mangle_field_name(&f.name), val = val));
                 }
             }
         } else if self.current_fn_return_ty.as_deref()
@@ -53790,9 +53790,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Если elem_ty это pointer type, cast applied (tuple
                         // stores pointers as int slots in legacy paths).
                         if elem_ty.ends_with('*') && elem_ty != "nova_int*" {
-                            self.line(&format!("{} {} = ({}){};", elem_ty, name, elem_ty, field));
+                            self.line(&format!("{} {} = ({}){};", elem_ty, Self::mangle_field_name(name), elem_ty, field));
                         } else {
-                            self.line(&format!("{} {} = {};", elem_ty, name, field));
+                            self.line(&format!("{} {} = {};", elem_ty, Self::mangle_field_name(name), field));
                         }
                         self.var_types.insert(name.clone(), elem_ty);
                     }

@@ -1,0 +1,28 @@
+module grid.c28
+
+type Big value {
+    ro a str
+    ro b str
+}
+type Sm value {
+    ro x int
+}
+type Rr {
+    mut x int
+}
+fn mk() -> Big => { a: "x", b: "y" }
+fn apply(f fn() -> str) -> str => f()
+fn apply_b(f fn(Big) -> str) -> str => f(mk())
+
+fn g(mut cq AtomicInt) {
+    supervised {
+        spawn {
+            cq.fetch_add(3)
+        }
+    }
+}
+fn main() Io {
+    mut n = AtomicInt.new(0)
+    g(n)
+    println("c28 ${n.load()}")
+}

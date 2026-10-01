@@ -12,3 +12,5 @@ coerce_pair
 value_record
 iflet_else
 ctor_self_shorthand
+record_variant
+or_pattern_binder

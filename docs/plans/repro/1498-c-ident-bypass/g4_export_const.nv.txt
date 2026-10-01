@@ -1,0 +1,17 @@
+// Registry #1498 -- the std carriers (uuid `NIL`, complex `ONE`, int128 `MIN`)
+// cut down: an exported module const whose value is built at start-up. #1440
+// put its storage through the door (`_nova_const_nv_ORIGIN_value`), the read
+// looked it up by the source name `ORIGIN`, missed, and wrote a bare
+// `nv_ORIGIN`. Before the fix: clang "use of undeclared identifier
+// 'nv_ORIGIN'". After: `g4 4 5`.
+type Holder {
+    k int
+}
+
+export const ORIGIN Holder = { k: 4 }
+
+fn Holder @plus_origin() -> int => @k + ORIGIN.k
+
+fn main() Io {
+    println("g4 ${ORIGIN.k} ${Holder { k: 1 }.plus_origin()}")
+}

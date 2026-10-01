@@ -41,7 +41,7 @@ import ../builtins.{HANDLER_CTOR}
 import ../sem.{FnRow, raw_row}
 import ../sem.{branch_children, leaf_kind, leaf_text, generic_names, tparam_slot, param_type_at, field_type_at}
 import ../sem.{param_name_at}
-import ../sem.{expr_leaf_name}
+import ../sem.{expr_leaf_name, variants_named}
 import ../sem.{repr_is_one_name}
 
 /// The KEY PHRASE of the refusal. The holder pins this and nothing longer: a
@@ -177,8 +177,12 @@ fn Checker mut @report_if_ctor_type_undeclared(kids []Node) -> bool {
     if kids.len() == 0 { return false }
     ro head = kids[0]
     if head.kind_of() != NodeKind.Name { return false }
+    // A VARIANT head -- qualified `Node.Branch {`, or a bare name only a sum
+    // declares -- is a record-form variant's construction (record_variant.nv).
+    if branch_children(head).len() == 3 { return @report_if_ctor_variant_wrong(kids) }
     ro name = expr_leaf_name(head)
     if @type_name_is_declared(name, []str.new()) { return false }
+    if variants_named(@ctx, name).1 > 0 { return @report_if_ctor_variant_wrong(kids) }
     @report_first_leaf_of(kids, undeclared_type_msg(name))
     true
 }

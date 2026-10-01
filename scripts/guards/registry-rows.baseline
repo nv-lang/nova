@@ -1461,8 +1461,33 @@
 # 2026-10-01, integrator nova-20: rows -> 1447, max -> 1499 (merge of p1488 (agent): #1488 lands (out of gaps); #1495/#1496 from the cloud reports #1458/#1457 and #1499 (qualified module constant in C) filed; 1494, 1497, 1498 issued, in gaps).
 # 2026-10-01, Carina window: rows -> 1448, max -> 1500 (#1500: a method call statement with a constructor argument
 #   iced in emission -- fixed in the same commit; number given by integrator nova-20).
+# 2026-10-01, background agent of the integrator (p1498-c-ident-bypass): rows -> 1448, max -> 1499 (#1498 (K2, regression of #1440: a local/param name written into C past the door c_ident) lands, out of gaps; number given by the integrator).
+# 2026-10-01, integrator nova-20: rows -> 1452, max -> 1504 (merge of p1498 (agent): #1498 lands; #1501-#1504 filed from its grid (#1502/#1503 K1 silent wrong value -- block the oracle tag); 1500 issued to Carina, in gaps).
+# 2026-10-01, integrator nova-20: rows -> 1453, max -> 1504 (merge of p1494 (assistant): #1494 lands (out of gaps), #1489 fixed in the branch).
+# 2026-10-01, integrator nova-20: rows -> 1455, max -> 1506 (merge of the cloud session's p1461: #1461 fixed; #1505 (Carina: an unreadable std declarations file is skipped silently) and #1506 (runtime byte buffers allocated scannable) numbered here).
+# 2026-10-01, integrator nova-20: rows -> 1456, max -> 1507 (merge of the cloud session's p971: #971 fixed; #1507 (an unknown effect name in an effect row passes) numbered here).
+# 2026-10-01, integrator nova-20: rows -> 1461, max -> 1512 (merge of the cloud session's patterns-ab: #1508 (Carina, record variant and | binders), #1509 (Carina, match tail type), #1510/#1511 (oracle K1: | binders by position, record-variant patterns unjudged), #1512 (Carina, handed sum payload) numbered here).
+# 2026-10-01, integrator nova-20: rows -> 1463, max -> 1516 (merge of p1497 (agent): #1032 fixed in the branch; 1497 stays a gap (the defect was the old #1032, not a regression); #1515 (oracle: nested | does not parse) and #1516 (nova_tests e2402) filed; 1513-1514 issued to Carina).
+# 2026-10-01, Carina window, merge of main e448f0193: rows -> 1466, max -> 1516 (#1500 lands
+#   with this branch, out of gaps; #1513 (a field typed by a declaration below its record
+#   was dropped -- fixed) and #1514 (a composite newtype/alias representation read as its
+#   first name -- refused loud, the form open) land, out of gaps; numbers from nova-20).
+rows=1466
+max=1516
+rows=1463
+max=1516
+rows=1461
+max=1512
+rows=1456
+max=1507
+rows=1455
+max=1506
+rows=1453
+max=1504
+rows=1452
+max=1504
 rows=1448
-max=1500
+max=1499
 rows=1443
 max=1493
 rows=1442
@@ -2096,7 +2121,7 @@ stale_gaps=0
 # nomer I v gaps=, I so strokoy schitaetsya 'protuhshey dyroy'.
 # 2026-09-21: №1209 ПРИЕХАЛ и СНЯТ из gaps=
 # (писал интегратор, как и планировалось). №1210-1211 всё ещё ждёт Карину.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1494,1497-1498
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding

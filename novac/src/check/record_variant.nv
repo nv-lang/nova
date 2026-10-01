@@ -1,0 +1,186 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `rustc_hir_typeck::pat::check_struct_pat_fields` and
+// `expr::check_expr_struct_fields` -- a struct-like VARIANT is matched and built
+// by FIELD NAME against the variant's own field list (`VariantDef::fields`),
+// the same walk a plain struct takes, with the variant chosen first; NOT taken:
+// rustc's `FieldIdx` remapping, because the subset keeps a variant's payload
+// POSITIONAL in the layout and the name is resolved to that position once
+// (`payload_named`, sem).
+// Role: layer 4 -- the checker's judgment of a RECORD-FORM VARIANT (`| Branch {
+//   id NodeId, kind NodeKind }`, D54; pattern `Branch { id, .. }`, D486 s2):
+//   its pattern, and its construction `Branch { id: i, kind: k }` / the
+//   qualified `Node.Branch { id, kind }`.
+// Used by: check/match_arms.nv (`@bind_record_pattern`, a headed pattern),
+//   check/binds.nv (`@judge_record_ctor`), check/typeref_rules.nv (the
+//   constructor-name door), check/check.nv (the constructor's position).
+// Guarded by: check-novac-fixture-expect.sh (novac/fixtures/record_variant neg
+//   pinned) and scripts/tools/novac-e1-smoke.sh on its pos (byte-for-byte with the oracle).
+//
+// A FILE OF ITS OWN because the form is one question -- a variant addressed by
+// field names -- asked from four places, and match_arms.nv and binds.nv are
+// both near the thousand-line limit.
+
+module novac.check
+
+import ../tree.{Node, NodeKind}
+import ../sem.{pattern_head_text, pattern_qualifier, pattern_fields, patfield_name, patfield_sub, pattern_rest}
+import ../sem.{decl_of_ty, payload_as_seen, payload_named, variant_in_sum, variants_named, ctor_head_variant}
+import ../sem.{VariantRow, raw_vrow, is_vrow, no_vrow, branch_children, leaf_text, ParamMode, ctor_field_name}
+import ../sem.{CalleeTarget, SlotBind, no_row}
+import ../types.{TyId, no_ty, is_ty}
+
+/// A pattern with a HEAD and braces: `Branch { id, .. }` names a record-form
+/// variant of the matched sum (D486 s2's `qual-head? '{' field-pat ... '}'`), and
+/// `Point { x, y }` names the record itself -- which is the head-less judgment.
+/// Every field is resolved to its payload position by name, typed as the
+/// scrutinee sees it, and bound by the one recursive binder; a partial list
+/// needs `..` (D411), the same rule the record form keeps.
+fn Checker mut @bind_headed_record_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode, pos PatPos) -> bool {
+    // SILENT-OK: a POISONED scrutinee -- the cascade rule of
+    // `@bind_variant_pattern`; its refusal stands where it was typed.
+    if !is_ty(ty) { return false }
+    ro head = pattern_head_text(pat)
+    ro sum_name = decl_of_ty(@ctx, ty).name
+    if pattern_qualifier(pat) != "" && pattern_qualifier(pat) != sum_name {
+        @reject_first_leaf_of(ak, WRONG_SUM_ARM_MSG)
+        return false
+    }
+    ro vrow = variant_in_sum(@ctx, ty, head) ?? no_vrow()
+    if !is_vrow(vrow) {
+        // The record's own name: the fields of the record, as if no head were
+        // written (D486: the head is optional).
+        if head == sum_name && pattern_qualifier(pat) == "" { return @bind_record_fields(pat, ty, ak, dmode, pos) }
+        ro msg = if variants_named(@ctx, head).1 > 0 { WRONG_SUM_ARM_MSG } else { VARIANT_PATTERN_MSG }
+        @reject_first_leaf_of(ak, msg)
+        return false
+    }
+    // A variant is REFUTABLE: a binding or a `for` header takes none.
+    if @refused_unit_variant(ak, pos) { return false }
+    ro vr = @ctx.variant_rows[raw_vrow(vrow)]
+    mut named = 0
+    mut ok = true
+    for f in pattern_fields(pat) {
+        ro at = payload_named(@ctx, vrow, patfield_name(f))
+        if at < 0 {
+            @reject_first_leaf_of(ak, DESTR_NO_FIELD_PATTERN_MSG)
+            return false
+        }
+        ro ft = payload_as_seen(@ctx, ty, @ctx.payload_types[vr.payload_off + at])
+        // The PatField carries the type, the lowering's one source (the record
+        // form's own rule, `@bind_record_fields`).
+        if is_ty(ft) { @record(f, ft) } else { // An unresolved payload: the sum's own refusal.
+        }
+        match patfield_sub(f) {
+            Some(sub) => {
+                if !@bind_pattern(sub, ft, ak, dmode, pos) { ok = false } else { // The field bound.
+                }
+            }
+            None => {
+                if !@bind_field_shorthand(f, ft, ak, dmode) { ok = false } else { // Bound under its own name.
+                }
+            }
+        }
+        named += 1
+    }
+    if !ok { return false }
+    if named < vr.payload_cnt && !pattern_rest(pat) {
+        @reject_first_leaf_of(ak, destr_needs_rest_msg(named, vr.payload_cnt))
+        return false
+    }
+    true
+}
+
+/// The CONSTRUCTION of a record-form variant, `Branch { id: i, kind: k }`: every
+/// declared field named exactly once, each value typed, and the decision recorded
+/// as a VARIANT callee whose slots say which written field fills each payload
+/// position -- the emitter builds the maker call from that, in declaration
+/// order, after evaluating the fields in written order.
+fn Checker mut @judge_variant_ctor(ctor Node, v VariantRow) -> () {
+    ro kids = branch_children(ctor)
+    ro vr = @ctx.variant_rows[raw_vrow(v)]
+    if @variant_sum_is_generic(v) {
+        // A generic sum's instance is inferred from a payload by position
+        // (`@type_generic_variant_call`); a brace construction has no door
+        // for it yet.
+        @report_first_leaf_of(kids, GENERIC_RECORD_VARIANT_MSG)
+        return
+    }
+    mut slots = []SlotBind.new()
+    for i in 0..vr.payload_cnt {
+        slots.push(SlotBind { arg_row: -1, via_row: no_row() })
+    }
+    mut written = 0
+    for c in kids {
+        ro ck = c.kind_of()
+        if ck == NodeKind.CtorSpread {
+            // `{ ...src }` copies a RECORD; a variant has no value of its own
+            // shape to copy from.
+            @reject_first_leaf_of(kids, CTOR_UNKNOWN_FIELD_MSG)
+            return
+        }
+        if ck != NodeKind.CtorField { continue }
+        ro at = payload_named(@ctx, v, ctor_field_name(c))
+        if at < 0 {
+            @reject_first_leaf_of(branch_children(c), CTOR_UNKNOWN_FIELD_MSG)
+            return
+        }
+        if slots[at].arg_row >= 0 {
+            @reject_first_leaf_of(kids, CTOR_FIELD_TWICE_MSG)
+            return
+        }
+        slots[at] = SlotBind { arg_row: written, via_row: no_row() }
+        written += 1
+    }
+    for s in slots {
+        if s.arg_row < 0 {
+            @reject_first_leaf_of(kids, CTOR_MISSING_FIELD_MSG)
+            return
+        }
+    }
+    ro before = @out.len()
+    for c in kids {
+        if c.kind_of() != NodeKind.CtorField { continue }
+        ro fk = branch_children(c)
+        // `name: expr` types its value; `{ id }` names a binding the scope
+        // already typed; `{ @id }` is a receiver field access.
+        if fk.len() >= 3 {
+            @type_expr(fk[2])
+        } else if fk[0].kind_of() == NodeKind.SelfField {
+            @type_expr(fk[0])
+        } else {
+            // Punning by a bare name: the name's own binding answers.
+        }
+    }
+    if @out.len() > before { return }
+    @chan.record_callee(ctor.id_of(), CalleeTarget.CalleeVariant(v), []TyId.new(), slots)
+}
+
+/// The constructor-name door for a VARIANT head: true when the head was
+/// refused here. A bare name two sums declare is ambiguous (the call form's
+/// rule, registry #964); a qualified head whose sum has no such variant names
+/// nothing. Either way the construction goes no further.
+fn Checker mut @report_if_ctor_variant_wrong(kids []Node) -> bool {
+    ro head = kids[0]
+    ro hk = branch_children(head)
+    if hk.len() == 3 {
+        if ctor_head_variant(@ctx, head).is_some() { return false }
+        @reject_first_leaf_of(kids, QUALIFIED_CTOR_NO_VARIANT_MSG)
+        return true
+    }
+    if variants_named(@ctx, leaf_text(hk[0])).1 > 1 {
+        @reject_first_leaf_of(kids, AMBIGUOUS_VARIANT_MSG)
+        return true
+    }
+    false
+}
+
+/// A generic sum's record-form variant built by brace: the instance has no
+/// inference door here yet.
+const GENERIC_RECORD_VARIANT_MSG = "outside the subset: a record-form variant of a GENERIC sum is not constructed by brace yet -- its instance is inferred from a positional payload only (274.7 W4)"
+
+/// `Node.Nope { .. }`: the qualifier names a sum that declares no such variant.
+const QUALIFIED_CTOR_NO_VARIANT_MSG = "a type name takes a variant after the dot, and this is not one of its variants"
+
+/// `f(Branch { .. })`: a record-form variant built in an ARGUMENT or nested
+/// position, where the record's builder prints it and knows no variant maker.
+const VARIANT_CTOR_POSITION_MSG = "outside the subset: a record-form variant is constructed only where its value is placed -- a binding initializer, the body of a match arm, the tail of a value body or the right side of `=`; bind it first (E4, step 4d of 274.11 E.10)"

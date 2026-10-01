@@ -160,6 +160,38 @@ impl<'a> TypeCheckCtx<'a> {
         Some(first)
     }
 
+    /// Registry 221.1 #1489: the RECEIVER type of `NAME.method(..)`, which the
+    /// parser folds into `Path[NAME, method]` for an uppercase head. A module
+    /// value's own type as above; an untyped literal value has none there (it
+    /// adapts to its position, D44/D55), but a receiver is not such a position:
+    /// `BIG.to_nanos()` with `const BIG = 7` is the call `7.to_nanos()`, and the
+    /// receiver gets the type the literal itself gets. Before this the door
+    /// read only consts with a written annotation (`const_types`), so the call
+    /// on any other module value had no type and the emitter died on "Path call
+    /// return type unknown" (or `println` printed a `str` as an int).
+    pub(super) fn module_value_receiver_type(&self, name: &str, at: Span, scope: &HashMap<String, TypeRef>) -> Option<TypeRef> {
+        if scope.contains_key(name) {
+            return None;
+        }
+        let decls = self.module_value_decl(name, at)?;
+        let mut types = decls.iter().map(|v| {
+            self.module_value_type(v).or_else(|| {
+                if v.ty.is_none() && is_untyped_const_expr(v.value) {
+                    untyped_default_type(v.value)
+                } else {
+                    None
+                }
+            })
+        });
+        let first = types.next()??;
+        for t in types {
+            if typeref_display(&t?) != typeref_display(&first) {
+                return None;
+            }
+        }
+        Some(first)
+    }
+
     /// The qualified spellings of the same thing, `Q.NAME`: an associated
     /// constant of a type (`Type.K`, D200) or a value of an imported module
     /// (`m.K`, the import prefix naming that module). `None` when `Q` is
@@ -224,4 +256,34 @@ impl<'a> TypeCheckCtx<'a> {
         self.module_value_decl(name, expr.span)
             .is_some_and(|d| !d.is_empty() && d.iter().all(|v| v.ty.is_none() && is_untyped_const_expr(v.value)))
     }
+}
+
+/// #1489: the type an untyped constant expression (`is_untyped_const_expr`)
+/// takes where no position gives it one -- the literal defaults of D44: an
+/// integer literal is `int`, a float literal `f64`; arithmetic with a float
+/// operand is `f64`; a comparison, a logical operator and `!` give `bool`.
+/// `infer_expr_type` deliberately answers nothing for `-9_223... - 1` (the
+/// value adapts to its position); a method receiver is not such a position.
+fn untyped_default_type(e: &Expr) -> Option<TypeRef> {
+    use crate::ast::{BinOp, UnOp};
+    let name = match &e.kind {
+        ExprKind::IntLit(_) => "int",
+        ExprKind::FloatLit(_) => "f64",
+        ExprKind::BoolLit(_) => "bool",
+        ExprKind::CharLit(_) => "char",
+        ExprKind::StrLit(_) => "str",
+        ExprKind::Unary { op: UnOp::Not, .. } => "bool",
+        ExprKind::Unary { operand, .. } => return untyped_default_type(operand),
+        ExprKind::Binary { op, left, right } => match op {
+            BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+            | BinOp::And | BinOp::Or | BinOp::Implies | BinOp::Iff => "bool",
+            _ => {
+                let (l, r) = (untyped_default_type(left)?, untyped_default_type(right)?);
+                let is_f64 = |t: &TypeRef| typeref_display(t) == "f64";
+                return Some(if is_f64(&r) && !is_f64(&l) { r } else { l });
+            }
+        },
+        _ => return None,
+    };
+    Some(prim_ref(name, e.span))
 }

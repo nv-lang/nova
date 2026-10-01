@@ -156,6 +156,83 @@ void nova_gc_pause_diag_snapshot(uint64_t* count, uint64_t* total_ns, uint64_t* 
     if (max_ns)   *max_ns   = __atomic_load_n(&_nova_gc_pause_max_ns, __ATOMIC_RELAXED);
 }
 
+/* 221.1 №1461: инкрементальный режим — ТОЛЬКО там, где ядро само следит за
+ * записью в страницы кучи.
+ *
+ * Инкрементальный Boehm узнаёт, какие страницы кучи изменились с прошлого
+ * марка, одним из трёх способов: GetWriteWatch (Windows, GWW_VDB), биты
+ * soft-dirty ядра Linux (SOFT_VDB, libgc >= 8.2) или ЗАЩИТА СТРАНИЦ: куча
+ * помечается PROT_READ, первая запись ловится SIGSEGV-обработчиком, который
+ * снимает защиту и ставит бит (MPROTECT_VDB). Третий способ видит только
+ * записи ИЗ ПОЛЬЗОВАТЕЛЬСКОГО КОДА. Запись в защищённую страницу из ЯДРА —
+ * `read`/`pread`/`recv` в буфер, выделенный `nova_alloc`, — сигнала не
+ * порождает: системный вызов возвращает EFAULT. А `nova_alloc` = `GC_malloc`
+ * без `_atomic`, то есть ВСЕ байтовые буферы рантайма лежат в защищаемых
+ * страницах.
+ *
+ * Замер (облачная сессия №1461, Linux 6.18 без CONFIG_MEM_SOFT_DIRTY, libgc
+ * 8.2.6): `novac check display_generic/pos_1.nv` под `setarch -R` 19/20
+ * неверно; strace — `pread64(…, 0x7ffff7898000, 8192, 8192) = -1 EFAULT`
+ * сразу после марка (чтение /proc/self/maps колбэком корней), файл
+ * `std/src/collections/vec/core.nv` недочитан, и Карина отвечает «`Vec` is
+ * not among the declarations». `GC_incremental_protection_needs()` на этой
+ * машине = GC_PROTECTS_POINTER_HEAP. Живые объекты НЕ терялись — терялись
+ * байты, которые ядро не смогло записать.
+ *
+ * Где способ третий: Linux без soft-dirty (arm64 его не имеет вовсе, часть
+ * облачных ядер собрана без него), libgc < 8.2 (Ubuntu 22.04 — 8.0), macOS
+ * (mach-исключения поверх mprotect). Там включать инкрементальный режим
+ * НЕЛЬЗЯ, а выключить его после `GC_enable_incremental` Boehm не умеет —
+ * поэтому решение принимается ДО вызова, своей пробой ядра (та же, что
+ * `detect_soft_dirty_supported` в libgc: очистить биты через clear_refs,
+ * записать страницу, прочитать бит 55 в pagemap).
+ *
+ * `NOVA_GC_INCREMENTAL=0` — выключить всегда (как раньше); `=1` — включить
+ * БЕЗУСЛОВНО, в том числе поверх защиты страниц: это ключ пробы в обе
+ * стороны на одном бинаре, не режим для работы. */
+#if defined(__linux__)
+#  include <fcntl.h>
+#  include <unistd.h>
+#  include <sys/mman.h>
+static int _nova_kernel_soft_dirty_works(void) {
+    int ok = 0;
+    long pg = sysconf(_SC_PAGESIZE);
+    if (pg <= 0) return 0;
+    volatile char* page = (volatile char*)mmap(NULL, (size_t)pg, PROT_READ | PROT_WRITE,
+                                               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page == (volatile char*)MAP_FAILED) return 0;
+    page[0] = 1;  /* страница присутствует */
+    int cfd = open("/proc/self/clear_refs", O_WRONLY | O_CLOEXEC);
+    int pfd = open("/proc/self/pagemap", O_RDONLY | O_CLOEXEC);
+    if (cfd >= 0 && pfd >= 0 && write(cfd, "4", 1) == 1) {
+        uint64_t e = 0;
+        off_t off = (off_t)(((uintptr_t)page / (uintptr_t)pg) * sizeof e);
+        int clean = pread(pfd, &e, sizeof e, off) == (ssize_t)sizeof e && !((e >> 55) & 1);
+        page[0] = 2;
+        e = 0;
+        ok = clean && pread(pfd, &e, sizeof e, off) == (ssize_t)sizeof e && ((e >> 55) & 1);
+    }
+    if (cfd >= 0) close(cfd);
+    if (pfd >= 0) close(pfd);
+    munmap((void*)page, (size_t)pg);
+    return ok;
+}
+#endif
+
+static int _nova_gc_incremental_wanted(void) {
+    const char* e = getenv("NOVA_GC_INCREMENTAL");
+    if (e && strcmp(e, "0") == 0) return 0;
+    if (e && strcmp(e, "1") == 0) return 1;
+#if defined(_WIN32)
+    return 1;   /* GWW_VDB: ядро ведёт журнал записи, страницы не защищаются */
+#elif defined(__linux__)
+    /* SOFT_VDB появился в libgc 8.2; старее — только защита страниц. */
+    return GC_get_version() >= ((8u << 16) | (2u << 8)) && _nova_kernel_soft_dirty_works();
+#else
+    return 0;   /* macOS и прочие: только защита страниц */
+#endif
+}
+
 void nova_gc_init(void) {
     /* Plan 83.11 §12.31: install in-process SEGV localizer FIRST (before any
      * potentially-faulting init). Gated by NOVA_DIAG_SEGV env. No-op on Linux. */
@@ -189,7 +266,9 @@ void nova_gc_init(void) {
      * отказывает мерить бОльшую часть сессии), но НЕ показал регресса ни на
      * одной чистой выборке — включаем ПО УМОЛЧАНИЮ (не только для замера);
      * `NOVA_GC_INCREMENTAL=0` — явный откат на полный сборщик, если для
-     * какой-то нагрузки инкрементальный вдруг окажется хуже.
+     * какой-то нагрузки инкрементальный вдруг окажется хуже. С №1461 —
+     * не везде: только где Boehm следит за записью без защиты страниц
+     * (`_nova_gc_incremental_wanted` выше и его комментарий).
      *
      * (b) Ранний прогрев кучи (`GC_expand_hp`) — избегает СЕРИИ мелких
      * grow-and-collect циклов в начале процесса (типичны для supervised-
@@ -198,7 +277,7 @@ void nova_gc_init(void) {
      * кучи маленькой тестовой программы, но пренебрежимо мало против
      * серверного бюджета памяти; безопасный, обратимый параметр, НЕ меняет
      * ничьё наблюдаемое поведение, кроме частоты триггера коллектора. */
-    if (!getenv("NOVA_GC_INCREMENTAL") || strcmp(getenv("NOVA_GC_INCREMENTAL"), "0") != 0) {
+    if (_nova_gc_incremental_wanted()) {
         GC_enable_incremental();
     }
     GC_expand_hp(4 * 1024 * 1024);

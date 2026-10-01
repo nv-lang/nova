@@ -151,7 +151,14 @@ fn Lowerer @pattern_of(pat Node, scr_t TyId) -> Pattern {
         }
         // A tuple or record pattern matches everything of its type: there is
         // no test, only the bindings the arm lays down.
-        Tuple | Record => Pattern.Wild
+        // A HEADED record pattern naming a variant (`Branch { .. }`) tests the
+        // tag exactly as `Branch(..)` does; a head-less one names no variant.
+        Tuple | Record => {
+            match variant_in_sum(@ctx, scr_t, pattern_head_text(pat)) {
+                Some(vrow) => Pattern.Variant(VariantMatch { head: vrow, also: []VariantRow.new() })
+                None => Pattern.Wild
+            }
+        }
         Array => Pattern.ArrayP(array_match_of(pat))
     }
 }
@@ -174,13 +181,21 @@ fn array_match_of(pat Node) -> ArrayMatch {
 /// subpattern that is itself structured reads its piece into a TEMPORARY
 /// first -- the same "scrutinee once" contract the destructuring binding
 /// holds (M3c), one level per nesting.
-fn Lowerer mut @lower_pattern_bind(pat Node, ty TyId, base Local) -> () {
+fn Lowerer mut @lower_pattern_bind(pat Node, ty TyId, base Local) -> () =>
+    @lower_pattern_bind_in(pat, ty, base, []str.new())
+
+/// The same recursion, with the names a DISJUNCTION declared above it (`pre`):
+/// a binder of that name assigns the local already declared instead of
+/// declaring its own, so whichever alternative held, the arm reads ONE `x`
+/// (`@lower_disj_bind`, lower_disj.nv). Empty everywhere else.
+fn Lowerer mut @lower_pattern_bind_in(pat Node, ty TyId, base Local, pre []str) -> () {
     match pattern_shape(pat) {
-        Lit | Wild | Disj => {}
+        Lit | Wild => {}
+        Disj => @lower_disj_bind(pat, ty, base, pre)
         Bind => {
             ro nm = pattern_head_text(pat)
             if is_vrow(variant_in_sum(@ctx, ty, nm) ?? no_vrow()) { return }
-            ro l = @ir.named(@out.type_of(pattern_name_node(pat).id_of()), nm)
+            ro l = @binder_local(@out.type_of(pattern_name_node(pat).id_of()), nm, pre)
             @ir.copy(l, base)
         }
         Variant => {
@@ -203,18 +218,18 @@ fn Lowerer mut @lower_pattern_bind(pat Node, ty TyId, base Local) -> () {
                 // AS THE SCRUTINEE SEES IT, the same door the checker asks:
                 // for `Option[int]` the payload `T` is `int`.
                 ro pt = payload_as_seen(@ctx, ty, @ctx.payload_types[vr.payload_off + i])
-                match pattern_shape(sub) {
-                    Wild | Lit | Disj => {}
-                    Bind => {
+                match @sub_bind_shape(sub) {
+                    SubNone => {}
+                    SubName => {
                         // A plain payload binder reads its field directly --
                         // no temporary between the union and the author's name.
-                        ro lb = @ir.named(@out.type_of(pattern_name_node(sub).id_of()), pattern_head_text(sub))
+                        ro lb = @binder_local(@out.type_of(pattern_name_node(sub).id_of()), pattern_head_text(sub), pre)
                         if as_option { @ir.take_payload(lb, base) } else { @ir.take_field(lb, base, vrow, i) }
                     }
-                    Variant | Record | Tuple | Array => {
+                    SubNested => {
                         ro t = @ir.temp(pt)
                         if as_option { @ir.take_payload(t, base) } else { @ir.take_field(t, base, vrow, i) }
-                        @lower_pattern_bind(sub, pt, t)
+                        @lower_pattern_bind_in(sub, pt, t, pre)
                     }
                 }
                 i += 1
@@ -225,11 +240,18 @@ fn Lowerer mut @lower_pattern_bind(pat Node, ty TyId, base Local) -> () {
             for sub in pattern_subpatterns(pat) {
                 if i >= @ctx.tys.arg_count(ty) { break }
                 ro et = @ctx.tys.arg(ty, i)
-                @lower_proj_bind(sub, et, base, Projection.Elem(i))
+                @lower_proj_bind(sub, et, base, Projection.Elem(i), pre)
                 i += 1
             }
         }
         Record => {
+            match variant_in_sum(@ctx, ty, pattern_head_text(pat)) {
+                Some(vrow) => {
+                    @lower_variant_record_bind(pat, vrow, base, pre)
+                    return
+                }
+                None => {}
+            }
             for f in pattern_fields(pat) {
                 ro fname = patfield_name(f)
                 // THE CHANNEL, and nothing else: the checker recorded the
@@ -241,10 +263,10 @@ fn Lowerer mut @lower_pattern_bind(pat Node, ty TyId, base Local) -> () {
                     Some(sub) => {
                         ro t = @ir.temp(ft)
                         @ir.read(t, base, Projection.Field(fname))
-                        @lower_pattern_bind(sub, ft, t)
+                        @lower_pattern_bind_in(sub, ft, t, pre)
                     }
                     None => {
-                        ro l = @ir.named(@out.type_of(patfield_name_node(f).id_of()), fname)
+                        ro l = @binder_local(@out.type_of(patfield_name_node(f).id_of()), fname, pre)
                         @ir.read(l, base, Projection.Field(fname))
                     }
                 }
@@ -279,10 +301,10 @@ fn Lowerer mut @lower_pattern_bind(pat Node, ty TyId, base Local) -> () {
                     Branch { .. } => {
                         if c.kind_of() == NodeKind.Pattern {
                             if seen_rest {
-                                @lower_elem_bind(c, elem_t, base, suffix - sj, true)
+                                @lower_elem_bind(c, elem_t, base, suffix - sj, true, pre)
                                 sj += 1
                             } else {
-                                @lower_elem_bind(c, elem_t, base, idx, false)
+                                @lower_elem_bind(c, elem_t, base, idx, false, pre)
                                 idx += 1
                             }
                         } else { // A non-Pattern branch (a recovery gap) binds nothing.
@@ -296,34 +318,34 @@ fn Lowerer mut @lower_pattern_bind(pat Node, ty TyId, base Local) -> () {
 
 /// Bind one subpattern read out of `base` through one projection step (a
 /// tuple's `.fN`, a record's `.field`).
-fn Lowerer mut @lower_proj_bind(sub Node, ty TyId, base Local, proj Projection) -> () {
-    match pattern_shape(sub) {
-        Wild | Lit | Disj => {}
-        Bind => {
-            ro l = @ir.named(@out.type_of(pattern_name_node(sub).id_of()), pattern_head_text(sub))
+fn Lowerer mut @lower_proj_bind(sub Node, ty TyId, base Local, proj Projection, pre []str) -> () {
+    match @sub_bind_shape(sub) {
+        SubNone => {}
+        SubName => {
+            ro l = @binder_local(@out.type_of(pattern_name_node(sub).id_of()), pattern_head_text(sub), pre)
             @ir.read(l, base, proj)
         }
-        Variant | Record | Tuple | Array => {
+        SubNested => {
             ro t = @ir.temp(ty)
             @ir.read(t, base, proj)
-            @lower_pattern_bind(sub, ty, t)
+            @lower_pattern_bind_in(sub, ty, t, pre)
         }
     }
 }
 
 /// Bind one array element: a constant index from the front, or `len - n`
 /// from the back (the suffix of a `[a, .., z]`).
-fn Lowerer mut @lower_elem_bind(sub Node, elem_t TyId, base Local, n int, from_end bool) -> () {
-    match pattern_shape(sub) {
-        Wild | Lit | Disj => {}
-        Bind => {
-            ro l = @ir.named(@out.type_of(pattern_name_node(sub).id_of()), pattern_head_text(sub))
+fn Lowerer mut @lower_elem_bind(sub Node, elem_t TyId, base Local, n int, from_end bool, pre []str) -> () {
+    match @sub_bind_shape(sub) {
+        SubNone => {}
+        SubName => {
+            ro l = @binder_local(@out.type_of(pattern_name_node(sub).id_of()), pattern_head_text(sub), pre)
             if from_end { @ir.take_elem_end(l, base, n) } else { @ir.take_elem_at(l, base, n) }
         }
-        Variant | Record | Tuple | Array => {
+        SubNested => {
             ro t = @ir.temp(elem_t)
             if from_end { @ir.take_elem_end(t, base, n) } else { @ir.take_elem_at(t, base, n) }
-            @lower_pattern_bind(sub, elem_t, t)
+            @lower_pattern_bind_in(sub, elem_t, t, pre)
         }
     }
 }

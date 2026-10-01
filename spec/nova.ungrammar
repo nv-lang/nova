@@ -160,7 +160,7 @@ SumDecl =
   ('enum' Variant* | Variant+)
 
 Variant =
-  '|'? 'ident' BalancedRun? ('(' 'ident' (',' 'ident')* ')')?
+  '|'? 'ident' ('{' Field* '}')? ('(' 'ident' (',' 'ident')* ')')?
 
 Field =
   mode:'ident'? 'ident' TypeRefLeaves ('=' Expr)?
@@ -350,6 +350,13 @@ ArrayLit =
 ArraySpread =
   '...' Expr
 
+// РАСХОЖДЕНИЕ (2026-10-01, амендмент D54 интегратора): голова конструкции
+// record-варианта -- тот же qual-head, что у образца (D486 §2), то есть и
+// `Node.Branch { id, kind, children }`. Парсер Карины на main читает только
+// голое имя: `a.b {` уходит в FieldAccess (`parse/expr.nv`, @primary). Ветка
+// `p-novac-patterns-ab-a25r8x` строит здесь RecordCtor, голова которого -- один
+// Name из трёх листьев (сумма, точка, вариант); с её слиянием правило ниже
+// получает квалифицированную голову, а эта пометка снимается.
 RecordCtor =
   Name? '{' (CtorField | CtorSpread | Err)* '}'
 
