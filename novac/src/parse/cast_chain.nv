@@ -25,14 +25,26 @@ import ../tree.{Node, NodeKind}
 /// prefix operator (D54 amendment 2026-10-01): `s.len() as u8 + 1` is
 /// `((s.len() as u8) + 1)`, `-x as T` is `-(x as T)`. Its right side is a
 /// TYPE, so it goes through the type door and not through @expr. `is` (D54)
-/// binds exactly as a cast does: the right side is a type.
+/// binds exactly as a cast does: the right side is a type -- or, after `is`
+/// ONLY, a QUALIFIED variant `Sum.Variant` (D54 amendment 2026-10-01, registry
+/// 1570), read as ONE Name of three leaves, the shape the qualified
+/// constructor head already has (qual-head, D486 section 2). Every other type
+/// position keeps the type door, which reads no dotted name.
 fn Cursor mut @cast_operand() -> Node {
     mut left = @primary()
     while @peek() == TokenKind.KwAs || @peek() == TokenKind.KwIs {
         ro kind = if @peek() == TokenKind.KwIs { NodeKind.IsTest } else { NodeKind.Cast }
         mut ck = []Node.of(left, @take())
-        ck.append(@type_ref())
+        if kind == NodeKind.IsTest && @at_qualified_variant() {
+            ck.push(@node(NodeKind.Name, []Node.of(@take(), @take(), @take())))
+        } else {
+            ck.append(@type_ref())
+        }
         left = @node(kind, ck)
     }
     left
 }
+
+/// Does `Ident . Ident` stand at the cursor -- the qualified variant after `is`?
+fn Cursor @at_qualified_variant() -> bool =>
+    @peek() == TokenKind.Ident && @peek(skip: 1) == TokenKind.Dot && @peek(skip: 2) == TokenKind.Ident

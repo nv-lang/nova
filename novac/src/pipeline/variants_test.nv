@@ -35,3 +35,16 @@ test "a variant is addressed by its sum: two sums share `Red`, both match (274.7
     ro (d4, _) = compile_to_c("type Color enum Red | Green\nfn f(c Color) -> int {\n match c {\n  Red => 1\n  other => 2\n }\n}\nfn main() {\n println(f(Color.Green))\n}", std)
     assert(d4.len() == 0, messages(d4))
 }
+
+test "`x is Sum.Variant`: a qualified variant after `is` parses and tests the value's own sum (D54 amendment 2026-10-01, registry 1570)" {
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("type Shape enum Dot | Box(int)\nfn main() {\n ro a = Box(2) is Shape.Box\n println(a)\n}", std)
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("Shape_Box"), c)
+    // A qualifier naming another sum is refused by name, not read past.
+    ro (w, _) = compile_to_c("type Shape enum Dot | Box(int)\ntype Other enum Box | Ring\nfn main() {\n ro s = Shape.Box(2)\n println(s is Other.Box)\n}", std)
+    assert(w.len() == 1 && messages(w).contains("names a variant of `Other`"), messages(w))
+    // CONTROL: the bare form of the same test, legal before 1570, still is.
+    ro (b, _) = compile_to_c("type Shape enum Dot | Box(int)\nfn main() {\n ro a = Box(2) is Box\n println(a)\n}", std)
+    assert(b.len() == 0, messages(b))
+}

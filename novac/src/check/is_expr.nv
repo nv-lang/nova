@@ -14,11 +14,11 @@
 
 module novac.check
 
-import ../tree.{Node}
+import ../tree.{Node, NodeKind}
 import ../builtins.{TypeKind}
 import ../sem.{branch_children, variant_in_sum, is_any_ty, any_tid_c, type_ref_last_ident}
-import ../sem.{narrowing_of, ParamMode, is_target_of}
-import ../types.{TyId, is_ty}
+import ../sem.{narrowing_of, ParamMode, is_target_of, leaf_text, ty_source_name}
+import ../types.{TyId, is_ty, no_ty}
 
 /// `x is T`: the operand typed, the right side judged against it, `bool`
 /// recorded. The TARGET type is `sem.is_target_of`'s answer -- the door the
@@ -51,6 +51,17 @@ fn Checker mut @type_is_test(e Node) -> () {
         return
     }
     if is_ty(lt) && @ctx.tys.kind_of(lt) == TypeKind.TkSum {
+        // A QUALIFIED variant (`x is Shape.Box`, D54 amendment 2026-10-01)
+        // names the tested sum itself: a qualifier naming ANOTHER type would
+        // otherwise be read past by the last-identifier rule below, and
+        // `s is Other.Box` would test `Shape.Box` in silence.
+        ro qual = is_qualifier_of(rhs)
+        if qual != "" && (@ctx.ty_of_name(qual) ?? no_ty()) != lt {
+            @reject_first_leaf_of([]Node.of(rhs), is_wrong_sum_msg(qual, ty_source_name(@ctx, lt)))
+            return
+        } else {
+            // Bare, or qualified by the tested sum: the variant decides below.
+        }
         // The sum half: the right side names one of THIS sum's variants, by
         // its last identifier (`Shape.Circle` or `Circle`).
         match variant_in_sum(@ctx, lt, type_ref_last_ident(rhs)) {
@@ -63,6 +74,19 @@ fn Checker mut @type_is_test(e Node) -> () {
     }
     @reject_first_leaf_of(kids, IS_NON_ANY_MSG)
 }
+
+/// The qualifier of a qualified variant after `is` (`Shape` of `Shape.Box`, a
+/// Name of three leaves -- parse/cast_chain.nv), `""` for any other right side.
+fn is_qualifier_of(rhs Node) -> str {
+    if rhs.kind_of() != NodeKind.Name { return "" }
+    ro nk = branch_children(rhs)
+    if nk.len() != 3 { return "" }
+    leaf_text(nk[0])
+}
+
+/// The refusal of a qualifier that names another type than the tested sum.
+fn is_wrong_sum_msg(qual str, sum str) -> str =>
+    "`is` names a variant of `${qual}`, but the tested value is a `${sum}` -- a qualified variant after `is` names the value's own sum (D54 amendment 2026-10-01)"
 
 /// The then-branch of an `if` (or the body of a `while`): typed as a block,
 /// with the tested name narrowed first when the condition is `x is T` on an
