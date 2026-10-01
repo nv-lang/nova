@@ -1,0 +1,11 @@
+// Registry 221.1 #1465, the control: the same shape with branches of ONE type
+// (`int`/`int`) is refused as it should be --
+//   [E_MISSING_RETURN_TYPE] function `f` has a block-body ...
+// and so are a `match` tail and a bare `7` tail. Only the mixed-type `if`
+// (a.nv.txt) slips through the checker.
+fn f(b bool) {
+    if b { 1 } else { 2 }
+}
+fn main() Io -> () {
+    print("${f(true)}")
+}
