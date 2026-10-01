@@ -78,14 +78,114 @@ export type FnLookup enum
 export type FnIndex priv {
     heads NameTable /// name -> LAST registered row of that name; `next` walks the earlier ones
     next []FnRow /// parallel to FnTable.rows: next row carrying the SAME name, `no_row()` at the end
+    imp_heads NameTable /// #1493: imported name -> LAST registered import of it; `imp_next` walks the rest
+    imp_mod []str /// #1493: per import, the last segment of the module path it names
+    imp_next []int /// #1493: next import of the SAME name, -1 at the end
+    vis_on bool /// #1493: whether `@sees` judges at all -- false for an index built without the file's imports
+    own_c str /// #1493: the file's own module in C spelling (`Ctx.module_c`), whose rows need no import
 }
 
 /// Build the index over these rows: an empty FnIndex, then one registering
-/// pass.
+/// pass. Visibility is NOT judged by an index built this way (`@sees` answers
+/// true): an instance body is typed under its own module's imports, which the
+/// caller of `check_instance` does not have.
 export fn FnIndex.build(fns FnTable) -> FnIndex {
-    mut ix = FnIndex { heads: NameTable.new(NamespaceId.NsCallables), next: []FnRow.new() }
+    mut ix = FnIndex {
+        heads: NameTable.new(NamespaceId.NsCallables), next: []FnRow.new(),
+        imp_heads: NameTable.new(NamespaceId.NsCallables), imp_mod: []str.new(), imp_next: []int.new(),
+        vis_on: false, own_c: "",
+    }
     ix.fill(fns)
     ix
+}
+
+/// The index of a FILE, which also knows what the file imported (registry
+/// 221.1 #1493, D29): a function of ANOTHER module -- of the program or of std --
+/// is visible only through `import <module>.{<name>}`. Before this the index was
+/// flat by bare name, so `f()` of `hp.geo` and std's `is_high_surrogate` were
+/// called with no import at all, where the oracle says "undefined identifier".
+/// `imported` comes from the file's import declarations (check/calls.nv
+/// `visible_imports`), one `<last module segment>|<name>` key per imported name;
+/// registering may allocate, the `@sees` door may not (P18).
+export fn FnIndex.build_for(fns FnTable, imported []str, own_c str) -> FnIndex {
+    mut ix = FnIndex.build(fns)
+    ix.vis_on = true
+    ix.own_c = own_c
+    ix.register_imports(imported)
+    ix
+}
+
+/// Register the import keys -- the chain `@fill` grows for rows, per imported
+/// name: remember the previous import of that name, become the head.
+fn FnIndex mut @register_imports(keys []str) -> () {
+    for k in keys {
+        ro bar = bar_at(k)
+        if bar < 0 { continue }
+        ro name = k[bar + 1..]
+        @imp_next.push(@imp_heads.find(name))
+        @imp_heads.put(name, @imp_mod.len())
+        @imp_mod.push(k[0..bar])
+    }
+}
+
+/// May this file call the row of `name` declared in module `handed_from`?
+///
+/// D29 (07-modules.md): the file's OWN rows and those of its module (`handed_from`
+/// empty, or the file's own module) need no import -- folder peers share a
+/// namespace; the PRELUDE is in scope by definition (07-modules.md, "Prelude --
+/// without import"), and its rows come from the `prelude.*` modules; everything
+/// else is visible only when the file imported that name from that module. The
+/// module is matched by its LAST segment -- a NAMED SIMPLIFICATION (274.11 E.10):
+/// an import is written relative (`../geo`) or absolute (`std.encoding.utf16`),
+/// while a handed row carries the module's own dotted name (`hp.geo`,
+/// `encoding.utf16`); the last segment is what both spellings agree on, and two
+/// modules sharing it are not told apart until import paths resolve to modules.
+#realtime nogc
+export fn FnIndex @sees(handed_from str, name str) -> bool {
+    if !@vis_on || handed_from == "" { return true }
+    if same_module_c(handed_from, @own_c) { return true }
+    if handed_from == "prelude" || handed_from.starts_with("prelude.") { return true }
+    ro seg = seg_start(handed_from)
+    mut i = @imp_heads.find(name)
+    while i >= 0 {
+        if handed_from[seg..] == @imp_mod[i] { return true }
+        i = @imp_next[i]
+    }
+    false
+}
+
+/// The byte index where the last segment of a dotted module name starts.
+#realtime nogc
+fn seg_start(dotted str) -> int {
+    mut i = dotted.byte_len()
+    while i > 0 {
+        if dotted[i - 1..i] == "." { return i }
+        i -= 1
+    }
+    0
+}
+
+/// Is the dotted module name `dotted` the C-spelled module `c` (`hp.geo` ~ `hp_geo`)?
+#realtime nogc
+fn same_module_c(dotted str, c str) -> bool {
+    if dotted.byte_len() != c.byte_len() { return false }
+    mut i = 0
+    while i < c.byte_len() {
+        ro d = dotted[i..i + 1]
+        if d != c[i..i + 1] && !(d == "." && c[i..i + 1] == "_") { return false }
+        i += 1
+    }
+    true
+}
+
+/// Where the `|` of an import key is, or -1.
+fn bar_at(k str) -> int {
+    mut i = 0
+    while i < k.byte_len() {
+        if k[i..i + 1] == "|" { return i }
+        i += 1
+    }
+    -1
 }
 
 /// Register every row -- the same chain `FnTable.add` grew in place before
