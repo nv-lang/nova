@@ -34,7 +34,9 @@ for g in $list; do
         *.py) out=$(timeout 240 python "scripts/guards/$g" . 2>&1); rc=$? ;;
         *) out=$(timeout 240 bash "scripts/guards/$g" . 2>&1); rc=$? ;;
     esac
-    if [ $rc -ne 0 ]; then
+    if [ $rc -eq 124 ]; then
+        bad=$((bad+1)); echo "СНЯТ ПРЕДЕЛОМ 240с: вердикта нет $g"
+    elif [ $rc -ne 0 ]; then
         bad=$((bad+1)); echo "FAIL($rc) $g"; echo "$out" | head -4 | cut -c1-200
     else
         echo "ok $g"

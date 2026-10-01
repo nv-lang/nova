@@ -79,9 +79,9 @@ fn param_read(ctx Big, long Big, near Big, IN Big) -> str =>
     "${ctx.a}-${long.b} ${near.a}-${IN.b}"
 
 fn mut_int(mut ctx int, mut long int, mut nova_x int) {
-    ctx = ctx + 1
-    long = long + 1
-    nova_x = nova_x + 1
+    ctx += 1
+    long += 1
+    nova_x += 1
 }
 
 fn mut_value(mut ctx Big) {
@@ -98,7 +98,7 @@ fn copy_of(ctx Big) -> Big {
 fn ret_of(schedlink Big) -> Big => schedlink
 
 fn bump(mut x int) {
-    x = x + 1
+    x += 1
 }
 
 fn pass_on(mut ctx int, mut near int) {
@@ -142,14 +142,14 @@ fn main() Io -> () {
     ro pairs = [(1, 2), (3, 4)]
     mut st = 0
     for (ctx, long) in pairs {
-        st = st + ctx * long
+        st += ctx * long
     }
     println("for tuple ${st}")
 
     ro m HashMap[int, int] = [1: 10, 2: 20]
     mut sm = 0
     for (near, nova_x) in m {
-        sm = sm + near * nova_x
+        sm += near * nova_x
     }
     println("for map ${sm}")
     println("const ${ORIGIN.k} ${Holder { k: 1 }.plus_origin()} ${NIL.a}${NIL.b} ${LIMIT}")
