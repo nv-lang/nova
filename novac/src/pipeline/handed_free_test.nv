@@ -69,3 +69,21 @@ test "a function of ANOTHER MODULE OF THE PROGRAM: judged by its signature, name
     ro (d1, _) = compile_to_c_with(prog, decls, InteropTable.new())
     assert(messages(d1).contains("declared in module `novac.helpers`"), messages(d1))
 }
+
+test "a POINTER in a handed declaration is read: a std record with a `*mut` field is whole (274.11 E.10 step 3b)" {
+    // std's `Vec[T]` keeps `mut data *mut T`; until step 3b the reference door
+    // answered no type for `*`, and a record whose field it could not read was
+    // a record with a hole. The PLAIN field beside it must read as before, and
+    // the program that touches only it must compile.
+    mut texts = std_decls()
+    texts.push("module std.cellm\nexport type Cell { n int, data *mut int }\nexport fn cell_n(c Cell) -> int => c.n\n")
+    ro decls = parse_decls(texts)
+    ro prog = "import std.cellm.{Cell, cell_n}\nfn f(c Cell) -> int => c.n\nfn main() {\n println(1)\n}"
+    ro (d0, _) = compile_to_c_with(prog, decls, InteropTable.new())
+    assert(d0.len() == 0, messages(d0))
+    // The POINTER field has a TYPE now, and the type is the pointer: returned
+    // as an `int`, the mismatch names `*mut int` -- with no type there the
+    // door had nothing to name (the hole read as silence).
+    ro (d1, _) = compile_to_c_with("import std.cellm.{Cell}\nfn g(c Cell) -> int => c.data\nfn main() {\n println(1)\n}", decls, InteropTable.new())
+    assert(messages(d1).contains("*mut int"), messages(d1))
+}
