@@ -34,6 +34,7 @@ mod record_lit_schema; // #1448/#1096: a record literal against its record's fie
 mod generic_sum; // #1337/#1338: a user generic sum's ctor, payload and expected type
 mod raw_ptr_ops; // #1473: raw-pointer address arithmetic outside unsafe (D216 part 1)
 mod as_cast_rules; // #1547: the `as` rules of D54 in the checker, not the emitter
+mod pattern_literal_rules; // #1535: a literal pattern has the scrutinee's type
 pub(crate) mod reserved_names; // D487: a declared name outside the compiler's C namespaces (called by the parser)
 pub(crate) mod coerce_door; // #1451/#1452: one door for `#coerce` -- checker decides, rewrite reads
 mod const_names; // #1488: the type of a module-level `const`/`ro` read by its bare name
@@ -9522,7 +9523,11 @@ impl<'a> TypeCheckCtx<'a> {
                     // 2026-07-23): 3rd position of the norm — RETURN.
                     // №717 дыра (2): через хвостовое семейство — хвост ветви
                     // if/match тоже есть возврат.
-                    self.check_ro_launder_tail(e, ret, &scope, errors);
+                    // #1554: the tail of a `-> @` body is DISCARDED (D409), not returned -- `=> o`
+                    // with a `ro o` launders nothing.
+                    if !fd.returns_receiver {
+                        self.check_ro_launder_tail(e, ret, &scope, errors);
+                    }
                     // №959 (2026-09-05): тело против ОБЪЯВЛЕННОГО ВОЗВРАТА —
                     // тем же `assignable`, каким судятся аргумент и биндинг.
                     // Строкой выше в этом же файле стояло «return-type compat
@@ -9562,7 +9567,11 @@ impl<'a> TypeCheckCtx<'a> {
                         self.check_closure_scalar_return(trailing, ret, errors);
                         // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1б).
                         // №717 дыра (2): см. `check_ro_launder_tail`.
-                        self.check_ro_launder_tail(trailing, ret, &scope, errors);
+                        // #1554: the tail of a `-> @` body is DISCARDED (D409), not returned -- `=> o`
+                        // with a `ro o` launders nothing.
+                        if !fd.returns_receiver {
+                            self.check_ro_launder_tail(trailing, ret, &scope, errors);
+                        }
                         // №959: хвостовое выражение блочного тела — тот же
                         // возврат, что и arrow-body.
                         if !fd.returns_receiver {
@@ -13501,6 +13510,9 @@ impl<'a> TypeCheckCtx<'a> {
                 // непокрытый вариант проходил check и build и давал ТИХО
                 // неверный результат (код 0).
                 self.check_match_exhaustive(scrut_ty.as_ref(), arms, e.span, errors);
+                for arm in arms {
+                    self.check_pattern_literal_type(&arm.pattern, scrut_ty.as_ref(), errors); // #1535
+                }
                 // РЕЕСТР 221.1 №762/№1157, решение владельца 2026-09-18 (вариант
                 // «б» — ОТВЕРГАТЬ): ИМЯ МОДУЛЬНОЙ КОНСТАНТЫ В ПОЗИЦИИ ОБРАЗЦА
                 // НЕ ФОРМА ЯЗЫКА.
@@ -24113,6 +24125,21 @@ impl<'a> TypeCheckCtx<'a> {
         hit.then(|| TypeRef::Named { path: vec![sum.to_string()], generics: Vec::new(), span })
     }
 
+    /// Registry 221.1 #1572: the type of a block's VALUE is the type of its tail. The
+    /// match-arm and block-expression arms of `infer_expr_type` took the last expression
+    /// STATEMENT instead -- for `{ if v < 0 { return Err(..) }; Val.Flag(..) }` that is the
+    /// `if` without `else`, typed `()`, so `Ok(match ..)` was `Result[(), str]` and the
+    /// return check of #1517 refused a correct program (E7301). Without a tail the old
+    /// reading stays (a body lowered with its value as the last statement).
+    fn block_value_type(&self, b: &Block, scope: &HashMap<String, TypeRef>) -> Option<TypeRef> {
+        match &b.trailing {
+            Some(t) => self.infer_expr_type(t, scope),
+            None => b.stmts.iter().rev().find_map(|s| {
+                if let Stmt::Expr(e) = s { self.infer_expr_type(e, scope) } else { None }
+            }),
+        }
+    }
+
     /// Ф.1: best-effort вывод типа выражения (для не-литералов).
     fn infer_expr_type(
         &self,
@@ -25547,13 +25574,12 @@ impl<'a> TypeCheckCtx<'a> {
             // Plan 172.1 P67 D45: Match expr type = first arm-body type that resolves.
             // Pattern bindings are not added to scope here; bodies referencing them get None
             // and we skip to the next arm. SelfAccess / scope-Ident arms resolve correctly.
+            // #1572: a block arm's type is its TAIL (`block_value_type`).
             ExprKind::Match { arms, .. } => {
                 for arm in arms {
                     let ty = match &arm.body {
                         MatchArmBody::Expr(e) => self.infer_expr_type(e, scope),
-                        MatchArmBody::Block(b) => b.stmts.iter().rev().find_map(|s| {
-                            if let Stmt::Expr(e) = s { self.infer_expr_type(e, scope) } else { None }
-                        }),
+                        MatchArmBody::Block(b) => self.block_value_type(b, scope),
                     };
                     if let Some(t) = ty {
                         return Some(t);
@@ -25582,10 +25608,8 @@ impl<'a> TypeCheckCtx<'a> {
                     None => unreachable!(),
                 }
             }
-            // Plan 172.1 P67 D45: Block expr type = tail stmt type (last Expr stmt).
-            ExprKind::Block(b) => b.stmts.iter().rev().find_map(|s| {
-                if let Stmt::Expr(e) = s { self.infer_expr_type(e, scope) } else { None }
-            }),
+            // Plan 172.1 P67 D45: Block expr type = its tail (#1572, `block_value_type`).
+            ExprKind::Block(b) => self.block_value_type(b, scope),
             // #1488: `Type.K` / `m.K` / `CR.field` folded into a path (`const_names.rs`).
             ExprKind::Path(parts) if parts.len() >= 2 => self.value_path_type(parts, expr.span, scope),
             _ => None,
@@ -45639,6 +45663,12 @@ fn check_no_explicit_self_return_block(
     if let Some(t) = &b.trailing {
         if expr_is_bare_self(t) {
             errors.push(e_explicit_self_return(t.span, method_name));
+        } else {
+            // #1554: a tail that is not the receiver is discarded (D409), but it may
+            // HOLD a `return <value>` -- `if k > 10 { return o }` as the last
+            // expression of the body was never descended into, and `return o`
+            // returned `o`, `return 5` crashed (rc 139).
+            check_no_explicit_self_return_expr(t, fluent, recv_type, method_name, errors);
         }
     }
 }
@@ -45657,10 +45687,10 @@ fn check_no_explicit_self_return_stmt(
             } else if !expr_always_returns_receiver(v, fluent, recv_type) {
                 errors.push(Diagnostic::new(
                     format!(
-                        "метод `{}` объявлен `-> @` (fluent-return, D132/D409): \
-                         `return` с явным значением, отличным от приёмника, — \
-                         ошибка. Используй голый `return` (авто-возврат D409) \
-                         или `return <вызов другого `-> @` метода>`.",
+                        "[E_FLUENT_RETURN_VALUE] method `{}` is declared `-> @`: returning \
+                         anything but the receiver is an error (D409 rule 2, D132). Use a bare \
+                         `return` (the receiver is returned automatically) or delegate \
+                         to another `-> @` method: `return @other_fluent()`.",
                         method_name),
                     *span,
                 ));

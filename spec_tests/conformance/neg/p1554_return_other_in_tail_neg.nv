@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR E_FLUENT_RETURN_VALUE
+// Regression for registry 221.1 #1554: D409 rule 2 -- a `-> @` method returns only
+// its receiver. An explicit `return <value>` in the TAIL of the body (an `if` that is
+// the last expression) was never judged: `return o` returned `o`, `return 5`
+// crashed (rc 139). Positive half: standalone/p1554_fluent_tail_ok.nv.
+module neg.p1554_return_other_in_tail_neg
+
+type Ctr { n int }
+
+fn Ctr mut @swap(mut o Ctr, k int) -> @ {
+    @n = @n + k
+    if k > 10 {
+    // nova:expect E_FLUENT_RETURN_VALUE -- `o` is not the receiver: a `-> @` body returns the receiver only (D409 rule 2)
+        return o
+    }
+}
+
+fn main() {
+    mut a = Ctr { n: 1 }
+    mut b = Ctr { n: 50 }
+    println(a.swap(b, 20).n)
+}

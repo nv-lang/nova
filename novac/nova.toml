@@ -517,7 +517,10 @@
 # (merge of origin/main 0fed40d0d into p274-carina-strarm, 2026-10-01: main
 # carried 150 for its own spec commits, this branch 151 for its two; the line
 # is the guard's formula over the joined history.)
-#   spec-queue: 152
+# (merge of origin/integrate bacdefa12, 2026-10-01: integrate wrote 155, but the
+# guard's formula over its own history gives 154 -- and 154 over the joined one;
+# the line follows the formula.)
+#   spec-queue: 154
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,
