@@ -1,6 +1,7 @@
 module applied_sum_arm.neg_1
 
-// A `match` ON AN APPLIED SUM -- refused BY NAME, and the name is the point.
+// A `match` ON AN APPLIED SUM NOVAC CANNOT SPELL -- refused BY NAME, and the
+// name is the point.
 //
 // Until 2026-09-20 this said "this arm names a variant of a different sum than
 // the value matched on". That sentence is about the PROGRAM and was a statement
@@ -8,25 +9,28 @@ module applied_sum_arm.neg_1
 // scrutinee is an application, and the door compared type ids. The reader was
 // sent looking for a sum mix-up that is not in their code.
 //
-// WHAT THE WAVE DID AND DELIBERATELY DID NOT DO. The door now finds the head
-// through the DECLARATION, so the form is recognised -- and it is refused here,
-// because the emitter cannot spell it: an applied sum reaching novac comes from
-// the SHELL, with the oracle's tag names and value semantics, while novac emits
-// its own spelling and a pointer access. Measured on this very file:
+// WHAT CHANGED ON 2026-10-01, AND WHY THE CELL MOVED OFF `Option`. An applied
+// sum comes from the SHELL, with the oracle's tag names and value semantics,
+// while novac emitted its own spelling (measured on `Option[int]`:
 // `_novac_l2->tag` against a value struct, and an undeclared
-// `NOVAC_TAG_..._Option_Some`.
+// `NOVAC_TAG_..._Option_Some`). The wave match_applied_sum taught the emitter
+// the shell's spelling for the two sums whose instances the shell names --
+// `Option[T]` (`NovaOpt_<T>`) and `Result[T, E]` (`NovaRes_<T>_<E>`) -- so a
+// match on `Option[int]` compiles now (novac/fixtures/match_applied_sum/).
 //
-// So recognition landed and compilation did not, ON PURPOSE. Letting the form
-// through the checker with the emitter unable to carry it is the silent-
-// acceptance class this compiler keeps closing -- and this same night it had
-// already cost one wrong answer and two ices.
+// What stays refused is every OTHER applied sum the declarations hand over:
+// the prelude's `Outcome[T]` is the one reachable today, and the shell spells
+// it without a per-instance struct that novac could name. Letting it through
+// the checker with the emitter unable to carry it is the silent-acceptance
+// class this compiler keeps closing.
 //
 // A user's OWN generic sum never reaches this door: generic parameters are
-// refused earlier (E2-b2). So this cell is about the shell's sums alone.
+// refused at the declaration (E2-b2). So this cell is about the shell's sums
+// alone.
 
 // NOVAC_EXPECT a `match` on an applied sum
 
-fn from_option(o Option[int]) -> int => match o {
-    Some(v) => v
-    None => 0
+fn finished_or_zero(o Outcome[int]) -> int => match o {
+    Finished(v) => v
+    Aborted => 0
 }

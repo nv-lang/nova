@@ -112,6 +112,32 @@ export fn coalesce_payload(ctx Ctx, t TyId) -> TyId {
     ctx.tys.arg(t, 0)
 }
 
+/// AN APPLIED SUM WHOSE TAGS THE SHELL SPELLS: the language's `Option[T]` or
+/// `Result[T, E]`, and nothing else.
+///
+/// THE ONE HOME OF THE LIST, asked by the checker (may a `match` on this
+/// scrutinee pass?) and the emitter (whose spelling is the tag test?), so the
+/// two cannot disagree -- the class the registry calls O-1. An applied sum
+/// comes from the SHELL: its C is the oracle's monomorphised instance, and
+/// novac's own `NOVAC_TAG_<module><Sum>_<Variant>` names nothing there
+/// (measured on `Option[int]`: `_novac_l2->tag == NOVAC_TAG_p1_Option_None`,
+/// an undeclared constant behind a pointer access to a value struct). The two
+/// sums named here are the ones whose instances the shell spells by name --
+/// `NovaOpt_<T>` (emit_option.nv) and `NovaRes_<T>_<E>` with `NOVA_TAG_Result_*`
+/// (shell.tpl.c, `nova_make_NovaRes_..._Ok`). Every other applied sum the
+/// declarations hand over (`Outcome[T]` of the prelude) is spelled by the shell
+/// WITHOUT a per-instance struct, and stays refused by name until it is read.
+///
+/// The ARITY is part of the name for the reason `coalesce_ok_variant` gives.
+export fn is_shell_applied_sum(ctx Ctx, t TyId) -> bool {
+    if !is_ty(t) { return false }
+    if ctx.tys.kind_of(t) != TypeKind.TkApp { return false }
+    ro head = decl_of_ty(ctx, t)
+    if head.kind != TypeKind.TkSum { return false }
+    ro arity = ctx.tys.arg_count(t)
+    (head.name == OPTION_SUM && arity == 1) || (head.name == RESULT_SUM && arity == 2)
+}
+
 /// The ELEMENT a for-head vector carries: the single-argument door under its
 /// wave's name (B16) -- the head kind was already judged by the caller
 /// (`check/typing.nv:680`).
