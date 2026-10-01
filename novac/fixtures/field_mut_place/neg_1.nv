@@ -1,0 +1,24 @@
+module field_mut_place.neg_1
+
+// NOVAC_EXPECT needs a mutable place
+// ONE seeded cause: the root of the chain is a `ro` local, so its field is a
+// read-only place and a `mut` method may not be called through it. The
+// oracle refuses the same line (E_LOCAL_NOT_MUT: "the root binding of the
+// chain must be `mut`").
+type Ctr {
+    n int
+}
+
+fn Ctr mut @bump() -> int {
+    @n += 1
+    @n
+}
+
+type Outer {
+    c Ctr
+}
+
+fn main() {
+    ro o = Outer { c: Ctr { n: 0 } }
+    println(o.c.bump())
+}
