@@ -1,0 +1,63 @@
+=== PACKAGE
+./src/main.nv
+=== ORACLE: nova build src/main.nv, run
+oracle build rc=0
+oracle run rc=0
+70
+-1
+2
+-1
+12
+-1
+0
+-1
+113
+-1
+2.5
+-1
+200
+-1
+=== SUBJECT: novac check (no NOVAC_SELF_PATH: single file)
+novac check rc=0
+=== SUBJECT: novac emit
+novac emit rc=0
+--- C lines matching: novac_fn_
+12017:static NovaOpt_Nova_Shape_p novac_fn_osh__nova_bool__to_Option_of_Shape(nova_bool f) {
+12026:static NovaOpt_Nova_Color_p novac_fn_ocol__nova_bool__to_Option_of_Color(nova_bool f) {
+12035:static NovaOpt_NovaValue_Pt novac_fn_opt__nova_bool__to_Option_of_Pt(nova_bool f) {
+12047:static NovaOpt_nova_bool novac_fn_obool__nova_bool__to_Option_of_nova_bool(nova_bool f) {
+12056:static NovaOpt_nova_char novac_fn_ochar__nova_bool__to_Option_of_nova_char(nova_bool f) {
+12065:static NovaOpt_nova_f64 novac_fn_of64__nova_bool__to_Option_of_nova_f64(nova_bool f) {
+12074:static nova_byte novac_fn_two_hundred__to_nova_byte(void) {
+12077:static NovaOpt_nova_byte novac_fn_ou8__nova_bool__to_Option_of_nova_byte(nova_bool f) {
+12080:        _novac_l1 = ((NovaOpt_nova_byte){.tag = NOVA_TAG_Option_Some, .value = (novac_fn_two_hundred__to_nova_byte())});
+12086:static nova_int novac_fn_a__Option_of_Shape__to_nova_int(NovaOpt_Nova_Shape_p o) {
+12114:static nova_int novac_fn_b__Option_of_Color__to_nova_int(NovaOpt_Nova_Color_p o) {
+12140:static nova_int novac_fn_c__Option_of_Pt__to_nova_int(NovaOpt_NovaValue_Pt o) {
+12155:static nova_int novac_fn_d__Option_of_nova_bool__to_nova_int(NovaOpt_nova_bool o) {
+12176:static nova_int novac_fn_e__Option_of_nova_char__to_nova_int(NovaOpt_nova_char o) {
+12197:static nova_f64 novac_fn_f__Option_of_nova_f64__to_nova_f64(NovaOpt_nova_f64 o) {
+12212:static nova_int novac_fn_g__Option_of_nova_byte__to_nova_int(NovaOpt_nova_byte o) {
+12234:    nova_print_int(novac_fn_a__Option_of_Shape__to_nova_int(novac_fn_osh__nova_bool__to_Option_of_Shape(true)));
+12236:    nova_print_int(novac_fn_a__Option_of_Shape__to_nova_int(novac_fn_osh__nova_bool__to_Option_of_Shape(false)));
+12238:    nova_print_int(novac_fn_b__Option_of_Color__to_nova_int(novac_fn_ocol__nova_bool__to_Option_of_Color(true)));
+12240:    nova_print_int(novac_fn_b__Option_of_Color__to_nova_int(novac_fn_ocol__nova_bool__to_Option_of_Color(false)));
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+70
+-1
+2
+-1
+12
+-1
+0
+-1
+113
+-1
+2.5
+-1
+200
+-1
+=== VERDICT: SAME stdout

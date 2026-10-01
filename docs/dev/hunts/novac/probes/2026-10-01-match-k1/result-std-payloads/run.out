@@ -1,0 +1,47 @@
+=== PACKAGE
+./src/main.nv
+=== ORACLE: nova build src/main.nv, run
+oracle build rc=0
+oracle run rc=0
+ok
+open
+1
+3
+whole
+err read_dir
+=== SUBJECT: novac check (no NOVAC_SELF_PATH: single file)
+novac check rc=0
+=== SUBJECT: novac emit
+novac emit rc=0
+--- C lines matching: tag == NOVA_TAG_Result
+4729:    if (_nv_tmp_192->tag == NOVA_TAG_Result_Err) {
+4920:    if (!_nv_matched_282 && ((_nv_scr_280->tag == NOVA_TAG_Result_Ok))) {
+4925:    if (!_nv_matched_282 && ((_nv_scr_280->tag == NOVA_TAG_Result_Err))) {
+4982:        if (!_nv_matched_293 && (((_nv_scr_291->tag == NOVA_TAG_Result_Ok) && (_nv_scr_291->payload.Ok._0 == 0LL)))) {
+4986:        if (!_nv_matched_293 && ((_nv_scr_291->tag == NOVA_TAG_Result_Ok))) {
+4995:        if (!_nv_matched_293 && ((_nv_scr_291->tag == NOVA_TAG_Result_Err))) {
+5024:        if (!_nv_matched_302 && ((_nv_scr_300->tag == NOVA_TAG_Result_Ok))) {
+5028:        if (!_nv_matched_302 && ((_nv_scr_300->tag == NOVA_TAG_Result_Err))) {
+5225:    if (!_nv_matched_323 && ((_nv_scr_321->tag == NOVA_TAG_Result_Ok))) {
+5230:    if (!_nv_matched_323 && ((_nv_scr_321->tag == NOVA_TAG_Result_Err))) {
+5281:        if (!_nv_matched_334 && (((_nv_scr_332->tag == NOVA_TAG_Result_Ok) && (_nv_scr_332->payload.Ok._0 == 0LL)))) {
+5286:        if (!_nv_matched_334 && ((_nv_scr_332->tag == NOVA_TAG_Result_Ok))) {
+5292:        if (!_nv_matched_334 && ((_nv_scr_332->tag == NOVA_TAG_Result_Err))) {
+5321:        if (!_nv_matched_342 && ((_nv_scr_340->tag == NOVA_TAG_Result_Ok))) {
+5325:        if (!_nv_matched_342 && ((_nv_scr_340->tag == NOVA_TAG_Result_Err))) {
+5507:    if (!_nv_matched_366 && ((_nv_scr_364->tag == NOVA_TAG_Result_Ok))) {
+5512:    if (!_nv_matched_366 && ((_nv_scr_364->tag == NOVA_TAG_Result_Err))) {
+6965:    nova_char _nv_tmp_527 = (_nv_tmp_525->tag == NOVA_TAG_Result_Ok ? _nv_tmp_525->payload.Ok._0 : ((nova_char)65533U));
+7321:    if (_nv_tmp_590->tag == NOVA_TAG_Result_Err) { nova_throw_trace_push("parse.nv", 135); return nova_make_NovaRes_nova_char_Nova_ParseCharError_p_Err(_nv_tmp_590->payload.Err._0); }
+11608:    nova_char fill_c = (_nv_tmp_1240->tag == NOVA_TAG_Result_Ok ? _nv_tmp_1240->payload.Ok._0 : ((nova_char)32U));
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+ok
+open
+1
+3
+whole
+err read_dir
+=== VERDICT: SAME stdout

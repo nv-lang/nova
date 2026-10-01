@@ -1,0 +1,51 @@
+=== PACKAGE
+./src/main.nv
+=== ORACLE: nova build src/main.nv, run
+oracle build rc=0
+oracle run rc=0
+2
+0
+3
+0
+5
+6
+7
+0
+=== SUBJECT: novac check (no NOVAC_SELF_PATH: single file)
+novac check rc=0
+=== SUBJECT: novac emit
+novac emit rc=0
+--- C lines matching: _novac_strlit_[0-9]+ =|nova_str_eq
+3366:    return ((((a.value).code) == ((b.value).code)) && (((a.value).found) == ((b.value).found)) && nova_str_eq((a.value).program, (b.value).program));
+3416:    return (nova_str_eq((a.value).f0, (b.value).f0) && nova_str_eq((a.value).f1, (b.value).f1));
+11951:static const nova_str _novac_strlit_0 = { .ptr = _novac_strlit_0_buf, .len = sizeof(_novac_strlit_0_buf) - 1 };
+11953:static const nova_str _novac_strlit_1 = { .ptr = _novac_strlit_1_buf, .len = sizeof(_novac_strlit_1_buf) - 1 };
+11955:static const nova_str _novac_strlit_2 = { .ptr = _novac_strlit_2_buf, .len = sizeof(_novac_strlit_2_buf) - 1 };
+11957:static const nova_str _novac_strlit_3 = { .ptr = _novac_strlit_3_buf, .len = sizeof(_novac_strlit_3_buf) - 1 };
+11959:static const nova_str _novac_strlit_4 = { .ptr = _novac_strlit_4_buf, .len = sizeof(_novac_strlit_4_buf) - 1 };
+11961:static const nova_str _novac_strlit_5 = { .ptr = _novac_strlit_5_buf, .len = sizeof(_novac_strlit_5_buf) - 1 };
+11963:static const nova_str _novac_strlit_6 = { .ptr = _novac_strlit_6_buf, .len = sizeof(_novac_strlit_6_buf) - 1 };
+11965:static const nova_str _novac_strlit_7 = { .ptr = _novac_strlit_7_buf, .len = sizeof(_novac_strlit_7_buf) - 1 };
+11970:    if (!_novac_matched_t0 && (nova_str_eq(_novac_l2, _novac_strlit_0))) {
+11974:    if (!_novac_matched_t0 && (nova_str_eq(_novac_l2, _novac_strlit_1))) {
+11978:    if (!_novac_matched_t0 && (nova_str_eq(_novac_l2, _novac_strlit_2))) {
+11982:    if (!_novac_matched_t0 && (nova_str_eq(_novac_l2, _novac_strlit_3))) {
+11986:    if (!_novac_matched_t0 && (nova_str_eq(_novac_l2, _novac_strlit_4))) {
+11990:    if (!_novac_matched_t0 && (nova_str_eq(_novac_l2, _novac_strlit_5))) {
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+2
+0
+3
+4
+5
+6
+7
+0
+=== VERDICT: DIFFERENT stdout (< oracle, > Carina)
+4c4
+< 0
+---
+> 4

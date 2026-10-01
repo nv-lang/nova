@@ -1,0 +1,58 @@
+// Arm forms over an applied sum: a disjunction, guards in order, a binder of
+// the whole Option handed on, a field scrutinee, the statement position.
+type Box {
+    o Option[int]
+    name str
+}
+
+fn mk(f bool, n int) -> Option[int] => if f { Some(n) } else { None }
+
+fn disj(o Option[int]) -> int => match o {
+    None | Some(_) => 1
+}
+
+fn guards(o Option[int]) -> int => match o {
+    Some(x) if x > 10 => 100
+    Some(x) if x > 5 => 50
+    Some(x) => x
+    None => -1
+}
+
+fn pass(o Option[int]) -> Option[int] => match o {
+    Some(x) if x == 0 => mk(false, 0)
+    whole => whole
+}
+
+fn field(b Box) -> int => match b.o {
+    Some(x) => x + 1000
+    None => 0
+}
+
+fn stmt(o Option[int]) -> int {
+    mut acc = 7
+    match o {
+        Some(x) => {
+            acc = acc + x
+        }
+        None => {
+            acc = 0
+        }
+    }
+    acc
+}
+
+fn main() {
+    println(disj(mk(true, 1)))
+    println(disj(mk(false, 1)))
+    println(guards(mk(true, 11)))
+    println(guards(mk(true, 6)))
+    println(guards(mk(true, 2)))
+    println(guards(mk(false, 2)))
+    println(guards(pass(mk(true, 0))))
+    println(guards(pass(mk(true, 3))))
+    println(guards(pass(mk(false, 3))))
+    println(field(Box { o: mk(true, 4), name: "b" }))
+    println(field(Box { o: mk(false, 4), name: "b" }))
+    println(stmt(mk(true, 3)))
+    println(stmt(mk(false, 3)))
+}
