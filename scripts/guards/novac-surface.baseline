@@ -422,7 +422,10 @@ parse 1
 #
 # pipeline 11 -> 12 (2026-10-01, окно Карины, Э.10 шаг 2а): mark_program -- отмечает модули
 #   ПРОГРАММЫ на поверхности линковки; зовёт его main.nv (объявления из NOVAC_SELF_PATH).
-pipeline 12
+# 2026-10-01, cloud session p274-carina-sweep: pipeline 12 -> 13: `UnitFile` -- the type of the
+#   exported `Unit.files` and of `file_of_offset` / `offset_in_file`; a private type in a public
+#   signature is E_PRIVATE_TYPE_IN_PUBLIC (D47 amendment, owner 2026-10-01). main.nv reads it.
+pipeline 13
 # 2026-08-28 (274.4 step 3): the field root gets the same cut. sem 171 -> 169:
 # has_field and field_type moved OUT to resolve (FieldIndex); resolve 11 -> 15:
 # FieldIndex, build, has_field, field_type.
