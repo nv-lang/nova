@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+//
+// Registry 221.1 #1452: a `str` reaches a `[]u8` position only as the read-only view of the
+// pair `#coerce str @bytes() -> ro []u8` (D429 R2), and `ro O` does not match a writable
+// position (D429 R6; D55 "Str -> `ro []u8`": there the gesture is `s.bytes().clone()`).
+// Before the fix `nova check` was silent here and the write in `zap` went into the string's
+// own bytes: SIGSEGV for a literal in `.rodata`, silent corruption of a heap `str`.
+// Position: the `mut` parameter of a FREE function; form: a call. Positive side:
+// `standalone/p1452_str_bytes_positions.nv`.
+
+module neg.p1452_str_bytes_mut_param_neg
+
+fn p1452_name() -> str => "abc"
+
+fn p1452_zap(mut b []u8) -> () { b[0] = 65 as u8 }
+
+fn main() Io -> () {
+    // nova:expect E_READONLY_COERCE -- a `str` is only a `ro []u8` view, and `b` is a `mut` parameter: the write in `p1452_zap` would land in the string's bytes
+    p1452_zap(p1452_name())
+}

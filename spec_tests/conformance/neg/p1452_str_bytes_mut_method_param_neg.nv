@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+//
+// Registry 221.1 #1452: the `mut` parameter of a METHOD (concrete receiver), form: a variable.
+// Same rule as `p1452_str_bytes_mut_param_neg.nv` (D429 R6: `ro O` does not match a writable
+// position); before the fix this compiled and the write hit the literal's `.rodata` (SIGSEGV).
+
+module neg.p1452_str_bytes_mut_method_param_neg
+
+type P1452Box { n int }
+
+fn P1452Box @zap(mut b []u8) -> () { b[0] = 65 as u8 }
+
+fn main() Io -> () {
+    ro s = "abc"
+    ro bx = P1452Box { n: 0 }
+    // nova:expect E_READONLY_COERCE -- `s` is a `str`; as `[]u8` it is only a `ro` view, and `b` is a `mut` parameter
+    bx.zap(s)
+}

@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+//
+// Registry 221.1 #1452: a `consume` parameter takes OWNERSHIP of a writable `[]u8`; a `str` can
+// give only a borrowed read-only view of its own bytes (D429 R6: `ro O` does not match a
+// `mut`/`consume` position). Form: a field read. Before the fix the callee wrote into the
+// string's bytes (SIGSEGV on a literal).
+
+module neg.p1452_str_bytes_mut_consume_param_neg
+
+type P1452Rec { name str }
+
+fn p1452_eat(consume b []u8) -> []u8 {
+    b[0] = 65 as u8
+    return b
+}
+
+fn main() Io -> () {
+    ro r = P1452Rec { name: "abc" }
+    // nova:expect E_READONLY_COERCE -- `r.name` is a `str`; a `consume` parameter needs an owned writable `[]u8`, the coercion gives only a `ro` view
+    ro out = p1452_eat(r.name)
+    println(out.len().to_str())
+}

@@ -1,0 +1,26 @@
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+//
+// Registry 221.1 #1452: the `mut` parameter of a method called on a PROTOCOL receiver, form: a
+// literal. A protocol method has no `FnDecl` for the call-argument check, so the door is applied
+// from the protocol's own declaration (`coerce_protocol_method_args`); before the fix the literal
+// went through untouched (CC-FAIL), and the variable form wrote into `.rodata`.
+
+module neg.p1452_str_bytes_mut_proto_param_neg
+
+type P1452Zapper protocol {
+    mut @zap(mut b []u8) -> ()
+}
+
+type P1452Zed { n int }
+
+fn P1452Zed mut @zap(mut b []u8) -> () { b[0] = 65 as u8 }
+
+fn p1452_go(mut w P1452Zapper) -> () {
+    // nova:expect E_READONLY_COERCE -- the literal is only a `ro []u8` view, and the protocol method's `b` is `mut`
+    w.zap("abc")
+}
+
+fn main() Io -> () {
+    mut z = P1452Zed { n: 0 }
+    p1452_go(z)
+}

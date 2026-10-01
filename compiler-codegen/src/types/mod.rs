@@ -30,6 +30,7 @@ mod duplicate_decls; // #1179/#1183/#1186: one duplicate check for the compiled 
 mod record_lit_schema; // #1448/#1096: a record literal against its record's fields
 mod generic_sum; // #1337/#1338: a user generic sum's ctor, payload and expected type
 mod raw_ptr_ops; // #1473: raw-pointer address arithmetic outside unsafe (D216 part 1)
+pub(crate) mod coerce_door; // #1451/#1452: one door for `#coerce` -- checker decides, rewrite reads
 
 /// Plan 196 (gs-bounds migration, spike `docs/plans/wip/196-gs-spike.md`):
 /// `gs` ("generics in scope") used to be `HashSet<String>` — ONLY the names of the
@@ -959,6 +960,13 @@ pub struct ModuleEnv {
     /// silent miscompile. A fact about the expression, not about the position, so a
     /// speculative `assignable` probe (overload filtering) cannot poison it.
     pub sum_wrap_kinds: HashMap<crate::ast::ExprId, WrapKind>,
+    /// Registry 221.1 #1451/#1452: the `#coerce` (D429) channel -- every expression
+    /// the checker accepted at a typed position THROUGH a declared pair, keyed by the
+    /// expression's `ExprId`, with the pair's method. `annotate_map_literals` splices
+    /// exactly these (`x` -> `x.method()`), whatever the expression's form; nothing
+    /// downstream decides a coercion by the shape of an expression. See
+    /// `types/coerce_door.rs`.
+    pub coerce_sites: HashMap<crate::ast::ExprId, coerce_door::CoerceSite>,
     /// Plan 172.1 U.3.4: per-call resolved-CALLEE channel (call-site `ExprId` → chosen
     /// callee `FnDecl` declaration `Span`). The checker resolves each call's overload
     /// ONCE (it already does, for arg-checking) and records WHICH `FnDecl` it picked;
@@ -2167,6 +2175,8 @@ fn check_module_impl(
     env.resolved_variant_ctors = type_check_ctx.resolved_variant_ctors_buf.take();
     // #1260: lift the sum-coercion kind channel (read by `annotate_map_literals`).
     env.sum_wrap_kinds = type_check_ctx.sum_wrap_kinds_buf.take();
+    // #1451/#1452: lift the `#coerce` channel (read by `annotate_map_literals`).
+    env.coerce_sites = type_check_ctx.coerce_sites_buf.take();
     // Plan 104.10 Ф.2 (D379): lift the opt-in IDE per-expression type map. Empty unless
     // `record_expr_types` was set (i.e. via check_module_with_expr_types) — zero-overhead
     // guarantee for the normal compile path.
@@ -4585,6 +4595,11 @@ struct TypeCheckCtx<'a> {
     resolved_variant_ctors_buf: std::cell::RefCell<HashMap<crate::ast::ExprId, (String, usize)>>,
     /// Registry 221.1 #1260: lifted into `ModuleEnv.sum_wrap_kinds` (see there).
     sum_wrap_kinds_buf: std::cell::RefCell<HashMap<crate::ast::ExprId, WrapKind>>,
+    /// Registry 221.1 #1451/#1452: lifted into `ModuleEnv.coerce_sites` (see there).
+    coerce_sites_buf: std::cell::RefCell<HashMap<crate::ast::ExprId, coerce_door::CoerceSite>>,
+    /// Registry 221.1 #1451/#1452: >0 while `assignable` is asked speculatively
+    /// (overload filtering) -- a probe must not leave a coercion in the channel.
+    coerce_probe_depth: std::cell::Cell<u32>,
     /// Plan 221.1 №286 residual gap (window p286, 2026-08-04): a BARE
     /// `Channel.new(cap)` (no turbofish, no `ChanWriter[T]`/`ChanReader[T]`
     /// annotation) left `T` permanently untracked (window p-chan, №143/№286
@@ -5515,6 +5530,8 @@ impl<'a> TypeCheckCtx<'a> {
             // №658: empty bare-variant-ctor channel; filled during the check walk.
             resolved_variant_ctors_buf: std::cell::RefCell::new(HashMap::new()),
             sum_wrap_kinds_buf: std::cell::RefCell::new(HashMap::new()),
+            coerce_sites_buf: std::cell::RefCell::new(HashMap::new()),
+            coerce_probe_depth: std::cell::Cell::new(0),
             // Plan 221.1 №286 residual gap (window p286): empty first-send
             // T-inference hint channel; filled per-block during the check walk.
             channel_bare_send_elem_hint: std::cell::RefCell::new(HashMap::new()),
@@ -10238,6 +10255,11 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f1_expr(target, gs, scope, errors);
                 self.assign_target_top.set(false);
                 self.f1_expr(value, gs, scope, errors);
+                // #1451/#1452: `x = v` is a typed position too -- the same `#coerce`
+                // verdict as a `let`, and a view never lands in writable content.
+                if matches!(op, AssignOp::Assign) {
+                    self.coerce_assignment(target, value, gs, scope, errors);
+                }
                 // D175/D176 (Plan 108): check that we're not assigning to a
                 // readonly field or through a readonly index.
                 self.check_target_readonly(target, scope, errors);
@@ -12793,6 +12815,9 @@ impl<'a> TypeCheckCtx<'a> {
                                             if let Some(overloads) =
                                                 self.method_overloads(type_name, op_method)
                                             {
+                                                // #1451: filtering asks every overload; a `#coerce`
+                                                // verdict is recorded for the one chosen (below).
+                                                let probe = self.coerce_probe();
                                                 let compat: Vec<&FnDecl> = overloads
                                                     .iter()
                                                     .copied()
@@ -12817,10 +12842,17 @@ impl<'a> TypeCheckCtx<'a> {
                                                             )
                                                     })
                                                     .collect();
+                                                drop(probe);
                                                 if let [single] = compat.as_slice() {
                                                     self.resolved_callees
                                                         .borrow_mut()
                                                         .insert(e.id, single.span);
+                                                    self.materialize_coerce(
+                                                        right,
+                                                        &single.params[0].ty,
+                                                        gs,
+                                                        scope,
+                                                    );
                                                 }
                                             }
                                         }
@@ -13731,6 +13763,10 @@ impl<'a> TypeCheckCtx<'a> {
                                 .map(|rf| rf.ty.clone())
                             {
                                 self.check_addrof_mut_from_ro_source(v, &field_ty, errors);
+                                // #1451: a field value is a typed position for the
+                                // `#coerce` door (its value is not otherwise judged
+                                // against the field type here).
+                                self.materialize_coerce(v, &field_ty, gs, scope);
                             }
                         }
                     }
@@ -14415,6 +14451,13 @@ impl<'a> TypeCheckCtx<'a> {
         // work: `-> ro Value` then `ro a Value = f()` ✅ (target frozen by the
         // `ro` binding) vs `mut a Value = f()` ❌ (mut content-view).
         let target_content_is_mut = Self::let_target_content_is_mut(Some(ann), binding_mut);
+        // #1452: a `#coerce` view (`str` as `ro []u8`) is not a mutable binding's content.
+        self.check_coerce_view_into_mut(
+            value,
+            target_content_is_mut,
+            &format!("the mutable binding `{name}`"),
+            errors,
+        );
         // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1): checks BOTH
         // the L2 axis (value_ty.is_readonly()) and the L1 axis (value is a
         // bare Ident bound through `ro_binding_names`) — see the shared
@@ -16688,6 +16731,9 @@ impl<'a> TypeCheckCtx<'a> {
     ) -> Option<bool> {
         let bindings = crate::argbind::bind_call_args(&callee.params, args).ok()?;
         let callee_gs = fn_generic_scope(callee);
+        // #1451: a candidate is only being asked -- its `#coerce` verdicts must not
+        // reach the channel (the chosen callee is checked again, definitely).
+        let _probe = self.coerce_probe();
         for (pi, binding) in bindings.iter().enumerate() {
             let ai = match binding {
                 crate::argbind::ArgBinding::Positional(i)
@@ -17435,6 +17481,9 @@ impl<'a> TypeCheckCtx<'a> {
             _ => return,
         };
         let type_name = type_name.as_str();
+        // #1451/#1452: a method of a PROTOCOL receiver has no `FnDecl` to check the
+        // arguments against below -- the `#coerce` door still has to see them.
+        self.coerce_protocol_method_args(type_name, method_name, args, gs, scope, errors);
         // Plan 200 П19 [E_UNKNOWN_METHOD]: a `[N]T` FixedArray receiver normalizes to
         // "Vec" just above (D239 spelling reuse for the SLICE `[]T` case), but `[N]T` is
         // NOT `Vec[T]` at the C level ([M-fixed-array-value-semantics] — inline `{ T
@@ -17997,6 +18046,13 @@ impl<'a> TypeCheckCtx<'a> {
                         // depend on that gate).
                         self.check_addrof_mut_from_ro_source(arg.expr(), &exp_ty, errors);
                         let compat = self.assignable(arg.expr(), &exp_ty, gs, &callee_gs, scope);
+                        // #1452: see `f1_check_call`.
+                        self.check_coerce_view_into_mut(
+                            arg.expr(),
+                            coerce_door::param_is_writable(param),
+                            &coerce_door::param_position(param),
+                            errors,
+                        );
                         let recv_generic_names: HashSet<String> = subst.keys().cloned().collect();
                         let generic_param = !recv_generic_names.is_empty()
                             && typeref_mentions_any(&param.ty, &recv_generic_names);
@@ -19214,7 +19270,15 @@ impl<'a> TypeCheckCtx<'a> {
             // №375 (window p375-ptr2): `&ro_x` passed where a `*mut T` param
             // is declared — same source-check as the let-annotation site.
             self.check_addrof_mut_from_ro_source(arg.expr(), &param.ty, errors);
-            match self.assignable(arg.expr(), &param.ty, gs, &callee_gs, scope)
+            let arg_compat = self.assignable(arg.expr(), &param.ty, gs, &callee_gs, scope);
+            // #1452: a `#coerce` view accepted just above must not bind a writable param.
+            self.check_coerce_view_into_mut(
+                arg.expr(),
+                coerce_door::param_is_writable(param),
+                &coerce_door::param_position(param),
+                errors,
+            );
+            match arg_compat
             {
                 Compat::Bad { found } => {
                     errors.push(
@@ -21910,6 +21974,11 @@ impl<'a> TypeCheckCtx<'a> {
         scope: &HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
+        // #1451: a container whose own value reaches `ret` through `#coerce` is
+        // coerced whole, like the same value in a `let`.
+        if self.coerce_return_container(e, ret, gs, scope) {
+            return;
+        }
         match &e.kind {
             ExprKind::If { then, else_, .. } | ExprKind::IfLet { then, else_, .. } => {
                 self.check_return_compat_tail_block(then, ret, gs, scope, errors);
@@ -22536,23 +22605,18 @@ impl<'a> TypeCheckCtx<'a> {
         // that invariant, not a live tie-break. R5 (exact > coercion) already
         // holds structurally: we only reach here after `direct` failed, i.e.
         // no exact match exists at this position.
+        // Registry 221.1 #1451/#1452: ONE decision (`coerce_verdict`, concrete pairs
+        // first, then generic patterns -- R5') for accept here AND for the channel
+        // the rewrite reads; see `types/coerce_door.rs`.
         if let Compat::Bad { .. } = &direct {
-            if let Some(input_name) = self.coerce_expr_input_name(expr, scope) {
-                if let Some(pairs) = self.coerce_pairs.get(&input_name) {
-                    let exp_key = coerce_type_key(expected);
-                    if pairs.iter().any(|p| p.output_key == exp_key) {
-                        return Compat::Ok;
+            if let Some(verdict) = self.coerce_verdict(expr, expected, scope) {
+                return match verdict {
+                    Ok(site) => {
+                        self.note_coerce_site(expr, site);
+                        Compat::Ok
                     }
-                }
-            }
-        }
-        // Plan 214.1 (D429 amend): GENERIC `#coerce` pattern fallback — tried
-        // ONLY after the CONCRETE `coerce_pairs` lookup above misses (design
-        // §2 pseudocode: concrete lookup first, patterns second — the hot
-        // str/[]u8 concrete path never even reaches `named_base_and_args`).
-        if let Compat::Bad { .. } = &direct {
-            if let Some(verdict) = self.generic_coerce_lookup(expr, expected, scope) {
-                return verdict;
+                    Err(msg) => Compat::CoerceConflict { msg },
+                };
             }
         }
         direct
@@ -22560,8 +22624,8 @@ impl<'a> TypeCheckCtx<'a> {
 
     /// Plan 214.1 (D429 amend): GENERIC `#coerce` pattern accept-path.
     /// `None` — no applicable pattern, caller falls through to `direct`'s
-    /// mismatch. `Some(Compat::Ok)` — EXACTLY one pattern unifies to
-    /// `expected`'s canonical key. `Some(Compat::CoerceConflict{..})` — R3':
+    /// mismatch. `Some(Ok(site))` — EXACTLY one pattern unifies to
+    /// `expected`'s canonical key. `Some(Err(msg))` — R3':
     /// ≥2 patterns unify to the SAME (I,O) pair at this position (see that
     /// variant's doc for why this can only be caught here, not at decl time).
     ///
@@ -22575,7 +22639,7 @@ impl<'a> TypeCheckCtx<'a> {
         expr: &Expr,
         expected: &TypeRef,
         scope: &HashMap<String, TypeRef>,
-    ) -> Option<Compat> {
+    ) -> Option<Result<coerce_door::CoerceSite, String>> {
         let input_ty = self.coerce_expr_input_shape(expr, scope)?;
         let (base, concrete_args) = named_base_and_args(&input_ty)?;
         let patterns = self.generic_coerce_patterns.get(&base)?;
@@ -22594,21 +22658,24 @@ impl<'a> TypeCheckCtx<'a> {
             .collect();
         match matches.len() {
             0 => None,
-            1 => Some(Compat::Ok),
+            1 => Some(Ok(coerce_door::CoerceSite {
+                method: matches[0].method_name.clone(),
+                input: typeref_display(&input_ty),
+                output: exp_key,
+                is_view: !matches[0].is_finalize,
+            })),
             _ => {
                 let decls: Vec<String> = matches
                     .iter()
                     .map(|p| format!("`{base}[..] @{}()`", p.method_name))
                     .collect();
-                Some(Compat::CoerceConflict {
-                    msg: format!(
-                        "[E_COERCE_DUPLICATE_PAIR] ≥2 generic `#coerce` patterns on `{base}` \
-                         unify to the same pair `{base}[..] → {exp_key}` at this position \
-                         (D429 R3'): {}. At most one `#coerce` may provide a given (I,O) pair \
-                         — remove or rename one of the declarations.",
-                        decls.join(", ")
-                    ),
-                })
+                Some(Err(format!(
+                    "[E_COERCE_DUPLICATE_PAIR] ≥2 generic `#coerce` patterns on `{base}` \
+                     unify to the same pair `{base}[..] → {exp_key}` at this position \
+                     (D429 R3'): {}. At most one `#coerce` may provide a given (I,O) pair \
+                     — remove or rename one of the declarations.",
+                    decls.join(", ")
+                )))
             }
         }
     }
@@ -23246,11 +23313,15 @@ impl<'a> TypeCheckCtx<'a> {
             // unrelated to this fix — see the `materialize_returns_in_*` comments).
             // `ExprKind::Ident` (a str VARIABLE) never reaches this arm — D176 still
             // requires an explicit `.bytes()` for a non-literal str value.
+            //
+            // Registry 221.1 #1451/#1452: the `[]u8` half of this arm is GONE. It was a
+            // second accept door for the same pair, keyed by the literal's FORM: it said
+            // Ok before `assignable`'s `#coerce` fallback was asked, so no verdict reached
+            // the channel and no mutability check saw it (`mut m []u8 = "lit"` wrote into
+            // `.rodata`). A literal is a `str` value like any other; the declared pair
+            // `#coerce str @bytes() -> ro []u8` (D429) is its only way into `[]u8`.
             ExprKind::StrLit(_) => {
                 if matches!(exp_rt, ResolvedType::Str) {
-                    return Compat::Ok;
-                }
-                if is_bytes_slice_rt(&exp_rt) {
                     return Compat::Ok;
                 }
                 return Compat::Bad { found: "str".to_string() };
@@ -28474,22 +28545,6 @@ fn array_elem_type(expected: &TypeRef) -> Option<&TypeRef> {
         }
         _ => None,
     }
-}
-
-/// [M-d55-str-literal-coercion-name-gated] fix: is the (already category-
-/// resolved) `rt` the `[]u8` category — i.e. `Array(Scalar{width:8,
-/// signed:false})`? `resolved_cat_of`/`resolved_cat_of_depth` canonicalize
-/// BOTH `[]u8` sugar and `Vec[u8]` to this exact shape (D239 `[]T ≡
-/// Vec[T]`), so a single structural check here covers both spellings —
-/// the key every str-literal→`[]u8` coercion site (`assignable_direct`'s
-/// `StrLit` arm) compares against, replacing the retired name-gate on the
-/// method literally spelled `write`.
-fn is_bytes_slice_rt(rt: &ResolvedType) -> bool {
-    matches!(
-        rt,
-        ResolvedType::Array(inner)
-            if matches!(**inner, ResolvedType::Scalar { width: 8, signed: false, .. })
-    )
 }
 
 /// Plan 200 (sql-autoconv) D55 amend — "obvious single-wrapper coercion":
@@ -52855,12 +52910,9 @@ struct MapLitCtx {
     wrap_types: HashMap<String, TypeDeclKind>,
     /// Plan 214 (D429): `#coerce` pair registry — I type name → applicable
     /// pairs. Built by `collect_coerce_pairs` (shared with `TypeCheckCtx`'s
-    /// accept-path copy) — feeds `MapLitAnnotator::try_coerce_leaf` (rewrite).
+    /// accept-path copy). Since #1451 the rewrite no longer decides from it --
+    /// it splices what the checker recorded (`ModuleEnv.coerce_sites`).
     coerce_pairs: HashMap<String, Vec<CoercePairEntry>>,
-    /// Plan 214.1 (D429 amend): GENERIC `#coerce` pattern registry — I BASE
-    /// type name → applicable patterns. Same collector/sharing shape as
-    /// `coerce_pairs` — feeds `MapLitAnnotator::try_coerce_leaf` (rewrite).
-    generic_coerce_patterns: HashMap<String, Vec<GenericCoercePattern>>,
     /// Plan 214 (D429): validation diagnostics from the SAME `collect_coerce_pairs`
     /// call that built `coerce_pairs` — surfaced by `check_module` below (mirrors
     /// how this whole struct's other diagnostics-free build steps route errors:
@@ -53131,7 +53183,7 @@ impl MapLitCtx {
         // `wrap_types` lookup R11 needs (pair-already-covered-by-single-wrapper
         // check) — one collector, shared shape with `TypeCheckCtx::build`'s
         // independent copy (see `collect_coerce_pairs` doc).
-        let (coerce_pairs, generic_coerce_patterns, coerce_errors) =
+        let (coerce_pairs, _generic_coerce_patterns, coerce_errors) =
             collect_coerce_pairs(module, &|n: &str| wrap_types.get(n).cloned());
         MapLitCtx {
             type_methods,
@@ -53146,7 +53198,6 @@ impl MapLitCtx {
             record_field_types,
             wrap_types,
             coerce_pairs,
-            generic_coerce_patterns,
             coerce_errors,
             from_pairs_errors,
         }
@@ -54176,9 +54227,9 @@ pub fn annotate_map_literals(module: &mut Module, env: &ModuleEnv) {
         fn_generics: HashSet::new(),
         var_types: HashMap::new(),
         sum_wrap_kinds: &env.sum_wrap_kinds,
+        coerce_sites: &env.coerce_sites,
         resolved_types: &env.resolved_types,
         current_fn_return_ty: None,
-        current_fn_span: None,
     };
     ann.walk_module(module);
     // Plan 42.4 / Plan 52 Ф.7: peer_files несут per-peer копии items для
@@ -54206,6 +54257,9 @@ struct MapLitAnnotator<'e> {
     /// Authoritative over `var_types` in `try_wrap_leaf`: accept and
     /// materialization must judge the same expression the same way.
     sum_wrap_kinds: &'e HashMap<crate::ast::ExprId, WrapKind>,
+    /// Registry 221.1 #1451: the checker's `#coerce` verdicts (`ModuleEnv.coerce_sites`)
+    /// -- the ONLY source of a `#coerce` rewrite (`splice_checker_coerce`).
+    coerce_sites: &'e HashMap<crate::ast::ExprId, coerce_door::CoerceSite>,
     /// Registry 221.1 #1260: the checker's per-expression type channel
     /// (`ModuleEnv.resolved_types`). A name whose type the checker knew from its
     /// scope -- a pattern binding, an unannotated `let` of a call -- is absent
@@ -54228,14 +54282,6 @@ struct MapLitAnnotator<'e> {
     /// construct is itself in tail position — full tail-position tracking
     /// through arbitrary nesting is out of scope for this fix; see Ф.4).
     current_fn_return_ty: Option<TypeRef>,
-    /// Plan 214.1 (D429 amend, R13'): the CURRENT function's OWN span — set
-    /// on `Item::Fn` entry, cleared on exit, mirrors `current_fn_return_ty`'s
-    /// lifetime exactly. Lets `try_coerce_leaf` exclude a GENERIC pattern's
-    /// own declaration from matching while rewriting THAT SAME declaration's
-    /// body (anti-self-recursion — same rule as `TypeCheckCtx`'s
-    /// `current_coerce_decl_span`, mirrored here for the SEPARATE rewrite
-    /// pass, which does not share that RefCell).
-    current_fn_span: Option<Span>,
 }
 
 impl MapLitAnnotator<'_> {
@@ -54268,9 +54314,6 @@ impl MapLitAnnotator<'_> {
                     // body walk — consumed by `Stmt::Return` (any nesting depth)
                     // and by `walk_fn_body_block`'s own top-level trailing expr.
                     self.current_fn_return_ty = return_ty.clone();
-                    // Plan 214.1 (D429 amend, R13'): same lifetime, feeds
-                    // `try_coerce_leaf`'s self-exclusion for GENERIC patterns.
-                    self.current_fn_span = Some(f.span);
                     match &mut f.body {
                         FnBody::Expr(e) => {
                             self.walk_expr(e, return_ty.as_ref());
@@ -54283,7 +54326,6 @@ impl MapLitAnnotator<'_> {
                         FnBody::External => {}
                     }
                     self.current_fn_return_ty = None;
-                    self.current_fn_span = None;
                 }
                 Item::Test(t) => {
                     self.fn_generics.clear();
@@ -54424,7 +54466,6 @@ impl MapLitAnnotator<'_> {
                 // the checker accepts it there (`check_return_compat_tail`); a
                 // missing rewrite handed the bare payload to a sum-typed return.
                 self.wrap_return_tail(t, &ret_ty);
-                self.try_coerce_leaf(t, &ret_ty);
             }
         }
     }
@@ -54517,7 +54558,6 @@ impl MapLitAnnotator<'_> {
                     if let Some(ret_ty) = self.current_fn_return_ty.clone() {
                         // #1260: see `walk_fn_body_block` -- return is a wrap position.
                         self.wrap_return_tail(v, &ret_ty);
-                        self.try_coerce_leaf(v, &ret_ty);
                     }
                 }
             }
@@ -54730,84 +54770,8 @@ impl MapLitAnnotator<'_> {
         );
     }
 
-    /// Plan 214 (D429) R7: rewrite `e` IN PLACE into `e.method()` — an
-    /// ordinary named-call, byte-identical to what a user would write by hand
-    /// — when `e` is a plain leaf (literal / var `Ident` with a KNOWN
-    /// `var_types` entry) whose type is a registered `#coerce` I, and
-    /// `expected`'s canonical key matches one of that I's declared O pairs.
-    /// No-op otherwise (the checker's verdict — exact match via
-    /// `assignable_direct`, or a genuine mismatch — stands unchanged).
-    ///
-    /// Leaf-only scope mirrors `try_wrap_leaf` exactly (same family, called
-    /// right after it below): `MapLitAnnotator` doesn't carry full scope-aware
-    /// type inference (that lives in `TypeCheckCtx`, already consulted by
-    /// `assignable`'s OWN `#coerce` accept-path fallback — so a non-leaf
-    /// coercible expr, e.g. a call-chain result, still type-CHECKS via that
-    /// fallback even when this rewrite pass leaves its AST shape untouched;
-    /// only the "canon = bare value" ergonomics (R9) would not apply to it
-    /// yet — a leaf covers the seed pairs' realistic shapes: a `str` literal
-    /// or variable, and a `StringBuilder`/`WriteBuffer` variable).
-    fn try_coerce_leaf(&mut self, e: &mut Expr, expected: &TypeRef) {
-        // Plan 214.1: the leaf's OWN declared type — needed BOTH for the
-        // pre-existing concrete-name path (`simple_named_type_name`, empty
-        // generics only) AND, when that fails, the NEW generic-pattern path
-        // below (`named_base_and_args`, any arity — `Json[User]`).
-        let leaf_ty: Option<TypeRef> = match &e.kind {
-            ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => {
-                Some(TypeRef::Named { path: vec!["str".to_string()], generics: Vec::new(), span: Span::dummy() })
-            }
-            ExprKind::Ident(name) => self.var_types.get(name).cloned(),
-            _ => None,
-        };
-        let Some(leaf_ty) = leaf_ty else { return };
-        if let Some(input_name) = simple_named_type_name(&leaf_ty) {
-            let Some(pairs) = self.ctx.coerce_pairs.get(&input_name) else { return };
-            let exp_key = coerce_type_key(expected);
-            // R5: I never legally equals one of its own O's (R3/R11 keep the
-            // pair set disjoint from identity) — this is just a defensive
-            // no-op guard, not a case the seed pairs can hit.
-            if input_name == exp_key {
-                return;
-            }
-            let Some(pair) = pairs.iter().find(|p| p.output_key == exp_key) else { return };
-            let method_name = pair.method_name.clone();
-            Self::splice_coerce_call(e, method_name);
-            return;
-        }
-        // Plan 214.1 (D429 amend): GENERIC pattern path — reached only when
-        // `leaf_ty` carries generics (`simple_named_type_name` returned
-        // `None`, e.g. `Json[User]`). Mirrors R7 (named-call rewrite) + R13'
-        // (self-exclusion via `current_fn_span`) exactly, using the SAME
-        // shallow one-directional unifier `TypeCheckCtx::generic_coerce_
-        // lookup` uses — kept independent here (this pass has no access to
-        // `TypeCheckCtx`, only `MapLitCtx`'s own parallel copy of the
-        // registry, R9 "one window").
-        let Some((base, concrete_args)) = named_base_and_args(&leaf_ty) else { return };
-        let Some(patterns) = self.ctx.generic_coerce_patterns.get(&base) else { return };
-        let exp_key = coerce_type_key(expected);
-        let matches: Vec<&GenericCoercePattern> = patterns
-            .iter()
-            .filter(|p| Some(p.decl_span) != self.current_fn_span)
-            .filter(|p| {
-                unify_coerce_receiver(&p.params, &concrete_args)
-                    .map(|b| coerce_type_key(&substitute_coerce_shape(&p.ret_shape, &b)) == exp_key)
-                    .unwrap_or(false)
-            })
-            .collect();
-        // Ambiguous (R3', ≥2) or no match (0) — leave the AST untouched.
-        // `assignable`'s OWN accept-path fallback (`generic_coerce_lookup`)
-        // already surfaced the R3' diagnostic (if any) or the honest
-        // mismatch; this rewrite pass never emits diagnostics (mirrors
-        // `try_wrap_leaf`'s own "leave as-is on ambiguity" posture).
-        if matches.len() != 1 {
-            return;
-        }
-        let method_name = matches[0].method_name.clone();
-        Self::splice_coerce_call(e, method_name);
-    }
-
-    /// Plan 214.1: shared AST-splice for BOTH the concrete and generic
-    /// `#coerce` rewrite branches above — `e` (`x`) → `x.method_name()`, an
+    /// Plan 214.1: shared AST-splice for a `#coerce` rewrite (since #1451 the only
+    /// caller is `splice_checker_coerce`, `types/coerce_door.rs`) — `e` (`x`) → `x.method_name()`, an
     /// ordinary named call, byte-identical to what a user would write by
     /// hand (R7). Factored out once a second call site (generic) needed the
     /// IDENTICAL splice the original concrete-only `try_coerce_leaf` already
@@ -54828,7 +54792,14 @@ impl MapLitAnnotator<'_> {
         );
     }
 
+    /// #1451: walk `e`, then materialize the checker's `#coerce` verdict on it
+    /// (post-order, so the spliced `e.method()` is never walked again).
     fn walk_expr(&mut self, e: &mut Expr, expected: Option<&TypeRef>) {
+        self.walk_expr_shape(e, expected);
+        self.splice_checker_coerce(e);
+    }
+
+    fn walk_expr_shape(&mut self, e: &mut Expr, expected: Option<&TypeRef>) {
         // Plan 200 (sql-autoconv) D55 amend: "obvious single-wrapper
         // coercion" REWRITE — a bare leaf value (literal / var `Ident`) at
         // a KNOWN sum-typed `expected` position becomes an explicit
@@ -54846,14 +54817,9 @@ impl MapLitAnnotator<'_> {
         // is sufficient, confirmed empirically).
         if let Some(exp) = expected {
             self.try_wrap_leaf(e, exp);
-            // Plan 214 (D429): `#coerce` REWRITE — same expected-type-propagated
-            // leaf walk, tried AFTER the single-wrapper rewrite above (R11
-            // primacy note — the two never compete on the same pair by
-            // construction, see `collect_coerce_pairs`'s R11 check). A no-op if
-            // `try_wrap_leaf` already replaced `e` with a `Type.Variant(..)`
-            // call above (that call's own shape doesn't match any `#coerce`
-            // leaf pattern, so this is naturally idempotent, not a special case).
-            self.try_coerce_leaf(e, exp);
+            // Plan 214 (D429): the `#coerce` rewrite is NOT decided here any more
+            // (#1451: this leaf walk saw a literal or a bare name only) -- see
+            // `walk_expr`, which splices what the checker recorded.
         }
         // Plan 52.x: all-spread `[...a, ...b]` без expected-типа —
         // синтезируем map-тип из spread-источников, чтобы конверсия

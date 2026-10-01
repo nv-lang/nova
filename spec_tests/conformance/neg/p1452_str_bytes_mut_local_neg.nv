@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+//
+// Registry 221.1 #1452: a `mut` local with a `[]u8` annotation is writable content (D246
+// content-view: a `mut` binding over a non-`ro` type), so the `ro []u8` view of a `str` does
+// not match it (D429 R6). Form: an `if` value. Probe `docs/plans/repro/d55-str-bytes/
+// mut_let_segfault.nv.txt` is the variable form of the same cell (exit 139 before the fix).
+
+module neg.p1452_str_bytes_mut_local_neg
+
+fn main() Io -> () {
+    ro s = "abc"
+    ro flag = true
+    // nova:expect E_READONLY_COERCE -- a `mut b []u8` binding is writable, and a `str` gives only a `ro []u8` view
+    mut b []u8 = if flag { s } else { "xy" }
+    b[0] = 65 as u8
+}

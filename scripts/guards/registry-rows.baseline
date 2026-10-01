@@ -1447,6 +1447,9 @@
 # 2026-10-01, integrator nova-20: rows -> 1420, max -> 1472 (merge of p1453 (background agent): #1453 (regression of #1441, capture bodies nested in a lambda) lands; #1472 (K2, spawn in a lambda body fails in C, old) numbered here).
 # 2026-10-01, integrator nova-20: rows -> 1426, max -> 1479 (merge of hunt/guards-1001 (assistant, guards x K5 on today's main-path guards): #1474-#1479; 1473 issued to Carina, leaves gaps).
 # 2026-10-01, integrator nova-20: rows -> 1427, max -> 1479 (merge of Carina's p274-e9s4: #1473 (the oracle lets read_at past unsafe) lands, out of gaps).
+# 2026-10-01, integrator nova-20: rows -> 1429, max -> 1481 (merge of the cloud session's p1452: #1480 (K1, the str view leaks into an owned []u8 through return/element/field and is laundered by mut) and #1481 (K1, protocol method arguments are not checked against the protocol's parameter types) -- both block the oracle tag).
+rows=1429
+max=1481
 rows=1427
 max=1479
 rows=1426
