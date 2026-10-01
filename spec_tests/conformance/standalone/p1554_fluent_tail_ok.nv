@@ -10,7 +10,7 @@ module standalone.p1554_fluent_tail_ok
 type Ctr { mut n int }
 
 fn Ctr mut @add(k int) -> @ {
-    @n = @n + k
+    @n += k
     if k > 10 {
         return
     }
