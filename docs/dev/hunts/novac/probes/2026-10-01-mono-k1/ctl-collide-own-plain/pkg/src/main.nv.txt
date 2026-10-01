@@ -1,0 +1,7 @@
+fn is_empty(xs []int) -> bool => xs.len() < 100
+
+fn main() {
+    ro v = [1, 2, 3]
+    println(v.is_empty())
+    println(is_empty(v))
+}

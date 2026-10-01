@@ -1,0 +1,6 @@
+fn main() {
+    mut v = [1, 2, 3]
+    ro w = v.clear()
+    println(v.len())
+    println(w.len())
+}

@@ -1,7 +1,0 @@
-// D486 s4 row "disjunction", if/while column: forbidden. Nested here.
-fn main() {
-    ro o = Some(3)
-    if Some(2 | 3) = o {
-        println(1)
-    }
-}

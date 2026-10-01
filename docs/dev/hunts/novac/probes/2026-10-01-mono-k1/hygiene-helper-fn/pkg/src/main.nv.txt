@@ -1,0 +1,11 @@
+module hp
+
+import ./geo
+
+fn helper() -> int => 1
+
+fn main() {
+    ro v = [1, 2, 3]
+    println(v.tag())
+    println(helper())
+}

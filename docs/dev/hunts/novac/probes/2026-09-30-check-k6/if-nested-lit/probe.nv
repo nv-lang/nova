@@ -1,8 +1,0 @@
-// D486 s4 row "literal", if/while column: forbidden. Is the predicate
-// top-level only, or tree-wide? Here the literal is nested in a constructor.
-fn main() {
-    ro o = Some(3)
-    if Some(3) = o {
-        println(1)
-    }
-}

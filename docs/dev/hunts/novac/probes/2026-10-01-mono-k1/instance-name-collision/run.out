@@ -1,0 +1,22 @@
+=== PACKAGE
+./src/main.nv
+=== ORACLE: nova build src/main.nv, run
+oracle build rc=0
+oracle run rc=0
+false
+false
+=== SUBJECT: novac check (no NOVAC_SELF_PATH: single file)
+novac check rc=0
+=== SUBJECT: novac emit
+novac emit rc=0
+--- C lines matching: novac_fn_is_empty
+11950:static nova_bool novac_fn_is_empty__Vec_of_nova_int__to_nova_bool__nova_int(Nova_Vec____nova_int* _novac_self);
+11951:static nova_bool novac_fn_is_empty__Vec_of_nova_int__to_nova_bool__nova_int(Nova_Vec____nova_int* xs);
+11958:    nova_print_bool(novac_fn_is_empty__Vec_of_nova_int__to_nova_bool__nova_int(v));
+11960:    nova_print_bool(novac_fn_is_empty__Vec_of_nova_int__to_nova_bool__nova_int(v));
+11964:static nova_bool novac_fn_is_empty__Vec_of_nova_int__to_nova_bool__nova_int(Nova_Vec____nova_int* _novac_self) {
+11967:static nova_bool novac_fn_is_empty__Vec_of_nova_int__to_nova_bool__nova_int(Nova_Vec____nova_int* xs) {
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=1
+<tmp>/body.c:11966:18: error: redefinition of 'novac_fn_is_empty__Vec_of_nova_int__to_nova_bool__nova_int'
+1 error generated.

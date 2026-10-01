@@ -1,0 +1,28 @@
+=== PACKAGE
+./src/main.nv
+=== ORACLE: nova build src/main.nv, run
+oracle build rc=0
+oracle run rc=0
+false
+false
+true
+=== SUBJECT: novac check (no NOVAC_SELF_PATH: single file)
+novac check rc=0
+=== SUBJECT: novac emit
+novac emit rc=0
+--- C lines matching: novac_fn_is_empty|novac_fn_empty
+11952:static nova_bool novac_fn_empty__Vec_of_nova_int__to_nova_bool__nova_int(Nova_Vec____nova_int* xs);
+11953:static nova_bool novac_fn_empty__Vec_of_nova_str__to_nova_bool__nova_str(Nova_Vec____nova_str* xs);
+11959:    nova_print_bool(novac_fn_empty__Vec_of_nova_int__to_nova_bool__nova_int(_novac_tmp_t1));
+11963:    nova_print_bool(novac_fn_empty__Vec_of_nova_str__to_nova_bool__nova_str(_novac_tmp_t2));
+11969:    nova_print_bool(novac_fn_empty__Vec_of_nova_int__to_nova_bool__nova_int(e));
+11973:static nova_bool novac_fn_empty__Vec_of_nova_int__to_nova_bool__nova_int(Nova_Vec____nova_int* xs) {
+11974:    return novac_fn_is_empty__Vec_of_nova_int__to_nova_bool__nova_int(xs);
+11976:static nova_bool novac_fn_empty__Vec_of_nova_str__to_nova_bool__nova_str(Nova_Vec____nova_str* xs) {
+11977:    return novac_fn_is_empty__Vec_of_nova_str__to_nova_bool__nova_str(xs);
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=1
+lld-link: error: undefined symbol: novac_fn_is_empty__Vec_of_nova_int__to_nova_bool__nova_int
+lld-link: error: undefined symbol: novac_fn_is_empty__Vec_of_nova_str__to_nova_bool__nova_str
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
