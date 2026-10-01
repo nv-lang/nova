@@ -31,7 +31,7 @@ for n in 9005 9006; do
         --registry "$REG" --accepted "$HERE/acc-$n.list" 2>&1; echo "rc=$?"
 done
 echo "=== registry-routes-scan on the same file (no_route_list = rows it reads OPEN)"
-NOVA_NOFIELD_BASELINE="$HERE/nofield-empty.baseline" "$PY" "$RS" "$HERE/tree" 2>&1; echo "rc=$?"
+NOVA_NOFIELD_BASELINE="$HERE/nofield-empty.txt" "$PY" "$RS" "$HERE/tree" 2>&1; echo "rc=$?"
 echo "=== D. real registry, both readings side by side (read-only)"
 "$PY" "$HERE/measure_real_registry.py" "$ROOT/docs/plans/221.1-bug-sweep.md" | grep -v "push-proven=nofield"
 echo "rows where push-proven says nofield (a refusal if cited) but routes-scan reads a status:"
