@@ -43,7 +43,11 @@ fn Checker @const_seen(name str) -> Option[ConstRow] {
         ro own = @ctx.defs.is_own(i)
         ro home = @ctx.defs.home_at(i)
         if @res.decl_is_home(own, home) { return Some(row) }
-        if seen < 0 && @res.sees_decl(own, home, name) { seen = i }
+        if seen < 0 && @res.sees_decl(own, home, name) {
+            seen = i
+        } else {
+            // Not visible, or a visible one is already kept: the first wins.
+        }
     }
     if seen < 0 { return None }
     match @ctx.defs.def_at(seen).target {

@@ -417,7 +417,11 @@ parse 1
 #
 # pipeline 11 -> 12 (2026-10-01, окно Карины, Э.10 шаг 2а): mark_program -- отмечает модули
 #   ПРОГРАММЫ на поверхности линковки; зовёт его main.nv (объявления из NOVAC_SELF_PATH).
-pipeline 12
+# pipeline 12 -> 13 (2026-10-01, cloud session p274-carina-k1, registry 1521 step a):
+#   `path_base` -- the base name of a path, moved from main.nv: the pipeline now gets a
+#   handed body's whole PATH (its refusals name it) and still prints the base name in the
+#   body's contracts; main.nv asks the same cut for the compiled file. One door, two askers.
+pipeline 13
 # 2026-08-28 (274.4 step 3): the field root gets the same cut. sem 171 -> 169:
 # has_field and field_type moved OUT to resolve (FieldIndex); resolve 11 -> 15:
 # FieldIndex, build, has_field, field_type.
@@ -426,7 +430,13 @@ pipeline 12
 # check (запись через вид, `E_READONLY_CONTENT`), а имена полей резолвятся ТОЛЬКО
 # через FieldIndex (274.4 step 3) -- у check нет другой двери к строке поля.
 # 2026-10-01, Carina window (274.11 E.10 steps 4c-2/4d): resolve 18 -> 19 (merged over main's 16 -> 18): `FieldIndex @field_private_to` -- where a handed record's private field is visible from.
-resolve 19
+# 2026-10-01, cloud session p274-carina-k1 (registry 1521, steps b1/b2): resolve 19 -> 23:
+#   `@sees` became `@sees_row` (D29 asked FROM a module); new `@sees_decl` and
+#   `@decl_is_home` (the same view for any declaration -- check's constant door asks them
+#   with a DefTable row), `@free_candidate` (check's D429 coercing walk asks the view) and
+#   `PRELUDE_ASKER` (check_instance's asker for a std body with no module line). All are
+#   asked by check, which owns no index of its own.
+resolve 23
 # sem 54 -> 56 (2026-08-18): наружу вышли ДВЕ двери параметра,
 # param_name_at и param_type_at. Имя и тип параметра больше не берутся
 # индексом pk[0]/pk[1]: индекс сдвигается, как только у параметра
@@ -937,7 +947,11 @@ resolve 19
 #   `is_never_ty` (sem/type_shape.nv) -- is a type the bottom type `never` (D26)? Asked by
 #   check (the tail `if`, the `match` arm, the return): only sem knows the universe row's
 #   family, and a copy of the question in check would be a second door.
-sem 322
+# 2026-10-01, cloud session p274-carina-k1 (registry 1521, step b2): sem 322 -> 327:
+#   `DefTable @first_def` / `@prev_def` / `@def_at` / `@home_at` / `@is_own` -- the
+#   same-named rows of every module, each with its home, walked by check's constant door
+#   (`Checker @const_seen`): a body reads its OWN module's constant, not the caller's.
+sem 327
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

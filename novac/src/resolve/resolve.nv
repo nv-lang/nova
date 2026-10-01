@@ -207,7 +207,11 @@ fn FnIndex @free_view(fns FnTable, name str) -> int {
         ro fd = fns.rows[raw_row(row)]
         if fd.has_recv || is_ty(fd.owner) { continue }
         if @is_home(fns, row) { return 2 }
-        if @sees_row(fns, row) { view = 1 }
+        if @sees_row(fns, row) {
+            view = 1
+        } else {
+            // Invisible from here: it neither shadows nor widens the view.
+        }
     }
     view
 }
