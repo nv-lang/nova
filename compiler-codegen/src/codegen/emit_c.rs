@@ -24,6 +24,7 @@ mod generic_overload_mono; // #1343: generic free-fn monomorph by declaration, s
 mod method_key; mod default_dispatch; mod consume_disarm_resolved; // #1413 method key; #1414 value default method; #1100 disarm by resolved callee
 mod type_repr_early; mod generic_sum_schema; // #761: newtype/alias representation before any consumer; #1338: generic sum payload layout from the channel
 mod c_name; // #1440/#1446: the one door "Nova name -> C identifier", see its doc
+mod type_by_role; // #1545/#1527: a bare type name read by the kind its position admits, see its doc
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
@@ -52278,7 +52279,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // If struct_name is a base generic type (e.g. "Box"), resolve to the concrete
             // monomorphized name (e.g. "Box____nova_int") using field value types.
             // This enables `Box { value: 42 }` to emit as Nova_Box____nova_int.
-            let struct_name = if self.generic_types.contains(&struct_name) {
+            // #1545/#1533: a record literal builds a RECORD -- a generic template of
+            // another kind with this bare name (the prelude's sum `Outcome[T]`) is not it.
+            let struct_name = if self.generic_template_for(&struct_name, type_by_role::TypeRole::RecordLiteral) {
                 if let Some(template) = self.generic_type_templates.get(&struct_name).cloned() {
                     use crate::ast::TypeDeclKind;
                     let mut type_args_c: Vec<String> = template.generics.iter()
@@ -59097,6 +59100,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Инстанс-вызов `obj.method(args)`.
             ExprKind::Member { obj, name } => {
                 let m = name.strip_prefix('@').unwrap_or(name);
+                // #1527: a receiver in TYPE position (`Query[int].from_request(..)`) is
+                // that type -- never the sum of a same-named variant elsewhere in the CU.
+                if let Some(ty) = self.type_position_name(obj) {
+                    return self.synthesize_method_byref_args(&ty, m, args);
+                }
                 let obj_c = self.infer_expr_c_type(obj);
                 let ty = Self::debt_nova_type_name_from_c(&obj_c);
                 if ty.is_empty() {
@@ -63470,7 +63478,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // Plan 62.A.bis Ф.2.2: registry-driven sum variant lookup.
                     if let Some((sum_type_name, _)) = self.sum_schema_registry.find_variant_compat(&struct_name) {
                         self.a4_sum_c_type(&sum_type_name)
-                    } else if self.generic_types.contains(&struct_name) {
+                    } else if self.generic_template_for(&struct_name, type_by_role::TypeRole::RecordLiteral) {
+                        // #1545: by kind -- a generic SUM of this bare name is not a record literal's type.
                         // Generic type: compute concrete mono name from field values.
                         // Check BEFORE record_schemas because record_schemas has the erased form
                         // (with void* fields) for generic types — we want the concrete mono form.

@@ -1,0 +1,20 @@
+module p1545_anon_elem_generic_name.p1545_side
+
+// The side module of `p1545_anon_elem_generic_name.nv`: a value record named like
+// the prelude's generic SUM `Outcome[T]` (D455), built by anonymous literals at
+// three targets -- elements of a `[]Outcome`, a static constructor's return and a
+// fn body.
+
+export type Outcome value {
+    ro message str
+    ro status int
+}
+
+export fn Outcome.new(message str, status int) -> Outcome =>
+    { message, status }
+
+export fn listed() -> []Outcome => [{ message: "a", status: 1 }, { message: "b", status: 2 }]
+
+export fn built() -> Outcome => Outcome.new("s", 429)
+
+export fn direct() -> Outcome => { message: "d", status: 7 }
