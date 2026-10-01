@@ -195,6 +195,9 @@ export fn shape_of_record_decl(decl Node) -> RecordShape {
 /// back "this is not a form of the language" -- about a form the language has
 /// and the oracle compiles.
 export fn repr_of_decl(decl Node, defs DefTable) -> Option[ReprSpec] {
+    // A COMPOSITE representation is not read at all (registry 1514): its
+    // first identifier is not the type it names, and check refuses it.
+    if !repr_is_one_name(branch_children(decl)) { return None }
     mut marks_alias = false
     mut under = no_decl()
     mut seen_name = false
@@ -234,6 +237,42 @@ export fn repr_of_decl(decl Node, defs DefTable) -> Option[ReprSpec] {
     }
     if !is_decl(under) { return None }
     Some(ReprSpec { under_decl: under, is_alias: marks_alias })
+}
+
+/// Is the representation a type declaration writes ONE name (`type Row int`,
+/// `type Row alias Cel`)? A composite one -- `[]T`, `T[A]`, a tuple, a
+/// pointer -- is not, and novac does not read it yet (registry 1514). Until
+/// this door the representation was its FIRST identifier after the name, so
+/// `type Ids alias []Id` silently named `Id` and `alias IndexMap[str, V]` the
+/// bare head: a wrong type, not a refusal. Asked by `repr_of_decl` and by
+/// check's refusal of the form -- one answer for both.
+export fn repr_is_one_name(kids []Node) -> bool {
+    mut seen_name = false
+    mut words = 0
+    for c in kids {
+        if c.kind_of() != NodeKind.LeafNode {
+            // A branch after the name is a body or a part of a type -- only
+            // the declaration's own generics may stand there.
+            if seen_name && c.kind_of() != NodeKind.Generics { return false }
+            continue
+        }
+        if !c.is_ident() {
+            // Before the name: the `type` keyword. After it: punctuation of a
+            // composite type (`[`, `(`, `*`, `,`).
+            if seen_name { return false }
+            continue
+        }
+        if !seen_name {
+            seen_name = true
+            continue
+        }
+        if leaf_text(c) != ALIAS_MARKER {
+            words += 1
+        } else {
+            // The `alias` word marks the form; it is not the representation.
+        }
+    }
+    words == 1
 }
 
 /// The NAME slot of a record-field node, or None.

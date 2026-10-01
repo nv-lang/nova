@@ -268,6 +268,8 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // every type NAME must be declared (#970, typeref_rules) --
                     // `type Box { v Nmbr }` passed check in silence before.
                     @report_if_type_body_undeclared(children)
+                    // A newtype or an alias over a composite type (#1514).
+                    @report_if_composite_repr(children)
                 }
                 ForStmt => {
                     @report_if_bad_for_head(children)

@@ -91,3 +91,19 @@ test "a field whose type is declared BELOW its record keeps the field (registry 
     assert(d.len() == 0, messages(d))
     assert(c.contains("first"), c)
 }
+
+test "a newtype or an alias over a COMPOSITE type is refused, not read as its first name (registry 1514)" {
+    // The representation used to be its FIRST identifier: `alias []Id` WAS
+    // `Id` and `[]int` a newtype over `int` -- accepted in silence, a wrong
+    // type. Now one refusal at each declaration, and nothing registered.
+    mut std = std_decls()
+    std.push("module std.v\nexport type Vec[T] { n int }\nexport fn Vec[T] @len() -> int => 0\n")
+    ro (d, _) = compile_to_c("type Ids alias []Id\ntype N []int\ntype Id int\nfn main() {\n println(1)\n}", std)
+    assert(d.len() == 2, messages(d))
+    assert(messages(d).contains("over a composite type"), messages(d))
+    // CONTROL: one declared name stays a newtype and an alias, and a sum of
+    // bare variants is not a "representation" at all.
+    ro (ok, _) = compile_to_c("type Id int\ntype Cel alias Id\ntype Dir enum North | South\nfn main() {\n ro c = Id(1)\n println(1)\n}", std)
+    assert(ok.len() == 0, messages(ok))
+}
+

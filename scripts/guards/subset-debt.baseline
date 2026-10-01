@@ -390,7 +390,14 @@ undated=60
 # value, a fn declaration without a name); the ratchet goes down with them.
 # 2026-10-01, Carina window (274.11 E.10 step 4b): refusals 141 -> 140. A generic METHOD
 # declared in the file is instantiated like a generic function; its refusal is gone.
-refusals=140
+# 2026-10-01, Carina window (registry 1514): refusals 140 -> 141, and it is a RAISE on
+# purpose. The refusal does not join a form that compiled: it REPLACES A WRONG TYPE.
+# `type Ids alias []Id` was read as an alias of `Id`, `type N []int` as a newtype over
+# `int`, `alias IndexMap[str, V]` as the bare head -- accepted in silence. A loud
+# refusal with a stage (E10) is the floor; the form itself (a representation read
+# through the type-reference door, an alias that names a TERM, not a declaration)
+# lowers it back, and row 1514 keeps that as its open half.
+refusals=141
 # ТРЕТЬЕ ЧИСЛО — БЕССРОЧНЫЕ ПО ДВЕРИ (волна 274.7 В11-б, засев 2026-09-14, окно 274).
 #
 # Два числа выше мерят НАПИСАНИЕ текста отказа, а у предмета есть машинный признак:
