@@ -8,7 +8,8 @@
 #                 const_type_mismatch -> check=ok.
 # After the fix:  min_method_arg / let_position -> build=ok stdout=[2],
 #                 const_type_mismatch -> check=[E7301].
-# The same binary with NOVA_KILL_1488=1 gives the "before" lines.
+# The "before" lines were taken on main e63d0167e (the both-ways proof passed
+# with a temporary kill-switch on one binary, removed before the merge).
 # neighbour_qualified_module_const: NOT this class -- `m.K` (a const read through
 # a module prefix) is emitted as `m->K` even with no coercion at all; it stays
 # C-COMPILER ERROR before and after.

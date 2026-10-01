@@ -149,10 +149,6 @@ impl<'a> TypeCheckCtx<'a> {
     /// `infer_expr_type`'s answer for a bare name that is not a local: the
     /// type of the module-level value it denotes, when that is unambiguous.
     pub(super) fn module_value_ident_type(&self, name: &str, at: Span) -> Option<TypeRef> {
-        // Kill-switch for the both-ways proof on ONE binary (as `NOVA_KILL_D55NT`).
-        if std::env::var("NOVA_KILL_1488").is_ok_and(|v| v == "1") {
-            return None;
-        }
         let decls = self.module_value_decl(name, at)?;
         let mut types = decls.iter().map(|v| self.module_value_type(v));
         let first = types.next()??;
@@ -169,7 +165,7 @@ impl<'a> TypeCheckCtx<'a> {
     /// (`m.K`, the import prefix naming that module). `None` when `Q` is
     /// neither, or the value has no type to give (see `module_value_type`).
     pub(super) fn qualified_value_type(&self, q: &str, name: &str, scope: &HashMap<String, TypeRef>) -> Option<TypeRef> {
-        if std::env::var("NOVA_KILL_1488").is_ok_and(|v| v == "1") || scope.contains_key(q) {
+        if scope.contains_key(q) {
             return None;
         }
         if let Some(td) = self.types_get_here(q) {
