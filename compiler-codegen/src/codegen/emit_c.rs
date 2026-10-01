@@ -10571,7 +10571,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let val = if let ExprKind::Call { func, args, .. } = &value.kind {
             if let ExprKind::Member { obj, name: m } = &func.kind {
                 if m == "bytes" && args.is_empty()
-                    && matches!(obj.kind, ExprKind::StrLit(_))
+                    && (matches!(obj.kind, ExprKind::StrLit(_)) || self.infer_expr_c_type(obj) == "nova_str") // #1488: a `str` const too
                     && Self::is_bytes_slice_c_ty(ty_c)
                 {
                     let obj_c = self.emit_expr(obj)?;

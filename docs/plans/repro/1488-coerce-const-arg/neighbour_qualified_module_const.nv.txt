@@ -1,0 +1,7 @@
+import std.unicode
+
+fn main() Io -> () {
+    ro v str = unicode.UNICODE_VERSION
+    println(v)
+    println("${unicode.UNICODE_VERSION.byte_len()}")
+}
