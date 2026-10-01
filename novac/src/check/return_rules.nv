@@ -20,7 +20,7 @@ module novac.check
 import ../tree.{Node, NodeKind}
 import ../types.{TyId, no_ty, is_ty, Interner}
 import ../sem.{FnRow, raw_row, branch_children, ty_source_name, prim_row_of, LitArg}
-import ../sem.{Ctx, expr_leaf_name, is_value_record, ret_is_unit}
+import ../sem.{Ctx, expr_leaf_name, is_value_record, ret_is_unit, is_never_ty}
 import ../builtins.{TypeKind, RECV_BINDING}
 
 /// A written `-> T` whose type the collector's reference door could not read
@@ -194,6 +194,10 @@ fn Checker mut @judge_return(e Node, t0 TyId) -> () {
     // GUARDED and misses it. The guard has to be on the value actually
     // handed to the door, not on its ancestor.
     if !is_ty(t) { return } else {}
+    // A tail of type `never` (D26, B10 part 3): a call that does not return
+    // -- `ice(..)` as the last expression of a `-> TyId` fn -- hands back no
+    // value, so there is nothing to compare with the declared return.
+    if is_never_ty(@ctx.tys, t) { return }
     if @ctx.tys.kind_of(t) == TypeKind.TkParam { return }
     if t == @ret_expect {
         // Same type as the result. What is left is HOW the value is bound (#1309).
@@ -270,11 +274,11 @@ fn int_narrows(tys Interner, from TyId, to TyId) -> bool {
     }
     ro from_int = match fr.family {
         PfInt => true
-        PfFloat | PfStr | PfBool | PfChar | PfUnit | PfAny => false
+        PfFloat | PfStr | PfBool | PfChar | PfUnit | PfAny | PfNever => false
     }
     ro to_int = match tr.family {
         PfInt => true
-        PfFloat | PfStr | PfBool | PfChar | PfUnit | PfAny => false
+        PfFloat | PfStr | PfBool | PfChar | PfUnit | PfAny | PfNever => false
     }
     if !from_int || !to_int { return false }
     tr.bits < fr.bits || (tr.bits == fr.bits && tr.signed != fr.signed)

@@ -23,7 +23,7 @@ module novac.check
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, NodeId, no_node}
 import ../sem.{branch_children, is_expr_kind, leaf_kind, ret_is_unit, is_value_tail_kind, expr_leaf_name}
-import ../sem.{returns_receiver}
+import ../sem.{returns_receiver, is_never_ty}
 import ../types.{TyId, no_ty, is_ty}
 import ../sem.{iflet_body_at, iflet_else_at, loop_ctl_is_break}
 import ../builtins.{is_true_literal}
@@ -206,6 +206,18 @@ fn Checker mut @type_if_value(n Node) -> () {
         return
     } else {
         // Both branches produced a type: they must be the same one.
+    }
+    // A branch of type `never` (D26, B10 part 3) -- `else { ice(..) }` --
+    // produces no value: the `if` carries the other branch's type, exactly as
+    // for a branch that terminates above. Both `never`: the `if` is `never`.
+    if is_never_ty(@ctx.tys, then_t) {
+        @record(n, else_t)
+        return
+    } else if is_never_ty(@ctx.tys, else_t) {
+        @record(n, then_t)
+        return
+    } else {
+        // Neither branch is `never`: the comparison below.
     }
     if then_t != else_t {
         @report_first_leaf_of(kids, "outside the subset: the branches of a tail `if` must agree on a type (E2-b)")

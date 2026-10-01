@@ -180,7 +180,7 @@ export fn is_float_prim(tys Interner, t TyId) -> bool {
 fn row_is_int(r BuiltinType) -> bool {
     match r.family {
         PfInt => true
-        PfFloat | PfStr | PfBool | PfChar | PfUnit | PfAny => false
+        PfFloat | PfStr | PfBool | PfChar | PfUnit | PfAny | PfNever => false
     }
 }
 
@@ -188,7 +188,7 @@ fn row_is_int(r BuiltinType) -> bool {
 fn row_is_float(r BuiltinType) -> bool {
     match r.family {
         PfFloat => true
-        PfInt | PfStr | PfBool | PfChar | PfUnit | PfAny => false
+        PfInt | PfStr | PfBool | PfChar | PfUnit | PfAny | PfNever => false
     }
 }
 
@@ -217,6 +217,16 @@ export fn is_any_ty(tys Interner, t TyId) -> bool {
     if !is_ty(t) || tys.kind_of(t) != TypeKind.TkPrim { return false }
     match prim_row(tys.prim_ordinal_of(t)).family {
         PfAny => true
-        PfInt | PfFloat | PfStr | PfBool | PfChar | PfUnit => false
+        PfInt | PfFloat | PfStr | PfBool | PfChar | PfUnit | PfNever => false
+    }
+}
+
+/// Is `t` the bottom type `never` (D26)? The family of its universe row says so.
+/// A value of it never exists, so it is compatible with every expected type.
+export fn is_never_ty(tys Interner, t TyId) -> bool {
+    if !is_ty(t) || tys.kind_of(t) != TypeKind.TkPrim { return false }
+    match prim_row(tys.prim_ordinal_of(t)).family {
+        PfNever => true
+        PfInt | PfFloat | PfStr | PfBool | PfChar | PfUnit | PfAny => false
     }
 }

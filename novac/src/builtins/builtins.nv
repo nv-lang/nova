@@ -372,6 +372,7 @@ export type PrimFamily enum
     | PfChar /// char
     | PfUnit /// ()
     | PfAny /// any -- the top type (D53), a boxed value behind `void*` (D54)
+    | PfNever /// never -- the bottom type (D26): no values; it stands in any value position
 
 /// One pre-declared type of the universe: (source name, runtime C spelling,
 /// family, width, signedness). The C spelling of a PRIMITIVE is part of the
@@ -445,7 +446,16 @@ export ro BuiltinType.ALL = [
     // a row of the universe here, named: its C spelling is the runtime's `void*`
     // on a `NovaAny`, and no operator or printer takes it. After `()`, so no
     // ordinal moves.
-    BuiltinType { name: "any", c_name: "void*", family: PrimFamily.PfAny, bits: 0, signed: false }]
+    BuiltinType { name: "any", c_name: "void*", family: PrimFamily.PfAny, bits: 0, signed: false },
+    // `never` (registry 221.1 / 274.11 B10 part 3): the BOTTOM type (D26) -- no
+    // value has it, and a value of it is compatible with every type. Until this
+    // row the word was refused as "a type form not compiled yet", and a handed
+    // signature `-> never` (diag `ice`) was dropped whole, so every `?? ice(..)`
+    // and every `ice(..)` in a value position was "not a callable novac knows".
+    // Its C spelling is the oracle's (`nova_int`, compiler-codegen emit_c.rs, the
+    // primitive map): a function declared `-> never` returns that in C and never
+    // does. Last, so no ordinal moves.
+    BuiltinType { name: "never", c_name: "nova_int", family: PrimFamily.PfNever, bits: 0, signed: false }]
 
 /// THE ROW of a primitive by its universe ordinal -- family, width, signedness
 /// and both spellings in one value, for the doors in `sem/type_shape` that
