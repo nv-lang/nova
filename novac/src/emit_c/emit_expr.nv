@@ -623,6 +623,9 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // A static method takes no receiver: its slots are its written arguments.
         @emit_bound_args(kids, 3, !static, e.id_of(), cr.callable_row())
         @body.append(")")
+    } else if k == NodeKind.Call && @out.contract_of(e.id_of()).is_some() {
+        // `assert(..)` (D81): the checker typed the intrinsic and noted its text.
+        @emit_assert(e, branch_children(e))
     } else if k == NodeKind.Call && @out.has_subst(e.id_of()) {
         // `size_of[T]()` (D216, 274.11 E.10 step 4c-2): the checker recorded
         // the type argument as the node's substitution; the value is C's size.

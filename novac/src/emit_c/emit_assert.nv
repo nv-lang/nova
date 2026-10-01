@@ -1,0 +1,65 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: C's `assert` macro (`__FILE__`, `__LINE__`, `#expr` handed to a
+// failure routine) -- taken as the shape of the call; NOT taken: NDEBUG, since
+// D81 makes the check always on. The callee is the runtime's
+// `nova_assert_loc(cond, text, file, line, msg)` inside a comma expression
+// whose value is the unit, so the call is legal in any position. INTEROP,
+// named as such: it lives in nova_rt effects.h, reached through the shell;
+// goes the day novac emits the prelude.
+// Role: the emission of the `assert` intrinsic the checker typed
+//   (check/assert_call.nv): the condition, its display and line from the
+//   channel's contract note on the call node, the file this unit names, and
+//   the literal message or NULL.
+// Used by: emit_expr.nv (`@emit_expr`, the free-call branch with a note).
+// Guarded by: novac/fixtures/assert_stmt (byte-for-byte with the oracle),
+//   check-novac-differential.sh.
+
+module novac.emit_c
+
+import ../tree.{Node, NodeKind}
+import ../sem.{call_arg_at, is_arg_node, literal_as_c_text}
+import ../lex.{TokenKind}
+import ../diag.{ice}
+
+/// `assert(cond[, msg])` as one C expression of type `nova_unit`.
+fn Emitter mut @emit_assert(e Node, kids []Node) -> () {
+    ro note = @out.contract_of(e.id_of()) ?? ice("emit_c: an assert the checker left without its note")
+    @body.append("((void)nova_assert_loc(")
+    @emit_expr(call_arg_at(kids, 1, 0))
+    @body.append(", \"")
+    @body.append(c_literal_escaped(note.display))
+    @body.append("\", \"${@src_name}\", ${note.src_line}, ")
+    @body.append(assert_msg_c(kids))
+    @body.append("), NOVA_UNIT)")
+}
+
+/// The message as C text: a string literal as written, anything else -- or no
+/// message -- the runtime's NULL (the oracle's rule: only a literal is baked in).
+fn assert_msg_c(kids []Node) -> str {
+    mut n = 0
+    mut at = 0
+    for c in kids {
+        if at >= 1 && is_arg_node(c) { n += 1 } else {
+            // The callee's name, or punctuation: not an argument.
+        }
+        at += 1
+    }
+    if n < 2 { return "NULL" }
+    str_literal_c(call_arg_at(kids, 1, 1))
+}
+
+/// A plain string literal as C text, else NULL. The parser wraps a literal in
+/// a `Lit` branch (one leaf; two with a sign), so both shapes are asked.
+fn str_literal_c(m Node) -> str {
+    match m {
+        Leaf(t) => {
+            if t.kind == TokenKind.StrLit { return literal_as_c_text(t.text) }
+            // Not a string literal: the runtime prints no message.
+        }
+        Branch { kind, children, .. } => {
+            if kind == NodeKind.Lit && children.len() == 1 { return str_literal_c(children[0]) }
+            // A computed message: the same fallback.
+        }
+    }
+    "NULL"
+}
