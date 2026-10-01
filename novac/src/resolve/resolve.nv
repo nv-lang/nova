@@ -156,16 +156,22 @@ fn FnIndex mut @index_imports(names []str) -> () {
 /// `encoding.utf16`); the last segment is what both spellings agree on, and two
 /// modules sharing it are not told apart until import paths resolve to modules.
 #realtime nogc
-export fn FnIndex @sees_row(fns FnTable, row FnRow) -> bool {
+export fn FnIndex @sees_row(fns FnTable, row FnRow) -> bool =>
+    @sees_decl(fns.compiles_body(row), fns.rows[raw_row(row)].handed_from, fns.rows[raw_row(row)].name)
+
+/// THE VIEW, for any declaration and not only a callable (#1521): may the
+/// asker name `name`, declared by the compiled file itself (`own`) or by a
+/// handed file of module `handed_from`? The constant door asks it with a
+/// `DefTable` row (`Checker @const_seen`), the callable doors with a `FnRow`.
+#realtime nogc
+export fn FnIndex @sees_decl(own bool, handed_from str, name str) -> bool {
     if !@vis_on { return true }
-    ro fd = fns.rows[raw_row(row)]
-    ro own = fns.compiles_body(row)
-    // A handed row with no module: std's prelude files, in scope everywhere.
-    if !own && fd.handed_from == "" { return true }
-    ro home = if own { @file_mod } else { fd.handed_from }
+    // A handed declaration with no module: std's prelude files, in scope everywhere.
+    if !own && handed_from == "" { return true }
+    ro home = if own { @file_mod } else { handed_from }
     if home == @asker { return true }
     if home == "prelude" || home.starts_with("prelude.") { return true }
-    ro i = @imp.find(fd.name)
+    ro i = @imp.find(name)
     if i < 0 { return false }
     @imp_segs[i] == home[seg_start(home)..]
 }
@@ -174,11 +180,15 @@ export fn FnIndex @sees_row(fns FnTable, row FnRow) -> bool {
 /// asker's module shadows the same name brought in from anywhere else, so when
 /// such a row exists the others are not candidates at all.
 #realtime nogc
-fn FnIndex @is_home(fns FnTable, row FnRow) -> bool {
-    ro own = fns.compiles_body(row)
-    ro fd = fns.rows[raw_row(row)]
-    if !own && fd.handed_from == "" { return false }
-    ro home = if own { @file_mod } else { fd.handed_from }
+fn FnIndex @is_home(fns FnTable, row FnRow) -> bool =>
+    @decl_is_home(fns.compiles_body(row), fns.rows[raw_row(row)].handed_from)
+
+/// The same question for any declaration: `own` -- the compiled file's own;
+/// else handed from module `handed_from` ("" = std's prelude files, nobody's home).
+#realtime nogc
+export fn FnIndex @decl_is_home(own bool, handed_from str) -> bool {
+    if !own && handed_from == "" { return false }
+    ro home = if own { @file_mod } else { handed_from }
     home == @asker
 }
 

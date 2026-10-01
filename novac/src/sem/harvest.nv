@@ -597,8 +597,11 @@ fn exported_ids(d Node) -> []NodeId {
 }
 
 /// THE CONSTANTS OF HANDED FILES (registry 1518, 2026-10-01): a module-level
-/// `const` another module declares, where D281 lets the compiled file see it
-/// (exported, or the same module). Until this pass none was registered, and
+/// `const` another module declares -- ALL of them since #1521, each under its
+/// module (`DefTable` row home): a private one is its module's bodies' to read
+/// (`hp.geo`'s `SCALE` in its own `Vec[T] @scaled`), and who sees which is the
+/// asking body's question (`Checker @const_seen`, D281 + D29), not a filter
+/// here. Until #1518 none was registered, and
 /// every imported constant was "unknown name" -- eight times over novac's own
 /// source (`EFFECT_MARKER`, `ENTRY_FN`, `TYPE_KIND_COUNT`, ...).
 ///
@@ -609,21 +612,20 @@ fn exported_ids(d Node) -> []NodeId {
 /// tree carries ids of THAT tree's space, which the file's channel would read
 /// as its own; such a constant stays unregistered and its read is refused by
 /// name, until a handed initializer is typed in a channel of its own.
-fn harvest_consts(decls []Node, mut defs DefTable, mut consts ConstTable, own_module str) -> () {
+fn harvest_consts(decls []Node, mut defs DefTable, mut consts ConstTable) -> () {
     for d in decls {
-        ro same_module = module_dotted(d) == own_module
-        ro exported = exported_ids(d)
+        ro home = module_dotted(d)
         for c in file_decls(d) {
             ro ck = const_decl_of(c)
             if !ck.is_some() { continue }
-            if !same_module && !is_among(exported, c.id_of()) { continue }
             ro kids = branch_children(ck ?? c)
             ro init_at = const_init_at(kids)
             if init_at < 0 { continue }
             ro lit = handed_literal(kids[init_at])
             if !lit.is_some() { continue }
             if Some(cname) = const_full_name(kids) {
-                defs.add(cname, DefTarget.DefConst(consts.add(cname, no_ty(), []Node.of(lit ?? kids[init_at]), false)))
+                defs.add(cname, DefTarget.DefConst(consts.add(cname, no_ty(), []Node.of(lit ?? kids[init_at]), false)),
+                         home: home)
             } else {
                 // No name: a parse-error shape, refused in its own file.
             }

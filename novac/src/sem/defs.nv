@@ -108,12 +108,15 @@ export type Def value {
 export type DefTable {
     names NameTable /// name -> row in `rows` (NsDefs namespace).
     rows []Def /// What each registered name is.
+    prev []int /// parallel to `rows`: the row this name had BEFORE this one was put, -1 at the end -- the same-named rows of other modules (#1521)
+    homes []str /// parallel to `rows`: the module (dotted) a HANDED row was declared in; "" for the file's own rows, the seeded ones and std's files with no module line (#1521)
     foreign_cnt int /// how many FIRST rows came from declarations novac was HANDED (the seeded primitives among them); every row after is the compiled file's own. A fact about the TABLE, like `FnTable.own_cnt`, and a PREFIX because a signature of this file must be able to name a handed-over type -- so those go in first
 }
 
 /// Empty registry with the NsDefs namespace.
 export fn DefTable.new() -> DefTable =>
-    { names: NameTable.new(NamespaceId.NsDefs), rows: []Def.new(), foreign_cnt: 0 }
+    { names: NameTable.new(NamespaceId.NsDefs), rows: []Def.new(), prev: []int.new(), homes: []str.new(),
+      foreign_cnt: 0 }
 
 /// Register one name. LAST PUT WINS, and that is the rule rather than a
 /// shortcut: `collect_types` gives the id to the FIRST declaration that owns
@@ -135,10 +138,40 @@ export fn DefTable.new() -> DefTable =>
 /// the K7 class this plan refuses, so the order stayed and the chain went. The
 /// day two FOREIGN declarations of one name can arrive (that is `import`, which
 /// brings nothing yet), the ambiguity is a REFUSAL to write, not a chain to walk.
-export fn DefTable mut @add(name str, target DefTarget) -> () {
+///
+/// THE CHAIN CAME BACK WITH A MODULE ON EACH ROW (registry 221.1 #1521), and
+/// the paragraph above names the day: two declarations of one name from
+/// DIFFERENT modules are both real -- `hp`'s `SCALE` and `hp.geo`'s -- and a
+/// body written in `hp.geo` means its own. `@def_of` still answers the LAST
+/// put (the file's, as before); the asking-module question walks the chain
+/// (`@first_def`/`@prev_def`) and reads each row's `home`.
+export fn DefTable mut @add(name str, target DefTarget, home str = "") -> () {
+    @prev.push(@names.find(name))
     @names.put(name, @rows.len())
     @rows.push(Def { target })
+    @homes.push(home)
 }
+
+/// The LAST row put under `name`, or -1: the head of its chain (#1521).
+#realtime nogc
+export fn DefTable @first_def(name str) -> int => @names.find(name)
+
+/// The row of the same name put before row `i`, or -1.
+#realtime nogc
+export fn DefTable @prev_def(i int) -> int => @prev[i]
+
+/// What row `i` is.
+#realtime nogc
+export fn DefTable @def_at(i int) -> Def => @rows[i]
+
+/// The module a handed row `i` was declared in ("" for the file's own, the
+/// seeded ones and std's prelude files).
+#realtime nogc
+export fn DefTable @home_at(i int) -> str => @homes[i]
+
+/// Did the compiled FILE put row `i` (not a handed declaration)?
+#realtime nogc
+export fn DefTable @is_own(i int) -> bool => i >= @foreign_cnt
 
 /// Everything registered so far came from ELSEWHERE; every row after this is the
 /// compiled file's own.

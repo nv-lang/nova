@@ -80,3 +80,32 @@ fn main() {\n ro v = [7, 8, 9]\n println(v.tag())\n println(v.w())\n println(hel
     assert(d1.len() == 0, messages(d1))
     assert(c1.contains("return novac_fn_hp_geo_helper__to_nova_int();"), c1)
 }
+
+test "a constant in an instance is its BODY's module's, and another module's private one stays unseen (#1521, D281)" {
+    ro geo = "module hp.geo\nconst SCALE = 10\nexport fn Vec[T] @scaled() -> int => @len() * SCALE\n"
+    // The hunt's hygiene-const-oracle-fails: the caller declares `SCALE` too.
+    // Until #1521 the registry was flat, the caller's constant was put last,
+    // and the instance multiplied by 100 (printed 300 where 30 is meant).
+    ro (d0, c0) = compile_beside("module hp\nimport ./geo\nconst SCALE = 100\n\
+fn main() {\n ro v = [7, 8, 9]\n println(v.scaled())\n println(SCALE)\n}", geo)
+    assert(d0.len() == 0, messages(d0))
+    // The body is `@len() * SCALE`: its one multiplication, by the body's 10.
+    assert(scaled_by(c0, "((nova_int)10LL))"), c0)
+    assert(!scaled_by(c0, "((nova_int)100LL))"), c0)
+    // CONTROL (D125): the caller's own read is the caller's constant.
+    assert(c0.contains("nova_print_int(((nova_int)100LL))"), c0)
+    // CONTROL (D281): `hp.geo`'s constant is private -- the caller, which has
+    // none of its own, does not read it. Registered for its module's bodies is
+    // not visible to everyone.
+    ro (d1, _) = compile_beside("module hp\nimport ./geo\nfn main() {\n println(SCALE)\n}", geo)
+    assert(d1.len() == 1, messages(d1))
+    assert(d1[0].message.contains("unknown name"), messages(d1))
+}
+
+/// Does a line of `c` multiply (checked) by the literal spelled `lit`?
+fn scaled_by(c str, lit str) -> bool {
+    for line in c.split("\n") {
+        if line.contains("nova_int_checked_mul(") && line.contains(lit) { return true }
+    }
+    false
+}

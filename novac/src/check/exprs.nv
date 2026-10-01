@@ -61,7 +61,7 @@ import ../sem.{LitArg}
 /// here rather than at collection keeps one answer to one question: sem
 /// registers the name, the checker types it.
 fn Checker mut @const_type_of(name str) -> TyId {
-    ro row = match @ctx.defs.const_row(name) {
+    ro row = match @const_seen(name) {
         None => return no_ty()
         Some(r) => r
     }
@@ -109,7 +109,7 @@ fn Checker mut @note_if_capture(e Node, name str) -> () {
 /// known about it here, and the ordinary doors answer.
 fn Checker @is_poisoned_module_value(name str) -> bool {
     if @substs.len() > 0 { return false }
-    ro row = match @ctx.defs.const_row(name) {
+    ro row = match @const_seen(name) {
         None => return false
         Some(r) => r
     }
@@ -538,7 +538,7 @@ fn Checker mut @type_expr(e Node) -> () {
                     // the name itself (274.4 rule E).
                     // I1 boundary first: an INTERPOLATED initializer would be
                     // substituted where no hoist ran -- refused by name.
-                    match @ctx.defs.const_row(t.text) {
+                    match @const_seen(t.text) {
                         Some(row) => {
                             if const_init_interpolates(@ctx, row) {
                                 @refuse(t, INTERP_CONST_MSG)
