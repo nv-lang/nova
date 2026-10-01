@@ -46,6 +46,7 @@ export type Diagnostic {
     lo int /// primary span start, byte offset into the source
     hi int /// primary span end (half-open), byte offset
     message str /// human half, English (project rule)
+    file str /// "" = the span is in the compiled file, whose path the printing door knows; else the path of the file it IS in -- a body handed from another file and typed as an instance in this unit (registry 221.1 #1521)
 }
 
 /// Serde DTO of the §7 primary-span object (file + byte range).
@@ -74,7 +75,9 @@ export fn to_json(d Diagnostic, id int, file str) -> str {
         id: "d${id}",
         code: d.code,
         severity: d.severity.to_str(),
-        primary: PrimaryDto { file, start: d.lo, end: d.hi },
+        // The span's OWN file wins: an instance body's refusal is about the
+        // file the body was written in, not the one being compiled (#1521).
+        primary: PrimaryDto { file: if d.file == "" { file } else { d.file }, start: d.lo, end: d.hi },
         message: d.message,
         poisoned_by: None,
     }
