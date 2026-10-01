@@ -825,7 +825,12 @@ Details — [D30](decisions/03-syntax.md#d30), [D46](decisions/03-syntax.md#d46)
 Without `export` = private (visible only inside the module).
 
 Applied uniformly to **types**, **functions**, **methods**,
-**constants**, and **protocols**:
+**constants**, and **protocols**.
+
+A public declaration may not name a private type in its signature or in a public field
+(`E_PRIVATE_TYPE_IN_PUBLIC`, D47 amendment 2026-10-01): another module would get a value of a type
+it cannot name. Export the type or narrow the declaration.
+
 
 ```nova
 module account
