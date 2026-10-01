@@ -17,25 +17,45 @@
 //!
 //! Kept out of emit_c.rs (arch-ratchet precedent: `assoc_ro.rs`).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use super::emit_c::CEmitter;
+
+/// #1441, #1453: the capture body (handler op, closure) being emitted -- the reads in it that are bound where they
+/// stand, and the boxes its OWN captures had when it began (`var_boxed` is emptied per body, so on entry it holds
+/// exactly the captures). A bound read skips a box only if it is that capture's box: a local that shadows a capture.
+/// #1453 (regression of #1441): the set was cumulative and the box unchecked, so (1) a nested literal / closure
+/// inherited the ids of its enclosing body -- a lambda local `t` that a handler op or inner closure captures is read
+/// BOUND in the lambda's walk, and the op body wrote bare `t` for `_c->t` (undeclared in C); (2) a body's own local,
+/// boxed when a nested closure captured it, was read past its box.
+#[derive(Default, Clone)]
+pub(crate) struct CaptureScope {
+    ids: HashSet<crate::ast::ExprId>,
+    boxes: HashMap<String, String>,
+}
+
+impl CaptureScope {
+    pub(crate) fn reads_local(&self, id: crate::ast::ExprId, name: &str, bx: &str) -> bool {
+        self.ids.contains(&id) && self.boxes.get(name).is_some_and(|b| b == bx)
+    }
+}
 
 impl CEmitter {
     /// #1441: a capture body (handler op, closure) begins. Its reads that are bound where they stand -- a local
     /// declared before the read, possibly shadowing a capture of the same name -- read the LOCAL, not the captured
     /// box (`var_boxed`); and with captures unpacked as C locals of the same names, the body goes into its own C
     /// block so such a local is a legal C shadow and a read before it still sees the capture.
-    pub(crate) fn enter_capture_body(&mut self, params: &[&str], brace: bool, walk: impl FnOnce(&mut HashSet<String>, &mut HashSet<String>)) -> (HashSet<crate::ast::ExprId>, bool) {
+    /// #1453: the scope is the body's OWN (replaced, not extended) -- see `CaptureScope`.
+    pub(crate) fn enter_capture_body(&mut self, params: &[&str], brace: bool, walk: impl FnOnce(&mut HashSet<String>, &mut HashSet<String>)) -> (CaptureScope, bool) {
         let ids = crate::free_idents::bound_read_ids(params, walk);
-        let saved = self.local_read_ids.clone();
-        self.local_read_ids.extend(ids);
+        let own = CaptureScope { ids, boxes: self.var_boxed.clone() };
+        let saved = std::mem::replace(&mut self.capture_scope, own);
         if brace { self.line("{"); }
         (saved, brace)
     }
 
-    pub(crate) fn leave_capture_body(&mut self, (saved, brace): (HashSet<crate::ast::ExprId>, bool)) {
+    pub(crate) fn leave_capture_body(&mut self, (saved, brace): (CaptureScope, bool)) {
         if brace { self.line("}"); }
-        self.local_read_ids = saved;
+        self.capture_scope = saved;
     }
 
     /// #1441: does handler op `m` read `name` free somewhere -- before a local of that name is declared?

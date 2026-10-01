@@ -1,0 +1,141 @@
+// EXPECT_STDOUT a 22
+// EXPECT_STDOUT b 2
+// EXPECT_STDOUT c 1515
+// EXPECT_STDOUT d 3618
+// EXPECT_STDOUT e 11
+// EXPECT_STDOUT f 10706
+// EXPECT_STDOUT g 2
+//
+// Registry 221.1 #1453 (regression of #1441): a capture body nested in a lambda
+// (or in a handler op body) that captures a LOCAL of that lambda / op. #1441
+// decides per read whether a name is bound where it stands, and a bound read
+// skips the captured box; but the set of such reads was cumulative -- a nested
+// handler op or closure inherited the reads of its enclosing body, where the
+// local is bound -- so the inner body wrote the bare name for `_c->t` /
+// `_env->t` (clang: undeclared identifier). And a body's own local, boxed when
+// a nested closure captured it, was read past its box. Now each capture body
+// has its own set, and a bound read skips only the box its own capture had.
+// Cells, lambda x form: a handler literal writes the lambda's locals (a), a
+// closure writes one and the lambda reads it after (b), a nested lambda writes
+// and reads one (c), a closure called twice with a lambda write between (d);
+// a closure inside a handler op body writes the op's local (e); the #1441
+// shape -- a capture read, then a local of the same name -- inside a lambda
+// (f); control: the handler form in a named function (g).
+module standalone.p1453_handler_captures_lambda_local
+
+type P1453Tally {
+    mut n int
+}
+
+type P1453Hit effect {
+    hit() -> ()
+}
+
+fn p1453_run(body fn() -> int) -> int => body()
+
+fn handler_in_lambda() Io {
+    ro got = p1453_run(fn() -> int {
+        mut t = P1453Tally { n: 0 }
+        mut k = 0
+        with P1453Hit = effect P1453Hit {
+            hit() -> () {
+                t.n += 1
+                k += 10
+            }
+        } {
+            P1453Hit.hit()
+            P1453Hit.hit()
+        }
+        t.n + k
+    })
+    println("a ${got}")
+}
+
+fn closure_in_lambda() Io {
+    ro got = p1453_run(fn() -> int {
+        mut x = 0
+        ro bump = fn() -> () { x += 1 }
+        bump()
+        bump()
+        x
+    })
+    println("b ${got}")
+}
+
+fn lambda_in_lambda() Io {
+    ro got = p1453_run(fn() -> int {
+        mut y = 10
+        ro inner = p1453_run(fn() -> int {
+            y += 5
+            y
+        })
+        inner * 100 + y
+    })
+    println("c ${got}")
+}
+
+fn closure_shares_box() Io {
+    ro got = p1453_run(fn() -> int {
+        mut x = 1
+        ro f = fn() -> int {
+            x *= 3
+            x
+        }
+        ro a = f()
+        x += 100
+        ro b = f()
+        a * 1000 + b + x
+    })
+    println("d ${got}")
+}
+
+fn closure_in_op() Io {
+    mut t = P1453Tally { n: 0 }
+    with P1453Hit = effect P1453Hit {
+        hit() -> () {
+            mut m = 1
+            ro inc = fn() -> () { m += 10 }
+            inc()
+            t.n += m
+        }
+    } {
+        P1453Hit.hit()
+    }
+    println("e ${t.n}")
+}
+
+fn shadow_in_lambda() Io {
+    ro got = p1453_run(fn() -> int {
+        mut s = 5
+        ro inner = p1453_run(fn() -> int {
+            s += 1
+            ro a = s
+            mut s = 100
+            s += 1
+            a + s
+        })
+        inner * 100 + s
+    })
+    println("f ${got}")
+}
+
+fn counted() -> int {
+    mut t = P1453Tally { n: 0 }
+    with P1453Hit = effect P1453Hit {
+        hit() -> () { t.n += 1 }
+    } {
+        P1453Hit.hit()
+        P1453Hit.hit()
+    }
+    t.n
+}
+
+fn main() Io -> () {
+    handler_in_lambda()
+    closure_in_lambda()
+    lambda_in_lambda()
+    closure_shares_box()
+    closure_in_op()
+    shadow_in_lambda()
+    println("g ${p1453_run(fn() -> int => counted())}")
+}

@@ -1538,7 +1538,7 @@ pub struct CEmitter {
     pub(crate) pending_assoc_consts: Vec<(String, crate::ast::AssocConst)>,
     /// #1397: per emitted body (fn / test / closure), (names read as BOUND, names read as FREE) -- see `is_local_read`.
     pub(crate) local_frames: Vec<(HashSet<String>, HashSet<String>)>,
-    pub(crate) local_read_ids: HashSet<crate::ast::ExprId>, // #1441: see `enter_capture_body`
+    pub(crate) capture_scope: super::local_frames::CaptureScope, // #1441, #1453: see `enter_capture_body`
     /// #1158: final C qualifiers (`c_name`) of lazy consts -- laziness of ONE const, not of a name.
     lazy_const_syms: HashSet<String>,
     pub(crate) module_value_tys: HashMap<String, String>, // #1410: see `reset_module_value_types`
@@ -2040,7 +2040,7 @@ pub struct CEmitter {
     /// is emitted, followed by `#define x (*_box_x)` so all subsequent caller-side
     /// reads/writes go through the box. The closure env stores `_box_x` directly
     /// (no dangling-ptr risk on escape). Cleared and #undef'd at function exit.
-    var_boxed: HashMap<String, String>,
+    pub(crate) var_boxed: HashMap<String, String>,
     // Registry #790: the subset of `var_boxed` VALUES that are the hoisted,
     // NULL-initialized detach boxes (`hoist_box_decl` + the `if (!bv)` lazy
     // alloc at the detach site, Plan 248). Only these can legally be NULL at
@@ -2801,7 +2801,7 @@ impl CEmitter {
             user_fn_variadic: HashSet::new(),
             suppress_variadic_routing: false,
             emitted_fn_thunks: HashSet::new(),
-            lazy_consts: HashSet::new(), pending_assoc_consts: Vec::new(), local_frames: Vec::new(), local_read_ids: HashSet::new(), lazy_const_syms: HashSet::new(), module_value_tys: HashMap::new(),
+            lazy_consts: HashSet::new(), pending_assoc_consts: Vec::new(), local_frames: Vec::new(), capture_scope: Default::default(), lazy_const_syms: HashSet::new(), module_value_tys: HashMap::new(),
             pending_const_inits: Vec::new(),
             record_field_fn_sigs: HashMap::new(),
             trailing_block_counter: 0,
@@ -36286,7 +36286,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Ctx/env-field box values (`_c->…`, `_env->…`) have no local of
                 // that name in the emitted function and are never NULL, so they
                 // keep the plain deref.
-                if let Some(box_var) = self.var_boxed.get(name).filter(|_| !self.local_read_ids.contains(&expr.id)) { // #1441
+                if let Some(box_var) = self.var_boxed.get(name).filter(|bx| !self.capture_scope.reads_local(expr.id, name, bx)) { // #1441, #1453
                     if self.lazy_detach_boxes.contains(box_var) {
                         return Ok(format!(
                             "(*({bx} ? {bx} : &{local}))",
