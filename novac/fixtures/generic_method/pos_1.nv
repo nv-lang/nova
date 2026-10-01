@@ -1,0 +1,27 @@
+module generic_method.pos_1
+
+// TWO instances of ONE generic METHOD body (274.11 E.10 step 4b): `pick[int]`
+// and `pick[f64]` become two C functions, each typed under its own
+// substitution -- the method twin of generic_call/pos_1. The body reads the
+// receiver's field AND does arithmetic on the parameter, so a substitution
+// that silently answered "int" would print a different number (`+` on int is
+// the checked helper, on f64 the raw C operator), and a receiver that was not
+// passed would not reach `@bias`.
+type Pt {
+    bias int
+}
+
+fn Pt @pick[U](a U, b U) -> U {
+    if @bias > 0 {
+        a + a
+    } else {
+        b + b
+    }
+}
+
+fn main() {
+    ro p = Pt { bias: 1 }
+    ro q = Pt { bias: 0 }
+    println(p.pick(21, 5))
+    println(q.pick(1.5, 0.25))
+}

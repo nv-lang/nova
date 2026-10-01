@@ -48,10 +48,8 @@ import ../source.{SourceText}
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, NodeId, bin_op_of, un_op_of}
 import ../diag.{Diagnostic, ice}
-import ../builtins.{COERCE_ATTR, REALTIME_ATTR}
-import ../builtins.{IMPL_ATTR, DISPLAY_PROTO, EQUAL_PROTO}
 import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind}
-import ../sem.{expr_leaf_name, attr_kids_name, attr_args_among, attr_has_args, recv_type_name, is_value_record}
+import ../sem.{expr_leaf_name, recv_type_name, is_value_record}
 import ../sem.{file_decls}
 import ../sem.{slice_shape_of}
 // Where an arm keeps its body -- the door the lowering has read for waves.
@@ -379,45 +377,9 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // that -- refusing here would refuse the legal case too.
                 }
                 ImportDecl => {
-                    // THE FORM IS READ, not refused (2026-08-23). What an import
-                    // BRINGS still has to resolve -- a name no declaration
-                    // answers is refused at its USE, by name, exactly as before.
-                    // What changed is that the file after the import is no longer
-                    // swallowed: the refusal used to be the first of a cascade
-                    // whose rest said nothing (29 of novac's own 34 files).
-                    //
-                    // The ALIAS is the one part still refused: it is a statement
-                    // about identity (section 9.1d point 2), and there is nothing to
-                    // point it at until cross-file resolution lands.
-                    if import_renames(children) {
-                        @report_first_leaf_of(children, IMPORT_ALIAS_MSG)
-                    } else {
-                        // A plain import: nothing here to judge.
-                    }
-                    // The FORM is not judged, but a GAP inside it still has to
-                    // be seen: `import` with no path at all parsed clean and
-                    // compiled with exit code 0 (registry #815, probe
-                    // `import_no_path`). This arm ends the walk, so the
-                    // question is asked here or nowhere.
-                    //
-                    // ONLY THE Err CHILDREN, and the difference is a defect I
-                    // shipped closing #815. `@report_err_branch` takes the
-                    // children of an Err BRANCH -- "one Err branch, one
-                    // diagnostic at its FIRST leaf" -- and this arm handed it
-                    // the children of a HEALTHY import. The first leaf of an
-                    // import is the keyword, which has width, so the
-                    // width-bearing path fired every time: every `import` in
-                    // every file was refused as "not a form of the language".
-                    // Measured on novac's own source: the first refusal of 28
-                    // of its 57 files was their import line.
-                    for c in children {
-                        if c.kind_of() == NodeKind.Err {
-                            @report_err_branch(branch_children(c))
-                        } else {
-                            // The import's own tokens. This arm does not judge
-                            // the form, and saying so is the whole point above.
-                        }
-                    }
+                    // The form is read, its alias and its gaps judged: `@walk_import`
+                    // (decl_forms.nv). The arm ends the walk.
+                    @walk_import(children)
                     return
                 }
                 ExportDecl => {
@@ -432,53 +394,8 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // The walk continues into the children below.
                 }
                 AttrDecl => {
-                    // TWO attributes are read (274.5 wave B6). `#coerce` is
-                    // JUDGED: it declares a PAIR (D429) the collector reads.
-                    // `#realtime` (with or without `nogc`) is READ AND NOT
-                    // ENFORCED: the guarantee is about what a body may call,
-                    // the subset compiles no effect machinery, and the oracle
-                    // -- measured 2026-08-29 on an allocating body -- does not
-                    // enforce it on these shapes either. Any OTHER attribute
-                    // stays outside the subset: an unknown attribute may
-                    // change what the declaration means, and accepting it
-                    // unread is how a subset becomes WIDER than the language.
-                    if attr_kids_name(children, COERCE_ATTR) {
-                        // The pair attribute: the collector owns it.
-                    } else if attr_kids_name(children, IMPL_ATTR)
-                              && !attr_has_args(children, IMPL_ATTR) {
-                        // `#impl()` or a bare `#impl` -- a LANGUAGE error since
-                        // the D186 amendment, so the door is `@reject_*`: the
-                        // form does not exist, as opposed to "not read yet".
-                        @reject_first_leaf_of(children, IMPL_NO_PROTOCOLS_MSG)
-                    } else if attr_kids_name(children, IMPL_ATTR)
-                              && attr_args_among(children, []str.of(DISPLAY_PROTO, EQUAL_PROTO)) {
-                        // `#impl(P)` (D186) -- the author's opt-in, READ ONLY FOR
-                        // THE PROTOCOL THE SUBSET JUDGES, which today is `Display`
-                        // (wave B1b). `#impl(Serialize)` stands in novac's own
-                        // diag/diag.nv and must keep refusing, or the subset would
-                        // claim to honour an opt-in it does nothing about.
-                        //
-                        // ONE CONDITION AND NOT A NESTED REFUSAL, and the reason is
-                        // a measurement: the nested form spelled `ATTR_MSG` a SECOND
-                        // time, and `check-novac-subset-debt-dated` counts refusal
-                        // DOORS -- it went 84 -> 85 while the debt itself went DOWN
-                        // (one form more is accepted). A guard that counts doors is
-                        // right to complain about a second door for one refusal.
-                        //
-                        // Reading it is INERT so far, deliberately: the synthesis of
-                        // a memberwise `@display` is the next step, and until it
-                        // lands the interpolation slot still refuses through its own
-                        // judge with the dated address -- one refusal, at the place
-                        // that knows the reason.
-                    } else if attr_kids_name(children, REALTIME_ATTR) {
-                        // Read, not enforced [INV-GUARD: check-novac-differential]
-                        // -- the corpus compares OUTCOMES against the oracle on
-                        // every file, so the day the oracle starts policing the
-                        // guarantee, this decision reddens there. See the doc of
-                        // REALTIME_ATTR for the measurement behind it.
-                    } else {
-                        @report_first_leaf_of(children, ATTR_MSG)
-                    }
+                    // Which attributes the subset reads: `@judge_attr` (decl_forms.nv).
+                    @judge_attr(children)
                     return
                 }
                 TestDecl => {

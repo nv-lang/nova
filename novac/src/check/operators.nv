@@ -18,7 +18,7 @@ import ../sem.{LitArg, leaf_kind, leaf_text}
 import ../sem.{carrier_of, is_int_prim, is_numeric_prim, prim_row_of}
 import ../types.{TyId, no_ty, is_ty}
 import ../builtins.{EQUAL_METHOD, EQUAL_PROTO, BuiltinType, TypeKind}
-import ../sem.{gate_names, decl_of_ty, is_value_sum}
+import ../sem.{gate_names, decl_of_ty, is_payload_free_sum}
 import ../resolve.{FnLookup}
 import ../sem.{ArgSpec, ArgClass, CallForm, CalleeTarget, ty_source_name, c_shell_method}
 import ../sem.{identity_slots, branch_children, ParamMode}
@@ -229,7 +229,10 @@ fn Checker mut @report_if_operator_needs_protocol(kids []Node) -> bool {
     } else {
         // Not equality over one sum, or the sum declares Equal: the table decides.
     }
-    ro tag_eq = one_sum && is_value_sum(@ctx, lt)
+    // TAGS compare on a payload-free sum wherever it is placed: the A4 fence
+    // moves it to the heap but leaves its value its tag (the emitter reads it by
+    // placement, `.` or `->`).
+    ro tag_eq = one_sum && is_payload_free_sum(@ctx, lt)
     // Each operator states WHICH operands the subset can emit for it. The
     // match is exhaustive, so a new operator cannot slip in without an
     // answer -- and the answer is a refusal, never a guess.

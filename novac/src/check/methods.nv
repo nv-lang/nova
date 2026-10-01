@@ -254,12 +254,13 @@ fn Checker mut @record_instance_method(e Node, t Token, row FnRow, key []ArgSpec
         Some(v) => v
     }
     ro fd = @ctx.fns.rows[raw_row(row)]
-    if @ctx.fns.compiles_body(row) {
-        @refuse(t, "outside the subset: a generic method declared in this file -- mono instantiates functions, not methods, yet")
-        return
-    }
+    // A generic method declared in THIS file is instantiated like a generic
+    // function (274.11 E.10 step 4b): the callee is recorded with its type
+    // arguments, and mono grows one `(row, subst)` instance per substitution.
+    // The shell is not asked -- the body is ours.
+    ro own = @ctx.fns.compiles_body(row)
     ro sym = c_method_symbol(@ctx, key[0].type_id, t.text)
-    if !@ctx.interop.has(sym) {
+    if !own && !@ctx.interop.has(sym) {
         // THE ADVICE IS TRUE FOR A HANDED TYPE AND IMPOSSIBLE FOR THIS FILE'S
         // OWN, so it is given only where it can be followed. "The method
         // arrives when the probe calls it" is exactly how `Option[int]` was

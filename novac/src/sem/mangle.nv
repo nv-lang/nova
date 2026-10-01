@@ -91,7 +91,16 @@ export fn carrier_of(ctx Ctx, t TyId) -> TyId {
 /// GENERICS are out of the subset BY CONSTRUCTION, not by check: an applied
 /// type ices in `c_type` ("arrives with E2-b2"), so a generic sum cannot reach
 /// emission at all. When E2-b2 lands, the parameter test joins this door.
-export fn is_value_sum(ctx Ctx, t TyId) -> bool {
+export fn is_value_sum(ctx Ctx, t TyId) -> bool => is_payload_free_sum(ctx, t) && !ctx.tys.is_arg_anywhere(t)
+
+/// Is this a PAYLOAD-FREE sum of the file's own kind (not a runtime-pinned one)
+/// -- the A4 question WITHOUT the fence? Its value is its tag wherever it is
+/// placed, so `==` on it compares tags; the fence (an argument of an
+/// application keeps it on the heap) decides only how the tag is READ, `.` or
+/// `->`. Split out of `is_value_sum` on 2026-10-01: the two questions were one,
+/// and every `==` on a fenced enum -- 279 of novac's own in parse/, `@peek() ==
+/// TokenKind.X` beside a `[]TokenKind` -- was refused as protocol dispatch.
+export fn is_payload_free_sum(ctx Ctx, t TyId) -> bool {
     if !is_ty(t) { return false }
     match ctx.tys.kind_of(t) {
         TkSum => {}
@@ -100,7 +109,6 @@ export fn is_value_sum(ctx Ctx, t TyId) -> bool {
     }
     ro td = decl_of_ty(ctx, t)
     if is_runtime_abi_sum(td.name) { return false }
-    if ctx.tys.is_arg_anywhere(t) { return false }
     ro vr = variant_range_of(td) ?? (no_vrow(), 0)
     if vr.1 == 0 { return false }
     ro vstart = raw_vrow(vr.0)

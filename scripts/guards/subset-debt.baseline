@@ -142,7 +142,12 @@
 # правкой вернулось РОВНО в базу: 94 -> 81 — превышение 81 -> 94 было этими же
 # тринадцатью бессрочными, заведёнными дугой и просочившимися без датировки
 # (страж в волне не гонялся; урок записан в передаче дуги).
-undated=68
+# 2026-10-01, Carina window: undated 68 -> 62. Refusals that were word-for-word copies at two
+# doors now read one text (the array literal and `[]T.new()`, a match arm without pattern or
+# value, a fn declaration without a name); the ratchet goes down with them.
+# 2026-10-01, Carina window (274.11 E.10 step 4b): undated 62 -> 61. A generic METHOD
+# declared in the file is instantiated like a generic function; its refusal is gone.
+undated=61
 
 # ВТОРОЕ ЧИСЛО — ОБЩЕЕ, храповик ВНИЗ с целью НОЛЬ (274 §1.3а п. «г»). Заведено
 # 2026-09-13 окном 274; предписано оно было ещё 2026-09-05 планом 274.7 §И («страж
@@ -378,7 +383,12 @@ undated=68
 # 2026-09-30, окно Карины (реестр №1381): 143 -> 142 -- `ro` у биндера внутри образца
 # (`Some(ro x)`) не форма языка (D486 §4 амендмент п.3): RO_WORD_PATTERN_MSG стал ошибкой
 # языка, а не долгом.
-refusals=142
+# 2026-10-01, Carina window: refusals 142 -> 141. Refusals that were word-for-word copies at two
+# doors now read one text (the array literal and `[]T.new()`, a match arm without pattern or
+# value, a fn declaration without a name); the ratchet goes down with them.
+# 2026-10-01, Carina window (274.11 E.10 step 4b): refusals 141 -> 140. A generic METHOD
+# declared in the file is instantiated like a generic function; its refusal is gone.
+refusals=140
 # ТРЕТЬЕ ЧИСЛО — БЕССРОЧНЫЕ ПО ДВЕРИ (волна 274.7 В11-б, засев 2026-09-14, окно 274).
 #
 # Два числа выше мерят НАПИСАНИЕ текста отказа, а у предмета есть машинный признак:
@@ -499,4 +509,9 @@ refusals=142
 # гарантирует), и потому был бы найден поздно; теперь там `ice`.
 # 2026-09-30, окно Карины (реестр №1381): 81 -> 79 -- по двери ушли два бессрочных:
 # `ro` у биндера (две двери в match_arms.nv) стали ошибкой языка.
-undated_by_door=79
+# 2026-10-01, Carina window: undated_by_door 79 -> 77. Refusals that were word-for-word copies at two
+# doors now read one text (the array literal and `[]T.new()`, a match arm without pattern or
+# value, a fn declaration without a name); the ratchet goes down with them.
+# 2026-10-01, Carina window (274.11 E.10 step 4b): undated_by_door 77 -> 76. A generic METHOD
+# declared in the file is instantiated like a generic function; its refusal is gone.
+undated_by_door=76

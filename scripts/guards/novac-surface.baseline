@@ -915,7 +915,11 @@ resolve 16
 # sem 295 -> 296 (2026-10-01, integrator, merge of the cloud session's #1459): `ctor_field_name`
 #   -- one door for a constructor field's name in both forms (`name` and `@name`); check/literal_rules.nv
 #   and emit_c/emit_c.nv ask it. The branch raised 292 -> 293 on its own base; Carina's +3 and this +1 add.
-sem 296
+# sem 296 -> 299 (2026-10-01, Karina window, 274.11 E.10 step 4a): HandedBodies (the Ctx table where a handed
+#   callable's body lives) and its doors @decl_of / @tree_of -- asked by the pipeline's instance builder.
+# sem 299 -> 300 (2026-10-01, Karina window): is_payload_free_sum -- the A4 question without the fence
+#   (may tags compare?), asked by check/operators.nv and emit_c/emit_expr.nv; is_value_sum keeps the placement.
+sem 300
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

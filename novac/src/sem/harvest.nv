@@ -61,12 +61,15 @@ export fn harvest_own_method(kids []Node, types []TypeDef, mut defs DefTable,
 /// point of use. Overloads (two signatures for one (receiver, name))
 /// are marked and also rejected — silent choosing is not allowed.
 fn harvest_methods(decls []Node, types []TypeDef, mut defs DefTable, mut tys Interner,
-                   mut fns FnTable, mut coerces []CoercePair) -> () {
+                   mut fns FnTable, mut coerces []CoercePair, mut bodies HandedBodies) -> () {
+    mut tree = 0
     for d in decls {
         // The MODULE of the handed file travels with every row read out of it
         // (wave W6): a free function of that module is emitted as the shell's
-        // symbol, which the oracle spells from the module path.
-        harvest_in(d, module_dotted(d), types, defs, tys, fns, coerces)
+        // symbol, which the oracle spells from the module path. The TREE's index
+        // travels too (E.10 step 4a): the row's body lives there.
+        harvest_in(d, module_dotted(d), types, defs, tys, fns, coerces, tree, bodies)
+        tree += 1
     }
 }
 
@@ -77,12 +80,19 @@ fn harvest_methods(decls []Node, types []TypeDef, mut defs DefTable, mut tys Int
 /// collection must not depend on it: a declaration is found wherever
 /// it ended up.
 fn harvest_in(n Node, handed_from str, types []TypeDef, mut defs DefTable, mut tys Interner,
-              mut fns FnTable, mut coerces []CoercePair) -> () {
+              mut fns FnTable, mut coerces []CoercePair, tree int, mut bodies HandedBodies) -> () {
     match n {
         Leaf(_) => {}
         Branch { kind, children, .. } => {
             if kind == NodeKind.FnDecl {
+                ro before = fns.rows.len()
                 harvest_fn(children, handed_from, types, defs, tys, fns)
+                if fns.rows.len() > before {
+                    // The row this declaration became, and where its body lives.
+                    bodies.note(FnRow(before), tree, n)
+                } else {
+                    // The signature was not taken: no row, no body to note.
+                }
                 return
             }
             // An attribute is the declaration's PREVIOUS SIBLING, not its
@@ -98,7 +108,7 @@ fn harvest_in(n Node, handed_from str, types []TypeDef, mut defs DefTable, mut t
             for c in children {
                 if c.kind_of() == NodeKind.AttrDecl { continue }
                 ro before = fns.rows.len()
-                harvest_in(c, handed_from, types, defs, tys, fns, coerces)
+                harvest_in(c, handed_from, types, defs, tys, fns, coerces, tree, bodies)
                 if is_attr_marked(marked, c.id_of()) && fns.rows.len() > before {
                     harvest_coerce_pair(fns, coerces, FnRow(fns.rows.len() - 1))
                 } else {

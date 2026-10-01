@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc's crate metadata -- an item of another crate keeps its MIR, so a
+// generic of that crate is instantiated by the CONSUMER from the body it was
+// handed; NOT taken: an encoded metadata format -- novac's handed declarations
+// are the parsed source trees themselves.
+// Role: where a HANDED callable's body lives (274.11 E.10 step 4a): the
+//   declaration tree it was read from (an index into the decls handed to
+//   `collect`) and its `FnDecl` node there. A generic of std over a type of
+//   novac's own (`Vec[TyRow] @index`) is instantiated from this body when the
+//   shell carries no instance -- the shell cannot know novac's types.
+// Used by: harvest.nv (`harvest_in` notes each handed row it reads), and the
+//   pipeline's instance builder when an instance of a handed row is needed.
+// Guarded by: nova test novac/src/pipeline/handed_free_test.nv (the handed body
+//   tests) and check-novac-ctx-tables.py (the Ctx table, plan 274 s10.3b).
+
+module novac.sem
+
+import ../tree.{Node}
+
+/// The bodies of the handed callables, by row.
+export type HandedBodies {
+    slot []int /// per callable row: its index in `trees`/`decls`, or -1 when the row has no handed body
+    trees []int /// per noted row: the handed declaration tree it was read from (index into the decls)
+    decls []Node /// per noted row: its `FnDecl` node in that tree
+}
+
+/// No handed body known yet.
+fn HandedBodies.new() -> HandedBodies => { slot: []int.new(), trees: []int.new(), decls: []Node.new() }
+
+/// Note that `row` was read from the `FnDecl` node `decl` of handed tree `tree`.
+fn HandedBodies mut @note(row FnRow, tree int, decl Node) -> () {
+    while @slot.len() <= raw_row(row) {
+        @slot.push(-1)
+    }
+    @slot[raw_row(row)] = @trees.len()
+    @trees.push(tree)
+    @decls.push(decl)
+}
+
+/// The handed `FnDecl` of `row`, or `None` for a row read from nowhere (the
+/// file's own, a constructor, a builtin).
+export fn HandedBodies @decl_of(row FnRow) -> Option[Node] {
+    if raw_row(row) < 0 || raw_row(row) >= @slot.len() { return None }
+    ro s = @slot[raw_row(row)]
+    if s < 0 { None } else { Some(@decls[s]) }
+}
+
+/// The handed tree `row` was read from, or -1 (the rows `decl_of` answers None for).
+export fn HandedBodies @tree_of(row FnRow) -> int {
+    if raw_row(row) < 0 || raw_row(row) >= @slot.len() { return -1 }
+    ro s = @slot[raw_row(row)]
+    if s < 0 { -1 } else { @trees[s] }
+}
