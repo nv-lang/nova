@@ -29,7 +29,7 @@ test "with: a handler value of type Effect[Fs], body typed -- accepted (E4)" {
     std.push("module std.fx\nexport type Fs effect { fn read(p str) -> []u8 }\nexport fn make() -> Effect[Fs]\n")
     // The shell carries the factory (`fx_shell`), as it carries real_fs since
     // E.9 step 1: the handler is link-checked like any call (W6 test below).
-    ro d = compile_with("fn g() -> int {\n with Fs = make() {\n  ro x = 1\n  println(x)\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(std), fx_shell())
+    ro d = compile_with("import std.fx.{make}\nfn g() -> int {\n with Fs = make() {\n  ro x = 1\n  println(x)\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(std), fx_shell())
     assert(d.len() == 0, messages(d))
 }
 
@@ -40,7 +40,7 @@ test "with: several bindings in one statement (E4)" {
     // the lowering installs both and restores both in reverse (ir_with.nv).
     mut std = std_decls()
     std.push("module std.fx\nexport type Fs effect { fn read(p str) -> []u8 }\nexport type Os effect { fn args() -> []str }\nexport fn make() -> Effect[Fs]\nexport fn make_o() -> Effect[Os]\n")
-    ro d = compile_with("fn g() -> int {\n with Fs = make(), Os = make_o() {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(std), fx_shell())
+    ro d = compile_with("import std.fx.{make, make_o}\nfn g() -> int {\n with Fs = make(), Os = make_o() {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(std), fx_shell())
     assert(d.len() == 0, messages(d))
 }
 
@@ -53,7 +53,7 @@ test "with: a handler factory the shell does not carry is refused by W6, as in a
     // the shell now carries its factories (the second half pins that).
     mut std = std_decls()
     std.push("module std.fx\nexport type Fs effect { fn read(p str) -> []u8 }\nexport fn make() -> Effect[Fs]\n")
-    ro d = compile_with("fn g() -> int {\n with Fs = make() {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(std), interop_surface())
+    ro d = compile_with("import std.fx.{make}\nfn g() -> int {\n with Fs = make() {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(std), interop_surface())
     assert(d.len() == 1, messages(d))
     assert(messages(d).contains("carries no `nova_fn_3std2fx4make`"), messages(d))
     assert(interop_surface().has("nova_fn_3std2fs7real_fs"), "the shell must carry real_fs (E.9 step 1)")
@@ -83,7 +83,7 @@ test "with: an unknown effect name is refused as a name (E4)" {
     // second refusal about a value that is not what this door judges.
     mut std = std_decls()
     std.push("module std.fx\nexport type Fs effect { fn read(p str) -> []u8 }\nexport fn make() -> Effect[Fs]\n")
-    ro (d, _) = compile_to_c_with("fn g() -> int {\n with Nope = make() {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(std), fx_shell())
+    ro (d, _) = compile_to_c_with("import std.fx.{make}\nfn g() -> int {\n with Nope = make() {\n  1\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(std), fx_shell())
     assert(d.len() == 1, messages(d))
     assert(d[0].message.contains("unknown name"), d[0].message)
 }
@@ -370,7 +370,7 @@ test "effect op call: no handler in sight -- check is green, the runtime panic i
 }
 
 test "effect op call: inside a with body, the handler installed -- green (E.4 item 2)" {
-    ro d = compile_with("fn g() -> int {\n with Fs = make() {\n  ro b = Fs.read(\"p\")\n  println(Fs.size())\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(opcall_fx()), fx_shell())
+    ro d = compile_with("import std.fx.{make}\nfn g() -> int {\n with Fs = make() {\n  ro b = Fs.read(\"p\")\n  println(Fs.size())\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(opcall_fx()), fx_shell())
     assert(d.len() == 0, messages(d))
 }
 
@@ -393,7 +393,7 @@ test "effect op call and with: the C holds the dispatcher, the slot swap, the fr
     // The value form lowered: the handler in a local, swapped into the slot,
     // the body under the frame's setjmp, the slot restored and the frame
     // popped after it; the operation printed as the shell's dispatcher.
-    ro (d, c) = compile_to_c_with("fn g() -> int {\n with Fs = make() {\n  println(Fs.size())\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(opcall_fx()), fx_shell())
+    ro (d, c) = compile_to_c_with("import std.fx.{make}\nfn g() -> int {\n with Fs = make() {\n  println(Fs.size())\n }\n 0\n}\nfn main() {\n println(g())\n}", parse_decls(opcall_fx()), fx_shell())
     assert(d.len() == 0, messages(d))
     assert(c.contains("${effect_vtable_c("Fs")}*"), c)
     assert(c.contains(" = ${effect_slot_c("Fs")};"), c)

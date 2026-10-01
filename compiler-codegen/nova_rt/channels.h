@@ -1372,7 +1372,7 @@ static void _nova_after_cancel_resource_cb(void* handle) {
 static inline Nova_ChanReader* Nova_Time_after(nova_int ms) {
     Nova_ChannelPair pair = nova_channel_new(1);
     /* Plan 44.1 R8: NOT nova_alloc — NovaAfterState is owned by libuv
-     * (lifetime = from this call до _nova_after_close_cb), so it must never be
+     * (lifetime = from this call до _nova_after_close_cb), so it must never be [INV-PROPERTY: spec_tests/conformance/standalone/p1487_after_writer_rooted.nv]
      * collected while the timer is pending.
      *
      * 221.1 #1487: UNCOLLECTABLE, not raw malloc. `st->tx` is the channel's

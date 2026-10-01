@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_UNKNOWN_TYPE
+//
+// Registry 221.1 #971: an undeclared type name in an EFFECT ARGUMENT `Fail[X]`. Before the fix the
+// checker turned any unknown name into an opaque nominal type and every check
+// in that position went quiet (`check` PASS). The legal forms are pinned by
+// `standalone/p971_visible_type_names_pos`.
+module neg.p971_undeclared_type_effect_arg_neg
+
+// nova:expect E_UNKNOWN_TYPE -- the effect head `Fail` is an effect name, but its argument `Nmbr` is an ordinary annotation position
+fn risky() Fail[Nmbr] -> int => 1
+
+fn main() Io -> () {
+    println(1)
+}

@@ -1,0 +1,16 @@
+// Probe found while fixing registry 221.1 #1489 (helper window nova-88, 2026-10-01).
+// NOT the #1489 class (a method call on a module value) -- a neighbour: a module
+// value read through the IMPORT PREFIX, `m.K`. The checker accepts it (#1488 even
+// types it, `qualified_value_type`), the emitter writes the prefix into C as an
+// identifier. Same result with a method on it (`decimal.DECIMAL_MAX_SHIFT.to_str()`).
+// Measured on main 5b6e77a1d and on branch p1494-runner-marker-line alike:
+//   CC-FAIL  error: use of undeclared identifier 'x' / 'decimal'
+// No file of std or spec_tests uses the form `m.K` for a value today; whether the
+// form is legal is the spec's question (D29), not this probe's.
+// EXPECT_STDOUT 61
+module p1489_qualified_module_value
+import std.runtime.decimal
+fn main() Io -> () {
+    ro x = decimal.DECIMAL_MAX_SHIFT + 1
+    println(x.to_str())
+}

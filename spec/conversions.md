@@ -479,6 +479,15 @@ Any `str` expression passes this way — a literal, a variable, a call result
 (owner's decision 2026-10-01, D55 amendment): the pair is a zero-copy `ro []u8`
 view, so it does not apply where a mutable `mut []u8` is required.
 
+**Amendment 2026-10-01 (owner's decision, #1480, option (a)): read-only positions only.**
+The view also does not apply where the value is OWNED and may later become mutable —
+a return `-> []u8`, an element of `[][]u8`, a record field `f []u8`: a `mut` binding of
+such a value would write into the string's own bytes. There the explicit
+`s.bytes().clone()` is required, otherwise `E_READONLY_COERCE`. The coercion positions
+are a default (`ro`) parameter, a `ro` binding annotated `[]u8`, and any position typed
+`ro []u8` (`-> ro []u8`, `[]ro []u8`, `f ro []u8`). The rule holds for every view pair
+of D429, not only `str`.
+
 Two "lanes", both guaranteed zero-cost:
 - **view** — a non-`consume` method with a `ro` return (a borrow, no allocation);
 - **finalize** — a `consume` method with an owning return (a move; the receiver

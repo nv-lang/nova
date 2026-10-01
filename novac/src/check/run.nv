@@ -29,7 +29,7 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeId, no_node, raw_node}
 import ../diag.{Diagnostic}
 import ../builtins.{IMPL_ATTR}
-import ../sem.{Ctx, CheckOut, branch_children, file_decls, attr_kids_name}
+import ../sem.{Ctx, CheckOut, branch_children, file_decls, attr_kids_name, FnRow, no_row}
 import ../names.{NameTable, NamespaceId}
 import ../resolve.{FnIndex, FieldIndex}
 import ../types.{TyId, no_ty}
@@ -69,7 +69,7 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
     }
     mut c = Checker {
         src, ctx,
-        res: FnIndex.build(ctx.fns),
+        res: FnIndex.build_for(ctx.fns, import_parts(file, false), import_parts(file, true), ctx.module_c), // #1493
         fres: FieldIndex.build(ctx.fields),
         gap_at: -1,
         gap_kind: TokenKind.ErrorTok,
@@ -93,6 +93,7 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
         ret_unit: false,
         ret_ro: false,
         substs: []TyId.new(),
+        inst_row: no_row(),
     }
     // THROUGH THE DOOR (P18): a raw walk over a file's children does not see
     // what sits inside an `export` wrapper, so `export #impl` would have been
@@ -137,7 +138,8 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
 ///
 /// `cap` is the file's node capacity, not the declaration's: node ids are
 /// handed out per FILE, so a declaration's nodes sit anywhere in that range.
-export fn check_instance(decl Node, src SourceText, ctx Ctx, substs []TyId, cap int) -> ([]Diagnostic, CheckOut)
+export fn check_instance(decl Node, src SourceText, ctx Ctx, row FnRow, substs []TyId,
+                         cap int) -> ([]Diagnostic, CheckOut)
     requires cap > 0, "check: an instance channel needs the file's node capacity"
 {
     mut c = Checker {
@@ -173,6 +175,7 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, substs []TyId, cap 
         ret_unit: false,
         ret_ro: false,
         substs,
+        inst_row: row,
     }
     c.type_fn(decl)
     (c.out, c.chan)

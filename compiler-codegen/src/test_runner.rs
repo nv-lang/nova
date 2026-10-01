@@ -340,6 +340,19 @@ pub enum ExpectMarker {
     LintWarning(String),
 }
 
+/// №1494: THE reading of a header directive line, shared by every reader of
+/// one (`parse_expect`, `detect_test_type`, `parse_timeout_ms`,
+/// `parse_smt_backend_requirement`, `parse_alloc_constraint`,
+/// `parse_contracts_policy`, `parse_env`): a `//` comment, any indentation
+/// before it and any spacing after it, whose BODY is returned for the caller to
+/// match a directive name at its START. A directive named inside prose or code
+/// is not a directive. Before this each reader had its own: the lane door
+/// matched a substring anywhere in the line (№1494) and three readers demanded
+/// exactly `// ` -- one marker, read three ways.
+pub fn marker_body(line: &str) -> Option<&str> {
+    Some(line.trim_start().strip_prefix("//")?.trim_start())
+}
+
 /// Парсит D89 EXPECT-маркеры из первых 30 строк.
 ///
 /// Возвращает все маркеры в порядке появления. Несколько маркеров разных
@@ -357,11 +370,7 @@ pub enum ExpectMarker {
 pub fn parse_expect(src: &str) -> Vec<ExpectMarker> {
     let mut found: Vec<ExpectMarker> = Vec::new();
     for line in src.lines().take(30) {
-        let trimmed = line.trim_start();
-        let Some(body) = trimmed.strip_prefix("//") else {
-            continue;
-        };
-        let body = body.trim_start();
+        let Some(body) = marker_body(line) else { continue };
 
         let parsed: Option<ExpectMarker> = if let Some(rest) = body.strip_prefix("EXPECT_COMPILE_ERROR") {
             let arg = rest.trim();
@@ -2620,8 +2629,8 @@ impl SkipReason {
 /// `trivial`) совпадает с указанным именем.
 pub fn parse_smt_backend_requirement(src: &str) -> Option<String> {
     for line in src.lines().take(30) {
-        let t = line.trim();
-        if let Some(rest) = t.strip_prefix("// REQUIRES_SMT_BACKEND") {
+        let Some(t) = marker_body(line) else { continue };
+        if let Some(rest) = t.strip_prefix("REQUIRES_SMT_BACKEND") {
             let name = rest.trim();
             if !name.is_empty() {
                 return Some(name.to_ascii_lowercase());
@@ -2644,12 +2653,12 @@ fn active_smt_backend() -> String {
 /// `// ALLOC_EXCLUDES <tag>`. Возвращает AllocConstraint::None если маркер не найден.
 pub fn parse_alloc_constraint(src: &str) -> AllocConstraint {
     for line in src.lines().take(30) {
-        let t = line.trim();
-        if let Some(rest) = t.strip_prefix("// ALLOC_REQUIRES") {
+        let Some(t) = marker_body(line) else { continue };
+        if let Some(rest) = t.strip_prefix("ALLOC_REQUIRES") {
             if let Some(tag) = GcKindTag::parse(rest) {
                 return AllocConstraint::Requires(tag);
             }
-        } else if let Some(rest) = t.strip_prefix("// ALLOC_EXCLUDES") {
+        } else if let Some(rest) = t.strip_prefix("ALLOC_EXCLUDES") {
             if let Some(tag) = GcKindTag::parse(rest) {
                 return AllocConstraint::Excludes(tag);
             }
@@ -2662,8 +2671,8 @@ pub fn parse_alloc_constraint(src: &str) -> AllocConstraint {
 /// Возвращает Duration если найдено и N > 0.
 pub fn parse_timeout_ms(src: &str) -> Option<Duration> {
     for line in src.lines().take(30) {
-        let t = line.trim();
-        if let Some(rest) = t.strip_prefix("// EXPECT_TIMEOUT_MS") {
+        let Some(t) = marker_body(line) else { continue };
+        if let Some(rest) = t.strip_prefix("EXPECT_TIMEOUT_MS") {
             if let Ok(ms) = rest.trim().parse::<u64>() {
                 if ms > 0 {
                     return Some(Duration::from_millis(ms));
@@ -2686,11 +2695,7 @@ pub fn parse_timeout_ms(src: &str) -> Option<Duration> {
 /// в непереехавших фикстурах молча игнорируются (fallback на opts default).
 pub fn parse_contracts_policy(src: &str) -> Option<ast::ContractsMode> {
     for line in src.lines().take(30) {
-        let trimmed = line.trim_start();
-        let Some(body) = trimmed.strip_prefix("//") else {
-            continue;
-        };
-        let body = body.trim_start();
+        let Some(body) = marker_body(line) else { continue };
         let Some(rest) = body.strip_prefix("CONTRACTS") else {
             continue;
         };
@@ -2719,11 +2724,7 @@ pub fn parse_contracts_policy(src: &str) -> Option<ast::ContractsMode> {
 pub fn parse_env(src: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for line in src.lines().take(30) {
-        let trimmed = line.trim_start();
-        let Some(body) = trimmed.strip_prefix("//") else {
-            continue;
-        };
-        let body = body.trim_start();
+        let Some(body) = marker_body(line) else { continue };
         let Some(rest) = body.strip_prefix("ENV") else {
             continue;
         };
@@ -7092,14 +7093,24 @@ pub fn strip_slow_suffix(stem: &str) -> &str {
 
 /// Read the EXPECT_* marker from the first 30 lines of a .nv file.
 /// Returns TestType based on the first matching marker found.
+///
+/// №1494: a marker is a MARKER LINE -- a `//` comment whose body STARTS with
+/// `EXPECT_...`, the same reading `parse_expect` gives the expectations. Until
+/// 2026-10-01 this lane door matched the substring anywhere in the line, so prose
+/// that merely NAMED a marker chose the lane: `std/src/time/overflow_safe_test.nv`
+/// says "Trap-поведение … (EXPECT_RUNTIME_PANIC)" in its header, landed in the
+/// `--full`-only runtime-panic lane, and every CI std run (`nova test std/src`,
+/// no `--full`) skipped it -- a test CI never ran, red the whole time (№1489).
+/// Two readers of one marker disagreed; now there is one reading.
 pub fn detect_test_type(path: &Path) -> TestType {
     use std::io::{BufRead, BufReader};
     let Ok(f) = std::fs::File::open(path) else { return TestType::Positive };
     let reader = BufReader::new(f);
-    for line in reader.lines().take(30) {
-        let Ok(line) = line else { break };
-        if line.contains("EXPECT_COMPILE_ERROR") { return TestType::CompileError; }
-        if line.contains("EXPECT_RUNTIME_PANIC") { return TestType::Panic; }
+    for raw in reader.lines().take(30) {
+        let Ok(raw) = raw else { break };
+        let Some(line) = marker_body(&raw) else { continue };
+        if line.starts_with("EXPECT_COMPILE_ERROR") { return TestType::CompileError; }
+        if line.starts_with("EXPECT_RUNTIME_PANIC") { return TestType::Panic; }
         // №453: `EXPECT_TIMEOUT_MS` — это ПЕР-ТЕСТОВЫЙ БЮДЖЕТ ВРЕМЕНИ
         // (`parse_timeout_ms`), а НЕ дорожка «ожидается зависание». Подстрочный
         // матч ниже уносил такие фикстуры в timeout-лейн, которого авторитетный
@@ -7108,9 +7119,9 @@ pub fn detect_test_type(path: &Path) -> TestType {
         // них регресс на use-after-free, успевший перестать компилироваться
         // незамеченным. Гейт этого поймать не мог: уехавшая фикстура не даёт ни
         // PASS, ни FAIL, а число SKIP не ассертится (см. №453).
-        if line.contains("EXPECT_TIMEOUT_MS")    { continue; }
-        if line.contains("EXPECT_TIMEOUT")       { return TestType::Timeout; }
-        if line.contains("EXPECT_EXIT")           { return TestType::Exit; }
+        if line.starts_with("EXPECT_TIMEOUT_MS")    { continue; }
+        if line.starts_with("EXPECT_TIMEOUT")       { return TestType::Timeout; }
+        if line.starts_with("EXPECT_EXIT")           { return TestType::Exit; }
         // №463: `EXPECT_LINT_WARNING` (CONV_RULES rule id) — как
         // `EXPECT_COMPILE_WARNING`, не заводит отдельную TestType-дорожку
         // (файл остаётся Positive: компилируется/запускается штатно, лишь
@@ -7118,7 +7129,7 @@ pub fn detect_test_type(path: &Path) -> TestType {
         // Explicit `continue`, а не молчаливый fallthrough — тот же приём,
         // что EXPECT_TIMEOUT_MS выше (№453): защищает от случайного
         // будущего substring-перехвата другой веткой этого цикла.
-        if line.contains("EXPECT_LINT_WARNING")   { continue; }
+        if line.starts_with("EXPECT_LINT_WARNING")   { continue; }
     }
     TestType::Positive
 }
@@ -9553,6 +9564,39 @@ mod plan156_slow_lane_tests {
         let pan = root.join("pan.nv");
         fs::write(&pan, "// EXPECT_RUNTIME_PANIC\nfn main() {}").unwrap();
         assert_eq!(detect_test_type(&pan), TestType::Panic);
+        // №1494: a marker NAMED in prose does not choose the lane -- the shape of
+        // std/src/time/overflow_safe_test.nv line 8, and a non-comment mention.
+        let prose = root.join("prose.nv");
+        fs::write(&prose, "// Trap behaviour lives in std/time/rt/ (EXPECT_RUNTIME_PANIC).\n// No EXPECT_COMPILE_ERROR here either.\nfn main() {}").unwrap();
+        assert_eq!(detect_test_type(&prose), TestType::Positive);
+        let code = root.join("code.nv");
+        fs::write(&code, "fn main() { println(\"EXPECT_RUNTIME_PANIC\") }").unwrap();
+        assert_eq!(detect_test_type(&code), TestType::Positive);
+        // ...while an indented marker LINE still does (the parse_expect reading).
+        let ind = root.join("ind.nv");
+        fs::write(&ind, "   //   EXPECT_RUNTIME_PANIC boom\nfn main() {}").unwrap();
+        assert_eq!(detect_test_type(&ind), TestType::Panic);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn marker_body_one_reading() {
+        // №1494: every header directive is read through `marker_body`, so the
+        // readers that used to demand exactly `// ` now agree with the lane door
+        // and with `parse_expect` -- and none of them answers to a mention.
+        use super::{marker_body, parse_alloc_constraint, parse_smt_backend_requirement,
+                    parse_timeout_ms, AllocConstraint, GcKindTag};
+        use std::time::Duration;
+        assert_eq!(marker_body("  //   EXPECT_STDOUT x"), Some("EXPECT_STDOUT x"));
+        assert_eq!(marker_body("x = 1 // EXPECT_STDOUT x"), None);
+        assert_eq!(parse_timeout_ms("// EXPECT_TIMEOUT_MS 50"), Some(Duration::from_millis(50)));
+        assert_eq!(parse_timeout_ms("//EXPECT_TIMEOUT_MS 50"), Some(Duration::from_millis(50)));
+        assert_eq!(parse_timeout_ms("    //  EXPECT_TIMEOUT_MS 50"), Some(Duration::from_millis(50)));
+        assert_eq!(parse_timeout_ms("// see EXPECT_TIMEOUT_MS 50"), None);
+        assert_eq!(parse_smt_backend_requirement("//  REQUIRES_SMT_BACKEND Z3"), Some("z3".to_string()));
+        assert_eq!(parse_smt_backend_requirement("// needs REQUIRES_SMT_BACKEND z3"), None);
+        assert!(matches!(parse_alloc_constraint("//ALLOC_REQUIRES boehm"), AllocConstraint::Requires(GcKindTag::Boehm)));
+        assert!(matches!(parse_alloc_constraint("//   ALLOC_EXCLUDES malloc"), AllocConstraint::Excludes(GcKindTag::Malloc)));
+        assert!(matches!(parse_alloc_constraint("// not ALLOC_REQUIRES boehm"), AllocConstraint::None));
     }
 }

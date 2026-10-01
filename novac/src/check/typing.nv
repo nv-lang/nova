@@ -243,7 +243,9 @@ fn Checker mut @type_fn(f Node) -> () {
         Some(at) => leaf_text(kids[at])
     }
     @scope = Scope.new()
-    ro row = match decl_fn_row(f, @ctx) {
+    // An instance's row is HANDED (`inst_row`): its body may come from another
+    // tree, whose node ids the file's table does not know.
+    ro row = match if raw_row(@inst_row) >= 0 { Some(@inst_row) } else { decl_fn_row(f, @ctx) } {
         None => {
             // SILENT-OK: the registry recorded no row for this
             // declaration, which means it is malformed, and the subset walk
@@ -275,7 +277,9 @@ fn Checker mut @type_fn(f Node) -> () {
         // field access on an ordinary binding.
         ro rfd = @ctx.fns.rows[raw_row(row)]
         if rfd.has_recv && rfd.param_cnt > 0 {
-            @scope.bind(RECV_BINDING, @ctx.fns.params[rfd.param_off].type_id,
+            // CONCRETE under an instance's substitution: `Vec[T]` is `Vec[Pt]`
+            // in the instance of a handed `Vec[T] @len` (E.10 step 4c).
+            @scope.bind(RECV_BINDING, @concrete(@ctx.fns.params[rfd.param_off].type_id),
                         @ctx.fns.params[rfd.param_off].mode)
         } else {
             // A free function: no receiver to bind.

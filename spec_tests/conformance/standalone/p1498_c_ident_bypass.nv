@@ -1,0 +1,156 @@
+// EXPECT_STDOUT param read x-y x-y
+// EXPECT_STDOUT mut int 2 3 4
+// EXPECT_STDOUT mut value y x
+// EXPECT_STDOUT method x y 1
+// EXPECT_STDOUT copy x y
+// EXPECT_STDOUT pass 2 3
+// EXPECT_STDOUT handler y x
+// EXPECT_STDOUT spread 5 2 3 7
+// EXPECT_STDOUT for tuple 14
+// EXPECT_STDOUT for map 50
+// EXPECT_STDOUT const 4 5 nm 7
+//
+// Registry 221.1 #1498: #1440/#1446 made `c_ident` the one door "Nova name ->
+// C identifier" and widened it (the generator's own member `ctx`, platform
+// macros, ALL-CAPS, the `_`/`nova_` prefixes) -- but some places still
+// printed a local or a parameter verbatim. The declaration went through the
+// door (`NovaValue_Ctx* nv_ctx`) and the use did not (`(*ctx).request_id`):
+// clang "use of undeclared identifier 'ctx'" on a legal program (carrier:
+// claude-limits server/routes.nv, `refuse_method(allow str, ctx Ctx)`).
+// CLASS: a site that writes a source name into C without the door, while
+// another site of the same name goes through it. A C keyword (`long`) was
+// escaped before #1440 too, so these sites failed for `long` long before;
+// #1440 widened the set of escaped names and turned them into a regression.
+// The sites, one line of output each:
+//  * a by-pointer parameter (a value record over 16 bytes, a `mut` in-out
+//    parameter) read in the body -- `(*name)` in the Ident arm: param read,
+//    mut int, mut value, method, copy (also `ro x = p` and `return p`), pass
+//    (a `mut` param handed on to another `mut` param, `&((*name))`);
+//  * a handler literal capturing a by-pointer parameter (also an older,
+//    name-independent fault: the capture copied the POINTER into a value
+//    slot, and the op body then dereferenced its own by-value copy);
+//  * an anonymous record spread `{ ...r, f: v }` -- the field name and a
+//    field pun were written raw;
+//  * a tuple pattern of `for` over an array and over a map;
+//  * an exported module const whose value is built at start-up (a record,
+//    a value record): the storage was declared `_nova_const_nv_ORIGIN_value`
+//    and the read looked the const up by its source name, missed it, and
+//    wrote a bare `nv_ORIGIN` (carriers: std uuid `NIL`, complex `ONE`,
+//    int128 `MIN` -- red in their own tests). A read in `main`, in a method,
+//    and an exported constant of a scalar (a bare C global) beside them.
+// Names: the generator's member `ctx` and `schedlink`, the C keyword `long`,
+// the Windows macro `near`, the runtime prefix `nova_x`, the ALL-CAPS `IN`
+// (a parameter; an upper-case name cannot be a local).
+module standalone.p1498_c_ident_bypass
+
+type Big value {
+    ro a str
+    ro b str
+}
+
+type Names {
+    ctx int
+    long int
+    near int
+    schedlink int
+}
+
+type Holder {
+    k int
+}
+
+type Ask effect {
+    fn ask() -> str
+}
+
+fn use_ask() Ask -> str => Ask.ask()
+
+export const ORIGIN Holder = { k: 4 }
+
+export const NIL Big = { a: "n", b: "m" }
+
+export const LIMIT = 7
+
+fn Holder @plus_origin() -> int => @k + ORIGIN.k
+
+fn mk() -> Big => { a: "x", b: "y" }
+
+fn param_read(ctx Big, long Big, near Big, IN Big) -> str =>
+    "${ctx.a}-${long.b} ${near.a}-${IN.b}"
+
+fn mut_int(mut ctx int, mut long int, mut nova_x int) {
+    ctx += 1
+    long += 1
+    nova_x += 1
+}
+
+fn mut_value(mut ctx Big) {
+    ctx = Big { a: ctx.b, b: ctx.a }
+}
+
+fn Holder @pick(ctx Big, near Big) -> str => "${ctx.a} ${near.b} ${@k}"
+
+fn copy_of(ctx Big) -> Big {
+    ro x = ctx
+    x
+}
+
+fn ret_of(schedlink Big) -> Big => schedlink
+
+fn bump(mut x int) {
+    x += 1
+}
+
+fn pass_on(mut ctx int, mut near int) {
+    bump(ctx)
+    bump(near)
+}
+
+fn in_handler(ctx Big, long Big) -> str =>
+    with Ask = effect Ask { ask() -> str => "${ctx.b} ${long.a}" } { use_ask() }
+
+fn spread_set(r Names) -> Names => { ...r, ctx: 5 }
+
+fn spread_pun(r Names, schedlink int) -> Names => { ...r, schedlink }
+
+fn main() Io -> () {
+    println("param read ${param_read(mk(), mk(), mk(), mk())}")
+
+    mut a = 1
+    mut b = 2
+    mut c = 3
+    mut_int(a, b, c)
+    println("mut int ${a} ${b} ${c}")
+
+    mut v = mk()
+    mut_value(v)
+    println("mut value ${v.a} ${v.b}")
+
+    println("method ${Holder { k: 1 }.pick(mk(), mk())}")
+    println("copy ${copy_of(mk()).a} ${ret_of(mk()).b}")
+
+    mut p = 1
+    mut q = 2
+    pass_on(p, q)
+    println("pass ${p} ${q}")
+
+    println("handler ${in_handler(mk(), mk())}")
+
+    ro r = spread_pun(spread_set(Names { ctx: 1, long: 2, near: 3, schedlink: 4 }), 7)
+    println("spread ${r.ctx} ${r.long} ${r.near} ${r.schedlink}")
+
+    ro pairs = [(1, 2), (3, 4)]
+    mut st = 0
+    for (ctx, long) in pairs {
+        st += ctx * long
+    }
+    println("for tuple ${st}")
+
+    ro m HashMap[int, int] = [1: 10, 2: 20]
+    mut sm = 0
+    for (near, nova_x) in m {
+        sm += near * nova_x
+    }
+    println("for map ${sm}")
+    println("const ${ORIGIN.k} ${Holder { k: 1 }.plus_origin()} ${NIL.a}${NIL.b} ${LIMIT}")
+}

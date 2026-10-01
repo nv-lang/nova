@@ -1,0 +1,25 @@
+module grid.c27
+
+type Big value {
+    ro a str
+    ro b str
+}
+type Sm value {
+    ro x int
+}
+type Rr {
+    mut x int
+}
+fn mk() -> Big => { a: "x", b: "y" }
+fn apply(f fn() -> str) -> str => f()
+fn apply_b(f fn(Big) -> str) -> str => f(mk())
+
+fn g(mut cq int) -> str => apply(fn() -> str {
+    cq = cq + 1
+    "${cq}"
+})
+fn main() Io {
+    mut v = 1
+    ro s = g(v)
+    println("c27 ${s} ${v}")
+}

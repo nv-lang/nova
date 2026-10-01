@@ -258,7 +258,9 @@ fn Checker mut @record_instance_method(e Node, t Token, row FnRow, key []ArgSpec
     // function (274.11 E.10 step 4b): the callee is recorded with its type
     // arguments, and mono grows one `(row, subst)` instance per substitution.
     // The shell is not asked -- the body is ours.
-    ro own = @ctx.fns.compiles_body(row)
+    // So is a HANDED generic method whose instance the shell lacks and whose
+    // body novac was handed (E.10 step 4c, `Ctx @instantiates`): `Vec[Pt] @len`.
+    ro own = @ctx.fns.compiles_body(row) || @ctx.instantiates(row, ids)
     ro sym = c_method_symbol(@ctx, key[0].type_id, t.text)
     if !own && !@ctx.interop.has(sym) {
         // THE ADVICE IS TRUE FOR A HANDED TYPE AND IMPOSSIBLE FOR THIS FILE'S

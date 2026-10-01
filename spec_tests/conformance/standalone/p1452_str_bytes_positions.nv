@@ -10,13 +10,19 @@
 // the rewrite splices exactly that (`compiler-codegen/src/types/coerce_door.rs`).
 //
 // Positions: free fn arg (free), method arg (method), protocol-receiver method arg (proto),
-// `ro` let with `[]u8` annotation (rolet), arrow-body return (retarrow), `return` statement
-// (retstmt), `[][]u8` element (elem). Then the read-only spellings of writable places, which
+// `ro` let with `[]u8` annotation (rolet), arrow-body return `-> ro []u8` (retarrow), `return`
+// statement (retstmt), `[]ro []u8` element (elem). Then the read-only spellings of writable places, which
 // stay legal because the content is `ro`: `mut b ro []u8` binding, `mut b ro []u8` parameter,
 // assignment to a `mut b ro []u8`; a record-literal field; a module-level `const`. Last, the
 // FINALIZE lane (`WriteBuffer -> []u8`, an owning move, D429 R2) into a writable `mut` local --
 // the mutability rule is about the view lane only, an owned value is the caller's to write.
 // The writable places are refused -- `neg/p1452_str_bytes_mut_*.nv`.
+//
+// #1480 (D55 amendment 2026-10-01, owner's decision, option (a)): the return, element and
+// record-field cells used to be typed `-> []u8`, `[][]u8` and `data []u8`. Those are OWNED
+// positions -- a `mut` binding of the result writes into the string's bytes -- and are refused
+// now (`neg/p1480_str_bytes_owned_*_neg.nv`). The cells keep every form and the same door, at
+// the read-only spellings `-> ro []u8`, `[]ro []u8` and `data ro []u8`.
 
 // EXPECT_STDOUT free lit abc
 // EXPECT_STDOUT free var abc
@@ -78,7 +84,7 @@ module standalone.p1452_str_bytes_positions
 
 type P1452Rec { name str }
 
-type P1452Hold { data []u8 }
+type P1452Hold { data ro []u8 }
 
 type P1452Tally { mut got str }
 
@@ -116,63 +122,63 @@ fn via_if(mut w P1452Sink, s str, r P1452Rec, k int, flag bool) -> () { w.put(if
 
 fn via_match(mut w P1452Sink, s str, r P1452Rec, k int, flag bool) -> () { w.put(match k { 0 => s, _ => "xy" }) }
 
-fn ra_lit(s str, r P1452Rec, k int, flag bool) -> []u8 => "abc"
+fn ra_lit(s str, r P1452Rec, k int, flag bool) -> ro []u8 => "abc"
 
-fn ra_var(s str, r P1452Rec, k int, flag bool) -> []u8 => s
+fn ra_var(s str, r P1452Rec, k int, flag bool) -> ro []u8 => s
 
-fn ra_call(s str, r P1452Rec, k int, flag bool) -> []u8 => nm()
+fn ra_call(s str, r P1452Rec, k int, flag bool) -> ro []u8 => nm()
 
-fn ra_field(s str, r P1452Rec, k int, flag bool) -> []u8 => r.name
+fn ra_field(s str, r P1452Rec, k int, flag bool) -> ro []u8 => r.name
 
-fn ra_interp(s str, r P1452Rec, k int, flag bool) -> []u8 => "${s}"
+fn ra_interp(s str, r P1452Rec, k int, flag bool) -> ro []u8 => "${s}"
 
-fn ra_if(s str, r P1452Rec, k int, flag bool) -> []u8 => if flag { s } else { "xy" }
+fn ra_if(s str, r P1452Rec, k int, flag bool) -> ro []u8 => if flag { s } else { "xy" }
 
-fn ra_match(s str, r P1452Rec, k int, flag bool) -> []u8 => match k { 0 => s, _ => "xy" }
+fn ra_match(s str, r P1452Rec, k int, flag bool) -> ro []u8 => match k { 0 => s, _ => "xy" }
 
-fn rs_lit(s str, r P1452Rec, k int, flag bool) -> []u8 {
+fn rs_lit(s str, r P1452Rec, k int, flag bool) -> ro []u8 {
     if k > 5 {
         return "early"
     }
     return "abc"
 }
 
-fn rs_var(s str, r P1452Rec, k int, flag bool) -> []u8 {
+fn rs_var(s str, r P1452Rec, k int, flag bool) -> ro []u8 {
     if k > 5 {
         return "early"
     }
     return s
 }
 
-fn rs_call(s str, r P1452Rec, k int, flag bool) -> []u8 {
+fn rs_call(s str, r P1452Rec, k int, flag bool) -> ro []u8 {
     if k > 5 {
         return "early"
     }
     return nm()
 }
 
-fn rs_field(s str, r P1452Rec, k int, flag bool) -> []u8 {
+fn rs_field(s str, r P1452Rec, k int, flag bool) -> ro []u8 {
     if k > 5 {
         return "early"
     }
     return r.name
 }
 
-fn rs_interp(s str, r P1452Rec, k int, flag bool) -> []u8 {
+fn rs_interp(s str, r P1452Rec, k int, flag bool) -> ro []u8 {
     if k > 5 {
         return "early"
     }
     return "${s}"
 }
 
-fn rs_if(s str, r P1452Rec, k int, flag bool) -> []u8 {
+fn rs_if(s str, r P1452Rec, k int, flag bool) -> ro []u8 {
     if k > 5 {
         return "early"
     }
     return if flag { s } else { "xy" }
 }
 
-fn rs_match(s str, r P1452Rec, k int, flag bool) -> []u8 {
+fn rs_match(s str, r P1452Rec, k int, flag bool) -> ro []u8 {
     if k > 5 {
         return "early"
     }
@@ -290,25 +296,25 @@ fn main() Io -> () {
     println("retstmt if ${o41}")
     ro o42 = dec(rs_match(s, r, k, flag))
     println("retstmt match ${o42}")
-    ro xs_lit [][]u8 = ["abc", "zz"]
+    ro xs_lit []ro []u8 = ["abc", "zz"]
     ro o43 = dec(xs_lit[0])
     println("elem lit ${o43}")
-    ro xs_var [][]u8 = [s, "zz"]
+    ro xs_var []ro []u8 = [s, "zz"]
     ro o44 = dec(xs_var[0])
     println("elem var ${o44}")
-    ro xs_call [][]u8 = [nm(), "zz"]
+    ro xs_call []ro []u8 = [nm(), "zz"]
     ro o45 = dec(xs_call[0])
     println("elem call ${o45}")
-    ro xs_field [][]u8 = [r.name, "zz"]
+    ro xs_field []ro []u8 = [r.name, "zz"]
     ro o46 = dec(xs_field[0])
     println("elem field ${o46}")
-    ro xs_interp [][]u8 = ["${s}", "zz"]
+    ro xs_interp []ro []u8 = ["${s}", "zz"]
     ro o47 = dec(xs_interp[0])
     println("elem interp ${o47}")
-    ro xs_if [][]u8 = [if flag { s } else { "xy" }, "zz"]
+    ro xs_if []ro []u8 = [if flag { s } else { "xy" }, "zz"]
     ro o48 = dec(xs_if[0])
     println("elem if ${o48}")
-    ro xs_match [][]u8 = [match k { 0 => s, _ => "xy" }, "zz"]
+    ro xs_match []ro []u8 = [match k { 0 => s, _ => "xy" }, "zz"]
     ro o49 = dec(xs_match[0])
     println("elem match ${o49}")
     mut mr ro []u8 = nm()

@@ -22,6 +22,11 @@
 
 module runtime.sync
 
+// #971: `Duration` (the `*_for(timeout Duration)` signatures below) is declared
+// in `time.duration`, not in the prelude. Before #971 the checker turned the
+// unimported name into an opaque type and accepted any argument there.
+import std.time.duration.{Duration}
+
 // ─── MemOrdering ─────────────────────────────────────────────────
 
 /// Memory ordering for atomic operations and fences. Controls the

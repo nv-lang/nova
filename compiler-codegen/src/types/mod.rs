@@ -27,10 +27,15 @@ mod static_blanket;
 mod fn_visibility; // #1097: a same-name free fn by the caller's imports, see its doc
 mod import_conflict; // #1234: D29 imported name vs own declaration / other import
 mod duplicate_decls; // #1179/#1183/#1186: one duplicate check for the compiled module
+mod unknown_type_name; // #971: a type name in an annotation must be visible from here
+pub(crate) use unknown_type_name::PRIMITIVE_TYPE_NAMES;
+use unknown_type_name::STDLIB_PROTOCOL_ALIASES;
 mod record_lit_schema; // #1448/#1096: a record literal against its record's fields
 mod generic_sum; // #1337/#1338: a user generic sum's ctor, payload and expected type
 mod raw_ptr_ops; // #1473: raw-pointer address arithmetic outside unsafe (D216 part 1)
+pub(crate) mod reserved_names; // D487: a declared name outside the compiler's C namespaces (called by the parser)
 pub(crate) mod coerce_door; // #1451/#1452: one door for `#coerce` -- checker decides, rewrite reads
+mod const_names; // #1488: the type of a module-level `const`/`ro` read by its bare name
 
 /// Plan 196 (gs-bounds migration, spike `docs/plans/wip/196-gs-spike.md`):
 /// `gs` ("generics in scope") used to be `HashSet<String>` — ONLY the names of the
@@ -2176,6 +2181,8 @@ fn check_module_impl(
     // #1260: lift the sum-coercion kind channel (read by `annotate_map_literals`).
     env.sum_wrap_kinds = type_check_ctx.sum_wrap_kinds_buf.take();
     // #1451/#1452: lift the `#coerce` channel (read by `annotate_map_literals`).
+    // #1480: a view no read-only-by-mode position judged sits in an owned one.
+    type_check_ctx.report_coerce_view_into_owned(&mut errors);
     env.coerce_sites = type_check_ctx.coerce_sites_buf.take();
     // Plan 104.10 Ф.2 (D379): lift the opt-in IDE per-expression type map. Empty unless
     // `record_expr_types` was set (i.e. via check_module_with_expr_types) — zero-overhead
@@ -4600,6 +4607,18 @@ struct TypeCheckCtx<'a> {
     /// Registry 221.1 #1451/#1452: >0 while `assignable` is asked speculatively
     /// (overload filtering) -- a probe must not leave a coercion in the channel.
     coerce_probe_depth: std::cell::Cell<u32>,
+    /// Registry 221.1 #1488: module-level values by name, the module of each
+    /// file, and the recursion bound of `const A = B` (`const_names.rs`).
+    module_values: HashMap<String, Vec<const_names::ModuleValue<'a>>>,
+    module_value_files: HashMap<crate::diag::FileId, &'a [String]>,
+    module_value_depth: std::cell::Cell<u32>,
+    /// Registry 221.1 #1480: view-lane sites recorded at a position whose type is
+    /// NOT `ro O` -- owned unless a read-only-by-mode position (a `ro` parameter,
+    /// a `ro` binding) judges them; see `coerce_door::CoerceOwnedCandidate`.
+    coerce_owned_candidates:
+        std::cell::RefCell<HashMap<crate::ast::ExprId, coerce_door::CoerceOwnedCandidate>>,
+    /// Registry 221.1 #1480: sites judged by a position that knows its own mode.
+    coerce_judged: std::cell::RefCell<HashSet<crate::ast::ExprId>>,
     /// Plan 221.1 №286 residual gap (window p286, 2026-08-04): a BARE
     /// `Channel.new(cap)` (no turbofish, no `ChanWriter[T]`/`ChanReader[T]`
     /// annotation) left `T` permanently untracked (window p-chan, №143/№286
@@ -5047,10 +5066,7 @@ impl<'a> TypeCheckCtx<'a> {
         arity.entry("Result".to_string())
             .or_insert(ArityInfo { count: 2, decl_span: None });
         // Примитивы — арность 0 (`int[X]` / `bool[T]` — ошибка).
-        for prim in [
-            "int", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
-            "uint", "f32", "f64", "str", "bool", "char",
-        ] {
+        for prim in PRIMITIVE_TYPE_NAMES.iter().copied() {
             arity.entry(prim.to_string())
                 .or_insert(ArityInfo { count: 0, decl_span: None });
         }
@@ -5532,6 +5548,11 @@ impl<'a> TypeCheckCtx<'a> {
             sum_wrap_kinds_buf: std::cell::RefCell::new(HashMap::new()),
             coerce_sites_buf: std::cell::RefCell::new(HashMap::new()),
             coerce_probe_depth: std::cell::Cell::new(0),
+            module_values: const_names::collect_module_values(module),
+            module_value_files: module.peer_files.iter().map(|p| (p.file_id, p.module_name.as_slice())).collect(),
+            module_value_depth: std::cell::Cell::new(0),
+            coerce_owned_candidates: std::cell::RefCell::new(HashMap::new()),
+            coerce_judged: std::cell::RefCell::new(HashSet::new()),
             // Plan 221.1 №286 residual gap (window p286): empty first-send
             // T-inference hint channel; filled per-block during the check walk.
             channel_bare_send_elem_hint: std::cell::RefCell::new(HashMap::new()),
@@ -6193,6 +6214,13 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
+        // #1488: module-level values (`const`, `ro NAME = ...`) are checked FIRST, so a
+        // body reading one finds its value already typed (`const_names.rs`), whatever
+        // the declaration order; and a module-level `ro` is checked at all -- its
+        // annotated position used to reach no `assignable` (no `#coerce` verdict).
+        for item in &module.items {
+            self.f1_check_module_value(item, errors);
+        }
         // Ф.1: assignability — отдельный scope-aware проход по телам
         // (var-типы локальных переменных нужны только здесь).
         for item in &module.items {
@@ -6218,17 +6246,6 @@ impl<'a> TypeCheckCtx<'a> {
                     let gs: GenericScope = HashMap::new();
                     let mut scope: HashMap<String, TypeRef> = HashMap::new();
                     self.f1_block(&t.body, &gs, &mut scope, errors);
-                }
-                Item::Const(cd) => {
-                    let gs: GenericScope = HashMap::new();
-                    let mut scope: HashMap<String, TypeRef> = HashMap::new();
-                    if let Some(ann) = &cd.ty {
-                        // A `const` binding is immutable (ro content-view).
-                        self.f1_check_assign_let(
-                            &cd.value, ann, &cd.name, false, &gs, &scope, errors,
-                        );
-                    }
-                    self.f1_expr(&cd.value, &gs, &mut scope, errors);
                 }
                 _ => {}
             }
@@ -6260,11 +6277,7 @@ impl<'a> TypeCheckCtx<'a> {
                             let mut scope: HashMap<String, TypeRef> = HashMap::new();
                             self.f1_block(&t.body, &gs, &mut scope, &mut peer_errors);
                         }
-                        Item::Const(cd) => {
-                            let gs: GenericScope = HashMap::new();
-                            let mut scope: HashMap<String, TypeRef> = HashMap::new();
-                            self.f1_expr(&cd.value, &gs, &mut scope, &mut peer_errors);
-                        }
+                        Item::Const(_) | Item::Let(_) => self.f1_check_module_value(item, &mut peer_errors),
                         _ => {}
                     }
                 }
@@ -7433,7 +7446,7 @@ impl<'a> TypeCheckCtx<'a> {
                     if fd_generic_names.contains(leaf_name.as_str()) { continue; }
                     if !reported.insert(leaf_name.clone()) { continue; }
                     let is_shadow = self.types_get_here_contains(&leaf_name)
-                        || Self::is_primitive_scalar_type_name(&leaf_name);
+                        || Self::is_primitive_type_name(&leaf_name);
                     if is_shadow {
                         errors.push(Diagnostic::new(
                             format!(
@@ -7489,6 +7502,14 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
+        // #971 (D355 §1): type variables a bound introduces (`T` in
+        // `fn[I Next[T]]`, `E` in a carrier bound `Cleanup[E]`) are in scope
+        // for the annotation check. Added after the receiver-typevar checks
+        // above so they cannot mask `E_UNDECLARED_TYPEVAR_IN_RECEIVER`.
+        self.add_bound_introduced_vars(&fd.generics, &mut gs);
+        if let Some(r) = &fd.receiver {
+            self.add_bound_introduced_vars(&r.carrier_bounds, &mut gs);
+        }
         // Bounds и defaults generic-параметров.
         for g in &fd.generics {
             for b in &g.bounds {
@@ -7511,7 +7532,7 @@ impl<'a> TypeCheckCtx<'a> {
             self.walk_ref_return(rt, &gs, errors);
         }
         for e in &fd.effects {
-            self.walk_typeref(e, &gs, errors);
+            self.walk_effect_ref(e, &gs, errors);
         }
         for c in &fd.contracts {
             self.walk_expr(&c.expr, &gs, errors);
@@ -7549,6 +7570,7 @@ impl<'a> TypeCheckCtx<'a> {
         for g in &td.generics {
             gs.insert(g.name.clone(), g.clone());
         }
+        self.add_bound_introduced_vars(&td.generics, &mut gs); // #971, D355
         for g in &td.generics {
             for b in &g.bounds {
                 self.walk_typeref(b, &gs, errors);
@@ -7586,6 +7608,7 @@ impl<'a> TypeCheckCtx<'a> {
                     for g in &m.generics {
                         ms.insert(g.name.clone(), g.clone());
                     }
+                    self.add_bound_introduced_vars(&m.generics, &mut ms); // #971, D355
                     for p in &m.params {
                         self.walk_typeref(&p.ty, &ms, errors);
                     }
@@ -7593,7 +7616,7 @@ impl<'a> TypeCheckCtx<'a> {
                         self.walk_ref_return(rt, &ms, errors);
                     }
                     for e in &m.effects {
-                        self.walk_typeref(e, &ms, errors);
+                        self.walk_effect_ref(e, &ms, errors);
                     }
                 }
             }
@@ -7603,6 +7626,7 @@ impl<'a> TypeCheckCtx<'a> {
                     for g in &m.generics {
                         ms.insert(g.name.clone(), g.clone());
                     }
+                    self.add_bound_introduced_vars(&m.generics, &mut ms); // #971, D355
                     for p in &m.params {
                         self.walk_typeref(&p.ty, &ms, errors);
                     }
@@ -7610,7 +7634,7 @@ impl<'a> TypeCheckCtx<'a> {
                         self.walk_ref_return(rt, &ms, errors);
                     }
                     for e in &m.effects {
-                        self.walk_typeref(e, &ms, errors);
+                        self.walk_effect_ref(e, &ms, errors);
                     }
                 }
                 // Plan 101.4: validate embedded protocol type references.
@@ -8035,11 +8059,7 @@ impl<'a> TypeCheckCtx<'a> {
     /// are NOT present in `self.types` (mirrors the size walk's primitive table).
     #[inline]
     fn is_primitive_type_name(name: &str) -> bool {
-        matches!(
-            name,
-            "int" | "i64" | "u64" | "f64" | "i32" | "u32" | "f32" | "i16" | "u16"
-                | "i8" | "u8" | "uint" | "bool" | "char" | "str"
-        )
+        PRIMITIVE_TYPE_NAMES.contains(&name)
     }
 
     /// Plan 172.14 F.2 atom A2 -- would this sum's layout recurse without bound
@@ -8449,8 +8469,15 @@ impl<'a> TypeCheckCtx<'a> {
                 if arity_exempt(name) {
                     return;
                 }
-                // Неизвестное имя — не наша забота (name-resolution).
-                let Some(info) = self.arity.get(name) else { return; };
+                // #971: an unknown name is no longer "not our business" -- it
+                // used to return here and switch off every check in its
+                // position (`unknown_type_name.rs`).
+                let Some(info) = self.arity.get(name) else {
+                    if !self.annotation_type_name_visible(name, gs) {
+                        errors.push(Self::unknown_annotation_type_diag(name, *span));
+                    }
+                    return;
+                };
                 let actual = generics.len();
                 // `actual == 0` — type-аргументы опущены и выводятся из
                 // контекста (`fn f() -> Result { Ok(1) }`, `let x Option`).
@@ -8473,7 +8500,7 @@ impl<'a> TypeCheckCtx<'a> {
                     self.walk_typeref(p, gs, errors);
                 }
                 for e in effects {
-                    self.walk_typeref(e, gs, errors);
+                    self.walk_effect_ref(e, gs, errors);
                 }
                 if let Some(rt) = return_type {
                     self.walk_typeref(rt, gs, errors);
@@ -8488,7 +8515,7 @@ impl<'a> TypeCheckCtx<'a> {
                         self.walk_typeref(&p.ty, gs, errors);
                     }
                     for e in &m.effects {
-                        self.walk_typeref(e, gs, errors);
+                        self.walk_effect_ref(e, gs, errors);
                     }
                     if let Some(rt) = &m.return_type {
                         self.walk_typeref(rt, gs, errors);
@@ -8650,20 +8677,11 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
-    /// Plan 221.1 №88 (iv): primitive scalar type names — same set used
-    /// elsewhere for the "is this a bound-method unbound-receiver type name"
-    /// heuristic (`f3_check_member_ctx`'s `is_type_name` check). A receiver
-    /// carrier slot named `int`/`str`/… is ALSO a shadow (the doctrine bans
-    /// primitives too, not just user types — `self.types` never carries
-    /// primitives, so they need this separate check).
-    fn is_primitive_scalar_type_name(name: &str) -> bool {
-        matches!(
-            name,
-            "int" | "i8" | "i16" | "i32" | "i64"
-                | "u8" | "u16" | "u32" | "u64"
-                | "f32" | "f64" | "bool" | "char" | "str"
-        )
-    }
+    // Plan 221.1 №88 (iv): a receiver carrier slot named `int`/`str`/… is ALSO
+    // a shadow (the doctrine bans primitives too, not just user types —
+    // `self.types` never carries primitives). Its own 14-name list (no `uint`)
+    // was folded into `PRIMITIVE_TYPE_NAMES` by #971; `uint` is a primitive and
+    // shadows like the rest.
 
     // --- Ф.2: walk тел (turbofish / as / is / let-аннотации) ------------
 
@@ -9213,7 +9231,7 @@ impl<'a> TypeCheckCtx<'a> {
             self.walk_typeref(&p.ty, gs, errors);
         }
         for e in &sb.effects {
-            self.walk_typeref(e, gs, errors);
+            self.walk_effect_ref(e, gs, errors);
         }
         if let Some(rt) = &sb.return_type {
             self.walk_typeref(rt, gs, errors);
@@ -12847,12 +12865,23 @@ impl<'a> TypeCheckCtx<'a> {
                                                     self.resolved_callees
                                                         .borrow_mut()
                                                         .insert(e.id, single.span);
-                                                    self.materialize_coerce(
-                                                        right,
-                                                        &single.params[0].ty,
-                                                        gs,
-                                                        scope,
-                                                    );
+                                                    if self
+                                                        .materialize_coerce(
+                                                            right,
+                                                            &single.params[0].ty,
+                                                            gs,
+                                                            scope,
+                                                        )
+                                                        .is_some()
+                                                    {
+                                                        // #1480: an operator's operand is its parameter.
+                                                        self.check_coerce_view_into_mut(
+                                                            right,
+                                                            coerce_door::param_is_writable(&single.params[0]),
+                                                            &coerce_door::param_position(&single.params[0]),
+                                                            errors,
+                                                        );
+                                                    }
                                                 }
                                             }
                                         }
@@ -22583,6 +22612,7 @@ impl<'a> TypeCheckCtx<'a> {
                         // (D429), и этот путь обязан остаться для него живым.
                         let newtype_refused = matches!(target, WrapTarget::Newtype(_))
                             && !is_untyped_const_expr(expr)
+                            && !self.is_untyped_module_value(expr)
                             && !d55_newtype_strict_disabled();
                         if !newtype_refused {
                             // #1260: the rewrite pass materializes this wrap from
@@ -22612,7 +22642,7 @@ impl<'a> TypeCheckCtx<'a> {
             if let Some(verdict) = self.coerce_verdict(expr, expected, scope) {
                 return match verdict {
                     Ok(site) => {
-                        self.note_coerce_site(expr, site);
+                        self.note_coerce_site(expr, expected, site);
                         Compat::Ok
                     }
                     Err(msg) => Compat::CoerceConflict { msg },
@@ -24083,6 +24113,10 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                     }
                 }
+                // #1488: a module-level `const`/`ro` read by name (`const_names.rs`).
+                if let Some(tr) = self.module_value_ident_type(name, expr.span) {
+                    return Some(tr);
+                }
                 // [Plan 228 Ф.2(a) producer, реестр 221.1 №94-v2] Bare reference
                 // to a free fn BY NAME, not a call (`ro m Mid = identity_mw`) —
                 // the sixth legacy arm this plan targets (`fn_returns_fn_sig`'s
@@ -24490,6 +24524,12 @@ impl<'a> TypeCheckCtx<'a> {
                 // (prelude's `fn[T] T @to_str() -> str`) — honest miss, not a bug (this
                 // IS №82's answer: bonus mechanism does NOT close it, confirmed
                 // structurally, matching the mvinfer fixtures' own doc comment).
+                // #1488: `Type.K` / `m.K` as a member (`const_names.rs`).
+                if let ExprKind::Ident(q) = &obj.kind {
+                    if let Some(tr) = self.qualified_value_type(q, name, scope) {
+                        return Some(tr);
+                    }
+                }
                 if let Some(method_bare) = name.strip_prefix('@') {
                     if let ExprKind::Ident(tn) = &obj.kind {
                         if !scope.contains_key(tn)
@@ -25483,6 +25523,8 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::Block(b) => b.stmts.iter().rev().find_map(|s| {
                 if let Stmt::Expr(e) = s { self.infer_expr_type(e, scope) } else { None }
             }),
+            // #1488: `Type.K` / `m.K` / `CR.field` folded into a path (`const_names.rs`).
+            ExprKind::Path(parts) if parts.len() >= 2 => self.value_path_type(parts, expr.span, scope),
             _ => None,
         }
     }
@@ -26961,8 +27003,13 @@ impl<'a> TypeCheckCtx<'a> {
             // const (types/consts are disjoint Nova DECL namespaces) — a real
             // static/type-namespace Path (`Monotonic.now()`, `Channel.new()`) never
             // collides with a name present in `const_types`.
+            // #1489: any module value is such a receiver -- unannotated, a module
+            // `ro`, an imported one (`const_names.rs`); `const_types` (annotated
+            // consts, CU-wide) stays the fallback for a name the door finds ambiguous.
             ExprKind::Path(parts) if parts.len() == 2 => {
-                let rt = self.const_types.get(parts[0].as_str())?.clone();
+                let rt = self
+                    .module_value_receiver_type(&parts[0], func.span, scope)
+                    .or_else(|| self.const_types.get(parts[0].as_str()).cloned())?;
                 (rt, &parts[1], None)
             }
             // [M-assoc-const-chained-method-call-p67] (окно №73): `Type.CONST.method()`
@@ -30335,17 +30382,11 @@ fn check_generic_bound_declarations(
     // Well-known stdlib alias names (D237: renamed + new protocols).
     // D237: Hashable→Hash, Equatable→Equal, Comparable→Compare, Cloneable→Clone,
     //       Printable→Display, DebugPrintable→Debug.
-    let stdlib_aliases: &[&str] = &[
-        "Ord", "Eq", "ToStr", "TryFrom", "TryInto",
-        "Hash", "Display", "Equal", "Compare", "Clone", "Debug",
-        "Iterable", "From", "Into",
-    ];
-    // Primitive-имена (Q-representation-bound future):
-    let primitives: &[&str] = &[
-        "int", "i8", "i16", "i32", "i64",
-        "u8", "u16", "u32", "u64", "uint",
-        "f32", "f64", "bool", "char", "str", "any", "never",
-    ];
+    // #971: both lists are module-level now (`unknown_type_name.rs`), read by
+    // the annotation check too. `any`/`never` are not primitives (they are the
+    // top/bottom types, `arity_exempt`) -- as bound names they stay legal here,
+    // named explicitly instead of hiding in a list called "primitives".
+    let stdlib_aliases: &[&str] = STDLIB_PROTOCOL_ALIASES;
     // Plan 172.3 (D310), amended by Plan p424: validate type-set DECLARATIONS —
     // members must be concrete types (not protocol/effect), OR another
     // type-set (nested — legalized by the D310 amendment: expanded on
@@ -30418,7 +30459,9 @@ fn check_generic_bound_declarations(
         // Если у имени префикс (`std.collections.Iter`), берём последний.
         // Allowed: protocol, alias, primitive.
         if stdlib_aliases.contains(&name.as_str()) { return; }
-        if primitives.contains(&name.as_str()) { return; }
+        if PRIMITIVE_TYPE_NAMES.contains(&name.as_str()) || matches!(name.as_str(), "any" | "never") {
+            return;
+        }
         match type_kinds.get(name) {
             Some(&"protocol") => { /* OK */ }
             // Plan 172.3 (D310): type-set is a valid generic bound (D72 amended).

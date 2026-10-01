@@ -1,0 +1,48 @@
+// EXPECT_STDOUT locals 63
+// EXPECT_STDOUT record 21
+// EXPECT_STDOUT params 15
+// EXPECT_STDOUT match 7
+//
+// D487 positive twin of the d487_reserved_*_neg fixtures: the rule closes
+// exactly four namespaces (`_nv_`, `_nova_`, `_at_`, `__`) and nothing
+// around them. Every name below is one letter away from a reserved one, or
+// is a name the C side owns and the door `c_ident` (codegen/emit_c/c_name.rs)
+// escapes to `nv_` + name: a leading `_` (D461: lawful to declare, never
+// read), `nv_`, `nova_`, `at_`, a `__` INSIDE the name, the ALL-CAPS `NOVA`,
+// the C keyword `long`, the Windows macro `near`, the runtime type
+// `nova_int`. All of them still declare, compile and print.
+module standalone.d487_reserved_ok
+
+type NOVA {
+    nv_x int
+    nova_y int
+    at_z int
+    long int
+    near int
+    x__y int
+}
+
+fn params(nv_a int, nova_b int, at_c int, long int, near int, _unused int) -> int =>
+    nv_a + nova_b + at_c + long + near
+
+fn pick(o Option[int]) -> int => match o {
+    Some(nv_v) => nv_v + 1
+    None => 0
+}
+
+fn main() Io -> () {
+    ro nv_x = 1
+    ro nova_x = 2
+    ro at_x = 3
+    ro x__y = 4
+    ro long = 5
+    ro near = 6
+    ro nova_int = 21
+    ro _unused = 99
+    ro (nv_p, _) = (21, 0)
+    println("locals ${nv_x + nova_x + at_x + x__y + long + near + nova_int + nv_p}")
+    ro r = NOVA { nv_x: 1, nova_y: 2, at_z: 3, long: 4, near: 5, x__y: 6 }
+    println("record ${r.nv_x + r.nova_y + r.at_z + r.long + r.near + r.x__y}")
+    println("params ${params(1, 2, 3, 4, 5, 0)}")
+    println("match ${pick(Some(6))}")
+}

@@ -27,10 +27,14 @@ fn D55BytesSink mut @absorb(bytes []u8) -> () {
 fn d55_bytes_free_len(bytes []u8) -> int => bytes.len()
 
 // ─── position 3: return ───
+// Registry 221.1 #1480 (D55 amendment 2026-10-01, owner's decision, option (a)): these two
+// returns were typed `-> []u8`. That is an OWNED position -- `mut b = d55_bytes_ret_bytes();
+// b[0] = ...` wrote into `.rodata` (SIGSEGV) -- and is now `neg/p1480_str_bytes_owned_return_neg.nv`.
+// The view is legal at `-> ro []u8`, which is what the cell asserts now.
 
-fn d55_bytes_ret_bytes() -> []u8 => "ret!"
+fn d55_bytes_ret_bytes() -> ro []u8 => "ret!"
 
-fn d55_bytes_ret_bytes_stmt() -> []u8 {
+fn d55_bytes_ret_bytes_stmt() -> ro []u8 {
     if true {
         return "early"
     }
@@ -82,7 +86,9 @@ test "D55 position 3: return-position []u8 (arrow-body + explicit return stmt) �
 }
 
 test "D55 position 4: [][]u8 array-literal element — str-литерал элементы coerce" {
-    ro parts [][]u8 = ["ab", "cd", "e"]
+    // #1480: was `[][]u8` -- an owned element type (`neg/p1480_str_bytes_owned_elem_neg.nv`);
+    // the view is legal as an element of `[]ro []u8`.
+    ro parts []ro []u8 = ["ab", "cd", "e"]
     assert(parts.len() == 3)
     assert(parts[0].len() == 2)
     assert(parts[1].len() == 2)

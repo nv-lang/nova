@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR E_RESERVED_NAME
+//
+// D487 (owner decision 2026-10-01): a parameter of a handler-literal operation may not be declared in the
+// compiler's namespace `_nv_` -- the code generator writes its own names
+// there in the generated C, and `c_ident` (codegen/emit_c/c_name.rs) lets
+// that namespace through unescaped, so a program name there could meet one
+// of them (registry 221.1 #1440, question 1). One kind of declaration per
+// file: the parser stops at the first refusal.
+module neg.d487_reserved_handler_param_neg
+
+type D487Ask effect {
+    fn ask(n int) -> int
+}
+fn run() -> int => with D487Ask = effect D487Ask {
+    // nova:expect E_RESERVED_NAME -- a parameter of a handler-literal operation in the reserved namespace `_nv_` (D487)
+    ask(_nv_n int) -> int => 1
+} {
+    D487Ask.ask(2)
+}

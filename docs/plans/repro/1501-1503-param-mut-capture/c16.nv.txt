@@ -1,0 +1,23 @@
+module grid.c16
+
+type Big value {
+    ro a str
+    ro b str
+}
+type Sm value {
+    ro x int
+}
+type Rr {
+    mut x int
+}
+fn mk() -> Big => { a: "x", b: "y" }
+fn apply(f fn() -> str) -> str => f()
+fn apply_b(f fn(Big) -> str) -> str => f(mk())
+
+fn main() Io {
+    mut s = ""
+    for cq in [mk(), mk()] {
+        s = "${s}${cq.a}"
+    }
+    println("c16 ${s}")
+}

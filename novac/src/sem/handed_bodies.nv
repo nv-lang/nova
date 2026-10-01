@@ -8,14 +8,16 @@
 //   `collect`) and its `FnDecl` node there. A generic of std over a type of
 //   novac's own (`Vec[TyRow] @index`) is instantiated from this body when the
 //   shell carries no instance -- the shell cannot know novac's types.
-// Used by: harvest.nv (`harvest_in` notes each handed row it reads), and the
-//   pipeline's instance builder when an instance of a handed row is needed.
+// Used by: harvest.nv (`harvest_in` notes each handed row it reads); the
+//   checker, mono and the emitter through `Ctx @instantiates` / `@body_ours`
+//   (whose body an instance is); the pipeline's instance builder.
 // Guarded by: nova test novac/src/pipeline/handed_free_test.nv (the handed body
 //   tests) and check-novac-ctx-tables.py (the Ctx table, plan 274 s10.3b).
 
 module novac.sem
 
 import ../tree.{Node}
+import ../types.{TyId}
 
 /// The bodies of the handed callables, by row.
 export type HandedBodies {
@@ -51,3 +53,28 @@ export fn HandedBodies @tree_of(row FnRow) -> int {
     ro s = @slot[raw_row(row)]
     if s < 0 { -1 } else { @trees[s] }
 }
+
+/// Does THIS unit instantiate `row` under `args` from the body it was handed
+/// (274.11 E.10 step 4c)? A generic callable of another module -- std's
+/// `Vec[T] @len` -- with a handed body, under type arguments the shell carries
+/// no instance for: `Vec[Pt]` over a type of the program, which the probe the
+/// shell is built from cannot know. Where the shell DOES carry the instance
+/// (`Vec____nova_int_method_len`), the answer is no and the shell's is called:
+/// one body per instance in the linked program.
+///
+/// A FREE generic callable of another module answers no here: its shell
+/// spelling is not the method door's, and none is instantiated yet (its
+/// refusal names it, check/calls.nv).
+export fn Ctx @instantiates(row FnRow, args []TyId) -> bool {
+    if @fns.compiles_body(row) { return false }
+    if @handed.decl_of(row).is_none() { return false }
+    ro fd = @fns.rows[raw_row(row)]
+    if !fd.has_recv || fd.param_cnt == 0 || args.len() != fd.tparam_cnt { return false }
+    ro recv_t = subst_type(@, @fns.params[fd.param_off].type_id, args)
+    !@interop.has(c_method_symbol(@, recv_t, fd.name))
+}
+
+/// Is the body of this call's callee compiled into this program -- the file's
+/// own, a handed row of a program module, or an instance this unit makes from
+/// a handed body? The door that decides whose NAME a call prints.
+export fn Ctx @body_ours(row FnRow, args []TyId) -> bool => @in_program(row) || @instantiates(row, args)

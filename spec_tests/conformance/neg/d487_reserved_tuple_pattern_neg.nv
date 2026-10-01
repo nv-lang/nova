@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_RESERVED_NAME
+//
+// D487 (owner decision 2026-10-01): a name of a destructuring binding may not be declared in the
+// compiler's namespace `_at_` -- the code generator writes its own names
+// there in the generated C, and `c_ident` (codegen/emit_c/c_name.rs) lets
+// that namespace through unescaped, so a program name there could meet one
+// of them (registry 221.1 #1440, question 1). One kind of declaration per
+// file: the parser stops at the first refusal.
+module neg.d487_reserved_tuple_pattern_neg
+
+fn pair() -> int {
+    // nova:expect E_RESERVED_NAME -- a name of a destructuring binding in the reserved namespace `_at_` (D487)
+    ro (_at_a, b) = (1, 2)
+    b
+}
