@@ -12,12 +12,12 @@
 
 | точка | до (os_env.h с main) | после |
 |---|---|---|
-| argv (u1) | `c5e2e3` | `d095d0b2d0b3` |
-| env get (u1) | `c5e2e3` | `d095d0b2d0b3` |
+| argv (u1) | `c5 e2 e3` | `d0 95 d0 b2 d0 b3` |
+| env get (u1) | `c5 e2 e3` | `d0 95 d0 b2 d0 b3` |
 | env set→get (u3) | верно (круг в одной кодировке) | верно |
-| vars() (u3) | `c5e2e3` | `d095d0b2d0b3` |
+| vars() (u3) | `c5 e2 e3` | `d0 95 d0 b2 d0 b3` |
 | cwd из кириллического каталога (u3) | `efbfbd…` (U+FFFD) | UTF-8 пути |
 | temp_dir / home_dir (u3) | `efbfbd…` | UTF-8 пути |
-| hostname (u3, `COMPUTERNAME=ХОСТ`) | `d5ced1d2` (cp1251) | `d0a5d09ed0a1d0a2` |
+| hostname (u3, `COMPUTERNAME=ХОСТ`) | `d5 ce d1 d2` (cp1251) | `d0 a5 d0 9e d0 a1 d0 a2` |
 
 Имена файлов (std.fs) идут через libuv и были верны и до (u2 пробы nova-63).
