@@ -1,0 +1,37 @@
+// EXPECT_STDOUT p1100 result=9 no cleanup
+//
+// Registry 221.1 #1100, D432 §4 point 3 for a METHOD argument, the other half:
+// `h.take(g)` resolves to the `consume` overload; the caller's flag must be
+// disarmed (a cleanup in the caller would panic).
+
+module standalone.p1100_method_two_overloads_consume_called
+
+type Boom consume { id int }
+
+fn Boom consume @cleanup(_o ScopeOutcome) -> () {
+    panic("p1100 cleanup fired")
+}
+
+fn Boom consume @defuse() -> () { }
+
+fn mk(v int) -> Boom => { id: v }
+
+type Holder { n int }
+
+fn Holder @take(consume x Boom) -> int {
+    x.defuse()
+    9
+}
+
+fn Holder @take(x Boom, tag int) -> int => tag + @n
+
+fn run() -> int {
+    ro h = Holder { n: 0 }
+    consume g = mk(7)
+    h.take(g)
+}
+
+fn main() Io -> () {
+    ro r = run()
+    println("p1100 result=${r} no cleanup")
+}
