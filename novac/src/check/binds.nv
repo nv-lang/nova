@@ -622,7 +622,7 @@ fn Checker mut @type_array_lit(init Node) -> TyId {
     if Some(hn) = literal_head_name(kids) {
         elem_t = @ctx.ty_of_name(hn) ?? no_ty()
         if !is_ty(elem_t) {
-            @report_first_leaf_of(kids, "outside the subset: novac does not know this element type yet (274.5 P3)")
+            @report_first_leaf_of(kids, UNKNOWN_ELEM_MSG)
             return no_ty()
         } else {
             // A known element type: every element must be of it.
@@ -648,7 +648,7 @@ fn Checker mut @type_array_lit(init Node) -> TyId {
     }
     ro lit_t = slice_term_of(elem_t, @ctx.types, @ctx.defs, @ctx.tys)
     if !is_ty(lit_t) {
-        @report_first_leaf_of(kids, "outside the subset: the slice head `${SLICE_HEAD}` is not among the declarations novac was handed (274.5 P5)")
+        @report_first_leaf_of(kids, no_slice_head_msg())
         return no_ty()
     } else {
         // The term exists; whether the SHELL can build it is the last question.
@@ -659,13 +659,26 @@ fn Checker mut @type_array_lit(init Node) -> TyId {
     ro ctor = c_instance_ctor(@ctx, lit_t)
     ro push = c_instance_method(@ctx, lit_t, LITERAL_PUSH)
     if !@ctx.interop.has(ctor) || !@ctx.interop.has(push) {
-        @report_first_leaf_of(kids, "outside the subset: the shell novac links into carries no `${SLICE_HEAD}` instance for ${ty_source_name(@ctx, elem_t)} -- the interop surface is the probe program (novac/probe/shell_probe.nv); a literal of this element type arrives when the probe uses one, or with the prelude")
+        @report_first_leaf_of(kids, no_shell_vec_msg(ty_source_name(@ctx, elem_t)))
         return no_ty()
     } else {
         // Carried: the emitter prints exactly these two names.
     }
     lit_t
 }
+
+/// An element type novac does not know -- the array literal and the empty
+/// vector refuse it alike, by one text.
+const UNKNOWN_ELEM_MSG = "outside the subset: novac does not know this element type yet (274.5 P3)"
+
+/// The slice head `[]` is missing from the declarations novac was handed.
+fn no_slice_head_msg() -> str =>
+    "outside the subset: the slice head `${SLICE_HEAD}` is not among the declarations novac was handed (274.5 P5)"
+
+/// The shell carries no vector instance for element type `ty` -- the array
+/// literal and the empty vector alike (one text, one refusal).
+fn no_shell_vec_msg(ty str) -> str =>
+    "outside the subset: the shell novac links into carries no `${SLICE_HEAD}` instance for ${ty} -- the interop surface is the probe program (novac/probe/shell_probe.nv, E2-b); a vector of this element type arrives when the probe uses one, or with the prelude"
 
 /// The type of `[]T.new()`, the EMPTY vector constructor, or `no_ty()` after a
 /// NAMED refusal (registry 221.1 #1457).
@@ -698,20 +711,20 @@ fn Checker mut @type_empty_vec(kids []Node, elems []Node) -> TyId {
         // No written element name: refused just below.
     }
     if !is_ty(elem_t) {
-        @report_first_leaf_of(kids, "outside the subset: novac does not know this element type yet (274.5 P3)")
+        @report_first_leaf_of(kids, UNKNOWN_ELEM_MSG)
         return no_ty()
     } else {
         // A known element type.
     }
     ro vec_t = slice_term_of(elem_t, @ctx.types, @ctx.defs, @ctx.tys)
     if !is_ty(vec_t) {
-        @report_first_leaf_of(kids, "outside the subset: the slice head `${SLICE_HEAD}` is not among the declarations novac was handed (274.5 P5)")
+        @report_first_leaf_of(kids, no_slice_head_msg())
         return no_ty()
     } else {
         // The term exists; the shell decides whether it can be built.
     }
     if !@ctx.interop.has(c_instance_ctor(@ctx, vec_t)) {
-        @report_first_leaf_of(kids, "outside the subset: the shell novac links into carries no `${SLICE_HEAD}` instance for ${ty_source_name(@ctx, elem_t)} -- the interop surface is the probe program (novac/probe/shell_probe.nv, E2-b); a vector of this element type arrives when the probe uses one, or with the prelude")
+        @report_first_leaf_of(kids, no_shell_vec_msg(ty_source_name(@ctx, elem_t)))
         return no_ty()
     } else {
         // Carried: the emitter prints exactly this name.
