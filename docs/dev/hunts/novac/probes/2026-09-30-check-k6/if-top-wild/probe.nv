@@ -1,8 +1,0 @@
-// D486 s4 / s7: `_` in an if-condition is forbidden for good ("meaningless",
-// owner's decision; s7 "remain forbidden"). Which kind of refusal?
-fn main() {
-    ro o = Some(3)
-    if _ = o {
-        println(1)
-    }
-}

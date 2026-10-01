@@ -1,0 +1,13 @@
+module match_str_lit.neg_1
+
+// A CHAR literal in an arm over a `str` value: a literal compares with a value
+// of its own type (D128 keeps `char` apart; the spec's pattern table compares
+// "by value"). The oracle has no check here -- it prints `scr == 97LL` on a
+// `nova_str` and clang refuses the C; novac names the mistake in Nova terms.
+
+// NOVAC_EXPECT a literal pattern compares with a value of its own type
+
+fn kind(s str) -> int => match s {
+    'a' => 1
+    _ => 0
+}

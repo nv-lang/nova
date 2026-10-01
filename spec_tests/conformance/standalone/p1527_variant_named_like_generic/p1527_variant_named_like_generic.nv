@@ -1,0 +1,22 @@
+// EXPECT_STDOUT 7 b x
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for registry 221.1 #1527 (found by nova-63 in claude-limits, T2.15): a
+// generic type `Query[T]` and a VARIANT `Query(str)` of an unrelated sum in one CU.
+// The receiver `Query[int]` of the static call `Query[int].from_request(r, 7)` was
+// typed as the bare EXPRESSION `Query` -- the variant's sum `DuckError` -- so the
+// by-ref ABI key of the method was `(DuckError, from_request)`, nothing matched,
+// and the large value argument went by value where the callee takes a pointer:
+// clang "passing 'NovaValue_Req' to parameter of incompatible type
+// 'NovaValue_Req *'". The base of a turbofish in receiver position is a TYPE
+// (`codegen/emit_c/type_by_role.rs`). Carrier: claude-limits
+// probes/variant-named-like-generic (polaris `Query[T]` + duckdb `DuckError`).
+module standalone.p1527_variant_named_like_generic
+
+import ./p1527_extract.{Req, Query}
+import ./p1527_errs.{DuckError, describe}
+
+fn main() Io -> () {
+    ro r = Req { a: "a", b: "b", c: "c", d: "d", e: 1, f: 2, g: 3, h: 4 }
+    ro q = Query[int].from_request(r, 7)
+    println("${q.data()} ${r.b} ${describe(DuckError.Query("x"))}")
+}

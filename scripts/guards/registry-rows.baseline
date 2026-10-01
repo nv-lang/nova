@@ -1459,8 +1459,6 @@
 # 2026-10-01, integrator nova-20: rows -> 1442, max -> 1493 (merge of hunt/novac-1001 (novac x sem x K1 over wave E.10): #1490-#1493; 1488 and 1489 issued (agent, assistant), leave gaps).
 # 2026-10-01, integrator nova-20: rows -> 1443, max -> 1493 (merge of p1489 (assistant): #1489 lands (old, not a regression), out of gaps).
 # 2026-10-01, integrator nova-20: rows -> 1447, max -> 1499 (merge of p1488 (agent): #1488 lands (out of gaps); #1495/#1496 from the cloud reports #1458/#1457 and #1499 (qualified module constant in C) filed; 1494, 1497, 1498 issued, in gaps).
-# 2026-10-01, Carina window: rows -> 1448, max -> 1500 (#1500: a method call statement with a constructor argument
-#   iced in emission -- fixed in the same commit; number given by integrator nova-20).
 # 2026-10-01, background agent of the integrator (p1498-c-ident-bypass): rows -> 1448, max -> 1499 (#1498 (K2, regression of #1440: a local/param name written into C past the door c_ident) lands, out of gaps; number given by the integrator).
 # 2026-10-01, integrator nova-20: rows -> 1452, max -> 1504 (merge of p1498 (agent): #1498 lands; #1501-#1504 filed from its grid (#1502/#1503 K1 silent wrong value -- block the oracle tag); 1500 issued to Carina, in gaps).
 # 2026-10-01, integrator nova-20: rows -> 1453, max -> 1504 (merge of p1494 (assistant): #1494 lands (out of gaps), #1489 fixed in the branch).
@@ -1468,22 +1466,60 @@
 # 2026-10-01, integrator nova-20: rows -> 1456, max -> 1507 (merge of the cloud session's p971: #971 fixed; #1507 (an unknown effect name in an effect row passes) numbered here).
 # 2026-10-01, integrator nova-20: rows -> 1461, max -> 1512 (merge of the cloud session's patterns-ab: #1508 (Carina, record variant and | binders), #1509 (Carina, match tail type), #1510/#1511 (oracle K1: | binders by position, record-variant patterns unjudged), #1512 (Carina, handed sum payload) numbered here).
 # 2026-10-01, integrator nova-20: rows -> 1463, max -> 1516 (merge of p1497 (agent): #1032 fixed in the branch; 1497 stays a gap (the defect was the old #1032, not a regression); #1515 (oracle: nested | does not parse) and #1516 (nova_tests e2402) filed; 1513-1514 issued to Carina).
-# 2026-10-01, Carina window, merge of main e448f0193: rows -> 1466, max -> 1516 (#1500 lands
-#   with this branch, out of gaps; #1513 (a field typed by a declaration below its record
-#   was dropped -- fixed) and #1514 (a composite newtype/alias representation read as its
-#   first name -- refused loud, the form open) land, out of gaps; numbers from nova-20).
-# 2026-10-01, cloud session p274-carina-cloud: rows -> 1467, max -> 1518 (#1518: a constant of another
-#   module was never registered -- "unknown name"; fixed in the branch; number given by the integrator).
-#   1517 is not in the registry and was in no gaps= line: added to gaps.
-# 2026-10-01, cloud session p274-carina-cloud: rows -> 1468, max -> 1519 (#1519: D84's linearity axis
-#   was missing from overload resolution -- `[T]` beside `[T consume]` was an ambiguity; fixed in the
-#   branch; number given by the integrator).
-rows=1468
-max=1519
-rows=1467
-max=1518
-rows=1466
-max=1516
+# 2026-10-01, integrator nova-20: rows -> 1469, max -> 1525 (2026-10-01 integrator: merge hunt/novac-mono-1001 -- 6 TBD rows numbered 1520-1525; 1517 (cloud option_ctor) and 1518-1519 (cloud p274-carina-cloud) reserved, in gaps until those merges).
+# 2026-10-01, integrator nova-20: rows -> 1470, max -> 1525 (2026-10-01 integrator: merge p1517-variant-ctor-check -- row 1517 lands, 1517 leaves gaps).
+# 2026-10-01, integrator nova-20: rows -> 1471, max -> 1526 (2026-10-01 integrator: row 1526 -- reason of the NOVA_SKIP_CI_CHECK push of f0c5dbdd3 (nightly red on the replaced 97ab70f5d)).
+# 2026-10-01, integrator nova-20: rows -> 1472, max -> 1527 (2026-10-01 integrator: row 1527 -- variant of a foreign sum named like a generic type (nova-63, claude-limits probe)).
+# 2026-10-01, integrator nova-20: rows -> 1476, max -> 1531 (2026-10-01 integrator: rows 1528-1531 -- oracle findings of the #1517 cloud session).
+# 2026-10-01, integrator nova-20: rows -> 1481, max -> 1531 (2026-10-01 integrator: merge p274-carina-cloud (Carina e9s4 + ice-expr + 1518/1519) -- rows 1500,1513,1514,1518,1519 land and leave gaps).
+# 2026-10-01, integrator nova-20: rows -> 1483, max -> 1533 (2026-10-01 integrator: rows 1532/1533 -- regressions of #1488 and #1448 found by nova-63, bisected).
+# 2026-10-01, integrator nova-20: rows -> 1485, max -> 1535 (2026-10-01 integrator: rows 1534/1535 -- findings of the cloud strarm session (Carina nested literal K1, oracle pattern literal type)).
+# 2026-10-01, integrator nova-20: rows -> 1486, max -> 1536 (2026-10-01 integrator: row 1536 -- record literal as a lambda body (nova-63)).
+# 2026-10-01, integrator nova-20: rows -> 1487, max -> 1537 (2026-10-01 integrator: row 1537 -- Time.now() without std.time import panics codegen (nova-63)).
+# 2026-10-01, integrator nova-20: rows -> 1491, max -> 1544 (2026-10-01 integrator: rows 1541-1544 -- findings of the cloud appsum session; 1538-1540 promised to the k1 session, filed at its merge).
+# 2026-10-01, integrator nova-20: rows -> 1494, max -> 1544 (2026-10-01 integrator: merge p274-carina-k1 -- rows 1538-1540 land and leave gaps).
+# 2026-10-01, integrator nova-20: rows -> 1495, max -> 1545 (2026-10-01 integrator: row 1545 -- silent zeros for []Outcome elements named like a prelude generic (assistant)).
+# 2026-10-01, integrator nova-20: rows -> 1498, max -> 1548 (2026-10-01 integrator: rows 1546-1548 -- findings of the cloud cast session).
+# 2026-10-01, integrator nova-20: rows -> 1499, max -> 1549 (2026-10-01 integrator: row 1549 -- const referencing a const in a non-entry module (assistant)).
+# 2026-10-01, integrator nova-20: rows -> 1503, max -> 1553 (2026-10-01 integrator: merge hunt/novac-match-1001 -- TBD rows numbered 1550-1553; 1421-1428/1441 folded links).
+# 2026-10-01, integrator nova-20: rows -> 1504, max -> 1554 (2026-10-01 integrator: row 1554 -- oracle accepts return <value> in a -> @ body (hunter observation)).
+# 2026-10-01, integrator nova-20: rows -> 1505, max -> 1555 (2026-10-01 integrator: row 1555 -- regression: bare variant bound to the importer's same-name variant (nova-63)).
+rows=1505
+max=1555
+rows=1504
+max=1554
+rows=1503
+max=1553
+rows=1499
+max=1549
+rows=1498
+max=1548
+rows=1495
+max=1545
+rows=1494
+max=1544
+rows=1491
+max=1544
+rows=1487
+max=1537
+rows=1486
+max=1536
+rows=1485
+max=1535
+rows=1483
+max=1533
+rows=1481
+max=1531
+rows=1476
+max=1531
+rows=1472
+max=1527
+rows=1471
+max=1526
+rows=1470
+max=1525
+rows=1469
+max=1525
 rows=1463
 max=1516
 rows=1461
@@ -2131,7 +2167,7 @@ stale_gaps=0
 # nomer I v gaps=, I so strokoy schitaetsya 'protuhshey dyroy'.
 # 2026-09-21: №1209 ПРИЕХАЛ и СНЯТ из gaps=
 # (писал интегратор, как и планировалось). №1210-1211 всё ещё ждёт Карину.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1517
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding

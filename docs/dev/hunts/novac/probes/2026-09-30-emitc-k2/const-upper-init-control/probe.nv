@@ -1,8 +1,0 @@
-// Control, upper-case: a constant whose initializer reads another constant,
-// read in `main` with NO local of either name in scope.
-const STEP = 1
-const NEXT = STEP + 10
-
-fn main() {
-    println(NEXT)
-}

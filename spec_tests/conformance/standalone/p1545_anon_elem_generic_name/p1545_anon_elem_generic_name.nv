@@ -1,0 +1,24 @@
+// EXPECT_STDOUT a 1|b 2|s 429|d 7
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for registry 221.1 #1545 (found fixing #1533): an anonymous record
+// literal as an ELEMENT of `[]Outcome`, where `Outcome` is a program record named
+// like the prelude's generic SUM `Outcome[T]` (D455), declared outside the entry
+// module. The emitter read a named record literal by its BARE name, matched the
+// generic template and built `Outcome[int]`: main printed " 0| 0" -- silently
+// wrong; the #1533 guard (leave such a literal unnamed) turned it into a codegen
+// refusal. Now the emitter reads the name by the KIND its position admits
+// (`codegen/emit_c/type_by_role.rs`): a record literal builds a record, never a
+// sum -- and the #1533 guard is gone, the literal is named again.
+//
+// Cells: elements of a `[]Outcome`, a static constructor's return (#1533's
+// carrier shape) and a fn body.
+module standalone.p1545_anon_elem_generic_name
+
+import ./p1545_side.{listed, built, direct}
+
+fn main() Io -> () {
+    ro l = listed()
+    ro o = built()
+    ro d = direct()
+    println("${l[0].message} ${l[0].status}|${l[1].message} ${l[1].status}|${o.message} ${o.status}|${d.message} ${d.status}")
+}

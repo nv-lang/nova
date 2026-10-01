@@ -1,0 +1,14 @@
+module p1527_variant_named_like_generic.p1527_extract
+
+// A generic record `Query[T]` with a static method taking a LARGE value record --
+// the shape of polaris' `Query[T].from_request(req ServerRequest)`. A large value
+// argument goes by reference (the by-ref ABI of methods), keyed by the receiver
+// type's name.
+
+export type Req value { ro a str, ro b str, ro c str, ro d str, ro e int, ro f int, ro g int, ro h int }
+
+export type Query[T] value { priv data T }
+
+export fn Query[T] @data() -> T => @data
+
+export fn Query[T].from_request(req Req, v T) -> Query[T] => { data: v }

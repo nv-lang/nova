@@ -1,0 +1,23 @@
+module p1555_bare_variant_own_module.p1555_lib
+
+// The library side of `p1555_bare_variant_own_module.nv`: a sum `Method` whose
+// variants are written BARE inside a `match` that builds an `Ok(..)` -- the shape of
+// nova-http `src/method.nv:39`. The importer declares its own sum with the same
+// variant names; a library's names must not change meaning because of who imports it.
+
+export type Method enum Get | Post | Other(str)
+
+export fn to_method(s str) -> Result[Method, str] {
+    if s == "" { return Err("empty") }
+    Ok(match s {
+        "GET" => Get
+        "POST" => Post
+        _ => Other(s)
+    })
+}
+
+export fn method_name(m Method) -> str => match m {
+    Get => "get"
+    Post => "post"
+    Other(x) => x
+}

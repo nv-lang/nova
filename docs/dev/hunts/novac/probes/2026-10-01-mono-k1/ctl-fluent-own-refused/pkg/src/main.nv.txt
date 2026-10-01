@@ -1,0 +1,13 @@
+type Ctr {
+    n int
+}
+
+fn Ctr mut @reset() -> @ {
+    @n = 0
+}
+
+fn main() {
+    mut c = Ctr { n: 5 }
+    println(c.reset().n)
+    println(c.n)
+}

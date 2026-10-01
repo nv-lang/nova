@@ -1,0 +1,6 @@
+module hp.geo
+
+export fn Vec[T] @bad() -> int {
+    ro n = @len()
+    n + missing
+}

@@ -1,0 +1,4 @@
+fn main() {
+    mut v = [1.5, 2.5]
+    println(v.clear().is_empty())
+}

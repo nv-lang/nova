@@ -1,0 +1,7 @@
+// EXPECT_STDOUT a 1|b 2
+module e.main
+import outcome.{listed}
+fn main() Io -> () {
+    ro l = listed()
+    println("${l[0].message} ${l[0].status}|${l[1].message} ${l[1].status}")
+}

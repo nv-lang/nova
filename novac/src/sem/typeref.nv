@@ -71,10 +71,11 @@ fn flat_type_args(pk []Node, open int, recv_t TyId, tps []str, param_rows []TyId
 ///
 /// TOLERANT like everything at collection: an unreadable shape answers
 /// `no_ty()`, and check names the refusal at the point of use. What it reads
-/// today, exhaustively: a plain identifier; `Self`; `Name[Args]` with IDENT
-/// arguments of exactly the head's arity; `[]Elem` with an ident element.
-/// Nested applications (`Vec[Vec[int]]`) answer `no_ty()` honestly -- the
-/// argument reader takes identifiers only, and a bare head is not a type.
+/// today, exhaustively: a plain identifier; `Self`; `ro T`; `*T`/`*mut T`; a
+/// tuple; `[]Elem`; and `Name[Args]` of exactly the head's arity, where EVERY
+/// argument is read by this same door -- so `Vec[Vec[int]]`, `Option[[]int]`
+/// and `Result[(int, str), E]` are types, and an unreadable argument makes
+/// the whole application `no_ty()` rather than a different type.
 export fn ty_of_type_ref(pk []Node, at int, recv_t TyId, tps []str, param_rows []TyId,
                          types []TypeDef, defs DefTable, mut tys Interner) -> TyId {
     if at >= pk.len() { return no_ty() }
@@ -194,13 +195,24 @@ export fn ty_of_type_ref(pk []Node, at int, recv_t TyId, tps []str, param_rows [
         // Not a flat argument run: the Generics branch or a plain name below.
     }
     // `Name[Args]`: the Generics branch, when written, stands right after the
-    // head -- the parser keeps the pair adjacent.
+    // head -- the parser keeps the pair adjacent, and its children are the
+    // SAME flat run the paren case above reads (`[`, the arguments, `]` as
+    // leaves, type_ref.nv `@generics`), so they are read by the same door.
+    //
+    // Until 2026-10-01 the arguments were read as NAMES (`names_of_generics`,
+    // the declaration door, which keeps the first identifier of each entry):
+    // `Option[[]int]` became `Option[int]` and `Result[[]u8, IoError]` became
+    // `Result[u8, IoError]` -- SILENTLY, a wrong type where the doc above
+    // promises an honest `no_ty()`. It surfaced the day a `match` on a std
+    // `read(...)` was let through: the payload `bytes` was a `u8`, and
+    // `bytes.len()` was refused as "no such method" on novac's own main.nv.
     if at + 1 < pk.len() && pk[at + 1].kind_of() == NodeKind.Generics {
-        mut args = []TyId.new()
-        for nm in names_of_generics(branch_children(pk[at + 1])) {
-            args.push(ty_of_type_name(nm, tps, param_rows, types, defs))
+        ro gargs = flat_type_args(branch_children(pk[at + 1]), 0, recv_t, tps, param_rows, types, defs, tys)
+        for a in gargs {
+            if !is_ty(a) { return no_ty() }
         }
-        return app_term_of(leaf_text(head), args, types, defs, tys)
+        if gargs.len() == 0 { return no_ty() }
+        return app_term_of(leaf_text(head), gargs, types, defs, tys)
     }
     // A plain name: the reading every caller had before the door.
     ref_leaf_ty(head, recv_t, tps, param_rows, types, defs)

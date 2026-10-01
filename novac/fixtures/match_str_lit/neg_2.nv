@@ -1,0 +1,13 @@
+module match_str_lit.neg_2
+
+// A `match` on a `str` with literal arms only: the values of `str` cannot all
+// be listed, so a `_` (or a binder) arm is required -- E_MATCH_NON_EXHAUSTIVE,
+// on BOTH compilers (syntax.ru.md exhaustiveness). Without the rule novac's
+// value would be the uninitialised temporary of an arm chain nobody took.
+
+// NOVAC_EXPECT E_MATCH_NON_EXHAUSTIVE
+
+fn kind(s str) -> int => match s {
+    "fn" => 1
+    "match" => 2
+}

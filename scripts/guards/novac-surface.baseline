@@ -251,7 +251,9 @@
 # 2026-10-01, cloud session (p274-carina-cast, step 2): builtins 61 -> 59: `INT_TYPE_NAME`,
 #   `UINT_TYPE_NAME` removed -- the pair `int as uint` they singled out is open now (the
 #   integrator's word: D54's low bits; the oracle's saturation is registry 1547), so nothing asks.
-builtins 59
+# merge of origin/main 0fed40d0d into p274-carina-cast: the branch's net builtins change is
+#   zero (59 -> 61 -> 59), main's is 59 -> 60 -- the merged base is main's 60.
+builtins 60
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -945,7 +947,7 @@ resolve 19
 #   `is_never_ty` (sem/type_shape.nv) -- is a type the bottom type `never` (D26)? Asked by
 #   check (the tail `if`, the `match` arm, the return): only sem knows the universe row's
 #   family, and a copy of the question in check would be a second door.
-sem 322
+sem 324
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
@@ -1131,3 +1133,12 @@ types 30
 #   `variant_is_record` (запись ли вариант -- `check/match_arms.nv`, отказ позиционному образцу),
 #   `ctor_head_variant` (голова конструктора `Branch {..}` / `Node.Branch {..}` называет вариант --
 #   `check` в четырёх местах и `emit_c/emit_place.nv`).
+# builtins 59 -> 60, sem 322 -> 324 (2026-10-01, облачная сессия p274-carina-appsum, `match` на
+#   применённой сумме): три имени, и каждое спрашивают ВНЕ своего модуля --
+#   sem.is_shell_applied_sum -- ОДИН список применённых сумм, чьи теги пишет оболочка (Option,
+#     Result); спрашивают `check/match_arms.nv` (пропустить ли `match`) и `emit_c/emit_match.nv`
+#     (чьё написание у теста тега). Две копии списка в check и emit_c разошлись бы (класс O-1);
+#   sem.c_shell_tag -- имя константы тега В ПРОСТРАНСТВЕ ОБОЛОЧКИ (`NOVA_TAG_Result_Ok`) рядом с
+#     `c_tag`; спрашивает `emit_c/emit_applied_sum.nv`, а все C-имена живут в двери мэнглинга (П24);
+#   builtins.RESULT_FAMILY_C -- префикс семейства `NovaRes_`, рядом с `OPTION_FAMILY_C`; читает
+#     `sem/mangle_instance.nv`, а имена, которые компилятор обязан знать сам, живут в builtins (П5).

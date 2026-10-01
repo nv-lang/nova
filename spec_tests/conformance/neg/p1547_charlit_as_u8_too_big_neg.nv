@@ -1,0 +1,10 @@
+// EXPECT_COMPILE_ERROR E_LIT_OUT_OF_RANGE
+// Regression for registry 221.1 #1547: D54 `as`, cell `charlit_as_u8_too_big` -- refused by `nova check`,
+// before any C (the table used to live in the emitter, and this cell passed).
+// The positive half: spec_tests/conformance/standalone/p1547_as_d54_legal.nv.
+module neg.p1547_charlit_as_u8_too_big_neg
+
+fn main() Io -> () {
+    // nova:expect E_LIT_OUT_OF_RANGE -- a `char` LITERAL converts to an integer it fits; U+0100 does not fit `u8` (D54 amendment 2026-10-01 p.2)
+    println(('\u{100}' as u8).to_str())
+}

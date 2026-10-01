@@ -1,0 +1,26 @@
+// The escape `\$` (D467 s2: "a literal `$`") in a PATTERN literal against the
+// same text in an EXPRESSION. Both spellings below denote the two bytes `$x`.
+fn k(s str) -> int => match s {
+    "\$x" => 4
+    _ => 0
+}
+
+fn j(s str) -> int => match s {
+    "$x" => 4
+    _ => 0
+}
+
+fn t(s str) -> int => match s {
+    "\${n}" => 7
+    _ => 0
+}
+
+fn main() {
+    println("\$x".byte_len())
+    println(k("\$x"))
+    println(k("$x"))
+    println(j("\$x"))
+    println(j("$x"))
+    println("\${n}".byte_len())
+    println(t("\${n}"))
+}
