@@ -194,7 +194,7 @@ fn Checker mut @type_fn(f Node) -> () {
     @tail_value_body = value_body_of(branch_children(f))
     ro kids = branch_children(f)
     if kids.len() < 2 {
-        @report_first_leaf_of(kids, "outside the subset: a fn declaration needs a name")
+        @report_first_leaf_of(kids, FN_NAME_MSG)
         return
     }
     // A METHOD declaration puts a `Recv` BRANCH where a free function has its
@@ -237,7 +237,7 @@ fn Checker mut @type_fn(f Node) -> () {
     // same answer for an instance.
     ro name = match decl_name_at(kids) {
         None => {
-            @report_first_leaf_of(kids, "outside the subset: a fn declaration needs a name")
+            @report_first_leaf_of(kids, FN_NAME_MSG)
             return
         }
         Some(at) => leaf_text(kids[at])
@@ -878,3 +878,6 @@ fn Checker mut @type_call_stmt(call Node) -> () {
         }
     }
 }
+
+/// A fn declaration with no name -- one refusal, asked at two doors.
+const FN_NAME_MSG = "outside the subset: a fn declaration needs a name"

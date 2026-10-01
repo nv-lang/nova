@@ -141,7 +141,7 @@ fn Checker mut @type_arm_stmt(arm Node, scr_t TyId) -> () {
     ro mark = @scope.mark()
     ro ak = branch_children(arm)
     if ak.len() < 1 {
-        @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern and a value")
+        @report_first_leaf_of(ak, ARM_PATTERN_VALUE_MSG)
         return
     }
     @bind_arm_pattern(ak, scr_t)
@@ -712,7 +712,7 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
     ro mark = @scope.mark()
     ro ak = branch_children(arm)
     if ak.len() < 1 {
-        @report_first_leaf_of(ak, "outside the subset: a match arm needs a pattern and a value")
+        @report_first_leaf_of(ak, ARM_PATTERN_VALUE_MSG)
         return None
     }
     if !@bind_arm_pattern(ak, scr_t) { return None }
@@ -877,3 +877,6 @@ const DESTR_NO_FIELD_PATTERN_MSG = "a brace pattern names a field this type does
 const ARRAY_PATTERN_MSG = "an array pattern needs a slice scrutinee (`[]T`)"
 const ARRAY_REST_TWICE_MSG = "an array pattern takes one `..` at most (D59) -- a second one is ambiguous"
 const WRONG_SUM_ARM_MSG = "this arm names a variant of a different sum than the value matched on (registry #964) -- write a variant of the matched sum, or a binder"
+
+/// A match arm missing its pattern or its value -- one refusal, asked at two doors.
+const ARM_PATTERN_VALUE_MSG = "outside the subset: a match arm needs a pattern and a value"
