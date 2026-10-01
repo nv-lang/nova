@@ -1,0 +1,23 @@
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+//
+// Registry 221.1 #1452: the rule is about the VIEW lane of D429 (R2: a non-`consume` `#coerce`
+// with a `ro` result), not about `str`. A user-declared view pair `P1452Tag -> ro []u8` into a
+// `mut` parameter is refused the same way (R8: user pairs are first-class). The finalize lane
+// (`consume` receiver, owning result -- `WriteBuffer -> []u8`) gives an owned value and stays legal
+// in a writable position.
+
+module neg.p1452_str_bytes_mut_user_view_pair_neg
+
+type P1452Tag { raw []u8 }
+
+#coerce
+fn P1452Tag @view() -> ro []u8 => @raw
+
+fn p1452_tag() -> P1452Tag => { raw: "abc".bytes().clone() }
+
+fn p1452_zap(mut b []u8) -> () { b[0] = 65 as u8 }
+
+fn main() Io -> () {
+    // nova:expect E_READONLY_COERCE -- `P1452Tag` reaches `[]u8` only through a view pair (`ro` result), and `b` is a `mut` parameter
+    p1452_zap(p1452_tag())
+}

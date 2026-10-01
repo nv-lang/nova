@@ -68,8 +68,10 @@ test "D55 position 2: let with explicit []u8-annotation — str-литерал c
     ro b []u8 = "Ok("
     assert(b.len() == 3)
     assert(d55_bytes_decode(b) == "Ok(")
-    mut m []u8 = "mut-lit"
-    assert(m.len() == 7)
+    // Registry 221.1 #1452: `mut m []u8 = "mut-lit"` used to stand here. A `mut` binding is
+    // writable content, and a literal reaches `[]u8` only as the `ro` view of its read-only
+    // bytes (D429 R6) -- the line asserted the forbidden case and stayed green only because
+    // nothing wrote through `m`. It is now the negative `neg/p1452_str_bytes_mut_let_literal_neg.nv`.
 }
 
 test "D55 position 3: return-position []u8 (arrow-body + explicit return stmt) — str-литерал coerces" {

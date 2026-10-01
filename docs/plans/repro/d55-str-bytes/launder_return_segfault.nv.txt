@@ -1,0 +1,16 @@
+// Found 2026-10-01 by the #1452 window (cloud). The view of a `str` escapes through a RETURN
+// typed `[]u8` (a position D55 "Str -> `ro []u8`" lists as legal, beside `-> ro []u8`) into an
+// ordinary owned `[]u8`, and a `mut` binding of the result writes into the string's bytes.
+// `nova check` passes; run: "Unexpected bus error or segmentation fault", exit 134 (`.rodata`).
+// Same class: launder_elem_segfault.nv.txt (`[][]u8` element), launder_field_segfault.nv.txt
+// (record-literal field). Not closed by #1452: D55/D429 R6 name return and element positions
+// as legal for the view, so the fix needs an owner's word on the spec first.
+module probe5
+
+fn f() -> []u8 => "abc"
+
+fn main() Io -> () {
+    mut b = f()
+    b[0] = 65 as u8
+    println("ran")
+}

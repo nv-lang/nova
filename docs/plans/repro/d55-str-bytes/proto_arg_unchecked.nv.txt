@@ -1,0 +1,23 @@
+// Found 2026-10-01 by the #1452 window (cloud). The ARGUMENTS of a method called on a PROTOCOL
+// receiver are not judged against the protocol's declared parameter types at all: `w.put(42)`
+// for `mut @put(bytes []u8)` passes `nova check`, and the int is handed over as a `[]u8` pointer.
+// Run: "Unexpected bus error or segmentation fault at 0x32", exit 134 -- the int 42 (0x2a) was used
+// as the `[]u8` pointer; the fault is 8 bytes past it. The #1452 fix applies only the `#coerce` door
+// to these arguments (`coerce_protocol_method_args`), not a type check.
+module probe8
+
+type Sink protocol {
+    mut @put(bytes []u8) -> ()
+}
+
+type Tally { mut n int }
+
+fn Tally mut @put(bytes []u8) -> () { @n = @n + bytes.len() }
+
+fn via(mut w Sink) -> () { w.put(42) }
+
+fn main() Io -> () {
+    mut t = Tally { n: 0 }
+    via(t)
+    println(t.n.to_str())
+}

@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+//
+// Registry 221.1 #1452: a plain assignment to a `mut b []u8` is the same writable content as
+// its `let` (D429 R6). Form: interpolation. Before the fix the checker never judged the value
+// against the target's type here; the rewrite still turned a literal or a name into a view, and
+// the next write through `b` hit the string's bytes.
+
+module neg.p1452_str_bytes_mut_assign_neg
+
+fn main() Io -> () {
+    ro s = "abc"
+    mut b []u8 = "xyz".bytes().clone()
+    // nova:expect E_READONLY_COERCE -- `b` holds writable `[]u8` content, and a `str` gives only a `ro []u8` view
+    b = "${s}"
+    b[0] = 65 as u8
+}

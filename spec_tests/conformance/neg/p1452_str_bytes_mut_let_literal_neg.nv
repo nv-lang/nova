@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+//
+// Registry 221.1 #1452: the line `mut m []u8 = "mut-lit"` of `d55_bytes_lit_type_directed.nv`
+// (position 2), moved here. That fixture asserted the case D429 R6 forbids -- a literal is a
+// `str` like any other, and its `[]u8` is a read-only view of `.rodata` -- and it stayed
+// green only because the line never wrote through `m`. The test was wrong, not weakened: the
+// first write would have been SIGSEGV. The owned spelling is `"mut-lit".bytes().clone()`.
+
+module neg.p1452_str_bytes_mut_let_literal_neg
+
+fn main() Io -> () {
+    // nova:expect E_READONLY_COERCE -- the literal is only a `ro []u8` view of read-only memory, and `m` is a writable binding
+    mut m []u8 = "mut-lit"
+    println(m.len().to_str())
+}

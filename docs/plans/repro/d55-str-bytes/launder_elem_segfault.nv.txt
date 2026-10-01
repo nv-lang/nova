@@ -1,0 +1,10 @@
+// Same class as launder_return_segfault.nv.txt: the view of a `str` stored as an ELEMENT of a
+// `mut [][]u8` (D55 lists the element position as legal) and written through the outer binding.
+// `nova check` passes; run: "Unexpected bus error or segmentation fault", exit 134.
+module probe6
+
+fn main() Io -> () {
+    mut xs [][]u8 = ["abc"]
+    xs[0][0] = 65 as u8
+    println("ran")
+}
