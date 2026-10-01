@@ -110,7 +110,7 @@ int < f64      // ошибка — целое против float
 ```nova
 ro n = 1e20 as int             // saturates to INT64_MAX
 ro m = (-1.0) as u32           // saturates to 0
-ro nan = 0.0 / 0.0 as i16      // 0
+ro nan = (0.0 / 0.0) as i16    // 0
 ```
 
 ### Checked narrowing — `to_*` ([D430](decisions/04-effects.md#d430), 2026-07-20)
