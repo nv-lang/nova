@@ -16,7 +16,7 @@ fn arm_block(k int) -> Result[Val, str] {
     Ok(match k {
         0 => {
             mut v = 1
-            v = v + 1
+            v += 1
             if v < 0 { return Err("negative") }
             Val.Flag(v != 0)
         }
