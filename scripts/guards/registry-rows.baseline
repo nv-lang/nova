@@ -1457,6 +1457,9 @@
 # 2026-10-01, assistant nova-88: rows -> 1438, max -> 1487 (#1486 static orphan scope not a GC root, #1487
 #   Time.after writer held only by malloc -- both fixed in rt/gc-roots-1486; numbers given by integrator nova-20).
 # 2026-10-01, integrator nova-20: rows -> 1442, max -> 1493 (merge of hunt/novac-1001 (novac x sem x K1 over wave E.10): #1490-#1493; 1488 and 1489 issued (agent, assistant), leave gaps).
+# 2026-10-01, integrator nova-20: rows -> 1443, max -> 1493 (merge of p1489 (assistant): #1489 lands (old, not a regression), out of gaps).
+rows=1443
+max=1493
 rows=1442
 max=1493
 rows=1438
@@ -2088,7 +2091,7 @@ stale_gaps=0
 # nomer I v gaps=, I so strokoy schitaetsya 'protuhshey dyroy'.
 # 2026-09-21: №1209 ПРИЕХАЛ и СНЯТ из gaps=
 # (писал интегратор, как и планировалось). №1210-1211 всё ещё ждёт Карину.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1488-1489
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1488
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding
