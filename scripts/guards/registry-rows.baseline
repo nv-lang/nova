@@ -1461,6 +1461,9 @@
 # 2026-10-01, integrator nova-20: rows -> 1447, max -> 1499 (merge of p1488 (agent): #1488 lands (out of gaps); #1495/#1496 from the cloud reports #1458/#1457 and #1499 (qualified module constant in C) filed; 1494, 1497, 1498 issued, in gaps).
 # 2026-10-01, background agent of the integrator (p1498-c-ident-bypass): rows -> 1448, max -> 1499 (#1498 (K2, regression of #1440: a local/param name written into C past the door c_ident) lands, out of gaps; number given by the integrator).
 # 2026-10-01, integrator nova-20: rows -> 1452, max -> 1504 (merge of p1498 (agent): #1498 lands; #1501-#1504 filed from its grid (#1502/#1503 K1 silent wrong value -- block the oracle tag); 1500 issued to Carina, in gaps).
+# 2026-10-01, integrator nova-20: rows -> 1453, max -> 1504 (merge of p1494 (assistant): #1494 lands (out of gaps), #1489 fixed in the branch).
+rows=1453
+max=1504
 rows=1452
 max=1504
 rows=1448
@@ -2098,7 +2101,7 @@ stale_gaps=0
 # nomer I v gaps=, I so strokoy schitaetsya 'protuhshey dyroy'.
 # 2026-09-21: №1209 ПРИЕХАЛ и СНЯТ из gaps=
 # (писал интегратор, как и планировалось). №1210-1211 всё ещё ждёт Карину.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1494,1497,1500
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1500
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding

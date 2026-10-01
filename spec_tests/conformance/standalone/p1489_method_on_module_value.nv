@@ -1,0 +1,38 @@
+// EXPECT_STDOUT ok 7 -8 7 -9223372036854775808 2.5 true 7 14 60 true 5 7
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for registry 221.1 #1489: a method called on a module-level
+// value, `NAME.method()`. The parser folds an uppercase head into a path
+// `Path[NAME, method]`, and the checker's channel door for that path took the
+// receiver's type ONLY from consts with a written annotation. Every other
+// module value left the call without a type: the emitter died on "Path call
+// return type unknown" (a blanket method such as `to_nanos`), or `println`
+// printed the `str` of `.to_str()` as an int (C compile error).
+//
+// Cells: an unannotated const whose value is an int literal, an arithmetic of
+// literals, the i64 minimum spelled `-MAX - 1`, a float arithmetic, a
+// comparison (bool), a bool literal; a module `ro` with a runtime value; a
+// blanket of this file and one of std (`to_nanos`); a const imported by name
+// from std; and the controls that already worked -- an annotated const and a
+// `str` const.
+module standalone.p1489_method_on_module_value
+
+import std.time.duration
+import std.runtime.decimal.{DECIMAL_MAX_SHIFT}
+
+const SEVEN = 7
+const NEG = -7 - 1
+const I64_MIN = -9_223_372_036_854_775_807 - 1
+const HALF = 1.25 * 2
+const LESS = 1 < 2
+const ON = true
+const TYPED i64 = 7
+const MSG = "hello"
+
+fn seven() -> int => 7
+ro RUNTIME = seven()
+
+fn[T Ints] T @twice() -> i64 => (@ as i64) * 2
+
+fn main() Io -> () {
+    println("ok ${SEVEN.to_nanos().nanos()} ${NEG.to_str()} ${RUNTIME.to_nanos().nanos()} ${I64_MIN.to_nanos().nanos()} ${HALF.to_str()} ${LESS.to_str()} ${SEVEN.to_str()} ${SEVEN.twice()} ${DECIMAL_MAX_SHIFT.to_str()} ${ON.to_str()} ${MSG.byte_len()} ${TYPED.to_nanos().nanos()}")
+}
