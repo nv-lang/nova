@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Donor: Swift's range subscript (`a[lo...]`) -- one method taking a range,
-// an open side filled from the collection's own index space; std spells the
-// same through `@index(r Range)` and `@end_index()` (plan 284).
+// Donor: Rust core `ops::Index` over ranges (`impl Index<RangeFrom<usize>> for [T]`) --
+// the bracket form is sugar for ONE index method taking a range, and an open
+// side is filled from the collection itself; NOT taken: one range TYPE per
+// open side (RangeFrom/RangeTo/RangeFull) -- std has one `Range`, and the open
+// upper side is the receiver's `end_index()` (plan 284, the RangeIndex role).
 // Role: typing of a slice `x[lo..hi]`, either side possibly open (registry
 //   #1170, plan 274.7 waves U-1..U-3): the call `x.index(Range { .. })` of
 //   D470 section 5, whose result is the receiver's own type (`str @index(r
 //   Range) -> str`, `Vec[T] @index(r Range) -> Self`). Out-of-range and a cut
 //   through a code point are RUN-TIME panics of std's own contract, not
 //   diagnostics, so nothing here judges the numbers.
-// Used by: binds.nv (`@type_index`).
+// Used by: check/binds.nv `@type_index`, when a typed receiver stands before
+//   a slice in brackets (typing, before emission).
 // Guarded by: nova test novac/src/check/check_test.nv (the slice tests) and
 //   check-novac-differential.sh over novac/fixtures/slice.
 
@@ -90,4 +93,20 @@ fn Checker mut @slice_bound_is_int(b Node) -> bool {
         // An `int` bound.
     }
     true
+}
+
+/// The WRITTEN sides of a slice's bracket content, walked like any expression;
+/// an open side is the parser's zero-width gap, with nothing written to walk
+/// (the walk's Bin arm in check.nv hands the slice here).
+fn Checker mut @walk_slice_sides(kids []Node, sh SliceShape) -> () {
+    if sh.lo_open {
+        // The gap the parser planted where `lo` is not written.
+    } else {
+        @walk(kids[0])
+    }
+    if sh.hi_open {
+        // The gap the parser planted where `hi` is not written.
+    } else {
+        @walk(kids[2])
+    }
 }

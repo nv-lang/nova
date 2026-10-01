@@ -14484,6 +14484,7 @@ typedef struct {
 static Nova_Decision* _nova_handler_lit_5_impl_Supervisor_on_child_fail(void* _ctx, nova_int idx, void* err);
 static Nova_Decision* _nova_handler_lit_5_impl_Supervisor_on_child_fail(void* _ctx, nova_int idx, void* err) {
     NovaCtx__nova_handler_lit_5* _c = (NovaCtx__nova_handler_lit_5*)_ctx;
+    {
     /* SRC: ro _ = died.fetch_add(1) */
     nova_int _nv_tmp_1398 = Nova_AtomicInt_method_fetch_add_int(&((*_c->_nv_fv__nova_handler_lit_5_died)), ((nova_int)1LL));
     /* SRC: if err is str { */
@@ -14511,6 +14512,7 @@ static Nova_Decision* _nova_handler_lit_5_impl_Supervisor_on_child_fail(void* _c
     (void)(_nv_if_1399);
     /* SRC: return Decision.Stop */
     return (nova_int)(intptr_t)nova_make_Decision_Stop();
+    }
 }
 
 void _nv_with_restore__nv_tmp_1405(void** p) {

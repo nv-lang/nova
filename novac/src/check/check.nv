@@ -814,8 +814,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // tells the two apart), so only the written sides are walked.
                     if index_pos {
                         if Some(sh) = slice_shape_of(n) {
-                            if !sh.lo_open { @walk(children[0]) }
-                            if !sh.hi_open { @walk(children[2]) }
+                            @walk_slice_sides(children, sh)
                             return
                         } else {
                             // Not a slice: the range rule below.

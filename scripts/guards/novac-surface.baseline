@@ -234,7 +234,10 @@
 # builtins 51 -> 52 (same day, E.9 step 4 emitter): SUPERVISOR_EFFECT -- the
 #   effect whose installed handler sets a scope's has_supervisor.
 # builtins 52 -> 53 (E.9 step 4b): has_fixed_tid -- which primitives carry the runtime's fixed type id.
-builtins 53
+# builtins 53 -> 54 (2026-10-01, окно Карины, срезы №1170): END_INDEX_METHOD -- имя второго
+#   метода роли RangeIndex std (`end_index`), спрашивают его check/slice.nv и emit_c/emit_slice.nv;
+#   имя языка/std живёт в builtins (П5), а не строкой у двух потребителей.
+builtins 54
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -889,7 +892,12 @@ resolve 15
 # sem 283 -> 289 (E.9 step 4b, `any` and `is`, D54): is_any_ty, any_tid_c, Narrowing,
 #   narrowing_of, type_ref_last_ident, is_target_of -- one door each for check,
 #   lower and emit_c (+6).
-sem 289
+# sem 289 -> 292 (2026-10-01, окно Карины, срезы №1170): +SliceShape, +slice_shape_of,
+#   +range_index_symbol (ОДНО чтение среза для чекера и эмиттера: их спрашивают check/check.nv,
+#   check/binds.nv, check/slice.nv и emit_c/emit_slice.nv), +is_collection_head (одна дверь
+#   головы `for` для check/rules.nv, check/typing.nv и lower/lowering.nv вместо трёх копий);
+#   -is_closed_slice_bin (заменена slice_shape_of).
+sem 292
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

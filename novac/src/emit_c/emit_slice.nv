@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Donor: Swift's range subscript -- `a[lo...]` is one call taking a range whose
-// open side is the collection's own `endIndex`; here the call is std's
-// `index(r Range)` and the open side `end_index()` (plan 284).
+// Donor: Rust core `ops::Index` over ranges (`impl Index<RangeFrom<usize>> for [T]`) --
+// the bracket form is sugar for ONE index method taking a range, and an open
+// side is filled from the collection itself; NOT taken: one range TYPE per
+// open side (RangeFrom/RangeTo/RangeFull) -- std has one `Range`, and the open
+// upper side is the receiver's `end_index()` (plan 284, the RangeIndex role).
 // Role: emission of a slice `x[lo..hi]`, either side possibly open (registry
 //   #1170, plan 274.7 waves U-1..U-3): `<index(Range) symbol>(x, (Range){ lo,
 //   hi })`, an open lower side printed `0`, an open upper side printed as the

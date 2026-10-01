@@ -758,22 +758,23 @@ export type Vec[T] { n int }")
     assert(cpr.contains("Vec____nova_int_method_index"))
 
     // The gate's other side, pinned in the same test so both halves travel
-    // together: an instance the shell does NOT carry (`[]str` -- the probe
-    // never indexes one) keeps the named refusal instead of reaching an
+    // together: an instance the shell does NOT carry (`[]bool` -- the probe
+    // never indexes one; `[]str` was the pin until 2026-10-01, when the probe
+    // began to index it for the self-build) keeps the named refusal instead of reaching an
     // emit ICE. The receiver is a PARAMETER so the array-literal gate is not
     // in play and the index door is reached; `main` does not CALL `first` and
     // does not build a `[]str` literal, because the shell-literal gate would
     // add its own refusal and drown the one pin (measured 2026-09-28: two
     // diagnostics instead of one; the probe_tmp witnesses are since wiped
     // per the scratch rule).
-    ro (dn, cn) = compile_to_c("fn first(xs []str) -> str {\n\
+    ro (dn, cn) = compile_to_c("fn first(xs []bool) -> bool {\n\
  xs[0]\n\
 }\n\
 fn main() {\n\
  println(\"x\")\n\
 }", std)
     assert(dn.len() == 1)
-    assert(dn[0].message.contains("carries no `index` for Vec[str]"))
+    assert(dn[0].message.contains("carries no `index` for Vec[bool]"), messages(dn))
     assert(cn == "")
 
     // The literal tuple falls in the same class (the second carrier the
