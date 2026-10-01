@@ -16,7 +16,6 @@
 
 module novac.pipeline
 import ../sem.{InteropTable, representation_of, FnRow}
-import ../builtins.{TypeKind}
 import ../diag.{ice}
 import ../parse.{parse}
 
@@ -108,7 +107,10 @@ test "a NEWTYPE of a handed module is a newtype here: laid out as its representa
     assert(d0.len() == 0, messages(d0))
     ro ctx = context(parse(tokens_of(prog)), decls, InteropTable.new())
     ro row = ctx.ty_of_name("Row") ?? ice("test: the handed `Row` is not in the registry")
-    assert(ctx.tys.kind_of(row) == TypeKind.TkNewtype, "a handed newtype registered as another kind")
+    // A newtype term carries its representation as its one argument; the record
+    // it used to be registered as carried none (asked without importing the
+    // kind sum: `pipeline` has no edge to `builtins`, architecture s3).
+    assert(ctx.tys.arg_count(row) == 1, "a handed newtype registered as another kind")
     assert(representation_of(ctx, row) == ctx.prims.int_id, "the handed newtype's representation is not `int`")
 }
 
@@ -140,5 +142,19 @@ test "a HANDED callable knows where its body lives: the declaration tree and its
     }
     assert(handed_get == 1, "the handed `get` was not registered once")
     assert(own_seen == 1, "the file's own `own` was not registered once")
+}
+
+test "`==` on a payload-free sum compares tags wherever A4 places it -- a fenced enum too (2026-10-01)" {
+    // A sum that stands as an ARGUMENT of an application (`[]K`) is fenced to
+    // the heap by A4, and `is_value_sum` answers no -- which refused every `==`
+    // on it as protocol dispatch: 279 of novac's own, `@peek() == TokenKind.X`
+    // in parse/ beside a `[]TokenKind`. Its value is still its tag; the fence
+    // only decides `.` or `->`.
+    mut texts = std_decls()
+    texts.push("module std.v\nexport type Vec[T] { n int }\n")
+    ro decls = parse_decls(texts)
+    ro src = "#impl(Equal)\ntype K enum\n    | A\n    | B\n\nfn f(xs []K, k K) -> bool => k == K.A\n\nfn main() {\n    println(1)\n}"
+    ro d = compile_with(src, decls, InteropTable.new())
+    assert(d.len() == 0, messages(d))
 }
 
