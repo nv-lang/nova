@@ -1,0 +1,18 @@
+module cast_numeric.pos_2
+
+// `int as uint` takes the LOW BITS, like every integer pair (D54, amendment
+// 2026-09-04 point 1; spec/conversions.md "(-1 as int) as uint == 2^64-1").
+//
+// Born as `d54_int_uint.nv`, outside the differential, while the oracle
+// clamped a negative to 0 (registry 1547). The oracle's fix f61183148 is on
+// origin/main since 2026-10-01: built from it, the oracle prints
+// 18446744073709551551, 18446744073709551615, 65 -- novac's output byte for
+// byte -- so the cell is a `pos_*` fixture now. NOTE for a branch whose base
+// predates f61183148: its oracle still prints 0, 0, 65 here.
+fn main() {
+    ro n = 65
+    ro minus_one = 0 - 1
+    println((0 - n) as uint)
+    println(minus_one as uint)
+    println(n as uint)
+}
