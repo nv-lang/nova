@@ -1,0 +1,82 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Role: what a GENERIC body of the file calls is instantiated per instance of
+//   that body, under ITS substitution (registry 1522): `xs.is_empty()` in
+//   `empty[T]` is `Vec[int] @is_empty` in `empty[int]`. The file's walk saw the
+//   body once, under the abstract `T`, and grew nothing; the emitter named the
+//   concrete instance anyway, and the linker refused it.
+// Used by: nova test novac/src/pipeline (the module-test batch of the gate).
+// Guarded by: check-novac-module-tests; the fixture generic_body_instance/pos_1
+//   through the differential.
+
+module novac.pipeline
+
+import ../mono.{reachable}
+import ../check.{check}
+import ../parse.{parse}
+import ../source.{SourceText}
+import ../sem.{raw_row}
+
+/// A handed `Vec[T]` with a method the real shell carries for no instance --
+/// so a call of it is always an instance this unit makes from the body.
+fn body_std() -> []str {
+    mut std = std_decls()
+    std.push("module std.v\n\
+export type Vec[T] { n int }\n\
+export fn Vec[T] @len() -> int => @n\n\
+export fn Vec[T] mut @push(v T) -> @ => @\n\
+export fn Vec[T] @nope() -> int => @n\n")
+    std
+}
+
+/// How many instances of the row named `name` the set holds after the
+/// pipeline's instance walk -- and how many the FILE's walk alone found.
+fn instances_named(prog str, std []str, name str) -> (int, int) {
+    ro decls = parse_decls(std)
+    ro interop = described_surface(std)
+    ro src = SourceText { text: prog }
+    ro tree = parse(tokens_of(prog))
+    ro ctx = context(tree, decls, interop)
+    ro (d, chan) = check(tree, src, ctx)
+    assert(d.len() == 0, messages(d))
+    mut reach = reachable(tree, ctx, chan)
+    mut before = 0
+    for it in reach.instances() {
+        before += if ctx.fns.rows[raw_row(it.row)].name == name { 1 } else { 0 }
+    }
+    ro (idiags, _) = instances_of(tree, src, ctx, reach, decls)
+    assert(idiags.len() == 0, messages(idiags))
+    mut after = 0
+    for it in reach.instances() {
+        after += if ctx.fns.rows[raw_row(it.row)].name == name { 1 } else { 0 }
+    }
+    (before, after)
+}
+
+test "a handed method called from the file's GENERIC body grows one instance per instance of that body (registry 1522)" {
+    ro prog = "fn count[T](xs []T) -> int => xs.nope()\nfn main() {\n println(count([1, 2]))\n println(count([\"a\"]))\n}"
+    ro (before, after) = instances_named(prog, body_std(), "nope")
+    // The class, pinned: the file's walk sees the body under `T` and grows nothing.
+    assert(before == 0, "the file's walk grew a concrete instance from an abstract body")
+    // One per substitution of `count`: `Vec[int]` and `Vec[str]`.
+    assert(after == 2, "the instances of `count` did not grow theirs")
+    // And the program LINKS: the instance the call names is defined.
+    ro (d, c) = compile_to_c(prog, body_std())
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("static nova_int novac_fn_std_v_nope__Vec_of_nova_int__to_nova_int__nova_int(Nova_Vec____nova_int* _novac_self) {"),
+           "the instance `count[int]` calls is not defined")
+}
+
+test "the file's generic body reached from ANOTHER generic body: `outer[T]` -> `inner[T]` -> std (registry 1522)" {
+    ro prog = "fn inner[T](xs []T) -> int => xs.nope()\nfn outer[T](xs []T) -> int => inner(xs)\nfn main() {\n println(outer([1]))\n}"
+    ro (_, inner_n) = instances_named(prog, body_std(), "inner")
+    assert(inner_n == 1, "`outer[int]` did not grow `inner[int]`")
+    ro (_, nope_n) = instances_named(prog, body_std(), "nope")
+    assert(nope_n == 1, "`inner[int]` did not grow `Vec[int] @nope`")
+}
+
+test "CONTROL: the same call written in `main` grows its instance from the file's walk alone" {
+    ro prog = "fn main() {\n ro v = [1, 2]\n println(v.nope())\n}"
+    ro (before, after) = instances_named(prog, body_std(), "nope")
+    assert(before == 1, "a call written in `main` was not found by the file's walk")
+    assert(after == 1, "the instance walk duplicated an instance the file's walk had")
+}
