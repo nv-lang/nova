@@ -157,7 +157,7 @@ test "`==` on a payload-free sum compares tags wherever A4 places it -- a fenced
     mut texts = std_decls()
     texts.push("module std.v\nexport type Vec[T] { n int }\n")
     ro decls = parse_decls(texts)
-    ro src = "#impl(Equal)\ntype K enum\n    | A\n    | B\n\nfn f(xs []K, k K) -> bool => k == K.A\n\nfn main() {\n    println(1)\n}"
+    ro src = "#impl(Equal)\ntype Kt enum\n    | A\n    | B\n\nfn f(xs []Kt, k Kt) -> bool => k == Kt.A\n\nfn main() {\n    println(1)\n}"
     ro d = compile_with(src, decls, InteropTable.new())
     assert(d.len() == 0, messages(d))
 }

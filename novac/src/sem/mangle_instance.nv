@@ -97,7 +97,10 @@ export fn c_method_symbol(ctx Ctx, t TyId, name str) -> str {
 /// asks `interop.has` of THIS answer, and a miss sends the overload to the body
 /// novac was handed (`Ctx @instantiates`) or to a refusal by name.
 export fn c_overload_symbol(ctx Ctx, row FnRow, recv_t TyId, args []TyId) -> str {
-    ro base = c_method_symbol(ctx, recv_t, ctx.fns.rows[raw_row(row)].name)
+    // The ROW's spelling first: a `consume` receiver of a plain type is the
+    // shell's `_consume_` (registry 1564, `shell_method_symbol`) -- one truth
+    // for the question `Ctx @instantiates` asks and the name the emitter prints.
+    ro base = shell_method_symbol(ctx, row, recv_t)
     ro it = impl_of_proto(ctx, recv_t)
     if !is_ty(it) || ctx.tys.kind_of(it) != TypeKind.TkApp { return base }
     if decl_of_ty(ctx, it).kind != TypeKind.TkRecord { return base }
