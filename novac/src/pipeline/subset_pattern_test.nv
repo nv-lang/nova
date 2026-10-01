@@ -581,8 +581,8 @@ fn main() {\n\
     assert(d2.len() == 1, messages(d2))
     assert(d2[0].message.contains("a literal pattern compares with a value of its own type"), d2[0].message)
 
-    // A literal BELOW the root is refused by name: the lowering tests the
-    // root only. CONTROL: the same sum with a binder at that position
+    // A string literal BELOW the root is refused by name: the lowering tests
+    // the root only. CONTROL: the same sum with a binder at that position
     // compiles, so the refusal is the nested LITERAL's.
     ro (d3, _) = compile_to_c("type W enum A(str) | B\n\
 fn k(w W) -> int => match w {\n\
@@ -593,7 +593,7 @@ fn main() {\n\
  println(k(B))\n\
 }", std)
     assert(d3.len() == 1, messages(d3))
-    assert(d3[0].message.contains("a literal inside a `match` arm's pattern"), d3[0].message)
+    assert(d3[0].message.contains("a string or char literal inside a `match` arm's pattern"), d3[0].message)
     ro (d4, _) = compile_to_c("type W enum A(str) | B\n\
 fn k(w W) -> int => match w {\n\
  A(x) => 1\n\

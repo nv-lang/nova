@@ -14,12 +14,13 @@ module literal_arm.neg_1
 //
 // 2026-10-01: the root string arm compiles (match_str_lit/pos_1 holds it), and
 // the cell moves to the next hole of the same family. A literal INSIDE a
-// pattern -- `W("match")`, `A(3)` -- is legal Nova (D486 s2), but the lowering
-// tests the arm's ROOT only: the tag of `A(3)` was tested and the `3` dropped,
-// so `A(4)` took the arm, measured on the day the string arms opened. The
-// root's door would have handed strings the same silent wrong answer.
+// pattern -- `W("match")` -- is legal Nova (D486 s2), but the lowering tests
+// the arm's ROOT only: for an int the tag of `A(3)` is tested and the `3`
+// dropped, so `A(4)` takes the arm, measured on the day the string arms
+// opened. The root's door would have handed strings the same silent wrong
+// answer; the int half is a defect of its own, reported beside this cell.
 
-// NOVAC_EXPECT a literal inside a `match` arm's pattern
+// NOVAC_EXPECT a string or char literal inside a `match` arm's pattern
 
 type Word enum
     | W(str)

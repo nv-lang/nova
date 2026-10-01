@@ -186,13 +186,14 @@ const VARIANT_VALUE_NEEDS_ARGS_MSG = "outside the subset: this variant carries a
 /// own here: it prints `scr.len == ...` over an int and clang refuses the C.
 const LIT_PATTERN_TYPE_MSG = "a literal pattern compares with a value of its own type -- a string literal with a `str`, a char literal with a `char` (D128: `char` is not `int`); the value matched here is of another type"
 
-/// A literal standing INSIDE a `match` arm's pattern -- `A(3)`, `Some(x)`
-/// with a literal payload, `(1, y)`. Legal Nova (D486 s2), and refused BY NAME
-/// because the lowering tests the arm's ROOT only: the tag of `A(3)` was
-/// tested and the `3` was dropped, so `A(4)` took the arm (measured on the
-/// day the string arms opened, 2026-10-01). Opening string literals at the
-/// root without this door would have inherited the same silent wrong answer.
-const NESTED_LITERAL_ARM_MSG = "outside the subset: a literal inside a `match` arm's pattern (`A(3)`) is read but not compiled yet -- the lowering tests the arm's root only (E2-b, with nested pattern tests)"
+/// A STRING or CHAR literal standing INSIDE a `match` arm's pattern --
+/// `W("x")`, `(c, 'a')`. Legal Nova (D486 s2), and refused BY NAME because the
+/// lowering tests the arm's ROOT only: for an int the tag of `A(3)` is tested
+/// and the `3` dropped, so `A(4)` takes the arm (measured on the day the
+/// string arms opened, 2026-10-01). These two kinds were refused at every
+/// depth until then; opening the root without this door would have handed
+/// them the same silent wrong answer.
+const NESTED_LITERAL_ARM_MSG = "outside the subset: a string or char literal inside a `match` arm's pattern is read but not compiled yet -- the lowering tests the arm's root only (E2-b, with nested pattern tests)"
 
 const IFLET_VARIANT_MSG = "outside the subset: `if <pattern> = ...` takes only `Some(name)` here -- other variants arrive with their carriers (274.5 P4)"
 
