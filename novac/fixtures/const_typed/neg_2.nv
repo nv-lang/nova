@@ -1,0 +1,14 @@
+module const_typed.neg_2
+
+// ONE seeded cause: a constant whose initializer is a VALUE of another type
+// than the one it writes -- `u8` under `u16`. D405 (spec/conversions.md):
+// no implicit conversion between named types, widening included; refused at
+// the declaration in the return door's words (E7301). The ORACLE accepts this
+// file and prints 120 -- it widens implicitly here, a divergence named in
+// REPORT-carina-cast-3.md; it does refuse the narrowing (neg_3).
+// NOVAC_EXPECT cannot initialize a constant declared `u16` with a value of type `u8` (E7301)
+const C u16 = ('x' as u8)
+
+fn main() {
+    println(C)
+}

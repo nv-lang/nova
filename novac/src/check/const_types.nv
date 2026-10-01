@@ -23,7 +23,7 @@ module novac.check
 
 import ../tree.{Node, NodeKind, is_node}
 import ../lex.{TokenKind}
-import ../sem.{raw_crow, const_name_at, const_init_at, ty_of_type_ref, leaf_kind}
+import ../sem.{raw_crow, const_name_at, const_init_at, ty_of_type_ref, leaf_kind, ty_source_name}
 import ../types.{TyId, no_ty, is_ty}
 
 /// The TYPE of a module constant, or `no_ty()` when the name is not one.
@@ -50,14 +50,12 @@ fn Checker mut @const_type_of(name str) -> TyId {
     } else {
         // A constant: typed by its declaration at every use, below.
     }
-    ro own = type_of(cd.init[0], @ctx, @scope, @chan)
+    // The WRITTEN type is the constant's type, full stop: an initializer of
+    // another type is refused once, at the declaration (`@type_const_decl`,
+    // E7301), so a read never sees a second answer and never cascades.
     ro wt = @written_const_type(cd.decl)
-    if !is_ty(wt) { return own }
-    // The literal takes the written type -- or the initializer already has
-    // it. Anything else keeps its own type, and a mismatch shows where the
-    // constant is read.
-    if adapt_operand(cd.init[0], own, wt, @ctx.tys) == wt { return wt }
-    own
+    if is_ty(wt) { return wt }
+    type_of(cd.init[0], @ctx, @scope, @chan)
 }
 
 /// A constant's initializer, typed ONCE at its declaration, so the channel
@@ -77,25 +75,48 @@ fn Checker mut @type_const_decl(kids []Node) -> () {
     // SILENT-OK: no initializer -- the parser already refused the declaration.
     if at < 0 { return }
     ro init = kids[at]
-    if init.kind_of() != NodeKind.Lit {
+    ro is_lit = init.kind_of() == NodeKind.Lit
+    if !is_lit {
+        ro before = @out.len()
         @type_expr(init)
-        // SILENT-OK: the expression door recorded the type or refused it.
-        return
+        // SILENT-OK: the expression door refused the initializer, one cause.
+        if @out.len() > before { return }
     } else {
-        // A literal: its type is the written one, when one is written.
+        // A literal: typed below, by the written type when one is written.
     }
     ro wt = @written_const_type(kids)
-    // SILENT-OK: no written type -- the literal keeps its own type (D44).
+    // SILENT-OK: no written type -- the initializer's own type is the answer (D44).
     if !is_ty(wt) { return }
     ro own = type_of(init, @ctx, @scope, @chan)
-    // SILENT-OK: a literal the written type does not take keeps its own type, read at each use.
-    if adapt_operand(init, own, wt, @ctx.tys) != wt { return }
+    // SILENT-OK: the initializer already has the written type; its door recorded it.
+    if !is_lit && own == wt { return }
+    if adapt_operand(init, own, wt, @ctx.tys) != wt {
+        // ANOTHER TYPE than the one written: the declaration is refused, in
+        // the return door's words (E7301; E_IMPLICIT_NARROWING for an integer
+        // narrowing), and the written type stays the constant's at every read.
+        @reject_first_leaf_of([]Node.of(init), const_mismatch_msg(ty_source_name(@ctx, own),
+            ty_source_name(@ctx, wt), int_narrows(@ctx.tys, own, wt)))
+        return
+    } else {
+        // A literal the written type takes, or a value already of it.
+    }
+    // SILENT-OK: a non-literal of the written type -- its door recorded it.
+    if !is_lit { return }
     if @lit_fits_or_refuse(init, wt) && is_node(init.id_of()) {
         @record(init, wt)
     } else {
         // Out of range: the door reported it, and nothing is recorded for
         // an emission that will not happen.
     }
+}
+
+/// The refusal of an initializer of another type than the written one -- the
+/// return door's sentence with the constant's words (return_rules.nv).
+fn const_mismatch_msg(from str, to str, narrows bool) -> str {
+    if narrows {
+        return "cannot initialize a constant declared `${to}` with a value of type `${from}` -- implicit int narrowing loses range; use an explicit `... as ${to}` cast (D54, E_IMPLICIT_NARROWING)"
+    }
+    "cannot initialize a constant declared `${to}` with a value of type `${from}` (E7301): no implicit conversion between named types (D405, spec/conversions.md) -- convert with `as`, or fix the declaration"
 }
 
 /// The type a constant's declaration WRITES between its name and `=`, or
