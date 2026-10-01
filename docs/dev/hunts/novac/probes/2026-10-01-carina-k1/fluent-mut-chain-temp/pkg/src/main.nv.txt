@@ -1,0 +1,20 @@
+type Ctr {
+    n int
+}
+
+fn Ctr mut @reset() -> @ {
+    @n = 0
+}
+
+fn Ctr mut @set_pos(x int) -> @ {
+    if x < 0 {
+        return
+    }
+    @n = x
+}
+
+fn main() {
+    mut c = Ctr { n: 5 }
+    println(c.reset().set_pos(4).n)
+    println(c.n)
+}
