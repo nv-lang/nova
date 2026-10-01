@@ -596,8 +596,8 @@ fn main() {\n\
     // is read into a temporary and compared by CONTENT, the root's own door.
     // CONTROL: the same sum with a binder at that position compares no string,
     // so the compare is the nested LITERAL's.
-    ro (d3, c3) = compile_to_c("type W enum A(str) | B\n\
-fn k(w W) -> int => match w {\n\
+    ro (d3, c3) = compile_to_c("type Wrap enum A(str) | B\n\
+fn k(w Wrap) -> int => match w {\n\
  A(\"x\") => 1\n\
  _ => 0\n\
 }\n\
@@ -606,8 +606,8 @@ fn main() {\n\
 }", std)
     assert(d3.len() == 0, messages(d3))
     assert(c3.contains("nova_str_eq(_novac_l"), "a nested string compares by content")
-    ro (d4, c4) = compile_to_c("type W enum A(str) | B\n\
-fn k(w W) -> int => match w {\n\
+    ro (d4, c4) = compile_to_c("type Wrap enum A(str) | B\n\
+fn k(w Wrap) -> int => match w {\n\
  A(x) => 1\n\
  _ => 0\n\
 }\n\

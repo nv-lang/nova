@@ -16,14 +16,52 @@ module novac.check
 
 import ../tree.{Node}
 import ../diag.{ice}
-import ../sem.{raw_crow, branch_children, const_full_name}
+import ../sem.{raw_crow, branch_children, const_full_name, ConstRow}
 import ../types.{no_ty, is_ty}
+
+/// The CONSTANT `name` denotes FROM THIS BODY'S MODULE, or None (registry 221.1
+/// #1521) -- the one door of this checker to a constant by name.
+///
+/// The table holds every constant of every module under its home (`DefTable`
+/// rows chained by name); which one a body means is its own module's question:
+/// a constant of its module shadows the rest (D125), else one it may see --
+/// imported, or std's prelude (D29), never another module's private one
+/// (D281). An instance of `hp.geo`'s `Vec[T] @scaled` reads `hp.geo`'s `SCALE`;
+/// until #1521 it read the caller's, because the registry was flat and the
+/// caller's put came last.
+fn Checker @const_seen(name str) -> Option[ConstRow] {
+    mut seen = 0 - 1
+    mut d = @ctx.defs.first_def(name)
+    while d >= 0 {
+        ro i = d
+        d = @ctx.defs.prev_def(i)
+        ro row = match @ctx.defs.def_at(i).target {
+            DefConst(r) => r
+            DefType(_) => continue
+            DefFn(_) => continue
+        }
+        ro own = @ctx.defs.is_own(i)
+        ro home = @ctx.defs.home_at(i)
+        if @res.decl_is_home(own, home) { return Some(row) }
+        if seen < 0 && @res.sees_decl(own, home, name) {
+            seen = i
+        } else {
+            // Not visible, or a visible one is already kept: the first wins.
+        }
+    }
+    if seen < 0 { return None }
+    match @ctx.defs.def_at(seen).target {
+        DefConst(r) => Some(r)
+        DefType(_) => None
+        DefFn(_) => None
+    }
+}
 
 /// The constant-table row of the module value these children declare, -1
 /// when the registry does not hold it (a name the collector skipped).
 fn Checker @module_value_row(kids []Node) -> int {
     ro n = const_full_name(kids) ?? ""
-    match @ctx.defs.const_row(n) {
+    match @const_seen(n) {
         None => 0 - 1
         Some(r) => raw_crow(r)
     }
@@ -57,7 +95,7 @@ fn Checker mut @type_module_value_at(row int) -> () {
 /// FILE's checker walks this -- an instance checker types no initializer.
 fn Checker mut @settle_module_value(name str) -> bool {
     if @mv_state.len() == 0 { return false }
-    ro row = match @ctx.defs.const_row(name) {
+    ro row = match @const_seen(name) {
         None => return false
         Some(r) => raw_crow(r)
     }
@@ -88,7 +126,7 @@ fn arrow_path(names []str) -> str {
 /// declaration whose read closes the cycle, the value being typed right now,
 /// with the path from `name` round to itself.
 fn Checker mut @report_module_cycle(name str) -> () {
-    ro row = raw_crow(@ctx.defs.const_row(name) ?? ice("check: a module value in a cycle lost its row"))
+    ro row = raw_crow(@const_seen(name) ?? ice("check: a module value in a cycle lost its row"))
     mut from = 0 - 1
     for i in 0..@mv_stack.len() {
         if from < 0 && @mv_stack[i] == row {

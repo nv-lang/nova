@@ -1,0 +1,128 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Role: an instance of a handed body is judged in the scope of the module and
+//   the file it was WRITTEN in, not of the unit that instantiates it (registry
+//   221.1 #1521): the file and the span of its refusals first.
+// Used by: nova test novac/src/pipeline (the module-test batch of the gate).
+// Guarded by: check-novac-module-tests, check-novac-file-size.py; the probes
+//   docs/dev/hunts/novac/probes/2026-10-01-carina-k1/diag-body-file-module and
+//   ../2026-10-01-mono-k1/diag-wrong-file-std.
+//
+// Why a file of its own: #1521 is one class with several judgments -- the
+// refusal's file, the names of the body, the privacy of its fields, its C name
+// -- and they arrive as separate steps; each lands its cells here.
+
+module novac.pipeline
+
+/// A handed module whose generic method refuses inside its body: `missing` is
+/// bound nowhere. Instantiated over `Vec[int]` by the unit.
+fn scope_decls() -> []str {
+    mut std = std_decls()
+    std.push("module std.v\n\
+export type Vec[T] { n int }\n\
+export fn Vec[T] @len() -> int => @n\n\
+export fn Vec[T] @bad() -> int {\n ro k = @n\n k + missing\n}\n")
+    std
+}
+
+test "a refusal INSIDE an instance names the body's file and the body's span (#1521)" {
+    ro decls = scope_decls()
+    ro (ds, _) = compile_to_c("fn main() {\n ro v = [7, 8]\n println(v.bad())\n}", decls)
+    assert(ds.len() == 1, messages(ds))
+    // The handed text is the LAST one; `described_surface` names it by position.
+    assert(ds[0].file == "decl_${decls.len() - 1}", "the refusal names `${ds[0].file}`, not the body's file")
+    // The span is the body's own: `missing` in the handed text, not 0..0 of the unit.
+    ro body = decls[decls.len() - 1]
+    assert(body[ds[0].lo..ds[0].hi] == "missing", "the span is ${ds[0].lo}..${ds[0].hi}")
+    // CONTROL: a refusal in the compiled file's own body names no other file.
+    ro (own, _) = compile_to_c("fn main() {\n ro v = [7, 8]\n println(v.len() + missing)\n}", decls)
+    assert(own.len() == 1, messages(own))
+    assert(own[0].file == "", "the file's own refusal names `${own[0].file}`")
+}
+
+/// The program module `hp.geo` of the hunt's probes, with a PRIVATE `helper`
+/// and `weight` its generic method calls, and a vector type to extend.
+fn geo_texts(geo str) -> []str {
+    mut texts = std_decls()
+    texts.push("module std.v\nexport type Vec[T] { n int }\nexport fn Vec[T] @len() -> int => @n\n")
+    texts.push(geo)
+    texts
+}
+
+/// Compile `prog` as module `hp` beside the program module `geo`.
+fn compile_beside(prog str, geo str) -> ([]Diagnostic, str) {
+    ro texts = geo_texts(geo)
+    mut link = described_surface(texts)
+    mark_program(link, parse_decls([]str.of(geo)))
+    compile_to_c_with(prog, parse_decls(texts), link)
+}
+
+test "a free name in an instance is resolved in the BODY's module, not the caller's (#1521)" {
+    ro geo = "module hp.geo\n\
+fn helper() -> int => 2\n\
+fn weight(x int) -> int => x * 2\n\
+export fn Vec[T] @tag() -> int => helper()\n\
+export fn Vec[T] @w() -> int => weight(@len())\n"
+    // The hunt's hygiene-helper-fn and -overload: the caller declares the same
+    // names. Until #1521 the instance called the caller's `helper` (printed 1,
+    // the oracle 2) and the caller's `weight` (3000, the oracle 6).
+    ro prog = "module hp\nimport ./geo\nfn helper() -> int => 1\nfn weight(x int) -> int => x * 1000\n\
+fn main() {\n ro v = [7, 8, 9]\n println(v.tag())\n println(v.w())\n println(helper())\n}"
+    ro (d0, c0) = compile_beside(prog, geo)
+    assert(d0.len() == 0, messages(d0))
+    assert(c0.contains("return novac_fn_hp_geo_helper__to_nova_int();"), c0)
+    assert(c0.contains("novac_fn_hp_geo_weight__nova_int__to_nova_int("), c0)
+    // CONTROL (D125): the caller's OWN call still names the caller's helper --
+    // its module's name shadows the one of `hp.geo`, which it does not import.
+    assert(c0.contains("nova_print_int(novac_fn_hp_helper__to_nova_int());"), c0)
+    assert(!c0.contains("novac_fn_hp_weight__nova_int__to_nova_int(Vec"), c0)
+    // CONTROL: no shadow in the caller -- the body's helper, as before #1521.
+    ro (d1, c1) = compile_beside("module hp\nimport ./geo\nfn main() {\n ro v = [7]\n println(v.tag())\n}", geo)
+    assert(d1.len() == 0, messages(d1))
+    assert(c1.contains("return novac_fn_hp_geo_helper__to_nova_int();"), c1)
+}
+
+test "a constant in an instance is its BODY's module's, and another module's private one stays unseen (#1521, D281)" {
+    ro geo = "module hp.geo\nconst SCALE = 10\nexport fn Vec[T] @scaled() -> int => @len() * SCALE\n"
+    // The hunt's hygiene-const-oracle-fails: the caller declares `SCALE` too.
+    // Until #1521 the registry was flat, the caller's constant was put last,
+    // and the instance multiplied by 100 (printed 300 where 30 is meant).
+    ro (d0, c0) = compile_beside("module hp\nimport ./geo\nconst SCALE = 100\n\
+fn main() {\n ro v = [7, 8, 9]\n println(v.scaled())\n println(SCALE)\n}", geo)
+    assert(d0.len() == 0, messages(d0))
+    // The body is `@len() * SCALE`: its one multiplication, by the body's 10.
+    assert(scaled_by(c0, "((nova_int)10LL))"), c0)
+    assert(!scaled_by(c0, "((nova_int)100LL))"), c0)
+    // CONTROL (D125): the caller's own read is the caller's constant.
+    assert(c0.contains("nova_print_int(((nova_int)100LL))"), c0)
+    // CONTROL (D281): `hp.geo`'s constant is private -- the caller, which has
+    // none of its own, does not read it. Registered for its module's bodies is
+    // not visible to everyone.
+    ro (d1, _) = compile_beside("module hp\nimport ./geo\nfn main() {\n println(SCALE)\n}", geo)
+    assert(d1.len() == 1, messages(d1))
+    assert(d1[0].message.contains("unknown name"), messages(d1))
+}
+
+/// Does a line of `c` multiply (checked) by the literal spelled `lit`?
+fn scaled_by(c str, lit str) -> bool {
+    for line in c.split("\n") {
+        if line.contains("nova_int_checked_mul(") && line.contains(lit) { return true }
+    }
+    false
+}
+
+test "a `priv` field of a std type read without a module line is private to a file without one too (#1521, D281)" {
+    // std's `#prelude` files (`collections/vec/core.nv`) are read with no
+    // module, and so is a file that declares none: "" == "" made `Vec`'s `priv`
+    // fields that file's own, and `v.len` compiled where the oracle says
+    // E_FIELD_MODULE_PRIVATE (the hunt's priv-leak-moduleless).
+    mut decls = std_decls()
+    decls.push("export type Vec[T] priv { n int }\nexport fn Vec[T] @size() -> int => @n\n")
+    ro (d0, _) = compile_to_c("fn main() {\n ro v = [7, 8]\n println(v.n)\n}", decls)
+    assert(d0.len() == 1, messages(d0))
+    assert(d0[0].message.contains("unknown field"), messages(d0))
+    // CONTROL: the type's own body reads its private field -- the instance of
+    // `@size` the unit makes for `Vec[int]`.
+    ro (d1, c1) = compile_to_c("fn main() {\n ro v = [7, 8]\n println(v.size())\n}", decls)
+    assert(d1.len() == 0, messages(d1))
+    assert(c1.contains("_size__"), c1)
+}
