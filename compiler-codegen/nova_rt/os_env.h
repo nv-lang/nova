@@ -194,12 +194,12 @@ static inline nova_str os_home_dir(void) {
 
 /* ─── Process ─── */
 
-/* Flush stdout/stderr and terminate the process (never returns for real; the
- * declared int return keeps the effect-op shape uniform). */
+/* Flush stdout/stderr and terminate the process at once — live fibers are not
+ * waited for (221.1 №1418: `exit()` ran the atexit orphan drain and hung on a
+ * fiber parked in I/O; see `nova_process_exit_now`, effects.h). Never returns
+ * for real; the declared int return keeps the effect-op shape uniform. */
 static inline nova_int os_exit(nova_int code) {
-    fflush(stdout);
-    fflush(stderr);
-    exit((int)code);
+    nova_process_exit_now((int)code);
     return 0; /* unreachable */
 }
 

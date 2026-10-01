@@ -1,0 +1,344 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_STDOUT control: reply 10
+// EXPECT_STDOUT accept: reply 40
+// EXPECT_STDOUT accept: listener closed
+// EXPECT_STDOUT read: reply 50
+// EXPECT_STDOUT read: server got [x]
+// EXPECT_STDOUT server: client 0 got [reply 10]
+// EXPECT_STDOUT server: client 1 got [reply 20]
+// EXPECT_STDOUT sleep: reply 60
+// EXPECT_STDOUT reverse: reply 70
+// EXPECT_STDOUT reverse: listener closed
+// EXPECT_STDOUT many: sum 360
+// EXPECT_STDOUT many: listener closed
+// EXPECT_STDOUT all cells done
+// EXPECT_TIMEOUT_MS 60000
+//
+// Registry 221.1 №1406 (and the exit half of №1418). While any fiber was parked
+// in a `Net` operation on a handle owned by the MAIN thread's loop (a listener
+// bound in `main`, a stream accepted from it), a channel request/reply whose
+// waiting side is the main fiber (a store in a `supervised` body) never got its
+// answer: the waker (a worker fiber's `ChanTx.send` -> `Condvar.notify_one` ->
+// `nova_goready`) flipped the parked flags of a bootstrap-scope fiber and
+// returned, and the main thread stayed blocked in `uv_run(UV_RUN_ONCE)` — the
+// parked Net handle kept its loop alive — until the next unrelated I/O event.
+// Behind it sat a second hang of the same class: once no user handle kept the
+// main loop alive, `uv_run` returned without polling, so an op a worker had
+// marshalled onto the main loop (the read of an accepted stream) never started.
+//
+// Each cell prints its reply BEFORE it releases its parked I/O, so a reply that
+// needed an I/O event to arrive cannot pass. Pre-fix every cell except
+// `control` and `sleep` hangs (runner timeout); `server` also hangs with only
+// the first half of the fix (the wake poke) and not the second (the pump hold). The last line is followed by
+// `exit_process(0)` with fibers still parked (a 60 s sleep, a channel recv): it
+// must exit at once instead of waiting for the orphan drain (№1418).
+//
+// Each `detach consume l` / `spawn consume l` block uses the capture `l` directly. Rebinding it
+// first (`consume lis = l`) leaves the capture's own auto-cleanup armed, so the
+// listener is closed twice and the second close can land on the next cell's
+// listener at the reused address (registry №TBD, class №480).
+module standalone.p1406_chan_wake_while_io_parked
+
+import std.concurrency.nvchan.{Chan, ChanTx, ChanRx}
+import std.net.{TcpListener, TcpStream}
+import std.os.{real_os, exit_process}
+import std.time.duration
+
+type Ask value {
+    ro n int
+    ro reply ChanTx[int]
+}
+
+// The store answers every ask with n * 10 until its request channel closes.
+// A refused send means the peer closed early — say so instead of dropping it.
+fn put[T](tx ChanTx[T], v T) Io -> () {
+    if !tx.send(v) { println("send refused: channel closed") }
+}
+
+fn store(rx ChanRx[Ask]) Io -> () {
+    mut going = true
+    while going {
+        match rx.recv() {
+            None => { going = false }
+            Some(a) => put(a.reply, a.n * 10)
+        }
+    }
+}
+
+fn ask(tx ChanTx[Ask], n int) Io -> int {
+    ro pair = Chan[int].new(1)
+    ro q Ask = { n, reply: pair.tx }
+    put(tx, q)
+    pair.rx.recv() ?? (0 - 1)
+}
+
+// Connect to `port` and close at once — the event that releases a parked accept.
+fn poke(port int, who str) Io Net -> () {
+    match TcpStream.connect("127.0.0.1:${port}") {
+        Ok(consume c) => c.close()
+        Err(e) => println("${who}: connect ${e}")
+    }
+}
+
+// Control: no parked I/O anywhere.
+fn cell_control() Io Time -> () {
+    ro req = Chan[Ask].new(8)
+    ro tx = req.tx
+    supervised {
+        spawn {
+            20.to_millis().sleep()
+            println("control: reply ${ask(tx, 1)}")
+            tx.close()
+        }
+        store(req.rx)
+    }
+}
+
+// A fiber parked in `accept()` on a main-bound listener nobody connects to; the
+// store is the main fiber, the asker a spawned fiber on a worker.
+fn cell_accept() Io Net Time Detach -> () {
+    ro req = Chan[Ask].new(8)
+    ro tx = req.tx
+    ro closed = Chan[int].new(1)
+    ro closed_tx = closed.tx
+    consume l = match TcpListener.bind("127.0.0.1:0") {
+        Ok(consume x) => x
+        Err(e) => panic("accept: bind ${e}")
+    }
+    ro port = l.local_port()
+    detach consume l {
+        match l.accept() {
+            Ok(consume s) => s.close()
+            Err(e) => println("accept ${e}")
+        }
+        l.close()
+        put(closed_tx, 1)
+    }
+    supervised {
+        spawn {
+            20.to_millis().sleep()
+            println("accept: reply ${ask(tx, 4)}")
+            tx.close()
+        }
+        store(req.rx)
+    }
+    poke(port, "accept")
+    ro _ = closed.rx.recv()
+    println("accept: listener closed")
+}
+
+// A fiber parked in `read` on an accepted stream whose client stays silent; the
+// listener is already closed, so the reading stream is the only main-loop handle.
+fn cell_read() Io Net Time Detach -> () {
+    ro req = Chan[Ask].new(8)
+    ro tx = req.tx
+    ro got = Chan[str].new(1)
+    ro got_tx = got.tx
+    consume l = match TcpListener.bind("127.0.0.1:0") {
+        Ok(consume x) => x
+        Err(e) => panic("read: bind ${e}")
+    }
+    ro port = l.local_port()
+    detach consume l {
+        match l.accept() {
+            Ok(consume s) => {
+                l.close()
+                match s.read_text(16) {
+                    Ok(t) => { put(got_tx, t) }
+                    Err(e) => { put(got_tx, "read error ${e}") }
+                }
+                s.close()
+            }
+            Err(e) => {
+                l.close()
+                put(got_tx, "accept error ${e}")
+            }
+        }
+    }
+    consume c = match TcpStream.connect("127.0.0.1:${port}") {
+        Ok(consume x) => x
+        Err(e) => panic("read: connect ${e}")
+    }
+    supervised {
+        spawn {
+            50.to_millis().sleep()
+            println("read: reply ${ask(tx, 5)}")
+            tx.close()
+        }
+        store(req.rx)
+    }
+    match c.write_all("x") {
+        Ok(_) => ()
+        Err(e) => println("read: write ${e}")
+    }
+    c.close()
+    ro text = got.rx.recv() ?? "nothing"
+    println("read: server got [${text}]")
+}
+
+// A fiber parked in a long timer sleep (left parked; the final exit_process ends it).
+fn cell_sleep() Io Time Detach -> () {
+    ro req = Chan[Ask].new(8)
+    ro tx = req.tx
+    detach { 60000.to_millis().sleep() }
+    supervised {
+        spawn {
+            20.to_millis().sleep()
+            println("sleep: reply ${ask(tx, 6)}")
+            tx.close()
+        }
+        store(req.rx)
+    }
+}
+
+// Roles reversed: the store is a spawned fiber, the asker is the main fiber —
+// the main fiber's reply `recv` is the wait woken from a worker.
+fn cell_reverse() Io Net Time Detach -> () {
+    ro req = Chan[Ask].new(8)
+    ro tx = req.tx
+    ro closed = Chan[int].new(1)
+    ro closed_tx = closed.tx
+    consume l = match TcpListener.bind("127.0.0.1:0") {
+        Ok(consume x) => x
+        Err(e) => panic("reverse: bind ${e}")
+    }
+    ro port = l.local_port()
+    detach consume l {
+        match l.accept() {
+            Ok(consume s) => s.close()
+            Err(e) => println("accept ${e}")
+        }
+        l.close()
+        put(closed_tx, 1)
+    }
+    supervised {
+        spawn { store(req.rx) }
+        20.to_millis().sleep()
+        println("reverse: reply ${ask(tx, 7)}")
+        tx.close()
+    }
+    poke(port, "reverse")
+    ro _ = closed.rx.recv()
+    println("reverse: listener closed")
+}
+
+// Many askers at once against the main-fiber store, with a parked accept.
+fn cell_many() Io Net Time Detach -> () {
+    ro req = Chan[Ask].new(2)
+    ro tx = req.tx
+    ro sums = Chan[int].new(8)
+    ro sums_tx = sums.tx
+    ro closed = Chan[int].new(1)
+    ro closed_tx = closed.tx
+    consume l = match TcpListener.bind("127.0.0.1:0") {
+        Ok(consume x) => x
+        Err(e) => panic("many: bind ${e}")
+    }
+    ro port = l.local_port()
+    detach consume l {
+        match l.accept() {
+            Ok(consume s) => s.close()
+            Err(e) => println("accept ${e}")
+        }
+        l.close()
+        put(closed_tx, 1)
+    }
+    supervised {
+        spawn {
+            supervised {
+                for i in 0..8 {
+                    spawn {
+                        10.to_millis().sleep()
+                        put(sums_tx, ask(tx, i + 1))
+                    }
+                }
+            }
+            tx.close()
+        }
+        store(req.rx)
+    }
+    mut sum = 0
+    for _ in 0..8 { sum += sums.rx.recv() ?? 0 }
+    println("many: sum ${sum}")
+    poke(port, "many")
+    ro _ = closed.rx.recv()
+    println("many: listener closed")
+}
+
+// A server: an accept loop in a spawned fiber on a main-bound listener, each
+// connection served by a detached fiber that reads the request, asks the store
+// (the main fiber) and writes the answer; clients on a worker. Once the listener
+// is closed after the last accept, nothing on the main loop keeps it alive, so
+// the second connection's read — marshalled onto the main loop — only starts if
+// the main pump polls while it waits.
+fn serve_one(consume s TcpStream, tx ChanTx[Ask], i int) Io Net -> () {
+    match s.read_text(16) {
+        Ok(_) => {
+            match s.write_all("reply ${ask(tx, i + 1)}") {
+                Ok(_) => ()
+                Err(e) => println("server: write ${e}")
+            }
+        }
+        Err(e) => println("server: read ${e}")
+    }
+    s.close()
+}
+
+fn cell_server() Io Net Time Detach -> () {
+    ro req = Chan[Ask].new(8)
+    ro tx = req.tx
+    consume l = match TcpListener.bind("127.0.0.1:0") {
+        Ok(consume x) => x
+        Err(e) => panic("server: bind ${e}")
+    }
+    ro port = l.local_port()
+    supervised {
+        spawn consume l {
+            for i in 0..2 {
+                match l.accept() {
+                    Ok(consume stream) => {
+                        detach consume stream { serve_one(stream, tx, i) }
+                    }
+                    Err(e) => println("server: accept ${e}")
+                }
+            }
+            l.close()
+        }
+        spawn {
+            for i in 0..2 {
+                match TcpStream.connect("127.0.0.1:${port}") {
+                    Ok(consume c) => {
+                        match c.write_all("hi") {
+                            Ok(_) => ()
+                            Err(e) => println("server: client write ${e}")
+                        }
+                        match c.read_text(16) {
+                            Ok(t) => println("server: client ${i} got [${t}]")
+                            Err(e) => println("server: client read ${e}")
+                        }
+                        c.close()
+                    }
+                    Err(e) => println("server: connect ${e}")
+                }
+            }
+            tx.close()
+        }
+        store(req.rx)
+    }
+}
+
+fn main() Io Net Time Detach {
+    cell_control()
+    cell_accept()
+    cell_read()
+    cell_server()
+    cell_sleep()
+    cell_reverse()
+    cell_many()
+    // Left parked on purpose: the 60 s sleep from `cell_sleep` and this recv.
+    ro idle = Chan[int].new(1)
+    ro idle_rx = idle.rx
+    detach { ro _ = idle_rx.recv() }
+    println("all cells done")
+    with Os = real_os() { exit_process(0) }
+}

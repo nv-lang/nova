@@ -1,0 +1,35 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_STDOUT exiting with a fiber parked
+// EXPECT_STDERR config gone
+// EXPECT_EXIT_CODE 5
+// EXPECT_TIMEOUT_MS 60000
+// ENV NOVA_ORPHAN_DRAIN_GRACE_SECS=0
+//
+// Registry 221.1 №1418, the builtin twin of p1418_exit_process_immediate: the
+// D13 builtin `exit(code, msg)` is specified as "no defers, no handlers, the
+// process is put down" (spec/decisions/08-runtime.md), yet it too went through
+// C `exit()` and so through the atexit orphan drain, waiting on a detached
+// fiber parked in `accept()`. With the drain grace at 0 (wait forever) a drain
+// on this path is a runner timeout; the exit code and message must be the ones
+// passed.
+module standalone.p1418_builtin_exit_immediate
+
+import std.net.{TcpListener}
+import std.time.duration
+
+fn main() Io Net Time Detach {
+    consume l = match TcpListener.bind("127.0.0.1:0") {
+        Ok(consume x) => x
+        Err(e) => panic("bind ${e}")
+    }
+    detach consume l {
+        match l.accept() {
+            Ok(consume s) => s.close()
+            Err(e) => println("accept ${e}")
+        }
+        l.close()
+    }
+    20.to_millis().sleep()
+    println("exiting with a fiber parked")
+    exit(5, "config gone")
+}
