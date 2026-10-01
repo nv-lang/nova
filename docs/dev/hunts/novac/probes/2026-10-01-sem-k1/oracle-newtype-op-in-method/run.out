@@ -1,0 +1,17 @@
+=== PACKAGE
+./src/geo/geo.nv
+./src/main.nv
+=== ORACLE: nova build src/main.nv, run
+oracle build rc=1
+error: compiler error:
+lld-link: error: undefined symbol: Nova_Meters_method_plus
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
+=== SUBJECT: novac check (NOVAC_SELF_PATH=<pkg>/src)
+novac check rc=0
+=== SUBJECT: novac emit
+novac emit rc=0
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=1
+lld-link: error: undefined symbol: novac_fn_hp_geo_double__Meters__to_Meters
+clang: error: linker command failed with exit code 1 (use -v to see invocation)

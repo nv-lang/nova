@@ -1,0 +1,3 @@
+module hp.perm
+
+export type Permissions { read_only bool, mode u8 }

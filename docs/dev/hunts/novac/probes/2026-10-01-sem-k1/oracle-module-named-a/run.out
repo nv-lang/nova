@@ -1,0 +1,15 @@
+=== PACKAGE
+./src/a/a.nv
+./src/main.nv
+=== ORACLE: nova build src/main.nv, run
+oracle build rc=1
+error: <repo>\std\src\collections\vec\access.nv:208:12: error: [E7401] no function `compare` in module `a`
+=== SUBJECT: novac check (NOVAC_SELF_PATH=<pkg>/src)
+novac check rc=0
+=== SUBJECT: novac emit
+novac emit rc=0
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+7

@@ -1505,6 +1505,7 @@ no_caveat=0
 # 2026-10-01, integrator nova-20: 90 -> 91, merge of the cloud session's p1448: #1462 (K1, as into a newtype from a Result prints an address -- blocks the oracle tag), #1463 (K2, curly literal of a named tuple fails in C), #1464 (K3, spread array without D55 element wrap).
 # 2026-10-01, integrator nova-20: 91 -> 93, merge of the cloud session's p1100: #1470 (K1, the checker judges consume by name, not by the chosen overload) and #1471 (K1, a call through a function value double-cleans) -- both block the oracle tag.
 # 2026-10-01, integrator nova-20: 93 -> 95, merge of the cloud session's p1452: #1480 (K1, the str view leaks into an owned []u8 through return/element/field and is laundered by mut) and #1481 (K1, protocol method arguments are not checked against the protocol's parameter types) -- both block the oracle tag.
+# 2026-10-01, integrator nova-20: 95 -> 95, merge of hunt/novac-1001 (novac x sem x K1 over wave E.10): #1490-#1493; 1488 and 1489 issued (agent, assistant), leave gaps.
 blockers=95
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:

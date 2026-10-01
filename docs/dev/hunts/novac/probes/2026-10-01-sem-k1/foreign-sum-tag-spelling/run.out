@@ -1,0 +1,41 @@
+=== PACKAGE
+./src/geo/geo.nv
+./src/main.nv
+=== ORACLE: nova build src/main.nv, run
+oracle build rc=0
+oracle run rc=0
+S
+E
+=== SUBJECT: novac check (NOVAC_SELF_PATH=<pkg>/src)
+novac check rc=0
+=== SUBJECT: novac emit
+novac emit rc=0
+--- C lines matching: NOVAC_TAG_|novac_make_|nova_make_Dir
+11962:    if (!_novac_matched_t0 && ((_novac_l2.tag == NOVAC_TAG_hp_Dir_North))) {
+11966:    if (!_novac_matched_t0 && ((_novac_l2.tag == NOVAC_TAG_hp_Dir_East))) {
+11970:    if (!_novac_matched_t0 && ((_novac_l2.tag == NOVAC_TAG_hp_Dir_South))) {
+11974:    if (!_novac_matched_t0 && ((_novac_l2.tag == NOVAC_TAG_hp_Dir_West))) {
+11981:    nova_print_str(novac_fn_hp_name__Dir__to_nova_str(nova_make_Dir_South()));
+11983:    nova_print_str(novac_fn_hp_name__Dir__to_nova_str(nova_make_Dir_East()));
+=== SUBJECT: novac emit of the owner unit src/geo/geo.nv
+novac emit rc=0
+11952:    NOVAC_TAG_hp_geo_Dir_North,
+11953:    NOVAC_TAG_hp_geo_Dir_East,
+11954:    NOVAC_TAG_hp_geo_Dir_South,
+11955:    NOVAC_TAG_hp_geo_Dir_West,
+11971:static NovaValue_Dir novac_make_hp_geo_Dir_North(void) {
+11973:    _r.tag = NOVAC_TAG_hp_geo_Dir_North;
+11977:static NovaValue_Dir novac_make_hp_geo_Dir_East(void) {
+11979:    _r.tag = NOVAC_TAG_hp_geo_Dir_East;
+11983:static NovaValue_Dir novac_make_hp_geo_Dir_South(void) {
+11985:    _r.tag = NOVAC_TAG_hp_geo_Dir_South;
+11989:static NovaValue_Dir novac_make_hp_geo_Dir_West(void) {
+11991:    _r.tag = NOVAC_TAG_hp_geo_Dir_West;
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=1
+<tmp>/body.c:11957:52: error: unknown type name 'NovaValue_Dir'; did you mean 'NovaValue_DirFs'?
+<tmp>/body.c:11958:5: error: unknown type name 'NovaValue_Dir'; did you mean 'NovaValue_DirFs'?
+<tmp>/body.c:11961:43: error: no member named 'tag' in 'struct NovaValue_DirFs'
+<tmp>/body.c:11961:50: error: use of undeclared identifier 'NOVAC_TAG_hp_Dir_North'
+<tmp>/body.c:11965:43: error: no member named 'tag' in 'struct NovaValue_DirFs'
+<tmp>/body.c:11965:50: error: use of undeclared identifier 'NOVAC_TAG_hp_Dir_East'

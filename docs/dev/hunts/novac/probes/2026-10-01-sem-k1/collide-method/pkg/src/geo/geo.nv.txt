@@ -1,0 +1,5 @@
+module hp.geo
+
+export type Meters int
+
+export fn Meters @double() -> int => 2

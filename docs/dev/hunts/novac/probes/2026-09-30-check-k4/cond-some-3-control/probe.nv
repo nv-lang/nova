@@ -1,9 +1,0 @@
-// Control for cond-some-true: an INTEGER literal nested in a condition's pattern.
-fn main() {
-    ro o = Some(4)
-    if Some(3) = o {
-        println("matched")
-    } else {
-        println("no")
-    }
-}

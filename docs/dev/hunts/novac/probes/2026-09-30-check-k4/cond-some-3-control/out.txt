@@ -1,9 +1,0 @@
-=== SUBJECT: novac check
-{"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"D:/Temp/hunt-check-k4/probes/cond-some-3-control/probe.nv","start":118,"end":120},"message":"a condition's pattern does not compare with a value -- a literal or `|` stands in it at no depth (D486): write `== Some(3)` or a guard","poisoned_by":null}
-novac rc=1
-=== ORACLE: nova check
-[32mok:[0m D:/Temp/hunt-check-k4/probes/cond-some-3-control/probe.nv
-
-===== SUMMARY =====
-[32mPASS[0m: 1  FAIL: 0
-oracle check rc=0

@@ -1,8 +1,0 @@
-// `if true = b`: a bool LITERAL as the whole condition pattern. D486 s4/s7
-// refuse a literal in a condition; which cause does each compiler name?
-fn main() {
-    ro b = false
-    if true = b {
-        println("t")
-    }
-}

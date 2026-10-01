@@ -1,0 +1,27 @@
+=== PACKAGE
+./src/geo/geo.nv
+./src/main.nv
+=== ORACLE: nova build src/main.nv, run
+oracle build rc=0
+oracle run rc=0
+2
+1
+=== SUBJECT: novac check (NOVAC_SELF_PATH=<pkg>/src)
+novac check rc=0
+=== SUBJECT: novac emit
+novac emit rc=0
+--- C lines matching: novac_fn_
+11950:static nova_int novac_fn_hp_geo_double__Meters__to_nova_int(nova_int m) {
+11955:    nova_print_int(novac_fn_hp_geo_double__Meters__to_nova_int(m));
+11957:    nova_print_int(novac_fn_hp_geo_double__Meters__to_nova_int(m));
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+1
+1
+=== VERDICT: DIFFERENT stdout (< oracle, > Carina)
+1c1
+< 2
+---
+> 1
