@@ -1,0 +1,29 @@
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+//
+// Registry 221.1 #1480 (D55 amendment 2026-10-01, owner's decision, option (a)): a record field
+// typed `[]u8` (not `ro []u8`) is an OWNED position -- `h.data[0] = 65 as u8` through a `mut`
+// binding of the record writes into it. A `str` reaches `[]u8` only as the read-only view
+// `#coerce str @bytes() -> ro []u8`, so before the fix that write went into the string's own
+// bytes (SIGSEGV on a literal). Probe:
+// `docs/plans/repro/d55-str-bytes/launder_field_segfault.nv.txt`. The owned spelling is
+// `s.bytes().clone()`; the view spelling is a field `data ro []u8`
+// (`standalone/p1480_str_bytes_owned_positions.nv`).
+
+module neg.p1480_str_bytes_owned_field_neg
+
+type P1480Hold { data []u8 }
+
+fn p1480_nm() -> str => "abc"
+
+fn main() Io -> () {
+    ro s = "abc"
+    // nova:expect E_READONLY_COERCE -- a `str` variable into the owned field `data []u8`
+    mut h = P1480Hold { data: s }
+    h.data[0] = 65 as u8
+    // nova:expect E_READONLY_COERCE -- a literal into the owned field `data []u8`
+    ro g = P1480Hold { data: "abc" }
+    // nova:expect E_READONLY_COERCE -- a call result into the owned field `data []u8`
+    ro c = P1480Hold { data: p1480_nm() }
+    println(g.data.len().to_str())
+    println(c.data.len().to_str())
+}

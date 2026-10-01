@@ -20,6 +20,13 @@
 //! (`splice_checker_coerce`), whatever their form. A view-lane pair (`ro` result,
 //! D429 R2) at a mutable position is `E_READONLY_COERCE` (D429 R6: `ro O` does not
 //! match a `mut`/`consume` position), for every pair of that lane, not only `str`.
+//!
+//! #1480 (D55 amendment 2026-10-01, owner's decision, option (a)): the view is
+//! legal ONLY at a read-only position -- one typed `ro O`, or a `ro` parameter /
+//! `ro` binding typed `O` (read-only by mode, judged by the position itself). Any
+//! other position typed `O` -- a `-> O` return, an element of `[]O`, a record
+//! field `f O` -- holds an OWNED value that a `mut` binding of it writes through;
+//! it is refused by default (`report_coerce_view_into_owned`), not by a list.
 
 use super::*;
 
@@ -75,8 +82,20 @@ impl<'a> TypeCheckCtx<'a> {
 
     /// Record an accepted coercion in the channel -- unless this `assignable`
     /// is a speculative probe, whose position may not be the one finally taken.
-    pub(super) fn note_coerce_site(&self, expr: &Expr, site: CoerceSite) {
+    ///
+    /// #1480: a view-lane site whose position type is not `ro O` is also a
+    /// CANDIDATE for "view into an owned position" -- see `CoerceOwnedCandidate`.
+    pub(super) fn note_coerce_site(&self, expr: &Expr, expected: &TypeRef, site: CoerceSite) {
         if self.coerce_probe_depth.get() == 0 && expr.id.is_set() {
+            if site.is_view && !expected.is_readonly() {
+                self.coerce_owned_candidates.borrow_mut().insert(
+                    expr.id,
+                    CoerceOwnedCandidate {
+                        span: expr.span,
+                        gesture: coerce_owned_gesture(expr, &site.method),
+                    },
+                );
+            }
             self.coerce_sites_buf.borrow_mut().insert(expr.id, site);
         }
     }
@@ -104,7 +123,7 @@ impl<'a> TypeCheckCtx<'a> {
             return None;
         }
         let site = self.coerce_verdict(value, expected, scope)?.ok()?;
-        self.note_coerce_site(value, site.clone());
+        self.note_coerce_site(value, expected, site.clone());
         Some(site)
     }
 
@@ -112,6 +131,11 @@ impl<'a> TypeCheckCtx<'a> {
     /// land in a MUTABLE position -- a `mut`/`consume` parameter, a `mut` local,
     /// an assignment to one (D429 R6, D55 "Str -> `ro []u8`"). Called right after
     /// the position's own `assignable`, which is what recorded the verdict.
+    ///
+    /// #1480: this is also the JUDGEMENT of a position that knows its own mode.
+    /// A `ro` parameter or a `ro` binding typed `O` (not `ro O`) is read-only by
+    /// mode, so the view is legal there; every view site no such position judged
+    /// is reported by `report_coerce_view_into_owned`.
     pub(super) fn check_coerce_view_into_mut(
         &self,
         value: &Expr,
@@ -119,21 +143,19 @@ impl<'a> TypeCheckCtx<'a> {
         position: &str,
         errors: &mut Vec<Diagnostic>,
     ) {
-        if !target_is_mut || !value.id.is_set() {
+        if !value.id.is_set() {
+            return;
+        }
+        self.coerce_judged.borrow_mut().insert(value.id);
+        if !target_is_mut {
             return;
         }
         let Some(site) = self.coerce_sites_buf.borrow().get(&value.id).cloned() else { return };
         if !site.is_view {
             return;
         }
+        let gesture = coerce_owned_gesture(value, &site.method);
         let CoerceSite { method, input, output, .. } = site;
-        let gesture = match &value.kind {
-            ExprKind::Ident(n) => format!("{n}.{method}().clone()"),
-            ExprKind::StrLit(lit) if lit.chars().count() <= 24 && !lit.contains('"') => {
-                format!("\"{lit}\".{method}().clone()")
-            }
-            _ => format!("(...).{method}().clone()"),
-        };
         errors.push(Diagnostic::new(
             format!(
                 "[E_READONLY_COERCE] a `{input}` value is accepted as `{output}` only as the \
@@ -144,6 +166,69 @@ impl<'a> TypeCheckCtx<'a> {
             ),
             value.span,
         ));
+    }
+}
+
+/// #1480: a view-lane site recorded at a position typed `O`, not `ro O`.
+///
+/// Such a position is read-only only BY MODE -- a `ro` parameter, a `ro`
+/// binding -- and those positions say so through `check_coerce_view_into_mut`.
+/// Every other one (a `-> O` return, an element of `[]O`, a record field `f O`,
+/// any position added later) holds an OWNED value, which a `mut` binding of the
+/// result can write through: the view's bytes are the source's own (D55
+/// amendment 2026-10-01, owner's decision, option (a)). The rule is default-deny
+/// on purpose: a position nobody named is owned, not silently a view.
+#[derive(Debug, Clone)]
+pub struct CoerceOwnedCandidate {
+    pub span: Span,
+    /// The explicit owned copy the diagnostic names (`s.bytes().clone()`).
+    pub gesture: String,
+}
+
+/// The explicit gesture that turns the view into an owned value.
+fn coerce_owned_gesture(value: &Expr, method: &str) -> String {
+    match &value.kind {
+        ExprKind::Ident(n) => format!("{n}.{method}().clone()"),
+        ExprKind::StrLit(lit) if lit.chars().count() <= 24 && !lit.contains('"') => {
+            format!("\"{lit}\".{method}().clone()")
+        }
+        _ => format!("(...).{method}().clone()"),
+    }
+}
+
+impl<'a> TypeCheckCtx<'a> {
+    /// #1480: every view-lane site at a non-`ro` position that no read-only-by-mode
+    /// position judged -- the view would become an owned, writable value.
+    pub(super) fn report_coerce_view_into_owned(&self, errors: &mut Vec<Diagnostic>) {
+        let judged = self.coerce_judged.borrow();
+        let sites = self.coerce_sites_buf.borrow();
+        let mut found: Vec<(&crate::ast::ExprId, &CoerceOwnedCandidate)> = Vec::new();
+        let candidates = self.coerce_owned_candidates.borrow();
+        for (id, cand) in candidates.iter() {
+            if !judged.contains(id) && sites.get(id).is_some_and(|s| s.is_view) {
+                found.push((id, cand));
+            }
+        }
+        // One report per source place: a desugared copy of an expression (an
+        // `=> e` body) carries its own `ExprId` over the same span.
+        found.sort_by_key(|(_, c)| (c.span.file_id, c.span.start, c.span.end));
+        found.dedup_by_key(|(_, c)| (c.span.file_id, c.span.start, c.span.end));
+        for (id, cand) in found {
+            let site = &sites[id];
+            let (input, output, method) = (&site.input, &site.output, &site.method);
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_READONLY_COERCE] a `{input}` value is accepted as `{output}` only as the \
+                     read-only view `#coerce {input} @{method}() -> ro {output}` (D429 R2/R6), and \
+                     this position is typed `{output}`, not `ro {output}`: it holds an OWNED value \
+                     (a return, a collection element, a record field), and a write through a \
+                     `mut` binding of it would change the `{input}`'s own immutable bytes. Pass \
+                     an owned copy explicitly -- `{}` -- or declare the position `ro {output}`.",
+                    cand.gesture
+                ),
+                cand.span,
+            ));
+        }
     }
 }
 
