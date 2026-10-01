@@ -357,7 +357,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
         ro init_at = const_init_at(kids)
         if init_at < 0 { continue }
         defs.add(cname, DefTarget.DefConst(consts.add(cname, no_ty(),
-                 []Node.of(kids[init_at]), once)))
+                 []Node.of(kids[init_at]), once, kids)))
     }
     for c in decls_of_file {
         ro k = c.kind_of()

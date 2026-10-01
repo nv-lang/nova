@@ -196,11 +196,11 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     @report_if_decl_types_undeclared(children)
                 }
                 ConstDecl => {
-                    // A CONSTANT IS JUDGED BY ITS INITIALIZER -- by
-                    // `@const_type_of` in `exprs.nv`, which reads the
-                    // initializer at the point of USE: the name goes
-                    // into the registry at collection, the type comes from
-                    // the initializer at the point of USE (274.5 wave B2),
+                    // A CONSTANT IS TYPED AT ITS USE -- by `@const_type_of`
+                    // in `const_types.nv`: its written type, or its
+                    // initializer's when none is written. The name goes
+                    // into the registry at collection, the type is decided
+                    // at the point of USE (274.5 wave B2),
                     // and an initializer the subset cannot compile is refused
                     // where it is used, with the position the user can see.
                     // What the walk DOES judge is the partition (D184): a
@@ -210,6 +210,11 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                         @reject_first_leaf_of(children, CONST_NOT_CONSTEXPR_MSG)
                     } else {
                         // Constexpr, or no initializer -- the parser named that.
+                        // The initializer is typed here, once: a WRITTEN type
+                        // takes a literal and judges its range (D227 rule 3,
+                        // registry 1546), and the channel holds what the
+                        // emitter reads at each substituted use.
+                        @type_const_decl(children)
                     }
                 }
                 LetDecl => {
