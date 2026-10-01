@@ -93,7 +93,10 @@ export fn ty_of_type_ref(pk []Node, at int, recv_t TyId, tps []str, param_rows [
     // is the language's (D239), asked from the registry by its builtins name.
     if leaf_kind(head) == TokenKind.EmptyBrackets {
         if at + 1 >= pk.len() { return no_ty() }
-        ro elem = ref_leaf_ty(pk[at + 1], recv_t, tps, param_rows, types, defs)
+        // The ELEMENT through THIS door (registry 1458): `[][]int` is a slice
+        // of `[]int`, and the leaf-only read made the nested form no type --
+        // `-> ro [][]T` and plain `[][]T` alike.
+        ro elem = ty_of_type_ref(pk, at + 1, recv_t, tps, param_rows, types, defs, tys)
         return app_term_of(SLICE_HEAD, []TyId.of(elem), types, defs, tys)
     }
     // A TUPLE type: `(int, str)` arrives as the parser's balanced paren run
