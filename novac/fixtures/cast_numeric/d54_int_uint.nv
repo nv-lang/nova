@@ -1,0 +1,25 @@
+module cast_numeric.d54_int_uint
+
+// `int as uint` -- judged against D54, NOT against the oracle, and for that
+// reason not named `pos_*`: the differential (check-novac-differential.sh)
+// compares a `pos_*` fixture's output with the oracle byte for byte, and the
+// oracle answers this cell wrongly until registry 1547 is fixed.
+//
+// D54, amendment 2026-09-04 point 1: every integer pair takes the low bits of
+// the source, "`int as uint` -- the same operation"; spec/conversions.md:
+// "(-1 as int) as uint == 2^64-1". The oracle clamps a negative to 0
+// (`nova_int_to_uint`, nova_rt/cast.h) -- registry 1547.
+//
+// EXPECTED OUTPUT (D54), one value per line:
+//   18446744073709551551
+//   18446744073709551615
+//   65
+// The oracle prints 0, 0, 65 today. When 1547 is fixed, rename this file to
+// `pos_2.nv`: from then on the differential holds it.
+fn main() {
+    ro n = 65
+    ro minus_one = 0 - 1
+    println((0 - n) as uint)
+    println(minus_one as uint)
+    println(n as uint)
+}

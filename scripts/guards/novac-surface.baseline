@@ -248,7 +248,10 @@
 #   (D129/D130). check/cast_pairs.nv singles the pair `int as uint` out (held: D54 takes the
 #   low bits, the oracle saturates), and `int`/`uint` differ from `i64`/`u64` by name only;
 #   names of the language live in builtins (P5), which is why they are exported, not spelled.
-builtins 61
+# 2026-10-01, cloud session (p274-carina-cast, step 2): builtins 61 -> 59: `INT_TYPE_NAME`,
+#   `UINT_TYPE_NAME` removed -- the pair `int as uint` they singled out is open now (the
+#   integrator's word: D54's low bits; the oracle's saturation is registry 1547), so nothing asks.
+builtins 59
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует

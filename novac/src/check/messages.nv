@@ -441,11 +441,11 @@ const DEFAULT_ORDER_MSG = "a parameter with a default value stands before one wi
 ///
 /// Since the numeric wave (p274-carina-cast, 2026-10-01) the text names what is
 /// still held, because the numeric family itself compiles: `as any`, a sum's
-/// discriminant, an integer into a newtype, and the pairs where D54 and the
-/// oracle answer differently (`int as uint`, a char variable into an integer)
-/// and the one where D54 and its overview page do (a bool into a number) --
-/// those wait for the integrator's word, not for code.
-const CAST_MSG = "outside the subset: this cast `expr as T` is not compiled yet -- the numeric family is; `as any`, a sum's discriminant, a value into a newtype and the pairs whose answer is not settled (`int as uint`, a char variable into an integer, a bool into a number) wait (E2-b)"
+/// discriminant, an integer into a newtype, and the pairs the owner has yet to
+/// decide (a char variable into an integer wider than `u8`; a bool into a
+/// number, where D54 and its overview page disagree) -- those wait for a
+/// word, not for code. `int as uint` left the list on 2026-10-01.
+const CAST_MSG = "outside the subset: this cast `expr as T` is not compiled yet -- the numeric family is; `as any`, a sum's discriminant, a value into a newtype and the pairs whose answer is not settled (a char variable into an integer, a bool into a number) wait (E2-b)"
 
 /// THE FORBIDDEN PAIRS of D54 (spec/decisions/03-syntax.md): a permanent
 /// language error, not a debt, so the head carries neither of the debt's

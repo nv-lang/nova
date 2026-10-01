@@ -10,7 +10,7 @@
 // here. Reverse probe (owner's rule, "prove it both ways"): with
 // `prim_cast_verdict` answering `CvHeld` for the numeric family, four of the
 // six tests redden (the width, the spellings, the forbidden pairs -- whose
-// `66 as u8` is numeric -- and the held pair's control); restored, all pass.
+// `66 as u8` is numeric -- and `int as uint`); restored, all pass.
 // Run 2026-10-01 before this file was committed, on one tree.
 
 module novac.pipeline
@@ -81,19 +81,18 @@ test "D54's forbidden pairs are language errors naming the pair (D54, the table 
     assert(ok.len() == 0, messages(ok))
 }
 
-test "a pair D54 and the oracle answer differently is HELD under the subset's code, not chosen (int as uint)" {
+test "`int as uint` takes the low bits, a C cast -- not the oracle's saturation (D54 amendment 2026-09-04, registry 1547)" {
     ro std = std_decls()
-    ro (h, _) = compile_to_c("fn main() {\n ro n = 5\n println(n as uint)\n}", std)
-    assert(h.len() == 1, messages(h))
-    assert(codes(h).contains("E_NOVAC_SUBSET"), codes(h))
-    assert(messages(h).contains("`int as uint`"), messages(h))
-    // A bool into a number is held for the same reason one level up: D54 has
-    // no rule, its overview page spec/conversions.md gives `true=1`.
+    ro (d, c) = compile_to_c("fn main() {\n ro n = 5\n println((0 - n) as uint)\n}", std)
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("((nova_uint)("), c)
+    // The oracle's spelling of the same cast is `nova_int_to_uint`, which
+    // clamps a negative to 0 -- the defect of registry 1547, not D54.
+    assert(!c.contains("nova_int_to_uint"), c)
+    // CONTROL: a pair still unsettled stays HELD under the subset's code --
+    // a bool into a number (D54 has no rule, spec/conversions.md gives true=1).
     ro (b, _) = compile_to_c("fn main() {\n ro t = true\n println(t as u8)\n}", std)
     assert(b.len() == 1 && codes(b).contains("E_NOVAC_SUBSET"), messages(b))
-    // CONTROL: the neighbouring pair both sides agree on compiles.
-    ro (ok, _) = compile_to_c("fn main() {\n ro n = 5 as u64\n println(n as uint)\n}", std)
-    assert(ok.len() == 0, messages(ok))
 }
 
 test "inside `unsafe { }` an integer variable may become a char, and that is the block's reason (D54)" {
@@ -103,4 +102,9 @@ test "inside `unsafe { }` an integer variable may become a char, and that is the
     // CONTROL: the same cast outside the block is the language's error.
     ro (o, _) = compile_to_c("fn main() {\n ro n = 65\n println(\"\${n as char}\")\n}", std)
     assert(o.len() == 1 && messages(o).contains("`int as char`"), messages(o))
+    // A char VARIABLE into a byte is D54's other unsafe pair: legal inside the
+    // block and its operation, so the block is not E_UNSAFE_UNUSED (the
+    // oracle's refusal there is registry 1547).
+    ro (u, _) = compile_to_c("fn main() {\n ro c = 'q'\n ro b = unsafe { c as u8 }\n println(b)\n}", std)
+    assert(u.len() == 0, messages(u))
 }
