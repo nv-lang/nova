@@ -387,6 +387,7 @@ ro n = 100
 ro c Row = n                   // ERROR E7301 -- a typed variable
 ro d Row = Row(n)              // ok
 ro e Row = n as Row            // ok
+ro g Row = Row(d)              // ERROR E_NEWTYPE_CTOR_SELF -- d is already Row
 ```
 
 Sums are untouched: `SqlValue.I(x)` is still inserted for ANY expression the
