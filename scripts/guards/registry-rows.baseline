@@ -1490,6 +1490,9 @@
 # 2026-10-01, integrator nova-20: rows -> 1529, max -> 1587 (rows 1578, 1579, 1587 (strarm question, claude-limits test-only CC-FAIL, cast question 3)).
 # 2026-10-01, integrator nova-20: rows -> 1532, max -> 1591 (d486-cond-outer-mode merge: rows 1588, 1589, 1591).
 # 2026-10-01, integrator nova-20: rows -> 1533, max -> 1591 (row 1590 (Windows argv/env ANSI)).
+# 2026-10-01, integrator nova-20: rows -> 1535, max -> 1593 (rows 1592 (cli error causes), 1593 (literal precision)).
+rows=1535
+max=1593
 rows=1533
 max=1591
 rows=1532
