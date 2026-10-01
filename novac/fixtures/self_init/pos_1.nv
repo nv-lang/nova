@@ -1,0 +1,27 @@
+module self_init.pos_1
+
+// A BINDING NAMED LIKE A FIELD, A METHOD OR A NAMED ARGUMENT IN ITS OWN
+// INITIALIZER -- not a self-reference. `ro name = fns.rows[i].name` reads the
+// FIELD `name`; the self-initialization refusal (274.3/F28, `ro x = x + 1`
+// reads a binding not yet made) counted every identifier token of the
+// initializer, and refused two loops of novac's own resolve.nv (plus four
+// "unknown name" cascades after them). A reference to a binding is a `Name`
+// node; the field after `.`, the method's name and the argument's label are
+// bare tokens. Behaviour byte-for-byte with the oracle (novac-e1-smoke).
+
+type Row {
+    name str
+    len int
+}
+
+fn width(len int, pad int = 0) -> int => len + pad
+
+fn main() {
+    ro rows = [Row { name: "fn", len: 2 }, Row { name: "match", len: 5 }]
+    for i in 0..rows.len() {
+        ro name = rows[i].name
+        ro len = name.byte_len()
+        ro pad = width(len, pad: 1)
+        println("${name} ${len} ${pad}")
+    }
+}

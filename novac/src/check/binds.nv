@@ -747,13 +747,21 @@ const SELF_INIT_MSG = "outside the subset: a binding's initializer refers to the
 /// (rule 1 of the resolve discipline, and its guard is right to insist --
 /// my first version compared identifier TEXT against the declared name in
 /// a walk, which is the linear resolve the rule bans). The declared name
-/// goes into a one-entry table owned by the Checker, every identifier leaf
-/// is asked for its id, and the comparison is on integers.
+/// goes into a one-entry table owned by the Checker, every `Name` node of the
+/// initializer is asked for its id, and the comparison is on integers.
 #realtime nogc
 fn Checker @init_reads_self(n Node) -> bool {
     match n {
-        Leaf(t) => leaf_kind(n) == TokenKind.Ident && @self_probe.find(t.text) >= 0
+        // A BARE token is no reference to a binding: the field after `.`
+        // (`ro name = fns.rows[i].name`), a method's name, a named argument's
+        // label. Until 2026-10-01 every identifier leaf counted, and two
+        // initializers of resolve.nv were refused for reading a FIELD named
+        // like the binding -- plus four "unknown name" cascades after them.
+        Leaf(_) => false
         Branch { children, .. } => {
+            // A reference to a binding is a `Name` node (the parser wraps every
+            // one); its token is the name read.
+            if n.kind_of() == NodeKind.Name { return @self_probe.find(expr_leaf_name(n)) >= 0 }
             mut found = false
             for c in children {
                 // A flag that only turns on IS a disjunction (P31).
