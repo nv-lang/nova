@@ -1,0 +1,95 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_STDOUT main-store: reply 40
+// EXPECT_STDOUT same-worker: reply 50
+// EXPECT_STDOUT one worker done
+// EXPECT_TIMEOUT_MS 60000
+// ENV NOVA_MAXPROCS=1
+//
+// Registry 221.1 №1406, the one-worker twin of p1406_chan_wake_while_io_parked:
+// with a single worker, the sender and the receiver of a request/reply sit on
+// the SAME worker (`same-worker`: store and asker are both spawned) or on the
+// worker and the main thread (`main-store`), while a fiber is parked in
+// `accept()` on a main-bound listener. Pre-fix `main-store` hangs; `same-worker`
+// is the control (a same-thread wake goes through the worker's runnext).
+module standalone.p1406_chan_wake_one_worker
+
+import std.concurrency.nvchan.{Chan, ChanTx, ChanRx}
+import std.net.{TcpListener, TcpStream}
+import std.os.{real_os, exit_process}
+import std.time.duration
+
+type Ask value {
+    ro n int
+    ro reply ChanTx[int]
+}
+
+// A refused send means the peer closed early — say so instead of dropping it.
+fn put[T](tx ChanTx[T], v T) Io -> () {
+    if !tx.send(v) { println("send refused: channel closed") }
+}
+
+fn store(rx ChanRx[Ask]) Io -> () {
+    mut going = true
+    while going {
+        match rx.recv() {
+            None => { going = false }
+            Some(a) => put(a.reply, a.n * 10)
+        }
+    }
+}
+
+fn ask(tx ChanTx[Ask], n int) Io -> int {
+    ro pair = Chan[int].new(1)
+    ro q Ask = { n, reply: pair.tx }
+    put(tx, q)
+    pair.rx.recv() ?? (0 - 1)
+}
+
+fn main() Io Net Time Detach {
+    consume l = match TcpListener.bind("127.0.0.1:0") {
+        Ok(consume x) => x
+        Err(e) => panic("bind ${e}")
+    }
+    ro port = l.local_port()
+    ro closed = Chan[int].new(1)
+    ro closed_tx = closed.tx
+    detach consume l {
+        match l.accept() {
+            Ok(consume s) => s.close()
+            Err(e) => println("accept ${e}")
+        }
+        l.close()
+        put(closed_tx, 1)
+    }
+
+    ro req1 = Chan[Ask].new(8)
+    ro tx1 = req1.tx
+    supervised {
+        spawn {
+            20.to_millis().sleep()
+            println("main-store: reply ${ask(tx1, 4)}")
+            tx1.close()
+        }
+        store(req1.rx)
+    }
+
+    ro req2 = Chan[Ask].new(8)
+    ro tx2 = req2.tx
+    ro rx2 = req2.rx
+    supervised {
+        spawn { store(rx2) }
+        spawn {
+            20.to_millis().sleep()
+            println("same-worker: reply ${ask(tx2, 5)}")
+            tx2.close()
+        }
+    }
+
+    match TcpStream.connect("127.0.0.1:${port}") {
+        Ok(consume c) => c.close()
+        Err(e) => println("connect ${e}")
+    }
+    ro _ = closed.rx.recv()
+    println("one worker done")
+    with Os = real_os() { exit_process(0) }
+}
