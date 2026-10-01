@@ -560,7 +560,7 @@ fn harvest_fn(kids []Node, handed_from str, own_module str, types []TypeDef, mut
         fns.add_static(recv_t, mname, ret_t, param_ids, tps, bounds, handed_from, ret_is_ro(ret_kids))
     } else {
         fns.add(mname, ret_t, !is_free, param_ids, tps, bounds, handed_from: handed_from,
-                ret_ro: ret_is_ro(ret_kids))
+                ret_ro: ret_is_ro(ret_kids), ret_self: returns_receiver(kids))
     }
     fns.mark_linear(linear)
     if is_free && !row_only {
