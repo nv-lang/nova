@@ -1,0 +1,52 @@
+module vec_new.pos_3
+
+// `[]T.new()` as the TAIL OF AN `if`-VALUE BRANCH (registry 221.1 #1457) --
+// novac's own `if is_free { []str.new() } else { ... }` (sem/harvest.nv) --
+// with the `if` standing as a binding initializer, the right side of `=`, a
+// call argument and the body of a match arm; the other branch builds a
+// non-empty literal or calls. Behaviour byte-for-byte with the oracle
+// (novac-e1-smoke). The argument case binds the call before printing it: an
+// `if` value inside a call that is itself `println`'s argument ICEs in emit
+// ("expression kind outside the subset") on the base without this entry too
+// -- a separate defect, named in REPORT-p1457.md, not this form's.
+
+fn seeded(n int) -> []int {
+    mut xs = []int.new()
+    for i in 0..n {
+        if i % 2 == 0 {
+            xs.push(i)
+        }
+        xs.push(i + n)
+    }
+    xs
+}
+
+fn count(xs []int) -> int => xs.len()
+
+fn pick(k int) -> int {
+    ro v = match k {
+        0 => if k == 0 { []int.new() } else { seeded(3) }
+        _ => if k > 5 { seeded(k) } else { []int.of(k, k) }
+    }
+    v.len()
+}
+
+fn main() {
+    ro empty = true
+    mut ws = if empty { []str.new() } else { []str.of("z") }
+    println(ws.len())
+    ws.push("q")
+    println(ws.len())
+    ws = if ws.len() > 0 { []str.new() } else { []str.of("a", "b") }
+    println(ws.len())
+    mut xs = if !empty { seeded(2) } else { []int.new() }
+    xs.push(4)
+    println(xs.len())
+    ro n1 = count(if empty { []int.new() } else { seeded(9) })
+    println(n1)
+    ro n2 = count(if !empty { []int.new() } else { seeded(9) })
+    println(n2)
+    println(pick(0))
+    println(pick(2))
+    println(pick(7))
+}

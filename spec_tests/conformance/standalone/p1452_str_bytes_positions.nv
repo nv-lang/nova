@@ -1,0 +1,334 @@
+// Registry 221.1 #1451/#1452, positive side: ONE door for `#coerce str @bytes() -> ro []u8`
+// (D55 "Str -> `ro []u8` coercion", D429 R6/R7). Every position of the D55 table x every form
+// of a `str` expression; each line decodes the bytes it received back to text.
+//
+// Before the fix the checker accepted all of these by the value's TYPE, but three places
+// materialized the coercion by the expression's FORM (a literal or a bare name in `let`/
+// `return`, a resolvable callee in a call argument), so a call, a field or an `if`/`match`
+// value in `let`/`return`, and any non-leaf at a protocol receiver or in a `[][]u8` element,
+// reached C as `nova_str` (CC-FAIL). Now the checker records its verdict per expression and
+// the rewrite splices exactly that (`compiler-codegen/src/types/coerce_door.rs`).
+//
+// Positions: free fn arg (free), method arg (method), protocol-receiver method arg (proto),
+// `ro` let with `[]u8` annotation (rolet), arrow-body return (retarrow), `return` statement
+// (retstmt), `[][]u8` element (elem). Then the read-only spellings of writable places, which
+// stay legal because the content is `ro`: `mut b ro []u8` binding, `mut b ro []u8` parameter,
+// assignment to a `mut b ro []u8`; a record-literal field; a module-level `const`. Last, the
+// FINALIZE lane (`WriteBuffer -> []u8`, an owning move, D429 R2) into a writable `mut` local --
+// the mutability rule is about the view lane only, an owned value is the caller's to write.
+// The writable places are refused -- `neg/p1452_str_bytes_mut_*.nv`.
+
+// EXPECT_STDOUT free lit abc
+// EXPECT_STDOUT free var abc
+// EXPECT_STDOUT free call abc
+// EXPECT_STDOUT free field abc
+// EXPECT_STDOUT free interp abc
+// EXPECT_STDOUT free if abc
+// EXPECT_STDOUT free match abc
+// EXPECT_STDOUT method lit abc
+// EXPECT_STDOUT method var abc
+// EXPECT_STDOUT method call abc
+// EXPECT_STDOUT method field abc
+// EXPECT_STDOUT method interp abc
+// EXPECT_STDOUT method if abc
+// EXPECT_STDOUT method match abc
+// EXPECT_STDOUT proto lit abc
+// EXPECT_STDOUT proto var abc
+// EXPECT_STDOUT proto call abc
+// EXPECT_STDOUT proto field abc
+// EXPECT_STDOUT proto interp abc
+// EXPECT_STDOUT proto if abc
+// EXPECT_STDOUT proto match abc
+// EXPECT_STDOUT rolet lit abc
+// EXPECT_STDOUT rolet var abc
+// EXPECT_STDOUT rolet call abc
+// EXPECT_STDOUT rolet field abc
+// EXPECT_STDOUT rolet interp abc
+// EXPECT_STDOUT rolet if abc
+// EXPECT_STDOUT rolet match abc
+// EXPECT_STDOUT retarrow lit abc
+// EXPECT_STDOUT retarrow var abc
+// EXPECT_STDOUT retarrow call abc
+// EXPECT_STDOUT retarrow field abc
+// EXPECT_STDOUT retarrow interp abc
+// EXPECT_STDOUT retarrow if abc
+// EXPECT_STDOUT retarrow match abc
+// EXPECT_STDOUT retstmt lit abc
+// EXPECT_STDOUT retstmt var abc
+// EXPECT_STDOUT retstmt call abc
+// EXPECT_STDOUT retstmt field abc
+// EXPECT_STDOUT retstmt interp abc
+// EXPECT_STDOUT retstmt if abc
+// EXPECT_STDOUT retstmt match abc
+// EXPECT_STDOUT elem lit abc
+// EXPECT_STDOUT elem var abc
+// EXPECT_STDOUT elem call abc
+// EXPECT_STDOUT elem field abc
+// EXPECT_STDOUT elem interp abc
+// EXPECT_STDOUT elem if abc
+// EXPECT_STDOUT elem match abc
+// EXPECT_STDOUT mutro call abc
+// EXPECT_STDOUT mutroparam call abc
+// EXPECT_STDOUT assignro call abc
+// EXPECT_STDOUT recfield call abc
+// EXPECT_STDOUT const lit abc
+// EXPECT_STDOUT finalize mut Abc
+
+module standalone.p1452_str_bytes_positions
+
+type P1452Rec { name str }
+
+type P1452Hold { data []u8 }
+
+type P1452Tally { mut got str }
+
+fn P1452Tally mut @put(bytes []u8) -> () { @got = dec(bytes) }
+
+type P1452Sink protocol {
+    mut @put(bytes []u8) -> ()
+}
+
+type P1452Box { n int }
+
+fn P1452Box @echo(b []u8) -> str => dec(b)
+
+const P1452_K []u8 = "abc"
+
+fn dec(b []u8) -> str => b.to_str() ?? "ERR"
+
+fn echo(b []u8) -> str => dec(b)
+
+fn look(mut b ro []u8) -> str => dec(b)
+
+fn nm() -> str => "abc"
+
+fn via_lit(mut w P1452Sink, s str, r P1452Rec, k int, flag bool) -> () { w.put("abc") }
+
+fn via_var(mut w P1452Sink, s str, r P1452Rec, k int, flag bool) -> () { w.put(s) }
+
+fn via_call(mut w P1452Sink, s str, r P1452Rec, k int, flag bool) -> () { w.put(nm()) }
+
+fn via_field(mut w P1452Sink, s str, r P1452Rec, k int, flag bool) -> () { w.put(r.name) }
+
+fn via_interp(mut w P1452Sink, s str, r P1452Rec, k int, flag bool) -> () { w.put("${s}") }
+
+fn via_if(mut w P1452Sink, s str, r P1452Rec, k int, flag bool) -> () { w.put(if flag { s } else { "xy" }) }
+
+fn via_match(mut w P1452Sink, s str, r P1452Rec, k int, flag bool) -> () { w.put(match k { 0 => s, _ => "xy" }) }
+
+fn ra_lit(s str, r P1452Rec, k int, flag bool) -> []u8 => "abc"
+
+fn ra_var(s str, r P1452Rec, k int, flag bool) -> []u8 => s
+
+fn ra_call(s str, r P1452Rec, k int, flag bool) -> []u8 => nm()
+
+fn ra_field(s str, r P1452Rec, k int, flag bool) -> []u8 => r.name
+
+fn ra_interp(s str, r P1452Rec, k int, flag bool) -> []u8 => "${s}"
+
+fn ra_if(s str, r P1452Rec, k int, flag bool) -> []u8 => if flag { s } else { "xy" }
+
+fn ra_match(s str, r P1452Rec, k int, flag bool) -> []u8 => match k { 0 => s, _ => "xy" }
+
+fn rs_lit(s str, r P1452Rec, k int, flag bool) -> []u8 {
+    if k > 5 {
+        return "early"
+    }
+    return "abc"
+}
+
+fn rs_var(s str, r P1452Rec, k int, flag bool) -> []u8 {
+    if k > 5 {
+        return "early"
+    }
+    return s
+}
+
+fn rs_call(s str, r P1452Rec, k int, flag bool) -> []u8 {
+    if k > 5 {
+        return "early"
+    }
+    return nm()
+}
+
+fn rs_field(s str, r P1452Rec, k int, flag bool) -> []u8 {
+    if k > 5 {
+        return "early"
+    }
+    return r.name
+}
+
+fn rs_interp(s str, r P1452Rec, k int, flag bool) -> []u8 {
+    if k > 5 {
+        return "early"
+    }
+    return "${s}"
+}
+
+fn rs_if(s str, r P1452Rec, k int, flag bool) -> []u8 {
+    if k > 5 {
+        return "early"
+    }
+    return if flag { s } else { "xy" }
+}
+
+fn rs_match(s str, r P1452Rec, k int, flag bool) -> []u8 {
+    if k > 5 {
+        return "early"
+    }
+    return match k { 0 => s, _ => "xy" }
+}
+
+fn main() Io -> () {
+    ro s = "abc"
+    ro r = P1452Rec { name: "abc" }
+    ro k = 0
+    ro flag = true
+    ro bx = P1452Box { n: 0 }
+    ro o1 = echo("abc")
+    println("free lit ${o1}")
+    ro o2 = echo(s)
+    println("free var ${o2}")
+    ro o3 = echo(nm())
+    println("free call ${o3}")
+    ro o4 = echo(r.name)
+    println("free field ${o4}")
+    ro o5 = echo("${s}")
+    println("free interp ${o5}")
+    ro o6 = echo(if flag { s } else { "xy" })
+    println("free if ${o6}")
+    ro o7 = echo(match k { 0 => s, _ => "xy" })
+    println("free match ${o7}")
+    ro o8 = bx.echo("abc")
+    println("method lit ${o8}")
+    ro o9 = bx.echo(s)
+    println("method var ${o9}")
+    ro o10 = bx.echo(nm())
+    println("method call ${o10}")
+    ro o11 = bx.echo(r.name)
+    println("method field ${o11}")
+    ro o12 = bx.echo("${s}")
+    println("method interp ${o12}")
+    ro o13 = bx.echo(if flag { s } else { "xy" })
+    println("method if ${o13}")
+    ro o14 = bx.echo(match k { 0 => s, _ => "xy" })
+    println("method match ${o14}")
+    mut t_lit = P1452Tally { got: "" }
+    via_lit(t_lit, s, r, k, flag)
+    ro o15 = t_lit.got
+    println("proto lit ${o15}")
+    mut t_var = P1452Tally { got: "" }
+    via_var(t_var, s, r, k, flag)
+    ro o16 = t_var.got
+    println("proto var ${o16}")
+    mut t_call = P1452Tally { got: "" }
+    via_call(t_call, s, r, k, flag)
+    ro o17 = t_call.got
+    println("proto call ${o17}")
+    mut t_field = P1452Tally { got: "" }
+    via_field(t_field, s, r, k, flag)
+    ro o18 = t_field.got
+    println("proto field ${o18}")
+    mut t_interp = P1452Tally { got: "" }
+    via_interp(t_interp, s, r, k, flag)
+    ro o19 = t_interp.got
+    println("proto interp ${o19}")
+    mut t_if = P1452Tally { got: "" }
+    via_if(t_if, s, r, k, flag)
+    ro o20 = t_if.got
+    println("proto if ${o20}")
+    mut t_match = P1452Tally { got: "" }
+    via_match(t_match, s, r, k, flag)
+    ro o21 = t_match.got
+    println("proto match ${o21}")
+    ro b_lit []u8 = "abc"
+    ro o22 = dec(b_lit)
+    println("rolet lit ${o22}")
+    ro b_var []u8 = s
+    ro o23 = dec(b_var)
+    println("rolet var ${o23}")
+    ro b_call []u8 = nm()
+    ro o24 = dec(b_call)
+    println("rolet call ${o24}")
+    ro b_field []u8 = r.name
+    ro o25 = dec(b_field)
+    println("rolet field ${o25}")
+    ro b_interp []u8 = "${s}"
+    ro o26 = dec(b_interp)
+    println("rolet interp ${o26}")
+    ro b_if []u8 = if flag { s } else { "xy" }
+    ro o27 = dec(b_if)
+    println("rolet if ${o27}")
+    ro b_match []u8 = match k { 0 => s, _ => "xy" }
+    ro o28 = dec(b_match)
+    println("rolet match ${o28}")
+    ro o29 = dec(ra_lit(s, r, k, flag))
+    println("retarrow lit ${o29}")
+    ro o30 = dec(ra_var(s, r, k, flag))
+    println("retarrow var ${o30}")
+    ro o31 = dec(ra_call(s, r, k, flag))
+    println("retarrow call ${o31}")
+    ro o32 = dec(ra_field(s, r, k, flag))
+    println("retarrow field ${o32}")
+    ro o33 = dec(ra_interp(s, r, k, flag))
+    println("retarrow interp ${o33}")
+    ro o34 = dec(ra_if(s, r, k, flag))
+    println("retarrow if ${o34}")
+    ro o35 = dec(ra_match(s, r, k, flag))
+    println("retarrow match ${o35}")
+    ro o36 = dec(rs_lit(s, r, k, flag))
+    println("retstmt lit ${o36}")
+    ro o37 = dec(rs_var(s, r, k, flag))
+    println("retstmt var ${o37}")
+    ro o38 = dec(rs_call(s, r, k, flag))
+    println("retstmt call ${o38}")
+    ro o39 = dec(rs_field(s, r, k, flag))
+    println("retstmt field ${o39}")
+    ro o40 = dec(rs_interp(s, r, k, flag))
+    println("retstmt interp ${o40}")
+    ro o41 = dec(rs_if(s, r, k, flag))
+    println("retstmt if ${o41}")
+    ro o42 = dec(rs_match(s, r, k, flag))
+    println("retstmt match ${o42}")
+    ro xs_lit [][]u8 = ["abc", "zz"]
+    ro o43 = dec(xs_lit[0])
+    println("elem lit ${o43}")
+    ro xs_var [][]u8 = [s, "zz"]
+    ro o44 = dec(xs_var[0])
+    println("elem var ${o44}")
+    ro xs_call [][]u8 = [nm(), "zz"]
+    ro o45 = dec(xs_call[0])
+    println("elem call ${o45}")
+    ro xs_field [][]u8 = [r.name, "zz"]
+    ro o46 = dec(xs_field[0])
+    println("elem field ${o46}")
+    ro xs_interp [][]u8 = ["${s}", "zz"]
+    ro o47 = dec(xs_interp[0])
+    println("elem interp ${o47}")
+    ro xs_if [][]u8 = [if flag { s } else { "xy" }, "zz"]
+    ro o48 = dec(xs_if[0])
+    println("elem if ${o48}")
+    ro xs_match [][]u8 = [match k { 0 => s, _ => "xy" }, "zz"]
+    ro o49 = dec(xs_match[0])
+    println("elem match ${o49}")
+    mut mr ro []u8 = nm()
+    ro o50 = dec(mr)
+    println("mutro call ${o50}")
+    ro o51 = look(nm())
+    println("mutroparam call ${o51}")
+    mut ar ro []u8 = "zz"
+    ar = nm()
+    ro o52 = dec(ar)
+    println("assignro call ${o52}")
+    ro h = P1452Hold { data: nm() }
+    ro o53 = dec(h.data)
+    println("recfield call ${o53}")
+    ro o54 = dec(P1452_K)
+    println("const lit ${o54}")
+    mut wb = WriteBuffer.new()
+    wb.write_bytes("abc")
+    mut fb []u8 = wb
+    fb[0] = 65 as u8
+    ro ofin = dec(fb)
+    println("finalize mut ${ofin}")
+}

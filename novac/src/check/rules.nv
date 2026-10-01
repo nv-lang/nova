@@ -156,6 +156,47 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
     @report_first_leaf_of(kids, msg)
 }
 
+/// A FIELD's children with its `ro` view qualifier stepped over (D176:
+/// `type Wrapper { field ro []u8 }`, registry 1458): the shape is judged on the
+/// type after it, exactly as the reference door reads it. The view itself is
+/// kept on the field's row (`FieldDef.ro_view`) and judged at every write.
+fn past_field_ro(kids []Node) -> ro []Node {
+    ro at = param_type_at(kids) ?? -1
+    if at < 0 { return kids }
+    if kids[at].kind_of() != NodeKind.LeafNode || leaf_kind(kids[at]) != TokenKind.KwRo { return kids }
+    mut out = []Node.new()
+    for i in 0..kids.len() {
+        // Not a copy: the push skips the one qualifier leaf, and no slice
+        // drops an element from the middle.
+        if i != at {
+            // nova:allow W_MANUAL_SLICE_COPY -- conditional push, no slice expresses it
+            out.push(kids[i])
+        } else {
+            // The qualifier leaf itself: stepped over.
+        }
+    }
+    out
+}
+
+/// A binding that WRITES its type (`ro x T = ...`) -- outside the subset (E2-b3)
+/// -- with one form the oracle refuses outright, and so must novac, by its code
+/// and at its token: `ro x ro T` (D176 amendment, Plan 124.8) -- the `ro`
+/// binding already makes the content read-only, the second `ro` is redundant
+/// (registry 1458). A `ro` view qualifier on a `mut` binding (`mut x ro T`) is
+/// legal in the language and refused here only as a typed local, without the
+/// claim that a type named `ro` is missing.
+fn Checker mut @report_typed_local(children []Node, tname str, known bool) -> () {
+    ro view = children[2].kind_of() == NodeKind.LeafNode && leaf_kind(children[2]) == TokenKind.KwRo
+    ro ro_bind = children[0].kind_of() == NodeKind.LeafNode && leaf_kind(children[0]) == TokenKind.KwRo
+    if view && ro_bind {
+        @reject_first_leaf_of([]Node.of(children[2]), REDUNDANT_TYPE_RO_MSG)
+    } else if view {
+        @report_first_leaf_of(children, TYPED_LOCAL_MSG)
+    } else {
+        @report_first_leaf_of(children, typed_local_msg(tname, known))
+    }
+}
+
 /// The SHAPE of a declared return type: `-> []int`, `-> Vec[T]`, `-> (a, b)`,
 /// `-> fn(int) -> str` are read by the parser and refused by name here.
 fn Checker mut @report_if_return_form(kids []Node) -> () {
@@ -170,7 +211,15 @@ fn Checker mut @report_if_return_form(kids []Node) -> () {
     // reference door reads them at collection -- so the Generics branch and
     // `EmptyBrackets` pass through here, and an unreadable head is named at
     // the point of use instead of the shape being turned away wholesale.
-    match kids[1] {
+    // `-> ro T` stopped being one too (registry 1458): `ro` is a VIEW of the
+    // type after it (D176), the reference door reads through it, and the form
+    // is judged on what follows -- so `-> ro *T` is still the pointer refusal.
+    ro at = if kids[1].kind_of() == NodeKind.LeafNode && leaf_kind(kids[1]) == TokenKind.KwRo { 2 } else { 1 }
+    if at >= kids.len() {
+        @report_first_leaf_of(kids, TYPE_FORM_MSG)
+        return
+    }
+    match kids[at] {
         Leaf(t) => {
             // `-> (a, b)` stopped being a refusal with B15 step 4b: the one
             // reference door reads the tuple form (typeref), exactly as `[]T`

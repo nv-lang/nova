@@ -66,6 +66,18 @@ $PATHS
 EOF
 
 if [ -n "${NOVA_DOCS_BATCH:-}" ]; then
+    # №1479: «текст обязателен — пакет без описи неотличим от одиночного».
+    # Пробелы и голое число (`1`, как у соседнего ключа NOVA_MAIN_DIRECT_CODE)
+    # описью не являются — прежде проходили.
+    _inv=$(printf '%s' "$NOVA_DOCS_BATCH" | tr -d ' \t')
+    case "$_inv" in
+        ''|*[!0-9]*) ;;
+        *) _inv="" ;;
+    esac
+    if [ -z "$_inv" ]; then
+        echo "$NAME: FAIL — NOVA_DOCS_BATCH без описи ('$NOVA_DOCS_BATCH'): назови, что в пакете" >&2
+        exit 1
+    fi
     pass "пакетный бумажный коммит в main ($N путей) по ключу NOVA_DOCS_BATCH: $NOVA_DOCS_BATCH"
 fi
 

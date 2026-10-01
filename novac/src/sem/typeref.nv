@@ -80,11 +80,23 @@ export fn ty_of_type_ref(pk []Node, at int, recv_t TyId, tps []str, param_rows [
     if at >= pk.len() { return no_ty() }
     ro head = pk[at]
     if head.kind_of() != NodeKind.LeafNode { return no_ty() }
+    // THE `ro` VIEW (D176, registry 1458): `ro T` is a read-only view of the
+    // SAME type -- zero overhead, the same C value -- so the term is the term
+    // of what follows, read by THIS door. The right to write is not a type
+    // here; the row keeps it (`FnDef.ret_ro`, `FieldDef.ro_view`) and check
+    // judges every write through it. Until this line `-> ro []Node` was no
+    // type, and fifteen of novac's own signatures were refused as a "form".
+    if leaf_kind(head) == TokenKind.KwRo {
+        return ty_of_type_ref(pk, at + 1, recv_t, tps, param_rows, types, defs, tys)
+    }
     // THE SLICE SUGAR FIRST: `[]Elem` has no head ident of its own -- the head
     // is the language's (D239), asked from the registry by its builtins name.
     if leaf_kind(head) == TokenKind.EmptyBrackets {
         if at + 1 >= pk.len() { return no_ty() }
-        ro elem = ref_leaf_ty(pk[at + 1], recv_t, tps, param_rows, types, defs)
+        // The ELEMENT through THIS door (registry 1458): `[][]int` is a slice
+        // of `[]int`, and the leaf-only read made the nested form no type --
+        // `-> ro [][]T` and plain `[][]T` alike.
+        ro elem = ty_of_type_ref(pk, at + 1, recv_t, tps, param_rows, types, defs, tys)
         return app_term_of(SLICE_HEAD, []TyId.of(elem), types, defs, tys)
     }
     // A POINTER: `*T` and `*mut T` (D216) -- std writes `mut data *mut T` and
@@ -413,6 +425,21 @@ export fn ret_ty_of_decl(fk []Node, tps []str, param_rows []TyId,
         ret = ty_of_type_ref(rk, 1, no_ty(), tps, param_rows, types, defs, tys)
     }
     ret
+}
+
+/// Does this return-type node hand out a `ro` VIEW (`-> ro []T`, D176)? The
+/// qualifier stands right after the arrow; the caller may read the value and
+/// may not write through it, and check judges that from the row.
+fn ret_is_ro(rk []Node) -> bool =>
+    rk.len() > 1 && is_leaf_kind(rk[1], TokenKind.KwRo)
+
+/// The same question asked of a whole declaration: its `RetType` child, when
+/// written, is the one that answers.
+fn decl_ret_is_ro(fk []Node) -> bool {
+    for r in fk {
+        if r.kind_of() == NodeKind.RetType { return ret_is_ro(branch_children(r)) }
+    }
+    false
 }
 
 /// Does this return-type node declare the UNIT (`-> ()`)?

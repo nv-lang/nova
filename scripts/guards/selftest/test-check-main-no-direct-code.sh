@@ -29,6 +29,7 @@ git -C "$R" init -q -b main
 git -C "$R" config core.autocrlf false
 mkdir -p "$R/std/src" "$R/docs/plans" "$R/spec"
 echo base > "$R/std/src/a.nv"; echo base > "$R/docs/plans/x.md"
+echo "| 1234 | 🟠 К2 | строка-фикстура. **Статус:** ОТКРЫТО |" > "$R/docs/plans/221.1-bug-sweep.md"
 git -C "$R" add -A
 git -C "$R" -c core.hooksPath=/dev/null commit -q -m base
 
@@ -67,6 +68,8 @@ reset_index; stage std/src/a.nv; stage docs/plans/x.md
 expect "код вперемешку с доками -> FAIL" 1 "FAIL"
 NOVA_MAIN_DIRECT_CODE="hotfix of the gate #1234" expect "ключ с номером -> ok, причина напечатана" 0 "hotfix of the gate #1234"
 NOVA_MAIN_DIRECT_CODE=1 expect "ключ без номера -> FAIL" 1 "#NNNN"
+# №1477: номер обязан называть СУЩЕСТВУЮЩУЮ строку реестра.
+NOVA_MAIN_DIRECT_CODE="hotfix #00" expect "ключ с несуществующей строкой -> FAIL" 1 "#00, которой нет"
 
 echo "== слияние =="
 git -C "$R" rev-parse HEAD > "$R/.git/MERGE_HEAD"

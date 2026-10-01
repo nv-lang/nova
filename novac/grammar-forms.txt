@@ -11,3 +11,4 @@ default_named
 coerce_pair
 value_record
 iflet_else
+ctor_self_shorthand

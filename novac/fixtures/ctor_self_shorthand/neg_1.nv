@@ -1,0 +1,25 @@
+module ctor_self_shorthand.neg_1
+
+// RECEIVER PUNNING OUTSIDE A METHOD (#1459): `Pt { @x }` in a free function has
+// no receiver to read `x` from -- D458 binds `@` only through a method's
+// receiver parameter. Refused at the `@`, the same answer a bare `@x` gets.
+//
+// THE ORACLE'S CHECK PASSES THIS FILE and its build then fails in C on an
+// undeclared `nova_self` (measured 2026-10-01): its check never refuses `@x`
+// outside a method, written alone or punned. novac refuses where the spec
+// does, not where the oracle happens to stop.
+//
+// NOVAC_EXPECT outside a method body there is no receiver
+
+type Pt {
+    x int
+}
+
+fn make() -> int {
+    ro p = Pt { @x }
+    p.x
+}
+
+fn main() {
+    println(make())
+}

@@ -1,0 +1,51 @@
+// EXPECT_COMPILE_ERROR E_UNSAFE_REQUIRED
+//
+// Registry 221.1 #1473 / D216 amendment 2026-09-20, PART 1: access through a
+// valid pointer is safe (`p.read()`, `p.write(v)`), but `unsafe` STAYS where
+// the type stops answering -- address arithmetic: `read_at`, `write_at`,
+// `offset`, `dist`, `copy_from`/`copy_to`, unaligned and volatile access, and
+// the indexed consume/view forms. Each of them outside `unsafe { }` is
+// E_UNSAFE_REQUIRED, one marker per line. Before the fix the oracle only
+// counted these names for E_UNSAFE_UNUSED: `s.ptr().read_at(0)` passed
+// `check`, built and printed 65.
+module neg.p1473_ptr_address_arithmetic_unsafe_required_neg
+
+fn first_byte(s str) -> u8 {
+    // nova:expect E_UNSAFE_REQUIRED -- read_at is address arithmetic (D216 part 1)
+    s.ptr().read_at(0)
+}
+
+test "every address-arithmetic method outside unsafe is refused" {
+    mut buf []int = [1, 2, 3, 4]
+    ro src []int = [5, 6, 7, 8]
+    mut d = buf.ptr()
+    ro p = buf.ptr()
+    ro s = src.ptr()
+    // nova:expect E_UNSAFE_REQUIRED -- read_at
+    ro a = p.read_at(1)
+    // nova:expect E_UNSAFE_REQUIRED -- write_at
+    d.write_at(0, 9)
+    // nova:expect E_UNSAFE_REQUIRED -- offset
+    ro q = p.offset(2)
+    // nova:expect E_UNSAFE_REQUIRED -- dist
+    ro n = q.dist(p)
+    // nova:expect E_UNSAFE_REQUIRED -- copy_from
+    d.copy_from(s, 2)
+    // nova:expect E_UNSAFE_REQUIRED -- copy_from_nonoverlapping
+    d.copy_from_nonoverlapping(s, 2)
+    // nova:expect E_UNSAFE_REQUIRED -- copy_to
+    s.copy_to(d, 2)
+    // nova:expect E_UNSAFE_REQUIRED -- copy_to_nonoverlapping
+    s.copy_to_nonoverlapping(d, 2)
+    // nova:expect E_UNSAFE_REQUIRED -- read_unaligned
+    ro u = p.read_unaligned()
+    // nova:expect E_UNSAFE_REQUIRED -- write_unaligned
+    d.write_unaligned(3)
+    // nova:expect E_UNSAFE_REQUIRED -- read_volatile
+    ro v = p.read_volatile()
+    // nova:expect E_UNSAFE_REQUIRED -- write_volatile
+    d.write_volatile(4)
+    // nova:expect E_UNSAFE_REQUIRED -- view_at
+    ro w = p.view_at(0, |e| e + 1)
+    assert(a + n + u + v + w > 0)
+}

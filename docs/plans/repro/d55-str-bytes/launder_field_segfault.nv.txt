@@ -1,0 +1,14 @@
+// Same class as launder_return_segfault.nv.txt: the view of a `str` stored in a RECORD-LITERAL
+// FIELD of type `[]u8` (D429 R6 clarification: "the value of a record literal" is NOT a #coerce
+// position at all, yet the oracle accepts it) and written through a `mut` binding of the record.
+// `nova check` passes; run: "Unexpected bus error or segmentation fault", exit 134.
+module probe7
+
+type Hold { data []u8 }
+
+fn main() Io -> () {
+    ro s = "abc"
+    mut h = Hold { data: s }
+    h.data[0] = 65 as u8
+    println("ran")
+}

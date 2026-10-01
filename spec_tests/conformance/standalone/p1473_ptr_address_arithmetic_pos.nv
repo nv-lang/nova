@@ -1,0 +1,36 @@
+// EXPECT_STDOUT 65|42|3|7|11|5|2
+//
+// Registry 221.1 #1473 / D216 amendment 2026-09-20, PART 1 -- the side that
+// must STAY legal next to neg/p1473_ptr_address_arithmetic_unsafe_required_neg:
+// - access through a valid pointer outside `unsafe` (`p.read()`, `p.write(v)`);
+// - address arithmetic INSIDE `unsafe { }` and in an `unsafe fn` body;
+// - methods of the SAME NAMES on an ordinary type outside `unsafe` -- the rule
+//   judges the receiver's type, not the method name;
+// - a pointer from `p.offset(n)` used inside `unsafe`.
+module standalone.p1473_ptr_address_arithmetic_pos
+
+type Ruler { base int }
+
+fn Ruler @offset(n int) -> int => @base + n
+fn Ruler @read_at(i int) -> int => @base * i
+fn Ruler @dist(o Ruler) -> int => @base - o.base
+
+fn first_byte(s str) -> u8 => unsafe { s.ptr().read_at(0) }
+
+unsafe fn third(p *int) -> int => p.read_at(2)
+
+fn main() Io -> () {
+    print("${first_byte("A")}|")
+    mut x int = 1
+    ro px = &x
+    px.write(42)
+    print("${px.read()}|")
+    mut buf []int = [1, 2, 3, 4]
+    ro p = buf.ptr()
+    print("${unsafe { third(p) }}|")
+    ro r = Ruler { base: 5 }
+    print("${r.offset(2)}|")
+    print("${unsafe { p.offset(1).read_at(2) } + r.read_at(1) + 2}|")
+    print("${r.read_at(1)}|")
+    print("${r.dist(Ruler { base: 3 })}")
+}

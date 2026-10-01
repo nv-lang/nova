@@ -1447,6 +1447,21 @@
 # 2026-10-01, integrator nova-20: rows -> 1420, max -> 1472 (merge of p1453 (background agent): #1453 (regression of #1441, capture bodies nested in a lambda) lands; #1472 (K2, spawn in a lambda body fails in C, old) numbered here).
 # 2026-10-01, integrator nova-20: rows -> 1426, max -> 1479 (merge of hunt/guards-1001 (assistant, guards x K5 on today's main-path guards): #1474-#1479; 1473 issued to Carina, leaves gaps).
 # 2026-10-01, integrator nova-20: rows -> 1427, max -> 1479 (merge of Carina's p274-e9s4: #1473 (the oracle lets read_at past unsafe) lands, out of gaps).
+# 2026-10-01, integrator nova-20: rows -> 1429, max -> 1481 (merge of the cloud session's p1452: #1480 (K1, the str view leaks into an owned []u8 through return/element/field and is laundered by mut) and #1481 (K1, protocol method arguments are not checked against the protocol's parameter types) -- both block the oracle tag).
+# 2026-10-01, integrator nova-20: rows -> 1431, max -> 1482 (merge of the cloud session's p1457: #1457 lands (out of gaps); #1482 (K2, Carina: an if-value in a nested call argument under println drops emission) numbered here).
+# 2026-10-01, integrator nova-20: rows -> 1432, max -> 1482 (merge of the cloud session's p1458: #1458 lands (out of gaps)).
+# 2026-10-01, integrator nova-20: rows -> 1433, max -> 1482 (merge of the cloud session's p1459: #1459 lands (out of gaps)).
+# 2026-10-01, integrator nova-20: rows -> 1435, max -> 1484 (merge of the cloud session's p1459: #1483 (oracle: @field outside a method passes check, fails in C) and #1484 (Carina: anonymous constructor in a match arm ICEs) numbered here).
+rows=1435
+max=1484
+rows=1433
+max=1482
+rows=1432
+max=1482
+rows=1431
+max=1482
+rows=1429
+max=1481
 rows=1427
 max=1479
 rows=1426
@@ -2062,7 +2077,7 @@ stale_gaps=0
 # nomer I v gaps=, I so strokoy schitaetsya 'protuhshey dyroy'.
 # 2026-09-21: №1209 ПРИЕХАЛ и СНЯТ из gaps=
 # (писал интегратор, как и планировалось). №1210-1211 всё ещё ждёт Карину.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1457-1459
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding

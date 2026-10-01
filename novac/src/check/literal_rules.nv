@@ -18,7 +18,7 @@ module novac.check
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind}
 import ../sem.{branch_children, leaf_text, leaf_kind, decl_of_ty, field_range_of}
-import ../sem.{raw_frow, no_frow}
+import ../sem.{raw_frow, no_frow, ctor_field_name}
 // The interpolation slicer comes with the judge moved here on 2026-09-20.
 import ../sem.{interp_slices}
 import ../sem.{prim_row_of, lit_admits, call_arg_at, raw_row, no_row, CalleeTarget}
@@ -334,6 +334,20 @@ fn Checker mut @report_if_ctor_fields_wrong(ctor Node, t TyId) -> () {
         // The construction names a type this file knows.
     }
     ro kids = branch_children(ctor)
+    // RECEIVER PUNNING `{ @f }` (D52 rule 1, #1459) carries its VALUE as the
+    // field's only child, so the value loop of `@judge_record_ctor` -- which
+    // types `name: expr` at slot 2 and skips the one-leaf name punning --
+    // never reaches it. Typed here, first: `@f` is a field access on the
+    // receiver, and its own judge records the type and refuses an `f` the
+    // receiver lacks or a receiver that is not there.
+    // Its natural home is that value loop (check/binds.nv); the file was held
+    // by a neighbouring wave when this landed, and either home is one door.
+    for c in kids {
+        if c.kind_of() != NodeKind.CtorField { continue }
+        ro pk = branch_children(c)
+        if pk[0].kind_of() != NodeKind.SelfField { continue }
+        @type_expr(pk[0])
+    }
     mut spread = false
     mut named_cnt = 0
     for c in kids {
@@ -343,7 +357,7 @@ fn Checker mut @report_if_ctor_fields_wrong(ctor Node, t TyId) -> () {
         } else if ck == NodeKind.CtorField {
             named_cnt += 1
             ro fk = branch_children(c)
-            ro want = leaf_text(fk[0])
+            ro want = ctor_field_name(c)
             if !@fres.has_field(@ctx.fields, t, want) {
                 @report_first_leaf_of(fk, CTOR_UNKNOWN_FIELD_MSG)
                 return
@@ -377,8 +391,7 @@ fn Checker mut @report_if_ctor_fields_wrong(ctor Node, t TyId) -> () {
             // names from one declaration, the same bound a binder scans
             // under. It is not name resolution in a registry, which is what
             // the discipline rule is about.
-            ro fk = branch_children(c)
-            if leaf_text(fk[0]) != fd.name { continue }
+            if ctor_field_name(c) != fd.name { continue }
             seen = true
         }
         if !seen {

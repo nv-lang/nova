@@ -488,6 +488,21 @@ export fn literal_prim_of(lk TokenKind, ctx Ctx) -> TyId {
 }
 
 
+/// The FIELD NAME a CtorField writes -- the one door for the question, because
+/// the node has two shapes for it (#1459). `name`, `name: expr`: the first leaf.
+/// Receiver punning `@name` (D52 rule 1): the CtorField's only child is the
+/// SelfField itself, and the name is that node's second leaf -- reading the
+/// first leaf there would answer `@`, or ice on the branch.
+export fn ctor_field_name(field Node) -> str {
+    ro fk = branch_children(field)
+    if fk[0].kind_of() == NodeKind.SelfField {
+        return leaf_text(branch_children(fk[0])[1])
+    } else {
+        // A written name leads the field.
+    }
+    leaf_text(fk[0])
+}
+
 /// First-leaf text of a Name-like node (its identifier).
 export fn expr_leaf_name(e Node) -> str {
     ro kids = branch_children(e)

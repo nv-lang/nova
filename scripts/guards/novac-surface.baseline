@@ -239,7 +239,10 @@
 #   имя языка/std живёт в builtins (П5), а не строкой у двух потребителей.
 # builtins 54 -> 55 (2026-10-01, окно Карины, 274.11 Э.10 шаг 3в): PTR_READ_AT -- имя метода
 #   указателя D216 `read_at`, его спрашивают check/unsafe.nv; имя языка живёт в builtins (П5).
-builtins 55
+# 2026-10-01 (integrator, merge of the cloud session's #1457), builtins 55 -> 56: `EMPTY_CTOR`
+# ("new") -- the empty-vector constructor's name; check/binds.nv judges `[]T.new()` by it, and
+# builtin names live in builtins (the same home as LITERAL_CTOR). The #1457 merge itself missed the raise.
+builtins 56
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -416,7 +419,11 @@ pipeline 12
 # 2026-08-28 (274.4 step 3): the field root gets the same cut. sem 171 -> 169:
 # has_field and field_type moved OUT to resolve (FieldIndex); resolve 11 -> 15:
 # FieldIndex, build, has_field, field_type.
-resolve 15
+# 2026-10-01 (облачная сессия, реестр 1458), resolve 15 -> 16: `field_is_ro` --
+# «объявлено ли поле видом `f ro T` (D176)». Наружу нужна потому, что спрашивает
+# check (запись через вид, `E_READONLY_CONTENT`), а имена полей резолвятся ТОЛЬКО
+# через FieldIndex (274.4 step 3) -- у check нет другой двери к строке поля.
+resolve 16
 # sem 54 -> 56 (2026-08-18): наружу вышли ДВЕ двери параметра,
 # param_name_at и param_type_at. Имя и тип параметра больше не берутся
 # индексом pk[0]/pk[1]: индекс сдвигается, как только у параметра
@@ -905,9 +912,12 @@ resolve 15
 #   (модули программы рядом с символами шелла) и Ctx.@in_program -- одна дверь «тело этой строки
 #   есть в программе», её спрашивают check/calls.nv, check/methods.nv, emit_c/emit_expr.nv и
 #   emit_c/emit_interp.nv вместо compiles_body.
-# sem 295 -> 298 (2026-10-01, Karina window, 274.11 E.10 step 4a): HandedBodies (the Ctx table where a handed
+# sem 295 -> 296 (2026-10-01, integrator, merge of the cloud session's #1459): `ctor_field_name`
+#   -- one door for a constructor field's name in both forms (`name` and `@name`); check/literal_rules.nv
+#   and emit_c/emit_c.nv ask it. The branch raised 292 -> 293 on its own base; Carina's +3 and this +1 add.
+# sem 296 -> 299 (2026-10-01, Karina window, 274.11 E.10 step 4a): HandedBodies (the Ctx table where a handed
 #   callable's body lives) and its doors @decl_of / @tree_of -- asked by the pipeline's instance builder.
-sem 298
+sem 299
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
@@ -1080,3 +1090,6 @@ types 28
 #     `check/exprs.nv`; оставить внутри `sem` значило бы завести вторую дверь
 #     к той же цепи вариантов в `check` — ровно то, что запрещает «одна дверь на корень» (274.4).
 # sem 240 -> 248 (2026-09-21, накопленный рост дня, несколько окон -- согласовано с интегратором, полный поимённый список не составлялся: рост размазан по нескольким сегодняшним слияниям в novac/src, не одному коммиту).
+# sem 292 -> 293 (2026-10-01, облачная сессия, №1459): `ctor_field_name` -- имя поля, которое пишет
+#   CtorField; у узла две формы (`x`/`x: e` и получательская `@x`, D52 правило 1), и спрашивают
+#   его ДВА модуля вне sem (`check/literal_rules.nv`, `emit_c/emit_c.nv`) -- две копии разошлись бы.

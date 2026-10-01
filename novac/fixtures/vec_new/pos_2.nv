@@ -1,0 +1,49 @@
+module vec_new.pos_2
+
+// `[]T.new()` as a RECORD FIELD (registry 221.1 #1457): built empty inside a
+// constructor field, filled through a local and stored back, and the FIELD re-assigned
+// empty (`b.items = []int.new()` -- the shape of `@cur = []Stmt.new()` in
+// novac's own lowering), from `main` and from a method through `@`.
+// Behaviour byte-for-byte with the oracle (novac-e1-smoke).
+
+type Bag {
+    items []int
+    names []str
+}
+
+fn Bag mut @reset() -> () {
+    @items = []int.new()
+    @names = []str.new()
+}
+
+fn total(xs []int) -> int {
+    mut s = 0
+    for x in xs {
+        s += x
+    }
+    s
+}
+
+fn main() {
+    mut b = Bag { items: []int.new(), names: []str.new() }
+    println(b.items.len())
+    mut xs = []int.new()
+    xs.push(7)
+    xs.push(8)
+    b.items = xs
+    mut ns = []str.new()
+    ns.push("n")
+    b.names = ns
+    println(b.items.len())
+    println(total(b.items))
+    println(b.names.len())
+    b.items = []int.new()
+    println(b.items.len())
+    mut one = []int.new()
+    one.push(1)
+    b.items = one
+    println(b.items.len())
+    b.reset()
+    println(b.items.len())
+    println(b.names.len())
+}

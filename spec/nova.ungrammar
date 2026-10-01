@@ -353,8 +353,12 @@ ArraySpread =
 RecordCtor =
   Name? '{' (CtorField | CtorSpread | Err)* '}'
 
+// Третья форма поля — `@x` (D52 правило 1: `T { @end }` значит `T { end: @end }`),
+// единственным ребёнком CtorField стоит сам SelfField; до №1459 парсер её не читал.
 CtorField =
-  'ident' (':' Expr)?
+  ( 'ident' (':' Expr)?
+  | SelfField
+  )
 
 CtorSpread =
   '...' Expr

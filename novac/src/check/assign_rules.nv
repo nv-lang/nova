@@ -16,7 +16,8 @@ module novac.check
 
 import ../tree.{Node, NodeKind, assign_op_of}
 import ../types.{TyId, no_ty, is_ty}
-import ../builtins.{TypeKind}
+import ../builtins.{TypeKind, RECV_BINDING}
+import ../lex.{TokenKind}
 import ../sem.{leaf_kind, carrier_of, is_numeric_prim, ty_source_name, expr_leaf_name, branch_children, ParamMode}
 
 /// The root NAME of an assignment TARGET -- the identifier at the bottom of
@@ -46,6 +47,7 @@ fn assign_target_root(e Node) -> Option[str] {
 /// 124.8 / D175 amend). A target with no bound root at all (a call's result,
 /// an owned temporary's own field) is not this door's question and passes.
 fn Checker mut @report_if_assign_target_not_writable(kids []Node) -> bool {
+    if @report_if_write_through_ro_view(kids) { return true }
     if Some(name) = assign_target_root(kids[0]) {
         if !@scope.is_bound(name) { return false }
         match @scope.mode_of_name(name) {
@@ -66,6 +68,81 @@ fn Checker mut @report_if_assign_target_not_writable(kids []Node) -> bool {
     } else {
         false
     }
+}
+
+/// Does this expression READ THROUGH a `ro` VIEW (D176, registry 1458)? A call
+/// whose row returns `-> ro T`, a field declared `f ro T`, and anything reached
+/// by an index or a field from such a view -- the content is frozen all the way
+/// down, whoever holds it. Answered from decisions the walk already recorded
+/// (the callee, the owner's type); an undecided node answers false, because its
+/// own refusal has spoken. A `ro`-BOUND name is not this question: the binding
+/// gate below answers it.
+fn Checker @hands_ro_view(e Node) -> bool {
+    ro k = e.kind_of()
+    if k == NodeKind.Paren { return @hands_ro_view(branch_children(e)[1]) }
+    if k == NodeKind.Call || k == NodeKind.MethodCall { return call_hands_ro_view(e, @ctx, @chan) }
+    if k == NodeKind.Index { return @hands_ro_view(branch_children(e)[0]) }
+    if k == NodeKind.FieldAccess {
+        ro kids = branch_children(e)
+        if @hands_ro_view(kids[0]) { return true }
+        if kids.len() < 3 { return false }
+        return @field_is_ro_view(@chan.type_if_known(kids[0].id_of()), kids[2])
+    }
+    if k == NodeKind.SelfField {
+        ro kids = branch_children(e)
+        if kids.len() < 2 || !@scope.is_bound(RECV_BINDING) { return false }
+        return @field_is_ro_view(@scope.type_of_name(RECV_BINDING), kids[1])
+    }
+    false
+}
+
+/// Is the field named by `name_leaf` of `owner` declared `ro`? An unknown owner
+/// or a non-leaf name answers false: the field door refused it already.
+fn Checker @field_is_ro_view(owner TyId, name_leaf Node) -> bool {
+    if !is_ty(owner) { return false }
+    match name_leaf {
+        Leaf(t) => @fres.field_is_ro(@ctx.fields, owner, t.text)
+        Branch { .. } => false
+    }
+}
+
+/// A WRITE THROUGH A `ro` VIEW (D176, registry 1458): `view[i] = x` and
+/// `view.f = x`, where the indexed or accessed operand is a `ro` view, are
+/// refused with the oracle's code for the index form, `E_READONLY_CONTENT`
+/// ("cannot write through index on `ro` array"). The oracle stays silent on
+/// the FIELD form through a `ro` record view (`bx().n = 2`) -- its defect,
+/// filed in the registry row; novac follows the spec, which forbids both.
+/// Reassigning a `ro` FIELD itself (`w.f = other`) is not a write through the
+/// view and passes (measured: the oracle accepts it, D176 freezes content).
+fn Checker mut @report_if_write_through_ro_view(kids []Node) -> bool {
+    ro t = kids[0]
+    ro tk = t.kind_of()
+    if tk != NodeKind.Index && tk != NodeKind.FieldAccess { return false }
+    if !@hands_ro_view(branch_children(t)[0]) { return false }
+    ro msg = if tk == NodeKind.Index {
+        "cannot write through index on a `ro` view -- its content is read-only (D176, E_READONLY_CONTENT); take a mutable copy with `.clone()` (D230) if it must change"
+    } else {
+        "cannot write a field through a `ro` view -- its content is read-only (D176, E_READONLY_CONTENT); take a mutable copy with `.clone()` (D230) if it must change"
+    }
+    match kids[1] {
+        Leaf(tk2) => @reject(tk2, msg)
+        Branch { .. } => {}
+    }
+    true
+}
+
+/// A `ro` VIEW BOUND `mut` (D176, registry 1458): `mut x = view()` would hand
+/// the binding a write the view forbids. The oracle's code and position: the
+/// initializer, `E_READONLY_COERCE`. Judged after the binding is typed, from
+/// the decisions the walk recorded; a typed local (`mut x T = ...`) is refused
+/// by the subset walk before it reaches here.
+fn Checker mut @report_if_ro_view_into_mut(st Node) -> () {
+    ro kids = branch_children(st)
+    if kids.len() < 2 { return }
+    if kids[0].kind_of() != NodeKind.LeafNode || leaf_kind(kids[0]) != TokenKind.KwMut { return }
+    ro init = kids[kids.len() - 1]
+    if !@hands_ro_view(init) { return }
+    @reject_first_leaf_of([]Node.of(init), "cannot bind a `ro` view to a `mut` binding -- removing readonly is not allowed (D176, E_READONLY_COERCE); bind it `ro`, or take a mutable copy with `.clone()` (D230)")
 }
 
 /// THE TYPE A COMPOUND ASSIGNMENT RUNS IN, or `no_ty()` when the operand was
