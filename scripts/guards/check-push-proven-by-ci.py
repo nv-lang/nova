@@ -167,8 +167,20 @@ def main():
     sha = args[0]
     esc = os.environ.get("NOVA_PUSH_UNPROVEN", "")
     if esc:
-        if not re.search(u"[#№]\\d{2,5}", esc):
+        m = re.search(u"[#№](\\d{2,5})", esc)
+        if not m:
             refuse("NOVA_PUSH_UNPROVEN must name a registry row (#NNNN) -- got: %r" % esc)
+        # #1477: "a reason naming a registry row" -- the row has to EXIST. The
+        # same guard refuses `#00` in ci-accepted-red.list as "does not exist";
+        # the escape used to take it, so a typo'd or invented number passed.
+        try:
+            registry_text = open(registry, encoding="utf-8").read()
+        except OSError as e:
+            refuse("NOVA_PUSH_UNPROVEN names row #%s, but the registry %s is unreadable "
+                   "(%s) -- the escape cannot be judged" % (m.group(1), registry, e))
+        if row_state(registry_text, m.group(1)) == "missing":
+            refuse("NOVA_PUSH_UNPROVEN names registry row #%s, which does not exist -- "
+                   "got: %r" % (m.group(1), esc))
         say("SKIPPED by NOVA_PUSH_UNPROVEN: %s (sha %s NOT proven by CI)" % (esc, sha[:9]))
         return 0
     accepted = accepted_entries(accepted_path, registry)
