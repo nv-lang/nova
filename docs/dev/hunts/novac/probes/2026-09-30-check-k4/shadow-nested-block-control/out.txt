@@ -1,9 +1,0 @@
-=== SUBJECT: novac check
-{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"D:/Temp/hunt-check-k4/probes/shadow-nested-block-control/probe.nv","start":204,"end":208},"message":"outside the subset: a binding's initializer refers to the name it binds -- same-scope re-binding is legal (D347 R3: the RHS reads the OLD binding) and novac does not compile it yet (274.7 B9)","poisoned_by":null}
-novac rc=1
-=== ORACLE: nova check
-[32mok:[0m D:/Temp/hunt-check-k4/probes/shadow-nested-block-control/probe.nv
-
-===== SUMMARY =====
-[32mPASS[0m: 1  FAIL: 0
-oracle check rc=0

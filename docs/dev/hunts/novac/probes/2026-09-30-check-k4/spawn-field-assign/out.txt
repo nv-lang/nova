@@ -1,9 +1,0 @@
-=== SUBJECT: novac check
-{"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"D:/Temp/hunt-check-k4/probes/spawn-field-assign/probe.nv","start":159,"end":164},"message":"a `spawn` body captures the `mut` binding `c`, whose type is not safe to mutate from two fibers -- a race; share it through a `#share` type (`AtomicInt`, `Mutex`, ...) or a channel (06-concurrency.md section 2, E_CONCURRENT_MUT_CAPTURE)","poisoned_by":null}
-novac rc=1
-=== ORACLE: nova check
-[32mok:[0m D:/Temp/hunt-check-k4/probes/spawn-field-assign/probe.nv
-
-===== SUMMARY =====
-[32mPASS[0m: 1  FAIL: 0
-oracle check rc=0

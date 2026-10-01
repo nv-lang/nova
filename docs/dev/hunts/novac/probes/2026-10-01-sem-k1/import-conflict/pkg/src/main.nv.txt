@@ -1,0 +1,9 @@
+module hp
+
+import ./geo.{label}
+
+fn label(x int) -> str => "own"
+
+fn main() {
+    println(label(1))
+}

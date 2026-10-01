@@ -1259,6 +1259,15 @@ with it would leak the resource without a single keyword: that is an error too.
 Prefixes reserved for the compiler (`_nova_`, `_at_`, `__`) are exempt -- the
 rule is about a human convention.
 
+**A program does not declare a name in the compiler's namespaces**
+([D487](decisions/03-syntax.md#d487)): no local, parameter, field, variant,
+function, method, type, effect, protocol, constant, module value, generic
+parameter or pattern binding may start with `_nv_`, `_nova_`, `_at_` or `__`
+(`E_RESERVED_NAME`). The code generator writes its own names there in the
+generated C, so a program name in the same space could collide with one of
+them. Not judged: the name of an `extern "C" fn` (a C library's symbol),
+references, and `_` / `_x` (D461 above).
+
 ```nova
 ro _y = 7
 _y * 2                       // error: `_y` is declared unused

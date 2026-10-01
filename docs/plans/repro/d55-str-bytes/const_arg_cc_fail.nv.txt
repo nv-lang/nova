@@ -1,0 +1,17 @@
+// Found 2026-10-01 by the #1480 window while building the flagships: a MODULE-LEVEL `str`
+// constant (typed or not) passed where `[]u8` is expected passes `nova check` and fails in C:
+//   error: passing 'const nova_str' to parameter of incompatible type 'Nova_Vec____nova_byte *'
+// Measured on main 9712b306f (binary without #1480's change -- not caused by it): CC-FAIL.
+// A binary built 2026-09-30 16:51 (before the #1451/#1452 merge 30c12795e) builds it and
+// prints 5. Carrier in the tree: examples/net/echo_client.nv (`stream.write(MESSAGE)`,
+// `const MESSAGE = "hello from nova"`) -- the flagship `echo_client_net` does not build.
+// Same with `const MESSAGE str = "hello"`.
+module probe_const_arg
+
+const MESSAGE = "hello"
+
+fn take(b []u8) -> int => b.len()
+
+fn main() Io -> () {
+    println(take(MESSAGE).to_str())
+}

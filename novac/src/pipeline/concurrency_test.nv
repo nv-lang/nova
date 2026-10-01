@@ -72,7 +72,7 @@ test "spawn: a `mut` capture crosses the fiber only for a `#share` type -- E_CON
     assert(d[0].message.contains("`n`"), d[0].message)
     // CONTROLS: a `mut` of a vouched type (the carrier's `mut AtomicInt`),
     // and an `ro` capture of anything -- a deep-immutable view.
-    ro atomic = "fn g() -> int {\n    mut a = mk_atomic()\n    supervised {\n        spawn {\n            ro b = a\n        }\n    }\n    0\n}\nfn main() {\n    println(g())\n}"
+    ro atomic = "import std.s.{mk_atomic}\nfn g() -> int {\n    mut a = mk_atomic()\n    supervised {\n        spawn {\n            ro b = a\n        }\n    }\n    0\n}\nfn main() {\n    println(g())\n}"
     ro d2 = compile_with(atomic, parse_decls(share_fx()), share_shell())
     assert(d2.len() == 0, messages(d2))
     ro ro_src = "fn g() -> int {\n    ro n = 1\n    supervised {\n        spawn {\n            println(n)\n        }\n    }\n    0\n}\nfn main() {\n    println(g())\n}"

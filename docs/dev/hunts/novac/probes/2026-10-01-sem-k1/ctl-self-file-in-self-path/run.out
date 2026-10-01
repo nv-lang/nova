@@ -1,0 +1,37 @@
+=== PACKAGE
+./src/main.nv
+=== ORACLE: nova build src/main.nv, run
+oracle build rc=0
+oracle run rc=0
+int 3
+str q
+2
+a
+9
+=== SUBJECT: novac check (NOVAC_SELF_PATH=<pkg>/src)
+novac check rc=0
+=== SUBJECT: novac emit
+novac emit rc=0
+--- C lines matching: novac_fn_
+11961:static nova_int novac_fn_hp_pick__nova_int__nova_int__nova_bool__to_nova_int__nova_int(nova_int a, nova_int b, nova_bool first);
+11962:static nova_str novac_fn_hp_pick__nova_str__nova_str__nova_bool__to_nova_str__nova_str(nova_str a, nova_str b, nova_bool first);
+11963:static nova_int novac_fn_hp_get__Box__to_nova_int(Nova_Box* _novac_self) {
+11966:static nova_str novac_fn_hp_show__nova_int__to_nova_str(nova_int x) {
+11973:static nova_str novac_fn_hp_show__nova_str__to_nova_str(nova_str x) {
+11981:    nova_print_str(novac_fn_hp_show__nova_int__to_nova_str(((nova_int)3LL)));
+11983:    nova_print_str(novac_fn_hp_show__nova_str__to_nova_str(_novac_strlit_0));
+11985:    nova_print_int(novac_fn_hp_pick__nova_int__nova_int__nova_bool__to_nova_int__nova_int(((nova_int)1LL), ((nova_int)2LL), false));
+11987:    nova_print_str(novac_fn_hp_pick__nova_str__nova_str__nova_bool__to_nova_str__nova_str(_novac_strlit_1, _novac_strlit_2, true));
+11992:    nova_print_int(novac_fn_hp_get__Box__to_nova_int(b));
+11996:static nova_int novac_fn_hp_pick__nova_int__nova_int__nova_bool__to_nova_int__nova_int(nova_int a, nova_int b, nova_bool first) {
+12005:static nova_str novac_fn_hp_pick__nova_str__nova_str__nova_bool__to_nova_str__nova_str(nova_str a, nova_str b, nova_bool first) {
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+int 3
+str q
+2
+a
+9
+=== VERDICT: SAME stdout

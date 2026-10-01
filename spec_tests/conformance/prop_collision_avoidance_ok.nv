@@ -9,19 +9,23 @@ type Bag3_2 {
 }
 
 fn Bag3_2 @combine_with_existing() -> int {
-    // User has _at_x as local — pass must rename cache to avoid
-    // collision.
-    ro _at_x = 100
+    // D487 (2026-10-01): a program may no longer DECLARE `_at_x` -- `_at_`
+    // is the field cache's own namespace (`E_RESERVED_NAME`, see
+    // neg/d487_reserved_local_ro_neg.nv), so the collision this fixture was
+    // written for is impossible by construction. What stays: a user local
+    // that differs from the cache name only by the leading `_` -- in C the
+    // two must still be distinct names.
+    ro at_x = 100
     // @x accessed 3 times, @y accessed 2 times → both cached.
-    // user's _at_x = 100 — preserved.
-    (@x + @x + @x) + (@y + @y) + _at_x
+    // user's at_x = 100 — preserved.
+    (@x + @x + @x) + (@y + @y) + at_x
 }
 
 fn Bag3_2.new(x int, y int) -> Bag3_2 {
     Bag3_2 { x, y }
 }
 
-test "property: user local _at_x not clobbered" {
+test "property: user local at_x not clobbered" {
     ro r = Bag3_2.new(2, 3).combine_with_existing()
     // 3*2 + 2*3 + 100 = 6+6+100 = 112
     assert(r == 112)

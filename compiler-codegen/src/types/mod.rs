@@ -30,7 +30,9 @@ mod duplicate_decls; // #1179/#1183/#1186: one duplicate check for the compiled 
 mod record_lit_schema; // #1448/#1096: a record literal against its record's fields
 mod generic_sum; // #1337/#1338: a user generic sum's ctor, payload and expected type
 mod raw_ptr_ops; // #1473: raw-pointer address arithmetic outside unsafe (D216 part 1)
+pub(crate) mod reserved_names; // D487: a declared name outside the compiler's C namespaces (called by the parser)
 pub(crate) mod coerce_door; // #1451/#1452: one door for `#coerce` -- checker decides, rewrite reads
+mod const_names; // #1488: the type of a module-level `const`/`ro` read by its bare name
 
 /// Plan 196 (gs-bounds migration, spike `docs/plans/wip/196-gs-spike.md`):
 /// `gs` ("generics in scope") used to be `HashSet<String>` — ONLY the names of the
@@ -2176,6 +2178,8 @@ fn check_module_impl(
     // #1260: lift the sum-coercion kind channel (read by `annotate_map_literals`).
     env.sum_wrap_kinds = type_check_ctx.sum_wrap_kinds_buf.take();
     // #1451/#1452: lift the `#coerce` channel (read by `annotate_map_literals`).
+    // #1480: a view no read-only-by-mode position judged sits in an owned one.
+    type_check_ctx.report_coerce_view_into_owned(&mut errors);
     env.coerce_sites = type_check_ctx.coerce_sites_buf.take();
     // Plan 104.10 Ф.2 (D379): lift the opt-in IDE per-expression type map. Empty unless
     // `record_expr_types` was set (i.e. via check_module_with_expr_types) — zero-overhead
@@ -4600,6 +4604,18 @@ struct TypeCheckCtx<'a> {
     /// Registry 221.1 #1451/#1452: >0 while `assignable` is asked speculatively
     /// (overload filtering) -- a probe must not leave a coercion in the channel.
     coerce_probe_depth: std::cell::Cell<u32>,
+    /// Registry 221.1 #1488: module-level values by name, the module of each
+    /// file, and the recursion bound of `const A = B` (`const_names.rs`).
+    module_values: HashMap<String, Vec<const_names::ModuleValue<'a>>>,
+    module_value_files: HashMap<crate::diag::FileId, &'a [String]>,
+    module_value_depth: std::cell::Cell<u32>,
+    /// Registry 221.1 #1480: view-lane sites recorded at a position whose type is
+    /// NOT `ro O` -- owned unless a read-only-by-mode position (a `ro` parameter,
+    /// a `ro` binding) judges them; see `coerce_door::CoerceOwnedCandidate`.
+    coerce_owned_candidates:
+        std::cell::RefCell<HashMap<crate::ast::ExprId, coerce_door::CoerceOwnedCandidate>>,
+    /// Registry 221.1 #1480: sites judged by a position that knows its own mode.
+    coerce_judged: std::cell::RefCell<HashSet<crate::ast::ExprId>>,
     /// Plan 221.1 №286 residual gap (window p286, 2026-08-04): a BARE
     /// `Channel.new(cap)` (no turbofish, no `ChanWriter[T]`/`ChanReader[T]`
     /// annotation) left `T` permanently untracked (window p-chan, №143/№286
@@ -5532,6 +5548,11 @@ impl<'a> TypeCheckCtx<'a> {
             sum_wrap_kinds_buf: std::cell::RefCell::new(HashMap::new()),
             coerce_sites_buf: std::cell::RefCell::new(HashMap::new()),
             coerce_probe_depth: std::cell::Cell::new(0),
+            module_values: const_names::collect_module_values(module),
+            module_value_files: module.peer_files.iter().map(|p| (p.file_id, p.module_name.as_slice())).collect(),
+            module_value_depth: std::cell::Cell::new(0),
+            coerce_owned_candidates: std::cell::RefCell::new(HashMap::new()),
+            coerce_judged: std::cell::RefCell::new(HashSet::new()),
             // Plan 221.1 №286 residual gap (window p286): empty first-send
             // T-inference hint channel; filled per-block during the check walk.
             channel_bare_send_elem_hint: std::cell::RefCell::new(HashMap::new()),
@@ -6193,6 +6214,13 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
+        // #1488: module-level values (`const`, `ro NAME = ...`) are checked FIRST, so a
+        // body reading one finds its value already typed (`const_names.rs`), whatever
+        // the declaration order; and a module-level `ro` is checked at all -- its
+        // annotated position used to reach no `assignable` (no `#coerce` verdict).
+        for item in &module.items {
+            self.f1_check_module_value(item, errors);
+        }
         // Ф.1: assignability — отдельный scope-aware проход по телам
         // (var-типы локальных переменных нужны только здесь).
         for item in &module.items {
@@ -6218,17 +6246,6 @@ impl<'a> TypeCheckCtx<'a> {
                     let gs: GenericScope = HashMap::new();
                     let mut scope: HashMap<String, TypeRef> = HashMap::new();
                     self.f1_block(&t.body, &gs, &mut scope, errors);
-                }
-                Item::Const(cd) => {
-                    let gs: GenericScope = HashMap::new();
-                    let mut scope: HashMap<String, TypeRef> = HashMap::new();
-                    if let Some(ann) = &cd.ty {
-                        // A `const` binding is immutable (ro content-view).
-                        self.f1_check_assign_let(
-                            &cd.value, ann, &cd.name, false, &gs, &scope, errors,
-                        );
-                    }
-                    self.f1_expr(&cd.value, &gs, &mut scope, errors);
                 }
                 _ => {}
             }
@@ -6260,11 +6277,7 @@ impl<'a> TypeCheckCtx<'a> {
                             let mut scope: HashMap<String, TypeRef> = HashMap::new();
                             self.f1_block(&t.body, &gs, &mut scope, &mut peer_errors);
                         }
-                        Item::Const(cd) => {
-                            let gs: GenericScope = HashMap::new();
-                            let mut scope: HashMap<String, TypeRef> = HashMap::new();
-                            self.f1_expr(&cd.value, &gs, &mut scope, &mut peer_errors);
-                        }
+                        Item::Const(_) | Item::Let(_) => self.f1_check_module_value(item, &mut peer_errors),
                         _ => {}
                     }
                 }
@@ -12847,12 +12860,23 @@ impl<'a> TypeCheckCtx<'a> {
                                                     self.resolved_callees
                                                         .borrow_mut()
                                                         .insert(e.id, single.span);
-                                                    self.materialize_coerce(
-                                                        right,
-                                                        &single.params[0].ty,
-                                                        gs,
-                                                        scope,
-                                                    );
+                                                    if self
+                                                        .materialize_coerce(
+                                                            right,
+                                                            &single.params[0].ty,
+                                                            gs,
+                                                            scope,
+                                                        )
+                                                        .is_some()
+                                                    {
+                                                        // #1480: an operator's operand is its parameter.
+                                                        self.check_coerce_view_into_mut(
+                                                            right,
+                                                            coerce_door::param_is_writable(&single.params[0]),
+                                                            &coerce_door::param_position(&single.params[0]),
+                                                            errors,
+                                                        );
+                                                    }
                                                 }
                                             }
                                         }
@@ -22583,6 +22607,7 @@ impl<'a> TypeCheckCtx<'a> {
                         // (D429), и этот путь обязан остаться для него живым.
                         let newtype_refused = matches!(target, WrapTarget::Newtype(_))
                             && !is_untyped_const_expr(expr)
+                            && !self.is_untyped_module_value(expr)
                             && !d55_newtype_strict_disabled();
                         if !newtype_refused {
                             // #1260: the rewrite pass materializes this wrap from
@@ -22612,7 +22637,7 @@ impl<'a> TypeCheckCtx<'a> {
             if let Some(verdict) = self.coerce_verdict(expr, expected, scope) {
                 return match verdict {
                     Ok(site) => {
-                        self.note_coerce_site(expr, site);
+                        self.note_coerce_site(expr, expected, site);
                         Compat::Ok
                     }
                     Err(msg) => Compat::CoerceConflict { msg },
@@ -24083,6 +24108,10 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                     }
                 }
+                // #1488: a module-level `const`/`ro` read by name (`const_names.rs`).
+                if let Some(tr) = self.module_value_ident_type(name, expr.span) {
+                    return Some(tr);
+                }
                 // [Plan 228 Ф.2(a) producer, реестр 221.1 №94-v2] Bare reference
                 // to a free fn BY NAME, not a call (`ro m Mid = identity_mw`) —
                 // the sixth legacy arm this plan targets (`fn_returns_fn_sig`'s
@@ -24490,6 +24519,12 @@ impl<'a> TypeCheckCtx<'a> {
                 // (prelude's `fn[T] T @to_str() -> str`) — honest miss, not a bug (this
                 // IS №82's answer: bonus mechanism does NOT close it, confirmed
                 // structurally, matching the mvinfer fixtures' own doc comment).
+                // #1488: `Type.K` / `m.K` as a member (`const_names.rs`).
+                if let ExprKind::Ident(q) = &obj.kind {
+                    if let Some(tr) = self.qualified_value_type(q, name, scope) {
+                        return Some(tr);
+                    }
+                }
                 if let Some(method_bare) = name.strip_prefix('@') {
                     if let ExprKind::Ident(tn) = &obj.kind {
                         if !scope.contains_key(tn)
@@ -25483,6 +25518,8 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::Block(b) => b.stmts.iter().rev().find_map(|s| {
                 if let Stmt::Expr(e) = s { self.infer_expr_type(e, scope) } else { None }
             }),
+            // #1488: `Type.K` / `m.K` / `CR.field` folded into a path (`const_names.rs`).
+            ExprKind::Path(parts) if parts.len() >= 2 => self.value_path_type(parts, expr.span, scope),
             _ => None,
         }
     }

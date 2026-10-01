@@ -6,10 +6,12 @@
 // (2) `_` on a NON-linear payload -- nothing owns anything, nothing leaks;
 // (3) `Ok(consume r) => r.close()` -- the one lawful spelling for a linear
 //     payload;
-// (4) compiler-reserved prefixes (`_nova_`, `_at_`, `__`) stay usable: they
-//     name machinery the user did not write, and rule (A) speaks about a HUMAN
-//     naming convention. Without this carve-out the rule would reject the
-//     compiler's own field caches and wire tables.
+// (4) compiler-reserved prefixes (`_nova_`, `_at_`, `__`) are exempt from
+//     rule (A): they name machinery the user did not write, and rule (A)
+//     speaks about a HUMAN naming convention. Without this carve-out the rule
+//     would reject the compiler's own field caches and wire tables. Since
+//     D487 (2026-10-01) a program may not DECLARE a name there at all
+//     (`E_RESERVED_NAME`), so the carve-out only ever meets compiler names.
 module spec_tests.conformance
 
 type D461Ok consume { tag int }

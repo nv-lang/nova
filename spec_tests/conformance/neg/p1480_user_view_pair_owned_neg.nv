@@ -1,0 +1,28 @@
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+//
+// Registry 221.1 #1480: the owned-position rule belongs to the VIEW lane of D429 (R2: a
+// non-`consume` `#coerce` with a `ro` result), not to `str`. A user-declared view pair
+// `P1480Tag -> ro []u8` into an owned return `-> []u8` and an owned element of `[][]u8` is
+// refused the same way (R8: user pairs are first-class). `-> ro []u8` takes the view.
+
+module neg.p1480_user_view_pair_owned_neg
+
+type P1480Tag { raw []u8 }
+
+#coerce
+fn P1480Tag @view() -> ro []u8 => @raw
+
+fn p1480_tag() -> P1480Tag => { raw: "abc".bytes().clone() }
+
+// nova:expect E_READONLY_COERCE -- `P1480Tag` reaches `[]u8` only through a view pair, and `-> []u8` is owned
+fn p1480_owned() -> []u8 => p1480_tag()
+
+fn p1480_view() -> ro []u8 => p1480_tag()
+
+fn main() Io -> () {
+    // nova:expect E_READONLY_COERCE -- the same view as an element of an owned `[][]u8`
+    ro xs [][]u8 = [p1480_tag()]
+    println(p1480_owned().len().to_str())
+    println(p1480_view().len().to_str())
+    println(xs.len().to_str())
+}

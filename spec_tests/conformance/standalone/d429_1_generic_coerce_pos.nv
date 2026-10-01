@@ -34,7 +34,11 @@ fn d429_wants_bytes(b []u8) -> int => b.len()
 
 // ─── return-position coercion (D429 R6 position table) ───
 
-fn d429_json_return_user() -> D429User {
+// Registry 221.1 #1480 (D55 amendment 2026-10-01, owner's decision, option (a)): this return
+// was typed `-> D429User`. `@data()` is a VIEW pair (`ro T` result, D429 R2), and a return typed
+// without `ro` is an OWNED position the caller may bind `mut` and write through -- refused for
+// every view pair now. The view is legal at `-> ro D429User`, which is what the cell asserts.
+fn d429_json_return_user() -> ro D429User {
     ro u = D429User { name: "bo", age: 20 }
     ro j D429Json[D429User] = { data: u }
     return j

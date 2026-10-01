@@ -30,7 +30,9 @@ import ../sem.{c_free_symbol}
 // the lowering ask, so the three cannot disagree on WHICH arguments they mean.
 import ../sem.{contains_call}
 
-import ../tree.{Node, raw_node}
+import ../tree.{Node, raw_node, NodeKind}
+// #1493: the file's import declarations are read leaf by leaf (`visible_imports`).
+import ../sem.{branch_children, leaf_text, file_decls}
 import ../diag.{ice}
 import ../builtins.{TypeKind, SIZE_OF_FN}
 import ../sem.{LitArg, ArgSpec, CallForm, CalleeTarget, decl_of_ty, Ctx, CheckOut, FnRow, raw_row, coerce_row}
@@ -587,6 +589,13 @@ fn Checker mut @deduce_from_args(row FnRow, key []ArgSpec, kids []Node) -> Optio
 /// error — the exact class P12 forbids (measured by the step-1 probe,
 /// 2026-08-19).
 fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec) -> () {
+    // VISIBILITY FIRST (#1493, D29): a function of another module is callable only
+    // when this file imported it -- a LANGUAGE error, not subset debt.
+    ro vfd = @ctx.fns.rows[raw_row(row)]
+    if !@res.sees(vfd.handed_from, vfd.name) {
+        @reject_first_leaf_of(kids, "undefined identifier `${vfd.name}`: it is declared in module `${vfd.handed_from}` and this file does not import it -- a name of another module is visible only through `import <module>.{${vfd.name}}` (D29)")
+        return
+    }
     // A HANDED free function (wave W6): its body is std's, so the call is emitted
     // as the shell's symbol -- and the shell has to carry it, or the refusal
     // names the true reason (the row exists now; "not a callable" was the wrong
@@ -953,4 +962,52 @@ fn Checker mut @type_free_call(e Node) -> () {
     // gave it (and rule 3 judges its range). Reads the channel, so the
     // generic, turbofish and coercing paths need no hook of their own.
     @adapt_literal_args(e, kids, 1, 0)
+}
+
+/// What THIS file imported (registry 221.1 #1493, D29), for `FnIndex.build_for`:
+/// with `seg` false every name in a brace list, with `seg` true the last segment
+/// of the module path each of them came from -- two parallel lists, one walk
+/// each. Read from the import DECLARATIONS, never from the source text, where
+/// `import` in a comment would count. An import without a brace list brings the
+/// module's name, not its functions; `file_decls` unwraps `export import`.
+fn import_parts(file Node, seg bool) -> []str {
+    mut out = []str.new()
+    for d in file_decls(file) {
+        if d.kind_of() != NodeKind.ImportDecl { continue }
+        out.append(import_parts_of(branch_children(d), seg))
+    }
+    out
+}
+
+/// The parts of ONE import: the last identifier of the path before the brace
+/// list, once per name inside it (`seg`), or the names themselves. An aliased
+/// import is refused before typing (`@walk_import`), so `as` never reaches a
+/// lookup.
+fn import_parts_of(kids []Node, seg bool) -> []str {
+    mut res = []str.new()
+    mut last = ""
+    mut in_braces = false
+    mut first = true
+    for c in kids {
+        if c.kind_of() != NodeKind.LeafNode { continue }
+        ro t = leaf_text(c)
+        if first {
+            first = false // the keyword: `import` / `use`
+        } else if t == "{" {
+            in_braces = true
+        } else if t == "}" {
+            in_braces = false
+        } else if in_braces {
+            if t != "," && t != "as" {
+                res.push(if seg { last } else { t })
+            } else {
+                // The separator, or the `as` before an alias.
+            }
+        } else if t != "." && t != ".." && t != "/" {
+            last = t
+        } else {
+            // Path punctuation.
+        }
+    }
+    res
 }

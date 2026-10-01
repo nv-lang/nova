@@ -1,9 +1,0 @@
-=== SUBJECT: novac check
-{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"D:/Temp/hunt-check-k4/probes/lit-escape-assign/probe.nv","start":232,"end":238},"message":"outside the subset: a handler literal is compiled only as a `with` binding's handler or a local binding's initializer (`ro h = effect E { ... }`) that captures no `mut` binding -- a handler value in any other position, and a held one whose `mut` capture would be an address into its frame, is not compiled yet (E4, boundary E.5 of plan 274.11)","poisoned_by":null}
-novac rc=1
-=== ORACLE: nova check
-[32mok:[0m D:/Temp/hunt-check-k4/probes/lit-escape-assign/probe.nv
-
-===== SUMMARY =====
-[32mPASS[0m: 1  FAIL: 0
-oracle check rc=0

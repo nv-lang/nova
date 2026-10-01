@@ -1,0 +1,560 @@
+// Registry 221.1 #1488: a module-level named value of type `str` -- a `const`, a module `ro`,
+// an associated const, a field of a record const, an imported const -- at every `[]u8`
+// position of the D55 table (`#coerce str @bytes() -> ro []u8`, D429).
+//
+// Before the fix the checker had NO type for such a name (`infer_expr_type` knew locals, the
+// resolved-type channel and the fn table only), so it accepted the name permissively and the
+// `#coerce` door recorded no verdict; since #1452 removed codegen's own guesses nothing
+// spliced `.bytes()`, and C got `nova_str` where `Nova_Vec____nova_byte*` was expected
+// (CC-FAIL; flagship `examples/net/echo_client.nv`, `stream.write(MESSAGE)`). Now the name
+// is typed from its declaration (`compiler-codegen/src/types/const_names.rs`).
+//
+// Positions: free fn arg (free), method arg (method), `mut`-receiver method arg (mutmethod),
+// protocol-receiver method arg (proto), `ro` let with `[]u8` annotation (rolet), arrow-body
+// return `-> ro []u8` (retarrow), `return` statement (retstmt), `[]ro []u8` element (elem), record field `ro []u8`
+// (recfield), assignment to a `mut b ro []u8` (assignro), module-level `const`/`ro` with
+// `[]u8` annotation (modlet). The imported form compares with the constant itself (its value
+// is the Unicode version, not ours to pin).
+
+// EXPECT_STDOUT lconst free abc
+// EXPECT_STDOUT lconst method abc
+// EXPECT_STDOUT lconst mutmethod abc
+// EXPECT_STDOUT lconst proto abc
+// EXPECT_STDOUT lconst rolet abc
+// EXPECT_STDOUT lconst retarrow abc
+// EXPECT_STDOUT lconst retstmt abc
+// EXPECT_STDOUT lconst elem abc
+// EXPECT_STDOUT lconst recfield abc
+// EXPECT_STDOUT lconst assignro abc
+// EXPECT_STDOUT lconst modlet abc
+// EXPECT_STDOUT lconstann free abc
+// EXPECT_STDOUT lconstann method abc
+// EXPECT_STDOUT lconstann mutmethod abc
+// EXPECT_STDOUT lconstann proto abc
+// EXPECT_STDOUT lconstann rolet abc
+// EXPECT_STDOUT lconstann retarrow abc
+// EXPECT_STDOUT lconstann retstmt abc
+// EXPECT_STDOUT lconstann elem abc
+// EXPECT_STDOUT lconstann recfield abc
+// EXPECT_STDOUT lconstann assignro abc
+// EXPECT_STDOUT lconstann modlet abc
+// EXPECT_STDOUT modro free abc
+// EXPECT_STDOUT modro method abc
+// EXPECT_STDOUT modro mutmethod abc
+// EXPECT_STDOUT modro proto abc
+// EXPECT_STDOUT modro rolet abc
+// EXPECT_STDOUT modro retarrow abc
+// EXPECT_STDOUT modro retstmt abc
+// EXPECT_STDOUT modro elem abc
+// EXPECT_STDOUT modro recfield abc
+// EXPECT_STDOUT modro assignro abc
+// EXPECT_STDOUT modro modlet abc
+// EXPECT_STDOUT modroann free abc
+// EXPECT_STDOUT modroann method abc
+// EXPECT_STDOUT modroann mutmethod abc
+// EXPECT_STDOUT modroann proto abc
+// EXPECT_STDOUT modroann rolet abc
+// EXPECT_STDOUT modroann retarrow abc
+// EXPECT_STDOUT modroann retstmt abc
+// EXPECT_STDOUT modroann elem abc
+// EXPECT_STDOUT modroann recfield abc
+// EXPECT_STDOUT modroann assignro abc
+// EXPECT_STDOUT modroann modlet abc
+// EXPECT_STDOUT assoc free abc
+// EXPECT_STDOUT assoc method abc
+// EXPECT_STDOUT assoc mutmethod abc
+// EXPECT_STDOUT assoc proto abc
+// EXPECT_STDOUT assoc rolet abc
+// EXPECT_STDOUT assoc retarrow abc
+// EXPECT_STDOUT assoc retstmt abc
+// EXPECT_STDOUT assoc elem abc
+// EXPECT_STDOUT assoc recfield abc
+// EXPECT_STDOUT assoc assignro abc
+// EXPECT_STDOUT assoc modlet abc
+// EXPECT_STDOUT assocunann free abc
+// EXPECT_STDOUT assocunann method abc
+// EXPECT_STDOUT assocunann mutmethod abc
+// EXPECT_STDOUT assocunann proto abc
+// EXPECT_STDOUT assocunann rolet abc
+// EXPECT_STDOUT assocunann retarrow abc
+// EXPECT_STDOUT assocunann retstmt abc
+// EXPECT_STDOUT assocunann elem abc
+// EXPECT_STDOUT assocunann recfield abc
+// EXPECT_STDOUT assocunann assignro abc
+// EXPECT_STDOUT assocunann modlet abc
+// EXPECT_STDOUT constfield free abc
+// EXPECT_STDOUT constfield method abc
+// EXPECT_STDOUT constfield mutmethod abc
+// EXPECT_STDOUT constfield proto abc
+// EXPECT_STDOUT constfield rolet abc
+// EXPECT_STDOUT constfield retarrow abc
+// EXPECT_STDOUT constfield retstmt abc
+// EXPECT_STDOUT constfield elem abc
+// EXPECT_STDOUT constfield recfield abc
+// EXPECT_STDOUT constfield assignro abc
+// EXPECT_STDOUT constfield modlet abc
+// EXPECT_STDOUT assocfield free abc
+// EXPECT_STDOUT assocfield method abc
+// EXPECT_STDOUT assocfield mutmethod abc
+// EXPECT_STDOUT assocfield proto abc
+// EXPECT_STDOUT assocfield rolet abc
+// EXPECT_STDOUT assocfield retarrow abc
+// EXPECT_STDOUT assocfield retstmt abc
+// EXPECT_STDOUT assocfield elem abc
+// EXPECT_STDOUT assocfield recfield abc
+// EXPECT_STDOUT assocfield assignro abc
+// EXPECT_STDOUT assocfield modlet abc
+// EXPECT_STDOUT import free true
+// EXPECT_STDOUT import method true
+// EXPECT_STDOUT import mutmethod true
+// EXPECT_STDOUT import proto true
+// EXPECT_STDOUT import rolet true
+// EXPECT_STDOUT import retarrow true
+// EXPECT_STDOUT import retstmt true
+// EXPECT_STDOUT import elem true
+// EXPECT_STDOUT import recfield true
+// EXPECT_STDOUT import assignro true
+// EXPECT_STDOUT import modlet true
+
+module standalone.p1488_coerce_const_arg
+
+import std.unicode.{UNICODE_VERSION}
+
+type P1488Rec { name str }
+
+type P1488Hold { data ro []u8 }
+
+type P1488Tally { mut got str }
+
+fn P1488Tally mut @put(bytes []u8) -> () { @got = dec(bytes) }
+
+type P1488Sink protocol {
+    mut @put(bytes []u8) -> ()
+}
+
+type P1488Box { n int }
+
+fn P1488Box @echo(b []u8) -> str => dec(b)
+
+const P1488_M1 = "abc"
+
+// nova:allow W_REDUNDANT_CONST_TYPE_ANNOTATION -- the annotated spelling is a cell of the grid (form `lconstann`)
+const P1488_M2 str = "abc"
+
+ro P1488_MR = nm()
+
+ro P1488_MS str = nm()
+
+// nova:allow W_REDUNDANT_CONST_TYPE_ANNOTATION -- the annotated spelling is a cell of the grid (form `assoc`)
+const P1488Box.K str = "abc"
+
+const P1488Box.K2 = "abc"
+
+const P1488Box.REC P1488Rec = { name: "abc" }
+
+const P1488_CR P1488Rec = { name: "abc" }
+
+fn dec(b []u8) -> str => b.to_str() ?? "ERR"
+
+fn echo(b []u8) -> str => dec(b)
+
+fn nm() -> str => "abc"
+
+// --- module `const` without annotation
+
+const P1488_GB_LCONST []u8 = P1488_M1
+
+fn via_lconst(mut w P1488Sink) -> () { w.put(P1488_M1) }
+
+fn ra_lconst() -> ro []u8 => P1488_M1
+
+fn rs_lconst(k int) -> ro []u8 {
+    if k > 5 {
+        return "early"
+    }
+    return P1488_M1
+}
+
+fn show_lconst(pos str, got str) Io -> () {
+    println("lconst ${pos} ${got}")
+}
+
+fn run_lconst() Io -> () {
+    ro bx = P1488Box { n: 0 }
+    show_lconst("free", echo(P1488_M1))
+    show_lconst("method", bx.echo(P1488_M1))
+    mut t = P1488Tally { got: "" }
+    t.put(P1488_M1)
+    show_lconst("mutmethod", t.got)
+    mut tp = P1488Tally { got: "" }
+    via_lconst(tp)
+    show_lconst("proto", tp.got)
+    ro b []u8 = P1488_M1
+    show_lconst("rolet", dec(b))
+    show_lconst("retarrow", dec(ra_lconst()))
+    show_lconst("retstmt", dec(rs_lconst(0)))
+    ro xs []ro []u8 = [P1488_M1, "zz"]
+    show_lconst("elem", dec(xs[0]))
+    ro h = P1488Hold { data: P1488_M1 }
+    show_lconst("recfield", dec(h.data))
+    mut ar ro []u8 = "zz"
+    ar = P1488_M1
+    show_lconst("assignro", dec(ar))
+    show_lconst("modlet", dec(P1488_GB_LCONST))
+}
+
+// --- module `const` with `str` annotation
+
+const P1488_GB_LCONSTANN []u8 = P1488_M2
+
+fn via_lconstann(mut w P1488Sink) -> () { w.put(P1488_M2) }
+
+fn ra_lconstann() -> ro []u8 => P1488_M2
+
+fn rs_lconstann(k int) -> ro []u8 {
+    if k > 5 {
+        return "early"
+    }
+    return P1488_M2
+}
+
+fn show_lconstann(pos str, got str) Io -> () {
+    println("lconstann ${pos} ${got}")
+}
+
+fn run_lconstann() Io -> () {
+    ro bx = P1488Box { n: 0 }
+    show_lconstann("free", echo(P1488_M2))
+    show_lconstann("method", bx.echo(P1488_M2))
+    mut t = P1488Tally { got: "" }
+    t.put(P1488_M2)
+    show_lconstann("mutmethod", t.got)
+    mut tp = P1488Tally { got: "" }
+    via_lconstann(tp)
+    show_lconstann("proto", tp.got)
+    ro b []u8 = P1488_M2
+    show_lconstann("rolet", dec(b))
+    show_lconstann("retarrow", dec(ra_lconstann()))
+    show_lconstann("retstmt", dec(rs_lconstann(0)))
+    ro xs []ro []u8 = [P1488_M2, "zz"]
+    show_lconstann("elem", dec(xs[0]))
+    ro h = P1488Hold { data: P1488_M2 }
+    show_lconstann("recfield", dec(h.data))
+    mut ar ro []u8 = "zz"
+    ar = P1488_M2
+    show_lconstann("assignro", dec(ar))
+    show_lconstann("modlet", dec(P1488_GB_LCONSTANN))
+}
+
+// --- module `ro` with a runtime value, no annotation
+
+ro P1488_GB_MODRO []u8 = P1488_MR
+
+fn via_modro(mut w P1488Sink) -> () { w.put(P1488_MR) }
+
+fn ra_modro() -> ro []u8 => P1488_MR
+
+fn rs_modro(k int) -> ro []u8 {
+    if k > 5 {
+        return "early"
+    }
+    return P1488_MR
+}
+
+fn show_modro(pos str, got str) Io -> () {
+    println("modro ${pos} ${got}")
+}
+
+fn run_modro() Io -> () {
+    ro bx = P1488Box { n: 0 }
+    show_modro("free", echo(P1488_MR))
+    show_modro("method", bx.echo(P1488_MR))
+    mut t = P1488Tally { got: "" }
+    t.put(P1488_MR)
+    show_modro("mutmethod", t.got)
+    mut tp = P1488Tally { got: "" }
+    via_modro(tp)
+    show_modro("proto", tp.got)
+    ro b []u8 = P1488_MR
+    show_modro("rolet", dec(b))
+    show_modro("retarrow", dec(ra_modro()))
+    show_modro("retstmt", dec(rs_modro(0)))
+    ro xs []ro []u8 = [P1488_MR, "zz"]
+    show_modro("elem", dec(xs[0]))
+    ro h = P1488Hold { data: P1488_MR }
+    show_modro("recfield", dec(h.data))
+    mut ar ro []u8 = "zz"
+    ar = P1488_MR
+    show_modro("assignro", dec(ar))
+    show_modro("modlet", dec(P1488_GB_MODRO))
+}
+
+// --- module `ro` with `str` annotation
+
+ro P1488_GB_MODROANN []u8 = P1488_MS
+
+fn via_modroann(mut w P1488Sink) -> () { w.put(P1488_MS) }
+
+fn ra_modroann() -> ro []u8 => P1488_MS
+
+fn rs_modroann(k int) -> ro []u8 {
+    if k > 5 {
+        return "early"
+    }
+    return P1488_MS
+}
+
+fn show_modroann(pos str, got str) Io -> () {
+    println("modroann ${pos} ${got}")
+}
+
+fn run_modroann() Io -> () {
+    ro bx = P1488Box { n: 0 }
+    show_modroann("free", echo(P1488_MS))
+    show_modroann("method", bx.echo(P1488_MS))
+    mut t = P1488Tally { got: "" }
+    t.put(P1488_MS)
+    show_modroann("mutmethod", t.got)
+    mut tp = P1488Tally { got: "" }
+    via_modroann(tp)
+    show_modroann("proto", tp.got)
+    ro b []u8 = P1488_MS
+    show_modroann("rolet", dec(b))
+    show_modroann("retarrow", dec(ra_modroann()))
+    show_modroann("retstmt", dec(rs_modroann(0)))
+    ro xs []ro []u8 = [P1488_MS, "zz"]
+    show_modroann("elem", dec(xs[0]))
+    ro h = P1488Hold { data: P1488_MS }
+    show_modroann("recfield", dec(h.data))
+    mut ar ro []u8 = "zz"
+    ar = P1488_MS
+    show_modroann("assignro", dec(ar))
+    show_modroann("modlet", dec(P1488_GB_MODROANN))
+}
+
+// --- associated `const Type.K str`
+
+const P1488_GB_ASSOC []u8 = P1488Box.K
+
+fn via_assoc(mut w P1488Sink) -> () { w.put(P1488Box.K) }
+
+fn ra_assoc() -> ro []u8 => P1488Box.K
+
+fn rs_assoc(k int) -> ro []u8 {
+    if k > 5 {
+        return "early"
+    }
+    return P1488Box.K
+}
+
+fn show_assoc(pos str, got str) Io -> () {
+    println("assoc ${pos} ${got}")
+}
+
+fn run_assoc() Io -> () {
+    ro bx = P1488Box { n: 0 }
+    show_assoc("free", echo(P1488Box.K))
+    show_assoc("method", bx.echo(P1488Box.K))
+    mut t = P1488Tally { got: "" }
+    t.put(P1488Box.K)
+    show_assoc("mutmethod", t.got)
+    mut tp = P1488Tally { got: "" }
+    via_assoc(tp)
+    show_assoc("proto", tp.got)
+    ro b []u8 = P1488Box.K
+    show_assoc("rolet", dec(b))
+    show_assoc("retarrow", dec(ra_assoc()))
+    show_assoc("retstmt", dec(rs_assoc(0)))
+    ro xs []ro []u8 = [P1488Box.K, "zz"]
+    show_assoc("elem", dec(xs[0]))
+    ro h = P1488Hold { data: P1488Box.K }
+    show_assoc("recfield", dec(h.data))
+    mut ar ro []u8 = "zz"
+    ar = P1488Box.K
+    show_assoc("assignro", dec(ar))
+    show_assoc("modlet", dec(P1488_GB_ASSOC))
+}
+
+// --- associated `const Type.K2` without annotation
+
+const P1488_GB_ASSOCUNANN []u8 = P1488Box.K2
+
+fn via_assocunann(mut w P1488Sink) -> () { w.put(P1488Box.K2) }
+
+fn ra_assocunann() -> ro []u8 => P1488Box.K2
+
+fn rs_assocunann(k int) -> ro []u8 {
+    if k > 5 {
+        return "early"
+    }
+    return P1488Box.K2
+}
+
+fn show_assocunann(pos str, got str) Io -> () {
+    println("assocunann ${pos} ${got}")
+}
+
+fn run_assocunann() Io -> () {
+    ro bx = P1488Box { n: 0 }
+    show_assocunann("free", echo(P1488Box.K2))
+    show_assocunann("method", bx.echo(P1488Box.K2))
+    mut t = P1488Tally { got: "" }
+    t.put(P1488Box.K2)
+    show_assocunann("mutmethod", t.got)
+    mut tp = P1488Tally { got: "" }
+    via_assocunann(tp)
+    show_assocunann("proto", tp.got)
+    ro b []u8 = P1488Box.K2
+    show_assocunann("rolet", dec(b))
+    show_assocunann("retarrow", dec(ra_assocunann()))
+    show_assocunann("retstmt", dec(rs_assocunann(0)))
+    ro xs []ro []u8 = [P1488Box.K2, "zz"]
+    show_assocunann("elem", dec(xs[0]))
+    ro h = P1488Hold { data: P1488Box.K2 }
+    show_assocunann("recfield", dec(h.data))
+    mut ar ro []u8 = "zz"
+    ar = P1488Box.K2
+    show_assocunann("assignro", dec(ar))
+    show_assocunann("modlet", dec(P1488_GB_ASSOCUNANN))
+}
+
+// --- field of a record `const`
+
+ro P1488_GB_CONSTFIELD []u8 = P1488_CR.name
+
+fn via_constfield(mut w P1488Sink) -> () { w.put(P1488_CR.name) }
+
+fn ra_constfield() -> ro []u8 => P1488_CR.name
+
+fn rs_constfield(k int) -> ro []u8 {
+    if k > 5 {
+        return "early"
+    }
+    return P1488_CR.name
+}
+
+fn show_constfield(pos str, got str) Io -> () {
+    println("constfield ${pos} ${got}")
+}
+
+fn run_constfield() Io -> () {
+    ro bx = P1488Box { n: 0 }
+    show_constfield("free", echo(P1488_CR.name))
+    show_constfield("method", bx.echo(P1488_CR.name))
+    mut t = P1488Tally { got: "" }
+    t.put(P1488_CR.name)
+    show_constfield("mutmethod", t.got)
+    mut tp = P1488Tally { got: "" }
+    via_constfield(tp)
+    show_constfield("proto", tp.got)
+    ro b []u8 = P1488_CR.name
+    show_constfield("rolet", dec(b))
+    show_constfield("retarrow", dec(ra_constfield()))
+    show_constfield("retstmt", dec(rs_constfield(0)))
+    ro xs []ro []u8 = [P1488_CR.name, "zz"]
+    show_constfield("elem", dec(xs[0]))
+    ro h = P1488Hold { data: P1488_CR.name }
+    show_constfield("recfield", dec(h.data))
+    mut ar ro []u8 = "zz"
+    ar = P1488_CR.name
+    show_constfield("assignro", dec(ar))
+    show_constfield("modlet", dec(P1488_GB_CONSTFIELD))
+}
+
+// --- field of a record associated const
+
+ro P1488_GB_ASSOCFIELD []u8 = P1488Box.REC.name
+
+fn via_assocfield(mut w P1488Sink) -> () { w.put(P1488Box.REC.name) }
+
+fn ra_assocfield() -> ro []u8 => P1488Box.REC.name
+
+fn rs_assocfield(k int) -> ro []u8 {
+    if k > 5 {
+        return "early"
+    }
+    return P1488Box.REC.name
+}
+
+fn show_assocfield(pos str, got str) Io -> () {
+    println("assocfield ${pos} ${got}")
+}
+
+fn run_assocfield() Io -> () {
+    ro bx = P1488Box { n: 0 }
+    show_assocfield("free", echo(P1488Box.REC.name))
+    show_assocfield("method", bx.echo(P1488Box.REC.name))
+    mut t = P1488Tally { got: "" }
+    t.put(P1488Box.REC.name)
+    show_assocfield("mutmethod", t.got)
+    mut tp = P1488Tally { got: "" }
+    via_assocfield(tp)
+    show_assocfield("proto", tp.got)
+    ro b []u8 = P1488Box.REC.name
+    show_assocfield("rolet", dec(b))
+    show_assocfield("retarrow", dec(ra_assocfield()))
+    show_assocfield("retstmt", dec(rs_assocfield(0)))
+    ro xs []ro []u8 = [P1488Box.REC.name, "zz"]
+    show_assocfield("elem", dec(xs[0]))
+    ro h = P1488Hold { data: P1488Box.REC.name }
+    show_assocfield("recfield", dec(h.data))
+    mut ar ro []u8 = "zz"
+    ar = P1488Box.REC.name
+    show_assocfield("assignro", dec(ar))
+    show_assocfield("modlet", dec(P1488_GB_ASSOCFIELD))
+}
+
+// --- `const` imported from another module (`import std.unicode.{UNICODE_VERSION}`)
+
+const P1488_GB_IMPORT []u8 = UNICODE_VERSION
+
+fn via_import(mut w P1488Sink) -> () { w.put(UNICODE_VERSION) }
+
+fn ra_import() -> ro []u8 => UNICODE_VERSION
+
+fn rs_import(k int) -> ro []u8 {
+    if k > 5 {
+        return "early"
+    }
+    return UNICODE_VERSION
+}
+
+fn show_import(pos str, got str) Io -> () {
+    println("import ${pos} ${got == UNICODE_VERSION}")
+}
+
+fn run_import() Io -> () {
+    ro bx = P1488Box { n: 0 }
+    show_import("free", echo(UNICODE_VERSION))
+    show_import("method", bx.echo(UNICODE_VERSION))
+    mut t = P1488Tally { got: "" }
+    t.put(UNICODE_VERSION)
+    show_import("mutmethod", t.got)
+    mut tp = P1488Tally { got: "" }
+    via_import(tp)
+    show_import("proto", tp.got)
+    ro b []u8 = UNICODE_VERSION
+    show_import("rolet", dec(b))
+    show_import("retarrow", dec(ra_import()))
+    show_import("retstmt", dec(rs_import(0)))
+    ro xs []ro []u8 = [UNICODE_VERSION, "zz"]
+    show_import("elem", dec(xs[0]))
+    ro h = P1488Hold { data: UNICODE_VERSION }
+    show_import("recfield", dec(h.data))
+    mut ar ro []u8 = "zz"
+    ar = UNICODE_VERSION
+    show_import("assignro", dec(ar))
+    show_import("modlet", dec(P1488_GB_IMPORT))
+}
+
+fn main() Io -> () {
+    run_lconst()
+    run_lconstann()
+    run_modro()
+    run_modroann()
+    run_assoc()
+    run_assocunann()
+    run_constfield()
+    run_assocfield()
+    run_import()
+}

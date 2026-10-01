@@ -1,0 +1,15 @@
+module hp
+
+import ./geo.{Dir}
+
+fn name(d Dir) -> str => match d {
+    North => "N"
+    East => "E"
+    South => "S"
+    West => "W"
+}
+
+fn main() {
+    println(name(Dir.South))
+    println(name(Dir.East))
+}

@@ -23,6 +23,7 @@ mod decl_module_symbol; // #1097: free-fn symbol by declaring module (D134), see
 mod generic_overload_mono; // #1343: generic free-fn monomorph by declaration, see its doc
 mod method_key; mod default_dispatch; mod consume_disarm_resolved; // #1413 method key; #1414 value default method; #1100 disarm by resolved callee
 mod type_repr_early; mod generic_sum_schema; // #761: newtype/alias representation before any consumer; #1338: generic sum payload layout from the channel
+mod c_name; // #1440/#1446: the one door "Nova name -> C identifier", see its doc
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
@@ -10352,7 +10353,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                 }
-                c.name.clone()
+                Self::mangle_field_name(&c.name) // #1440: an exported const is a bare C global, through the door
             });
         if c.is_export && self.colliding_const_names.contains(&c.name) {
             self.const_qualified_by_name.insert(c.name.clone(), c_name.clone());
@@ -10571,7 +10572,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let val = if let ExprKind::Call { func, args, .. } = &value.kind {
             if let ExprKind::Member { obj, name: m } = &func.kind {
                 if m == "bytes" && args.is_empty()
-                    && matches!(obj.kind, ExprKind::StrLit(_))
+                    && (matches!(obj.kind, ExprKind::StrLit(_)) || self.infer_expr_c_type(obj) == "nova_str") // #1488: a `str` const too
                     && Self::is_bytes_slice_c_ty(ty_c)
                 {
                     let obj_c = self.emit_expr(obj)?;
@@ -11460,7 +11461,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     extra_sig = extra_sig,
                     body = thunk_body,
                 ));
-                field_inits.push(format!("    .{} = {}", m.name, thunk_name));
+                field_inits.push(format!("    .{} = {}", Self::mangle_field_name(&m.name), thunk_name));
             }
             self.current_type_subst = old_subst;
             self.mono_fwd_decls.push_str(&format!(
@@ -11648,7 +11649,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 .collect::<Vec<_>>()
                 .join(", ");
             let mangled_name = Self::mangle_op(&m.name, param_c_types, &all_method_pairs);
-            fields.push_str(&format!("    {} (*{})({}); \n", ret_c, mangled_name, params_str));
+            fields.push_str(&format!("    {} (*{})({}); \n", ret_c, Self::mangle_field_name(&mangled_name), params_str));
         }
         // [fix №154] restore — see save above.
         self.current_emit_file_id = saved_emit_file_id_proto;
@@ -11921,7 +11922,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Emit signature.
             let mut sig_parts: Vec<String> = vec![format!("{} nova_self", t_c_ty)];
             for (p, pc) in m.params.iter().zip(param_c_tys.iter()) {
-                sig_parts.push(format!("{} {}", pc, p.name));
+                sig_parts.push(format!("{} {}", pc, Self::mangle_field_name(&p.name)));
             }
             self.line(&format!(
                 "{}{} {}({}) {{",
@@ -13406,14 +13407,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         self.line(&format!(
                             "{ty}* {bv} = ({ty}*)nova_alloc(sizeof({ty}));",
                             ty = cap_ty, bv = bv));
-                        self.line(&format!("*{bv} = {cap};", bv = bv, cap = cap_name));
+                        self.line(&format!("*{bv} = {cap};", bv = bv, cap = Self::mangle_field_name(cap_name)));
                         self.var_boxed.insert(cap_name.clone(), bv.clone());
                         bv
                     }
                 } else if let Some(boxed) = self.var_boxed.get(cap_name) {
                     boxed.clone() // #1421: in an op body / closure the name is a capture: its address is the body's box
                 } else {
-                    format!("&{}", cap_name)
+                    format!("&{}", Self::mangle_field_name(cap_name))
                 };
                 self.line(&format!("{ctx}->{field} = {field_val};",
                     ctx = ctx_var, field = field, field_val = field_val));
@@ -13423,7 +13424,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // var_boxed (only mutable vars are ever registered there),
                 // so the bare read is always the correct current value.
                 self.line(&format!("{ctx}->{field} = {cap};",
-                    ctx = ctx_var, field = field, cap = cap_name));
+                    ctx = ctx_var, field = field, cap = Self::mangle_field_name(cap_name)));
             }
         }
         // Patch vtable at runtime — use mangled field name for overloaded ops
@@ -13462,7 +13463,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let mut decl_params = vec!["void* _ctx".to_string()];
                 for (i, p) in m.params.iter().enumerate() {
                     let ty = param_types.get(i).cloned().unwrap_or_else(|| "nova_int".into());
-                    decl_params.push(format!("{} {}", ty, p.name));
+                    decl_params.push(format!("{} {}", ty, Self::mangle_field_name(&p.name)));
                 }
                 let _ = writeln!(self.lambda_forward_decls,
                     "{storage}{ret} {fn}({params});",
@@ -13518,7 +13519,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 fn_name.clone()
             };
             self.line(&format!("{vt}->{field} = {install_fn};",
-                vt = vtable_var, field = field, install_fn = install_fn));
+                vt = vtable_var, field = Self::mangle_field_name(&field), install_fn = install_fn));
         }
         // Plan 20 Ф.8 (4): vtable->prev initialized to NULL here.
         // Будет перезаписан в `with X = h { ... }` codegen перед install'ом
@@ -13543,7 +13544,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             let mut fn_params = vec!["void* _ctx".to_string()];
             for (i, p) in m.params.iter().enumerate() {
                 let ty = param_types.get(i).cloned().unwrap_or_else(|| "nova_int".into());
-                fn_params.push(format!("{} {}", ty, p.name));
+                fn_params.push(format!("{} {}", ty, Self::mangle_field_name(&p.name)));
             }
             let fn_name = format!("{}_impl_{}_{}", handler_id, eff, m.name);
             let _ = writeln!(self.deferred_impls,
@@ -13616,7 +13617,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let (wire_ty, wire_name) = if annotation_bridges.iter().any(|(n, _, _)| n == &p.name) {
                     (schema_ty.clone(), format!("{}_wire", p.name))
                 } else {
-                    (ty.clone(), p.name.clone())
+                    (ty.clone(), Self::mangle_field_name(&p.name))
                 };
                 fn_params.push(format!("{} {}", wire_ty, wire_name));
                 method_param_types.push((p.name.clone(), ty));
@@ -13687,7 +13688,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if is_mut {
                     self.var_boxed.insert(cap_name.clone(), format!("_c->{}", field));
                 } else {
-                    self.line(&format!("{} {} = _c->{};", cap_ty, cap_name, field));
+                    self.line(&format!("{} {} = _c->{};", cap_ty, Self::mangle_field_name(cap_name), field));
                 }
             }
             // Plan 65 Ф.1: rebind annotation-bridged handler params from the
@@ -13701,8 +13702,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // the cast in the body.
             for (pname, _wire_ty, annot_ty) in &annotation_bridges {
                 self.line(&format!(
-                    "{annot} {pname} = ({annot})(intptr_t)({pname}_wire);",
-                    annot = annot_ty, pname = pname
+                    "{annot} {pname_c} = ({annot})(intptr_t)({pname}_wire);",
+                    annot = annot_ty, pname = pname, pname_c = Self::mangle_field_name(pname)
                 ));
             }
 
@@ -13895,7 +13896,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // (file-scope, в deferred_impls после fn).
         let _ = writeln!(self.lambda_forward_decls, "typedef struct {{");
         for ((cap_name, _), ptr_ty) in all_captures.iter().zip(capture_ptr_tys.iter()) {
-            let _ = writeln!(self.lambda_forward_decls, "    {} {};", ptr_ty, cap_name);
+            let _ = writeln!(self.lambda_forward_decls, "    {} {};", ptr_ty, Self::mangle_field_name(cap_name));
         }
         if all_captures.is_empty() {
             let _ = writeln!(self.lambda_forward_decls, "    char _dummy;");
@@ -13921,20 +13922,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Для scalar: storage `T*` хранит `&local`.
                 let cap_ty = &all_captures.iter().find(|(n, _)| n == cap_name).unwrap().1;
                 if cap_ty.ends_with('*') {
-                    self.line(&format!("{ctx}->{cap} = {cap};", ctx = ctx_var, cap = cap_name));
+                    self.line(&format!("{ctx}->{cap} = {cap};", ctx = ctx_var, cap = Self::mangle_field_name(cap_name)));
                 } else {
-                    self.line(&format!("{ctx}->{cap} = &{cap};", ctx = ctx_var, cap = cap_name));
+                    self.line(&format!("{ctx}->{cap} = &{cap};", ctx = ctx_var, cap = Self::mangle_field_name(cap_name)));
                 }
             } else {
                 // By-value snapshot: copy current value.
-                self.line(&format!("{ctx}->{cap} = {cap};", ctx = ctx_var, cap = cap_name));
+                self.line(&format!("{ctx}->{cap} = {cap};", ctx = ctx_var, cap = Self::mangle_field_name(cap_name)));
             }
         }
         // Patch vtable fields → impl functions.
         for m in methods {
             let fn_name = format!("{}_impl_{}", lit_name, m.name);
             self.line(&format!("{vt}->{m} = {fn};",
-                vt = vtable_var, m = m.name, fn = fn_name));
+                vt = vtable_var, m = Self::mangle_field_name(&m.name), fn = fn_name));
         }
 
         // ---- Forward decls of impl functions в lambda_forward_decls ----
@@ -13953,7 +13954,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     .and_then(|pm| pm.params.get(i))
                     .and_then(|pp| self.type_ref_to_c(&pp.ty).ok())
                     .unwrap_or_else(|| "nova_int".into());
-                fn_params.push(format!("{} {}", pty, p.name));
+                fn_params.push(format!("{} {}", pty, Self::mangle_field_name(&p.name)));
             }
             let fn_name = format!("{}_impl_{}", lit_name, m.name);
             let _ = writeln!(self.lambda_forward_decls,
@@ -13990,7 +13991,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     .and_then(|pm| pm.params.get(i))
                     .and_then(|pp| self.type_ref_to_c(&pp.ty).ok())
                     .unwrap_or_else(|| "nova_int".into());
-                fn_params.push(format!("{} {}", pty, p.name));
+                fn_params.push(format!("{} {}", pty, Self::mangle_field_name(&p.name)));
                 method_param_types.push((p.name.clone(), pty));
             }
             let fn_name = format!("{}_impl_{}", lit_name, m.name);
@@ -14014,13 +14015,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             for ((cap_name, cap_ty), &by_ptr) in all_captures.iter().zip(capture_modes.iter()) {
                 if by_ptr {
                     if cap_ty.ends_with('*') {
-                        self.line(&format!("#define {cap} (_c->{cap})", cap = cap_name));
+                        self.line(&format!("#define {cap} (_c->{cap})", cap = Self::mangle_field_name(cap_name)));
                     } else {
-                        self.line(&format!("#define {cap} (*_c->{cap})", cap = cap_name));
+                        self.line(&format!("#define {cap} (*_c->{cap})", cap = Self::mangle_field_name(cap_name)));
                     }
                 } else {
                     // By-value snapshot: direct field access (no deref).
-                    self.line(&format!("#define {cap} (_c->{cap})", cap = cap_name));
+                    self.line(&format!("#define {cap} (_c->{cap})", cap = Self::mangle_field_name(cap_name)));
                 }
             }
 
@@ -14070,7 +14071,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
             // Undef capture macros.
             for (cap_name, _) in &all_captures {
-                self.line(&format!("#undef {}", cap_name));
+                self.line(&format!("#undef {}", Self::mangle_field_name(cap_name)));
             }
 
             // Restore var_types для method params.
@@ -14352,6 +14353,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Ident-emission `ref_params` deref below). Treating a
             // `ref_params` name as "already a pointer" here mirrors that.
             let outer_is_ref_param = self.ref_params.contains(cap);
+            let cap = &Self::mangle_field_name(cap); // #1440/#1446: field and local both through the door
             let access_outer = if is_outer_cap {
                 if outer_by_value { format!("_c->{}", cap) }            // T value
                 else { format!("(*_c->{})", cap) }                       // *T
@@ -14561,9 +14563,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // User capture fields follow base fields.
         for (cap, ty, by_value) in &captures {
             if *by_value {
-                let _ = writeln!(self.lambda_forward_decls, "    {} {};", ty, cap);
+                let _ = writeln!(self.lambda_forward_decls, "    {} {};", ty, Self::mangle_field_name(cap));
             } else {
-                let _ = writeln!(self.lambda_forward_decls, "    {}* {};", ty, cap);
+                let _ = writeln!(self.lambda_forward_decls, "    {}* {};", ty, Self::mangle_field_name(cap));
             }
         }
         // [M-187-nested-spawn-scope-var-cc-fail]: active scope queue, threaded
@@ -16136,9 +16138,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let _ = writeln!(self.lambda_forward_decls, "typedef struct {{");
         for (cap, ty, by_value) in &captures {
             if *by_value {
-                let _ = writeln!(self.lambda_forward_decls, "    {} {};", ty, cap);
+                let _ = writeln!(self.lambda_forward_decls, "    {} {};", ty, Self::mangle_field_name(cap));
             } else {
-                let _ = writeln!(self.lambda_forward_decls, "    {}* {};", ty, cap);
+                let _ = writeln!(self.lambda_forward_decls, "    {}* {};", ty, Self::mangle_field_name(cap));
             }
         }
         if has_result {
@@ -16157,6 +16159,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 .map(|s| s.contains(cap)).unwrap_or(false);
             let outer_by_value = self.current_spawn_capture_by_value.as_ref()
                 .map(|s| s.contains(cap)).unwrap_or(false);
+            let cap = &Self::mangle_field_name(cap); // #1440: through the door, as the spawn ctx above
             let access_outer = if is_outer_cap {
                 if outer_by_value { format!("_c->{}", cap) }
                 else { format!("(*_c->{})", cap) }
@@ -16351,8 +16354,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let _ = writeln!(self.lambda_forward_decls, "typedef struct {{");
         for (i, (ty, _)) in param_c_types.iter().enumerate() {
             let field = fn_decl.params.get(i)
-                .map(|p| p.name.as_str())
-                .unwrap_or("_arg");
+                .map(|p| Self::mangle_field_name(&p.name))
+                .unwrap_or_else(|| "_arg".into());
             let _ = writeln!(self.lambda_forward_decls, "    {} {};", ty, field);
         }
         if has_result {
@@ -16374,7 +16377,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line(&format!("{} {};", ctx_ty, ctx_var));
         for (i, arg) in args.iter().enumerate() {
             let field = fn_decl.params.get(i)
-                .map(|p| p.name.clone())
+                .map(|p| Self::mangle_field_name(&p.name))
                 .unwrap_or_else(|| format!("_arg{}", i));
             let arg_c = self.emit_expr(arg.expr())?;
             self.line(&format!("{}.{} = {};", ctx_var, field, arg_c));
@@ -16412,7 +16415,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
         // Build call: nova_fn_foo(_c->a, _c->b, ...)
         let arg_exprs: String = fn_decl.params.iter()
-            .map(|p| format!("_c->{}", p.name))
+            .map(|p| format!("_c->{}", Self::mangle_field_name(&p.name)))
             .collect::<Vec<_>>()
             .join(", ");
 
@@ -16546,7 +16549,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let mut fn_params = vec!["void* _ctx".to_string()];
                     for (i, p) in m.params.iter().enumerate() {
                         let ty = param_types.get(i).cloned().unwrap_or_else(|| "nova_int".into());
-                        fn_params.push(format!("{} {}", ty, p.name));
+                        fn_params.push(format!("{} {}", ty, Self::mangle_field_name(&p.name)));
                     }
                     let fn_name = format!("{}_impl_{}_{}", handler_id, eff, m.name);
                     self.line(&format!(
@@ -17590,7 +17593,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 };
                 for p in &f.params {
                     let p_c = self.erased_type_ref_c(&Some(p.ty.clone()), &type_params);
-                    parts.push(format!("{} {}", p_c, p.name));
+                    parts.push(format!("{} {}", p_c, Self::mangle_field_name(&p.name)));
                 }
                 self.current_receiver_type = prev_recv;
                 self.sync_receiver_rt();
@@ -18255,7 +18258,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 self.line(&format!("{} _{};", c_ty, i));
                             }
                             self.indent -= 1;
-                            self.line(&format!("}} {};", v.name));
+                            self.line(&format!("}} {};", Self::mangle_field_name(&v.name)));
                             sum_schema.insert(v.name.clone(), field_types);
                         }
                         SumVariantKind::Record(fields) => {
@@ -18285,7 +18288,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             let field_names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
                             self.record_variant_field_order.insert(order_key, field_names);
                             self.indent -= 1;
-                            self.line(&format!("}} {};", v.name));
+                            self.line(&format!("}} {};", Self::mangle_field_name(&v.name)));
                             sum_schema.insert(v.name.clone(), field_types);
                         }
                     }
@@ -18322,14 +18325,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         SumVariantKind::Tuple(_) => {
                             for (i, _) in field_types.iter().enumerate() {
                                 self.line(&format!("_r->payload.{var}._{i} = _{i};",
-                                    var = v.name, i = i));
+                                    var = Self::mangle_field_name(&v.name), i = i));
                             }
                         }
                         SumVariantKind::Record(fields) => {
                             for (i, f) in fields.iter().enumerate() {
                                 let mf = Self::mangle_field_name(&f.name);
                                 self.line(&format!("_r->payload.{var}.{fname} = _{i};",
-                                    var = v.name, fname = mf, i = i));
+                                    var = Self::mangle_field_name(&v.name), fname = mf, i = i));
                             }
                         }
                     }
@@ -18649,7 +18652,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let mut param_types_with_ctx = vec!["void*".to_string()]; // ctx first
                 param_types_with_ctx.extend(param_c_types.iter().cloned());
                 let params_sig = param_types_with_ctx.join(", ");
-                self.line(&format!("{} (*{})({}); ", ret, mangled, params_sig));
+                self.line(&format!("{} (*{})({}); ", ret, Self::mangle_field_name(&mangled), params_sig));
             }
             schema.insert(mangled.clone(), (param_c_types.clone(), ret));
         }
@@ -18702,8 +18705,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 format!("_nova_handler_{name}->ctx", name = name)
             ];
             for (p, ty) in m.params.iter().zip(param_c_types.iter()) {
-                fn_params.push(format!("{} {}", ty, p.name));
-                call_args.push(p.name.clone());
+                fn_params.push(format!("{} {}", ty, Self::mangle_field_name(&p.name)));
+                call_args.push(Self::mangle_field_name(&p.name));
             }
             let fn_params_str = if fn_params.is_empty() {
                 "void".to_string()
@@ -18744,7 +18747,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // nova_clos_base_fn / _env macros (defined в nova_rt.h).
                 // Push pair to TLS LIFO stack.
                 let fn_arg = m.params.first()
-                    .map(|p| p.name.clone())
+                    .map(|p| Self::mangle_field_name(&p.name))
                     .unwrap_or_else(|| "f".to_string());
                 self.line(&format!(
                     "NovaClosBase* _nv_clos = (NovaClosBase*)({});",
@@ -18787,7 +18790,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     "sleep" => {
                         // param `d` is `NovaValue_Duration` (by value) —
                         // extract `.nanos` for the int64-wire slot.
-                        let arg_name = m.params.first().map(|p| p.name.clone())
+                        let arg_name = m.params.first().map(|p| Self::mangle_field_name(&p.name))
                             .unwrap_or_else(|| "d".to_string());
                         self.line(&format!(
                             "if (_nova_handler_Time->sleep) {{ return _nova_handler_Time->sleep(_nova_handler_Time->ctx, {arg}.nanos); }}",
@@ -18820,7 +18823,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             } else { // №158: null handler → `nv_panic` (D62 "runtime fail (panic)"), не NULL-deref.
                 self.line(&format!(
                     "if (!_nova_handler_{name}) {{ nv_panic(nova_str_from_cstr(\"unhandled effect `{name}.{op}`: no active handler (missing `with {name} = …` around this call)\")); return ({ret}){{0}}; }} return _nova_handler_{name}->{field}({args});",
-                    name = name, op = m.name, ret = ret, field = mangled, args = call_args_str
+                    name = name, op = m.name, ret = ret, field = Self::mangle_field_name(&mangled), args = call_args_str
                 ));
             }
             self.indent -= 1;
@@ -19608,7 +19611,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         self.line(&format!("{} _{};", tc, i));
                     }
                     self.indent -= 1;
-                    self.line(&format!("}} {};", v.name));
+                    self.line(&format!("}} {};", Self::mangle_field_name(&v.name)));
                     sum_schema.insert(v.name.clone(), field_types);
                 }
                 SumVariantKind::Record(fields) => {
@@ -19629,7 +19632,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let order_key = format!("{}::{}", name, v.name);
                     self.record_variant_field_order.insert(order_key, field_names_ordered);
                     self.indent -= 1;
-                    self.line(&format!("}} {};", v.name));
+                    self.line(&format!("}} {};", Self::mangle_field_name(&v.name)));
                     sum_schema.insert(v.name.clone(), field_types);
                 }
             }
@@ -19667,7 +19670,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 SumVariantKind::Tuple(_) => {
                     for (i, _) in field_types.iter().enumerate() {
                         self.line(&format!("_r->payload.{var}._{i} = _{i};",
-                            var = v.name, i = i));
+                            var = Self::mangle_field_name(&v.name), i = i));
                     }
                 }
                 SumVariantKind::Record(fields) => {
@@ -19676,7 +19679,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     for (i, f) in fields.iter().enumerate() {
                         let mfn = Self::mangle_field_name(&f.name);
                         self.line(&format!("_r->payload.{var}.{fname} = _{i};",
-                            var = v.name, fname = mfn, i = i));
+                            var = Self::mangle_field_name(&v.name), fname = mfn, i = i));
                     }
                 }
             }
@@ -19770,38 +19773,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         )
     }
 
-    /// Иначе генерируется invalid C (`nova_int char;`).
-    ///
-    /// `n` это C-keyword? Список — стандартный C99/C11 + popular extensions.
-    ///
-    /// [M-c-keyword-ident-collision] (Plan 172.13): та же функция используется
-    /// НЕ только для полей (`mangle_field_name`'s исходное имя — historical),
-    /// но и как единый канал маскирования ЛЮБОГО user-identifier'а Nova,
-    /// который становится C-токеном (local var decl/read/write, fn-параметр,
-    /// match-arm binding). Nova сам не резервирует эти слова — пользователь
-    /// не должен знать о зарезервированных словах ЦЕЛЕВОГО языка кодогена.
-    fn mangle_field_name(name: &str) -> String {
-        if Self::is_c_keyword(name) {
-            format!("nv_{}", name)
-        } else {
-            name.to_string()
-        }
-    }
-
-    fn is_c_keyword(name: &str) -> bool {
-        matches!(name,
-            "auto" | "break" | "case" | "char" | "const" | "continue" |
-            "default" | "do" | "double" | "else" | "enum" | "extern" |
-            "float" | "for" | "goto" | "if" | "inline" | "int" | "long" |
-            "register" | "restrict" | "return" | "short" | "signed" |
-            "sizeof" | "static" | "struct" | "switch" | "typedef" |
-            "union" | "unsigned" | "void" | "volatile" | "while" |
-            "_Bool" | "_Atomic" | "_Complex" | "_Imaginary" |
-            "_Generic" | "_Thread_local" | "_Static_assert" | "_Noreturn" |
-            "_Alignas" | "_Alignof" |
-            "asm" | "fortran"
-        )
-    }
+    // The door "Nova name -> C identifier" (`mangle_field_name`) lives in emit_c/c_name.rs (#1440/#1446).
 
     // ---- function emission ----
 
@@ -21212,14 +21184,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         };
         for p in &f.params {
             let p_c = self.erased_type_ref_c(&Some(p.ty.clone()), &type_params);
-            parts.push(format!("{} {}", p_c, p.name));
+            parts.push(format!("{} {}", p_c, Self::mangle_field_name(&p.name)));
         }
         let params_s = if parts.is_empty() { "void".into() } else { parts.join(", ") };
         self.line(&format!("{}{} {}({}) {{", self.top_level_storage(), ret_c, mangled, params_s));
         self.indent += 1;
         if is_instance { self.line("(void)nova_self;"); }
         for p in &f.params {
-            self.line(&format!("(void){};", p.name));
+            self.line(&format!("(void){};", Self::mangle_field_name(&p.name)));
         }
         if ret_c == "nova_unit" {
             self.line("return NOVA_UNIT;");
@@ -21388,7 +21360,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         };
         for p in &f.params {
             let p_c = self.erased_type_ref_c(&Some(p.ty.clone()), &type_params);
-            parts.push(format!("{} {}", p_c, p.name));
+            parts.push(format!("{} {}", p_c, Self::mangle_field_name(&p.name)));
         }
         // Plan 11 Follow-up (2026-05-17): НЕ восстанавливаем current_receiver_type
         // здесь — оставляем set, чтобы body emit (включая var_types для params
@@ -22720,11 +22692,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let (li, ri) = match rec_order.as_ref().and_then(|o| o.get(i)) {
                             Some(fname) => {
                                 let mfn = Self::mangle_field_name(fname);
-                                (format!("({})->payload.{}.{}", l, var_name, mfn),
-                                 format!("({})->payload.{}.{}", r, var_name, mfn))
+                                (format!("({})->payload.{}.{}", l, Self::mangle_field_name(&var_name), mfn),
+                                 format!("({})->payload.{}.{}", r, Self::mangle_field_name(&var_name), mfn))
                             }
-                            None => (format!("({})->payload.{}._{}", l, var_name, i),
-                                     format!("({})->payload.{}._{}", r, var_name, i)),
+                            None => (format!("({})->payload.{}._{}", l, Self::mangle_field_name(&var_name), i),
+                                     format!("({})->payload.{}._{}", r, Self::mangle_field_name(&var_name), i)),
                         };
                         self.emit_field_eq(fty, &li, &ri, depth + 1)
                     })
@@ -22815,8 +22787,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         .iter()
                         .enumerate()
                         .map(|(i, fty)| {
-                            let li = format!("({})->payload.{}._{}", l, var_name, i);
-                            let ri = format!("({})->payload.{}._{}", r, var_name, i);
+                            let li = format!("({})->payload.{}._{}", l, Self::mangle_field_name(&var_name), i);
+                            let ri = format!("({})->payload.{}._{}", r, Self::mangle_field_name(&var_name), i);
                             self.emit_field_eq(fty, &li, &ri, depth + 1)
                         })
                         .collect();
@@ -26468,12 +26440,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 match &p.ty {
                     TypeRef::Named { path, generics, .. } => {
                         let nm = path.join("_");
-                        if type_params.contains(&nm) { format!("void* {}", p.name) }
+                        if type_params.contains(&nm) { format!("void* {}", Self::mangle_field_name(&p.name)) }
                         else if !generics.is_empty() && self.record_schemas.contains_key(&nm) {
-                            format!("Nova_{}* {}", nm, p.name)
-                        } else { format!("void* {}", p.name) }
+                            format!("Nova_{}* {}", nm, Self::mangle_field_name(&p.name))
+                        } else { format!("void* {}", Self::mangle_field_name(&p.name)) }
                     }
-                    _ => format!("void* {}", p.name),
+                    _ => format!("void* {}", Self::mangle_field_name(&p.name)),
                 }
             }).collect::<Vec<_>>().join(", ")
         };
@@ -26548,7 +26520,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             "void".to_string()
         } else {
             fn_decl.params.iter().zip(&param_c_tys)
-                .map(|(p, ty)| format!("{} {}", ty, p.name))
+                .map(|(p, ty)| format!("{} {}", ty, Self::mangle_field_name(&p.name)))
                 .collect::<Vec<_>>()
                 .join(", ")
         };
@@ -26700,7 +26672,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             Vec::new()
         };
         for (p, ty) in fn_decl.params.iter().zip(&param_c_tys) {
-            parts.push(format!("{} {}", ty, p.name));
+            parts.push(format!("{} {}", ty, Self::mangle_field_name(&p.name)));
         }
         let params_str = if parts.is_empty() { "void".to_string() } else { parts.join(", ") };
         // Forward decl
@@ -26922,7 +26894,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             Vec::new()
         };
         for (p, ty) in fn_decl.params.iter().zip(&param_c_tys) {
-            parts.push(format!("{} {}", ty, p.name));
+            parts.push(format!("{} {}", ty, Self::mangle_field_name(&p.name)));
         }
         // Plan 172.14 (sret/_out §2): mono `__sret`-вариант (детект по суффиксу
         // имени, поставлен register_mono_method_instance) — доп. параметр
@@ -28046,7 +28018,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 self.line(&format!("{} _{};", tc, i));
                             }
                             self.indent -= 1;
-                            self.line(&format!("}} {};", v.name));
+                            self.line(&format!("}} {};", Self::mangle_field_name(&v.name)));
                             sum_schema.insert(v.name.clone(), field_types);
                         }
                         SumVariantKind::Record(fields) => {
@@ -28067,7 +28039,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             let field_names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
                             self.record_variant_field_order.insert(order_key, field_names);
                             self.indent -= 1;
-                            self.line(&format!("}} {};", v.name));
+                            self.line(&format!("}} {};", Self::mangle_field_name(&v.name)));
                             sum_schema.insert(v.name.clone(), field_types);
                         }
                     }
@@ -28102,14 +28074,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         SumVariantKind::Unit => {}
                         SumVariantKind::Tuple(_) => {
                             for (i, _) in field_types.iter().enumerate() {
-                                self.line(&format!("_r->payload.{var}._{i} = _{i};", var = v.name, i = i));
+                                self.line(&format!("_r->payload.{var}._{i} = _{i};", var = Self::mangle_field_name(&v.name), i = i));
                             }
                         }
                         SumVariantKind::Record(fields) => {
                             for (i, f) in fields.iter().enumerate() {
                                 let mf = Self::mangle_field_name(&f.name);
                                 self.line(&format!("_r->payload.{var}.{fname} = _{i};",
-                                    var = v.name, fname = mf, i = i));
+                                    var = Self::mangle_field_name(&v.name), fname = mf, i = i));
                             }
                         }
                     }
@@ -28619,7 +28591,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             "void".to_string()
         } else {
             fn_decl.params.iter().zip(&param_c_tys)
-                .map(|(p, ty)| format!("{} {}", ty, p.name))
+                .map(|(p, ty)| format!("{} {}", ty, Self::mangle_field_name(&p.name)))
                 .collect::<Vec<_>>()
                 .join(", ")
         };
@@ -28890,7 +28862,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let params_str = if f.params.is_empty() {
             "void".to_string()
         } else {
-            f.params.iter().zip(&param_c_tys).map(|(p, ty)| format!("{} {}", ty, p.name)).collect::<Vec<_>>().join(", ")
+            f.params.iter().zip(&param_c_tys).map(|(p, ty)| format!("{} {}", ty, Self::mangle_field_name(&p.name))).collect::<Vec<_>>().join(", ")
         };
         // Plan 47: буферизуем тело — spawn-ctx typedefs (lambda_forward_decls)
         // должны флашиться ПЕРЕД телом. Иначе `spawn` внутри generic-функции
@@ -31092,9 +31064,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // `emit_auto_cleanup_arm` no longer needs to patch it
                     // (kept as a defensive no-op re-assignment there).
                     let c_binding = if init_c_type.starts_with("NovaValue_") && !init_c_type.ends_with('*') {
-                        format!("(&{})", nova_binding)
+                        format!("(&{})", Self::mangle_field_name(&nova_binding))
                     } else {
-                        nova_binding.clone()
+                        Self::mangle_field_name(&nova_binding)
                     };
                     entries.push(DeferEntry {
                         active_var: active_var.clone(),
@@ -32009,10 +31981,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         };
         let c_local = self.fresh_tmp();
         self.materialize_scope_outcome(&c_local, outcome);
-        self.line(&format!("#define {} {}", name, c_local));
+        self.line(&format!("#define {} {}", Self::mangle_field_name(name), c_local));
         let prev = self.var_types.insert(name.clone(), "Nova_ScopeOutcome*".to_string());
         let r = self.emit_defer_body_void(body);
-        self.line(&format!("#undef {}", name));
+        self.line(&format!("#undef {}", Self::mangle_field_name(name)));
         match prev {
             Some(p) => { self.var_types.insert(name.clone(), p); }
             None => { self.var_types.remove(name); }
@@ -33094,9 +33066,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         };
         let c_binding_arg = if init_c_type.starts_with("NovaValue_") && !init_c_type.ends_with('*') {
-            format!("(&{})", binding)
+            format!("(&{})", Self::mangle_field_name(&binding))
         } else {
-            binding.clone()
+            Self::mangle_field_name(&binding)
         };
         let type_name = {
             let t = self.debt_strip_nova_trim_start(&init_c_type);
@@ -33235,7 +33207,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
                 let val = self.emit_const_expr_typed(&decl.value, Some(&ty_c))
                     .map_err(|e| format!("scope-local const `{}` codegen failed: {}", decl.name, e))?;
-                self.line(&format!("const {} {} = {};", ty_c, decl.name, val));
+                self.line(&format!("const {} {} = {};", ty_c, Self::mangle_field_name(&decl.name), val));
                 self.var_types.insert(decl.name.clone(), ty_c);
                 return Ok(());
             }
@@ -33275,7 +33247,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let binding = self.pattern_binding(&decl.pattern)?;
                         let inner_c = self.type_ref_to_c(inner)?;
                         let place = self.emit_expr(&decl.value)?;
-                        self.line(&format!("{}* {} = &({});", inner_c, binding, place));
+                        self.line(&format!("{}* {} = &({});", inner_c, Self::mangle_field_name(&binding), place));
                         self.var_types.insert(binding.clone(), inner_c);
                         self.ref_params.insert(binding);
                         return Ok(());
@@ -33300,7 +33272,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             (self.intern_blob_literal(&bytes), n)
                         };
                         self.line(&format!(
-                            "{vec_c}* {binding} = ({vec_c}*)nova_blob_copy({src}, {n});"
+                            "{vec_c}* {} = ({vec_c}*)nova_blob_copy({src}, {n});", Self::mangle_field_name(&binding)
                         ));
                         self.var_types.insert(binding, format!("{vec_c}*"));
                         return Ok(());
@@ -33430,7 +33402,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if val_c != "void*" && !val_c.is_empty() {
                         let v = self.emit_expr(&decl.value)?;
                         let boxed = self.emit_any_box(&val_c, &v);
-                        self.line(&format!("void* {} = {};", binding, boxed));
+                        self.line(&format!("void* {} = {};", Self::mangle_field_name(&binding), boxed));
                         self.var_types.insert(binding.clone(), "void*".to_string());
                         return Ok(());
                     }
@@ -35134,14 +35106,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     } else {
                         "nova_int".to_string()
                     };
-                    self.line(&format!("{} {};", res_ty, r.name));
+                    self.line(&format!("{} {};", res_ty, Self::mangle_field_name(&r.name)));
                     self.var_types.insert(r.name.clone(), res_ty);
                 }
                 self.line(&format!("/* Plan 173 Ф.2.B3-merge: consume {} = ... {{ ... }} */", binding));
                 self.line("{");
                 self.indent += 1;
                 self.line(&format!("{} {} = {};", init_c_type, c_binding, init_c_code));
-                self.line(&format!("#define {} {}", binding, c_binding));
+                self.line(&format!("#define {} {}", Self::mangle_field_name(&binding), c_binding));
                 // Register binding's C type for downstream member/method dispatch
                 // (var_types drives `r.field` → `r->field` on pointer types).
                 self.var_types.insert(binding.clone(), init_c_type.clone());
@@ -35315,7 +35287,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             consume_active_var));
                     }
                     match result {
-                        Some(r) => self.line(&format!("{} = {};", r.name, v)),
+                        Some(r) => self.line(&format!("{} = {};", Self::mangle_field_name(&r.name), v)),
                         None => self.line(&format!("(void)({});", v)),
                     }
                 }
@@ -35334,7 +35306,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // re-throws to the caller (leave-compose longjmp).
                 self.leave_defer_scope(consume_block_id);
 
-                self.line(&format!("#undef {}", binding));
+                self.line(&format!("#undef {}", Self::mangle_field_name(&binding)));
                 self.var_types.remove(binding);
                 self.indent -= 1;
                 self.line("}");
@@ -35887,9 +35859,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let by_value = self.current_spawn_capture_by_value.as_ref()
             .map(|s| s.contains(name)).unwrap_or(false);
         Some(if by_value {
-            format!("_c->{}", name)
+            format!("_c->{}", Self::mangle_field_name(name))
         } else {
-            format!("(*_c->{})", name)
+            format!("(*_c->{})", Self::mangle_field_name(name))
         })
     }
 
@@ -36214,9 +36186,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let by_value = self.current_spawn_capture_by_value.as_ref()
                             .map(|s| s.contains(name)).unwrap_or(false);
                         return if by_value {
-                            Ok(format!("_c->{}", name))
+                            Ok(format!("_c->{}", Self::mangle_field_name(name)))
                         } else {
-                            Ok(format!("(*_c->{})", name))
+                            Ok(format!("(*_c->{})", Self::mangle_field_name(name)))
                         };
                     }
                 }
@@ -39960,7 +39932,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // outer variable via the #define macro below.
                 let mut td = format!("typedef struct {{ ");
                 for (cap, ty) in &captures {
-                    td.push_str(&format!("{}* {}; ", ty, cap));
+                    td.push_str(&format!("{}* {}; ", ty, Self::mangle_field_name(cap)));
                 }
                 td.push_str(&format!("}} {};", name));
                 self.lambda_forward_decls.push_str(&td);
@@ -39972,7 +39944,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             let body_param_list: String = {
                 let mut parts = vec!["void* _env_ptr".to_string()];
                 for (p, ty) in tb.params.iter().zip(param_c_tys.iter()) {
-                    parts.push(format!("{} {}", ty, p.name));
+                    parts.push(format!("{} {}", ty, Self::mangle_field_name(&p.name)));
                 }
                 parts.join(", ")
             };
@@ -39994,7 +39966,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 for (cap, _) in &captures {
                     // #define cap (*_env->cap) — dereferences T* field → T
                     // (same approach as spawn body #define macros at ~line 4742/5044).
-                    self.line(&format!("#define {} (*_env->{})", cap, cap));
+                    self.line(&format!("#define {0} (*_env->{0})", Self::mangle_field_name(cap)));
                 }
             }
             // Register trailing block params in var_types
@@ -40014,7 +39986,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Undef capture macros at end of function
             if env_struct_name.is_some() {
                 for (cap, _) in &captures {
-                    self.line(&format!("#undef {}", cap));
+                    self.line(&format!("#undef {}", Self::mangle_field_name(cap)));
                 }
             }
             // Restore param types
@@ -40062,14 +40034,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if spawn_caps.contains(cap) {
                             // spawn captures are stored as T* in the spawn ctx struct;
                             // _c->cap is already the pointer we need for env->cap.
-                            format!("_c->{}", cap)
+                            format!("_c->{}", Self::mangle_field_name(cap))
                         } else {
-                            format!("&{}", cap)
+                            format!("&{}", Self::mangle_field_name(cap))
                         }
                     } else {
-                        format!("&{}", cap)
+                        format!("&{}", Self::mangle_field_name(cap))
                     };
-                    self.line(&format!("{}->{} = {};", env_tmp, cap, addr_expr));
+                    self.line(&format!("{}->{} = {};", env_tmp, Self::mangle_field_name(cap), addr_expr));
                 }
                 self.line(&format!("{}->env = (void*)({});", clos_tmp, env_tmp));
             } else {
@@ -44767,8 +44739,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         }
                         return Ok(format!(
-                            "{vn}.vtable->{method}({vn}.data{extra})",
-                            vn = var_name, method = method, extra = extra_args
+                            "{vn}.vtable->{method}({vn}.data{extra})", // #1440: both names through the door
+                            vn = Self::mangle_field_name(var_name), method = Self::mangle_field_name(method), extra = extra_args
                         ));
                     }
                     if let Some(proto_name) = self.protocol_vars.get(var_name.as_str()).cloned() {
@@ -49049,9 +49021,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let nvar = self.fresh_tmp();
                 self.line(&format!(
                     "{tc} {nvar} = *({tc}*)nova_any_data({name});",
-                    tc = tc, nvar = nvar, name = name
+                    tc = tc, nvar = nvar, name = Self::mangle_field_name(name)
                 ));
-                self.line(&format!("#define {} {}", name, nvar));
+                self.line(&format!("#define {} {}", Self::mangle_field_name(name), nvar));
                 let old = self.var_types.insert(name.clone(), tc.clone());
                 Some((name.clone(), old))
             } else {
@@ -49059,7 +49031,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             };
         self.emit_block_into(&tmp, &if_ty, then)?;
         if let Some((name, old)) = narrow_saved {
-            self.line(&format!("#undef {}", name));
+            self.line(&format!("#undef {}", Self::mangle_field_name(&name)));
             match old {
                 Some(o) => { self.var_types.insert(name, o); }
                 None => { self.var_types.remove(&name); }
@@ -50535,14 +50507,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             let binding_ty = if let Some(value_ty) = &value_sum_pointee {
                 // Plan 89 debox: слот хранит `<value_ty>*` — читаем по значению.
                 self.line(&format!("{} {} = *({}*){}->data[{}];",
-                    value_ty, binding, value_ty, arr_tmp, idx_tmp));
+                    value_ty, Self::mangle_field_name(&binding), value_ty, arr_tmp, idx_tmp));
                 value_ty.clone()
             } else if elem_ty.ends_with('*') && elem_ty != "nova_int*" {
                 self.line(&format!("{} {} = ({}){}->data[{}];",
-                    elem_ty, binding, elem_ty, arr_tmp, idx_tmp));
+                    elem_ty, Self::mangle_field_name(&binding), elem_ty, arr_tmp, idx_tmp));
                 elem_ty.clone()
             } else {
-                self.line(&format!("{} {} = {}->data[{}];", elem_ty, binding, arr_tmp, idx_tmp));
+                self.line(&format!("{} {} = {}->data[{}];", elem_ty, Self::mangle_field_name(&binding), arr_tmp, idx_tmp));
                 elem_ty.clone()
             };
             self.var_types.insert(binding.clone(), binding_ty);
@@ -50583,15 +50555,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     && elem_ty.ends_with('*');
                 if is_mono_tuple_ptr {
                     let mono_ty = elem_ty.trim_end_matches('*');
-                    self.line(&format!("{} {} = *{};", mono_ty, tup_tmp, binding));
+                    self.line(&format!("{} {} = *{};", mono_ty, tup_tmp, Self::mangle_field_name(&binding)));
                 } else if elem_ty == "nova_int" {
                     // Plan 148 Ф.4: legacy erased tuple — register arity.
                     self.register_legacy_tuple(arity);
                     self.line(&format!("_NovaTuple{} {} = *(_NovaTuple{}*)(intptr_t){};",
-                        arity, tup_tmp, arity, binding));
+                        arity, tup_tmp, arity, Self::mangle_field_name(&binding)));
                 } else {
                     self.register_legacy_tuple(arity);
-                    self.line(&format!("_NovaTuple{} {} = {};", arity, tup_tmp, binding));
+                    self.line(&format!("_NovaTuple{} {} = {};", arity, tup_tmp, Self::mangle_field_name(&binding)));
                 }
                 for (i, p) in parts.iter().enumerate() {
                     let fty = field_tys_opt.as_ref()
@@ -50862,7 +50834,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // .value — direct mono'd tuple struct, no cast.
                         self.line(&format!(
                             "{} {} = {}.value;",
-                            mono_struct, binding, opt_tmp));
+                            mono_struct, Self::mangle_field_name(&binding), opt_tmp));
                     } else if elem_c_ty == format!("_NovaTuple{}", arity) {
                         // Plan 14 Ф.1: NovaOpt_<_NovaTuple_N> хранит tuple
                         // как value напрямую (struct в struct). Direct
@@ -50871,14 +50843,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         self.register_legacy_tuple(arity);
                         self.line(&format!(
                             "_NovaTuple{} {} = {}.value;",
-                            arity, binding, opt_tmp));
+                            arity, Self::mangle_field_name(&binding), opt_tmp));
                     } else if elem_c_ty == "nova_int" {
                         // Legacy путь: payload — nova_int box, intptr_t
                         // cast'ом превращается в _NovaTupleN*.
                         self.register_legacy_tuple(arity);
                         self.line(&format!(
                             "_NovaTuple{} {} = ({}.value == 0) ? (_NovaTuple{}){{0}} : *((_NovaTuple{}*)(intptr_t)({}.value));",
-                            arity, binding, opt_tmp, arity, arity, opt_tmp));
+                            arity, Self::mangle_field_name(&binding), opt_tmp, arity, arity, opt_tmp));
                     } else if elem_c_ty == format!("_NovaTuple{}_p", arity)
                         || elem_c_ty == format!("_NovaTuple{}*", arity)
                     {
@@ -50886,7 +50858,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         self.register_legacy_tuple(arity);
                         self.line(&format!(
                             "_NovaTuple{} {} = ({}.value == NULL) ? (_NovaTuple{}){{0}} : *({}.value);",
-                            arity, binding, opt_tmp, arity, opt_tmp));
+                            arity, Self::mangle_field_name(&binding), opt_tmp, arity, opt_tmp));
                     } else if elem_c_ty.starts_with("_NovaTuple_") {
                         // Plan 59: mono'd tuple stored as value в
                         // NovaOpt_<mono>.value. Direct copy + populate
@@ -50896,7 +50868,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // parser handles любой nesting depth.
                         self.line(&format!(
                             "{} {} = {}.value;",
-                            elem_c_ty, binding, opt_tmp));
+                            elem_c_ty, Self::mangle_field_name(&binding), opt_tmp));
                         if !self.tuple_element_types.contains_key(binding.as_str()) {
                             if let Some(elems) = Self::parse_mono_tuple_elements(&elem_c_ty) {
                                 // Ф.7.1: populate безусловно, даже при arity
@@ -50952,7 +50924,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         Self::desanitize_c_from_ident(&elem_c_ty)
                     };
                     self.line(&format!(
-                        "{} {} = {}.value;", binding_c_ty, binding, opt_tmp));
+                        "{} {} = {}.value;", binding_c_ty, Self::mangle_field_name(&binding), opt_tmp));
                     self.var_types.insert(binding.clone(), binding_c_ty);
                 }
 
@@ -51662,7 +51634,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.line(&format!("if ({}) {{", cond));
                     self.indent += 1;
                     if let Some(b) = binding {
-                        self.line(&format!("nova_int {} = {}.value;", b, opt_tmp));
+                        self.line(&format!("nova_int {} = {}.value;", Self::mangle_field_name(b), opt_tmp));
                         self.var_types.insert(b.clone(), "nova_int".to_string());
                     }
                     if let Some(g) = &arm.guard {
@@ -51925,7 +51897,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Field-punning: { name } → значение это переменная `name` в scope.
             let value_expr_str = match &f.value {
                 Some(v_expr) => self.emit_expr(v_expr)?,
-                None => f.name.clone(),
+                None => Self::mangle_field_name(&f.name),
             };
             // Ключ — str literal из имени поля.
             let key_str = format!(
@@ -51992,9 +51964,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// пуннинга — free-fn мог, но без наблюдаемого дефекта на корпусе).
     fn field_pun_c(&self, name: &str) -> String {
         if self.ref_params.contains(name) {
-            format!("(*{})", name)
+            format!("(*{})", Self::mangle_field_name(name))
         } else {
-            name.to_string()
+            Self::mangle_field_name(name)
         }
     }
 
@@ -54010,7 +53982,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 }
                             } else {
                                 let raw = format!("{}->payload.{}._{}",
-                                    scr, variant_name, i);
+                                    scr, Self::mangle_field_name(&variant_name), i);
                                 // If sub-pattern is an Option variant, the payload is a boxed pointer
                                 let sub_is_opt_variant = matches!(p, Pattern::Variant { path, .. } if path.last().map_or(false, |n| n == "Some" || n == "None"));
                                 // Plan 59 Ф.7.5 D3: mono `NovaRes_<n>` несёт
@@ -54136,7 +54108,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     for field in fields {
                         if let Some(Pattern::Literal(lit, _)) = &field.pattern {
                             let mfn = Self::mangle_field_name(&field.name);
-                            let field_access = format!("{}->payload.{}.{}", scr, variant_name, mfn);
+                            let field_access = format!("{}->payload.{}.{}", scr, Self::mangle_field_name(&variant_name), mfn);
                             let sub = self.pattern_cond(&Pattern::Literal(lit.clone(), Span::dummy()), &field_access)?;
                             if sub != "true" { conds.push(sub); }
                         }
@@ -54314,7 +54286,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     .cloned()
                                     .unwrap_or_else(|| "nova_int".into());
                                 let raw = format!("{}->payload.{}._{}",
-                                    scr, variant_name, i);
+                                    scr, Self::mangle_field_name(&variant_name), i);
                                 // Plan 59 Ф.7.5 D3: mono'd `NovaRes_<n>`
                                 // несёт реальный (T,E) inline в payload —
                                 // `Ok._0` уже нужного типа, без boxing.
@@ -54695,7 +54667,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let ty = self.get_record_variant_field_type(&sum_type_name, &variant_name, &field.name)
                             .unwrap_or_else(|| "nova_int".into());
                         let mfn = Self::mangle_field_name(&field.name);
-                        let field_access = format!("{}->payload.{}.{}", scr, variant_name, mfn);
+                        let field_access = format!("{}->payload.{}.{}", scr, Self::mangle_field_name(&variant_name), mfn);
                         match &field.pattern {
                             None => {
                                 self.var_types.insert(field.name.clone(), ty.clone());
@@ -55369,7 +55341,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let body_params_str = {
             let mut parts = vec!["void* _env_ptr".to_string()];
             for (p, ty) in params.iter().zip(&param_c_tys) {
-                parts.push(format!("{} {}", ty, p.name));
+                parts.push(format!("{} {}", ty, Self::mangle_field_name(&p.name)));
             }
             parts.join(", ")
         };
@@ -55488,7 +55460,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // Register in var_boxed as "_env->field" so Ident emits (*_env->field).
                     self.var_boxed.insert(name.clone(), format!("_env->{}", field));
                 } else {
-                    self.line(&format!("{} {} = _env->{};", ty, name, field));
+                    self.line(&format!("{} {} = _env->{};", ty, Self::mangle_field_name(name), field));
                 }
             }
         }
@@ -55625,9 +55597,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // incompatible type ty *` mismatch this fix closes; the
                     // copy source needs one extra deref.
                     let copy_src = if *is_ref_param_src {
-                        format!("(*{})", name)
+                        format!("(*{})", Self::mangle_field_name(name))
                     } else {
-                        name.clone()
+                        Self::mangle_field_name(name)
                     };
                     self.line(&format!("*{} = {};", bv, copy_src));
                     // Register in var_boxed: from this point on, ExprKind::Ident
@@ -55643,7 +55615,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // stays the bare identifier — a value-read position, where
                 // an active outer capture-alias macro is supposed to (and
                 // correctly does) expand it to `_c->name`.
-                self.line(&format!("{}->{} = {};", env_tmp, field, name));
+                self.line(&format!("{}->{} = {};", env_tmp, field, Self::mangle_field_name(name)));
             }
         }
         self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));", clos_struct, clos_tmp, clos_struct, clos_struct));

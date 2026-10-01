@@ -12048,18 +12048,45 @@ type Log effect { write(s str) -> () }
         cache_module(&mut m, &FieldCacheConfig::default());
     }
 
-    /// Name collision: user has `_at_x` local → suffix appended.
+    /// Name collision: the body already binds `_at_x` → suffix appended.
+    /// D487: a PROGRAM can no longer declare `_at_x` (`E_RESERVED_NAME` at
+    /// parse), so the local is written as `taken_x` and renamed to `_at_x`
+    /// on the AST -- the pass must still keep clear of a name some earlier
+    /// pass put into its namespace.
     #[test]
     fn name_collision_suffix() {
         let src = r#"
 module testmod.collision
 type Box { ro x int }
 fn Box @collide() -> int {
-    ro _at_x = 99
-    @x + @x + _at_x
+    ro taken_x = 99
+    @x + @x + taken_x
 }
 "#;
-        let m = run_pass(src, FieldCacheConfig::default());
+        fn rename(e: &mut Expr) {
+            match &mut e.kind {
+                ExprKind::Ident(n) if n == "taken_x" => *n = "_at_x".to_string(),
+                ExprKind::Binary { left, right, .. } => { rename(left); rename(right); }
+                _ => {}
+            }
+        }
+        let mut module = parse(src).expect("parse");
+        for item in &mut module.items {
+            if let Item::Fn(f) = item {
+                if let FnBody::Block(b) = &mut f.body {
+                    for s in &mut b.stmts {
+                        if let Stmt::Let(d) = s {
+                            if let Pattern::Ident { name, .. } = &mut d.pattern {
+                                if name == "taken_x" { *name = "_at_x".to_string(); }
+                            }
+                        }
+                    }
+                    if let Some(t) = &mut b.trailing { rename(t); }
+                }
+            }
+        }
+        cache_module(&mut module, &FieldCacheConfig::default());
+        let m = module;
         let f = find_fn(&m, "collide");
         // Cache local should be `_at_x_1` (suffix added due to user-
         // local collision).

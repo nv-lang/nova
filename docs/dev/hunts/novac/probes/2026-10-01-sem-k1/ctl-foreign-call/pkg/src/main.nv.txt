@@ -1,0 +1,7 @@
+module hp
+
+import ./geo.{f}
+
+fn main() {
+    println(f())
+}

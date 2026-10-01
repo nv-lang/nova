@@ -425,8 +425,8 @@ pipeline 12
 # «объявлено ли поле видом `f ro T` (D176)». Наружу нужна потому, что спрашивает
 # check (запись через вид, `E_READONLY_CONTENT`), а имена полей резолвятся ТОЛЬКО
 # через FieldIndex (274.4 step 3) -- у check нет другой двери к строке поля.
-# 2026-10-01, Carina window (274.11 E.10 steps 4c-2/4d): resolve 16 -> 17: `FieldIndex @field_private_to` -- where a handed record's private field is visible from.
-resolve 17
+# 2026-10-01, Carina window (274.11 E.10 steps 4c-2/4d): resolve 18 -> 19 (merged over main's 16 -> 18): `FieldIndex @field_private_to` -- where a handed record's private field is visible from.
+resolve 19
 # sem 54 -> 56 (2026-08-18): наружу вышли ДВЕ двери параметра,
 # param_name_at и param_type_at. Имя и тип параметра больше не берутся
 # индексом pk[0]/pk[1]: индекс сдвигается, как только у параметра
@@ -1101,3 +1101,6 @@ types 30
 # sem 292 -> 293 (2026-10-01, облачная сессия, №1459): `ctor_field_name` -- имя поля, которое пишет
 #   CtorField; у узла две формы (`x`/`x: e` и получательская `@x`, D52 правило 1), и спрашивают
 #   его ДВА модуля вне sem (`check/literal_rules.nv`, `emit_c/emit_c.nv`) -- две копии разошлись бы.
+# resolve 16 -> 18 (2026-10-01, помощник nova-88, №1493): `FnIndex.build_for` и `FnIndex @sees` -- индекс
+#   файла знает его импорты (D29), и спрашивает его `check/calls.nv` (`record_free_callee`), а строит
+#   `check/run.nv`: без экспорта видимость судить негде, второй индекс в check был бы второй дверью.
