@@ -501,7 +501,18 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // there: opening init_pos on every right side would wave a
                     // `match` through to a store that cannot lay its blocks
                     // down.
-                    if !init_pos && !arg_pos && !arm_pos {
+                    //
+                    // THE TAIL OF AN `if`-VALUE BRANCH, for a NAMED constructor
+                    // only (2026-10-01): `if rest { Am { .. } } else { Am { .. } }`
+                    // as a fn's value (lower/lower_match.nv). `@lower_if_value`
+                    // places each branch's tail through `@lower_place`, the door
+                    // above; the named constructor carries its own type. An
+                    // ANONYMOUS one (`{ exact: 1 }`) has none until an expectation
+                    // gives it one, and the branch typing does not hand it any --
+                    // measured: `novac emit` ices "anonymous constructor without a
+                    // spread". It stays refused here.
+                    ro named_tail = if_tail && children.len() > 0 && children[0].kind_of() == NodeKind.Name
+                    if !init_pos && !arg_pos && !arm_pos && !named_tail {
                         @report_first_leaf_of(children, "outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)")
                         return
                     } else {
@@ -881,7 +892,11 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
             }
             // An `if` standing as a VALUE: the walk below already refused it
             // anywhere else, so its Block children are branches of a value.
-            ro value_if = kind == NodeKind.IfExpr && (init_pos || arg_pos || arm_pos)
+            // A TAIL `if` of a value body or an arm body is a value too: the
+            // block's tail slot (`tail_at`) walks it with `arm_pos`, and the
+            // statement spelling (`IfStmt`) is the one a block tail parses to.
+            ro value_if = (kind == NodeKind.IfExpr && (init_pos || arg_pos || arm_pos)) ||
+                          (kind == NodeKind.IfStmt && arm_pos)
             mut at = 0
             for c in children {
                 // STATEMENT POSITION is "a direct child of a Block" (274.5

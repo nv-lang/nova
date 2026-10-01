@@ -1,0 +1,24 @@
+module ctor_if_tail.neg_1
+
+// NOVAC_EXPECT a record constructor is compiled only as
+// ONE seeded cause: an ANONYMOUS constructor (`{ exact: 30, .. }`) as a
+// branch tail. It has no type until an expectation gives it one, and the
+// branch typing hands it none -- `novac emit` iced on it ("anonymous
+// constructor without a spread"), so the subset keeps refusing it while the
+// named form is admitted. The oracle accepts this file; novac is narrower.
+type Am {
+    exact int
+    at_least int
+}
+
+fn anon(c bool) -> Am {
+    if c {
+        { exact: 30, at_least: 0 }
+    } else {
+        Am { exact: 31, at_least: 0 }
+    }
+}
+
+fn main() {
+    println(anon(true).exact)
+}
