@@ -24,10 +24,7 @@ fn main() Io {
             Ok(_) => {
                 match cwd() {
                     Ok(p) => {
-                        ro name = match p.file_name() {
-                            Some(n) => n
-                            None => "?"
-                        }
+                        ro name = p.file_name() ?? "?"
                         ro shown = if name.starts_with("Каталог_p1590") { "Каталог_p1590" } else { name }
                         out = "${out} cwd ${shown}"
                     }
@@ -36,9 +33,8 @@ fn main() Io {
             }
             Err(_) => { out = "${out} cwd set-failed" }
         }
-        match start {
-            Ok(p) => { ro _ = cwd(p) }
-            Err(_) => {}
+        if Ok(p) = start {
+            ro _ = cwd(p)
         }
         ro _ = remove_dir(dir)
         ro _ = env("P1590_KEY", "Жук")
