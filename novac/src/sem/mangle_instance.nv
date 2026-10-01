@@ -106,30 +106,41 @@ export fn c_overload_symbol(ctx Ctx, row FnRow, recv_t TyId, args []TyId) -> str
     // shell's `_consume_` (registry 1564, `shell_method_symbol`) -- one truth
     // for the question `Ctx @instantiates` asks and the name the emitter prints.
     ro base = shell_method_symbol(ctx, row, recv_t)
-    // AN EXTERN method (`extern "nova" fn AtomicInt @load(..)`, no body) is
-    // spelled by the oracle's OTHER rule (`external_registry.rs`
-    // `mangle_method_c_name`): with two or more overloads on the type, EVERY
-    // one takes `_` and its last parameter's type name; none -> the bare name
-    // (`Nova_AtomicInt_method_load` is `load()`). Registry 1558.
-    if ctx.is_extern_handed(row) {
-        if ctx.overload_count(row) < 2 { return base }
-        ro last = extern_last_param_name(ctx, row, args)
-        return if last == "" { base } else { "${base}_${last}" }
-    } else {
-        // A method with a body: the generic-method overload rule below.
-    }
-    if ctx.overload_ordinal(row) <= 0 { return base }
     ro it = impl_of_proto(ctx, recv_t)
     // SILENT-OK: a receiver whose type did not resolve was refused upstream.
     if !is_ty(it) { return base }
     ro k = ctx.tys.kind_of(it)
     ro measured = k == TypeKind.TkPrim || k == TypeKind.TkRecord || k == TypeKind.TkNewtype ||
         (k == TypeKind.TkApp && decl_of_ty(ctx, it).kind == TypeKind.TkRecord)
-    if !measured { return "${base}__${UNMEASURED_SPELLING}" }
+    "${base}${overload_tail(ctx, row, args, measured)}"
+}
+
+/// WHAT FOLLOWS the bare symbol of overload `row` -- "" for the first overload
+/// of its name on its type, the one spelling both a method and a STATIC method
+/// take (registry 1558; `Nova_str_static_new` /
+/// `Nova_str_static_new__const_nova_byte_p_nova_int`, read off the shell):
+/// - an EXTERN declaration (`extern "nova"`, no body) is spelled by the
+///   oracle's other rule (`external_registry.rs` `mangle_method_c_name`): with
+///   two or more overloads every one takes `_` and its last parameter's type
+///   name, none -> nothing (`Nova_AtomicInt_method_load` is `load()`);
+/// - a later overload otherwise takes `__` and its parameters' C types
+///   (pointer star `_p`, joined by `_`; none -> `mut`/`ro` by the receiver);
+/// - a receiver kind whose overloads were never measured (`measured` false: a
+///   sum, a generic sum's family) gets a spelling no C identifier holds, so it
+///   is never found carried.
+fn overload_tail(ctx Ctx, row FnRow, args []TyId, measured bool) -> str {
+    if ctx.is_extern_handed(row) {
+        if ctx.overload_count(row) < 2 { return "" }
+        ro last = extern_last_param_name(ctx, row, args)
+        return if last == "" { "" } else { "_${last}" }
+    } else {
+        // A declaration with a body: the generic-method overload rule below.
+    }
+    if ctx.overload_ordinal(row) <= 0 { return "" }
+    if !measured { return "__${UNMEASURED_SPELLING}" }
     ro fd = ctx.fns.rows[raw_row(row)]
     ro first = if fd.has_recv { 1 } else { 0 }
     consume s = StringBuilder.new(cap: 64)
-    s.append(base)
     s.append("__")
     for p in first..fd.param_cnt {
         if p > first {
@@ -196,6 +207,11 @@ fn overload_param_spelling(ctx Ctx, t TyId) -> Option[str] {
     ro k = ctx.tys.kind_of(t)
     if k == TypeKind.TkPrim || k == TypeKind.TkRecord || k == TypeKind.TkNewtype {
         return Some(instance_arg_spelling(ctx, t))
+    } else if k == TypeKind.TkPtr {
+        // `*mut T` is the oracle's `T*`, `*const T` its `const T*` -- read off
+        // the shell (`..._static_new__const_nova_byte_p_nova_int`).
+        ro el = overload_param_spelling(ctx, ctx.tys.arg(t, 0))?
+        return Some(if ctx.tys.ptr_is_mut(t) { "${el}_p" } else { "const_${el}_p" })
     } else if k == TypeKind.TkApp {
         if decl_of_ty(ctx, t).kind != TypeKind.TkSum { return Some(instance_arg_spelling(ctx, t)) }
         ro fam = family_instance_name(ctx, t)
@@ -299,6 +315,10 @@ export fn c_static_symbol(ctx Ctx, row FnRow, args []TyId) -> str {
     }
     s.append("_static_")
     s.append(fd.name)
+    // THE OVERLOAD, not the name (registry 1558): `str.new(p, n)` is
+    // `Nova_str_static_new__const_nova_byte_p_nova_int`. The owner of a static
+    // method is a record or a primitive -- the measured kinds.
+    s.append(overload_tail(ctx, row, args, true))
     for i in owner_n..args.len() {
         s.append(if i == owner_n { "____" } else { "__" })
         s.append(instance_arg_spelling(ctx, args[i]))
