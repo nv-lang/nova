@@ -296,12 +296,22 @@ fn Emitter mut @emit_option_typedefs() -> () {
         // rule (check-novac-tuple-no-second-door) forbids a new code line that
         // names the structural kind, and this question is about declarations.
         ro pk = @ctx.tys.kind_of(payload)
-        ro declared = pk == TypeKind.TkRecord || pk == TypeKind.TkSum || pk == TypeKind.TkNewtype
-        if !declared { continue }
-        // Past the foreign boundary: the file's own. A handed type's instance
-        // is declared by the shell.
-        ro di = decl_index_of_ty(@ctx, payload)
-        if di < @ctx.foreign_types_cnt { continue }
+        // AN INSTANCE PAYLOAD THE SHELL NEVER MET (2026-10-01): `Option[[]int]`
+        // is the shell's only when its probe used it -- `NovaOpt_Nova_Vec____nova_byte_p`
+        // is there, `NovaOpt_Nova_Vec____nova_int_p` is not. Asked of the shell's
+        // own struct bodies by the instance's NAME, the same question
+        // emit_instance_structs.nv asks of a record instance. Reachable since
+        // the type reader stopped flattening `Option[[]int]` into `Option[int]`.
+        if pk == TypeKind.TkApp {
+            if @ctx.interop.has_body(c_type(@ctx, t)) { continue }
+        } else {
+            ro declared = pk == TypeKind.TkRecord || pk == TypeKind.TkSum || pk == TypeKind.TkNewtype
+            if !declared { continue }
+            // Past the foreign boundary: the file's own. A handed type's instance
+            // is declared by the shell.
+            ro di = decl_index_of_ty(@ctx, payload)
+            if di < @ctx.foreign_types_cnt { continue }
+        }
         ro rid = raw_ty(t)
         mut dup = false
         for seen in ids {
