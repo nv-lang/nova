@@ -1482,6 +1482,9 @@
 # 2026-10-01, integrator nova-20: rows -> 1498, max -> 1548 (2026-10-01 integrator: rows 1546-1548 -- findings of the cloud cast session).
 # 2026-10-01, integrator nova-20: rows -> 1499, max -> 1549 (2026-10-01 integrator: row 1549 -- const referencing a const in a non-entry module (assistant)).
 # 2026-10-01, integrator nova-20: rows -> 1503, max -> 1553 (2026-10-01 integrator: merge hunt/novac-match-1001 -- TBD rows numbered 1550-1553; 1421-1428/1441 folded links).
+# 2026-10-01, integrator nova-20: rows -> 1504, max -> 1554 (2026-10-01 integrator: row 1554 -- oracle accepts return <value> in a -> @ body (hunter observation)).
+rows=1504
+max=1554
 rows=1503
 max=1553
 rows=1499
