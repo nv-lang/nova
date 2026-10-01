@@ -69,6 +69,11 @@ const NESTED_INTERP_MSG = "outside the subset: an interpolation nested inside an
 /// bound its receiver.
 const BARE_SELF_MSG = "`@` is the method receiver -- outside a method body there is nothing it could name"
 
+/// The receiver-field judge's answer (#1459): `@field` -- written alone or as
+/// the receiver punning `T { @field }` (D52 rule 1) -- reads the receiver, and
+/// only a method body binds one.
+const SELF_FIELD_OUTSIDE_MSG = "`@field` reads a field of the method receiver -- outside a method body there is no receiver to read it from"
+
 /// The slot-type judge's answer for a NON-PRIMITIVE slot: the spec routes the
 /// slot through `Display` -- `@display(mut f Fmt)` (D422), with `#impl(Display)`
 /// the opt-in gate that a bare `${x}` needs (D186 amendment) -- and that is

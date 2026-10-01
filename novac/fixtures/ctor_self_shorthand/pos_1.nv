@@ -1,0 +1,62 @@
+module ctor_self_shorthand.pos_1
+
+// RECEIVER PUNNING IN A RECORD CONSTRUCTOR -- `T { @f }` means `T { f: @f }`
+// (D52 rule 1, registry #1459). Until this fixture novac's parser met the `@`
+// where a field name stands, fell into recovery and answered "novac did not
+// parse this" -- five times on its own sources (`Fn { @locals, @blocks }` in
+// lower/ir.nv among them), and a file that does not parse is not typed at all.
+//
+// EVERY PLACE THE FORM STANDS, one method each: alone and several in a named
+// constructor; mixed with a written field, a name punning and a spread; the
+// anonymous brace as a value body; and the body of a match arm. The printed
+// values prove the field got the RECEIVER's value and not a same-named local:
+// `mixed` takes a parameter named `y` and the receiver's `x`, and the two
+// differ.
+//
+// NOT HERE: an ANONYMOUS brace as an arm body (`0 => { @x, @y }`). The parser
+// reads it -- parse_test.nv pins the shape -- but novac's checker ices on ANY
+// anonymous constructor in that position, `{ x: 9 }` included, before and
+// after this change ("anonymous constructor without a spread"; a separate
+// defect, named in REPORT-p1459.md).
+
+type Pt {
+    x int
+    y int
+    z int
+}
+
+fn Pt @same() -> Pt {
+    ro p = Pt { @x, @y, @z }
+    p
+}
+
+fn Pt @mixed(y int) -> Pt {
+    ro p = Pt { @x, y, z: @z + 10 }
+    p
+}
+
+fn Pt @spread() -> Pt {
+    ro p = Pt { @z, ...@ }
+    p
+}
+
+fn Pt @turn() -> Pt => { @x, y: @z, z: @y }
+
+fn Pt @pick(k int) -> Pt => match k {
+    0 => Pt { @x, @y, z: 0 }
+    _ => Pt { @z, x: 0, y: 0 }
+}
+
+fn main() {
+    ro a = Pt { x: 1, y: 2, z: 3 }
+    ro b = a.same()
+    println(b.x, b.y, b.z)
+    ro c = a.mixed(7)
+    println(c.x, c.y, c.z)
+    ro d = a.spread()
+    println(d.x, d.y, d.z)
+    ro e = a.turn()
+    println(e.x, e.y, e.z)
+    ro f = a.pick(1)
+    println(f.x, f.y, f.z)
+}
