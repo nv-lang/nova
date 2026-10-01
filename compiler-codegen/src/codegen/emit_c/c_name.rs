@@ -21,7 +21,8 @@
 //! a listed fixed member of a code-generator struct, an ALL-CAPS name of two or
 //! more characters (the macro convention), or starts with `_`, `nv_`, `nova_`,
 //! `Nova` or `NOVA` -- except the compiler's own namespaces `_nv_`, `_nova_`,
-//! `_at_`, `__`, which it synthesizes itself; every other name is emitted
+//! `_at_`, `__`, which it synthesizes itself and where a program may not
+//! declare a name (D487, `E_RESERVED_NAME`); every other name is emitted
 //! unchanged.
 //!
 //! Why it is safe: an escaped name starts with `nv_`, and a name that starts
@@ -102,9 +103,11 @@ const RESERVED_PREFIXES: &[&str] = &["_", "nv_", "nova_", "Nova", "NOVA"];
 /// The compiler's OWN namespaces inside `_`: names the parser, the desugar
 /// passes and the generator synthesize and then read through the same
 /// `Ident` path as user names (`_nv_tmp_N`, `_nova_decr_old`, `_at_<F>`,
-/// `__nv_p0`). They pass the door unchanged -- the same four namespaces D461
-/// (`E_UNDERSCORE_NAME_USED`, types/mod.rs) exempts as "not the programmer's".
-const COMPILER_NAMESPACES: &[&str] = &["_nv_", "_nova_", "_at_", "__"];
+/// `__nv_p0`). They pass the door unchanged. A program may not declare a name
+/// there (D487, `E_RESERVED_NAME`), so nothing the programmer wrote reaches C
+/// raw through this exemption -- the list is the ONE list of
+/// `types/reserved_names.rs`, so the door and the rule cannot drift apart.
+use crate::types::reserved_names::COMPILER_NAMESPACES;
 
 /// Does `name` have to be escaped? (The rule of the module doc, clause by clause.)
 pub(crate) fn c_name_needs_escape(name: &str) -> bool {

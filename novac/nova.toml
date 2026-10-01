@@ -493,6 +493,11 @@
 # and D429 R6 -- a view `#coerce` pair applies only at a read-only position; an
 # owned `-> []u8` / `[][]u8` / field `f []u8` needs `.bytes().clone()`. Value set
 # by the pre-commit formula (main carried 145 against 146 counted commits).
+# new D487 -- a program may not declare a name starting with `_nv_`, `_nova_`,
+# `_at_` or `__` (E_RESERVED_NAME; owner's word 2026-10-01, registry #1440
+# question 1). Cost to Carina: novac/src declares no such name (measured 0);
+# the check itself is not in Carina -- debt, one walk over declared names.
+# (HEAD already counted 146 against the line's 145 before this commit.)
 #   spec-queue: 147
 #   oracle-pin: 2803de2d9
 #   stage: E2
