@@ -1,0 +1,51 @@
+// Registry #1498 -- the other sites of the class, none of them a by-pointer
+// parameter read in a plain body. Before the fix each one is a C-compiler error:
+//  * a handler literal capturing a by-pointer parameter -- the capture slot got
+//    the POINTER (`= nv_ctx`, a name-independent fault: `c` fails the same way)
+//    and the op body read `(*ctx)` of its own by-value copy;
+//  * an anonymous record spread `{ ...r, ctx: 5 }` / pun `{ ...r, schedlink }`
+//    -- the field written as `->ctx`, the pun as a raw `schedlink`;
+//  * a tuple pattern of `for` over an array / a map -- declared `nova_int long`,
+//    read `nv_long`.
+// After the fix: `g3 y x | 5 2 3 7 | 14 | 50`.
+type Big value {
+    ro a str
+    ro b str
+}
+
+type Names {
+    ctx int
+    long int
+    near int
+    schedlink int
+}
+
+type Ask effect {
+    fn ask() -> str
+}
+
+fn use_ask() Ask -> str => Ask.ask()
+
+fn mk() -> Big => { a: "x", b: "y" }
+
+fn in_handler(ctx Big, long Big) -> str =>
+    with Ask = effect Ask { ask() -> str => "${ctx.b} ${long.a}" } { use_ask() }
+
+fn spread_set(r Names) -> Names => { ...r, ctx: 5 }
+
+fn spread_pun(r Names, schedlink int) -> Names => { ...r, schedlink }
+
+fn main() Io {
+    ro r = spread_pun(spread_set(Names { ctx: 1, long: 2, near: 3, schedlink: 4 }), 7)
+    ro pairs = [(1, 2), (3, 4)]
+    mut st = 0
+    for (ctx, long) in pairs {
+        st = st + ctx * long
+    }
+    ro m HashMap[int, int] = [1: 10, 2: 20]
+    mut sm = 0
+    for (near, nova_x) in m {
+        sm = sm + near * nova_x
+    }
+    println("g3 ${in_handler(mk(), mk())} | ${r.ctx} ${r.long} ${r.near} ${r.schedlink} | ${st} | ${sm}")
+}
