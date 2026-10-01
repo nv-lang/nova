@@ -1,0 +1,166 @@
+// EXPECT_STDOUT x1|side0|side1|sidese|sidep1|none|x1|side5|sidesn|t|side0|side1|sidese|x3|side0|side1|end|sidese|end|side2|side1|5|-1|5|1|a|none|11|7|-2|5|-1|3|0|3|0
+//
+// Registry 221.1 #1443 and #1376: where an `if` / if-let / `match` stands decides
+// what happens to a branch's tail, and the emitter did not ask.
+// - STATEMENT position (#1443): the value is dropped, but a tail was assigned into
+//   a temp of the first branch's type -- `int` into `nova_unit`, `str` into `int`,
+//   unit into a record pointer: CC-FAIL. The if-let took its type from its
+//   then-tail alone and assigned every tail bare; a `match` with a unit arm and an
+//   `int` arm kept `int` (the unit rule excluded `int`); an `if` with an `int` tail
+//   and a `str` tail had no rule at all. Now a construct whose value is dropped (a
+//   statement, the tail of a unit body, a block tail into a unit temp, the
+//   `else if` of such a construct) takes the unit type, and the if-let goes through
+//   the same door as `if` (unit dominates, `emit_block_into`).
+// - VALUE position (#1376): `ro d = if Some(v) = o { v } else { return -1 }` with an
+//   `int` payload typed its temp by a stale same-named `v` of another fn (the
+//   then-tail was typed before the pattern's bindings were in scope) -- `str`
+//   here, an undeclared temp in the registry's first measure. The tail is typed
+//   with the bindings in scope now.
+// - an anonymous record literal as a branch tail had no target in the emitter
+//   ("anonymous record literal without spread"); the literal annotator carries the
+//   construct's expected type into the branch tails and names the record there,
+//   the rule #1416 put on array elements.
+// Cells: statement if-let with tails int / int+str / record / `else if`; plain
+// `if` and `match` in statement position; a statement if-let mid-body; `while let`;
+// value if-let with `int` (return and value else), `str`, as an argument and a
+// return tail; value `match` with a `return` arm; record tails of `if` and if-let.
+module standalone.p1443_branch_tail_by_position
+
+type P1443Pt { x int, y int }
+
+fn pick(b bool) -> Option[int] => if b { Some(1) } else { None }
+fn side(n int) -> int {
+    print("side${n}|")
+    n
+}
+fn sides(s str) -> str {
+    print("sides${s}|")
+    s
+}
+fn sidep(n int) -> P1443Pt {
+    print("sidep${n}|")
+    { x: n, y: n }
+}
+fn id(n int) -> int => n
+
+fn stmt_iflet_int(b bool) -> () {
+    if Some(x) = pick(b) {
+        print("x${x}|")
+    } else {
+        side(0)
+    }
+}
+fn stmt_iflet_both(b bool) -> () {
+    if Some(x) = pick(b) {
+        side(x)
+    } else {
+        sides("e")
+    }
+}
+fn stmt_iflet_rec(b bool) -> () {
+    if Some(x) = pick(b) {
+        sidep(x)
+    } else {
+        print("none|")
+    }
+}
+fn stmt_iflet_elseif(b bool, c bool) -> () {
+    if Some(x) = pick(b) {
+        print("x${x}|")
+    } else if c {
+        side(5)
+    } else {
+        sides("n")
+    }
+}
+fn stmt_if_int(b bool) -> () {
+    if b {
+        print("t|")
+    } else {
+        side(0)
+    }
+}
+fn stmt_if_both(b bool) -> () {
+    if b {
+        side(1)
+    } else {
+        sides("e")
+    }
+}
+fn stmt_match_int(o Option[int]) -> () {
+    match o {
+        Some(x) => print("x${x}|")
+        None => side(0)
+    }
+}
+fn stmt_match_both(o Option[int]) -> () {
+    match o {
+        Some(x) => side(x)
+        None => sides("e")
+    }
+    print("end|")
+}
+fn stmt_whilelet() -> () {
+    mut n = 2
+    while Some(x) = (if n > 0 { Some(n) } else { None }) {
+        n -= 1
+        side(x)
+    }
+}
+fn val_iflet_int_return(o Option[int]) -> int {
+    ro d = if Some(v) = o { v } else { return -1 }
+    d + 1
+}
+fn val_iflet_int_both(o Option[int]) -> int {
+    ro d = if Some(v) = o { v } else { 0 }
+    d + 1
+}
+fn val_iflet_str(o Option[str]) -> str {
+    ro d = if Some(v) = o { v } else { "none" }
+    d
+}
+fn val_iflet_tail_return(b bool) -> int => if Some(v) = pick(b) { v * 7 } else { -2 }
+fn val_match_int_return(o Option[int]) -> int {
+    ro d = match o {
+        Some(v) => v
+        None => return -1
+    }
+    d + 1
+}
+fn val_iflet_rec(b bool) -> int {
+    ro p P1443Pt = if Some(v) = pick(b) { { x: v, y: 2 } } else { { x: 0, y: 0 } }
+    p.x + p.y
+}
+fn val_if_rec(b bool) -> int {
+    ro p P1443Pt = if b { { x: 1, y: 2 } } else { { x: 0, y: 0 } }
+    p.x + p.y
+}
+
+fn main() Io -> () {
+    stmt_iflet_int(true)
+    stmt_iflet_int(false)
+    stmt_iflet_both(true)
+    stmt_iflet_both(false)
+    stmt_iflet_rec(true)
+    stmt_iflet_rec(false)
+    stmt_iflet_elseif(true, false)
+    stmt_iflet_elseif(false, true)
+    stmt_iflet_elseif(false, false)
+    stmt_if_int(true)
+    stmt_if_int(false)
+    stmt_if_both(true)
+    stmt_if_both(false)
+    stmt_match_int(Some(3))
+    stmt_match_int(None)
+    stmt_match_both(Some(1))
+    stmt_match_both(None)
+    stmt_whilelet()
+    print("${val_iflet_int_return(Some(4))}|${val_iflet_int_return(None)}|")
+    print("${val_iflet_int_both(Some(4))}|${val_iflet_int_both(None)}|")
+    print("${val_iflet_str(Some("a"))}|${val_iflet_str(None)}|")
+    print("${id(if Some(v) = pick(true) { v + 10 } else { 0 })}|")
+    print("${val_iflet_tail_return(true)}|${val_iflet_tail_return(false)}|")
+    print("${val_match_int_return(Some(4))}|${val_match_int_return(None)}|")
+    print("${val_iflet_rec(true)}|${val_iflet_rec(false)}|")
+    print("${val_if_rec(true)}|${val_if_rec(false)}")
+}

@@ -1,0 +1,47 @@
+// EXPECT_STDOUT 5|3|4|2|3|4|10
+// EXPECT_STDOUT 3|0|9|4
+//
+// Registry 221.1 #1444: `import m.{T as U}` names the type `m.T` as `U` in THIS
+// file only -- the type half of #1419. The resolver used to rename the type
+// declaration itself for the whole compile unit, so `ta_src`'s own `Box` (the
+// literal in `src_twice`) and `ta_peer`'s `import ./ta_src.{Box, mk}` named a
+// type nobody declared. Every type position of this file names `Crate` and
+// `Form`: annotations, parameters, returns, a record literal and an anonymous
+// one with the target `Crate`, a static and an instance method, an extension
+// method declared here for `Crate` (D287), generic arguments, `Form.Sq(..)`,
+// and `match` arms on `Form`'s variants.
+//
+// `ta_peer` is imported FIRST here: it merges `ta_src` before the aliased import
+// is resolved (measured before the fix: CC-FAIL `incomplete definition of type
+// 'struct Nova_Crate'`). `p1444_b_alias_first.nv` is the other order.
+module p1444_type_import_alias.p1444_a_peer_first
+
+import ./ta_peer.{peer_mk, peer_get, peer_area}
+import ./ta_src.{Box as Crate, Shape as Form, mk, area, src_twice}
+
+fn get(c Crate) -> int => c.v
+
+fn make(v int) -> Crate => { v }
+
+fn Crate @double() -> int => @v * 2
+
+fn side(f Form) -> int {
+    match f {
+        Form.Dot => 0
+        Form.Sq(n) => n
+    }
+}
+
+fn main() Io -> () {
+    ro c Crate = mk(5)
+    ro d = Crate { v: 4 }
+    ro u = Crate.unit()
+    ro xs []Crate = [c, d, make(6)]
+    ro o Option[Crate] = Some(d)
+    ro n = match o {
+        Some(b) => b.get()
+        None => 0
+    }
+    print("${get(c)}|${peer_get(peer_mk(2))}|${d.get()}|${u.double()}|${xs.len()}|${n}|${src_twice(c)}")
+    print("${side(Form.Sq(3))}|${side(Form.Dot)}|${area(Form.Sq(3))}|${peer_area(3)}")
+}

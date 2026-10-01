@@ -24,6 +24,9 @@ export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 G="$ROOT/scripts/guards/check-novac-differential.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+# Ярус приходит от гейта (№1442): утёкший из окружения, он переключил бы
+# случаи ниже на этапы 1–2. Случаи, которым он нужен, ставят его сами.
+unset NOVAC_DIFF_TIER
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ok   $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  FAIL $1" >&2; }
@@ -226,6 +229,19 @@ mkrc 1; corpus_out 10 4 200000
 check "NOVAC_CORPUS=0 — зелёный, раннер не зовётся" \
       "$(NOVAC_CORPUS=0 sh "$G" "$FIX" "$BIN" > "$TMP/out" 2> "$TMP/err"; echo $?)" "0"
 has "$TMP/out" 'стадия КОРПУСА пропущена' "пропуск назван строкой"
+
+echo "== ярус push судит этапы 1–2, корпус — ярус full (реестр №1442) =="
+# Обманка всё ещё КРАСНАЯ (код 1, числа ниже базы): ярус push обязан её не
+# звать и дать полный вердикт этапов 1–2; ярус full — позвать и покраснеть.
+# Без второй половины первая была бы зелёной и на страже, который просто
+# перестал судить корпус.
+check "NOVAC_DIFF_TIER=push при красном корпусе — зелёный, вердикт этапов 1–2" \
+      "$(NOVAC_DIFF_TIER=push NOVAC_CORPUS=1 sh "$G" "$FIX" "$BIN" > "$TMP/out" 2> "$TMP/err"; echo $?)" "0"
+has "$TMP/out" 'ok: ИТОГ ЯРУСА push' "вердикт яруса push назван своим именем"
+has "$TMP/out" 'судит ярус full' "куда уехал этап 3, сказано в вердикте"
+check "NOVAC_DIFF_TIER=full при красном корпусе — красный (корпус судится)" \
+      "$(NOVAC_DIFF_TIER=full NOVAC_CORPUS=1 sh "$G" "$FIX" "$BIN" > "$TMP/out" 2> "$TMP/err"; echo $?)" "1"
+has "$TMP/err" 'корпусный прогон красный' "в ярусе full отказ корпуса назван по сути"
 
 echo "== монотонность САМОГО файла базы: откат обязан быть ОБЪЯВЛЕН =="
 # Блок стража сверяет базу с версией в HEAD, поэтому подложке нужен git —
