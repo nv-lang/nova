@@ -99,6 +99,7 @@ fn Emitter @expr_of(rv Rvalue) -> Node {
         IndexFromEnd(_) => ice("emit_c: a from-the-end element read reached expr_of -- only an assignment prints it")
         VariantField(_) => ice("emit_c: a variant field read reached expr_of -- only an assignment prints it")
         Read(_) => ice("emit_c: a place read reached expr_of -- only an assignment prints it")
+        AnyData(_) => ice("emit_c: an unboxing reached expr_of -- only an assignment prints it")
     }
 }
 
@@ -125,6 +126,14 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
         SomePayload(opt) => {
             @emit_assign_head(d)
             @body.append("${@lo.ir.decl_of(opt).name}.value;\n")
+        }
+        AnyData(subject) => {
+            // The runtime's unboxing (`nova_rt/typeid.h`): the payload of the
+            // `NovaAny`, read as the destination's C type.
+            @emit_assign_head(d)
+            @body.append("*(${c_type(@ctx, d.ty)}*)nova_any_data(")
+            @emit_expr(subject)
+            @body.append(");\n")
         }
         Read(r) => {
             // THE SPELLING COMES FROM THE CHANNEL, the STEP from the record (M3c). A value

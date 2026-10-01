@@ -1,0 +1,13 @@
+=== SUBJECT: novac check
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"D:/Temp/hunt-check-k4/probes/cap-method-mut/probe.nv","start":91,"end":93},"message":"outside the subset: a typed array literal is written `[]T.of(...)` -- this constructor is not the literal form (274.5 P3)","poisoned_by":null}
+{"id":"d1","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"D:/Temp/hunt-check-k4/probes/cap-method-mut/probe.nv","start":222,"end":225},"message":"outside the subset: this type has no such method in the declarations novac was handed","poisoned_by":null}
+novac rc=1
+=== ORACLE: nova check
+[32mok:[0m D:/Temp/hunt-check-k4/probes/cap-method-mut/probe.nv
+
+===== SUMMARY =====
+[32mPASS[0m: 1  FAIL: 0
+oracle check rc=0
+=== BEHAVIOUR: novac-e1-smoke (oracle binary vs novac binary)
+novac-e1-smoke: FAIL — novac emit упал: stderr «»; диагностики из stdout (2 шт.): "message":"outside the subset: a typed array literal is written `[]T.of(...)` -- this constructor is not the literal form (274.5 P3)" "message":"outside the subset: this type has no such method in the declarations novac was handed" 
+smoke rc=1

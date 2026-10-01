@@ -1,0 +1,13 @@
+// Probe 2: `-> []u8` body returning a str-valued CALL (or a FIELD read) -- `nova check` passes,
+// `nova build` fails in C ("returning 'nova_str' from a function with incompatible result type").
+// Works: return of a literal and of a plain identifier `s`.
+// D55/D429 R6: return position accepts a str expression of any form.
+module probe2
+
+fn nm() -> str => "abc"
+fn f() -> []u8 => nm()
+
+fn main() Io -> () {
+    assert(f().len() == 3)
+    print("ok")
+}

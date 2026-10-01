@@ -1,0 +1,32 @@
+module with_lit.pos_2
+
+// A handler literal built INSIDE another literal's op body (E.9 step 3):
+// the inner literal captures `seen`, which the outer one captured -- the
+// inner context is filled from the outer op's context, not from a local
+// that does not exist there. Both literals move one `mut` counter.
+// Behaviour byte-for-byte with the oracle (novac-e1-smoke).
+
+fn main() {
+    mut seen = 0
+    ro base = 40
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(label str) -> () {
+            seen += 1
+            with Random = effect Random {
+                u64() -> u64 {
+                    seen += 100
+                    7
+                }
+            } {
+                println(label, " ", base + seen, " ", Random.u64())
+            }
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {
+            println(label)
+        }
+    } {
+        ResourceTrace.on_resource_enter("a")
+        ResourceTrace.on_resource_enter("b")
+    }
+    println(seen)
+}

@@ -681,7 +681,12 @@ export fn c_tag(ctx Ctx, vrow VariantRow) -> str {
 /// C name of a variant's maker function: `novac_make_<Sum>_<Variant>`.
 export fn c_maker(ctx Ctx, vrow VariantRow) -> str {
     ro vd = ctx.variant_rows[raw_vrow(vrow)]
-    "novac_make_${module_prefix(ctx)}${decl_of_ty(ctx, vd.sum_id).name}_${vd.name}"
+    ro sname = decl_of_ty(ctx, vd.sum_id).name
+    // A HANDED sum (a row below `foreign_types_cnt`) is the shell's: its maker
+    // answers to the oracle's ABI (`nova_make_Decision_Stop`, E.9 step 4b --
+    // an op of a std effect returns one), never to our module prefix.
+    if raw_decl(ctx.tys.decl_head_of(vd.sum_id)) < ctx.foreign_types_cnt { return "nova_make_${sname}_${vd.name}" }
+    "novac_make_${module_prefix(ctx)}${sname}_${vd.name}"
 }
 
 /// The RUNTIME's entry slot. Not ours to choose: the shell calls this exact

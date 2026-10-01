@@ -282,7 +282,7 @@ fn Checker @is_primitive(t TyId) -> bool {
 /// inner question lives in its own function.
 fn family_has_values(r BuiltinType) -> bool {
     match r.family {
-        PfUnit => false
+        PfUnit | PfAny => false
         PfInt | PfFloat | PfStr | PfBool | PfChar => true
     }
 }

@@ -42,7 +42,7 @@ import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, 
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor, c_instance_method}
 import ../sem.{ty_source_name, c_shell_method, is_value_record}
 import ../types.{TyId, no_ty, is_ty}
-import ../sem.{option_payload, for_head_elem}
+import ../sem.{option_payload, for_head_elem, is_collection_head}
 import ../sem.{let_decl_of, const_init_at, const_full_name}
 import ../sem.{iflet_pattern_at, iflet_init_at, iflet_body_at, iflet_else_at}
 import ../sem.{whilelet_pattern_at, whilelet_init_at, whilelet_body_at}
@@ -705,7 +705,8 @@ fn Checker mut @type_stmt(st Node) -> () {
             return
         }
         @type_expr(kids[1])
-        @type_block(kids[2])
+        // The then-branch, narrowed by an `is` condition (check/is_expr.nv).
+        @type_then_branch(kids[1], kids[2])
         // The ELSE branch, since the parser learned `else` (2026-08-18).
         // Typing it is not optional: check passed the file and emit ICEd
         // with "sem: no type recorded" -- a decision taken by one layer
@@ -821,8 +822,7 @@ fn Checker mut @type_stmt(st Node) -> () {
         // every node of the tree (PatPos.PosFor, registry 1379) -- a check of
         // the ROOT alone stood here and let `for (k, Some(v)) in xs` through.
         ro head = kids[3]
-        if head.kind_of() == NodeKind.Call || head.kind_of() == NodeKind.MethodCall ||
-           head.kind_of() == NodeKind.Name || head.kind_of() == NodeKind.FieldAccess {
+        if is_collection_head(head) {
             // A COLLECTION head (wave B16): a call, a name or a field hands
             // back a VECTOR, the
             // loop variable is its element. The call's type is RECORDED --
@@ -837,6 +837,7 @@ fn Checker mut @type_stmt(st Node) -> () {
                 @report_first_leaf_of(kids, FOR_CALL_HEAD_MSG)
                 return
             }
+            if !@walk_carried(kids, ht) { return }
             @record(head, ht)
             ro cmark = @scope.mark()
             // The element pattern binds through the ONE door, fresh each

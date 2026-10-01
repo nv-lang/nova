@@ -154,7 +154,10 @@ fn Scope @is_bound(name str) -> bool => @names.find(name) >= 0
 #realtime nogc
 fn Scope @type_of_name(name str) -> TyId {
     ro row = @names.find(name)
-    // [LEGACY-#700-user-error-as-ice until:E2b3] an unbound name is a USER error.
+    // An INVARIANT, no longer user-error debt (#700 triage 2026-09-30): every
+    // caller asks `@is_bound` first, and an unbound name is refused by the
+    // walk (`unknown name`, check/exprs.nv) before the lattice is asked --
+    // pinned by pipeline/concurrency_test.nv and iflet_test.nv.
     assert(row >= 0, "check: unbound name — resolve is check's ground, no silent int default (#652 class)")
     @binds[row].type_id
 }

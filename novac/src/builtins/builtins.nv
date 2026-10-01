@@ -121,6 +121,11 @@ export const VEC_LEN_METHOD = "len"
 /// array pattern. `get` is for the access nobody proved (D470: it answers
 /// Option), and `for x in xs` is the iterator protocol, not either door.
 export const VEC_INDEX_METHOD = "index"
+/// The upper bound an open slice `x[lo..]` takes: the second method of std's
+/// `RangeIndex` role beside `index(r Range)` -- the receiver's OWN answer, not
+/// a `len` field (plan 284; `std/src/collections/vec/slice.nv`,
+/// `std/src/runtime/string/slice.nv`).
+export const END_INDEX_METHOD = "end_index"
 
 /// The method `==` lowers to. A NAME OF THE LANGUAGE, so it lives here with
 /// the others (P5): the emitter must not spell std names itself, and the
@@ -289,6 +294,21 @@ export const EQUAL_PROTO = "Equal"
 /// NOT enough for a bare `${x}` -- at least one of (type author, use site) must
 /// say so out loud, and this attribute is how the author does.
 export const IMPL_ATTR = "impl"
+/// `#share` -- the author vouches that a value of this type may be aliased
+/// for MUTATION from another fiber (06-concurrency.md:7383, audited vouch):
+/// the sync primitives of std carry it (`Atomic*`, `Mutex`, ...).
+export const SHARE_ATTR = "share"
+
+/// Does the primitive whose C spelling is `c_name` carry a FIXED runtime type
+/// id (`nova_rt/typeid.h`: NOVA_TID_nova_int .. NOVA_TID_nova_unit)? Every other
+/// type's id is generated per compilation unit by the oracle (D54 `is`, E.9
+/// step 4b).
+export fn has_fixed_tid(c_name str) -> bool =>
+    c_name == "nova_int" || c_name == "nova_str" || c_name == "nova_bool" || c_name == "nova_f64" ||
+    c_name == "nova_f32" || c_name == "nova_byte" || c_name == "nova_unit"
+/// The effect a `supervised` scope asks about: an installed handler decides
+/// its children's failures (`has_supervisor`, E.9 step 4).
+export const SUPERVISOR_EFFECT = "Supervisor"
 /// The runtime entry that builds a bare `Fmt` context over a builder -- what
 /// the codegen constructs at every user-type slot (measured on the oracle's
 /// emission 2026-09-05: `Nova_FmtCtx_static_bare(sb, 0, false)`). Interop.
@@ -327,6 +347,7 @@ export type PrimFamily enum
     | PfBool /// bool
     | PfChar /// char
     | PfUnit /// ()
+    | PfAny /// any -- the top type (D53), a boxed value behind `void*` (D54)
 
 /// One pre-declared type of the universe: (source name, runtime C spelling,
 /// family, width, signedness). The C spelling of a PRIMITIVE is part of the
@@ -394,7 +415,13 @@ export ro BuiltinType.ALL = [
     //
     // It goes LAST so no seeded ordinal moves: `Prims` reads the first four by
     // index, and an insertion above would have silently renamed them.
-    BuiltinType { name: "()", c_name: "nova_unit", family: PrimFamily.PfUnit, bits: 0, signed: false }]
+    BuiltinType { name: "()", c_name: "nova_unit", family: PrimFamily.PfUnit, bits: 0, signed: false },
+    // `any` (E.9 step 4b): the top type, an EMPTY protocol by the spec (D53,
+    // 02-types.md:1008) and a boxed value at run time (D54, 03-syntax.md:4193) --
+    // a row of the universe here, named: its C spelling is the runtime's `void*`
+    // on a `NovaAny`, and no operator or printer takes it. After `()`, so no
+    // ordinal moves.
+    BuiltinType { name: "any", c_name: "void*", family: PrimFamily.PfAny, bits: 0, signed: false }]
 
 /// THE ROW of a primitive by its universe ordinal -- family, width, signedness
 /// and both spellings in one value, for the doors in `sem/type_shape` that
