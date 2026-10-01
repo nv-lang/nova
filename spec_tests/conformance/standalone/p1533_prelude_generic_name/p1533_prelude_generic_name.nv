@@ -1,0 +1,25 @@
+// EXPECT_STDOUT s 429|d 7
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for registry 221.1 #1533: a program module declares its own record
+// with the name of a GENERIC type of the prelude (`Outcome`, D455's
+// `Outcome[T]`) and builds it with an anonymous literal `{ .. }`. The checker's
+// rewrite (#1416/#1443) named such a literal by the target's BARE name, and the
+// emitter, reading a named literal by its bare name, took the prelude's generic:
+// `Outcome[int]` -- `void* ... /* unknown type Outcome____nova_int */` and a C
+// error "returning 'void *' from a function with incompatible result type". A
+// single file did not reproduce it: the type has to live in a module other than
+// the entry one. Carrier: claude-limits `usage/outcome.nv`.
+//
+// Cells: the return-position literal through a static constructor, and a literal
+// as a fn body. NOT a cell: the same literals as ELEMENTS of a `[]Outcome` -- on
+// main that silently printed zeros, here it is refused by codegen (no target for
+// an anonymous element); a separate open item of the same name collision.
+module standalone.p1533_prelude_generic_name
+
+import ./p1533_side.{of_status, direct}
+
+fn main() Io -> () {
+    ro o = of_status(429)
+    ro d = direct(7)
+    println("${o.message} ${o.status}|${d.message} ${d.status}")
+}
