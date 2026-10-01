@@ -54321,11 +54321,16 @@ impl MapLitAnnotator<'_> {
     }
 
     fn walk_block(&mut self, b: &mut Block) {
+        self.walk_block_to(b, None)
+    }
+
+    /// #1443: a block whose tail is the value of a construct with a known expected type.
+    fn walk_block_to(&mut self, b: &mut Block, expected: Option<&TypeRef>) {
         for s in &mut b.stmts {
             self.walk_stmt(s);
         }
         if let Some(t) = &mut b.trailing {
-            self.walk_expr(t, None);
+            self.walk_expr(t, expected);
         }
     }
 
@@ -54945,8 +54950,18 @@ impl MapLitAnnotator<'_> {
         // target-type propagation чуть выше — без него desugar раньше
         // ХАРДКОДИЛ `HashMap`, и `{...}` в позиции `IndexMap[str, V]`
         // строил бы `HashMap`, не `IndexMap`).
-        if let ExprKind::RecordLit { type_name: None, inferred_map_v, inferred_target_type, .. } = &mut e.kind {
+        if let ExprKind::RecordLit { type_name: tn @ None, inferred_map_v, inferred_target_type, fields, .. } = &mut e.kind {
             if let Some(exp) = expected {
+                // #1416 / #1443: an anonymous, spread-free `{ .. }` whose target is a (non-generic) record gets that
+                // record's name here, wherever the target comes from (an element of `[]T`, a branch tail of an
+                // `if`/if-let/`match`, ...): no emitter path had to hand it its target, and the named form builds
+                // in all of them. The checker already accepted the literal against this target.
+                if let TypeRef::Named { path, generics, .. } = exp {
+                    if generics.is_empty() && !self.ctx.expected_is_from_fields(exp) && !fields.iter().any(|f| f.is_spread)
+                        && matches!(path.last().and_then(|n| self.ctx.wrap_types.get(n)), Some(TypeDeclKind::Record(_))) {
+                        *tn = Some(path.clone());
+                    }
+                }
                 if self.ctx.expected_is_from_fields(exp) {
                     // Уже в ветке #from_fields (KV-тип с 2 generics,
                     // str-ключи) → is_kv_type=true, без хардкода имени.
@@ -54999,22 +55014,7 @@ impl MapLitAnnotator<'_> {
                     Some(TypeRef::FixedArray(_, inner, _)) => Some((**inner).clone()),
                     _ => None,
                 };
-                // #1416: an anonymous `{ .. }` element whose element type is a (non-generic) record gets that
-                // record's name -- none of the emitter's array paths hands an element its target (a module `ro`
-                // failed on `copy_n_nonoverlapping`, a local one on "anonymous record literal"), and the named
-                // form builds in all of them. The checker already accepted the literal against this target.
-                let elem_record: Option<Vec<String>> = match &elem_expected {
-                    Some(t @ TypeRef::Named { path, generics, .. }) if generics.is_empty()
-                        && !self.ctx.expected_is_from_fields(t)
-                        && matches!(path.last().and_then(|n| self.ctx.wrap_types.get(n)), Some(TypeDeclKind::Record(_))) => Some(path.clone()),
-                    _ => None,
-                };
                 for el in elems.iter_mut() {
-                    if let (Some(p), ArrayElem::Item(x)) = (&elem_record, &mut *el) {
-                        if let ExprKind::RecordLit { type_name: t @ None, fields, .. } = &mut x.kind {
-                            if !fields.iter().any(|f| f.is_spread) { *t = Some(p.clone()); }
-                        }
-                    }
                     match el {
                         ArrayElem::Item(x) | ArrayElem::Spread(x) => {
                             self.walk_expr(x, elem_expected.as_ref());
@@ -55189,23 +55189,24 @@ impl MapLitAnnotator<'_> {
                     }
                 }
             }
+            // #1443: a branch tail is the construct's value -- it carries the construct's expected type.
             ExprKind::If { cond, then, else_ } => {
                 self.walk_expr(cond, None);
-                self.walk_block(then);
+                self.walk_block_to(then, expected);
                 if let Some(eb) = else_ {
                     match eb {
-                        ElseBranch::Block(b) => self.walk_block(b),
-                        ElseBranch::If(x) => self.walk_expr(x, None),
+                        ElseBranch::Block(b) => self.walk_block_to(b, expected),
+                        ElseBranch::If(x) => self.walk_expr(x, expected),
                     }
                 }
             }
             ExprKind::IfLet { scrutinee, then, else_, .. } => {
                 self.walk_expr(scrutinee, None);
-                self.walk_block(then);
+                self.walk_block_to(then, expected);
                 if let Some(eb) = else_ {
                     match eb {
-                        ElseBranch::Block(b) => self.walk_block(b),
-                        ElseBranch::If(x) => self.walk_expr(x, None),
+                        ElseBranch::Block(b) => self.walk_block_to(b, expected),
+                        ElseBranch::If(x) => self.walk_expr(x, expected),
                     }
                 }
             }
@@ -55214,8 +55215,8 @@ impl MapLitAnnotator<'_> {
                 for arm in arms.iter_mut() {
                     if let Some(g) = &mut arm.guard { self.walk_expr(g, None); }
                     match &mut arm.body {
-                        MatchArmBody::Expr(x) => self.walk_expr(x, None),
-                        MatchArmBody::Block(b) => self.walk_block(b),
+                        MatchArmBody::Expr(x) => self.walk_expr(x, expected),
+                        MatchArmBody::Block(b) => self.walk_block_to(b, expected),
                     }
                 }
             }
