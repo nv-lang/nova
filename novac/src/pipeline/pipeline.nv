@@ -97,7 +97,22 @@ export fn parse_decls(decl_texts []str) -> []Node {
 /// texts (empty = no methods are known at all, and every method call
 /// gets an honest subset rejection).
 export fn compile(text str, decl_texts []str) -> []Diagnostic =>
-    compile_with(text, parse_decls(decl_texts), interop_surface())
+    compile_with(text, parse_decls(decl_texts), described_surface(decl_texts))
+
+/// The interop surface with the handed texts DESCRIBED (274.11 E.10 step 4c):
+/// a std body the unit instantiates is typed against its own text. The texts
+/// here come from no files, so each is named by its position -- `decl_3` --
+/// which is what a contract in such a body prints; the driver names real files
+/// (main.nv `read_decls`).
+fn described_surface(decl_texts []str) -> InteropTable {
+    mut s = interop_surface()
+    mut names = []str.new()
+    for i in 0..decl_texts.len() {
+        names.push("decl_${i}")
+    }
+    s.describe_decls(names, decl_texts)
+    s
+}
 
 /// The same, given declarations ALREADY parsed -- what a batch hands over.
 ///
@@ -533,7 +548,8 @@ export fn compile_with(text str, decls []Node, interop InteropTable) -> []Diagno
     // runs the same instances the emitter will. Otherwise a file passes check
     // and is refused by emit: two verdicts about one file, which is the shape
     // this compiler exists to stop repeating.
-    ro (idiags, _) = instances_of(tree, src, ctx, reachable(tree, ctx, chan))
+    mut reach = reachable(tree, ctx, chan)
+    ro (idiags, _) = instances_of(tree, src, ctx, reach, decls)
     idiags
 }
 
@@ -565,7 +581,14 @@ fn decl_of_row(tree Node, ctx Ctx, row FnRow) -> Option[Node] {
 /// renders one C function per element. Neither check nor the emitter may call
 /// the other, so the walk over the set belongs to the one module that calls
 /// phases.
-fn instances_of(tree Node, src SourceText, ctx Ctx, reach Reach) -> ([]Diagnostic, []Instantiation) {
+///
+/// AN INSTANCE OF A HANDED BODY (274.11 E.10 step 4c) is typed from the tree it
+/// was read from: its own text (the tree is lossless, `tree_reserialize`), its
+/// own node capacity, its own file name for the contracts it prints. Its
+/// callees are known only once it is typed, so the walk is a WORKLIST: each
+/// such body grows the set (`Reach @grow`), and the loop runs until the set
+/// stops growing -- `Vec[Pt] @push` reaches `@reserve`, which reaches `@cap`.
+fn instances_of(tree Node, src SourceText, ctx Ctx, mut reach Reach, decls []Node) -> ([]Diagnostic, []Instantiation) {
     mut diags = []Diagnostic.new()
     mut insts = []Instantiation.new()
     // Node ids are handed out per FILE and the root takes the last one, so the
@@ -573,15 +596,55 @@ fn instances_of(tree Node, src SourceText, ctx Ctx, reach Reach) -> ([]Diagnosti
     // channel must be sized to, because a declaration's nodes sit anywhere in
     // that range.
     ro cap = raw_node(tree.id_of()) + 1
-    for it in reach.instances() {
-        // mono instantiated a row this file does not declare: a call to a body
-        // novac does not compile is refused BY NAME in check, so reaching here
-        // is a broken invariant rather than a program shape.
-        ro decl = decl_of_row(tree, ctx, it.row) ?? ice("pipeline: an instance of a row this file does not declare")
-        ro (idiags, ichan) = check_instance(decl, src, ctx, reach.subst_of(it), cap)
-        diags.append(idiags)
-        insts.push(Instantiation { decl, row: it.row, subst: reach.subst_of(it),
-                                   ptypes: reach.ptypes_of(it), ret_id: it.ret_id, chan: ichan })
+    // A FIXPOINT over rounds: a round types the instances the previous one
+    // added (`done..upto`, the range evaluated once), and the set may grow
+    // while it runs; the loop stops when a round adds nothing.
+    mut done = 0
+    while done < reach.instances().len() {
+        ro upto = reach.instances().len()
+        for k in done..upto {
+            ro it = reach.instances()[k]
+            match decl_of_row(tree, ctx, it.row) {
+                Some(decl) => {
+                    ro (idiags, ichan) = check_instance(decl, src, ctx, it.row, reach.subst_of(it), cap)
+                    diags.append(idiags)
+                    insts.push(Instantiation { decl, row: it.row, subst: reach.subst_of(it),
+                                               ptypes: reach.ptypes_of(it), ret_id: it.ret_id, chan: ichan,
+                                               src_name: "" })
+                }
+                None => {
+                    // mono instantiated a row this file does not declare: it must
+                    // be a handed body (`Ctx @instantiates`); anything else is a
+                    // broken invariant -- a call to a body novac does not compile
+                    // is refused BY NAME in check.
+                    ro decl = ctx.handed.decl_of(it.row) ?? ice("pipeline: an instance of a row with no body novac was handed")
+                    ro t = ctx.handed.tree_of(it.row)
+                    if t < 0 || t >= decls.len() {
+                        ice("pipeline: a handed body names a declaration tree outside the decls")
+                    } else {
+                        // The tree the body was read from.
+                    }
+                    ro htree = decls[t]
+                    // The ORIGINAL text, not a reserialized copy: a position is a
+                    // slice's distance from the buffer it was cut from.
+                    ro htext = ctx.interop.decl_text(t) ?? ice("pipeline: a handed body to instantiate, but the declarations were handed undescribed")
+                    ro hname = ctx.interop.decl_name(t)
+                    ro hsrc = SourceText { text: htext }
+                    ro hcap = raw_node(htree.id_of()) + 1
+                    ro (idiags, ichan) = check_instance(decl, hsrc, ctx, it.row, reach.subst_of(it), hcap)
+                    diags.append(idiags)
+                    if idiags.len() == 0 {
+                        ro _ = reach.grow(decl, ctx, ichan)
+                    } else {
+                        // SILENT-OK: the body's refusals are the verdict; its callees are not walked.
+                    }
+                    insts.push(Instantiation { decl, row: it.row, subst: reach.subst_of(it),
+                                               ptypes: reach.ptypes_of(it), ret_id: it.ret_id, chan: ichan,
+                                               src_name: hname })
+                }
+            }
+        }
+        done = upto
     }
     (diags, insts)
 }
@@ -591,7 +654,7 @@ fn instances_of(tree Node, src SourceText, ctx Ctx, reach Reach) -> ([]Diagnosti
 /// (diags, c_text): non-empty diags means c_text is empty and must not be
 /// used; no Result in signatures (274 p4.1).
 export fn compile_to_c(text str, decl_texts []str) -> ([]Diagnostic, str) =>
-    compile_to_c_with(text, parse_decls(decl_texts), interop_surface())
+    compile_to_c_with(text, parse_decls(decl_texts), described_surface(decl_texts))
 
 /// The same, given declarations ALREADY parsed.
 export fn compile_to_c_with(text str, decls []Node, interop InteropTable,
@@ -605,8 +668,8 @@ export fn compile_to_c_with(text str, decls []Node, interop InteropTable,
     }
     // WHICH callables exist is mono's decision, and it is taken once, here:
     // the emitter is handed the answer, not the collector (E2-b2).
-    ro reach = reachable(tree, ctx, chan)
-    ro (idiags, insts) = instances_of(tree, src, ctx, reach)
+    mut reach = reachable(tree, ctx, chan)
+    ro (idiags, insts) = instances_of(tree, src, ctx, reach, decls)
     if idiags.len() > 0 {
         return (idiags, "")
     }

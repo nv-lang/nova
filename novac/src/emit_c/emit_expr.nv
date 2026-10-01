@@ -596,7 +596,9 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // The SUBSTITUTION comes from the same record as the row: one question
         // ("which instance does this call name"), one read. An ordinary call
         // carries an empty one, so there is no branch here to get wrong.
-        if @ctx.in_program(cr.callable_row()) {
+        // `body_ours`: the file's own, a program module's, or an instance this
+        // unit makes from a handed body (274.11 E.10 step 4c).
+        if @ctx.body_ours(cr.callable_row(), @out.callee_subst_of(e.id_of())) {
             @body.append(c_callable(@ctx, cr.callable_row(), @out.callee_subst_of(e.id_of())))
         } else {
             // INTEROP (sub-plan L2): a method row with no body of ours is an

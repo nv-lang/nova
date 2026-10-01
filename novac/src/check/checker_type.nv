@@ -66,6 +66,12 @@ type Checker {
     /// is nothing to type it under. One copy of the body is typed per
     /// instance (Go stenciling), so nothing here is parametric afterwards.
     substs []TyId
+    /// The instance's ROW, handed by the pipeline; `no_row()` for a run over a
+    /// file. A body read from ANOTHER tree -- a std body this unit instantiates
+    /// (274.11 E.10 step 4c) -- has node ids of that tree, and the file's
+    /// node->row table (`decl_fn_row`) cannot answer for them: it would answer
+    /// None, or worse, the row of whichever own declaration shares the id.
+    inst_row FnRow
     /// The ONE block whose tail call is a returned value: the body of the fn
     /// being walked, when that fn declares a return type (274.5 wave B4). Set
     /// by the FnDecl arm of each phase, read by the Block arm; there are no

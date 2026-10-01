@@ -117,6 +117,7 @@ export type Instantiation {
     ptypes []ParamDef /// its parameters: CONCRETE types plus the declared modes
     ret_id TyId /// its CONCRETE return type
     chan CheckOut /// the channel this body was typed into -- one per instance
+    src_name str /// the file the body was READ from, for its contracts: "" = the compiled file; a std file's name for a handed body this unit instantiates (274.11 E.10 step 4c)
 }
 
 /// Emit the whole C translation unit for a checked subset file. The channel
@@ -254,9 +255,28 @@ fn Emitter mut @emit_fn(f Node) -> () {
 fn Emitter mut @emit_instance(inst Instantiation) -> () {
     ro kids = branch_children(inst.decl)
     ro file_chan = @out
+    ro file_name = @src_name
+    ro file_tmps = @lit_tmp
     @out = inst.chan
+    @lo.out = inst.chan
+    // A HANDED body (274.11 E.10 step 4c) lives in another tree: its node ids
+    // are that tree's, so the by-node hoist map is sized by ITS channel, and
+    // its contracts name the file it was read from.
+    mut tmps = []str.new()
+    for _ in 0..inst.chan.types.len() {
+        tmps.push("")
+    }
+    @lit_tmp = tmps
+    if inst.src_name != "" {
+        @src_name = inst.src_name
+    } else {
+        // The file's own generic body: its contracts name the file.
+    }
     @emit_callable(inst.decl, decl_name(inst.decl), inst.row, inst.subst, inst.ptypes, inst.ret_id)
     @out = file_chan
+    @lo.out = file_chan
+    @src_name = file_name
+    @lit_tmp = file_tmps
 }
 
 /// A prototype per instance, written before any definition.

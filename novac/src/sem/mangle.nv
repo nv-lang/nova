@@ -686,11 +686,34 @@ export fn subst_type(ctx Ctx, t TyId, subst []TyId) -> TyId {
                 "mangle: a type parameter outside the substitution — a generic asked without one")
             return subst[idx]
         }
+        // A TERM WITH ARGUMENTS carries parameters inside it -- `Vec[T]`,
+        // `(T, int)`, `*mut T` -- and is rewritten THROUGH them, by the
+        // interner's one substitution (2026-10-01, 274.11 E.10 step 4c). Until
+        // this day these kinds returned unchanged: a shallow door, so the
+        // receiver of an instance of std's `Vec[T] @len` stayed `Vec[T]` and
+        // the instance's C name asked for a parameter's layout (ice). No own
+        // generic took a `[]T` before the handed bodies did, which is why the
+        // shallowness went unseen. An empty substitution is a run over a file,
+        // where there is nothing to rewrite.
+        TkApp | TkTuple | TkPtr => {
+            if subst.len() == 0 { return t }
+            // READ, not interned: this door holds the context without the
+            // right to grow the interner. The checker interned every term it
+            // typed, so the rewritten one exists -- a term that does not is
+            // a hole in the checker, said here rather than guessed.
+            ro r = ctx.tys.subst_known(t, subst)
+            if !is_ty(r) {
+                ice("mangle: a substituted type the checker never interned -- the instance was not typed through it")
+            } else {
+                // Interned: the one id this term has.
+            }
+            return r
+        }
         // Every other kind is already a type: a substitution has nothing to
         // rewrite in it. Named one by one rather than through a wildcard --
         // a new kind must come here and say what it does (P21). TkEffect is
         // one of them: a marker nominal whose term mentions no parameter.
-        TkPrim | TkRecord | TkSum | TkApp | TkInfer | TkNewtype | TkTuple | TkEffect | TkPtr => {}
+        TkPrim | TkRecord | TkSum | TkInfer | TkNewtype | TkEffect => {}
     }
     t
 }

@@ -173,7 +173,11 @@ fn check_unit(paths []str, decls []Node, interop InteropTable) Fs -> Verdict {
 /// itself). A missing or unreadable directory yields an empty list: then no
 /// method is known and every method call gets an honest subset refusal
 /// instead of a quiet guess.
-fn read_decls(dir str) Fs -> []str {
+///
+/// `names` gets the FILE NAME of every text returned, in the same order: a
+/// contract in a std body novac instantiates prints the file it was written in
+/// (274.11 E.10 step 4c), and only this door knows it.
+fn read_decls(dir str, mut names []str) Fs -> []str {
     mut out = []str.new()
     if dir == "" { return out }
     match read_dir(dir.to_path()) {
@@ -193,7 +197,7 @@ fn read_decls(dir str) Fs -> []str {
                 // fix -- and paid 17.5s before it, which is why the order of
                 // these two steps was the other way around.
                 if e.kind.is_dir() {
-                    out.append(read_decls("${dir}/${nm}"))
+                    out.append(read_decls("${dir}/${nm}", names))
                     continue
                 } else {
                     // A file: the two tests that decide its fate are the
@@ -208,7 +212,10 @@ fn read_decls(dir str) Fs -> []str {
                 match read(full.to_path()) {
                     Ok(bytes) => {
                         match bytes.to_str() {
-                            Ok(t) => { out.push(t) }
+                            Ok(t) => {
+                                out.push(t)
+                                names.push(nm)
+                            }
                             // A declaration file that is not UTF-8 is simply
                             // not a declaration novac can read; skipping it
                             // leaves its methods unknown, and every use of
@@ -381,7 +388,9 @@ fn run(a []str) -> int {
         // smokes are untouched. The read file itself lands in the decls too:
         // the registry's last-put-wins shadowing hands its names back to the
         // file (measured before this wave, plan entry names the probe).
-        mut decls = parse_decls(read_decls(std_dir))
+        mut decl_names = []str.new()
+        mut decl_texts = read_decls(std_dir, decl_names)
+        mut decls = parse_decls(decl_texts)
         // The interop surface, lifted from the embedded shell ONCE -- the second
         // input of every compile beside the declarations (sub-plan L).
         mut interop = interop_surface()
@@ -390,12 +399,16 @@ fn run(a []str) -> int {
                 // THE PROGRAM's modules are marked on the link surface: their
                 // bodies are the program's, so a call into one is judged by its
                 // signature and named by its owner (274.11 E.10 step 2a).
-                ro self_decls = parse_decls(read_decls(self_dir))
+                ro self_texts = read_decls(self_dir, decl_names)
+                ro self_decls = parse_decls(self_texts)
+                decl_texts.append(self_texts)
                 mark_program(interop, self_decls)
                 decls.append(self_decls)
             }
             None => {}
         }
+        // Which file each declaration tree came from and its text, in the decls' order.
+        interop.describe_decls(decl_names, decl_texts)
         ro argi = 2
         if argi >= a.len() {
             println("usage: novac check <file.nv>... | novac emit <file.nv>")
