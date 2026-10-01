@@ -39,6 +39,18 @@ export fn SourceText @len() -> int => @text.byte_len()
 /// The text under a span.
 export fn SourceText @slice(sp Span) -> str => @text[sp.lo..sp.hi]
 
+/// Does the slice lie inside THIS text? The question `@offset_of` asserts,
+/// asked without the assert: a token of ANOTHER file's text (a handed
+/// declaration's default, registry 1578) answers false.
+export fn SourceText @holds(s str) -> bool {
+    ro d = @dist_of(s)
+    d >= 0 && d + s.byte_len() <= @text.byte_len()
+}
+
+/// How far the slice starts from the text's first byte -- negative, or past the
+/// end, for a slice of another text. One door for `@holds` and `@offset_of`.
+fn SourceText @dist_of(s str) -> int => unsafe { s.ptr().dist(@text.ptr()) }
+
 /// Byte offset of a slice of `@text` — O(1) via pointer distance (owner's
 /// design 2026-08-14). PRECONDITION: `s` must be a slice of `@text`; a
 /// foreign str gives a meaningless number (checked by the assert -- which
@@ -46,7 +58,7 @@ export fn SourceText @slice(sp Span) -> str => @text[sp.lo..sp.hi]
 /// honestly). This is the ONE position door: nothing
 /// else in the compiler computes offsets.
 export fn SourceText @offset_of(s str) -> int {
-    ro d = unsafe { s.ptr().dist(@text.ptr()) }
+    ro d = @dist_of(s)
     // The WHOLE slice must lie inside the text (owner's question 2026-08-14:
     // why <=?). `d == len` is legal ONLY for the empty slice anchored at the
     // end: text[len..len] is admitted BY CONTRACT -- str @index requires

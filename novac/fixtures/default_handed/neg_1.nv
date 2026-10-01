@@ -1,0 +1,18 @@
+module default_handed.neg_1
+
+// A CALL THAT OMITS A SLOT WHOSE DEFAULT IS DECLARED IN ANOTHER FILE AND IS NOT
+// A LITERAL (registry 1578): `StringBuilder.new()` leaves `cap` to std's
+// `INITIAL_CAPACITY`. The default is printed at the call site (D102) -- in
+// THIS file -- from a node of std's tree, whose id belongs to another space:
+// novac died in the emitter ("array: index 32 out of bounds for length 9").
+// A literal or `true` / `false` default is rebuilt without an identity and
+// compiles (registry 1576); any other form is refused by name until a handed
+// default is typed in a channel of its own. The oracle compiles this file.
+// Three carriers in novac's own source (lex.nv, resolve.nv, tree.nv).
+
+// NOVAC_EXPECT is not a literal -- novac carries only a literal or `true` / `false` default across files
+
+fn main() {
+    mut b = StringBuilder.new()
+    println(1)
+}
