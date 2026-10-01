@@ -344,6 +344,8 @@ fn harvest_fn(kids []Node, handed_from str, types []TypeDef, mut defs DefTable, 
     mut bounds = []str.new()
     for _ in 0..recv_tp_cnt { bounds.push("") }
     bounds.append(generic_bounds(kids))
+    mut linear = if is_free { []bool.new() } else { recv_type_linear(recv_kids, recv_at) }
+    linear.append(generic_linear(kids))
     mut prow = []TyId.new()
     for i in 0..tps.len() { prow.push(tys.param(i)) }
     ro recv_t = if is_free { no_ty() } else {
@@ -456,6 +458,7 @@ fn harvest_fn(kids []Node, handed_from str, types []TypeDef, mut defs DefTable, 
         fns.add(mname, ret_t, !is_free, param_ids, tps, bounds, handed_from: handed_from,
                 ret_ro: ret_is_ro(ret_kids))
     }
+    fns.mark_linear(linear)
     if is_free {
         defs.add(mname, DefTarget.DefFn(FnRow(fns.rows.len() - 1)))
     } else {
@@ -486,6 +489,23 @@ fn recv_type_params(rk []Node, at int) -> []str {
         ro c = rk[i]
         if c.kind_of() != NodeKind.Generics { continue }
         out.append(names_of_generics(branch_children(c)))
+    }
+    out
+}
+
+/// The linearity of the receiver's type parameters, in `recv_type_params`'
+/// order: `Vec[T consume]` -> [true], `Vec[T]` -> [false].
+fn recv_type_linear(rk []Node, at int) -> []bool {
+    mut out = []bool.new()
+    if at + 1 < rk.len() && rk[at + 1].kind_of() == NodeKind.Generics {
+        out.append(linear_of_generics(branch_children(rk[at + 1])))
+    } else {
+        // A plain receiver (`Cel`, `[]u8`): no parameters of its head.
+    }
+    for i in 0..at {
+        // Slice brackets or the mode keyword are not a parameter list.
+        if rk[i].kind_of() != NodeKind.Generics { continue }
+        out.append(linear_of_generics(branch_children(rk[i])))
     }
     out
 }

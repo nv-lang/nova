@@ -650,6 +650,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                                           mode: param_mode_at(pk), default_expr: param_default_slot(pk) })
             }
             fns.add(fname, ret, false, param_ids, tps, generic_bounds(fk), ret_ro: decl_ret_is_ro(fk))
+            fns.mark_linear(generic_linear(fk))
             ro frow = FnRow(fns.rows.len() - 1)
             defs.add(fname, DefTarget.DefFn(frow))
             // The DECLARATION's own row, keyed by its node. Asking `defs` by

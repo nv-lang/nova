@@ -1475,6 +1475,11 @@
 # 2026-10-01, cloud session p274-carina-cloud: rows -> 1467, max -> 1518 (#1518: a constant of another
 #   module was never registered -- "unknown name"; fixed in the branch; number given by the integrator).
 #   1517 is not in the registry and was in no gaps= line: added to gaps.
+# 2026-10-01, cloud session p274-carina-cloud: rows -> 1468, max -> 1519 (#1519: D84's linearity axis
+#   was missing from overload resolution -- `[T]` beside `[T consume]` was an ambiguity; fixed in the
+#   branch; number given by the integrator).
+rows=1468
+max=1519
 rows=1467
 max=1518
 rows=1466

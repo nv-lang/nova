@@ -193,6 +193,7 @@ export fn FnTable @is_entry_row(row FnRow) -> bool
 export type FnTable {
     tparams []str /// type-parameter NAMES of every callable, grouped by tparam_off/cnt
     tbounds []str /// the BOUND of each type parameter (`""` = none), same grouping as `tparams` -- a parallel pool, so a slot's bound is one index away
+    tlinear []bool /// each type parameter is `T consume` (D84 linearity axis), same grouping as `tparams`; `@add` fills it plain, `@mark_linear` marks
     rows []FnDef /// every callable, in registration order; a row index is what `DefTarget.DefFn` carries
     params []ParamDef /// parameters of every callable -- type AND mode in one row, addressed by FnDef.param_off/param_cnt
     own_cnt int /// how many LEADING rows this file declared; the rest are signatures read from declarations
@@ -203,7 +204,7 @@ export type FnTable {
 /// An empty callable registry.
 export fn FnTable.new() -> FnTable =>
     { rows: []FnDef.new(), params: []ParamDef.new(),
-      tparams: []str.new(), tbounds: []str.new(), own_cnt: 0,
+      tparams: []str.new(), tbounds: []str.new(), tlinear: []bool.new(), own_cnt: 0,
       own_methods: NameTable.new(NamespaceId.NsDefs), own_next: []int.new() }
 
 /// Does novac compile this callable's BODY?
@@ -304,9 +305,27 @@ export fn FnTable mut @add(name str, ret_id TyId, has_recv bool, param_ids []Par
     // later callable's bounds by one.
     for i in 0..tparam_names.len() {
         @tbounds.push(if i < tparam_bounds.len() { tparam_bounds[i] } else { "" })
+        @tlinear.push(false)
     }
     @rows.push(FnDef { name, ret_id, param_off: off, param_cnt: param_ids.len(), has_recv,
                        tparam_off: toff, tparam_cnt: tparam_names.len(), ret_ro, handed_from, owner: no_ty() })
+}
+
+/// Mark which type parameters of the LAST registered row are `T consume`
+/// (registry 1519): `@add` registers every one plain, and the two readers of
+/// generics lists (harvest, the file's own fns) say which are linear. A
+/// separate door rather than a seventh parameter of `@add`, whose callers --
+/// tests included -- have no generics to speak of.
+fn FnTable mut @mark_linear(linear []bool) -> () {
+    if @rows.len() == 0 { return }
+    ro fd = @rows[@rows.len() - 1]
+    for i in 0..fd.tparam_cnt {
+        if i < linear.len() {
+            @tlinear[fd.tparam_off + i] = linear[i]
+        } else {
+            // No entry for this slot: it stays plain.
+        }
+    }
 }
 
 /// Register one STATIC method of type `owner` (`fn Vec[T].new(cap int)`): no

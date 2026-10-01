@@ -113,3 +113,19 @@ test "`??` is judged: a non-Option left side and `?? return` refuse by name (coa
     }
     assert(non_opt)
 }
+
+test "the linearity axis: a plain T takes the `[T]` form over `[T consume]` (D84 amendment 2026-09-25, registry 1519)" {
+    // std declares `Vec[T consume] @contains` beside `Vec[T] @contains`; for a
+    // plain T both fit, and the amendment says the `[T]` form dominates. Without
+    // the axis every `xs.contains(k)` on a vector of a plain type was refused
+    // as an ambiguity -- four times over novac's own parser.
+    mut std = std_decls()
+    std.push("module std.v\nexport type Vec[T] { n int }\nexport fn Vec[T consume] @has(v T) -> bool => false\nexport fn Vec[T] @has(v T) -> bool => true\n")
+    ro d = compile_with("fn f(xs Vec[int]) -> bool => xs.has(1)\nfn main() {\n println(1)\n}", parse_decls(std), interop_surface())
+    assert(d.len() == 0, messages(d))
+    // CONTROL: one form alone takes every T its bound admits (rule 3).
+    mut one = std_decls()
+    one.push("module std.v\nexport type Vec[T] { n int }\nexport fn Vec[T consume] @has(v T) -> bool => false\n")
+    ro d1 = compile_with("fn f(xs Vec[int]) -> bool => xs.has(1)\nfn main() {\n println(1)\n}", parse_decls(one), interop_surface())
+    assert(d1.len() == 0, messages(d1))
+}
