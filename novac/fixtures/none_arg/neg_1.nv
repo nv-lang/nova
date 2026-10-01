@@ -1,0 +1,12 @@
+module none_arg.neg_1
+
+// NOVAC_EXPECT a bare `None` here has no type to take
+// ONE seeded cause: the parameter names an instance of ANOTHER sum
+// (`Result[int, str]`), so the bare `None` the call passes has no instance to
+// take from it. The callee is decided by arity alone; the argument is refused
+// by its cause. The oracle refuses the call too.
+fn take(r Result[int, str]) -> int => 1
+
+fn main() {
+    println(take(None))
+}

@@ -1,0 +1,42 @@
+module generic_body_instance.pos_1
+
+// What a GENERIC body of the file calls is instantiated per instance of that
+// body, under ITS substitution (registry 1522). `xs.is_empty()` in `inner[T]`
+// is `Vec[f64] @is_empty` in `inner[f64]` -- an instance the unit makes from
+// std's body, because the shell carries none -- and the walk that saw the body
+// once, under the abstract `T`, grew nothing: check and emit said yes, the
+// linker refused. Every form below reaches a std body the shell lacks only
+// from inside a generic body: an explicit call, a `mut` receiver, the implicit
+// `xs[0]`, a generic body reached from another, a generic METHOD of the file.
+fn head[T](xs []T) -> T => xs[0]
+
+fn inner[T](xs []T) -> bool => xs.is_empty()
+
+fn outer[T](xs []T) -> bool => inner(xs)
+
+type Bag {
+    k int
+}
+
+fn Bag @probe[T](xs []T) -> bool => xs.is_empty()
+
+fn wipe[T](mut xs []T) -> int {
+    xs.clear()
+    xs.len()
+}
+
+fn main() {
+    ro d = [1.5, 2.5]
+    println(head(d))
+    println(head(["q", "r"]))
+    println(outer([1.5]))
+    println(outer(["a"]))
+    println(outer([3]))
+    ro b = Bag { k: 1 }
+    println(b.probe([2.5]))
+    mut e = [1.5, 2.5, 3.5]
+    println(wipe(e))
+    println(e.len())
+    mut s = ["x", "y"]
+    println(wipe(s))
+}

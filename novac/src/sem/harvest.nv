@@ -32,7 +32,7 @@ module novac.sem
 import ../tree.{Node, NodeKind, NodeId, branch, no_node}
 import ../builtins.{COERCE_ATTR, SELF_TYPE, UNIT_TYPE_NAME, RECV_BINDING}
 import ../types.{TyId, no_ty, is_ty}
-import ../names.{raw_decl, DeclId}
+import ../names.{raw_decl, DeclId, NameTable, NamespaceId}
 
 /// Read a METHOD declared in THIS file: the same reader std declarations go
 /// through, plus the node -> row entry the emitter needs to find the body.
@@ -68,8 +68,69 @@ fn harvest_methods(decls []Node, types []TypeDef, mut defs DefTable, mut tys Int
         // (wave W6): a free function of that module is emitted as the shell's
         // symbol, which the oracle spells from the module path. The TREE's index
         // travels too (E.10 step 4a): the row's body lives there.
+        ro first = fns.rows.len()
         harvest_in(d, module_dotted(d), types, defs, tys, fns, coerces, tree, bodies)
+        resolve_const_defaults(d, fns, first)
         tree += 1
+    }
+}
+
+/// A HANDED parameter's default that names a CONSTANT of its own file
+/// (`fn StringBuilder.new(cap int = INITIAL_CAPACITY)`, the constant private
+/// to std) becomes that constant's LITERAL (registry 1563). D102: a default is
+/// evaluated at the call site, and may read module-level `const`s -- of the
+/// DECLARING module, which the calling file cannot name. Left as the bare
+/// name, the call printed `INITIAL_CAPACITY` into the caller's C, an
+/// undeclared identifier: `check` clean, clang red. The literal is rebuilt
+/// without an identity (`handed_literal`), as for an imported constant. Any
+/// other default form stays as written.
+fn resolve_const_defaults(d Node, mut fns FnTable, first int) -> () {
+    if first >= fns.rows.len() { return }
+    // The file's constants with a literal value, by name, through the ONE
+    // str -> id door: `lits[i]` is the literal of the constant `index` maps to.
+    mut index = NameTable.new(NamespaceId.NsDefs)
+    mut lits = []Node.new()
+    for c in file_decls(d) {
+        if Some(ck) = const_decl_of(c) {
+            ro kids = branch_children(ck)
+            ro init_at = const_init_at(kids)
+            if init_at < 0 { continue }
+            if Some(cname) = const_full_name(kids) {
+                if Some(lit) = handed_literal(kids[init_at]) {
+                    index.put(cname, lits.len())
+                    lits.push(lit)
+                } else {
+                    // A computed constant: no literal to put in a default.
+                }
+            } else {
+                // A nameless constant: a parse-error shape, nothing to index.
+            }
+        } else {
+            // Not a constant declaration.
+        }
+    }
+    if lits.len() == 0 { return }
+    apply_const_defaults(index, lits, fns, first)
+}
+
+/// The lookup half of `resolve_const_defaults`: a parameter default that is a
+/// bare name of an indexed constant becomes the constant's literal.
+#realtime nogc
+fn apply_const_defaults(index NameTable, lits []Node, mut fns FnTable, first int) -> () {
+    for r in first..fns.rows.len() {
+        ro fd = fns.rows[r]
+        for p in fd.param_off..fd.param_off + fd.param_cnt {
+            if Some(dx) = fns.params[p].default_expr {
+                if dx.kind_of() != NodeKind.Name { continue }
+                ro at = index.find(expr_leaf_name(dx))
+                if at < 0 { continue }
+                mut pd = fns.params[p]
+                pd.default_expr = Some(lits[at])
+                fns.params[p] = pd
+            } else {
+                // A required parameter: no default to resolve.
+            }
+        }
     }
 }
 
@@ -86,12 +147,16 @@ fn harvest_in(n Node, handed_from str, types []TypeDef, mut defs DefTable, mut t
         Branch { kind, children, .. } => {
             if kind == NodeKind.FnDecl {
                 ro before = fns.rows.len()
-                harvest_fn(children, handed_from, types, defs, tys, fns)
+                ro key = harvest_fn(children, handed_from, types, defs, tys, fns)
                 if fns.rows.len() > before {
                     // The row this declaration became, and where its body lives.
-                    bodies.note(FnRow(before), tree, n)
+                    bodies.note(FnRow(before), key.name, head_index(tys, key.on), tree, n)
+                } else if key.name != "" && is_ty(key.on) {
+                    // Not taken, but a METHOD all the same: it keeps its place
+                    // among its name's overloads (registry 1558).
+                    bodies.note_dropped(key.name, head_index(tys, key.on), tree, n)
                 } else {
-                    // The signature was not taken: no row, no body to note.
+                    // SILENT-OK: a free function or an unreadable receiver -- no overload place to keep.
                 }
                 return
             }
@@ -257,12 +322,22 @@ fn harvest_types(decls []Node, mut types []TypeDef, mut gates []str, mut defs De
     }
 }
 
+/// WHAT a handed declaration is, whether or not it became a row: its name and
+/// the type it hangs on (the receiver's term, or the static method's owner;
+/// `no_ty()` for a free function or a receiver the registry cannot read).
+/// A DROPPED method still holds its place among its name's overloads -- the
+/// oracle spells the overloads by their order of DECLARATION (registry 1558).
+type HarvestKey value {
+    name str /// the declared name; "" when the declaration has none readable
+    on TyId /// the type it hangs on, or `no_ty()`
+}
+
 /// One declaration: receiver, name, return type. Taken only if BOTH
 /// the receiver AND the return are already known to the registry —
 /// otherwise the method does not enter the subset and gets an
-/// honest rejection at the point of use.
+/// honest rejection at the point of use. Answers the declaration's key either way.
 fn harvest_fn(kids []Node, handed_from str, types []TypeDef, mut defs DefTable, mut tys Interner,
-              mut fns FnTable) -> () {
+              mut fns FnTable) -> HarvestKey {
     mut recv_name = ""
     mut recv_kids = []Node.new()
     mut recv_at = -1
@@ -328,7 +403,7 @@ fn harvest_fn(kids []Node, handed_from str, types []TypeDef, mut defs DefTable, 
     } else {
         // A method: its name was read after the receiver group above.
     }
-    if mname == "" || ret_kids.len() < 2 { return }
+    if mname == "" { return HarvestKey { name: "", on: no_ty() } }
     // TYPE PARAMETERS OF A METHOD (sub-plan L2, 2026-08-26): the receiver's own
     // (`Vec[T]` -- the Generics right after its name) come first, the method's
     // (`fn[U]`, a Generics before it) after; one parameter row per slot. The
@@ -351,6 +426,9 @@ fn harvest_fn(kids []Node, handed_from str, types []TypeDef, mut defs DefTable, 
     ro recv_t = if is_free { no_ty() } else {
         ty_of_type_ref(recv_kids, recv_head_at(recv_kids, recv_at), no_ty(), tps, prow, types, defs, tys)
     }
+    // From here on a drop still answers WHAT was dropped (registry 1558).
+    ro key = HarvestKey { name: mname, on: recv_t }
+    if ret_kids.len() < 2 { return key }
     // `Self` is the RECEIVER's type, spelled by its role instead of its name.
     // It is not in `defs` and never will be -- it names no declaration -- so a
     // door that only asked the registry dropped the WHOLE signature: measured
@@ -371,7 +449,7 @@ fn harvest_fn(kids []Node, handed_from str, types []TypeDef, mut defs DefTable, 
     } else {
         ty_of_type_ref(ret_kids, ret_from, recv_t, tps, prow, types, defs, tys)
     }
-    if (!is_free && !is_ty(recv_t)) || !is_ty(ret_t) { return }
+    if (!is_free && !is_ty(recv_t)) || !is_ty(ret_t) { return key }
     // A signature is valid only if ALL its types are known, including
     // its parameters. Otherwise std overloads would land in the table
     // as "one name twice" and get rejected as ambiguous: `str` has both
@@ -415,7 +493,7 @@ fn harvest_fn(kids []Node, handed_from str, types []TypeDef, mut defs DefTable, 
         ro tat = match param_type_at(pk) {
             // No readable type: the signature does not enter the subset, and a
             // use of it gets an honest refusal at the point of use.
-            None => return
+            None => return key
             Some(t) => t
         }
         // The TYPE through the ONE reference door (step B2): a plain name,
@@ -425,7 +503,7 @@ fn harvest_fn(kids []Node, handed_from str, types []TypeDef, mut defs DefTable, 
         // generic method's body cannot be emitted anyway, and a half-read
         // signature is the K7 shape.
         ro pt = ty_of_type_ref(pk, tat, recv_t, tps, prow, types, defs, tys)
-        if !is_ty(pt) { return }
+        if !is_ty(pt) { return key }
         // The MODE travels with the type: it is an axis of overloading (P14),
         // so a signature read without it would make `@ptr()` and `mut @ptr()`
         // one row twice over.
@@ -446,12 +524,12 @@ fn harvest_fn(kids []Node, handed_from str, types []TypeDef, mut defs DefTable, 
     // the holder: `fn is_high_surrogate` beside std's). The expression-position
     // call asks the name table first (`defs.def_of`), so a handed free function
     // stands there too.
-    if is_free && !defs.def_of(mname).is_none() { return }
+    if is_free && !defs.def_of(mname).is_none() { return key }
     // THE SAME RULE FOR A METHOD (registry 1354, 2026-09-26): a handed method
     // identical to one the file declares is the file's own method read a
     // second time -- in module mode the unit is inside `NOVAC_SELF_PATH`, and
     // every call of its own methods was an ambiguity (237 over novac's source).
-    if !is_free && fns.file_declares_method(mname, param_ids) { return }
+    if !is_free && fns.file_declares_method(mname, param_ids) { return key }
     if is_static {
         fns.add_static(recv_t, mname, ret_t, param_ids, tps, bounds, handed_from, ret_is_ro(ret_kids))
     } else {
@@ -465,6 +543,7 @@ fn harvest_fn(kids []Node, handed_from str, types []TypeDef, mut defs DefTable, 
         // A method is reached through its receiver, a static one through its
         // type -- never by bare name.
     }
+    key
 }
 
 /// The name of a free function declaration: the first identifier leaf after

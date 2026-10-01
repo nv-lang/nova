@@ -1,0 +1,85 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Role: the shell is asked about the OVERLOAD a call picks, never about its
+//   name (registry 1524): `cap()` / `cap(n)`, the read `index(i)` / the write
+//   `index(i, v)` -- written as a call and as `xs[i] = v` -- are two C
+//   functions each, and the name alone sent the second to the first.
+// Used by: nova test novac/src/pipeline (the module-test batch of the gate).
+// Guarded by: check-novac-module-tests; the fixture shell_overload/pos_1
+//   through the differential.
+//
+// Every pin is a CALL SITE (`<symbol>(v, ...)`): the C carries the whole shell
+// template, so the bare symbol is in it whether or not the call names it.
+
+module novac.pipeline
+
+/// A handed `Vec[T]` whose overloads the REAL shell spells: `cap` and `index`
+/// carried for `Vec[int]` under the first overload's bare name, `cap(n)` under
+/// `cap__nova_int`, the write `index(i, v)` not at all.
+fn overload_std() -> []str {
+    mut std = std_decls()
+    std.push("module std.v\n\
+export type Vec[T] { n int }\n\
+export fn Vec[T] @len() -> int => @n\n\
+export fn Vec[T] mut @push(v T) -> @ => @\n\
+export fn Vec[T] @cap() -> int => @n\n\
+export fn Vec[T] mut @cap(n int) -> @ => @\n\
+export fn Vec[T] @index(i int) -> T => @index(i)\n\
+export fn Vec[T] mut @index(i int, val T) -> () {\n    @n = @n\n}\n")
+    std
+}
+
+test "a SECOND overload of a shell method is asked by its own symbol: `cap(n)` is `cap__nova_int` (registry 1524)" {
+    ro std = overload_std()
+    ro (d0, c0) = compile_to_c("fn main() {\n mut v = [1, 2]\n v.cap(100)\n println(v.len())\n}", std)
+    assert(d0.len() == 0, messages(d0))
+    ro by_overload = "Vec____nova_int_method_cap__nova_int(v, ((nova_int)100LL))"
+    assert(c0.contains(by_overload), "`cap(n)` is not called by its overload's symbol")
+    // The defect, pinned: the FIRST overload's name with the second's arguments.
+    assert(!c0.contains("Vec____nova_int_method_cap(v, ((nova_int)100LL))"), "`cap(n)` went to the shell's `cap()`")
+    // CONTROL: the first overload keeps the bare name -- green without the fix.
+    ro (d1, c1) = compile_to_c("fn main() {\n ro v = [1, 2]\n println(v.cap())\n}", std)
+    assert(d1.len() == 0, messages(d1))
+    assert(c1.contains("Vec____nova_int_method_cap(v)"), "the first overload lost its bare name")
+}
+
+test "an overload the shell does NOT carry is made from its body, whatever the name says: `index(i, v)` (registry 1524)" {
+    ro std = overload_std()
+    ro (d0, c0) = compile_to_c("fn main() {\n mut d = [1, 2]\n d.index(1, 9)\n println(d.len())\n}", std)
+    assert(d0.len() == 0, messages(d0))
+    assert(c0.contains("novac_fn_std_v_index__m_Vec_of_nova_int__nova_int__nova_int__"), "the write overload is not made from its handed body")
+    assert(!c0.contains("Vec____nova_int_method_index(d, ((nova_int)1LL), ((nova_int)9LL))"), "the write went to the shell's read")
+    // CONTROL: the read is carried, and keeps the shell's name.
+    ro (d1, c1) = compile_to_c("fn main() {\n ro d = [1, 2]\n println(d.index(1))\n}", std)
+    assert(d1.len() == 0, messages(d1))
+    assert(c1.contains("Vec____nova_int_method_index(d, ((nova_int)1LL))"), "the read lost the shell's name")
+}
+
+test "`xs[i] = v` and `xs[i] += v` WRITE through the write overload, never the read's call on the left of `=` (registry 1524)" {
+    ro std = overload_std()
+    ro (d0, c0) = compile_to_c("fn main() {\n mut v = [1, 2]\n v[0] = 5\n v[1] += 3\n println(v.len())\n}", std)
+    assert(d0.len() == 0, messages(d0))
+    // The defect, pinned: the read on the left of `=`, which C cannot assign.
+    ro read_as_lvalue = "Vec____nova_int_method_index(v, ((nova_int)0LL)) = "
+    assert(!c0.contains(read_as_lvalue), "`v[0] = 5` assigns to the read's call")
+    assert(c0.contains("(void)novac_fn_std_v_index__m_Vec_of_nova_int__"), "the store does not call the write overload")
+    // The compound store READS through the read overload, inside the write.
+    assert(c0.contains("Vec____nova_int_method_index(_novac_tmp_t"), "the compound store does not read its element")
+    // CONTROL: a plain read of an element is untouched.
+    ro (d1, c1) = compile_to_c("fn main() {\n ro v = [1, 2]\n println(v[1])\n}", std)
+    assert(d1.len() == 0, messages(d1))
+    assert(c1.contains("Vec____nova_int_method_index(v, ((nova_int)1LL))"), "the element read lost the shell's name")
+}
+
+test "a write the shell lacks and std does not declare is REFUSED by name, not printed (registry 1524)" {
+    // Without the write overload in the handed `Vec`, there is nothing to make
+    // the store from: check says so by the operation's name.
+    mut std = std_decls()
+    std.push("module std.v\n\
+export type Vec[T] { n int }\n\
+export fn Vec[T] @len() -> int => @n\n\
+export fn Vec[T] mut @push(v T) -> @ => @\n\
+export fn Vec[T] @index(i int) -> T => @index(i)\n")
+    ro (d0, _) = compile_to_c("fn main() {\n mut v = [1, 2]\n v[0] = 5\n println(v.len())\n}", std)
+    assert(d0.len() == 1, messages(d0))
+    assert(d0[0].message.contains("index(i, v)"), messages(d0))
+}

@@ -243,7 +243,11 @@
 # ("new") -- the empty-vector constructor's name; check/binds.nv judges `[]T.new()` by it, and
 # builtin names live in builtins (the same home as LITERAL_CTOR). The #1457 merge itself missed the raise.
 # 2026-10-01, Carina window (274.11 E.10 steps 4c-2/4d): builtins 56 -> 59: `PTR_WRITE_AT`, `PTR_WRITE_CONSUME_AT`, `SIZE_OF_FN` -- the language's own names std's `Vec[T]` bodies use.
-builtins 60
+builtins 66
+# 2026-10-01, cloud session p274-carina-sweep: builtins 59 -> 60: `ASSERT_FN` ("assert") -- the
+#   prelude's `assert`, an `extern "nova"` intrinsic; check/calls.nv hands the call to its door by
+#   this name, and language names live in builtins (P5).
+# merge of p274-carina-sweep into p274-carina-mono-k2: builtins 64 (mono-k2) + 1 (sweep) = 65.
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -944,7 +948,16 @@ resolve 19
 # 2026-10-01, cloud session p274-carina-strarm (registry 1556): sem 324 -> 325 (merged onto main's 324):
 # `pattern_is_interp` -- the pattern position reads an interpolated string, and the
 # checker asks this one door to refuse it by name (a pattern's literal is not interpolated).
-sem 326
+sem 331
+# 2026-10-01, cloud session p274-carina-sweep: sem 322 -> 325: `CheckOut @record_coercion` /
+#   `@coercion_at` (the return door's `#coerce` method on a value, D429 R2 -- written by check,
+#   read by emit_c) and `coerce_shell_symbol` (the shell's C name of a `consume`-receiver pair,
+#   asked by both check and emit_c, so one spelling).
+# 2026-10-01, cloud session p274-carina-sweep (registry 1564): sem 325 -> 326:
+#   `shell_method_symbol` -- the shell's C name of a method by its ROW, so a `consume`
+#   receiver gets the shell's `_consume_` spelling; asked by check/methods.nv and
+#   emit_c/emit_expr.nv, and the return door's `coerce_shell_symbol` goes through it.
+# merge of p274-carina-sweep into p274-carina-mono-k2: sem 323 (mono-k2) + 4 (sweep) = 327.
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
@@ -1145,3 +1158,14 @@ types 30
 #   Option без тега), до того читавший `.ends_with("*")` на результате двери мэнглинга (П24).
 #   Его пара `c_in_name` (написание типа внутри имени) наружу не выходит: её спрашивают только
 #   `mangle.nv` и `mangle_instance.nv` того же модуля.
+# builtins 59 -> 61, sem 322 -> 323 (2026-10-01, облачная сессия p274-carina-mono-k2, №1524): шелл
+#   спрашивается о ВЫБРАННОЙ перегрузке, а не об имени. `c_overload_symbol` (sem) -- C-символ
+#   перегрузки; его спрашивают `check/methods.nv`, `check/binds.nv` и `emit_c/emit_expr.nv`, и
+#   вопрос с печатью обязаны идти одной дверью, иначе check и emit назовут разное. `VEC_INDEX_SET_OP`
+#   и `vec_op_method` (builtins) -- ключ неявной операции записи `xs[i] = v` и имя метода, который
+#   она зовёт: их читают `check/binds.nv` и `emit_c/emit_place.nv`, имена std живут в builtins (П5).
+# builtins 61 -> 64 (2026-10-01, облачная сессия p274-carina-mono-k2, №1557): `VEC_INDEX_RANGE_OP`
+#   (ключ неявной операции среза `xs[lo..hi]` -- перегрузка `@index(r Range)`), `vec_op_is_overload`
+#   (у какого ключа нет своего голого имени: запись и срез -- перегрузки `index`) и `PTR_OFFSET`
+#   (`p.offset(n)`, D216). Их читают `check/slice.nv`, `check/binds.nv`, `check/unsafe.nv`,
+#   `sem/handed_bodies.nv`, `emit_c/emit_slice.nv`, `emit_c/emit_ptr.nv`; имена std живут в builtins (П5).

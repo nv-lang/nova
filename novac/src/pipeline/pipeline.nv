@@ -608,6 +608,19 @@ fn instances_of(tree Node, src SourceText, ctx Ctx, mut reach Reach, decls []Nod
                 Some(decl) => {
                     ro (idiags, ichan) = check_instance(decl, src, ctx, it.row, reach.subst_of(it), cap)
                     diags.append(idiags)
+                    // What THIS instance calls is known under ITS substitution
+                    // only (registry 1522): `xs.is_empty()` in `empty[T]` is
+                    // `Vec[int] @is_empty` in `empty[int]`, an instance the unit
+                    // makes when the shell lacks it -- and the emitter names it
+                    // from this very channel (`Ctx @body_ours`). The file's
+                    // walk saw the body once, under the abstract `T`, where no
+                    // such instance exists; so the set grows here, from the
+                    // concrete channel, through the door a handed body takes.
+                    if idiags.len() == 0 {
+                        ro _ = reach.grow(decl, ctx, ichan)
+                    } else {
+                        // SILENT-OK: the body's refusals are the verdict; its callees are not walked.
+                    }
                     insts.push(Instantiation { decl, row: it.row, subst: reach.subst_of(it),
                                                ptypes: reach.ptypes_of(it), ret_id: it.ret_id, chan: ichan,
                                                src_name: "" })

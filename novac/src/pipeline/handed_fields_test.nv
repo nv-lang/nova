@@ -68,7 +68,7 @@ test "a poisoned operand in index arithmetic poisons the index, it does not reac
     // refusals stay; the ICE is gone -- a module test that ICEd would not return.
     mut std = std_decls()
     std.push("module std.v\nexport type Vec[T] { n int }\n")
-    ro d = compile_with("type P { n int }\nfn f(ps []P, qs []int) -> int {\n ro p = ps[0]\n qs[p.n + 1]\n}\nfn main() {\n println(1)\n}", parse_decls(std), interop_surface())
+    ro d = compile_with("type Pt { n int }\nfn f(ps []Pt, qs []int) -> int {\n ro p = ps[0]\n qs[p.n + 1]\n}\nfn main() {\n println(1)\n}", parse_decls(std), interop_surface())
     assert(d.len() >= 1, messages(d))
     for g in d {
         assert(g.code != "E_NOVAC_ICE", messages(d))

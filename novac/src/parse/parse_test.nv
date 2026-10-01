@@ -625,7 +625,7 @@ test "shape: a signature without a body ends where the next declaration begins (
     // The shape of std/src/runtime/sync.nv: a bodyless `extern` method, then the
     // next declaration's attributes and a record with a body. Before the fix the
     // record's `{ v int }` became the extern's BODY and the type was gone.
-    ro src = "type T value { v int }\n#realtime\nexport extern \"nova\" fn T @load() -> int\n#stable(since = \"0.1\")\n#share\nexport type U value priv { v int }\nexport extern \"nova\" fn U @get() -> int\n"
+    ro src = "type Tt value { v int }\n#realtime\nexport extern \"nova\" fn Tt @load() -> int\n#stable(since = \"0.1\")\n#share\nexport type Ut value priv { v int }\nexport extern \"nova\" fn Ut @get() -> int\n"
     ro f = parse(lex(src))
     mut types = 0
     mut errs = 0
