@@ -1,0 +1,9 @@
+[
+ {"workflowName": "nova-gate", "status": "completed", "conclusion": "failure", "databaseId": 101, "event": "push", "headSha": "1111111111111111111111111111111111111111", "createdAt": "2026-10-01T01:01:00Z"},
+ {"workflowName": "crate-tests", "status": "completed", "conclusion": "success", "databaseId": 102, "event": "push", "headSha": "1111111111111111111111111111111111111111", "createdAt": "2026-10-01T01:02:00Z"},
+ {"workflowName": "nova-lint", "status": "completed", "conclusion": "success", "databaseId": 103, "event": "push", "headSha": "1111111111111111111111111111111111111111", "createdAt": "2026-10-01T01:03:00Z"},
+ {"workflowName": "nova-test-regression", "status": "completed", "conclusion": "success", "databaseId": 104, "event": "push", "headSha": "1111111111111111111111111111111111111111", "createdAt": "2026-10-01T01:04:00Z"},
+ {"workflowName": "contracts-crosscheck", "status": "completed", "conclusion": "success", "databaseId": 105, "event": "push", "headSha": "1111111111111111111111111111111111111111", "createdAt": "2026-10-01T01:05:00Z"},
+ {"workflowName": "contracts-z3", "status": "completed", "conclusion": "success", "databaseId": 106, "event": "push", "headSha": "1111111111111111111111111111111111111111", "createdAt": "2026-10-01T01:06:00Z"},
+ {"workflowName": "nova-doc", "status": "completed", "conclusion": "success", "databaseId": 107, "event": "push", "headSha": "1111111111111111111111111111111111111111", "createdAt": "2026-10-01T01:07:00Z"}
+]

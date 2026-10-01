@@ -1,0 +1,9 @@
+=== nova-lint run 103 concluded success; its jobs list one failure
+check-push-proven-by-ci: ok: 7/7 required workflows green on 111111111
+rc=0
+=== continue-on-error carriers in the seven required workflows (job-level = 4 spaces):
+nova-lint.yml:128:    continue-on-error: true
+nova-test-regression.yml:46:        continue-on-error: true
+nova-test-regression.yml:77:        continue-on-error: true
+contracts-z3.yml:39:        continue-on-error: true
+contracts-z3.yml:54:        continue-on-error: true

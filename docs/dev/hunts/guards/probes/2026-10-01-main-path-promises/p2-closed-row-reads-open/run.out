@@ -1,0 +1,11 @@
+=== A. control: row 9005 closed in canonical bold field (expect FAIL 'is closed')
+check-push-proven-by-ci: FAIL -- acc-9005.list:1: registry row #9005 is closed -- the exemption for nova-gate / novac-gate is stale, remove it together with its reason
+rc=1
+=== B. row 9005 closed as 'Статус: ЗАКРЫТ', prose later quotes '**Статус:**'
+check-push-proven-by-ci: note: nova-gate / novac-gate (self-hosted compiler builds + module tests): failure, accepted by open row #9005
+check-push-proven-by-ci: ok: 7/7 required workflows green on 111111111 (1 red job(s) accepted by open rows)
+rc=0
+=== C. real registry row 651, verbatim
+check-push-proven-by-ci: note: nova-gate / novac-gate (self-hosted compiler builds + module tests): failure, accepted by open row #651
+check-push-proven-by-ci: ok: 7/7 required workflows green on 111111111 (1 red job(s) accepted by open rows)
+rc=0
