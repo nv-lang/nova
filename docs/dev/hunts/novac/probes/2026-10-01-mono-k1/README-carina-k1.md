@@ -9,7 +9,7 @@
 **Запуск на Linux** (тело писано под Windows): из корня репозитория
 ```sh
 NOVAC=$PWD/novac/target/novac NOVA=$PWD/nova-cli/target/release/nova NOVA_CLANG=clang \
-  sh docs/dev/hunts/novac/probes/2026-10-01-carina-k1/<проба>/cmd.sh
+  sh docs/dev/hunts/novac/probes/2026-10-01-mono-k1/<проба>/cmd.sh
 ```
 В `run.out` пути машины заменены на `<repo>`, `<scratch>`, `<tmp>`.
 
