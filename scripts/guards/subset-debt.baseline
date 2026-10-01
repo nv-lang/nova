@@ -413,9 +413,10 @@ undated=58
 # ONE REFUSAL TRADED FOR ANOTHER. `LITERAL_ARM_MSG` is gone -- a `match` arm on a string or
 # char literal compiles (fixtures match_str_lit, match_char_lit; 24 refusals off novac's
 # own source in the 0.2 measure, 145 -> 121). `NESTED_LITERAL_ARM_MSG` came in, dated
-# (E2-b): a literal BELOW an arm's root was ACCEPTED IN SILENCE -- the lowering tests the
-# root only, so `A(3)` took `A(4)` (measured). Without it the string arms would have
-# inherited that wrong answer. Carriers of the new refusal in novac's own source: zero.
+# (E2-b): a STRING or CHAR literal below an arm's root -- refused at every depth until
+# today -- stays refused there, because the lowering tests the root only (an int literal
+# below the root is accepted and its test dropped: `A(3)` takes `A(4)`, measured,
+# reported apart). Carriers of the new refusal in novac's own source: zero.
 refusals=141
 # ТРЕТЬЕ ЧИСЛО — БЕССРОЧНЫЕ ПО ДВЕРИ (волна 274.7 В11-б, засев 2026-09-14, окно 274).
 #
