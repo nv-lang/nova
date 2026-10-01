@@ -1,0 +1,14 @@
+module handed_free_fn.neg_3
+
+// A free function of a std module called WITHOUT an import (registry 221.1
+// #1493, D29): a name of another module is visible only through `import
+// <module>.{<name>}`. `pos_1` beside this file calls the same function after
+// importing it. Until #1493 novac resolved the call by its bare name over a flat
+// table and printed `true`, where the oracle says "undefined identifier".
+// Both compilers refuse now.
+
+// NOVAC_EXPECT undefined identifier `is_high_surrogate`: it is declared in module
+
+fn main() {
+    println(is_high_surrogate(0xD800))
+}
