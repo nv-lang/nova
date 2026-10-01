@@ -218,6 +218,9 @@ fn Checker mut @judge_method_lookup(e Node, t Token, key []ArgSpec, found FnLook
             }
         }
         FnFound(row) => {
+            // The callee is decided: a bare `None` argument takes its parameter
+            // -- unless deciding it was refused below (one cause, said once).
+            ro rmark = @out.len()
             if @ctx.fns.rows[raw_row(row)].tparam_cnt > 0 {
                 @record_instance_method(e, t, row, key)
             } else if @ctx.in_program(row) {
@@ -254,6 +257,11 @@ fn Checker mut @judge_method_lookup(e Node, t Token, key []ArgSpec, found FnLook
                     // answer -- type_of re-resolving the name was the second door.
                     @chan.record_type(e.id_of(), mfd.ret_id)
                 }
+            }
+            if @out.len() == rmark {
+                @type_deferred_args(branch_children(e), 3, true, row, key)
+            } else {
+                // SILENT-OK: deciding the callee was refused by name already.
             }
         }
     }
@@ -387,7 +395,9 @@ fn Checker mut @type_method_call(e Node) -> () {
     @type_expr(kids[0])
     mut i = 0
     for c in kids {
-        if i > 2 && is_expr_kind(c.kind_of()) {
+        if i > 2 && is_expr_kind(c.kind_of()) && !@is_deferred_variant(c) {
+            // A bare `None` (`@is_deferred_variant`) is typed after the lookup,
+            // by its parameter (registry 1565).
             @type_expr(c)
         } else {
             // Children 0..2 are the receiver, the dot and the method

@@ -30,11 +30,12 @@
 module novac.check
 
 import ../lex.{Token}
-import ../tree.{Node}
+import ../tree.{Node, NodeKind}
 import ../names.{DeclId}
 import ../types.{TyId, no_ty, is_ty}
 import ../builtins.{TypeKind}
 import ../sem.{CalleeTarget, VariantRow, raw_vrow, decl_of_ty, decl_index_of_ty, identity_slots, is_expr_kind, ArgSpec}
+import ../sem.{FnRow, raw_row, bind_slots, call_arg_at, expr_leaf_name, variants_named}
 
 /// A bare variant of a generic sum with nothing around it to say which
 /// instance it is.
@@ -150,4 +151,41 @@ fn Checker mut @type_bare_variant_value(e Node, t Token, v VariantRow) -> () {
     }
     @record(e, ex)
     @chan.record_callee(e.id_of(), CalleeTarget.CalleeVariant(v), subst, identity_slots(0))
+}
+
+/// Is this argument a BARE payload-less variant of a GENERIC sum (`None`) that
+/// no local binding shadows? Such an argument has no type of its own: the
+/// PARAMETER it lands in names the instance (registry 1565). The argument walk
+/// leaves it untyped -- the key then holds an unknown slot, which the lookup
+/// matches by every other position -- and `@type_deferred_args` types it once
+/// the callee is decided.
+fn Checker @is_deferred_variant(c Node) -> bool {
+    if c.kind_of() != NodeKind.Name { return false }
+    ro nm = expr_leaf_name(c)
+    if @scope.is_bound(nm) { return false }
+    ro (v, n) = variants_named(@ctx, nm)
+    if n != 1 { return false }
+    @ctx.variant_rows[raw_vrow(v)].payload_cnt == 0 && @variant_sum_is_generic(v)
+}
+
+/// Type the deferred arguments of a call whose callee is DECIDED (`row`): each
+/// takes its parameter's type as the expectation, the same door a tail's bare
+/// `None` takes the declared return through. `from` is where the written
+/// arguments begin (1 free, 3 method); `recv` says key slot 0 is the receiver,
+/// so written argument `i` is key row `i + 1`. A generic parameter offers no
+/// instance -- the expectation stays empty and the value door refuses by cause.
+fn Checker mut @type_deferred_args(kids []Node, from int, recv bool, row FnRow, key []ArgSpec) -> () {
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    ro slots = bind_slots(@ctx.fns.params, fd.param_off, fd.param_cnt, key)
+    ro saved = @value_expect
+    for s in 0..slots.len() {
+        ro at = slots[s].arg_row
+        if at < 0 || (recv && at == 0) { continue }
+        ro c = call_arg_at(kids, from, if recv { at - 1 } else { at })
+        if !@is_deferred_variant(c) { continue }
+        ro pt = @ctx.fns.params[fd.param_off + s].type_id
+        @value_expect = if is_ty(pt) && @ctx.tys.is_concrete(pt) { pt } else { no_ty() }
+        @type_expr(c)
+    }
+    @value_expect = saved
 }

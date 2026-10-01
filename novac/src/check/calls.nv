@@ -793,6 +793,8 @@ fn Checker mut @type_free_call(e Node) -> () {
     @value_expect = no_ty()
     for c in kids {
         if !is_expr_kind(c.kind_of()) { continue }
+        // A bare `None` takes its PARAMETER's instance, after the lookup (1565).
+        if @is_deferred_variant(c) { continue }
         @type_expr(c)
     }
     @value_expect = saved_expect
@@ -821,7 +823,17 @@ fn Checker mut @type_free_call(e Node) -> () {
             // emitted as one string argument to a two-parameter function.
             ro key = typed_free_key(kids, @ctx, @scope, @chan)
             match @res.lookup(@ctx.fns, @ctx.tys, cname, key, CallForm.FreeCall) {
-                FnFound(row) => @record_free_callee(e, kids, row, key)
+                FnFound(row) => {
+                    ro rmark = @out.len()
+                    @record_free_callee(e, kids, row, key)
+                    // Only a call that RESOLVED types its deferred arguments: a
+                    // refusal of the callee is the cause, said once.
+                    if @out.len() == rmark {
+                        @type_deferred_args(kids, 1, false, row, key)
+                    } else {
+                        // SILENT-OK: the callee door refused by name already.
+                    }
+                }
                 // What stays overloaded under a TYPED key is a real D84
                 // tie -- unless a slot novac could not type matched every
                 // overload, which is ignorance, not ambiguity (the M1
