@@ -1,0 +1,29 @@
+// f2: CONTROL for f1 -- the same local and handler in a NAMED function body, which
+// the lambda only calls. claude-limits collect_round (dfc7e5e) has this shape.
+module hcap.f2_named_fn_control
+
+type Tally {
+    mut n int
+}
+
+type Hit effect {
+    hit() -> ()
+}
+
+fn run(body fn() -> int) -> int => body()
+
+fn counted() -> int {
+    mut t = Tally { n: 0 }
+    with Hit = effect Hit {
+        hit() -> () { t.n += 1 }
+    } {
+        Hit.hit()
+        Hit.hit()
+    }
+    t.n
+}
+
+fn main() Io {
+    ro got = run(fn() -> int => counted())
+    println("f2 ${got}")
+}

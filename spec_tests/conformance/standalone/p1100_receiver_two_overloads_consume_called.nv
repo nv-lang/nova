@@ -1,0 +1,34 @@
+// EXPECT_STDOUT p1100 result=9 no cleanup
+//
+// Registry 221.1 #1100, D432 §4 point 2, the other half: `g.settle()` resolves to
+// the consume-receiver overload; the caller's flag must be disarmed (a cleanup
+// in the caller would panic).
+
+module standalone.p1100_receiver_two_overloads_consume_called
+
+type Boom consume { id int }
+
+fn Boom consume @cleanup(_o ScopeOutcome) -> () {
+    panic("p1100 cleanup fired")
+}
+
+fn Boom consume @defuse() -> () { }
+
+fn mk(v int) -> Boom => { id: v }
+
+fn Boom consume @settle() -> () {
+    @defuse()
+}
+
+fn Boom @settle(_tag int) -> () { }
+
+fn run() -> int {
+    consume g = mk(7)
+    g.settle()
+    9
+}
+
+fn main() Io -> () {
+    ro r = run()
+    println("p1100 result=${r} no cleanup")
+}

@@ -3,6 +3,11 @@
 
 #include "nova_rt.h"
 #include <setjmp.h>
+#if defined(_WIN32)
+#  include <stdlib.h>   /* _exit (nova_process_exit_now) */
+#else
+#  include <unistd.h>   /* _exit (nova_process_exit_now) */
+#endif
 
 /* ---- Fail effect — setjmp/longjmp based ---- *
  *
@@ -1574,6 +1579,28 @@ NOVA_DEFINE_CHECKED_UNSIGNED_DIVMOD(uint, nova_uint)
 
 #undef NOVA_DEFINE_CHECKED_UNSIGNED_DIVMOD
 
+/* 221.1 №1418: immediate process exit — the one terminal path for the two
+ * exits whose contract is "no cleanup" (D13 builtin `exit(code, msg)` and std
+ * `os.exit_process`, both specified as Go `os.Exit` / Rust `process::exit`).
+ *
+ * `exit()` is NOT immediate here: it runs the atexit chain, and the runtime
+ * registers `nova_runtime_drain_orphans` there (runtime.c,
+ * `_orphan_scope_ensure_init`) — a drain that waits for every `detach`ed fiber
+ * to finish. A fiber parked for good (a server's `accept()`) never does, so
+ * the "immediate" exit hung in `pre-exit-drain` (dump at 10 s, then forever),
+ * and a second exit issued meanwhile (a watchdog fiber) re-entered `exit()`,
+ * which is undefined behaviour. The orphan drain belongs to a NORMAL end of
+ * `main` — emitted main() drains explicitly before shutdown — not to these.
+ *
+ * stdio is flushed first (the contract says "after flushing stdout/stderr");
+ * `_exit` then skips atexit, as `nova_cancel_token_bind` already does for the
+ * same reason (a live worker pool, fibers.h). */
+static inline void nova_process_exit_now(int code) {
+    fflush(stdout);
+    fflush(stderr);
+    _exit(code);
+}
+
 /* nv_exit(code, msg) — D13: смерть всего процесса.
  *
  * exit это финальная точка — НЕ routes через fail-frame (handler-ом не
@@ -1610,7 +1637,7 @@ static inline void nv_exit(nova_int code, nova_str msg) {
         fwrite(msg.ptr, 1, msg.len, stderr);
         fwrite("\n", 1, 1, stderr);
     }
-    exit((int)code);
+    nova_process_exit_now((int)code);  /* №1418: no atexit orphan drain */
 }
 
 /* ---- Generic effect handler vtable ---- *

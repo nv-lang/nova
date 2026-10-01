@@ -837,13 +837,15 @@ fn Checker mut @type_stmt(st Node) -> () {
                 @report_first_leaf_of(kids, FOR_CALL_HEAD_MSG)
                 return
             }
-            if !@walk_carried(kids, ht) { return }
             @record(head, ht)
             ro cmark = @scope.mark()
             // The element pattern binds through the ONE door, fresh each
             // iteration (the mark is the loop's, released after the body).
             if !@bind_pattern(pat, elem, kids, ParamMode.ModeRo, PatPos.PosFor) {
                 @bind_names_untyped(pat)
+            } else if !@walk_carried(kids, ht) { // Language first: the shell's walk is asked of an admitted pattern.
+                @scope.release(cmark)
+                return
             } else { // Every name bound with its decided type.
             }
             @type_block(kids[4])

@@ -1,0 +1,9 @@
+// Peer of `a_main.nv` (see its header): the legal repeats' second halves.
+
+module standalone.p1179_legal_repeats
+
+fn describe(x str) -> str => "str:${x}"
+
+priv(file) fn tag() -> str => "b"
+
+export fn tag_b() -> str => tag()

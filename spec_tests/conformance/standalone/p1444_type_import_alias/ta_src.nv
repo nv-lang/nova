@@ -1,0 +1,27 @@
+// #1444 carrier -- see `p1444_a_peer_first.nv`. The importers name `Box` and
+// `Shape` by aliases; this module keeps naming them by their own names.
+module p1444_type_import_alias.ta_src
+
+export type Box { v int }
+
+export type Shape enum
+    | Dot
+    | Sq(int)
+
+export fn mk(v int) -> Box => { v }
+
+export fn Box @get() -> int => @v
+
+export fn Box.unit() -> Box => { v: 1 }
+
+export fn area(s Shape) -> int {
+    match s {
+        Dot => 0
+        Sq(n) => n * n
+    }
+}
+
+export fn src_twice(b Box) -> int {
+    ro d = Box { v: b.v * 2 }
+    d.get()
+}

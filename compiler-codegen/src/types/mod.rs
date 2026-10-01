@@ -26,6 +26,8 @@ mod fail_reach;
 mod static_blanket;
 mod fn_visibility; // #1097: a same-name free fn by the caller's imports, see its doc
 mod import_conflict; // #1234: D29 imported name vs own declaration / other import
+mod duplicate_decls; // #1179/#1183/#1186: one duplicate check for the compiled module
+mod record_lit_schema; // #1448/#1096: a record literal against its record's fields
 mod generic_sum; // #1337/#1338: a user generic sum's ctor, payload and expected type
 
 /// Plan 196 (gs-bounds migration, spike `docs/plans/wip/196-gs-spike.md`):
@@ -1362,6 +1364,11 @@ fn check_module_impl(
             && file_priv_decl_files.get(name).map_or(false, |s| s.len() >= 2)
     };
 
+    // #1179/#1183/#1186: duplicates among the module's OWN declarations are
+    // judged once, by `duplicate_decls`, whatever the imports merged in; the
+    // loop below only classifies collisions with imported (merged) items.
+    let refused_dups = duplicate_decls::check_duplicate_decls(module, &mut errors);
+
     for item in &module.items {
         match item {
             Item::Type(td) => {
@@ -1394,10 +1401,12 @@ fn check_module_impl(
                             continue;
                         }
                         None => {
-                            errors.push(Diagnostic::new(
-                                format!("duplicate top-level name `{}`", td.name),
-                                td.span,
-                            ));
+                            if !refused_dups.contains(&td.name) {
+                                errors.push(Diagnostic::new(
+                                    format!("duplicate top-level name `{}`", td.name),
+                                    td.span,
+                                ));
+                            }
                         }
                     }
                 }
@@ -1430,8 +1439,7 @@ fn check_module_impl(
                 // `@` is the zeroth parameter), so `fn T @m()` and
                 // `fn T consume @m()` are distinct overloads too. The key used
                 // to compare only `mutable` and refused that pair as a duplicate.
-                let new_recv_mut = fd.receiver.as_ref()
-                    .map(|r| (r.mutable, r.consume)).unwrap_or((false, false));
+                // (The comparison lives in `duplicate_decls::same_overload_sig`.)
                 // Plan 184 (Р13/Р14): parameter MODE {ro,mut,consume} is a valid
                 // overload axis too (unified with the receiver axis: `@` is the
                 // zeroth parameter). `f(x T)` / `f(mut x T)` / `f(consume x T)`
@@ -1440,49 +1448,14 @@ fn check_module_impl(
                 // `is_mut` AND same `consume`.
                 // D464 amendment 2026-09-25 (linearity axis): a plain `[T]` and a
                 // `[T consume]` of the same name are a pair, not a duplicate.
-                let dup_existing = entry.iter().find(|existing| {
-                    // Plan 135: if receiver-mutability differs, NOT a duplicate.
-                    let existing_recv_mut = existing.receiver.as_ref()
-                        .map(|r| (r.mutable, r.consume)).unwrap_or((false, false));
-                    if existing_recv_mut != new_recv_mut { return false; }
-                    if linearity_pair_differs(existing, fd) { return false; }
-                    // Arity + arg-types + param-modes одинаковы?
-                    let args_equal = existing.params.len() == fd.params.len()
-                        && existing.params.iter().zip(fd.params.iter())
-                            .all(|(p, np)| typeref_equal(&p.ty, &np.ty)
-                                && p.is_mut == np.is_mut
-                                && p.consume == np.consume);
-                    if !args_equal { return false; }
-                    // Return-type одинаков? (None / None или Some/Some equal).
-                    match (&existing.return_type, &fd.return_type) {
-                        (None, None) => true,
-                        (Some(a), Some(b)) => typeref_equal(a, b),
-                        _ => false,
-                    }
-                });
+                let dup_existing = entry.iter().find(|existing| duplicate_decls::same_overload_sig(existing, fd));
                 if dup_existing.is_some() {
                     // Plan 62.D bis-1: D29 — duplicate fn signature shadowing
                     // a prelude-imported definition → warning (not error).
                     // E.g. `fn Range @step_by(int) -> StepRangeIter` declared
                     // in both user file and the merged-via-prelude
                     // std/collections/range.nv. User wins.
-                    let dup_pos = entry.iter().position(|existing| {
-                        let existing_recv_mut = existing.receiver.as_ref()
-                            .map(|r| (r.mutable, r.consume)).unwrap_or((false, false));
-                        if existing_recv_mut != new_recv_mut { return false; }
-                        if linearity_pair_differs(existing, fd) { return false; }
-                        let args_equal = existing.params.len() == fd.params.len()
-                            && existing.params.iter().zip(fd.params.iter())
-                                .all(|(p, np)| typeref_equal(&p.ty, &np.ty)
-                                    && p.is_mut == np.is_mut
-                                    && p.consume == np.consume);
-                        if !args_equal { return false; }
-                        match (&existing.return_type, &fd.return_type) {
-                            (None, None) => true,
-                            (Some(a), Some(b)) => typeref_equal(a, b),
-                            _ => false,
-                        }
-                    });
+                    let dup_pos = entry.iter().position(|existing| duplicate_decls::same_overload_sig(existing, fd));
                     // Plan 154 [M-method-override-silent-noop]: переопределение
                     // **метода** (receiver present) с той же сигнатурой, что у
                     // метода из std/prelude/импортированного модуля — это SILENT
@@ -1562,6 +1535,7 @@ fn check_module_impl(
                             }
                             continue;
                         }
+                        None if refused_dups.contains(&key) => {}
                         None => {
                             errors.push(Diagnostic::new(
                                 format!(
@@ -1600,10 +1574,12 @@ fn check_module_impl(
                             continue;
                         }
                         None => {
-                            errors.push(Diagnostic::new(
-                                format!("duplicate top-level name `{}`", cd.name),
-                                cd.span,
-                            ));
+                            if !refused_dups.contains(&cd.name) {
+                                errors.push(Diagnostic::new(
+                                    format!("duplicate top-level name `{}`", cd.name),
+                                    cd.span,
+                                ));
+                            }
                         }
                     }
                 }
@@ -8990,16 +8966,7 @@ impl<'a> TypeCheckCtx<'a> {
                                         .collect();
                                     if !missing.is_empty() {
                                         errors.push(Diagnostic::new(
-                                            format!(
-                                                "[E_MISSING_FIELD_IN_LITERAL] record literal \
-                                                 `{}{{ … }}` does not initialise {}: {}. \
-                                                 Construction requires every declared field \
-                                                 (D02 §Construction); add it, or copy the rest \
-                                                 from another value with `...other`.",
-                                                last,
-                                                if missing.len() == 1 { "field" } else { "fields" },
-                                                missing.join(", "),
-                                            ),
+                                            record_lit_schema::missing_field_message(last, &missing),
                                             e.span,
                                         ));
                                     }
@@ -11489,6 +11456,9 @@ impl<'a> TypeCheckCtx<'a> {
                                     Compat::CoerceConflict { msg } => {
                                         errors.push(Diagnostic::new(msg, arg.expr().span));
                                     }
+                                    Compat::RecordLit { faults } => {
+                                        errors.extend(faults.into_iter().map(|(m, s)| Diagnostic::new(m, s)));
+                                    }
                                     Compat::Ok | Compat::Unknown => {}
                                 }
                             }
@@ -12837,7 +12807,7 @@ impl<'a> TypeCheckCtx<'a> {
                                                                     &fn_generic_scope(f),
                                                                     scope,
                                                                 ),
-                                                                Compat::Bad { .. }
+                                                                Compat::Bad { .. } | Compat::RecordLit { .. }
                                                             )
                                                     })
                                                     .collect();
@@ -13739,6 +13709,11 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             ExprKind::RecordLit { type_name, fields, .. } => {
+                // #1448/#1096: every field against its declared type, and
+                // completeness where #1142's site does not reach.
+                if let Some(path) = type_name {
+                    self.check_named_record_lit(e, path, fields, gs, scope, errors);
+                }
                 for f in fields {
                     if let Some(v) = &f.value {
                         self.f1_expr(v, gs, scope, errors);
@@ -14413,6 +14388,9 @@ impl<'a> TypeCheckCtx<'a> {
             // doc).
             Compat::CoerceConflict { msg } => {
                 errors.push(Diagnostic::new(msg, value.span));
+            }
+            Compat::RecordLit { faults } => {
+                errors.extend(faults.into_iter().map(|(m, s)| Diagnostic::new(m, s)));
             }
             Compat::Ok | Compat::Unknown => {}
         }
@@ -16741,7 +16719,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
             if matches!(
                 self.assignable(arg.expr(), &param.ty, gs, &callee_gs, scope),
-                Compat::Bad { .. }
+                Compat::Bad { .. } | Compat::RecordLit { .. }
             ) {
                 return Some(false);
             }
@@ -18033,6 +18011,9 @@ impl<'a> TypeCheckCtx<'a> {
                                     ),
                                 );
                             }
+                            Compat::RecordLit { faults } if generic_param => {
+                                errors.extend(faults.into_iter().map(|(m, s)| Diagnostic::new(m, s)));
+                            }
                             Compat::CoerceConflict { msg } if generic_param => {
                                 errors.push(
                                     Diagnostic::new(msg, arg.expr().span).with_note_at(
@@ -18153,6 +18134,9 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 Compat::CoerceConflict { msg } => {
                     errors.push(Diagnostic::new(msg, arg_expr.span));
+                }
+                Compat::RecordLit { faults } => {
+                    errors.extend(faults.into_iter().map(|(m, s)| Diagnostic::new(m, s)));
                 }
                 Compat::Ok | Compat::Unknown => {}
             }
@@ -19288,6 +19272,9 @@ impl<'a> TypeCheckCtx<'a> {
                             param.span,
                         ),
                     );
+                }
+                Compat::RecordLit { faults } => {
+                    errors.extend(faults.into_iter().map(|(m, s)| Diagnostic::new(m, s)));
                 }
                 Compat::Ok | Compat::Unknown => {
                     // [M-generic-arg-type-mismatch-silent] The Ty/TyCat lowering
@@ -21893,6 +21880,9 @@ impl<'a> TypeCheckCtx<'a> {
             Compat::CoerceConflict { msg } => {
                 errors.push(Diagnostic::new(msg, value.span));
             }
+            Compat::RecordLit { faults } => {
+                errors.extend(faults.into_iter().map(|(m, s)| Diagnostic::new(m, s)));
+            }
             Compat::Ok | Compat::Unknown => {}
         }
     }
@@ -23134,6 +23124,13 @@ impl<'a> TypeCheckCtx<'a> {
                             }
                         }
                     }
+                }
+            }
+            // #1448/#1096: `{ .. }` at a record-typed position is checked field
+            // by field against that record (`record_lit_schema.rs`).
+            ExprKind::RecordLit { type_name: None, fields, .. } => {
+                if let Some(v) = self.anon_record_lit_compat(expr, fields, expected, expr_gs, exp_gs, scope) {
+                    return v;
                 }
             }
             ExprKind::IntLit(v) => {
@@ -28382,6 +28379,11 @@ enum Compat {
     /// of which declaration provides it (see `generic_coerce_lookup` doc for
     /// why decl-time R3 dedup can't catch this for generic patterns).
     CoerceConflict { msg: String },
+    /// Registry 221.1 #1448/#1096: an anonymous record literal against a
+    /// record type, with the faults of its fields (wrong type, missing,
+    /// undeclared) as ready diagnostics, each at its own span
+    /// (`record_lit_schema.rs`).
+    RecordLit { faults: Vec<(String, Span)> },
 }
 
 /// Plan 142 (D227 Rule 3/6): диапазон `[min, max]` для sized-int типа.
@@ -54319,11 +54321,16 @@ impl MapLitAnnotator<'_> {
     }
 
     fn walk_block(&mut self, b: &mut Block) {
+        self.walk_block_to(b, None)
+    }
+
+    /// #1443: a block whose tail is the value of a construct with a known expected type.
+    fn walk_block_to(&mut self, b: &mut Block, expected: Option<&TypeRef>) {
         for s in &mut b.stmts {
             self.walk_stmt(s);
         }
         if let Some(t) = &mut b.trailing {
-            self.walk_expr(t, None);
+            self.walk_expr(t, expected);
         }
     }
 
@@ -54943,8 +54950,18 @@ impl MapLitAnnotator<'_> {
         // target-type propagation чуть выше — без него desugar раньше
         // ХАРДКОДИЛ `HashMap`, и `{...}` в позиции `IndexMap[str, V]`
         // строил бы `HashMap`, не `IndexMap`).
-        if let ExprKind::RecordLit { type_name: None, inferred_map_v, inferred_target_type, .. } = &mut e.kind {
+        if let ExprKind::RecordLit { type_name: tn @ None, inferred_map_v, inferred_target_type, fields, .. } = &mut e.kind {
             if let Some(exp) = expected {
+                // #1416 / #1443: an anonymous, spread-free `{ .. }` whose target is a (non-generic) record gets that
+                // record's name here, wherever the target comes from (an element of `[]T`, a branch tail of an
+                // `if`/if-let/`match`, ...): no emitter path had to hand it its target, and the named form builds
+                // in all of them. The checker already accepted the literal against this target.
+                if let TypeRef::Named { path, generics, .. } = exp {
+                    if generics.is_empty() && !self.ctx.expected_is_from_fields(exp) && !fields.iter().any(|f| f.is_spread)
+                        && matches!(path.last().and_then(|n| self.ctx.wrap_types.get(n)), Some(TypeDeclKind::Record(_))) {
+                        *tn = Some(path.clone());
+                    }
+                }
                 if self.ctx.expected_is_from_fields(exp) {
                     // Уже в ветке #from_fields (KV-тип с 2 generics,
                     // str-ключи) → is_kv_type=true, без хардкода имени.
@@ -54997,22 +55014,7 @@ impl MapLitAnnotator<'_> {
                     Some(TypeRef::FixedArray(_, inner, _)) => Some((**inner).clone()),
                     _ => None,
                 };
-                // #1416: an anonymous `{ .. }` element whose element type is a (non-generic) record gets that
-                // record's name -- none of the emitter's array paths hands an element its target (a module `ro`
-                // failed on `copy_n_nonoverlapping`, a local one on "anonymous record literal"), and the named
-                // form builds in all of them. The checker already accepted the literal against this target.
-                let elem_record: Option<Vec<String>> = match &elem_expected {
-                    Some(t @ TypeRef::Named { path, generics, .. }) if generics.is_empty()
-                        && !self.ctx.expected_is_from_fields(t)
-                        && matches!(path.last().and_then(|n| self.ctx.wrap_types.get(n)), Some(TypeDeclKind::Record(_))) => Some(path.clone()),
-                    _ => None,
-                };
                 for el in elems.iter_mut() {
-                    if let (Some(p), ArrayElem::Item(x)) = (&elem_record, &mut *el) {
-                        if let ExprKind::RecordLit { type_name: t @ None, fields, .. } = &mut x.kind {
-                            if !fields.iter().any(|f| f.is_spread) { *t = Some(p.clone()); }
-                        }
-                    }
                     match el {
                         ArrayElem::Item(x) | ArrayElem::Spread(x) => {
                             self.walk_expr(x, elem_expected.as_ref());
@@ -55187,23 +55189,24 @@ impl MapLitAnnotator<'_> {
                     }
                 }
             }
+            // #1443: a branch tail is the construct's value -- it carries the construct's expected type.
             ExprKind::If { cond, then, else_ } => {
                 self.walk_expr(cond, None);
-                self.walk_block(then);
+                self.walk_block_to(then, expected);
                 if let Some(eb) = else_ {
                     match eb {
-                        ElseBranch::Block(b) => self.walk_block(b),
-                        ElseBranch::If(x) => self.walk_expr(x, None),
+                        ElseBranch::Block(b) => self.walk_block_to(b, expected),
+                        ElseBranch::If(x) => self.walk_expr(x, expected),
                     }
                 }
             }
             ExprKind::IfLet { scrutinee, then, else_, .. } => {
                 self.walk_expr(scrutinee, None);
-                self.walk_block(then);
+                self.walk_block_to(then, expected);
                 if let Some(eb) = else_ {
                     match eb {
-                        ElseBranch::Block(b) => self.walk_block(b),
-                        ElseBranch::If(x) => self.walk_expr(x, None),
+                        ElseBranch::Block(b) => self.walk_block_to(b, expected),
+                        ElseBranch::If(x) => self.walk_expr(x, expected),
                     }
                 }
             }
@@ -55212,8 +55215,8 @@ impl MapLitAnnotator<'_> {
                 for arm in arms.iter_mut() {
                     if let Some(g) = &mut arm.guard { self.walk_expr(g, None); }
                     match &mut arm.body {
-                        MatchArmBody::Expr(x) => self.walk_expr(x, None),
-                        MatchArmBody::Block(b) => self.walk_block(b),
+                        MatchArmBody::Expr(x) => self.walk_expr(x, expected),
+                        MatchArmBody::Block(b) => self.walk_block_to(b, expected),
                     }
                 }
             }

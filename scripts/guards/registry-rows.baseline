@@ -1437,12 +1437,33 @@
 #   #1439, #1443 land beside main's #1441, #1442, #1444-#1448; all of those leave gaps).
 # 2026-10-01, integrator nova-20: rows -> 1401, max -> 1450 (merge of the cloud session's p1343: #1449 (K1, mut x T of a generic free fn loses the write, blocks the tag) and #1450 (K2, overlapping generic overloads T vs []T)).
 # 2026-10-01, integrator nova-20: rows -> 1403, max -> 1452 (merge of spec/d55-str-bytes: #1451 (K2, let/return of a non-identifier str into []u8 fails in C) and #1452 (K1, str accepted in a mut []u8 position -- writes into the string's bytes; blocks the tag)).
-# 2026-10-01, облачная сессия №1459 (номер — интегратор): rows 1406 -> 1407, max 1456 -> 1459.
-#   №1459 — Карина не разбирает `T { @f }` (D52 правило 1), четыре отказа разбора самосборки.
-#   1457 и 1458 выданы соседним облачным сессиям, в этом клоне их строк нет — в gaps до слияния.
-rows=1407
-max=1459
 # 2026-10-01, integrator nova-20: rows -> 1406, max -> 1456 (merge of the cloud session's p1338: #1454 (K2, constructor receiver with an undetermined parameter), #1455 (K1, arithmetic on a void* operand emits a silent 0 -- blocks the tag), #1456 (K3, unknown Option method passes the checker); 1453 reserved for the handler-capture regression, leaves gaps).
+# 2026-10-01, integrator nova-20: rows -> 1407, max -> 1460 (merge of the cloud session's p1179: #1460 (K2, a function and a type of one name in one module -- verdict depends on order; owner's question); 1457-1459 issued to cloud sessions, leave gaps).
+# 2026-10-01, integrator nova-20: rows -> 1408, max -> 1461 (merge of the cloud session's p1442: #1461 (K1, novac loses live objects under GC -- the compiler's answer depends on the environment; on the path of Carina's 0.2 double build)).
+# 2026-10-01, integrator nova-20: rows -> 1411, max -> 1464 (merge of the cloud session's p1448: #1462 (K1, as into a newtype from a Result prints an address -- blocks the oracle tag), #1463 (K2, curly literal of a named tuple fails in C), #1464 (K3, spread array without D55 element wrap)).
+# 2026-10-01, integrator nova-20: rows -> 1415, max -> 1469 (merge of the cloud session's p1406: #1466 (K1, consume rebinding inside detach/spawn consume closes the capture twice -- a live #480 carrier), #1467-#1469 (K2); 1465 issued to the assistant, leaves gaps).
+# 2026-10-01, integrator nova-20: rows -> 1417, max -> 1471 (merge of the cloud session's p1100: #1470 (K1, the checker judges consume by name, not by the chosen overload) and #1471 (K1, a call through a function value double-cleans) -- both block the oracle tag).
+# 2026-10-01, integrator nova-20: rows -> 1418, max -> 1471 (merge of guards/novac-module-tests: #1465 (assistant; K2, a fn without -> T whose tail if mixes int and str fails in C -- a spec decision) lands, leaves gaps).
+# 2026-10-01, integrator nova-20: rows -> 1420, max -> 1472 (merge of p1453 (background agent): #1453 (regression of #1441, capture bodies nested in a lambda) lands; #1472 (K2, spawn in a lambda body fails in C, old) numbered here).
+# 2026-10-01, облачная сессия №1459 (номер — интегратор; слияние origin/integrate 1d71ba01c): rows 1420 -> 1421,
+#   max 1472 (без изменений). №1459 — Карина не разбирает `T { @f }` (D52 правило 1), четыре отказа разбора
+#   самосборки; 1459 уходит из gaps, 1457 и 1458 (соседние облачные сессии) остаются дырами.
+rows=1421
+max=1472
+rows=1420
+max=1472
+rows=1418
+max=1471
+rows=1417
+max=1471
+rows=1415
+max=1469
+rows=1411
+max=1464
+rows=1408
+max=1461
+rows=1407
+max=1460
 rows=1406
 max=1456
 rows=1403
@@ -2040,7 +2061,7 @@ stale_gaps=0
 # nomer I v gaps=, I so strokoy schitaetsya 'protuhshey dyroy'.
 # 2026-09-21: №1209 ПРИЕХАЛ и СНЯТ из gaps=
 # (писал интегратор, как и планировалось). №1210-1211 всё ещё ждёт Карину.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1453,1457-1458
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1457-1458
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding

@@ -84,6 +84,17 @@ void nova_runtime_spawn_into(struct NovaFiberQueue* scope,
  * если runtime не initialized (main wake handle отсутствует). */
 void nova_runtime_signal_main(void);
 
+/* 221.1 №1406: wake the (main) thread driving a bootstrap scope after
+ * `nova_goready` made one of its fibers ready from another thread. Called by
+ * `nova_goready`'s `dispatch_ready == NULL` branch; no-op on the main thread. */
+void nova_runtime_poke_bootstrap_driver(void);
+
+/* 221.1 №1406: hold `_main_wake` referenced across one blocking pump wait on
+ * the main thread (see `_nova_pump_wait_once`, fibers.h); returns whether a
+ * hold was taken — pair `true` with `nova_runtime_main_wake_unhold`. */
+bool nova_runtime_main_wake_hold(uv_loop_t* loop);
+void nova_runtime_main_wake_unhold(void);
+
 /* Plan 83.4.5.2 Ф.1 (2026-05-23): orphan fiber spawn — fire-and-forget
  * без bound supervised-scope. Production-grade default для D50
  * `detach { body }` (паритет с Go `go fn()` / tokio::spawn / Kotlin

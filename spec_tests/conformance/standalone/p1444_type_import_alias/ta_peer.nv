@@ -1,0 +1,14 @@
+// #1444: a second importer of `ta_src.Box` and `ta_src.Shape`, by their
+// declared names.
+module p1444_type_import_alias.ta_peer
+
+import ./ta_src.{Box, Shape, mk, area}
+
+export fn peer_mk(v int) -> Box => mk(v + 1)
+
+export fn peer_get(b Box) -> int => b.v
+
+export fn peer_area(n int) -> int {
+    ro s Shape = Shape.Sq(n - 1)
+    area(s)
+}

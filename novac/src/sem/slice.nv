@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Donor: Swift's `Collection` subscript by a range (`a[lo..<hi]`, `a[lo...]`) --
-// the bracket form is sugar for ONE method taking a range, and an open side is
-// filled from the collection's own index space (`startIndex`/`endIndex`), not
-// from a length field. std says the same through `@index(r Range)` and
-// `@end_index()` (plan 284, the `RangeIndex` role).
+// Donor: Rust core `ops::Index` over ranges (`impl Index<RangeFrom<usize>> for [T]`) --
+// the bracket form is sugar for ONE index method taking a range, and an open
+// side is filled from the collection itself; NOT taken: one range TYPE per
+// open side (RangeFrom/RangeTo/RangeFull) -- std has one `Range`, and the open
+// upper side is the receiver's `end_index()` (plan 284, the RangeIndex role).
 // Role: the ONE reading of a slice `x[lo..hi]` (registry #1170, plan 274.7
 //   wave U-2/U-3): which bounds are written, and which C symbol the shell
 //   carries for the `index(Range)` call a slice is (D470 section 5). The

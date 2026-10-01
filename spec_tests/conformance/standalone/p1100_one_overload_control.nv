@@ -1,0 +1,31 @@
+// EXPECT_RUNTIME_PANIC p1100 cleanup fired
+//
+// Registry 221.1 #1100, CONTROL: one overload only, taking `g` by view. No
+// `consume` position exists under the name, so `g` stays armed and its
+// auto-`@cleanup` runs at the end of `run` (panic = sentinel). This file was
+// already green before #1100; it proves the sentinel works, so the
+// two-overload files measure the union and nothing else.
+
+module standalone.p1100_one_overload_control
+
+type Boom consume { id int }
+
+fn Boom consume @cleanup(_o ScopeOutcome) -> () {
+    panic("p1100 cleanup fired")
+}
+
+fn Boom consume @defuse() -> () { }
+
+fn mk(v int) -> Boom => { id: v }
+
+fn use(x Boom, tag int) -> int => tag
+
+fn run() -> int {
+    consume g = mk(7)
+    use(g, 1)
+}
+
+fn main() Io -> () {
+    ro r = run()
+    println("p1100 result=${r} no cleanup")
+}

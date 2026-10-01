@@ -436,8 +436,17 @@ test "a for header reads the ONE pattern door; refutable forms refuse by positio
 export type Vec[T] { n int }\n")
 
     // A RECORD pattern in the header: the element lands in a temporary and
-    // the fields bind by name through the one recursive door.
-    ro (d, c) = compile_to_c("type Pair { a int, b int }\n\
+    // the fields bind by name through the one recursive door. The walk reads
+    // the vector through the shell's `len` and `index` of its instance, and
+    // since 2026-10-01 the checker ASKS the shell for them (a `for` over an
+    // uncarried instance passed check and died in clang); the lifted surface
+    // carries no `Vec[Pair]` -- no probe knows this test's type -- so this
+    // shell is the lifted one plus that instance, and the pin stays on the
+    // pattern door it was written for.
+    mut shell = interop_surface()
+    shell.add("Vec____Nova_Pair_p_method_len")
+    shell.add("Vec____Nova_Pair_p_method_index")
+    ro (d, c) = compile_to_c_with("type Pair { a int, b int }\n\
 fn show(rs []Pair) -> () {\n\
  for { a, .. } in rs {\n\
   println(a)\n\
@@ -445,7 +454,7 @@ fn show(rs []Pair) -> () {\n\
 }\n\
 fn main() {\n\
  println(1)\n\
-}", std)
+}", parse_decls(std), shell)
     assert(d.len() == 0, messages(d))
     assert(c.contains("_method_index("), c)
     assert(c.contains(".a"), c)

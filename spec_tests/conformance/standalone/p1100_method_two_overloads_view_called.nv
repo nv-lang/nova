@@ -1,0 +1,37 @@
+// EXPECT_RUNTIME_PANIC p1100 cleanup fired
+//
+// Registry 221.1 #1100, D432 §4 point 3 for a METHOD argument
+// (`recv.method(g)`): `h.take(g, 1)` resolves to the view overload, so `g`'s
+// auto-`@cleanup` must run at the end of `run` (the panic is the sentinel).
+
+module standalone.p1100_method_two_overloads_view_called
+
+type Boom consume { id int }
+
+fn Boom consume @cleanup(_o ScopeOutcome) -> () {
+    panic("p1100 cleanup fired")
+}
+
+fn Boom consume @defuse() -> () { }
+
+fn mk(v int) -> Boom => { id: v }
+
+type Holder { n int }
+
+fn Holder @take(consume x Boom) -> int {
+    x.defuse()
+    9
+}
+
+fn Holder @take(x Boom, tag int) -> int => tag + @n
+
+fn run() -> int {
+    ro h = Holder { n: 0 }
+    consume g = mk(7)
+    h.take(g, 1)
+}
+
+fn main() Io -> () {
+    ro r = run()
+    println("p1100 result=${r} no cleanup")
+}

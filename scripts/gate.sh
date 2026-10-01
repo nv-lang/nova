@@ -1035,6 +1035,9 @@ DOC_EXAMPLES_SHOW_MATCHES=0 guard "$ROOT/scripts/guards/check-doc-examples.sh" "
 step loop "handoff-labels (метка раздела ролевой записки — полная дата, а не четыре цифры: 2026-09-17, шесть схем в двух файлах)"
 guard "$ROOT/scripts/guards/check-handoff-labels.py" "$ROOT" || fail "handoff-labels (метка раздела записки не есть полная дата: заведи \`0-ГГГГ-ММ-ДД[-часть суток]\`, прежнюю — в базу; см. вывод выше)"
 
+step loop "task-selection-order (порядок выбора задач в /load-background и /cloud-task: novac-gate/0.2 -> 274.10 -> 274.11 -> оракул со связью; БЛОКИРУЕТ ТЕГ не судит; САМОПРОВЕРКА — слово владельца 2026-10-01)"
+guard "$ROOT/scripts/guards/check-task-selection-order.py" "$ROOT" || fail "task-selection-order (порядок выбора задач или САМОПРОВЕРКА в командах съехали от требований владельца 2026-10-01; см. вывод выше)"
+
 step loop "handoff-home (передача остановки лежит в РОЛЕВОЙ записке, а не в игнорируемом docs/.sessions — слово владельца 2026-09-18)"
 guard "$ROOT/scripts/guards/check-handoff-home.py" "$ROOT" || fail "handoff-home (передача написана в каталог под .gitignore либо /stop перестал называть ролевую записку: см. вывод выше)"
 

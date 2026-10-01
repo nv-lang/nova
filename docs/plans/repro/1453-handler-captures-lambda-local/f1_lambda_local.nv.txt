@@ -1,0 +1,27 @@
+// f1: a lambda declares a `mut` local, and an effect-handler literal inside the same
+// lambda writes it. The shape of claude-limits serve_mode before dfc7e5e.
+module hcap.f1_lambda_local
+
+type Tally {
+    mut n int
+}
+
+type Hit effect {
+    hit() -> ()
+}
+
+fn run(body fn() -> int) -> int => body()
+
+fn main() Io {
+    ro got = run(fn() -> int {
+        mut t = Tally { n: 0 }
+        with Hit = effect Hit {
+            hit() -> () { t.n += 1 }
+        } {
+            Hit.hit()
+            Hit.hit()
+        }
+        t.n
+    })
+    println("f1 ${got}")
+}
