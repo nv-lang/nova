@@ -147,9 +147,69 @@ stub_case "PASS: 0  FAIL: 0" FAIL \
 stub_case "PASS: 1  FAIL: 0" FAIL \
     "счёт не сошёлся (1 из 2) — красный" "счёт не сошёлся"
 stub_case "PASS: 1  FAIL: 0  SKIP: 1 (skipped)" PASS \
-    "пропуск учтён: 1+1=2 — зелёный, но сказано вслух" "пропущено тестов"
+    "пропуск учтён: 1+1=2 — зелёный, но сказано вслух" "пропущено модулей"
 stub_case "PASS: 2  FAIL: 0" PASS \
     "здоровый случай: 2 из 2 — зелёный" "счёт сошёлся"
+
+# -- 10-12. ЕДИНИЦА ПРОГОНА — КАТАЛОГ МОДУЛЯ (правка 2026-10-01). Раннер
+#          собирает папку-модуль одной единицей вместе со ВСЕМИ её `*_test.nv`,
+#          и прежний страж, передавая файлы поштучно, собирал модуль novac
+#          `pipeline` 23 раза (CI обрывал шаг пределом 600с). Клетки держат
+#          три стороны новой единицы: страж передаёт КАТАЛОГ, а не файлы (10);
+#          в каталоге проверяется и НЕ первый файл (11); каталог из двух
+#          модулей не проходит молча (12).
+PAIR="$T/pair/novac/src/one"
+mkdir -p "$PAIR"
+echo "module one" > "$PAIR/x_test.nv"
+echo "module one" > "$PAIR/y_test.nv"
+cat > "$T/argstub.sh" <<SH
+#!/bin/sh
+printf '%s\n' "\$@" > "$T/args"
+echo "PASS: 1  FAIL: 0"
+exit 0
+SH
+chmod +x "$T/argstub.sh"
+if sh "$G" "$T/pair" "$T/argstub.sh" > "$T/out10" 2> "$T/err10"; then
+    if grep -q '_test\.nv' "$T/args"; then
+        bad "страж передал оракулу ФАЙЛЫ, а не каталог: [$(tr '\n' ' ' < "$T/args")]"
+    elif [ "$(grep -c '/novac/src/one$' "$T/args")" -ne 1 ]; then
+        bad "каталог модуля не передан ровно один раз: [$(tr '\n' ' ' < "$T/args")]"
+    elif ! grep -q "модулей 1 (файлов 2)" "$T/out10"; then
+        bad "зелёный, но не назвал модули и файлы: [$(head -n 1 "$T/out10")]"
+    else
+        ok "два тестовых файла одного модуля — один каталог оракулу, зелёный"
+    fi
+else
+    bad "каталог из двух файлов одного модуля красный: [$(head -n 2 "$T/err10")]"
+fi
+
+if [ -f "$ORACLE" ]; then
+    LIVE="$T/live/novac/src/one"
+    mkdir -p "$LIVE"
+    printf 'module one\n\ntest "first passes" {\n    assert(1 == 1)\n}\n' > "$LIVE/a_test.nv"
+    printf 'module one\n\ntest "second fails" {\n    assert(1 == 2)\n}\n' > "$LIVE/b_test.nv"
+    if sh "$G" "$T/live" "$ORACLE" > "$T/out11" 2> "$T/err11"; then
+        bad "падение во ВТОРОМ файле модуля не покраснело: [$(head -n 1 "$T/out11")]"
+    elif grep -q "модульных тестов упало" "$T/err11" && grep -q "b_test.nv" "$T/err11"; then
+        ok "падение в не первом файле модуля — красный, файл назван"
+    else
+        bad "красный, но не про b_test.nv: [$(head -n 2 "$T/err11")]"
+    fi
+
+    MIX="$T/mix/novac/src/two"
+    mkdir -p "$MIX"
+    printf 'module ma\n\ntest "ma" {\n    assert(1 == 1)\n}\n' > "$MIX/a_test.nv"
+    printf 'module mb\n\ntest "mb" {\n    assert(1 == 1)\n}\n' > "$MIX/b_test.nv"
+    if sh "$G" "$T/mix" "$ORACLE" > "$T/out12" 2> "$T/err12"; then
+        bad "каталог из двух модулей прошёл молча: [$(head -n 1 "$T/out12")]"
+    elif grep -q "счёт не сошёлся" "$T/err12"; then
+        ok "каталог из двух модулей — красный по счёту"
+    else
+        bad "красный, но не про счёт: [$(head -n 2 "$T/err12")]"
+    fi
+else
+    ok "оракула нет — клетки 11-12 пропущены осознанно"
+fi
 
 if [ "$fails" -ne 0 ]; then
     echo "итог: FAIL $fails" >&2
