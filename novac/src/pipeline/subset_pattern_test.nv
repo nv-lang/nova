@@ -711,3 +711,32 @@ fn main() {\n\
     assert(d6[0].message.contains("not interpolated"), d6[0].message)
     assert(d6[0].code == "E_NOVAC_LANG", d6[0].code)
 }
+
+test "a disjunction BELOW an arm's root tests its heads (registry 1568's wave)" {
+    // `Xx(Pp | Qq)` tested `Xx` only and took `Xx(Rr)`: the inner heads are now
+    // one more nested test, spelled like the arm head's own `|` test. CONTROL:
+    // `Xx(_)` tests no inner tag.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("type In enum Pp | Qq | Rr\n\
+type Out enum Xx(In) | Yy\n\
+fn k(o Out) -> int => match o {\n\
+ Xx(Pp | Qq) => 1\n\
+ _ => 0\n\
+}\n\
+fn main() {\n\
+ println(k(Yy))\n\
+}", std)
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("_In_Qq)"), "the inner alternatives' heads are tested")
+    ro (d0, c0) = compile_to_c("type In enum Pp | Qq | Rr\n\
+type Out enum Xx(In) | Yy\n\
+fn k(o Out) -> int => match o {\n\
+ Xx(_) => 1\n\
+ _ => 0\n\
+}\n\
+fn main() {\n\
+ println(k(Yy))\n\
+}", std)
+    assert(d0.len() == 0, messages(d0))
+    assert(!c0.contains("_In_Qq)"), "CONTROL: `_` tests no inner tag")
+}

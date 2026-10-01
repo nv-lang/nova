@@ -380,9 +380,9 @@ fn Lowerer mut @lower_sub(sub Node, ty TyId, base Local, rd SubRead, pre []str, 
 
 /// Does the subpattern test something of its own? A literal, a variant head (a
 /// bare payload-less one included -- `X(Q)` read `Q` as a binder and died on a
-/// type nobody recorded, registry 1542), a record headed by a variant, and an
-/// array (its length). A binder, `_`, a tuple and a plain record match any
-/// value; a nested disjunction binds through its own switch (lower_disj.nv).
+/// type nobody recorded, registry 1542), a record headed by a variant, an array
+/// (its length) and a nested disjunction (its heads). A binder, `_`, a tuple and
+/// a plain record match any value.
 fn Lowerer @sub_has_test(sub Node, ty TyId) -> bool {
     ro sh = pattern_shape(sub)
     if sh == PatShape.Lit || sh == PatShape.Variant || sh == PatShape.Array { return true }
@@ -390,7 +390,12 @@ fn Lowerer @sub_has_test(sub Node, ty TyId) -> bool {
     if sh == PatShape.Bind || sh == PatShape.Record {
         return is_vrow(variant_in_sum(@ctx, ty, pattern_head_text(sub)) ?? no_vrow())
     }
-    // `_`, a positional bracket, a nested `|`: no head of their own.
+    // A nested `|` tests its alternatives' heads (`X(P | Q)` took `X(R)` until
+    // registry 1568's wave): `@pattern_of` spells them, as the arm head does at the
+    // root. Over a shell Option the heads are the Option door's, which a `|` does
+    // not reach -- unchanged there.
+    if sh == PatShape.Disj { return !is_ty(option_payload(@ctx, ty)) }
+    // `_`, a positional bracket: no head of their own.
     false
 }
 
