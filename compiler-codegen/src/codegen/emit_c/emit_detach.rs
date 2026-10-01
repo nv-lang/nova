@@ -225,9 +225,9 @@ impl CEmitter {
         self.emit_spawn_ctx_anchor_field();
         for (cap, ty, by_value) in &captures {
             if *by_value {
-                let _ = writeln!(self.lambda_forward_decls, "    {} {};", ty, cap);
+                let _ = writeln!(self.lambda_forward_decls, "    {} {};", ty, Self::mangle_field_name(cap));
             } else {
-                let _ = writeln!(self.lambda_forward_decls, "    {}* {};", ty, cap);
+                let _ = writeln!(self.lambda_forward_decls, "    {}* {};", ty, Self::mangle_field_name(cap));
             }
         }
         let _ = writeln!(self.lambda_forward_decls, "}} {};", ctx_ty);
@@ -520,12 +520,15 @@ impl CEmitter {
             // multi-field value-struct param triggers `free_fn_byref_flag`/
             // `method_byref_flag` and lands in `ref_params` regardless).
             let outer_is_ref_param = self.ref_params.contains(cap);
+            // #1440/#1446: the lookups above key on the Nova name; what is
+            // WRITTEN into C -- the ctx field and the local -- is its door name.
+            let cap_c = Self::mangle_field_name(cap);
             let access_outer = if is_outer_cap {
-                if outer_by_value { format!("_c->{}", cap) }
-                else { format!("(*_c->{})", cap) }
+                if outer_by_value { format!("_c->{}", cap_c) }
+                else { format!("(*_c->{})", cap_c) }
             } else if outer_is_ref_param {
-                format!("(*{})", cap)
-            } else { cap.clone() };
+                format!("(*{})", cap_c)
+            } else { cap_c.clone() };
             // Plan 248 (wave 3, second mega-CU regression,
             // [M-detach-box-mut-param-value-copy-diverges]): is the capture's
             // SOURCE already a pointer to storage whose lifetime is someone
@@ -542,7 +545,7 @@ impl CEmitter {
             // and its own №240 doc, for THAT case).
             let source_is_already_ptr = (is_outer_cap && !outer_by_value) || outer_is_ref_param;
             if *by_value {
-                self.line(&format!("{ctx_var}->{cap} = {access_outer};"));
+                self.line(&format!("{ctx_var}->{cap_c} = {access_outer};"));
             } else if source_is_already_ptr {
                 // `access_outer` above DEREFERENCES the source pointer down
                 // to a VALUE (right for the `*by_value` read-only-snapshot
@@ -567,8 +570,8 @@ impl CEmitter {
                 // either — there is no box, later reads of `cap` in THIS
                 // function's own body are untouched (still plain `n`/
                 // `(*n)`, unaffected by anything a `detach{}` did with it).
-                let ptr_expr = if is_outer_cap { format!("_c->{}", cap) } else { cap.clone() };
-                self.line(&format!("{ctx_var}->{cap} = {ptr_expr};"));
+                let ptr_expr = if is_outer_cap { format!("_c->{}", cap_c) } else { cap_c.clone() };
+                self.line(&format!("{ctx_var}->{cap_c} = {ptr_expr};"));
             } else {
                 let box_ptr = if let Some(existing) = self.var_boxed.get(cap) {
                     // Var already heap-promoted by an earlier closure/handler/
@@ -637,7 +640,7 @@ impl CEmitter {
                     self.lazy_detach_boxes.insert(bv.clone());
                     bv
                 };
-                self.line(&format!("{ctx_var}->{cap} = {box_ptr};"));
+                self.line(&format!("{ctx_var}->{cap_c} = {box_ptr};"));
             }
         }
 
