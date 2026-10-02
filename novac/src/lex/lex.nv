@@ -309,6 +309,17 @@ fn decimal_run_end(b []u8, n int, i int) -> int {
     n
 }
 
+/// The end of a HEX digit run that starts at `i`, the first digit after
+/// `0x` (D44 `hex-int`): the same rule as the decimal run -- `_` only between
+/// two hex digits, so `0xFF_FF` runs whole and `0xFF_` stops at the `_`.
+fn hex_run_end(b []u8, n int, i int) -> int {
+    for k in i..n {
+        ro separator = b[k] == ('_' as u8) && k > i && is_hex_digit(byte_at(b, n, k + 1))
+        if !is_hex_digit(b[k]) && !separator { return k }
+    }
+    n
+}
+
 /// The end of an EXPONENT at `i` (D44: `e`/`E`, an optional sign, a
 /// decimal run), or `i` itself when no whole exponent stands there -- a
 /// bare `1e` or `1e+` is no exponent, and the identifier byte refuses it.
@@ -659,25 +670,22 @@ export fn lex(src str) -> []Token {
         } else if is_digit(c) {
             i = decimal_run_end(b, n, i)
             kind = TokenKind.IntLit
-            // `1_000` (once also `0xFF` and `1e9`) is a LANGUAGE form the E1
-            // subset does not lex yet -- and once it did not refuse it either: the
-            // digits stopped at the underscore and `1_000` became IntLit(1)
-            // plus identifier `_000`, which parses, checks and COMPILES to
-            // the number one (274.3/F21). A silent misread is the worst of
-            // the three outcomes; the honest one is a refusal that names the
-            // whole run. The bytes stay ours -- lossless -- so E2 turns this
-            // branch into real lexing without moving the boundary.
+            // `1_000` is one IntLit with its separator kept in the text (D44;
+            // the readers ask `literal_digits`, sem/literal_spelling.nv). It once
+            // became IntLit(1) plus the name `_000` -- parsed, checked and
+            // COMPILED to the number one (274.3/F21) -- and then a refusal of
+            // the whole run until #1605 gave every reader one door.
             // HEX (the hex wave): a run that is exactly `0` followed by
-            // `x` and a hex digit continues as one IntLit -- `0x0A` -- and
-            // keeps its text verbatim (C reads the same spelling). A broken
-            // tail (`0xZZ`, bare `0x`) falls through to the touching-ident
-            // refusal right below, which eats the whole run as one ErrorTok.
+            // `x` and a hex digit continues as one IntLit -- `0x0A`, `0xFF_FF`
+            // -- and keeps its text (C reads the same spelling once the
+            // separators are dropped). A broken tail (`0xZZ`, bare `0x`,
+            // `0x_FF`) falls through to the touching-ident refusal right
+            // below, which eats the whole run as one ErrorTok.
             mut hex_head = false
             if i == start + 1 && b[start] == ('0' as u8) &&
                 i + 1 < n && b[i] == ('x' as u8) && is_hex_digit(b[i + 1]) {
                 hex_head = true
-                i += 1
-                while i < n && is_hex_digit(b[i]) { i += 1 }
+                i = hex_run_end(b, n, i + 1)
             } else {
                 // Not a hex head: a plain decimal run, decided above.
             }
@@ -699,15 +707,6 @@ export fn lex(src str) -> []Token {
                 kind = TokenKind.FloatLit
             } else {
                 // No exponent: the token is what the run and fraction made it.
-            }
-            // An INTEGER spelled with underscores (`1_000`) is a D44 form the
-            // integer readers (magnitude, C spelling, cast folding) do not
-            // strip yet: refused whole, as before, rather than misread. A
-            // float's underscores are stripped at its one C spelling door.
-            if kind == TokenKind.IntLit && src[start..i].contains("_") {
-                kind = TokenKind.ErrorTok
-            } else {
-                // No integer underscore: the kind decided above stands.
             }
             // A run touching an identifier byte is a refusal (`1abc`, `1e`,
             // `1_e5`, `1.5_`); a run that ends cleanly keeps its kind (P31).

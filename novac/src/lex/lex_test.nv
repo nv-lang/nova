@@ -171,20 +171,21 @@ test "F19: a string literal does not cross a line" {
     assert(saw_ident_after, "the next line must lex as code, not as literal text")
 }
 
-test "F21: a digit run touching an identifier byte is one refusal" {
+test "F21: a separated integer is ONE IntLit, never IntLit(1) plus a name" {
     // `1_000` used to lex as IntLit(1) plus identifier `_000` -- it parsed,
-    // checked and COMPILED to the number one.
-    ro toks = lex("ro x = 1_000")
-    mut ints = 0
-    mut errors = 0
-    for t in toks {
-        // Counting is an expression too: add one when it matches, zero when
-        // it does not -- the absent branch has nothing to say.
-        ints += if t.kind == TokenKind.IntLit { 1 } else { 0 }
-        errors += if t.kind == TokenKind.ErrorTok { 1 } else { 0 }
+    // checked and COMPILED to the number one; then it was refused whole; since
+    // #1605 it is the D44 literal it spells, separators kept in its text.
+    for form in ["1_000", "0xFF_FF", "1_0", "0x1_0"] {
+        ro toks = lex(form)
+        assert(toks[0].kind == TokenKind.IntLit, "a separated integer must lex as one IntLit")
+        assert(toks[0].text == form, "the integer token must carry the whole spelling")
+        assert(toks[1].kind == TokenKind.Eof, "nothing may be left after the integer")
     }
-    assert(errors == 1, "1_000 must be refused as one run")
-    assert(ints == 0, "1_000 must not leave an IntLit behind")
+    // A run touching an identifier byte is still one refusal.
+    for broken in ["1abc", "1_", "100_", "0x_FF", "0xFF_", "1__0"] {
+        assert(lex(broken)[0].kind == TokenKind.ErrorTok, "a malformed integer must be refused whole")
+        assert(lex(broken)[1].kind == TokenKind.Eof, "the refusal must eat the whole run")
+    }
 }
 
 test "#1605: every D44 float form is ONE FloatLit, its text whole" {

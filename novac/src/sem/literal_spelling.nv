@@ -29,22 +29,28 @@ import ../diag.{ice}
 /// drops the leading zeros -- the same strip the magnitude judge already
 /// performs (literal_rules.nv): ONE answer to "what number is written
 /// here", at the one door both emitters read. A hex literal keeps its
-/// text: C reads `0x` exactly as Nova does.
-export fn int_literal_c_text(t str) -> str {
+/// digits: C reads `0x` exactly as Nova does. Both go through
+/// `literal_digits` first -- C has no `_`.
+export fn int_literal_c_text(text str) -> str {
+    ro t = literal_digits(text)
     if t.byte_len() > 2 && t[..2] == "0x" { return t }
     mut i = 0
     while i + 1 < t.byte_len() && t[i..i + 1] == "0" { i += 1 }
     t[i..]
 }
 
-/// The C SPELLING of a float literal's text: D44 separators dropped
-/// (`1_000.5e3` -> `1000.5e3`), the rest verbatim -- C reads the fraction
-/// and the signed exponent exactly as Nova writes them (#1605).
-export fn float_literal_c_text(t str) -> str {
+/// The DIGITS of a numeric literal's text: the D44 separators dropped
+/// (`1_000` -> `1000`, `0xFF_FF` -> `0xFFFF`, `1_000.5e3` -> `1000.5e3`), the
+/// rest verbatim. ONE door for every reader of a literal's number -- the
+/// magnitude judges (check/literal_rules.nv), the integer and float C
+/// spellings -- so no reader meets a separator another one stripped (#1605).
+/// A float's C spelling IS its digits: C reads the fraction and the signed
+/// exponent exactly as Nova writes them.
+export fn literal_digits(t str) -> str {
     // Slices between the separators, not `replace`: the shell Carina links
-    // into carries no `replace` for str yet.
-    // The width is bound first: a method call as the named argument of a
-    // static call is an ICE in novac's own check (registry, sweep 5).
+    // into carries no `replace` for str yet. The width is bound first: a
+    // method call as the named argument of a static call is an ICE in
+    // novac's own check (registry 1618).
     ro width = t.byte_len()
     consume out = StringBuilder.new(cap: width)
     mut from = 0
@@ -53,7 +59,7 @@ export fn float_literal_c_text(t str) -> str {
             out.append(t[from..i])
             from = i + 1
         } else {
-            // A digit, the dot, the exponent letter or its sign: kept.
+            // A digit, the `0x` head, the dot, the exponent letter or its sign: kept.
         }
     }
     out.append(t[from..])
