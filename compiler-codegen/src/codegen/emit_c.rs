@@ -44482,7 +44482,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     && (!obj_ty.starts_with("Nova_") || obj_ty.ends_with("**"))
                     && !obj_ty.starts_with("NovaArray_")
                     && !obj_ty.starts_with("NovaVtable_")
-                    && obj_ty != "void*"
+                    && obj_ty != "void*" && !self.starred_value_is_place(obj, &obj_ty)
                 {
                     let is_const = obj_ty.starts_with("const ");
                     // D216 амендмент 2026-09-25 (план 246): `read_consume`/
