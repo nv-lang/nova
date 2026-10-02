@@ -203,53 +203,6 @@ fn Lowerer mut @lower_if_let_value(n Node, res_t TyId) -> Local {
     t
 }
 
-/// `a ?? b` as a VALUE: the Option into a temporary, then the payload or the
-/// fallback into a second one. The SHORT CIRCUIT is the point -- the fallback
-/// is emitted INSIDE the else branch, so its effects run only when the left
-/// side is None, which is what the oracle does and what a reader expects.
-///
-/// The shape is `@lower_if_value`'s and the `(T){0}` initialiser is there for
-/// the same reason: a temporary only conditionally written would otherwise
-/// answer whatever the stack held. Both branches always write here; the
-/// initialiser costs one C token and removes the question.
-fn Lowerer mut @lower_coalesce(e Node) -> Local {
-    ro qk = branch_children(e)
-    ro ot = @out.type_of(qk[0].id_of())
-    ro res_t = @out.type_of(e.id_of())
-    // The Option lands in a TEMPORARY of the body through the one door (274.8 M1):
-    // the hoist of a construction inside it is the printer's. The name is the body's
-    // own -- `temp` numbers it by index -- because the compiler invented it and the
-    // printer has no business spelling `_novac_tmp_t<uniq>` by hand (274.8 M3).
-    ro lo = @ir.temp(ot)
-    @lower_place(qk[0], lo)
-    // The result is a temporary of the body, DECLARED as a statement of it (M2b-2 step 2):
-    // the zero initialiser is a field the lowering sets, not a shape this printer knows.
-    ro lr = @ir.temp(res_t)
-    @ir.declare_zeroed(lr)
-    // The head goes through the ONE door (M2b-2 step 3a), which spells the Some-test
-    // from the local's type and name -- the two values this function used to pass by
-    // hand. Both branches are BLOCKS of the body with one join, and the Some branch's
-    // one statement is the payload read through the one door -- printed by the one
-    // assignment printer, which spells a Temp with the indent the hand-written line
-    // had (measured before the edit, plan 274.8 decision (1)).
-    ro cond = Cond.IsSome(lo)
-    // Same as the if-value: the None branch is a block printed as `} else {`.
-    ro c = @ir.begin_if(cond, ElseShape.Braced)
-    @ir.take_payload(lr, lo)
-    @ir.begin_else(c)
-    // THE FALLBACK LIVES HERE, not above: its hoists and its effects belong
-    // to the None branch alone -- that is the short circuit, in one place.
-    @lower_place(qk[2], lr)
-    @ir.end_if(c)
-    // THE LOCAL ITSELF, not its name (M3a). M2c had this function ask the record for the
-    // name because it handed its caller the TEXT of an expression; now `??` is a value
-    // form that LOWERS, so what the caller needs is the local -- a caller that wants text
-    // asks `decl_of(l).name` at its own end. Handing the local is what lets a value
-    // position take `??` through the one door (`lower_value_source`) instead of the
-    // print-time hoist table, and the hoist is exactly what iced under the walk of step 3b.
-    lr
-}
-
 /// Emit a block whose LAST statement is its value: everything before it runs
 /// as a statement, and the last one is assigned to the `if` temporary.
 ///
@@ -826,7 +779,7 @@ fn Lowerer mut @hoist_sealed_args(call Node) -> () {
         // third arm. std's `Vec[T] @get` returns `Some(unsafe { .. })`; check
         // took it, the printer had no arm, and every `get` instance the shell
         // lacks died in emit.
-        if ck != NodeKind.IfExpr && ck != NodeKind.Coalesce && ck != NodeKind.Unsafe { continue }
+        if ck != NodeKind.IfExpr && ck != NodeKind.Coalesce && ck != NodeKind.Try && ck != NodeKind.Unsafe { continue }
         ro t = @out.type_if_known(c.id_of())
         if !is_ty(t) {
             // SILENT-OK: refused where it was typed; nothing to hoist.
@@ -939,6 +892,8 @@ fn Lowerer mut @lower_value_source(e Node, ty TyId) -> Option[Local] {
         // door for every value position at once -- the class, not the two carriers.
         return Some(@lower_coalesce(e))
     }
+    // `x?` (D85) lays down the same Some-test, and its None branch RETURNS (lower_coalesce.nv).
+    if k == NodeKind.Try { return Some(@lower_try(e)) }
     if k == NodeKind.IfExpr || k == NodeKind.IfStmt {
         // A tail `if` and an if-expression lay down the same pair (wave B14); the door
         // hands back the local it declared.

@@ -50,7 +50,7 @@ import ../tree.{Node, NodeKind, NodeId, bin_op_of, un_op_of}
 import ../diag.{Diagnostic, ice}
 import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind}
 import ../sem.{expr_leaf_name, is_value_record}
-import ../sem.{file_decls}
+import ../sem.{file_decls, is_coalesce_return}
 import ../sem.{slice_shape_of, ctor_head_variant}
 // Where an arm keeps its body -- the door the lowering has read for waves.
 import ../sem.{arm_body_at, array_of_lparen_at}
@@ -356,15 +356,24 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // expression and the display set; the walk descends into
                     // the slot expressions like anyone else's children.
                 }
-                Coalesce => {
-                    // `a ?? b` (the coalesce wave): typing judges the left
-                    // side's Option and refuses `?? return`; the walk descends
-                    // into both sides like anyone else's children.
-                }
-                Try => {
-                    // `a?` (D85, registry #1264): `@type_expr`'s own Try
-                    // arm refuses it by name; the walk descends into the
-                    // operand like anyone else's child.
+                Coalesce | Try => {
+                    // `a ?? b` (the coalesce wave) and `a?` (D85): typing judges
+                    // the container and the body's return (try_rules.nv). Both
+                    // LAY DOWN BLOCKS, and a form that RETURNS -- `a?`, `a ??
+                    // return r` -- is opened only where it is placed through
+                    // `@lower_value_source` with the graph still open: an
+                    // initializer, a `return`, a `=>` body, a match arm's body.
+                    // Elsewhere -- an operator, the right of `=`, a method's
+                    // argument, a condition -- the printer meets it after the
+                    // seal: a plain `??` there is the ICE "a block sealed twice"
+                    // (registry TBD, measured 2026-10-02), and the new forms do
+                    // not join it.
+                    if (kind == NodeKind.Try || is_coalesce_return(children)) && !init_pos && !arm_pos {
+                        @report_first_leaf_of(children, SEALED_VALUE_POSITION_MSG)
+                        return
+                    } else {
+                        // A placed position: the walk descends into the children.
+                    }
                 }
                 SelfField => {
                     // Judged, not refused (wave 3g): the receiver is a binding

@@ -165,3 +165,15 @@ export fn returns_receiver(fk []Node) -> bool {
     }
     false
 }
+
+/// Is this `??` (its children: left side, `??`, fallback...) the form whose fallback
+/// is `return` -- `X ?? return R` (D86 amended 2026-09-01)? The parser keeps the
+/// keyword as a leaf, so the question is one leaf's kind; the checker judges the form
+/// and the lowering leaves the body from its None branch, and both ask HERE.
+export fn is_coalesce_return(qk []Node) -> bool {
+    if qk.len() < 3 { return false }
+    match qk[2] {
+        Leaf(t) => t.kind == TokenKind.KwReturn
+        Branch { .. } => false
+    }
+}

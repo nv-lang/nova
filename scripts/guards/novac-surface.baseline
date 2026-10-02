@@ -1002,7 +1002,11 @@ resolve 23
 #   of every method on a value record that D488 replaces.
 # merge of p274-carina-sweep (deliveries 3-4) into the merge train (integrator, 2026-10-02): 336 + 3 (D488:
 #   RECV_COPY_MAX_BYTES, value_recv_by_pointer, row_recv_by_pointer) - 1 (recv_type_name) = 338.
-sem 338
+# 2026-10-02, cloud session p274-carina-cast (step 7, `?` and `?? return`): sem 338 -> 339:
+#   `is_coalesce_return` (sem/node_questions.nv) -- is a `??` the `X ?? return R` form? Asked by
+#   check (the form's door, the position gate) and lower (the None branch returns); `lower`
+#   may not read the lexer, so the one question about the keyword leaf lives in sem.
+sem 339
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

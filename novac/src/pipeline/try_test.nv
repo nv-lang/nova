@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `check_expr_try` -- the operand's container and the enclosing
+// fn's return are judged together; NOT taken: `From` on the error (D85).
+// Role: acceptance tests of `x?` (D85) and `X ?? return R` (D86 amended
+// 2026-09-01): an Option `?` in an Option body returns the `None` of the BODY's
+// instance, and every other pair is refused under the oracle's own code.
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file; fixtures try_option/ and
+// coalesce_return/ through check-novac-no-cascade and the differential.
+// novac/src/pipeline/try_test.nv -- the early-return value forms.
+
+module novac.pipeline
+
+test "`x?` on an Option returns the None of the body's own instance; the other pairs carry D85's codes" {
+    mut std = std_decls()
+    std.push("module std.o\nexport type Option[T] enum Some(T) | None\nexport type Result[T, E] enum Ok(T) | Err(E)\n")
+    // The operand is an `Option[str]`, the body returns an `Option[int]`: the
+    // early return is the BODY's None, not the operand's.
+    ro (d0, c0) = compile_to_c("fn name(f bool) -> Option[str] => if f { Some(\"ab\") } else { None }\nfn size(f bool) -> Option[int] {\n ro s = name(f)?\n Some(s.byte_len())\n}\nfn main() {\n println(size(true) ?? -1)\n}", std)
+    assert(d0.len() == 0, messages(d0))
+    assert(c0.contains("return ((NovaOpt_nova_int){.tag = NOVA_TAG_Option_None});"), c0)
+    // An Option in a Result body, a Result in an Option body: the oracle's codes.
+    ro (d1, _) = compile_to_c("fn f(o Option[int]) -> Result[int, str] {\n ro v = o?\n return Ok(v)\n}\nfn main() {\n println(1)\n}", std)
+    assert(messages(d1).contains("E_TRY_OPTION_IN_RESULT_FN"), messages(d1))
+    ro (d2, _) = compile_to_c("fn g(r Result[int, str]) -> Option[int] {\n ro v = r?\n Some(v)\n}\nfn main() {\n println(1)\n}", std)
+    assert(messages(d2).contains("E_TRY_RESULT_IN_OPTION_FN"), messages(d2))
+    // A Result in a Result body is the language's -- refused by the SUBSET's stage,
+    // the one `??` over a Result already names.
+    ro (d3, _) = compile_to_c("fn h(r Result[int, str]) -> Result[int, str] {\n ro v = r?\n return Ok(v)\n}\nfn main() {\n println(1)\n}", std)
+    assert(messages(d3).contains("over a `Result` are not compiled yet"), messages(d3))
+    // CONTROL: `?? return R` in a `-> bool` body compiles; in an Option body it is
+    // the oracle's E_COALESCE_RETURN_FALLBACK.
+    ro (d4, _) = compile_to_c("fn pos(o Option[int]) -> bool {\n ro v = o ?? return false\n v > 0\n}\nfn main() {\n println(1)\n}", std)
+    assert(d4.len() == 0, messages(d4))
+    ro (d5, _) = compile_to_c("fn back(o Option[int]) -> Option[int] {\n ro v = o ?? return None\n Some(v)\n}\nfn main() {\n println(1)\n}", std)
+    assert(messages(d5).contains("E_COALESCE_RETURN_FALLBACK"), messages(d5))
+}

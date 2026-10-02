@@ -1,0 +1,16 @@
+module coalesce_return.neg_1
+
+// ONE seeded cause: `X ?? return R` in a fn that returns an Option. The D86
+// amendment of 2026-09-01 narrowed the retraction but kept it here: the fn
+// has a wrapper to propagate, so `?` is the shorter canon. The oracle refuses
+// it as E_COALESCE_RETURN_FALLBACK, and novac as the language's.
+// NOVAC_EXPECT (D86, E_COALESCE_RETURN_FALLBACK)
+fn first_doubled(xs []int) -> Option[int] {
+    ro x = xs.first() ?? return None
+    println(x)
+    None
+}
+
+fn main() {
+    println(first_doubled([]int.new()) ?? -1)
+}
