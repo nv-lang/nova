@@ -326,7 +326,7 @@ fn parse_dep_source(raw_val: &str) -> DepSource {
                     Ok(req) => GitPin::Version(req),
                     Err(e) => {
                         return DepSource::Invalid(format!(
-                            "git-зависимость: некорректный version `{}`: {}",
+                            "git-зависимость: некорректный version `{}`: {:#}",
                             vr, e,
                         ))
                     }

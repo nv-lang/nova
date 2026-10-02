@@ -209,7 +209,7 @@ pub fn build_missing_vendor_ffi_libs(ffi: &ResolvedFfiConfig, vcvars: Option<&Pa
     for dir in &ffi.vendor_src_dirs {
         let mut srcs: Vec<PathBuf> = Vec::new();
         if let Err(e) = collect_c_files(dir, &mut srcs, /*recursive*/ false) {
-            eprintln!("nova: warning: vendor FFI build: read {}: {}", dir.display(), e);
+            eprintln!("nova: warning: vendor FFI build: read {}: {:#}", dir.display(), e);
             return;
         }
         srcs_by_dir.push(srcs);
@@ -224,11 +224,11 @@ pub fn build_missing_vendor_ffi_libs(ffi: &ResolvedFfiConfig, vcvars: Option<&Pa
         ffi.libs, target_dir.display(), total_srcs
     );
     if let Err(e) = std::fs::create_dir_all(target_dir) {
-        eprintln!("nova: warning: vendor FFI build: create lib_dir {}: {}", target_dir.display(), e);
+        eprintln!("nova: warning: vendor FFI build: create lib_dir {}: {:#}", target_dir.display(), e);
         return;
     }
     if let Err(e) = build_vendor_ffi_lib(&srcs_by_dir, &ffi.include_dirs, target_dir, &ffi.libs, vcvars) {
-        eprintln!("nova: warning: vendor FFI build failed: {}", e);
+        eprintln!("nova: warning: vendor FFI build failed: {:#}", e);
         // Swallowed — caller's first_missing_ffi_lib (SKIP on the test
         // path) / diagnose_missing_vendor_ffi (FATAL on the build path)
         // handles what happens next.
@@ -260,7 +260,7 @@ fn build_vendor_ffi_lib(srcs_by_dir: &[Vec<PathBuf>], include_dirs: &[PathBuf], 
         let _ = std::fs::remove_dir_all(&obj_dir);
     }
     std::fs::create_dir_all(&obj_dir)
-        .map_err(|e| anyhow!("create obj_dir: {}", e))?;
+        .map_err(|e| anyhow!("create obj_dir: {:#}", e))?;
     let total_srcs: usize = srcs_by_dir.iter().map(|v| v.len()).sum();
 
     #[cfg(target_os = "windows")]
@@ -273,7 +273,7 @@ fn build_vendor_ffi_lib(srcs_by_dir: &[Vec<PathBuf>], include_dirs: &[PathBuf], 
             }
             let group_dir = obj_dir.join(group_idx.to_string());
             std::fs::create_dir_all(&group_dir)
-                .map_err(|e| anyhow!("create obj group dir: {}", e))?;
+                .map_err(|e| anyhow!("create obj group dir: {:#}", e))?;
             let rsp = group_dir.join("compile.rsp");
             let mut lines: Vec<String> = Vec::new();
             lines.push("/c /nologo /W0 /MT /O2 /D_WIN32_WINNT=0x0602 /DWIN32_LEAN_AND_MEAN \
@@ -299,7 +299,7 @@ fn build_vendor_ffi_lib(srcs_by_dir: &[Vec<PathBuf>], include_dirs: &[PathBuf], 
             // active codepage — same fix applied to the `lib.exe` archive rsp
             // below (its object-file paths live under the same tree).
             std::fs::write(&rsp, format!("\u{FEFF}{}", lines.join("\n")))
-                .map_err(|e| anyhow!("write rsp: {}", e))?;
+                .map_err(|e| anyhow!("write rsp: {:#}", e))?;
             let inner = format!(
                 "\"call \"{}\" >nul 2>&1 && cl.exe @\"{}\"\"",
                 vcv.display(), rsp.display()
@@ -307,7 +307,7 @@ fn build_vendor_ffi_lib(srcs_by_dir: &[Vec<PathBuf>], include_dirs: &[PathBuf], 
             let mut cmd = Command::new("cmd");
             cmd.raw_arg("/c").raw_arg(&inner);
             let out = cmd.output()
-                .map_err(|e| anyhow!("spawn cl.exe: {}", e))?;
+                .map_err(|e| anyhow!("spawn cl.exe: {:#}", e))?;
             if !out.status.success() {
                 let combined = format!("{}{}",
                     bytes_to_string(&out.stdout),
@@ -337,7 +337,7 @@ fn build_vendor_ffi_lib(srcs_by_dir: &[Vec<PathBuf>], include_dirs: &[PathBuf], 
             // BOM — see compile.rsp comment above (same non-ASCII-path
             // codepage-misdecode risk; obj_files live under the same tree).
             std::fs::write(&lib_rsp, format!("\u{FEFF}{}", lib_lines.join("\n")))
-                .map_err(|e| anyhow!("write lib.rsp: {}", e))?;
+                .map_err(|e| anyhow!("write lib.rsp: {:#}", e))?;
             let lib_inner = format!(
                 "\"call \"{}\" >nul 2>&1 && lib.exe @\"{}\"\"",
                 vcv.display(), lib_rsp.display()
@@ -345,7 +345,7 @@ fn build_vendor_ffi_lib(srcs_by_dir: &[Vec<PathBuf>], include_dirs: &[PathBuf], 
             let mut lib_cmd = Command::new("cmd");
             lib_cmd.raw_arg("/c").raw_arg(&lib_inner);
             let lib_out = lib_cmd.output()
-                .map_err(|e| anyhow!("spawn lib.exe: {}", e))?;
+                .map_err(|e| anyhow!("spawn lib.exe: {:#}", e))?;
             if !lib_out.status.success() {
                 return Err(anyhow!("lib.exe failed for {}: {}", lib,
                     bytes_to_string(&lib_out.stderr)));
@@ -368,7 +368,7 @@ fn build_vendor_ffi_lib(srcs_by_dir: &[Vec<PathBuf>], include_dirs: &[PathBuf], 
             // own `dec/static_init.c` vs `common/static_init.c`).
             let group_dir = obj_dir.join(group_idx.to_string());
             std::fs::create_dir_all(&group_dir)
-                .map_err(|e| anyhow!("create obj group dir: {}", e))?;
+                .map_err(|e| anyhow!("create obj group dir: {:#}", e))?;
             for src in srcs {
                 let obj = group_dir.join(
                     src.file_name().unwrap().to_string_lossy().replace(".c", ".o")
@@ -381,7 +381,7 @@ fn build_vendor_ffi_lib(srcs_by_dir: &[Vec<PathBuf>], include_dirs: &[PathBuf], 
                 c.arg("-o").arg(&obj);
                 c.arg(src);
                 let out = c.output()
-                    .map_err(|e| anyhow!("spawn {}: {}", cc, e))?;
+                    .map_err(|e| anyhow!("spawn {}: {:#}", cc, e))?;
                 if !out.status.success() {
                     return Err(anyhow!("vendor FFI compile failed on {}: {}",
                         src.display(), bytes_to_string(&out.stderr)));
@@ -397,7 +397,7 @@ fn build_vendor_ffi_lib(srcs_by_dir: &[Vec<PathBuf>], include_dirs: &[PathBuf], 
                 ar.arg(o);
             }
             let ar_out = ar.output()
-                .map_err(|e| anyhow!("spawn ar: {}", e))?;
+                .map_err(|e| anyhow!("spawn ar: {:#}", e))?;
             if !ar_out.status.success() {
                 return Err(anyhow!("ar failed for {}: {}", lib,
                     bytes_to_string(&ar_out.stderr)));

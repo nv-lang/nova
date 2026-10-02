@@ -77,7 +77,7 @@ fn time_one(spec: &HyperfineSpec, timeout: std::time::Duration,
     cmd.stdin(Stdio::null());
     let start = Instant::now();
     let mut child = cmd.spawn()
-        .map_err(|e| anyhow!("spawn {}: {}", spec.binary.display(), e))?;
+        .map_err(|e| anyhow!("spawn {}: {:#}", spec.binary.display(), e))?;
     // Poll for completion с timeout.
     let deadline = Instant::now() + timeout;
     let exit_status = loop {
@@ -90,7 +90,7 @@ fn time_one(spec: &HyperfineSpec, timeout: std::time::Duration,
                 }
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
-            Err(e) => bail!("wait {}: {}", spec.display_name(), e),
+            Err(e) => bail!("wait {}: {:#}", spec.display_name(), e),
         }
     };
     let elapsed_ns = start.elapsed().as_nanos() as u64;
@@ -119,7 +119,7 @@ pub fn run(opts: HyperfineOpts) -> Result<Vec<AnalyzedBench>> {
         let mut raw_ns: Vec<u64> = Vec::with_capacity(opts.samples as usize);
         for i in 0..opts.samples {
             let t = time_one(spec, timeout, opts.workdir.as_deref())
-                .map_err(|e| anyhow!("sample {}/{}: {}", i + 1, opts.samples, e))?;
+                .map_err(|e| anyhow!("sample {}/{}: {:#}", i + 1, opts.samples, e))?;
             raw_ns.push(t);
         }
         let raw = RawBenchResult {
@@ -153,7 +153,7 @@ pub fn write_json(benches: &[AnalyzedBench], out_path: &Path) -> Result<()> {
     let meta = repro::collect("hyperfine", sampling);
     let json = run_result_to_json(&meta, benches);
     std::fs::write(out_path, serde_json::to_string_pretty(&json)?)
-        .map_err(|e| anyhow!("write JSON {}: {}", out_path.display(), e))?;
+        .map_err(|e| anyhow!("write JSON {}: {:#}", out_path.display(), e))?;
     Ok(())
 }
 

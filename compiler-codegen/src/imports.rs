@@ -1260,7 +1260,7 @@ pub fn resolve_imports_inline_ex(
             &mut pending_peer_preludes,
         );
         if let Err(e) = res {
-            import_errors.push(format!("{}", e));
+            import_errors.push(format!("{:#}", e));
             in_progress = in_progress_snap;
             import_chain = import_chain_snap;
             visited = visited_snap;
@@ -2084,7 +2084,7 @@ fn resolve_one(
                     return Err(peer_path
                         .canonicalize()
                         .map_err(|e| {
-                            anyhow!("canonicalize {}: {}", peer_path.display(), e)
+                            anyhow!("canonicalize {}: {:#}", peer_path.display(), e)
                         })
                         .err()
                         .unwrap_or_else(|| {
@@ -3309,7 +3309,7 @@ fn lookup_dependency(importer_path: &Path, dep_name: &str, entry_dir: &Path) -> 
     // на каждый lookup.
     if let Some(rd) = root_dir.as_deref() {
         if let Err(e) = crate::lockfile::ensure_pins_loaded(rd) {
-            return DepLookup::GitError(format!("nova.lock.toml: {}", e));
+            return DepLookup::GitError(format!("nova.lock.toml: {:#}", e));
         }
     }
     let root_manifest = if is_root {
@@ -3357,7 +3357,7 @@ fn lookup_dependency(importer_path: &Path, dep_name: &str, entry_dir: &Path) -> 
             match crate::git_cache::resolve_git_dep(url, pin, None) {
                 Ok(res) => finalize_dep_pkg(&res.checkout, dep_name),
                 Err(e) => DepLookup::GitError(format!(
-                    "git-зависимость `{}`: {}",
+                    "git-зависимость `{}`: {:#}",
                     dep_name, e,
                 )),
             }

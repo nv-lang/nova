@@ -78,7 +78,7 @@ pub fn parse_ucd(ucd_dir: &Path) -> anyhow::Result<NormTables> {
     let read = |name: &str| -> anyhow::Result<String> {
         let p = ucd_dir.join(name);
         std::fs::read_to_string(&p)
-            .map_err(|e| anyhow::anyhow!("failed to read {}: {}", p.display(), e))
+            .map_err(|e| anyhow::anyhow!("failed to read {}: {:#}", p.display(), e))
     };
 
     // --- UnicodeData.txt: raw decompositions + canonical combining class ---
@@ -287,7 +287,7 @@ pub fn parse_grapheme_tables(ucd_dir: &Path) -> anyhow::Result<GraphemeTables> {
     let read = |name: &str| -> anyhow::Result<String> {
         let p = ucd_dir.join(name);
         std::fs::read_to_string(&p)
-            .map_err(|e| anyhow::anyhow!("failed to read {}: {}", p.display(), e))
+            .map_err(|e| anyhow::anyhow!("failed to read {}: {:#}", p.display(), e))
     };
     // GraphemeBreakProperty.txt: "RANGE ; PROP # comment"
     let mut gcb: Vec<(u32, u32, u8)> = Vec::new();
@@ -394,7 +394,7 @@ pub fn render_grapheme_data_nv(t: &GraphemeTables, version: &str) -> String {
 /// expected cluster sequence (CONTENT-checked, not just count). Chunked.
 pub fn render_grapheme_conformance_nv(ucd_dir: &Path, limit: usize) -> anyhow::Result<String> {
     let data = std::fs::read_to_string(ucd_dir.join("GraphemeBreakTest.txt"))
-        .map_err(|e| anyhow::anyhow!("failed to read GraphemeBreakTest.txt: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("failed to read GraphemeBreakTest.txt: {:#}", e))?;
     let esc = |cps: &[u32]| -> String {
         let mut s = String::new();
         for &cp in cps {
@@ -487,7 +487,7 @@ pub fn render_grapheme_conformance_nv(ucd_dir: &Path, limit: usize) -> anyhow::R
 /// (not a silent truncation).
 pub fn render_conformance_nv(ucd_dir: &Path, limit: usize) -> anyhow::Result<String> {
     let data = std::fs::read_to_string(ucd_dir.join("NormalizationTest.txt"))
-        .map_err(|e| anyhow::anyhow!("failed to read NormalizationTest.txt: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("failed to read NormalizationTest.txt: {:#}", e))?;
     // Hex codepoint sequence -> a Nova string literal of \u{..} escapes.
     let lit = |s: &str| -> String {
         let mut out = String::new();
@@ -597,7 +597,7 @@ fn wb_cat_code(name: &str) -> u8 {
 /// Parse `WordBreakProperty.txt` into a sorted (lo, hi, cat) range table.
 pub fn parse_word_tables(ucd_dir: &Path) -> anyhow::Result<Vec<(u32, u32, u8)>> {
     let data = std::fs::read_to_string(ucd_dir.join("WordBreakProperty.txt"))
-        .map_err(|e| anyhow::anyhow!("failed to read WordBreakProperty.txt: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("failed to read WordBreakProperty.txt: {:#}", e))?;
     let mut wb: Vec<(u32, u32, u8)> = Vec::new();
     for line in data.lines() {
         let line = line.split('#').next().unwrap_or("").trim();
@@ -652,7 +652,7 @@ pub fn render_word_data_nv(wb: &[(u32, u32, u8)], version: &str) -> String {
 /// segment sequence (CONTENT-checked, not just count). Chunked.
 pub fn render_word_conformance_nv(ucd_dir: &Path, limit: usize) -> anyhow::Result<String> {
     let data = std::fs::read_to_string(ucd_dir.join("WordBreakTest.txt"))
-        .map_err(|e| anyhow::anyhow!("failed to read WordBreakTest.txt: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("failed to read WordBreakTest.txt: {:#}", e))?;
     let esc = |cps: &[u32]| -> String {
         let mut s = String::new();
         for &cp in cps {
@@ -851,7 +851,7 @@ pub fn parse_category_tables(ucd_dir: &Path) -> anyhow::Result<CategoryTables> {
     let read = |name: &str| -> anyhow::Result<String> {
         let p = ucd_dir.join(name);
         std::fs::read_to_string(&p)
-            .map_err(|e| anyhow::anyhow!("failed to read {}: {}", p.display(), e))
+            .map_err(|e| anyhow::anyhow!("failed to read {}: {:#}", p.display(), e))
     };
 
     // --- UnicodeData.txt field 2 = General_Category abbreviation ---
@@ -1002,7 +1002,7 @@ pub fn parse_case_tables(ucd_dir: &Path) -> anyhow::Result<CaseTables> {
     let read = |name: &str| -> anyhow::Result<String> {
         let p = ucd_dir.join(name);
         std::fs::read_to_string(&p)
-            .map_err(|e| anyhow::anyhow!("failed to read {}: {}", p.display(), e))
+            .map_err(|e| anyhow::anyhow!("failed to read {}: {:#}", p.display(), e))
     };
 
     // --- UnicodeData.txt simple mappings: [12]=upper [13]=lower [14]=title ---
@@ -1294,7 +1294,7 @@ fn sb_cat_code(name: &str) -> u8 {
 /// Parse `SentenceBreakProperty.txt` into a sorted (lo, hi, cat) range table.
 pub fn parse_sentence_tables(ucd_dir: &Path) -> anyhow::Result<Vec<(u32, u32, u8)>> {
     let data = std::fs::read_to_string(ucd_dir.join("SentenceBreakProperty.txt"))
-        .map_err(|e| anyhow::anyhow!("failed to read SentenceBreakProperty.txt: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("failed to read SentenceBreakProperty.txt: {:#}", e))?;
     let mut sb: Vec<(u32, u32, u8)> = Vec::new();
     for line in data.lines() {
         let line = line.split('#').next().unwrap_or("").trim();
@@ -1348,7 +1348,7 @@ pub fn render_sentence_data_nv(sb: &[(u32, u32, u8)], version: &str) -> String {
 /// boundaries come straight from the test file, not the implementation. Chunked.
 pub fn render_sentence_conformance_nv(ucd_dir: &Path, limit: usize) -> anyhow::Result<String> {
     let data = std::fs::read_to_string(ucd_dir.join("SentenceBreakTest.txt"))
-        .map_err(|e| anyhow::anyhow!("failed to read SentenceBreakTest.txt: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("failed to read SentenceBreakTest.txt: {:#}", e))?;
     let esc = |cps: &[u32]| -> String {
         let mut s = String::new();
         for &cp in cps {
@@ -1508,7 +1508,7 @@ pub fn parse_collation_tables(ucd_dir: &Path) -> anyhow::Result<CollationTables>
     let read = |name: &str| -> anyhow::Result<String> {
         let p = ucd_dir.join(name);
         std::fs::read_to_string(&p)
-            .map_err(|e| anyhow::anyhow!("failed to read {}: {}", p.display(), e))
+            .map_err(|e| anyhow::anyhow!("failed to read {}: {:#}", p.display(), e))
     };
 
     let mut single: BTreeMap<u32, Vec<CollElem>> = BTreeMap::new();
@@ -1705,7 +1705,7 @@ pub fn render_collation_conformance_nv(ucd_dir: &Path, limit: usize) -> anyhow::
             )
         })?;
     let data = std::fs::read_to_string(path)
-        .map_err(|e| anyhow::anyhow!("failed to read {}: {}", path.display(), e))?;
+        .map_err(|e| anyhow::anyhow!("failed to read {}: {:#}", path.display(), e))?;
     let esc = |cps: &[u32]| -> String {
         let mut s = String::new();
         for &cp in cps {

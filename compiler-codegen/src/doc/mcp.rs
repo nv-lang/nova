@@ -70,14 +70,14 @@ pub fn run_http_server(tree_json: &JsonValue, port: u16) -> std::io::Result<()> 
     for stream in listener.incoming() {
         let mut stream = match stream {
             Ok(s) => s,
-            Err(e) => { eprintln!("accept error: {}", e); continue; }
+            Err(e) => { eprintln!("accept error: {:#}", e); continue; }
         };
         // Read HTTP request (blocking).
         let response = match handle_http_request(&mut stream, tree_json) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("http handler error: {}", e);
-                http_response(500, "Internal Server Error", "text/plain", e.to_string().as_bytes())
+                eprintln!("http handler error: {:#}", e);
+                http_response(500, "Internal Server Error", "text/plain", format!("{:#}", e).as_bytes())
             }
         };
         // Write response.
@@ -150,7 +150,7 @@ fn http_response(status_code: u16, status_text: &str, content_type: &str, body: 
 pub fn handle_request(tree_json: &JsonValue, request_line: &str) -> String {
     let request = match parse_json(request_line) {
         Ok(v) => v,
-        Err(e) => return jsonrpc_error(None, -32700, &format!("Parse error: {}", e)),
+        Err(e) => return jsonrpc_error(None, -32700, &format!("Parse error: {:#}", e)),
     };
     let id = request.get("id").cloned();
     let method = match request.get("method").and_then(|v| v.as_str()) {
@@ -213,7 +213,7 @@ fn handle_tools_call(
 fn tool_query_items(tree_json: &JsonValue, args: Option<&JsonValue>) -> Result<String, String> {
     let query_str = args.and_then(|a| a.get("query")).and_then(|v| v.as_str())
         .ok_or_else(|| "missing query argument".to_string())?;
-    let q = parse_query(query_str).map_err(|e| format!("query parse: {}", e))?;
+    let q = parse_query(query_str).map_err(|e| format!("query parse: {:#}", e))?;
     let results = execute_json(tree_json, &q);
     Ok(render_results_json(&results))
 }

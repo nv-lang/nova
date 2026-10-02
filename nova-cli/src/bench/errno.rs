@@ -62,8 +62,8 @@ pub fn perf_event_open_hint(err: &io::Error) -> Option<&'static str> {
 /// Format full error message: original + actionable hint (если есть).
 pub fn fmt_perf_event_open_err(prefix: &str, err: &io::Error) -> String {
     match perf_event_open_hint(err) {
-        Some(hint) => format!("{}: {}\n\n{}", prefix, err, hint),
-        None       => format!("{}: {}", prefix, err),
+        Some(hint) => format!("{}: {:#}\n\n{}", prefix, err, hint),
+        None       => format!("{}: {:#}", prefix, err),
     }
 }
 
