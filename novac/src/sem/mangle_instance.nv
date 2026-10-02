@@ -91,6 +91,22 @@ export fn c_method_symbol(ctx Ctx, t TyId, name str) -> str {
     c_shell_method(ctx, it, name)
 }
 
+/// The C identifier of a CONCRETE array receiver -- `[]u8` is `NovaArray_nova_byte`
+/// -- or "" for every other type (a generic `[]T`, a nested or a record element).
+/// INTEROP, read off the oracle (`receiver_type_c_ident`, emit_c.rs) and the
+/// shell (`Nova_NovaArray_nova_byte_method_to_str`): a method a std file declares
+/// on `[]E` for one primitive `E` is spelled from the element's runtime name.
+/// A spelling the shell does not carry is still asked of `interop.has` by the
+/// caller, so an element whose name differs is refused, never guessed.
+fn array_ext_c_ident(ctx Ctx, t TyId) -> str {
+    if !is_ty(t) || ctx.tys.kind_of(t) != TypeKind.TkApp { return "" }
+    if decl_of_ty(ctx, t).name != SLICE_HEAD || ctx.tys.arg_count(t) != 1 { return "" }
+    match prim_row_of(ctx.tys, ctx.tys.arg(t, 0)) {
+        Some(bt) => "NovaArray_${bt.c_name}"
+        None => ""
+    }
+}
+
 /// THE OVERLOAD's shell symbol: the method `row` picks, on receiver `recv_t`,
 /// under the type arguments `args` (registry 1524). `c_method_symbol` answers
 /// for a NAME, and a name is not a function when it is overloaded: `cap()` and

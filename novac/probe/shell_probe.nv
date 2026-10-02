@@ -52,6 +52,11 @@ fn main() {
         None => "no"
     }
     println("find = ", ftext)
+    // Sweep 11: `str.replace` -- the carrier's spelling and mangling doors
+    // (sem/literal_spelling.nv, sem/mangle.nv) rewrite text through it --
+    println("replace = ", s.replace("ring", "RING"))
+    // ... and `str.ends_with`, the walk's filter of `.nv` files (main.nv).
+    println("ends = ", s.ends_with("ring"))
 
     // E2 records surface: the only NEW runtime helper is f64 printing —
     // record structs/alloc are emitted by novac itself into the BODY slot
@@ -193,11 +198,24 @@ fn eff_door(a []str) -> int {
         ro dir = env("NOVA_STD_PATH") ?? "std/src"
         mut n = a.len() + Os.arg_count()
         match read(dir.to_path()) {
-            Ok(bytes) => { n += bytes.len() }
+            // Sweep 11: `[]u8.to_str` -- the carrier turns every input it reads
+            // into text through it (main.nv, pipeline/pipeline.nv, sem/mangle.nv).
+            Ok(bytes) => { n += bytes.len() + (bytes.to_str() ?? "").byte_len() }
             Err(_) => { n += 1 }
         }
         match read_dir(dir.to_path()) {
-            Ok(entries) => { n += entries.len() }
+            // Sweep 11: the walk of `read_decls` (main.nv) -- each entry's name
+            // through `to_str`, and `FileType.is_dir` to descend.
+            Ok(entries) => {
+                for e in entries {
+                    n += (e.name.os_bytes().to_str() ?? "").byte_len()
+                    if e.kind.is_dir() {
+                        n += 1
+                    } else {
+                        // A file: counted by its name above.
+                    }
+                }
+            }
             Err(_) => { n += 2 }
         }
         if n < 0 {
