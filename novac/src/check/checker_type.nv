@@ -128,13 +128,7 @@ type Checker {
     mv_decl_nodes []Node
     /// The body being typed returns no value (`-> ()` or none declared): a bare `return` is legal.
     ret_unit bool
-    /// The value expression typed RIGHT NOW in a PLACED position -- a binding's
-    /// initializer, a tail, a `return`, a `=>` body, a match arm's body -- or a
-    /// stale id nobody asks about. `x?` and `x ?? return r` are lowered only
-    /// there (try_rules.nv asks `e.id_of() == @placed`). A TYPING question and
-    /// not the shape walk's: a walk refusal leaves the whole file untyped, and
-    /// the first edition hid every other refusal of sem/ that way (measured).
-    placed NodeId
+
     /// The body being typed returns a `ro` VIEW (`-> ro T`, D176): a `ro`
     /// parameter may be handed out through it (registry 1458).
     ret_ro bool

@@ -63,7 +63,7 @@
 module novac.emit_c
 
 import ../lex.{TokenKind}
-import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, raw_node}
+import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, raw_node, no_node}
 import ../diag.{ice}
 import ../mono.{Reach}
 import ../sem.{is_unit_ty, returns_receiver}
@@ -138,7 +138,7 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
     for _ in 0..out.types.len() {
         lt.push("")
     }
-    consume e = Emitter { src_name, ctx, out, reach, next_tmp: 0, ret_self: false,
+    consume e = Emitter { src_name, ctx, out, reach, next_tmp: 0, ret_self: false, hoist_root: no_node(),
                           recv_copy: false, recv_ptr_value: false,
                           lo: Lowerer { ctx, out, ir: FnBuilder.new(no_ty()) },
                           lit_tmp: lt, body: StringBuilder.new(), hlits: []Node.new(), cur_lit: 0 - 1,
@@ -523,6 +523,10 @@ fn Emitter mut @hoist_array_lits(e Node) -> () {
             // twice, and the first temporary was dead. A construction's
             // insides are its own emitter's to hoist, in the order its fields
             // are written.
+            // A NODE THE LOWERING ALREADY LAID DOWN (registry 1619) is read from its
+            // temporary by `@emit_expr`: building anything inside it again here would
+            // run its effects twice, and a `??` in it would lower after the seal.
+            if @lo.ir.local_of_node(e.id_of()) != no_local() { return }
             if kind == NodeKind.ArrayLit {
                 @lit_tmp[raw_node(e.id_of())] = @emit_array_lit(e, @out.type_of(e.id_of()))
                 return

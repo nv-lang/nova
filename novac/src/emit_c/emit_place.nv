@@ -18,7 +18,7 @@
 
 module novac.emit_c
 
-import ../tree.{Node, NodeKind}
+import ../tree.{Node, NodeKind, no_node}
 // M3a: telling a string literal from any other argument needs the leaf's token kind.
 import ../lex.{TokenKind}
 import ../sem.{leaf_kind}
@@ -115,6 +115,9 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
     ro d = @lo.ir.decl_of(a.dest)
     match a.src {
         Expr(e) => {
+            // The value this line DEFINES is printed from the tree even when its
+            // node is the hoisted one (registry 1619); its children read theirs.
+            @hoist_root = e.id_of()
             // Built FIRST: a construction lays its statements down before the
             // line that reads the temporary.
             ro built = @build_value(e, d.ty)
@@ -134,6 +137,7 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
                 Some(t) => @body.append(t)
                 None => @emit_expr(e)
             }
+            @hoist_root = no_node()
             @body.append(if wrap { ");\n" } else { ";\n" })
         }
         SomePayload(opt) => {
