@@ -45,16 +45,12 @@ anymore.
 
 ## Numeric ↔ numeric
 
-### Widening without loss happens by itself; anything else is written ([D490](decisions/02-types.md#d490), owner 2026-10-02)
+### There is no automatic widening in an operation ([D405](decisions/02-types.md#d405), amended 2026-09-04)
 
-A value widens to a wider type of the same kind when every value of its type fits there: `u8` → `u16`,
-`u32` → `int`, `i32` → `i64`, `f32` → `f64`. It happens in a position with a known type (a binding, an
-argument, a return, a field, an element) and between the operands of one operator, where the narrower
-one widens to the wider. Nothing that can change a value happens by itself: narrowing, signed against
-unsigned with no type that holds both, an integer against a float — those are compile errors, and the
-conversion you meant is written with `as`. Arithmetic runs in the operands' type, not in the type the
-result is stored into: `ro r int = a * b` with `a u8`, `b u8` multiplies in `u8` (an overflow there is
-checked and loud) — write `(a as int) * b` to compute wider.
+Every widening below happens because you wrote `as`. Nova does **not** pick the wider
+type for you when two numeric types meet in one operation — no "take the larger",
+no integer promoted to float, no signed compared against unsigned. Mixed operands are
+a compile error, and the conversion you meant is written down.
 
 This is the rule C spent decades teaching everyone to fear: `u32(4294967295) ==
 i32(-1)` is `true` in C, because the signed operand is converted to unsigned behind
@@ -81,16 +77,17 @@ in the second operand too (`x == 300` with `x u8` is an error).
 
 A value of type `int` next to a value of type `f64` is still an error, literal or not.
 
-**The category decides which operators exist for a type, and widening stays inside it.** Pairs that
-widen without loss meet freely; pairs with no type that holds both are refused:
+**Belonging to one category is not permission to mix inside it.** Both `f32` and `f64`
+are floats; `f32 < f64` is still an error. Both `i32` and `i64` are signed integers;
+`i64 < i32` is still an error. The category decides which operators exist for a type,
+not which pairs of types may meet. Every one of these is refused, and the conversion
+you intend is written with `as`:
 
 ```nova
-u8 + u16       // ok -- u8 widens to u16, the result is u16
-i64 < i32      // ok -- i32 widens to i64
-f32 < f64      // ok -- f32 widens to f64
-u32 == i32     // error -- neither holds the other: write `as`
-u64 + int      // error -- neither holds the other
-int < f64      // error -- integer against float: write `as`
+u32 == i32     // ошибка — разная знаковость
+i64 < i32      // ошибка — разная ширина
+f32 < f64      // ошибка — разная ширина, оба float
+int < f64      // ошибка — целое против float
 ```
 
 **Unary minus is defined for signed types only.** `-x` with an unsigned `x` is a compile
