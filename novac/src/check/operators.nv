@@ -67,8 +67,15 @@ fn Checker mut @record_operator_callee(e Node, kids []Node) -> () {
 /// since M3), and "no such method" would send the reader hunting a
 /// declaration that is right there. Its own refuser, like its siblings:
 /// the door that asks the table builds no text (P18).
+///
+/// A LANGUAGE error, not a subset limit (the integrator's word 2026-10-02):
+/// `a == b` is `a.@equal(b)` (D46), and the operands reach this door with ONE
+/// type (the protocol gate before it refuses `"a" == 5`) -- so the fault is an
+/// `equal` declared over another type than the right side's, and calling it
+/// would change the argument's type implicitly (D405, D491). No wave of novac
+/// makes that compile, so the refusal carries no stage.
 fn Checker mut @refuse_equality_rhs(kids []Node) -> () {
-    @report_first_leaf_of(kids, "outside the subset: `==` takes a right-hand side of the left one's type, and this operand's type is not one `${EQUAL_METHOD}` declares")
+    @reject_first_leaf_of(kids, "`==` takes a right-hand side of the left one's type, and this operand's type is not one `${EQUAL_METHOD}` declares -- a value never changes its type implicitly to meet the other (D405, D491)")
 }
 
 /// Is `t` an instance of the vector (`Vec[T]`, `[]T`)? The HEAD declaration's
@@ -91,8 +98,16 @@ fn Checker mut @refuse_equality_overloaded(kids []Node, key []ArgSpec) -> () {
 /// The method is not among the declarations novac was handed,
 /// so there is nothing to emit `==` on strings with -- and the
 /// compiler must say so, not the linker.
+///
+/// SUBSET DEBT WITH A STAGE (the integrator's word 2026-10-02): this door is
+/// reached only for `str` and a vector (`@record_operator_callee` returns for
+/// any other left side), and std declares `equal` for both -- `str @equal`,
+/// `Vec[T consume] @equal` with no bound. So the program is legal and the
+/// declaration simply did not reach this unit. A type that by the norm HAS no
+/// `equal` -- a sum or a value record without `Equal`, D363's
+/// `E_EQ_WITHOUT_EQUAL` -- never comes here.
 fn Checker mut @refuse_equality_unknown(kids []Node) -> () {
-    @report_first_leaf_of(kids, "outside the subset: `==` here needs the `${EQUAL_METHOD}` method, and it is not among the declarations novac was handed")
+    @report_first_leaf_of(kids, "outside the subset: `==` here needs the `${EQUAL_METHOD}` method, and it is not among the declarations novac was handed -- the handed modules' declarations reach this unit whole with E2-b2 (E2-b2 multi-file)")
 }
 
 /// The row is found; the question left is WHO carries its body.
