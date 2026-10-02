@@ -1,22 +1,23 @@
 module must_consume.neg_13
 
-// LEFT EARLY FROM AN ARM: legal Nova (the `return` path consumed `t` first),
-// and the oracle compiles it. Step 2 joins the arms' states and does not yet
-// take an arm that LEAVES out of the join (the early-exit step), so the `return`
-// is refused BY NAME with its stage -- never joined wrongly.
+// A `return` WHILE A VALUE IS STILL OWNED (D133-not-consumed: `return` is an exit
+// point, and every live value but the returned one must be done there). The
+// ORACLE accepts it -- it judges only the body's end (registry 221.1 No.TBD,
+// oracle); novac follows the spec. (Until step 3 this fixture held a legal
+// `return` from an arm, refused by the subset; that form now lives in pos_5.)
 
-// NOVAC_EXPECT left early by a `return` while it is still owned is not tracked yet
+// NOVAC_EXPECT is still owned when this `return` leaves its scope
 
 type Tx consume {
     id int
 }
 
 fn Tx consume @commit() -> () {
-    println(@id)
+    println("commit ${@id}")
 }
 
 fn Tx consume @rollback() -> () {
-    println(0)
+    println("rollback ${@id}")
 }
 
 fn Tx @peek() -> int => @id
@@ -24,7 +25,6 @@ fn Tx @peek() -> int => @id
 fn run(n int) -> () {
     consume t = Tx { id: n }
     if n > 0 {
-        t.commit()
         return
     }
     t.rollback()

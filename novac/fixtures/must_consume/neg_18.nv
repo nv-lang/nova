@@ -1,0 +1,34 @@
+module must_consume.neg_18
+
+// CONSUMED ONLY IF THE LOOP RUNS (D133-not-consumed, partial): `for` over an
+// empty range never enters its body, and that path leaves `t` owned; the `break`
+// path consumed it. The oracle refuses it too.
+
+// NOVAC_EXPECT is consumed on only some paths before the end of its scope
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx @peek() -> int => @id
+
+fn run(n int) -> () {
+    consume t = Tx { id: n }
+    for k in 0..n {
+        println(k)
+        t.commit()
+        break
+    }
+}
+
+fn main() {
+    run(2)
+}

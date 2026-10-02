@@ -1,25 +1,23 @@
 module must_consume.neg_6
 
-// CONSUMED INSIDE A LOOP: the body may run more than once, so the second pass
-// would use a consumed value -- the oracle refuses it (D131 "possibly
-// consumed"). Steps 1-2 of the track walk a loop with the depth raised and do
-// not follow a move out of it (whether a `break` follows is the early-exit
-// step), so it is refused BY NAME with its stage -- never accepted unchecked.
-// (Until step 2 this fixture held a consume inside an `if`, which step 2 joins:
-// that form now lives in pos_3.)
+// CONSUMED INSIDE A LOOP (D131, "possibly consumed"): the body may run more than
+// once, and its second pass starts from the join of the loop's entry and the
+// first pass's end -- `t` is then neither owned nor gone. The oracle refuses it
+// too. (Until step 3 this was a dated subset refusal; before step 2 it held a
+// consume inside an `if`, which now lives in pos_3.)
 
-// NOVAC_EXPECT consumed inside a loop or a nested block is not tracked yet
+// NOVAC_EXPECT is used after it was possibly consumed
 
 type Tx consume {
     id int
 }
 
 fn Tx consume @commit() -> () {
-    println(@id)
+    println("commit ${@id}")
 }
 
 fn Tx consume @rollback() -> () {
-    println(0)
+    println("rollback ${@id}")
 }
 
 fn Tx @peek() -> int => @id

@@ -1,0 +1,31 @@
+module must_consume.neg_15
+
+// A `continue` WHILE THE PASS'S OWN VALUE IS STILL OWNED (D133-not-consumed: the
+// pass's scope ends there). The ORACLE accepts it (registry 221.1 No.TBD, the
+// same oracle row as neg_13).
+
+// NOVAC_EXPECT is still owned when this `continue` leaves its scope
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx @peek() -> int => @id
+
+fn main() {
+    for k in 0..2 {
+        consume t = Tx { id: k }
+        if k == 0 {
+            continue
+        }
+        t.commit()
+    }
+}

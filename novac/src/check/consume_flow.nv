@@ -5,16 +5,14 @@
 //   `MaybeUninitializedPlaces` -- two paths that disagree leave the value MAYBE moved.
 //   NOT taken: the dataflow over a control-flow graph -- the tree is walked, a branch
 //   is the only join, and a loop or an early exit is refused by name.
-// Role: the CONSUMPTION OBLIGATION of a must-consume type (D133), steps 1-2 of the
+// Role: the CONSUMPTION OBLIGATION of a must-consume type (D133), steps 1-3 of the
 //   track (the integrator's word 2026-10-02): a file's own `type X consume`, its
 //   `consume` bindings and `consume` parameters -- consumed by a `consume` method, a
 //   `consume` parameter, a `return` or the tail, a `consume y = x` transfer; used
-//   after that is D131's error, still owned at the end is `D133-not-consumed`. Step 2:
-//   the arms of an `if`, an `if`-let and a `match` are walked one by one from the
-//   same state and JOINED -- Live, Consumed, or MaybeConsumed where they disagree.
-//   Every value of such a type these steps do not track -- moved inside a loop, left
-//   early from a branch, in a position they do not classify -- is refused by name,
-//   with the track's stage.
+//   after that is D131's error, still owned at an exit is `D133-not-consumed`, and a
+//   fresh one handed to a view is the same error (D476 s4). The paths -- branches,
+//   loops, exits and their joins -- are check/consume_paths.nv's. Every value of
+//   such a type these steps do not track is refused by name, with the track's stage.
 // Used by: check/run.nv, once the file is typed (`@check_consume_flow`).
 // Guarded by: nova test over pipeline/consume_flow_test.nv; the fixtures
 //   must_consume/ through check-novac-fixture-expect.sh and the differential.
@@ -27,7 +25,7 @@ import ../lex.{TokenKind}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{branch_children, leaf_text, leaf_kind, expr_leaf_name, file_decls, decl_fn_row}
 import ../sem.{CalleeTarget, raw_row, call_arg_at, bind_mode_at, ParamMode, ty_source_name}
-import ../sem.{iflet_body_at, iflet_else_at, arm_body_at, is_never_ty}
+import ../sem.{is_never_ty}
 import ../types.{TyId, no_ty, is_ty}
 
 /// One body's ownership state: the must-consume types of the file, and every value
@@ -40,8 +38,14 @@ type ConsumeFlow {
     owned_ty []TyId /// per entry: the value's type
     at []Node /// per entry: where it was bound, for the refusal
     state []VarState /// per entry: owned, consumed, or consumed on only some paths
-    depth int /// how many loops or nested blocks enclose the walk: inside one, nothing may change who owns what
-    arms int /// how many branch arms enclose the walk: leaving one early is not joined yet
+    depth int /// how many `with`, `spawn`, handler bodies or assignments enclose the walk: inside one, nothing may change who owns what
+    nest int /// how many arms, loop bodies or nested blocks enclose the walk: a tracked name as their value moves out of them
+    dead bool /// this path has left (`return`, `break`, `continue`, a diverging call): what follows is not reached
+    loop_mark int /// the first entry the innermost loop's body bound, `-1` outside a loop
+    brk []VarState /// the innermost loop: the joined state at its `break`s, for the values bound before it
+    brk_paths int /// how many `break`s joined into `brk`
+    cont []VarState /// the innermost loop's pass: the joined state at its `continue`s
+    cont_paths int /// how many `continue`s (and pass ends) joined into `cont`
     stopped bool /// a refusal stopped tracking this body: what follows is not judged
 }
 
@@ -63,6 +67,12 @@ fn partly_consumed_msg(name str, ty str, methods str) -> str =>
 /// D131 after a join: the value may be gone already.
 fn maybe_consumed_msg(name str) -> str =>
     "`${name}` is used after it was possibly consumed -- it is consumed on only some of the paths that reach here, so it may no longer be here (D131)"
+
+/// D133-not-consumed for a FRESH value handed to a view (D476 s4): the desugaring
+/// `consume x = e { ... }` leaves `x` unconsumed when the type has no `@cleanup`.
+/// The message names the expression the author wrote, never a synthetic name (s5).
+fn rvalue_in_view_msg(ty str, methods str) -> str =>
+    "a fresh value of must-consume type `${ty}` is handed to a view here and nothing consumes it afterwards -- bind it with `consume x = ...` and call one of its `consume` methods (${methods}), or pass it to a `consume` parameter (D133, D476)"
 
 /// D131: a consumed value is gone.
 fn used_after_consume_msg(name str) -> str =>
@@ -164,7 +174,9 @@ fn is_kind_of(kinds []TyId, t TyId) -> bool {
 fn Checker mut @flow_fn(f Node, kinds []TyId) -> () {
     // SILENT-OK: a generic body is walked per INSTANCE (`@check_consume_flow_instance`), as it is typed.
     if @is_generic_decl(f) && @substs.len() == 0 { return }
-    ro row = match if raw_row(@inst_row) >= 0 { Some(@inst_row) } else { decl_fn_row(f, @ctx) } {
+    // An instance's own row, else the declaration's.
+    ro found = if raw_row(@inst_row) >= 0 { Some(@inst_row) } else { decl_fn_row(f, @ctx) }
+    ro row = match found {
         // SILENT-OK: no row -- the subset walk refused the declaration already.
         None => return
         Some(r) => r
@@ -173,8 +185,9 @@ fn Checker mut @flow_fn(f Node, kinds []TyId) -> () {
     ro fk = branch_children(f)
     if fk.len() == 0 { return }
     mut fl = ConsumeFlow { kinds, names: NameTable.new(NamespaceId.NsLocals), nm: []str.new(),
-                           owned_ty: []TyId.new(), at: []Node.new(), state: []VarState.new(), depth: 0, arms: 0,
-                           stopped: false }
+                           owned_ty: []TyId.new(), at: []Node.new(), state: []VarState.new(), depth: 0, nest: 0,
+                           dead: false, loop_mark: -1, brk: []VarState.new(), brk_paths: 0,
+                           cont: []VarState.new(), cont_paths: 0, stopped: false }
     ro first = if fd.has_recv { 1 } else { 0 }
     for p in first..fd.param_cnt {
         ro pd = @ctx.fns.params[fd.param_off + p]
@@ -204,21 +217,29 @@ fn Checker mut @flow_fn(f Node, kinds []TyId) -> () {
         // `consume` parameters are the callee's business, written elsewhere.
         return
     }
-    if fl.stopped { return }
+    // A body that left by `return` (or diverged) had its exits judged there.
+    if fl.stopped || fl.dead { return }
     @flow_scope_end(fl, 0)
 }
 
 /// The end of a scope: every value bound since entry `mark` must be consumed on
-/// every path that reaches it.
-fn Checker mut @flow_scope_end(fl ConsumeFlow, mark int) -> () {
+/// every path that reaches it. An error stops tracking (a loop's next pass would
+/// say it again).
+fn Checker mut @flow_scope_end(mut fl ConsumeFlow, mark int) -> () {
     for i in mark..fl.owned_ty.len() {
         ro t = fl.owned_ty[i]
         match fl.state[i] {
             VsConsumed => {}
-            VsLive => @reject_first_leaf_of([]Node.of(fl.at[i]),
-                not_consumed_msg(fl.nm[i], ty_source_name(@ctx, t), @consume_methods_of(t)))
-            VsMaybe => @reject_first_leaf_of([]Node.of(fl.at[i]),
-                partly_consumed_msg(fl.nm[i], ty_source_name(@ctx, t), @consume_methods_of(t)))
+            VsLive => {
+                @reject_first_leaf_of([]Node.of(fl.at[i]),
+                    not_consumed_msg(fl.nm[i], ty_source_name(@ctx, t), @consume_methods_of(t)))
+                fl.stopped = true
+            }
+            VsMaybe => {
+                @reject_first_leaf_of([]Node.of(fl.at[i]),
+                    partly_consumed_msg(fl.nm[i], ty_source_name(@ctx, t), @consume_methods_of(t)))
+                fl.stopped = true
+            }
         }
     }
 }
@@ -262,13 +283,14 @@ fn Checker mut @flow_block(b Node, mut fl ConsumeFlow, value_body bool) -> () {
     }
     i = 0
     for c in kids {
-        if fl.stopped { return }
+        // After an exit the rest of the block is not reached.
+        if fl.stopped || fl.dead { return }
         match c {
             Leaf(_) => {}
             Branch { .. } => {
                 // A tracked name as a nested block's or an arm's last statement may be
                 // the block's VALUE -- a move out of a branch, which is not followed.
-                ro tracked_tail = (fl.depth > 0 || fl.arms > 0) && i == last && @is_tracked_name(c, fl)
+                ro tracked_tail = (fl.depth > 0 || fl.nest > 0) && i == last && @is_tracked_name(c, fl)
                 if tracked_tail {
                     @flow_stop(c, "moved out of a branch, a loop or a nested block", fl)
                 } else {
@@ -285,11 +307,12 @@ fn Checker mut @flow_block(b Node, mut fl ConsumeFlow, value_body bool) -> () {
 fn Checker @is_tracked_name(c Node, fl ConsumeFlow) -> bool =>
     c.kind_of() == NodeKind.Name && fl.names.find(expr_leaf_name(c)) >= 0
 
-/// A loop or a nested block, walked with the depth raised: inside it a value may
-/// be USED, and a fresh one may be made and consumed there, but nothing that
-/// outlives it may change owner -- the state after it is then the state before it,
-/// on every path. Whatever would change that is refused by name (a branch inside
-/// it is walked at the same depth, so the rule holds in its arms too).
+/// A `with`, `supervised` or `spawn` body, a handler, an assignment, walked with the
+/// depth raised: inside it a value may be USED, and a fresh one may be made and
+/// consumed there, but nothing that outlives it may change owner -- the state after
+/// it is then the state before it, on every path. Whatever would change that is
+/// refused by name (a branch or a loop inside it is walked at the same depth, so the
+/// rule holds there too; a `spawn` body is another fiber's, D13).
 fn Checker mut @flow_nested(n Node, mut fl ConsumeFlow) -> () {
     fl.depth += 1
     for c in branch_children(n) {
@@ -324,185 +347,48 @@ fn flow_any_live(fl ConsumeFlow) -> bool {
     false
 }
 
-/// Does leaving early HERE escape the join? Inside an arm a `return`, a `?` or a
-/// diverging call ends that arm's path, and the join would still count the state it
-/// left -- so while anything is tracked it is refused by name (early exits are the
-/// next step of the track).
-fn flow_exit_unjoined(fl ConsumeFlow) -> bool => fl.arms > 0 && fl.owned_ty.len() > 0
-
-/// The kinds whose arms are JOINED: every arm starts from the same state.
-fn is_branch_kind(k NodeKind) -> bool =>
-    k == NodeKind.IfStmt || k == NodeKind.IfExpr || k == NodeKind.IfLet || k == NodeKind.MatchExpr
-
-/// A branch: the head is evaluated once on every path, each arm is walked from the
-/// state after it, and the states the arms leave are JOINED. An `if` without an
-/// `else` has a second path that changes nothing. A value bound inside an arm lives
-/// to the end of that arm.
-fn Checker mut @flow_branch(n Node, mut fl ConsumeFlow) -> () {
-    ro k = n.kind_of()
-    ro kids = branch_children(n)
-    mut joined = []VarState.new()
-    mut paths = 0
-    if k == NodeKind.MatchExpr {
-        if kids.len() < 2 { return }
-        @flow_expr(kids[1], fl, false)
-        ro entry = flow_states_copy(fl.state)
-        for a in kids {
-            if a.kind_of() != NodeKind.MatchArm { continue }
-            @flow_pattern(branch_children(a)[0], fl)
-        }
-        for a in kids {
-            if fl.stopped { return }
-            if a.kind_of() != NodeKind.MatchArm { continue }
-            @flow_arm(a, true, entry, fl, joined, paths)
-            paths += 1
-        }
-    } else {
-        // An `if` [KwIf, cond, then, KwElse, else] or an `if`-let [KwIf, pattern,
-        // `=`, init, then, KwElse, else] (sem/slots.nv's doors).
-        ro head_at = if k == NodeKind.IfLet { 3 } else { 1 }
-        ro then_at = if k == NodeKind.IfLet { iflet_body_at(kids) } else { 2 }
-        ro else_at = if k == NodeKind.IfLet { iflet_else_at(kids) } else { 4 }
-        if kids.len() <= then_at { return }
-        @flow_expr(kids[head_at], fl, false)
-        if k == NodeKind.IfLet {
-            @flow_pattern(kids[1], fl)
-        } else {
-            // A plain condition binds nothing.
-        }
-        ro entry = flow_states_copy(fl.state)
-        @flow_arm(kids[then_at], false, entry, fl, joined, paths)
-        paths += 1
-        if kids.len() > else_at {
-            @flow_arm(kids[else_at], false, entry, fl, joined, paths)
-        } else {
-            // No `else`: the false path leaves the state as it was.
-            flow_join(joined, entry, paths)
-        }
-    }
-    if fl.stopped { return }
-    fl.state = joined
-}
-
-/// A pattern that binds a value of a must-consume type -- a payload, a field, an
-/// element -- starts an obligation nothing tracks yet: refused by name (the oracle
-/// asks for a `consume` pattern there, E_CONSUME_PATTERN_REQUIRED).
-fn Checker mut @flow_pattern(p Node, mut fl ConsumeFlow) -> () {
-    if fl.stopped { return }
-    match p {
-        Leaf(_) => return
-        Branch { .. } => {}
-    }
-    if is_node(p.id_of()) && is_kind_of(fl.kinds, @chan.type_if_known(p.id_of())) {
-        @flow_stop(p, "bound by a pattern", fl)
-        return
-    } else {
-        // Not a must-consume value here: its sub-patterns below.
-    }
-    for c in branch_children(p) { @flow_pattern(c, fl) }
-}
-
-/// One arm, walked from `entry`; what it binds ends with it, and the state it leaves
-/// for the values bound before the branch joins `joined` (`paths` arms so far).
-/// `is_match_arm`: `a` is a whole `match` arm (its guard and body); otherwise it is
-/// an `if` arm's body itself.
-fn Checker mut @flow_arm(a Node, is_match_arm bool, entry []VarState, mut fl ConsumeFlow,
-                         mut joined []VarState, paths int) -> () {
-    fl.state = flow_states_copy(entry)
-    ro mark = fl.owned_ty.len()
-    fl.arms += 1
-    if is_match_arm {
-        // A match arm: [pattern, guard?, `=>`, body, `,`?]; the guard runs on this path.
-        ro ak = branch_children(a)
-        for c in ak {
-            if c.kind_of() == NodeKind.Guard { @flow_child(c, fl) } else { continue }
-        }
-        match arm_body_at(ak) {
-            Some(b) => @flow_arm_body(ak[b], fl)
-            // SILENT-OK: an arm of punctuation only -- the parser named it.
-            None => {}
-        }
-    } else {
-        // An `if` arm: a block, or the next `if` of an `else if` chain.
-        @flow_arm_body(a, fl)
-    }
-    fl.arms -= 1
-    if fl.stopped { return }
-    @flow_scope_end(fl, mark)
-    flow_drop_from(fl, mark)
-    flow_join(joined, fl.state, paths)
-}
-
-/// The body of an arm: a block of statements, or one statement or expression. A
-/// tracked name standing alone is the arm's VALUE -- a move out of a branch.
-fn Checker mut @flow_arm_body(b Node, mut fl ConsumeFlow) -> () {
-    if b.kind_of() == NodeKind.Block {
-        @flow_block(b, fl, false)
-    } else if @is_tracked_name(b, fl) {
-        @flow_stop(b, "moved out of a branch, a loop or a nested block", fl)
-    } else {
-        @flow_stmt(b, fl, false)
-    }
-}
-
-/// A copy of a state vector: each arm starts from its own.
-fn flow_states_copy(v []VarState) -> []VarState {
-    mut out = []VarState.new()
-    out.append(v)
-    out
-}
-
-/// Join one path's state into `joined` (the first path is taken as it is): where
-/// the paths disagree the value is MAYBE consumed.
-fn flow_join(mut joined []VarState, st []VarState, paths int) -> () {
-    if paths == 0 {
-        joined.append(st)
-        return
-    } else {
-        // A later path: compared entry by entry below.
-    }
-    for i in 0..joined.len() {
-        if i >= st.len() { break }
-        if joined[i] != st[i] { joined[i] = VarState.VsMaybe } else { continue }
-    }
-}
-
-/// Forget every entry from `mark` on -- the values an arm bound -- and let each name
-/// mean its latest entry before it again (an arm may have shadowed one).
-fn flow_drop_from(mut fl ConsumeFlow, mark int) -> () {
-    fl.nm.truncate(mark)
-    fl.owned_ty.truncate(mark)
-    fl.at.truncate(mark)
-    fl.state.truncate(mark)
-    fl.names.clear()
-    for i in 0..mark { fl.names.put(fl.nm[i], i) }
-}
-
-/// One statement. A branch is joined (`@flow_branch`); a loop or a nested block is
-/// walked with the depth raised (`@flow_nested`).
+/// One statement. A branch, a loop and a nested block are consumed_paths.nv's; an
+/// exit (`return`, `break`, `continue`, a diverging call) judges what is owned and
+/// ends the path; a `with`-like body is walked with the depth raised (`@flow_nested`).
 fn Checker mut @flow_stmt(st Node, mut fl ConsumeFlow, is_last bool) -> () {
     ro k = st.kind_of()
+    ro diverges = is_node(st.id_of()) && is_never_ty(@ctx.tys, @chan.type_if_known(st.id_of()))
+    ro leaves = k == NodeKind.RetStmt || k == NodeKind.LoopCtl || diverges
+    if leaves && fl.depth > 0 && fl.owned_ty.len() > 0 {
+        @flow_stop(st, "left early from a `with`, a `spawn` or a handler body while one is tracked", fl)
+        return
+    } else {
+        // Not an exit, or an exit no such body hides: judged below.
+    }
     if k == NodeKind.BindStmt {
         @flow_bind(st, fl)
     } else if k == NodeKind.RetStmt {
-        if (fl.depth > 0 && flow_any_live(fl)) || flow_exit_unjoined(fl) {
-            @flow_stop(st, "left early by a `return` while it is still owned", fl)
-            return
-        } else {
-            // The function's own last word, or nothing owned is skipped.
-        }
+        // The returned value leaves first; then every other owned value must be done.
         for c in branch_children(st) {
             match c {
                 Leaf(_) => {}
                 Branch { .. } => @flow_expr(c, fl, true)
             }
         }
+        if fl.stopped { return }
+        @flow_exit(fl, 0, st, "this `return`")
+        fl.dead = true
+    } else if k == NodeKind.LoopCtl {
+        @flow_loop_ctl(st, fl)
     } else if is_branch_kind(k) {
         @flow_branch(st, fl)
+    } else if is_loop_kind(k) {
+        @flow_loop(st, fl)
+    } else if k == NodeKind.Block || k == NodeKind.Unsafe {
+        @flow_scope_block(st, fl)
     } else if is_compound_kind(k) {
         @flow_nested(st, fl)
-    } else if flow_exit_unjoined(fl) && is_node(st.id_of()) && is_never_ty(@ctx.tys, @chan.type_if_known(st.id_of())) {
-        @flow_stop(st, "left early from a branch by a diverging call while one is tracked", fl)
+    } else if diverges {
+        // `panic(..)` and every call that never returns: an exit point (D133).
+        @flow_expr(st, fl, false)
+        if fl.stopped { return }
+        @flow_exit(fl, 0, st, "this diverging call")
+        fl.dead = true
     } else {
         // An expression statement: its value is the tail's when it is the last one,
         // else it is used and dropped.
@@ -510,13 +396,11 @@ fn Checker mut @flow_stmt(st Node, mut fl ConsumeFlow, is_last bool) -> () {
     }
 }
 
-/// The statement kinds walked with the depth raised: every one that loops or opens a
-/// scope of its own (a branch is joined instead, `is_branch_kind`).
+/// The kinds walked with the depth raised: a body that runs elsewhere or under a
+/// handler, and an assignment (branches, loops and blocks have their own paths).
 fn is_compound_kind(k NodeKind) -> bool =>
-    k == NodeKind.WhileStmt || k == NodeKind.WhileLet || k == NodeKind.ForStmt ||
     k == NodeKind.WithStmt || k == NodeKind.SupervisedStmt || k == NodeKind.SpawnStmt ||
-    k == NodeKind.Block || k == NodeKind.Unsafe || k == NodeKind.AssignStmt ||
-    k == NodeKind.HandlerLit || k == NodeKind.HandlerOp
+    k == NodeKind.AssignStmt || k == NodeKind.HandlerLit || k == NodeKind.HandlerOp
 
 /// The kinds that NAME a value where it lives rather than produce one: a name, `@`,
 /// a field, an element. Using one is a view; moving out of one is what step 1 does
@@ -547,7 +431,7 @@ fn Checker mut @flow_bind(st Node, mut fl ConsumeFlow) -> () {
         // The `consume` form: the obligation is visible here.
     }
     if fl.depth > 0 {
-        @flow_stop(st, "bound inside a loop or a nested block", fl)
+        @flow_stop(st, "bound inside a `with`, a `spawn`, a handler or an assignment", fl)
         return
     } else if kids[1].kind_of() != NodeKind.LeafNode {
         @flow_stop(st, "bound by a destructuring pattern", fl)
@@ -599,9 +483,11 @@ fn Checker mut @flow_expr(e Node, mut fl ConsumeFlow, moved bool) -> () {
         @flow_call(e, fl)
     } else if is_branch_kind(k) {
         @flow_branch(e, fl)
+    } else if k == NodeKind.Block || k == NodeKind.Unsafe {
+        @flow_scope_block(e, fl)
     } else if is_compound_kind(k) {
         @flow_nested(e, fl)
-    } else if k == NodeKind.Try && (flow_any_live(fl) || flow_exit_unjoined(fl)) {
+    } else if k == NodeKind.Try && flow_any_live(fl) {
         @flow_stop(e, "left early by a `?` while it is still owned", fl)
     } else {
         for c in branch_children(e) {
@@ -624,7 +510,7 @@ fn Checker mut @flow_name(e Node, mut fl ConsumeFlow, moved bool) -> () {
         } else if fl.state[i] == VarState.VsMaybe {
             @flow_reject(e, maybe_consumed_msg(expr_leaf_name(e)), fl)
         } else if moved && fl.depth > 0 {
-            @flow_stop(e, "consumed inside a loop or a nested block", fl)
+            @flow_stop(e, "consumed inside a `with`, a `spawn`, a handler or an assignment", fl)
         } else if moved {
             fl.state[i] = VarState.VsConsumed
         } else {
@@ -661,8 +547,39 @@ fn Checker mut @flow_call(e Node, mut fl ConsumeFlow) -> () {
         ro written = if is_method { at - 1 } else { at }
         ro arg = if is_method && at == 0 { kids[0] } else { call_arg_at(kids, from, written) }
         ro mode = if s < fd.param_cnt { @ctx.fns.params[fd.param_off + s].mode } else { ParamMode.ModeRo }
-        @flow_expr(arg, fl, mode == ParamMode.ModeConsume)
+        if mode != ParamMode.ModeConsume && @is_fresh_owned(arg, fl) {
+            @flow_fresh_in_view(arg, fl)
+        } else {
+            @flow_expr(arg, fl, mode == ParamMode.ModeConsume)
+        }
     }
+}
+
+/// A FRESH value of a must-consume type: produced here, not named by a place.
+fn Checker @is_fresh_owned(e Node, fl ConsumeFlow) -> bool =>
+    is_node(e.id_of()) && !is_place_kind(e.kind_of()) && is_kind_of(fl.kinds, @chan.type_if_known(e.id_of()))
+
+/// A fresh value handed to a view (a view or `mut` parameter, a view receiver):
+/// D476 desugars it to `consume x = e { ... }`, and for a type with no `@cleanup`
+/// the binding is left unconsumed -- `D133-not-consumed` (D476 s4). A type WITH
+/// one is cleaned there, which is the `@cleanup` step of the track.
+fn Checker mut @flow_fresh_in_view(e Node, mut fl ConsumeFlow) -> () {
+    ro t = @chan.type_if_known(e.id_of())
+    if @has_cleanup(t) {
+        @flow_stop(e, "handed to a view while its type has a `@cleanup` (the D476 scope)", fl)
+    } else {
+        @flow_reject(e, rvalue_in_view_msg(ty_source_name(@ctx, t), @consume_methods_of(t)), fl)
+    }
+}
+
+/// Does `t` declare a `@cleanup` method (D432)?
+fn Checker @has_cleanup(t TyId) -> bool {
+    for i in 0..@ctx.fns.rows.len() {
+        ro fd = @ctx.fns.rows[i]
+        if !fd.has_recv || fd.param_cnt == 0 || fd.name != "cleanup" { continue }
+        if @ctx.fns.params[fd.param_off].type_id == t { return true }
+    }
+    false
 }
 
 /// The arguments of a call that names no callable row: each moves into what is built.

@@ -1,0 +1,30 @@
+module must_consume.neg_19
+
+// A FRESH MUST-CONSUME VALUE HANDED TO A VIEW PARAMETER (D133 table:
+// D133-consume-rvalue-in-view; D476 s4: for a type with no `@cleanup` the
+// desugared binding is left unconsumed). The ORACLE accepts it (registry 221.1
+// No.1659, oracle).
+
+// NOVAC_EXPECT is handed to a view here and nothing consumes it afterwards
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx @peek() -> int => @id
+
+fn show(t Tx) -> () {
+    println(t.peek())
+}
+
+fn main() {
+    show(Tx { id: 1 })
+}
