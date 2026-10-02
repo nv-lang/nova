@@ -36,6 +36,7 @@ mod raw_ptr_ops; // #1473: raw-pointer address arithmetic outside unsafe (D216 p
 mod as_cast_rules; // #1547: the `as` rules of D54 in the checker, not the emitter
 mod pattern_literal_rules; // #1535: a literal pattern has the scrutinee's type
 mod literal_exact; // #1593: a literal fits its position only exactly, see its doc
+mod sum_method_rules; // #1456: a method Option/Result do not have is a checker error, see its doc
 pub(crate) mod reserved_names; // D487: a declared name outside the compiler's C namespaces (called by the parser)
 pub(crate) mod coerce_door; // #1451/#1452: one door for `#coerce` -- checker decides, rewrite reads
 mod const_names; // #1488: the type of a module-level `const`/`ro` read by its bare name
@@ -18830,6 +18831,7 @@ impl<'a> TypeCheckCtx<'a> {
                 // primitive receivers gated (U.3.2). De-risked §7: 0 false-positives on
                 // 707K corpus calls (62K resolved-ok), catches the crafted mismatch.
                 self.check_instance_overload(obj, name, args, gs, scope, func.span, errors, call_id);
+                self.check_sum_method_exists(obj, name, scope, func.span, errors); // #1456
                 let ExprKind::Ident(prefix) = &obj.kind else { return; };
                 // Локальная переменная перекрывает имя → это instance-
                 // метод на значении, не module-call.

@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E7320
+// Regression for registry 221.1 #1456: a method that a sum does not have is a checker
+// error (E7320), whatever the receiver's shape. Before, `nova check` was green and the C
+// compiler refused the program. Positive half: standalone/p1456_sum_methods_ok.nv.
+module neg.p1456_option_flatten_neg
+
+fn main() Io {
+    // nova:expect E7320 -- `Option` has no `flatten`; the call used to slide into `Vec.flatten`
+    ro x = Some(Some(3)).flatten()
+    println("${x}")
+}
