@@ -4,6 +4,15 @@
 # сужение без опускания — красный (протухшая база пропустит следующий рост).
 # Снято 2026-08-16. Заметь sem: широчайшая дверь наружу — до-дженериковый реестр.
 #
+#   2026-10-03 (облачная сессия p274-carina-strarm, D133-трек шаг 5 -- авто-`@cleanup`,
+#   D432), builtins 68 -> 71, lower 94 -> 98, sem 341 -> 344. builtins: `CLEANUP_METHOD`,
+#   `SCOPE_OUTCOME_TYPE`, `SCOPE_OUTCOME_SUCCESS` -- имена языка/std, которые спрашивают
+#   check (какой тип аффинный) и emit_c (исход вызова); P5 держит их в одном реестре.
+#   lower: `CleanupCall` (вызов в понижённом теле, его печатает emit_c), `remember_binding`,
+#   `bound_local`, `cleanup_call` -- двери построителя для этого вызова. sem: `CleanupRow`
+#   и `cleanup_first` / `record_cleanup` -- канал чекера: решение потока о вызовах, которое
+#   читают понижение и mono (корни достижимости).
+#
 #   2026-09-04 (окно 274, волна «десять типов» №910 + фикс получателя №917),
 #   builtins 33 -> 35, sem 209 -> 215. builtins: `PrimFamily` (ось семьи
 #   примитива) и `prim_row` (строка универсума по ординалу — семья, ширина, знак,
@@ -271,7 +280,7 @@
 # 2026-10-02, cloud session p274-carina-k1 (part 5, D216 `dist`): builtins 67 -> 68: `PTR_DIST`
 #   -- the raw-pointer intrinsic's name beside `PTR_OFFSET`, asked by check's typing of a
 #   pointer method (check/unsafe.nv) and by its emission (emit_c/emit_ptr.nv).
-builtins 68
+builtins 71
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -375,7 +384,7 @@ lex 11
 #   became `@note_arm_heads` (the blocks of an arm's test Ifs -- the printer descends
 #   through a disjunction's switch to each) and `@set_bool` came in: the one constant
 #   the lowering writes, a disjunction's "an alternative held" flag.
-lower 94
+lower 98
 main 0
 # mono -- НОВЫЙ модуль (2026-08-18, Э2-б2): коллектор достижимого.
 # Наружу три имени: тип Reach, вопрос @has (эмиттер спрашивает про каждую
@@ -1047,7 +1056,7 @@ resolve 23
 #   tree is 341 -- main's 340 plus k1's `is_arg_value_kind` (part 5 step 3, its chronicle line above).
 # merge of origin/main f80d61e00 into p274-carina-strarm (2026-10-02): main's counts plus this
 #   branch's SourceText.@holds (source 6 -> 7); the counts are the guard's on the merged tree.
-sem 341
+sem 344
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

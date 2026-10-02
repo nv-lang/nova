@@ -45,6 +45,7 @@ import ../sem.{contains_call, loop_ctl_is_break, is_collection_head}
 /// value (Nova tail-expression semantics; arithmetic.nv relies on it).
 fn Lowerer mut @lower_block_stmts_fn(b Node, tail bool) -> () {
     ro kids = branch_children(b)
+    mut cleaned = false
     mut last_branch = -1
     if tail {
         mut j = 0
@@ -78,13 +79,21 @@ fn Lowerer mut @lower_block_stmts_fn(b Node, tail bool) -> () {
                     // record, general expression), each spelling `return`
                     // itself; the form of the value is now the printer's one
                     // dispatch (`build_value` in emit_place.nv).
-                    @lower_place(c, @ir.ret_place())
+                    @lower_exit_value(c, @ir.ret_place(), b.id_of())
+                    cleaned = true
                 } else {
                     @lower_stmt(c)
                 }
             }
         }
         j += 1
+    }
+    // The block's end is an exit of what it bound (D432) -- unless its returned
+    // value already ran them, between the value and the `return`.
+    if !cleaned {
+        @lower_cleanups(b.id_of())
+    } else {
+        // `@lower_exit_value` placed them.
     }
 }
 
@@ -132,6 +141,8 @@ fn Lowerer mut @lower_block_stmts_value(b Node, dest Local) -> () {
         }
         i += 1
     }
+    // The block's end is an exit of what it bound (D432): after its value is placed.
+    @lower_cleanups(b.id_of())
 }
 
 /// A tail `if` laid down as a VALUE: a zero-initialised temporary, both
@@ -280,6 +291,8 @@ fn Lowerer mut @lower_stmt(st Node) -> () {
     } else if k == NodeKind.LoopCtl {
         // `break` / `continue` (274.7 B10): the block ends with the jump, what the
         // source wrote after it lands in a fresh block -- `@lower_return`'s shape.
+        // The values the pass bound and still owns are cleaned first (D432 s6).
+        @lower_cleanups(st.id_of())
         if loop_ctl_is_break(st) {
             @ir.break_loop()
         } else {
@@ -363,6 +376,12 @@ fn Lowerer mut @lower_bind(st Node) -> () {
     // general expression -- each spelling the declaration line itself.
     ro l = @ir.named(vtype, vname)
     @lower_place(init, l)
+    // An exit below may clean this value (D432): the statement names its local.
+    if @out.cleanups.len() > 0 {
+        @ir.remember_binding(st.id_of(), l)
+    } else {
+        // Nothing is cleaned in this file: no exit asks.
+    }
 }
 
 /// A destructuring binding: the scrutinee lands in a temporary ONCE, and the
@@ -687,7 +706,7 @@ fn Lowerer mut @lower_for_each(kids []Node) -> () {
 fn Lowerer mut @lower_return(st Node) -> () {
     ro kids = branch_children(st)
     if kids.len() > 1 {
-        @lower_place(kids[1], @ir.ret_place())
+        @lower_exit_value(kids[1], @ir.ret_place(), st.id_of())
     } else {
         // A BARE `return` RECORDS AND PRINTS NOTHING HERE (2026-09-09). It used to print
         // `return NOVA_UNIT;` on the spot, and under the walk that landed the line right
@@ -696,6 +715,12 @@ fn Lowerer mut @lower_return(st Node) -> () {
         // the form: a grep for a bare `return` found zero carriers, which is why every
         // green measurement of this wave was silent about it. The `Return` terminator is
         // what the walk prints from, and it prints the same for a body that just ends.
+    }
+    if kids.len() <= 1 {
+        // A bare `return`: the values still owned are cleaned before it (D432).
+        @lower_cleanups(st.id_of())
+    } else {
+        // `@lower_exit_value` cleaned them between the value and the return.
     }
     @ir.ret()
 }

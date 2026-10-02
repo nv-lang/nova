@@ -255,7 +255,18 @@ export type CheckOut {
     cap_at []int /// NodeId -> the capture row a Name read inside a literal op body is, -1 = none. One writer: check.
     coerce_at []int /// NodeId -> the raw row of the `#coerce` method the RETURN door inserts around this value (D429 R2/R9), -1 = none. One writer: check (`@judge_return`).
     vec_ops NameTable /// implicit vector operation NAME (`new`, `push`, `len`, `index`) -> the row of std's `Vec[T]` declaration it calls, recorded by the checker where it decided an instance novac makes, read by the emitter to name it (274.11 E.10 step 4c-2) (NsCallables)
+    cleanups []CleanupRow /// the auto-`@cleanup` calls (D432) the flow decided: one row per (exit site, value), a site's rows contiguous, innermost value first. One writer: check (`@flow_record_cleanups`).
+    cleanup_at []int /// NodeId of an exit site -- a `return`, `break` or `continue`, or the block whose end it is -> its first row of `cleanups`, -1 = none. One writer: check.
     wanted []CalleeRef /// instances the LANGUAGE calls with no call written -- a vector literal's `new` and `push`, `xs[i]`'s `index`, a `for`'s `len` and `index` over a vector whose instance novac makes itself (274.11 E.10 step 4c-2). A flat list, not by node: no node holds a call for them, and mono reads them all. One writer: check.
+}
+
+/// One auto-`@cleanup` call (D432) at one exit site: a value of a type with an
+/// effect-free `@cleanup` still owned when its scope is left there.
+export type CleanupRow value {
+    site NodeId /// the exit: a `return`, `break` or `continue` statement, or the block whose end it is
+    binder NodeId /// the `consume x = e` statement that bound the value; the function's declaration for a `consume` parameter
+    name str /// the value's source name -- the C name of a parameter
+    row FnRow /// the type's `@cleanup` callable
 }
 
 /// One binding a handler literal CAPTURES from the scope it is written in
@@ -279,16 +290,19 @@ export fn CheckOut.new(node_count int) -> CheckOut {
     mut implicit = []Resolution.new()
     mut cap_at = []int.new()
     mut coerce_at = []int.new()
+    mut cleanup_at = []int.new()
     for _ in 0..node_count {
         types.push(no_ty())
         res.push(Resolution.Unresolved)
         implicit.push(Resolution.Unresolved)
         cap_at.push(0 - 1)
         coerce_at.push(0 - 1)
+        cleanup_at.push(0 - 1)
     }
     CheckOut { entry: no_row(), types, res, implicit, subst_args: []TyId.new(), arg_slots: []SlotBind.new(),
                contract_notes: []ContractNote.new(), mv_order: []int.new(),
-               captures: []CaptureRow.new(), cap_at, coerce_at, wanted: []CalleeRef.new(),
+               captures: []CaptureRow.new(), cap_at, coerce_at, cleanups: []CleanupRow.new(), cleanup_at,
+               wanted: []CalleeRef.new(),
                vec_ops: NameTable.new(NamespaceId.NsCallables) }
 }
 
@@ -331,6 +345,22 @@ export fn CheckOut mut @record_entry(row FnRow) -> () {
 /// depth-first walk finishes a value only after its dependencies.
 export fn CheckOut mut @record_module_value(row int) -> () {
     @mv_order.push(row)
+}
+
+/// The first `cleanups` row of exit `site`, -1 when it has none -- also how the flow
+/// knows a site was settled already (a loop's second pass reaches it again).
+#realtime nogc
+export fn CheckOut @cleanup_first(site NodeId) -> int => @cleanup_at[raw_node(site)]
+
+/// One auto-`@cleanup` call at `site`: the rows of one site are recorded together,
+/// so the first one marks where they start.
+export fn CheckOut mut @record_cleanup(site NodeId, binder NodeId, name str, row FnRow) -> () {
+    if @cleanup_at[raw_node(site)] < 0 {
+        @cleanup_at[raw_node(site)] = @cleanups.len()
+    } else {
+        // A later row of the same site: the first one marks the start.
+    }
+    @cleanups.push(CleanupRow { site, binder, name, row })
 }
 
 /// A READ of a binding captured by handler literal `lit` (E.9 step 3): the

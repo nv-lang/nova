@@ -1,0 +1,81 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc MIR's drop elaboration (`rustc_mir_transform::elaborate_drops`) -- a
+//   value still owned where its scope is left gets a `Drop` on that edge, and only
+//   there; Go's `defer` for "placed by the compiler at each exit". NOT taken: the
+//   drop FLAG of a value owned on some paths only (D432 s5) -- the checker refuses
+//   that case by name, so every call placed here is unconditional.
+// Role: the auto-`@cleanup` calls of the lowered body (D432, step 5 of the D133
+//   track): the checker's flow decides WHERE a value with an effect-free
+//   `@cleanup` is still owned when its scope is left (`CheckOut.cleanups`), and
+//   the lowering places one call per such value at that exit -- before a `return`
+//   or a `break`/`continue` jumps, at a block's end after its value is placed.
+// Used by: lower/lowering.nv (`@lower_return`, the LoopCtl arm, the two block
+//   doors, `@lower_bind`); emit_c/emit_flow.nv prints `Stmt.Cleanup`.
+// Guarded by: the fixtures novac/fixtures/must_consume/ through
+//   check-novac-differential.sh (each call's output byte-for-byte with the oracle).
+// novac/src/lower/ir_cleanup.nv -- where an auto-`@cleanup` call lands.
+
+module novac.lower
+
+import ../tree.{Node, NodeId, raw_node}
+import ../sem.{FnRow}
+
+/// One auto-`@cleanup` call: the value is a local of the body (a `consume x = e`
+/// binding) or, when `local` is none, a parameter named `name` (D432 rev-2: a
+/// `consume` parameter is cleaned as a binding is); `row` is its type's `@cleanup`.
+export type CleanupCall value {
+    local Local /// the binding's local, `no_local()` for a parameter
+    name str /// the parameter's name when `local` is none
+    row FnRow /// the `@cleanup` callable
+}
+
+/// A `consume` binding was laid down as `l`: remembered, so an exit below can name
+/// it (the same linear table `hoisted_at` is -- a body binds few such values).
+export fn FnBuilder mut @remember_binding(bind NodeId, l Local) -> () {
+    @bound_at.push(raw_node(bind))
+    @bound_to.push(l)
+}
+
+/// The local a binding statement laid down, `no_local()` when it is not one of this
+/// body's (a parameter).
+export fn FnBuilder @bound_local(bind NodeId) -> Local {
+    for i in 0..@bound_at.len() {
+        if @bound_at[i] == raw_node(bind) { return @bound_to[i] }
+    }
+    no_local()
+}
+
+/// One auto-`@cleanup` call, at the current point of the body.
+export fn FnBuilder mut @cleanup_call(c CleanupCall) -> () {
+    @cur.push(Stmt.Cleanup(c))
+}
+
+/// The VALUE of an exit lands in `dest` (D432): when the exit cleans values, through a
+/// temporary of `dest`'s type first -- the value is computed while they are still
+/// owned, the cleanups run, and only then does it reach the return place, whose
+/// assignment the printer spells as the `return` itself.
+fn Lowerer mut @lower_exit_value(e Node, dest Local, site NodeId) -> () {
+    if @out.cleanup_first(site) < 0 {
+        @lower_place(e, dest)
+        return
+    } else {
+        // Cleanups at this exit: the value waits in a temporary.
+    }
+    ro t = @ir.temp(@ir.decl_of(dest).ty)
+    @lower_place(e, t)
+    @lower_cleanups(site)
+    @ir.copy(dest, t)
+}
+
+/// The auto-`@cleanup` calls the checker decided at exit `site` (D432): placed here,
+/// innermost binding first, before control leaves.
+fn Lowerer mut @lower_cleanups(site NodeId) -> () {
+    mut k = @out.cleanup_first(site)
+    if k < 0 { return }
+    while k < @out.cleanups.len() {
+        ro r = @out.cleanups[k]
+        if r.site != site { break }
+        @ir.cleanup_call(CleanupCall { local: @ir.bound_local(r.binder), name: r.name, row: r.row })
+        k += 1
+    }
+}

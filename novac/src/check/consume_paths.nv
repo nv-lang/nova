@@ -45,12 +45,20 @@ fn is_loop_kind(k NodeKind) -> bool =>
 fn Checker mut @flow_exit(mut fl ConsumeFlow, mark int, at Node, exit str) -> () {
     for i in mark..fl.owned_ty.len() {
         if fl.state[i] == VarState.VsConsumed { continue }
+        if fl.auto_at[i] >= 0 {
+            // An affine value is cleaned at this exit (D432).
+            @flow_settle_auto(fl, i)
+            continue
+        } else {
+            // Strictly linear: an error below.
+        }
         ro t = fl.owned_ty[i]
         ro partly = fl.state[i] == VarState.VsMaybe
         @reject_first_leaf_of([]Node.of(at),
             exit_not_consumed_msg(fl.nm[i], ty_source_name(@ctx, t), @ways_out(t), exit, partly))
         fl.stopped = true
     }
+    @flow_record_cleanups(fl, mark, at)
 }
 
 /// `break` / `continue`: the values the loop body bound must be consumed here, and
@@ -199,7 +207,7 @@ fn Checker mut @flow_arm(a Node, is_match_arm bool, pat Node, moved bool, entry 
     if fl.stopped { return false }
     ro came_out = !fl.dead
     if came_out {
-        @flow_scope_end(fl, mark)
+        @flow_scope_end(fl, mark, if is_match_arm { flow_arm_body_node(a) } else { a })
     } else {
         // The arm left early: its exit judged what it had bound.
     }
@@ -207,6 +215,15 @@ fn Checker mut @flow_arm(a Node, is_match_arm bool, pat Node, moved bool, entry 
     if fl.stopped || !came_out { return false }
     flow_join(joined, fl.state, paths)
     true
+}
+
+/// The body node of a `match` arm -- its block, or its one expression.
+fn flow_arm_body_node(a Node) -> Node {
+    ro ak = branch_children(a)
+    match arm_body_at(ak) {
+        Some(b) => ak[b]
+        None => a
+    }
 }
 
 /// The body of an arm: a block of statements, or one statement or expression. Its
@@ -233,7 +250,7 @@ fn Checker mut @flow_scope_block(b Node, mut fl ConsumeFlow) -> () {
     fl.nest -= 1
     if fl.stopped { return }
     if !fl.dead {
-        @flow_scope_end(fl, mark)
+        @flow_scope_end(fl, mark, b)
     } else {
         // Left early: the exit judged what the block had bound.
     }
@@ -320,7 +337,7 @@ fn Checker mut @flow_loop(n Node, mut fl ConsumeFlow) -> () {
         fl.nest -= 1
         if fl.stopped { break }
         if !fl.dead {
-            @flow_scope_end(fl, fl.loop_mark)
+            @flow_scope_end(fl, fl.loop_mark, kids[body_at])
             if fl.stopped { break }
             flow_drop_from(fl, fl.loop_mark)
             flow_join(fl.cont, fl.state, fl.cont_paths)
@@ -397,6 +414,8 @@ fn flow_drop_from(mut fl ConsumeFlow, mark int) -> () {
     fl.at.truncate(mark)
     fl.state.truncate(mark)
     fl.loose.truncate(mark)
+    fl.auto_at.truncate(mark)
+    fl.origin.truncate(mark)
     fl.names.clear()
     for i in 0..mark { fl.names.put(fl.nm[i], i) }
 }

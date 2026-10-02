@@ -250,6 +250,7 @@ export type Stmt enum
     | ScopeOpen(int) // `supervised` scope N opened: its fiber queue, the early deadline armed (E.9 step 4)
     | ScopeJoin(int) // scope N joined -- its children run to the end; on EVERY exit of the body
     | Spawn(SpawnSite) // one `spawn`: its context filled, its fiber handed to the scope's queue
+    | Cleanup(CleanupCall) // one auto-`@cleanup` call (D432) where its value's scope is left
 
 /// What an `If` tests (wave M2b-1b): a boolean expression as the tree spells
 /// it (the M1 bridge until M3), or "the Option held by this local carries a
@@ -477,6 +478,8 @@ export type FnBuilder {
     scopes []WithScope /// the open `with` scopes, innermost last (E.9 step 2)
     loops int /// the loops open at the current point -- see WithScope.loops
     frames int /// interrupt frames this body has opened -- the source of their names
+    bound_at []int /// `consume` binding statements laid down, by node id, parallel to `bound_to` (ir_cleanup.nv)
+    bound_to []Local /// the local each of `bound_at` laid down
 }
 
 /// A NODE WHOSE VALUE IS ALREADY IN A LOCAL, or `no_local()` (F65).
@@ -523,7 +526,8 @@ export fn FnBuilder.new(ret_ty TyId) -> FnBuilder {
     mut hoisted_at = []int.new()
     mut hoisted_to = []Local.new()
     FnBuilder { locals, blocks, cur, cur_id: BlockId(0), open_arms, arm_start, switches: 0,
-                hoisted_at, hoisted_to, scopes: []WithScope.new(), loops: 0, frames: 0 }
+                hoisted_at, hoisted_to, scopes: []WithScope.new(), loops: 0, frames: 0,
+                bound_at: []int.new(), bound_to: []Local.new() }
 }
 
 /// The block the next statement lands in.

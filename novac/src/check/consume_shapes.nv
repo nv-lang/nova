@@ -20,12 +20,13 @@
 
 module novac.check
 
-import ../tree.{Node, NodeKind, is_node, raw_node}
+import ../tree.{Node, NodeKind, is_node}
 import ../lex.{TokenKind}
 import ../sem.{branch_children, leaf_text, file_decls, ty_source_name, binder_text}
 import ../sem.{decl_of_ty, field_range_of, raw_frow, no_frow, pattern_mode_word}
+import ../sem.{FnRow, ParamMode, decl_fn_row, raw_row, no_row}
 import ../types.{TyId, no_ty, is_ty}
-import ../builtins.{TypeKind}
+import ../builtins.{TypeKind, CLEANUP_METHOD, SCOPE_OUTCOME_TYPE}
 
 /// D133-field-marker-missing: a field of a must-consume type says so.
 fn field_marker_missing_msg(field str, ty str) -> str =>
@@ -58,7 +59,7 @@ fn discarded_by_wildcard_msg(ty str) -> str =>
 fn Checker mut @judge_wildcard(pat Node, ty TyId, ak []Node, pos PatPos) -> bool {
     if !@is_owned_kind(@consume_kinds, ty) { return true }
     ro arm_root = match pos {
-        PosArm => ak.len() > 0 && raw_node(ak[0].id_of()) == raw_node(pat.id_of())
+        PosArm => ak.len() > 0 && ak[0].id_of() == pat.id_of()
         PosBind | PosFor | PosCond => false
     }
     if arm_root {
@@ -289,11 +290,56 @@ fn Checker mut @judge_fresh_in_view(e Node, t TyId) -> bool {
     true
 }
 
+/// The file's AFFINE must-consume types (D432): each declares, in this file,
+/// `fn T consume @cleanup(o ScopeOutcome) -> ()` -- the row of that method, and
+/// whether its signature carries effects. An effect-free one is cleaned where an
+/// owned value of it is left (s1); an effectful one would add its effects to the
+/// enclosing function (the 2026-08-04 amendment), which the track does not follow.
+type AutoCleanups {
+    affine []TyId /// the affine types
+    rows []FnRow /// per type: its `@cleanup`
+    eff []bool /// per type: the `@cleanup` declares effects
+}
+
+/// The affine types of `file` among `kinds`.
+fn Checker @auto_cleanups_of(file Node, kinds []TyId) -> AutoCleanups {
+    mut a = AutoCleanups { affine: []TyId.new(), rows: []FnRow.new(), eff: []bool.new() }
+    ro outcome_t = @ctx.ty_of_name(SCOPE_OUTCOME_TYPE) ?? no_ty()
+    for d in file_decls(file) {
+        if d.kind_of() != NodeKind.FnDecl { continue }
+        // No row: the subset walk refused the declaration already.
+        ro row = decl_fn_row(d, @ctx) ?? no_row()
+        if raw_row(row) < 0 { continue }
+        ro fd = @ctx.fns.rows[raw_row(row)]
+        if fd.name != CLEANUP_METHOD || !fd.has_recv || fd.param_cnt != 2 { continue }
+        ro recv = @ctx.fns.params[fd.param_off]
+        ro arg = @ctx.fns.params[fd.param_off + 1]
+        ro shaped = recv.mode == ParamMode.ModeConsume && is_kind_of(kinds, recv.type_id) && arg.type_id == outcome_t
+        if !shaped { continue }
+        mut effects = false
+        for c in branch_children(d) {
+            if c.kind_of() == NodeKind.EffectItem { effects = true } else { continue }
+        }
+        a.affine.push(recv.type_id)
+        a.rows.push(row)
+        a.eff.push(effects)
+    }
+    a
+}
+
+/// The index of `t` among the affine types, -1 when it is strictly linear.
+fn auto_index_of(a AutoCleanups, t TyId) -> int {
+    for i in 0..a.affine.len() {
+        if a.affine[i] == t { return i }
+    }
+    0 - 1
+}
+
 /// Does `t` declare a `@cleanup` method (D432)?
 fn Checker @has_cleanup(t TyId) -> bool {
     for i in 0..@ctx.fns.rows.len() {
         ro fd = @ctx.fns.rows[i]
-        if !fd.has_recv || fd.param_cnt == 0 || fd.name != "cleanup" { continue }
+        if !fd.has_recv || fd.param_cnt == 0 || fd.name != CLEANUP_METHOD { continue }
         if @ctx.fns.params[fd.param_off].type_id == t { return true }
     }
     false

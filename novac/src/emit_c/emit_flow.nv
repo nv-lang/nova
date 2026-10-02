@@ -40,9 +40,11 @@ import ../sem.{branch_children, leaf_text, vec_op_c}
 import ../sem.{is_unit_ty}
 import ../types.{is_ty}
 import ../lower.{IfCtx, LoopHead, Cond, Fn, Stmt, BlockId, SwitchTerm, no_block, raw_block}
-import ../lower.{HandlerSwap}
+import ../lower.{HandlerSwap, CleanupCall, raw_local}
+import ../sem.{c_callable, c_maker, variant_named_in, raw_vrow}
+import ../types.{TyId, no_ty}
 import ../sem.{c_type, effect_slot_c}
-import ../builtins.{VEC_LEN_METHOD, RECV_C_NAME}
+import ../builtins.{VEC_LEN_METHOD, RECV_C_NAME, SCOPE_OUTCOME_TYPE, SCOPE_OUTCOME_SUCCESS}
 
 /// Whether this branch continues a `} else ` line its caller printed.
 fn chained_of(outer Option[IfCtx]) -> bool {
@@ -451,7 +453,19 @@ fn Emitter mut @print_stmt(s Stmt) -> () {
         ScopeOpen(q) => @emit_scope_open(q)
         ScopeJoin(q) => @emit_scope_join(q)
         Spawn(s) => @emit_spawn_site(s)
+        Cleanup(c) => @emit_cleanup(c)
     }
+}
+
+/// One auto-`@cleanup` call (D432): the type's `@cleanup` on the value still owned,
+/// with the exit's outcome -- every exit the subset reaches is a `Success` (no
+/// `?`, no unwinding: the checker refuses both before they reach here).
+fn Emitter mut @emit_cleanup(c CleanupCall) -> () {
+    ro target = if raw_local(c.local) >= 0 { @lo.ir.decl_of(c.local).name } else { c.name }
+    ro outcome_t = @ctx.ty_of_name(SCOPE_OUTCOME_TYPE) ?? no_ty()
+    ro success = variant_named_in(@ctx, SCOPE_OUTCOME_SUCCESS, outcome_t)
+    assert(raw_vrow(success) >= 0, "emit: an auto-cleanup reached the emitter with no `ScopeOutcome.Success` to pass")
+    @body.append("    (void)(${c_callable(@ctx, c.row, []TyId.new())}(${target}, ${c_maker(@ctx, success)}()));\n")
 }
 
 /// `prev = slot; slot = handler` -- the displaced handler is DECLARED here, its

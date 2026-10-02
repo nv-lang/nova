@@ -1,0 +1,25 @@
+module must_consume.neg_36
+
+// AN AFFINE TYPE WHOSE `@cleanup` DECLARES EFFECTS: legal since the D432 s1
+// amendment of 2026-08-04 -- the call's effects become the enclosing function's --
+// and the oracle compiles it. novac does not propagate them yet, so the value is
+// refused BY NAME with its stage.
+
+// NOVAC_EXPECT cleaned by a `@cleanup` with effects (their propagation, D432 s1 amendment) is not tracked yet
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @release() -> () {
+    println("release ${@id}")
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) Io -> () {
+    println("cleanup ${@id}")
+}
+
+fn main() Io {
+    consume a = Lk { id: 1 }
+    println("body")
+}

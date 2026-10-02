@@ -41,6 +41,9 @@ type ConsumeFlow {
     at []Node /// per entry: where it was bound, for the refusal
     state []VarState /// per entry: owned, consumed, or consumed on only some paths
     loose []bool /// per entry: bound by a pattern WITHOUT `consume` -- its one use must move it on (plan 293)
+    auto_at []int /// per entry: its type's index in `autos` when the entry is cleaned where it is left (D432: a `consume x = e` binding or a `consume` parameter of an affine type), -1 = strictly linear
+    origin []Node /// per entry: what bound it -- the `consume x = e` statement, the function for a parameter -- the key an exit's cleanup names it by
+    autos AutoCleanups /// the file's affine types (D432)
     depth int /// how many `with`, `spawn`, handler bodies or assignments enclose the walk: inside one, nothing may change who owns what
     nest int /// how many arms, loop bodies or nested blocks enclose the walk: a tracked name as their value moves out of them
     dead bool /// this path has left (`return`, `break`, `continue`, a diverging call): what follows is not reached
@@ -103,6 +106,7 @@ fn Checker mut @check_consume_flow(file Node) -> () {
     // in a file with no must-consume type at all.
     @check_field_markers(file, kinds)
     if kinds.len() == 0 { return }
+    ro autos = @auto_cleanups_of(file, kinds)
     for d in file_decls(file) {
         if d.kind_of() != NodeKind.TypeDecl || !decl_marked_consume(d) { continue }
         ro dk = branch_children(d)
@@ -116,7 +120,7 @@ fn Checker mut @check_consume_flow(file Node) -> () {
     }
     for d in file_decls(file) {
         if d.kind_of() != NodeKind.FnDecl { continue }
-        @flow_fn(d, kinds)
+        @flow_fn(d, kinds, autos)
     }
 }
 
@@ -126,7 +130,7 @@ fn Checker mut @check_consume_flow(file Node) -> () {
 fn Checker mut @check_consume_flow_instance(decl Node, body_file Node) -> () {
     ro kinds = @consume_kinds_of(body_file)
     if kinds.len() == 0 { return }
-    @flow_fn(decl, kinds)
+    @flow_fn(decl, kinds, @auto_cleanups_of(body_file, kinds))
 }
 
 /// The file's own `type X consume` declarations, as types.
@@ -178,7 +182,7 @@ fn is_kind_of(kinds []TyId, t TyId) -> bool {
 /// One function: its `consume` parameters of a must-consume type are owned from the
 /// start (the receiver of a `consume` method is the consumption itself, so `@` is not
 /// tracked), its body is walked, and whatever is still owned at its end is refused.
-fn Checker mut @flow_fn(f Node, kinds []TyId) -> () {
+fn Checker mut @flow_fn(f Node, kinds []TyId, autos AutoCleanups) -> () {
     // SILENT-OK: a generic body is walked per INSTANCE (`@check_consume_flow_instance`), as it is typed.
     if @is_generic_decl(f) && @substs.len() == 0 { return }
     // An instance's own row, else the declaration's.
@@ -193,6 +197,7 @@ fn Checker mut @flow_fn(f Node, kinds []TyId) -> () {
     if fk.len() == 0 { return }
     mut fl = ConsumeFlow { kinds, names: NameTable.new(NamespaceId.NsLocals), nm: []str.new(),
                            owned_ty: []TyId.new(), at: []Node.new(), state: []VarState.new(), loose: []bool.new(),
+                           auto_at: []int.new(), origin: []Node.new(), autos,
                            depth: 0, nest: 0, dead: false, loop_mark: -1, brk: []VarState.new(), brk_paths: 0,
                            cont: []VarState.new(), cont_paths: 0, forced: false, stopped: false }
     ro first = if fd.has_recv { 1 } else { 0 }
@@ -201,6 +206,9 @@ fn Checker mut @flow_fn(f Node, kinds []TyId) -> () {
         ro pt = @concrete(pd.type_id)
         if pd.mode == ParamMode.ModeConsume && @is_owned_kind(kinds, pt) {
             flow_own(fl, pd.name, pt, fk[0])
+            // D432 rev-2: a `consume` parameter of an affine type is cleaned as a
+            // binding is; its key is the function itself.
+            flow_mark_auto(fl, f)
         } else {
             // A view, a `mut` view, or no must-consume type: nothing owned.
         }
@@ -222,6 +230,15 @@ fn Checker mut @flow_fn(f Node, kinds []TyId) -> () {
                 }
             }
         }
+        // An `=>` body has no block whose end could hold a cleanup call.
+        for i in 0..fl.owned_ty.len() {
+            if fl.auto_at[i] >= 0 && fl.state[i] != VarState.VsConsumed {
+                @flow_stop(fl.at[i], "cleaned at the end of an `=>` body (its `@cleanup`, D432)", fl)
+                return
+            } else {
+                continue
+            }
+        }
     } else {
         // A declaration with no body (an `extern` one): nothing is walked, and its
         // `consume` parameters are the callee's business, written elsewhere.
@@ -229,15 +246,22 @@ fn Checker mut @flow_fn(f Node, kinds []TyId) -> () {
     }
     // A body that left by `return` (or diverged) had its exits judged there.
     if fl.stopped || fl.dead { return }
-    @flow_scope_end(fl, 0)
+    @flow_scope_end(fl, 0, body)
 }
 
-/// The end of a scope: every value bound since entry `mark` must be consumed on
-/// every path that reaches it. An error stops tracking (a loop's next pass would
-/// say it again).
-fn Checker mut @flow_scope_end(mut fl ConsumeFlow, mark int) -> () {
+/// The end of a scope (`site`, the block that ends): every value bound since entry
+/// `mark` must be consumed on every path that reaches it -- or, of an affine type,
+/// is cleaned there (D432, `@flow_settle_auto`). An error stops tracking (a loop's
+/// next pass would say it again).
+fn Checker mut @flow_scope_end(mut fl ConsumeFlow, mark int, site Node) -> () {
     for i in mark..fl.owned_ty.len() {
         ro t = fl.owned_ty[i]
+        if fl.auto_at[i] >= 0 {
+            @flow_settle_auto(fl, i)
+            continue
+        } else {
+            // Strictly linear: judged below.
+        }
         match fl.state[i] {
             VsConsumed => {}
             VsLive => {
@@ -252,6 +276,47 @@ fn Checker mut @flow_scope_end(mut fl ConsumeFlow, mark int) -> () {
             }
         }
     }
+    @flow_record_cleanups(fl, mark, site)
+}
+
+/// An affine value at an exit (D432): owned on every path, it is cleaned there --
+/// recorded by `@flow_record_cleanups`; owned on SOME paths, it needs the drop flag
+/// of s5; its `@cleanup` with effects needs them propagated (s1, amendment
+/// 2026-08-04). Those two are refused by name.
+fn Checker mut @flow_settle_auto(mut fl ConsumeFlow, i int) -> () {
+    if fl.state[i] == VarState.VsConsumed { return }
+    if fl.state[i] == VarState.VsMaybe {
+        @flow_stop(fl.at[i], "consumed on only some paths before its `@cleanup` would run (the drop flag, D432 s5)", fl)
+    } else if fl.autos.eff[fl.auto_at[i]] {
+        @flow_stop(fl.at[i], "cleaned by a `@cleanup` with effects (their propagation, D432 s1 amendment)", fl)
+    } else {
+        // Owned on every path, an effect-free cleanup: recorded at the site.
+    }
+}
+
+/// The auto-`@cleanup` calls at exit `site` (D432): every affine value bound since
+/// `mark` still owned there, innermost first -- recorded once (a loop's second pass
+/// reaches the same site).
+fn Checker mut @flow_record_cleanups(fl ConsumeFlow, mark int, site Node) -> () {
+    if fl.stopped || @chan.cleanup_first(site.id_of()) >= 0 { return }
+    mut i = fl.owned_ty.len() - 1
+    while i >= mark {
+        ro a = fl.auto_at[i]
+        if a >= 0 && fl.state[i] == VarState.VsLive {
+            @chan.record_cleanup(site.id_of(), fl.origin[i].id_of(), fl.nm[i], fl.autos.rows[a])
+        } else {
+            // Consumed, or strictly linear: nothing to clean here.
+        }
+        i -= 1
+    }
+}
+
+/// The entry just owned is AFFINE when its type is (D432) -- `origin` is what bound
+/// it, the key its cleanup names it by.
+fn flow_mark_auto(mut fl ConsumeFlow, origin Node) -> () {
+    ro last = fl.owned_ty.len() - 1
+    fl.auto_at[last] = auto_index_of(fl.autos, fl.owned_ty[last])
+    fl.origin[last] = origin
 }
 
 /// Own a new value: a fresh entry, and the name now means it.
@@ -262,6 +327,8 @@ fn flow_own(mut fl ConsumeFlow, name str, t TyId, at Node) -> () {
     fl.at.push(at)
     fl.state.push(VarState.VsLive)
     fl.loose.push(false)
+    fl.auto_at.push(0 - 1)
+    fl.origin.push(at)
 }
 
 /// A LANGUAGE error at `n`, and tracking stops: what follows is drawn from a state
@@ -410,6 +477,15 @@ fn Checker mut @flow_stmt(st Node, mut fl ConsumeFlow, is_last bool) -> () {
         // `panic(..)` and every call that never returns: an exit point (D133).
         @flow_expr(st, fl, false)
         if fl.stopped { return }
+        // Its outcome is a panic, and no cleanup is placed on that path (D432).
+        for i in 0..fl.owned_ty.len() {
+            if fl.auto_at[i] >= 0 && fl.state[i] != VarState.VsConsumed {
+                @flow_stop(st, "left by a diverging call before its `@cleanup` (the Panic outcome, D432)", fl)
+                return
+            } else {
+                continue
+            }
+        }
         @flow_exit(fl, 0, st, "this diverging call")
         fl.dead = true
     } else {
@@ -467,6 +543,8 @@ fn Checker mut @flow_bind(st Node, mut fl ConsumeFlow) -> () {
     @flow_expr(init, fl, true)
     if fl.stopped { return }
     flow_own(fl, leaf_text(kids[1]), it, kids[1])
+    // A bare `consume x = e` of an affine type is cleaned where it is left (D432 s2).
+    flow_mark_auto(fl, st)
 }
 
 /// `consume (a, b) = e`, `ro (a, b) = e`: a destructuring binding. A must-consume
