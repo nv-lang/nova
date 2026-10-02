@@ -34,7 +34,8 @@ cd "$T" || exit 2
 # blindness was fixed in the controller's machine watch the same night.
 _pick() { [ -x "$1" ] && { echo "$1"; return; }; [ -x "$2" ] && { echo "$2"; return; }; echo "$1"; }
 NOVA=$(_pick "$T/nova-cli/target/release/nova.exe" "$T/nova-cli/target/release/nova")
-NOVAC=$(_pick "$T/novac/target/novac.exe" "$T/novac/target/novac")
+. "$T/scripts/guards/lib/novac.sh"
+NOVAC=$(novac_bin "$T")   # #1607: the newer of the two, not the first that exists
 STEP="${1:-}"; NAME="${2:-x}"
 
 build_novac() {

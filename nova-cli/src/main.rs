@@ -1217,7 +1217,7 @@ enum ContractsCmd {
 /// resolve.
 fn find_repo_root() -> Result<PathBuf> {
     let cwd = std::env::current_dir()
-        .map_err(|e| anyhow!("cannot determine current directory: {}", e))?;
+        .map_err(|e| anyhow!("cannot determine current directory: {:#}", e))?;
     // find_repo_root_from принимает path к файлу — даём ему синтетический
     // path в cwd (parent будет cwd), что симулирует «ищем root от cwd».
     let probe = cwd.join("__novacli_probe__.nv");
@@ -1374,7 +1374,7 @@ fn bold(s: &str) -> String {
 
 fn read_file(path: &Path) -> Result<String> {
     std::fs::read_to_string(path)
-        .map_err(|e| anyhow!("failed to read {}: {}", path.display(), e))
+        .map_err(|e| anyhow!("failed to read {}: {:#}", path.display(), e))
 }
 
 /// Plan 45 Ф.24.13: parse + typecheck + infer_effects one .nv file.
@@ -1389,7 +1389,7 @@ fn read_file(path: &Path) -> Result<String> {
 fn parse_one_file(f: &Path) -> Result<(String, nova_codegen::ast::Module), String> {
     let src = match std::fs::read_to_string(f) {
         Ok(s) => s,
-        Err(e) => return Err(format!("warning: {}: {}", f.display(), e)),
+        Err(e) => return Err(format!("warning: {}: {:#}", f.display(), e)),
     };
     let path_str = f.to_string_lossy();
     match nova_codegen::parser::parse(&src) {
@@ -1583,7 +1583,7 @@ fn cmd_check_explain_cache(
         } else if p.is_dir() {
             let mut found = Vec::new();
             nova_codegen::test_runner::walk_nv(p, &mut found)
-                .map_err(|e| anyhow!("walk {}: {}", p.display(), e))?;
+                .map_err(|e| anyhow!("walk {}: {:#}", p.display(), e))?;
             for f in found {
                 if !should_skip_path_full(&f, Some(p), include_runtime, skip, std_runtime_dir.as_deref()) {
                     files.push(f);
@@ -1599,7 +1599,7 @@ fn cmd_check_explain_cache(
         let src = match std::fs::read_to_string(file) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("warn: skip {} (read error: {})", file.display(), e);
+                eprintln!("warn: skip {} (read error: {:#})", file.display(), e);
                 continue;
             }
         };
@@ -1615,7 +1615,7 @@ fn cmd_check_explain_cache(
         if let Some(repo) = nova_codegen::test_runner::find_repo_root_from(file) {
             let stdlib_dir = nova_codegen::manifest::resolve_std_path(repo.as_ref());
             if let Err(e) = nova_codegen::imports::resolve_imports_inline_ex(file, &mut module, &repo, &stdlib_dir, true) {
-                eprintln!("warn: skip {} (import resolve failed: {})", file.display(), e);
+                eprintln!("warn: skip {} (import resolve failed: {:#})", file.display(), e);
                 continue;
             }
         }
@@ -1686,7 +1686,7 @@ fn cmd_check_telemetry_cache(
         } else if p.is_dir() {
             let mut found = Vec::new();
             nova_codegen::test_runner::walk_nv(p, &mut found)
-                .map_err(|e| anyhow!("walk {}: {}", p.display(), e))?;
+                .map_err(|e| anyhow!("walk {}: {:#}", p.display(), e))?;
             for f in found {
                 if !should_skip_path_full(&f, Some(p), include_runtime, skip, std_runtime_dir.as_deref()) {
                     files.push(f);
@@ -1848,7 +1848,7 @@ fn cmd_check_telemetry_cache(
     // → fail (defaults; future could expose as CLI flag).
     if let Some(baseline) = baseline_path {
         let baseline_text = std::fs::read_to_string(baseline)
-            .map_err(|e| anyhow!("read baseline {}: {}", baseline.display(), e))?;
+            .map_err(|e| anyhow!("read baseline {}: {:#}", baseline.display(), e))?;
         if let Some(bl_cycles) = parse_json_number(&baseline_text, "cycles_saved_estimate") {
             let bl_cycles = bl_cycles as u64;
             if bl_cycles > 0 {
@@ -1883,7 +1883,7 @@ fn cmd_check_telemetry_cache(
                 "--telemetry-gate-caches-drop must be ≥ 0 (percent drop magnitude)"));
         }
         let baseline_text = std::fs::read_to_string(baseline)
-            .map_err(|e| anyhow!("read baseline {}: {}", baseline.display(), e))?;
+            .map_err(|e| anyhow!("read baseline {}: {:#}", baseline.display(), e))?;
         let bl_pct = parse_json_number(&baseline_text, "methods_affected_pct").unwrap_or(0.0);
         let bl_caches = parse_json_number(&baseline_text, "caches_total").unwrap_or(0.0) as usize;
 
@@ -2092,7 +2092,7 @@ fn cmd_check(
             // local `_test.nv` peer — walk_nv's test-discovery walker silently
             // drops those (correct for `nova test`, wrong here; see the fn doc).
             nova_codegen::test_runner::walk_nv_for_check(p, &mut found)
-                .map_err(|e| anyhow!("walk {}: {}", p.display(), e))?;
+                .map_err(|e| anyhow!("walk {}: {:#}", p.display(), e))?;
             for f in found {
                 match classify_skip_path(&f, Some(p), include_runtime, skip, std_runtime_dir.as_deref()) {
                     None => files.push(f),
@@ -2336,7 +2336,7 @@ fn check_one_file(path: &Path, verbose: bool, conv_lint: bool) -> CheckResult {
         Ok(s) => s,
         Err(e) => return CheckResult {
             file: path.to_path_buf(),
-            error: Some(format!("read: {}", e)),
+            error: Some(format!("read: {:#}", e)),
             warnings: Vec::new(),
             elapsed_ms: measure(t0),
         },
@@ -2367,7 +2367,7 @@ fn check_one_file(path: &Path, verbose: bool, conv_lint: bool) -> CheckResult {
     if let Err(e) = check_module_path(path, &module, repo_opt.as_deref()) {
         return CheckResult {
             file: path.to_path_buf(),
-            error: Some(format!("{}", e)),
+            error: Some(format!("{:#}", e)),
             warnings: Vec::new(),
             elapsed_ms: measure(t0),
         };
@@ -2444,7 +2444,7 @@ fn check_one_file(path: &Path, verbose: bool, conv_lint: bool) -> CheckResult {
                     Err(nova_codegen::check_pipeline::PrepareError::Import(e)) => {
                         return CheckResult {
                             file: path.to_path_buf(),
-                            error: Some(format!("import resolution: {}", e)),
+                            error: Some(format!("import resolution: {:#}", e)),
                             warnings: Vec::new(),
                             elapsed_ms: measure(t0),
                         };
@@ -2583,9 +2583,9 @@ fn check_one_file(path: &Path, verbose: bool, conv_lint: bool) -> CheckResult {
 /// folder-модулей, которые test-discovery walker пропускает).
 fn lint_walk_all_nv(root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     let entries = std::fs::read_dir(root)
-        .map_err(|e| anyhow!("read_dir {}: {}", root.display(), e))?;
+        .map_err(|e| anyhow!("read_dir {}: {:#}", root.display(), e))?;
     for entry in entries {
-        let entry = entry.map_err(|e| anyhow!("read_dir entry: {}", e))?;
+        let entry = entry.map_err(|e| anyhow!("read_dir entry: {:#}", e))?;
         let path = entry.path();
         if path.is_dir() {
             lint_walk_all_nv(&path, out)?;
@@ -2728,7 +2728,7 @@ fn cmd_lint(
             // должен видеть ВСЕ .nv-файлы. Полный рекурсивный обход.
             let mut found = Vec::new();
             lint_walk_all_nv(p, &mut found)
-                .map_err(|e| anyhow!("walk {}: {}", p.display(), e))?;
+                .map_err(|e| anyhow!("walk {}: {:#}", p.display(), e))?;
             for f in found {
                 // `neg/`/`*_neg/`-фикстуры — намеренно неканонический код
                 // (EXPECT_COMPILE_ERROR), конвенции к ним не применяются.
@@ -2783,7 +2783,7 @@ fn cmd_lint(
         let src = match read_file(f) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("{}: read: {}", f.display(), e);
+                eprintln!("{}: read: {:#}", f.display(), e);
                 parse_failures += 1;
                 continue;
             }
@@ -3524,7 +3524,7 @@ fn cmd_doc_mutate_contracts(
 ///   no Nova compilation needed).
 fn cmd_doc_query(path: &Path, query_str: &str) -> Result<()> {
     let q = nova_codegen::doc::query::parse_query(query_str)
-        .map_err(|e| anyhow!("query parse error: {}", e))?;
+        .map_err(|e| anyhow!("query parse error: {:#}", e))?;
 
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     if ext == "nv" {
@@ -3542,7 +3542,7 @@ fn cmd_doc_query(path: &Path, query_str: &str) -> Result<()> {
         // Plan 45 Ф.32.2: parse pre-generated JSON, query directly on items array.
         let content = read_file(path)?;
         let json = nova_codegen::doc::json_parse::parse(&content)
-            .map_err(|e| anyhow!("JSON parse error in {}: {}", path.display(), e))?;
+            .map_err(|e| anyhow!("JSON parse error in {}: {:#}", path.display(), e))?;
         let results = nova_codegen::doc::query::execute_json(&json, &q);
         print!("{}", nova_codegen::doc::query::render_results_json(&results));
         Ok(())
@@ -3609,7 +3609,7 @@ fn cmd_doc_mcp(path: &Path, port: Option<u16>) -> Result<()> {
         None => bail!("file has no extension — expected .nv or .json"),
     };
     let tree_json = nova_codegen::doc::json_parse::parse(&tree_json_str)
-        .map_err(|e| anyhow!("JSON parse: {}", e))?;
+        .map_err(|e| anyhow!("JSON parse: {:#}", e))?;
     eprintln!("nova doc-mcp: loaded doc tree from {}", path.display());
     match port {
         Some(p) => {
@@ -3839,7 +3839,7 @@ fn cmd_doc_watch(
                         print!("{}", out);
                     }
                 }
-                Err(e) => eprintln!("error: {}", e),
+                Err(e) => eprintln!("error: {:#}", e),
             }
         }
         std::thread::sleep(Duration::from_millis(500));
@@ -3900,14 +3900,14 @@ struct DiffChange {
 /// Compares items by stable ID, classifies changes, exits with severity code.
 fn cmd_doc_diff(old_path: &Path, new_path: &Path) -> Result<()> {
     let old_src = std::fs::read_to_string(old_path)
-        .map_err(|e| anyhow!("cannot read {}: {}", old_path.display(), e))?;
+        .map_err(|e| anyhow!("cannot read {}: {:#}", old_path.display(), e))?;
     let new_src = std::fs::read_to_string(new_path)
-        .map_err(|e| anyhow!("cannot read {}: {}", new_path.display(), e))?;
+        .map_err(|e| anyhow!("cannot read {}: {:#}", new_path.display(), e))?;
 
     let old_json: serde_json::Value = serde_json::from_str(&old_src)
-        .map_err(|e| anyhow!("{}: invalid JSON: {}", old_path.display(), e))?;
+        .map_err(|e| anyhow!("{}: invalid JSON: {:#}", old_path.display(), e))?;
     let new_json: serde_json::Value = serde_json::from_str(&new_src)
-        .map_err(|e| anyhow!("{}: invalid JSON: {}", new_path.display(), e))?;
+        .map_err(|e| anyhow!("{}: invalid JSON: {:#}", new_path.display(), e))?;
 
     // Build id → item maps from "items" array.
     let old_items = collect_items_by_id(&old_json);
@@ -4203,7 +4203,7 @@ fn cmd_add(
     let text = read_file(&toml_path)?;
     let updated = insert_dependency(&text, name, &value)?;
     std::fs::write(&toml_path, &updated)
-        .map_err(|e| anyhow!("writing {}: {}", toml_path.display(), e))?;
+        .map_err(|e| anyhow!("writing {}: {:#}", toml_path.display(), e))?;
     println!(
         "{} `{}` → {}",
         green("added:"),
@@ -4213,7 +4213,7 @@ fn cmd_add(
 
     // Обновить nova.lock.toml (материализует git-зависимость, фиксирует commit).
     nova_codegen::lockfile::sync(&pkg_dir)
-        .map_err(|e| anyhow!("nova.lock.toml was not updated: {}", e))?;
+        .map_err(|e| anyhow!("nova.lock.toml was not updated: {:#}", e))?;
     println!("{} nova.lock.toml updated", green("locked:"));
     Ok(())
 }
@@ -4242,7 +4242,7 @@ fn cmd_update(name: Option<&str>, precise: Option<&str>) -> Result<()> {
             ))
         })?;
         let version = nova_codegen::semver::Version::parse(vstr)
-            .map_err(|e| usage_err(format!("--precise: {}", e)))?;
+            .map_err(|e| usage_err(format!("--precise: {:#}", e)))?;
         let dep = manifest
             .dependencies
             .iter()
@@ -4263,7 +4263,7 @@ fn cmd_update(name: Option<&str>, precise: Option<&str>) -> Result<()> {
             }
         };
         nova_codegen::lockfile::update_precise(&pkg_dir, pname, &url, &version)
-            .map_err(|e| anyhow!("updating dependencies: {}", e))?;
+            .map_err(|e| anyhow!("updating dependencies: {:#}", e))?;
         println!(
             "{} `{}` pinned to version {}",
             green("updated:"),
@@ -4294,7 +4294,7 @@ fn cmd_update(name: Option<&str>, precise: Option<&str>) -> Result<()> {
         }
     }
     let graph = nova_codegen::lockfile::update(&pkg_dir, name)
-        .map_err(|e| anyhow!("updating dependencies: {}", e))?;
+        .map_err(|e| anyhow!("updating dependencies: {:#}", e))?;
     match name {
         Some(n) => println!("{} git pin `{}` re-resolved", green("updated:"), n),
         None => println!(
@@ -4316,7 +4316,7 @@ fn info_surface(
     let (pkg_root, default_name): (PathBuf, String) = if path.exists() {
         let p = path
             .canonicalize()
-            .map_err(|e| usage_err(format!("{}: {}", target, e)))?;
+            .map_err(|e| usage_err(format!("{}: {:#}", target, e)))?;
         let name = p
             .file_stem()
             .and_then(|s| s.to_str())
@@ -4351,7 +4351,7 @@ fn info_surface(
             nova_codegen::manifest::DepSource::Path(rel) => pkg_dir.join(rel),
             nova_codegen::manifest::DepSource::Git { url, pin } => {
                 nova_codegen::git_cache::resolve_git_dep(url, pin, None)
-                    .map_err(|e| anyhow!("git dependency `{}`: {}", target, e))?
+                    .map_err(|e| anyhow!("git dependency `{}`: {:#}", target, e))?
                     .checkout
             }
             _ => {
@@ -4553,7 +4553,7 @@ fn consume_analyze_parse(
     path: &Path,
 ) -> Result<(nova_codegen::ast::Module, Vec<nova_codegen::diag::Diagnostic>)> {
     let src = std::fs::read_to_string(path)
-        .map_err(|e| anyhow!("cannot read {}: {}", path.display(), e))?;
+        .map_err(|e| anyhow!("cannot read {}: {:#}", path.display(), e))?;
     let tokens = nova_codegen::lexer::lex(&src)
         .map_err(|d| anyhow!("{}", d.message))?;
     let mut parser = nova_codegen::parser::Parser::new(tokens);
@@ -4572,7 +4572,7 @@ fn cmd_consume_analyze(path: &Path, format: &str, fail_on_uncovered: bool) -> Re
     } else if path.is_dir() {
         let mut fs = Vec::new();
         nova_codegen::test_runner::walk_nv(path, &mut fs)
-            .map_err(|e| anyhow!("walk {}: {}", path.display(), e))?;
+            .map_err(|e| anyhow!("walk {}: {:#}", path.display(), e))?;
         fs.sort();
         fs
     } else {
@@ -4679,7 +4679,7 @@ fn cmd_gc_effect_analyze(path: &Path, format: &str) -> Result<()> {
     } else if path.is_dir() {
         let mut fs = Vec::new();
         nova_codegen::test_runner::walk_nv(path, &mut fs)
-            .map_err(|e| anyhow!("walk {}: {}", path.display(), e))?;
+            .map_err(|e| anyhow!("walk {}: {:#}", path.display(), e))?;
         fs.sort();
         fs
     } else {
@@ -4811,7 +4811,7 @@ fn cmd_gc_layout_analyze(path: &Path, format: &str) -> Result<()> {
     } else if path.is_dir() {
         let mut fs = Vec::new();
         nova_codegen::test_runner::walk_nv(path, &mut fs)
-            .map_err(|e| anyhow!("walk {}: {}", path.display(), e))?;
+            .map_err(|e| anyhow!("walk {}: {:#}", path.display(), e))?;
         fs.sort();
         fs
     } else {
@@ -4967,7 +4967,7 @@ fn cmd_build(
     let paths = resolve_paths(&repo);
 
     let path = path.canonicalize()
-        .map_err(|e| usage_err(format!("cannot resolve path {}: {}", path.display(), e)))?;
+        .map_err(|e| usage_err(format!("cannot resolve path {}: {:#}", path.display(), e)))?;
     let src = read_file(&path)?;
     let path_str = path.to_string_lossy();
 
@@ -5006,11 +5006,11 @@ fn cmd_build(
         let toml_path = pkg_dir.join("nova.toml");
         if let Some(m) = nova_codegen::manifest::parse_manifest(&toml_path, &pkg_dir) {
             nova_codegen::manifest::check_no_committed_replace(&m, &toml_path)
-                .map_err(|e| anyhow!("{}", e))?;
+                .map_err(|e| anyhow!("{:#}", e))?;
             // №444: кросс-реповый `path` в [dependencies] — ЖЁСТКАЯ ошибка.
             // Раньше был warning'ом и месяцами пролистывался, пока красил CI.
             nova_codegen::manifest::check_no_cross_repo_path_deps(&m, &toml_path)
-                .map_err(|e| anyhow!("{}", e))?;
+                .map_err(|e| anyhow!("{:#}", e))?;
         }
         let _t = nova_codegen::perf_timer::PerfTimer::new("dep-lock");
         // Plan 219: демон подтвердил, что entry `nova.toml`+lockfile
@@ -5024,11 +5024,11 @@ fn cmd_build(
         let skip_dep_lock = daemon_prime.as_ref().map(|p| p.skip_dep_lock).unwrap_or(false);
         if skip_dep_lock {
             nova_codegen::lockfile::load_pins(&pkg_dir)
-                .map_err(|e| anyhow!("dependency resolution (nova.lock.toml): {}", e))?;
+                .map_err(|e| anyhow!("dependency resolution (nova.lock.toml): {:#}", e))?;
             eprintln!("{} build daemon — dep-graph unchanged, skipping lock resolution", green("note:"));
         } else {
             nova_codegen::lockfile::sync(&pkg_dir)
-                .map_err(|e| anyhow!("dependency resolution (nova.lock.toml): {}", e))?;
+                .map_err(|e| anyhow!("dependency resolution (nova.lock.toml): {:#}", e))?;
             if let Some(hash) = daemon::dep_combined_hash(&pkg_dir) {
                 daemon::try_commit(&repo, &pkg_dir, &hash);
             }
@@ -5465,7 +5465,7 @@ fn cmd_build(
                 nova_codegen::test_runner::catch_unit_panic(std::panic::AssertUnwindSafe(|| {
                     emitter.emit_module_multi_tu(&module, &cu_name)
                 }))
-                    .map_err(|e| anyhow!("codegen error: {}", e))?
+                    .map_err(|e| anyhow!("codegen error: {:#}", e))?
             };
             for w in &warnings {
                 eprintln!("{}", w);
@@ -5504,7 +5504,7 @@ fn cmd_build(
     let hash = path_hash(&path);
     let tmp_path = default_tmp_dir().join(format!("build-{}", &hash[..hash.len().min(12)]));
     std::fs::create_dir_all(&tmp_path)
-        .map_err(|e| anyhow!("create tmp dir: {}", e))?;
+        .map_err(|e| anyhow!("create tmp dir: {:#}", e))?;
     let _tmp_guard = TmpDirGuard { path: &tmp_path, keep: keep_artifacts };
     let c_file = tmp_path.join(format!("{}.c", exe_stem.to_string_lossy()));
     let exe_file = tmp_path.join(&exe_name);
@@ -5514,7 +5514,7 @@ fn cmd_build(
     // `compile_multi_tu_to_exe` itself instead.
     if let nova_codegen::codegen::EmitOutput::Single(c_code) = &emit_output {
         std::fs::write(&c_file, c_code)
-            .map_err(|e| anyhow!("write .c file: {}", e))?;
+            .map_err(|e| anyhow!("write .c file: {:#}", e))?;
     }
 
     // detect toolchain
@@ -5662,11 +5662,11 @@ fn cmd_build(
     // move exe to final destination
     if let Some(parent) = final_exe.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|e| anyhow!("create output dir: {}", e))?;
+            .map_err(|e| anyhow!("create output dir: {:#}", e))?;
     }
     std::fs::rename(&exe_file, &final_exe)
         .or_else(|_| std::fs::copy(&exe_file, &final_exe).map(|_| ()))
-        .map_err(|e| anyhow!("move executable: {}", e))?;
+        .map_err(|e| anyhow!("move executable: {:#}", e))?;
 
     println!("{} {} ({:.2}s)", green("built:"), final_exe.display(), build_start.elapsed().as_secs_f64());
     Ok(())
@@ -5802,7 +5802,7 @@ fn cmd_test(
     }
     if let Some(parent) = results_path.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|e| anyhow!("cannot create results dir {}: {}", parent.display(), e))?;
+            .map_err(|e| anyhow!("cannot create results dir {}: {:#}", parent.display(), e))?;
     }
 
     let gc_kind = test_runner::GcKind::parse(gc)?;
@@ -6039,7 +6039,7 @@ fn cmd_regen_runtime(check: bool) -> Result<()> {
         let content = runtime_registry::render_nv(module, fns);
         if check {
             let existing = std::fs::read_to_string(&abs)
-                .map_err(|e| anyhow!("failed to read {}: {}", abs.display(), e))?;
+                .map_err(|e| anyhow!("failed to read {}: {:#}", abs.display(), e))?;
             let norm = |s: &str| s.replace("\r\n", "\n");
             if norm(&existing) != norm(&content) {
                 diffs.push(rel);
@@ -6047,10 +6047,10 @@ fn cmd_regen_runtime(check: bool) -> Result<()> {
         } else {
             if let Some(parent) = abs.parent() {
                 std::fs::create_dir_all(parent)
-                    .map_err(|e| anyhow!("create dir {}: {}", parent.display(), e))?;
+                    .map_err(|e| anyhow!("create dir {}: {:#}", parent.display(), e))?;
             }
             std::fs::write(&abs, &content)
-                .map_err(|e| anyhow!("write {}: {}", abs.display(), e))?;
+                .map_err(|e| anyhow!("write {}: {:#}", abs.display(), e))?;
             println!("wrote {}", rel);
         }
         total += 1;
@@ -6224,7 +6224,7 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
         BenchCmd::Corpus { path, json, html, echarts_url, mode, toolchain, gc } => {
             // Discover nova-cli path (self).
             let self_exe = std::env::current_exe()
-                .map_err(|e| anyhow!("locate self: {}", e))?;
+                .map_err(|e| anyhow!("locate self: {:#}", e))?;
             let files = if path.is_dir() {
                 bench::corpus::list_corpus_files(&path)?
             } else {
@@ -6247,7 +6247,7 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
             } else if let Some(html_path) = html {
                 let h = bench::corpus::render_html(&entries, &echarts_url);
                 std::fs::write(&html_path, h)
-                    .map_err(|e| anyhow!("write HTML: {}", e))?;
+                    .map_err(|e| anyhow!("write HTML: {:#}", e))?;
                 eprintln!("nova bench corpus: wrote HTML to {}", html_path.display());
             } else {
                 print!("{}", bench::corpus::render_terminal(&entries));
@@ -6264,7 +6264,7 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
             gate_regression_pp, skip_failed,
         } => {
             let self_exe = std::env::current_exe()
-                .map_err(|e| anyhow!("locate self: {}", e))?;
+                .map_err(|e| anyhow!("locate self: {:#}", e))?;
             let opts = bench::field_cache_wallclock::FieldCacheWallclockOpts {
                 path: &path,
                 self_exe: &self_exe,
@@ -6449,7 +6449,7 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
                     "ll_misses": r.ll_misses,
                 });
                 std::fs::write(&p, serde_json::to_string_pretty(&json)?)
-                    .map_err(|e| anyhow!("write JSON {}: {}", p.display(), e))?;
+                    .map_err(|e| anyhow!("write JSON {}: {:#}", p.display(), e))?;
                 eprintln!("wrote callgrind JSON to {}", p.display());
             }
             Ok(())
@@ -6563,7 +6563,7 @@ fn cmd_bench_remote(sub: BenchRemoteCmd) -> Result<()> {
         }
         let f = RemotesFile::load_or_default(&path);
         for err in &f.parse_errors {
-            eprintln!("warning: {}: {}", path.display(), err);
+            eprintln!("warning: {}: {:#}", path.display(), err);
         }
         Ok(f)
     }
@@ -6709,7 +6709,7 @@ fn should_use_color() -> bool {
 
 fn contracts_parse_file(file: &std::path::Path) -> Result<nova_codegen::ast::Module> {
     let src = std::fs::read_to_string(file)
-        .map_err(|e| anyhow!("cannot read {}: {}", file.display(), e))?;
+        .map_err(|e| anyhow!("cannot read {}: {:#}", file.display(), e))?;
     let tokens = nova_codegen::lexer::lex(&src)
         .map_err(|d| anyhow!("{}", d.message))?;
     let mut parser = nova_codegen::parser::Parser::new(tokens);
@@ -6953,7 +6953,7 @@ fn run() -> ExitCode {
     match ColorMode::parse(&cli.color) {
         Ok(mode) => set_color_mode(mode),
         Err(e) => {
-            eprintln!("error: {}", e);
+            eprintln!("error: {:#}", e);
             return ExitCode::from(2);
         }
     }
@@ -7125,7 +7125,7 @@ fn run() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("{} {}", bold(&red("error:")), e);
+            eprintln!("{} {:#}", bold(&red("error:")), e);
             // Plan 36 R7: usage errors → exit=2, diagnostics → exit=1.
             // Discriminate через downcast UsageError type.
             if e.downcast_ref::<UsageError>().is_some() {

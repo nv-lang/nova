@@ -401,7 +401,7 @@ impl EmbedCtx {
             Err(err) => {
                 self.diags.push(Diagnostic::new(
                     format!(
-                        "[E_EMBED_NOT_FOUND] cannot read embedded file `{}`: {}",
+                        "[E_EMBED_NOT_FOUND] cannot read embedded file `{}`: {:#}",
                         canon.display(),
                         err
                     ),
@@ -512,7 +512,7 @@ impl EmbedCtx {
             Err(err) => {
                 self.diags.push(Diagnostic::new(
                     format!(
-                        "[E_EMBED_NOT_FOUND] cannot read embedded file `{}`: {}",
+                        "[E_EMBED_NOT_FOUND] cannot read embedded file `{}`: {:#}",
                         canon.display(),
                         err
                     ),
@@ -830,7 +830,7 @@ impl EmbedCtx {
                 Err(err) => {
                     self.diags.push(Diagnostic::new(
                         format!(
-                            "[E_EMBED_DIR_NOT_FOUND] cannot read embedded file `{}`: {}",
+                            "[E_EMBED_DIR_NOT_FOUND] cannot read embedded file `{}`: {:#}",
                             abs.display(),
                             err
                         ),

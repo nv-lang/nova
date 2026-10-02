@@ -46,7 +46,7 @@ ROOT="$(cd "$ROOT" 2>/dev/null && pwd || printf '%s' "$ROOT")"
 NAME=check-novac-iteration-cost
 . "$(dirname "$0")/lib/novac.sh"
 BASE="$ROOT/scripts/guards/novac-iteration-cost.baseline"
-NOVAC="$ROOT/novac/target/novac.exe"
+NOVAC="$(novac_bin "$ROOT")"
 [ "${NOVAC_COST:-1}" = "0" ] && { echo "$NAME: пропущен (NOVAC_COST=0 — локальная итерация)"; exit 0; }
 novac_require_bin "$NAME" "$ROOT" "$NOVAC"
 [ -f "$BASE" ] || { echo "$NAME: FAIL — нет $BASE" >&2; exit 1; }

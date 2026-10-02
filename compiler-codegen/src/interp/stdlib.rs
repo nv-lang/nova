@@ -143,7 +143,7 @@ pub fn install(env: &Env) {
                 match std::fs::read_to_string(path) {
                     Ok(s) => Ok(Value::Str(s)),
                     Err(e) => Err(NativeError {
-                        message: format!("read_file: {}", e),
+                        message: format!("read_file: {:#}", e),
                     }),
                 }
             }),
@@ -164,7 +164,7 @@ pub fn install(env: &Env) {
                 match std::fs::write(path, contents) {
                     Ok(()) => Ok(Value::Unit),
                     Err(e) => Err(NativeError {
-                        message: format!("write_file: {}", e),
+                        message: format!("write_file: {:#}", e),
                     }),
                 }
             }),

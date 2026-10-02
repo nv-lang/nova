@@ -694,7 +694,7 @@ fn capture_vcvars_env(vcvars: &Path) -> Result<Vec<(OsString, OsString)>> {
     );
     let mut cmd = Command::new("cmd");
     cmd.raw_arg("/c").raw_arg(&inner);
-    let out = cmd.output().map_err(|e| anyhow!("spawn cmd: {}", e))?;
+    let out = cmd.output().map_err(|e| anyhow!("spawn cmd: {:#}", e))?;
     if !out.status.success() {
         return Err(anyhow!("vcvars64.bat failed (exit {:?})", out.status.code()));
     }
@@ -730,7 +730,7 @@ pub fn detect_toolchain(opts: &ToolchainOpts) -> Result<Toolchain> {
     // The ~7s call vcvars64.bat cost is paid here once, not per-test.
     let vcvars_env: Option<Vec<(OsString, OsString)>> = if let Some(ref v) = vcvars {
         let env = capture_vcvars_env(v)
-            .map_err(|e| anyhow!("vcvars64.bat capture failed: {}", e))?;
+            .map_err(|e| anyhow!("vcvars64.bat capture failed: {:#}", e))?;
         Some(env)
     } else {
         None
@@ -2074,7 +2074,7 @@ pub fn compile_c_to_exe(
     let _ = resolve_gc_or_exit(opts.gc_kind, opts.cg_include, opts.rt_dir, tc.vcvars_path());
     let cmd = build_command(tc, opts);
     let out = run_with_timeout(cmd, timeout)
-        .map_err(|e| anyhow!("spawn compiler: {}", e))?;
+        .map_err(|e| anyhow!("spawn compiler: {:#}", e))?;
     let ok = out.status.map(|s| s.success()).unwrap_or(false);
     if !ok {
         let stderr = bytes_to_string(&out.stderr);
@@ -2206,17 +2206,17 @@ pub fn compile_multi_tu_to_exe(
         .unwrap_or("cu")
         .to_string();
     let obj_dir = opts.obj_dir;
-    std::fs::create_dir_all(obj_dir).map_err(|e| anyhow!("mkdir obj_dir: {}", e))?;
+    std::fs::create_dir_all(obj_dir).map_err(|e| anyhow!("mkdir obj_dir: {:#}", e))?;
 
     // Write common.h + part_K.c side by side — parts `#include` the header
     // by its relative filename, so both must live in the same directory.
     let common_h_path = obj_dir.join(format!("{}_common.h", stem));
     std::fs::write(&common_h_path, common_h)
-        .map_err(|e| anyhow!("write {}: {}", common_h_path.display(), e))?;
+        .map_err(|e| anyhow!("write {}: {:#}", common_h_path.display(), e))?;
     let mut part_paths: Vec<PathBuf> = Vec::with_capacity(parts.len());
     for (i, part) in parts.iter().enumerate() {
         let p = obj_dir.join(format!("{}_part{}.c", stem, i));
-        std::fs::write(&p, part).map_err(|e| anyhow!("write {}: {}", p.display(), e))?;
+        std::fs::write(&p, part).map_err(|e| anyhow!("write {}: {:#}", p.display(), e))?;
         part_paths.push(p);
     }
 
@@ -2438,7 +2438,7 @@ pub fn compile_multi_tu_to_exe(
                 };
                 return Err(anyhow!("{}", reason));
             }
-            Err(e) => return Err(anyhow!("spawn compiler ({}): {}", src.display(), e)),
+            Err(e) => return Err(anyhow!("spawn compiler ({}): {:#}", src.display(), e)),
         }
     }
 
@@ -2508,7 +2508,7 @@ pub fn compile_multi_tu_to_exe(
             link.arg(format!("-l{}", lib));
         }
     }
-    let link_out = run_with_timeout(link, timeout).map_err(|e| anyhow!("spawn linker: {}", e))?;
+    let link_out = run_with_timeout(link, timeout).map_err(|e| anyhow!("spawn linker: {:#}", e))?;
     let link_ok = link_out.status.map(|s| s.success()).unwrap_or(false);
     if !link_ok {
         let stderr = bytes_to_string(&link_out.stderr);
@@ -3091,7 +3091,7 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
         Ok(s) => s,
         Err(e) => {
             return Outcome::Fail {
-                stage: Stage::Codegen { error: format!("read: {}", e) },
+                stage: Stage::Codegen { error: format!("read: {:#}", e) },
                 elapsed: start.elapsed(),
             }
         }
@@ -3567,7 +3567,7 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
         Ok(g) => g,
         Err(e) => {
             return Outcome::Fail {
-                stage: Stage::Cc { error: format!("mkdir subdir: {}", e) },
+                stage: Stage::Cc { error: format!("mkdir subdir: {:#}", e) },
                 elapsed: start.elapsed(),
             };
         }
@@ -3586,7 +3586,7 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     let obj_dir = subdir.join("obj");
     if let Err(e) = std::fs::create_dir_all(&obj_dir) {
         return Outcome::Fail {
-            stage: Stage::Cc { error: format!("mkdir obj_dir: {}", e) },
+            stage: Stage::Cc { error: format!("mkdir obj_dir: {:#}", e) },
             elapsed: start.elapsed(),
         };
     }
@@ -3713,7 +3713,7 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
             let success = result.is_ok();
             let stderr = match &result {
                 Ok(_) => Vec::new(),
-                Err(e) => e.to_string().into_bytes(),
+                Err(e) => format!("{:#}", e).into_bytes(),
             };
             let status = synth_exit_status(success);
             break 'cc (
@@ -3735,7 +3735,7 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
                 Ok(o) => o,
                 Err(e) => {
                     return Outcome::Fail {
-                        stage: Stage::Cc { error: format!("spawn cc: {}", e) },
+                        stage: Stage::Cc { error: format!("spawn cc: {:#}", e) },
                         elapsed: start.elapsed(),
                     }
                 }
@@ -3913,7 +3913,7 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
                     continue;
                 }
                 return Outcome::Fail {
-                    stage: Stage::Run { error: format!("spawn exe: {}", e) },
+                    stage: Stage::Run { error: format!("spawn exe: {:#}", e) },
                     elapsed: start.elapsed(),
                 };
             }
@@ -4721,7 +4721,7 @@ fn codegen_to_c(
             },
         )
         .map_err(|e| match e {
-            crate::check_pipeline::PrepareError::Import(e) => format!("import resolution: {}", e),
+            crate::check_pipeline::PrepareError::Import(e) => format!("import resolution: {:#}", e),
             crate::check_pipeline::PrepareError::Embed(diags) => {
                 // module.peer_files is already populated (import-resolve —
                 // step 1 of `prepare_module_for_check_with` — succeeded
@@ -4988,7 +4988,7 @@ fn codegen_to_c(
         // therefore byte-identical to the pre-209 write.
         let cu_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("cu").to_string();
         emitter.emit_module_multi_tu(&module, &cu_name)
-            .map_err(|e| format!("codegen error: {}", e))?
+            .map_err(|e| format!("codegen error: {:#}", e))?
     };
     let artifact = match emit_output {
         crate::codegen::EmitOutput::Single(c_code) => {
@@ -4998,7 +4998,7 @@ fn codegen_to_c(
             let out_path = out_dir.join(format!("{}.c", unique_c_base(path)));
             std::fs::write(&out_path, &c_code).map_err(|e| {
                 format!(
-                    "failed to write {}: {}",
+                    "failed to write {}: {:#}",
                     out_path.display(),
                     e
                 )
@@ -5357,7 +5357,7 @@ pub fn detect_or_build_libuv(rt_dir: &Path, repo_root: &Path,
     eprintln!("nova: libuv not built, building (one-time, ~30 sec)...");
     if let Err(e) = build_libuv_lib(&libuv_dir, &cache_dir, vcvars) {
         eprintln!(
-            "nova: FATAL failed to build libuv: {}\n\
+            "nova: FATAL failed to build libuv: {:#}\n\
              Plan 22 F2: libuv is mandatory. Check vcvars64.bat, \
              cl.exe / clang availability, and libuv submodule integrity.",
             e
@@ -5595,9 +5595,9 @@ pub fn main_worktree_root(root: &Path) -> Option<PathBuf> {
 fn populate_boehm_include_dir(gc_include: &Path, cache_include: &Path) -> Result<()> {
     let nested = cache_include.join("gc");
     std::fs::create_dir_all(&nested)
-        .map_err(|e| anyhow!("create {}: {}", nested.display(), e))?;
+        .map_err(|e| anyhow!("create {}: {:#}", nested.display(), e))?;
     for entry in std::fs::read_dir(gc_include)
-        .map_err(|e| anyhow!("read {}: {}", gc_include.display(), e))?
+        .map_err(|e| anyhow!("read {}: {:#}", gc_include.display(), e))?
     {
         let entry = entry?;
         let path = entry.path();
@@ -5606,9 +5606,9 @@ fn populate_boehm_include_dir(gc_include: &Path, cache_include: &Path) -> Result
         }
         let name = path.file_name().unwrap();
         std::fs::copy(&path, cache_include.join(name))
-            .map_err(|e| anyhow!("copy {} (flat): {}", path.display(), e))?;
+            .map_err(|e| anyhow!("copy {} (flat): {:#}", path.display(), e))?;
         std::fs::copy(&path, nested.join(name))
-            .map_err(|e| anyhow!("copy {} (nested gc/): {}", path.display(), e))?;
+            .map_err(|e| anyhow!("copy {} (nested gc/): {:#}", path.display(), e))?;
     }
     Ok(())
 }
@@ -5683,11 +5683,11 @@ pub fn detect_or_build_boehm_fallback(
              building from vendored bdwgc submodule (one-time, ~10 sec)..."
         );
         if let Err(e) = populate_boehm_include_dir(&gc_include, &cache_include) {
-            eprintln!("nova: warning: bdwgc fallback build failed: copy headers: {}", e);
+            eprintln!("nova: warning: bdwgc fallback build failed: copy headers: {:#}", e);
             return None;
         }
         if let Err(e) = build_boehm_lib(&gc_dir, &ao_dir, &cache_dir, vcvars) {
-            eprintln!("nova: warning: bdwgc fallback build failed: {}", e);
+            eprintln!("nova: warning: bdwgc fallback build failed: {:#}", e);
             return None;
         }
         if gc_lib.is_file() {
@@ -5784,13 +5784,13 @@ pub fn resolve_gc_or_exit(gc: GcKind, cg_include: &Path, rt_dir: &Path, vcvars: 
 fn build_libuv_lib(libuv_dir: &Path, cache_dir: &Path,
                     vcvars: Option<&Path>) -> Result<()> {
     std::fs::create_dir_all(cache_dir)
-        .map_err(|e| anyhow!("create cache_dir: {}", e))?;
+        .map_err(|e| anyhow!("create cache_dir: {:#}", e))?;
     let obj_dir = cache_dir.join("obj");
     if obj_dir.is_dir() {
         let _ = std::fs::remove_dir_all(&obj_dir);
     }
     std::fs::create_dir_all(&obj_dir)
-        .map_err(|e| anyhow!("create obj_dir: {}", e))?;
+        .map_err(|e| anyhow!("create obj_dir: {:#}", e))?;
 
     // Collect source files: src/*.c + src/{win,unix}/*.c.
     let mut srcs: Vec<PathBuf> = Vec::new();
@@ -5870,7 +5870,7 @@ fn build_libuv_lib(libuv_dir: &Path, cache_dir: &Path,
         // spurious `C1083: file not found`. Same fix `link_prep.rs` already
         // carries; this sibling never got it.
         std::fs::write(&rsp, format!("\u{FEFF}{}", lines.join("\n")))
-            .map_err(|e| anyhow!("write rsp: {}", e))?;
+            .map_err(|e| anyhow!("write rsp: {:#}", e))?;
         let inner = format!(
             "\"call \"{}\" >nul 2>&1 && cl.exe @\"{}\"\"",
             vcv.display(), rsp.display()
@@ -5881,7 +5881,7 @@ fn build_libuv_lib(libuv_dir: &Path, cache_dir: &Path,
             cmd.raw_arg("/c").raw_arg(&inner);
         }
         let out = cmd.output()
-            .map_err(|e| anyhow!("spawn cl.exe: {}", e))?;
+            .map_err(|e| anyhow!("spawn cl.exe: {:#}", e))?;
         if !out.status.success() {
             let combined = format!("{}{}",
                 bytes_to_string(&out.stdout),
@@ -5908,7 +5908,7 @@ fn build_libuv_lib(libuv_dir: &Path, cache_dir: &Path,
         // №287: BOM — see the compile.rsp comment above (same non-ASCII-path
         // mangling applies to lib.exe response files).
         std::fs::write(&lib_rsp, format!("\u{FEFF}{}", lib_lines.join("\n")))
-            .map_err(|e| anyhow!("write lib.rsp: {}", e))?;
+            .map_err(|e| anyhow!("write lib.rsp: {:#}", e))?;
         let lib_inner = format!(
             "\"call \"{}\" >nul 2>&1 && lib.exe @\"{}\"\"",
             vcv.display(), lib_rsp.display()
@@ -5916,7 +5916,7 @@ fn build_libuv_lib(libuv_dir: &Path, cache_dir: &Path,
         let mut lib_cmd = Command::new("cmd");
         lib_cmd.raw_arg("/c").raw_arg(&lib_inner);
         let lib_out = lib_cmd.output()
-            .map_err(|e| anyhow!("spawn lib.exe: {}", e))?;
+            .map_err(|e| anyhow!("spawn lib.exe: {:#}", e))?;
         if !lib_out.status.success() {
             return Err(anyhow!("lib.exe failed: {}",
                 bytes_to_string(&lib_out.stderr)));
@@ -5942,7 +5942,7 @@ fn build_libuv_lib(libuv_dir: &Path, cache_dir: &Path,
             c.arg("-o").arg(&obj);
             c.arg(src);
             let out = c.output()
-                .map_err(|e| anyhow!("spawn {}: {}", cc, e))?;
+                .map_err(|e| anyhow!("spawn {}: {:#}", cc, e))?;
             if !out.status.success() {
                 return Err(anyhow!("libuv compile failed on {}: {}",
                     src.display(),
@@ -5957,7 +5957,7 @@ fn build_libuv_lib(libuv_dir: &Path, cache_dir: &Path,
             ar.arg(o);
         }
         let ar_out = ar.output()
-            .map_err(|e| anyhow!("spawn ar: {}", e))?;
+            .map_err(|e| anyhow!("spawn ar: {:#}", e))?;
         if !ar_out.status.success() {
             return Err(anyhow!("ar failed: {}",
                 bytes_to_string(&ar_out.stderr)));
@@ -5997,13 +5997,13 @@ fn build_libuv_lib(libuv_dir: &Path, cache_dir: &Path,
 fn build_boehm_lib(gc_dir: &Path, ao_dir: &Path, cache_dir: &Path,
                     vcvars: Option<&Path>) -> Result<()> {
     std::fs::create_dir_all(cache_dir)
-        .map_err(|e| anyhow!("create cache_dir: {}", e))?;
+        .map_err(|e| anyhow!("create cache_dir: {:#}", e))?;
     let obj_dir = cache_dir.join("obj");
     if obj_dir.is_dir() {
         let _ = std::fs::remove_dir_all(&obj_dir);
     }
     std::fs::create_dir_all(&obj_dir)
-        .map_err(|e| anyhow!("create obj_dir: {}", e))?;
+        .map_err(|e| anyhow!("create obj_dir: {:#}", e))?;
 
     let gc_amalgam = gc_dir.join("extra").join("gc.c");
     let gc_include = gc_dir.join("include");
@@ -6028,7 +6028,7 @@ fn build_boehm_lib(gc_dir: &Path, ao_dir: &Path, cache_dir: &Path,
         // `link_prep.rs`'s rsp files (see that module's matching comment);
         // this repo's own user profile path can contain Cyrillic.
         std::fs::write(&rsp, format!("\u{FEFF}{}", lines.join("\n")))
-            .map_err(|e| anyhow!("write rsp: {}", e))?;
+            .map_err(|e| anyhow!("write rsp: {:#}", e))?;
         let inner = format!(
             "\"call \"{}\" >nul 2>&1 && cl.exe @\"{}\"\"",
             vcv.display(), rsp.display()
@@ -6036,7 +6036,7 @@ fn build_boehm_lib(gc_dir: &Path, ao_dir: &Path, cache_dir: &Path,
         let mut cmd = Command::new("cmd");
         cmd.raw_arg("/c").raw_arg(&inner);
         let out = cmd.output()
-            .map_err(|e| anyhow!("spawn cl.exe: {}", e))?;
+            .map_err(|e| anyhow!("spawn cl.exe: {:#}", e))?;
         if !out.status.success() {
             let combined = format!("{}{}",
                 bytes_to_string(&out.stdout),
@@ -6063,7 +6063,7 @@ fn build_boehm_lib(gc_dir: &Path, ao_dir: &Path, cache_dir: &Path,
             lib_lines.push(format!("\"{}\"", strip_verbatim_prefix(o).display()));
         }
         std::fs::write(&lib_rsp, format!("\u{FEFF}{}", lib_lines.join("\n")))
-            .map_err(|e| anyhow!("write lib.rsp: {}", e))?;
+            .map_err(|e| anyhow!("write lib.rsp: {:#}", e))?;
         let lib_inner = format!(
             "\"call \"{}\" >nul 2>&1 && lib.exe @\"{}\"\"",
             vcv.display(), lib_rsp.display()
@@ -6071,7 +6071,7 @@ fn build_boehm_lib(gc_dir: &Path, ao_dir: &Path, cache_dir: &Path,
         let mut lib_cmd = Command::new("cmd");
         lib_cmd.raw_arg("/c").raw_arg(&lib_inner);
         let lib_out = lib_cmd.output()
-            .map_err(|e| anyhow!("spawn lib.exe: {}", e))?;
+            .map_err(|e| anyhow!("spawn lib.exe: {:#}", e))?;
         if !lib_out.status.success() {
             return Err(anyhow!("lib.exe failed: {}", bytes_to_string(&lib_out.stderr)));
         }
@@ -6093,9 +6093,9 @@ pub(crate) fn collect_c_files(dir: &Path, out: &mut Vec<PathBuf>, recursive: boo
         return Ok(());
     }
     let entries = std::fs::read_dir(dir)
-        .map_err(|e| anyhow!("read_dir {}: {}", dir.display(), e))?;
+        .map_err(|e| anyhow!("read_dir {}: {:#}", dir.display(), e))?;
     for entry in entries {
-        let entry = entry.map_err(|e| anyhow!("read_dir entry: {}", e))?;
+        let entry = entry.map_err(|e| anyhow!("read_dir entry: {:#}", e))?;
         let path = entry.path();
         if path.is_dir() {
             if recursive { collect_c_files(&path, out, true)?; }
@@ -6530,7 +6530,7 @@ pub fn detect_or_build_rt_archive(
             }
             Err(e) => {
                 eprintln!(
-                    "nova: warning: libnova_rt archive build failed ({}) — \
+                    "nova: warning: libnova_rt archive build failed ({:#}) — \
                      falling back to per-build inline compile",
                     e
                 );
@@ -6599,9 +6599,9 @@ fn build_rt_archive_lib(
     runtime_defines: &[String],
     vcvars: Option<&Path>,
 ) -> Result<()> {
-    std::fs::create_dir_all(cache_dir).map_err(|e| anyhow!("create cache_dir: {}", e))?;
+    std::fs::create_dir_all(cache_dir).map_err(|e| anyhow!("create cache_dir: {:#}", e))?;
     let obj_dir = cache_dir.join(format!(".build-{}", unique_build_tag()));
-    std::fs::create_dir_all(&obj_dir).map_err(|e| anyhow!("create obj_dir: {}", e))?;
+    std::fs::create_dir_all(&obj_dir).map_err(|e| anyhow!("create obj_dir: {:#}", e))?;
     for src in sources {
         if !src.is_file() {
             let _ = std::fs::remove_dir_all(&obj_dir);
@@ -6651,22 +6651,22 @@ fn build_rt_archive_lib(
         let rsp = obj_dir.join("compile.rsp");
         // №287: BOM against ANSI-codepage mangling of non-ASCII paths.
         std::fs::write(&rsp, format!("\u{FEFF}{}", lines.join("\n")))
-            .map_err(|e| anyhow!("write rsp: {}", e))?;
+            .map_err(|e| anyhow!("write rsp: {:#}", e))?;
         let inner = format!(
             "\"call \"{}\" >nul 2>&1 && cl.exe @\"{}\"\"",
             vcv.display(), rsp.display()
         );
         let mut cmd = Command::new("cmd");
         cmd.raw_arg("/c").raw_arg(&inner);
-        let out = cmd.output().map_err(|e| anyhow!("spawn cl.exe: {}", e))?;
+        let out = cmd.output().map_err(|e| anyhow!("spawn cl.exe: {:#}", e))?;
         if !out.status.success() {
             let combined = format!("{}{}", bytes_to_string(&out.stdout), bytes_to_string(&out.stderr));
             return Err(anyhow!("libnova_rt compile failed: {}",
                 combined.lines().take(20).collect::<Vec<_>>().join("\n")));
         }
         let mut obj_files: Vec<PathBuf> = Vec::new();
-        for entry in std::fs::read_dir(&obj_dir).map_err(|e| anyhow!("read obj_dir: {}", e))? {
-            let p = entry.map_err(|e| anyhow!("read_dir entry: {}", e))?.path();
+        for entry in std::fs::read_dir(&obj_dir).map_err(|e| anyhow!("read obj_dir: {:#}", e))? {
+            let p = entry.map_err(|e| anyhow!("read_dir entry: {:#}", e))?.path();
             if p.extension().and_then(|s| s.to_str()) == Some("obj") {
                 obj_files.push(p);
             }
@@ -6685,14 +6685,14 @@ fn build_rt_archive_lib(
         }
         // №287: BOM against ANSI-codepage mangling of non-ASCII paths.
         std::fs::write(&lib_rsp, format!("\u{FEFF}{}", lib_lines.join("\n")))
-            .map_err(|e| anyhow!("write lib.rsp: {}", e))?;
+            .map_err(|e| anyhow!("write lib.rsp: {:#}", e))?;
         let lib_inner = format!(
             "\"call \"{}\" >nul 2>&1 && lib.exe @\"{}\"\"",
             vcv.display(), lib_rsp.display()
         );
         let mut lib_cmd = Command::new("cmd");
         lib_cmd.raw_arg("/c").raw_arg(&lib_inner);
-        let lib_out = lib_cmd.output().map_err(|e| anyhow!("spawn lib.exe: {}", e))?;
+        let lib_out = lib_cmd.output().map_err(|e| anyhow!("spawn lib.exe: {:#}", e))?;
         if !lib_out.status.success() {
             return Err(anyhow!("lib.exe failed: {}", bytes_to_string(&lib_out.stderr)));
         }
@@ -6764,7 +6764,7 @@ fn build_rt_archive_lib(
             c.arg("-I").arg(cg_include);
             c.arg("-o").arg(&obj);
             c.arg(src);
-            let out = c.output().map_err(|e| anyhow!("spawn {}: {}", cc, e))?;
+            let out = c.output().map_err(|e| anyhow!("spawn {}: {:#}", cc, e))?;
             if !out.status.success() {
                 return Err(anyhow!("libnova_rt compile failed on {}: {}",
                     src.display(), bytes_to_string(&out.stderr)));
@@ -6776,7 +6776,7 @@ fn build_rt_archive_lib(
         for o in &obj_files {
             ar.arg(o);
         }
-        let ar_out = ar.output().map_err(|e| anyhow!("spawn ar: {}", e))?;
+        let ar_out = ar.output().map_err(|e| anyhow!("spawn ar: {:#}", e))?;
         if !ar_out.status.success() {
             return Err(anyhow!("ar failed: {}", bytes_to_string(&ar_out.stderr)));
         }
@@ -6823,7 +6823,7 @@ fn build_rt_archive_lib(
                     Ok(())
                 } else {
                     Err(anyhow!(
-                        "publish {} -> {}: {}",
+                        "publish {} -> {}: {:#}",
                         tmp_lib_file.display(), lib_file.display(), e
                     ))
                 }
@@ -7182,7 +7182,7 @@ fn walk_nv_filtered_ex(
         return Ok(());
     }
     let entries = std::fs::read_dir(root)
-        .map_err(|e| anyhow!("read_dir {}: {}", root.display(), e))?;
+        .map_err(|e| anyhow!("read_dir {}: {:#}", root.display(), e))?;
     // Plan 42 D29 rev-3: collect direct .nv files в этой папке.
     // Если они — peers of folder-module (все объявляют одинаковый
     // `module X`), они НЕ компилируются как standalone test entries
@@ -7194,7 +7194,7 @@ fn walk_nv_filtered_ex(
     let mut direct_nv: Vec<PathBuf> = Vec::new();
     let mut sub_dirs: Vec<PathBuf> = Vec::new();
     for entry in entries {
-        let entry = entry.map_err(|e| anyhow!("read_dir entry: {}", e))?;
+        let entry = entry.map_err(|e| anyhow!("read_dir entry: {:#}", e))?;
         let path = entry.path();
         if path.is_dir() {
             sub_dirs.push(path);
@@ -7305,12 +7305,12 @@ pub fn walk_nv_selected_ex(
         return Ok(());
     }
     let entries = std::fs::read_dir(root)
-        .map_err(|e| anyhow!("read_dir {}: {}", root.display(), e))?;
+        .map_err(|e| anyhow!("read_dir {}: {:#}", root.display(), e))?;
     let target = crate::imports::current_target_os();
     let mut direct_nv: Vec<PathBuf> = Vec::new();
     let mut sub_dirs: Vec<PathBuf> = Vec::new();
     for entry in entries {
-        let entry = entry.map_err(|e| anyhow!("read_dir entry: {}", e))?;
+        let entry = entry.map_err(|e| anyhow!("read_dir entry: {:#}", e))?;
         let path = entry.path();
         if path.is_dir() {
             sub_dirs.push(path);
@@ -7774,7 +7774,7 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
     excluded_inputs.sort_by(|a, b| a.0.cmp(&b.0));
 
     std::fs::create_dir_all(opts.tmp_dir)
-        .map_err(|e| anyhow!("create tmp_dir: {}", e))?;
+        .map_err(|e| anyhow!("create tmp_dir: {:#}", e))?;
 
     // Plan 26 Ф.10: --rerun-failed pre-load list.
     let rerun_set: Option<std::collections::HashSet<String>> = if opts.rerun_failed {
@@ -7795,7 +7795,7 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
     // Plan 27 Б.5: --filter-from exact-match set.
     let filter_from_set: Option<std::collections::HashSet<String>> = if let Some(p) = opts.filter_from {
         let text = std::fs::read_to_string(p)
-            .map_err(|e| anyhow!("--filter-from: cannot read {}: {}", p.display(), e))?;
+            .map_err(|e| anyhow!("--filter-from: cannot read {}: {:#}", p.display(), e))?;
         Some(text.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
     } else {
         None
@@ -8049,7 +8049,7 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
             })
             .collect();
         if let Err(e) = save_results(path, &records) {
-            eprintln!("warning: failed to save results file {}: {}", path.display(), e);
+            eprintln!("warning: failed to save results file {}: {:#}", path.display(), e);
         }
     }
 

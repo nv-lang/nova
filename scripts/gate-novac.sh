@@ -409,6 +409,7 @@ par_add "$ROOT/scripts/guards/check-novac-local-only-work.sh" "работа жи
 par_add "$ROOT/scripts/guards/check-novac-legacy-workarounds.py" "обход бага оракула в novac без маркера/с закрытым багом (274 §1.5)"
 par_add "$ROOT/scripts/guards/check-novac-oracle-tax-link.py" "маркер [LEGACY-#N] в novac/src разошёлся со списком плана 274.10 (274.10, Порядок работы п.1)"
 par_add "$ROOT/scripts/guards/check-guard-honesty.py" "страж может соврать или промолчать вместо проверки"
+par_add "$ROOT/scripts/guards/check-novac-bin-door.py" "бинарь Карины выбран по имени файла, а не дверью novac_bin (№1607)"
 par_add "$ROOT/scripts/guards/check-diag-paths.py" "текст компилятора ссылает пользователя на несуществующий файл (№1109)"
 par_add "$ROOT/scripts/guards/check-lint-rule-covered.py" "правило линта не названо ни одной фикстурой (№1114)"
 par_add "$ROOT/scripts/guards/check-novac-plan-liveline.py" "живая строка плана отстала от кода"
@@ -439,7 +440,7 @@ if [ -f "$ROOT/novac/src/main.nv" ]; then
         # пропускаем, только если бинарь есть, ни один .nv не новее его и оракул
         # не новее его. Ошибиться тут дороже, чем пересобрать: свежий на вид, но
         # протухший бинарь — ровно класс 274.3/F1, из-за которого сборку завели.
-        NOVAC_OUT="$ROOT/novac/target/novac.exe"
+        NOVAC_OUT="$(novac_bin_out "$ROOT")"   # #1607: the door, not a file name
         NOVAC_FRESH=0
         if [ -f "$NOVAC_OUT" ] && [ ! "$NOVA_BIN" -nt "$NOVAC_OUT" ] \
            && [ -z "$(find "$ROOT/novac/src" -name '*.nv' -newer "$NOVAC_OUT" 2>/dev/null | head -n 1)" ]; then
@@ -448,7 +449,7 @@ if [ -f "$ROOT/novac/src/main.nv" ]; then
         BUILD_T0=$(date +%s)
         if [ "$NOVAC_FRESH" -eq 1 ]; then
             echo "novac-build ok: бинарь новее всех .nv и оракула — пересборка не нужна"
-        elif ! bash "$ROOT/scripts/tools/with-deadline.sh" 300 "$NOVA_BIN" build "$ROOT/novac/src/main.nv" -o "$ROOT/novac/target/novac.exe" >"$ROOT/target/novac-build.log" 2>&1; then
+        elif ! bash "$ROOT/scripts/tools/with-deadline.sh" 300 "$NOVA_BIN" build "$ROOT/novac/src/main.nv" -o "$NOVAC_OUT" >"$ROOT/target/novac-build.log" 2>&1; then
             BUILD_OUT="$(cat "$ROOT/target/novac-build.log" 2>/dev/null || true)"
             if is_desync "$BUILD_OUT"; then
                 desync "novac-build: оракул эмитит вызов рантайма, которого нет в заголовках этого дерева — см. target/novac-build.log"

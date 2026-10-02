@@ -21,6 +21,8 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts" / "guards" / "lib"))
+from novac_bin import novac_bin  # noqa: E402 -- #1607: the one door choosing Carina's binary
 BASE = pathlib.Path(os.environ.get("TEMP", "/tmp")) / "novac-grammar-matrix"
 
 
@@ -35,7 +37,7 @@ def _bin(base):
 
 
 ORACLE = _bin(ROOT / "nova-cli/target/release/nova")
-NOVAC = _bin(ROOT / "novac/target/novac")
+NOVAC = novac_bin(ROOT)  # #1607: the door (scripts/guards/lib/novac_bin.py)
 
 # Класс A -- отказ novac называет ЛОЖНУЮ причину (дороже всех).
 # Класс B -- отказ безымянный: «construct not in the MVP grammar».

@@ -449,7 +449,7 @@ mod tests {
     #[cfg(not(target_os = "linux"))]
     fn measure_bandwidth_err_message_mentions_linux() {
         let err = measure_bandwidth(|| {}).unwrap_err();
-        let msg = format!("{}", err);
+        let msg = format!("{:#}", err);
         assert!(msg.contains("Linux"), "err msg should mention Linux: {}", msg);
     }
 }

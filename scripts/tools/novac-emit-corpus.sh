@@ -5,7 +5,8 @@
 # Corpus: examples/**/*.nv (novac-diff-corpus default) + novac/fixtures/**/pos_*.nv.
 set -u
 OUT="$1"
-NOVAC="novac/target/novac.exe"
+. scripts/guards/lib/novac.sh
+NOVAC="$(novac_bin .)"
 mkdir -p "$OUT"
 n=0; ok=0
 for f in $(find examples novac/fixtures -name '*.nv' | grep -E 'examples/|/pos_[0-9]+\.nv$' | sort); do

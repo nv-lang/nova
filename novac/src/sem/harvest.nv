@@ -231,8 +231,10 @@ fn harvest_types(decls []Node, mut types []TypeDef, mut gates []str, mut defs De
     // first, then the PRIVATE types of other modules -- registered for their own
     // module's bodies, which this unit instantiates (`hp.geo`'s `Cell` in its
     // `Vec[T] @cellv`), and only under a name nothing visible already holds: a
-    // private type must never stand where an exported one of its name is meant
-    // (registry 1491, std's private json `Token` over novac's `lex.Token`).
+    // private type must never stand where an exported one of its name is meant [INV-PROPERTY]
+    // (registry 1491, std's private json `Token` over novac's `lex.Token`) -- held by
+    // the order below: the private pass runs second and registers a name only where
+    // no visible type already holds it.
     harvest_types_pass(decls, types, gates, defs, tys, fx, own_module, false)
     harvest_types_pass(decls, types, gates, defs, tys, fx, own_module, true)
 }
