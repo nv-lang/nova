@@ -238,13 +238,14 @@ export fn FnTable @compiles_body(row FnRow) -> bool => raw_row(row) < @own_cnt
 /// free functions in `harvest_fn`. Asked of the file's rows only (`own_cnt` is
 /// fixed before any harvest), so a real overload handed from elsewhere stays.
 #realtime nogc
-export fn FnTable @file_declares_method(name str, params []ParamDef) -> bool {
+export fn FnTable @file_declares_method(name str, params []ParamDef, owner TyId) -> bool {
     // ONE name lookup, then the same-name chain BY ROW (the variant table's
-    // shape): no name is compared twice.
+    // shape): no name is compared twice. `owner` tells a STATIC method
+    // (`fn T.new()`, its type) from a method (`no_ty()`): the two never meet.
     mut r = @own_methods.find(name)
     while r >= 0 {
         ro d = @rows[r]
-        if d.param_cnt == params.len() && @same_params(d.param_off, params) { return true }
+        if d.owner == owner && d.param_cnt == params.len() && @same_params(d.param_off, params) { return true }
         r = @own_next[r]
     }
     false
@@ -260,7 +261,12 @@ export fn FnTable mut @seal_own() -> () {
     // Walked from the END so each name's chain starts at its FIRST row.
     mut r = @own_cnt - 1
     while r >= 0 {
-        if @rows[r].has_recv {
+        // A STATIC method joins the chain too (the static twin of registry 1354):
+        // in module mode the file's own `fn ConstTable.new()` arrives a second
+        // time as a handed declaration, and without its row in the chain the
+        // second copy became a second static of one name and arity -- 8 refusals
+        // of the 0.2 measure, `this type declares several static methods`.
+        if @rows[r].has_recv || is_ty(@rows[r].owner) {
             @own_next[r] = @own_methods.find(@rows[r].name)
             @own_methods.put(@rows[r].name, r)
         } else {

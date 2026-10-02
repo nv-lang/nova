@@ -125,9 +125,12 @@ fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
     } else {
         // Not generic: no substitution.
     }
-    // WHOSE BODY: the shell's, or one this unit makes from the body it was
-    // handed -- refused by the shell's name when neither.
-    if !@ctx.instantiates(row, ids) && !@ctx.interop.has(c_static_symbol(@ctx, row, ids)) {
+    // WHOSE BODY: the PROGRAM's (another module of it -- `ConstTable.new()`
+    // from novac's own `sem` in the self-build; its owner unit compiles it, as
+    // a method of a program module, 274.11 E.10 step 2a), the shell's, or one
+    // this unit makes from the body it was handed -- refused by the shell's
+    // name when none.
+    if !@ctx.in_program(row) && !@ctx.instantiates(row, ids) && !@ctx.interop.has(c_static_symbol(@ctx, row, ids)) {
         @report_first_leaf_of(kids, no_shell_method_msg(mname, expr_leaf_name(kids[0])))
         return true
     } else {

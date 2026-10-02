@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Role: a NON-generic handed body the shell does not carry is made by the unit
+//   from its text, the way a generic instance always was (task 4 of 274, the
+//   shell-str group of the 0.2 measure: `s.replace`, `k.is_dir()`, std's
+//   private `is_ascii_ws` under `str @trim_ascii`); the static twin of
+//   registry 1354; one cause, one diagnostic around `unsafe { }`; the block
+//   as a value in any position. The POISONED-name cascades inside a made body
+//   need std's own declarations, which these tests do not hand: the fixture
+//   novac/fixtures/std_method_body/neg_2.nv holds them.
+// Used by: nova test novac/src/pipeline (the module-test batch of the gate).
+// Guarded by: check-novac-module-tests, check-novac-file-size.py.
+//
+// Why a file of its own: each rule here moved a contract the older holders
+// (pipeline_test, handed_self_test, handed_free_test) asserted the other way,
+// and those keep the body-less half -- refused by name -- as their control.
+
+module novac.pipeline
+
+test "a STATIC method of the file handed back to it is ONE, not two (registry 1354's static twin)" {
+    // Module mode hands the compiled file back as a declaration; before task 4
+    // the copy of `fn Box.make()` was a second static of one name and arity --
+    // 8 refusals of the 0.2 measure, "declares several static methods".
+    ro src = "module u\ntype Box { v int }\nfn Box.make() -> Box => Box { v: 1 }\nfn apply() -> int => Box.make().v\nfn main() {\n println(apply())\n}"
+    ro ds = compile_with(src, parse_decls(self_decls(src)), interop_surface())
+    assert(ds.len() == 0, messages(ds))
+    // CONTROL: a METHOD of the same name and parameters is another owner -- it
+    // does not swallow the static, and the static still resolves.
+    ro msrc = "module u\ntype Box { v int }\nfn Box.make() -> Box => Box { v: 1 }\nfn Box @make() -> Box => Box { v: 2 }\nfn apply() -> int => Box.make().v\nfn main() {\n println(apply())\n}"
+    ro ms = compile_with(msrc, parse_decls(self_decls(msrc)), interop_surface())
+    assert(ms.len() == 0, messages(ms))
+}
