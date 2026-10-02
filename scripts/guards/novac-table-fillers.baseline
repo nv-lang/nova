@@ -41,14 +41,18 @@ coerces=1:sem
 #   total 36 -> 38. The handed constants: `harvest_consts` (sem/harvest.nv) registers a
 #   constant another module exports, beside `harvest_types`, in the same module as the
 #   file's own constants (sem/collect.nv). Growth by design, not a second filler.
-consts=2:sem
+# consts 2 -> 3, defs 12 -> 13 (2026-10-02, cloud session p274-carina-k1, part 6): a HANDED
+#   MODULE VALUE with a written type is registered by `harvest_module_value` (sem/harvest.nv),
+#   beside `harvest_consts` in the same module -- one name row and one constant row, the same
+#   pair the file's own module values get in sem/collect.nv. Growth by design, not a second filler.
+consts=3:sem
 # 2026-09-23, integrator (acceptance of the nova-kim E4 wave, 274.11):
 # defs 9->11, types 7->10, total 29->34. Five new write sites, all in
 # sem (one filler module per table still holds): an effect declaration
 # registers its name and its TkEffect row in sem/collect.nv, the second
 # pass re-reads its shape in sem/harvest.nv, and sem/sem.nv seeds the
 # builtin `Effect` (defs + types). Growth by design, not a second filler.
-defs=12:sem
+defs=13:sem
 fields=1:sem
 fn_decl_rows=2:sem
 fns=3:sem
@@ -63,4 +67,5 @@ variant_names=1:sem
 variant_rows=1:sem
 # total 35 -> 36 (2026-10-01, Carina window, record-form variants): a NEW table `payload_names`
 #   (plan 274 s10.3b row) -- one filler, `register_sum_variants`, beside `payload_types`.
-total=38
+# total 38 -> 40 (2026-10-02, part 6 of p274-carina-k1): the handed module value pair above.
+total=40

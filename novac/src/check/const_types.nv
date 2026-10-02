@@ -23,7 +23,7 @@ module novac.check
 
 import ../tree.{Node, NodeKind, is_node}
 import ../lex.{TokenKind}
-import ../sem.{raw_crow, const_name_at, const_init_at, const_type_at, ty_of_type_ref, leaf_kind, ty_source_name}
+import ../sem.{raw_crow, const_init_at, const_type_at, ty_of_type_ref, leaf_kind, ty_source_name}
 import ../types.{TyId, no_ty, is_ty}
 
 /// The TYPE of a module constant, or `no_ty()` when the name is not one.

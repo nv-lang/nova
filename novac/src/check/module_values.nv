@@ -65,7 +65,7 @@ fn Checker @const_seen(name str) -> Option[ConstRow] {
 fn seen_by_name(name str) -> str {
     ro b = name.bytes()
     for i in 0..b.len() {
-        if b[i] == DOT_IN_NAME { return name[0..i] }
+        if b[i] == DOT_IN_NAME { return name[..i] }
     }
     name
 }
