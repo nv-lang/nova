@@ -183,3 +183,21 @@ export fn Vec[T] @boxed() -> int => open(Box { n: @len() })\n"
     assert(d2.len() >= 1, messages(d2))
     assert(d2[0].message.contains("undeclared type name `Cell`"), messages(d2))
 }
+
+test "another module's PRIVATE type's method of the same name does not hide a call's own cause (#1567)" {
+    // std's private json `Lexer @bump` got a row once private types were
+    // registered for their own instances; `o.c.bump()` on the file's `Ctr`
+    // then found the NAME overloaded and said "no such method" instead of its
+    // P14 cause (fixture field_mut_place/neg_1).
+    mut decls = std_decls()
+    decls.push("module std.lx\ntype Lexer {\n i int\n}\nfn Lexer mut @bump(b u8) -> () {\n @i += 1\n}\n")
+    ro src = "type Ctr {\n n int\n}\nfn Ctr mut @bump() -> int {\n @n += 1\n @n\n}\n\
+type Outer {\n c Ctr\n}\nfn main() {\n ro o = Outer { c: Ctr { n: 0 } }\n println(o.c.bump())\n}"
+    ro (d0, _) = compile_to_c(src, decls)
+    assert(d0.len() == 1, messages(d0))
+    assert(d0[0].message.contains("needs a mutable place"), messages(d0))
+    // CONTROL: the same call on a `mut` root compiles -- the foreign row is no
+    // candidate for it either.
+    ro (d1, _) = compile_to_c(src.replace("ro o =", "mut o ="), decls)
+    assert(d1.len() == 0, messages(d1))
+}
