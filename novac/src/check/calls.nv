@@ -34,7 +34,7 @@ import ../tree.{Node, raw_node, NodeKind}
 // #1493: the file's import declarations are read leaf by leaf (`visible_imports`).
 import ../sem.{branch_children, leaf_text, file_decls}
 import ../diag.{ice}
-import ../builtins.{TypeKind, SIZE_OF_FN, ASSERT_FN}
+import ../builtins.{TypeKind, SIZE_OF_FN, ASSERT_FN, RECV_BINDING}
 import ../sem.{LitArg, ArgSpec, CallForm, CalleeTarget, decl_of_ty, Ctx, CheckOut, FnRow, raw_row, coerce_row}
 import ../sem.{subst_type, slot_binding_in, representation_of, generic_names, is_arg_value_kind, branch_children}
 import ../sem.{ty_source_name, bind_fault, bind_slots, identity_slots, no_row, SlotBind}
@@ -178,10 +178,14 @@ fn Checker mut @refuse_arg_type(kids []Node, row FnRow, key []ArgSpec, form Call
             // not be shadowed by a class question at some OTHER slot.
             if mode_admits(want.mode, key[at].cls) {
                 continue
-            } else if want.mode == ParamMode.ModeMut && @is_value_type(want.type_id) {
+            } else if want.mode == ParamMode.ModeMut && @is_value_type(want.type_id) && want.name != RECV_BINDING {
                 // A LANGUAGE error, not a subset limit: a `mut` parameter of a
                 // VALUE type is the caller's own storage (D326 revision R3),
-                // and this argument has none to write back into.
+                // and this argument has none to write back into. NOT the
+                // RECEIVER: a value temporary as a `mut @` receiver is legal
+                // (D32, `&v` / hoist + `&temp`) -- the subset refusal below
+                // stands for it until the hoist arrives (registry 1630); part 7
+                // of p274-carina-k1 found part 6 calling it a language error.
                 @reject_first_leaf_of(kids, "parameter `${want.name}` of a value type needs a mutable place -- this argument has no storage the call could write back into (E_MUT_ARG_NOT_MUTABLE, D326 revision R3)")
                 return
             } else {
