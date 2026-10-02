@@ -67,11 +67,11 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
         return run_dir(opts);
     }
     let bench_path = opts.bench_path.canonicalize()
-        .map_err(|e| anyhow!("cannot resolve path {}: {}", opts.bench_path.display(), e))?;
+        .map_err(|e| anyhow!("cannot resolve path {}: {:#}", opts.bench_path.display(), e))?;
     crate::require_nova_source(&bench_path)?;
 
     let src = std::fs::read_to_string(&bench_path)
-        .map_err(|e| anyhow!("read bench source: {}", e))?;
+        .map_err(|e| anyhow!("read bench source: {:#}", e))?;
     let path_str = bench_path.to_string_lossy();
 
     // ── Pipeline parse → resolve → typecheck → desugar → callnorm → codegen.
@@ -162,7 +162,7 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
     emitter.set_node_substs(&bench_env.node_substs);
     let (c_code, warnings) = emitter
         .emit_module(&module)
-        .map_err(|e| anyhow!("codegen error: {}", e))?;
+        .map_err(|e| anyhow!("codegen error: {:#}", e))?;
     for w in &warnings {
         eprintln!("{}", w);
     }
@@ -176,10 +176,10 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
     };
     let hash = simple_hash(&bench_path.display().to_string());
     let tmp_path = std::env::temp_dir().join(format!("nova-bench-{}", &hash[..hash.len().min(12)]));
-    std::fs::create_dir_all(&tmp_path).map_err(|e| anyhow!("create tmp: {}", e))?;
+    std::fs::create_dir_all(&tmp_path).map_err(|e| anyhow!("create tmp: {:#}", e))?;
     let c_file = tmp_path.join(format!("{}_bench.c", stem));
     let exe_file = tmp_path.join(&exe_name);
-    std::fs::write(&c_file, &c_code).map_err(|e| anyhow!("write .c: {}", e))?;
+    std::fs::write(&c_file, &c_code).map_err(|e| anyhow!("write .c: {:#}", e))?;
 
     let tc = test_runner::detect_toolchain(&opts.tc_opts)?;
     let libuv = test_runner::detect_or_build_libuv(opts.rt_dir, opts.repo, tc.vcvars_path());
@@ -236,7 +236,7 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
     cmd.stderr(std::process::Stdio::piped());
 
     // Run with timeout via thread+join (no async runtime required).
-    let mut child = cmd.spawn().map_err(|e| anyhow!("spawn bench exe: {}", e))?;
+    let mut child = cmd.spawn().map_err(|e| anyhow!("spawn bench exe: {:#}", e))?;
     let stdout = child.stdout.take().ok_or_else(|| anyhow!("no stdout from bench exe"))?;
     let stderr = child.stderr.take().ok_or_else(|| anyhow!("no stderr from bench exe"))?;
 
@@ -271,7 +271,7 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
     let mut current_bench_name: Option<String> = None;
     let mut pending_metrics: Vec<(String, i64, String)> = Vec::new();
     for line in reader.lines() {
-        let line = line.map_err(|e| anyhow!("read bench stdout: {}", e))?;
+        let line = line.map_err(|e| anyhow!("read bench stdout: {:#}", e))?;
         if let Some(r) = RawBenchResult::parse_line(&line) {
             // Attach pending metrics (aggregated by name+unit) to this bench.
             let mut groups: std::collections::BTreeMap<(String, String), Vec<i64>>
@@ -301,7 +301,7 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
         }
         // Other lines passed silently.
     }
-    let status = child.wait().map_err(|e| anyhow!("wait bench exe: {}", e))?;
+    let status = child.wait().map_err(|e| anyhow!("wait bench exe: {:#}", e))?;
     let heap_samples = stderr_handle.join().unwrap_or_default();
     if !heap_samples.is_empty() {
         let bytes_only: Vec<u64> = heap_samples.iter().map(|(_, b)| *b).collect();
@@ -347,12 +347,12 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
     if let Some(p) = opts.out_json {
         let json = run_result_to_json(&meta, &benches);
         std::fs::write(p, serde_json::to_string_pretty(&json)?)
-            .map_err(|e| anyhow!("write JSON: {}", e))?;
+            .map_err(|e| anyhow!("write JSON: {:#}", e))?;
         eprintln!("wrote JSON to {}", p.display());
     }
     if let Some(p) = opts.out_csv {
         std::fs::write(p, report::csv_report(&benches))
-            .map_err(|e| anyhow!("write CSV: {}", e))?;
+            .map_err(|e| anyhow!("write CSV: {:#}", e))?;
         eprintln!("wrote CSV to {}", p.display());
     }
     if let Some(p) = opts.out_criterion {
@@ -377,7 +377,7 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
                 st.n,
                 st.outliers_low + st.outliers_high));
         }
-        std::fs::write(p, md).map_err(|e| anyhow!("write MD: {}", e))?;
+        std::fs::write(p, md).map_err(|e| anyhow!("write MD: {:#}", e))?;
         eprintln!("wrote markdown to {}", p.display());
     }
 
@@ -397,9 +397,9 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
 /// instrumentation noise не влиял на baseline numbers).
 pub fn compile_for_profile(opts: &BenchRunOpts) -> Result<std::path::PathBuf> {
     let bench_path = opts.bench_path.canonicalize()
-        .map_err(|e| anyhow!("cannot resolve {}: {}", opts.bench_path.display(), e))?;
+        .map_err(|e| anyhow!("cannot resolve {}: {:#}", opts.bench_path.display(), e))?;
     let src = std::fs::read_to_string(&bench_path)
-        .map_err(|e| anyhow!("read bench source: {}", e))?;
+        .map_err(|e| anyhow!("read bench source: {:#}", e))?;
     let path_str = bench_path.to_string_lossy();
 
     let mut module = nova_codegen::parser::parse(&src)
@@ -457,7 +457,7 @@ pub fn compile_for_profile(opts: &BenchRunOpts) -> Result<std::path::PathBuf> {
     emitter.set_node_substs(&bench_env.node_substs);
     let (c_code, _warnings) = emitter
         .emit_module(&module)
-        .map_err(|e| anyhow!("codegen error: {}", e))?;
+        .map_err(|e| anyhow!("codegen error: {:#}", e))?;
 
     let stem = bench_path.file_stem().and_then(|s| s.to_str()).unwrap_or("bench");
     let exe_name = if cfg!(target_os = "windows") {
@@ -467,10 +467,10 @@ pub fn compile_for_profile(opts: &BenchRunOpts) -> Result<std::path::PathBuf> {
     };
     let hash = simple_hash(&bench_path.display().to_string());
     let tmp_path = std::env::temp_dir().join(format!("nova-bench-profile-{}", &hash[..hash.len().min(12)]));
-    std::fs::create_dir_all(&tmp_path).map_err(|e| anyhow!("create tmp: {}", e))?;
+    std::fs::create_dir_all(&tmp_path).map_err(|e| anyhow!("create tmp: {:#}", e))?;
     let c_file = tmp_path.join(format!("{}_profile.c", stem));
     let exe_file = tmp_path.join(&exe_name);
-    std::fs::write(&c_file, &c_code).map_err(|e| anyhow!("write .c: {}", e))?;
+    std::fs::write(&c_file, &c_code).map_err(|e| anyhow!("write .c: {:#}", e))?;
 
     let tc = test_runner::detect_toolchain(&opts.tc_opts)?;
     let libuv = test_runner::detect_or_build_libuv(opts.rt_dir, opts.repo, tc.vcvars_path());
@@ -577,7 +577,7 @@ fn run_dir(opts: BenchRunOpts) -> Result<i32> {
         };
         let r = run(single_opts);
         if let Err(e) = r {
-            eprintln!("nova bench: file {} failed — {}", f.display(), e);
+            eprintln!("nova bench: file {} failed — {:#}", f.display(), e);
         } else {
             total_benches += 1;
             if let Some(p) = per_file_json {
@@ -595,7 +595,7 @@ fn run_dir(opts: BenchRunOpts) -> Result<i32> {
         } else {
             let agg = aggregate_json_files(&per_file_json_paths, dir)?;
             std::fs::write(out_path, serde_json::to_string_pretty(&agg)?)
-                .map_err(|e| anyhow!("write aggregated JSON: {}", e))?;
+                .map_err(|e| anyhow!("write aggregated JSON: {:#}", e))?;
             eprintln!("nova bench: wrote aggregated JSON to {} ({} benches across {} files)",
                 out_path.display(),
                 agg.get("benches").and_then(|x| x.as_array()).map(|a| a.len()).unwrap_or(0),
@@ -607,10 +607,10 @@ fn run_dir(opts: BenchRunOpts) -> Result<i32> {
             let agg = aggregate_json_files(&per_file_json_paths, dir)?;
             let benches: Vec<super::schema::AnalyzedBench> =
                 super::schema::RunResultParsed::from_json(&agg)
-                    .map_err(|e| anyhow!("aggregate parse: {}", e))?
+                    .map_err(|e| anyhow!("aggregate parse: {:#}", e))?
                     .benches;
             std::fs::write(out_path, super::report::csv_report(&benches))
-                .map_err(|e| anyhow!("write aggregated CSV: {}", e))?;
+                .map_err(|e| anyhow!("write aggregated CSV: {:#}", e))?;
             eprintln!("nova bench: wrote aggregated CSV to {} ({} benches)",
                 out_path.display(), benches.len());
         }
@@ -619,7 +619,7 @@ fn run_dir(opts: BenchRunOpts) -> Result<i32> {
         if !per_file_json_paths.is_empty() {
             let agg = aggregate_json_files(&per_file_json_paths, dir)?;
             let parsed = super::schema::RunResultParsed::from_json(&agg)
-                .map_err(|e| anyhow!("aggregate parse: {}", e))?;
+                .map_err(|e| anyhow!("aggregate parse: {:#}", e))?;
             let mut md = String::new();
             md.push_str(&format!("# Bench results — directory `{}`\n\n", dir.display()));
             md.push_str("| Bench | median | MAD | mean | stddev | n | outliers |\n");
@@ -636,7 +636,7 @@ fn run_dir(opts: BenchRunOpts) -> Result<i32> {
                     st.outliers_low + st.outliers_high));
             }
             std::fs::write(out_path, md)
-                .map_err(|e| anyhow!("write aggregated MD: {}", e))?;
+                .map_err(|e| anyhow!("write aggregated MD: {:#}", e))?;
             eprintln!("nova bench: wrote aggregated markdown to {}", out_path.display());
         }
     }
@@ -645,7 +645,7 @@ fn run_dir(opts: BenchRunOpts) -> Result<i32> {
             let agg = aggregate_json_files(&per_file_json_paths, dir)?;
             let benches: Vec<super::schema::AnalyzedBench> =
                 super::schema::RunResultParsed::from_json(&agg)
-                    .map_err(|e| anyhow!("aggregate parse: {}", e))?
+                    .map_err(|e| anyhow!("aggregate parse: {:#}", e))?
                     .benches;
             let n = super::criterion_compat::write_all(out_path, &benches)?;
             eprintln!("nova bench: wrote aggregated Criterion-compat layout to {} ({} benches)",
@@ -672,9 +672,9 @@ fn aggregate_json_files(paths: &[PathBuf], dir: &Path) -> Result<serde_json::Val
     let mut all_benches: Vec<Value> = Vec::new();
     for p in paths {
         let text = std::fs::read_to_string(p)
-            .map_err(|e| anyhow!("read {}: {}", p.display(), e))?;
+            .map_err(|e| anyhow!("read {}: {:#}", p.display(), e))?;
         let v: Value = serde_json::from_str(&text)
-            .map_err(|e| anyhow!("parse {}: {}", p.display(), e))?;
+            .map_err(|e| anyhow!("parse {}: {:#}", p.display(), e))?;
         if first_meta.is_none() {
             if let Some(m) = v.get("metadata") {
                 first_meta = Some(m.clone());

@@ -35,7 +35,7 @@ export LC_ALL=C
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 . "$ROOT/scripts/guards/lib/novac.sh"   # novac_is_panic_rc (274.3/F3)
 CORPUS="${1:-$ROOT/examples}"
-NOVAC="$ROOT/novac/target/novac.exe"
+NOVAC="$(novac_bin "$ROOT")"
 ALLOW="$ROOT/novac/divergences.allow"
 T="${TMPDIR:-/tmp}/novac-diff-corpus.$$"
 mkdir -p "$T"
@@ -56,7 +56,7 @@ STALE_NV=$(find "$ROOT/novac/src" -name '*.nv' -newer "$NOVAC" 2>/dev/null | hea
 if [ -n "$STALE_NV" ]; then
     echo "novac-diff-corpus: БИНАРЬ ПРОТУХ — $STALE_NV новее, чем $NOVAC" >&2
     echo "    Мера относилась бы к ПРЕЖНЕМУ компилятору и молчала бы об этом." >&2
-    echo "    Собери: nova build novac/src/main.nv -o novac/target/novac.exe" >&2
+    echo "    Собери: nova build novac/src/main.nv -o $(novac_bin_out .)" >&2
     echo "    Осознанно мерить старым: NOVAC_STALE_OK=1 (причина — в доклад)." >&2
     [ -n "${NOVAC_STALE_OK:-}" ] || exit 2
     echo "novac-diff-corpus: мерю ПРОТУХШИМ бинарём по NOVAC_STALE_OK" >&2

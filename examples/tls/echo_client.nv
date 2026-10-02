@@ -30,7 +30,7 @@ fn server_ca() -> []u8 => embed("certs/localhost_cert.pem")
 
 fn main() {
     with Net = real_net() {
-        ro addr = SocketAddr.loopback(PORT)
+        ro addr = SocketAddr.loopback(PORT as int)
         ro cfg = ClientConfig.new("localhost")
             .verification(VerificationMode.CustomRoots(server_ca()))
 

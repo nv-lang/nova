@@ -60,15 +60,15 @@ impl NoiseFloor {
             "suite_noise_pct": self.suite_noise_pct,
         });
         std::fs::write(path, serde_json::to_string_pretty(&j)?)
-            .map_err(|e| anyhow!("write noise floor: {}", e))?;
+            .map_err(|e| anyhow!("write noise floor: {:#}", e))?;
         Ok(())
     }
 
     pub fn load(path: &Path) -> Result<Self> {
         let raw = std::fs::read_to_string(path)
-            .map_err(|e| anyhow!("read noise floor: {}", e))?;
+            .map_err(|e| anyhow!("read noise floor: {:#}", e))?;
         let v: Value = serde_json::from_str(&raw)
-            .map_err(|e| anyhow!("parse noise floor JSON: {}", e))?;
+            .map_err(|e| anyhow!("parse noise floor JSON: {:#}", e))?;
         let fv = v.get("format_version").and_then(|x| x.as_str())
             .ok_or_else(|| anyhow!("noise floor missing format_version"))?;
         if fv != NOISE_SCHEMA_VERSION {
@@ -121,11 +121,11 @@ pub fn calibrate(runs: &[PathBuf]) -> Result<NoiseFloor> {
     let mut parsed: Vec<RunResultParsed> = Vec::with_capacity(runs.len());
     for p in runs {
         let raw = std::fs::read_to_string(p)
-            .map_err(|e| anyhow!("read {}: {}", p.display(), e))?;
+            .map_err(|e| anyhow!("read {}: {:#}", p.display(), e))?;
         let v: Value = serde_json::from_str(&raw)
-            .map_err(|e| anyhow!("parse {}: {}", p.display(), e))?;
+            .map_err(|e| anyhow!("parse {}: {:#}", p.display(), e))?;
         let r = RunResultParsed::from_json(&v)
-            .map_err(|e| anyhow!("schema {}: {}", p.display(), e))?;
+            .map_err(|e| anyhow!("schema {}: {:#}", p.display(), e))?;
         parsed.push(r);
     }
 

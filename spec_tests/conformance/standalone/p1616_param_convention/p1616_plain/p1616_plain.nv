@@ -1,0 +1,11 @@
+// #1616 carrier -- see `../p1616_param_convention.nv`. `stamp` and `mark` take a
+// plain `int` here; `p1616_mutp` declares both names with a `mut` record parameter.
+module p1616_param_convention.p1616_plain
+
+fn stamp(ms int) -> int => ms / 1000 + 1
+
+fn mark(x int) -> int => x * 2
+
+export fn named(ms int) -> int => stamp(ms)
+
+export fn mark_plain(x int) -> int => mark(x)

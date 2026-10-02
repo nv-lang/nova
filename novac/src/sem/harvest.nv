@@ -227,6 +227,22 @@ fn harvest_in(n Node, handed_from str, own_module str, types []TypeDef, mut defs
 /// obligation (K7). The name and the KIND are what a type in a signature needs.
 fn harvest_types(decls []Node, mut types []TypeDef, mut gates []str, mut defs DefTable,
                         mut tys Interner, mut fx EffectTable, own_module str) -> () {
+    // TWO PASSES (registry 221.1 #1567): the types the compiled file may name
+    // first, then the PRIVATE types of other modules -- registered for their own
+    // module's bodies, which this unit instantiates (`hp.geo`'s `Cell` in its
+    // `Vec[T] @cellv`), and only under a name nothing visible already holds: a
+    // private type must never stand where an exported one of its name is meant [INV-PROPERTY]
+    // (registry 1491, std's private json `Token` over novac's `lex.Token`) -- held by
+    // the order below: the private pass runs second and registers a name only where
+    // no visible type already holds it.
+    harvest_types_pass(decls, types, gates, defs, tys, fx, own_module, false)
+    harvest_types_pass(decls, types, gates, defs, tys, fx, own_module, true)
+}
+
+/// One pass of `harvest_types`: the visible declarations, or (`privates`) the
+/// private ones of other modules, each under its module (`DefTable` home).
+fn harvest_types_pass(decls []Node, mut types []TypeDef, mut gates []str, mut defs DefTable,
+                      mut tys Interner, mut fx EffectTable, own_module str, privates bool) -> () {
     for d in decls {
         // WHICH declarations of this file other modules may NAME (D281, registry
         // 221.1 #1491): the exported ones -- a type not exported is its module's
@@ -250,8 +266,12 @@ fn harvest_types(decls []Node, mut types []TypeDef, mut gates []str, mut defs De
             if nk.len() < 2 { continue }
             if nk[1].kind_of() != NodeKind.LeafNode { continue }
             ro tname = leaf_text(nk[1])
-            // SILENT-OK: a private type of another module is invisible here by D281 -- its own module reads it.
-            if !same_module && !is_among(exported, c.id_of()) { continue }
+            // A private type of another module is invisible to the file by D281
+            // -- its own module reads it -- and is registered in the second
+            // pass, for that module's bodies alone (`Checker @type_seen`).
+            ro hidden = !same_module && !is_among(exported, c.id_of())
+            // SILENT-OK: the other pass registers this declaration.
+            if hidden != privates { continue }
             // A GENERIC declaration registers as a HEAD (step B1): the row
             // carries how many parameters it binds, and the RESOLVER is what
             // keeps a bare `Vec` from becoming a type -- `ty_or_none` answers
@@ -265,7 +285,7 @@ fn harvest_types(decls []Node, mut types []TypeDef, mut gates []str, mut defs De
             // last-write-wins this table stopped doing.
             if defs.def_of(tname).is_some() { continue }
             ro id = DeclId(types.len())
-            defs.add(tname, DefTarget.DefType(id))
+            defs.add(tname, DefTarget.DefType(id), home: module_dotted(d), private: hidden)
             // A SUM IS TOLD BY THE NODE KIND, not by `DeclShape`: that sum has
             // four variants and none of them is a sum, because the shape reader
             // answers about a `type` declaration's TAIL while the parser already
@@ -363,7 +383,12 @@ fn harvest_fn(kids []Node, handed_from str, own_module str, types []TypeDef, mut
     mut recv_kids = []Node.new()
     mut recv_at = -1
     mut mname = ""
-    mut ret_unit = false
+    // NO `->` AT ALL is the unit too, as for the file's own functions: std
+    // writes `fn HashMap[K, V] mut @clear() {` and `extern "nova" fn AtomicInt
+    // mut @store(v int)`, and until part 5 of p274-carina-k1 the missing return
+    // dropped the signature -- `m.clear()` and `exit_code.store(..)` were
+    // "no such method" about methods std declares.
+    mut ret_unit = true
     mut ret_kids = []Node.new()
     for c in kids {
         ro ck = c.kind_of()
@@ -389,6 +414,9 @@ fn harvest_fn(kids []Node, handed_from str, own_module str, types []TypeDef, mut
                 i += 1
             }
         } else if ck == NodeKind.RetType {
+            // A return IS written: what it names decides, and an unreadable one
+            // drops the signature below (an empty `ret_kids`).
+            ret_unit = false
             ro rk = branch_children(c)
             if rk.len() < 2 { continue }
             // `-> ()` names the UNIT, and its spelling is punctuation rather
@@ -449,7 +477,7 @@ fn harvest_fn(kids []Node, handed_from str, own_module str, types []TypeDef, mut
     }
     // From here on a drop still answers WHAT was dropped (registry 1558).
     ro key = HarvestKey { name: mname, on: recv_t }
-    if ret_kids.len() < 2 { return key }
+    if !ret_unit && ret_kids.len() < 2 { return key }
     // `Self` is the RECEIVER's type, spelled by its role instead of its name.
     // It is not in `defs` and never will be -- it names no declaration -- so a
     // door that only asked the registry dropped the WHOLE signature: measured
@@ -583,7 +611,7 @@ fn harvest_fn(kids []Node, handed_from str, own_module str, types []TypeDef, mut
         fns.add_static(recv_t, mname, ret_t, param_ids, tps, bounds, handed_from, ret_is_ro(ret_kids))
     } else {
         fns.add(mname, ret_t, !is_free, param_ids, tps, bounds, handed_from: handed_from,
-                ret_ro: ret_is_ro(ret_kids))
+                ret_ro: ret_is_ro(ret_kids), ret_self: returns_receiver(kids))
     }
     fns.mark_linear(linear)
     if is_free && !row_only {

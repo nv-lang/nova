@@ -1,0 +1,15 @@
+#!/bin/bash
+# Widening-ban cost: `nova check` with and without NOVA_PROBE_NO_WIDEN on the SAME binary.
+# Usage: cost.sh <label> <cwd> <paths...>   -> out/<label>.base, out/<label>.probe
+P="$(cd "$(dirname "$0")" && pwd)"
+N="$P/nova-probe.exe"
+export NOVA_STD_PATH=D:/Sources/nv-lang/nova-p1532/std
+label=$1; dir=$2; shift 2
+mkdir -p "$P/out"
+cd "$dir" || exit 1
+echo "[$label] $(date +%H:%M:%S) base"
+timeout 590 "$N" check "$@" 2>&1 | sed 's/\x1b\[[0-9;]*m//g' > "$P/out/$label.base"
+echo "[$label] $(date +%H:%M:%S) probe"
+NOVA_PROBE_NO_WIDEN=1 timeout 590 "$N" check "$@" 2>&1 | sed 's/\x1b\[[0-9;]*m//g' > "$P/out/$label.probe"
+b=$(grep -c ': error: ' "$P/out/$label.base"); p=$(grep -c ': error: ' "$P/out/$label.probe")
+echo "[$label] $(date +%H:%M:%S) errors base=$b probe=$p tail: $(tail -1 "$P/out/$label.probe" | cut -c1-80)"

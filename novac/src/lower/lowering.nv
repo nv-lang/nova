@@ -160,7 +160,7 @@ fn Lowerer mut @lower_if_value(n Node, res_t TyId) -> Local {
     ro c = @ir.begin_if(cond, ElseShape.Braced)
     @lower_block_value(kids[2], t)
     @ir.begin_else(c)
-    @lower_block_value(kids[4], t)
+    @lower_else_value(kids[4], t)
     @ir.end_if(c)
     // The result local is HANDED BACK (274.8 M2b-2, prerequisite 5): the caller records
     // the assignment from it at LOWERING time, so nothing is lowered while the walk prints.
@@ -198,56 +198,9 @@ fn Lowerer mut @lower_if_let_value(n Node, res_t TyId) -> Local {
     @lower_pattern_bind(kids[iflet_pattern_at(kids)], ot, lo)
     @lower_block_value(kids[iflet_body_at(kids)], t)
     @ir.begin_else(c)
-    @lower_block_value(kids[iflet_else_at(kids)], t)
+    @lower_else_value(kids[iflet_else_at(kids)], t)
     @ir.end_if(c)
     t
-}
-
-/// `a ?? b` as a VALUE: the Option into a temporary, then the payload or the
-/// fallback into a second one. The SHORT CIRCUIT is the point -- the fallback
-/// is emitted INSIDE the else branch, so its effects run only when the left
-/// side is None, which is what the oracle does and what a reader expects.
-///
-/// The shape is `@lower_if_value`'s and the `(T){0}` initialiser is there for
-/// the same reason: a temporary only conditionally written would otherwise
-/// answer whatever the stack held. Both branches always write here; the
-/// initialiser costs one C token and removes the question.
-fn Lowerer mut @lower_coalesce(e Node) -> Local {
-    ro qk = branch_children(e)
-    ro ot = @out.type_of(qk[0].id_of())
-    ro res_t = @out.type_of(e.id_of())
-    // The Option lands in a TEMPORARY of the body through the one door (274.8 M1):
-    // the hoist of a construction inside it is the printer's. The name is the body's
-    // own -- `temp` numbers it by index -- because the compiler invented it and the
-    // printer has no business spelling `_novac_tmp_t<uniq>` by hand (274.8 M3).
-    ro lo = @ir.temp(ot)
-    @lower_place(qk[0], lo)
-    // The result is a temporary of the body, DECLARED as a statement of it (M2b-2 step 2):
-    // the zero initialiser is a field the lowering sets, not a shape this printer knows.
-    ro lr = @ir.temp(res_t)
-    @ir.declare_zeroed(lr)
-    // The head goes through the ONE door (M2b-2 step 3a), which spells the Some-test
-    // from the local's type and name -- the two values this function used to pass by
-    // hand. Both branches are BLOCKS of the body with one join, and the Some branch's
-    // one statement is the payload read through the one door -- printed by the one
-    // assignment printer, which spells a Temp with the indent the hand-written line
-    // had (measured before the edit, plan 274.8 decision (1)).
-    ro cond = Cond.IsSome(lo)
-    // Same as the if-value: the None branch is a block printed as `} else {`.
-    ro c = @ir.begin_if(cond, ElseShape.Braced)
-    @ir.take_payload(lr, lo)
-    @ir.begin_else(c)
-    // THE FALLBACK LIVES HERE, not above: its hoists and its effects belong
-    // to the None branch alone -- that is the short circuit, in one place.
-    @lower_place(qk[2], lr)
-    @ir.end_if(c)
-    // THE LOCAL ITSELF, not its name (M3a). M2c had this function ask the record for the
-    // name because it handed its caller the TEXT of an expression; now `??` is a value
-    // form that LOWERS, so what the caller needs is the local -- a caller that wants text
-    // asks `decl_of(l).name` at its own end. Handing the local is what lets a value
-    // position take `??` through the one door (`lower_value_source`) instead of the
-    // print-time hoist table, and the hoist is exactly what iced under the walk of step 3b.
-    lr
 }
 
 /// Emit a block whose LAST statement is its value: everything before it runs
@@ -274,12 +227,12 @@ fn Lowerer mut @lower_block_value(b Node, t Local) -> () {
         match c {
             Leaf(_) => {} // the block's braces are trivia, not statements
             Branch { .. } => {
-                if j == last_branch && is_expr_kind(c.kind_of()) {
+                if j == last_branch && @tail_places_value(c) {
                     @lower_place(c, t)
                 } else {
-                    // Everything before the tail runs for effect, and a tail
-                    // that is not an expression is refused in `check` -- it
-                    // never reaches here.
+                    // Before the tail: effect only. The tail asks the ONE door, not `is_expr_kind`
+                    // -- a tuple or nested `if` tail went to `@lower_stmt` and the value was
+                    // DROPPED, silently (part 5 of p274-carina-k1: `0 0` for the oracle's `6 2`).
                     @lower_stmt(c)
                 }
             }
@@ -347,6 +300,10 @@ fn Lowerer mut @lower_stmt(st Node) -> () {
         // precedent of `@hoist_sealed_args`, whose hoist the store's printer
         // reads back through `@lo.ir.local_of_node`, so the recorded store
         // below needs no new shape.
+        // A block form on the right, or nested in it, or in the target's index
+        // (registry 1619): laid down first and read back by the printer.
+        @hoist_operand(src)
+        @hoist_block_forms(kids[0])
         if src.kind_of() == NodeKind.IfExpr {
             ro sty = @out.type_if_known(src.id_of())
             if is_ty(sty) {
@@ -442,6 +399,9 @@ fn Lowerer mut @lower_if(st Node, outer Option[IfCtx]) -> () {
     // later. Recording before printing is safe because printing a condition lowers
     // nothing -- `emit_expr` touches neither the builder nor the name counter (measured
     // 2026-09-08); only `build_value` lowers, and a condition never goes through it.
+    // A block form in the condition is laid down before the test (registry 1619);
+    // a chained `else if` with one is lowered braced instead (`else_shape`).
+    @hoist_operand(kids[1])
     ro cond = Cond.Expr(kids[1])
     ro shape = else_shape(kids, 4)
     ro c = match outer {
@@ -496,6 +456,10 @@ fn Lowerer mut @lower_else_tail(c IfCtx, tail Node) -> () {
     if tk == NodeKind.Block {
         @ir.begin_else(c)
         @lower_block_stmts_fn(tail, false)
+    } else if tk == NodeKind.IfStmt && contains_block_form(branch_children(tail)[1]) {
+        // The braced shape `else_shape` chose: the `if` stands alone in the else block.
+        @ir.begin_else(c)
+        @lower_if(tail, None)
     } else if tk == NodeKind.IfStmt {
         @lower_if(tail, Some(c))
     } else if tk == NodeKind.IfLet {
@@ -592,6 +556,20 @@ fn Lowerer mut @lower_if_let(st Node, outer Option[IfCtx]) -> () {
 /// One `while`: the header block carries the loop, the body jumps back.
 fn Lowerer mut @lower_while(st Node) -> () {
     ro kids = branch_children(st)
+    if contains_block_form(kids[1]) {
+        // A condition with a block form is re-evaluated each turn, so it cannot be
+        // laid down before the loop: `loop { <blocks>; if (c) {} else { break; } ... }`
+        // (registry 1619).
+        ro fc = @ir.begin_loop(LoopHead.Forever)
+        @hoist_operand(kids[1])
+        ro t = @ir.begin_if(Cond.Expr(kids[1]), ElseShape.Braced)
+        @ir.begin_else(t)
+        @ir.break_loop()
+        @ir.end_if(t)
+        @lower_block_stmts_fn(kids[2], false)
+        @ir.end_loop(fc)
+        return
+    }
     // Recorded first, printed from the record (M2b-2 step 3a).
     ro head = LoopHead.While(kids[1])
     ro c = @ir.begin_loop(head)
@@ -635,6 +613,7 @@ fn Lowerer mut @lower_while_let(st Node) -> () {
 fn Lowerer mut @lower_for_range(kids []Node) -> () {
     ro pat = kids[1]
     ro range = branch_children(kids[3]) // Bin: [lo, .., hi]
+    @hoist_operand(range[0])
     ro hi_l = @ir.temp(@ctx.prims.int_id)
     @lower_place(range[2], hi_l)
     // A plain binder keeps the author's name on the counter; a `_` header
@@ -733,6 +712,8 @@ fn Lowerer mut @lower_place(e Node, dest Local) -> () {
     // One form, two doors -- and only the probe could tell me the second one.
     @hoist_ordered_args(e)
     @hoist_sealed_args(e)
+    // A block form NESTED in the value goes first, in order (registry 1619).
+    @hoist_block_forms(e)
     // THE SOURCE IS RESOLVED FIRST (prerequisite 5): a value form that lays down blocks
     // is lowered NOW and the assignment reads the local it produced, through the operand
     // rvalue door `@ir.copy`. Otherwise the tree node stays the source -- the M1 bridge,
@@ -756,94 +737,11 @@ fn Lowerer mut @lower_eval(e Node) -> () {
     }
     @hoist_ordered_args(e)
     @hoist_sealed_args(e)
+    // A statement that IS a block form (`o ?? f()`, `x?`) is laid down, its value
+    // dropped; one that holds one has it laid down first (registry 1619).
+    @hoist_operand(e)
+    if needs_own_lowering(e) { return }
     @ir.eval(e)
-}
-
-/// TWO OR MORE ARGUMENTS THAT CALL SOMETHING get a temporary each, laid
-/// down in SOURCE ORDER (F65).
-///
-/// C fixes no evaluation order for arguments at any calling convention, and
-/// the oracle was measured -- 2026-08-16, re-run 2026-09-20 -- evaluating
-/// such a call RIGHT to left, while the spec calls left to right normative
-/// and OBSERVABLE. Printing the calls inline therefore shipped a program
-/// whose behaviour belongs to the C compiler; until this door the subset
-/// refused the form instead, which was the honest half-answer.
-///
-/// ONE effectful argument is left alone: a single effect has no order to get
-/// wrong, and a temporary for it would be emission nobody needs.
-fn Lowerer mut @hoist_ordered_args(call Node) -> () {
-    ro kids = branch_children(call)
-    mut effectful = 0
-    for c in kids {
-        if !is_expr_kind(c.kind_of()) { continue }
-        if !contains_call(c) { continue }
-        effectful += 1
-    }
-    if effectful < 2 { return }
-    // IN WRITTEN ORDER, which is the whole point: the children are walked
-    // left to right and each hoist is a statement placed before the call's
-    // own, so the order of effects is the order of the source by
-    // construction rather than by anyone's care.
-    for c in kids {
-        if !is_expr_kind(c.kind_of()) { continue }
-        if !contains_call(c) { continue }
-        ro t = @out.type_if_known(c.id_of())
-        if !is_ty(t) {
-            // SILENT-OK: an argument the checker recorded no type for was
-            // refused where it was typed; hoisting it would need a type for
-            // the temporary, and inventing one is how a wrong C type is
-            // spelled. The call still prints it inline, as before.
-            continue
-        } else {
-            // A typed effectful argument: it gets its own local.
-        }
-        ro l = @ir.temp(t)
-        @lower_place(c, l)
-        @ir.remember_hoist(c.id_of(), l)
-    }
-}
-
-/// ONE MORE gate before `@lo.ir.finish()` seals the graph (registry #TBD,
-/// the if-in-argument wave): an argument whose OWN kind needs sealed
-/// blocks (`IfExpr`, `Coalesce` -- `@lower_value_source`'s own dispatch)
-/// cannot wait for `@hoist_ordered_args` above -- that gate fires only at
-/// two or more call-CONTAINING arguments (F65's concern is INTERLEAVING,
-/// not existence), so a single such argument never reaches it, and
-/// printing it from the tree at print time is impossible by then:
-/// `@lo.ir.finish()` has already sealed the graph, and `@lower_if_value`
-/// opening a new block there is the `block sealed twice` ICE (measured
-/// live, this wave). Lowered HERE instead -- before the seal --
-/// `@emit_bound_args` (emit_expr.nv) already reads the hoist back through
-/// `@lo.ir.local_of_node`, so no printer-side change is needed at all.
-fn Lowerer mut @hoist_sealed_args(call Node) -> () {
-    ro kids = branch_children(call)
-    for k in kids {
-        // A constructor FIELD is an argument's position too (registry 1557).
-        ro c = if k.kind_of() == NodeKind.CtorField && branch_children(k).len() > 2 { branch_children(k)[2] } else { k }
-        if !is_expr_kind(c.kind_of()) { continue }
-        ro ck = c.kind_of()
-        // `unsafe { .. }` JOINS THEM (registry 1525): `@lower_value_source`'s
-        // third arm. std's `Vec[T] @get` returns `Some(unsafe { .. })`; check
-        // took it, the printer had no arm, and every `get` instance the shell
-        // lacks died in emit.
-        if ck != NodeKind.IfExpr && ck != NodeKind.Coalesce && ck != NodeKind.Unsafe { continue }
-        ro t = @out.type_if_known(c.id_of())
-        if !is_ty(t) {
-            // SILENT-OK: refused where it was typed; nothing to hoist.
-            continue
-        } else {
-            // A typed sealed-block argument: it gets its own local.
-        }
-        match @lower_value_source(c, t) {
-            Some(l) => @ir.remember_hoist(c.id_of(), l)
-            None => {
-                // Not actually a value (e.g. every branch terminates):
-                // nothing to hoist, and the print side has nothing to read
-                // either -- consistent with how a terminating tail if is
-                // already handled elsewhere in this file.
-            }
-        }
-    }
 }
 
 /// Lowers one `println` into the sequence it IS: per argument, whatever the argument needs
@@ -895,7 +793,11 @@ fn Lowerer mut @lower_println(call Node) -> () {
             ro ty = @out.type_of(c.id_of())
             match @lower_value_source(c, ty) {
                 Some(l) => @ir.output(Operand.Place(l), ty)
-                None => @ir.output(Operand.Tree(c), ty)
+                None => {
+                    // A block form nested in the argument goes first (registry 1619).
+                    @hoist_block_forms(c)
+                    @ir.output(Operand.Tree(c), ty)
+                }
             }
         } else {
             match c {
@@ -939,6 +841,10 @@ fn Lowerer mut @lower_value_source(e Node, ty TyId) -> Option[Local] {
         // door for every value position at once -- the class, not the two carriers.
         return Some(@lower_coalesce(e))
     }
+    // `x?` (D85) lays down the same Some-test, and its None branch RETURNS (lower_coalesce.nv).
+    if k == NodeKind.Try { return Some(@lower_try(e)) }
+    // `a && b` / `a || b` whose right side holds one: a branch (lower_hoist.nv, 1619).
+    if needs_own_lowering(e) { return Some(@lower_short_circuit(e)) }
     if k == NodeKind.IfExpr || k == NodeKind.IfStmt {
         // A tail `if` and an if-expression lay down the same pair (wave B14); the door
         // hands back the local it declared.
@@ -992,7 +898,10 @@ fn else_shape(kids []Node, tail_at int) -> ElseShape {
     // (`E_RECV_METHOD_MISMATCH` on `Vec`), and binding it also names the thing.
     ro tail = kids[tail_at]
     ro k = tail.kind_of()
-    if k == NodeKind.Block || k == NodeKind.IfLet {
+    // An `else if` whose condition holds a block form cannot chain: its condition's
+    // blocks need a place to stand, and `} else if (` has none (registry 1619).
+    ro braced_if = k == NodeKind.IfStmt && contains_block_form(branch_children(tail)[1])
+    if k == NodeKind.Block || k == NodeKind.IfLet || braced_if {
         ElseShape.Braced
     } else {
         ElseShape.Chained

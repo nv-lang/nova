@@ -64,13 +64,13 @@ pub fn generate(opts: DashboardOpts) -> Result<i32> {
     let mut runs: Vec<(history::HistoryEntry, RunResultParsed)> = Vec::new();
     for e in chronological {
         let content = history::read_entry(opts.repo, &opts.history_branch, &e.filename)
-            .map_err(|err| anyhow!("read entry {}: {}", e.filename, err))?;
+            .map_err(|err| anyhow!("read entry {}: {:#}", e.filename, err))?;
         let v: Value = serde_json::from_str(&content)
-            .map_err(|err| anyhow!("parse {}: {}", e.filename, err))?;
+            .map_err(|err| anyhow!("parse {}: {:#}", e.filename, err))?;
         match RunResultParsed::from_json(&v) {
             Ok(r) => runs.push((e, r)),
             Err(err) => {
-                eprintln!("dashboard: skip {} (schema mismatch: {})",
+                eprintln!("dashboard: skip {} (schema mismatch: {:#})",
                     e.filename, err);
             }
         }
@@ -103,19 +103,19 @@ pub fn generate(opts: DashboardOpts) -> Result<i32> {
 
     // 5. Write output files.
     std::fs::create_dir_all(opts.out_dir)
-        .map_err(|e| anyhow!("create dashboard dir: {}", e))?;
+        .map_err(|e| anyhow!("create dashboard dir: {:#}", e))?;
 
     // Index page — overview + time-series chart.
     let index_html = render_index(&runs, &series_data, &opts.echarts_url);
     std::fs::write(opts.out_dir.join("index.html"), index_html)
-        .map_err(|e| anyhow!("write index.html: {}", e))?;
+        .map_err(|e| anyhow!("write index.html: {:#}", e))?;
 
     // Per-bench detail pages.
     for (name, points) in &series_data {
         let safe = filename_for_bench(name);
         let html = render_bench_detail(name, points, &runs, &opts.echarts_url);
         std::fs::write(opts.out_dir.join(format!("bench-{}.html", safe)), html)
-            .map_err(|e| anyhow!("write bench-{}.html: {}", safe, e))?;
+            .map_err(|e| anyhow!("write bench-{}.html: {:#}", safe, e))?;
     }
 
     // Raw data JSON (для consumers).
@@ -135,7 +135,7 @@ pub fn generate(opts: DashboardOpts) -> Result<i32> {
     });
     std::fs::write(opts.out_dir.join("data.json"),
         serde_json::to_string_pretty(&raw_json)?)
-        .map_err(|e| anyhow!("write data.json: {}", e))?;
+        .map_err(|e| anyhow!("write data.json: {:#}", e))?;
 
     eprintln!("dashboard: wrote {} files in {}", series_data.len() + 2,
         opts.out_dir.display());

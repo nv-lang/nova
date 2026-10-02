@@ -1,0 +1,7 @@
+eval f
+eval g
+3
+eval l
+false
+eval l2
+true

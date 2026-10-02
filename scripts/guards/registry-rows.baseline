@@ -1496,6 +1496,57 @@
 # 2026-10-01, integrator nova-20: rows -> 1547, max -> 1597 (p1593 merge: rows 1594, 1595 (holes closed)).
 # 2026-10-01, integrator nova-20: rows -> 1554, max -> 1606 (hunt cast-k1 rows 1600-1606; 1598-1599 reserved for the assistant).
 # 2026-10-01, integrator nova-20: rows -> 1555, max -> 1607 (row 1607 (novac binary chosen by name)).
+# 2026-10-01, integrator nova-20: rows -> 1557, max -> 1609 (rows 1608, 1609 (D491 in both compilers); 1597 decided).
+# 2026-10-01, integrator nova-20: rows -> 1558, max -> 1612 (row 1612 (claude-limits CI hang, suspected runtime); 1610-1611 reserved).
+# 2026-10-01, integrator nova-20: rows -> 1561, max -> 1615 (rows 1613 (non-int index), 1614 (same-named type of two modules), 1615 (Command.run ignores the deadline)).
+# 2026-10-01, integrator nova-20: rows -> 1562, max -> 1615 (p1456 merge: row 1610 filed, its reserve dropped).
+# 2026-10-01, integrator nova-20: rows -> 1564, max -> 1615 (R3 merge: rows 1598, 1599 filed, their reserve dropped).
+# 2026-10-02, integrator nova-20: rows -> 1565, max -> 1616 (row 1616 filed: oracle call takes the parameter convention of a same-named function of another module, K1, blocks the tag).
+# 2026-10-02, integrator nova-20: rows -> 1566, max -> 1616 (row 1611 arrives with its fix (merge of p1611-float-int-kind); reserve 1611 dropped from gaps).
+# 2026-10-02, integrator nova-20: rows -> 1571, max -> 1623 (merge of p274-carina-cast step 7: rows 1619-1623; 1617-1618 reserved for the sweep session).
+# 2026-10-02, integrator nova-20: rows -> 1572, max -> 1624 (row 1624 filed (methods keyed by type and name, kin of 1614), found by the assistant at 1616).
+# 2026-10-02, integrator nova-20: rows -> 1573, max -> 1625 (row 1616 closed by the merge 29210c203; row 1625 filed (nova-63: Option[T] field of a later type, CC-FAIL)).
+# 2026-10-02, integrator nova-20: rows -> 1575, max -> 1627 (merge of p274-carina-cast step 8: TBD rows numbered 1626, 1627).
+# 2026-10-02, integrator nova-20: rows -> 1580, max -> 1633 (rows 1619, 1626 closed by c1bb7af7e and 1579 by 29210c203 (verified by nova-63); rows 1629-1633 filed (mono-k2 task 4); 1628 reserved for the k1 session).
+# 2026-10-02, integrator nova-20: rows -> 1581, max -> 1633 (merge of p274-carina-k1 part 5: row 1628 filed, its reserve dropped).
+# 2026-10-02, integrator nova-20: rows -> 1582, max -> 1634 (merge of p1598-ro-receiver-by-copy: row 1634 filed (DCE of a method only a protocol default body calls), 1599 closed by measurement).
+# 2026-10-02, integrator nova-20: rows -> 1584, max -> 1638 (rows 1637 (SqlValue variants per numeric type, owner's decision) and 1638 (JsonValue numbers) filed; 1635-1636 reserved for the assistant's branch).
+# 2026-10-02, integrator nova-20: rows -> 1586, max -> 1638 (merge of p1598-ro-receiver-write: rows 1635, 1636 filed, their reserve dropped).
+# 2026-10-02, assistant nova-88: rows -> 1587, max -> 1639 (branch p1608-no-implicit-numeric-change: row 1639 filed -- an example without fn main is checked by nothing (orm_demo), number from the integrator).
+rows=1587
+max=1639
+rows=1586
+max=1638
+rows=1584
+max=1638
+rows=1582
+max=1634
+rows=1581
+max=1633
+rows=1580
+max=1633
+rows=1575
+max=1627
+rows=1573
+max=1625
+rows=1572
+max=1624
+rows=1571
+max=1623
+rows=1566
+max=1616
+rows=1565
+max=1616
+rows=1564
+max=1615
+rows=1562
+max=1615
+rows=1561
+max=1615
+rows=1558
+max=1612
+rows=1557
+max=1609
 rows=1555
 max=1607
 rows=1554
@@ -2205,7 +2256,9 @@ stale_gaps=0
 # (писал интегратор, как и планировалось). №1210-1211 всё ещё ждёт Карину.
 # 2026-10-02, integrator: 1598-1599 В `gaps` — РЕЗЕРВ, выданный помощнику nova-88 под R3 (`ro @` по размеру, `-> ro T`
 #   указателем); строки едут в его ветке `r3-threshold-24`. Условие снятия: тем же слиянием номера убираются из `gaps`.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1598-1599
+# 2026-10-02, integrator: 1610-1611 В `gaps` — РЕЗЕРВ, выданный помощнику nova-88: №1610 (вывод `Empty` как ParseBoolError, ветка
+#   p1456-builtin-sum-method) и №1611 (f64 -> int молча, К1). Тем же слиянием номера убираются из `gaps`.
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1617-1618
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding

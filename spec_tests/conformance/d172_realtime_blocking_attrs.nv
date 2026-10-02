@@ -17,7 +17,7 @@ module spec_tests.conformance
 }
 
 #realtime fn d172_rt_atomic(mut d172_a AtomicI64, delta int) -> int {
-    d172_a.fetch_add(delta)
+    d172_a.fetch_add(delta as i64) as int
 }
 
 #realtime fn d172_rt_oncecell_get(d172_c OnceCell[int]) -> Option[int] {
@@ -52,7 +52,7 @@ test "#realtime: OnceCell.get разрешён (D172)" {
 // ── #blocking: threadpool-offload; #realtime и #wakes операции разрешены ──
 
 #blocking fn d172_blk_fetch_add(mut d172_a AtomicI64, delta int) -> int {
-    d172_a.fetch_add(delta)
+    d172_a.fetch_add(delta as i64) as int
 }
 
 #blocking fn d172_blk_unlock(mut d172_m Mutex) {

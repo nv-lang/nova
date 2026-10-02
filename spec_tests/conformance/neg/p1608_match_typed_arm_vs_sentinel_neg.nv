@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E_MATCH_ARM_WIDTH_MISMATCH
+// Regression for registry 221.1 #1608 (D491): the arms of a `match` have one numeric type.
+// `Some(v) => v` with `v u32` beside `None => -1` used to unify to the wider `int`
+// (D433 R1, revoked by D491); the sentinel `-1` does not fit `u32`, so nothing makes the
+// arms agree without `as`. Positive half: standalone/p1595_match_widen_sentinel_ok.nv and
+// d129_match_arm_width_widen.nv (`Some(v) => v as int`).
+module neg.p1608_match_typed_arm_vs_sentinel_neg
+
+fn main() Io {
+    ro o Option[u32] = None
+    // nova:allow W_MANUAL_COALESCE -- the match form is the subject
+    ro r = match o {
+        Some(v) => v
+        // nova:expect E_MATCH_ARM_WIDTH_MISMATCH -- `-1` does not fit `u32`, and `u32` is not widened (D491)
+        None => -1
+    }
+    println("${r}")
+}

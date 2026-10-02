@@ -1,0 +1,23 @@
+module float_exponent.pos_1
+
+// A float literal with an EXPONENT (D44's table: `1e10`, `1.5e-3`) -- novac's
+// lexer read none (registry 1605): inside a function the text was a parse
+// refusal, inside a `const` an ICE. The letter is `e` or `E` and the sign is
+// optional, as the oracle reads them. The `const` is the hunt's side probe
+// (`1e20 as i32` saturates, D54). Byte for byte with the oracle.
+const E = 1e20 as i32
+const SMALL = 1.5e-3
+
+fn main() {
+    println(E)
+    println(SMALL * 1000.0)
+    println(1e3 + 0.5)
+    println(2.5E2)
+    println(4e+1)
+    ro x = 1e-2
+    println(x * 100.0)
+    println((3e9 as i64) / 1000)
+    for i in 0..2 {
+        println(i)
+    }
+}

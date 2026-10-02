@@ -262,7 +262,10 @@ pub(crate) fn bitnot_primitive_emit(operand_c: &str, operand_c_ty: &str) -> Stri
 /// `is_byref` (caller: `param_c_types` pointer-suffix OR `method_byref_flag`,
 /// the latter needed because `param_c_types` predates the auto-by-ref pass
 /// and never carries the `*` for it) decides whether the wrapper forwards
-/// `&b` or `b` to the real method. Returns `(prototype, definition)`.
+/// `&b` or `b` to the real method. `recv_by_copy` (#1598, D488 rule 2): the
+/// real method takes its small `ro @` receiver by copy -- forward `a`, not `&a`.
+/// Returns `(prototype, definition)`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_vr_wrapper(
     storage: &str,
     ret_c: &str,
@@ -271,16 +274,18 @@ pub(crate) fn emit_vr_wrapper(
     arg_c: &str,
     real_c_name: &str,
     is_byref: bool,
+    recv_by_copy: bool,
 ) -> (String, String) {
     let arg_expr = if is_byref { "&b" } else { "b" };
+    let recv_expr = if recv_by_copy { "a" } else { "&a" };
     let proto = format!(
         "{s}{ret} {w}({recv} a, {arg} b);\n",
         s = storage, ret = ret_c, w = wrap_name, recv = recv_c, arg = arg_c,
     );
     let def = format!(
-        "{s}{ret} {w}({recv} a, {arg} b) {{ return {c}(&a, {argexpr}); }}\n",
+        "{s}{ret} {w}({recv} a, {arg} b) {{ return {c}({recvexpr}, {argexpr}); }}\n",
         s = storage, ret = ret_c, w = wrap_name, recv = recv_c, arg = arg_c,
-        c = real_c_name, argexpr = arg_expr,
+        c = real_c_name, argexpr = arg_expr, recvexpr = recv_expr,
     );
     (proto, def)
 }
@@ -386,7 +391,7 @@ mod tests {
     fn vr_wrapper_byref_forwards_address_of_b() {
         let (proto, def) = emit_vr_wrapper(
             "static ", "nova_bool", "nova_vr_ueq_BigRat", "NovaValue_BigRat",
-            "NovaValue_BigRat", "Nova_BigRat_method_equal", true,
+            "NovaValue_BigRat", "Nova_BigRat_method_equal", true, false,
         );
         assert_eq!(proto, "static nova_bool nova_vr_ueq_BigRat(NovaValue_BigRat a, NovaValue_BigRat b);\n");
         assert_eq!(
@@ -399,9 +404,19 @@ mod tests {
     fn vr_wrapper_by_value_forwards_b_unchanged() {
         let (_, def) = emit_vr_wrapper(
             "static ", "NovaValue_Duration", "nova_vr_binop_Nova_Duration_method_plus",
-            "NovaValue_Duration", "nova_int", "Nova_Duration_method_plus", false,
+            "NovaValue_Duration", "nova_int", "Nova_Duration_method_plus", false, false,
         );
         assert!(def.ends_with("{ return Nova_Duration_method_plus(&a, b); }\n"));
+    }
+
+    #[test]
+    fn vr_wrapper_receiver_by_copy_forwards_a_unchanged() {
+        // #1598 (D488 rule 2): a small `ro @` receiver is taken by copy by the real method.
+        let (_, def) = emit_vr_wrapper(
+            "static ", "NovaValue_Duration", "nova_vr_binop_Nova_Duration_method_plus",
+            "NovaValue_Duration", "nova_int", "Nova_Duration_method_plus", false, true,
+        );
+        assert!(def.ends_with("{ return Nova_Duration_method_plus(a, b); }\n"));
     }
 
     #[test]

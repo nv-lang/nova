@@ -270,7 +270,7 @@ export fn Ulid @to_str() -> str {
             if shift2 + 4 >= 16 {
                 // Window spans r_lo high and r_hi low
                 ro from_lo = r_lo >> shift2                            // младшие биты выходного значения
-                ro from_hi = (r_hi & ((1 << (shift2 + 5 - 16)) - 1)) << (16 - shift2)
+                ro from_hi = (r_hi & (((1 as u64) << (shift2 + 5 - 16)) - 1)) << (16 - shift2)
                 ((from_hi | from_lo) & 0x1F) as u8
             } else {
                 // shift2 + 4 < 16: всё в r_lo

@@ -1,0 +1,15 @@
+module try_option.neg_2
+
+// ONE seeded cause: `?` on a value that is neither an Option nor a Result.
+// D85 defines `?` on the two containers only. The oracle ACCEPTS `x?` with
+// `x int` (measured 2026-10-02) -- the reference for this form is the spec.
+// NOVAC_EXPECT `?` takes an `Option` or a `Result` (D85)
+fn twice(x int) -> Option[int] {
+    ro v = x?
+    println(v)
+    None
+}
+
+fn main() {
+    println(twice(4) ?? -1)
+}

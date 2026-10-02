@@ -106,7 +106,7 @@ pub fn run(opts: FieldCacheWallclockOpts) -> Result<i32> {
                 }
             }
             Err(e) => {
-                eprintln!("  skip {} (read: {})", f.display(), e);
+                eprintln!("  skip {} (read: {:#})", f.display(), e);
                 entries.push(skip_entry(f, "read error"));
                 continue;
             }
@@ -115,9 +115,9 @@ pub fn run(opts: FieldCacheWallclockOpts) -> Result<i32> {
         match measure_one(&opts, f) {
             Ok(e) => entries.push(e),
             Err(e) => {
-                eprintln!("  warn: {} — {}", f.display(), e);
+                eprintln!("  warn: {} — {:#}", f.display(), e);
                 failed_count += 1;
-                entries.push(skip_entry(f, &format!("fail: {}", e)));
+                entries.push(skip_entry(f, &format!("fail: {:#}", e)));
                 if !opts.skip_failed {
                     // continue accumulating, but tracked для exit code.
                 }
@@ -140,7 +140,7 @@ pub fn run(opts: FieldCacheWallclockOpts) -> Result<i32> {
         let v = build_json(&entries, geomean, total_static, opts.samples,
                             opts.warmup);
         std::fs::write(p, serde_json::to_string_pretty(&v)?)
-            .map_err(|e| anyhow!("write JSON: {}", e))?;
+            .map_err(|e| anyhow!("write JSON: {:#}", e))?;
         eprintln!("nova bench field-cache: wrote JSON to {}", p.display());
     }
 
@@ -148,8 +148,8 @@ pub fn run(opts: FieldCacheWallclockOpts) -> Result<i32> {
         let threshold = opts.gate_regression_pp.unwrap_or(2.0);
         let baseline_v: Value = serde_json::from_str(
             &std::fs::read_to_string(b)
-                .map_err(|e| anyhow!("read baseline {}: {}", b.display(), e))?
-        ).map_err(|e| anyhow!("parse baseline JSON: {}", e))?;
+                .map_err(|e| anyhow!("read baseline {}: {:#}", b.display(), e))?
+        ).map_err(|e| anyhow!("parse baseline JSON: {:#}", e))?;
         let base_geomean = baseline_v.get("aggregate")
             .and_then(|a| a.get("geomean_speedup_pct"))
             .and_then(|v| v.as_f64())
@@ -186,9 +186,9 @@ fn measure_one(opts: &FieldCacheWallclockOpts, file: &Path)
     let exe_off = tmp_dir.join(format!("{}_off{}", stem, ext));
 
     build_one(opts, file, &exe_on, /*fc_off=*/false)
-        .map_err(|e| anyhow!("build ON: {}", e))?;
+        .map_err(|e| anyhow!("build ON: {:#}", e))?;
     build_one(opts, file, &exe_off, /*fc_off=*/true)
-        .map_err(|e| anyhow!("build OFF: {}", e))?;
+        .map_err(|e| anyhow!("build OFF: {:#}", e))?;
 
     // Interleaved sampling reduces systematic drift bias (CPU thermal,
     // scheduler) compared with sequential off-all-then-on-all.
@@ -247,7 +247,7 @@ fn build_one(opts: &FieldCacheWallclockOpts, file: &Path,
         cmd.env("NOVA_FIELD_CACHE", "1");
     }
     let output = cmd.output()
-        .map_err(|e| anyhow!("spawn nova build: {}", e))?;
+        .map_err(|e| anyhow!("spawn nova build: {:#}", e))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let preview: String = stderr.lines().take(5)
@@ -264,7 +264,7 @@ fn run_one(exe: &Path, timeout_secs: u64) -> Result<u64> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .map_err(|e| anyhow!("spawn {}: {}", exe.display(), e))?;
+        .map_err(|e| anyhow!("spawn {}: {:#}", exe.display(), e))?;
     let elapsed = start.elapsed();
     if !status.success() {
         bail!("exe exited non-zero: {:?}", status.code());
@@ -304,7 +304,7 @@ pub fn geomean_speedup_pct(entries: &[&WallclockEntry]) -> f64 {
 
 fn static_estimate(file: &Path) -> Result<(u64, StaticLayerBreakdown)> {
     let src = std::fs::read_to_string(file)
-        .map_err(|e| anyhow!("read for estimate: {}", e))?;
+        .map_err(|e| anyhow!("read for estimate: {:#}", e))?;
     let mut module = nova_codegen::parser::parse(&src)
         .map_err(|d| anyhow!("parse: {}",
             d.render(&src, &file.to_string_lossy())))?;

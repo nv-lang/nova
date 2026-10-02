@@ -1,42 +1,37 @@
-// D129/D54 — match arms with DISAGREEING but safe-widening-compatible int-family
-// widths (u32 payload arm + int/i64 sentinel-literal arm) unify to the WIDER side
-// instead of the pre-fix silent bug: `infer_match_common_primitive` bailed on ANY
-// arm-type disagreement, and the legacy codegen re-derive (`infer_expr_c_type`'s
-// Match arm / `emit_match`'s own arm-type loop) picked the first non-`nova_int`
-// arm's C type regardless of the OTHER arm — `None => -1` in a match alongside a
-// `Some(v: u32) => v` arm silently read back as `4294967295` (the `-1` bit pattern
-// reinterpreted as `uint32_t`) whenever there was no external expected type to force
-// the correct width (an un-annotated `ro r = match {...}` local, the common shape
-// this bug hid behind after the `compose_pair -> Option[u32]` unicode migration
-// removed the original trigger — [M-match-arm-mixed-int-width-sentinel-coerce],
-// Plan 172.2 followup, P1, fixed 2026-07-21). See `neg/n_match_arm_width_mismatch`
-// for the complementary GENUINE mismatch (i32 vs u32, same width/opposite sign,
-// neither safely widens — a hard compile error, D54 `would_narrow_into`).
-// Spec: spec/decisions/02-types.md (D129, D54-widen amendment).
+// D129/D54, rewritten by D491 (owner's decision 2026-10-02, registry 221.1 #1608): a
+// `match` whose `u32` payload arm meets an `int` sentinel arm. Before D491 the arms unified
+// to the WIDER side (D433 R1, revoked); before THAT, the legacy codegen re-derive picked
+// the first non-`nova_int` arm, and `None => -1` beside `Some(v: u32) => v` read back as
+// `4294967295` ([M-match-arm-mixed-int-width-sentinel-coerce], Plan 172.2 followup).
+// Under D491 a value never changes its numeric type implicitly: the payload arm writes
+// `v as int`, and the arms agree. The form without `as` is now a compile error,
+// `neg/p1608_match_typed_arm_vs_sentinel_neg.nv`; the GENUINE mismatch (i32 vs u32) is
+// `neg/n_match_arm_width_mismatch`. A bare literal arm still adopts its sibling's type
+// (D489) -- the last test below. Spec: spec/decisions/02-types.md (D491, D129).
 module spec_tests.conformance
 
-test "match-arm width unify: u32 payload arm + int sentinel arm widen to int (D129/D54)" {
+test "match arms of one type: a u32 payload arm writes `as int` beside an int sentinel (D491)" {
     ro o Option[u32] = None
     ro r = match o {
-        Some(v) => v
+        Some(v) => v as int
         None => -1
     }
     assert(r == -1)
 
     ro o2 Option[u32] = Some(7)
     ro r2 = match o2 {
-        Some(v) => v
+        Some(v) => v as int
         None => -1
     }
     assert(r2 == 7)
 }
 
-test "match-arm width unify: same mix through a -> int fn return position" {
+test "match arms of one type: the same through a -> int fn return position (D491)" {
     assert(d129_pick_width(None) == -1)
     assert(d129_pick_width(Some(42)) == 42)
 }
 
-test "match-arm width unify: same mix through an un-annotated local inside the fn" {
+test "match arms of one type: the same through an un-annotated local inside the fn (D491)" {
     assert(d129_pick_width_via_local(None) == -1)
     assert(d129_pick_width_via_local(Some(9)) == 9)
 }
@@ -65,7 +60,7 @@ test "match-arm width unify: bare literal arm adopts a concrete uint sibling (D4
 fn d129_pick_width(o Option[u32]) -> int {
     // nova:allow W_MANUAL_COALESCE -- see comment above (match-arm width unification is the test subject, not value-fallback)
     match o {
-        Some(v) => v
+        Some(v) => v as int
         None => -1
     }
 }
@@ -73,7 +68,7 @@ fn d129_pick_width(o Option[u32]) -> int {
 fn d129_pick_width_via_local(o Option[u32]) -> int {
     // nova:allow W_MANUAL_COALESCE -- see comment above (match-arm width unification is the test subject, not value-fallback)
     ro r = match o {
-        Some(v) => v
+        Some(v) => v as int
         None => -1
     }
     r

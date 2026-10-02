@@ -57,13 +57,9 @@ cd "$ROOT" || exit 2
 # left by an earlier build used to win by name alone -- the cloud session k1
 # measured a Carina that no longer existed (2026-10-02: 140/161 and 124/144 were
 # taken on the old binary; 15 false reds in no-cascade and diag-schema too).
-if [ -z "${NOVAC:-}" ]; then
-    _a="$ROOT/novac/target/novac.exe"; _b="$ROOT/novac/target/novac"
-    if [ -x "$_a" ] && [ -x "$_b" ]; then
-        if [ "$_b" -nt "$_a" ]; then NOVAC="$_b"; else NOVAC="$_a"; fi
-    elif [ -x "$_a" ]; then NOVAC="$_a"
-    else NOVAC="$_b"; fi
-fi
+# The choice itself lives in ONE door now (#1607, scripts/guards/lib/novac.sh).
+. "$ROOT/scripts/guards/lib/novac.sh"
+NOVAC="$(novac_bin "$ROOT")"
 VERDICT="$ROOT/target/double-build-verdict.txt"
 mkdir -p "$ROOT/target"
 
@@ -72,7 +68,7 @@ fail() {
     exit 1
 }
 
-[ -x "$NOVAC" ] || fail "no novac binary (A) at $NOVAC -- build it first: nova build novac/src/main.nv -o novac/target/novac.exe"
+[ -x "$NOVAC" ] || fail "no novac binary (A) at $NOVAC -- build it first: nova build novac/src/main.nv -o $(novac_bin_out .)"
 
 echo "double-build: A = $NOVAC"
 

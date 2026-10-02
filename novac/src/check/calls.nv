@@ -36,7 +36,7 @@ import ../sem.{branch_children, leaf_text, file_decls}
 import ../diag.{ice}
 import ../builtins.{TypeKind, SIZE_OF_FN, ASSERT_FN}
 import ../sem.{LitArg, ArgSpec, CallForm, CalleeTarget, decl_of_ty, Ctx, CheckOut, FnRow, raw_row, coerce_row}
-import ../sem.{subst_type, slot_binding_in, representation_of, generic_names, is_expr_kind, branch_children}
+import ../sem.{subst_type, slot_binding_in, representation_of, generic_names, is_arg_value_kind, branch_children}
 import ../sem.{ty_source_name, bind_fault, bind_slots, identity_slots, no_row, SlotBind}
 import ../sem.{ArgClass, ParamMode, ParamDef, mode_admits}
 import ../sem.{shape_of, call_callee_text}
@@ -665,7 +665,7 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
 fn Checker mut @record_arg_types(kids []Node, from int) -> () {
     mut i = 0
     for c in kids {
-        if i < from || !is_expr_kind(c.kind_of()) {
+        if i < from || !is_arg_value_kind(c.kind_of()) {
             // The callee of a free call, and the receiver, dot and name of a
             // method call, are children too -- and none of them is an
             // argument. `is_arg_node` could not say so: it knows the KIND
@@ -798,7 +798,7 @@ fn Checker mut @type_free_call(e Node) -> () {
     ro saved_expect = @value_expect
     @value_expect = no_ty()
     for c in kids {
-        if !is_expr_kind(c.kind_of()) { continue }
+        if !is_arg_value_kind(c.kind_of()) { continue }
         // A bare `None` takes its PARAMETER's instance, after the lookup (1565).
         if @is_deferred_variant(c) { continue }
         @type_expr(c)

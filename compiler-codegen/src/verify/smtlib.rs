@@ -498,7 +498,7 @@ impl SmtLibEmitter {
             ("=>", [x, y]) => format!("(=> {} {})", x, y),
             // Bool-iff: в SMT-LIB это `=` над Bool.
             ("<=>", [x, y]) => format!("(= {} {})", x, y),
-            ("ite", [c, t, e]) => format!("(ite {} {} {})", c, t, e),
+            ("ite", [c, t, e]) => format!("(ite {} {} {:#})", c, t, e),
 
             // ── IEEE-754 floating point ───────────────────────────────
             // Арифметика — с rounding mode RNE.

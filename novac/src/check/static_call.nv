@@ -19,7 +19,7 @@ module novac.check
 import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
 import ../sem.{branch_children, leaf_text, leaf_kind, expr_leaf_name, ty_of_decl, raw_row, no_row, FnRow}
-import ../sem.{CalleeTarget, bind_slots, is_expr_kind, c_static_symbol}
+import ../sem.{CalleeTarget, bind_slots, is_arg_value_kind, c_static_symbol}
 import ../types.{TyId, no_ty, is_ty}
 
 /// `Type.f(args)` where `Type` names a type with a STATIC method `f`: typed,
@@ -49,7 +49,7 @@ fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
     mut written = 0
     mut at = 0
     for c in kids {
-        written += if at > 2 && is_expr_kind(c.kind_of()) { 1 } else { 0 }
+        written += if at > 2 && is_arg_value_kind(c.kind_of()) { 1 } else { 0 }
         at += 1
     }
     mut row = no_row()
@@ -83,7 +83,7 @@ fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
     ro before = @out.len()
     at = 0
     for c in kids {
-        if at > 2 && is_expr_kind(c.kind_of()) {
+        if at > 2 && is_arg_value_kind(c.kind_of()) {
             @type_expr(c)
         } else {
             // The head, the dot, the name and the punctuation: nothing to type.

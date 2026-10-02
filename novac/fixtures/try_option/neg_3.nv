@@ -1,0 +1,22 @@
+module try_option.neg_3
+
+// ONE seeded cause: `x?` inside a match GUARD. The form is legal Nova (D85)
+// and novac lays it down in any other position (registry 1619); a guard is
+// tested inside the arm's chain of checks, where a laid-down `?` opens one
+// more `if` and the printer loses the arm -- refused by name instead.
+// NOVAC_EXPECT inside a match guard are not compiled yet
+fn maybe(v int) -> Option[int] {
+    if v < 0 { return None }
+    Some(v)
+}
+
+fn pick(v int) -> Option[int] {
+    match v {
+        n if maybe(n)? > 2 => Some(n)
+        _ => None
+    }
+}
+
+fn main() {
+    println(pick(5) ?? -1)
+}

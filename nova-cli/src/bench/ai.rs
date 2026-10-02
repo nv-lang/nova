@@ -84,7 +84,7 @@ impl AiConfig {
         if let Some(p) = path.as_ref() {
             if p.exists() {
                 let text = std::fs::read_to_string(p)
-                    .map_err(|e| anyhow!("read {}: {}", p.display(), e))?;
+                    .map_err(|e| anyhow!("read {}: {:#}", p.display(), e))?;
                 for raw in text.lines() {
                     let line = raw.split('#').next().unwrap_or("").trim();
                     if line.is_empty() || line.starts_with('[') { continue; }
@@ -265,7 +265,7 @@ fn call_anthropic(cfg: &AiConfig, prompt: &str, dry_run: bool) -> Result<AiRespo
         ("content-type", "application/json"),
     ])?;
     let v: Value = serde_json::from_str(&out)
-        .map_err(|e| anyhow!("parse Anthropic response: {} — raw: {}", e,
+        .map_err(|e| anyhow!("parse Anthropic response: {:#} — raw: {}", e,
             truncate_for_tokens(&out, 500)))?;
     // Check for {"type":"error",...} envelope.
     if v.get("type").and_then(|t| t.as_str()) == Some("error") {
@@ -310,7 +310,7 @@ fn call_openai(cfg: &AiConfig, prompt: &str, dry_run: bool) -> Result<AiResponse
         ("Content-Type", "application/json"),
     ])?;
     let v: Value = serde_json::from_str(&out)
-        .map_err(|e| anyhow!("parse OpenAI response: {} — raw: {}", e,
+        .map_err(|e| anyhow!("parse OpenAI response: {:#} — raw: {}", e,
             truncate_for_tokens(&out, 500)))?;
     if let Some(err) = v.get("error") {
         let msg = err.get("message").and_then(|x| x.as_str()).unwrap_or("unknown");
@@ -348,16 +348,16 @@ fn curl_post(url: &str, body: &str, headers: &[(&str, &str)]) -> Result<String> 
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
         let mut child = cmd.spawn()
-            .map_err(|e| anyhow!("spawn curl: {} (install curl?)", e))?;
+            .map_err(|e| anyhow!("spawn curl: {:#} (install curl?)", e))?;
         {
             use std::io::Write;
             let stdin = child.stdin.as_mut()
                 .ok_or_else(|| anyhow!("curl stdin unavailable"))?;
             stdin.write_all(body.as_bytes())
-                .map_err(|e| anyhow!("write to curl stdin: {}", e))?;
+                .map_err(|e| anyhow!("write to curl stdin: {:#}", e))?;
         }
         let out = child.wait_with_output()
-            .map_err(|e| anyhow!("wait curl: {}", e))?;
+            .map_err(|e| anyhow!("wait curl: {:#}", e))?;
         let stdout = String::from_utf8_lossy(&out.stdout).to_string();
         let stderr = String::from_utf8_lossy(&out.stderr).to_string();
         if out.status.success() {

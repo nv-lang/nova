@@ -111,13 +111,14 @@ export type DefTable {
     rows []Def /// What each registered name is.
     prev []int /// parallel to `rows`: the row this name had BEFORE this one was put, -1 at the end -- the same-named rows of other modules (#1521)
     homes []str /// parallel to `rows`: the module (dotted) a HANDED row was declared in; "" for the file's own rows, the seeded ones and std's files with no module line (#1521)
+    privs []bool /// parallel to `rows`: the row is a declaration its module keeps PRIVATE (D281) and that only that module's bodies may name -- a type of another module registered for its own instances (#1567)
     foreign_cnt int /// how many FIRST rows came from declarations novac was HANDED (the seeded primitives among them); every row after is the compiled file's own. A fact about the TABLE, like `FnTable.own_cnt`, and a PREFIX because a signature of this file must be able to name a handed-over type -- so those go in first
 }
 
 /// Empty registry with the NsDefs namespace.
 export fn DefTable.new() -> DefTable =>
     { names: NameTable.new(NamespaceId.NsDefs), rows: []Def.new(), prev: []int.new(), homes: []str.new(),
-      foreign_cnt: 0 }
+      privs: []bool.new(), foreign_cnt: 0 }
 
 /// Register one name. LAST PUT WINS, and that is the rule rather than a
 /// shortcut: `collect_types` gives the id to the FIRST declaration that owns
@@ -146,12 +147,18 @@ export fn DefTable.new() -> DefTable =>
 /// body written in `hp.geo` means its own. `@def_of` still answers the LAST
 /// put (the file's, as before); the asking-module question walks the chain
 /// (`@first_def`/`@prev_def`) and reads each row's `home`.
-export fn DefTable mut @add(name str, target DefTarget, home str = "") -> () {
+export fn DefTable mut @add(name str, target DefTarget, home str = "", private bool = false) -> () {
     @prev.push(@names.find(name))
     @names.put(name, @rows.len())
     @rows.push(Def { target })
     @homes.push(home)
+    @privs.push(private)
 }
+
+/// Is row `i` a declaration its module keeps PRIVATE (D281), registered only so
+/// that module's own bodies -- instantiated here -- can name it (#1567)?
+#realtime nogc
+export fn DefTable @is_private(i int) -> bool => @privs[i]
 
 /// The LAST row put under `name`, or -1: the head of its chain (#1521).
 #realtime nogc

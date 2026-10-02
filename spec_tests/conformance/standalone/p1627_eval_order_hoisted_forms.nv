@@ -1,0 +1,138 @@
+// EXPECT_STDOUT add: f g 3
+// EXPECT_STDOUT and-false: l false
+// EXPECT_STDOUT or-true: l2 true
+// EXPECT_STDOUT and-true: l3 r3 true
+// EXPECT_STDOUT cmp: c1 c2 true
+// EXPECT_STDOUT call: a1 a2 a3 6
+// EXPECT_STDOUT nested: n1 n2 3
+// EXPECT_STDOUT try: t1 0
+// EXPECT_STDOUT match: m1 m2 4
+// EXPECT_STDOUT method: o1 o2 o3 3
+// EXPECT_STDOUT interp: s1 s2 1-2
+// EXPECT_STDOUT vec: v1 v2 v3 3
+// EXPECT_STDOUT record: p1 p2 3
+// EXPECT_STDOUT tuple: u1 u2 3
+// EXPECT_STDOUT range: r1 r2 6
+// EXPECT_STDOUT range-value: g1 g2 2
+// EXPECT_STDOUT index: i1 i2 20
+//
+// Registry 221.1 #1627: a form that writes C statements while being emitted
+// (`??`, `?`, a `match` used as a value) put them before the WHOLE enclosing
+// statement, so an operand to its left ran after it, and the right side of
+// `&&`/`||` ran although the left side had decided. Norm: D484 (evaluation is
+// left to right and observable), D46 (`&&`/`||` short-circuit), D86 (`??`).
+// `mark` prints its name without a newline, so each line below is the order
+// in which the operands ran, followed by the value.
+//
+// Both ways (2026-10-02): with the doors of `emit_c/eval_order.rs` off, every
+// cell is red except `interp`, `vec`, `record` and `tuple` -- those emitters
+// already build their value part by part, in order; they stay as controls.
+// Two effectful operands WITHOUT such a form (`a() + b()`, `f(a(), b())`) are
+// not this row: their order is left to C -- registry #685, probe
+// docs/plans/repro/685-operand-order-windows/.
+module standalone.p1627_eval_order_hoisted_forms
+
+fn mark(s str, v int) -> int {
+    print("${s} ")
+    v
+}
+
+fn maybe(v int) -> Option[int] {
+    if v < 0 { return None }
+    Some(v)
+}
+
+fn add3(a int, b int, c int) -> int => a + b + c
+
+fn try_sum(x Option[int]) -> Option[int] {
+    ro s = mark("t1", 1) + x?
+    Some(s)
+}
+
+type P1627Acc { n int }
+fn P1627Acc @plus2(a int, b int) -> int => @n + a + b
+
+type P1627Pair { x int, y int }
+
+fn main() Io {
+    print("add: ")
+    ro a = mark("f", 1) + (maybe(mark("g", 2)) ?? 0)
+    println("${a}")
+
+    print("and-false: ")
+    ro b = mark("l", 0) > 1 && (maybe(mark("never", 5)) ?? 0) > 3
+    println("${b}")
+
+    print("or-true: ")
+    ro c = mark("l2", 2) > 1 || (maybe(mark("never2", 5)) ?? 0) > 3
+    println("${c}")
+
+    print("and-true: ")
+    ro d = mark("l3", 2) > 1 && (maybe(mark("r3", 5)) ?? 0) > 3
+    println("${d}")
+
+    print("cmp: ")
+    ro e = mark("c1", 1) < (maybe(mark("c2", 2)) ?? 0)
+    println("${e}")
+
+    print("call: ")
+    ro f = add3(mark("a1", 1), maybe(mark("a2", 2)) ?? 0, mark("a3", 3))
+    println("${f}")
+
+    // The inner fallback `mark("n3", 3)` is not evaluated: the inner value is Some.
+    print("nested: ")
+    ro g = mark("n1", 1) + (maybe(maybe(mark("n2", 2)) ?? mark("n3", 3)) ?? 0)
+    println("${g}")
+
+    // `x?` returns None only after `mark("t1", 1)` ran.
+    print("try: ")
+    ro t = try_sum(None) ?? 0
+    println("${t}")
+
+    print("match: ")
+    ro m = mark("m1", 1) + match maybe(mark("m2", 2)) {
+        Some(v) => v + 1
+        None => 0
+    }
+    println("${m}")
+
+    // The receiver is an rvalue: it runs first, then the arguments in order.
+    print("method: ")
+    ro o = mk(mark("o1", 0)).plus2(mark("o2", 1), maybe(mark("o3", 2)) ?? 0)
+    println("${o}")
+
+    print("interp: ")
+    ro s = "${mark("s1", 1)}-${maybe(mark("s2", 2)) ?? 0}"
+    println(s)
+
+    print("vec: ")
+    ro v = [mark("v1", 1), maybe(mark("v2", 2)) ?? 0, mark("v3", 3)]
+    println("${v.len()}")
+
+    print("record: ")
+    ro p = P1627Pair { x: mark("p1", 1), y: maybe(mark("p2", 2)) ?? 0 }
+    println("${p.x + p.y}")
+
+    print("tuple: ")
+    ro tp = (mark("u1", 1), maybe(mark("u2", 2)) ?? 0)
+    println("${tp.0 + tp.1}")
+
+    print("range: ")
+    mut total = 0
+    for i in mark("r1", 1)..(maybe(mark("r2", 4)) ?? 0) {
+        total += i
+    }
+    println("${total}")
+
+    print("range-value: ")
+    ro rg = mark("g1", 1)..(maybe(mark("g2", 3)) ?? 0)
+    println("${rg.end - rg.start}")
+
+    print("index: ")
+    ro ix = pick(mark("i1", 0))[maybe(mark("i2", 1)) ?? 0]
+    println("${ix}")
+}
+
+fn pick(k int) -> []int => [10 + k, 20 + k, 30 + k]
+
+fn mk(n int) -> P1627Acc => { n }

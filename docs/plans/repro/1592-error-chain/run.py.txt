@@ -1,0 +1,37 @@
+# Registry 221.1 #1592: does `nova build` show the CAUSE of a dependency failure?
+# Usage (drop the .txt suffix): python run.py <nova.exe> [<nova.exe> ...]
+# A one-file package depends on a git repository that does not exist, with an empty
+# NOVA_HOME; git refuses and says why. The verdict line per binary: CAUSE-SHOWN when git's
+# own words ("does not appear to be a git repository" / "not found" / "No such") reach the
+# user, CAUSE-LOST otherwise. Network-free and deterministic, unlike the original probe
+# (claude-limits probes/dep-error-drops-git-cause/, a MAX_PATH overflow on GitHub data).
+import os, shutil, subprocess, sys, tempfile
+
+CAUSE = ("does not appear to be a git repository", "not found", "No such", "cannot find")
+
+def run(nova):
+    base = tempfile.mkdtemp(prefix="p1592-")
+    try:
+        pkg = os.path.join(base, "pkg")
+        os.makedirs(pkg)
+        missing = os.path.join(base, "no-such-repo").replace("\\", "/")
+        with open(os.path.join(pkg, "nova.toml"), "w", encoding="utf-8", newline="\n") as f:
+            f.write('[package]\nname = "p1592"\nversion = "0.0.0"\n\n[lib]\nsrc = "."\n\n'
+                    '[dependencies]\nzz = { git = "file:///' + missing.lstrip("/") + '", version = "0.1" }\n')
+        with open(os.path.join(pkg, "main.nv"), "w", encoding="utf-8", newline="\n") as f:
+            f.write("module p1592\n\nfn main() Io {\n    println(\"x\")\n}\n")
+        env = dict(os.environ, NOVA_HOME=os.path.join(base, "home"))
+        p = subprocess.run([nova, "build", "main.nv", "-o", os.path.join(base, "m.exe")],
+                           cwd=pkg, env=env, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=300)
+        out = p.stdout + p.stderr
+        err = [l for l in out.splitlines() if "error" in l.lower() or l.startswith("  ")]
+        verdict = "CAUSE-SHOWN" if any(c in out for c in CAUSE) else "CAUSE-LOST"
+        print(f"{verdict}  rc={p.returncode}  {nova}")
+        for l in err[:8]:
+            print("    " + l[:200])
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+for n in sys.argv[1:]:
+    run(n)

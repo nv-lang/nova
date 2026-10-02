@@ -1,17 +1,18 @@
 // EXPECT_STDOUT p1595 -1 0 true | 7 8 | -1
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Regression for registry 221.1 #1595: a `match` without an outer type takes the
-// common type of its arms (D129, D54-widen): `Some(v) => v` with `v u32` and
-// `None => -1` give `int`. Before: the checker typed the result by its first arm,
+// Regression for registry 221.1 #1595: the type of a `match` without an outer type is
+// the common type of its arms. Before: the checker typed the result by its first arm,
 // `u32`, a binding `ro r = match ..` took it, and `-1` was stored as 4294967295
 // without a word -- `r + 1` panicked with an overflow, and `r == -1` held only by
-// C's unsigned comparison.
+// C's unsigned comparison. Rewritten by D491 (#1608): the arms agree only with `as`
+// (`Some(v) => v as int`); the form without it is
+// `neg/p1608_match_typed_arm_vs_sentinel_neg.nv`.
 module standalone.p1595_match_widen_sentinel_ok
 
 fn pick(o Option[u32]) -> int {
     // nova:allow W_MANUAL_COALESCE -- the match form is what #1595 pins (`??` is another construct)
     ro r = match o {
-        Some(v) => v
+        Some(v) => v as int
         None => -1
     }
     r
@@ -21,13 +22,13 @@ fn main() Io {
     ro none Option[u32] = None
     // nova:allow W_MANUAL_COALESCE -- the match form is what #1595 pins (`??` is another construct)
     ro r = match none {
-        Some(v) => v
+        Some(v) => v as int
         None => -1
     }
     ro some Option[u32] = Some(7)
     // nova:allow W_MANUAL_COALESCE -- the match form is what #1595 pins (`??` is another construct)
     ro s = match some {
-        Some(v) => v
+        Some(v) => v as int
         None => -1
     }
     ro next = r + 1

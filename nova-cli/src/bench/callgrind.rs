@@ -90,7 +90,7 @@ pub fn measure(opts: CallgrindOpts) -> Result<CallgrindResult> {
     if let Some(d) = opts.workdir { cmd.current_dir(d); }
 
     let status = cmd.status()
-        .map_err(|e| anyhow!("spawn valgrind: {}", e))?;
+        .map_err(|e| anyhow!("spawn valgrind: {:#}", e))?;
     if !status.success() {
         bail!("valgrind exited non-zero: {:?}", status.code());
     }
@@ -108,7 +108,7 @@ pub fn measure(opts: CallgrindOpts) -> Result<CallgrindResult> {
 ///   ...
 pub fn parse_output_file(path: &Path) -> Result<CallgrindResult> {
     let text = std::fs::read_to_string(path)
-        .map_err(|e| anyhow!("read {}: {}", path.display(), e))?;
+        .map_err(|e| anyhow!("read {}: {:#}", path.display(), e))?;
     parse_output(&text).ok_or_else(||
         anyhow!("could not parse callgrind output {}", path.display()))
 }

@@ -1,0 +1,10 @@
+module hp.geo
+
+export type Row int
+
+export type Tgt enum
+    | TFn(Row)
+    | TVar(Row)
+    | TCtor(int)
+
+export fn row(n int) -> Row => Row(n)

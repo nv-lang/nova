@@ -32,17 +32,17 @@ pub fn run(baseline_path: &Path, new_path: &Path,
            config_path: Option<&Path>,
            noise_path: Option<&Path>) -> Result<i32> {
     let base_text = std::fs::read_to_string(baseline_path)
-        .map_err(|e| anyhow!("read baseline {}: {}", baseline_path.display(), e))?;
+        .map_err(|e| anyhow!("read baseline {}: {:#}", baseline_path.display(), e))?;
     let new_text = std::fs::read_to_string(new_path)
-        .map_err(|e| anyhow!("read new {}: {}", new_path.display(), e))?;
+        .map_err(|e| anyhow!("read new {}: {:#}", new_path.display(), e))?;
     let base_v: Value = serde_json::from_str(&base_text)
-        .map_err(|e| anyhow!("parse baseline JSON: {}", e))?;
+        .map_err(|e| anyhow!("parse baseline JSON: {:#}", e))?;
     let new_v: Value = serde_json::from_str(&new_text)
-        .map_err(|e| anyhow!("parse new JSON: {}", e))?;
+        .map_err(|e| anyhow!("parse new JSON: {:#}", e))?;
     let baseline = RunResultParsed::from_json(&base_v)
-        .map_err(|e| anyhow!("baseline schema: {}", e))?;
+        .map_err(|e| anyhow!("baseline schema: {:#}", e))?;
     let new = RunResultParsed::from_json(&new_v)
-        .map_err(|e| anyhow!("new schema: {}", e))?;
+        .map_err(|e| anyhow!("new schema: {:#}", e))?;
 
     let cfg = match config_path {
         Some(p) => BenchToml::load_or_default(p),
@@ -57,7 +57,7 @@ pub fn run(baseline_path: &Path, new_path: &Path,
         }
     };
     for err in &cfg.parse_errors {
-        eprintln!("bench.toml: {}", err);
+        eprintln!("bench.toml: {:#}", err);
     }
 
     // Plan 57.A.3: load noise floor если doступен.
@@ -80,7 +80,7 @@ pub fn run(baseline_path: &Path, new_path: &Path,
                 }
             }
             Err(e) => {
-                eprintln!("noise floor: skip — {}", e);
+                eprintln!("noise floor: skip — {:#}", e);
                 None
             }
         }
