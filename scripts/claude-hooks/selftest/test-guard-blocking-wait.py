@@ -15,12 +15,14 @@ PASS = 0
 FAIL = 0
 
 
-def run(cmd, background=False):
+def run(cmd, background=False, role="integrator"):
     ti = {"command": cmd}
     if background:
         ti["run_in_background"] = True
+    env = dict(os.environ)
+    env["NOVA_WINDOW_ROLE"] = role
     p = subprocess.run([sys.executable, HOOK], input=json.dumps({"tool_input": ti}).encode("utf-8"),
-                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
     return p.returncode
 
 
@@ -52,6 +54,11 @@ check("korotkii sleep 2 bez cikla", run("kill 123; sleep 2; ps -ef | wc -l"), 0)
 check("fon: tot zhe nositel s run_in_background", run(CARRIER, background=True), 0)
 check("slovo sleep v stroke grep", run("grep -n 'sleepy' file.txt"), 0)
 check("pustaya komanda", run(""), 0)
+
+print("== tolko rol integratora ==")
+check("okno Kariny: tot zhe nositel propushchen", run(CARRIER, role="carina"), 0)
+check("pomoshchnik: tot zhe nositel propushchen", run(CARRIER, role="assistant"), 0)
+check("rol none: propushchen", run(CARRIER, role="none"), 0)
 
 print("== klapan ==")
 check("blocking-wait-ok s prichinoi", run("for i in 1 2; do sleep 3; done # blocking-wait-ok: probe of a race, 6 s"), 0)

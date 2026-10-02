@@ -17,6 +17,13 @@
 уведомление, ход отдаётся коротким докладом. Нужен ответ прямо сейчас — команда,
 которая сама ждёт результата (`git push`, `cargo build`, прогон стража), а не опрос.
 
+ТОЛЬКО ДЛЯ РОЛИ ИНТЕГРАТОРА (слово владельца 2026-10-02: «это должно работать только для
+твоей роли»). Роль берётся той же функцией, что у Stop-хука (`detect_role` из
+`guard-stop-v2.py`: переменная `NOVA_WINDOW_ROLE`, затем визитка роли с `session_id`
+этой сессии, затем ветка) — второй копии правила «кто я» не заводится. Роль не
+определилась или не интегратор — пропуск: окно Карины, помощник и пакетные окна
+вправе ждать по-своему.
+
 ЧТО ПРОВЕРЯЕТ (только передний план — `run_in_background` не судится):
   1. `sleep`/`Start-Sleep` внутри цикла (`for`, `while`, `until`, `foreach`) —
      это опрос: отказ при любом числе секунд;
@@ -58,7 +65,23 @@ def verdict(cmd: str, background: bool):
     return None
 
 
+def my_role() -> str:
+    """Роль этой сессии — дверью Stop-хука; при любой беде — пустая строка (пропуск)."""
+    try:
+        import importlib.util
+        import os
+        p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "guard-stop-v2.py")
+        spec = importlib.util.spec_from_file_location("guard_stop_v2", p)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return (mod.detect_role(os.getcwd()) or "").strip().lower()
+    except Exception:
+        return ""
+
+
 def main() -> int:
+    if my_role() != "integrator":
+        return 0
     try:
         data = json.loads(sys.stdin.read() or "{}")
         ti = data.get("tool_input") or {}
