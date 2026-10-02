@@ -1496,6 +1496,9 @@
 # 2026-10-01, integrator nova-20: rows -> 1547, max -> 1597 (p1593 merge: rows 1594, 1595 (holes closed)).
 # 2026-10-01, integrator nova-20: rows -> 1554, max -> 1606 (hunt cast-k1 rows 1600-1606; 1598-1599 reserved for the assistant).
 # 2026-10-01, integrator nova-20: rows -> 1555, max -> 1607 (row 1607 (novac binary chosen by name)).
+# 2026-10-01, integrator nova-20: rows -> 1557, max -> 1609 (rows 1608, 1609 (D491 in both compilers); 1597 decided).
+rows=1557
+max=1609
 rows=1555
 max=1607
 rows=1554
