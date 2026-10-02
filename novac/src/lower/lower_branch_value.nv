@@ -1,0 +1,187 @@
+// Donor: rustc `rustc_mir_build` -- `expr_into_dest`: an expression that BRANCHES is built
+//   into a destination place, each arm writing it, rather than producing a value of its own.
+// Role: layer lower -- the VALUES laid down by branching: a tail `if`, `if let` and `??` as
+//   a value, the block that writes a value, and the `else` branch that is a block or the next
+//   `if` of a chain. Split out of lowering.nv when it crossed 1000 lines (2026-10-02, the
+//   nested-`if` wave), same module, same receiver.
+// Used by: lowering.nv -- the value door of `@lower_place` asks `@lower_if_value`,
+//   `@lower_if_let_value` and `@lower_coalesce`; the rest are called from within this file.
+// Guarded by: check-novac-deps.py (the edges), check-novac-lowering-one-door.py, lower_test.nv,
+//   the fixtures tail_if_nested/ and the corpus through check-novac-differential.sh.
+module novac.lower
+import ../tree.{Node, NodeKind}
+import ../diag.{ice}
+import ../types.{TyId}
+import ../sem.{branch_children}
+import ../sem.{is_expr_kind}
+import ../sem.{iflet_pattern_at, iflet_body_at, iflet_else_at, iflet_init_at}
+/// A tail `if` laid down as a VALUE: a zero-initialised temporary, both
+/// branches writing into it, the caller returning it.
+///
+/// The shape is `@emit_match`'s and the comment there explains the `(T){0}`:
+/// a temporary that is only conditionally written answers whatever the stack
+/// held otherwise -- valid C, a different number per run, no diagnostic
+/// anywhere. Here BOTH branches always write, but the initialiser stays: it
+/// costs one C token and removes a whole class of question.
+fn Lowerer mut @lower_if_value(n Node, res_t TyId) -> Local {
+    ro kids = branch_children(n)
+    // The temporary is a LOCAL of the lowered body, and its DECLARATION is a statement of
+    // that body (274.8 M2b-2 step 2): recorded here, printed by the one statement door. It
+    // starts at zero because a branch may fall through without assigning it -- the reason
+    // lives on `DeclAt.Zeroed`, with every one of its clients named there.
+    ro t = @ir.temp(res_t)
+    @ir.declare_zeroed(t)
+    // Both branches are BLOCKS of the body with one join (274.8 M2b-1): an
+    // if-value always has an else, so `has_else` is a fact, not a guess. The head goes
+    // through the ONE door (M2b-2 step 3a) -- the same one the statement `if`, the
+    // `if let` and a match guard use.
+    ro cond = Cond.Expr(kids[1])
+    // The else branch of an if-value is always a BLOCK printed as `} else {`, so it is
+    // braced by construction -- not a guess, the next line prints the brace.
+    ro c = @ir.begin_if(cond, ElseShape.Braced)
+    @lower_block_value(kids[2], t)
+    @ir.begin_else(c)
+    @lower_branch_value(kids[4], t)
+    @ir.end_if(c)
+    // The result local is HANDED BACK (274.8 M2b-2, prerequisite 5): the caller records
+    // the assignment from it at LOWERING time, so nothing is lowered while the walk prints.
+    t
+}
+
+/// A tail `if let` laid down as a VALUE (registry 1189): the Option into its
+/// own temporary, the Some-test, the binder, and BOTH branches writing into a
+/// result temporary the caller returns.
+///
+/// It is `@lower_if_value` and `@lower_if_let` composed, and neither of them
+/// could answer alone: the first knows how a branching VALUE is laid down, the
+/// second knows what an if-let's parts are. The `(T){0}` initialiser is there
+/// for the reason given at `@lower_if_value` -- both branches always write, and
+/// the zero costs one C token to remove the whole question.
+///
+/// AN `else` IS A FACT HERE, not a guess: the checker refuses a value if-let
+/// without one (`IFLET_VALUE_NEEDS_ELSE_MSG`), so `kids[9]` exists by the time
+/// this runs. The same holds for the recorded type -- the branches had to
+/// agree before anything reached the lowering.
+fn Lowerer mut @lower_if_let_value(n Node, res_t TyId) -> Local {
+    ro kids = branch_children(n)
+    ro init = kids[iflet_init_at(kids)]
+    ro ot = @out.type_of(init.id_of())
+    ro t = @ir.temp(res_t)
+    @ir.declare_zeroed(t)
+    // The Option is a temporary of the BODY, named by its index (274.8 M3):
+    // the Option of an `if let` is the compiler's, not the author's.
+    ro lo = @ir.temp(ot)
+    @lower_place(init, lo)
+    ro c = @ir.begin_if(Cond.IsSome(lo), ElseShape.Braced)
+    // The pattern binds through the match arm's own door (wave P3): a binder
+    // reads the payload, a nested pattern reads its piece -- one judgment,
+    // recorded by the checker, spelled here.
+    @lower_pattern_bind(kids[iflet_pattern_at(kids)], ot, lo)
+    @lower_block_value(kids[iflet_body_at(kids)], t)
+    @ir.begin_else(c)
+    @lower_branch_value(kids[iflet_else_at(kids)], t)
+    @ir.end_if(c)
+    t
+}
+
+/// `a ?? b` as a VALUE: the Option into a temporary, then the payload or the
+/// fallback into a second one. The SHORT CIRCUIT is the point -- the fallback
+/// is emitted INSIDE the else branch, so its effects run only when the left
+/// side is None, which is what the oracle does and what a reader expects.
+///
+/// The shape is `@lower_if_value`'s and the `(T){0}` initialiser is there for
+/// the same reason: a temporary only conditionally written would otherwise
+/// answer whatever the stack held. Both branches always write here; the
+/// initialiser costs one C token and removes the question.
+fn Lowerer mut @lower_coalesce(e Node) -> Local {
+    ro qk = branch_children(e)
+    ro ot = @out.type_of(qk[0].id_of())
+    ro res_t = @out.type_of(e.id_of())
+    // The Option lands in a TEMPORARY of the body through the one door (274.8 M1):
+    // the hoist of a construction inside it is the printer's. The name is the body's
+    // own -- `temp` numbers it by index -- because the compiler invented it and the
+    // printer has no business spelling `_novac_tmp_t<uniq>` by hand (274.8 M3).
+    ro lo = @ir.temp(ot)
+    @lower_place(qk[0], lo)
+    // The result is a temporary of the body, DECLARED as a statement of it (M2b-2 step 2):
+    // the zero initialiser is a field the lowering sets, not a shape this printer knows.
+    ro lr = @ir.temp(res_t)
+    @ir.declare_zeroed(lr)
+    // The head goes through the ONE door (M2b-2 step 3a), which spells the Some-test
+    // from the local's type and name -- the two values this function used to pass by
+    // hand. Both branches are BLOCKS of the body with one join, and the Some branch's
+    // one statement is the payload read through the one door -- printed by the one
+    // assignment printer, which spells a Temp with the indent the hand-written line
+    // had (measured before the edit, plan 274.8 decision (1)).
+    ro cond = Cond.IsSome(lo)
+    // Same as the if-value: the None branch is a block printed as `} else {`.
+    ro c = @ir.begin_if(cond, ElseShape.Braced)
+    @ir.take_payload(lr, lo)
+    @ir.begin_else(c)
+    // THE FALLBACK LIVES HERE, not above: its hoists and its effects belong
+    // to the None branch alone -- that is the short circuit, in one place.
+    @lower_place(qk[2], lr)
+    @ir.end_if(c)
+    // THE LOCAL ITSELF, not its name (M3a). M2c had this function ask the record for the
+    // name because it handed its caller the TEXT of an expression; now `??` is a value
+    // form that LOWERS, so what the caller needs is the local -- a caller that wants text
+    // asks `decl_of(l).name` at its own end. Handing the local is what lets a value
+    // position take `??` through the one door (`lower_value_source`) instead of the
+    // print-time hoist table, and the hoist is exactly what iced under the walk of step 3b.
+    lr
+}
+
+/// Emit a block whose LAST statement is its value: everything before it runs
+/// as a statement, and the last one is assigned to the `if` temporary.
+///
+/// THE DOOR THIS WAVE HAD TO ADD, and the reason is a real difference rather
+/// than an oversight in the match code: a match ARM is an expression, so
+/// `@emit_arm_value` writes `t = <expr>;` in one line. An `if` BRANCH is a
+/// block, and its value is whatever its last statement produces -- so the
+/// block has to be walked, and only its tail turned into an assignment.
+fn Lowerer mut @lower_block_value(b Node, t Local) -> () {
+    ro kids = branch_children(b)
+    mut last_branch = -1
+    mut j = 0
+    for c in kids {
+        match c {
+            Leaf(_) => {}
+            Branch { .. } => { last_branch = j }
+        }
+        j += 1
+    }
+    j = 0
+    for c in kids {
+        match c {
+            Leaf(_) => {} // the block's braces are trivia, not statements
+            Branch { .. } => {
+                // A tail that PLACES a value -- an expression, or a nested
+                // `if` / typed `if let` / `match` the checker typed as one --
+                // writes the result. A nested `if` used to be lowered as a
+                // statement here, and the result kept its zero.
+                if j == last_branch && (is_expr_kind(c.kind_of()) || @tail_places_value(c)) {
+                    @lower_place(c, t)
+                } else {
+                    // Everything before the tail runs for effect, and a tail
+                    // that is not an expression is refused in `check` -- it
+                    // never reaches here.
+                    @lower_stmt(c)
+                }
+            }
+        }
+        j += 1
+    }
+}
+
+/// An ELSE branch of a value: a block, or an `else if` -- the next `if`, a
+/// value of its own laid down inside the braces `begin_else` printed.
+fn Lowerer mut @lower_branch_value(b Node, t Local) -> () {
+    ro k = b.kind_of()
+    if k == NodeKind.Block {
+        @lower_block_value(b, t)
+    } else if k == NodeKind.IfStmt || k == NodeKind.IfExpr || k == NodeKind.IfLet {
+        @lower_place(b, t)
+    } else {
+        ice("lower: an else branch of a value that is neither a block nor an `if` -- the checker refused it")
+    }
+}
