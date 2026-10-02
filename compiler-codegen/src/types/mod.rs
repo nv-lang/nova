@@ -9658,6 +9658,14 @@ impl<'a> TypeCheckCtx<'a> {
                 if let Some(name) = pattern_simple_name(&d.pattern) {
                     snapshot.push((name.clone(), scope.get(&name).cloned()));
                 }
+                // #1657: the shadow of an untyped local ends with its block.
+                let mut names = Vec::new();
+                consume_pattern_names(&d.pattern, &mut names);
+                for n in names {
+                    let k = local_shadow_key(&n);
+                    let prev = scope.get(&k).cloned();
+                    snapshot.push((k, prev));
+                }
             }
         }
         // Plan 124.8 [M-124.8-ro-binding-scope] fix (2026-06-03):
@@ -10156,7 +10164,11 @@ impl<'a> TypeCheckCtx<'a> {
                         .or_else(|| self.closure_literal_fn_typeref(&d.value, scope))
                     {
                         Some(t) => { scope.insert(name, t); }
-                        None => { scope.remove(&name); }
+                        // #1657: still a local -- it shadows every outer name.
+                        None => {
+                            scope.remove(&name);
+                            scope.insert(local_shadow_key(&name), TypeRef::Unit(d.value.span));
+                        }
                     }
                 } else if let Pattern::Tuple(pats, _) = &d.pattern {
                     // Plan 221.1 №286/№143 (окно p-chan): `ro (tx, rx) =
@@ -10209,20 +10221,24 @@ impl<'a> TypeCheckCtx<'a> {
                             drop(buf);
                             Self::resolved_to_typeref_tp(&rt, d.value.span)
                         });
+                    // #1657: an element the RHS type does not type is still a
+                    // local, shadowing every outer name (`shadow_bound_names`).
+                    let mut typed = false;
                     if let Some(TypeRef::Tuple(tys, _)) = rhs_tr {
                         if tys.len() == pats.len() {
+                            typed = true;
                             for (pp, ty) in pats.iter().zip(tys) {
                                 if let Pattern::Ident { name: pn, .. } = pp {
                                     scope.insert(pn.clone(), ty);
                                 }
                             }
                         }
-                    } else {
-                        for pp in pats {
-                            if let Pattern::Ident { name: pn, .. } = pp {
-                                scope.remove(pn);
-                            }
-                        }
+                    }
+                    if !typed {
+                        let mut names = Vec::new();
+                        consume_pattern_names(&d.pattern, &mut names);
+                        // The block restores these keys (`f1_block` snapshot).
+                        let _ = shadow_bound_names(&names, scope, d.value.span);
                     }
                     }
                 } else if let Pattern::Record { fields, .. } = &d.pattern {
@@ -11541,6 +11557,9 @@ impl<'a> TypeCheckCtx<'a> {
                         let mut saved: Vec<(String, Option<TypeRef>)> = Vec::new();
                         for (n, t) in binds {
                             saved.push((n.clone(), scope.insert(n.clone(), t.clone())));
+                            // #1657: tell the closure arm this entry IS its parameter's.
+                            let k = closure_seed_key(n);
+                            saved.push((k.clone(), scope.insert(k, TypeRef::Unit(a.expr().span))));
                         }
                         self.f1_expr(a.expr(), gs, scope, errors);
                         // 172.1.2 C6b (2026-07-03): сам closure-arg аннотируется
@@ -13480,7 +13499,11 @@ impl<'a> TypeCheckCtx<'a> {
                 // name's type to tell a scalar bare-bind apart from a
                 // heap-owning one).
                 let binds = self.match_arm_bindings(pattern, scrut_ty.as_ref());
-                let mut saved: Vec<(String, Option<TypeRef>)> = Vec::new();
+                // #1657: every bound name shadows the outer ones; the typed
+                // binds go over the shadow.
+                let mut pat_names = Vec::new();
+                consume_pattern_names(pattern, &mut pat_names);
+                let mut saved = shadow_bound_names(&pat_names, scope, e.span);
                 for (n, t) in &binds {
                     saved.push((n.clone(), scope.insert(n.clone(), t.clone())));
                 }
@@ -13498,12 +13521,7 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f1_block(then, gs, scope, errors);
                 *self.ro_binding_names.borrow_mut() = ro_snapshot;
                 *self.consume_binding_names.borrow_mut() = consume_snapshot;
-                for (n, prev) in saved {
-                    match prev {
-                        Some(t) => { scope.insert(n, t); }
-                        None => { scope.remove(&n); }
-                    }
-                }
+                restore_scope_entries(scope, saved);
                 if let Some(eb) = else_ {
                     self.f1_else(eb, gs, scope, errors);
                 }
@@ -13637,7 +13655,10 @@ impl<'a> TypeCheckCtx<'a> {
                     // into `f64 @clamp` (implicit int64_t<->double cast, precision loss at i64
                     // extremes, no CC-FAIL since both sides are scalar).
                     let binds = self.match_arm_bindings(&arm.pattern, binds_scrut_ty.as_ref());
-                    let mut saved: Vec<(String, Option<TypeRef>)> = Vec::new();
+                    // #1657: shadow first, the typed binds over it (see if-let).
+                    let mut pat_names = Vec::new();
+                    consume_pattern_names(&arm.pattern, &mut pat_names);
+                    let mut saved = shadow_bound_names(&pat_names, scope, e.span);
                     for (n, t) in &binds {
                         saved.push((n.clone(), scope.insert(n.clone(), t.clone())));
                     }
@@ -13675,12 +13696,7 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                     *self.ro_binding_names.borrow_mut() = ro_snapshot;
                     *self.consume_binding_names.borrow_mut() = consume_snapshot;
-                    for (n, prev) in saved {
-                        match prev {
-                            Some(t) => { scope.insert(n, t); }
-                            None => { scope.remove(&n); }
-                        }
-                    }
+                    restore_scope_entries(scope, saved);
                 }
                 // [M-match-arm-mixed-int-width-sentinel-coerce] fix (P1, 2026-07-21):
                 // arms with GENUINELY incompatible int widths (neither safely widens
@@ -13893,6 +13909,21 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f1_expr(body, gs, scope, errors)
             }
             ExprKind::ClosureLight { params, body, .. } => {
+                // #1657: an untyped parameter is a local of the body -- it
+                // shadows every outer name (`|sec| sec + 1` beside `fn sec`).
+                // A parameter the call seeded from the callee's signature keeps
+                // its type; the seed marks end here, so a nested closure with
+                // the same parameter name does not inherit them.
+                let mut unseeded: Vec<String> = Vec::new();
+                let mut saved: Vec<(String, Option<TypeRef>)> = Vec::new();
+                for p in params.iter() {
+                    let k = closure_seed_key(&p.name);
+                    match scope.remove(&k) {
+                        Some(mark) => saved.push((k, Some(mark))),
+                        None => unseeded.push(p.name.clone()),
+                    }
+                }
+                saved.extend(shadow_bound_names(&unseeded, scope, e.span));
                 match body {
                     ClosureBody::Expr(be) => {
                         self.check_ref_escape_capture(be, errors);
@@ -13903,6 +13934,7 @@ impl<'a> TypeCheckCtx<'a> {
                         self.f1_block(b, gs, scope, errors)
                     }
                 }
+                restore_scope_entries(scope, saved);
                 // 2026-07-02 (tally АТОМ 3b): zero-param truthful-подмножество —
                 // `|| body` без параметров: нечего гадать про params, ret = infer
                 // тела. Гейт §1: primitive non-Unit ret + не упоминает gs.
@@ -14062,7 +14094,12 @@ impl<'a> TypeCheckCtx<'a> {
                 self.check_priv_pattern_recursive(pattern, scrut_ty.as_ref(), errors);
                 // №279: resolve nested bare-variant sub-patterns (see fn doc).
                 self.resolve_pattern_variant_types(pattern, scrut_ty.as_ref());
+                // #1657: the bound names shadow the outer ones in the body.
+                let mut pat_names = Vec::new();
+                consume_pattern_names(pattern, &mut pat_names);
+                let saved = shadow_bound_names(&pat_names, scope, e.span);
                 self.f1_loop_body(|| self.f1_block(body, gs, scope, errors));
+                restore_scope_entries(scope, saved);
             }
             ExprKind::Loop { body, .. } => {
                 // Registry #1384: `loop` without a break cannot exit.
@@ -15125,7 +15162,15 @@ impl<'a> TypeCheckCtx<'a> {
                     None => { scope.remove(name); }
                 }
             }
-            _ => self.f1_block(body, gs, scope, errors),
+            // #1657: a loop variable the checker does not type is still a
+            // local, shadowing every outer name for the body.
+            _ => {
+                let mut names = Vec::new();
+                consume_pattern_names(pattern, &mut names);
+                let saved = shadow_bound_names(&names, scope, body.span);
+                self.f1_block(body, gs, scope, errors);
+                restore_scope_entries(scope, saved);
+            }
         }
     }
 
@@ -24355,6 +24400,10 @@ impl<'a> TypeCheckCtx<'a> {
                             return Some(tr);
                         }
                     }
+                }
+                // #1657: a local of unknown type shadows every outer name below.
+                if scope.contains_key(&local_shadow_key(name)) {
+                    return None;
                 }
                 // #1488: a module-level `const`/`ro` read by name (`const_names.rs`).
                 if let Some(tr) = self.module_value_ident_type(name, expr.span) {
@@ -44197,6 +44246,57 @@ impl ConsumeRegistry {
                         .push(mode_shape_of(fd));
                 }
             }
+        }
+    }
+}
+
+/// Registry 221.1 #1657: the scope key that marks `name` as bound by a LOCAL
+/// whose type the checker could not infer. Such a local still SHADOWS every
+/// outer name -- a free function, a module constant -- exactly as a typed one
+/// does. Without the mark the untyped local was simply absent from the scope,
+/// and `infer_expr_type` resolved its name to an outer one: std
+/// `Timestamp @to_zoned`'s `ro sec = if .. { .. } else { .. }` became the
+/// program's `fn sec(str) -> Section`, and the C code zeroed the time of day.
+/// The key cannot collide with a Nova identifier (it starts with U+0001).
+fn local_shadow_key(name: &str) -> String {
+    format!("\u{1}local:{name}")
+}
+
+/// #1657: the scope key the closure-argument seeder (`closure_arg_param_seeds`)
+/// sets beside a parameter type it put in the scope -- the closure arm keeps
+/// such an entry instead of shadowing it as an outer name.
+fn closure_seed_key(name: &str) -> String {
+    format!("\u{1}seed:{name}")
+}
+
+/// #1657: every name in `names` becomes a local of unknown type for the
+/// walk that follows -- an outer typed entry of the same name is removed (the
+/// inner local is a different value), and the shadow key is set. Returns the
+/// previous entries; restore them with `restore_scope_entries`.
+fn shadow_bound_names(
+    names: &[String],
+    scope: &mut HashMap<String, TypeRef>,
+    span: Span,
+) -> Vec<(String, Option<TypeRef>)> {
+    let mut saved = Vec::new();
+    for n in names {
+        if n == "_" {
+            continue;
+        }
+        saved.push((n.clone(), scope.remove(n)));
+        let k = local_shadow_key(n);
+        saved.push((k.clone(), scope.insert(k, TypeRef::Unit(span))));
+    }
+    saved
+}
+
+/// Restore entries saved by `shadow_bound_names` (and by binding inserts made
+/// after it) -- in REVERSE order, so an entry saved twice gets its oldest value.
+fn restore_scope_entries(scope: &mut HashMap<String, TypeRef>, saved: Vec<(String, Option<TypeRef>)>) {
+    for (n, prev) in saved.into_iter().rev() {
+        match prev {
+            Some(t) => { scope.insert(n, t); }
+            None => { scope.remove(&n); }
         }
     }
 }
