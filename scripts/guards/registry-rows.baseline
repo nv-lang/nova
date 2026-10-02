@@ -1510,6 +1510,9 @@
 # 2026-10-02, integrator nova-20: rows -> 1580, max -> 1633 (rows 1619, 1626 closed by c1bb7af7e and 1579 by 29210c203 (verified by nova-63); rows 1629-1633 filed (mono-k2 task 4); 1628 reserved for the k1 session).
 # 2026-10-02, integrator nova-20: rows -> 1581, max -> 1633 (merge of p274-carina-k1 part 5: row 1628 filed, its reserve dropped).
 # 2026-10-02, integrator nova-20: rows -> 1582, max -> 1634 (merge of p1598-ro-receiver-by-copy: row 1634 filed (DCE of a method only a protocol default body calls), 1599 closed by measurement).
+# 2026-10-02, assistant nova-88: rows -> 1584, max -> 1636 (branch p1598-ro-receiver-write: rows 1635 (field write through a non-mut receiver, K1) and 1636 (mut-method call through it, K2) filed, numbers from the integrator).
+rows=1584
+max=1636
 rows=1582
 max=1634
 rows=1581
