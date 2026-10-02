@@ -28,6 +28,7 @@ mod type_repr_early; mod generic_sum_schema; // #761: newtype/alias representati
 mod c_name; // #1440/#1446: the one door "Nova name -> C identifier", see its doc
 mod type_by_role; // #1545/#1527: a bare type name read by the kind its position admits, see its doc
 mod param_convention; // #1616: a call passes arguments as the RESOLVED callee declares, see its doc
+mod eval_order; // #1627: the order of evaluation survives a form that writes statements, see its doc
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
@@ -35871,7 +35872,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     return self.emit_expr(expr);
                 }
                 let l = self.emit_expr_with_target_type(left, target_ty_c)?;
+                let at = self.out.len();
                 let r = self.emit_expr_with_target_type(right, target_ty_c)?;
+                // #1627: the right operand wrote statements -- evaluate `l` first.
+                let l = if self.out.len() > at { self.spill_before(at, &l, target_ty_c)? } else { l };
                 // Plan 33.8 Ф.1.2 / Plan 206 Ф.1b (D423): checked-форма.
                 // `target_ty_c` — гарантированно sized `Ints`-тип (guard в
                 // начале функции исключает `nova_int` — тот идёт через
@@ -35935,6 +35939,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// node).
     fn emit_expr(&mut self, expr: &Expr) -> Result<String, String> {
         self.disarm_auto_cleanup_receiver_call(expr);
+        // #1627 (D484): a call whose later operand writes statements evaluates
+        // the earlier operands first, in order -- see `emit_c/eval_order.rs`.
+        if let Some(ordered) = self.order_operands(expr)? {
+            return self.emit_expr(&ordered);
+        }
         // №465 (A8.29): same choke-point rationale as the disarm above —
         // every consume-param-arg Call is emitted via `emit_expr` somewhere,
         // regardless of nesting. Unlike the disarm (a pure flag-write, order
@@ -36529,7 +36538,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let lty = self.infer_expr_c_type(left);
                 let rty = self.infer_expr_c_type(right);
                 let l = self.emit_expr(left)?;
+                let at = self.out.len();
                 let r = self.emit_expr(right)?;
+                // #1627 (D484, D46): the right operand wrote statements. They
+                // run before the statement holding this expression, so the left
+                // operand is evaluated first into a temporary, and the right
+                // side of a short-circuit operator keeps them inside its branch.
+                let l = if self.out.len() > at {
+                    if matches!(op, BinOp::And | BinOp::Or | BinOp::Implies) {
+                        return Ok(self.lazy_right(at, op, &l, &r));
+                    }
+                    self.spill_before(at, &l, &lty)?
+                } else {
+                    l
+                };
                 // If either operand is void* (erased generic or unknown stub), handle carefully:
                 // - void* vs nova_int/nova_bool: cast void* back to the concrete type and compare
                 // - void* vs nova_str: dereference void* as nova_str* and use str equality
@@ -37977,7 +37999,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let end = end.as_deref().ok_or_else(||
                     "Range materialize: open-ended Range without end bound (Plan 96 Ф.2)".to_string())?;
                 let s = self.emit_expr(start)?;
+                let at = self.out.len();
                 let e = self.emit_expr(end)?;
+                // #1627: the end wrote statements -- evaluate the start first.
+                let s = if self.out.len() > at { self.spill_before(at, &s, "nova_int")? } else { s };
                 if self.record_schemas.contains_key("Range") {
                     let tmp = self.fresh_tmp();
                     let end_expr = if *inclusive {
@@ -50431,7 +50456,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 return Ok(tmp);
             }
             let s = self.emit_expr(start)?;
+            let at = self.out.len();
             let e = self.emit_expr(end)?;
+            // #1627 (D484): the start is evaluated before the end. It sits in the
+            // for-init, i.e. AFTER a hoisted end (below) and after any statement
+            // the end wrote -- so a start with an effect is evaluated first,
+            // into a temporary. A place or a literal start is read as before.
+            let s = if self.out.len() > at
+                || (Self::loop_bound_int_literal(end).is_none()
+                    && !eval_order::is_place(start)
+                    && !eval_order::is_literal(start))
+            {
+                self.spill_before(at, &s, "nova_int")?
+            } else {
+                s
+            };
             // Registry 221.1 #1340 (D58: `for x in c` calls `c.iter()` ONCE and
             // `a..b` is the value `Range { start: a, end: b }`): the bounds are
             // evaluated once, before the first iteration. The start already is
