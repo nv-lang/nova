@@ -29,7 +29,7 @@ import ../sem.{branch_children, coalesce_payload, option_payload, is_coalesce_re
 /// that type one: a binding, a tail or `return`, a match arm). Elsewhere -- an
 /// operator, the right of `=`, an argument, a condition -- the printer meets
 /// them after the seal; a plain `??` there is the ICE "a block sealed twice"
-/// (filed, measured 2026-10-02), and the new forms do not join it.
+/// (registry 1619, measured 2026-10-02), and the new forms do not join it.
 const SEALED_VALUE_POSITION_MSG = "outside the subset: `x?` and `x ?? return r` are compiled only as a binding initializer, a `return` value, a `=>` body or a match arm's body -- inside an operator, an argument, a condition or on the right of `=` they are not compiled yet (E2, the control-flow horizon): bind the value first"
 
 /// `?` takes an Option or a Result (D85). The oracle accepts any operand here
@@ -49,7 +49,8 @@ const COALESCE_RETURN_BARE_MSG = "a bare `?? return` leaves a fn that promises a
 /// D86 keeps the form refused where a type names a generic parameter: under `T`
 /// an `Option` may arrive, and the form is the second door to `?` again. novac
 /// types an INSTANCE, so it asks the declaration's return (`inst_row`); the
-/// operand's declared type is not written anywhere it could ask (see the report).
+/// operand's declared type is not written anywhere it could ask -- a named
+/// simplification (docs/dev/simplifications.md) until 274 E2-b3.
 const COALESCE_RETURN_GENERIC_MSG = "`return` cannot be the fallback of `??` in a fn whose declared return names a type parameter -- under `T` an `Option` may arrive (D86, amended 2026-09-01: the form is legal only where no generic parameter is involved)"
 
 /// `x?` (D85): the operand is typed first (an earlier mistake inside it is not
