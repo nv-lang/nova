@@ -775,9 +775,14 @@ fn Checker mut @type_arm_block_value(b Node) -> TyId {
             Leaf(_) => {}
             Branch { .. } => {
                 @value_expect = if i == last { tail_expect } else { no_ty() }
-                if i == last && is_expr_kind(c.kind_of()) {
+                if i == last && is_value_if(c) {
+                    // A TAIL `if` WITH AN ELSE IS THE BLOCK'S VALUE (D49: an
+                    // `if` is an expression) -- the same door a binding's
+                    // `if` takes, nested as deep as the source nests it.
+                    out_t = @if_value_type(c)
+                } else if i == last && is_expr_kind(c.kind_of()) {
                     ro before = @out.len()
-                    @type_expr(c)
+                    @type_value_at(c, tail_expect)
                     if @out.len() == before {
                         out_t = type_of(c, @ctx, @scope, @chan)
                     } else {
@@ -935,7 +940,7 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
     // unrelated earlier refusal in the same file passed with zero diagnostics
     // about it -- a K-C silent widening, not a crash.
     ro before = @out.len()
-    @type_expr(body)
+    @type_value_at(body, @value_expect)
     // None is "this arm has no type to compare": the walk refused something in
     // the body, so the lattice must not be asked about it (its miss is an ice).
     // Written as a terminator rather than an if-else: the shape guard reads an

@@ -1,0 +1,13 @@
+module if_value_forms.neg_2
+
+// NOVAC_EXPECT must agree on a type
+// ONE seeded cause: no result type is written, and the branches are of two
+// types -- an `int` and a `str`. Without a written type the `if` has no
+// position to adapt to, and its branches must be of one type. The oracle's
+// checker lets it through and clang refuses the C it emits (registry 906:
+// the oracle does not compare the types of an `if`'s branches).
+fn main() {
+    ro hot = true
+    ro x = if hot { 1 } else { "cold" }
+    println(x)
+}

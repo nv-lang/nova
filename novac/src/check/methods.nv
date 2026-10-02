@@ -21,7 +21,7 @@ module novac.check
 
 import ../tree.{Node, NodeKind}
 import ../lex.{Token}
-import ../types.{TyId, is_ty}
+import ../types.{TyId, is_ty, no_ty}
 import ../builtins.{TypeKind}
 import ../diag.{ice}
 import ../names.{raw_decl}
@@ -402,6 +402,12 @@ fn Checker mut @type_method_call(e Node) -> () {
     // the lattice is asked; a refusal anywhere in the children stops the
     // resolution, because the type the key would carry is not trustworthy.
     ro before = @out.len()
+    // The receiver and the arguments are not the call's value: the position's
+    // expectation stays outside, as around a free call's arguments (calls.nv).
+    // It leaked in until sweep 6: under a `-> TyId` tail, the `if is_mut { 1 }
+    // else { 0 }` argument of `@intern` took `TyId` for its literals.
+    ro saved_expect = @value_expect
+    @value_expect = no_ty()
     @type_expr(kids[0])
     mut i = 0
     for c in kids {
@@ -416,6 +422,7 @@ fn Checker mut @type_method_call(e Node) -> () {
         }
         i += 1
     }
+    @value_expect = saved_expect
     // The mark, not the file's count (274.4 step 2): the file-wide
     // `== 0` guard silenced the judge for every method call after the
     // FIRST refusal anywhere in the file -- no refusal, no recorded

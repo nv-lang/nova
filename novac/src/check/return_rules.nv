@@ -78,25 +78,38 @@ fn Checker @return_expectation(row FnRow) -> TyId {
 }
 
 /// Type a value that flows OUT of the fn -- a tail expression or a `return`
-/// operand. A bare numeric literal takes the DECLARED return type (D227 rule 2,
-/// D55 at the return position: `fn f() -> f64 => 1`, `fn g() -> u8 => 200`),
-/// judged for fit before it is recorded -- the very rule the argument door
-/// applies, through the same two doors (`adapt_operand`, `lit_fits_or_refuse`).
-/// Anything else is typed as an expression and judged afterwards.
+/// operand: the value at the position of the DECLARED return.
 fn Checker mut @type_tail_value(e Node) -> () {
-    if is_ty(@ret_expect) {
-        // Only a BARE LITERAL is asked about before it is typed: the lattice
-        // ices on a name the registry does not carry (#902), so an unknown
-        // callee in the tail must reach the expression walk's refusal first.
+    @type_value_at(e, @ret_expect)
+}
+
+/// THE ONE DOOR FOR A VALUE AT A POSITION WHOSE TYPE IS WRITTEN (D489): the
+/// tail of a fn, the body of a match arm, the tail of an `if` branch. A bare
+/// numeric literal has no type until the position gives one -- `fn g() -> u8
+/// => 200`, an arm `_ => 0` of a `-> u8` match, the `else { 0 }` of a `-> u8`
+/// tail `if` -- so it takes `want` and is judged for fit before it is recorded,
+/// through the two doors the argument position uses (`adapt_operand`,
+/// `lit_fits_or_refuse`). Anything else is typed as an expression with `want`
+/// as its expectation (a bare `None` takes it, wave W4), and judged by its
+/// caller afterwards. With no type written (`no_ty()`) the literal keeps its
+/// own kind, `int` or `f64` (D44), and the caller's agreement rule judges it.
+///
+/// Only a BARE LITERAL is asked about before it is typed: the lattice ices on
+/// a name the registry does not carry (#902), so an unknown callee must reach
+/// the expression walk's refusal first. Until #1605's sweep the fn tail had
+/// this door and the arm and the branch did not: `if k < n { b[k] } else { 0 }`
+/// in a `-> u8` fn was refused as two branches of different types.
+fn Checker mut @type_value_at(e Node, want TyId) -> () {
+    if is_ty(want) {
         match lit_arg_of(e) {
             NotLit => {}
             IntLitArg | FloatLitArg => {
                 ro own = type_of(e, @ctx, @scope, @chan)
-                ro adapted = adapt_operand(e, own, @ret_expect, @ctx.tys)
+                ro adapted = adapt_operand(e, own, want, @ctx.tys)
                 if @lit_fits_or_refuse(e, adapted) {
                     @record(e, adapted)
                 } else {
-                    // The literal does not fit the declared width: the fit
+                    // The literal does not fit the written width: the fit
                     // door refused it at its own token (E_LIT_OUT_OF_RANGE).
                 }
                 // SILENT-OK: the literal was recorded, or refused by the fit door
@@ -105,15 +118,14 @@ fn Checker mut @type_tail_value(e Node) -> () {
             }
         }
     } else {
-        // Nothing to adapt to: the fn declares no value to judge against.
+        // No type written: the literal keeps its own kind (D44).
     }
-    // THE EXPECTATION FLOWS INTO THE VALUE (wave W4): a bare `None` in the tail
-    // -- or in an arm of a tail match/if -- is an instance of the declared
-    // return; a call CLEARS it around its arguments (option_rules), so
-    // `f(None)` in the tail is not typed as the fn's own return.
-    @value_expect = @ret_expect
+    // THE EXPECTATION FLOWS INTO THE VALUE (wave W4): a call CLEARS it around
+    // its arguments (option_rules), so `f(None)` is not typed as `want`.
+    ro saved = @value_expect
+    @value_expect = want
     @type_expr(e)
-    @value_expect = no_ty()
+    @value_expect = saved
 }
 
 /// The type of a value tail AFTER it was typed, for the return door: what the

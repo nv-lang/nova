@@ -230,63 +230,55 @@ fn Checker mut @type_if_value(n Node) -> () {
     @record(n, then_t)
 }
 
-/// The type a BRANCH of a tail `if` produces: its last statement's, or
-/// `no_ty()` after a named refusal.
+/// The type a BRANCH of an `if` value produces, or `no_ty()` after a named
+/// refusal. ONE DOOR WITH THE MATCH ARM (the integrator's word, sweep 6): a
+/// branch block is typed exactly as an arm's block body -- its statements,
+/// then its tail at the position's expectation (`@type_arm_block_value`) --
+/// so a literal, a bare `None` and a nested `if` mean the same thing in both.
+/// An `else if` continuation (D49: `else if` is one expression) is an `if`
+/// value of its own, typed through this door's caller recursively.
 ///
-/// A branch whose tail is not an expression -- a `return`, a binding -- is
-/// refused, and that is the boundary this wave DECLARED rather than discovered:
-/// mixing the two ways out of a function needs a measurement against the
-/// oracle, and that measurement is its own step.
+/// What stays the branch's own is the REFUSAL: an arm whose tail is no value
+/// leaves through `return` and offers nothing to the fold, but a branch that
+/// does not terminate (its caller asked) and ends in a statement has no value
+/// to give the `if` -- named, not silent.
 fn Checker mut @type_branch_value(b Node) -> TyId {
+    if b.kind_of() == NodeKind.IfExpr || b.kind_of() == NodeKind.IfStmt {
+        return @if_value_type(b)
+    } else {
+        // A block, or an `else if let` continuation: judged below.
+    }
     if b.kind_of() != NodeKind.Block {
-        // An `else if` chain, or a gap the parser planted. Named, not silent:
-        // the chain is legal Nova and arrives with its own carrier.
-        @report_first_leaf_of([]Node.of(b), "outside the subset: an `else if` chain is not compiled as a value yet (E2-b)")
+        @report_first_leaf_of([]Node.of(b), "outside the subset: an `else if let` chain is not compiled as a value yet (E2-b)")
         return no_ty()
     } else {
         // A block: its tail decides.
     }
+    ro before = @out.len()
+    ro t = @type_arm_block_value(b)
+    if is_ty(t) || @out.len() > before { return t }
     ro kids = branch_children(b)
     ro last = last_branch_of(kids)
-    mut i = 0
-    mut out_t = no_ty()
-    for c in kids {
-        match c {
-            Leaf(_) => {}
-            Branch { .. } => {
-                if i == last {
-                    if is_value_tail_kind(c.kind_of()) {
-                        // A TUPLE tail places a value too (`{ (no_vrow(), 0) }`
-                        // -- the destructure carriers of the if-value wave):
-                        // `is_value_tail_kind` is `is_expr_kind` plus the one
-                        // positional record/tuple the tail chain has returned
-                        // since B15 step 4b, and the emitter builds it through
-                        // the same `build_value` dispatch.
-                        // THE LATTICE IS ASKED ONLY WHEN NOTHING WAS REFUSED
-                        // (#902's rule): a refused tail -- an unknown callee,
-                        // a construction the registry has no row for -- has
-                        // no type, and asking iced ("call target not in the
-                        // registry") instead of letting the refusal stand
-                        // (found by W4's reverse probe, 2026-09-06).
-                        ro before = @out.len()
-                        @type_expr(c)
-                        if @out.len() == before {
-                            out_t = type_of(c, @ctx, @scope, @chan)
-                        } else {
-                            // Refused inside: no type, and the refusal is the
-                            // diagnostic -- `no_ty()` says so to the caller.
-                        }
-                    } else {
-                        @report_first_leaf_of([]Node.of(c), "outside the subset: a branch of a tail `if` ends without a value (E2-b)")
-                    }
-                } else {
-                    @type_stmt(c)
-                }
-            }
-        }
-        i += 1
-    }
-    out_t
+    ro at = if last >= 0 { []Node.of(kids[last]) } else { kids }
+    @report_first_leaf_of(at, "outside the subset: a branch of a tail `if` ends without a value (E2-b)")
+    no_ty()
+}
+
+/// An `if` VALUE typed and its type read back: what `@type_if_value` recorded,
+/// or `no_ty()` when it refused (or recorded nothing: both branches leave).
+fn Checker mut @if_value_type(n Node) -> TyId {
+    ro before = @out.len()
+    @type_if_value(n)
+    if @out.len() > before { return no_ty() }
+    @chan.type_if_known(n.id_of())
+}
+
+/// Is this statement an `if` that is a VALUE when it stands as a block's
+/// tail? It has an `else` (an `if` without one has no value, D49) and does not
+/// leave on every path (`if c { return 1 } else { return 2 }` places nothing).
+fn is_value_if(c Node) -> bool {
+    if c.kind_of() != NodeKind.IfStmt && c.kind_of() != NodeKind.IfExpr { return false }
+    branch_children(c).len() >= 5 && !stmt_terminates(c)
 }
 
 /// The index of the last BRANCH child: trailing leaves are not statements.

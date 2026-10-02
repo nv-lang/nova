@@ -253,12 +253,11 @@ fn Lowerer mut @lower_coalesce(e Node) -> Local {
 /// Emit a block whose LAST statement is its value: everything before it runs
 /// as a statement, and the last one is assigned to the `if` temporary.
 ///
-/// THE DOOR THIS WAVE HAD TO ADD, and the reason is a real difference rather
-/// than an oversight in the match code: a match ARM is an expression, so
-/// `@emit_arm_value` writes `t = <expr>;` in one line. An `if` BRANCH is a
-/// block, and its value is whatever its last statement produces -- so the
-/// block has to be walked, and only its tail turned into an assignment.
+/// A branch is a block walked to its tail; an `else if` continuation is an `if`
+/// value placed into the same temporary (sweep 6), and a tail `if` nested in a
+/// branch places through `@tail_places_value`, the arm body's own test.
 fn Lowerer mut @lower_block_value(b Node, t Local) -> () {
+    if b.kind_of() != NodeKind.Block { return @lower_place(b, t) }
     ro kids = branch_children(b)
     mut last_branch = -1
     mut j = 0
@@ -274,7 +273,7 @@ fn Lowerer mut @lower_block_value(b Node, t Local) -> () {
         match c {
             Leaf(_) => {} // the block's braces are trivia, not statements
             Branch { .. } => {
-                if j == last_branch && is_expr_kind(c.kind_of()) {
+                if j == last_branch && @tail_places_value(c) {
                     @lower_place(c, t)
                 } else {
                     // Everything before the tail runs for effect, and a tail
@@ -865,24 +864,19 @@ fn Lowerer mut @lower_println(call Node) -> () {
     for c in branch_children(call) {
         ro ck = c.kind_of()
         if ck == NodeKind.Lit {
-            // THE CHANNEL FIRST, AND THE FORM ONLY WHERE IT IS SILENT -- and it is silent
-            // about exactly ONE literal. Measured 2026-09-09 in `check/typing.nv:836-850`:
-            // the argument loop of `println` RECORDS a numeric or char literal through the
-            // full `type_of` (all four kinds, plus the half where the POSITION dictates a
-            // width), and skips only a STRING one -- deliberately, and its comment says why:
-            // "the emitter never asks its type", because the only consumer took the pool
-            // slot by shape.
+            // THE CHANNEL FIRST, AND THE FORM ONLY WHERE IT IS SILENT -- and it is silent about exactly ONE literal.
+            // Measured 2026-09-09 in `check/typing.nv:836-850`: the argument loop of `println` RECORDS a numeric or
+            // char literal through the full `type_of` (all four kinds, plus the half where the POSITION dictates a
+            // width), and skips only a STRING one -- deliberately, and its comment says why: "the emitter never asks
+            // its type", because the only consumer took the pool slot by shape.
             //
-            // So asking the door for EVERY literal, as the first edition of this line did,
-            // computed a second answer to a question the channel had already decided -- the
-            // very `decide it twice` this channel's doctrine exists to prevent. Asking the
-            // channel first also makes this FALLBACK DIE ON ITS OWN, and its removal
-            // condition is named: when the type of a
-            // string literal is published (marker `[M-strlit-node-has-no-type]`), this
+            // So asking the door for EVERY literal, as the first edition of this line did, computed a second answer to
+            // a question the channel had already decided -- the very `decide it twice` this channel's doctrine exists
+            // to prevent. Asking the channel first also makes this FALLBACK DIE ON ITS OWN, and its removal condition
+            // is named: when the type of a string literal is published (marker `[M-strlit-node-has-no-type]`), this
             // `else` stops executing and no consumer needs editing.
             //
-            // The fallback judges the LAST leaf, as the checker does: a negated literal
-            // arrives as `[Minus, lit]`.
+            // The fallback judges the LAST leaf, as the checker does: a negated literal arrives as `[Minus, lit]`.
             ro known = @out.type_if_known(c.id_of())
             ro lty = if is_ty(known) {
                 known
@@ -895,7 +889,13 @@ fn Lowerer mut @lower_println(call Node) -> () {
             ro ty = @out.type_of(c.id_of())
             match @lower_value_source(c, ty) {
                 Some(l) => @ir.output(Operand.Place(l), ty)
-                None => @ir.output(Operand.Tree(c), ty)
+                None => {
+                    // Printed from the tree, so its sealed arguments land first, as in
+                    // `@lower_place` (sweep 6: `println(f(if c { a } else { b }))` iced).
+                    @hoist_ordered_args(c)
+                    @hoist_sealed_args(c)
+                    @ir.output(Operand.Tree(c), ty)
+                }
             }
         } else {
             match c {
