@@ -13462,6 +13462,12 @@ impl<'a> TypeCheckCtx<'a> {
                 // Plan 124.2 (D221): pattern destructure priv-field check.
                 let scrut_ty = self.infer_expr_type(scrutinee, scope);
                 self.check_priv_pattern_recursive(pattern, scrut_ty.as_ref(), errors);
+                // #1649: an `if let` pattern naming a foreign variant can never match.
+                if let Some(st) = scrut_ty.as_ref() {
+                    if std::env::var("NOVA_KILL_1649").as_deref() != Ok("1") {
+                        self.check_pattern_foreign_variants(pattern, st, e.span, errors);
+                    }
+                }
                 // №279: resolve nested bare-variant sub-patterns against the
                 // scrutinee's structural type (see fn doc).
                 self.resolve_pattern_variant_types(pattern, scrut_ty.as_ref());
@@ -13518,6 +13524,7 @@ impl<'a> TypeCheckCtx<'a> {
                 // держит четыре законные формы от ложняка]. До этой волны
                 // непокрытый вариант проходил check и build и давал ТИХО
                 // неверный результат (код 0).
+                self.check_match_foreign_variants(scrut_ty.as_ref(), arms, e.span, errors); // #1649
                 self.check_match_exhaustive(scrut_ty.as_ref(), arms, e.span, errors);
                 for arm in arms {
                     self.check_pattern_literal_type(&arm.pattern, scrut_ty.as_ref(), errors); // #1535
@@ -16076,6 +16083,165 @@ impl<'a> TypeCheckCtx<'a> {
     }
 
     #[allow(clippy::only_used_in_recursion)]
+    /// Registry 221.1 #1649: a pattern that names a variant of a sum the
+    /// scrutinee's type is not -- `match user { NotFound => .. }` with
+    /// `NotFound` of `RepoError` -- can never match, yet reads as a working arm,
+    /// and codegen tests a tag the value does not have (CC-FAIL on a record,
+    /// garbage on another sum). #567 refused it only for a SUM scrutinee and only
+    /// when no catch-all arm came before the analysis returned; a record, an
+    /// `int`/`str`, a sum with `_`, and a nested pattern (`Some(NotFound)` over
+    /// `Option[User]`) passed silently. This check runs for every arm (a guarded
+    /// one too), every scrutinee whose type is known, and recurses into the
+    /// payload patterns of a variant the type does have. A name that is no sum's
+    /// variant is left to the other checks (a constant pattern, E_MATCH_CONST_PATTERN).
+    /// KILL SWITCH `NOVA_KILL_1649=1` (and #567's `NOVA_KILL_567_NEG=1`).
+    fn check_match_foreign_variants(
+        &self,
+        scrut_ty: Option<&TypeRef>,
+        arms: &[crate::ast::MatchArm],
+        span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        if std::env::var("NOVA_KILL_1649").as_deref() == Ok("1")
+            || std::env::var("NOVA_KILL_567_NEG").as_deref() == Ok("1")
+        {
+            return;
+        }
+        let Some(ty) = scrut_ty else { return };
+        for arm in arms {
+            self.check_pattern_foreign_variants(&arm.pattern, ty, span, errors);
+        }
+    }
+
+    /// #1649: one pattern against the type it matches (see `check_match_foreign_variants`).
+    fn check_pattern_foreign_variants(
+        &self,
+        pattern: &crate::ast::Pattern,
+        ty: &TypeRef,
+        span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        use crate::ast::{Pattern, VariantPatternKind};
+        match pattern {
+            Pattern::Or { alternatives, .. } => {
+                for alt in alternatives {
+                    self.check_pattern_foreign_variants(alt, ty, span, errors);
+                }
+            }
+            Pattern::Binding { inner, .. } => self.check_pattern_foreign_variants(inner, ty, span, errors),
+            Pattern::Tuple(pats, _) => {
+                if let TypeRef::Tuple(tys, _) = ty.strip_readonly() {
+                    for (sp, st) in pats.iter().zip(tys.iter()) {
+                        self.check_pattern_foreign_variants(sp, st, span, errors);
+                    }
+                }
+            }
+            Pattern::Variant { path, kind, span: at } => {
+                let Some(v) = path.last() else { return };
+                let Some((type_name, names)) = self.pattern_variant_universe(ty, span) else { return };
+                if names.iter().any(|n| n == v) {
+                    if let VariantPatternKind::Tuple { patterns, .. } = kind {
+                        if let Some(payload) = self.variant_payload_types(ty, v, span) {
+                            for (sp, pt) in patterns.iter().zip(payload.iter()) {
+                                self.check_pattern_foreign_variants(sp, pt, span, errors);
+                            }
+                        }
+                    }
+                    return;
+                }
+                let Some(owner) = self.sum_owning_variant(v) else { return };
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_MATCH_FOREIGN_VARIANT] the pattern names `{v}`, a variant of `{owner}`, but the \
+                         value it matches is `{type_name}`, which has no such variant: the arm can NEVER match, \
+                         yet it reads as a working one, and the generated code would test a tag the value does \
+                         not have (registry 221.1 #567, #1649). Remove the arm, or name a variant of `{type_name}`."
+                    ),
+                    *at,
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    /// #1649: the variant names a pattern may use against `ty`, with the type's
+    /// display name; `None` when the type is not known well enough to judge.
+    fn pattern_variant_universe(&self, ty: &TypeRef, span: Span) -> Option<(String, Vec<String>)> {
+        match ty.strip_readonly() {
+            TypeRef::Named { path, span: ty_span, .. } => {
+                let name = path.last()?.clone();
+                match name.as_str() {
+                    "Option" => return Some((name, vec!["Some".into(), "None".into()])),
+                    "Result" => return Some((name, vec!["Ok".into(), "Err".into()])),
+                    _ => {}
+                }
+                if Self::is_primitive_type_name(&name) {
+                    return Some((name, Vec::new()));
+                }
+                let file = if ty_span.file_id != span.file_id { ty_span.file_id } else { span.file_id };
+                let td = self.types_get_for_file(&name, file)?;
+                match &td.kind {
+                    TypeDeclKind::Sum(variants) => Some((name, variants.iter().map(|v| v.name.clone()).collect())),
+                    TypeDeclKind::NamedTuple(_) => Some((name.clone(), vec![name])),
+                    TypeDeclKind::Record(_) => Some((name, Vec::new())),
+                    _ => None,
+                }
+            }
+            TypeRef::Tuple(..) | TypeRef::Array(..) | TypeRef::FixedArray(..) => {
+                Some((typeref_display(ty), Vec::new()))
+            }
+            _ => None,
+        }
+    }
+
+    /// #1649: the payload types of variant `v` of `ty` (`Some` of `Option[T]` ->
+    /// `[T]`), the type's own arguments substituted; `None` when unknown.
+    fn variant_payload_types(&self, ty: &TypeRef, v: &str, span: Span) -> Option<Vec<TypeRef>> {
+        let TypeRef::Named { path, generics, span: ty_span } = ty.strip_readonly() else { return None };
+        let name = path.last()?;
+        match (name.as_str(), v) {
+            ("Option", "Some") => return generics.first().map(|t| vec![t.clone()]),
+            ("Result", "Ok") => return generics.first().map(|t| vec![t.clone()]),
+            ("Result", "Err") => return generics.get(1).map(|t| vec![t.clone()]),
+            ("Option", _) | ("Result", _) => return None,
+            _ => {}
+        }
+        let file = if ty_span.file_id != span.file_id { ty_span.file_id } else { span.file_id };
+        let td = self.types_get_for_file(name, file)?;
+        let TypeDeclKind::Sum(variants) = &td.kind else { return None };
+        let var = variants.iter().find(|x| x.name == v)?;
+        let crate::ast::SumVariantKind::Tuple(tys) = &var.kind else { return None };
+        if td.generics.len() != generics.len() {
+            return if td.generics.is_empty() { Some(tys.clone()) } else { None };
+        }
+        let subst: HashMap<String, TypeRef> = td
+            .generics
+            .iter()
+            .map(|g| g.name.clone())
+            .zip(generics.iter().cloned())
+            .collect();
+        Some(tys.iter().map(|t| subst_typeref(t, &subst)).collect())
+    }
+
+    /// #1649: a sum (or `Option`/`Result`) that declares variant `v`, for the message.
+    fn sum_owning_variant(&self, v: &str) -> Option<String> {
+        match v {
+            "Some" | "None" => return Some("Option".into()),
+            "Ok" | "Err" => return Some("Result".into()),
+            _ => {}
+        }
+        let mut owners: Vec<&str> = self
+            .types
+            .values()
+            .filter_map(|td| match &td.kind {
+                TypeDeclKind::Sum(variants) if variants.iter().any(|x| x.name == v) => Some(td.name.as_str()),
+                _ => None,
+            })
+            .collect();
+        owners.sort_unstable();
+        owners.first().map(|s| s.to_string())
+    }
+
     fn check_match_exhaustive(
         &self,
         scrut_ty: Option<&TypeRef>,
@@ -16198,20 +16364,9 @@ impl<'a> TypeCheckCtx<'a> {
         // гасила проверку исчерпаемости ЦЕЛИКОМ при коллизии имён. Снятие было
         // верным; замена — не сдаваться, а НАЗВАТЬ чужой вариант, и это безопасно
         // только теперь, когда разрешение импорто-осведомлённое.
-        if std::env::var("NOVA_KILL_567_NEG").as_deref() != Ok("1") {
-            for (v, at) in &covered_at {
-                if all.contains(v) {
-                    continue;
-                }
-                errors.push(Diagnostic::new(
-                    format!(
-                        "[E_MATCH_FOREIGN_VARIANT] ветка `match` называет `{}` — этого варианта нет у суммы `{}`, так что ветка НЕ СРАБОТАЕТ никогда, а читается как рабочая. До №567 совпадение имени с чужой суммой было хуже мёртвой ветки: матч уходил в чужой тег и возвращал мусор из неинициализированной памяти. Убери ветку либо назови вариант этой суммы.",
-                        v, sum_name
-                    ),
-                    *at,
-                ));
-            }
-        }
+        // #1649: the foreign-variant half moved to `check_match_foreign_variants`,
+        // which runs for every scrutinee and every arm, a catch-all included.
+        let _ = &covered_at;
         let missing: Vec<&String> = all.iter().filter(|v| !covered.contains(*v)).collect();
         if missing.is_empty() {
             return;

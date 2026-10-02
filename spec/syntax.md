@@ -1250,6 +1250,11 @@ matching alternative bound it, not from its position in the first one. Different
 name sets are `E_OR_PATTERN_BINDING_MISMATCH`; different types of one name are an
 error too.
 
+**A variant pattern names a variant of the scrutinee's type** ([D486](decisions/03-syntax.md#d486) §2,
+amendment 2026-10-03): a variant of its sum, `Some`/`None` of `Option`, `Ok`/`Err` of `Result`,
+a named tuple's own constructor. A variant of another sum -- in any arm, with `_` or without,
+nested in a payload, and in `if Pat = expr` -- is `E_MATCH_FOREIGN_VARIANT`.
+
 **A pattern's literal has the scrutinee's type** ([D486](decisions/03-syntax.md#d486)
 §2, amendment 2026-10-01): a string literal over a `str` (compared by content), a char
 literal over a `char` (by codepoint), an integer literal over an integer type. `char`

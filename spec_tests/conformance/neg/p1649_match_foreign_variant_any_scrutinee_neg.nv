@@ -1,0 +1,83 @@
+// EXPECT_COMPILE_ERROR E_MATCH_FOREIGN_VARIANT
+//
+// Registry 221.1 #1649: a pattern naming a variant of a sum the scrutinee's
+// type is NOT can never match, yet reads as a working arm; codegen then tests
+// a tag the value does not have (a C error on a record, garbage on another
+// sum). #567 refused it only for a SUM scrutinee and only when no catch-all
+// arm came first; everything else passed `nova check` silently (found under
+// examples/real_world/orm_demo.nv: a test matched a `User` against
+// `NotFound`). One cell per scrutinee form; the positive twin is
+// spec_tests/conformance/standalone/p1649_match_own_variants.nv.
+module neg.p1649_match_foreign_variant_any_scrutinee_neg
+
+type P1649User value { ro id int, name str }
+
+type P1649Err
+    | NotFound
+    | Inconsistent(str)
+
+type P1649Shape
+    | Circle(int)
+    | Square(int)
+
+fn p1649_user() -> P1649User => { id: 1, name: "a" }
+fn p1649_shape() -> P1649Shape => Circle(2)
+
+fn record_with_catchall() -> int {
+    match p1649_user() {
+        // nova:expect E_MATCH_FOREIGN_VARIANT -- a record has no variants; `NotFound` is P1649Err's
+        NotFound => 1
+        _ => 2
+    }
+}
+
+fn record_payload_variant() -> int {
+    match p1649_user() {
+        // nova:expect E_MATCH_FOREIGN_VARIANT -- a variant with a payload, of another type
+        Inconsistent(m) => 1
+        _ => 2
+    }
+}
+
+fn sum_with_catchall() -> int {
+    match p1649_shape() {
+        // nova:expect E_MATCH_FOREIGN_VARIANT -- a catch-all after it no longer hides the foreign arm
+        NotFound => 1
+        _ => 2
+    }
+}
+
+fn int_scrutinee() -> int {
+    match 5 {
+        // nova:expect E_MATCH_FOREIGN_VARIANT -- an `int` has no variants
+        NotFound => 1
+        _ => 2
+    }
+}
+
+fn str_scrutinee() -> int {
+    match "x" {
+        // nova:expect E_MATCH_FOREIGN_VARIANT -- a `str` has no variants
+        NotFound => 1
+        _ => 2
+    }
+}
+
+fn nested_payload() -> int {
+    match Some(p1649_user()) {
+        // nova:expect E_MATCH_FOREIGN_VARIANT -- the payload of `Some` is a P1649User, not a P1649Err
+        Some(NotFound) => 1
+        _ => 2
+    }
+}
+
+fn if_let_form() -> int {
+    // nova:expect E_MATCH_FOREIGN_VARIANT -- `if let` is a pattern match too
+    if NotFound = p1649_user() {
+        return 1
+    }
+    2
+}
+
+fn main() {
+}

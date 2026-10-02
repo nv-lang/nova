@@ -534,16 +534,24 @@ test "find_by_id returns the user" {
     }
 }
 
+// Is this failure `NotFound`? The handler below judges the thrown value: a
+// `match` over the `User` that `find_by_id` returns could never see a
+// `RepoError` variant (registry 221.1 #1649 refuses such an arm).
+fn is_not_found(e RepoError) -> bool => match e {
+    NotFound => true
+    _        => false
+}
+
 test "find_by_id throws NotFound for missing id" {
     mut storage = HashMap[u64, DbRow].new()
-    with Db = in_memory_db_handler(storage),
-         Fail[RepoError] = |e| interrupt e {
-        ro r = users_repo().find_by_id(999)
-        match r {
-            NotFound => ()                   // ожидаемый исход
-            _        => assert(false)
-        }
+    // `find_by_id` returns a `User` or throws; the verdict leaves through
+    // `interrupt`, so the `with` value is a `bool` either way.
+    ro not_found = with Db = in_memory_db_handler(storage),
+                        Fail[RepoError] = |e| interrupt is_not_found(e) {
+        ro _u = users_repo().find_by_id(999)
+        false
     }
+    assert(not_found)
 }
 
 test "Query fluent builder — where_eq + limit + fetch_all" {
