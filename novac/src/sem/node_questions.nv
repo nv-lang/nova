@@ -28,8 +28,21 @@ import ../tree.{Node, NodeKind}
 /// A door because the answer used to be `is_expr_kind(c.kind_of())` at four
 /// call sites, and a named argument is not an expression kind -- so every one of
 /// them counted the arguments of `f(1, by: 2)` as one.
+///
+/// A TUPLE LITERAL is the third shape (`is_arg_value_kind`).
 export fn is_arg_node(c Node) -> bool =>
-    is_expr_kind(c.kind_of()) || c.kind_of() == NodeKind.NamedArg
+    is_arg_value_kind(c.kind_of()) || c.kind_of() == NodeKind.NamedArg
+
+/// May a node of this kind stand as an argument's VALUE -- an expression, or a
+/// TUPLE LITERAL (part 5 of p274-carina-k1)? `Some((a, b))` was counted as NO
+/// argument and typed by no walk, and the variant was refused as taking "a
+/// different number of payload values" -- the RecordCtor/IfExpr/Index lesson
+/// once more. The tuple joins THIS door and not `is_expr_kind`, which feeds
+/// every general arm (wave B13); the walks that count or type a call's
+/// arguments ask here.
+/// The SAME set as `is_value_tail_kind` below, asked under the name of its
+/// position -- one list, so the two cannot drift.
+export fn is_arg_value_kind(k NodeKind) -> bool => is_value_tail_kind(k)
 
 /// The kinds a VALUE TAIL may have -- `is_expr_kind` plus the one positional
 /// record literal the tail chain returns since B15 step 4b. ONE door for the

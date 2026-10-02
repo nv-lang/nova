@@ -15,7 +15,7 @@
 module novac.check
 
 import ../tree.{Node}
-import ../builtins.{PTR_WRITE_AT, PTR_WRITE_CONSUME_AT, PTR_OFFSET, is_ptr_method}
+import ../builtins.{PTR_WRITE_AT, PTR_WRITE_CONSUME_AT, PTR_OFFSET, PTR_DIST, is_ptr_method, TypeKind}
 import ../sem.{branch_children, leaf_text, is_expr_kind}
 import ../types.{TyId, is_ty}
 
@@ -54,6 +54,9 @@ fn Checker mut @type_ptr_method(e Node, kids []Node, recv_t TyId) -> () {
     // `offset(n) -> *T` (D216): address arithmetic in elements, the type kept
     // (registry 1557 -- std's `Vec[T] @index(r Range)` builds its view with it).
     ro offsets = leaf_text(kids[2]) == PTR_OFFSET
+    // `dist(q) -> int` (D216): the signed element count between two pointers
+    // to the same pointee -- the one method whose argument is a POINTER.
+    ro dists = leaf_text(kids[2]) == PTR_DIST
     if !is_ptr_method(leaf_text(kids[2])) {
         // A pointer method IS an operation that needs the context, compiled
         // or not: without the count the enclosing block was also called
@@ -84,7 +87,19 @@ fn Checker mut @type_ptr_method(e Node, kids []Node, recv_t TyId) -> () {
             args += 1
             ro at = type_of(c, @ctx, @scope, @chan)
             // The FIRST argument is the index; `write_at`'s second is the value,
-            // of the pointee's type.
+            // of the pointee's type. `dist`'s one argument is the other pointer.
+            if dists {
+                if is_ty(at) && !@points_to(at, elem) {
+                    @reject_first_leaf_of([]Node.of(c), "`dist` measures to a pointer of the same pointee (D216)")
+                    return
+                } else {
+                    // A pointer to the same pointee, or one already refused.
+                }
+                i += 1
+                continue
+            } else {
+                // An index or a value: judged below.
+            }
             ro want = if args == 1 { @ctx.prims.int_id } else { elem }
             if is_ty(at) && at != want {
                 if args == 1 {
@@ -107,6 +122,9 @@ fn Checker mut @type_ptr_method(e Node, kids []Node, recv_t TyId) -> () {
     } else if offsets && args != 1 {
         @reject_first_leaf_of(kids, "`offset` takes one element count (D216)")
         return
+    } else if dists && args != 1 {
+        @reject_first_leaf_of(kids, "`dist` takes one pointer (D216)")
+        return
     } else if !writes && args != 1 {
         @reject_first_leaf_of(kids, "`read_at` takes one index (D216)")
         return
@@ -116,7 +134,16 @@ fn Checker mut @type_ptr_method(e Node, kids []Node, recv_t TyId) -> () {
     if offsets {
         // The pointer moved: the same pointer type (D216).
         @record(e, recv_t)
+    } else if dists {
+        // A count of elements, signed (D216).
+        @record(e, @ctx.prims.int_id)
     } else {
         @record(e, if writes { @ctx.prims.unit_id } else { elem })
     }
+}
+
+/// Is `t` a raw pointer to `elem` -- `*elem` or `*mut elem`? What `dist`'s
+/// argument must be (D216): the count is in elements, so the pointees agree.
+fn Checker @points_to(t TyId, elem TyId) -> bool {
+    @ctx.tys.kind_of(t) == TypeKind.TkPtr && @ctx.tys.arg(t, 0) == elem
 }

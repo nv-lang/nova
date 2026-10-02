@@ -238,10 +238,19 @@ fn Checker mut @type_if_value(n Node) -> () {
 /// mixing the two ways out of a function needs a measurement against the
 /// oracle, and that measurement is its own step.
 fn Checker mut @type_branch_value(b Node) -> TyId {
-    if b.kind_of() != NodeKind.Block {
-        // An `else if` chain, or a gap the parser planted. Named, not silent:
-        // the chain is legal Nova and arrives with its own carrier.
-        @report_first_leaf_of([]Node.of(b), "outside the subset: an `else if` chain is not compiled as a value yet (E2-b)")
+    if b.kind_of() == NodeKind.IfStmt || b.kind_of() == NodeKind.IfExpr {
+        // AN `else if` CHAIN is itself a value `if` (part 5 of p274-carina-k1;
+        // its carrier: sem/mangle.nv `ro shell = if .. else if .. else ..`; an
+        // `IfExpr` where the `if` is an expression, an `IfStmt` in a body):
+        // the same door judges it, and its agreed type is this branch's. The
+        // lowering places it into the same temporary (lower_branch.nv).
+        ro cmark = @out.len()
+        @type_if_value(b)
+        if @out.len() > cmark { return no_ty() }
+        return @chan.type_if_known(b.id_of())
+    } else if b.kind_of() != NodeKind.Block {
+        // A gap the parser planted: named, not silent.
+        @report_first_leaf_of([]Node.of(b), "outside the subset: this branch of a value `if` is neither a block nor an `else if` (E2-b)")
         return no_ty()
     } else {
         // A block: its tail decides.
@@ -255,7 +264,25 @@ fn Checker mut @type_branch_value(b Node) -> TyId {
             Leaf(_) => {}
             Branch { .. } => {
                 if i == last {
-                    if is_value_tail_kind(c.kind_of()) {
+                    ro lmark = @out.len()
+                    ro lit_t = @branch_literal_tail(c)
+                    if is_ty(lit_t) || @out.len() > lmark {
+                        // A bare numeric literal took the position's type, or
+                        // its fit door refused it: decided either way.
+                        out_t = lit_t
+                    } else if c.kind_of() == NodeKind.IfStmt {
+                        // A NESTED tail `if` is the branch's value (part 5 of
+                        // p274-carina-k1): `if a { if b { 1 } else { 2 } } else
+                        // { 0 }` -- the same door judges it, with the same
+                        // expectation, and its agreed type is this branch's.
+                        ro nmark = @out.len()
+                        @type_if_value(c)
+                        if @out.len() == nmark {
+                            out_t = @chan.type_if_known(c.id_of())
+                        } else {
+                            // Refused inside, by name: no type.
+                        }
+                    } else if is_value_tail_kind(c.kind_of()) {
                         // A TUPLE tail places a value too (`{ (no_vrow(), 0) }`
                         // -- the destructure carriers of the if-value wave):
                         // `is_value_tail_kind` is `is_expr_kind` plus the one
@@ -287,6 +314,29 @@ fn Checker mut @type_branch_value(b Node) -> TyId {
         i += 1
     }
     out_t
+}
+
+/// A branch's tail that is a BARE NUMERIC LITERAL takes the position's expected
+/// type (D227 rule 2), exactly as a body's tail does (`@type_tail_value`):
+/// `if k < n { b[k] } else { 0 }` in an `-> u8` body is two `u8` branches
+/// (part 5 of p274-carina-k1: lex.nv `byte_at` was "must agree on a type").
+/// The adapted type, or `no_ty()` when this is no literal, nothing is expected,
+/// or the fit door refused the literal (the caller tells by its mark).
+fn Checker mut @branch_literal_tail(c Node) -> TyId {
+    if !is_ty(@value_expect) { return no_ty() }
+    match lit_arg_of(c) {
+        NotLit => { return no_ty() }
+        IntLitArg | FloatLitArg => {
+            ro adapted = adapt_operand(c, type_of(c, @ctx, @scope, @chan), @value_expect, @ctx.tys)
+            if @lit_fits_or_refuse(c, adapted) {
+                @record(c, adapted)
+                return adapted
+            } else {
+                // Out of the expected width: the fit door said so at its token.
+            }
+        }
+    }
+    no_ty()
 }
 
 /// The index of the last BRANCH child: trailing leaves are not statements.

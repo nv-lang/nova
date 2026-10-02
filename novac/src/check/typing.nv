@@ -442,7 +442,14 @@ fn Checker mut @type_block(b Node) -> () {
                     // by name. The rule was written at each entrance that
                     // remembered it, and these two tails did not.
                     ro tmark = @out.len()
+                    // The declared return reaches the tail call as it reaches
+                    // every other tail (`@type_tail_value`) and the `=>` body: a
+                    // call clears it around its own arguments, and what is left
+                    // is the position's word -- `Some(row)` over a poisoned `row`
+                    // takes its instance from it (part 5 of p274-carina-k1).
+                    @value_expect = @ret_expect
                     @type_expr(c)
+                    @value_expect = no_ty()
                     if @out.len() > tmark {
                         i += 1
                         continue

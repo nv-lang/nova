@@ -268,7 +268,10 @@
 #   (check/unsafe.nv) and the subset walk's "is this a method novac knows" (check/rules.nv),
 #   which an instance body now passes too; outside builtins because both askers are check's.
 # merge of origin/main 2488a47be into p274-carina-k1: main's builtins 66 plus this branch's +1 (the line above) = 67.
-builtins 67
+# 2026-10-02, cloud session p274-carina-k1 (part 5, D216 `dist`): builtins 67 -> 68: `PTR_DIST`
+#   -- the raw-pointer intrinsic's name beside `PTR_OFFSET`, asked by check's typing of a
+#   pointer method (check/unsafe.nv) and by its emission (emit_c/emit_ptr.nv).
+builtins 68
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -1028,7 +1031,13 @@ resolve 23
 #   may not read the lexer, so the one question about the keyword leaf lives in sem.
 # merge of p274-carina-cast (step 7) into main (integrator, 2026-10-02): the guard's count on the merged
 #   tree is 340 -- main's 339 plus cast's `is_coalesce_return` (see its chronicle line above).
-sem 340
+# 2026-10-02, cloud session p274-carina-k1 (part 5, tuple argument): sem 339 -> 340:
+#   `is_arg_value_kind` (sem/node_questions.nv) -- may this kind stand as an argument's value,
+#   an expression or a TUPLE literal; asked by `is_arg_node` and by check's argument walks
+#   (calls, methods, static calls, variant calls), so `Some((a, b))` counts one payload.
+# merge of p274-carina-k1 (part 5) into main (integrator, 2026-10-02): the guard's count on the merged
+#   tree is 341 -- main's 340 plus k1's `is_arg_value_kind` (part 5 step 3, its chronicle line above).
+sem 341
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

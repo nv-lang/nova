@@ -381,7 +381,7 @@ const TYPE_ARG_UNKNOWN_MSG = "outside the subset: a type argument names a type n
 /// A cast whose target names no type novac knows -- the named and the pointer target alike.
 const CAST_UNKNOWN_TYPE_MSG = "outside the subset: a cast to a type novac does not know"
 
-const PTR_METHOD_MSG = "outside the subset: of the raw-pointer methods only `read_at` and `write_at` are compiled yet (D216; E2-b)"
+const PTR_METHOD_MSG = "outside the subset: of the raw-pointer methods only `read_at`, `write_at`, `offset` and `dist` are compiled yet (D216; E2-b)"
 
 /// `write_at` through a `*T`: the language writes only through `*mut T` (D216).
 const PTR_WRITE_RO_MSG = "`write_at` writes through a `*mut T` only -- this pointer is `*T` (D216)"

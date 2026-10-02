@@ -70,3 +70,26 @@ test "a bare `None` takes its position's Option in a block tail `if`, a match ar
     ro (u, _) = compile_to_c("fn main() {\n ro x = None\n println(1)\n}", std)
     assert(u.len() == 1 && messages(u).contains("has no type to take"), messages(u))
 }
+
+test "a parenthesised pair is an argument: `Some((a, b))` takes one payload (part 5 of p274-carina-k1)" {
+    // sem/callables.nv writes `VariantRows(first, cnt) => Some((first, cnt))`;
+    // the tuple was counted as NO argument and typed by no walk, and the
+    // variant was refused as taking "a different number of payload values".
+    mut std = std_decls()
+    std.push("module std.o\nexport type Option[T] enum Some(T) | None\n")
+    ro (d, c) = compile_to_c("fn span(a int) -> Option[(int, int)] => Some((a, 2))\n\
+fn main() {\n ro (x, y) = span(1) ?? (0, 0)\n println(x + y)\n}", std)
+    assert(d.len() == 0, messages(d))
+    // The pair's C type spells its arity and both components.
+    assert(c.contains("_2_8_nova_int_8_nova_int"), c)
+    // A free generic call counts it too: the refusal is the tuple PARAMETER's
+    // own named limit, not "this call omits `x`".
+    ro (dg, _) = compile_to_c("fn kept[T](x T) -> int => 1\nfn main() {\n println(kept((8, 9)))\n}", std)
+    assert(!messages(dg).contains("omits"), messages(dg))
+    // CONTROL: the count is still the declaration's -- a tuple AND a second
+    // value are two payloads for a one-payload variant.
+    ro (d2, _) = compile_to_c("fn span(a int) -> Option[(int, int)] => Some((a, 2), 3)\n\
+fn main() {\n println(1)\n}", std)
+    assert(d2.len() >= 1, "two payloads for Some must be refused")
+    assert(messages(d2).contains("different number of payload values"), messages(d2))
+}

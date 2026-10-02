@@ -268,6 +268,14 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // file's own constant of the same name is registered after it, and the
     // last put wins -- the file shadows what it was handed.
     harvest_consts(decls, defs, consts)
+    // THE HANDED NEWTYPES' TERMS, before ANY reader of a handed name's term: the
+    // file's own pass 2 (a field or a representation that names one, 2026-10-01:
+    // they used to be records) and the handed sums' variants just below. A
+    // variant's payload is a term too, and the variant loop drops a payload
+    // without one -- so `CalleeFn(FnRow)` of sem, read from mono, registered
+    // with NO payload, and every `CalleeFn(row)` pattern was refused as "the
+    // pattern's payload count disagrees" (part 5 of p274-carina-k1).
+    fill_handed_newtypes(decls, types, defs, tys)
     // THE VARIANTS OF HANDED SUMS, through the same door the file's own sums
     // take below (274.5 wave "variants of handed sums", 2026-09-04). Until this
     // loop `harvest_types` registered a handed sum's NAME and skipped its
@@ -289,9 +297,6 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
             register_sum_variants(c, types, defs, variant_rows, payload_types, payload_names, variant_names, tys)
         }
     }
-    // THE HANDED NEWTYPES' TERMS, before the file's own pass 2 reads a field or a
-    // representation that names one (2026-10-01: they used to be records).
-    fill_handed_newtypes(decls, types, defs, tys)
     // THE TYPE BOUNDARY IS FIXED HERE, beside the name boundary, because the two
     // are DIFFERENT numbers: `defs.foreign_cnt` counts name rows (types AND the
     // handed variants registered just above), `foreign_types_cnt` counts type rows.
