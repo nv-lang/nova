@@ -2079,6 +2079,12 @@ pub struct CEmitter {
     /// by-value). Строится ОДНИМ пре-пассом `build_free_fn_byref_map` ДО
     /// fn-forward-decl цикла — сигнатуры/тела/call-sites читают одну карту.
     free_fn_byref_params: HashMap<String, Vec<(String, bool)>>,
+    /// #1598: value-record C types never passed by copy as a receiver (see `value_abi.rs`).
+    recv_pinned_c: HashSet<String>,
+    /// #1598: the `fn_span` of every `-> @` method -- its receiver stays a pointer.
+    fluent_recv_fn_spans: HashSet<Span>,
+    /// #1598: the by-copy answer per receiver C type, fixed on first ask.
+    recv_by_copy_memo: RefCell<HashMap<String, bool>>,
     /// #1616: the one declaration each `free_fn_byref_params` entry was built from.
     free_fn_byref_decl: HashMap<String, Span>,
     /// [M-172.14-methods-byref]: зеркало `free_fn_byref_params` для МЕТОДОВ
@@ -2903,6 +2909,9 @@ impl CEmitter {
             free_fn_inout_params: HashMap::new(),
             value_struct_field_tys: HashMap::new(),
             free_fn_byref_params: HashMap::new(),
+            recv_pinned_c: HashSet::new(),
+            fluent_recv_fn_spans: HashSet::new(),
+            recv_by_copy_memo: RefCell::new(HashMap::new()),
             free_fn_byref_decl: HashMap::new(),
             method_byref_params: HashMap::new(),
             mono_method_decls: HashMap::new(),
@@ -8625,7 +8634,7 @@ impl CEmitter {
                             if is_expr_like && matches!(recv.kind, ReceiverKind::Instance) {
                                 let prev_recv_for_ret = self.current_receiver_type.replace(recv.type_name.clone());
                                 self.sync_receiver_rt();
-                                let recv_c = self.receiver_c_type(&recv.type_name, recv.mutable);
+                                let recv_c = self.receiver_c_type_for(&recv.type_name, recv.mutable, Self::recv_forced_ptr_decl(f));
                                 let prev_nova_self = self.var_types.insert("nova_self".into(), recv_c);
                                 let ret = self.return_type_c(f)
                                     .unwrap_or_else(|_| "nova_unit".into());
@@ -8805,6 +8814,9 @@ impl CEmitter {
                     // both `fn T mut @method() -> never` и `fn T.method() -> never`.
                     if Self::fn_return_is_never_125(f) {
                         self.never_returning_methods.insert(key.clone());
+                    }
+                    if f.returns_receiver {
+                        self.fluent_recv_fn_spans.insert(f.span); // #1598
                     }
                     self.register_method_overload(key, sig);
                     // `T.from(v V)` → from_targets[T] += V. [D73/D77 retraction
@@ -17604,7 +17616,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let ret_c = self.erased_type_ref_c(&f.return_type, &type_params);
                 let mut parts = if is_instance {
                     // Plan 128 Ф.1: thread recv.mutable (Ф.2 consumes).
-                    vec![format!("{} nova_self", self.receiver_c_type(&recv.type_name, recv.mutable))]
+                    vec![format!("{} nova_self", self.receiver_c_type_for(&recv.type_name, recv.mutable, Self::recv_forced_ptr_decl(f)))]
                 } else {
                     vec![]
                 };
@@ -18431,7 +18443,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 use crate::ast::AllocKind;
                 match t.allocation {
                     AllocKind::Heap => self.emit_record_type(&def_base, fields)?,
-                    AllocKind::Value => self.emit_value_record_type(&def_base, fields)?,
+                    AllocKind::Value => {
+                        // #1598: a type that must not be copied keeps a pointer receiver.
+                        if t.no_copy || t.consume || t.zero_on_move
+                            || t.attrs.contains(&crate::ast::TypeAttr::Share)
+                        {
+                            self.recv_pinned_c.insert(format!("NovaValue_{}", def_base));
+                        }
+                        self.emit_value_record_type(&def_base, fields)?
+                    }
                     // Plan 127 V1: ValueHeapPromoted lives только на per-binding
                     // slots, не на TypeDecl. Type declaration аллокация всегда
                     // {Heap, Value}. Per-binding promotion обрабатывается на
@@ -20700,6 +20720,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// `ro @` keeps the existing by-value form unchanged (R5: ro is
     /// size-discretionary/invisible, no observable-mutation contract to honour).
     fn receiver_c_type(&self, type_name: &str, recv_mutable: bool) -> String {
+        self.receiver_c_type_for(type_name, recv_mutable, false)
+    }
+
+    /// #1598: `forced_ptr` -- the receiver stays a pointer although not `mut @`
+    /// (`-> @`, `consume @`; see `value_abi::recv_forced_ptr_decl`).
+    fn receiver_c_type_for(&self, type_name: &str, recv_mutable: bool, forced_ptr: bool) -> String {
         match type_name {
             // Plan 172.1-K1 (int-de-collapse): a primitive receiver lowers through the SINGLE
             // scalar source `primitive_name_to_c` — the SAME leaf `resolved_type_to_c` uses
@@ -20897,6 +20923,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // остаётся by-value через type_ref_to_c — меняется ТОЛЬКО
                     // receiver-ABI. Один предикат вместо двух параллельных веток.
                     if Self::is_value_struct(c_ty) {
+                        // #1598 (D488 rule 2): a small `ro @` receiver by copy.
+                        if self.recv_by_copy(c_ty, recv_mutable || forced_ptr) {
+                            return c_ty.clone();
+                        }
                         return format!("{}*", c_ty);
                     }
                 }
@@ -21006,7 +21036,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if let Some(recv) = &f.receiver {
             if matches!(recv.kind, ReceiverKind::Instance) {
                 // Plan 128 Ф.1: thread recv.mutable (Ф.2 consumes).
-                parts.push(format!("{} nova_self", self.receiver_c_type(&recv.type_name, recv.mutable)));
+                parts.push(format!("{} nova_self", self.receiver_c_type_for(&recv.type_name, recv.mutable, Self::recv_forced_ptr_decl(f))));
             }
         }
         for (p_idx, p) in f.params.iter().enumerate() {
@@ -21192,7 +21222,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.current_receiver_type = prev_recv;
         self.sync_receiver_rt();
         // Plan 128 Ф.1: thread recv.mutable (Ф.2 consumes).
-        let recv_c = self.receiver_c_type(&recv.type_name, recv.mutable);
+        let recv_c = self.receiver_c_type_for(&recv.type_name, recv.mutable, Self::recv_forced_ptr_decl(f));
         // Match the same signature as the forward declaration in emit_fn_decl
         let mut parts: Vec<String> = if is_instance {
             vec![format!("{} nova_self", recv_c)]
@@ -21368,7 +21398,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.sync_receiver_rt();
         let ret_c = self.erased_type_ref_c(&f.return_type, &type_params);
         // Plan 128 Ф.1: thread recv.mutable (Ф.2 consumes).
-        let recv_c = self.receiver_c_type(&recv.type_name, recv.mutable);
+        let recv_c = self.receiver_c_type_for(&recv.type_name, recv.mutable, Self::recv_forced_ptr_decl(f));
         // Static methods don't get nova_self; instance methods do.
         let mut parts: Vec<String> = if is_instance {
             vec![format!("{} nova_self", recv_c)]
@@ -22411,6 +22441,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 let (proto, def) = super::operator_dispatch::emit_vr_wrapper(
                                     self.top_level_storage(), "nova_bool", &wrap, cty, cty,
                                     &sig.c_name, arg_is_ptr,
+                                    self.recv_by_copy(cty, sig.recv_mutable), // #1598
                                 );
                                 self.vr_ueq_protos_buf.borrow_mut().push_str(&proto);
                                 buf.push_str(&def);
@@ -22471,6 +22502,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // an arbitrary rvalue expression, unlike the binary/
                         // unary operator-dispatch call sites), so `&(l)` is
                         // always legal C — no hoist-to-temp needed here.
+                        // #1598: a small `ro @` receiver is taken by copy.
+                        if self.recv_by_copy(cty, sig.recv_mutable) {
+                            return format!("{}({}, {})", sig.c_name, l, r);
+                        }
                         return format!("{}(&({}), {})", sig.c_name, l, r);
                     }
                 }
@@ -26638,7 +26673,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.debt_bind_self_for_mono_recv(recv_type);
         // Plan 128 Ф.1: thread recv.mutable from fn_decl AST (Ф.2 consumes).
         let recv_mutable = fn_decl.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
-        let recv_c = self.receiver_c_type(recv_type, recv_mutable);
+        let recv_c = self.receiver_c_type_for(recv_type, recv_mutable, Self::recv_forced_ptr_decl(fn_decl));
         // [M-nested-generic-receiver-method-mono] (реестр 221.1 №247): see
         // `debt_rebind_nested_receiver_typevars` doc — rebinds a builtin
         // Option/Result carrier's colliding "T"/"E" to the method's OWN
@@ -26847,7 +26882,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.debt_bind_self_for_mono_recv(recv_type);
         // Plan 128 Ф.1: thread recv.mutable from fn_decl AST (Ф.2 consumes).
         let recv_mutable = fn_decl.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
-        let recv_c = self.receiver_c_type(recv_type, recv_mutable);
+        let recv_c = self.receiver_c_type_for(recv_type, recv_mutable, Self::recv_forced_ptr_decl(fn_decl));
         // [M-nested-generic-receiver-method-mono] (реестр 221.1 №247): see
         // `debt_rebind_nested_receiver_typevars` doc — rebinds a builtin
         // Option/Result carrier's colliding "T"/"E" to the method's OWN
@@ -29416,7 +29451,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // (line ~16191), after return_type_c is called. The definition then
             // conflicts with the forward decl if both used different paths.
             if matches!(recv.kind, ReceiverKind::Instance) {
-                let recv_c = self.receiver_c_type(&recv.type_name, recv.mutable);
+                let recv_c = self.receiver_c_type_for(&recv.type_name, recv.mutable, Self::recv_forced_ptr_decl(f));
                 self.var_types.insert("nova_self".into(), recv_c);
             }
         } else {
@@ -29607,7 +29642,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if let Some(recv) = &f.receiver {
             if matches!(recv.kind, ReceiverKind::Instance) {
                 // Plan 128 Ф.1: thread recv.mutable (Ф.2 consumes).
-                self.var_types.insert("nova_self".into(), self.receiver_c_type(&recv.type_name, recv.mutable));
+                self.var_types.insert("nova_self".into(), self.receiver_c_type_for(&recv.type_name, recv.mutable, Self::recv_forced_ptr_decl(f)));
             }
         }
         for p in &f.params {
@@ -36030,12 +36065,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // ALSO a pointer for a `mut @` PRIMITIVE receiver now
                     // (`is_primitive_mut_recv_ptr`) — deref it the same way
                     // as the value-struct pointer case.
-                    let self_by_ptr_value_record = self.var_types.get("nova_self")
-                        .map(|c| Self::is_value_struct_ptr(c) || Self::is_primitive_mut_recv_ptr(c))
-                        .unwrap_or(false)
-                        || self.current_receiver_type.as_deref()
-                            .map(|t| t != "str" && self.value_record_names.contains(t))
-                            .unwrap_or(false);
+                    let self_by_ptr_value_record = self.self_receiver_is_pointer(); // #1598
                     return Ok(if self_by_ptr_value_record {
                         // 172.4 Ф.3 A1: зеркало SelfAccess-арма — в return-позиции
                         // `-> @` fluent-метода `return self` эмитится ptr.
@@ -36765,7 +36795,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // concern below, Plan 175 Ф.1b/Ф.3) so `&tmp` is always valid.
                             let recv_tmp = self.fresh_tmp();
                             self.line(&format!("{} {} = {};", tuple_ty, recv_tmp, l));
-                            let call = format!("{}(&({}), {})", c_name, recv_tmp, if self.method_byref_flag(type_name, method_name, 0) { format!("&({})", r) } else { r.clone() });
+                            // #1598: a small `ro @` receiver is taken by copy.
+                            let recv_arg = if self.recv_by_copy(&tuple_ty, false) { recv_tmp.clone() } else { format!("&({})", recv_tmp) };
+                            let call = format!("{}({}, {})", c_name, recv_arg, if self.method_byref_flag(type_name, method_name, 0) { format!("&({})", r) } else { r.clone() });
                             return Ok(match op {
                                 BinOp::Neq => format!("(!({}))", call),
                                 _          => format!("({})", call),
@@ -36798,7 +36830,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     {
                         let recv_tmp = self.fresh_tmp();
                         self.line(&format!("{} {} = {};", tuple_ty, recv_tmp, l));
-                        let call = format!("{}(&({}), {})", c_name, recv_tmp, if self.method_byref_flag(type_name, "compare", 0) { format!("&({})", r) } else { r.clone() });
+                        // #1598: a small `ro @` receiver is taken by copy.
+                        let recv_arg = if self.recv_by_copy(&tuple_ty, false) { recv_tmp.clone() } else { format!("&({})", recv_tmp) };
+                        let call = format!("{}({}, {})", c_name, recv_arg, if self.method_byref_flag(type_name, "compare", 0) { format!("&({})", r) } else { r.clone() });
                         return Ok(match op {
                             BinOp::Lt => format!("(({}) < 0)", call),
                             BinOp::Le => format!("(({}) <= 0)", call),
@@ -36903,6 +36937,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     let (proto, def) = super::operator_dispatch::emit_vr_wrapper(
                                         self.top_level_storage(), &ret, &wrap, &lty, &arg_ty,
                                         &c_name, arg_is_byref,
+                                        self.recv_by_copy(&lty, false), // #1598: operators are `ro @`
                                     );
                                     self.vr_ueq_protos_buf.borrow_mut().push_str(&proto);
                                     buf.push_str(&def);
@@ -36945,6 +36980,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 let (proto, def) = super::operator_dispatch::emit_vr_wrapper(
                                     self.top_level_storage(), &ret, &wrap, &lty, &arg_ty,
                                     &c_name, arg_is_byref,
+                                    self.recv_by_copy(&lty, false), // #1598: operators are `ro @`
                                 );
                                 self.vr_ueq_protos_buf.borrow_mut().push_str(&proto);
                                 buf.push_str(&def);
@@ -37426,9 +37462,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     self.vr_ueq_protos_buf.borrow_mut().push_str(&format!(
                                         "{s}{ret} {w}({recv} a);\n",
                                         s = self.top_level_storage(), ret = ret, w = wrap, recv = operand_ty));
+                                    // #1598: a small `ro @` receiver is taken by copy.
+                                    let recv_expr = if self.recv_by_copy(&operand_ty, sig.recv_mutable) { "a" } else { "&a" };
                                     buf.push_str(&format!(
-                                        "{s}{ret} {w}({recv} a) {{ return {c}(&a); }}\n",
-                                        s = self.top_level_storage(), ret = ret, w = wrap, recv = operand_ty, c = c_name));
+                                        "{s}{ret} {w}({recv} a) {{ return {c}({re}); }}\n",
+                                        s = self.top_level_storage(), ret = ret, w = wrap, recv = operand_ty, c = c_name, re = recv_expr));
                                 }
                             }
                             return Ok(format!("{}({})", wrap, v));
@@ -37474,6 +37512,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // instead (always emitted well after the typedef,
                             // deep inside a function body) — same technique as
                             // the binary-operator fix just above.
+                            // #1598: a small `ro @` receiver is taken by copy.
+                            if self.recv_by_copy(&operand_ty, false) {
+                                return Ok(format!("({}({}))", c_name, v));
+                            }
                             let recv_tmp = self.fresh_tmp();
                             self.line(&format!("{} {} = {};", operand_ty, recv_tmp, v));
                             return Ok(format!("({}(&({})))", c_name, recv_tmp));
@@ -39187,12 +39229,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // case (`is_primitive_mut_recv_ptr`), so a bare `@` read
                 // (e.g. `@ = @ + by`'s RHS) must deref it too, exactly like
                 // the value-struct pointer case.
-                let self_by_ptr_value_record = self.var_types.get("nova_self")
-                    .map(|c| Self::is_value_struct_ptr(c) || Self::is_primitive_mut_recv_ptr(c))
-                    .unwrap_or(false)
-                    || self.current_receiver_type.as_deref()
-                        .map(|t| t != "str" && self.value_record_names.contains(t))
-                        .unwrap_or(false);
+                let self_by_ptr_value_record = self.self_receiver_is_pointer(); // #1598
                 if self_by_ptr_value_record {
                     // 172.4 Ф.3 блокер-1: в return-позиции `-> @` — ptr.
                     if self.in_recv_ptr_return_position.get() {
@@ -41758,7 +41795,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             for a in args {
                                 arg_strs.push(self.emit_expr(a.expr())?);
                             }
-                            let mut full_args = vec!["nova_self".to_string()];
+                            // #1598 (D488 rule 2): the callee may take its receiver by
+                            // copy while this body holds `nova_self` as a pointer (a `mut @`
+                            // or a large `ro @` caller), or the other way round.
+                            let callee_mut = self.method_overloads
+                                .get(&(recv_type.clone(), method_stripped.clone()))
+                                .and_then(|sigs| sigs.iter().find(|s| s.c_name == c_fn))
+                                .map_or(false, |s| s.recv_mutable || self.sig_recv_forced_ptr(s));
+                            let self_c = self.var_types.get("nova_self").cloned().unwrap_or_default();
+                            let self_is_ptr = self_c.trim_end().ends_with('*');
+                            let callee_by_copy = self.recv_by_copy(&self_c, callee_mut);
+                            let self_arg = match (Self::is_value_struct(self_c.trim_end_matches('*')), callee_by_copy, self_is_ptr) {
+                                (true, true, true) => "(*nova_self)".to_string(),
+                                (true, false, false) => "(&nova_self)".to_string(),
+                                _ => "nova_self".to_string(),
+                            };
+                            let mut full_args = vec![self_arg];
                             full_args.extend(arg_strs);
                             return Ok(format!("{}({})", c_fn, full_args.join(", ")));
                         }
@@ -44338,7 +44390,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 // (registered with AST flag) — Ф.2 consumes it to
                                 // switch immutable receivers к by-value passing.
                                 let obj_ty_local = self.recv_c_type_materialized(obj).unwrap_or_default();
-                                let obj_c = self.prepare_method_recv(&obj_c, &obj_ty_local, sig.recv_mutable, Some(obj));
+                                let forced = self.sig_recv_forced_ptr(sig);
+                                let obj_c = self.prepare_method_recv_for(&obj_c, &obj_ty_local, sig.recv_mutable, forced, Some(obj));
                                 let mut arg_strs = vec![obj_c];
                                 for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                                 // D178: fill in default values for omitted trailing params.
@@ -45519,8 +45572,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 self.recv_c_type_materialized(obj).unwrap_or_default();
                                             let recv_mut = fn_decl.receiver.as_ref()
                                                 .map(|r| r.mutable).unwrap_or(false);
-                                            let obj_c = self.prepare_method_recv(
-                                                &obj_c, &obj_ty_local, recv_mut, Some(obj));
+                                            let forced = Self::recv_forced_ptr_decl(&fn_decl);
+                                            let obj_c = self.prepare_method_recv_for(
+                                                &obj_c, &obj_ty_local, recv_mut, forced, Some(obj));
                                             let mut full = vec![obj_c];
                                             full.extend(arg_strs);
                                             let result_str = format!("{}({})", mono_name, full.join(", "));
@@ -45672,8 +45726,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         // route through prepare_method_recv (no-op for
                                         // heap/primitive receivers).
                                         let obj_ty_local = self.recv_c_type_materialized(obj).unwrap_or_default();
-                                        let obj_c = self.prepare_method_recv(
-                                            &obj_c, &obj_ty_local, sig.recv_mutable, Some(obj));
+                                        let forced = self.sig_recv_forced_ptr(&sig);
+                                        let obj_c = self.prepare_method_recv_for(
+                                            &obj_c, &obj_ty_local, sig.recv_mutable, forced, Some(obj));
                                         let mut full = vec![obj_c];
                                         full.extend(arg_strs);
                                         return Ok(format!("{}({})", sig.c_name, full.join(", ")));
@@ -46214,8 +46269,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     // method dispatch byte-identical.
                                     let recv_mut = fn_decl.receiver.as_ref()
                                         .map(|r| r.mutable).unwrap_or(false);
-                                    let recv = self.prepare_method_recv(
-                                        &obj_c, &obj_ty, recv_mut, Some(obj));
+                                    let forced = Self::recv_forced_ptr_decl(&fn_decl);
+                                    let recv = self.prepare_method_recv_for(
+                                        &obj_c, &obj_ty, recv_mut, forced, Some(obj));
                                     let mut full = vec![recv];
                                     full.extend(arg_strs);
                                     return Ok(format!("{}({})", method_c_name, full.join(", ")));
@@ -46464,8 +46520,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let obj_c = self.emit_expr(obj)?;
                         let obj_ty_local = self.recv_c_type_materialized(obj)
                             .unwrap_or_default();
-                        let obj_c = self.prepare_method_recv(
-                            &obj_c, &obj_ty_local, sig.recv_mutable, Some(obj));
+                        let forced = self.sig_recv_forced_ptr(&sig);
+                        let obj_c = self.prepare_method_recv_for(
+                            &obj_c, &obj_ty_local, sig.recv_mutable, forced, Some(obj));
                         let mut arg_strs = vec![obj_c];
                         let method_wrapped =
                             self.synthesize_method_byref_args(&sig_type, method, args);
@@ -47070,9 +47127,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 // Fallback: any instance sig.
                                 exact.or_else(|| sigs.iter().find(|s| s.is_instance))
                             })
-                            .map(|s| s.recv_mutable)
-                            .unwrap_or(false);
-                        let obj_c = self.prepare_method_recv(&obj_c, &obj_ty_local, recv_mutable, Some(obj));
+                            .map(|s| (s.recv_mutable, self.sig_recv_forced_ptr(s)))
+                            .unwrap_or((false, false));
+                        let (recv_mutable, forced) = recv_mutable;
+                        let obj_c = self.prepare_method_recv_for(&obj_c, &obj_ty_local, recv_mutable, forced, Some(obj));
                         let mut arg_strs = vec![obj_c];
                         // [M-172.14-methods-byref]: большой ro value-struct аргумент
                         // метода — обёртка в RefArg (materialize-temp/прямой адрес),
@@ -58487,6 +58545,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         recv_mutable: bool,
         obj_ast: Option<&Expr>,
     ) -> String {
+        self.prepare_method_recv_for(obj_c, obj_ty, recv_mutable, false, obj_ast)
+    }
+
+    /// #1598: `forced_ptr` -- the callee keeps a pointer receiver although not `mut @`
+    /// (`-> @`, `consume @`). It decides only the value-record branch.
+    fn prepare_method_recv_for(
+        &mut self,
+        obj_c: &str,
+        obj_ty: &str,
+        recv_mutable: bool,
+        forced_ptr: bool,
+        obj_ast: Option<&Expr>,
+    ) -> String {
         // №377 (D216 §5, owner decision 2026-08-06, variant A — auto-deref
         // for METHOD calls through a typed pointer): mirrors the sibling
         // `ExprKind::Member` field-access arm's `is_double_ptr` check
@@ -58535,6 +58606,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             .unwrap_or_else(|| Self::looks_like_ident_str(obj_c));
 
         if Self::is_value_struct_val(obj_ty) {
+            // #1598 (D488 rule 2): the callee takes a small `ro @` receiver by copy --
+            // the value itself; a fluent `-> @` pointer result is dereferenced.
+            if self.recv_by_copy(obj_ty, recv_mutable || forced_ptr) {
+                if let Some(e) = obj_ast {
+                    if self.is_fluent_value_ptr_for_target(e, obj_ty) {
+                        return format!("(*{})", obj_c.trim());
+                    }
+                }
+                return obj_c.to_string();
+            }
             // Plan 184 (Р7): the receiver may ITSELF be a value-record fluent
             // `-> @` result — already a `ref Self` pointer (`NovaValue_X*`, the
             // emit-fact from `fn_ret_*`). This is a chain of depth ≥ 3 whose inner
