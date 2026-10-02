@@ -1,0 +1,493 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc_borrowck's move analysis (`MirBorrowckCtxt::check_if_path_or_subpath_is_moved`)
+//   -- a value is tracked from its binding, each use asks whether it was moved, and the
+//   end of scope asks what is still owned; NOT taken: the dataflow over a control-flow
+//   graph -- this step walks straight-line code only and refuses the rest by name.
+// Role: the CONSUMPTION OBLIGATION of a must-consume type (D133), step 1 of the track
+//   (the integrator's word 2026-10-02): a file's own `type X consume`, its `consume`
+//   bindings and `consume` parameters on straight-line code -- consumed by a `consume`
+//   method, a `consume` parameter, a `return` or the tail, a `consume y = x` transfer;
+//   used after that is D131's error, still owned at the end is `D133-not-consumed`.
+//   Every value of such a type this step does not track -- inside a branch or a loop,
+//   in a position it does not classify -- is refused by name, with the step's stage.
+// Used by: check/run.nv, once the file is typed (`@check_consume_flow`).
+// Guarded by: nova test over pipeline/consume_flow_test.nv; the fixtures
+//   must_consume/ through check-novac-fixture-expect.sh and the differential.
+// novac/src/check/consume_flow.nv -- who owns a must-consume value, and until when.
+
+module novac.check
+
+import ../tree.{Node, NodeKind, is_node}
+import ../lex.{TokenKind}
+import ../names.{NameTable, NamespaceId}
+import ../sem.{branch_children, leaf_text, leaf_kind, expr_leaf_name, file_decls, decl_fn_row}
+import ../sem.{CalleeTarget, raw_row, call_arg_at, bind_mode_at, ParamMode, ty_source_name}
+import ../types.{TyId, no_ty, is_ty}
+
+/// One body's ownership state: the must-consume types of the file, and every value
+/// of one this body owns, by name -- `names` maps a name to its LATEST entry, so a
+/// re-binding shadows.
+type ConsumeFlow {
+    kinds []TyId /// the file's own must-consume types
+    names NameTable /// a name -> its latest entry below
+    nm []str /// per entry: the name it was bound under
+    owned_ty []TyId /// per entry: the value's type
+    at []Node /// per entry: where it was bound, for the refusal
+    consumed []bool /// per entry: consumed already
+    depth int /// how many branches, loops or nested blocks enclose the walk: inside one, nothing may change who owns what
+    stopped bool /// a refusal stopped tracking this body: what follows is not judged
+}
+
+/// D133-not-consumed, worded like the oracle's: the name, the type, the ways out.
+fn not_consumed_msg(name str, ty str, methods str) -> str =>
+    "`${name}` (type `${ty}`) is not consumed before the end of its scope -- call one of its `consume` methods (${methods}), return it, or pass it to a `consume` parameter (D133)"
+
+/// D131: a consumed value is gone.
+fn used_after_consume_msg(name str) -> str =>
+    "`${name}` is used after it was consumed -- its value went to a `consume` call and is no longer here (D131)"
+
+/// D133-empty-consume: a must-consume type nothing could ever consume.
+fn empty_consume_msg(ty str) -> str =>
+    "type `${ty}` is declared `consume` and has no `consume` method -- nothing could ever consume its values (D133)"
+
+/// E_CONSUME_KEYWORD_MISSING: the obligation is visible at the binding.
+fn consume_keyword_missing_msg(ty str) -> str =>
+    "a value of must-consume type `${ty}` is bound with `ro` or `mut` -- bind it with `consume x = ...`, which is where its obligation starts (D133)"
+
+/// THE ONE REFUSAL of what step 1 does not track yet, naming WHERE the value stands.
+fn untracked_consume_msg(where str) -> str =>
+    "outside the subset: a value of a must-consume type ${where} is not tracked yet, so its obligation would go unchecked (274.7 B13)"
+
+/// The file's own `type X consume` declarations: their types, and each one's refusal
+/// when it declares no `consume` method (D133-empty-consume). Then every function
+/// body of the file is walked. A file that declares none has nothing to do here.
+fn Checker mut @check_consume_flow(file Node) -> () {
+    ro kinds = @consume_kinds_of(file)
+    if kinds.len() == 0 { return }
+    for d in file_decls(file) {
+        if d.kind_of() != NodeKind.TypeDecl || !decl_marked_consume(d) { continue }
+        ro dk = branch_children(d)
+        if dk.len() < 2 || dk[1].kind_of() != NodeKind.LeafNode { continue }
+        ro t = @ctx.ty_of_name(leaf_text(dk[1])) ?? no_ty()
+        if is_ty(t) && @consume_methods_of(t) == "" {
+            @reject_first_leaf_of([]Node.of(dk[1]), empty_consume_msg(leaf_text(dk[1])))
+        } else {
+            // At least one `consume` method: the type can be consumed.
+        }
+    }
+    for d in file_decls(file) {
+        if d.kind_of() != NodeKind.FnDecl { continue }
+        @flow_fn(d, kinds)
+    }
+}
+
+/// The same obligation over ONE INSTANCE of a generic body (check_instance): the
+/// file pass skips a generic declaration, whose types exist only per instance --
+/// this is where they do. `body_file` declares the must-consume types it may meet.
+fn Checker mut @check_consume_flow_instance(decl Node, body_file Node) -> () {
+    ro kinds = @consume_kinds_of(body_file)
+    if kinds.len() == 0 { return }
+    @flow_fn(decl, kinds)
+}
+
+/// The file's own `type X consume` declarations, as types.
+fn Checker @consume_kinds_of(file Node) -> []TyId {
+    mut kinds = []TyId.new()
+    for d in file_decls(file) {
+        if d.kind_of() != NodeKind.TypeDecl || !decl_marked_consume(d) { continue }
+        ro dk = branch_children(d)
+        if dk.len() < 2 || dk[1].kind_of() != NodeKind.LeafNode { continue }
+        ro t = @ctx.ty_of_name(leaf_text(dk[1])) ?? no_ty()
+        if !is_ty(t) { continue }
+        kinds.push(t)
+    }
+    kinds
+}
+
+/// Is a type declaration marked `consume`? The marker is a KEYWORD leaf among its
+/// children (the parser keeps it), found by token kind.
+fn decl_marked_consume(d Node) -> bool {
+    for c in branch_children(d) {
+        if c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.KwConsume { return true }
+    }
+    false
+}
+
+/// The names of `t`'s `consume` methods, comma-separated -- `""` when it has none.
+fn Checker @consume_methods_of(t TyId) -> str {
+    mut out = ""
+    for i in 0..@ctx.fns.rows.len() {
+        ro fd = @ctx.fns.rows[i]
+        // A METHOD's type is its receiver's, parameter zero (plan 273); `owner`
+        // names the type of a STATIC method only.
+        if !fd.has_recv || fd.param_cnt == 0 { continue }
+        ro recv = @ctx.fns.params[fd.param_off]
+        if recv.type_id != t || recv.mode != ParamMode.ModeConsume { continue }
+        out = if out == "" { "`${fd.name}`" } else { "${out}, `${fd.name}`" }
+    }
+    out
+}
+
+/// Is `t` one of the file's must-consume types?
+fn is_kind_of(kinds []TyId, t TyId) -> bool {
+    for k in kinds {
+        if k == t { return true }
+    }
+    false
+}
+
+/// One function: its `consume` parameters of a must-consume type are owned from the
+/// start (the receiver of a `consume` method is the consumption itself, so `@` is not
+/// tracked), its body is walked, and whatever is still owned at its end is refused.
+fn Checker mut @flow_fn(f Node, kinds []TyId) -> () {
+    // SILENT-OK: a generic body is walked per INSTANCE (`@check_consume_flow_instance`), as it is typed.
+    if @is_generic_decl(f) && @substs.len() == 0 { return }
+    ro row = match if raw_row(@inst_row) >= 0 { Some(@inst_row) } else { decl_fn_row(f, @ctx) } {
+        // SILENT-OK: no row -- the subset walk refused the declaration already.
+        None => return
+        Some(r) => r
+    }
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    ro fk = branch_children(f)
+    if fk.len() == 0 { return }
+    mut fl = ConsumeFlow { kinds, names: NameTable.new(NamespaceId.NsLocals), nm: []str.new(),
+                           owned_ty: []TyId.new(), at: []Node.new(), consumed: []bool.new(), depth: 0, stopped: false }
+    ro first = if fd.has_recv { 1 } else { 0 }
+    for p in first..fd.param_cnt {
+        ro pd = @ctx.fns.params[fd.param_off + p]
+        ro pt = @concrete(pd.type_id)
+        if pd.mode == ParamMode.ModeConsume && is_kind_of(kinds, pt) {
+            flow_own(fl, pd.name, pt, fk[0])
+        } else {
+            // A view, a `mut` view, or no must-consume type: nothing owned.
+        }
+    }
+    ro body = fk[fk.len() - 1]
+    ro bk = body.kind_of()
+    if bk == NodeKind.Block {
+        // The last statement is the TAIL only of a body that promises a value
+        // (`value_body_of`, tail_rules.nv): its value then leaves the function.
+        @flow_block(body, fl, body.id_of() == value_body_of(fk))
+    } else if bk == NodeKind.FnExprBody {
+        // `=> expr`: the expression IS the tail, and its value leaves the function.
+        for c in branch_children(body) {
+            match c {
+                Leaf(_) => {}
+                Branch { .. } => @flow_expr(c, fl, true)
+            }
+        }
+    } else {
+        // A declaration with no body (an `extern` one): nothing is walked, and its
+        // `consume` parameters are the callee's business, written elsewhere.
+        return
+    }
+    if fl.stopped { return }
+    for i in 0..fl.owned_ty.len() {
+        if fl.consumed[i] { continue }
+        ro t = fl.owned_ty[i]
+        @reject_first_leaf_of([]Node.of(fl.at[i]),
+            not_consumed_msg(fl.nm[i], ty_source_name(@ctx, t), @consume_methods_of(t)))
+    }
+}
+
+/// Own a new value: a fresh entry, and the name now means it.
+fn flow_own(mut fl ConsumeFlow, name str, t TyId, at Node) -> () {
+    fl.names.put(name, fl.owned_ty.len())
+    fl.nm.push(name)
+    fl.owned_ty.push(t)
+    fl.at.push(at)
+    fl.consumed.push(false)
+}
+
+/// A LANGUAGE error at `n`, and tracking stops: what follows is drawn from a state
+/// the error already broke.
+fn Checker mut @flow_reject(n Node, msg str, mut fl ConsumeFlow) -> () {
+    @reject_first_leaf_of([]Node.of(n), msg)
+    fl.stopped = true
+}
+
+/// Refuse what this step does not track, once per body: tracking stops, so no
+/// later verdict is drawn from a state that is no longer known.
+fn Checker mut @flow_stop(n Node, where str, mut fl ConsumeFlow) -> () {
+    if fl.stopped { return }
+    @report_first_leaf_of([]Node.of(n), untracked_consume_msg(where))
+    fl.stopped = true
+}
+
+/// A block's statements in order; its last one is a tail only when the block is a
+/// function's value body (`value_body`).
+fn Checker mut @flow_block(b Node, mut fl ConsumeFlow, value_body bool) -> () {
+    ro kids = branch_children(b)
+    mut last = -1
+    mut i = 0
+    for c in kids {
+        match c {
+            Leaf(_) => {}
+            Branch { .. } => { last = i }
+        }
+        i += 1
+    }
+    i = 0
+    for c in kids {
+        if fl.stopped { return }
+        match c {
+            Leaf(_) => {}
+            Branch { .. } => {
+                // A tracked name as a nested block's last statement may be the
+                // block's VALUE -- a move out of a branch, which step 1 does not follow.
+                ro tracked_tail = fl.depth > 0 && i == last && @is_tracked_name(c, fl)
+                if tracked_tail {
+                    @flow_stop(c, "moved out of a branch, a loop or a nested block", fl)
+                } else {
+                    @flow_stmt(c, fl, value_body && i == last)
+                }
+            }
+        }
+        i += 1
+    }
+}
+
+/// Is `c` a plain name of a value this body tracks?
+#realtime nogc
+fn Checker @is_tracked_name(c Node, fl ConsumeFlow) -> bool =>
+    c.kind_of() == NodeKind.Name && fl.names.find(expr_leaf_name(c)) >= 0
+
+/// A branch, a loop or a nested block, walked with the depth raised: inside it a
+/// value may be USED, and a fresh one may be made and consumed there, but nothing
+/// that outlives it may change owner -- the state after it is then the state before
+/// it, on every path. Whatever would change that is refused by name (step 2 follows
+/// the paths).
+fn Checker mut @flow_nested(n Node, mut fl ConsumeFlow) -> () {
+    fl.depth += 1
+    for c in branch_children(n) {
+        if fl.stopped { break }
+        match c {
+            Leaf(_) => {}
+            Branch { .. } => @flow_child(c, fl)
+        }
+    }
+    fl.depth -= 1
+}
+
+/// One child of a branch, a loop or a nested block: a block is a list of
+/// statements, and anything else -- a statement or a condition -- is judged as one
+/// (`@flow_stmt` tells a statement from an expression).
+fn Checker mut @flow_child(c Node, mut fl ConsumeFlow) -> () {
+    if c.kind_of() == NodeKind.Block {
+        @flow_block(c, fl, false)
+        return
+    } else {
+        // Not a block: one statement or one expression.
+    }
+    @flow_stmt(c, fl, false)
+}
+
+/// Is any tracked value still owned? An early exit then skips its obligation.
+fn flow_any_live(fl ConsumeFlow) -> bool {
+    for c in fl.consumed {
+        if !c { return true }
+    }
+    false
+}
+
+/// One statement. A compound one (a branch, a loop, a nested block) is not walked
+/// by this step: if a must-consume value stands anywhere inside it, it is refused.
+fn Checker mut @flow_stmt(st Node, mut fl ConsumeFlow, is_last bool) -> () {
+    ro k = st.kind_of()
+    if k == NodeKind.BindStmt {
+        @flow_bind(st, fl)
+    } else if k == NodeKind.RetStmt {
+        if fl.depth > 0 && flow_any_live(fl) {
+            @flow_stop(st, "left early by a `return` while it is still owned", fl)
+            return
+        } else {
+            // The function's own last word, or nothing owned is skipped.
+        }
+        for c in branch_children(st) {
+            match c {
+                Leaf(_) => {}
+                Branch { .. } => @flow_expr(c, fl, true)
+            }
+        }
+    } else if is_compound_kind(k) {
+        @flow_nested(st, fl)
+    } else {
+        // An expression statement: its value is the tail's when it is the last one,
+        // else it is used and dropped.
+        @flow_expr(st, fl, is_last)
+    }
+}
+
+/// The statement kinds this step does not walk: every one that branches, loops or
+/// opens a scope of its own.
+fn is_compound_kind(k NodeKind) -> bool =>
+    k == NodeKind.IfStmt || k == NodeKind.IfExpr || k == NodeKind.IfLet || k == NodeKind.MatchExpr ||
+    k == NodeKind.WhileStmt || k == NodeKind.WhileLet || k == NodeKind.ForStmt ||
+    k == NodeKind.WithStmt || k == NodeKind.SupervisedStmt || k == NodeKind.SpawnStmt ||
+    k == NodeKind.Block || k == NodeKind.Unsafe || k == NodeKind.AssignStmt ||
+    k == NodeKind.HandlerLit || k == NodeKind.HandlerOp
+
+/// The kinds that NAME a value where it lives rather than produce one: a name, `@`,
+/// a field, an element. Using one is a view; moving out of one is what step 1 does
+/// not track unless it is a tracked binding's name.
+fn is_place_kind(k NodeKind) -> bool =>
+    k == NodeKind.Name || k == NodeKind.SelfExpr || k == NodeKind.SelfField ||
+    k == NodeKind.FieldAccess || k == NodeKind.Index || k == NodeKind.Paren
+
+/// `consume x = e`, `ro x = e`, `mut x = e`: a must-consume initializer starts an
+/// obligation, and only the `consume` form may hold it (D133).
+fn Checker mut @flow_bind(st Node, mut fl ConsumeFlow) -> () {
+    ro kids = branch_children(st)
+    if kids.len() < 2 { return }
+    ro init = kids[kids.len() - 1]
+    ro it = @chan.type_if_known(init.id_of())
+    if !is_kind_of(fl.kinds, it) {
+        // Not a must-consume value: the initializer is an ordinary use.
+        @flow_expr(init, fl, false)
+        return
+    } else {
+        // A must-consume value: judged below.
+    }
+    if bind_mode_at(kids) != ParamMode.ModeConsume {
+        @reject_first_leaf_of(kids, consume_keyword_missing_msg(ty_source_name(@ctx, it)))
+        fl.stopped = true
+        return
+    } else {
+        // The `consume` form: the obligation is visible here.
+    }
+    if fl.depth > 0 {
+        @flow_stop(st, "bound inside a branch, a loop or a nested block", fl)
+        return
+    } else if kids[1].kind_of() != NodeKind.LeafNode {
+        @flow_stop(st, "bound by a destructuring pattern", fl)
+        return
+    } else {
+        // One name.
+    }
+    // The initializer MOVES into the binding: a name is consumed by it.
+    @flow_expr(init, fl, true)
+    if fl.stopped { return }
+    flow_own(fl, leaf_text(kids[1]), it, kids[1])
+}
+
+/// An expression in order of evaluation. `moved` says the expression's VALUE leaves
+/// to a new owner here (a `consume` parameter or receiver, a `return`, the tail, a
+/// `consume` binding); otherwise the value is only used, and a must-consume value
+/// that is not a name in a tracked binding has nowhere to go.
+fn Checker mut @flow_expr(e Node, mut fl ConsumeFlow, moved bool) -> () {
+    if fl.stopped { return }
+    ro k = e.kind_of()
+    if k == NodeKind.Name {
+        @flow_name(e, fl, moved)
+        return
+    } else if k == NodeKind.Paren {
+        for c in branch_children(e) {
+            match c {
+                Leaf(_) => {}
+                Branch { .. } => @flow_expr(c, fl, moved)
+            }
+        }
+        return
+    } else {
+        // Not a plain name: its parts below.
+    }
+    ro t = if is_node(e.id_of()) { @chan.type_if_known(e.id_of()) } else { no_ty() }
+    if is_kind_of(fl.kinds, t) && is_place_kind(k) && moved {
+        // `consume_it(@)`, `eat(b.tx)`: moving out of a view or of a place.
+        @flow_stop(e, "moved out of a view or a place (`@`, a field, an element)", fl)
+        return
+    } else if is_kind_of(fl.kinds, t) && !is_place_kind(k) && !moved {
+        // A FRESH value with nowhere to go: a view argument, an operand, a
+        // dropped statement.
+        @flow_stop(e, "in this position (a view argument, an operand or a dropped statement)", fl)
+        return
+    } else {
+        // No must-consume value, a view used in place, or a value that moves.
+    }
+    if (k == NodeKind.Call || k == NodeKind.MethodCall) && @chan.has_callee(e.id_of()) {
+        @flow_call(e, fl)
+    } else if is_compound_kind(k) {
+        @flow_nested(e, fl)
+    } else if k == NodeKind.Try && flow_any_live(fl) {
+        @flow_stop(e, "left early by a `?` while it is still owned", fl)
+    } else {
+        for c in branch_children(e) {
+            match c {
+                Leaf(_) => {}
+                Branch { .. } => @flow_expr(c, fl, false)
+            }
+        }
+    }
+}
+
+/// A name: a tracked binding is consumed when it moves and must still be owned
+/// either way; an untracked name of a must-consume type (a view parameter, `@`) may
+/// be used, and moving it is not tracked by this step.
+fn Checker mut @flow_name(e Node, mut fl ConsumeFlow, moved bool) -> () {
+    ro i = fl.names.find(expr_leaf_name(e))
+    if i >= 0 {
+        if fl.consumed[i] {
+            @flow_reject(e, used_after_consume_msg(expr_leaf_name(e)), fl)
+        } else if moved && fl.depth > 0 {
+            @flow_stop(e, "consumed inside a branch, a loop or a nested block", fl)
+        } else if moved {
+            fl.consumed[i] = true
+        } else {
+            // Used, and still owned.
+        }
+    } else if moved && is_node(e.id_of()) && is_kind_of(fl.kinds, @chan.type_if_known(e.id_of())) {
+        @flow_stop(e, "moved out of a view or a place (`@`, a field, an element)", fl)
+    } else {
+        // An ordinary name, or a view of a must-consume value that is only used.
+    }
+}
+
+/// A call with a recorded callable: each argument goes where its parameter's MODE
+/// says -- a `consume` slot moves it, any other slot only uses it. The receiver of a
+/// method is slot zero (plan 273).
+fn Checker mut @flow_call(e Node, mut fl ConsumeFlow) -> () {
+    ro kids = branch_children(e)
+    ro is_method = e.kind_of() == NodeKind.MethodCall
+    ro from = if is_method { 3 } else { 1 }
+    ro row = match @chan.callee_of(e.id_of()).target {
+        CalleeFn(r) => r
+        // A variant, a constructor, a display, an effect operation: every
+        // argument is a payload or a field, which this step moves.
+        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => {
+            @flow_args_moved(kids, from, is_method, fl)
+            return
+        }
+    }
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    ro slots = @chan.callee_slots_of(e.id_of())
+    for s in 0..slots.len() {
+        ro at = slots[s].arg_row
+        if at < 0 { continue }
+        ro written = if is_method { at - 1 } else { at }
+        ro arg = if is_method && at == 0 { kids[0] } else { call_arg_at(kids, from, written) }
+        ro mode = if s < fd.param_cnt { @ctx.fns.params[fd.param_off + s].mode } else { ParamMode.ModeRo }
+        @flow_expr(arg, fl, mode == ParamMode.ModeConsume)
+    }
+}
+
+/// The arguments of a call that names no callable row: each moves into what is built.
+fn Checker mut @flow_args_moved(kids []Node, from int, is_method bool, mut fl ConsumeFlow) -> () {
+    if is_method {
+        // The receiver of a built value's method is only read.
+        @flow_expr(kids[0], fl, false)
+    } else {
+        // A free call: child zero is the callee's name.
+    }
+    mut i = 0
+    for c in kids {
+        if i >= from {
+            match c {
+                Leaf(_) => {}
+                Branch { .. } => @flow_expr(c, fl, true)
+            }
+        } else {
+            // The callee's name, or the receiver, the dot and the name.
+        }
+        i += 1
+    }
+}

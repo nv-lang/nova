@@ -1,0 +1,63 @@
+module must_consume.pos_1
+
+// A MUST-CONSUME TYPE ON STRAIGHT-LINE CODE (D133, step 1 of the track): every
+// owned value leaves exactly once -- through a `consume` method, a `consume`
+// parameter, a `return` or the tail, a `consume u = t` transfer -- and a fresh
+// value may go straight into a `consume` position. A value is USED, not moved,
+// by a view method, a field read and a view parameter, and those uses may stand
+// inside a branch or a loop: nothing there changes who owns it. novac refused
+// the declaration itself until this step ("novac checks no consumption
+// obligation anywhere", registry #1099).
+// Behaviour byte-for-byte with the oracle (novac-e1-smoke).
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx @peek() -> int => @id
+
+fn look(t Tx) -> int => t.id
+
+fn finish(consume t Tx) -> () {
+    t.commit()
+}
+
+fn open(n int) -> Tx {
+    consume t = Tx { id: n }
+    println(t.peek())
+    t
+}
+
+fn open_short(n int) -> Tx => { id: n * 10 }
+
+fn main() {
+    consume a = Tx { id: 1 }
+    println(look(a))
+    consume b = open(2)
+    // The loop stands BEFORE the first consumption: after one, the oracle reports
+    // a false "consumed only on part of the paths" (pos_2 beside this file).
+    for i in 0..2 {
+        println(b.peek() + i)
+    }
+    if look(b) > 1 {
+        println("big")
+    } else {
+        println("small")
+    }
+    a.commit()
+    finish(b)
+    consume c = open_short(3)
+    consume d = c
+    println(d.id)
+    d.rollback()
+    finish(Tx { id: 4 })
+    open_short(5).commit()
+}

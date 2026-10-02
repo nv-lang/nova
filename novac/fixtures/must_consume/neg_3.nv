@@ -1,0 +1,21 @@
+module must_consume.neg_3
+
+// A MUST-CONSUME VALUE BOUND WITH `ro` (D133; the oracle's
+// E_CONSUME_KEYWORD_MISSING): the obligation must be visible at the binding.
+
+// NOVAC_EXPECT is bound with `ro` or `mut`
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println(@id)
+}
+
+fn Tx @peek() -> int => @id
+
+fn main() {
+    ro t = Tx { id: 1 }
+    println(t.peek())
+}

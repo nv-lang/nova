@@ -1,0 +1,21 @@
+module must_consume.neg_1
+
+// A MUST-CONSUME VALUE NEVER CONSUMED (D133-not-consumed): `t` is only read.
+// The oracle refuses it too.
+
+// NOVAC_EXPECT is not consumed before the end of its scope
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println(@id)
+}
+
+fn Tx @peek() -> int => @id
+
+fn main() {
+    consume t = Tx { id: 1 }
+    println(t.peek())
+}

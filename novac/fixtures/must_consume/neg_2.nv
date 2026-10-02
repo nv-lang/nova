@@ -1,0 +1,22 @@
+module must_consume.neg_2
+
+// A CONSUMED VALUE USED AGAIN (D131): `t` went to `commit` and is gone. The
+// oracle refuses it too.
+
+// NOVAC_EXPECT is used after it was consumed
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println(@id)
+}
+
+fn Tx @peek() -> int => @id
+
+fn main() {
+    consume t = Tx { id: 1 }
+    t.commit()
+    println(t.peek())
+}

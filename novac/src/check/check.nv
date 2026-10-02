@@ -249,15 +249,14 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // first, so a misplaced form is named as misplaced.
                     @report_if_misplaced_generics(children)
                     @report_if_generic_form(children)
-                    // A MUST-CONSUME type parses (2026-09-14) and is refused BY NAME:
-                    // novac has no linearity, so accepting it would promise a guarantee
-                    // it does not give (registry #1099). Reading the form is what makes
-                    // D133 fixtures writable at all -- before it, the declaration fell
-                    // into the parser's fallback.
-                    @report_if_consume_type(children)
+                    // A MUST-CONSUME type is ACCEPTED since D133 step 1 (2026-10-02):
+                    // its obligation is checked once the file is typed
+                    // (`@check_consume_flow`, consume_flow.nv), and what that step does
+                    // not track is refused there by name. Until then it was refused
+                    // here -- novac had no linearity at all (registry #1099).
                     // AN EFFECT DECLARATION parses (2026-09-21) and is refused
-                    // BY NAME, the same shape as consume above: novac emits no
-                    // effect's runtime pieces. See @report_if_effect_type.
+                    // BY NAME: novac emits no effect's runtime pieces. See
+                    // @report_if_effect_type.
                     @report_if_effect_type(n)
                     // Fields, a newtype's representation, variant payloads:
                     // every type NAME must be declared (#970, typeref_rules) --

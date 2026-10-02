@@ -1,0 +1,14 @@
+module must_consume.neg_4
+
+// A `consume` TYPE WITH NO `consume` METHOD (D133-empty-consume): nothing could
+// ever consume its values. The oracle refuses it too.
+
+// NOVAC_EXPECT has no `consume` method
+
+type Ty consume {
+    id int
+}
+
+fn main() {
+    println(1)
+}

@@ -1,0 +1,31 @@
+module must_consume.neg_6
+
+// CONSUMED INSIDE A BRANCH: legal Nova (D133 joins the paths), and the oracle
+// compiles it. Step 1 of the track follows straight-line code only, so the
+// branch is refused BY NAME with its stage -- never accepted unchecked. Step 2
+// (branch joins) lifts it.
+
+// NOVAC_EXPECT consumed inside a branch, a loop or a nested block is not tracked yet
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println(@id)
+}
+
+fn Tx @peek() -> int => @id
+
+fn Tx consume @rollback() -> () {
+    println(0)
+}
+
+fn main() {
+    consume t = Tx { id: 1 }
+    if t.peek() > 0 {
+        t.commit()
+    } else {
+        t.rollback()
+    }
+}

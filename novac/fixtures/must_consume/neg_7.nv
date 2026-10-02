@@ -1,0 +1,26 @@
+module must_consume.neg_7
+
+// A MUST-CONSUME VALUE LEAKED IN A GENERIC BODY (D133-not-consumed): the body is
+// typed per instance, and the obligation is checked there too -- the file pass
+// skips a generic declaration, whose types exist only in an instance. The oracle
+// refuses it too.
+
+// NOVAC_EXPECT is not consumed before the end of its scope
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println(@id)
+}
+
+fn hold[T](x T, n int) -> int {
+    consume t = Tx { id: n }
+    println(t.id)
+    n
+}
+
+fn main() {
+    println(hold(1, 2))
+}
