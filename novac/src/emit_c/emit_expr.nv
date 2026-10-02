@@ -317,6 +317,15 @@ fn callee_row_or_none(cr CalleeRef) -> FnRow {
 
 /// Emit one expression: literals, names, fields, method/fn calls, binary ops.
 fn Emitter mut @emit_expr(e Node) -> () {
+    // A NODE THE LOWERING PUT IN A TEMPORARY (registry 1619) prints as it -- except
+    // the value of the assignment that defines it, which would read `x = x`.
+    ro hl = if e.id_of() != @hoist_root { @lo.ir.local_of_node(e.id_of()) } else { no_local() }
+    if hl != no_local() {
+        @body.append(@lo.ir.decl_of(hl).name)
+        return
+    } else {
+        // Not laid down, or the defining value: printed from the tree below.
+    }
     ro k = e.kind_of()
     if k == NodeKind.Lit {
         ro lkids = branch_children(e)

@@ -1,0 +1,303 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `rustc_mir_build` -- an operand that needs blocks of its own is
+//   lowered into a temporary BEFORE the expression that reads it (`as_operand` ->
+//   `as_temp`), in evaluation order; NOT taken: the full place/rvalue split of MIR --
+//   the subset lowers to temporaries only what the printer cannot spell inline.
+// Role: layer lower -- registry 1619: a value form that LAYS DOWN BLOCKS (`a ?? b`,
+//   `x?`, a short-circuit `&&`/`||` whose right side holds one) nested inside an
+//   expression is lowered into a temporary while the graph is still open, and the
+//   printer reads the temporary (`@emit_expr`'s head, emit_expr.nv). Before this the
+//   printer met such a node after the seal: the ICE "a block sealed twice" / "a `??`
+//   the hoist never built" -- inside an operator, on the right of `=`, as a method's
+//   argument, as an index, in a condition, in an interpolation, as a statement.
+// Used by: lowering.nv -- `@lower_place`, `@lower_eval`, the store, `if` / `while`
+//   conditions, `println`'s arguments, a range's low bound.
+// Guarded by: check-novac-differential.sh (fixture coalesce_nested/pos_1, byte for
+//   byte with the oracle, the nine probes of 1619 among its lines),
+//   nova test novac/src/pipeline/try_test.nv.
+//
+// ORDER (F65): the language evaluates left to right, and a temporary runs its effects
+// where it is laid down. So when a later operand needs a temporary, every EARLIER
+// operand that calls something is laid down first, in order -- otherwise `f() + (g() ??
+// 0)` would call `g` before `f`. A short-circuit right side is NOT walked: it runs only
+// when the left allows, and the form is lowered as a branch instead (`@lower_short_circuit`).
+
+module novac.lower
+
+import ../tree.{Node, NodeKind, BinOp, bin_op_of}
+import ../types.{is_ty}
+import ../sem.{branch_children, contains_call, is_expr_kind, leaf_kind}
+
+/// A form whose value is laid down by blocks of the lowering and so cannot be
+/// printed inline from the tree.
+fn is_block_form(k NodeKind) -> bool => k == NodeKind.Coalesce || k == NodeKind.Try
+
+/// `a && b` / `a || b`: the right side runs only when the left allows.
+fn is_short_circuit(e Node) -> bool {
+    if e.kind_of() != NodeKind.Bin { return false }
+    match bin_op_of(leaf_kind(branch_children(e)[1])) {
+        AndAlso | OrElse => true
+        Add | Sub | Mul | Div | Modulo | Range => false
+        Less | LessEq | Greater | GreaterEq | Equal | NotEqual => false
+        BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight => false
+    }
+}
+
+/// Does this expression hold a block form that `@hoist_block_forms` must lay down?
+/// The forms that lower their own insides -- an `if` value, a `match`, `unsafe`, a
+/// handler literal -- stop the search: their branches go through `@lower_place`.
+fn contains_block_form(e Node) -> bool {
+    match e {
+        Leaf(_) => false
+        Branch { kind, children, .. } => {
+            if is_block_form(kind) { return true }
+            if kind == NodeKind.IfExpr || kind == NodeKind.MatchExpr || kind == NodeKind.Unsafe ||
+               kind == NodeKind.HandlerLit || kind == NodeKind.Block {
+                return false
+            }
+            for c in children {
+                if contains_block_form(c) { return true }
+            }
+            false
+        }
+    }
+}
+
+/// Does this NODE itself need the lowering (rather than a walk of its insides)?
+/// A block form, or a short-circuit whose right side holds one.
+fn needs_own_lowering(e Node) -> bool {
+    if is_block_form(e.kind_of()) { return true }
+    is_short_circuit(e) && contains_block_form(branch_children(e)[2])
+}
+
+/// The expression a wrapper carries: a named argument's value, a constructor
+/// field's value; the node itself otherwise.
+fn carried_expr(c Node) -> ro Node {
+    ro k = c.kind_of()
+    if (k == NodeKind.NamedArg || k == NodeKind.CtorField) && branch_children(c).len() > 2 {
+        return branch_children(c)[2]
+    }
+    c
+}
+
+/// Lay down, in evaluation order, every block form NESTED in `e` (not `e` itself:
+/// its own position decides that), each into a temporary the printer reads back.
+/// An earlier operand that calls something goes first, into its own temporary, so
+/// the effects keep the source's order (F65). Already-hoisted nodes are skipped.
+fn Lowerer mut @hoist_block_forms(e Node) -> () {
+    if !contains_block_form_inside(e) || lowers_itself(e) { return }
+    if is_short_circuit(e) {
+        // Only the LEFT side runs unconditionally; a right side holding a block
+        // form makes the whole `&&`/`||` its parent's to lower as a branch.
+        @hoist_block_forms(branch_children(e)[0])
+        return
+    }
+    ro kids = branch_children(e)
+    mut next = 0
+    for i in 0..kids.len() {
+        ro c = carried_expr(kids[i])
+        if !is_expr_kind(c.kind_of()) || !contains_block_form(c) { continue }
+        // Every earlier operand that calls something runs first (F65).
+        for j in next..i {
+            @hoist_called(carried_expr(kids[j]))
+        }
+        next = i + 1
+        if @ir.local_of_node(c.id_of()) != no_local() { continue }
+        if needs_own_lowering(c) {
+            ro t = @out.type_if_known(c.id_of())
+            if !is_ty(t) {
+                // SILENT-OK: an untyped operand was refused where it was typed.
+                continue
+            }
+            match @lower_value_source(c, t) {
+                Some(l) => @ir.remember_hoist(c.id_of(), l)
+                None => {
+                    // Every branch left the body: nothing to read back.
+                }
+            }
+        } else {
+            @hoist_block_forms(c)
+        }
+    }
+}
+
+/// A node whose insides its own lowering lays down -- a block form or a
+/// branching short-circuit (`@lower_value_source`), an `if` value, a `match`,
+/// `unsafe`, a handler literal: a walk into it would hoist a part that runs only
+/// on one of its branches.
+fn lowers_itself(e Node) -> bool {
+    ro k = e.kind_of()
+    needs_own_lowering(e) || k == NodeKind.IfExpr || k == NodeKind.MatchExpr ||
+        k == NodeKind.Unsafe || k == NodeKind.HandlerLit
+}
+
+/// A value read in place by its statement -- a condition, the right of `=`, an
+/// index: lowered into a temporary when it IS a block form, walked when it
+/// holds one. The printer reads the temporary either way.
+fn Lowerer mut @hoist_operand(e Node) -> () {
+    if needs_own_lowering(e) && @ir.local_of_node(e.id_of()) == no_local() {
+        ro t = @out.type_if_known(e.id_of())
+        if !is_ty(t) {
+            // SILENT-OK: an untyped operand was refused where it was typed.
+            return
+        }
+        match @lower_value_source(e, t) {
+            Some(l) => @ir.remember_hoist(e.id_of(), l)
+            None => {
+                // Every branch left the body: nothing to read back.
+            }
+        }
+    } else {
+        @hoist_block_forms(e)
+    }
+}
+
+/// Does `e` hold a block form strictly below its own node?
+fn contains_block_form_inside(e Node) -> bool {
+    match e {
+        Leaf(_) => false
+        Branch { children, .. } => {
+            for c in children {
+                if contains_block_form(c) { return true }
+            }
+            false
+        }
+    }
+}
+
+/// An earlier operand that calls something, laid down in a temporary of its own
+/// so it runs before the block form that follows it; one that calls nothing has
+/// no effect to order and stays inline.
+fn Lowerer mut @hoist_called(c Node) -> () {
+    if !is_expr_kind(c.kind_of()) || !contains_call(c) { return }
+    if @ir.local_of_node(c.id_of()) != no_local() { return }
+    ro t = @out.type_if_known(c.id_of())
+    if !is_ty(t) {
+        // SILENT-OK: an untyped operand was refused where it was typed.
+        return
+    }
+    ro l = @ir.temp(t)
+    @lower_place(c, l)
+    @ir.remember_hoist(c.id_of(), l)
+}
+
+/// `a && b` / `a || b` whose right side holds a block form, as a BRANCH: the left
+/// into a temporary, and the right lowered only on the side that evaluates it --
+/// `if (a) { r = b } else { r = a }` for `&&`, `if (a) { r = a } else { r = b }`
+/// for `||`. The condition reads the left's temporary (the printer's hoist read).
+fn Lowerer mut @lower_short_circuit(e Node) -> Local {
+    ro kids = branch_children(e)
+    ro t = @out.type_of(e.id_of())
+    ro la = @ir.temp(t)
+    @lower_place(kids[0], la)
+    @ir.remember_hoist(kids[0].id_of(), la)
+    ro r = @ir.temp(t)
+    @ir.declare_zeroed(r)
+    ro is_and = match bin_op_of(leaf_kind(kids[1])) {
+        AndAlso => true
+        OrElse => false
+        Add | Sub | Mul | Div | Modulo | Range => false
+        Less | LessEq | Greater | GreaterEq | Equal | NotEqual => false
+        BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight => false
+    }
+    ro c = @ir.begin_if(Cond.Expr(kids[0]), ElseShape.Braced)
+    if is_and { @lower_place(kids[2], r) } else { @ir.copy(r, la) }
+    @ir.begin_else(c)
+    if is_and { @ir.copy(r, la) } else { @lower_place(kids[2], r) }
+    @ir.end_if(c)
+    r
+}
+
+/// TWO OR MORE ARGUMENTS THAT CALL SOMETHING get a temporary each, laid
+/// down in SOURCE ORDER (F65).
+///
+/// C fixes no evaluation order for arguments at any calling convention, and
+/// the oracle was measured -- 2026-08-16, re-run 2026-09-20 -- evaluating
+/// such a call RIGHT to left, while the spec calls left to right normative
+/// and OBSERVABLE. Printing the calls inline therefore shipped a program
+/// whose behaviour belongs to the C compiler; until this door the subset
+/// refused the form instead, which was the honest half-answer.
+///
+/// ONE effectful argument is left alone: a single effect has no order to get
+/// wrong, and a temporary for it would be emission nobody needs.
+fn Lowerer mut @hoist_ordered_args(call Node) -> () {
+    // `a && b` / `a || b` IS NOT A CALL: its right side runs only when the left
+    // allows, so laying both down in order ran `b` always (measured 2026-10-02:
+    // `mark("x", 0) > 1 && mark("y", 1) > 0` printed `eval y`). C's own `&&`
+    // keeps the order and the short circuit (registry 1619's wave).
+    if is_short_circuit(call) { return }
+    ro kids = branch_children(call)
+    mut effectful = 0
+    for c in kids {
+        if !is_expr_kind(c.kind_of()) { continue }
+        if !contains_call(c) { continue }
+        effectful += 1
+    }
+    if effectful < 2 { return }
+    // IN WRITTEN ORDER, which is the whole point: the children are walked
+    // left to right and each hoist is a statement placed before the call's
+    // own, so the order of effects is the order of the source by
+    // construction rather than by anyone's care.
+    for c in kids {
+        if !is_expr_kind(c.kind_of()) { continue }
+        if !contains_call(c) { continue }
+        ro t = @out.type_if_known(c.id_of())
+        if !is_ty(t) {
+            // SILENT-OK: an argument the checker recorded no type for was
+            // refused where it was typed; hoisting it would need a type for
+            // the temporary, and inventing one is how a wrong C type is
+            // spelled. The call still prints it inline, as before.
+            continue
+        } else {
+            // A typed effectful argument: it gets its own local.
+        }
+        ro l = @ir.temp(t)
+        @lower_place(c, l)
+        @ir.remember_hoist(c.id_of(), l)
+    }
+}
+
+/// ONE MORE gate before `@lo.ir.finish()` seals the graph (registry #TBD,
+/// the if-in-argument wave): an argument whose OWN kind needs sealed
+/// blocks (`IfExpr`, `Coalesce` -- `@lower_value_source`'s own dispatch)
+/// cannot wait for `@hoist_ordered_args` above -- that gate fires only at
+/// two or more call-CONTAINING arguments (F65's concern is INTERLEAVING,
+/// not existence), so a single such argument never reaches it, and
+/// printing it from the tree at print time is impossible by then:
+/// `@lo.ir.finish()` has already sealed the graph, and `@lower_if_value`
+/// opening a new block there is the `block sealed twice` ICE (measured
+/// live, this wave). Lowered HERE instead -- before the seal --
+/// `@emit_bound_args` (emit_expr.nv) already reads the hoist back through
+/// `@lo.ir.local_of_node`, so no printer-side change is needed at all.
+fn Lowerer mut @hoist_sealed_args(call Node) -> () {
+    // Not into a short circuit's right side: it lowers as a branch (lower_hoist.nv).
+    if is_short_circuit(call) { return }
+    ro kids = branch_children(call)
+    for k in kids {
+        // A constructor FIELD is an argument's position too (registry 1557).
+        ro c = if k.kind_of() == NodeKind.CtorField && branch_children(k).len() > 2 { branch_children(k)[2] } else { k }
+        if !is_expr_kind(c.kind_of()) { continue }
+        ro ck = c.kind_of()
+        // `unsafe { .. }` JOINS THEM (registry 1525): `@lower_value_source`'s
+        // third arm. std's `Vec[T] @get` returns `Some(unsafe { .. })`; check
+        // took it, the printer had no arm, and every `get` instance the shell
+        // lacks died in emit.
+        if ck != NodeKind.IfExpr && ck != NodeKind.Coalesce && ck != NodeKind.Try && ck != NodeKind.Unsafe { continue }
+        ro t = @out.type_if_known(c.id_of())
+        if !is_ty(t) {
+            // SILENT-OK: refused where it was typed; nothing to hoist.
+            continue
+        } else {
+            // A typed sealed-block argument: it gets its own local.
+        }
+        match @lower_value_source(c, t) {
+            Some(l) => @ir.remember_hoist(c.id_of(), l)
+            None => {
+                // Not actually a value (e.g. every branch terminates):
+                // nothing to hoist, and the print side has nothing to read
+                // either -- consistent with how a terminating tail if is
+                // already handled elsewhere in this file.
+            }
+        }
+    }
+}

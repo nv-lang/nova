@@ -20,17 +20,15 @@
 
 module novac.check
 
-import ../tree.{Node}
+import ../tree.{Node, NodeKind}
 import ../types.{TyId, no_ty, is_ty}
 import ../sem.{branch_children, coalesce_payload, option_payload, is_coalesce_return, raw_row}
 
-/// `?` and `?? return` lay down blocks and leave the body, and only a PLACED
-/// value position lowers them with the graph open (`@placed`, set by the doors
-/// that type one: a binding, a tail or `return`, a match arm). Elsewhere -- an
-/// operator, the right of `=`, an argument, a condition -- the printer meets
-/// them after the seal; a plain `??` there is the ICE "a block sealed twice"
-/// (registry 1619, measured 2026-10-02), and the new forms do not join it.
-const SEALED_VALUE_POSITION_MSG = "outside the subset: `x?` and `x ?? return r` are compiled only as a binding initializer, a `return` value, a `=>` body or a match arm's body -- inside an operator, an argument, a condition or on the right of `=` they are not compiled yet (E2, the control-flow horizon): bind the value first"
+/// A match GUARD is tested inside the arm's chain of checks, and the printer
+/// finds the arm's innermost check by counting the `if`s the lowering opened:
+/// a `??` or a `?` laid down in the guard opens one more and the arm is lost
+/// (measured 2026-10-02: the guard and the body vanished from the C).
+const GUARD_BLOCK_FORM_MSG = "outside the subset: `??` and `?` inside a match guard are not compiled yet (E2, the control-flow horizon: the guard is tested inside the arm's chain of checks) -- bind the value before the `match`"
 
 /// `?` takes an Option or a Result (D85). The oracle accepts any operand here
 /// (`x?` with `x int` compiles), so the reference is the spec.
@@ -58,14 +56,9 @@ const COALESCE_RETURN_GENERIC_MSG = "`return` cannot be the fallback of `??` in 
 /// value is the payload; the lowering returns `None` from the None branch.
 fn Checker mut @type_try(e Node) -> () {
     ro tk = branch_children(e)
-    ro placed = e.id_of() == @placed
     ro before = @out.len()
     @type_expr(tk[0])
     if @out.len() > before { return }
-    if !placed {
-        @report_first_leaf_of(tk, SEALED_VALUE_POSITION_MSG)
-        return
-    }
     ro ot = type_of(tk[0], @ctx, @scope, @chan)
     ro payload = if is_ty(ot) { coalesce_payload(@ctx, ot) } else { no_ty() }
     if !is_ty(payload) {
@@ -97,10 +90,6 @@ fn Checker mut @type_try(e Node) -> () {
 /// `R` is judged as a `return` operand -- the same door, the same rules. Answers
 /// whether the form was admitted; a refusal was written when it was not.
 fn Checker mut @type_coalesce_return(e Node, qk []Node) -> bool {
-    if e.id_of() != @placed {
-        @report_first_leaf_of(qk, SEALED_VALUE_POSITION_MSG)
-        return false
-    }
     ro rt = @ret_expect
     if is_ty(rt) && is_ty(coalesce_payload(@ctx, rt)) {
         @reject_first_leaf_of(qk, COALESCE_RETURN_FALLBACK_MSG)
@@ -124,4 +113,29 @@ fn Checker mut @type_coalesce_return(e Node, qk []Node) -> bool {
     if @out.len() > mark { return false }
     @judge_return(qk[3], @tail_type_of(qk[3]))
     @out.len() == mark
+}
+
+
+/// A guard holding `??` or `?` is refused by name (`GUARD_BLOCK_FORM_MSG`);
+/// called after the guard was typed, so a refusal inside it speaks first.
+fn Checker mut @refuse_block_form_in_guard(g Node) -> () {
+    if holds_block_form(g) {
+        @report_first_leaf_of(branch_children(g), GUARD_BLOCK_FORM_MSG)
+    } else {
+        // No block form: the guard prints inline, as it always has.
+    }
+}
+
+/// Does this expression hold a `??` or a `?` anywhere?
+fn holds_block_form(e Node) -> bool {
+    match e {
+        Leaf(_) => false
+        Branch { kind, children, .. } => {
+            if kind == NodeKind.Coalesce || kind == NodeKind.Try { return true }
+            for c in children {
+                if holds_block_form(c) { return true }
+            }
+            false
+        }
+    }
 }

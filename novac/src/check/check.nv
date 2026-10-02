@@ -358,9 +358,9 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                 }
                 Coalesce | Try => {
                     // `a ?? b` (the coalesce wave) and `a?` (D85): typing judges
-                    // the container, the body's return and the POSITION
-                    // (try_rules.nv, `@placed`); the walk descends into the
-                    // children like anyone else's.
+                    // the container and the body's return (try_rules.nv); the
+                    // lowering lays them down in any position (lower_hoist.nv,
+                    // registry 1619). The walk descends like anyone else's.
                 }
                 SelfField => {
                     // Judged, not refused (wave 3g): the receiver is a binding

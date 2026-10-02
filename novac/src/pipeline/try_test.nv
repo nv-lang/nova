@@ -35,3 +35,18 @@ test "`x?` on an Option returns the None of the body's own instance; the other p
     ro (d5, _) = compile_to_c("fn back(o Option[int]) -> Option[int] {\n ro v = o ?? return None\n Some(v)\n}\nfn main() {\n println(1)\n}", std)
     assert(messages(d5).contains("E_COALESCE_RETURN_FALLBACK"), messages(d5))
 }
+
+test "a `??` or `?` nested in an expression is laid down before it (registry 1619); a short circuit keeps its right side conditional" {
+    mut std = std_decls()
+    std.push("module std.o\nexport type Option[T] enum Some(T) | None\n")
+    // Inside an operator, on the right of `=`, in a condition, and on the right of
+    // `&&`: before the wave each was the ICE "a block sealed twice".
+    ro (d0, c0) = compile_to_c("fn t(a bool, o Option[int]) -> bool => a && (o ?? 0) > 3\nfn u(o Option[int]) -> Option[int] {\n mut y = 0\n y = (o ?? 1) + o?\n if (o ?? 0) > y {\n  return Some(y)\n }\n Some(-y)\n}\nfn main() {\n println(1)\n}", std)
+    assert(d0.len() == 0, messages(d0))
+    assert(c0.contains(".tag == NOVA_TAG_Option_Some"), c0)
+    // The right side of `&&` is lowered as a BRANCH: the C keeps no `&&` around a
+    // laid-down `??` (CONTROL: a plain `&&` with no block form stays C's own).
+    ro (d1, c1) = compile_to_c("fn v(a bool, b bool) -> bool => a && b\nfn main() {\n println(1)\n}", std)
+    assert(d1.len() == 0, messages(d1))
+    assert(c1.contains("&&"), c1)
+}

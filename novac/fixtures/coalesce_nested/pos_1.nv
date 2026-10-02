@@ -1,0 +1,76 @@
+module coalesce_nested.pos_1
+
+// `a ?? b` and `x?` NESTED in an expression (registry 1619): inside an
+// operator, under a cast, as a receiver, as an index, as a method's argument,
+// on the right of `=`, in an `if` and an `else if` condition, in a `while`
+// condition, in an interpolation, as a statement, in a short circuit's right
+// side. Each lays down blocks, so novac lowers it into a temporary first; the
+// printer used to meet it after the graph was sealed -- the ICE "a block
+// sealed twice" / "a `??` the hoist never built". Byte for byte with the
+// oracle: every line here is one where the oracle gives the norm (the order
+// of effects across `+` and a `??` evaluated on the right of a false `&&` are
+// the oracle's defects, filed with this wave, and stay out of this file).
+
+fn first(xs []int) -> Option[int] {
+    if xs.len() == 0 { return None }
+    Some(xs[0])
+}
+
+fn maybe(v int) -> Option[int] {
+    if v < 0 { return None }
+    Some(v)
+}
+
+fn sum2(a int, b int) -> Option[int] {
+    Some(maybe(a)? + maybe(b)?)
+}
+
+fn count(v int) -> Option[int] {
+    mut n = 0
+    while maybe(v - n)? > 0 {
+        n += 1
+    }
+    Some(n)
+}
+
+fn pos(xs []int, k int) -> bool {
+    k > 0 && xs.first() ?? return false > 0
+}
+
+fn main() {
+    mut xs = []int.new()
+    ro e = []int.new()
+    println((first(e) ?? 0) + 1)
+    println(-(first(e) ?? 5))
+    println(((first(e) ?? 300) as u8) as int)
+    println((first(e) ?? -4).abs())
+    xs.push(7)
+    xs.push(8)
+    println(xs[first(e) ?? 1])
+    xs.push(first(e) ?? 9)
+    println(xs[2])
+    mut y = 0
+    y = first(xs) ?? 0
+    println(y)
+    if (first(e) ?? 0) > 5 {
+        println("big")
+    } else if (first(xs) ?? 0) > 5 {
+        println("first is big")
+    } else {
+        println("small")
+    }
+    ro b = []bool.new()
+    mut n = 0
+    while b.first() ?? false {
+        n += 1
+    }
+    println(n)
+    println("got ${first(e) ?? 3} and ${first(xs) ?? 3}")
+    first(e) ?? 0
+    println(true && (first(e) ?? 0) == 0)
+    println(sum2(1, 2) ?? -1)
+    println(sum2(1, -2) ?? -1)
+    println(count(3) ?? -1)
+    println(pos(e, 1))
+    println(pos(xs, 1))
+}
