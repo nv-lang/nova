@@ -4,7 +4,7 @@ module typed_local.neg_1
 // refuses it (E7301, `int` into `str`); novac compiles a declared local type
 // only when the initializer has exactly that type, and says so -- one
 // diagnostic, and the later use of `b` adds none.
-// NOVAC_EXPECT compiled only when the initializer has exactly that type
+// NOVAC_EXPECT only an initializer of exactly the written type is (E2-b3)
 fn main() {
     ro b str = 5
     println(b)

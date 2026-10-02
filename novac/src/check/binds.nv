@@ -58,7 +58,10 @@ fn Checker mut @type_bind(st Node) -> () {
         @type_untyped_bind(kids)
         ro got = @scope.type_of_name(leaf_text(kids[1]))
         if is_ty(got) && got != declared {
-            @report_first_leaf_of(kids, "outside the subset: a declared local type is compiled only when the initializer has exactly that type (E2-b3) -- an initializer typed to it by expectation or by conversion is not compiled yet")
+            // The TYPED_LOCAL refusal, narrowed to what is left of it: the
+            // same cause, said with the two types.
+            ro gn = ty_source_name(@ctx, got)
+            @report_first_leaf_of(kids, "${TYPED_LOCAL_MSG} -- only an initializer of exactly the written type is (E2-b3), and this one is `${gn}`")
         } else {
             // The same type, or an initializer refused by its own cause (the
             // name is bound poisoned): nothing more to say.
@@ -86,7 +89,7 @@ fn Checker @declared_local_type(kids []Node) -> TyId {
     }
     // The type's leaves stop before `=`: the door reads from position 2 and
     // takes the run it recognises.
-    ty_of_type_ref(kids[0..kids.len() - 2], 2, no_ty(), tps, @substs, @ctx.types, @ctx.defs, @ctx.tys)
+    ty_of_type_ref(kids[..kids.len() - 2], 2, no_ty(), tps, @substs, @ctx.types, @ctx.defs, @ctx.tys)
 }
 
 /// The binding WITHOUT a declared type's judgement: the initializer decides.
@@ -732,7 +735,7 @@ fn no_slice_head_msg() -> str =>
 /// The shell carries no vector instance for element type `ty` -- the array
 /// literal and the empty vector alike (one text, one refusal).
 fn no_shell_vec_msg(ty str) -> str =>
-    "outside the subset: the shell novac links into carries no `${SLICE_HEAD}` instance for ${ty} -- the interop surface is the probe program (novac/probe/shell_probe.nv, E2-b); a vector of this element type arrives when the probe uses one, or with the prelude"
+    no_shell_instance_msg(SLICE_HEAD, ty, "a vector of this element type arrives when the probe uses one, or with the prelude")
 
 /// The type of `[]T.new()`, the EMPTY vector constructor, or `no_ty()` after a
 /// NAMED refusal (registry 221.1 #1457).

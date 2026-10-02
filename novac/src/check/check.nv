@@ -700,8 +700,10 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // the old door below: the redundant form is a language
                     // error at its own token (registry 1458).
                     ro init_k = children[children.len() - 1].kind_of()
-                    ro view = children.len() > 4 && children[2].kind_of() == NodeKind.LeafNode && leaf_kind(children[2]) == TokenKind.KwRo
-                    if children.len() > 4 && !view && init_k != NodeKind.RecordCtor && is_ty(@declared_local_type(children)) {
+                    ro view = children.len() > 4 && children[2].kind_of() == NodeKind.LeafNode &&
+                        leaf_kind(children[2]) == TokenKind.KwRo
+                    ro typed = children.len() > 4 && !view && init_k != NodeKind.RecordCtor
+                    if typed && is_ty(@declared_local_type(children)) {
                         @walk(children[children.len() - 1], init_pos: true, handler_pos: true)
                         return
                     } else if children.len() > 4 {
