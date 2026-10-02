@@ -16,6 +16,7 @@ Python-скрипты, подключённые как **PreToolUse-хуки Cla
 |---|---|---|
 | [`guard-git.py`](guard-git.py) | `PreToolUse`, matcher `Bash\|PowerShell` | запись `git config user.name/email`, `git add -A`/`.`/`--all`, `git stash` |
 | [`guard-memory.py`](guard-memory.py) | `PreToolUse`, matcher `Write` | запись `memory/feedback-*.md` без поля `enforcement:` |
+| [`guard-blocking-wait.py`](guard-blocking-wait.py) | `PreToolUse`, matcher `Bash\|PowerShell` | цикл ожидания на переднем плане (`sleep` внутри `for`/`while`/`until`) и одиночный `sleep` от 60 с; клапан `# blocking-wait-ok: <причина>` (2026-10-02, «правила не работают») |
 
 ## Как подключены
 
