@@ -82,6 +82,7 @@ fn Checker mut @type_bind(st Node) -> () {
     // ice it caused (#918) is what the door below removes.
     if ik != NodeKind.MatchExpr && ik != NodeKind.RecordCtor && ik != NodeKind.ArrayLit && is_expr_kind(ik) {
         ro before = @out.len()
+        @placed = init.id_of()
         @type_expr(init)
         // The mark, not the file's count: a refusal in an EARLIER declaration
         // used to stop this walk too, and `@type_bind` then skipped its

@@ -25,7 +25,11 @@ import ../types.{TyId, no_ty, is_ty}
 import ../sem.{branch_children, coalesce_payload, option_payload, is_coalesce_return, raw_row}
 
 /// `?` and `?? return` lay down blocks and leave the body, and only a PLACED
-/// value position lowers them with the graph open (check.nv's shape walk asks).
+/// value position lowers them with the graph open (`@placed`, set by the doors
+/// that type one: a binding, a tail or `return`, a match arm). Elsewhere -- an
+/// operator, the right of `=`, an argument, a condition -- the printer meets
+/// them after the seal; a plain `??` there is the ICE "a block sealed twice"
+/// (filed, measured 2026-10-02), and the new forms do not join it.
 const SEALED_VALUE_POSITION_MSG = "outside the subset: `x?` and `x ?? return r` are compiled only as a binding initializer, a `return` value, a `=>` body or a match arm's body -- inside an operator, an argument, a condition or on the right of `=` they are not compiled yet (E2, the control-flow horizon): bind the value first"
 
 /// `?` takes an Option or a Result (D85). The oracle accepts any operand here
@@ -53,9 +57,14 @@ const COALESCE_RETURN_GENERIC_MSG = "`return` cannot be the fallback of `??` in 
 /// value is the payload; the lowering returns `None` from the None branch.
 fn Checker mut @type_try(e Node) -> () {
     ro tk = branch_children(e)
+    ro placed = e.id_of() == @placed
     ro before = @out.len()
     @type_expr(tk[0])
     if @out.len() > before { return }
+    if !placed {
+        @report_first_leaf_of(tk, SEALED_VALUE_POSITION_MSG)
+        return
+    }
     ro ot = type_of(tk[0], @ctx, @scope, @chan)
     ro payload = if is_ty(ot) { coalesce_payload(@ctx, ot) } else { no_ty() }
     if !is_ty(payload) {
@@ -86,7 +95,11 @@ fn Checker mut @type_try(e Node) -> () {
 /// left side as an Option: legal where the body returns neither container, and
 /// `R` is judged as a `return` operand -- the same door, the same rules. Answers
 /// whether the form was admitted; a refusal was written when it was not.
-fn Checker mut @type_coalesce_return(qk []Node) -> bool {
+fn Checker mut @type_coalesce_return(e Node, qk []Node) -> bool {
+    if e.id_of() != @placed {
+        @report_first_leaf_of(qk, SEALED_VALUE_POSITION_MSG)
+        return false
+    }
     ro rt = @ret_expect
     if is_ty(rt) && is_ty(coalesce_payload(@ctx, rt)) {
         @reject_first_leaf_of(qk, COALESCE_RETURN_FALLBACK_MSG)

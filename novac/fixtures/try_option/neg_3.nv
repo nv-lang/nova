@@ -12,7 +12,8 @@ fn first(xs []int) -> Option[int] {
 
 fn plus_one(xs []int) -> Option[int] {
     ro v = first(xs)? + 1
-    Some(v)
+    println(v)
+    None
 }
 
 fn main() {

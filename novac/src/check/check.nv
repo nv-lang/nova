@@ -50,7 +50,7 @@ import ../tree.{Node, NodeKind, NodeId, bin_op_of, un_op_of}
 import ../diag.{Diagnostic, ice}
 import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind}
 import ../sem.{expr_leaf_name, is_value_record}
-import ../sem.{file_decls, is_coalesce_return}
+import ../sem.{file_decls}
 import ../sem.{slice_shape_of, ctor_head_variant}
 // Where an arm keeps its body -- the door the lowering has read for waves.
 import ../sem.{arm_body_at, array_of_lparen_at}
@@ -358,22 +358,9 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                 }
                 Coalesce | Try => {
                     // `a ?? b` (the coalesce wave) and `a?` (D85): typing judges
-                    // the container and the body's return (try_rules.nv). Both
-                    // LAY DOWN BLOCKS, and a form that RETURNS -- `a?`, `a ??
-                    // return r` -- is opened only where it is placed through
-                    // `@lower_value_source` with the graph still open: an
-                    // initializer, a `return`, a `=>` body, a match arm's body.
-                    // Elsewhere -- an operator, the right of `=`, a method's
-                    // argument, a condition -- the printer meets it after the
-                    // seal: a plain `??` there is the ICE "a block sealed twice"
-                    // (registry TBD, measured 2026-10-02), and the new forms do
-                    // not join it.
-                    if (kind == NodeKind.Try || is_coalesce_return(children)) && !init_pos && !arm_pos {
-                        @report_first_leaf_of(children, SEALED_VALUE_POSITION_MSG)
-                        return
-                    } else {
-                        // A placed position: the walk descends into the children.
-                    }
+                    // the container, the body's return and the POSITION
+                    // (try_rules.nv, `@placed`); the walk descends into the
+                    // children like anyone else's.
                 }
                 SelfField => {
                     // Judged, not refused (wave 3g): the receiver is a binding

@@ -935,6 +935,7 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
     // unrelated earlier refusal in the same file passed with zero diagnostics
     // about it -- a K-C silent widening, not a crash.
     ro before = @out.len()
+    @placed = body.id_of()
     @type_expr(body)
     // None is "this arm has no type to compare": the walk refused something in
     // the body, so the lattice must not be asked about it (its miss is an ice).

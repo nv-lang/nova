@@ -408,7 +408,8 @@ test "lone ? (Try operator): named refusal, not the anonymous parser fallback (r
     ro src = "module m\n\nfn maybe() -> int {\n    5\n}\n\nfn use_it() -> int {\n    ro v = maybe()?\n    v\n}\n"
     ro msg = diagnose_msg(src)
     assert(!msg.contains("did not parse"), "a legal form must not read as a syntax error")
-    assert(msg.contains("`?` takes an `Option` or a `Result`"), "the refusal must name the operator, not stay anonymous")
+    ro named = msg.contains("`?` takes an `Option` or a `Result`")
+    assert(named, "the refusal must name the operator, not stay anonymous")
 }
 
 test "with: a binding naming a non-effect is refused at the name, saying what the name is (274.11 E.4)" {

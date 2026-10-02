@@ -431,7 +431,7 @@ fn Checker mut @type_expr(e Node) -> () {
         if is_coalesce_return(qk) {
             // `X ?? return R` (D86 amended 2026-09-01): its own door, beside `?`.
             // SILENT-OK: the door wrote its refusal when it did not admit the form.
-            if !@type_coalesce_return(qk) { return }
+            if !@type_coalesce_return(e, qk) { return }
         } else if qk.len() > 2 {
             @type_expr(qk[2])
             if @out.len() > before { return }
