@@ -24,7 +24,7 @@
 
 module novac.lower
 
-import ../tree.{Node, NodeKind, BinOp, bin_op_of}
+import ../tree.{Node, NodeKind, bin_op_of}
 import ../types.{is_ty}
 import ../sem.{branch_children, contains_call, is_expr_kind, leaf_kind}
 
