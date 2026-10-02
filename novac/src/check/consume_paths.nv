@@ -236,7 +236,7 @@ fn Checker mut @flow_scope_block(b Node, mut fl ConsumeFlow) -> () {
 
 /// The block of an `unsafe { ... }` (D216 s8): its one Block child; the node itself
 /// when the parser marked a missing body (nothing then to walk but its leaves).
-fn unsafe_block_of(n Node) -> Node {
+fn unsafe_block_of(n Node) -> ro Node {
     for c in branch_children(n) {
         if c.kind_of() == NodeKind.Block { return c }
     }
