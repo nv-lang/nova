@@ -48,3 +48,29 @@ test "the body's value must be the declared return type, by name (274.7 B5, #960
     ro (d7, _) = compile_to_c("fn f() -> u8 => 300\nfn main() {\n println(f())\n}", std)
     assert(d7.len() == 1 && messages(d7).contains("E_LIT_OUT_OF_RANGE"), messages(d7))
 }
+
+test "a value `if` branch may end in a NESTED `if` or a bare literal of the expected type (part 5 of p274-carina-k1)" {
+    // sem.nv `generic_head_cnt` ends a branch in an `if`; lex.nv `byte_at` puts
+    // `0` against `b[k]` in a `-> u8` body. Both were refused: "a branch of a
+    // tail `if` ends without a value", "the branches ... must agree on a type".
+    ro (d, c) = compile_to_c("fn deep(a int, b int) -> int {\n if a > 0 {\n  if b > 0 { 1 } else { 2 }\n\
+ } else {\n  0\n }\n}\n\
+fn main() {\n println(deep(1, 2))\n}", std_decls())
+    assert(d.len() == 0, messages(d))
+    // The nested branches WRITE the value; they are not evaluated and dropped.
+    assert(!c.contains("(void)(((nova_int)1LL))"), c)
+    ro (dl, _) = compile_to_c("fn pick(c bool, v u8) -> u8 {\n if c {\n  v\n } else {\n  0\n }\n}\n\
+fn main() {\n println(1)\n}", std_decls())
+    assert(dl.len() == 0, messages(dl))
+    // The literal takes the position's type, and the RETURN's type is not the
+    // position of a method's argument: `=> t.row(if m { 1 } else { 0 })` in a
+    // `-> Row` body adapted the branch literals to `Row` until the method call
+    // cleared the expectation as the free call does (types.nv `@intern`).
+    ro (da, _) = compile_to_c("type Tb { n int }\ntype Row int\nfn Tb @row(h int) -> Row => Row(h)\n\
+fn mk(t Tb, m bool) -> Row => t.row(if m { 1 } else { 0 })\nfn main() {\n println(1)\n}", std_decls())
+    assert(da.len() == 0, messages(da))
+    // CONTROL: a branch that ends in a BINDING still has no value.
+    ro (dc, _) = compile_to_c("fn f(a int) -> int {\n if a > 0 {\n  ro z = 1\n } else {\n  0\n }\n}\n\
+fn main() {\n println(f(1))\n}", std_decls())
+    assert(messages(dc).contains("ends without a value"), messages(dc))
+}

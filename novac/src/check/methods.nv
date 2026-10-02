@@ -21,7 +21,7 @@ module novac.check
 
 import ../tree.{Node, NodeKind}
 import ../lex.{Token}
-import ../types.{TyId, is_ty}
+import ../types.{TyId, is_ty, no_ty}
 import ../builtins.{TypeKind}
 import ../diag.{ice}
 import ../names.{raw_decl}
@@ -426,6 +426,12 @@ fn Checker mut @type_method_call(e Node) -> () {
     // the lattice is asked; a refusal anywhere in the children stops the
     // resolution, because the type the key would carry is not trustworthy.
     ro before = @out.len()
+    // THE TAIL'S EXPECTATION STAYS OUTSIDE THE CALL, as the free call has it
+    // (calls.nv): `=> @intern(k, if m { 1 } else { 0 }, a)` in a `-> TyId`
+    // body adapted the branch literals to `TyId` -- the RETURN's type -- and
+    // the argument no longer fitted `head_id int` (part 5 of p274-carina-k1).
+    ro saved_expect = @value_expect
+    @value_expect = no_ty()
     @type_expr(kids[0])
     mut i = 0
     for c in kids {
@@ -440,6 +446,7 @@ fn Checker mut @type_method_call(e Node) -> () {
         }
         i += 1
     }
+    @value_expect = saved_expect
     // The mark, not the file's count (274.4 step 2): the file-wide
     // `== 0` guard silenced the judge for every method call after the
     // FIRST refusal anywhere in the file -- no refusal, no recorded
@@ -573,6 +580,9 @@ fn Checker mut @type_effect_op_call(e Node, kids []Node) -> bool {
     // which names the counts and so is not silent about the shape.
     ro before = @out.len()
     mut args = []Node.new()
+    // The tail's expectation stays outside the call (the method call's rule).
+    ro saved_expect = @value_expect
+    @value_expect = no_ty()
     mut i = 0
     for c in kids {
         if i > 2 && is_arg_value_kind(c.kind_of()) {
@@ -585,6 +595,7 @@ fn Checker mut @type_effect_op_call(e Node, kids []Node) -> bool {
         }
         i += 1
     }
+    @value_expect = saved_expect
     if @out.len() > before {
         // SILENT-OK: an argument's own refusal already spoke; the type a
         // comparison would use is not trustworthy, the same invariant the
