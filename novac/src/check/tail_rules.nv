@@ -244,6 +244,7 @@ fn Checker mut @type_if_value(n Node) -> () {
 /// to give the `if` -- named, not silent.
 fn Checker mut @type_branch_value(b Node) -> TyId {
     if b.kind_of() == NodeKind.IfExpr || b.kind_of() == NodeKind.IfStmt {
+        // SILENT-OK: the continuation's own door recorded its type or refused it.
         return @if_value_type(b)
     } else {
         // A block, or an `else if let` continuation: judged below.
