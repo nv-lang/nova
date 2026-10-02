@@ -744,6 +744,7 @@ fn harvest_consts(decls []Node, mut defs DefTable, mut consts ConstTable) -> () 
     for d in decls {
         ro home = module_dotted(d)
         for c in file_decls(d) {
+            harvest_module_value(c, home, defs, consts)
             ro ck = const_decl_of(c)
             if !ck.is_some() { continue }
             ro kids = branch_children(ck ?? c)
@@ -759,6 +760,25 @@ fn harvest_consts(decls []Node, mut defs DefTable, mut consts ConstTable) -> () 
                 // No name: a parse-error shape, refused in its own file.
             }
         }
+    }
+}
+
+/// A handed MODULE VALUE (`ro NAME T = expr`), registered by its WRITTEN type
+/// (part 6 of p274-carina-k1): the cell is its owner's, and a reader needs only
+/// the name and the type. So the row carries NO initializer -- the owner's
+/// tree's ids never reach this file's channel -- and its type is read off the
+/// declaration by text (`@written_const_type`, check). A value with no written
+/// type stays unregistered and its read is refused by name: typing a handed
+/// initializer needs a channel of its own (docs/dev/simplifications.md).
+fn harvest_module_value(c Node, home str, mut defs DefTable, mut consts ConstTable) -> () {
+    ro lk = let_decl_of(c)
+    if !lk.is_some() { return }
+    ro kids = branch_children(lk ?? c)
+    if const_type_at(kids) < 0 { return }
+    if Some(cname) = const_full_name(kids) {
+        defs.add(cname, DefTarget.DefConst(consts.add(cname, no_ty(), []Node.new(), true, kids)), home: home)
+    } else {
+        // No name: a parse-error shape, refused in its own file.
     }
 }
 
