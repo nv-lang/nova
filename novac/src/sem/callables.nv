@@ -520,6 +520,22 @@ export fn variant_named_in(ctx Ctx, name str, expect TyId) -> VariantRow {
     no_vrow()
 }
 
+/// HOW MANY sums declare this variant name -- the file's and the handed alike:
+/// the count D478 rule 2 speaks of ("visible from two or more sums"). Not
+/// `variants_named`'s count, which keeps the file's set when it is non-empty: a
+/// file sum's `Ok` beside the language's `Result` one is one there and two here,
+/// and the position's expectation chooses between them (registry 1647).
+#realtime nogc
+export fn variant_sum_count(ctx Ctx, name str) -> int {
+    mut r = ctx.variant_names.find(name)
+    mut n = 0
+    while r >= 0 {
+        n += 1
+        r = raw_vrow(ctx.variant_rows[r].next_same)
+    }
+    n
+}
+
 /// HOW MANY sums declare this variant name, and the first row that does.
 ///
 /// The count is what the caller decides on: one means the bare name resolves,

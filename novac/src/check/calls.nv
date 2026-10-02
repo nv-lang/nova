@@ -731,7 +731,7 @@ fn Checker mut @type_free_call(e Node) -> () {
     // (D478, the door a bare name takes in exprs.nv) -- `Err(..)` in std's
     // `[]u8 @to_str` under a `-> Result[..]`, made from its body in a unit
     // whose own sums declare an `Err` too (registry 1632, the self-build).
-    ro by_expect = if vn > 1 { variant_named_in(@ctx, cname, @value_expect) } else { no_vrow() }
+    ro by_expect = if vn > 0 { variant_named_in(@ctx, cname, @value_expect) } else { no_vrow() }
     if is_vrow(by_expect) {
         @type_variant_call(e, kids, by_expect)
         return

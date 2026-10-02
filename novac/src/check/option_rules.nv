@@ -36,6 +36,7 @@ import ../types.{TyId, no_ty, is_ty}
 import ../builtins.{TypeKind, RESULT_SUM}
 import ../sem.{CalleeTarget, VariantRow, raw_vrow, decl_of_ty, decl_index_of_ty, identity_slots, ArgSpec}
 import ../sem.{FnRow, raw_row, bind_slots, call_arg_at, expr_leaf_name, variants_named, is_arg_node, c_struct}
+import ../sem.{variant_sum_count, branch_children, call_callee_text}
 
 /// A bare variant of a generic sum with nothing around it to say which
 /// instance it is.
@@ -207,10 +208,23 @@ fn Checker mut @type_bare_variant_value(e Node, t Token, v VariantRow) -> () {
 /// leaves it untyped -- the key then holds an unknown slot, which the lookup
 /// matches by every other position -- and `@type_deferred_args` types it once
 /// the callee is decided.
+///
+/// A variant name SEVERAL sums declare is deferred the same way, bare or called
+/// (`take(Ok(3))` beside a file sum with an `Ok`): D478 rule 2 resolves it by
+/// the expected type, and an argument's expected type is its parameter's
+/// (registry 1647).
 fn Checker @is_deferred_variant(c Node) -> bool {
+    if c.kind_of() == NodeKind.Call {
+        ro cn = call_callee_text(branch_children(c))
+        if @scope.is_bound(cn) || @ctx.defs.declared_by_file(cn) { return false }
+        return variant_sum_count(@ctx, cn) > 1
+    } else {
+        // A bare name, or no variant at all: below.
+    }
     if c.kind_of() != NodeKind.Name { return false }
     ro nm = expr_leaf_name(c)
     if @scope.is_bound(nm) { return false }
+    if variant_sum_count(@ctx, nm) > 1 { return true }
     ro (v, n) = variants_named(@ctx, nm)
     if n != 1 { return false }
     @ctx.variant_rows[raw_vrow(v)].payload_cnt == 0 && @variant_sum_is_generic(v)

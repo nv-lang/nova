@@ -55,7 +55,13 @@ fn Checker mut @type_bind(st Node) -> () {
     // or convert to it -- stays outside the subset, said with the type's name.
     if kids.len() > 4 {
         ro declared = @declared_local_type(kids)
+        // The written type is the initializer's EXPECTATION (D478's list: "a
+        // binding with a declared type" -- `ro r Result[int, int] = Err(4)`
+        // beside a file sum with an `Err`, registry 1647).
+        ro saved_expect = @value_expect
+        @value_expect = declared
         @type_untyped_bind(kids)
+        @value_expect = saved_expect
         ro got = @scope.type_of_name(leaf_text(kids[1]))
         if is_ty(got) && got != declared {
             // The TYPED_LOCAL refusal, narrowed to what is left of it: the

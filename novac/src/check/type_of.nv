@@ -19,7 +19,7 @@ import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, RECV_BINDING, SELF_TYPE}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{variants_named, ctor_head_variant, VariantRow}
+import ../sem.{variants_named, ctor_head_variant, VariantRow, variant_sum_count}
 import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, raw_row, ParamMode, carrier_of, arm_body_at, branch_children}
 import ../sem.{LitArg}
 // M3a: the literal token -> primitive table lives in `sem`, asked by both consumers.
@@ -708,6 +708,11 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // so the first row is the one when any is there.
         ro (vfirst, vn) = if ctx.defs.declared_by_file(cname) { (no_vrow(), 0) } else { variants_named(ctx, cname) }
         if vn >= 1 {
+            // A name SEVERAL sums declare is the POSITION's to resolve (D478):
+            // until the checker has recorded its choice -- an argument waits for
+            // its parameter (`@type_deferred_args`) -- it has no type of its
+            // own, and the key's slot stays open (registry 1647).
+            if !chan.has_callee(e.id_of()) && variant_sum_count(ctx, cname) > 1 { return no_ty() }
             // The row the CHECKER chose when several sums declare the name (by
             // the expectation, D478 -- calls.nv): the first row would be
             // another sum, and the node typed twice (registry 1632).

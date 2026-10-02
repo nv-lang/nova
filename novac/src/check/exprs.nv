@@ -517,7 +517,11 @@ fn Checker mut @type_expr(e Node) -> () {
                     // where it names another type. The admitted case walks the
                     // SAME path as an unambiguous one -- one door per root
                     // (274.4).
-                    ro picked = if vn > 1 {
+                    // Asked whenever ANY sum declares the name (registry
+                    // 1647): a file sum's `None` beside the language's Option
+                    // one counts as one visible here (the file's set wins the
+                    // count), yet the position may expect the other.
+                    ro picked = if vn > 0 {
                         variant_named_in(@ctx, t.text, @value_expect)
                     } else {
                         no_vrow()
