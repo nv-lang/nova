@@ -87,7 +87,9 @@ export fn shell_surface() -> InteropTable {
         t.add(word)
         prev = if prev == "struct" || word == "struct" { word } else { "" }
     }
-    mark_stubs(t, bytes.to_str() ?? ice("emit: shell.tpl.c is not UTF-8"))
+    for stub in stub_names(bytes.to_str() ?? ice("emit: shell.tpl.c is not UTF-8 for the stub scan")) {
+        t.add_stub(stub)
+    }
     t
 }
 
@@ -98,13 +100,16 @@ export fn shell_surface() -> InteropTable {
 /// that resolves to one compiles, links and answers a constant -- `==` over two
 /// vectors was "not equal" whatever they held. Such a function is marked, and
 /// `InteropTable @has` answers no for it, so every door that asks the shell
-/// falls to the std instance or to its refusal by name.
+/// falls to the std instance or to its refusal by name. The NAMES are returned
+/// and the caller marks them: the table is a local of the scan, not a mutable
+/// aggregate handed through the phases.
 ///
 /// The shape is exact: a `static` definition at column 0 whose body is one or
 /// more `(void)<param>;` and ONE `return` of `NULL`, `NOVA_UNIT` or a `{0}`
 /// compound literal -- nothing a real body is made of. A body with no `(void)`
 /// is not taken: a constant function without parameters may be meant.
-fn mark_stubs(mut t InteropTable, text str) -> () {
+fn stub_names(text str) -> []str {
+    mut found = []str.new()
     mut name = ""
     mut voids = 0
     mut returns = 0
@@ -121,7 +126,7 @@ fn mark_stubs(mut t InteropTable, text str) -> () {
             }
         } else if line == "}" {
             if shape && voids > 0 && returns == 1 {
-                t.add_stub(name)
+                found.push(name)
             } else {
                 // A real body: the function stays callable.
             }
@@ -134,6 +139,7 @@ fn mark_stubs(mut t InteropTable, text str) -> () {
             shape = false
         }
     }
+    found
 }
 
 /// Does this definition head end its line with ` {` (a body follows)?
@@ -144,10 +150,14 @@ fn is_open_brace_line(line str) -> bool {
 
 /// The defined function's name: the identifier right before the first `(`.
 fn defined_name(line str) -> str {
-    ro head = line[..line.find("(") ?? 0]
-    ro words = head.split(" ")
+    mut head = ""
+    mut taken = false
+    for part in line.split("(") {
+        head = if taken { head } else { part }
+        taken = true
+    }
     mut last = ""
-    for w in words { last = w }
+    for w in head.split(" ") { last = w }
     last
 }
 
