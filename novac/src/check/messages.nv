@@ -362,6 +362,11 @@ const IMPORT_ALIAS_MSG = "outside the subset: an `import ... as ...` alias arriv
 /// `#realtime nogc` and its kin.
 const ATTR_MSG = "outside the subset: an effect attribute is read but not compiled yet"
 
+/// `#impl(P)` for a protocol other than `Display` / `Equal` -- `Serialize` in
+/// novac's own diag/diag.nv. The derived method and its callers dispatch through
+/// protocol bounds (`S Serializer`, `T Serialize`), which arrive with E2-b3.
+const IMPL_DEFERRED_MSG = "outside the subset: `#impl` of this protocol is derived only for `Display` and `Equal` -- the derived methods of the others (`Serialize`, D341) and their callers dispatch through protocol bounds, not compiled yet (E2-b3)"
+
 /// `unsafe { ... }` -- D216 s8. Compiled since 274.11 E.10 step 3c where an `if`
 /// value stands (initializer, argument, a body's tail) and as a statement.
 const UNSAFE_MSG = "outside the subset: an `unsafe` block is compiled as a statement, an initializer, a call argument or a body's tail -- not in this position yet (E2-b)"
