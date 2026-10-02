@@ -1,0 +1,14 @@
+module prim_static.pos_1
+
+// A STATIC method of a PRIMITIVE (registry 1631): std's `str.new()` (the
+// shell's `Nova_str_static_new`) and the file's own `fn str.twice(..)`. Until
+// then novac refused both as the program's error -- "this type declares no
+// static method of this name" -- about methods that exist; std's
+// `[]u8 @to_str` calls the private `str.alloc_copy` the same way.
+fn str.twice(s str) -> str => "${s}${s}"
+
+fn main() {
+    ro e = str.new()
+    println(e.byte_len())
+    println(str.twice("ab"))
+}

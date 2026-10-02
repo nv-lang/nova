@@ -39,9 +39,14 @@ fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
             DefFn(_) | DefConst(_) => return false
         }
     }
-    // SILENT-OK: a head that is no declared type has no static methods to ask.
-    if !is_ty(head_t) || !@ctx.tys.names_a_decl(head_t) { return false }
-    ro head_decl = @ctx.tys.decl_head_of(head_t)
+    // SILENT-OK: a head that is no type has no static methods to ask.
+    if !is_ty(head_t) { return false }
+    // A PRIMITIVE head (`str.new()`, std's `str.alloc_copy(p, n)`) names no
+    // declaration: its static methods are the rows OWNED by that very type
+    // (registry 1631). Until then the door answered "not mine" for it, and the
+    // variant door below called it the program's error -- "this type declares
+    // no static method of this name" about `fn str.new()`, which std declares.
+    ro head_nominal = @ctx.tys.names_a_decl(head_t)
     ro mname = leaf_text(kids[2])
     // THE ROW, by name and written arity among the type's static methods --
     // asked BEFORE the arguments are walked, so a spelling that is not a static
@@ -58,8 +63,16 @@ fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
     for i in 0..@ctx.fns.rows.len() {
         ro fd = @ctx.fns.rows[i]
         if fd.name != mname || !is_ty(fd.owner) { continue }
-        // A static method of a PRIMITIVE (`int.max_value()`) names no declaration.
-        if !@ctx.tys.names_a_decl(fd.owner) || @ctx.tys.decl_head_of(fd.owner) != head_decl { continue }
+        // A nominal head matches by its declaration (`Vec[T]` and `Vec[int]`
+        // are one head); a primitive one (`int.max_value()`) by the type itself.
+        if head_nominal {
+            if !@ctx.tys.names_a_decl(fd.owner) { continue }
+            if @ctx.tys.decl_head_of(fd.owner) != @ctx.tys.decl_head_of(head_t) { continue }
+        } else if fd.owner != head_t {
+            continue
+        } else {
+            // A static method of this very primitive.
+        }
         named += 1
         // The written arguments fill the leading parameters; the rest must
         // carry defaults (D102: `Vec[T].new(cap int = 0)` takes `new()`).
