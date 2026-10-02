@@ -525,7 +525,11 @@
 # representation, `W(e)` with `e W` is E_NEWTYPE_CTOR_SELF; D55/D52 stale lines about a
 # variable wrapping itself fixed; D489 states the match-arm case and D433 points to it.
 # Cost to Carina: none -- it refuses `W(e)` already; the refusal moves to E_NOVAC_LANG.
-#   spec-queue: 161
+# 2026-10-02 (integrator, owner's word): D490 -- a value widens without `as` when every value
+# of its type fits the same kind (positions, operators by the wider operand, generics,
+# overloads exact-first); narrowing, sign without a common type, integer <-> float stay `as`.
+# Cost to Carina: row 1609 (her half of the one widening door), after the oracle's row 1608.
+#   spec-queue: 162
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,
