@@ -59,6 +59,8 @@ fn Checker @variant_sum_is_generic(v VariantRow) -> bool {
 /// decision. A non-generic sum's constructor is the row itself; a generic
 /// sum's constructor is the instance its payload fixes.
 fn Checker mut @type_variant_call(e Node, kids []Node, v VariantRow) -> () {
+    // SILENT-OK: the door just refused by the payload type's name, and the walk stops.
+    if @refused_lost_payload(kids, v) { return }
     ro vbefore = @out.len()
     // The tail's expectation does not reach INTO a call: `f(None)` in a tail
     // is not the fn's own return.

@@ -1,0 +1,36 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/pipeline/mut_receiver_test.nv -- a `mut` method called through a
+// place that is not mutable is a LANGUAGE error naming the receiver's class
+// (P14, D488; registry 1577), not the subset's "no such method". Reverse probe:
+// with the raised-receiver lookup in `@refuse_method_call` (check/methods.nv)
+// answering "no such method" the fixtures mut_receiver/neg_1, neg_2 redden; with
+// the receiver slot's old text (check/calls.nv) this file reddens.
+
+module novac.pipeline
+
+const MUT_RECV_PHRASE = "the receiver of a `mut` method needs a mutable place"
+
+/// A counter with one `mut` method, held in a field of a box -- every case
+/// below writes only its own `main` (and, for `@`, one method of the box).
+fn ctr_src(body str) -> str =>
+    "type Ctr {\n    n int\n}\nfn Ctr mut @inc() -> () {\n    @n = @n + 1\n}\ntype Box {\n    c Ctr\n}\n${body}"
+
+test "a `mut` method through a `ro` binding, a field of one, `@` of a non-`mut` method: refused by the receiver's class (D488, 1577)" {
+    ro std = []str.new()
+    // CONTROL: the same calls through mutable places compile clean.
+    ro (d0, _) = compile_to_c(ctr_src("fn Box mut @bump() -> () {\n    @c.inc()\n}\nfn main() {\n mut b = Box { c: Ctr { n: 0 } }\n b.c.inc()\n b.bump()\n mut k = Ctr { n: 1 }\n k.inc()\n println(b.c.n + k.n)\n}"), std)
+    assert(d0.len() == 0, messages(d0))
+    ro (d1, _) = compile_to_c(ctr_src("fn main() {\n ro k = Ctr { n: 1 }\n k.inc()\n println(k.n)\n}"), std)
+    assert(messages(d1).contains(MUT_RECV_PHRASE), messages(d1))
+    assert(!messages(d1).contains("no such method"), messages(d1))
+    ro (d2, _) = compile_to_c(ctr_src("fn main() {\n ro b = Box { c: Ctr { n: 0 } }\n b.c.inc()\n println(b.c.n)\n}"), std)
+    assert(messages(d2).contains(MUT_RECV_PHRASE), messages(d2))
+    ro (d3, _) = compile_to_c(ctr_src("fn Box @bad() -> () {\n    @c.inc()\n}\nfn main() {\n mut b = Box { c: Ctr { n: 0 } }\n b.bad()\n println(b.c.n)\n}"), std)
+    assert(messages(d3).contains(MUT_RECV_PHRASE), messages(d3))
+}
+
+test "a method that does not exist is still \"no such method\", not a receiver's class (1577 control)" {
+    ro (d, _) = compile_to_c(ctr_src("fn main() {\n ro k = Ctr { n: 1 }\n k.nope()\n println(1)\n}"), []str.new())
+    assert(d.len() >= 1, "k.nope() must be refused")
+    assert(!messages(d).contains(MUT_RECV_PHRASE), messages(d))
+}

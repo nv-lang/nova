@@ -504,6 +504,22 @@
 # a record-variant construction takes the pattern's qual-head,
 # `Node.Branch { .. }` (same branch). Value by the pre-commit formula (main
 # carried 147 against 148 counted commits).
+# 149 -> 150 (2026-10-01, integrator's word to cloud session p274-carina-strarm,
+# option (A)): AMEND D486 s2 -- a pattern's literal has the scrutinee's type;
+# `char` and the integers do not mix (D128), so `97` over `char` and `'a'` over
+# `int` are type errors. Cost to Carina: zero debt -- the same branch refuses
+# both; the oracle checks no literal type in a pattern (registry 1535).
+# 150 -> 151 (2026-10-01, integrator's decision to the same session): the same
+# D486 s2 amendment gains one sentence -- a pattern's string literal is not
+# interpolated; a `${...}` slot in a pattern is an error. Cost to Carina: zero
+# debt -- the same branch refuses it by name (it used to be "did not parse");
+# the oracle compares with the raw text (registry 1556).
+# (merge of origin/main 0fed40d0d into p274-carina-strarm, 2026-10-01: main
+# carried 150 for its own spec commits, this branch 151 for its two; the line
+# is the guard's formula over the joined history.)
+# (merge of origin/integrate bacdefa12, 2026-10-01: integrate wrote 155, but the
+# guard's formula over its own history gives 154 -- and 154 over the joined one;
+# the line follows the formula.)
 # 2026-10-01 (cloud session p274-carina-cast, registry 1570, agreed with the
 # integrator): AMEND D54 -- after `is`, and only there, a qualified variant
 # `Sum.Variant` is legal (the D188 example `err is DbError.Deadlock`). Cost to

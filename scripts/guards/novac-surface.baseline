@@ -371,7 +371,11 @@ lex 11
 #   1542): PatTest (the nested subpattern's test, carried by Cond.Holds and printed by
 #   emit_c's pattern-test door) and FnBuilder.@note_arm_checks (how many nested-test
 #   Ifs an arm opened; emit_c finds the innermost through SwitchArm.checks).
-lower 93
+# lower 93 -> 94 (2026-10-01, the same session, registry 1568): `@note_arm_checks`
+#   became `@note_arm_heads` (the blocks of an arm's test Ifs -- the printer descends
+#   through a disjunction's switch to each) and `@set_bool` came in: the one constant
+#   the lowering writes, a disjunction's "an alternative held" flag.
+lower 94
 main 0
 # mono -- НОВЫЙ модуль (2026-08-18, Э2-б2): коллектор достижимого.
 # Наружу три имени: тип Reach, вопрос @has (эмиттер спрашивает про каждую
@@ -1014,6 +1018,10 @@ resolve 23
 #   of every method on a value record that D488 replaces.
 # merge of p274-carina-sweep (deliveries 3-4) into the merge train (integrator, 2026-10-02): 336 + 3 (D488:
 #   RECV_COPY_MAX_BYTES, value_recv_by_pointer, row_recv_by_pointer) - 1 (recv_type_name) = 338.
+# source 6 -> 7 (2026-10-01, cloud session p274-carina-strarm, registry 1578):
+#   SourceText.@holds -- does a slice lie inside THIS file's text; the checker asks it
+#   of a handed default's first token (check/handed_default.nv), where an id can coincide.
+# (merge of origin/integrate 2488a47be into p274-carina-strarm, 2026-10-02: integrate's 6 + this branch's 1.)
 # merge of origin/integ/merge-train-1001 into p274-carina-cast (2026-10-02): the train's base
 #   plus what the sweep branch exported after the train took its earlier version -- pipeline
 #   `UnitFile` and sem's D488 doors (see the sweep chronicle lines on p274-carina-sweep);
@@ -1045,8 +1053,12 @@ resolve 23
 #   magnitude judges (check/literal_rules.nv) and both C spellings; the count stays 339.
 # merge of origin/main f80d61e00 into p274-carina-sweep (2026-10-02): main's 341 plus this
 #   branch's `literal_digits` (the two lines above) = 342; the count is the guard's on the merged tree.
+# merge of origin/main f80d61e00 into p274-carina-strarm (2026-10-02): main's counts plus this
+#   branch's SourceText.@holds (source 6 -> 7); the counts are the guard's on the merged tree.
+# merge of p274-carina-strarm (step 10) into main (integrator, 2026-10-02): the guard's counts on the
+#   merged tree -- sem 342 (main's, sweep's literal_digits included), source 7 (strarm's SourceText.@holds).
 sem 342
-source 6
+source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
 # шести местах четырёх модулей, и в половине следом брался `leaf_text` того же

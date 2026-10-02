@@ -30,7 +30,7 @@
 module novac.sem
 
 import ../tree.{Node, NodeKind, NodeId, branch, no_node}
-import ../builtins.{COERCE_ATTR, SELF_TYPE, UNIT_TYPE_NAME, RECV_BINDING}
+import ../builtins.{COERCE_ATTR, SELF_TYPE, UNIT_TYPE_NAME, RECV_BINDING, is_bool_literal}
 import ../types.{TyId, no_ty, is_ty}
 import ../names.{raw_decl, DeclId, NameTable, NamespaceId}
 
@@ -557,7 +557,7 @@ fn harvest_fn(kids []Node, handed_from str, own_module str, types []TypeDef, mut
         // so a signature read without it would make `@ptr()` and `mut @ptr()`
         // one row twice over.
         param_ids.push(ParamDef { name: param_name_of(pk), type_id: pt,
-                                  mode: param_mode_at(pk), default_expr: param_default_slot(pk) })
+                                  mode: param_mode_at(pk), default_expr: handed_default(param_default_slot(pk)) })
     }
     // A signature READ from std's own Nova source: the body is there too, and
     // novac does not compile it yet. That is a state of THIS compiler, not a
@@ -778,6 +778,33 @@ fn handed_literal(n Node) -> Option[Node] {
         return Some(branch(no_node(), NodeKind.Lit, kids))
     }
     None
+}
+
+/// A HANDED function's DEFAULT (registry 1576, the class of 1563): the call that
+/// omits the slot prints it at the CALL SITE (D102), so a node of the handed
+/// tree is emitted in the compiled file -- and every reader of a literal asks the
+/// channel by the node's id, an id of ANOTHER tree's space. Measured: a string
+/// default of a larger handed file died as "array: index 421 out of bounds for
+/// length 6" (the literal-temporaries table of the compiled file). A literal and
+/// `true` / `false` are rebuilt WITHOUT an identity, as a handed constant's
+/// literal is (`handed_literal`); any other default keeps its node -- no default
+/// of another form is handed in novac's own source, and the row says so here.
+fn handed_default(slot Option[Node]) -> Option[Node] {
+    match slot {
+        None => None
+        Some(d) => {
+            match handed_literal(d) {
+                Some(lit) => Some(lit)
+                None => {
+                    if d.kind_of() == NodeKind.Name && is_bool_literal(leaf_text(branch_children(d)[0])) {
+                        return Some(branch(no_node(), NodeKind.Name, branch_children(d)))
+                    }
+                    // Any other form keeps its node (see the doc above).
+                    Some(d)
+                }
+            }
+        }
+    }
 }
 
 /// One newtype's term, when its row still waits for one -- the ONE door for a

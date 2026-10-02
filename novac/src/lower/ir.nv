@@ -149,6 +149,7 @@ export type Rvalue enum
     | VariantField(VariantRead) // field `index` of variant `vrow` of the sum in `scr` (match binder)
     | Read(PlaceRead) // one projection of a local, read as a value (destructuring binder)
     | AnyData(Node) // the value the `any` the tree names holds, read as the destination's type (D54)
+    | Bool(bool) // a boolean constant: a disjunction's "an alternative held" flag (registry 1568)
     | NoneOf // the `None` of the destination's own Option type (the early return of `x?`, D85)
 
 /// ONE STEP OF A PLACE (wave M3c): a named field, or a positional component.
@@ -267,6 +268,9 @@ export type Cond enum
     // into (registries 1534, 1542): `3` of `A(3)`, `P` of `X(P(n))` -- printed
     // through the one door of pattern tests, the arm head's (emit_match.nv)
     | Holds(PatTest)
+    // the bool local holds: a disjunction whose alternatives test below their
+    // heads raised it in the alternative that held (registry 1568)
+    | Flag(Local)
 
 /// WHAT KIND OF `else` AN `if` HAS -- three states, and the fourth is gone because it never
 /// existed. Until 2026-09-13 the doors took two booleans, `has_else` and `els_braced`, which
@@ -417,6 +421,7 @@ export type Terminator enum
 /// What `begin_if` hands back and `begin_else` / `end_if` take: the three
 /// blocks of one `if`, so the caller never names a block id itself.
 export type IfCtx value {
+    head BlockId /// the block whose terminator is this `If` (a tested arm's printer descends to it)
     then BlockId /// entered when the condition holds
     els BlockId /// the else branch, or the join when there is none
     join BlockId /// where the branches continue
@@ -733,8 +738,9 @@ fn FnBuilder mut @open_if(cond Cond, join BlockId, shape ElseShape) -> IfCtx {
         ElseShape.NoElse => false
         ElseShape.Chained => false
     }
+    ro head = @cur_id
     @close(Terminator.If(IfTerm { cond, then, els, join, els_braced }), then)
-    IfCtx { then, els, join }
+    IfCtx { head, then, els, join }
 }
 
 /// Moves from the `then` branch to the `else` branch: the branch ends with a
@@ -836,25 +842,13 @@ export fn FnBuilder mut @begin_arm(c SwitchCtx, pat Pattern, guard Option[Node])
         ice("lower: begin_arm outside of a match")
     }
     ro body = @reserve()
-    @open_arms.push(SwitchArm { pat, guard, body, checks: 0 })
+    @open_arms.push(SwitchArm { pat, guard, body, heads: []BlockId.new() })
     @cur_id = body
 }
 
 /// Closes an arm: its block jumps to the join; the header is current again.
 export fn FnBuilder mut @end_arm(c SwitchCtx) -> () {
     @close(Terminator.Goto(c.join), c.head)
-}
-
-/// Records how many synthetic `If`s the OPEN arm's nested tests opened before its
-/// guard (registries 1534, 1542): the printer reads `SwitchArm.checks` to find the
-/// innermost branch, where the body runs and the first-match flag is set.
-export fn FnBuilder mut @note_arm_checks(n int) -> () {
-    if @open_arms.len() == 0 {
-        ice("lower: note_arm_checks outside of an arm")
-    }
-    ro i = @open_arms.len() - 1
-    ro a = @open_arms[i]
-    @open_arms[i] = SwitchArm { pat: a.pat, guard: a.guard, body: a.body, checks: n }
 }
 
 /// Closes a `match`: the header is sealed with the `Switch` over the arms

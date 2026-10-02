@@ -1,0 +1,38 @@
+module applied_static.pos_1
+
+// A STATIC CALL ON A TYPE APPLIED TO ARGUMENTS (274.5 P4): `HashMap[str,
+// int].new()` and `Vec[int].new()`. The parser reads `HashMap[str, int]` as an
+// index run and leaves the judgment to what its first name resolves to; novac
+// refused the form as "a type applied to arguments is read but not compiled
+// yet" -- on names/names.nv:86 of its own source, `NameTable.new` building its
+// map. The instance is the WRITTEN one (a constructor without parameters has
+// nothing to deduce it from), its omitted `cap` is the declaration's default,
+// and the shell carries the instance because the probe uses it.
+//
+// The axes: the map's four operations of `names.NameTable` (`new`, `insert`,
+// `get`, `clear`), a missing key, the map as a record field built by a free
+// function and written through the field, and `Vec[int].new()` beside it.
+// Behaviour byte-for-byte with the oracle (novac-e1-smoke).
+
+type Table {
+    m HashMap[str, int]
+}
+
+fn table() -> Table => { m: HashMap[str, int].new() }
+
+fn main() {
+    mut m = HashMap[str, int].new()
+    m.insert("a", 1)
+    m.insert("b", 2)
+    println(m.get("a") ?? -1)
+    println(m.get("z") ?? -1)
+    m.clear()
+    println(m.get("b") ?? -1)
+    mut t = table()
+    t.m.insert("k", 7)
+    println(t.m.get("k") ?? -1)
+    mut v = Vec[int].new()
+    v.push(5)
+    v.push(6)
+    println(v.len())
+}

@@ -22,7 +22,7 @@ import ../lower.{no_local}
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, raw_node, is_node}
 import ../diag.{ice}
-import ../sem.{raw_crow, carrier_of, c_callable, c_shell_method, c_overload_symbol, Ctx}
+import ../sem.{raw_crow, carrier_of, c_callable, c_method_symbol, c_overload_symbol, Ctx}
 import ../sem.{CheckOut, vec_op_c, c_static_symbol}
 import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct}
 import ../sem.{shape_of}
@@ -31,6 +31,7 @@ import ../tree.{raw_node}
 import ../sem.{c_tag, c_maker, VariantRow, raw_vrow, no_vrow, call_arg_at, raw_row, slot_default_of, no_row}
 import ../sem.{is_value_record, slice_shape_of, is_value_sum, is_payload_free_sum, row_recv_by_pointer}
 import ../builtins.{EQUAL_METHOD, PRINT_FN, bool_c_literal, RECV_C_NAME, VEC_INDEX_METHOD}
+import ../builtins.{is_bool_literal, is_true_literal}
 import ../types.{TyId, is_ty}
 import ../sem.{prim_row_of, is_int_prim}
 import ../builtins.{BuiltinType}
@@ -219,102 +220,6 @@ fn c_unary_form(op UnOp) -> str {
 /// answer here too.
 
 
-/// A call's arguments, in SLOT order, with omitted slots filled from the
-/// declaration.
-///
-/// ONE door for both call forms. `from` is the child where the written arguments
-/// begin (1 for a free call, 3 for a method call); `recv_slot` says that
-/// argument zero is the RECEIVER and lives at `kids[0]` rather than in that
-/// range. The row is the callee's, and it is asked only when a slot was left to
-/// its default -- a variant's payload has none, so it may arrive as `no_row()`.
-fn Emitter mut @emit_bound_args(kids []Node, from int, recv_slot bool,
-                                id NodeId, row FnRow) -> () {
-    ro slots = @out.callee_slots_of(id)
-    mut first = true
-    for s in 0..slots.len() {
-        @body.append(if first { "" } else { ", " })
-        first = false
-        ro at = slots[s].arg_row
-        // THE DECLARED CONVERSION, when the checker recorded one (D429 R7): the
-        // emission is a call to the method the program NAMED, never a cast and
-        // never a conversion of our own invention. `#coerce fn str consume
-        // @to_bytes() -> Bytes` becomes exactly that method's C name around the
-        // argument.
-        ro wrap = raw_row(slots[s].via_row) >= 0
-        if wrap {
-            @body.append("${c_callable(@ctx, slots[s].via_row, no_subst())}(")
-        } else {
-            // The type matches as written: nothing stands around the value.
-        }
-        if at < 0 {
-            @emit_slot_default(row, s)
-        } else if recv_slot && at == 0 {
-            ro by_ptr = raw_row(row) >= 0 && @ctx.in_program(row) && row_recv_by_pointer(@ctx, row) // D488
-            @body.append(if by_ptr { "(&" } else { "" })
-            @emit_expr(kids[0])
-            @body.append(if by_ptr { ")" } else { "" })
-        } else {
-            // ALREADY IN A LOCAL? (F65) The lowering hoists an effectful
-            // argument into a temporary so the effects run in the order the
-            // source wrote them; here that decision becomes the printed text.
-            //
-            // ASKED HERE AND NOT AT THE HEAD OF `@emit_expr`: there it
-            // substituted the local for the node everywhere, INCLUDING inside
-            // the statement that defines the local, and the emission said so
-            // plainly -- `nova_int _novac_l2 = _novac_l2;`. The question is
-            // about an ARGUMENT, and this is where an argument is printed.
-            ro anode = call_arg_at(kids, from, if recv_slot { at - 1 } else { at })
-            ro hl = @lo.ir.local_of_node(anode.id_of())
-            if hl != no_local() {
-                @body.append(@lo.ir.decl_of(hl).name)
-            } else {
-                @emit_expr(anode)
-            }
-        }
-        if wrap {
-            @body.append(")")
-        } else {
-            // Nothing was opened.
-        }
-    }
-}
-
-/// The DEFAULT of a slot the call omitted, emitted AT THE CALL SITE -- which is
-/// what D102 means by "evaluated at the call site, each call anew".
-///
-/// An absent default here is not a user mistake but a broken channel: the
-/// checker recorded -1 for a slot whose declaration writes nothing, and emitting
-/// anything at all would invent a value. So it ices.
-fn Emitter mut @emit_slot_default(row FnRow, s int) -> () {
-    if raw_row(row) < 0 {
-        ice("emit_c: a call with no callable row left a slot to a default")
-    } else {
-        // A callable row: its declaration is what says the value.
-    }
-    ro fd = @ctx.fns.rows[raw_row(row)]
-    match slot_default_of(@ctx.fns.params, fd.param_off, s) {
-        Some(d) => @emit_expr(d)
-        None => ice("emit_c: a call left a slot to a default its declaration does not write")
-    }
-}
-
-/// The CALLABLE row a decision names, or `no_row()` when it names something
-/// else -- a variant or a type. The emission of the arguments is the same for
-/// all three; only a DEFAULT needs the row, and only a callable has one.
-#realtime nogc
-fn callee_row_or_none(cr CalleeRef) -> FnRow {
-    match cr.target {
-        CalleeFn(row) => row
-        CalleeVariant(_) => no_row()
-        CalleeCtor(_) => no_row()
-        // A synthesized display has no row to give: the program wrote no
-        // function, and the emitter prints the field sequence from the TYPE.
-        CalleeSynthDisplay(_) => no_row()
-        // An effect operation has none either: the shell's dispatcher serves it.
-        CalleeEffectOp(_) => no_row()
-    }
-}
-
 /// Emit one expression: literals, names, fields, method/fn calls, binary ops.
 fn Emitter mut @emit_expr(e Node) -> () {
     // A NODE THE LOWERING PUT IN A TEMPORARY (registry 1619) prints as it -- except
@@ -423,6 +328,19 @@ fn Emitter mut @emit_expr(e Node) -> () {
         }
         @body.append(rtmp)
     } else if k == NodeKind.Name {
+        // A NAME WITHOUT AN IDENTITY is a handed function's `true` / `false`
+        // default, rebuilt without one by harvest (registry 1576): the channel
+        // knows nothing of it, and asking it by id would index with -1.
+        if !is_node(e.id_of()) {
+            ro bname = expr_leaf_name(e)
+            if is_bool_literal(bname) {
+                @body.append(bool_c_literal(is_true_literal(bname)))
+                return
+            }
+            ice("emit_c: a name without an identity that is no bool literal (a handed default)")
+        } else {
+            // A name of this file's tree: the channel answers below.
+        }
         // A CAPTURE (E.9 step 3): a binding of the scope a handler literal
         // was written in, read from one of its op bodies -- through the op
         // function's context, as the checker recorded it.
@@ -899,7 +817,9 @@ fn Emitter mut @emit_expr(e Node) -> () {
             if @ctx.in_program(row) {
                 @body.append(c_callable(@ctx, row, no_subst()))
             } else {
-                @body.append(c_shell_method(@ctx, @out.type_of(kids[0].id_of()), EQUAL_METHOD))
+                // A vector instance is spelled `<Head>____<args>_method_equal`, a
+                // primitive `Nova_<type>_method_equal`: the one door that knows both.
+                @body.append(c_method_symbol(@ctx, @out.type_of(kids[0].id_of()), EQUAL_METHOD))
             }
             @body.append("(")
             @emit_expr(kids[0])

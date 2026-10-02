@@ -43,7 +43,7 @@ import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, 
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor}
-import ../sem.{ty_source_name, c_shell_method, digit_index}
+import ../sem.{ty_source_name, digit_index}
 import ../sem.{interp_slices, const_init_interpolates}
 import ../types.{TyId, no_ty, is_ty}
 import ../sem.{coalesce_payload, option_payload, is_coalesce_return}
