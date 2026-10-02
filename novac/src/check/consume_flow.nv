@@ -354,7 +354,7 @@ fn Checker mut @flow_branch(n Node, mut fl ConsumeFlow) -> () {
         for a in kids {
             if fl.stopped { return }
             if a.kind_of() != NodeKind.MatchArm { continue }
-            @flow_arm(a, entry, fl, joined, paths)
+            @flow_arm(a, true, entry, fl, joined, paths)
             paths += 1
         }
     } else {
@@ -371,10 +371,10 @@ fn Checker mut @flow_branch(n Node, mut fl ConsumeFlow) -> () {
             // A plain condition binds nothing.
         }
         ro entry = flow_states_copy(fl.state)
-        @flow_arm(kids[then_at], entry, fl, joined, paths)
+        @flow_arm(kids[then_at], false, entry, fl, joined, paths)
         paths += 1
         if kids.len() > else_at {
-            @flow_arm(kids[else_at], entry, fl, joined, paths)
+            @flow_arm(kids[else_at], false, entry, fl, joined, paths)
         } else {
             // No `else`: the false path leaves the state as it was.
             flow_join(joined, entry, paths)
@@ -404,11 +404,14 @@ fn Checker mut @flow_pattern(p Node, mut fl ConsumeFlow) -> () {
 
 /// One arm, walked from `entry`; what it binds ends with it, and the state it leaves
 /// for the values bound before the branch joins `joined` (`paths` arms so far).
-fn Checker mut @flow_arm(a Node, entry []VarState, mut fl ConsumeFlow, mut joined []VarState, paths int) -> () {
+/// `is_match_arm`: `a` is a whole `match` arm (its guard and body); otherwise it is
+/// an `if` arm's body itself.
+fn Checker mut @flow_arm(a Node, is_match_arm bool, entry []VarState, mut fl ConsumeFlow,
+                         mut joined []VarState, paths int) -> () {
     fl.state = flow_states_copy(entry)
     ro mark = fl.owned_ty.len()
     fl.arms += 1
-    if a.kind_of() == NodeKind.MatchArm {
+    if is_match_arm {
         // A match arm: [pattern, guard?, `=>`, body, `,`?]; the guard runs on this path.
         ro ak = branch_children(a)
         for c in ak {
@@ -445,7 +448,7 @@ fn Checker mut @flow_arm_body(b Node, mut fl ConsumeFlow) -> () {
 /// A copy of a state vector: each arm starts from its own.
 fn flow_states_copy(v []VarState) -> []VarState {
     mut out = []VarState.new()
-    for x in v { out.push(x) }
+    out.append(v)
     out
 }
 
@@ -453,7 +456,7 @@ fn flow_states_copy(v []VarState) -> []VarState {
 /// the paths disagree the value is MAYBE consumed.
 fn flow_join(mut joined []VarState, st []VarState, paths int) -> () {
     if paths == 0 {
-        for x in st { joined.push(x) }
+        joined.append(st)
         return
     } else {
         // A later path: compared entry by entry below.
@@ -467,22 +470,12 @@ fn flow_join(mut joined []VarState, st []VarState, paths int) -> () {
 /// Forget every entry from `mark` on -- the values an arm bound -- and let each name
 /// mean its latest entry before it again (an arm may have shadowed one).
 fn flow_drop_from(mut fl ConsumeFlow, mark int) -> () {
-    mut nm = []str.new()
-    mut owned = []TyId.new()
-    mut at = []Node.new()
-    mut st = []VarState.new()
+    fl.nm.truncate(mark)
+    fl.owned_ty.truncate(mark)
+    fl.at.truncate(mark)
+    fl.state.truncate(mark)
     fl.names.clear()
-    for i in 0..mark {
-        nm.push(fl.nm[i])
-        owned.push(fl.owned_ty[i])
-        at.push(fl.at[i])
-        st.push(fl.state[i])
-        fl.names.put(fl.nm[i], i)
-    }
-    fl.nm = nm
-    fl.owned_ty = owned
-    fl.at = at
-    fl.state = st
+    for i in 0..mark { fl.names.put(fl.nm[i], i) }
 }
 
 /// One statement. A branch is joined (`@flow_branch`); a loop or a nested block is
