@@ -427,7 +427,7 @@ fn main() {\n\
  }\n\
 }", std)
     assert(d4.len() >= 1)
-    assert(d4[0].message.contains("must be an Option instance"))
+    assert(d4[0].message.contains("must be a sum"))
 }
 
 test "a for header reads the ONE pattern door; refutable forms refuse by position (D486 P5)" {

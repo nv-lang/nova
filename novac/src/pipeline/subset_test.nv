@@ -556,7 +556,8 @@ fn main() {\n\
     assert(c.contains("NOVA_TAG_Option_Some"))
     assert(c.contains(".value;"))
 
-    // A non-Option initializer refuses by name.
+    // An initializer no variant can test (an `int`) refuses by name -- since
+    // sweep 10 any variant of any sum is read, so the rule is "a sum".
     ro (d2, _) = compile_to_c("module p\n\
 fn main() {\n\
  if Some(v) = 5 {\n\
@@ -564,9 +565,10 @@ fn main() {\n\
  }\n\
 }", std)
     assert(d2.len() >= 1)
-    assert(d2[0].message.contains("must be an Option instance"))
+    assert(d2[0].message.contains("must be a sum"))
 
-    // A variant other than Some refuses by name.
+    // A head that names NO variant of the matched sum is refused by the shared
+    // pattern door, by name (since sweep 10 every real variant is read).
     ro (d3, _) = compile_to_c("module p\n\
 fn main() {\n\
  ro xs = [4]\n\
@@ -575,7 +577,7 @@ fn main() {\n\
  }\n\
 }", std)
     assert(d3.len() >= 1)
-    assert(d3[0].message.contains("takes only `Some(name)`"))
+    assert(d3[0].message.contains("names no variant of the matched sum"), d3[0].message)
 }
 
 test "a requires clause guards the body through the shell's contract helper (requires wave)" {

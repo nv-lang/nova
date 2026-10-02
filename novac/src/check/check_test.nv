@@ -425,27 +425,20 @@ test "with: a binding naming a non-effect is refused at the name, saying what th
     assert(msg.contains("is a record"), "the refusal must say what the name resolves to")
 }
 
-test "if-let: a QUALIFIED head naming a non-Some variant reaches the same named refusal as a bare one (registry #1259)" {
-    // The positive half of #1259 (a qualified `Option.Some(v)` head parsing
-    // and type-checking) needs `Option` DECLARED to reach `option_payload`
-    // at all -- this file's `diagnose()` deliberately runs against an EMPTY
-    // interop table (see its own doc comment) and cannot resolve `Option`,
-    // so that half lives in `pipeline/iflet_test.nv` instead, where
-    // `compile_to_c` injects real `std` declarations. What IS testable here,
-    // with no `Option` involved at all: a qualified head naming a variant of
-    // a SELF-DECLARED sum (no std dependency) reaches the SAME named
-    // "Some(name) only" refusal a bare non-Some head already gives -- not
-    // the unnamed parser fallback the qualified form used to fall into
-    // before this fix.
-    ro qualified_wrong_variant = "module m\n\ntype Shape enum\n    | Circle(int)\n    | Square(int)\n\nfn f(s Shape) -> int {\n    if Shape.Circle(r) = s {\n        r\n    } else {\n        0\n    }\n}\n"
-    ro msg = diagnose_first_msg(qualified_wrong_variant)
-    assert(msg.contains("Some(name)"), "a qualified non-Some head must name the same subset boundary the bare form already refuses with")
-
-    // Control: the bare non-Some form gives the identical message -- the fix
-    // did not change WHAT is said, only WHICH heads can reach the door that
-    // says it.
-    ro bare_wrong_variant = "module m\n\ntype Shape enum\n    | Circle(int)\n    | Square(int)\n\nfn f(s Shape) -> int {\n    if Circle(r) = s {\n        r\n    } else {\n        0\n    }\n}\n"
-    assert(diagnose_first_msg(bare_wrong_variant) == msg, "the qualified and bare forms must be refused with the identical message")
+test "if-let: a QUALIFIED head and a bare one of a declared sum are read alike (registry #1259, sweep 10)" {
+    // Since sweep 10 any variant of any sum is read by `if <variant> = ..`; the
+    // qualified head (`Shape.Circle(r)`, #1259) and the bare one (`Circle(r)`)
+    // go through the one pattern door and are accepted alike. Until then both
+    // were refused with the identical "Some(name) only" boundary -- what #1259
+    // pinned was that the two forms reach ONE door, and that still holds.
+    ro qualified = "module m\n\ntype Shape enum\n    | Circle(int)\n    | Square(int)\n\nfn f(s Shape) -> int {\n    if Shape.Circle(r) = s {\n        r\n    } else {\n        0\n    }\n}\n"
+    assert(diagnose(qualified) == 0, "a qualified head of a declared sum's variant is read")
+    // Control: the bare head is treated identically, and an initializer no
+    // variant can test is still refused by name.
+    ro bare = "module m\n\ntype Shape enum\n    | Circle(int)\n    | Square(int)\n\nfn f(s Shape) -> int {\n    if Circle(r) = s {\n        r\n    } else {\n        0\n    }\n}\n"
+    assert(diagnose(bare) == 0, "the bare head reaches the same door and is read alike")
+    ro not_sum = "module m\n\ntype Shape enum\n    | Circle(int)\n    | Square(int)\n\nfn f(n int) -> int {\n    if Circle(r) = n {\n        r\n    } else {\n        0\n    }\n}\n"
+    assert(diagnose_first_msg(not_sum).contains("must be a sum"), "an `int` initializer is refused by name")
 }
 
 test "interpolation format spec `:?`: named refusal, not the anonymous parser fallback (registry #1231)" {
@@ -644,7 +637,9 @@ test "binder or variant is ONE door: a bare variant name in a condition is a var
     // the name is a variant; the binding and the match arm each asked their own way.
     ro unit = "module m\n\ntype St enum\n    | P(int)\n    | N\n\nfn f(s St) -> int {\n    if N = s {\n        return 1\n    }\n    0\n}\n"
     assert(!diagnose_first_msg(unit).contains("name binding"), diagnose_first_msg(unit))
-    assert(diagnose_first_msg(unit).contains("takes only"), diagnose_first_msg(unit))
+    // Since sweep 10 the variant pattern is READ (any variant of any sum): no
+    // diagnostic at all, where the condition used to refuse "takes only".
+    assert(diagnose(unit) == 0, diagnose_first_msg(unit))
     // CONTROL: a name that is no variant stays a binder in the condition.
     ro name = "module m\n\ntype St enum\n    | P(int)\n    | N\n\nfn f(s St) -> int {\n    if ro x = s {\n        return 1\n    }\n    0\n}\n"
     assert(diagnose_first_msg(name).contains("name binding"), diagnose_first_msg(name))

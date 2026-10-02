@@ -1,0 +1,69 @@
+module iflet_variants.pos_1
+
+import std.fs.{read}
+
+// `if <variant> = ..` and `while <variant> = ..` FOR ANY VARIANT OF ANY SUM
+// (sweep 10): a declared sum's variant with and without a payload, `Ok`/`Err`
+// of a Result, `None` of an Option -- until now only `Some(name)` was read.
+// The test is the match arm's head test; `Some` keeps its own. Each branch
+// prints a value naming it, so a test that always held or never held prints
+// different lines.
+type Target enum
+    | DefFn(int)
+    | DefConst(str)
+    | Nothing
+
+fn row_of(t Target) -> int {
+    if DefFn(row) = t {
+        row * 10
+    } else {
+        -1
+    }
+}
+
+fn describe(t Target) -> str {
+    if DefConst(name) = t {
+        return "const ${name}"
+    }
+    if Nothing = t {
+        return "nothing"
+    }
+    "other"
+}
+
+fn nothing() -> Option[int] => None
+
+fn countdown(n int) -> Target {
+    if n > 0 { DefFn(n) } else { Nothing }
+}
+
+fn main() Fs {
+    println(row_of(DefFn(4)))
+    println(row_of(DefConst("k")))
+    println(describe(DefConst("pi")))
+    println(describe(Nothing))
+    println(describe(DefFn(1)))
+    // A Result as a std call hands it back (a program-built Result is E2-b3).
+    if Ok(bytes) = read("/nonexistent/iflet".to_path()) {
+        println(bytes.len())
+    } else {
+        println("no file")
+    }
+    if Err(_) = read("/nonexistent/iflet".to_path()) {
+        println("err")
+    } else {
+        println("ok")
+    }
+    if None = nothing() {
+        println("none")
+    } else {
+        println("some")
+    }
+    mut k = 3
+    mut sum = 0
+    while DefFn(m) = countdown(k) {
+        sum += m
+        k -= 1
+    }
+    println(sum)
+}

@@ -195,7 +195,6 @@ const INTERP_PATTERN_MSG = "a pattern's string literal is not interpolated (D486
 const LIT_PATTERN_TYPE_MSG = "a literal pattern compares with a value of its own type -- a string literal with a `str`, a char literal with a `char`, an integer literal with an integer (D486 s2; D128: `char` and the integers do not mix); the value matched here is of another type"
 
 
-const IFLET_VARIANT_MSG = "outside the subset: `if <pattern> = ...` takes only `Some(name)` here -- other variants arrive with their carriers (274.5 P4)"
 
 /// A tail `if let` used as a VALUE with no `else` (registry 1189).
 ///
@@ -212,8 +211,8 @@ const IFLET_VALUE_NEEDS_ELSE_MSG = "outside the subset: a tail `if let` needs an
 /// wrong answer and no diagnostic anywhere.
 const IFLET_VALUE_DISAGREE_MSG = "outside the subset: the branches of a value `if let` must agree on a type (E2-b)"
 
-/// See IFLET_VARIANT_MSG above; the initializer half.
-const IFLET_INIT_MSG = "the initializer of `if Some(...) = ...` must be an Option instance -- this expression's type is not one"
+/// The initializer of a variant pattern is no sum: no variant can test it.
+const IFLET_INIT_MSG = "the initializer of `if <variant> = ...` must be a sum -- an Option, a Result or a declared sum; this expression's type is not one"
 
 /// The if-let condition's PATTERN door (wave P3, D486 §4's third column):
 /// the condition takes a variant pattern -- judged against the initializer's
@@ -238,8 +237,7 @@ const RO_WORD_PATTERN_MSG = "`ro` stands only before a bare name that is the who
 /// if-let's, worded for its own position -- a while-let is the if-let's
 /// condition asked once per iteration, so the judgments are one and the
 /// messages name the form the author wrote.
-const WHILELET_VARIANT_MSG = "outside the subset: `while <pattern> = ...` takes only `Some(name)` here -- other variants arrive with their carriers (274.5 P4)"
-const WHILELET_INIT_MSG = "the initializer of `while Some(...) = ...` must be an Option instance -- this expression's type is not one"
+const WHILELET_INIT_MSG = "the initializer of `while <variant> = ...` must be a sum -- an Option, a Result or a declared sum; this expression's type is not one"
 const WHILELET_COND_BIND_MSG = "outside the subset: a name binding in a `while` condition is read but not compiled yet -- the condition takes a variant pattern (274.5 P4, the condition-forms wave)"
 const WHILELET_COND_FORM_MSG = "outside the subset: a `while` condition takes a variant pattern here -- record, array and positional-group conditions arrive with the condition-forms wave (274.5 P4)"
 

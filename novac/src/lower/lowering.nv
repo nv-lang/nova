@@ -19,7 +19,8 @@ import ../sem.{leaf_text, literal_prim_of, raw_vrow, variant_in_sum}
 import ../sem.{iflet_pattern_at, iflet_body_at, iflet_else_at, iflet_init_at}
 import ../sem.{whilelet_pattern_at, whilelet_init_at, whilelet_body_at}
 import ../sem.{payload_as_seen}
-import ../sem.{pattern_shape, pattern_head_text, PatShape}
+import ../sem.{pattern_shape, pattern_head_text, PatShape, option_payload}
+import ../builtins.{OPTION_SOME_VARIANT}
 // Which arguments have an observable order (F65) -- the checker's own door.
 import ../sem.{contains_call, loop_ctl_is_break, is_collection_head}
 
@@ -191,7 +192,7 @@ fn Lowerer mut @lower_if_let_value(n Node, res_t TyId) -> Local {
     // the Option of an `if let` is the compiler's, not the author's.
     ro lo = @ir.temp(ot)
     @lower_place(init, lo)
-    ro c = @ir.begin_if(Cond.IsSome(lo), ElseShape.Braced)
+    ro c = @ir.begin_if(@variant_test(kids[iflet_pattern_at(kids)], ot, lo), ElseShape.Braced)
     // The pattern binds through the match arm's own door (wave P3): a binder
     // reads the payload, a nested pattern reads its piece -- one judgment,
     // recorded by the checker, spelled here.
@@ -507,7 +508,7 @@ fn Lowerer mut @lower_if_let(st Node, outer Option[IfCtx]) -> () {
     // Recorded first, printed from the record -- the same door the plain `if` uses
     // (M2b-2 step 3a). The head is identical to what this function spelled by hand:
     // `option_some_test` reads the local's type and name, which is what it was passed.
-    ro cond = Cond.IsSome(lo)
+    ro cond = @variant_test(kids[iflet_pattern_at(kids)], ot, lo)
     ro shape = else_shape(kids, else_at)
     // THE TEMPORARY BELONGS TO THE ELSE BLOCK, and under the walk that is decided by
     // MEMBERSHIP rather than by the moment of printing (found 2026-09-09, the last divergence
@@ -595,12 +596,38 @@ fn Lowerer mut @lower_while_let(st Node) -> () {
     // Recorded first, printed from the record (M2b-2 step 3a).
     ro c = @ir.begin_loop(LoopHead.Forever)
     @lower_place(init, lo)
-    ro exit_c = @ir.begin_if(Cond.NotSome(lo), ElseShape.NoElse)
-    @ir.break_loop()
-    @ir.end_if(exit_c)
-    @lower_pattern_bind(kids[whilelet_pattern_at(kids)], ot, lo)
-    @lower_block_stmts_fn(kids[whilelet_body_at(kids)], false)
+    ro pat = kids[whilelet_pattern_at(kids)]
+    match @variant_test(pat, ot, lo) {
+        IsSome(_) => {
+            ro exit_c = @ir.begin_if(Cond.NotSome(lo), ElseShape.NoElse)
+            @ir.break_loop()
+            @ir.end_if(exit_c)
+            @lower_pattern_bind(pat, ot, lo)
+            @lower_block_stmts_fn(kids[whilelet_body_at(kids)], false)
+        }
+        // Any other variant (sweep 10): its test has no negated spelling, so
+        // the body sits in the test's then-branch and the else leaves.
+        Expr(_) | NotSome(_) | FrameEntered(_) | Holds(_) => {
+            ro test_c = @ir.begin_if(@variant_test(pat, ot, lo), ElseShape.Braced)
+            @lower_pattern_bind(pat, ot, lo)
+            @lower_block_stmts_fn(kids[whilelet_body_at(kids)], false)
+            @ir.begin_else(test_c)
+            @ir.break_loop()
+            @ir.end_if(test_c)
+        }
+    }
     @ir.end_loop(c)
+}
+
+/// The HEAD TEST of a variant pattern in `if let` / `while let`: `Some` over an
+/// Option keeps the Option door's spelling (`Cond.IsSome`); any other variant,
+/// of any sum, is the match arm's head test (`Cond.Holds`, emit_match.nv) --
+/// one test per pattern, whichever statement asks.
+fn Lowerer @variant_test(pat Node, ty TyId, lo Local) -> Cond {
+    if is_ty(option_payload(@ctx, ty)) && pattern_head_text(pat) == OPTION_SOME_VARIANT {
+        return Cond.IsSome(lo)
+    }
+    Cond.Holds(PatTest { pat: @pattern_of(pat, ty), scr: lo })
 }
 
 /// One `for v in lo..hi`: the loop variable is a binding local of the body,
