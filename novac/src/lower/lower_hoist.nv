@@ -278,6 +278,15 @@ fn Lowerer mut @hoist_sealed_args(call Node) -> () {
         ro c = if k.kind_of() == NodeKind.CtorField && branch_children(k).len() > 2 { branch_children(k)[2] } else { k }
         if !is_expr_kind(c.kind_of()) { continue }
         ro ck = c.kind_of()
+        // A CALL AS AN ARGUMENT carries arguments of its own, and a sealed one
+        // among them (`take(idf(if c { 5 } else { 0 }))`) is printed inline with
+        // the outer call unless it is lowered here, before the seal -- the emit
+        // ice "expression kind outside the subset" (part 7 of p274-carina-k1).
+        // A call already hoisted whole (`@hoist_ordered_args`) lowered its own.
+        if (ck == NodeKind.Call || ck == NodeKind.MethodCall) && @ir.local_of_node(c.id_of()) == no_local() {
+            @hoist_sealed_args(c)
+            continue
+        }
         // `unsafe { .. }` JOINS THEM (registry 1525): `@lower_value_source`'s
         // third arm. std's `Vec[T] @get` returns `Some(unsafe { .. })`; check
         // took it, the printer had no arm, and every `get` instance the shell
