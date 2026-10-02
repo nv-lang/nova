@@ -1398,7 +1398,7 @@ compile error, `neg_protocol_lit_missing_method.nv`).
 
 ---
 
-## D55. Literal coercion в позиции с явным типом: sum-конструкторы и record-литералы
+## D55. Literal coercion в позиции с явным типом: sum-конструкторы и record-литералы {#d55}
 
 > **Уточнено [D491](#d491) (2026-10-02):** обёртка значения в вариант суммы сверяет ЧИСЛОВОЙ тип точно (`int` ≠ `i64`); «int-семья взаимозаменяема» снята.
 
@@ -14488,7 +14488,7 @@ tuples, C# ValueTuple), always all-public. Encapsulation на стеке —
 всегда all-public; `type X priv (...)` syntax больше НЕ supported.
 Records keep type-level priv flip (D220 §3.3.1 unaffected).
 
-### D228 NEW — Value-record allocation contract (Plan 124.8 Ф.2/Ф.4)
+### D228 NEW — Value-record allocation contract (Plan 124.8 Ф.2/Ф.4) {#d228}
 
 > **Уточнено [D488](#d488) (2026-10-01):** размещение и передача значения — там единственный дом правила (место решает убегание, передачу `ro` — размер, порог три слова; `mut` — указатель). Где этот блок расходится с D488, действует D488.
 
