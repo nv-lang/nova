@@ -35,13 +35,18 @@ test "a method of the file handed back to it is ONE method, not a tie (D125's me
 test "a REAL overload stays a tie: a handed method with other parameters is not the file's" {
     // CONTROL: the rule compares receiver, name and every parameter's type and
     // mode. A handed `@get(n int)` beside the file's `@get()` is a different
-    // method, and it does not vanish: `b.get(3)` resolves to it. What stops the
-    // call is its BODY (novac compiles no handed body, E2-b2) -- the refusal
-    // names the method it FOUND, which is neither a tie nor "no such method".
+    // method, and it does not vanish: `b.get(3)` resolves to it, and its handed
+    // body is made by novac (task 4) -- neither a tie nor "no such method".
     ro src = "module u\ntype Box { v int }\nfn Box @get() -> int => @v\nfn apply(b Box) -> int => b.get(3)\nfn main() {\n println(1)\n}"
     mut decls = std_decls()
     decls.push("module u\ntype Box { v int }\nfn Box @get() -> int => @v\nfn Box @get(n int) -> int => n\n")
     ro ds = compile_with(src, parse_decls(decls), interop_surface())
-    assert(ds.len() == 1, messages(ds))
-    assert(ds[0].message.contains("carries no `get` for Box"), messages(ds))
+    assert(ds.len() == 0, messages(ds))
+    // Body-less (`extern "nova"`), what stops the call is the missing BODY --
+    // the refusal names the method it FOUND.
+    mut bare = std_decls()
+    bare.push("module u\ntype Box { v int }\nfn Box @get() -> int => @v\nextern \"nova\" fn Box @get(n int) -> int\n")
+    ro bs = compile_with(src, parse_decls(bare), interop_surface())
+    assert(bs.len() == 1, messages(bs))
+    assert(bs[0].message.contains("carries no `get` for Box"), messages(bs))
 }

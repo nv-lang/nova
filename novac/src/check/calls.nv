@@ -500,13 +500,17 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
     // A GENERIC handed free function is judged once its substitution is known
     // (below): its instance is made from the body novac was handed (274.11
     // E.10 step 4c-2, `Ctx @instantiates`), or refused by name there.
-    if hfd.handed_from != "" && hfd.tparam_cnt == 0 {
+    // HANDED is the row's fact (`compiles_body` false), not its module's
+    // spelling: std may be handed without a module line (`handed_from` ""),
+    // and asking `!= ""` skipped the shell question for every such function --
+    // a call printed under a shell name the shell does not carry (task 4).
+    if !@ctx.fns.compiles_body(row) && @ctx.handed.decl_of(row).is_some() && hfd.tparam_cnt == 0 {
         ro sym = c_free_symbol(@ctx, row)
         if @ctx.in_program(row) {
             // A function of ANOTHER MODULE OF THE PROGRAM (274.11 E.10 step 2a):
             // its body is the program's, named by its owner's module; the call is
             // judged by the owner's signature like an own call.
-        } else if !@ctx.interop.has(sym) {
+        } else if !@ctx.interop.has(sym) && !@ctx.instantiates(row, []TyId.new()) {
             @report_first_leaf_of(kids,
                 "outside the subset: `${hfd.name}` is declared in module `${hfd.handed_from}`, whose bodies novac does not compile into this unit yet (E2-b2 multi-file), and the shell novac links into carries no `${sym}` for it")
             return

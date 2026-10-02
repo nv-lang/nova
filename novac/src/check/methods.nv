@@ -253,7 +253,11 @@ fn Checker mut @judge_method_lookup(e Node, t Token, key []ArgSpec, found FnLook
                 // THE OVERLOAD, not the name (registry 1558): `sb.append(1)` is
                 // `..._append__nova_int`, not the `str` overload's bare name.
                 ro sym = c_overload_symbol(@ctx, row, key[0].type_id, []TyId.new())
-                if @ctx.interop.has(sym) {
+                // OR MADE FROM ITS BODY when the shell lacks it (task 4, the
+                // shell-str group: `s.replace(a, b)`, `k.is_dir()` -- std's body
+                // was handed and novac compiles it), exactly as a generic
+                // method's instance is made; `Ctx @instantiates` is the one door.
+                if @ctx.interop.has(sym) || @ctx.instantiates(row, []TyId.new()) {
                     @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new(),
                         bind_slots(@ctx.fns.params, mfd.param_off, mfd.param_cnt, key))
                     @record(e, mfd.ret_id)

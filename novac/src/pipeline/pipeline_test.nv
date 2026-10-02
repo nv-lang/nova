@@ -90,9 +90,14 @@ test "E2 strings surface: a std method the shell carries is callable, one it lac
     // them. Both move the other way now.
     ro src = "fn main() { ro s = \"ab\"\n while s.byte_len() < 1 { println(s.to_ascii_upper()) }\n println(s.starts_with(\"a\")) }"
     assert(n_diags(src) == 0)
-    // A method the shell does NOT carry is refused by NAME of the missing body:
-    // the declaration is handed, the symbol exists nowhere to link.
-    ro decls = []str.of("fn str @nowhere() -> int => 0\n")
+    // A method the shell does NOT carry, handed WITH its body, is made from that
+    // body by novac (task 4, the shell-str group: `s.replace`, `k.is_dir()`) --
+    // the way a generic method's instance always was.
+    ro made = compile("fn main() { ro s = \"ab\"\n println(s.nowhere()) }", []str.of("fn str @nowhere() -> int => 0\n"))
+    assert(made.len() == 0, messages(made))
+    // One with NO body (`extern "nova"`) is refused by NAME of the missing body:
+    // the symbol exists nowhere to link, and nothing is there to make it from.
+    ro decls = []str.of("extern \"nova\" fn str @nowhere() -> int\n")
     ro d = compile("fn main() { ro s = \"ab\"\n println(s.nowhere()) }", decls)
     assert(d.len() == 1)
     assert(d[0].message.contains("carries no `nowhere` for str"), d[0].message)
@@ -284,10 +289,15 @@ test "a receiver MODE is read AND judged: a consuming method needs a consuming p
     assert(on_ro.len() == 1)
     assert(!on_ro[0].message.contains("carries no `into_f64`"), on_ro[0].message)
     // A `consume` BINDING is the place it does take -- the signature IS found,
-    // and what novac lacks is the method's body.
+    // and the handed body is made by novac (task 4): nothing is refused.
     ro on_consume = compile("type Cel { v f64 }\nfn main() { consume c = Cel { v: 1.5 }\n println(c.into_f64()) }", decls)
-    assert(on_consume.len() == 1)
-    assert(on_consume[0].message.contains("carries no `into_f64` for Cel"), on_consume[0].message)
+    assert(on_consume.len() == 0, messages(on_consume))
+    // The same place with a BODY-LESS declaration: found, and refused for the
+    // one reason left -- the shell carries no body and novac has none to make.
+    ro bodiless = []str.of("extern \"nova\" fn Cel consume @into_f64() -> f64\n")
+    ro no_body = compile("type Cel { v f64 }\nfn main() { consume c = Cel { v: 1.5 }\n println(c.into_f64()) }", bodiless)
+    assert(no_body.len() == 1)
+    assert(no_body[0].message.contains("carries no `into_f64` for Cel"), no_body[0].message)
 }
 
 test "`Self` in a declaration is the RECEIVER's type, not a missing one" {
@@ -302,8 +312,13 @@ fn main() { ro c = Cel { v: 1.0 }\n\
  println(c.twin().v) }"
     ro diags = compile(src, decls)
     assert(diags.len() == 1)
-    // Read, and refused for the reason that is left: novac emits no method body.
-    assert(diags[0].message.contains("carries no `twin` for Cel"), diags[0].message)
+    // Read, and its handed BODY is now typed (task 4): `0` is refused against
+    // `-> Cel` -- `Self` WAS read as the receiver's type.
+    assert(diags[0].message.contains("declared `-> Cel`"), diags[0].message)
+    // Body-less, it is refused for the reason that is left: no body anywhere.
+    ro bare = compile(src, []str.of("extern \"nova\" fn Cel @twin() -> Self\n"))
+    assert(bare.len() == 1)
+    assert(bare[0].message.contains("carries no `twin` for Cel"), bare[0].message)
 }
 
 test "a BOUND is not a type parameter: the arity is ONE, not two" {

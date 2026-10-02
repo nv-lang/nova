@@ -54,6 +54,14 @@ fn Checker mut @type_cast(e Node) -> () {
     @type_expr(kids[0])
     if @out.len() > before { return }
     ro from = type_of(kids[0], @ctx, @scope, @chan)
+    if !is_ty(from) && reads_poisoned(kids[0], @scope) {
+        // SILENT-OK: the operand reads a name whose initializer was refused --
+        // that refusal is the one cause (task 4: `out[i] as int` in std's
+        // `to_ascii_lower`, made from its body, after `[]u8.new(cap: n)`).
+        return
+    } else {
+        // An operand with a type, or one novac could not type on its own.
+    }
     // A POINTER target (`0 as *mut T`, `p as *mut T`) is a type REFERENCE, read
     // through the one door with the instance's parameters in scope (274.11 E.10
     // step 4c-2: std's `Vec[T].new` writes `0 as *mut T`); a plain name is the
