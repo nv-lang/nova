@@ -597,7 +597,8 @@ Do not use them for other purposes.
   is only known at run time. The form `Vec[T consume Cleanup[E]]` declares its
   own cleanup that walks the elements and, per
   [D432](decisions/02-types.md#d432), becomes affine — you may forget it, the
-  compiler inserts the call.
+  compiler inserts the call. A newtype over a must-consume type (`type Tx2 Tx`)
+  is the same one-value wrapper and must-consume too (amendment 2026-10-03).
 - **An empty `Vec` and an empty slice allocate nothing** ([D232 amendment
   2026-09-24](decisions/02-types.md#d232-vect--nova-native-generic-growable-array)): `Vec[T].new()`
   and a zero-length `[]T` have a null data pointer and `cap == len == 0`; memory is allocated only

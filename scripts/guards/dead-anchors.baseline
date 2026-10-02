@@ -44,7 +44,12 @@
 # removed from the list below the same edit. {#d478} added alongside.
 # 2026-10-02, integrator: 409 -> 399, d55 and d228 got explicit {#d55}/{#d228} targets (the D55/D489
 #   amendment of row 1637 linked to #d55).
-dead=399
+# 2026-10-03, integrator: 399 -> 394, D432 got an explicit {#d432} target (the D156 newtype amendment
+#   links to it; five older (#d432) links came alive); address d432 removed. D424 got {#d424} for the
+#   code-home pointer of the D35 amendment (#1636).
+#   Same edit: 394 -> 393, D156 got {#d156} (its own amendment and D52's pointer link to it), address
+#   d156 removed; D52 got {#d52}.
+dead=393
 d100
 d101
 d102
@@ -65,7 +70,6 @@ d133
 d14
 d142
 d144
-d156
 d157
 d158
 d159
@@ -144,7 +148,6 @@ d423
 d427
 d430
 d431
-d432
 d434
 d437
 d44
