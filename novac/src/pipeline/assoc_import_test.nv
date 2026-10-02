@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Role: an ASSOCIATED value `Type.NAME` (D200, `[export] const|ro Type.NAME = ..`)
+//   lives in its type's namespace and is imported WITH the type: importing `Lim`
+//   lets the file read `Lim.MAX` (resolve/resolve.nv `imported_as`, sweep 11).
+//   Until then the import list was searched for the whole dotted name, which no
+//   import list can carry, and the read was refused as "not a sum".
+// Used by: nova test novac/src/pipeline (the module-test batch of the gate).
+// Guarded by: check-novac-module-tests.
+//
+// THE TEST CARRIES ITS CONTROL. Reverse probe, run before the commit: with the
+// import list searched for `Lim.MAX` itself, the first assertion reddens.
+
+module novac.pipeline
+
+test "an associated value is imported with its type (D200)" {
+    mut std = std_decls()
+    std.push("module std.k\nexport type Lim { n int }\nexport const Lim.MAX = 3\n")
+    ro (d, _) = compile_to_c("import std.k.{Lim}\nfn main() {\n println(Lim.MAX + 1)\n}", std)
+    assert(d.len() == 0, messages(d))
+    // CONTROL: without the type imported, its value is not visible either.
+    ro (r, _) = compile_to_c("fn main() {\n println(Lim.MAX + 1)\n}", std)
+    assert(r.len() > 0, "an associated value of a type nobody imported was read")
+}

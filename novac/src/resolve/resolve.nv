@@ -171,9 +171,21 @@ export fn FnIndex @sees_decl(own bool, handed_from str, name str) -> bool {
     ro home = if own { @file_mod } else { handed_from }
     if home == @asker { return true }
     if home == "prelude" || home.starts_with("prelude.") { return true }
-    ro i = @imp.find(name)
+    ro i = @imp.find(imported_as(name))
     if i < 0 { return false }
     @imp_segs[i] == home[seg_start(home)..]
+}
+
+/// The name an IMPORT LIST carries for declaration `name`: an associated value
+/// `Type.NAME` (D200, `[export] ro Type.NAME = ..`) lives in its type's namespace
+/// and is imported with the type -- `import ../builtins.{BuiltinType}` brings
+/// `BuiltinType.ALL` -- so it is looked up by `Type`; every other name by itself.
+#realtime nogc
+fn imported_as(name str) -> str {
+    for i in 0..name.byte_len() {
+        if name[i..i + 1] == "." { return name[0..i] }
+    }
+    name
 }
 
 /// Is `row` declared in the ASKER's own module (#1521)? D125: a name of the
