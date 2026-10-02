@@ -61,6 +61,13 @@ fn Checker mut @type_try(e Node) -> () {
     if @out.len() > before { return }
     ro ot = type_of(tk[0], @ctx, @scope, @chan)
     ro payload = if is_ty(ot) { coalesce_payload(@ctx, ot) } else { no_ty() }
+    // The same cascade door as `??`'s (exprs.nv): a poisoned read is not `?`'s fault.
+    if !is_ty(ot) && reads_poisoned(tk[0], @scope) {
+        // SILENT-OK: the refused initializer of the name read here is the cause.
+        return
+    } else {
+        // A typed operand, or one with no poisoned read: judged below.
+    }
     if !is_ty(payload) {
         @reject_first_leaf_of(tk, TRY_NOT_CONTAINER_MSG)
         return
