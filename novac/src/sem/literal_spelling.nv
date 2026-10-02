@@ -43,17 +43,21 @@ export fn int_literal_c_text(t str) -> str {
 export fn float_literal_c_text(t str) -> str {
     // Slices between the separators, not `replace`: the shell Carina links
     // into carries no `replace` for str yet.
-    mut out = ""
+    // The width is bound first: a method call as the named argument of a
+    // static call is an ICE in novac's own check (registry, sweep 5).
+    ro width = t.byte_len()
+    consume out = StringBuilder.new(cap: width)
     mut from = 0
     for i in 0..t.byte_len() {
         if t[i..i + 1] == "_" {
-            out = "${out}${t[from..i]}"
+            out.append(t[from..i])
             from = i + 1
         } else {
             // A digit, the dot, the exponent letter or its sign: kept.
         }
     }
-    "${out}${t[from..]}"
+    out.append(t[from..])
+    out
 }
 
 /// The CODEPOINT of a char literal's text, as decimal C digits: `'A'` -> "65",
