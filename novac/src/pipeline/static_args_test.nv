@@ -34,16 +34,31 @@ test "a HANDED static method: its parameters judge the call too (1650)" {
 test "a GENERIC static method: a concrete parameter still judges its argument (1650)" {
     mut std = std_decls()
     std.push("module std.gbx\nexport type Gbx[T] { n int }\nexport fn Gbx[T].make(v T, n int) -> Gbx[T] => { n }\n")
-    // Judged by `compile` (the check verdict). A generic static call that FITS
-    // ices in its instance ("mangle: a substituted type the checker never
-    // interned") -- measured with this fix off as well; a finding of its own,
-    // named in the report, so both calls here are misfits.
     ro bad = compile("import std.gbx.{Gbx}\nfn main() {\n ro b = Gbx.make(1, \"q\")\n println(b.n)\n}", std)
     assert(bad.len() == 1 && messages(bad).contains("argument `n` of type `int`"), messages(bad))
     // CONTROL: the type parameter takes another type than the concrete one --
     // the misfit is the concrete slot's, not the parameter's.
-    ro good = compile("import std.gbx.{Gbx}\nfn main() {\n ro b = Gbx.make(\"t\", \"u\")\n println(b.n)\n}", std)
-    assert(good.len() == 1 && messages(good).contains("argument `n` of type `int`"), messages(good))
+    ro odd = compile("import std.gbx.{Gbx}\nfn main() {\n ro b = Gbx.make(\"t\", \"u\")\n println(b.n)\n}", std)
+    assert(odd.len() == 1 && messages(odd).contains("argument `n` of type `int`"), messages(odd))
+    // A call that FITS is checked AND emitted (registry 1666): until the
+    // instance's signature was interned before the whose-body question, the
+    // shell symbol's spelling substituted `Gbx[T]` -> `Gbx[str]` through the
+    // read-only door and iced ("a substituted type the checker never
+    // interned").
+    ro (good, c) = compile_to_c("import std.gbx.{Gbx}\nfn main() {\n ro b = Gbx.make(\"t\", 2)\n println(b.n)\n}", std)
+    assert(good.len() == 0, messages(good))
+    assert(c.contains("make"), c)
+}
+
+test "a GENERIC SUM's static method is spelled by the sum's name, not iced (1666)" {
+    // The same door with a sum owner: the record-shaped instance body iced
+    // ("the record-shaped instance body of a generic SUM") -- std's
+    // `LinkedList.from_array([1, 2, 3])`. The oracle calls the one symbol
+    // `Nova_<Sum>_static_<name>`; what the body then meets is novac's subset.
+    mut std = std_decls()
+    std.push("module std.sbx2\nexport type Sx[T] enum\n    | Nil\n    | One(T)\nexport fn Sx[T].wrap(v T) -> Sx[T] => One(v)\n")
+    ro got = compile("import std.sbx2.{Sx}\nfn main() {\n ro s = Sx.wrap(3)\n println(1)\n}", std)
+    assert(!messages(got).contains("internal compiler error"), messages(got))
 }
 
 test "a NAMED argument of a static call is counted, bound and judged (1650)" {

@@ -319,7 +319,14 @@ export fn c_static_symbol(ctx Ctx, row FnRow, args []TyId) -> str {
     ro owner_n = ctx.tys.arg_count(fd.owner)
     consume s = StringBuilder.new(cap: 64)
     s.append("Nova_")
-    if owner_n > 0 {
+    if owner_n > 0 && decl_of_ty(ctx, fd.owner).kind == TypeKind.TkSum {
+        // A generic SUM's static method is ONE symbol by the sum's name -- the
+        // oracle instantiates only a generic RECORD's statics per argument
+        // (measured: `LinkedList.from_array([1, 2, 3])` calls
+        // `Nova_LinkedList_static_from_array`). The record-shaped body below
+        // ices on a sum.
+        s.append(decl_of_ty(ctx, fd.owner).name)
+    } else if owner_n > 0 {
         s.append(instance_body(ctx, subst_type(ctx, fd.owner, args)))
     } else if ctx.tys.names_a_decl(fd.owner) {
         s.append(decl_of_ty(ctx, fd.owner).name)

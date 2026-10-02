@@ -153,6 +153,13 @@ fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
     } else {
         // Not generic: no substitution.
     }
+    // The instance's signature is interned FIRST (registry 1666): the
+    // whose-body question below spells the shell's symbol, and that spelling
+    // substitutes the owner (`Gbx[T]` -> `Gbx[str]`) through the door that
+    // only READS the interner -- asked before the term existed, it iced
+    // ("a substituted type the checker never interned") on every generic
+    // static call that fit.
+    @intern_instance_sig(row, ids)
     // WHOSE BODY: the PROGRAM's (another module of it -- `ConstTable.new()`
     // from novac's own `sem` in the self-build; its owner unit compiles it, as
     // a method of a program module, 274.11 E.10 step 2a), the shell's, or one
@@ -164,7 +171,6 @@ fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
     } else {
         // Callable: recorded below.
     }
-    @intern_instance_sig(row, ids)
     @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), ids,
         bind_slots(@ctx.fns.params, fd.param_off, fd.param_cnt, key))
     @record(e, @ctx.tys.subst(fd.ret_id, ids))
