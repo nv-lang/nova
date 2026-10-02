@@ -17,9 +17,14 @@ bad() { echo "  PROVAL $1" >&2; FAILED=1; }
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 run() { python "$G" "$1" > "$TMP/.out" 2> "$TMP/.err"; }
 
+doors() {   # $1 каталог: дверь на месте -- иначе страж честно отказывает «мишень потеряна»
+    mkdir -p "$1/scripts/guards/lib"
+    : > "$1/scripts/guards/lib/novac.sh"; : > "$1/scripts/guards/lib/novac_bin.py"
+}
 mk() {   # $1 каталог, $2 относительный путь файла, $3 текст
     rm -rf "$1"; mkdir -p "$1/$(dirname "$2")"
     printf '%s\n' "$3" > "$1/$2"
+    doors "$1"
 }
 pair() {  # $1 имя клетки, $2 путь, $3 красный текст, $4 зелёный текст
     mk "$TMP/r" "$2" "$3"
@@ -43,11 +48,16 @@ mk "$TMP/n" scripts/guards/selftest/test-y.sh 'touch "$FIX/novac/target/novac.ex
 printf '%s\n' '# the stale novac/target/novac.exe used to win' > "$TMP/n/scripts/c.sh"
 run "$TMP/n" && grep -q "ok:" "$TMP/.out" && ok "not judged: selftest fixture, comment" || bad "not judged: expected ok"
 
+# A lost target: an empty root is a FAIL with its reason, never a green zero (#911).
+mkdir -p "$TMP/e"
+run "$TMP/e"; rc=$?
+[ $rc -ne 0 ] && grep -q "target is lost" "$TMP/.err" && ok "empty root: FAIL, target lost" || bad "empty root: expected FAIL"
+
 # The real tree: ok as is, FAIL after one door call turns back into the file name.
 run "$ROOT" && grep -q "ok:" "$TMP/.out" && ok "real tree: ok" || bad "real tree: expected ok ($(tail -1 "$TMP/.err"))"
 F="$ROOT/scripts/guards/check-novac-no-panic.sh"
 if grep -q 'BIN="${2:-$(novac_bin "$ROOT")}"' "$F"; then
-    mkdir -p "$TMP/t/scripts/guards"
+    mkdir -p "$TMP/t/scripts/guards"; doors "$TMP/t"
     sed 's|BIN="${2:-$(novac_bin "$ROOT")}"|BIN="${2:-$ROOT/novac/target/novac.exe}"|' "$F" > "$TMP/t/scripts/guards/check-novac-no-panic.sh"
     run "$TMP/t"; rc=$?
     [ $rc -ne 0 ] && grep -q "check-novac-no-panic.sh" "$TMP/.err" && ok "real carrier reverted: red" || bad "real carrier reverted: expected FAIL"

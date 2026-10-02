@@ -34,7 +34,15 @@ EXEMPT = "novac-bin: not a selection"
 
 def main():
     root = sys.argv[1] if len(sys.argv) > 1 else "."
+    # A LOST TARGET IS A FAIL, NOT A GREEN ZERO (registry #911, check-guard-empty-root):
+    # with no door and nothing scanned, "no offending line" would read as a measurement.
+    missing = [d for d in sorted(DOORS) if not os.path.isfile(os.path.join(root, d))]
+    if missing:
+        print(f"check-novac-bin-door FAIL: the target is lost -- no door {', '.join(missing)} "
+              f"under {root} (#1607)", file=sys.stderr)
+        sys.exit(1)
     bad = []
+    scanned = 0
     for dp, _, files in os.walk(os.path.join(root, "scripts")):
         rel_dir = os.path.relpath(dp, root).replace("\\", "/")
         if rel_dir.startswith("scripts/guards/selftest"):
@@ -45,6 +53,7 @@ def main():
             rel = f"{rel_dir}/{f}"
             if rel in DOORS or rel == "scripts/guards/check-novac-bin-door.py":
                 continue
+            scanned += 1
             for n, line in enumerate(open(os.path.join(dp, f), encoding="utf-8", errors="replace"), 1):
                 code = line.strip()
                 if code.startswith("#") or EXEMPT in line:
@@ -57,7 +66,7 @@ def main():
             print(b, file=sys.stderr)
         print(f"check-novac-bin-door FAIL: {len(bad)} line(s) (#1607)", file=sys.stderr)
         sys.exit(1)
-    print("check-novac-bin-door ok: Carina's binary is chosen only by the door")
+    print(f"check-novac-bin-door ok: Carina's binary is chosen only by the door ({scanned} scripts read)")
 
 
 if __name__ == "__main__":
