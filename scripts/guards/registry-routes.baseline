@@ -1515,7 +1515,8 @@ no_caveat=0
 # 2026-10-02, integrator nova-20: 100 -> 101, row 1611 arrives with the merge of p1611-float-int-kind (fixed there); closed by the next registry commit.
 # 2026-10-02, integrator nova-20: 101 -> 99, rows 1611 (merged fc81d48a1) and 1590 (merged fbdc495dc, verified live by nova-63) closed.
 # 2026-10-02, integrator nova-20: 99 -> 98, row 1616 closed by the merge 29210c203; row 1625 filed (nova-63: Option[T] field of a later type, CC-FAIL).
-blockers=98
+# 2026-10-02, integrator nova-20: 98 -> 99, row 1635 (K1, blocks the tag) arrives with its fix (merge of p1598-ro-receiver-write); closed by the next registry commit.
+blockers=99
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed

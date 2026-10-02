@@ -3587,9 +3587,12 @@ fn process_audio(samples []f32) Realtime -> []f32 =>
 ### Что
 Поле без префикса мутируется, **если binding mutable**. `ro`
 запрещает мутацию даже у mutable binding'а (для id, foreign keys,
-invariants). `mut` per-field разрешает мутацию даже у immutable
+invariants). ~~`mut` per-field разрешает мутацию даже у immutable
 binding'а (для cache, lazy init, atomic counters — аналог C++
-`mutable`). Group-syntax: несколько полей одного типа через запятую.
+`mutable`).~~ **Снято амендментом D175 «binding dominates» (Plan 124.8 Ф.3; см. таблицу там):**
+`mut`-поле через `ro`-привязку, параметр без `mut` и приёмник `@` без `mut` НЕ мутируется —
+`E_READONLY_FIELD` (для `@` — [D35](03-syntax.md) амендмент 2026-10-02, реестр №1635). Пример
+`LazyConfig` ниже пишется с `fn LazyConfig mut @get()`. Group-syntax: несколько полей одного типа через запятую.
 
 ### Правило
 
@@ -3628,10 +3631,10 @@ type LazyConfig {
     mut cached_value Option[str]    // обновляется при первом read
 }
 
-fn LazyConfig @get() -> str {
+fn LazyConfig mut @get() -> str {   // `mut @` — D175 binding dominates, D35 амендмент 2026-10-02
     if Some(v) = @cached_value { return v }
     ro v = read_file(@path)
-    @cached_value = Some(v)         // мутация через @-метод даже у ro-binding
+    @cached_value = Some(v)         // мутация только через `mut @`
     v
 }
 ```

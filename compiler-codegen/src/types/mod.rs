@@ -27987,6 +27987,12 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::Ident(name) => self.ro_binding_names.borrow().contains(name),
             ExprKind::Member { obj, .. } => self.is_through_ro_binding(obj),
             ExprKind::Index { obj, .. } => self.is_through_ro_binding(obj),
+            // #1635 (D32, D35): the receiver `@` of a method declared without
+            // `mut` (nor `consume`) is a read-only root, exactly like a
+            // parameter without `mut`. A mutating method is `fn T mut @m`.
+            // Before, `@n += 1` passed in a `fn T @m` -- and once #1598 passed
+            // a small value receiver by copy, the write was silently lost.
+            ExprKind::SelfAccess => !self.current_recv_is_mut.get(),
             _ => false,
         }
     }
@@ -27996,6 +28002,15 @@ impl<'a> TypeCheckCtx<'a> {
     /// content-view type for the R2-split override (`ro r mut Point` →
     /// content-writable). Returns `None` for non-Ident roots (deref / self /
     /// call results), which carry no simple binding to consult.
+    /// #1635: is the `.field`/`[i]` access path rooted at the receiver `@`?
+    fn access_root_is_self(expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::SelfAccess => true,
+            ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } => Self::access_root_is_self(obj),
+            _ => false,
+        }
+    }
+
     fn assign_root_ident(expr: &Expr) -> Option<&str> {
         match &expr.kind {
             ExprKind::Ident(name) => Some(name.as_str()),
@@ -28300,6 +28315,19 @@ impl<'a> TypeCheckCtx<'a> {
                 // path = Ident бинд'енный через `ro`, любой write блокируется
                 // даже если field имеет `mut` модификатор. Rust-style правило:
                 // `let x = ...; x.field = ...` ❌ vs `let mut x = ...; x.field = ...` ✅.
+                if !root_view_is_mut_type && self.is_through_ro_binding(obj) && Self::access_root_is_self(obj) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_READONLY_FIELD] cannot mutate `{}` through the receiver `@` of a \
+                             method declared without `mut` (D32: a parameter without `mut` mutates \
+                             no field; the receiver is one). Hint: declare the method \
+                             `fn T mut @name(...)`; its callers then need a `mut` binding.",
+                            field_name
+                        ),
+                        target.span,
+                    ));
+                    return;
+                }
                 if !root_view_is_mut_type && self.is_through_ro_binding(obj) {
                     errors.push(Diagnostic::new(
                         format!(

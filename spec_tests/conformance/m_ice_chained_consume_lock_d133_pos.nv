@@ -45,7 +45,7 @@ fn MIceLockRegistry.new() -> MIceLockRegistry => { m_ice_lock: Mutex.new(), m_ic
 
 // Chained form: `@lock.lock()` — receiver is a bare field-access `Member`,
 // not a bound Ident. No explicit `.unlock()` — auto-cleanup must apply.
-fn MIceLockRegistry @m_ice_bump_chained() -> int {
+fn MIceLockRegistry mut @m_ice_bump_chained() -> int {
     consume m_ice_g = @m_ice_lock.lock()
     @m_ice_counter += 1
     @m_ice_counter
@@ -54,7 +54,7 @@ fn MIceLockRegistry @m_ice_bump_chained() -> int {
 // Intermediate-bound-var form: `ro m = @lock; consume g = m.lock()` — the
 // SECOND site the original gap hit (the `@lock` bare-Member arm feeds this
 // binding's own type resolution too). Still no explicit `.unlock()`.
-fn MIceLockRegistry @m_ice_bump_bound() -> int {
+fn MIceLockRegistry mut @m_ice_bump_bound() -> int {
     ro m_ice_m = @m_ice_lock
     consume m_ice_g = m_ice_m.lock()
     @m_ice_counter += 1
@@ -62,13 +62,13 @@ fn MIceLockRegistry @m_ice_bump_bound() -> int {
 }
 
 test "ICE-пачка п.4: chained consume-lock (@lock.lock()), no explicit unlock" {
-    ro r = MIceLockRegistry.new()
+    mut r = MIceLockRegistry.new()
     assert(r.m_ice_bump_chained() == 1, "auto-cleanup releases the guard, counter still bumps")
     assert(r.m_ice_bump_chained() == 2, "lock reusable on the next call (guard was actually released)")
 }
 
 test "ICE-пачка п.4: bound-var consume-lock (m.lock()), no explicit unlock" {
-    ro r = MIceLockRegistry.new()
+    mut r = MIceLockRegistry.new()
     assert(r.m_ice_bump_bound() == 1, "auto-cleanup releases the guard, counter still bumps")
     assert(r.m_ice_bump_bound() == 2, "lock reusable on the next call (guard was actually released)")
 }

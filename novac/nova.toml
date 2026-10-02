@@ -538,6 +538,10 @@
 # temporary goes to consume by rule 3); "mut only for a mutable place" is the rule of CHOOSING among
 # overloads, a single mut parameter of a heap type takes a temporary (D326 R3/R6). No new rule;
 # Carina's refusal of `@record_pattern([]Node.new())` is her defect (k1's queue).
+# 2026-10-02 (integrator, row 1635): D35 -- a field write through `@` of a method without `mut`
+# is E_READONLY_FIELD; D36's "a mut field mutates through an immutable binding" struck, pointing to
+# the D175 amendment it had not followed. Cost to Carina: her checker must refuse the same form (her
+# own source has 0 such places, measured by the assistant). Inside a merge commit: the counter (--no-merges) stays 166.
 #   spec-queue: 166
 #   oracle-pin: 2803de2d9
 #   stage: E2

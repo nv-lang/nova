@@ -912,7 +912,7 @@ stay in the `priv(<scope>)` family.
 
 **Canonical field access — same-name property methods via
 arity-based overloading** (D84 + D117):
-read `@x() -> T` (0 arguments), write `mut @x(v T) -> @`
+read `@x() -> T` (0 arguments), write `mut @x(v T) -> @` (in a method without `mut @` the fields of `@` are read-only -- `E_READONLY_FIELD`, D35 amendment 2026-10-02)
 (1 argument, fluent — receiver return automatic, D409, no need to write
 `return @`/`=> @` in the body):
 
