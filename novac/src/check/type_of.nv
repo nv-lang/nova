@@ -21,7 +21,7 @@ import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, RECV_BINDING, SELF_TYPE
 import ../names.{NameTable, NamespaceId}
 import ../sem.{variants_named, ctor_head_variant}
 import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, raw_row, ParamMode, carrier_of, arm_body_at, branch_children}
-import ../sem.{LitArg}
+import ../sem.{LitArg, is_const_int_expr}
 // M3a: the literal token -> primitive table lives in `sem`, asked by both consumers.
 import ../sem.{literal_prim_of}
 import ../sem.{call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, raw_vrow, no_vrow}
@@ -236,7 +236,13 @@ fn class_of_binding(nm str, scope Scope) -> ArgClass {
 /// literal is not one: their types are their own.
 #realtime nogc
 fn lit_arg_of(e Node) -> LitArg {
-    if e.kind_of() != NodeKind.Lit { return LitArg.NotLit }
+    // An untyped integer CONSTANT EXPRESSION (`40 + 2`) is a literal to every
+    // position (D489, the Rule): admitted, adapted and judged for fit by its
+    // exact value as one -- part 9 of p274-carina-k1.
+    if e.kind_of() != NodeKind.Lit {
+        if is_const_int_expr(e) { return LitArg.IntLitArg }
+        return LitArg.NotLit
+    }
     ro lk_kids = branch_children(e)
     ro lk = leaf_kind(lk_kids[lk_kids.len() - 1])
     if lk == TokenKind.IntLit { return LitArg.IntLitArg }
@@ -524,6 +530,19 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         ro recorded = chan.type_if_known(e.id_of())
         if is_ty(recorded) { return recorded }
         return cast_target_of(e, ctx)
+    }
+    if k == NodeKind.Paren || k == NodeKind.Unary || k == NodeKind.Bin {
+        // A CONSTANT EXPRESSION a position adapted (`k(40 + 2)` at `b u8`) was
+        // RECORDED with the position's type, as a literal is (D489); its parts
+        // keep their own. Read first, so the lattice and the judge agree.
+        if is_const_int_expr(e) {
+            ro decided = chan.type_if_known(e.id_of())
+            if is_ty(decided) { return decided }
+        } else {
+            // Not a constant: its type is computed below from its parts.
+        }
+    } else {
+        // Not an operator form: the kinds below answer for themselves.
     }
     if k == NodeKind.Paren {
         // Parens carry no meaning of their own: the type is the inner

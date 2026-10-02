@@ -1041,7 +1041,7 @@ resolve 23
 #   `const_type_at` (sem/slots_decl.nv) -- where a constant's or module value's WRITTEN type
 #   starts; moved from check/const_types.nv, because sem's harvest now asks it too (a handed
 #   module value is registered only with a written type) -- one door for both, not two copies.
-sem 342
+sem 345
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
@@ -1253,3 +1253,9 @@ types 30
 #   (у какого ключа нет своего голого имени: запись и срез -- перегрузки `index`) и `PTR_OFFSET`
 #   (`p.offset(n)`, D216). Их читают `check/slice.nv`, `check/binds.nv`, `check/unsafe.nv`,
 #   `sem/handed_bodies.nv`, `emit_c/emit_slice.nv`, `emit_c/emit_ptr.nv`; имена std живут в builtins (П5).
+# sem 342 -> 345 (2026-10-02, облачная сессия p274-carina-k1, часть 9, №1679): нетипизированное
+#   константное выражение D489 (`40 + 2`). `is_const_int_expr` (форма) и `const_int_value` (точное
+#   значение) живут в `sem/constexpr.nv`, а спрашивают их `check/` (позиция берёт выражение как
+#   литерал и судит его диапазон по значению) и `emit_c/` (печать значения в строке позиции): одна
+#   дверь, иначе проверка и печать посчитают разное. `@retype_constant` (CheckOut) -- единственная
+#   санкционированная вторая запись типа узла: позиция заменяет временный `int` выражения своим.

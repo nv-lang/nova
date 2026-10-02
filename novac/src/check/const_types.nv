@@ -24,6 +24,7 @@ module novac.check
 import ../tree.{Node, NodeKind, is_node}
 import ../lex.{TokenKind}
 import ../sem.{raw_crow, const_init_at, const_type_at, ty_of_type_ref, leaf_kind, ty_source_name}
+import ../sem.{is_const_int_expr}
 import ../types.{TyId, no_ty, is_ty}
 
 /// The TYPE of a module constant, or `no_ty()` when the name is not one.
@@ -79,6 +80,10 @@ fn Checker mut @type_const_decl(kids []Node) -> () {
     if at < 0 { return }
     ro init = kids[at]
     ro is_lit = init.kind_of() == NodeKind.Lit
+    // A constant EXPRESSION of literals (`const C u8 = 40 + 2`) is typed by the
+    // walk like any expression, then takes the written type as a literal does
+    // (D489), by its exact value.
+    ro adapts = is_lit || is_const_int_expr(init)
     if !is_lit {
         ro before = @out.len()
         @type_expr(init)
@@ -92,7 +97,7 @@ fn Checker mut @type_const_decl(kids []Node) -> () {
     if !is_ty(wt) { return }
     ro own = type_of(init, @ctx, @scope, @chan)
     // SILENT-OK: the initializer already has the written type; its door recorded it.
-    if !is_lit && own == wt { return }
+    if !adapts && own == wt { return }
     if adapt_operand(init, own, wt, @ctx.tys) != wt {
         // ANOTHER TYPE than the one written: the declaration is refused, in
         // the return door's words (E7301; E_IMPLICIT_NARROWING for an integer
@@ -104,7 +109,7 @@ fn Checker mut @type_const_decl(kids []Node) -> () {
         // A literal the written type takes, or a value already of it.
     }
     // SILENT-OK: a non-literal of the written type -- its door recorded it.
-    if !is_lit { return }
+    if !adapts { return }
     if @lit_fits_or_refuse(init, wt) && is_node(init.id_of()) {
         @record(init, wt)
     } else {
