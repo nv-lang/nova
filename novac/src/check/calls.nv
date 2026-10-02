@@ -25,6 +25,7 @@
 
 module novac.check
 
+import ../sem.{is_arg_node, arg_expr_of}
 import ../sem.{c_free_symbol}
 // Which arguments have an observable order (F65) -- the same door the rule and
 // the lowering ask, so the three cannot disagree on WHICH arguments they mean.
@@ -798,10 +799,13 @@ fn Checker mut @type_free_call(e Node) -> () {
     ro saved_expect = @value_expect
     @value_expect = no_ty()
     for c in kids {
-        if !is_arg_value_kind(c.kind_of()) { continue }
+        // A NAMED argument's value is typed like a positional one (registry
+        // 1630): `g(2, by: s.byte_len())` left the inner call undecided, and
+        // the key's `type_of` iced on it.
+        if !is_arg_node(c) { continue }
         // A bare `None` takes its PARAMETER's instance, after the lookup (1565).
         if @is_deferred_variant(c) { continue }
-        @type_expr(c)
+        @type_expr(arg_expr_of(c))
     }
     @value_expect = saved_expect
     if @out.len() > before { return }

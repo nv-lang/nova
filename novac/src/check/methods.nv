@@ -26,6 +26,7 @@ import ../builtins.{TypeKind}
 import ../diag.{ice}
 import ../names.{raw_decl}
 import ../resolve.{FnLookup}
+import ../sem.{is_arg_node, arg_expr_of}
 import ../sem.{LitArg, branch_children, ArgSpec, ArgClass, CallForm, FnRow, CalleeTarget, raw_row, no_row, bind_slots}
 import ../sem.{is_arg_value_kind}
 import ../sem.{c_method_symbol, c_overload_symbol, impl_of_proto, ty_source_name, decl_of_ty}
@@ -65,7 +66,7 @@ fn Checker @method_arity_key(kids []Node, recv_t TyId) -> []ArgSpec {
     // then `b.m()` selects the `mut @m` overload, which is the precedent the
     // whole mode axis generalizes from (P14 rule 2).
     ro recv_it = impl_of_proto(@ctx, recv_t)
-    out.push(ArgSpec { type_id: recv_it, cls: arg_class(kids[0], @scope), name: "", lit: LitArg.NotLit })
+    out.push(ArgSpec { type_id: recv_it, cls: recv_class(arg_class(kids[0], @scope)), name: "", lit: LitArg.NotLit })
     out.append(unknown_args(kids, 3, @scope))
     out
 }
@@ -439,10 +440,11 @@ fn Checker mut @type_method_call(e Node) -> () {
     @type_expr(kids[0])
     mut i = 0
     for c in kids {
-        if i > 2 && is_arg_value_kind(c.kind_of()) && !@is_deferred_variant(c) {
+        if i > 2 && is_arg_node(c) && !@is_deferred_variant(c) {
             // A bare `None` (`@is_deferred_variant`) is typed after the lookup,
-            // by its parameter (registry 1565).
-            @type_expr(c)
+            // by its parameter (registry 1565). A NAMED argument's value is
+            // typed like a positional one (registry 1630).
+            @type_expr(arg_expr_of(c))
         } else {
             // Children 0..2 are the receiver, the dot and the method
             // name, and a punctuation leaf is no expression: nothing to

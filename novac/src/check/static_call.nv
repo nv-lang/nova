@@ -18,6 +18,7 @@ module novac.check
 
 import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
+import ../sem.{is_arg_node, arg_expr_of}
 import ../sem.{branch_children, leaf_text, leaf_kind, expr_leaf_name, ty_of_decl, raw_row, no_row, FnRow}
 import ../sem.{CalleeTarget, bind_slots, is_arg_value_kind, c_static_symbol}
 import ../types.{TyId, no_ty, is_ty}
@@ -96,8 +97,10 @@ fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
     ro before = @out.len()
     at = 0
     for c in kids {
-        if at > 2 && is_arg_value_kind(c.kind_of()) {
-            @type_expr(c)
+        if at > 2 && is_arg_node(c) {
+            // A NAMED argument's value too (registry 1630: std's
+            // `StringBuilder.new(cap: s.byte_len() + 2)` in `str @pad_start`).
+            @type_expr(arg_expr_of(c))
         } else {
             // The head, the dot, the name and the punctuation: nothing to type.
         }

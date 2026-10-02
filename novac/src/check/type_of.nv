@@ -45,7 +45,8 @@ fn typed_call_key(kids []Node, from int, recv Node, recv_t TyId, ctx Ctx, scope 
     // The receiver is parameter zero (plan 273), so it carries a CLASS like any
     // other argument: `mut b; b.m()` selects the `mut @m` overload, which is
     // the precedent the whole mode axis generalizes from (P14 rule 2).
-    out.push(ArgSpec { type_id: recv_t, cls: typed_arg_class(recv, ctx, scope, chan), name: "", lit: LitArg.NotLit })
+    ro rcls = recv_class(typed_arg_class(recv, ctx, scope, chan))
+    out.push(ArgSpec { type_id: recv_t, cls: rcls, name: "", lit: LitArg.NotLit })
     out.append(typed_args(kids, from, ctx, scope, chan))
     out
 }
@@ -142,7 +143,23 @@ fn field_class(e Node, scope Scope) -> ArgClass {
         ArgConsume => ArgClass.ArgMut
         ArgRo => ArgClass.ArgRo
         ArgOwnedTemp => ArgClass.ArgRo
+        ArgTempRecv => ArgClass.ArgRo
     }
+}
+
+/// The class of a RECEIVER: what the argument class says, except that an owned
+/// temporary is a place for the length of its own call -- `StringBuilder.new(
+/// cap: 4).append(s)` writes into the hoisted temp (D33, 02-types.md:13526:
+/// a chain rooted in an rvalue has no binding to check). Until registry 1630
+/// the temporary was refused by every `mut` method ("no such method"), and in
+/// a longer chain the refusal went silent and iced in `type_of`.
+#realtime nogc
+fn recv_class(c ArgClass) -> ArgClass => match c {
+    ArgOwnedTemp => ArgClass.ArgTempRecv
+    ArgRo => ArgClass.ArgRo
+    ArgMut => ArgClass.ArgMut
+    ArgConsume => ArgClass.ArgConsume
+    ArgTempRecv => ArgClass.ArgTempRecv
 }
 
 /// The class of an argument whose call is ALREADY TYPED: a call that hands out
