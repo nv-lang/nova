@@ -972,7 +972,11 @@ export fn reserialize(toks []Token) -> str {
 fn exponent_end(b []u8, i int, n int) -> int {
     if i >= n || (b[i] != ('e' as u8) && b[i] != ('E' as u8)) { return i }
     mut j = i + 1
-    if j < n && (b[j] == ('+' as u8) || b[j] == ('-' as u8)) { j += 1 }
+    if j < n && (b[j] == ('+' as u8) || b[j] == ('-' as u8)) {
+        j += 1
+    } else {
+        // No sign: the digits start right after the letter.
+    }
     if j >= n || !is_digit(b[j]) { return i }
     while j < n && is_digit(b[j]) { j += 1 }
     j
