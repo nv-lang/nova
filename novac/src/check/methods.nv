@@ -27,7 +27,7 @@ import ../diag.{ice}
 import ../names.{raw_decl}
 import ../resolve.{FnLookup}
 import ../sem.{LitArg, branch_children, ArgSpec, ArgClass, CallForm, FnRow, CalleeTarget, raw_row, no_row, bind_slots}
-import ../sem.{is_arg_value_kind}
+import ../sem.{is_arg_value_kind, leaf_text}
 import ../sem.{c_method_symbol, c_overload_symbol, impl_of_proto, ty_source_name, decl_of_ty}
 import ../sem.{row_recv_by_pointer}
 import ../sem.{option_payload}
@@ -68,6 +68,21 @@ fn Checker @method_arity_key(kids []Node, recv_t TyId) -> []ArgSpec {
     out.push(ArgSpec { type_id: recv_it, cls: arg_class(kids[0], @scope), name: "", lit: LitArg.NotLit })
     out.append(unknown_args(kids, 3, @scope))
     out
+}
+
+/// The one row a method call can mean BEFORE its arguments are typed -- the
+/// receiver's type and the written arity -- or `no_row()`: the receiver was
+/// refused or untyped (`rmark`: refusals since its walk began), or the name
+/// and arity leave an overload set. What `@type_arg_expecting` asks.
+#realtime nogc
+fn Checker @method_arg_row(kids []Node, rmark int) -> FnRow {
+    if @out.len() > rmark { return no_row() }
+    ro recv_t = type_of(kids[0], @ctx, @scope, @chan)
+    if !is_ty(recv_t) || kids[2].kind_of() != NodeKind.LeafNode { return no_row() }
+    match @res.lookup(@ctx.fns, @ctx.tys, leaf_text(kids[2]), @method_arity_key(kids, recv_t), CallForm.MethodCall) {
+        FnFound(r) => r
+        FnUnknown | FnOverloaded(_) => no_row()
+    }
 }
 
 /// Every position of this key carries a decided type. What separates a real
@@ -432,13 +447,26 @@ fn Checker mut @type_method_call(e Node) -> () {
     // the argument no longer fitted `head_id int` (part 5 of p274-carina-k1).
     ro saved_expect = @value_expect
     @value_expect = no_ty()
+    ro rmark = @out.len()
     @type_expr(kids[0])
+    // THE ONE ROW this receiver, name and arity can mean, asked once the
+    // receiver is typed, so each argument meets its PARAMETER's type as its
+    // expectation (part 7 of p274-carina-k1, arg_expect.nv); parameter zero is
+    // the receiver, so the k-th written argument stands at parameter k + 1.
+    ro arg_row = @method_arg_row(kids, rmark)
+    ro pre = @expected_ids(arg_row, saved_expect)
+    mut argi = 1
     mut i = 0
     for c in kids {
         if i > 2 && is_arg_value_kind(c.kind_of()) && !@is_deferred_variant(c) {
             // A bare `None` (`@is_deferred_variant`) is typed after the lookup,
             // by its parameter (registry 1565).
-            @type_expr(c)
+            ro want = if c.kind_of() == NodeKind.NamedArg { no_ty() } else { @param_expect(arg_row, argi, pre) }
+            @type_arg_expecting(c, want)
+            argi += 1
+        } else if i > 2 && is_arg_value_kind(c.kind_of()) {
+            // A deferred `None` still holds its parameter's place.
+            argi += 1
         } else {
             // Children 0..2 are the receiver, the dot and the method
             // name, and a punctuation leaf is no expression: nothing to

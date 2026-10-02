@@ -1,0 +1,74 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `FnCtxt::expected_inputs_for_expected_output` -- the expected
+//   type of a call's RESULT, unified with the callee's declared return, gives
+//   expectations for its ARGUMENTS before they are checked; NOT taken: rustc's
+//   full unification -- here one structural match per type parameter
+//   (`slot_binding_in`), the same door the deduction from arguments uses.
+// Role: layer 7, the expectation of a call's arguments (part 7 of
+//   p274-carina-k1; D489 "Где действует": a literal takes the type of its
+//   position wherever the position knows its type). The call's own position
+//   (a declared return, an outer argument) fixes the type parameters its
+//   declared return mentions; each argument is then typed with its PARAMETER's
+//   type as the expectation -- a concrete parameter's own, a bare `T` the bound
+//   one -- so a literal, and the literal branches of a value `if`, take it.
+// Used by: calls.nv (the free call), methods.nv (the method call),
+//   static_call.nv (the static call): the argument walk and `@deduce_from_args`.
+// Guarded by: pipeline/return_test.nv (`T` from the expected type: free,
+//   static, method; the control without an expectation),
+//   check-novac-no-alloc-in-lookup.py (nothing here asks a table).
+
+module novac.check
+
+import ../tree.{Node}
+import ../builtins.{TypeKind}
+import ../sem.{FnRow, raw_row, slot_binding_in}
+import ../types.{TyId, no_ty, is_ty}
+
+/// The type arguments the CALL'S POSITION fixes: for each type parameter of
+/// `row`, its binding inside the declared return matched against `expect`
+/// (`-> T` against `Row` fixes `T = Row`), or `no_ty()` -- no expectation, or
+/// a return that does not mention the slot.
+fn Checker @expected_ids(row FnRow, expect TyId) -> []TyId {
+    mut out = []TyId.new()
+    if raw_row(row) < 0 { return out }
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    for slot in 0..fd.tparam_cnt {
+        out.push(if is_ty(expect) { slot_binding_in(@ctx.tys, fd.ret_id, expect, slot) } else { no_ty() })
+    }
+    out
+}
+
+/// The expectation of the argument standing at parameter `at` of `row`: a
+/// CONCRETE parameter's own type, a bare type parameter's binding in `pre`, or
+/// `no_ty()` -- no row, a parameter beyond the list, or a type novac cannot
+/// state yet (a parameter nested in an application).
+fn Checker @param_expect(row FnRow, at int, pre []TyId) -> TyId {
+    if raw_row(row) < 0 || at < 0 { return no_ty() }
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    if at >= fd.param_cnt { return no_ty() }
+    ro p = @ctx.fns.params[fd.param_off + at].type_id
+    if !is_ty(p) { return no_ty() }
+    if @ctx.tys.kind_of(p) == TypeKind.TkParam {
+        ro slot = @ctx.tys.param_slot_of(p)
+        if slot < pre.len() { return pre[slot] }
+        return no_ty()
+    }
+    if @ctx.tys.is_concrete(p) { return p }
+    no_ty()
+}
+
+/// Type one argument with its position's expectation: a bare numeric literal
+/// takes `want` (D489, through the fit door), any other expression is typed
+/// with `want` as the expectation -- a value `if`'s literal branches take it.
+fn Checker mut @type_arg_expecting(c Node, want TyId) -> () {
+    ro saved = @value_expect
+    @value_expect = want
+    ro mark = @out.len()
+    ro lit = @branch_literal_tail(c)
+    if !is_ty(lit) && @out.len() == mark {
+        @type_expr(c)
+    } else {
+        // A literal took `want`, or its fit door refused it: decided.
+    }
+    @value_expect = saved
+}

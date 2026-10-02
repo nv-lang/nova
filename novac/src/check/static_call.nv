@@ -86,10 +86,18 @@ fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
     // `=> Tb.id(if m { 1 } else { 0 })` in a `-> Row` body deduced `T = Row`.
     ro saved_expect = @value_expect
     @value_expect = no_ty()
+    // The row is KNOWN here when one static method takes this arity: each
+    // argument meets its parameter's type as its expectation (part 7,
+    // arg_expect.nv); several rows give none.
+    ro arg_row = if cnt == 1 { row } else { no_row() }
+    ro pre = @expected_ids(arg_row, saved_expect)
+    mut argi = 0
     at = 0
     for c in kids {
         if at > 2 && is_arg_value_kind(c.kind_of()) {
-            @type_expr(c)
+            ro want = if c.kind_of() == NodeKind.NamedArg { no_ty() } else { @param_expect(arg_row, argi, pre) }
+            @type_arg_expecting(c, want)
+            argi += 1
         } else {
             // The head, the dot, the name and the punctuation: nothing to type.
         }
