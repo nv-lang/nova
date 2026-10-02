@@ -670,13 +670,25 @@ impl CEmitter {
     /// ONCE per enclosing-function call, instead of re-allocating (and, for
     /// value-inside captured types, re-SNAPSHOTTING) a fresh cell on every
     /// iteration.
-    fn hoist_box_decl(&mut self, ty: &str, bv: &str) {
-        if let Some((offset, indent)) = self.detach_box_hoist {
-            let text = format!("{}{}* {} = NULL;\n", "    ".repeat(indent), ty, bv);
-            self.out.insert_str(offset, &text);
-            self.detach_box_hoist = Some((offset + text.len(), indent));
-        } else {
-            self.line(&format!("{}* {} = NULL;", ty, bv));
+    ///
+    /// #1559: also the home of the closure / escaping-handler capture boxes
+    /// (`capture_box.rs`). The anchor carries the text before it and is used only
+    /// while that text still stands there -- an anchor taken in another output
+    /// buffer (a closure body emitted through a swapped `self.out`, a work-fn body)
+    /// falls back to the inline declaration. Returns whether the declaration was
+    /// hoisted.
+    pub(super) fn hoist_box_decl(&mut self, ty: &str, bv: &str) -> bool {
+        if let Some((offset, indent, tag, done)) = self.detach_box_hoist.clone() {
+            let anchored = offset >= tag.len() && self.out.len() >= offset + done
+                && self.out.get(offset - tag.len()..offset) == Some(tag.as_str());
+            if anchored {
+                let text = format!("{}{}* {} = NULL;\n", "    ".repeat(indent), ty, bv);
+                self.out.insert_str(offset + done, &text);
+                self.detach_box_hoist = Some((offset, indent, tag, done + text.len()));
+                return true;
+            }
         }
+        self.line(&format!("{}* {} = NULL;", ty, bv));
+        false
     }
 }

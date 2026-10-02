@@ -10,6 +10,7 @@ use std::fmt::Write as FmtWrite;
 // scripts/guards/arch-ratchet.sh only measures this file). See that
 // module's doc comment.
 mod emit_detach;
+mod capture_box; // #1559: capture boxes declared at the function top, see its doc
 // №658: setter + channel-first lookup of `resolved_variant_ctors` live in the
 // child module (same ratchet rule; see its doc). Field + two consult sites stay.
 mod variant_ctor_channel;
@@ -2048,7 +2049,8 @@ pub struct CEmitter {
     /// bare box-pointer declarations here, so a `detach{}` nested inside a
     /// `while`/`if`/match-arm C block still declares its box pointer in a
     /// scope that dominates reads occurring after that nested block closes.
-    detach_box_hoist: Option<(usize, usize)>,
+    detach_box_hoist: Option<(usize, usize, String, usize)>, // #1559: + the text before the anchor, bytes inserted
+    lazy_box_fallback: HashMap<String, String>, // #1559: hoisted capture box -> the local's address while it is NULL
     /// Plan 48: generic FnDecls for monomorphization worklist drain.
     /// Key = Nova fn name (e.g. "within"). Populated during pre-pass.
     mono_fn_decls: HashMap<String, crate::ast::FnDecl>,
@@ -2871,7 +2873,7 @@ impl CEmitter {
             loop_scope_floor: Vec::new(),
             var_boxed: HashMap::new(),
             lazy_detach_boxes: std::collections::HashSet::new(),
-            detach_box_hoist: None,
+            detach_box_hoist: None, lazy_box_fallback: HashMap::new(),
             warnings: std::cell::RefCell::new(Vec::new()),
             strict_errors: std::cell::RefCell::new(Vec::new()),
             interned_str_literals: HashMap::new(),
@@ -13419,19 +13421,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let handler_escapes = self.current_fn_return_ty.as_deref()
                     .map_or(false, |t| t.starts_with("NovaVtable_"));
                 let field_val = if handler_escapes {
-                    if let Some(existing) = self.var_boxed.get(cap_name) {
-                        existing.clone()
-                    } else {
-                        let bv = format!("_box_{}", cap_name);
-                        self.line(&format!(
-                            "{ty}* {bv} = ({ty}*)nova_alloc(sizeof({ty}));",
-                            ty = cap_ty, bv = bv));
-                        self.line(&format!("*{bv} = {cap};", bv = bv, cap = Self::mangle_field_name(cap_name)));
-                        self.var_boxed.insert(cap_name.clone(), bv.clone());
-                        bv
-                    }
+                    self.capture_box(cap_name, &cap_ty, false) // #1559: declared at the function top
                 } else if let Some(boxed) = self.var_boxed.get(cap_name) {
-                    boxed.clone() // #1421: in an op body / closure the name is a capture: its address is the body's box
+                    // #1421: in an op body / closure the name is a capture: its address is the body's box;
+                    // #1559: a hoisted capture box is NULL until its closure ran -- the local is the storage then
+                    match self.lazy_box_fallback.get(boxed) { Some(fb) => format!("({boxed} ? {boxed} : {fb})"), None => boxed.clone() }
                 } else {
                     format!("&{}", Self::mangle_field_name(cap_name))
                 };
@@ -29862,6 +29856,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         match &f.body {
             FnBody::Expr(e) => {
                 self.emit_source_annotation_for_expr(e);
+                self.detach_box_hoist = self.box_hoist_anchor(); // #1559: an arrow body hoists its boxes too
                 // Plan 172.1 [M-172.1-some-target-coerce]: an arrow-body `=> expr` return
                 // coerces the expr TO the return type for the NovaOpt_<X>/typed-int surface,
                 // so `=> Some(<int-literal>)` in `-> Option[uint]` builds NovaOpt_nova_uint,
@@ -32320,7 +32315,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     fn emit_block_stmts(&mut self, block: &Block, ret_ty: &str) -> Result<(), String> {
         // №240: every call here is a genuine new top-level C function body
         // start (fn/test/method/lambda) — see `detach_box_hoist` doc.
-        self.detach_box_hoist = Some((self.out.len(), self.indent));
+        self.detach_box_hoist = self.box_hoist_anchor();
         let block_id = self.enter_defer_scope(block, false);
         for stmt in &block.stmts {
             self.emit_stmt(stmt)?;
@@ -36177,6 +36172,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             bx = box_var,
                             local = Self::mangle_field_name(name)
                         ));
+                    }
+                    if let Some(fb) = self.lazy_box_fallback.get(box_var) { // #1559: a hoisted capture box, see capture_box.rs
+                        return Ok(format!("(*({box_var} ? {box_var} : {fb}))"));
                     }
                     return Ok(format!("(*{})", box_var));
                 }
@@ -54905,6 +54903,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// No #undef needed — var_boxed uses ExprKind::Ident rewriting, not macros.
     fn flush_boxed_vars(&mut self) {
         self.var_boxed.clear();
+        self.detach_box_hoist = None; // #1559: the anchor dies with its function
     }
 
     /// Сгенерировать temporary name с **семантической ролью** в имени:
@@ -55395,6 +55394,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let old_out = std::mem::take(&mut self.out);
         let old_indent = self.indent;
         let saved_var_boxed = std::mem::take(&mut self.var_boxed);
+        let saved_box_hoist = self.detach_box_hoist.take(); // #1559: the body sets its own anchor
         // [M-effect-handler-mutex-hashmap-value-capture] / срочный пакет
         // звучности п.6 (2026-08-01): `ref_params` (Plan 172.5 D326 R5 —
         // by-pointer in-out `mut` value/primitive params, auto-deref `name`
@@ -55515,6 +55515,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.indent = old_indent;
         // Restore caller-scope var_boxed (lambda body used its own set of entries).
         self.var_boxed = saved_var_boxed;
+        self.detach_box_hoist = saved_box_hoist;
         // Restore caller-scope ref_params (see the `std::mem::take` above).
         self.ref_params = saved_ref_params;
         self.swap_exit_scopes(saved_exits);
@@ -55559,42 +55560,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // never collides with any Nova identifier or capture-alias.
             let field = mangled_field(name);
             if *is_mut {
-                let box_var = if let Some(existing) = self.var_boxed.get(name) {
-                    // Already heap-promoted by an earlier closure in this fn — reuse.
-                    existing.clone()
-                } else {
-                    // First capture of this mut var: promote to heap box.
-                    let bv = format!("_box_{}", name);
-                    // Allocate box and copy current stack value into it.
-                    // Use the plain name here (before var_boxed is set) so the
-                    // emit_expr for `name` still resolves to the stack variable.
-                    // `box_ty` (not `ty`): for a plain value-struct-ptr alias
-                    // (`ty` already `NovaValue_X*`), the box must be sized/
-                    // typed for the POINTEE — `ty` itself would double the
-                    // indirection (see `free_var_box_ty` above).
-                    self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));", box_ty, bv, box_ty, box_ty));
-                    // [M-effect-handler-mutex-hashmap-value-capture] п.6
-                    // (2026-08-01): for a plain `var_mutable` stack local,
-                    // `name` at THIS point is a by-VALUE C variable — a bare
-                    // copy is correct (`*bv = name;`). For a `ref_params`
-                    // source (a `mut`-value/primitive PARAMETER, already a
-                    // raw `ty*` C parameter, D326 R5 in-out ABI), `name` is
-                    // ALREADY a pointer — copying it bare into `*bv` (typed
-                    // `ty`, the POINTEE) is the exact `assigning to ty from
-                    // incompatible type ty *` mismatch this fix closes; the
-                    // copy source needs one extra deref.
-                    let copy_src = if *is_ref_param_src {
-                        format!("(*{})", Self::mangle_field_name(name))
-                    } else {
-                        Self::mangle_field_name(name)
-                    };
-                    self.line(&format!("*{} = {};", bv, copy_src));
-                    // Register in var_boxed: from this point on, ExprKind::Ident
-                    // for `name` emits `(*_box_name)` instead of bare `name`,
-                    // keeping caller reads/writes in sync with the closure's env ptr.
-                    self.var_boxed.insert(name.clone(), bv.clone());
-                    bv
-                };
+                // #1559: declared at the function top, allocated here (capture_box.rs);
+                // an earlier closure's box is reused, all closures over the var share it.
+                let box_var = self.capture_box(name, box_ty, *is_ref_param_src);
                 // Env stores the box pointer — safe even if closure escapes scope.
                 self.line(&format!("{}->{} = {};", env_tmp, field, box_var));
             } else {

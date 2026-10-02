@@ -24125,6 +24125,21 @@ impl<'a> TypeCheckCtx<'a> {
         hit.then(|| TypeRef::Named { path: vec![sum.to_string()], generics: Vec::new(), span })
     }
 
+    /// Registry 221.1 #1572: the type of a block's VALUE is the type of its tail. The
+    /// match-arm and block-expression arms of `infer_expr_type` took the last expression
+    /// STATEMENT instead -- for `{ if v < 0 { return Err(..) }; Val.Flag(..) }` that is the
+    /// `if` without `else`, typed `()`, so `Ok(match ..)` was `Result[(), str]` and the
+    /// return check of #1517 refused a correct program (E7301). Without a tail the old
+    /// reading stays (a body lowered with its value as the last statement).
+    fn block_value_type(&self, b: &Block, scope: &HashMap<String, TypeRef>) -> Option<TypeRef> {
+        match &b.trailing {
+            Some(t) => self.infer_expr_type(t, scope),
+            None => b.stmts.iter().rev().find_map(|s| {
+                if let Stmt::Expr(e) = s { self.infer_expr_type(e, scope) } else { None }
+            }),
+        }
+    }
+
     /// Ф.1: best-effort вывод типа выражения (для не-литералов).
     fn infer_expr_type(
         &self,
@@ -25559,13 +25574,12 @@ impl<'a> TypeCheckCtx<'a> {
             // Plan 172.1 P67 D45: Match expr type = first arm-body type that resolves.
             // Pattern bindings are not added to scope here; bodies referencing them get None
             // and we skip to the next arm. SelfAccess / scope-Ident arms resolve correctly.
+            // #1572: a block arm's type is its TAIL (`block_value_type`).
             ExprKind::Match { arms, .. } => {
                 for arm in arms {
                     let ty = match &arm.body {
                         MatchArmBody::Expr(e) => self.infer_expr_type(e, scope),
-                        MatchArmBody::Block(b) => b.stmts.iter().rev().find_map(|s| {
-                            if let Stmt::Expr(e) = s { self.infer_expr_type(e, scope) } else { None }
-                        }),
+                        MatchArmBody::Block(b) => self.block_value_type(b, scope),
                     };
                     if let Some(t) = ty {
                         return Some(t);
@@ -25594,10 +25608,8 @@ impl<'a> TypeCheckCtx<'a> {
                     None => unreachable!(),
                 }
             }
-            // Plan 172.1 P67 D45: Block expr type = tail stmt type (last Expr stmt).
-            ExprKind::Block(b) => b.stmts.iter().rev().find_map(|s| {
-                if let Stmt::Expr(e) = s { self.infer_expr_type(e, scope) } else { None }
-            }),
+            // Plan 172.1 P67 D45: Block expr type = its tail (#1572, `block_value_type`).
+            ExprKind::Block(b) => self.block_value_type(b, scope),
             // #1488: `Type.K` / `m.K` / `CR.field` folded into a path (`const_names.rs`).
             ExprKind::Path(parts) if parts.len() >= 2 => self.value_path_type(parts, expr.span, scope),
             _ => None,
