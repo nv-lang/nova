@@ -18,7 +18,7 @@
 // shape for a generic target: `try_wrap_leaf` now emits a BARE `Leaf(w)` call
 // (mirrors how `Some(x)`/`Ok(x)` are hand-written for `Option`/`Result`)
 // instead of the qualified `Node.Leaf(w)` non-generic sum-lift already used
-// (mirrors `SqlValue.I(1)`) — `emit_c.rs`'s `try_emit_explicit_variant_ctor`
+// (mirrors `SqlValue.Int(1)`) — `emit_c.rs`'s `try_emit_explicit_variant_ctor`
 // explicitly declines a qualified call on a generic sum ("Generic sums keep
 // their own mono-aware bare-`Ident` variant path ... — not intercepted
 // here"); a qualified call mis-routed to static-METHOD dispatch (undefined

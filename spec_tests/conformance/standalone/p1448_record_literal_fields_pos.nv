@@ -54,6 +54,6 @@ fn main() {
     ro gp = P1448Pair { a: 1, b: "b" }
     ro ga P1448Pair[int, str] = { a: gp.a, b: gp.b }
     ro small i32 = 40
-    ro wide = P1448Wide { big: small }
+    ro wide = P1448Wide { big: small as i64 }
     println("plain=${plain.a}${plain.b} value=${d.tag}:${d.digits[0]} str=[${st.s}] sum=${sum} newtype=${ac.id as u64} nested=${nested.tok.text} anon=${anon.tok.text} arg=${p1448_text({ tok: { text: "v" } })} ret=${p1448_make().tok.text} arr=${arr.len()} spread=${spread.x}:${spread.y} variant=${variant} self=${self_lit.n} generic=${ga.a}${ga.b} widen=${wide.big}")
 }

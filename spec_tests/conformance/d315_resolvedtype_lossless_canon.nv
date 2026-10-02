@@ -29,9 +29,9 @@ test "top-of-width u32 element round-trips, not sign-flipped or truncated (D315)
     assert(a[0] > a[1])
 }
 
-test "alias canonicalizes — int and i64 are the SAME canonical ResolvedType (D315)" {
+test "int crosses into i64 without width drift (D315; distinct types by the D129 amend, D491)" {
     ro x int = 5
-    ro y i64 = x        // `int` alias normalized to `i64` carrier — assignable, no width drift
-    assert(x == y)      // semantically-equal types → structurally-equal carrier → value-equal
+    ro y i64 = x as i64        // `int` → `i64` is explicit (D491), and loses nothing
+    assert(x as i64 == y)      // the same value on both sides of the crossing
     assert(y == 5)
 }

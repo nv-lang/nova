@@ -391,7 +391,7 @@ ro e Row = n as Row            // ok
 ro g Row = Row(d)              // ERROR E_NEWTYPE_CTOR_SELF -- d is already Row
 ```
 
-Sums are untouched: `SqlValue.I(x)` is still inserted for ANY expression the
+Sums are untouched: the variant of the value's EXACT type (`SqlValue.Int(x)` for an `int`, `I32(x)` for an `i32`; a literal takes the D44 default, registry 1637) is still inserted for ANY expression the
 checker accepts -- a variable, a call, a field read, not only a literal (D55,
 clarified 2026-10-01) -- there the compiler DERIVES the only matching variant
 instead of inventing the author's claim. For the old softness on your own newtype, declare it as a
