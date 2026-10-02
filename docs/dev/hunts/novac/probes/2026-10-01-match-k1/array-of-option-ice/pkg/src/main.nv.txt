@@ -1,7 +1,0 @@
-// An array literal whose elements are Options: `[]Option[int]`.
-fn mk(f bool, n int) -> Option[int] => if f { Some(n) } else { None }
-
-fn main() {
-    ro v = [mk(true, 5), mk(false, 1)]
-    println(v.len())
-}
