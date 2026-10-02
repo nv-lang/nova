@@ -89,7 +89,15 @@ fn Checker mut @record_newtype_ctor(e Node, kids []Node, type_id TyId) -> () {
     } else {
         // One argument: its TYPE decides.
     }
-    if args[0].type_id != representation_of(@ctx, type_id) {
+    if !is_ty(args[0].type_id) && args_read_poisoned(kids, 1, @scope) {
+        // SILENT-OK: the argument reads a name an earlier refusal bound with no
+        // type -- that refusal is the cause, and "not the representation" would
+        // say it a second time (part 5 of p274-carina-k1: `fns` of a refused
+        // `FnTable.new()` made `FnRow(fns.rows.len() - 1)` refuse again). The
+        // construction is still RECORDED: `Row(..)` is a `Row` whatever its
+        // argument, the reader of its type expects a record or a refusal, and
+        // the file is already refused, so nothing of it is emitted.
+    } else if args[0].type_id != representation_of(@ctx, type_id) {
         @report_first_leaf_of(kids,
             "outside the subset: this argument is not the newtype's representation")
         return

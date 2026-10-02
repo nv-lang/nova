@@ -113,3 +113,17 @@ test "recovery does not swallow a closing token of the enclosing form (274.3/F15
     assert(c_ok != "") // accepted: the C is there
     assert(d_ok.len() == 0)
 }
+
+test "a newtype construction over a POISONED argument says nothing more (part 5 of p274-carina-k1)" {
+    // `mut fns = FnTable.new()` was refused (a static overload), `fns` was
+    // bound with no type, and `FnRow(fns.rows.len() - 1)` refused AGAIN as
+    // "not the newtype's representation" -- the first refusal said twice.
+    ro std = std_decls()
+    ro (d, _) = compile_to_c("type Row int\nfn main() {\n ro t = nosuch\n ro r = Row(t)\n println(r)\n}", std)
+    assert(d.len() == 1, messages(d))
+    assert(!messages(d).contains("representation"), messages(d))
+    assert(!messages(d).contains("internal compiler error"), messages(d))
+    // CONTROL: a TYPED argument of another type is still refused by name.
+    ro (d2, _) = compile_to_c("type Row int\nfn main() {\n ro t = \"s\"\n ro r = Row(t)\n println(1)\n}", std)
+    assert(messages(d2).contains("not the newtype's representation"), messages(d2))
+}
