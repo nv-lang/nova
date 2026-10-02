@@ -1,0 +1,33 @@
+module must_consume.neg_31
+
+// A MUST-CONSUME VALUE DESTRUCTURED BY `ro` (E_CONSUME_KEYWORD_MISSING): its parts
+// carry the obligation, and only the `consume` word can hold it (D133). The ORACLE
+// accepts it (the class of registry 221.1 No.1660: a `ro` binding of a must-consume
+// value).
+
+// NOVAC_EXPECT a value of must-consume type `(Tx, Tx)` is bound with `ro` or `mut`
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx @peek() -> int => @id
+
+fn pair(n int) -> (Tx, Tx) {
+    consume a = Tx { id: n }
+    consume b = Tx { id: n + 1 }
+    (a, b)
+}
+
+fn main() {
+    ro (x, y) = pair(1)
+    println(x.peek() + y.peek())
+}

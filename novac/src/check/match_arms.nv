@@ -356,7 +356,7 @@ fn Checker mut @bind_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode, pos 
     if @refused_at_position(pat, ak, pos) { return false }
     match pattern_shape(pat) {
         Lit => @bind_lit_pattern(pat, ty, ak)
-        Wild => true
+        Wild => @judge_wildcard(pat, ty, ak, pos)
         Bind => @bind_name_pattern(pat, ty, ak, dmode, pos)
         Variant => @bind_variant_pattern(pat, ty, ak, dmode, pos)
         Record => @bind_record_pattern(pat, ty, ak, dmode, pos)

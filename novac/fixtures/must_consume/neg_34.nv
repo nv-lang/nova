@@ -1,0 +1,39 @@
+module must_consume.neg_34
+
+// A `consume` RECORD TAKEN APART BY A DESTRUCTURING PATTERN: D133 names the
+// record's own `consume` method for that (`@into_parts`), and the track does not
+// follow a value through such a pattern -- refused BY NAME with its stage. (The
+// oracle refuses it too, with a false D133-not-consumed on the plain `int` part.)
+
+// NOVAC_EXPECT taken apart by a destructuring pattern (a `consume` record) is not tracked yet
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx @peek() -> int => @id
+
+type Box consume {
+    consume t Tx
+    n int
+}
+
+fn Box consume @close() -> () {
+    println(@n)
+}
+
+fn main() {
+    consume t = Tx { id: 1 }
+    consume b = Box { t, n: 2 }
+    consume { t: u, n } = b
+    println(n)
+    u.commit()
+}

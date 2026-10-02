@@ -1,0 +1,59 @@
+module must_consume.pos_9
+
+// MUST-CONSUME VALUES IN DESTRUCTURING AND LOOP PATTERNS (D133, step 5 of the
+// track): `(a, b)` in a return position moves both (D133's consumption table,
+// amendment 2026-09-14) and `consume (x, y) = e` binds both owned; `for consume t
+// in v` takes the vector apart, one owned element per pass (D156, the
+// collection-aware form), and `while Some(consume t) = e` owns each pass's value
+// (D432 s2 form 2); a `_` arm after a `consume` arm takes only what is left (no
+// payload to discard), and `Some(_)` over a plain payload discards nothing.
+// Behaviour byte-for-byte with the oracle (novac-e1-smoke).
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx @peek() -> int => @id
+
+fn mk(n int) -> Option[Tx] => if n > 0 { Some(Tx { id: n }) } else { None }
+
+fn pair(n int) -> (Tx, Tx) {
+    consume a = Tx { id: n }
+    consume b = Tx { id: n + 1 }
+    (a, b)
+}
+
+fn next(i int) -> Option[Tx] => if i < 3 { Some(Tx { id: i + 10 }) } else { None }
+
+fn main() {
+    consume (x, y) = pair(1)
+    x.commit()
+    y.rollback()
+    consume v = []Tx.new()
+    v.push(Tx { id: 5 })
+    v.push(Tx { id: 6 })
+    for consume t in v {
+        t.commit()
+    }
+    mut i = 0
+    while Some(consume t) = next(i) {
+        t.rollback()
+        i += 1
+    }
+    match mk(7) {
+        Some(consume t) => t.commit()
+        _ => println("none")
+    }
+    match Some(3) {
+        Some(_) => println("some")
+        None => println("none")
+    }
+}

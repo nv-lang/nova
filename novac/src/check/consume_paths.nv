@@ -21,6 +21,8 @@ import ../tree.{Node, NodeKind, is_node}
 import ../sem.{branch_children, expr_leaf_name, ty_source_name}
 import ../sem.{iflet_body_at, iflet_else_at, arm_body_at, loop_ctl_is_break}
 import ../builtins.{is_true_literal}
+import ../lex.{TokenKind}
+import ../sem.{pattern_mode_word}
 
 /// D133-not-consumed at an EXIT POINT: the value is still owned, on every path or on
 /// some, when `exit` leaves its scope.
@@ -151,22 +153,12 @@ fn Checker mut @flow_come_out(mut fl ConsumeFlow, joined []VarState, paths int, 
     }
 }
 
-/// A LOOP's pattern that binds a value of a must-consume type -- an element taken
-/// out of a container -- starts an obligation the track does not follow yet:
-/// refused by name.
-fn Checker mut @flow_pattern(p Node, mut fl ConsumeFlow) -> () {
-    if fl.stopped { return }
-    match p {
-        Leaf(_) => return
-        Branch { .. } => {}
+/// Does a `for` pattern TAKE its elements -- the `consume` word on it (D156)?
+fn pattern_takes(p Node) -> bool {
+    match pattern_mode_word(p) {
+        Some(k) => k == TokenKind.KwConsume
+        None => false
     }
-    if is_node(p.id_of()) && @is_owned_kind(fl.kinds, @chan.type_if_known(p.id_of())) {
-        @flow_stop(p, "bound by a loop's pattern", fl)
-        return
-    } else {
-        // Not a must-consume value here: its sub-patterns below.
-    }
-    for c in branch_children(p) { @flow_pattern(c, fl) }
 }
 
 /// One arm, walked from `entry`; what it binds ends with it -- the must-consume
@@ -262,7 +254,11 @@ fn unsafe_block_of(n Node) -> ro Node {
 /// state at the loop's entry and then from that state JOINED with the state its
 /// pass leaves (a value the body consumes is then MAYBE consumed at the next
 /// pass's use of it, D131). The loop comes out where the condition fails -- never
-/// for a literal `while true` -- and at every `break`.
+/// for a literal `while true` -- and at every `break`. A PATTERN that takes a
+/// must-consume element binds a fresh value each pass, owned by the body (D432 s2
+/// form 2): `for consume t in v` consumes `v` itself (D156: the collection-aware
+/// form), `while Some(consume t) = e` moves each `e` into its pattern; a plain `for t
+/// in v` views the elements and binds nothing owned.
 fn Checker mut @flow_loop(n Node, mut fl ConsumeFlow) -> () {
     ro k = n.kind_of()
     ro kids = branch_children(n)
@@ -270,16 +266,16 @@ fn Checker mut @flow_loop(n Node, mut fl ConsumeFlow) -> () {
     if kids.len() <= body_at { return }
     ro head = if k == NodeKind.WhileStmt { kids[1] } else { kids[3] }
     ro forever = k == NodeKind.WhileStmt && head.kind_of() == NodeKind.Name && is_true_literal(expr_leaf_name(head))
+    // Does the pattern take what it binds? `for consume t in v`: the word on the
+    // pattern; `while Some(consume t) = e`: a binder owning a must-consume value.
+    ro has_pat = k != NodeKind.WhileStmt
+    ro takes = has_pat && @pattern_owns(kids[1], fl.kinds) && (k == NodeKind.WhileLet || pattern_takes(kids[1]))
     if k == NodeKind.ForStmt {
-        // The iterated value is evaluated once, before the first pass.
-        @flow_expr(head, fl, false)
+        // The iterated value is evaluated once, before the first pass -- and moved
+        // into the loop when its pattern takes the elements.
+        @flow_expr(head, fl, takes)
     } else {
         // A condition or a `while`-let initializer runs at every pass, below.
-    }
-    if k != NodeKind.WhileStmt {
-        @flow_pattern(kids[1], fl)
-    } else {
-        // A plain condition binds nothing.
     }
     if fl.stopped { return }
     // The enclosing loop's own exits are kept aside while this one is walked.
@@ -300,7 +296,7 @@ fn Checker mut @flow_loop(n Node, mut fl ConsumeFlow) -> () {
         fl.cont = []VarState.new()
         fl.cont_paths = 0
         if k != NodeKind.ForStmt {
-            @flow_expr(head, fl, false)
+            @flow_expr(head, fl, takes)
         } else {
             // The iterated value was evaluated once, above.
         }
@@ -311,6 +307,13 @@ fn Checker mut @flow_loop(n Node, mut fl ConsumeFlow) -> () {
             exit_paths += 1
         } else {
             // `while true`: only a `break` comes out.
+        }
+        if takes {
+            // This pass's element: owned by the body, a scope of its own.
+            @flow_own_binders(kids[1], k == NodeKind.ForStmt, fl)
+            if fl.stopped { break }
+        } else {
+            // A view of each element, or no pattern: nothing owned.
         }
         fl.nest += 1
         @flow_block(kids[body_at], fl, false)

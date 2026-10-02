@@ -8,7 +8,7 @@ module must_consume.pos_8
 // - a `match` over a `consume` BINDING whose arm takes the payload with `consume`
 //   consumes the binding (D157: `if Some(consume t) = opt` -- "opt Consumed
 //   после"); the oracle reports the binding as never consumed (registry 221.1
-//   No.TBD, oracle).
+//   No.1676, oracle).
 // Listed in novac/divergences.allow (plan 274.12).
 
 type Tx consume {

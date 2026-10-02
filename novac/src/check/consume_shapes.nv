@@ -20,7 +20,7 @@
 
 module novac.check
 
-import ../tree.{Node, NodeKind, is_node}
+import ../tree.{Node, NodeKind, is_node, raw_node}
 import ../lex.{TokenKind}
 import ../sem.{branch_children, leaf_text, file_decls, ty_source_name, binder_text}
 import ../sem.{decl_of_ty, field_range_of, raw_frow, no_frow, pattern_mode_word}
@@ -44,6 +44,32 @@ fn marker_on_non_consume_msg(field str, ty str) -> str =>
 fn pattern_required_msg(name str, ty str) -> str =>
     "`${name}` is bound by a pattern to a must-consume value of type `${ty}` without `consume` -- write `consume ${name}` in the pattern to own it; a bare binder may only move the value on, once (an arm's value, a `return`, a constructor argument) (E_CONSUME_PATTERN_REQUIRED)"
 
+/// D461 (B): `_` throws a must-consume value away. The spec gives the rule no code
+/// of its own; the oracle names it E_LINEAR_PAYLOAD_DISCARDED.
+fn discarded_by_wildcard_msg(ty str) -> str =>
+    "`_` discards a must-consume value of type `${ty}` -- nothing would ever consume it: bind it with `consume x` in the pattern and consume it (D461 (B), D133)"
+
+/// `_` against a value of type `ty` (typing's wildcard arm, match_arms.nv): legal,
+/// except over a must-consume value -- D461 (B): a linear value is not thrown away
+/// by a pattern. The ROOT of a `match` arm is not a discard: it takes what the arms
+/// above it left (`Some(consume t) => ..., _ => ...` sees `None` only), and a
+/// scrutinee nothing moves stays owned where it was (the flow judges it). False when
+/// refused.
+fn Checker mut @judge_wildcard(pat Node, ty TyId, ak []Node, pos PatPos) -> bool {
+    if !@is_owned_kind(@consume_kinds, ty) { return true }
+    ro arm_root = match pos {
+        PosArm => ak.len() > 0 && raw_node(ak[0].id_of()) == raw_node(pat.id_of())
+        PosBind | PosFor | PosCond => false
+    }
+    if arm_root {
+        return true
+    } else {
+        // A payload, an element, a field: a discard.
+    }
+    @reject_first_leaf_of([]Node.of(pat), discarded_by_wildcard_msg(ty_source_name(@ctx, ty)))
+    false
+}
+
 /// Is `t` MUST-CONSUME? One of the file's own `type X consume`, or a type applied to
 /// one or a tuple holding one: a `[T consume]` container inherits the obligation
 /// (D156, amendment 2026-08-04), and since plan 246 a plain `[T]` takes no
@@ -54,6 +80,10 @@ fn Checker @is_owned_kind(kinds []TyId, t TyId) -> bool {
     if is_kind_of(kinds, t) { return true }
     // A type with ARGUMENTS holds them -- an application, a structural record on the
     // stack, a newtype's representation -- except a raw pointer, which owns nothing.
+    // A NEWTYPE over a must-consume type counts by its representation: the spec has
+    // no line on it (D156 names containers and `[T consume]` only), and the stricter
+    // reading admits nothing extra -- AWAITS THE OWNER'S DECISION (the integrator's
+    // question of 2026-10-03, report 14 question 4).
     if @ctx.tys.kind_of(t) == TypeKind.TkPtr { return false }
     for i in 0..@ctx.tys.arg_count(t) {
         if @is_owned_kind(kinds, @ctx.tys.arg(t, i)) { return true }
@@ -230,10 +260,12 @@ fn Checker mut @flow_own_binders(p Node, marked bool, mut fl ConsumeFlow) -> () 
     } else {
         // A structural pattern, or one with a mode word: its parts below.
     }
-    ro here = match pattern_mode_word(p) {
+    // `marked` carries down from a destructuring binding's own `consume` word.
+    ro worded = match pattern_mode_word(p) {
         Some(k) => k == TokenKind.KwConsume
         None => false
     }
+    ro here = marked || worded
     for c in branch_children(p) { @flow_own_binders(c, here, fl) }
 }
 

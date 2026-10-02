@@ -1,0 +1,31 @@
+module must_consume.neg_29
+
+// A MUST-CONSUME PAYLOAD THROWN AWAY BY `_` (D461 (B): a linear value is not
+// discarded by a pattern -- the spec gives the rule no code; the oracle names it
+// E_LINEAR_PAYLOAD_DISCARDED). The oracle refuses it too. (Until step 5 this was a
+// dated subset refusal.)
+
+// NOVAC_EXPECT `_` discards a must-consume value of type `Tx`
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx @peek() -> int => @id
+
+fn mk(n int) -> Option[Tx] => if n > 0 { Some(Tx { id: n }) } else { None }
+
+fn main() {
+    match mk(1) {
+        Some(_) => println(1)
+        None => println(0)
+    }
+}

@@ -378,6 +378,8 @@ fn Checker mut @flow_stmt(st Node, mut fl ConsumeFlow, is_last bool) -> () {
     }
     if k == NodeKind.BindStmt {
         @flow_bind(st, fl)
+    } else if k == NodeKind.DestructureBind {
+        @flow_destructure(st, fl)
     } else if k == NodeKind.RetStmt {
         // The returned value leaves first; then every other owned value must be done.
         for c in branch_children(st) {
@@ -467,6 +469,40 @@ fn Checker mut @flow_bind(st Node, mut fl ConsumeFlow) -> () {
     flow_own(fl, leaf_text(kids[1]), it, kids[1])
 }
 
+/// `consume (a, b) = e`, `ro (a, b) = e`: a destructuring binding. A must-consume
+/// initializer moves into the pattern, which binds its parts -- owned by the
+/// `consume` word (D133); `ro`/`mut` cannot hold it. A record declared `consume` is
+/// taken apart by its own `consume` method (D133: `@into_parts`), which the track
+/// does not follow through a pattern.
+fn Checker mut @flow_destructure(st Node, mut fl ConsumeFlow) -> () {
+    ro kids = branch_children(st)
+    if kids.len() < 4 { return }
+    ro pat = kids[1]
+    ro init = kids[kids.len() - 1]
+    ro it = @chan.type_if_known(init.id_of())
+    if !@is_owned_kind(fl.kinds, it) {
+        @flow_expr(init, fl, false)
+        return
+    } else {
+        // A must-consume value: judged below.
+    }
+    if bind_mode_at(kids) != ParamMode.ModeConsume {
+        @flow_reject(st, consume_keyword_missing_msg(ty_source_name(@ctx, it)), fl)
+        return
+    } else if fl.depth > 0 {
+        @flow_stop(st, "bound inside a `with`, a `spawn`, a handler or an assignment", fl)
+        return
+    } else if is_kind_of(fl.kinds, it) {
+        @flow_stop(st, "taken apart by a destructuring pattern (a `consume` record)", fl)
+        return
+    } else {
+        // A structural value of must-consume parts: its pattern binds them.
+    }
+    @flow_expr(init, fl, true)
+    if fl.stopped { return }
+    @flow_own_binders(pat, true, fl)
+}
+
 /// An expression in order of evaluation. `moved` says the expression's VALUE leaves
 /// to a new owner here (a `consume` parameter or receiver, a `return`, the tail, a
 /// `consume` binding); otherwise the value is only used, and a must-consume value
@@ -496,11 +532,13 @@ fn Checker mut @flow_expr(e Node, mut fl ConsumeFlow, moved bool) -> () {
     }
     ro t = if is_node(e.id_of()) { @chan.type_if_known(e.id_of()) } else { no_ty() }
     ro owned = @is_owned_kind(fl.kinds, t)
-    if owned && is_place_kind(k) && moved {
+    // A call of a `-> @` method (D409) answers its RECEIVER: a place, not a fresh value.
+    ro place = is_place_kind(k) || @answers_receiver(e)
+    if owned && place && moved {
         // `consume_it(@)`, `eat(b.tx)`: moving out of a view or of a place.
         @flow_stop(e, "moved out of a view or a place (`@`, a field, an element)", fl)
         return
-    } else if owned && !is_place_kind(k) && !moved {
+    } else if owned && !place && !moved {
         // A FRESH value with nowhere to go: a view argument, an operand, a
         // dropped statement.
         @flow_stop(e, "in this position (a view argument, an operand or a dropped statement)", fl)
@@ -523,10 +561,19 @@ fn Checker mut @flow_expr(e Node, mut fl ConsumeFlow, moved bool) -> () {
     } else if k == NodeKind.Try && flow_any_live(fl) {
         @flow_stop(e, "left early by a `?` while it is still owned", fl)
     } else {
+        // Any other form: its parts are used -- except that a must-consume value BUILT
+        // here from its parts (a literal of several values, D133's `(a, b)` in a
+        // return position) takes them when it moves: each must-consume part moves in.
+        ro builds = moved && owned
         for c in branch_children(e) {
             match c {
                 Leaf(_) => {}
-                Branch { .. } => @flow_expr(c, fl, false)
+                Branch { .. } => {
+                    ro part_owned = @is_tracked_name(c, fl) ||
+                                    (is_node(c.id_of()) && @is_owned_kind(fl.kinds, @chan.type_if_known(c.id_of())))
+                    fl.forced = builds && part_owned
+                    @flow_expr(c, fl, builds && part_owned)
+                }
             }
         }
     }
@@ -606,7 +653,18 @@ fn Checker mut @flow_call(e Node, mut fl ConsumeFlow) -> () {
 
 /// A FRESH value of a must-consume type: produced here, not named by a place.
 fn Checker @is_fresh_owned(e Node, fl ConsumeFlow) -> bool =>
-    is_node(e.id_of()) && !is_place_kind(e.kind_of()) && @is_owned_kind(fl.kinds, @chan.type_if_known(e.id_of()))
+    is_node(e.id_of()) && !is_place_kind(e.kind_of()) && !@answers_receiver(e) &&
+    @is_owned_kind(fl.kinds, @chan.type_if_known(e.id_of()))
+
+/// Is `e` a call of a method that returns its receiver (`-> @`, D409 -- `ret_self`)?
+/// Its value is the place the receiver was, not a value made here.
+fn Checker @answers_receiver(e Node) -> bool {
+    if e.kind_of() != NodeKind.MethodCall || !is_node(e.id_of()) || !@chan.has_callee(e.id_of()) { return false }
+    match @chan.callee_of(e.id_of()).target {
+        CalleeFn(r) => @ctx.fns.rows[raw_row(r)].ret_self
+        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => false
+    }
+}
 
 /// A fresh value handed to a view: the one judge (`@judge_fresh_in_view`,
 /// consume_shapes.nv) says which verdict, and tracking stops either way.
