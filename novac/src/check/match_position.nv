@@ -1,0 +1,40 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc_hir_typeck -- a `match` is an expression typed like any other
+// at its position; NOT taken: rustc has no subset, so every position is legal.
+// Role: the subset's gate on WHERE a `match` may stand (D49: `if`/`match` are
+//   expressions) -- the positions novac compiles today, refused by name
+//   elsewhere. Lifted out of `@walk` (check.nv) when the sweep-9 merge took
+//   that file past the 1000-line limit (274 decision 12): one question, one
+//   function, its history beside it.
+// Used by: check.nv (`@walk`'s MatchExpr arm).
+// Guarded by: nova test novac/src/pipeline/match_value_test.nv and
+//   check-novac-differential.sh over novac/fixtures/match_value_forms.
+
+module novac.check
+
+import ../tree.{Node}
+
+/// Is this `match` standing where novac does not compile one yet? Refused by
+/// name and answered true then; false for a legal position, walked by the caller.
+///
+/// Three legal positions since 274.5 wave B5: a binding initializer, a
+/// STATEMENT (a direct child of a block -- the arms run for effect), and
+/// through init_pos also the tail of a value body (`=>` bodies took it earlier;
+/// the `{...}` tail is a statement position plus the typing route of wave B4's
+/// tail machinery). FOUR since 2026-09-20: the ARM BODY of another match joins
+/// the three, and it is 33 of novac's own carriers -- the lexer dispatches on a
+/// second byte that way throughout. EVERY VALUE POSITION AN `if` TAKES (sweep
+/// 9): a call or method argument, an array element, a constructor field, the
+/// right of `=`/`+=` and a scrutinee -- the `if` value's own positions, typed
+/// by `@type_expr` and placed by `@lower_value_source`, which had a `MatchExpr`
+/// arm all along.
+fn Checker mut @refuse_match_position(children []Node, init_pos bool, stmt_pos bool,
+                                      arm_pos bool, arg_pos bool, scrut_pos bool) -> bool {
+    if init_pos || stmt_pos || arm_pos || arg_pos || scrut_pos {
+        return false
+    } else {
+        // Every legal position is named above; this one is not among them.
+    }
+    @report_first_leaf_of(children, "outside the subset: a `match` is compiled only as an initializer, a statement, a body tail, a match arm's body, an argument, an element or field, the right of an assignment or a scrutinee -- other positions are not compiled yet (E2, the control-flow horizon)")
+    true
+}

@@ -304,7 +304,7 @@ fn Lowerer mut @lower_stmt(st Node) -> () {
         // (registry 1619): laid down first and read back by the printer.
         @hoist_operand(src)
         @hoist_block_forms(kids[0])
-        if src.kind_of() == NodeKind.IfExpr {
+        if src.kind_of() == NodeKind.IfExpr || src.kind_of() == NodeKind.MatchExpr {
             ro sty = @out.type_if_known(src.id_of())
             if is_ty(sty) {
                 match @lower_value_source(src, sty) {

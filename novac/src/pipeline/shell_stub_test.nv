@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/pipeline/shell_stub_test.nv -- the shell's STUBS are carried and
+// never callable (registry 1643). The oracle emits the erased generic layer as
+// bodies that discard their parameters and return a constant; a name that
+// resolved to one compiled to a silent wrong value (`==` over two vectors was
+// always "not equal"). `InteropTable @has` answers no for them, so the doors
+// that ask the shell fall to the std instance or refuse by name.
+//
+// EACH ASSERTION CARRIES ITS CONTROL: a stub beside a real body of the same
+// family. Reverse probe, run before the commit: with `@has` ignoring the stub
+// table, the first two assertions of each test redden.
+
+module novac.pipeline
+
+test "an erased stub is not a shell symbol; a real body of the same family is (registry 1643)" {
+    ro t = interop_surface()
+    // `{ (void)nova_self; (void)other; return (nova_bool){0}; }`
+    assert(!t.has("Nova_Vec_method_equal"), "the erased Vec equal is a stub")
+    assert(!t.has("Nova_HashMap_method_contains"), "the erased HashMap contains is a stub")
+    // CONTROL: the concrete instances the probe keeps are real bodies.
+    assert(t.has("Vec____nova_byte_method_equal"), "a concrete Vec equal is callable")
+    assert(t.has("Vec____nova_int_method_push__nova_int"), "a concrete Vec push is callable")
+}
+
+test "a stub's NAME is still known to the shell: only callability is withdrawn" {
+    ro t = interop_surface()
+    // A stub returning NULL and one returning NOVA_UNIT are both taken.
+    assert(!t.has("Nova_Vec_method_clone"), "a NULL-returning stub is not callable")
+    assert(!t.has("Nova_Vec_method_display"), "a NOVA_UNIT-returning stub is not callable")
+    // CONTROL: the runtime's own helpers, with real bodies, stay.
+    assert(t.has("nova_print_int"), "a runtime helper is callable")
+    assert(t.sym_cnt > 1000, "the lifted surface keeps every identifier it read")
+}

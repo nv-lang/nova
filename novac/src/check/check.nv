@@ -666,18 +666,9 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     }
                 }
                 MatchExpr => {
-                    // Three legal positions since 274.5 wave B5: a binding
-                    // initializer, a STATEMENT (a direct child of a block --
-                    // the arms run for effect), and through init_pos also the
-                    // tail of a value body (`=>` bodies took it earlier; the
-                    // `{...}` tail is a statement position plus the typing
-                    // route of wave B4's tail machinery).
-                    // FOUR legal positions since 2026-09-20: the ARM BODY of
-                    // another match joins the three, and it is 33 of novac's
-                    // own carriers -- the lexer dispatches on a second byte
-                    // that way throughout.
-                    if !init_pos && !stmt_pos && !arm_pos {
-                        @report_first_leaf_of(children, "outside the subset: a `match` is compiled only as an initializer, a statement, a body tail or the body of a match arm -- other positions are not compiled yet (E2, the control-flow horizon)")
+                    // WHERE a `match` may stand: one question, its history beside
+                    // it (match_position.nv).
+                    if @refuse_match_position(children, init_pos, stmt_pos, arm_pos, arg_pos, scrut_pos) {
                         return
                     } else {
                         // A legal position: walked below.
@@ -830,7 +821,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                                      ((leaf_kind(children[1]) == TokenKind.Assign &&
                                        (c.kind_of() == NodeKind.RecordCtor ||
                                         c.kind_of() == NodeKind.ArrayLit)) ||
-                                      c.kind_of() == NodeKind.IfExpr))
+                                      c.kind_of() == NodeKind.IfExpr || c.kind_of() == NodeKind.MatchExpr))
                         ai += 1
                     }
                     return

@@ -1075,7 +1075,15 @@ resolve 23
 # merge of p274-carina-mono-k2 (tasks 4-6) into main (integrator, 2026-10-02): the guard's counts on
 #   the merged tree -- sem 345 (main's 343 plus mono-k2's sole_expr_of_unsafe and variant_sum_count),
 #   source 7 (strarm's SourceText.@holds).
-sem 345
+# 2026-10-02, cloud session p274-carina-sweep (registry 1643 and D46 on vectors): sem 342 -> 344:
+#   `InteropTable @add_stub` (sem/interop.nv) -- the shell scan (emit_c/shell.nv) marks the erased
+#   generic layer's stub bodies, so `@has` answers no for them; `is_vector_ty` (sem/handed_bodies.nv)
+#   -- is this a `[]T`, asked by check's `==` door (check/operators.nv) and by the emitter that
+#   spells the call through `vec_op_c` (emit_c/emit_expr.nv): two readers, one answer.
+# merge of p274-carina-sweep (steps 8-9) into main (integrator, 2026-10-02): the branch's `is_vector_ty`
+#   is dropped with its second door for vector `==` (main's #1573 door stays the one); the counts
+#   are the guard's on the merged tree -- sem 346 (main's 345 plus the branch's `InteropTable @add_stub`, #1643).
+sem 346
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
