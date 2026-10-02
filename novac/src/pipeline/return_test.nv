@@ -74,3 +74,20 @@ fn mk(t Tb, m bool) -> Row => t.row(if m { 1 } else { 0 })\nfn main() {\n printl
 fn main() {\n println(f(1))\n}", std_decls())
     assert(messages(dc).contains("ends without a value"), messages(dc))
 }
+
+test "an `else if` chain is a value -- in a body tail and in a binding (part 5 of p274-carina-k1)" {
+    // sem/mangle.nv writes `ro shell = if .. else if .. else ..`; the chain was
+    // "not compiled as a value yet". It is a value `if` in the else position,
+    // judged by the same door and placed into the same temporary.
+    ro (d, c) = compile_to_c("fn sign(n int) -> int {\n ro s = if n > 0 { 1 } else if n < 0 { 2 } else { 3 }\n s\n}\n\
+fn grade(n int) -> int {\n if n > 90 {\n  7\n } else if n > 50 {\n  8\n } else {\n  9\n }\n}\n\
+fn main() {\n println(sign(1) + grade(1))\n}", std_decls())
+    assert(d.len() == 0, messages(d))
+    // Every arm of both chains WRITES its value; none is evaluated and dropped.
+    assert(!c.contains("(void)(((nova_int)"), c)
+    assert(c.contains("= ((nova_int)9LL);"), c)
+    // CONTROL: a chain whose arms disagree is still refused by name.
+    ro (dc, _) = compile_to_c("fn f(n int) -> int {\n if n > 0 {\n  1\n } else if n < 0 {\n  \"no\"\n } else {\n  0\n }\n}\n\
+fn main() {\n println(f(1))\n}", std_decls())
+    assert(dc.len() >= 1, "disagreeing arms of an else-if chain must be refused")
+}

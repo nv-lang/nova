@@ -238,10 +238,19 @@ fn Checker mut @type_if_value(n Node) -> () {
 /// mixing the two ways out of a function needs a measurement against the
 /// oracle, and that measurement is its own step.
 fn Checker mut @type_branch_value(b Node) -> TyId {
-    if b.kind_of() != NodeKind.Block {
-        // An `else if` chain, or a gap the parser planted. Named, not silent:
-        // the chain is legal Nova and arrives with its own carrier.
-        @report_first_leaf_of([]Node.of(b), "outside the subset: an `else if` chain is not compiled as a value yet (E2-b)")
+    if b.kind_of() == NodeKind.IfStmt || b.kind_of() == NodeKind.IfExpr {
+        // AN `else if` CHAIN is itself a value `if` (part 5 of p274-carina-k1;
+        // its carrier: sem/mangle.nv `ro shell = if .. else if .. else ..`; an
+        // `IfExpr` where the `if` is an expression, an `IfStmt` in a body):
+        // the same door judges it, and its agreed type is this branch's. The
+        // lowering places it into the same temporary (lower_branch.nv).
+        ro cmark = @out.len()
+        @type_if_value(b)
+        if @out.len() > cmark { return no_ty() }
+        return @chan.type_if_known(b.id_of())
+    } else if b.kind_of() != NodeKind.Block {
+        // A gap the parser planted: named, not silent.
+        @report_first_leaf_of([]Node.of(b), "outside the subset: this branch of a value `if` is neither a block nor an `else if` (E2-b)")
         return no_ty()
     } else {
         // A block: its tail decides.

@@ -160,7 +160,7 @@ fn Lowerer mut @lower_if_value(n Node, res_t TyId) -> Local {
     ro c = @ir.begin_if(cond, ElseShape.Braced)
     @lower_block_value(kids[2], t)
     @ir.begin_else(c)
-    @lower_block_value(kids[4], t)
+    @lower_else_value(kids[4], t)
     @ir.end_if(c)
     // The result local is HANDED BACK (274.8 M2b-2, prerequisite 5): the caller records
     // the assignment from it at LOWERING time, so nothing is lowered while the walk prints.
@@ -198,7 +198,7 @@ fn Lowerer mut @lower_if_let_value(n Node, res_t TyId) -> Local {
     @lower_pattern_bind(kids[iflet_pattern_at(kids)], ot, lo)
     @lower_block_value(kids[iflet_body_at(kids)], t)
     @ir.begin_else(c)
-    @lower_block_value(kids[iflet_else_at(kids)], t)
+    @lower_else_value(kids[iflet_else_at(kids)], t)
     @ir.end_if(c)
     t
 }
