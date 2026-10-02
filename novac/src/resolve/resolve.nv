@@ -453,15 +453,35 @@ fn fits(fns FnTable, tys Interner, row FnRow, args []ArgSpec, form CallForm) -> 
     // Allocation-free, as this door must be: `BindFault` is a value sum with an
     // int payload, and every primitive under it already satisfied
     // check-novac-no-alloc-in-lookup.
+    args_misfit(fns, tys, row, args) == ARGS_FIT
+}
+
+/// `args_misfit`'s answer when every argument fits its slot.
+export const ARGS_FIT = -1
+
+/// `args_misfit`'s answer when the arguments do not BIND (D102: too many, a name
+/// no parameter has, a required slot left empty...).
+export const ARGS_UNBOUND = -2
+
+/// The first SLOT of `row` the call's arguments do not fit -- its index, by the
+/// argument's TYPE or its MODE (P14) -- or ARGS_UNBOUND when they do not bind at
+/// all, or ARGS_FIT. The question `fits` asks of every candidate, as a door of
+/// its own, so a call that does not choose among candidates -- a static call
+/// with ONE row of its name and arity -- asks the SAME question and is not
+/// accepted unjudged (registry 1650: `Tb.row("s")` for `fn Tb.row(h int)` was
+/// silent). Allocation-free, as the lookup it serves.
+#realtime nogc
+export fn args_misfit(fns FnTable, tys Interner, row FnRow, args []ArgSpec) -> int {
+    ro fd = fns.rows[raw_row(row)]
     match bind_fault(fns.params, fd.param_off, fd.param_cnt, args) {
         FaultNone => {}
-        FaultPositionalAfterNamed(_) => return false
-        FaultTooManyArgs(_) => return false
-        FaultPositionalDefaulted(_) => return false
-        FaultNamedRequired(_) => return false
-        FaultUnknownName(_) => return false
-        FaultDuplicate(_) => return false
-        FaultMissing(_) => return false
+        FaultPositionalAfterNamed(_) => return ARGS_UNBOUND
+        FaultTooManyArgs(_) => return ARGS_UNBOUND
+        FaultPositionalDefaulted(_) => return ARGS_UNBOUND
+        FaultNamedRequired(_) => return ARGS_UNBOUND
+        FaultUnknownName(_) => return ARGS_UNBOUND
+        FaultDuplicate(_) => return ARGS_UNBOUND
+        FaultMissing(_) => return ARGS_UNBOUND
     }
     for s in 0..fd.param_cnt {
         ro at = bind_slot_of(fns.params, fd.param_off, fd.param_cnt, args, s)
@@ -485,7 +505,7 @@ fn fits(fns FnTable, tys Interner, row FnRow, args []ArgSpec, form CallForm) -> 
         // `int`). The literal's decided type and its range are the checker's
         // business after the binding; here only admission is asked.
         if !type_admits(tys, p.type_id, args[at].type_id) && !lit_admits(tys, args[at].lit, p.type_id) {
-            return false
+            return s
         } else {
             // Either this position is not typed yet (no_ty()), it matches, or a
             // literal takes the parameter's type.
@@ -496,7 +516,7 @@ fn fits(fns FnTable, tys Interner, row FnRow, args []ArgSpec, form CallForm) -> 
         // tell them apart -- it answered "overloaded, not narrowed" and refused
         // both (measured 2026-08-21).
         if !mode_admits(p.mode, args[at].cls) {
-            return false
+            return s
         } else {
             // This argument's class is one this mode accepts.
         }
@@ -504,7 +524,7 @@ fn fits(fns FnTable, tys Interner, row FnRow, args []ArgSpec, form CallForm) -> 
     // Every argument found its slot and every slot its argument: `bind_fault`
     // answered that above, and the counting that used to live here went with
     // the copy.
-    true
+    ARGS_FIT
 }
 
 /// Does `a` beat `b` by P14 filter 4 -- no less specific in EVERY position, and

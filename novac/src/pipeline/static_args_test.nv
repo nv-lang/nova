@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Role: a static call's arguments are judged whether the row was CHOSEN among
+//   several or stood ALONE (registry 1650): binding (D102), type (E7301), mode
+//   (P14) -- the resolver's `args_misfit`, the question every lookup candidate
+//   passes. Until then one row of the name and arity was taken unjudged:
+//   `Tb.row("s")` for `fn Tb.row(h int)` compiled.
+// Used by: nova test novac/src/pipeline (the module-test batch of the gate).
+// Guarded by: check-novac-module-tests, check-novac-file-size.py.
+//
+// The cells the integrator named: a static method of the PROGRAM, one HANDED
+// (std's, the shell's or made from its body), a GENERIC one, and a NAMED
+// argument.
+
+module novac.pipeline
+
+test "a static method of the program: a wrong argument type is refused, a right one compiles (1650)" {
+    ro defs = "type Tb { n int }\nfn Tb.row(h int) -> Tb => { n: h }\n"
+    ro (bad, _) = compile_to_c("${defs}fn main() {\n ro t = Tb.row(\"s\")\n println(t.n)\n}", std_decls())
+    assert(bad.len() == 1 && messages(bad).contains("cannot pass `str` as argument `h` of type `int`"), messages(bad))
+    // CONTROL: the right type is the same call accepted.
+    ro (good, _) = compile_to_c("${defs}fn main() {\n ro t = Tb.row(4)\n println(t.n)\n}", std_decls())
+    assert(good.len() == 0, messages(good))
+}
+
+test "a HANDED static method: its parameters judge the call too (1650)" {
+    mut std = std_decls()
+    std.push("module std.sbx\nexport type Sbx { n int }\nexport fn Sbx.make(cap int = 0) -> Sbx => { n: cap }\n")
+    ro (bad, _) = compile_to_c("import std.sbx.{Sbx}\nfn main() {\n ro b = Sbx.make(cap: \"x\")\n println(b.n)\n}", std)
+    assert(bad.len() == 1 && messages(bad).contains("argument `cap` of type `int`"), messages(bad))
+    ro (good, _) = compile_to_c("import std.sbx.{Sbx}\nfn main() {\n ro b = Sbx.make(cap: 3)\n println(b.n)\n}", std)
+    assert(good.len() == 0, messages(good))
+}
+
+test "a GENERIC static method: a concrete parameter still judges its argument (1650)" {
+    mut std = std_decls()
+    std.push("module std.gbx\nexport type Gbx[T] { n int }\nexport fn Gbx[T].make(v T, n int) -> Gbx[T] => { n }\n")
+    // Judged by `compile` (the check verdict). A generic static call that FITS
+    // ices in its instance ("mangle: a substituted type the checker never
+    // interned") -- measured with this fix off as well; a finding of its own,
+    // named in the report, so both calls here are misfits.
+    ro bad = compile("import std.gbx.{Gbx}\nfn main() {\n ro b = Gbx.make(1, \"q\")\n println(b.n)\n}", std)
+    assert(bad.len() == 1 && messages(bad).contains("argument `n` of type `int`"), messages(bad))
+    // CONTROL: the type parameter takes another type than the concrete one --
+    // the misfit is the concrete slot's, not the parameter's.
+    ro good = compile("import std.gbx.{Gbx}\nfn main() {\n ro b = Gbx.make(\"t\", \"u\")\n println(b.n)\n}", std)
+    assert(good.len() == 1 && messages(good).contains("argument `n` of type `int`"), messages(good))
+}
+
+test "a NAMED argument of a static call is counted, bound and judged (1650)" {
+    ro defs = "type Tb { n int }\nfn Tb.row(h int, k int = 2) -> Tb => { n: h + k }\n"
+    ro (bad, _) = compile_to_c("${defs}fn main() {\n ro t = Tb.row(1, k: \"s\")\n println(t.n)\n}", std_decls())
+    assert(bad.len() == 1 && messages(bad).contains("argument `k` of type `int`"), messages(bad))
+    ro (good, _) = compile_to_c("${defs}fn main() {\n ro t = Tb.row(1, k: 5)\n println(t.n)\n}", std_decls())
+    assert(good.len() == 0, messages(good))
+}

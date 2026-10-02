@@ -1,0 +1,15 @@
+module static_args.neg_1
+
+// ONE seeded cause: the only static method of its name and arity takes an
+// `int`, and the call hands it a `str`. Until registry 1650 a row that stood
+// alone was taken without judging its arguments, and this compiled; the oracle
+// says E7301 at the argument.
+// NOVAC_EXPECT cannot pass `str` as argument `h` of type `int`
+type Tb { n int }
+
+fn Tb.row(h int) -> Tb => { n: h }
+
+fn main() {
+    ro t = Tb.row("s")
+    println(t.n)
+}

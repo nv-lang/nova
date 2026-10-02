@@ -1,0 +1,14 @@
+module static_args.neg_2
+
+// ONE seeded cause, by NAME: a defaulted parameter reached as `k: "s"` -- the
+// named argument is counted, bound to its slot and judged by its type
+// (registry 1650; before, a named argument was not even counted as written).
+// NOVAC_EXPECT cannot pass `str` as argument `k` of type `int`
+type Tb { n int }
+
+fn Tb.row(h int, k int = 2) -> Tb => { n: h + k }
+
+fn main() {
+    ro t = Tb.row(1, k: "s")
+    println(t.n)
+}

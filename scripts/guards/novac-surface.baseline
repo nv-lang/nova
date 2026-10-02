@@ -477,7 +477,11 @@ pipeline 14
 #   with a DefTable row), `@free_candidate` (check's D429 coercing walk asks the view) and
 #   `PRELUDE_ASKER` (check_instance's asker for a std body with no module line). All are
 #   asked by check, which owns no index of its own.
-resolve 23
+# 2026-10-02, cloud session p274-carina-mono-k2 (registry 1650): resolve 23 -> 26:
+#   `args_misfit` with its two answers `ARGS_FIT` / `ARGS_UNBOUND` -- the question every
+#   lookup candidate passes (binding, type, mode), as a door of its own, so check's static
+#   call door asks it of a row that stood alone instead of taking that row unjudged.
+resolve 26
 # sem 54 -> 56 (2026-08-18): наружу вышли ДВЕ двери параметра,
 # param_name_at и param_type_at. Имя и тип параметра больше не берутся
 # индексом pk[0]/pk[1]: индекс сдвигается, как только у параметра
