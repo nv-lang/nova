@@ -25,7 +25,7 @@ import ../diag.{ice}
 import ../sem.{raw_crow, carrier_of, c_callable, c_shell_method, c_overload_symbol, Ctx}
 import ../sem.{CheckOut, vec_op_c, c_static_symbol}
 import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct}
-import ../sem.{shape_of}
+import ../sem.{shape_of, sole_expr_of_unsafe}
 import ../sem.{int_literal_c_text, char_literal_code, interp_slices}
 import ../tree.{raw_node}
 import ../sem.{c_tag, c_maker, VariantRow, raw_vrow, no_vrow, call_arg_at, raw_row, slot_default_of, no_row}
@@ -780,6 +780,13 @@ fn Emitter mut @emit_expr(e Node) -> () {
             @emit_expr(kids[2])
             @body.append(")")
         }
+    } else if k == NodeKind.Unsafe {
+        // `unsafe { e }` with no statement IS `e` (a typing context, D216): it
+        // prints as `e` in every value position at once (`sole_expr_of_unsafe`).
+        match sole_expr_of_unsafe(e) {
+            Some(x) => @emit_expr(x)
+            None => ice("emit: an `unsafe` block with statements in a position the lowering did not hoist")
+        }
     } else if k == NodeKind.IsTest {
         @emit_is_test(e)
     } else if k == NodeKind.Cast {
@@ -988,4 +995,3 @@ fn is_sum_equality(op BinOp, ctx Ctx, t TyId) -> bool {
         BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight | Range => false
     }
 }
-

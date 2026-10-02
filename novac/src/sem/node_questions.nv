@@ -165,3 +165,26 @@ export fn returns_receiver(fk []Node) -> bool {
     }
     false
 }
+
+/// The one expression of `unsafe { e }` -- `None` when the block holds a
+/// statement besides it, or no expression at all. The block is a typing context
+/// (D216) and does nothing when the program runs, so it IS this expression in
+/// every value position at once -- the operand of `as` (std's `trim_ascii`:
+/// `unsafe { @ptr().read_at(i) } as int`), a condition, an operand -- rather than
+/// one hoist per position (the class registry 1525 named). ONE door for the two
+/// askers: the walk's position gate admits such a block anywhere, and the
+/// emitter prints it as its expression. A block WITH statements is the
+/// lowering's to hoist, in the positions it hoists.
+export fn sole_expr_of_unsafe(e Node) -> Option[Node] {
+    ro uk = branch_children(e)
+    if uk.len() < 2 { return None }
+    ro bk = branch_children(uk[1])
+    mut n = 0
+    mut at = -1
+    for i in 0..bk.len() {
+        if bk[i].kind_of() == NodeKind.LeafNode { continue }
+        n += 1
+        at = i
+    }
+    if n == 1 && is_value_tail_kind(bk[at].kind_of()) { Some(bk[at]) } else { None }
+}

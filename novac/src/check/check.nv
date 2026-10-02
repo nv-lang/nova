@@ -50,7 +50,7 @@ import ../tree.{Node, NodeKind, NodeId, bin_op_of, un_op_of}
 import ../diag.{Diagnostic, ice}
 import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind}
 import ../sem.{expr_leaf_name, is_value_record}
-import ../sem.{file_decls}
+import ../sem.{file_decls, sole_expr_of_unsafe}
 import ../sem.{slice_shape_of, ctor_head_variant}
 // Where an arm keeps its body -- the door the lowering has read for waves.
 import ../sem.{arm_body_at, array_of_lparen_at}
@@ -539,8 +539,11 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // `unsafe { ... }` (D216 s8; 274.11 E.10 step 3c): a value
                     // where an `if` value stands -- an initializer, an argument,
                     // a body's tail -- or a statement; typed by `@type_unsafe`
-                    // (unsafe.nv). Elsewhere the lowering has no place for it.
-                    if !stmt_pos && !init_pos && !arg_pos && !arm_pos {
+                    // (unsafe.nv). Elsewhere the lowering has no place for it --
+                    // unless the block is ONE expression: then it IS that
+                    // expression (D216, a typing context) and the emitter prints
+                    // it as one in any value position (`sole_expr_of_unsafe`).
+                    if !stmt_pos && !init_pos && !arg_pos && !arm_pos && sole_expr_of_unsafe(n).is_none() {
                         @report_first_leaf_of(children, UNSAFE_MSG)
                         return
                     } else {

@@ -68,3 +68,17 @@ test "one cause, one diagnostic: a refusal inside `unsafe { }` is not also E_UNS
     ro (u, _) = compile_to_c("fn main() {\n ro n = 1\n ro b = unsafe { n + 1 }\n println(b)\n}", std)
     assert(u.len() == 1 && messages(u).contains("E_UNSAFE_UNUSED"), messages(u))
 }
+
+test "`unsafe { e }` is `e` in every value position: the operand of `as` (D216)" {
+    ro std = std_decls()
+    // std's `trim_ascii` shape: the block is the operand of a cast.
+    ro (d, c) = compile_to_c("fn main() {\n ro ch = 'q'\n println(unsafe { ch as u8 } as int)\n}", std)
+    assert(d.len() == 0, messages(d))
+    // Printed as the expression itself, with no temporary: the block does
+    // nothing at run time.
+    assert(c.contains("((nova_int)(") || c.contains("(nova_int)"), c)
+    // CONTROL: a block WITH a statement is still the lowering's to hoist, and
+    // stays refused where the lowering has no place for it.
+    ro (s, _) = compile_to_c("fn main() {\n ro ch = 'q'\n println(unsafe { ro k = ch\n k as u8 } as int)\n}", std)
+    assert(s.len() == 1, messages(s))
+}
