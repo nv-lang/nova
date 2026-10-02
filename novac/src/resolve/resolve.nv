@@ -539,6 +539,14 @@ fn dominates(fns FnTable, a FnRow, b FnRow) -> bool {
         }
     }
     if no_worse && better_somewhere { return true }
+    // CONCRETE BEATS GENERIC (D84 filter 4, rule 1; D285 section 2 item 1: "a
+    // concrete method on an exactly matching receiver wins over the blanket"),
+    // where the modes tie: both rows FIT, so the one with no type parameter is
+    // the specific name and the generic one the blanket. Without it
+    // `bytes.to_str()` -- std's `[]u8 @to_str` beside `fn[T] T @to_str` -- was
+    // an ambiguity: 6 refusals of the 0.2 measure (spec/conversions.ru.md
+    // names this very pair).
+    if no_worse && fa.tparam_cnt == 0 && fb.tparam_cnt > 0 { return true }
     // THE LINEARITY AXIS (D84 amendment 2026-09-25, registry 1519), and only
     // where the mode axis cannot tell the two apart (its rule 5: linearity
     // decides AFTER the modes, between forms alike in all else): the form whose
