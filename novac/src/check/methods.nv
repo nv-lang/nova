@@ -117,7 +117,13 @@ fn Checker mut @record_method_callee(e Node, kids []Node, recv_t TyId) -> () {
 fn Checker mut @refuse_method_call(e Node, t Token, key []ArgSpec) -> () {
     ro kids = branch_children(e)
     mut single_row = no_row()
-    if Some(row) = @res.only_row_of(t.text) {
+    // THE ONE METHOD OF THIS NAME ON THIS RECEIVER (#1567): another type's
+    // method of the same name is no candidate, so it must not make the name
+    // look overloaded either. `o.c.bump()` on the file's `Ctr` lost its P14
+    // cause the day std's private json `Lexer @bump` got a row (its type is
+    // registered for its own module's bodies now) -- the name stopped being
+    // single, and the refusal fell back to "no such method".
+    if Some(row) = @only_row_on_receiver(t.text, key) {
         // THE ONE METHOD OF THIS NAME MAY BELONG TO ANOTHER TYPE (2026-10-01):
         // `code.store(7)` on an `AtomicInt` beside the program's own
         // `FnBuilder @store(target, op, src)` was refused as "this call omits
@@ -163,6 +169,24 @@ fn Checker mut @refuse_method_call(e Node, t Token, key []ArgSpec) -> () {
             "outside the subset: no overload of this method accepts these argument types")
         FnFound(row) => @refuse_arg_type(kids, row, key, CallForm.MethodCall)
     }
+}
+
+/// The single METHOD row of `name` whose receiver is not another concrete type
+/// than this call's (`@receiver_is_foreign`), or None when there is none or
+/// more than one -- the name's chain walked through the index's two doors.
+fn Checker @only_row_on_receiver(name str, key []ArgSpec) -> Option[FnRow] {
+    mut found = no_row()
+    mut r = @res.first_row_of(name)
+    while raw_row(r) >= 0 {
+        ro here = r
+        r = @res.next_row_of(r)
+        if !@ctx.fns.rows[raw_row(here)].has_recv { continue }
+        if @receiver_is_foreign(here, key) { continue }
+        if raw_row(found) >= 0 { return None }
+        found = here
+    }
+    if raw_row(found) < 0 { return None }
+    Some(found)
 }
 
 /// Is this row a method of a DIFFERENT concrete type than the call's receiver?

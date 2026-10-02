@@ -165,6 +165,16 @@ export const PTR_WRITE_AT = "write_at"
 /// `p.write_consume_at(i, v)`: `write_at` that MOVES `v` in -- the consuming store (D216, D156); the same bits in C.
 export const PTR_WRITE_CONSUME_AT = "write_consume_at"
 
+/// Is `name` one of the raw-pointer methods of D216 -- `read_at`, `write_at`,
+/// `write_consume_at`, `offset`? ONE answer for the two walks that ask it
+/// (registry 221.1 #1539): the typing of a pointer's method (check/unsafe.nv)
+/// and the subset walk's "is this a method novac knows" (check/rules.nv). The
+/// second knew only the names std DECLARES, and passed `read_at`/`offset` by
+/// coincidence (std has `File @read_at`, `ZonedDateTime @offset`) while
+/// refusing `write_at` -- unseen while an instance skipped that walk.
+export fn is_ptr_method(name str) -> bool =>
+    name == PTR_READ_AT || name == PTR_WRITE_AT || name == PTR_WRITE_CONSUME_AT || name == PTR_OFFSET
+
 /// `size_of[T]()`: the byte size of `T`'s value, an `int` -- the language's intrinsic (D216).
 export const SIZE_OF_FN = "size_of"
 
