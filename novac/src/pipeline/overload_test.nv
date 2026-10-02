@@ -129,3 +129,26 @@ test "the linearity axis: a plain T takes the `[T]` form over `[T consume]` (D84
     ro d1 = compile_with("fn f(xs Vec[int]) -> bool => xs.has(1)\nfn main() {\n println(1)\n}", parse_decls(one), interop_surface())
     assert(d1.len() == 0, messages(d1))
 }
+
+test "concrete beats generic: a concrete row wins over a blanket one of its name (D84 filter 4 rule 1, registry 1543)" {
+    // std declares `[]u8 @to_str()` beside `fn[T] T @to_str()`; both fit a
+    // `[]u8` receiver, and `dominates` compared only modes and linearity, so
+    // `bytes.to_str()` was an ambiguity -- six times over novac's own source.
+    mut std = std_decls()
+    std.push("module std.w\nexport type Box { n int }\n\
+export fn Box @tag() -> int => 1\nexport fn[T] T @tag() -> int => 2\n")
+    ro src = "fn f(b Box) -> int => b.tag()\nfn main() {\n println(1)\n}"
+    ro d = compile_with(src, parse_decls(std), interop_surface())
+    // The concrete row is CHOSEN: what remains is the shell's word about its
+    // symbol (std's bodies are the shell's), never the D84 tie.
+    assert(!messages(d).contains("fits more than one"), messages(d))
+    // The free path asks the same door: `pick(3)` takes `pick(a int)`.
+    ro (df, c) = compile_to_c("fn pick[T](a T) -> int => 2\nfn pick(a int) -> int => 1\nfn main() {\n println(pick(3))\n}", std_decls())
+    assert(df.len() == 0, messages(df))
+    assert(c.contains("pick"), c)
+    // CONTROL: generic in OPPOSITE positions is still a tie -- neither row is
+    // no more general everywhere, and D84 refuses rather than chooses.
+    ro (dt, _) = compile_to_c("fn pick[T](a T, b int) -> int => 1\nfn pick[T](a int, b T) -> int => 2\nfn main() {\n println(pick(1, 2))\n}", std_decls())
+    assert(dt.len() >= 1, "opposite generic positions must be refused")
+    assert(messages(dt).contains("fits more than one"), messages(dt))
+}
