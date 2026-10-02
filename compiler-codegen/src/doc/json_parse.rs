@@ -222,7 +222,7 @@ impl<'a> Parser<'a> {
             .map_err(|_| self.err("invalid UTF-8 in number"))?;
         s.parse::<i64>()
             .map(JsonValue::Int)
-            .map_err(|e| self.err(&format!("invalid integer: {}", e)))
+            .map_err(|e| self.err(&format!("invalid integer: {:#}", e)))
     }
 }
 

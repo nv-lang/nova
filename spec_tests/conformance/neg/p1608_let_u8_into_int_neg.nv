@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_IMPLICIT_NARROWING
+// Regression for registry 221.1 #1608 (D491, owner's decision 2026-10-02): a value of a
+// numeric type does not change its type implicitly -- not by widening either. Before,
+// a widening (`u8` -> `int`, `i32` -> `i64`, `f32` -> `f64`) was implicit in every
+// position, and `u32 + int` was accepted in an operator.
+// Positive half: standalone/p1608_numeric_as_ok.nv.
+module neg.p1608_let_u8_into_int_neg
+
+fn main() Io {
+    ro b u8 = 7
+    // nova:expect E_IMPLICIT_NARROWING -- `u8` into an `int` declaration
+    ro n int = b
+    println("${n}")
+}

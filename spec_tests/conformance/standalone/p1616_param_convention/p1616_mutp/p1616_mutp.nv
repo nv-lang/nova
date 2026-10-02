@@ -1,0 +1,23 @@
+// #1616 carrier -- see `../p1616_param_convention.nv`. `stamp` and `mark` take a
+// `mut` record here (passed by pointer, D488); `p1616_plain` declares both names
+// with a plain `int`.
+module p1616_param_convention.p1616_mutp
+
+export type P1616Rec value {
+    n int
+}
+
+export fn stamp(mut r P1616Rec) -> P1616Rec {
+    r.n += 1
+    r
+}
+
+fn mark(mut r P1616Rec) -> int {
+    r.n += 10
+    r.n
+}
+
+export fn mark_own(x int) -> int {
+    mut r P1616Rec = { n: x }
+    mark(r)
+}

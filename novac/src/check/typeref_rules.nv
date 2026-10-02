@@ -80,9 +80,31 @@ fn undeclared_type_msg(name str) -> str {
 fn Checker @type_name_is_declared(name str, tps []str) -> bool {
     if name == SELF_TYPE { return true }
     if tparam_slot(name, tps).is_some() { return true }
-    if @ctx.defs.type_decl(name).is_some() { return true }
+    if @type_seen(name) { return true }
     if @ctx.protos.def_of(name).is_some() { return true }
     is_language_type_word(name)
+}
+
+/// May THIS body name the type `name` (registry 221.1 #1567)? A type the file
+/// may see answers as before; a type another module keeps PRIVATE (D281) is
+/// registered only for that module's own bodies, and answers yes to them alone
+/// -- an instance of `hp.geo`'s method names `hp.geo`'s `Cell`, the file `hp`
+/// does not.
+fn Checker @type_seen(name str) -> bool {
+    mut d = @ctx.defs.first_def(name)
+    while d >= 0 {
+        ro i = d
+        d = @ctx.defs.prev_def(i)
+        ro is_type = match @ctx.defs.def_at(i).target {
+            DefType(_) => true
+            DefFn(_) => false
+            DefConst(_) => false
+        }
+        if !is_type { continue }
+        if !@ctx.defs.is_private(i) { return true }
+        if @res.decl_is_home(@ctx.defs.is_own(i), @ctx.defs.home_at(i)) { return true }
+    }
+    false
 }
 
 /// The FIRST undeclared type name inside the written reference `kids[at..]` --
@@ -159,7 +181,11 @@ fn Checker mut @report_if_path_head_unknown(kids []Node) -> bool {
     ro name = expr_leaf_name(head)
     if @scope.is_bound(name) { return false }
     if @type_name_is_declared(name, []str.new()) { return false }
-    if @ctx.defs.def_of(name).is_some() { return false }
+    // A name the registry holds -- unless it is ONLY another module's private
+    // type, which this body may not name (#1567, D281).
+    if @ctx.defs.def_of(name).is_some() && (@ctx.defs.type_decl(name).is_none() || @type_seen(name)) {
+        return false
+    }
     @report_first_leaf_of([]Node.of(head), path_head_unknown_msg(name))
     true
 }

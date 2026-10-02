@@ -1,0 +1,21 @@
+// EXPECT_STDOUT p1456 true false 6 0 true 4 12
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for registry 221.1 #1456: a method that a sum does not have is a checker
+// error (E7320), whatever the receiver's shape. Before, `nova check` was green and the C
+// compiler refused the program. The methods a sum does have: declared ones (prelude and a
+// program's own), `??`, and `unwrap` (retracted but still served). Negatives: neg/p1456_*_neg.nv.
+module standalone.p1456_sum_methods_ok
+
+type Shape enum Circle(int) | Square(int)
+
+fn Shape @area() -> int => match @ {
+    Shape.Circle(r) => 3 * r * r
+    Shape.Square(s) => s * s
+}
+
+fn main() Io {
+    ro o = Some(6)
+    ro n Option[int] = None
+    ro r Result[int, str] = Ok(2)
+    println("p1456 ${o.is_some()} ${n.is_some()} ${o.unwrap()} ${n ?? 0} ${r.is_ok()} ${Shape.Square(2).area()} ${Shape.Circle(2).area()}")
+}

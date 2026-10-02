@@ -563,7 +563,10 @@ on whether the function has a wrapper to propagate
   (Option → the function returns Result);
 * the function returns anything else (`bool`, a number, `()`, a tuple, a type
   of your own) — the form is **legal**: there is nothing to propagate, `?`
-  does not apply, and its alternative is a two-arm `match` (also legal).
+  does not apply, and its alternative is a two-arm `match` (also legal);
+* in a generic function, when the operand's or the return's type mentions a
+  type parameter — the form is **refused** (`T` may be instantiated with
+  `Option`, and the form would again be a second door to `?`).
 
 ```nova
 fn is_big(x int) -> bool {

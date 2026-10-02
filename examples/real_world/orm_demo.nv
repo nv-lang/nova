@@ -109,7 +109,7 @@ export type ColumnValue {
 // find_by_id — поиск по PK. NotFound отдельной ошибкой, чтобы caller
 // мог отличить «нет записи» от «БД упала».
 export fn Repo[T] @find_by_id(id u64) Db Fail[RepoError] -> T {
-    ro q = sql`SELECT * FROM ${S(@table)} WHERE id = ${I(id as i64)}`
+    ro q = sql`SELECT * FROM ${Text(@table)} WHERE id = ${I64(id as i64)}`
     ro rows = Db.query(q)
     match rows {
         []     => throw NotFound
@@ -130,7 +130,7 @@ export fn Repo[T] @find_one(q Sql) Db Fail[RepoError] -> Option[T] {
 // list_all — все записи без фильтра. Для больших таблиц — `query()`
 // builder + pagination (см. ниже).
 export fn Repo[T] @list_all() Db Fail[RepoError] -> []T =>
-    @list_with(sql`SELECT * FROM ${S(@table)}`)
+    @list_with(sql`SELECT * FROM ${Text(@table)}`)
 
 // list_with — выполнить произвольный SELECT, парсить каждую строку.
 export fn Repo[T] @list_with(q Sql) Db Fail[RepoError] -> []T {
@@ -176,7 +176,7 @@ export fn Repo[T] @update(value T) Db Fail[RepoError] -> bool {
 
     ro assigns = cols.map(|c| "${c.name} = ?").join(", ")
     mut args []SqlValue = cols.map(|c| c.value)
-    args.push(I(@id_of(value) as i64))
+    args.push(I64(@id_of(value) as i64))
 
     ro q Sql = {
         template: "UPDATE ${@table} SET ${assigns} WHERE id = ?",
@@ -194,8 +194,8 @@ export fn Repo[T] @update_versioned(value T, expected_version i64) Db Fail[RepoE
     ro cols = @to_columns(value)
     ro assigns = cols.map(|c| "${c.name} = ?").join(", ")
     mut args []SqlValue = cols.map(|c| c.value)
-    args.push(I(@id_of(value) as i64))
-    args.push(I(expected_version))
+    args.push(I64(@id_of(value) as i64))
+    args.push(I64(expected_version))
 
     ro q Sql = {
         template: "UPDATE ${@table} SET ${assigns}, version = version + 1 WHERE id = ? AND version = ?",
@@ -207,7 +207,7 @@ export fn Repo[T] @update_versioned(value T, expected_version i64) Db Fail[RepoE
 
 // delete — по id. true если запись была.
 export fn Repo[T] @delete(id u64) Db Fail[RepoError] -> bool {
-    ro q = sql`DELETE FROM ${S(@table)} WHERE id = ${I(id as i64)}`
+    ro q = sql`DELETE FROM ${Text(@table)} WHERE id = ${I64(id as i64)}`
     Db.exec(q) > 0
 }
 
@@ -221,7 +221,7 @@ export fn Repo[T] @bulk_load[K](fk_col str, keys []K, key_to_sql fn(K) -> SqlVal
     if keys.len() == 0 { return [] }
 
     ro sql_keys []SqlValue = keys.map(key_to_sql)
-    ro q = Sql.builder(sql`SELECT * FROM ${S(@table)} WHERE 1 = 1`)
+    ro q = Sql.builder(sql`SELECT * FROM ${Text(@table)} WHERE 1 = 1`)
         .where_in(fk_col, sql_keys)
         .build()
     @list_with(q)
@@ -242,7 +242,7 @@ export type Query[T] {
 export fn Repo[T] @query() -> Query[T] =>
     {
         repo: @,
-        builder: Sql.builder(sql`SELECT * FROM ${S(@table)} WHERE 1 = 1`),
+        builder: Sql.builder(sql`SELECT * FROM ${Text(@table)} WHERE 1 = 1`),
     }
 
 // Все where_* методы возвращают `mut self` через spread — но
@@ -273,13 +273,13 @@ export fn Query[T] mut @where_lt(col str, value SqlValue) -> Query[T] {
 // часть. Для простоты demo передаём строку SQL — реальная stdlib дала бы
 // Direction enum.
 export fn Query[T] mut @order_by(expr str) -> Query[T] {
-    @builder.set_suffix(sql`ORDER BY ${S(expr)}`)
+    @builder.set_suffix(sql`ORDER BY ${Text(expr)}`)
     @
 }
 
 // limit — LIMIT N. Перетирает любую предыдущую suffix-секцию.
 export fn Query[T] mut @limit(n int) -> Query[T] {
-    @builder.set_suffix(sql`LIMIT ${I(n as i64)}`)
+    @builder.set_suffix(sql`LIMIT ${I64(n as i64)}`)
     @
 }
 
@@ -315,7 +315,7 @@ export fn Repo[T] @fetch_page(after Option[u64], size int) Db Fail[RepoError] ->
     }
     ro q Sql = {
         template: "SELECT * FROM ${@table} WHERE 1 = 1 ${cursor_predicate.template} ORDER BY id ASC LIMIT ?",
-        args: [...cursor_predicate.args, SqlValue.I((size + 1) as i64)],
+        args: [...cursor_predicate.args, SqlValue.I64((size + 1) as i64)],
     }
     ro items = @list_with(q)
 
@@ -361,9 +361,9 @@ fn row_to_user(row DbRow) Fail[RepoError] -> User {
 // update_versioned.
 fn user_to_columns(u User) -> []ColumnValue =>
     [
-        { name: "name",    value: S(u.name) },
-        { name: "email",   value: S(u.email) },
-        { name: "balance", value: I(u.balance) },
+        { name: "name",    value: Text(u.name) },
+        { name: "email",   value: Text(u.email) },
+        { name: "balance", value: I64(u.balance) },
     ]
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -395,9 +395,9 @@ fn row_to_post(row DbRow) Fail[RepoError] -> Post {
 
 fn post_to_columns(p Post) -> []ColumnValue =>
     [
-        { name: "user_id", value: I(p.user_id as i64) },
-        { name: "title",   value: S(p.title) },
-        { name: "body",    value: S(p.body) },
+        { name: "user_id", value: I64(p.user_id as i64) },
+        { name: "title",   value: Text(p.title) },
+        { name: "body",    value: Text(p.body) },
     ]
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -408,7 +408,7 @@ fn post_to_columns(p Post) -> []ColumnValue =>
 // без N+1 (один SQL).
 export fn posts_of(user_id UserId) Db Fail[RepoError] -> []Post =>
     posts_repo().query()
-        .where_eq("user_id", I(user_id as i64))
+        .where_eq("user_id", I64(user_id as i64))
         .order_by("created_at DESC")
         .fetch_all()
 
@@ -421,7 +421,7 @@ export fn posts_of_many(user_ids []UserId) Db Fail[RepoError] -> HashMap[UserId,
     ro posts = posts_repo().bulk_load(
         "user_id",
         user_ids,
-        |uid| I(uid as i64),
+        |uid| I64(uid as i64),
     )
 
     mut grouped = HashMap[UserId, []Post].new()
@@ -487,7 +487,7 @@ fn in_memory_db_handler(mut storage HashMap[u64, DbRow]) -> Effect[Db] => effect
         // SELECT WHERE id = ?
         if q.template.contains("WHERE id = ?") {
             ro id = match q.args[0] {
-                I(n) => n as u64
+                I64(n) => n as u64
                 _    => panic("expected i64 id arg")
             }
             match storage.get(id) {
@@ -497,7 +497,7 @@ fn in_memory_db_handler(mut storage HashMap[u64, DbRow]) -> Effect[Db] => effect
         } else if q.template.contains("WHERE id IN") {
             // SELECT WHERE id IN (?, ?, ...) — bulk_load
             ro ids []u64 = q.args.map(|a| match a {
-                I(n) => n as u64
+                I64(n) => n as u64
                 _    => 0
             })
             mut out []DbRow = []
@@ -513,7 +513,7 @@ fn in_memory_db_handler(mut storage HashMap[u64, DbRow]) -> Effect[Db] => effect
             // следующий sequence). Тесты, которые проверяют конкретный id
             // после insert, должны использовать другой handler.
             ro new_id = (storage.len() + 1) as u64
-            [{ columns: ["id"], values: [I(new_id as i64)] }]
+            [{ columns: ["id"], values: [I64(new_id as i64)] }]
         } else {
             // SELECT FROM <table> — все записи.
             mut out []DbRow = []
@@ -525,7 +525,7 @@ fn in_memory_db_handler(mut storage HashMap[u64, DbRow]) -> Effect[Db] => effect
         // DELETE / UPDATE — упрощённо: ищем `id = ?` среди args.
         if q.template.starts_with("DELETE") {
             ro id = match q.args[0] {
-                I(n) => n as u64
+                I64(n) => n as u64
                 _    => 0
             }
             if storage.contains(id) {
@@ -537,7 +537,7 @@ fn in_memory_db_handler(mut storage HashMap[u64, DbRow]) -> Effect[Db] => effect
         } else {
             // UPDATE — последний arg обычно id.
             ro id = match q.args[q.args.len() - 1] {
-                I(n) => n as u64
+                I64(n) => n as u64
                 _    => 0
             }
             if storage.contains(id) { 1 } else { 0 }
@@ -550,7 +550,7 @@ fn in_memory_db_handler(mut storage HashMap[u64, DbRow]) -> Effect[Db] => effect
 fn seed_user(mut storage HashMap[u64, DbRow], id u64, name str, email str, balance i64) {
     storage.insert(id, {
         columns: ["id", "name", "email", "balance", "version", "created_at"],
-        values:  [I(id as i64), S(name), S(email), I(balance), I(0), I(1700000000)],
+        values:  [I64(id as i64), Text(name), Text(email), I64(balance), I64(0), I64(1700000000)],
     })
 }
 
@@ -587,7 +587,7 @@ test "Query fluent builder — where_eq + limit + fetch_all" {
         // В упрощённом handler'е WHERE name = ? игнорируется, и мы получаем
         // всех — но композиция запроса демонстрируется.
         ro active = users_repo().query()
-            .where_eq("name", S("alice"))
+            .where_eq("name", Text("alice"))
             .limit(10)
             .fetch_all()
         assert(active.len() >= 1)
@@ -615,7 +615,7 @@ test "bulk_load — anti-N+1 для списка id'ов" {
         ro users = users_repo().bulk_load(
             "id",
             [1 as UserId, 2 as UserId, 3 as UserId],
-            |uid| I(uid as i64),
+            |uid| I64(uid as i64),
         )
         assert(users.len() == 3)
     }

@@ -55,7 +55,7 @@ if [ ! -f "$LOG" ]; then
         exit 1
     fi
     mkdir -p "$ROOT/target" "$ROOT/novac/target"
-    "$NOVA_BIN" build "$ROOT/novac/src/main.nv" -o "$ROOT/novac/target/novac.exe" > "$LOG" 2>&1
+    "$NOVA_BIN" build "$ROOT/novac/src/main.nv" -o "$(novac_bin_out "$ROOT")" > "$LOG" 2>&1
 fi
 
 # Предупреждение НАШЕ, если оно не указывает в чужую землю. Прежний фильтр

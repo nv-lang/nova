@@ -20,7 +20,7 @@ import ../source.{SourceText}
 import ../lex.{Token, TokenKind, spelling_of}
 import ../tree.{Node, NodeKind, NodeId, no_node, bin_op_of, un_op_of, raw_node}
 import ../diag.{Diagnostic, Severity, ice}
-import ../builtins.{ENTRY_FN, PRINT_FN, CALLER_LOC_FN, is_bool_literal}
+import ../builtins.{ENTRY_FN, PRINT_FN, CALLER_LOC_FN, is_bool_literal, is_ptr_method}
 import ../sem.{Ctx, CheckOut, declares_receiver, generics_have_consume, generics_have_protocol_bound, param_type_at}
 // The tree question that decides what a hoist must order (F65).
 import ../sem.{contains_call}
@@ -806,6 +806,10 @@ fn Checker mut @report_if_unknown_method(kids []Node) -> () {
             // green, handler or no handler (a missing handler is the
             // runtime's panic, not a check error).
             if @effect_op_head(kids) { return }
+            // A RAW POINTER's method (D216) is the language's, not a
+            // declaration's: the typing walk judges it on the receiver's type
+            // (check/unsafe.nv), which this walk does not know (#1539).
+            if is_ptr_method(t.text) { return }
             // The parenthetical "(or the name is overloaded)" died with E2-b3
             // M3: `has_name` answers existence alone, so an overloaded name
             // never reaches this refusal -- the tail described a case this

@@ -24,25 +24,25 @@ pub fn write_bench(out_dir: &Path, bench: &AnalyzedBench) -> Result<()> {
     let safe = sanitize(&bench.raw.name);
     let bench_dir = out_dir.join(&safe).join("new");
     std::fs::create_dir_all(&bench_dir)
-        .map_err(|e| anyhow!("create {}: {}", bench_dir.display(), e))?;
+        .map_err(|e| anyhow!("create {}: {:#}", bench_dir.display(), e))?;
 
     // estimates.json — Criterion stats blob.
     let estimates = estimates_json(bench);
     std::fs::write(bench_dir.join("estimates.json"),
         serde_json::to_string_pretty(&estimates)?)
-        .map_err(|e| anyhow!("write estimates.json: {}", e))?;
+        .map_err(|e| anyhow!("write estimates.json: {:#}", e))?;
 
     // sample.json — raw timing samples + iter counts.
     let sample = sample_json(bench);
     std::fs::write(bench_dir.join("sample.json"),
         serde_json::to_string_pretty(&sample)?)
-        .map_err(|e| anyhow!("write sample.json: {}", e))?;
+        .map_err(|e| anyhow!("write sample.json: {:#}", e))?;
 
     // benchmark.json — metadata.
     let metadata = benchmark_metadata_json(bench);
     std::fs::write(bench_dir.join("benchmark.json"),
         serde_json::to_string_pretty(&metadata)?)
-        .map_err(|e| anyhow!("write benchmark.json: {}", e))?;
+        .map_err(|e| anyhow!("write benchmark.json: {:#}", e))?;
 
     Ok(())
 }
@@ -50,7 +50,7 @@ pub fn write_bench(out_dir: &Path, bench: &AnalyzedBench) -> Result<()> {
 /// Write all benches into Criterion layout.
 pub fn write_all(out_dir: &Path, benches: &[AnalyzedBench]) -> Result<usize> {
     std::fs::create_dir_all(out_dir)
-        .map_err(|e| anyhow!("create out dir: {}", e))?;
+        .map_err(|e| anyhow!("create out dir: {:#}", e))?;
     for b in benches {
         write_bench(out_dir, b)?;
     }

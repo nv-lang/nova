@@ -45,3 +45,18 @@ test "a REAL overload stays a tie: a handed method with other parameters is not 
     assert(ds.len() == 1, messages(ds))
     assert(ds[0].message.contains("carries no `get` for Box"), messages(ds))
 }
+
+test "a handed method with NO `->` returns the unit and keeps its row (part 5 of p274-carina-k1)" {
+    // std writes `fn HashMap[K, V] mut @clear() {` and `extern "nova" fn
+    // AtomicInt mut @store(v int)`; the harvest dropped every signature without
+    // a written return, and `m.clear()` was "no such method".
+    mut std = std_decls()
+    std.push("module std.b\nexport type Bag { n int }\nexport fn Bag mut @wipe() {\n    @n = 0\n}\n")
+    ro src = "fn f(mut b Bag) -> () {\n b.wipe()\n}\nfn main() {\n println(1)\n}"
+    ro d = compile_with(src, parse_decls(std), interop_surface())
+    assert(!messages(d).contains("no such method"), messages(d))
+    // CONTROL: a name the declarations do not carry is still refused as such.
+    ro src2 = "fn f(mut b Bag) -> () {\n b.wipe3()\n}\nfn main() {\n println(1)\n}"
+    ro d2 = compile_with(src2, parse_decls(std), interop_surface())
+    assert(messages(d2).contains("no such method"), messages(d2))
+}

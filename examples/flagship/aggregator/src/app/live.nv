@@ -47,7 +47,7 @@ export fn weather_live_cities() -> [](str, f64, f64) {
 /// IS the measurement; no bytes are read (matches `fetch_one`'s framing:
 /// payload content is not domain-meaningful, only timing/outcome are).
 fn live_fetch_tcp(host str) Net Time -> Result[SourceData, AggError] {
-    match resolve(host, 443 as u16) {
+    match resolve(host, 443) {
         Ok(addrs) => {
             if addrs.len() == 0 {
                 Err(AggError.Transport("resolve: no address for ${host}"))
@@ -80,7 +80,7 @@ fn live_fetch_tcp(host str) Net Time -> Result[SourceData, AggError] {
 /// and no run here proves it. The marker stays until someone runs it live.
 fn live_fetch_weather(id str, lat f64, lon f64) Net Time -> Result[SourceData, AggError] {
     ro host = "api.open-meteo.com"
-    match resolve(host, 443 as u16) {
+    match resolve(host, 443) {
         Ok(addrs) => {
             if addrs.len() == 0 {
                 Err(AggError.Transport("resolve: no address for ${host}"))

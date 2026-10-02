@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR E_IMPLICIT_NARROWING
+// Regression for registry 221.1 #1611 (D491): a value of a numeric type does not change
+// its kind (integer <-> float) or narrow as a float without `as`, in any position. Before,
+// `nova check` was green and the C compiler truncated `2.5` to `2` without a word.
+// Positive half: standalone/p1611_numeric_as_ok.nv.
+module neg.p1611_closure_return_float_into_int_neg
+
+fn main() Io {
+    // nova:expect E_IMPLICIT_NARROWING -- a closure's declared `-> int` is a position too
+    ro f = fn(x f64) -> int => x
+    println("${f(2.5)}")
+}

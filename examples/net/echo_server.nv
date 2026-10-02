@@ -18,7 +18,7 @@ const PORT u16 = 7777
 
 fn main() {
     with Net = real_net() {
-        ro addr = SocketAddr.loopback(PORT)
+        ro addr = SocketAddr.loopback(PORT as int)
 
         supervised {
             spawn {

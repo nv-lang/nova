@@ -165,9 +165,9 @@ pub fn scan_history(repo: &Path, branch: &str)
     let mut runs: Vec<(history::HistoryEntry, RunResultParsed)> = Vec::new();
     for e in chronological {
         let content = history::read_entry(repo, branch, &e.filename)
-            .map_err(|err| anyhow!("read {}: {}", e.filename, err))?;
+            .map_err(|err| anyhow!("read {}: {:#}", e.filename, err))?;
         let v: Value = serde_json::from_str(&content)
-            .map_err(|err| anyhow!("parse {}: {}", e.filename, err))?;
+            .map_err(|err| anyhow!("parse {}: {:#}", e.filename, err))?;
         if let Ok(r) = RunResultParsed::from_json(&v) {
             runs.push((e, r));
         }

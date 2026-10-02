@@ -139,7 +139,7 @@ pub fn surface_of_package(pkg_dir: &Path) -> Result<EffectSurface> {
     let mut modules = Vec::new();
     for f in &files {
         let src = std::fs::read_to_string(f)
-            .map_err(|e| anyhow!("чтение {}: {}", f.display(), e))?;
+            .map_err(|e| anyhow!("чтение {}: {:#}", f.display(), e))?;
         let m = crate::parser::parse(&src)
             .map_err(|d| anyhow!("{}", d.render(&src, &f.to_string_lossy())))?;
         modules.push(m);
@@ -172,7 +172,7 @@ pub fn check_forbidden(entry_pkg_dir: &Path) -> Result<()> {
             crate::manifest::DepSource::Path(rel) => entry_pkg_dir.join(rel),
             crate::manifest::DepSource::Git { url, pin } => {
                 crate::git_cache::resolve_git_dep(url, pin, None)
-                    .map_err(|e| anyhow!("forbid-проверка `{}`: {}", dep.name, e))?
+                    .map_err(|e| anyhow!("forbid-проверка `{}`: {:#}", dep.name, e))?
                     .checkout
             }
             // registry/invalid — диагностируется резолвом импортов; пропуск.
@@ -182,7 +182,7 @@ pub fn check_forbidden(entry_pkg_dir: &Path) -> Result<()> {
             continue;
         }
         let surface = surface_of_package(&dep_dir)
-            .map_err(|e| anyhow!("forbid-проверка `{}`: {}", dep.name, e))?;
+            .map_err(|e| anyhow!("forbid-проверка `{}`: {:#}", dep.name, e))?;
         let mut report = String::new();
         for forbidden in &dep.forbid {
             let hit: Vec<&String> = surface
@@ -331,7 +331,7 @@ mod tests {
         )
         .unwrap();
         let err = check_forbidden(&entry).expect_err("Net под forbid → ошибка");
-        let msg = err.to_string();
+        let msg = format!("{:#}", err);
         assert!(msg.contains("netlib"), "err: {}", msg);
         assert!(msg.contains("Net"), "err: {}", msg);
         std::fs::remove_dir_all(&base).ok();

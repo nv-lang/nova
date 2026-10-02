@@ -45,10 +45,11 @@ anymore.
 
 ## Numeric ↔ numeric
 
-### There is no automatic widening in an operation ([D405](decisions/02-types.md#d405), amended 2026-09-04)
+### A value never changes its numeric type by itself ([D491](decisions/02-types.md#d491), [D405](decisions/02-types.md#d405))
 
 Every widening below happens because you wrote `as`. Nova does **not** pick the wider
-type for you when two numeric types meet in one operation — no "take the larger",
+type for you when two numeric types meet in one operation, and a typed value does not widen into a
+position of another type either (a binding, an argument, a return, a field, a match arm) -- D491, owner 2026-10-02 — no "take the larger",
 no integer promoted to float, no signed compared against unsigned. Mixed operands are
 a compile error, and the conversion you meant is written down.
 
@@ -100,7 +101,7 @@ error, not a modular wrap (`-200u8` does not become `56`); what you mean is writ
 |---|---|---|
 | `i8 → i16/i32/i64/int` | `as` | sign-extend |
 | `u8 → u16/u32/u64/int` | `as` | zero-extend |
-| `i8/u8 → f64` | `as` | exact (any int64 representable as f64) |
+| `i8/u8 → f64` | `as` | exact (every i8/u8 value is representable) |
 | `f32 → f64` | `as` | exact |
 
 ### Narrowing (potential precision loss)
@@ -390,7 +391,7 @@ ro e Row = n as Row            // ok
 ro g Row = Row(d)              // ERROR E_NEWTYPE_CTOR_SELF -- d is already Row
 ```
 
-Sums are untouched: `SqlValue.I(x)` is still inserted for ANY expression the
+Sums are untouched: the variant of the value's EXACT type (`SqlValue.Int(x)` for an `int`, `I32(x)` for an `i32`; a literal takes the D44 default, registry 1637) is still inserted for ANY expression the
 checker accepts -- a variable, a call, a field read, not only a literal (D55,
 clarified 2026-10-01) -- there the compiler DERIVES the only matching variant
 instead of inventing the author's claim. For the old softness on your own newtype, declare it as a

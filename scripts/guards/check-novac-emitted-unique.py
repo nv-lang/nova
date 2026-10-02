@@ -42,6 +42,9 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "lib"))
+from novac_bin import novac_bin  # noqa: E402 -- #1607: the one door choosing Carina's binary
+
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 
@@ -88,7 +91,7 @@ def main():
             units += 1
             names += judge(c.name, c.read_text(encoding="utf-8", errors="replace"), bad)
     else:
-        novac = root / "novac" / "target" / ("novac.exe" if sys.platform == "win32" else "novac")
+        novac = novac_bin(root)  # #1607: the door (lib/novac_bin.py)
         fixtures = sorted((root / "novac" / "fixtures").rglob("pos_*.nv"))
         if not novac.is_file() or not fixtures:
             print(f"{NAME} ok: судить нечего (нет бинаря novac или фикстур)")

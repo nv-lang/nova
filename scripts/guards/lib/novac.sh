@@ -120,3 +120,32 @@ novac_find_oracle() {
     fi
     return 1
 }
+
+# novac_bin ROOT — путь к бинарю КАРИНЫ, который ЗАПУСКАТЬ (реестр 221.1 №1607).
+#
+# ОДНО место, решающее, какой из двух файлов — Карина. Переменная NOVAC вызывающего
+# первой; иначе более СВЕЖИЙ из novac/target/novac.exe и novac/target/novac; если нет
+# ни одного — путь сборки этой платформы (вызывающий судит отсутствие сам, обычно
+# novac_require_bin). Почему не по имени: сборка на Linux пишет `novac`, а `novac.exe`,
+# оставшийся от прежней сборки, побеждал именем — облачная сессия p274-carina-k1
+# 2026-10-02 мерила Карину, которой уже не было (замеры 140/161 и 124/144, 15 ложных
+# красных в no-cascade и diag-schema). До двери выбор стоял в двадцати местах, и каждое
+# знало своё имя файла; страж check-novac-bin-door держит, чтобы так не стало снова.
+novac_bin() {
+    if [ -n "${NOVAC:-}" ]; then printf '%s\n' "$NOVAC"; return 0; fi
+    _nb_a="$1/novac/target/novac.exe"; _nb_b="$1/novac/target/novac"
+    if [ -f "$_nb_a" ] && [ -f "$_nb_b" ]; then
+        if [ "$_nb_b" -nt "$_nb_a" ]; then printf '%s\n' "$_nb_b"; else printf '%s\n' "$_nb_a"; fi
+    elif [ -f "$_nb_a" ]; then printf '%s\n' "$_nb_a"
+    elif [ -f "$_nb_b" ]; then printf '%s\n' "$_nb_b"
+    else novac_bin_out "$1"; fi
+}
+
+# novac_bin_out ROOT — куда СОБИРАТЬ Карину: `novac.exe` на Windows, `novac` иначе
+# (так её собирает CI, .github/workflows/nova-gate.yml). Пара к novac_bin.
+novac_bin_out() {
+    case "$(uname -s 2>/dev/null)" in
+        MINGW*|MSYS*|CYGWIN*) printf '%s\n' "$1/novac/target/novac.exe" ;;
+        *) printf '%s\n' "$1/novac/target/novac" ;;
+    esac
+}

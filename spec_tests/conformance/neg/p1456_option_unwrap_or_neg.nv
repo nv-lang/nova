@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E7320
+// Regression for registry 221.1 #1456: a method that a sum does not have is a checker
+// error (E7320), whatever the receiver's shape. Before, `nova check` was green and the C
+// compiler refused the program. Positive half: standalone/p1456_sum_methods_ok.nv.
+module neg.p1456_option_unwrap_or_neg
+
+fn main() Io {
+    // nova:expect E7320 -- `unwrap_or` is retracted (D86): `Some(6) ?? 0`
+    ro x = Some(6).unwrap_or(0)
+    println("${x}")
+}

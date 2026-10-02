@@ -1,0 +1,42 @@
+// EXPECT_STDOUT 24 70 18 24
+// Registry 221.1 #1634 (sibling of #1414): a method that ONLY a protocol default
+// body calls was pruned by method-DCE, and the program failed to link --
+// "lld-link: error: undefined symbol: Nova_Small_method_area". Reachability is
+// collected by `collect_used_names` (lints.rs), whose protocol branch walked a
+// method's parameter and result types but not its default body, so `@area()`
+// below was never seen. Not about the receiver's ABI: the heap record failed
+// the same way. Every callee here is called from the default body and nowhere
+// else -- calling one directly would seed its name and hide the defect.
+module standalone.default_body_callee_reachable
+
+type DbcArea protocol {
+    @area() -> int
+    @twice() -> int => @area() * 2
+}
+
+#impl(DbcArea)
+type DbcSmall value {
+    a int
+    b int
+}
+fn DbcSmall @area() -> int => @a * @b
+
+#impl(DbcArea)
+type DbcBox {
+    w int
+    h int
+}
+fn DbcBox @area() -> int => @w * @h
+
+#impl(DbcArea)
+type DbcPair(x int, y int)
+fn DbcPair @area() -> int => @x + @y
+
+fn via_bound[T DbcArea](v T) -> int => v.twice()
+
+fn main() Io {
+    ro s = DbcSmall { a: 3, b: 4 }
+    ro b = DbcBox { w: 5, h: 7 }
+    ro p = DbcPair(4, 5)
+    println("${s.twice()} ${b.twice()} ${p.twice()} ${via_bound(s)}")
+}

@@ -208,7 +208,7 @@ fn run() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("error: {}", e);
+            eprintln!("error: {:#}", e);
             ExitCode::FAILURE
         }
     }
@@ -232,7 +232,7 @@ fn main() -> ExitCode {
 }
 
 fn read_file(path: &PathBuf) -> Result<String> {
-    std::fs::read_to_string(path).map_err(|e| anyhow!("failed to read {}: {}", path.display(), e))
+    std::fs::read_to_string(path).map_err(|e| anyhow!("failed to read {}: {:#}", path.display(), e))
 }
 
 /// Plan 186 (D412): общий враппер embed-резолюции для single-file команд
@@ -574,7 +574,7 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
     emitter.set_contracts_mode(nova_codegen::ast::ContractsMode::parse(contracts));
     let (c_code, warnings) = emitter
         .emit_module(&module)
-        .map_err(|e| anyhow!("codegen error: {}", e))?;
+        .map_err(|e| anyhow!("codegen error: {:#}", e))?;
     for w in &warnings {
         eprintln!("{}", w);
     }
@@ -584,7 +584,7 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
         None => path.with_extension("c"),
     };
     std::fs::write(&out_path, &c_code)
-        .map_err(|e| anyhow!("failed to write {}: {}", out_path.display(), e))?;
+        .map_err(|e| anyhow!("failed to write {}: {:#}", out_path.display(), e))?;
     eprintln!("ok: {} -> {}", path.display(), out_path.display());
     Ok(())
 }
@@ -629,7 +629,7 @@ fn cmd_emit_runtime_stubs(root: &PathBuf, check: bool) -> Result<()> {
         let content = runtime_registry::render_nv(module, fns);
         if check {
             let existing = std::fs::read_to_string(&abs_path)
-                .map_err(|e| anyhow!("failed to read {}: {}", abs_path.display(), e))?;
+                .map_err(|e| anyhow!("failed to read {}: {:#}", abs_path.display(), e))?;
             // Normalize line endings (Windows CRLF vs LF).
             let norm = |s: &str| s.replace("\r\n", "\n");
             if norm(&existing) != norm(&content) {
@@ -639,10 +639,10 @@ fn cmd_emit_runtime_stubs(root: &PathBuf, check: bool) -> Result<()> {
             // Ensure parent dir exists.
             if let Some(parent) = abs_path.parent() {
                 std::fs::create_dir_all(parent)
-                    .map_err(|e| anyhow!("failed to create {}: {}", parent.display(), e))?;
+                    .map_err(|e| anyhow!("failed to create {}: {:#}", parent.display(), e))?;
             }
             std::fs::write(&abs_path, &content)
-                .map_err(|e| anyhow!("failed to write {}: {}", abs_path.display(), e))?;
+                .map_err(|e| anyhow!("failed to write {}: {:#}", abs_path.display(), e))?;
             println!("wrote {}", rel_path);
         }
         total_files += 1;
@@ -860,7 +860,7 @@ fn cmd_unicode(
     if check {
         let norm = |s: &str| s.replace("\r\n", "\n");
         let existing = std::fs::read_to_string(&abs)
-            .map_err(|e| anyhow!("failed to read {}: {}", abs.display(), e))?;
+            .map_err(|e| anyhow!("failed to read {}: {:#}", abs.display(), e))?;
         if norm(&existing) != norm(&content) {
             return Err(anyhow!(
                 "{} diverges from UCD ({}).\n\
@@ -870,7 +870,7 @@ fn cmd_unicode(
         }
         {
             let ex = std::fs::read_to_string(&gabs)
-                .map_err(|e| anyhow!("failed to read {}: {}", gabs.display(), e))?;
+                .map_err(|e| anyhow!("failed to read {}: {:#}", gabs.display(), e))?;
             if norm(&ex) != norm(&gcontent) {
                 return Err(anyhow!(
                     "{} diverges from UCD ({}).\n\
@@ -881,7 +881,7 @@ fn cmd_unicode(
         }
         {
             let ex = std::fs::read_to_string(&cabs)
-                .map_err(|e| anyhow!("failed to read {}: {}", cabs.display(), e))?;
+                .map_err(|e| anyhow!("failed to read {}: {:#}", cabs.display(), e))?;
             if norm(&ex) != norm(&ccontent) {
                 return Err(anyhow!(
                     "{} diverges from UCD ({}).\n\
@@ -892,7 +892,7 @@ fn cmd_unicode(
         }
         {
             let ex = std::fs::read_to_string(&wabs)
-                .map_err(|e| anyhow!("failed to read {}: {}", wabs.display(), e))?;
+                .map_err(|e| anyhow!("failed to read {}: {:#}", wabs.display(), e))?;
             if norm(&ex) != norm(&wcontent) {
                 return Err(anyhow!(
                     "{} diverges from UCD ({}).\n\
@@ -903,7 +903,7 @@ fn cmd_unicode(
         }
         {
             let ex = std::fs::read_to_string(&sabs)
-                .map_err(|e| anyhow!("failed to read {}: {}", sabs.display(), e))?;
+                .map_err(|e| anyhow!("failed to read {}: {:#}", sabs.display(), e))?;
             if norm(&ex) != norm(&scontent) {
                 return Err(anyhow!(
                     "{} diverges from UCD ({}).\n\
@@ -914,7 +914,7 @@ fn cmd_unicode(
         }
         {
             let ex = std::fs::read_to_string(&catabs)
-                .map_err(|e| anyhow!("failed to read {}: {}", catabs.display(), e))?;
+                .map_err(|e| anyhow!("failed to read {}: {:#}", catabs.display(), e))?;
             if norm(&ex) != norm(&catcontent) {
                 return Err(anyhow!(
                     "{} diverges from UCD ({}).\n\
@@ -926,7 +926,7 @@ fn cmd_unicode(
         // Plan 152.5b: collation table (only if the UCA data was present).
         if let Some((cl_content, cl_stats, cl_abs, cl_rel)) = &coll_data {
             let ex = std::fs::read_to_string(cl_abs)
-                .map_err(|e| anyhow!("failed to read {}: {}", cl_abs.display(), e))?;
+                .map_err(|e| anyhow!("failed to read {}: {:#}", cl_abs.display(), e))?;
             if norm(&ex) != norm(cl_content) {
                 return Err(anyhow!(
                     "{} diverges from UCA DUCET ({}).\n\
@@ -937,7 +937,7 @@ fn cmd_unicode(
         }
         for (c, p) in &confs {
             let ex = std::fs::read_to_string(p)
-                .map_err(|e| anyhow!("failed to read {}: {}", p.display(), e))?;
+                .map_err(|e| anyhow!("failed to read {}: {:#}", p.display(), e))?;
             if norm(&ex) != norm(c) {
                 return Err(anyhow!("{} diverges from UCD test data; regenerate.", p.display()));
             }
@@ -950,43 +950,43 @@ fn cmd_unicode(
     } else {
         if let Some(parent) = abs.parent() {
             std::fs::create_dir_all(parent)
-                .map_err(|e| anyhow!("failed to create {}: {}", parent.display(), e))?;
+                .map_err(|e| anyhow!("failed to create {}: {:#}", parent.display(), e))?;
         }
         std::fs::write(&abs, &content)
-            .map_err(|e| anyhow!("failed to write {}: {}", abs.display(), e))?;
+            .map_err(|e| anyhow!("failed to write {}: {:#}", abs.display(), e))?;
         println!("wrote {} ({}).", rel, stats);
         std::fs::write(&gabs, &gcontent)
-            .map_err(|e| anyhow!("failed to write {}: {}", gabs.display(), e))?;
+            .map_err(|e| anyhow!("failed to write {}: {:#}", gabs.display(), e))?;
         println!("wrote {} ({}).", grel, gstats);
         std::fs::write(&cabs, &ccontent)
-            .map_err(|e| anyhow!("failed to write {}: {}", cabs.display(), e))?;
+            .map_err(|e| anyhow!("failed to write {}: {:#}", cabs.display(), e))?;
         println!("wrote {} ({}).", crel, cstats);
         std::fs::write(&wabs, &wcontent)
-            .map_err(|e| anyhow!("failed to write {}: {}", wabs.display(), e))?;
+            .map_err(|e| anyhow!("failed to write {}: {:#}", wabs.display(), e))?;
         println!("wrote {} ({}).", wrel, wstats);
         std::fs::write(&sabs, &scontent)
-            .map_err(|e| anyhow!("failed to write {}: {}", sabs.display(), e))?;
+            .map_err(|e| anyhow!("failed to write {}: {:#}", sabs.display(), e))?;
         println!("wrote {} ({}).", srel, sstats);
         std::fs::write(&catabs, &catcontent)
-            .map_err(|e| anyhow!("failed to write {}: {}", catabs.display(), e))?;
+            .map_err(|e| anyhow!("failed to write {}: {:#}", catabs.display(), e))?;
         println!("wrote {} ({}).", catrel, catstats);
         // Plan 152.5b: collation table (only if the UCA data was present).
         if let Some((cl_content, cl_stats, cl_abs, cl_rel)) = &coll_data {
             if let Some(parent) = cl_abs.parent() {
                 std::fs::create_dir_all(parent)
-                    .map_err(|e| anyhow!("failed to create {}: {}", parent.display(), e))?;
+                    .map_err(|e| anyhow!("failed to create {}: {:#}", parent.display(), e))?;
             }
             std::fs::write(cl_abs, cl_content)
-                .map_err(|e| anyhow!("failed to write {}: {}", cl_abs.display(), e))?;
+                .map_err(|e| anyhow!("failed to write {}: {:#}", cl_abs.display(), e))?;
             println!("wrote {} ({}).", cl_rel, cl_stats);
         }
         for (c, p) in &confs {
             if let Some(parent) = p.parent() {
                 std::fs::create_dir_all(parent)
-                    .map_err(|e| anyhow!("failed to create {}: {}", parent.display(), e))?;
+                    .map_err(|e| anyhow!("failed to create {}: {:#}", parent.display(), e))?;
             }
             std::fs::write(p, c)
-                .map_err(|e| anyhow!("failed to write {}: {}", p.display(), e))?;
+                .map_err(|e| anyhow!("failed to write {}: {:#}", p.display(), e))?;
             println!("wrote {}.", p.display());
         }
     }
@@ -1069,7 +1069,7 @@ fn cmd_test_build(
         .unwrap_or_else(|| repo_root.join("compiler-codegen").join("nova_rt"));
     let tmp_dir_buf = tmp_dir.map(Path::to_path_buf).unwrap_or_else(default_tmp_dir);
     std::fs::create_dir_all(&tmp_dir_buf)
-        .map_err(|e| anyhow!("create tmp_dir {}: {}", tmp_dir_buf.display(), e))?;
+        .map_err(|e| anyhow!("create tmp_dir {}: {:#}", tmp_dir_buf.display(), e))?;
 
     let tc_opts = test_runner::ToolchainOpts {
         pref,

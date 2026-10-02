@@ -6,11 +6,11 @@
 module spec_tests.conformance
 /// fetch_add(n) then fetch_sub(n) must restore the original value.
 fn check_add_sub_inverse_i64(init int, delta int) -> bool {
-    mut a = AtomicI64.new(init)
-    ro prev = a.fetch_add(delta)
-    ro prev2 = a.fetch_sub(delta)
+    mut a = AtomicI64.new(init as i64)
+    ro prev = a.fetch_add(delta as i64)
+    ro prev2 = a.fetch_sub(delta as i64)
     ro final = a.load()
-    prev == init && prev2 == init + delta && final == init
+    (prev as int) == init && (prev2 as int) == init + delta && (final as int) == init
 }
 
 fn check_add_sub_inverse_i32(init int, delta int) -> bool {
@@ -19,7 +19,7 @@ fn check_add_sub_inverse_i32(init int, delta int) -> bool {
     ro prev = a.fetch_add(delta as i32)
     ro prev2 = a.fetch_sub(delta as i32)
     ro final = a.load()
-    prev == init && prev2 == init + delta && final == init
+    (prev as int) == init && (prev2 as int) == init + delta && (final as int) == init
 }
 
 fn check_add_sub_inverse_u64(init int, delta int) -> bool {
@@ -28,7 +28,7 @@ fn check_add_sub_inverse_u64(init int, delta int) -> bool {
     ro prev = a.fetch_add(delta as u64)
     ro prev2 = a.fetch_sub(delta as u64)
     ro final = a.load()
-    prev == init && prev2 == init + delta && final == init
+    (prev as int) == init && (prev2 as int) == init + delta && (final as int) == init
 }
 
 test "property: i64 fetch_add/sub inverse — multiple values" {

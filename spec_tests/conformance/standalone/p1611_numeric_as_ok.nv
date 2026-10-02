@@ -1,0 +1,46 @@
+// EXPECT_STDOUT p1611 2 2 2 2 2 2 3 2.5 1 2 7
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for registry 221.1 #1611 (D491) and #1610. The positions of the negatives
+// (neg/p1611_*_neg.nv) with the explicit `as` they require, and an assignment of a bare
+// variant of the module's own GENERIC sum (#1610: `Empty` used to be typed as the
+// prelude's `ParseBoolError`, a non-generic sum with the same variant name).
+module standalone.p1611_numeric_as_ok
+
+type Pt { n int }
+
+type P1611Slot[T] enum Empty | Full(T)
+
+type P1611Holder[T] { s P1611Slot[T] }
+
+fn take(x int) -> int => x
+
+fn half(d f64) -> int => d as int
+
+fn pair(d f64) -> (int, int) => (d as int, 1)
+
+fn P1611Holder[T] mut @clear() {
+    @s = Empty
+}
+
+fn P1611Holder[T] @size() -> int => match @s {
+    Empty => 0
+    Full(_) => 1
+}
+
+fn main() Io {
+    ro d f64 = 2.5
+    ro n int = d as int
+    ro p = Pt { n: d as int }
+    mut v = Vec[int].new()
+    v.push(d as int)
+    mut q = Pt { n: 0 }
+    q.n = d as int
+    ro i int = 3
+    ro g f64 = i as f64
+    ro h f32 = d as f32
+    ro f = fn(x f64) -> int => x as int
+    mut hold P1611Holder[int] = { s: Full(1) }
+    ro before = hold.size()
+    hold.clear()
+    println("p1611 ${n} ${take(d as int)} ${half(d)} ${p.n} ${v[0]} ${q.n} ${i} ${h} ${before} ${pair(d).0 + f(d) - 2} ${g as int + 4}")
+}

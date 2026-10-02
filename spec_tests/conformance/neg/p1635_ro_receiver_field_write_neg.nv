@@ -1,0 +1,46 @@
+// EXPECT_COMPILE_ERROR E_READONLY_FIELD
+//
+// Registry 221.1 #1635: a method declared without `mut` wrote a field of its
+// receiver `@`, and the checker accepted it. D32: "without `mut` a parameter
+// mutates no field"; D35: a mutating method is `fn Type mut @method`. The
+// receiver is a parameter -- the same door (`E_READONLY_FIELD`, "binding
+// dominates") that already refuses `p.n = 5` for a parameter without `mut`.
+// The hole turned into a silently wrong value once #1598 passed a small value
+// receiver by copy: the write landed in the copy (CI, mega-CU, the fixture
+// m_ice_chained_consume_lock_d133_pos: the counter stayed 1).
+//
+// One cell per form: a value record (the lost write), a heap record (the
+// rule does not depend on the kind of type), a nested field, a compound
+// assignment. The positive twins are the same methods declared `mut @`, e.g.
+// spec_tests/conformance/m_ice_chained_consume_lock_d133_pos.nv.
+module neg.p1635_ro_receiver_field_write_neg
+
+type P1635Val value { n int }
+type P1635Heap { x int }
+type P1635Inner value { v int }
+type P1635Outer value { inner P1635Inner }
+
+fn P1635Val @bump() -> int {
+    // nova:expect E_READONLY_FIELD -- a value receiver without `mut`: the write would land in the copy
+    @n += 1
+    @n
+}
+
+fn P1635Heap @set_x(v int) {
+    // nova:expect E_READONLY_FIELD -- a heap receiver without `mut`: the rule is D32, not the representation
+    @x = v
+}
+
+fn P1635Outer @set_inner(v int) {
+    // nova:expect E_READONLY_FIELD -- a nested field is still reached through `@`
+    @inner.v = v
+}
+
+fn main() {
+    mut a = P1635Val { n: 1 }
+    mut h = P1635Heap { x: 0 }
+    mut o = P1635Outer { inner: P1635Inner { v: 0 } }
+    ro _ = a.bump()
+    h.set_x(1)
+    o.set_inner(2)
+}
