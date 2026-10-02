@@ -1012,7 +1012,11 @@ resolve 23
 #   module's own instances; asked by check's type door (`Checker @type_seen`), which owns
 #   no registry of its own.
 # merge of origin/main 2488a47be into p274-carina-k1: main's sem 338 plus this branch's +1 (the line above) = 339.
-sem 339
+# 2026-10-02, cloud session p274-carina-k1 (part 5, tuple argument): sem 339 -> 340:
+#   `is_arg_value_kind` (sem/node_questions.nv) -- may this kind stand as an argument's value,
+#   an expression or a TUPLE literal; asked by `is_arg_node` and by check's argument walks
+#   (calls, methods, static calls, variant calls), so `Some((a, b))` counts one payload.
+sem 340
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

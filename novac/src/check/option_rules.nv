@@ -34,8 +34,8 @@ import ../tree.{Node, NodeKind}
 import ../names.{DeclId}
 import ../types.{TyId, no_ty, is_ty}
 import ../builtins.{TypeKind}
-import ../sem.{CalleeTarget, VariantRow, raw_vrow, decl_of_ty, decl_index_of_ty, identity_slots, is_expr_kind, ArgSpec}
-import ../sem.{FnRow, raw_row, bind_slots, call_arg_at, expr_leaf_name, variants_named}
+import ../sem.{CalleeTarget, VariantRow, raw_vrow, decl_of_ty, decl_index_of_ty, identity_slots, ArgSpec}
+import ../sem.{FnRow, raw_row, bind_slots, call_arg_at, expr_leaf_name, variants_named, is_arg_node}
 
 /// A bare variant of a generic sum with nothing around it to say which
 /// instance it is.
@@ -65,7 +65,9 @@ fn Checker mut @type_variant_call(e Node, kids []Node, v VariantRow) -> () {
     ro saved = @value_expect
     @value_expect = no_ty()
     for c in kids {
-        if !is_expr_kind(c.kind_of()) { continue }
+        // The ARGUMENT door, not the expression one: a tuple payload
+        // (`Some((a, b))`) is an argument and no expression kind.
+        if !is_arg_node(c) { continue }
         @type_expr(c)
     }
     @value_expect = saved

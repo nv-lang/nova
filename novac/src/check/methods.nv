@@ -27,7 +27,7 @@ import ../diag.{ice}
 import ../names.{raw_decl}
 import ../resolve.{FnLookup}
 import ../sem.{LitArg, branch_children, ArgSpec, ArgClass, CallForm, FnRow, CalleeTarget, raw_row, no_row, bind_slots}
-import ../sem.{is_expr_kind}
+import ../sem.{is_arg_value_kind}
 import ../sem.{c_method_symbol, c_overload_symbol, impl_of_proto, ty_source_name, decl_of_ty}
 import ../sem.{row_recv_by_pointer}
 import ../sem.{option_payload}
@@ -429,7 +429,7 @@ fn Checker mut @type_method_call(e Node) -> () {
     @type_expr(kids[0])
     mut i = 0
     for c in kids {
-        if i > 2 && is_expr_kind(c.kind_of()) && !@is_deferred_variant(c) {
+        if i > 2 && is_arg_value_kind(c.kind_of()) && !@is_deferred_variant(c) {
             // A bare `None` (`@is_deferred_variant`) is typed after the lookup,
             // by its parameter (registry 1565).
             @type_expr(c)
@@ -575,7 +575,7 @@ fn Checker mut @type_effect_op_call(e Node, kids []Node) -> bool {
     mut args = []Node.new()
     mut i = 0
     for c in kids {
-        if i > 2 && is_expr_kind(c.kind_of()) {
+        if i > 2 && is_arg_value_kind(c.kind_of()) {
             @type_expr(c)
             args.push(c)
         } else {
