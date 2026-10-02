@@ -60,3 +60,13 @@ test "Option construction: Some(x) from the payload, None from the expectation, 
     assert(d4.len() == 1, messages(d4))
     assert(messages(d4).contains("Option[int]") && messages(d4).contains("Option[str]"), messages(d4))
 }
+
+test "a bare `None` takes its position's Option in a block tail `if`, a match arm after a `return`, and a record field (E2-b3, 2026-10-02)" {
+    mut std = std_decls()
+    std.push("module std.o\nexport type Option[T] enum Some(T) | None\n")
+    ro (d, _) = compile_to_c("type Sh enum Lf(int) | Br\ntype Cell { v int, next Option[int] }\nfn f(n int) -> Option[int] {\n ro k = n + 1\n if k > 2 { Some(k) } else { None }\n}\nfn h(s Sh) -> Option[int] {\n match s {\n  Lf(t) => {\n   if t > 1 {\n    return Some(t)\n   }\n   None\n  }\n  Br => None\n }\n}\nfn k(n int) -> Cell {\n ro c = Cell { v: n, next: None }\n c\n}\nfn main() {\n println(1)\n}", std)
+    assert(d.len() == 0, messages(d))
+    // CONTROL: an untyped binding names no Option -- still the named refusal.
+    ro (u, _) = compile_to_c("fn main() {\n ro x = None\n println(1)\n}", std)
+    assert(u.len() == 1 && messages(u).contains("has no type to take"), messages(u))
+}

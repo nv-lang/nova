@@ -397,12 +397,30 @@ fn Checker mut @judge_record_ctor(ctor Node, vtype TyId) -> () {
         } else if ck == NodeKind.CtorField {
             ro fk = branch_children(c)
             if fk.len() < 3 { continue }
+            // THE FIELD'S DECLARED TYPE IS THE VALUE'S EXPECTATION (E2-b3): a
+            // bare `None` for an `Option[Node]` field takes that instance, as at
+            // a tail or a `return` (`default_expr: None`, sem/harvest.nv).
+            ro saved_expect = @value_expect
+            @value_expect = @field_expect(vtype, fk[0])
             @type_expr(fk[2])
+            @value_expect = saved_expect
         } else {
             // The type name and the braces of the ctor are children too, and
             // they hold no expression to type.
         }
     }
+}
+
+/// The declared type of the field a constructor names, as an expectation for
+/// its value -- `no_ty()` when the name is no field (the field door refuses
+/// that) or the type mentions a parameter (no instance to take).
+fn Checker mut @field_expect(vtype TyId, name Node) -> TyId {
+    if !is_ty(vtype) || name.kind_of() != NodeKind.LeafNode { return no_ty() }
+    ro owner = @field_owner(vtype)
+    if !@fres.has_field(@ctx.fields, owner, leaf_text(name)) { return no_ty() }
+    ro ft = @field_under(vtype, @fres.field_type(@ctx.fields, owner, leaf_text(name)))
+    if is_ty(ft) && @ctx.tys.is_concrete(ft) { return ft }
+    no_ty()
 }
 
 /// Bind a name whose initializer was REFUSED, with no type -- so its later uses
