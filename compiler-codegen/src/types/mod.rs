@@ -47707,7 +47707,18 @@ fn check_unsafe_coerce_args(
 /// false-positive risk: the caller only fires on a positive `Some`) or the
 /// field's own type isn't a single-segment `Named` (generic/tuple/etc).
 fn local_field_type_name(module: &Module, type_name: &str, field_name: &str) -> Option<String> {
-    let field_ty = module.items.iter().find_map(|it| {
+    let field_ty = local_field_typeref(module, type_name, field_name)?;
+    match field_ty.strip_readonly() {
+        TypeRef::Named { path, .. } => path.last().cloned(),
+        _ => None,
+    }
+}
+
+/// The declared type of field `field_name` of the LOCALLY-declared record or
+/// named tuple `type_name` (#1636: shared by `local_field_type_name` and
+/// `chain_link`, which also needs a pointer field's type).
+fn local_field_typeref(module: &Module, type_name: &str, field_name: &str) -> Option<TypeRef> {
+    module.items.iter().find_map(|it| {
         let Item::Type(td) = it else { return None };
         if td.name != type_name {
             return None;
@@ -47721,11 +47732,7 @@ fn local_field_type_name(module: &Module, type_name: &str, field_name: &str) -> 
                 .map(|f| f.ty.clone()),
             _ => None,
         }
-    })?;
-    match field_ty.strip_readonly() {
-        TypeRef::Named { path, .. } => path.last().cloned(),
-        _ => None,
-    }
+    })
 }
 
 /// №370 companion of `local_field_type_name`: does the LOCALLY-declared type
@@ -49644,6 +49651,68 @@ fn consume_walk_consume_for(
 /// Used by mut-method-on-chain check (`b.field.sub.mut_m()`) — root binding'а
 /// `b` mutability gate'ит весь chain независимо от типов промежуточных полей.
 /// Cross-ref: `is_through_ro_binding` (Plan 124.8) — symmetric для D175.
+/// Registry 221.1 #1636: does a field/index chain end at the receiver `@`?
+fn lvalue_root_is_self(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::SelfAccess => true,
+        ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } => lvalue_root_is_self(obj),
+        ExprKind::TurboFish { base, .. } => lvalue_root_is_self(base),
+        _ => false,
+    }
+}
+
+/// Registry 221.1 #1636 (D246 P4/P5): does a field chain reach its last link
+/// THROUGH a `*mut` field? The ro-view of a binding stops at every `*`; a
+/// `*mut T` pointee is writable from its type, so a mutating method on it
+/// mutates neither the binding nor its record. A `*T` (ro pointee) is NOT a
+/// wall here -- the pointee's own capability is not this pass's question, and
+/// the chain stays refused as before. Unknown types answer `false` (refuse).
+fn chain_passes_mut_pointer(module: &Module, root_ty: Option<&str>, e: &Expr) -> bool {
+    matches!(chain_link(module, root_ty, e), ChainLink::MutPointer)
+}
+
+enum ChainLink {
+    Named(String),
+    MutPointer,
+    Unknown,
+}
+
+fn chain_link(module: &Module, root_ty: Option<&str>, e: &Expr) -> ChainLink {
+    match &e.kind {
+        ExprKind::SelfAccess | ExprKind::Ident(_) => match root_ty.map(str::trim) {
+            Some(t) if t.starts_with("*mut ") => ChainLink::MutPointer,
+            Some(t) => ChainLink::Named(t.split('[').next().unwrap_or(t).trim().to_string()),
+            None => ChainLink::Unknown,
+        },
+        ExprKind::Member { obj, name } => match chain_link(module, root_ty, obj) {
+            ChainLink::Named(t) => match local_field_typeref(module, &t, name) {
+                Some(ty) => match ty.strip_readonly() {
+                    TypeRef::Pointer(inner, _) if matches!(**inner, TypeRef::Mut(..)) => ChainLink::MutPointer,
+                    TypeRef::Named { path, .. } => path.last().cloned().map_or(ChainLink::Unknown, ChainLink::Named),
+                    _ => ChainLink::Unknown,
+                },
+                None => ChainLink::Unknown,
+            },
+            other => other,
+        },
+        ExprKind::Index { obj, .. } => match chain_link(module, root_ty, obj) {
+            ChainLink::MutPointer => ChainLink::MutPointer,
+            _ => ChainLink::Unknown,
+        },
+        ExprKind::TurboFish { base, .. } => chain_link(module, root_ty, base),
+        _ => ChainLink::Unknown,
+    }
+}
+
+/// Plan 128.2 / Plan 135: a chain's method mutates when it is registered `mut`
+/// on any type and has no `ro` overload anywhere, or is a builtin mut-method --
+/// conservative, the receiver type of a chain link is not known here.
+fn chain_method_is_mut(reg: &ConsumeRegistry, method: &str) -> bool {
+    let is_registered_mut_any = reg.mut_methods.iter().any(|(_, m)| m == method);
+    let has_any_ro_overload = reg.ro_methods.iter().any(|(_, m)| m == method);
+    (is_registered_mut_any && !has_any_ro_overload) || is_builtin_mut_method(method)
+}
+
 fn lvalue_root_ident(e: &Expr) -> Option<&str> {
     match &e.kind {
         ExprKind::Ident(name) => Some(name.as_str()),
@@ -50366,14 +50435,11 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                             // (Plan 128.2 §1.3 — acceptable trade-off.)
                             // Plan 135: если recv-mut overload pair (и ro и mut),
                             // то ro-binding может вызывать через chain — не ошибка.
-                            let is_registered_mut_any = ctx.reg.mut_methods.iter()
-                                .any(|(_, m)| m == method.as_str());
-                            // Plan 135: check if there's a ro-overload for ANY type
-                            // with this method name (conservative mirror of mut check).
-                            let has_any_ro_overload = ctx.reg.ro_methods.iter()
-                                .any(|(_, m)| m == method.as_str());
-                            let is_mut_method = (is_registered_mut_any && !has_any_ro_overload)
-                                || is_builtin_mut_method(method.as_str());
+                            // #1636 (D246 P4/P5): a chain that reaches its method
+                            // THROUGH a `*mut` field mutates the pointee, not the
+                            // binding -- the ro-view stops at every `*`.
+                            let is_mut_method = chain_method_is_mut(ctx.reg, method)
+                                && !chain_passes_mut_pointer(ctx.module, recv_ty.as_deref(), obj);
                             if is_mut_method {
                                 // (a) Param check — E_PARAM_NOT_MUT.
                                 if let Some(&is_mut) = ctx.param_mut.get(&root) {
@@ -50424,6 +50490,38 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                     }
                                 }
                             }
+                        } else if !matches!(obj.kind, ExprKind::SelfAccess)
+                            && lvalue_root_is_self(obj)
+                            && ctx.self_recv.is_some()
+                            && !ctx.self_recv_is_mut
+                            && chain_method_is_mut(ctx.reg, method)
+                            && !chain_passes_mut_pointer(ctx.module, ctx.self_type.as_deref(), obj)
+                        {
+                            // Registry 221.1 #1636: the chain's root is the receiver
+                            // `@` -- a parameter of the method, bound `ro` unless the
+                            // method says `mut @` (D176). Binding dominates down the
+                            // chain (D35, D175: `acc.tags.items.push` through `ro acc`
+                            // is refused), so `@items.push(x)` in `fn T @m()` is the
+                            // same error as `p.items.push(x)` through a non-`mut` `p`.
+                            // `lvalue_root_ident` knows only an `Ident` root, and the
+                            // `@` root passed silently. No `#share` exception: a
+                            // mutating method of a shared field is still a mutation
+                            // through the receiver. A `*mut` field is the wall (D246
+                            // P4: "L2 freeze stops at every `*`"; P5: `*mut T` is a
+                            // writable target from its type) -- `@rc.fetch_add(1)`
+                            // with `rc *mut AtomicInt` mutates the pointee only.
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_PARAM_NOT_MUT] the receiver `@` is not `mut`, but the \
+                                     mut-method `{}` is called through the chain `@…`. The root \
+                                     binding of a chain must be `mut` (D35, D175).",
+                                    method),
+                                e.span,
+                            ).with_note(
+                                "declare the method with `mut @`: `fn T mut @name(...)`; \
+                                 its callers then need a `mut` binding."
+                                    .to_string(),
+                            ));
                         } else if let ExprKind::Call { func: inner_func, args: inner_args, .. } = &obj.kind {
                             // Plan 184 Р7 / D181 follow-up (ex-172.5 R6,
                             // `[M-172.5-chain-gating-ro-at]`): `obj` — сам результат

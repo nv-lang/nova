@@ -59,7 +59,8 @@ fn M_boxcap_Registry.new() -> M_boxcap_Registry => {
 // `MutexGuard`'s declared `@cleanup` (D432/Plan 217 auto-cleanup) is visible
 // and the guard is released automatically at scope-exit — this is the
 // canonical owner-preferred form (no explicit unlock needed).
-fn M_boxcap_Registry @m_boxcap_record(m_boxcap_name str) {
+// #1636: `insert` on a field mutates the receiver -- the method is `mut @` (D35).
+fn M_boxcap_Registry mut @m_boxcap_record(m_boxcap_name str) {
     consume m_boxcap_g = @m_boxcap_lock.lock()
     ro m_boxcap_cur = @m_boxcap_counters.get(m_boxcap_name) ?? 0
     ro _ = @m_boxcap_counters.insert(m_boxcap_name, m_boxcap_cur + 1)
