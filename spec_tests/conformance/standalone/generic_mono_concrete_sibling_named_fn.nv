@@ -1,4 +1,13 @@
-// EXPECT_COMPILE_ERROR E7001
+// EXPECT_STDOUT r_int=12
+//
+// This file was the NEGATIVE companion of #105 (`EXPECT_COMPILE_ERROR E7001`)
+// -- an honest refusal pinned on the gap its own text names below: a bare
+// function value's `R` could not be told. That gap is closed -- a function
+// VALUE passed to a generic method carries the method's type parameter in its
+// own type (registry 221.1 #1640) -- so `r.get("/gamma", handler_int)` takes
+// the generic overload with `R = int` (D84: the concrete sibling's `str`
+// return provably disagrees) and returns 12. Found as NEG-NO-ERROR while
+// accepting #1648; converted to this positive. The history below is #105's.
 //
 // [M-generic-mono-multi-instantiation-concrete-sibling-collision] (реестр
 // 221.1 №105) — companion NEG to `generic_mono_concrete_sibling_multi_r.nv`.
@@ -22,19 +31,19 @@
 // window brief), and codegen's `[M-no-silent-nova-int-fallback]` honesty
 // guard now reports E7001 instead of silently miscompiling.
 
-module neg.generic_mono_concrete_sibling_named_fn_neg
+module standalone.generic_mono_concrete_sibling_named_fn
 
-type Handler105Neg fn(int) -> str
+type Handler105Fn fn(int) -> str
 
-type Router105Neg {
+type Router105Fn {
     tag int,
 }
 
-export fn Router105Neg mut @get(path str, h Handler105Neg) -> str {
+export fn Router105Fn mut @get(path str, h Handler105Fn) -> str {
     h(path.byte_len())
 }
 
-export fn Router105Neg mut @get[R](path str, f fn(int) -> R) -> R {
+export fn Router105Fn mut @get[R](path str, f fn(int) -> R) -> R {
     f(path.byte_len())
 }
 
@@ -42,8 +51,8 @@ fn handler_int(n int) -> int {
     n * 2
 }
 
-test "named-function-value handler, return type mismatched vs concrete sibling → honest error" {
-    mut r = Router105Neg { tag: 1 }
+fn main() Io {
+    mut r = Router105Fn { tag: 1 }
     ro r_int = r.get("/gamma", handler_int)
-    assert(r_int == 12)
+    println("r_int=${r_int}")
 }
