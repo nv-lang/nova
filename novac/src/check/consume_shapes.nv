@@ -7,7 +7,7 @@
 //   which types are must-consume (the file's own `type X consume`, and every type
 //   applied to one -- D156: a `[T consume]` container inherits the obligation, as
 //   `Option[T consume]` and `Result[T consume, E consume]` do); the field markers
-//   of a record (D133 "Заразность через поля"); a record literal moving a value
+//   of a record (D133, contagion through fields); a record literal moving a value
 //   into a `consume` field (D133 amendment 2026-07-13); the binders of a pattern
 //   (`Some(consume t)` owns, a bare `Some(t)` may only move its value on once --
 //   E_CONSUME_PATTERN_REQUIRED, narrowed by plan 293); a fresh value handed to a
@@ -24,7 +24,8 @@ import ../tree.{Node, NodeKind, is_node}
 import ../lex.{TokenKind}
 import ../sem.{branch_children, leaf_text, file_decls, ty_source_name, binder_text}
 import ../sem.{decl_of_ty, field_range_of, raw_frow, no_frow, pattern_mode_word}
-import ../types.{TyId, TypeKind, no_ty, is_ty}
+import ../types.{TyId, no_ty, is_ty}
+import ../builtins.{TypeKind}
 
 /// D133-field-marker-missing: a field of a must-consume type says so.
 fn field_marker_missing_msg(field str, ty str) -> str =>
@@ -51,8 +52,9 @@ fn pattern_required_msg(name str, ty str) -> str =>
 fn Checker @is_owned_kind(kinds []TyId, t TyId) -> bool {
     if !is_ty(t) { return false }
     if is_kind_of(kinds, t) { return true }
-    ro k = @ctx.tys.kind_of(t)
-    if k != TypeKind.TkApp && k != TypeKind.TkTuple { return false }
+    // A type with ARGUMENTS holds them -- an application, a structural record on the
+    // stack, a newtype's representation -- except a raw pointer, which owns nothing.
+    if @ctx.tys.kind_of(t) == TypeKind.TkPtr { return false }
     for i in 0..@ctx.tys.arg_count(t) {
         if @is_owned_kind(kinds, @ctx.tys.arg(t, i)) { return true }
     }
@@ -100,7 +102,13 @@ fn Checker mut @judge_field_marker(f Node, fty TyId, type_name str, type_marked 
     for c in fk {
         match c {
             Leaf(tk) => {
-                if tk.kind == TokenKind.KwConsume { marked = true } else if tk.kind == TokenKind.Ident && name == "" { name = tk.text } else { continue }
+                // The mode word and the field's name are leaves; the type is nodes.
+                marked = marked || tk.kind == TokenKind.KwConsume
+                if name == "" && tk.kind == TokenKind.Ident {
+                    name = tk.text
+                } else {
+                    // Punctuation, or the name already read.
+                }
             }
             // SILENT-OK: the type's own nodes, read through the registry above.
             Branch { .. } => {}
