@@ -1498,6 +1498,9 @@
 # 2026-10-01, integrator nova-20: rows -> 1555, max -> 1607 (row 1607 (novac binary chosen by name)).
 # 2026-10-01, integrator nova-20: rows -> 1557, max -> 1609 (rows 1608, 1609 (D491 in both compilers); 1597 decided).
 # 2026-10-01, integrator nova-20: rows -> 1558, max -> 1612 (row 1612 (claude-limits CI hang, suspected runtime); 1610-1611 reserved).
+# 2026-10-01, integrator nova-20: rows -> 1561, max -> 1615 (rows 1613 (non-int index), 1614 (same-named type of two modules), 1615 (Command.run ignores the deadline)).
+rows=1561
+max=1615
 rows=1558
 max=1612
 rows=1557
