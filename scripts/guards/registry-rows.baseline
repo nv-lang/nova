@@ -1512,6 +1512,9 @@
 # 2026-10-02, integrator nova-20: rows -> 1582, max -> 1634 (merge of p1598-ro-receiver-by-copy: row 1634 filed (DCE of a method only a protocol default body calls), 1599 closed by measurement).
 # 2026-10-02, integrator nova-20: rows -> 1584, max -> 1638 (rows 1637 (SqlValue variants per numeric type, owner's decision) and 1638 (JsonValue numbers) filed; 1635-1636 reserved for the assistant's branch).
 # 2026-10-02, integrator nova-20: rows -> 1586, max -> 1638 (merge of p1598-ro-receiver-write: rows 1635, 1636 filed, their reserve dropped).
+# 2026-10-02, assistant nova-88: rows -> 1587, max -> 1639 (branch p1608-no-implicit-numeric-change: row 1639 filed -- an example without fn main is checked by nothing (orm_demo), number from the integrator).
+rows=1587
+max=1639
 rows=1586
 max=1638
 rows=1584

@@ -22790,18 +22790,10 @@ impl<'a> TypeCheckCtx<'a> {
             if !candidates.is_empty() {
                 let found_kind = self.wrap_kind_of_expr(expr, scope);
                 if let Some(found_kind) = found_kind {
-                    let matches: Vec<&(WrapTarget, TypeRef)> = candidates
-                        .iter()
-                        .filter(|(_, inner_ty)| {
-                            wrap_kind_of(inner_ty, &lookup, 0) == found_kind
-                        })
-                        .collect();
-                    // Ambiguous (≥2 candidates match, e.g. an `int` literal
-                    // would match BOTH an `I(i64)` and — if it existed — a
-                    // second int-family variant) or no match (0) → no
+                    // #1637: one choice for the checker and the rewrite pass
+                    // (`pick_wrap_candidate`). Ambiguous or no match → no
                     // auto-wrap, fall through to the direct verdict.
-                    if matches.len() == 1 {
-                        let (target, inner_ty) = matches[0];
+                    if let Some((target, inner_ty)) = pick_wrap_candidate(&candidates, &found_kind, &lookup) {
                         // D55 amend 2026-08-21: NEWTYPE-половина — только для
                         // нетипизированных констант (см. `is_untyped_const_expr`).
                         // Типизированная переменная или выражение требует
@@ -29064,13 +29056,60 @@ fn single_wrap_candidates(
 /// to their underlying kind (depth-guarded).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WrapKind {
+    /// An UNTYPED integer literal or constant (D489: it takes the type of its
+    /// position). A typed value is `Num`.
     IntFamily,
+    /// An UNTYPED float literal. A typed value is `Num`.
     Float,
+    /// #1637 (D491): a value of exactly this numeric type. It wraps only into
+    /// a payload of the same type -- `i32` into `I32(i32)`, never into
+    /// `I64(i64)`: a value does not change its numeric type implicitly.
+    Num(String),
     Bool,
     Str,
     Array(Box<WrapKind>),
     Named(String),
     Other,
+}
+
+/// #1637 (D55, D489, D491): which wrap candidate a value of kind `found` takes --
+/// ONE answer for the checker (`assignable`) and the rewrite pass
+/// (`try_wrap_leaf`), so the variant accepted is the variant built.
+///
+/// * A typed value (`Num`, `Bool`, `Str`, `Named`, ...) takes the candidate
+///   whose payload is of EXACTLY its kind; two such -- ambiguous, none -- no
+///   wrap.
+/// * An untyped numeric literal takes the only candidate of its family
+///   (integer payloads for `1`, `f32`/`f64` for `1.5`); with several, the
+///   default type of D44 decides -- `int` for an integer literal, `f64` for a
+///   float one -- and without that payload the wrap is ambiguous.
+fn pick_wrap_candidate<'c>(
+    candidates: &'c [(WrapTarget, TypeRef)],
+    found: &WrapKind,
+    lookup: &impl Fn(&str) -> Option<TypeDeclKind>,
+) -> Option<&'c (WrapTarget, TypeRef)> {
+    let kinds: Vec<WrapKind> = candidates.iter().map(|(_, t)| wrap_kind_of(t, lookup, 0)).collect();
+    let exact: Vec<usize> = (0..candidates.len()).filter(|&i| kinds[i] == *found).collect();
+    match exact.len() {
+        1 => return Some(&candidates[exact[0]]),
+        0 => {}
+        _ => return None,
+    }
+    let (in_family, default): (fn(&str) -> bool, &str) = match found {
+        WrapKind::IntFamily => (|t| !matches!(t, "f32" | "f64"), "int"),
+        WrapKind::Float => (|t| matches!(t, "f32" | "f64"), "f64"),
+        _ => return None,
+    };
+    let family: Vec<usize> = (0..candidates.len())
+        .filter(|&i| matches!(&kinds[i], WrapKind::Num(t) if in_family(t)))
+        .collect();
+    if family.len() == 1 {
+        return Some(&candidates[family[0]]);
+    }
+    family
+        .into_iter()
+        .find(|&i| kinds[i] == WrapKind::Num(default.to_string()))
+        .map(|i| &candidates[i])
 }
 
 fn wrap_kind_of(ty: &TypeRef, lookup: &impl Fn(&str) -> Option<TypeDeclKind>, depth: u32) -> WrapKind {
@@ -29087,10 +29126,8 @@ fn wrap_kind_of(ty: &TypeRef, lookup: &impl Fn(&str) -> Option<TypeDeclKind>, de
         TypeRef::Named { path, generics, .. } => {
             let Some(name) = path.last() else { return WrapKind::Other };
             match name.as_str() {
-                "int" | "uint" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" => {
-                    WrapKind::IntFamily
-                }
-                "f32" | "f64" => WrapKind::Float,
+                "int" | "uint" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"
+                | "f32" | "f64" => WrapKind::Num(name.clone()),
                 "bool" => WrapKind::Bool,
                 "str" => WrapKind::Str,
                 "Vec" if generics.len() == 1 => {
@@ -55040,14 +55077,10 @@ impl MapLitAnnotator<'_> {
         if candidates.is_empty() {
             return;
         }
-        let matches: Vec<&(WrapTarget, TypeRef)> = candidates
-            .iter()
-            .filter(|(_, inner)| wrap_kind_of(inner, &lookup, 0) == found_kind)
-            .collect();
-        if matches.len() != 1 {
+        // #1637: the same choice the checker made (`pick_wrap_candidate`).
+        let Some((target, inner_ty)) = pick_wrap_candidate(&candidates, &found_kind, &lookup) else {
             return; // ambiguous or no match — leave as-is (checker's verdict stands).
-        }
-        let (target, inner_ty) = matches[0];
+        };
         let WrapTarget::SumVariant(tname, vname) = target else {
             return; // Newtype — accept-only, see doc comment above.
         };
@@ -55084,7 +55117,7 @@ impl MapLitAnnotator<'_> {
         // OWN declared payload type invisibly (owner directive: "прячь
         // int→i64 в коэрсии"). Harmless no-op cast when already exact
         // (`1 as i64` on an already-i64 literal is a legal identity cast).
-        let numeric = matches!(wrap_kind_of(inner_ty, &lookup, 0), WrapKind::IntFamily | WrapKind::Float);
+        let numeric = matches!(wrap_kind_of(inner_ty, &lookup, 0), WrapKind::Num(_));
         let payload = if numeric {
             Expr::new(ExprKind::As(Box::new(old), inner_ty.clone()), span)
         } else {

@@ -16,15 +16,16 @@ import std.text          // []str @join(sep) — используется в sql
 // SqlValue — closed sum для SQL-аргументов
 // ──────────────────────────────────────────────────────────────────────────
 
-// Соответствует канонической схеме «SQL primitives»: целые, дробные,
-// строки, логические, бинарные, NULL. Этого достаточно для 95%
-// backend-задач. Для остального — ручной cast в одном из этих
-// вариантов.
-//
-// D55 literal coercion: `[42, "alice", true]` в позиции `[]SqlValue`
-// раскрывается в `[I(42), S("alice"), B(true)]` автоматически.
-/// SQL value variants: int, float, string, bool, bytes, null. D55 coercion:
-/// `[42, "alice"]` → `[I(42), S("alice")]` automatically in a `[]SqlValue` position.
+// Варианты по числовым типам носят имена самих типов (решение владельца
+// 2026-10-02, реестр 221.1 №1637): значение точного типа заворачивается в
+// свой вариант само (D55), и ни одно число не меняет тип неявно (D491) —
+// `i32` уходит в `I32`, а не расширяется до `i64`. `u64` и `uint` варианта
+// не получают. Литерал без типа при нескольких числовых вариантах берёт тип
+// по умолчанию D44: `${1}` → `Int`, `${1.5}` → `F64`.
+/// SQL value variants: one per numeric type (`Int`, `I8`..`I64`, `U8`..`U32`,
+/// `F32`, `F64`), plus `Text`, `Bool`, `Bytes` and `Null`. D55 coercion: a value
+/// of an exact type wraps into its own variant (`i32` → `I32`); an untyped
+/// literal takes the default type -- `[42, "alice"]` → `[Int(42), Text("alice")]`.
 #stable(since = "0.1")
 // Plan 221.1 (E_DEBUG_PRINTABLE_NOT_IMPLEMENTED audit): `@expect_*` methods
 // below interpolate the receiver bare via `${@:?}` (Debug) in their error
@@ -33,10 +34,18 @@ import std.text          // []str @join(sep) — используется в sql
 // garbage print.
 #impl(Debug)
 export type SqlValue enum
-    | I(i64)
-    | F(f64)
-    | S(str)
-    | B(bool)
+    | Int(int)
+    | I8(i8)
+    | I16(i16)
+    | I32(i32)
+    | I64(i64)
+    | U8(u8)
+    | U16(u16)
+    | U32(u32)
+    | F32(f32)
+    | F64(f64)
+    | Text(str)
+    | Bool(bool)
     | Bytes([]u8)
     | Null
 
@@ -190,59 +199,77 @@ export fn DbRow @at(i int) -> Option[SqlValue] => @values.get(i)
 // Возврат `Result[_, DbError]`, чтобы ошибки парсинга поднимались как
 // DbError (Constraint), а не молча возвращали None.
 
-/// Extract i64 or `Err(Constraint)`. Used by from-row parsers.
+/// Extract an integer of any integer variant as i64 (an explicit widening --
+/// every variant fits, there is no `u64` one) or `Err(Constraint)`.
 #stable(since = "0.1")
 export fn SqlValue @expect_int() -> Result[i64, DbError] =>
-    match @ {
-        I(n) => Ok(n)
+    match @as_int() {
+        Some(n) => Ok(n)
         // Plan 221.1 (E_INTERP_NO_DISPLAY audit): `SqlValue` has no
         // `#impl(Display)` — bare `${@}` used to silently reach emit_c's
         // numeric-cast fallback (print the enum's heap address as an int).
         // `${@:?}` uses the always-available Debug auto-derive instead —
         // shows the actual variant/value, which is strictly more useful in
         // an error message anyway.
-        _    => Err(DbError.Constraint("expected I, got ${@:?}"))
+        None    => Err(DbError.Constraint("expected an integer, got ${@:?}"))
     }
 
 /// Extract str or `Err(Constraint)`.
 #stable(since = "0.1")
 export fn SqlValue @expect_str() -> Result[str, DbError] =>
     match @ {
-        S(s) => Ok(s)
-        _    => Err(DbError.Constraint("expected S, got ${@:?}"))
+        Text(s) => Ok(s)
+        _       => Err(DbError.Constraint("expected Text, got ${@:?}"))
     }
 
 /// Extract bool or `Err(Constraint)`.
 #stable(since = "0.1")
 export fn SqlValue @expect_bool() -> Result[bool, DbError] =>
     match @ {
-        B(b) => Ok(b)
-        _    => Err(DbError.Constraint("expected B, got ${@:?}"))
+        Bool(b) => Ok(b)
+        _       => Err(DbError.Constraint("expected Bool, got ${@:?}"))
     }
 
-/// Extract f64 or `Err(Constraint)`. INT→FLOAT promotion is allowed.
+/// Extract f64 or `Err(Constraint)`. `F32` is promoted explicitly; an integer
+/// variant only when f64 holds it EXACTLY (|v| <= 2^53) -- a larger one would
+/// lose precision silently, which D491 forbids, so it is refused like a
+/// mismatch.
 #stable(since = "0.1")
 export fn SqlValue @expect_f64() -> Result[f64, DbError] =>
     match @ {
-        F(x) => Ok(x)
-        I(n) => Ok(n as f64)
-        _    => Err(DbError.Constraint("expected F/I, got ${@:?}"))
+        F64(x) => Ok(x)
+        F32(x) => Ok(x as f64)
+        _      => match @as_int() {
+            Some(n) => if n > 9007199254740992 || n < -9007199254740992 {
+                Err(DbError.Constraint("integer ${n} is not exactly representable as f64"))
+            } else {
+                Ok(n as f64)
+            }
+            None    => Err(DbError.Constraint("expected a number, got ${@:?}"))
+        }
     }
 
 /// Extract i64 into an `Option` (NULL → None) — for NULL-able columns.
 #stable(since = "0.1")
 export fn SqlValue @as_int() -> Option[i64] => // [M-d410-as-to-migration]
     match @ {
-        I(n) => Some(n)
-        _    => None
+        Int(n) => Some(n as i64)
+        I8(n)  => Some(n as i64)
+        I16(n) => Some(n as i64)
+        I32(n) => Some(n as i64)
+        I64(n) => Some(n)
+        U8(n)  => Some(n as i64)
+        U16(n) => Some(n as i64)
+        U32(n) => Some(n as i64)
+        _      => None
     }
 
 /// Extract str into an `Option` (NULL → None).
 #stable(since = "0.1")
 export fn SqlValue @str() -> Option[str] =>
     match @ {
-        S(s) => Some(s)
-        _    => None
+        Text(s) => Some(s)
+        _       => None
     }
 
 /// Get column by name + expect i64. `Err(Constraint)` if column is missing/wrong type.
@@ -284,8 +311,8 @@ export fn DbRow @get_bool(name str) -> Result[bool, DbError] =>
 /// # Examples
 /// ```nova
 /// ro q = Sql.builder(sql`SELECT * FROM users WHERE 1=1`)
-///     .where_eq("active", B(true))
-///     .where_in("role", [S("admin"), S("editor")])
+///     .where_eq("active", Bool(true))
+///     .where_in("role", [Text("admin"), Text("editor")])
 ///     .build()
 /// ```
 #stable(since = "0.1")

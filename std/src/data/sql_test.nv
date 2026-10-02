@@ -12,7 +12,7 @@ test "sql tag builds template with placeholders" {
     assert(q.template == "SELECT * FROM users WHERE id = ?")
     assert(q.args.len() == 1)
     match q.args[0] {
-        SqlValue.I(n) => assert(n == 42)
+        SqlValue.Int(n) => assert(n == 42)
         _             => assert(false)
     }
 }
@@ -24,11 +24,11 @@ test "sql tag with multiple args preserves order" {
     assert(q.template == "INSERT INTO users (name, age) VALUES (?, ?)")
     assert(q.args.len() == 2)
     match q.args[0] {
-        SqlValue.S(s) => assert(s == "alice")
+        SqlValue.Text(s) => assert(s == "alice")
         _             => assert(false)
     }
     match q.args[1] {
-        SqlValue.I(n) => assert(n == 30)
+        SqlValue.Int(n) => assert(n == 30)
         _             => assert(false)
     }
 }
@@ -40,13 +40,13 @@ test "sql tag with no interpolation" {
 }
 
 test "DbRow.get and DbRow.at" {
-    ro row DbRow = { columns: ["id", "name"], values: [SqlValue.I(42), SqlValue.S("alice")] }
+    ro row DbRow = { columns: ["id", "name"], values: [SqlValue.Int(42), SqlValue.Text("alice")] }
     match row.get("id") {
-        Some(SqlValue.I(n)) => assert(n == 42)
+        Some(SqlValue.Int(n)) => assert(n == 42)
         _                   => assert(false)
     }
     match row.at(1) {
-        Some(SqlValue.S(s)) => assert(s == "alice")
+        Some(SqlValue.Text(s)) => assert(s == "alice")
         _                   => assert(false)
     }
     assert(row.get("missing") == None)
@@ -54,21 +54,21 @@ test "DbRow.get and DbRow.at" {
 }
 
 test "DbRow.get_int / get_str — typed accessors" {
-    ro row DbRow = { columns: ["id", "name"], values: [SqlValue.I(42), SqlValue.S("alice")] }
+    ro row DbRow = { columns: ["id", "name"], values: [SqlValue.Int(42), SqlValue.Text("alice")] }
     assert(row.get_int("id") == Ok(42))
     assert(row.get_str("name") == Ok("alice"))
 }
 
 test "Sql.concat — fragments compose with args preserved" {
-    ro a Sql = { template: "SELECT * FROM users WHERE id = ?", args: [SqlValue.I(1)] }
-    ro b Sql = { template: "AND name = ?", args: [SqlValue.S("alice")] }
+    ro a Sql = { template: "SELECT * FROM users WHERE id = ?", args: [SqlValue.Int(1)] }
+    ro b Sql = { template: "AND name = ?", args: [SqlValue.Text("alice")] }
     ro combined = a.concat(b)
     assert(combined.template == "SELECT * FROM users WHERE id = ? AND name = ?")
     assert(combined.args.len() == 2)
 }
 
 test "Sql.builder — fluent WHERE composition" {
-    ro q = Sql.builder(sql`SELECT * FROM users WHERE 1 = 1`).where_eq("status", SqlValue.S("active")).where_in("role", [SqlValue.S("admin"), SqlValue.S("user")]).set_suffix(sql`ORDER BY created_at DESC LIMIT 10`).build()
+    ro q = Sql.builder(sql`SELECT * FROM users WHERE 1 = 1`).where_eq("status", SqlValue.Text("active")).where_in("role", [SqlValue.Text("admin"), SqlValue.Text("user")]).set_suffix(sql`ORDER BY created_at DESC LIMIT 10`).build()
 
     assert(q.template.contains("AND status = ?"))
     assert(q.template.contains("AND role IN (?, ?)"))
@@ -84,7 +84,7 @@ test "Sql.with_filter — handler-decorator use case" {
 }
 
 // Plan 200 (sql-autoconv) repro + fix: bare ${expr} interpolation D55-
-// coerces to SqlValue without manual SqlValue.I/S/B wrap.
+// coerces to SqlValue without manual SqlValue.Int/Text/Bool wrap.
 //
 // Diagnosis (2026-07-12, before the fix in this same commit): the
 // tag-template desugars (parser/mod.rs TokenKind::Backtick) straight into a
@@ -104,12 +104,12 @@ test "Sql.with_filter — handler-decorator use case" {
 // (or a newtype's) payload auto-wraps at an explicit-target position."
 //
 // Fix: `assignable()` (types/mod.rs) now tries this "single-wrapper
-// coercion" whenever the direct structural check fails (int→I, str→S,
-// bool→B, f64→F, []u8→Bytes disambiguated via a STRICT `WrapKind`, not the
+// coercion" whenever the direct structural check fails (int→Int, str→Text,
+// bool→Bool, f64→F64, []u8→Bytes disambiguated via a STRICT `WrapKind`, not the
 // permissive int↔float `cat_compatible_rt` used for ordinary assignability
-// — else `${1}` would ambiguously match both `I`/`F`), AND gained an
+// — else `${1}` would ambiguously match both `Int`/`F64`), AND gained an
 // `ArrayLit` arm that recurses the SAME check per element. The actual
-// MATERIALIZATION (AST rewrite `${1}` → `SqlValue.I(1 as i64)`) piggy-backs
+// MATERIALIZATION (AST rewrite `${1}` → `SqlValue.Int(1 as i64)`) piggy-backs
 // on the existing `annotate_map_literals` expected-type-propagated mutable
 // pass (`MapLitAnnotator::walk_expr`/`try_wrap_leaf`) — one walker already
 // threads expected types through let/const/call-arg/array-element/tuple/
@@ -122,52 +122,53 @@ test "sql tag bare-literal/var interpolation auto-coerces to SqlValue (D55 obvio
     assert(q.template == "UPDATE users SET name = ? WHERE id = ? AND active = ? AND age = ?")
     assert(q.args.len() == 4)
     match q.args[0] {
-        SqlValue.S(s) => assert(s == "alice")
+        SqlValue.Text(s) => assert(s == "alice")
         _             => assert(false)
     }
     match q.args[1] {
-        SqlValue.I(v) => assert(v == 1)
+        SqlValue.Int(v) => assert(v == 1)
         _             => assert(false)
     }
     match q.args[2] {
-        SqlValue.B(b) => assert(b == true)
+        SqlValue.Bool(b) => assert(b == true)
         _             => assert(false)
     }
     match q.args[3] {
-        SqlValue.I(v) => assert(v == 1)
+        SqlValue.Int(v) => assert(v == 1)
         _             => assert(false)
     }
 }
 
 // Owner-directive target syntax (Plan 200): `@builder.set_suffix(sql`LIMIT
-// ${n}`)` with `n` an `int` VARIABLE (not `${I(n as i64)}`) — the
+// ${n}`)` with `n` an `int` VARIABLE (not `${Int(n)}`) — the
 // tag-fn call-arg is nested one level deeper (method-chain receiver), and
-// the int→i64 widening must stay invisible.
+// the value wraps into `Int` with no widening (#1637, D491: no implicit
+// numeric type change; `SqlValue` has a variant per numeric type).
 
 test "sql tag interpolation of int VARIABLE via method-chain builder (owner directive)" {
     ro n = 10
     ro q = Sql.builder(sql`SELECT * FROM users`).set_suffix(sql`LIMIT ${n}`).build()
     assert(q.template.contains("LIMIT ?"))
     match q.args[q.args.len() - 1] {
-        SqlValue.I(v) => assert(v == 10)
+        SqlValue.Int(v) => assert(v == 10)
         _             => assert(false)
     }
 }
 
 // D55 amend: the SAME "obvious single-wrapper coercion" also fires OUTSIDE
 // tag-templates — any explicit sum-typed binding with exactly one matching
-// unary variant (int→I, str→S), matching D55's existing record/map-literal
+// unary variant (int→Int, str→Text), matching D55's existing record/map-literal
 // coercion positions (annotated `let`).
 
 test "D55 obvious sum-coercion at plain let-annotation (non-array, non-tag)" {
     ro v SqlValue = 42
     match v {
-        SqlValue.I(n) => assert(n == 42)
+        SqlValue.Int(n) => assert(n == 42)
         _             => assert(false)
     }
     ro w SqlValue = "hi"
     match w {
-        SqlValue.S(s) => assert(s == "hi")
+        SqlValue.Text(s) => assert(s == "hi")
         _             => assert(false)
     }
 }
@@ -179,27 +180,44 @@ test "D55 obvious sum-coercion at array-literal element position" {
     ro args []SqlValue = [1, "alice", true]
     assert(args.len() == 3)
     match args[0] {
-        SqlValue.I(n) => assert(n == 1)
+        SqlValue.Int(n) => assert(n == 1)
         _             => assert(false)
     }
     match args[1] {
-        SqlValue.S(s) => assert(s == "alice")
+        SqlValue.Text(s) => assert(s == "alice")
         _             => assert(false)
     }
     match args[2] {
-        SqlValue.B(b) => assert(b == true)
+        SqlValue.Bool(b) => assert(b == true)
         _             => assert(false)
     }
 }
 
-// Explicit `SqlValue.I(1)` must stay valid — the value is ALREADY the
+// Explicit `SqlValue.Int(1)` must stay valid — the value is ALREADY the
 // target type, `try_wrap_leaf` only fires on a plain literal/`Ident` leaf
 // (a `Call` node is never a wrap trigger), so this is not double-wrapped.
 
-test "explicit SqlValue.I(...) interpolation still valid (no double-wrap)" {
-    ro q = sql`WHERE id = ${SqlValue.I(1)}`
+test "explicit SqlValue.Int(...) interpolation still valid (no double-wrap)" {
+    ro q = sql`WHERE id = ${SqlValue.Int(1)}`
     match q.args[0] {
-        SqlValue.I(n) => assert(n == 1)
+        SqlValue.Int(n) => assert(n == 1)
         _             => assert(false)
+    }
+}
+
+// #1637: an integer variant reads as f64 only when f64 holds it exactly
+// (|v| <= 2^53); 2^53 + 1 would round silently -- refused (D491).
+test "expect_f64 refuses an integer f64 cannot hold exactly (#1637)" {
+    match SqlValue.I64(9007199254740992).expect_f64() {
+        Ok(x) => assert(x == 9007199254740992.0)
+        Err(_) => assert(false)
+    }
+    match SqlValue.I64(9007199254740993).expect_f64() {
+        Ok(_) => assert(false)
+        Err(_) => assert(true)
+    }
+    match SqlValue.I32(7).expect_f64() {
+        Ok(x) => assert(x == 7.0)
+        Err(_) => assert(false)
     }
 }
