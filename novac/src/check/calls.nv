@@ -34,7 +34,7 @@ import ../tree.{Node, raw_node, NodeKind}
 // #1493: the file's import declarations are read leaf by leaf (`visible_imports`).
 import ../sem.{branch_children, leaf_text, file_decls}
 import ../diag.{ice}
-import ../builtins.{TypeKind, SIZE_OF_FN}
+import ../builtins.{TypeKind, SIZE_OF_FN, RECV_BINDING}
 import ../sem.{LitArg, ArgSpec, CallForm, CalleeTarget, decl_of_ty, Ctx, CheckOut, FnRow, raw_row, coerce_row}
 import ../sem.{subst_type, slot_binding_in, representation_of, generic_names, is_expr_kind, branch_children}
 import ../sem.{ty_source_name, bind_fault, bind_slots, identity_slots, no_row, SlotBind}
@@ -141,7 +141,13 @@ fn Checker mut @refuse_free_call(kids []Node, cname str, key []ArgSpec) -> () {
 fn mode_refusal_msg(p ParamDef, got ArgClass) -> str {
     match p.mode {
         ModeRo => ice("check: a `ro` parameter's mode never refuses an argument's class (P14)")
-        ModeMut => "parameter `${p.name}` needs a mutable place (`mut`, or a `consume` binding) -- this argument is not one (P14)"
+        // The RECEIVER of a `mut` method says what the receiver door says
+        // (`@fits_with_mut_receiver`, methods.nv): one fact, one sentence.
+        ModeMut => if p.name == RECV_BINDING {
+            MUT_METHOD_ON_RO_PLACE_MSG
+        } else {
+            "parameter `${p.name}` needs a mutable place (`mut`, or a `consume` binding) -- this argument is not one (P14)"
+        }
         ModeConsume => "parameter `${p.name}` needs ownership (an owned temporary, or a binding declared `consume`) -- this argument is not one (P14)"
     }
 }
@@ -179,7 +185,11 @@ fn Checker mut @refuse_arg_type(kids []Node, row FnRow, key []ArgSpec, form Call
             if mode_admits(want.mode, key[at].cls) {
                 continue
             } else {
-                @report_first_leaf_of(kids, mode_refusal_msg(want, key[at].cls))
+                // A LANGUAGE refusal (registry 1577): the comment on
+                // `mode_refusal_msg` always said a class mismatch is no subset
+                // limit -- the oracle refuses it too -- but the walk reported
+                // it as subset debt.
+                @reject_first_leaf_of(kids, mode_refusal_msg(want, key[at].cls))
                 return
             }
         } else {

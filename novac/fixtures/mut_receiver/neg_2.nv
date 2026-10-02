@@ -1,0 +1,24 @@
+module mut_receiver.neg_2
+
+// A `mut` METHOD ON A FIELD OF `@` IN A METHOD THAT IS NOT `mut` (registry
+// 1577, D488): `@xs.push(1)` in `fn Bag @bad()`. The receiver of `@bad` is a
+// `ro @` -- a copy up to three words, a read-only view above -- so the push
+// writes through a read-only place. The ORACLE ACCEPTS this (registry 1577;
+// novac/divergences.allow, plan 274.12); the language refuses it, and so does
+// novac.
+
+// NOVAC_EXPECT a `mut` method is called on a place that is not mutable
+
+type Bag {
+    xs []int
+}
+
+fn Bag @bad() -> () {
+    @xs.push(1)
+}
+
+fn main() {
+    mut b = Bag { xs: []int.new() }
+    b.bad()
+    println(b.xs.len())
+}
