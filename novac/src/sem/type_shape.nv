@@ -231,6 +231,14 @@ export fn is_numeric_prim(tys Interner, t TyId) -> bool =>
 /// as written. The range rule (D227 rule 3) is not asked here: admission is the
 /// resolver's question, the range is the checker's, once the binding is known.
 export fn lit_admits(tys Interner, lit LitArg, want TyId) -> bool {
+    // A NEWTYPE over a number takes the literal by its representation's rule
+    // (D489 "where it applies"; D55 amendment 2026-08-21): `branch(0, ..)` with
+    // `id NodeId`. Until part 8 of p274-carina-k1 only a call with ONE row let
+    // it through (the argument's expectation, check/arg_expect.nv); an overload
+    // set asked this door, and `NodeId` is no numeric primitive.
+    if is_ty(want) && tys.kind_of(want) == TypeKind.TkNewtype && tys.arg_count(want) == 1 {
+        return lit_admits(tys, lit, tys.arg(want, 0))
+    }
     match lit {
         NotLit => false
         IntLitArg => is_numeric_prim(tys, want)

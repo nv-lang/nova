@@ -168,3 +168,20 @@ export fn Box @tag() -> int => 1\nexport fn[T] T @tag() -> int => 2\n")
     assert(dt.len() >= 1, "opposite generic positions must be refused")
     assert(messages(dt).contains("fits more than one"), messages(dt))
 }
+
+test "an integer literal takes a NEWTYPE parameter by its representation's rule, in an overload set too (D489, part 8 of p274-carina-k1)" {
+    // `branch(0, NodeKind.File, []Node.new())` with `id NodeId` -- sem/binding_test.nv
+    // and sem/mangle_test.nv, refused since the sem module is typed past
+    // channel.nv (sweep 3-4). A single row takes the literal through the
+    // argument's expectation (part 7); an overload set asks `lit_admits`,
+    // which knew no newtype: "no overload accepts these argument types".
+    ro decls = "type Id int\nfn f(i Id) -> int => (i as int) + 1\nfn f(s str) -> int => 2\n\
+fn g(i Id, k int) -> int => (i as int) + k\n"
+    ro calls = "fn main() {\n println(f(0))\n println(f(\"a\"))\n println(g(0, 3))\n}"
+    ro (ds, _) = compile_to_c("${decls}${calls}", std_decls())
+    assert(ds.len() == 0, messages(ds))
+    // CONTROL: a FLOAT literal does not fit an int-based newtype, by the same
+    // rule -- the overload set still refuses it.
+    ro (dc, _) = compile_to_c("${decls}fn main() {\n println(f(1.5))\n}", std_decls())
+    assert(dc.len() >= 1, "a float literal must not take an int-based newtype")
+}
