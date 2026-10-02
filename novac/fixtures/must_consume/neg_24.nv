@@ -1,0 +1,28 @@
+module must_consume.neg_24
+
+// A `consume` FIELD IN A TYPE NOT DECLARED `consume` (D133-type-marker-missing).
+// The oracle refuses it too.
+
+// NOVAC_EXPECT type `Box` has a `consume` field and is not declared `consume` itself
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx @peek() -> int => @id
+
+type Box {
+    consume t Tx
+}
+
+fn main() {
+    println(0)
+}

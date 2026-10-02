@@ -24,9 +24,9 @@ import ../builtins.{is_true_literal}
 
 /// D133-not-consumed at an EXIT POINT: the value is still owned, on every path or on
 /// some, when `exit` leaves its scope.
-fn exit_not_consumed_msg(name str, ty str, methods str, exit str, partly bool) -> str {
-    ro how = if partly { "is consumed on only some paths" } else { "is still owned" }
-    "`${name}` (type `${ty}`) ${how} when ${exit} leaves its scope -- consume it first: call one of its `consume` methods (${methods}), return it, or pass it to a `consume` parameter (D133)"
+fn exit_not_consumed_msg(name str, ty str, how str, exit str, partly bool) -> str {
+    ro state = if partly { "is consumed on only some paths" } else { "is still owned" }
+    "`${name}` (type `${ty}`) ${state} when ${exit} leaves its scope -- consume it first: ${how}, return it, or pass it to a `consume` parameter (D133)"
 }
 
 /// The kinds whose arms are JOINED: every arm starts from the same state.
@@ -46,7 +46,7 @@ fn Checker mut @flow_exit(mut fl ConsumeFlow, mark int, at Node, exit str) -> ()
         ro t = fl.owned_ty[i]
         ro partly = fl.state[i] == VarState.VsMaybe
         @reject_first_leaf_of([]Node.of(at),
-            exit_not_consumed_msg(fl.nm[i], ty_source_name(@ctx, t), @consume_methods_of(t), exit, partly))
+            exit_not_consumed_msg(fl.nm[i], ty_source_name(@ctx, t), @ways_out(t), exit, partly))
         fl.stopped = true
     }
 }
@@ -80,7 +80,9 @@ fn Checker mut @flow_loop_ctl(st Node, mut fl ConsumeFlow) -> () {
 /// state after it, and the states the LIVE arms leave are JOINED -- an arm that left
 /// (`return`, `break`, ...) takes no part. An `if` without an `else` has a second
 /// path that changes nothing. When no arm comes out, neither does the branch.
-fn Checker mut @flow_branch(n Node, mut fl ConsumeFlow) -> () {
+/// A scrutinee whose patterns bind a must-consume value MOVES into the arm that
+/// binds it (D157); `moved`: the branch's value leaves, so each arm's value does.
+fn Checker mut @flow_branch(n Node, mut fl ConsumeFlow, moved bool) -> () {
     ro k = n.kind_of()
     ro kids = branch_children(n)
     mut joined = []VarState.new()
@@ -88,16 +90,18 @@ fn Checker mut @flow_branch(n Node, mut fl ConsumeFlow) -> () {
     mut entry = []VarState.new()
     if k == NodeKind.MatchExpr {
         if kids.len() < 2 { return }
-        @flow_expr(kids[1], fl, false)
-        entry = flow_states_copy(fl.state)
+        mut owns = false
         for a in kids {
             if a.kind_of() != NodeKind.MatchArm { continue }
-            @flow_pattern(branch_children(a)[0], fl)
+            if @pattern_owns(branch_children(a)[0], fl.kinds) { owns = true } else { continue }
         }
+        @flow_expr(kids[1], fl, owns)
+        entry = flow_states_copy(fl.state)
         for a in kids {
             if fl.stopped { return }
             if a.kind_of() != NodeKind.MatchArm { continue }
-            if !@flow_arm(a, true, entry, fl, joined, paths) { continue }
+            ro ak = branch_children(a)
+            if !@flow_arm(a, true, ak[0], moved, entry, fl, joined, paths) { continue }
             paths += 1
         }
     } else {
@@ -107,21 +111,20 @@ fn Checker mut @flow_branch(n Node, mut fl ConsumeFlow) -> () {
         ro then_at = if k == NodeKind.IfLet { iflet_body_at(kids) } else { 2 }
         ro else_at = if k == NodeKind.IfLet { iflet_else_at(kids) } else { 4 }
         if kids.len() <= then_at { return }
-        @flow_expr(kids[head_at], fl, false)
-        if k == NodeKind.IfLet {
-            @flow_pattern(kids[1], fl)
-        } else {
-            // A plain condition binds nothing.
-        }
+        ro owns = k == NodeKind.IfLet && @pattern_owns(kids[1], fl.kinds)
+        @flow_expr(kids[head_at], fl, owns)
         entry = flow_states_copy(fl.state)
-        if @flow_arm(kids[then_at], false, entry, fl, joined, paths) {
+        // The then-arm binds what an `if`-let's pattern binds; a plain condition
+        // binds nothing (its "pattern" is the condition, which owns nothing).
+        ro pat = if k == NodeKind.IfLet { kids[1] } else { kids[0] }
+        if @flow_arm(kids[then_at], false, pat, moved, entry, fl, joined, paths) {
             paths += 1
         } else {
             // The arm left early: it takes no part in the join.
         }
         if fl.stopped { return }
         if kids.len() > else_at {
-            if @flow_arm(kids[else_at], false, entry, fl, joined, paths) {
+            if @flow_arm(kids[else_at], false, kids[0], moved, entry, fl, joined, paths) {
                 paths += 1
             } else {
                 // The arm left early: it takes no part in the join.
@@ -148,17 +151,17 @@ fn Checker mut @flow_come_out(mut fl ConsumeFlow, joined []VarState, paths int, 
     }
 }
 
-/// A pattern that binds a value of a must-consume type -- a payload, a field, an
-/// element -- starts an obligation nothing tracks yet: refused by name (the oracle
-/// asks for a `consume` pattern there, E_CONSUME_PATTERN_REQUIRED).
+/// A LOOP's pattern that binds a value of a must-consume type -- an element taken
+/// out of a container -- starts an obligation the track does not follow yet:
+/// refused by name.
 fn Checker mut @flow_pattern(p Node, mut fl ConsumeFlow) -> () {
     if fl.stopped { return }
     match p {
         Leaf(_) => return
         Branch { .. } => {}
     }
-    if is_node(p.id_of()) && is_kind_of(fl.kinds, @chan.type_if_known(p.id_of())) {
-        @flow_stop(p, "bound by a pattern", fl)
+    if is_node(p.id_of()) && @is_owned_kind(fl.kinds, @chan.type_if_known(p.id_of())) {
+        @flow_stop(p, "bound by a loop's pattern", fl)
         return
     } else {
         // Not a must-consume value here: its sub-patterns below.
@@ -166,16 +169,24 @@ fn Checker mut @flow_pattern(p Node, mut fl ConsumeFlow) -> () {
     for c in branch_children(p) { @flow_pattern(c, fl) }
 }
 
-/// One arm, walked from `entry`; what it binds ends with it. When the arm comes out
-/// at its end, the state it leaves for the values bound before the branch joins
-/// `joined` (`paths` arms so far) and the answer is true; an arm that LEFT early
-/// answers false. `is_match_arm`: `a` is a whole `match` arm (its guard and body);
-/// otherwise it is an `if` arm's body itself.
-fn Checker mut @flow_arm(a Node, is_match_arm bool, entry []VarState, mut fl ConsumeFlow,
-                         mut joined []VarState, paths int) -> bool {
+/// One arm, walked from `entry`; what it binds ends with it -- the must-consume
+/// binders of `pat` (an `if`-let's or the arm's own pattern; any other node binds
+/// nothing) first. When the arm comes out at its end, the state it leaves for the
+/// values bound before the branch joins `joined` (`paths` arms so far) and the
+/// answer is true; an arm that LEFT early answers false. `is_match_arm`: `a` is a
+/// whole `match` arm (its guard and body); otherwise it is an `if` arm's body
+/// itself. `moved`: the arm's value leaves with the branch's.
+fn Checker mut @flow_arm(a Node, is_match_arm bool, pat Node, moved bool, entry []VarState,
+                         mut fl ConsumeFlow, mut joined []VarState, paths int) -> bool {
     fl.state = flow_states_copy(entry)
     fl.dead = false
     ro mark = fl.owned_ty.len()
+    if pat.kind_of() == NodeKind.Pattern || pat.kind_of() == NodeKind.Name {
+        @flow_own_binders(pat, false, fl)
+    } else {
+        // An `if`'s condition or keyword: nothing bound.
+    }
+    if fl.stopped { return false }
     fl.nest += 1
     if is_match_arm {
         // A match arm: [pattern, guard?, `=>`, body, `,`?]; the guard runs on this path.
@@ -184,13 +195,13 @@ fn Checker mut @flow_arm(a Node, is_match_arm bool, entry []VarState, mut fl Con
             if c.kind_of() == NodeKind.Guard { @flow_child(c, fl) } else { continue }
         }
         match arm_body_at(ak) {
-            Some(b) => @flow_arm_body(ak[b], fl)
+            Some(b) => @flow_arm_body(ak[b], moved, fl)
             // SILENT-OK: an arm of punctuation only -- the parser named it.
             None => {}
         }
     } else {
         // An `if` arm: a block, or the next `if` of an `else if` chain.
-        @flow_arm_body(a, fl)
+        @flow_arm_body(a, moved, fl)
     }
     fl.nest -= 1
     if fl.stopped { return false }
@@ -206,15 +217,18 @@ fn Checker mut @flow_arm(a Node, is_match_arm bool, entry []VarState, mut fl Con
     true
 }
 
-/// The body of an arm: a block of statements, or one statement or expression. A
-/// tracked name standing alone is the arm's VALUE -- a move out of a branch.
-fn Checker mut @flow_arm_body(b Node, mut fl ConsumeFlow) -> () {
+/// The body of an arm: a block of statements, or one statement or expression. Its
+/// value is the arm's: it MOVES -- a forced move, plan 293 -- when the branch's
+/// value leaves (`moved`); a tracked name standing alone otherwise is a move out of
+/// a branch, which is not followed.
+fn Checker mut @flow_arm_body(b Node, moved bool, mut fl ConsumeFlow) -> () {
     if b.kind_of() == NodeKind.Block {
-        @flow_block(b, fl, false)
-    } else if @is_tracked_name(b, fl) {
+        @flow_block(b, fl, moved)
+    } else if !moved && @is_tracked_name(b, fl) {
         @flow_stop(b, "moved out of a branch, a loop or a nested block", fl)
     } else {
-        @flow_stmt(b, fl, false)
+        fl.forced = moved
+        @flow_stmt(b, fl, moved)
     }
 }
 
@@ -379,6 +393,7 @@ fn flow_drop_from(mut fl ConsumeFlow, mark int) -> () {
     fl.owned_ty.truncate(mark)
     fl.at.truncate(mark)
     fl.state.truncate(mark)
+    fl.loose.truncate(mark)
     fl.names.clear()
     for i in 0..mark { fl.names.put(fl.nm[i], i) }
 }

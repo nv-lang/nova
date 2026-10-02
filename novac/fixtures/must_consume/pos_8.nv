@@ -1,0 +1,48 @@
+module must_consume.pos_8
+
+// TWO FORMS THE SPEC ALLOWS AND THE ORACLE DOES NOT YET (D133, step 4):
+// - a bare payload binder whose one use is a FORCED move -- `Some(t) => Some(t)`,
+//   an arm's value that leaves -- is legal without `consume` (D157 amendment
+//   2026-09-24, plan 293); the oracle still asks for the marker, and plan 293
+//   names Carina's consume wave as the rule's carrier, the oracle's only "if cheap";
+// - a `match` over a `consume` BINDING whose arm takes the payload with `consume`
+//   consumes the binding (D157: `if Some(consume t) = opt` -- "opt Consumed
+//   после"); the oracle reports the binding as never consumed (registry 221.1
+//   No.TBD, oracle).
+// Listed in novac/divergences.allow (plan 274.12).
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx @peek() -> int => @id
+
+fn mk(n int) -> Option[Tx] => if n > 0 { Some(Tx { id: n }) } else { None }
+
+fn pass(n int) -> Option[Tx] {
+    match mk(n) {
+        Some(t) => Some(t)
+        None => None
+    }
+}
+
+fn run(n int) -> () {
+    consume o = pass(n)
+    match o {
+        Some(consume t) => t.commit()
+        None => println("none")
+    }
+}
+
+fn main() {
+    run(1)
+    run(0)
+}

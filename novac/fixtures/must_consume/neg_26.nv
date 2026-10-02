@@ -1,0 +1,30 @@
+module must_consume.neg_26
+
+// A `consume` PATTERN BINDER NEVER CONSUMED (D133-not-consumed): `Some(consume
+// t)` owns `t` in its arm, and the arm ends with it owned. The oracle refuses it
+// too.
+
+// NOVAC_EXPECT `t` (type `Tx`) is not consumed before the end of its scope
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx @peek() -> int => @id
+
+fn mk(n int) -> Option[Tx] => if n > 0 { Some(Tx { id: n }) } else { None }
+
+fn main() {
+    match mk(1) {
+        Some(consume t) => println(t.peek())
+        None => println(0)
+    }
+}

@@ -5,14 +5,16 @@
 //   `MaybeUninitializedPlaces` -- two paths that disagree leave the value MAYBE moved.
 //   NOT taken: the dataflow over a control-flow graph -- the tree is walked, a branch
 //   is the only join, and a loop or an early exit is refused by name.
-// Role: the CONSUMPTION OBLIGATION of a must-consume type (D133), steps 1-3 of the
+// Role: the CONSUMPTION OBLIGATION of a must-consume type (D133), steps 1-4 of the
 //   track (the integrator's word 2026-10-02): a file's own `type X consume`, its
 //   `consume` bindings and `consume` parameters -- consumed by a `consume` method, a
 //   `consume` parameter, a `return` or the tail, a `consume y = x` transfer; used
 //   after that is D131's error, still owned at an exit is `D133-not-consumed`, and a
 //   fresh one handed to a view is the same error (D476 s4). The paths -- branches,
-//   loops, exits and their joins -- are check/consume_paths.nv's. Every value of
-//   such a type these steps do not track is refused by name, with the track's stage.
+//   loops, exits and their joins -- are check/consume_paths.nv's; the shapes a value
+//   hides in -- containers, fields, patterns -- check/consume_shapes.nv's. Every
+//   value of such a type these steps do not track is refused by name, with the
+//   track's stage.
 // Used by: check/run.nv, once the file is typed (`@check_consume_flow`).
 // Guarded by: nova test over pipeline/consume_flow_test.nv; the fixtures
 //   must_consume/ through check-novac-fixture-expect.sh and the differential.
@@ -38,6 +40,7 @@ type ConsumeFlow {
     owned_ty []TyId /// per entry: the value's type
     at []Node /// per entry: where it was bound, for the refusal
     state []VarState /// per entry: owned, consumed, or consumed on only some paths
+    loose []bool /// per entry: bound by a pattern WITHOUT `consume` -- its one use must move it on (plan 293)
     depth int /// how many `with`, `spawn`, handler bodies or assignments enclose the walk: inside one, nothing may change who owns what
     nest int /// how many arms, loop bodies or nested blocks enclose the walk: a tracked name as their value moves out of them
     dead bool /// this path has left (`return`, `break`, `continue`, a diverging call): what follows is not reached
@@ -46,6 +49,7 @@ type ConsumeFlow {
     brk_paths int /// how many `break`s joined into `brk`
     cont []VarState /// the innermost loop's pass: the joined state at its `continue`s
     cont_paths int /// how many `continue`s (and pass ends) joined into `cont`
+    forced bool /// the expression walked next stands where the grammar forces a move (an arm's or a body's value, a `return`, a constructor argument)
     stopped bool /// a refusal stopped tracking this body: what follows is not judged
 }
 
@@ -57,12 +61,12 @@ type VarState enum
     | VsMaybe /// consumed on some paths and owned on others: neither usable nor done
 
 /// D133-not-consumed, worded like the oracle's: the name, the type, the ways out.
-fn not_consumed_msg(name str, ty str, methods str) -> str =>
-    "`${name}` (type `${ty}`) is not consumed before the end of its scope -- call one of its `consume` methods (${methods}), return it, or pass it to a `consume` parameter (D133)"
+fn not_consumed_msg(name str, ty str, how str) -> str =>
+    "`${name}` (type `${ty}`) is not consumed before the end of its scope -- ${how}, return it, or pass it to a `consume` parameter (D133)"
 
 /// D133-not-consumed on PART of the paths: the arms of a branch disagreed.
-fn partly_consumed_msg(name str, ty str, methods str) -> str =>
-    "`${name}` (type `${ty}`) is consumed on only some paths before the end of its scope -- every path must call one of its `consume` methods (${methods}), return it, or pass it to a `consume` parameter (D133)"
+fn partly_consumed_msg(name str, ty str, how str) -> str =>
+    "`${name}` (type `${ty}`) is consumed on only some paths before the end of its scope -- every path must ${how}, return it, or pass it to a `consume` parameter (D133)"
 
 /// D131 after a join: the value may be gone already.
 fn maybe_consumed_msg(name str) -> str =>
@@ -71,8 +75,8 @@ fn maybe_consumed_msg(name str) -> str =>
 /// D133-not-consumed for a FRESH value handed to a view (D476 s4): the desugaring
 /// `consume x = e { ... }` leaves `x` unconsumed when the type has no `@cleanup`.
 /// The message names the expression the author wrote, never a synthetic name (s5).
-fn rvalue_in_view_msg(ty str, methods str) -> str =>
-    "a fresh value of must-consume type `${ty}` is handed to a view here and nothing consumes it afterwards -- bind it with `consume x = ...` and call one of its `consume` methods (${methods}), or pass it to a `consume` parameter (D133, D476)"
+fn rvalue_in_view_msg(ty str, how str) -> str =>
+    "a fresh value of must-consume type `${ty}` is handed to a view here and nothing consumes it afterwards -- bind it with `consume x = ...` and ${how}, or pass it to a `consume` parameter (D133, D476)"
 
 /// D131: a consumed value is gone.
 fn used_after_consume_msg(name str) -> str =>
@@ -95,6 +99,9 @@ fn untracked_consume_msg(where str) -> str =>
 /// body of the file is walked. A file that declares none has nothing to do here.
 fn Checker mut @check_consume_flow(file Node) -> () {
     ro kinds = @consume_kinds_of(file)
+    // The field markers first: a marker on a field that carries nothing is wrong
+    // in a file with no must-consume type at all.
+    @check_field_markers(file, kinds)
     if kinds.len() == 0 { return }
     for d in file_decls(file) {
         if d.kind_of() != NodeKind.TypeDecl || !decl_marked_consume(d) { continue }
@@ -185,14 +192,14 @@ fn Checker mut @flow_fn(f Node, kinds []TyId) -> () {
     ro fk = branch_children(f)
     if fk.len() == 0 { return }
     mut fl = ConsumeFlow { kinds, names: NameTable.new(NamespaceId.NsLocals), nm: []str.new(),
-                           owned_ty: []TyId.new(), at: []Node.new(), state: []VarState.new(), depth: 0, nest: 0,
-                           dead: false, loop_mark: -1, brk: []VarState.new(), brk_paths: 0,
-                           cont: []VarState.new(), cont_paths: 0, stopped: false }
+                           owned_ty: []TyId.new(), at: []Node.new(), state: []VarState.new(), loose: []bool.new(),
+                           depth: 0, nest: 0, dead: false, loop_mark: -1, brk: []VarState.new(), brk_paths: 0,
+                           cont: []VarState.new(), cont_paths: 0, forced: false, stopped: false }
     ro first = if fd.has_recv { 1 } else { 0 }
     for p in first..fd.param_cnt {
         ro pd = @ctx.fns.params[fd.param_off + p]
         ro pt = @concrete(pd.type_id)
-        if pd.mode == ParamMode.ModeConsume && is_kind_of(kinds, pt) {
+        if pd.mode == ParamMode.ModeConsume && @is_owned_kind(kinds, pt) {
             flow_own(fl, pd.name, pt, fk[0])
         } else {
             // A view, a `mut` view, or no must-consume type: nothing owned.
@@ -209,7 +216,10 @@ fn Checker mut @flow_fn(f Node, kinds []TyId) -> () {
         for c in branch_children(body) {
             match c {
                 Leaf(_) => {}
-                Branch { .. } => @flow_expr(c, fl, true)
+                Branch { .. } => {
+                    fl.forced = true
+                    @flow_expr(c, fl, true)
+                }
             }
         }
     } else {
@@ -232,12 +242,12 @@ fn Checker mut @flow_scope_end(mut fl ConsumeFlow, mark int) -> () {
             VsConsumed => {}
             VsLive => {
                 @reject_first_leaf_of([]Node.of(fl.at[i]),
-                    not_consumed_msg(fl.nm[i], ty_source_name(@ctx, t), @consume_methods_of(t)))
+                    not_consumed_msg(fl.nm[i], ty_source_name(@ctx, t), @ways_out(t)))
                 fl.stopped = true
             }
             VsMaybe => {
                 @reject_first_leaf_of([]Node.of(fl.at[i]),
-                    partly_consumed_msg(fl.nm[i], ty_source_name(@ctx, t), @consume_methods_of(t)))
+                    partly_consumed_msg(fl.nm[i], ty_source_name(@ctx, t), @ways_out(t)))
                 fl.stopped = true
             }
         }
@@ -251,6 +261,7 @@ fn flow_own(mut fl ConsumeFlow, name str, t TyId, at Node) -> () {
     fl.owned_ty.push(t)
     fl.at.push(at)
     fl.state.push(VarState.VsLive)
+    fl.loose.push(false)
 }
 
 /// A LANGUAGE error at `n`, and tracking stops: what follows is drawn from a state
@@ -268,8 +279,9 @@ fn Checker mut @flow_stop(n Node, where str, mut fl ConsumeFlow) -> () {
     fl.stopped = true
 }
 
-/// A block's statements in order; its last one is a tail only when the block is a
-/// function's value body (`value_body`).
+/// A block's statements in order; its last one is a tail -- its value MOVES, where
+/// the grammar forces it -- only when the block's value leaves (`value_body`: a
+/// function's value body, or an arm whose branch's value moves).
 fn Checker mut @flow_block(b Node, mut fl ConsumeFlow, value_body bool) -> () {
     ro kids = branch_children(b)
     mut last = -1
@@ -288,12 +300,13 @@ fn Checker mut @flow_block(b Node, mut fl ConsumeFlow, value_body bool) -> () {
         match c {
             Leaf(_) => {}
             Branch { .. } => {
-                // A tracked name as a nested block's or an arm's last statement may be
-                // the block's VALUE -- a move out of a branch, which is not followed.
-                ro tracked_tail = (fl.depth > 0 || fl.nest > 0) && i == last && @is_tracked_name(c, fl)
+                // A tracked name as the last statement of a nested block or an arm
+                // whose value does NOT leave is a move out of it, which is not followed.
+                ro tracked_tail = !value_body && (fl.depth > 0 || fl.nest > 0) && i == last && @is_tracked_name(c, fl)
                 if tracked_tail {
                     @flow_stop(c, "moved out of a branch, a loop or a nested block", fl)
                 } else {
+                    fl.forced = value_body && i == last
                     @flow_stmt(c, fl, value_body && i == last)
                 }
             }
@@ -351,6 +364,9 @@ fn flow_any_live(fl ConsumeFlow) -> bool {
 /// exit (`return`, `break`, `continue`, a diverging call) judges what is owned and
 /// ends the path; a `with`-like body is walked with the depth raised (`@flow_nested`).
 fn Checker mut @flow_stmt(st Node, mut fl ConsumeFlow, is_last bool) -> () {
+    // A forced move belongs to an expression statement's own value, nothing else.
+    ro forced = fl.forced
+    fl.forced = false
     ro k = st.kind_of()
     ro diverges = is_node(st.id_of()) && is_never_ty(@ctx.tys, @chan.type_if_known(st.id_of()))
     ro leaves = k == NodeKind.RetStmt || k == NodeKind.LoopCtl || diverges
@@ -367,7 +383,10 @@ fn Checker mut @flow_stmt(st Node, mut fl ConsumeFlow, is_last bool) -> () {
         for c in branch_children(st) {
             match c {
                 Leaf(_) => {}
-                Branch { .. } => @flow_expr(c, fl, true)
+                Branch { .. } => {
+                    fl.forced = true
+                    @flow_expr(c, fl, true)
+                }
             }
         }
         if fl.stopped { return }
@@ -376,7 +395,7 @@ fn Checker mut @flow_stmt(st Node, mut fl ConsumeFlow, is_last bool) -> () {
     } else if k == NodeKind.LoopCtl {
         @flow_loop_ctl(st, fl)
     } else if is_branch_kind(k) {
-        @flow_branch(st, fl)
+        @flow_branch(st, fl, is_last)
     } else if is_loop_kind(k) {
         @flow_loop(st, fl)
     } else if k == NodeKind.Block {
@@ -394,6 +413,7 @@ fn Checker mut @flow_stmt(st Node, mut fl ConsumeFlow, is_last bool) -> () {
     } else {
         // An expression statement: its value is the tail's when it is the last one,
         // else it is used and dropped.
+        fl.forced = forced
         @flow_expr(st, fl, is_last)
     }
 }
@@ -418,7 +438,7 @@ fn Checker mut @flow_bind(st Node, mut fl ConsumeFlow) -> () {
     if kids.len() < 2 { return }
     ro init = kids[kids.len() - 1]
     ro it = @chan.type_if_known(init.id_of())
-    if !is_kind_of(fl.kinds, it) {
+    if !@is_owned_kind(fl.kinds, it) {
         // Not a must-consume value: the initializer is an ordinary use.
         @flow_expr(init, fl, false)
         return
@@ -452,16 +472,22 @@ fn Checker mut @flow_bind(st Node, mut fl ConsumeFlow) -> () {
 /// `consume` binding); otherwise the value is only used, and a must-consume value
 /// that is not a name in a tracked binding has nowhere to go.
 fn Checker mut @flow_expr(e Node, mut fl ConsumeFlow, moved bool) -> () {
+    // `forced` is this expression's own: its parts stand elsewhere.
+    ro forced = fl.forced
+    fl.forced = false
     if fl.stopped { return }
     ro k = e.kind_of()
     if k == NodeKind.Name {
-        @flow_name(e, fl, moved)
+        @flow_name(e, fl, moved, forced)
         return
     } else if k == NodeKind.Paren {
         for c in branch_children(e) {
             match c {
                 Leaf(_) => {}
-                Branch { .. } => @flow_expr(c, fl, moved)
+                Branch { .. } => {
+                    fl.forced = forced
+                    @flow_expr(c, fl, moved)
+                }
             }
         }
         return
@@ -469,11 +495,12 @@ fn Checker mut @flow_expr(e Node, mut fl ConsumeFlow, moved bool) -> () {
         // Not a plain name: its parts below.
     }
     ro t = if is_node(e.id_of()) { @chan.type_if_known(e.id_of()) } else { no_ty() }
-    if is_kind_of(fl.kinds, t) && is_place_kind(k) && moved {
+    ro owned = @is_owned_kind(fl.kinds, t)
+    if owned && is_place_kind(k) && moved {
         // `consume_it(@)`, `eat(b.tx)`: moving out of a view or of a place.
         @flow_stop(e, "moved out of a view or a place (`@`, a field, an element)", fl)
         return
-    } else if is_kind_of(fl.kinds, t) && !is_place_kind(k) && !moved {
+    } else if owned && !is_place_kind(k) && !moved {
         // A FRESH value with nowhere to go: a view argument, an operand, a
         // dropped statement.
         @flow_stop(e, "in this position (a view argument, an operand or a dropped statement)", fl)
@@ -484,7 +511,9 @@ fn Checker mut @flow_expr(e Node, mut fl ConsumeFlow, moved bool) -> () {
     if (k == NodeKind.Call || k == NodeKind.MethodCall) && @chan.has_callee(e.id_of()) {
         @flow_call(e, fl)
     } else if is_branch_kind(k) {
-        @flow_branch(e, fl)
+        @flow_branch(e, fl, moved)
+    } else if k == NodeKind.RecordCtor {
+        @flow_record_ctor(e, fl)
     } else if k == NodeKind.Block {
         @flow_scope_block(e, fl)
     } else if k == NodeKind.Unsafe {
@@ -506,24 +535,35 @@ fn Checker mut @flow_expr(e Node, mut fl ConsumeFlow, moved bool) -> () {
 /// A name: a tracked binding is consumed when it moves and must still be owned
 /// either way; an untracked name of a must-consume type (a view parameter, `@`) may
 /// be used, and moving it is not tracked by this step.
-fn Checker mut @flow_name(e Node, mut fl ConsumeFlow, moved bool) -> () {
+fn Checker mut @flow_name(e Node, mut fl ConsumeFlow, moved bool, forced bool) -> () {
     ro i = fl.names.find(expr_leaf_name(e))
     if i >= 0 {
-        if fl.state[i] == VarState.VsConsumed {
-            @flow_reject(e, used_after_consume_msg(expr_leaf_name(e)), fl)
-        } else if fl.state[i] == VarState.VsMaybe {
-            @flow_reject(e, maybe_consumed_msg(expr_leaf_name(e)), fl)
-        } else if moved && fl.depth > 0 {
-            @flow_stop(e, "consumed inside a `with`, a `spawn`, a handler or an assignment", fl)
-        } else if moved {
-            fl.state[i] = VarState.VsConsumed
-        } else {
-            // Used, and still owned.
-        }
-    } else if moved && is_node(e.id_of()) && is_kind_of(fl.kinds, @chan.type_if_known(e.id_of())) {
+        @flow_take(e, i, moved, forced, fl)
+    } else if moved && is_node(e.id_of()) && !@chan.has_callee(e.id_of()) &&
+              @is_owned_kind(fl.kinds, @chan.type_if_known(e.id_of())) {
+        // (A name with a recorded callee is a bare VARIANT, `None`: a value, not a place.)
         @flow_stop(e, "moved out of a view or a place (`@`, a field, an element)", fl)
     } else {
         // An ordinary name, or a view of a must-consume value that is only used.
+    }
+}
+
+/// One use of tracked entry `i` at `e`: gone already is D131; a LOOSE pattern binder
+/// (plan 293) may only be moved on where the grammar forces it (`forced`); a move
+/// consumes it.
+fn Checker mut @flow_take(e Node, i int, moved bool, forced bool, mut fl ConsumeFlow) -> () {
+    if fl.state[i] == VarState.VsConsumed {
+        @flow_reject(e, used_after_consume_msg(fl.nm[i]), fl)
+    } else if fl.state[i] == VarState.VsMaybe {
+        @flow_reject(e, maybe_consumed_msg(fl.nm[i]), fl)
+    } else if fl.loose[i] && !(moved && forced) {
+        @flow_reject(e, pattern_required_msg(fl.nm[i], ty_source_name(@ctx, fl.owned_ty[i])), fl)
+    } else if moved && fl.depth > 0 {
+        @flow_stop(e, "consumed inside a `with`, a `spawn`, a handler or an assignment", fl)
+    } else if moved {
+        fl.state[i] = VarState.VsConsumed
+    } else {
+        // Used, and still owned.
     }
 }
 
@@ -538,8 +578,13 @@ fn Checker mut @flow_call(e Node, mut fl ConsumeFlow) -> () {
         CalleeFn(r) => r
         // A variant, a constructor, a display, an effect operation: every
         // argument is a payload or a field, which this step moves.
-        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => {
-            @flow_args_moved(kids, from, is_method, fl)
+        // A variant's payload and a constructor's argument are FORCED moves (plan 293).
+        CalleeVariant(_) | CalleeCtor(_) => {
+            @flow_args_moved(kids, from, is_method, true, fl)
+            return
+        }
+        CalleeSynthDisplay(_) | CalleeEffectOp(_) => {
+            @flow_args_moved(kids, from, is_method, false, fl)
             return
         }
     }
@@ -561,33 +606,19 @@ fn Checker mut @flow_call(e Node, mut fl ConsumeFlow) -> () {
 
 /// A FRESH value of a must-consume type: produced here, not named by a place.
 fn Checker @is_fresh_owned(e Node, fl ConsumeFlow) -> bool =>
-    is_node(e.id_of()) && !is_place_kind(e.kind_of()) && is_kind_of(fl.kinds, @chan.type_if_known(e.id_of()))
+    is_node(e.id_of()) && !is_place_kind(e.kind_of()) && @is_owned_kind(fl.kinds, @chan.type_if_known(e.id_of()))
 
-/// A fresh value handed to a view (a view or `mut` parameter, a view receiver):
-/// D476 desugars it to `consume x = e { ... }`, and for a type with no `@cleanup`
-/// the binding is left unconsumed -- `D133-not-consumed` (D476 s4). A type WITH
-/// one is cleaned there, which is the `@cleanup` step of the track.
+/// A fresh value handed to a view: the one judge (`@judge_fresh_in_view`,
+/// consume_shapes.nv) says which verdict, and tracking stops either way.
 fn Checker mut @flow_fresh_in_view(e Node, mut fl ConsumeFlow) -> () {
-    ro t = @chan.type_if_known(e.id_of())
-    if @has_cleanup(t) {
-        @flow_stop(e, "handed to a view while its type has a `@cleanup` (the D476 scope)", fl)
-    } else {
-        @flow_reject(e, rvalue_in_view_msg(ty_source_name(@ctx, t), @consume_methods_of(t)), fl)
-    }
+    if fl.stopped { return }
+    @judge_fresh_in_view(e, @chan.type_if_known(e.id_of()))
+    fl.stopped = true
 }
 
-/// Does `t` declare a `@cleanup` method (D432)?
-fn Checker @has_cleanup(t TyId) -> bool {
-    for i in 0..@ctx.fns.rows.len() {
-        ro fd = @ctx.fns.rows[i]
-        if !fd.has_recv || fd.param_cnt == 0 || fd.name != "cleanup" { continue }
-        if @ctx.fns.params[fd.param_off].type_id == t { return true }
-    }
-    false
-}
-
-/// The arguments of a call that names no callable row: each moves into what is built.
-fn Checker mut @flow_args_moved(kids []Node, from int, is_method bool, mut fl ConsumeFlow) -> () {
+/// The arguments of a call that names no callable row: each moves into what is built
+/// (`forced`: a variant's payload or a constructor's argument, plan 293).
+fn Checker mut @flow_args_moved(kids []Node, from int, is_method bool, forced bool, mut fl ConsumeFlow) -> () {
     if is_method {
         // The receiver of a built value's method is only read.
         @flow_expr(kids[0], fl, false)
@@ -599,7 +630,10 @@ fn Checker mut @flow_args_moved(kids []Node, from int, is_method bool, mut fl Co
         if i >= from {
             match c {
                 Leaf(_) => {}
-                Branch { .. } => @flow_expr(c, fl, true)
+                Branch { .. } => {
+                    fl.forced = forced
+                    @flow_expr(c, fl, true)
+                }
             }
         } else {
             // The callee's name, or the receiver, the dot and the name.

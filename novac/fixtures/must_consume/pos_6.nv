@@ -6,7 +6,7 @@ module must_consume.pos_6
 // tail_rules precedent, registry #1253). Every path consumes exactly once.
 // The ORACLE refuses all three ("possibly consumed", D131): its consume checker
 // joins the state at the loop's head with the state at its exits and does not
-// take a `break` or a `continue` as the end of a path. Registry 221.1 No.TBD
+// take a `break` or a `continue` as the end of a path. Registry 221.1 No.1669
 // (oracle); listed in novac/divergences.allow (plan 274.12).
 
 type Tx consume {

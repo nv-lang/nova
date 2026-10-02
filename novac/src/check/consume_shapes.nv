@@ -1,0 +1,260 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc_borrowck's move paths into a projection (`MovePathLookup` over a
+//   field, a downcast, a tuple element) -- a value inside a value is moved by the
+//   place that names it; NOT taken: partial moves out of a live aggregate -- a
+//   must-consume value leaves an aggregate only through a `consume` pattern.
+// Role: the SHAPES a must-consume value hides in (D133, step 4 of the track):
+//   which types are must-consume (the file's own `type X consume`, and every type
+//   applied to one -- D156: a `[T consume]` container inherits the obligation, as
+//   `Option[T consume]` and `Result[T consume, E consume]` do); the field markers
+//   of a record (D133 "Заразность через поля"); a record literal moving a value
+//   into a `consume` field (D133 amendment 2026-07-13); the binders of a pattern
+//   (`Some(consume t)` owns, a bare `Some(t)` may only move its value on once --
+//   E_CONSUME_PATTERN_REQUIRED, narrowed by plan 293); a fresh value handed to a
+//   view or a `mut` view (D476 s4), one judge for both positions.
+// Used by: check/consume_flow.nv, check/consume_paths.nv; check/calls.nv (the
+//   `mut` position, refused by typing before the flow runs).
+// Guarded by: the fixtures novac/fixtures/must_consume/ through
+//   check-novac-fixture-expect.sh and the differential (check-novac-differential.sh).
+// novac/src/check/consume_shapes.nv -- where a must-consume value can stand.
+
+module novac.check
+
+import ../tree.{Node, NodeKind, is_node}
+import ../lex.{TokenKind}
+import ../sem.{branch_children, leaf_text, file_decls, ty_source_name, binder_text}
+import ../sem.{decl_of_ty, field_range_of, raw_frow, no_frow, pattern_mode_word}
+import ../types.{TyId, TypeKind, no_ty, is_ty}
+
+/// D133-field-marker-missing: a field of a must-consume type says so.
+fn field_marker_missing_msg(field str, ty str) -> str =>
+    "field `${field}` has the must-consume type `${ty}` and is not marked `consume` -- write `consume ${field} ${ty}`: the field carries its value's obligation (D133)"
+
+/// D133-type-marker-missing: a record holding a `consume` field is must-consume too.
+fn type_marker_missing_msg(name str) -> str =>
+    "type `${name}` has a `consume` field and is not declared `consume` itself -- write `type ${name} consume { ... }`: a record holding an obligation carries it (D133)"
+
+/// D133-marker-on-non-consume: the marker on a field that has nothing to carry.
+fn marker_on_non_consume_msg(field str, ty str) -> str =>
+    "field `${field}` is marked `consume`, but its type `${ty}` is not must-consume -- remove the marker (D133)"
+
+/// E_CONSUME_PATTERN_REQUIRED, narrowed by plan 293: a bare binder may only move
+/// its value on, once.
+fn pattern_required_msg(name str, ty str) -> str =>
+    "`${name}` is bound by a pattern to a must-consume value of type `${ty}` without `consume` -- write `consume ${name}` in the pattern to own it; a bare binder may only move the value on, once (an arm's value, a `return`, a constructor argument) (E_CONSUME_PATTERN_REQUIRED)"
+
+/// Is `t` MUST-CONSUME? One of the file's own `type X consume`, or a type applied to
+/// one or a tuple holding one: a `[T consume]` container inherits the obligation
+/// (D156, amendment 2026-08-04), and since plan 246 a plain `[T]` takes no
+/// must-consume argument at all, so an application holding one is always such a
+/// container.
+fn Checker @is_owned_kind(kinds []TyId, t TyId) -> bool {
+    if !is_ty(t) { return false }
+    if is_kind_of(kinds, t) { return true }
+    ro k = @ctx.tys.kind_of(t)
+    if k != TypeKind.TkApp && k != TypeKind.TkTuple { return false }
+    for i in 0..@ctx.tys.arg_count(t) {
+        if @is_owned_kind(kinds, @ctx.tys.arg(t, i)) { return true }
+    }
+    false
+}
+
+/// HOW a must-consume value of `t` is consumed, for the messages: its `consume`
+/// methods, or -- a container with none -- a `consume` pattern that takes it apart.
+fn Checker @ways_out(t TyId) -> str {
+    ro methods = @consume_methods_of(t)
+    if methods != "" { return "call one of its `consume` methods (${methods})" }
+    "take it apart with a `consume` pattern (`Some(consume x)`)"
+}
+
+/// The field markers of every record the file declares (D133): a field of a
+/// must-consume type is marked `consume`, a marked field has such a type, and a
+/// record with a marked field is declared `consume` itself.
+fn Checker mut @check_field_markers(file Node, kinds []TyId) -> () {
+    for d in file_decls(file) {
+        if d.kind_of() != NodeKind.TypeDecl { continue }
+        ro dk = branch_children(d)
+        if dk.len() < 2 || dk[1].kind_of() != NodeKind.LeafNode { continue }
+        ro t = @ctx.ty_of_name(leaf_text(dk[1])) ?? no_ty()
+        // Only a RECORD has fields; an alias may name a primitive, which has no
+        // declaration row at all.
+        if !is_ty(t) || @ctx.tys.kind_of(t) != TypeKind.TkRecord { continue }
+        ro range = field_range_of(decl_of_ty(@ctx, t)) ?? (no_frow(), 0)
+        ro type_marked = decl_marked_consume(d)
+        mut j = 0
+        for f in dk {
+            if f.kind_of() != NodeKind.Field { continue }
+            if j >= range.1 { break }
+            ro fty = @ctx.fields.rows[raw_frow(range.0) + j].type_id
+            j += 1
+            @judge_field_marker(f, fty, leaf_text(dk[1]), type_marked, kinds)
+        }
+    }
+}
+
+/// One declared field against the three marker rules.
+fn Checker mut @judge_field_marker(f Node, fty TyId, type_name str, type_marked bool, kinds []TyId) -> () {
+    ro fk = branch_children(f)
+    mut marked = false
+    mut name = ""
+    for c in fk {
+        match c {
+            Leaf(tk) => {
+                if tk.kind == TokenKind.KwConsume { marked = true } else if tk.kind == TokenKind.Ident && name == "" { name = tk.text } else { continue }
+            }
+            // SILENT-OK: the type's own nodes, read through the registry above.
+            Branch { .. } => {}
+        }
+    }
+    ro owned = @is_owned_kind(kinds, fty)
+    if owned && !marked {
+        @reject_first_leaf_of([]Node.of(f), field_marker_missing_msg(name, ty_source_name(@ctx, fty)))
+    } else if marked && !owned {
+        @reject_first_leaf_of([]Node.of(f), marker_on_non_consume_msg(name, ty_source_name(@ctx, fty)))
+    } else if marked && !type_marked {
+        @reject_first_leaf_of([]Node.of(f), type_marker_missing_msg(type_name))
+    } else {
+        // The field and its marker agree.
+    }
+}
+
+/// A record literal: each field's value goes INTO the record. A must-consume value
+/// moves there (D133 amendment 2026-07-13 -- a bare owned binding is consumed by
+/// it, a pun `{ t }` included); anything else is only read.
+fn Checker mut @flow_record_ctor(e Node, mut fl ConsumeFlow) -> () {
+    for c in branch_children(e) {
+        if fl.stopped { return }
+        ro k = c.kind_of()
+        if k == NodeKind.CtorField {
+            @flow_ctor_field(c, fl)
+        } else if k == NodeKind.CtorSpread {
+            @flow_spread(c, fl)
+        } else {
+            // The type's name, the braces, the commas: nothing owned.
+            continue
+        }
+    }
+}
+
+/// One `name: value`, or a pun `{ name }` whose value is the binding of that name.
+fn Checker mut @flow_ctor_field(c Node, mut fl ConsumeFlow) -> () {
+    ro fk = branch_children(c)
+    if fk.len() == 1 && fk[0].kind_of() == NodeKind.LeafNode {
+        // A pun: the leaf IS the name of the value.
+        ro i = fl.names.find(leaf_text(fk[0]))
+        if i < 0 { return }
+        @flow_take(c, i, true, true, fl)
+        return
+    } else {
+        // `name: value`: the value is the last child.
+    }
+    ro v = fk[fk.len() - 1]
+    match v {
+        Leaf(_) => return
+        Branch { .. } => {}
+    }
+    // A tracked name is owned whatever typing recorded for it here.
+    ro owned = @is_tracked_name(v, fl) ||
+               (is_node(v.id_of()) && @is_owned_kind(fl.kinds, @chan.type_if_known(v.id_of())))
+    fl.forced = owned
+    @flow_expr(v, fl, owned)
+}
+
+/// `..base` in a record literal: a must-consume base would be split, which the track
+/// does not follow.
+fn Checker mut @flow_spread(c Node, mut fl ConsumeFlow) -> () {
+    for v in branch_children(c) {
+        match v {
+            Leaf(_) => {}
+            Branch { .. } => {
+                if is_node(v.id_of()) && @is_owned_kind(fl.kinds, @chan.type_if_known(v.id_of())) {
+                    @flow_stop(v, "spread into a record literal", fl)
+                    return
+                } else {
+                    @flow_expr(v, fl, false)
+                }
+            }
+        }
+    }
+}
+
+/// Does this pattern bind a must-consume value anywhere (the scrutinee then moves
+/// into the arm that binds it)?
+fn Checker @pattern_owns(p Node, kinds []TyId) -> bool {
+    match p {
+        Leaf(_) => return false
+        Branch { .. } => {}
+    }
+    if p.kind_of() == NodeKind.Name {
+        return is_node(p.id_of()) && @is_owned_kind(kinds, @chan.type_if_known(p.id_of()))
+    } else {
+        // A structural pattern: its parts below.
+    }
+    for c in branch_children(p) {
+        if @pattern_owns(c, kinds) { return true }
+    }
+    false
+}
+
+/// The binders of a must-consume value in a pattern, owned by the arm that binds
+/// them: `consume x` owns its value (D157 amendment, consume-wave A); a bare `x` is
+/// owned LOOSELY -- its one use must move it on (plan 293). `marked`: the enclosing
+/// pattern node carries the `consume` word.
+fn Checker mut @flow_own_binders(p Node, marked bool, mut fl ConsumeFlow) -> () {
+    match p {
+        Leaf(_) => return
+        Branch { .. } => {}
+    }
+    if p.kind_of() == NodeKind.Name {
+        if !is_node(p.id_of()) { return }
+        ro t = @chan.type_if_known(p.id_of())
+        if !@is_owned_kind(fl.kinds, t) { return }
+        ro name = binder_text(p)
+        if name == "_" {
+            @flow_stop(p, "dropped by a `_` pattern", fl)
+            return
+        } else {
+            // A named binder: owned below.
+        }
+        flow_own(fl, name, t, p)
+        fl.loose[fl.loose.len() - 1] = !marked
+        return
+    } else {
+        // A structural pattern, or one with a mode word: its parts below.
+    }
+    ro here = match pattern_mode_word(p) {
+        Some(k) => k == TokenKind.KwConsume
+        None => false
+    }
+    for c in branch_children(p) { @flow_own_binders(c, here, fl) }
+}
+
+/// A fresh value of a must-consume type handed to a view: a view or `mut` parameter,
+/// a view receiver (D476 s1). D476 desugars it to `consume x = e { ... }`, and for a
+/// type with no `@cleanup` that binding is left unconsumed -- `D133-not-consumed`
+/// (s4), worded on the expression the author wrote, never on a synthetic name (s5).
+/// A type WITH one is the D476 scope itself, the `@cleanup` step of the track.
+/// ONE judge for both positions: the flow asks it for a view, typing for a `mut`
+/// view (calls.nv, where P14 would refuse the class first). True when the verdict is
+/// a language error.
+fn Checker mut @judge_fresh_in_view(e Node, t TyId) -> bool {
+    if @has_cleanup(t) {
+        @report_first_leaf_of([]Node.of(e),
+            untracked_consume_msg("handed to a view while its type has a `@cleanup` (the D476 scope)"))
+        return false
+    } else {
+        // No `@cleanup`: nothing would ever consume it.
+    }
+    @reject_first_leaf_of([]Node.of(e), rvalue_in_view_msg(ty_source_name(@ctx, t), @ways_out(t)))
+    true
+}
+
+/// Does `t` declare a `@cleanup` method (D432)?
+fn Checker @has_cleanup(t TyId) -> bool {
+    for i in 0..@ctx.fns.rows.len() {
+        ro fd = @ctx.fns.rows[i]
+        if !fd.has_recv || fd.param_cnt == 0 || fd.name != "cleanup" { continue }
+        if @ctx.fns.params[fd.param_off].type_id == t { return true }
+    }
+    false
+}

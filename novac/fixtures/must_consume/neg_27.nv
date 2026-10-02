@@ -1,0 +1,30 @@
+module must_consume.neg_27
+
+// A FRESH MUST-CONSUME VALUE HANDED TO A `mut` PARAMETER: the same rule as a
+// view (D476 s1 names both positions; s4: with no `@cleanup` the desugared
+// binding is left unconsumed), the same judge. novac's typing refused its class
+// first (P14) until step 4. The ORACLE accepts it (registry 221.1 No.1659).
+
+// NOVAC_EXPECT is handed to a view here and nothing consumes it afterwards
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx @peek() -> int => @id
+
+fn poke(mut t Tx) -> () {
+    println(t.peek())
+}
+
+fn main() {
+    poke(Tx { id: 1 })
+}
