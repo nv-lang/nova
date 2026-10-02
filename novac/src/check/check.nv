@@ -55,7 +55,7 @@ import ../sem.{slice_shape_of, ctor_head_variant}
 // Where an arm keeps its body -- the door the lowering has read for waves.
 import ../sem.{arm_body_at, array_of_lparen_at}
 import ../sem.{is_constexpr, const_init_at}
-import ../types.{TyId, no_ty}
+import ../types.{TyId, no_ty, is_ty}
 import ../resolve.{FnIndex, FieldIndex}
 
 
@@ -686,16 +686,35 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // ordinary binding in the language and reported a
                     // declared type where none was written. Counting is a
                     // measurement too, and this one went unmeasured.
-                    if children.len() > 4 {
+                    // A type the one door READS is compiled (typing holds the
+                    // initializer to it, `@type_bind`); the walk goes on to
+                    // the initializer alone -- the type's leaves are no
+                    // expression. Until task 5 every declared type was refused
+                    // here, and since instance bodies walk the subset (#1539)
+                    // std's `mut out []u8 = []u8.new(cap: n)` stopped there.
+                    // A RECORD CONSTRUCTOR under a declared type is not
+                    // this form: the oracle refuses `ro p Pt = Pt { .. }` as a
+                    // redundant prefix and takes `= { .. }` by the annotation
+                    // -- neither is compiled yet, so both stay refused here.
+                    // A VIEW QUALIFIER (`ro x ro T`, `mut x ro T`) is judged by
+                    // the old door below: the redundant form is a language
+                    // error at its own token (registry 1458).
+                    ro init_k = children[children.len() - 1].kind_of()
+                    ro view = children.len() > 4 && children[2].kind_of() == NodeKind.LeafNode && leaf_kind(children[2]) == TokenKind.KwRo
+                    if children.len() > 4 && !view && init_k != NodeKind.RecordCtor && is_ty(@declared_local_type(children)) {
+                        @walk(children[children.len() - 1], init_pos: true, handler_pos: true)
+                        return
+                    } else if children.len() > 4 {
                         // THE NAME IS READ AND JUDGED, not just the shape: the
                         // limit refuses the program, but a name nobody declared
                         // is what the reader can fix (registry #1150). The type
                         // stands third -- keyword, name, TYPE, `=`, initializer.
-                        ro tname = if children[2].kind_of() == NodeKind.LeafNode {
-                            leaf_text(children[2])
-                        } else {
-                            ""
-                        }
+                        // A type of SEVERAL leaves (`[]u8`, `Vec[int]`) is no
+                        // single name to look up: asking for its first leaf
+                        // claimed "no type named `[]`" about a slice of a
+                        // declared element type.
+                        ro one_leaf = children.len() == 5 && children[2].kind_of() == NodeKind.LeafNode
+                        ro tname = if one_leaf { leaf_text(children[2]) } else { "" }
                         ro known = tname == "" || @type_name_is_declared(tname, []str.new())
                         @report_typed_local(children, tname, known)
                         return

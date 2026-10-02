@@ -1,0 +1,11 @@
+module typed_local.neg_1
+
+// ONE seeded cause: a declared type the initializer does not have. The oracle
+// refuses it (E7301, `int` into `str`); novac compiles a declared local type
+// only when the initializer has exactly that type, and says so -- one
+// diagnostic, and the later use of `b` adds none.
+// NOVAC_EXPECT compiled only when the initializer has exactly that type
+fn main() {
+    ro b str = 5
+    println(b)
+}
