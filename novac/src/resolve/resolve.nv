@@ -183,7 +183,7 @@ export fn FnIndex @sees_decl(own bool, handed_from str, name str) -> bool {
 #realtime nogc
 fn imported_as(name str) -> str {
     for i in 0..name.byte_len() {
-        if name[i..i + 1] == "." { return name[0..i] }
+        if name[i..i + 1] == "." { return name[..i] }
     }
     name
 }
