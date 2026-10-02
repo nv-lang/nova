@@ -19,7 +19,7 @@ import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, RECV_BINDING, SELF_TYPE}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{variants_named, ctor_head_variant}
+import ../sem.{variants_named, ctor_head_variant, VariantRow}
 import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, raw_row, ParamMode, carrier_of, arm_body_at, branch_children}
 import ../sem.{LitArg}
 // M3a: the literal token -> primitive table lives in `sem`, asked by both consumers.
@@ -708,7 +708,10 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // so the first row is the one when any is there.
         ro (vfirst, vn) = if ctx.defs.declared_by_file(cname) { (no_vrow(), 0) } else { variants_named(ctx, cname) }
         if vn >= 1 {
-            ro sid = ctx.variant_rows[raw_vrow(vfirst)].sum_id
+            // The row the CHECKER chose when several sums declare the name (by
+            // the expectation, D478 -- calls.nv): the first row would be
+            // another sum, and the node typed twice (registry 1632).
+            ro sid = ctx.variant_rows[raw_vrow(decided_variant(chan, e, vfirst))].sum_id
             // A GENERIC sum's constructor names an INSTANCE (`Some(3)` is an
             // `Option[int]`), decided by the walk from the payload and RECORDED
             // (wave W4, option_rules): the family term is not a type a value
@@ -769,4 +772,14 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         ice("check: a type in call position with no construction recorded -- the refusal should have stopped this walk")
     }
     ice("check: expression kind without a type rule — no silent int default (#652 class)")
+}
+
+/// The variant row the checker RECORDED for this construction, or `first` when
+/// it recorded none -- a pure read of the decision, never a second choice.
+fn decided_variant(chan CheckOut, e Node, first VariantRow) -> VariantRow {
+    if !chan.has_callee(e.id_of()) { return first }
+    match chan.callee_of(e.id_of()).target {
+        CalleeVariant(v) => v
+        CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => first
+    }
 }

@@ -82,3 +82,18 @@ test "`unsafe { e }` is `e` in every value position: the operand of `as` (D216)"
     ro (s, _) = compile_to_c("fn main() {\n ro ch = 'q'\n println(unsafe { ro k = ch\n k as u8 } as int)\n}", std)
     assert(s.len() == 1, messages(s))
 }
+
+test "a constructor named by two sums takes the one its position expects (D478, registry 1632)" {
+    // The self-build: std's `[]u8 @to_str`, made from its body, writes
+    // `Err(..)` under `-> Result[..]` in a unit whose own sums declare an
+    // `Err` too. Two handed sums stand in for the pair here.
+    mut std = std_decls()
+    std.push("module std.ha\nexport type Aa enum\n    | Hit(int)\n    | Miss\n")
+    std.push("module std.hb\nexport type Bb enum\n    | Hit(int)\n    | Gone\n")
+    ro src = "import std.ha.{Aa}\nimport std.hb.{Bb}\nfn f() -> Bb => Hit(1)\nfn main() {\n println(1)\n}"
+    ro d = compile_with(src, parse_decls(std), interop_surface())
+    assert(d.len() == 0, messages(d))
+    // CONTROL: no expectation -- the name is ambiguous, refused by name.
+    ro c = compile_with("import std.ha.{Aa}\nimport std.hb.{Bb}\nfn main() {\n ro x = Hit(1)\n println(1)\n}", parse_decls(std), interop_surface())
+    assert(c.len() == 1 && messages(c).contains("more than one sum"), messages(c))
+}

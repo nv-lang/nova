@@ -47,7 +47,7 @@ import ../resolve.{FnLookup, missing_sig_of}
 // per FILE in Nova, so a body that moves between files of ONE module still has to
 // bring the names it uses. Computed from what the moved text actually mentions,
 // not guessed, and then verified by building: the compiler named the first missing one.
-import ../sem.{no_vrow, ty_of_decl, variants_named}
+import ../sem.{no_vrow, ty_of_decl, variants_named, variant_named_in, is_vrow}
 
 /// The lookup key of a free call: one slot per written argument, no position
 /// zero. Same shape, same door, one position fewer.
@@ -727,7 +727,15 @@ fn Checker mut @type_free_call(e Node) -> () {
     // A type, fn or const DECLARED IN THIS FILE outranks any variant of the
     // name (`Pair(1, 2)` for the file's tuple type beside a std variant `Pair`).
     ro (vfirst, vn) = if @ctx.defs.declared_by_file(cname) { (no_vrow(), 0) } else { variants_named(@ctx, cname) }
-    if vn > 1 {
+    // SEVERAL sums declare the name: the POSITION picks the one it expects
+    // (D478, the door a bare name takes in exprs.nv) -- `Err(..)` in std's
+    // `[]u8 @to_str` under a `-> Result[..]`, made from its body in a unit
+    // whose own sums declare an `Err` too (registry 1632, the self-build).
+    ro by_expect = if vn > 1 { variant_named_in(@ctx, cname, @value_expect) } else { no_vrow() }
+    if is_vrow(by_expect) {
+        @type_variant_call(e, kids, by_expect)
+        return
+    } else if vn > 1 {
         @report_first_leaf_of(kids, AMBIGUOUS_VARIANT_MSG)
         return
     } else if vn == 1 {
