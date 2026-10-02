@@ -56,6 +56,11 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 
 NAME = "check-spec-amend-places"
 RE_AMEND = re.compile(r"^\s*(>\s*)?\*\*(Амендмент|Уточнение|Amendment)\b")
+# A DATED mark ANYWHERE in the line counts too: an italic `*Уточнение 2026-10-02 (...)*` in the
+# middle of a rule, or `(уточнение 2026-10-02: ...)` -- the integrator's own D84 edit of
+# 2026-10-02 used both forms and passed as "no amendment" (the hole this line closes).
+# The date is what makes it an amendment: the bare word "уточнение" in prose is not judged.
+RE_AMEND_DATED = re.compile(r"(?i)(Амендмент|Уточнение|Поправка|Amendment|AMEND)\b[^\n]{0,40}?\b20\d\d-\d\d-\d\d")
 RE_HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 RE_TRAILER = re.compile(r"^[A-Z][A-Za-z-]*:")
 RE_ONLY = re.compile(r"^only here\s*(--|—|–|-)\s*(.*)$", re.I)
@@ -110,7 +115,7 @@ def amended_blocks(root, diff):
             continue
         staged = git(root, "show", ":" + path).replace("\r\n", "\n").split("\n")
         for n, text in sorted(adds.items()):
-            if not RE_AMEND.match(text):
+            if not RE_AMEND.match(text) and not RE_AMEND_DATED.search(text):
                 continue
             head = None
             for k in range(min(n, len(staged)) - 1, -1, -1):
