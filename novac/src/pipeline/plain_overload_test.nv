@@ -10,7 +10,7 @@
 
 module novac.pipeline
 
-import ../sem.{FnRow, c_overload_symbol}
+import ../sem.{FnRow, c_overload_symbol, c_static_symbol}
 import ../parse.{parse}
 import ../types.{TyId}
 import ../diag.{ice}
@@ -94,4 +94,29 @@ export fn int @mx(o int) -> int => o\n")
     ro prog = "fn main() {\n println(1)\n}"
     ro mx = symbol_of(prog, std, "std.b", "mx", "int", 1)
     assert(mx == "Nova_int_method_mx", "another primitive's method counted as an overload")
+}
+
+/// The shell symbol of the `at`-th STATIC `want` row of `from`.
+fn static_symbol_of(prog str, std []str, from str, want str, at int) -> str {
+    ro ctx = context(parse(tokens_of(prog)), parse_decls(std), InteropTable.new())
+    ro rows = rows_named(prog, std, from, want)
+    c_static_symbol(ctx, rows[at], []TyId.new())
+}
+
+test "a STATIC method's second overload is asked by its own symbol too, a `*mut` spelled as the shell does (registry 1558)" {
+    // The shell spells static overloads like methods: `Nova_str_static_new`,
+    // `Nova_str_static_new__const_nova_byte_p_nova_int`. (A `*const` parameter
+    // is not read by harvest yet, so no row of that shape can be asked.)
+    mut std = std_decls()
+    std.push("module std.b\nexport type Box { n int }\n\
+export fn Box.mk() -> Box => Box { n: 0 }\n\
+export fn Box.mk(n int) -> Box => Box { n }\n\
+export fn Box.mk(p *mut u8) -> Box => Box { n: 1 }\n")
+    ro prog = "import std.b.{Box}\nfn main() {\n println(1)\n}"
+    // CONTROL: the first static overload keeps the bare name.
+    assert(static_symbol_of(prog, std, "std.b", "mk", 0) == "Nova_Box_static_mk", "the first static lost its name")
+    ro by_int = static_symbol_of(prog, std, "std.b", "mk", 1)
+    assert(by_int == "Nova_Box_static_mk__nova_int", "a static overload is asked by the first's name")
+    ro by_mut = static_symbol_of(prog, std, "std.b", "mk", 2)
+    assert(by_mut == "Nova_Box_static_mk__nova_byte_p", "a `*mut` parameter is not spelled `T*`")
 }
