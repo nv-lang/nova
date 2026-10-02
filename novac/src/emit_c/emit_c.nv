@@ -73,7 +73,7 @@ import ../sem.{CheckOut, branch_children, leaf_text, leaf_kind, is_expr_kind, ex
 import ../sem.{interp_slices, ctor_field_name}
 import ../sem.{c_struct, c_tag, c_tag_enum, c_maker, is_value_sum, VariantRow, raw_vrow, no_vrow}
 import ../sem.{field_range_of, variant_range_of, raw_frow, no_frow, file_decls, is_value_record, literal_elems}
-import ../sem.{value_recv_by_pointer}
+import ../sem.{recv_by_pointer_of}
 import ../sem.{vec_op_c}
 import ../sem.{decl_index_of_ty}
 import ../builtins.{PRINT_FN, bool_c_literal, RECV_C_NAME, LITERAL_PUSH, EMPTY_CTOR}
@@ -299,6 +299,15 @@ fn Emitter mut @emit_instance_protos(insts []Instantiation) -> () {
     }
 }
 
+/// Does `row` return its `value` receiver BY POINTER -- a fluent `-> @` whose
+/// receiver crosses by pointer (1654)? Asked by the signature and by the call,
+/// which reads the value back through it.
+fn Emitter @returns_recv_pointer(row FnRow, ptypes []ParamDef) -> bool {
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    fd.ret_self && fd.has_recv && ptypes.len() > 0 && is_value_record(@ctx, ptypes[0].type_id) &&
+        recv_by_pointer_of(@ctx, row, ptypes[0].type_id, ptypes[0].mode)
+}
+
 /// The signature of a callable, up to but not including its body: `static`, the
 /// return type, the ONE mangled name and the parameter list.
 ///
@@ -316,6 +325,10 @@ fn Emitter mut @emit_signature(f Node, name str, row FnRow, subst []TyId, ptypes
     }
     @body.append("static ")
     @body.append(c_type(@ctx, ret))
+    // A fluent `-> @` whose `value` receiver arrived by POINTER returns that
+    // pointer (1654): `NovaValue_X*`, the oracle's shape -- the body returns
+    // the receiver as it holds it.
+    @body.append(if @returns_recv_pointer(row, ptypes) { "*" } else { "" })
     @body.append(" ${c_callable(@ctx, row, subst)}(")
     mut first = true
     mut slot = 0
@@ -334,7 +347,8 @@ fn Emitter mut @emit_signature(f Node, name str, row FnRow, subst []TyId, ptypes
         @body.append(c_type(@ctx, ptypes[0].type_id))
         // A `value` record's receiver by POINTER where D488 says so (R3 `mut @`,
         // R5 a `ro @` above three words): `NovaValue_X*`, the oracle's shape.
-        if is_value_record(@ctx, ptypes[0].type_id) && value_recv_by_pointer(@ctx, ptypes[0].type_id, ptypes[0].mode) {
+        ro recv_t = ptypes[0].type_id
+        if is_value_record(@ctx, recv_t) && recv_by_pointer_of(@ctx, row, recv_t, ptypes[0].mode) {
             @body.append("*")
         } else {
             // A plain record is a pointer already; a small `ro` value record is a copy.
@@ -386,7 +400,7 @@ fn Emitter mut @emit_callable(f Node, name str, row FnRow, subst []TyId, ptypes 
     // decides how `@` and `@field` are spelled in this body.
     ro has_value_recv = @ctx.fns.rows[raw_row(row)].has_recv && ptypes.len() > 0 &&
                         is_value_record(@ctx, ptypes[0].type_id)
-    ro by_ptr = has_value_recv && value_recv_by_pointer(@ctx, ptypes[0].type_id, ptypes[0].mode)
+    ro by_ptr = has_value_recv && recv_by_pointer_of(@ctx, row, ptypes[0].type_id, ptypes[0].mode)
     @recv_copy = has_value_recv && !by_ptr
     @recv_ptr_value = by_ptr
     @emit_requires_prologue(kids, name)

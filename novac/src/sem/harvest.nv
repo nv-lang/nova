@@ -307,6 +307,7 @@ fn harvest_types_pass(decls []Node, mut types []TypeDef, mut gates []str, mut de
                                      ty_id: tys.sum(id), name: tname,
                                      gate_off: gates.len(),
                                      gate_cnt: push_gates(gates, decls_here, c.id_of()),
+                                     recv_pinned: false,
                                      share: share_marked_before(decls_here, c.id_of()), rows: TypeRows.NoRows })
                 continue
             }
@@ -329,6 +330,7 @@ fn harvest_types_pass(decls []Node, mut types []TypeDef, mut gates []str, mut de
                                      ty_id: tys.record(id), name: tname,
                                      gate_off: gates.len(),
                                      gate_cnt: push_gates(gates, decls_here, c.id_of()),
+                                     recv_pinned: false,
                                      share: false, rows: TypeRows.NoRows })
                 fill_harvested_effect_ops(fx, c, tname, types, defs, tys)
                 continue
@@ -348,6 +350,7 @@ fn harvest_types_pass(decls []Node, mut types []TypeDef, mut gates []str, mut de
                                      tparam_cnt: 0, ty_id: no_ty(), name: tname,
                                      gate_off: gates.len(),
                                      gate_cnt: push_gates(gates, decls_here, c.id_of()),
+                                     recv_pinned: false,
                                      share: share_marked_before(decls_here, c.id_of()), rows: TypeRows.NoRows })
                 continue
             } else {
@@ -358,6 +361,7 @@ fn harvest_types_pass(decls []Node, mut types []TypeDef, mut gates []str, mut de
                                  ty_id: tys.record(id), name: tname,
                                  gate_off: gates.len(),
                                  gate_cnt: push_gates(gates, decls_here, c.id_of()),
+                                 recv_pinned: recv_pinned_before(decls_here, c),
                                  share: share_marked_before(decls_here, c.id_of()), rows: TypeRows.NoRows })
         }
     }

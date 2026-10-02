@@ -9,14 +9,23 @@
 //   size that rule reads.
 // Used by: check/check.nv (the receiver of a method on a value record is no
 //   longer refused), emit_c/emit_c.nv (the signature), emit_c/emit_expr.nv
-//   (the receiver at the call site, `@` and `@field` inside the body).
+//   (the receiver at the call site, `@` and `@field` inside the body),
+//   check/methods.nv (a temporary receiver by pointer), sem/harvest.nv and
+//   sem/collect.nv (the pin of a declaration, `recv_pinned_before`).
+// ONE RULE FOR THE PROGRAM AND THE SHELL (registry 1654): Carina calls the
+//   methods of the shell the oracle emits, so the shell's receivers are
+//   asked the same question as the program's -- with the oracle's exceptions
+//   (codegen/emit_c/value_abi.rs): `consume @`, a fluent `-> @`, and a type
+//   that must not be copied stay a pointer at any size.
 // Guarded by: novac/fixtures/value_recv (both sides of the threshold, byte
 //   for byte with the oracle), check-novac-differential.sh.
 
 module novac.sem
 
 import ../types.{TyId, is_ty}
-import ../builtins.{TypeKind, prim_row}
+import ../builtins.{TypeKind, prim_row, SHARE_ATTR, NO_COPY_ATTR, ZERO_ON_MOVE_ATTR}
+import ../tree.{Node, NodeKind}
+import ../lex.{TokenKind}
 
 /// D488 R5: the largest `ro @` receiver of a `value` record passed by COPY,
 /// in bytes -- three words. One constant, the oracle's too (it moves to the
@@ -32,18 +41,57 @@ export const RECV_COPY_MAX_BYTES = 24
 /// read-only receiver.
 export fn value_recv_by_pointer(ctx Ctx, t TyId, m ParamMode) -> bool {
     if m != ParamMode.ModeRo { return true }
+    // A type that must not be copied (1654): a copy would not be zeroed, or
+    // would duplicate what the type owns -- the oracle pins it to a pointer.
+    if is_ty(t) && ctx.tys.kind_of(t) == TypeKind.TkRecord && decl_of_ty(ctx, t).recv_pinned { return true }
     ro (size, _) = c_size_align(ctx, t)
     size < 0 || size > RECV_COPY_MAX_BYTES
 }
 
 /// Does the receiver (parameter zero) of `row` cross by POINTER as a `value`
 /// record? A plain record is a pointer already and answers no; a free
-/// function has no receiver. Asked by the call site and the receiver check.
+/// function has no receiver. Asked by the call site and the receiver check --
+/// for a row of the program and of the shell alike (1654).
 export fn row_recv_by_pointer(ctx Ctx, row FnRow) -> bool {
     ro fd = ctx.fns.rows[raw_row(row)]
     if !fd.has_recv || fd.param_cnt == 0 { return false }
     ro p = ctx.fns.params[fd.param_off]
-    is_value_record(ctx, p.type_id) && value_recv_by_pointer(ctx, p.type_id, p.mode)
+    is_value_record(ctx, p.type_id) && recv_by_pointer_of(ctx, row, p.type_id, p.mode)
+}
+
+/// Does `row` RETURN its `value` receiver by pointer -- a fluent `-> @` whose
+/// receiver crosses by pointer? The call's value is read back through it (1654).
+export fn row_returns_recv_pointer(ctx Ctx, row FnRow) -> bool =>
+    ctx.fns.rows[raw_row(row)].ret_self && row_recv_by_pointer(ctx, row)
+
+/// The receiver rule with the ROW's own exception: a fluent `-> @` returns the
+/// receiver itself, so its chain must reach the caller's place -- a pointer at
+/// any size (the oracle's `recv_forced_ptr_decl`). `t` and `m` are the
+/// receiver's, as the caller holds them (an instance's substituted type).
+export fn recv_by_pointer_of(ctx Ctx, row FnRow, t TyId, m ParamMode) -> bool {
+    ctx.fns.rows[raw_row(row)].ret_self || value_recv_by_pointer(ctx, t, m)
+}
+
+/// Does the declaration `decl` pin its receiver to a POINTER (1654)? Read where
+/// the row is collected, since the node is gone afterwards: a `consume` type
+/// (the keyword is a leaf of the declaration), or `#no_copy`, `#zero_on_move`,
+/// `#share` in the attribute run right before it (std stacks them).
+export fn recv_pinned_before(kids []Node, decl Node) -> bool {
+    for c in branch_children(decl) {
+        if c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.KwConsume { return true }
+    }
+    mut seen = false
+    for c in kids {
+        if c.kind_of() == NodeKind.AttrDecl {
+            ro ak = branch_children(c)
+            seen = seen || attr_kids_name(ak, NO_COPY_ATTR) || attr_kids_name(ak, ZERO_ON_MOVE_ATTR) ||
+                   attr_kids_name(ak, SHARE_ATTR)
+            continue
+        }
+        if c.id_of() == decl.id_of() { return seen }
+        seen = false
+    }
+    false
 }
 
 /// The C (size, alignment) of a type laid out INLINE, or (-1, -1) when novac
