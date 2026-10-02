@@ -1037,7 +1037,11 @@ resolve 23
 #   (calls, methods, static calls, variant calls), so `Some((a, b))` counts one payload.
 # merge of p274-carina-k1 (part 5) into main (integrator, 2026-10-02): the guard's count on the merged
 #   tree is 341 -- main's 340 plus k1's `is_arg_value_kind` (part 5 step 3, its chronicle line above).
-sem 341
+# 2026-10-02, cloud session p274-carina-k1 (part 6, handed module values): sem 341 -> 342:
+#   `const_type_at` (sem/slots_decl.nv) -- where a constant's or module value's WRITTEN type
+#   starts; moved from check/const_types.nv, because sem's harvest now asks it too (a handed
+#   module value is registered only with a written type) -- one door for both, not two copies.
+sem 342
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

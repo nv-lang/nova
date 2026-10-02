@@ -314,6 +314,27 @@ export fn let_decl_of(c Node) -> Option[Node] {
     None
 }
 
+/// Where a constant's or a module value's WRITTEN type starts: right after the
+/// name -- after `Type.NAME` for a qualified one (D200 amend #66) -- unless
+/// `=` stands there; -1 when no type is written. The parser lays the type
+/// reference's leaves into the declaration itself (parse/decls.nv
+/// `@const_decl`). ONE door for check (a constant's type) and sem (a handed
+/// module value is registered only with one, part 6 of p274-carina-k1).
+export fn const_type_at(kids []Node) -> int {
+    ro n = const_name_at(kids)
+    if n < 0 { return -1 }
+    mut at = n + 1
+    if at + 1 < kids.len() && is_leaf_kind(kids[at], TokenKind.Dot) && is_leaf_kind(kids[at + 1], TokenKind.Ident) {
+        at += 2
+    } else {
+        // An unqualified name: the type, if any, follows it directly.
+    }
+    if at >= kids.len() { return -1 }
+    if kids[at].kind_of() != NodeKind.LeafNode { return -1 }
+    if is_leaf_kind(kids[at], TokenKind.Assign) { return -1 }
+    at
+}
+
 /// The slot of a constant's NAME: the first identifier leaf after `const`.
 ///
 /// The TERMINATOR is the branch (P21), as in `field_name_at`: a node that is

@@ -43,7 +43,7 @@ fn Checker @const_seen(name str) -> Option[ConstRow] {
         ro own = @ctx.defs.is_own(i)
         ro home = @ctx.defs.home_at(i)
         if @res.decl_is_home(own, home) { return Some(row) }
-        if seen < 0 && @res.sees_decl(own, home, name) {
+        if seen < 0 && @res.sees_decl(own, home, seen_by_name(name)) {
             seen = i
         } else {
             // Not visible, or a visible one is already kept: the first wins.
@@ -56,6 +56,22 @@ fn Checker @const_seen(name str) -> Option[ConstRow] {
         DefFn(_) => None
     }
 }
+
+/// The name a constant is SEEN by (D281, D29): a type-scoped `Type.NAME` (D200
+/// amend #66) is visible where its TYPE is -- an import names `Kind`, never
+/// `Kind.ALL` -- and a bare one by itself. Until part 6 of p274-carina-k1 every
+/// type-scoped constant or value of another program module was invisible, and
+/// its read fell to the variant judge ("this type is not a sum").
+fn seen_by_name(name str) -> str {
+    ro b = name.bytes()
+    for i in 0..b.len() {
+        if b[i] == DOT_IN_NAME { return name[0..i] }
+    }
+    name
+}
+
+/// The byte that joins a type-scoped constant's two names (`Kind.ALL`).
+const DOT_IN_NAME u8 = 0x2E
 
 /// The constant-table row of the module value these children declare, -1
 /// when the registry does not hold it (a name the collector skipped).
@@ -100,6 +116,9 @@ fn Checker mut @settle_module_value(name str) -> bool {
         Some(r) => raw_crow(r)
     }
     if !@ctx.consts.rows[row].once { return false }
+    // A HANDED module value has no initializer here: its owner's unit computes
+    // it and orders it (sem/harvest.nv `harvest_module_value`). Nothing to settle.
+    if @ctx.consts.rows[row].init.len() == 0 { return false }
     if @mv_state[row] == 1 { return true }
     if @mv_state[row] == 0 {
         @type_module_value_at(row)
