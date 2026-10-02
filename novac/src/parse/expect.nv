@@ -28,6 +28,7 @@ module novac.parse
 
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind}
+import ../builtins.{is_reserved_word}
 
 /// Take the token if it is the one wanted, and say ONCE what it means when it
 /// is not.
@@ -110,9 +111,35 @@ fn Cursor mut @push_expected(mut kids []Node, k TokenKind) -> () {
 /// pushes its zero-width Err leaf, and wrapping THAT in a `Name` would tell
 /// every consumer a name is there.
 fn Cursor mut @push_binder(mut kids []Node) -> () {
-    if @peek() == TokenKind.Ident {
+    if @peek() == TokenKind.Ident && is_reserved_word(@peek_text()) {
+        kids.push(@take_name())
+    } else if @peek() == TokenKind.Ident {
         kids.push(@node(NodeKind.Name, []Node.of(@take())))
     } else {
         @push_expected(kids, TokenKind.Ident)
     }
+}
+
+/// A declaration's NAME: an identifier that is not a reserved word. A reserved
+/// word standing there (`fn Tab.with(..)`, registry 1652) is taken into an Err
+/// branch of its own -- the cursor moves past it, so the rest of the
+/// declaration reads as written, and `check` refuses the word by name
+/// ("expected identifier, got `with`", the oracle's words). Anything else
+/// takes the ordinary door.
+fn Cursor mut @push_name(mut kids []Node) -> () {
+    kids.push(@take_name())
+}
+
+/// The same question for a position that TAKES whatever stands there (a
+/// parameter's name, a qualified name after its dot): a reserved word comes
+/// back wrapped in its Err branch, any other token as itself.
+fn Cursor mut @take_name() -> Node {
+    if @peek() == TokenKind.Ident && is_reserved_word(@peek_text()) {
+        return @node(NodeKind.Err, []Node.of(@take()))
+    } else {
+        // Not a reserved word: the position's ordinary reading below.
+    }
+    if @peek() == TokenKind.Ident { return @take() }
+    // Absent: the zero-width Err with the wanted kind, as `@push_expected` makes.
+    @error_node(TokenKind.Ident)
 }

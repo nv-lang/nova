@@ -1,0 +1,10 @@
+module reserved_name.neg_2
+
+// ONE seeded cause: a reserved word (`throw`) names a FREE function -- the same
+// door as a static method's name (registry 1652), the oracle's same words.
+// NOVAC_EXPECT expected identifier, got `throw`
+fn throw() -> int => 1
+
+fn main() {
+    println(1)
+}

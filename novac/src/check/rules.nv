@@ -20,7 +20,7 @@ import ../source.{SourceText}
 import ../lex.{Token, TokenKind, spelling_of}
 import ../tree.{Node, NodeKind, NodeId, no_node, bin_op_of, un_op_of, raw_node}
 import ../diag.{Diagnostic, Severity, ice}
-import ../builtins.{ENTRY_FN, PRINT_FN, CALLER_LOC_FN, is_bool_literal, is_ptr_method}
+import ../builtins.{ENTRY_FN, PRINT_FN, CALLER_LOC_FN, is_bool_literal, is_ptr_method, is_reserved_word}
 import ../sem.{Ctx, CheckOut, declares_receiver, generics_have_consume, generics_have_protocol_bound, param_type_at}
 // The tree question that decides what a hoist must order (F65).
 import ../sem.{contains_call}
@@ -837,6 +837,15 @@ fn Checker mut @report_err_branch(children []Node) -> () {
         if @out.len() > before { return } // the one diagnostic is out already
         match c {
             Leaf(t) => {
+                // A RESERVED word where a declaration's name stands (registry
+                // 1652, the parser's `@take_name`): refused in the oracle's
+                // words, at the word.
+                if t.kind == TokenKind.Ident && is_reserved_word(t.text) {
+                    @reject(t, "expected identifier, got `${t.text}`")
+                    return
+                } else {
+                    // Any other recovered run: the generic refusal below.
+                }
                 // The whole run is the subject, so the whole run is underlined.
                 ro lo = @src.offset_of(t.text)
                 ro hi = @run_end_of(children, lo + t.text.byte_len())

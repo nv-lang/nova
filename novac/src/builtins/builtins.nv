@@ -599,3 +599,26 @@ export fn is_runtime_abi_sum(name str) -> bool {
     if name == "WaitResult" { return true }
     false
 }
+
+/// The words the language RESERVES that this lexer reads as identifiers -- the
+/// oracle's keyword table (compiler-codegen/src/lexer/mod.rs) minus the words
+/// novac lexes as keywords of its own. Several are read here by SPELLING in
+/// the one position they own (`with` before a handler binding, `effect` and
+/// `priv` as markers, `true`/`false` as literals, `spawn`/`supervised` before a
+/// block); NONE may name a declaration: the oracle refuses `fn Tab.with(..)`,
+/// `fn with()` and a parameter `with` alike -- "expected identifier, got
+/// `with`" -- and novac accepted all three (registry 1652).
+ro RESERVED_WORDS = []str.of("alias", "blocking", "defer", "detach", "effect", "errdefer", "external",
+    "false", "forbid", "interrupt", "lemma", "let", "loop", "okdefer", "parallel", "priv", "protocol",
+    "pub", "readonly", "realtime", "ref", "safe", "select", "spawn", "supervised", "throw", "true",
+    "uninit", "with")
+
+/// Is this word one the language reserves although novac's lexer hands it over
+/// as an identifier (`RESERVED_WORDS`)? Asked by the parser at every position
+/// that NAMES a declaration.
+export fn is_reserved_word(text str) -> bool {
+    for w in RESERVED_WORDS {
+        if w == text { return true }
+    }
+    false
+}

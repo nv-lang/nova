@@ -271,7 +271,11 @@
 # 2026-10-02, cloud session p274-carina-k1 (part 5, D216 `dist`): builtins 67 -> 68: `PTR_DIST`
 #   -- the raw-pointer intrinsic's name beside `PTR_OFFSET`, asked by check's typing of a
 #   pointer method (check/unsafe.nv) and by its emission (emit_c/emit_ptr.nv).
-builtins 68
+# 2026-10-02, cloud session p274-carina-mono-k2 (registry 1652): builtins 68 -> 69:
+#   `is_reserved_word` -- the words the language reserves that novac's lexer hands over as
+#   identifiers (the oracle's keyword table minus novac's own keywords); asked by the parser at
+#   every position that names a declaration, and by check's refusal of the recovered word.
+builtins 69
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует

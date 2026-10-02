@@ -33,7 +33,7 @@ import ../tree.{Node, NodeKind}
 /// recovery on the next token.
 fn Cursor mut @type_decl() -> Node {
     mut kids = []Node.of(@take()) // KwType
-    @push_expected(kids, TokenKind.Ident)
+    @push_name(kids)
     if @peek() == TokenKind.LBracket {
         kids.push(@generics())
     } else {
@@ -208,7 +208,7 @@ fn Cursor mut @type_decl() -> Node {
     if @peek() == TokenKind.Pipe {
         while @peek() == TokenKind.Pipe {
             mut vk = []Node.of(@take()) // '|'
-            @push_expected(vk, TokenKind.Ident)
+            @push_name(vk)
             // A RECORD-form variant: `| Circle { radius f64 }` -- its fields
             // are read by the record body's own door (`@variant_record_fields`).
             if @peek() == TokenKind.LBrace {
@@ -372,7 +372,7 @@ fn Cursor mut @variant_record_fields(mut vk []Node) -> () {
 /// name: a parser that guesses is worse than one that stops.
 fn Cursor mut @proto_method() -> Node {
     mut kids = []Node.of(@take()) // At
-    @push_expected(kids, TokenKind.Ident) // method name
+    @push_name(kids) // method name
     if @peek() == TokenKind.LParen {
         kids.push(@take())
         while @peek() == TokenKind.Ident {
@@ -408,7 +408,7 @@ fn Cursor mut @proto_method() -> Node {
 /// op, moded params included, in a shape the schema filler can read.
 fn Cursor mut @effect_op() -> Node {
     mut kids = []Node.of(@take()) // KwFn
-    @push_expected(kids, TokenKind.Ident) // operation name
+    @push_name(kids) // operation name
     if @peek() == TokenKind.LParen {
         kids.push(@take())
         // The loop follows the fn-parameter reader, not the Ident-only test

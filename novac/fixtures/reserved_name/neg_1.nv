@@ -1,0 +1,15 @@
+module reserved_name.neg_1
+
+// ONE seeded cause: `with` is a word the language reserves, and it names a
+// STATIC method here. The oracle refuses it at the word -- "expected
+// identifier, got `with`"; novac's lexer hands `with` over as an identifier
+// (it reads it by spelling before a handler binding) and accepted the
+// declaration until registry 1652.
+// NOVAC_EXPECT expected identifier, got `with`
+type Tab { n int }
+
+fn Tab.with(n int) -> Tab => { n }
+
+fn main() {
+    println(1)
+}
