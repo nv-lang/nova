@@ -31,6 +31,7 @@
 
 module novac.sem
 
+import ../tree.{Node}
 import ../types.{TyId, no_ty, is_ty, Interner}
 import ../builtins.{TypeKind, OPTION_SUM, OPTION_SOME_VARIANT, RESULT_SUM, RESULT_OK_VARIANT, BuiltinType, prim_row}
 
@@ -59,6 +60,11 @@ export fn option_payload(ctx Ctx, t TyId) -> TyId {
     if decl_of_ty(ctx, t).name != OPTION_SUM { return no_ty() }
     arg
 }
+
+/// Is this pattern `Some(..)` over an Option -- the one test the Option door
+/// keeps its own spelling for (`if Some(x) = ..`, lower's `Cond.IsSome`).
+export fn is_option_some_pattern(ctx Ctx, pat Node, t TyId) -> bool =>
+    is_ty(option_payload(ctx, t)) && pattern_head_text(pat) == OPTION_SOME_VARIANT
 
 /// THE VARIANT THAT CARRIES A VALUE in a container `??` unwraps -- `Some` for `Option`,
 /// `Ok` for `Result` -- or no variant when this type is not such a container.

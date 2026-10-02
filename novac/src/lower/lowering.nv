@@ -20,7 +20,7 @@ import ../sem.{iflet_pattern_at, iflet_body_at, iflet_else_at, iflet_init_at}
 import ../sem.{whilelet_pattern_at, whilelet_init_at, whilelet_body_at}
 import ../sem.{payload_as_seen}
 import ../sem.{pattern_shape, pattern_head_text, PatShape, option_payload}
-import ../builtins.{OPTION_SOME_VARIANT}
+import ../sem.{is_option_some_pattern}
 // Which arguments have an observable order (F65) -- the checker's own door.
 import ../sem.{contains_call, loop_ctl_is_break, is_collection_head}
 
@@ -629,7 +629,7 @@ fn Lowerer mut @lower_while_let(st Node) -> () {
 /// of any sum, is the match arm's head test (`Cond.Holds`, emit_match.nv) --
 /// one test per pattern, whichever statement asks.
 fn Lowerer @variant_test(pat Node, ty TyId, lo Local) -> Cond {
-    if is_ty(option_payload(@ctx, ty)) && pattern_head_text(pat) == OPTION_SOME_VARIANT {
+    if is_option_some_pattern(@ctx, pat, ty) {
         return Cond.IsSome(lo)
     }
     Cond.Holds(PatTest { pat: @pattern_of(pat, ty), scr: lo })

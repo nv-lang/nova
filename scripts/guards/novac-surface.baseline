@@ -1058,7 +1058,11 @@ resolve 23
 #   generic layer's stub bodies, so `@has` answers no for them; `is_vector_ty` (sem/handed_bodies.nv)
 #   -- is this a `[]T`, asked by check's `==` door (check/operators.nv) and by the emitter that
 #   spells the call through `vec_op_c` (emit_c/emit_expr.nv): two readers, one answer.
-sem 344
+# 2026-10-02, cloud session p274-carina-sweep (sweep 10, `if <variant> = ..`): sem 344 -> 345:
+#   `is_option_some_pattern` -- is a pattern `Some(..)` over an Option. Asked by lower/lowering.nv
+#   (`@variant_test`: `Cond.IsSome` vs the arm head test); sem owns both the Option shape and the
+#   pattern head, and lower has no edge to builtins (architecture section 3), so the door lives here.
+sem 345
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
