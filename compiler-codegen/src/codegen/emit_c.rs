@@ -27,6 +27,7 @@ mod method_key; mod default_dispatch; mod consume_disarm_resolved; // #1413 meth
 mod type_repr_early; mod generic_sum_schema; // #761: newtype/alias representation before any consumer; #1338: generic sum payload layout from the channel
 mod c_name; // #1440/#1446: the one door "Nova name -> C identifier", see its doc
 mod type_by_role; // #1545/#1527: a bare type name read by the kind its position admits, see its doc
+mod param_convention; // #1616: a call passes arguments as the RESOLVED callee declares, see its doc
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
@@ -2060,7 +2061,8 @@ pub struct CEmitter {
     /// flag (a value/primitive `mut x T` param). Drives call-site address-of
     /// injection in `synthesize_inout_refargs`. Populated for every free fn
     /// (generic and non-generic) in `emit_fn_forward_decl`.
-    free_fn_inout_params: HashMap<String, Vec<bool>>,
+    // #1616: per declaration (span), every free fn of the name -- see `param_convention.rs`.
+    free_fn_inout_params: HashMap<String, Vec<(Span, Vec<bool>)>>,
     /// Plan 172.14 Ф.1: C-имя value-struct'а (`NovaValue_X`/`NovaTuple_X`) →
     /// УПОРЯДОЧЕННЫЙ список C-типов его полей. Заполняется при эмиссии
     /// typedef'ов (`emit_value_record_type`/`emit_named_tuple_type`) — до
@@ -2077,6 +2079,8 @@ pub struct CEmitter {
     /// by-value). Строится ОДНИМ пре-пассом `build_free_fn_byref_map` ДО
     /// fn-forward-decl цикла — сигнатуры/тела/call-sites читают одну карту.
     free_fn_byref_params: HashMap<String, Vec<(String, bool)>>,
+    /// #1616: the one declaration each `free_fn_byref_params` entry was built from.
+    free_fn_byref_decl: HashMap<String, Span>,
     /// [M-172.14-methods-byref]: зеркало `free_fn_byref_params` для МЕТОДОВ
     /// (receiver, не свободная функция). Ключ — `(Type, method_name)` (не
     /// плоское имя — методы с одинаковым именем на разных типах разные C-
@@ -2899,6 +2903,7 @@ impl CEmitter {
             free_fn_inout_params: HashMap::new(),
             value_struct_field_tys: HashMap::new(),
             free_fn_byref_params: HashMap::new(),
+            free_fn_byref_decl: HashMap::new(),
             method_byref_params: HashMap::new(),
             mono_method_decls: HashMap::new(),
             mono_method_decls_by_span: HashMap::new(),
@@ -17418,9 +17423,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 };
                 Self::param_is_inout_ptr(p, &ty_c)
             }).collect();
-            if flags.iter().any(|b| *b) {
-                self.free_fn_inout_params.insert(f.name.clone(), flags);
-            }
+            self.record_free_fn_inout(f, flags); // #1616: by declaration, not by name
         }
         // D82: external fn — forward decl не нужен (реализация в nova_rt/*.h
         // уже включена через preamble #include).
@@ -40199,7 +40202,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// wrapping (the common case — no allocation). Value-typed `mut` params on
     /// METHODS were migrated to local-copy Category-A (Plan 184), so only the
     /// free-fn callee path is resolved here.
-    fn synthesize_inout_refargs(&self, func: &Expr, args: &[CallArg]) -> Option<Vec<CallArg>> {
+    fn synthesize_inout_refargs(
+        &self,
+        func: &Expr,
+        args: &[CallArg],
+        call_id: crate::ast::ExprId,
+    ) -> Option<Vec<CallArg>> {
         let base: &Expr = match &func.kind {
             ExprKind::TurboFish { base, .. } => base,
             _ => func,
@@ -40208,10 +40216,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             ExprKind::Ident(name) => name.as_str(),
             _ => return None,
         };
-        let inout_flags: Option<&Vec<bool>> = self.free_fn_inout_params.get(name);
+        // #1616: the conventions of the declaration this call resolved to.
+        let inout_owned: Option<Vec<bool>> = self.callee_inout_flags(name, call_id);
+        let inout_flags: Option<&Vec<bool>> = inout_owned.as_ref();
         // Plan 172.14 Ф.1: большие ro value-struct параметры — тоже by-pointer
         // (call-site RefArg; rvalue материализуется в temp при эмиссии RefArg).
-        let byref_flags: Option<&Vec<(String, bool)>> = self.free_fn_byref_params.get(name);
+        let byref_flags: Option<&Vec<(String, bool)>> = self.callee_byref_flags(name, call_id);
         if inout_flags.is_none() && byref_flags.is_none() {
             return None;
         }
@@ -40503,7 +40513,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // (emits `(&(place))`) so EVERY downstream arg-emission branch passes the
         // caller's storage address. The checker (E_MUT_ARG_NOT_MUTABLE) already
         // guaranteed each such arg is a mutable, addressable lvalue. Idempotent.
-        let inout_wrapped: Option<Vec<CallArg>> = self.synthesize_inout_refargs(func, args);
+        let inout_wrapped: Option<Vec<CallArg>> = self.synthesize_inout_refargs(func, args, call_id);
         let args: &[CallArg] = inout_wrapped.as_deref().unwrap_or(args);
         // [M-172.14-methods-byref]: единая обёртка method-аргументов (большой ro
         // value-struct → RefArg) в начале emit_call — покрывает все downstream
@@ -58740,6 +58750,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut poisoned: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut map: HashMap<String, Vec<(String, bool)>> = HashMap::new();
+        let mut decl_of: HashMap<String, Span> = HashMap::new();
         for item in &module.items {
             let Item::Fn(f) = item else { continue };
             if f.receiver.is_some() || f.is_external || f.name == "main" {
@@ -58767,6 +58778,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             if any {
                 map.insert(f.name.clone(), flags);
+                decl_of.insert(f.name.clone(), f.span); // #1616
             }
         }
         if !map.is_empty() {
@@ -58800,6 +58812,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         for n in &poisoned {
             map.remove(n);
         }
+        decl_of.retain(|n, _| map.contains_key(n));
+        self.free_fn_byref_decl = decl_of;
         self.free_fn_byref_params = map;
     }
 

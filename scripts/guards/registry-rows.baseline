@@ -1504,6 +1504,9 @@
 # 2026-10-02, integrator nova-20: rows -> 1565, max -> 1616 (row 1616 filed: oracle call takes the parameter convention of a same-named function of another module, K1, blocks the tag).
 # 2026-10-02, integrator nova-20: rows -> 1566, max -> 1616 (row 1611 arrives with its fix (merge of p1611-float-int-kind); reserve 1611 dropped from gaps).
 # 2026-10-02, integrator nova-20: rows -> 1571, max -> 1623 (merge of p274-carina-cast step 7: rows 1619-1623; 1617-1618 reserved for the sweep session).
+# 2026-10-02, integrator nova-20: rows -> 1572, max -> 1624 (row 1624 filed (methods keyed by type and name, kin of 1614), found by the assistant at 1616).
+rows=1572
+max=1624
 rows=1571
 max=1623
 rows=1566
