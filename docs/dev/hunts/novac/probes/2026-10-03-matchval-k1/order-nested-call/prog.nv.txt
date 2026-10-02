@@ -1,0 +1,30 @@
+module prog
+
+// D484: arguments left to right, observably -- for a call that is itself an
+// ARGUMENT of another call (`println(f(..))`, `ro r = g(f(..))`). Carina's F65
+// hoist orders a call standing as a statement or an initializer; here the
+// ordered call is one level down. Lines 1-3: no `match` at all.
+fn say(n int) -> int {
+    println(n)
+    n
+}
+
+fn three(a int, b int, c int) -> int => a * 100 + b * 10 + c
+
+fn id(x int) -> int => x
+
+fn main() {
+    println("control, init: norm 1 2 3 then 123")
+    ro r0 = three(say(1), say(2), say(3))
+    println(r0)
+    println("under println: norm 1 2 3 then 123")
+    println(three(say(1), say(2), say(3)))
+    println("under id in init: norm 4 5 6 then 456")
+    ro r1 = id(three(say(4), say(5), say(6)))
+    println(r1)
+    println("match arg under println: norm 7 8 9 then 789")
+    println(three(say(7), match say(8) {
+        8 => 8
+        _ => 0
+    }, say(9)))
+}

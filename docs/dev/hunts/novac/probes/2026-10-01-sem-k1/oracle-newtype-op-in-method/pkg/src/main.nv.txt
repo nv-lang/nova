@@ -1,7 +1,0 @@
-module hp
-
-import ./geo.{Meters}
-
-fn main() {
-    println(Meters(21).double())
-}

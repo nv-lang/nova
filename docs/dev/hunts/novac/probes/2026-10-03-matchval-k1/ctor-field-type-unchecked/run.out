@@ -1,0 +1,118 @@
+=== PROGRAM
+     1	module prog
+     2	
+     3	// D491: "a position with a written type -- a declaration, a call argument, a
+     4	// return, a RECORD FIELD, a collection element: the value's type equals the
+     5	// position's; otherwise an error, the hint is the form with `as`". Here an
+     6	// `int` VALUE (a local, not a literal) is given to a `u8` field and to an
+     7	// `f64` field: plainly, through an `if` value and through a `match` value (the
+     8	// sweep-9 position). The norm: no program -- the oracle refuses every line.
+     9	// Each print is labelled with what a silent conversion would show.
+    10	type Pv { b u8, f f64 }
+    11	
+    12	fn main() {
+    13	    ro k = 3
+    14	    ro n = 300
+    15	    ro q1 = Pv { b: n, f: 2.0 }
+    16	    println("plain int 300 into u8 field (no program by norm)")
+    17	    println(q1.b as int)
+    18	    ro q2 = Pv { b: if k > 0 { n } else { n }, f: 2.0 }
+    19	    println("if-value int 300 into u8 field (no program by norm)")
+    20	    println(q2.b as int)
+    21	    ro q3 = Pv { b: match k {
+    22	        3 => n
+    23	        _ => n
+    24	    }, f: 2.0 }
+    25	    println("match-value int 300 into u8 field (no program by norm)")
+    26	    println(q3.b as int)
+    27	    ro q4 = Pv { b: 1 as u8, f: match k {
+    28	        3 => k
+    29	        _ => k
+    30	    } }
+    31	    println("match-value int 3 into f64 field (no program by norm)")
+    32	    println(q4.f)
+    33	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=1
+[1m[31merror:[0m[0m \\?\D:\Temp\tmp.0NkX1sxY1o\prog.nv:15:21: error: [E_IMPLICIT_NARROWING] cannot initialise field `b` of `Pv` with a value of type `int` -- the field is `u8`; a value does not change its numeric type implicitly (D491); use an explicit `... as u8` cast
+\\?\D:\Temp\tmp.0NkX1sxY1o\prog.nv:18:21: error: [E_IMPLICIT_NARROWING] cannot initialise field `b` of `Pv` with a value of type `int` -- the field is `u8`; a value does not change its numeric type implicitly (D491); use an explicit `... as u8` cast
+\\?\D:\Temp\tmp.0NkX1sxY1o\prog.nv:21:21: error: [E_IMPLICIT_NARROWING] cannot initialise field `b` of `Pv` with a value of type `int` -- the field is `u8`; a value does not change its numeric type implicitly (D491); use an explicit `... as u8` cast
+\\?\D:\Temp\tmp.0NkX1sxY1o\prog.nv:27:33: error: [E_IMPLICIT_NARROWING] cannot initialise field `f` of `Pv` with a value of type `int` -- the field is `f64`; a value does not change its numeric type implicitly (D491); use an explicit `... as f64` cast
+(no oracle binary)
+=== SUBJECT: novac emit prog.nv
+novac emit rc=0
+--- Carina's C, the body of main
+static nova_unit nova_fn_main_impl(void) {
+    nova_int k = ((nova_int)3LL);
+    nova_int n = ((nova_int)300LL);
+    Nova_Pv* _novac_tmp_t1 = (Nova_Pv*)nova_alloc(sizeof(Nova_Pv));
+    _novac_tmp_t1->b = n;
+    _novac_tmp_t1->f = ((nova_f64)2.0);
+    Nova_Pv* q1 = _novac_tmp_t1;
+    nova_print_str(_novac_strlit_0);
+    nova_print_newline();
+    nova_print_int(((nova_int)((q1->b))));
+    nova_print_newline();
+    nova_int _novac_l5 = (nova_int){0};
+    if (((nova_int)((k) > (((nova_int)0LL))))) {
+        _novac_l5 = n;
+    } else {
+        _novac_l5 = n;
+    }
+    Nova_Pv* _novac_tmp_t2 = (Nova_Pv*)nova_alloc(sizeof(Nova_Pv));
+    _novac_tmp_t2->b = _novac_l5;
+    _novac_tmp_t2->f = ((nova_f64)2.0);
+    Nova_Pv* q2 = _novac_tmp_t2;
+    nova_print_str(_novac_strlit_1);
+    nova_print_newline();
+    nova_print_int(((nova_int)((q2->b))));
+    nova_print_newline();
+    nova_int _novac_l8 = k;
+    nova_int _novac_l7 = (nova_int){0};
+    int _novac_matched_t0 = 0;
+    if (!_novac_matched_t0 && ((_novac_l8 == 3LL))) {
+        _novac_l7 = n;
+    _novac_matched_t0 = 1;
+    }
+    if (!_novac_matched_t0 && (true)) {
+        _novac_l7 = n;
+    _novac_matched_t0 = 1;
+    }
+    Nova_Pv* _novac_tmp_t3 = (Nova_Pv*)nova_alloc(sizeof(Nova_Pv));
+    _novac_tmp_t3->b = _novac_l7;
+    _novac_tmp_t3->f = ((nova_f64)2.0);
+    Nova_Pv* q3 = _novac_tmp_t3;
+    nova_print_str(_novac_strlit_2);
+    nova_print_newline();
+    nova_print_int(((nova_int)((q3->b))));
+    nova_print_newline();
+    nova_int _novac_l11 = k;
+    nova_int _novac_l10 = (nova_int){0};
+    int _novac_matched_t1 = 0;
+    if (!_novac_matched_t1 && ((_novac_l11 == 3LL))) {
+        _novac_l10 = k;
+    _novac_matched_t1 = 1;
+    }
+    if (!_novac_matched_t1 && (true)) {
+        _novac_l10 = k;
+    _novac_matched_t1 = 1;
+    }
+    Nova_Pv* _novac_tmp_t4 = (Nova_Pv*)nova_alloc(sizeof(Nova_Pv));
+    _novac_tmp_t4->b = ((nova_byte)(((nova_int)1LL)));
+    _novac_tmp_t4->f = _novac_l10;
+    Nova_Pv* q4 = _novac_tmp_t4;
+    nova_print_str(_novac_strlit_3);
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+=== VERDICT: one side produced no run (see above)
+--- Carina stdout
+plain int 300 into u8 field (no program by norm)
+44
+if-value int 300 into u8 field (no program by norm)
+44
+match-value int 300 into u8 field (no program by norm)
+44
+match-value int 3 into f64 field (no program by norm)
+3

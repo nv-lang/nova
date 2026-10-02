@@ -1,0 +1,69 @@
+=== PROGRAM
+     1	module prog
+     2	
+     3	// D484 control: call arguments are evaluated left to right, observably --
+     4	// no `match`, no `if`: three plain calls as the three arguments.
+     5	fn say(n int) -> int {
+     6	    println(n)
+     7	    n
+     8	}
+     9	
+    10	fn three(a int, b int, c int) -> int => a * 100 + b * 10 + c
+    11	
+    12	type Box { n int }
+    13	
+    14	fn Box @add3(a int, b int, c int) -> int => @n + a + b + c
+    15	
+    16	fn main() {
+    17	    println("plain call, norm 1 2 3 then 123")
+    18	    println(three(say(1), say(2), say(3)))
+    19	    println("method call, norm 4 5 6 then 15")
+    20	    ro b = Box { n: 0 }
+    21	    println(b.add3(say(4), say(5), say(6)))
+    22	    println("two-arg, norm 7 8 then 78")
+    23	    println(three(0, say(7), say(8)))
+    24	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=0
+oracle run rc=0
+=== SUBJECT: novac emit prog.nv
+novac emit rc=0
+--- Carina's C, the body of main
+static nova_unit nova_fn_main_impl(void) {
+    nova_print_str(_novac_strlit_0);
+    nova_print_newline();
+    nova_print_int(novac_fn_prog_three__nova_int__nova_int__nova_int__to_nova_int(novac_fn_prog_say__nova_int__to_nova_int(((nova_int)1LL)), novac_fn_prog_say__nova_int__to_nova_int(((nova_int)2LL)), novac_fn_prog_say__nova_int__to_nova_int(((nova_int)3LL))));
+    nova_print_newline();
+    nova_print_str(_novac_strlit_1);
+    nova_print_newline();
+    Nova_Box* _novac_tmp_t1 = (Nova_Box*)nova_alloc(sizeof(Nova_Box));
+    _novac_tmp_t1->n = ((nova_int)0LL);
+    Nova_Box* b = _novac_tmp_t1;
+    nova_print_int(novac_fn_prog_add3__Box__nova_int__nova_int__nova_int__to_nova_int(b, novac_fn_prog_say__nova_int__to_nova_int(((nova_int)4LL)), novac_fn_prog_say__nova_int__to_nova_int(((nova_int)5LL)), novac_fn_prog_say__nova_int__to_nova_int(((nova_int)6LL))));
+    nova_print_newline();
+    nova_print_str(_novac_strlit_2);
+    nova_print_newline();
+    nova_print_int(novac_fn_prog_three__nova_int__nova_int__nova_int__to_nova_int(((nova_int)0LL), novac_fn_prog_say__nova_int__to_nova_int(((nova_int)7LL)), novac_fn_prog_say__nova_int__to_nova_int(((nova_int)8LL))));
+    nova_print_newline();
+    return NOVA_UNIT;
+}
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+=== STDOUT, line by line: oracle | Carina
+  1  plain call, norm 1 2 3 then 123| plain call, norm 1 2 3 then 123
+  2  3                       | 3
+  3  2                       | 2
+  4  1                       | 1
+  5  123                     | 123
+  6  method call, norm 4 5 6 then 15| method call, norm 4 5 6 then 15
+  7  6                       | 6
+  8  5                       | 5
+  9  4                       | 4
+ 10  15                      | 15
+ 11  two-arg, norm 7 8 then 78| two-arg, norm 7 8 then 78
+ 12  8                       | 8
+ 13  7                       | 7
+ 14  78                      | 78
+=== VERDICT: SAME stdout

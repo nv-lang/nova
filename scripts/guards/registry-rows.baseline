@@ -1522,8 +1522,9 @@
 # 2026-10-03, integrator nova-20: rows -> 1601, max -> 1665 (merge of p1648-generic-record-field-expected: row 1648 arrives, its reserve dropped).
 # 2026-10-03, assistant nova-88: rows -> 1598, max -> 1670 (branch p1657-untyped-local-shadows: row 1670 filed -- the return check judges by the function's entry scope, a false E_IMPLICIT_NARROWING; number from the integrator; 1663-1669, issued to other sessions and not filed on main, reserved in gaps; condition to drop: their rows' filing removes them).
 # 2026-10-03, integrator nova-20: rows -> 1602, max -> 1670 (merge of p1657-untyped-local-shadows: row 1670 arrives; 1666-1669 stay reserved for the cloud sessions mono-k2 and strarm).
-rows=1602
-max=1670
+# 2026-10-03, integrator nova-20: rows -> 1608, max -> 1685 (rows 1680-1685 filed from the hunt 2026-10-03-matchval-k1; 1671-1679 issued to cloud sessions tonight -- reserved in gaps).
+rows=1608
+max=1685
 rows=1590
 max=1642
 rows=1587
@@ -2271,7 +2272,7 @@ stale_gaps=0
 #   указателем); строки едут в его ветке `r3-threshold-24`. Условие снятия: тем же слиянием номера убираются из `gaps`.
 # 2026-10-02, integrator: 1610-1611 В `gaps` — РЕЗЕРВ, выданный помощнику nova-88: №1610 (вывод `Empty` как ParseBoolError, ветка
 #   p1456-builtin-sum-method) и №1611 (f64 -> int молча, К1). Тем же слиянием номера убираются из `gaps`.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1644-1647,1649-1654,1658-1660,1664,1666-1669
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1644-1647,1649-1654,1658-1660,1664,1666-1669,1671-1679
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding

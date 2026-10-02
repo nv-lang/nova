@@ -1,3 +1,0 @@
-module hp.geo
-
-export type Point { x int, y int }

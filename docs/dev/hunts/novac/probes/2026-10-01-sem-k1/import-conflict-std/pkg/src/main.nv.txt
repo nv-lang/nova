@@ -1,9 +1,0 @@
-module hp
-
-import std.encoding.utf16.{is_high_surrogate}
-
-fn is_high_surrogate(x str) -> bool => true
-
-fn main() {
-    println(is_high_surrogate("a"))
-}

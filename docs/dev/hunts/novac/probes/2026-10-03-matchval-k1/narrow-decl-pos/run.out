@@ -1,0 +1,143 @@
+=== PROGRAM
+     1	module prog
+     2	
+     3	// D489: a literal takes the type of its position when its value fits; a
+     4	// declared local type is such a position (`ro x T = e`), and the `match`
+     5	// value's arms take the type their neighbour value has. Each print is
+     6	// labelled with the norm.
+     7	fn found(k int) -> Option[int] {
+     8	    if k > 0 { Some(k) } else { None }
+     9	}
+    10	
+    11	fn take8(x u8) -> int => x as int
+    12	
+    13	fn main() {
+    14	    ro k = 3
+    15	    ro a u8 = 200 as u8
+    16	    println("a u8 = 200, (a + 55) as int, norm 255")
+    17	    println((a + 55) as int)
+    18	    ro b i16 = -300 as i16
+    19	    println("b i16 = -300, norm -300")
+    20	    println(b as int)
+    21	    ro o Option[int] = found(k)
+    22	    println("o Option[int] = found(3), norm 3")
+    23	    println(o ?? 0)
+    24	    ro f f64 = 3 as f64
+    25	    println("f f64 = 3, f / 2.0, norm 1.5")
+    26	    println(f / 2.0)
+    27	    ro w u8 = a
+    28	    println("w u8 = a, norm 200")
+    29	    println(w as int)
+    30	    println("take8(match: a or 7), norm 200")
+    31	    println(take8(match k {
+    32	        3 => a
+    33	        _ => 7 as u8
+    34	    }))
+    35	    println("take8(match Some(v) => a, None => 255), norm 255")
+    36	    println(take8(match found(0) {
+    37	        Some(v) => a
+    38	        None => 255 as u8
+    39	    }))
+    40	    ro e = match k {
+    41	        3 => a
+    42	        _ => 0 as u8
+    43	    }
+    44	    println("e = match a or 0, (e + 55) as int, norm 255")
+    45	    println((e + 55) as int)
+    46	    ro g u8 = match k {
+    47	        3 => a
+    48	        _ => w
+    49	    }
+    50	    println("g u8 = match a or w, norm 200")
+    51	    println(g as int)
+    52	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=0
+oracle run rc=0
+=== SUBJECT: novac emit prog.nv
+novac emit rc=0
+--- Carina's C, the body of main
+static nova_unit nova_fn_main_impl(void) {
+    nova_int k = ((nova_int)3LL);
+    nova_byte a = ((nova_byte)(((nova_int)200LL)));
+    nova_print_str(_novac_strlit_0);
+    nova_print_newline();
+    nova_print_int(((nova_int)((nova_u8_checked_add(a, ((nova_byte)55ULL))))));
+    nova_print_newline();
+    int16_t b = nova_i16_checked_neg(((int16_t)(((nova_int)300LL))));
+    nova_print_str(_novac_strlit_1);
+    nova_print_newline();
+    nova_print_int(((nova_int)(b)));
+    nova_print_newline();
+    NovaOpt_nova_int o = novac_fn_prog_found__nova_int__to_Option_of_nova_int(k);
+    nova_print_str(_novac_strlit_2);
+    nova_print_newline();
+    NovaOpt_nova_int _novac_l5 = o;
+    nova_int _novac_l6 = (nova_int){0};
+    if (_novac_l5.tag == NOVA_TAG_Option_Some) {
+        _novac_l6 = _novac_l5.value;
+    } else {
+        _novac_l6 = ((nova_int)0LL);
+    }
+    nova_print_int(_novac_l6);
+    nova_print_newline();
+    nova_f64 f = ((nova_f64)(((nova_int)3LL)));
+    nova_print_str(_novac_strlit_3);
+    nova_print_newline();
+    nova_print_f64((f / ((nova_f64)2.0)));
+    nova_print_newline();
+    nova_byte w = a;
+    nova_print_str(_novac_strlit_4);
+    nova_print_newline();
+    nova_print_int(((nova_int)(w)));
+    nova_print_newline();
+    nova_print_str(_novac_strlit_5);
+    nova_print_newline();
+    nova_int _novac_l10 = k;
+    nova_byte _novac_l9 = (nova_byte){0};
+    int _novac_matched_t0 = 0;
+    if (!_novac_matched_t0 && ((_novac_l10 == 3LL))) {
+        _novac_l9 = a;
+    _novac_matched_t0 = 1;
+    }
+    if (!_novac_matched_t0 && (true)) {
+        _novac_l9 = ((nova_byte)(((nova_int)7LL)));
+    _novac_matched_t0 = 1;
+    }
+    nova_print_int(novac_fn_prog_take8__nova_byte__to_nova_int(_novac_l9));
+    nova_print_newline();
+    nova_print_str(_novac_strlit_6);
+    nova_print_newline();
+    NovaOpt_nova_int _novac_l12 = novac_fn_prog_found__nova_int__to_Option_of_nova_int(((nova_int)0LL));
+    nova_byte _novac_l11 = (nova_byte){0};
+    int _novac_matched_t1 = 0;
+    if (!_novac_matched_t1 && ((_novac_l12.tag == NOVA_TAG_Option_Some))) {
+    nova_int v = _novac_l12.value;
+        _novac_l11 = a;
+    _novac_matched_t1 = 1;
+    }
+    if (!_novac_matched_t1 && ((_novac_l12.tag == NOVA_TAG_Option_None))) {
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+=== STDOUT, line by line: oracle | Carina
+  1  a u8 = 200, (a + 55) as int, norm 255| a u8 = 200, (a + 55) as int, norm 255
+  2  255                     | 255
+  3  b i16 = -300, norm -300 | b i16 = -300, norm -300
+  4  -300                    | -300
+  5  o Option[int] = found(3), norm 3| o Option[int] = found(3), norm 3
+  6  3                       | 3
+  7  f f64 = 3, f / 2.0, norm 1.5| f f64 = 3, f / 2.0, norm 1.5
+  8  1.5                     | 1.5
+  9  w u8 = a, norm 200      | w u8 = a, norm 200
+ 10  200                     | 200
+ 11  take8(match: a or 7), norm 200| take8(match: a or 7), norm 200
+ 12  200                     | 200
+ 13  take8(match Some(v) => a, None => 255), norm 255| take8(match Some(v) => a, None => 255), norm 255
+ 14  255                     | 255
+ 15  e = match a or 0, (e + 55) as int, norm 255| e = match a or 0, (e + 55) as int, norm 255
+ 16  255                     | 255
+ 17  g u8 = match a or w, norm 200| g u8 = match a or w, norm 200
+ 18  200                     | 200
+=== VERDICT: SAME stdout

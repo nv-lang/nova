@@ -1,0 +1,125 @@
+=== PROGRAM
+     1	module prog
+     2	
+     3	// A `match` value as the argument of a call whose
+     4	// parameter is GENERIC (the type comes from the match), with `str` and
+     5	// record arms, and as a method argument whose receiver is itself a `match`
+     6	// value bound first. Pure arms; each print labelled with the norm.
+     7	type Tally { n int }
+     8	
+     9	fn Tally @plus(k int) -> int => @n + k
+    10	
+    11	fn first[T](a T, b T) -> ro T => a
+    12	
+    13	fn found(k int) -> Option[int] {
+    14	    if k > 0 { Some(k) } else { None }
+    15	}
+    16	
+    17	fn main() {
+    18	    ro k = 3
+    19	    println("generic T from match arms (str), norm three")
+    20	    println(first(match k {
+    21	        3 => "three"
+    22	        _ => "other"
+    23	    }, "x"))
+    24	    println("generic T from match arms (record), norm 7")
+    25	    ro t = first(match found(k) {
+    26	        Some(v) => Tally { n: v + 4 }
+    27	        None => Tally { n: 0 }
+    28	    }, Tally { n: 9 })
+    29	    println(t.n)
+    30	    println("method arg with binding arm, receiver from a match, norm 37")
+    31	    ro acc = match k {
+    32	        3 => Tally { n: 7 }
+    33	        _ => Tally { n: 0 }
+    34	    }
+    35	    println(acc.plus(match found(k) {
+    36	        Some(v) => v * 10
+    37	        None => 0
+    38	    }))
+    39	    println("str arm into println directly, norm three")
+    40	    println(match k {
+    41	        3 => "three"
+    42	        _ => "other"
+    43	    })
+    44	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=0
+oracle run rc=0
+=== SUBJECT: novac emit prog.nv
+novac emit rc=0
+--- Carina's C, the body of main
+static nova_unit nova_fn_main_impl(void) {
+    nova_int k = ((nova_int)3LL);
+    nova_print_str(_novac_strlit_0);
+    nova_print_newline();
+    nova_int _novac_l3 = k;
+    nova_str _novac_l2 = (nova_str){0};
+    int _novac_matched_t0 = 0;
+    if (!_novac_matched_t0 && ((_novac_l3 == 3LL))) {
+        _novac_l2 = _novac_strlit_1;
+    _novac_matched_t0 = 1;
+    }
+    if (!_novac_matched_t0 && (true)) {
+        _novac_l2 = _novac_strlit_2;
+    _novac_matched_t0 = 1;
+    }
+    nova_print_str(novac_fn_prog_first__nova_str__nova_str__to_nova_str__nova_str(_novac_l2, _novac_strlit_3));
+    nova_print_newline();
+    nova_print_str(_novac_strlit_4);
+    nova_print_newline();
+    NovaOpt_nova_int _novac_l6 = novac_fn_prog_found__nova_int__to_Option_of_nova_int(k);
+    Nova_Tally* _novac_l5 = (Nova_Tally*){0};
+    int _novac_matched_t1 = 0;
+    if (!_novac_matched_t1 && ((_novac_l6.tag == NOVA_TAG_Option_Some))) {
+    nova_int v = _novac_l6.value;
+    Nova_Tally* _novac_tmp_t1 = (Nova_Tally*)nova_alloc(sizeof(Nova_Tally));
+    _novac_tmp_t1->n = nova_int_checked_add(v, ((nova_int)4LL));
+        _novac_l5 = _novac_tmp_t1;
+    _novac_matched_t1 = 1;
+    }
+    if (!_novac_matched_t1 && ((_novac_l6.tag == NOVA_TAG_Option_None))) {
+    Nova_Tally* _novac_tmp_t2 = (Nova_Tally*)nova_alloc(sizeof(Nova_Tally));
+    _novac_tmp_t2->n = ((nova_int)0LL);
+        _novac_l5 = _novac_tmp_t2;
+    _novac_matched_t1 = 1;
+    }
+    Nova_Tally* _novac_tmp_t3 = (Nova_Tally*)nova_alloc(sizeof(Nova_Tally));
+    _novac_tmp_t3->n = ((nova_int)9LL);
+    Nova_Tally* t = novac_fn_prog_first__Tally__Tally__to_Tally__Tally(_novac_l5, _novac_tmp_t3);
+    nova_print_int((t->n));
+    nova_print_newline();
+    nova_print_str(_novac_strlit_5);
+    nova_print_newline();
+    nova_int _novac_l10 = k;
+    Nova_Tally* _novac_l9 = (Nova_Tally*){0};
+    int _novac_matched_t2 = 0;
+    if (!_novac_matched_t2 && ((_novac_l10 == 3LL))) {
+    Nova_Tally* _novac_tmp_t4 = (Nova_Tally*)nova_alloc(sizeof(Nova_Tally));
+    _novac_tmp_t4->n = ((nova_int)7LL);
+        _novac_l9 = _novac_tmp_t4;
+    _novac_matched_t2 = 1;
+    }
+    if (!_novac_matched_t2 && (true)) {
+    Nova_Tally* _novac_tmp_t5 = (Nova_Tally*)nova_alloc(sizeof(Nova_Tally));
+    _novac_tmp_t5->n = ((nova_int)0LL);
+        _novac_l9 = _novac_tmp_t5;
+    _novac_matched_t2 = 1;
+    }
+    Nova_Tally* acc = _novac_l9;
+    NovaOpt_nova_int _novac_l12 = novac_fn_prog_found__nova_int__to_Option_of_nova_int(k);
+    nova_int _novac_l11 = (nova_int){0};
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+=== STDOUT, line by line: oracle | Carina
+  1  generic T from match arms (str), norm three| generic T from match arms (str), norm three
+  2  three                   | three
+  3  generic T from match arms (record), norm 7| generic T from match arms (record), norm 7
+  4  7                       | 7
+  5  method arg with binding arm, receiver from a match, norm 37| method arg with binding arm, receiver from a match, norm 37
+  6  37                      | 37
+  7  str arm into println directly, norm three| str arm into println directly, norm three
+  8  three                   | three
+=== VERDICT: SAME stdout
