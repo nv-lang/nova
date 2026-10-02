@@ -49,7 +49,8 @@ test "u8 wrapping_add сохраняет ширину u8, а не signed nova_in
     ro got = d404w_x.wrapping_add(d404w_y) // UNANNOTATED: inferred u8 (не int)
     // u8-слот: 300 mod 256 = 44. nova_int-коллапс дал бы полное 300.
     assert(got == 44)                      // u8 wrap ✓ ; коллапс → 300 → FAIL
-    assert(got != 300)                     // прямой страж против схлопывания в широкий int
+    assert((got as int) != 300)            // прямой страж против схлопывания в широкий int; `got != 300` при u8 —
+                                           // вечно-истинное сравнение, E_LIT_OUT_OF_RANGE (D489, №1593)
 }
 
 test "u16 wrapping_mul сохраняет ширину u16, а не signed nova_int (D404 под 206)" {
@@ -61,7 +62,8 @@ test "u16 wrapping_mul сохраняет ширину u16, а не signed nova_
     ro got = d404w_p.wrapping_mul(d404w_q) // UNANNOTATED: inferred u16
     // u16-слот: 120000 mod 65536 = 54464. nova_int-коллапс дал бы полное 120000.
     assert(got == 54464)                   // u16 wrap ✓ ; коллапс → 120000 → FAIL
-    assert(got < 65536)                    // остаётся в 16-битном диапазоне ; коллапс → ≥65536
+    assert((got as int) < 65536)           // остаётся в 16-битном диапазоне ; коллапс → ≥65536 (`got < 65536`
+                                           // при u16 — E_LIT_OUT_OF_RANGE, D489, №1593)
 }
 
 test "i32+i32 control: signed-32 round-trips корректно, не теряет знак (D404)" {
