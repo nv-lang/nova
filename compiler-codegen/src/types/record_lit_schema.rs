@@ -217,8 +217,9 @@ impl<'a> TypeCheckCtx<'a> {
                 Compat::Narrowing { from, to } => faults.push((
                     format!(
                         "[E_IMPLICIT_NARROWING] cannot initialise field `{field}` of `{ty}` \
-                         with a value of type `{from}` -- `{to}` is narrower; implicit int \
-                         narrowing loses range; use an explicit `... as {to}` cast (D54)"
+                         with a value of type `{from}` -- the field is `{to}`; {why}; use an \
+                         explicit `... as {to}` cast",
+                        why = super::numeric_change::numeric_change_why(&from, &to)
                     ),
                     value.span,
                 )),

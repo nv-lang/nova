@@ -1502,6 +1502,9 @@
 # 2026-10-01, integrator nova-20: rows -> 1562, max -> 1615 (p1456 merge: row 1610 filed, its reserve dropped).
 # 2026-10-01, integrator nova-20: rows -> 1564, max -> 1615 (R3 merge: rows 1598, 1599 filed, their reserve dropped).
 # 2026-10-02, integrator nova-20: rows -> 1565, max -> 1616 (row 1616 filed: oracle call takes the parameter convention of a same-named function of another module, K1, blocks the tag).
+# 2026-10-02, integrator nova-20: rows -> 1566, max -> 1616 (row 1611 arrives with its fix (merge of p1611-float-int-kind); reserve 1611 dropped from gaps).
+rows=1566
+max=1616
 rows=1565
 max=1616
 rows=1564
@@ -2225,7 +2228,7 @@ stale_gaps=0
 #   указателем); строки едут в его ветке `r3-threshold-24`. Условие снятия: тем же слиянием номера убираются из `gaps`.
 # 2026-10-02, integrator: 1610-1611 В `gaps` — РЕЗЕРВ, выданный помощнику nova-88: №1610 (вывод `Empty` как ParseBoolError, ветка
 #   p1456-builtin-sum-method) и №1611 (f64 -> int молча, К1). Тем же слиянием номера убираются из `gaps`.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1611
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding
