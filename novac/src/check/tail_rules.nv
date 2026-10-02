@@ -20,7 +20,6 @@
 
 module novac.check
 
-import ../diag.{ice}
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, NodeId, no_node}
 import ../sem.{branch_children, is_expr_kind, leaf_kind, ret_is_unit, is_value_tail_kind, expr_leaf_name}
@@ -239,18 +238,9 @@ fn Checker mut @type_if_value(n Node) -> () {
 /// mixing the two ways out of a function needs a measurement against the
 /// oracle, and that measurement is its own step.
 fn Checker mut @type_branch_value(b Node) -> TyId {
-    if is_nested_value_kind(b.kind_of()) {
-        // An `else if` CHAIN -- `IfStmt` in a tail, `IfExpr` in an initializer,
-        // `IfLet` for `else if Some(v) = ..`:
-        // the else branch is the next `if`, itself a value
-        // (D49 rule 5: an `else if` continues the `if` expression; D34 rule 6).
-        // It used to be refused here as "not compiled as a value yet" --
-        // sem/mangle.nv:479 of novac's own source.
-        // SILENT-OK: the nested door recorded the inner value or refused it by name.
-        return @type_nested_value(b)
-    } else if b.kind_of() != NodeKind.Block {
-        // A gap the parser planted (a recovery shape): refused by name here,
-        // as every non-block else branch was before the chain was compiled.
+    if b.kind_of() != NodeKind.Block {
+        // An `else if` chain, or a gap the parser planted. Named, not silent:
+        // the chain is legal Nova and arrives with its own carrier.
         @report_first_leaf_of([]Node.of(b), "outside the subset: an `else if` chain is not compiled as a value yet (E2-b)")
         return no_ty()
     } else {
@@ -286,12 +276,6 @@ fn Checker mut @type_branch_value(b Node) -> TyId {
                             // Refused inside: no type, and the refusal is the
                             // diagnostic -- `no_ty()` says so to the caller.
                         }
-                    } else if is_nested_value_kind(c.kind_of()) {
-                        // A NESTED `if` / `if let` as the branch's tail: a
-                        // value of its own, typed by its own door. It used
-                        // to "end without a value" (lower/lower_match.nv:410,
-                        // sem/sem.nv:493 of novac's own source).
-                        out_t = @type_nested_value(c)
                     } else {
                         @report_first_leaf_of([]Node.of(c), "outside the subset: a branch of a tail `if` ends without a value (E2-b)")
                     }
@@ -304,29 +288,6 @@ fn Checker mut @type_branch_value(b Node) -> TyId {
     }
     out_t
 }
-
-/// The VALUE of an `if` or `if let` standing where a branch's value goes -- a
-/// branch's tail, or an `else if` -- through the door that types it as a
-/// value anywhere else, read back from what that door recorded. `no_ty()`
-/// after a refusal inside (the door spoke), or when both of its branches
-/// leave -- and then the enclosing branch terminates too, so no caller asks.
-fn Checker mut @type_nested_value(c Node) -> TyId {
-    ro before = @out.len()
-    if c.kind_of() == NodeKind.IfLet {
-        @type_if_let(c, as_value: true)
-    } else if c.kind_of() == NodeKind.IfStmt || c.kind_of() == NodeKind.IfExpr {
-        @type_if_value(c)
-    } else {
-        ice("check: a nested value that is neither an `if` nor an `if let` -- `is_nested_value_kind` admits only those")
-    }
-    if @out.len() > before { return no_ty() }
-    @chan.type_if_known(c.id_of())
-}
-
-/// The node kinds that stand as a NESTED value -- a branch's tail or an `else
-/// if`: the plain `if` in both its positions and the `if let`.
-fn is_nested_value_kind(k NodeKind) -> bool =>
-    k == NodeKind.IfStmt || k == NodeKind.IfExpr || k == NodeKind.IfLet
 
 /// The index of the last BRANCH child: trailing leaves are not statements.
 fn last_branch_of(kids []Node) -> int {
