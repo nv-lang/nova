@@ -146,3 +146,23 @@ test "a prefix operator and a generic payload over a POISONED name say nothing m
     ro (dc, _) = compile_to_c("fn main() {\n ro t = \"s\"\n if !t { println(1) }\n}", std)
     assert(messages(dc).contains("prefix operator"), messages(dc))
 }
+
+test "a temporary of a HEAP type may fill a `mut` parameter; of a VALUE type it may not (part 6 of p274-carina-k1)" {
+    // parse/pattern.nv `@record_pattern([]Node.new())` was refused "needs a
+    // mutable place": D84's mode rule CHOOSES between overloads, and what a
+    // single `mut` parameter takes is D326 revision R3/R6 -- the right to change
+    // a heap OBJECT, which a temporary is as much as a binding.
+    ro std = std_decls()
+    ro (d, _) = compile_to_c("type Bag { n int }\nfn fill(mut b Bag) -> int => b.n\nfn main() {\n println(fill(Bag { n: 1 }))\n}", std)
+    assert(d.len() == 0, messages(d))
+    // A VALUE type's `mut` parameter is the caller's own storage: a temporary
+    // has none, and that is a language error with its code, not a subset limit.
+    ro (dv, _) = compile_to_c("fn inc(mut n int) -> int => n\nfn main() {\n println(inc(3))\n}", std)
+    assert(messages(dv).contains("E_MUT_ARG_NOT_MUTABLE"), messages(dv))
+    assert(dv[0].code == "E_NOVAC_LANG", dv[0].code)
+    // CONTROL: a `ro` BINDING of a heap type is still no mutable place -- only
+    // the temporary is admitted, and only when no overload takes it otherwise.
+    ro (dr, _) = compile_to_c("type Bag { n int }\nfn fill(mut b Bag) -> int => b.n\n\
+fn main() {\n ro b = Bag { n: 1 }\n println(fill(b))\n}", std)
+    assert(messages(dr).contains("needs a mutable place"), messages(dr))
+}

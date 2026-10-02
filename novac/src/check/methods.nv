@@ -104,7 +104,7 @@ fn Checker mut @record_method_callee(e Node, kids []Node, recv_t TyId) -> () {
         // the binding, and its refusal needs it to name which rule failed.
         Leaf(t) => {
             ro key = @method_call_key(kids, recv_t)
-            @judge_method_lookup(e, t, key, @res.lookup(@ctx.fns, @ctx.tys, t.text, key, CallForm.MethodCall))
+            @judge_method_lookup(e, t, key, @lookup_call(t.text, key, CallForm.MethodCall))
         }
     }
 }

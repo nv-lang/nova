@@ -91,10 +91,15 @@ fn Ctr mut @fresh() -> Ctr => Ctr { n: @n }\n"
     // CONTROL: a chain rooted at a `ro` place is still not a mutable place.
     ro (d1, _) = compile_to_c("${defs}fn main() {\n ro c = Ctr { n: 5 }\n println(c.reset().set(4).n)\n}", std)
     assert(d1.len() >= 1 && messages(d1).contains("needs a mutable place"), messages(d1))
-    // CONTROL: a method that returns a FRESH value (`-> Ctr`, not `-> @`) hands
-    // out a temporary, not its receiver's place.
+    // A method that returns a FRESH value (`-> Ctr`, not `-> @`) hands out a
+    // temporary, not its receiver's place -- and since 2026-10-02 a temporary of
+    // a HEAP type fills a `mut` receiver all the same: D84's mode rule chooses
+    // between overloads, and a single `mut @` of a heap type is the right to
+    // change the object (D326 revision R3/R6; the integrator's word for part 6
+    // of p274-carina-k1; the oracle accepts and runs it). This line asserted
+    // the refusal until then. The VALUE-type control lives in refusal_test.
     ro (d2, _) = compile_to_c("${defs}fn main() {\n mut c = Ctr { n: 5 }\n println(c.fresh().set(4).n)\n}", std)
-    assert(d2.len() >= 1 && messages(d2).contains("needs a mutable place"), messages(d2))
+    assert(d2.len() == 0, messages(d2))
 }
 
 test "an EXPLICIT self-return in a `-> @` body is refused: tail `@`, `return @`, `=> @` (D409 rule 3, #1538)" {
