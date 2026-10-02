@@ -82,10 +82,31 @@ fn harvest_methods(decls []Node, own_module str, types []TypeDef, mut defs DefTa
 /// DECLARING module, which the calling file cannot name. Left as the bare
 /// name, the call printed `INITIAL_CAPACITY` into the caller's C, an
 /// undeclared identifier: `check` clean, clang red. The literal is rebuilt
-/// without an identity (`handed_literal`), as for an imported constant. Any
-/// other default form stays as written.
+/// without an identity (`handed_literal`), as for an imported constant -- and
+/// so is a default that IS a literal (1576). Any other default form stays as
+/// written.
 fn resolve_const_defaults(d Node, mut fns FnTable, first int) -> () {
     if first >= fns.rows.len() { return }
+    // A LITERAL default is rebuilt without an identity too (registry 1576):
+    // printed as-is it carried its HANDED tree's node id, and the emitter read
+    // that id in the compiled file's channel -- another node's type (a `3` for
+    // `int` printed as that node's `u8`), or past the end of the table.
+    for r in first..fns.rows.len() {
+        ro fd = fns.rows[r]
+        for p in fd.param_off..fd.param_off + fd.param_cnt {
+            if Some(dx) = fns.params[p].default_expr {
+                if Some(lit) = handed_literal(dx) {
+                    mut pd = fns.params[p]
+                    pd.default_expr = Some(lit)
+                    fns.params[p] = pd
+                } else {
+                    // Not a literal: the constant pass below, or as written.
+                }
+            } else {
+                // A required parameter: no default to rebuild.
+            }
+        }
+    }
     // The file's constants with a literal value, by name, through the ONE
     // str -> id door: `lits[i]` is the literal of the constant `index` maps to.
     mut index = NameTable.new(NamespaceId.NsDefs)

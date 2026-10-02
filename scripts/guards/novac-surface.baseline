@@ -259,10 +259,15 @@
 #   zero (59 -> 61 -> 59), main's is 59 -> 60 -- the merged base is main's 60.
 # merge of p274-carina-cast into the merge train (integrator, 2026-10-01): cast's net builtins
 #   change against main is zero, so the train's 66 stands.
+# 2026-10-01, cloud session p274-carina-sweep, merge of origin/main 0fed40d0d: builtins 60 -> 61 --
+#   this branch's ASSERT_FN and main's own +1 (main 59 -> 60) add; the count is the guard's on the merged tree.
+# merge of p274-carina-sweep (deliveries 3-4) into the merge train (integrator, 2026-10-02): ASSERT_FN was
+#   already counted at the mono-k2 merge, so the train's 66 stands (the guard's count on the merged tree).
 # 2026-10-02, cloud session p274-carina-k1 (registry 1539): builtins 66 -> 67: `is_ptr_method`
 #   -- the raw-pointer methods of D216 as ONE answer for check's typing of a pointer method
 #   (check/unsafe.nv) and the subset walk's "is this a method novac knows" (check/rules.nv),
 #   which an instance body now passes too; outside builtins because both askers are check's.
+# merge of origin/main 2488a47be into p274-carina-k1: main's builtins 66 plus this branch's +1 (the line above) = 67.
 builtins 67
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
@@ -445,7 +450,12 @@ parse 1
 #   `path_base` -- the base name of a path, moved from main.nv: the pipeline now gets a
 #   handed body's whole PATH (its refusals name it) and still prints the base name in the
 #   body's contracts; main.nv asks the same cut for the compiled file. One door, two askers.
-pipeline 13
+# 2026-10-01, cloud session p274-carina-sweep: pipeline 12 -> 13: `UnitFile` -- the type of the
+#   exported `Unit.files` and of `file_of_offset` / `offset_in_file`; a private type in a public
+#   signature is E_PRIVATE_TYPE_IN_PUBLIC (D47 amendment, owner 2026-10-01). main.nv reads it.
+# merge of p274-carina-sweep into the merge train (integrator, 2026-10-02): pipeline 13 (k1) + 1
+#   (sweep's UnitFile) = 14.
+pipeline 14
 # 2026-08-28 (274.4 step 3): the field root gets the same cut. sem 171 -> 169:
 # has_field and field_type moved OUT to resolve (FieldIndex); resolve 11 -> 15:
 # FieldIndex, build, has_field, field_type.
@@ -988,11 +998,21 @@ resolve 23
 #   same-named rows of every module, each with its home, walked by check's constant door
 #   (`Checker @const_seen`): a body reads its OWN module's constant, not the caller's.
 # merge of p274-carina-k1 into the merge train (integrator, 2026-10-02): sem 331 (train) + 5 (k1) = 336.
+# 2026-10-01, cloud session p274-carina-sweep, merge of origin/main 0fed40d0d: sem 326 -> 328 --
+#   main's 322 -> 324 and this branch's 322 -> 326 add; the count is the guard's on the merged tree.
+# 2026-10-01, cloud session p274-carina-sweep (D488): sem 328 -> 331: `RECV_COPY_MAX_BYTES`,
+#   `value_recv_by_pointer`, `row_recv_by_pointer` (sem/value_recv.nv) -- how a `value` record's
+#   receiver crosses a call; asked by check/methods.nv and the emitter's signature, body and call site.
+#   And 331 -> 330: `recv_type_name` (sem/slots_decl.nv) is gone with its one caller, the refusal
+#   of every method on a value record that D488 replaces.
+# merge of p274-carina-sweep (deliveries 3-4) into the merge train (integrator, 2026-10-02): 336 + 3 (D488:
+#   RECV_COPY_MAX_BYTES, value_recv_by_pointer, row_recv_by_pointer) - 1 (recv_type_name) = 338.
 # 2026-10-02, cloud session p274-carina-k1 (registry 1567, types step 1): sem 336 -> 337:
 #   `DefTable @is_private` -- a type another module keeps private (D281), registered for that
 #   module's own instances; asked by check's type door (`Checker @type_seen`), which owns
 #   no registry of its own.
-sem 337
+# merge of origin/main 2488a47be into p274-carina-k1: main's sem 338 plus this branch's +1 (the line above) = 339.
+sem 339
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

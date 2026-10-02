@@ -60,7 +60,7 @@
 
 std/src/encoding/serde/decode_errors_test   # №624 (было №599/CC-FAIL, ЗАКРЫТО окном p599; теперь RUN-FAIL в sum_autoderive_test.nv, скрытый прежде тем же CC-FAIL)
 std/src/net/addr                            # №591 (только CI: wakes a directly-parked accept)
-std/src/os/d324_os_env_args_cwd_test        # №591 (только CI: d453 supervised timeout reaps)
+std/src/os/d324_os_env_args_cwd_test        # №1594 (CC-FAIL: строковый литерал в `[]u8` перегрузки `env_bytes` идёт в C как nova_str; прежняя запись №591 «только CI» устарела, 2026-10-02)
 # 2026-09-09 (интегратор), НЕ регресс слияния — проверено ЗАПУСКОМ до записи.
 #   Отказ появился в полном прогоне `nova test std/src` (PASS 75 FAIL 3), а
 #   поодиночке тест зелёный ТРИ раза из трёх: `PASS: 1 FAIL: 0`.

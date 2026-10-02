@@ -1,0 +1,6 @@
+[package]
+name = "intlitfloat"
+version = "0.0.0"
+
+[lib]
+src = "."

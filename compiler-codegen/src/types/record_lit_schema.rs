@@ -212,7 +212,7 @@ impl<'a> TypeCheckCtx<'a> {
                     value.span,
                 )),
                 Compat::OutOfRange { msg } => {
-                    faults.push((format!("[E_LIT_OUT_OF_RANGE] {msg}"), value.span))
+                    faults.push((super::literal_exact::literal_diag(&msg), value.span))
                 }
                 Compat::Narrowing { from, to } => faults.push((
                     format!(

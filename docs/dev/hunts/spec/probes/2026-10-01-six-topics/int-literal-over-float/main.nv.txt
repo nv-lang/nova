@@ -1,0 +1,12 @@
+module intlitfloat.main
+// C7: D486 s2 (amendment 2026-10-01) says an integer literal pattern stands "only over an integer type".
+fn kind(x f64) -> int {
+    match x {
+        1 => 10
+        _ => 0
+    }
+}
+
+fn main() Io {
+    println("${kind(1.0)} ${kind(2.0)}")
+}

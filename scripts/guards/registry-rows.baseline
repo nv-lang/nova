@@ -1486,9 +1486,36 @@
 # 2026-10-01, integrator nova-20: rows -> 1505, max -> 1555 (2026-10-01 integrator: row 1555 -- regression: bare variant bound to the importer's same-name variant (nova-63)).
 # 2026-10-01, integrator nova-20: rows -> 1509, max -> 1559 (2026-10-01 integrator: rows 1556-1559 (strarm interpolation, mono-k2 index ICE and 1524 rest, nova-63 _box_ capture)).
 # 2026-10-01, integrator nova-20: rows -> 1519, max -> 1569 (2026-10-01 integrator: rows 1560-1569 (sweep, k1, strarm findings)).
-# 2026-10-01, integrator merge train integ/merge-train-1001: rows -> 1520, max -> 1570 (rows 1 added).
-rows=1520
-max=1570
+# 2026-10-01, integrator nova-20: rows -> 1526, max -> 1586 (spec-track merge: rows 1580-1586 (spec hunt, six topics + std type-name leak)).
+# 2026-10-01, integrator nova-20: rows -> 1529, max -> 1587 (rows 1578, 1579, 1587 (strarm question, claude-limits test-only CC-FAIL, cast question 3)).
+# 2026-10-01, integrator nova-20: rows -> 1532, max -> 1591 (d486-cond-outer-mode merge: rows 1588, 1589, 1591).
+# 2026-10-01, integrator nova-20: rows -> 1533, max -> 1591 (row 1590 (Windows argv/env ANSI)).
+# 2026-10-01, integrator nova-20: rows -> 1535, max -> 1593 (rows 1592 (cli error causes), 1593 (literal precision)).
+# 2026-10-01, integrator nova-20: rows -> 1543, max -> 1593 (merge-train merge: rows 1570-1577 (1571-1577 filed at the merge; the train agent was stopped before filing)).
+# 2026-10-01, integrator nova-20: rows -> 1545, max -> 1597 (rows 1596 (newtype ctor from itself), 1597 (D433 vs D405 implicit widening)).
+# 2026-10-01, integrator nova-20: rows -> 1547, max -> 1597 (p1593 merge: rows 1594, 1595 (holes closed)).
+# 2026-10-01, integrator nova-20: rows -> 1554, max -> 1606 (hunt cast-k1 rows 1600-1606; 1598-1599 reserved for the assistant).
+# 2026-10-01, integrator nova-20: rows -> 1555, max -> 1607 (row 1607 (novac binary chosen by name)).
+rows=1555
+max=1607
+rows=1554
+max=1606
+rows=1547
+max=1597
+rows=1545
+max=1597
+rows=1543
+max=1593
+rows=1535
+max=1593
+rows=1533
+max=1591
+rows=1532
+max=1591
+rows=1529
+max=1587
+rows=1526
+max=1586
 rows=1519
 max=1569
 rows=1509
@@ -2176,7 +2203,9 @@ stale_gaps=0
 # nomer I v gaps=, I so strokoy schitaetsya 'protuhshey dyroy'.
 # 2026-09-21: №1209 ПРИЕХАЛ и СНЯТ из gaps=
 # (писал интегратор, как и планировалось). №1210-1211 всё ещё ждёт Карину.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497
+# 2026-10-02, integrator: 1598-1599 В `gaps` — РЕЗЕРВ, выданный помощнику nova-88 под R3 (`ro @` по размеру, `-> ro T`
+#   указателем); строки едут в его ветке `r3-threshold-24`. Условие снятия: тем же слиянием номера убираются из `gaps`.
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1598-1599
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding

@@ -1,0 +1,6 @@
+module suffixlit.main
+// C7: D54 table examples write `-1i32 as u16`, `300u32 as u8`; D44/D227 say suffix literals are a syntax error.
+fn main() Io {
+    ro a = 300u32 as u8
+    println("${a}")
+}

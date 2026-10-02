@@ -125,6 +125,14 @@ fi
 if [ -f "$ROOT/scripts/guards/check-novac-commit-no-simplification.py" ] && [ -n "${MSGFILE:-}" ]; then
     python "$ROOT/scripts/guards/check-novac-commit-no-simplification.py" "$MSGFILE" "$ROOT" || exit 1
 fi
+# Амендмент внутри существующего D-блока называет остальные места правила (слово
+# владельца 2026-10-02: «спека однозначно понятна из любого места»): трейлер
+# `Spec-places:`. Зовётся, только когда в индексе есть spec/decisions/; клапан
+# NOVA_SPEC_PLACES_NA="<причина>"; слияние страж сам не судит (MERGE_HEAD).
+if [ -f "$ROOT/scripts/guards/check-spec-amend-places.py" ] && [ -n "${MSGFILE:-}" ] \
+   && git diff --cached --name-only 2>/dev/null | grep -q '^spec/decisions/'; then
+    python "$ROOT/scripts/guards/check-spec-amend-places.py" "$MSGFILE" "$ROOT" || exit 1
+fi
 # Новая строка №TBD не коммитится, пока ветка отстаёт от main (владелец,
 # 2026-09-22) — иначе номер, уже присвоенный интегратором на main, приходит
 # назад как второй №TBD той же находки. Не нуждается в файле сообщения.

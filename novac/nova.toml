@@ -510,7 +510,24 @@
 # Carina: none left -- the parser reads it in the same commit, the checker
 # already took the last identifier. Value by the pre-commit formula
 # (150 + this commit) in the shallow cloud clone; recounted on the full history at the merge.
-#   spec-queue: 155
+# 2026-10-02 (integrator, owner's word): D457 no longer says `pub` is absent from the
+# language -- `pub` exists only as the field modifier of D220/D281. Cost to Carina: none
+# expected, the field modifier is old; checked by the novac gate.
+# 2026-10-02 (integrator, owner's word): D55 amendment -- a literal takes the type of its
+# position when its exact value is representable there; the literal's form sets its kind.
+# Cost to Carina: not measured yet -- the oracle half is row 1593; Carina's half follows by
+# the differential (an integer literal pattern over a float scrutinee becomes legal).
+# 2026-10-02 (integrator, owner's word): the literal rule moves out of D55 into its own block
+# D489 (one home; D44, D54, D55, D227, D405, D486 point to it). Same rule, no new cost.
+# merge of integ/merge-train-1001 into main (integrator, 2026-10-02): recounted on the full
+# history over both sides -- main's 159 plus the cast branch's D54 amendment.
+# 2026-10-02 (integrator, owner's word): D52 -- a newtype constructor takes the
+# representation, `W(e)` with `e W` is E_NEWTYPE_CTOR_SELF; D55/D52 stale lines about a
+# variable wrapping itself fixed; D489 states the match-arm case and D433 points to it.
+# Cost to Carina: none -- it refuses `W(e)` already; the refusal moves to E_NOVAC_LANG.
+# 2026-10-02 (integrator): D490 reverted before publication -- the owner is still deciding
+# ("I am still thinking about this decision"); the revert commit counts as a spec commit.
+#   spec-queue: 163
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,

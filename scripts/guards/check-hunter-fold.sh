@@ -70,7 +70,7 @@ rc=0
 SUMMARY=""
 TSEEN="${TMPDIR:-/tmp}/hunter-fold-refs.$$"
 trap 'rm -f "$TSEEN"' 0 2 15
-for TRACK in novac guards; do
+for TRACK in novac guards spec; do
     DIR="$HUNTS_BASE/$TRACK"
     : > "$TSEEN"
     [ -d "$DIR" ] || continue  # отсутствие каталога краснит mark-страж, не этот
@@ -91,7 +91,7 @@ for TRACK in novac guards; do
         while IFS= read -r line; do
             case "$line" in "СВЁРНУТО |"*) ;; *) continue ;; esac
             N_FOLDED=$((N_FOLDED + 1))
-            if ! printf '%s\n' "$line" | grep -qE '^СВЁРНУТО \| *20[0-9]{2}-[0-9]{2}-[0-9]{2}-[a-z0-9-]+ *\| *[a-z_]+ *\| *К[1-7] *\| *находок [0-9]+ *\|'; then
+            if ! printf '%s\n' "$line" | grep -qE '^СВЁРНУТО \| *20[0-9]{2}-[0-9]{2}-[0-9]{2}-[a-z0-9-]+ *\| *[a-z_]+ *\| *(К|С)[1-7] *\| *находок [0-9]+ *\|'; then
                 echo "check-hunter-fold: FAIL — строка леджера $TRACK не разбирается по формату (№801): $(printf '%s' "$line" | head -c 100)" >&2
                 rc=1
                 continue
