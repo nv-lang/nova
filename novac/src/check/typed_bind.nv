@@ -43,7 +43,7 @@ fn Checker mut @type_declared_bind(kids []Node, dt TyId) -> () {
     ro init = kids[kids.len() - 1]
     ro ik = init.kind_of()
     if ik == NodeKind.MatchExpr || ik == NodeKind.RecordCtor || ik == NodeKind.ArrayLit ||
-       ik == NodeKind.HandlerLit || ik == NodeKind.TupleExpr || !is_expr_kind(ik) {
+       ik == NodeKind.HandlerLit || !is_expr_kind(ik) {
         // An initializer form whose own door types it without the expectation
         // a written type would hand it -- a `match`, a constructor, an array, a
         // handler literal: the same dated debt the whole form carried before.
