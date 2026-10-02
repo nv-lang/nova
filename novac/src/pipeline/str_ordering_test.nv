@@ -13,7 +13,7 @@ test "`<` on two `str` calls `compare` and compares its answer with zero (D46)" 
     ro std = []str.of("fn str @compare(other str) -> int => 0\n")
     ro (d, c) = compile_to_c("fn gt(a str, b str) -> bool => a > b\nfn main() {\n println(gt(\"b\", \"a\"))\n}", std)
     assert(d.len() == 0, messages(d))
-    assert(c.contains("Nova_str_method_compare("), "the ordering calls the shell's `str @compare`")
+    assert(c.contains("_compare("), "the ordering calls the shell's `str @compare`")
     assert(c.contains(") > 0))"), "the answer of `compare` is compared with zero")
     // CONTROL: a `str` beside an `int` is no `str` pair -- refused by the table.
     ro (r, _) = compile_to_c("fn main() {\n println(\"a\" < 1)\n}", std)

@@ -27,7 +27,7 @@ import ../sem.{c_type, vec_op_c, raw_vrow, is_value_record, c_maker, VariantRow,
 // M3a: lowering `println` asks the tree three questions (is this an argument, what does the
 // callee spell, what are the children) and the output printer asks the carrier of a type.
 import ../sem.{branch_children, is_expr_kind, carrier_of, slice_shape_of}
-import ../sem.{FnRow, raw_row, c_callable, coerce_shell_symbol, c_shell_method, row_recv_by_pointer, no_subst}
+import ../sem.{FnRow, raw_row, c_callable, coerce_shell_symbol, c_shell_method, row_recv_by_pointer}
 import ../types.{TyId, is_ty}
 import ../lower.{Local, LocalDecl, AssignStmt, StoreStmt, Rvalue, Operand, OutputStmt, no_local}
 import ../builtins.{VEC_INDEX_METHOD, VEC_INDEX_SET_OP, VEC_LEN_METHOD, NEXT_METHOD}

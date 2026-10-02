@@ -614,13 +614,13 @@ export fn FnBuilder mut @place(e Node, dest Local) -> () {
     @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.Expr(e) }))
 }
 
-/// The binder of an `if let` (wave M2b-1b): `dest = payload of opt`, recorded
-/// in the current block -- the then-branch the Some-test just opened, where
-/// the read is safe by construction.
+/// The binder of an `if let` (wave M2b-1b): `dest = payload of opt`, in the then-branch
+/// the Some-test just opened -- the read is safe by construction.
 export fn FnBuilder mut @take_payload(dest Local, opt Local) -> () {
     @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.SomePayload(opt) }))
 }
 
+/// `dest = recv.next()`: one turn of a `for` over an iterator (D58), `row` is its `next`.
 export fn FnBuilder mut @call_next(dest Local, row FnRow, recv Local) -> () {
     @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.CallNext(NextRead { row, recv }) }))
 }
