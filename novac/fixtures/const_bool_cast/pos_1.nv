@@ -1,0 +1,32 @@
+module const_bool_cast.pos_1
+
+// `true` / `false` IN A CONSTANT (registry 1604): a bool literal is a literal
+// wearing a name, known at compile time like `1` -- alone, under `!` and
+// `&&`, and as the operand of every legal D54 cast (`bool as` a number since
+// the amendment 2026-10-01 p.1). The other cast pairs of D54 stand beside it
+// as the control: they were constant before, and stay so.
+const T = true
+const NF = !true
+const G = true && false
+const D = true as u8
+const E = false as int
+const F = true as i64
+const A = 300 as u8
+const B = 'A' as u8
+const C = 3.9 as int
+const H = 7 as f64
+const L = 'z' as int
+
+fn main() {
+    println(T)
+    println(NF)
+    println(G)
+    println(D)
+    println(E)
+    println(F as int)
+    println(A)
+    println(B)
+    println(C)
+    println(H)
+    println(L)
+}

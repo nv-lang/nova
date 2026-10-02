@@ -19,6 +19,7 @@
 module novac.sem
 
 import ../tree.{Node, NodeKind}
+import ../builtins.{is_bool_literal}
 
 /// Is `e` constexpr-eligible (D184 / D199)? The spec's list and nothing else:
 /// a literal of a primitive type; arithmetic, bitwise or comparison over
@@ -34,7 +35,10 @@ export fn is_constexpr(e Node, ctx Ctx) -> bool {
     if k == NodeKind.Lit { return true }
     if k == NodeKind.Name {
         ro n = expr_leaf_name(e)
-        return names_a_constant(n, ctx) || names_a_variant(n, ctx)
+        // `true` / `false` are LITERALS wearing a name (builtins.nv): known at
+        // compile time like `1` -- `const T = true`, `const D = true as u8`
+        // (D54 amendment 2026-10-01 p.1) were refused until #1604.
+        return is_bool_literal(n) || names_a_constant(n, ctx) || names_a_variant(n, ctx)
     }
     if k == NodeKind.FieldAccess { return qualified_constexpr(e, ctx) }
     if k == NodeKind.Paren || k == NodeKind.Unary || k == NodeKind.Bin || k == NodeKind.Cast {
