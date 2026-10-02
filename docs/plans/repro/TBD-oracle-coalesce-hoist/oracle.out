@@ -1,0 +1,9 @@
+eval g
+eval f
+3
+eval never
+eval l
+false
+eval never2
+eval l2
+true
