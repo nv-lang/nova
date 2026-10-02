@@ -100,7 +100,7 @@ impl BenchToml {
                 let key = line[..eq_pos].trim();
                 let value = line[eq_pos + 1..].trim();
                 if let Err(e) = cfg.apply_kv(&current_section, current_strict_name.as_deref(), key, value) {
-                    cfg.parse_errors.push(format!("line {}: {}", lineno + 1, e));
+                    cfg.parse_errors.push(format!("line {}: {:#}", lineno + 1, e));
                 }
                 continue;
             }

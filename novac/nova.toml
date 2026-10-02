@@ -530,7 +530,21 @@
 # 2026-10-02 (integrator, owner's word): D491 -- a value of a numeric type never changes its
 # type implicitly (positions, operators, match/if arms, wrapping into a variant); D433 R1 retracted;
 # composite literals follow D489 recursively. Cost to Carina: row 1609 (her half), after the oracle's 1608.
-#   spec-queue: 164
+# 2026-10-02 (integrator): D86 -- three places still said `?? return` was retracted whole;
+# they now point to the narrowing of AMEND 2026-09-01. D85 -- "a Fail function" means a function
+# whose return is not Result/Option (judged by the return type, as E_TRY_IN_FAIL_FN does). No new
+# rule, so no cost to Carina.
+# 2026-10-02 (integrator): D84 -- rule 1 of the mode axis chooses between ro and mut (an owned
+# temporary goes to consume by rule 3); "mut only for a mutable place" is the rule of CHOOSING among
+# overloads, a single mut parameter of a heap type takes a temporary (D326 R3/R6). No new rule;
+# Carina's refusal of `@record_pattern([]Node.new())` is her defect (k1's queue).
+# 2026-10-02 (integrator, row 1635): D35 -- a field write through `@` of a method without `mut`
+# is E_READONLY_FIELD; D36's "a mut field mutates through an immutable binding" struck, pointing to
+# the D175 amendment it had not followed. Cost to Carina: her checker must refuse the same form (her
+# own source has 0 such places, measured by the assistant). Inside a merge commit: the counter (--no-merges) stays 166.
+# 2026-10-02 (integrator): D35's amendment names the home block of E_READONLY_FIELD, D228
+# (check-spec-code-home). No rule changes.
+#   spec-queue: 167
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,

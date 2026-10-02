@@ -52,3 +52,18 @@ test "a type that is no sum is not told it has variants -- the refusal names the
     // `Nova_Box_static_new` -- not as an uncompiled form.
     assert(messages(d).contains("carries no `new`"), messages(d))
 }
+
+test "a handed variant whose payload is a handed NEWTYPE keeps its payload (part 5 of p274-carina-k1)" {
+    // sem hands mono `CalleeFn(FnRow)`, and `FnRow` is a newtype. Its term was
+    // interned AFTER the handed variants were registered, the variant loop drops
+    // a payload without a term, and `CalleeFn(row)` was refused as "the
+    // pattern's payload count disagrees" -- four times over novac's own mono.
+    ro decls = []str.of("type Row int\ntype Tk enum\n    | A(Row)\n    | B\n")
+    ro (d, _) = compile_to_c("fn pick(k Tk) -> int => match k {\n A(r) => 1\n B => 2\n}\nfn main() {\n println(pick(Tk.B))\n}", decls)
+    assert(d.len() == 0, messages(d))
+    // CONTROL: the count is still the declaration's -- two names for one
+    // payload are refused, so the case above is a count kept, not a judge gone.
+    ro (d2, _) = compile_to_c("fn pick(k Tk) -> int => match k {\n A(r, s) => 1\n B => 2\n}\nfn main() {\n println(pick(Tk.B))\n}", decls)
+    assert(d2.len() >= 1, "two names for a one-payload variant must be refused")
+    assert(messages(d2).contains("payload count disagrees"), messages(d2))
+}

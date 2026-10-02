@@ -298,6 +298,15 @@ fn family_has_values(r BuiltinType) -> bool {
 /// position. Returns whether it refused.
 fn Checker mut @report_if_unary_needs_protocol(kids []Node) -> bool {
     ro t = type_of(kids[1], @ctx, @scope, @chan)
+    if !is_ty(t) && reads_poisoned(kids[1], @scope) {
+        // SILENT-OK: the operand reads a name an earlier refusal bound with no
+        // type -- that refusal is the cause, and "dispatches through a
+        // protocol" would say it again about an operand nobody typed (part 5
+        // of p274-carina-k1: `!nm.ends_with(".nv")` in main.nv).
+        return true
+    } else {
+        // A typed operand, or an untyped one with no earlier cause: judged below.
+    }
     match un_op_of(leaf_kind(kids[0])) {
         Not => { if t == @ctx.prims.bool_id { return false } }
         Negate => {

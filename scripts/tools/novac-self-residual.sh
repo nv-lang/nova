@@ -28,7 +28,8 @@ set -u
 export LC_ALL=C
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT" || exit 1
-NOVAC="${NOVAC:-$ROOT/novac/target/novac.exe}"
+. "$ROOT/scripts/guards/lib/novac.sh"
+NOVAC="$(novac_bin "$ROOT")"   # #1607: NOVAC from the caller still wins, inside the door
 if [ ! -x "$NOVAC" ]; then
     echo "novac-self-residual: FAIL -- no novac binary at $NOVAC (build it first)" >&2
     exit 1

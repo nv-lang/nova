@@ -38,6 +38,33 @@ test "shape: file holds module decl, fn decl, eof" {
     }
 }
 
+test "shape: file attributes stand ABOVE the module header -- the header is still the header (D99, D371, #1567)" {
+    // std's `#prelude` files open so (`collections/vec/core.nv:45-46`); until
+    // #1567 the header after them was wrapped as a stray declaration.
+    ro f = parse(lex("#prelude(core, runtime)\n#allow(shadow)\nmodule collections.vv\nfn main() { }"))
+    match f {
+        Branch { kind, children, .. } => {
+            assert(kind == NodeKind.File)
+            assert(children[0].kind_of() == NodeKind.AttrDecl)
+            assert(children[1].kind_of() == NodeKind.AttrDecl)
+            assert(children[2].kind_of() == NodeKind.ModuleDecl)
+            assert(children[3].kind_of() == NodeKind.FnDecl)
+        }
+        Leaf(_) => assert(false)
+    }
+    assert(roundtrip("#prelude(core, runtime)\nmodule collections.vv\nfn main() { }"))
+    // CONTROL: a SECOND module declaration, after the header, is still the
+    // stray one the checker refuses -- attributes do not open a second header.
+    ro g = parse(lex("module a.b\n#doc \"x\"\nmodule c.d\nfn main() { }"))
+    match g {
+        Branch { children, .. } => {
+            assert(children[0].kind_of() == NodeKind.ModuleDecl)
+            assert(children[2].kind_of() == NodeKind.Err)
+        }
+        Leaf(_) => assert(false)
+    }
+}
+
 test "shape: module-level `ro` parses as LetDecl (registry TBD, D184 Item::Let)" {
     // Before this door existed, EVERY module-level `ro` -- not just array
     // literals or record constructors, as the failing carrier's shape

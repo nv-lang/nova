@@ -55,3 +55,21 @@ test "a slice over a vector the shell lacks `index(Range)` for is made from std'
     assert(d0.len() == 0, messages(d0))
     assert(c0.contains("Vec____nova_int_method_index(v, ((nova_int)1LL))"), "the element read lost the shell's name")
 }
+
+test "`p.dist(q)` is the signed element count between two pointers (D216, part 5 of p274-carina-k1)" {
+    // source/source.nv measures a slice's offset with `s.ptr().dist(..)`; the
+    // intrinsic was missing, and the call was "no such method in the
+    // declarations handed to novac" -- no declaration carries an intrinsic.
+    mut std = slice_std()
+    std.push("module std.w\nimport ../v.{Vec}\n\
+export fn Vec[T] @gap(k int) -> int => unsafe { @data.offset(k).dist(@data) }\n")
+    ro (d, c) = compile_to_c("fn main() {\n ro v = [1, 2, 3]\n println(v.gap(2))\n}", std)
+    assert(d.len() == 0, messages(d))
+    // C's pointer difference counts elements; the cast is the recorded `int`.
+    assert(c.contains(") - ((_novac_self->data))))"), c)
+    // CONTROL: the argument is a POINTER to the same pointee, not a count.
+    mut bad = slice_std()
+    bad.push("module std.w\nimport ../v.{Vec}\nexport fn Vec[T] @gap(k int) -> int => unsafe { @data.dist(k) }\n")
+    ro (d2, _) = compile_to_c("fn main() {\n ro v = [1, 2, 3]\n println(v.gap(2))\n}", bad)
+    assert(messages(d2).contains("same pointee"), messages(d2))
+}

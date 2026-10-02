@@ -111,9 +111,16 @@ fn Checker mut @type_tail_value(e Node) -> () {
     // -- or in an arm of a tail match/if -- is an instance of the declared
     // return; a call CLEARS it around its arguments (option_rules), so
     // `f(None)` in the tail is not typed as the fn's own return.
+    //
+    // SAVED AND RESTORED, not cleared: a `return` stands INSIDE other values --
+    // a match arm's block (`Lf(t) => { if c { return Some(t) } None }`) -- and
+    // clearing to `no_ty()` here took the arm's own expectation with it, so
+    // the block's tail `None` and every later arm's `None` lost the declared
+    // return (measured on novac's own sem/pattern.nv, 2026-10-02).
+    ro saved_expect = @value_expect
     @value_expect = @ret_expect
     @type_expr(e)
-    @value_expect = no_ty()
+    @value_expect = saved_expect
 }
 
 /// The type of a value tail AFTER it was typed, for the return door: what the

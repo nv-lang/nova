@@ -519,7 +519,7 @@ fn fits(fns FnTable, tys Interner, row FnRow, args []ArgSpec, form CallForm) -> 
 /// ro c)` scores 2 and `f(ro a, ro b, mut c)` scores 1, so the sum names a
 /// winner although neither is more specific everywhere.
 #realtime nogc
-fn dominates(fns FnTable, a FnRow, b FnRow) -> bool {
+fn dominates(fns FnTable, tys Interner, a FnRow, b FnRow) -> bool {
     ro fa = fns.rows[raw_row(a)]
     ro fb = fns.rows[raw_row(b)]
     mut no_worse = fa.param_cnt == fb.param_cnt
@@ -539,13 +539,58 @@ fn dominates(fns FnTable, a FnRow, b FnRow) -> bool {
         }
     }
     if no_worse && better_somewhere { return true }
+    // The modes are a filter BEFORE filter 4 (D84, mode-axis amendment): past
+    // this line they tie in every position, or `a` loses one of them.
+    if !no_worse { return false }
+    // CONCRETE BEATS GENERIC (D84 filter 4, rule 1), position by position, and
+    // only between rows the modes could not tell apart. Until part 5 of
+    // p274-carina-k1 this axis was missing, and every concrete method that
+    // shares its name with a blanket one was an ambiguity: `[]u8 @to_str()`
+    // beside `fn[T] T @to_str()` refused `bytes.to_str()` (registry 1543).
+    match type_order(fns, tys, fa, fb) {
+        Narrower => { return true }
+        Apart => { return false }
+        Alike => {}
+    }
     // THE LINEARITY AXIS (D84 amendment 2026-09-25, registry 1519), and only
     // where the mode axis cannot tell the two apart (its rule 5: linearity
     // decides AFTER the modes, between forms alike in all else): the form whose
     // type parameters are plain beats the `[T consume]` one, position by
     // position (rule 4). Without it std's `Vec[T] @contains` beside
     // `Vec[T consume] @contains` was an ambiguity on every vector of a plain T.
-    no_worse && linear_dominates(fns, fa, fb)
+    linear_dominates(fns, fa, fb)
+}
+
+/// How two rows' parameter TYPES compare under D84 filter 4 rule 1.
+type TypeOrder enum
+    | Narrower
+    | Alike
+    | Apart
+
+/// The type axis of filter 4: `Narrower` when `fa` is no more general than `fb`
+/// in every position and strictly more specific in one, `Alike` when each
+/// admits the other everywhere, `Apart` otherwise. "More general" is asked of
+/// the one structural door (`type_admits`): a parameter `T` admits `[]u8`,
+/// `[]u8` does not admit `T`. A position either row leaves untyped tells
+/// nothing, so it can make the pair `Alike` but never `Narrower`.
+#realtime nogc
+fn type_order(fns FnTable, tys Interner, fa FnDef, fb FnDef) -> TypeOrder {
+    mut narrower = false
+    for i in 0..fa.param_cnt {
+        ro ta = fns.params[fa.param_off + i].type_id
+        ro tb = fns.params[fb.param_off + i].type_id
+        if !is_ty(ta) || !is_ty(tb) { continue }
+        ro b_takes_a = type_admits(tys, tb, ta)
+        ro a_takes_b = type_admits(tys, ta, tb)
+        if !b_takes_a { return TypeOrder.Apart }
+        if !a_takes_b {
+            narrower = true
+        } else {
+            // Alike at this position: some other one decides.
+        }
+    }
+    if narrower { return TypeOrder.Narrower }
+    TypeOrder.Alike
 }
 
 /// Does `fa` beat `fb` on the linearity axis -- nowhere `consume` where `fb` is
@@ -615,9 +660,9 @@ export fn FnIndex @lookup(fns FnTable, tys Interner, name str, args []ArgSpec, f
         }
         if raw_row(winner) < 0 {
             winner = row
-        } else if dominates(fns, row, winner) {
+        } else if dominates(fns, tys, row, winner) {
             winner = row
-        } else if dominates(fns, winner, row) {
+        } else if dominates(fns, tys, winner, row) {
             // The standing candidate beats this row outright; nothing to settle.
         } else {
             // Incomparable. NOT a verdict: a row met later may beat them both
@@ -647,7 +692,7 @@ export fn FnIndex @lookup(fns FnTable, tys Interner, name str, args []ArgSpec, f
         if !@in_view(fns, row, view) { continue }
         if !fits(fns, tys, row, args, form) { continue }
         if row == winner { continue }
-        if !dominates(fns, winner, row) {
+        if !dominates(fns, tys, winner, row) {
             unique = false
         } else {
             // The winner beats this one outright; the rest of the chain decides.

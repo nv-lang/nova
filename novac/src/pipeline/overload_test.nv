@@ -79,7 +79,7 @@ fn main() {\n\
     assert(tie)
 }
 
-test "`??` is judged: a non-Option left side and `?? return` refuse by name (coalesce wave)" {
+test "`??` is judged: a non-Option left side refuses by name, with or without a `return` fallback (coalesce wave)" {
     // The POSITIVE path (payload/fallback, the tag guard, the short circuit)
     // is the CARRIER's -- examples/basics/coalesce.nv, held byte-for-byte by
     // the corpus smoke. It cannot live here: these shared decls are poor (no
@@ -88,9 +88,10 @@ test "`??` is judged: a non-Option left side and `?? return` refuse by name (coa
     // judge's own two refusals), and it speaks without any Option at all.
     ro std = std_decls()
 
-    // `?? return` is retracted (D86 amend): read by the parser, refused by
-    // name here -- the oracle refuses it in its checker for the same reason
-    // (novac's own door: `check/literal_rules.nv:420`).
+    // `?? return` is no longer refused as a form (D86 amended 2026-09-01: legal
+    // where the fn returns neither container -- its door and tests are
+    // check/try_rules.nv and pipeline/try_test.nv). Its LEFT side is still
+    // judged first: an `int` has no payload, with a `return` fallback too.
     ro (dr, _) = compile_to_c("fn main() {\n\
  ro n = 1\n\
  ro v = n ?? return 0\n\
@@ -98,7 +99,7 @@ test "`??` is judged: a non-Option left side and `?? return` refuse by name (coa
 }", std)
     mut ret_hit = false
     for g in dr {
-        if g.message.contains("does not take `return`") { ret_hit = true }
+        if g.message.contains("this left side is neither") { ret_hit = true }
     }
     assert(ret_hit)
 
@@ -128,4 +129,42 @@ test "the linearity axis: a plain T takes the `[T]` form over `[T consume]` (D84
     one.push("module std.v\nexport type Vec[T] { n int }\nexport fn Vec[T consume] @has(v T) -> bool => false\n")
     ro d1 = compile_with("fn f(xs Vec[int]) -> bool => xs.has(1)\nfn main() {\n println(1)\n}", parse_decls(one), interop_surface())
     assert(d1.len() == 0, messages(d1))
+}
+
+test "a method on a concrete receiver beats a blanket one on a bare type parameter (D285 section 2 point 1, D84 section 1)" {
+    mut std = std_decls()
+    std.push("module std.sh\nexport fn int @show() -> int => 1\nexport fn[T] T @show() -> str => \"\"\n")
+    // The concrete `int @show` wins: its `int` result takes `+ 1`; the blanket
+    // `str` one could not, and a tie would be the D84 ambiguity.
+    ro (d, _) = compile_to_c("fn main() {\n ro n = 7\n println(n.show() + 1)\n}", std)
+    assert(!messages(d).contains("fits more than one method"), messages(d))
+    // CONTROL: two concrete-alike forms (both blanket) stay an ambiguity --
+    // the axis says nothing between two bare type parameters.
+    mut std2 = std_decls()
+    std2.push("module std.sh\nexport fn[T] T @show() -> int => 1\nexport fn[U] U @show() -> str => \"\"\n")
+    ro (a, _) = compile_to_c("fn main() {\n ro n = 7\n println(n.show())\n}", std2)
+    assert(messages(a).contains("fits more than one method"), messages(a))
+}
+
+test "concrete beats generic: a concrete row wins over a blanket one of its name (D84 filter 4 rule 1, registry 1543)" {
+    // std declares `[]u8 @to_str()` beside `fn[T] T @to_str()`; both fit a
+    // `[]u8` receiver, and `dominates` compared only modes and linearity, so
+    // `bytes.to_str()` was an ambiguity -- six times over novac's own source.
+    mut std = std_decls()
+    std.push("module std.w\nexport type Box { n int }\n\
+export fn Box @tag() -> int => 1\nexport fn[T] T @tag() -> int => 2\n")
+    ro src = "fn f(b Box) -> int => b.tag()\nfn main() {\n println(1)\n}"
+    ro d = compile_with(src, parse_decls(std), interop_surface())
+    // The concrete row is CHOSEN: what remains is the shell's word about its
+    // symbol (std's bodies are the shell's), never the D84 tie.
+    assert(!messages(d).contains("fits more than one"), messages(d))
+    // The free path asks the same door: `pick(3)` takes `pick(a int)`.
+    ro (df, c) = compile_to_c("fn pick[T](a T) -> int => 2\nfn pick(a int) -> int => 1\nfn main() {\n println(pick(3))\n}", std_decls())
+    assert(df.len() == 0, messages(df))
+    assert(c.contains("pick"), c)
+    // CONTROL: generic in OPPOSITE positions is still a tie -- neither row is
+    // no more general everywhere, and D84 refuses rather than chooses.
+    ro (dt, _) = compile_to_c("fn pick[T](a T, b int) -> int => 1\nfn pick[T](a int, b T) -> int => 2\nfn main() {\n println(pick(1, 2))\n}", std_decls())
+    assert(dt.len() >= 1, "opposite generic positions must be refused")
+    assert(messages(dt).contains("fits more than one"), messages(dt))
 }

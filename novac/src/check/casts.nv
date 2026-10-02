@@ -54,6 +54,13 @@ fn Checker mut @type_cast(e Node) -> () {
     @type_expr(kids[0])
     if @out.len() > before { return }
     ro from = type_of(kids[0], @ctx, @scope, @chan)
+    // A POISONED OPERAND STOPS HERE (the cascade rule, check/binds.nv): a name
+    // whose initializer was refused is bound with `no_ty()`, and that one cause
+    // was already reported. Until this line the cast went on to the newtype
+    // rule with no type and said "this cast is not compiled yet" -- a second
+    // diagnostic about a cast nobody got wrong.
+    // SILENT-OK: the operand's own refusal is the one cause.
+    if !is_ty(from) { return }
     // A POINTER target (`0 as *mut T`, `p as *mut T`) is a type REFERENCE, read
     // through the one door with the instance's parameters in scope (274.11 E.10
     // step 4c-2: std's `Vec[T].new` writes `0 as *mut T`); a plain name is the

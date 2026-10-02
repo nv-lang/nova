@@ -27,8 +27,8 @@ set -u
 ROOT="${1:-.}"
 cd "$ROOT" || exit 2
 
-NOVAC="novac/target/novac.exe"
-[ -x "$NOVAC" ] || NOVAC="novac/target/novac"
+. scripts/guards/lib/novac.sh
+NOVAC="$(novac_bin .)"
 
 echo "=== RUNG DISTANCE -- $(date '+%Y-%m-%d %H:%M') ==="
 # THE LADDER IS READ, NOT RESTATED. Its home is plan 274; a copy here would

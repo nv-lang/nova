@@ -12,7 +12,7 @@
 module novac.emit_c
 
 import ../tree.{Node}
-import ../builtins.{TypeKind, PTR_WRITE_AT, PTR_WRITE_CONSUME_AT, PTR_OFFSET}
+import ../builtins.{TypeKind, PTR_WRITE_AT, PTR_WRITE_CONSUME_AT, PTR_OFFSET, PTR_DIST}
 import ../sem.{call_arg_at, leaf_text}
 import ../types.{is_ty}
 
@@ -35,6 +35,15 @@ fn Emitter mut @emit_ptr_op(kids []Node) -> () {
         @body.append(") + (")
         @emit_expr(call_arg_at(kids, 3, 0))
         @body.append("))")
+        return
+    } else if leaf_text(kids[2]) == PTR_DIST {
+        // `dist(q)`: C's pointer difference counts elements, signed -- cast to
+        // the `int` the checker recorded, as the oracle spells it.
+        @body.append("((nova_int)((")
+        @emit_expr(kids[0])
+        @body.append(") - (")
+        @emit_expr(call_arg_at(kids, 3, 0))
+        @body.append(")))")
         return
     } else {
         // `read_at` / `write_at`: the element.

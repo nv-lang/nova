@@ -30,7 +30,8 @@ export LC_ALL=C
 ROOT="${1:-$(dirname "$0")/../..}"
 ROOT="$(cd "$ROOT" 2>/dev/null && pwd || printf '%s' "$ROOT")"
 BASE="${2:-$ROOT/scripts/guards/novac-emission.baseline}"
-NOVAC="${3:-$ROOT/novac/target/novac.exe}"
+. "$(dirname "$0")/lib/novac.sh"
+NOVAC="${3:-$(novac_bin "$ROOT")}"   # #1607: the door, not a file name
 NAME=check-novac-emission-size
 
 if [ "${NOVAC_EMISSION:-1}" = "0" ]; then

@@ -64,21 +64,21 @@ impl WatchCache {
     ) -> Result<(Arc<Module>, String, CacheOutcome), CacheError> {
         let mtime = std::fs::metadata(path)
             .and_then(|m| m.modified())
-            .map_err(|e| CacheError::Io(format!("mtime для {}: {}", path.display(), e)))?;
+            .map_err(|e| CacheError::Io(format!("mtime для {}: {:#}", path.display(), e)))?;
         // Cache hit с unchanged mtime.
         if let Some(entry) = self.entries.get(path) {
             if entry.mtime == mtime {
                 // Hit: reuse cached Arc. Re-read source чтобы returned source
                 // matched (cache не stores source — only Module).
                 let src = std::fs::read_to_string(path)
-                    .map_err(|e| CacheError::Io(format!("read {}: {}", path.display(), e)))?;
+                    .map_err(|e| CacheError::Io(format!("read {}: {:#}", path.display(), e)))?;
                 return Ok((Arc::clone(&entry.module), src, CacheOutcome::Hit));
             }
         }
         // Miss или stale — re-parse.
         let was_present = self.entries.contains_key(path);
         let src = std::fs::read_to_string(path)
-            .map_err(|e| CacheError::Io(format!("read {}: {}", path.display(), e)))?;
+            .map_err(|e| CacheError::Io(format!("read {}: {:#}", path.display(), e)))?;
         let mut module = crate::parser::parse(&src)
             .map_err(|d| CacheError::Parse(d.render(&src, &path.display().to_string())))?;
         // Type-check + infer effects (тот же pipeline что cmd_doc делает).

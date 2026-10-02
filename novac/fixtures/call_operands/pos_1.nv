@@ -1,0 +1,26 @@
+module call_operands.pos_1
+
+// An operator whose two operands both CALL something, and a short circuit
+// whose right side calls (found by the 1619 wave, 2026-10-02): the F65 door
+// laid both operands down in temporaries in order -- and the printer, which
+// read a temporary back only at an argument, printed the operator from the
+// tree again, so every call ran TWICE (`eval p`, `eval q`, `eval p`, `eval q`)
+// and a `&&`'s right side ran even when the left was false. Now the printer
+// reads every laid-down node, and a short circuit is not laid down at all.
+// Byte for byte with the oracle.
+
+fn mark(s str, v int) -> int {
+    println("eval ${s}")
+    v
+}
+
+fn main() {
+    ro b = mark("x", 0) > 1 && mark("y", 1) > 0
+    println(b)
+    ro c = mark("p", 1) + mark("q", 2)
+    println(c)
+    ro d = mark("u", 1) > 0 || mark("v", 1) > 0
+    println(d)
+    ro e = mark("m", 3) * mark("n", 4) - mark("o", 5)
+    println(e)
+}

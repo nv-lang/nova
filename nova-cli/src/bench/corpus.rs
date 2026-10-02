@@ -40,7 +40,7 @@ pub fn measure_file(nova_cli_path: &Path, file: &Path,
     cmd.stdout(Stdio::null());
     cmd.stderr(Stdio::piped());
     let output = cmd.output()
-        .map_err(|e| anyhow!("spawn nova build: {}", e))?;
+        .map_err(|e| anyhow!("spawn nova build: {:#}", e))?;
     let stderr = String::from_utf8_lossy(&output.stderr);
     let mut passes: Vec<(String, u64)> = Vec::new();
     for line in stderr.lines() {
@@ -268,7 +268,7 @@ pub fn list_corpus_files(dir: &Path) -> Result<Vec<PathBuf>> {
 
 fn walk(d: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     let entries = std::fs::read_dir(d)
-        .map_err(|e| anyhow!("read_dir {}: {}", d.display(), e))?;
+        .map_err(|e| anyhow!("read_dir {}: {:#}", d.display(), e))?;
     for ent in entries.flatten() {
         let p = ent.path();
         let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");

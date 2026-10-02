@@ -1,0 +1,100 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `rustc_ast_lowering::expr` -- `x?` lowers to a match whose failing arm
+//   returns from the enclosing body (`lower_expr_try`); NOT taken: the `Try` trait and its
+//   `branch`/`from_residual` calls, because D85 has two fixed containers and no conversion.
+// Role: layer lower -- the value forms that test an Option and continue with its payload:
+//   `a ?? b` (D86), `X ?? return R` (D86 amended 2026-09-01) and `x?` (D85). The last two
+//   leave the body from their None branch through the return place and `Return`.
+// Used by: lowering.nv -- `@lower_value_source` (every value position) and
+//   `@hoist_sealed_args` (an argument); emit_c.nv's print-time hoist for `??`.
+// Guarded by: check-novac-differential.sh (the try_option and coalesce_return pos
+//   fixtures, byte for byte with the oracle), nova test novac/src/pipeline/try_test.nv
+//   (the early return's C), lower_test.nv (the graph shapes).
+//
+// A FILE OF ITS OWN because lowering.nv sits at the thousand-line limit: `??` moved here
+// with `?`, which shares its Some-test and differs only in its None branch.
+
+module novac.lower
+
+import ../tree.{Node}
+import ../sem.{branch_children, is_coalesce_return}
+
+/// `a ?? b` as a VALUE: the Option into a temporary, then the payload or the
+/// fallback into a second one. The SHORT CIRCUIT is the point -- the fallback
+/// is emitted INSIDE the else branch, so its effects run only when the left
+/// side is None, which is what the oracle does and what a reader expects.
+///
+/// The shape is `@lower_if_value`'s and the `(T){0}` initialiser is there for
+/// the same reason: a temporary only conditionally written would otherwise
+/// answer whatever the stack held. Both branches always write here; the
+/// initialiser costs one C token and removes the question.
+fn Lowerer mut @lower_coalesce(e Node) -> Local {
+    ro qk = branch_children(e)
+    ro ot = @out.type_of(qk[0].id_of())
+    ro res_t = @out.type_of(e.id_of())
+    // The Option lands in a TEMPORARY of the body through the one door (274.8 M1):
+    // the hoist of a construction inside it is the printer's. The name is the body's
+    // own -- `temp` numbers it by index -- because the compiler invented it and the
+    // printer has no business spelling `_novac_tmp_t<uniq>` by hand (274.8 M3).
+    ro lo = @ir.temp(ot)
+    @lower_place(qk[0], lo)
+    // The result is a temporary of the body, DECLARED as a statement of it (M2b-2 step 2):
+    // the zero initialiser is a field the lowering sets, not a shape this printer knows.
+    ro lr = @ir.temp(res_t)
+    @ir.declare_zeroed(lr)
+    // The head goes through the ONE door (M2b-2 step 3a), which spells the Some-test
+    // from the local's type and name -- the two values this function used to pass by
+    // hand. Both branches are BLOCKS of the body with one join, and the Some branch's
+    // one statement is the payload read through the one door -- printed by the one
+    // assignment printer, which spells a Temp with the indent the hand-written line
+    // had (measured before the edit, plan 274.8 decision (1)).
+    ro cond = Cond.IsSome(lo)
+    // Same as the if-value: the None branch is a block printed as `} else {`.
+    ro c = @ir.begin_if(cond, ElseShape.Braced)
+    @ir.take_payload(lr, lo)
+    @ir.begin_else(c)
+    // THE FALLBACK LIVES HERE, not above: its hoists and its effects belong
+    // to the None branch alone -- that is the short circuit, in one place.
+    // `X ?? return R` (D86 amended 2026-09-01) RETURNS from this branch, through
+    // the door a `return` statement takes; the result local is then never read.
+    if is_coalesce_return(qk) {
+        if qk.len() > 3 {
+            @lower_place(qk[3], @ir.ret_place())
+        } else {
+            // A bare `?? return` of a unit (or `-> @`) body: the `Return`
+            // terminator prints the unit, or the receiver (emit_flow.nv).
+        }
+        @ir.ret()
+    } else {
+        @lower_place(qk[2], lr)
+    }
+    @ir.end_if(c)
+    // THE LOCAL ITSELF, not its name (M3a). M2c had this function ask the record for the
+    // name because it handed its caller the TEXT of an expression; now `??` is a value
+    // form that LOWERS, so what the caller needs is the local -- a caller that wants text
+    // asks `decl_of(l).name` at its own end. Handing the local is what lets a value
+    // position take `??` through the one door (`lower_value_source`) instead of the
+    // print-time hoist table, and the hoist is exactly what iced under the walk of step 3b.
+    lr
+}
+
+
+/// `x?` on an Option (D85) as a VALUE: `match x { Some(v) => v, None => return None }`.
+/// The Some branch is `??`'s, read by the same door; the None branch writes the `None` of
+/// the RETURN place's own type -- an Option of another payload than the operand's, so the
+/// operand's `None` is not it -- and leaves the body. The checker admitted only an Option
+/// operand in a body that returns an Option (check/try_rules.nv).
+fn Lowerer mut @lower_try(e Node) -> Local {
+    ro tk = branch_children(e)
+    ro lo = @ir.temp(@out.type_of(tk[0].id_of()))
+    @lower_place(tk[0], lo)
+    ro lr = @ir.temp(@out.type_of(e.id_of()))
+    @ir.declare_zeroed(lr)
+    ro c = @ir.begin_if(Cond.IsSome(lo), ElseShape.Braced)
+    @ir.take_payload(lr, lo)
+    @ir.begin_else(c)
+    @ir.set_none(@ir.ret_place())
+    @ir.ret()
+    @ir.end_if(c)
+    lr
+}

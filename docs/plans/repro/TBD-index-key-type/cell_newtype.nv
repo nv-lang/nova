@@ -1,0 +1,16 @@
+module cell_newtype
+
+// An index of a newtype over `int` (the shape of novac's `NodeId`) over an
+// ordinary Vec held in a record field. D52: a newtype over `int` is not an
+// `int`; D238 and D405 as in cell_u8 -- a refusal.
+type Row int
+
+type Tab { rows []int }
+
+fn main() {
+    mut t = Tab { rows: []int.new() }
+    t.rows.push(10)
+    t.rows.push(20)
+    ro i = Row(1)
+    println(t.rows[i])
+}

@@ -79,3 +79,40 @@ test "a HANDED `-> @` body: the instance the unit makes returns its receiver on 
     }
     assert(returns - 1 >= 4, c1)
 }
+
+test "a `mut` fluent chain continues on the receiver a `-> @` call hands back (D181, D409, #1540)" {
+    ro std = std_decls()
+    ro defs = "type Ctr { n int }\nfn Ctr mut @reset() -> @ {\n @n = 0\n}\nfn Ctr mut @set(x int) -> @ {\n @n = x\n}\n\
+fn Ctr mut @fresh() -> Ctr => Ctr { n: @n }\n"
+    // Until #1540 the second link was "parameter `@` needs a mutable place
+    // (P14)": every call result was an owned temporary, the receiver too.
+    ro (d0, _) = compile_to_c("${defs}fn main() {\n mut c = Ctr { n: 5 }\n println(c.reset().set(4).n)\n println(c.n)\n}", std)
+    assert(d0.len() == 0, messages(d0))
+    // CONTROL: a chain rooted at a `ro` place is still not a mutable place.
+    ro (d1, _) = compile_to_c("${defs}fn main() {\n ro c = Ctr { n: 5 }\n println(c.reset().set(4).n)\n}", std)
+    assert(d1.len() >= 1 && messages(d1).contains("needs a mutable place"), messages(d1))
+    // CONTROL: a method that returns a FRESH value (`-> Ctr`, not `-> @`) hands
+    // out a temporary, not its receiver's place.
+    ro (d2, _) = compile_to_c("${defs}fn main() {\n mut c = Ctr { n: 5 }\n println(c.fresh().set(4).n)\n}", std)
+    assert(d2.len() >= 1 && messages(d2).contains("needs a mutable place"), messages(d2))
+}
+
+test "an EXPLICIT self-return in a `-> @` body is refused: tail `@`, `return @`, `=> @` (D409 rule 3, #1538)" {
+    ro std = std_decls()
+    // The oracle says E_EXPLICIT_SELF_RETURN for each; Carina accepted all three.
+    ro forms = []str.of("fn Ctr mut @set() -> @ {\n @n = 1\n @\n}",
+                        "fn Ctr mut @set() -> @ {\n @n = 1\n return @\n}",
+                        "fn Ctr @set() -> @ => @")
+    for f in forms {
+        ro (ds, _) = compile_to_c("type Ctr { n int }\n${f}\nfn main() {\n mut c = Ctr { n: 0 }\n println(c.set().n)\n}", std)
+        assert(ds.len() == 1, messages(ds))
+        assert(ds[0].message.contains("E_EXPLICIT_SELF_RETURN"), messages(ds))
+    }
+    // CONTROL: a DELEGATION is a call, not a self-return (D409's exception), and
+    // a bare `return` IS `return @` -- both stay accepted.
+    ro (dc, _) = compile_to_c("type Ctr { n int }\nfn Ctr mut @inc() -> @ {\n @n += 1\n}\n\
+fn Ctr mut @twice(b bool) -> @ {\n if b {\n  return @inc()\n }\n @inc()\n}\n\
+fn Ctr mut @thrice() -> @ => @inc()\n\
+fn main() {\n mut c = Ctr { n: 0 }\n println(c.twice(true).n)\n println(c.thrice().n)\n}", std)
+    assert(dc.len() == 0, messages(dc))
+}

@@ -402,12 +402,14 @@ test "lone ? (Try operator): named refusal, not the anonymous parser fallback (r
     // explicitly) and the parser's generic fallback refused it with no
     // name at all, the same "novac did not parse this" text a genuinely
     // malformed program gets. Now it reaches the tree as its own
-    // `NodeKind.Try` and is refused BY NAME in the checker, mirroring the
-    // established rule for the sibling `?? return` form (D86, expr.nv).
+    // `NodeKind.Try` and is judged BY NAME in the checker. Since 2026-10-02 the
+    // form compiles (check/try_rules.nv); this program applies it to an `int`,
+    // which D85 does not allow, and the refusal still names the operator.
     ro src = "module m\n\nfn maybe() -> int {\n    5\n}\n\nfn use_it() -> int {\n    ro v = maybe()?\n    v\n}\n"
     ro msg = diagnose_msg(src)
     assert(!msg.contains("did not parse"), "a legal form must not read as a syntax error")
-    assert(msg.contains("not compiled yet"), "the refusal must name the operator, not stay anonymous")
+    ro named = msg.contains("`?` takes an `Option` or a `Result`")
+    assert(named, "the refusal must name the operator, not stay anonymous")
 }
 
 test "with: a binding naming a non-effect is refused at the name, saying what the name is (274.11 E.4)" {
@@ -687,10 +689,10 @@ test "a `str` slice is compiled in every bound shape the shell carries; the rest
     // CONTROL: a receiver with no `index(Range)` at all.
     ro other = "module m\n\nfn f(n int) -> int => n[1..3]\n"
     assert(diagnose_in(other, shell).contains("carries no `index(Range)` for int"), diagnose_in(other, shell))
-    // CONTROL: a bound of another type gets the index's own SUBSET text -- the
-    // oracle accepts a `u8` bound (measured 2026-09-25).
+    // CONTROL: a bound of another type gets the index's own text -- a LANGUAGE
+    // error since 2026-10-02 (D238, D405), whatever the oracle accepts.
     ro wide = "module m\n\nfn f(s str, b bool) -> str => s[b..3]\n"
-    assert(diagnose_in(wide, shell).contains("only an `int` index"), diagnose_in(wide, shell))
+    assert(diagnose_in(wide, shell).contains("an index is an `int`"), diagnose_in(wide, shell))
 }
 
 test "a match on a POISONED scrutinee says nothing about its arms -- no `different sum` cascade (2026-10-01)" {
@@ -994,3 +996,4 @@ test "`is` on a value of a statically known non-sum type is E_IS_NON_ANY (D54)" 
     ro sum_ok = "module m\n\ntype Ct enum A | B\n\nfn f(c Ct) -> bool => c is A\n"
     assert(diagnose(sum_ok) == 0, diagnose_first_msg(sum_ok))
 }
+

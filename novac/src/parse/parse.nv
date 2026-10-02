@@ -248,6 +248,17 @@ export fn parse(toks []Token) -> Node
 {
     mut p = Cursor { toks, i: 0, no_ctor: false, next_id: 0, depth: 0, depth_told: false }
     mut items = []Node.new()
+    // FILE ATTRIBUTES COME BEFORE THE HEADER (D99 "Position", D371): `#prelude(
+    // core, runtime)`, `#no_prelude`, `#allow(shadow)`, `#cfg(..)`, `#doc ".."`,
+    // `#forbid ..` stand ABOVE `module a.b`, and an attribute after it is the
+    // next item's. Until 2026-10-02 only a header that was the very first token
+    // was one: the 19 std files that open with `#prelude(...)` had their
+    // `module collections.vec` wrapped as a stray declaration, read as NO module
+    // -- and every row and C name of theirs took the compiled file's module
+    // instead (registry 221.1 #1567, the hunt's instance-name-collision-module).
+    while p.peek() == TokenKind.Hash {
+        items.push(p.attr_decl())
+    }
     if p.peek() == TokenKind.KwModule {
         items.push(p.module_decl())
     } else {

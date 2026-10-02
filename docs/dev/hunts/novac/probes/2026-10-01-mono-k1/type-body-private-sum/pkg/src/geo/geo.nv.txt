@@ -1,0 +1,12 @@
+module hp.geo
+
+type Mode enum
+    | Big
+    | Small
+
+fn pick(n int) -> Mode => if n > 2 { Mode.Big } else { Mode.Small }
+
+export fn Vec[T] @mode() -> int => match pick(@len()) {
+    Big => 1
+    Small => 0
+}

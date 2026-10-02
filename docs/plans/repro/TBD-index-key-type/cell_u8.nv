@@ -1,0 +1,11 @@
+module cell_u8
+
+// An index of type `u8` over an ordinary Vec. D238: `Vec[T] @index` takes
+// `int` or `Range`; D405: no implicit numeric conversion -- a refusal.
+fn main() {
+    mut xs = []int.new()
+    xs.push(10)
+    xs.push(20)
+    ro i = 1 as u8
+    println(xs[i])
+}

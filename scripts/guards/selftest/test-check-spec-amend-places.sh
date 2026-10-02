@@ -104,6 +104,14 @@ run "$TMP/a" && grep -q "слияние" "$TMP/.out" && ok "k: MERGE_HEAD -> not
 : > "$TMP/a/.msg"
 run "$TMP/a" && grep -q "судить нечего" "$TMP/.out" && ok "l: empty message -> nothing to judge" || bad "l: expected ok"
 
+# (p) курсивное датированное уточнение внутри абзаца -> FAIL без трейлера (дыра 2026-10-02, D84)
+base "$TMP/p"; amend "$TMP/p" 'Rule continues. *Уточнение 2026-10-02 (integrator):* the rule narrows.'; msg "$TMP/p" "spec: amend D1"
+run "$TMP/p"; rc=$?
+[ $rc -ne 0 ] && grep -q "без трейлера" "$TMP/.err" && ok "p: inline italic dated Уточнение -> FAIL" || bad "p: expected FAIL on inline dated mark"
+# (q) КОНТРОЛЬ: слово «уточнение» без даты в прозе -> не амендмент, ok
+base "$TMP/q"; amend "$TMP/q" 'Rule continues; an уточнение of wording only.'; msg "$TMP/q" "spec: wording"
+run "$TMP/q" && ok "q: undated word in prose -> not judged" || bad "q: expected ok on undated prose"
+
 # (n) форма Amendment по-английски -> FAIL без трейлера
 base "$TMP/n"; amend "$TMP/n" '> **Amendment 2026-10-02**: the rule changes.'; msg "$TMP/n" "spec: amend D1"
 run "$TMP/n"; rc=$?
