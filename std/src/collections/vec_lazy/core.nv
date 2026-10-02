@@ -647,7 +647,7 @@ export fn BoxIter[T Compare] mut @max() -> Option[T] {
 
 /// Last remaining element, or `None` if the iterator is empty (drains it).
 export fn BoxIter[T] mut @last() -> Option[T] {
-    mut result = None
+    mut result Option[T] = None
     while true {
         match @next() {
             Some(x) => { result = Some(x) }

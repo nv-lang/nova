@@ -1,0 +1,43 @@
+module literal_arm.pos_1
+
+// A STRING LITERAL IN A `match` ARM, at the root and below it -- COMPILED.
+//
+// THIS CELL HAS CHANGED SIDES THREE TIMES, AND WHAT IT GUARDS NEVER CHANGED:
+// the order of preference -- a named refusal is louder than a crash and
+// quieter than a wrong answer, and a compiled form is better than all three.
+//
+// 2026-09-20 (registry 1191): positive -> negative. The parser had learnt
+// string and char arm patterns and novac DIED on `"match" => 2` in the emitter;
+// the cell held the refusal that replaced the crash.
+//
+// 2026-10-01, morning: the root string arm compiled, and the cell moved to the
+// nested literal `W("match")`, refused by name -- the lowering tested the arm's
+// root only (`A(3)` took `A(4)`, registry 1534).
+//
+// 2026-10-01, evening: the nested test is a synthetic condition on the value
+// it reads (lower_match.nv `@lower_sub`), and the cell is positive again, at
+// both depths. Behaviour byte-for-byte with the oracle (novac-e1-smoke).
+
+type Word enum
+    | W(str)
+    | Other
+
+fn word_kind(w Word) -> int => match w {
+    W("match") => 2
+    W("") => 1
+    _ => 0
+}
+
+fn root_kind(s str) -> int => match s {
+    "match" => 2
+    _ => 0
+}
+
+fn main() {
+    println(word_kind(Word.W("match")))
+    println(word_kind(Word.W("matc")))
+    println(word_kind(Word.W("")))
+    println(word_kind(Word.Other))
+    println(root_kind("match"))
+    println(root_kind("fn"))
+}

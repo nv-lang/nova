@@ -1,0 +1,11 @@
+module p1549_const_ref_const_nonentry.p1549_feed
+
+// A module-private const with the same name as the backup module's export -- the
+// shape of claude-limits `src/server/feed_test.nv`. Not the cause (renamed, the
+// defect stays), kept so the two qualifications meet in one CU.
+
+const DAY_MS = 86400000
+const TWO_DAYS_MS = DAY_MS * 2
+
+export fn day() -> int => DAY_MS
+export fn two_days() -> int => TWO_DAYS_MS

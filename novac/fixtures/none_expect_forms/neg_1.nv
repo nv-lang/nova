@@ -1,0 +1,22 @@
+module none_expect_forms.neg_1
+
+// NOVAC_EXPECT a bare `None` here has no type to take
+// ONE seeded cause: a bare `None` bound by a STATEMENT inside an arm's block.
+// The match's expectation belongs to the block's TAIL (the arm's value), not to
+// the statements before it, so `ro x = None` has no type to take. The oracle
+// refuses the same line (E_VARIANT_CTOR_UNTYPED: nothing fixes `T`).
+type Kd enum Ka | Kb
+
+fn f(k Kd) -> Option[int] {
+    match k {
+        Ka => {
+            ro x = None
+            x
+        }
+        Kb => Some(1)
+    }
+}
+
+fn main() {
+    println(f(Kd.Kb) ?? 0)
+}

@@ -247,6 +247,11 @@ ro x u8 = 200             // 200 это u8
 ro arr []f32 = [1.0, 2.0]
 ```
 
+A literal takes the type of its position only when its exact value is representable there, and
+its form sets its kind ([D489](decisions/02-types.md#d489)): an integer goes to an integer type
+within range and to a float when exact; a fractional one to floats only (`2.0` in `int` is an
+error); a character to `char` only.
+
 **Type-suffixes (`100u32`, `1.5f32`) are not introduced.** For rare
 disambiguation cases — an `as`-cast: `100 as u32`, `0xFF as u8`.
 
@@ -699,7 +704,9 @@ existing mechanisms:
 - `@as_X()` duplicates the `as` keyword (D54) for cheap casts or
   `X.from` for nontrivial ones.
 - `@is_X()` duplicates `v is X` (D54): for sum types and `any`
-  the `is` operator works directly (`shape is Circle`,
+  the `is` operator works directly (`shape is Circle`, or qualified
+  `shape is Shape.Circle` -- the qualifier must name the value's sum, D54 amendment
+  2026-10-01,
   `arg is int` for `arg any`). To extract the variant value
   with a binding — `if X(n) = v` (D34).
 - Field privacy — the `priv` modifier; the `_`-prefix for "privacy by
@@ -825,7 +832,12 @@ Details — [D30](decisions/03-syntax.md#d30), [D46](decisions/03-syntax.md#d46)
 Without `export` = private (visible only inside the module).
 
 Applied uniformly to **types**, **functions**, **methods**,
-**constants**, and **protocols**:
+**constants**, and **protocols**.
+
+A public declaration may not name a private type in its signature or in a public field
+(`E_PRIVATE_TYPE_IN_PUBLIC`, D47 amendment 2026-10-01): another module would get a value of a type
+it cannot name. Export the type or narrow the declaration.
+
 
 ```nova
 module account
@@ -1222,7 +1234,7 @@ takes the first one where the pattern matched AND the guard is true.
 
 | Form | Example | What it does |
 |---|---|---|
-| Literal | `0`, `"hello"`, `true` | comparison by value |
+| Literal | `0`, `"hello"`, `'a'`, `true` | comparison by value; the literal has the scrutinee's type, `char` and the integers do not mix (D486 §2, amendment 2026-10-01) |
 | Name (binding) | `n`, `x` | catches any value, binds it to a name |
 | Wildcard | `_` | catches any value, binds nothing |
 | Constructor | `Some(v)`, `Ok(value)`, `None` | destructures a sum-type variant |
@@ -1237,6 +1249,21 @@ amendment 2026-10-01): in `Aa(n, s) | Bb(s, n)` the name `n` is taken from where
 matching alternative bound it, not from its position in the first one. Different
 name sets are `E_OR_PATTERN_BINDING_MISMATCH`; different types of one name are an
 error too.
+
+**A pattern's literal has the scrutinee's type** ([D486](decisions/03-syntax.md#d486)
+§2, amendment 2026-10-01): a string literal over a `str` (compared by content), a char
+literal over a `char` (by codepoint), an integer literal over an integer type. `char`
+and the integers do not mix (D128), as in an expression -- `97` over a `char` is a
+type error:
+
+```nova
+fn kind(c char) -> int => match c {
+    'a' => 1        // a char literal over a `char`: compared by codepoint
+    '\n' => 2
+    _ => 0          // `char`, like `str` and `int`, needs a catch-all
+}
+// `match c { 97 => 1  _ => 0 }` is refused: an integer literal over a `char`
+```
 
 **A bare name in a pattern ALWAYS binds, even when a constant has that name.**
 `match w { MUT_W => 1, _ => 0 }` does not compare `w` against `MUT_W`, so the
@@ -1263,7 +1290,9 @@ only; a named tuple is destructured with the brace form `{ x, .. }`), array
 (`[a, .., z]`); the implicit field skip, formerly legal in `match`, is retracted
 (`E_RECORD_PATTERN_NEEDS_REST` in every position). `consume` on a binder inside a
 pattern is allowed in conditions too (`if Some(consume x) = opt { … }`); only the
-mode before the whole pattern is refused (`E_CONSUME_IN_CONDITION`). Any name in a
+mode before the whole pattern is refused (`E_CONSUME_IN_CONDITION`; `ro`/`mut` before a
+constructor or destructuring pattern — `E_OUTER_RO_IN_CONDITION` / `E_OUTER_MUT_IN_CONDITION`,
+they stand only before a bare name: `if ro n = f()`). Any name in a
 pattern may carry a type (`ro (a int, b) = pair`, `for (k str, v) in pairs`): the
 type is only checked — never converted, never used as a filter (D486 amendment
 2026-09-30).

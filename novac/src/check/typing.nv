@@ -497,7 +497,11 @@ fn Checker mut @type_block(b Node) -> () {
                     // for the emitter -- which declares the result temporary
                     // with it, exactly as the tail match has done since B5.
                     ro imark = @out.len()
+                    // The declared return reaches the branches (E2-b3), as it
+                    // does for an expression body's `if` and a tail match.
+                    @value_expect = @ret_expect
                     @type_if_value(c)
+                    @value_expect = no_ty()
                     if @out.len() == imark {
                         @judge_return(c, @chan.type_if_known(c.id_of()))
                     } else {
@@ -522,7 +526,9 @@ fn Checker mut @type_block(b Node) -> () {
                     // what a test corpus is for: my own probes all had branches
                     // that produce values, so none of them could have noticed.
                     ro lmark = @out.len()
+                    @value_expect = @ret_expect
                     @type_if_let(c, as_value: true)
+                    @value_expect = no_ty()
                     if @out.len() == lmark {
                         @judge_return(c, @chan.type_if_known(c.id_of()))
                     } else {

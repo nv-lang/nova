@@ -8,8 +8,8 @@
 // Role: backend A (layer 11) -- renders the checker's decision (the recorded
 //       INSTANCE type and the variant row); decides nothing.
 // Used by: emit_expr.nv (the variant-construction arms of Name, FieldAccess,
-//          Call and MethodCall), emit_flow.nv (the if-let) and emit_c.nv's `??` (the
-//          Some-test).
+//          Call and MethodCall), emit_flow.nv (the if-let), emit_c.nv's `??` (the
+//          Some-test) and emit_applied_sum.nv (a `match` arm's Some/None test).
 // Guarded by: check-novac-differential.sh (fixtures option_ctor/ and the
 //             corpus carrier examples/basics/option_ctor.nv, byte-for-byte
 //             against the oracle), novac/src/pipeline/option_test.nv (both
@@ -33,7 +33,7 @@ import ../tree.{Node}
 import ../types.{TyId, is_ty}
 import ../lower.{no_local}
 import ../builtins.{TypeKind, OPTION_SUM, OPTION_SOME_TAG_C, OPTION_NONE_TAG_C}
-import ../sem.{c_type, decl_of_ty}
+import ../sem.{c_type, decl_of_ty, c_is_pointer}
 
 /// Is this type an INSTANCE of the language's Option -- the shell's
 /// `NovaOpt_` family? A primitive or a record answers no without asking the
@@ -45,9 +45,10 @@ fn Emitter @is_option_inst(t TyId) -> bool {
 }
 
 /// Does this Option instance carry a POINTER payload -- the shell's tagless
-/// `_p` shape? Read off the payload's C spelling: a heap record is `Nova_X*`.
+/// `_p` shape? Asked of the payload's TERM through the mangling door
+/// (`c_is_pointer`), not read off its C spelling (P24).
 fn Emitter @option_payload_is_pointer(inst TyId) -> bool =>
-    c_type(@ctx, @ctx.tys.arg(inst, 0)).ends_with("*")
+    c_is_pointer(@ctx, @ctx.tys.arg(inst, 0))
 
 /// `Some(x)` as the shell's compound literal for the instance `inst`; `payload`
 /// is the one argument expression, printed by the general expression door.
@@ -78,6 +79,18 @@ fn Emitter mut @emit_option_none(inst TyId) -> () {
         @body.append("((${ct}){.value = NULL})")
     } else {
         @body.append("((${ct}){.tag = ${OPTION_NONE_TAG_C}})")
+    }
+}
+
+/// The C condition "this Option temporary holds NO value", for both shapes --
+/// the mirror of `option_some_test` below, asked by a `match` arm on `None`.
+/// Spelled positively rather than as `!(some)`: the value shape carries the
+/// shell's own None tag, and the pointer shape's absence IS `NULL`.
+fn Emitter @option_none_test(inst TyId, tmp str) -> str {
+    if @option_payload_is_pointer(inst) {
+        "${tmp}.value == NULL"
+    } else {
+        "${tmp}.tag == ${OPTION_NONE_TAG_C}"
     }
 }
 

@@ -1,7 +1,0 @@
-// D486 s2: binding = [mode] IDENT, mode = 'mut' | 'consume'. `ro` on a
-// binder inside a destructuring binding.
-fn main() {
-    ro p = (1, 2)
-    ro (ro a, b) = p
-    println(a + b)
-}

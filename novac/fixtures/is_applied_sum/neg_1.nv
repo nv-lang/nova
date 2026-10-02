@@ -1,0 +1,15 @@
+module is_applied_sum.neg_1
+
+// `x is V` on an applied sum novac CANNOT spell -- refused by name and stage,
+// not as E_IS_NON_ANY.
+//
+// The prelude's `Outcome[T]` is a sum, so the old answer ("`is` tests a value of
+// type `any` or a sum -- the type of this value is known statically") was false
+// about it the same way it was about `Option[int]` before registry 1544. The
+// shell spells `Outcome` without a per-instance struct, so the emitter has no
+// test to print; the refusal says so, exactly as a `match` on it does
+// (applied_sum_arm/neg_1.nv). The pair: pos_1.nv, `is` on Option and Result.
+
+// NOVAC_EXPECT `is` on an applied sum
+
+fn finished(o Outcome[int]) -> bool => o is Finished

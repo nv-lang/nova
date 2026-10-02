@@ -1,0 +1,3 @@
+module k.feed
+const DAY_MS = 86400000
+export fn day() -> int => DAY_MS

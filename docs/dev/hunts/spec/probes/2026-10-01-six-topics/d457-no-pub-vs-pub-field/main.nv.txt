@@ -1,0 +1,11 @@
+module pubfield.main
+// C7: D220/D281 name a `pub` field modifier; D457 says `pub` is not in the language.
+type Wallet priv {
+    pub id int
+    bal int
+}
+
+fn main() Io {
+    ro a = Wallet{ id: 1, bal: 2 }
+    println("${a.id}")
+}

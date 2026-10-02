@@ -45,8 +45,8 @@ fn main() Io -> () {
                         gc.collect()
                     }
                     match fs.read_text(f) {
-                        Ok(s) => { if s == text { ok = ok + 1 } }
-                        Err(_) => {}
+                        Ok(s) => { if s == text { ok += 1 } }
+                        Err(_) => { println("read failed") }
                     }
                 }
                 ro _ = fs.remove_file(f)

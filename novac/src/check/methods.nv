@@ -29,6 +29,7 @@ import ../resolve.{FnLookup}
 import ../sem.{LitArg, branch_children, ArgSpec, ArgClass, CallForm, FnRow, CalleeTarget, raw_row, no_row, bind_slots}
 import ../sem.{is_expr_kind}
 import ../sem.{c_method_symbol, c_overload_symbol, impl_of_proto, ty_source_name, decl_of_ty}
+import ../sem.{row_recv_by_pointer}
 import ../sem.{option_payload}
 import ../sem.{expr_leaf_name, type_admits}
 import ../sem.{EffectOpRef, identity_slots, effect_op_dispatcher_c}
@@ -232,6 +233,12 @@ fn Checker mut @judge_method_lookup(e Node, t Token, key []ArgSpec, found FnLook
                 // argument -- the pair that made a variant row indistinguishable
                 // from a callable one.
                 ro mfd = @ctx.fns.rows[raw_row(row)]
+                // A `value` record receiver by POINTER (D488) takes a place's address.
+                if row_recv_by_pointer(@ctx, row) && !is_place_expr(branch_children(e)[0]) {
+                    @refuse(t, VALUE_RECV_TEMP_MSG)
+                } else {
+                    // A copy, a pointer record, or a place: nothing to refuse.
+                }
                 @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new(),
                     bind_slots(@ctx.fns.params, mfd.param_off, mfd.param_cnt, key))
             } else {
@@ -639,5 +646,16 @@ fn args_read_poisoned(kids []Node, from int, scope Scope) -> bool {
     for i in from..kids.len() {
         if reads_poisoned(kids[i], scope) { return true }
     }
+    false
+}
+
+/// Is this receiver expression a PLACE C can take the address of -- a bound
+/// name, `@`, a field of a place or `@field`, parenthesised or not? A call, a
+/// literal or an index result is a temporary (novac's `xs[i]` is a call).
+fn is_place_expr(e Node) -> bool {
+    ro k = e.kind_of()
+    if k == NodeKind.Name || k == NodeKind.SelfExpr || k == NodeKind.SelfField { return true }
+    if k == NodeKind.Paren { return is_place_expr(branch_children(e)[1]) }
+    if k == NodeKind.FieldAccess { return is_place_expr(branch_children(e)[0]) }
     false
 }

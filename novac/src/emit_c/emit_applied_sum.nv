@@ -1,0 +1,58 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: none for the shape -- the C is the shell's sum ABI for the two
+//        applied sums it spells per instance, read off shell.tpl.c (2026-10-01):
+//        `NovaOpt_<T>` by value (emit_option.nv names both of its shapes) and
+//        `NovaRes_<T>_<E>` behind a pointer, `r->tag = NOVA_TAG_Result_Ok` in
+//        every `nova_make_NovaRes_*`. The tag constants come from the mangling
+//        door (P5).
+// Role: backend A (layer 11) -- the tag test of a `match` arm whose scrutinee
+//       is an APPLIED sum: renders the checker's decision (the recorded
+//       instance type and the variant row the lowering chose); decides nothing.
+// Used by: emit_match.nv (`@emit_tag_test`, the head of every variant arm) and
+//   emit_is.nv (`x is Some` on an applied sum, registry 1544).
+// Guarded by: check-novac-differential.sh (fixtures match_applied_sum/,
+//             byte-for-byte against the oracle), novac/src/pipeline/
+//             match_applied_sum_test.nv (both spellings pinned in the C, with a
+//             control), check-novac-shell-freshness.sh (the tag names are the
+//             shell's).
+//
+// INTEROP, NAMED AS SUCH (goes the day novac emits the whole prelude): the
+// PAYLOAD read needs no door here -- the lowering already reads an Option's
+// payload through `.value` (`take_payload`) and every other sum's through the
+// union `->payload.<Variant>._<i>` (`take_field`), and the second IS the
+// shell's `NovaRes_` layout. What novac could not spell was the TEST: its own
+// `NOVAC_TAG_<module><Sum>_<Variant>` names nothing in the shell's instances.
+
+module novac.emit_c
+
+import ../types.{TyId}
+import ../builtins.{OPTION_SOME_VARIANT}
+import ../sem.{VariantRow, raw_vrow, c_shell_tag}
+
+/// The C condition "the scrutinee `scr` (a local of the applied sum `scr_ty`)
+/// holds the variant `vrow`" -- for a sum `is_shell_applied_sum` admitted.
+///
+/// An Option asks the ONE Option door (both of its shapes; the pointer shape
+/// has no tag at all). A Result is the shell's heap instance: the tag behind
+/// `->`, named in the shell's namespace -- the same access `is_value_sum`
+/// would choose for any sum with a payload (A4), written out because the
+/// instance is the shell's and its placement is not ours to decide.
+fn Emitter @applied_sum_tag_test(scr_ty TyId, scr str, vrow VariantRow) -> str =>
+    "${scr}${@applied_sum_tag_after(scr_ty, vrow)}"
+
+/// The same test WITHOUT its operand: what follows the value in C (`.tag ==
+/// NOVA_TAG_Option_Some`, `.value == NULL`, `->tag == NOVA_TAG_Result_Ok`). Every
+/// shape of both sums is "the operand, then an access", so the split is exact --
+/// and it lets `x is Some` print its operand as an EXPRESSION (once, through the
+/// general door) where a match arm names a temporary.
+fn Emitter @applied_sum_tag_after(scr_ty TyId, vrow VariantRow) -> str {
+    if @is_option_inst(scr_ty) {
+        // The Option door spells "<operand><access>"; asked with an empty
+        // operand, it answers the access alone.
+        if @ctx.variant_rows[raw_vrow(vrow)].name == OPTION_SOME_VARIANT {
+            return @option_some_test(scr_ty, "")
+        }
+        return @option_none_test(scr_ty, "")
+    }
+    "->tag == ${c_shell_tag(@ctx, vrow)}"
+}

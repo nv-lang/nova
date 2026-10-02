@@ -1,0 +1,40 @@
+// EXPECT_STDOUT lib post|lib get|lib put|own put|own get
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for registry 221.1 #1555: a BARE variant inside a library module bound
+// to the same-named variant of a sum of the IMPORTING module. The checker's last
+// resort for a bare variant picked, over the whole merged CU, the owner whose name
+// sorts first -- `HttpMethod` before `Method` -- and since #1517 checks a
+// constructor's payload against its instance, the library's
+// `Ok(match s { "GET" => Get, .. })` became E7301 "cannot return value of type
+// `Result[HttpMethod, str]` from a function declared `-> Result[Method, str]`".
+// Carrier: nova-http `src/method.nv:39` under claude-limits (`type HttpMethod enum
+// Get | Post | Put | Delete`): every server module failed.
+//
+// Now a bare variant is first the variant of a sum of the reading module. Cells: the
+// library's names (Get, Post, Other) from the library, and this module's own
+// `HttpMethod` names (Put, Get) from here -- each side reads its own sum.
+module standalone.p1555_bare_variant_own_module
+
+import ./p1555_lib.{to_method, method_name}
+
+type HttpMethod enum Get | Post | Put
+
+fn own_name(m HttpMethod) -> str => match m {
+    Get => "get"
+    Post => "post"
+    Put => "put"
+}
+
+fn pick(s str) -> HttpMethod => match s {
+    "PUT" => Put
+    _ => Get
+}
+
+fn lib_name(s str) -> str => match to_method(s) {
+    Ok(m) => method_name(m)
+    Err(e) => e
+}
+
+fn main() Io -> () {
+    println("lib ${lib_name("POST")}|lib ${lib_name("GET")}|lib ${lib_name("put")}|own ${own_name(pick("PUT"))}|own ${own_name(pick("x"))}")
+}

@@ -92,7 +92,9 @@ test "d427: raw unary `-` in-range does NOT panic (byte-parity)" {
     assert(-a == neg_five)
     ro b u32 = 5
     ro u32_wrap u32 = 4_294_967_291
-    assert(-b == u32_wrap)
+    // D427 amendment 2026-09-04 / D405: `-b` on a `u32` is a compile error (#1547); the
+    // wrap is spelled as what it is -- a signed negation, then the low 32 bits.
+    assert((-(b as i64)) as u32 == u32_wrap)
 }
 
 test "d427: checked_div/checked_rem — None on /0 and MIN/-1, Some otherwise" {

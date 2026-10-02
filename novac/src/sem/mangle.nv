@@ -262,16 +262,35 @@ export fn shape_of(ctx Ctx, t TyId) -> RecordShape {
     }
 }
 
+/// The LAYOUT of a type's C spelling, decided once: the spelling without its
+/// star, and whether the star is written. Split out of `c_type` on 2026-10-01
+/// (the integrator's decision on check-novac-mangling-one-way) so that "is it a
+/// pointer" and "how is it written inside a name" are answered from the SAME
+/// match that writes the star, instead of by editing the string it produced.
+type CLayout value {
+    /// The spelling without the star: `Nova_Rec`, `nova_int`, `NovaRes_..._IoError`.
+    base str
+    /// Whether `c_type` writes a star after it -- the type lives behind a pointer.
+    by_ptr bool
+}
+
 /// C spelling of a type id: primitives by their runtime ABI name (a stored
 /// fact of nova_rt.h), records and sums as GC pointers `Nova_<name>*`.
 export fn c_type(ctx Ctx, t TyId) -> str {
+    ro l = c_layout(ctx, t)
+    if l.by_ptr { "${l.base}*" } else { l.base }
+}
+
+/// The match `c_type` reads: every kind's spelling and whether it is a pointer.
+fn c_layout(ctx Ctx, t TyId) -> CLayout {
     if is_ty(t) {
         // THE KIND COMES FROM THE INTERNER (wave B8). It used to come from the
         // declaration row, which meant every question about a type went through
         // the declaration table -- and a PRIMITIVE has no declaration to go
         // through. The row is reached for below only where the NAME is wanted.
         match ctx.tys.kind_of(t) {
-            TkPrim => { return prim_c_name(ctx.tys.prim_ordinal_of(t)) } // universe fact by ordinal, read off the term
+            // A universe fact by ordinal, read off the term.
+            TkPrim => { return CLayout { base: prim_c_name(ctx.tys.prim_ordinal_of(t)), by_ptr: false } }
             // A VALUE RECORD IS NOT A POINTER, and that is the whole meaning of
             // the word: it lives inline, so a copy is a copy. Measured against
             // the fixed point (2026-08-23): `ro b = a` on a value record must
@@ -286,23 +305,24 @@ export fn c_type(ctx Ctx, t TyId) -> str {
                 // pair, `impl_of_proto`): `mut f Fmt` is `Nova_FmtCtx* f`.
                 ro it = impl_of_proto(ctx, t)
                 return match shape_of(ctx, it) {
-                    Record => "Nova_${decl_of_ty(ctx, it).name}*"
-                    ValueRecord => "NovaValue_${decl_of_ty(ctx, it).name}"
+                    Record => CLayout { base: "Nova_${decl_of_ty(ctx, it).name}", by_ptr: true }
+                    ValueRecord => CLayout { base: "NovaValue_${decl_of_ty(ctx, it).name}", by_ptr: false }
                     NamedTuple | PositionalTuple | AnonNamedTuple | AnonPositionalTuple =>
-                        "${PAREN_RECORD_C_PREFIX}${decl_of_ty(ctx, it).name}"
+                        CLayout { base: "${PAREN_RECORD_C_PREFIX}${decl_of_ty(ctx, it).name}", by_ptr: false }
                 }
             }
             // A4: payload-less unfenced sums are VALUES, as the oracle emits them.
             TkSum => {
-                if is_value_sum(ctx, t) { return "NovaValue_${decl_of_ty(ctx, t).name}" }
-                return "Nova_${decl_of_ty(ctx, t).name}*"
+                ro nm = decl_of_ty(ctx, t).name
+                if is_value_sum(ctx, t) { return CLayout { base: "NovaValue_${nm}", by_ptr: false } }
+                return CLayout { base: "Nova_${nm}", by_ptr: true }
             }
             // A NEWTYPE is a distinct TYPE with the representation's LAYOUT, so
             // its C spelling is the representation's -- zero cost, and what the
             // oracle emits too (`typedef nova_int Nova_Row;` and then a plain
             // `nova_int` local; measured 2026-08-21). The DISTINCTION lives in
             // the registry and in `type_tag`, never in the layout.
-            TkNewtype => { return c_type(ctx, representation_of(ctx, t)) }
+            TkNewtype => { return c_layout(ctx, representation_of(ctx, t)) }
             // An INSTANCE of a generic record is a GC pointer like the record
             // itself; its struct is spelled the oracle's way (interop -- see
             // `instance_struct_name`).
@@ -312,10 +332,10 @@ export fn c_type(ctx Ctx, t TyId) -> str {
                 // the table and its registration live in the shell, novac only
                 // holds and installs the pointer.
                 ro eff = handled_effect_name(ctx, t)
-                if eff != "" { return "${effect_vtable_c(eff)}*" }
+                if eff != "" { return CLayout { base: effect_vtable_c(eff), by_ptr: true } }
                 ro fam = family_instance_name(ctx, t)
-                if fam != "" { return fam }
-                return "${instance_struct_name(ctx, t)}*"
+                if fam != "" { return CLayout { base: fam, by_ptr: family_by_pointer(ctx, t) } }
+                return CLayout { base: instance_struct_name(ctx, t), by_ptr: true }
             }
             TkParam => { ice("mangle: c_type of a type parameter — layout is asked before substitution") }
             TkInfer => { ice("mangle: c_type of an inference variable — a variable escaped its body") }
@@ -326,13 +346,13 @@ export fn c_type(ctx Ctx, t TyId) -> str {
             // A tuple is a BY-VALUE mono struct (D123): its C type IS its
             // struct name, no pointer -- the same word `value` means on a
             // record, and the shell's own pair typedefs are structs by value.
-            TkTuple => { return mono_tuple_name(ctx, t) }
+            TkTuple => { return CLayout { base: mono_tuple_name(ctx, t), by_ptr: false } }
             // A POINTER is its pointee's C type with a star -- `*mut T` is `T*`,
             // `*T` is `const T*` (the oracle's spelling, read off the shell:
             // `copy_n_nonoverlapping(const nova_int* src, nova_int* dst, ..)`).
             TkPtr => {
-                ro under = "${c_type(ctx, ctx.tys.arg(t, 0))}*"
-                return if ctx.tys.ptr_is_mut(t) { under } else { "const ${under}" }
+                ro under = c_type(ctx, ctx.tys.arg(t, 0))
+                return CLayout { base: if ctx.tys.ptr_is_mut(t) { under } else { "const ${under}" }, by_ptr: true }
             }
         }
     }
@@ -580,7 +600,7 @@ export fn mono_tuple_name(ctx Ctx, t TyId) -> str {
     s.append("_NovaTuple_")
     s.append("${ctx.tys.arg_count(t)}")
     for i in 0..ctx.tys.arg_count(t) {
-        ro spell = c_type(ctx, ctx.tys.arg(t, i)).replace("*", "_p")
+        ro spell = c_in_name(ctx, ctx.tys.arg(t, i))
         s.append("_")
         s.append("${spell.byte_len()}")
         s.append("_")
@@ -598,6 +618,17 @@ export fn c_tag(ctx Ctx, vrow VariantRow) -> str {
     // into one tag set -- and a tag is an enum constant, so C would have taken
     // the second definition as a redefinition or, worse, silently agreed.
     "NOVAC_TAG_${module_prefix(ctx)}${decl_of_ty(ctx, vd.sum_id).name}_${vd.name}"
+}
+
+/// C name of the SHELL'S tag constant for a variant: `NOVA_TAG_<Sum>_<Variant>`
+/// -- the oracle's namespace, unqualified by module, exactly as the shell
+/// declares it (`r->tag = NOVA_TAG_Result_Ok` in every `nova_make_NovaRes_*`).
+/// Asked for a sum whose instances the SHELL defines (`is_shell_applied_sum`);
+/// novac's own sums keep `c_tag` above. The maker below makes the same split for
+/// a handed sum, by the same reason: the C is the shell's, not ours.
+export fn c_shell_tag(ctx Ctx, vrow VariantRow) -> str {
+    ro vd = ctx.variant_rows[raw_vrow(vrow)]
+    "NOVA_TAG_${decl_of_ty(ctx, vd.sum_id).name}_${vd.name}"
 }
 
 /// C name of a variant's maker function: `novac_make_<Sum>_<Variant>`.

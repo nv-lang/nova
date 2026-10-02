@@ -160,13 +160,6 @@ const VARIANT_VALUE_NEEDS_ARGS_MSG = "outside the subset: this variant carries a
 
 /// The if-let judges' two answers (if-let wave). The subset takes exactly
 /// the shape its carriers write: `Some` and an Option-instance initializer.
-/// A `match` arm whose pattern is a STRING or CHAR literal (registry 1190).
-///
-/// The parser reads the form since 2026-09-20 and the checker judges it, but
-/// the lowering compares patterns as int literals or variant tags only -- and
-/// a form that reaches an emitter with no arm for it ICEs. The refusal is
-/// louder than the crash and quieter than a wrong answer, which is the whole
-/// order of preference here.
 /// A `match` whose scrutinee is an APPLIED sum -- `Option[int]`, `Result[T, E]`.
 ///
 /// The form is recognised now (the arm's head is found through the
@@ -185,7 +178,22 @@ const VARIANT_VALUE_NEEDS_ARGS_MSG = "outside the subset: this variant carries a
 /// in `match_arms.nv` that already has `@ctx` -- a static string here named
 /// `Option[int]` regardless of which applied sum actually fired the gate.
 
-const LITERAL_ARM_MSG = "outside the subset: a `match` arm on a string or char literal is read but not compiled yet (E2-b, with the string family)"
+/// A LITERAL pattern against a value of another type (the string family,
+/// E2-b): `'a'` over a `str` or an `int`, `"a"` over a `char` or an `int`,
+/// `3` over a `str` or a `char`. D486 s2 (amendment 2026-10-01): a pattern's
+/// literal has the scrutinee's type, and `char` and the integers do not mix
+/// (D128), as in an expression (D405). The oracle has no check of its own
+/// here (registry 1535): it prints `scr.len == ...` over an int and clang
+/// refuses the C, and it runs `97` over a `char`.
+/// A STRING LITERAL WITH A SLOT in a pattern (registry 1556): a pattern's literal
+/// is not interpolated (D486 s2, amendment 2026-10-01) -- it compares with a
+/// FIXED value. The oracle reads the form and compares with the raw text,
+/// `a${x}` byte for byte, so the slot is silently not a slot; the comparison
+/// the author meant is a guard.
+const INTERP_PATTERN_MSG = "a pattern's string literal is not interpolated (D486 s2) -- it compares with a fixed value; write the comparison the slot means as a guard (`s if s == ...`)"
+
+const LIT_PATTERN_TYPE_MSG = "a literal pattern compares with a value of its own type -- a string literal with a `str`, a char literal with a `char`, an integer literal with an integer (D486 s2; D128: `char` and the integers do not mix); the value matched here is of another type"
+
 
 const IFLET_VARIANT_MSG = "outside the subset: `if <pattern> = ...` takes only `Some(name)` here -- other variants arrive with their carriers (274.5 P4)"
 
@@ -400,10 +408,13 @@ const TEST_MSG = "outside the subset: a `test` block arrives with the test runne
 /// What the layout wave owes: `NovaValue_<name>` by value (not `Nova_<name>*`),
 /// `.` where a pointer takes `->`, construction on the stack instead of
 /// `nova_alloc`, and the same for `@field` on a value receiver.
-const VALUE_METHOD_MSG = "outside the subset: a method on a `value` record needs the receiver taken by POINTER (the fixed point writes `NovaValue_X*`), and novac passes a value receiver by value -- so a `mut` method would write to a copy"
 
-/// The SAME rule as VALUE_METHOD_MSG one line up, met at a parameter instead of
-/// a receiver: the fixed point lowers a `mut x V` parameter to `V*` (plan 184,
+/// A method whose `value` record receiver crosses by POINTER (D488 R3/R5) needs a
+/// PLACE to take the address of; a temporary receiver (`mk().m()`) has none yet.
+const VALUE_RECV_TEMP_MSG = "outside the subset: this method takes its `value` record receiver by pointer (D488), and the receiver here is a temporary -- novac does not spill it to a place yet (E2-b3)"
+
+/// A `mut` PARAMETER of a value record (the receiver's rule is D488, compiled
+/// since 2026-10-01): the fixed point lowers a `mut x V` parameter to `V*` (plan 184,
 /// P10 ABI), and novac passes a value record BY VALUE -- the callee writes to a
 /// copy the caller never sees. Measured by the hunt (emit_c x K1, H4): the
 /// oracle prints 2, novac printed 1 in silence. `ro` reads the copy legally and
@@ -438,7 +449,39 @@ const DEFAULT_ORDER_MSG = "a parameter with a default value stands before one wi
 /// A CAST, `1 as u8`. `as` was not a keyword of this lexer until 2026-08-18, so
 /// the cast lexed as two names and the refusal read "unknown name" -- the
 /// reader was sent looking for a binding that was never meant to exist.
-const CAST_MSG = "outside the subset: a cast `expr as T` is not compiled yet (E2-b, with the numeric family)"
+///
+/// Since the numeric wave (p274-carina-cast, 2026-10-01) the text names what is
+/// still held, because the numeric family itself compiles: `as any`, a sum's
+/// discriminant and an integer into a newtype. The pairs once held for a word
+/// (`int as uint`, a char value into an integer, a bool into a number) were all
+/// decided on 2026-10-01 (D54 amendment) and left the list.
+const CAST_MSG = "outside the subset: this cast `expr as T` is not compiled yet -- the numeric family is; `as any`, a sum's discriminant and a value into a newtype wait (E2-b)"
+
+/// THE FORBIDDEN PAIRS of D54 (spec/decisions/03-syntax.md): a permanent
+/// language error, not a debt, so the head carries neither of the debt's
+/// spellings. The pair and the replacement follow it (`cast_pair_msg`).
+const CAST_PAIR_HEAD = "this cast is no conversion the language has:"
+
+/// D54, the table of forbidden casts: a number is not a truth value.
+const CAST_TO_BOOL_WHY = "a bool is not a number; write the comparison (`n != 0`, `f != 0.0`)"
+
+/// D54 with its 2026-08-01 amendment: a string is parsed or printed by a
+/// method on the SOURCE, never cast.
+const CAST_STR_WHY = "a string is parsed or printed by a method on the source (`s.to_int()`, `n.to_str()`), never cast"
+
+/// D54 with its 2026-10-01 amendment: a char VALUE goes only into a row that
+/// holds every codepoint (i32/u32/int/uint/i64/u64); the checked narrow form
+/// is `c.to_u8()`.
+const CAST_CHAR_NARROW_WHY = "a char value goes only into an integer that holds every codepoint (i32, u32, int, uint, i64, u64); into a narrower one convert with a checked method (`c.to_u8()`, a Result), or cast a char LITERAL that fits"
+
+/// D54 with its 2026-09-05 amendment: the one door into a char is `to_char()`.
+const CAST_INT_CHAR_WHY = "not every integer is a codepoint; convert with `n.to_char()` (a Result), or cast an integer LITERAL, checked at compile time"
+
+/// D54: `any` has no static conversion; its value is asked with `is`.
+const CAST_FROM_ANY_WHY = "an `any` has no static conversion; test it with `is` (`x is int`)"
+
+/// D54: "arbitrary types without an explicit rule -- a compile error".
+const CAST_NO_RULE_WHY = "the language names no such conversion, and a cast without a rule is an error"
 
 /// THE SHELL CARRIES NO SYMBOL for this method of this type -- ONE text for one
 /// refusal. Until 2026-10-01 five sites spelled it five ways (`index` in
@@ -548,7 +591,9 @@ const SYNTAX_MSG = "novac did not parse this -- and it cannot tell whether the f
 const HANDLER_RET_UNRESOLVED_MSG = "outside the subset: a handler-literal op's return type is not resolved here -- inside a generic body its type parameters are not substituted by this door yet (E4, handler-literal wave)"
 
 /// `x is T` on a value whose type is known statically and is not a sum (D54).
-const IS_NON_ANY_MSG = "`is` tests a value of type `any` or a sum -- the type of this value is known statically, so the test answers nothing (D54, E_IS_NON_ANY)"
+/// Says what the value is NOT rather than what it is: until registry 1544 it also
+/// fired on `Option[int]` -- a sum -- and read as if the sum were not one.
+const IS_NON_ANY_MSG = "`is` tests a value of type `any` or a sum -- this value is neither: its type is known statically, so the test answers nothing (D54, E_IS_NON_ANY)"
 
 /// `s is V` on a sum where V is not one of its variants.
 const IS_NOT_VARIANT_MSG = "`is` on a sum names one of its variants -- this is not a variant of the tested sum (D54)"

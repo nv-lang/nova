@@ -29,9 +29,9 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeId, no_node, raw_node}
 import ../diag.{Diagnostic}
 import ../builtins.{IMPL_ATTR}
-import ../sem.{Ctx, CheckOut, branch_children, file_decls, attr_kids_name, FnRow, no_row}
+import ../sem.{Ctx, CheckOut, branch_children, file_decls, attr_kids_name, FnRow, no_row, raw_row, module_dotted}
 import ../names.{NameTable, NamespaceId}
-import ../resolve.{FnIndex, FieldIndex}
+import ../resolve.{FnIndex, FieldIndex, PRELUDE_ASKER}
 import ../types.{TyId, no_ty}
 
 /// Check a parsed file against the E1 subset. Always returns the full list;
@@ -69,7 +69,9 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
     }
     mut c = Checker {
         src, ctx,
-        res: FnIndex.build_for(ctx.fns, import_parts(file, false), import_parts(file, true), ctx.module_c), // #1493
+        // #1493: the file's imports; #1521: the file asks from its own module.
+        res: FnIndex.build_for(ctx.fns, import_parts(file, false), import_parts(file, true),
+                               module_dotted(file), module_dotted(file)),
         fres: FieldIndex.build(ctx.fields),
         gap_at: -1,
         gap_kind: TokenKind.ErrorTok,
@@ -140,13 +142,28 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
 ///
 /// `cap` is the file's node capacity, not the declaration's: node ids are
 /// handed out per FILE, so a declaration's nodes sit anywhere in that range.
+///
+/// WHOSE SCOPE (registry 221.1 #1521): `body_file` is the tree the body was
+/// written in and `file_mod` the COMPILED file's module. The body's free names
+/// are resolved from the body's module with its file's imports -- `helper()` in
+/// a method of `hp.geo` is `hp.geo`'s helper even when the unit compiling the
+/// instance (`hp`) declares one of its own.
 export fn check_instance(decl Node, src SourceText, ctx Ctx, row FnRow, substs []TyId,
-                         cap int) -> ([]Diagnostic, CheckOut)
+                         cap int, body_file Node, file_mod str) -> ([]Diagnostic, CheckOut)
     requires cap > 0, "check: an instance channel needs the file's node capacity"
 {
+    ro fd = ctx.fns.rows[raw_row(row)]
+    ro asker = if ctx.fns.compiles_body(row) {
+        file_mod
+    } else if fd.handed_from == "" {
+        PRELUDE_ASKER
+    } else {
+        fd.handed_from
+    }
     mut c = Checker {
         src, ctx,
-        res: FnIndex.build(ctx.fns),
+        res: FnIndex.build_for(ctx.fns, import_parts(body_file, false), import_parts(body_file, true),
+                               asker, file_mod),
         fres: FieldIndex.build(ctx.fields),
         // SILENT-OK: an instance never TELLS its gap, and that is not an
         // omission. A gap is a syntax hole, and syntax was judged when the

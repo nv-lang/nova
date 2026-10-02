@@ -1,0 +1,141 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/pipeline/cast_test.nv -- the holders of the numeric cast wave
+// (D54, spec/decisions/03-syntax.md; check/cast_pairs.nv, emit_c/emit_cast.nv).
+// Every spelling asserted here was read off the oracle's emission of the same
+// program (compiler-codegen emit_c.rs, the `ExprKind::As` arm): a C cast for an
+// integer or float pair, `nova_<f>_to_<int row>` for a float into an integer.
+//
+// EACH TEST CARRIES ITS CONTROL: the same program one step away, answered the
+// other way -- so a test that would pass with the rule switched off cannot hide
+// here. Reverse probe (owner's rule, "prove it both ways"): with
+// `prim_cast_verdict` answering `CvHeld` for the numeric family, four of the
+// six tests redden (the width, the spellings, the forbidden pairs -- whose
+// `66 as u8` is numeric -- and `int as uint`); restored, all pass.
+// Run 2026-10-01 before this file was committed, on one tree.
+
+module novac.pipeline
+
+import ../diag.{Diagnostic}
+
+/// The codes of the diagnostics, joined -- a refusal's KIND is asserted by its
+/// code, because "the language forbids it" and "not compiled yet" read alike.
+fn codes(d []Diagnostic) -> str {
+    mut all = ""
+    for x in d { all = "${all}${x.code}\n" }
+    all
+}
+
+test "a cast keeps the target's width: `b >= ('a' as u8)` is one type on both sides (D54)" {
+    ro std = std_decls()
+    ro (d, _) = compile_to_c("fn f(b u8) -> bool => b >= ('a' as u8)\nfn main() {\n println(f(98 as u8))\n}", std)
+    assert(d.len() == 0, messages(d))
+    // CONTROL: the same comparison WITHOUT the cast is the D405 refusal -- so
+    // the case above really asks the cast for its type.
+    ro (c, _) = compile_to_c("fn f(b u8, n int) -> bool => b >= n\nfn main() {\n println(f(98 as u8, 97))\n}", std)
+    assert(c.len() == 1, messages(c))
+    assert(messages(c).contains("different numeric types"), messages(c))
+}
+
+test "a float into an integer saturates through the runtime helper; every other pair is a C cast (D54)" {
+    ro (d, c) = compile_to_c("fn main() {\n ro f = 3.9\n ro n = 300\n println(f as u8)\n println(f as int)\n println(n as u8)\n println(n as i16)\n println(n as f64)\n println(f as f32)\n}", std_decls())
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("nova_f64_to_u8("), c)
+    // `int` is address-sized, 64 bits: the helper is named by the width.
+    assert(c.contains("nova_f64_to_i64("), c)
+    assert(c.contains("((nova_byte)("), c)
+    assert(c.contains("((int16_t)("), c)
+    assert(c.contains("((nova_f64)("), c)
+    assert(c.contains("((nova_f32)("), c)
+    // CONTROL: an integer into an integer never takes the saturating helper --
+    // D54 wraps it, and a helper there would clamp 300 to 255.
+    ro (d2, c2) = compile_to_c("fn main() {\n ro n = 300\n println(n as u8)\n}", std_decls())
+    assert(d2.len() == 0, messages(d2))
+    assert(!c2.contains("nova_int_to_u8") && !c2.contains("_to_u8("), c2)
+}
+
+test "a char literal is its codepoint, a char variable into a byte is the language's error (D54)" {
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn main() {\n println('A' as u8)\n println('A' as int)\n}", std)
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("((nova_byte)("), c)
+    // CONTROL: the VARIABLE form of the same pair -- refused, the pair named,
+    // under the language's code and not the subset's.
+    ro (v, _) = compile_to_c("fn main() {\n ro c = 'A'\n println(c as u8)\n}", std)
+    assert(v.len() == 1, messages(v))
+    assert(messages(v).contains("`char as u8`"), messages(v))
+    assert(codes(v).contains("E_NOVAC_LANG"), codes(v))
+}
+
+test "D54's forbidden pairs are language errors naming the pair (D54, the table of forbidden casts)" {
+    ro std = std_decls()
+    ro (b, _) = compile_to_c("fn main() {\n ro n = 1\n println(n as bool)\n}", std)
+    assert(b.len() == 1 && messages(b).contains("`int as bool`") && codes(b).contains("E_NOVAC_LANG"), messages(b))
+    ro (s, _) = compile_to_c("fn main() {\n ro s = \"7\"\n println(s as int)\n}", std)
+    assert(s.len() == 1 && messages(s).contains("`str as int`") && codes(s).contains("E_NOVAC_LANG"), messages(s))
+    ro (u, _) = compile_to_c("fn main() {\n ro b = 66 as u8\n println(\"\${b as char}\")\n}", std)
+    assert(u.len() == 1 && messages(u).contains("`u8 as char`"), messages(u))
+    ro (r, _) = compile_to_c("fn main() {\n println(\"\${0x110000 as char}\")\n}", std)
+    assert(r.len() == 1 && messages(r).contains("`0x110000`"), messages(r))
+    // CONTROL: the integer LITERAL in range is D54's exception, checked here.
+    ro (ok, _) = compile_to_c("fn main() {\n println(\"\${0x41 as char}\")\n}", std)
+    assert(ok.len() == 0, messages(ok))
+}
+
+test "`int as uint` takes the low bits, a C cast -- not the oracle's saturation (D54 amendment 2026-09-04, registry 1547)" {
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn main() {\n ro n = 5\n println((0 - n) as uint)\n}", std)
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("((nova_uint)("), c)
+    // The oracle's spelling of the same cast is `nova_int_to_uint`, which
+    // clamps a negative to 0 -- the defect of registry 1547, not D54.
+    assert(!c.contains("nova_int_to_uint"), c)
+    // CONTROL: `as any` is still outside the numeric family -- the subset's
+    // refusal, under its own code.
+    ro (b, _) = compile_to_c("fn main() {\n ro n = 5\n ro a = n as any\n println(1)\n}", std)
+    assert(b.len() == 1 && codes(b).contains("E_NOVAC_SUBSET"), messages(b))
+}
+
+test "the owner's word on D54 (amendment 2026-10-01): bool into a number, char value into a wide row, a char literal that fits" {
+    ro std = std_decls()
+    // A bool is 1 or 0 in any number; a char VALUE goes into a row of 32 bits
+    // or more; a char LITERAL into any row that holds its codepoint.
+    ro (d, _) = compile_to_c("fn main() {\n ro t = true\n ro c = 'q'\n println(t as u8)\n println(t as f64)\n println(c as u32)\n println(c as int)\n println('A' as i8)\n}", std)
+    assert(d.len() == 0, messages(d))
+    // CONTROL: the narrow neighbours of each -- a char value into u16, a char
+    // literal past u8 (E_LIT_OUT_OF_RANGE, not the low bits), a number into a
+    // bool -- are the language's errors.
+    ro (v, _) = compile_to_c("fn main() {\n ro c = 'q'\n println(c as u16)\n}", std)
+    assert(v.len() == 1 && messages(v).contains("`char as u16`") && codes(v).contains("E_NOVAC_LANG"), messages(v))
+    ro (l, _) = compile_to_c("fn main() {\n println('Ā' as u8)\n}", std)
+    assert(l.len() == 1 && messages(l).contains("E_LIT_OUT_OF_RANGE"), messages(l))
+    ro (b, _) = compile_to_c("fn main() {\n ro n = 1\n println(n as bool)\n}", std)
+    assert(b.len() == 1 && codes(b).contains("E_NOVAC_LANG"), messages(b))
+}
+
+test "a prefix minus binds looser than `as`: `-x as T` is `-(x as T)` (D54 amendment 2026-10-01)" {
+    ro std = std_decls()
+    // `-f as u8` negates a u8 -- the unsigned-minus refusal proves the reading.
+    ro (u, _) = compile_to_c("fn main() {\n ro f = 2.5\n println(-f as u8)\n}", std)
+    assert(u.len() == 1 && messages(u).contains("signed types only"), messages(u))
+    // ... and the literal form too: `-1 as u8` is `-(1 as u8)`.
+    ro (l, _) = compile_to_c("fn main() {\n println(-1 as u8)\n}", std)
+    assert(l.len() == 1 && messages(l).contains("signed types only"), messages(l))
+    // CONTROL: parenthesised, the minus is inside the cast, and the program
+    // is legal.
+    ro (p, _) = compile_to_c("fn main() {\n ro f = 2.5\n println((-f) as u8)\n println((-1) as u8)\n}", std)
+    assert(p.len() == 0, messages(p))
+}
+
+test "inside `unsafe { }` an integer variable may become a char, and that is the block's reason (D54)" {
+    ro std = std_decls()
+    ro (d, _) = compile_to_c("fn main() {\n ro n = 65\n ro c = unsafe { n as char }\n println(\"\${c}\")\n}", std)
+    assert(d.len() == 0, messages(d))
+    // CONTROL: the same cast outside the block is the language's error.
+    ro (o, _) = compile_to_c("fn main() {\n ro n = 65\n println(\"\${n as char}\")\n}", std)
+    assert(o.len() == 1 && messages(o).contains("`int as char`"), messages(o))
+    // A char VARIABLE into a byte is D54's other unsafe pair: legal inside the
+    // block and its operation, so the block is not E_UNSAFE_UNUSED (the
+    // oracle's refusal there is registry 1547).
+    ro (u, _) = compile_to_c("fn main() {\n ro c = 'q'\n ro b = unsafe { c as u8 }\n println(b)\n}", std)
+    assert(u.len() == 0, messages(u))
+}

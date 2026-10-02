@@ -538,3 +538,173 @@ fn main() {\n\
     assert(d4.len() >= 1)
     assert(d4[0].message.contains("positional tuple scrutinee"), d4[0].message)
 }
+
+test "a string or char literal arm compiles to a CONTENT compare; another type is refused (E2-b, string family)" {
+    // The string arm compares by content through the runtime's `nova_str_eq`
+    // (the oracle's inline `len` + `memcmp` under a name), the char arm by
+    // codepoint. CONTROL: an int arm in the same program keeps its plain
+    // `==`, so the string test is a property of the STRING arm, not of every
+    // literal arm.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn k(s str) -> int => match s {\n\
+ \"fn\" => 1\n\
+ _ => 0\n\
+}\n\
+fn ch(x char) -> int => match x {\n\
+ 'a' => 1\n\
+ _ => 0\n\
+}\n\
+fn n(i int) -> int => match i {\n\
+ 7 => 1\n\
+ _ => 0\n\
+}\n\
+fn main() {\n\
+ println(k(\"fn\") + ch('a') + n(7))\n\
+}", std)
+    assert(d.len() == 0, messages(d))
+    // The scrutinee's local (`_novac_l...`) is novac's own spelling, so the
+    // shell's own `nova_str_eq` calls cannot answer for the arm.
+    assert(c.contains("nova_str_eq(_novac_l"), "a string arm compares by content")
+    assert(c.contains(" == ((nova_char)97U))"), "a char arm compares the codepoint")
+    assert(c.contains(" == 7LL)"), "CONTROL: an int arm keeps its plain compare")
+
+    // A literal of ANOTHER type is refused in Nova terms -- the oracle has no
+    // such check and clang refuses its C. CONTROL: the same arm over its own
+    // type compiles (above), so the refusal is the TYPE's, not the form's.
+    ro (d2, _) = compile_to_c("fn k(s str) -> int => match s {\n\
+ 'a' => 1\n\
+ _ => 0\n\
+}\n\
+fn main() {\n\
+ println(k(\"a\"))\n\
+}", std)
+    assert(d2.len() == 1, messages(d2))
+    assert(d2[0].message.contains("a literal pattern compares with a value of its own type"), d2[0].message)
+    // An INTEGER literal over a `char` is the same mistake (D486 s2, amendment
+    // 2026-10-01; D128): `char` and the integers do not mix in a pattern either.
+    ro (d5, _) = compile_to_c("fn k(c char) -> int => match c {\n\
+ 97 => 1\n\
+ _ => 0\n\
+}\n\
+fn main() {\n\
+ println(k('a'))\n\
+}", std)
+    assert(d5.len() == 1, messages(d5))
+    assert(d5[0].message.contains("a literal pattern compares with a value of its own type"), d5[0].message)
+
+    // A string literal BELOW the root compiles since registry 1534: its payload
+    // is read into a temporary and compared by CONTENT, the root's own door.
+    // CONTROL: the same sum with a binder at that position compares no string,
+    // so the compare is the nested LITERAL's.
+    ro (d3, c3) = compile_to_c("type Wrap enum A(str) | B\n\
+fn k(w Wrap) -> int => match w {\n\
+ A(\"x\") => 1\n\
+ _ => 0\n\
+}\n\
+fn main() {\n\
+ println(k(B))\n\
+}", std)
+    assert(d3.len() == 0, messages(d3))
+    assert(c3.contains("nova_str_eq(_novac_l"), "a nested string compares by content")
+    ro (d4, c4) = compile_to_c("type Wrap enum A(str) | B\n\
+fn k(w Wrap) -> int => match w {\n\
+ A(x) => 1\n\
+ _ => 0\n\
+}\n\
+fn main() {\n\
+ println(k(B))\n\
+}", std)
+    assert(d4.len() == 0, messages(d4))
+    assert(!c4.contains("nova_str_eq(_novac_l"), "CONTROL: a binder compares nothing")
+}
+
+test "a literal or a variant BELOW an arm's root is tested, not dropped (registries 1534, 1542, 1556)" {
+    // `A(3)`: the payload is read into a temporary and compared by a synthetic
+    // condition (`Cond.Holds`) -- the int compare appears in the C. CONTROL: the
+    // same arm with a binder at that position prints no such compare, so the
+    // compare is the nested LITERAL's, not the variant's.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("type Sh enum A(int) | B\n\
+fn k(s Sh) -> int => match s {\n\
+ A(3) => 1\n\
+ _ => 0\n\
+}\n\
+fn main() {\n\
+ println(k(B))\n\
+}", std)
+    assert(d.len() == 0, messages(d))
+    assert(c.contains(" == 3LL)"), "a nested literal is compared")
+    ro (d0, c0) = compile_to_c("type Sh enum A(int) | B\n\
+fn k(s Sh) -> int => match s {\n\
+ A(n) => n\n\
+ _ => 0\n\
+}\n\
+fn main() {\n\
+ println(k(B))\n\
+}", std)
+    assert(d0.len() == 0, messages(d0))
+    assert(!c0.contains(" == 3LL)"), "CONTROL: a binder compares nothing")
+
+    // `X(Q)`: a payload-less inner head is a VARIANT test, not a binder -- it used
+    // to reach the binder door and die on a type nobody recorded (1542). The
+    // inner tag test spells the inner sum's tag; CONTROL: `X(_)` spells none.
+    ro (d2, c2) = compile_to_c("type In enum P(int) | Q\n\
+type Out enum X(In) | Y\n\
+fn k(o Out) -> int => match o {\n\
+ X(Q) => 1\n\
+ X(P(n)) => n\n\
+ _ => 0\n\
+}\n\
+fn main() {\n\
+ println(k(Y))\n\
+}", std)
+    assert(d2.len() == 0, messages(d2))
+    assert(c2.contains("_In_Q)"), "the inner head's tag is tested")
+    ro (d3, c3) = compile_to_c("type In enum P(int) | Q\n\
+type Out enum X(In) | Y\n\
+fn k(o Out) -> int => match o {\n\
+ X(_) => 1\n\
+ _ => 0\n\
+}\n\
+fn main() {\n\
+ println(k(Y))\n\
+}", std)
+    assert(d3.len() == 0, messages(d3))
+    assert(!c3.contains("_In_Q)"), "CONTROL: `_` tests no inner tag")
+
+    // A test below an alternative of `|` is refused by name: the disjunction
+    // tests its heads only. CONTROL: binders below the heads compile.
+    ro (d4, _) = compile_to_c("type Two enum Aa(int) | Bb(int) | Cc\n\
+fn k(t Two) -> int => match t {\n\
+ Aa(1) | Bb(1) => 1\n\
+ _ => 0\n\
+}\n\
+fn main() {\n\
+ println(k(Cc))\n\
+}", std)
+    assert(d4.len() == 1, messages(d4))
+    assert(d4[0].message.contains("an alternative of `|` with a literal or a variant below its head"), d4[0].message)
+    ro (d5, _) = compile_to_c("type Two enum Aa(int) | Bb(int) | Cc\n\
+fn k(t Two) -> int => match t {\n\
+ Aa(n) | Bb(n) => n\n\
+ _ => 0\n\
+}\n\
+fn main() {\n\
+ println(k(Cc))\n\
+}", std)
+    assert(d5.len() == 0, messages(d5))
+
+    // An interpolated string in a pattern is refused by name, a language error
+    // (D486 s2: a pattern's literal is not interpolated). CONTROL: the plain
+    // literal compiles (the string-family test above).
+    ro (d6, _) = compile_to_c("fn k(s str, x int) -> int => match s {\n\
+ \"a\${x}\" => 1\n\
+ _ => 0\n\
+}\n\
+fn main() {\n\
+ println(k(\"a\", 1))\n\
+}", std)
+    assert(d6.len() == 1, messages(d6))
+    assert(d6[0].message.contains("not interpolated"), d6[0].message)
+    assert(d6[0].code == "E_NOVAC_LANG", d6[0].code)
+}

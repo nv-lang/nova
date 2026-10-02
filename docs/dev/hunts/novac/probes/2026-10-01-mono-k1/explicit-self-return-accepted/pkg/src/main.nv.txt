@@ -1,0 +1,22 @@
+type Ctr {
+    n int
+}
+
+fn Ctr mut @tail() -> @ {
+    @n = 1
+    @
+}
+
+fn Ctr mut @ret() -> @ {
+    @n = 2
+    return @
+}
+
+fn Ctr @arrow() -> @ => @
+
+fn main() {
+    mut c = Ctr { n: 0 }
+    println(c.tail().n)
+    println(c.ret().n)
+    println(c.arrow().n)
+}

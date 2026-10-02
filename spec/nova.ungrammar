@@ -256,8 +256,14 @@ Unary =
 Cast =
   Expr 'as' TypeRefLeaves
 
+// поправка 2026-10-01 (D54 амендмент того же дня, реестр №1570, согласовано с
+// интегратором): после `is` -- и ТОЛЬКО там -- допустим квалифицированный вариант
+// `Сумма.Вариант` (`'ident' '.' 'ident'`). В дереве это один Name из трёх листьев,
+// та же форма, что у квалифицированной головы конструктора (qual-head, D486 §2);
+// `parse/cast_chain.nv`. TypeRefLeaves не тронут: в прочих типовых позициях
+// точечного имени нет.
 IsTest =
-  Expr 'is' TypeRefLeaves
+  Expr 'is' (TypeRefLeaves | qual:Name)
 
 Coalesce =
   lhs:Expr '??' (rhs:Expr | 'return' Expr?)
@@ -334,7 +340,7 @@ SelfField =
   '@' 'ident'
 
 Name =
-  'ident'
+  'ident' ('.' 'ident')?
 
 Lit =
   '-'? 'literal'
@@ -350,13 +356,11 @@ ArrayLit =
 ArraySpread =
   '...' Expr
 
-// РАСХОЖДЕНИЕ (2026-10-01, амендмент D54 интегратора): голова конструкции
-// record-варианта -- тот же qual-head, что у образца (D486 §2), то есть и
-// `Node.Branch { id, kind, children }`. Парсер Карины на main читает только
-// голое имя: `a.b {` уходит в FieldAccess (`parse/expr.nv`, @primary). Ветка
-// `p-novac-patterns-ab-a25r8x` строит здесь RecordCtor, голова которого -- один
-// Name из трёх листьев (сумма, точка, вариант); с её слиянием правило ниже
-// получает квалифицированную голову, а эта пометка снимается.
+// Голова конструкции -- один Name; в записи `Node.Branch { id, kind, children }`
+// (D54, qual-head D486 §2) это Name из ТРЁХ листьев: сумма, точка, вариант
+// (postfix-цикл в `parse/expr.nv`, гейт `is_qualified_ctor_head`; слияние
+// 7ea35e992). Гейт `@no_ctor` тот же, что у голого `Point {`: `if a.b {` остаётся
+// условием и блоком.
 RecordCtor =
   Name? '{' (CtorField | CtorSpread | Err)* '}'
 

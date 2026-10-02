@@ -1,0 +1,15 @@
+module is_qualified.neg_1
+
+// ONE seeded cause: the qualifier names ANOTHER sum than the tested value's.
+// D54 amendment 2026-10-01: the qualified variant after `is` names the value's
+// own sum. The ORACLE accepts this file and prints true -- it reads past the
+// qualifier to the last name, a divergence named in REPORT-carina-cast-4.md.
+// NOVAC_EXPECT `is` names a variant of `Other`, but the tested value is a `Shape`
+type Shape enum Dot | Box(int)
+type Other enum Box | Ring
+
+fn main() {
+    ro s = Shape.Box(2)
+    ro a = s is Other.Box
+    println(a)
+}

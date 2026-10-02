@@ -1,0 +1,29 @@
+// EXPECT_STDOUT g6 12 66
+module e.main
+
+type Greeter protocol {
+    @greet() -> int
+}
+
+#impl(Greeter)
+type Speaker {
+    base int
+}
+
+fn Speaker @greet() -> int => @base
+
+fn main() Io {
+    mut gs = Vec[Greeter].new()
+    for i in 0..12 {
+        mut sp = Speaker{ base: i }
+        mut g Greeter = sp
+        gs.push(g)
+    }
+    mut s = 0
+    mut j = 0
+    while j < gs.len() {
+        s += gs[j].greet()
+        j += 1
+    }
+    println("g6 ${gs.len()} ${s}")
+}

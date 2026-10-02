@@ -1,0 +1,23 @@
+// EXPECT_STDOUT 604800000 1209600000 12 86400000 172800000
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for registry 221.1 #1549: a const whose initialiser reads another
+// const, declared in a module other than the entry one. The definition of the read
+// const went through the C-name door (`nv_DAY_MS`: an ALL-CAPS name is escaped,
+// #1440/#1446), the reference inside the initialiser did not:
+// `static const nova_int nv_WEEK_MS = 7 * (DAY_MS)` -- clang "use of undeclared
+// identifier 'DAY_MS'". A read in a BODY was right; the const initialiser had its
+// own copy of the lookup that stopped at the module-private map and fell back to
+// the bare name. Now both read through one door (`const_ref_c_name`). Carrier:
+// claude-limits 92fa204 (`export const WEEK_MS = 7 * DAY_MS`).
+//
+// Cells: an exported ALL-CAPS const read by an exported const, two levels deep, a
+// lower-case const reading a module-private one, and a module-private const of the
+// same name in another module reading itself into another private const.
+module standalone.p1549_const_ref_const_nonentry
+
+import ./p1549_backup.{week, fortnight, half_day}
+import ./p1549_feed.{day, two_days}
+
+fn main() Io -> () {
+    println("${week()} ${fortnight()} ${half_day} ${day()} ${two_days()}")
+}

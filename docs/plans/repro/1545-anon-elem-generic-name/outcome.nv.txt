@@ -1,0 +1,6 @@
+module e.outcome
+export type Outcome value {
+    ro message str
+    ro status int
+}
+export fn listed() -> []Outcome => [{ message: "a", status: 1 }, { message: "b", status: 2 }]

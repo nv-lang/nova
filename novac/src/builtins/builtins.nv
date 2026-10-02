@@ -113,6 +113,12 @@ export const RESULT_SUM = "Result"
 /// and what `match` tests. Its twin `Err` is not named: the operator ABSORBS the error
 /// (D86), so nothing reads the failing variant by name.
 export const RESULT_OK_VARIANT = "Ok"
+/// The shell's family prefix of a `Result` instance (read off shell.tpl.c,
+/// 2026-10-01): `NovaRes_<T>_<E>`, a GC pointer -- unlike `NovaOpt_`, which the
+/// shell passes by value. The carrier arrived with the `match` on an applied
+/// sum: a `Result` a std call hands back is now a scrutinee, so its C type is
+/// asked for the first time.
+export const RESULT_FAMILY_C = "NovaRes_"
 
 /// The vector length method the for-over-a-call emission walks with (B16
 /// wave, P5: std names live here, the emitter must not spell them itself).

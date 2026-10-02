@@ -30,6 +30,13 @@
 #           (2026-09-04 держатель окна 274 проходил с правилом снятым), так
 #           что его строки — территория, а не дописка. Трек заведён по слову
 #           владельца «добавь в охотника искать ошибки в твоих стражах».
+#   spec:   spec/*.md и spec/decisions/*.md — тексты, а не код: трек ищет
+#           РАССИНХРОН спеки (классы С1–С7, docs/dev/hunts/spec/LEDGER.md).
+#           Заведён 2026-10-01 по слову владельца через интегратора: «привести
+#           спеку в однозначное, непротиворечивое состояние и держать её такой».
+#           Поверхность — ДВА образца, поэтому SURFACE ниже — список слов, а
+#           глоббинг оболочки на время diff выключен (set -f): `*` здесь — образ
+#           git, а не файлы текущего каталога.
 # Именно added, не net: рефакторный чурн рождает дефекты не хуже роста.
 #
 # КТО ПЛАТИТ ДОЛГ — ОКНО, КОТОРОЕ ВЫРАСТИЛО ПОВЕРХНОСТЬ (владелец, 2026-09-16).
@@ -125,17 +132,21 @@ SUMMARY=""
 TMPDUP="${TMPDIR:-/tmp}/hunter-debt-dup.$$"
 TMPP="${TMPDIR:-/tmp}/hunter-debt-pairs.$$"
 trap 'rm -f "$TMPDUP" "$TMPP"' 0 2 15
-for TRACK in novac guards; do
+for TRACK in novac guards spec; do
     BUDGET=$(key1 "budget_$TRACK") || { rc=1; continue; }
     case "$TRACK" in
         novac)  SURFACE="novac/src/*.nv";           EXCL='_test[.]nv$' ;;
         guards) SURFACE="scripts/guards/*";          EXCL='[.](baseline|list)$' ;;
+        spec)   SURFACE=":(glob)spec/*.md :(glob)spec/decisions/*.md"; EXCL='^$' ;;
     esac
     CLOCK=$(find_clock "$TRACK" | head -1 | cut -d' ' -f1)
     SRC="отчёт"
     if [ -z "$CLOCK" ]; then CLOCK="$ANCHOR"; SRC="якорь"; fi
-    DEBT=$(git -C "$ROOT" diff --numstat "$CLOCK" -- "$SURFACE" 2>/dev/null \
+    set -f
+    # shellcheck disable=SC2086 # SURFACE — список образов git (трек spec — два)
+    DEBT=$(git -C "$ROOT" diff --numstat "$CLOCK" -- $SURFACE 2>/dev/null \
         | awk -F'\t' -v excl="$EXCL" '$1 != "-" && $3 !~ excl {s += $1} END {print s+0}')
+    set +f
     if [ "$DEBT" -gt "$BUDGET" ]; then
         SHORT=$(git -C "$ROOT" rev-parse --short "$CLOCK" 2>/dev/null || echo "$CLOCK")
         echo "check-hunter-debt: FAIL — долг охоты трека $TRACK: добавлено $DEBT строк поверхности с последней охоты ($SRC $SHORT), бюджет $BUDGET." >&2

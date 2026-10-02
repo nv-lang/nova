@@ -1,0 +1,6 @@
+[package]
+name = "consumecond"
+version = "0.0.0"
+
+[lib]
+src = "."

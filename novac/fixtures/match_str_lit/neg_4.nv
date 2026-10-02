@@ -1,0 +1,14 @@
+module match_str_lit.neg_4
+
+// AN INTERPOLATED STRING in a `match` arm's pattern: a pattern's literal is not
+// interpolated (D486 s2, amendment 2026-10-01) -- it compares with a fixed
+// value. The oracle reads the form and compares with the raw text `a${x}`, so
+// `f("a3", 3)` takes `_` (registry 1556, the integrator's); novac read it as
+// nothing at all ("did not parse this") until it learnt to name it.
+
+// NOVAC_EXPECT a pattern's string literal is not interpolated
+
+fn f(s str, x int) -> int => match s {
+    "a${x}" => 1
+    _ => 0
+}

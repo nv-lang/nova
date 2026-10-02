@@ -68,6 +68,13 @@ disagree with:
 - an untyped literal adapts to the float operand beside it (`b + 1` where `b f64`),
   the way an untyped constant does in Go.
 
+One rule stands behind both ([D489](decisions/02-types.md#d489)): **a literal takes the type of its
+position when its exact value is representable there**, and the literal's form sets its kind. An
+integer literal goes to any integer type within range and to a float when exact (`16777217` in
+`f32` is `E_LIT_INEXACT`); a fractional one goes to floats only, so `2.0` in `int` is an error; a
+character goes to `char` only, to a number through `as`. The rule holds in a `match` pattern and
+in the second operand too (`x == 300` with `x u8` is an error).
+
 A value of type `int` next to a value of type `f64` is still an error, literal or not.
 
 **Belonging to one category is not permission to mix inside it.** Both `f32` and `f64`
@@ -119,7 +126,7 @@ Consistent with Rust 1.45+.
 ```nova
 ro n = 1e20 as int             // saturates to INT64_MAX
 ro m = (-1.0) as u32           // saturates to 0
-ro nan = 0.0 / 0.0 as i16      // 0
+ro nan = (0.0 / 0.0) as i16    // 0
 ```
 
 ### Checked narrowing — `to_*` ([D430](decisions/04-effects.md#d430), 2026-07-20)
@@ -380,6 +387,7 @@ ro n = 100
 ro c Row = n                   // ERROR E7301 -- a typed variable
 ro d Row = Row(n)              // ok
 ro e Row = n as Row            // ok
+ro g Row = Row(d)              // ERROR E_NEWTYPE_CTOR_SELF -- d is already Row
 ```
 
 Sums are untouched: `SqlValue.I(x)` is still inserted for ANY expression the
@@ -387,6 +395,19 @@ checker accepts -- a variable, a call, a field read, not only a literal (D55,
 clarified 2026-10-01) -- there the compiler DERIVES the only matching variant
 instead of inventing the author's claim. For the old softness on your own newtype, declare it as a
 [`#coerce`](decisions/02-types.md#d429) pair.
+
+**A variant constructor is judged against the expected instance (D55 amend,
+2026-10-01).** The payload is checked against the variant's field in the
+INSTANCE the position expects, its arity against the declaration, and a
+constructor with no type source at all is refused rather than given a default:
+
+```nova
+fn bad() -> Option[str] => Some(1)   // ERROR E7301 -- Option[int] is not Option[str]
+ro p = Some(1, 2)                    // ERROR E_VARIANT_CTOR_ARITY
+ro q = None                          // ERROR E_VARIANT_CTOR_UNTYPED -- annotate it
+ro r Option[str] = None              // ok
+ro s = Some(1)                       // ok -- Option[int], from the payload
+```
 
 **Operators on a newtype stay inside the newtype ([D52](decisions/02-types.md#d52) amend,
 2026-09-04).** Arithmetic and comparison are defined between two values of the *same*

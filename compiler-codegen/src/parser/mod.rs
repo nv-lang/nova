@@ -6701,6 +6701,46 @@ impl Parser {
     }
 
     /// Plan 114 (D184) helper: pattern — bare identifier (`x`).
+    /// D486 §4 rule 3 (owner, 2026-09-30): in an `if`/`while` condition a word before
+    /// the pattern is the mode of a BARE NAME only (`if ro n = f()`, `if mut buf = read()`).
+    /// A word before a constructor or destructuring pattern is an outer mode, refused:
+    /// `if mut Some(x) = e` (E_OUTER_MUT_IN_CONDITION, write `Some(mut x)`), `if ro Some(x) =
+    /// e` (E_OUTER_RO_IN_CONDITION, a binder is `ro` already), `if ro consume Some(t) = e`
+    /// (E_CONSUME_IN_CONDITION, as `if consume Some(t) = e`). Before: the parser took any
+    /// pattern after `ro`/`mut` and compiled all three (spec hunt 2026-10-01, rows
+    /// 1580-1585; the integrator's ruling 2026-10-02 -- D486 is newer than D34/D157).
+    /// Called with the `ro`/`mut` already consumed.
+    fn parse_cond_outer_mode_pattern(&mut self, is_mut: bool) -> Result<Pattern, Diagnostic> {
+        if matches!(self.peek().kind, TokenKind::KwConsume) {
+            return Err(Diagnostic::new(
+                "[E_CONSUME_IN_CONDITION] `consume` before the pattern of an if/while condition is \
+                 refused (D486 §5): an outer mode has no scope for a tracked binding -- write \
+                 `if Some(consume x) = e` (on the binder) or move the value out in a statement"
+                    .to_string(),
+                self.peek().span,
+            ));
+        }
+        let start = self.peek().span;
+        let pattern = self.parse_pattern()?;
+        if matches!(pattern, Pattern::Ident { is_consume: false, is_mut: false, .. }) {
+            return Ok(pattern);
+        }
+        Err(Diagnostic::new(
+            if is_mut {
+                "[E_OUTER_MUT_IN_CONDITION] `mut` before a constructor or destructuring pattern \
+                 in an if/while condition is refused (D486 §4): the mode goes on the binder -- \
+                 write `if Some(mut x) = e`"
+            } else {
+                "[E_OUTER_RO_IN_CONDITION] `ro` before a constructor or destructuring pattern in \
+                 an if/while condition is refused (D486 §4): `ro` stands only before a bare name \
+                 (`if ro n = f()`), a binder inside a pattern is `ro` already -- write \
+                 `if Some(x) = e`"
+            }
+            .to_string(),
+            start,
+        ))
+    }
+
     fn is_ident_pattern(pat: &Pattern) -> bool {
         matches!(pat, Pattern::Ident { .. })
     }
@@ -10970,9 +11010,9 @@ impl Parser {
         // Plan 114 (D184): `if ro IDENT = e` / `if mut IDENT = e` —
         // identifier-pattern с explicit keyword (footgun protection).
         if matches!(self.peek().kind, TokenKind::KwRo | TokenKind::KwMut) {
-            let _is_mut = matches!(self.peek().kind, TokenKind::KwMut);
+            let is_mut = matches!(self.peek().kind, TokenKind::KwMut);
             self.bump();
-            let pattern = self.parse_pattern()?;
+            let pattern = self.parse_cond_outer_mode_pattern(is_mut)?;
             self.expect(&TokenKind::Eq)?;
             // Plan 106: parse scrutinee stopping before `&&` (parse_eq level).
             let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_eq())?;
@@ -11298,8 +11338,9 @@ impl Parser {
         }
         // Plan 114 (D184): `while ro IDENT = e` / `while mut IDENT = e`.
         if matches!(self.peek().kind, TokenKind::KwRo | TokenKind::KwMut) {
+            let is_mut = matches!(self.peek().kind, TokenKind::KwMut);
             self.bump();
-            let pattern = self.parse_pattern()?;
+            let pattern = self.parse_cond_outer_mode_pattern(is_mut)?;
             self.expect(&TokenKind::Eq)?;
             // Plan 106: parse scrutinee stopping before `&&` (parse_eq level).
             let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_eq())?;
@@ -12875,9 +12916,25 @@ impl Parser {
                 self.bump();
                 Ok(Pattern::Literal(Literal::Float(f), start))
             }
+            // Registry 221.1 #1556: a string pattern is the literal's VALUE, read by the
+            // expression path -- the lexer's raw body kept `${x}` as text (`"a${x}" =>`
+            // compared with the bytes `a${x}`, silently) and the escaped `\${` as its
+            // SOH sentinel (`"a\${x}" =>` never matched `a${x}`). A pattern literal is
+            // not interpolated (integrator's ruling, 2026-10-01): refused by name here,
+            // where the interpolation is still told apart from an escaped `\${`.
             TokenKind::Str(s) => {
                 self.bump();
-                Ok(Pattern::Literal(Literal::Str(s), start))
+                match self.desugar_string_interpolation(s, start)?.kind {
+                    ExprKind::StrLit(v) => Ok(Pattern::Literal(Literal::Str(v), start)),
+                    _ => Err(Diagnostic::new(
+                        "[E_PATTERN_LITERAL_INTERPOLATED] a string pattern is not interpolated -- \
+                         `${...}` in a pattern would compare with the text `${...}`; match the \
+                         value with a guard (`s if s == \"a${x}\" =>`) or write `\\${` for the \
+                         literal text"
+                            .to_string(),
+                        start,
+                    )),
+                }
             }
             TokenKind::Char(cp) => {
                 self.bump();

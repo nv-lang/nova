@@ -24,11 +24,14 @@ import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, is_true_literal}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{decl_of_ty, decl_fn_row, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at}
 import ../sem.{ty_source_name, is_never_ty}
+// The ONE list of applied sums whose tags the shell spells -- asked here and by
+// the emitter's tag test (emit_applied_sum.nv), so the two cannot part.
+import ../sem.{is_shell_applied_sum}
 // The pattern tree's doors (D486): the shape asked ONCE, the head and the
-// parts through their own doors -- never slot arithmetic (registry 1190's
+// parts through their own doors -- never slot arithmetic (registry 1191's
 // class: a slot count and the meaning of what sits there are two doors).
 import ../sem.{PatShape, pattern_shape, pattern_head_text, pattern_qualifier, pattern_subpatterns}
-import ../sem.{pattern_lit_leaf}
+import ../sem.{pattern_lit_leaf, pattern_is_interp}
 import ../sem.{pattern_fields, patfield_name, patfield_sub, pattern_rest, pattern_mode_word}
 import ../sem.{pattern_name_node, patfield_name_node, rest_is_trailing}
 import ../sem.{shape_of, field_range_of, no_frow}
@@ -44,15 +47,30 @@ import ../types.{TyId, no_ty, is_ty}
 /// STATEMENTS, and coverage judged -- but no value question is asked: the
 /// arms run for effect, and demanding that `{}` agree in type with
 /// `{ println(x) }` would refuse legal code the census counts five files of.
-/// IS THIS SCRUTINEE AN APPLIED SUM -- and if so, say it ONCE.
+/// IS THIS SCRUTINEE AN APPLIED SUM NOVAC CANNOT SPELL -- and if so, say it ONCE.
 ///
 /// The head of an arm is found through the DECLARATION since 2026-09-20, so
 /// `Some` over an `Option[int]` is no longer called a variant of ANOTHER sum
 /// -- which was false and sent the reader looking for a mix-up not in their
-/// code. What it is instead: a form novac READS and cannot EMIT, because an
-/// applied sum comes from the SHELL with the oracle's tag names and value
-/// semantics (measured: `_novac_l2->tag` against a value struct, and an
-/// undeclared `NOVAC_TAG_..._Option_Some`).
+/// code. An applied sum comes from the SHELL with the oracle's tag names and
+/// value semantics (measured: `_novac_l2->tag` against a value struct, and an
+/// undeclared `NOVAC_TAG_..._Option_Some`), so the emitter needs the shell's
+/// spelling, not its own.
+///
+/// SINCE 2026-10-01 TWO OF THEM HAVE IT: `Option[T]` and `Result[T, E]`, whose
+/// instances the shell spells by name -- the tag test through
+/// emit_applied_sum.nv, the payload through the reads the lowering already had
+/// (`.value` for Option, the `->payload.<V>._<i>` union for Result). The arms
+/// of such a match are judged exactly as a plain sum's: the variant through
+/// the declaration, the payload through `payload_as_seen`, coverage counted.
+/// The question is ONE door (`is_shell_applied_sum`) that the emitter asks
+/// too, so the two passes cannot disagree on which sums pass.
+///
+/// What stays refused, by name: every other applied sum the declarations hand
+/// over -- `Outcome[T]` of the prelude is the one reachable today -- because the
+/// shell spells it without a per-instance struct, and novac has no reading of
+/// that spelling yet. A user's OWN generic sum never reaches this door: its
+/// declaration is refused earlier (E2-b2, generic parameters).
 ///
 /// AT THE MATCH AND NOT AT THE ARM, because the fact is a property of the
 /// SCRUTINEE: at the arm it fired once per arm and said one thing twice.
@@ -66,6 +84,8 @@ fn Checker mut @report_if_applied_sum(kids []Node, scr_t TyId) -> bool {
     // misrouted through this door and refused with an unrelated `Option[int]`
     // message it never named).
     if decl_of_ty(@ctx, scr_t).kind != TypeKind.TkSum { return false }
+    // The two the shell spells per instance pass; the arms are judged below.
+    if is_shell_applied_sum(@ctx, scr_t) { return false }
     // Registry #1233's remaining half: the message used to be a static
     // string with `Option[int]` WRITTEN IN, regardless of which applied
     // sum actually triggered this gate -- honest for the shell's own
@@ -73,8 +93,17 @@ fn Checker mut @report_if_applied_sum(kids []Node, scr_t TyId) -> bool {
     // already resolved and checked above; naming it costs one call to the
     // same door every sibling message in this file already reads through
     // (`ty_source_name`, line 341).
-    @report_first_leaf_of(kids, "outside the subset: a `match` on an applied sum (`${ty_source_name(@ctx, scr_t)}`) is read but not compiled yet -- its tags belong to the shell (E2-b2, with generics)")
+    @report_applied_sum(kids, "a `match`", scr_t)
     true
+}
+
+/// An APPLIED sum novac cannot spell (`Outcome[int]`), under either form that
+/// tests its tags -- `form` is "a `match`" (above) or "`is`" (is_expr.nv). ONE
+/// refusal for the two doors, because the cause is one: the shell spells per
+/// instance only `Option` and `Result` (`is_shell_applied_sum`), and a second
+/// copy of the sentence would be a second debt line for one debt.
+fn Checker mut @report_applied_sum(kids []Node, form str, sum_t TyId) -> () {
+    @report_first_leaf_of(kids, "outside the subset: ${form} on an applied sum (`${ty_source_name(@ctx, sum_t)}`) is read but not compiled yet -- novac spells the shell's tags only for `Option` and `Result`, and this sum's belong to the shell too (E2-b2, with generics)")
 }
 
 /// THE SHARED HEAD of both match doors (`@type_match_stmt`, `@type_match`):
@@ -164,6 +193,11 @@ fn has_match_arm(kids []Node) -> bool {
     false
 }
 
+/// No arm typed yet. A function, not a bare `None` in the binding: the oracle
+/// refuses an unannotated `None` (registry 221.1 #1517 -- nothing fixes its `T`),
+/// and a declared local type is outside novac's subset (E2-b3).
+fn no_arm_type() -> Option[TyId] => None
+
 /// A match: the scrutinee's type is the answer the emitter needs (it declares
 /// the C temporary with it); the arms bind their binders and are typed after.
 fn Checker mut @type_match(m Node) -> () {
@@ -184,11 +218,16 @@ fn Checker mut @type_match(m Node) -> () {
         None => return
     }
     ro before_arms = @out.len()
-    mut first_t = None
+    mut first_t = no_arm_type()
     for c in kids {
         if c.kind_of() != NodeKind.MatchArm { continue }
+        // EVERY arm starts from the position's expectation: an arm's body may
+        // clear it on its way (a statement, an `if`), and the next arm must not
+        // inherit that -- `Branch { .. } => None` after a block arm was refused.
+        @value_expect = arm_expect
         first_t = @fold_arm_type(c, scr_t, first_t, before_arms)
     }
+    @value_expect = arm_expect
     if @out.len() > before_arms { return }
     // The agreed type is RECORDED here, where every arm was typed with its
     // binders in scope; `type_of` reads it back instead of re-asking an arm
@@ -326,14 +365,30 @@ fn Checker mut @bind_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode, pos 
     }
 }
 
-/// A LITERAL pattern. A string or char literal is refused BY NAME until the
-/// lowering can compare one (registry 1190) -- it used to die in the emitter
-/// with an ice, and a refusal names the form where an ice names the compiler.
+/// A LITERAL pattern. Each literal kind compares with a value of ITS OWN
+/// type (`LIT_PATTERN_TYPE_MSG`): a string with a `str`, by content -- the
+/// spec's "by value" (syntax.ru.md, pattern kinds), the oracle's `len` plus
+/// `memcmp` -- and a char with a `char`, by codepoint. Until the string
+/// family (E2-b) both were refused by name: the lowering could compare
+/// neither, and the form used to die in the emitter with an ice.
+/// A literal BELOW the arm's root is legal at any depth (D486 s2): the
+/// lowering reads the value it stands on and tests it by a synthetic condition
+/// (registry 1534, lower_match.nv `@lower_sub`). Until then it tested the root
+/// only -- `A(3)` took `A(4)` -- and string and char literals there were
+/// refused by name rather than handed the same wrong answer.
 /// The integer magnitude door is asked here too (#1251): a `Pattern` node is
 /// never a `Lit` node, so the generic literal walk never visits it, and a
 /// 23-digit text once reached the C comparison verbatim, which clang refused
 /// -- the failure #810 exists to prevent, at one position nobody had visited.
+/// The same holds for the char and string judges: their walks never reach a
+/// pattern either, so this door asks them itself.
 fn Checker mut @bind_lit_pattern(pat Node, ty TyId, ak []Node) -> bool {
+    if pattern_is_interp(pat) {
+        @reject_first_leaf_of(ak, INTERP_PATTERN_MSG)
+        return false
+    } else {
+        // A plain literal: its token answers below.
+    }
     ro p0 = pattern_lit_leaf(pat)
     ro lk0 = leaf_kind(p0)
     // `true` / `false`: a LITERAL of `bool` (sem/pattern.nv), never a binder
@@ -344,8 +399,18 @@ fn Checker mut @bind_lit_pattern(pat Node, ty TyId, ak []Node) -> bool {
         return false
     }
     if lk0 == TokenKind.StrLit || lk0 == TokenKind.CharLit {
-        @report_first_leaf_of(ak, LITERAL_ARM_MSG)
+        return @bind_text_lit_pattern(p0, lk0, ty, ak)
+    }
+    if ty == @ctx.prims.str_id || ty == @ctx.prims.char_id {
+        // An integer literal over a `str` has no comparison at all (the
+        // oracle prints `scr == 3LL` on a `nova_str`, and clang refuses);
+        // over a `char` it is the mixing D128 and D405 forbid in an
+        // expression, and a pattern is no loophole (D486 s2, amendment
+        // 2026-10-01). The oracle runs `97` over `char` -- registry 1535.
+        @reject_first_leaf_of(ak, LIT_PATTERN_TYPE_MSG)
         return false
+    } else {
+        // An integer scrutinee, or one the rows below do not judge.
     }
     // THE ROW DOOR IS DELIBERATELY NOT ASKED: the oracle itself does not
     // apply D227 rule 3 at a pattern's position (`match x { 300 => .. }` on
@@ -356,6 +421,32 @@ fn Checker mut @bind_lit_pattern(pat Node, ty TyId, ak []Node) -> bool {
         return false
     }
     true
+}
+
+/// A STRING or CHAR literal pattern: the scrutinee must be of the literal's
+/// own type, and the literal itself passes the judge its kind passes in an
+/// expression -- the escape alphabet for a string, one codepoint for a char.
+/// A POISONED scrutinee says nothing more: its refusal stands where it was
+/// typed (the cascade rule of `@bind_variant_pattern`).
+fn Checker mut @bind_text_lit_pattern(p0 Node, lk0 TokenKind, ty TyId, ak []Node) -> bool {
+    if !is_ty(ty) {
+        // SILENT-OK: a POISONED scrutinee -- refused where it was typed.
+        return false
+    } else {
+        // A typed scrutinee: the literal's own type judges it.
+    }
+    ro own = if lk0 == TokenKind.StrLit { @ctx.prims.str_id } else { @ctx.prims.char_id }
+    if ty != own {
+        @reject_first_leaf_of(ak, LIT_PATTERN_TYPE_MSG)
+        return false
+    }
+    ro before = @out.len()
+    if lk0 == TokenKind.StrLit {
+        @report_if_bad_escape([p0])
+    } else {
+        @judge_char_leaf(p0, ak)
+    }
+    @out.len() == before
 }
 
 /// A NAME-WRAPPED pattern: a binder, or a payload-less variant head -- the
@@ -675,10 +766,15 @@ fn Checker mut @type_arm_block_value(b Node) -> TyId {
     ro last = last_branch_of(kids)
     mut i = 0
     mut out_t = no_ty()
+    // The arm's expectation belongs to the block's TAIL, which is the arm's
+    // value; the statements before it are not (a `ro x = None` there is not
+    // the arm's `None`).
+    ro tail_expect = @value_expect
     for c in kids {
         match c {
             Leaf(_) => {}
             Branch { .. } => {
+                @value_expect = if i == last { tail_expect } else { no_ty() }
                 if i == last && is_expr_kind(c.kind_of()) {
                     ro before = @out.len()
                     @type_expr(c)
@@ -695,6 +791,7 @@ fn Checker mut @type_arm_block_value(b Node) -> TyId {
         }
         i += 1
     }
+    @value_expect = tail_expect
     out_t
 }
 
@@ -871,6 +968,13 @@ const AMBIGUOUS_VARIANT_MSG = "this variant name is declared by more than one su
 /// refused as non-exhaustive -- the wrong cause. Refused HERE, at the arm; the
 /// exhaustiveness rule then says nothing (one cause, one diagnostic).
 const ARRAY_REST_BIND_MSG = "outside the subset: a `..rest` binding in an array pattern needs the shell's slice view wired -- the length test and prefix/suffix elements compile today (E2-b, with the slice view)"
+/// A subpattern that TESTS something below an alternative of `|` (`Aa(1) |
+/// Bb(1)`, `X(P) | Y`): the disjunction's lowering tests the alternatives'
+/// heads only, and the test below was dropped -- a silent wrong answer, the
+/// class of registry 1534 inside a disjunction. Compiling it means an OR of
+/// per-alternative test chains; until then the form is refused by name.
+const DISJ_NESTED_TEST_MSG = "outside the subset: an alternative of `|` with a literal or a variant below its head is read but not compiled yet -- the disjunction tests the heads only (E2-b, with nested pattern tests)"
+
 const DISJ_ALT_MSG = "outside the subset: a `|` pattern takes variant alternatives only -- a literal, `_`, binder, parenthesized, array or nested `|` alternative is not compiled yet (E2-b, with the general or-test)"
 const VARIANT_PATTERN_MSG = "a pattern with a payload names no variant of the matched sum -- a plain binder pattern takes no payload"
 const PAYLOAD_ARITY_MSG = "the pattern's payload count disagrees with the variant's declaration -- match every payload field, or mark the rest with `..` (D59)"

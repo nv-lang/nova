@@ -1,0 +1,15 @@
+module match_char_lit.neg_3
+
+// An INTEGER literal in an arm over a `char` value: a pattern's literal has the
+// scrutinee's type, and `char` and the integers do not mix (D486 s2, amendment
+// 2026-10-01; D128) -- as in an expression, where `c == 97` is refused (D405).
+// The oracle runs this arm as a codepoint compare and prints 1 for `'a'`
+// (registry 1535); novac refuses it, and the asymmetry with `'a'` over an `int`
+// (refused since the string family) is gone.
+
+// NOVAC_EXPECT a literal pattern compares with a value of its own type
+
+fn ck(c char) -> int => match c {
+    97 => 1
+    _ => 0
+}

@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR E_PATTERN_LITERAL_INTERPOLATED
+// Regression for registry 221.1 #1556: a string pattern is not interpolated (the
+// integrator's ruling 2026-10-01). Before: `"a${x}" =>` compiled to a comparison
+// with the text `a${x}` -- "ab" fell through to `_`, silently. Escaped `\${` stays
+// the literal text: spec_tests/conformance/standalone/p1556_escaped_dollar_pattern_ok.nv.
+module neg.p1556_interpolated_pattern_neg
+
+fn kind(s str) -> int {
+    ro x = "b"
+    match s {
+        // nova:expect E_PATTERN_LITERAL_INTERPOLATED -- `${x}` in a pattern is refused, not compared as text
+        "a${x}" => 1
+        _ => 0
+    }
+}
+
+fn main() Io {
+    println("${kind("ab")}")
+}

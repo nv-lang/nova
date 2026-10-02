@@ -87,6 +87,9 @@ fn Checker mut @refuse_span_kind(lo int, hi int, msg str, kind DiagKind) -> ()
         lo,
         hi,
         message: msg,
+        // The checker's spans are offsets into ITS source; whose file that is,
+        // the pipeline knows (`instances_of` names a handed body's, #1521).
+        file: "",
     })
 }
 
