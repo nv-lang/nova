@@ -55,4 +55,9 @@
 #   NEG-WRONG-LINE «landed on line ?» (замер 19:1x, `nova test --full`). Не
 #   поддаётся разметке ПО ПОСТРОЕНИЮ, тот же случай, что d729 выше; разметится,
 #   когда отказ переедет в чекер со спаном.
-unpinned_neg_fixtures=554
+#
+# 2026-10-02, облачная сессия p274-carina-cast (шаг 10, №1646): 554 -> 553.
+#   neg/n_match_arm_width_negative_literal_uint.nv размечена попутно: её код
+#   переведён на E_LIT_OUT_OF_RANGE (D489, пример `None => -1`), и пин поставлен
+#   на строку литерала.
+unpinned_neg_fixtures=553
