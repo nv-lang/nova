@@ -73,9 +73,9 @@ export LC_ALL=C
 # корень файловой системы, а это хуже исходной болезни.
 ROOT="${1:-$(dirname "$0")/../..}"
 ROOT="$(cd "$ROOT" 2>/dev/null && pwd || printf '%s' "$ROOT")"
-BIN="${2:-$ROOT/novac/target/novac.exe}"
 NAME=check-novac-differential
 . "$(dirname "$0")/lib/novac.sh"
+BIN="${2:-$(novac_bin "$ROOT")}"   # #1607: the door, not a file name
 
 novac_require_bin "$NAME" "$ROOT" "$BIN"
 

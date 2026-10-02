@@ -28,7 +28,7 @@ ROOT="${1:-$(dirname "$0")/../..}"
 ROOT="$(cd "$ROOT" 2>/dev/null && pwd || printf '%s' "$ROOT")"
 NAME=check-novac-mangle-fixed-point
 . "$(dirname "$0")/lib/novac.sh"
-NOVAC="$ROOT/novac/target/novac.exe"
+NOVAC="$(novac_bin "$ROOT")"
 SHELL_TPL="$ROOT/novac/src/emit_c/shell.tpl.c"
 novac_require_bin "$NAME" "$ROOT" "$NOVAC"
 [ -f "$SHELL_TPL" ] || { echo "$NAME: FAIL — нет $SHELL_TPL" >&2; exit 1; }
