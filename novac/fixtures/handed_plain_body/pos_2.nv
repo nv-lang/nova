@@ -1,0 +1,13 @@
+module handed_plain_body.pos_2
+
+// `str @replace`, made from std's body (task 4), runs a `mut` fluent chain on a
+// `consume` StringBuilder -- `sb.append(..).append(..)`, whose second link
+// writes the place the first returned (`-> @`, D33/D326; registry 1629,
+// closed on main by registry 1540). Before that the made body was refused
+// inside its instance as "no such method".
+fn main() {
+    ro s = "a.b.c"
+    println(s.replace(".", "__"))
+    println("xyz".replace("q", "r"))
+    println("aaa".replace("a", "bb"))
+}

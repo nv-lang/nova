@@ -1,0 +1,34 @@
+module variant_by_expect.pos_2
+
+// D478's own example, both sums the file's: `Red` under `-> Color`, under a
+// declared `Signal` binding and as a `Signal` argument -- each resolved by the
+// position's expectation (registry 1647: the argument was refused until then).
+
+type Color enum
+    | Red
+    | Green
+
+type Signal enum
+    | Red
+    | Amber
+
+fn pick() -> Color {
+    Red
+}
+
+fn show(s Signal) -> int {
+    match s {
+        Signal.Red => 1
+        Signal.Amber => 2
+    }
+}
+
+fn main() {
+    ro s Signal = Red
+    println(show(s))
+    println(show(Red))
+    match pick() {
+        Color.Red => println(10)
+        Color.Green => println(20)
+    }
+}

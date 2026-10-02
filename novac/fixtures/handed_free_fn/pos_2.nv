@@ -1,0 +1,15 @@
+module handed_free_fn.pos_2
+
+// A free function of a handed std module whose symbol the SHELL does not carry:
+// the declaration is read, the call resolves, and novac MAKES the function from
+// its handed body (task 4 of 274) under its own name -- the shell's symbol
+// `nova_fn_9checksums7adler3212adler32_init` exists nowhere to link. The oracle
+// compiles std and prints 1; so does novac now. Until 2026-10-02 this was neg_1,
+// refused as an honest subset boundary (E2-b2) and allow-listed with that story
+// (docs/plans/274.12-novac-divergences.md); the line left the allow list with it.
+
+import std.checksums.adler32.{adler32_init}
+
+fn main() {
+    println(adler32_init())
+}

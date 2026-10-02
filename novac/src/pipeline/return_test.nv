@@ -91,3 +91,22 @@ fn main() {\n println(sign(1) + grade(1))\n}", std_decls())
 fn main() {\n println(f(1))\n}", std_decls())
     assert(dc.len() >= 1, "disagreeing arms of an else-if chain must be refused")
 }
+
+test "the tail's expectation stays outside a STATIC call's arguments (part 6 of p274-carina-k1)" {
+    // `=> Tb.id(if m { 1 } else { 0 })` in a `-> Row` body: the branch literals
+    // took the RETURN's type `Row` through the static call's argument walk, so
+    // `T` was deduced as `Row` -- the leak part 5 closed for the method call
+    // (methods.nv). The argument is the literal's position (D489), and an
+    // `if` whose branches are both literals with no written type is `int`:
+    // `T = int`, and the body's value is `int` where `Row` is declared -- the
+    // verdict the generic METHOD of the same shape gets.
+    mut std = std_decls()
+    std.push("module std.s\nexport type Tb { n int }\nexport type Row int\nexport fn Tb.id[T](x T) -> T => x\n")
+    ro src = "fn mk(m bool) -> Row => Tb.id(if m { 1 } else { 0 })\nfn main() {\n println(1)\n}"
+    ro d = compile_with(src, parse_decls(std), interop_surface())
+    assert(messages(d).contains("cannot return value of type `int`"), messages(d))
+    // CONTROL: where the declared return IS `int`, the same call compiles.
+    ro ok = "fn mk(m bool) -> int => Tb.id(if m { 1 } else { 0 })\nfn main() {\n println(1)\n}"
+    ro d2 = compile_with(ok, parse_decls(std), interop_surface())
+    assert(d2.len() == 0, messages(d2))
+}

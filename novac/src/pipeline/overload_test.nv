@@ -131,6 +131,21 @@ test "the linearity axis: a plain T takes the `[T]` form over `[T consume]` (D84
     assert(d1.len() == 0, messages(d1))
 }
 
+test "concrete beats generic: a method on the receiver's own type takes the call from the blanket (D84 filter 4 rule 1)" {
+    // std declares `[]u8 @to_str() -> Result[str, Utf8Error]` beside the
+    // blanket `fn[T] T @to_str() -> str`; both fit `bytes.to_str()`, and the
+    // spec names the concrete one the winner (spec/decisions/10-overloading.md
+    // filter 4 rule 1; D285 section 2 item 1). Without the axis it was a D84
+    // tie -- 6 refusals of the 0.2 measure over novac's own source.
+    mut std = std_decls()
+    std.push("module std.lbl\nexport type Tag { n int }\nexport fn[T] T @label() -> str => \"g\"\nexport fn Tag @label() -> int => 1\n")
+    ro d = compile_with("import std.lbl.{Tag}\nfn f(t Tag) -> int => t.label()\nfn main() {\n println(1)\n}", parse_decls(std), interop_surface())
+    assert(d.len() == 0, messages(d))
+    // CONTROL: a receiver no concrete row fits still takes the blanket.
+    ro g = compile_with("import std.lbl.{Tag}\nfn f(n int) -> str => n.label()\nfn main() {\n println(1)\n}", parse_decls(std), interop_surface())
+    assert(g.len() == 0, messages(g))
+}
+
 test "a method on a concrete receiver beats a blanket one on a bare type parameter (D285 section 2 point 1, D84 section 1)" {
     mut std = std_decls()
     std.push("module std.sh\nexport fn int @show() -> int => 1\nexport fn[T] T @show() -> str => \"\"\n")

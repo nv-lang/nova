@@ -1515,8 +1515,9 @@
 # 2026-10-02, assistant nova-88: rows -> 1587, max -> 1639 (branch p1608-no-implicit-numeric-change: row 1639 filed -- an example without fn main is checked by nothing (orm_demo), number from the integrator).
 # 2026-10-02, integrator nova-20: rows -> 1590, max -> 1642 (rows 1640 (closed by c8aef519e), 1641, 1642 filed (the assistant's findings on orm_demo)).
 # 2026-10-02, integrator nova-20: rows -> 1592, max -> 1642 (merge of p274-carina-sweep steps 5-7: rows 1617, 1618 arrive, their reserve dropped).
-rows=1592
-max=1642
+# 2026-10-02, integrator nova-20: rows -> 1597, max -> 1662 (rows 1655 (stdout buffered), 1656 (false E_DEP_PATH_OUTSIDE_REPO), 1657 (free fn named like a std local), 1661 (gate-novac without the novac_bin door), 1662 (accepted red by job name) filed; 1643-1654 and 1658-1660 reserved in gaps -- numbers issued to cloud sessions and the assistant, their rows travel in branches or wait for a filing; condition to drop: the same merge or filing removes them from gaps).
+rows=1597
+max=1662
 rows=1590
 max=1642
 rows=1587
@@ -2264,7 +2265,7 @@ stale_gaps=0
 #   указателем); строки едут в его ветке `r3-threshold-24`. Условие снятия: тем же слиянием номера убираются из `gaps`.
 # 2026-10-02, integrator: 1610-1611 В `gaps` — РЕЗЕРВ, выданный помощнику nova-88: №1610 (вывод `Empty` как ParseBoolError, ветка
 #   p1456-builtin-sum-method) и №1611 (f64 -> int молча, К1). Тем же слиянием номера убираются из `gaps`.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1643-1654,1658-1660
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding
