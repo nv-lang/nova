@@ -1501,6 +1501,9 @@
 # 2026-10-01, integrator nova-20: rows -> 1561, max -> 1615 (rows 1613 (non-int index), 1614 (same-named type of two modules), 1615 (Command.run ignores the deadline)).
 # 2026-10-01, integrator nova-20: rows -> 1562, max -> 1615 (p1456 merge: row 1610 filed, its reserve dropped).
 # 2026-10-01, integrator nova-20: rows -> 1564, max -> 1615 (R3 merge: rows 1598, 1599 filed, their reserve dropped).
+# 2026-10-02, integrator nova-20: rows -> 1565, max -> 1616 (row 1616 filed: oracle call takes the parameter convention of a same-named function of another module, K1, blocks the tag).
+rows=1565
+max=1616
 rows=1564
 max=1615
 rows=1562

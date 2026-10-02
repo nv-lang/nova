@@ -1511,7 +1511,8 @@ no_caveat=0
 # 2026-10-01, integrator nova-20: 98 -> 98, merge of the cloud session's patterns-ab: #1508 (Carina, record variant and | binders), #1509 (Carina, match tail type), #1510/#1511 (oracle K1: | binders by position, record-variant patterns unjudged), #1512 (Carina, handed sum payload) numbered here.
 # 2026-10-02, integrator: row 1590 added (nova-63, Windows argv/env arrive in ANSI and
 # are kept as UTF-8 str), BLOKIRUET TEG: DA. blockers 98->99.
-blockers=99
+# 2026-10-02, integrator nova-20: 99 -> 100, row 1616 filed: oracle call takes the parameter convention of a same-named function of another module, K1, blocks the tag.
+blockers=100
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed
