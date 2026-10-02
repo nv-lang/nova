@@ -9,8 +9,8 @@ G="$GD/check-novac-self-accepted.py"
 T="${TMPDIR:-/tmp}/novac-self-accepted-selftest.$$"
 mkdir -p "$T"
 trap 'rm -rf "$T"' 0
-fails=0
-ok()  { echo "  ok  $1"; }
+fails=0; cases=0
+ok()  { echo "  ok  $1"; cases=$((cases+1)); }
 bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
 run() { python "$G" "$ROOT" --from-file "$1" --baseline "$2" > "$T/out" 2> "$T/err"; return $?; }
 
@@ -94,7 +94,7 @@ fi
 
 echo "итог: FAIL $fails"
 if [ "$fails" -eq 0 ]; then
-    echo "test-check-novac-self-accepted ok: 8 случаев, храповик в обе стороны"
+    echo "test-check-novac-self-accepted ok: $cases случаев, храповик в обе стороны"
     exit 0
 fi
 exit 1
