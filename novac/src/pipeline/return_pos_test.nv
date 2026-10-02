@@ -38,3 +38,22 @@ test "a pair in return position: `=>` body and `return` build a temporary and re
     ro (d3, _) = compile_to_c("fn pair() -> (int, str) => (1, 2)\nfn main() {\n println(1)\n}", std)
     assert(d3.len() == 1, messages(d3))
 }
+
+test "a TUPLE tail of a value `if` branch is the branch's value (part 5 of p274-carina-k1)" {
+    // The checker took `if a > 0 { (a, 1) } else { (0, 2) }` as a value, and the
+    // lowering asked `is_expr_kind` -- which a tuple literal is not -- so both
+    // branches ran as statements and the function returned the temporary's
+    // zero: `0 0` where the oracle prints `6 2`. Silent wrong code.
+    ro (d, c) = compile_to_c("fn pair(a int) -> (int, int) {\n if a > 0 {\n  (a, 1)\n } else {\n  (0, 2)\n }\n}\n\
+fn main() {\n ro (x, y) = pair(5)\n println(x + y)\n}", std_decls())
+    assert(d.len() == 0, messages(d))
+    // Each branch's pair is ASSIGNED to the result -- the base built it and
+    // dropped it, `(void)_novac_tmp_t1;`.
+    assert(!c.contains("(void)_novac_tmp_"), c)
+    assert(c.contains(" = _novac_tmp_t"), c)
+    // CONTROL: a scalar branch tail places its value as before.
+    ro (d2, c2) = compile_to_c("fn one(a int) -> int {\n if a > 0 {\n  7\n } else {\n  8\n }\n}\n\
+fn main() {\n println(one(1))\n}", std_decls())
+    assert(d2.len() == 0, messages(d2))
+    assert(c2.contains("= ((nova_int)7LL);"), c2)
+}

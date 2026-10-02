@@ -274,12 +274,12 @@ fn Lowerer mut @lower_block_value(b Node, t Local) -> () {
         match c {
             Leaf(_) => {} // the block's braces are trivia, not statements
             Branch { .. } => {
-                if j == last_branch && is_expr_kind(c.kind_of()) {
+                if j == last_branch && @tail_places_value(c) {
                     @lower_place(c, t)
                 } else {
-                    // Everything before the tail runs for effect, and a tail
-                    // that is not an expression is refused in `check` -- it
-                    // never reaches here.
+                    // Before the tail: effect only. The tail asks the ONE door, not `is_expr_kind`
+                    // -- a tuple or nested `if` tail went to `@lower_stmt` and the value was
+                    // DROPPED, silently (part 5 of p274-carina-k1: `0 0` for the oracle's `6 2`).
                     @lower_stmt(c)
                 }
             }
