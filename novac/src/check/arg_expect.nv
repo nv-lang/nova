@@ -5,7 +5,7 @@
 //   full unification -- here one structural match per type parameter
 //   (`slot_binding_in`), the same door the deduction from arguments uses.
 // Role: layer 7, the expectation of a call's arguments (part 7 of
-//   p274-carina-k1; D489 "Где действует": a literal takes the type of its
+//   p274-carina-k1; D489 "where it applies": a literal takes the type of its
 //   position wherever the position knows its type). The call's own position
 //   (a declared return, an outer argument) fixes the type parameters its
 //   declared return mentions; each argument is then typed with its PARAMETER's
