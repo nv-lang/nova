@@ -36,7 +36,7 @@ module novac.resolve
 
 import ../diag.{ice}
 import ../names.{NameTable, NamespaceId}
-import ../builtins.{ENTRY_FN}
+import ../builtins.{ENTRY_FN, TypeKind}
 import ../types.{TyId, is_ty, Interner}
 import ../sem.{FnTable, FnDef, FnRow, raw_row, no_row, Ctx, ProtoSig, ArgSpec, CallForm, bind_fault}
 import ../sem.{FieldTable, FieldRow, raw_frow, is_frow}
@@ -519,7 +519,7 @@ fn fits(fns FnTable, tys Interner, row FnRow, args []ArgSpec, form CallForm) -> 
 /// ro c)` scores 2 and `f(ro a, ro b, mut c)` scores 1, so the sum names a
 /// winner although neither is more specific everywhere.
 #realtime nogc
-fn dominates(fns FnTable, a FnRow, b FnRow) -> bool {
+fn dominates(fns FnTable, tys Interner, a FnRow, b FnRow) -> bool {
     ro fa = fns.rows[raw_row(a)]
     ro fb = fns.rows[raw_row(b)]
     mut no_worse = fa.param_cnt == fb.param_cnt
@@ -539,6 +539,15 @@ fn dominates(fns FnTable, a FnRow, b FnRow) -> bool {
         }
     }
     if no_worse && better_somewhere { return true }
+    // THE RECEIVER AXIS (D285 section 2 point 1, D84 section 1): a method on a
+    // CONCRETE receiver type beats a blanket one on a bare type parameter
+    // (`fn[T] T @to_str()`), "always", when the modes do not tell them apart.
+    // Both fit the call already (`fits` above), so the concrete one is on the
+    // receiver's own type -- the case point 3 forbids (a concrete method on
+    // ANOTHER type beating a compatible blanket) cannot reach here. Without it
+    // `bytes.to_str()` on a `[]u8` was "fits more than one method": std's
+    // `[]u8 @to_str() -> Result[..]` beside the blanket `T @to_str() -> str`.
+    if no_worse && concrete_recv_over_blanket(fns, tys, fa, fb) { return true }
     // THE LINEARITY AXIS (D84 amendment 2026-09-25, registry 1519), and only
     // where the mode axis cannot tell the two apart (its rule 5: linearity
     // decides AFTER the modes, between forms alike in all else): the form whose
@@ -546,6 +555,17 @@ fn dominates(fns FnTable, a FnRow, b FnRow) -> bool {
     // position (rule 4). Without it std's `Vec[T] @contains` beside
     // `Vec[T consume] @contains` was an ambiguity on every vector of a plain T.
     no_worse && linear_dominates(fns, fa, fb)
+}
+
+/// Is `fa` a method on a concrete receiver and `fb` one on a bare type
+/// parameter? The receiver is parameter zero of a method row (plan 273).
+#realtime nogc
+fn concrete_recv_over_blanket(fns FnTable, tys Interner, fa FnDef, fb FnDef) -> bool {
+    if !fa.has_recv || !fb.has_recv || fa.param_cnt == 0 || fb.param_cnt == 0 { return false }
+    ro ra = fns.params[fa.param_off].type_id
+    ro rb = fns.params[fb.param_off].type_id
+    if !is_ty(ra) || !is_ty(rb) { return false }
+    tys.kind_of(ra) != TypeKind.TkParam && tys.kind_of(rb) == TypeKind.TkParam
 }
 
 /// Does `fa` beat `fb` on the linearity axis -- nowhere `consume` where `fb` is
@@ -615,9 +635,9 @@ export fn FnIndex @lookup(fns FnTable, tys Interner, name str, args []ArgSpec, f
         }
         if raw_row(winner) < 0 {
             winner = row
-        } else if dominates(fns, row, winner) {
+        } else if dominates(fns, tys, row, winner) {
             winner = row
-        } else if dominates(fns, winner, row) {
+        } else if dominates(fns, tys, winner, row) {
             // The standing candidate beats this row outright; nothing to settle.
         } else {
             // Incomparable. NOT a verdict: a row met later may beat them both
@@ -647,7 +667,7 @@ export fn FnIndex @lookup(fns FnTable, tys Interner, name str, args []ArgSpec, f
         if !@in_view(fns, row, view) { continue }
         if !fits(fns, tys, row, args, form) { continue }
         if row == winner { continue }
-        if !dominates(fns, winner, row) {
+        if !dominates(fns, tys, winner, row) {
             unique = false
         } else {
             // The winner beats this one outright; the rest of the chain decides.

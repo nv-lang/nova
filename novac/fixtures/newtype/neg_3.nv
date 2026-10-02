@@ -1,0 +1,15 @@
+module newtype.neg_3
+
+// ONE seeded cause: a newtype's constructor given a value that already IS the
+// newtype. D52 amendment 2026-10-02 (the owner's decision): the constructor
+// takes a value of the representation, and `W(e)` with `e W` is
+// E_NEWTYPE_CTOR_SELF -- the constructor is not needed. The oracle still
+// accepts it (registry 1596, not Carina's to fix).
+// NOVAC_EXPECT this value already is the newtype -- the constructor is not needed (E_NEWTYPE_CTOR_SELF
+type Row int
+
+fn main() {
+    ro a = Row(7)
+    ro b = Row(a)
+    println(b as int)
+}

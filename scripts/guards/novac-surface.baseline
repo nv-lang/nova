@@ -450,6 +450,10 @@ parse 1
 #   signature is E_PRIVATE_TYPE_IN_PUBLIC (D47 amendment, owner 2026-10-01). main.nv reads it.
 # merge of p274-carina-sweep into the merge train (integrator, 2026-10-02): pipeline 13 (k1) + 1
 #   (sweep's UnitFile) = 14.
+# merge of origin/integ/merge-train-1001 into p274-carina-cast (2026-10-02): the train's base
+#   plus what the sweep branch exported after the train took its earlier version -- pipeline
+#   `UnitFile` and sem's D488 doors (see the sweep chronicle lines on p274-carina-sweep);
+#   the counts are the guard's on the merged tree.
 pipeline 14
 # 2026-08-28 (274.4 step 3): the field root gets the same cut. sem 171 -> 169:
 # has_field and field_type moved OUT to resolve (FieldIndex); resolve 11 -> 15:
@@ -1002,6 +1006,10 @@ resolve 23
 #   of every method on a value record that D488 replaces.
 # merge of p274-carina-sweep (deliveries 3-4) into the merge train (integrator, 2026-10-02): 336 + 3 (D488:
 #   RECV_COPY_MAX_BYTES, value_recv_by_pointer, row_recv_by_pointer) - 1 (recv_type_name) = 338.
+# merge of origin/integ/merge-train-1001 into p274-carina-cast (2026-10-02): the train's base
+#   plus what the sweep branch exported after the train took its earlier version -- pipeline
+#   `UnitFile` and sem's D488 doors (see the sweep chronicle lines on p274-carina-sweep);
+#   the counts are the guard's on the merged tree.
 sem 338
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.

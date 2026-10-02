@@ -1,0 +1,11 @@
+module cast_numeric.neg_9
+
+// ONE seeded cause, and ONE diagnostic: the operand of a cast is a name whose
+// initializer was refused (an unknown callee). The cast must not speak about
+// it -- until 2026-10-01 it added "this cast is not compiled yet" to the one
+// real cause, a cascade the no-cascade rule forbids.
+// NOVAC_EXPECT `mystery` is not a callable novac knows
+fn main() {
+    ro x = mystery(1)
+    println(x as u8)
+}

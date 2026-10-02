@@ -1,0 +1,14 @@
+module index_key.neg_1
+
+// ONE seeded cause: an index of type `u8`. D238: `Vec[T] @index` takes an
+// `int` or a `Range`; D405: no implicit numeric conversion -- a LANGUAGE error
+// (the integrator's ruling 2026-10-02). The oracle accepts it and prints 20
+// (docs/plans/repro/TBD-index-key-type).
+// NOVAC_EXPECT an index is an `int` (D238
+fn main() {
+    mut xs = []int.new()
+    xs.push(10)
+    xs.push(20)
+    ro i = 1 as u8
+    println(xs[i])
+}
