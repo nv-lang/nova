@@ -48,9 +48,17 @@ impl<'a> TypeCheckCtx<'a> {
         let mut gen = VarGen::new();
         let vars: HashMap<String, constraint_solver::TypeVar> =
             td.generics.iter().map(|g| (g.name.clone(), gen.fresh())).collect();
+        let params: HashSet<String> = td.generics.iter().map(|g| g.name.clone()).collect();
         let mut cs = Vec::with_capacity(fields.len());
         for (field, arg) in fields.iter().zip(args) {
             let CallArg::Item(e) = arg else { return None };
+            // #1653: a field that names no parameter fixes none -- `Tag(3, "t")` with
+            // `Tag(u16, T)` asked `u16 == int` of the literal and lost `T` to the
+            // failed solve; the field's own agreement is #1645's door
+            // (`check_variant_ctor_payload`), which judges the literal against `u16`.
+            if !typeref_mentions_any(field, &params) {
+                continue;
+            }
             let at = ResolvedType::from_type_ref(&self.infer_expr_type(e, scope)?);
             if !self.rt_is_closed(&at) {
                 return None;

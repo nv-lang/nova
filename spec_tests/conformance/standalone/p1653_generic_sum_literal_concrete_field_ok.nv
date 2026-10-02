@@ -1,0 +1,27 @@
+// EXPECT_STDOUT t:3 u:7 w:9
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 #1653: a generic sum's constructor with no declared type and a
+// bare literal in a field that names no type parameter -- `Tag(3, "t")` with
+// `Tag(u16, T)` -- passed `nova check` and failed in the C compiler: the
+// instance's `T` was solved from EVERY field, `u16 == int` (the literal's own
+// type) failed the solve, and `e` was left without a type, so the `match`
+// bound the payload as `void*`. A field that names no parameter fixes none; it
+// is judged against its own type by #1645's door (the literal takes `u16`,
+// D489). Both orders of the fields, and a field that is a parameter's container.
+// Negative half: neg/p1653_generic_sum_literal_concrete_field_neg.nv.
+module standalone.p1653_generic_sum_literal_concrete_field_ok
+
+type P1653Tg[T] enum P1653Tag(u16, T) | P1653Nn
+type P1653Rv[T] enum P1653Rev(T, u8) | P1653None
+type P1653Ls[T] enum P1653List(u32, []T) | P1653Empty
+
+fn main() Io {
+    ro a = P1653Tag(3, "t")
+    ro sa = match a { P1653Tag(n, s) => "${s}:${n}", P1653Nn => "-" }
+    ro b = P1653Rev("u", 7)
+    ro sb = match b { P1653Rev(s, n) => "${s}:${n}", P1653None => "-" }
+    ro c = P1653List(9, ["w"])
+    ro sc = match c { P1653List(n, xs) => "${xs[0]}:${n}", P1653Empty => "-" }
+    println("${sa} ${sb} ${sc}")
+}

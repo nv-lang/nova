@@ -4,8 +4,8 @@
 // Registry 221.1 #1645, the positive half: with no expected type a payload of the
 // field's own type is accepted, a literal takes the field's type when it fits
 // (D489), `as` says the change (D491), and a field that names a type parameter is
-// left to the instance (`Tag(T, u16)`: `T` from the declared type; without it the C
-// compiler refuses the form -- registry row of the same date). Negative halves:
+// left to the instance (`Tag(T, u16)`: `T` from the declared type here; the form
+// without one is standalone/p1653_generic_sum_literal_concrete_field_ok). Negative halves:
 // neg/p1645_variant_payload_*_neg.nv.
 module standalone.p1645_variant_payload_ok
 

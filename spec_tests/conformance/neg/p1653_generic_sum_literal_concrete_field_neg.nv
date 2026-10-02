@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR E_LIT_OUT_OF_RANGE
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 #1653, the negative half: a field that names no type parameter
+// no longer takes part in solving the instance, so its literal is judged where
+// the field is -- against the field's own type (D489), by #1645's door. The
+// literal does not fit: the cause is named at it. One line per cell.
+module neg.p1653_generic_sum_literal_concrete_field_neg
+
+type P1653nTg[T] enum P1653nTag(u16, T) | P1653nNn
+
+fn main() Io {
+    // nova:expect E_LIT_OUT_OF_RANGE -- `70000` does not fit the `u16` field; `T` is still `str`
+    ro a = P1653nTag(70000, "t")
+    // nova:expect E_LIT_OUT_OF_RANGE -- a negative literal never fits an unsigned field
+    ro b = P1653nTag(-1, 5)
+    match a { P1653nTag(n, s) => println("${s}${n}"), P1653nNn => println("-") }
+    match b { P1653nTag(n, k) => println("${k}${n}"), P1653nNn => println("-") }
+}
