@@ -1,0 +1,30 @@
+module must_consume.neg_14
+
+// A MUST-CONSUME PAYLOAD BOUND BY A PATTERN: `Some(t)` binds a `Tx` that no
+// `consume` binding owns -- the oracle refuses it (E_CONSUME_PATTERN_REQUIRED).
+// The track does not follow a value through a pattern yet, so it is refused BY
+// NAME with its stage -- never left untracked.
+
+// NOVAC_EXPECT bound by a pattern is not tracked yet
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println(@id)
+}
+
+fn Tx consume @rollback() -> () {
+    println(0)
+}
+
+fn Tx @peek() -> int => @id
+
+fn mk(n int) -> Option[Tx] => if n > 0 { Some(Tx { id: n }) } else { None }
+
+fn main() {
+    if Some(t) = mk(1) {
+        println(t.peek())
+    }
+}

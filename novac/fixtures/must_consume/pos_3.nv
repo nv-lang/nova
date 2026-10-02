@@ -1,0 +1,145 @@
+module must_consume.pos_3
+
+// A MUST-CONSUME VALUE ACROSS BRANCHES (D133, step 2 of the track): the arms of
+// an `if`, an `else if` chain, an `if`-let and a `match` each start from the
+// same state, and the value is done after the branch when EVERY arm consumed it
+// -- by a different `consume` method in each, or by a `consume` parameter. A
+// value bound inside an arm lives to the end of that arm; a `match` guard runs
+// on its arm's path; a branch in value position joins the same way; and a
+// `consume` call in a condition consumes on every path.
+// Behaviour byte-for-byte with the oracle (novac-e1-smoke).
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx consume @done() -> bool {
+    println("done ${@id}")
+    @id > 0
+}
+
+fn Tx @peek() -> int => @id
+
+fn eat(consume t Tx) -> () {
+    println("eat ${t.peek()}")
+    t.commit()
+}
+
+fn both(n int) -> () {
+    consume t = Tx { id: n }
+    if n > 0 {
+        t.commit()
+    } else {
+        t.rollback()
+    }
+}
+
+fn chain(n int) -> () {
+    consume t = Tx { id: n }
+    if n > 1 {
+        t.commit()
+    } else if n > 0 {
+        eat(t)
+    } else {
+        t.rollback()
+    }
+}
+
+fn nested(n int, m int) -> () {
+    consume t = Tx { id: n }
+    if n > 0 {
+        if m > 0 {
+            t.commit()
+        } else {
+            t.rollback()
+        }
+    } else {
+        eat(t)
+    }
+}
+
+fn arms(n int) -> () {
+    consume t = Tx { id: n }
+    match n {
+        0 => t.rollback()
+        1 => eat(t)
+        k if k > 5 => t.commit()
+        _ => {
+            consume u = Tx { id: 100 }
+            u.commit()
+            t.rollback()
+        }
+    }
+}
+
+fn maybe(o Option[int]) -> () {
+    consume t = Tx { id: 7 }
+    if Some(v) = o {
+        println(v)
+        t.commit()
+    } else {
+        t.rollback()
+    }
+}
+
+fn inner(n int) -> () {
+    if n > 0 {
+        consume t = Tx { id: n }
+        println(t.peek())
+        t.commit()
+    } else {
+        println("none")
+    }
+}
+
+fn valued(n int) -> int {
+    consume t = Tx { id: n }
+    ro x = if n > 0 {
+        t.commit()
+        1
+    } else {
+        t.rollback()
+        2
+    }
+    x * 10
+}
+
+fn cond(n int) -> () {
+    consume t = Tx { id: n }
+    if t.done() {
+        println("yes")
+    } else {
+        println("no")
+    }
+}
+
+fn main() {
+    both(1)
+    both(0)
+    chain(2)
+    chain(1)
+    chain(0)
+    nested(1, 1)
+    nested(1, 0)
+    nested(0, 0)
+    arms(0)
+    arms(1)
+    arms(9)
+    arms(3)
+    maybe(Some(3))
+    maybe(None)
+    inner(4)
+    inner(0)
+    println(valued(1))
+    println(valued(0))
+    cond(1)
+    cond(0)
+}

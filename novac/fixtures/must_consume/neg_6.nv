@@ -1,11 +1,14 @@
 module must_consume.neg_6
 
-// CONSUMED INSIDE A BRANCH: legal Nova (D133 joins the paths), and the oracle
-// compiles it. Step 1 of the track follows straight-line code only, so the
-// branch is refused BY NAME with its stage -- never accepted unchecked. Step 2
-// (branch joins) lifts it.
+// CONSUMED INSIDE A LOOP: the body may run more than once, so the second pass
+// would use a consumed value -- the oracle refuses it (D131 "possibly
+// consumed"). Steps 1-2 of the track walk a loop with the depth raised and do
+// not follow a move out of it (whether a `break` follows is the early-exit
+// step), so it is refused BY NAME with its stage -- never accepted unchecked.
+// (Until step 2 this fixture held a consume inside an `if`, which step 2 joins:
+// that form now lives in pos_3.)
 
-// NOVAC_EXPECT consumed inside a branch, a loop or a nested block is not tracked yet
+// NOVAC_EXPECT consumed inside a loop or a nested block is not tracked yet
 
 type Tx consume {
     id int
@@ -15,17 +18,16 @@ fn Tx consume @commit() -> () {
     println(@id)
 }
 
-fn Tx @peek() -> int => @id
-
 fn Tx consume @rollback() -> () {
     println(0)
 }
 
+fn Tx @peek() -> int => @id
+
 fn main() {
     consume t = Tx { id: 1 }
-    if t.peek() > 0 {
+    for i in 0..2 {
+        println(i)
         t.commit()
-    } else {
-        t.rollback()
     }
 }

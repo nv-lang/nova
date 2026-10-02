@@ -1,0 +1,28 @@
+module must_consume.neg_9
+
+// ONE MATCH ARM DOES NOT CONSUME (D133-not-consumed, partial): the `_` arm only
+// reads `t`. The oracle refuses it too.
+
+// NOVAC_EXPECT is consumed on only some paths before the end of its scope
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println(@id)
+}
+
+fn Tx consume @rollback() -> () {
+    println(0)
+}
+
+fn Tx @peek() -> int => @id
+
+fn main() {
+    consume t = Tx { id: 1 }
+    match t.peek() {
+        0 => t.rollback()
+        _ => println(t.peek())
+    }
+}

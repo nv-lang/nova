@@ -122,8 +122,14 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
         // asked once the callees are recorded.
         c.refuse_foreign_defaults(file)
         // The consumption obligation of the file's own must-consume types (D133
-        // step 1), asked once every node's type and callee is recorded.
-        c.check_consume_flow(file)
+        // steps 1-2), asked once every node's type and callee is recorded -- and
+        // only over a file typing accepted: the join of two arms reads every
+        // statement's type, and a refused one (an unknown `panic`) is not trusted.
+        if c.out.len() == 0 {
+            c.check_consume_flow(file)
+        } else {
+            // Typing refused: the types the obligation would read are not trusted.
+        }
         // The disjointness walk that stood here is gone (2026-08-18): the
         // channel holds ONE sum per node now, so "a call and an
         // instantiation at once" is not a state that can be built.
