@@ -1,0 +1,24 @@
+=== PROGRAM
+     1	// Hunt 2026-10-02 cast x K1, side probe (outside K1: an ICE, not a value).
+     2	// A float literal with an exponent (D489's table names `1e10` a float
+     3	// literal) as a cast operand in a `const`. Carina's lexer reads no exponent;
+     4	// inside a function the same text is a parse refusal, inside a `const` it is
+     5	// E_NOVAC_ICE "expression kind without a type rule". The oracle prints
+     6	// 2147483647 (saturation, D54).
+     7	const E = 1e20 as i32
+     8	
+     9	fn main() {
+    10	    println(E)
+    11	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=0
+oracle run rc=0
+=== SUBJECT: novac emit prog.nv
+novac emit rc=2
+{"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error (novac bug, not yours): check: expression kind without a type rule — no silent int default (#652 class)","poisoned_by":null}
+--- Carina's C, the body of main
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+(skipped: refused by novac, or no smoke cache)
+=== VERDICT: one side produced no run (see above)
+--- oracle stdout
+2147483647

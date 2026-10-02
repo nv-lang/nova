@@ -52,8 +52,18 @@
 export LC_ALL=C
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT" || exit 2
-NOVAC="$ROOT/novac/target/novac.exe"
-[ -x "$NOVAC" ] || NOVAC="$ROOT/novac/target/novac"
+# Which Carina binary is A. NOVAC from the caller wins. Otherwise the NEWER of
+# novac.exe and novac: a build on Linux writes `novac`, and a stale `novac.exe`
+# left by an earlier build used to win by name alone -- the cloud session k1
+# measured a Carina that no longer existed (2026-10-02: 140/161 and 124/144 were
+# taken on the old binary; 15 false reds in no-cascade and diag-schema too).
+if [ -z "${NOVAC:-}" ]; then
+    _a="$ROOT/novac/target/novac.exe"; _b="$ROOT/novac/target/novac"
+    if [ -x "$_a" ] && [ -x "$_b" ]; then
+        if [ "$_b" -nt "$_a" ]; then NOVAC="$_b"; else NOVAC="$_a"; fi
+    elif [ -x "$_a" ]; then NOVAC="$_a"
+    else NOVAC="$_b"; fi
+fi
 VERDICT="$ROOT/target/double-build-verdict.txt"
 mkdir -p "$ROOT/target"
 
