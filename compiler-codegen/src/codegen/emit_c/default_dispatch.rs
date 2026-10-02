@@ -13,6 +13,11 @@
 //! are the value since #1395) and the call passes the receiver by address,
 //! through the same `prepare_method_recv` every other value-receiver method
 //! call uses (an rvalue receiver is hoisted to a temporary there).
+//!
+//! #1598 (D488 rule 2): a small `ro @` receiver is passed by copy -- the body
+//! then takes `NovaValue_X nova_self` and the call passes the value; the door
+//! is `recv_by_copy`, the same one every method definition and call asks (a
+//! default body is called `ro`, as the call site has always assumed).
 
 use crate::ast::TypeRef;
 
@@ -58,6 +63,9 @@ impl CEmitter {
                 .strip_prefix("NovaTuple_")
                 .map(|s| s.trim().to_string())
                 .unwrap_or_else(|| Self::debt_strip_value_prefix_or_nova_trim_start(obj_ty));
+            if self.recv_by_copy(obj_ty, false) {
+                return (name, obj_ty.to_string(), false); // #1598: by copy
+            }
             (name, format!("{}*", obj_ty), true)
         } else {
             (self.debt_strip_nova_trim_start_no_ws(obj_ty), obj_ty.to_string(), false)
