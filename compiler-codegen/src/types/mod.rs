@@ -11321,6 +11321,8 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::Call { func, args, trailing } => {
                 // #1517: a variant constructor's payload count (`variant_ctor.rs`).
                 self.check_variant_ctor_arity(e, scope, errors);
+                // #1645: its payload against the fields every instance shares.
+                self.check_variant_ctor_payload(e, gs, scope, errors);
                 // 172.1.2 Шаг 2: func-позиция — Member здесь = метод-вызов, не field-read.
                 self.in_call_func.set(true);
                 self.f1_expr(func, gs, scope, errors);

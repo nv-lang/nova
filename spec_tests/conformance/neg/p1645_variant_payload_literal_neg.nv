@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E_LIT_OUT_OF_RANGE
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 #1645, the literal half: a literal payload takes the field's type
+// (D489) and is checked against its range -- `P1645lByte(300)` with `| Byte(u8)` was
+// accepted wherever nothing expected the sum. One line per cell, at the literal.
+module neg.p1645_variant_payload_literal_neg
+
+type P1645lSv enum P1645lByte(u8) | P1645lPos(u32)
+
+fn main() {
+    // nova:expect E_LIT_OUT_OF_RANGE -- `300` does not fit the `u8` field
+    ro a = P1645lSv.P1645lByte(300)
+    // nova:expect E_LIT_OUT_OF_RANGE -- a negative literal never fits an unsigned field
+    ro b = P1645lPos(-1)
+    match a { P1645lByte(v) => println(v), _ => println(0) }
+    match b { P1645lPos(v) => println(v), _ => println(0) }
+}
