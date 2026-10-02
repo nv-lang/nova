@@ -1,0 +1,35 @@
+module coalesce_return.pos_1
+
+// `X ?? return R` where the fn returns neither an Option nor a Result -- LEGAL
+// since the D86 amendment of 2026-09-01 (novac's own sem/handed_bodies.nv
+// writes it in `-> bool` functions). On `Some(v)` the value is `v`; on `None`
+// the fn returns `R`. Byte for byte with the oracle.
+
+fn first_positive(xs []int) -> bool {
+    ro x = xs.first() ?? return false
+    x > 0
+}
+
+fn label(xs []str) -> str {
+    ro s = xs.first() ?? return "empty"
+    "first: ${s}"
+}
+
+fn count_after(xs []int) -> int {
+    ro h = xs.first() ?? return -1
+    println("not empty")
+    h + 1
+}
+
+fn main() {
+    mut xs = []int.new()
+    println(first_positive(xs))
+    println(count_after(xs))
+    xs.push(7)
+    println(first_positive(xs))
+    println(count_after(xs))
+    mut ss = []str.new()
+    println(label(ss))
+    ss.push("a")
+    println(label(ss))
+}

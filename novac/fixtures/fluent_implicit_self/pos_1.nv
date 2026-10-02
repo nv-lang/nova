@@ -53,6 +53,10 @@ fn main() {
     ro g = c.touch()
     println(g.n)
     println(c.set_pos(4).peek())
+    // A `mut` fluent chain (D181): the second link runs on the receiver the
+    // first handed back -- the place `c` is (registry 221.1 #1540).
+    println(c.reset().set_pos(6).bump_if(true).n)
+    println(c.n)
     // Handed std bodies of the same forms: no tail (`clear`), a tail `if`
     // without `else` (`truncate`).
     mut v = [1, 2, 3]

@@ -153,7 +153,40 @@ fn field_class(e Node, scope Scope) -> ArgClass {
 /// Every other shape answers what `arg_class` answers.
 fn typed_arg_class(e Node, ctx Ctx, scope Scope, chan CheckOut) -> ArgClass {
     if call_hands_ro_view(e, ctx, chan) { return ArgClass.ArgRo }
+    // A FLUENT CALL hands out its RECEIVER (`-> @`, D409; the `mut` chain of
+    // D181): `c.reset().set_pos(4)` calls `set_pos` on the place `c` is, so
+    // the call answers its receiver's class -- a `mut` place stays one. Until
+    // registry 1540 every call result was an owned temporary here, and the
+    // second `mut` link was refused under P14 where the oracle compiles it.
+    if Some(recv) = fluent_receiver(e, ctx, chan) {
+        return typed_arg_class(recv, ctx, scope, chan)
+    } else {
+        // Not a call that returns its receiver: the shape decides below.
+    }
     arg_class(e, scope)
+}
+
+/// The RECEIVER expression of a method call whose decided callee returns its
+/// receiver (`-> @`) -- or None. Read from the channel's decision, never
+/// re-resolved; parens are looked through, as `arg_class` does.
+fn fluent_receiver(e Node, ctx Ctx, chan CheckOut) -> Option[Node] {
+    ro k = e.kind_of()
+    if k == NodeKind.Paren { return fluent_receiver(branch_children(e)[1], ctx, chan) }
+    if k != NodeKind.MethodCall { return None }
+    if !chan.has_callee(e.id_of()) { return None }
+    match chan.callee_of(e.id_of()).target {
+        CalleeFn(row) => {
+            if ctx.fns.rows[raw_row(row)].ret_self {
+                return Some(branch_children(e)[0])
+            } else {
+                // A method with any other return: its value is a fresh one.
+                return None
+            }
+        }
+        // A variant, a construction, a synthesized display and an effect
+        // operation hand out a fresh value, never the receiver.
+        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => None
+    }
 }
 
 /// Does this CALL hand out a `ro` view -- is its decided callee a row whose
@@ -312,9 +345,10 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // first. Keeping a copy here would have been a second home for one rule.
         return literal_prim_of(lk, ctx)
     }
-    if k == NodeKind.Coalesce {
-        // DECIDED by the walk (the payload of the left side), read here --
-        // re-deriving it would be the second door the channel exists to close.
+    if k == NodeKind.Coalesce || k == NodeKind.Try {
+        // DECIDED by the walk (the payload of the left side; of `x?`'s operand,
+        // try_rules.nv), read here -- re-deriving it would be the second door
+        // the channel exists to close.
         return chan.type_if_known(e.id_of())
     }
     if k == NodeKind.Name {

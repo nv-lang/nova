@@ -76,7 +76,7 @@ test "spawn consume ws = s.share() {} inline from a mut-param builds and runs" {
                 }
                 spawn {
                     ro port = match port_rx.recv() { Some(p) => p, None => 0 as u16 }
-                    match TcpStream.connect(SocketAddr.loopback(port)) {
+                    match TcpStream.connect(SocketAddr.loopback(port as int)) {
                         Ok(consume cli) => {
                             ro _ = cli.write("hi")
                             cli.close()

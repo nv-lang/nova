@@ -109,7 +109,7 @@ fn push_implicit(mut acc []u32, cp u32) {
         if cp >= rlo && cp <= rhi {
             base = implicit_flat[i * 4 + 2]
             kind = implicit_flat[i * 4 + 3]
-            lo = rlo
+            lo = rlo as int
             found = true
         }
         i += 1

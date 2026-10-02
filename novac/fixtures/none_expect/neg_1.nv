@@ -1,0 +1,10 @@
+module none_expect.neg_1
+
+// ONE seeded cause: a bare `None` where nothing says WHICH Option -- an
+// untyped binding. The expectation flows from a return, a field or a
+// parameter (none_expect/pos_1); a binding with no written type has none.
+// NOVAC_EXPECT a bare `None` here has no type to take
+fn main() {
+    ro x = None
+    println(1)
+}

@@ -1,0 +1,41 @@
+// EXPECT_STDOUT p1608 7 9 3 443 7 7 5 1.5 10 true 3 4 1 2.5 1 9
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for registry 221.1 #1608 (D491): the positions and operators of the
+// negatives (neg/p1608_*_neg.nv) with the explicit `as` they require, the literal that
+// still takes its position's type (D489), and arms / branches of one type.
+module standalone.p1608_numeric_as_ok
+
+type P1608Port { n int }
+
+fn take(x int) -> int => x
+
+fn grow(x i32) -> i64 => x as i64
+
+fn main() Io {
+    ro b u8 = 7
+    ro c u32 = 9
+    ro p16 u16 = 443
+    ro n int = b as int
+    mut v = Vec[int].new()
+    v.push(b as int)
+    mut m = 0
+    m = b as int
+    ro p = P1608Port { n: p16 as int }
+    ro w i64 = 5 as int as i64
+    ro h f32 = 1.5
+    ro d f64 = h as f64
+    ro s = c + 1
+    ro eq = c == (9 as u32)
+    ro xs = [1, 2, 3]
+    ro len_sum = xs.len() + (c as int) - 9
+    ro flag = n > 0
+    ro r = if flag { c as int } else { n }
+    ro k = 1
+    ro arm = match k {
+        0 => 0.5
+        _ => d + 1.0
+    }
+    ro small u8 = 1
+    ro lit = small + 0
+    println("p1608 ${n} ${take(c as int)} ${grow(3 as i32)} ${p.n} ${v[0]} ${m} ${w} ${d} ${s} ${eq} ${len_sum} ${r - 5} ${lit} ${arm} ${small} ${c}")
+}

@@ -139,3 +139,15 @@ test "inside `unsafe { }` an integer variable may become a char, and that is the
     ro (u, _) = compile_to_c("fn main() {\n ro c = 'q'\n ro b = unsafe { c as u8 }\n println(b)\n}", std)
     assert(u.len() == 0, messages(u))
 }
+
+test "an index of another type than `int` and a newtype re-wrapped are LANGUAGE errors (D238/D405, D52 amendment 2026-10-02)" {
+    ro std = std_decls()
+    // The index half is held in check/check_test.nv, where the shell carries
+    // the `Vec` index the key is judged against.
+    ro (w, _) = compile_to_c("type Row int\nfn main() {\n ro a = Row(7)\n ro b = Row(a)\n println(b as int)\n}", std)
+    assert(w.len() == 1 && codes(w).contains("E_NOVAC_LANG"), messages(w))
+    assert(messages(w).contains("E_NEWTYPE_CTOR_SELF"), messages(w))
+    // CONTROL: the constructor from the representation.
+    ro (ok, _) = compile_to_c("type Row int\nfn main() {\n println(Row(7) as int)\n}", std)
+    assert(ok.len() == 0, messages(ok))
+}

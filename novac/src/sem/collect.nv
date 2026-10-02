@@ -317,11 +317,15 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // file's own constant of the same name is registered after it, and the
     // last put wins -- the file shadows what it was handed.
     harvest_consts(decls, defs, consts)
-    // THE HANDED NEWTYPES' TERMS, before the file's own pass 2 reads a field or a
-    // representation that names one (2026-10-01: they used to be records) -- and
-    // before the handed sums' variants just below, whose payloads name them
-    // (registry 1512): `| CalleeFn(FnRow)` of `sem` read `FnRow` while its row
-    // still had no term, and the variant was registered one position short.
+    // THE HANDED NEWTYPES' TERMS, before ANY reader of a handed name's term: the
+    // file's own pass 2 (a field or a representation that names one, 2026-10-01:
+    // they used to be records) and the handed sums' variants just below. A
+    // variant's payload is a term too, and the variant loop drops a payload
+    // without one -- so `CalleeFn(FnRow)` of sem, read from mono, registered
+    // with NO payload, and every `CalleeFn(row)` pattern was refused as "the
+    // pattern's payload count disagrees" (part 5 of p274-carina-k1). The loop
+    // no longer drops a position (registry 1512, `register_sum_variants`): one
+    // whose type is still unread is kept and named in `VariantDef.lost_type`.
     fill_handed_newtypes(decls, types, defs, tys)
     // THE VARIANTS OF HANDED SUMS, through the same door the file's own sums
     // take below (274.5 wave "variants of handed sums", 2026-09-04). Until this
@@ -712,7 +716,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
             // other overload's parameter types (owner's review 2026-08-19).
             ro did = raw_node(c.id_of())
             while fn_decl_rows.len() <= did { fn_decl_rows.push(no_row()) }
-            fn_decl_rows[did] = FnRow(frow)
+            fn_decl_rows[did] = frow
         } else {
             // Every other top-level node -- the module declaration, imports,
             // and recovery Err branches -- declares neither a type nor a

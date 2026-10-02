@@ -1,0 +1,22 @@
+// EXPECT_STDOUT 24
+module dm_bound
+
+type Area protocol {
+    @area() -> int
+    @twice() -> int => @area() * 2
+}
+
+#impl(Area)
+type Small value {
+    a int
+    b int
+}
+
+fn Small @area() -> int => @a * @b
+
+fn via_bound[T Area](x T) -> int => x.twice()
+
+fn main() Io {
+    ro s = Small { a: 3, b: 4 }
+    println("${via_bound(s)}")
+}

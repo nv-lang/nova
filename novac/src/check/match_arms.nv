@@ -179,6 +179,7 @@ fn Checker mut @type_arm_stmt(arm Node, scr_t TyId) -> () {
         ro gk = branch_children(g)
         if gk.len() < 2 { continue }
         @type_expr(gk[1])
+        @refuse_block_form_in_guard(gk[1])
     }
     ro body = ak[arm_body_at(ak) ?? ice("check: a statement-position match arm with no body reached the checker")]
     @type_body(body)
@@ -826,6 +827,7 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
         // remnant with nothing to type; the next arm child is next.
         if gk.len() < 2 { continue }
         @type_expr(gk[1])
+        @refuse_block_form_in_guard(gk[1])
     }
     @value_expect = body_expect
     ro body = ak[arm_body_at(ak) ?? ice("check: a match arm with no body reached the checker")]

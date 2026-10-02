@@ -1,0 +1,55 @@
+module none_expect.pos_1
+
+// A bare `None` takes the instance its POSITION expects (E2-b3): the declared
+// return reaches the branches of a block body's tail `if` (`f`), a tail
+// `if let` (`g`), a match arm's block AFTER a `return` inside it and every
+// later arm (`h`), and a record field's declared type reaches the field's
+// value (`k`). Each was "a bare `None` here has no type to take" until
+// 2026-10-02 -- the arrow body `=> if ...` already compiled.
+type Sh enum Lf(int) | Br
+
+type Cell { v int, next Option[int] }
+
+fn f(n int) -> Option[int] {
+    ro k = n + 1
+    if k > 2 { Some(k) } else { None }
+}
+
+fn g(o Option[int]) -> Option[int] {
+    if Some(v) = o { Some(v + 1) } else { None }
+}
+
+fn h(s Sh) -> Option[int] {
+    match s {
+        Lf(t) => {
+            if t > 1 {
+                return Some(t)
+            }
+            None
+        }
+        Br => None
+    }
+}
+
+fn k(n int) -> Cell {
+    ro c = Cell { v: n, next: None }
+    c
+}
+
+fn show(o Option[int]) -> int {
+    match o {
+        Some(v) => v
+        None => -1
+    }
+}
+
+fn main() {
+    println(show(f(1)))
+    println(show(f(5)))
+    println(show(g(Some(3))))
+    println(show(g(f(0))))
+    println(show(h(Lf(7))))
+    println(show(h(Lf(0))))
+    println(show(h(Br)))
+    println(show(k(4).next))
+}

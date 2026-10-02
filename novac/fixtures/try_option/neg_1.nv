@@ -1,0 +1,14 @@
+module try_option.neg_1
+
+// ONE seeded cause: `?` in a fn that returns neither an Option nor a Result.
+// D85: `?` propagates by value, return-only -- the oracle refuses it as
+// E_TRY_IN_FAIL_FN, and novac refuses it as the language's.
+// NOVAC_EXPECT (D85, E_TRY_IN_FAIL_FN)
+fn head(xs []int) -> int {
+    ro h = xs.first()?
+    h
+}
+
+fn main() {
+    println(head([]int.new()))
+}

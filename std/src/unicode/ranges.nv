@@ -34,7 +34,7 @@ fn range_lookup3(t []u32, cp u32) -> int {
         } else if cp > rhi {
             lo = mid + 1
         } else {
-            res = t[mid * 3 + 2]
+            res = t[mid * 3 + 2] as int
             lo = hi + 1
         }
     }

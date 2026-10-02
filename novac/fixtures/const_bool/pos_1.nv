@@ -1,0 +1,23 @@
+module const_bool.pos_1
+
+// `true` and `false` are literals (D184's constant list), and a cast of a
+// literal is a constant initializer -- `bool as <number>` is legal since the
+// D54 amendment 2026-10-01 point 1. novac refused every `const` of a bool as
+// E_CONST_NOT_CONSTEXPR (registry 1604: the tree reads the two words as
+// names, and the constant door asked only for constants and variants).
+// Byte for byte with the oracle.
+const A = 300 as u8
+const C = 'A' as u8
+const D = true as u8
+const E = false
+const F = !true
+const G = (false as i32) + 7
+
+fn main() {
+    println(A)
+    println(C)
+    println(D)
+    println(E)
+    println(F)
+    println(G)
+}

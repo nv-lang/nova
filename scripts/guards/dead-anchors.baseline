@@ -42,7 +42,9 @@
 # {#d54} on D54 -- the record-variant construction amendment links to it
 # from D486, and four older (#d54) links came alive with it; address d54
 # removed from the list below the same edit. {#d478} added alongside.
-dead=409
+# 2026-10-02, integrator: 409 -> 399, d55 and d228 got explicit {#d55}/{#d228} targets (the D55/D489
+#   amendment of row 1637 linked to #d55).
+dead=399
 d100
 d101
 d102
@@ -88,7 +90,6 @@ d214
 d216
 d226
 d227
-d228
 d229
 d233
 d237
@@ -158,7 +159,6 @@ d470
 d474
 d50
 d53
-d55
 d58
 d61
 d62

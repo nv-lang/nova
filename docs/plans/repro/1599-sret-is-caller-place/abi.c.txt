@@ -1,0 +1,28 @@
+#include <stdint.h>
+typedef struct { int64_t a, b, c, d; } Big32;   /* > 24 B */
+typedef struct { int64_t a, b, c; } Mid24;      /* = 24 B */
+
+__attribute__((noinline)) Big32 make_big(int64_t x) {
+    Big32 r = { x, x + 1, x + 2, x + 3 };
+    return r;
+}
+__attribute__((noinline)) Mid24 make_mid(int64_t x) {
+    Mid24 r = { x, x + 1, x + 2 };
+    return r;
+}
+/* explicit sret, the form #1599 would emit */
+__attribute__((noinline)) void make_big_out(int64_t x, Big32 *out) {
+    out->a = x; out->b = x + 1; out->c = x + 2; out->d = x + 3;
+}
+
+int64_t use_init(int64_t x) {           /* init context: ro v = make_big(x) */
+    Big32 v = make_big(x);
+    return v.a + v.d;
+}
+int64_t use_init_out(int64_t x) {
+    Big32 v; make_big_out(x, &v);
+    return v.a + v.d;
+}
+int64_t use_expr(int64_t x) {           /* expression context: make_big(x).b */
+    return make_big(x).b;
+}

@@ -222,6 +222,15 @@ fn c_unary_form(op UnOp) -> str {
 
 /// Emit one expression: literals, names, fields, method/fn calls, binary ops.
 fn Emitter mut @emit_expr(e Node) -> () {
+    // A NODE THE LOWERING PUT IN A TEMPORARY (registry 1619) prints as it -- except
+    // the value of the assignment that defines it, which would read `x = x`.
+    ro hl = if e.id_of() != @hoist_root { @lo.ir.local_of_node(e.id_of()) } else { no_local() }
+    if hl != no_local() {
+        @body.append(@lo.ir.decl_of(hl).name)
+        return
+    } else {
+        // Not laid down, or the defining value: printed from the tree below.
+    }
     ro k = e.kind_of()
     if k == NodeKind.Lit {
         ro lkids = branch_children(e)
@@ -383,9 +392,10 @@ fn Emitter mut @emit_expr(e Node) -> () {
             ice("emit_c: an interpolated string the hoist never built (I2)")
         }
         @body.append(itmp2)
-    } else if k == NodeKind.Coalesce {
+    } else if k == NodeKind.Coalesce || k == NodeKind.Try {
         // The hoist built the temporary and the guard that fills it (the
-        // short circuit lives there); the expression IS that name.
+        // short circuit lives there, and `x?`'s early return); the expression
+        // IS that name.
         ro qtmp = @lit_tmp[raw_node(e.id_of())]
         if qtmp == "" {
             ice("emit_c: a `??` the hoist never built (coalesce wave)")
@@ -829,13 +839,8 @@ fn Emitter mut @emit_expr(e Node) -> () {
             @emit_expr(kids[2])
             @body.append(")${acc}tag))")
         } else if is_bit_infix(op) {
-            @body.append("((")
-            @emit_expr(kids[0])
-            @body.append(") ")
-            @body.append(form)
-            @body.append(" (")
-            @emit_expr(kids[2])
-            @body.append("))")
+            // Cast back to the row's width (emit_cast.nv, registry 1602).
+            @emit_bit_infix(e, kids, form)
         } else if is_truth_infix(op) {
             @body.append("((nova_int)((")
             @emit_expr(kids[0])

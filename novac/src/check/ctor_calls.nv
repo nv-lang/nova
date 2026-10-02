@@ -89,7 +89,22 @@ fn Checker mut @record_newtype_ctor(e Node, kids []Node, type_id TyId) -> () {
     } else {
         // One argument: its TYPE decides.
     }
-    if args[0].type_id != representation_of(@ctx, type_id) {
+    // A POISONED ARGUMENT is not judged here, as at the cast door: its one
+    // cause was reported where it was typed, and "not the newtype's
+    // representation" about a value of no type would be a second, false one.
+    // The construction is still RECORDED below -- the lattice asks for it, and
+    // an unrecorded call is an ice, the worst answer to a user's mistake.
+    // THE NEWTYPE ITSELF as the argument (`W(e)` with `e W`): a LANGUAGE error
+    // (D52 amendment 2026-10-02, the owner's decision; the oracle's code
+    // E_NEWTYPE_CTOR_SELF) -- the constructor takes the representation, and a
+    // value that already is a `W` needs no constructor at all.
+    if args[0].type_id == type_id {
+        @reject_first_leaf_of(kids, NEWTYPE_CTOR_SELF_MSG)
+        return
+    } else {
+        // Another type than the newtype itself: the representation rule below.
+    }
+    if is_ty(args[0].type_id) && args[0].type_id != representation_of(@ctx, type_id) {
         @report_first_leaf_of(kids,
             "outside the subset: this argument is not the newtype's representation")
         return

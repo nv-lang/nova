@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc MIR building -- `else if c { a } else { b }` is an `else`
+// whose block holds one value `if`; the chain lowers as that nesting.
+// Role: lowering of the ELSE of a value `if` / `if let` (part 5 of
+//   p274-carina-k1): a block goes through `@lower_block_value` as before; an
+//   `else if` chain is itself a value `if`, placed into the SAME temporary
+//   through the one value door (`@lower_place`).
+// Used by: lowering.nv (`@lower_if_value`, `@lower_if_let_value`).
+// Guarded by: pipeline/return_test.nv (the `else if` chain as a value) and
+//   check-novac-no-default-branch.py (the other else is an ice, not a guess).
+
+module novac.lower
+
+import ../tree.{Node, NodeKind}
+import ../diag.{ice}
+
+/// The ELSE of a value `if` / `if let`, written into `t`: a block's tail, or
+/// a whole `else if` chain's value. Until part 5 the checker refused the chain
+/// ("an `else if` chain is not compiled as a value yet"), so only blocks came.
+fn Lowerer mut @lower_else_value(b Node, t Local) -> () {
+    if b.kind_of() == NodeKind.Block {
+        @lower_block_value(b, t)
+        return
+    }
+    if b.kind_of() == NodeKind.IfStmt || b.kind_of() == NodeKind.IfExpr {
+        @lower_place(b, t)
+        return
+    }
+    // Check refuses every other else by name (check/tail_rules.nv).
+    ice("lower: the else of a value `if` is neither a block nor an `else if` -- check refuses that")
+}

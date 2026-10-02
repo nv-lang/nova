@@ -263,7 +263,15 @@
 #   this branch's ASSERT_FN and main's own +1 (main 59 -> 60) add; the count is the guard's on the merged tree.
 # merge of p274-carina-sweep (deliveries 3-4) into the merge train (integrator, 2026-10-02): ASSERT_FN was
 #   already counted at the mono-k2 merge, so the train's 66 stands (the guard's count on the merged tree).
-builtins 66
+# 2026-10-02, cloud session p274-carina-k1 (registry 1539): builtins 66 -> 67: `is_ptr_method`
+#   -- the raw-pointer methods of D216 as ONE answer for check's typing of a pointer method
+#   (check/unsafe.nv) and the subset walk's "is this a method novac knows" (check/rules.nv),
+#   which an instance body now passes too; outside builtins because both askers are check's.
+# merge of origin/main 2488a47be into p274-carina-k1: main's builtins 66 plus this branch's +1 (the line above) = 67.
+# 2026-10-02, cloud session p274-carina-k1 (part 5, D216 `dist`): builtins 67 -> 68: `PTR_DIST`
+#   -- the raw-pointer intrinsic's name beside `PTR_OFFSET`, asked by check's typing of a
+#   pointer method (check/unsafe.nv) and by its emission (emit_c/emit_ptr.nv).
+builtins 68
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -454,6 +462,10 @@ parse 1
 #   signature is E_PRIVATE_TYPE_IN_PUBLIC (D47 amendment, owner 2026-10-01). main.nv reads it.
 # merge of p274-carina-sweep into the merge train (integrator, 2026-10-02): pipeline 13 (k1) + 1
 #   (sweep's UnitFile) = 14.
+# merge of origin/integ/merge-train-1001 into p274-carina-cast (2026-10-02): the train's base
+#   plus what the sweep branch exported after the train took its earlier version -- pipeline
+#   `UnitFile` and sem's D488 doors (see the sweep chronicle lines on p274-carina-sweep);
+#   the counts are the guard's on the merged tree.
 pipeline 14
 # 2026-08-28 (274.4 step 3): the field root gets the same cut. sem 171 -> 169:
 # has_field and field_type moved OUT to resolve (FieldIndex); resolve 11 -> 15:
@@ -1006,11 +1018,36 @@ resolve 23
 #   of every method on a value record that D488 replaces.
 # merge of p274-carina-sweep (deliveries 3-4) into the merge train (integrator, 2026-10-02): 336 + 3 (D488:
 #   RECV_COPY_MAX_BYTES, value_recv_by_pointer, row_recv_by_pointer) - 1 (recv_type_name) = 338.
-sem 338
 # source 6 -> 7 (2026-10-01, cloud session p274-carina-strarm, registry 1578):
 #   SourceText.@holds -- does a slice lie inside THIS file's text; the checker asks it
 #   of a handed default's first token (check/handed_default.nv), where an id can coincide.
 # (merge of origin/integrate 2488a47be into p274-carina-strarm, 2026-10-02: integrate's 6 + this branch's 1.)
+# merge of origin/integ/merge-train-1001 into p274-carina-cast (2026-10-02): the train's base
+#   plus what the sweep branch exported after the train took its earlier version -- pipeline
+#   `UnitFile` and sem's D488 doors (see the sweep chronicle lines on p274-carina-sweep);
+#   the counts are the guard's on the merged tree.
+# 2026-10-02, cloud session p274-carina-k1 (registry 1567, types step 1): sem 336 -> 337:
+#   `DefTable @is_private` -- a type another module keeps private (D281), registered for that
+#   module's own instances; asked by check's type door (`Checker @type_seen`), which owns
+#   no registry of its own.
+# merge of origin/main 2488a47be into p274-carina-k1: main's sem 338 plus this branch's +1 (the line above) = 339.
+# merge of p274-carina-k1 (parts 3-4) into main (integrator, 2026-10-02): the guard's count on the merged
+#   tree is 339 -- main's 338 plus k1's one door of part 4 (see its chronicle lines above).
+# 2026-10-02, cloud session p274-carina-cast (step 7, `?` and `?? return`): sem 338 -> 339:
+#   `is_coalesce_return` (sem/node_questions.nv) -- is a `??` the `X ?? return R` form? Asked by
+#   check (the form's door, the position gate) and lower (the None branch returns); `lower`
+#   may not read the lexer, so the one question about the keyword leaf lives in sem.
+# merge of p274-carina-cast (step 7) into main (integrator, 2026-10-02): the guard's count on the merged
+#   tree is 340 -- main's 339 plus cast's `is_coalesce_return` (see its chronicle line above).
+# 2026-10-02, cloud session p274-carina-k1 (part 5, tuple argument): sem 339 -> 340:
+#   `is_arg_value_kind` (sem/node_questions.nv) -- may this kind stand as an argument's value,
+#   an expression or a TUPLE literal; asked by `is_arg_node` and by check's argument walks
+#   (calls, methods, static calls, variant calls), so `Some((a, b))` counts one payload.
+# merge of p274-carina-k1 (part 5) into main (integrator, 2026-10-02): the guard's count on the merged
+#   tree is 341 -- main's 340 plus k1's `is_arg_value_kind` (part 5 step 3, its chronicle line above).
+# merge of origin/main f80d61e00 into p274-carina-strarm (2026-10-02): main's counts plus this
+#   branch's SourceText.@holds (source 6 -> 7); the counts are the guard's on the merged tree.
+sem 341
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

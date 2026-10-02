@@ -97,7 +97,7 @@ impl Cvc5Backend {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| format!("не удалось запустить cvc5: {}", e))?;
+            .map_err(|e| format!("не удалось запустить cvc5: {:#}", e))?;
 
         // stdin пишем в отдельном потоке — защита от взаимной блокировки
         // pipe'ов, если скрипт окажется крупнее буфера ОС.
@@ -110,7 +110,7 @@ impl Cvc5Backend {
 
         let out = child
             .wait_with_output()
-            .map_err(|e| format!("cvc5 wait: {}", e))?;
+            .map_err(|e| format!("cvc5 wait: {:#}", e))?;
         let _ = writer.join();
 
         Ok((
@@ -178,7 +178,7 @@ impl SmtBackend for Cvc5Backend {
         let (stdout, stderr) = match Self::run(path, self.timeout_ms, &script) {
             Ok(pair) => pair,
             Err(e) => {
-                return SatResult::Unknown(UnknownReason::BackendError(format!("cvc5: {}", e)))
+                return SatResult::Unknown(UnknownReason::BackendError(format!("cvc5: {:#}", e)))
             }
         };
 

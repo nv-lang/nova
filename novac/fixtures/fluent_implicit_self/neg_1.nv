@@ -1,0 +1,21 @@
+module fluent_implicit_self.neg_1
+
+// D409 rule 3 (registry 221.1 #1538): the receiver of a `-> @` body is returned
+// automatically, so a tail `@` is an explicit self-return -- refused, as the
+// oracle refuses it (E_EXPLICIT_SELF_RETURN). One seeded cause.
+
+// NOVAC_EXPECT E_EXPLICIT_SELF_RETURN
+
+type Ctr {
+    n int
+}
+
+fn Ctr mut @reset() -> @ {
+    @n = 0
+    @
+}
+
+fn main() {
+    mut c = Ctr { n: 5 }
+    println(c.reset().n)
+}

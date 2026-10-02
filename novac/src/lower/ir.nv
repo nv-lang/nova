@@ -150,6 +150,7 @@ export type Rvalue enum
     | Read(PlaceRead) // one projection of a local, read as a value (destructuring binder)
     | AnyData(Node) // the value the `any` the tree names holds, read as the destination's type (D54)
     | Bool(bool) // a boolean constant: a disjunction's "an alternative held" flag (registry 1568)
+    | NoneOf // the `None` of the destination's own Option type (the early return of `x?`, D85)
 
 /// ONE STEP OF A PLACE (wave M3c): a named field, or a positional component.
 ///
@@ -616,6 +617,13 @@ export fn FnBuilder mut @place(e Node, dest Local) -> () {
 /// the read is safe by construction.
 export fn FnBuilder mut @take_payload(dest Local, opt Local) -> () {
     @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.SomePayload(opt) }))
+}
+
+/// `dest = None` of dest's own Option type: the early return of `x?` (D85) writes it into
+/// the return place, where no tree node spells the value -- the operand's `None` is an
+/// instance of ANOTHER Option when the payloads differ.
+fn FnBuilder mut @set_none(dest Local) -> () {
+    @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.NoneOf }))
 }
 
 /// The element binding of a `for` over a collection (wave M2b-1c): `dest =

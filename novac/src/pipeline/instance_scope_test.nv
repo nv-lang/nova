@@ -126,3 +126,78 @@ test "a `priv` field of a std type read without a module line is private to a fi
     assert(d1.len() == 0, messages(d1))
     assert(c1.contains("_size__"), c1)
 }
+
+test "an instance of a std body is named by the BODY's module, even when its file opens with `#prelude` (#1567)" {
+    // std's `#prelude` files were read with no module, so an instance of their
+    // bodies took the COMPILED file's module: `v.first()` in module `hp` beside
+    // the file's own `fn first[T]` gave two `novac_fn_hp_first__...` and clang
+    // "redefinition" (the hunt's instance-name-collision-module).
+    mut decls = std_decls()
+    decls.push("#prelude(core, runtime)\nmodule collections.vv\n\
+export type Vec[T] { n int }\nexport fn Vec[T] @len() -> int => @n\nexport fn Vec[T] @head() -> int => @n\n")
+    ro (d0, c0) = compile_to_c("module hp\nfn head[T](xs []T) -> int => 7\n\
+fn main() {\n ro v = [1, 2]\n println(v.head())\n println(head(v))\n}", decls)
+    assert(d0.len() == 0, messages(d0))
+    assert(c0.contains("novac_fn_collections_vv_head__"), c0)
+    // CONTROL: the file's own generic of the same name keeps the file's module.
+    assert(c0.contains("novac_fn_hp_head__"), c0)
+}
+
+test "an instance body passes the subset walk, not typing alone (#1539)" {
+    // The hunt's instance-skips-subset-walk: `ro s str = @len()` is refused in a
+    // file of its own ("a declared local type is not compiled yet"), and the
+    // oracle says E7301; in an instance it was typed only, accepted, emitted.
+    ro geo = "module hp.geo\nexport fn Vec[T] @bad() -> int {\n ro s str = @len()\n 0\n}\n"
+    ro (d0, _) = compile_beside("module hp\nimport ./geo\nfn main() {\n ro v = [7]\n println(v.bad())\n}", geo)
+    assert(d0.len() == 1, messages(d0))
+    assert(d0[0].message.contains("in the instance of `bad`"), messages(d0))
+    assert(d0[0].message.contains("declared local type"), messages(d0))
+    // CONTROL: the walk is the BODY's -- a generic declaration is not refused
+    // as "generic parameters are not compiled yet", and a clean body still
+    // compiles to its instance.
+    ro ok = "module hp.geo\nexport fn Vec[T] @good() -> int {\n ro s = @len()\n s + 1\n}\n"
+    ro (d1, c1) = compile_beside("module hp\nimport ./geo\nfn main() {\n ro v = [7]\n println(v.good())\n}", ok)
+    assert(d1.len() == 0, messages(d1))
+    assert(c1.contains("novac_fn_hp_geo_good__"), c1)
+}
+
+test "a PRIVATE type of the body's module is the body's to name -- and stays its module's (#1567, D281)" {
+    // The hunt-of-the-wave probe type-body-private: `hp.geo`'s private `Cell`
+    // built and read in its own `Vec[T] @cellv`. The oracle prints 30; Carina
+    // refused "undeclared type name `Cell`" -- a private type of another module
+    // was not registered at all, its own module's instance included.
+    ro geo = "module hp.geo\ntype Cell {\n v int\n}\nexport fn Vec[T] @cellv() -> int {\n ro c = Cell { v: @len() * 10 }\n c.v\n}\n"
+    ro (d0, c0) = compile_beside("module hp\nimport ./geo\nfn main() {\n ro v = [1, 2, 3]\n println(v.cellv())\n}", geo)
+    assert(d0.len() == 0, messages(d0))
+    assert(c0.contains("novac_fn_hp_geo_cellv__"), c0)
+    // The SIGNATURE half (type-body-sig): a private helper of the module whose
+    // parameter is the private type has a row now, and the instance calls it.
+    ro sig = "module hp.geo\ntype Box {\n n int\n}\nfn open(b Box) -> int => b.n + 1\n\
+export fn Vec[T] @boxed() -> int => open(Box { n: @len() })\n"
+    ro (d1, c1) = compile_beside("module hp\nimport ./geo\nfn main() {\n ro v = [1, 2, 3]\n println(v.boxed())\n}", sig)
+    assert(d1.len() == 0, messages(d1))
+    assert(c1.contains("novac_fn_hp_geo_open__"), c1)
+    // CONTROL (D281): the CALLER may not name `hp.geo`'s private type -- it is
+    // registered for that module's bodies, not for everyone.
+    ro (d2, _) = compile_beside("module hp\nimport ./geo\nfn main() {\n ro c = Cell { v: 1 }\n println(c.v)\n}", geo)
+    assert(d2.len() >= 1, messages(d2))
+    assert(d2[0].message.contains("undeclared type name `Cell`"), messages(d2))
+}
+
+test "another module's PRIVATE type's method of the same name does not hide a call's own cause (#1567)" {
+    // std's private json `Lexer @bump` got a row once private types were
+    // registered for their own instances; `o.c.bump()` on the file's `Ctr`
+    // then found the NAME overloaded and said "no such method" instead of its
+    // P14 cause (fixture field_mut_place/neg_1).
+    mut decls = std_decls()
+    decls.push("module std.lx\ntype Lexer {\n i int\n}\nfn Lexer mut @bump(b u8) -> () {\n @i += 1\n}\n")
+    ro src = "type Ctr {\n n int\n}\nfn Ctr mut @bump() -> int {\n @n += 1\n @n\n}\n\
+type Outer {\n c Ctr\n}\nfn main() {\n ro o = Outer { c: Ctr { n: 0 } }\n println(o.c.bump())\n}"
+    ro (d0, _) = compile_to_c(src, decls)
+    assert(d0.len() == 1, messages(d0))
+    assert(d0[0].message.contains("needs a mutable place"), messages(d0))
+    // CONTROL: the same call on a `mut` root compiles -- the foreign row is no
+    // candidate for it either.
+    ro (d1, _) = compile_to_c(src.replace("ro o =", "mut o ="), decls)
+    assert(d1.len() == 0, messages(d1))
+}

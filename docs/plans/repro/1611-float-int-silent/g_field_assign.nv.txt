@@ -1,0 +1,8 @@
+// EXPECT_STDOUT 2
+type Pt { n int }
+fn main() Io {
+    ro d f64 = 2.5
+    mut p = Pt { n: 0 }
+    p.n = d
+    println("${p.n}")
+}

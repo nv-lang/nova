@@ -18,7 +18,7 @@
 
 module novac.emit_c
 
-import ../tree.{Node, NodeKind}
+import ../tree.{Node, NodeKind, no_node}
 // M3a: telling a string literal from any other argument needs the leaf's token kind.
 import ../lex.{TokenKind}
 import ../sem.{leaf_kind}
@@ -102,6 +102,7 @@ fn Emitter @expr_of(rv Rvalue) -> Node {
         Read(_) => ice("emit_c: a place read reached expr_of -- only an assignment prints it")
         AnyData(_) => ice("emit_c: an unboxing reached expr_of -- only an assignment prints it")
         Bool(_) => ice("emit_c: a flag constant reached expr_of -- only an assignment prints it")
+        NoneOf => ice("emit_c: a `None` of the destination's type reached expr_of -- only an assignment prints it")
     }
 }
 
@@ -115,6 +116,9 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
     ro d = @lo.ir.decl_of(a.dest)
     match a.src {
         Expr(e) => {
+            // The value this line DEFINES is printed from the tree even when its
+            // node is the hoisted one (registry 1619); its children read theirs.
+            @hoist_root = e.id_of()
             // Built FIRST: a construction lays its statements down before the
             // line that reads the temporary.
             ro built = @build_value(e, d.ty)
@@ -134,6 +138,7 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
                 Some(t) => @body.append(t)
                 None => @emit_expr(e)
             }
+            @hoist_root = no_node()
             @body.append(if wrap { ");\n" } else { ";\n" })
         }
         SomePayload(opt) => {
@@ -144,6 +149,13 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
             // A disjunction's "an alternative held" flag (registry 1568): the C keyword.
             @emit_assign_head(d)
             @body.append("${bool_c_literal(b)};\n")
+        }
+        NoneOf => {
+            // The early return of `x?` (D85): the shell's `None` of the
+            // destination's own instance, through the Option door.
+            @emit_assign_head(d)
+            @emit_option_none(d.ty)
+            @body.append(";\n")
         }
         AnyData(subject) => {
             // The runtime's unboxing (`nova_rt/typeid.h`): the payload of the

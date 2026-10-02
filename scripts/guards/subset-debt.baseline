@@ -156,7 +156,11 @@
 # call on a TYPE is compiled (check/static_call.nv); its old refusal is a language reject now.
 # 2026-10-01, Carina window, merge of main e448f0193: both notes above stand; the
 #   number is the guard's count on the merged tree.
-undated=58
+# 2026-10-02, cloud session p274-carina-cast (step 6): INT_INDEX_MSG left the subset door --
+#   an index key other than `int` is a LANGUAGE error (D238, D405, D52; the integrator's
+#   ruling), and NEWTYPE_CTOR_SELF_MSG went in on the language door (D52 amendment
+#   2026-10-02). Numbers are the guard's on the tree after the merge of the train.
+undated=57
 
 # ВТОРОЕ ЧИСЛО — ОБЩЕЕ, храповик ВНИЗ с целью НОЛЬ (274 §1.3а п. «г»). Заведено
 # 2026-09-13 окном 274; предписано оно было ещё 2026-09-05 планом 274.7 §И («страж
@@ -427,6 +431,10 @@ undated=58
 # 2026-10-01, the same session (registry 1568): refusals 141 -> 140. `DISJ_NESTED_TEST_MSG`
 # is gone: the alternative whose tests all held raises a flag the arm tests (fixture
 # disj_nested/pos_1, byte-for-byte). A refusal retired, none added.
+# 2026-10-02, cloud session p274-carina-cast (step 6): INT_INDEX_MSG left the subset door --
+#   an index key other than `int` is a LANGUAGE error (D238, D405, D52; the integrator's
+#   ruling), and NEWTYPE_CTOR_SELF_MSG went in on the language door (D52 amendment
+#   2026-10-02). Numbers are the guard's on the tree after the merge of the train.
 refusals=140
 # ТРЕТЬЕ ЧИСЛО — БЕССРОЧНЫЕ ПО ДВЕРИ (волна 274.7 В11-б, засев 2026-09-14, окно 274).
 #
@@ -562,4 +570,11 @@ refusals=140
 # объявляет, отказ идёт ТОЙ ЖЕ дверью `no_shell_method_msg`, что и чтение `xs[i]` -- её текст
 # несёт этап (E2-b); страж видит литерал имени операции `index(i, v)` у вызова, как и у
 # соседнего `index(Range)` (check/slice.nv). До правки этот отказ был clang-ом после зелёного check.
-undated_by_door=72
+# 2026-10-02, cloud session p274-carina-cast (step 6): INT_INDEX_MSG left the subset door --
+#   an index key other than `int` is a LANGUAGE error (D238, D405, D52; the integrator's
+#   ruling), and NEWTYPE_CTOR_SELF_MSG went in on the language door (D52 amendment
+#   2026-10-02). Numbers are the guard's on the tree after the merge of the train.
+# 2026-10-02, cloud session p274-carina-cast (step 7): `?` and `X ?? return R` compile -- TRY_MSG
+#   left with the form; the new position gate is dated (E2) and `?` over a Result shares
+#   `??`'s dated E2-b3 text. By door 70 -> 69, the guard's count on the tree.
+undated_by_door=69

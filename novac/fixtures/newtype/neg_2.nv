@@ -1,0 +1,14 @@
+module newtype.neg_2
+
+// ONE seeded cause, and ONE diagnostic: the argument of a newtype's
+// constructor is a name whose initializer was refused (an unknown callee).
+// The constructor must not judge a value of no type -- until 2026-10-01 it
+// added "this argument is not the newtype's representation", a cascade.
+// NOVAC_EXPECT `mystery` is not a callable novac knows
+type Row int
+
+fn main() {
+    ro x = mystery(1)
+    ro r = Row(x)
+    println(r as int)
+}

@@ -912,7 +912,7 @@ stay in the `priv(<scope>)` family.
 
 **Canonical field access — same-name property methods via
 arity-based overloading** (D84 + D117):
-read `@x() -> T` (0 arguments), write `mut @x(v T) -> @`
+read `@x() -> T` (0 arguments), write `mut @x(v T) -> @` (in a method without `mut @` the fields of `@` are read-only -- `E_READONLY_FIELD`, D35 amendment 2026-10-02)
 (1 argument, fluent — receiver return automatic, D409, no need to write
 `return @`/`=> @` in the body):
 
@@ -931,7 +931,7 @@ j.name("deploy")    // setter — переприсваивает и возвра
     .name("test")    // fluent-chain: сеттер можно вызывать цепочкой
 ```
 
-**Overload sets that differ only by parameter MODE are resolved by dominance, never by a score** (D84 mode axis; implemented 2026-09-02, registry 857). A candidate wins only if it is no less specific in every position and more specific somewhere: `consume` > `mut` > `ro`. When two candidates vary in opposite directions -- say `f(consume a, b, c)` against `f(a, mut b, mut c)` -- neither dominates, and the call is refused with `[E_OVERLOAD_AMBIGUOUS_MODE]` listing the candidates. There is no silent pick: before that date such a call compiled and quietly ran one of the two.
+**Overload sets that differ only by parameter MODE are resolved by dominance, never by a score** (D84 mode axis; implemented 2026-09-02, registry 857). A candidate wins only if it is no less specific in every position and more specific somewhere: `consume` > `mut` > `ro`. This rule CHOOSES among overloads; what a single `mut` parameter accepts is D326's (a temporary of a heap type is legal, of a value type `E_MUT_ARG_NOT_MUTABLE`). When two candidates vary in opposite directions -- say `f(consume a, b, c)` against `f(a, mut b, mut c)` -- neither dominates, and the call is refused with `[E_OVERLOAD_AMBIGUOUS_MODE]` listing the candidates. There is no silent pick: before that date such a call compiled and quietly ran one of the two.
 
 `get_x`/`set_x` pairs — **not the canon** (there are 0 of them in std).
 `with_x(v)` — a different operation (a copy with a replaced field, not

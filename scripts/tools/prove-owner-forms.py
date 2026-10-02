@@ -43,7 +43,7 @@ CASES = [
     ("C abs main copy, forward slashes",
      "uid 1 1 ? 18:00:00 %s/compiler-codegen/target/debug/nova-codegen test" % MAIN, "nova"),
     ("D real worktree, abs",
-     "uid 1 1 ? 18:00:00 %s\\nova-p274\\novac\\target\\novac.exe emit examples/basic" % PAR_BS, "nova-p274"),
+     "uid 1 1 ? 18:00:00 %s\\nova-p274\\novac\\target\\novac.exe emit examples/basic" % PAR_BS, "nova-p274"),  # novac-bin: not a selection -- a process-table sample
     ("E real worktree WITH the same subdir inside",
      "uid 1 1 ? 18:00:00 %s/nova-p274/nova-cli/target/release/nova test spec_tests" % PAR,
      "nova-p274"),

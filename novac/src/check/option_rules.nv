@@ -34,8 +34,8 @@ import ../tree.{Node, NodeKind}
 import ../names.{DeclId}
 import ../types.{TyId, no_ty, is_ty}
 import ../builtins.{TypeKind}
-import ../sem.{CalleeTarget, VariantRow, raw_vrow, decl_of_ty, decl_index_of_ty, identity_slots, is_expr_kind, ArgSpec}
-import ../sem.{FnRow, raw_row, bind_slots, call_arg_at, expr_leaf_name, variants_named}
+import ../sem.{CalleeTarget, VariantRow, raw_vrow, decl_of_ty, decl_index_of_ty, identity_slots, ArgSpec}
+import ../sem.{FnRow, raw_row, bind_slots, call_arg_at, expr_leaf_name, variants_named, is_arg_node}
 
 /// A bare variant of a generic sum with nothing around it to say which
 /// instance it is.
@@ -67,7 +67,9 @@ fn Checker mut @type_variant_call(e Node, kids []Node, v VariantRow) -> () {
     ro saved = @value_expect
     @value_expect = no_ty()
     for c in kids {
-        if !is_expr_kind(c.kind_of()) { continue }
+        // The ARGUMENT door, not the expression one: a tuple payload
+        // (`Some((a, b))`) is an argument and no expression kind.
+        if !is_arg_node(c) { continue }
         @type_expr(c)
     }
     @value_expect = saved
@@ -104,6 +106,15 @@ fn Checker mut @type_generic_variant_call(e Node, kids []Node, v VariantRow, arg
     for a in args {
         ro pt = @ctx.payload_types[vd.payload_off + k]
         if @ctx.tys.kind_of(pt) == TypeKind.TkParam {
+            if !is_ty(a.type_id) && args_read_poisoned(kids, 1, @scope) && @expects_sum(vd.sum_id) {
+                // SILENT-OK: the payload reads a name an earlier refusal bound
+                // with no type -- that refusal is the cause (part 5 of
+                // p274-carina-k1: `Some(row)` after a refused `row` in sem.nv).
+                // The POSITION names the instance, as for a bare `None`, so
+                // the readers of this node's type find one.
+                @record(e, @value_expect)
+                return
+            }
             if !is_ty(a.type_id) {
                 @report_first_leaf_of(kids, GENERIC_PAYLOAD_UNTYPED_MSG)
                 return
@@ -125,6 +136,14 @@ fn Checker mut @type_generic_variant_call(e Node, kids []Node, v VariantRow, arg
     @chan.record_callee(e.id_of(), CalleeTarget.CalleeVariant(v), subst, identity_slots(args.len()))
 }
 
+/// Does the position expect an instance of THIS generic sum (`-> Option[int]`
+/// for a `Some(..)`)? The question a bare `None` asks, and a poisoned payload.
+fn Checker @expects_sum(sum_id TyId) -> bool {
+    ro ex = @value_expect
+    is_ty(ex) && @ctx.tys.kind_of(ex) == TypeKind.TkApp &&
+        decl_index_of_ty(@ctx, ex) == decl_index_of_ty(@ctx, sum_id)
+}
+
 /// A payload-less variant as a bare VALUE (`Dot`, `None`): a non-generic sum's
 /// value is the sum; a generic sum's value is the instance the position
 /// EXPECTS -- the declared return at a tail or a `return` operand -- and with
@@ -141,9 +160,7 @@ fn Checker mut @type_bare_variant_value(e Node, t Token, v VariantRow) -> () {
         return
     }
     ro ex = @value_expect
-    ro same_sum = is_ty(ex) && @ctx.tys.kind_of(ex) == TypeKind.TkApp &&
-        decl_index_of_ty(@ctx, ex) == decl_index_of_ty(@ctx, vd.sum_id)
-    if !same_sum {
+    if !@expects_sum(vd.sum_id) {
         @refuse(t, BARE_GENERIC_VARIANT_MSG)
         return
     }
