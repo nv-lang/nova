@@ -22146,8 +22146,12 @@ impl<'a> TypeCheckCtx<'a> {
                 // ловит своё.
                 // #1517: a variant constructor of the declared sum is judged by
                 // its payload (`variant_ctor.rs`) -- a precise verdict, reported.
+                // #1642: a function-typed return is judged too -- there is no D55
+                // coercion INTO a function type, and `assignable_direct` refuses a
+                // value there only when it is certainly not a function.
                 if !ResolvedType::from_type_ref(ret).is_primitive_lowerable()
                     && !self.is_ctor_of_expected_sum(value, ret, scope)
+                    && !self.typeref_is_func_compatible(ret)
                 {
                     return;
                 }
@@ -22967,6 +22971,49 @@ impl<'a> TypeCheckCtx<'a> {
     /// `resolved_cat_of_depth`'s guard) — generics-carrying Named refs are NOT
     /// peeled (a fn-newtype has none; bail conservatively to `false` rather
     /// than mis-resolve a parametric unrelated type of the same name).
+    /// #1642: the display of `expr`'s type when it is CERTAINLY not a function
+    /// value -- a literal of a non-function kind, or an inferred scalar, string,
+    /// bool, array, tuple, unit, or a declared type that is not a fn-newtype or
+    /// alias. `None` when it may be a function or cannot be known (a type
+    /// parameter, `any`, an uninferred expression): a refusal is issued only on
+    /// certainty, so the false positive of #101 (a name resolved to an
+    /// unrelated function) has no room here.
+    fn certainly_not_a_function(&self, expr: &Expr, scope: &HashMap<String, TypeRef>) -> Option<String> {
+        let literal = match &expr.kind {
+            ExprKind::IntLit(_) => Some("int"),
+            ExprKind::FloatLit(_) => Some("f64"),
+            ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => Some("str"),
+            ExprKind::BoolLit(_) => Some("bool"),
+            ExprKind::CharLit(_) => Some("char"),
+            ExprKind::UnitLit => Some("()"),
+            ExprKind::ArrayLit(_) => Some("an array literal"),
+            ExprKind::MapLit { .. } => Some("a map literal"),
+            ExprKind::TupleLit(_) => Some("a tuple literal"),
+            ExprKind::RecordLit { .. } => Some("a record literal"),
+            _ => None,
+        };
+        if let Some(l) = literal {
+            return Some(l.to_string());
+        }
+        let found = self.infer_expr_type(expr, scope)?;
+        if matches!(found, TypeRef::Func { .. }) || self.typeref_is_func_compatible(&found) {
+            return None;
+        }
+        let certain = match ResolvedType::from_type_ref(&found).peel_view() {
+            ResolvedType::Scalar { .. } | ResolvedType::Float { .. } | ResolvedType::Str
+            | ResolvedType::Bool | ResolvedType::Unit | ResolvedType::Array(_)
+            | ResolvedType::FixedArray(..) | ResolvedType::Tuple(_) => true,
+            ResolvedType::Named { name, .. } => self.types_get_here(&name).is_some_and(|td| {
+                matches!(
+                    td.kind,
+                    TypeDeclKind::Record(_) | TypeDeclKind::Sum(_) | TypeDeclKind::NamedTuple(_)
+                )
+            }),
+            _ => false,
+        };
+        certain.then(|| typeref_display(&found))
+    }
+
     fn typeref_is_func_compatible(&self, tr: &TypeRef) -> bool {
         self.typeref_is_func_compatible_depth(tr, 0)
     }
@@ -23326,6 +23373,19 @@ impl<'a> TypeCheckCtx<'a> {
         // Both used to pass unjudged -- `(d, 1)` with `d f64` for `(int, int)` truncated.
         if let Some(v) = self.composite_literal_compat(expr, expected, expr_gs, exp_gs, scope) {
             return v;
+        }
+        // #1642: a value that is certainly not a function, at a function-typed
+        // position. `resolved_cat_of` collapses `Func` into the permissive `Any`
+        // below, so `call(0)`, `call([])`, `call("s")`, a record -- every one was
+        // accepted for `f fn() -> T`, and the program called the value as code:
+        // `m.get_or_insert(1, [])` (the parameter is `fallback fn() -> V`) built
+        // and died at run time, "fiber stack overflow ... access violation".
+        // The opposite direction (a function value at a non-function position)
+        // has its own narrow door, `check_fn_value_mismatch` (#101).
+        if self.typeref_is_func_compatible(expected) {
+            if let Some(found) = self.certainly_not_a_function(expr, scope) {
+                return Compat::Bad { found };
+            }
         }
         // Generic-параметр / any / func / tuple — проверить нельзя.
         if matches!(exp_rt, ResolvedType::Any) {
