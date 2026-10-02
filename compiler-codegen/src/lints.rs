@@ -853,14 +853,41 @@ pub(crate) fn collect_used_names(items: &[Item], out: &mut HashSet<String>) {
                     }
                     TypeDeclKind::Protocol { methods, embeds } => {
                         for mth in methods {
+                            for g in &mth.generics {
+                                for b in &g.bounds {
+                                    collect_tr(b, out);
+                                }
+                                if let Some(d) = &g.default {
+                                    collect_tr(d, out);
+                                }
+                            }
                             for p in &mth.params {
                                 collect_tr(&p.ty, out);
+                                if let Some(dv) = &p.default {
+                                    collect_expr(dv, out);
+                                }
                             }
                             if let Some(rt) = &mth.return_type {
                                 collect_tr(rt, out);
                             }
                             for e in &mth.effects {
                                 collect_tr(e, out);
+                            }
+                            for c in &mth.contracts {
+                                collect_expr(&c.expr, out);
+                                if let Some(me) = &c.message_expr {
+                                    collect_expr(me, out);
+                                }
+                            }
+                            // A default body (D183) is code: codegen synthesizes it
+                            // for every implementer that does not override it, so
+                            // what it calls is reachable. Unwalked, `@twice() =>
+                            // @area() * 2` left `area` unseen, method-DCE pruned
+                            // `Nova_T_method_area` and the link failed (registry
+                            // #1634, sibling of #1414); an import used only here was
+                            // reported unused.
+                            if let Some(b) = &mth.default_body {
+                                collect_block(b, out);
                             }
                         }
                         // Plan 101.4: embedded protocols reference other named types
@@ -9155,6 +9182,26 @@ mod tests {
             hits[0].diag.message.contains("Unused") && !hits[0].diag.message.contains("AlsoUnused"),
             "should name entry's own unused import, not the foreign peer's, got: {}",
             hits[0].diag.message
+        );
+    }
+
+    // Registry #1634 (sibling of #1414): a protocol default body is code; what it
+    // calls is reachable. Unwalked, method-DCE pruned `area` (link error) and
+    // an import used only there was reported unused.
+    #[test]
+    fn protocol_default_body_is_walked_for_used_names() {
+        let m = parse(
+            "module foo\nimport bar.{helper}\ntype A protocol {\n    @area() -> int\n    \
+             @twice() -> int => helper(@area())\n}\n",
+        );
+        let mut used = HashSet::new();
+        collect_used_names(&m.items, &mut used);
+        assert!(used.contains("area"), "the default body's call `@area()` is unseen: {:?}", used);
+        let ws = lint_module(&m);
+        assert!(
+            !ws.iter().any(|w| w.rule == "unused-import"),
+            "`helper` is used by the default body, got: {:?}",
+            ws.iter().map(|w| w.diag.message.clone()).collect::<Vec<_>>()
         );
     }
 
