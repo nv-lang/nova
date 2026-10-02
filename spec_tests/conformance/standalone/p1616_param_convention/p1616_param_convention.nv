@@ -1,0 +1,27 @@
+// Registry 221.1 #1616 (D488): how a call passes an argument is decided by the
+// function the call resolved to, never by a same-named function of another module.
+//
+// Two modules each declare `stamp` and `mark`: `p1616_plain` takes `int`, `p1616_mutp`
+// takes `mut r P1616Rec` (a `mut` parameter is passed by pointer, D488). The call
+// site used to look the convention up by the bare name, and the table kept whichever
+// declaration was emitted last: `p1616_plain.stamp(ms)` got the pointer convention of
+// `p1616_mutp.stamp` and was called with `&ms` -- the right C symbol, the address of
+// the argument as its value, a result that changed from run to run. The other order
+// passes a record by value where the callee takes a pointer. Every value below is
+// distinct, so a call that took the other module's convention cannot pass by accident.
+module standalone.p1616_param_convention
+
+import ./p1616_plain.{named, mark_plain}
+import ./p1616_mutp.{P1616Rec, stamp, mark_own}
+
+test "a module's own call keeps its own convention beside a mut namesake (#1616)" {
+    assert(named(1790911579855) == 1790911580)
+    assert(mark_plain(21) == 42)
+}
+
+test "the mut namesake keeps the pointer convention, in its module and through an import (#1616)" {
+    ro start P1616Rec = { n: 1 }
+    ro r = stamp(start)
+    assert(r.n == 2)
+    assert(mark_own(1) == 11)
+}
