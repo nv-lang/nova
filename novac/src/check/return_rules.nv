@@ -218,6 +218,11 @@ fn Checker mut @judge_return(e Node, t0 TyId) -> () {
     // `.into_str()` redundant). Taken only when the inserted call names a C
     // symbol that exists; otherwise the refusal below stands.
     if @coerce_return(e, t) { return }
+    // `*mut T` -> `*T` IS the language's own narrowing (02-types.md, P8: "`*mut T
+    // -> *T` auto-narrowing; `*T -> *mut T` refused"): the write right is given
+    // up, the value is unchanged. std's `Vec[T] @ptr() -> *T => @data` returns
+    // its `*mut T` field that way (registry 1633). The reverse stays refused.
+    if ptr_narrows(@ctx.tys, t, @ret_expect) { return }
     ro from = ty_source_name(@ctx, t)
     ro to = ty_source_name(@ctx, @ret_expect)
     ro msg = if int_narrows(@ctx.tys, t, @ret_expect) {
@@ -386,4 +391,11 @@ fn Checker mut @coerce_return(e Node, t TyId) -> bool {
             true
         }
     }
+}
+
+/// Is `from` a `*mut T` and `to` the `*T` of the same pointee -- the one pointer
+/// conversion the language makes without `as` (02-types.md, P8)?
+fn ptr_narrows(tys Interner, from TyId, to TyId) -> bool {
+    if tys.kind_of(from) != TypeKind.TkPtr || tys.kind_of(to) != TypeKind.TkPtr { return false }
+    tys.ptr_is_mut(from) && !tys.ptr_is_mut(to) && tys.arg(from, 0) == tys.arg(to, 0)
 }
