@@ -199,6 +199,10 @@ export const END_INDEX_METHOD = "end_index"
 /// registry is asked for the row under this name.
 export const EQUAL_METHOD = "equal"
 
+/// The method an ORDERING lowers to (`a < b` is `a.@compare(b) < 0`, D46). A
+/// name of the language, beside `equal`, for the same reason (P5).
+export const COMPARE_METHOD = "compare"
+
 /// The attribute that declares an implicit conversion (D429): `#coerce` on a
 /// no-parameter method makes `receiver -> return` an implicit pair. A NAME OF
 /// THE LANGUAGE, so it lives here and nowhere else (P5) -- D429 is emphatic

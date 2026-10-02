@@ -888,27 +888,27 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // absent where a primitive C form comes out.
         if @out.has_callee(e.id_of()) {
             ro row = @out.callee_of(e.id_of()).callable_row()
+            // `equal` for `==`/`!=`, `compare` for an ordering (D46): the row says
+            // which, and an ordering reads `compare(a, b) <op> 0` (the oracle's).
+            ro method = @ctx.fns.rows[raw_row(row)].name
             @body.append("((nova_int)(")
             @body.append(if op_is_not_equal(op) { "!" } else { "" })
-            // NAMED BY WHOEVER HAS THE BODY. `str.equal` is std's, and novac
-            // compiles no std bodies — so the definition lives in the SHELL and
-            // must be called by the shell's name. Until 2026-08-28 this branch
-            // printed `c_callable`, i.e. OUR `novac_fn_equal__...`, and the link
-            // failed on an undefined symbol; nobody saw it because not one file
-            // of the corpus that novac accepts compares strings (measured).
+            // NAMED BY WHOEVER HAS THE BODY. `str.equal` is std's, so the definition
+            // lives in the SHELL and is called by the shell's name. Until 2026-08-28
+            // this printed OUR `novac_fn_equal__...` and the link failed on it.
             ro lhs_t = @out.type_of(kids[0].id_of())
             if @ctx.in_program(row) {
                 @body.append(c_callable(@ctx, row, no_subst()))
             } else if is_vector_ty(@ctx, lhs_t) {
-                @body.append(vec_op_c(@ctx, lhs_t, EQUAL_METHOD, row))
+                @body.append(vec_op_c(@ctx, lhs_t, method, row))
             } else {
-                @body.append(c_shell_method(@ctx, lhs_t, EQUAL_METHOD))
+                @body.append(c_shell_method(@ctx, lhs_t, method))
             }
             @body.append("(")
             @emit_expr(kids[0])
             @body.append(", ")
             @emit_expr(kids[2])
-            @body.append(")))")
+            @body.append(if method == EQUAL_METHOD { ")))" } else { ") ${form} 0))" })
         } else if is_sum_equality(op, @ctx, @out.type_of(kids[0].id_of())) {
             // A PAYLOAD-FREE SUM declaring `Equal` (274.7 wave R): its value IS
             // the tag, so the tags compare -- the access by placement, the way
