@@ -385,7 +385,7 @@ fn Emitter mut @print_switch(f Fn, t SwitchTerm, mut printed []bool) -> () {
             @print_chain(f, a.body, t.join, false, printed)
             @body.append("    _novac_matched_t${t.uniq} = 1;\n")
         } else {
-            @print_tested_arm(f, a.body, levels, t.uniq, printed)
+            @print_tested_arm(f, a.body, levels, t.uniq, a.guard, printed)
         }
         @body.append("    }\n")
     }
@@ -393,10 +393,35 @@ fn Emitter mut @print_switch(f Fn, t SwitchTerm, mut printed []bool) -> () {
 /// An arm whose body runs inside `levels` nested `If`s -- the nested tests and the
 /// guard: each block's statements (the reads its test needs), its head, then the
 /// then-branch; the body's chain and the first-match flag go into the innermost.
-fn Emitter mut @print_tested_arm(f Fn, first BlockId, levels int, uniq int, mut printed []bool) -> () {
+fn Emitter mut @print_tested_arm(f Fn, first BlockId, levels int, uniq int, guard Option[Node],
+                                 mut printed []bool) -> () {
     mut b = first
     mut last_join = first
-    for _ in 0..levels {
+    for lv in 0..levels {
+        // THE GUARD'S LEVEL MAY BE LED BY VALUE `if`s (registry 1619's guard): a
+        // `??` or a `?` in the guard is laid down before the guard's test, and each
+        // opens an `If` that is a statement of the arm, not a test of it. They are
+        // printed whole, up to their joins, until the block whose `If` IS the guard's
+        // -- known by its condition, the guard's own node.
+        if lv == levels - 1 && guard.is_some() {
+            ro g = guard ?? ice("emit: a guard level without a guard")
+            mut lead = true
+            while lead {
+                match f.blocks[raw_block(b)].term {
+                    If(vt) => {
+                        if is_cond_of(vt.cond, g) {
+                            lead = false
+                        } else {
+                            @print_chain(f, b, vt.join, false, printed)
+                            b = vt.join
+                        }
+                    }
+                    Return | Goto(_) | Loop(_) | Switch(_) | Break | Continue | Unreached => { lead = false }
+                }
+            }
+        } else {
+            // A pattern test's level: its `If` is the test itself.
+        }
         @print_block_stmts(f, b, printed)
         match f.blocks[raw_block(b)].term {
             If(gt) => {
@@ -481,4 +506,13 @@ fn Emitter mut @emit_push_frame(f int) -> () {
 /// The innermost interrupt frame popped -- a `with` exit.
 fn Emitter mut @emit_pop_frame() -> () {
     @body.append("    nova_interrupt_pop();\n")
+}
+
+/// Is this condition the test of THIS expression node -- the guard's own `If`,
+/// told from the value `if`s a laid-down `??` opened before it?
+fn is_cond_of(c Cond, g Node) -> bool {
+    match c {
+        Expr(n) => n.id_of() == g.id_of()
+        IsSome(_) | NotSome(_) | FrameEntered(_) | Holds(_) => false
+    }
 }

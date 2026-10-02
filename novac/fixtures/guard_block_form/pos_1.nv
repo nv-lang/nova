@@ -1,0 +1,44 @@
+module guard_block_form.pos_1
+
+// `x?` and `a ?? b` inside a match GUARD (registry 1619's last position): the
+// form is laid down after the pattern held and before the guard's test, and
+// the printer tells the value `if`s it opens from the guard's own `if` by the
+// condition. Until 2026-10-02 the guard was refused by name -- the arm's
+// chain of checks counted the laid-down `if` as a test and lost the arm.
+// The guard's effects run only for the arm whose pattern held (`eval g` once
+// per call). Byte for byte with the oracle.
+
+fn mark(s str, v int) -> int {
+    println("eval ${s}")
+    v
+}
+
+fn maybe(v int) -> Option[int] {
+    if v < 0 { return None }
+    Some(v)
+}
+
+fn pick(v int) -> Option[int] {
+    match v {
+        n if maybe(n)? > 2 => Some(n * 10)
+        n if (maybe(n - 5) ?? 7) > 6 => Some(n + 100)
+        _ => Some(maybe(v)? + 1)
+    }
+}
+
+fn kind(o Option[int]) -> int {
+    match o {
+        Some(x) if (maybe(mark("g", x)) ?? 0) > 3 => 1
+        Some(_) => 2
+        None => 3
+    }
+}
+
+fn main() {
+    println(pick(5) ?? -1)
+    println(pick(1) ?? -1)
+    println(pick(-1) ?? -1)
+    println(kind(Some(9)))
+    println(kind(Some(1)))
+    println(kind(None))
+}

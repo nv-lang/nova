@@ -431,6 +431,10 @@ fn Lowerer mut @lower_arm(arm Node, scr_t TyId, ls Local, c SwitchCtx, dest Loca
             // The guard's head is an `if` like any other: it goes through the ONE head
             // door (`@print_if_head`, emit_flow.nv), which until this step was the third
             // place spelling `    if (` + condition + `) {` by hand.
+            // A `??` / `?` in the guard is laid down here, after the pattern held
+            // and before the test (registry 1619); the printer tells its value
+            // `if`s from the guard's own by the condition (emit_flow.nv).
+            @hoist_operand(g)
             ro gcond = Cond.Expr(g)
             // A guard has no else branch at all, and that is now the whole answer: there
             // is no second bit to pass, and no default for anyone to interpret later.
