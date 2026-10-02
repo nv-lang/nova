@@ -1507,6 +1507,9 @@
 # 2026-10-02, integrator nova-20: rows -> 1572, max -> 1624 (row 1624 filed (methods keyed by type and name, kin of 1614), found by the assistant at 1616).
 # 2026-10-02, integrator nova-20: rows -> 1573, max -> 1625 (row 1616 closed by the merge 29210c203; row 1625 filed (nova-63: Option[T] field of a later type, CC-FAIL)).
 # 2026-10-02, integrator nova-20: rows -> 1575, max -> 1627 (merge of p274-carina-cast step 8: TBD rows numbered 1626, 1627).
+# 2026-10-02, integrator nova-20: rows -> 1580, max -> 1633 (rows 1619, 1626 closed by c1bb7af7e and 1579 by 29210c203 (verified by nova-63); rows 1629-1633 filed (mono-k2 task 4); 1628 reserved for the k1 session).
+rows=1580
+max=1633
 rows=1575
 max=1627
 rows=1573
@@ -2240,7 +2243,7 @@ stale_gaps=0
 #   указателем); строки едут в его ветке `r3-threshold-24`. Условие снятия: тем же слиянием номера убираются из `gaps`.
 # 2026-10-02, integrator: 1610-1611 В `gaps` — РЕЗЕРВ, выданный помощнику nova-88: №1610 (вывод `Empty` как ParseBoolError, ветка
 #   p1456-builtin-sum-method) и №1611 (f64 -> int молча, К1). Тем же слиянием номера убираются из `gaps`.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1617-1618
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1617-1618,1628
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding
