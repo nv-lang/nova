@@ -29,6 +29,7 @@ mod c_name; // #1440/#1446: the one door "Nova name -> C identifier", see its do
 mod type_by_role; // #1545/#1527: a bare type name read by the kind its position admits, see its doc
 mod param_convention; // #1616: a call passes arguments as the RESOLVED callee declares, see its doc
 mod eval_order; // #1627: the order of evaluation survives a form that writes statements, see its doc
+mod fn_value; // #1640: the result type of a function VALUE passed to a generic method, see its doc
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
@@ -45339,7 +45340,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                         }
                                                         sb.return_type.as_ref().and_then(|rt| self.type_ref_to_c(rt).ok()).unwrap_or_default()
                                                     }
-                                                    _ => String::new(),
+                                                    // #1640: a function VALUE (a parameter, a local, a named
+                                                    // function) -- its own type carries the result.
+                                                    _ => self.fn_value_return_c(arg.expr()).unwrap_or_default(),
                                                     }
                                                 };
                                                 if !closure_ret_c.is_empty() && closure_ret_c != "void*" {
