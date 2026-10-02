@@ -1,0 +1,15 @@
+module match_value_forms.neg_1
+
+// NOVAC_EXPECT a `match` is compiled only as
+// ONE seeded cause: a `match` as an OPERAND of `+`. The positions a `match`
+// value takes are the `if` value's (an argument, an element, a field, the
+// right of an assignment, a scrutinee); an operand is not among them for
+// either form yet, and the refusal names the positions. Legal Nova: the
+// oracle prints 31.
+fn main() {
+    ro k = 3
+    println(1 + match k {
+        3 => 30
+        _ => 40
+    })
+}

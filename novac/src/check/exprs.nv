@@ -195,6 +195,23 @@ fn Checker mut @type_expr(e Node) -> () {
         @type_try(e)
     } else if k == NodeKind.Unsafe {
         @type_unsafe(e)
+    } else if k == NodeKind.MatchExpr {
+        // A `match` AS A VALUE where an `if` value stands -- an argument, an
+        // element, a field, the right of an assignment, a scrutinee (sweep 9):
+        // the arms through the one match door, the agreed type recorded for the
+        // lowering's temporary, exactly as an initializer's match is.
+        ro mark = @out.len()
+        @type_match(e)
+        if @out.len() == mark {
+            ro mt = type_of(e, @ctx, @scope, @chan)
+            if is_ty(mt) {
+                @record(e, mt)
+            } else {
+                // Untypeable after a clean walk: no type to hand the lowering.
+            }
+        } else {
+            // Refused inside an arm, by name: nothing to record.
+        }
     } else if k == NodeKind.IfExpr {
         // A CALL ARGUMENT is a legal position too (registry #TBD, the B14
         // door widened the same way B13's record constructor was): this

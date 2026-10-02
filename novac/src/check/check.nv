@@ -673,8 +673,13 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // another match joins the three, and it is 33 of novac's
                     // own carriers -- the lexer dispatches on a second byte
                     // that way throughout.
-                    if !init_pos && !stmt_pos && !arm_pos {
-                        @report_first_leaf_of(children, "outside the subset: a `match` is compiled only as an initializer, a statement, a body tail or the body of a match arm -- other positions are not compiled yet (E2, the control-flow horizon)")
+                    // EVERY VALUE POSITION AN `if` TAKES (sweep 9): a call or
+                    // method argument, an array element, a constructor field,
+                    // the right of `=`/`+=` and a scrutinee -- the `if` value's
+                    // own positions, typed by `@type_expr` and placed by
+                    // `@lower_value_source`, which had a `MatchExpr` arm all along.
+                    if !init_pos && !stmt_pos && !arm_pos && !arg_pos && !scrut_pos {
+                        @report_first_leaf_of(children, "outside the subset: a `match` is compiled only as an initializer, a statement, a body tail, a match arm's body, an argument, an element or field, the right of an assignment or a scrutinee -- other positions are not compiled yet (E2, the control-flow horizon)")
                         return
                     } else {
                         // A legal position: walked below.
@@ -806,7 +811,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                                      ((leaf_kind(children[1]) == TokenKind.Assign &&
                                        (c.kind_of() == NodeKind.RecordCtor ||
                                         c.kind_of() == NodeKind.ArrayLit)) ||
-                                      c.kind_of() == NodeKind.IfExpr))
+                                      c.kind_of() == NodeKind.IfExpr || c.kind_of() == NodeKind.MatchExpr))
                         ai += 1
                     }
                     return
