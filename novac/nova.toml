@@ -562,7 +562,8 @@
 # (check-spec-code-home). No rule changes.
 # 2026-10-02 (integrator): D55 and D228 headings get explicit {#d55}/{#d228} targets; no rule changes.
 # 2026-10-03 (integrator): D156 amendment -- a newtype over a must-consume type is must-consume (owner's word).
-#   spec-queue: 170
+# 2026-10-03 (integrator, merge of p1649): D486 s2 amendment -- a variant pattern names a variant of the scrutinee's type (row 1649; agreed by the integrator).
+#   spec-queue: 171
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,
