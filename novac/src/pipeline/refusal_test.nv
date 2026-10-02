@@ -127,3 +127,22 @@ test "a newtype construction over a POISONED argument says nothing more (part 5 
     ro (d2, _) = compile_to_c("type Row int\nfn main() {\n ro t = \"s\"\n ro r = Row(t)\n println(1)\n}", std)
     assert(messages(d2).contains("not the newtype's representation"), messages(d2))
 }
+
+test "a prefix operator and a generic payload over a POISONED name say nothing more (part 5 of p274-carina-k1)" {
+    // main.nv `!nm.ends_with(".nv")` and sem.nv `Some(row)` read names an
+    // earlier refusal bound with no type, and each refused AGAIN: "this prefix
+    // operator ... dispatches through a protocol", "the type argument of this
+    // sum cannot be inferred from the payload".
+    mut std = std_decls()
+    std.push("module std.o\nexport type Option[T] enum Some(T) | None\n")
+    ro (d, _) = compile_to_c("fn main() {\n ro t = nosuch\n if !t { println(1) }\n ro n = -t\n println(2)\n}", std)
+    assert(d.len() == 1, messages(d))
+    // The tail call takes the declared return as every other tail does, so the
+    // poisoned payload's `Some` has its instance from the position.
+    ro (ds, _) = compile_to_c("fn f() -> Option[int] {\n ro t = nosuch\n Some(t)\n}\nfn main() {\n println(f() ?? 0)\n}", std)
+    assert(ds.len() == 1, messages(ds))
+    assert(!messages(ds).contains("internal compiler error"), messages(ds))
+    // CONTROL: an operand of a TYPED non-bool is still refused by its cause.
+    ro (dc, _) = compile_to_c("fn main() {\n ro t = \"s\"\n if !t { println(1) }\n}", std)
+    assert(messages(dc).contains("prefix operator"), messages(dc))
+}
