@@ -205,7 +205,13 @@ while IFS= read -r rel; do
         continue
     fi
     NLIB=$((NLIB + 1))
-    if ! timeout 300 "$NOVA" check "$EX_DIR/$rel" > "$TMP/lib.log" 2>&1; then
+    timeout 300 "$NOVA" check "$EX_DIR/$rel" > "$TMP/lib.log" 2>&1
+    lrc=$?
+    if [ "$lrc" -eq 124 ]; then
+        # Код 124 -- предел `timeout(1)`, а не отказ проверки: третье слово, и оно красное (Г15).
+        echo "check-examples-strict-effects: FAIL - $rel: СНЯТ ПРЕДЕЛОМ 300с: вердикта nova check нет"
+        rc=1
+    elif [ "$lrc" -ne 0 ]; then
         echo "check-examples-strict-effects: FAIL - $rel: файл без fn main не проходит nova check:"
         grep -m2 -aE 'error' "$TMP/lib.log" | cut -c1-140 | sed 's/^/    /' >&2
         echo "    Файл без точки входа не собирает ни один шаг — его проверяет только этот (№1639)." >&2
