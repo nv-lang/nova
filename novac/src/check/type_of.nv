@@ -345,9 +345,10 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // first. Keeping a copy here would have been a second home for one rule.
         return literal_prim_of(lk, ctx)
     }
-    if k == NodeKind.Coalesce {
-        // DECIDED by the walk (the payload of the left side), read here --
-        // re-deriving it would be the second door the channel exists to close.
+    if k == NodeKind.Coalesce || k == NodeKind.Try {
+        // DECIDED by the walk (the payload of the left side; of `x?`'s operand,
+        // try_rules.nv), read here -- re-deriving it would be the second door
+        // the channel exists to close.
         return chan.type_if_known(e.id_of())
     }
     if k == NodeKind.Name {

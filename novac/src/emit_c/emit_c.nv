@@ -542,6 +542,11 @@ fn Emitter mut @hoist_array_lits(e Node) -> () {
                 @lit_tmp[raw_node(e.id_of())] = @lo.ir.decl_of(@lo.lower_coalesce(e)).name
                 return
             }
+            if kind == NodeKind.Try {
+                // `x?` (D85): `??`'s Some-test with a returning None branch.
+                @lit_tmp[raw_node(e.id_of())] = @lo.ir.decl_of(@lo.lower_try(e)).name
+                return
+            }
             if kind == NodeKind.Lit {
                 // A literal hoists nothing: the pool owns a plain string,
                 // and the interpolated form is its own InterpStr node since

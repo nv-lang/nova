@@ -1,0 +1,127 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/check/try_rules.nv -- the two value forms that RETURN from the body
+// out of an expression: `x?` (D85) and `X ?? return R` (D86 amended 2026-09-01).
+//
+// Donor: rustc `check_expr_try` / the `?` desugaring's typing -- the operand's
+//        container and the enclosing fn's return are judged TOGETHER, and the
+//        expression's type is the payload; NOT taken: `From` on the error (D85
+//        rejects auto-conversion) and the `Try` trait (two fixed containers).
+// Role: check (layer 7) -- one door for both forms: which container, which
+//       return, which code when the pair is not the language's.
+// Used by: exprs.nv (the Try arm, and the Coalesce arm for a `return` fallback).
+// Guarded by: check-novac-differential.sh (fixtures try_option/ and
+//             coalesce_return/, pos byte for byte with the oracle),
+//             check-novac-fixture-expect.sh (the neg pins), and
+//             nova test novac/src/pipeline/try_test.nv.
+//
+// WHY ONE FILE: the two forms are one mechanism -- an Option tested, its payload
+// the value, the None branch leaving the body (lower/lower_coalesce.nv) -- and
+// they share the question the oracle answers by code: what the body returns.
+
+module novac.check
+
+import ../tree.{Node}
+import ../types.{TyId, no_ty, is_ty}
+import ../sem.{branch_children, coalesce_payload, option_payload, is_coalesce_return, raw_row}
+
+/// `?` and `?? return` lay down blocks and leave the body, and only a PLACED
+/// value position lowers them with the graph open (`@placed`, set by the doors
+/// that type one: a binding, a tail or `return`, a match arm). Elsewhere -- an
+/// operator, the right of `=`, an argument, a condition -- the printer meets
+/// them after the seal; a plain `??` there is the ICE "a block sealed twice"
+/// (registry 1619, measured 2026-10-02), and the new forms do not join it.
+const SEALED_VALUE_POSITION_MSG = "outside the subset: `x?` and `x ?? return r` are compiled only as a binding initializer, a `return` value, a `=>` body or a match arm's body -- inside an operator, an argument, a condition or on the right of `=` they are not compiled yet (E2, the control-flow horizon): bind the value first"
+
+/// `?` takes an Option or a Result (D85). The oracle accepts any operand here
+/// (`x?` with `x int` compiles), so the reference is the spec.
+const TRY_NOT_CONTAINER_MSG = "`?` takes an `Option` or a `Result` (D85), and this operand is neither"
+/// `?` in a body that returns neither container: the oracle's E_TRY_IN_FAIL_FN.
+const TRY_IN_FAIL_FN_MSG = "`?` is allowed only in a fn returning `Result[T, E]` / `Option[T]` -- it propagates by value, return-only (D85, E_TRY_IN_FAIL_FN); in a `Fail` fn propagate with `!!` or `throw`"
+/// The oracle's E_TRY_OPTION_IN_RESULT_FN.
+const TRY_OPTION_IN_RESULT_MSG = "`?` on an `Option` in a fn returning a `Result` would return `None`, which is not a `Result` (D85, E_TRY_OPTION_IN_RESULT_FN) -- convert first: `opt.ok_or(<error>)?`"
+/// The oracle's E_TRY_RESULT_IN_OPTION_FN.
+const TRY_RESULT_IN_OPTION_MSG = "`?` on a `Result` in a fn returning an `Option` would return `Err(e)`, which is not an `Option` (D85, E_TRY_RESULT_IN_OPTION_FN) -- convert first: `res.ok()?`"
+/// `X ?? return R` where the body returns a container: the oracle's code.
+const COALESCE_RETURN_FALLBACK_MSG = "`return` cannot be the fallback of `??` here -- this fn returns an `Option`/`Result`, so `?` is the shorter canon (D86, E_COALESCE_RETURN_FALLBACK); the form is legal only where the return is neither"
+/// `?? return` with no value in a body that promises one: the bare `return`'s own
+/// rule (a value body returns a value), at the `??`.
+const COALESCE_RETURN_BARE_MSG = "a bare `?? return` leaves a fn that promises a value without one -- write `?? return <value>` (D86 amended 2026-09-01)"
+/// D86 keeps the form refused where a type names a generic parameter: under `T`
+/// an `Option` may arrive, and the form is the second door to `?` again. novac
+/// types an INSTANCE, so it asks the declaration's return (`inst_row`); the
+/// operand's declared type is not written anywhere it could ask -- a named
+/// simplification (docs/dev/simplifications.md) until 274 E2-b3.
+const COALESCE_RETURN_GENERIC_MSG = "`return` cannot be the fallback of `??` in a fn whose declared return names a type parameter -- under `T` an `Option` may arrive (D86, amended 2026-09-01: the form is legal only where no generic parameter is involved)"
+
+/// `x?` (D85): the operand is typed first (an earlier mistake inside it is not
+/// masked), then the pair operand container / declared return decides. The
+/// value is the payload; the lowering returns `None` from the None branch.
+fn Checker mut @type_try(e Node) -> () {
+    ro tk = branch_children(e)
+    ro placed = e.id_of() == @placed
+    ro before = @out.len()
+    @type_expr(tk[0])
+    if @out.len() > before { return }
+    if !placed {
+        @report_first_leaf_of(tk, SEALED_VALUE_POSITION_MSG)
+        return
+    }
+    ro ot = type_of(tk[0], @ctx, @scope, @chan)
+    ro payload = if is_ty(ot) { coalesce_payload(@ctx, ot) } else { no_ty() }
+    if !is_ty(payload) {
+        @reject_first_leaf_of(tk, TRY_NOT_CONTAINER_MSG)
+        return
+    }
+    ro rt = @ret_expect
+    ro ret_is_opt = is_ty(rt) && is_ty(option_payload(@ctx, rt))
+    ro ret_is_res = is_ty(rt) && !ret_is_opt && is_ty(coalesce_payload(@ctx, rt))
+    ro op_is_opt = is_ty(option_payload(@ctx, ot))
+    if !ret_is_opt && !ret_is_res {
+        @reject_first_leaf_of(tk, TRY_IN_FAIL_FN_MSG)
+    } else if op_is_opt && ret_is_res {
+        @reject_first_leaf_of(tk, TRY_OPTION_IN_RESULT_MSG)
+    } else if !op_is_opt && ret_is_opt {
+        @reject_first_leaf_of(tk, TRY_RESULT_IN_OPTION_MSG)
+    } else if !op_is_opt {
+        // The same stage as `??` over a Result: one text for both (literal_rules.nv).
+        @report_first_leaf_of(tk, COALESCE_RESULT_MSG)
+    } else {
+        // An Option in a body returning an Option: the language's form, compiled.
+        @record(tk[0], ot)
+        @record(e, payload)
+    }
+}
+
+/// `X ?? return R` (D86 amended 2026-09-01), after the `??` door admitted its
+/// left side as an Option: legal where the body returns neither container, and
+/// `R` is judged as a `return` operand -- the same door, the same rules. Answers
+/// whether the form was admitted; a refusal was written when it was not.
+fn Checker mut @type_coalesce_return(e Node, qk []Node) -> bool {
+    if e.id_of() != @placed {
+        @report_first_leaf_of(qk, SEALED_VALUE_POSITION_MSG)
+        return false
+    }
+    ro rt = @ret_expect
+    if is_ty(rt) && is_ty(coalesce_payload(@ctx, rt)) {
+        @reject_first_leaf_of(qk, COALESCE_RETURN_FALLBACK_MSG)
+        return false
+    }
+    if @substs.len() > 0 && raw_row(@inst_row) >= 0 && !@ctx.tys.is_concrete(@ctx.fns.rows[raw_row(@inst_row)].ret_id) {
+        @reject_first_leaf_of(qk, COALESCE_RETURN_GENERIC_MSG)
+        return false
+    }
+    // A bare `?? return` is the bare `return` of a body that returns no value
+    // (`-> ()`, `-> @`), as the statement is (typing.nv, RetStmt); the oracle
+    // accepts it there (measured 2026-10-02) and refuses it in a value body.
+    if qk.len() < 4 {
+        // SILENT-OK: a bare return of a unit body carries nothing to type.
+        if @ret_unit || @ret_self { return true }
+        @reject_first_leaf_of(qk, COALESCE_RETURN_BARE_MSG)
+        return false
+    }
+    ro mark = @out.len()
+    @type_tail_value(qk[3])
+    if @out.len() > mark { return false }
+    @judge_return(qk[3], @tail_type_of(qk[3]))
+    @out.len() == mark
+}

@@ -6,16 +6,17 @@
 // This file repeats the runtime's spelling as interop.
 // Role: emission of `expr as T` (D54): a newtype's unwrap (the operand, free),
 //   a pointer cast, and the cast between two primitives the checker admitted
-//   (check/cast_pairs.nv).
-// Used by: emit_expr.nv (`@emit_expr`'s Cast arm).
-// Guarded by: the fixtures novac/fixtures/cast_numeric (byte-for-byte against
-//   the oracle through check-novac-differential.sh) and
+//   (check/cast_pairs.nv); and the narrowing back to its row of a binary bit
+//   operator's value (registry 1602).
+// Used by: emit_expr.nv (`@emit_expr`'s Cast arm and its bit-operator arm).
+// Guarded by: the fixtures novac/fixtures/cast_numeric and narrow_shift
+//   (byte-for-byte against the oracle through check-novac-differential.sh) and
 //   nova test novac/src/pipeline/cast_test.nv.
 
 module novac.emit_c
 
 import ../tree.{Node}
-import ../sem.{branch_children, c_type, prim_row_of}
+import ../sem.{branch_children, c_type, prim_row_of, is_int_prim, carrier_of}
 import ../builtins.{BuiltinType, PrimFamily}
 import ../types.{is_ty}
 import ../diag.{ice}
@@ -99,5 +100,35 @@ fn is_int_row_family(f PrimFamily) -> bool {
     match f {
         PfInt => true
         PfFloat | PfStr | PfBool | PfChar | PfUnit | PfAny | PfNever => false
+    }
+}
+
+/// A binary BIT operator (`&`, `|`, `^`, `<<`, `>>`) on an integer row, cast back
+/// to the row's C type -- the door `~` has had since 274.7 B7 (#934), and the
+/// same narrowing an `as` does (D54: the low bits). C promotes a `u8`/`i8`/
+/// `u16`/`i16` operand to `int`, so `a << 4` with `a u8 = 200` was 3200 wherever
+/// the value was not stored first -- a cast, a comparison, a `println` argument,
+/// a constant's inlined initializer (registry 1600, 1602, 1603). The cast gives
+/// the value D54 and the oracle give (128); on a row as wide as C's promotion it
+/// changes nothing. Here and not in emit_expr.nv: it is a narrowing, and that
+/// file stands at the thousand-line limit.
+fn Emitter mut @emit_bit_infix(e Node, kids []Node, form str) -> () {
+    ro bit_cast = is_int_prim(@ctx.tys, carrier_of(@ctx, @out.type_of(e.id_of())))
+    if bit_cast {
+        @body.append("((${@arith_row(@out.type_of(e.id_of())).c_name})")
+    } else {
+        // A bool's `&`/`|`/`^`: C's int is its value already.
+    }
+    @body.append("((")
+    @emit_expr(kids[0])
+    @body.append(") ")
+    @body.append(form)
+    @body.append(" (")
+    @emit_expr(kids[2])
+    @body.append("))")
+    if bit_cast {
+        @body.append(")")
+    } else {
+        // Nothing was opened above.
     }
 }

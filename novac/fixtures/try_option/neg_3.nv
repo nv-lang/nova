@@ -1,0 +1,21 @@
+module try_option.neg_3
+
+// ONE seeded cause: `x?` inside an operator. The form is legal Nova (D85);
+// novac lowers it only where the value is PLACED -- a binding initializer, a
+// `return`, a `=>` body, a match arm's body -- and refuses it by name
+// elsewhere instead of reaching the printer after the graph is sealed.
+// NOVAC_EXPECT `x?` and `x ?? return r` are compiled only as a binding initializer
+fn first(xs []int) -> Option[int] {
+    if xs.len() == 0 { return None }
+    Some(xs[0])
+}
+
+fn plus_one(xs []int) -> Option[int] {
+    ro v = first(xs)? + 1
+    println(v)
+    None
+}
+
+fn main() {
+    println(plus_one([]int.new()) ?? -1)
+}

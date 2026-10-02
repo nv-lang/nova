@@ -79,7 +79,7 @@ fn main() {\n\
     assert(tie)
 }
 
-test "`??` is judged: a non-Option left side and `?? return` refuse by name (coalesce wave)" {
+test "`??` is judged: a non-Option left side refuses by name, with or without a `return` fallback (coalesce wave)" {
     // The POSITIVE path (payload/fallback, the tag guard, the short circuit)
     // is the CARRIER's -- examples/basics/coalesce.nv, held byte-for-byte by
     // the corpus smoke. It cannot live here: these shared decls are poor (no
@@ -88,9 +88,10 @@ test "`??` is judged: a non-Option left side and `?? return` refuse by name (coa
     // judge's own two refusals), and it speaks without any Option at all.
     ro std = std_decls()
 
-    // `?? return` is retracted (D86 amend): read by the parser, refused by
-    // name here -- the oracle refuses it in its checker for the same reason
-    // (novac's own door: `check/literal_rules.nv:420`).
+    // `?? return` is no longer refused as a form (D86 amended 2026-09-01: legal
+    // where the fn returns neither container -- its door and tests are
+    // check/try_rules.nv and pipeline/try_test.nv). Its LEFT side is still
+    // judged first: an `int` has no payload, with a `return` fallback too.
     ro (dr, _) = compile_to_c("fn main() {\n\
  ro n = 1\n\
  ro v = n ?? return 0\n\
@@ -98,7 +99,7 @@ test "`??` is judged: a non-Option left side and `?? return` refuse by name (coa
 }", std)
     mut ret_hit = false
     for g in dr {
-        if g.message.contains("does not take `return`") { ret_hit = true }
+        if g.message.contains("this left side is neither") { ret_hit = true }
     }
     assert(ret_hit)
 

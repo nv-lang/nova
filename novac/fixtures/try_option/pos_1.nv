@@ -1,0 +1,60 @@
+module try_option.pos_1
+
+// `x?` on an Option in a fn returning an Option (D85): `Some(v)` continues
+// with `v`, `None` returns `None` of the fn's own Option -- an instance of
+// ANOTHER payload type than the operand's (`first_len` below). Before this
+// wave novac refused every `?` as "not compiled yet"; its own source writes
+// the form five times (sem/defs.nv, sem/sem.nv, resolve.nv). Byte for byte
+// with the oracle.
+
+fn first(xs []int) -> Option[int] {
+    if xs.len() == 0 { return None }
+    Some(xs[0])
+}
+
+fn double_first(xs []int) -> Option[int] {
+    ro h = first(xs)?
+    Some(h * 2)
+}
+
+fn first_len(xs []str) -> Option[int] {
+    ro s = xs.first()?
+    Some(s.byte_len())
+}
+
+fn sum_firsts(a []int, b []int) -> Option[int] {
+    ro x = first(a)?
+    ro y = first(b)?
+    Some(x + y)
+}
+
+fn pick(xs []int, k int) -> Option[int] {
+    match k {
+        0 => {
+            ro v = first(xs)?
+            return Some(v)
+        }
+        _ => {
+            ro v = first(xs)?
+            Some(v + k)
+        }
+    }
+}
+
+fn main() {
+    mut xs = []int.new()
+    println(double_first(xs) ?? -1)
+    xs.push(21)
+    println(double_first(xs) ?? -1)
+    mut ss = []str.new()
+    println(first_len(ss) ?? -1)
+    ss.push("four")
+    println(first_len(ss) ?? -1)
+    mut ys = []int.new()
+    println(sum_firsts(xs, ys) ?? -1)
+    ys.push(5)
+    println(sum_firsts(xs, ys) ?? -1)
+    println(pick(xs, 0) ?? -1)
+    println(pick(xs, 3) ?? -1)
+    println(pick(ys, 3) ?? -1)
+}

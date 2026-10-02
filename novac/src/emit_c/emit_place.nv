@@ -101,6 +101,7 @@ fn Emitter @expr_of(rv Rvalue) -> Node {
         VariantField(_) => ice("emit_c: a variant field read reached expr_of -- only an assignment prints it")
         Read(_) => ice("emit_c: a place read reached expr_of -- only an assignment prints it")
         AnyData(_) => ice("emit_c: an unboxing reached expr_of -- only an assignment prints it")
+        NoneOf => ice("emit_c: a `None` of the destination's type reached expr_of -- only an assignment prints it")
     }
 }
 
@@ -138,6 +139,13 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
         SomePayload(opt) => {
             @emit_assign_head(d)
             @body.append("${@lo.ir.decl_of(opt).name}.value;\n")
+        }
+        NoneOf => {
+            // The early return of `x?` (D85): the shell's `None` of the
+            // destination's own instance, through the Option door.
+            @emit_assign_head(d)
+            @emit_option_none(d.ty)
+            @body.append(";\n")
         }
         AnyData(subject) => {
             // The runtime's unboxing (`nova_rt/typeid.h`): the payload of the

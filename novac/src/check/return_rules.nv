@@ -119,6 +119,7 @@ fn Checker mut @type_tail_value(e Node) -> () {
     // return (measured on novac's own sem/pattern.nv, 2026-10-02).
     ro saved_expect = @value_expect
     @value_expect = @ret_expect
+    @placed = e.id_of()
     @type_expr(e)
     @value_expect = saved_expect
 }

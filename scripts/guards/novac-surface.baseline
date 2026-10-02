@@ -1022,7 +1022,13 @@ resolve 23
 # merge of origin/main 2488a47be into p274-carina-k1: main's sem 338 plus this branch's +1 (the line above) = 339.
 # merge of p274-carina-k1 (parts 3-4) into main (integrator, 2026-10-02): the guard's count on the merged
 #   tree is 339 -- main's 338 plus k1's one door of part 4 (see its chronicle lines above).
-sem 339
+# 2026-10-02, cloud session p274-carina-cast (step 7, `?` and `?? return`): sem 338 -> 339:
+#   `is_coalesce_return` (sem/node_questions.nv) -- is a `??` the `X ?? return R` form? Asked by
+#   check (the form's door, the position gate) and lower (the None branch returns); `lower`
+#   may not read the lexer, so the one question about the keyword leaf lives in sem.
+# merge of p274-carina-cast (step 7) into main (integrator, 2026-10-02): the guard's count on the merged
+#   tree is 340 -- main's 339 plus cast's `is_coalesce_return` (see its chronicle line above).
+sem 340
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

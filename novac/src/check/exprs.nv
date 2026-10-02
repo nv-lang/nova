@@ -46,7 +46,7 @@ import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_o
 import ../sem.{ty_source_name, c_shell_method, digit_index}
 import ../sem.{interp_slices, const_init_interpolates}
 import ../types.{TyId, no_ty, is_ty}
-import ../sem.{coalesce_payload, option_payload}
+import ../sem.{coalesce_payload, option_payload, is_coalesce_return}
 import ../sem.{shape_of}
 import ../sem.{is_int_prim, is_numeric_prim, prim_row_of}
 import ../builtins.{BuiltinType, PrimFamily, FMT_PROTO, DISPLAY_METHOD}
@@ -191,19 +191,8 @@ fn Checker @display_row_of(key []ArgSpec) -> Option[FnRow] {
 fn Checker mut @type_expr(e Node) -> () {
     ro k = e.kind_of()
     if k == NodeKind.Try {
-        // `a?` (D85, registry #1264): the operand is typed first so
-        // an earlier mistake inside it is not masked by this refusal
-        // (#902's rule, the same one every door in this file follows), then
-        // the whole expression is refused BY NAME -- never falls through to
-        // `type_of`'s generic "expression kind without a type rule" ice,
-        // which is what it did before this branch existed (measured: the
-        // ice fired, not a named message, the same silent-widening risk
-        // every other unhandled-kind gap in this file guards against).
-        ro tk = branch_children(e)
-        ro before = @out.len()
-        @type_expr(tk[0])
-        if @out.len() > before { return }
-        @report_first_leaf_of(tk, TRY_MSG)
+        // `a?` (D85): its own door, with `?? return` (try_rules.nv).
+        @type_try(e)
     } else if k == NodeKind.Unsafe {
         @type_unsafe(e)
     } else if k == NodeKind.IfExpr {
@@ -408,26 +397,6 @@ fn Checker mut @type_expr(e Node) -> () {
         ro before = @out.len()
         @type_expr(qk[0])
         if @out.len() > before { return }
-        // `?? return` is spotted by the LEAF, and the question is asked of a
-        // leaf only: a fallback EXPRESSION is a branch, and asking a branch
-        // for its token kind is an ice (measured on the wave's first probe).
-        if qk.len() > 2 {
-            match qk[2] {
-                Leaf(rt) => {
-                    if rt.kind == TokenKind.KwReturn {
-                        @report_first_leaf_of(qk, COALESCE_RETURN_MSG)
-                        return
-                    } else {
-                        // A leaf fallback (a name, a literal): typed below.
-                    }
-                }
-                Branch { .. } => {
-                    // An expression fallback: typed below like any other.
-                }
-            }
-        } else {
-            // A recovery shape with no fallback at all: the parser spoke.
-        }
         ro lt = type_of(qk[0], @ctx, @scope, @chan)
         // THE CONTAINER DOOR, not the Option door (registry 1084, 2026-09-13). D86 gives
         // `??` two containers -- `Some(v)` and `Ok(v)` both yield `v` -- and novac read
@@ -459,7 +428,11 @@ fn Checker mut @type_expr(e Node) -> () {
         // records its own, so the hole showed only with W4's first free
         // Option-returning fn (channel.nv "no type recorded for this node").
         @record(qk[0], lt)
-        if qk.len() > 2 {
+        if is_coalesce_return(qk) {
+            // `X ?? return R` (D86 amended 2026-09-01): its own door, beside `?`.
+            // SILENT-OK: the door wrote its refusal when it did not admit the form.
+            if !@type_coalesce_return(e, qk) { return }
+        } else if qk.len() > 2 {
             @type_expr(qk[2])
             if @out.len() > before { return }
         } else {

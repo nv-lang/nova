@@ -402,12 +402,14 @@ test "lone ? (Try operator): named refusal, not the anonymous parser fallback (r
     // explicitly) and the parser's generic fallback refused it with no
     // name at all, the same "novac did not parse this" text a genuinely
     // malformed program gets. Now it reaches the tree as its own
-    // `NodeKind.Try` and is refused BY NAME in the checker, mirroring the
-    // established rule for the sibling `?? return` form (D86, expr.nv).
+    // `NodeKind.Try` and is judged BY NAME in the checker. Since 2026-10-02 the
+    // form compiles (check/try_rules.nv); this program applies it to an `int`,
+    // which D85 does not allow, and the refusal still names the operator.
     ro src = "module m\n\nfn maybe() -> int {\n    5\n}\n\nfn use_it() -> int {\n    ro v = maybe()?\n    v\n}\n"
     ro msg = diagnose_msg(src)
     assert(!msg.contains("did not parse"), "a legal form must not read as a syntax error")
-    assert(msg.contains("not compiled yet"), "the refusal must name the operator, not stay anonymous")
+    ro named = msg.contains("`?` takes an `Option` or a `Result`")
+    assert(named, "the refusal must name the operator, not stay anonymous")
 }
 
 test "with: a binding naming a non-effect is refused at the name, saying what the name is (274.11 E.4)" {

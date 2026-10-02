@@ -571,4 +571,7 @@ refusals=140
 #   an index key other than `int` is a LANGUAGE error (D238, D405, D52; the integrator's
 #   ruling), and NEWTYPE_CTOR_SELF_MSG went in on the language door (D52 amendment
 #   2026-10-02). Numbers are the guard's on the tree after the merge of the train.
-undated_by_door=70
+# 2026-10-02, cloud session p274-carina-cast (step 7): `?` and `X ?? return R` compile -- TRY_MSG
+#   left with the form; the new position gate is dated (E2) and `?` over a Result shares
+#   `??`'s dated E2-b3 text. By door 70 -> 69, the guard's count on the tree.
+undated_by_door=69
