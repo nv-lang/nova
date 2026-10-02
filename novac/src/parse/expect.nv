@@ -135,6 +135,7 @@ fn Cursor mut @push_name(mut kids []Node) -> () {
 /// back wrapped in its Err branch, any other token as itself.
 fn Cursor mut @take_name() -> Node {
     if @peek() == TokenKind.Ident && is_reserved_word(@peek_text()) {
+        // RECOVERY-BOUNDED: the token taken is an identifier, asked just above, never a closer.
         return @node(NodeKind.Err, []Node.of(@take()))
     } else {
         // Not a reserved word: the position's ordinary reading below.

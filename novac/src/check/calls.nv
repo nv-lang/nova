@@ -734,6 +734,7 @@ fn Checker mut @type_free_call(e Node) -> () {
     ro by_expect = if vn > 0 { variant_named_in(@ctx, cname, @value_expect) } else { no_vrow() }
     if is_vrow(by_expect) {
         @type_variant_call(e, kids, by_expect)
+        // SILENT-OK: the construction door recorded the variant or refused it.
         return
     } else if vn > 1 {
         @report_first_leaf_of(kids, AMBIGUOUS_VARIANT_MSG)
