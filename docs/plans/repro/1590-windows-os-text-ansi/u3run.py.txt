@@ -1,0 +1,14 @@
+import subprocess, os, sys
+exe = os.path.abspath(sys.argv[1])
+word = "Евг"
+base = os.path.join(os.environ["TEMP"], "Каталог-1590")
+os.makedirs(base, exist_ok=True)
+env = dict(os.environ, U1_PROBE=word, TEMP=base, TMP=base, USERPROFILE=base, COMPUTERNAME="ХОСТ")
+r = subprocess.run([exe], env=env, capture_output=True, cwd=base)
+out = r.stdout.decode("utf-8", "replace").strip()
+print(out)
+u = lambda s: s.encode("utf-8").hex()
+print("expect set-get", u("Жук"), "| vars", u(word), "| cwd/temp/home", u(base), "| host", u("ХОСТ"))
+ok = all(x in out for x in ["set-get " + u("Жук"), "vars " + u(word), "removed none", "cwd-tail " + u(base),
+                            "temp " + u(base), "home " + u(base), "host " + u("ХОСТ")])
+print("ALL-OK" if ok else "MISMATCH")

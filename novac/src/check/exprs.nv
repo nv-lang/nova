@@ -53,32 +53,8 @@ import ../builtins.{BuiltinType, PrimFamily, FMT_PROTO, DISPLAY_METHOD}
 import ../sem.{LitArg}
 
 /// One expression: record what the emitter asks about, walk what it emits.
-/// The TYPE of a module constant, or `no_ty()` when the name is not one.
-///
-/// The type is read off the INITIALIZER, because the subset's constants
-/// declare none (`export const TYPE_KIND_COUNT = 7`) and the written form is
-/// optional (D200 spells the full one; the oracle accepts both). Reading it
-/// here rather than at collection keeps one answer to one question: sem
-/// registers the name, the checker types it.
-fn Checker mut @const_type_of(name str) -> TyId {
-    ro row = match @ctx.defs.const_row(name) {
-        None => return no_ty()
-        Some(r) => r
-    }
-    ro cd = @ctx.consts.rows[raw_crow(row)]
-    if cd.init.len() == 0 { return no_ty() }
-    // A MODULE VALUE's type was recorded ONCE, when its initializer was
-    // typed (`@type_module_value`): read it there -- the lattice cannot type
-    // an initializer that reads another module value. An instance channel
-    // never typed the initializer, so the lattice answers there.
-    if cd.once {
-        ro rec = @chan.type_if_known(cd.init[0].id_of())
-        if is_ty(rec) { return rec }
-    } else {
-        // A constant: typed by its initializer at every use, below.
-    }
-    type_of(cd.init[0], @ctx, @scope, @chan)
-}
+// `@const_type_of` -- the type of a module constant, written or read off its
+// initializer -- lives in const_types.nv since registry 1546.
 
 /// A read of `name` from a handler literal's op body, bound OUTSIDE the
 /// literal: record the capture (E.9 step 3) -- by address for a `mut`
@@ -109,7 +85,7 @@ fn Checker mut @note_if_capture(e Node, name str) -> () {
 /// known about it here, and the ordinary doors answer.
 fn Checker @is_poisoned_module_value(name str) -> bool {
     if @substs.len() > 0 { return false }
-    ro row = match @ctx.defs.const_row(name) {
+    ro row = match @const_seen(name) {
         None => return false
         Some(r) => r
     }
@@ -538,7 +514,7 @@ fn Checker mut @type_expr(e Node) -> () {
                     // the name itself (274.4 rule E).
                     // I1 boundary first: an INTERPOLATED initializer would be
                     // substituted where no hoist ran -- refused by name.
-                    match @ctx.defs.const_row(t.text) {
+                    match @const_seen(t.text) {
                         Some(row) => {
                             if const_init_interpolates(@ctx, row) {
                                 @refuse(t, INTERP_CONST_MSG)
@@ -969,7 +945,9 @@ fn Checker @field_visible(owner TyId, name str) -> bool {
             home == "#${@ctx.handed.tree_of(@inst_row)}"
     } else {
         // The file's own body: its module, in the C shape `Ctx.module_c` keeps;
-        // a file-private field of a handed file is never the file's.
-        return home.replace(".", "_") == @ctx.module_c
+        // a file-private field of a handed file is never the file's, and
+        // neither is one whose module reads "" -- std's `#prelude` files --
+        // even when the file has no module line either (D281, #1521).
+        return home != "" && home.replace(".", "_") == @ctx.module_c
     }
 }

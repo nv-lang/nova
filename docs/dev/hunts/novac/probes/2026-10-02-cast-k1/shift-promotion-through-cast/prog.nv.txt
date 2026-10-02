@@ -1,0 +1,30 @@
+// Hunt 2026-10-02 cast x K1, probe shift-promotion-through-cast.
+// A shift on a NARROW integer (u8, i8, u16) is typed by both compilers as the
+// operand's type -- a binding `ro t = a << 4` stores 128 -- but the same
+// expression cast to a WIDER type carries C's int promotion through the cast.
+// D54: a u8 source has at most 8 bits to give, so `x as u16` of a u8 is <= 255;
+// conversions.md (D405): "Nova does not pick the wider type for you";
+// plan 234 (owner's decision 2026-07-27) names this exact C promotion for `~`
+// as "silently wrong in an expression context".
+fn main() {
+    ro a = 200 as u8
+    ro s = 100 as i8
+    ro h = 60000 as u16
+    println("ctl: ro t = a << 4; t as u16, norm 128")
+    ro t = a << 4
+    println(t as u16)
+    println("(a << 4) as u16, norm 128")
+    println((a << 4) as u16)
+    println("(a << 4) as u64, norm 128")
+    println((a << 4) as u64)
+    println("(a << 4) as f64, norm 128")
+    println((a << 4) as f64)
+    println("(s << 1) as i16, norm -56")
+    println((s << 1) as i16)
+    println("(h << 2) as u32, norm 43392")
+    println((h << 2) as u32)
+    println("a << 4 printed bare, norm 128")
+    println(a << 4)
+    println("(a << 4) == (128 as u8), norm true")
+    println((a << 4) == (128 as u8))
+}

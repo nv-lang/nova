@@ -28,7 +28,7 @@
 module novac.sem
 
 import ../tree.{Node, NodeId, NodeKind}
-import ../builtins.{COERCE_ATTR, IMPL_ATTR, SHARE_ATTR}
+import ../builtins.{COERCE_ATTR, IMPL_ATTR, SHARE_ATTR, TypeKind}
 import ../lex.{TokenKind}
 import ../types.{TyId, is_ty}
 
@@ -409,3 +409,30 @@ export fn harvest_coerce_pair(fns FnTable, mut coerces []CoercePair, via_row FnR
     coerces.push(CoercePair { from_id: fns.params[fd.param_off].type_id, to_id: fd.ret_id, via_row })
 }
 
+/// The C symbol of a SHELL-carried method `row` on a receiver of type `t`
+/// (registry 1564). INTEROP: the shell spells a `consume` receiver of a plain
+/// type `Nova_<T>_consume_<name>` -- `Nova_StringBuilder_consume_into_str` --
+/// and every other receiver through `c_method_symbol` (`_method_`, or the
+/// instance spelling of an applied type). Until 2026-10-01 only `_method_`
+/// existed, so an explicit `sb.into_str()` was refused as "the shell carries
+/// no `into_str`" while the shell carried it under the consume spelling.
+/// One door for the method-call check, its emission and the return door's
+/// `#coerce` pair. Goes the day novac emits the prelude.
+export fn shell_method_symbol(ctx Ctx, row FnRow, t TyId) -> str {
+    ro fd = ctx.fns.rows[raw_row(row)]
+    ro consumes = fd.param_cnt > 0 && ctx.fns.params[fd.param_off].mode == ParamMode.ModeConsume
+    if consumes && is_ty(t) && ctx.tys.kind_of(t) != TypeKind.TkApp {
+        return "Nova_${ty_source_name(ctx, t)}_consume_${fd.name}"
+    }
+    c_method_symbol(ctx, t, fd.name)
+}
+
+/// The C symbol a SHELL-carried `#coerce` method is called by, when the return
+/// door inserts it (D429 R7; check/return_rules.nv `@coerce_return`). The
+/// receiver's type is the pair's SOURCE (`harvest_coerce_pair`), so the symbol
+/// is spelled from the row alone -- the converted node needs no type of its own
+/// in the channel.
+export fn coerce_shell_symbol(ctx Ctx, via FnRow) -> str {
+    ro fd = ctx.fns.rows[raw_row(via)]
+    shell_method_symbol(ctx, via, ctx.fns.params[fd.param_off].type_id)
+}

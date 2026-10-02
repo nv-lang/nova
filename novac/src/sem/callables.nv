@@ -151,7 +151,12 @@ export fn is_entry_fn(fd FnDef) -> bool =>
 export fn FnTable @is_entry_row(row FnRow) -> bool
     requires raw_row(row) >= 0 && raw_row(row) < @rows.len(), "sem: is_entry_row of a row outside the registry"
 {
-    is_entry_fn(@rows[raw_row(row)])
+    // THE FILE'S OWN row: a `main` of a handed file is that file's, never this
+    // program's entry. Until #1521 no such row existed -- a handed free function
+    // whose name the file held was dropped -- and the first one registered
+    // (`std/src/io/neg/*_neg.nv` declares a `main`) took the entry away from
+    // the file: nothing was emitted.
+    @compiles_body(row) && is_entry_fn(@rows[raw_row(row)])
 }
 
 /// WHERE THE RECEIVER MARK LIVES, and why it is one bit on the callable

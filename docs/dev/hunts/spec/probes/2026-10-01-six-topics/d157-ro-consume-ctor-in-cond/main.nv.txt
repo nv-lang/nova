@@ -1,0 +1,12 @@
+module consumecond.main
+// C7: D157 example `if ro consume Some(t) = opt` vs D486 s5 / D34: outer consume in a condition is E_CONSUME_IN_CONDITION.
+type Tx consume { n int }
+
+fn Tx consume @commit() -> int => @n
+
+fn main() Io {
+    ro opt = Some(Tx{ n: 4 })
+    if ro consume Some(t) = opt {
+        println("${t.commit()}")
+    }
+}

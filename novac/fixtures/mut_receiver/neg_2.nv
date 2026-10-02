@@ -7,7 +7,7 @@ module mut_receiver.neg_2
 // novac/divergences.allow, plan 274.12); the language refuses it, and so does
 // novac.
 
-// NOVAC_EXPECT a `mut` method is called on a place that is not mutable
+// NOVAC_EXPECT the receiver of a `mut` method needs a mutable place
 
 type Bag {
     xs []int

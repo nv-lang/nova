@@ -1,0 +1,10 @@
+module hp
+
+import ./geo.{show}
+
+fn main() {
+    mut v = [1, 2, 3]
+    show(7)
+    ro w = v.mark()
+    println(w.len())
+}

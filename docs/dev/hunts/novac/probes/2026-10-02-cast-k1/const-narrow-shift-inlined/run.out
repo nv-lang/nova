@@ -1,0 +1,76 @@
+=== PROGRAM
+     1	// Hunt 2026-10-02 cast x K1, probe const-narrow-shift-inlined.
+     2	// A `const` whose initializer casts and shifts a narrow integer: its type is
+     3	// u8, so its value is a u8. The oracle stores it at its type (128); Carina
+     4	// substitutes the initializer TEXT at every use, and the use sees C's
+     5	// int-promoted shift (3200) -- even with no cast at the use site.
+     6	const S = (200 as u8) << 4
+     7	const T u8 = 200
+     8	
+     9	fn main() {
+    10	    println("S, norm 128")
+    11	    println(S)
+    12	    println("S as u16, norm 128")
+    13	    println(S as u16)
+    14	    println("S as u8, norm 128")
+    15	    println(S as u8)
+    16	    println("S == 128, norm true")
+    17	    println(S == 128)
+    18	    println("(T << 4) as u8, norm 128")
+    19	    println((T << 4) as u8)
+    20	    println("ctl: ro r = (200 as u8) << 4; r, norm 128")
+    21	    ro r = (200 as u8) << 4
+    22	    println(r)
+    23	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=0
+oracle run rc=0
+=== SUBJECT: novac emit prog.nv
+novac emit rc=0
+--- Carina's C, the body of main
+static nova_unit nova_fn_main_impl(void) {
+    nova_print_str(_novac_strlit_0);
+    nova_print_newline();
+    nova_print_int((((((nova_byte)(((nova_int)200LL))))) << (((nova_byte)4ULL))));
+    nova_print_newline();
+    nova_print_str(_novac_strlit_1);
+    nova_print_newline();
+    nova_print_int(((uint16_t)((((((nova_byte)(((nova_int)200LL))))) << (((nova_byte)4ULL))))));
+    nova_print_newline();
+    nova_print_str(_novac_strlit_2);
+    nova_print_newline();
+    nova_print_int((((((nova_byte)(((nova_int)200LL))))) << (((nova_byte)4ULL))));
+    nova_print_newline();
+    nova_print_str(_novac_strlit_3);
+    nova_print_newline();
+    nova_print_bool(((nova_int)(((((((nova_byte)(((nova_int)200LL))))) << (((nova_byte)4ULL)))) == (((nova_byte)128ULL)))));
+    nova_print_newline();
+    nova_print_str(_novac_strlit_4);
+    nova_print_newline();
+    nova_print_int((((((nova_byte)200ULL)) << (((nova_byte)4ULL)))));
+    nova_print_newline();
+    nova_print_str(_novac_strlit_5);
+    nova_print_newline();
+    nova_byte r = (((((nova_byte)(((nova_int)200LL))))) << (((nova_byte)4ULL)));
+    nova_print_int(r);
+    nova_print_newline();
+    return NOVA_UNIT;
+}
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+=== STDOUT, line by line: oracle | Carina
+  1  S, norm 128             | S, norm 128
+  2  128                     | 3200
+  3  S as u16, norm 128      | S as u16, norm 128
+  4  128                     | 3200
+  5  S as u8, norm 128       | S as u8, norm 128
+  6  128                     | 3200
+  7  S == 128, norm true     | S == 128, norm true
+  8  true                    | false
+  9  (T << 4) as u8, norm 128| (T << 4) as u8, norm 128
+ 10  128                     | 3200
+ 11  ctl: ro r = (200 as u8) << 4; r, norm 128| ctl: ro r = (200 as u8) << 4; r, norm 128
+ 12  128                     | 128
+=== VERDICT: DIFFERENT stdout

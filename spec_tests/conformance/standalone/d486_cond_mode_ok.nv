@@ -1,0 +1,33 @@
+// EXPECT_STDOUT ok 3 4 5 2
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for the spec hunt 2026-10-01 (rows 1580-1585; the integrator's ruling
+// 2026-10-02): in an if/while condition a word before the pattern is the mode of a
+// BARE NAME only (D486 s4 rule 3). Before, the parser took any pattern after `ro`/`mut`
+// and the program compiled. The legal forms; negatives: neg/d486_cond_*_neg.nv.
+module standalone.d486_cond_mode_ok
+
+type Tx consume { n int }
+
+fn Tx consume @into_n() -> int => @n
+
+fn find(k int) -> Option[int] => if k > 0 { Some(k) } else { None }
+
+fn main() Io {
+    mut out = "ok"
+    if ro n = 3 && n > 0 {
+        out = "${out} ${n}"
+    }
+    if Some(mut u) = find(3) {
+        u += 1
+        out = "${out} ${u}"
+    }
+    ro opt = Some(Tx{ n: 5 })
+    if Some(consume t) = opt {
+        out = "${out} ${t.into_n()}"
+    }
+    mut k = 0
+    while mut m = k + 1 && m < 3 {
+        k = m
+    }
+    println("${out} ${k}")
+}

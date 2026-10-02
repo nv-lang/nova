@@ -5,7 +5,8 @@
 // rustc's attribute registry tables (the subset reads four attributes).
 // Role: the subset's judgement of two DECLARATION forms that carry no type --
 //   `import` (its alias and its gaps) and an attribute `#...` (which ones the
-//   subset reads, which it rejects as a language error, which it refuses).
+//   subset reads, which it rejects as a language error, which it refuses) --
+//   and the D30 length rule on a type declaration's NAME.
 // Used by: check.nv `@walk`, its ImportDecl and AttrDecl arms (the subset
 //   walk, before typing).
 // Guarded by: nova test novac/src/check/check_test.nv (the import and attribute
@@ -17,7 +18,7 @@ module novac.check
 import ../tree.{Node, NodeKind}
 import ../builtins.{COERCE_ATTR, REALTIME_ATTR}
 import ../builtins.{IMPL_ATTR, DISPLAY_PROTO, EQUAL_PROTO}
-import ../sem.{branch_children, attr_kids_name, attr_args_among, attr_has_args}
+import ../sem.{branch_children, attr_kids_name, attr_args_among, attr_has_args, leaf_text}
 
 /// An `import` declaration, judged by the subset walk.
 fn Checker mut @walk_import(children []Node) -> () {
@@ -111,4 +112,22 @@ fn Checker mut @judge_attr(children []Node) -> () {
     } else {
         @report_first_leaf_of(children, ATTR_MSG)
     }
+}
+
+/// A TYPE NAME OF ONE CHARACTER is a language error (D30, its naming section;
+/// Plan 167; spec/decisions/03-syntax.md "minimum 2 characters"): single
+/// letters are the generic parameters' convention, and `type T` would make a
+/// named type and a type variable indistinguishable. Every `type X ...` form
+/// -- record, sum, newtype, effect, protocol -- carries its name at child 1.
+/// Registry 1562: novac accepted `type A { n int }`, the oracle refuses it.
+fn Checker mut @report_if_type_name_too_short(children []Node) -> () {
+    if children.len() < 2 || children[1].kind_of() != NodeKind.LeafNode { return }
+    ro name = leaf_text(children[1])
+    mut n = 0
+    for _ in name.chars() {
+        n += 1
+    }
+    if n != 1 { return }
+    @reject_first_leaf_of([]Node.of(children[1]),
+        "type name `${name}` is a single character -- a type name has at least 2 characters, single letters are the generic parameters' (D30, E_TYPE_NAME_TOO_SHORT): rename it, e.g. `${name}Val`")
 }

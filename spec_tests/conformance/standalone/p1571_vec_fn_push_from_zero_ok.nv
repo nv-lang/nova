@@ -1,0 +1,59 @@
+// EXPECT_STDOUT p1571 9 3 190 20 33
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for registry 221.1 #1571: closures pushed into `Vec.new()` (capacity 0).
+// A Vec of closures is pushed through the runtime's array push, which grew the
+// buffer by doubling -- and doubling 0 stays 0: every push wrote past a zero-size
+// allocation, the third element read back as garbage and longer runs crashed. Growth
+// from capacity 0 now gives 8. Three pushes and a call of the third; twenty pushes
+// past the first two growths, every element called; a closure over a fresh `mut`
+// local of each iteration, changed after the push.
+module standalone.p1571_vec_fn_push_from_zero_ok
+
+fn three() -> (int, int) {
+    ro c = 7
+    mut fs = Vec[fn() -> int].new()
+    fs.push(fn() -> int => c)
+    fs.push(fn() -> int => c + 1)
+    fs.push(fn() -> int => c + 2)
+    ro g = fs[2]
+    (g(), fs.len())
+}
+
+fn twenty() -> (int, int) {
+    mut fs = Vec[fn() -> int].new()
+    for i in 0..20 {
+        ro k = i
+        fs.push(fn() -> int => k)
+    }
+    mut s = 0
+    mut j = 0
+    while j < fs.len() {
+        ro g = fs[j]
+        s += g()
+        j += 1
+    }
+    (s, fs.len())
+}
+
+fn fresh_cells() -> int {
+    mut fs = Vec[fn() -> int].new()
+    for i in 0..3 {
+        mut c = i * 10
+        fs.push(fn() -> int => c)
+        c += 1
+    }
+    mut s = 0
+    mut j = 0
+    while j < fs.len() {
+        ro g = fs[j]
+        s += g()
+        j += 1
+    }
+    s
+}
+
+fn main() Io {
+    ro (a, n) = three()
+    ro (s, m) = twenty()
+    println("p1571 ${a} ${n} ${s} ${m} ${fresh_cells()}")
+}

@@ -26,10 +26,11 @@ import ../diag.{ice}
 import ../sem.{c_type, vec_op_c, raw_vrow, is_value_record, c_maker, VariantRow, ctor_field_name}
 // M3a: lowering `println` asks the tree three questions (is this an argument, what does the
 // callee spell, what are the children) and the output printer asks the carrier of a type.
-import ../sem.{branch_children, is_expr_kind, carrier_of}
+import ../sem.{branch_children, is_expr_kind, carrier_of, slice_shape_of}
+import ../sem.{FnRow, raw_row, c_callable, coerce_shell_symbol}
 import ../types.{TyId, is_ty}
 import ../lower.{Local, LocalDecl, AssignStmt, StoreStmt, Rvalue, Operand, OutputStmt, no_local}
-import ../builtins.{VEC_INDEX_METHOD, VEC_LEN_METHOD, bool_c_literal}
+import ../builtins.{VEC_INDEX_METHOD, VEC_INDEX_SET_OP, VEC_LEN_METHOD, bool_c_literal}
 
 
 /// Prints ONE step of output: the printer of the value's CARRIER around the value.
@@ -118,11 +119,22 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
             // line that reads the temporary.
             ro built = @build_value(e, d.ty)
             @emit_assign_head(d)
+            // THE RETURN DOOR'S DECLARED CONVERSION (D429 R7): the method the
+            // program NAMED, around the value -- the checker recorded it, and
+            // only for a symbol that exists (`@coerce_return`).
+            ro via = @out.coercion_at(e.id_of())
+            ro wrap = raw_row(via) >= 0
+            if wrap {
+                @body.append(@coercion_callee(via))
+                @body.append("(")
+            } else {
+                // No conversion: the value as written.
+            }
             match built {
                 Some(t) => @body.append(t)
                 None => @emit_expr(e)
             }
-            @body.append(";\n")
+            @body.append(if wrap { ");\n" } else { ";\n" })
         }
         SomePayload(opt) => {
             @emit_assign_head(d)
@@ -292,6 +304,12 @@ fn Emitter mut @emit_store(st StoreStmt) -> () {
         Set => @build_value(st.src, @out.type_of(st.src.id_of()))
         Update(_) => None
     }
+    if is_element_target(st.target) {
+        @emit_element_store(st, built)
+        return
+    } else {
+        // A name, `@field` or a field path: an lvalue C can assign.
+    }
     @body.append("    ")
     @emit_expr(st.target)
     @body.append(" = ")
@@ -325,6 +343,63 @@ fn Emitter mut @emit_store(st StoreStmt) -> () {
         }
     }
     @body.append(";\n")
+}
+
+/// Is a store's target an ELEMENT `xs[i]` (not a slice)? Its write is a call,
+/// not an lvalue (registry 1524).
+fn is_element_target(t Node) -> bool {
+    if t.kind_of() != NodeKind.Index { return false }
+    ro kids = branch_children(t)
+    kids.len() >= 3 && slice_shape_of(kids[2]).is_none()
+}
+
+/// `xs[i] = v` / `xs[i] op= v`: the WRITE overload `mut @index(i int, val T)`
+/// the checker judged the store by (`@judge_index_store`), never the read's
+/// call on the left of `=` -- that was C clang refused after a green check
+/// (registry 1524). The receiver and the index are evaluated ONCE, into
+/// temporaries, before the value: a compound store reads the element through
+/// the read overload and writes it back through the write, and neither may
+/// re-run a call written in `xs` or `i`.
+fn Emitter mut @emit_element_store(st StoreStmt, built Option[str]) -> () {
+    ro kids = branch_children(st.target)
+    ro rt = @out.type_if_known(kids[0].id_of())
+    if !is_ty(rt) {
+        ice("emit: an element store whose receiver type the checker did not record")
+    } else {
+        // Decided: the receiver's temporary is typed from it.
+    }
+    // The index is `int`: the checker refused every other (`INT_INDEX_MSG`).
+    ro it = @ctx.prims.int_id
+    ro r = "_novac_tmp_t${@fresh_uniq()}"
+    ro i = "_novac_tmp_t${@fresh_uniq()}"
+    @body.append("    { ${c_type(@ctx, rt)} ${r} = ")
+    @emit_expr(kids[0])
+    @body.append("; ${c_type(@ctx, it)} ${i} = ")
+    @emit_expr(kids[2])
+    @body.append("; (void)${vec_op_c(@ctx, rt, VEC_INDEX_SET_OP, @out.vec_op_row(VEC_INDEX_SET_OP))}(${r}, ${i}, ")
+    ro read = "${vec_op_c(@ctx, rt, VEC_INDEX_METHOD, @out.vec_op_row(VEC_INDEX_METHOD))}(${r}, ${i})"
+    match st.op {
+        Set => {
+            match built {
+                Some(t) => @body.append(t)
+                None => @emit_store_src(st)
+            }
+        }
+        Update(op) => {
+            ro row = @arith_row(@out.type_of(st.src.id_of()))
+            ro form = c_binary_form(op, row)
+            if !is_call_form(op, is_float_row(row)) {
+                @body.append("((${read}) ${form} (")
+                @emit_store_src(st)
+                @body.append("))")
+            } else {
+                @body.append("${form}(${read}, ")
+                @emit_store_src(st)
+                @body.append(")")
+            }
+        }
+    }
+    @body.append("); }\n")
 }
 
 /// The SOURCE of a store, printed as the local the lowering hoisted it into
@@ -433,4 +508,12 @@ fn Emitter mut @emit_variant_ctor(e Node, v VariantRow, ty TyId) -> str {
     }
     @body.append(");\n")
     out
+}
+
+/// The C name of a recorded `#coerce` method: ours when this unit emits its
+/// body, else the shell's (`coerce_shell_symbol`) -- the same split an
+/// explicit method call takes (emit_expr.nv).
+fn Emitter @coercion_callee(via FnRow) -> str {
+    if @ctx.fns.compiles_body(via) { return c_callable(@ctx, via, no_subst()) }
+    coerce_shell_symbol(@ctx, via)
 }

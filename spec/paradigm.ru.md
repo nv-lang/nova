@@ -169,14 +169,23 @@ describe("hello")     // str — встроенный @display
 ## Инкапсуляция — на уровне модуля
 
 ```nova
-type Account { ... }                // публичный
-type _internal_state { ... }        // приватный (префикс _)
+export type Account { id int, priv balance int }   // наружу; поле balance — только модулю
+type Ledger { ... }                                // без модификатора — виден модулю (peer-файлам папки)
+priv(file) fn validate(a Account) -> bool { ... }  // только этот файл
+priv(package) fn audit() -> () { ... }             // всем модулям своего пакета, наружу — нет
 
-pub fn Account.new(...) = ...       // публично
-fn validate(...) = ...              // приватно для модуля
+type Secret priv { pub id int, key str }           // поля по умолчанию закрыты, `pub` открывает одно
 ```
 
-Два уровня видимости: либо `pub`, либо нет.
+Видимость объявлений — шкала от узкого к широкому: `priv(file)` → без модификатора
+(модуль) → `priv(package)` → `export`
+([D307](decisions/02-types.md#d307-file-private-visibility--privfile-plan-170),
+[D457](decisions/02-types.md#d457), [D47](decisions/07-modules.md#d47)). Поля
+записи по умолчанию открыты; `priv` закрывает одно поле, а `type X priv { … }`
+закрывает все, и тогда `pub` открывает отдельное поле
+([D220](decisions/02-types.md#d220-per-field-visibility--priv-keyword--type-level-default-flip),
+[D281](decisions/02-types.md#d281-module-level-field-privacy--type-x-priv---plan-160)).
+Это единственная роль слова `pub`: `pub fn` и `pub type` не пишутся.
 
 ## «Как в ООП, только…»
 
@@ -190,7 +199,7 @@ fn validate(...) = ...              // приватно для модуля
 | Интерфейс | `protocol` (структурный — единственная форма) |
 | Перегрузка методов | нет, разные имена |
 | Перегрузка операторов | только через стандартные protocol'ы (`Add`, `Eq`, …) |
-| `protected` | нет, только pub / module-private |
+| `protected` | нет; есть шкала `priv(file)` / модуль / `priv(package)` / `export` |
 | `static` методы | просто функции в модуле |
 | Singleton | модуль-уровень `let` |
 | `instanceof` | `match` на sum-type |

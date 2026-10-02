@@ -1,0 +1,27 @@
+module plain_overload.pos_1
+
+// The shell is asked about the OVERLOAD a call picks on a PLAIN type too
+// (registry 1558, the rest of 1524). `StringBuilder @append` and `str @contains`
+// / `@starts_with` are overloaded; the shell spells the first by its name and
+// the others `..._append__nova_int`, `..._contains__nova_char`. Asked by the
+// name, every call went to the first overload and clang refused the argument;
+// each line below prints only when its own overload was called.
+fn n() -> int => 42
+
+fn x() -> f64 => 1.5
+
+fn main() {
+    consume sb = StringBuilder.new(cap: 16)
+    sb.append("n=")
+    sb.append(n())
+    sb.append(',')
+    sb.append(true)
+    sb.append(x())
+    println(sb.into_str())
+    ro s = "hello"
+    println(s.contains('e'))
+    println(s.contains("ll"))
+    println(s.starts_with('h'))
+    println(s.starts_with("he"))
+    println(s[1..3])
+}

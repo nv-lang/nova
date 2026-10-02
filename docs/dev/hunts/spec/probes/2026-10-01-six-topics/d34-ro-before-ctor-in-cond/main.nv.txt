@@ -1,0 +1,9 @@
+module roctorcond.main
+// C7: D34 example `if ro Some(user) = ... && ...` vs D486: a word before a constructor pattern in a condition is refused.
+fn find(k int) -> Option[int] => if k > 0 { Some(k) } else { None }
+
+fn main() Io {
+    if ro Some(user) = find(3) && user > 1 {
+        println("u ${user}")
+    }
+}

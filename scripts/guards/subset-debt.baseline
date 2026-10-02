@@ -557,4 +557,9 @@ refusals=140
 # Five doors left with the two refusals (three `|`-binder doors, two record-form doors); the
 # language errors the new doors give -- a field the variant does not declare, a variant of
 # another sum, an ambiguous bare name -- go through the LANGUAGE door.
-undated_by_door=71
+# 2026-10-01, облачная сессия p274-carina-mono-k2 (№1524): undated_by_door 71 -> 72. Запись
+# `xs[i] = v` судится своей перегрузкой `mut @index(i, v)`, и где шелл её не несёт, а std не
+# объявляет, отказ идёт ТОЙ ЖЕ дверью `no_shell_method_msg`, что и чтение `xs[i]` -- её текст
+# несёт этап (E2-b); страж видит литерал имени операции `index(i, v)` у вызова, как и у
+# соседнего `index(Range)` (check/slice.nv). До правки этот отказ был clang-ом после зелёного check.
+undated_by_door=72

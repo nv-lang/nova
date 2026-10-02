@@ -1,0 +1,21 @@
+module is_qualified.pos_1
+
+// `x is Sum.Variant` -- the QUALIFIED variant after `is` (D54 amendment
+// 2026-10-01, registry 1570; the D188 example `err is DbError.Deadlock`),
+// beside the bare form it equals. Until 1570 novac did not parse the dotted
+// name ("novac did not parse this"); the oracle compiled it all along.
+type Shape enum Dot | Box(int)
+
+fn main() {
+    ro a = Box(2) is Shape.Box
+    ro b = Box(2) is Shape.Dot
+    ro c = Box(2) is Box
+    println(a)
+    println(b)
+    println(c)
+    if Dot is Shape.Dot {
+        println("dot")
+    } else {
+        println("not a dot")
+    }
+}

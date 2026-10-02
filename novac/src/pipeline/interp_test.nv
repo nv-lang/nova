@@ -78,8 +78,8 @@ fn main() {\n\
     assert(messages(d3e).contains("non-primitive type"), messages(d3e))
 
     // A NON-primitive slot still refuses by name -- B1b's ground.
-    ro (d3b, _) = compile_to_c("type P { n int }\nfn main() {\n\
- ro p = P { n: 1 }\n\
+    ro (d3b, _) = compile_to_c("type Pt { n int }\nfn main() {\n\
+ ro p = Pt { n: 1 }\n\
  println(\"p \${p}\")\n\
 }", std)
     assert(d3b.len() >= 1)

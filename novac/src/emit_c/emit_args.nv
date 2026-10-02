@@ -15,7 +15,7 @@ module novac.emit_c
 
 import ../tree.{Node, NodeId}
 import ../diag.{ice}
-import ../sem.{call_arg_at, raw_row, slot_default_of, no_row, c_callable}
+import ../sem.{call_arg_at, raw_row, slot_default_of, no_row, c_callable, row_recv_by_pointer}
 import ../lower.{no_local}
 
 /// A call's arguments, in SLOT order, with omitted slots filled from the
@@ -48,7 +48,10 @@ fn Emitter mut @emit_bound_args(kids []Node, from int, recv_slot bool,
         if at < 0 {
             @emit_slot_default(row, s)
         } else if recv_slot && at == 0 {
+            ro by_ptr = raw_row(row) >= 0 && @ctx.in_program(row) && row_recv_by_pointer(@ctx, row) // D488
+            @body.append(if by_ptr { "(&" } else { "" })
             @emit_expr(kids[0])
+            @body.append(if by_ptr { ")" } else { "" })
         } else {
             // ALREADY IN A LOCAL? (F65) The lowering hoists an effectful
             // argument into a temporary so the effects run in the order the

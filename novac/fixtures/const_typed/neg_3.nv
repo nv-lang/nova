@@ -1,0 +1,11 @@
+module const_typed.neg_3
+
+// ONE seeded cause: a constant whose initializer NARROWS -- a `u16` value
+// under `u8`. Refused at the declaration as E_IMPLICIT_NARROWING, the return
+// door's words; the oracle refuses it too (its E_IMPLICIT_NARROWING).
+// NOVAC_EXPECT implicit int narrowing loses range
+const C u8 = (300 as u16)
+
+fn main() {
+    println(C)
+}

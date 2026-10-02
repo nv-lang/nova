@@ -2,12 +2,13 @@
 // novac/src/pipeline/mut_receiver_test.nv -- a `mut` method called through a
 // place that is not mutable is a LANGUAGE error naming the receiver's class
 // (P14, D488; registry 1577), not the subset's "no such method". Reverse probe:
-// with `@fits_with_mut_receiver` answering false (check/methods.nv) the three
-// refusal cases redden on their message.
+// with the raised-receiver lookup in `@refuse_method_call` (check/methods.nv)
+// answering "no such method" the fixtures mut_receiver/neg_1, neg_2 redden; with
+// the receiver slot's old text (check/calls.nv) this file reddens.
 
 module novac.pipeline
 
-const MUT_RECV_PHRASE = "a `mut` method is called on a place that is not mutable"
+const MUT_RECV_PHRASE = "the receiver of a `mut` method needs a mutable place"
 
 /// A counter with one `mut` method, held in a field of a box -- every case
 /// below writes only its own `main` (and, for `@`, one method of the box).

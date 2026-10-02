@@ -137,10 +137,16 @@ export fn is_println_call(e Node) -> bool {
 /// (`for p in a[argi..]`, main.nv; registry #1170) needed the same word in
 /// three places. What the head hands back is typing's question
 /// (`for_head_elem`), not this one's.
+/// A receiver field (`for c in @captures`) and an array literal (`for m in
+/// []str.of(a, b)`, `for x in [1, 2]`) joined 2026-10-01: both are values the
+/// same three layers already type, copy into the loop's temporary and index --
+/// the list, not the machinery, was what refused them (twice over novac's own
+/// source in the 0.2 measure).
 export fn is_collection_head(n Node) -> bool {
     ro k = n.kind_of()
     k == NodeKind.Call || k == NodeKind.MethodCall || k == NodeKind.Name ||
-        k == NodeKind.FieldAccess || k == NodeKind.Index
+        k == NodeKind.FieldAccess || k == NodeKind.Index || k == NodeKind.SelfField ||
+        k == NodeKind.ArrayLit
 }
 
 /// Whether a `LoopCtl` node is `break` rather than `continue` (274.7 wave B10). ONE door

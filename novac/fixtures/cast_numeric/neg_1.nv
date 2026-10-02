@@ -1,0 +1,12 @@
+module cast_numeric.neg_1
+
+// ONE seeded cause: an integer VARIABLE cast to a char. D54's table of
+// forbidden casts names `iN/uN as char`: not every integer is a codepoint,
+// and the checked door is `n.to_char()`. The ORACLE accepts this file and
+// prints the byte as a char -- a divergence, named in REPORT-carina-cast.md.
+// NOVAC_EXPECT `u8 as char`
+fn main() {
+    ro b = 66 as u8
+    ro c = b as char
+    println("${c}")
+}

@@ -1,0 +1,43 @@
+module shell_overload.pos_1
+
+// The shell is asked about the OVERLOAD a call picks, never about its name
+// (registry 1524). `cap()` and `cap(n)`, the read `index(i)` and the write
+// `index(i, v)` are two C functions each; asked by the name, `v.cap(100)` and
+// `d.index(1, 9)` went to the one-argument function and clang refused the C
+// after check had said yes. The write written as `xs[i] = v` / `xs[i] op= v`
+// is the same overload, and it was printed as the READ's call on the left of
+// `=` ("expression is not assignable"). Every line below prints what it does
+// only when the right overload was called: a getter in place of `cap(n)`
+// would leave the capacity under 100, a read in place of a write would leave
+// the element as it was.
+fn bump(mut xs []int, i int) -> () {
+    xs[i] += 10
+    xs[i - 1] *= 3
+}
+
+fn main() {
+    mut v = [1, 2, 3]
+    v.cap(100)
+    println(v.cap() >= 100)
+    println(v.len())
+    mut d = [1, 2]
+    d.index(1, 9)
+    println(d[1])
+    v[1] = 7
+    v[2] += 5
+    bump(v, 1)
+    println(v[0])
+    println(v[1])
+    println(v[2])
+    mut f = [1.5, 2.5]
+    f.cap(40)
+    f[0] = 4.25
+    f[1] += 0.5
+    println(f[0])
+    println(f[1])
+    println(f.cap() >= 40)
+    mut w = ["a", "b"]
+    w[0] = "z"
+    println(w[0])
+    println(w.len())
+}

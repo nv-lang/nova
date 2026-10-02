@@ -817,10 +817,16 @@ fn Lowerer mut @hoist_ordered_args(call Node) -> () {
 /// `@lo.ir.local_of_node`, so no printer-side change is needed at all.
 fn Lowerer mut @hoist_sealed_args(call Node) -> () {
     ro kids = branch_children(call)
-    for c in kids {
+    for k in kids {
+        // A constructor FIELD is an argument's position too (registry 1557).
+        ro c = if k.kind_of() == NodeKind.CtorField && branch_children(k).len() > 2 { branch_children(k)[2] } else { k }
         if !is_expr_kind(c.kind_of()) { continue }
         ro ck = c.kind_of()
-        if ck != NodeKind.IfExpr && ck != NodeKind.Coalesce { continue }
+        // `unsafe { .. }` JOINS THEM (registry 1525): `@lower_value_source`'s
+        // third arm. std's `Vec[T] @get` returns `Some(unsafe { .. })`; check
+        // took it, the printer had no arm, and every `get` instance the shell
+        // lacks died in emit.
+        if ck != NodeKind.IfExpr && ck != NodeKind.Coalesce && ck != NodeKind.Unsafe { continue }
         ro t = @out.type_if_known(c.id_of())
         if !is_ty(t) {
             // SILENT-OK: refused where it was typed; nothing to hoist.

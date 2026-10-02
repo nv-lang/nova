@@ -1,0 +1,5 @@
+module reexportwhole.lib
+// C7: D47 example `export import std.duration` (whole module re-export) vs D288 E_REEXPORT_GLOB.
+export import std.time
+
+export fn one() -> int => 1

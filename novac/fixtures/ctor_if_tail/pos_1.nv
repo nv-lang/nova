@@ -1,0 +1,45 @@
+module ctor_if_tail.pos_1
+
+// A NAMED RECORD CONSTRUCTOR AS THE TAIL OF AN `if`-VALUE BRANCH: the block
+// tail of a value body (`if rest { Am {..} } else { Am {..} }`, the shape of
+// novac's own lower_match.nv), an expression body `=> if`, a binding's
+// initializer, and the branches of an `if` that is a match arm's body. Each
+// branch places its constructor through the same door an initializer's does;
+// every printed field differs, so a branch built into the wrong place or not
+// at all cannot print the same lines.
+type Am {
+    exact int
+    at_least int
+}
+
+type Kd enum Ka | Kb
+
+fn am(rest bool, n int) -> Am {
+    if rest {
+        Am { exact: -1, at_least: n }
+    } else {
+        Am { exact: n, at_least: 0 }
+    }
+}
+
+fn am2(rest bool, n int) -> Am => if rest { Am { exact: 5, at_least: n } } else { Am { exact: n, at_least: 7 } }
+
+fn pick(k Kd, c bool) -> Am {
+    match k {
+        Ka => if c { Am { exact: 1, at_least: 2 } } else { Am { exact: 3, at_least: 4 } }
+        Kb => Am { exact: 8, at_least: 6 }
+    }
+}
+
+fn main() {
+    ro a = am(true, 3)
+    ro b = am(false, 4)
+    ro c = if a.exact < 0 { Am { exact: 9, at_least: 9 } } else { b }
+    println(a.exact)
+    println(a.at_least)
+    println(b.exact)
+    println(c.at_least)
+    println(am2(true, 1).exact)
+    println(am2(false, 2).at_least)
+    println(pick(Kd.Ka, false).exact)
+}

@@ -8,8 +8,8 @@
 //   another space. A literal and `true` / `false` are rebuilt without an identity
 //   when the declaration is harvested (sem/harvest.nv `handed_default`, 1576).
 // Used by: run.nv `check`, once the file is typed (the callees are recorded).
-// Guarded by: check-novac-fixture-expect.sh over novac/fixtures/default_handed/neg_1
-//   (the pinned refusal), pipeline/handed_free_test.nv (the literal defaults compile).
+// Guarded by: pipeline/handed_default_test.nv (the refusal, on a program module's
+//   call default), pipeline/handed_free_test.nv (the literal defaults compile).
 // novac/src/check/handed_default.nv -- a handed default novac cannot carry, named.
 
 module novac.check

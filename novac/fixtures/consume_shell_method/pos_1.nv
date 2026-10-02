@@ -1,0 +1,17 @@
+module consume_shell_method.pos_1
+
+// AN EXPLICIT CALL OF A `consume` METHOD THE SHELL CARRIES (registry 1564):
+// `sb.into_str()` on a `consume` StringBuilder. The shell spells a consuming
+// receiver `Nova_StringBuilder_consume_into_str`, not `_method_`, and the
+// call names that symbol -- before the fix the check refused it as "the shell
+// carries no `into_str`", and the emitter named a body nobody made.
+fn build(n int) -> str {
+    consume sb = StringBuilder.new(cap: 8)
+    sb.append("n=")
+    sb.append("x")
+    sb.into_str()
+}
+
+fn main() {
+    println(build(1))
+}

@@ -81,7 +81,8 @@
     } \
     static void nova_array_push_##T(NovaArray_##T* a, T v) { \
         if (a->len >= a->cap) { \
-            int64_t new_cap = a->cap * 2; \
+            /* #1571: from capacity 0 (std `Vec.new()`) doubling stays 0 -- grow to 8. */ \
+            int64_t new_cap = a->cap > 0 ? a->cap * 2 : 8; \
             T* new_data = (T*)nova_alloc((size_t)new_cap * sizeof(T)); \
             memcpy(new_data, a->data, (size_t)(a->len) * sizeof(T)); \
             a->data = new_data; \
@@ -302,7 +303,8 @@ static NovaArray_void_p* nova_array_new_void_p(int64_t init_cap) {
 }
 static void nova_array_push_void_p(NovaArray_void_p* a, void_p v) {
     if (a->len >= a->cap) {
-        int64_t new_cap = a->cap * 2;
+        /* #1571: see nova_array_push_##T -- doubling 0 stays 0. */
+        int64_t new_cap = a->cap > 0 ? a->cap * 2 : 8;
         void_p* new_data = (void_p*)nova_alloc((size_t)new_cap * sizeof(void_p));
         memcpy(new_data, a->data, (size_t)(a->len) * sizeof(void_p));
         a->data = new_data;

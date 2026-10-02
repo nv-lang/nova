@@ -6,7 +6,7 @@ module mut_receiver.neg_1
 // subset's "this type has no such method" -- a name that is right there; the
 // refusal now names the receiver's class as the language error it is.
 
-// NOVAC_EXPECT a `mut` method is called on a place that is not mutable
+// NOVAC_EXPECT the receiver of a `mut` method needs a mutable place
 
 type Bag {
     xs []int

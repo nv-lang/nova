@@ -22,14 +22,14 @@ import ../lower.{no_local}
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, raw_node, is_node}
 import ../diag.{ice}
-import ../sem.{raw_crow, carrier_of, c_callable, c_method_symbol, Ctx}
+import ../sem.{raw_crow, carrier_of, c_callable, c_method_symbol, c_overload_symbol, Ctx}
 import ../sem.{CheckOut, vec_op_c, c_static_symbol}
 import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct}
 import ../sem.{shape_of}
 import ../sem.{int_literal_c_text, char_literal_code, interp_slices}
 import ../tree.{raw_node}
 import ../sem.{c_tag, c_maker, VariantRow, raw_vrow, no_vrow, call_arg_at, raw_row, slot_default_of, no_row}
-import ../sem.{is_value_record, slice_shape_of, is_value_sum, is_payload_free_sum}
+import ../sem.{is_value_record, slice_shape_of, is_value_sum, is_payload_free_sum, row_recv_by_pointer}
 import ../builtins.{EQUAL_METHOD, PRINT_FN, bool_c_literal, RECV_C_NAME, VEC_INDEX_METHOD}
 import ../builtins.{is_bool_literal, is_true_literal}
 import ../types.{TyId, is_ty}
@@ -392,14 +392,15 @@ fn Emitter mut @emit_expr(e Node) -> () {
         }
         @body.append(qtmp)
     } else if k == NodeKind.SelfExpr {
-        // The receiver's C name, exactly as the signature spelled it.
-        @body.append(RECV_C_NAME)
+        // The receiver's C name; its VALUE when a value record came by pointer (D488).
+        @body.append(if @recv_ptr_value { "(*${RECV_C_NAME})" } else { RECV_C_NAME })
     } else if k == NodeKind.SelfField {
         // `@field` is a field of the receiver, and the receiver is parameter
         // zero under our own name. A record is a GC pointer, so the access is
         // `->` exactly like any other field access -- one shape, not two.
         ro kids = branch_children(e)
-        @body.append("(${RECV_C_NAME}->")
+        // A `value` record that arrived BY COPY (D488 R5) is reached with `.`.
+        @body.append(if @recv_copy { "(${RECV_C_NAME}." } else { "(${RECV_C_NAME}->" })
         @body.append(leaf_text(kids[1]))
         @body.append(")")
     } else if k == NodeKind.FieldAccess {
@@ -523,6 +524,10 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // `body_ours`: the file's own, a program module's, or an instance this
         // unit makes from a handed body (274.11 E.10 step 4c).
         ro static = is_ty(@ctx.fns.rows[raw_row(cr.callable_row())].owner)
+        // ONE question decides whose body this is (`Ctx @instantiates` asks the
+        // shell by `c_overload_symbol`), and the name printed below is that
+        // door's answer: a `consume` method of the shell (1564) and a second
+        // overload (1524) are spelled by it alike, so no override is needed here.
         if @ctx.body_ours(cr.callable_row(), @out.callee_subst_of(e.id_of())) {
             @body.append(c_callable(@ctx, cr.callable_row(), @out.callee_subst_of(e.id_of())))
         } else if static {
@@ -535,7 +540,10 @@ fn Emitter mut @emit_expr(e Node) -> () {
             // instance -- `Vec____nova_int_method_len`; the checker admitted
             // it against the lifted surface. Goes the day novac emits the
             // whole prelude.
-            @body.append(c_method_symbol(@ctx, @out.type_of(kids[0].id_of()), leaf_text(kids[2])))
+            // The OVERLOAD the checker picked, spelled by the same door the
+            // checker asked the shell with (registry 1524, 1564).
+            @body.append(c_overload_symbol(@ctx, cr.callable_row(), @out.type_of(kids[0].id_of()),
+                                           @out.callee_subst_of(e.id_of())))
         }
         @body.append("(")
         // The receiver is parameter ZERO (plan 273), so it is slot zero of the
@@ -544,6 +552,9 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // A static method takes no receiver: its slots are its written arguments.
         @emit_bound_args(kids, 3, !static, e.id_of(), cr.callable_row())
         @body.append(")")
+    } else if k == NodeKind.Call && @out.contract_of(e.id_of()).is_some() {
+        // `assert(..)` (D81): the checker typed the intrinsic and noted its text.
+        @emit_assert(e, branch_children(e))
     } else if k == NodeKind.Call && @out.has_subst(e.id_of()) {
         // `size_of[T]()` (D216, 274.11 E.10 step 4c-2): the checker recorded
         // the type argument as the node's substitution; the value is C's size.
@@ -690,19 +701,8 @@ fn Emitter mut @emit_expr(e Node) -> () {
     } else if k == NodeKind.IsTest {
         @emit_is_test(e)
     } else if k == NodeKind.Cast {
-        // Unwrapping a newtype is FREE: the value is already the
-        // representation, so the emission is the operand and nothing else. C
-        // needs no cast between a typedef and its underlying type. A POINTER
-        // target is a C cast (`0 as *mut T`, 274.11 E.10 step 4c-2).
-        // `@is_ptr_receiver` asks whether a node's RECORDED type is a pointer --
-        // here the cast node's own.
-        if @is_ptr_receiver(e) {
-            @body.append("((${c_type(@ctx, @out.type_of(e.id_of()))})(")
-            @emit_expr(branch_children(e)[0])
-            @body.append("))")
-        } else {
-            @emit_expr(branch_children(e)[0])
-        }
+        // A newtype's unwrap, a pointer, a pair of primitives (D54): one door.
+        @emit_cast(e)
     } else if k == NodeKind.Paren {
         @body.append("(")
         @emit_expr(branch_children(e)[1])
@@ -908,3 +908,4 @@ fn is_sum_equality(op BinOp, ctx Ctx, t TyId) -> bool {
         BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight | Range => false
     }
 }
+

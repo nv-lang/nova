@@ -1,0 +1,9 @@
+module hp.geo
+
+export fn Vec[T] mut @mark() -> @ {
+    println(@len())
+}
+
+export fn show(n int) -> () {
+    println(n)
+}

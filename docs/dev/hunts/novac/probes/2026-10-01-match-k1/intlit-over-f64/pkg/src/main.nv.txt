@@ -1,9 +1,0 @@
-fn g(x f64) -> int => match x {
-    1 => 10
-    _ => 20
-}
-
-fn main() {
-    println(g(1.0))
-    println(g(1.5))
-}
