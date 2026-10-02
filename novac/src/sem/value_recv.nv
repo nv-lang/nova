@@ -11,7 +11,7 @@
 //   longer refused), emit_c/emit_c.nv (the signature), emit_c/emit_expr.nv
 //   (the receiver at the call site, `@` and `@field` inside the body),
 //   check/methods.nv (a temporary receiver by pointer), sem/harvest.nv and
-//   sem/collect.nv (the pin of a declaration, `recv_pinned_before`).
+//   sem/collect.nv (the pin of a declaration, `copy_pinned_before`).
 // ONE RULE FOR THE PROGRAM AND THE SHELL (registry 1654): Carina calls the
 //   methods of the shell the oracle emits, so the shell's receivers are
 //   asked the same question as the program's -- with the oracle's exceptions
@@ -43,7 +43,7 @@ export fn value_recv_by_pointer(ctx Ctx, t TyId, m ParamMode) -> bool {
     if m != ParamMode.ModeRo { return true }
     // A type that must not be copied (1654): a copy would not be zeroed, or
     // would duplicate what the type owns -- the oracle pins it to a pointer.
-    if is_ty(t) && ctx.tys.kind_of(t) == TypeKind.TkRecord && decl_of_ty(ctx, t).recv_pinned { return true }
+    if is_ty(t) && ctx.tys.kind_of(t) == TypeKind.TkRecord && decl_of_ty(ctx, t).copy_pinned { return true }
     ro (size, _) = c_size_align(ctx, t)
     size < 0 || size > RECV_COPY_MAX_BYTES
 }
@@ -76,7 +76,7 @@ export fn recv_by_pointer_of(ctx Ctx, row FnRow, t TyId, m ParamMode) -> bool {
 /// the row is collected, since the node is gone afterwards: a `consume` type
 /// (the keyword is a leaf of the declaration), or `#no_copy`, `#zero_on_move`,
 /// `#share` in the attribute run right before it (std stacks them).
-export fn recv_pinned_before(kids []Node, decl Node) -> bool {
+fn copy_pinned_before(kids []Node, decl Node) -> bool {
     for c in branch_children(decl) {
         if c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.KwConsume { return true }
     }

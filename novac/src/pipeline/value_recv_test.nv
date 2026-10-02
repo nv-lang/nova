@@ -18,7 +18,7 @@
 module novac.pipeline
 
 import ../parse.{parse}
-import ../sem.{InteropTable, ParamMode, FnRow, value_recv_by_pointer, recv_by_pointer_of}
+import ../sem.{InteropTable, ParamMode, FnRow, value_recv_by_pointer, recv_by_pointer_of, ty_of_decl}
 import ../types.{TyId, no_ty}
 
 /// A handed module with small `value` records -- eight bytes each, below the
@@ -44,18 +44,22 @@ export fn Fl @peek() -> @ {}\n")
 /// The unit's context with the handed module above.
 fn recv_ctx() -> Ctx => context(parse(tokens_of("fn main() {}")), parse_decls(recv_decls()), InteropTable.new())
 
-/// The term of the handed type `name`.
+/// The term of the handed type `name`, through the name door.
 fn ty_named(ctx Ctx, name str) -> TyId {
-    for td in ctx.types {
-        if td.name == name { return td.ty_id }
+    match ctx.defs.def_of(name) {
+        Some(d) => match d.target {
+            DefType(decl) => ty_of_decl(ctx, decl)
+            DefFn(_) | DefConst(_) => no_ty()
+        }
+        None => no_ty()
     }
-    no_ty()
 }
 
-/// The row of the handed method `name`.
-fn row_named(ctx Ctx, name str) -> FnRow {
+/// The one method whose RECEIVER is `t` -- each record above declares one.
+fn method_of(ctx Ctx, t TyId) -> FnRow {
     for i in 0..ctx.fns.rows.len() {
-        if ctx.fns.rows[i].name == name { return FnRow(i) }
+        ro fd = ctx.fns.rows[i]
+        if fd.has_recv && fd.param_cnt > 0 && ctx.fns.params[fd.param_off].type_id == t { return FnRow(i) }
     }
     FnRow(-1)
 }
@@ -76,7 +80,8 @@ test "a small `ro @` crosses by COPY unless the type must not be copied (#1654, 
 test "a fluent `-> @` takes its receiver by POINTER at any size (#1654, the oracle's forced pointer)" {
     ro ctx = recv_ctx()
     ro fl = ty_named(ctx, "Fl")
-    assert(recv_by_pointer_of(ctx, row_named(ctx, "peek"), fl, ParamMode.ModeRo), "peek")
+    assert(recv_by_pointer_of(ctx, method_of(ctx, fl), fl, ParamMode.ModeRo), "peek")
     // CONTROL: a plain `ro @` of the same size stays a copy.
-    assert(!recv_by_pointer_of(ctx, row_named(ctx, "get"), ty_named(ctx, "Pl"), ParamMode.ModeRo), "get")
+    ro pl = ty_named(ctx, "Pl")
+    assert(!recv_by_pointer_of(ctx, method_of(ctx, pl), pl, ParamMode.ModeRo), "get")
 }

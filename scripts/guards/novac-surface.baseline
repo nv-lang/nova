@@ -271,7 +271,10 @@
 # 2026-10-02, cloud session p274-carina-k1 (part 5, D216 `dist`): builtins 67 -> 68: `PTR_DIST`
 #   -- the raw-pointer intrinsic's name beside `PTR_OFFSET`, asked by check's typing of a
 #   pointer method (check/unsafe.nv) and by its emission (emit_c/emit_ptr.nv).
-builtins 68
+# 2026-10-02, cloud session p274-carina-cast (step 11, #1654): builtins 68 -> 70: `NO_COPY_ATTR`,
+#   `ZERO_ON_MOVE_ATTR` -- the spellings of the two attributes that pin a `value` receiver to a
+#   pointer, beside `SHARE_ATTR`; asked by sem's `copy_pinned_before` (sem/value_recv.nv).
+builtins 70
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -1037,7 +1040,11 @@ resolve 23
 #   (calls, methods, static calls, variant calls), so `Some((a, b))` counts one payload.
 # merge of p274-carina-k1 (part 5) into main (integrator, 2026-10-02): the guard's count on the merged
 #   tree is 341 -- main's 340 plus k1's `is_arg_value_kind` (part 5 step 3, its chronicle line above).
-sem 341
+# 2026-10-02, cloud session p274-carina-cast (step 11, #1654): sem 341 -> 343:
+#   `recv_by_pointer_of` (the receiver rule with the row's fluent exception, asked by emit_c's
+#   signature and body) and `row_returns_recv_pointer` (does the call's value come back as a
+#   pointer, asked by emit_c's call) -- both in sem/value_recv.nv; `copy_pinned_before` stays private.
+sem 343
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
