@@ -851,24 +851,6 @@ export fn FnBuilder mut @end_arm(c SwitchCtx) -> () {
     @close(Terminator.Goto(c.join), c.head)
 }
 
-/// Records the blocks holding the OPEN arm's test `If`s -- its nested tests, then its
-/// guard (registries 1534, 1542, 1568): the printer descends to each in turn and finds
-/// the innermost branch, where the body runs and the first-match flag is set.
-export fn FnBuilder mut @note_arm_heads(heads []BlockId) -> () {
-    if @open_arms.len() == 0 {
-        ice("lower: note_arm_heads outside of an arm")
-    }
-    ro i = @open_arms.len() - 1
-    ro a = @open_arms[i]
-    @open_arms[i] = SwitchArm { pat: a.pat, guard: a.guard, body: a.body, heads }
-}
-
-/// `dest = true` / `false`: the one constant the lowering itself writes -- a
-/// disjunction's "an alternative held" flag (registry 1568).
-export fn FnBuilder mut @set_bool(dest Local, b bool) -> () {
-    @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.Bool(b) }))
-}
-
 /// Closes a `match`: the header is sealed with the `Switch` over the arms
 /// collected, and what is placed next belongs to the join.
 export fn FnBuilder mut @end_switch(c SwitchCtx) -> () {

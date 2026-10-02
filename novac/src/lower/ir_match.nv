@@ -4,8 +4,9 @@
 // taken: the decision tree -- the arms keep the if-chain in source order.
 // Role: the PATTERN vocabulary of the lowered body -- what an arm tests at its
 //   root (`Pattern`), the arm record (`SwitchArm`) and the test of a NESTED
-//   subpattern (`PatTest`, registries 1534 and 1542). Split out of ir.nv (the
-//   1000-line cap) by meaning: these types are about `match` and nothing else.
+//   subpattern (`PatTest`, registries 1534 and 1542), with the two builder steps
+//   only an arm's tests take (`@note_arm_heads`, `@set_bool`). Split out of
+//   ir.nv (the 1000-line cap) by meaning: these are about `match` and nothing else.
 // Used by: ir.nv (`Cond.Holds`, the `Switch` terminator), lower_match.nv and
 //   lower_disj.nv (build them), emit_c (emit_match.nv prints the tests,
 //   emit_flow.nv the arms).
@@ -15,6 +16,7 @@
 module novac.lower
 import ../tree.{Node}
 import ../sem.{VariantRow}
+import ../diag.{ice}
 
 /// What an arm of a `match` tests at its ROOT (wave M2b-1d): a literal, a
 /// variant head (with the other heads of a disjunction `A | B`), a plain
@@ -66,4 +68,22 @@ export type SwitchArm value {
 export type PatTest value {
     pat Pattern /// what the subpattern's own head tests
     scr Local /// the temporary its value was read into
+}
+
+/// Records the blocks holding the OPEN arm's test `If`s -- its nested tests, then its
+/// guard (registries 1534, 1542, 1568): the printer descends to each in turn and finds
+/// the innermost branch, where the body runs and the first-match flag is set.
+export fn FnBuilder mut @note_arm_heads(heads []BlockId) -> () {
+    if @open_arms.len() == 0 {
+        ice("lower: note_arm_heads outside of an arm")
+    }
+    ro i = @open_arms.len() - 1
+    ro a = @open_arms[i]
+    @open_arms[i] = SwitchArm { pat: a.pat, guard: a.guard, body: a.body, heads }
+}
+
+/// `dest = true` / `false`: the one constant the lowering itself writes -- a
+/// disjunction's "an alternative held" flag (registry 1568).
+export fn FnBuilder mut @set_bool(dest Local, b bool) -> () {
+    @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.Bool(b) }))
 }
