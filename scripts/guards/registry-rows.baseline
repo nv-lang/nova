@@ -1497,6 +1497,9 @@
 # 2026-10-01, integrator nova-20: rows -> 1554, max -> 1606 (hunt cast-k1 rows 1600-1606; 1598-1599 reserved for the assistant).
 # 2026-10-01, integrator nova-20: rows -> 1555, max -> 1607 (row 1607 (novac binary chosen by name)).
 # 2026-10-01, integrator nova-20: rows -> 1557, max -> 1609 (rows 1608, 1609 (D491 in both compilers); 1597 decided).
+# 2026-10-01, integrator nova-20: rows -> 1558, max -> 1612 (row 1612 (claude-limits CI hang, suspected runtime); 1610-1611 reserved).
+rows=1558
+max=1612
 rows=1557
 max=1609
 rows=1555
@@ -2208,7 +2211,9 @@ stale_gaps=0
 # (писал интегратор, как и планировалось). №1210-1211 всё ещё ждёт Карину.
 # 2026-10-02, integrator: 1598-1599 В `gaps` — РЕЗЕРВ, выданный помощнику nova-88 под R3 (`ro @` по размеру, `-> ro T`
 #   указателем); строки едут в его ветке `r3-threshold-24`. Условие снятия: тем же слиянием номера убираются из `gaps`.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1598-1599
+# 2026-10-02, integrator: 1610-1611 В `gaps` — РЕЗЕРВ, выданный помощнику nova-88: №1610 (вывод `Empty` как ParseBoolError, ветка
+#   p1456-builtin-sum-method) и №1611 (f64 -> int молча, К1). Тем же слиянием номера убираются из `gaps`.
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1598-1599,1610-1611
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding
