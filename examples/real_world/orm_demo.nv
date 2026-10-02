@@ -433,7 +433,9 @@ export fn posts_of_many(user_ids []UserId) Db Fail[RepoError] -> HashMap[UserId,
 
     mut grouped = HashMap[UserId, []Post].new()
     for p in posts {
-        mut bucket = grouped.get_or_insert(p.user_id, [])
+        // `get_or_insert` takes a FUNCTION for the absent value (#1642: `[]`
+        // here was accepted and would have been called as code).
+        mut bucket = grouped.get_or_insert(p.user_id, || [])
         bucket.push(p)
     }
     grouped
