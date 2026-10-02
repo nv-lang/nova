@@ -542,7 +542,9 @@
 # is E_READONLY_FIELD; D36's "a mut field mutates through an immutable binding" struck, pointing to
 # the D175 amendment it had not followed. Cost to Carina: her checker must refuse the same form (her
 # own source has 0 such places, measured by the assistant). Inside a merge commit: the counter (--no-merges) stays 166.
-#   spec-queue: 166
+# 2026-10-02 (integrator): D35's amendment names the home block of E_READONLY_FIELD, D228
+# (check-spec-code-home). No rule changes.
+#   spec-queue: 167
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,
