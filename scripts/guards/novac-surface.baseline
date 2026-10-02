@@ -1002,7 +1002,10 @@ resolve 23
 #   of every method on a value record that D488 replaces.
 # merge of p274-carina-sweep (deliveries 3-4) into the merge train (integrator, 2026-10-02): 336 + 3 (D488:
 #   RECV_COPY_MAX_BYTES, value_recv_by_pointer, row_recv_by_pointer) - 1 (recv_type_name) = 338.
-sem 338
+# 2026-10-02, cloud session p274-carina-sweep (registry 1605): sem 338 -> 339: `float_literal_c_text`
+#   (sem/mangle.nv) -- the C spelling of a float literal, D44 separators dropped, beside
+#   `int_literal_c_text`; asked by emit_c/emit_expr.nv, and every C spelling lives at the mangle door (P24).
+sem 339
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

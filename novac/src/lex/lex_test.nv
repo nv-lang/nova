@@ -187,6 +187,28 @@ test "F21: a digit run touching an identifier byte is one refusal" {
     assert(ints == 0, "1_000 must not leave an IntLit behind")
 }
 
+test "#1605: every D44 float form is ONE FloatLit, its text whole" {
+    // The exponent used to fall to the touching-identifier refusal: `1e20`
+    // was one ErrorTok and `1.5e3` a float plus the name `e3`.
+    for form in ["1e10", "1.5e-3", "2E+2", "1_000.5", "1_000.25e6", "1.0e1_0"] {
+        ro toks = lex(form)
+        assert(toks[0].kind == TokenKind.FloatLit, "a D44 float form must lex as one FloatLit")
+        assert(toks[0].text == form, "the float token must carry the whole spelling")
+        assert(toks[1].kind == TokenKind.Eof, "nothing may be left after the float")
+    }
+}
+
+test "#1605: a broken exponent is refused, the hex digit and the range stay" {
+    // D44 forbids `_` beside `e` and an exponent without digits; `0x1e5`
+    // keeps its `e` as a hex digit and `0..3` keeps both dots.
+    for broken in ["1e", "1e+", "1_e10", "1.5_", "1__0.5"] {
+        assert(lex(broken)[0].kind == TokenKind.ErrorTok, "a malformed number must be refused whole")
+    }
+    assert(lex("0x1e5")[0].kind == TokenKind.IntLit, "a hex run takes no exponent")
+    ro range = lex("0..3")
+    assert(range[0].kind == TokenKind.IntLit && range[1].kind == TokenKind.DotDot)
+}
+
 test "char literal: one token, escapes whole, reserialize lossless (char wave)" {
     ro toks = lex("ro c = 'x'\nro n = '\\n'\nro q = '\\''")
     // 'x' after `ro c =` is one CharLit carrying its quotes verbatim.

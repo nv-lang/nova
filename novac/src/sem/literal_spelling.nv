@@ -1,0 +1,147 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/sem/literal_spelling.nv -- the C SPELLING of a literal's text:
+// the integer, float, char and string doors every emitter reads.
+//
+// Donor: rustc `rustc_codegen_ssa` constant lowering -- a literal's value is
+// spelled for the backend in ONE place from the token's text; NOT taken: a
+// parsed numeric value carried in the token, which the lossless lexer of
+// novac does not hold (the text IS the token).
+// Role: layer 3 -- what C text a Nova literal becomes. Each door is one
+//   answer to "what is written here", so two emitters cannot spell the same
+//   literal two ways (the int literal's octal hunt, 2026-09-02, N1).
+// Used by: emit_c (emit_expr.nv, emit_match.nv, emit_interp.nv, emit_assert.nv,
+//   emit_requires.nv, shell.nv) and check/cast_pairs.nv (a char's codepoint).
+// Guarded by: check-novac-differential.sh (the fixtures float_exponent/,
+//   const_bool_cast/ and the hex and char waves, byte-for-byte with the
+//   oracle), nova test of mangle_test.nv (the int, char and string doors).
+//
+// Cut out of mangle.nv (2026-10-02, registry 1605) when the float door pushed
+// that file past the 1000-line bound: a literal's spelling is not an entity's
+// C NAME, so the cut follows the meaning, not only the count.
+
+module novac.sem
+
+import ../diag.{ice}
+
+/// The C SPELLING of an integer literal's text. C reads a leading zero as
+/// OCTAL (hunt 2026-09-02, N1: `println(0123)` printed 83, a `010 =>` arm
+/// matched the other branch, `08` broke clang), so the decimal spelling
+/// drops the leading zeros -- the same strip the magnitude judge already
+/// performs (literal_rules.nv): ONE answer to "what number is written
+/// here", at the one door both emitters read. A hex literal keeps its
+/// text: C reads `0x` exactly as Nova does.
+export fn int_literal_c_text(t str) -> str {
+    if t.byte_len() > 2 && t[..2] == "0x" { return t }
+    mut i = 0
+    while i + 1 < t.byte_len() && t[i..i + 1] == "0" { i += 1 }
+    t[i..]
+}
+
+/// The C SPELLING of a float literal's text: D44 separators dropped
+/// (`1_000.5e3` -> `1000.5e3`), the rest verbatim -- C reads the fraction
+/// and the signed exponent exactly as Nova writes them (#1605).
+export fn float_literal_c_text(t str) -> str {
+    // Slices between the separators, not `replace`: the shell Carina links
+    // into carries no `replace` for str yet.
+    mut out = ""
+    mut from = 0
+    for i in 0..t.byte_len() {
+        if t[i..i + 1] == "_" {
+            out = "${out}${t[from..i]}"
+            from = i + 1
+        } else {
+            // A digit, the dot, the exponent letter or its sign: kept.
+        }
+    }
+    "${out}${t[from..]}"
+}
+
+/// The CODEPOINT of a char literal's text, as decimal C digits: `'A'` -> "65",
+/// a newline escape -> "10". The int literal's precedent exactly: one spelling
+/// door, every emitter through it, so two readers cannot disagree about what
+/// character is written. The judge upstream (check) refused everything but one
+/// codepoint or one defined escape, so the leftover here is an ice, not a
+/// diagnostic.
+export fn char_literal_code(t str) -> str {
+    ro body = t[1..t.byte_len() - 1]
+    ro b = body.bytes()
+    if b[0] == BACKSLASH_BYTE {
+        // BYTES, not one-letter strings: the P24 scanner reads a quoted
+        // identifier-like string in an emitting module as a printed C name,
+        // and it is right to -- a char literal is the honest spelling here.
+        ro e = b[1]
+        if e == ('n' as u8) { return "10" }
+        if e == ('t' as u8) { return "9" }
+        if e == ('r' as u8) { return "13" }
+        if e == BACKSLASH_BYTE { return "92" }
+        if e == ('\'' as u8) { return "39" }
+        if e == ('"' as u8) { return "34" }
+        if e == ('0' as u8) { return "0" }
+        ice("mangle: a char escape the judge let through")
+    }
+    // One UTF-8 codepoint, 1-4 bytes: the head byte announces the length and
+    // carries the high bits, each continuation byte carries six more.
+    ro head = b[0] as int
+    if head < 128 { return "${head}" }
+    mut cp = 0
+    mut i = 1
+    if head >= 240 {
+        cp = head - 240
+    } else if head >= 224 {
+        cp = head - 224
+    } else {
+        cp = head - 192
+    }
+    while i < b.len() {
+        cp = cp * 64 + ((b[i] as int) - 128)
+        i += 1
+    }
+    "${cp}"
+}
+
+/// The two bytes the dollar rule reads.
+const BACKSLASH_BYTE u8 = 0x5C  // backslash
+const DOLLAR_BYTE u8 = 0x24     // $
+
+/// A Nova string literal's text as C text -- the ONE door every literal takes
+/// into C. Nova's subset escape set (\" \\ \n \t \r) matches C's one for one
+/// -- check refuses everything else by name -- with two exceptions whose Nova
+/// spelling C does not share: the line continuation and `\$`. THREE readers
+/// spell literals into C: the shell's literal pool, the contract prologue's
+/// message slot and an interpolated string's pieces -- the hunt (2026-09-02,
+/// its P1 contradiction) caught the pool claiming to be `the only place`
+/// while the prologue shipped the backslash through; one door ends that
+/// argument by construction.
+export fn literal_as_c_text(s str) -> str => unescape_dollar(splice_continuations(s))
+
+/// D467 section 3: `\` right before a line break eats the break AND the
+/// leading spaces and tabs of the next line (the oracle's lexer, the same
+/// bytes). Until registry 1324 this was left to C, whose phase-2 splice
+/// joins the lines but KEEPS the next line's indentation: `"x\` + newline +
+/// `  y"` printed `x  y` where the oracle prints `xy` -- a silent wrong
+/// string, measured with the behaviour smoke on an LF and a CRLF file.
+///
+/// Written with `@replace` and no cursor, the rule of the door below, and for
+/// one more reason: this module is part of novac's own source, and a byte
+/// cursor over a slice is a form novac does not compile yet (registry 1170).
+/// A `\` before a raw line break is always a continuation in a literal the
+/// lexer accepted: an escaped `\\` followed by a raw break is a raw newline
+/// in a literal, refused before emission (D467 section 4).
+fn splice_continuations(s str) -> str {
+    if !s.contains("\\\n") && !s.contains("\\\r\n") { return s }
+    mut t = s.replace("\\\r\n", "\\\n")
+    while t.contains("\\\n ") || t.contains("\\\n\t") {
+        t = t.replace("\\\n ", "\\\n").replace("\\\n\t", "\\\n")
+    }
+    t.replace("\\\n", "")
+}
+
+/// The `\$` half of the door above. Kept apart so the continuation rule and
+/// the dollar rule each read as one sentence.
+fn unescape_dollar(s str) -> str =>
+    // ONE CALL, not a cursor. The first version walked the bytes through a
+    // reusable one-byte buffer, and the owner asked the obvious question
+    // (2026-09-04): std already answers this. `@replace` takes every
+    // occurrence -- `@replacen` is the one that counts -- which is exactly
+    // the contract here: no `\$` may reach clang, not merely the first.
+    s.replace("\$", "$")
