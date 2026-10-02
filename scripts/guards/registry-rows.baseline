@@ -1518,7 +1518,9 @@
 # 2026-10-02, integrator nova-20: rows -> 1597, max -> 1662 (rows 1655 (stdout buffered), 1656 (false E_DEP_PATH_OUTSIDE_REPO), 1657 (free fn named like a std local), 1661 (gate-novac without the novac_bin door), 1662 (accepted red by job name) filed; 1643-1654 and 1658-1660 reserved in gaps -- numbers issued to cloud sessions and the assistant, their rows travel in branches or wait for a filing; condition to drop: the same merge or filing removes them from gaps).
 # 2026-10-02, integrator nova-20: rows -> 1598, max -> 1662 (merge of p274-carina-sweep steps 8-9: row 1643 arrives, its reserve dropped; its tag field set to NO).
 # 2026-10-03, integrator nova-20: rows -> 1600, max -> 1665 (rows 1663 (smoke cache keeps a removed tree's oracle path) and 1665 (measure 0.2 is no ratchet) filed; 1664 reserved in gaps (1666-1675 above max, issued too) -- issued to cloud sessions (cast 1664, mono-k2 1666-1667, strarm 1668-1669, k1 1671-1673, sweep 1674-1675) and the assistant (1670); their rows travel in branches; condition to drop: the same merge removes them from gaps).
-rows=1600
+# 2026-10-02, assistant nova-88: rows -> 1598, max -> 1662 (branch p1648-generic-record-field-expected: row 1648 filed with its fix -- a closure in a field of a generic record instance got `int` for the type parameter; number from the integrator, reserve 1648 dropped from gaps).
+# 2026-10-03, integrator nova-20: rows -> 1601, max -> 1665 (merge of p1648-generic-record-field-expected: row 1648 arrives, its reserve dropped).
+rows=1601
 max=1665
 rows=1590
 max=1642
@@ -2267,7 +2269,7 @@ stale_gaps=0
 #   указателем); строки едут в его ветке `r3-threshold-24`. Условие снятия: тем же слиянием номера убираются из `gaps`.
 # 2026-10-02, integrator: 1610-1611 В `gaps` — РЕЗЕРВ, выданный помощнику nova-88: №1610 (вывод `Empty` как ParseBoolError, ветка
 #   p1456-builtin-sum-method) и №1611 (f64 -> int молча, К1). Тем же слиянием номера убираются из `gaps`.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1644-1654,1658-1660,1664
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1644-1647,1649-1654,1658-1660,1664
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding

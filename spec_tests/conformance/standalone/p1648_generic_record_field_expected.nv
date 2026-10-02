@@ -1,0 +1,66 @@
+// EXPECT_STDOUT closure: 7 7 7 7
+// EXPECT_STDOUT nested: 3 200 2
+// EXPECT_STDOUT pair: x 9
+//
+// Registry 221.1 #1648: a literal in a FIELD of a GENERIC record instance --
+// `fn mk() -> Repo[User] => { table: "t", id_of: |u| u.id as u64 }` -- takes
+// its expected type from the field's declared type with the instance's type
+// arguments substituted (`id_of fn(T) -> u64` at `Repo[User]` is
+// `fn(User) -> u64`). The substitution was missing: a generic record was
+// skipped, the closure-light got no parameter type, and codegen defaulted it
+// to `nova_int` -- `nova check` passed, the build failed in C ("member
+// reference base type 'nova_int' is not a structure", found under
+// examples/real_world/orm_demo.nv, `users_repo()`). Cells: a closure in the
+// field through each value position (an `=>` body, `ro x Repo[User] = ..`, a
+// call argument, a branch tail); a number literal, an anonymous record and an
+// array of anonymous records in a generic field; a record with two type
+// parameters.
+module standalone.p1648_generic_record_field_expected
+
+type UserId u64
+type User { ro id UserId, name str }
+
+type Repo[T] {
+    ro table str
+    ro id_of fn(T) -> u64
+}
+
+type Inner { n int }
+type Box3[T] {
+    ro items []T
+    ro small T
+    ro one Inner
+}
+
+type Pair[A, B] {
+    ro a A
+    ro f fn(B) -> int
+}
+
+fn mk_body() -> Repo[User] => { table: "t", id_of: |u| u.id as u64 }
+
+fn mk_tail(k int) -> Repo[User] {
+    if k == 0 {
+        { table: "t0", id_of: |u| u.id as u64 }
+    } else {
+        { table: "t1", id_of: |u| u.id as u64 }
+    }
+}
+
+fn use_repo(r Repo[User], u User) -> u64 => (r.id_of)(u)
+
+fn main() Io {
+    ro u = User { id: 7 as UserId, name: "a" }
+    ro r_let Repo[User] = { table: "t", id_of: |x| x.id as u64 }
+    ro a = (mk_body().id_of)(u)
+    ro b = (r_let.id_of)(u)
+    ro c = use_repo({ table: "t", id_of: |x| x.id as u64 }, u)
+    ro d = (mk_tail(1).id_of)(u)
+    println("closure: ${a} ${b} ${c} ${d}")
+
+    ro bx Box3[u8] = { items: [1, 2, 3], small: 200, one: { n: 2 } }
+    println("nested: ${bx.items.len()} ${bx.small} ${bx.one.n}")
+
+    ro p Pair[str, User] = { a: "x", f: |w| w.name.len() + 8 }
+    println("pair: ${p.a} ${(p.f)(u)}")
+}

@@ -21722,23 +21722,38 @@ impl<'a> TypeCheckCtx<'a> {
             // `Option[T]`/`Result[T,E]`, it just never got THIS field's `T` handed
             // to it before). Anonymous literals (D55 record-coercion) are handled
             // identically — `expected` alone decides the field schema, `type_name`
-            // is not consulted. Scoped to non-generic declared records (mirrors
-            // this function's other `td.generics.is_empty()`-gated arms) —
-            // a generic record's field types would need receiver-generic
-            // substitution first, out of scope here.
+            // is not consulted.
+            // Registry 221.1 #1648: a GENERIC record is no longer skipped. Its
+            // field types name its parameters (`id_of fn(T) -> u64`), and the
+            // expected instance binds them (`Repo[User]`): each field's type is
+            // substituted (`subst_typeref`) before it becomes the field value's
+            // expected type. Skipped, a closure-light in such a field got no
+            // parameter type at all, and codegen defaulted it to `nova_int`
+            // (`|u| u.id` -> CC-FAIL "member reference base type 'nova_int'").
+            // An arity mismatch (an unannotated generic instance) is skipped,
+            // as before.
             ExprKind::RecordLit { fields, .. } => {
                 if let TypeRef::Named { path, generics, .. } = expected {
-                    if generics.is_empty() {
-                        if let Some(name) = path.last() {
-                            if let Some(td) = self.types_get_here(name) {
-                                if td.generics.is_empty() {
-                                    if let TypeDeclKind::Record(decl_fields) = &td.kind {
-                                        for f in fields {
-                                            if let Some(v) = &f.value {
-                                                if let Some(fd) =
-                                                    decl_fields.iter().find(|df| df.name == f.name)
-                                                {
+                    if let Some(name) = path.last() {
+                        if let Some(td) = self.types_get_here(name) {
+                            if td.generics.len() == generics.len() {
+                                if let TypeDeclKind::Record(decl_fields) = &td.kind {
+                                    let subst: HashMap<String, TypeRef> = td
+                                        .generics
+                                        .iter()
+                                        .map(|g| g.name.clone())
+                                        .zip(generics.iter().cloned())
+                                        .collect();
+                                    for f in fields {
+                                        if let Some(v) = &f.value {
+                                            if let Some(fd) =
+                                                decl_fields.iter().find(|df| df.name == f.name)
+                                            {
+                                                if subst.is_empty() {
                                                     self.materialize_literal_coercion(v, &fd.ty);
+                                                } else {
+                                                    let fty = subst_typeref(&fd.ty, &subst);
+                                                    self.materialize_literal_coercion(v, &fty);
                                                 }
                                             }
                                         }
@@ -41297,8 +41312,18 @@ fn subst_typeref(t: &TypeRef, subst: &HashMap<String, TypeRef>) -> TypeRef {
         TypeRef::Uninit(inner, s) => TypeRef::Uninit(Box::new(subst_typeref(inner, subst)), *s),
         // Plan 184: `ref T` — подставляем цель (`f[T]() -> ref T` при T=…).
         TypeRef::Ref(inner, s) => TypeRef::Ref(Box::new(subst_typeref(inner, subst)), *s),
-        // Func/Protocol/Unit — params/methods rarely reference the receiver's
-        // type-params in a way the narrowing check needs; clone as-is.
+        // Registry 221.1 #1648: a function type's parameters and result carry
+        // the type parameters too -- `id_of fn(T) -> u64` at `Repo[User]` is
+        // `fn(User) -> u64`. Cloned as-is, a closure in such a field got no
+        // parameter type and codegen defaulted it to `nova_int`.
+        TypeRef::Func { params, effects, return_type, extern_abi, span } => TypeRef::Func {
+            params: params.iter().map(|p| subst_typeref(p, subst)).collect(),
+            effects: effects.clone(),
+            return_type: return_type.as_ref().map(|r| Box::new(subst_typeref(r, subst))),
+            extern_abi: extern_abi.clone(),
+            span: *span,
+        },
+        // Protocol/Unit -- nothing here names a type parameter the callers need.
         _ => t.clone(),
     }
 }
