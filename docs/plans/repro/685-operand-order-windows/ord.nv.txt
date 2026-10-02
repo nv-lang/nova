@@ -1,0 +1,20 @@
+module ord
+
+fn mark(s str, v int) -> int {
+    print("${s} ")
+    v
+}
+
+fn add3(a int, b int, c int) -> int => a + b + c
+
+fn main() Io {
+    print("plus: ")
+    ro a = mark("p", 1) + mark("q", 2)
+    println("${a}")
+    print("args: ")
+    ro b = add3(mark("a1", 1), mark("a2", 2), mark("a3", 3))
+    println("${b}")
+    print("arg-plus: ")
+    ro c = add3(mark("x1", 1) + mark("x2", 2), 0, 0)
+    println("${c}")
+}
