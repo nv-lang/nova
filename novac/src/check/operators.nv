@@ -21,7 +21,7 @@ import ../builtins.{EQUAL_METHOD, EQUAL_PROTO, BuiltinType, TypeKind}
 import ../sem.{gate_names, decl_of_ty, is_payload_free_sum}
 import ../resolve.{FnLookup}
 import ../sem.{ArgSpec, ArgClass, CallForm, CalleeTarget, ty_source_name, c_shell_method}
-import ../sem.{identity_slots, branch_children, ParamMode}
+import ../sem.{identity_slots, branch_children, ParamMode, is_vector_ty, raw_row}
 
 /// One expression: record what the emitter asks about, walk what it emits.
 /// Equality on `str` is a method call, not a C operator: the
@@ -37,6 +37,12 @@ fn Checker mut @record_operator_callee(e Node, kids []Node) -> () {
     ro op = bin_op_of(leaf_kind(kids[1]))
     if !is_equality(op) { return }
     ro lhs_t = type_of(kids[0], @ctx, @scope, @chan)
+    if @is_vector_pair(kids) {
+        @record_vector_equality(e, kids, lhs_t)
+        return
+    } else {
+        // Not two vectors of one type: `str` below, or a C operator.
+    }
     if lhs_t != @ctx.prims.str_id { return }
     // P18: a door that ASKS the table builds no text -- the
     // messages live in the refusers below, each with its own
@@ -107,6 +113,37 @@ fn Checker mut @accept_equality_row(e Node, kids []Node, lhs_t TyId, row FnRow) 
         // Our own body: our own name, no shell involved.
     }
     @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new(), identity_slots(2))
+}
+
+/// TWO VECTORS OF ONE TYPE under `==` / `!=` (D46: `a == b` is `a.@equal(b)`,
+/// and `Vec[T] @equal` is std's, collections/vec/protocols.nv). The row is the
+/// implicit vector operation's (`@vec_op_carried`, the door `xs[i]` takes): the
+/// shell's concrete instance when it carries one, else the instance made from
+/// std's body, else a refusal by the shell's name. The shell's ERASED
+/// `Nova_Vec_method_equal` is a stub answering false and is never taken
+/// (`InteropTable @has`, registry 1643). Recorded as the callee, so the emitter
+/// prints the call -- the absence of a callee still means a C operator.
+fn Checker mut @record_vector_equality(e Node, kids []Node, vec_t TyId) -> () {
+    if !@vec_op_carried(vec_t, EQUAL_METHOD) {
+        @report_first_leaf_of(kids, no_shell_method_msg(EQUAL_METHOD, ty_source_name(@ctx, vec_t)))
+        return
+    } else {
+        // Carried by the shell or made from std's body: the row is recorded.
+    }
+    ro row = @chan.vec_op_row(EQUAL_METHOD)
+    if raw_row(row) < 0 {
+        @report_first_leaf_of(kids, no_shell_method_msg(EQUAL_METHOD, ty_source_name(@ctx, vec_t)))
+        return
+    } else {
+        // The std row the emitter spells through `vec_op_c`.
+    }
+    @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new(), identity_slots(2))
+}
+
+/// Are both operands VECTORS of one type (`[]T`, `Vec[T]`)?
+fn Checker @is_vector_pair(kids []Node) -> bool {
+    ro lt = type_of(kids[0], @ctx, @scope, @chan)
+    lt == type_of(kids[2], @ctx, @scope, @chan) && is_vector_ty(@ctx, lt)
 }
 
 /// The operators D52's newtype rule covers: arithmetic and comparison (its
@@ -239,7 +276,7 @@ fn Checker mut @report_if_operator_needs_protocol(kids []Node) -> bool {
     match op {
         Add | Sub | Mul | Div | Modulo => { if numeric || same_nt { return false } }
         Less | LessEq | Greater | GreaterEq => { if numeric || same_nt { return false } }
-        Equal | NotEqual => { if same_prim || same_nt || tag_eq { return false } }
+        Equal | NotEqual => { if same_prim || same_nt || tag_eq || @is_vector_pair(kids) { return false } }
         AndAlso | OrElse => { if bools { return false } }
         BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight => { if ints { return false } }
         Range => { if numeric { return false } }

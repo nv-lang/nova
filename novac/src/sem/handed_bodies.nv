@@ -195,6 +195,12 @@ fn Ctx @overload_ordinal(row FnRow) -> int {
 /// a handed body? The door that decides whose NAME a call prints.
 export fn Ctx @body_ours(row FnRow, args []TyId) -> bool => @in_program(row) || @instantiates(row, args)
 
+/// Is `t` a VECTOR (`[]T`, `Vec[T]`) -- the receiver of the implicit vector
+/// operations? One question for the checker that decides `==` on two vectors
+/// (D46) and the emitter that spells it (`vec_op_c`); two readers, one answer.
+export fn is_vector_ty(ctx Ctx, t TyId) -> bool =>
+    is_ty(t) && ctx.tys.names_a_decl(t) && decl_of_ty(ctx, t).name == SLICE_HEAD
+
 /// Is `row` -- a callable NAMED like the implicit vector operation `name` (the
 /// caller walks the name's chain in the callable index) -- the std
 /// declaration of `Vec[T]` that operation calls (274.11 E.10 step 4c-2)? The

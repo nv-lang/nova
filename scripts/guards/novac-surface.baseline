@@ -1045,7 +1045,12 @@ resolve 23
 #   magnitude judges (check/literal_rules.nv) and both C spellings; the count stays 339.
 # merge of origin/main f80d61e00 into p274-carina-sweep (2026-10-02): main's 341 plus this
 #   branch's `literal_digits` (the two lines above) = 342; the count is the guard's on the merged tree.
-sem 342
+# 2026-10-02, cloud session p274-carina-sweep (registry 1643 and D46 on vectors): sem 342 -> 344:
+#   `InteropTable @add_stub` (sem/interop.nv) -- the shell scan (emit_c/shell.nv) marks the erased
+#   generic layer's stub bodies, so `@has` answers no for them; `is_vector_ty` (sem/handed_bodies.nv)
+#   -- is this a `[]T`, asked by check's `==` door (check/operators.nv) and by the emitter that
+#   spells the call through `vec_op_c` (emit_c/emit_expr.nv): two readers, one answer.
+sem 344
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

@@ -1,0 +1,14 @@
+module vec_equality.neg_1
+
+// NOVAC_EXPECT in the instance of `equal`
+// ONE seeded cause: `==` on two `[]int`. The shell carries no concrete
+// `Vec[int] @equal`, so the instance is made from std's body -- and that body
+// lends each element through a closure (`view_at(i, |a| ...)`), which novac
+// does not compile yet; the refusal names the instance. The shell's ERASED
+// `Nova_Vec_method_equal` would have linked and printed `false` for equal
+// vectors (registry 1643): it is not a candidate. The oracle prints `true`.
+fn same(a []int, b []int) -> bool => a == b
+
+fn main() {
+    println(same([1, 2], [1, 2]))
+}

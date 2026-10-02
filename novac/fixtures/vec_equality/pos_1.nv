@@ -1,0 +1,27 @@
+module vec_equality.pos_1
+
+// `==` AND `!=` ON TWO VECTORS (D46: `a == b` is `a.@equal(b)`, and
+// `Vec[T] @equal` is std's, collections/vec/protocols.nv). The call is the
+// implicit vector operation the index takes: the shell's concrete instance
+// when it carries one -- here `Vec[u8]` and `Vec[str]`. Until registry 1643
+// the operator was refused as "dispatches through a protocol"; the shell's
+// ERASED `Nova_Vec_method_equal`, a stub answering false, is never taken.
+// Each line differs from its neighbour in exactly one element or length, so a
+// constant answer prints a different column.
+fn same(a []u8, b []u8) -> bool => a == b
+
+fn differ(a []str, b []str) -> bool => a != b
+
+fn main() {
+    println(same("abc".bytes(), "abc".bytes()))
+    println(same("abc".bytes(), "abd".bytes()))
+    println(same("ab".bytes(), "abc".bytes()))
+    println(same("".bytes(), "".bytes()))
+    println(differ(["x", "y"], ["x", "y"]))
+    println(differ(["x", "y"], ["x", "z"]))
+    println(differ(["x"], ["x", "y"]))
+    ro w = ["a", "b"]
+    ro v = ["a", "b"]
+    println(w == v)
+    println(w != v)
+}
