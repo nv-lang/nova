@@ -87,7 +87,75 @@ export fn shell_surface() -> InteropTable {
         t.add(word)
         prev = if prev == "struct" || word == "struct" { word } else { "" }
     }
+    mark_stubs(t, bytes.to_str() ?? ice("emit: shell.tpl.c is not UTF-8"))
     t
+}
+
+/// THE SHELL'S STUBS, read off their bodies (registry 1643). The oracle emits
+/// the ERASED generic layer (`Nova_Vec_method_*`, `Nova_HashMap_*`, `Nova_Set_*`,
+/// their iterators) as bodies that discard every parameter and return a
+/// constant: `{ (void)nova_self; (void)other; return (nova_bool){0}; }`. A name
+/// that resolves to one compiles, links and answers a constant -- `==` over two
+/// vectors was "not equal" whatever they held. Such a function is marked, and
+/// `InteropTable @has` answers no for it, so every door that asks the shell
+/// falls to the std instance or to its refusal by name.
+///
+/// The shape is exact: a `static` definition at column 0 whose body is one or
+/// more `(void)<param>;` and ONE `return` of `NULL`, `NOVA_UNIT` or a `{0}`
+/// compound literal -- nothing a real body is made of. A body with no `(void)`
+/// is not taken: a constant function without parameters may be meant.
+fn mark_stubs(mut t InteropTable, text str) -> () {
+    mut name = ""
+    mut voids = 0
+    mut returns = 0
+    mut shape = false
+    for line in text.lines() {
+        if name == "" {
+            if line.starts_with("static ") && line.contains("(") && is_open_brace_line(line) {
+                name = defined_name(line)
+                voids = 0
+                returns = 0
+                shape = true
+            } else {
+                // Not a definition head: nothing opens here.
+            }
+        } else if line == "}" {
+            if shape && voids > 0 && returns == 1 {
+                t.add_stub(name)
+            } else {
+                // A real body: the function stays callable.
+            }
+            name = ""
+        } else if line.starts_with("    (void)") && !line.contains(" = ") {
+            voids += 1
+        } else if is_constant_return(line) {
+            returns += 1
+        } else {
+            shape = false
+        }
+    }
+}
+
+/// Does this definition head end its line with ` {` (a body follows)?
+fn is_open_brace_line(line str) -> bool {
+    ro n = line.byte_len()
+    n > 2 && line[n - 2..] == " {"
+}
+
+/// The defined function's name: the identifier right before the first `(`.
+fn defined_name(line str) -> str {
+    ro head = line[..line.find("(") ?? 0]
+    ro words = head.split(" ")
+    mut last = ""
+    for w in words { last = w }
+    last
+}
+
+/// A stub's one statement: a constant handed back whatever came in.
+fn is_constant_return(line str) -> bool {
+    if line == "    return NULL;" || line == "    return NOVA_UNIT;" { return true }
+    ro n = line.byte_len()
+    line.starts_with("    return (") && n > 4 && line[n - 4..] == "{0};"
 }
 
 /// One C translation unit under construction: everything the emitter reads
