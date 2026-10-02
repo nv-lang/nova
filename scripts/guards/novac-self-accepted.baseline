@@ -1,0 +1,51 @@
+# scripts/guards/novac-self-accepted.baseline — МНОЖЕСТВО файлов novac/src,
+# отвергаемых самосборкой (мера 0.2 релиза Карины). Судья:
+# scripts/guards/check-novac-self-accepted.py (реестр 221.1 №1665).
+#
+# ХРАПОВИК В ОБЕ СТОРОНЫ, как у novac-surface.baseline: отвергнутый файл ВНЕ
+# базы — красный (регресс самосборки — чинить; законное вскрытие — поднять
+# базу ТЕМ ЖЕ слиянием строкой-летописью с датой, коммитом и причиной); файл
+# из базы, ставший принимаемым, без сужения базы — тоже красный: иначе
+# следующий рост до прежнего множества пройдёт молча. ICE > 0 красный всегда:
+# ICE обрывает проход и прячет всё за собой.
+#
+# Способ замера — ровно мера 0.2 (scripts/tools/double-build.sh): один процесс
+# NOVAC_UNIT=1 NOVAC_SELF_PATH=novac/src novac check по всем novac/src/*.nv и
+# novac/src/*/*.nv; отвергнутый — назван полем "file" хотя бы одной
+# диагностики. Мера ДИАГНОСТИК (scripts/tools/novac-self-residual.sh) остаётся
+# мерой и здесь не сверяется.
+#
+# Летопись (новые записи — сверху):
+# 2026-10-03, интегратор nova-20, слияние ветки p1665 в main (после влитых k1 ч.6, mono-k2 4–6, sweep 8–9,
+#   партии оракула): база пересчитана на сведённом дереве, 16 файлов, ICE 0. ВОШЛИ 8 — законное
+#   вскрытие и известные классы: sweep 9 (`match`-значение) впервые провёл модуль check/ через обход
+#   формы, и показались скрытые отказы (мера 28 -> 38 в его отчёте) — check/binds.nv (временное в
+#   `mut`-параметре, k1), check/calls.nv, check/methods.nv, check/mut_args.nv (`==` на сумме без
+#   Equal, D363), check/decl_forms.nv (голова `for` — вызов, sweep 10 в ветке), check/literal_rules.nv
+#   (`str > str`, D46, sweep 10 в ветке), check/type_of.nv (приёмник value-записи по указателю, №1654
+#   cast); pipeline/handed_free_test.nv — «did not parse» (из пяти файлов находки nova-f2, разбирает k1).
+#   ВЫШЛИ 7: check/static_call.nv, check/typing.nv, names/names.nv, parse/pattern.nv,
+#   pipeline/pipeline_test.nv, sem/collect.nv (статические двойники, mono-k2), types/types.nv.
+# 2026-10-02, облачная сессия p1665, коммит 08ff689ca (origin/main): ПЕРВАЯ
+#   база — 15 файлов, ICE 0, из 168 файлов novac/src, ~18с на машине
+#   владельца. Повод: пять файлов (sem/collect.nv, sem/mangle.nv,
+#   sem/mangle_test.nv, sem/binding_test.nv, pipeline/handed_free_test.nv),
+#   принимавшихся в 00:23, к утру стали отвергаться, и мера «не храповик»
+#   (решение 2026-09-25) этого не показала до вечернего ручного замера;
+#   интегратор пересмотрел решение этим заданием.
+novac/src/check/binds.nv
+novac/src/check/calls.nv
+novac/src/check/decl_forms.nv
+novac/src/check/literal_rules.nv
+novac/src/check/methods.nv
+novac/src/check/mut_args.nv
+novac/src/check/type_of.nv
+novac/src/diag/diag.nv
+novac/src/emit_c/shell.nv
+novac/src/lex/lex_test.nv
+novac/src/main.nv
+novac/src/pipeline/handed_free_test.nv
+novac/src/resolve/resolve_test.nv
+novac/src/sem/binding_test.nv
+novac/src/sem/mangle.nv
+novac/src/sem/mangle_test.nv
