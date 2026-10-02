@@ -129,3 +129,18 @@ test "the linearity axis: a plain T takes the `[T]` form over `[T consume]` (D84
     ro d1 = compile_with("fn f(xs Vec[int]) -> bool => xs.has(1)\nfn main() {\n println(1)\n}", parse_decls(one), interop_surface())
     assert(d1.len() == 0, messages(d1))
 }
+
+test "a method on a concrete receiver beats a blanket one on a bare type parameter (D285 section 2 point 1, D84 section 1)" {
+    mut std = std_decls()
+    std.push("module std.sh\nexport fn int @show() -> int => 1\nexport fn[T] T @show() -> str => \"\"\n")
+    // The concrete `int @show` wins: its `int` result takes `+ 1`; the blanket
+    // `str` one could not, and a tie would be the D84 ambiguity.
+    ro (d, _) = compile_to_c("fn main() {\n ro n = 7\n println(n.show() + 1)\n}", std)
+    assert(!messages(d).contains("fits more than one method"), messages(d))
+    // CONTROL: two concrete-alike forms (both blanket) stay an ambiguity --
+    // the axis says nothing between two bare type parameters.
+    mut std2 = std_decls()
+    std2.push("module std.sh\nexport fn[T] T @show() -> int => 1\nexport fn[U] U @show() -> str => \"\"\n")
+    ro (a, _) = compile_to_c("fn main() {\n ro n = 7\n println(n.show())\n}", std2)
+    assert(messages(a).contains("fits more than one method"), messages(a))
+}
