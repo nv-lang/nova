@@ -170,10 +170,6 @@ fn Checker mut @refuse_method_call(e Node, t Token, key []ArgSpec) -> () {
     }
 }
 
-/// Is this row a method of a DIFFERENT concrete type than the call's receiver?
-/// Slot 0 of a method row and of a method key is the receiver. A generic
-/// receiver (`Vec[T]`) or an untyped one answers no: whether it fits is the
-/// lookup's question, not this one's.
 /// The single METHOD row of `name` whose receiver is not another concrete type
 /// than this call's (`@receiver_is_foreign`), or None when there is none or
 /// more than one -- the name's chain walked through the index's two doors.
@@ -192,6 +188,10 @@ fn Checker @only_row_on_receiver(name str, key []ArgSpec) -> Option[FnRow] {
     Some(found)
 }
 
+/// Is this row a method of a DIFFERENT concrete type than the call's receiver?
+/// Slot 0 of a method row and of a method key is the receiver. A generic
+/// receiver (`Vec[T]`) or an untyped one answers no: whether it fits is the
+/// lookup's question, not this one's.
 fn Checker @receiver_is_foreign(row FnRow, key []ArgSpec) -> bool {
     ro fd = @ctx.fns.rows[raw_row(row)]
     if fd.param_cnt == 0 || key.len() == 0 { return false }
