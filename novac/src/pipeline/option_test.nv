@@ -61,7 +61,7 @@ test "Option construction: Some(x) from the payload, None from the expectation, 
     assert(messages(d4).contains("Option[int]") && messages(d4).contains("Option[str]"), messages(d4))
 }
 
-test "a TUPLE literal is an argument: `Some((a, b))` takes one payload (part 5 of p274-carina-k1)" {
+test "a parenthesised pair is an argument: `Some((a, b))` takes one payload (part 5 of p274-carina-k1)" {
     // sem/callables.nv writes `VariantRows(first, cnt) => Some((first, cnt))`;
     // the tuple was counted as NO argument and typed by no walk, and the
     // variant was refused as taking "a different number of payload values".
@@ -70,7 +70,8 @@ test "a TUPLE literal is an argument: `Some((a, b))` takes one payload (part 5 o
     ro (d, c) = compile_to_c("fn span(a int) -> Option[(int, int)] => Some((a, 2))\n\
 fn main() {\n ro (x, y) = span(1) ?? (0, 0)\n println(x + y)\n}", std)
     assert(d.len() == 0, messages(d))
-    assert(c.contains("NovaTuple_"), c)
+    // The pair's C type spells its arity and both components.
+    assert(c.contains("_2_8_nova_int_8_nova_int"), c)
     // A free generic call counts it too: the refusal is the tuple PARAMETER's
     // own named limit, not "this call omits `x`".
     ro (dg, _) = compile_to_c("fn kept[T](x T) -> int => 1\nfn main() {\n println(kept((8, 9)))\n}", std)

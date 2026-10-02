@@ -39,7 +39,7 @@ test "a pair in return position: `=>` body and `return` build a temporary and re
     assert(d3.len() == 1, messages(d3))
 }
 
-test "a TUPLE tail of a value `if` branch is the branch's value (part 5 of p274-carina-k1)" {
+test "a pair as the tail of a value `if` branch is the branch's value (part 5 of p274-carina-k1)" {
     // The checker took `if a > 0 { (a, 1) } else { (0, 2) }` as a value, and the
     // lowering asked `is_expr_kind` -- which a tuple literal is not -- so both
     // branches ran as statements and the function returned the temporary's

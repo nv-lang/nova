@@ -40,7 +40,9 @@ export fn is_arg_node(c Node) -> bool =>
 /// once more. The tuple joins THIS door and not `is_expr_kind`, which feeds
 /// every general arm (wave B13); the walks that count or type a call's
 /// arguments ask here.
-export fn is_arg_value_kind(k NodeKind) -> bool => is_expr_kind(k) || k == NodeKind.TupleExpr
+/// The SAME set as `is_value_tail_kind` below, asked under the name of its
+/// position -- one list, so the two cannot drift.
+export fn is_arg_value_kind(k NodeKind) -> bool => is_value_tail_kind(k)
 
 /// The kinds a VALUE TAIL may have -- `is_expr_kind` plus the one positional
 /// record literal the tail chain returns since B15 step 4b. ONE door for the
