@@ -1,0 +1,98 @@
+=== PROGRAM
+     1	// Hunt 2026-10-02 cast x K1, probe shift-promotion-through-cast.
+     2	// A shift on a NARROW integer (u8, i8, u16) is typed by both compilers as the
+     3	// operand's type -- a binding `ro t = a << 4` stores 128 -- but the same
+     4	// expression cast to a WIDER type carries C's int promotion through the cast.
+     5	// D54: a u8 source has at most 8 bits to give, so `x as u16` of a u8 is <= 255;
+     6	// conversions.md (D405): "Nova does not pick the wider type for you";
+     7	// plan 234 (owner's decision 2026-07-27) names this exact C promotion for `~`
+     8	// as "silently wrong in an expression context".
+     9	fn main() {
+    10	    ro a = 200 as u8
+    11	    ro s = 100 as i8
+    12	    ro h = 60000 as u16
+    13	    println("ctl: ro t = a << 4; t as u16, norm 128")
+    14	    ro t = a << 4
+    15	    println(t as u16)
+    16	    println("(a << 4) as u16, norm 128")
+    17	    println((a << 4) as u16)
+    18	    println("(a << 4) as u64, norm 128")
+    19	    println((a << 4) as u64)
+    20	    println("(a << 4) as f64, norm 128")
+    21	    println((a << 4) as f64)
+    22	    println("(s << 1) as i16, norm -56")
+    23	    println((s << 1) as i16)
+    24	    println("(h << 2) as u32, norm 43392")
+    25	    println((h << 2) as u32)
+    26	    println("a << 4 printed bare, norm 128")
+    27	    println(a << 4)
+    28	    println("(a << 4) == (128 as u8), norm true")
+    29	    println((a << 4) == (128 as u8))
+    30	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=0
+oracle run rc=0
+=== SUBJECT: novac emit prog.nv
+novac emit rc=0
+--- Carina's C, the body of main
+static nova_unit nova_fn_main_impl(void) {
+    nova_byte a = ((nova_byte)(((nova_int)200LL)));
+    int8_t s = ((int8_t)(((nova_int)100LL)));
+    uint16_t h = ((uint16_t)(((nova_int)60000LL)));
+    nova_print_str(_novac_strlit_0);
+    nova_print_newline();
+    nova_byte t = ((a) << (((nova_byte)4ULL)));
+    nova_print_int(((uint16_t)(t)));
+    nova_print_newline();
+    nova_print_str(_novac_strlit_1);
+    nova_print_newline();
+    nova_print_int(((uint16_t)((((a) << (((nova_byte)4ULL)))))));
+    nova_print_newline();
+    nova_print_str(_novac_strlit_2);
+    nova_print_newline();
+    nova_print_uint(((uint64_t)((((a) << (((nova_byte)4ULL)))))));
+    nova_print_newline();
+    nova_print_str(_novac_strlit_3);
+    nova_print_newline();
+    nova_print_f64(((nova_f64)((((a) << (((nova_byte)4ULL)))))));
+    nova_print_newline();
+    nova_print_str(_novac_strlit_4);
+    nova_print_newline();
+    nova_print_int(((int16_t)((((s) << (((int8_t)1LL)))))));
+    nova_print_newline();
+    nova_print_str(_novac_strlit_5);
+    nova_print_newline();
+    nova_print_int(((uint32_t)((((h) << (((uint16_t)2ULL)))))));
+    nova_print_newline();
+    nova_print_str(_novac_strlit_6);
+    nova_print_newline();
+    nova_print_int(((a) << (((nova_byte)4ULL))));
+    nova_print_newline();
+    nova_print_str(_novac_strlit_7);
+    nova_print_newline();
+    nova_print_bool(((nova_int)(((((a) << (((nova_byte)4ULL))))) == ((((nova_byte)(((nova_int)128LL))))))));
+    nova_print_newline();
+    return NOVA_UNIT;
+}
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+=== STDOUT, line by line: oracle | Carina
+  1  ctl: ro t = a << 4; t as u16, norm 128| ctl: ro t = a << 4; t as u16, norm 128
+  2  128                     | 128
+  3  (a << 4) as u16, norm 128| (a << 4) as u16, norm 128
+  4  3200                    | 3200
+  5  (a << 4) as u64, norm 128| (a << 4) as u64, norm 128
+  6  3200                    | 3200
+  7  (a << 4) as f64, norm 128| (a << 4) as f64, norm 128
+  8  3200                    | 3200
+  9  (s << 1) as i16, norm -56| (s << 1) as i16, norm -56
+ 10  200                     | 200
+ 11  (h << 2) as u32, norm 43392| (h << 2) as u32, norm 43392
+ 12  240000                  | 240000
+ 13  a << 4 printed bare, norm 128| a << 4 printed bare, norm 128
+ 14  3200                    | 3200
+ 15  (a << 4) == (128 as u8), norm true| (a << 4) == (128 as u8), norm true
+ 16  false                   | false
+=== VERDICT: SAME stdout

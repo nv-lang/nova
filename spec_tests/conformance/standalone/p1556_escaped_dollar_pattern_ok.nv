@@ -1,0 +1,34 @@
+// EXPECT_STDOUT p1556 1 0 1 1 0
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for registry 221.1 #1556 (positive half): a string pattern is the
+// literal's VALUE. An escaped `\${` is the text `${` -- before, the pattern kept the
+// lexer's escape sentinel and `"a\${x}" =>` never matched `a${x}`. Matching an
+// interpolated value goes through a guard. The refusal of `"a${x}" =>`:
+// spec_tests/conformance/neg/p1556_interpolated_*_neg.nv.
+module standalone.p1556_escaped_dollar_pattern_ok
+
+fn escaped(s str) -> int {
+    match s {
+        "a\${x}" => 1
+        _ => 0
+    }
+}
+
+fn nested(o Option[str]) -> int {
+    match o {
+        Some("\${y}") => 1
+        _ => 0
+    }
+}
+
+fn guarded(s str) -> int {
+    ro x = "b"
+    match s {
+        t if t == "a${x}" => 1
+        _ => 0
+    }
+}
+
+fn main() Io {
+    println("p1556 ${escaped("a\${x}")} ${escaped("ab")} ${nested(Some("\${y}"))} ${guarded("ab")} ${guarded("a\${x}")}")
+}

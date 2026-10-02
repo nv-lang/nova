@@ -35,6 +35,7 @@ mod generic_sum; // #1337/#1338: a user generic sum's ctor, payload and expected
 mod raw_ptr_ops; // #1473: raw-pointer address arithmetic outside unsafe (D216 part 1)
 mod as_cast_rules; // #1547: the `as` rules of D54 in the checker, not the emitter
 mod pattern_literal_rules; // #1535: a literal pattern has the scrutinee's type
+mod literal_exact; // #1593: a literal fits its position only exactly, see its doc
 pub(crate) mod reserved_names; // D487: a declared name outside the compiler's C namespaces (called by the parser)
 pub(crate) mod coerce_door; // #1451/#1452: one door for `#coerce` -- checker decides, rewrite reads
 mod const_names; // #1488: the type of a module-level `const`/`ro` read by its bare name
@@ -11502,7 +11503,7 @@ impl<'a> TypeCheckCtx<'a> {
                                     }
                                     Compat::OutOfRange { msg } => {
                                         errors.push(Diagnostic::new(
-                                            format!("[E_LIT_OUT_OF_RANGE] {msg}"),
+                                            literal_exact::literal_diag(&msg),
                                             arg.expr().span,
                                         ));
                                     }
@@ -12545,6 +12546,7 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f1_expr(right, gs, scope, errors);
                 self.f4_check_value(left, scope, errors);
                 self.f4_check_value(right, scope, errors);
+                self.check_literal_operand(*op, left, right, gs, scope, errors); // #1593
                 // Plan 172.1.1 (U.4.5 — Binary arm): materialize the binary expr's resolved type
                 // into the channel so codegen READS it instead of re-deriving via legacy.
                 // `infer_expr_type` has NO Binary arm (→ None), so compute the result type INLINE
@@ -14453,7 +14455,7 @@ impl<'a> TypeCheckCtx<'a> {
             Compat::OutOfRange { msg } => {
                 errors.push(
                     Diagnostic::new(
-                        format!("[E_LIT_OUT_OF_RANGE] {msg}"),
+                        literal_exact::literal_diag(&msg),
                         value.span,
                     )
                     .with_note_at(
@@ -18235,7 +18237,7 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 Compat::OutOfRange { msg } => {
                     errors.push(Diagnostic::new(
-                        format!("[E_LIT_OUT_OF_RANGE] {msg}"),
+                        literal_exact::literal_diag(&msg),
                         arg_expr.span,
                     ));
                 }
@@ -19356,7 +19358,7 @@ impl<'a> TypeCheckCtx<'a> {
                 Compat::OutOfRange { msg } => {
                     errors.push(
                         Diagnostic::new(
-                            format!("[E_LIT_OUT_OF_RANGE] {msg}"),
+                            literal_exact::literal_diag(&msg),
                             arg.expr().span,
                         )
                         .with_note_at(
@@ -22018,7 +22020,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
             Compat::OutOfRange { msg } => {
                 errors.push(Diagnostic::new(
-                    format!("[E_LIT_OUT_OF_RANGE] {msg}"),
+                    literal_exact::literal_diag(&msg),
                     value.span,
                 ));
             }
@@ -23325,7 +23327,11 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                         Compat::Ok
                     }
-                    ResolvedType::Float { .. } => Compat::Ok,
+                    // #1593: an integer literal in a float position only if exact.
+                    ResolvedType::Float { width } => match literal_exact::int_literal_into_float(*v as i128, *width) {
+                        Some(msg) => Compat::OutOfRange { msg },
+                        None => Compat::Ok,
+                    },
                     _ => Compat::Bad { found: "int".to_string() },
                 };
             }
@@ -23367,13 +23373,32 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                         Compat::Ok
                     }
-                    ResolvedType::Float { .. } => Compat::Ok,
+                    ResolvedType::Float { width } => match literal_exact::int_literal_into_float(-(v as i128), *width) {
+                        Some(msg) => Compat::OutOfRange { msg },
+                        None => Compat::Ok,
+                    },
                     _ => Compat::Bad { found: "int".to_string() },
                 };
             }
-            ExprKind::FloatLit(_) => {
+            // #1593: a decimal fraction rounds legally; overflowing to infinity does not.
+            ExprKind::FloatLit(f) => {
                 return match &exp_rt {
-                    ResolvedType::Float { .. } => Compat::Ok,
+                    ResolvedType::Float { width } => match literal_exact::float_literal_into_float(*f, *width) {
+                        Some(msg) => Compat::OutOfRange { msg },
+                        None => Compat::Ok,
+                    },
+                    _ => Compat::Bad { found: "f64".to_string() },
+                };
+            }
+            ExprKind::Unary { op: UnOp::Neg, operand }
+                if matches!(operand.kind, ExprKind::FloatLit(_)) =>
+            {
+                let ExprKind::FloatLit(f) = operand.kind else { unreachable!() };
+                return match &exp_rt {
+                    ResolvedType::Float { width } => match literal_exact::float_literal_into_float(-f, *width) {
+                        Some(msg) => Compat::OutOfRange { msg },
+                        None => Compat::Ok,
+                    },
                     _ => Compat::Bad { found: "f64".to_string() },
                 };
             }
@@ -24123,6 +24148,21 @@ impl<'a> TypeCheckCtx<'a> {
             v.name == variant && matches!(&v.kind, SumVariantKind::Tuple(tys) if tys.len() == arity)
         });
         hit.then(|| TypeRef::Named { path: vec![sum.to_string()], generics: Vec::new(), span })
+    }
+
+    /// Registry 221.1 #1572: the type of a block's VALUE is the type of its tail. The
+    /// match-arm and block-expression arms of `infer_expr_type` took the last expression
+    /// STATEMENT instead -- for `{ if v < 0 { return Err(..) }; Val.Flag(..) }` that is the
+    /// `if` without `else`, typed `()`, so `Ok(match ..)` was `Result[(), str]` and the
+    /// return check of #1517 refused a correct program (E7301). Without a tail the old
+    /// reading stays (a body lowered with its value as the last statement).
+    fn block_value_type(&self, b: &Block, scope: &HashMap<String, TypeRef>) -> Option<TypeRef> {
+        match &b.trailing {
+            Some(t) => self.infer_expr_type(t, scope),
+            None => b.stmts.iter().rev().find_map(|s| {
+                if let Stmt::Expr(e) = s { self.infer_expr_type(e, scope) } else { None }
+            }),
+        }
     }
 
     /// Ф.1: best-effort вывод типа выражения (для не-литералов).
@@ -25559,13 +25599,23 @@ impl<'a> TypeCheckCtx<'a> {
             // Plan 172.1 P67 D45: Match expr type = first arm-body type that resolves.
             // Pattern bindings are not added to scope here; bodies referencing them get None
             // and we skip to the next arm. SelfAccess / scope-Ident arms resolve correctly.
-            ExprKind::Match { arms, .. } => {
+            // #1572: a block arm's type is its TAIL (`block_value_type`).
+            // #1595: the type is first the COMMON type of the arms -- the same
+            // `infer_match_common_primitive` the channel stores for the match (D129,
+            // D54-widen: `Some(v) => v` with `v u32` and `None => -1` give `int`). The
+            // first-resolving arm said `u32`, a binding `ro r = match ..` took it, and
+            // `-1` was stored as 4294967295 without a word.
+            ExprKind::Match { scrutinee, arms } => {
+                let scrut_ty = self.infer_expr_type(scrutinee, scope);
+                if let Some(rt) = self.infer_match_common_primitive(arms, scope, scrut_ty.as_ref()) {
+                    if let Some(t) = Self::resolved_to_typeref(&rt, expr.span) {
+                        return Some(t);
+                    }
+                }
                 for arm in arms {
                     let ty = match &arm.body {
                         MatchArmBody::Expr(e) => self.infer_expr_type(e, scope),
-                        MatchArmBody::Block(b) => b.stmts.iter().rev().find_map(|s| {
-                            if let Stmt::Expr(e) = s { self.infer_expr_type(e, scope) } else { None }
-                        }),
+                        MatchArmBody::Block(b) => self.block_value_type(b, scope),
                     };
                     if let Some(t) = ty {
                         return Some(t);
@@ -25594,10 +25644,8 @@ impl<'a> TypeCheckCtx<'a> {
                     None => unreachable!(),
                 }
             }
-            // Plan 172.1 P67 D45: Block expr type = tail stmt type (last Expr stmt).
-            ExprKind::Block(b) => b.stmts.iter().rev().find_map(|s| {
-                if let Stmt::Expr(e) = s { self.infer_expr_type(e, scope) } else { None }
-            }),
+            // Plan 172.1 P67 D45: Block expr type = its tail (#1572, `block_value_type`).
+            ExprKind::Block(b) => self.block_value_type(b, scope),
             // #1488: `Type.K` / `m.K` / `CR.field` folded into a path (`const_names.rs`).
             ExprKind::Path(parts) if parts.len() >= 2 => self.value_path_type(parts, expr.span, scope),
             _ => None,

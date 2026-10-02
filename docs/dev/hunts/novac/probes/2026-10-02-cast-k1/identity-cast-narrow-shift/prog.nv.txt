@@ -1,0 +1,26 @@
+// Hunt 2026-10-02 cast x K1, probe identity-cast-narrow-shift.
+// A cast INTO THE OPERAND'S OWN TYPE (`e as u8` with `e u8`) must still yield a
+// value of that type. D54 (amendment 2026-09-04 p.1): `as` takes the low M bits
+// of the source -- "`as` IS that mask". Each `norm` line names the value D54
+// gives; the `ctl` lines are the same value reached through a binding.
+fn main() {
+    ro a = 200 as u8
+    ro s = 100 as i8
+    ro h = 40000 as u16
+    ro q = 20000 as i16
+    println("(a << 4) as u8, norm 128")
+    println((a << 4) as u8)
+    println("(a << 4) as u8 == 128, norm true")
+    println((a << 4) as u8 == 128)
+    println("((a << 4) as u8) as u16, norm 128")
+    println(((a << 4) as u8) as u16)
+    println("(s << 1) as i8, norm -56")
+    println((s << 1) as i8)
+    println("(h << 1) as u16, norm 14464")
+    println((h << 1) as u16)
+    println("(q << 2) as i16, norm 14464")
+    println((q << 2) as i16)
+    println("ctl: ro t = a << 4; t as u8, norm 128")
+    ro t = a << 4
+    println(t as u8)
+}

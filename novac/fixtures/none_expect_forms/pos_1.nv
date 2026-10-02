@@ -1,0 +1,47 @@
+module none_expect_forms.pos_1
+
+// A BARE `None` TAKES ITS POSITION'S EXPECTATION in the four forms novac's own
+// `sem` module writes (E2-b3): the branches of a block-tail `if` and of a
+// block-tail `if let` (the declared return), the tail of a block arm and an arm
+// AFTER a block arm (the match's expectation, restored per arm), and a
+// constructor field (the field's declared type). Each path prints its own
+// value, so a `None` typed against the wrong instance or a dropped branch shows.
+type Kd enum Ka | Kb | Kc
+
+type NeSlot {
+    name str
+    def Option[int]
+}
+
+fn pick(n int) -> Option[int] {
+    if n > 0 { Some(n) } else { None }
+}
+
+fn first(o Option[int]) -> Option[int] {
+    if Some(v) = o { Some(v + 1) } else { None }
+}
+
+fn word(k Kd) -> Option[int] {
+    match k {
+        Ka => {
+            if false {
+                return Some(9)
+            }
+            None
+        }
+        Kb => None
+        Kc => Some(5)
+    }
+}
+
+fn main() {
+    println(pick(3) ?? 0)
+    println(pick(-1) ?? 7)
+    println(first(Some(1)) ?? 0)
+    println(first(None) ?? 8)
+    println(word(Kd.Ka) ?? 11)
+    println(word(Kd.Kb) ?? 12)
+    println(word(Kd.Kc) ?? 13)
+    ro s = NeSlot { name: "x", def: None }
+    println(s.def ?? 14)
+}

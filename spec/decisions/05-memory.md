@@ -1020,7 +1020,7 @@ tx in vec` consume. То же для `if let`:
 
 ```nova
 if Some(t) = opt { println(t.id) }          // view, opt Live после
-if ro consume Some(t) = opt { t.commit() }     // consume, opt Consumed после
+if Some(consume t) = opt { t.commit() }     // consume на биндере, opt Consumed после (outer `ro consume` — ❌ E_CONSUME_IN_CONDITION, D486 §5)
 ```
 
 ### `mut`-borrow через `mut tx` qualifier (НЕ `&mut T`)

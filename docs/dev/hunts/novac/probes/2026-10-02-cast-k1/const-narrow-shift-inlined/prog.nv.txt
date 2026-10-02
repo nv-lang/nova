@@ -1,0 +1,23 @@
+// Hunt 2026-10-02 cast x K1, probe const-narrow-shift-inlined.
+// A `const` whose initializer casts and shifts a narrow integer: its type is
+// u8, so its value is a u8. The oracle stores it at its type (128); Carina
+// substitutes the initializer TEXT at every use, and the use sees C's
+// int-promoted shift (3200) -- even with no cast at the use site.
+const S = (200 as u8) << 4
+const T u8 = 200
+
+fn main() {
+    println("S, norm 128")
+    println(S)
+    println("S as u16, norm 128")
+    println(S as u16)
+    println("S as u8, norm 128")
+    println(S as u8)
+    println("S == 128, norm true")
+    println(S == 128)
+    println("(T << 4) as u8, norm 128")
+    println((T << 4) as u8)
+    println("ctl: ro r = (200 as u8) << 4; r, norm 128")
+    ro r = (200 as u8) << 4
+    println(r)
+}

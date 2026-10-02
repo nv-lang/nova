@@ -27,79 +27,17 @@ D488: в разделе `### Что заменено` перечислены D32
 
 usage: python scripts/guards/check-dblock-supersede-pointers.py [КОРЕНЬ]
 """
-import glob
-import io
 import os
-import re
+import pathlib
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from spec_dblocks import LOOKAHEAD, has_pointer, scan  # noqa: E402  (общий разбор)
+
 NAME = "check-dblock-supersede-pointers"
-HEAD = re.compile(r"^(#{2,3}) D(\d+)\b")
-H2 = re.compile(r"^## D(\d+)\b")
-SECTION = re.compile(r"^### (Что заменено|Supersedes)\b")
-LOOKAHEAD = 8
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
-
-
-def read_lines(path):
-    with io.open(path, encoding="utf-8", errors="replace") as f:
-        return f.read().splitlines()
-
-
-def scan(root):
-    files = sorted(glob.glob(os.path.join(root, "spec", "decisions", "*.md")))
-    headings = {}   # номер -> [(файл, номер строки 1-based, строки файла)]
-    supers = []     # (Dnew, файл, строка, [Dold...])
-    for path in files:
-        lines = read_lines(path)
-        rel = os.path.relpath(path, root).replace("\\", "/")
-        fence = False
-        cur = None          # номер текущего блока уровня 2
-        sec = None          # собираемый раздел
-        for i, ln in enumerate(lines):
-            if ln.lstrip().startswith("```"):
-                fence = not fence
-            if fence:
-                if sec is not None:
-                    sec[3].extend(re.findall(r"\bD(\d+)\b", ln))
-                continue
-            m = HEAD.match(ln)
-            if m:
-                headings.setdefault(m.group(2), []).append((rel, i + 1, lines))
-            m2 = H2.match(ln)
-            if ln.startswith("## "):
-                cur = m2.group(1) if m2 else None
-                if sec is not None:
-                    supers.append(sec)
-                    sec = None
-            elif ln.startswith("### "):
-                if sec is not None:
-                    supers.append(sec)
-                    sec = None
-                if cur and SECTION.match(ln):
-                    sec = [cur, rel, i + 1, []]
-            elif sec is not None:
-                sec[3].extend(re.findall(r"\bD(\d+)\b", ln))
-        if sec is not None:
-            supers.append(sec)
-    return files, headings, supers
-
-
-def has_pointer(lines, idx, new):
-    """idx -- 0-based индекс заголовка."""
-    seen = 0
-    pat = re.compile(r"\bD%s\b" % new)
-    for ln in lines[idx + 1:]:
-        if not ln.strip():
-            continue
-        seen += 1
-        if seen > LOOKAHEAD:
-            break
-        if ln.lstrip().startswith(">") and pat.search(ln):
-            return True
-    return False
 
 
 def main():

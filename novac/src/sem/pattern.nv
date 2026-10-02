@@ -56,6 +56,9 @@ fn is_leaf_kind(n Node, k TokenKind) -> bool {
 /// (`variant_in_sum`), exactly as the flat pattern's identifier head was
 /// answered before. A QUALIFIED head keeps its own leaves, so `Variant` and
 /// `Record` carry their heads directly.
+/// `#impl(Equal)`: the checker and the lowering compare modes/shapes with `==`,
+/// which D363 (amendment 2026-09-30, E_EQ_WITHOUT_EQUAL) admits only for a sum
+/// that implements `Equal`.
 #impl(Equal)
 export type PatShape enum
     | Lit      /// an int / string / char literal

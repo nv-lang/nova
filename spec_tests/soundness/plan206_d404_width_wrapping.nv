@@ -15,7 +15,7 @@ test "u16 wrapping_mul сохраняет 16-битную ширину (D404 п�
     // 60000*2 = 120000; u16-wrap: 120000 mod 65536 = 54464.
     // nova_int-коллапс дал бы полное 120000.
     assert(p.wrapping_mul(q) == 54464)
-    assert(p.wrapping_mul(q) < 65536)
+    assert((p.wrapping_mul(q) as int) < 65536)   // `< 65536` over u16 is always true: E_LIT_OUT_OF_RANGE (D489, #1593)
 }
 
 test "u8 wrapping_add сохраняет 8-битную ширину (D404 под 206)" {
@@ -23,7 +23,7 @@ test "u8 wrapping_add сохраняет 8-битную ширину (D404 по�
     ro y u8 = 100
     // 300 mod 256 = 44; nova_int-коллапс дал бы 300.
     assert(x.wrapping_add(y) == 44)
-    assert(x.wrapping_add(y) != 300)
+    assert((x.wrapping_add(y) as int) != 300)   // `!= 300` over u8 is always true: E_LIT_OUT_OF_RANGE (D489, #1593)
 }
 
 test "uint high-bit сумма читается позитивом (D404, без overflow — 2^63 < 2^64)" {

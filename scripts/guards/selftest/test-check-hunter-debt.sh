@@ -19,7 +19,7 @@ rm -f "$T.live"
 
 # Макет-репозиторий: поверхность novac + один отчёт охоты.
 mkdir -p "$T/repo/novac/src" "$T/repo/docs/dev/hunts/novac" "$T/repo/docs/dev/hunts/oracle" \
-         "$T/repo/docs/dev/hunts/guards"
+         "$T/repo/docs/dev/hunts/guards" "$T/repo/docs/dev/hunts/spec" "$T/repo/spec/decisions"
 git -C "$T/repo" init -q
 git -C "$T/repo" config user.email selftest@example.com
 git -C "$T/repo" config user.name selftest
@@ -30,7 +30,7 @@ printf 'KLETKA stub\n' > "$T/repo/docs/dev/hunts/novac/2026-01-01-parse-k1.md"
 git -C "$T/repo" add novac/src/a.nv docs/dev/hunts/novac/2026-01-01-parse-k1.md
 git -C "$T/repo" commit -qm "seed: surface and first hunt report"
 ANCHOR=$(git -C "$T/repo" rev-parse HEAD)
-printf 'budget_novac=5\nbudget_oracle=5\nbudget_guards=5\nanchor=%s\n' "$ANCHOR" > "$T/base"
+printf 'budget_novac=5\nbudget_oracle=5\nbudget_guards=5\nbudget_spec=5\nanchor=%s\n' "$ANCHOR" > "$T/base"
 
 # Здоровье: долг 0 при свежей охоте.
 if ! NOVA_HUNTER_DEBT_BASELINE="$T/base" sh "$GUARD" "$T/repo" >"$T.o0" 2>&1; then
@@ -68,7 +68,7 @@ if NOVA_HUNTER_DEBT_BASELINE="$T/base" sh "$GUARD" "$T/repo" >"$T.o3" 2>&1; then
 fi
 
 # ── подделка 3: якорь-мусор в базе ──────────────────────────────────────
-printf 'budget_novac=5\nbudget_oracle=5\nbudget_guards=5\nanchor=deadbeef\n' > "$T/base2"
+printf 'budget_novac=5\nbudget_oracle=5\nbudget_guards=5\nbudget_spec=5\nanchor=deadbeef\n' > "$T/base2"
 if NOVA_HUNTER_DEBT_BASELINE="$T/base2" sh "$GUARD" "$T/repo" >"$T.o4" 2>&1; then
     echo "FAIL: якорь-не-коммит прошёл — базу можно сломать молча" >&2
     rc=1
@@ -118,5 +118,43 @@ if NOVA_HUNTER_DEBT_BASELINE="$T/base3" sh "$GUARD" "$T/repo" >"$T.o8" 2>&1; the
     rc=1
 fi
 
-[ "$rc" -eq 0 ] && echo "test-check-hunter-debt ok: семь подделок покраснели, гашение отчётом работает, живая половина зелёная"
+# ── трек spec (2026-10-01): поверхность — ДВА образа, spec/*.md и spec/decisions/*.md ──
+# Своя база: в $T/base3 нет budget_guards/budget_spec, она судит только дописку.
+printf 'budget_novac=999999\nbudget_guards=999999\nbudget_spec=5\nanchor=%s\n' "$(git -C "$T/repo" rev-parse HEAD)" > "$T/base4"
+# S1: рост блока spec/decisions/ над бюджетом — красный, и красный называет трек spec;
+seq 1 20 | sed 's/^/decision /' > "$T/repo/spec/decisions/02-types.md"
+git -C "$T/repo" add spec/decisions/02-types.md   # новый файл в долге — только отслеживаемый
+if NOVA_HUNTER_DEBT_BASELINE="$T/base4" sh "$GUARD" "$T/repo" >"$T.s1" 2>&1 || ! grep -q "трека spec" "$T.s1"; then
+    echo "FAIL: рост spec/decisions/*.md над бюджетом не покраснел треком spec" >&2; tail -2 "$T.s1" | sed 's/^/    /' >&2
+    rc=1
+fi
+# S2: рост обзорной spec/x.md — тоже поверхность (второй образ);
+git -C "$T/repo" rm -q --cached spec/decisions/02-types.md; rm -f "$T/repo/spec/decisions/02-types.md"
+seq 1 20 | sed 's/^/overview /' > "$T/repo/spec/syntax.md"
+git -C "$T/repo" add spec/syntax.md
+if NOVA_HUNTER_DEBT_BASELINE="$T/base4" sh "$GUARD" "$T/repo" >"$T.s2" 2>&1 || ! grep -q "трека spec" "$T.s2"; then
+    echo "FAIL: рост spec/*.md над бюджетом не покраснел треком spec" >&2; tail -2 "$T.s2" | sed 's/^/    /' >&2
+    rc=1
+fi
+# S3: .md вне spec/ поверхностью трека не является — зелёный;
+git -C "$T/repo" rm -q --cached spec/syntax.md; rm -f "$T/repo/spec/syntax.md"; mkdir -p "$T/repo/docs/guide"
+seq 1 20 | sed 's/^/guide /' > "$T/repo/docs/guide/x.md"
+git -C "$T/repo" add docs/guide/x.md
+if ! NOVA_HUNTER_DEBT_BASELINE="$T/base4" sh "$GUARD" "$T/repo" >"$T.s3" 2>&1; then
+    echo "FAIL: docs/guide/*.md посчитан поверхностью трека spec:" >&2; tail -2 "$T.s3" | sed 's/^/    /' >&2
+    rc=1
+fi
+# S4: коммит роста spec + НОВЫЙ отчёт трека spec гасит долг.
+seq 1 20 | sed 's/^/decision /' > "$T/repo/spec/decisions/02-types.md"
+git -C "$T/repo" add spec/decisions/02-types.md
+git -C "$T/repo" commit -qm "grow spec"
+printf 'KLETKA spec stub\n' > "$T/repo/docs/dev/hunts/spec/2026-10-01-topic-c2.md"
+git -C "$T/repo" add docs/dev/hunts/spec/2026-10-01-topic-c2.md
+git -C "$T/repo" commit -qm "spec hunt report"
+if ! NOVA_HUNTER_DEBT_BASELINE="$T/base4" sh "$GUARD" "$T/repo" >"$T.s4" 2>&1; then
+    echo "FAIL: свежий отчёт трека spec не погасил его долг:" >&2; tail -2 "$T.s4" | sed 's/^/    /' >&2
+    rc=1
+fi
+
+[ "$rc" -eq 0 ] && echo "test-check-hunter-debt ok: семь подделок покраснели, гашение отчётом работает, трек spec судит оба образа поверхности и гасится своим отчётом, живая половина зелёная"
 exit "$rc"

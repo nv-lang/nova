@@ -497,11 +497,8 @@ fn Checker mut @type_block(b Node) -> () {
                     // for the emitter -- which declares the result temporary
                     // with it, exactly as the tail match has done since B5.
                     ro imark = @out.len()
-                    // The declared return is the branches' expectation (E2-b3),
-                    // as at the `=>` body and the tail match above: a branch's
-                    // bare `None` takes it. This block-body entrance did not set
-                    // it, so `{ ...; if c { Some(x) } else { None } }` refused
-                    // the `None` the arrow form `=> if ...` compiled.
+                    // The declared return reaches the branches (E2-b3), as it
+                    // does for an expression body's `if` and a tail match.
                     @value_expect = @ret_expect
                     @type_if_value(c)
                     @value_expect = no_ty()
@@ -529,8 +526,6 @@ fn Checker mut @type_block(b Node) -> () {
                     // what a test corpus is for: my own probes all had branches
                     // that produce values, so none of them could have noticed.
                     ro lmark = @out.len()
-                    // The declared return is the branches' expectation, as for
-                    // the tail `if` just above.
                     @value_expect = @ret_expect
                     @type_if_let(c, as_value: true)
                     @value_expect = no_ty()
