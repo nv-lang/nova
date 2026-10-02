@@ -54826,12 +54826,23 @@ impl MapLitAnnotator<'_> {
     /// single-wrapper rewrite now runs on the returned leaves
     /// (`wrap_return_tail`); `walk_expr(t, None)` stays, for the other
     /// mechanisms this paragraph is about.
+    /// Correction (registry 221.1 #1641): it does not stay -- `None` withheld
+    /// the return type from the element-type inference of an anonymous-record
+    /// array in a branch tail. The tail is now walked against the return type,
+    /// exactly as an expression body (`FnBody::Expr` above) always was, and
+    /// `wrap_return_tail` follows it on both paths.
     fn walk_fn_body_block(&mut self, b: &mut Block) {
         for s in &mut b.stmts {
             self.walk_stmt(s);
         }
         if let Some(t) = &mut b.trailing {
-            self.walk_expr(t, None);
+            // #1641: the tail IS the return value -- it gets the declared type
+            // as its expected type, so an `if`/`match`/block tail hands it on to
+            // its branches (`walk_block_to`). Before, an array of anonymous
+            // records in a branch tail (`else { [{ name: "a", n: k }] }`) had no
+            // element type, and codegen monomorphized `Vec` with an EMPTY one.
+            let ret_ty = self.current_fn_return_ty.clone();
+            self.walk_expr(t, ret_ty.as_ref());
             if let Some(ret_ty) = self.current_fn_return_ty.clone() {
                 // #1260: `return` is a position of the single-wrapper rule
                 // (D55 amend: `let`/`const`, `return`, call-arg, element), and
@@ -54925,8 +54936,11 @@ impl MapLitAnnotator<'_> {
                 // widen the PRE-EXISTING D55 single-wrapper `try_wrap_leaf`
                 // rewrite to a position it was never scoped to (return),
                 // outside Plan 214's mandate).
+                // Corrected by #1260 (return IS a wrap position) and #1641
+                // (the value is walked against the return type, as a tail is).
                 if let Some(v) = value {
-                    self.walk_expr(v, None);
+                    let ret_ty = self.current_fn_return_ty.clone();
+                    self.walk_expr(v, ret_ty.as_ref());
                     if let Some(ret_ty) = self.current_fn_return_ty.clone() {
                         // #1260: see `walk_fn_body_block` -- return is a wrap position.
                         self.wrap_return_tail(v, &ret_ty);
@@ -55576,7 +55590,8 @@ impl MapLitAnnotator<'_> {
                 self.walk_block(body);
             }
             ExprKind::Loop { body, .. } => self.walk_block(body),
-            ExprKind::Block(b) => self.walk_block(b),
+            // #1641: a block VALUE -- its tail is the value.
+            ExprKind::Block(b) => self.walk_block_to(b, expected),
             ExprKind::Spawn(x) => self.walk_expr(x, None),
             ExprKind::Detach(b) | ExprKind::Blocking(b) => self.walk_block(b),
             ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
@@ -55627,10 +55642,17 @@ impl MapLitAnnotator<'_> {
             // Plan 97 Ф.4 (D142): protocol-литерал — walk-mut идентичен.
             ExprKind::HandlerLit { methods, .. } | ExprKind::ProtocolLit { methods, .. } => {
                 for m in methods.iter_mut() {
+                    // #1641: an `effect X { op(..) -> T { .. } }` op declares `T`
+                    // (mandatory there); its body's tail and its `return`s target
+                    // it -- not the enclosing function's type. A protocol
+                    // method-impl has no `ret_ty` and keeps `None`, as before.
+                    let op_ret = m.ret_ty.clone();
+                    let saved = std::mem::replace(&mut self.current_fn_return_ty, op_ret.clone());
                     match &mut m.body {
-                        HandlerMethodBody::Expr(x) => self.walk_expr(x, None),
-                        HandlerMethodBody::Block(b) => self.walk_block(b),
+                        HandlerMethodBody::Expr(x) => self.walk_expr(x, op_ret.as_ref()),
+                        HandlerMethodBody::Block(b) => self.walk_block_to(b, op_ret.as_ref()),
                     }
+                    self.current_fn_return_ty = saved;
                 }
             }
             ExprKind::Select { arms } => {
