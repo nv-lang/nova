@@ -50,11 +50,12 @@ test "a GENERIC static method: a concrete parameter still judges its argument (1
     assert(c.contains("make"), c)
 }
 
-test "a GENERIC SUM's static method is spelled by the sum's name, not iced (1666)" {
+test "a GENERIC SUM's static method is spelled per instance, not iced (1666)" {
     // The same door with a sum owner: the record-shaped instance body iced
     // ("the record-shaped instance body of a generic SUM") -- std's
-    // `LinkedList.from_array([1, 2, 3])`. The oracle calls the one symbol
-    // `Nova_<Sum>_static_<name>`; what the body then meets is novac's subset.
+    // `LinkedList.from_array([1, 2, 3])`. The oracle calls
+    // `Nova_<Sum>____<arg>_static_<name>`, as for a record; what the body
+    // then meets is novac's subset.
     mut std = std_decls()
     std.push("module std.sbx2\nexport type Sx[T] enum\n    | Nil\n    | One(T)\nexport fn Sx[T].wrap(v T) -> Sx[T] => One(v)\n")
     ro got = compile("import std.sbx2.{Sx}\nfn main() {\n ro s = Sx.wrap(3)\n println(1)\n}", std)
