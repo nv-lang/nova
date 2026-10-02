@@ -665,7 +665,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
             // other overload's parameter types (owner's review 2026-08-19).
             ro did = raw_node(c.id_of())
             while fn_decl_rows.len() <= did { fn_decl_rows.push(no_row()) }
-            fn_decl_rows[did] = FnRow(frow)
+            fn_decl_rows[did] = frow
         } else {
             // Every other top-level node -- the module declaration, imports,
             // and recovery Err branches -- declares neither a type nor a
