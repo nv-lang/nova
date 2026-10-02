@@ -1,0 +1,99 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/check/numeric_positions.nv -- D491: a value of a numeric type never
+// changes its type implicitly, in any position; a literal takes its position's
+// type when its exact value fits (D489).
+//
+// Donor: rustc `check_expr_coercible_to_type` / `demand_coerce` -- a value judged
+//        against the type its POSITION writes, the literal inferred from it;
+//        NOT taken: Rust's coercion set (deref, unsizing) -- D491 has none for
+//        numbers, and `#coerce` pairs (D429) are their own door.
+// Role: check (layer 7) -- one door for the positions D491 lists that had none:
+//       a record field's value, a variant's payload, a branch or arm without a
+//       written result type; and the one text every refusing door shares.
+// Used by: binds.nv (record fields), option_rules.nv (variant payloads),
+//          tail_rules.nv (if branches), match_arms.nv (arms), calls.nv,
+//          return_rules.nv, assign_rules.nv (their numeric texts).
+// Guarded by: check-novac-fixture-expect.sh (fixtures numeric_positions/,
+//             the codes pinned), check-novac-differential.sh (pos byte for byte
+//             with the oracle), nova test novac/src/pipeline/numeric_test.nv.
+
+module novac.check
+
+import ../tree.{Node, NodeKind}
+import ../types.{TyId, is_ty}
+import ../builtins.{TypeKind}
+import ../sem.{is_numeric_prim, ty_source_name, coerce_row, Ctx, is_never_ty}
+
+/// The refusal of a numeric value standing where ANOTHER numeric type is written
+/// -- widening, narrowing or a change of kind alike (D491). The code is the
+/// oracle's (`E_IMPLICIT_NARROWING`), so the two compilers name one rule.
+fn numeric_position_msg(ctx Ctx, from TyId, to TyId, place str) -> str {
+    ro f = ty_source_name(ctx, from)
+    ro t = ty_source_name(ctx, to)
+    "a value of type `${f}` does not become `${t}` ${place} -- a number never changes its type implicitly, widening or narrowing alike (D491, E_IMPLICIT_NARROWING); convert it: `... as ${t}`"
+}
+
+/// Branches of an `if` / arms of a `match` of different numeric types, with no
+/// result type written: the oracle's code.
+const ARMS_WIDTH_MSG = "the branches of this `if` / arms of this `match` are different numeric types, and no result type is written -- a number never changes its type implicitly (D491, E_MATCH_ARM_WIDTH_MISMATCH); convert one with `as`, or write the result's type"
+
+/// A value of a non-numeric type standing where another type is written.
+fn position_mismatch_msg(ctx Ctx, from TyId, to TyId, place str) -> str {
+    ro f = ty_source_name(ctx, from)
+    ro t = ty_source_name(ctx, to)
+    "a value of type `${f}` stands ${place}, which is `${t}` -- no implicit conversion between named types (E7301, D405)"
+}
+
+/// Two different NUMERIC primitives -- the pair D491 refuses by its own code.
+fn differ_numeric(ctx Ctx, a TyId, b TyId) -> bool =>
+    is_ty(a) && is_ty(b) && a != b && is_numeric_prim(ctx.tys, a) && is_numeric_prim(ctx.tys, b)
+
+/// A bare numeric literal standing where `to` is wanted takes `to` (D489) when
+/// its family admits it; a value out of range is refused at the literal by the
+/// fit door. Answers whether the literal was DECIDED here (taken or refused).
+fn Checker mut @literal_takes(e Node, to TyId) -> bool {
+    match lit_arg_of(e) {
+        NotLit => { return false }
+        IntLitArg | FloatLitArg => {
+            // A numeric literal: asked below whether its family admits `to`.
+        }
+    }
+    ro own = type_of(e, @ctx, @scope, @chan)
+    if adapt_operand(e, own, to, @ctx.tys) != to { return false }
+    if @lit_fits_or_refuse(e, to) {
+        @record(e, to)
+    } else {
+        // Out of `to`'s range: the fit door refused it at its token.
+    }
+    true
+}
+
+/// A value, already typed, standing where `want` is written -- a record field,
+/// a variant's payload: a literal takes the type; a value of another type is
+/// refused, by D491's code when both are numbers. A type parameter is not
+/// judged (the instance judges its own body), and a declared `#coerce` pair
+/// (D429) is its own door's.
+fn Checker mut @judge_value_in(e Node, want TyId, place str) -> () {
+    if !is_ty(want) || @ctx.tys.kind_of(want) == TypeKind.TkParam { return }
+    if @literal_takes(e, want) { return }
+    // The CHANNEL first: an anonymous constructor has no type of its own, and
+    // the lattice ices on it -- it was typed against its position already.
+    ro rec = @chan.type_if_known(e.id_of())
+    if !is_ty(rec) && e.kind_of() == NodeKind.RecordCtor { return }
+    ro have = @concrete(if is_ty(rec) { rec } else { type_of(e, @ctx, @scope, @chan) })
+    if !is_ty(have) || have == want || @ctx.tys.kind_of(have) == TypeKind.TkParam { return }
+    // A value of type `never` (D26) -- `ice(..)` in the field -- produces none.
+    if is_never_ty(@ctx.tys, have) { return }
+    match coerce_row(@ctx, have, want) {
+        Some(_) => {
+            // A declared pair: the coercing door decides, not this one.
+        }
+        None => {
+            if differ_numeric(@ctx, have, want) {
+                @reject_first_leaf_of([]Node.of(e), numeric_position_msg(@ctx, have, want, place))
+            } else {
+                @reject_first_leaf_of([]Node.of(e), position_mismatch_msg(@ctx, have, want, place))
+            }
+        }
+    }
+}

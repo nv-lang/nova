@@ -1,0 +1,11 @@
+module numeric_positions.neg_1
+
+// ONE seeded cause (registry 1609, D491): a numeric value standing in
+// a binding with a written type, of another numeric type. A number never changes its type
+// implicitly; the refusal carries the oracle's code.
+// NOVAC_EXPECT in this binding (written `int`) -- a number never changes its type implicitly, widening or narrowing alike (D491, E_IMPLICIT_NARROWING)
+fn main() {
+    ro x = 7 as u32
+    ro y int = x
+    println(y)
+}

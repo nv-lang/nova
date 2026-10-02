@@ -33,9 +33,10 @@ test "the body's value must be the declared return type, by name (274.7 B5, #960
     assert(d1.len() == 1, messages(d1))
     assert(messages(d1).contains("cannot return value of type `str` from a function declared `-> int`") && messages(d1).contains("E7301"), messages(d1))
     ro (d2, _) = compile_to_c("fn f(x f64) -> int => x\nfn main() {\n println(f(3.9))\n}", std)
-    assert(d2.len() == 1 && messages(d2).contains("E7301"), messages(d2))
+    // Two numbers are D491's (2026-10-02): the oracle's code, not E7301.
+    assert(d2.len() == 1 && messages(d2).contains("E_IMPLICIT_NARROWING"), messages(d2))
     ro (d3, _) = compile_to_c("fn f(n int) -> f64 => n\nfn main() {\n println(f(7))\n}", std)
-    assert(d3.len() == 1 && messages(d3).contains("E7301"), messages(d3))
+    assert(d3.len() == 1 && messages(d3).contains("E_IMPLICIT_NARROWING"), messages(d3))
     ro (d4, _) = compile_to_c("type Meters int\nfn f(n int) -> Meters => n\nfn main() {\n println(f(9))\n}", std)
     assert(d4.len() == 1 && messages(d4).contains("`-> Meters`"), messages(d4))
 

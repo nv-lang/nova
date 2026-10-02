@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `check_expr_coercible_to_type` -- a value judged against its
+// position's written type; NOT taken: Rust's coercions (D491 has none).
+// Role: acceptance tests of registry 1609 (D491, D489): a numeric value keeps
+// its type in every position, a literal takes its position's type.
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file; fixtures numeric_positions/
+// through check-novac-no-cascade and the differential.
+// novac/src/pipeline/numeric_test.nv -- D491 positions.
+
+module novac.pipeline
+
+test "a number keeps its type in every position (D491); a literal takes the position's (D489)" {
+    ro std = std_decls()
+    // LEGAL: a written local type with a literal, a literal field, a literal
+    // branch beside a `u8` value -- the branch takes `u8`.
+    ro (d0, c0) = compile_to_c("type Box { n u8 }\nfn pick(c bool, b u8) -> u8 {\n ro r = if c { b } else { 0 }\n r\n}\nfn main() {\n ro a u8 = 200\n ro x = Box { n: 17 }\n println(pick(true, a))\n println(x.n)\n}", std)
+    assert(d0.len() == 0, messages(d0))
+    assert(c0.contains("nova_byte)200") || c0.contains("nova_byte)0xC8"), c0)
+    // REFUSED with the oracle's code: a binding, a field, the branches.
+    ro (d1, _) = compile_to_c("fn main() {\n ro x = 7 as u32\n ro y int = x\n println(y)\n}", std)
+    assert(d1.len() == 1 && messages(d1).contains("E_IMPLICIT_NARROWING"), messages(d1))
+    ro (d2, _) = compile_to_c("type Box { n int }\nfn main() {\n ro x = 7 as u8\n ro b = Box { n: x }\n println(b.n)\n}", std)
+    assert(d2.len() == 1 && messages(d2).contains("in this field"), messages(d2))
+    ro (d3, _) = compile_to_c("fn main() {\n ro a = 7 as u8\n ro b = 9\n ro r = if b > 1 { a } else { b }\n println(r)\n}", std)
+    assert(d3.len() == 1 && messages(d3).contains("E_MATCH_ARM_WIDTH_MISMATCH"), messages(d3))
+    // CONTROL: a non-number in a field is E7301, not D491's code.
+    ro (d4, _) = compile_to_c("type Box { n int }\nfn main() {\n ro b = Box { n: \"s\" }\n println(b.n)\n}", std)
+    assert(d4.len() == 1 && messages(d4).contains("E7301") && !messages(d4).contains("D491"), messages(d4))
+}

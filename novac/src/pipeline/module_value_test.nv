@@ -143,12 +143,13 @@ test "a constant's WRITTEN type is its type at every read, and its literal is ju
     assert(n.len() == 1 && messages(n).contains("different numeric types"), messages(n))
 }
 
-test "a constant's initializer of ANOTHER type than the written one is refused at the declaration, in the return door's words (E7301)" {
+test "a constant's initializer of ANOTHER type than the written one is refused at the declaration (D491, E_IMPLICIT_NARROWING for two numbers)" {
     ro std = std_decls()
     // A `u8` value under `u16`: no implicit widening (D405) -- one refusal at
     // the declaration, and the read of the constant does not cascade.
     ro (w, _) = compile_to_c("const C u16 = ('x' as u8)\nfn main() {\n println(C)\n}", std)
-    assert(w.len() == 1 && messages(w).contains("(E7301)") && messages(w).contains("`u16`"), messages(w))
+    // D491 (2026-10-02): widening is refused too, with the oracle's code.
+    assert(w.len() == 1 && messages(w).contains("E_IMPLICIT_NARROWING") && messages(w).contains("`u16`"), messages(w))
     // A narrowing is the narrowing refusal.
     ro (n, _) = compile_to_c("const C u8 = (300 as u16)\nfn main() {\n println(C)\n}", std)
     assert(n.len() == 1 && messages(n).contains("E_IMPLICIT_NARROWING"), messages(n))

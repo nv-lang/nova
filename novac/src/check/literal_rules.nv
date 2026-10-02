@@ -20,7 +20,7 @@ import ../tree.{Node, NodeKind}
 import ../sem.{branch_children, leaf_text, leaf_kind, decl_of_ty, field_range_of}
 import ../sem.{raw_frow, no_frow, ctor_field_name}
 // The interpolation slicer comes with the judge moved here on 2026-09-20.
-import ../sem.{interp_slices}
+import ../sem.{interp_slices, subst_type}
 import ../sem.{prim_row_of, lit_admits, call_arg_at, raw_row, no_row, CalleeTarget}
 import ../diag.{ice}
 import ../builtins.{BuiltinType}
@@ -231,7 +231,9 @@ fn Checker mut @adapt_literal_args(e Node, kids []Node, from int, recv_rows int)
     for s in 0..slots.len() {
         ro at = slots[s].arg_row
         if at < recv_rows { continue }
-        ro want = @ctx.fns.params[fd.param_off + s].type_id
+        // A GENERIC callee's parameter is read under the call's substitution: a
+        // literal handed to `T` takes the instance's type (D489, `bs.push(4)`).
+        ro want = subst_type(@ctx, @ctx.fns.params[fd.param_off + s].type_id, @chan.callee_subst_of(e.id_of()))
         ro a = call_arg_at(kids, from, at - recv_rows)
         if !lit_admits(@ctx.tys, lit_arg_of(a), want) { continue }
         if type_of(a, @ctx, @scope, @chan) == want { continue }
@@ -252,7 +254,7 @@ fn Checker mut @adapt_literal_args(e Node, kids []Node, from int, recv_rows int)
 /// value of type `int` next to a value of type `f64` is still an error, literal
 /// or not", and the spec outranks the oracle (AGENTS.md, order of precedence;
 /// the oracle's side is registry #926). Wave 274.7 B4.
-const MIXED_NUMERIC_MSG = "the operands are different numeric types -- no implicit widening (D405, spec/conversions.md): `int` beside `f64`, `u8` beside `u16`, `f32` beside `f64` are all errors; convert one of them with `as` (a bare literal takes the other side's type)"
+const MIXED_NUMERIC_MSG = "the operands are different numeric types -- no implicit widening (D405, D491, E_MIXED_WIDTH_ARITH): `int` beside `f64`, `u8` beside `u16`, `f32` beside `f64` are all errors; convert one of them with `as` (a bare literal takes the other side's type)"
 
 /// spec/conversions.md (amendment 2026-09-04): "Unary minus is defined for
 /// signed types only. `-x` with an unsigned `x` is a compile error, not a

@@ -1,0 +1,13 @@
+module numeric_positions.neg_4
+
+// ONE seeded cause (registry 1609, D491): a numeric value standing in
+// a record field, of another numeric type. A number never changes its type
+// implicitly; the refusal carries the oracle's code.
+// NOVAC_EXPECT in this field -- a number never changes its type implicitly, widening or narrowing alike (D491, E_IMPLICIT_NARROWING)
+type Box { n int }
+
+fn main() {
+    ro x = 7 as u8
+    ro b = Box { n: x }
+    println(b.n)
+}

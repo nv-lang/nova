@@ -1,0 +1,13 @@
+module numeric_positions.neg_3
+
+// ONE seeded cause (registry 1609, D491): a numeric value standing in
+// a return, of another numeric type. A number never changes its type
+// implicitly; the refusal carries the oracle's code.
+// NOVAC_EXPECT as this fn's return (`-> int`) -- a number never changes its type implicitly
+fn give(x u32) -> int {
+    x
+}
+
+fn main() {
+    println(give(7 as u32))
+}

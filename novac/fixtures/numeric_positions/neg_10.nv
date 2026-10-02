@@ -1,0 +1,18 @@
+module numeric_positions.neg_10
+
+// ONE seeded cause (registry 1609, D491): a numeric value standing in
+// a variant's payload -- the ORACLE ACCEPTS this one (registry TBD); D55/D491 say the payload's numeric type is exact, of another numeric type. A number never changes its type
+// implicitly; the refusal carries the oracle's code.
+// NOVAC_EXPECT as this variant's payload -- a number never changes its type implicitly
+type Sv enum
+    | Int(int)
+    | U8(u8)
+
+fn main() {
+    ro x = 7 as u8
+    ro s = Sv.Int(x)
+    match s {
+        Int(n) => println(n)
+        U8(m) => println(m)
+    }
+}

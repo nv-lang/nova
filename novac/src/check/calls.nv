@@ -204,8 +204,16 @@ fn Checker mut @refuse_arg_type(kids []Node, row FnRow, key []ArgSpec, form Call
                 MethodCall => @report_first_leaf_of(kids,
                     "outside the subset: this argument reaches the parameter only through a declared `#coerce` pair, and the coercing stage for method calls has not arrived yet (E2-b3)")
             }
-            None => @report_first_leaf_of(kids,
-                "outside the subset: this argument's type is not the one this function declares here")
+            // Two different numbers are D491's -- a language error with the
+            // oracle's code; any other pair stays the subset's (overloads,
+            // generics and coercions it has not read yet may still fit).
+            None => if differ_numeric(@ctx, key[at].type_id, want.type_id) {
+                ro amsg = numeric_position_msg(@ctx, key[at].type_id, want.type_id, "as this argument")
+                @reject_first_leaf_of(kids, amsg)
+            } else {
+                @report_first_leaf_of(kids,
+                    "outside the subset: this argument's type is not the one this function declares here")
+            }
         }
         return
     }
@@ -430,8 +438,25 @@ fn Checker mut @deduce_from_args(row FnRow, key []ArgSpec, kids []Node) -> Optio
         mut found = no_ty()
         mut first_at = 0      // WHICH argument fixed the slot: named in the refusal
         mut clash_at = -1     // WHICH argument disagreed; -1 = none did
+        // A BARE NUMERIC LITERAL fixes a slot only when nothing else does (D489:
+        // it has no type until its position gives one -- `bs.push(4)` with `bs
+        // []u8` is a `u8`); it is admitted afterwards by `@adapt_literal_args`.
+        mut lit_found = no_ty()
+        mut lit_at = 0
         for i in 0..key.len() {
             if i >= fd.param_cnt { break }
+            ro lit_bound = slot_binding_in(@ctx.tys, @ctx.fns.params[fd.param_off + i].type_id, key[i].type_id, slot)
+            if key[i].lit != LitArg.NotLit && is_ty(lit_bound) {
+                if !is_ty(lit_found) {
+                    lit_found = lit_bound
+                    lit_at = i
+                } else {
+                    // A later literal: the first one stands in when nothing else fixes the slot.
+                }
+                continue
+            } else {
+                // Not a literal: it fixes the slot below.
+            }
             // STRUCTURAL (sub-plan L2): the slot's binding INSIDE the parameter's
             // type, so a receiver `Vec[int]` against `Vec[T]` fixes T the way
             // `int` against `x T` does; `no_ty` when the slot is not in there.
@@ -453,6 +478,21 @@ fn Checker mut @deduce_from_args(row FnRow, key []ArgSpec, kids []Node) -> Optio
                 found = at
                 first_at = i
             }
+        }
+        if !is_ty(found) && is_ty(lit_found) {
+            found = lit_found
+            first_at = lit_at
+        } else {
+            // A typed argument fixed the slot, or nothing did (refused below).
+        }
+        if clash_at >= 0 && differ_numeric(@ctx, key[clash_at].type_id, found) {
+            // Two NUMBERS for one slot: D491's rule, with the oracle's code --
+            // `v.push(x)` with `v []int` and `x u8` is not the subset's gap.
+            @reject_first_leaf_of(kids, numeric_position_msg(@ctx, key[clash_at].type_id, found,
+                "as argument ${clash_at + 1} (argument ${first_at + 1} made it `${ty_source_name(@ctx, found)}`)"))
+            return None
+        } else {
+            // No clash, or a clash that is not two numbers: below.
         }
         if clash_at >= 0 {
             // BOTH POSITIONS AND BOTH TYPES (wave 2). The schema carries ONE

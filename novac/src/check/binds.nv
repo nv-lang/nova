@@ -48,6 +48,15 @@ fn Checker mut @type_bind(st Node) -> () {
         @report_first_leaf_of(kids, "outside the subset: a binding needs a name and an initializer (274.5 P3)")
         return
     }
+    // A WRITTEN TYPE (`ro y T = e`, registry 1609): its own door (typed_bind.nv).
+    ro dt = @declared_bind_type(kids)
+    if is_ty(dt) {
+        @type_declared_bind(kids, dt)
+        // SILENT-OK: the written-type door bound the name or refused by name.
+        return
+    } else {
+        // No written type: the ordinary binding below.
+    }
     ro vname = leaf_text(kids[1])
     // A NAME that is a visible payload-less variant is not a binder in the
     // language: the binding is a refutable one-variant pattern, and the
@@ -400,9 +409,15 @@ fn Checker mut @judge_record_ctor(ctor Node, vtype TyId) -> () {
             // The FIELD's declared type is the value's expectation (E2-b3): a
             // bare `None` for an `Option[T]` field takes it, as an argument
             // takes its parameter's (#1565) -- `default_expr: None` in harvest.
-            @value_expect = @ctor_field_expect(vtype, ctor_field_name(c))
+            ro fexp = @ctor_field_expect(vtype, ctor_field_name(c))
+            @value_expect = fexp
+            ro fmark = @out.len()
             @type_expr(fk[2])
             @value_expect = no_ty()
+            // THE VALUE IS JUDGED AGAINST THE FIELD (D491, D489): until 2026-10-02
+            // nothing compared them -- `Box { n: "s" }` and a `u8` field given 300
+            // compiled in silence. Asked only when typing refused nothing (#902).
+            if @out.len() == fmark { @judge_value_in(fk[2], fexp, "in this field") } else { }
         } else {
             // The type name and the braces of the ctor are children too, and
             // they hold no expression to type.

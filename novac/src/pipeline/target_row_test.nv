@@ -53,11 +53,12 @@ test "the assignment door: a literal takes the target's type, a named mismatch i
     ro (d0, c0) = compile_to_c("fn twice(n int) -> int => n * 2\nfn main() {\n mut x = 1.5\n x = 2\n println(x)\n mut n = 1\n n = twice(4)\n println(n)\n mut s = \"a\"\n s = \"b\"\n println(s)\n}", std)
     assert(d0.len() == 0, messages(d0))
     assert(c0.contains("x = ((nova_f64)2LL);"), c0)
-    // A NAMED int into an f64 target: refused as a named mismatch (E7301).
+    // A NAMED int into an f64 target: two numbers, D491's refusal (2026-10-02),
+    // with the oracle's code -- E7301 stays the answer for non-numbers (below).
     ro (d1, _) = compile_to_c("fn main() {\n mut x = 1.5\n ro y = 2\n x = y\n println(x)\n}", std)
     assert(d1.len() == 1, messages(d1))
-    assert(messages(d1).contains("cannot assign value of type `int` to a target of type `f64`"), messages(d1))
-    assert(messages(d1).contains("E7301"), messages(d1))
+    assert(messages(d1).contains("a value of type `int` does not become `f64` on the right of `=`"), messages(d1))
+    assert(messages(d1).contains("E_IMPLICIT_NARROWING"), messages(d1))
     // A str into an int target: E7301 too, at the operator, once.
     ro (d2, _) = compile_to_c("fn main() {\n mut x = 1\n x = \"s\"\n println(x)\n}", std)
     assert(d2.len() == 1, messages(d2))

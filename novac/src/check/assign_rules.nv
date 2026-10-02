@@ -214,13 +214,14 @@ fn Checker mut @assigned_value_type(kids []Node, rt0 TyId) -> TyId {
     if t == want { return adapted }
     ro from = ty_source_name(@ctx, t)
     ro to = ty_source_name(@ctx, want)
-    ro msg = if int_narrows(@ctx.tys, t, want) {
-        "cannot assign value of type `${from}` to a target of type `${to}` -- implicit int narrowing loses range; use an explicit `... as ${to}` cast (D54, E_IMPLICIT_NARROWING)"
+    ro msg = if differ_numeric(@ctx, t, want) {
+        numeric_position_msg(@ctx, t, want, "on the right of `=` (the target is `${to}`)")
     } else {
         "cannot assign value of type `${from}` to a target of type `${to}` (E7301): no implicit conversion between named types (D405, spec/conversions.md) -- convert with `as`, or change the target"
     }
+    // A LANGUAGE error (D491 / E7301), as at the return.
     match kids[1] {
-        Leaf(tk) => @refuse(tk, msg)
+        Leaf(tk) => @reject(tk, msg)
         Branch { .. } => {}
     }
     no_ty()

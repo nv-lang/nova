@@ -1,0 +1,73 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/check/typed_bind.nv -- a binding with a WRITTEN type, `ro y T = e`
+// (registry 1609: D491's first position, the binding).
+//
+// Donor: rustc `check_decl_local` -- a local's written type is the initializer's
+//        expectation, and the initializer is coerced to it; NOT taken: Rust's
+//        coercions -- D491 has none for numbers, so the value must BE `T`.
+// Role: check (layer 7) -- the door the shape walk opens for a declared local
+//       whose type the reference door reads; its initializer is judged as every
+//       position with a written type is (numeric_positions.nv), and the name is
+//       bound with the WRITTEN type.
+// Used by: binds.nv `@type_bind` (the first question it asks), check.nv's
+//          shape walk (`@declared_bind_type` decides whether the form is open).
+// Guarded by: check-novac-fixture-expect.sh (fixtures numeric_positions/),
+//             check-novac-differential.sh (pos byte for byte with the oracle).
+
+module novac.check
+
+import ../tree.{Node, NodeKind}
+import ../types.{TyId, no_ty, is_ty}
+import ../sem.{ty_of_type_ref, raw_row, bind_mode_at, leaf_text, ty_source_name, is_expr_kind}
+
+/// The type a binding WRITES between its name and `=` -- `ro y u8 = 200` --
+/// read by the one reference door (sem/typeref.nv), or `no_ty()` when none is
+/// written or it does not read. A plain binding is four children.
+fn Checker mut @declared_bind_type(kids []Node) -> TyId {
+    if kids.len() <= 4 { return no_ty() }
+    mut tps = []str.new()
+    if raw_row(@inst_row) >= 0 {
+        ro fd = @ctx.fns.rows[raw_row(@inst_row)]
+        tps.append(@ctx.fns.tparams[fd.tparam_off..fd.tparam_off + fd.tparam_cnt])
+    } else {
+        // A body of the file: no generic is typed outside an instance.
+    }
+    ty_of_type_ref(kids, 2, no_ty(), tps, @substs, @ctx.types, @ctx.defs, @ctx.tys)
+}
+
+/// `ro y T = e`: the written type is the initializer's expectation (a bare
+/// `None` takes it), a literal takes it (D489), any other value must BE it
+/// (D491) -- and the name is bound with `T`, whatever the initializer was.
+fn Checker mut @type_declared_bind(kids []Node, dt TyId) -> () {
+    ro vname = leaf_text(kids[1])
+    ro init = kids[kids.len() - 1]
+    ro ik = init.kind_of()
+    if ik == NodeKind.MatchExpr || ik == NodeKind.RecordCtor || ik == NodeKind.ArrayLit ||
+       ik == NodeKind.HandlerLit || ik == NodeKind.TupleExpr || !is_expr_kind(ik) {
+        // An initializer form whose own door types it without the expectation
+        // a written type would hand it -- a `match`, a constructor, an array, a
+        // handler literal: the same dated debt the whole form carried before.
+        @report_first_leaf_of([]Node.of(init), typed_local_msg(ty_source_name(@ctx, dt), true))
+        @bind_poisoned(vname, kids)
+        return
+    } else {
+        // A plain expression: typed against the written type below.
+    }
+    ro before = @out.len()
+    ro saved = @value_expect
+    @value_expect = dt
+    @type_expr(init)
+    @value_expect = saved
+    if @out.len() == before {
+        @judge_value_in(init, dt, "in this binding (written `${ty_source_name(@ctx, dt)}`)")
+    } else {
+        // The initializer was refused where it was typed: one cause.
+    }
+    if @out.len() > before {
+        @bind_poisoned(vname, kids)
+        return
+    } else {
+        // Judged and of the written type.
+    }
+    @scope.bind(vname, dt, bind_mode_at(kids))
+}

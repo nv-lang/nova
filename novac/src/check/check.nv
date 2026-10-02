@@ -55,7 +55,7 @@ import ../sem.{slice_shape_of, ctor_head_variant}
 // Where an arm keeps its body -- the door the lowering has read for waves.
 import ../sem.{arm_body_at, array_of_lparen_at}
 import ../sem.{is_constexpr, const_init_at}
-import ../types.{TyId, no_ty}
+import ../types.{TyId, no_ty, is_ty}
 import ../resolve.{FnIndex, FieldIndex}
 
 
@@ -683,7 +683,13 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // ordinary binding in the language and reported a
                     // declared type where none was written. Counting is a
                     // measurement too, and this one went unmeasured.
-                    if children.len() > 4 {
+                    // A WRITTEN TYPE THE REFERENCE DOOR READS is open since
+                    // 2026-10-02 (registry 1609, D491's binding position):
+                    // typed by `@type_declared_bind` (typed_bind.nv). A `ro`
+                    // view or an unreadable type keeps the refusals below.
+                    ro typed_open = children.len() > 4 && !(children[2].kind_of() == NodeKind.LeafNode &&
+                        leaf_kind(children[2]) == TokenKind.KwRo) && is_ty(@declared_bind_type(children))
+                    if children.len() > 4 && !typed_open {
                         // THE NAME IS READ AND JUDGED, not just the shape: the
                         // limit refuses the program, but a name nobody declared
                         // is what the reader can fix (registry #1150). The type

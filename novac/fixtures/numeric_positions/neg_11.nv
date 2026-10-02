@@ -1,0 +1,11 @@
+module numeric_positions.neg_11
+
+// ONE seeded cause (registry 1609, D491): a numeric value standing in
+// `int` is not `i64` (D129), of another numeric type. A number never changes its type
+// implicitly; the refusal carries the oracle's code.
+// NOVAC_EXPECT a value of type `int` does not become `i64` in this binding
+fn main() {
+    ro x = 7
+    ro y i64 = x
+    println(y)
+}

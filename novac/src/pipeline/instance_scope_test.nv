@@ -151,7 +151,9 @@ test "an instance body passes the subset walk, not typing alone (#1539)" {
     ro (d0, _) = compile_beside("module hp\nimport ./geo\nfn main() {\n ro v = [7]\n println(v.bad())\n}", geo)
     assert(d0.len() == 1, messages(d0))
     assert(d0[0].message.contains("in the instance of `bad`"), messages(d0))
-    assert(d0[0].message.contains("declared local type"), messages(d0))
+    // A written local type is compiled since registry 1609: the refusal is the
+    // oracle's own E7301 -- `@len()` is an `int`, the binding writes `str`.
+    assert(d0[0].message.contains("E7301"), messages(d0))
     // CONTROL: the walk is the BODY's -- a generic declaration is not refused
     // as "generic parameters are not compiled yet", and a clean body still
     // compiles to its instance.

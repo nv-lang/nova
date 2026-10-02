@@ -94,8 +94,14 @@ fn Checker mut @type_const_decl(kids []Node) -> () {
         // ANOTHER TYPE than the one written: the declaration is refused, in
         // the return door's words (E7301; E_IMPLICIT_NARROWING for an integer
         // narrowing), and the written type stays the constant's at every read.
-        @reject_first_leaf_of([]Node.of(init), const_mismatch_msg(ty_source_name(@ctx, own),
-            ty_source_name(@ctx, wt), int_narrows(@ctx.tys, own, wt)))
+        // Two numbers are D491's (E_IMPLICIT_NARROWING, widening too); any
+        // other pair keeps the return door's E7301 sentence.
+        ro cmsg = if differ_numeric(@ctx, own, wt) {
+            numeric_position_msg(@ctx, own, wt, "as this constant's value (written `${ty_source_name(@ctx, wt)}`)")
+        } else {
+            const_mismatch_msg(ty_source_name(@ctx, own), ty_source_name(@ctx, wt), false)
+        }
+        @reject_first_leaf_of([]Node.of(init), cmsg)
         return
     } else {
         // A literal the written type takes, or a value already of it.
