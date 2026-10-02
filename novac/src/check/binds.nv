@@ -84,7 +84,7 @@ fn Checker mut @type_bind(st Node) -> () {
 /// parameters read as their substitution -- `no_ty()` when the door cannot read
 /// it. Asked by the shape walk (is the form compiled?) and by typing (does the
 /// initializer match?): one reading for both.
-fn Checker @declared_local_type(kids []Node) -> TyId {
+fn Checker mut @declared_local_type(kids []Node) -> TyId {
     if kids.len() < 5 { return no_ty() }
     mut tps = []str.new()
     if raw_row(@inst_row) >= 0 {
