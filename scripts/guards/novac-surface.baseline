@@ -988,7 +988,11 @@ resolve 23
 #   same-named rows of every module, each with its home, walked by check's constant door
 #   (`Checker @const_seen`): a body reads its OWN module's constant, not the caller's.
 # merge of p274-carina-k1 into the merge train (integrator, 2026-10-02): sem 331 (train) + 5 (k1) = 336.
-sem 336
+# 2026-10-02, cloud session p274-carina-k1 (registry 1567, types step 1): sem 336 -> 337:
+#   `DefTable @is_private` -- a type another module keeps private (D281), registered for that
+#   module's own instances; asked by check's type door (`Checker @type_seen`), which owns
+#   no registry of its own.
+sem 337
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
