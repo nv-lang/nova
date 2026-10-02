@@ -321,8 +321,12 @@ export fn c_static_symbol(ctx Ctx, row FnRow, args []TyId) -> str {
     s.append("Nova_")
     if owner_n > 0 {
         s.append(instance_body(ctx, subst_type(ctx, fd.owner, args)))
-    } else {
+    } else if ctx.tys.names_a_decl(fd.owner) {
         s.append(decl_of_ty(ctx, fd.owner).name)
+    } else {
+        // A PRIMITIVE owner (`fn str.new()`, registry 1631) names no
+        // declaration: the shell spells it by its source name, `Nova_str_static_new`.
+        s.append(ty_source_name(ctx, fd.owner))
     }
     s.append("_static_")
     s.append(fd.name)

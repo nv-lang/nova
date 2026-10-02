@@ -1063,7 +1063,19 @@ resolve 23
 #   module value is registered only with a written type) -- one door for both, not two copies.
 # merge of p274-carina-k1 (part 6) into main (integrator, 2026-10-02): the guard's counts on the merged
 #   tree -- sem 343 (main's 342 plus k1's const_type_at), source 7 (unchanged).
-sem 343
+# merge of origin/main f80d61e00 into p274-carina-mono-k2 (task 4 sync): main's 341 plus
+#   this branch's `sole_expr_of_unsafe` (its line below) = 342 -- the guard's count on the merged tree.
+# 2026-10-02, cloud session p274-carina-mono-k2 (task 4): sem 338 -> 339: `sole_expr_of_unsafe`
+#   (sem/node_questions.nv) -- the one expression of `unsafe { e }`, asked by check's position
+#   gate (check/check.nv) and printed by the emitter (emit_c/emit_expr.nv): two askers, one door.
+# 2026-10-02, cloud session p274-carina-mono-k2 (registry 1647): sem 342 -> 343:
+#   `variant_sum_count` (sem/callables.nv) -- how many sums declare a variant name, the file's
+#   and the handed alike (D478 rule 2); asked by check's deferred-argument door and the lattice,
+#   where `variants_named`'s file-first count hid the language's `Result`/`Option` variants.
+# merge of p274-carina-mono-k2 (tasks 4-6) into main (integrator, 2026-10-02): the guard's counts on
+#   the merged tree -- sem 345 (main's 343 plus mono-k2's sole_expr_of_unsafe and variant_sum_count),
+#   source 7 (strarm's SourceText.@holds).
+sem 345
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

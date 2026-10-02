@@ -239,13 +239,14 @@ export fn FnTable @compiles_body(row FnRow) -> bool => raw_row(row) < @own_cnt
 /// free functions in `harvest_fn`. Asked of the file's rows only (`own_cnt` is
 /// fixed before any harvest), so a real overload handed from elsewhere stays.
 #realtime nogc
-export fn FnTable @file_declares_method(name str, params []ParamDef) -> bool {
+export fn FnTable @file_declares_method(name str, params []ParamDef, owner TyId) -> bool {
     // ONE name lookup, then the same-name chain BY ROW (the variant table's
-    // shape): no name is compared twice.
+    // shape): no name is compared twice. `owner` tells a STATIC method
+    // (`fn T.new()`, its type) from a method (`no_ty()`): the two never meet.
     mut r = @own_methods.find(name)
     while r >= 0 {
         ro d = @rows[r]
-        if d.param_cnt == params.len() && @same_params(d.param_off, params) { return true }
+        if d.owner == owner && d.param_cnt == params.len() && @same_params(d.param_off, params) { return true }
         r = @own_next[r]
     }
     false
@@ -261,7 +262,12 @@ export fn FnTable mut @seal_own() -> () {
     // Walked from the END so each name's chain starts at its FIRST row.
     mut r = @own_cnt - 1
     while r >= 0 {
-        if @rows[r].has_recv {
+        // A STATIC method joins the chain too (the static twin of registry 1354):
+        // in module mode the file's own `fn ConstTable.new()` arrives a second
+        // time as a handed declaration, and without its row in the chain the
+        // second copy became a second static of one name and arity -- 8 refusals
+        // of the 0.2 measure, `this type declares several static methods`.
+        if @rows[r].has_recv || is_ty(@rows[r].owner) {
             @own_next[r] = @own_methods.find(@rows[r].name)
             @own_methods.put(@rows[r].name, r)
         } else {
@@ -512,6 +518,22 @@ export fn variant_named_in(ctx Ctx, name str, expect TyId) -> VariantRow {
         r = raw_vrow(v.next_same)
     }
     no_vrow()
+}
+
+/// HOW MANY sums declare this variant name -- the file's and the handed alike:
+/// the count D478 rule 2 speaks of ("visible from two or more sums"). Not
+/// `variants_named`'s count, which keeps the file's set when it is non-empty: a
+/// file sum's `Ok` beside the language's `Result` one is one there and two here,
+/// and the position's expectation chooses between them (registry 1647).
+#realtime nogc
+export fn variant_sum_count(ctx Ctx, name str) -> int {
+    mut r = ctx.variant_names.find(name)
+    mut n = 0
+    while r >= 0 {
+        n += 1
+        r = raw_vrow(ctx.variant_rows[r].next_same)
+    }
+    n
 }
 
 /// HOW MANY sums declare this variant name, and the first row that does.

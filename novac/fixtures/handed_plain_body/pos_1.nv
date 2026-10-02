@@ -1,0 +1,17 @@
+module handed_plain_body.pos_1
+
+// NON-generic std methods the shell does not carry, made by novac from their
+// handed bodies (task 4 of 274, the shell-str group of the 0.2 measure). The
+// bodies of `trim_ascii*` reach three things at once, each a class of its own:
+// the method itself (`str @trim_ascii`, no shell symbol), std's PRIVATE free
+// function `is_ascii_ws` it calls (no module line in the handed text -- the
+// call used to print the shell's name the shell lacks, a link error), and
+// `unsafe { @ptr().read_at(i) } as int` -- an `unsafe` block as the operand of
+// a cast, which IS its expression (D216) in every value position.
+fn main() {
+    ro s = "  padded text \t"
+    println(s.trim_ascii())
+    println(s.trim_ascii_start())
+    println(s.trim_ascii_end())
+    println("plain".trim_ascii())
+}

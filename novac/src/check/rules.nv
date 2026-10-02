@@ -190,7 +190,7 @@ fn Checker mut @report_typed_local(children []Node, tname str, known bool) -> ()
     ro ro_bind = children[0].kind_of() == NodeKind.LeafNode && leaf_kind(children[0]) == TokenKind.KwRo
     if view && ro_bind {
         @reject_first_leaf_of([]Node.of(children[2]), REDUNDANT_TYPE_RO_MSG)
-    } else if view {
+    } else if view || tname == "" {
         @report_first_leaf_of(children, TYPED_LOCAL_MSG)
     } else {
         @report_first_leaf_of(children, typed_local_msg(tname, known))

@@ -509,7 +509,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
                 } else {
                     // A file sum's variant: its maker, below.
                 }
-                @body.append("${c_maker(@ctx, v)}(")
+                @body.append("${@variant_maker(v, nt)}(")
                 @emit_bound_args(kids, 3, false, e.id_of(), callee_row_or_none(cr))
                 @body.append(")")
                 return
@@ -597,7 +597,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
                     // A file sum's variant: its maker opens here, the
                     // arguments follow below.
                 }
-                @body.append("${c_maker(@ctx, v)}(")
+                @body.append("${@variant_maker(v, nt)}(")
             }
             // A CONSTRUCTOR is a function whose return type is a
             // parenthesised record and whose body novac does not emit -- so
@@ -708,6 +708,8 @@ fn Emitter mut @emit_expr(e Node) -> () {
             @emit_expr(kids[2])
             @body.append(")")
         }
+    } else if k == NodeKind.Unsafe {
+        @emit_unsafe_value(e)
     } else if k == NodeKind.IsTest {
         @emit_is_test(e)
     } else if k == NodeKind.Cast {
@@ -913,4 +915,3 @@ fn is_sum_equality(op BinOp, ctx Ctx, t TyId) -> bool {
         BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight | Range => false
     }
 }
-

@@ -18,6 +18,7 @@ module novac.check
 
 import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
+import ../sem.{is_arg_node, arg_expr_of}
 import ../sem.{branch_children, leaf_text, leaf_kind, expr_leaf_name, ty_of_decl, raw_row, no_row, FnRow}
 import ../sem.{CalleeTarget, bind_slots, is_arg_value_kind, c_static_symbol}
 import ../types.{TyId, no_ty, is_ty}
@@ -70,9 +71,14 @@ fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
             DefFn(_) | DefConst(_) => return false
         }
     }
-    // SILENT-OK: a head that is no declared type has no static methods to ask.
-    if !is_ty(head_t) || !@ctx.tys.names_a_decl(head_t) { return false }
-    ro head_decl = @ctx.tys.decl_head_of(head_t)
+    // SILENT-OK: a head that is no type has no static methods to ask.
+    if !is_ty(head_t) { return false }
+    // A PRIMITIVE head (`str.new()`, std's `str.alloc_copy(p, n)`) names no
+    // declaration: its static methods are the rows OWNED by that very type
+    // (registry 1631). Until then the door answered "not mine" for it, and the
+    // variant door below called it the program's error -- "this type declares
+    // no static method of this name" about `fn str.new()`, which std declares.
+    ro head_nominal = @ctx.tys.names_a_decl(head_t)
     ro mname = leaf_text(kids[2])
     // THE ROW, by name and written arity among the type's static methods --
     // asked BEFORE the arguments are walked, so a spelling that is not a static
@@ -89,8 +95,16 @@ fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
     for i in 0..@ctx.fns.rows.len() {
         ro fd = @ctx.fns.rows[i]
         if fd.name != mname || !is_ty(fd.owner) { continue }
-        // A static method of a PRIMITIVE (`int.max_value()`) names no declaration.
-        if !@ctx.tys.names_a_decl(fd.owner) || @ctx.tys.decl_head_of(fd.owner) != head_decl { continue }
+        // A nominal head matches by its declaration (`Vec[T]` and `Vec[int]`
+        // are one head); a primitive one (`int.max_value()`) by the type itself.
+        if head_nominal {
+            if !@ctx.tys.names_a_decl(fd.owner) { continue }
+            if @ctx.tys.decl_head_of(fd.owner) != @ctx.tys.decl_head_of(head_t) { continue }
+        } else if fd.owner != head_t {
+            continue
+        } else {
+            // A static method of this very primitive.
+        }
         named += 1
         // The written arguments fill the leading parameters; the rest must
         // carry defaults (D102: `Vec[T].new(cap int = 0)` takes `new()`).
@@ -119,8 +133,10 @@ fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
     @value_expect = no_ty()
     at = 0
     for c in kids {
-        if at > 2 && is_arg_value_kind(c.kind_of()) {
-            @type_expr(c)
+        if at > 2 && is_arg_node(c) {
+            // A NAMED argument's value too (registry 1630: std's
+            // `StringBuilder.new(cap: s.byte_len() + 2)` in `str @pad_start`).
+            @type_expr(arg_expr_of(c))
         } else {
             // The head, the dot, the name and the punctuation: nothing to type.
         }
@@ -175,9 +191,12 @@ fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
     } else {
         // Not generic: no substitution.
     }
-    // WHOSE BODY: the shell's, or one this unit makes from the body it was
-    // handed -- refused by the shell's name when neither.
-    if !@ctx.instantiates(row, ids) && !@ctx.interop.has(c_static_symbol(@ctx, row, ids)) {
+    // WHOSE BODY: the PROGRAM's (another module of it -- `ConstTable.new()`
+    // from novac's own `sem` in the self-build; its owner unit compiles it, as
+    // a method of a program module, 274.11 E.10 step 2a), the shell's, or one
+    // this unit makes from the body it was handed -- refused by the shell's
+    // name when none.
+    if !@ctx.in_program(row) && !@ctx.instantiates(row, ids) && !@ctx.interop.has(c_static_symbol(@ctx, row, ids)) {
         @report_first_leaf_of(kids, no_shell_method_msg(mname, expr_leaf_name(head)))
         return true
     } else {

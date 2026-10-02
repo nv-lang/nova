@@ -1,0 +1,99 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Role: a NON-generic handed body the shell does not carry is made by the unit
+//   from its text, the way a generic instance always was (task 4 of 274, the
+//   shell-str group of the 0.2 measure: `s.replace`, `k.is_dir()`, std's
+//   private `is_ascii_ws` under `str @trim_ascii`); the static twin of
+//   registry 1354; one cause, one diagnostic around `unsafe { }`; the block
+//   as a value in any position. The POISONED-name cascades inside a made body
+//   need std's own declarations, which these tests do not hand: the fixture
+//   novac/fixtures/std_method_body/neg_2.nv holds them.
+// Used by: nova test novac/src/pipeline (the module-test batch of the gate).
+// Guarded by: check-novac-module-tests, check-novac-file-size.py.
+//
+// Why a file of its own: each rule here moved a contract the older holders
+// (pipeline_test, handed_self_test, handed_free_test) asserted the other way,
+// and those keep the body-less half -- refused by name -- as their control.
+
+module novac.pipeline
+
+import ../sem.{InteropTable}
+
+test "a STATIC method of the file handed back to it is ONE, not two (registry 1354's static twin)" {
+    // Module mode hands the compiled file back as a declaration; before task 4
+    // the copy of `fn Box.make()` was a second static of one name and arity --
+    // 8 refusals of the 0.2 measure, "declares several static methods".
+    ro src = "module u\ntype Box { v int }\nfn Box.make() -> Box => Box { v: 1 }\nfn apply() -> int => Box.make().v\nfn main() {\n println(apply())\n}"
+    ro ds = compile_with(src, parse_decls(self_decls(src)), interop_surface())
+    assert(ds.len() == 0, messages(ds))
+    // CONTROL: a METHOD of the same name and parameters is another owner -- it
+    // does not swallow the static, and the static still resolves.
+    ro msrc = "module u\ntype Box { v int }\nfn Box.make() -> Box => Box { v: 1 }\nfn Box @make() -> Box => Box { v: 2 }\nfn apply() -> int => Box.make().v\nfn main() {\n println(apply())\n}"
+    ro ms = compile_with(msrc, parse_decls(self_decls(msrc)), interop_surface())
+    assert(ms.len() == 0, messages(ms))
+}
+
+test "a handed NON-generic method the shell lacks is made from its body (task 4)" {
+    mut texts = std_decls()
+    texts.push("fn str @nowhere() -> int => 7\n")
+    ro (d, c) = compile_to_c("fn main() { ro s = \"ab\"\n println(s.nowhere()) }", texts)
+    assert(d.len() == 0, messages(d))
+    // The body is in the C: novac printed the instance, not a shell call.
+    assert(c.contains("nowhere"), c)
+    // The BODY is judged, as any instance's is: a wrong one is refused inside
+    // the instance, by its own cause.
+    mut wrong = std_decls()
+    wrong.push("fn str @nowhere() -> int => \"x\"\n")
+    ro (w, _) = compile_to_c("fn main() { ro s = \"ab\"\n println(s.nowhere()) }", wrong)
+    assert(w.len() == 1 && messages(w).contains("in the instance of `nowhere`"), messages(w))
+}
+
+/// An EMPTY link surface with the handed texts described: the shell carries
+/// nothing, and a body the unit makes is typed against its own text.
+fn described_bare(texts []str) -> InteropTable {
+    mut names = []str.new()
+    for i in 0..texts.len() {
+        names.push("decl_${i}")
+    }
+    mut t = InteropTable.new()
+    t.describe_decls(names, texts)
+    t
+}
+
+test "one cause, one diagnostic: a refusal inside `unsafe { }` is not also E_UNSAFE_UNUSED" {
+    ro std = std_decls()
+    // The refused operation was never counted, so "unused" would be a guess.
+    ro (r, _) = compile_to_c("fn main() {\n ro b = unsafe { nosuch as u8 }\n println(b)\n}", std)
+    assert(r.len() == 1, messages(r))
+    // CONTROL: a block with nothing unsafe in it is still refused as unused.
+    ro (u, _) = compile_to_c("fn main() {\n ro n = 1\n ro b = unsafe { n + 1 }\n println(b)\n}", std)
+    assert(u.len() == 1 && messages(u).contains("E_UNSAFE_UNUSED"), messages(u))
+}
+
+test "`unsafe { e }` is `e` in every value position: the operand of `as` (D216)" {
+    ro std = std_decls()
+    // std's `trim_ascii` shape: the block is the operand of a cast.
+    ro (d, c) = compile_to_c("fn main() {\n ro ch = 'q'\n println(unsafe { ch as u8 } as int)\n}", std)
+    assert(d.len() == 0, messages(d))
+    // Printed as the expression itself, with no temporary: the block does
+    // nothing at run time.
+    assert(c.contains("((nova_int)(") || c.contains("(nova_int)"), c)
+    // CONTROL: a block WITH a statement is still the lowering's to hoist, and
+    // stays refused where the lowering has no place for it.
+    ro (s, _) = compile_to_c("fn main() {\n ro ch = 'q'\n println(unsafe { ro k = ch\n k as u8 } as int)\n}", std)
+    assert(s.len() == 1, messages(s))
+}
+
+test "a constructor named by two sums takes the one its position expects (D478, registry 1632)" {
+    // The self-build: std's `[]u8 @to_str`, made from its body, writes
+    // `Err(..)` under `-> Result[..]` in a unit whose own sums declare an
+    // `Err` too. Two handed sums stand in for the pair here.
+    mut std = std_decls()
+    std.push("module std.ha\nexport type Aa enum\n    | Hit(int)\n    | Miss\n")
+    std.push("module std.hb\nexport type Bb enum\n    | Hit(int)\n    | Gone\n")
+    ro src = "import std.ha.{Aa}\nimport std.hb.{Bb}\nfn f() -> Bb => Hit(1)\nfn main() {\n println(1)\n}"
+    ro d = compile_with(src, parse_decls(std), interop_surface())
+    assert(d.len() == 0, messages(d))
+    // CONTROL: no expectation -- the name is ambiguous, refused by name.
+    ro c = compile_with("import std.ha.{Aa}\nimport std.hb.{Bb}\nfn main() {\n ro x = Hit(1)\n println(1)\n}", parse_decls(std), interop_surface())
+    assert(c.len() == 1 && messages(c).contains("more than one sum"), messages(c))
+}
