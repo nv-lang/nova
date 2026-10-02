@@ -379,8 +379,10 @@ fn Checker mut @flow_stmt(st Node, mut fl ConsumeFlow, is_last bool) -> () {
         @flow_branch(st, fl)
     } else if is_loop_kind(k) {
         @flow_loop(st, fl)
-    } else if k == NodeKind.Block || k == NodeKind.Unsafe {
+    } else if k == NodeKind.Block {
         @flow_scope_block(st, fl)
+    } else if k == NodeKind.Unsafe {
+        @flow_scope_block(unsafe_block_of(st), fl)
     } else if is_compound_kind(k) {
         @flow_nested(st, fl)
     } else if diverges {
@@ -483,8 +485,10 @@ fn Checker mut @flow_expr(e Node, mut fl ConsumeFlow, moved bool) -> () {
         @flow_call(e, fl)
     } else if is_branch_kind(k) {
         @flow_branch(e, fl)
-    } else if k == NodeKind.Block || k == NodeKind.Unsafe {
+    } else if k == NodeKind.Block {
         @flow_scope_block(e, fl)
+    } else if k == NodeKind.Unsafe {
+        @flow_scope_block(unsafe_block_of(e), fl)
     } else if is_compound_kind(k) {
         @flow_nested(e, fl)
     } else if k == NodeKind.Try && flow_any_live(fl) {

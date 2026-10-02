@@ -8,7 +8,7 @@
 //   the arms of a branch and the passes of a loop start from one state and are
 //   joined -- Live, Consumed, MaybeConsumed; an arm, a loop body and a nested
 //   block are scopes of their own; `return`, `break`, `continue` and a diverging
-//   call are EXIT POINTS (D133 "Точки выхода"): what is still owned there is
+//   call are EXIT POINTS (D133, the list of exit points): what is still owned there is
 //   `D133-not-consumed`, and the path they end takes no part in a join.
 // Used by: check/consume_flow.nv (`@flow_stmt`, `@flow_expr`).
 // Guarded by: the fixtures novac/fixtures/must_consume/ through
@@ -218,19 +218,12 @@ fn Checker mut @flow_arm_body(b Node, mut fl ConsumeFlow) -> () {
     }
 }
 
-/// A nested block or `unsafe { }` in straight-line code: a scope of its own -- what
-/// it binds must be consumed by its end.
-fn Checker mut @flow_scope_block(n Node, mut fl ConsumeFlow) -> () {
+/// A nested block in straight-line code (a bare one, or the block of an `unsafe { }`,
+/// `unsafe_block_of`): a scope of its own -- what it binds must be consumed by its end.
+fn Checker mut @flow_scope_block(b Node, mut fl ConsumeFlow) -> () {
     ro mark = fl.owned_ty.len()
     fl.nest += 1
-    if n.kind_of() == NodeKind.Block {
-        @flow_block(n, fl, false)
-    } else {
-        // `unsafe { ... }`: its block is a child.
-        for c in branch_children(n) {
-            if c.kind_of() == NodeKind.Block { @flow_block(c, fl, false) } else { continue }
-        }
-    }
+    @flow_block(b, fl, false)
     fl.nest -= 1
     if fl.stopped { return }
     if !fl.dead {
@@ -239,6 +232,15 @@ fn Checker mut @flow_scope_block(n Node, mut fl ConsumeFlow) -> () {
         // Left early: the exit judged what the block had bound.
     }
     flow_drop_from(fl, mark)
+}
+
+/// The block of an `unsafe { ... }` (D216 s8): its one Block child; the node itself
+/// when the parser marked a missing body (nothing then to walk but its leaves).
+fn unsafe_block_of(n Node) -> Node {
+    for c in branch_children(n) {
+        if c.kind_of() == NodeKind.Block { return c }
+    }
+    n
 }
 
 /// A loop [KwWhile, cond, body] / [KwWhile, pattern, `=`, init, body] / [KwFor,
