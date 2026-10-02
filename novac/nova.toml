@@ -534,7 +534,11 @@
 # they now point to the narrowing of AMEND 2026-09-01. D85 -- "a Fail function" means a function
 # whose return is not Result/Option (judged by the return type, as E_TRY_IN_FAIL_FN does). No new
 # rule, so no cost to Carina.
-#   spec-queue: 165
+# 2026-10-02 (integrator): D84 -- rule 1 of the mode axis chooses between ro and mut (an owned
+# temporary goes to consume by rule 3); "mut only for a mutable place" is the rule of CHOOSING among
+# overloads, a single mut parameter of a heap type takes a temporary (D326 R3/R6). No new rule;
+# Carina's refusal of `@record_pattern([]Node.new())` is her defect (k1's queue).
+#   spec-queue: 166
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,
