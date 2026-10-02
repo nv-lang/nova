@@ -1,0 +1,35 @@
+=== place A (D489)
+20694:Литерал — и нетипизированное константное выражение из литералов (`40 + 60`, `-1`) — не имеет типа, пока
+=== place B (D54, amendment 2026-10-01 p.3)
+3654:> **3. Приоритет: `as` связывает сильнее префиксного минуса** — `-x as T` читается как `-(x as T)`, как у
+=== PROGRAM
+     1	// Hunt 2026-10-02 cast x K1, contradiction probe (not a finding).
+     2	// `-128 as i8`: D54 amendment 2026-10-01 p.3 reads `-(128 as i8)`, i.e.
+     3	// -(-128), a negation overflow; D489 names `-1` an untyped constant
+     4	// expression -- read as ONE literal, `(-128) as i8` is -128. Both compilers
+     5	// follow D54 today: -127 is printed, then "negation overflow".
+     6	fn main() {
+     7	    println(-127 as i8)
+     8	    println(-128 as i8)
+     9	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=0
+oracle run rc=101
+=== SUBJECT: novac emit prog.nv
+novac emit rc=0
+--- Carina's C, the body of main
+static nova_unit nova_fn_main_impl(void) {
+    nova_print_int(nova_i8_checked_neg(((int8_t)(((nova_int)127LL)))));
+    nova_print_newline();
+    nova_print_int(nova_i8_checked_neg(((int8_t)(((nova_int)128LL)))));
+    nova_print_newline();
+    return NOVA_UNIT;
+}
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=101
+=== STDOUT, line by line: oracle | Carina
+  1  panic: negation overflow| panic: negation overflow
+  2  -127                    | -127
+=== VERDICT: SAME stdout
