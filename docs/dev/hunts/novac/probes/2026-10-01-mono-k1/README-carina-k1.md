@@ -27,6 +27,7 @@ NOVAC=$PWD/novac/target/novac NOVA=$PWD/nova-cli/target/release/nova NOVA_CLANG=
 | `type-body-private-sum` | №1567 | приватная СУММА модуля: вариант строится в приватном помощнике, сопоставляется в обобщённом методе. Оракул `1` | «`pick` is not a callable» | проверка проходит (шаг 1); C в одноединичной пробе без `NovaValue_Mode` — упрощение 2а |
 | `type-body-private-method` | №1567 | метод приватного типа модуля, вызванный из его обобщённого метода. Оракул `6` (тип назван `Tally`: имя `Acc` оракул путает с параметром `fn[Acc]` в std, E_PREFIX_SHADOWS_NAMED_TYPE) | «no such method» | проверка проходит (шаг 1) |
 | `type-body-shadow` | №1567, оракул | у вызывающего тип того же имени с другой раскладкой. **Оракул сам строит `Cell` вызывающего** (E_MISSING_FIELD_IN_LITERAL на теле `geo.nv:8:12`) — оракульная половина | отказ «omits a declared field» | без изменений (имя занято видимым типом — приватный не регистрируется, см. отчёт части 4) |
+| `handed-sum-pattern` | часть 5 | `match` на сумме другого модуля программы, чья полезная нагрузка — NEWTYPE того же модуля (`TFn(Row)`, `type Row int`): форма `CalleeFn(FnRow)` из sem в mono. Оракул `2` `1` | «the pattern's payload count disagrees» ×2 — терм переданного newtype появлялся ПОСЛЕ регистрации переданных вариантов, и нагрузка выпадала | проверка проходит (часть 5); C в одноединичной пробе без `Nova_Tgt` — упрощение 2а |
 
 Пробы охотника по №1520 на базе ветки (а не на `e448f0193`, где их снимал охотник):
 `fluent-clear-alias`, `fluent-clear-chain-f64`, `fluent-module-mark` — **уже совпадают** с
