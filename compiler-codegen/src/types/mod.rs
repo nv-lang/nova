@@ -102,7 +102,7 @@ pub mod constraint_solver;
 ///
 /// U.5.2 amend: `Scalar` also carries `wide_default` — `true` ONLY for `int`/`uint`,
 /// `false` for the explicit sized names (`i8`..`i64` / `u8`..`u64`). `int`≡`i64` and
-/// `uint`≡`u64` stay equal on `(width, signed)` (arithmetic / `would_narrow_into`
+/// `uint`≡`u64` stay equal on `(width, signed)` (arithmetic / `changes_int_type_into`
 /// read only those), but DIFFER on `wide_default`: the wide defaults skip the literal
 /// range-check (D227 Rule 1), the sized names are range-checked. This is the one bit
 /// the lossy `Ty`/`TyCat` could not express and the reason `sized_int_name` needs the
@@ -418,26 +418,21 @@ impl ResolvedType {
         }
     }
 
-    /// Would coercing a non-literal value of `self` into `target` LOSE range — i.e.
-    /// a narrowing / value-range-unsafe int conversion requiring explicit `as`?
-    /// Mirrors `is_int_narrowing` EXACTLY (single source for U.5.2). Non-int on
-    /// either side ⇒ `false` (permissive, D54).
-    pub fn would_narrow_into(&self, target: &ResolvedType) -> bool {
-        let (Some((fw, fs)), Some((ew, es))) =
-            (self.int_width_sign(), target.int_width_sign())
-        else {
-            return false;
-        };
-        if fw == ew && fs == es {
-            return false; // identity widening (int≡i64, uint≡u64, Tn→Tn)
+    /// D491 (registry 221.1 #1608): does a NON-literal integer value of `self` change its
+    /// TYPE going into `target`? Every change counts -- widening (`u8` -> `int`),
+    /// narrowing, a sign flip, and `int` <-> `i64` / `uint` <-> `u64` (distinct types: `int`
+    /// is `intptr_t`, D129 amend). The single source for integers: every position, the
+    /// assignment compare and the `match` arms read it. Non-int on either side => `false`
+    /// (float and a change of kind: `numeric_change.rs`). Before D491 a widening was
+    /// implicit and only a narrowing answered `true` (the function was `changes_int_type_into`).
+    pub fn changes_int_type_into(&self, target: &ResolvedType) -> bool {
+        match (self.peel_view(), target.peel_view()) {
+            (
+                ResolvedType::Scalar { width: fw, signed: fs, wide_default: fd },
+                ResolvedType::Scalar { width: ew, signed: es, wide_default: ed },
+            ) => (fw, fs, fd) != (ew, es, ed),
+            _ => false,
         }
-        let safe_widening = match (fs, es) {
-            (true, true) => ew > fw,   // signed → wider signed
-            (false, false) => ew > fw, // unsigned → wider unsigned
-            (false, true) => ew > fw,  // unsigned → strictly wider signed (range fits)
-            (true, false) => false,    // signed → unsigned: never implicit
-        };
-        !safe_widening
     }
 
     /// Plan 172.1 U.4.4 / U.1.3b: the shared PRIMITIVE gate. A resolved type is
@@ -578,7 +573,7 @@ mod resolved_type_tests {
         assert_eq!(ResolvedType::from_type_ref(&ro(int())).sized_int_name(), None); // wide default
         let ro_u32 = ResolvedType::from_type_ref(&ro(prim_ref("u32", Span::dummy())));
         let i32t = ResolvedType::from_type_ref(&prim_ref("i32", Span::dummy()));
-        assert!(ro_u32.would_narrow_into(&i32t)); // `readonly u32` → i32 narrows like `u32`
+        assert!(ro_u32.changes_int_type_into(&i32t)); // `readonly u32` → i32 narrows like `u32`
     }
 
     #[test]
@@ -777,37 +772,30 @@ mod resolved_type_tests {
     }
 
     #[test]
-    fn would_narrow_into_int_semantics() {
-        // narrowing reads only (width, signed) — `wide_default` is irrelevant here.
+    fn changes_int_type_into_int_semantics() {
+        // D491 (#1608): every change of integer type counts, widening included.
         let s = |w, sg| ResolvedType::Scalar { width: w, signed: sg, wide_default: false };
-        // narrowing / value-range-unsafe:
-        assert!(s(32, false).would_narrow_into(&s(32, true))); // u32 → i32
-        assert!(s(64, false).would_narrow_into(&s(64, true))); // u64 → int(i64)
-        assert!(s(32, true).would_narrow_into(&s(32, false))); // i32 → u32 (signed→unsigned)
-        assert!(s(64, true).would_narrow_into(&s(8, true)));   // i64 → i8
-        // safe widening / identity:
-        assert!(!s(8, false).would_narrow_into(&s(64, true)));  // u8 → int (range fits)
-        assert!(!s(64, true).would_narrow_into(&s(64, true)));  // int ≡ i64 identity
-        assert!(!s(8, true).would_narrow_into(&s(16, true)));   // i8 → i16
-        assert!(!s(8, false).would_narrow_into(&s(16, false))); // u8 → u16
-        // over real TypeRefs (the narrowing surface `assignable` exercises) — these are
-        // the exact pairs the deleted `is_int_narrowing` decided; pinned to the SAME
-        // verdicts (the U.5.2 fold is byte-identical, also gated by the corpus run).
+        assert!(s(32, false).changes_int_type_into(&s(32, true))); // u32 → i32
+        assert!(s(64, true).changes_int_type_into(&s(8, true)));   // i64 → i8
+        assert!(s(8, false).changes_int_type_into(&s(64, true)));  // u8 → i64: widening is a change too
+        assert!(s(8, true).changes_int_type_into(&s(16, true)));   // i8 → i16
+        assert!(!s(16, false).changes_int_type_into(&s(16, false))); // u16 → u16
         let tr = |n| prim_ref(n, Span::dummy());
         for (f, e, expect) in [
-            ("u32", "i32", true),  // narrowing (same width, sign flip)
-            ("u8", "int", false),  // safe widening (range fits)
-            ("i32", "u32", true),  // signed → unsigned
-            ("int", "i64", false), // int ≡ i64 identity
-            ("u64", "int", true),  // u64 → i64 narrowing
-            ("u8", "u16", false),  // safe widening
-            ("i64", "i8", true),   // narrowing
+            ("u32", "i32", true),
+            ("u8", "int", true),   // widening: D491
+            ("int", "i64", true),  // distinct types (`int` is `intptr_t`, D129 amend)
+            ("uint", "u64", true),
+            ("u8", "u16", true),
+            ("i64", "i8", true),
+            ("int", "int", false),
+            ("u8", "u8", false),
         ] {
             assert_eq!(
                 ResolvedType::from_type_ref(&tr(f))
-                    .would_narrow_into(&ResolvedType::from_type_ref(&tr(e))),
+                    .changes_int_type_into(&ResolvedType::from_type_ref(&tr(e))),
                 expect,
-                "would_narrow_into({f} → {e})"
+                "changes_int_type_into({f} → {e})"
             );
         }
     }
@@ -869,7 +857,7 @@ mod resolved_type_tests {
         assert!(cat_compatible_rt(&R::Any, &R::Str));
         assert!(cat_compatible_rt(&R::Bool, &R::Any));
         // Scalar/Float permissive on width+sign (= old (Int,Int)/(Int,Float)) — narrowing
-        // is decided SEPARATELY by `would_narrow_into`, not here:
+        // is decided SEPARATELY by `changes_int_type_into`, not here:
         assert!(cat_compatible_rt(&sc(8, false), &sc(64, true)));
         assert!(cat_compatible_rt(&sc(64, false), &sc(8, true)));
         assert!(cat_compatible_rt(&sc(32, true), &f(64)));
@@ -10424,16 +10412,14 @@ impl<'a> TypeCheckCtx<'a> {
                         if let (Some(target_ty), Some(value_ty)) =
                             (scope.get(name).cloned(), self.infer_expr_type(value, scope))
                         {
-                            // U.5.2: single-source narrowing via `would_narrow_into`
+                            // U.5.2: single-source narrowing via `changes_int_type_into`
                             // on DIRECT types (folds the legacy `is_int_narrowing`).
                             // #1611: and a change of numeric kind / a float narrowing.
                             let (value_direct, target_direct) = (
                                 ResolvedType::from_type_ref(&value_ty),
                                 ResolvedType::from_type_ref(&target_ty),
                             );
-                            if value_direct.would_narrow_into(&target_direct)
-                                || numeric_change::float_change_refused(&value_direct, &target_direct)
-                            {
+                            if numeric_change::value_type_changes(&value_direct, &target_direct) {
                                 let (from, to) =
                                     (typeref_display(&value_ty), typeref_display(&target_ty));
                                 errors.push(Diagnostic::new(
@@ -12559,6 +12545,7 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f4_check_value(left, scope, errors);
                 self.f4_check_value(right, scope, errors);
                 self.check_literal_operand(*op, left, right, gs, scope, errors); // #1593
+                self.check_operand_numeric_types(*op, left, right, scope, e.span, errors); // #1608
                 // Plan 172.1.1 (U.4.5 — Binary arm): materialize the binary expr's resolved type
                 // into the channel so codegen READS it instead of re-deriving via legacy.
                 // `infer_expr_type` has NO Binary arm (→ None), so compute the result type INLINE
@@ -12763,7 +12750,14 @@ impl<'a> TypeCheckCtx<'a> {
                                     .map(|t| ResolvedType::from_type_ref(&t))
                                     .or_else(|| self.resolved_types_buf.borrow().get(&e.id).cloned())
                             };
+                            // #1608 (D489): an operand made only of literals has no type of its
+                            // own -- the result is the other operand's (shifts keep the left).
+                            let lit_l = numeric_change::is_const_number_expr(left);
+                            let lit_r = numeric_change::is_const_number_expr(right);
+                            let shift = matches!(op, BinOp::Shl | BinOp::Shr);
                             let numeric = match (operand_rt(left), operand_rt(right)) {
+                                (Some(_), Some(r)) if lit_l && !lit_r && !shift && is_num(&r) => Some(r),
+                                (Some(l), Some(_)) if lit_r && !lit_l && is_num(&l) => Some(l),
                                 (Some(l), Some(r)) if is_num(&l) && is_num(&r) => join(&l, &r),
                                 // 172.1.2 Binary-bounds: ОДИНАКОВЫЙ numeric-bounded
                                 // TypeParam с обеих сторон → тот же TypeParam (Join видит
@@ -13450,6 +13444,7 @@ impl<'a> TypeCheckCtx<'a> {
                 if let Some(eb) = else_ {
                     self.f1_else(eb, gs, scope, errors);
                 }
+                self.check_if_branch_numeric_types(then, else_, scope, errors); // #1608 (D491)
                 // Plan 172.1 U.4.4 (If-expr half): materialize the common primitive type of an
                 // `if/else` EXPRESSION into the checker channel so codegen READS it instead of
                 // re-deriving (§0/§1) — the If-parallel of the Match-arm flip. See
@@ -16475,13 +16470,13 @@ impl<'a> TypeCheckCtx<'a> {
 
     /// [M-match-arm-mixed-int-width-sentinel-coerce] fix: does `b` need an EXPLICIT
     /// `as` to reach `a` (neither direction is a Nova-sanctioned safe int-widening,
-    /// D54/`would_narrow_into`)? int-family (`Scalar`) ONLY — non-int disagreement
+    /// D54/`changes_int_type_into`)? int-family (`Scalar`) ONLY — non-int disagreement
     /// (records/Float/etc.) is unchanged pre-existing behavior (bail silently, out
     /// of this marker's scope). `false` when EITHER side is non-int (permissive,
-    /// mirrors `would_narrow_into`'s own "Non-int on either side ⇒ false" contract —
+    /// mirrors `changes_int_type_into`'s own "Non-int on either side ⇒ false" contract —
     /// the caller's `int_width_sign` gate already excludes those before calling).
     fn int_arms_incompatible(a: &ResolvedType, b: &ResolvedType) -> bool {
-        b.would_narrow_into(a) && a.would_narrow_into(b)
+        b.changes_int_type_into(a) && a.changes_int_type_into(b)
     }
 
     fn infer_match_common_primitive(
@@ -16526,7 +16521,7 @@ impl<'a> TypeCheckCtx<'a> {
                     // e.g. `u32` sentinel arm + `int` literal arm) unify to the
                     // WIDER side instead of bailing — the wider type is what BOTH
                     // arms can losslessly hold (mirrors the assignment-target
-                    // widening Nova already allows elsewhere; `would_narrow_into`
+                    // widening Nova already allows elsewhere; `changes_int_type_into`
                     // is the single source, `int_width_sign` gates int-family-only).
                     let both_int = c.int_width_sign().is_some() && rt.int_width_sign().is_some();
                     if !both_int || Self::int_arms_incompatible(c, &rt) {
@@ -16535,7 +16530,7 @@ impl<'a> TypeCheckCtx<'a> {
                     // `rt` does NOT narrow into `c` ⇒ `c` is wide enough for `rt`,
                     // keep it. Otherwise (not incompatible ⇒ the OTHER direction
                     // must be safe) `c` narrows into `rt` ⇒ `rt` is the wider side.
-                    if !rt.would_narrow_into(c) {
+                    if !rt.changes_int_type_into(c) {
                         // c already wide enough — no change.
                     } else {
                         common = Some(rt); // upgrade to rt, the wider (or equal-C-type) side
@@ -16570,16 +16565,19 @@ impl<'a> TypeCheckCtx<'a> {
 
     /// [M-match-arm-mixed-int-width-sentinel-coerce] fix (Plan 172.2 followup,
     /// P1, 2026-07-21): a `match` whose arms hold GENUINELY incompatible int-family
-    /// widths (neither side safe-widens into the other, D54/`would_narrow_into` —
+    /// widths (neither side safe-widens into the other, D54/`changes_int_type_into` —
     /// e.g. `u32` vs `i32` same-width-different-sign, or `u16` vs `i8`) used to bail
     /// SILENTLY out of `infer_match_common_primitive` into the legacy codegen
     /// arm-type re-derivation, which picks the first non-`nova_int` arm regardless
     /// of the OTHER arm's width/sign — silently reinterpreting a sentinel literal's
     /// bits under the wrong type (`None => -1` read back as `4294967295` when a
-    /// sibling arm bound `u32`). Safe-widening-compatible mixes (`u32` sentinel arm
-    /// + `int`/`i64` literal arm) are NOT reported here — `infer_match_common_primitive`
-    /// now unifies those to the wider side (this function's own bail path is only
-    /// entered when NEITHER direction is safe). D-amendment: spec/decisions/02-types.md.
+    /// sibling arm bound `u32`). D-amendment: spec/decisions/02-types.md.
+    ///
+    /// Registry 221.1 #1608 (D491): ANY two numeric types of typed arms disagree now --
+    /// the safe-widening mix (`u32` arm + `int` arm) is no longer unified to the wider side
+    /// (D433 R1 revoked), and float arms are judged too; a bare literal arm still adopts
+    /// the others' type (D489). The judgement is `check_numeric_arms_agree`, shared with
+    /// the branches of an `if`.
     fn check_match_arm_width_mismatch(
         &self,
         arms: &[MatchArm],
@@ -16588,73 +16586,208 @@ impl<'a> TypeCheckCtx<'a> {
         errors: &mut Vec<Diagnostic>,
     ) {
         let Some(arm_types) = self.match_arm_value_types(arms, scope, scrut_ty) else { return };
-        let mut common: Option<(Span, ResolvedType)> = None;
-        let mut common_lit: Option<i128> = None; // Some iff `common` came from a bare literal arm
-        for (span, rt, lit) in arm_types {
-            let Some((c_span, c)) = &common else {
-                common = Some((span, rt));
-                common_lit = lit;
+        // #1608: a float-literal arm adopts a float type like an int literal adopts an int one.
+        let float_lit_spans: std::collections::HashSet<Span> = arms
+            .iter()
+            .filter_map(|arm| match &arm.body {
+                MatchArmBody::Expr(e) => Some(e),
+                MatchArmBody::Block(b) => b.trailing.as_deref(),
+            })
+            .filter(|e| Self::is_float_literal(e))
+            .map(|e| e.span)
+            .collect();
+        let arms4 = arm_types
+            .into_iter()
+            .map(|(sp, rt, lit)| (sp, rt, lit, float_lit_spans.contains(&sp)))
+            .collect();
+        self.check_numeric_arms_agree("match arms", "arm", arms4, errors);
+    }
+
+    /// #1608 (D491): the `if`/`else` branches of a value-producing `if` -- one numeric type,
+    /// as the arms of a `match`. Before, an `if` had no check at all: `if c { a_u32 } else
+    /// { n_int }` took a type nobody wrote.
+    fn check_if_branch_numeric_types(
+        &self,
+        then: &Block,
+        else_: &Option<ElseBranch>,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let mut tails: Vec<&Expr> = Vec::new();
+        let mut blocks: Vec<&Block> = vec![then];
+        let mut next = else_.as_ref();
+        while let Some(eb) = next {
+            match eb {
+                ElseBranch::Block(b) => {
+                    blocks.push(b);
+                    next = None;
+                }
+                ElseBranch::If(x) => match &x.kind {
+                    ExprKind::If { then, else_, .. } => {
+                        blocks.push(then);
+                        next = else_.as_ref();
+                    }
+                    _ => return,
+                },
+            }
+        }
+        if blocks.len() < 2 || else_.is_none() {
+            return; // an `if` without `else` is unit-valued
+        }
+        for b in &blocks {
+            let Some(t) = b.trailing.as_deref() else { return };
+            tails.push(t);
+        }
+        let mut arms4 = Vec::new();
+        for (b, t) in blocks.iter().zip(tails) {
+            let rt = if b.stmts.is_empty() {
+                self.infer_expr_type(t, scope).map(|tr| ResolvedType::from_type_ref(&tr))
+            } else {
+                None
+            }
+            .or_else(|| {
+                if t.id.is_set() {
+                    self.resolved_types_buf.borrow().get(&t.id).cloned()
+                } else {
+                    None
+                }
+            });
+            let Some(rt) = rt else { continue };
+            if rt == ResolvedType::Never {
+                continue;
+            }
+            arms4.push((t.span, rt, Self::bare_int_literal_value(t), Self::is_float_literal(t)));
+        }
+        self.check_numeric_arms_agree("if branches", "branch", arms4, errors);
+    }
+
+    /// #1608 (D491, D405): the two operands of an arithmetic, bitwise or comparison operator
+    /// have ONE numeric type. A literal operand takes the other's type (D489, judged by
+    /// `check_literal_operand`); shifts are exempt (the amount is conventionally another
+    /// type). Each operand is typed by the full inference, the checker channel when that is
+    /// silent. Before, only two SIZED integers of different widths were refused (`u8 + u16`),
+    /// so `u32 + int`, `u32 == i32`, `f32 * f64` and `int + f64` passed.
+    fn check_operand_numeric_types(
+        &self,
+        op: crate::ast::BinOp,
+        left: &Expr,
+        right: &Expr,
+        scope: &HashMap<String, TypeRef>,
+        span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        use crate::ast::BinOp as B;
+        if !matches!(
+            op,
+            B::Add | B::Sub | B::Mul | B::Div | B::Mod | B::BitAnd | B::BitOr | B::BitXor
+                | B::Eq | B::Neq | B::Lt | B::Le | B::Gt | B::Ge
+        ) {
+            return;
+        }
+        let is_lit = |x: &Expr| numeric_change::is_const_number_expr(x);
+        let typed = |x: &Expr| -> Option<ResolvedType> {
+            if is_lit(x) {
+                return None;
+            }
+            let rt = self
+                .infer_expr_type(x, scope)
+                .map(|t| ResolvedType::from_type_ref(&t))
+                .or_else(|| {
+                    if x.id.is_set() {
+                        self.resolved_types_buf.borrow().get(&x.id).cloned()
+                    } else {
+                        None
+                    }
+                })?;
+            matches!(rt.peel_view(), ResolvedType::Scalar { .. } | ResolvedType::Float { .. }).then_some(rt)
+        };
+        let (Some(l), Some(r)) = (typed(left), typed(right)) else { return };
+        if !numeric_change::value_type_changes(&l, &r) {
+            return;
+        }
+        let name = |t: &ResolvedType| match t.peel_view() {
+            ResolvedType::Float { width } => format!("f{width}"),
+            other => other.int_name().unwrap_or("<int>").to_string(),
+        };
+        let (ln, rn) = (name(&l), name(&r));
+        errors.push(Diagnostic::new(
+            format!(
+                "[E_MIXED_WIDTH_ARITH] the operands are different numeric types: `{ln}` and \
+                 `{rn}` — a value does not change its numeric type implicitly (D491, D405); \
+                 write `as` on one side (`... as {ln}` or `... as {rn}`)"
+            ),
+            span,
+        ));
+    }
+
+    fn is_float_literal(e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::FloatLit(_) => true,
+            ExprKind::Unary { op: UnOp::Neg, operand } => matches!(operand.kind, ExprKind::FloatLit(_)),
+            _ => false,
+        }
+    }
+
+    /// #1608 (D491): the numeric types of the arms of one `match` / branches of one `if`
+    /// agree. A bare literal adopts the type of the others (D489: an integer literal if it
+    /// fits -- exactly, for a float -- a decimal fraction any float); two typed arms of
+    /// different numeric types are `E_MATCH_ARM_WIDTH_MISMATCH`. D433 R1 (the arms unify
+    /// to the wider side) is revoked by D491. Non-numeric arms are not judged here.
+    fn check_numeric_arms_agree(
+        &self,
+        what: &str,
+        one: &str,
+        arms: Vec<(Span, ResolvedType, Option<i128>, bool)>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let is_num = |t: &ResolvedType| matches!(t.peel_view(), ResolvedType::Scalar { .. } | ResolvedType::Float { .. });
+        let adopts = |int_lit: Option<i128>, float_lit: bool, t: &ResolvedType| match (int_lit, t.peel_view()) {
+            (Some(v), ResolvedType::Scalar { .. }) => Self::literal_fits_scalar(v, t),
+            (Some(v), ResolvedType::Float { width }) => literal_exact::int_literal_into_float(v, *width).is_none(),
+            (None, ResolvedType::Float { .. }) => float_lit,
+            _ => false,
+        };
+        let name = |t: &ResolvedType| match t.peel_view() {
+            ResolvedType::Float { width } => format!("f{width}"),
+            other => other.int_name().unwrap_or("<int>").to_string(),
+        };
+        let mut common: Option<(Span, ResolvedType, Option<i128>, bool)> = None;
+        for (span, rt, int_lit, float_lit) in arms {
+            if !is_num(&rt) {
+                continue;
+            }
+            let Some((c_span, c, c_int, c_float)) = common.clone() else {
+                common = Some((span, rt, int_lit, float_lit));
                 continue;
             };
-            if *c == rt {
+            let c_is_lit = c_int.is_some() || c_float;
+            if !numeric_change::value_type_changes(&rt, &c) {
+                if c_is_lit && int_lit.is_none() && !float_lit {
+                    common = Some((span, rt, None, false)); // a typed arm fixes the type
+                }
                 continue;
             }
-            let both_int = c.int_width_sign().is_some() && rt.int_width_sign().is_some();
-            if !both_int {
-                continue; // non-int disagreement — unchanged pre-existing behavior, out of scope
+            if adopts(int_lit, float_lit, &c) {
+                continue; // this arm's literal takes the established type
             }
-            // [M-match-arm-mixed-int-width-sentinel-coerce] amend (mega-CU gate
-            // found on d407_enum_payload_width.nv, 2026-07-21): literal-fit BEFORE
-            // treating a disagreement as a real conflict — mirrors
-            // `infer_match_common_primitive`'s own amend (see its doc for the full
-            // rationale). A negative literal that doesn't fit an unsigned target
-            // still falls through to the mismatch check (D227 Rule 6 floor).
-            if let Some(v) = lit {
-                if Self::literal_fits_scalar(v, c) {
-                    continue; // this arm's literal adopts `c` — common unchanged
-                }
-            }
-            if let Some(cv) = common_lit {
-                if Self::literal_fits_scalar(cv, &rt) {
-                    common = Some((span, rt)); // established literal adopts the new, concrete `rt`
-                    common_lit = None;
-                    continue;
-                }
-            }
-            if !Self::int_arms_incompatible(c, &rt) {
-                // safe-widening-compatible — track the wider side for any FURTHER arm,
-                // mirroring `infer_match_common_primitive`'s own unify (so a 3rd arm is
-                // compared against the correct running-wider type, not the first arm).
-                // `rt` does NOT narrow into `c` ⇒ `c` stays the wider running type;
-                // otherwise (not incompatible ⇒ the other direction is safe) `c`
-                // narrows into `rt` ⇒ `rt` becomes the new wider running type.
-                if !rt.would_narrow_into(c) {
-                    // c stays the wider running type — no change.
-                } else {
-                    common = Some((span, rt));
-                }
-                common_lit = None; // common is now a concrete (non-literal-flexible) type
+            if c_is_lit && adopts(c_int, c_float, &rt) {
+                common = Some((span, rt, None, false)); // the established literal takes this type
                 continue;
             }
-            // Genuine mismatch: neither `int_name()` can be `None` here (both int-family).
-            let c_name = c.int_name().unwrap_or("<int>");
-            let rt_name = rt.int_name().unwrap_or("<int>");
+            let (here, there) = (name(&rt), name(&c));
             errors.push(
                 Diagnostic::new(
                     format!(
-                        "[E_MATCH_ARM_WIDTH_MISMATCH] match arms have incompatible integer \
-                         widths: `{}` here vs `{}` — neither safely widens into the other; \
-                         cast one arm explicitly (`... as {}` or `... as {}`)",
-                        rt_name, c_name, c_name, rt_name,
+                        "[E_MATCH_ARM_WIDTH_MISMATCH] {what} have different numeric types: \
+                         `{here}` here vs `{there}` — a value does not change its numeric type \
+                         implicitly (D491); write `as` on one {one} (`... as {there}` or \
+                         `... as {here}`) or the type of the result"
                     ),
                     span,
                 )
-                .with_note_at(
-                    format!("this arm is typed `{}`", c_name),
-                    *c_span,
-                ),
+                .with_note_at(format!("this {one} is `{there}`"), c_span),
             );
-            return; // one diagnostic per match — avoid a cascade of repeats
+            return; // one diagnostic per match / if -- avoid a cascade of repeats
         }
     }
 
@@ -23593,7 +23726,7 @@ impl<'a> TypeCheckCtx<'a> {
         // [M-scalar-nonliteral-narrowing-not-enforced] (D54): a NON-LITERAL int
         // value coerced into a narrower / value-range-unsafe int position must
         // use an explicit `as`. U.5.2: narrowing decided on the DIRECT
-        // (`from_type_ref`) types via `would_narrow_into` — the SINGLE source that
+        // (`from_type_ref`) types via `changes_int_type_into` — the SINGLE source that
         // folds the former raw-TypeRef `is_int_narrowing` second pass. Direct-only
         // width (no alias resolve) preserves the legacy `int_width_rank` semantics
         // byte-identically; widening stays implicit.
@@ -23601,9 +23734,7 @@ impl<'a> TypeCheckCtx<'a> {
         // are the same verdict on the same direct types -- see `numeric_change.rs`.
         let (found_direct, expected_direct) =
             (ResolvedType::from_type_ref(&found_tr), ResolvedType::from_type_ref(expected));
-        if found_direct.would_narrow_into(&expected_direct)
-            || numeric_change::float_change_refused(&found_direct, &expected_direct)
-        {
+        if numeric_change::value_type_changes(&found_direct, &expected_direct) {
             return Compat::Narrowing {
                 from: typeref_display(&found_tr),
                 to: typeref_display(expected),
@@ -24799,7 +24930,7 @@ impl<'a> TypeCheckCtx<'a> {
             // Arithmetic/bitwise: infer from left ONLY if left is NOT an IntLit/FloatLit/CharLit
             // (bare literals default to int/f64/char which may mismatch the declared context, §5).
             // Non-literal left (Ident, Member, Call, As, etc.) → its inferred type is reliable.
-            ExprKind::Binary { op, left, .. } => {
+            ExprKind::Binary { op, left, right } => {
                 use crate::ast::BinOp;
                 match op {
                     BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le
@@ -24813,11 +24944,18 @@ impl<'a> TypeCheckCtx<'a> {
                             &left.kind,
                             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::CharLit(_)
                                 | ExprKind::Unary { .. }  // -N is also a literal pattern
-                        );
-                        if left_is_lit {
+                        ) || numeric_change::is_const_number_expr(left);
+                        if !left_is_lit {
+                            self.infer_expr_type(left, scope)
+                        } else if matches!(op, BinOp::Shl | BinOp::Shr)
+                            || numeric_change::is_const_number_expr(right)
+                        {
                             None
                         } else {
-                            self.infer_expr_type(left, scope)
+                            // #1608 (D489): `153 * m` with `m i64` is `i64` -- the literal
+                            // takes the other operand's type; it used to answer nothing,
+                            // and the binding fell to a guess of `int`.
+                            self.infer_expr_type(right, scope)
                         }
                     }
                 }
@@ -28686,7 +28824,7 @@ fn sized_int_bounds(name: &str) -> Option<(i128, i128)> {
 
 /// Plan 172.1 U.5.2: the former `sized_int_name(&TypeRef)`, `int_width_rank` and
 /// `is_int_narrowing` standalone helpers were folded into `ResolvedType`
-/// (`sized_int_name()` method + `would_narrow_into`, the single narrowing source) and
+/// (`sized_int_name()` method + `changes_int_type_into`, the single narrowing source) and
 /// deleted here — the raw-TypeRef second pass over `assignable` is gone.
 ///
 /// Plan 142 (D227 Rule 3/6): диапазон-проверка значения `val` (i128)
@@ -29562,7 +29700,7 @@ fn collect_coerce_pairs(
 /// (replaces the `TyCat` version for the `assignable` / `f1_check_for_elem` category
 /// gate). Permissive on `Any` (= old `Other`) and — exactly like the old `(Int,Int)` —
 /// on int WIDTH/SIGN: `(Scalar,Scalar)` is ALWAYS compatible here. Narrowing is decided
-/// SEPARATELY by `would_narrow_into` on the DIRECT (`from_type_ref`) types BEFORE this
+/// SEPARATELY by `changes_int_type_into` on the DIRECT (`from_type_ref`) types BEFORE this
 /// call, preserving the `int_width_rank`-vs-`cat_of` alias asymmetry byte-identically
 /// (an alias-to-int must NOT be flagged as narrowing — `int_width_rank` does not resolve
 /// aliases, so the width gate stays direct-only). `char` rides as `Named("char")`, so the
@@ -31699,42 +31837,11 @@ impl<'a> BoundCtx<'a> {
                         ));
                     }
                 }
-                // Plan 172.1 D405: mixed-width integer arithmetic is a compile error
-                // (E_MIXED_WIDTH_ARITH). Two SIZED (non-wide-default) integer operands
-                // of DIFFERENT widths may not be combined: `u8 + u16` → CC-error; use
-                // explicit `as` casts to a common width first. Permissive: fires only when
-                // BOTH operand types are definitively known (infer_arg_ty non-None).
-                // Does NOT fire for Shl/Shr (shift-amount asymmetry is conventional) or
-                // for relational/equality operators (already handled elsewhere).
-                let is_arith = matches!(
-                    op,
-                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod
-                    | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor
-                );
-                if is_arith {
-                    use ResolvedType as R;
-                    let sized_width = |x: &Expr| -> Option<u8> {
-                        let tr = Self::infer_arg_ty(x, scope)?;
-                        match ResolvedType::from_type_ref(&tr) {
-                            R::Scalar { width, wide_default: false, .. } => Some(width),
-                            _ => None,
-                        }
-                    };
-                    if let (Some(lw), Some(rw)) = (sized_width(left), sized_width(right)) {
-                        if lw != rw {
-                            errors.push(Diagnostic::new(
-                                format!(
-                                    "[E_MIXED_WIDTH_ARITH] mixed-width integer arithmetic \
-                                     is not allowed: left operand is {}-bit, right is \
-                                     {}-bit (D405). Use explicit `as` casts to a common \
-                                     width before the operation.",
-                                    lw, rw
-                                ),
-                                e.span,
-                            ));
-                        }
-                    }
-                }
+                // Plan 172.1 D405 (`E_MIXED_WIDTH_ARITH`) lived here for two SIZED integer
+                // operands of different widths only, typed by `infer_arg_ty`. Registry 221.1
+                // #1608 (D491) moved it into the checker's `Binary` arm
+                // (`check_operand_numeric_types`): every numeric pair, full inference and the
+                // checker channel -- one home, not two partial ones.
                 self.walk_expr(left, scope, errors);
                 self.walk_expr(right, scope, errors);
             }

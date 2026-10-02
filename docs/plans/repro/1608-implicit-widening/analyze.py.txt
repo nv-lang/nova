@@ -1,0 +1,135 @@
+"""Widening-ban cost: probe-minus-base error lines per corpus, classified by form and type pair."""
+import collections, os, re, sys
+sys.stdout.reconfigure(encoding="utf-8")
+P = os.path.dirname(os.path.abspath(__file__))
+W = "D:/Sources/nv-lang/nova-p1532"
+CORPORA = [  # label, cwd, own-path prefix (relative or absolute, normalised)
+    ("std", W, "std/src"), ("novac", W, "novac/src"), ("examples", W, "examples"),
+    ("conf-root", W, "spec_tests/conformance/"), ("conf-standalone", W, "spec_tests/conformance/standalone"),
+    ("conf-neg", W, "spec_tests/conformance/neg"), ("soundness", W, "spec_tests/soundness"),
+    ("strict_effects", W, "spec_tests/strict_effects"), ("p270", W, "spec_tests/p270"),
+] + [(d, "D:/Sources/nv-lang/" + d, "src") for d in
+     ["nova-bignum", "nova-compress", "nova-http", "nova-polaris", "nova-socks", "nova-tls",
+      "nova-postgres", "nova-duckdb", "nova-sdl", "claude-limits"]]
+LINE = re.compile(r"^\s*(.+?):(\d+):(\d+): error: (.*)$")
+
+def errs(path):
+    out = []
+    for l in open(path, encoding="utf-8", errors="replace"):
+        m = LINE.match(l.rstrip("\n"))
+        if m:
+            out.append((m.group(1).replace("\\", "/"), int(m.group(2)), int(m.group(3)), m.group(4)))
+    return out
+
+def norm(cwd, f):
+    a = f if re.match(r"^[A-Za-z]:/", f) else cwd + "/" + f
+    return os.path.normpath(a).replace("\\", "/")
+
+FORMS = [
+    (r"cannot pass `([^`]+?)(?: \[PROBE-WIDEN\])?` as argument `([^`]+)` of narrower type `([^`]+)`", "аргумент"),
+    (r"cannot assign value of type `([^`]+?)(?: \[PROBE-WIDEN\])?` to `([^`]+)` of narrower type `([^`]+)`", "let/присваивание"),
+    (r"cannot return value of type `([^`]+?)(?: \[PROBE-WIDEN\])?` from a function declared `-> ([^`]+)`", "return"),
+    (r"cannot initialise field `[^`]+` of `[^`]+` with a value of type `([^`]+?)(?: \[PROBE-WIDEN\])?` -- `([^`]+)` is narrower", "поле"),
+    (r"match arms have incompatible integer widths: `([^`]+)` here vs `([^`]+)`", "рукава match"),
+    (r"\[E_PROBE_WIDEN_OP\] operator mixes `([^`]+)` and `([^`]+)`", "оператор"),
+]
+CANON = {"int": "int", "i64": "int", "uint": "uint", "u64": "uint"}
+
+def classify(msg):
+    for rx, form in FORMS:
+        m = re.search(rx, msg)
+        if m:
+            g = m.groups()
+            if form in ("аргумент", "let/присваивание"):
+                return form, g[0], g[2]
+            if form in ("рукава match", "оператор"):
+                a, b = sorted([g[0], g[1]])
+                return form, a, b
+            return form, g[0], g[1]
+    return "прочее", "?", msg[:90]
+
+def kind(t):
+    if t in ("f32", "f64"):
+        return "float"
+    return "int"
+
+def src(f, line, col):
+    try:
+        L = open(f, encoding="utf-8", errors="replace").read().split("\n")
+        return L[line - 1]
+    except Exception:
+        return ""
+
+tot = collections.Counter(); rows = []; allhits = []
+for label, cwd, own in CORPORA:
+    bp, pp = os.path.join(P, "out", label + ".base"), os.path.join(P, "out", label + ".probe")
+    if not os.path.exists(pp):
+        continue
+    base = collections.Counter(errs(bp)); probe = collections.Counter(errs(pp))
+    delta = probe - base
+    ownabs = norm(cwd, own)
+    hits = []
+    for (f, ln, c, msg), n in delta.items():
+        fa = norm(cwd, f)
+        if not fa.startswith(ownabs):
+            continue
+        if label == "conf-root" and ("/standalone/" in fa or "/neg/" in fa):
+            continue
+        form, a, b = classify(msg)
+        line = src(fa, ln, c)
+        before = line[:c - 1] if c > 0 else ""
+        is_index = before.rstrip().endswith("[") or (form == "аргумент" and re.search(r"argument `(i|idx|index)`", msg) and "[" in line[max(0, c - 3):c])
+        is_len = "len()" in line[max(0, c - 1):c + 60] or "len()" in line
+        hits.append(dict(label=label, f=fa, ln=ln, c=c, form=form, a=a, b=b, line=line.strip(), msg=msg,
+                         index=bool(is_index), len=bool(is_len)))
+    allhits += hits
+
+by = collections.defaultdict(list)
+for h in allhits:
+    by[h["label"]].append(h)
+print("| корпус | мест | по формам | пары типов |")
+print("|---|---|---|---|")
+for label, _, _ in CORPORA:
+    hs = by.get(label, [])
+    forms = collections.Counter(h["form"] for h in hs)
+    pairs = collections.Counter(f"{h['a']}→{h['b']}" if h["form"] not in ("рукава match", "оператор") else f"{h['a']}⇄{h['b']}" for h in hs)
+    print(f"| {label} | {len(hs)} | {', '.join(f'{k} {v}' for k, v in forms.most_common())} | {', '.join(f'{k} {v}' for k, v in pairs.most_common(6))} |")
+print()
+print("ВСЕГО:", len(allhits))
+print("по формам:", collections.Counter(h["form"] for h in allhits).most_common())
+pairs = collections.Counter(f"{h['a']}→{h['b']}" if h["form"] not in ("рукава match", "оператор") else f"{h['a']}⇄{h['b']}" for h in allhits)
+print("пары:", pairs.most_common())
+kinds = collections.Counter()
+for h in allhits:
+    ka, kb = kind(h["a"]), kind(h["b"])
+    if ka != kb:
+        kinds["float↔int (смешение родов)"] += 1
+    elif ka == "float":
+        kinds["f32↔f64"] += 1
+    else:
+        kinds["int↔int (ширина/знак)"] += 1
+print("роды:", kinds.most_common())
+print("индексы:", sum(h["index"] for h in allhits), " len():", sum(h["len"] for h in allhits))
+print()
+for label, _, _ in CORPORA:
+    hs = by.get(label, [])
+    if not hs:
+        continue
+    print(f"--- {label}")
+    seen = collections.Counter()
+    for h in sorted(hs, key=lambda h: (h["form"], h["f"], h["ln"])):
+        if seen[h["form"]] >= 3:
+            continue
+        seen[h["form"]] += 1
+        rel = h["f"].split("/nv-lang/", 1)[-1]
+        print(f"  [{h['form']}] {h['a']}→{h['b']}  {rel}:{h['ln']}  `{h['line'][:110]}`" + ("  [индекс]" if h["index"] else "") + ("  [len]" if h["len"] else ""))
+other = [h for h in allhits if h["form"] == "прочее"]
+if other:
+    print("\nПРОЧЕЕ:")
+    for h in other[:15]:
+        print("  ", h["f"].split("/nv-lang/", 1)[-1], h["ln"], h["msg"][:160])
+
+c = collections.defaultdict(set)
+for h in allhits:
+    c[h["label"]].add((h["f"], h["ln"]))
+print("\nDISTINCT LINES:", {k: len(v) for k, v in c.items()}, "total", sum(len(v) for v in c.values()), "files", len({h["f"] for h in allhits}))

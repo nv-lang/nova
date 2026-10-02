@@ -1,0 +1,25 @@
+| корпус | мест | по формам | пары типов |
+|---|---|---|---|
+| std | 6 | оператор 2, let/присваивание 2, аргумент 2 | u32→int 4, i64⇄u64 2 |
+| novac | 0 |  |  |
+| examples | 6 | аргумент 6 | u16→int 6 |
+| conf-root | 18 | оператор 6, рукава match 4, let/присваивание 3, return 2, аргумент 2, прочее 1 | int⇄u32 4, i32⇄i64 3, i64⇄u64 3, u32→int 2, u8→int 2, ?→[E_LIT_OUT_OF_RANGE] -1 < u32.MIN (0) 1 |
+| conf-standalone | 15 | аргумент 9, рукава match 3, поле 1, return 1, прочее 1 | u16→int 9, int⇄u32 3, i32→i64 1, u32→int 1, ?→[E_LIT_OUT_OF_RANGE] -1 < u32.MIN (0) 1 |
+| conf-neg | 2 | оператор 1, return 1 | u16⇄u8 1, u8→u16 1 |
+| soundness | 0 |  |  |
+| strict_effects | 0 |  |  |
+| p270 | 0 |  |  |
+| nova-bignum | 0 |  |  |
+| nova-compress | 0 |  |  |
+| nova-http | 2 | аргумент 2 | u16→int 2 |
+| nova-polaris | 12 | аргумент 12 | u16→int 12 |
+| nova-socks | 1 | аргумент 1 | u16→int 1 |
+| nova-tls | 12 | аргумент 12 | u16→int 12 |
+| nova-postgres | 0 |  |  |
+| nova-duckdb | 0 |  |  |
+| nova-sdl | 0 |  |  |
+| claude-limits | 0 |  |  |
+
+ВСЕГО: 74
+по формам: [('аргумент', 46), ('оператор', 9), ('рукава match', 7), ('let/присваивание', 5), ('return', 4), ('прочее', 2), ('поле', 1)]
+DISTINCT LINES: {'std': 4, 'examples': 6, 'conf-root': 14, 'conf-standalone': 15, 'conf-neg': 1, 'nova-http': 2, 'nova-polaris': 12, 'nova-socks': 1, 'nova-tls': 12} total 67 files 32

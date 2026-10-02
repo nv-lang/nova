@@ -30,7 +30,7 @@ fn server_key() -> []u8 => embed("certs/localhost_key.pem")
 
 fn main() {
     with Net = real_net() {
-        ro addr = SocketAddr.loopback(PORT)
+        ro addr = SocketAddr.loopback(PORT as int)
         ro cfg = ServerConfig.new(server_cert(), server_key())
 
         supervised {
