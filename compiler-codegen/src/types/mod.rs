@@ -40,6 +40,8 @@ pub(crate) mod reserved_names; // D487: a declared name outside the compiler's C
 pub(crate) mod coerce_door; // #1451/#1452: one door for `#coerce` -- checker decides, rewrite reads
 mod const_names; // #1488: the type of a module-level `const`/`ro` read by its bare name
 mod variant_ctor; // #1517: a variant constructor against the sum instance it builds
+mod numeric_change; // #1611: a value does not change numeric kind implicitly (D491)
+mod assign_value; // #1611: `target = value` judged by `assignable`, as a declaration
 
 /// Plan 196 (gs-bounds migration, spike `docs/plans/wip/196-gs-spike.md`):
 /// `gs` ("generics in scope") used to be `HashSet<String>` — ONLY the names of the
@@ -10296,6 +10298,7 @@ impl<'a> TypeCheckCtx<'a> {
                 // verdict as a `let`, and a view never lands in writable content.
                 if matches!(op, AssignOp::Assign) {
                     self.coerce_assignment(target, value, gs, scope, errors);
+                    self.check_assignment_value(target, value, gs, scope, errors); // #1611
                 }
                 // D175/D176 (Plan 108): check that we're not assigning to a
                 // readonly field or through a readonly index.
@@ -10405,7 +10408,11 @@ impl<'a> TypeCheckCtx<'a> {
                 // `assignable()` check, so do a focused narrowing-only compare here.
                 // Literals coerce by context (skip); `as`-casts infer as their
                 // target width (no narrowing seen). Only fires int→int narrowing.
-                if let ExprKind::Ident(name) = &target.kind {
+                // #1611: a plain `=` is judged in full by `check_assignment_value` above;
+                // this compare stays for the compound forms (`n += d`).
+                if let (ExprKind::Ident(name), false) =
+                    (&target.kind, matches!(op, AssignOp::Assign))
+                {
                     let is_num_lit = matches!(
                         value.kind,
                         ExprKind::IntLit(_) | ExprKind::FloatLit(_)
@@ -10418,19 +10425,26 @@ impl<'a> TypeCheckCtx<'a> {
                         {
                             // U.5.2: single-source narrowing via `would_narrow_into`
                             // on DIRECT types (folds the legacy `is_int_narrowing`).
-                            if ResolvedType::from_type_ref(&value_ty)
-                                .would_narrow_into(&ResolvedType::from_type_ref(&target_ty))
+                            // #1611: and a change of numeric kind / a float narrowing.
+                            let (value_direct, target_direct) = (
+                                ResolvedType::from_type_ref(&value_ty),
+                                ResolvedType::from_type_ref(&target_ty),
+                            );
+                            if value_direct.would_narrow_into(&target_direct)
+                                || numeric_change::float_change_refused(&value_direct, &target_direct)
                             {
+                                let (from, to) =
+                                    (typeref_display(&value_ty), typeref_display(&target_ty));
                                 errors.push(Diagnostic::new(
                                     format!(
                                         "[E_IMPLICIT_NARROWING] cannot assign value of \
-                                         type `{}` to `{}` of narrower type `{}` — \
-                                         implicit int narrowing loses range; use an \
-                                         explicit `... as {}` cast (D54)",
-                                        typeref_display(&value_ty),
+                                         type `{}` to `{}` of type `{}` — {}; use an \
+                                         explicit `... as {}` cast",
+                                        from,
                                         name,
-                                        typeref_display(&target_ty),
-                                        typeref_display(&target_ty),
+                                        to,
+                                        numeric_change::numeric_change_why(&from, &to),
+                                        to,
                                     ),
                                     value.span,
                                 ));
@@ -11510,12 +11524,9 @@ impl<'a> TypeCheckCtx<'a> {
                                     Compat::Narrowing { from, to } => {
                                         errors.push(Diagnostic::new(
                                             format!(
-                                                "[E_IMPLICIT_NARROWING] cannot send value of \
-                                                 type `{}` into a channel of narrower \
-                                                 declared element type `{}` — implicit int \
-                                                 narrowing loses range; use an explicit \
-                                                 `... as {}` cast (D54)",
-                                                from, to, to,
+                                                "[E_IMPLICIT_NARROWING] cannot send value of type `{}` into a channel of \
+                                                 declared element type `{}` — {}; use an explicit `... as {}` cast",
+                                                from, to, numeric_change::numeric_change_why(&from, &to), to,
                                             ),
                                             arg.expr().span,
                                         ));
@@ -13929,6 +13940,7 @@ impl<'a> TypeCheckCtx<'a> {
                     FnBody::External => {}
                 }
                 self.f1_fn_sig_body(sb, gs, scope, errors);
+                self.check_closure_return(sb, gs, scope, errors); // #1611
                 // 197.3 (Q3 B, channel-first migration): ClosureFull is fully
                 // typed by grammar — every param carries an explicit `T`,
                 // `return_type` is `-> R` or absent (= Unit) — unlike
@@ -14470,9 +14482,8 @@ impl<'a> TypeCheckCtx<'a> {
                     Diagnostic::new(
                         format!(
                             "[E_IMPLICIT_NARROWING] cannot assign value of type `{}` \
-                             to `{}` of narrower type `{}` — implicit int narrowing \
-                             loses range; use an explicit `... as {}` cast (D54)",
-                            from, name, to, to,
+                             to `{}` of type `{}` — {}; use an explicit `... as {}` cast",
+                            from, name, to, numeric_change::numeric_change_why(&from, &to), to,
                         ),
                         value.span,
                     )
@@ -18150,9 +18161,8 @@ impl<'a> TypeCheckCtx<'a> {
                                     Diagnostic::new(
                                         format!(
                                             "[E_IMPLICIT_NARROWING] cannot pass `{}` as argument \
-                                             `{}` of narrower type `{}` — implicit int narrowing \
-                                             loses range; use an explicit `{} as {}` cast (D54)",
-                                            from, param.name, to, "<value>", to,
+                                             `{}` of type `{}` — {}; use an explicit `<value> as {}` cast",
+                                            from, param.name, to, numeric_change::numeric_change_why(&from, &to), to,
                                         ),
                                         arg.expr().span,
                                     )
@@ -18245,9 +18255,8 @@ impl<'a> TypeCheckCtx<'a> {
                     errors.push(Diagnostic::new(
                         format!(
                             "[E_IMPLICIT_NARROWING] cannot pass value of type `{}` as an \
-                             argument of narrower type `{}` — implicit int narrowing loses \
-                             range; use an explicit `... as {}` cast (D54)",
-                            from, to, to,
+                             argument of type `{}` — {}; use an explicit `... as {}` cast",
+                            from, to, numeric_change::numeric_change_why(&from, &to), to,
                         ),
                         arg_expr.span,
                     ));
@@ -19379,9 +19388,8 @@ impl<'a> TypeCheckCtx<'a> {
                             Diagnostic::new(
                                 format!(
                                     "[E_IMPLICIT_NARROWING] cannot pass `{}` as argument \
-                                     `{}` of narrower type `{}` — implicit int narrowing \
-                                     loses range; use an explicit `{} as {}` cast (D54)",
-                                    from, param.name, to, "<value>", to,
+                                     `{}` of type `{}` — {}; use an explicit `<value> as {}` cast",
+                                    from, param.name, to, numeric_change::numeric_change_why(&from, &to), to,
                                 ),
                                 arg.expr().span,
                             )
@@ -22028,9 +22036,8 @@ impl<'a> TypeCheckCtx<'a> {
                 errors.push(Diagnostic::new(
                     format!(
                         "[E_IMPLICIT_NARROWING] cannot return value of type `{}` from a \
-                         function declared `-> {}` — implicit int narrowing loses range; \
-                         use an explicit `... as {}` cast (D54)",
-                        from, to, to,
+                         function declared `-> {}` — {}; use an explicit `... as {}` cast",
+                        from, to, numeric_change::numeric_change_why(&from, &to), to,
                     ),
                     value.span,
                 ));
@@ -23187,6 +23194,12 @@ impl<'a> TypeCheckCtx<'a> {
         // `resolved_cat_of` зеркалит `cat_of` (alias/Vec/Named/Any), но int-семья несёт
         // точные (width, signed) вместо `TyCat::Int`-коллапса.
         let exp_rt = self.resolved_cat_of(expected, exp_gs);
+        // #1611: a tuple literal against a tuple type and a map literal against
+        // `HashMap[K, V]` are judged element by element, as an array literal is below.
+        // Both used to pass unjudged -- `(d, 1)` with `d f64` for `(int, int)` truncated.
+        if let Some(v) = self.composite_literal_compat(expr, expected, expr_gs, exp_gs, scope) {
+            return v;
+        }
         // Generic-параметр / any / func / tuple — проверить нельзя.
         if matches!(exp_rt, ResolvedType::Any) {
             // [M-checker-protocol-typed-arg-any-bypass] fix (zero-tolerance, backlog-
@@ -23582,8 +23595,12 @@ impl<'a> TypeCheckCtx<'a> {
         // folds the former raw-TypeRef `is_int_narrowing` second pass. Direct-only
         // width (no alias resolve) preserves the legacy `int_width_rank` semantics
         // byte-identically; widening stays implicit.
-        if ResolvedType::from_type_ref(&found_tr)
-            .would_narrow_into(&ResolvedType::from_type_ref(expected))
+        // #1611 (D491): a change of numeric kind (integer <-> float) and a float narrowing
+        // are the same verdict on the same direct types -- see `numeric_change.rs`.
+        let (found_direct, expected_direct) =
+            (ResolvedType::from_type_ref(&found_tr), ResolvedType::from_type_ref(expected));
+        if found_direct.would_narrow_into(&expected_direct)
+            || numeric_change::float_change_refused(&found_direct, &expected_direct)
         {
             return Compat::Narrowing {
                 from: typeref_display(&found_tr),
@@ -24262,11 +24279,15 @@ impl<'a> TypeCheckCtx<'a> {
                 // (lexicographically smallest) one — same source now ALWAYS produces the
                 // same C, so a genuinely-ambiguous corpus fails (or passes) the SAME way on
                 // every run instead of flaking.
-                let owners: Vec<(&String, crate::diag::FileId)> = self.types.iter()
+                // #1610: a GENERIC sum owns its variants too. It used to be left out of
+                // the owners, so `mut acc = Empty` inside `LinkedList[T]` (or
+                // `@buckets[i] = Empty` inside `HashMap[K, V]`) was typed as the one
+                // non-generic owner left -- the prelude's `ParseBoolError`.
+                let owners: Vec<(&String, crate::diag::FileId, bool)> = self.types.iter()
                     .filter_map(|(type_name, td)| {
                         if let TypeDeclKind::Sum(variants) = &td.kind {
-                            if td.generics.is_empty() && variants.iter().any(|v| &v.name == name) {
-                                return Some((type_name, td.span.file_id));
+                            if variants.iter().any(|v| &v.name == name) {
+                                return Some((type_name, td.span.file_id, !td.generics.is_empty()));
                             }
                         }
                         None
@@ -24280,14 +24301,19 @@ impl<'a> TypeCheckCtx<'a> {
                 // library's `Ok(match s { "GET" => Get, .. })` was E7301. A module that
                 // imports the library does not change what the library's names mean.
                 let here = self.module_value_files.get(&expr.span.file_id).copied();
-                let own: Vec<&String> = owners.iter()
-                    .filter(|(_, fid)| here.is_some() && self.module_value_files.get(fid).copied() == here)
-                    .map(|(n, _)| *n)
+                let own: Vec<(&String, bool)> = owners.iter()
+                    .filter(|(_, fid, _)| here.is_some() && self.module_value_files.get(fid).copied() == here)
+                    .map(|(n, _, g)| (*n, *g))
                     .collect();
-                let mut candidates: Vec<&String> =
-                    if own.is_empty() { owners.iter().map(|(n, _)| *n).collect() } else { own };
+                let mut candidates: Vec<(&String, bool)> =
+                    if own.is_empty() { owners.iter().map(|(n, _, g)| (*n, *g)).collect() } else { own };
                 candidates.sort();
-                if let Some(type_name) = candidates.into_iter().next() {
+                if let Some((type_name, generic)) = candidates.into_iter().next() {
+                    // #1610: the instance of a generic owner is not known from the bare
+                    // name -- silence, not a guess (callers fall back as for any unknown).
+                    if generic {
+                        return None;
+                    }
                     return Some(TypeRef::Named {
                         path: vec![type_name.clone()],
                         generics: Vec::new(),

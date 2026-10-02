@@ -1,0 +1,15 @@
+// EXPECT_STDOUT 2 3 2.5 3 5.5 7.5
+fn h(x f32) -> f32 => x
+fn main() Io {
+    ro d f64 = 2.5
+    ro i int = 3
+    mut n int = 0
+    n = d
+    mut g f64 = 0.0
+    g = i
+    ro a = h(d)
+    ro m = match i { 0 => d, _ => i }
+    ro s = i + d
+    ro t = d * i
+    println("${n} ${g} ${a} ${m} ${s} ${t}")
+}
