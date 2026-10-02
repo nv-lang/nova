@@ -778,7 +778,11 @@ fn Checker mut @type_arm_block_value(b Node) -> TyId {
                 @value_expect = if i == last { tail_expect } else { no_ty() }
                 if i == last && is_expr_kind(c.kind_of()) {
                     ro before = @out.len()
-                    @type_expr(c)
+                    if !is_ty(@branch_literal_tail(c)) {
+                        @type_expr(c)
+                    } else {
+                        // A bare literal took the arm's written type: the `if` branch's door.
+                    }
                     if @out.len() == before {
                         out_t = type_of(c, @ctx, @scope, @chan)
                     } else {
@@ -937,7 +941,11 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
     // unrelated earlier refusal in the same file passed with zero diagnostics
     // about it -- a K-C silent widening, not a crash.
     ro before = @out.len()
-    @type_expr(body)
+    if !is_ty(@branch_literal_tail(body)) {
+        @type_expr(body)
+    } else {
+        // `false => 0` in a `-> u8` match: the literal took the arm's written type.
+    }
     // None is "this arm has no type to compare": the walk refused something in
     // the body, so the lattice must not be asked about it (its miss is an ice).
     // Written as a terminator rather than an if-else: the shape guard reads an

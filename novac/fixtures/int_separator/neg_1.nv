@@ -1,0 +1,14 @@
+module int_separator.neg_1
+
+// NOVAC_EXPECT does not fit
+// ONE seeded cause: a separated literal one past `u64`'s edge. The magnitude
+// judge reads the literal's DIGITS (`literal_digits`), so the separators
+// neither hide an overflow nor invent one: `18_446_744_073_709_551_615` fits
+// (pos_1), this one does not -- the oracle refuses it too.
+fn show64(x u64) -> () {
+    println((x >> 40) as int)
+}
+
+fn main() {
+    show64(18_446_744_073_709_551_616)
+}

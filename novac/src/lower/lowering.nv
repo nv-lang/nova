@@ -794,8 +794,11 @@ fn Lowerer mut @lower_println(call Node) -> () {
             match @lower_value_source(c, ty) {
                 Some(l) => @ir.output(Operand.Place(l), ty)
                 None => {
-                    // A block form nested in the argument goes first (registry 1619).
+                    // A block form nested in the argument goes first (registry 1619),
+                    // and so does a call's own `if`/`unsafe` argument, as in `@lower_place`
+                    // (sweep 6: `println(f(if c { a } else { b }))` iced in emit).
                     @hoist_block_forms(c)
+                    @hoist_sealed_args(c)
                     @ir.output(Operand.Tree(c), ty)
                 }
             }

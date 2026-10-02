@@ -1037,7 +1037,15 @@ resolve 23
 #   (calls, methods, static calls, variant calls), so `Some((a, b))` counts one payload.
 # merge of p274-carina-k1 (part 5) into main (integrator, 2026-10-02): the guard's count on the merged
 #   tree is 341 -- main's 340 plus k1's `is_arg_value_kind` (part 5 step 3, its chronicle line above).
-sem 341
+# 2026-10-02, cloud session p274-carina-sweep (registry 1605): sem 338 -> 339: `float_literal_c_text`
+#   (sem/mangle.nv) -- the C spelling of a float literal, D44 separators dropped, beside
+#   `int_literal_c_text`; asked by emit_c/emit_expr.nv, and every C spelling lives at the mangle door (P24).
+#   Same day, same session (integrator's word on 1605: one door for every reader of a literal's
+#   number): `float_literal_c_text` becomes `literal_digits` -- the separators dropped for the
+#   magnitude judges (check/literal_rules.nv) and both C spellings; the count stays 339.
+# merge of origin/main f80d61e00 into p274-carina-sweep (2026-10-02): main's 341 plus this
+#   branch's `literal_digits` (the two lines above) = 342; the count is the guard's on the merged tree.
+sem 342
 source 6
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
