@@ -598,7 +598,7 @@ impl<'a> Lexer<'a> {
             let cleaned: String = text.chars().filter(|c| *c != '_').collect();
             let v: f64 = cleaned
                 .parse()
-                .map_err(|e| Diagnostic::new(format!("invalid float: {e}"), span))?;
+                .map_err(|e| Diagnostic::new(format!("invalid float: {e:#}"), span))?;
             Ok(Token::new(TokenKind::Float(v), span))
         } else {
             let cleaned: String = text.chars().filter(|c| *c != '_').collect();
@@ -611,7 +611,7 @@ impl<'a> Lexer<'a> {
                 Ok(v) => v,
                 Err(_) => cleaned
                     .parse::<u64>()
-                    .map_err(|e| Diagnostic::new(format!("invalid int: {e}"), span))?
+                    .map_err(|e| Diagnostic::new(format!("invalid int: {e:#}"), span))?
                     as i64,
             };
             Ok(Token::new(TokenKind::Int(v), span))
@@ -644,7 +644,7 @@ impl<'a> Lexer<'a> {
             Ok(v) => v,
             Err(_) => {
                 let u = u64::from_str_radix(&cleaned, radix)
-                    .map_err(|e| Diagnostic::new(format!("invalid int: {e}"), span))?;
+                    .map_err(|e| Diagnostic::new(format!("invalid int: {e:#}"), span))?;
                 u as i64
             }
         };

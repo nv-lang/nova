@@ -1,0 +1,11 @@
+// EXPECT_STDOUT 2 2 2 2
+type Pt { n int }
+fn r(d f64) -> int => d
+fn main() Io {
+    ro d f64 = 2.5
+    ro n int = d
+    ro p = Pt { n: d }
+    mut v = Vec[int].new()
+    v.push(d)
+    println("${n} ${r(d)} ${p.n} ${v[0]}")
+}

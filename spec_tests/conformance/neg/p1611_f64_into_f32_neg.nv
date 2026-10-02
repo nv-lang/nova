@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_IMPLICIT_NARROWING
+// Regression for registry 221.1 #1611 (D491): a value of a numeric type does not change
+// its kind (integer <-> float) or narrow as a float without `as`, in any position. Before,
+// `nova check` was green and the C compiler truncated `2.5` to `2` without a word.
+// Positive half: standalone/p1611_numeric_as_ok.nv.
+module neg.p1611_f64_into_f32_neg
+
+fn take(x f32) -> f32 => x
+
+fn main() Io {
+    ro d f64 = 2.5
+    // nova:expect E_IMPLICIT_NARROWING -- a float value does not narrow implicitly
+    println("${take(d)}")
+}

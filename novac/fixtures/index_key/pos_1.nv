@@ -1,0 +1,19 @@
+module index_key.pos_1
+
+// The key of an index is an `int` (D238): a binding of `int`, a literal (it
+// takes the position's type, D489), and a `u8` or a newtype converted with
+// `as int` -- the spelling the refusal of index_key/neg_1 names.
+type Row int
+
+fn main() {
+    mut xs = []int.new()
+    xs.push(10)
+    xs.push(20)
+    ro i = 1
+    ro b = 1 as u8
+    ro r = Row(0)
+    println(xs[i])
+    println(xs[0])
+    println(xs[b as int])
+    println(xs[r as int])
+}

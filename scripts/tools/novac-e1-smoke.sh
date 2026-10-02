@@ -27,7 +27,8 @@ FILE="${1:-examples/basics/hello.nv}"
 # гейта, `cp` не прошёл пять попыток подряд, и смоук молча померил ПРЕЖНИЙ
 # бинарь — три строки «результата», которые ничего не доказывали. Шов дешевле
 # борьбы с блокировкой и убирает целый класс ложных замеров.
-NOVAC="${NOVAC_BIN:-$ROOT/novac/target/novac.exe}"
+. "$ROOT/scripts/guards/lib/novac.sh"
+NOVAC="${NOVAC_BIN:-$(novac_bin "$ROOT")}"
 CACHE="${NOVAC_SMOKE_CACHE:-${TMPDIR:-/tmp}/novac-smoke-cache}"
 T="${TMPDIR:-/tmp}/novac-smoke.$$"
 mkdir -p "$CACHE" "$T"
@@ -171,12 +172,12 @@ fi
 sed '0,/^#include "nova_rt\/nova_rt.h"$/{//d}' "$T/novac.c" > "$T/body.c"
 eval "\"$REAL_CLANG\" $(tr '\n' ' ' < "$CFLAGS") -include-pch \"$PCH\" -c \"$T/body.c\" -o \"$T/body.o\"" > "$T/cc.out" 2>&1 \
     || fail "clang -c упал: $(head -5 "$T/cc.out")"
-eval "\"$REAL_CLANG\" $(tr '\n' ' ' < "$LINKCMD") -o \"$T/novac.exe\" \"$T/body.o\"" > "$T/link.out" 2>&1 \
+eval "\"$REAL_CLANG\" $(tr '\n' ' ' < "$LINKCMD") -o \"$T/emitted_prog.exe\" \"$T/body.o\"" > "$T/link.out" 2>&1 \
     || fail "clang не слинковал: $(head -5 "$T/link.out")"
 
 # ---- 4. behavior diff ---------------------------------------------------
 "$ORACLE_EXE" > "$T/out.oracle" 2>&1; e_o=$?
-"$T/novac.exe"  > "$T/out.novac"  2>&1; e_n=$?
+"$T/emitted_prog.exe"  > "$T/out.novac"  2>&1; e_n=$?
 # `head -3` показывал только «1c1», строку оракула и разделитель — НАШЕЙ строки
 # в отчёте не было вовсе (замерено 2026-08-27 на `[7, 8].cap()`: видно «< 8»,
 # не видно «> 2»). Отчёт, показывающий одну сторону расхождения, заставляет

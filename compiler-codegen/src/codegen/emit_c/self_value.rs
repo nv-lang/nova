@@ -49,7 +49,8 @@ impl CEmitter {
     /// the receiver carrier for `-> @`, the value otherwise.
     pub(super) fn self_ret_c(&self, recv: &str, recv_mutable: bool, fluent: bool) -> String {
         if fluent {
-            self.receiver_c_type(recv, recv_mutable)
+            // #1598: the carrier of `-> @` is a pointer at any size.
+            self.receiver_c_type_for(recv, recv_mutable, true)
         } else {
             self.self_value_c(recv)
         }
@@ -72,7 +73,8 @@ impl CEmitter {
             return None;
         }
         let recv = self.current_receiver_type.as_ref()?;
-        Some(self.receiver_c_type(recv, false))
+        // #1598: the carrier of `-> @` is a pointer at any size.
+        Some(self.receiver_c_type_for(recv, false, true))
     }
 
     /// Record the span of every `-> @` return TypeRef in `module`.

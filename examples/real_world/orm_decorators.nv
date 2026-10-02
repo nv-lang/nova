@@ -179,7 +179,7 @@ fn main() Io -> () {
         42,
     ) {
         Db.query(sql`SELECT * FROM users`)
-        Db.exec(sql`DELETE FROM users WHERE id = ${I(7)}`)
+        Db.exec(sql`DELETE FROM users WHERE id = ${I64(7)}`)
     }
 
     // Чтение ушло на replica и получило soft-delete-фильтр; удаление ушло на
@@ -235,7 +235,7 @@ test "soft-delete: SELECT augmented with deleted_at IS NULL" {
     mut log []CapturedQuery = []
 
     with Db = with_soft_delete(capturing_handler(log)) {
-        Db.query(sql`SELECT * FROM users WHERE id = ${I(1)}`)
+        Db.query(sql`SELECT * FROM users WHERE id = ${I64(1)}`)
     }
 
     assert(log.len() == 1)
@@ -246,7 +246,7 @@ test "soft-delete: DELETE rewritten as UPDATE deleted_at" {
     mut log []CapturedQuery = []
 
     with Db = with_soft_delete(capturing_handler(log)) {
-        Db.exec(sql`DELETE FROM users WHERE id = ${I(1)}`)
+        Db.exec(sql`DELETE FROM users WHERE id = ${I64(1)}`)
     }
 
     assert(log.len() == 1)
@@ -263,7 +263,7 @@ test "read-replica: SELECT идёт на replica, exec — на primary" {
         capturing_handler(replica_log),
     ) {
         Db.query(sql`SELECT 1`)
-        Db.exec(sql`UPDATE users SET name = ${S("alice")} WHERE id = ${I(1)}`)
+        Db.exec(sql`UPDATE users SET name = ${Text("alice")} WHERE id = ${I64(1)}`)
     }
 
     assert(primary_log.len() == 1)                    // только UPDATE
@@ -285,7 +285,7 @@ test "read-replica: SELECT идёт на replica, мутация — на primar
         capturing_handler(replica_log),
     ) {
         Db.query(sql`SELECT 1`)
-        Db.exec(sql`UPDATE users SET name = ${S("alice")} WHERE id = ${I(1)}`)
+        Db.exec(sql`UPDATE users SET name = ${Text("alice")} WHERE id = ${I64(1)}`)
     }
 
     assert(replica_log.len() == 1)                    // SELECT ушёл на replica
@@ -309,8 +309,8 @@ test "audit: каждый exec пишется в detach-задачу" {
     // — реестр 221.1 №573), поэтому ошибка жила незамеченной. Тест проверяет
     // то же наблюдаемое свойство без обёртки: audit пишет на exec, не на query.
     with Db = with_audit(capturing_handler(log), 42) {
-        Db.exec(sql`INSERT INTO users (name) VALUES (${S("alice")})`)
-        Db.exec(sql`UPDATE users SET name = ${S("bob")} WHERE id = ${I(1)}`)
+        Db.exec(sql`INSERT INTO users (name) VALUES (${Text("alice")})`)
+        Db.exec(sql`UPDATE users SET name = ${Text("bob")} WHERE id = ${I64(1)}`)
         Db.query(sql`SELECT * FROM users`)             // audit на SELECT не пишется
     }
 
@@ -333,7 +333,7 @@ test "compose: soft-delete + audit + read-replica" {
 
     with Db = composed {
         Db.query(sql`SELECT * FROM users`)    // replica + soft-delete
-        Db.exec(sql`DELETE FROM users WHERE id = ${I(1)}`)
+        Db.exec(sql`DELETE FROM users WHERE id = ${I64(1)}`)
                                                // primary + soft-delete + audit
     }
 

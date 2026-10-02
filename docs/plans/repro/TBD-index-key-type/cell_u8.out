@@ -1,0 +1,5 @@
+== cell_u8 (oracle: nova-cli built from c585fd5c8, the merged tree of origin/integ/merge-train-1001 e2f4fc96)
+build ok, run prints:
+20
+== cell_u8 (novac, same tree)
+{"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"docs/plans/repro/TBD-index-key-type/cell_u8.nv","start":263,"end":265},"message":"an index is an `int` (D238: `@index` takes an `int` or a `Range`) -- there is no implicit numeric conversion (D405), and a newtype over `int` is not an `int` (D52); convert with `as int`","poisoned_by":null}

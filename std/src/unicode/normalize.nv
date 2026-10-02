@@ -136,7 +136,7 @@ fn compose(cps []u32) -> []u32 {
             // compose_pair → Option[u32] (D327, no `-1` sentinel): Some(comp) AND
             // not blocked → fold into the starter; else emit `ch`.
             mut composed = false
-            match compose_pair(starter_ch, ch) {
+            match compose_pair(starter_ch as int, ch as int) {
                 Some(comp) => {
                     if last_ccc < cc || last_ccc == 0 {
                         out[starter_pos] = comp

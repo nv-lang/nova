@@ -138,11 +138,11 @@ test "#456: spawn consume a, b { helper(a, b) } with explicit close() on real bl
             spawn {
                 ro port = match ch_port.rx.recv() { Some(p) => p, None => 0 as u16 }
 
-                consume c1 = match TcpStream.connect(SocketAddr.loopback(port)) {
+                consume c1 = match TcpStream.connect(SocketAddr.loopback(port as int)) {
                     Ok(consume s) => s
                     Err(_) => panic("m456: client connect1 failed")
                 }
-                consume c2 = match TcpStream.connect(SocketAddr.loopback(port)) {
+                consume c2 = match TcpStream.connect(SocketAddr.loopback(port as int)) {
                     Ok(consume s) => s
                     Err(_) => panic("m456: client connect2 failed")
                 }

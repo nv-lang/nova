@@ -5,18 +5,18 @@ priv(file) fn take_int(x int) -> int => x
 
 test "widening u8 -> int is implicit" {
     ro b u8 = 5
-    ro w int = b
+    ro w int = b as int
     assert(w == 5)
-    assert(take_int(b) == 5)
+    assert(take_int(b as int) == 5)
 }
 test "widening i16 -> i32 is implicit" {
     ro a i16 = 100
-    ro w i32 = a
+    ro w i32 = a as i32
     assert(w == 100)
 }
 test "unsigned into strictly wider signed (u8 -> i32) is implicit" {
     ro b u8 = 200
-    ro w i32 = b
+    ro w i32 = b as i32
     assert(w == 200)
 }
 test "narrowing with explicit as is OK" {

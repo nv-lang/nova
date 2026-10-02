@@ -130,7 +130,7 @@ test "an instance types its body under the substitution, in its own channel (E2-
     // not record one (the lattice reads it from the scope), so the assertion
     // stands on an expression whose type the channel DOES carry.
     ro kids = branch_children(decl)
-    mut body_t = -1
+    mut body_t TyId = -1
     for c in kids {
         if c.kind_of() != NodeKind.FnExprBody { continue }
         ro ek = branch_children(c)

@@ -1,0 +1,84 @@
+// EXPECT_STDOUT int i8 i16 i32 i64 u8 u16 u32 f32 f64
+// EXPECT_STDOUT literals: Int F64 Text Bool
+// EXPECT_STDOUT tag: Int I32 F64 Text
+// EXPECT_STDOUT tag-all: int i8 i16 i32 i64 u8 u16 u32 f32 f64
+//
+// Registry 221.1 #1637 (owner's decision 2026-10-02): `SqlValue` has a
+// variant per numeric type, named after the type, and a value wraps into the
+// variant of EXACTLY its type (D55) -- no numeric value changes its type
+// implicitly (D491): an `i32` goes into `I32`, never widened into `I64`. An
+// untyped literal, with several numeric variants to choose from, takes the
+// default type of D44: `1` -> `Int`, `1.5` -> `F64`. `u64` and `uint` have no
+// variant (the negative twin: neg/p1637_sqlvalue_no_u64_variant_neg.nv).
+module standalone.p1637_sqlvalue_exact_variant
+
+import std.data.sql.{SqlValue, sql}
+
+fn name_of(v SqlValue) -> str =>
+    match v {
+        SqlValue.Int(_) => "int"
+        SqlValue.I8(_)  => "i8"
+        SqlValue.I16(_) => "i16"
+        SqlValue.I32(_) => "i32"
+        SqlValue.I64(_) => "i64"
+        SqlValue.U8(_)  => "u8"
+        SqlValue.U16(_) => "u16"
+        SqlValue.U32(_) => "u32"
+        SqlValue.F32(_) => "f32"
+        SqlValue.F64(_) => "f64"
+        SqlValue.Text(_) => "Text"
+        SqlValue.Bool(_) => "Bool"
+        SqlValue.Bytes(_) => "Bytes"
+        SqlValue.Null => "Null"
+    }
+
+fn variant(v SqlValue) -> str =>
+    match v {
+        SqlValue.Int(_) => "Int"
+        SqlValue.I32(_) => "I32"
+        SqlValue.F64(_) => "F64"
+        SqlValue.Text(_) => "Text"
+        SqlValue.Bool(_) => "Bool"
+        _ => name_of(v)
+    }
+
+fn main() Io {
+    ro a int = 1
+    ro b i8 = 2
+    ro c i16 = 3
+    ro d i32 = 4
+    ro e i64 = 5
+    ro f u8 = 6
+    ro g u16 = 7
+    ro h u32 = 8
+    ro x f32 = 1.5
+    ro y f64 = 2.5
+    ro typed []SqlValue = [a, b, c, d, e, f, g, h, x, y]
+    mut names []str = []
+    for v in typed {
+        names.push(name_of(v))
+    }
+    println(names.join(" "))
+
+    ro lits []SqlValue = [1, 1.5, "s", true]
+    mut ln []str = []
+    for v in lits {
+        ln.push(variant(v))
+    }
+    println("literals: ${ln.join(" ")}")
+
+    ro q = sql`SELECT ${7} ${d} ${0.5} ${"t"}`
+    mut tn []str = []
+    for v in q.args {
+        tn.push(variant(v))
+    }
+    println("tag: ${tn.join(" ")}")
+
+    // Every numeric type in `${..}` of the `sql` tag, each into its own variant.
+    ro all = sql`${a}${b}${c}${d}${e}${f}${g}${h}${x}${y}`
+    mut an []str = []
+    for v in all.args {
+        an.push(name_of(v))
+    }
+    println("tag-all: ${an.join(" ")}")
+}

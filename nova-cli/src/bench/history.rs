@@ -40,9 +40,9 @@ pub fn add(opts: HistoryAddOpts) -> Result<i32> {
 
     // Validate JSON parse + schema version.
     let raw = std::fs::read_to_string(opts.result_json)
-        .map_err(|e| anyhow!("read result JSON: {}", e))?;
+        .map_err(|e| anyhow!("read result JSON: {:#}", e))?;
     let v: Value = serde_json::from_str(&raw)
-        .map_err(|e| anyhow!("parse result JSON: {}", e))?;
+        .map_err(|e| anyhow!("parse result JSON: {:#}", e))?;
     let format_version = v.get("format_version")
         .and_then(|x| x.as_str())
         .ok_or_else(|| anyhow!("result JSON missing 'format_version' field"))?;
@@ -110,7 +110,7 @@ pub fn add(opts: HistoryAddOpts) -> Result<i32> {
     // Copy result file into worktree.
     let dest = tmp_wt.join(&entry_name);
     std::fs::copy(opts.result_json, &dest)
-        .map_err(|e| anyhow!("copy result: {}", e))?;
+        .map_err(|e| anyhow!("copy result: {:#}", e))?;
 
     // Commit.
     git_in(&tmp_wt, &["add", &entry_name, "README.md"])?;
@@ -183,7 +183,7 @@ fn git_in(cwd: &Path, args: &[&str]) -> Result<String> {
         .current_dir(cwd)
         .args(args)
         .output()
-        .map_err(|e| anyhow!("spawn git: {}", e))?;
+        .map_err(|e| anyhow!("spawn git: {:#}", e))?;
     if !output.status.success() {
         bail!("git {} failed: {}", args.join(" "),
             String::from_utf8_lossy(&output.stderr));
@@ -201,7 +201,7 @@ fn branch_exists_local(repo: &Path, branch: &str) -> Result<bool> {
         .current_dir(repo)
         .args(["rev-parse", "--verify", &format!("refs/heads/{}", branch)])
         .output()
-        .map_err(|e| anyhow!("spawn git: {}", e))?;
+        .map_err(|e| anyhow!("spawn git: {:#}", e))?;
     Ok(result.status.success())
 }
 

@@ -1,0 +1,30 @@
+// EXPECT_COMPILE_ERROR E7301
+//
+// Registry 221.1 #1637: a value wraps into a sum variant whose payload is of
+// EXACTLY its type (D55 + D491 -- no numeric value changes its type
+// implicitly). Two cells:
+// * `u64` has no `SqlValue` variant (owner's decision 2026-10-02: `u64` and
+//   `uint` get none) -- the value is refused, an explicit `as i64` is the way;
+// * an `i32` value meets a sum whose only integer variant is `W(i64)` --
+//   before #1637 every integer was one "int family" and the value was widened
+//   silently into `W`; now it is refused like any other implicit change.
+// The positive twin: standalone/p1637_sqlvalue_exact_variant.nv.
+module neg.p1637_sqlvalue_no_u64_variant_neg
+
+import std.data.sql.{SqlValue, sql}
+
+type P1637Wide enum
+    | W(i64)
+    | Label(str)
+
+fn main() {
+    ro n u64 = 5
+    // nova:expect E7301 -- `u64` has no SqlValue variant; write `n as i64`
+    ro v SqlValue = n
+    ro k i32 = 3
+    // nova:expect E7301 -- an `i32` does not widen into `W(i64)` implicitly (D491)
+    ro w P1637Wide = k
+    // nova:expect E7301 -- the same refusal inside the `sql` tag: `${n}` with `n u64`
+    ro q = sql`LIMIT ${n}`
+    ro ok SqlValue = n as i64
+}

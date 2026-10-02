@@ -672,7 +672,7 @@ fn handle_connection(mut stream: TcpStream, state: &Arc<DaemonState>, token: &st
     let envelope: Envelope = match serde_json::from_str(line.trim()) {
         Ok(e) => e,
         Err(e) => {
-            let _ = send_response(&mut stream, &Response::Error(format!("bad request: {}", e)));
+            let _ = send_response(&mut stream, &Response::Error(format!("bad request: {:#}", e)));
             return;
         }
     };
@@ -726,14 +726,14 @@ fn send_response(stream: &mut TcpStream, resp: &Response) -> std::io::Result<()>
 /// (фоновый процесс).
 pub fn run_server(repo_root: PathBuf) -> anyhow::Result<()> {
     let listener = TcpListener::bind(("127.0.0.1", 0))
-        .map_err(|e| anyhow::anyhow!("bind daemon socket: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("bind daemon socket: {:#}", e))?;
     let port = listener
         .local_addr()
-        .map_err(|e| anyhow::anyhow!("local_addr: {}", e))?
+        .map_err(|e| anyhow::anyhow!("local_addr: {:#}", e))?
         .port();
     let token = gen_token();
     let info = DaemonInfo { pid: std::process::id(), port, token: token.clone(), started_at_unix: unix_now() };
-    write_discovery(&repo_root, &info).map_err(|e| anyhow::anyhow!("write discovery file: {}", e))?;
+    write_discovery(&repo_root, &info).map_err(|e| anyhow::anyhow!("write discovery file: {:#}", e))?;
 
     let state = Arc::new(DaemonState::new());
     let timeout = idle_timeout();

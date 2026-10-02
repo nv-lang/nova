@@ -165,7 +165,7 @@ impl RemoteConfig {
         for a in self.ssh_base_args() { cmd.arg(a); }
         cmd.arg("echo pong");
         let out = cmd.output()
-            .map_err(|e| anyhow!("spawn ssh: {}", e))?;
+            .map_err(|e| anyhow!("spawn ssh: {:#}", e))?;
         if !out.status.success() {
             bail!("ssh {}@{} failed: {}", self.user, self.host,
                 String::from_utf8_lossy(&out.stderr));
@@ -204,7 +204,7 @@ impl RemoteConfig {
         for a in self.ssh_base_args() { cmd.arg(a); }
         cmd.arg(&remote_cmd);
         let out = cmd.output()
-            .map_err(|e| anyhow!("spawn ssh for bench: {}", e))?;
+            .map_err(|e| anyhow!("spawn ssh for bench: {:#}", e))?;
         if !out.status.success() {
             bail!("remote bench run failed on {}: {}", self.name,
                 String::from_utf8_lossy(&out.stderr));
@@ -222,7 +222,7 @@ impl RemoteConfig {
         scp.arg(format!("{}@{}:{}", self.user, self.host, remote_out));
         scp.arg(local_out);
         let scp_out = scp.output()
-            .map_err(|e| anyhow!("spawn scp: {}", e))?;
+            .map_err(|e| anyhow!("spawn scp: {:#}", e))?;
         if !scp_out.status.success() {
             bail!("scp from {} failed: {}", self.name,
                 String::from_utf8_lossy(&scp_out.stderr));

@@ -433,26 +433,12 @@ const CHAR_WIDTH_MSG = "a char literal holds exactly one character (or one escap
 const CHAR_ESCAPE_MSG = "this char escape is not one the language defines"
 const CHAR_UNICODE_MSG = "outside the subset: the unicode char escape (backslash-u) is not compiled yet (E2-b3) -- write the character itself"
 
-/// The `??` judge's two refusals (the coalesce wave). The first is the
-/// LANGUAGE's: `X ?? return R` was retracted by the D86 amendment, the oracle
-/// parses it and always refuses in its checker, and novac is at the same
-/// stage with the same verdict. The second is the subset's: `??` unwraps an
-/// Option, so a left side that is not one has no payload to answer with.
-const COALESCE_RETURN_MSG = "`??` does not take `return` on its right -- the form is retracted (D86); bind the value and return on the next line"
 /// `??` unwraps a container, and this left side is not one. NOT a subset refusal:
 /// D86 gives exactly two containers and novac now implements both, so a left side
 /// that is neither is an ERROR OF THE PROGRAM and stays refused forever. The oracle
 /// is wrong here and accepts it (registry 839, blocks the tag: `42 ?? 77` prints 77
 /// while its check says ok), which is why the reference for this form is the spec.
 const COALESCE_NONOPT_MSG = "`??` unwraps an `Option` or a `Result`, and this left side is neither"
-
-/// The lone `?` (Try operator, D85, registry #1264): legal Nova --
-/// the oracle compiles it as early-return propagation on `Option`/`Result`
-/// -- not compiled yet. Named here rather than at the lexer, mirroring
-/// `??`'s own two refusals above: a legal-but-unimplemented (D85) construct
-/// reaches the tree and is refused BY NAME in the checker, not swallowed
-/// as a syntax error about a form the language does not have.
-const TRY_MSG = "outside the subset: the `?` (Try) operator is not compiled yet (E2, the control-flow horizon) -- match the `Option`/`Result` and write the early return by hand"
 
 /// A debug format specifier in an interpolation slot (`${expr:?}`, D229 V1;
 /// registry #1231): legal Nova, and the parser now reads the `: ?` pair as
@@ -481,7 +467,7 @@ const INTERP_SPEC_MSG = "outside the subset: a format specifier in string interp
 /// hands novac no std declarations. Nothing can reach the form, so nothing can exercise
 /// an emitter written for it; writing it now would put untested code in the compiler.
 /// When E2-b3 lands, the form becomes both reachable and testable in one step.
-const COALESCE_RESULT_MSG = "outside the subset: `??` over a `Result` is not compiled yet (E2-b3) -- the language allows it (D86), but a `Result` value cannot be built here yet, so the form cannot be exercised end to end"
+const COALESCE_RESULT_MSG = "outside the subset: `??` and `?` over a `Result` are not compiled yet (E2-b3) -- the language allows them (D85, D86), but a `Result` value cannot be built here yet, so the forms cannot be exercised end to end"
 
 /// The brace form of a parenthesised record. Not "outside the subset": the
 /// ORACLE fails to emit it too (`Pair { x: 1 }` on `type Pair(x int, y int)`

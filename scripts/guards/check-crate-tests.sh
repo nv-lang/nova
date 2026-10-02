@@ -66,7 +66,7 @@ ROOT="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
 # сервер), а валл-клок гуляет 60-296с. Шаг гейта, краснеющий случайно,
 # хуже отсутствующего: следующее окно его отключит. Сначала — разобрать
 # мерцание (класс №855), потом включать.
-SUITES="nova-lsp:--lib:300 nova-cli::150 compiler-codegen:--lib:1200 compiler-codegen:--test=d325_result_everywhere_guard:3"
+SUITES="nova-lsp:--lib:300 nova-cli::150 compiler-codegen:--lib:1200 compiler-codegen:--test=d325_result_everywhere_guard:3 compiler-codegen:--test=r3_value_byref_threshold:3 compiler-codegen:--test=r1598_ro_receiver_by_copy:3"
 
 fail_hard() {
     echo "$NAME: FAIL — $1" >&2

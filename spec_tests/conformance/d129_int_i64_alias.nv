@@ -2,6 +2,9 @@
 // `nova_int` (typedef int64_t). The absence of codegen distinction is INTENTIONAL — a
 // bootstrap-invariant, NOT a collapse-bug (contrast D128 char/int, where distinction IS
 // needed). This test pins the SIGNED arithmetic semantics and the int ≡ i64 value-equivalence.
+// Rewritten by D491 (registry 221.1 #1608) after the D129 amend (Plan 133): `int` is
+// `intptr_t`, `i64` is `int64_t` -- DISTINCT types of equal width on 64-bit -- so a value
+// crosses between them with `as`, and the second test pins that the crossing is lossless.
 module spec_tests.conformance
 
 test "int is SIGNED: negative literals compare and add as signed (D129)" {
@@ -11,8 +14,8 @@ test "int is SIGNED: negative literals compare and add as signed (D129)" {
     assert(a + b == -2)        // signed: -5 + 3 = -2
 }
 
-test "int and i64 are interchangeable by value (D129 alias)" {
+test "int and i64 are distinct types: a value crosses with `as`, losslessly (D129 amend, D491)" {
     ro a int = -5
     ro c i64 = -5
-    assert(a == c)             // int ≡ i64 — same nova_int, same value
+    assert(a as i64 == c)      // the same value after an explicit `as`
 }

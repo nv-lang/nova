@@ -78,7 +78,7 @@ test "stress: AtomicI64 fetch_max over ascending sequence" {
     mut a = AtomicI64.new(0)
     mut i = 0
     while i < 1000 {
-        a.fetch_max(i)
+        a.fetch_max(i as i64)
         i = i + 1
     }
     assert(a.load() == 999)
@@ -88,7 +88,7 @@ test "stress: AtomicI64 fetch_min over descending sequence" {
     mut a = AtomicI64.new(1000)
     mut i = 999
     while i >= 0 {
-        a.fetch_min(i)
+        a.fetch_min(i as i64)
         i = i - 1
     }
     assert(a.load() == 0)

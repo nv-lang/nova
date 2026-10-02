@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_MIXED_WIDTH_ARITH
+// Regression for registry 221.1 #1608 (D491, owner's decision 2026-10-02): a value of a
+// numeric type does not change its type implicitly -- not by widening either. Before,
+// a widening (`u8` -> `int`, `i32` -> `i64`, `f32` -> `f64`) was implicit in every
+// position, and `u32 + int` was accepted in an operator.
+// Positive half: standalone/p1608_numeric_as_ok.nv.
+module neg.p1608_op_u32_eq_i32_neg
+
+fn main() Io {
+    ro c u32 = 9
+    ro k i32 = 9
+    // nova:expect E_MIXED_WIDTH_ARITH -- a comparison mixes two numeric types too
+    println("${c == k}")
+}

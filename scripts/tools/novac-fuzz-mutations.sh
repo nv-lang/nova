@@ -38,8 +38,8 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 # krasnyh v obe storony. Bez shva novaya faza emit byla by nedokazuema.
 NOVAC="${NOVAC_BIN:-}"
 if [ -z "$NOVAC" ]; then
-    NOVAC="$ROOT/novac/target/novac.exe"
-    [ -x "$NOVAC" ] || NOVAC="$ROOT/novac/target/novac"
+    . "$ROOT/scripts/guards/lib/novac.sh"
+    NOVAC="$(novac_bin "$ROOT")"
 fi
 STEP="${1:-40}"
 CORPUS="${2:-$ROOT/examples/basics}"

@@ -289,3 +289,23 @@ def"
     ro with_nl = "abc\ndef"
     assert(with_nl.byte_len() == whole.byte_len() + 1)
 }
+
+test "a float exponent is one FloatLit token (registry 1605), and an `e` that starts none is not taken" {
+    ro toks = lex("1e20 1.5e-3 2.5E2 4e+1 7")
+    assert(toks[0].kind == TokenKind.FloatLit && toks[0].text == "1e20")
+    assert(toks[1].kind == TokenKind.FloatLit && toks[1].text == "1.5e-3")
+    assert(toks[2].kind == TokenKind.FloatLit && toks[2].text == "2.5E2")
+    assert(toks[3].kind == TokenKind.FloatLit && toks[3].text == "4e+1")
+    assert(toks[4].kind == TokenKind.IntLit)
+    // CONTROL: no digit after the `e` (or after its sign) is no exponent, and
+    // the run touching the letter is ONE refusal -- `1.5e` as a whole, as the
+    // oracle's "invalid float literal" says (merge of sweep 6: the first
+    // version of this control split it into `1.5` and a name `e`, the silent
+    // misread `1.5_` had). The integer run is refused the same way.
+    ro ctl = lex("1.5e x 3e- 0..3")
+    assert(ctl[0].kind == TokenKind.ErrorTok && ctl[0].text == "1.5e")
+    assert(ctl[1].kind == TokenKind.Ident && ctl[1].text == "x")
+    assert(ctl[2].kind == TokenKind.ErrorTok && ctl[2].text == "3e")
+    assert(ctl[4].kind == TokenKind.IntLit && ctl[5].kind == TokenKind.DotDot)
+    assert(reserialize(ctl) == "1.5e x 3e- 0..3")
+}

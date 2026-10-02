@@ -90,7 +90,7 @@ test "m_boxcap detach box-capture + reachable CancelToken: serve, respond, cance
                 }
                 spawn {
                     ro m_boxcap_port = match m_boxcap_port_rx.recv() { Some(p) => p, None => 0 as u16 }
-                    match TcpStream.connect(SocketAddr.loopback(m_boxcap_port)) {
+                    match TcpStream.connect(SocketAddr.loopback(m_boxcap_port as int)) {
                         Ok(consume m_boxcap_cli) => {
                             ro _ = m_boxcap_cli.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n")
                             match m_boxcap_cli.read_bytes(4096) {

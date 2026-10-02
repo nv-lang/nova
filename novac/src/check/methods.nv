@@ -27,7 +27,7 @@ import ../diag.{ice}
 import ../names.{raw_decl}
 import ../resolve.{FnLookup}
 import ../sem.{LitArg, branch_children, ArgSpec, ArgClass, CallForm, FnRow, CalleeTarget, raw_row, no_row, bind_slots}
-import ../sem.{is_expr_kind}
+import ../sem.{is_arg_value_kind}
 import ../sem.{c_method_symbol, c_overload_symbol, impl_of_proto, ty_source_name, decl_of_ty}
 import ../sem.{row_recv_by_pointer}
 import ../sem.{option_payload}
@@ -117,7 +117,13 @@ fn Checker mut @record_method_callee(e Node, kids []Node, recv_t TyId) -> () {
 fn Checker mut @refuse_method_call(e Node, t Token, key []ArgSpec) -> () {
     ro kids = branch_children(e)
     mut single_row = no_row()
-    if Some(row) = @res.only_row_of(t.text) {
+    // THE ONE METHOD OF THIS NAME ON THIS RECEIVER (#1567): another type's
+    // method of the same name is no candidate, so it must not make the name
+    // look overloaded either. `o.c.bump()` on the file's `Ctr` lost its P14
+    // cause the day std's private json `Lexer @bump` got a row (its type is
+    // registered for its own module's bodies now) -- the name stopped being
+    // single, and the refusal fell back to "no such method".
+    if Some(row) = @only_row_on_receiver(t.text, key) {
         // THE ONE METHOD OF THIS NAME MAY BELONG TO ANOTHER TYPE (2026-10-01):
         // `code.store(7)` on an `AtomicInt` beside the program's own
         // `FnBuilder @store(target, op, src)` was refused as "this call omits
@@ -163,6 +169,24 @@ fn Checker mut @refuse_method_call(e Node, t Token, key []ArgSpec) -> () {
             "outside the subset: no overload of this method accepts these argument types")
         FnFound(row) => @refuse_arg_type(kids, row, key, CallForm.MethodCall)
     }
+}
+
+/// The single METHOD row of `name` whose receiver is not another concrete type
+/// than this call's (`@receiver_is_foreign`), or None when there is none or
+/// more than one -- the name's chain walked through the index's two doors.
+fn Checker @only_row_on_receiver(name str, key []ArgSpec) -> Option[FnRow] {
+    mut found = no_row()
+    mut r = @res.first_row_of(name)
+    while raw_row(r) >= 0 {
+        ro here = r
+        r = @res.next_row_of(r)
+        if !@ctx.fns.rows[raw_row(here)].has_recv { continue }
+        if @receiver_is_foreign(here, key) { continue }
+        if raw_row(found) >= 0 { return None }
+        found = here
+    }
+    if raw_row(found) < 0 { return None }
+    Some(found)
 }
 
 /// Is this row a method of a DIFFERENT concrete type than the call's receiver?
@@ -402,16 +426,16 @@ fn Checker mut @type_method_call(e Node) -> () {
     // the lattice is asked; a refusal anywhere in the children stops the
     // resolution, because the type the key would carry is not trustworthy.
     ro before = @out.len()
-    // The receiver and the arguments are not the call's value: the position's
-    // expectation stays outside, as around a free call's arguments (calls.nv).
-    // It leaked in until sweep 6: under a `-> TyId` tail, the `if is_mut { 1 }
-    // else { 0 }` argument of `@intern` took `TyId` for its literals.
+    // THE TAIL'S EXPECTATION STAYS OUTSIDE THE CALL, as the free call has it
+    // (calls.nv): `=> @intern(k, if m { 1 } else { 0 }, a)` in a `-> TyId`
+    // body adapted the branch literals to `TyId` -- the RETURN's type -- and
+    // the argument no longer fitted `head_id int` (part 5 of p274-carina-k1).
     ro saved_expect = @value_expect
     @value_expect = no_ty()
     @type_expr(kids[0])
     mut i = 0
     for c in kids {
-        if i > 2 && is_expr_kind(c.kind_of()) && !@is_deferred_variant(c) {
+        if i > 2 && is_arg_value_kind(c.kind_of()) && !@is_deferred_variant(c) {
             // A bare `None` (`@is_deferred_variant`) is typed after the lookup,
             // by its parameter (registry 1565).
             @type_expr(c)
@@ -556,9 +580,12 @@ fn Checker mut @type_effect_op_call(e Node, kids []Node) -> bool {
     // which names the counts and so is not silent about the shape.
     ro before = @out.len()
     mut args = []Node.new()
+    // The tail's expectation stays outside the call (the method call's rule).
+    ro saved_expect = @value_expect
+    @value_expect = no_ty()
     mut i = 0
     for c in kids {
-        if i > 2 && is_expr_kind(c.kind_of()) {
+        if i > 2 && is_arg_value_kind(c.kind_of()) {
             @type_expr(c)
             args.push(c)
         } else {
@@ -568,6 +595,7 @@ fn Checker mut @type_effect_op_call(e Node, kids []Node) -> bool {
         }
         i += 1
     }
+    @value_expect = saved_expect
     if @out.len() > before {
         // SILENT-OK: an argument's own refusal already spoke; the type a
         // comparison would use is not trustworthy, the same invariant the

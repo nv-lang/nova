@@ -1,0 +1,12 @@
+module hp
+
+fn gap(s str, k int) -> int {
+    ro p = s.ptr()
+    unsafe { p.offset(k).dist(p) }
+}
+
+fn main() {
+    println(gap("hello", 3))
+    ro p = "abc".ptr()
+    println(unsafe { p.dist(p.offset(2)) })
+}

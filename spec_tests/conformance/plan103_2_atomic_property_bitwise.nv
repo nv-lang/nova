@@ -23,7 +23,7 @@ test "property: fetch_and identity — and with all-ones" {
     ro mask = 0xFFFFFFFF
     mut a2 = AtomicI64.new(0b1010)
     ro v2 = a2.load()
-    ro prev = a2.fetch_and(mask)
+    ro prev = a2.fetch_and(mask as i64)
     assert(prev == v2)
     // value still v2 (0b1010 & 0xFFFFFFFF = 0b1010)
     assert(a2.load() == v2)

@@ -1047,14 +1047,14 @@ fn infer_generic_subst(
     }
     for (i, (p, expected)) in const_fn.params.iter().zip(expected_params.iter()).enumerate() {
         unify_type(&p.ty, expected, &generic_names, &mut subst)
-            .map_err(|e| format!("param {} ({}): {}", i, p.name, e))?;
+            .map_err(|e| format!("param {} ({}): {:#}", i, p.name, e))?;
     }
     // Match return type.
     let const_ret_strip = const_fn.return_type.as_ref();
     match (const_ret_strip, expected_ret) {
         (Some(cr), Some(er)) => {
             unify_type(cr, er, &generic_names, &mut subst)
-                .map_err(|e| format!("return type: {}", e))?;
+                .map_err(|e| format!("return type: {:#}", e))?;
         }
         (None, Some(er)) => {
             // const fn returns Unit implicitly если no return_type.

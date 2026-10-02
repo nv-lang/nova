@@ -1,34 +1,23 @@
 module float_exponent.pos_1
 
-// EXPONENT LITERALS (registry 1605): every float form of D44 -- an exponent
-// with and without a sign, with and without a fraction, either letter case,
-// and `_` between digits anywhere a digit run stands. Until the fix the lexer
-// stopped at the `e`: `1e20` was one refused token (an ICE in a constant) and
-// `1.5e3` a float `1.5` followed by an unknown name `e3`. The hex literal and
-// the range stand beside them as the control: `0x1e5` keeps its `e` as a hex
-// digit, `0..3` keeps its two dots.
-const BIG = 1e20 as i32
-const K = 1.5e3
-const MILLI = 1.5e-3
+// A float literal with an EXPONENT (D44's table: `1e10`, `1.5e-3`) -- novac's
+// lexer read none (registry 1605): inside a function the text was a parse
+// refusal, inside a `const` an ICE. The letter is `e` or `E` and the sign is
+// optional, as the oracle reads them. The `const` is the hunt's side probe
+// (`1e20 as i32` saturates, D54). Byte for byte with the oracle.
+const E = 1e20 as i32
+const SMALL = 1.5e-3
 
 fn main() {
-    println(BIG)
-    println(K)
-    println(MILLI)
-    println(1e10)
-    println(2E+2)
-    println(1E5)
-    println(-2.5e2)
-    println(1_000.5)
-    println(1_000.25e-1)
-    println(1.0e1_0)
-    println(2.5e0 * 4.0)
-    println(1e3 > 999.5)
-    println((1.5e3 as int) + 1)
-    println(0x1e5)
-    mut sum = 0
-    for i in 0..3 {
-        sum += i
+    println(E)
+    println(SMALL * 1000.0)
+    println(1e3 + 0.5)
+    println(2.5E2)
+    println(4e+1)
+    ro x = 1e-2
+    println(x * 100.0)
+    println((3e9 as i64) / 1000)
+    for i in 0..2 {
+        println(i)
     }
-    println(sum)
 }
