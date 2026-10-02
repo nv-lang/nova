@@ -1,0 +1,33 @@
+module narrow_shift.pos_1
+
+// A bit operation on a NARROW integer (`u8`, `i8`, `u16`, `i16`) is a value of
+// that type wherever it stands -- not only once stored (registry 1600, 1602,
+// 1603; hunt docs/dev/hunts/novac/probes/2026-10-02-cast-k1). C promotes the
+// operands to `int`, and novac printed 3200 for `(a << 4) as u8` with
+// `a u8 = 200` and for a `const` whose initializer shifts a `u8`; D54 and the
+// oracle give 128. Byte for byte with the oracle: every line here is one where
+// the oracle gives the norm (a shift cast to a WIDER type is still 1601, the
+// oracle's half, and stays out of this file until it is fixed).
+const S = (200 as u8) << 4
+const T u8 = 200
+
+fn main() {
+    ro a = 200 as u8
+    ro s = 100 as i8
+    ro h = 40000 as u16
+    ro q = 20000 as i16
+    println((a << 4) as u8)
+    println((a << 4) as u8 == 128)
+    println(((a << 4) as u8) as u16)
+    println((s << 1) as i8)
+    println((h << 1) as u16)
+    println((q << 2) as i16)
+    println((a | 1) as u8)
+    println((a & 15) ^ 3)
+    println(S)
+    println(S as u16)
+    println(S == 128)
+    println((T << 4) as u8)
+    ro t = a << 4
+    println(t)
+}

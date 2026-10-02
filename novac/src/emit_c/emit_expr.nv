@@ -909,6 +909,19 @@ fn Emitter mut @emit_expr(e Node) -> () {
             @emit_expr(kids[2])
             @body.append(")${acc}tag))")
         } else if is_bit_infix(op) {
+            // THE ROW'S WIDTH, through the same door as `~` above (registry
+            // 1602): C promotes a `u8`/`i8`/`u16`/`i16` operand to `int`, so
+            // `a << 4` with `a u8 = 200` was 3200 wherever the value was not
+            // stored first -- a cast, a comparison, a `println` argument, a
+            // constant's inlined initializer (1600, 1603). The cast back to the
+            // row's C type is the value D54 and the oracle give (128); on a row
+            // as wide as C's promotion it changes nothing.
+            ro bit_cast = is_int_prim(@ctx.tys, carrier_of(@ctx, @out.type_of(e.id_of())))
+            if bit_cast {
+                @body.append("((${@arith_row(@out.type_of(e.id_of())).c_name})")
+            } else {
+                // A bool's `&`/`|`/`^`: C's int is its value already.
+            }
             @body.append("((")
             @emit_expr(kids[0])
             @body.append(") ")
@@ -916,6 +929,11 @@ fn Emitter mut @emit_expr(e Node) -> () {
             @body.append(" (")
             @emit_expr(kids[2])
             @body.append("))")
+            if bit_cast {
+                @body.append(")")
+            } else {
+                // Nothing was opened above.
+            }
         } else if is_truth_infix(op) {
             @body.append("((nova_int)((")
             @emit_expr(kids[0])
