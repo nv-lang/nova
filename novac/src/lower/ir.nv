@@ -20,7 +20,7 @@ module novac.lower
 import ../tree.{Node, AssignOp, NodeId, raw_node}
 import ../types.{TyId}
 import ../diag.{ice}
-import ../sem.{VariantRow, Ctx, CheckOut}
+import ../sem.{VariantRow, Ctx, CheckOut, FnRow}
 
 /// A local of the lowered body: `Local(0)` is the return place (rustc `_0`);
 /// every other index is a source binding or a temporary, in creation order.
@@ -150,6 +150,7 @@ export type Rvalue enum
     | Read(PlaceRead) // one projection of a local, read as a value (destructuring binder)
     | AnyData(Node) // the value the `any` the tree names holds, read as the destination's type (D54)
     | NoneOf // the `None` of the destination's own Option type (the early return of `x?`, D85)
+    | CallNext(NextRead) // `next` of the iterator a local holds -- a `for` over an iterator (D58)
 
 /// ONE STEP OF A PLACE (wave M3c): a named field, or a positional component.
 ///
@@ -199,6 +200,12 @@ export type VariantRead value {
 export type ElemRead value {
     vec Local /// the collection local
     idx Local /// the index local
+}
+
+/// One turn of a `for` over an iterator (D58): the recorded `next` row, on the local.
+export type NextRead value {
+    row FnRow /// the `next` method's row
+    recv Local /// the iterator local
 }
 
 /// `dest = src` -- the ONE way a value reaches a place in the lowered body.
@@ -612,6 +619,10 @@ export fn FnBuilder mut @place(e Node, dest Local) -> () {
 /// the read is safe by construction.
 export fn FnBuilder mut @take_payload(dest Local, opt Local) -> () {
     @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.SomePayload(opt) }))
+}
+
+export fn FnBuilder mut @call_next(dest Local, row FnRow, recv Local) -> () {
+    @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.CallNext(NextRead { row, recv }) }))
 }
 
 /// `dest = None` of dest's own Option type: the early return of `x?` (D85) writes it into

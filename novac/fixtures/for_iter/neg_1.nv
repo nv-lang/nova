@@ -1,0 +1,13 @@
+module for_iter.neg_1
+
+// NOVAC_EXPECT neither a vector
+// ONE seeded cause: a `for` over an `int` -- no vector, and no `next()` on the
+// type, so nothing to walk. The refusal names both heads novac walks. The
+// oracle refuses the loop at code generation (its checker passes it).
+fn seven() -> int => 7
+
+fn main() {
+    for x in seven() {
+        println(x)
+    }
+}

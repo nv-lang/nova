@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/pipeline/for_iter_test.nv -- a `for` over an ITERATOR (D58): a
+// head whose type has `next() -> Option[T]` is walked by calling `next` each
+// turn; sweep 10 (check/for_iter.nv, `@lower_for_iter`).
+//
+// THE TEST CARRIES ITS CONTROL. Reverse probe, run before the commit: with
+// `@type_for_iterator` refusing every head, the first assertion reddens.
+
+module novac.pipeline
+
+test "a `for` over a program's own iterator calls its `next` each turn (D58)" {
+    mut std = std_decls()
+    std.push("module std.o\nexport type Option[T] enum Some(T) | None")
+    ro src = "type Cd { n int }\nfn Cd mut @next() -> Option[int] {\n if @n <= 0 {\n  return None\n }\n @n -= 1\n Some(@n)\n}\nfn main() {\n ro c = Cd { n: 3 }\n for k in c {\n  println(k)\n }\n}"
+    ro (d, c) = compile_to_c(src, std)
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("_next("), "each turn calls the iterator's `next`")
+    // CONTROL: a head with no `next` is refused by name.
+    ro (r, _) = compile_to_c("fn seven() -> int => 7\nfn main() {\n for x in seven() {\n  println(x)\n }\n}", std)
+    assert(r.len() == 1, messages(r))
+    assert(messages(r).contains("neither a vector"), messages(r))
+}

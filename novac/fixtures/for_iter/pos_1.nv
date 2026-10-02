@@ -1,0 +1,54 @@
+module for_iter.pos_1
+
+// A `for` OVER AN ITERATOR (D58: `for x in c` is `loop { match it.next() {
+// Some(x) => body, None => break } }`): a head whose type has `next() ->
+// Option[T]` binds `T` each turn. std's `str.chars()` (its `next` the shell
+// carries, called on the iterator by pointer as the oracle does) and a
+// program's own iterator (its `mut @next` our own body), with a binder, `_`,
+// and a `break`. Until sweep 10 only a `[]T` head was walked.
+type Countdown { n int }
+
+fn Countdown mut @next() -> Option[int] {
+    if @n <= 0 {
+        return None
+    }
+    @n -= 1
+    Some(@n + 1)
+}
+
+fn count(name str) -> int {
+    mut n = 0
+    for _ in name.chars() {
+        n += 1
+    }
+    n
+}
+
+fn code_sum(s str) -> int {
+    mut sum = 0
+    for c in s.chars() {
+        sum += c as int
+    }
+    sum
+}
+
+fn main() {
+    println(count("héllo"))
+    println(count(""))
+    println(code_sum("AB"))
+    mut total = 0
+    ro four = Countdown { n: 4 }
+    for k in four {
+        total = total * 10 + k
+    }
+    println(total)
+    mut seen = 0
+    ro nine = Countdown { n: 9 }
+    for k in nine {
+        if k == 6 {
+            break
+        }
+        seen += 1
+    }
+    println(seen)
+}

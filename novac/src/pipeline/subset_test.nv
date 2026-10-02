@@ -521,7 +521,8 @@ fn main() {\n\
     assert(d2.len() == 0)
     assert(c2.contains("_method_index("))
 
-    // A call that hands back a SCALAR has no element: refused by name.
+    // A call that hands back a SCALAR has no element and no `next`: refused by
+    // name (since sweep 10 the text names both heads a `for` walks).
     ro (d3, _) = compile_to_c("fn one() -> int {\n\
  5\n\
 }\n\
@@ -531,7 +532,7 @@ fn main() {\n\
  }\n\
 }", std)
     assert(d3.len() >= 1)
-    assert(d3[0].message.contains("does not return a vector"))
+    assert(d3[0].message.contains("neither a vector"), d3[0].message)
 }
 
 test "if-let binds the payload behind the tag guard; both judges answer by name" {

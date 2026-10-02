@@ -27,10 +27,10 @@ import ../sem.{c_type, vec_op_c, raw_vrow, is_value_record, c_maker, VariantRow,
 // M3a: lowering `println` asks the tree three questions (is this an argument, what does the
 // callee spell, what are the children) and the output printer asks the carrier of a type.
 import ../sem.{branch_children, is_expr_kind, carrier_of, slice_shape_of}
-import ../sem.{FnRow, raw_row, c_callable, coerce_shell_symbol}
+import ../sem.{FnRow, raw_row, c_callable, coerce_shell_symbol, c_shell_method, row_recv_by_pointer, no_subst}
 import ../types.{TyId, is_ty}
 import ../lower.{Local, LocalDecl, AssignStmt, StoreStmt, Rvalue, Operand, OutputStmt, no_local}
-import ../builtins.{VEC_INDEX_METHOD, VEC_INDEX_SET_OP, VEC_LEN_METHOD}
+import ../builtins.{VEC_INDEX_METHOD, VEC_INDEX_SET_OP, VEC_LEN_METHOD, NEXT_METHOD}
 
 
 /// Prints ONE step of output: the printer of the value's CARRIER around the value.
@@ -98,6 +98,7 @@ fn Emitter @expr_of(rv Rvalue) -> Node {
         IndexPayload(_) => ice("emit_c: an element read reached expr_of -- only an assignment prints it")
         IndexConst(_) => ice("emit_c: a constant-index element read reached expr_of -- only an assignment prints it")
         IndexFromEnd(_) => ice("emit_c: a from-the-end element read reached expr_of -- only an assignment prints it")
+        CallNext(_) => ice("emit_c: an iterator's `next` reached expr_of -- only an assignment prints it")
         VariantField(_) => ice("emit_c: a variant field read reached expr_of -- only an assignment prints it")
         Read(_) => ice("emit_c: a place read reached expr_of -- only an assignment prints it")
         AnyData(_) => ice("emit_c: an unboxing reached expr_of -- only an assignment prints it")
@@ -143,6 +144,20 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
         SomePayload(opt) => {
             @emit_assign_head(d)
             @body.append("${@lo.ir.decl_of(opt).name}.value;\n")
+        }
+        CallNext(r) => {
+            // `next` of the iterator local (D58): our name for our own body, the
+            // shell's for std's; the receiver by pointer where its row takes it
+            // so (D488: `mut @` of a value record) -- the oracle's `next(&it)`.
+            ro rd = @lo.ir.decl_of(r.recv)
+            ro sym = if @ctx.in_program(r.row) {
+                c_callable(@ctx, r.row, no_subst())
+            } else {
+                c_shell_method(@ctx, rd.ty, NEXT_METHOD)
+            }
+            ro amp = if row_recv_by_pointer(@ctx, r.row) { "&" } else { "" }
+            @emit_assign_head(d)
+            @body.append("${sym}(${amp}${rd.name});\n")
         }
         NoneOf => {
             // The early return of `x?` (D85): the shell's `None` of the

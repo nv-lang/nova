@@ -274,7 +274,9 @@
 # 2026-10-02, cloud session p274-carina-sweep (D46 on `str`, sweep 10): builtins 68 -> 69:
 #   `COMPARE_METHOD` -- the method an ordering lowers to (`a < b` is `a.@compare(b) < 0`), a name of
 #   the language beside `EQUAL_METHOD`; asked by check/operators.nv, which looks the row up by it.
-builtins 69
+#   Same session, same day (D58, a `for` over an iterator): builtins 69 -> 70: `NEXT_METHOD` -- the
+#   method each turn of such a `for` calls, asked by check/for_iter.nv and spelled by emit_c/emit_place.nv.
+builtins 70
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -374,7 +376,10 @@ lex 11
 #   1542): PatTest (the nested subpattern's test, carried by Cond.Holds and printed by
 #   emit_c's pattern-test door) and FnBuilder.@note_arm_checks (how many nested-test
 #   Ifs an arm opened; emit_c finds the innermost through SwitchArm.checks).
-lower 93
+# 2026-10-02, cloud session p274-carina-sweep (D58, a `for` over an iterator): lower 93 -> 95:
+#   `NextRead` (the rvalue's payload: the `next` row and the iterator local) and `FnBuilder @call_next`
+#   (its one writer) -- read by emit_c/emit_place.nv, which prints `next(&it)` from the record.
+lower 95
 main 0
 # mono -- НОВЫЙ модуль (2026-08-18, Э2-б2): коллектор достижимого.
 # Наружу три имени: тип Reach, вопрос @has (эмиттер спрашивает про каждую

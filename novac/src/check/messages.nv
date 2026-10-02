@@ -250,7 +250,7 @@ const WHILELET_COND_FORM_MSG = "outside the subset: a `while` condition takes a 
 /// requiring `[]T` is a LAG, not a rule, and a reader is entitled to know when it ends.
 /// Carrying neither spelling, it was also invisible to the debt ratchet -- the hole in
 /// that counter's scope is wave B11's subject.
-const FOR_CALL_HEAD_MSG = "outside the subset: the head of this `for` is a call that does not return a vector, and novac walks a collection by index, so it needs `[]T` -- the iterator protocol D58 asks for is not compiled yet (274.7 B12)"
+const FOR_CALL_HEAD_MSG = "outside the subset: the head of this `for` is neither a vector `[]T` nor an iterator (a type with `next() -> Option[T]`, D58) -- a collection reached through `iter()` first is not compiled yet (274.7 B12)"
 
 /// The for-header's OWN predicate (wave P5, D486 s4: the header is a binding
 /// position, and a binding position is irrefutable): a variant, a literal, an

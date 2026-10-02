@@ -321,6 +321,11 @@ fn Lowerer mut @lower_stmt(st Node) -> () {
         @lower_store(kids[0], assign_op_of(leaf_kind(kids[1])), src)
     } else if k == NodeKind.ForStmt {
         ro kids = branch_children(st)
+        if @out.has_callee(st.id_of()) {
+            // An ITERATOR head (D58): the checker recorded its `next` on the loop.
+            @lower_for_iter(st, kids)
+            return
+        }
         if is_collection_head(kids[3]) {
             // A COLLECTION head (wave B16) walks a vector by index: a loop
             // of the lowered body whose header carries the collection, the
@@ -702,6 +707,41 @@ fn Lowerer mut @lower_for_each(kids []Node) -> () {
         if shape != PatShape.Bind {
             @lower_pattern_bind(pat, elem_t, le)
         } else { // The element local IS the author's name, bound directly.
+        }
+    }
+    @lower_block_stmts_fn(kids[4], false)
+    @ir.end_loop(c)
+}
+
+/// A `for` over an ITERATOR (D58: `loop { match it.next() { Some(x) => body,
+/// None => break } }`): the head into a temporary once, then each turn its
+/// `next` into an Option temporary, the exit on None, the element bound through
+/// the one pattern door. The checker recorded the `next` row as the loop's
+/// callee and the Option type as the loop's own.
+fn Lowerer mut @lower_for_iter(st Node, kids []Node) -> () {
+    ro head = kids[3]
+    ro it = @ir.temp(@out.type_of(head.id_of()))
+    @lower_place(head, it)
+    ro ot = @out.type_of(st.id_of())
+    ro elem_t = option_payload(@ctx, ot)
+    ro c = @ir.begin_loop(LoopHead.Forever)
+    ro lo = @ir.temp(ot)
+    ro next = @out.callee_of(st.id_of())
+    @ir.call_next(lo, next.callable_row(), it)
+    ro exit_c = @ir.begin_if(Cond.NotSome(lo), ElseShape.NoElse)
+    @ir.break_loop()
+    @ir.end_if(exit_c)
+    ro pat = kids[1]
+    ro shape = pattern_shape(pat)
+    if shape == PatShape.Wild {
+        // Nothing binds the element: the turn only advances the iterator.
+    } else {
+        ro le = if shape == PatShape.Bind { @ir.named(elem_t, pattern_head_text(pat)) } else { @ir.temp(elem_t) }
+        @ir.take_payload(le, lo)
+        if shape != PatShape.Bind {
+            @lower_pattern_bind(pat, elem_t, le)
+        } else {
+            // The element local IS the author's name, bound directly.
         }
     }
     @lower_block_stmts_fn(kids[4], false)
