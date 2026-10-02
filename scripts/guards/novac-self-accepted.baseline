@@ -1,0 +1,40 @@
+# scripts/guards/novac-self-accepted.baseline — МНОЖЕСТВО файлов novac/src,
+# отвергаемых самосборкой (мера 0.2 релиза Карины). Судья:
+# scripts/guards/check-novac-self-accepted.py (реестр 221.1 №1665).
+#
+# ХРАПОВИК В ОБЕ СТОРОНЫ, как у novac-surface.baseline: отвергнутый файл ВНЕ
+# базы — красный (регресс самосборки — чинить; законное вскрытие — поднять
+# базу ТЕМ ЖЕ слиянием строкой-летописью с датой, коммитом и причиной); файл
+# из базы, ставший принимаемым, без сужения базы — тоже красный: иначе
+# следующий рост до прежнего множества пройдёт молча. ICE > 0 красный всегда:
+# ICE обрывает проход и прячет всё за собой.
+#
+# Способ замера — ровно мера 0.2 (scripts/tools/double-build.sh): один процесс
+# NOVAC_UNIT=1 NOVAC_SELF_PATH=novac/src novac check по всем novac/src/*.nv и
+# novac/src/*/*.nv; отвергнутый — назван полем "file" хотя бы одной
+# диагностики. Мера ДИАГНОСТИК (scripts/tools/novac-self-residual.sh) остаётся
+# мерой и здесь не сверяется.
+#
+# Летопись (новые записи — сверху):
+# 2026-10-02, облачная сессия p1665, коммит 08ff689ca (origin/main): ПЕРВАЯ
+#   база — 15 файлов, ICE 0, из 168 файлов novac/src, ~18с на машине
+#   владельца. Повод: пять файлов (sem/collect.nv, sem/mangle.nv,
+#   sem/mangle_test.nv, sem/binding_test.nv, pipeline/handed_free_test.nv),
+#   принимавшихся в 00:23, к утру стали отвергаться, и мера «не храповик»
+#   (решение 2026-09-25) этого не показала до вечернего ручного замера;
+#   интегратор пересмотрел решение этим заданием.
+novac/src/check/static_call.nv
+novac/src/check/typing.nv
+novac/src/diag/diag.nv
+novac/src/emit_c/shell.nv
+novac/src/lex/lex_test.nv
+novac/src/main.nv
+novac/src/names/names.nv
+novac/src/parse/pattern.nv
+novac/src/pipeline/pipeline_test.nv
+novac/src/resolve/resolve_test.nv
+novac/src/sem/binding_test.nv
+novac/src/sem/collect.nv
+novac/src/sem/mangle.nv
+novac/src/sem/mangle_test.nv
+novac/src/types/types.nv
