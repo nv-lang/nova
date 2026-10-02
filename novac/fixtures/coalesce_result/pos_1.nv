@@ -1,0 +1,32 @@
+module coalesce_result.pos_1
+
+import std.fs.{read}
+
+// `??` OVER A `Result` (D86: `Ok(v)` yields `v`, an `Err` the fallback),
+// compiled since sweep 11 -- until now only an Option's `??` was. A Result
+// as std hands it back (`[]u8.to_str()`, `read`), `Ok` and `Err` both, in a
+// binding and in an argument; the fallback runs only on `Err` (it prints).
+fn bytes_of(codes []int) -> []u8 {
+    mut b = []u8.new()
+    for c in codes {
+        b.push(c as u8)
+    }
+    b
+}
+
+fn fallback(tag str) -> str {
+    println("fallback ${tag}")
+    "?"
+}
+
+fn main() Fs {
+    ro hi = bytes_of([]int.of(104, 105))
+    ro ok = hi.to_str() ?? fallback("ok")
+    println(ok)
+    ro ff = bytes_of([]int.of(255))
+    ro bad = ff.to_str() ?? fallback("bad")
+    println(bad)
+    println((bytes_of([]int.of(195, 169)).to_str() ?? "none").byte_len())
+    ro got = read("/nonexistent/coalesce_result".to_path()) ?? bytes_of([]int.of(1, 2, 3))
+    println(got.len())
+}

@@ -428,17 +428,9 @@ fn Checker mut @type_expr(e Node) -> () {
             // A container: the payload of its value-carrying variant is this
             // expression's type -- the LEFT side decides, never the fallback.
         }
-        // AND THE EMITTER'S HALF, refused with its stage rather than accepted silently.
-        // The door above answers for both containers because that is what D86 says; the
-        // emitter can only spell one of them, and a `Result` reaching the Option door
-        // would compare `NOVA_TAG_Option_Some` against a `NovaRes_` struct. Refusing
-        // here keeps check and emit agreeing -- the class the registry calls O-1.
-        if !is_ty(option_payload(@ctx, lt)) {
-            @report_first_leaf_of(qk, COALESCE_RESULT_MSG)
-            return
-        } else {
-            // An Option: the one container the emitter spells today.
-        }
+        // BOTH CONTAINERS ARE COMPILED (sweep 11): an Option through the Option door's
+        // Some-test, a `Result` through the general head test of its `Ok` variant
+        // (lower/lower_coalesce.nv) -- never a `Result` through the Option door.
         // THE LEFT OPERAND'S TYPE IS RECORDED, not left to the lattice: the
         // emitter declares the Option temporary from the channel, and a FREE
         // call there (`name(true) ?? "none"`) had no record -- a method call
