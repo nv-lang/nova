@@ -92,7 +92,7 @@ fn run_cpu(opts: ProfileOpts) -> Result<i32> {
     }
 
     let status = cmd.status()
-        .map_err(|e| anyhow!("spawn samply: {}", e))?;
+        .map_err(|e| anyhow!("spawn samply: {:#}", e))?;
     if !status.success() {
         bail!("samply record exited {:?}", status.code());
     }
@@ -120,7 +120,7 @@ fn run_heap(opts: ProfileOpts) -> Result<i32> {
         cmd.env("NOVA_BENCH_FILTER", f);
     }
     let output = cmd.output()
-        .map_err(|e| anyhow!("spawn bench: {}", e))?;
+        .map_err(|e| anyhow!("spawn bench: {:#}", e))?;
 
     // Stub: emit JSON placeholder.
     let stub = serde_json::json!({
@@ -131,7 +131,7 @@ fn run_heap(opts: ProfileOpts) -> Result<i32> {
         "bench_exit": output.status.code().unwrap_or(-1),
     });
     std::fs::write(opts.out, serde_json::to_string_pretty(&stub)?)
-        .map_err(|e| anyhow!("write heap profile: {}", e))?;
+        .map_err(|e| anyhow!("write heap profile: {:#}", e))?;
     eprintln!("profile/heap: stub written to {}", opts.out.display());
     Ok(0)
 }
@@ -152,7 +152,7 @@ fn run_gc(opts: ProfileOpts) -> Result<i32> {
         cmd.env("NOVA_BENCH_FILTER", f);
     }
     let output = cmd.output()
-        .map_err(|e| anyhow!("spawn bench: {}", e))?;
+        .map_err(|e| anyhow!("spawn bench: {:#}", e))?;
 
     let stub = format!(
         "GC pause profile (stub — Plan 57.B integration)\n\
@@ -160,7 +160,7 @@ fn run_gc(opts: ProfileOpts) -> Result<i32> {
          note: gc.last_pause_ns API in Plan 32 ext (TBD).\n",
         output.status.code());
     std::fs::write(opts.out, stub)
-        .map_err(|e| anyhow!("write gc profile: {}", e))?;
+        .map_err(|e| anyhow!("write gc profile: {:#}", e))?;
     eprintln!("profile/gc: stub written to {}", opts.out.display());
     Ok(0)
 }

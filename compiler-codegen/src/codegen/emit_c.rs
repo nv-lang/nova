@@ -9079,7 +9079,7 @@ impl CEmitter {
                 // Plan 157: associated `ro Type.NAME` -- storage keyed by the qualified `Type_NAME` symbol.
                 let symbol = format!("{}_{}", tn, ac.name);
                 let ty_c = match &ac.ty { Some(ty) => self.type_ref_to_c(ty)?, None => self.infer_expr_c_type(value) };
-                self.emit_lazy_const(&symbol, &symbol, &ty_c, value).map_err(|e| format!("assoc ro `{}` codegen failed: {}", key, e))?;
+                self.emit_lazy_const(&symbol, &symbol, &ty_c, value).map_err(|e| format!("assoc ro `{}` codegen failed: {:#}", key, e))?;
                 continue;
             }
             let Some(l) = bare else { continue };
@@ -15597,7 +15597,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
                     self.line("{");
                     self.indent += 1;
-                    self.line(&format!("nova_int _nova_par_count = ({} - {}{});",
+                    self.line(&format!("nova_int _nova_par_count = ({:#} - {}{});",
                         e, s, plus_one));
                     self.line("if (_nova_par_count <= (nova_int)nova_runtime_parallel_inline_threshold()) {");
                     self.indent += 1;
@@ -33224,7 +33224,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     ));
                 }
                 let val = self.emit_const_expr_typed(&decl.value, Some(&ty_c))
-                    .map_err(|e| format!("scope-local const `{}` codegen failed: {}", decl.name, e))?;
+                    .map_err(|e| format!("scope-local const `{}` codegen failed: {:#}", decl.name, e))?;
                 self.line(&format!("const {} {} = {};", ty_c, Self::mangle_field_name(&decl.name), val));
                 self.var_types.insert(decl.name.clone(), ty_c);
                 return Ok(());
@@ -37939,7 +37939,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if self.record_schemas.contains_key("Range") {
                     let tmp = self.fresh_tmp();
                     let end_expr = if *inclusive {
-                        format!("({} + ((nova_int)1LL))", e)
+                        format!("({:#} + ((nova_int)1LL))", e)
                     } else {
                         e.clone()
                     };
@@ -37960,7 +37960,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     Ok(tmp)
                 } else {
                     let _ = inclusive;
-                    Ok(format!("/*range({}, {})*/NOVA_UNIT", s, e))
+                    Ok(format!("/*range({}, {:#})*/NOVA_UNIT", s, e))
                 }
             }
 
@@ -38525,7 +38525,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 } else { None };
                 let inner_c_ty_for_check = self.infer_expr_c_type(inner);
                 let target_c = self.type_ref_to_c(ty)
-                    .map_err(|e| format!("as-cast type error: {}", e))?;
+                    .map_err(|e| format!("as-cast type error: {:#}", e))?;
                 // Plan 180: `None as Option[T]` — emit the target-typed
                 // (NPO-aware) None literal directly. A bare `None` builds a
                 // DEFAULT-typed NovaOpt compound literal and a plain C
@@ -38609,7 +38609,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let inner_ty_is = self.infer_expr_c_type(inner);
                 if inner_ty_is == "void*" {
                     let target_c = self.type_ref_to_c(ty)
-                        .map_err(|e| format!("`is` target type error: {}", e))?;
+                        .map_err(|e| format!("`is` target type error: {:#}", e))?;
                     let tid = self.debt_typeid_macro_for(&target_c);
                     let x = self.emit_expr(inner)?;
                     return Ok(format!("nova_any_is({}, {})", x, tid));
@@ -40538,7 +40538,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     && self.infer_expr_c_type(obj) == "void*"
                 {
                     let target_c = self.type_ref_to_c(&type_args[0])
-                        .map_err(|e| format!("`try_as` target type error: {}", e))?;
+                        .map_err(|e| format!("`try_as` target type error: {:#}", e))?;
                     let tid = self.debt_typeid_macro_for(&target_c);
                     let sani = Self::sanitize_for_novaopt(&target_c);
                     self.register_novaopt_decl(&sani, &target_c);
@@ -50383,7 +50383,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 e
             } else {
                 let end_tmp = self.fresh_tmp();
-                self.line(&format!("nova_int {} = {};", end_tmp, e));
+                self.line(&format!("nova_int {} = {:#};", end_tmp, e));
                 end_tmp
             };
             let cmp = if *inclusive { "<=" } else { "<" };
@@ -50412,7 +50412,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // reads look it up).
             let binding_c = Self::mangle_field_name(&binding);
             self.line(&format!(
-                "for (nova_int {} = {}; {} {} {}; {}++) {{",
+                "for (nova_int {} = {}; {} {} {:#}; {}++) {{",
                 binding_c, s, binding_c, cmp, e, binding_c
             ));
             self.indent += 1;

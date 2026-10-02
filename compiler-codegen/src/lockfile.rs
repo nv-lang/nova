@@ -518,7 +518,7 @@ fn enforce_no_cross_repo_paths(entry_pkg_dir: &Path) -> Result<()> {
     let toml_path = entry_pkg_dir.join("nova.toml");
     if let Some(m) = crate::manifest::parse_manifest(&toml_path, entry_pkg_dir) {
         crate::manifest::check_no_cross_repo_path_deps(&m, &toml_path)
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
+            .map_err(|e| anyhow::anyhow!("{:#}", e))?;
     }
     Ok(())
 }
@@ -677,7 +677,7 @@ pub fn update_precise(
     // осталась бы preferred.
     drop_git_locks(entry_pkg_dir, Some(dep_name))?;
     let exact = VersionReq::parse(&format!("={}", version))
-        .map_err(|e| anyhow!("некорректная версия `{}`: {}", version, e))?;
+        .map_err(|e| anyhow!("некорректная версия `{}`: {:#}", version, e))?;
     sync_ex(entry_pkg_dir, &[(dep_url.to_string(), exact)])
 }
 
@@ -710,7 +710,7 @@ impl GitProvider {
         if let Some(c) = self.versions.borrow().get(url) {
             return Ok(c.clone());
         }
-        let vs = git_cache::list_versions(url).map_err(|e| e.to_string())?;
+        let vs = git_cache::list_versions(url).map_err(|e| format!("{:#}", e))?;
         self.versions.borrow_mut().insert(url.to_string(), vs.clone());
         Ok(vs)
     }
@@ -751,9 +751,9 @@ impl DependencyProvider for GitProvider {
             return Ok(c.clone());
         }
         let tag = self.tag_of(pkg, ver)?;
-        let root = git_cache::git_cache_root().map_err(|e| e.to_string())?;
+        let root = git_cache::git_cache_root().map_err(|e| format!("{:#}", e))?;
         let res = git_cache::resolve_git_dep_in(&root, pkg, &GitPin::Tag(tag), None)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| format!("{:#}", e))?;
         let toml = res.checkout.join("nova.toml");
         let manifest = crate::manifest::parse_manifest(&toml, &res.checkout)
             .ok_or_else(|| {
@@ -812,7 +812,7 @@ fn resolve_version_deps(
     let provider = GitProvider::new();
     let resolution =
         resolver::resolve_with_preferences(&provider, &root_version_deps, preferred)
-            .map_err(|e| anyhow!("резолв версий git-зависимостей:\n  {}", e))?;
+            .map_err(|e| anyhow!("резолв версий git-зависимостей:\n  {:#}", e))?;
     let mut entries: Vec<(String, String)> = Vec::new();
     let mut versions: HashMap<String, String> = HashMap::new();
     for (url, ver) in &resolution.selected {
