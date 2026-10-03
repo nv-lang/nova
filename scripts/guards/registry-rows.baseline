@@ -1538,7 +1538,9 @@
 # 2026-10-03, integrator nova-20: rows -> 1637, max -> 1707 (merge of p274-carina-cast steps 9-13: rows 1674-1675,1694-1695 arrive, their reserve dropped).
 # 2026-10-03, integrator nova-20: rows -> 1640, max -> 1707 (merge of p274-carina-mono-k2 tasks 6-8, 64ae9748c: rows 1677-1678,1688 arrive, their reserve dropped).
 # 2026-10-03, integrator nova-20: rows -> 1649, max -> 1713 (merge of p274-carina-strarm D133 steps 1-6, 84aa92524: rows 1668-1669,1676,1696 arrive and 1709-1713 are numbered; 1708 is k1's, not yet merged).
-rows=1649
+# 2026-10-03, cloud session p274-carina-k1 (part 12): rows -> 1621, max -> 1708 (row 1708 filed open, numbered by the integrator; 1703-1707 live on main and arrive with the next sync -- reserved in gaps until then).
+# 2026-10-03, integrator nova-20: rows -> 1650, max -> 1713 (merge of p274-carina-k1 (#1703, row 1708 arrives): rows 1708 arrive, their reserve dropped).
+rows=1650
 max=1713
 rows=1611
 max=1693
@@ -2292,7 +2294,7 @@ stale_gaps=0
 # 2026-10-03, merge of origin/main dc2617993 into p274-carina-k1 (part 10 sync): №1673, №1679, №1689
 #   and №1690 ARRIVE with this branch (1673 and 1679 filed closed, 1689 and 1690 open, route the
 #   assistant) -- taken out of gaps= by the same merge that brings their rows.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698,1708
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding

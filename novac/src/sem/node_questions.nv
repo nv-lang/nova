@@ -18,7 +18,7 @@
 
 module novac.sem
 
-import ../builtins.{PRINT_FN}
+import ../builtins.{PRINT_FN, is_print_fn}
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind}
 
@@ -139,8 +139,12 @@ export fn is_expr_kind(k NodeKind) -> bool {
 /// -- a guess from the module's name, undone by reading the constant.
 export fn is_println_call(e Node) -> bool {
     if e.kind_of() != NodeKind.Call { return false }
-    call_callee_text(branch_children(e)) == PRINT_FN
+    is_print_fn(call_callee_text(branch_children(e)))
 }
+
+/// Does this print statement close its line -- `println`, not `print`? Asked
+/// of a call `is_println_call` admitted.
+export fn print_call_ends_line(e Node) -> bool => call_callee_text(branch_children(e)) == PRINT_FN
 
 /// Is this `for` head a COLLECTION -- a value handing back a vector whose
 /// element the loop variable is (wave B16) -- rather than a range `lo..hi`?

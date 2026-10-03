@@ -251,7 +251,7 @@ export type Stmt enum
     | Store(StoreStmt) // `place = value` / `place op= value`, place named by the tree
     | Decl(Local) // the local's declaration point (donor: rustc MIR `StorageLive`)
     | Output(OutputStmt) // one value handed to output, in this position of the sequence
-    | OutputEnd // the newline that closes a `println` -- once, at the end
+    | OutputEnd(bool) // the end of a print statement, once: true for `println`'s newline; both flush (1703)
     | SetHandler(HandlerSwap) // `prev = slot; slot = handler` -- a `with` binding installs
     | RestoreHandler(HandlerSwap) // `slot = prev` -- on EVERY exit of the `with` (E.9 step 2)
     | PushFrame(int) // the `with`'s interrupt frame N, declared and pushed
@@ -671,9 +671,10 @@ export fn FnBuilder mut @output(value Operand, ty TyId) -> () {
     @cur.push(Stmt.Output(OutputStmt { value, ty }))
 }
 
-/// Records the newline that closes a `println`: once, after the last value.
-export fn FnBuilder mut @output_end() -> () {
-    @cur.push(Stmt.OutputEnd)
+/// Records the end of a print statement: once, after the last value --
+/// `newline` for a `println`, none for a `print`.
+export fn FnBuilder mut @output_end(newline bool) -> () {
+    @cur.push(Stmt.OutputEnd(newline))
 }
 
 /// Records the read of one projection of a local into `dest` (wave M3c).

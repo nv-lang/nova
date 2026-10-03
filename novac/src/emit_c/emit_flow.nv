@@ -452,7 +452,7 @@ fn Emitter mut @print_stmt(s Stmt) -> () {
         Store(st) => @emit_store(st)
         Decl(l) => @emit_decl(l)
         Output(o) => @emit_output(o)
-        OutputEnd => @emit_output_end()
+        OutputEnd(newline) => @emit_output_end(newline)
         SetHandler(s) => @emit_set_handler(s)
         RestoreHandler(s) => @emit_restore_handler(s)
         PushFrame(f) => @emit_push_frame(f)

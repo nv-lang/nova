@@ -76,7 +76,7 @@ import ../sem.{field_range_of, variant_range_of, raw_frow, no_frow, file_decls, 
 import ../sem.{recv_by_pointer_of}
 import ../sem.{vec_op_c}
 import ../sem.{decl_index_of_ty}
-import ../builtins.{PRINT_FN, bool_c_literal, RECV_C_NAME, LITERAL_PUSH, EMPTY_CTOR}
+import ../builtins.{bool_c_literal, RECV_C_NAME, LITERAL_PUSH, EMPTY_CTOR}
 import ../builtins.{OPTION_SOME_TAG_C}
 import ../types.{TyId, is_ty, raw_ty}
 import ../types.{no_ty}

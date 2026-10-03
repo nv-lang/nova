@@ -1,0 +1,11 @@
+module hp
+
+fn main() {
+    print("a|")
+    print(7)
+    println("b")
+    println("x")
+    ro d = [1, 2]
+    print("piece|")
+    println(d.index(9))
+}

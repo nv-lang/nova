@@ -28,8 +28,8 @@ import ../lex.{Token, TokenKind}
 import ../source.{Span}
 import ../tree.{Node, NodeKind, BinOp, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
-import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
-import ../builtins.{EQUAL_METHOD}
+import ../builtins.{ENTRY_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
+import ../builtins.{EQUAL_METHOD, OPTION_SOME_VARIANT, is_print_fn}
 import ../sem.{LitArg, field_range_of, decl_of_ty, no_frow}
 import ../resolve.{FnLookup}
 import ../names.{NameTable, NamespaceId, raw_decl}
@@ -845,7 +845,7 @@ fn Checker mut @type_call_stmt(call Node) -> () {
     // and those are the doors an expression call already goes through. Until
     // this wave the arm left at once, because the subset walk had refused every
     // statement call that was not `println` -- and that refusal is gone.
-    if call_callee_text(kids) != PRINT_FN {
+    if !is_print_fn(call_callee_text(kids)) {
         @type_expr(call)
         // SILENT-OK: the decision was taken one line above, not skipped here.
         // `@type_expr` walks this call and records its answer through the
@@ -855,7 +855,8 @@ fn Checker mut @type_call_stmt(call Node) -> () {
         // door to one root.
         return
     } else {
-        // `println` types its arguments one at a time below: the printer set is
+        // `println` -- and `print`, its form without the newline (registry
+        // 1703) -- types its arguments one at a time below: the printer set is
         // narrower than the type system, and that boundary lives here.
     }
     for c in kids {

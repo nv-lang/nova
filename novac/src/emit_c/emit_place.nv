@@ -60,9 +60,19 @@ fn Emitter mut @emit_output(o OutputStmt) -> () {
     @body.append(");\n")
 }
 
-/// The newline that closes a `println`.
-fn Emitter mut @emit_output_end() -> () {
-    @body.append("    nova_print_newline();\n")
+/// The end of a print statement: the newline that closes a `println`, then the
+/// flush that ends EVERY print call (registry 1703; the oracle's
+/// `nova_print_end()` since #1655). C's `stdout` is fully buffered when it is
+/// no terminal, so without it a program's output waited for exit -- after a
+/// panic's own message, and lost at `_exit` -- and Carina's order of lines
+/// against a panic differed from the oracle's.
+fn Emitter mut @emit_output_end(newline bool) -> () {
+    if newline {
+        @body.append("    nova_print_newline();\n")
+    } else {
+        // A `print`: its pieces end the call without a newline.
+    }
+    @body.append("    nova_print_end();\n")
 }
 
 /// Records a store into a place the tree names and prints it at once.

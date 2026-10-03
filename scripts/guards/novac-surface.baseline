@@ -310,7 +310,11 @@
 #   collector's per-field privacy (sem/collect.nv) and by check's field shape rule (check/rules.nv).
 # merge of p274-carina-mono-k2 into main (integrator, 2026-10-03): 72 (cast 2 + sweep 2) + mono-k2's 5 = 77, measured.
 # merge of p274-carina-strarm (D133 steps 1-6) into main (integrator, 2026-10-03): main's number plus strarm's own growth over the merge base, equal to the guard's measure.
-builtins 80
+# 2026-10-03, cloud session p274-carina-k1 (part 12, registry 1703): builtins 68 -> 70: `PRINT_PIECE_FN`
+#   (`print`, the print statement without the newline) and `is_print_fn` (println or print) -- asked by
+#   check/typing.nv, emit_c/emit_expr.nv and sem/node_questions.nv: the two statements are one form.
+# merge of p274-carina-k1 (#1703) into main (integrator, 2026-10-03): main's number plus k1's growth over the merge base, equal to the guard's measure.
+builtins 82
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -1157,7 +1161,10 @@ resolve 26
 #   `@gone_binder`, `@mark_cond`, `@has_cond`, `file_exported_fns` (their lines above) -- 354, the
 #   guard's count on the merged tree.
 # merge of p274-carina-strarm (D133 steps 1-6) into main (integrator, 2026-10-03): main's number plus strarm's own growth over the merge base, equal to the guard's measure.
-sem 363
+# 2026-10-03, cloud session p274-carina-k1 (part 12, registry 1703): sem 352 -> 353: `print_call_ends_line`
+#   (sem/node_questions.nv) -- `println` or `print`, asked by the lowering that ends the statement.
+# merge of p274-carina-k1 (#1703) into main (integrator, 2026-10-03): main's number plus k1's growth over the merge base, equal to the guard's measure.
+sem 364
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
