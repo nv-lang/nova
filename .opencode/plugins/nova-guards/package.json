@@ -1,0 +1,10 @@
+{
+  "name": "nova-guards",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Project mechanisms of the Nova repository for OpenCode V2: .claude/settings.json hooks and deny list, command environment, machine time, slash commands",
+  "exports": {
+    ".": "./index.ts"
+  }
+}
