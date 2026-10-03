@@ -4,18 +4,19 @@
 # ПОЧЕМУ (запрос владельца 2026-07-27: «должен быть файл установки автопроверок
 # на случай, например, необходимости переустановки всего»). Часть механизмов
 # живёт НЕ в файлах репы, а в НАСТРОЙКАХ окружения:
-#   * git-хуки включаются `git config core.hooksPath` — ОТДЕЛЬНО в каждой из
-#     пяти реп, и свежий `git clone` их НЕ приносит;
-#   * хуки Claude Code читаются из `.claude/settings.json`.
+#   * git-хуки включаются `git config core.hooksPath` — ОТДЕЛЬНО в каждой репе
+#     семьи, и свежий `git clone` их НЕ приносит;
+#   * хуки Claude Code читаются из `.claude/settings.json`; в OpenCode те же
+#     хуки и тот же список запретов исполняет `.opencode/plugins/nova-guards/index.ts`.
 # Пока эта установка держалась «в голове», её нельзя было ни воспроизвести на
 # новой машине, ни проверить, ни восстановить после переустановки — то есть
 # защита существовала ровно до первого чистого клона. Этот скрипт делает
 # установку воспроизводимой и проверяемой.
 #
 # ЧТО ДЕЛАЕТ (идемпотентно — можно запускать сколько угодно раз):
-#   1. `core.hooksPath` → `scripts/githooks` во ВСЕХ найденных репах семьи
-#      (nova, nova-http, nova-tls, nova-polaris, nova-compress). Отсутствующие
-#      рядом репы просто пропускаются с отметкой.
+#   1. `core.hooksPath` → `scripts/githooks` в СВОЕЙ репе (как бы ни назывался
+#      её каталог) и в каждой соседней репе, у которой есть `scripts/githooks`.
+#      Список выводится из диска, а не пишется (№1714).
 #   2. Права на исполнение всем стражам, самотестам и хукам.
 #   3. Проверка, что хуки Claude Code объявлены в `.claude/settings.json`
 #      (сам файл НЕ переписывается — он может нести и другие настройки;
@@ -52,15 +53,36 @@ echo "install-guards: установка механизмов автопрове
 [ "$CHECK_ONLY" -eq 1 ] && echo "  (режим --check: только проверка, изменений не вносится)"
 
 # ── 1. git-хуки во всех репах семьи ───────────────────────────────────────────
+#
+# СПИСОК РЕП ВЫВОДИТСЯ, А НЕ ПИШЕТСЯ (реестр 221.1 №1714, 2026-10-03). Здесь
+# стоял список имён `nova nova-http nova-tls nova-polaris nova-compress`,
+# и у него было два дефекта одного класса «место репы названо, а не выведено»:
+# (1) свою репу скрипт искал по имени `nova` у родителя, поэтому клон под другим
+# именем (`nova-ensemble`) оставался без хуков, а настраивалась ЧУЖАЯ репа с
+# именем `nova`; (2) пакеты, заведённые после списка (`nova-bignum`,
+# `nova-socks`, `nova-postgres`), не настраивались вовсе — замер того же дня:
+# у bignum и socks каталог хуков есть, `core.hooksPath` не задан.
+# Теперь: сперва СВОЯ репа (REPO_ROOT, как бы ни звался каталог), затем каждая
+# соседняя репа со своим `scripts/githooks`. Рабочее дерево (`.git` — файл)
+# пропускается: его настройка — общая с главной копией и задаётся через неё.
 echo "[1/4] git-хуки (core.hooksPath)"
-for repo in nova nova-http nova-tls nova-polaris nova-compress; do
-    dir="$FAMILY_PARENT/$repo"
-    if [ ! -d "$dir/.git" ] && [ ! -f "$dir/.git" ]; then
-        say "— $repo: репы рядом нет, пропуск"
-        continue
-    fi
+family_repos() {
+    printf '%s\n' "$REPO_ROOT"
+    for d in "$FAMILY_PARENT"/*/; do
+        d="${d%/}"
+        [ "$d" = "$REPO_ROOT" ] && continue
+        [ -d "$d/.git" ] || continue
+        [ -d "$d/scripts/githooks" ] || continue
+        printf '%s\n' "$d"
+    done
+}
+while IFS= read -r dir; do
+    repo="$(basename "$dir")"
     current="$(git -C "$dir" config --get core.hooksPath 2>/dev/null || true)"
-    if [ "$current" = "scripts/githooks" ]; then
+    # Абсолютный путь на СВОЙ каталог хуков равнозначен относительному.
+    current_norm="$(printf '%s' "$current" | tr '\\' '/' | tr 'A-Z' 'a-z')"
+    own_abs="$(printf '%s' "$dir/scripts/githooks" | tr '\\' '/' | tr 'A-Z' 'a-z' | sed -E 's|^/([a-z])/|\1:/|')"
+    if [ "$current" = "scripts/githooks" ] || [ "$current_norm" = "$own_abs" ]; then
         say "ok: $repo — уже настроено"
         continue
     fi
@@ -77,7 +99,7 @@ for repo in nova nova-http nova-tls nova-polaris nova-compress; do
     else
         bad "$repo: не удалось задать core.hooksPath"
     fi
-done
+done < <(family_repos)
 
 # ── 2. Права на исполнение ────────────────────────────────────────────────────
 echo "[2/4] права на исполнение"
@@ -106,6 +128,14 @@ else
             bad "$hook НЕ объявлен в $settings (файл не переписываю — допиши вручную)"
         fi
     done
+fi
+# В OpenCode хуки `.claude/settings.json` сами не исполняются (замер 2026-10-03,
+# №1715): их исполняет плагин, и его отсутствие — та же дыра, что и снятый хук.
+oc_plugin="$REPO_ROOT/.opencode/plugins/nova-guards/index.ts"
+if [ -f "$oc_plugin" ]; then
+    say "ok: плагин OpenCode на месте (.opencode/plugins/nova-guards/index.ts)"
+else
+    bad "нет $oc_plugin — в OpenCode хуки и запреты .claude/settings.json не исполняются"
 fi
 
 # ── 4. Диагностика: механизмы должны РАБОТАТЬ, а не просто лежать ────────────
