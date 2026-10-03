@@ -1,0 +1,15 @@
+module str_chars.pos_1
+
+// std's `str @chars().count()` and `str @pad_start(width, fill)` through the
+// regenerated shell: before the publication of 2026-10-03 the shell lagged the
+// oracle and both were refused (`pad_start` waits on `@chars().count()`, see
+// named_arg_value/pos_1). Non-ASCII on purpose -- a count of CHARACTERS, not
+// bytes -- and a width the text already exceeds.
+fn main() {
+    ro s = "héllo"
+    println(s.chars().count())
+    println("".chars().count())
+    println("7".pad_start(3, '0'))
+    println("abc".pad_start(2, '0'))
+    println("ж".pad_start(3, '.'))
+}

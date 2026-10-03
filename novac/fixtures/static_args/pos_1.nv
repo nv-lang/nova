@@ -1,0 +1,17 @@
+module static_args.pos_1
+
+// Static calls whose arguments FIT, through the same judgement that refuses
+// static_args/neg_1 and neg_2 (registry 1650): the program's own method, a
+// defaulted parameter by name and by omission, and the shell's
+// `StringBuilder.new(cap: ..)`.
+type Tb { n int }
+
+fn Tb.row(h int, k int = 2) -> Tb => { n: h + k }
+
+fn main() {
+    println(Tb.row(1).n)
+    println(Tb.row(1, k: 5).n)
+    consume sb = StringBuilder.new(cap: 8)
+    sb.append("ok")
+    println(sb.into_str())
+}

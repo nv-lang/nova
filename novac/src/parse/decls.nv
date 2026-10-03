@@ -209,7 +209,7 @@ fn Cursor mut @attr_decl() -> Node {
 /// most of them happen to have.
 fn Cursor mut @const_decl() -> Node {
     mut kids = []Node.of(@take()) // KwConst
-    @push_expected(kids, TokenKind.Ident) // the name, or the TYPE of a qualified name
+    @push_name(kids) // the name, or the TYPE of a qualified name
     // A QUALIFIED module-level name (D200 amend #66): `const Type.NAME` reads
     // exactly like `Type.method` does everywhere else in the grammar -- a
     // `Dot` right after the leading identifier, with another identifier
@@ -219,7 +219,7 @@ fn Cursor mut @const_decl() -> Node {
     // reads the shape the language has.
     if @peek() == TokenKind.Dot && @peek(skip: 1) == TokenKind.Ident {
         kids.push(@take()) // '.'
-        kids.push(@take()) // the qualified name itself
+        kids.push(@take_name()) // the qualified name itself
     } else {
         // An unqualified name: the ordinary door below answers.
     }
@@ -250,13 +250,13 @@ fn Cursor mut @const_decl() -> Node {
 /// follow-up, not bundled into this fix for `ro`.
 fn Cursor mut @let_decl() -> Node {
     mut kids = []Node.of(@take()) // KwRo
-    @push_expected(kids, TokenKind.Ident) // the name, or the TYPE of a qualified name
+    @push_name(kids) // the name, or the TYPE of a qualified name
     // A QUALIFIED module-level name (D200 amend #66, `ro` twin of the
     // `const` form right above -- see its own comment for the reason this
     // reads `Dot Ident` directly rather than through a generic name door).
     if @peek() == TokenKind.Dot && @peek(skip: 1) == TokenKind.Ident {
         kids.push(@take()) // '.'
-        kids.push(@take()) // the qualified name itself
+        kids.push(@take_name()) // the qualified name itself
     } else {
         // An unqualified name: the ordinary door below answers.
     }

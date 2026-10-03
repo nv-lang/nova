@@ -279,7 +279,19 @@
 #   check/operators.nv and emit_c/emit_expr.nv) and `NEXT_METHOD` (D58: a `for` over an iterator
 #   calls `next`; read by check/for_iter.nv and emit_c/emit_place.nv) -- sweep 10, std names in builtins (P5).
 # merge of p274-carina-sweep (steps 10-12) into main (integrator, 2026-10-03): the guard's numbers on the merged tree -- builtins 72 (sweep's COMPARE_METHOD and the variant test door on main's 70), sem 355 (main's 354 plus sweep's is_option_some_pattern).
-builtins 72
+# 2026-10-02, cloud session p274-carina-mono-k2 (registry 1652): builtins 68 -> 69:
+#   `is_reserved_word` -- the words the language reserves that novac's lexer hands over as
+#   identifiers (the oracle's keyword table minus novac's own keywords); asked by the parser at
+#   every position that names a declaration, and by check's refusal of the recovered word.
+#   And 69 -> 72 the same day: `WITH_WORD`, `SUPERVISED_WORD`, `SPAWN_WORD` -- three of those
+#   words the parser reads by spelling in their own position; with the list in builtins,
+#   check-novac-no-name-hardcode (P5) wants their spelling there too.
+# 2026-10-03, cloud session p274-carina-mono-k2 (D83, field names): builtins 72 -> 73:
+#   `is_field_visibility_word` -- a field's D220 modifier (`priv`, `pub`) at its head; asked by
+#   the field reader (parse/type_decl.nv), by `field_name_at` (sem/slots_decl.nv), by the
+#   collector's per-field privacy (sem/collect.nv) and by check's field shape rule (check/rules.nv).
+# merge of p274-carina-mono-k2 into main (integrator, 2026-10-03): 72 (cast 2 + sweep 2) + mono-k2's 5 = 77, measured.
+builtins 77
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -492,7 +504,11 @@ pipeline 14
 #   with a DefTable row), `@free_candidate` (check's D429 coercing walk asks the view) and
 #   `PRELUDE_ASKER` (check_instance's asker for a std body with no module line). All are
 #   asked by check, which owns no index of its own.
-resolve 23
+# 2026-10-02, cloud session p274-carina-mono-k2 (registry 1650): resolve 23 -> 26:
+#   `args_misfit` with its two answers `ARGS_FIT` / `ARGS_UNBOUND` -- the question every
+#   lookup candidate passes (binding, type, mode), as a door of its own, so check's static
+#   call door asks it of a row that stood alone instead of taking that row unjudged.
+resolve 26
 # sem 54 -> 56 (2026-08-18): наружу вышли ДВЕ двери параметра,
 # param_name_at и param_type_at. Имя и тип параметра больше не берутся
 # индексом pk[0]/pk[1]: индекс сдвигается, как только у параметра

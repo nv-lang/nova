@@ -24,7 +24,7 @@ module novac.check
 
 import ../tree.{Node, NodeKind}
 import ../sem.{pattern_head_text, pattern_qualifier, pattern_fields, patfield_name, patfield_sub, pattern_rest}
-import ../sem.{decl_of_ty, payload_as_seen, payload_named, variant_in_sum, variants_named, ctor_head_variant}
+import ../sem.{decl_of_ty, payload_as_seen, payload_named, variant_in_sum, ctor_head_variant}
 import ../sem.{VariantRow, raw_vrow, is_vrow, no_vrow, branch_children, leaf_text, ParamMode, ctor_field_name}
 import ../sem.{CalleeTarget, SlotBind, no_row}
 import ../types.{TyId, no_ty, is_ty}
@@ -50,7 +50,7 @@ fn Checker mut @bind_headed_record_pattern(pat Node, ty TyId, ak []Node, dmode P
         // The record's own name: the fields of the record, as if no head were
         // written (D486: the head is optional).
         if head == sum_name && pattern_qualifier(pat) == "" { return @bind_record_fields(pat, ty, ak, dmode, pos) }
-        ro msg = if variants_named(@ctx, head).1 > 0 { WRONG_SUM_ARM_MSG } else { VARIANT_PATTERN_MSG }
+        ro msg = if @variants_named_here(head).1 > 0 { WRONG_SUM_ARM_MSG } else { VARIANT_PATTERN_MSG }
         @reject_first_leaf_of(ak, msg)
         return false
     }
@@ -170,7 +170,7 @@ fn Checker mut @report_if_ctor_variant_wrong(kids []Node) -> bool {
         @reject_first_leaf_of(kids, QUALIFIED_CTOR_NO_VARIANT_MSG)
         return true
     }
-    if variants_named(@ctx, leaf_text(hk[0])).1 > 1 {
+    if @variants_named_here(leaf_text(hk[0])).1 > 1 {
         @reject_first_leaf_of(kids, AMBIGUOUS_VARIANT_MSG)
         return true
     }

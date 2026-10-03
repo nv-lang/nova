@@ -264,6 +264,14 @@ fn instance_body(ctx Ctx, t TyId) -> str {
         TkPrim | TkApp | TkParam | TkInfer | TkNewtype | TkTuple | TkEffect | TkPtr =>
             ice("mangle: an application whose head is not a record or sum declaration")
     }
+    applied_body_text(ctx, t)
+}
+
+/// The text of `<Head>____<arg>__<arg>` for an applied declaration -- a
+/// record's instance body, and a generic sum's in a STATIC symbol
+/// (`c_static_symbol`), the one place the oracle spells a sum that way.
+fn applied_body_text(ctx Ctx, t TyId) -> str {
+    ro head = decl_of_ty(ctx, t)
     consume s = StringBuilder.new(cap: 64)
     s.append(head.name)
     s.append("____")
@@ -335,7 +343,16 @@ export fn c_static_symbol(ctx Ctx, row FnRow, args []TyId) -> str {
     ro owner_n = ctx.tys.arg_count(fd.owner)
     consume s = StringBuilder.new(cap: 64)
     s.append("Nova_")
-    if owner_n > 0 {
+    if owner_n > 0 && decl_of_ty(ctx, fd.owner).kind == TypeKind.TkSum {
+        // A generic SUM's static is spelled per instance like a record's
+        // (measured: `LinkedList[int].from_array([1, 2, 3])` calls
+        // `Nova_LinkedList____nova_int_static_from_array`), not by the
+        // family spelling `c_instance_method` gives Option/Result methods.
+        // The oracle's bare `Nova_LinkedList_static_from_array` is the
+        // erased fallback it takes WITHOUT the turbofish -- and that program
+        // segfaults at run time; it is not copied.
+        s.append(applied_body_text(ctx, subst_type(ctx, fd.owner, args)))
+    } else if owner_n > 0 {
         s.append(instance_body(ctx, subst_type(ctx, fd.owner, args)))
     } else if ctx.tys.names_a_decl(fd.owner) {
         s.append(decl_of_ty(ctx, fd.owner).name)

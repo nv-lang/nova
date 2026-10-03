@@ -466,9 +466,15 @@ export fn type_admits(tys Interner, want TyId, got TyId) -> bool {
         }
         // A POINTER admits structurally like a tuple, its head the
         // MUTABILITY: `*mut T` takes only a `*mut`, and the pointees admit.
+        // `*T` takes a `*mut T` too -- the narrowing the language makes without
+        // `as` (02-types.md P8: "`*mut T -> *T` auto-narrowing; `*T -> *mut T`
+        // refused"): std's `RawMem.copy_n_nonoverlapping(src *T, ..)` is called
+        // with a vector's `*mut T` field, and once a static call's arguments
+        // were judged (registry 1650) the strict head refused it. A `*mut T`
+        // still takes only a `*mut`.
         TkPtr => {
             if tys.kind_of(got) != TypeKind.TkPtr { return false }
-            if tys.ptr_is_mut(want) != tys.ptr_is_mut(got) { return false }
+            if tys.ptr_is_mut(want) && !tys.ptr_is_mut(got) { return false }
             return type_admits(tys, tys.arg(want, 0), tys.arg(got, 0))
         }
         // TkEffect: not a unification variable and nothing structural to

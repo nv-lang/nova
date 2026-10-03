@@ -98,6 +98,7 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
         self_ty: no_ty(),
         substs: []TyId.new(),
         inst_row: no_row(),
+        home_sums: NameTable.new(NamespaceId.NsDefs),
         ret_self: false,
     }
     // THROUGH THE DOOR (P18): a raw walk over a file's children does not see
@@ -200,6 +201,11 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, row FnRow, substs [
         self_ty: no_ty(),
         substs,
         inst_row: row,
+        home_sums: if ctx.fns.compiles_body(row) {
+            NameTable.new(NamespaceId.NsDefs)
+        } else {
+            sums_declared_in(body_file)
+        },
         ret_self: false,
     }
     // THE SAME TWO PASSES AS THE FILE, over the BODY (registry 221.1 #1539): the
@@ -297,4 +303,21 @@ fn import_parts_of(kids []Node, seg bool) -> []str {
         }
     }
     res
+}
+
+/// The NAMES of the sums a tree declares at its top level, exported or not:
+/// the "own module" a handed body's bare variant names resolve in first
+/// (`Checker.home_sums`, registry 1678). The parser builds a sum as its own
+/// node kind, `SumDecl`, its name the leaf after `type`.
+fn sums_declared_in(file Node) -> NameTable {
+    mut out = NameTable.new(NamespaceId.NsDefs)
+    mut n = 0
+    for d in file_decls(file) {
+        if d.kind_of() != NodeKind.SumDecl { continue }
+        ro nk = branch_children(d)
+        if nk.len() < 2 || nk[1].kind_of() != NodeKind.LeafNode { continue }
+        out.put(leaf_text(nk[1]), n)
+        n += 1
+    }
+    out
 }

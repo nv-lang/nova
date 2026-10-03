@@ -26,7 +26,7 @@ import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind}
 import ../sem.{branch_children, leaf_text, leaf_kind, expr_leaf_name, is_arg_value_kind}
 import ../sem.{VariantRow, variants_named, variant_named_in, variant_range_of}
-import ../sem.{raw_vrow, no_vrow, is_vrow}
+import ../sem.{raw_vrow, no_vrow, is_vrow, raw_row}
 import ../diag.{ice}
 import ../sem.{arg_expr_of, arg_count, CalleeTarget, CallForm}
 import ../sem.{identity_slots}
@@ -128,7 +128,7 @@ fn Checker mut @judge_qualified_payload(e Node, kids []Node, vt Token, vrow Vari
 /// above, which must not call a construction a missing method. The definition
 /// registry answers -- the same `def_of` every other variant question uses, so
 /// there is no second table to disagree with.
-fn Checker @is_known_variant(name str) -> bool => variants_named(@ctx, name).1 >= 1
+fn Checker @is_known_variant(name str) -> bool => @variants_named_here(name).1 >= 1
 
 /// `Sum.Variant` as a VALUE: a head that names a TYPE followed by the dot and
 /// one of ITS variants is the variant's value, not a field read -- and the head
@@ -323,3 +323,46 @@ fn Checker mut @judge_type_head_variant(e Node, kids []Node, arg_from int) -> bo
         }
     }
 }
+
+/// HOW MANY sums declare this variant name, and the first row -- asked from
+/// WHERE the name stands. For the file's own body this is `variants_named`
+/// (the file's sums win over the handed ones). For a HANDED body the body's
+/// own MODULE wins (`home_sums`): `mut acc = Empty` in std's
+/// `LinkedList.from_array` is `LinkedList.Empty`, as the oracle reads it, and
+/// the private `Slot.Empty` of hash_map is no second candidate there -- it was,
+/// and the instance was refused as ambiguous (registry 1678).
+#realtime nogc
+fn Checker @variants_named_here(name str) -> (VariantRow, int) {
+    if !@in_handed_body() { return variants_named(@ctx, name) }
+    mut r = @ctx.variant_names.find(name)
+    mut first_all = no_vrow()
+    mut n_all = 0
+    mut first_home = no_vrow()
+    mut n_home = 0
+    while r >= 0 {
+        ro v = @ctx.variant_rows[r]
+        if !is_vrow(first_all) {
+            first_all = VariantRow(r)
+        } else {
+            // The head is the first of all; later rows only count.
+        }
+        n_all += 1
+        if @home_sums.find(decl_of_ty(@ctx, v.sum_id).name) >= 0 {
+            if !is_vrow(first_home) {
+                first_home = VariantRow(r)
+            } else {
+                // A later row of the home module only counts.
+            }
+            n_home += 1
+        } else {
+            // Another module's sum: counted among all, not among the home's.
+        }
+        r = raw_vrow(v.next_same)
+    }
+    if n_home > 0 { return (first_home, n_home) }
+    (first_all, n_all)
+}
+
+/// Is the body being typed a HANDED one -- a std body this unit instantiates,
+/// read from another tree -- rather than the file's own?
+fn Checker @in_handed_body() -> bool => raw_row(@inst_row) >= 0 && !@ctx.fns.compiles_body(@inst_row)

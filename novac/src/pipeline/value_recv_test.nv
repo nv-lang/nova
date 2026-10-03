@@ -107,7 +107,7 @@ test "a `-> @` on a by-pointer value receiver returns the receiver's STORAGE: a 
     // the C function returns the pointer the receiver arrived as.
     ro (d, c) = compile_to_c("${PV_DECLS}fn main() {\n mut c = mk()\n println(c.set(5).set(6).n)\n println(c.n)\n}", std_decls())
     assert(d.len() == 0, messages(d))
-    assert(c.contains("* novac_fn_set("), c)
+    assert(c.contains("* novac_fn_set_"), c)
     assert(c.contains("return _novac_self;"), c)
     // The call is read THROUGH the pointer: the next link takes `&` of that lvalue.
     assert(c.contains("(&(*novac_fn_set"), c)
@@ -122,5 +122,5 @@ test "a `-> @` on a by-pointer value receiver returns the receiver's STORAGE: a 
     ro (dc, cc) = compile_to_c("type Sm value {\n n int\n}\nfn Sm @same() -> @ {\n}\n\
 fn main() {\n ro s = Sm { n: 3 }\n println(s.same().n)\n}", std_decls())
     assert(dc.len() == 0, messages(dc))
-    assert(cc.contains("* novac_fn_same("), cc)
+    assert(cc.contains("* novac_fn_same_"), cc)
 }

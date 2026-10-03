@@ -1,0 +1,15 @@
+module reserved_name.neg_4
+
+// ONE seeded cause: a reserved word (`with`) names a record FIELD (D83:
+// keywords are forbidden as identifiers, fields included -- closes
+// Q-keywords-as-fields). The literal and the read that name it add no second
+// diagnostic.
+// NOVAC_EXPECT expected identifier, got `with`
+type Wb {
+    with int
+}
+
+fn main() {
+    ro w = Wb { with: 2 }
+    println(w.with)
+}

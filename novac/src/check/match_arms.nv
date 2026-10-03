@@ -39,7 +39,7 @@ import ../builtins.{SLICE_HEAD}
 // The payload of an APPLIED sum, with the application's arguments put in.
 import ../sem.{payload_as_seen, variant_is_record}
 import ../sem.{branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, raw_vrow, no_vrow}
-import ../sem.{is_vrow, variant_range_of, variant_in_sum, variants_named, VariantRow}
+import ../sem.{is_vrow, variant_range_of, variant_in_sum, VariantRow}
 import ../types.{TyId, no_ty, is_ty}
 
 /// A match in STATEMENT position (274.5 wave B5): the scrutinee is typed and
@@ -482,7 +482,7 @@ fn Checker mut @bind_variant_pattern(pat Node, ty TyId, ak []Node, dmode ParamMo
         // A typed scrutinee: its sum judges the head.
     }
     ro vrow = variant_in_sum(@ctx, ty, head) ?? no_vrow()
-    if wrong_qualifier || (!is_vrow(vrow) && variants_named(@ctx, head).1 > 0) {
+    if wrong_qualifier || (!is_vrow(vrow) && @variants_named_here(head).1 > 0) {
         @report_first_leaf_of(ak, WRONG_SUM_ARM_MSG)
         return false
     }

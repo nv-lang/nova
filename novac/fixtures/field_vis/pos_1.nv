@@ -1,0 +1,31 @@
+module field_vis.pos_1
+
+// A field's VISIBILITY modifier (D220): `priv` or `pub` before its mode and
+// name. Inside its own module a `priv` field is read and built freely (D281:
+// module-private), and `pub` lifts a type-level `priv`. Until 2026-10-03 novac
+// read the modifier as the field's NAME and the name as its type.
+type Acct {
+    priv mut money int
+    priv id int
+    tag str
+}
+
+type Secret priv {
+    pub ro label str
+    salt int
+}
+
+fn Acct mut @add(n int) -> () {
+    @money += n
+}
+
+fn main() {
+    mut a = Acct { money: 5, id: 7, tag: "x" }
+    a.add(3)
+    println(a.money)
+    println(a.id)
+    println(a.tag)
+    ro s = Secret { label: "k", salt: 9 }
+    println(s.label)
+    println(s.salt)
+}

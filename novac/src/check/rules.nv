@@ -20,7 +20,8 @@ import ../source.{SourceText}
 import ../lex.{Token, TokenKind, spelling_of}
 import ../tree.{Node, NodeKind, NodeId, no_node, bin_op_of, un_op_of, raw_node}
 import ../diag.{Diagnostic, Severity, ice}
-import ../builtins.{ENTRY_FN, PRINT_FN, CALLER_LOC_FN, is_bool_literal, is_ptr_method}
+import ../builtins.{ENTRY_FN, PRINT_FN, CALLER_LOC_FN, is_bool_literal, is_ptr_method, is_reserved_word}
+import ../builtins.{is_field_visibility_word}
 import ../sem.{Ctx, CheckOut, declares_receiver, generics_have_consume, generics_have_protocol_bound, param_type_at}
 // The tree question that decides what a hoist must order (F65).
 import ../sem.{contains_call}
@@ -154,6 +155,20 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
         // one answer for that shape, exactly as it is for a leaf of any other kind.
     }
     @report_first_leaf_of(kids, msg)
+}
+
+/// A field's children past its VISIBILITY modifier (D220: `priv`, `pub`), which
+/// the parser keeps as the first leaf -- the shape rules below locate the type
+/// through the parameter door, and a parameter has no such word.
+fn past_field_visibility(kids []Node) -> ro []Node {
+    if kids.len() == 0 || kids[0].kind_of() != NodeKind.LeafNode { return kids }
+    if !is_field_visibility_word(leaf_text(kids[0])) { return kids }
+    mut out = []Node.new()
+    for i in 1..kids.len() {
+        // nova:allow W_MANUAL_SLICE_COPY -- the head leaf stepped over, as `past_field_ro` does
+        out.push(kids[i])
+    }
+    out
 }
 
 /// A FIELD's children with its `ro` view qualifier stepped over (D176:
@@ -837,6 +852,15 @@ fn Checker mut @report_err_branch(children []Node) -> () {
         if @out.len() > before { return } // the one diagnostic is out already
         match c {
             Leaf(t) => {
+                // A RESERVED word where a declaration's name stands (registry
+                // 1652, the parser's `@take_name`): refused in the oracle's
+                // words, at the word.
+                if t.kind == TokenKind.Ident && is_reserved_word(t.text) {
+                    @reject(t, "expected identifier, got `${t.text}`")
+                    return
+                } else {
+                    // Any other recovered run: the generic refusal below.
+                }
                 // The whole run is the subject, so the whole run is underlined.
                 ro lo = @src.offset_of(t.text)
                 ro hi = @run_end_of(children, lo + t.text.byte_len())

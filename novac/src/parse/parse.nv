@@ -33,6 +33,7 @@ module novac.parse
 
 import ../lex.{Token, TokenKind, brace_delta, paren_delta}
 import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, VALUE_MARKER, PRIV_MARKER, SUM_MARKER}
+import ../builtins.{is_reserved_word, WITH_WORD, SUPERVISED_WORD, SPAWN_WORD}
 import ../tree.{Node, NodeKind, BinOp, branch, leaf, is_binop, bin_op_of, is_unop, is_assign_op}
 
 /// The parser's walking state over one Eof-terminated token stream.
@@ -406,7 +407,13 @@ fn Cursor mut @fn_decl(lead []Node) -> Node {
     }
     // Receiver or free function? The two only differ AFTER the name and its
     // brackets, so the pieces are held aside and the `@` (or `.`) decides.
-    head.append(@type_ref())
+    // A RESERVED word cannot be the free function's name nor the receiver's
+    // type (registry 1652): taken into its own Err branch, read on from there.
+    if @peek() == TokenKind.Ident && is_reserved_word(@peek_text()) {
+        head.push(@take_name())
+    } else {
+        head.append(@type_ref())
+    }
     // `fn Account mut @bump()`, `fn StringBuilder consume @into_str()` -- the
     // receiver may be qualified by ANY mode word, and the set is asked of the
     // one module that spells the language (P5).
@@ -438,7 +445,7 @@ fn Cursor mut @fn_decl(lead []Node) -> Node {
     if is_recv_mark {
         head.push(@take()) // '@' or '.'
         kids.push(@node(NodeKind.Recv, head))
-        @push_expected(kids, TokenKind.Ident)
+        @push_name(kids)
         if @peek() == TokenKind.LBracket {
             kids.push(@generics())
         } else {
@@ -483,7 +490,7 @@ fn Cursor mut @fn_decl(lead []Node) -> Node {
         } else {
             // No mode: the ordinary parameter, whose first leaf is its name.
         }
-        pk.push(@take()) // parameter name
+        pk.push(@take_name()) // parameter name
         // The TYPE is a type reference, not one identifier (owner 2026-08-17).
         // `Vec[T]`, `[]int`, `fn(int) -> str`, `ro []Vec[T]` all used to break
         // the parameter list apart here and take the rest of the signature
@@ -861,7 +868,7 @@ fn Cursor mut @stmt() -> Node {
         } else {
             // Not a pattern: an ordinary binding, read below.
         }
-        @push_expected(kids, TokenKind.Ident)
+        @push_name(kids)
         // A DECLARED type: `ro x int = 1`. It stands between the name and the
         // `=`, and reading it here is what keeps `=` from looking absent.
         if @peek() != TokenKind.Assign {
@@ -917,7 +924,7 @@ fn Cursor mut @stmt() -> Node {
     // Before this arm the form fell apart into THREE plausible statements --
     // a `with` name, an assignment, a record constructor -- and check
     // answered with refusals that named none of them.
-    ro with_stmt = @peek_ident("with") &&
+    ro with_stmt = @peek_ident(WITH_WORD) &&
         @peek(skip: 1) == TokenKind.Ident && @peek(skip: 2) == TokenKind.Assign
     if with_stmt {
         mut kids = []Node.of(@take()) // `with`
@@ -959,7 +966,7 @@ fn Cursor mut @stmt() -> Node {
     // RESERVES the word (probed 2026-09-23: `type supervised { ... }`
     // refuses "expected identifier, got `supervised`"), so no such type
     // exists in the language and the contextual door loses nothing.
-    if @peek_ident("supervised") && @peek(skip: 1) == TokenKind.LBrace {
+    if @peek_ident(SUPERVISED_WORD) && @peek(skip: 1) == TokenKind.LBrace {
         // The door's lookahead guarantees the body brace, so the block is
         // taken directly -- a BARE `supervised` (no brace) never reaches
         // this arm: it is an ordinary name statement, refused by the
@@ -975,7 +982,7 @@ fn Cursor mut @stmt() -> Node {
     // oracle reserves `spawn` too: "expected identifier, got `spawn`"),
     // same bodyless marker. No `timeout:`/`cancel:` arguments this wave:
     // the carrier writes none, and the acceptance is the carrier's shape.
-    if @peek_ident("spawn") && @peek(skip: 1) == TokenKind.LBrace {
+    if @peek_ident(SPAWN_WORD) && @peek(skip: 1) == TokenKind.LBrace {
         // Same guarantee and the same bare-word semantics as `supervised`
         // one arm up: the door sees the brace, so the block is direct.
         mut kids = []Node.of(@take()) // `spawn`
