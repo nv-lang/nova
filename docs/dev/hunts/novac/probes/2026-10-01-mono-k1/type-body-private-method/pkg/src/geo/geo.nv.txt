@@ -1,9 +1,0 @@
-module hp.geo
-
-type Tally {
-    n int
-}
-
-fn Tally @twice() -> int => @n * 2
-
-export fn Vec[T] @total() -> int => Tally { n: @len() }.twice()

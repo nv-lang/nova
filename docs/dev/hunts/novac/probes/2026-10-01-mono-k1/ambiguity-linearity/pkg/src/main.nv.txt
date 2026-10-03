@@ -1,5 +1,0 @@
-fn main() {
-    ro v = [3, 1, 2]
-    println(v.contains(2))
-    println(v.contains(5))
-}

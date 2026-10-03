@@ -1,9 +1,0 @@
-fn empty[T](xs []T) -> bool => xs.is_empty()
-
-fn main() {
-    println(empty([1, 2]))
-    println(empty(["a"]))
-    mut e = [1]
-    e.clear()
-    println(empty(e))
-}

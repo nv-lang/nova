@@ -1,0 +1,36 @@
+=== PROGRAM
+     1	module p
+     2	
+     3	type Tx consume {
+     4	    id int
+     5	}
+     6	
+     7	fn Tx consume @commit() -> () {
+     8	    println("commit ${@id}")
+     9	}
+    10	
+    11	fn ok(consume t Tx) -> bool {
+    12	    t.commit()
+    13	    true
+    14	}
+    15	
+    16	fn mk(n int) -> Option[int] => if n > 0 { Some(n) } else { None }
+    17	
+    18	fn run(n int) -> () {
+    19	    consume a = Tx { id: n }
+    20	    ro xs = []Tx.of(a)
+    21	    println("arr")
+    22	}
+    23	
+    24	fn main() {
+    25	    run(1)
+    26	}
+=== ORACLE: nova check prog.nv
+oracle check rc=1
+  D:/Temp/tmp.lvz1FJ5K8C/prog.nv:18:21: error: [D133-not-consumed] переменная `a` (тип `Tx`) не consumed до scope-exit. Добавьте вызов одного из: commit, либо `return a`, либо передайте в consume-param.
+    help: consume `a` via method (D133-not-consumed quick fix) --> D:/Temp/tmp.lvz1FJ5K8C/prog.nv:18:21 [maybe-incorrect]
+error: 1 file(s) failed type-check
+=== SUBJECT: novac check prog.nv
+novac check rc=1
+{"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"D:/Temp/tmp.lvz1FJ5K8C/prog.nv","start":285,"end":287},"message":"a value of must-consume type `Vec[Tx]` is bound with `ro` or `mut` -- bind it with `consume x = ...`, which is where its obligation starts (D133)","poisoned_by":null}
+=== VERDICT: BOTH REFUSE

@@ -1,0 +1,40 @@
+=== PROGRAM
+     1	module p
+     2	
+     3	type Tx consume {
+     4	    id int
+     5	}
+     6	
+     7	fn Tx consume @commit() -> () {
+     8	    println("commit ${@id}")
+     9	}
+    10	
+    11	fn ok(consume t Tx) -> bool {
+    12	    t.commit()
+    13	    true
+    14	}
+    15	
+    16	fn eat(consume t Tx) -> int {
+    17	    t.commit()
+    18	    0
+    19	}
+    20	
+    21	fn mk(n int) -> Option[int] => if n > 0 { Some(n) } else { None }
+    22	
+    23	fn run(n int) -> Option[int] {
+    24	    consume t = Tx { id: n }
+    25	    ro v = mk(n - 1)?
+    26	    t.commit()
+    27	    Some(v)
+    28	}
+    29	
+    30	fn main() {
+    31	    ro r = run(0) ?? 7
+    32	    println(r)
+    33	}
+=== ORACLE: nova check prog.nv
+oracle check rc=0
+=== SUBJECT: novac check prog.nv
+novac check rc=1
+{"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"D:/Temp/tmp.wlKTbdy4Zf/prog.nv","start":355,"end":357},"message":"`t` (type `Tx`) is still owned when this `?` leaves its scope -- consume it first: call one of its `consume` methods (`commit`), return it, or pass it to a `consume` parameter (D133)","poisoned_by":null}
+=== VERDICT: DIFFERENT: oracle accepts, Carina refuses

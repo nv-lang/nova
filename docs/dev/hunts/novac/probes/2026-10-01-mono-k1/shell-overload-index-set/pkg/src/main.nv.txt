@@ -1,5 +1,0 @@
-fn main() {
-    mut d = [1, 2]
-    d.index(1, 9)
-    println(d[1])
-}

@@ -1,9 +1,0 @@
-module hp.geo
-
-type Box {
-    n int
-}
-
-fn open(b Box) -> int => b.n + 1
-
-export fn Vec[T] @boxed() -> int => open(Box { n: @len() })

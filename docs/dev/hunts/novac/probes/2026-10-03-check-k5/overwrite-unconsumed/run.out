@@ -1,0 +1,35 @@
+=== PROGRAM
+     1	module p
+     2	
+     3	type Tx consume {
+     4	    id int
+     5	}
+     6	
+     7	fn Tx consume @commit() -> () {
+     8	    println("commit ${@id}")
+     9	}
+    10	
+    11	fn ok(consume t Tx) -> bool {
+    12	    t.commit()
+    13	    true
+    14	}
+    15	
+    16	fn mk(n int) -> Option[int] => if n > 0 { Some(n) } else { None }
+    17	
+    18	fn run(n int) -> () {
+    19	    consume mut t = Tx { id: n }
+    20	    t = Tx { id: n + 1 }
+    21	    t.commit()
+    22	}
+    23	
+    24	fn main() {
+    25	    run(1)
+    26	}
+=== ORACLE: nova check prog.nv
+oracle check rc=1
+  D:/Temp/tmp.KZGDswGjMJ/prog.nv:19:13: error: `consume mut tx` is not valid: consume = ownership transfer; mut-methods accessed via receiver's `mut` qualifier (D7 100.1).
+error: 1 file(s) failed type-check
+=== SUBJECT: novac check prog.nv
+novac check rc=1
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"D:/Temp/tmp.KZGDswGjMJ/prog.nv","start":256,"end":263},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+=== VERDICT: BOTH REFUSE

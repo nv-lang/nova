@@ -1,0 +1,38 @@
+=== PROGRAM
+     1	module p
+     2	
+     3	type Tx consume {
+     4	    id int
+     5	}
+     6	
+     7	fn Tx consume @commit() -> () {
+     8	    println("commit ${@id}")
+     9	}
+    10	
+    11	fn ok(consume t Tx) -> bool {
+    12	    t.commit()
+    13	    true
+    14	}
+    15	
+    16	fn mk(n int) -> Option[int] => if n > 0 { Some(n) } else { None }
+    17	
+    18	fn run(n int) -> () {
+    19	    consume t = Tx { id: n }
+    20	    mut i = 0
+    21	    while i < 2 && ok(t) {
+    22	        i += 1
+    23	    }
+    24	}
+    25	
+    26	fn main() {
+    27	    run(1)
+    28	}
+=== ORACLE: nova check prog.nv
+oracle check rc=1
+  D:/Temp/tmp.gJ6Y2U0XI6/prog.nv:18:21: error: [D133-not-consumed] переменная `t` (тип `Tx`) consumed только на части путей выполнения. На всех путях до scope-exit должен быть вызов одного из: commit. suggestion: add errdefer + okdefer для полного покрытия.
+    help: cover `t` on all paths: `defer` (D162) или `consume`-scope (D188) (D133-not-consumed) --> D:/Temp/tmp.gJ6Y2U0XI6/prog.nv:18:21 [maybe-incorrect]
+error: 1 file(s) failed type-check
+=== SUBJECT: novac check prog.nv
+novac check rc=1
+{"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"D:/Temp/tmp.gJ6Y2U0XI6/prog.nv","start":317,"end":318},"message":"`t` is used after it was possibly consumed -- it is consumed on only some of the paths that reach here, so it may no longer be here (D131)","poisoned_by":null}
+=== VERDICT: BOTH REFUSE

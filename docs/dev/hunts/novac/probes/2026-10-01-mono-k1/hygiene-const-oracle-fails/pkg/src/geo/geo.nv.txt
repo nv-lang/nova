@@ -1,5 +1,0 @@
-module hp.geo
-
-const SCALE = 10
-
-export fn Vec[T] @scaled() -> int => @len() * SCALE
