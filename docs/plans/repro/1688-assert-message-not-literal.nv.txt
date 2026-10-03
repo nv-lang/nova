@@ -1,0 +1,30 @@
+// EVIDENCE, not a test (registry 1688; the `.nv.txt` suffix keeps it out of
+// every run). Found 2026-10-02 by the p274-carina-mono-k2 window while
+// probing #1678 through a module test whose assert message was built.
+//
+// Run: nova test <this file renamed to a_test.nv>
+// Observed (oracle, 2026-10-02):
+//   interp msg -- "assert failed: _nv_tmp_1782"   (the C temporary's NAME)
+//   var msg    -- "assert failed: 1 == 2"          (the condition, message lost)
+//   call msg   -- "assert failed: 1 == 2"          (the condition, message lost)
+//   lit msg    -- "assert failed: plain (1 == 2)"  (the only right one)
+// Expected: every failing assert prints the VALUE of its message.
+
+test "interp msg" {
+    ro x = "hello"
+    assert(1 == 2, "A[${x}]")
+}
+
+test "var msg" {
+    ro x = "hello"
+    assert(1 == 2, x)
+}
+
+test "call msg" {
+    ro x = "hello"
+    assert(1 == 2, x.to_ascii_upper())
+}
+
+test "lit msg" {
+    assert(1 == 2, "plain")
+}
