@@ -266,7 +266,7 @@ export fn JsonValue.bool(b bool) -> Self => Bool(b)
 export fn JsonValue.num(n f64) -> Self => F64(n)
 
 /// Construct a JSON integer -- the `Int` variant (#1638).
-export fn JsonValue.int(n int) -> Self => Int(n)
+export fn JsonValue.int(v int) -> Self => Int(v)
 
 /// Construct JSON string. Encoding — UTF-8.
 #stable(since = "0.1")
@@ -830,13 +830,12 @@ fn Lexer mut @read_number() -> Result[JsonValue, ParseJsonError] {
 
     ro text = @input[start..@pos]
     if integral {
-        match text.to_int() {
-            Ok(n) => return Ok(Int(n))
-            Err(_) => ()
+        // Too wide for `int` is not an error here: the next width is tried.
+        if Ok(n) = text.to_int() {
+            return Ok(Int(n))
         }
-        match text.to_u64() {
-            Ok(n) => return Ok(U64(n))
-            Err(_) => ()
+        if Ok(n) = text.to_u64() {
+            return Ok(U64(n))
         }
     }
     match text.to_f64() {
