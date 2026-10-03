@@ -16026,6 +16026,36 @@ impl<'a> TypeCheckCtx<'a> {
     ///
     /// Returns true when the verdict is final here (reported or proven fine),
     /// false to hand the `match` on to the sum analysis.
+    /// The precise refusal for an UNBOUND METHOD VALUE (`T.@method`, the
+    /// function `fn(T, params..) -> R`) passed where a function type is expected
+    /// and `assignable` found it does not fit -- the same words codegen's
+    /// method-value door uses ("method-value argument type mismatch"), now said
+    /// where the checker first sees it. `None` for any other argument, which
+    /// keeps the generic E7301.
+    fn method_value_arg_mismatch(&self, arg: &Expr, param_name: &str, exp_ty: &TypeRef) -> Option<Diagnostic> {
+        let ExprKind::Member { obj, name } = &arg.kind else { return None };
+        let method = name.strip_prefix('@')?;
+        let TypeRef::Func { params, .. } = exp_ty.strip_readonly() else { return None };
+        let recv = match &obj.kind {
+            ExprKind::Ident(n) => n.clone(),
+            ExprKind::Path(parts) => parts.join("."),
+            _ => return None,
+        };
+        let first = params
+            .first()
+            .map(|t| format!(", whose first parameter is `{}`", typeref_display(t)))
+            .unwrap_or_default();
+        Some(Diagnostic::new(
+            format!(
+                "[E7301] method-value argument type mismatch: `{recv}.@{method}` takes a `{recv}` \
+                 receiver, but argument `{param_name}` expects `{}`{first} -- an unbound method \
+                 value is `fn({recv}, ..) -> ..`, and its receiver and parameters must fit that type",
+                typeref_display(exp_ty),
+            ),
+            arg.span,
+        ))
+    }
+
     fn check_match_open_or_empty(
         &self,
         scrut_ty: Option<&TypeRef>,
@@ -18471,20 +18501,28 @@ impl<'a> TypeCheckCtx<'a> {
                             && typeref_mentions_any(&param.ty, &recv_generic_names);
                         match compat {
                             Compat::Bad { found } if generic_param => {
-                                errors.push(
-                                    Diagnostic::new(
-                                        format!(
-                                            "[E7301] cannot pass value of type `{}` as \
-                                             argument `{}` of type `{}`",
-                                            found, param.name, typeref_display(&exp_ty),
-                                        ),
-                                        arg.expr().span,
-                                    )
-                                    .with_note_at(
-                                        format!("parameter `{}` declared here", param.name),
-                                        param.span,
-                                    ),
-                                );
+                                // An unbound method value (`T.@method`) gets the precise
+                                // method-value refusal, not the generic one: since #1648
+                                // substitutes the receiver's type arguments into a
+                                // function type too, `Option[int].map(str.@byte_len)` is
+                                // judged HERE (`fn(int) -> U`), before codegen's own
+                                // method-value door could speak.
+                                let diag = self
+                                    .method_value_arg_mismatch(arg.expr(), &param.name, &exp_ty)
+                                    .unwrap_or_else(|| {
+                                        Diagnostic::new(
+                                            format!(
+                                                "[E7301] cannot pass value of type `{}` as \
+                                                 argument `{}` of type `{}`",
+                                                found, param.name, typeref_display(&exp_ty),
+                                            ),
+                                            arg.expr().span,
+                                        )
+                                    });
+                                errors.push(diag.with_note_at(
+                                    format!("parameter `{}` declared here", param.name),
+                                    param.span,
+                                ));
                             }
                             Compat::RecordLit { faults } if generic_param => {
                                 errors.extend(faults.into_iter().map(|(m, s)| Diagnostic::new(m, s)));
