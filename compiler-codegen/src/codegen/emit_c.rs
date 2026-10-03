@@ -48370,6 +48370,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if newline {
             self.line("nova_print_newline();");
         }
+        // Registry 221.1 #1655: the call's output reaches the fd now, not at exit
+        // (C's stdout is fully buffered when redirected; see `nova_print_end`).
+        self.line("nova_print_end();");
         self.indent -= 1;
         self.line("}");
         self.line(&format!("{} = NOVA_UNIT;", tmp));

@@ -1,0 +1,27 @@
+// EXPECT_EXIT 3
+// EXPECT_STDOUT println-line
+// EXPECT_STDOUT print-piece|stdout-write
+//
+// Registry 221.1 #1655: C's `stdout` is FULLY buffered when it is not a
+// terminal -- a file, a pipe, this test's capture -- and Nova's output went
+// through it: `print`/`println` and `Stdout @write` sat in the C buffer until a
+// normal exit flushed it. A process stopped before that (killed, or leaving
+// through `_exit` as here) lost ALL of it, and a reader of a redirected file
+// saw nothing while the program ran (found in claude-limits: a server's log was
+// never visible). std promises "the fd is unbuffered on the Nova side": every
+// `print`/`println` and every `Stdout @write` now reaches the fd before it
+// returns. `_exit` leaves without flushing the C buffers, so the expected
+// output is present only if each call flushed itself.
+module standalone.p1655_stdout_reaches_fd_before_exit
+
+import std.io.{stdout}
+
+extern "C" fn _exit(code int) -> ()
+
+fn main() Io {
+    println("println-line")
+    print("print-piece|")
+    mut out = stdout()
+    ro _ = out.write("stdout-write\n".bytes())
+    _exit(3)
+}

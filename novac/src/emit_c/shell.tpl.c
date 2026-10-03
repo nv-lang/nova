@@ -12388,6 +12388,7 @@ static nova_unit nova_fn_11shell_probe15supervise_probe(void) {
         nova_print_str(_nova_strlit_d7d5ceffedeccce9);
         nova_print_int(Nova_AtomicInt_method_load(&(code)));
         nova_print_newline();
+        nova_print_end();
     }
     _nv_println_1431 = NOVA_UNIT;
     _nv_println_1431;
@@ -15043,6 +15044,7 @@ static Nova_Decision* _nova_handler_lit_5_impl_Supervisor_on_child_fail(void* _c
         {
             nova_print_str(err);
             nova_print_newline();
+            nova_print_end();
         }
         _nv_println_1424 = NOVA_UNIT;
         _nv_if_1422 = NOVA_UNIT; (void)(_nv_println_1424);
@@ -15052,6 +15054,7 @@ static Nova_Decision* _nova_handler_lit_5_impl_Supervisor_on_child_fail(void* _c
         {
             nova_print_str(_nova_strlit_74427affe976131d);
             nova_print_newline();
+            nova_print_end();
         }
         _nv_println_1425 = NOVA_UNIT;
         _nv_if_1422 = NOVA_UNIT; (void)(_nv_println_1425);
