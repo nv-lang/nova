@@ -1708,7 +1708,7 @@ fn ptr_read[T](p *T) -> ref T          // сквозь неё читают: ме
 taking the value out, `p.view(f)` / `p.view_at(i, f)` lends the element to a closure as a view
 parameter. The rules are the same in safe and unsafe code.
 
-**What `mut` on a parameter means** (D326 Р3, amendment 2026-09-24): the right to change the value RECEIVED, not a link to the caller's variable. For a value type the value is the caller's storage — assigning it is visible outside. For a heap type the value is the object: changing the object is visible, while assigning the parameter only rebinds the local name, and the compiler warns `W_MUT_HEAP_PARAM_REBIND`.
+**What `mut` on a parameter means** (D326 Р3, amendment 2026-09-24): the right to change the value RECEIVED, not a link to the caller's variable. For a value type the value is the caller's storage — assigning it is visible outside. For a heap type the value is the object: changing the object is visible, while assigning the parameter only rebinds the local name, and the compiler warns `W_MUT_HEAP_PARAM_REBIND`. Heap-ness is a property of the REPRESENTATION (amendment 2026-10-03): a record without `value`, a newtype over a heap type and a function value `fn(..) -> ..` are heap types — a temporary of one is a legal `mut` argument; primitives, `value` records, sums and tuples are value types.
 
 ```nova
 type Account {
