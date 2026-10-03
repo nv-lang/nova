@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/pipeline/eq_door_test.nv -- the two refusals of the `==` door of
+// `str` and a vector (check/operators.nv), each of its own kind (the
+// integrator's word 2026-10-02): a right side of another type is a LANGUAGE
+// error (D405, D491); an `equal` the unit was not handed is subset debt WITH A
+// STAGE, because std declares it for both receivers. Reverse probe: with
+// `@refuse_equality_rhs` back on the subset door the first case reddens on its
+// code; with the stage dropped from `@refuse_equality_unknown` the second
+// reddens on its text.
+
+module novac.pipeline
+
+test "`==` with a right side of another type is a language error, an `equal` not handed is dated debt (registry 1573)" {
+    ro std = []str.of("fn str @equal(other str) -> bool => true")
+    // CONTROL: two strings compare through the declared `equal`, clean.
+    ro (d0, _) = compile_to_c("fn main() {\n println(\"a\" == \"b\")\n}", std)
+    assert(d0.len() == 0, messages(d0))
+    // An `equal` of `str` declared over `int`: `"a" == "b"` is
+    // `"a".@equal("b")`, an argument of another type -- a language error, no
+    // stage. (`"a" == 5` never reaches this door: the protocol gate before it
+    // refuses mixed operands.)
+    ro bad = []str.of("fn str @equal(other int) -> bool => true")
+    ro (d1, _) = compile_to_c("fn main() {\n println(\"a\" == \"b\")\n}", bad)
+    assert(d1.len() >= 1, "an equal over another type must refuse")
+    assert(d1[0].code == "E_NOVAC_LANG", messages(d1))
+    assert(d1[0].message.contains("right-hand side of the left one's type"), messages(d1))
+    // No `equal` handed at all: the form is legal, the declaration did not
+    // reach the unit -- subset debt that names its stage.
+    ro (d2, _) = compile_to_c("fn main() {\n println(\"a\" == \"b\")\n}", []str.new())
+    assert(d2.len() >= 1, "== without a handed equal must be refused")
+    assert(d2[0].code == "E_NOVAC_SUBSET", messages(d2))
+    assert(d2[0].message.contains("(E2-b2 multi-file)"), messages(d2))
+}

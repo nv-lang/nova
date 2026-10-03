@@ -126,8 +126,8 @@
 # DCE оракула заглушку именно по совпадению имени — НЕ проверено (названный пробел).
 # Собственная эмиссия novac не изменилась: hello минус шаблон = 6 строк и до, и
 # после (8938-8932, 9048-9042).
-match_demo 14844
-records 14774
+match_demo 15383
+records 15313
 # strings 6082 -> 6073 (2026-08-18, Э2-б2): заработал коллектор достижимого.
 # Девять строк -- это ровно те функции фикстуры, до которых из `main` нет
 # пути. Храповик двусторонний, и опускать базу СНИЖЕНИЕМ обязательно: иначе
@@ -153,7 +153,7 @@ records 14774
 # `i < _novac_l2` в условии) — норма D58 («выражение после `in` вычисляется один раз, до первой
 # итерации», амендмент 2026-09-30), пришла с дугой D486 (слияние nova-kim 2ba3a552c). Замер — diff
 # эмиссии novac до слияния (00cd06da9) и после: ровно эта строка. Рост — цена нормы.
-arithmetic 14767
+arithmetic 15306
 # 2026-09-30 (Carina window, batch 5): +5465 lines on EVERY fixture, all of it
 #   the shell, novac's own emission unchanged. +5446 came with E.9 step 1
 #   (75b205fe0): the shell probe imports std.fs/std.os and exercises args, an
@@ -170,7 +170,7 @@ arithmetic 14767
 # 2026-09-30 (Carina window, p274-e9s4 on main 97ab70f5d): +21 on every fixture,
 #   the shell regenerated on that oracle (#1412, #1409, #1097, #1415 in it);
 #   novac's own emission unchanged.
-hello 14735
+hello 15274
 # match_demo 6197 -> 6373, records 6127 -> 6303, arithmetic 6117 -> 6293, hello 6088 -> 6264 (2026-09-05, волна 274.7 В7): реген shell.tpl.c — проба оболочки получила
 # `Vec[f64]` (`reals = [1.5, 2.5]`, ради `Vec[Meters]` -> `Nova_Vec____nova_f64`, №940), и в
 # шаблон въехали инстанс Vec[f64] с его методами плюс всё, что оракул сам добавил в прелюдию с
@@ -199,4 +199,29 @@ hello 14735
 #   main e8fd85a48 grew 14726 -> 14730 lines after #1452 (one #coerce door: the oracle's .bytes()
 #   insertion moved from codegen into the rewrite pass) and #1473; measured by this guard on main:
 #   match_demo 14840 -> 14844, records 14770 -> 14774, arithmetic 14763 -> 14767, hello 14731 -> 14735.
+#   novac's own emission for these files did not change.
+# 2026-10-01, cloud session p274-carina-strarm (registry 1573): +99 lines on each of the four
+#   files -- the shell regenerated after shell_probe.nv learnt `slice_eq_probe` (a slice of
+#   `[]int` compared with `==`): it now carries `Vec____nova_int_method_index__NovaValue_Range`
+#   and `Vec____nova_int_method_equal` with their helpers, 14730 -> 14829 lines. Measured by
+#   this guard: match_demo 14844 -> 14943, records 14774 -> 14873, arithmetic 14767 -> 14866,
+#   hello 14735 -> 14834. novac's own emission for these files did not change.
+# 2026-10-02, cloud session p274-carina-strarm, merge of origin/integrate 2488a47be: -36 lines on
+#   each of the four files -- shell_probe.nv's `slice_eq_probe` keeps only `equal` of Vec[int]
+#   now (two vectors compared with `==`): since registry 1557 novac makes a Vec's
+#   `index(Range)` from std's body when the shell lacks it, so the shell no longer carries
+#   `Vec____nova_int_method_index__NovaValue_Range`; regenerated with the oracle of the merged
+#   tree. Measured by this guard: match_demo 14943 -> 14907, records 14873 -> 14837,
+#   arithmetic 14866 -> 14830, hello 14834 -> 14798. novac's own emission did not change.
+# 2026-10-02, cloud session p274-carina-strarm, merge of origin/main f80d61e00: +35 lines on each
+#   of the four files -- the shell regenerated with the oracle rebuilt on the merged tree (main
+#   brought 53 changed files of compiler-codegen/nova-cli); shell_probe.nv itself did not change in
+#   the merge, so the growth is the oracle's emission of the same probe, 14793 -> 14828 lines.
+#   Measured by this guard: match_demo 14907 -> 14942, records 14837 -> 14872, arithmetic
+#   14830 -> 14865, hello 14798 -> 14833. novac's own emission did not change.
+# 2026-10-02, cloud session p274-carina-strarm (274.5 P4, a type applied to arguments): +441 lines
+#   on each of the four files -- shell_probe.nv's `name_map_probe` uses `HashMap[str, int]` the way
+#   `names.NameTable` does (`new`, `insert`, `get`, `clear`), so the regenerated shell carries that
+#   instance instead of HashMap's stubs, 14828 -> 15269 lines. Measured by this guard: match_demo
+#   14942 -> 15383, records 14872 -> 15313, arithmetic 14865 -> 15306, hello 14833 -> 15274.
 #   novac's own emission for these files did not change.

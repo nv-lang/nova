@@ -1,9 +1,0 @@
-module hp
-
-import ./geo.{CallerLoc}
-
-fn main() {
-    ro c = CallerLoc { file: "x.nv", line: 2.5 }
-    println(c.file)
-    println(c.line * 2.0)
-}

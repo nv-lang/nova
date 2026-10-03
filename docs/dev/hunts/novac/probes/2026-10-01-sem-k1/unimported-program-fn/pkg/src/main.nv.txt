@@ -1,8 +1,0 @@
-module hp
-
-fn geo_f() -> int => 1
-
-fn main() {
-    println(f())
-    println(geo_f())
-}

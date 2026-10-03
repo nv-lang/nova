@@ -1,0 +1,36 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: subset_test.nv -- the same acceptance habit (a test asserts the
+// property of the emitted C, with a CONTROL beside it); NOT taken: golden files.
+// Role: acceptance of `==` over a VECTOR (registry 1573): a slice compared with
+//   a vector goes through the vector's `equal` instance; the slice itself is
+//   made from std's `index(Range)` body (registry 1557), which the shell lacks.
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file; the fixture slice_eq/pos_1
+//   holds the behaviour byte-for-byte with the oracle.
+// novac/src/pipeline/slice_eq_test.nv -- a slice compared, by elements.
+
+module novac.pipeline
+
+test "a slice compared with `==` is a call of the vector's `equal`, by elements (registry 1573)" {
+    // `@args[a..b] == want` (types.nv): the comparison is the vector's
+    // `equal` -- never the C `==` of two vector pointers -- and the slice is
+    // std's `index(Range)` body made for this instance (registry 1557). The parameter is named `zq`, a name the
+    // shell never prints, so the shell's own calls cannot answer for it.
+    // CONTROL: an `int` comparison of the same names stays the C operator.
+    // The declarations the two calls resolve against, handed as std hands them:
+    // the vector, the range a slice is indexed by, and the vector's `equal`.
+    mut std = slice_std()
+    std.push("module std.v\nexport fn Vec[T consume] @equal(other Vec[T]) -> bool => true")
+    ro (d, c) = compile_to_c("fn eq(zq []int, want []int) -> bool => zq[0..2] == want\n\
+fn main() {\n\
+ println(eq([1, 2, 3], [1, 2]))\n\
+}", std)
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("_method_equal(novac_fn_std_v_index__Vec_of_nova_int__"), c)
+    ro (d0, c0) = compile_to_c("fn eq(zq int, want int) -> bool => zq == want\n\
+fn main() {\n\
+ println(eq(1, 2))\n\
+}", std)
+    assert(d0.len() == 0, messages(d0))
+    assert(!c0.contains("_method_equal(zq"), "CONTROL: an int compares with the C operator")
+}

@@ -9,6 +9,7 @@
 
 module encoding.json_test
 
+import std.collections.hash_map.{HashMap}
 import std.encoding.json.{Json, JsonValue, JsonObject, ParseJsonError, pretty}
 
 test "parse: примитивы" {
@@ -51,7 +52,7 @@ test "parse: object с полями" {
     match v.object() {
         Some(m) => {
             assert(m.get("name") == Some(JsonValue.Str("alice")))
-            assert(m.get("age") == Some(JsonValue.Num(30.0)))
+            assert(m.get("age") == Some(JsonValue.Int(30)))
         }
         None => assert(false)
     }
@@ -151,8 +152,9 @@ test "to_str: примитивы — round-trip" {
         JsonValue.Null,
         JsonValue.Bool(true),
         JsonValue.Bool(false),
-        JsonValue.Num(42.0),
-        JsonValue.Num(-3.14),
+        JsonValue.F64(42.0),
+        JsonValue.F64(-3.14),
+        JsonValue.Int(42),
         JsonValue.Str("hello"),
     ]
     for v in cases {
@@ -163,7 +165,7 @@ test "to_str: примитивы — round-trip" {
 }
 
 test "to_str: array round-trip" {
-    ro v = JsonValue.Array([JsonValue.Num(1.0), JsonValue.Num(2.0), JsonValue.Str("three")])
+    ro v = JsonValue.Array([JsonValue.F64(1.0), JsonValue.Int(2), JsonValue.Str("three")])
     ro s = v.to_str()
     ro parsed = Json.parse(s)!!
     assert(parsed == v)
@@ -172,7 +174,7 @@ test "to_str: array round-trip" {
 test "to_str: nested object round-trip" {
     mut m = JsonObject.new()
     m.insert("name", JsonValue.Str("alice"))
-    m.insert("score", JsonValue.Num(95.5))
+    m.insert("score", JsonValue.F64(95.5))
     ro v = JsonValue.Object(m)
     ro s = v.to_str()
     ro parsed = Json.parse(s)!!
@@ -225,9 +227,9 @@ test "D422: ${v:#} = to_str_pretty(), ${v} = to_str() (unified @display)" {
 
 test "JsonObject: порядок вставки сохраняется при @iter()/@keys()" {
     mut m = JsonObject.new()
-    m.insert("z_first", JsonValue.Num(1.0))
-    m.insert("a_second", JsonValue.Num(2.0))
-    m.insert("m_third", JsonValue.Num(3.0))
+    m.insert("z_first", JsonValue.Int(1))
+    m.insert("a_second", JsonValue.Int(2))
+    m.insert("m_third", JsonValue.Int(3))
 
     ro keys = m.keys()
     assert(keys.len() == 3)
@@ -244,15 +246,15 @@ test "JsonObject: порядок вставки сохраняется при @i
 
 test "JsonObject: повторная вставка ключа НЕ двигает позицию" {
     mut m = JsonObject.new()
-    m.insert("a", JsonValue.Num(1.0))
-    m.insert("b", JsonValue.Num(2.0))
-    m.insert("a", JsonValue.Num(99.0))   // обновление, не re-append
+    m.insert("a", JsonValue.Int(1))
+    m.insert("b", JsonValue.Int(2))
+    m.insert("a", JsonValue.Int(99))   // обновление, не re-append
 
     ro keys = m.keys()
     assert(keys.len() == 2)
     assert(keys[0] == "a")
     assert(keys[1] == "b")
-    assert(m.get("a") == Some(JsonValue.Num(99.0)))
+    assert(m.get("a") == Some(JsonValue.Int(99)))
 }
 
 // Пин конкретного ожидаемого порядка полей — record из 3 полей, порядок
@@ -260,8 +262,8 @@ test "JsonObject: повторная вставка ключа НЕ двигае
 test "to_str: порядок полей Object детерминирован — пин конкретного вывода" {
     mut m = JsonObject.new()
     m.insert("id", JsonValue.Str("weather-1"))
-    m.insert("elapsed_ms", JsonValue.Num(42.0))
-    m.insert("t_ms", JsonValue.Num(100.0))
+    m.insert("elapsed_ms", JsonValue.Int(42))
+    m.insert("t_ms", JsonValue.Int(100))
     ro v = JsonValue.Object(m)
     assert(v.to_str() == "{\"id\":\"weather-1\",\"elapsed_ms\":42,\"t_ms\":100}")
 }
@@ -314,7 +316,7 @@ test "Баг 1: non-ASCII в строке без escape + число после"
 test "Баг 1: многобайтовый codepoint в ключе объекта" {
     ro v = Json.parse("{\"héllo\": 1}")!!
     match v.object() {
-        Some(m) => assert(m.get("héllo") == Some(JsonValue.Num(1.0)))
+        Some(m) => assert(m.get("héllo") == Some(JsonValue.Int(1)))
         None    => assert(false)
     }
 }
@@ -336,4 +338,49 @@ test "Баг 2: round-trip \\b\\f" {
     ro s = v.to_str()
     ro parsed = Json.parse(s)!!
     assert(parsed == v)
+}
+
+// ── #1638 "read exactly, write by I-JSON": the round trip build -> print ->
+// parse -> compare keeps the number and its variant ────────────────────────
+
+fn rt(v JsonValue) -> bool => Json.parse(v.to_str())!! == v
+
+test "#1638: integers round-trip exactly -- int.MAX, u64 max, 2^53+1" {
+    assert(rt(JsonValue.Int(int.MAX)))
+    assert(rt(JsonValue.Int(int.MIN)))
+    assert(rt(JsonValue.U64(18446744073709551615)))
+    assert(rt(JsonValue.Int(9007199254740993)))
+    assert(Json.parse("9007199254740993")!! == JsonValue.Int(9007199254740993))
+    assert(Json.parse("18446744073709551615")!! == JsonValue.U64(18446744073709551615))
+}
+
+test "#1638: a fraction and an exponent are F64; F64 keeps its variant" {
+    assert(Json.parse("2.5")!! == JsonValue.F64(2.5))
+    assert(Json.parse("1e3")!! == JsonValue.F64(1000.0))
+    assert(rt(JsonValue.F64(1.0)))
+    assert(JsonValue.F64(1.0).to_str() == "1.0")
+    assert(JsonValue.Int(1).to_str() == "1")
+    assert(JsonValue.Int(5) != JsonValue.F64(5.0))
+}
+
+test "#1638: beyond u64 an integer text is read as F64" {
+    match Json.parse("18446744073709551616")!! {
+        JsonValue.F64(_) => assert(true)
+        _ => assert(false)
+    }
+}
+
+test "#1638: accessors -- num() only when exact, int() and u64()" {
+    assert(JsonValue.Int(5).num() == Some(5.0))
+    assert(JsonValue.Int(9007199254740993).num() == None)
+    assert(JsonValue.F64(2.5).int() == None)
+    assert(JsonValue.U64(7).int() == Some(7))
+    assert(JsonValue.Int(-1).u64() == None)
+    assert(JsonValue.Int(42).is_num())
+}
+
+test "#1638: an integer literal lifts into Int, a float literal into F64" {
+    ro m HashMap[str, JsonValue] = ["i": 42, "f": 2.5]
+    assert(m.get("i") == Some(JsonValue.Int(42)))
+    assert(m.get("f") == Some(JsonValue.F64(2.5)))
 }

@@ -35,7 +35,7 @@ import ../tree.{Node, raw_node, NodeKind}
 // #1493: the file's import declarations are read leaf by leaf (`visible_imports`).
 import ../sem.{branch_children, leaf_text, file_decls}
 import ../diag.{ice}
-import ../builtins.{TypeKind, SIZE_OF_FN, ASSERT_FN}
+import ../builtins.{TypeKind, SIZE_OF_FN, ASSERT_FN, RECV_BINDING}
 import ../sem.{LitArg, ArgSpec, CallForm, CalleeTarget, decl_of_ty, Ctx, CheckOut, FnRow, raw_row, coerce_row}
 import ../sem.{subst_type, slot_binding_in, representation_of, generic_names, is_arg_value_kind, branch_children}
 import ../sem.{ty_source_name, bind_fault, bind_slots, identity_slots, no_row, SlotBind}
@@ -142,7 +142,13 @@ fn Checker mut @refuse_free_call(kids []Node, cname str, key []ArgSpec) -> () {
 fn mode_refusal_msg(p ParamDef, got ArgClass) -> str {
     match p.mode {
         ModeRo => ice("check: a `ro` parameter's mode never refuses an argument's class (P14)")
-        ModeMut => "parameter `${p.name}` needs a mutable place (`mut`, or a `consume` binding) -- this argument is not one (P14)"
+        // The RECEIVER of a `mut` method says what the receiver door says
+        // (`@refuse_method_call`, methods.nv): one fact, one sentence.
+        ModeMut => if p.name == RECV_BINDING {
+            MUT_METHOD_ON_RO_PLACE_MSG
+        } else {
+            "parameter `${p.name}` needs a mutable place (`mut`, or a `consume` binding) -- this argument is not one (P14)"
+        }
         ModeConsume => "parameter `${p.name}` needs ownership (an owned temporary, or a binding declared `consume`) -- this argument is not one (P14)"
     }
 }
@@ -179,8 +185,20 @@ fn Checker mut @refuse_arg_type(kids []Node, row FnRow, key []ArgSpec, form Call
             // not be shadowed by a class question at some OTHER slot.
             if mode_admits(want.mode, key[at].cls) {
                 continue
+            } else if want.mode == ParamMode.ModeMut && @is_value_type(want.type_id) {
+                // A LANGUAGE error, not a subset limit: a `mut` parameter of a
+                // VALUE type is the caller's own storage (D326 revision R3),
+                // and this argument has none to write back into.
+                @reject_first_leaf_of(kids, "parameter `${want.name}` of a value type needs a mutable place -- this argument has no storage the call could write back into (E_MUT_ARG_NOT_MUTABLE, D326 revision R3)")
+                return
             } else {
-                @report_first_leaf_of(kids, mode_refusal_msg(want, key[at].cls))
+                // A `ro` PLACE where a mutable one is needed is a LANGUAGE
+                // error (registry 1577, D488; the oracle refuses it too,
+                // E_LOCAL_NOT_MUT / E_MUT_ARG_NOT_MUTABLE). Any other class --
+                // a temporary handed to a `mut` parameter, which the oracle
+                // compiles -- stays the subset's refusal it was.
+                @report_first_leaf_kind(kids, mode_refusal_msg(want, key[at].cls),
+                    if key[at].cls == ArgClass.ArgRo { DiagKind.LangError } else { DiagKind.SubsetDebt })
                 return
             }
         } else {
@@ -734,7 +752,7 @@ fn Checker mut @type_free_call(e Node) -> () {
     ro by_expect = if vn > 0 { variant_named_in(@ctx, cname, @value_expect) } else { no_vrow() }
     if is_vrow(by_expect) {
         @type_variant_call(e, kids, by_expect)
-        // SILENT-OK: the construction door recorded the variant or refused it.
+        // SILENT-OK: the variant door records the call or refuses it by name.
         return
     } else if vn > 1 {
         @report_first_leaf_of(kids, AMBIGUOUS_VARIANT_MSG)
@@ -841,7 +859,7 @@ fn Checker mut @type_free_call(e Node) -> () {
             // arity alone -- accepted here, refused by the oracle, and
             // emitted as one string argument to a two-parameter function.
             ro key = typed_free_key(kids, @ctx, @scope, @chan)
-            match @res.lookup(@ctx.fns, @ctx.tys, cname, key, CallForm.FreeCall) {
+            match @lookup_call(cname, key, CallForm.FreeCall) {
                 FnFound(row) => {
                     ro rmark = @out.len()
                     @record_free_callee(e, kids, row, key)

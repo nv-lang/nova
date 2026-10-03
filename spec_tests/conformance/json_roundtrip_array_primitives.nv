@@ -4,12 +4,14 @@
 // Validates: format_array iter+join, parser accepts mixed types в одном
 // массиве, == определён pointwise для Array variant.
 
+// #1638: integer values are built with `JsonValue.int(..)` -- an `F64`
+// (`JsonValue.num(1.0)`) now prints as `1.0`, distinct from the integer `1`.
 module spec_tests.conformance
 import std.encoding.json.{JsonValue, Json}
 
 test "encode mixed primitives array" {
     ro v = JsonValue.array([
-        JsonValue.num(1.0),
+        JsonValue.int(1),
         JsonValue.str("a"),
         JsonValue.bool(true),
         JsonValue.null(),
@@ -34,7 +36,7 @@ test "parse mixed primitives array" {
 
 test "roundtrip mixed primitives array" {
     ro orig = JsonValue.array([
-        JsonValue.num(1.0),
+        JsonValue.int(1),
         JsonValue.str("a"),
         JsonValue.bool(true),
         JsonValue.null(),

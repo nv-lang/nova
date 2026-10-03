@@ -1,0 +1,10 @@
+module int_separator.neg_2
+
+// NOVAC_EXPECT did not parse this
+// ONE seeded cause: a separator right after the hex head. D44 forbids it by
+// name (`0x_FF`, spec/decisions/03-syntax.md); the hex run needs a digit first,
+// so the whole run is one refused token. The oracle accepts this form --
+// registry 1617, a deviation of the oracle from D44, not a norm to copy.
+fn main() {
+    println(0x_FF)
+}

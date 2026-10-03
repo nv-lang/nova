@@ -40,8 +40,29 @@ test "type mismatch -> Err(UnexpectedType) not panic" {
     }
 }
 
-test "lossy integer 2^53+1 -> Err(LossyInteger) not silent-truncate" {
+// #1638 "read exactly": 2^53+1 used to be refused (LossyInteger) because the
+// number passed through f64; it is now read EXACTLY -- the property this test
+// held ("never silently truncated") holds more strongly. A real loss is still
+// refused: a fraction or a too-large float into an `int` field.
+test "integer 2^53+1 is decoded exactly, not truncated (#1638)" {
     match json_decode[DecErrRec]("{\"id\": 9007199254740993, \"name\": \"x\"}") {
+        Ok(r)  => assert(r.id == 9007199254740993)
+        Err(_) => assert(false)
+    }
+}
+
+test "a fraction into an int field -> Err(LossyInteger)" {
+    match json_decode[DecErrRec]("{\"id\": 1.5, \"name\": \"x\"}") {
+        Ok(_)  => assert(false)
+        Err(e) => match e.kind {
+            LossyInteger(_) => assert(true)
+            _               => assert(false)
+        }
+    }
+}
+
+test "a float beyond 2^53 into an int field -> Err(LossyInteger)" {
+    match json_decode[DecErrRec]("{\"id\": 1e20, \"name\": \"x\"}") {
         Ok(_)  => assert(false)
         Err(e) => match e.kind {
             LossyInteger(_) => assert(true)

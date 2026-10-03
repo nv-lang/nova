@@ -1,0 +1,39 @@
+module field_mut.pos_1
+
+// A `mut` METHOD CALLED ON A FIELD OF A MUTABLE PLACE: `@xs.push(x)` inside a
+// `mut` method, `b.xs.push(1)` on a `mut b`. The argument class of a field was
+// `ro` for `b.xs` and a temporary for `@xs`, so the `mut` receiver of `push`
+// had no candidate -- "this type has no such method in the declarations novac
+// was handed", ten times over novac's own source (`@args.append(args)`,
+// `@rows.push(...)`, `@map.insert(...)`, `@heads.put(...)`). A field is as
+// mutable as its owner: mutable on a `mut` owner, read-only on any other.
+// Behaviour byte-for-byte with the oracle (novac-e1-smoke).
+
+type Bag {
+    xs []int
+    tags []str
+}
+
+fn Bag mut @add(x int) -> () {
+    @xs.push(x)
+    @tags.push("t${x}")
+}
+
+fn Bag @total() -> int {
+    mut n = 0
+    for i in 0..@xs.len() {
+        n += @xs[i]
+    }
+    n
+}
+
+fn main() {
+    mut b = Bag { xs: []int.new(), tags: []str.new() }
+    b.add(3)
+    b.add(4)
+    b.add(10)
+    b.xs.push(100)
+    println(b.total())
+    println(b.xs.len())
+    println(b.tags.len())
+}

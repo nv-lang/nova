@@ -1,0 +1,13 @@
+module const_bool_cast.neg_1
+
+// NOVAC_EXPECT is known at compile time
+// ONE seeded cause: a NAME that is not a literal -- a function call's result
+// cast to a number. Admitting `true` and `false` must not admit any name: a
+// call needs the runtime, and the oracle refuses it too (E_CONST_NOT_CONSTEXPR).
+fn flag() -> bool => true
+
+const D = flag() as u8
+
+fn main() {
+    println(D)
+}

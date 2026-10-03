@@ -56,6 +56,8 @@ fn Checker mut @bind_headed_record_pattern(pat Node, ty TyId, ak []Node, dmode P
     }
     // A variant is REFUTABLE: a binding or a `for` header takes none.
     if @refused_unit_variant(ak, pos) { return false }
+    // A field named in the pattern is a payload typed: the lost one refuses.
+    if pattern_fields(pat).len() > 0 && @refused_lost_payload(ak, vrow) { return false }
     ro vr = @ctx.variant_rows[raw_vrow(vrow)]
     mut named = 0
     mut ok = true
@@ -97,6 +99,7 @@ fn Checker mut @bind_headed_record_pattern(pat Node, ty TyId, ak []Node, dmode P
 /// order, after evaluating the fields in written order.
 fn Checker mut @judge_variant_ctor(ctor Node, v VariantRow) -> () {
     ro kids = branch_children(ctor)
+    if @refused_lost_payload(kids, v) { return }
     ro vr = @ctx.variant_rows[raw_vrow(v)]
     if @variant_sum_is_generic(v) {
         // A generic sum's instance is inferred from a payload by position

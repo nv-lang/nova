@@ -1,0 +1,27 @@
+// EXPECT_STDOUT const: 604 text
+//
+// Registry 221.1 #1657, the module-constant axis of
+// p1657_untyped_local_shadows_outer_name.nv: a local of unknown type named
+// like a module CONSTANT of another type (`const rem = "text"`) took the
+// constant's `str` -- the build failed in C. A local of unknown type shadows
+// every outer name, a constant included. The right-hand side is a std method
+// chain the checker does not type (`.to_unix_millis().unix_nanos()`).
+module standalone.p1657_untyped_local_shadows_module_const
+
+import std.time.civil
+
+const rem = "text"
+
+type Tick value { n i64 }
+
+fn Tick @const_cell() -> i64 {
+    ro rem = (@n as i64).to_unix_millis().unix_nanos() / 1_000_000 % 10
+    ro day = if rem < 0 { rem - 1 } else { rem }
+    ro local i64 = 6
+    local * 100 + day
+}
+
+fn main() Io {
+    ro t = Tick { n: 1234 }
+    println("const: ${t.const_cell()} ${rem}")
+}

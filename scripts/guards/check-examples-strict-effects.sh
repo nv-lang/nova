@@ -14,6 +14,15 @@
 # кодоген — «выглядел проверяемым и проверялся не тем». Такой файл обязан либо
 # получить точку входа, либо стоять в списке исключений С ПРИЧИНОЙ.
 #
+# ТРЕТЬЯ КОРЗИНА — ФАЙЛ БЕЗ `fn main` ВОВСЕ (реестр 221.1 №1639). До неё такой
+# файл не попадал ни в «точки входа», ни в «сниппеты» и не проверялся НИЧЕМ —
+# даже `nova check`: `real_world/orm_demo.nv` не собирался на main (`UserId`
+# без `Hash`, `Db.in_transaction`, снятый №570, `Timestamp.from_unix`, которого
+# в std нет), и ни один шаг гейта этого не видел. Теперь такой файл либо
+# ПОКРЫТ — в его каталоге есть точка входа с тем же `module` (пиры одного
+# модуля собираются вместе с ней, так устроен `http_proxy_chain/src`), — либо
+# проходит `nova check` сам. Исключения из этой корзины — тем же списком.
+#
 # СПИСОК ИСКЛЮЧЕНИЙ — ХРАПОВИК: `examples-strict-exceptions.list`, по строке
 # «<путь> # <причина>». Растёт только с правкой файла и объяснением; сокращается
 # свободно. Пустая строка исключения = тихо отключённая проверка.
@@ -63,6 +72,7 @@ fi
 find "$EX_DIR" -name '*.nv' -type f 2>/dev/null | tr -d '\r' | sed 's#\\#/#g' | sort > "$TMP/all"
 : > "$TMP/entries"
 : > "$TMP/snippets"
+: > "$TMP/libs"
 while IFS= read -r f; do
     [ -n "$f" ] || continue
     case "$f" in */_wip/*) continue ;; esac
@@ -71,8 +81,16 @@ while IFS= read -r f; do
         printf '%s\n' "$rel" >> "$TMP/entries"
     elif grep -qE '^[[:space:]]*//[[:space:]]*fn[[:space:]]+main[[:space:]]*\(' "$f"; then
         printf '%s\n' "$rel" >> "$TMP/snippets"
+    else
+        printf '%s\n' "$rel" >> "$TMP/libs"
     fi
 done < "$TMP/all"
+
+# Модуль файла — первая строка `module X` (пусто, если её нет).
+mod_of() {
+    grep -m1 -E '^[[:space:]]*module[[:space:]]+' "$1" 2>/dev/null \
+        | sed -E 's/^[[:space:]]*module[[:space:]]+([^[:space:]]+).*/\1/' | tr -d '\r'
+}
 
 rc=0
 
@@ -165,8 +183,47 @@ for f in $(ls "$TMP/res" 2>/dev/null | grep '^slow_' | sort); do
     rc=1
 done
 
+# ── файлы без `fn main` (№1639): покрыты пиром-точкой входа либо `check` ─
+NLIB=0
+NCOV=0
+while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    grep -qxF "$rel" "$TMP/exc" && continue
+    dir=$(dirname "$rel")
+    mod=$(mod_of "$EX_DIR/$rel")
+    covered=0
+    if [ -n "$mod" ]; then
+        while IFS= read -r e; do
+            [ -n "$e" ] || continue
+            [ "$(dirname "$e")" = "$dir" ] || continue
+            grep -qxF "$e" "$TMP/exc" && continue
+            if [ "$(mod_of "$EX_DIR/$e")" = "$mod" ]; then covered=1; break; fi
+        done < "$TMP/entries"
+    fi
+    if [ "$covered" -eq 1 ]; then
+        NCOV=$((NCOV + 1))
+        continue
+    fi
+    NLIB=$((NLIB + 1))
+    timeout 300 "$NOVA" check "$EX_DIR/$rel" > "$TMP/lib.log" 2>&1
+    lrc=$?
+    if [ "$lrc" -eq 124 ]; then
+        # Код 124 -- предел `timeout(1)`, а не отказ проверки: третье слово, и оно красное (Г15).
+        echo "check-examples-strict-effects: FAIL - $rel: СНЯТ ПРЕДЕЛОМ 300с: вердикта nova check нет"
+        rc=1
+    elif [ "$lrc" -ne 0 ]; then
+        echo "check-examples-strict-effects: FAIL - $rel: файл без fn main не проходит nova check:"
+        grep -m2 -aE 'error' "$TMP/lib.log" | cut -c1-140 | sed 's/^/    /' >&2
+        echo "    Файл без точки входа не собирает ни один шаг — его проверяет только этот (№1639)." >&2
+        rc=1
+    fi
+done < "$TMP/libs"
+
 if [ "$rc" -eq 0 ]; then
-    NEXC=$(grep -c . "$TMP/exc" 2>/dev/null || echo 0)
-    echo "check-examples-strict-effects ok: точек входа вне _wip $N, все собираются под --strict-effects; исключений с причиной $NEXC (сниппетов с закомментированной main: $(grep -c . "$TMP/snippets" 2>/dev/null || echo 0))"
+    # `grep -c` prints 0 AND exits 1 on no match -- `|| echo 0` used to append a
+    # second "0" to the line; the count is taken as printed.
+    NEXC=$(grep -c . "$TMP/exc" 2>/dev/null); NEXC=${NEXC:-0}
+    NSNIP=$(grep -c . "$TMP/snippets" 2>/dev/null); NSNIP=${NSNIP:-0}
+    echo "check-examples-strict-effects ok: точек входа вне _wip $N, все собираются под --strict-effects; файлов без main: $NLIB прошли check, $NCOV покрыты пиром-точкой входа; исключений с причиной $NEXC (сниппетов с закомментированной main: $NSNIP)"
 fi
 exit "$rc"

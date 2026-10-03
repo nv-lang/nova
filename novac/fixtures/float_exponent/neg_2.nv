@@ -1,0 +1,11 @@
+module float_exponent.neg_2
+
+// NOVAC_EXPECT did not parse this
+// ONE seeded cause: an underscore beside the exponent letter. D44 allows `_`
+// only BETWEEN two digits and names `1_e10` among the forbidden spellings
+// (spec/decisions/03-syntax.md, "around `e`"); the digit run stops at the
+// underscore, so the exponent is never read. The oracle accepts this form --
+// a deviation of the oracle from D44, filed separately, not a norm to copy.
+fn main() {
+    println(1_e10)
+}

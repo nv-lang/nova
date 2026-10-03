@@ -1,0 +1,30 @@
+=== PROGRAM
+     1	module prog
+     2	
+     3	// A `match` value as a constructor FIELD (a sweep-9 position) where the
+     4	// constructor is the right side of a plain `=` (another sweep-9 position).
+     5	// Each position alone compiles; together they reach the emitter unlowered.
+     6	// Legal Nova; the oracle prints 5.
+     7	type Pv { b int, f f64 }
+     8	
+     9	fn main() {
+    10	    ro k = 3
+    11	    mut q = Pv { b: 1, f: 1.0 }
+    12	    q = Pv { b: match k {
+    13	        3 => 5
+    14	        _ => 6
+    15	    }, f: 1.0 }
+    16	    println(q.b)
+    17	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=0
+oracle run rc=0
+=== SUBJECT: novac emit prog.nv
+novac emit rc=2
+{"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error (novac bug, not yours): emit: expression kind outside the subset","poisoned_by":null}
+--- Carina's C, the body of main
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+(skipped: refused by novac, or no smoke cache)
+=== VERDICT: one side produced no run (see above)
+--- oracle stdout
+5

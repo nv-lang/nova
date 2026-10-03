@@ -36,9 +36,9 @@ import std.encoding.json.{JsonObject, JsonValue}
 
 fn main() {
     mut m = JsonObject.new()
-    m.insert("z_first", JsonValue.Num(1.0))
-    m.insert("a_second", JsonValue.Num(2.0))
-    m.insert("m_third", JsonValue.Num(3.0))
+    m.insert("z_first", JsonValue.Int(1))
+    m.insert("a_second", JsonValue.Int(2))
+    m.insert("m_third", JsonValue.Int(3))
 
     // Индексный обход (`keys.len()` / `keys[i]`) сохранён НАМЕРЕННО — он и
     // есть предмет пробы: именно эта форма идёт через codegen встроенных

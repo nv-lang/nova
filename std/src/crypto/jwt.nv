@@ -116,20 +116,27 @@ export fn Jwt.validate_hs256(secret []u8, token str) Time -> Result[JsonValue, J
     match claims.object() {
         Some(m) => {
             // exp — expiration (RFC 7519 § 4.1.4)
+            // A NumericDate is an integer or a fraction (#1638: `Int`/`U64`/`F64`).
             match m.get("exp") {
-                Some(JsonValue.Num(exp_s)) => {
-                    if (now_s as f64) >= exp_s {
-                        return Err(TokenExpired { exp_ms: (exp_s as u64) * 1000, now_ms })
+                Some(v) => match v.num() {
+                    Some(exp_s) => {
+                        if (now_s as f64) >= exp_s {
+                            return Err(TokenExpired { exp_ms: (exp_s as u64) * 1000, now_ms })
+                        }
                     }
+                    None => ()
                 }
                 _ => ()
             }
             // nbf — not before (RFC 7519 § 4.1.5)
             match m.get("nbf") {
-                Some(JsonValue.Num(nbf_s)) => {
-                    if (now_s as f64) < nbf_s {
-                        return Err(NotYetValid { nbf_ms: (nbf_s as u64) * 1000, now_ms })
+                Some(v) => match v.num() {
+                    Some(nbf_s) => {
+                        if (now_s as f64) < nbf_s {
+                            return Err(NotYetValid { nbf_ms: (nbf_s as u64) * 1000, now_ms })
+                        }
                     }
+                    None => ()
                 }
                 _ => ()
             }

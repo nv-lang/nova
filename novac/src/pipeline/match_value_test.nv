@@ -1,0 +1,35 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/pipeline/match_value_test.nv -- a `match` is a value wherever an
+// `if` value stands (sweep 9): the shape walk admits the `if` value's
+// positions, `@type_expr` types the arms through the one match door, and the
+// lowering places it through `@lower_value_source`.
+//
+// EACH TEST CARRIES ITS CONTROL. Reverse probe, run before the commit: with
+// the walk's `match` gate closed to arguments and scrutinees, both tests'
+// first assertions redden.
+
+module novac.pipeline
+
+test "a `match` is a value in an argument and on the right of an assignment" {
+    ro std = std_decls()
+    ro arg = "fn twice(n int) -> int => n * 2\nfn main() {\n ro k = 3\n println(twice(match k {\n  3 => 30\n  _ => 40\n }))\n}"
+    ro (d, _) = compile_to_c(arg, std)
+    assert(d.len() == 0, messages(d))
+    ro asg = "fn main() {\n ro k = 3\n mut x = 0\n x = match k {\n  3 => 300\n  _ => 0\n }\n println(x)\n}"
+    ro (a, _) = compile_to_c(asg, std)
+    assert(a.len() == 0, messages(a))
+    // CONTROL: an operand is no `if` value position either -- refused by name.
+    ro (c, _) = compile_to_c("fn main() {\n ro k = 3\n println(1 + match k {\n  3 => 30\n  _ => 40\n })\n}", std)
+    assert(c.len() == 1, messages(c))
+    assert(messages(c).contains("a `match` is compiled only as"), messages(c))
+}
+
+test "a `match` is the scrutinee of another match" {
+    ro std = std_decls()
+    ro src = "fn main() {\n ro k = 3\n ro r = match match k {\n  3 => 1\n  _ => 2\n } {\n  1 => 10\n  _ => 20\n }\n println(r)\n}"
+    ro (d, _) = compile_to_c(src, std)
+    assert(d.len() == 0, messages(d))
+    // CONTROL: its arms still must agree -- the one match door judges them.
+    ro (c, _) = compile_to_c("fn main() {\n ro k = 3\n ro r = match match k {\n  3 => 1\n  _ => \"s\"\n } {\n  1 => 10\n  _ => 20\n }\n println(r)\n}", std)
+    assert(c.len() > 0, messages(c))
+}

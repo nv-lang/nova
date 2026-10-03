@@ -95,10 +95,13 @@ fn Ctr mut @fresh() -> Ctr => Ctr { n: @n }\n"
     // temporary, not its receiver's place -- and a `mut` method on a temporary
     // RECEIVER is legal: a chain rooted in an rvalue has no binding to check,
     // the mutation lands in the hoisted temp (D33, spec/decisions/
-    // 02-types.md:13526). This control asserted a refusal until registry 1630
-    // (2026-10-02), which the oracle never made; what tells the two shapes
-    // apart now is the PLACE: the `ro` root above is refused, the temporary is
-    // written and dropped.
+    // 02-types.md:13526); for a HEAP type a single `mut @` is the right to
+    // change the object (D326 revision R3/R6). This control asserted a refusal
+    // until 2026-10-02 (registry 1630 in p274-carina-mono-k2, part 6 of
+    // p274-carina-k1 -- both found it; the oracle never refused). What tells
+    // the two shapes apart now is the PLACE: the `ro` root above is refused,
+    // the temporary is written and dropped. The VALUE-type control of a `mut`
+    // parameter lives in refusal_test.
     ro (d2, c2) = compile_to_c("${defs}fn main() {\n mut c = Ctr { n: 5 }\n println(c.fresh().set(4).n)\n}", std)
     assert(d2.len() == 0, messages(d2))
     assert(c2.contains("fresh"), c2)

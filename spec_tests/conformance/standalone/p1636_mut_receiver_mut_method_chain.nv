@@ -1,0 +1,67 @@
+// EXPECT_STDOUT bag: 2 1
+// EXPECT_STDOUT outer: 1
+// EXPECT_STDOUT counter: 2
+// EXPECT_STDOUT read-only: 2
+// EXPECT_STDOUT pointer: 1 2 3
+//
+// Registry 221.1 #1636, the positive twin of
+// spec_tests/conformance/neg/p1636_ro_receiver_mut_method_chain_neg.nv: the
+// same mutating chains rooted at a receiver declared `mut @` (D35) are
+// accepted and reach the caller's value; a method that only READS a field
+// chain (`@items.len()`) needs no `mut`. A chain that reaches the mutating
+// method THROUGH a `*mut` field needs no `mut` either, through `@` or through
+// a parameter: D246 P4 -- "L2 freeze stops at every `*`" -- and P5 -- `*mut T`
+// is a writable target from its type; the pointee changes, the binding and
+// its record do not (std `TcpStream @share()`: `@rc.fetch_add(1)`). Before
+// #1636 the parameter form was refused (E_PARAM_NOT_MUT) against P4.
+module standalone.p1636_mut_receiver_mut_method_chain
+
+import std.runtime.sync.{AtomicInt}
+
+type P1636Bag { items []int, idx HashMap[int, int] }
+type P1636Outer { bag P1636Bag }
+type P1636Counter { c AtomicInt }
+type P1636Handle value { priv rc *mut AtomicInt }
+
+fn P1636Bag mut @add(x int) {
+    @items.push(x)
+}
+
+fn P1636Bag mut @put(k int) {
+    @idx.insert(k, k)
+}
+
+fn P1636Bag @count() -> int => @items.len()
+
+fn P1636Outer mut @add(x int) {
+    @bag.items.push(x)
+}
+
+fn P1636Counter mut @bump() -> int {
+    @c.fetch_add(1)
+}
+
+fn P1636Handle @share() -> int => @rc.fetch_add(1)
+
+fn bump_through(h P1636Handle) -> int => h.rc.fetch_add(1)
+
+fn main() Io {
+    mut b = P1636Bag { items: [], idx: HashMap[int, int].new() }
+    b.add(1)
+    b.add(2)
+    b.put(7)
+    println("bag: ${b.items.len()} ${b.idx.len()}")
+    mut o = P1636Outer { bag: P1636Bag { items: [], idx: HashMap[int, int].new() } }
+    o.add(5)
+    println("outer: ${o.bag.items.len()}")
+    mut c = P1636Counter { c: AtomicInt.new(0) }
+    ro _ = c.bump()
+    ro _ = c.bump()
+    println("counter: ${c.c.load()}")
+    println("read-only: ${b.count()}")
+    mut cell = AtomicInt.new(1)
+    ro h = P1636Handle { rc: &cell }
+    ro _ = h.share()
+    ro _ = bump_through(h)
+    println("pointer: 1 ${cell.load() - 1} ${cell.load()}")
+}

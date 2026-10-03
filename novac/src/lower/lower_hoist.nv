@@ -282,7 +282,8 @@ fn Lowerer mut @hoist_sealed_args(call Node) -> () {
         // third arm. std's `Vec[T] @get` returns `Some(unsafe { .. })`; check
         // took it, the printer had no arm, and every `get` instance the shell
         // lacks died in emit.
-        if ck != NodeKind.IfExpr && ck != NodeKind.Coalesce && ck != NodeKind.Try && ck != NodeKind.Unsafe { continue }
+        if ck != NodeKind.IfExpr && ck != NodeKind.MatchExpr && ck != NodeKind.Coalesce &&
+            ck != NodeKind.Try && ck != NodeKind.Unsafe { continue }
         ro t = @out.type_if_known(c.id_of())
         if !is_ty(t) {
             // SILENT-OK: refused where it was typed; nothing to hoist.

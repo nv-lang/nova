@@ -1,0 +1,70 @@
+module disj_nested.pos_1
+
+// A DISJUNCTION WHOSE ALTERNATIVES TEST BELOW THEIR HEADS (registry 1568):
+// `Aa(1) | Bb(1)`. The arm head tests only the heads (`tag == Aa || tag ==
+// Bb`), and the literal below was dropped -- `Aa(2)` took the arm, novac
+// printed 1 where the oracle printed 0. Now a switch over the scrutinee tries
+// the alternatives in order: each tests its own head and everything below it,
+// and the one that held raises a flag; the flag is one more synthetic
+// condition of the arm, so a value no alternative takes falls through to the
+// next arm.
+//
+// The axes: a literal below each head; a binder beside a literal across the
+// alternatives (`Aa(n, 0) | Bb(n, 0)` -- the name at the SAME position: bound
+// by name at different positions, `Bb(0, n)`, novac answers per D486 s2 and the
+// oracle reads the first alternative's layout, its own known defect); a nested variant below
+// a head (`Cc(Hit) | Dd(Hit)`); a payload-less alternative beside a tested one;
+// the first-match order across arms; a guard over a tested disjunction; a
+// statement position. Behaviour byte-for-byte with the oracle (novac-e1-smoke).
+
+type Mark enum
+    | Hit
+    | Miss
+
+type Two enum
+    | Aa(int, int)
+    | Bb(int, int)
+    | Cc(Mark)
+    | Dd(Mark)
+    | Ee
+
+fn code(t Two) -> int => match t {
+    Aa(1, _) | Bb(1, _) => 1
+    Aa(n, 0) | Bb(n, 0) => 10 + n
+    Cc(Hit) | Dd(Hit) => 2
+    Cc(Miss) | Ee => 3
+    _ => 0
+}
+
+fn guarded(t Two, on bool) -> int => match t {
+    Aa(7, _) | Bb(7, _) if on => 70
+    Aa(x, _) | Bb(x, _) => x
+    _ => -1
+}
+
+fn say(t Two) -> () {
+    match t {
+        Cc(Hit) | Dd(Miss) => println("cross")
+        _ => println("other")
+    }
+}
+
+fn main() {
+    println(code(Two.Aa(1, 9)))
+    println(code(Two.Bb(1, 9)))
+    println(code(Two.Aa(2, 0)))
+    println(code(Two.Bb(5, 0)))
+    println(code(Two.Aa(2, 3)))
+    println(code(Two.Cc(Mark.Hit)))
+    println(code(Two.Dd(Mark.Hit)))
+    println(code(Two.Cc(Mark.Miss)))
+    println(code(Two.Dd(Mark.Miss)))
+    println(code(Two.Ee))
+    println(guarded(Two.Aa(7, 0), true))
+    println(guarded(Two.Bb(7, 0), false))
+    println(guarded(Two.Bb(4, 0), true))
+    println(guarded(Two.Ee, true))
+    say(Two.Cc(Mark.Hit))
+    say(Two.Dd(Mark.Miss))
+    say(Two.Dd(Mark.Hit))
+}

@@ -1,0 +1,18 @@
+module if_value_forms.neg_1
+
+// NOVAC_EXPECT does not fit `u8`
+// ONE seeded cause: a branch literal one past the written result type. The
+// branch is a POSITION of the written type (D489), so its literal takes `u8`
+// and is judged for fit there -- `300` does not fit, and the refusal names the
+// literal, not a disagreement of branches. The oracle refuses it too.
+fn level(hot bool) -> u8 {
+    if hot {
+        1
+    } else {
+        300
+    }
+}
+
+fn main() {
+    println(level(true) as int)
+}

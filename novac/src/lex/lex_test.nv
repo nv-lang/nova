@@ -171,20 +171,43 @@ test "F19: a string literal does not cross a line" {
     assert(saw_ident_after, "the next line must lex as code, not as literal text")
 }
 
-test "F21: a digit run touching an identifier byte is one refusal" {
+test "F21: a separated integer is ONE IntLit, never IntLit(1) plus a name" {
     // `1_000` used to lex as IntLit(1) plus identifier `_000` -- it parsed,
-    // checked and COMPILED to the number one.
-    ro toks = lex("ro x = 1_000")
-    mut ints = 0
-    mut errors = 0
-    for t in toks {
-        // Counting is an expression too: add one when it matches, zero when
-        // it does not -- the absent branch has nothing to say.
-        ints += if t.kind == TokenKind.IntLit { 1 } else { 0 }
-        errors += if t.kind == TokenKind.ErrorTok { 1 } else { 0 }
+    // checked and COMPILED to the number one; then it was refused whole; since
+    // #1605 it is the D44 literal it spells, separators kept in its text.
+    for form in ["1_000", "0xFF_FF", "1_0", "0x1_0"] {
+        ro toks = lex(form)
+        assert(toks[0].kind == TokenKind.IntLit, "a separated integer must lex as one IntLit")
+        assert(toks[0].text == form, "the integer token must carry the whole spelling")
+        assert(toks[1].kind == TokenKind.Eof, "nothing may be left after the integer")
     }
-    assert(errors == 1, "1_000 must be refused as one run")
-    assert(ints == 0, "1_000 must not leave an IntLit behind")
+    // A run touching an identifier byte is still one refusal.
+    for broken in ["1abc", "1_", "100_", "0x_FF", "0xFF_", "1__0"] {
+        assert(lex(broken)[0].kind == TokenKind.ErrorTok, "a malformed integer must be refused whole")
+        assert(lex(broken)[1].kind == TokenKind.Eof, "the refusal must eat the whole run")
+    }
+}
+
+test "#1605: every D44 float form is ONE FloatLit, its text whole" {
+    // The exponent used to fall to the touching-identifier refusal: `1e20`
+    // was one ErrorTok and `1.5e3` a float plus the name `e3`.
+    for form in ["1e10", "1.5e-3", "2E+2", "1_000.5", "1_000.25e6", "1.0e1_0"] {
+        ro toks = lex(form)
+        assert(toks[0].kind == TokenKind.FloatLit, "a D44 float form must lex as one FloatLit")
+        assert(toks[0].text == form, "the float token must carry the whole spelling")
+        assert(toks[1].kind == TokenKind.Eof, "nothing may be left after the float")
+    }
+}
+
+test "#1605: a broken exponent is refused, the hex digit and the range stay" {
+    // D44 forbids `_` beside `e` and an exponent without digits; `0x1e5`
+    // keeps its `e` as a hex digit and `0..3` keeps both dots.
+    for broken in ["1e", "1e+", "1_e10", "1.5_", "1__0.5"] {
+        assert(lex(broken)[0].kind == TokenKind.ErrorTok, "a malformed number must be refused whole")
+    }
+    assert(lex("0x1e5")[0].kind == TokenKind.IntLit, "a hex run takes no exponent")
+    ro range = lex("0..3")
+    assert(range[0].kind == TokenKind.IntLit && range[1].kind == TokenKind.DotDot)
 }
 
 test "char literal: one token, escapes whole, reserialize lossless (char wave)" {
@@ -274,13 +297,15 @@ test "a float exponent is one FloatLit token (registry 1605), and an `e` that st
     assert(toks[2].kind == TokenKind.FloatLit && toks[2].text == "2.5E2")
     assert(toks[3].kind == TokenKind.FloatLit && toks[3].text == "4e+1")
     assert(toks[4].kind == TokenKind.IntLit)
-    // CONTROL: no digit after the `e` (or after its sign) is no exponent -- the
-    // fraction stays a FloatLit of its own, the integer run stays refused as
-    // touching an identifier, exactly as before.
+    // CONTROL: no digit after the `e` (or after its sign) is no exponent, and
+    // the run touching the letter is ONE refusal -- `1.5e` as a whole, as the
+    // oracle's "invalid float literal" says (merge of sweep 6: the first
+    // version of this control split it into `1.5` and a name `e`, the silent
+    // misread `1.5_` had). The integer run is refused the same way.
     ro ctl = lex("1.5e x 3e- 0..3")
-    assert(ctl[0].kind == TokenKind.FloatLit && ctl[0].text == "1.5")
-    assert(ctl[1].kind == TokenKind.Ident && ctl[1].text == "e")
-    assert(ctl[3].kind == TokenKind.ErrorTok)
-    assert(ctl[5].kind == TokenKind.IntLit && ctl[6].kind == TokenKind.DotDot)
+    assert(ctl[0].kind == TokenKind.ErrorTok && ctl[0].text == "1.5e")
+    assert(ctl[1].kind == TokenKind.Ident && ctl[1].text == "x")
+    assert(ctl[2].kind == TokenKind.ErrorTok && ctl[2].text == "3e")
+    assert(ctl[4].kind == TokenKind.IntLit && ctl[5].kind == TokenKind.DotDot)
     assert(reserialize(ctl) == "1.5e x 3e- 0..3")
 }

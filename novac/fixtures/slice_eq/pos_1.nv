@@ -1,0 +1,32 @@
+module slice_eq.pos_1
+
+// A SLICE COMPARED WITH `==` (registry 1573): `@args[a..b] == want` in
+// `Interner @args_equal` (types.nv) -- a closed slice of a vector against a
+// vector, through `equal` (D46: `a == b` is `a.@equal(b)`), by ELEMENTS. Two
+// halves were missing: the shell carried no `index(Range)` for Vec[int], and
+// `==` on a vector was refused (it is not `str`); printed as the C `==` it
+// would have compared two pointers. The element type is a NEWTYPE over `int`
+// here as in the carrier -- the oracle erases it to `nova_int`, so the one
+// Vec[int] instance serves both.
+//
+// The axes: equal and unequal contents, unequal lengths, an empty slice, `!=`
+// (derived from `equal`), a plain `[]int` beside the newtype vector, a slice on
+// both sides. Behaviour byte-for-byte with the oracle (novac-e1-smoke).
+
+type Tid int
+
+fn args_equal(args []Tid, off int, want []Tid) -> bool {
+    args[off..off + want.len()] == want
+}
+
+fn plain(xs []int, ys []int) -> bool => xs[0..2] != ys[0..2]
+
+fn main() {
+    ro args = [Tid(1), Tid(2), Tid(3), Tid(4)]
+    println(args_equal(args, 1, [Tid(2), Tid(3)]))
+    println(args_equal(args, 0, [Tid(2), Tid(3)]))
+    println(args_equal(args, 2, [Tid(3)]))
+    println(args_equal(args, 0, []Tid.new()))
+    println(plain([1, 2, 3], [1, 2, 9]))
+    println(plain([1, 2, 3], [1, 5, 3]))
+}

@@ -572,6 +572,13 @@ static inline void nova_print_char(nova_int cp) {
     fwrite(buf, 1, n, stdout);
 }
 static inline void nova_print_newline(void)     { putchar('\n'); }
+/* Registry 221.1 #1655: the end of every print/println call. C's `stdout` is
+ * FULLY buffered when it is not a terminal (a file, a pipe), so without this
+ * a program's output sat in the C buffer until exit -- invisible to a reader
+ * of the file and LOST if the process was stopped -- while std promises
+ * "the fd is unbuffered on the Nova side". One flush per call: the call's
+ * pieces still go out as one write. */
+static inline void nova_print_end(void)         { fflush(stdout); }
 
 /* ---- Unit ---- */
 typedef struct { char _dummy; } nova_unit;
