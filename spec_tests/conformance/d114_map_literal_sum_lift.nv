@@ -1,6 +1,7 @@
 // D55/D108 (реестр 221.1 №114): map-литерал `[k: v]` и `{}`-map-coercion
 // shorthand — value-позиция несёт ПОЛНЫЙ D55 known-target-type sum-lift
-// (D108 §"Правило — типы и coercion": "значения: ... 30.0 → Num(...)").
+// (D108 §"Правило — типы и coercion": "значения: ... 30.0 → F64(...)"; до
+// №1638 вариант назывался `Num`).
 // Владелец: JWT-пример, `["sub": s, "exp": 5_000_000_000.0]` против
 // `HashMap[str, JsonValue]` — str лифтился в `Str`, f64 → `Num` НЕ лифтился
 // («map literal values have incompatible types JsonValue and f64») — value
@@ -25,7 +26,7 @@ module spec_tests.conformance
 import std.encoding.json.{JsonValue}
 import std.collections.hash_map.{HashMap}
 
-test "d114: map-литерал [k:v] — str+f64 значения лифтятся (Str/Num)" {
+test "d114: map-литерал [k:v] — str+f64 значения лифтятся (Str/F64)" {
     ro s = "alice"
     mut m HashMap[str, JsonValue] = ["sub": s, "exp": 5_000_000_000.0]
     match m.get("sub") {
