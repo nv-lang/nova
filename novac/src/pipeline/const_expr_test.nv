@@ -86,3 +86,19 @@ test "a non-constant in the expression keeps its type: refused, and `int` positi
     assert(dz.len() == 1, messages(dz))
     assert(dz[0].message.contains("does not fold"), messages(dz))
 }
+
+test "a binding with a DECLARED type is a position too: a literal and a constant expression take it (D489)" {
+    // Until part 10 of p274-carina-k1 a declared local took only an initializer
+    // of exactly its type: `ro a u8 = 42` was "a declared local type is not
+    // compiled yet".
+    ro (d, c) = compile_to_c("${CONST_DECLS}fn main() {\n ro a u8 = 42\n ro b u8 = 40 + 2\n ro i Small = 40 + 2\n\
+ println(k(a, 0) + k(b, 0) + sm(i))\n}", std_decls())
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("42ULL)"), c)
+    ro (dv, _) = compile_to_c("fn main() {\n ro a u8 = 200 + 100\n println(a)\n}", std_decls())
+    assert(dv.len() == 1, messages(dv))
+    assert(dv[0].message.contains("is 300, and it does not fit `u8`"), messages(dv))
+    // CONTROL: a typed value keeps its type (D491) -- refused, as before.
+    ro (dm, _) = compile_to_c("fn main() {\n ro n = 2\n ro a u8 = 40 + n\n println(a)\n}", std_decls())
+    assert(dm.len() >= 1, "a constant mixed with an int binding must not take a declared `u8`")
+}

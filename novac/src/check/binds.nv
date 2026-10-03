@@ -60,6 +60,19 @@ fn Checker mut @type_bind(st Node) -> () {
         // beside a file sum with an `Err`, registry 1647).
         ro saved_expect = @value_expect
         @value_expect = declared
+        // A LITERAL or an untyped CONSTANT EXPRESSION takes the written type
+        // by its exact value (D489: "a declaration with a type" is a position
+        // that knows its type; registry 1679): `ro a u8 = 40 + 2`. Decided
+        // before the binding is typed, through the doors every other position
+        // uses; a refusal of its range is the binding's one cause.
+        if !@adapt_bind_literal(kids, declared) {
+            // Out of range: the fit door said so; the name is bound poisoned,
+            // so its uses stay silent (one cause, said once).
+            @value_expect = saved_expect
+            @bind_poisoned(leaf_text(kids[1]), kids)
+            // SILENT-OK: the fit door refused the initializer, and the name is poisoned.
+            return
+        }
         @type_untyped_bind(kids)
         @value_expect = saved_expect
         ro got = @scope.type_of_name(leaf_text(kids[1]))

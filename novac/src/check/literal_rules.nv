@@ -7,7 +7,8 @@
 // literal (#810) and a top-level name declared twice (#811). Both came from
 // the hunt of 2026-08-30 and both are silent-acceptance defects: the first
 // let the emitted C wrap, the second let a second body vanish.
-// Used by: check.nv -- the Lit arm and the declaration arms of the walk.
+// Used by: check.nv -- the Lit arm and the declaration arms of the walk;
+//   binds.nv -- a literal or a constant expression under a declared local type.
 // Guarded by: check-novac-file-size.py (this file exists because rules.nv
 // crossed 1000 lines on 2026-08-30 -- the cut sem.nv, typing.nv and emit_c.nv
 // took before it), and the two class tests in pipeline_test.nv.
@@ -234,6 +235,29 @@ fn int_value_fits_row(v int, r BuiltinType) -> bool {
     if !r.signed { return v < (1 << r.bits) }
     ro half = 1 << (r.bits - 1)
     v >= 0 - half && v < half
+}
+
+/// The initializer of a binding with a DECLARED type, when it is a literal or
+/// an untyped constant expression, takes that type (D489) -- recorded before
+/// the binding is typed, so the lattice answers the written type for it.
+/// Answers false when the fit door refused it (out of range); true otherwise,
+/// a non-literal included (it is judged by the binding's own rule).
+fn Checker mut @adapt_bind_literal(kids []Node, declared TyId) -> bool {
+    ro init = kids[kids.len() - 1]
+    if !is_ty(declared) { return true }
+    match lit_arg_of(init) {
+        NotLit => { return true }
+        IntLitArg | FloatLitArg => {
+            @walk_constant_first(init)
+            ro adapted = adapt_operand(init, type_of(init, @ctx, @scope, @chan), declared, @ctx.tys)
+            // Another kind than the written type's (`ro a u8 = 1.5`): the
+            // binding's own rule refuses it below, with the two types.
+            if adapted != declared { return true }
+            if !@lit_fits_or_refuse(init, declared) { return false }
+            @record(init, declared)
+        }
+    }
+    true
 }
 
 /// D227 rule 2 AT A CALL: once the binding is known, every bare numeric

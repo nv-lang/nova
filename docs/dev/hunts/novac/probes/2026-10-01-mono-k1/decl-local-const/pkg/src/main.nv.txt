@@ -1,0 +1,12 @@
+module hp
+
+type Small u8
+
+fn main() {
+    ro a u8 = 42
+    ro b u8 = 40 + 2
+    ro i Small = 40 + 2
+    println(a)
+    println(b)
+    println((i as u8) as int)
+}
