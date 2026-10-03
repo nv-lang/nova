@@ -157,7 +157,6 @@ else
         while IFS= read -r f; do
             rel=${f#"$ROOT"/}
             "$BIN" check "$f" >/dev/null 2>&1 </dev/null || continue
-            "$ORACLE" check "$f" >/dev/null 2>&1 </dev/null || continue
             twin=$(sed -n 's|^// NOVAC_TWIN \([^ ]*\)$|\1|p' "$f" | head -n 1)
             src="$f"
             if [ -n "$twin" ]; then
@@ -167,11 +166,14 @@ else
                     printf '  %s: близнец NOVAC_TWIN %s не найден\n' "$rel" "$twin" >> "$T/behbad"
                     continue
                 fi
-                twins=$((twins+1))
             else
                 # Без близнеца: оракул и novac собирают одну и ту же фикстуру.
                 :
             fi
+            # Оракул судит ТО, что собирает: близнеца, если он назван. Фикстура, которую
+            # оракул отвергает (исход — в allow), сверяется так же, если близнец есть.
+            "$ORACLE" check "$src" >/dev/null 2>&1 </dev/null || continue
+            [ "$src" = "$f" ] || twins=$((twins+1))
             if bash "$SMOKE" "$src" "$f" >"$T/smoke.out" 2>&1; then
                 beh=$((beh+1))
             else

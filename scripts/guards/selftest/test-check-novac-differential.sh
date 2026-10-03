@@ -73,6 +73,13 @@ printf '// NOVAC_TWIN pos_twin.nv\nx\n' > "$FIX/novac/fixtures/pos_probe.nv"
 echo "x" > "$FIX/novac/fixtures/pos_twin.nv"
 mksmoke 'case "$1" in */pos_twin.nv) [ "${2##*/}" = pos_probe.nv ] && exit 0;; esac; [ "$1" = "$2" ] && exit 0; exit 1'
 check "близнец есть — смоук получает (близнец, фикстура), зелёный" "$(run)" "0"
+mkoracle 'case "$2" in *pos_twin.nv) exit 0;; esac; exit 1'
+printf 'novac/fixtures/pos_probe.nv\n' > "$FIX/novac/divergences.allow"
+check "оракул отверг фикстуру (allow), близнеца принял — сверка идёт, зелёный" "$(run)" "0"
+mksmoke 'exit 1'
+check "то же, а ответ разошёлся с близнецом — красный" "$(run)" "1"
+rm -f "$FIX/novac/divergences.allow"
+mkoracle 'exit 0'
 rm -f "$FIX/novac/fixtures/pos_twin.nv"
 check "близнеца нет — красный" "$(run)" "1"
 echo "x" > "$FIX/novac/fixtures/pos_probe.nv"
