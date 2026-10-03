@@ -8,6 +8,8 @@
 // `IndexMap[str, JsonValue]`, не `HashMap[str, JsonValue]` — мигрировано
 // вместе с ретайпом (тесты ниже проверяют shape/len/contains, не порядок
 // ключей в выводе — миграция чистая).
+// #1638: integer values are built with `JsonValue.int(..)` -- an `F64`
+// (`JsonValue.num(1.0)`) now prints as `1.0`, distinct from the integer `1`.
 module spec_tests.conformance
 import std.encoding.json.{JsonValue, Json}
 import std.collections.index_map.{IndexMap}
@@ -29,8 +31,8 @@ test "parse nested — arr key present" {
 test "deep array nesting roundtrip string-compare" {
     // [[1, 2], [3, 4]] — array preserves order, byte-exact compare works.
     ro orig = JsonValue.array([
-        JsonValue.array([JsonValue.num(1.0), JsonValue.num(2.0)]),
-        JsonValue.array([JsonValue.num(3.0), JsonValue.num(4.0)]),
+        JsonValue.array([JsonValue.int(1), JsonValue.int(2)]),
+        JsonValue.array([JsonValue.int(3), JsonValue.int(4)]),
     ])
     ro encoded = orig.to_str()
     assert(encoded == "[[1,2],[3,4]]")
@@ -47,7 +49,7 @@ test "nested object encoded round-trips via re-encode" {
     mut inner = IndexMap[str, JsonValue].new()
     inner.insert("k", JsonValue.str("v"))
     ro arr = JsonValue.array([
-        JsonValue.num(1.0),
+        JsonValue.int(1),
         JsonValue.object(inner),
     ])
     mut root = IndexMap[str, JsonValue].new()

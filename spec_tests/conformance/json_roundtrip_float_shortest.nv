@@ -10,7 +10,7 @@
 // Parse-back path: `Json.parse(...)!!.num()` (Option[f64], the working
 // numeric-extraction path — the parser reads via `str @to_f64()`, which since
 // plan 283 rounds in Nova rather than in C, and stores a true f64 in
-// JsonValue.Num). The `strtod` named above is the shape of the guarantee, not
+// JsonValue.F64 -- `Num` before #1638). The `strtod` named above is the shape of the guarantee, not
 // the code path: the minimal string is the one that re-parses bit-for-bit, and
 // the differential tests of plan 283 keep our conversion equal to it.
 

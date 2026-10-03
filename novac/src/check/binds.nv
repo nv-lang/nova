@@ -27,7 +27,7 @@ import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING,
 import ../builtins.{VEC_INDEX_METHOD, VEC_INDEX_SET_OP, VEC_LEN_METHOD, EMPTY_CTOR, vec_op_method, vec_op_is_overload}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
-import ../sem.{shape_of, ctor_field_name}
+import ../sem.{shape_of, ctor_field_name, ty_of_type_ref, raw_row}
 import ../sem.{Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text}
 import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of}
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
@@ -48,6 +48,58 @@ fn Checker mut @type_bind(st Node) -> () {
         @report_first_leaf_of(kids, "outside the subset: a binding needs a name and an initializer (274.5 P3)")
         return
     }
+    // A DECLARED TYPE (`mut out []u8 = []u8.new()`) is the initializer's own
+    // when the two are the same type: the binding is typed by its initializer
+    // as always, then held to what was written. Any other pair -- an
+    // initializer that would take the type as its expectation (`ro b u8 = 5`)
+    // or convert to it -- stays outside the subset, said with the type's name.
+    if kids.len() > 4 {
+        ro declared = @declared_local_type(kids)
+        // The written type is the initializer's EXPECTATION (D478's list: "a
+        // binding with a declared type" -- `ro r Result[int, int] = Err(4)`
+        // beside a file sum with an `Err`, registry 1647).
+        ro saved_expect = @value_expect
+        @value_expect = declared
+        @type_untyped_bind(kids)
+        @value_expect = saved_expect
+        ro got = @scope.type_of_name(leaf_text(kids[1]))
+        if is_ty(got) && got != declared {
+            // The TYPED_LOCAL refusal, narrowed to what is left of it: the
+            // same cause, said with the two types.
+            ro gn = ty_source_name(@ctx, got)
+            @report_first_leaf_of(kids, "${TYPED_LOCAL_MSG} -- only an initializer of exactly the written type is (E2-b3), and this one is `${gn}`")
+        } else {
+            // The same type, or an initializer refused by its own cause (the
+            // name is bound poisoned): nothing more to say.
+        }
+        return
+    } else {
+        // No declared type: the binding is its initializer's.
+    }
+    @type_untyped_bind(kids)
+}
+
+/// The DECLARED type of a binding (`ro x T = e`: keyword, name, the type's
+/// leaves, `=`, initializer) through the one type door, with an instance's type
+/// parameters read as their substitution -- `no_ty()` when the door cannot read
+/// it. Asked by the shape walk (is the form compiled?) and by typing (does the
+/// initializer match?): one reading for both.
+fn Checker @declared_local_type(kids []Node) -> TyId {
+    if kids.len() < 5 { return no_ty() }
+    mut tps = []str.new()
+    if raw_row(@inst_row) >= 0 {
+        ro fd = @ctx.fns.rows[raw_row(@inst_row)]
+        tps.append(@ctx.fns.tparams[fd.tparam_off..fd.tparam_off + fd.tparam_cnt])
+    } else {
+        // A body of the file: no generic is typed outside an instance.
+    }
+    // The type's leaves stop before `=`: the door reads from position 2 and
+    // takes the run it recognises.
+    ty_of_type_ref(kids[..kids.len() - 2], 2, no_ty(), tps, @substs, @ctx.types, @ctx.defs, @ctx.tys)
+}
+
+/// The binding WITHOUT a declared type's judgement: the initializer decides.
+fn Checker mut @type_untyped_bind(kids []Node) -> () {
     ro vname = leaf_text(kids[1])
     // A NAME that is a visible payload-less variant is not a binder in the
     // language: the binding is a refutable one-variant pattern, and the
@@ -457,7 +509,7 @@ fn Checker mut @type_index(e Node) -> TyId {
             // wave, so the refusal NAMES the form instead of calling the head
             // an unbound value -- which is what it used to say, and it was a
             // lie about which thing was missing.
-            @report_first_leaf_of(kids, "outside the subset: a type applied to arguments is read but not compiled yet (274.5 P4)")
+            @report_first_leaf_of(kids, APPLIED_TYPE_MSG)
             return no_ty()
         } else {
             // Not a type: an ordinary receiver, typed below.
@@ -689,7 +741,7 @@ fn no_slice_head_msg() -> str =>
 /// The shell carries no vector instance for element type `ty` -- the array
 /// literal and the empty vector alike (one text, one refusal).
 fn no_shell_vec_msg(ty str) -> str =>
-    "outside the subset: the shell novac links into carries no `${SLICE_HEAD}` instance for ${ty} -- the interop surface is the probe program (novac/probe/shell_probe.nv, E2-b); a vector of this element type arrives when the probe uses one, or with the prelude"
+    no_shell_instance_msg(SLICE_HEAD, ty, "a vector of this element type arrives when the probe uses one, or with the prelude")
 
 /// The type of `[]T.new()`, the EMPTY vector constructor, or `no_ty()` after a
 /// NAMED refusal (registry 221.1 #1457).
@@ -753,13 +805,21 @@ const SELF_INIT_MSG = "outside the subset: a binding's initializer refers to the
 /// (rule 1 of the resolve discipline, and its guard is right to insist --
 /// my first version compared identifier TEXT against the declared name in
 /// a walk, which is the linear resolve the rule bans). The declared name
-/// goes into a one-entry table owned by the Checker, every identifier leaf
-/// is asked for its id, and the comparison is on integers.
+/// goes into a one-entry table owned by the Checker, every `Name` node of the
+/// initializer is asked for its id, and the comparison is on integers.
 #realtime nogc
 fn Checker @init_reads_self(n Node) -> bool {
     match n {
-        Leaf(t) => leaf_kind(n) == TokenKind.Ident && @self_probe.find(t.text) >= 0
+        // A BARE token is no reference to a binding: the field after `.`
+        // (`ro name = fns.rows[i].name`), a method's name, a named argument's
+        // label. Until 2026-10-01 every identifier leaf counted, and two
+        // initializers of resolve.nv were refused for reading a FIELD named
+        // like the binding -- plus four "unknown name" cascades after them.
+        Leaf(_) => false
         Branch { children, .. } => {
+            // A reference to a binding is a `Name` node (the parser wraps every
+            // one); its token is the name read.
+            if n.kind_of() == NodeKind.Name { return @self_probe.find(expr_leaf_name(n)) >= 0 }
             mut found = false
             mut i = 0
             for c in children {

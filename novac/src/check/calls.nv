@@ -25,6 +25,7 @@
 
 module novac.check
 
+import ../sem.{is_arg_node, arg_expr_of}
 import ../sem.{c_free_symbol}
 // Which arguments have an observable order (F65) -- the same door the rule and
 // the lowering ask, so the three cannot disagree on WHICH arguments they mean.
@@ -46,7 +47,7 @@ import ../resolve.{FnLookup, missing_sig_of}
 // per FILE in Nova, so a body that moves between files of ONE module still has to
 // bring the names it uses. Computed from what the moved text actually mentions,
 // not guessed, and then verified by building: the compiler named the first missing one.
-import ../sem.{no_vrow, ty_of_decl, variants_named}
+import ../sem.{no_vrow, ty_of_decl, variants_named, variant_named_in, is_vrow}
 
 /// The lookup key of a free call: one slot per written argument, no position
 /// zero. Same shape, same door, one position fewer.
@@ -141,7 +142,13 @@ fn Checker mut @refuse_free_call(kids []Node, cname str, key []ArgSpec) -> () {
 fn mode_refusal_msg(p ParamDef, got ArgClass) -> str {
     match p.mode {
         ModeRo => ice("check: a `ro` parameter's mode never refuses an argument's class (P14)")
-        ModeMut => "parameter `${p.name}` needs a mutable place (`mut`, or a `consume` binding) -- this argument is not one (P14)"
+        // The RECEIVER of a `mut` method says what the receiver door says
+        // (`@refuse_method_call`, methods.nv): one fact, one sentence.
+        ModeMut => if p.name == RECV_BINDING {
+            MUT_METHOD_ON_RO_PLACE_MSG
+        } else {
+            "parameter `${p.name}` needs a mutable place (`mut`, or a `consume` binding) -- this argument is not one (P14)"
+        }
         ModeConsume => "parameter `${p.name}` needs ownership (an owned temporary, or a binding declared `consume`) -- this argument is not one (P14)"
     }
 }
@@ -189,7 +196,13 @@ fn Checker mut @refuse_arg_type(kids []Node, row FnRow, key []ArgSpec, form Call
                 @reject_first_leaf_of(kids, "parameter `${want.name}` of a value type needs a mutable place -- this argument has no storage the call could write back into (E_MUT_ARG_NOT_MUTABLE, D326 revision R3)")
                 return
             } else {
-                @report_first_leaf_of(kids, mode_refusal_msg(want, key[at].cls))
+                // A `ro` PLACE where a mutable one is needed is a LANGUAGE
+                // error (registry 1577, D488; the oracle refuses it too,
+                // E_LOCAL_NOT_MUT / E_MUT_ARG_NOT_MUTABLE). Any other class --
+                // a temporary handed to a `mut` parameter, which the oracle
+                // compiles -- stays the subset's refusal it was.
+                @report_first_leaf_kind(kids, mode_refusal_msg(want, key[at].cls),
+                    if key[at].cls == ArgClass.ArgRo { DiagKind.LangError } else { DiagKind.SubsetDebt })
                 return
             }
         } else {
@@ -522,13 +535,17 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
     // A GENERIC handed free function is judged once its substitution is known
     // (below): its instance is made from the body novac was handed (274.11
     // E.10 step 4c-2, `Ctx @instantiates`), or refused by name there.
-    if hfd.handed_from != "" && hfd.tparam_cnt == 0 {
+    // HANDED is the row's fact (`compiles_body` false), not its module's
+    // spelling: std may be handed without a module line (`handed_from` ""),
+    // and asking `!= ""` skipped the shell question for every such function --
+    // a call printed under a shell name the shell does not carry (task 4).
+    if !@ctx.fns.compiles_body(row) && @ctx.handed.decl_of(row).is_some() && hfd.tparam_cnt == 0 {
         ro sym = c_free_symbol(@ctx, row)
         if @ctx.in_program(row) {
             // A function of ANOTHER MODULE OF THE PROGRAM (274.11 E.10 step 2a):
             // its body is the program's, named by its owner's module; the call is
             // judged by the owner's signature like an own call.
-        } else if !@ctx.interop.has(sym) {
+        } else if !@ctx.interop.has(sym) && !@ctx.instantiates(row, []TyId.new()) {
             @report_first_leaf_of(kids,
                 "outside the subset: `${hfd.name}` is declared in module `${hfd.handed_from}`, whose bodies novac does not compile into this unit yet (E2-b2 multi-file), and the shell novac links into carries no `${sym}` for it")
             return
@@ -744,7 +761,16 @@ fn Checker mut @type_free_call(e Node) -> () {
     // A type, fn or const DECLARED IN THIS FILE outranks any variant of the
     // name (`Pair(1, 2)` for the file's tuple type beside a std variant `Pair`).
     ro (vfirst, vn) = if @ctx.defs.declared_by_file(cname) { (no_vrow(), 0) } else { variants_named(@ctx, cname) }
-    if vn > 1 {
+    // SEVERAL sums declare the name: the POSITION picks the one it expects
+    // (D478, the door a bare name takes in exprs.nv) -- `Err(..)` in std's
+    // `[]u8 @to_str` under a `-> Result[..]`, made from its body in a unit
+    // whose own sums declare an `Err` too (registry 1632, the self-build).
+    ro by_expect = if vn > 0 { variant_named_in(@ctx, cname, @value_expect) } else { no_vrow() }
+    if is_vrow(by_expect) {
+        @type_variant_call(e, kids, by_expect)
+        // SILENT-OK: the variant door records the call or refuses it by name.
+        return
+    } else if vn > 1 {
         @report_first_leaf_of(kids, AMBIGUOUS_VARIANT_MSG)
         return
     } else if vn == 1 {
@@ -825,13 +851,16 @@ fn Checker mut @type_free_call(e Node) -> () {
     ro pre = @expected_ids(arg_row, saved_expect)
     mut argi = 0
     for c in kids {
-        if !is_arg_value_kind(c.kind_of()) { continue }
-        // A NAMED argument binds by name, not by place: no positional expectation.
+        // A NAMED argument's value is typed like a positional one (registry
+        // 1630): `g(2, by: s.byte_len())` left the inner call undecided, and
+        // the key's `type_of` iced on it. It binds by name, not by place: no
+        // positional expectation (part 7 of p274-carina-k1).
+        if !is_arg_node(c) { continue }
         ro want = if c.kind_of() == NodeKind.NamedArg { no_ty() } else { @param_expect(arg_row, argi, pre) }
         argi += 1
         // A bare `None` takes its PARAMETER's instance, after the lookup (1565).
         if @is_deferred_variant(c) { continue }
-        @type_arg_expecting(c, want)
+        @type_arg_expecting(arg_expr_of(c), want)
     }
     @value_expect = saved_expect
     if @out.len() > before { return }

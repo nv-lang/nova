@@ -1,0 +1,18 @@
+module typed_local.pos_1
+
+// A DECLARED LOCAL TYPE equal to its initializer's (`mut xs []int =
+// []int.new()`): compiled -- the binding is typed by its initializer, then
+// held to what was written. Since instance bodies walk the subset (#1539) the
+// old blanket refusal stopped std's own bodies too (`to_ascii_lower`:
+// `mut out []u8 = []u8.new(cap: n)`), and novac said "no type named `[]`"
+// about a slice of a declared element type.
+fn main() {
+    ro n int = 3
+    mut xs []int = []int.new()
+    xs.push(n)
+    ro t []int = xs
+    ro s str = "hi"
+    println(xs.len())
+    println(t.len())
+    println(s)
+}

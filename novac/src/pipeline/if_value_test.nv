@@ -1,0 +1,66 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/pipeline/if_value_test.nv -- the holders of the `if` value wave
+// (sweep 6): an `if` is a value wherever a value stands (D49), and a branch is
+// typed by the door a match arm's body takes (check/match_arms.nv
+// `@type_arm_block_value`, check/return_rules.nv `@type_value_at`).
+//
+// EACH TEST CARRIES ITS CONTROL: the same program one step away, answered the
+// other way. Reverse probe, run before the commit: with the arm door typing its
+// tail through the bare expression walk (no position type), the first, second
+// and fourth tests redden; with a method's arguments seeing the tail's
+// expectation, the fourth one does.
+
+module novac.pipeline
+
+test "a branch is a position of the written type: `else { 0 }` in a `-> u8` fn is a `u8` (D489)" {
+    ro std = std_decls()
+    ro (d, _) = compile_to_c("fn at(b u8, ok bool) -> u8 {\n if ok {\n  b\n } else {\n  0\n }\n}\nfn main() {\n println(at(65 as u8, true) as int)\n}", std)
+    assert(d.len() == 0, messages(d))
+    // CONTROL: with no type written, the branches have no position to adapt
+    // to, and an `int` beside a `str` is refused.
+    ro (c, _) = compile_to_c("fn main() {\n ro h = true\n ro x = if h { 1 } else { \"s\" }\n println(x)\n}", std)
+    assert(c.len() == 1, messages(c))
+    assert(messages(c).contains("must agree on a type"), messages(c))
+}
+
+test "a branch literal is judged for fit at the written type (D489, E_LIT_OUT_OF_RANGE)" {
+    ro std = std_decls()
+    ro (d, _) = compile_to_c("fn lv(h bool) -> u8 {\n if h {\n  1\n } else {\n  255\n }\n}\nfn main() {\n println(lv(true) as int)\n}", std)
+    assert(d.len() == 0, messages(d))
+    // CONTROL: one past the edge is refused at the literal itself.
+    ro (c, _) = compile_to_c("fn lv(h bool) -> u8 {\n if h {\n  1\n } else {\n  256\n }\n}\nfn main() {\n println(lv(true) as int)\n}", std)
+    assert(c.len() == 1, messages(c))
+    assert(messages(c).contains("does not fit `u8`"), messages(c))
+}
+
+test "an `else if` chain, a nested `if` and a scrutinee `if` are values (D49)" {
+    ro std = std_decls()
+    ro chain = "fn sh(s str) -> str => s\nfn main() {\n ro n = 2\n println(sh(if n > 5 { \"x\" } else if n == 2 { \"two\" } else { \"y\" }))\n}"
+    ro (d, _) = compile_to_c(chain, std)
+    assert(d.len() == 0, messages(d))
+    ro nested = "fn f(a bool, b bool) -> int {\n if a {\n  if b { 1 } else { 2 }\n } else {\n  3\n }\n}\nfn main() {\n println(f(true, false))\n}"
+    ro (e, _) = compile_to_c(nested, std)
+    assert(e.len() == 0, messages(e))
+    ro scrut = "fn g(k int) -> int {\n match if k > 0 { k } else { 0 - k } {\n  0 => 1\n  _ => 2\n }\n}\nfn main() {\n println(g(-3))\n}"
+    ro (s, _) = compile_to_c(scrut, std)
+    assert(s.len() == 0, messages(s))
+    // CONTROL: a branch that ends in a statement has no value to give.
+    ro (c, _) = compile_to_c("fn f(a bool) -> int {\n if a {\n  1\n } else {\n  ro x = 2\n }\n}\nfn main() {\n println(f(true))\n}", std)
+    assert(c.len() == 1, messages(c))
+    assert(messages(c).contains("ends without a value"), messages(c))
+}
+
+test "a method's arguments do not see the tail's written type" {
+    ro std = std_decls()
+    // `300` is an `int` argument of `code`; were the tail's `u8` to leak into
+    // it, the literal would be judged at `u8` and refused.
+    ro src = "type TVal { n int }\nfn TVal @code(k int) -> u8 => (@n + k) as u8\nfn pick(t TVal, m bool) -> u8 => t.code(if m { 300 } else { 0 })\nfn main() {\n println(pick(TVal { n: 4 }, true) as int)\n}"
+    ro (d, _) = compile_to_c(src, std)
+    assert(d.len() == 0, messages(d))
+    // CONTROL: the same `if` as the TAIL itself takes the written type, and
+    // `300` does not fit it -- the expectation is real, it only must not leak
+    // into an argument.
+    ro (c, _) = compile_to_c("fn pick(m bool) -> u8 => if m { 300 } else { 0 }\nfn main() {\n println(pick(true) as int)\n}", std)
+    assert(c.len() == 1, messages(c))
+    assert(messages(c).contains("does not fit `u8`"), messages(c))
+}

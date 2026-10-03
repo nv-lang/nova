@@ -29,6 +29,7 @@ mod c_name; // #1440/#1446: the one door "Nova name -> C identifier", see its do
 mod type_by_role; // #1545/#1527: a bare type name read by the kind its position admits, see its doc
 mod param_convention; // #1616: a call passes arguments as the RESOLVED callee declares, see its doc
 mod eval_order; // #1627: the order of evaluation survives a form that writes statements, see its doc
+mod fn_value; // #1640: the result type of a function VALUE passed to a generic method, see its doc
 
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
@@ -45339,7 +45340,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                         }
                                                         sb.return_type.as_ref().and_then(|rt| self.type_ref_to_c(rt).ok()).unwrap_or_default()
                                                     }
-                                                    _ => String::new(),
+                                                    // #1640: a function VALUE (a parameter, a local, a named
+                                                    // function) -- its own type carries the result.
+                                                    _ => self.fn_value_return_c(arg.expr()).unwrap_or_default(),
                                                     }
                                                 };
                                                 if !closure_ret_c.is_empty() && closure_ret_c != "void*" {
@@ -48367,6 +48370,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if newline {
             self.line("nova_print_newline();");
         }
+        // Registry 221.1 #1655: the call's output reaches the fd now, not at exit
+        // (C's stdout is fully buffered when redirected; see `nova_print_end`).
+        self.line("nova_print_end();");
         self.indent -= 1;
         self.line("}");
         self.line(&format!("{} = NOVA_UNIT;", tmp));
@@ -62641,6 +62647,42 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     // `b11x_novaarray_user_ext_methods.nv`) — dead SHADOW scaffolding goes
     // with the arm it fed (see docs/plans/196.5-stage-d-notes.md).
 
+    /// Registry 221.1 #1657: the C type of a block's tail with the block's own
+    /// top-level `let`s overlaid through `pattern_binding_overrides` (the same
+    /// technique as the `Block` arm of `infer_expr_c_type` and the `Match` arm's
+    /// `block_saved` seed). `var_types` is flat: without the overlay a tail that
+    /// names a block local took an OUTER namesake's C type -- an `if` value
+    /// `{ ro s = <i64>; s + 1 }` under an outer `s i32` became `int32_t` and the
+    /// value was silently truncated. `nova_unit` for a block without a tail.
+    fn block_tail_c_type(&self, b: &crate::ast::Block) -> String {
+        let Some(tail) = &b.trailing else {
+            return "nova_unit".into();
+        };
+        if b.stmts.is_empty() {
+            return self.infer_expr_c_type(tail);
+        }
+        let mut saved: Vec<(String, Option<String>)> = Vec::new();
+        for st in &b.stmts {
+            if let crate::ast::Stmt::Let(d) = st {
+                if let crate::ast::Pattern::Ident { name, .. } = &d.pattern {
+                    let ty = d.ty.as_ref().and_then(|t| self.type_ref_to_c(t).ok())
+                        .unwrap_or_else(|| self.infer_expr_c_type(&d.value));
+                    let prev = self.pattern_binding_overrides.borrow_mut().insert(name.clone(), ty);
+                    saved.push((name.clone(), prev));
+                }
+            }
+        }
+        let result = self.infer_expr_c_type(tail);
+        let mut overrides = self.pattern_binding_overrides.borrow_mut();
+        for (name, old) in saved.into_iter().rev() {
+            match old {
+                Some(t) => { overrides.insert(name, t); }
+                None => { overrides.remove(&name); }
+            }
+        }
+        result
+    }
+
     pub(crate) fn infer_expr_c_type(&self, expr: &Expr) -> String {
         // #1384: a loop's C value is unit, also when the checker types a no-exit loop `never`.
         if matches!(&expr.kind, ExprKind::Loop { .. } | ExprKind::While { .. }) { return "nova_unit".to_string(); }
@@ -64001,15 +64043,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // через dispatcher (каналы детей работают).
         if let ExprKind::If { else_: if_else @ Some(_), then: if_then, .. } = &expr.kind {
             let then_diverges = self.block_trailing_diverges(if_then);
-            let then_ty = if_then.trailing.as_ref()
-                .map(|e| self.infer_expr_c_type(e))
-                .unwrap_or_else(|| "nova_unit".into());
+            // #1657: each branch tail is typed with the branch's own lets
+            // overlaid (`block_tail_c_type`) -- `{ ro s = ..; s + 1 }` under an
+            // outer `s i32` declared the `if` value `int32_t` and truncated it.
+            let then_ty = self.block_tail_c_type(if_then);
             let (else_diverges, else_ty): (bool, String) = match if_else {
                 Some(ElseBranch::Block(b)) => (
                     self.block_trailing_diverges(b),
-                    b.trailing.as_ref()
-                        .map(|e| self.infer_expr_c_type(e))
-                        .unwrap_or_else(|| "nova_unit".into()),
+                    self.block_tail_c_type(b),
                 ),
                 Some(ElseBranch::If(e)) => (
                     self.expr_diverges_125(e),

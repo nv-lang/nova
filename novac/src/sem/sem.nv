@@ -252,7 +252,8 @@ export type VariantDef value {
     sum_id TyId /// Owning sum's type id (backends derive the tag name from it).
     name str /// Variant spelling; backends derive maker names from it.
     payload_off int /// First payload row in Ctx.payload_types.
-    payload_cnt int /// How many payload fields.
+    payload_cnt int /// How many payload fields -- the DECLARATION's count, a position whose type novac could not read included (registry 1512).
+    lost_type str /// The first payload TYPE NAME novac could not read (its position holds `no_ty()`), `""` when every payload is typed. Asked by every door that types a payload, which refuses by this name rather than by arity (registry 1512).
     next_same VariantRow /// The NEXT variant of the same bare name in another sum, `no_vrow()` at the chain's end: `variant_names` holds the head, the chain is walked by id and compared by `sum_id`, never by name (274.7 B6, #964).
 }
 

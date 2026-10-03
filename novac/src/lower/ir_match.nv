@@ -4,8 +4,9 @@
 // taken: the decision tree -- the arms keep the if-chain in source order.
 // Role: the PATTERN vocabulary of the lowered body -- what an arm tests at its
 //   root (`Pattern`), the arm record (`SwitchArm`) and the test of a NESTED
-//   subpattern (`PatTest`, registries 1534 and 1542). Split out of ir.nv (the
-//   1000-line cap) by meaning: these types are about `match` and nothing else.
+//   subpattern (`PatTest`, registries 1534 and 1542), with the two builder steps
+//   only an arm's tests take (`@note_arm_heads`, `@set_bool`). Split out of
+//   ir.nv (the 1000-line cap) by meaning: these are about `match` and nothing else.
 // Used by: ir.nv (`Cond.Holds`, the `Switch` terminator), lower_match.nv and
 //   lower_disj.nv (build them), emit_c (emit_match.nv prints the tests,
 //   emit_flow.nv the arms).
@@ -15,6 +16,7 @@
 module novac.lower
 import ../tree.{Node}
 import ../sem.{VariantRow}
+import ../diag.{ice}
 
 /// What an arm of a `match` tests at its ROOT (wave M2b-1d): a literal, a
 /// variant head (with the other heads of a disjunction `A | B`), a plain
@@ -44,17 +46,19 @@ export type VariantMatch value {
 
 /// One arm of a `Switch`: its pattern, its guard as the tree spells it (the
 /// M1 bridge; the guard is tested by an `If` inside the arm's block), and
-/// the block its binders and body occupy. `checks` counts the `If`s a NESTED
-/// subpattern's tests opened before the guard (registries 1534, 1542): the
-/// root's test is the arm head, a test below it can only run once the value
-/// it reads was read, so it is a synthetic condition in the arm's block,
-/// nested exactly like the guard's -- and the printer sets the first-match
-/// flag inside the innermost of them.
+/// the block its binders and body occupy. `heads` are the blocks whose `If`
+/// terminators test the arm beyond its head -- a NESTED subpattern's tests
+/// (registries 1534, 1542, 1568), then the guard: the root's test is the arm
+/// head, a test below it can only run once the value it reads was read, so it
+/// is a synthetic condition in the arm's block, nested exactly like the
+/// guard's. The printer descends to each head in turn (the blocks between --
+/// a disjunction's switch -- print on the way) and sets the first-match flag
+/// inside the innermost.
 export type SwitchArm value {
     pat Pattern /// what the arm tests
     guard Option[Node] /// the `if` after the pattern, if written
     body BlockId /// the arm's block: binders first, then the body
-    checks int /// the synthetic `If`s of nested tests that open before the guard (1534)
+    heads []BlockId /// the blocks holding the arm's test `If`s: nested tests, then the guard
 }
 
 /// The test of ONE nested subpattern (registries 1534, 1542): the pattern's
@@ -64,4 +68,22 @@ export type SwitchArm value {
 export type PatTest value {
     pat Pattern /// what the subpattern's own head tests
     scr Local /// the temporary its value was read into
+}
+
+/// Records the blocks holding the OPEN arm's test `If`s -- its nested tests, then its
+/// guard (registries 1534, 1542, 1568): the printer descends to each in turn and finds
+/// the innermost branch, where the body runs and the first-match flag is set.
+export fn FnBuilder mut @note_arm_heads(heads []BlockId) -> () {
+    if @open_arms.len() == 0 {
+        ice("lower: note_arm_heads outside of an arm")
+    }
+    ro i = @open_arms.len() - 1
+    ro a = @open_arms[i]
+    @open_arms[i] = SwitchArm { pat: a.pat, guard: a.guard, body: a.body, heads }
+}
+
+/// `dest = true` / `false`: the one constant the lowering itself writes -- a
+/// disjunction's "an alternative held" flag (registry 1568).
+export fn FnBuilder mut @set_bool(dest Local, b bool) -> () {
+    @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.Bool(b) }))
 }

@@ -1,0 +1,23 @@
+module mut_receiver.neg_1
+
+// A `mut` METHOD THROUGH A `ro` BINDING (P14, D488): `b.add(1)` on `ro b`. A
+// `ro` receiver is a copy or a read-only view, and the change would be lost.
+// The oracle refuses it too (E_LOCAL_NOT_MUT). novac used to answer with the
+// subset's "this type has no such method" -- a name that is right there; the
+// refusal now names the receiver's class as the language error it is.
+
+// NOVAC_EXPECT the receiver of a `mut` method needs a mutable place
+
+type Bag {
+    xs []int
+}
+
+fn Bag mut @add(x int) -> () {
+    @xs.push(x)
+}
+
+fn main() {
+    ro b = Bag { xs: []int.new() }
+    b.add(1)
+    println(b.xs.len())
+}

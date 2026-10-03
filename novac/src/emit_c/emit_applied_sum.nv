@@ -25,9 +25,9 @@
 
 module novac.emit_c
 
-import ../types.{TyId}
+import ../types.{TyId, is_ty}
 import ../builtins.{OPTION_SOME_VARIANT}
-import ../sem.{VariantRow, raw_vrow, c_shell_tag}
+import ../sem.{VariantRow, raw_vrow, c_shell_tag, c_maker, c_struct, is_shell_applied_sum}
 
 /// The C condition "the scrutinee `scr` (a local of the applied sum `scr_ty`)
 /// holds the variant `vrow`" -- for a sum `is_shell_applied_sum` admitted.
@@ -55,4 +55,16 @@ fn Emitter @applied_sum_tag_after(scr_ty TyId, vrow VariantRow) -> str {
         return @option_none_test(scr_ty, "")
     }
     "->tag == ${c_shell_tag(@ctx, vrow)}"
+}
+
+/// The MAKER a variant call prints: a `Result` instance is the shell's, and so
+/// is its maker -- `nova_make_NovaRes_<T>_<E>_<Variant>` (shell.tpl.c), never
+/// the sum's generic `nova_make_Result_Ok`, which nothing defines (registry
+/// 1632: `Ok(..)` / `Err(..)` typed by the declared return). Any other sum's
+/// variant keeps its own maker (`c_maker`).
+fn Emitter @variant_maker(v VariantRow, inst TyId) -> str {
+    if is_ty(inst) && is_shell_applied_sum(@ctx, inst) && !@is_option_inst(inst) {
+        return "nova_make_${c_struct(@ctx, inst)}_${@ctx.variant_rows[raw_vrow(v)].name}"
+    }
+    c_maker(@ctx, v)
 }

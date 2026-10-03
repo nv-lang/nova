@@ -1,0 +1,99 @@
+// EXPECT_STDOUT std: 2026-10-02T17:29:28Z
+// EXPECT_STDOUT local: 12804
+// EXPECT_STDOUT plain: 12804
+// EXPECT_STDOUT tuple: 12804
+// EXPECT_STDOUT for: 2469
+// EXPECT_STDOUT param: 2468
+// EXPECT_STDOUT match: 12804
+//
+// Registry 221.1 #1657: a local binding whose type the checker could not
+// infer was dropped from the checker's scope, and its name then resolved to
+// an OUTER name -- here this module's free function `sec`. In std
+// `Timestamp @to_zoned` the local `ro sec = if .. { .. } else { .. }` became
+// `fn(str) -> Section`; the C code typed the values after it `void*` and
+// folded the time of day to 0 -- every moment printed as `T00:00:00Z`,
+// silently (found in claude-limits, `config_reference.nv`'s `fn sec`). A
+// local of unknown type still shadows every outer name.
+//
+// The right-hand sides below are a std method chain the checker does not type
+// (`.to_unix_millis().unix_nanos()`), so each binding is a local of unknown
+// type named like the free function: a `ro` local after an `if` value, a plain
+// one, a tuple binding, a `for` variable, a closure parameter, a `match`
+// binding. Without the fix every cell but the closure printed 0. The module
+// CONSTANT axis is its own fixture (it failed to build rather than print):
+// p1657_untyped_local_shadows_module_const.nv.
+module standalone.p1657_untyped_local_shadows_outer_name
+
+import std.time.civil
+
+type Section value {
+    ro name str
+}
+
+fn sec(name str) -> Section => { name }
+
+type Tick value { n i64 }
+
+fn Tick @local_cell() -> i64 {
+    ro total = (@n as i64).to_unix_millis().unix_nanos() / 1_000_000
+    ro sec0 = total / 10
+    ro rem0 = total % 10
+    ro sec = if rem0 < 0 { sec0 - 1 } else { sec0 }
+    ro local = sec + 5
+    ro day = if local < 0 { local - 1 } else { local }
+    day * 100 + rem0
+}
+
+fn Tick @plain_cell() -> i64 {
+    ro sec = (@n as i64).to_unix_millis().unix_nanos() / 1_000_000 / 10
+    ro day = if sec < 0 { sec - 1 } else { sec + 5 }
+    day * 100 + 4
+}
+
+fn Tick @tuple_cell() -> i64 {
+    ro ns = (@n as i64).to_unix_millis().unix_nanos() / 1_000_000
+    ro (sec, rem0) = (ns / 10, ns % 10)
+    ro local = sec + 5
+    ro day = if local < 0 { local - 1 } else { local }
+    day * 100 + rem0
+}
+
+fn Tick @for_cell() -> i64 {
+    ro ns = (@n as i64).to_unix_millis().unix_nanos() / 1_000_000
+    mut n i64 = 0
+    for sec in [ns, ns + 1] {
+        ro day = if sec < 0 { sec - 1 } else { sec }
+        n += day
+    }
+    n
+}
+
+fn Tick @param_cell() -> i64 {
+    ro f = |sec| if sec < 0 { sec - 1 } else { sec * 2 }
+    f((@n as i64).to_unix_millis().unix_nanos() / 1_000_000)
+}
+
+fn Tick @match_cell() -> i64 {
+    match Some((@n as i64).to_unix_millis().unix_nanos() / 1_000_000) {
+        Some(sec) => {
+            ro local = sec / 10 + 5
+            ro day = if local < 0 { local - 1 } else { local }
+            day * 100 + sec % 10
+        }
+        None => 0
+    }
+}
+
+fn main() Io {
+    ro s = sec("x")
+    ro ms = 1790962168000
+    println("std: ${ms.to_unix_millis().to_rfc3339()}")
+    ro t = Tick { n: 1234 }
+    println("local: ${t.local_cell()}")
+    println("plain: ${t.plain_cell()}")
+    println("tuple: ${t.tuple_cell()}")
+    println("for: ${t.for_cell()}")
+    println("param: ${t.param_cell()}")
+    println("match: ${t.match_cell()}")
+    assert(s.name == "x")
+}

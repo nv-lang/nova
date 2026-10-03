@@ -47,6 +47,10 @@
           {
             "type": "command",
             "command": "python \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks/guard-shell-nonascii.py\""
+          },
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks/guard-blocking-wait.py\""
           }
         ]
       },

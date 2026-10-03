@@ -50,12 +50,12 @@ import ../tree.{Node, NodeKind, NodeId, bin_op_of, un_op_of}
 import ../diag.{Diagnostic, ice}
 import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind}
 import ../sem.{expr_leaf_name, is_value_record}
-import ../sem.{file_decls}
+import ../sem.{file_decls, sole_expr_of_unsafe}
 import ../sem.{slice_shape_of, ctor_head_variant}
 // Where an arm keeps its body -- the door the lowering has read for waves.
 import ../sem.{arm_body_at, array_of_lparen_at}
 import ../sem.{is_constexpr, const_init_at}
-import ../types.{TyId, no_ty}
+import ../types.{TyId, no_ty, is_ty}
 import ../resolve.{FnIndex, FieldIndex}
 
 
@@ -86,11 +86,15 @@ import ../resolve.{FnIndex, FieldIndex}
 /// constructor or a `match` in the same slot still ICEs in typing ("no type
 /// recorded", measured 2026-10-01) -- so the flag is its own, not `arm_pos`,
 /// which those gates also read.
+/// scrut_pos: the SCRUTINEE of a `match` (`match if c { a } else { b } {..}`),
+/// read by the `if` value's gate only: `@match_head` types it through
+/// `@type_expr` and the lowering places it through `@lower_place` -- the two
+/// doors an argument `if` already takes (sweep 6).
 fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                      arg_pos bool = false, index_pos bool = false,
                      arm_pos bool = false, handler_param bool = false,
                      handler_pos bool = false, if_branch bool = false,
-                     if_tail bool = false) -> () {
+                     if_tail bool = false, scrut_pos bool = false) -> () {
     match n {
         Leaf(t) => @report_if_error_token(t)
         Branch { kind, children, .. } => {
@@ -340,7 +344,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // `exprs.nv`'s `type_expr` dispatcher's `IfExpr` arm is
                     // unconditional (no position gate of its own), so the
                     // shape walk here was the only door left closed.
-                    if !init_pos && !arg_pos && !arm_pos {
+                    if !init_pos && !arg_pos && !arm_pos && !scrut_pos {
                         @report_first_leaf_of(children, IF_EXPR_MSG)
                         return
                     } else {
@@ -536,8 +540,11 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // `unsafe { ... }` (D216 s8; 274.11 E.10 step 3c): a value
                     // where an `if` value stands -- an initializer, an argument,
                     // a body's tail -- or a statement; typed by `@type_unsafe`
-                    // (unsafe.nv). Elsewhere the lowering has no place for it.
-                    if !stmt_pos && !init_pos && !arg_pos && !arm_pos {
+                    // (unsafe.nv). Elsewhere the lowering has no place for it --
+                    // unless the block is ONE expression: then it IS that
+                    // expression (D216, a typing context) and the emitter prints
+                    // it as one in any value position (`sole_expr_of_unsafe`).
+                    if !stmt_pos && !init_pos && !arg_pos && !arm_pos && sole_expr_of_unsafe(n).is_none() {
                         @report_first_leaf_of(children, UNSAFE_MSG)
                         return
                     } else {
@@ -659,18 +666,9 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     }
                 }
                 MatchExpr => {
-                    // Three legal positions since 274.5 wave B5: a binding
-                    // initializer, a STATEMENT (a direct child of a block --
-                    // the arms run for effect), and through init_pos also the
-                    // tail of a value body (`=>` bodies took it earlier; the
-                    // `{...}` tail is a statement position plus the typing
-                    // route of wave B4's tail machinery).
-                    // FOUR legal positions since 2026-09-20: the ARM BODY of
-                    // another match joins the three, and it is 33 of novac's
-                    // own carriers -- the lexer dispatches on a second byte
-                    // that way throughout.
-                    if !init_pos && !stmt_pos && !arm_pos {
-                        @report_first_leaf_of(children, "outside the subset: a `match` is compiled only as an initializer, a statement, a body tail or the body of a match arm -- other positions are not compiled yet (E2, the control-flow horizon)")
+                    // WHERE a `match` may stand: one question, its history beside
+                    // it (match_position.nv).
+                    if @refuse_match_position(children, init_pos, stmt_pos, arm_pos, arg_pos, scrut_pos) {
                         return
                     } else {
                         // A legal position: walked below.
@@ -683,16 +681,37 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // ordinary binding in the language and reported a
                     // declared type where none was written. Counting is a
                     // measurement too, and this one went unmeasured.
-                    if children.len() > 4 {
+                    // A type the one door READS is compiled (typing holds the
+                    // initializer to it, `@type_bind`); the walk goes on to
+                    // the initializer alone -- the type's leaves are no
+                    // expression. Until task 5 every declared type was refused
+                    // here, and since instance bodies walk the subset (#1539)
+                    // std's `mut out []u8 = []u8.new(cap: n)` stopped there.
+                    // A RECORD CONSTRUCTOR under a declared type is not
+                    // this form: the oracle refuses `ro p Pt = Pt { .. }` as a
+                    // redundant prefix and takes `= { .. }` by the annotation
+                    // -- neither is compiled yet, so both stay refused here.
+                    // A VIEW QUALIFIER (`ro x ro T`, `mut x ro T`) is judged by
+                    // the old door below: the redundant form is a language
+                    // error at its own token (registry 1458).
+                    ro init_k = children[children.len() - 1].kind_of()
+                    ro view = children.len() > 4 && children[2].kind_of() == NodeKind.LeafNode &&
+                        leaf_kind(children[2]) == TokenKind.KwRo
+                    ro typed = children.len() > 4 && !view && init_k != NodeKind.RecordCtor
+                    if typed && is_ty(@declared_local_type(children)) {
+                        @walk(children[children.len() - 1], init_pos: true, handler_pos: true)
+                        return
+                    } else if children.len() > 4 {
                         // THE NAME IS READ AND JUDGED, not just the shape: the
                         // limit refuses the program, but a name nobody declared
                         // is what the reader can fix (registry #1150). The type
                         // stands third -- keyword, name, TYPE, `=`, initializer.
-                        ro tname = if children[2].kind_of() == NodeKind.LeafNode {
-                            leaf_text(children[2])
-                        } else {
-                            ""
-                        }
+                        // A type of SEVERAL leaves (`[]u8`, `Vec[int]`) is no
+                        // single name to look up: asking for its first leaf
+                        // claimed "no type named `[]`" about a slice of a
+                        // declared element type.
+                        ro one_leaf = children.len() == 5 && children[2].kind_of() == NodeKind.LeafNode
+                        ro tname = if one_leaf { leaf_text(children[2]) } else { "" }
                         ro known = tname == "" || @type_name_is_declared(tname, []str.new())
                         @report_typed_local(children, tname, known)
                         return
@@ -802,7 +821,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                                      ((leaf_kind(children[1]) == TokenKind.Assign &&
                                        (c.kind_of() == NodeKind.RecordCtor ||
                                         c.kind_of() == NodeKind.ArrayLit)) ||
-                                      c.kind_of() == NodeKind.IfExpr))
+                                      c.kind_of() == NodeKind.IfExpr || c.kind_of() == NodeKind.MatchExpr))
                         ai += 1
                     }
                     return
@@ -936,6 +955,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                       handler_pos: kind == NodeKind.WithStmt,
                       if_branch: value_if && c.kind_of() == NodeKind.Block,
                       if_tail: at == if_tail_at,
+                      scrut_pos: kind == NodeKind.MatchExpr && at == 1,
                       // ELSE-IF CHAIN CONTINUATION (registry #1243): a nested
                       // `IfExpr` sitting in an `if`-value's own else-arm is
                       // the SAME value position as its parent -- `else if` is
@@ -950,7 +970,10 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                       // array literal may BE the body, and the literal's own
                       // typist judges the body against the op's return --
                       // the walk only has to not refuse the position.
-                      init_pos: (init_pos && kind == NodeKind.IfExpr &&
+                      // (Any value position of the parent, not only an
+                      // initializer: the parent's own gate already admitted
+                      // it -- an argument's chain was refused until sweep 6.)
+                      init_pos: (kind == NodeKind.IfExpr &&
                                  at == children.len() - 1 && c.kind_of() == NodeKind.IfExpr) ||
                                 (kind == NodeKind.HandlerOp && at == children.len() - 1))
                 at += 1

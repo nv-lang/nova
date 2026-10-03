@@ -1,0 +1,10 @@
+module float_exponent.neg_1
+
+// NOVAC_EXPECT did not parse this
+// ONE seeded cause: an exponent letter and a sign with NO digits after them.
+// D44's exponent is `e` (`+`|`-`)? decimal-int -- the digits are not optional,
+// so `1e+` is no float; reading the exponent must not swallow a bare `e+`.
+// The oracle refuses it too ("invalid float literal").
+fn main() {
+    println(1e+)
+}

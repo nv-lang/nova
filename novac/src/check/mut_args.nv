@@ -57,6 +57,10 @@ fn Checker @has_heap_temp(key []ArgSpec) -> bool {
 fn Checker @is_heap_temp(a ArgSpec) -> bool => match a.cls {
     ArgOwnedTemp => @is_heap_type(a.type_id)
     ArgRo | ArgMut | ArgConsume => false
+    // A temporary RECEIVER is already a place for its own call (`mode_admits`
+    // admits it into `mut @`, registry 1630); the second, heap-only pass is
+    // for temporaries in PARAMETER position.
+    ArgTempRecv => false
 }
 
 /// The key again, every heap temporary taken as a place -- what a heap `mut`

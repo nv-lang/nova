@@ -20,7 +20,7 @@ import ../tree.{Node, NodeKind}
 import ../sem.{branch_children, leaf_text, leaf_kind, decl_of_ty, field_range_of}
 import ../sem.{raw_frow, no_frow, ctor_field_name}
 // The interpolation slicer comes with the judge moved here on 2026-09-20.
-import ../sem.{interp_slices}
+import ../sem.{interp_slices, literal_digits}
 import ../sem.{prim_row_of, lit_admits, call_arg_at, raw_row, no_row, CalleeTarget}
 import ../sem.{const_int_value}
 import ../diag.{ice}
@@ -65,8 +65,9 @@ fn Checker mut @report_if_int_too_large(kids []Node) -> () {
 
 /// Does this decimal digit run fit SOME integer row -- not necessarily
 /// `int`'s own (registry #1250)? Compared as text against the bound, so
-/// nothing is parsed into the type whose range is being judged. Leading
-/// zeros are stripped first: `0000009` is nine, not a nine-digit number. The
+/// nothing is parsed into the type whose range is being judged. The D44
+/// separators (`literal_digits`) and the leading zeros are stripped first:
+/// `0000009` is nine, not a nine-digit number. The
 /// bound is `u64`'s -- the widest row -- because THIS door runs before the
 /// literal's position has named a row at all; the SIGNED bound (`int`'s own,
 /// or any other row narrower than `u64`) is `int_text_fits_row`'s question,
@@ -75,7 +76,8 @@ fn Checker mut @report_if_int_too_large(kids []Node) -> () {
 /// every nibble is free at the 16th -- `0xFFFF...F` (all ones, `u64::MAX`)
 /// fits exactly as much as `0x7FFF...F` does; which SIGNED rows the top
 /// nibble narrows for is again `int_text_fits_row`'s question.
-fn int_text_fits(t str) -> bool {
+fn int_text_fits(text str) -> bool {
+    ro t = literal_digits(text)
     if t.byte_len() > 2 && t[..2] == "0x" {
         mut h = 2
         while h + 1 < t.byte_len() && t[h..h + 1] == "0" {
@@ -131,7 +133,8 @@ fn int_max_text(bits int, signed bool, neg bool) -> str {
 /// twin (`-0x80` fits `i8`), which is an 8 followed by zeros. A negative
 /// literal never fits an unsigned row: `u8 = -1` is the spec's own example of
 /// E_LIT_OUT_OF_RANGE.
-fn int_text_fits_row(t str, r BuiltinType, neg bool) -> bool {
+fn int_text_fits_row(text str, r BuiltinType, neg bool) -> bool {
+    ro t = literal_digits(text)
     if neg && !r.signed { return false }
     if t.byte_len() > 2 && t[..2] == "0x" {
         mut h = 2

@@ -1,0 +1,95 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc -- a default argument is a fresh expression at the call site,
+// never a borrowed node of the callee's crate (rustc has no default arguments;
+// the shape is Kotlin's, whose call site re-emits the default from metadata).
+// Role: the call that omits a slot whose DEFAULT is declared in ANOTHER file and
+//   is not a literal (registry 1578): refused by name after typing, because the
+//   default would be printed from a node of the handed tree, whose id belongs to
+//   another space. A literal and `true` / `false` are rebuilt without an identity
+//   when the declaration is harvested (sem/harvest.nv `handed_default`, 1576).
+// Used by: run.nv `check`, once the file is typed (the callees are recorded).
+// Guarded by: nova test over pipeline/handed_default_test.nv (the refusal, on a
+//   program module's call default) and pipeline/handed_free_test.nv (the literal
+//   defaults compile).
+// novac/src/check/handed_default.nv -- a handed default novac cannot carry, named.
+
+module novac.check
+
+import ../tree.{Node, NodeKind, is_node}
+import ../sem.{branch_children, CalleeTarget, raw_row, slot_default_of}
+
+/// A NON-LITERAL default of another module's declaration, left to a call
+/// (registry 1578). `${...}` names the parameter and the module.
+fn foreign_default_msg(param str, from str) -> str =>
+    "the default of `${param}` is declared in ${from} and is not a literal -- novac carries only a literal or `true` / `false` default across files (registry 1578); write the argument at this call"
+
+/// Is this node's text ANOTHER file's? Its first token is asked of this file's
+/// source -- the one datum that cannot coincide, where an id can.
+fn Checker @is_foreign(d Node) -> bool {
+    match d {
+        Leaf(t) => !@src.holds(t.text)
+        Branch { .. } => {
+            ro kids = branch_children(d)
+            if kids.len() == 0 { return false }
+            @is_foreign(kids[0])
+        }
+    }
+}
+
+/// Walk the typed file: every call with a recorded callable asks its omitted
+/// slots (`@judge_omitted_defaults`). Leaves have nothing to ask.
+fn Checker mut @refuse_foreign_defaults(n Node) -> () {
+    match n {
+        Leaf(_) => {}
+        Branch { .. } => {
+            ro k = n.kind_of()
+            if (k == NodeKind.Call || k == NodeKind.MethodCall) && @chan.has_callee(n.id_of()) {
+                @judge_omitted_defaults(n)
+            } else {
+                // Not a call, or one with nothing recorded: its children answer.
+            }
+            for c in branch_children(n) {
+                @refuse_foreign_defaults(c)
+            }
+        }
+    }
+}
+
+/// One call: a slot left to its default (`arg_row < 0`) whose default is a node
+/// WITH an identity, declared by a HANDED row, is refused by name -- the node
+/// belongs to another tree's id space. A row of this file carries this file's
+/// own nodes; a rebuilt literal carries no identity.
+fn Checker mut @judge_omitted_defaults(call Node) -> () {
+    ro cr = @chan.callee_of(call.id_of())
+    match cr.target {
+        CalleeFn(row) => {
+            // THIS FILE's rows carry this file's nodes (`compiles_body`); a
+            // record's constructor row does too, though it stands past them --
+            // so the default itself is asked where its text lies (`@is_foreign`).
+            if @ctx.fns.compiles_body(row) { return }
+            ro fd = @ctx.fns.rows[raw_row(row)]
+            ro slots = @chan.callee_slots_of(call.id_of())
+            for s in 0..slots.len() {
+                if slots[s].arg_row >= 0 { continue }
+                match slot_default_of(@ctx.fns.params, fd.param_off, s) {
+                    Some(d) => {
+                        if is_node(d.id_of()) && @is_foreign(d) {
+                            ro pname = @ctx.fns.params[fd.param_off + s].name
+                            ro from = if fd.handed_from == "" { "a handed declaration" }
+                                      else { "module `${fd.handed_from}`" }
+                            @reject_first_leaf_of(branch_children(call), foreign_default_msg(pname, from))
+                            return
+                        } else {
+                            // Rebuilt without an identity (1576), or a node of this
+                            // file's own text: printed as written.
+                        }
+                    }
+                    None => {}
+                }
+            }
+        }
+        // A variant, a constructor, a synthesized display, an effect operation:
+        // no callable declaration, so no default of another file.
+        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => {}
+    }
+}

@@ -662,3 +662,10 @@ const COND_WILD_ROOT_MSG = "a condition whose whole pattern is `_` always matche
 /// A bare name as the whole condition pattern with no `ro`/`mut` (D486 §4 amendment
 /// 2026-09-30 p.3; registry 1381): a LANGUAGE error, the oracle's E_AMBIGUOUS_IDENT_PATTERN.
 const COND_BARE_NAME_MSG = "a bare name as the whole condition pattern needs `ro` or `mut` before it (D486, E_AMBIGUOUS_IDENT_PATTERN): `if n = f()` reads as a mistyped `==`"
+
+/// The shell carries no INSTANCE of a family the program needs -- a vector of
+/// an element type, a `Result` of a pair (registry 1632): novac prints the
+/// shell's instances and none of its own, so the form is refused by the
+/// instance's name. ONE text for every family, `arrives` saying when it comes.
+fn no_shell_instance_msg(head str, of str, arrives str) -> str =>
+    "outside the subset: the shell novac links into carries no `${head}` instance for ${of} -- the interop surface is the probe program (novac/probe/shell_probe.nv, E2-b); ${arrives}"

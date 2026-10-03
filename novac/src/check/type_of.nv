@@ -19,7 +19,7 @@ import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, RECV_BINDING, SELF_TYPE}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{variants_named, ctor_head_variant}
+import ../sem.{variants_named, ctor_head_variant, VariantRow, variant_sum_count}
 import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, raw_row, ParamMode, carrier_of, arm_body_at, branch_children}
 import ../sem.{LitArg, is_const_int_expr}
 // M3a: the literal token -> primitive table lives in `sem`, asked by both consumers.
@@ -45,7 +45,8 @@ fn typed_call_key(kids []Node, from int, recv Node, recv_t TyId, ctx Ctx, scope 
     // The receiver is parameter zero (plan 273), so it carries a CLASS like any
     // other argument: `mut b; b.m()` selects the `mut @m` overload, which is
     // the precedent the whole mode axis generalizes from (P14 rule 2).
-    out.push(ArgSpec { type_id: recv_t, cls: typed_arg_class(recv, ctx, scope, chan), name: "", lit: LitArg.NotLit })
+    ro rcls = recv_class(typed_arg_class(recv, ctx, scope, chan))
+    out.push(ArgSpec { type_id: recv_t, cls: rcls, name: "", lit: LitArg.NotLit })
     out.append(typed_args(kids, from, ctx, scope, chan))
     out
 }
@@ -142,7 +143,23 @@ fn field_class(e Node, scope Scope) -> ArgClass {
         ArgConsume => ArgClass.ArgMut
         ArgRo => ArgClass.ArgRo
         ArgOwnedTemp => ArgClass.ArgRo
+        ArgTempRecv => ArgClass.ArgRo
     }
+}
+
+/// The class of a RECEIVER: what the argument class says, except that an owned
+/// temporary is a place for the length of its own call -- `StringBuilder.new(
+/// cap: 4).append(s)` writes into the hoisted temp (D33, 02-types.md:13526:
+/// a chain rooted in an rvalue has no binding to check). Until registry 1630
+/// the temporary was refused by every `mut` method ("no such method"), and in
+/// a longer chain the refusal went silent and iced in `type_of`.
+#realtime nogc
+fn recv_class(c ArgClass) -> ArgClass => match c {
+    ArgOwnedTemp => ArgClass.ArgTempRecv
+    ArgRo => ArgClass.ArgRo
+    ArgMut => ArgClass.ArgMut
+    ArgConsume => ArgClass.ArgConsume
+    ArgTempRecv => ArgClass.ArgTempRecv
 }
 
 /// The class of an argument whose call is ALREADY TYPED: a call that hands out
@@ -710,7 +727,15 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // so the first row is the one when any is there.
         ro (vfirst, vn) = if ctx.defs.declared_by_file(cname) { (no_vrow(), 0) } else { variants_named(ctx, cname) }
         if vn >= 1 {
-            ro sid = ctx.variant_rows[raw_vrow(vfirst)].sum_id
+            // A name SEVERAL sums declare is the POSITION's to resolve (D478):
+            // until the checker has recorded its choice -- an argument waits for
+            // its parameter (`@type_deferred_args`) -- it has no type of its
+            // own, and the key's slot stays open (registry 1647).
+            if !chan.has_callee(e.id_of()) && variant_sum_count(ctx, cname) > 1 { return no_ty() }
+            // The row the CHECKER chose when several sums declare the name (by
+            // the expectation, D478 -- calls.nv): the first row would be
+            // another sum, and the node typed twice (registry 1632).
+            ro sid = ctx.variant_rows[raw_vrow(decided_variant(chan, e, vfirst))].sum_id
             // A GENERIC sum's constructor names an INSTANCE (`Some(3)` is an
             // `Option[int]`), decided by the walk from the payload and RECORDED
             // (wave W4, option_rules): the family term is not a type a value
@@ -771,4 +796,14 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         ice("check: a type in call position with no construction recorded -- the refusal should have stopped this walk")
     }
     ice("check: expression kind without a type rule — no silent int default (#652 class)")
+}
+
+/// The variant row the checker RECORDED for this construction, or `first` when
+/// it recorded none -- a pure read of the decision, never a second choice.
+fn decided_variant(chan CheckOut, e Node, first VariantRow) -> VariantRow {
+    if !chan.has_callee(e.id_of()) { return first }
+    match chan.callee_of(e.id_of()).target {
+        CalleeVariant(v) => v
+        CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => first
+    }
 }

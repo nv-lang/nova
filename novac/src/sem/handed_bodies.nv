@@ -142,20 +142,34 @@ export fn Ctx @instantiates(row FnRow, args []TyId) -> bool {
     if @handed.decl_of(row).is_none() { return false }
     ro fd = @fns.rows[raw_row(row)]
     if args.len() != fd.tparam_cnt { return false }
+    // A NON-generic row of another module of the PROGRAM is compiled by its
+    // owner unit, never a second time here (274.11 E.10 step 2a); a generic one
+    // is instantiated by the caller, which alone knows the substitution.
+    if fd.tparam_cnt == 0 && @in_program(row) { return false }
+    // A declaration with no body (`extern "nova"`) has nothing to make an
+    // instance FROM: the shell's or nothing (registry shell-str, task 4).
+    ro bodied = match @handed.decl_of(row) {
+        Some(d) => has_body(d)
+        None => false
+    }
+    if !bodied { return false }
     // A FREE generic function of another module (`alloc_buf[T]`, 274.11 E.10
     // step 4c-2): the shell's spelling of its instances is not novac's to
     // compute, so a generic one with a BODY is always this unit's to make --
     // under OUR name, which cannot collide with the shell's. An `extern` one
     // has no body to make it from.
+    // A NON-generic one is this unit's to make only when the shell does not
+    // carry it (task 4: std's private `is_ascii_ws`, called from the body of
+    // `str @trim_ascii`, was printed under the shell's name the shell lacks).
     if !fd.has_recv && !is_ty(fd.owner) {
-        return fd.tparam_cnt > 0 && has_body(@handed.decl_of(row) ?? return false)
+        return fd.tparam_cnt > 0 || !@interop.has(c_free_symbol(@, row))
     } else {
         // A method or a static method: the shell is asked below.
     }
     // A STATIC method (`Vec[T].new`) is spelled off its owner type, a method
     // off its receiver (274.11 E.10 step 4c-2).
     if is_ty(fd.owner) {
-        return has_body(@handed.decl_of(row) ?? return false) && !@interop.has(c_static_symbol(@, row, args))
+        return !@interop.has(c_static_symbol(@, row, args))
     } else {
         // A method: its receiver is parameter zero.
     }

@@ -1,0 +1,71 @@
+module prog
+
+// A VALUE RECORD (`type Pt value {..}`, D32: a value record is passed and
+// bound by copy) as the value of a `match` arm, in each position a `match`
+// value takes: an initializer, an argument, an array element, a constructor
+// field, the right of `=`. After the copy the source is written to, and the
+// copy must keep the OLD number. A reference record (`Rc`) is the control:
+// it aliases, so the new number shows through.
+type Pt value { n int }
+
+type Rc { n int }
+
+type Holder { p Pt }
+
+fn found(k int) -> Option[int] {
+    if k > 0 { Some(k) } else { None }
+}
+
+fn keep(p Pt) -> Pt => p
+
+fn main() {
+    ro k = 3
+    mut live = Pt { n: 1 }
+    mut other = Pt { n: 2 }
+    ro s = match k {
+        3 => live
+        _ => other
+    }
+    ro xs = [match found(k) {
+        Some(v) => live
+        None => other
+    }]
+    ro h = Holder { p: match k {
+        3 => live
+        _ => other
+    } }
+    ro kp = keep(match k {
+        3 => live
+        _ => other
+    })
+    mut t = Pt { n: 0 }
+    t = match k {
+        3 => live
+        _ => other
+    }
+    live.n = 11
+    println("init copy, norm 1")
+    println(s.n)
+    println("element copy, norm 1")
+    println(xs[0].n)
+    println("field copy, norm 1")
+    println(h.p.n)
+    println("argument copy, norm 1")
+    println(kp.n)
+    println("assign copy, norm 1")
+    println(t.n)
+    mut m = match k {
+        3 => other
+        _ => live
+    }
+    m.n = 99
+    println("source after writing the mut copy, norm 2")
+    println(other.n)
+    ro r = Rc { n: 5 }
+    ro ra = match k {
+        3 => r
+        _ => Rc { n: 6 }
+    }
+    println("reference record aliases (control), norm 5")
+    println(ra.n)
+}

@@ -1,0 +1,65 @@
+module match_value_forms.pos_1
+
+// A `match` IS A VALUE WHEREVER AN `if` VALUE STANDS (sweep 9): a call and a
+// method argument, an array element, a constructor field, the right of `=` and
+// of `+=`, the scrutinee of another match, an argument of a call `println`
+// prints. Each arm's value names the arm, so an arm placed in the wrong slot
+// prints a different line; arms bind (`Some(v) => v`) and end in blocks.
+type Tally { n int }
+
+fn Tally @plus(k int) -> int => @n + k
+
+fn twice(n int) -> int => n * 2
+
+fn found(k int) -> Option[int] {
+    if k > 0 { Some(k) } else { None }
+}
+
+fn main() {
+    ro k = 3
+    println(twice(match k {
+        3 => 30
+        _ => 40
+    }))
+    ro acc = Tally { n: 100 }
+    println(acc.plus(match found(k) {
+        Some(v) => v * 10
+        None => -1
+    }))
+    ro xs = [match k {
+        1 => 1
+        _ => {
+            ro base = 7
+            base + k
+        }
+    }, 5]
+    println(xs[0])
+    ro a = Tally { n: match found(0) {
+        Some(v) => v
+        None => 77
+    } }
+    println(a.n)
+    mut x = 0
+    x = match k {
+        3 => 300
+        _ => 0
+    }
+    println(x)
+    x += match k {
+        2 => 1
+        _ => 2
+    }
+    println(x)
+    ro r = match match k {
+        3 => 1
+        _ => 2
+    } {
+        1 => "one"
+        _ => "other"
+    }
+    println(r)
+    println(twice(match found(-5) {
+        Some(v) => v
+        None => 21
+    }))
+}

@@ -1,0 +1,96 @@
+=== PROGRAM
+     1	module prog
+     2	
+     3	// D484: call arguments are evaluated left to right, observably.
+     4	// The middle argument is a `match` whose scrutinee and arm have effects.
+     5	fn say(n int) -> int {
+     6	    println(n)
+     7	    n
+     8	}
+     9	
+    10	fn three(a int, b int, c int) -> int => a * 100 + b * 10 + c
+    11	
+    12	fn main() {
+    13	    println("case 1, norm 1 2 3 then 123")
+    14	    println(three(say(1), match say(2) {
+    15	        2 => 2
+    16	        _ => 0
+    17	    }, say(3)))
+    18	    println("case 2, norm 4 5 6 then 456")
+    19	    println(three(say(4), match 1 {
+    20	        1 => say(5)
+    21	        _ => 0
+    22	    }, say(6)))
+    23	    println("case 3, norm 7 8 9 then 789 (if for control)")
+    24	    println(three(say(7), if say(8) > 0 { 8 } else { 0 }, say(9)))
+    25	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=0
+oracle run rc=0
+=== SUBJECT: novac emit prog.nv
+novac emit rc=0
+--- Carina's C, the body of main
+static nova_unit nova_fn_main_impl(void) {
+    nova_print_str(_novac_strlit_0);
+    nova_print_newline();
+    nova_int _novac_l2 = novac_fn_prog_say__nova_int__to_nova_int(((nova_int)2LL));
+    nova_int _novac_l1 = (nova_int){0};
+    int _novac_matched_t0 = 0;
+    if (!_novac_matched_t0 && ((_novac_l2 == 2LL))) {
+        _novac_l1 = ((nova_int)2LL);
+    _novac_matched_t0 = 1;
+    }
+    if (!_novac_matched_t0 && (true)) {
+        _novac_l1 = ((nova_int)0LL);
+    _novac_matched_t0 = 1;
+    }
+    nova_print_int(novac_fn_prog_three__nova_int__nova_int__nova_int__to_nova_int(novac_fn_prog_say__nova_int__to_nova_int(((nova_int)1LL)), _novac_l1, novac_fn_prog_say__nova_int__to_nova_int(((nova_int)3LL))));
+    nova_print_newline();
+    nova_print_str(_novac_strlit_1);
+    nova_print_newline();
+    nova_int _novac_l4 = ((nova_int)1LL);
+    nova_int _novac_l3 = (nova_int){0};
+    int _novac_matched_t1 = 0;
+    if (!_novac_matched_t1 && ((_novac_l4 == 1LL))) {
+        _novac_l3 = novac_fn_prog_say__nova_int__to_nova_int(((nova_int)5LL));
+    _novac_matched_t1 = 1;
+    }
+    if (!_novac_matched_t1 && (true)) {
+        _novac_l3 = ((nova_int)0LL);
+    _novac_matched_t1 = 1;
+    }
+    nova_print_int(novac_fn_prog_three__nova_int__nova_int__nova_int__to_nova_int(novac_fn_prog_say__nova_int__to_nova_int(((nova_int)4LL)), _novac_l3, novac_fn_prog_say__nova_int__to_nova_int(((nova_int)6LL))));
+    nova_print_newline();
+    nova_print_str(_novac_strlit_2);
+    nova_print_newline();
+    nova_int _novac_l5 = (nova_int){0};
+    if (((nova_int)((novac_fn_prog_say__nova_int__to_nova_int(((nova_int)8LL))) > (((nova_int)0LL))))) {
+        _novac_l5 = ((nova_int)8LL);
+    } else {
+        _novac_l5 = ((nova_int)0LL);
+    }
+    nova_print_int(novac_fn_prog_three__nova_int__nova_int__nova_int__to_nova_int(novac_fn_prog_say__nova_int__to_nova_int(((nova_int)7LL)), _novac_l5, novac_fn_prog_say__nova_int__to_nova_int(((nova_int)9LL))));
+    nova_print_newline();
+    return NOVA_UNIT;
+}
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+=== STDOUT, line by line: oracle | Carina
+  1  case 1, norm 1 2 3 then 123| case 1, norm 1 2 3 then 123
+  2  1                       | 2
+  3  2                       | 3
+  4  3                       | 1
+  5  123                     | 123
+  6  case 2, norm 4 5 6 then 456| case 2, norm 4 5 6 then 456
+  7  4                       | 5
+  8  5                       | 6
+  9  6                       | 4
+ 10  456                     | 456
+ 11  case 3, norm 7 8 9 then 789 (if for control)| case 3, norm 7 8 9 then 789 (if for control)
+ 12  7                       | 8
+ 13  8                       | 9
+ 14  9                       | 7
+ 15  789                     | 789
+=== VERDICT: DIFFERENT stdout

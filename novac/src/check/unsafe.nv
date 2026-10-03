@@ -25,12 +25,21 @@ fn Checker mut @type_unsafe(e Node) -> () {
     ro uk = branch_children(e)
     assert(uk.len() >= 2, "check: an unsafe block without its body reached typing")
     ro ops_before = @unsafe_ops
+    // A refusal INSIDE the block is its one cause: the operation it refused
+    // may be the one that needed the context, so "unused" would be a second
+    // diagnostic, and a guess (registry: the cascade under an instance body,
+    // `"ABC".eq_ignore_ascii_case(..)` -- an unknown field, then E_UNSAFE_UNUSED).
+    ro out_before = @out.len()
     @unsafe_depth += 1
     ro mark = @scope.mark()
     ro bt = @type_arm_block_value(uk[1])
     @scope.release(mark)
     @unsafe_depth -= 1
-    if @unsafe_ops == ops_before {
+    // So is a name read POISONED (its initializer was refused earlier): the
+    // operation on it was skipped in silence, not found absent (`to_ascii_lower`
+    // made from std's body: `[]u8.new(cap: n)` refused, then
+    // `unsafe { out.into_str_unchecked() }` called "unused").
+    if @unsafe_ops == ops_before && @out.len() == out_before && !reads_poisoned(uk[1], @scope) {
         @reject_first_leaf_of(uk, UNSAFE_UNUSED_MSG)
         return
     } else {

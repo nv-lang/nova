@@ -1,0 +1,21 @@
+module vec_equality.pos_2
+
+// `==` AND `!=` ON TWO `[]int` -- a vector the shell carries no concrete
+// `equal` for. Until the sweep-9 merge this was neg_1, a refusal "in the instance
+// of `equal`": the branch's own door made the instance from std's body, which
+// lends each element through a closure. Main's door for vector `==` (registry
+// 1573, strarm) takes the same call through the row the resolver finds, and
+// novac compiles it byte-for-byte with the oracle -- so the refusal it pinned
+// is gone, and the fixture holds the behaviour instead. Equal, unequal by one
+// element and by length: a stub answering one constant (the erased
+// `Nova_Vec_method_equal` of registry 1643) cannot pass all three.
+fn same(a []int, b []int) -> bool => a == b
+
+fn main() {
+    println(same([1, 2], [1, 2]))
+    println(same([1, 2], [1, 3]))
+    println(same([1, 2], [1, 2, 3]))
+    ro a = [4, 5]
+    ro b = [4, 5]
+    println(a != b)
+}

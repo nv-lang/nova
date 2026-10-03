@@ -1,3 +1,0 @@
-module hp.alpha
-
-export type Id u8

@@ -1,9 +1,11 @@
 // D55 (реестр 221.1 №114 б) NEG: `m.insert(key, val)` generic call-arg
 // position on `HashMap[str, JsonValue]` — `val`'s DECLARED param type is the
-// receiver's own generic `V`, substituted here to `JsonValue`. `42`
-// (IntFamily) doesn't lift into ANY `JsonValue` unary variant (`Num` wants
-// `f64`, a different D55 "obvious single-wrapper" род) — a genuinely
-// incompatible value. Before this window's fix `check_instance_overload`
+// receiver's own generic `V`, substituted here to `JsonValue`. A `char`
+// doesn't lift into ANY `JsonValue` unary variant (no variant has a `char`
+// payload) — a genuinely incompatible value. (Until #1638 the carrier was the
+// integer literal `42`; `JsonValue` has an `Int(int)` variant now, which an
+// integer literal lifts into legitimately — the property kept, the carrier
+// changed.) Before this window's fix `check_instance_overload`
 // only ever reported `Compat::Narrowing` for such a param — a `Compat::Bad`
 // verdict here (assignable's own single-wrap fallback tried and failed) was
 // silently DROPPED (assumed "already caught by the arity/category
@@ -21,6 +23,6 @@ import std.collections.hash_map.{HashMap}
 
 fn d114_neg_insert() -> HashMap[str, JsonValue] {
     mut m HashMap[str, JsonValue] = HashMap[str, JsonValue].new()
-    m.insert("n", 42)
+    m.insert("n", 'x')
     return m
 }

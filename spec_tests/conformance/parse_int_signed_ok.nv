@@ -29,3 +29,25 @@ test "i64 min (overflow guard: -9223372036854775808 is tricky)" {
         Err(_) => assert(false, "expected Ok")
     }
 }
+
+// #1698 (found by #1638): the cell above stopped one short of int.MIN, and
+// int.MIN itself was refused as BelowMin -- the engine accumulated the
+// magnitude, which for int.MIN has no positive `int`.
+test "int.MIN itself parses; one past either end is refused" {
+    match "-9223372036854775808".to_int() {
+        Ok(n) => assert(n == int.MIN)
+        Err(_) => assert(false, "expected Ok(int.MIN)")
+    }
+    match "-9223372036854775809".to_int() {
+        Ok(_) => assert(false, "expected Err(BelowMin)")
+        Err(e) => assert(e == ParseIntError.BelowMin)
+    }
+    match "9223372036854775808".to_int() {
+        Ok(_) => assert(false, "expected Err(AboveMax)")
+        Err(e) => assert(e == ParseIntError.AboveMax)
+    }
+    match "-80000000".to_int(radix: 16) {
+        Ok(n) => assert(n == -2147483648)
+        Err(_) => assert(false, "expected Ok(-0x80000000)")
+    }
+}

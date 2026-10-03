@@ -1,8 +1,0 @@
-module hp
-
-import ./lexer.{Token}
-
-fn main() {
-    ro t = Token { kind: 1, text: "x" }
-    println(t.text)
-}

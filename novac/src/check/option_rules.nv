@@ -33,9 +33,10 @@ import ../lex.{Token}
 import ../tree.{Node, NodeKind}
 import ../names.{DeclId}
 import ../types.{TyId, no_ty, is_ty}
-import ../builtins.{TypeKind}
+import ../builtins.{TypeKind, RESULT_SUM}
 import ../sem.{CalleeTarget, VariantRow, raw_vrow, decl_of_ty, decl_index_of_ty, identity_slots, ArgSpec}
-import ../sem.{FnRow, raw_row, bind_slots, call_arg_at, expr_leaf_name, variants_named, is_arg_node}
+import ../sem.{FnRow, raw_row, bind_slots, call_arg_at, expr_leaf_name, variants_named, is_arg_node, c_struct}
+import ../sem.{variant_sum_count, branch_children, call_callee_text}
 
 /// A bare variant of a generic sum with nothing around it to say which
 /// instance it is.
@@ -43,6 +44,9 @@ const BARE_GENERIC_VARIANT_MSG = "a bare `None` here has no type to take: it sta
 
 /// A payload the walk could not type, so the sum's parameter stays unknown.
 const GENERIC_PAYLOAD_UNTYPED_MSG = "outside the subset: the type argument of this sum cannot be inferred from the payload -- its type is not decided here (E2-b3)"
+
+/// When a `Result` instance the shell lacks arrives (`no_shell_instance_msg`).
+const RESULT_ARRIVES = "novac emits no `Result` instance of its own yet (E2-b3)"
 
 /// A variant called with the wrong number of payload values.
 const VARIANT_ARITY_MSG = "this variant takes a different number of payload values than the call gives"
@@ -59,6 +63,8 @@ fn Checker @variant_sum_is_generic(v VariantRow) -> bool {
 /// decision. A non-generic sum's constructor is the row itself; a generic
 /// sum's constructor is the instance its payload fixes.
 fn Checker mut @type_variant_call(e Node, kids []Node, v VariantRow) -> () {
+    // SILENT-OK: the door just refused by the payload type's name, and the walk stops.
+    if @refused_lost_payload(kids, v) { return }
     ro vbefore = @out.len()
     // The tail's expectation does not reach INTO a call: `f(None)` in a tail
     // is not the fn's own return.
@@ -123,6 +129,23 @@ fn Checker mut @type_generic_variant_call(e Node, kids []Node, v VariantRow, arg
         }
         k += 1
     }
+    // A parameter NO payload slot names (`E` of `Ok(x)`, `T` of `Err(e)`) is
+    // the POSITION's: the declared return at a tail or a `return` operand
+    // names the instance, as it does for a bare `None` (registry 1632 --
+    // `Ok(..)` / `Err(..)` of a `Result` were refused everywhere, std's
+    // `[]u8 @to_str` among them). A payload-fixed slot keeps the payload's
+    // type: if the two differ, the return's own door says so.
+    if @expects_sum(vd.sum_id) {
+        for i in 0..subst.len() {
+            if !is_ty(subst[i]) {
+                subst[i] = @ctx.tys.arg(@value_expect, i)
+            } else {
+                // Fixed by a payload slot.
+            }
+        }
+    } else {
+        // No instance named by the position: the payload alone decides.
+    }
     for s in subst {
         if !is_ty(s) {
             @report_first_leaf_of(kids, GENERIC_PAYLOAD_UNTYPED_MSG)
@@ -130,6 +153,17 @@ fn Checker mut @type_generic_variant_call(e Node, kids []Node, v VariantRow, arg
         }
     }
     ro inst = @ctx.tys.app(DeclId(decl_index_of_ty(@ctx, vd.sum_id)), subst)
+    // A `Result` instance is the SHELL's struct (`NovaRes_<T>_<E>`, interop --
+    // emit_applied_sum.nv): novac emits none of its own, so an instance the
+    // shell does not carry is refused by its name here, never printed as a
+    // type nothing declares (`Ok("x")` for a `Result[str, int]`).
+    if td.name == RESULT_SUM && !@ctx.interop.has_body(c_struct(@ctx, inst)) {
+        ro inst_c = c_struct(@ctx, inst)
+        @report_first_leaf_of(kids, no_shell_instance_msg(RESULT_SUM, "`${inst_c}`", RESULT_ARRIVES))
+        return
+    } else {
+        // Option (novac spells its instances) or a Result the shell carries.
+    }
     @record(e, inst)
     @chan.record_callee(e.id_of(), CalleeTarget.CalleeVariant(v), subst, identity_slots(args.len()))
 }
@@ -176,10 +210,23 @@ fn Checker mut @type_bare_variant_value(e Node, t Token, v VariantRow) -> () {
 /// leaves it untyped -- the key then holds an unknown slot, which the lookup
 /// matches by every other position -- and `@type_deferred_args` types it once
 /// the callee is decided.
+///
+/// A variant name SEVERAL sums declare is deferred the same way, bare or called
+/// (`take(Ok(3))` beside a file sum with an `Ok`): D478 rule 2 resolves it by
+/// the expected type, and an argument's expected type is its parameter's
+/// (registry 1647).
 fn Checker @is_deferred_variant(c Node) -> bool {
+    if c.kind_of() == NodeKind.Call {
+        ro cn = call_callee_text(branch_children(c))
+        if @scope.is_bound(cn) || @ctx.defs.declared_by_file(cn) { return false }
+        return variant_sum_count(@ctx, cn) > 1
+    } else {
+        // A bare name, or no variant at all: below.
+    }
     if c.kind_of() != NodeKind.Name { return false }
     ro nm = expr_leaf_name(c)
     if @scope.is_bound(nm) { return false }
+    if variant_sum_count(@ctx, nm) > 1 { return true }
     ro (v, n) = variants_named(@ctx, nm)
     if n != 1 { return false }
     @ctx.variant_rows[raw_vrow(v)].payload_cnt == 0 && @variant_sum_is_generic(v)

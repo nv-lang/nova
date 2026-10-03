@@ -304,7 +304,7 @@ fn Lowerer mut @lower_stmt(st Node) -> () {
         // (registry 1619): laid down first and read back by the printer.
         @hoist_operand(src)
         @hoist_block_forms(kids[0])
-        if src.kind_of() == NodeKind.IfExpr {
+        if src.kind_of() == NodeKind.IfExpr || src.kind_of() == NodeKind.MatchExpr {
             ro sty = @out.type_if_known(src.id_of())
             if is_ty(sty) {
                 match @lower_value_source(src, sty) {
@@ -794,11 +794,11 @@ fn Lowerer mut @lower_println(call Node) -> () {
             match @lower_value_source(c, ty) {
                 Some(l) => @ir.output(Operand.Place(l), ty)
                 None => {
-                    // A block form nested in the argument goes first (registry 1619), and
-                    // so does a sealed argument of a call printed here (`println(f(if ..))`,
-                    // part 7 of p274-carina-k1: the emit ice "outside the subset").
-                    @hoist_sealed_args(c)
+                    // A block form nested in the argument goes first (registry 1619),
+                    // and so does a call's own `if`/`unsafe` argument, as in `@lower_place`
+                    // (sweep 6: `println(f(if c { a } else { b }))` iced in emit).
                     @hoist_block_forms(c)
+                    @hoist_sealed_args(c)
                     @ir.output(Operand.Tree(c), ty)
                 }
             }

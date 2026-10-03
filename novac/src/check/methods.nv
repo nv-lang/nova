@@ -26,6 +26,7 @@ import ../builtins.{TypeKind}
 import ../diag.{ice}
 import ../names.{raw_decl}
 import ../resolve.{FnLookup}
+import ../sem.{is_arg_node, arg_expr_of}
 import ../sem.{LitArg, branch_children, ArgSpec, ArgClass, CallForm, FnRow, CalleeTarget, raw_row, no_row, bind_slots}
 import ../sem.{is_arg_value_kind, leaf_text}
 import ../sem.{c_method_symbol, c_overload_symbol, impl_of_proto, ty_source_name, decl_of_ty}
@@ -65,7 +66,7 @@ fn Checker @method_arity_key(kids []Node, recv_t TyId) -> []ArgSpec {
     // then `b.m()` selects the `mut @m` overload, which is the precedent the
     // whole mode axis generalizes from (P14 rule 2).
     ro recv_it = impl_of_proto(@ctx, recv_t)
-    out.push(ArgSpec { type_id: recv_it, cls: arg_class(kids[0], @scope), name: "", lit: LitArg.NotLit })
+    out.push(ArgSpec { type_id: recv_it, cls: recv_class(arg_class(kids[0], @scope)), name: "", lit: LitArg.NotLit })
     out.append(unknown_args(kids, 3, @scope))
     out
 }
@@ -84,6 +85,22 @@ fn Checker @method_arg_row(kids []Node, rmark int) -> FnRow {
         FnUnknown | FnOverloaded(_) => no_row()
     }
 }
+
+/// The arity key of a method call with the receiver's class RAISED to `mut`:
+/// asked by `@refuse_method_call` after the call fit nothing, so that a fit
+/// names the receiver's class -- a `ro` binding, a field of one, or `@` in a
+/// method that is not `mut` (P14, D488) -- as the whole fault.
+fn Checker @mut_receiver_key(kids []Node, key []ArgSpec) -> []ArgSpec {
+    mut k = @method_arity_key(kids, key[0].type_id)
+    k[0] = ArgSpec { type_id: k[0].type_id, cls: ArgClass.ArgMut, name: k[0].name, lit: k[0].lit }
+    k
+}
+
+/// The refusal of a method call no declaration novac was handed carries.
+const NO_SUCH_METHOD_MSG = "outside the subset: this type has no such method in the declarations novac was handed"
+
+/// The refusal of a `mut` method called through a place that is not mutable.
+const MUT_METHOD_ON_RO_PLACE_MSG = "the receiver of a `mut` method needs a mutable place -- this one is a `ro` binding, a field of one, or `@` in a method that is not `mut`; a `ro` receiver is a copy or a read-only view and a change through it is lost (P14, D488); write `mut` on the binding or on the method"
 
 /// Every position of this key carries a decided type. What separates a real
 /// D84 ambiguity from a set novac merely could not narrow: an untyped slot
@@ -172,9 +189,17 @@ fn Checker mut @refuse_method_call(e Node, t Token, key []ArgSpec) -> () {
             // slot -- type or class.
             if raw_row(single_row) >= 0 {
                 @refuse_arg_type(kids, single_row, key, CallForm.MethodCall)
+            } else if key[0].cls == ArgClass.ArgMut {
+                @refuse(t, NO_SUCH_METHOD_MSG)
             } else {
-                @refuse(t,
-                    "outside the subset: this type has no such method in the declarations novac was handed")
+                // The method may be there -- a `mut @` one -- with the receiver
+                // no mutable place (registry 1577, D488): asked once more with
+                // the receiver raised to `mut`. A fit is a LANGUAGE error, where
+                // "no such method" sent the reader after a name that exists.
+                match @res.lookup(@ctx.fns, @ctx.tys, t.text, @mut_receiver_key(kids, key), CallForm.MethodCall) {
+                    FnUnknown => @refuse(t, NO_SUCH_METHOD_MSG)
+                    FnOverloaded(_) | FnFound(_) => @reject(t, MUT_METHOD_ON_RO_PLACE_MSG)
+                }
             }
         }
         // Several rows take this receiver and this many arguments, and none of
@@ -292,7 +317,11 @@ fn Checker mut @judge_method_lookup(e Node, t Token, key []ArgSpec, found FnLook
                 // THE OVERLOAD, not the name (registry 1558): `sb.append(1)` is
                 // `..._append__nova_int`, not the `str` overload's bare name.
                 ro sym = c_overload_symbol(@ctx, row, key[0].type_id, []TyId.new())
-                if @ctx.interop.has(sym) {
+                // OR MADE FROM ITS BODY when the shell lacks it (task 4, the
+                // shell-str group: `s.replace(a, b)`, `k.is_dir()` -- std's body
+                // was handed and novac compiles it), exactly as a generic
+                // method's instance is made; `Ctx @instantiates` is the one door.
+                if @ctx.interop.has(sym) || @ctx.instantiates(row, []TyId.new()) {
                     @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new(),
                         bind_slots(@ctx.fns.params, mfd.param_off, mfd.param_cnt, key))
                     @record(e, mfd.ret_id)
@@ -458,13 +487,15 @@ fn Checker mut @type_method_call(e Node) -> () {
     mut argi = 1
     mut i = 0
     for c in kids {
-        if i > 2 && is_arg_value_kind(c.kind_of()) && !@is_deferred_variant(c) {
+        if i > 2 && is_arg_node(c) && !@is_deferred_variant(c) {
             // A bare `None` (`@is_deferred_variant`) is typed after the lookup,
-            // by its parameter (registry 1565).
+            // by its parameter (registry 1565). A NAMED argument's value is
+            // typed like a positional one (registry 1630), and binds by name:
+            // no positional expectation (part 7 of p274-carina-k1).
             ro want = if c.kind_of() == NodeKind.NamedArg { no_ty() } else { @param_expect(arg_row, argi, pre) }
-            @type_arg_expecting(c, want)
+            @type_arg_expecting(arg_expr_of(c), want)
             argi += 1
-        } else if i > 2 && is_arg_value_kind(c.kind_of()) {
+        } else if i > 2 && is_arg_node(c) {
             // A deferred `None` still holds its parameter's place.
             argi += 1
         } else {

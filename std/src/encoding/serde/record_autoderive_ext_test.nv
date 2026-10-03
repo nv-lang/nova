@@ -99,3 +99,18 @@ test "encode int < 2^53 -> Ok, round-trips (representable)" {
     ro dec = json_decode[IntBox](enc)!!
     assert(dec.v == 9007199254740991)
 }
+
+#impl(Serialize + Deserialize)
+type FloatBox value { ro x f64 }
+
+// #1638: an integer field is written as an integer -- `3`, not `3.0` (the
+// encoder used to build every number as an f64; once the JSON value keeps
+// `Int` and `F64` apart, an f64-built integer printed `3.0`). A float field
+// keeps its float text. Pinned as TEXT: the round-trip cells above stay green
+// either way, which is why the regression was invisible to them.
+test "encode pins the number text: int field -> 3, f64 field -> 2.5 / 3.0 (#1638)" {
+    assert(json_encode(IntBox{ v: 3 })!! == "{\"v\":3}")
+    assert(json_encode(IntBox{ v: -17 })!! == "{\"v\":-17}")
+    assert(json_encode(FloatBox{ x: 2.5 })!! == "{\"x\":2.5}")
+    assert(json_encode(FloatBox{ x: 3.0 })!! == "{\"x\":3.0}")
+}

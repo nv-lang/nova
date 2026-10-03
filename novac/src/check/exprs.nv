@@ -44,7 +44,7 @@ import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, 
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
 import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
 import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor}
-import ../sem.{ty_source_name, c_shell_method, digit_index}
+import ../sem.{ty_source_name, digit_index}
 import ../sem.{interp_slices, const_init_interpolates}
 import ../types.{TyId, no_ty, is_ty}
 import ../sem.{coalesce_payload, option_payload, is_coalesce_return}
@@ -196,6 +196,23 @@ fn Checker mut @type_expr(e Node) -> () {
         @type_try(e)
     } else if k == NodeKind.Unsafe {
         @type_unsafe(e)
+    } else if k == NodeKind.MatchExpr {
+        // A `match` AS A VALUE where an `if` value stands -- an argument, an
+        // element, a field, the right of an assignment, a scrutinee (sweep 9):
+        // the arms through the one match door, the agreed type recorded for the
+        // lowering's temporary, exactly as an initializer's match is.
+        ro mark = @out.len()
+        @type_match(e)
+        if @out.len() == mark {
+            ro mt = type_of(e, @ctx, @scope, @chan)
+            if is_ty(mt) {
+                @record(e, mt)
+            } else {
+                // Untypeable after a clean walk: no type to hand the lowering.
+            }
+        } else {
+            // Refused inside an arm, by name: nothing to record.
+        }
     } else if k == NodeKind.IfExpr {
         // A CALL ARGUMENT is a legal position too (registry #TBD, the B14
         // door widened the same way B13's record constructor was): this
@@ -518,7 +535,11 @@ fn Checker mut @type_expr(e Node) -> () {
                     // where it names another type. The admitted case walks the
                     // SAME path as an unambiguous one -- one door per root
                     // (274.4).
-                    ro picked = if vn > 1 {
+                    // Asked whenever ANY sum declares the name (registry
+                    // 1647): a file sum's `None` beside the language's Option
+                    // one counts as one visible here (the file's set wins the
+                    // count), yet the position may expect the other.
+                    ro picked = if vn > 0 {
                         variant_named_in(@ctx, t.text, @value_expect)
                     } else {
                         no_vrow()

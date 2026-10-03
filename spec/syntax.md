@@ -597,7 +597,8 @@ Do not use them for other purposes.
   is only known at run time. The form `Vec[T consume Cleanup[E]]` declares its
   own cleanup that walks the elements and, per
   [D432](decisions/02-types.md#d432), becomes affine — you may forget it, the
-  compiler inserts the call.
+  compiler inserts the call. A newtype over a must-consume type (`type Tx2 Tx`)
+  is the same one-value wrapper and must-consume too (amendment 2026-10-03).
 - **An empty `Vec` and an empty slice allocate nothing** ([D232 amendment
   2026-09-24](decisions/02-types.md#d232-vect--nova-native-generic-growable-array)): `Vec[T].new()`
   and a zero-length `[]T` have a null data pointer and `cap == len == 0`; memory is allocated only
@@ -912,7 +913,7 @@ stay in the `priv(<scope>)` family.
 
 **Canonical field access — same-name property methods via
 arity-based overloading** (D84 + D117):
-read `@x() -> T` (0 arguments), write `mut @x(v T) -> @` (in a method without `mut @` the fields of `@` are read-only -- `E_READONLY_FIELD`, D35 amendment 2026-10-02)
+read `@x() -> T` (0 arguments), write `mut @x(v T) -> @` (in a method without `mut @` the fields of `@` are read-only -- `E_READONLY_FIELD`, D35 amendment 2026-10-02 -- and a mutating method on a field chain of `@` (`@items.push(x)`) is `E_PARAM_NOT_MUT`, no `#share` exception; a `*mut` field is the wall, D35 amendment #1636)
 (1 argument, fluent — receiver return automatic, D409, no need to write
 `return @`/`=> @` in the body):
 
@@ -1249,6 +1250,11 @@ amendment 2026-10-01): in `Aa(n, s) | Bb(s, n)` the name `n` is taken from where
 matching alternative bound it, not from its position in the first one. Different
 name sets are `E_OR_PATTERN_BINDING_MISMATCH`; different types of one name are an
 error too.
+
+**A variant pattern names a variant of the scrutinee's type** ([D486](decisions/03-syntax.md#d486) §2,
+amendment 2026-10-03): a variant of its sum, `Some`/`None` of `Option`, `Ok`/`Err` of `Result`,
+a named tuple's own constructor. A variant of another sum -- in any arm, with `_` or without,
+nested in a payload, and in `if Pat = expr` -- is `E_MATCH_FOREIGN_VARIANT`.
 
 **A pattern's literal has the scrutinee's type** ([D486](decisions/03-syntax.md#d486)
 §2, amendment 2026-10-01): a string literal over a `str` (compared by content), a char

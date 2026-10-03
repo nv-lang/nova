@@ -3,6 +3,8 @@
 // Verifies basic encode-then-decode + decode-then-encode equivalence
 // for null/bool/num/str values.
 
+// #1638: integer values are built with `JsonValue.int(..)` -- an `F64`
+// (`JsonValue.num(1.0)`) now prints as `1.0`, distinct from the integer `1`.
 module spec_tests.conformance
 import std.encoding.json.{JsonValue, Json}
 
@@ -25,13 +27,13 @@ test "encode bool false" {
 }
 
 test "encode num integer" {
-    ro v = JsonValue.num(42.0)
+    ro v = JsonValue.int(42)
     ro encoded = v.to_str()
     assert(encoded == "42")
 }
 
 test "encode num negative" {
-    ro v = JsonValue.num(-17.0)
+    ro v = JsonValue.int(-17)
     ro encoded = v.to_str()
     assert(encoded == "-17")
 }
