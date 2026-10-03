@@ -17,7 +17,7 @@ module novac.check
 import ../tree.{Node}
 import ../types.{TyId, no_ty, is_ty}
 import ../sem.{pattern_shape, PatShape, pattern_mode_word}
-import ../sem.{variant_in_sum, no_vrow, is_vrow, variants_named, VariantRow}
+import ../sem.{variant_in_sum, no_vrow, is_vrow, VariantRow}
 
 /// WHERE a pattern stands (D486 §4): the three columns of the position table plus
 /// the match arm, which takes every form. Named by the caller once and handed down
@@ -89,7 +89,7 @@ fn Checker @name_in_pattern(nm str, ty TyId) -> NameInPattern {
     } else {
         // No scrutinee type yet: the sums below answer for every one of them.
     }
-    ro (vfirst, vn) = variants_named(@ctx, nm)
+    ro (vfirst, vn) = @variants_named_here(nm)
     if vn >= 1 { return NameInPattern.NameForeignVariant(vfirst) }
     NameInPattern.NameBinder
 }

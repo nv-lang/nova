@@ -33,7 +33,7 @@ import ../sem.{gate_names, field_range_of, raw_frow}
 import ../sem.{c_method_symbol}
 import ../builtins.{DISPLAY_METHOD}
 import ../sem.{raw_crow}
-import ../sem.{variant_range_of, VariantRow, variants_named, variant_named_in}
+import ../sem.{variant_range_of, VariantRow, variant_named_in}
 import ../resolve.{FnLookup}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
@@ -526,7 +526,7 @@ fn Checker mut @type_expr(e Node) -> () {
                     // B6, #964): one sum declares it -> that variant; several ->
                     // the bare name is ambiguous and refused by name; none -> an
                     // unknown name.
-                    ro (vfound, vn) = variants_named(@ctx, t.text)
+                    ro (vfound, vn) = @variants_named_here(t.text)
                     ro is_variant = vn >= 1
                     // D478 (owner, 2026-09-16): two sums declaring one name is
                     // not a verdict. The POSITION'S EXPECTATION is asked, and

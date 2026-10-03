@@ -41,7 +41,7 @@ import ../builtins.{HANDLER_CTOR}
 import ../sem.{FnRow, raw_row}
 import ../sem.{branch_children, leaf_kind, leaf_text, generic_names, tparam_slot, param_type_at, field_type_at}
 import ../sem.{param_name_at}
-import ../sem.{expr_leaf_name, variants_named}
+import ../sem.{expr_leaf_name}
 import ../sem.{repr_is_one_name}
 import ../types.{is_ty}
 
@@ -229,7 +229,7 @@ fn Checker mut @report_if_ctor_type_undeclared(kids []Node) -> bool {
         // A written type name: the declaration rule below.
     }
     if @type_name_is_declared(name, []str.new()) { return false }
-    if variants_named(@ctx, name).1 > 0 { return @report_if_ctor_variant_wrong(kids) }
+    if @variants_named_here(name).1 > 0 { return @report_if_ctor_variant_wrong(kids) }
     @report_first_leaf_of(kids, undeclared_type_msg(name))
     true
 }

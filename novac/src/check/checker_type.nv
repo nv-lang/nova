@@ -72,6 +72,13 @@ type Checker {
     /// node->row table (`decl_fn_row`) cannot answer for them: it would answer
     /// None, or worse, the row of whichever own declaration shares the id.
     inst_row FnRow
+    /// The SUMS the body's own module declares, by name -- set for a HANDED
+    /// body only (a std body this unit instantiates), empty for the file's own.
+    /// A bare variant name resolves to its own module's sum first, as the
+    /// oracle does: in `LinkedList.from_array`'s body `Empty` is `LinkedList`'s,
+    /// not the private `Slot` of hash_map that declares one too (registry 1678).
+    /// For the file, "its own" is what `variants_named` already asks.
+    home_sums NameTable
     /// The body being typed returns its receiver (`-> @`, D409): a bare
     /// `return` is `return @`, and the tail is a statement.
     ret_self bool

@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Role: a bare variant name inside a HANDED body resolves in that body's own
+//   module first (registry 1678), as the oracle reads it: std's
+//   `LinkedList.from_array` writes `mut acc = Empty`, and hash_map's private
+//   `Slot` declares an `Empty` too -- the instance was refused as ambiguous
+//   ("declared by more than one sum in scope").
+// Used by: nova test novac/src/pipeline (the module-test batch of the gate).
+// Guarded by: check-novac-module-tests, check-novac-file-size.py.
+//
+// Judged by the diagnostic COUNT, not by an assert message: a message that is
+// not a literal is lost by the test runner (registry 1688).
+
+module novac.pipeline
+
+/// Two handed modules: `std.ha` keeps a PRIVATE sum with an `Empty`, `std.hb`
+/// exports its own sum with an `Empty` and a body that names it bare.
+fn handed_variant_std() -> []str {
+    mut std = std_decls()
+    std.push("module std.ha\ntype Hs enum\n    | Empty\n    | Full(int)\nexport fn ha_n() -> int => 1\n")
+    ro lb = "module std.hb\nexport type Lb enum\n    | Empty\n    | Node(int)\n"
+    std.push("${lb}export fn fresh() -> Lb {\n    mut a = Empty\n    a\n}\n")
+    std
+}
+
+test "a handed body's bare variant is its own module's sum's (1678)" {
+    ro (d, c) = compile_to_c("import std.hb.{Lb, fresh}\nfn main() {\n ro x = fresh()\n println(1)\n}",
+                             handed_variant_std())
+    assert(d.len() == 0)
+    assert(c.contains("fresh"))
+}
+
+test "the program's own bare variant is still ambiguous between two handed sums" {
+    // CONTROL: the program's file declares neither sum, so both are candidates
+    // and nothing fixes the choice -- the refusal stays where it belongs.
+    ro d = compile("import std.hb.{Lb}\nfn main() {\n mut a = Empty\n println(1)\n}", handed_variant_std())
+    assert(d.len() > 0)
+}
