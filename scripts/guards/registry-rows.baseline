@@ -1531,6 +1531,9 @@
 # 2026-10-03, integrator nova-20: rows -> 1614, max -> 1700 (rows 1699 (ghost variant in a pattern reaches C) and 1700 (extern void in a value arm) filed; 1694-1698 issued to cloud sessions and the assistant, reserved).
 # 2026-10-03, cloud session p274-carina-k1 (merge of origin/main dc2617993, part 10 sync): rows -> 1618, max -> 1700 (rows 1673 and 1679 arrive filed closed, 1689 and 1690 open; all four dropped from gaps).
 # 2026-10-03, cloud session p274-carina-k1 (part 11): rows -> 1620, max -> 1702 (rows 1701 filed closed, 1702 open, numbered by the integrator).
+# 2026-10-03, cloud session p274-carina-k1 (part 12): rows -> 1621, max -> 1708 (row 1708 filed open, numbered by the integrator; 1703-1707 live on main and arrive with the next sync -- reserved in gaps until then).
+rows=1621
+max=1708
 rows=1620
 max=1702
 rows=1618
@@ -2289,7 +2292,7 @@ stale_gaps=0
 # 2026-10-03, merge of origin/main dc2617993 into p274-carina-k1 (part 10 sync): №1673, №1679, №1689
 #   and №1690 ARRIVE with this branch (1673 and 1679 filed closed, 1689 and 1690 open, route the
 #   assistant) -- taken out of gaps= by the same merge that brings their rows.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1644-1647,1650,1652-1654,1658-1660,1664,1666-1669,1671-1672,1674-1678,1686-1688,1692,1694-1698
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1644-1647,1650,1652-1654,1658-1660,1664,1666-1669,1671-1672,1674-1678,1686-1688,1692,1694-1698,1703-1707
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding
