@@ -564,7 +564,8 @@
 # 2026-10-03 (integrator): D156 amendment -- a newtype over a must-consume type is must-consume (owner's word).
 # 2026-10-03 (integrator, merge of p1649): D486 s2 amendment -- a variant pattern names a variant of the scrutinee's type (row 1649; agreed by the integrator).
 # 2026-10-03 (integrator): D326 R3 amendment -- heap-ness is a property of the representation (owner's word).
-#   spec-queue: 173
+# 2026-10-03 (integrator): D314/D85 -- the cleanup outcome at a `?` exit; D341 -- serialize field order (owner's word).
+#   spec-queue: 174
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,

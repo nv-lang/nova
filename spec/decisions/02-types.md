@@ -17874,6 +17874,10 @@ Format-agnostic typed serialization. Protocols `Serialize` / `Deserialize` (cont
 
 `#impl(Serialize + Deserialize)` opt-in — the 7th/8th members of the auto-derive family (`Equal`/`Hash`/`Clone`/`Compare`/`Display`/`Debug`); `is_builtin_protocol` extended. **SUM is supported (Plan 180 Ф.2-sum, externally-tagged — see D345);** the record-path shapes below apply to record/named-tuple types. Emitted shapes:
 - `@serialize`: `s.begin_struct(name, N)?`; per field `s.struct_field("k")?; @field.serialize(s)?`; `s.end_struct()` — UNIFORM memberwise push (like `@debug`).
+- **Field order — amendment 2026-10-03 (owner's decision): the order of DECLARATION.** `@serialize` writes the
+  fields in the order the record declares them (a record variant: its fields after the tag, in their declared
+  order); `.deserialize` accepts any order. As Rust serde, Go `encoding/json`, Swift `Codable`, Python
+  `dataclasses.asdict`: the output is predictable and the author controls it by ordering the fields.
 - `.deserialize`: per field `mut sub = d.enter_field[_or_null]("k")?` then TYPE-DIRECTED read — scalar → `sub.deser_X()?` (instance); record/`Vec`/`HashMap` → `<T>.deserialize(sub)?` (static); `Option[T]` → inline `if sub.is_null()? { None } else { Some(<inner>) }` (built-in `Option` does not dispatch a user static method). Then `Ok(Type{ f1, f2, … })`.
 - Field-eligibility: primitive / `Option`·`Vec`·`HashMap[str,_]` (recurse) / `#impl(P)` / provides-method — else `E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL` (named field; no silent drop). `HashMap` key must be `str` (Q16). priv fields serialize (structural synth). User method wins (D77).
 - **Injection ordering**: serde synth is injected BEFORE type-check (its bodies call other methods whose return types codegen's annotation-free `infer_expr_c_type` cannot always resolve; type-checking annotates them). Non-serde protocols inject AFTER check as before (some bodies, e.g. `@display`'s `w.write_str`, are intentionally not type-checkable). Bound satisfaction: a `#impl(P)` type satisfies `[T P]` for a built-in auto-derivable P even before the method is materialized.

@@ -12332,6 +12332,8 @@ runtime-точку (`nova_scope_exit`).
 | `panic(msg)` | `Panic(msg)` |
 | `interrupt v` | `Failure(reason)` (спека core.nv:130; выравнивает impl — consume-монолит СЕЙЧАС обходил on_exit на interrupt, defer-frame его оборачивает) |
 | `break` / `continue` (loop-body exit, [D432](02-types.md#d432) §6 Plan 217) | `Success` — не несут throw/panic-исход; тело итерации завершается штатно, cleanup бежит с тем же исходом, что normal end-of-scope |
+| `?` над `Result` — ранний выход с `Err(e)` (амендмент 2026-10-03, решение владельца) | `Failure(e)` — payload сам `Err`-значение, ровно то, что `?` пробрасывает дальше; тот же исход, что у `throw e` |
+| `?` над `Option` — ранний выход с `None` (амендмент 2026-10-03, решение владельца) | `Success` — ошибки нет: `None` значит «значения нет», выход штатный, класть в `Failure` нечего |
 
 Субсумирует три ретрактнутые формы (D189): `errdefer{…}` ≡ `defer(o){ match o { Failure(_)|Panic(_) => …, Success => () } }`;
 `okdefer{…}` ≡ `defer(o){ match o { Success => …, _ => () } }`; `defer |r| {…}` ≡ эта форма.
