@@ -26,8 +26,7 @@
 - **В ПОЛЁТЕ:** ничего. **ПОРЯДОК для интегратора:** сперва теги polaris 0.2.4 и 0.1.10, ПОТОМ
   слияние №1638 — на нынешних тегах флагман aggregator, claude-limits и examples-strict падают в C
   (`NOVA_TAG_JsonValue_Num`); с polaris на ветках все три собраны (замер 05:50–05:55).
-  Деревья polaris `D:/Sources/nv-lang/nova-polaris-p1638` и `…-p1638-01` (worktree пакета) оставлены
-  до тегов; убрать `git -C D:/Sources/nv-lang/nova-polaris worktree remove <путь>`.
+  Деревья polaris `nova-polaris-p1638` и `…-p1638-01` (worktree пакета, рядом с его репозиторием) убраны интегратором 2026-10-03 после тегов v0.2.4/v0.1.10.
 - **НЕЗАКОММИЧЕНО:** ничего (`git status --porcelain` пуст в nova-p1642).
 - **ДАЛЬШЕ:** новая сессия — `/assistant`, спросить очередь у интегратора и окна Карины. Открытые
   находки: несуществующий вариант в образце (`Shape.Blob(x)`, `Some(JsonValue.Num(x))`) чекер
