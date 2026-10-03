@@ -1,0 +1,105 @@
+module must_consume.pos_14
+
+// AN AFFINE VALUE MOVED ON SOME PATHS ONLY (D432 s5): its `@cleanup` runs behind a
+// drop flag -- zero at the binding, set by each move of it, tested where its scope
+// is left: a branch that releases it and one that keeps it, a `consume` argument, an
+// early `return`, a move on the right of `&&` (it runs on some paths only), match
+// arms, a binding inside a loop. novac sets the flag inside the expression that
+// moves the value. Behaviour byte-for-byte with the oracle (novac-e1-smoke).
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @release() -> () {
+    println("release ${@id}")
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) -> () {
+    println("cleanup ${@id}")
+}
+
+fn take(consume t Lk) -> () {
+    t.release()
+}
+
+fn ok(consume t Lk) -> bool {
+    t.release()
+    true
+}
+
+fn branch(n int) -> () {
+    consume a = Lk { id: n }
+    if n > 1 {
+        a.release()
+    }
+    println("after ${n}")
+}
+
+fn arg(n int) -> () {
+    consume a = Lk { id: n }
+    if n > 1 {
+        take(a)
+    } else {
+        println("kept")
+    }
+}
+
+fn early(n int) -> int {
+    consume a = Lk { id: n }
+    if n > 5 {
+        a.release()
+    }
+    if n > 7 {
+        return 1
+    }
+    0
+}
+
+fn short(n int) -> () {
+    consume a = Lk { id: n }
+    if n > 1 && ok(a) {
+        println("both")
+    }
+    println("short ${n}")
+}
+
+fn arms(n int) -> () {
+    consume a = Lk { id: n }
+    match n {
+        1 => a.release()
+        2 => take(a)
+        _ => println("none")
+    }
+    println("arms ${n}")
+}
+
+fn looped() -> () {
+    for k in 0..3 {
+        consume a = Lk { id: 40 + k }
+        if k == 1 {
+            a.release()
+            continue
+        }
+        if k == 2 {
+            break
+        }
+        println("pass ${k}")
+    }
+}
+
+fn main() {
+    branch(1)
+    branch(2)
+    arg(1)
+    arg(2)
+    println(early(3))
+    println(early(6))
+    println(early(9))
+    short(1)
+    short(2)
+    arms(1)
+    arms(2)
+    arms(3)
+    looped()
+}

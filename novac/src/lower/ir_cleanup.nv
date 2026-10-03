@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Donor: rustc MIR's drop elaboration (`rustc_mir_transform::elaborate_drops`) -- a
 //   value still owned where its scope is left gets a `Drop` on that edge, and only
-//   there; Go's `defer` for "placed by the compiler at each exit". NOT taken: the
-//   drop FLAG of a value owned on some paths only (D432 s5) -- the checker refuses
-//   that case by name, so every call placed here is unconditional.
+//   there, and a value owned on some paths only gets a DROP FLAG, cleared by its move
+//   and tested at the drop (D432 s5); Go's `defer` for "placed by the compiler at each
+//   exit". NOT taken: the flag of a `consume` parameter -- the checker refuses it.
 // Role: the auto-`@cleanup` calls of the lowered body (D432, step 5 of the D133
 //   track): the checker's flow decides WHERE a value with an effect-free
 //   `@cleanup` is still owned when its scope is left (`CheckOut.cleanups`), and
 //   the lowering places one call per such value at that exit -- before a `return`
-//   or a `break`/`continue` jumps, at a block's end after its value is placed.
+//   or a `break`/`continue` jumps, at a block's end after its value is placed; a
+//   value owned on some paths only behind its drop flag; and D476's temporaries, after
+//   the call they were handed to.
 // Used by: lower/lowering.nv (`@lower_return`, the LoopCtl arm, the two block
 //   doors, `@lower_bind`); emit_c/emit_flow.nv prints `Stmt.Cleanup`.
 // Guarded by: the fixtures novac/fixtures/must_consume/ through
@@ -28,13 +30,25 @@ export type CleanupCall value {
     local Local /// the binding's local, `no_local()` for a parameter
     name str /// the parameter's name when `local` is none
     row FnRow /// the `@cleanup` callable
+    gone Local /// the binding's drop flag (D432 s5): the call runs while it is zero; `no_local()` = unconditional
 }
 
-/// A `consume` binding was laid down as `l`: remembered, so an exit below can name
-/// it (the same linear table `hoisted_at` is -- a body binds few such values).
-export fn FnBuilder mut @remember_binding(bind NodeId, l Local) -> () {
+/// A `consume` binding was laid down as `l`, with drop flag `gone` (or none):
+/// remembered, so an exit below can name it (the same linear table `hoisted_at` is --
+/// a body binds few such values).
+export fn FnBuilder mut @remember_binding(bind NodeId, l Local, gone Local) -> () {
     @bound_at.push(raw_node(bind))
     @bound_to.push(l)
+    @bound_gone.push(gone)
+}
+
+/// The drop flag of the binding statement whose raw NodeId is `bind` (D432 s5),
+/// `no_local()` when it has none -- the printer asks at every move of it.
+export fn FnBuilder @gone_of(bind int) -> Local {
+    for i in 0..@bound_at.len() {
+        if @bound_at[i] == bind { return @bound_gone[i] }
+    }
+    no_local()
 }
 
 /// The local a binding statement laid down, `no_local()` when it is not one of this
@@ -80,7 +94,7 @@ fn Lowerer mut @d476_args(call Node) -> []CleanupCall {
             ro r = @out.cleanups[k]
             if r.site != call.id_of() { break }
             if r.binder == c.id_of() {
-                out.push(CleanupCall { local: t, name: "", row: r.row })
+                out.push(CleanupCall { local: t, name: "", row: r.row, gone: no_local() })
             } else {
                 continue
             }
@@ -124,6 +138,8 @@ fn Lowerer mut @lower_cleanups(site NodeId) -> () {
     for k in first..@out.cleanups.len() {
         ro r = @out.cleanups[k]
         if r.site != site { break }
-        @ir.cleanup_call(CleanupCall { local: @ir.bound_local(r.binder), name: r.name, row: r.row })
+        ro gone = if r.cond { @ir.gone_of(raw_node(r.binder)) } else { no_local() }
+        assert(!r.cond || gone != no_local(), "lower: a conditional cleanup of a binding laid down with no drop flag")
+        @ir.cleanup_call(CleanupCall { local: @ir.bound_local(r.binder), name: r.name, row: r.row, gone })
     }
 }

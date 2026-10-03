@@ -1,11 +1,12 @@
 module must_consume.neg_35
 
-// AN AFFINE VALUE CONSUMED ON ONE PATH ONLY: legal Nova -- the oracle cleans the
-// other path behind a runtime drop flag (D432 s5) -- and the oracle compiles it.
-// novac places only unconditional calls, so the form is refused BY NAME with its
-// stage -- never cleaned twice or not at all.
+// A `consume` PARAMETER OF AN AFFINE TYPE MOVED ON ONE PATH ONLY: it is cleaned as a
+// binding is (D432 rev-2), behind a drop flag on the other path (s5). novac lays a
+// binding's flag at the binding statement and has none for a parameter, so the form
+// is refused BY NAME with its stage -- never cleaned twice or not at all. (The
+// oracle demands the parameter be consumed, registry 221.1 No.1696.)
 
-// NOVAC_EXPECT consumed on only some paths before its `@cleanup` would run (the drop flag, D432 s5)
+// NOVAC_EXPECT consumed on only some paths before its `@cleanup` would run, as a `consume` parameter (its drop flag, D432 s5)
 
 type Lk consume {
     id int
@@ -19,8 +20,7 @@ fn Lk consume @cleanup(outcome ScopeOutcome) -> () {
     println("cleanup ${@id}")
 }
 
-fn run(n int) -> () {
-    consume a = Lk { id: n }
+fn run(consume a Lk, n int) -> () {
     if n > 0 {
         a.release()
     }
@@ -28,5 +28,5 @@ fn run(n int) -> () {
 }
 
 fn main() {
-    run(1)
+    run(Lk { id: 1 }, 1)
 }

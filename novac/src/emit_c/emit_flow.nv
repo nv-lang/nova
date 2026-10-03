@@ -465,7 +465,9 @@ fn Emitter mut @emit_cleanup(c CleanupCall) -> () {
     ro outcome_t = @ctx.ty_of_name(SCOPE_OUTCOME_TYPE) ?? no_ty()
     ro success = variant_named_in(@ctx, SCOPE_OUTCOME_SUCCESS, outcome_t)
     assert(raw_vrow(success) >= 0, "emit: an auto-cleanup reached the emitter with no `ScopeOutcome.Success` to pass")
-    @body.append("    (void)(${c_callable(@ctx, c.row, []TyId.new())}(${target}, ${c_maker(@ctx, success)}()));\n")
+    // Behind a drop flag (D432 s5): only while no move of the binding set it.
+    ro guard = if raw_local(c.gone) >= 0 { "if (!${@lo.ir.decl_of(c.gone).name}) " } else { "" }
+    @body.append("    ${guard}(void)(${c_callable(@ctx, c.row, []TyId.new())}(${target}, ${c_maker(@ctx, success)}()));\n")
 }
 
 /// `prev = slot; slot = handler` -- the displaced handler is DECLARED here, its

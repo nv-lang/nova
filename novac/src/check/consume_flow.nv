@@ -283,30 +283,51 @@ fn Checker mut @flow_scope_end(mut fl ConsumeFlow, mark int, site Node) -> () {
 }
 
 /// An affine value at an exit (D432): owned on every path, it is cleaned there --
-/// recorded by `@flow_record_cleanups`; owned on SOME paths, it needs the drop flag
-/// of s5; its `@cleanup` with effects needs them propagated (s1, amendment
-/// 2026-08-04). Those two are refused by name.
+/// recorded by `@flow_record_cleanups`; owned on SOME paths, the call is guarded by
+/// the binding's drop flag (s5), set by every move of it (`@flow_take`). Refused by
+/// name: a `@cleanup` with effects (their propagation, s1 amendment 2026-08-04), and
+/// a `consume` PARAMETER owned on some paths (its flag would live outside a body
+/// statement, where the lowering lays none).
 fn Checker mut @flow_settle_auto(mut fl ConsumeFlow, i int) -> () {
     if fl.state[i] == VarState.VsConsumed { return }
-    if fl.state[i] == VarState.VsMaybe {
-        @flow_stop(fl.at[i], "consumed on only some paths before its `@cleanup` would run (the drop flag, D432 s5)", fl)
-    } else if fl.autos.eff[fl.auto_at[i]] {
+    if fl.autos.eff[fl.auto_at[i]] {
         @flow_stop(fl.at[i], "cleaned by a `@cleanup` with effects (their propagation, D432 s1 amendment)", fl)
+    } else if fl.state[i] == VarState.VsMaybe && fl.origin[i].kind_of() == NodeKind.FnDecl {
+        @flow_stop(fl.at[i], "consumed on only some paths before its `@cleanup` would run, as a `consume` parameter (its drop flag, D432 s5)", fl)
     } else {
-        // Owned on every path, an effect-free cleanup: recorded at the site.
+        // An effect-free cleanup, owned on every path or behind the drop flag:
+        // recorded at the site.
     }
 }
 
 /// The auto-`@cleanup` calls at exit `site` (D432): every affine value bound since
-/// `mark` still owned there, innermost first -- recorded once (a loop's second pass
-/// reaches the same site).
-fn Checker mut @flow_record_cleanups(fl ConsumeFlow, mark int, site Node) -> () {
-    if fl.stopped || @chan.cleanup_first(site.id_of()) >= 0 { return }
+/// `mark` still owned there on some path, innermost first -- conditional when owned on
+/// SOME paths (s5). Recorded once: a loop's second pass reaches the same site, and
+/// where it finds a value owned on some paths only, the first pass's call for it turns
+/// conditional; a value the first pass found moved on every path has no call there to
+/// turn, and is refused by name.
+fn Checker mut @flow_record_cleanups(mut fl ConsumeFlow, mark int, site Node) -> () {
+    if fl.stopped { return }
+    if @chan.cleanup_first(site.id_of()) >= 0 {
+        for i in mark..fl.owned_ty.len() {
+            if fl.auto_at[i] < 0 || fl.state[i] != VarState.VsMaybe { continue }
+            if !@chan.mark_cond(site.id_of(), fl.origin[i].id_of()) {
+                @flow_stop(fl.at[i], "moved on every path of a loop's first pass and on some paths of a later one, before its `@cleanup` (the drop flag, D432 s5)", fl)
+                return
+            } else {
+                continue
+            }
+        }
+        return
+    } else {
+        // The site's first pass: its rows below.
+    }
     mut i = fl.owned_ty.len() - 1
     while i >= mark {
         ro a = fl.auto_at[i]
-        if a >= 0 && fl.state[i] == VarState.VsLive {
-            @chan.record_cleanup(site.id_of(), fl.origin[i].id_of(), fl.nm[i], fl.autos.rows[a])
+        if a >= 0 && fl.state[i] != VarState.VsConsumed {
+            @chan.record_cleanup(site.id_of(), fl.origin[i].id_of(), fl.nm[i], fl.autos.rows[a],
+                                 fl.state[i] == VarState.VsMaybe)
         } else {
             // Consumed, or strictly linear: nothing to clean here.
         }
@@ -636,6 +657,8 @@ fn Checker mut @flow_expr(e Node, mut fl ConsumeFlow, moved bool) -> () {
         @flow_call(e, fl)
     } else if is_branch_kind(k) {
         @flow_branch(e, fl, moved)
+    } else if is_short_circuit(e) {
+        @flow_short_circuit(e, fl)
     } else if k == NodeKind.RecordCtor {
         @flow_record_ctor(e, fl)
     } else if k == NodeKind.Block {
@@ -695,6 +718,13 @@ fn Checker mut @flow_take(e Node, i int, moved bool, forced bool, mut fl Consume
         @flow_stop(e, "consumed inside a `with`, a `spawn`, a handler or an assignment", fl)
     } else if moved {
         fl.state[i] = VarState.VsConsumed
+        // An affine binding's move sets its drop flag (D432 s5) -- read where the
+        // binding is cleaned on some paths only, ignored elsewhere.
+        if fl.auto_at[i] >= 0 && is_node(e.id_of()) {
+            @chan.record_gone(e.id_of(), fl.origin[i].id_of())
+        } else {
+            // Strictly linear, or a use with no identity: no flag to set.
+        }
     } else {
         // Used, and still owned.
     }
@@ -799,7 +829,7 @@ fn Checker mut @flow_record_temp(call Node, arg Node, row FnRow) -> () {
     } else {
         // The call's first temporary.
     }
-    @chan.record_cleanup(call.id_of(), arg.id_of(), "", row)
+    @chan.record_cleanup(call.id_of(), arg.id_of(), "", row, false)
 }
 
 /// The arguments of a call that names no callable row: each moves into what is built

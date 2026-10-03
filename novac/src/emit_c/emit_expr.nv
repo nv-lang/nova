@@ -20,7 +20,7 @@ import ../sem.{effect_op_dispatcher_c}
 import ../lower.{no_local}
 
 import ../lex.{TokenKind}
-import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, raw_node, is_node}
+import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, raw_node, is_node, no_node}
 import ../diag.{ice}
 import ../sem.{raw_crow, carrier_of, c_callable, c_method_symbol, c_overload_symbol, Ctx}
 import ../sem.{CheckOut, vec_op_c, c_static_symbol}
@@ -230,6 +230,25 @@ fn Emitter mut @emit_expr(e Node) -> () {
         return
     } else {
         // Not laid down, or the defining value: printed from the tree below.
+    }
+    // A MOVE of an affine binding that has a drop flag (D432 s5) sets it as it moves:
+    // `(flag = 1, x)` -- inside the expression, so a move on one side of `&&` sets it
+    // only when it runs.
+    if e.id_of() != @gone_root {
+        ro bind = @out.gone_binder(e.id_of())
+        ro gone = if bind >= 0 { @lo.ir.gone_of(bind) } else { no_local() }
+        if gone != no_local() {
+            @gone_root = e.id_of()
+            @body.append("(${@lo.ir.decl_of(gone).name} = 1, ")
+            @emit_expr(e)
+            @body.append(")")
+            @gone_root = no_node()
+            return
+        } else {
+            // No flag to set: printed below.
+        }
+    } else {
+        // The move inside its own flag set: printed bare below.
     }
     ro k = e.kind_of()
     if k == NodeKind.Lit {

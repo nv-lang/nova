@@ -139,6 +139,7 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
         lt.push("")
     }
     consume e = Emitter { src_name, ctx, out, reach, next_tmp: 0, ret_self: false, hoist_root: no_node(),
+                          gone_root: no_node(),
                           recv_copy: false, recv_ptr_value: false,
                           lo: Lowerer { ctx, out, ir: FnBuilder.new(no_ty()) },
                           lit_tmp: lt, body: StringBuilder.new(), hlits: []Node.new(), cur_lit: 0 - 1,

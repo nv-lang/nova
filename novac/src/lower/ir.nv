@@ -72,7 +72,9 @@ export type LocalKind enum
 /// The nine were then walked ONE BY ONE, because 9-3 would have given the right answer
 /// by accident: the third `declare_zeroed` (`lowering.nv:604`) zeroes not a temporary of
 /// its own but the `dest` parameter handed to it, and for another caller it zeroes
-/// nothing. Three sites reach `Zeroed` -- two call the door themselves, and `:869` hands
+/// nothing. (A fourth site since 2026-10-03: the drop flag of an affine binding, D432
+/// s5, `@lower_bind` -- zeroed at its binding, set inside the expression that moves it,
+/// never assigned by a statement.) Three sites reach `Zeroed` -- two call the door themselves, and `:869` hands
 /// its local to `lower_match`, which is the half of the old sentence that was TRUE and is
 /// kept here: the path through a door exists, and a reader who forgets it will print the
 /// declaration of `:869` a second time. The remaining SIX live with `DeclAt.FirstAssign`.
@@ -480,6 +482,7 @@ export type FnBuilder {
     frames int /// interrupt frames this body has opened -- the source of their names
     bound_at []int /// `consume` binding statements laid down, by node id, parallel to `bound_to` (ir_cleanup.nv)
     bound_to []Local /// the local each of `bound_at` laid down
+    bound_gone []Local /// the drop flag of each of `bound_at` (D432 s5), `no_local()` when it is cleaned unconditionally wherever it is
 }
 
 /// A NODE WHOSE VALUE IS ALREADY IN A LOCAL, or `no_local()` (F65).
@@ -527,7 +530,8 @@ export fn FnBuilder.new(ret_ty TyId) -> FnBuilder {
     mut hoisted_to = []Local.new()
     FnBuilder { locals, blocks, cur, cur_id: BlockId(0), open_arms, arm_start, switches: 0,
                 hoisted_at, hoisted_to, scopes: []WithScope.new(), loops: 0, frames: 0,
-                bound_at: []int.new(), bound_to: []Local.new() }
+                bound_at: []int.new(), bound_to: []Local.new(),
+                bound_gone: []Local.new() }
 }
 
 /// The block the next statement lands in.

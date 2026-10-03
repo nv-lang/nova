@@ -18,7 +18,7 @@
 module novac.check
 
 import ../tree.{Node, NodeKind, is_node}
-import ../sem.{branch_children, expr_leaf_name, ty_source_name}
+import ../sem.{branch_children, expr_leaf_name, ty_source_name, leaf_kind}
 import ../sem.{iflet_body_at, iflet_else_at, arm_body_at, loop_ctl_is_break}
 import ../builtins.{is_true_literal}
 import ../lex.{TokenKind}
@@ -147,6 +147,31 @@ fn Checker mut @flow_branch(n Node, mut fl ConsumeFlow, moved bool) -> () {
     }
     if fl.stopped { return }
     @flow_come_out(fl, joined, paths, entry)
+}
+
+/// `a && b`, `a || b`: the right side runs on SOME paths only -- a branch with no
+/// `else`, and its state joins the left side's. Walked as any operand until
+/// 2026-10-03, so a move on the right counted as made on every path: an affine value
+/// moved there was left uncleaned where the left side skipped it (found by the drop
+/// flag's probe -- the oracle cleaned it, novac did not).
+fn Checker mut @flow_short_circuit(e Node, mut fl ConsumeFlow) -> () {
+    ro kids = branch_children(e)
+    @flow_expr(kids[0], fl, false)
+    if fl.stopped { return }
+    ro entry = flow_states_copy(fl.state)
+    @flow_expr(kids[2], fl, false)
+    if fl.stopped { return }
+    mut joined = []VarState.new()
+    flow_join(joined, fl.state, 0)
+    flow_join(joined, entry, 1)
+    fl.state = joined
+}
+
+/// Is `e` a short-circuit operator -- `&&` or `||`?
+fn is_short_circuit(e Node) -> bool {
+    if e.kind_of() != NodeKind.Bin { return false }
+    ro op = leaf_kind(branch_children(e)[1])
+    op == TokenKind.AmpAmp || op == TokenKind.PipePipe
 }
 
 /// After a join: the paths that came out decide the state; when none did, the code

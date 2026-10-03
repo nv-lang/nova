@@ -386,9 +386,17 @@ fn Lowerer mut @lower_bind(st Node) -> () {
     // general expression -- each spelling the declaration line itself.
     ro l = @ir.named(vtype, vname)
     @lower_place(init, l)
-    // An exit below may clean this value (D432): the statement names its local.
+    // An exit below may clean this value (D432): the statement names its local -- and,
+    // cleaned on some paths only, its drop flag (s5): zero here, set by each move.
     if @out.cleanups.len() > 0 {
-        @ir.remember_binding(st.id_of(), l)
+        mut gone = no_local()
+        if @out.has_cond(st.id_of()) {
+            gone = @ir.temp(@ctx.prims.int_id)
+            @ir.declare_zeroed(gone)
+        } else {
+            // Cleaned unconditionally wherever it is cleaned: no flag.
+        }
+        @ir.remember_binding(st.id_of(), l, gone)
     } else {
         // Nothing is cleaned in this file: no exit asks.
     }
