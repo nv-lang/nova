@@ -268,6 +268,17 @@ const INTERP_DOLLAR_B u8 = 0x24  // $
 const INTERP_LBRACE_B u8 = 0x7B  // {
 const INTERP_RBRACE_B u8 = 0x7D  // }
 
+/// HOW MANY BYTES an escape at `b[i]` (a backslash, `i + 1 < n`) consumes: two, or THREE
+/// for `\` + `\r\n` -- D467 s3's line continuation on a file whose own line ending is
+/// CRLF is ONE escape, not `\` escaping `\r` with the real `\n` left over (a scanner
+/// that stops on a newline then stops inside the literal). ONE DOOR for every scanner of
+/// a quoted literal: the plain string, the interpolated string's fragments after a slot
+/// and before it, and the char literal (registry 1691 -- the fragment scanner had its
+/// own `i += 2`, so a CRLF source failed to parse where the same LF source passed).
+#realtime nogc
+fn escape_len(b []u8, i int, n int) -> int =>
+    if b[i + 1] == B_CR && i + 2 < n && b[i + 2] == B_LF { 3 } else { 2 }
+
 /// Whitespace byte: space, tab, CR, LF.
 export fn is_space(b u8) -> bool => b == (' ' as u8) || b == B_TAB || b == B_CR || b == B_LF
 
@@ -630,7 +641,7 @@ export fn lex(src str) -> []Token {
                     break
                 }
                 if b[i] == B_BACKSLASH && i + 1 < n {
-                    i += 2
+                    i += escape_len(b, i, n)
                 } else if b[i] == INTERP_DOLLAR_B && i + 1 < n && b[i + 1] == INTERP_LBRACE_B {
                     open_again = true
                     break
@@ -751,18 +762,8 @@ export fn lex(src str) -> []Token {
                     // must NOT flag interpolation (E1 review p.4 -- the old
                     // loop inspected the already-escaped byte).
                     //
-                    // CRLF (D467 §3's `\` + line-break continuation, on a
-                    // file whose own line ending is `\r\n`): consuming just
-                    // `\` and `\r` here left a BARE `\n` right after -- and
-                    // the newline check above ends the scan on exactly that
-                    // byte, before the closing quote. `\` + `\r\n` is ONE
-                    // continuation, not `\` escaping `\r` with the real
-                    // newline left over to trip the scan.
-                    if b[i + 1] == B_CR && i + 2 < n && b[i + 2] == B_LF {
-                        i += 3
-                    } else {
-                        i += 2
-                    }
+                    // `\` + `\r\n` is ONE continuation on a CRLF file (`escape_len`).
+                    i += escape_len(b, i, n)
                 } else {
                     // Interpolation is detected, not consumed: the refusal is
                     // decided after the literal closes.
@@ -779,7 +780,7 @@ export fn lex(src str) -> []Token {
                 mut j = start + 1
                 while j < i {
                     if b[j] == B_BACKSLASH && j + 1 < i {
-                        j += 2
+                        j += escape_len(b, j, i)
                     } else if b[j] == INTERP_DOLLAR_B && j + 1 < i && b[j + 1] == INTERP_LBRACE_B {
                         toks.push(Token { kind: TokenKind.StrFrag,
                             leading: if sfs == start { leading } else { src[sfs..sfs] },
@@ -831,7 +832,7 @@ export fn lex(src str) -> []Token {
                 } else if b[i] == B_BACKSLASH && i + 1 < n {
                     // The escape consumes BOTH bytes and is not interpreted
                     // here: `'\''` closes on the THIRD quote, not the second.
-                    i += 2
+                    i += escape_len(b, i, n)
                 } else {
                     i += 1
                 }

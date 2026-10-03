@@ -62,6 +62,24 @@ test "string literal's line-continuation backslash survives a CRLF source (regis
     assert(reserialize(toks) == src)
 }
 
+test "one source in LF and in CRLF lexes to the same tokens -- an interpolated string's continuations too (registry 1691)" {
+    // `\` + the line break inside an INTERPOLATED string, before a slot and
+    // after one. The fragment after `}` was gathered by its own loop, which
+    // took `\` + `\r` as the escape and stopped on the bare `\n` left over:
+    // a CRLF file failed to parse where its LF twin passed (the self-build's
+    // pipeline/handed_free_test.nv). One door now (`escape_len`).
+    ro lf = "ro s = \"a\\\nb \${x}c\\\nd \${y}e\"\nro t = 1"
+    ro crlf = "ro s = \"a\\\r\nb \${x}c\\\r\nd \${y}e\"\r\nro t = 1"
+    ro a = lex(lf)
+    ro b = lex(crlf)
+    assert(a.len() == b.len(), "the CRLF source lexed to another number of tokens")
+    for i in 0..a.len() {
+        assert(a[i].kind == b[i].kind, "token ${i} differs between LF and CRLF")
+        assert(b[i].kind != TokenKind.ErrorTok, "an error token in the CRLF source")
+    }
+    assert(reserialize(b) == crlf)
+}
+
 test "unknown byte becomes ErrorTok, not a panic, and keeps its text" {
     // `?` used to stand for "a byte no rule claims" here -- it no longer
     // does (registry #1264: a lone `?` lexes its own `TokenKind.Question`

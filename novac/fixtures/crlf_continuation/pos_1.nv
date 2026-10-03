@@ -1,0 +1,17 @@
+module crlf_continuation.pos_1
+
+// A LINE CONTINUATION (`\` + the line break, D467 s3) in a plain string and in
+// an interpolated one, before a slot and after it. The file is stored with LF;
+// the CRLF probe (registry 1691) lexes its CRLF twin and needs the same C:
+// until sweep 13 the fragment after `}` stopped on the `\n` of `\r\n`.
+fn main() {
+    ro who = "world"
+    ro n = 3
+    println("plain \
+continues")
+    println("hello ${who}, \
+count ${n} \
+and done")
+    println("before \
+slot ${n}")
+}
