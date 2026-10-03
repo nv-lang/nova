@@ -44,6 +44,8 @@ type ConsumeFlow {
     auto_at []int /// per entry: its type's index in `autos` when the entry is cleaned where it is left (D432: a `consume x = e` binding or a `consume` parameter of an affine type), -1 = strictly linear
     origin []Node /// per entry: what bound it -- the `consume x = e` statement, the function for a parameter -- the key an exit's cleanup names it by
     autos AutoCleanups /// the file's affine types (D432)
+    fn_effects []str /// the effects the walked function declares -- an auto-cleanup's must be among them in an exported one (D432 s1 amendment)
+    fn_export bool /// the walked function is written under `export`: its effects are declared, never inferred (D28/D62)
     depth int /// how many `with`, `spawn`, handler bodies or assignments enclose the walk: inside one, nothing may change who owns what
     nest int /// how many arms, loop bodies or nested blocks enclose the walk: a tracked name as their value moves out of them
     dead bool /// this path has left (`return`, `break`, `continue`, a diverging call): what follows is not reached
@@ -95,6 +97,12 @@ fn empty_consume_msg(ty str) -> str =>
 fn consume_keyword_missing_msg(ty str) -> str =>
     "a value of must-consume type `${ty}` is bound with `ro` or `mut` -- bind it with `consume x = ...`, which is where its obligation starts (D133)"
 
+/// An exported function leaves undeclared an effect its auto-cleanup carries.
+fn cleanup_effect_msg(name str, eff str) -> str {
+    ro who = if name == "" { "this temporary" } else { "`${name}`" }
+    "${who} is cleaned where its scope ends, and its `@cleanup` carries the effect `${eff}`, which this exported function does not declare -- a cleanup's effects are the enclosing function's own (E_D432_CLEANUP_EFFECT_NOT_DECLARED, D432 s1 amendment 2026-08-04): declare `${eff}`, or consume the value before its scope ends"
+}
+
 /// THE ONE REFUSAL of what step 1 does not track yet, naming WHERE the value stands.
 fn untracked_consume_msg(where str) -> str =>
     "outside the subset: a value of a must-consume type ${where} is not tracked yet, so its obligation would go unchecked (274.7 B13)"
@@ -120,9 +128,10 @@ fn Checker mut @check_consume_flow(file Node) -> () {
             // At least one `consume` method: the type can be consumed.
         }
     }
+    ro exported = exported_fns_of(file)
     for d in file_decls(file) {
         if d.kind_of() != NodeKind.FnDecl { continue }
-        @flow_fn(d, kinds, autos)
+        @flow_fn(d, kinds, autos, node_among(exported, d))
     }
 }
 
@@ -132,7 +141,7 @@ fn Checker mut @check_consume_flow(file Node) -> () {
 fn Checker mut @check_consume_flow_instance(decl Node, body_file Node) -> () {
     ro kinds = @consume_kinds_of(body_file)
     if kinds.len() == 0 { return }
-    @flow_fn(decl, kinds, @auto_cleanups_of(body_file, kinds))
+    @flow_fn(decl, kinds, @auto_cleanups_of(body_file, kinds), node_among(exported_fns_of(body_file), decl))
 }
 
 /// The file's own `type X consume` declarations, as types.
@@ -184,7 +193,7 @@ fn is_kind_of(kinds []TyId, t TyId) -> bool {
 /// One function: its `consume` parameters of a must-consume type are owned from the
 /// start (the receiver of a `consume` method is the consumption itself, so `@` is not
 /// tracked), its body is walked, and whatever is still owned at its end is refused.
-fn Checker mut @flow_fn(f Node, kinds []TyId, autos AutoCleanups) -> () {
+fn Checker mut @flow_fn(f Node, kinds []TyId, autos AutoCleanups, exported bool) -> () {
     // SILENT-OK: a generic body is walked per INSTANCE (`@check_consume_flow_instance`), as it is typed.
     if @is_generic_decl(f) && @substs.len() == 0 { return }
     // An instance's own row, else the declaration's.
@@ -199,7 +208,8 @@ fn Checker mut @flow_fn(f Node, kinds []TyId, autos AutoCleanups) -> () {
     if fk.len() == 0 { return }
     mut fl = ConsumeFlow { kinds, names: NameTable.new(NamespaceId.NsLocals), nm: []str.new(),
                            owned_ty: []TyId.new(), at: []Node.new(), state: []VarState.new(), loose: []bool.new(),
-                           auto_at: []int.new(), origin: []Node.new(), autos,
+                           auto_at: []int.new(), origin: []Node.new(), autos, fn_effects: effect_names_of(f),
+                           fn_export: exported,
                            depth: 0, nest: 0, dead: false, loop_mark: -1, brk: []VarState.new(), brk_paths: 0,
                            cont: []VarState.new(), cont_paths: 0, forced: false, scope_call: f,
                            scope_ok: false, stopped: false }
@@ -290,8 +300,8 @@ fn Checker mut @flow_scope_end(mut fl ConsumeFlow, mark int, site Node) -> () {
 /// statement, where the lowering lays none).
 fn Checker mut @flow_settle_auto(mut fl ConsumeFlow, i int) -> () {
     if fl.state[i] == VarState.VsConsumed { return }
-    if fl.autos.eff[fl.auto_at[i]] {
-        @flow_stop(fl.at[i], "cleaned by a `@cleanup` with effects (their propagation, D432 s1 amendment)", fl)
+    if !@flow_cleanup_effects_ok(fl.at[i], fl.nm[i], fl.auto_at[i], fl) {
+        // Refused, by name or as a language error: tracking stopped.
     } else if fl.state[i] == VarState.VsMaybe && fl.origin[i].kind_of() == NodeKind.FnDecl {
         @flow_stop(fl.at[i], "consumed on only some paths before its `@cleanup` would run, as a `consume` parameter (its drop flag, D432 s5)", fl)
     } else {
@@ -667,8 +677,6 @@ fn Checker mut @flow_expr(e Node, mut fl ConsumeFlow, moved bool) -> () {
         @flow_scope_block(unsafe_block_of(e), fl)
     } else if is_compound_kind(k) {
         @flow_nested(e, fl)
-    } else if k == NodeKind.Try && flow_any_live(fl) {
-        @flow_stop(e, "left early by a `?` while it is still owned", fl)
     } else {
         // Any other form: its parts are used -- except that a must-consume value BUILT
         // here from its parts (a literal of several values, D133's `(a, b)` in a
@@ -685,6 +693,29 @@ fn Checker mut @flow_expr(e Node, mut fl ConsumeFlow, moved bool) -> () {
                 }
             }
         }
+        if k == NodeKind.Try {
+            @flow_try_exit(e, fl)
+        } else {
+            // No early exit in this form.
+        }
+    }
+}
+
+/// `x?` once its operand is walked: on the empty path it is an EXIT POINT -- D85
+/// makes it `return None` (`return Err(e)`) -- so the values owned there are judged
+/// as at a `return` (`@flow_exit`): a strictly linear one is D133's error, an affine
+/// one is cleaned there (D432). The path with a value goes on in the same state.
+/// Refused by name: a `?` inside a `with`, a `spawn` or a handler (it leaves their
+/// body, not the function), and one after a D476 temporary of the call it stands in
+/// was made (the temporary is no owned entry the exit could clean).
+fn Checker mut @flow_try_exit(e Node, mut fl ConsumeFlow) -> () {
+    if fl.stopped { return }
+    if fl.depth > 0 && flow_any_live(fl) {
+        @flow_stop(e, "left early by a `?` inside a `with`, a `spawn` or a handler", fl)
+    } else if fl.scope_ok && @chan.cleanup_first(fl.scope_call.id_of()) >= 0 {
+        @flow_stop(e, "left early by a `?` while a D476 temporary of the same call is alive", fl)
+    } else {
+        @flow_exit(fl, 0, e, "this `?`")
     }
 }
 
@@ -797,8 +828,8 @@ fn Checker mut @flow_fresh_in_view(e Node, call Node, mut fl ConsumeFlow) -> () 
         // Not an affine type: judged by name.
         @judge_fresh_in_view(e, t)
         fl.stopped = true
-    } else if fl.autos.eff[a] {
-        @flow_stop(e, "cleaned by a `@cleanup` with effects (their propagation, D432 s1 amendment)", fl)
+    } else if !@flow_cleanup_effects_ok(e, "", a, fl) {
+        // Refused, by name or as a language error: tracking stopped.
     } else if !embraced {
         @flow_stop(e, "handed to a view inside a larger expression (the D476 scope embracing that expression, s2)", fl)
     } else {
@@ -807,6 +838,40 @@ fn Checker mut @flow_fresh_in_view(e Node, call Node, mut fl ConsumeFlow) -> () 
         fl.forced = true
         @flow_expr(e, fl, true)
     }
+}
+
+/// The effects of affine type `a`'s `@cleanup`, called for the value `name` bound at
+/// `at` ("" for a D476 temporary), become the walked function's own (D432 s1
+/// amendment 2026-08-04, point 1: direct, not transitive). A private function
+/// takes them inferred (point 3); an exported one must declare each -- else the
+/// oracle's E_D432_CLEANUP_EFFECT_NOT_DECLARED. A `Fail` stays refused by name: its
+/// failure joins the exit's (point 4), and novac compiles no `Fail`. True when the
+/// value may be cleaned here.
+fn Checker mut @flow_cleanup_effects_ok(at Node, name str, a int, mut fl ConsumeFlow) -> bool {
+    if fl.stopped { return false }
+    ro off = fl.autos.eff_off[a]
+    ro cnt = fl.autos.eff_cnt[a]
+    for k in off..off + cnt {
+        if fl.autos.eff_names[k] != "Fail" { continue }
+        @flow_stop(at, "cleaned by a `@cleanup` that can fail (`Fail`: its failure joins the exit's, D432 s1 amendment point 4)", fl)
+        return false
+    }
+    if !fl.fn_export { return true }
+    for k in off..off + cnt {
+        ro eff = fl.autos.eff_names[k]
+        if str_among(fl.fn_effects, eff) { continue }
+        @flow_reject(at, cleanup_effect_msg(name, eff), fl)
+        return false
+    }
+    true
+}
+
+/// Is `s` one of `xs`?
+fn str_among(xs []str, s str) -> bool {
+    for x in xs {
+        if x == s { return true } else { continue }
+    }
+    false
 }
 
 /// Opens the D476 scope over `e` when it is a call (s2: the scope embraces the

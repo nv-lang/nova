@@ -1,0 +1,41 @@
+module must_consume.pos_20
+
+// A `@cleanup` WITH EFFECTS (D432 s1 amendment 2026-08-04): its effects become the
+// enclosing function's own -- declared by an exported function, INFERRED for a
+// private one (point 3, D28/D62: a private function's effects are the compiler's to
+// add). The ORACLE refuses the private case (it demands the declaration everywhere,
+// registry 221.1 No.TBD, oracle; listed in novac/divergences.allow, plan 274.12); its
+// run is compared against the twin pos_21, which declares it.
+
+// NOVAC_TWIN pos_21.nv
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @release() -> () {
+    println("release ${@id}")
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) Io -> () {
+    println("cleanup ${@id}")
+}
+
+export fn declared() Io -> () {
+    consume a = Lk { id: 1 }
+    println("declared")
+}
+
+fn inferred(n int) -> () {
+    consume a = Lk { id: n }
+    if n > 2 {
+        a.release()
+    }
+    println("inferred ${n}")
+}
+
+fn main() Io {
+    declared()
+    inferred(2)
+    inferred(3)
+}

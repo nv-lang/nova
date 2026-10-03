@@ -12,7 +12,8 @@
 //   value owned on some paths only behind its drop flag; and D476's temporaries, after
 //   the call they were handed to.
 // Used by: lower/lowering.nv (`@lower_return`, the LoopCtl arm, the two block
-//   doors, `@lower_bind`); emit_c/emit_flow.nv prints `Stmt.Cleanup`.
+//   doors, `@lower_bind`, `@lower_place`), lower/lower_coalesce.nv (`@lower_try`:
+//   a `?`'s empty path); emit_c/emit_flow.nv prints `Stmt.Cleanup`.
 // Guarded by: the fixtures novac/fixtures/must_consume/ through
 //   check-novac-differential.sh (each call's output byte-for-byte with the oracle).
 // novac/src/lower/ir_cleanup.nv -- where an auto-`@cleanup` call lands.

@@ -1,11 +1,12 @@
 module must_consume.neg_36
 
-// AN AFFINE TYPE WHOSE `@cleanup` DECLARES EFFECTS: legal since the D432 s1
-// amendment of 2026-08-04 -- the call's effects become the enclosing function's --
-// and the oracle compiles it. novac does not propagate them yet, so the value is
-// refused BY NAME with its stage.
+// AN EXPORTED FUNCTION THAT LEAVES UNDECLARED AN EFFECT ITS AUTO-CLEANUP CARRIES:
+// the call is generated in its body, so the effects are its own, direct (D432 s1
+// amendment 2026-08-04, point 1), and an exported function declares its effects
+// itself (point 3, D28/D62). The oracle refuses it as well
+// (E_D432_CLEANUP_EFFECT_NOT_DECLARED).
 
-// NOVAC_EXPECT cleaned by a `@cleanup` with effects (their propagation, D432 s1 amendment) is not tracked yet
+// NOVAC_EXPECT and its `@cleanup` carries the effect `Io`, which this exported function does not declare
 
 type Lk consume {
     id int
@@ -19,7 +20,11 @@ fn Lk consume @cleanup(outcome ScopeOutcome) Io -> () {
     println("cleanup ${@id}")
 }
 
-fn main() Io {
+export fn opened() -> () {
     consume a = Lk { id: 1 }
     println("body")
+}
+
+fn main() Io {
+    opened()
 }

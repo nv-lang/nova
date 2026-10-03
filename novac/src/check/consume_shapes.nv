@@ -298,11 +298,15 @@ type AutoCleanups {
     affine []TyId /// the affine types
     rows []FnRow /// per type: its `@cleanup`
     eff []bool /// per type: the `@cleanup` declares effects
+    eff_off []int /// per type: where its `@cleanup`'s effect names start in `eff_names`
+    eff_cnt []int /// per type: how many effect names its `@cleanup` declares
+    eff_names []str /// the effect names of every `@cleanup`, flat, by `eff_off`/`eff_cnt`
 }
 
 /// The affine types of `file` among `kinds`.
 fn Checker @auto_cleanups_of(file Node, kinds []TyId) -> AutoCleanups {
-    mut a = AutoCleanups { affine: []TyId.new(), rows: []FnRow.new(), eff: []bool.new() }
+    mut a = AutoCleanups { affine: []TyId.new(), rows: []FnRow.new(), eff: []bool.new(), eff_off: []int.new(),
+                           eff_cnt: []int.new(), eff_names: []str.new() }
     ro outcome_t = @ctx.ty_of_name(SCOPE_OUTCOME_TYPE) ?? no_ty()
     for d in file_decls(file) {
         if d.kind_of() != NodeKind.FnDecl { continue }
@@ -315,15 +319,56 @@ fn Checker @auto_cleanups_of(file Node, kinds []TyId) -> AutoCleanups {
         ro arg = @ctx.fns.params[fd.param_off + 1]
         ro shaped = recv.mode == ParamMode.ModeConsume && is_kind_of(kinds, recv.type_id) && arg.type_id == outcome_t
         if !shaped { continue }
-        mut effects = false
-        for c in branch_children(d) {
-            if c.kind_of() == NodeKind.EffectItem { effects = true } else { continue }
-        }
+        ro names = effect_names_of(d)
         a.affine.push(recv.type_id)
         a.rows.push(row)
-        a.eff.push(effects)
+        a.eff.push(names.len() > 0)
+        a.eff_off.push(a.eff_names.len())
+        a.eff_cnt.push(names.len())
+        a.eff_names.append(names)
     }
     a
+}
+
+/// The effects a function declaration names, by the head of each (`Fail[E]` is
+/// `Fail`), in written order.
+fn effect_names_of(d Node) -> []str {
+    mut out = []str.new()
+    for c in branch_children(d) {
+        if c.kind_of() == NodeKind.EffectItem { out.push(first_ident_of(c)) } else { continue }
+    }
+    out
+}
+
+/// The first identifier of a subtree, in written order -- the head of a type
+/// reference; "" when it has none.
+fn first_ident_of(n Node) -> str {
+    if n.is_ident() { return leaf_text(n) }
+    for c in branch_children(n) {
+        ro t = first_ident_of(c)
+        if t != "" { return t } else { continue }
+    }
+    ""
+}
+
+/// The function declarations of `file` written under `export`.
+fn exported_fns_of(file Node) -> []Node {
+    mut out = []Node.new()
+    for c in branch_children(file) {
+        if c.kind_of() != NodeKind.ExportDecl { continue }
+        for w in branch_children(c) {
+            if w.kind_of() == NodeKind.FnDecl { out.push(w) } else { continue }
+        }
+    }
+    out
+}
+
+/// Is `d` one of `fns` (the same node)?
+fn node_among(fns []Node, d Node) -> bool {
+    for f in fns {
+        if f.id_of() == d.id_of() { return true } else { continue }
+    }
+    false
 }
 
 /// The index of `t` among the affine types, -1 when it is strictly linear.

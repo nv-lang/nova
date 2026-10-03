@@ -1,0 +1,26 @@
+module must_consume.neg_41
+
+// AN AFFINE TYPE WHOSE `@cleanup` CAN FAIL (`Fail[E]`): legal since the D432 s1
+// amendment of 2026-08-04 -- the `Fail` joins the enclosing function's signature,
+// and a cleanup failing on a path that already fails joins that failure (point 4).
+// The oracle compiles it. novac compiles no `Fail`, so the value is refused BY NAME
+// with its stage.
+
+// NOVAC_EXPECT cleaned by a `@cleanup` that can fail
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) Fail[str] -> () {
+    println("cleanup ${@id}")
+}
+
+fn run() Fail[str] -> () {
+    consume a = Lk { id: 1 }
+    println("body")
+}
+
+fn main() {
+    println("x")
+}

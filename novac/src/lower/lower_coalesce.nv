@@ -93,6 +93,9 @@ fn Lowerer mut @lower_try(e Node) -> Local {
     ro c = @ir.begin_if(Cond.IsSome(lo), ElseShape.Braced)
     @ir.take_payload(lr, lo)
     @ir.begin_else(c)
+    // The empty path is an exit (D85: `return None`): what the checker found owned
+    // there is cleaned before it leaves (D432).
+    @lower_cleanups(e.id_of())
     @ir.set_none(@ir.ret_place())
     @ir.ret()
     @ir.end_if(c)
