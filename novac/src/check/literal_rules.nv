@@ -518,24 +518,12 @@ const COALESCE_NONOPT_MSG = "`??` unwraps an `Option` or a `Result`, and this le
 /// wrong.
 const INTERP_SPEC_MSG = "outside the subset: a format specifier in string interpolation (`\${expr:?}`, D229) is not compiled yet (274.7 B1b, the Display family) -- write the value plain and format it by hand"
 
-/// A `Result` left side: LEGAL IN THE LANGUAGE (D86 gives `??` both containers) and not
-/// emittable yet, so it is refused with the stage that unblocks it rather than accepted
-/// into an emitter that would spell it wrong.
-///
-/// MEASURED, not assumed. `option_some_test` prints `.value != NULL` when the payload is
-/// a pointer -- such an Option carries no tag at all -- and `c_tag` prints novac's own
-/// `NOVAC_TAG_<module><Sum>_<Variant>`, while Option wears the shell's
-/// `NOVA_TAG_Option_Some`. So the general variant door and the Option door print
-/// DIFFERENT C, and a `Result` reaching the Option door would compare an Option tag
-/// against a `NovaRes_` struct.
-///
-/// WHY THE STAGE IS E2-b3 AND NOT A LATER ONE: a `Result` VALUE cannot be produced in
-/// the subset at all today -- all four construction forms are refused by «the type
-/// argument of this sum cannot be inferred from the payload (E2-b3)», and the corpus run
-/// hands novac no std declarations. Nothing can reach the form, so nothing can exercise
-/// an emitter written for it; writing it now would put untested code in the compiler.
-/// When E2-b3 lands, the form becomes both reachable and testable in one step.
-const COALESCE_RESULT_MSG = "outside the subset: `??` and `?` over a `Result` are not compiled yet (E2-b3) -- the language allows them (D85, D86), but a `Result` value cannot be built here yet, so the forms cannot be exercised end to end"
+/// `x?` over a `Result`: LEGAL IN THE LANGUAGE (D85) and not compiled yet. Its Err branch
+/// RETURNS an `Err` of the body's own `Result` -- a value built here, and building a
+/// `Result` whose type arguments come from the return place is E2-b3. `??` over a
+/// `Result` needs no such value (it only reads the `Ok` payload) and is compiled since
+/// sweep 11 (lower/lower_coalesce.nv); this text is `?`'s alone.
+const TRY_RESULT_MSG = "outside the subset: `?` over a `Result` is not compiled yet (E2-b3) -- the language allows it (D85), but its Err branch returns an `Err` of this body's `Result`, a value novac does not build yet"
 
 /// The brace form of a parenthesised record. Not "outside the subset": the
 /// ORACLE fails to emit it too (`Pair { x: 1 }` on `type Pair(x int, y int)`

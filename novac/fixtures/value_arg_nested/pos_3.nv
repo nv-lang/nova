@@ -1,0 +1,31 @@
+module value_arg_nested.pos_3
+
+// A value form two calls deep and in a constructor field on the right of `=`,
+// WITH AN EFFECT in each position (registry 1683): every `say` prints once.
+// One effect per call level, so no order between siblings is asked of C here --
+// the order itself is pinned by pipeline/arg_order_test.nv.
+fn say(n int) -> int {
+    println(n)
+    n
+}
+
+fn id(x int) -> int => x
+
+fn three(a int, b int, c int) -> int => a * 100 + b * 10 + c
+
+type Pv { b int, f f64 }
+
+fn main() {
+    ro r = id(three(1, match say(2) {
+        2 => 2
+        _ => 0
+    }, 3))
+    println(r)
+    println(id(three(4, if say(5) > 0 { 5 } else { 0 }, 6)) * 2)
+    mut q = Pv { b: 0, f: 1.0 }
+    q = Pv { b: match say(7) {
+        7 => 70
+        _ => 0
+    }, f: 2.0 }
+    println(q.b)
+}

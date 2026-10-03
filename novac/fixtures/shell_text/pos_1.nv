@@ -1,0 +1,35 @@
+module shell_text.pos_1
+
+import std.fs.{read_dir}
+
+// THE SHELL CARRIES WHAT THE CARRIER CALLS (sweep 11): `str.replace`,
+// `str.ends_with` and `FileType.is_dir` -- the probe program uses each, so the
+// regenerated shell carries their bodies and novac calls them by name. Until
+// sweep 11 each was "the shell novac links into carries no ..." in the
+// self-build (main.nv, sem/mangle.nv). In a single file novac already built
+// `replace` and `is_dir` from std's bodies; `ends_with` was refused here too.
+fn count_dirs(path str) Fs -> int {
+    mut n = 0
+    match read_dir(path.to_path()) {
+        Ok(entries) => {
+            for e in entries {
+                if e.kind.is_dir() {
+                    n += 1
+                } else {
+                    // A file: not counted.
+                }
+            }
+        }
+        Err(_) => { n = -1 }
+    }
+    n
+}
+
+fn main() Fs {
+    println("a.b.c".replace(".", "__"))
+    println("x\\y".replace("\\", "/"))
+    println("main.nv".ends_with(".nv"))
+    println("main_test.nv".ends_with("_test.nv"))
+    println("main.rs".ends_with(".nv"))
+    println(count_dirs("/nonexistent/shell_text"))
+}

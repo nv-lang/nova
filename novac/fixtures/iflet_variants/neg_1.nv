@@ -1,0 +1,19 @@
+module iflet_variants.neg_1
+
+// NOVAC_EXPECT must be a sum
+// ONE seeded cause: a variant pattern over an `int`. Any variant of any sum is
+// read now, so the initializer is what is judged: no variant tests an `int`.
+// The oracle's checker lets it through and clang refuses the C it emits
+// (registry, filed with sweep 10).
+type Shape enum
+    | Dot(int)
+    | Empty
+
+fn main() {
+    ro n = 5
+    if Dot(x) = n {
+        println(x)
+    } else {
+        println("no")
+    }
+}

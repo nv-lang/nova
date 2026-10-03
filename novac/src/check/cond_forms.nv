@@ -13,7 +13,8 @@
 module novac.check
 
 import ../tree.{Node, NodeKind}
-import ../builtins.{OPTION_SOME_VARIANT}
+import ../builtins.{TypeKind}
+import ../sem.{is_shell_applied_sum}
 import ../sem.{branch_children, ParamMode}
 import ../sem.{iflet_pattern_at, iflet_init_at, iflet_body_at, iflet_else_at}
 import ../sem.{whilelet_pattern_at, whilelet_init_at, whilelet_body_at}
@@ -66,13 +67,11 @@ fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
         @report_first_leaf_of(kids, IFLET_COND_FORM_MSG)
         return
     }
-    // The subset's boundary among variants (its carriers use `Some` alone);
-    // the qualifier, if written, is judged by the shared door `@bind_pattern`
-    // below.
-    if pattern_head_text(pat) != OPTION_SOME_VARIANT {
-        @report_first_leaf_of(kids, IFLET_VARIANT_MSG)
-        return
-    }
+    // ANY VARIANT, of any sum (sweep 10): `if DefFn(row) = def.target` in
+    // novac's own check/type_of.nv was refused while `Some(name)` alone was
+    // read. The variant is judged against the initializer's sum by the shared
+    // door `@bind_pattern` below -- the match arm's -- and lowered as the arm's
+    // head test; `Some` over an Option keeps its own spelling there.
     ro init = kids[iflet_init_at(kids)]
     ro before = @out.len()
     match init {
@@ -85,8 +84,7 @@ fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
     }
     if @out.len() > before { return }
     ro ot = type_of(init, @ctx, @scope, @chan)
-    ro payload = option_payload(@ctx, ot)
-    if !is_ty(payload) {
+    if !@is_variant_scrutinee(ot) {
         @reject_first_leaf_of(kids, IFLET_INIT_MSG)
         return
     }
@@ -238,10 +236,7 @@ fn Checker mut @type_while_let(st Node) -> () {
         @report_first_leaf_of(kids, WHILELET_COND_FORM_MSG)
         return
     }
-    if pattern_head_text(pat) != OPTION_SOME_VARIANT {
-        @report_first_leaf_of(kids, WHILELET_VARIANT_MSG)
-        return
-    }
+    // Any variant of any sum, as the if-let's (sweep 10).
     ro init = kids[whilelet_init_at(kids)]
     ro before = @out.len()
     match init {
@@ -254,8 +249,7 @@ fn Checker mut @type_while_let(st Node) -> () {
     }
     if @out.len() > before { return }
     ro ot = type_of(init, @ctx, @scope, @chan)
-    ro payload = option_payload(@ctx, ot)
-    if !is_ty(payload) {
+    if !@is_variant_scrutinee(ot) {
         @reject_first_leaf_of(kids, WHILELET_INIT_MSG)
         return
     }
@@ -271,3 +265,11 @@ fn Checker mut @type_while_let(st Node) -> () {
     @type_block(kids[whilelet_body_at(kids)])
     @scope.release(mark)
 }
+
+/// May a VARIANT PATTERN test a value of this type -- an Option or a Result
+/// instance, or a sum the file declares? The head itself (which variant, of
+/// which sum) is the shared pattern door's question; this one only refuses an
+/// initializer no variant can test.
+fn Checker @is_variant_scrutinee(t TyId) -> bool =>
+    is_ty(option_payload(@ctx, t)) || is_shell_applied_sum(@ctx, t) ||
+        (is_ty(t) && @ctx.tys.kind_of(t) == TypeKind.TkSum)

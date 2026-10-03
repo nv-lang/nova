@@ -107,6 +107,7 @@ export type ParamDef value {
 /// Not its type: `tag(r)` and `tag(m)` have the same argument type and select
 /// different callables. That is the whole point of the axis, and it is why the
 /// checker has to know how a name was BOUND, not only what it holds.
+#impl(Equal)
 export type ArgClass enum
     | ArgRo /// a `ro` binding, or a place novac judges conservatively
     | ArgMut /// a `mut` binding -- a mutable place

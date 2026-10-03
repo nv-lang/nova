@@ -1,0 +1,67 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/check/for_iter.nv -- a `for` over an ITERATOR (D58).
+//
+// Donor: rustc `for` desugaring (`IntoIterator::into_iter` then `next` in a
+// `loop` with `match`); NOT taken: the trait-based `into_iter` step for a
+// collection -- the subset reads only heads that ARE iterators.
+// Role: layer 4 (check) -- decides the `next` row and the element type of a
+//   `for` whose head is not a vector, and records both on the loop for the
+//   lowering (`@lower_for_iter`, lower/lowering.nv).
+// Used by: check/typing.nv (the `for` arm), when `for_head_elem` has no answer.
+// Guarded by: check-novac-differential.sh (novac/fixtures/for_iter, byte-for-
+//   byte with the oracle), nova test of pipeline/for_iter_test.nv.
+//
+// D58: `for x in c` is `{ mut _it = c.iter(); loop { match _it.next() {
+// Some(x) => body, None => break } } }`, and an iterator's `iter()` is itself
+// (Plan 138). A head whose type has `next` IS the iterator; the oracle calls
+// `next` on it directly (`Nova_CharsIter_method_next(&it)`), and so does this.
+// A head that needs `iter()` first -- a collection other than `[]T` -- stays
+// refused by name (FOR_CALL_HEAD_MSG, its stage named there).
+
+module novac.check
+
+import ../tree.{Node}
+import ../types.{TyId, is_ty}
+import ../sem.{ArgSpec, ArgClass, CallForm, CalleeTarget, LitArg, ParamMode, identity_slots}
+import ../sem.{option_payload, ty_source_name, c_shell_method, raw_row}
+import ../resolve.{FnLookup}
+import ../builtins.{NEXT_METHOD}
+
+/// A `for` whose head is no vector: an iterator -- its type has `next() ->
+/// Option[T]` -- binds `T` each turn; anything else is refused by name. The
+/// `next` row is recorded as the loop's callee and its Option type as the
+/// loop's own type (the lowering reads both, the channel rule).
+fn Checker mut @type_for_iterator(st Node, kids []Node, ht TyId) -> () {
+    ro key = [ArgSpec { type_id: ht, cls: ArgClass.ArgMut, name: "", lit: LitArg.NotLit }]
+    ro row = match @res.lookup(@ctx.fns, @ctx.tys, NEXT_METHOD, key, CallForm.MethodCall) {
+        FnFound(r) => r
+        FnOverloaded(_) | FnUnknown => {
+            @report_first_leaf_of(kids, FOR_CALL_HEAD_MSG)
+            return
+        }
+    }
+    ro ot = @ctx.fns.rows[raw_row(row)].ret_id
+    ro elem = option_payload(@ctx, ot)
+    if !is_ty(elem) || !@ctx.tys.is_concrete(ot) {
+        @report_first_leaf_of(kids, FOR_CALL_HEAD_MSG)
+        return
+    } else {
+        // `next` hands back a concrete Option: its payload is the element.
+    }
+    if !@ctx.fns.compiles_body(row) && !@ctx.interop.has(c_shell_method(@ctx, ht, NEXT_METHOD)) {
+        @report_first_leaf_of(kids, no_shell_method_msg(NEXT_METHOD, ty_source_name(@ctx, ht)))
+        return
+    } else {
+        // Our own body, or std's carried by the shell: the call has a name.
+    }
+    @record(kids[3], ht)
+    @record(st, ot)
+    @chan.record_callee(st.id_of(), CalleeTarget.CalleeFn(row), []TyId.new(), identity_slots(1))
+    ro mark = @scope.mark()
+    if !@bind_pattern(kids[1], elem, kids, ParamMode.ModeRo, PatPos.PosFor) {
+        @bind_names_untyped(kids[1])
+    } else { // Every name bound with its decided type.
+    }
+    @type_block(kids[4])
+    @scope.release(mark)
+}

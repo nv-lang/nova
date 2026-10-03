@@ -245,13 +245,14 @@ fn Checker @is_deferred_variant(c Node) -> bool {
 }
 
 /// An argument typed AFTER the lookup, with its parameter's type as the
-/// expectation: a bare generic variant (`None`, 1565), or an `if`/`match` whose
-/// value tails are numeric literals of one family (1697, D489) -- typed first
-/// without the parameter, its literals would take `int` and the channel cannot
-/// take a second answer.
+/// expectation: a bare generic variant (`None`, 1565). An `if`/`match` whose
+/// value tails are numeric literals (1697, D489) was deferred here too until the
+/// k1/cast merge; part 7 of p274-carina-k1 types an argument WITH its parameter's
+/// expectation before the lookup when one row fits (`@type_arg_expecting`), which
+/// covers 1697, while deferring it hid the argument from a type parameter's
+/// deduction (`idf(if b { 5 } else { 0 })`: "no argument fixes this type parameter").
 fn Checker @is_deferred_arg(c Node) -> bool {
     ro k = c.kind_of()
-    if (k == NodeKind.IfExpr || k == NodeKind.MatchExpr) && is_lit_family(arg_lit_of(c)) { return true }
     @is_deferred_variant(c)
 }
 

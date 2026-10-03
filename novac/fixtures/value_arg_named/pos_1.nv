@@ -1,0 +1,20 @@
+module value_arg_named.pos_1
+
+// A value form as a NAMED argument (registry 1684, D102). Until sweep 11 refused,
+// and any non-literal named value iced ("no type recorded"). Hunt probe
+// side-named-arg-refused.
+
+// A `match` value as a NAMED argument (D102: `f(by: 2)` is how a defaulted
+// parameter is reached). The refusal's own text lists "an argument" among
+// the compiled positions. Legal Nova; the oracle prints 42 and 43.
+fn step(a int, by int = 1) -> int => a + by
+
+fn main() {
+    ro k = 3
+    println(step(2, by: match k {
+        3 => 40
+        _ => 0
+    }))
+    ro r = step(3, by: if k > 0 { 40 } else { 0 })
+    println(r)
+}

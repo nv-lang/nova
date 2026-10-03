@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Role: `*mut T -> *T` narrows the pointee (D246, 02-types.md: «`*mut T -> *T`
+//   auto-narrowing; `*T -> *mut T` refused»), judged in the instance of a handed
+//   generic body -- std's `Vec[T] @ptr() -> *T => @data` over a `*mut T` field,
+//   which the self-build instantiates for `[]str` and `[]Node` (sweep 11).
+// Used by: nova test novac/src/pipeline (the module-test batch of the gate).
+// Guarded by: check-novac-module-tests.
+//
+// THE TEST CARRIES ITS CONTROL. Reverse probe, run before the commit: without
+// `ptr_weakens` (check/return_rules.nv) the first assertion reddens with E7301.
+
+module novac.pipeline
+
+/// A handed `Vec[T]` whose `raw` the real shell carries for no instance, so a
+/// call of it is an instance this unit makes -- and judges -- from the body.
+fn ptr_std(ret str) -> []str {
+    mut std = std_decls()
+    std.push("module std.v\nexport type Vec[T] { data *mut T, n int }\nexport fn Vec[T] @len() -> int => @n\nexport fn Vec[T] @raw() -> ${ret} => @data\n")
+    std
+}
+
+test "a `*mut T` returned as `*T` narrows the pointee in a handed instance (D246)" {
+    ro prog = "fn main() {\n ro xs = [1, 2]\n ro p = xs.raw()\n println(xs.len())\n}"
+    ro (d, _) = compile_to_c(prog, ptr_std("*T"))
+    assert(d.len() == 0, messages(d))
+    // CONTROL: the other direction is not a narrowing -- a `*T` field handed out
+    // as `*mut T` stays E7301 (the field is written `*T` here).
+    mut std = std_decls()
+    std.push("module std.v\nexport type Vec[T] { data *T, n int }\nexport fn Vec[T] @len() -> int => @n\nexport fn Vec[T] @raw() -> *mut T => @data\n")
+    ro (r, _) = compile_to_c(prog, std)
+    assert(messages(r).contains("E7301"), messages(r))
+}

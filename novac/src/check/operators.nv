@@ -17,11 +17,11 @@ import ../tree.{Node, BinOp, bin_op_of, un_op_of}
 import ../sem.{LitArg, leaf_kind, leaf_text}
 import ../sem.{carrier_of, is_int_prim, is_numeric_prim, prim_row_of}
 import ../types.{TyId, no_ty, is_ty}
-import ../builtins.{EQUAL_METHOD, EQUAL_PROTO, BuiltinType, TypeKind, SLICE_HEAD}
+import ../builtins.{EQUAL_METHOD, EQUAL_PROTO, BuiltinType, TypeKind, SLICE_HEAD, COMPARE_METHOD}
 import ../sem.{gate_names, decl_of_ty, is_payload_free_sum}
 import ../resolve.{FnLookup}
 import ../sem.{ArgSpec, ArgClass, CallForm, CalleeTarget, ty_source_name, c_method_symbol}
-import ../sem.{identity_slots, branch_children, ParamMode}
+import ../sem.{identity_slots, branch_children, ParamMode, raw_row}
 
 /// One expression: record what the emitter asks about, walk what it emits.
 /// Equality on `str` is a method call, not a C operator: the
@@ -35,8 +35,14 @@ import ../sem.{identity_slots, branch_children, ParamMode}
 /// emitter reads it as one.
 fn Checker mut @record_operator_callee(e Node, kids []Node) -> () {
     ro op = bin_op_of(leaf_kind(kids[1]))
-    if !is_equality(op) { return }
     ro lhs_t = type_of(kids[0], @ctx, @scope, @chan)
+    if is_ordering(op) && @is_str_pair(kids) {
+        @record_str_ordering(e, kids, lhs_t)
+        return
+    } else {
+        // Not an ordering of two `str`: equality below, or a C operator.
+    }
+    if !is_equality(op) { return }
     // `str` and a VECTOR dispatch to `equal` (D46); a vector compares its
     // elements, never its pointer -- `@args[a..b] == want` (types.nv) printed
     // the C `==` of two `Nova_Vec*` before registry 1573.
@@ -119,7 +125,7 @@ fn Checker mut @refuse_equality_unknown(kids []Node) -> () {
 /// `undefined symbol: novac_fn_equal__...`).
 fn Checker mut @accept_equality_row(e Node, kids []Node, lhs_t TyId, row FnRow) -> () {
     if !@ctx.fns.compiles_body(row) {
-        ro sym = c_method_symbol(@ctx, lhs_t, EQUAL_METHOD)
+        ro sym = c_method_symbol(@ctx, lhs_t, @ctx.fns.rows[raw_row(row)].name)
         if !@ctx.interop.has(sym) {
             @report_first_leaf_of(kids, "outside the subset: `==` on `${ty_source_name(@ctx, lhs_t)}` needs `${sym}`, and the shell it links into does not carry it -- the interop surface is novac/probe/shell_probe.nv")
             return
@@ -130,6 +136,35 @@ fn Checker mut @accept_equality_row(e Node, kids []Node, lhs_t TyId, row FnRow) 
         // Our own body: our own name, no shell involved.
     }
     @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new(), identity_slots(2))
+}
+
+/// AN ORDERING OF TWO `str` (D46: `a < b` is `a.@compare(b) < 0`, and
+/// `str @compare` is std's): the `compare` row is recorded as the callee, and
+/// the emitter prints `compare(a, b) <op> 0` -- the oracle's spelling. The row
+/// is asked by the same lookup `==` on `str` asks, and the shell is asked for
+/// its body the same way (`@accept_equality_row`); a lookup that finds nothing
+/// is refused by the shell's name.
+fn Checker mut @record_str_ordering(e Node, kids []Node, lhs_t TyId) -> () {
+    ro key = equality_key(lhs_t, type_of(kids[2], @ctx, @scope, @chan))
+    match @res.lookup(@ctx.fns, @ctx.tys, COMPARE_METHOD, key, CallForm.MethodCall) {
+        FnFound(row) => @accept_equality_row(e, kids, lhs_t, row)
+        FnOverloaded(_) | FnUnknown => {
+            @report_first_leaf_of(kids, no_shell_method_msg(COMPARE_METHOD, ty_source_name(@ctx, lhs_t)))
+        }
+    }
+}
+
+/// Are both operands `str`?
+fn Checker @is_str_pair(kids []Node) -> bool =>
+    type_of(kids[0], @ctx, @scope, @chan) == @ctx.prims.str_id &&
+        type_of(kids[2], @ctx, @scope, @chan) == @ctx.prims.str_id
+
+/// `<`, `<=`, `>`, `>=` -- the operators that dispatch through `Compare` (D46).
+fn is_ordering(op BinOp) -> bool {
+    match op {
+        Less | LessEq | Greater | GreaterEq => true
+        Equal | NotEqual | Add | Sub | Mul | Div | Modulo | AndAlso | OrElse | BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight | Range => false
+    }
 }
 
 /// The operators D52's newtype rule covers: arithmetic and comparison (its
@@ -265,7 +300,7 @@ fn Checker mut @report_if_operator_needs_protocol(kids []Node) -> bool {
     // answer -- and the answer is a refusal, never a guess.
     match op {
         Add | Sub | Mul | Div | Modulo => { if numeric || same_nt { return false } }
-        Less | LessEq | Greater | GreaterEq => { if numeric || same_nt { return false } }
+        Less | LessEq | Greater | GreaterEq => { if numeric || same_nt || @is_str_pair(kids) { return false } }
         Equal | NotEqual => { if same_prim || same_nt || tag_eq || vec_eq { return false } }
         AndAlso | OrElse => { if bools { return false } }
         BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight => { if ints { return false } }

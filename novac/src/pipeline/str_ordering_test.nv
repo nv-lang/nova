@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/pipeline/str_ordering_test.nv -- an ordering of two `str` is
+// `a.@compare(b) <op> 0` (D46), the oracle's spelling; sweep 10.
+//
+// THE TEST CARRIES ITS CONTROL. Reverse probe, run before the commit: with the
+// ordering judge not admitting a `str` pair, the first assertion reddens.
+
+module novac.pipeline
+
+test "`<` on two `str` calls `compare` and compares its answer with zero (D46)" {
+    // The declarations handed here are std's `str @compare` signature: the test
+    // set of `std_decls()` carries only the methods its own tests call.
+    ro std = []str.of("fn str @compare(other str) -> int => 0\n")
+    ro (d, c) = compile_to_c("fn gt(a str, b str) -> bool => a > b\nfn main() {\n println(gt(\"b\", \"a\"))\n}", std)
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("_compare("), "the ordering calls the shell's `str @compare`")
+    assert(c.contains(") > 0))"), "the answer of `compare` is compared with zero")
+    // CONTROL: a `str` beside an `int` is no `str` pair -- refused by the table.
+    ro (r, _) = compile_to_c("fn main() {\n println(\"a\" < 1)\n}", std)
+    assert(r.len() == 1, messages(r))
+}

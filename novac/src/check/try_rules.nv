@@ -77,8 +77,8 @@ fn Checker mut @type_try(e Node) -> () {
     } else if !op_is_opt && ret_is_opt {
         @reject_first_leaf_of(tk, TRY_RESULT_IN_OPTION_MSG)
     } else if !op_is_opt {
-        // The same stage as `??` over a Result: one text for both (literal_rules.nv).
-        @report_first_leaf_of(tk, COALESCE_RESULT_MSG)
+        // The Err branch builds this body's `Result` -- E2-b3 (literal_rules.nv).
+        @report_first_leaf_of(tk, TRY_RESULT_MSG)
     } else {
         // An Option in a body returning an Option: the language's form, compiled.
         @record(tk[0], ot)

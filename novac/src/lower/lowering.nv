@@ -19,7 +19,8 @@ import ../sem.{leaf_text, literal_prim_of, raw_vrow, variant_in_sum}
 import ../sem.{iflet_pattern_at, iflet_body_at, iflet_else_at, iflet_init_at}
 import ../sem.{whilelet_pattern_at, whilelet_init_at, whilelet_body_at}
 import ../sem.{payload_as_seen}
-import ../sem.{pattern_shape, pattern_head_text, PatShape}
+import ../sem.{pattern_shape, pattern_head_text, PatShape, option_payload}
+import ../sem.{is_option_some_pattern}
 // Which arguments have an observable order (F65) -- the checker's own door.
 import ../sem.{contains_call, loop_ctl_is_break, is_collection_head}
 
@@ -191,7 +192,7 @@ fn Lowerer mut @lower_if_let_value(n Node, res_t TyId) -> Local {
     // the Option of an `if let` is the compiler's, not the author's.
     ro lo = @ir.temp(ot)
     @lower_place(init, lo)
-    ro c = @ir.begin_if(Cond.IsSome(lo), ElseShape.Braced)
+    ro c = @ir.begin_if(@variant_test(kids[iflet_pattern_at(kids)], ot, lo), ElseShape.Braced)
     // The pattern binds through the match arm's own door (wave P3): a binder
     // reads the payload, a nested pattern reads its piece -- one judgment,
     // recorded by the checker, spelled here.
@@ -302,6 +303,10 @@ fn Lowerer mut @lower_stmt(st Node) -> () {
         // below needs no new shape.
         // A block form on the right, or nested in it, or in the target's index
         // (registry 1619): laid down first and read back by the printer.
+        // The source's own arguments, in order and once, as in `@lower_place`
+        // (registries 1681, 1683: `q = Pv { b: match k {..}, .. }` iced).
+        @hoist_ordered_args(src)
+        @hoist_sealed_args(src)
         @hoist_operand(src)
         @hoist_block_forms(kids[0])
         if src.kind_of() == NodeKind.IfExpr || src.kind_of() == NodeKind.MatchExpr {
@@ -320,6 +325,11 @@ fn Lowerer mut @lower_stmt(st Node) -> () {
         @lower_store(kids[0], assign_op_of(leaf_kind(kids[1])), src)
     } else if k == NodeKind.ForStmt {
         ro kids = branch_children(st)
+        if @out.has_callee(st.id_of()) {
+            // An ITERATOR head (D58): the checker recorded its `next` on the loop.
+            @lower_for_iter(st, kids)
+            return
+        }
         if is_collection_head(kids[3]) {
             // A COLLECTION head (wave B16) walks a vector by index: a loop
             // of the lowered body whose header carries the collection, the
@@ -507,7 +517,7 @@ fn Lowerer mut @lower_if_let(st Node, outer Option[IfCtx]) -> () {
     // Recorded first, printed from the record -- the same door the plain `if` uses
     // (M2b-2 step 3a). The head is identical to what this function spelled by hand:
     // `option_some_test` reads the local's type and name, which is what it was passed.
-    ro cond = Cond.IsSome(lo)
+    ro cond = @variant_test(kids[iflet_pattern_at(kids)], ot, lo)
     ro shape = else_shape(kids, else_at)
     // THE TEMPORARY BELONGS TO THE ELSE BLOCK, and under the walk that is decided by
     // MEMBERSHIP rather than by the moment of printing (found 2026-09-09, the last divergence
@@ -595,12 +605,38 @@ fn Lowerer mut @lower_while_let(st Node) -> () {
     // Recorded first, printed from the record (M2b-2 step 3a).
     ro c = @ir.begin_loop(LoopHead.Forever)
     @lower_place(init, lo)
-    ro exit_c = @ir.begin_if(Cond.NotSome(lo), ElseShape.NoElse)
-    @ir.break_loop()
-    @ir.end_if(exit_c)
-    @lower_pattern_bind(kids[whilelet_pattern_at(kids)], ot, lo)
-    @lower_block_stmts_fn(kids[whilelet_body_at(kids)], false)
+    ro pat = kids[whilelet_pattern_at(kids)]
+    match @variant_test(pat, ot, lo) {
+        IsSome(_) => {
+            ro exit_c = @ir.begin_if(Cond.NotSome(lo), ElseShape.NoElse)
+            @ir.break_loop()
+            @ir.end_if(exit_c)
+            @lower_pattern_bind(pat, ot, lo)
+            @lower_block_stmts_fn(kids[whilelet_body_at(kids)], false)
+        }
+        // Any other variant (sweep 10): its test has no negated spelling, so
+        // the body sits in the test's then-branch and the else leaves.
+        Expr(_) | NotSome(_) | FrameEntered(_) | Holds(_) | Flag(_) => {
+            ro test_c = @ir.begin_if(@variant_test(pat, ot, lo), ElseShape.Braced)
+            @lower_pattern_bind(pat, ot, lo)
+            @lower_block_stmts_fn(kids[whilelet_body_at(kids)], false)
+            @ir.begin_else(test_c)
+            @ir.break_loop()
+            @ir.end_if(test_c)
+        }
+    }
     @ir.end_loop(c)
+}
+
+/// The HEAD TEST of a variant pattern in `if let` / `while let`: `Some` over an
+/// Option keeps the Option door's spelling (`Cond.IsSome`); any other variant,
+/// of any sum, is the match arm's head test (`Cond.Holds`, emit_match.nv) --
+/// one test per pattern, whichever statement asks.
+fn Lowerer @variant_test(pat Node, ty TyId, lo Local) -> Cond {
+    if is_option_some_pattern(@ctx, pat, ty) {
+        return Cond.IsSome(lo)
+    }
+    Cond.Holds(PatTest { pat: @pattern_of(pat, ty), scr: lo })
 }
 
 /// One `for v in lo..hi`: the loop variable is a binding local of the body,
@@ -675,6 +711,41 @@ fn Lowerer mut @lower_for_each(kids []Node) -> () {
         if shape != PatShape.Bind {
             @lower_pattern_bind(pat, elem_t, le)
         } else { // The element local IS the author's name, bound directly.
+        }
+    }
+    @lower_block_stmts_fn(kids[4], false)
+    @ir.end_loop(c)
+}
+
+/// A `for` over an ITERATOR (D58: `loop { match it.next() { Some(x) => body,
+/// None => break } }`): the head into a temporary once, then each turn its
+/// `next` into an Option temporary, the exit on None, the element bound through
+/// the one pattern door. The checker recorded the `next` row as the loop's
+/// callee and the Option type as the loop's own.
+fn Lowerer mut @lower_for_iter(st Node, kids []Node) -> () {
+    ro head = kids[3]
+    ro it = @ir.temp(@out.type_of(head.id_of()))
+    @lower_place(head, it)
+    ro ot = @out.type_of(st.id_of())
+    ro elem_t = option_payload(@ctx, ot)
+    ro c = @ir.begin_loop(LoopHead.Forever)
+    ro lo = @ir.temp(ot)
+    ro next = @out.callee_of(st.id_of())
+    @ir.call_next(lo, next.callable_row(), it)
+    ro exit_c = @ir.begin_if(Cond.NotSome(lo), ElseShape.NoElse)
+    @ir.break_loop()
+    @ir.end_if(exit_c)
+    ro pat = kids[1]
+    ro shape = pattern_shape(pat)
+    if shape == PatShape.Wild {
+        // Nothing binds the element: the turn only advances the iterator.
+    } else {
+        ro le = if shape == PatShape.Bind { @ir.named(elem_t, pattern_head_text(pat)) } else { @ir.temp(elem_t) }
+        @ir.take_payload(le, lo)
+        if shape != PatShape.Bind {
+            @lower_pattern_bind(pat, elem_t, le)
+        } else {
+            // The element local IS the author's name, bound directly.
         }
     }
     @lower_block_stmts_fn(kids[4], false)
@@ -797,8 +868,11 @@ fn Lowerer mut @lower_println(call Node) -> () {
                     // A block form nested in the argument goes first (registry 1619),
                     // and so does a call's own `if`/`unsafe` argument, as in `@lower_place`
                     // (sweep 6: `println(f(if c { a } else { b }))` iced in emit).
-                    @hoist_block_forms(c)
+                    // ITS OWN ARGUMENTS IN ORDER (registry 1681, D484 s2): `println`
+                    // is a sequence, but each argument is still one expression.
+                    @hoist_ordered_args(c)
                     @hoist_sealed_args(c)
+                    @hoist_block_forms(c)
                     @ir.output(Operand.Tree(c), ty)
                 }
             }

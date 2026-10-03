@@ -29,7 +29,7 @@ import ../source.{Span}
 import ../tree.{Node, NodeKind, BinOp, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
 import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
-import ../builtins.{EQUAL_METHOD, OPTION_SOME_VARIANT}
+import ../builtins.{EQUAL_METHOD}
 import ../sem.{LitArg, field_range_of, decl_of_ty, no_frow}
 import ../resolve.{FnLookup}
 import ../names.{NameTable, NamespaceId, raw_decl}
@@ -758,7 +758,8 @@ fn Checker mut @type_stmt(st Node) -> () {
             ro ht = type_of(head, @ctx, @scope, @chan)
             ro elem = for_head_elem(@ctx, ht)
             if !is_ty(elem) {
-                @report_first_leaf_of(kids, FOR_CALL_HEAD_MSG)
+                // Not a vector: an ITERATOR head (D58), or the refusal by name.
+                @type_for_iterator(st, kids, ht)
                 return
             }
             @record(head, ht)

@@ -739,7 +739,9 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
 /// arbitrating it.
 fn Checker mut @record_arg_types(kids []Node, from int) -> () {
     mut i = 0
-    for c in kids {
+    for k in kids {
+        // A named argument's VALUE is what the hoist lays down (registry 1684).
+        ro c = arg_expr_of(k)
         if i < from || !is_arg_value_kind(c.kind_of()) {
             // The callee of a free call, and the receiver, dot and name of a
             // method call, are children too -- and none of them is an

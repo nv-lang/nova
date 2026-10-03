@@ -1,0 +1,36 @@
+module value_arg_once.pos_2
+
+// The same for `if`, `??` and `?` as the argument (registry 1680). Hunt probe
+// double-eval-forms.
+
+// The same property ("a value form laid down twice") in other syntaxes than
+// `match`: an `if` value, a `??`, a `?` -- each as the middle of three
+// arguments that all call something, the call standing as an initializer.
+// D484: each argument is evaluated once, left to right.
+fn say(n int) -> int {
+    println(n)
+    n
+}
+
+fn sayo(n int) -> Option[int] {
+    println(n)
+    Some(n)
+}
+
+fn three(a int, b int, c int) -> int => a * 100 + b * 10 + c
+
+fn tryit() -> Option[int] {
+    ro r = three(say(7), sayo(8)?, say(9))
+    Some(r)
+}
+
+fn main() {
+    println("if value: norm 1 2 3 then 123")
+    ro r1 = three(say(1), if say(2) > 0 { 2 } else { 0 }, say(3))
+    println(r1)
+    println("coalesce: norm 4 5 6 then 456")
+    ro r2 = three(say(4), sayo(5) ?? 0, say(6))
+    println(r2)
+    println("try: norm 7 8 9 then 789")
+    println(tryit() ?? 0)
+}

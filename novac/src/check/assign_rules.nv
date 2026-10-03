@@ -212,6 +212,8 @@ fn Checker mut @assigned_value_type(kids []Node, rt0 TyId) -> TyId {
         // Both concrete: compared by name below.
     }
     if t == want { return adapted }
+    // A `*mut T` into a `*T` place narrows the pointee (D246; `ptr_narrows`, return_rules.nv).
+    if ptr_narrows(@ctx.tys, t, want) { return adapted }
     ro from = ty_source_name(@ctx, t)
     ro to = ty_source_name(@ctx, want)
     ro msg = if differ_numeric(@ctx, t, want) {

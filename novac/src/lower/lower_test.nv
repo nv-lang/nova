@@ -480,6 +480,7 @@ test "a for over a collection: the header carries vec/idx/elem locals, the body 
                 AnyData(_) => assert(false)
                 Bool(_) => assert(false)
                 NoneOf => assert(false)
+                CallNext(_) => assert(false)
             }
         }
         Eval(_) => assert(false)
@@ -539,6 +540,7 @@ test "an if-let: the Option lands in a binding, the If tests IsSome of it, the b
                 AnyData(_) => assert(false)
                 Bool(_) => assert(false)
                 NoneOf => assert(false)
+                CallNext(_) => assert(false)
             }
         }
         Eval(_) => assert(false)

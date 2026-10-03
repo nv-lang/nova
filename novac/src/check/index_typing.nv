@@ -1,0 +1,195 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc_hir_typeck place expressions -- an index is typed through the indexed
+// type's operation, a store into an index is judged against the element type.
+// Role: typing of indexing (`xs[i]`, `xs[a..b]`) and of a store through an index --
+//   lifted out of binds.nv when the merges of 2026-10-03 (cast, k1, sweep) took that
+//   file past the 1000-line limit (274 decision 12); one topic, its own file.
+// Used by: check/exprs.nv (`@type_expr`'s Index arm) and check/binds.nv (stores).
+// Guarded by: nova test novac/src/check/check_test.nv and check-novac-differential.sh
+//   over the index fixtures.
+
+module novac.check
+
+import ../lex.{Token, TokenKind}
+import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
+import ../diag.{ice}
+import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
+import ../builtins.{VEC_INDEX_METHOD, VEC_INDEX_SET_OP, VEC_LEN_METHOD, EMPTY_CTOR, vec_op_method, vec_op_is_overload}
+import ../names.{NameTable, NamespaceId}
+import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
+import ../sem.{shape_of, ctor_field_name, ty_of_type_ref, raw_row, contains_call}
+import ../sem.{Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text}
+import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of}
+import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
+import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
+import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of}
+import ../sem.{c_instance_ctor, c_method_symbol, c_overload_symbol}
+import ../sem.{ty_source_name, variants_named, slice_shape_of, ctor_head_variant}
+import ../types.{TyId, no_ty, is_ty}
+
+/// The type of `xs[i]` — the ELEMENT of the receiver's application (274.5 B10).
+///
+/// The door was already there: an applied type keeps its arguments in the
+/// interner, so `Vec[int]`'s element is `tys.arg(t, 0)` and nothing new had to
+/// be built. What this adds is the JUDGEMENT around it.
+///
+/// Everything the subset cannot do stays refused BY NAME rather than accepted
+/// in silence -- a receiver that is not an application (so not a Vec), an index
+/// that is not an integer, an element type nobody knows. Registry #815 was
+/// exactly the other choice, and it cost thirteen probes.
+fn Checker mut @type_index(e Node) -> TyId {
+    ro kids = branch_children(e)
+    if kids.len() < 3 {
+        // SILENT-OK: recv, '[' and an index are the very least this node can
+        // hold, so fewer children means the parser planted a gap right here.
+        // The gap IS the diagnostic, and saying a second thing about it would
+        // describe one mistake twice.
+        return no_ty()
+    } else {
+        // A whole index expression: judged below.
+    }
+    // A TYPE on the left makes this an APPLICATION, not an index -- the
+    // decision recorded in plan 274.5 s2sh before any of this was written. The
+    // token after `]` cannot tell `xs[0].len()` from `HashMap[str, int].new()`,
+    // because both carry `.NAME(`; only what the left name RESOLVES TO can, and
+    // resolution is the checker's root. So the question is asked here, of the
+    // registry, and not guessed at by the parser.
+    if kids[0].kind_of() == NodeKind.Name {
+        ro head = expr_leaf_name(kids[0])
+        if Some(_) = @ctx.ty_of_name(head) {
+            // A type applied to arguments. novac reads the form now; compiling
+            // it (a static method on the applied type) is the next step of this
+            // wave, so the refusal NAMES the form instead of calling the head
+            // an unbound value -- which is what it used to say, and it was a
+            // lie about which thing was missing.
+            @report_first_leaf_of(kids, APPLIED_TYPE_MSG)
+            return no_ty()
+        } else {
+            // Not a type: an ordinary receiver, typed below.
+        }
+    } else {
+        // A computed receiver: not a type name by construction.
+    }
+    // THE MARK, not the file's count: the question is about THIS receiver.
+    // Without it the door asked `type_of` for a receiver the line above had
+    // just refused -- and `type_of` on a call whose name is not in the registry
+    // raises an ice, not a diagnostic. Probe: `nosuch(i)[0]`, one of the five
+    // ICEs novac had on its own source. The same guard is written a file away
+    // in `@type_call_stmt`, and this door was the one place that skipped it.
+    ro before = @out.len()
+    @type_expr(kids[0])
+    if @out.len() > before {
+        // SILENT-OK: the receiver was refused just now, by name. One cause,
+        // one diagnostic; asking its type after refusing it is asking about a
+        // thing that was already said not to exist.
+        return no_ty()
+    } else {
+        // Nothing said about the receiver: its type is a fair question.
+    }
+    ro recv_t = type_of(kids[0], @ctx, @scope, @chan)
+    // A SLICE OVER AN UNTYPED RECEIVER IS REFUSED ALOUD (plan 274.7 wave U-1).
+    // The SILENT-OK below assumes the receiver was refused already; the mark
+    // above says it was NOT, and measured 2026-09-25 the untyped receiver
+    // exists with no word said -- `@ctx.fns.params[a..b]` in check/typeref_rules
+    // and emit_c/emit_c.nv, a field chain through a type of another module.
+    // Silence there let two files pass check with a slice nothing typed, which
+    // emission could only answer with an ICE. The slice keeps its refusal.
+    ro slice = slice_shape_of(kids[2])
+    if slice.is_some() && !is_ty(recv_t) {
+        @report_first_leaf_of(kids, SLICE_MSG)
+        return no_ty()
+    } else {
+        // Not a slice, or a typed receiver: the ordinary path below.
+    }
+    if !is_ty(recv_t) {
+        // SILENT-OK: the receiver was refused already, and one cause gets one
+        // diagnostic. Its refusal names the position; a second one here would
+        // point at the same mistake from the other side.
+        return no_ty()
+    } else {
+        // A typed receiver: its shape decides.
+    }
+    // A SLICE `s[lo..hi]`, either side open (plan 274.7 waves U-1..U-3) is the
+    // call `s.index(Range { start: lo, end: hi })` of D470 section 5. Asked here
+    // and not earlier because the answer needs the receiver's TYPE, which the
+    // walk (which let the slice through, check.nv's Bin arm) does not have.
+    if Some(sh) = slice {
+        return @type_slice(kids, recv_t, sh)
+    } else {
+        // An ordinary index: judged below.
+    }
+    if @ctx.tys.kind_of(recv_t) != TypeKind.TkApp {
+        @report_first_leaf_of(kids, "outside the subset: indexing is compiled for `[]T` only -- this receiver is not an applied type (274.5 P4)")
+        return no_ty()
+    } else {
+        // An application: `Vec[T]` and its `[]T` spelling both land here.
+    }
+    if @ctx.tys.arg_count(recv_t) != 1 {
+        @report_first_leaf_of(kids, "outside the subset: indexing is compiled for a ONE-argument application (`[]T`), and this receiver has more (274.5 P4)")
+        return no_ty()
+    } else {
+        // One argument: it is the element.
+    }
+    @type_expr(kids[2])
+    ro idx_t = type_of(kids[2], @ctx, @scope, @chan)
+    // The comparison goes through `prims`, the door to the seeded primitive ids
+    // (the CommonTypes model) -- comparing against a number or against the
+    // spelling of a name would be the hard-coded shape this compiler refuses.
+    //
+    // The refusal is a LANGUAGE error (2026-10-02, the integrator's ruling): D238
+    // gives `@index` an `int` or a `Range` key, D405 has no implicit numeric
+    // conversion, D52 makes a newtype over `int` a type of its own. Until then it
+    // said SUBSET, because the oracle accepts `xs[i]` with `i u8` (measured
+    // 2026-08-30) -- a measurement of the oracle, which the spec does not back
+    // (docs/plans/repro/TBD-index-key-type).
+    if is_ty(idx_t) && idx_t != @ctx.prims.int_id {
+        @reject_first_leaf_of(kids, INT_INDEX_MSG)
+        return no_ty()
+    } else {
+        // Either an int, or already refused where it was typed.
+    }
+    // THE SHELL DECIDES, by name — the same shape as the array literal above
+    // (line ~632). A plain `xs[i]` is the call `xs.index(i)` (D470 section 5,
+    // the same door the closed slice walks through); the element type is the
+    // application's argument and the receiver's spelling is `c_method_symbol`'s
+    // question. Measured 2026-08-31 the shell carried no `index` at all; wave
+    // 274.5 taught the probe `three().index(1)` for `Vec[int]`
+    // (`Vec____nova_int_method_index`, shell.tpl.c:2001), so the instance this
+    // subset needs exists — and any other instance is refused by the name the
+    // shell does not carry, not accepted into an emit ICE.
+    if !@vec_op_carried(recv_t, VEC_INDEX_METHOD) {
+        @report_first_leaf_of(kids, no_shell_method_msg(VEC_INDEX_METHOD, ty_source_name(@ctx, recv_t)))
+        return no_ty()
+    } else {
+        // Carried: the emitter prints exactly this name — and it reads the
+    // RECEIVER's type back off the channel to build that name, so the type
+    // the judgement below already holds is recorded on the receiver node.
+    // Measured 2026-09-28: without the line the emit arm ICEd ("an index whose
+    // receiver type the checker did not record"), because a plain identifier
+    // receiver is typed by the lattice without a recording writer of its own.
+    }
+    @chan.record_type(kids[0].id_of(), recv_t)
+    @ctx.tys.arg(recv_t, 0)
+}
+
+/// `xs[i] = v` and `xs[i] op= v` WRITE through the overload
+/// `mut @index(i int, val T)` -- std's own doc says it "Powers `v[i] = val`"
+/// -- so the store is judged by THAT overload, not by the read `index(i)` the
+/// target was typed through (registry 1524: until 2026-10-01 the write was
+/// printed as the read's call on the left of `=`, and clang refused it --
+/// "expression is not assignable" -- after check had said yes). Carried by the
+/// shell under its own spelling, made from std's body, or refused by name.
+/// A slice target is not judged here: its refusal is the slice door's.
+fn Checker mut @judge_index_store(target Node) -> () {
+    if target.kind_of() != NodeKind.Index { return }
+    ro kids = branch_children(target)
+    if kids.len() < 3 || slice_shape_of(kids[2]).is_some() { return }
+    ro recv_t = @chan.type_if_known(kids[0].id_of())
+    // SILENT-OK: the read door refused the receiver already, by name.
+    if !is_ty(recv_t) { return }
+    if !@vec_op_carried(recv_t, VEC_INDEX_SET_OP) {
+        @report_first_leaf_of(kids, no_shell_method_msg("${VEC_INDEX_METHOD}(i, v)", ty_source_name(@ctx, recv_t)))
+    } else {
+        // Carried or made: the emitter prints the write through `sem.vec_op_c`.
+    }
+}

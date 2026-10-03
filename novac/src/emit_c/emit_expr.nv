@@ -814,6 +814,9 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // absent where a primitive C form comes out.
         if @out.has_callee(e.id_of()) {
             ro row = @out.callee_of(e.id_of()).callable_row()
+            // `equal` for `==`/`!=`, `compare` for an ordering (D46): the row says
+            // which, and an ordering reads `compare(a, b) <op> 0` (the oracle's).
+            ro method = @ctx.fns.rows[raw_row(row)].name
             @body.append("((nova_int)(")
             @body.append(if op_is_not_equal(op) { "!" } else { "" })
             // NAMED BY WHOEVER HAS THE BODY. `str.equal` is std's, and novac
@@ -827,13 +830,13 @@ fn Emitter mut @emit_expr(e Node) -> () {
             } else {
                 // A vector instance is spelled `<Head>____<args>_method_equal`, a
                 // primitive `Nova_<type>_method_equal`: the one door that knows both.
-                @body.append(c_method_symbol(@ctx, @out.type_of(kids[0].id_of()), EQUAL_METHOD))
+                @body.append(c_method_symbol(@ctx, @out.type_of(kids[0].id_of()), method))
             }
             @body.append("(")
             @emit_expr(kids[0])
             @body.append(", ")
             @emit_expr(kids[2])
-            @body.append(")))")
+            @body.append(if method == EQUAL_METHOD { ")))" } else { ") ${form} 0))" })
         } else if is_sum_equality(op, @ctx, @out.type_of(kids[0].id_of())) {
             // A PAYLOAD-FREE SUM declaring `Equal` (274.7 wave R): its value IS
             // the tag, so the tags compare -- the access by placement, the way

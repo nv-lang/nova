@@ -38,19 +38,20 @@
 #   принимавшихся в 00:23, к утру стали отвергаться, и мера «не храповик»
 #   (решение 2026-09-25) этого не показала до вечернего ручного замера;
 #   интегратор пересмотрел решение этим заданием.
+# 2026-10-03, cloud session p274-carina-sweep (sync with main dc2617993): 16 -> 11 rejected. Accepted
+#   now by sweeps 10-11 (measured: main's own novac on the merged tree keeps all 16, this branch's
+#   accepts five): check/decl_forms.nv (`for` over an iterator, D58), check/literal_rules.nv (an
+#   ordering of two `str`, D46), main.nv and sem/mangle.nv (`??` over a Result, D86; the shell's
+#   `to_str`/`ends_with`/`replace`/`is_dir`), pipeline/instance_scope_test.nv.
+# 2026-10-03, cloud session p274-carina-sweep (sweep 12): 11 -> 8 rejected. check/calls.nv,
+#   check/methods.nv and check/mut_args.nv compared the sums `ArgClass` and `RecordShape` with `==`;
+#   D363 wants a sum to opt in, and both now carry `#impl(Equal)` (sem/binding.nv, sem/sem.nv).
+# 2026-10-03, интегратор nova-20 (слияние sweep 10-12 поверх k1 bc8b54277 и cast e14784386):
+#   8 -> 4 rejected. Приняты: check/type_of.nv, resolve/resolve_test.nv, sem/binding_test.nv,
+#   sem/mangle_test.nv (CI на 835fc322d назвал три последних; type_of.nv принят деревом слияния).
+#   Мерено на LF: локальные CRLF-копии pipeline/{const_expr,handed_free,return_pos}_test.nv
+#   отвергаются разбором — это №1691, не регресс (в индексе LF).
 novac/src/check/binds.nv
-novac/src/check/calls.nv
-novac/src/check/decl_forms.nv
-novac/src/check/literal_rules.nv
-novac/src/check/methods.nv
-novac/src/check/mut_args.nv
-novac/src/check/type_of.nv
 novac/src/diag/diag.nv
 novac/src/emit_c/shell.nv
 novac/src/lex/lex_test.nv
-novac/src/main.nv
-novac/src/pipeline/instance_scope_test.nv
-novac/src/resolve/resolve_test.nv
-novac/src/sem/binding_test.nv
-novac/src/sem/mangle.nv
-novac/src/sem/mangle_test.nv

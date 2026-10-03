@@ -17,7 +17,8 @@
 module novac.lower
 
 import ../tree.{Node}
-import ../sem.{branch_children, is_coalesce_return}
+import ../sem.{branch_children, is_coalesce_return, coalesce_ok_variant, option_payload, VariantRow}
+import ../types.{is_ty}
 
 /// `a ?? b` as a VALUE: the Option into a temporary, then the payload or the
 /// fallback into a second one. The SHORT CIRCUIT is the point -- the fallback
@@ -48,10 +49,22 @@ fn Lowerer mut @lower_coalesce(e Node) -> Local {
     // one statement is the payload read through the one door -- printed by the one
     // assignment printer, which spells a Temp with the indent the hand-written line
     // had (measured before the edit, plan 274.8 decision (1)).
-    ro cond = Cond.IsSome(lo)
+    // An Option keeps the Option door's Some-test; a `Result` (D86: `Ok(v)` yields `v`)
+    // is the match arm's head test of `Ok` and its payload is the arm binder's field 0.
+    ro is_opt = is_ty(option_payload(@ctx, ot))
+    ro ok = coalesce_ok_variant(@ctx, ot)
+    ro cond = if is_opt {
+        Cond.IsSome(lo)
+    } else {
+        Cond.Holds(PatTest { pat: Pattern.Variant(VariantMatch { head: ok, also: []VariantRow.new() }), scr: lo })
+    }
     // Same as the if-value: the None branch is a block printed as `} else {`.
     ro c = @ir.begin_if(cond, ElseShape.Braced)
-    @ir.take_payload(lr, lo)
+    if is_opt {
+        @ir.take_payload(lr, lo)
+    } else {
+        @ir.take_field(lr, lo, ok, 0)
+    }
     @ir.begin_else(c)
     // THE FALLBACK LIVES HERE, not above: its hoists and its effects belong
     // to the None branch alone -- that is the short circuit, in one place.

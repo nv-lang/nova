@@ -107,7 +107,7 @@ test "a `-> @` on a by-pointer value receiver returns the receiver's STORAGE: a 
     // the C function returns the pointer the receiver arrived as.
     ro (d, c) = compile_to_c("${PV_DECLS}fn main() {\n mut c = mk()\n println(c.set(5).set(6).n)\n println(c.n)\n}", std_decls())
     assert(d.len() == 0, messages(d))
-    assert(c.contains("NovaValue_Pv* novac_fn_set"), c)
+    assert(c.contains("* novac_fn_set("), c)
     assert(c.contains("return _novac_self;"), c)
     // The call is read THROUGH the pointer: the next link takes `&` of that lvalue.
     assert(c.contains("(&(*novac_fn_set"), c)
@@ -115,9 +115,12 @@ test "a `-> @` on a by-pointer value receiver returns the receiver's STORAGE: a 
     ro (dt, ct) = compile_to_c("${PV_DECLS}fn main() {\n println(mk().set(5).set(6).n)\n}", std_decls())
     assert(dt.len() == 0, messages(dt))
     assert(ct.contains("(&_novac_l"), ct)
-    // CONTROL: a by-COPY receiver (a small `ro @`) returns its value as it is.
+    // A small `ro @` with a fluent `-> @` crosses by POINTER too: the oracle forces it
+    // (`static NovaValue_Sm* Nova_Sm_method_same(NovaValue_Sm* nova_self)`, measured
+    // 2026-10-03), and #1654's door does the same. This control asserted a by-copy
+    // return until the k1/cast merge, where the two doors became one.
     ro (dc, cc) = compile_to_c("type Sm value {\n n int\n}\nfn Sm @same() -> @ {\n}\n\
 fn main() {\n ro s = Sm { n: 3 }\n println(s.same().n)\n}", std_decls())
     assert(dc.len() == 0, messages(dc))
-    assert(!cc.contains("NovaValue_Sm* novac_fn_same"), cc)
+    assert(cc.contains("* novac_fn_same("), cc)
 }

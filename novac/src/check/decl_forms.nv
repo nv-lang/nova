@@ -110,7 +110,13 @@ fn Checker mut @judge_attr(children []Node) -> () {
         // guarantee, this decision reddens there. See the doc of
         // REALTIME_ATTR for the measurement behind it.
     } else {
-        @report_first_leaf_of(children, ATTR_MSG)
+        // ONE DOOR, two texts: `#impl(P)` of a protocol the subset does not
+        // derive yet -- `#impl(Serialize)` in novac's own diag/diag.nv -- is
+        // named by its cause and its stage (D341's derived `@serialize[S
+        // Serializer]` and its caller `json_encode[T Serialize]` dispatch
+        // through protocol bounds, E2-b3; the integrator's choice (c), sweep
+        // 10); any other attribute keeps the generic text.
+        @report_first_leaf_of(children, if attr_kids_name(children, IMPL_ATTR) { IMPL_DEFERRED_MSG } else { ATTR_MSG })
     }
 }
 

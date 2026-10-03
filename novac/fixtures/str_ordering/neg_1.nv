@@ -1,0 +1,10 @@
+module str_ordering.neg_1
+
+// NOVAC_EXPECT dispatches through a protocol
+// ONE seeded cause: an ordering of a `str` and an `int`. `str @compare` takes a
+// `str`; the pair is no `str` pair, so no `compare` is asked and the operator
+// stays refused by the protocol table. The oracle's checker lets the pair
+// through and clang refuses the C it emits (registry, filed with sweep 10).
+fn main() {
+    println("a" < 1)
+}

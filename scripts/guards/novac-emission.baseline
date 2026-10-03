@@ -126,8 +126,10 @@
 # DCE оракула заглушку именно по совпадению имени — НЕ проверено (названный пробел).
 # Собственная эмиссия novac не изменилась: hello минус шаблон = 6 строк и до, и
 # после (8938-8932, 9048-9042).
-match_demo 15386
-records 15316
+# merge of p274-carina-sweep (steps 10-12) into main (integrator, 2026-10-03): the merge takes sweep's
+#   Linux-regenerated shell.tpl.c, so the numbers are sweep's own (measured again on the merged tree).
+match_demo 15602
+records 15532
 # strings 6082 -> 6073 (2026-08-18, Э2-б2): заработал коллектор достижимого.
 # Девять строк -- это ровно те функции фикстуры, до которых из `main` нет
 # пути. Храповик двусторонний, и опускать базу СНИЖЕНИЕМ обязательно: иначе
@@ -153,7 +155,9 @@ records 15316
 # `i < _novac_l2` в условии) — норма D58 («выражение после `in` вычисляется один раз, до первой
 # итерации», амендмент 2026-09-30), пришла с дугой D486 (слияние nova-kim 2ba3a552c). Замер — diff
 # эмиссии novac до слияния (00cd06da9) и после: ровно эта строка. Рост — цена нормы.
-arithmetic 15309
+# merge of p274-carina-sweep (steps 10-12) into main (integrator, 2026-10-03): the merge takes sweep's
+#   Linux-regenerated shell.tpl.c, so the numbers are sweep's own (measured again on the merged tree).
+arithmetic 15525
 # 2026-09-30 (Carina window, batch 5): +5465 lines on EVERY fixture, all of it
 #   the shell, novac's own emission unchanged. +5446 came with E.9 step 1
 #   (75b205fe0): the shell probe imports std.fs/std.os and exercises args, an
@@ -170,7 +174,9 @@ arithmetic 15309
 # 2026-09-30 (Carina window, p274-e9s4 on main 97ab70f5d): +21 on every fixture,
 #   the shell regenerated on that oracle (#1412, #1409, #1097, #1415 in it);
 #   novac's own emission unchanged.
-hello 15277
+# merge of p274-carina-sweep (steps 10-12) into main (integrator, 2026-10-03): the merge takes sweep's
+#   Linux-regenerated shell.tpl.c, so the numbers are sweep's own (measured again on the merged tree).
+hello 15493
 # match_demo 6197 -> 6373, records 6127 -> 6303, arithmetic 6117 -> 6293, hello 6088 -> 6264 (2026-09-05, волна 274.7 В7): реген shell.tpl.c — проба оболочки получила
 # `Vec[f64]` (`reals = [1.5, 2.5]`, ради `Vec[Meters]` -> `Nova_Vec____nova_f64`, №940), и в
 # шаблон въехали инстанс Vec[f64] с его методами плюс всё, что оракул сам добавил в прелюдию с
@@ -231,3 +237,12 @@ hello 15277
 #   line differing (a `parse.nv` line number in a throw trace). Measured by this guard: match_demo
 #   15383 -> 15386, records 15313 -> 15316, arithmetic 15306 -> 15309, hello 15274 -> 15277.
 #   novac's own emission for these files did not change.
+# 2026-10-03, cloud session p274-carina-sweep (sync with main dc2617993): +219 lines on each of the
+#   four files -- the shell regenerated ON LINUX from the merged probe and the rebuilt oracle,
+#   15269 -> 15488 lines: sweep 11's probe calls (`str.replace`, `str.ends_with`, `[]u8.to_str`,
+#   `FileType.is_dir`) and the Linux half of registry 1655 (the runtime's stdout flush), which main's
+#   Windows regeneration had taken from a stale cache (check-novac-shell-freshness red on CI).
+#   Measured by this guard: match_demo 15383 -> 15602, records 15313 -> 15532, arithmetic
+#   15306 -> 15525, hello 15274 -> 15493. novac's own emission for these files did not change.
+# merge of p274-carina-sweep (steps 10-12) into main (integrator, 2026-10-03): the merge takes sweep's
+#   Linux-regenerated shell.tpl.c, so the numbers are sweep's own (measured again on the merged tree).

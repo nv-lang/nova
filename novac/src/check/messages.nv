@@ -199,7 +199,6 @@ const INTERP_PATTERN_MSG = "a pattern's string literal is not interpolated (D486
 const LIT_PATTERN_TYPE_MSG = "a literal pattern compares with a value of its own type -- a string literal with a `str`, a char literal with a `char`, an integer literal with an integer (D486 s2; D128: `char` and the integers do not mix); the value matched here is of another type"
 
 
-const IFLET_VARIANT_MSG = "outside the subset: `if <pattern> = ...` takes only `Some(name)` here -- other variants arrive with their carriers (274.5 P4)"
 
 /// A tail `if let` used as a VALUE with no `else` (registry 1189).
 ///
@@ -216,8 +215,8 @@ const IFLET_VALUE_NEEDS_ELSE_MSG = "outside the subset: a tail `if let` needs an
 /// wrong answer and no diagnostic anywhere.
 const IFLET_VALUE_DISAGREE_MSG = "outside the subset: the branches of a value `if let` must agree on a type (E2-b)"
 
-/// See IFLET_VARIANT_MSG above; the initializer half.
-const IFLET_INIT_MSG = "the initializer of `if Some(...) = ...` must be an Option instance -- this expression's type is not one"
+/// The initializer of a variant pattern is no sum: no variant can test it.
+const IFLET_INIT_MSG = "the initializer of `if <variant> = ...` must be a sum -- an Option, a Result or a declared sum; this expression's type is not one"
 
 /// The if-let condition's PATTERN door (wave P3, D486 §4's third column):
 /// the condition takes a variant pattern -- judged against the initializer's
@@ -242,8 +241,7 @@ const RO_WORD_PATTERN_MSG = "`ro` stands only before a bare name that is the who
 /// if-let's, worded for its own position -- a while-let is the if-let's
 /// condition asked once per iteration, so the judgments are one and the
 /// messages name the form the author wrote.
-const WHILELET_VARIANT_MSG = "outside the subset: `while <pattern> = ...` takes only `Some(name)` here -- other variants arrive with their carriers (274.5 P4)"
-const WHILELET_INIT_MSG = "the initializer of `while Some(...) = ...` must be an Option instance -- this expression's type is not one"
+const WHILELET_INIT_MSG = "the initializer of `while <variant> = ...` must be a sum -- an Option, a Result or a declared sum; this expression's type is not one"
 const WHILELET_COND_BIND_MSG = "outside the subset: a name binding in a `while` condition is read but not compiled yet -- the condition takes a variant pattern (274.5 P4, the condition-forms wave)"
 const WHILELET_COND_FORM_MSG = "outside the subset: a `while` condition takes a variant pattern here -- record, array and positional-group conditions arrive with the condition-forms wave (274.5 P4)"
 
@@ -256,7 +254,7 @@ const WHILELET_COND_FORM_MSG = "outside the subset: a `while` condition takes a 
 /// requiring `[]T` is a LAG, not a rule, and a reader is entitled to know when it ends.
 /// Carrying neither spelling, it was also invisible to the debt ratchet -- the hole in
 /// that counter's scope is wave B11's subject.
-const FOR_CALL_HEAD_MSG = "outside the subset: the head of this `for` is a call that does not return a vector, and novac walks a collection by index, so it needs `[]T` -- the iterator protocol D58 asks for is not compiled yet (274.7 B12)"
+const FOR_CALL_HEAD_MSG = "outside the subset: the head of this `for` is neither a vector `[]T` nor an iterator (a type with `next() -> Option[T]`, D58) -- a collection reached through `iter()` first is not compiled yet (274.7 B12)"
 
 /// The for-header's OWN predicate (wave P5, D486 s4: the header is a binding
 /// position, and a binding position is irrefutable): a variant, a literal, an
@@ -365,6 +363,11 @@ const IMPORT_ALIAS_MSG = "outside the subset: an `import ... as ...` alias arriv
 
 /// `#realtime nogc` and its kin.
 const ATTR_MSG = "outside the subset: an effect attribute is read but not compiled yet"
+
+/// `#impl(P)` for a protocol other than `Display` / `Equal` -- `Serialize` in
+/// novac's own diag/diag.nv. The derived method and its callers dispatch through
+/// protocol bounds (`S Serializer`, `T Serialize`), which arrive with E2-b3.
+const IMPL_DEFERRED_MSG = "outside the subset: `#impl` of this protocol is derived only for `Display` and `Equal` -- the derived methods of the others (`Serialize`, D341) and their callers dispatch through protocol bounds, not compiled yet (E2-b3)"
 
 /// `unsafe { ... }` -- D216 s8. Compiled since 274.11 E.10 step 3c where an `if`
 /// value stands (initializer, argument, a body's tail) and as a statement.

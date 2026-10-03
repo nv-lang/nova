@@ -1,0 +1,29 @@
+module str_ordering.pos_1
+
+// `<`, `<=`, `>`, `>=` ON TWO `str` (D46: an ordering is `a.@compare(b) <op>
+// 0`, and `str @compare` is std's -- byte order, the shorter prefix first).
+// Until sweep 10 novac refused it as "dispatches through a protocol"; its own
+// check/literal_rules.nv compares digit texts this way. Each pair differs in
+// one byte, in length, or not at all, and every operator meets every case.
+fn lt(a str, b str) -> bool => a < b
+
+fn le(a str, b str) -> bool => a <= b
+
+fn gt(a str, b str) -> bool => a > b
+
+fn ge(a str, b str) -> bool => a >= b
+
+fn main() {
+    println(lt("abc", "abd"))
+    println(lt("abd", "abc"))
+    println(lt("ab", "abc"))
+    println(lt("x", "x"))
+    println(le("x", "x"))
+    println(le("y", "x"))
+    println(gt("18446744073709551616", "18446744073709551615"))
+    println(gt("", "a"))
+    println(ge("b", "a"))
+    println(ge("", ""))
+    ro digits = "255"
+    println(digits > "127")
+}

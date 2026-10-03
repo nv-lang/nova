@@ -424,6 +424,14 @@ export fn shell_method_symbol(ctx Ctx, row FnRow, t TyId) -> str {
     if consumes && is_ty(t) && ctx.tys.kind_of(t) != TypeKind.TkApp {
         return "Nova_${ty_source_name(ctx, t)}_consume_${fd.name}"
     }
+    // A method DECLARED on a concrete array (`fn []u8 @to_str`) is the shell's
+    // `Nova_NovaArray_nova_byte_method_to_str`, whatever the call's receiver
+    // spells -- the row's own receiver decides, not the generic instance form.
+    ro arr = if fd.has_recv { array_ext_c_ident(ctx, ctx.fns.params[fd.param_off].type_id) } else { "" }
+    if arr != "" {
+        ro form = if consumes { "consume" } else { "method" }
+        return "Nova_${arr}_${form}_${fd.name}"
+    }
     c_method_symbol(ctx, t, fd.name)
 }
 
