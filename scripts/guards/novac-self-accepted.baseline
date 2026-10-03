@@ -16,6 +16,11 @@
 # мерой и здесь не сверяется.
 #
 # Летопись (новые записи — сверху):
+# 2026-10-03, интегратор nova-20: база — МНОЖЕСТВО CI (Linux, LF), 16 файлов: вошёл
+#   pipeline/instance_scope_test.nv, вышел pipeline/handed_free_test.nv. На Windows-извлечении (CRLF)
+#   множество другое ровно на эти два файла — Карина зависит от переводов строк (реестр №1691);
+#   замерено копией novac/src и std с LF: совпало с CI. До №1691 локальный прогон на CRLF-дереве
+#   краснеет на них — это дефект Карины, не базы; судья — CI.
 # 2026-10-03, интегратор nova-20, слияние ветки p1665 в main (после влитых k1 ч.6, mono-k2 4–6, sweep 8–9,
 #   партии оракула): база пересчитана на сведённом дереве, 16 файлов, ICE 0. ВОШЛИ 8 — законное
 #   вскрытие и известные классы: sweep 9 (`match`-значение) впервые провёл модуль check/ через обход
@@ -44,7 +49,7 @@ novac/src/diag/diag.nv
 novac/src/emit_c/shell.nv
 novac/src/lex/lex_test.nv
 novac/src/main.nv
-novac/src/pipeline/handed_free_test.nv
+novac/src/pipeline/instance_scope_test.nv
 novac/src/resolve/resolve_test.nv
 novac/src/sem/binding_test.nv
 novac/src/sem/mangle.nv
