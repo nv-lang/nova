@@ -107,6 +107,7 @@ export type TypeRows enum
 /// nothing produces it and the parser refuses the form, so no program reaches
 /// this shape today. It costs one arm per match and buys the honest statement
 /// that the cell is empty ON PURPOSE.
+#impl(Equal)
 export type RecordShape enum Record | ValueRecord | NamedTuple | PositionalTuple
     | AnonNamedTuple | AnonPositionalTuple
 

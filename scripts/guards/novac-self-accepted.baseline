@@ -43,10 +43,10 @@
 #   accepts five): check/decl_forms.nv (`for` over an iterator, D58), check/literal_rules.nv (an
 #   ordering of two `str`, D46), main.nv and sem/mangle.nv (`??` over a Result, D86; the shell's
 #   `to_str`/`ends_with`/`replace`/`is_dir`), pipeline/instance_scope_test.nv.
+# 2026-10-03, cloud session p274-carina-sweep (sweep 12): 11 -> 8 rejected. check/calls.nv,
+#   check/methods.nv and check/mut_args.nv compared the sums `ArgClass` and `RecordShape` with `==`;
+#   D363 wants a sum to opt in, and both now carry `#impl(Equal)` (sem/binding.nv, sem/sem.nv).
 novac/src/check/binds.nv
-novac/src/check/calls.nv
-novac/src/check/methods.nv
-novac/src/check/mut_args.nv
 novac/src/check/type_of.nv
 novac/src/diag/diag.nv
 novac/src/emit_c/shell.nv
