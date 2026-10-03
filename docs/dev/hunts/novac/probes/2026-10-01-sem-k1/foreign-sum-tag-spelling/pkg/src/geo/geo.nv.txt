@@ -1,5 +1,0 @@
-module hp.geo
-
-export type Dir enum North | East | South | West
-
-export fn first() -> Dir => Dir.North

@@ -1,0 +1,7 @@
+module hp.geo
+
+export type Kind { name str }
+
+export ro Kind.ALL []Kind = [Kind { name: "a" }, Kind { name: "b" }]
+
+export const Kind.MAX = 5

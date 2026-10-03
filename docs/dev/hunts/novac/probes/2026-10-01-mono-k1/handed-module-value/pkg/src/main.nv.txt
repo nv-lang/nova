@@ -1,0 +1,11 @@
+module hp
+
+import ./geo.{Kind}
+
+fn main() {
+    for k in Kind.ALL {
+        println(k.name)
+    }
+    println(Kind.ALL.len())
+    println(Kind.MAX)
+}

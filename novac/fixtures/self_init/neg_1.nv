@@ -1,0 +1,17 @@
+module self_init.neg_1
+
+// A binding whose initializer READS THE NAME IT BINDS (274.3/F28): `ro x = x + 1`
+// in an inner block. Same-scope re-binding is legal (D347 R3: the right side
+// reads the OLD binding), and novac does not compile it yet (274.7 B9) -- the
+// refusal stays. Its pair, pos_1 beside this file, holds that a FIELD or a
+// method named like the binding is no such reading.
+
+// NOVAC_EXPECT a binding's initializer refers to the name it binds
+
+fn main() {
+    ro x = 7
+    if x > 0 {
+        ro x = x + 1
+        println(x)
+    }
+}

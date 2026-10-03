@@ -32,7 +32,7 @@ test "a number keeps its type in every position (D491); a literal takes the posi
 /// Registry 1682 (the hunt's carrier `Pv { b: n }` with `b u8`, `n = 300`, which
 /// printed 44 on main): a constructor's value is judged against the declared field
 /// in every constructor form -- a record, a `value` record, a named tuple, a variant
-/// with data -- whatever the value is: a binding, a call, a value form (`if`).
+/// with data -- whatever the value is: a binding, a call, a value form (`if`, `match`).
 fn ctor_head() -> str => "type Pr { b u8, f f64 }\ntype Pv value { b u8, f f32 }\ntype Pt(x u16, y f64)\n\
 type Sv enum\n | Small(i8)\n | Wide(f64)\nfn three() -> int => 3\nfn main() {\n ro k = 3\n ro n = 300\n"
 
@@ -49,7 +49,10 @@ test "a constructor's value keeps its type in every constructor form (D491, #168
         " ro a = Pt(1 as u16, three())\n println(a.y)\n}",
         " ro a = Sv.Small(n)\n match a { Small(v) => println(v as int), Wide(w) => println(w) }\n}",
         " ro a = Sv.Wide(three())\n match a { Small(v) => println(v as int), Wide(w) => println(w) }\n}",
-        " ro a = Sv.Small(if k > 0 { n } else { n })\n match a { Small(v) => println(v as int), Wide(w) => println(w) }\n}")
+        " ro a = Sv.Small(if k > 0 { n } else { n })\n match a { Small(v) => println(v as int), Wide(w) => println(w) }\n}",
+        // A `match` value in a field (the hunt's own cell; the position compiles since the sync).
+        " ro a = Pr { b: match k {\n 3 => n\n _ => n\n }, f: 2.0 }\n println(a.b as int)\n}",
+        " ro a = Pr { b: 1 as u8, f: match k {\n 3 => k\n _ => k\n } }\n println(a.f)\n}")
     for c in cells {
         ro (d, _) = compile_to_c("${ctor_head()}${c}", std)
         // ONE refusal per cell, by D491's own words: the value does not become the field's type.

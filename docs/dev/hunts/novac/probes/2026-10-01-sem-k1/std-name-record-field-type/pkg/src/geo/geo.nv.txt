@@ -1,3 +1,0 @@
-module hp.geo
-
-export type CallerLoc { file str, line f64 }

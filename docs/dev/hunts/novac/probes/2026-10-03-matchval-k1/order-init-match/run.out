@@ -1,0 +1,152 @@
+=== PROGRAM
+     1	module prog
+     2	
+     3	// D484: arguments left to right, observably -- the call stands as a binding
+     4	// initializer (the `@lower_place` door), a statement (`@lower_eval`), and a
+     5	// method argument; the `match` argument calls something in its scrutinee or arm.
+     6	fn say(n int) -> int {
+     7	    println(n)
+     8	    n
+     9	}
+    10	
+    11	fn three(a int, b int, c int) -> int => a * 100 + b * 10 + c
+    12	
+    13	fn sink(a int, b int, c int) -> () {
+    14	    println(a * 100 + b * 10 + c)
+    15	}
+    16	
+    17	type Box { n int }
+    18	
+    19	fn Box @add3(a int, b int, c int) -> int => @n + a * 100 + b * 10 + c
+    20	
+    21	fn main() {
+    22	    println("init, scrutinee calls: norm 1 2 3 then 123")
+    23	    ro r = three(say(1), match say(2) {
+    24	        2 => 2
+    25	        _ => 0
+    26	    }, say(3))
+    27	    println(r)
+    28	    println("init, arm calls: norm 4 5 6 then 456")
+    29	    ro r2 = three(say(4), match r {
+    30	        123 => say(5)
+    31	        _ => 0
+    32	    }, say(6))
+    33	    println(r2)
+    34	    println("statement: norm 7 8 9 then 789")
+    35	    sink(say(7), match say(8) {
+    36	        8 => 8
+    37	        _ => 0
+    38	    }, say(9))
+    39	    println("method arg in init: norm 1 2 3 then 123")
+    40	    ro b = Box { n: 0 }
+    41	    ro r3 = b.add3(say(1), match say(2) {
+    42	        2 => 2
+    43	        _ => 0
+    44	    }, say(3))
+    45	    println(r3)
+    46	    println("if control in init: norm 4 5 6 then 456")
+    47	    ro r4 = three(say(4), if say(5) > 0 { 5 } else { 0 }, say(6))
+    48	    println(r4)
+    49	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=0
+oracle run rc=0
+=== SUBJECT: novac emit prog.nv
+novac emit rc=0
+--- Carina's C, the body of main
+static nova_unit nova_fn_main_impl(void) {
+    nova_print_str(_novac_strlit_0);
+    nova_print_newline();
+    nova_int _novac_l2 = novac_fn_prog_say__nova_int__to_nova_int(((nova_int)1LL));
+    nova_int _novac_l5 = novac_fn_prog_say__nova_int__to_nova_int(((nova_int)2LL));
+    nova_int _novac_l4 = (nova_int){0};
+    int _novac_matched_t0 = 0;
+    if (!_novac_matched_t0 && ((_novac_l5 == 2LL))) {
+        _novac_l4 = ((nova_int)2LL);
+    _novac_matched_t0 = 1;
+    }
+    if (!_novac_matched_t0 && (true)) {
+        _novac_l4 = ((nova_int)0LL);
+    _novac_matched_t0 = 1;
+    }
+    nova_int _novac_l3 = _novac_l4;
+    nova_int _novac_l6 = novac_fn_prog_say__nova_int__to_nova_int(((nova_int)3LL));
+    nova_int _novac_l8 = novac_fn_prog_say__nova_int__to_nova_int(((nova_int)2LL));
+    nova_int _novac_l7 = (nova_int){0};
+    int _novac_matched_t1 = 0;
+    if (!_novac_matched_t1 && ((_novac_l8 == 2LL))) {
+        _novac_l7 = ((nova_int)2LL);
+    _novac_matched_t1 = 1;
+    }
+    if (!_novac_matched_t1 && (true)) {
+        _novac_l7 = ((nova_int)0LL);
+    _novac_matched_t1 = 1;
+    }
+    nova_int r = novac_fn_prog_three__nova_int__nova_int__nova_int__to_nova_int(_novac_l2, _novac_l3, _novac_l6);
+    nova_print_int(r);
+    nova_print_newline();
+    nova_print_str(_novac_strlit_1);
+    nova_print_newline();
+    nova_int _novac_l10 = novac_fn_prog_say__nova_int__to_nova_int(((nova_int)4LL));
+    nova_int _novac_l13 = r;
+    nova_int _novac_l12 = (nova_int){0};
+    int _novac_matched_t2 = 0;
+    if (!_novac_matched_t2 && ((_novac_l13 == 123LL))) {
+        _novac_l12 = novac_fn_prog_say__nova_int__to_nova_int(((nova_int)5LL));
+    _novac_matched_t2 = 1;
+    }
+    if (!_novac_matched_t2 && (true)) {
+        _novac_l12 = ((nova_int)0LL);
+    _novac_matched_t2 = 1;
+    }
+    nova_int _novac_l11 = _novac_l12;
+    nova_int _novac_l14 = novac_fn_prog_say__nova_int__to_nova_int(((nova_int)6LL));
+    nova_int _novac_l16 = r;
+    nova_int _novac_l15 = (nova_int){0};
+    int _novac_matched_t3 = 0;
+    if (!_novac_matched_t3 && ((_novac_l16 == 123LL))) {
+        _novac_l15 = novac_fn_prog_say__nova_int__to_nova_int(((nova_int)5LL));
+    _novac_matched_t3 = 1;
+    }
+    if (!_novac_matched_t3 && (true)) {
+        _novac_l15 = ((nova_int)0LL);
+    _novac_matched_t3 = 1;
+    }
+    nova_int r2 = novac_fn_prog_three__nova_int__nova_int__nova_int__to_nova_int(_novac_l10, _novac_l11, _novac_l14);
+    nova_print_int(r2);
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+=== STDOUT, line by line: oracle | Carina
+  1  init, scrutinee calls: norm 1 2 3 then 123| init, scrutinee calls: norm 1 2 3 then 123
+  2  1                       | 1
+  3  2                       | 2
+  4  3                       | 3
+  5  123                     | 2
+  6  init, arm calls: norm 4 5 6 then 456| 123
+  7  4                       | init, arm calls: norm 4 5 6 then 456
+  8  5                       | 4
+  9  6                       | 5
+ 10  456                     | 6
+ 11  statement: norm 7 8 9 then 789| 5
+ 12  7                       | 456
+ 13  8                       | statement: norm 7 8 9 then 789
+ 14  9                       | 7
+ 15  789                     | 8
+ 16  method arg in init: norm 1 2 3 then 123| 9
+ 17  1                       | 8
+ 18  2                       | 789
+ 19  3                       | method arg in init: norm 1 2 3 then 123
+ 20  123                     | 1
+ 21  if control in init: norm 4 5 6 then 456| 2
+ 22  4                       | 3
+ 23  5                       | 2
+ 24  6                       | 123
+ 25  456                     | if control in init: norm 4 5 6 then 456
+ 26                          | 4
+ 27                          | 5
+ 28                          | 6
+ 29                          | 5
+ 30                          | 456
+=== VERDICT: DIFFERENT stdout

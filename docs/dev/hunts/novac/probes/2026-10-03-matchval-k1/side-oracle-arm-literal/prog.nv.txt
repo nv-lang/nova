@@ -1,0 +1,35 @@
+module prog
+
+// D489, the paragraph on a match arm and an if branch: when the result type is WRITTEN (a typed
+// binding, a return, an argument), every arm is a position of that type and a
+// literal in it takes that type. All literals here fit their type. The norm:
+// the program builds and prints 250, -1, 255, -32768.
+fn found(k int) -> Option[int] {
+    if k > 0 { Some(k) } else { None }
+}
+
+fn take8(x u8) -> int => x as int
+
+fn take16(x i16) -> int => x as int
+
+fn main() {
+    ro k = 3
+    ro c u8 = match k {
+        3 => 250
+        _ => 0
+    }
+    println(c as int)
+    ro d i16 = match found(k) {
+        Some(v) => -1
+        None => 7
+    }
+    println(d as int)
+    println(take8(match k {
+        3 => 255
+        _ => 1
+    }))
+    println(take16(match found(0) {
+        Some(v) => 1
+        None => -32768
+    }))
+}

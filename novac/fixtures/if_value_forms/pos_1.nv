@@ -1,0 +1,101 @@
+module if_value_forms.pos_1
+
+// AN `if` IS A VALUE wherever a value stands (D49), and its branches are typed
+// by the door a match arm's body takes -- one door, the integrator's word for
+// sweep 6. Five forms, each one of novac's own carriers:
+//   * a branch is a position of the WRITTEN result type: `else { 0 }` in a
+//     `-> u8` fn takes `u8` (D489), and so does a match arm `_ => 0`;
+//   * an `else if` chain is one value, in a binding, a tail and an argument;
+//   * a nested `if` is the value of a branch, in the then and the else side;
+//   * an `if` is the scrutinee of a match;
+//   * a method call's arguments do not inherit the tail's written type.
+// Each printed value names the branch that produced it, so a branch placed in
+// the wrong slot prints a different line.
+type Tally { n int }
+
+fn Tally @plus(k int, d int) -> int => @n + k * 10 + d
+
+fn byte_at(b []u8, k int) -> u8 {
+    if k < b.len() {
+        b[k]
+    } else {
+        0
+    }
+}
+
+fn byte_arm(b []u8, k int) -> u8 {
+    match k < b.len() {
+        true => b[k]
+        false => 0
+    }
+}
+
+fn grade(k int) -> str {
+    if k > 89 {
+        "A"
+    } else if k > 69 {
+        "B"
+    } else {
+        "C"
+    }
+}
+
+fn shout(s str) -> str => "${s}!"
+
+fn nested(a bool, b bool) -> int {
+    if a {
+        ro base = 100
+        if b { base + 1 } else { base + 2 }
+    } else {
+        if b { 3 } else { 4 }
+    }
+}
+
+fn found(k int) -> Option[int] {
+    if k > 0 { Some(k) } else { None }
+}
+
+fn scrut(k int) -> int {
+    match if k > 5 { found(k) } else { found(0 - k) } {
+        Some(v) => v * 10
+        None => -1
+    }
+}
+
+fn wide(acc Tally, m bool) -> int => acc.plus(if m { 1 } else { 0 }, 7)
+
+/// A newtype over `int`, as novac's own `TyId`: the tail's written type is
+/// `Code`, and the `if` stands in a METHOD's argument, whose parameter is
+/// `int` -- the tail's type must not reach the argument's literals.
+type Code int
+
+fn Tally @code(k int) -> Code => Code(@n + k)
+
+fn code_raw(c Code) -> int => c as int
+
+fn pick(acc Tally, m bool) -> Code => acc.code(if m { 1 } else { 0 })
+
+fn main() {
+    ro b = "AB".bytes()
+    println(byte_at(b, 1) as int)
+    println(byte_at(b, 9) as int)
+    println(byte_arm(b, 0) as int)
+    println(byte_arm(b, 9) as int)
+    println(grade(95))
+    println(grade(75))
+    println(grade(10))
+    ro mid = if b.len() > 5 { "long" } else if b.len() > 1 { "pair" } else { "short" }
+    println(mid)
+    println(shout(if b.len() > 5 { "x" } else if b.len() == 2 { "two" } else { "y" }))
+    println(nested(true, true))
+    println(nested(true, false))
+    println(nested(false, true))
+    println(nested(false, false))
+    println(scrut(9))
+    println(scrut(-4))
+    println(scrut(0))
+    println(wide(Tally { n: 1000 }, true))
+    println(wide(Tally { n: 1000 }, false))
+    println(code_raw(pick(Tally { n: 40 }, true)))
+    println(code_raw(pick(Tally { n: 40 }, false)))
+}

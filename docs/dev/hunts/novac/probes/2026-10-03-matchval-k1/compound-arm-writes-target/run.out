@@ -1,0 +1,81 @@
+=== PROGRAM
+     1	module prog
+     2	
+     3	// `x += match ..` whose taken arm WRITES `x` before yielding its value. Which
+     4	// `x` the compound reads (before or after the arm ran) is a measurement here,
+     5	// not a norm (no D-block found that fixes the order of a compound store's
+     6	// read against its right side); the two compilers are compared.
+     7	fn main() {
+     8	    ro k = 3
+     9	    mut x = 1
+    10	    x += match k {
+    11	        3 => {
+    12	            x = 100
+    13	            1
+    14	        }
+    15	        _ => 0
+    16	    }
+    17	    println(x)
+    18	    mut ys = [1, 2]
+    19	    ys[0] += match k {
+    20	        3 => {
+    21	            ys[0] = 50
+    22	            1
+    23	        }
+    24	        _ => 0
+    25	    }
+    26	    println(ys[0])
+    27	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=0
+oracle run rc=0
+=== SUBJECT: novac emit prog.nv
+novac emit rc=0
+--- Carina's C, the body of main
+static nova_unit nova_fn_main_impl(void) {
+    nova_int k = ((nova_int)3LL);
+    nova_int x = ((nova_int)1LL);
+    nova_int _novac_l4 = k;
+    nova_int _novac_l3 = (nova_int){0};
+    int _novac_matched_t0 = 0;
+    if (!_novac_matched_t0 && ((_novac_l4 == 3LL))) {
+    x = ((nova_int)100LL);
+        _novac_l3 = ((nova_int)1LL);
+    _novac_matched_t0 = 1;
+    }
+    if (!_novac_matched_t0 && (true)) {
+        _novac_l3 = ((nova_int)0LL);
+    _novac_matched_t0 = 1;
+    }
+    x = nova_int_checked_add(x, _novac_l3);
+    nova_print_int(x);
+    nova_print_newline();
+    Nova_Vec____nova_int* _novac_tmp_t1 = Nova_Vec____nova_int_static_new(2);
+    (void)Vec____nova_int_method_push(_novac_tmp_t1, ((nova_int)1LL));
+    (void)Vec____nova_int_method_push(_novac_tmp_t1, ((nova_int)2LL));
+    Nova_Vec____nova_int* ys = _novac_tmp_t1;
+    nova_int _novac_l7 = k;
+    nova_int _novac_l6 = (nova_int){0};
+    int _novac_matched_t1 = 0;
+    if (!_novac_matched_t1 && ((_novac_l7 == 3LL))) {
+    { Nova_Vec____nova_int* _novac_tmp_t2 = ys; nova_int _novac_tmp_t3 = ((nova_int)0LL); (void)novac_fn_collections_vec_index__m_Vec_of_nova_int__nova_int__nova_int__to_nova_unit__nova_int(_novac_tmp_t2, _novac_tmp_t3, ((nova_int)50LL)); }
+        _novac_l6 = ((nova_int)1LL);
+    _novac_matched_t1 = 1;
+    }
+    if (!_novac_matched_t1 && (true)) {
+        _novac_l6 = ((nova_int)0LL);
+    _novac_matched_t1 = 1;
+    }
+    { Nova_Vec____nova_int* _novac_tmp_t4 = ys; nova_int _novac_tmp_t5 = ((nova_int)0LL); (void)novac_fn_collections_vec_index__m_Vec_of_nova_int__nova_int__nova_int__to_nova_unit__nova_int(_novac_tmp_t4, _novac_tmp_t5, nova_int_checked_add(Vec____nova_int_method_index(_novac_tmp_t4, _novac_tmp_t5), _novac_l6)); }
+    nova_print_int(Vec____nova_int_method_index(ys, ((nova_int)0LL)));
+    nova_print_newline();
+    return NOVA_UNIT;
+}
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+=== STDOUT, line by line: oracle | Carina
+  1  101                     | 101
+  2  51                      | 51
+=== VERDICT: SAME stdout

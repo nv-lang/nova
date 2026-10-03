@@ -1,0 +1,38 @@
+module int_separator.pos_1
+
+// INTEGER SEPARATORS (registry 1605, the integer half): `_` between digits in
+// a decimal and in a hex literal (D44 `decimal-int`, `hex-int`), in every
+// position a literal's NUMBER is read -- the C spelling of a value, a match
+// arm, the magnitude judge at a narrow row and at `u64`'s edge, a cast folded
+// in a constant, a leading zero beside a separator. The literal had been
+// refused whole since 274.3/F21; each reader now asks one door for its digits.
+const MILLION = 1_000_000
+const MASK u32 = 0xFF_FF
+const HIGH = 0x41_42 as u8
+
+fn arm(n int) -> str => match n {
+    1_000 => "a thousand"
+    0x1_0 => "sixteen"
+    _ => "other"
+}
+
+fn show8(x u8) -> () {
+    println(x as int)
+}
+
+fn show64(x u64) -> () {
+    println((x >> 40) as int)
+}
+
+fn main() {
+    println(MILLION)
+    println(MASK as int)
+    println(HIGH as int)
+    show8(2_5_5)
+    show64(18_446_744_073_709_551_615)
+    println(0_1_0)
+    println(arm(1000))
+    println(arm(16))
+    println(arm(3))
+    println(1_0 + 2)
+}

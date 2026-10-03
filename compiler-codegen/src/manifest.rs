@@ -767,7 +767,21 @@ pub struct ManifestWarning {
 /// выходящей ЗА границу репозитория (сосед-репозиторий типа `../nova-tls` —
 /// НЕ материализуется чистым клоном, нужна релизная git+version форма).
 pub fn git_repo_root(dir: &Path) -> Option<PathBuf> {
-    let mut d = dir.to_path_buf();
+    // Registry 221.1 #1656: a RELATIVE dir is resolved against the current
+    // directory first. `nova check src` run inside a package hands in the
+    // manifest dir of `nova.toml` -- the EMPTY path `""`: it does not
+    // `exists()`, `pop()` on it fails at once, and the walk answered `None`
+    // ("the manifest is not under git") while the dependency `../..`, which
+    // does exist, found the repo -- a false E_DEP_PATH_OUTSIDE_REPO for a
+    // path dependency inside the same repository.
+    let mut d = if dir.is_absolute() {
+        dir.to_path_buf()
+    } else {
+        match std::env::current_dir() {
+            Ok(cwd) => cwd.join(dir),
+            Err(_) => dir.to_path_buf(),
+        }
+    };
     while !d.exists() {
         if !d.pop() {
             return None;
@@ -1983,6 +1997,19 @@ mod parse_tests {
         assert!(m.replace.is_empty());
         assert!(!m.replace_in_committed_manifest);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Registry 221.1 #1656: the empty path (the manifest dir of a bare
+    /// `nova.toml` in the cwd) and `.` name the current directory -- they find
+    /// the same repo root as the cwd itself. Before the fix `""` answered `None`.
+    /// (Runs inside the checkout, which is under git; outside one all three are
+    /// `None` and still agree.)
+    #[test]
+    fn git_repo_root_resolves_relative_dirs_against_cwd_1656() {
+        let cwd = std::env::current_dir().unwrap();
+        let from_cwd = git_repo_root(&cwd);
+        assert_eq!(git_repo_root(Path::new("")), from_cwd);
+        assert_eq!(git_repo_root(Path::new(".")), from_cwd);
     }
 
     /// Plan 204 дофикс №2 (owner correction №2): path-dep staying INSIDE the

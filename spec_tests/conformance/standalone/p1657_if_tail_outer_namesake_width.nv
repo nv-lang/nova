@@ -1,0 +1,35 @@
+// EXPECT_STDOUT wide: 1790962168000000001
+// EXPECT_STDOUT narrow: 9
+//
+// Registry 221.1 #1657, the codegen layer: the C type of an `if` value was
+// taken from its branch tails, and a tail that names the branch's OWN local
+// was typed by the codegen's flat variable table -- where only the OUTER
+// namesake sat. `ro r = if s > 0 { ro s = <i64>; s + 1 } else { 0 }` under a
+// parameter `s i32` declared `r` as `int32_t` and SILENTLY truncated the value
+// (1439543297 instead of 1790962168000000001). The branch's lets are overlaid
+// before the tail is typed, as for a block value and a `match` arm. Cells: a
+// wider inner local (the truncation) and a narrower one (the control).
+module standalone.p1657_if_tail_outer_namesake_width
+
+import std.time.civil
+
+fn wide(s i32) -> i64 {
+    ro r = if s > 0 {
+        ro s = (1790962168000 as i64).to_unix_millis().unix_nanos()
+        s + 1
+    } else { 0 }
+    r
+}
+
+fn narrow(s i64) -> i64 {
+    ro r = if s > 0 {
+        ro s i64 = 8
+        s + 1
+    } else { 0 }
+    r
+}
+
+fn main() Io {
+    println("wide: ${wide(3)}")
+    println("narrow: ${narrow(3)}")
+}

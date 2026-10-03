@@ -112,6 +112,7 @@ export type ArgClass enum
     | ArgMut /// a `mut` binding -- a mutable place
     | ArgOwnedTemp /// an owned temporary: a call result, a literal, a constructor
     | ArgConsume /// a binding declared `consume` -- its form IS the promise
+    | ArgTempRecv /// an owned temporary as a method's RECEIVER: the hoisted temp the call may write (D33 `walk_root = None`, 02-types.md:13526)
 
 /// Is this argument a BARE NUMERIC LITERAL -- the one kind of expression whose
 /// type is decided by its POSITION rather than by itself (D227 rule 2: "in a
@@ -159,11 +160,17 @@ export fn mode_admits(m ParamMode, c ArgClass) -> bool => match m {
     ModeMut => match c {
         ArgMut => true
         ArgConsume => true
+        // A temporary RECEIVER is a place for the length of its call: the
+        // chain `T.new().m()` writes into the hoisted temp (D33: "no
+        // enforcement" when the root is an rvalue), unlike a temporary
+        // ARGUMENT bound to a `mut` parameter (D133).
+        ArgTempRecv => true
         ArgRo => false
         ArgOwnedTemp => false
     }
     ModeConsume => match c {
         ArgOwnedTemp => true
+        ArgTempRecv => true
         ArgConsume => true
         ArgRo => false
         ArgMut => false

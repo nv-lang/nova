@@ -57,8 +57,9 @@ export fn stdout() -> Stdout => { unit: 0 }
 #stable(since = "0.1")
 export fn Stdout mut @write(data []u8) Io -> Result[int, IoError] => Io.write_out(data)
 
-/// io.Write: no-op (the fd is unbuffered on the Nova side; wrap in `BufWriter`
-/// to batch).
+/// io.Write: nothing left to push -- every `write` (and every `print`/`println`)
+/// reaches the fd before it returns, a file or a pipe included (registry 221.1
+/// #1655). Wrap in `BufWriter` to batch.
 #stable(since = "0.1")
 export fn Stdout mut @flush() -> Result[(), IoError] => Ok(())
 

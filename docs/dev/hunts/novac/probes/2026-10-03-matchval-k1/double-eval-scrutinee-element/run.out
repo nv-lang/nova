@@ -1,0 +1,152 @@
+=== PROGRAM
+     1	module prog
+     2	
+     3	// "A value form laid down twice" without a call around it: the form stands
+     4	// as the SCRUTINEE of a `match` or as an ELEMENT of an array literal. One
+     5	// `say` per form, so each number must print exactly once. The `match`
+     6	// scrutinee is the sweep-9 form (its fixture's scrutinee calls nothing, so
+     7	// the second evaluation is invisible there); `if` and `??` are the same
+     8	// property in other syntaxes.
+     9	fn say(n int) -> int {
+    10	    println(n)
+    11	    n
+    12	}
+    13	
+    14	fn sayo(n int) -> Option[int] {
+    15	    println(n)
+    16	    Some(n)
+    17	}
+    18	
+    19	fn main() {
+    20	    println("match scrutinee is a match: 1 once, then 10")
+    21	    ro r1 = match match say(1) {
+    22	        1 => 1
+    23	        _ => 2
+    24	    } {
+    25	        1 => 10
+    26	        _ => 0
+    27	    }
+    28	    println(r1)
+    29	    println("match scrutinee is an if: 2 once, then 20")
+    30	    ro r2 = match if say(2) > 0 { 1 } else { 2 } {
+    31	        1 => 20
+    32	        _ => 0
+    33	    }
+    34	    println(r2)
+    35	    println("match scrutinee is a coalesce: 3 once, then 30")
+    36	    ro r3 = match sayo(3) ?? 0 {
+    37	        3 => 30
+    38	        _ => 0
+    39	    }
+    40	    println(r3)
+    41	    println("statement match on a match: 4 once, then 40")
+    42	    match match say(4) {
+    43	        4 => 1
+    44	        _ => 2
+    45	    } {
+    46	        1 => println(40)
+    47	        _ => println(0)
+    48	    }
+    49	    println("array element is a match, alone: 5 once, then 5")
+    50	    ro xs = [match say(5) {
+    51	        5 => 5
+    52	        _ => 0
+    53	    }]
+    54	    println(xs[0])
+    55	    println("array element is an if, alone: 6 once, then 6")
+    56	    ro ys = [if say(6) > 0 { 6 } else { 0 }]
+    57	    println(ys[0])
+    58	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=0
+oracle run rc=0
+=== SUBJECT: novac emit prog.nv
+novac emit rc=0
+--- Carina's C, the body of main
+static nova_unit nova_fn_main_impl(void) {
+    nova_print_str(_novac_strlit_0);
+    nova_print_newline();
+    nova_int _novac_l3 = novac_fn_prog_say__nova_int__to_nova_int(((nova_int)1LL));
+    nova_int _novac_l2 = (nova_int){0};
+    int _novac_matched_t0 = 0;
+    if (!_novac_matched_t0 && ((_novac_l3 == 1LL))) {
+        _novac_l2 = ((nova_int)1LL);
+    _novac_matched_t0 = 1;
+    }
+    if (!_novac_matched_t0 && (true)) {
+        _novac_l2 = ((nova_int)2LL);
+    _novac_matched_t0 = 1;
+    }
+    nova_int _novac_l7 = novac_fn_prog_say__nova_int__to_nova_int(((nova_int)1LL));
+    nova_int _novac_l6 = (nova_int){0};
+    int _novac_matched_t1 = 0;
+    if (!_novac_matched_t1 && ((_novac_l7 == 1LL))) {
+        _novac_l6 = ((nova_int)1LL);
+    _novac_matched_t1 = 1;
+    }
+    if (!_novac_matched_t1 && (true)) {
+        _novac_l6 = ((nova_int)2LL);
+    _novac_matched_t1 = 1;
+    }
+    nova_int _novac_l5 = _novac_l6;
+    nova_int _novac_l4 = (nova_int){0};
+    int _novac_matched_t2 = 0;
+    if (!_novac_matched_t2 && ((_novac_l5 == 1LL))) {
+        _novac_l4 = ((nova_int)10LL);
+    _novac_matched_t2 = 1;
+    }
+    if (!_novac_matched_t2 && (true)) {
+        _novac_l4 = ((nova_int)0LL);
+    _novac_matched_t2 = 1;
+    }
+    nova_int r1 = _novac_l4;
+    nova_print_int(r1);
+    nova_print_newline();
+    nova_print_str(_novac_strlit_1);
+    nova_print_newline();
+    nova_int _novac_l9 = (nova_int){0};
+    if (((nova_int)((novac_fn_prog_say__nova_int__to_nova_int(((nova_int)2LL))) > (((nova_int)0LL))))) {
+        _novac_l9 = ((nova_int)1LL);
+    } else {
+        _novac_l9 = ((nova_int)2LL);
+    }
+    nova_int _novac_l12 = (nova_int){0};
+    if (((nova_int)((novac_fn_prog_say__nova_int__to_nova_int(((nova_int)2LL))) > (((nova_int)0LL))))) {
+        _novac_l12 = ((nova_int)1LL);
+    } else {
+        _novac_l12 = ((nova_int)2LL);
+    }
+    nova_int _novac_l11 = _novac_l12;
+    nova_int _novac_l10 = (nova_int){0};
+    int _novac_matched_t3 = 0;
+    if (!_novac_matched_t3 && ((_novac_l11 == 1LL))) {
+        _novac_l10 = ((nova_int)20LL);
+    _novac_matched_t3 = 1;
+    }
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+=== STDOUT, line by line: oracle | Carina
+  1  match scrutinee is a match: 1 once, then 10| match scrutinee is a match: 1 once, then 10
+  2  1                       | 1
+  3  10                      | 1
+  4  match scrutinee is an if: 2 once, then 20| 10
+  5  2                       | match scrutinee is an if: 2 once, then 20
+  6  20                      | 2
+  7  match scrutinee is a coalesce: 3 once, then 30| 2
+  8  3                       | 20
+  9  30                      | match scrutinee is a coalesce: 3 once, then 30
+ 10  statement match on a match: 4 once, then 40| 3
+ 11  4                       | 3
+ 12  40                      | 30
+ 13  array element is a match, alone: 5 once, then 5| statement match on a match: 4 once, then 40
+ 14  5                       | 4
+ 15  5                       | 40
+ 16  array element is an if, alone: 6 once, then 6| array element is a match, alone: 5 once, then 5
+ 17  6                       | 5
+ 18  6                       | 5
+ 19                          | array element is an if, alone: 6 once, then 6
+ 20                          | 6
+ 21                          | 6
+=== VERDICT: DIFFERENT stdout

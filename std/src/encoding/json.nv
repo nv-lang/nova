@@ -194,7 +194,7 @@ export fn JsonObjectIter mut @next() -> Option[(str, JsonValue)] {
 /// now auto-wraps into `Object(...)` WITHOUT calling `.object()` at all —
 /// `Object` is `JsonValue`'s only unary variant whose payload's `WrapKind`
 /// is `Named("IndexMap")`, unambiguous among the other unary variants
-/// (`Bool`/`Num`/`Str`/`Array` are `Bool`/`Float`/`Str`/`Array(..)` kinds).
+/// (`Bool`/`Int`/`U64`/`F64`/`Str`/`Array` are `Bool`/`Num(..)`/`Str`/`Array(..)` kinds).
 /// `.object()` is KEPT as an explicit, readable, `#stable` name (not
 /// retracted) — the auto-wrap is an ergonomic ADDITION, not a replacement:
 ///
@@ -214,12 +214,26 @@ export fn JsonObjectIter mut @next() -> Option[(str, JsonValue)] {
 /// around it. See `spec_tests/conformance/standalone/
 /// p320_phase4_jsonvalue_sumlift_pos.nv` for the full repro/diagnosis of
 /// both gaps.
+///
+/// **Numbers are read exactly** (registry 221.1 #1638, the owner's decision
+/// "read exactly, write by I-JSON"): an integer -- no fraction, no exponent --
+/// is `Int` when it fits `int`, else `U64` when it fits `u64`, else `F64`;
+/// anything with a fraction or an exponent is `F64`. A large ID read and
+/// written back is not changed. `int` is `intptr_t`: on a 32-bit platform
+/// `Int` holds 32 bits, and an integer outside that range is read as
+/// `U64`/`F64` -- a consequence of `int`, not a gap. `Int(5)` and `F64(5.0)`
+/// are different values (the texts `5` and `5.0`), as in serde_json; `@num()`
+/// reads any of the three as `f64` when that is exact. An integer literal
+/// lifts into `Int`, a float literal into `F64` (D55 single-wrapper, D44
+/// defaults -- the precedent of `SqlValue.Int`, #1637).
 #stable(since = "0.1")
 #impl(Equal)
 export type JsonValue enum
     | Null
     | Bool(bool)
-    | Num(f64)
+    | Int(int)
+    | U64(u64)
+    | F64(f64)
     | Str(str)
     | Array([]JsonValue)
     | Object(IndexMap[str, JsonValue])
@@ -246,10 +260,13 @@ export fn JsonValue.null() -> Self => Null
 #stable(since = "0.1")
 export fn JsonValue.bool(b bool) -> Self => Bool(b)
 
-/// Construct JSON number (any f64). Uses the full f64 range — for
-/// integers > 2^53 precision is lost.
+/// Construct a JSON number from an `f64` -- the `F64` variant (#1638). For an
+/// exact integer use `JsonValue.int(n)` (or the `Int`/`U64` variants).
 #stable(since = "0.1")
-export fn JsonValue.num(n f64) -> Self => Num(n)
+export fn JsonValue.num(n f64) -> Self => F64(n)
+
+/// Construct a JSON integer -- the `Int` variant (#1638).
+export fn JsonValue.int(v int) -> Self => Int(v)
 
 /// Construct JSON string. Encoding — UTF-8.
 #stable(since = "0.1")
@@ -289,7 +306,7 @@ export fn JsonValue @is_bool()   -> bool => match @ { Bool(_) => true, _ => fals
 
 /// True if the value is a JSON number.
 #stable(since = "0.1")
-export fn JsonValue @is_num()    -> bool => match @ { Num(_) => true, _ => false }
+export fn JsonValue @is_num()    -> bool => match @ { Int(_) | U64(_) | F64(_) => true, _ => false }
 
 /// True if the value is a JSON string.
 #stable(since = "0.1")
@@ -314,10 +331,48 @@ export fn JsonValue @is_object() -> bool => match @ { Object(_) => true, _ => fa
 export fn JsonValue @bool() -> Option[bool] =>
     match @ { Bool(b) => Some(b), _ => None }
 
-/// Extract `f64`. `None` if the type is not Num.
+/// The number as `f64` -- `F64` as it is, `Int`/`U64` only when the
+/// conversion is exact (#1638: a large ID is not silently rounded). `None` for
+/// a non-number.
 #stable(since = "0.1")
-export fn JsonValue @num() -> Option[f64] =>
-    match @ { Num(n) => Some(n), _ => None }
+export fn JsonValue @num() -> Option[f64] => match @ {
+    F64(x) => Some(x)
+    Int(n) => int_as_exact_f64(n)
+    U64(n) => u64_as_exact_f64(n)
+    _ => None
+}
+
+/// The number as `int` -- `Int` as it is, `U64` when it fits; `None` for an
+/// `F64` (a text with a fraction or an exponent) and for a non-number (#1638).
+export fn JsonValue @int() -> Option[int] => match @ {
+    Int(n) => Some(n)
+    U64(n) => if n <= (int.MAX as u64) { Some(n as int) } else { None }
+    _ => None
+}
+
+/// The number as `u64` -- `U64` as it is, a non-negative `Int`; `None`
+/// otherwise (#1638).
+export fn JsonValue @u64() -> Option[u64] => match @ {
+    U64(n) => Some(n)
+    Int(n) => if n >= 0 { Some(n as u64) } else { None }
+    _ => None
+}
+
+/// `int` -> `f64` when the conversion loses nothing (#1638).
+fn int_as_exact_f64(n int) -> Option[f64] {
+    ro x = n as f64
+    if x >= -9.2233720368547758e18 && x < 9.2233720368547758e18 && (x as int) == n {
+        Some(x)
+    } else {
+        None
+    }
+}
+
+/// `u64` -> `f64` when the conversion loses nothing (#1638).
+fn u64_as_exact_f64(n u64) -> Option[f64] {
+    ro x = n as f64
+    if x < 1.8446744073709552e19 && (x as u64) == n { Some(x) } else { None }
+}
 
 /// Extract `str`. `None` if the type is not Str.
 #stable(since = "0.1")
@@ -349,7 +404,7 @@ type Token enum
     | TrueTok
     | FalseTok
     | NullTok
-    | NumTok(f64)
+    | NumTok(JsonValue)
     | StrTok(str)
     | EofTok
     // [M-181-json-trailing-content] обход: неопознанный ведущий символ
@@ -715,9 +770,10 @@ fn Lexer mut @read_hex_quad() -> Result[int, ParseJsonError] {
     Ok(code)
 }
 
-// Чтение числа: optional '-', integer part, optional '.fraction',
-// optional 'e[+-]exp'. Возвращает f64.
-fn Lexer mut @read_number() -> Result[f64, ParseJsonError] {
+// Reading a number: optional '-', integer part, optional '.fraction',
+// optional 'e[+-]exp'. #1638 "read exactly": an integer text (no fraction, no
+// exponent) is `Int` when it fits, else `U64`, else `F64`; the rest is `F64`.
+fn Lexer mut @read_number() -> Result[JsonValue, ParseJsonError] {
     // record-pattern binding snapshot with rename — 3 of 4 Lexer
     // fields (`input` omitted), so `..` is required (partial-list rule).
     ro {pos: start, line: start_line, col: start_col, ..} = @
@@ -739,7 +795,9 @@ fn Lexer mut @read_number() -> Result[f64, ParseJsonError] {
     }
 
     // Fraction: .[0-9]+
+    mut integral = true
     if @peek() == Some(B_DOT) {
+        integral = false
         @advance()
         if !digit_here(@peek()) {
             return Err(InvalidNumber {
@@ -753,6 +811,7 @@ fn Lexer mut @read_number() -> Result[f64, ParseJsonError] {
     // Exponent: [eE][+-]?[0-9]+
     match @peek() {
         Some(b) if b == B_LOWER_E || b == B_UPPER_E => {
+            integral = false
             @advance()
             match @peek() {
                 Some(b2) if b2 == B_PLUS || b2 == B_MINUS => { @advance() }
@@ -770,8 +829,17 @@ fn Lexer mut @read_number() -> Result[f64, ParseJsonError] {
     }
 
     ro text = @input[start..@pos]
+    if integral {
+        // Too wide for `int` is not an error here: the next width is tried.
+        if Ok(n) = text.to_int() {
+            return Ok(Int(n))
+        }
+        if Ok(n) = text.to_u64() {
+            return Ok(U64(n))
+        }
+    }
     match text.to_f64() {
-        Ok(n)    => Ok(n)
+        Ok(n)    => Ok(F64(n))
         Err(_)   => Err(InvalidNumber {
             line: start_line, col: start_col, text
         })
@@ -808,7 +876,7 @@ fn Parser mut @parse_value() -> Result[JsonValue, ParseJsonError] {
         NullTok    => { @advance()?; Ok(Null) }
         TrueTok    => { @advance()?; Ok(Bool(true)) }
         FalseTok   => { @advance()?; Ok(Bool(false)) }
-        NumTok(n)  => { @advance()?; Ok(Num(n)) }
+        NumTok(n)  => { @advance()?; Ok(n) }
         StrTok(s)  => { @advance()?; Ok(Str(s)) }
         LBracket   => @parse_array()
         LBrace     => @parse_object()
@@ -974,27 +1042,30 @@ export fn JsonValue.try_from(s str) -> Result[JsonValue, ParseJsonError] => // [
 ///
 /// # Examples
 /// ```nova
-/// ro v = Array([Num(1.0), Str("a")])
-/// assert(v.to_str() == "[1,\"a\"]")
+/// ro v = Array([Int(1), F64(2.5), Str("a")])
+/// assert(v.to_str() == "[1,2.5,\"a\"]")
 /// ```
 #stable(since = "0.1")
 export fn JsonValue @to_str() -> str => match @ {
     Null      => "null"
     Bool(b)   => if b { "true" } else { "false" }
-    Num(n)    => format_num(n)
+    Int(n)    => n.to_str()
+    U64(n)    => n.to_str()
+    F64(n)    => format_f64(n)
     Str(s)    => format_string(s)
     Array(xs) => format_array(xs)
     Object(m) => format_object(m)
 }
 
-fn format_num(n f64) -> str {
-    // Целые числа — без .0 в выводе. JSON допускает и "1" и "1.0",
-    // но для round-trip с целыми хорошо иметь короткую форму.
-    if n.is_finite() && n == n.trunc() && n.abs() < 1e16 {
-        // целое в безопасном диапазоне для f64 (2^53)
-        (n as i64).to_str()
+// #1638: an `F64` always prints with a fraction or an exponent (`1.0`, not
+// `1`) -- read back it is an `F64` again, not an `Int` (as serde_json). The
+// shortest text that re-reads bit-for-bit (plan 180) is kept otherwise.
+fn format_f64(n f64) -> str {
+    ro t = n.to_str()
+    if !n.is_finite() || t.contains(".") || t.contains("e") || t.contains("E") {
+        t
     } else {
-        n.to_str()
+        "${t}.0"
     }
 }
 

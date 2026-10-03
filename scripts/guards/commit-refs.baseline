@@ -170,6 +170,10 @@
 #   зелёном локальном. Живость теперь = ветки origin + HEAD + локальная `main`
 #   (п.4 в `commit-refs-scan.py`); самотест держит обе стороны: хеш под
 #   `refs/remotes/` жив, хеш только под локальной ссылкой мёртв.
-dead_hash_refs=888
+# 2026-10-03 (integrator nova-20): dead_hash_refs 888 -> 889. Not a new reference: `6d8388292` (#1346's
+#   first commit, 2026-09-26), cited by two old sections of integrator-handoff.md, was alive only
+#   through an origin branch, and the owner's cleanup of 2026-10-02 deleted the old branches on
+#   origin. No ref holds it now (the fix reached main as another commit); history is not rewritten.
+dead_hash_refs=889
 commit_url_no_context=0
 mirror_links=0

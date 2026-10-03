@@ -157,3 +157,27 @@ test "a constant's initializer of ANOTHER type than the written one is refused a
     ro (ok, _) = compile_to_c("const C u8 = ('x' as u8)\nfn main() {\n println(C)\n}", std)
     assert(ok.len() == 0, messages(ok))
 }
+
+test "another module's type-scoped value with a WRITTEN type, and its type-scoped constant, are read where the type is seen (part 6 of p274-carina-k1)" {
+    // collect.nv reads builtins' `BuiltinType.ALL`, a module VALUE of another
+    // module: handed values were never registered (only literal constants),
+    // and a type-scoped name was looked for in the import list by its full
+    // spelling -- an import names `Kind`, never `Kind.ALL`. Both reads fell to
+    // the variant judge: "this type is not a sum".
+    mut decls = std_decls()
+    decls.push("module kc\nexport type Kind { name str }\n\
+export ro Kind.FIRST Kind = Kind { name: \"a\" }\nexport const Kind.MAX = 5\n\
+export ro NOTYPE = Kind { name: \"c\" }\n")
+    ro src = "module kb\nimport kc.{Kind}\nfn main() {\n    println(Kind.FIRST.name)\n    println(Kind.MAX)\n}"
+    ro (d, c) = compile_to_c(src, decls)
+    assert(d.len() == 0, messages(d))
+    // The value is the OWNER's cell: this unit reads it and neither declares
+    // nor computes it.
+    assert(c.contains("novac_mv_Kind__FIRST"), c)
+    assert(!c.contains("novac_mv_Kind__FIRST = "), c)
+    // CONTROL: a handed value with NO written type is not registered -- its
+    // initializer would have to be typed in this file's channel -- and its read
+    // is refused by name (docs/dev/simplifications.md, the remainder).
+    ro (dn, _) = compile_to_c("module kb\nimport kc.{NOTYPE}\nfn main() {\n    println(NOTYPE.name)\n}", decls)
+    assert(dn.len() >= 1 && messages(dn).contains("unknown name"), messages(dn))
+}

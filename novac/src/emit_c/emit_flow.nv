@@ -85,6 +85,8 @@ fn Emitter mut @print_if_head(cond Cond, chained bool) -> () {
         // A nested subpattern's own test (registries 1534, 1542): the arm head's
         // printer, on the temporary the value was read into -- one door for both.
         Holds(pt) => @emit_pattern_test(pt.pat, pt.scr)
+        // A disjunction's "an alternative held" flag (registry 1568).
+        Flag(l) => @body.append(@lo.ir.decl_of(l).name)
     }
     @body.append(") {\n")
 }
@@ -376,54 +378,26 @@ fn Emitter mut @print_switch(f Fn, t SwitchTerm, mut printed []bool) -> () {
         // walk below descends `checks` (+1 for a guard) such `If`s -- statements, head,
         // then-branch -- and the flag goes into the innermost then-branch, the only place
         // where the whole pattern AND the guard have held.
-        mut levels = a.checks
-        match a.guard {
-            Some(_) => { levels += 1 }
-            None => {}
-        }
-        if levels == 0 {
+        if a.heads.len() == 0 {
             @print_chain(f, a.body, t.join, false, printed)
             @body.append("    _novac_matched_t${t.uniq} = 1;\n")
         } else {
-            @print_tested_arm(f, a.body, levels, t.uniq, a.guard, printed)
+            @print_tested_arm(f, a.body, a.heads, t.uniq, printed)
         }
         @body.append("    }\n")
     }
 }
-/// An arm whose body runs inside `levels` nested `If`s -- the nested tests and the
-/// guard: each block's statements (the reads its test needs), its head, then the
-/// then-branch; the body's chain and the first-match flag go into the innermost.
-fn Emitter mut @print_tested_arm(f Fn, first BlockId, levels int, uniq int, guard Option[Node],
-                                 mut printed []bool) -> () {
+/// An arm whose body runs inside nested `If`s -- the nested tests and the guard,
+/// one per block of `heads`: the chain up to the head (the reads its test needs, a
+/// disjunction's switch), the head's statements, its `if`, then the then-branch;
+/// the body's chain and the first-match flag go into the innermost.
+fn Emitter mut @print_tested_arm(f Fn, first BlockId, heads []BlockId, uniq int, mut printed []bool) -> () {
     mut b = first
     mut last_join = first
-    for lv in 0..levels {
-        // THE GUARD'S LEVEL MAY BE LED BY VALUE `if`s (registry 1619's guard): a
-        // `??` or a `?` in the guard is laid down before the guard's test, and each
-        // opens an `If` that is a statement of the arm, not a test of it. They are
-        // printed whole, up to their joins, until the block whose `If` IS the guard's
-        // -- known by its condition, the guard's own node.
-        if lv == levels - 1 && guard.is_some() {
-            ro g = guard ?? ice("emit: a guard level without a guard")
-            mut lead = true
-            while lead {
-                match f.blocks[raw_block(b)].term {
-                    If(vt) => {
-                        if is_cond_of(vt.cond, g) {
-                            lead = false
-                        } else {
-                            @print_chain(f, b, vt.join, false, printed)
-                            b = vt.join
-                        }
-                    }
-                    Return | Goto(_) | Loop(_) | Switch(_) | Break | Continue | Unreached => { lead = false }
-                }
-            }
-        } else {
-            // A pattern test's level: its `If` is the test itself.
-        }
-        @print_block_stmts(f, b, printed)
-        match f.blocks[raw_block(b)].term {
+    for h in heads {
+        @print_chain(f, b, h, false, printed)
+        @print_block_stmts(f, h, printed)
+        match f.blocks[raw_block(h)].term {
             If(gt) => {
                 @print_if_head(gt.cond, false)
                 last_join = gt.join
@@ -440,7 +414,7 @@ fn Emitter mut @print_tested_arm(f Fn, first BlockId, levels int, uniq int, guar
     }
     @print_chain(f, b, last_join, false, printed)
     @body.append("    _novac_matched_t${uniq} = 1;\n")
-    for _ in 0..levels {
+    for _ in heads {
         @body.append("    }\n")
     }
 }
@@ -508,11 +482,3 @@ fn Emitter mut @emit_pop_frame() -> () {
     @body.append("    nova_interrupt_pop();\n")
 }
 
-/// Is this condition the test of THIS expression node -- the guard's own `If`,
-/// told from the value `if`s a laid-down `??` opened before it?
-fn is_cond_of(c Cond, g Node) -> bool {
-    match c {
-        Expr(n) => n.id_of() == g.id_of()
-        IsSome(_) | NotSome(_) | FrameEntered(_) | Holds(_) => false
-    }
-}

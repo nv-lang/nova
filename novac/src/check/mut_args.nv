@@ -1,0 +1,94 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: none -- the rule is Nova's own: D326 revision R3/R6 (`mut` on a heap
+//   type is the right to change the OBJECT, not a link to the caller's place)
+//   and D84's note of 2026-10-02 (the mode rule CHOOSES between overloads).
+// Role: layer 7, the call's lookup in two stages (part 6 of p274-carina-k1):
+//   the mode axis chooses between overloads first (a temporary takes the `ro`
+//   form), and only when nothing fits is a temporary of a HEAP type admitted
+//   to a `mut` parameter -- the single `mut` function takes it. A temporary of
+//   a VALUE type has no storage to write back into and stays refused, as a
+//   language error (calls.nv, `@refuse_arg_type`).
+// Used by: calls.nv (the typed free call and its refusal), methods.nv (the
+//   method call).
+// Guarded by: pipeline/refusal_test.nv and pipeline/fluent_self_test.nv (heap
+//   temporary taken, value temporary refused with its code, a `ro` binding
+//   still no place); check-novac-no-alloc-in-lookup.py (the door builds nothing).
+
+module novac.check
+
+import ../builtins.{TypeKind}
+import ../sem.{ArgSpec, ArgClass, CallForm, decl_of_ty, RecordShape}
+import ../resolve.{FnLookup}
+import ../types.{TyId, is_ty}
+
+/// Is `t` a HEAP type -- a record that is not `value` (a plain record, `Vec`,
+/// `HashMap`), whose `mut` parameter receives the object itself (R6)? A sum's
+/// application (`Option[T]`) names a sum, not a record, and is no heap type.
+fn Checker @is_heap_type(t TyId) -> bool {
+    if !is_ty(t) { return false }
+    ro k = @ctx.tys.kind_of(t)
+    if k != TypeKind.TkRecord && k != TypeKind.TkApp { return false }
+    ro d = decl_of_ty(@ctx, t)
+    d.kind == TypeKind.TkRecord && d.shape == RecordShape.Record
+}
+
+/// Is `t` a VALUE type -- a primitive, a sum, a newtype, a `value` record or
+/// a structural pair -- whose `mut` parameter is the caller's own storage (R3)?
+/// A type parameter, a pointer, an effect or an untyped slot is neither: no
+/// verdict here, the subset's own refusal stands.
+fn Checker @is_value_type(t TyId) -> bool {
+    if !is_ty(t) { return false }
+    ro k = @ctx.tys.kind_of(t)
+    if k == TypeKind.TkParam || k == TypeKind.TkInfer || k == TypeKind.TkEffect || k == TypeKind.TkPtr {
+        return false
+    }
+    !@is_heap_type(t)
+}
+
+/// Does any argument of this key stand as an owned temporary of a heap type?
+fn Checker @has_heap_temp(key []ArgSpec) -> bool {
+    for a in key {
+        if @is_heap_temp(a) { return true }
+    }
+    false
+}
+
+/// Is this argument an owned temporary of a heap type?
+fn Checker @is_heap_temp(a ArgSpec) -> bool => match a.cls {
+    ArgOwnedTemp => @is_heap_type(a.type_id)
+    ArgRo | ArgMut | ArgConsume => false
+    // A temporary RECEIVER is already a place for its own call (`mode_admits`
+    // admits it into `mut @`, registry 1630); the second, heap-only pass is
+    // for temporaries in PARAMETER position.
+    ArgTempRecv => false
+}
+
+/// The key again, every heap temporary taken as a place -- what a heap `mut`
+/// asks of its argument is the right to change the object, and a temporary
+/// gives it. Built only when the strict lookup found nothing.
+fn Checker @heap_temps_as_places(key []ArgSpec) -> []ArgSpec {
+    mut out = []ArgSpec.new()
+    for a in key {
+        out.push(if @is_heap_temp(a) {
+            ArgSpec { type_id: a.type_id, cls: ArgClass.ArgMut, name: a.name, lit: a.lit }
+        } else {
+            a
+        })
+    }
+    out
+}
+
+/// The lookup of a call, in two stages. The STRICT key first: the mode axis
+/// chooses as it always did. When nothing fits and some argument is an owned
+/// temporary of a heap type, the same lookup again with those arguments taken
+/// as places (`@heap_temps_as_places`).
+#realtime nogc
+fn Checker @lookup_call(name str, key []ArgSpec, form CallForm) -> FnLookup {
+    ro strict = @res.lookup(@ctx.fns, @ctx.tys, name, key, form)
+    match strict {
+        FnUnknown => {}
+        FnFound(_) | FnOverloaded(_) => { return strict }
+    }
+    if !@has_heap_temp(key) { return strict }
+    @res.lookup(@ctx.fns, @ctx.tys, name, @heap_temps_as_places(key), form)
+}

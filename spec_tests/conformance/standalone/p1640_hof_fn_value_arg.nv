@@ -1,0 +1,51 @@
+// EXPECT_STDOUT std-map: 10,20,30 | 10,20,30 | 10,20,30
+// EXPECT_STDOUT generic: 2,3 | 2,3
+// EXPECT_STDOUT user-ext: x1,x2 | x1,x2 | x1,x2
+//
+// Registry 221.1 #1640: a generic extension method whose type parameter lives
+// only in the result of its function parameter -- `fn[T] []T @map[U](f fn(T)
+// -> U) -> []U` -- had `U` inferred from the BODY of a closure literal only. A
+// function VALUE -- a parameter, a local, a named function -- left `U` unbound:
+// `E7001 cannot infer C type for closure-arg return type (U)` (found under
+// examples/real_world/orm_demo.nv, `keys.map(key_to_sql)` in a generic
+// method). The value's own type carries `U`: the checker's channel records it
+// as `fn(..) -> U`. Cells: std `map` with each value form, the same inside a
+// generic function, and a user extension of the same shape.
+module standalone.p1640_hof_fn_value_arg
+
+import std.text
+import std.collections.vec_seq.{map}
+
+fn times10(x int) -> int => x * 10
+
+fn[T] []T @transform[R](f fn(T) -> R) -> []R {
+    mut out []R = []
+    for v in @ {
+        out.push(f(v))
+    }
+    out
+}
+
+fn tag(x int) -> str => "x${x}"
+
+fn by_param(xs []int, f fn(int) -> int) -> []int => xs.map(f)
+
+fn by_local(xs []int) -> []int {
+    ro g fn(int) -> int = |x| x * 10
+    xs.map(g)
+}
+
+fn in_generic[K](xs []int, k K, f fn(int) -> int) -> []int => xs.map(f)
+
+fn csv(xs []int) -> str => xs.map(|v| "${v}").join(",")
+
+fn ext_param(xs []int, f fn(int) -> str) -> []str => xs.transform(f)
+
+fn main() Io {
+    ro xs []int = [1, 2, 3]
+    println("std-map: ${csv(by_param(xs, |x| x * 10))} | ${csv(by_local(xs))} | ${csv(xs.map(times10))}")
+    ro ys []int = [1, 2]
+    println("generic: ${csv(in_generic(ys, "k", |x| x + 1))} | ${csv(in_generic(ys, 7, |x| x + 1))}")
+    ro h fn(int) -> str = |x| "x${x}"
+    println("user-ext: ${ext_param(ys, tag).join(",")} | ${ys.transform(h).join(",")} | ${ys.transform(tag).join(",")}")
+}

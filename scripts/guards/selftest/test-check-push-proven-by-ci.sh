@@ -13,6 +13,13 @@
 # временной репе с заглушкой стража и проверяется, что (1) он зовёт стража с
 # ЛОКАЛЬНЫМ sha отправляемого main, (2) NOVA_SKIP_CI_CHECK=1 его НЕ выключает,
 # (3) пуш не в main стража не зовёт.
+#
+# №1662: принятие красного — по ПРИЧИНЕ, а не по имени задания. Строка списка
+# несёт sig:"<подстрока причины>", обязанную встретиться в логе упавшего
+# задания; лог подложен файлом (--logs-json), сеть самотест не трогает. Клетка
+# «command not found при сигнатуре о другом» — носитель: фрагмент НАСТОЯЩЕГО
+# лога прогона 37020233144 (задание novac-gate, 2026-10-02), где красное было
+# по новой причине, а принималось по имени.
 
 set -u
 export LC_ALL=C
@@ -78,19 +85,42 @@ acc() { printf '%s\n' "# comment line" "$@" > "$TMP/acc.list"; }
 
 JOBS_RED="$TMP/jobs.json"
 cat > "$JOBS_RED" <<'EOF'
-{"501": [{"name": "novac-gate (self-hosted compiler builds + module tests)", "conclusion": "failure"},
+{"501": [{"name": "novac-gate (self-hosted compiler builds + module tests)", "conclusion": "failure", "databaseId": 90001},
          {"name": "nova-gate (conformance + flagship examples)", "conclusion": "success"},
          {"name": "docs-guard (doc-conventions.md enforcement)", "conclusion": "skipped"}],
- "502": [{"name": "novac-gate lookalike in another workflow", "conclusion": "failure"}],
+ "502": [{"name": "novac-gate lookalike in another workflow", "conclusion": "failure", "databaseId": 90002}],
  "503": [],
- "508": [{"name": "conformance shard", "conclusion": "cancelled"}]}
+ "508": [{"name": "conformance shard", "conclusion": "cancelled", "databaseId": 90003}]}
 EOF
+
+# Логи упавших заданий (шов --logs-json; ключ — databaseId задания, отсутствие
+# ключа = «лог не достался»). Сигнатура строк №1442 — из настоящих логов
+# прогонов 36947831053 (дифференциал) и 36812856352 (shell.tpl.c).
+SIG_DIFF='check-novac-differential.sh: ОБРЫВ, вердикта нет'
+SIG_SHELL='NOVAC-GATE FAIL: shell.tpl.c протух'
+mklogs() { "$PY" - "$1" <<'PYEOF'
+import json, sys
+logs = {
+ "90001": ("2026-10-02T01:04:07.8598979Z ОБРЫВ: check-novac-differential.sh снят, не дойдя до вердикта — кода возврата нет\n"
+           "2026-10-02T01:04:07.8600095Z NOVAC-GATE FAIL: check-novac-differential.sh: ОБРЫВ, вердикта нет — предмет не судили (Г16, №1113)\n"),
+ # НОСИТЕЛЬ: фрагмент настоящего лога упавшего задания novac-gate прогона
+ # 37020233144 (коммит 08ff689ca, 2026-10-02) — красный по НОВОЙ причине.
+ "90005": ("2026-10-02T14:32:46.4018887Z [   16s] == novac-gate: novac-build (274.3/F1: бинарь novac строится ГЕЙТОМ — иначе «судить нечего» неотличимо от «зелено») ==\n"
+           "2026-10-02T14:32:46.4048196Z scripts/gate-novac.sh: line 443: novac_bin_out: command not found\n"
+           "2026-10-02T14:32:46.4180444Z NOVAC-GATE FAIL: novac не собирается текущим оракулом (274.3/F1) - см. target/novac-build.log\n"
+           "2026-10-02T14:32:49.6075343Z check-novac-differential: FAIL — novac/src существует, а бинаря /home/runner/work/nova/nova/novac/target/novac нет\n"),
+}
+json.dump(logs, open(sys.argv[1], "w", encoding="utf-8"), ensure_ascii=False)
+PYEOF
+}
+mklogs "$TMP/logs.json"
+LOGS="$TMP/logs.json"
 
 # run_case <имя> <ждём rc> <ждём подстроку> <runs-файл> [env...]
 run_case() {
     _name="$1"; _want="$2"; _needle="$3"; _runs="$4"; shift 4
     _out="$(env "$@" "$PY" "$GUARD" "$SHA" --runs-json "$_runs" --jobs-json "$JOBS_RED" \
-            --registry "$REG" --accepted "$TMP/acc.list" 2>&1)"
+            --logs-json "$LOGS" --registry "$REG" --accepted "$TMP/acc.list" 2>&1)"
     _rc=$?
     if [ "$_rc" != "$_want" ]; then
         bad "$_name (ждал rc=$_want, получил $_rc): $(printf '%s' "$_out" | tail -2)"
@@ -116,26 +146,60 @@ runs "$TMP/red.json" "nova-gate:completed:failure:501"
 run_case "красное задание не из списка -> FAIL" 1 "nova-gate / novac-gate" "$TMP/red.json"
 run_case "NOVA_SKIP_CI_CHECK=1 стража не выключает" 1 "not proven green" "$TMP/red.json" NOVA_SKIP_CI_CHECK=1
 
-acc "nova-gate / novac-gate #9001 open reason"
-run_case "красное из списка, строка ОТКРЫТА -> ok" 0 "accepted by open row #9001" "$TMP/red.json"
+acc "nova-gate / novac-gate #9001 sig:\"$SIG_DIFF\" open reason"
+run_case "красное из списка, строка ОТКРЫТА, сигнатура в логе -> ok" 0 "accepted by open row #9001" "$TMP/red.json"
 
-acc "nova-gate / novac-gate #9003 partial"
+acc "nova-gate / novac-gate #9003 sig:\"$SIG_DIFF\" partial"
 run_case "строка ЗАКРЫТ ЧАСТИЧНО считается открытой -> ok" 0 "accepted by open row #9003" "$TMP/red.json"
 
-acc "nova-gate / novac-gate #9002 closed reason"
+acc "nova-gate / novac-gate #9002 sig:\"$SIG_DIFF\" closed reason"
 run_case "из списка, строка ЗАКРЫТА -> FAIL (запись протухла)" 1 "#9002 is closed" "$TMP/red.json"
 run_case "протухшая запись краснит и при всём зелёном" 1 "#9002 is closed" "$TMP/green.json"
 
-acc "nova-gate / novac-gate #9999 no such row"
+acc "nova-gate / novac-gate #9999 sig:\"$SIG_DIFF\" no such row"
 run_case "из списка, строки нет -> FAIL" 1 "#9999 does not exist" "$TMP/red.json"
 
-acc "nova-gate / novac-gate #9004 no field"
+acc "nova-gate / novac-gate #9004 sig:\"$SIG_DIFF\" no field"
 run_case "из списка, у строки нет поля статуса -> FAIL" 1 "#9004 has no status field" "$TMP/red.json"
 
 acc "nova-gate novac-gate without slash"
 run_case "запись не по форме -> FAIL" 1 "unparsed entry" "$TMP/green.json"
 
-acc "nova-gate / novac-gate #9001 open reason"
+echo "== №1662: принятие по ПРИЧИНЕ, а не по имени =="
+acc "nova-gate / novac-gate #9001 open reason without signature"
+run_case "строка без сигнатуры (устаревшая форма) -> FAIL" 1 "without a cause signature" "$TMP/green.json"
+
+acc "nova-gate / novac-gate #9001 sig:\"такой строки в логе нет\" other cause"
+run_case "сигнатуры нет в логе -> FAIL (красный по НЕЗАПИСАННОЙ причине)" 1 "UNRECORDED cause" "$TMP/red.json"
+
+# Носитель №1662: лог прогона 37020233144 — `command not found` при сигнатуре,
+# которая В ЛОГЕ ЕСТЬ, но о другом («novac не собирается» — следствие, а не
+# причина). Клетка держится на проверке чужой причины (в), не на отсутствии
+# сигнатуры. Именно так четыре публикации 2026-10-02 прошли мимо.
+acc "nova-gate / novac-gate #9001 sig:\"NOVAC-GATE FAIL: novac не собирается текущим оракулом\" open row, new cause"
+runs "$TMP/newcause.json" "nova-gate:completed:failure:505"
+"$PY" - "$TMP/jobs505.json" <<'PYEOF'
+import json, sys
+json.dump({"505": [{"name": "novac-gate (self-hosted compiler builds + module tests)",
+                    "conclusion": "failure", "databaseId": 90005}]}, open(sys.argv[1], "w"))
+PYEOF
+_out="$("$PY" "$GUARD" "$SHA" --runs-json "$TMP/newcause.json" --jobs-json "$TMP/jobs505.json" \
+        --logs-json "$LOGS" --registry "$REG" --accepted "$TMP/acc.list" 2>&1)"
+_rc=$?
+if [ "$_rc" = 1 ] && printf '%s' "$_out" | grep -qF "UNRECORDED cause" \
+   && printf '%s' "$_out" | grep -qF "command not found"; then
+    ok "лог носителя 37020233144 (command not found) при сигнатуре о другом -> FAIL"
+else
+    bad "носитель 37020233144 (ждал rc=1, UNRECORDED cause + command not found): $(printf '%s' "$_out" | tail -3)"
+fi
+
+acc "nova-gate / novac-gate #9001 sig:\"$SIG_DIFF\" open reason"
+printf '{}' > "$TMP/logs-empty.json"
+LOGS="$TMP/logs-empty.json"
+run_case "лог не достался -> FAIL «вердикта нет», не принято" 1 "вердикта нет" "$TMP/red.json"
+LOGS="$TMP/logs.json"
+
+acc "nova-gate / novac-gate #9001 sig:\"$SIG_DIFF\" open reason"
 runs "$TMP/other.json" "nova-lint:completed:failure:502"
 run_case "запись одного воркфлоу не покрывает задание другого" 1 "nova-lint / novac-gate lookalike" "$TMP/other.json"
 

@@ -1,0 +1,22 @@
+module prog
+
+// D491: a value of a numeric type never changes its type implicitly -- an
+// argument whose type differs from the parameter's is an error, "the hint is
+// the form with `as`". Here the argument is a `match` whose arms are `int`
+// VALUES (not literals: `v` bound from Option[int], `n` a local) and the
+// parameter is `f64`. The norm: no program. Printed value if one is built:
+// 1.5 (int 3 widened to f64 and halved).
+fn found(k int) -> Option[int] {
+    if k > 0 { Some(k) } else { None }
+}
+
+fn half(x f64) -> f64 => x / 2.0
+
+fn main() {
+    ro k = 3
+    ro n = 3
+    println(half(match found(k) {
+        Some(v) => v
+        None => n
+    }))
+}

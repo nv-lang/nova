@@ -1,0 +1,12 @@
+module result_ctor_expect.neg_1
+
+// ONE seeded cause: a `Result` instance the shell does not carry. novac emits
+// no `Result` instance of its own -- its C is the shell's `NovaRes_<T>_<E>` --
+// so the construction is refused by that name, never printed as a type
+// nothing declares (the oracle compiles it).
+// NOVAC_EXPECT carries no `Result` instance for `NovaRes_nova_str_nova_bool`
+fn f(n int) -> Result[str, bool] => Ok("x")
+
+fn main() {
+    println(1)
+}

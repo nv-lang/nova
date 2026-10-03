@@ -1,0 +1,23 @@
+module std_method_body.neg_2
+
+// A std method whose BODY the shell does not carry, and whose body was handed:
+// novac MAKES it from that body (task 4 of 274, the shell-str group of the 0.2
+// measure), so what is judged now is the BODY. Until 2026-10-02 this was neg_1
+// -- `to_ascii_lower` refused at the call ("the shell carries no
+// `to_ascii_lower` for str"); the refusal at the call now belongs to a method
+// with NO body to make (neg_1, `str @hash`).
+//
+// ONE seeded cause, inside the instance: `[]u8.new(cap: n)` is outside the
+// subset (registry 221.1 #1457). It is the cascade probe of the instance: the
+// local `out` is bound poisoned, and neither `out[i] as int` (a cast of an
+// operand with no type) nor `unsafe { out.into_str_unchecked() }` (a block
+// whose one operation was skipped in silence, "unused") may add a second,
+// false diagnostic -- both did on the day the body was first made.
+// NOVAC_EXPECT takes no arguments here
+fn lower(s str) -> str => s.to_ascii_lower()
+
+fn main() {
+    ro n = 1
+    println(n)
+    println(lower("MiXeD"))
+}

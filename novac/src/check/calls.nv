@@ -25,6 +25,7 @@
 
 module novac.check
 
+import ../sem.{is_arg_node, arg_expr_of}
 import ../sem.{c_free_symbol}
 // Which arguments have an observable order (F65) -- the same door the rule and
 // the lowering ask, so the three cannot disagree on WHICH arguments they mean.
@@ -34,7 +35,7 @@ import ../tree.{Node, raw_node, NodeKind}
 // #1493: the file's import declarations are read leaf by leaf (`visible_imports`).
 import ../sem.{branch_children, leaf_text, file_decls}
 import ../diag.{ice}
-import ../builtins.{TypeKind, SIZE_OF_FN, ASSERT_FN}
+import ../builtins.{TypeKind, SIZE_OF_FN, ASSERT_FN, RECV_BINDING}
 import ../sem.{LitArg, ArgSpec, CallForm, CalleeTarget, decl_of_ty, Ctx, CheckOut, FnRow, raw_row, coerce_row}
 import ../sem.{subst_type, slot_binding_in, representation_of, generic_names, is_arg_value_kind, branch_children}
 import ../sem.{ty_source_name, bind_fault, bind_slots, identity_slots, no_row, SlotBind}
@@ -46,7 +47,7 @@ import ../resolve.{FnLookup, missing_sig_of}
 // per FILE in Nova, so a body that moves between files of ONE module still has to
 // bring the names it uses. Computed from what the moved text actually mentions,
 // not guessed, and then verified by building: the compiler named the first missing one.
-import ../sem.{no_vrow, ty_of_decl, variants_named}
+import ../sem.{no_vrow, ty_of_decl, variants_named, variant_named_in, is_vrow}
 
 /// The lookup key of a free call: one slot per written argument, no position
 /// zero. Same shape, same door, one position fewer.
@@ -141,7 +142,13 @@ fn Checker mut @refuse_free_call(kids []Node, cname str, key []ArgSpec) -> () {
 fn mode_refusal_msg(p ParamDef, got ArgClass) -> str {
     match p.mode {
         ModeRo => ice("check: a `ro` parameter's mode never refuses an argument's class (P14)")
-        ModeMut => "parameter `${p.name}` needs a mutable place (`mut`, or a `consume` binding) -- this argument is not one (P14)"
+        // The RECEIVER of a `mut` method says what the receiver door says
+        // (`@refuse_method_call`, methods.nv): one fact, one sentence.
+        ModeMut => if p.name == RECV_BINDING {
+            MUT_METHOD_ON_RO_PLACE_MSG
+        } else {
+            "parameter `${p.name}` needs a mutable place (`mut`, or a `consume` binding) -- this argument is not one (P14)"
+        }
         ModeConsume => "parameter `${p.name}` needs ownership (an owned temporary, or a binding declared `consume`) -- this argument is not one (P14)"
     }
 }
@@ -178,8 +185,20 @@ fn Checker mut @refuse_arg_type(kids []Node, row FnRow, key []ArgSpec, form Call
             // not be shadowed by a class question at some OTHER slot.
             if mode_admits(want.mode, key[at].cls) {
                 continue
+            } else if want.mode == ParamMode.ModeMut && @is_value_type(want.type_id) {
+                // A LANGUAGE error, not a subset limit: a `mut` parameter of a
+                // VALUE type is the caller's own storage (D326 revision R3),
+                // and this argument has none to write back into.
+                @reject_first_leaf_of(kids, "parameter `${want.name}` of a value type needs a mutable place -- this argument has no storage the call could write back into (E_MUT_ARG_NOT_MUTABLE, D326 revision R3)")
+                return
             } else {
-                @report_first_leaf_of(kids, mode_refusal_msg(want, key[at].cls))
+                // A `ro` PLACE where a mutable one is needed is a LANGUAGE
+                // error (registry 1577, D488; the oracle refuses it too,
+                // E_LOCAL_NOT_MUT / E_MUT_ARG_NOT_MUTABLE). Any other class --
+                // a temporary handed to a `mut` parameter, which the oracle
+                // compiles -- stays the subset's refusal it was.
+                @report_first_leaf_kind(kids, mode_refusal_msg(want, key[at].cls),
+                    if key[at].cls == ArgClass.ArgRo { DiagKind.LangError } else { DiagKind.SubsetDebt })
                 return
             }
         } else {
@@ -446,7 +465,7 @@ fn Checker mut @deduce_from_args(row FnRow, key []ArgSpec, kids []Node) -> Optio
         for i in 0..key.len() {
             if i >= fd.param_cnt { break }
             ro lit_bound = slot_binding_in(@ctx.tys, @ctx.fns.params[fd.param_off + i].type_id, key[i].type_id, slot)
-            if key[i].lit != LitArg.NotLit && is_ty(lit_bound) {
+            if is_lit_family(key[i].lit) && is_ty(lit_bound) {
                 if !is_ty(lit_found) {
                     lit_found = lit_bound
                     lit_at = i
@@ -540,13 +559,17 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
     // A GENERIC handed free function is judged once its substitution is known
     // (below): its instance is made from the body novac was handed (274.11
     // E.10 step 4c-2, `Ctx @instantiates`), or refused by name there.
-    if hfd.handed_from != "" && hfd.tparam_cnt == 0 {
+    // HANDED is the row's fact (`compiles_body` false), not its module's
+    // spelling: std may be handed without a module line (`handed_from` ""),
+    // and asking `!= ""` skipped the shell question for every such function --
+    // a call printed under a shell name the shell does not carry (task 4).
+    if !@ctx.fns.compiles_body(row) && @ctx.handed.decl_of(row).is_some() && hfd.tparam_cnt == 0 {
         ro sym = c_free_symbol(@ctx, row)
         if @ctx.in_program(row) {
             // A function of ANOTHER MODULE OF THE PROGRAM (274.11 E.10 step 2a):
             // its body is the program's, named by its owner's module; the call is
             // judged by the owner's signature like an own call.
-        } else if !@ctx.interop.has(sym) {
+        } else if !@ctx.interop.has(sym) && !@ctx.instantiates(row, []TyId.new()) {
             @report_first_leaf_of(kids,
                 "outside the subset: `${hfd.name}` is declared in module `${hfd.handed_from}`, whose bodies novac does not compile into this unit yet (E2-b2 multi-file), and the shell novac links into carries no `${sym}` for it")
             return
@@ -762,7 +785,16 @@ fn Checker mut @type_free_call(e Node) -> () {
     // A type, fn or const DECLARED IN THIS FILE outranks any variant of the
     // name (`Pair(1, 2)` for the file's tuple type beside a std variant `Pair`).
     ro (vfirst, vn) = if @ctx.defs.declared_by_file(cname) { (no_vrow(), 0) } else { variants_named(@ctx, cname) }
-    if vn > 1 {
+    // SEVERAL sums declare the name: the POSITION picks the one it expects
+    // (D478, the door a bare name takes in exprs.nv) -- `Err(..)` in std's
+    // `[]u8 @to_str` under a `-> Result[..]`, made from its body in a unit
+    // whose own sums declare an `Err` too (registry 1632, the self-build).
+    ro by_expect = if vn > 0 { variant_named_in(@ctx, cname, @value_expect) } else { no_vrow() }
+    if is_vrow(by_expect) {
+        @type_variant_call(e, kids, by_expect)
+        // SILENT-OK: the variant door records the call or refuses it by name.
+        return
+    } else if vn > 1 {
         @report_first_leaf_of(kids, AMBIGUOUS_VARIANT_MSG)
         return
     } else if vn == 1 {
@@ -834,10 +866,13 @@ fn Checker mut @type_free_call(e Node) -> () {
     ro saved_expect = @value_expect
     @value_expect = no_ty()
     for c in kids {
-        if !is_arg_value_kind(c.kind_of()) { continue }
+        // A NAMED argument's value is typed like a positional one (registry
+        // 1630): `g(2, by: s.byte_len())` left the inner call undecided, and
+        // the key's `type_of` iced on it.
+        if !is_arg_node(c) { continue }
         // A bare `None` takes its PARAMETER's instance, after the lookup (1565).
         if @is_deferred_arg(c) { continue }
-        @type_expr(c)
+        @type_expr(arg_expr_of(c))
     }
     @value_expect = saved_expect
     if @out.len() > before { return }
@@ -864,7 +899,7 @@ fn Checker mut @type_free_call(e Node) -> () {
             // arity alone -- accepted here, refused by the oracle, and
             // emitted as one string argument to a two-parameter function.
             ro key = typed_free_key(kids, @ctx, @scope, @chan)
-            match @res.lookup(@ctx.fns, @ctx.tys, cname, key, CallForm.FreeCall) {
+            match @lookup_call(cname, key, CallForm.FreeCall) {
                 FnFound(row) => {
                     ro rmark = @out.len()
                     @record_free_callee(e, kids, row, key)
@@ -920,52 +955,4 @@ fn Checker mut @type_free_call(e Node) -> () {
     // gave it (and rule 3 judges its range). Reads the channel, so the
     // generic, turbofish and coercing paths need no hook of their own.
     @adapt_literal_args(e, kids, 1, 0)
-}
-
-/// What THIS file imported (registry 221.1 #1493, D29), for `FnIndex.build_for`:
-/// with `seg` false every name in a brace list, with `seg` true the last segment
-/// of the module path each of them came from -- two parallel lists, one walk
-/// each. Read from the import DECLARATIONS, never from the source text, where
-/// `import` in a comment would count. An import without a brace list brings the
-/// module's name, not its functions; `file_decls` unwraps `export import`.
-fn import_parts(file Node, seg bool) -> []str {
-    mut out = []str.new()
-    for d in file_decls(file) {
-        if d.kind_of() != NodeKind.ImportDecl { continue }
-        out.append(import_parts_of(branch_children(d), seg))
-    }
-    out
-}
-
-/// The parts of ONE import: the last identifier of the path before the brace
-/// list, once per name inside it (`seg`), or the names themselves. An aliased
-/// import is refused before typing (`@walk_import`), so `as` never reaches a
-/// lookup.
-fn import_parts_of(kids []Node, seg bool) -> []str {
-    mut res = []str.new()
-    mut last = ""
-    mut in_braces = false
-    mut first = true
-    for c in kids {
-        if c.kind_of() != NodeKind.LeafNode { continue }
-        ro t = leaf_text(c)
-        if first {
-            first = false // the keyword: `import` / `use`
-        } else if t == "{" {
-            in_braces = true
-        } else if t == "}" {
-            in_braces = false
-        } else if in_braces {
-            if t != "," && t != "as" {
-                res.push(if seg { last } else { t })
-            } else {
-                // The separator, or the `as` before an alias.
-            }
-        } else if t != "." && t != ".." && t != "/" {
-            last = t
-        } else {
-            // Path punctuation.
-        }
-    }
-    res
 }

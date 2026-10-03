@@ -1,0 +1,49 @@
+// EXPECT_COMPILE_ERROR E_PARAM_NOT_MUT
+//
+// Registry 221.1 #1636: a method declared without `mut` called a MUTATING
+// method on a field of its receiver -- `fn Bag @add(x int) { @items.push(x) }`
+// -- and the checker accepted it, while the same chain through a parameter
+// without `mut` (`b.items.push(x)`) is `E_PARAM_NOT_MUT`. The receiver is a
+// parameter (D32: without `mut` a parameter mutates no field; D35: a
+// mutating method is `fn Type mut @method`), and binding dominates down the
+// chain (D175: `acc.tags.items.push` through `ro acc` is refused). The chain
+// check knew only an identifier root; the `@` root passed silently. Pair of
+// #1635, which closed the same hole for field ASSIGNMENT.
+//
+// One cell per form: a heap collection field (`push`), a map field
+// (`insert`), a nested chain, an atomic field (no `#share` exception: a
+// mutating method of a shared field is still a mutation through the
+// receiver). NOT a cell: an atomic behind a `*mut` field -- D246 P4 ("L2
+// freeze stops at every `*`") makes that legal through any root; it is a
+// positive cell of the twin. The positive twins are the same methods declared
+// `mut @`, spec_tests/conformance/standalone/p1636_mut_receiver_mut_method_chain.nv.
+module neg.p1636_ro_receiver_mut_method_chain_neg
+
+import std.runtime.sync.{AtomicInt}
+
+type P1636Bag { items []int, idx HashMap[int, int] }
+type P1636Outer { bag P1636Bag }
+type P1636Counter { c AtomicInt }
+
+fn P1636Bag @add(x int) {
+    // nova:expect E_PARAM_NOT_MUT -- a collection field: `push` mutates it through `@`
+    @items.push(x)
+}
+
+fn P1636Bag @put(k int) {
+    // nova:expect E_PARAM_NOT_MUT -- a map field: `insert` mutates it through `@`
+    @idx.insert(k, k)
+}
+
+fn P1636Outer @add(x int) {
+    // nova:expect E_PARAM_NOT_MUT -- a nested chain is still rooted at `@`
+    @bag.items.push(x)
+}
+
+fn P1636Counter @bump() -> int {
+    // nova:expect E_PARAM_NOT_MUT -- an atomic field: no `#share` exception
+    @c.fetch_add(1)
+}
+
+fn main() {
+}
