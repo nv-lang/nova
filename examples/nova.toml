@@ -51,19 +51,21 @@ src = "."
 # (never committed) and now correctly overrides BOTH occurrences — see
 # follow-up #3 in `imports.rs::lookup_dependency` / D420 (09-tooling.md).
 [dependencies]
-tls = { git = "https://github.com/nv-lang/nova-tls", version = "0.1" }
+tls = { git = "https://github.com/nv-lang/nova-tls", version = "0.2" }
 # #444/CI: a `path` dependency in a COMMITTED manifest cannot resolve on CI
 # (there are no sibling repositories there) — that is exactly what reddened
 # `nova-gate` at the "Flagship examples gate" step, with a dependency-resolution
 # error naming `http`'s unresolvable `path ../../nova-http`. Local development
 # goes through `nova.override.toml` (never committed); the manifest itself must
-# point at something PUBLISHED. `nova-http` has tags (v0.1.0…v0.1.2).
-http = { git = "https://github.com/nv-lang/nova-http", version = "0.1" }
-# polaris v0.1.3 carries the #667 fix: the semaphore `Permit` was taken by
-# a match-arm binding and never returned, so the server stalled after
-# `max_inflight` connections. The temporary `rev` pin that stood here
-# between the fix and the tag is gone -- the range resolves to the tag.
-polaris = { git = "https://github.com/nv-lang/nova-polaris", version = "0.1" }
+# point at something PUBLISHED.
+http = { git = "https://github.com/nv-lang/nova-http", version = "0.2" }
+# The 0.2 line, owner's word 2026-10-03: the examples follow the line the
+# packages are developed on. Until then they sat on polaris 0.1, so every
+# std change that touched polaris needed a backport branch and a 0.1.x tag
+# besides the 0.2 one (#1638: v0.1.10 next to v0.2.4). polaris 0.2 pulls
+# http 0.2 and tls 0.2, which is why those two move with it: one URL
+# resolves to one checkout (see the `tls` note above).
+polaris = { git = "https://github.com/nv-lang/nova-polaris", version = "0.2" }
 # Plan 249 (examples/flagship/http_socks5_bridge). Wired 2026-08-09: both
 # blockers are gone — `nova-socks` now publishes `v0.1.0` on all three mirrors
 # (verified with `git ls-remote --tags`, so D420 §4 lock RESOLUTION has a
