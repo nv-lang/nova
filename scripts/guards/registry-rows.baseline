@@ -1541,8 +1541,9 @@
 # 2026-10-03, cloud session p274-carina-k1 (part 12): rows -> 1621, max -> 1708 (row 1708 filed open, numbered by the integrator; 1703-1707 live on main and arrive with the next sync -- reserved in gaps until then).
 # 2026-10-03, integrator nova-20: rows -> 1650, max -> 1713 (merge of p274-carina-k1 (#1703, row 1708 arrives): rows 1708 arrive, their reserve dropped).
 # 2026-10-03, integrator (OpenCode move): rows -> 1652, max -> 1715 (rows 1714 install-guards finds repos by fixed names, 1715 no .claude/settings.json mechanism acts in OpenCode; branch p-opencode-guards).
-rows=1652
-max=1715
+# 2026-10-03, integrator (OpenCode): rows -> 1653, max -> 1716 (row 1716 filed by the hunt check x K5, numbered at merge).
+rows=1653
+max=1716
 rows=1611
 max=1693
 rows=1590
