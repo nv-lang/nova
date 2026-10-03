@@ -1,0 +1,8 @@
+fn hello() -> () {
+    println("hi")
+}
+fn mk() -> fn() -> () => hello
+fn take(mut f fn() -> ()) -> int => 7
+fn main() {
+    println(take(mk()))
+}

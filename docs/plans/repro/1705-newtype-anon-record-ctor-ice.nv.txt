@@ -1,0 +1,7 @@
+type Bag { n int }
+type Wrap Bag
+fn mk() -> Wrap => Wrap({ n: 1 })
+fn bump(mut w Wrap) -> int => 7
+fn main() {
+    println(bump(mk()))
+}
