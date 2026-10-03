@@ -20,7 +20,7 @@ module novac.check
 import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
-import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, is_true_literal}
+import ../builtins.{ENTRY_FN, is_bool_literal, is_true_literal}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{decl_of_ty, decl_fn_row, arm_body_at, Ctx, CheckOut, param_name_at, param_type_at}
 import ../sem.{ty_source_name, is_never_ty}

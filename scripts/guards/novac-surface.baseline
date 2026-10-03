@@ -271,7 +271,10 @@
 # 2026-10-02, cloud session p274-carina-k1 (part 5, D216 `dist`): builtins 67 -> 68: `PTR_DIST`
 #   -- the raw-pointer intrinsic's name beside `PTR_OFFSET`, asked by check's typing of a
 #   pointer method (check/unsafe.nv) and by its emission (emit_c/emit_ptr.nv).
-builtins 68
+# 2026-10-03, cloud session p274-carina-k1 (part 12, registry 1703): builtins 68 -> 70: `PRINT_PIECE_FN`
+#   (`print`, the print statement without the newline) and `is_print_fn` (println or print) -- asked by
+#   check/typing.nv, emit_c/emit_expr.nv and sem/node_questions.nv: the two statements are one form.
+builtins 70
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -1092,7 +1095,9 @@ resolve 23
 #   `call_returns_recv_ref` (sem/value_recv.nv) -- a `-> @` on a by-pointer receiver returns the
 #   receiver's storage (R6/R8, the integrator's ruling 2026-10-03); asked by the signature
 #   (emit_c/emit_c.nv), the call site (emit_c/emit_expr.nv) and the spill (lower/lower_hoist.nv): one door.
-sem 352
+# 2026-10-03, cloud session p274-carina-k1 (part 12, registry 1703): sem 352 -> 353: `print_call_ends_line`
+#   (sem/node_questions.nv) -- `println` or `print`, asked by the lowering that ends the statement.
+sem 353
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

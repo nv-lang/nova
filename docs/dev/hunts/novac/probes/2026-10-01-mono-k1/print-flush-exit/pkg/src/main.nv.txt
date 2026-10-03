@@ -1,0 +1,9 @@
+module hp
+
+import std.os.{exit_process}
+
+fn main() Os {
+    println("before-exit")
+    print("piece|")
+    exit_process(3)
+}

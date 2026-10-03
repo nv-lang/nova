@@ -14,7 +14,7 @@ import ../types.{TyId, is_ty}
 import ../diag.{ice}
 import ../sem.{arm_body_at, branch_children, for_head_elem}
 import ../sem.{narrowing_of}
-import ../sem.{is_expr_kind, is_println_call, is_value_tail_kind, leaf_kind}
+import ../sem.{is_expr_kind, is_println_call, is_value_tail_kind, leaf_kind, print_call_ends_line}
 import ../sem.{leaf_text, literal_prim_of, raw_vrow, variant_in_sum}
 import ../sem.{iflet_pattern_at, iflet_body_at, iflet_else_at, iflet_init_at}
 import ../sem.{whilelet_pattern_at, whilelet_init_at, whilelet_body_at}
@@ -817,7 +817,7 @@ fn Lowerer mut @lower_println(call Node) -> () {
             }
         }
     }
-    @ir.output_end()
+    @ir.output_end(print_call_ends_line(call))
 }
 
 /// THE LOWERING HALF of the dispatch on the form of a value: a `match` and an `if` in value

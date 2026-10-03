@@ -58,6 +58,14 @@ export const ENTRY_FN = "main"
 /// today, not a std function — the one println the runtime prints through).
 export const PRINT_FN = "println"
 
+/// The print statement WITHOUT the closing newline (`print("a|")`): the same
+/// statement form as `println` -- the oracle's `emit_println(.., newline:
+/// false)` -- lowered by the same door (registry 1703).
+export const PRINT_PIECE_FN = "print"
+
+/// Is `name` one of the two print statements, `println` or `print`?
+export fn is_print_fn(name str) -> bool => name == PRINT_FN || name == PRINT_PIECE_FN
+
 /// The intrinsic that yields the location of the expression it stands in
 /// (D468). Named here rather than spelled at the rule that admits it, because
 /// this file is where a name the compiler must know itself belongs (P5).

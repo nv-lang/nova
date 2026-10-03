@@ -17,7 +17,7 @@ module novac.check
 import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
-import ../builtins.{ENTRY_FN, PRINT_FN, is_bool_literal, RECV_BINDING, SELF_TYPE}
+import ../builtins.{ENTRY_FN, is_bool_literal, RECV_BINDING, SELF_TYPE}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{variants_named, ctor_head_variant, VariantRow, variant_sum_count}
 import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, raw_row, ParamMode, carrier_of, arm_body_at, branch_children}

@@ -1,0 +1,35 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Role: acceptance tests of the END of a print statement (registry 1703): every
+//   `println` and every `print` ends with the runtime's `nova_print_end()` --
+//   the oracle's emission since registry 1655 -- so the call's output reaches
+//   the fd before the statement after it runs. C's `stdout` is fully buffered
+//   when it is no terminal, and without the flush Carina's lines came out AFTER
+//   a panic's message (probe ctl-index-contract) and were lost at `_exit`.
+//   `print` (the statement without the newline) is lowered by the same door as
+//   `println`; until this wave Carina did not know it.
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file; the probes ctl-index-contract
+//   and print-flush-order under docs/dev/hunts/novac/probes/2026-10-01-mono-k1/.
+//
+// Reverse probe (owner's rule, "prove it both ways"): with the flush line of
+// `@emit_output_end` removed both tests redden; with `is_print_fn` answering
+// only for `println` the `print` test reddens. Both were run before this file
+// was committed.
+
+module novac.pipeline
+
+test "every println ends with the runtime's flush, after its newline (registry 1703, oracle 1655)" {
+    ro (d, c) = compile_to_c("fn main() {\n println(1)\n println(\"two\")\n}", std_decls())
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("1LL));\n    nova_print_newline();\n    nova_print_end();"), c)
+}
+
+test "`print` is the print statement without the newline, and it flushes too (registry 1703)" {
+    ro (d, c) = compile_to_c("fn main() {\n print(\"a|\")\n print(7)\n println(\"b\")\n}", std_decls())
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("nova_print_end();"), c)
+    // CONTROL: the two `print`s end without a newline -- the flush follows the
+    // value at once -- and only the `println` prints one.
+    assert(c.contains("7LL));\n    nova_print_end();"), c)
+    assert(c.contains("nova_print_newline();\n    nova_print_end();"), c)
+}

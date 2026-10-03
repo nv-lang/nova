@@ -27,7 +27,7 @@ module novac.check
 import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, BinOp, bin_op_of, un_op_of, raw_node}
 import ../diag.{ice}
-import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
+import ../builtins.{ENTRY_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
 import ../builtins.{EQUAL_METHOD, DISPLAY_PROTO}
 import ../sem.{gate_names, field_range_of, raw_frow}
 import ../sem.{c_method_symbol}
