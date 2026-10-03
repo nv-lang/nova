@@ -1,0 +1,30 @@
+module must_consume.neg_11
+
+// USED AFTER EVERY ARM CONSUMED IT (D131): the join says consumed. The oracle
+// refuses it too.
+
+// NOVAC_EXPECT is used after it was consumed
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println(@id)
+}
+
+fn Tx consume @rollback() -> () {
+    println(0)
+}
+
+fn Tx @peek() -> int => @id
+
+fn main() {
+    consume t = Tx { id: 1 }
+    if t.peek() > 0 {
+        t.commit()
+    } else {
+        t.rollback()
+    }
+    println(t.peek())
+}

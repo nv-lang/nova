@@ -86,6 +86,21 @@ export fn module_segments(file Node) -> []str {
 /// with no module declaration.
 export fn module_dotted(file Node) -> str => module_joined(file, ".")
 
+/// The function declarations of `file` written under `export` -- the same wrappers
+/// `file_decls` opens, asked the other way: which of them carried the word. A
+/// question about visibility (D432 s1 amendment: an exported function declares its
+/// effects itself), so it lives with the door.
+export fn file_exported_fns(file Node) -> []Node {
+    mut out = []Node.new()
+    for c in branch_children(file) {
+        if c.kind_of() != NodeKind.ExportDecl { continue }
+        for w in branch_children(c) {
+            if w.kind_of() == NodeKind.FnDecl { out.push(w) } else { continue }
+        }
+    }
+    out
+}
+
 /// THE DECLARATIONS OF A FILE, with the visibility wrapper opened.
 ///
 /// `export fn f()` parses as an `ExportDecl` WRAPPING the declaration -- the

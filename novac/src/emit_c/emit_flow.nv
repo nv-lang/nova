@@ -40,9 +40,11 @@ import ../sem.{branch_children, leaf_text, vec_op_c}
 import ../sem.{is_unit_ty}
 import ../types.{is_ty}
 import ../lower.{IfCtx, LoopHead, Cond, Fn, Stmt, BlockId, SwitchTerm, no_block, raw_block}
-import ../lower.{HandlerSwap}
+import ../lower.{HandlerSwap, CleanupCall, raw_local}
+import ../sem.{c_callable, c_maker, variant_named_in, raw_vrow}
+import ../types.{TyId, no_ty}
 import ../sem.{c_type, effect_slot_c}
-import ../builtins.{VEC_LEN_METHOD, RECV_C_NAME}
+import ../builtins.{VEC_LEN_METHOD, RECV_C_NAME, SCOPE_OUTCOME_TYPE, SCOPE_OUTCOME_SUCCESS}
 
 /// Whether this branch continues a `} else ` line its caller printed.
 fn chained_of(outer Option[IfCtx]) -> bool {
@@ -458,7 +460,24 @@ fn Emitter mut @print_stmt(s Stmt) -> () {
         ScopeOpen(q) => @emit_scope_open(q)
         ScopeJoin(q) => @emit_scope_join(q)
         Spawn(s) => @emit_spawn_site(s)
+        Cleanup(c) => @emit_cleanup(c)
     }
+}
+
+/// One auto-`@cleanup` call (D432): the type's `@cleanup` on the value still owned,
+/// with the exit's outcome -- every exit the subset reaches is a `Success`: no
+/// unwinding (the checker refuses it), and a `?` is a `return` (D85), `Success` by
+/// D314 s2's row for `return v` -- as the oracle passes it. The spec also says
+/// `Failure(e)` for "`?` propagation" (03-syntax.md:9503, D188's block form); the
+/// contradiction went to the owner (report 16 of p274-carina-strarm).
+fn Emitter mut @emit_cleanup(c CleanupCall) -> () {
+    ro target = if raw_local(c.local) >= 0 { @lo.ir.decl_of(c.local).name } else { c.name }
+    ro outcome_t = @ctx.ty_of_name(SCOPE_OUTCOME_TYPE) ?? no_ty()
+    ro success = variant_named_in(@ctx, SCOPE_OUTCOME_SUCCESS, outcome_t)
+    assert(raw_vrow(success) >= 0, "emit: an auto-cleanup reached the emitter with no `ScopeOutcome.Success` to pass")
+    // Behind a drop flag (D432 s5): only while no move of the binding set it.
+    ro guard = if raw_local(c.gone) >= 0 { "if (!${@lo.ir.decl_of(c.gone).name}) " } else { "" }
+    @body.append("    ${guard}(void)(${c_callable(@ctx, c.row, []TyId.new())}(${target}, ${c_maker(@ctx, success)}()));\n")
 }
 
 /// `prev = slot; slot = handler` -- the displaced handler is DECLARED here, its

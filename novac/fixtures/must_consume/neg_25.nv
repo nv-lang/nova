@@ -1,0 +1,33 @@
+module must_consume.neg_25
+
+// THE `consume` MARKER ON A FIELD WITH NOTHING TO CARRY
+// (D133-marker-on-non-consume). The oracle refuses it too.
+
+// NOVAC_EXPECT field `n` is marked `consume`, but its type `int` is not must-consume
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx @peek() -> int => @id
+
+type Box consume {
+    consume n int
+}
+
+fn Box consume @close() -> () {
+    println(0)
+}
+
+fn main() {
+    consume b = Box { n: 1 }
+    b.close()
+}

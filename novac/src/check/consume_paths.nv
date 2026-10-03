@@ -1,0 +1,446 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc_mir_dataflow's `MaybeUninitializedPlaces` -- the state each path
+//   leaves, JOINED where paths meet (a value moved on one path and not on another
+//   is MAYBE moved), iterated around a loop to its fixed point; NOT taken: the
+//   control-flow graph -- the tree is walked, a branch and a loop are the only
+//   joins, and a loop is walked twice, which the three-valued state makes final.
+// Role: the PATHS of the consumption obligation (D133), steps 2-3 of the track:
+//   the arms of a branch and the passes of a loop start from one state and are
+//   joined -- Live, Consumed, MaybeConsumed; an arm, a loop body and a nested
+//   block are scopes of their own; `return`, `break`, `continue` and a diverging
+//   call are EXIT POINTS (D133, the list of exit points): what is still owned there is
+//   `D133-not-consumed`, and the path they end takes no part in a join.
+// Used by: check/consume_flow.nv (`@flow_stmt`, `@flow_expr`).
+// Guarded by: the fixtures novac/fixtures/must_consume/ through
+//   check-novac-fixture-expect.sh and the differential (check-novac-differential.sh).
+// novac/src/check/consume_paths.nv -- where the paths of a body part and meet.
+
+module novac.check
+
+import ../tree.{Node, NodeKind, is_node}
+import ../sem.{branch_children, expr_leaf_name, ty_source_name, leaf_kind}
+import ../sem.{iflet_body_at, iflet_else_at, arm_body_at, loop_ctl_is_break}
+import ../builtins.{is_true_literal}
+import ../lex.{TokenKind}
+import ../sem.{pattern_mode_word}
+
+/// D133-not-consumed at an EXIT POINT: the value is still owned, on every path or on
+/// some, when `exit` leaves its scope.
+fn exit_not_consumed_msg(name str, ty str, how str, exit str, partly bool) -> str {
+    ro state = if partly { "is consumed on only some paths" } else { "is still owned" }
+    "`${name}` (type `${ty}`) ${state} when ${exit} leaves its scope -- consume it first: ${how}, return it, or pass it to a `consume` parameter (D133)"
+}
+
+/// The kinds whose arms are JOINED: every arm starts from the same state.
+fn is_branch_kind(k NodeKind) -> bool =>
+    k == NodeKind.IfStmt || k == NodeKind.IfExpr || k == NodeKind.IfLet || k == NodeKind.MatchExpr
+
+/// The loops: a body walked from the joined state of every pass.
+fn is_loop_kind(k NodeKind) -> bool =>
+    k == NodeKind.WhileStmt || k == NodeKind.WhileLet || k == NodeKind.ForStmt
+
+/// An EXIT POINT at `at`: every value bound since entry `mark` that is still owned,
+/// on any path, is `D133-not-consumed` there. An error stops tracking: the rest of
+/// the body is drawn from a state the error already broke.
+fn Checker mut @flow_exit(mut fl ConsumeFlow, mark int, at Node, exit str) -> () {
+    for i in mark..fl.owned_ty.len() {
+        if fl.state[i] == VarState.VsConsumed { continue }
+        if fl.auto_at[i] >= 0 {
+            // An affine value is cleaned at this exit (D432).
+            @flow_settle_auto(fl, i)
+            continue
+        } else {
+            // Strictly linear: an error below.
+        }
+        ro t = fl.owned_ty[i]
+        ro partly = fl.state[i] == VarState.VsMaybe
+        @reject_first_leaf_of([]Node.of(at),
+            exit_not_consumed_msg(fl.nm[i], ty_source_name(@ctx, t), @ways_out(t), exit, partly))
+        fl.stopped = true
+    }
+    @flow_record_cleanups(fl, mark, at)
+}
+
+/// `break` / `continue`: the values the loop body bound must be consumed here, and
+/// the state of the values from before the loop goes to the loop's exit or to its
+/// next pass. The path ends.
+fn Checker mut @flow_loop_ctl(st Node, mut fl ConsumeFlow) -> () {
+    if fl.loop_mark < 0 {
+        // Outside a loop the checker refused the statement already; nothing to join.
+        fl.dead = true
+        return
+    } else {
+        // Inside a loop: judged below.
+    }
+    ro is_break = loop_ctl_is_break(st)
+    @flow_exit(fl, fl.loop_mark, st, if is_break { "this `break`" } else { "this `continue`" })
+    if fl.stopped { return }
+    ro outer = flow_states_prefix(fl.state, fl.loop_mark)
+    if is_break {
+        flow_join(fl.brk, outer, fl.brk_paths)
+        fl.brk_paths += 1
+    } else {
+        flow_join(fl.cont, outer, fl.cont_paths)
+        fl.cont_paths += 1
+    }
+    fl.dead = true
+}
+
+/// A branch: the head is evaluated once on every path, each arm is walked from the
+/// state after it, and the states the LIVE arms leave are JOINED -- an arm that left
+/// (`return`, `break`, ...) takes no part. An `if` without an `else` has a second
+/// path that changes nothing. When no arm comes out, neither does the branch.
+/// A scrutinee whose patterns bind a must-consume value MOVES into the arm that
+/// binds it (D157); `moved`: the branch's value leaves, so each arm's value does.
+fn Checker mut @flow_branch(n Node, mut fl ConsumeFlow, moved bool) -> () {
+    ro k = n.kind_of()
+    ro kids = branch_children(n)
+    mut joined = []VarState.new()
+    mut paths = 0
+    mut entry = []VarState.new()
+    if k == NodeKind.MatchExpr {
+        if kids.len() < 2 { return }
+        mut owns = false
+        for a in kids {
+            if a.kind_of() != NodeKind.MatchArm { continue }
+            if @pattern_owns(branch_children(a)[0], fl.kinds) { owns = true } else { continue }
+        }
+        @flow_expr(kids[1], fl, owns)
+        entry = flow_states_copy(fl.state)
+        for a in kids {
+            if fl.stopped { return }
+            if a.kind_of() != NodeKind.MatchArm { continue }
+            ro ak = branch_children(a)
+            if !@flow_arm(a, true, ak[0], moved, entry, fl, joined, paths) { continue }
+            paths += 1
+        }
+    } else {
+        // An `if` [KwIf, cond, then, KwElse, else] or an `if`-let [KwIf, pattern,
+        // `=`, init, then, KwElse, else] (sem/slots.nv's doors).
+        ro head_at = if k == NodeKind.IfLet { 3 } else { 1 }
+        ro then_at = if k == NodeKind.IfLet { iflet_body_at(kids) } else { 2 }
+        ro else_at = if k == NodeKind.IfLet { iflet_else_at(kids) } else { 4 }
+        if kids.len() <= then_at { return }
+        ro owns = k == NodeKind.IfLet && @pattern_owns(kids[1], fl.kinds)
+        @flow_expr(kids[head_at], fl, owns)
+        entry = flow_states_copy(fl.state)
+        // The then-arm binds what an `if`-let's pattern binds; a plain condition
+        // binds nothing (its "pattern" is the condition, which owns nothing).
+        ro pat = if k == NodeKind.IfLet { kids[1] } else { kids[0] }
+        if @flow_arm(kids[then_at], false, pat, moved, entry, fl, joined, paths) {
+            paths += 1
+        } else {
+            // The arm left early: it takes no part in the join.
+        }
+        if fl.stopped { return }
+        if kids.len() > else_at {
+            if @flow_arm(kids[else_at], false, kids[0], moved, entry, fl, joined, paths) {
+                paths += 1
+            } else {
+                // The arm left early: it takes no part in the join.
+            }
+        } else {
+            // No `else`: the false path leaves the state as it was.
+            flow_join(joined, entry, paths)
+            paths += 1
+        }
+    }
+    if fl.stopped { return }
+    @flow_come_out(fl, joined, paths, entry)
+}
+
+/// `a && b`, `a || b`: the right side runs on SOME paths only -- a branch with no
+/// `else`, and its state joins the left side's. Walked as any operand until
+/// 2026-10-03, so a move on the right counted as made on every path: an affine value
+/// moved there was left uncleaned where the left side skipped it (found by the drop
+/// flag's probe -- the oracle cleaned it, novac did not).
+fn Checker mut @flow_short_circuit(e Node, mut fl ConsumeFlow) -> () {
+    ro kids = branch_children(e)
+    @flow_expr(kids[0], fl, false)
+    if fl.stopped { return }
+    ro entry = flow_states_copy(fl.state)
+    @flow_expr(kids[2], fl, false)
+    if fl.stopped { return }
+    mut joined = []VarState.new()
+    flow_join(joined, fl.state, 0)
+    flow_join(joined, entry, 1)
+    fl.state = joined
+}
+
+/// Is `e` a short-circuit operator -- `&&` or `||`?
+fn is_short_circuit(e Node) -> bool {
+    if e.kind_of() != NodeKind.Bin { return false }
+    ro op = leaf_kind(branch_children(e)[1])
+    op == TokenKind.AmpAmp || op == TokenKind.PipePipe
+}
+
+/// After a join: the paths that came out decide the state; when none did, the code
+/// after it is not reached (the state stays `entry`, which nothing reads).
+fn Checker mut @flow_come_out(mut fl ConsumeFlow, joined []VarState, paths int, entry []VarState) -> () {
+    if paths == 0 {
+        fl.state = flow_states_copy(entry)
+        fl.dead = true
+    } else {
+        fl.state = flow_states_copy(joined)
+        fl.dead = false
+    }
+}
+
+/// Does a `for` pattern TAKE its elements -- the `consume` word on it (D156)?
+fn pattern_takes(p Node) -> bool {
+    match pattern_mode_word(p) {
+        Some(k) => k == TokenKind.KwConsume
+        None => false
+    }
+}
+
+/// One arm, walked from `entry`; what it binds ends with it -- the must-consume
+/// binders of `pat` (an `if`-let's or the arm's own pattern; any other node binds
+/// nothing) first. When the arm comes out at its end, the state it leaves for the
+/// values bound before the branch joins `joined` (`paths` arms so far) and the
+/// answer is true; an arm that LEFT early answers false. `is_match_arm`: `a` is a
+/// whole `match` arm (its guard and body); otherwise it is an `if` arm's body
+/// itself. `moved`: the arm's value leaves with the branch's.
+fn Checker mut @flow_arm(a Node, is_match_arm bool, pat Node, moved bool, entry []VarState,
+                         mut fl ConsumeFlow, mut joined []VarState, paths int) -> bool {
+    fl.state = flow_states_copy(entry)
+    fl.dead = false
+    ro mark = fl.owned_ty.len()
+    if pat.kind_of() == NodeKind.Pattern || pat.kind_of() == NodeKind.Name {
+        @flow_own_binders(pat, false, fl)
+    } else {
+        // An `if`'s condition or keyword: nothing bound.
+    }
+    if fl.stopped { return false }
+    fl.nest += 1
+    if is_match_arm {
+        // A match arm: [pattern, guard?, `=>`, body, `,`?]; the guard runs on this path.
+        ro ak = branch_children(a)
+        for c in ak {
+            if c.kind_of() == NodeKind.Guard { @flow_child(c, fl) } else { continue }
+        }
+        match arm_body_at(ak) {
+            Some(b) => @flow_arm_body(ak[b], moved, fl)
+            // SILENT-OK: an arm of punctuation only -- the parser named it.
+            None => {}
+        }
+    } else {
+        // An `if` arm: a block, or the next `if` of an `else if` chain.
+        @flow_arm_body(a, moved, fl)
+    }
+    fl.nest -= 1
+    if fl.stopped { return false }
+    ro came_out = !fl.dead
+    if came_out {
+        @flow_scope_end(fl, mark, if is_match_arm { flow_arm_body_node(a) } else { a })
+    } else {
+        // The arm left early: its exit judged what it had bound.
+    }
+    flow_drop_from(fl, mark)
+    if fl.stopped || !came_out { return false }
+    flow_join(joined, fl.state, paths)
+    true
+}
+
+/// The body node of a `match` arm -- its block, or its one expression.
+fn flow_arm_body_node(a Node) -> Node {
+    ro ak = branch_children(a)
+    match arm_body_at(ak) {
+        Some(b) => ak[b]
+        None => a
+    }
+}
+
+/// The body of an arm: a block of statements, or one statement or expression. Its
+/// value is the arm's: it MOVES -- a forced move, plan 293 -- when the branch's
+/// value leaves (`moved`); a tracked name standing alone otherwise is a move out of
+/// a branch, which is not followed.
+fn Checker mut @flow_arm_body(b Node, moved bool, mut fl ConsumeFlow) -> () {
+    if b.kind_of() == NodeKind.Block {
+        @flow_block(b, fl, moved)
+    } else if !moved && @is_tracked_name(b, fl) {
+        @flow_stop(b, "moved out of a branch, a loop or a nested block", fl)
+    } else {
+        fl.forced = moved
+        @flow_stmt(b, fl, moved)
+    }
+}
+
+/// A nested block in straight-line code (a bare one, or the block of an `unsafe { }`,
+/// `unsafe_block_of`): a scope of its own -- what it binds must be consumed by its end.
+fn Checker mut @flow_scope_block(b Node, mut fl ConsumeFlow) -> () {
+    ro mark = fl.owned_ty.len()
+    fl.nest += 1
+    @flow_block(b, fl, false)
+    fl.nest -= 1
+    if fl.stopped { return }
+    if !fl.dead {
+        @flow_scope_end(fl, mark, b)
+    } else {
+        // Left early: the exit judged what the block had bound.
+    }
+    flow_drop_from(fl, mark)
+}
+
+/// The block of an `unsafe { ... }` (D216 s8): its one Block child; the node itself
+/// when the parser marked a missing body (nothing then to walk but its leaves).
+fn unsafe_block_of(n Node) -> ro Node {
+    for c in branch_children(n) {
+        if c.kind_of() == NodeKind.Block { return c }
+    }
+    n
+}
+
+/// A loop [KwWhile, cond, body] / [KwWhile, pattern, `=`, init, body] / [KwFor,
+/// pattern, KwIn, head, body]. The body is a scope of its own, walked from the
+/// state at the loop's entry and then from that state JOINED with the state its
+/// pass leaves (a value the body consumes is then MAYBE consumed at the next
+/// pass's use of it, D131). The loop comes out where the condition fails -- never
+/// for a literal `while true` -- and at every `break`. A PATTERN that takes a
+/// must-consume element binds a fresh value each pass, owned by the body (D432 s2
+/// form 2): `for consume t in v` consumes `v` itself (D156: the collection-aware
+/// form), `while Some(consume t) = e` moves each `e` into its pattern; a plain `for t
+/// in v` views the elements and binds nothing owned.
+fn Checker mut @flow_loop(n Node, mut fl ConsumeFlow) -> () {
+    ro k = n.kind_of()
+    ro kids = branch_children(n)
+    ro body_at = if k == NodeKind.WhileStmt { 2 } else { 4 }
+    if kids.len() <= body_at { return }
+    ro head = if k == NodeKind.WhileStmt { kids[1] } else { kids[3] }
+    ro forever = k == NodeKind.WhileStmt && head.kind_of() == NodeKind.Name && is_true_literal(expr_leaf_name(head))
+    // Does the pattern take what it binds? `for consume t in v`: the word on the
+    // pattern; `while Some(consume t) = e`: a binder owning a must-consume value.
+    ro has_pat = k != NodeKind.WhileStmt
+    ro takes = has_pat && @pattern_owns(kids[1], fl.kinds) && (k == NodeKind.WhileLet || pattern_takes(kids[1]))
+    if k == NodeKind.ForStmt {
+        // The iterated value is evaluated once, before the first pass -- and moved
+        // into the loop when its pattern takes the elements.
+        @flow_expr(head, fl, takes)
+    } else {
+        // A condition or a `while`-let initializer runs at every pass, below.
+    }
+    if fl.stopped { return }
+    // The enclosing loop's own exits are kept aside while this one is walked.
+    ro saved_mark = fl.loop_mark
+    ro saved_brk = flow_states_copy(fl.brk)
+    ro saved_brk_paths = fl.brk_paths
+    ro saved_cont = flow_states_copy(fl.cont)
+    ro saved_cont_paths = fl.cont_paths
+    fl.loop_mark = fl.owned_ty.len()
+    fl.brk = []VarState.new()
+    fl.brk_paths = 0
+    mut exits = []VarState.new()
+    mut exit_paths = 0
+    mut start = flow_states_copy(fl.state)
+    for pass in 0..2 {
+        fl.state = flow_states_copy(start)
+        fl.dead = false
+        fl.cont = []VarState.new()
+        fl.cont_paths = 0
+        if k != NodeKind.ForStmt {
+            @flow_expr(head, fl, takes)
+        } else {
+            // The iterated value was evaluated once, above.
+        }
+        if fl.stopped { break }
+        if !forever {
+            // The condition fails, or the iterator is done: the loop comes out here.
+            flow_join(exits, fl.state, exit_paths)
+            exit_paths += 1
+        } else {
+            // `while true`: only a `break` comes out.
+        }
+        if takes {
+            // This pass's element: owned by the body, a scope of its own.
+            @flow_own_binders(kids[1], k == NodeKind.ForStmt, fl)
+            if fl.stopped { break }
+        } else {
+            // A view of each element, or no pattern: nothing owned.
+        }
+        fl.nest += 1
+        @flow_block(kids[body_at], fl, false)
+        fl.nest -= 1
+        if fl.stopped { break }
+        if !fl.dead {
+            @flow_scope_end(fl, fl.loop_mark, kids[body_at])
+            if fl.stopped { break }
+            flow_drop_from(fl, fl.loop_mark)
+            flow_join(fl.cont, fl.state, fl.cont_paths)
+            fl.cont_paths += 1
+        } else {
+            flow_drop_from(fl, fl.loop_mark)
+        }
+        if fl.cont_paths == 0 { break }
+        mut next = flow_states_copy(start)
+        flow_join(next, fl.cont, 1)
+        if flow_states_eq(next, start) { break }
+        start = next
+    }
+    ro brk = flow_states_copy(fl.brk)
+    ro brk_paths = fl.brk_paths
+    fl.loop_mark = saved_mark
+    fl.brk = saved_brk
+    fl.brk_paths = saved_brk_paths
+    fl.cont = saved_cont
+    fl.cont_paths = saved_cont_paths
+    if fl.stopped { return }
+    if brk_paths > 0 {
+        flow_join(exits, brk, exit_paths)
+        exit_paths += 1
+    } else {
+        // No `break`: the loop comes out only where its condition fails.
+    }
+    @flow_come_out(fl, exits, exit_paths, start)
+}
+
+/// A copy of a state vector: each arm starts from its own.
+fn flow_states_copy(v []VarState) -> []VarState {
+    mut out = []VarState.new()
+    out.append(v)
+    out
+}
+
+/// The first `n` entries of a state: the values bound before a loop.
+fn flow_states_prefix(v []VarState, n int) -> []VarState {
+    mut out = flow_states_copy(v)
+    out.truncate(n)
+    out
+}
+
+/// Do two states agree on every entry?
+fn flow_states_eq(a []VarState, b []VarState) -> bool {
+    if a.len() != b.len() { return false }
+    for i in 0..a.len() {
+        if a[i] != b[i] { return false }
+    }
+    true
+}
+
+/// Join one path's state into `joined` (the first path is taken as it is): where
+/// the paths disagree the value is MAYBE consumed.
+fn flow_join(mut joined []VarState, st []VarState, paths int) -> () {
+    if paths == 0 {
+        joined.append(st)
+        return
+    } else {
+        // A later path: compared entry by entry below.
+    }
+    for i in 0..joined.len() {
+        if i >= st.len() { break }
+        if joined[i] != st[i] { joined[i] = VarState.VsMaybe } else { continue }
+    }
+}
+
+/// Forget every entry from `mark` on -- the values a scope bound -- and let each
+/// name mean its latest entry before it again (a scope may have shadowed one).
+fn flow_drop_from(mut fl ConsumeFlow, mark int) -> () {
+    fl.nm.truncate(mark)
+    fl.owned_ty.truncate(mark)
+    fl.at.truncate(mark)
+    fl.state.truncate(mark)
+    fl.loose.truncate(mark)
+    fl.auto_at.truncate(mark)
+    fl.origin.truncate(mark)
+    fl.names.clear()
+    for i in 0..mark { fl.names.put(fl.nm[i], i) }
+}

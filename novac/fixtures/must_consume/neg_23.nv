@@ -1,0 +1,33 @@
+module must_consume.neg_23
+
+// A FIELD OF A MUST-CONSUME TYPE WITHOUT ITS MARKER (D133-field-marker-missing).
+// The oracle refuses it too.
+
+// NOVAC_EXPECT field `t` has the must-consume type `Tx` and is not marked `consume`
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx @peek() -> int => @id
+
+type Box consume {
+    t Tx
+}
+
+fn Box consume @close() -> () {
+    println(0)
+}
+
+fn main() {
+    consume b = Box { t: Tx { id: 1 } }
+    b.close()
+}

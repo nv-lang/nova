@@ -1,0 +1,43 @@
+module must_consume.pos_17
+
+// A MOVE INTO A NEW BINDING TAKES THE VALUE: after `consume b = a` the old name owns
+// nothing, and its `@cleanup` does not run (D432 s4: a moved value is not dropped;
+// D133 counts the move as the consumption) -- unconditionally and behind the drop flag
+// (s5). The ORACLE cleans `a` again after `b` released it -- registry 221.1 No.TBD
+// (oracle); its run is compared against the twin pos_18, which moves through a
+// `consume` argument, a disarm point the oracle knows (s4 point 3).
+
+// NOVAC_TWIN pos_18.nv
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @release() -> () {
+    println("release ${@id}")
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) -> () {
+    println("cleanup ${@id}")
+}
+
+fn always() -> () {
+    consume a = Lk { id: 1 }
+    consume b = a
+    b.release()
+}
+
+fn some(n int) -> () {
+    consume a = Lk { id: n }
+    if n > 2 {
+        consume b = a
+        b.release()
+    }
+    println("some ${n}")
+}
+
+fn main() {
+    always()
+    some(2)
+    some(3)
+}

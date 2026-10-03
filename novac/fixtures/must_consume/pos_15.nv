@@ -1,0 +1,39 @@
+module must_consume.pos_15
+
+// A VALUE BOUND BEFORE A LOOP AND MOVED INSIDE IT, THE MOVE FOLLOWED BY `break`:
+// after the loop it is owned on some paths only, and its `@cleanup` runs behind the
+// drop flag (D432 s5) -- when no pass broke out, it is cleaned at the end. The ORACLE
+// refuses the form (it does not take `break` as the end of the move's path, registry
+// 221.1 No.1669; listed in novac/divergences.allow, plan 274.12); its run is compared
+// against the twin pos_16, which keeps the move after the loop.
+
+// NOVAC_TWIN pos_16.nv
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @release() -> () {
+    println("release ${@id}")
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) -> () {
+    println("cleanup ${@id}")
+}
+
+fn carried(n int) -> () {
+    consume a = Lk { id: 50 + n }
+    for k in 0..n {
+        if k == 1 {
+            a.release()
+            break
+        }
+        println("carry ${k}")
+    }
+    println("carried ${n}")
+}
+
+fn main() {
+    carried(1)
+    carried(3)
+}

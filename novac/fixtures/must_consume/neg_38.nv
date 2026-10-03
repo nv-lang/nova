@@ -1,0 +1,33 @@
+module must_consume.neg_38
+
+// A STRICTLY LINEAR VALUE MOVED ON THE RIGHT OF `&&`: the right side runs only when
+// the left one is true, so `t` is consumed on some paths only -- D133's partly-consumed
+// refusal at the end of its scope. novac walked the right side as an ordinary operand
+// until 2026-10-03 and accepted the form; the ORACLE accepts it still (registry 221.1
+// No.TBD, oracle).
+
+// NOVAC_EXPECT is consumed on only some paths before the end of its scope
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn ok(consume t Tx) -> bool {
+    t.commit()
+    true
+}
+
+fn run(n int) -> () {
+    consume t = Tx { id: n }
+    if n > 1 && ok(t) {
+        println("both")
+    }
+}
+
+fn main() {
+    run(2)
+}

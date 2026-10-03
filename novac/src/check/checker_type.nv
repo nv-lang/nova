@@ -82,6 +82,10 @@ type Checker {
     /// The body being typed returns its receiver (`-> @`, D409): a bare
     /// `return` is `return @`, and the tail is a statement.
     ret_self bool
+    /// The file's own must-consume types (`type X consume`, D133), read before typing:
+    /// a fresh value of one handed to a `mut` parameter is judged by D476 where P14
+    /// would refuse its class (consume_shapes.nv, `@judge_fresh_in_view`).
+    consume_kinds []TyId
     /// The ONE block whose tail call is a returned value: the body of the fn
     /// being walked, when that fn declares a return type (274.5 wave B4). Set
     /// by the FnDecl arm of each phase, read by the Block arm; there are no

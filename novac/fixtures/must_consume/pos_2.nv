@@ -1,0 +1,25 @@
+module must_consume.pos_2
+
+// A LOOP AFTER A CONSUMED BINDING (D133): `a` is committed on straight-line
+// code, and a `for` that follows touches nothing it owned. The program is
+// correct; the ORACLE refuses it as "consumed only on part of the paths",
+// pointing at the loop (registry No.TBD; novac/divergences.allow, plan 274.12).
+// novac accepts it -- the loop changes no owner.
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println(@id)
+}
+
+fn Tx @peek() -> int => @id
+
+fn main() {
+    consume a = Tx { id: 1 }
+    a.commit()
+    for i in 0..2 {
+        println(i)
+    }
+}

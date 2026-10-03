@@ -83,6 +83,7 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
         tail_value_body: no_node(),
         ret_expect: no_ty(),
         value_expect: no_ty(),
+        consume_kinds: []TyId.new(),
         loop_depth: 0,
         mv_state,
         mv_stack: []int.new(),
@@ -119,10 +120,21 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
                 // answers "nothing reachable" from the same silence.
             }
         }
+        // The must-consume types, known before typing: the `mut` door asks (D476).
+        c.consume_kinds = c.consume_kinds_of(file)
         c.type_file(file)
         // A non-literal default of another file, left to a call (registry 1578),
         // asked once the callees are recorded.
         c.refuse_foreign_defaults(file)
+        // The consumption obligation of the file's own must-consume types (D133
+        // steps 1-2), asked once every node's type and callee is recorded -- and
+        // only over a file typing accepted: the join of two arms reads every
+        // statement's type, and a refused one (an unknown `panic`) is not trusted.
+        if c.out.len() == 0 {
+            c.check_consume_flow(file)
+        } else {
+            // Typing refused: the types the obligation would read are not trusted.
+        }
         // The disjointness walk that stood here is gone (2026-08-18): the
         // channel holds ONE sum per node now, so "a call and an
         // instantiation at once" is not a state that can be built.
@@ -186,6 +198,7 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, row FnRow, substs [
         tail_value_body: no_node(),
         ret_expect: no_ty(),
         value_expect: no_ty(),
+        consume_kinds: []TyId.new(),
         loop_depth: 0,
         mv_state: []int.new(),
         mv_stack: []int.new(),
@@ -226,7 +239,15 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, row FnRow, substs [
         }
     }
     if c.out.len() == 0 {
+        c.consume_kinds = c.consume_kinds_of(body_file)
         c.type_fn(decl)
+        // The consumption obligation of the instance's body (D133 step 1): the
+        // file pass skipped the generic declaration, whose types exist only here.
+        if c.out.len() == 0 {
+            c.check_consume_flow_instance(decl, body_file)
+        } else {
+            // Typing refused: the types the obligation would read are not trusted.
+        }
     } else {
         // Refused by the walk: the refusals are the verdict, as for the file.
     }

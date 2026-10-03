@@ -4,6 +4,24 @@
 # сужение без опускания — красный (протухшая база пропустит следующий рост).
 # Снято 2026-08-16. Заметь sem: широчайшая дверь наружу — до-дженериковый реестр.
 #
+#   2026-10-03 (облачная сессия p274-carina-strarm, D133-трек шаг 6б -- drop-флаг, D432 s5),
+#   lower 98 -> 99, sem 344 -> 348. lower: `@gone_of` -- флаг привязки по её узлу; его
+#   спрашивает принтер на каждом переносе (emit_c). sem: `@record_gone` / `@gone_binder`
+#   (решение потока «это использование -- перенос привязки», читает принтер), `@mark_cond`
+#   (поздний проход цикла переводит вызов в условный) и `@has_cond` (понижение: нужен ли
+#   привязке флаг) -- канал чекера. Шаг 6г, sem 348 -> 349: `file_exported_fns` -- какие
+#   функции файла написаны под `export` (их эффекты объявлены, не выведены, D432 s1); живёт
+#   у двери `file_decls`, потому что обход обёрток видимости -- её вопрос (П18).
+#
+#   2026-10-03 (облачная сессия p274-carina-strarm, D133-трек шаг 5 -- авто-`@cleanup`,
+#   D432), builtins 68 -> 71, lower 94 -> 98, sem 341 -> 344. builtins: `CLEANUP_METHOD`,
+#   `SCOPE_OUTCOME_TYPE`, `SCOPE_OUTCOME_SUCCESS` -- имена языка/std, которые спрашивают
+#   check (какой тип аффинный) и emit_c (исход вызова); P5 держит их в одном реестре.
+#   lower: `CleanupCall` (вызов в понижённом теле, его печатает emit_c), `remember_binding`,
+#   `bound_local`, `cleanup_call` -- двери построителя для этого вызова. sem: `CleanupRow`
+#   и `cleanup_first` / `record_cleanup` -- канал чекера: решение потока о вызовах, которое
+#   читают понижение и mono (корни достижимости).
+#
 #   2026-09-04 (окно 274, волна «десять типов» №910 + фикс получателя №917),
 #   builtins 33 -> 35, sem 209 -> 215. builtins: `PrimFamily` (ось семьи
 #   примитива) и `prim_row` (строка универсума по ординалу — семья, ширина, знак,
@@ -291,7 +309,8 @@
 #   the field reader (parse/type_decl.nv), by `field_name_at` (sem/slots_decl.nv), by the
 #   collector's per-field privacy (sem/collect.nv) and by check's field shape rule (check/rules.nv).
 # merge of p274-carina-mono-k2 into main (integrator, 2026-10-03): 72 (cast 2 + sweep 2) + mono-k2's 5 = 77, measured.
-builtins 77
+# merge of p274-carina-strarm (D133 steps 1-6) into main (integrator, 2026-10-03): main's number plus strarm's own growth over the merge base, equal to the guard's measure.
+builtins 80
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -398,7 +417,8 @@ lex 11
 # 2026-10-03, cloud session p274-carina-sweep (sync with main dc2617993), lower 94 -> 96: `NextRead`
 #   and `FnBuilder @call_next` -- one turn of a `for` over an iterator (D58, sweep 10), recorded by
 #   lower/lowering.nv and printed by emit_c/emit_place.nv.
-lower 96
+# merge of p274-carina-strarm (D133 steps 1-6) into main (integrator, 2026-10-03): main's number plus strarm's own growth over the merge base, equal to the guard's measure.
+lower 101
 main 0
 # mono -- НОВЫЙ модуль (2026-08-18, Э2-б2): коллектор достижимого.
 # Наружу три имени: тип Reach, вопрос @has (эмиттер спрашивает про каждую
@@ -1132,7 +1152,12 @@ resolve 26
 #   lower/lowering.nv `@variant_test` (sweep 10), which has no edge to builtins (architecture s3).
 #   The step-10 `is_vector_ty` is gone with the sync: main's one `==` door (registry 1573) stands.
 # merge of p274-carina-sweep (steps 10-12) into main (integrator, 2026-10-03): the guard's numbers on the merged tree.
-sem 355
+# merge of origin/main dc2617993 into p274-carina-strarm (2026-10-03): main's 346 plus this branch's
+#   eight -- step 5's `CleanupRow`, `@cleanup_first`, `@record_cleanup` and step 6's `@record_gone`,
+#   `@gone_binder`, `@mark_cond`, `@has_cond`, `file_exported_fns` (their lines above) -- 354, the
+#   guard's count on the merged tree.
+# merge of p274-carina-strarm (D133 steps 1-6) into main (integrator, 2026-10-03): main's number plus strarm's own growth over the merge base, equal to the guard's measure.
+sem 363
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

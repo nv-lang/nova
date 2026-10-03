@@ -1,0 +1,73 @@
+module must_consume.pos_12
+
+// A FRESH AFFINE VALUE HANDED TO A VIEW (D476): `show(Lk { id: 1 })` desugars to
+// `consume t = Lk { id: 1 } { show(t) }` -- the scope embraces the call (s2), the
+// temporary is cleaned once the call is done, several temporaries of one call the
+// last first (s7), a receiver as an argument (s1). novac embraces a call that is a
+// statement, a binding's initializer or a block's tail (a function's, a branch's, an
+// arm's value -- cleaned before the value leaves); the same program written with
+// the explicit bindings, pos_13, runs byte-for-byte as this one does: the oracle
+// implements no D476 (registry 221.1 No.1107, plan 274.12), so it builds the twin
+// and the differential compares novac's run of this file against it.
+
+// NOVAC_TWIN pos_13.nv
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) -> () {
+    println("cleanup ${@id}")
+}
+
+fn Lk @peek() -> int => @id
+
+fn show(t Lk) -> () {
+    println("show ${t.peek()}")
+}
+
+fn two(a Lk, b Lk) -> int => a.peek() + b.peek()
+
+fn tail_value() -> int {
+    println("tail")
+    two(Lk { id: 5 }, Lk { id: 6 })
+}
+
+fn tail_unit() -> () {
+    show(Lk { id: 7 })
+}
+
+fn branch(n int) -> int {
+    if n > 0 {
+        two(Lk { id: 20 }, Lk { id: 21 })
+    } else {
+        0
+    }
+}
+
+fn arm(n int) -> int {
+    ro r = match n {
+        1 => {
+            println("arm")
+            Lk { id: 30 }.peek()
+        }
+        _ => 0
+    }
+    r
+}
+
+fn main() {
+    show(Lk { id: 1 })
+    ro v = Lk { id: 2 }.peek()
+    println(v)
+    println("mid")
+    ro w = two(Lk { id: 3 }, Lk { id: 4 })
+    println(w)
+    for k in 0..2 {
+        show(Lk { id: 10 + k })
+    }
+    println(tail_value())
+    tail_unit()
+    println(branch(1))
+    println(arm(1))
+}

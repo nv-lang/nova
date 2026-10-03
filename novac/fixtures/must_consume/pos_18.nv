@@ -1,0 +1,40 @@
+module must_consume.pos_18
+
+// THE TWIN OF pos_17: each move into a new binding written through a `consume`
+// argument that hands the value back -- the same output as pos_17. Byte-for-byte with
+// the oracle (novac-e1-smoke).
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @release() -> () {
+    println("release ${@id}")
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) -> () {
+    println("cleanup ${@id}")
+}
+
+fn pass(consume t Lk) -> Lk => t
+
+fn always() -> () {
+    consume a = Lk { id: 1 }
+    consume b = pass(a)
+    b.release()
+}
+
+fn some(n int) -> () {
+    consume a = Lk { id: n }
+    if n > 2 {
+        consume b = pass(a)
+        b.release()
+    }
+    println("some ${n}")
+}
+
+fn main() {
+    always()
+    some(2)
+    some(3)
+}

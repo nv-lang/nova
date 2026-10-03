@@ -535,15 +535,6 @@ const INT_INDEX_MSG = "an index is an `int` (D238: `@index` takes an `int` or a 
 /// The ONE text of the rule, so that the two doors cannot drift apart.
 const FOR_HEAD_MSG = "outside the subset: the head of a `for` is a range `lo..hi` here; a collection head arrives with generics (E2-b)"
 
-/// The must-consume declaration: read by the parser (the tree is lossless), refused here.
-///
-/// Carina has NO LINEARITY AT ALL -- the consumption obligation is checked nowhere
-/// (registry #1099, measured 2026-09-14: `fn tag(consume c Cel)` with `c` never consumed
-/// gives zero diagnostics). Accepting `type X consume` would therefore promise a guarantee
-/// the compiler does not give, which is worse than refusing: a refusal the author sees, a
-/// missing guarantee nobody does.
-const CONSUME_TYPE_MSG = "outside the subset: `type X consume` declares a must-consume type, and novac checks no consumption obligation anywhere -- accepting the declaration would promise a guarantee it does not give; not compiled yet (274.7 B13)"
-
 /// ONE CAUSE, TWO POSITIONS (E.9 step 2, 2026-09-30): an effect's runtime
 /// pieces -- its operation table, its thread slot, its dispatchers -- are the
 /// SHELL's, and the shell carries them only for the std effects its probe

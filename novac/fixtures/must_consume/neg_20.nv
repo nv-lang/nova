@@ -1,0 +1,25 @@
+module must_consume.neg_20
+
+// A FRESH MUST-CONSUME VALUE AS THE RECEIVER OF A VIEW METHOD: the receiver is
+// parameter zero, the same position with a mode (D476 s1). The ORACLE accepts it
+// (registry 221.1 No.1659, oracle).
+
+// NOVAC_EXPECT is handed to a view here and nothing consumes it afterwards
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx @peek() -> int => @id
+
+fn main() {
+    println(Tx { id: 1 }.peek())
+}

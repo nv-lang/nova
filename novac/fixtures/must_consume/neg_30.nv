@@ -1,0 +1,31 @@
+module must_consume.neg_30
+
+// A DESTRUCTURED PART NEVER CONSUMED (D133-not-consumed): `consume (x, y) = e`
+// owns both parts. The oracle refuses it too.
+
+// NOVAC_EXPECT `y` (type `Tx`) is not consumed before the end of its scope
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx @peek() -> int => @id
+
+fn pair(n int) -> (Tx, Tx) {
+    consume a = Tx { id: n }
+    consume b = Tx { id: n + 1 }
+    (a, b)
+}
+
+fn main() {
+    consume (x, y) = pair(1)
+    x.commit()
+}

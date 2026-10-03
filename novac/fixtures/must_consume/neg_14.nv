@@ -1,0 +1,30 @@
+module must_consume.neg_14
+
+// A MUST-CONSUME PAYLOAD BOUND BY A BARE PATTERN AND ONLY VIEWED
+// (E_CONSUME_PATTERN_REQUIRED): `Some(t)` without `consume` may only move `t` on,
+// once (plan 293); a view of it is neither. The oracle refuses it too. (Until
+// step 4 this was a dated subset refusal.)
+
+// NOVAC_EXPECT without `consume` -- write `consume t` in the pattern to own it
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx @peek() -> int => @id
+
+fn mk(n int) -> Option[Tx] => if n > 0 { Some(Tx { id: n }) } else { None }
+
+fn main() {
+    if Some(t) = mk(1) {
+        println(t.peek())
+    }
+}

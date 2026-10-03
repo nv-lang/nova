@@ -12,3 +12,10 @@
 # Empty is the healthy state.
 examples/basics/vec_cap.nv
 novac/fixtures/mut_receiver/neg_2.nv
+novac/fixtures/must_consume/pos_2.nv
+novac/fixtures/must_consume/pos_4.nv
+novac/fixtures/must_consume/pos_6.nv
+novac/fixtures/must_consume/pos_8.nv
+novac/fixtures/must_consume/pos_11.nv
+novac/fixtures/must_consume/pos_15.nv
+novac/fixtures/must_consume/pos_20.nv

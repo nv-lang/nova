@@ -1,0 +1,194 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `rustc_mir_build` loop lowering -- a loop is a header block, a body
+//   block and an exit block, `break`/`continue` are edges to the exit and the header.
+// Role: layer lower -- the LOOPS of the lowering: `while`, `while let`, and `for` over
+//   a range, a collection and an iterator (D58). Lifted out of lowering.nv when the
+//   merges of 2026-10-03 (sweep, mono-k2, strarm) took it past the 1000-line limit
+//   (274 decision 12); one topic, its own file, no behaviour change.
+// Used by: lower/lowering.nv (`@lower_stmt`'s loop arms).
+// Guarded by: lower_test.nv (the graph shapes), the fixtures through
+//   check-novac-differential.sh, check-novac-deps.py (the edges).
+
+module novac.lower
+import ../tree.{Node}
+import ../sem.{branch_children, for_head_elem}
+import ../sem.{whilelet_pattern_at, whilelet_init_at, whilelet_body_at}
+import ../sem.{pattern_shape, pattern_head_text, PatShape, option_payload}
+
+/// One `while`: the header block carries the loop, the body jumps back.
+fn Lowerer mut @lower_while(st Node) -> () {
+    ro kids = branch_children(st)
+    if contains_block_form(kids[1]) {
+        // A condition with a block form is re-evaluated each turn, so it cannot be
+        // laid down before the loop: `loop { <blocks>; if (c) {} else { break; } ... }`
+        // (registry 1619).
+        ro fc = @ir.begin_loop(LoopHead.Forever)
+        @hoist_operand(kids[1])
+        ro t = @ir.begin_if(Cond.Expr(kids[1]), ElseShape.Braced)
+        @ir.begin_else(t)
+        @ir.break_loop()
+        @ir.end_if(t)
+        @lower_block_stmts_fn(kids[2], false)
+        @ir.end_loop(fc)
+        return
+    }
+    // Recorded first, printed from the record (M2b-2 step 3a).
+    ro head = LoopHead.While(kids[1])
+    ro c = @ir.begin_loop(head)
+    @lower_block_stmts_fn(kids[2], false)
+    @ir.end_loop(c)
+}
+
+/// One `while <pattern> = expr { ... }` (wave P4, D486): an UNCONDITIONAL
+/// head (`LoopHead.Forever` -- the real test is the body's, so no expression
+/// is forged for the head), then per iteration: the initializer into its own
+/// temporary through the placement door, the exit test `if (!some) break;`
+/// through the one Option door (`Cond.NotSome`), the pattern bound through
+/// the match arm's own door, and the body. The C is what a reader writes by
+/// hand: `while (1) { T lo = <init>; if (!is_some(lo)) break; ... }`.
+fn Lowerer mut @lower_while_let(st Node) -> () {
+    ro kids = branch_children(st)
+    ro init = kids[whilelet_init_at(kids)]
+    ro ot = @out.type_of(init.id_of())
+    // A temporary of the body, named by its index (274.8 M3): the Option of a
+    // `while let` is the compiler's, not the author's -- the if-let's own
+    // discipline, one loop iteration wide.
+    ro lo = @ir.temp(ot)
+    // Recorded first, printed from the record (M2b-2 step 3a).
+    ro c = @ir.begin_loop(LoopHead.Forever)
+    @lower_place(init, lo)
+    ro pat = kids[whilelet_pattern_at(kids)]
+    match @variant_test(pat, ot, lo) {
+        IsSome(_) => {
+            ro exit_c = @ir.begin_if(Cond.NotSome(lo), ElseShape.NoElse)
+            @ir.break_loop()
+            @ir.end_if(exit_c)
+            @lower_pattern_bind(pat, ot, lo)
+            @lower_block_stmts_fn(kids[whilelet_body_at(kids)], false)
+        }
+        // Any other variant (sweep 10): its test has no negated spelling, so
+        // the body sits in the test's then-branch and the else leaves.
+        Expr(_) | NotSome(_) | FrameEntered(_) | Holds(_) | Flag(_) => {
+            ro test_c = @ir.begin_if(@variant_test(pat, ot, lo), ElseShape.Braced)
+            @lower_pattern_bind(pat, ot, lo)
+            @lower_block_stmts_fn(kids[whilelet_body_at(kids)], false)
+            @ir.begin_else(test_c)
+            @ir.break_loop()
+            @ir.end_if(test_c)
+        }
+    }
+    @ir.end_loop(c)
+}
+
+/// One `for v in lo..hi`: the loop variable is a binding local of the body,
+/// the header carries the range form so the printer spells C's `for` and not
+/// a `while`. The UPPER BOUND IS EVALUATED ONCE (wave P5, the owner's rule --
+/// formally `lo..hi` is a `Range` value and the loop is its iteration, so a
+/// bound re-read per turn would be a second semantics): it is placed into a
+/// temporary BEFORE the loop, and the header spells the temporary. The lower
+/// bound stands in C's init clause, which is already once.
+fn Lowerer mut @lower_for_range(kids []Node) -> () {
+    ro pat = kids[1]
+    ro range = branch_children(kids[3]) // Bin: [lo, .., hi]
+    @hoist_operand(range[0])
+    ro hi_l = @ir.temp(@ctx.prims.int_id)
+    @lower_place(range[2], hi_l)
+    // A plain binder keeps the author's name on the counter; a `_` header
+    // binds nothing, and the counter is a temporary nobody spells. (A
+    // structured pattern never reaches here against `int` -- the checker's
+    // own door refused it.)
+    ro lv = if pattern_shape(pat) == PatShape.Bind {
+        @ir.named(@ctx.prims.int_id, pattern_head_text(pat))
+    } else {
+        @ir.temp(@ctx.prims.int_id)
+    }
+    ro head = LoopHead.Range(RangeHead { var: lv, lo: range[0], hi: hi_l })
+    ro c = @ir.begin_loop(head)
+    @lower_block_stmts_fn(kids[4], false)
+    @ir.end_loop(c)
+}
+
+/// One `for v in <collection>` (wave M2b-1c, from emit_for.nv): the head runs
+/// ONCE into a TEMPORARY through the placement door, the index is a temporary of
+/// int, the element is the author's binding, the header carries all three, and the
+/// body starts by reading `vec[idx]` -- `Rvalue.IndexPayload`, printed as the
+/// shell's `get(...).value` by the one assignment printer. The C is the same
+/// walk `emit_for_call` spelled by hand: `T <vec> = <head>;`, `for (nova_int <idx>
+/// = 0; <idx> < len(<vec>); <idx>++) {`, `E v = get(<vec>, <idx>).value;` -- the
+/// two temporaries are numbered by the body, so no name is spelled here (274.8 M3).
+/// The element type is the CHECKER's decision (`for_head_elem`), not a second
+/// derivation here (hunt emit_c x K4, 2026-09-04).
+fn Lowerer mut @lower_for_each(kids []Node) -> () {
+    ro head = kids[3]
+    ro ht = @out.type_of(head.id_of())
+    ro elem_t = for_head_elem(@ctx, ht)
+    // Both the collection and the index are TEMPORARIES of the body, named by their
+    // indices (274.8 M3).
+    ro lv = @ir.temp(ht)
+    @lower_place(head, lv)
+    // All three locals of the walk exist before the head is printed, because the head is
+    // printed FROM the record that names them (M2b-2 step 3a).
+    ro li = @ir.temp(@ctx.prims.int_id)
+    ro pat = kids[1]
+    ro shape = pattern_shape(pat)
+    // A PLAIN BINDER keeps the author's word on the element local itself (wave
+    // P5): no temporary between the slot read and the name, so the B16 C of
+    // every existing carrier is byte-unchanged. A STRUCTURED pattern (a tuple
+    // or a record -- the rest the checker's predicate refused) reads the
+    // element into a temporary first and binds through the one recursive door
+    // (`@lower_pattern_bind`, the "scrutinee once" contract). `_` reads
+    // nothing: the walk counts, and an unread slot read would be waste.
+    ro le = if shape == PatShape.Bind {
+        @ir.named(elem_t, pattern_head_text(pat))
+    } else {
+        @ir.temp(elem_t)
+    }
+    ro lh = LoopHead.Each(EachHead { vec: lv, idx: li, elem: le })
+    ro c = @ir.begin_loop(lh)
+    if shape == PatShape.Wild {
+        // Nothing binds the element.
+    } else {
+        @ir.take_elem(le, lv, li)
+        if shape != PatShape.Bind {
+            @lower_pattern_bind(pat, elem_t, le)
+        } else { // The element local IS the author's name, bound directly.
+        }
+    }
+    @lower_block_stmts_fn(kids[4], false)
+    @ir.end_loop(c)
+}
+
+/// A `for` over an ITERATOR (D58: `loop { match it.next() { Some(x) => body,
+/// None => break } }`): the head into a temporary once, then each turn its
+/// `next` into an Option temporary, the exit on None, the element bound through
+/// the one pattern door. The checker recorded the `next` row as the loop's
+/// callee and the Option type as the loop's own.
+fn Lowerer mut @lower_for_iter(st Node, kids []Node) -> () {
+    ro head = kids[3]
+    ro it = @ir.temp(@out.type_of(head.id_of()))
+    @lower_place(head, it)
+    ro ot = @out.type_of(st.id_of())
+    ro elem_t = option_payload(@ctx, ot)
+    ro c = @ir.begin_loop(LoopHead.Forever)
+    ro lo = @ir.temp(ot)
+    ro next = @out.callee_of(st.id_of())
+    @ir.call_next(lo, next.callable_row(), it)
+    ro exit_c = @ir.begin_if(Cond.NotSome(lo), ElseShape.NoElse)
+    @ir.break_loop()
+    @ir.end_if(exit_c)
+    ro pat = kids[1]
+    ro shape = pattern_shape(pat)
+    if shape == PatShape.Wild {
+        // Nothing binds the element: the turn only advances the iterator.
+    } else {
+        ro le = if shape == PatShape.Bind { @ir.named(elem_t, pattern_head_text(pat)) } else { @ir.temp(elem_t) }
+        @ir.take_payload(le, lo)
+        if shape != PatShape.Bind {
+            @lower_pattern_bind(pat, elem_t, le)
+        } else {
+            // The element local IS the author's name, bound directly.
+        }
+    }
+    @lower_block_stmts_fn(kids[4], false)
+    @ir.end_loop(c)
+}

@@ -1,0 +1,31 @@
+module must_consume.neg_12
+
+// CONSUMED AFTER A BRANCH THAT CONSUMED IT ON ONE PATH (D131, "possibly
+// consumed"): after the join `t` is neither owned nor gone. The oracle refuses
+// it too.
+
+// NOVAC_EXPECT is used after it was possibly consumed
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println(@id)
+}
+
+fn Tx consume @rollback() -> () {
+    println(0)
+}
+
+fn Tx @peek() -> int => @id
+
+fn main() {
+    consume t = Tx { id: 1 }
+    if t.peek() > 0 {
+        t.commit()
+    } else {
+        println(0)
+    }
+    t.rollback()
+}

@@ -1,0 +1,32 @@
+module must_consume.neg_35
+
+// A `consume` PARAMETER OF AN AFFINE TYPE MOVED ON ONE PATH ONLY: it is cleaned as a
+// binding is (D432 rev-2), behind a drop flag on the other path (s5). novac lays a
+// binding's flag at the binding statement and has none for a parameter, so the form
+// is refused BY NAME with its stage -- never cleaned twice or not at all. (The
+// oracle demands the parameter be consumed, registry 221.1 No.1696.)
+
+// NOVAC_EXPECT consumed on only some paths before its `@cleanup` would run, as a `consume` parameter (its drop flag, D432 s5)
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @release() -> () {
+    println("release ${@id}")
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) -> () {
+    println("cleanup ${@id}")
+}
+
+fn run(consume a Lk, n int) -> () {
+    if n > 0 {
+        a.release()
+    }
+    println("end")
+}
+
+fn main() {
+    run(Lk { id: 1 }, 1)
+}

@@ -1,0 +1,29 @@
+module must_consume.neg_33
+
+// A VECTOR USED AFTER `for consume` TOOK IT APART (D131): the collection-aware
+// loop consumes the collection (D156).
+
+// NOVAC_EXPECT `v` is used after it was consumed
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx @peek() -> int => @id
+
+fn main() {
+    consume v = []Tx.new()
+    v.push(Tx { id: 1 })
+    for consume t in v {
+        t.commit()
+    }
+    println(v.len())
+}

@@ -1,0 +1,40 @@
+module must_consume.pos_4
+
+// A NAME SHADOWED IN AN ARM (D347 R7: a nested scope's binding is a new
+// variable): the arm's own `t` is consumed in the arm, and the outer `t` is
+// still owned after the branch, on both paths -- consumed once, at the end.
+// The ORACLE refuses this ("possibly consumed", D131): its obligations are keyed
+// by NAME, so the inner commit is counted against the outer value -- the open
+// pre-existing gap `[M-consume-nested-scope-shadow-leak]` (D347 R2's own
+// boundary note). novac follows scopes; listed in novac/divergences.allow
+// (plan 274.12).
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println(@id)
+}
+
+fn Tx consume @rollback() -> () {
+    println(0)
+}
+
+fn Tx @peek() -> int => @id
+
+fn run(n int) -> () {
+    consume t = Tx { id: n }
+    if n > 0 {
+        consume t = Tx { id: 9 }
+        t.commit()
+    } else {
+        println(n)
+    }
+    t.commit()
+}
+
+fn main() {
+    run(1)
+    run(0)
+}

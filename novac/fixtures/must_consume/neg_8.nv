@@ -1,0 +1,28 @@
+module must_consume.neg_8
+
+// CONSUMED ON ONE PATH ONLY (D133-not-consumed, partial): an `if` without an
+// `else` consumes `t` when the condition holds; the false path leaves it owned.
+// The oracle refuses it too ("consumed only on part of the paths").
+
+// NOVAC_EXPECT is consumed on only some paths before the end of its scope
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println(@id)
+}
+
+fn Tx consume @rollback() -> () {
+    println(0)
+}
+
+fn Tx @peek() -> int => @id
+
+fn main() {
+    consume t = Tx { id: 1 }
+    if t.peek() > 0 {
+        t.commit()
+    }
+}

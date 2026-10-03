@@ -67,5 +67,22 @@ check "NOVAC_SMOKE=0 — пропуск НАЗВАН в выводе стади�
 NOVAC_CORPUS=0 sh "$G" "$FIX" "$TMP/bin.sh" >/dev/null 2>&1
 check "NOVAC_CORPUS=0 один — смоук ВКЛЮЧЁН, красный смоук красит (швы разделены, №992)" "$?" "1"
 
+echo "== близнец NOVAC_TWIN (2026-10-03): оракул собирает близнеца, novac — фикстуру =="
+mkoracle 'exit 0'; mkbin 'exit 0'
+printf '// NOVAC_TWIN pos_twin.nv\nx\n' > "$FIX/novac/fixtures/pos_probe.nv"
+echo "x" > "$FIX/novac/fixtures/pos_twin.nv"
+mksmoke 'case "$1" in */pos_twin.nv) [ "${2##*/}" = pos_probe.nv ] && exit 0;; esac; [ "$1" = "$2" ] && exit 0; exit 1'
+check "близнец есть — смоук получает (близнец, фикстура), зелёный" "$(run)" "0"
+mkoracle 'case "$2" in *pos_twin.nv) exit 0;; esac; exit 1'
+printf 'novac/fixtures/pos_probe.nv\n' > "$FIX/novac/divergences.allow"
+check "оракул отверг фикстуру (allow), близнеца принял — сверка идёт, зелёный" "$(run)" "0"
+mksmoke 'exit 1'
+check "то же, а ответ разошёлся с близнецом — красный" "$(run)" "1"
+rm -f "$FIX/novac/divergences.allow"
+mkoracle 'exit 0'
+rm -f "$FIX/novac/fixtures/pos_twin.nv"
+check "близнеца нет — красный" "$(run)" "1"
+echo "x" > "$FIX/novac/fixtures/pos_probe.nv"
+
 echo "итог: $PASS ok, $FAIL FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

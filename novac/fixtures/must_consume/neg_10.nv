@@ -1,0 +1,29 @@
+module must_consume.neg_10
+
+// BOUND IN AN ARM AND NOT CONSUMED THERE (D133-not-consumed): the arm is the
+// value's whole scope. The oracle refuses it too.
+
+// NOVAC_EXPECT is not consumed before the end of its scope
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println(@id)
+}
+
+fn Tx consume @rollback() -> () {
+    println(0)
+}
+
+fn Tx @peek() -> int => @id
+
+fn main() {
+    if 1 > 0 {
+        consume t = Tx { id: 1 }
+        println(t.peek())
+    } else {
+        println(0)
+    }
+}

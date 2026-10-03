@@ -12,18 +12,60 @@ module novac.lower
 import ../tree.{Node, NodeKind, assign_op_of}
 import ../types.{TyId, is_ty}
 import ../diag.{ice}
-import ../sem.{arm_body_at, branch_children, for_head_elem}
+import ../sem.{branch_children}
 import ../sem.{narrowing_of}
 import ../sem.{is_expr_kind, is_println_call, is_value_tail_kind, leaf_kind}
-import ../sem.{leaf_text, literal_prim_of, raw_vrow, variant_in_sum}
+import ../sem.{leaf_text, literal_prim_of}
 import ../sem.{iflet_pattern_at, iflet_body_at, iflet_else_at, iflet_init_at}
-import ../sem.{whilelet_pattern_at, whilelet_init_at, whilelet_body_at}
-import ../sem.{payload_as_seen}
-import ../sem.{pattern_shape, pattern_head_text, PatShape, option_payload}
 import ../sem.{is_option_some_pattern}
-// Which arguments have an observable order (F65) -- the checker's own door.
-import ../sem.{contains_call, loop_ctl_is_break, is_collection_head}
+import ../sem.{loop_ctl_is_break, is_collection_head}
+// The receiver's fields and the store it records (the receiver moved here from ir.nv).
+import ../tree.{AssignOp}
+import ../sem.{Ctx, CheckOut}
 
+
+/// THE LOWERING'S RECEIVER (274.8 M3). The lowering used to live as methods on `Emitter`,
+/// the printer's own state, and a method of the printer cannot live in a module BELOW the
+/// printer -- that is the edge inversion the architecture table forbids. So the work is a
+/// change of receiver, not a move of files, and this type is where the lowering lands.
+///
+/// IT CARRIES THREE THINGS: the builder under construction, plus `ctx` and `out`, which
+/// the lowering asks 7 and 11 times. That is shape C of plan 274.8 section 2s, chosen by
+/// measurement over two alternatives: handing `ctx`/`out` as parameters would make FIVE
+/// methods accept arguments they never read purely to pass on, and taking all three fields
+/// away from `Emitter` would cost 181 printer rewires against 23.
+///
+/// TWO READERS ARE NOT TWO SOURCES. `Emitter` keeps its own `ctx`/`out` and this type has
+/// its own; that is not a second home for either, because their home is `sem` and both
+/// readers are read-only. What `Emitter` LOST is the builder -- the mutable state, which
+/// belongs with the methods that write it.
+export type Lowerer {
+    ctx Ctx /// the type registry and def table, read only -- same home as Emitter's (`sem`)
+    out CheckOut /// the checker's channel: every type question is a READ here
+    mut ir FnBuilder /// the body under construction -- the lowering's own mutable state
+}
+
+/// A compound or plain assignment, recorded as a statement of the body. First method to
+/// live here rather than on the printer (274.8 M3, slice 1): it touches the builder and
+/// nothing else, so it proves the receiver without dragging the channel along.
+fn Lowerer mut @lower_store(target Node, op AssignOp, src Node) -> () {
+    @ir.store(target, op, src)
+}
+
+/// A temporary of the body holding a destructuring scrutinee, with the initialiser placed
+/// into it. Second method to live on the receiver (274.8 M3, slice 2), and the LAST one
+/// that could move alone: the call-structure measure found only two leaves, and this is the
+/// one with no outward calls at all. What remains are two mutually recursive groups plus
+/// three methods that call into printing -- they move as wholes, not one at a time.
+///
+/// The name is the body's own index, never the author's: a destructuring scrutinee is the
+/// compiler's invention, and `named` would claim otherwise (held by
+/// check-novac-invented-name-not-named).
+fn Lowerer mut @bind_pair_temp(init Node, pt TyId) -> Local {
+    ro l = @ir.temp(pt)
+    @ir.place(init, l)
+    l
+}
 
 /// THE LOWERING (274.8 M3). Everything here used to be methods on `Emitter`, the printer's own
 /// state, in `emit_c/`. A method of the printer cannot live in a module BELOW the printer, so
@@ -46,6 +88,7 @@ import ../sem.{contains_call, loop_ctl_is_break, is_collection_head}
 /// value (Nova tail-expression semantics; arithmetic.nv relies on it).
 fn Lowerer mut @lower_block_stmts_fn(b Node, tail bool) -> () {
     ro kids = branch_children(b)
+    mut cleaned = false
     mut last_branch = -1
     if tail {
         mut j = 0
@@ -79,13 +122,21 @@ fn Lowerer mut @lower_block_stmts_fn(b Node, tail bool) -> () {
                     // record, general expression), each spelling `return`
                     // itself; the form of the value is now the printer's one
                     // dispatch (`build_value` in emit_place.nv).
-                    @lower_place(c, @ir.ret_place())
+                    @lower_exit_value(c, @ir.ret_place(), b.id_of())
+                    cleaned = true
                 } else {
                     @lower_stmt(c)
                 }
             }
         }
         j += 1
+    }
+    // The block's end is an exit of what it bound (D432) -- unless its returned
+    // value already ran them, between the value and the `return`.
+    if !cleaned {
+        @lower_cleanups(b.id_of())
+    } else {
+        // `@lower_exit_value` placed them.
     }
 }
 
@@ -133,6 +184,8 @@ fn Lowerer mut @lower_block_stmts_value(b Node, dest Local) -> () {
         }
         i += 1
     }
+    // The block's end is an exit of what it bound (D432): after its value is placed.
+    @lower_cleanups(b.id_of())
 }
 
 /// A tail `if` laid down as a VALUE: a zero-initialised temporary, both
@@ -245,6 +298,16 @@ fn Lowerer mut @lower_block_value(b Node, t Local) -> () {
 /// Emit one statement by node kind (call/if/while/return/bind/assign/for/expr).
 fn Lowerer mut @lower_stmt(st Node) -> () {
     ro k = st.kind_of()
+    // A call holding D476 temporaries (an affine value handed to a view): its
+    // arguments laid down, the call run, the temporaries cleaned (ir_cleanup.nv).
+    if (k == NodeKind.Call || k == NodeKind.MethodCall) && @out.cleanup_first(st.id_of()) >= 0 {
+        ro cs = @d476_args(st)
+        @lower_eval(st)
+        @d476_cleanups(cs)
+        return
+    } else {
+        // An ordinary statement: by kind below.
+    }
     if k == NodeKind.Unsafe {
         @lower_unsafe_stmt(st)
     } else if k == NodeKind.MatchExpr {
@@ -281,6 +344,8 @@ fn Lowerer mut @lower_stmt(st Node) -> () {
     } else if k == NodeKind.LoopCtl {
         // `break` / `continue` (274.7 B10): the block ends with the jump, what the
         // source wrote after it lands in a fresh block -- `@lower_return`'s shape.
+        // The values the pass bound and still owns are cleaned first (D432 s6).
+        @lower_cleanups(st.id_of())
         if loop_ctl_is_break(st) {
             @ir.break_loop()
         } else {
@@ -373,6 +438,20 @@ fn Lowerer mut @lower_bind(st Node) -> () {
     // general expression -- each spelling the declaration line itself.
     ro l = @ir.named(vtype, vname)
     @lower_place(init, l)
+    // An exit below may clean this value (D432): the statement names its local -- and,
+    // cleaned on some paths only, its drop flag (s5): zero here, set by each move.
+    if @out.cleanups.len() > 0 {
+        mut gone = no_local()
+        if @out.has_cond(st.id_of()) {
+            gone = @ir.temp(@ctx.prims.int_id)
+            @ir.declare_zeroed(gone)
+        } else {
+            // Cleaned unconditionally wherever it is cleaned: no flag.
+        }
+        @ir.remember_binding(st.id_of(), l, gone)
+    } else {
+        // Nothing is cleaned in this file: no exit asks.
+    }
 }
 
 /// A destructuring binding: the scrutinee lands in a temporary ONCE, and the
@@ -563,71 +642,6 @@ fn Lowerer mut @lower_if_let(st Node, outer Option[IfCtx]) -> () {
     @ir.end_if(c)
 }
 
-/// One `while`: the header block carries the loop, the body jumps back.
-fn Lowerer mut @lower_while(st Node) -> () {
-    ro kids = branch_children(st)
-    if contains_block_form(kids[1]) {
-        // A condition with a block form is re-evaluated each turn, so it cannot be
-        // laid down before the loop: `loop { <blocks>; if (c) {} else { break; } ... }`
-        // (registry 1619).
-        ro fc = @ir.begin_loop(LoopHead.Forever)
-        @hoist_operand(kids[1])
-        ro t = @ir.begin_if(Cond.Expr(kids[1]), ElseShape.Braced)
-        @ir.begin_else(t)
-        @ir.break_loop()
-        @ir.end_if(t)
-        @lower_block_stmts_fn(kids[2], false)
-        @ir.end_loop(fc)
-        return
-    }
-    // Recorded first, printed from the record (M2b-2 step 3a).
-    ro head = LoopHead.While(kids[1])
-    ro c = @ir.begin_loop(head)
-    @lower_block_stmts_fn(kids[2], false)
-    @ir.end_loop(c)
-}
-
-/// One `while <pattern> = expr { ... }` (wave P4, D486): an UNCONDITIONAL
-/// head (`LoopHead.Forever` -- the real test is the body's, so no expression
-/// is forged for the head), then per iteration: the initializer into its own
-/// temporary through the placement door, the exit test `if (!some) break;`
-/// through the one Option door (`Cond.NotSome`), the pattern bound through
-/// the match arm's own door, and the body. The C is what a reader writes by
-/// hand: `while (1) { T lo = <init>; if (!is_some(lo)) break; ... }`.
-fn Lowerer mut @lower_while_let(st Node) -> () {
-    ro kids = branch_children(st)
-    ro init = kids[whilelet_init_at(kids)]
-    ro ot = @out.type_of(init.id_of())
-    // A temporary of the body, named by its index (274.8 M3): the Option of a
-    // `while let` is the compiler's, not the author's -- the if-let's own
-    // discipline, one loop iteration wide.
-    ro lo = @ir.temp(ot)
-    // Recorded first, printed from the record (M2b-2 step 3a).
-    ro c = @ir.begin_loop(LoopHead.Forever)
-    @lower_place(init, lo)
-    ro pat = kids[whilelet_pattern_at(kids)]
-    match @variant_test(pat, ot, lo) {
-        IsSome(_) => {
-            ro exit_c = @ir.begin_if(Cond.NotSome(lo), ElseShape.NoElse)
-            @ir.break_loop()
-            @ir.end_if(exit_c)
-            @lower_pattern_bind(pat, ot, lo)
-            @lower_block_stmts_fn(kids[whilelet_body_at(kids)], false)
-        }
-        // Any other variant (sweep 10): its test has no negated spelling, so
-        // the body sits in the test's then-branch and the else leaves.
-        Expr(_) | NotSome(_) | FrameEntered(_) | Holds(_) | Flag(_) => {
-            ro test_c = @ir.begin_if(@variant_test(pat, ot, lo), ElseShape.Braced)
-            @lower_pattern_bind(pat, ot, lo)
-            @lower_block_stmts_fn(kids[whilelet_body_at(kids)], false)
-            @ir.begin_else(test_c)
-            @ir.break_loop()
-            @ir.end_if(test_c)
-        }
-    }
-    @ir.end_loop(c)
-}
-
 /// The HEAD TEST of a variant pattern in `if let` / `while let`: `Some` over an
 /// Option keeps the Option door's spelling (`Cond.IsSome`); any other variant,
 /// of any sum, is the match arm's head test (`Cond.Holds`, emit_match.nv) --
@@ -639,126 +653,13 @@ fn Lowerer @variant_test(pat Node, ty TyId, lo Local) -> Cond {
     Cond.Holds(PatTest { pat: @pattern_of(pat, ty), scr: lo })
 }
 
-/// One `for v in lo..hi`: the loop variable is a binding local of the body,
-/// the header carries the range form so the printer spells C's `for` and not
-/// a `while`. The UPPER BOUND IS EVALUATED ONCE (wave P5, the owner's rule --
-/// formally `lo..hi` is a `Range` value and the loop is its iteration, so a
-/// bound re-read per turn would be a second semantics): it is placed into a
-/// temporary BEFORE the loop, and the header spells the temporary. The lower
-/// bound stands in C's init clause, which is already once.
-fn Lowerer mut @lower_for_range(kids []Node) -> () {
-    ro pat = kids[1]
-    ro range = branch_children(kids[3]) // Bin: [lo, .., hi]
-    @hoist_operand(range[0])
-    ro hi_l = @ir.temp(@ctx.prims.int_id)
-    @lower_place(range[2], hi_l)
-    // A plain binder keeps the author's name on the counter; a `_` header
-    // binds nothing, and the counter is a temporary nobody spells. (A
-    // structured pattern never reaches here against `int` -- the checker's
-    // own door refused it.)
-    ro lv = if pattern_shape(pat) == PatShape.Bind {
-        @ir.named(@ctx.prims.int_id, pattern_head_text(pat))
-    } else {
-        @ir.temp(@ctx.prims.int_id)
-    }
-    ro head = LoopHead.Range(RangeHead { var: lv, lo: range[0], hi: hi_l })
-    ro c = @ir.begin_loop(head)
-    @lower_block_stmts_fn(kids[4], false)
-    @ir.end_loop(c)
-}
-
-/// One `for v in <collection>` (wave M2b-1c, from emit_for.nv): the head runs
-/// ONCE into a TEMPORARY through the placement door, the index is a temporary of
-/// int, the element is the author's binding, the header carries all three, and the
-/// body starts by reading `vec[idx]` -- `Rvalue.IndexPayload`, printed as the
-/// shell's `get(...).value` by the one assignment printer. The C is the same
-/// walk `emit_for_call` spelled by hand: `T <vec> = <head>;`, `for (nova_int <idx>
-/// = 0; <idx> < len(<vec>); <idx>++) {`, `E v = get(<vec>, <idx>).value;` -- the
-/// two temporaries are numbered by the body, so no name is spelled here (274.8 M3).
-/// The element type is the CHECKER's decision (`for_head_elem`), not a second
-/// derivation here (hunt emit_c x K4, 2026-09-04).
-fn Lowerer mut @lower_for_each(kids []Node) -> () {
-    ro head = kids[3]
-    ro ht = @out.type_of(head.id_of())
-    ro elem_t = for_head_elem(@ctx, ht)
-    // Both the collection and the index are TEMPORARIES of the body, named by their
-    // indices (274.8 M3).
-    ro lv = @ir.temp(ht)
-    @lower_place(head, lv)
-    // All three locals of the walk exist before the head is printed, because the head is
-    // printed FROM the record that names them (M2b-2 step 3a).
-    ro li = @ir.temp(@ctx.prims.int_id)
-    ro pat = kids[1]
-    ro shape = pattern_shape(pat)
-    // A PLAIN BINDER keeps the author's word on the element local itself (wave
-    // P5): no temporary between the slot read and the name, so the B16 C of
-    // every existing carrier is byte-unchanged. A STRUCTURED pattern (a tuple
-    // or a record -- the rest the checker's predicate refused) reads the
-    // element into a temporary first and binds through the one recursive door
-    // (`@lower_pattern_bind`, the "scrutinee once" contract). `_` reads
-    // nothing: the walk counts, and an unread slot read would be waste.
-    ro le = if shape == PatShape.Bind {
-        @ir.named(elem_t, pattern_head_text(pat))
-    } else {
-        @ir.temp(elem_t)
-    }
-    ro lh = LoopHead.Each(EachHead { vec: lv, idx: li, elem: le })
-    ro c = @ir.begin_loop(lh)
-    if shape == PatShape.Wild {
-        // Nothing binds the element.
-    } else {
-        @ir.take_elem(le, lv, li)
-        if shape != PatShape.Bind {
-            @lower_pattern_bind(pat, elem_t, le)
-        } else { // The element local IS the author's name, bound directly.
-        }
-    }
-    @lower_block_stmts_fn(kids[4], false)
-    @ir.end_loop(c)
-}
-
-/// A `for` over an ITERATOR (D58: `loop { match it.next() { Some(x) => body,
-/// None => break } }`): the head into a temporary once, then each turn its
-/// `next` into an Option temporary, the exit on None, the element bound through
-/// the one pattern door. The checker recorded the `next` row as the loop's
-/// callee and the Option type as the loop's own.
-fn Lowerer mut @lower_for_iter(st Node, kids []Node) -> () {
-    ro head = kids[3]
-    ro it = @ir.temp(@out.type_of(head.id_of()))
-    @lower_place(head, it)
-    ro ot = @out.type_of(st.id_of())
-    ro elem_t = option_payload(@ctx, ot)
-    ro c = @ir.begin_loop(LoopHead.Forever)
-    ro lo = @ir.temp(ot)
-    ro next = @out.callee_of(st.id_of())
-    @ir.call_next(lo, next.callable_row(), it)
-    ro exit_c = @ir.begin_if(Cond.NotSome(lo), ElseShape.NoElse)
-    @ir.break_loop()
-    @ir.end_if(exit_c)
-    ro pat = kids[1]
-    ro shape = pattern_shape(pat)
-    if shape == PatShape.Wild {
-        // Nothing binds the element: the turn only advances the iterator.
-    } else {
-        ro le = if shape == PatShape.Bind { @ir.named(elem_t, pattern_head_text(pat)) } else { @ir.temp(elem_t) }
-        @ir.take_payload(le, lo)
-        if shape != PatShape.Bind {
-            @lower_pattern_bind(pat, elem_t, le)
-        } else {
-            // The element local IS the author's name, bound directly.
-        }
-    }
-    @lower_block_stmts_fn(kids[4], false)
-    @ir.end_loop(c)
-}
-
 /// One `return`: the value lands in the return place through the one door
 /// (274.8 M1) -- a bare `return` spells the unit itself -- and the block ends
 /// with `Return`; what the source wrote after it lands in a fresh block.
 fn Lowerer mut @lower_return(st Node) -> () {
     ro kids = branch_children(st)
     if kids.len() > 1 {
-        @lower_place(kids[1], @ir.ret_place())
+        @lower_exit_value(kids[1], @ir.ret_place(), st.id_of())
     } else {
         // A BARE `return` RECORDS AND PRINTS NOTHING HERE (2026-09-09). It used to print
         // `return NOVA_UNIT;` on the spot, and under the walk that landed the line right
@@ -768,6 +669,12 @@ fn Lowerer mut @lower_return(st Node) -> () {
         // green measurement of this wave was silent about it. The `Return` terminator is
         // what the walk prints from, and it prints the same for a body that just ends.
     }
+    if kids.len() <= 1 {
+        // A bare `return`: the values still owned are cleaned before it (D432).
+        @lower_cleanups(st.id_of())
+    } else {
+        // `@lower_exit_value` cleaned them between the value and the return.
+    }
     @ir.ret()
 }
 
@@ -776,6 +683,27 @@ fn Lowerer mut @lower_return(st Node) -> () {
 /// streaming bridge of waves M1/M2a: statements are lowered and printed one
 /// by one until M2b prints sealed blocks.
 fn Lowerer mut @lower_place(e Node, dest Local) -> () {
+    // A call holding D476 temporaries (ir_cleanup.nv): its arguments laid down first,
+    // its value placed in a temporary, then they go, and only then does the value reach
+    // `dest` -- which may be the return place, whose assignment the printer spells as
+    // the `return` itself. HERE and not at the binding: every value door -- a binding,
+    // a body's or a branch's tail -- comes through this one, and a door that skipped it
+    // would drop the cleanups silently (the tail did, on the first probe).
+    ro cs = @d476_args(e)
+    if cs.len() == 0 {
+        @lower_place_value(e, dest)
+        return
+    } else {
+        // D476 temporaries: the value waits in a temporary.
+    }
+    ro t = @ir.temp(@ir.decl_of(dest).ty)
+    @lower_place_value(e, t)
+    @d476_cleanups(cs)
+    @ir.copy(dest, t)
+}
+
+/// `dest = e` once the D476 temporaries, if any, are laid down (`@lower_place`).
+fn Lowerer mut @lower_place_value(e Node, dest Local) -> () {
     // A CALL IN VALUE POSITION NEEDS ITS ARGUMENTS ORDERED TOO (F65). The first
     // edition put the hoist only in `@lower_eval`, the STATEMENT door, and the
     // probe said so at once: `ro s = take(left(), right())` still printed right

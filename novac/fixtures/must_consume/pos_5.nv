@@ -1,0 +1,133 @@
+module must_consume.pos_5
+
+// EXITS AND LOOPS (D133, step 3 of the track): a `return` is an exit point --
+// every value still owned there must be done, the returned one leaves with it --
+// and the path it ends takes no part in the join after its branch. A loop body is
+// a scope of its own, run any number of times: a value bound in it is consumed in
+// the same pass; a value from outside may be viewed in it and consumed after it;
+// a `break` or a `continue` leaves the pass with what it bound already done; a
+// `while`-let tests its pattern each pass.
+// Behaviour byte-for-byte with the oracle (novac-e1-smoke).
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx @peek() -> int => @id
+
+fn early(n int) -> () {
+    consume t = Tx { id: n }
+    if n > 0 {
+        t.commit()
+        return
+    }
+    t.rollback()
+}
+
+fn valued(n int) -> int {
+    consume t = Tx { id: n }
+    if n > 0 {
+        t.commit()
+        return 1
+    } else {
+        t.rollback()
+    }
+    2
+}
+
+fn pick(n int) -> Tx {
+    consume t = Tx { id: n }
+    if n > 0 {
+        return t
+    }
+    t.rollback()
+    Tx { id: 0 }
+}
+
+fn per_pass(n int) -> () {
+    for k in 0..n {
+        consume t = Tx { id: k }
+        if k > 0 {
+            t.commit()
+        } else {
+            t.rollback()
+        }
+    }
+}
+
+fn found(n int) -> int {
+    consume t = Tx { id: n }
+    for i in 0..n {
+        for j in 0..n {
+            if i + j == 3 {
+                t.commit()
+                return i
+            }
+        }
+    }
+    t.rollback()
+    0
+}
+
+fn viewed(n int) -> () {
+    consume t = Tx { id: n }
+    mut i = 0
+    while i < n {
+        i += 1
+    }
+    for k in 0..n {
+        if k == 1 {
+            break
+        }
+        println(k + t.peek())
+    }
+    t.commit()
+}
+
+fn inner_break(n int) -> () {
+    for i in 0..n {
+        consume t = Tx { id: i }
+        for j in 0..n {
+            if j == 1 {
+                break
+            }
+            println(j + t.peek())
+        }
+        t.commit()
+    }
+}
+
+fn next(i int) -> Option[int] => if i < 3 { Some(i) } else { None }
+
+fn tested() -> () {
+    consume t = Tx { id: 50 }
+    mut i = 0
+    while Some(v) = next(i) {
+        println(v + t.peek())
+        i += 1
+    }
+    t.commit()
+}
+
+fn main() {
+    early(1)
+    early(0)
+    println(valued(1))
+    println(valued(0))
+    pick(7).commit()
+    pick(0).rollback()
+    per_pass(3)
+    println(found(3))
+    println(found(1))
+    viewed(3)
+    inner_break(2)
+    tested()
+}

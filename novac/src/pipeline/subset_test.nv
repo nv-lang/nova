@@ -954,24 +954,26 @@ fn main() -> () {\n\
 }", std)
     assert(d3.len() == 0)
 }
-test "a must-consume type declaration is READ and refused BY NAME, not dropped in the parser's bin (274.7 B13 step 0)" {
+test "a must-consume type declaration is READ, not dropped in the parser's bin, and judged by D133 (274.7 B13 steps 0-1)" {
     // Until 2026-09-14 `type X consume { ... }` fell into the newtype tail of
     // `@type_decl` as if `consume` were a representation, the brace body behind it
     // became junk, and the answer was the parser's fallback -- about a form the
     // language HAS. Third time that exact shape was found there: `protocol` and
     // `value` arrived the same way in 2026-08-23, one form apart.
     //
-    // READING IT IS NOT ACCEPTING IT. Carina has no linearity at all (registry
-    // #1099: a `consume` parameter never consumed gives zero diagnostics), so a
-    // silent yes would promise a guarantee the compiler does not give. The refusal
-    // names itself and carries its stage.
+    // READING IT IS NOT ACCEPTING IT. Step 0 refused the declaration by name:
+    // Carina had no linearity at all (registry #1099). Since step 1 (2026-10-02,
+    // check/consume_flow.nv) the declaration is accepted and its obligation is
+    // checked -- so the marker being READ shows as D133's own judgment of it: this
+    // type declares no `consume` method, which only a read marker can say
+    // (D133-empty-consume, a language error).
     ro std = std_decls()
 
     ro (d, _) = compile_to_c("type Tx consume { v int }\n\
 fn main() { println(1) }", std)
     assert(d.len() >= 1)
-    assert(d[0].message.contains("must-consume type"))
-    assert(d[0].message.contains("274.7 B13"))
+    assert(d[0].code == "E_NOVAC_LANG", messages(d))
+    assert(d[0].message.contains("is declared `consume` and has no `consume` method"), messages(d))
 
     // THE OTHER DIRECTION, and without it a branch refusing EVERY declaration would
     // pass this test whole: the same record with no marker stays clean.

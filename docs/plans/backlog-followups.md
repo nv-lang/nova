@@ -1597,6 +1597,9 @@ if/for/match/while-let) — первый `tx` утекает МОЛЧА: consume
 D131/D133 consume-checker / отдельный заход. **Проверено 2026-07-07 (заход [M-into-raw-generic-stub-ret]):
 НЕ тот же корень, что json-StringBuilder-краш** — тот оказался codegen pointer-stride (`*mut T`→`Nova_T**`),
 здесь — checker-звучность consume-obligations; ОСТАЁТСЯ ОТКРЫТЫМ.
+**2026-10-02 (Карина, D133 шаг 2):** та же причина даёт и ЛОЖНЫЙ отказ — затенение в плече `if` при
+внешнем `t`, потреблённом после ветки, оракул называет «возможно, потреблённой» (D131). Карина ведёт
+обязательства по областям и принимает: фикстура `novac/fixtures/must_consume/pos_4.nv`, расхождение в 274.12.
 
 ## [M-181-lsp-rename-symbol-table] — LSP rename over same-scope rebind (2026-07-04) — P3
 

@@ -1,0 +1,89 @@
+module must_consume.pos_10
+
+// AN AFFINE MUST-CONSUME TYPE (D432): `Lk` declares an effect-free `@cleanup`, so an
+// owned `consume x = e` of it left unconsumed is CLEANED where its scope is left --
+// at the end of a block, before a `return` (after its value is computed), at
+// `break` and `continue`, innermost binding first -- and a value consumed
+// explicitly is not cleaned again (s4). novac places the calls itself (step 5 of
+// the D133 track); before it, such a value was D133-not-consumed.
+// Behaviour byte-for-byte with the oracle (novac-e1-smoke).
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @release() -> () {
+    println("release ${@id}")
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) -> () {
+    println("cleanup ${@id}")
+}
+
+fn plain(n int) -> () {
+    consume a = Lk { id: n }
+    consume b = Lk { id: n + 1 }
+    consume c = Lk { id: n + 2 }
+    b.release()
+    println("plain")
+}
+
+fn early(n int) -> int {
+    consume a = Lk { id: n }
+    if n > 10 {
+        println("early")
+        return n * 10
+    }
+    a.release()
+    n
+}
+
+fn tail(n int) -> int {
+    consume a = Lk { id: n }
+    println("tail")
+    n * 2
+}
+
+fn passes() -> () {
+    for k in 20..23 {
+        consume a = Lk { id: k }
+        if k == 21 {
+            println("skip")
+            continue
+        }
+        if k == 22 {
+            println("stop")
+            break
+        }
+        println("pass ${k}")
+    }
+}
+
+fn arms(n int) -> () {
+    match n {
+        0 => {
+            consume a = Lk { id: 30 }
+            println("zero")
+        }
+        _ => {
+            consume b = Lk { id: 31 }
+            b.release()
+        }
+    }
+    if n > 0 {
+        consume c = Lk { id: 32 }
+        println("then")
+    } else {
+        println("else")
+    }
+}
+
+fn main() {
+    plain(1)
+    println(early(11))
+    println(early(5))
+    println(tail(4))
+    passes()
+    arms(0)
+    arms(1)
+}

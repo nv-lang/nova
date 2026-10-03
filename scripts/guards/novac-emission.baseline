@@ -126,8 +126,13 @@
 # DCE оракула заглушку именно по совпадению имени — НЕ проверено (названный пробел).
 # Собственная эмиссия novac не изменилась: hello минус шаблон = 6 строк и до, и
 # после (8938-8932, 9048-9042).
-# merge of p274-carina-sweep (steps 10-12) into main (integrator, 2026-10-03): the merge takes sweep's
+# merge of p274-carina-sweep (steps 10-12) into main (integrator, 2026-10-03; unchanged by the strarm merge, measured): the merge takes sweep's
 #   Linux-regenerated shell.tpl.c, so the numbers are sweep's own (measured again on the merged tree).
+# 2026-10-03, облачная сессия p274-carina-strarm, при слиянии origin/main dc2617993: +3 строки на
+# КАЖДОЙ фикстуре, причина одна на все четыре -- снимок оболочки `novac/src/emit_c/shell.tpl.c`
+# вырос с 15269 до 15272 строк слиянием `eb2e6f26a` (#1655, stdout доходит до fd в конце каждого
+# print/println). База в main не поднята: двоичный novac самого main (`dc2617993`) даёт те же
+# 15386/15316/15309/15277. Эмиссия novac не менялась -- рост целиком оболочечный.
 match_demo 15602
 records 15532
 # strings 6082 -> 6073 (2026-08-18, Э2-б2): заработал коллектор достижимого.
@@ -155,7 +160,7 @@ records 15532
 # `i < _novac_l2` в условии) — норма D58 («выражение после `in` вычисляется один раз, до первой
 # итерации», амендмент 2026-09-30), пришла с дугой D486 (слияние nova-kim 2ba3a552c). Замер — diff
 # эмиссии novac до слияния (00cd06da9) и после: ровно эта строка. Рост — цена нормы.
-# merge of p274-carina-sweep (steps 10-12) into main (integrator, 2026-10-03): the merge takes sweep's
+# merge of p274-carina-sweep (steps 10-12) into main (integrator, 2026-10-03; unchanged by the strarm merge, measured): the merge takes sweep's
 #   Linux-regenerated shell.tpl.c, so the numbers are sweep's own (measured again on the merged tree).
 arithmetic 15525
 # 2026-09-30 (Carina window, batch 5): +5465 lines on EVERY fixture, all of it
@@ -174,7 +179,7 @@ arithmetic 15525
 # 2026-09-30 (Carina window, p274-e9s4 on main 97ab70f5d): +21 on every fixture,
 #   the shell regenerated on that oracle (#1412, #1409, #1097, #1415 in it);
 #   novac's own emission unchanged.
-# merge of p274-carina-sweep (steps 10-12) into main (integrator, 2026-10-03): the merge takes sweep's
+# merge of p274-carina-sweep (steps 10-12) into main (integrator, 2026-10-03; unchanged by the strarm merge, measured): the merge takes sweep's
 #   Linux-regenerated shell.tpl.c, so the numbers are sweep's own (measured again on the merged tree).
 hello 15493
 # match_demo 6197 -> 6373, records 6127 -> 6303, arithmetic 6117 -> 6293, hello 6088 -> 6264 (2026-09-05, волна 274.7 В7): реген shell.tpl.c — проба оболочки получила
@@ -244,5 +249,5 @@ hello 15493
 #   Windows regeneration had taken from a stale cache (check-novac-shell-freshness red on CI).
 #   Measured by this guard: match_demo 15383 -> 15602, records 15313 -> 15532, arithmetic
 #   15306 -> 15525, hello 15274 -> 15493. novac's own emission for these files did not change.
-# merge of p274-carina-sweep (steps 10-12) into main (integrator, 2026-10-03): the merge takes sweep's
+# merge of p274-carina-sweep (steps 10-12) into main (integrator, 2026-10-03; unchanged by the strarm merge, measured): the merge takes sweep's
 #   Linux-regenerated shell.tpl.c, so the numbers are sweep's own (measured again on the merged tree).

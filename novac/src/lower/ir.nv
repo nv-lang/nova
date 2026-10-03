@@ -20,7 +20,7 @@ module novac.lower
 import ../tree.{Node, AssignOp, NodeId, raw_node}
 import ../types.{TyId}
 import ../diag.{ice}
-import ../sem.{VariantRow, Ctx, CheckOut, FnRow}
+import ../sem.{VariantRow, FnRow}
 
 /// A local of the lowered body: `Local(0)` is the return place (rustc `_0`);
 /// every other index is a source binding or a temporary, in creation order.
@@ -72,7 +72,9 @@ export type LocalKind enum
 /// The nine were then walked ONE BY ONE, because 9-3 would have given the right answer
 /// by accident: the third `declare_zeroed` (`lowering.nv:604`) zeroes not a temporary of
 /// its own but the `dest` parameter handed to it, and for another caller it zeroes
-/// nothing. Three sites reach `Zeroed` -- two call the door themselves, and `:869` hands
+/// nothing. (A fourth site since 2026-10-03: the drop flag of an affine binding, D432
+/// s5, `@lower_bind` -- zeroed at its binding, set inside the expression that moves it,
+/// never assigned by a statement.) Three sites reach `Zeroed` -- two call the door themselves, and `:869` hands
 /// its local to `lower_match`, which is the half of the old sentence that was TRUE and is
 /// kept here: the path through a door exists, and a reader who forgets it will print the
 /// declaration of `:869` a second time. The remaining SIX live with `DeclAt.FirstAssign`.
@@ -257,6 +259,7 @@ export type Stmt enum
     | ScopeOpen(int) // `supervised` scope N opened: its fiber queue, the early deadline armed (E.9 step 4)
     | ScopeJoin(int) // scope N joined -- its children run to the end; on EVERY exit of the body
     | Spawn(SpawnSite) // one `spawn`: its context filled, its fiber handed to the scope's queue
+    | Cleanup(CleanupCall) // one auto-`@cleanup` call (D432) where its value's scope is left
 
 /// What an `If` tests (wave M2b-1b): a boolean expression as the tree spells
 /// it (the M1 bridge until M3), or "the Option held by this local carries a
@@ -484,6 +487,9 @@ export type FnBuilder {
     scopes []WithScope /// the open `with` scopes, innermost last (E.9 step 2)
     loops int /// the loops open at the current point -- see WithScope.loops
     frames int /// interrupt frames this body has opened -- the source of their names
+    bound_at []int /// `consume` binding statements laid down, by node id, parallel to `bound_to` (ir_cleanup.nv)
+    bound_to []Local /// the local each of `bound_at` laid down
+    bound_gone []Local /// the drop flag of each of `bound_at` (D432 s5), `no_local()` when it is cleaned unconditionally wherever it is
 }
 
 /// A NODE WHOSE VALUE IS ALREADY IN A LOCAL, or `no_local()` (F65).
@@ -530,7 +536,9 @@ export fn FnBuilder.new(ret_ty TyId) -> FnBuilder {
     mut hoisted_at = []int.new()
     mut hoisted_to = []Local.new()
     FnBuilder { locals, blocks, cur, cur_id: BlockId(0), open_arms, arm_start, switches: 0,
-                hoisted_at, hoisted_to, scopes: []WithScope.new(), loops: 0, frames: 0 }
+                hoisted_at, hoisted_to, scopes: []WithScope.new(), loops: 0, frames: 0,
+                bound_at: []int.new(), bound_to: []Local.new(),
+                bound_gone: []Local.new() }
 }
 
 /// The block the next statement lands in.
@@ -948,47 +956,4 @@ export fn FnBuilder @finish() -> Fn {
         }
     }
     Fn { @locals, @blocks }
-}
-
-/// THE LOWERING'S RECEIVER (274.8 M3). The lowering used to live as methods on `Emitter`,
-/// the printer's own state, and a method of the printer cannot live in a module BELOW the
-/// printer -- that is the edge inversion the architecture table forbids. So the work is a
-/// change of receiver, not a move of files, and this type is where the lowering lands.
-///
-/// IT CARRIES THREE THINGS: the builder under construction, plus `ctx` and `out`, which
-/// the lowering asks 7 and 11 times. That is shape C of plan 274.8 section 2s, chosen by
-/// measurement over two alternatives: handing `ctx`/`out` as parameters would make FIVE
-/// methods accept arguments they never read purely to pass on, and taking all three fields
-/// away from `Emitter` would cost 181 printer rewires against 23.
-///
-/// TWO READERS ARE NOT TWO SOURCES. `Emitter` keeps its own `ctx`/`out` and this type has
-/// its own; that is not a second home for either, because their home is `sem` and both
-/// readers are read-only. What `Emitter` LOST is the builder -- the mutable state, which
-/// belongs with the methods that write it.
-export type Lowerer {
-    ctx Ctx /// the type registry and def table, read only -- same home as Emitter's (`sem`)
-    out CheckOut /// the checker's channel: every type question is a READ here
-    mut ir FnBuilder /// the body under construction -- the lowering's own mutable state
-}
-
-/// A compound or plain assignment, recorded as a statement of the body. First method to
-/// live here rather than on the printer (274.8 M3, slice 1): it touches the builder and
-/// nothing else, so it proves the receiver without dragging the channel along.
-fn Lowerer mut @lower_store(target Node, op AssignOp, src Node) -> () {
-    @ir.store(target, op, src)
-}
-
-/// A temporary of the body holding a destructuring scrutinee, with the initialiser placed
-/// into it. Second method to live on the receiver (274.8 M3, slice 2), and the LAST one
-/// that could move alone: the call-structure measure found only two leaves, and this is the
-/// one with no outward calls at all. What remains are two mutually recursive groups plus
-/// three methods that call into printing -- they move as wholes, not one at a time.
-///
-/// The name is the body's own index, never the author's: a destructuring scrutinee is the
-/// compiler's invention, and `named` would claim otherwise (held by
-/// check-novac-invented-name-not-named).
-fn Lowerer mut @bind_pair_temp(init Node, pt TyId) -> Local {
-    ro l = @ir.temp(pt)
-    @ir.place(init, l)
-    l
 }

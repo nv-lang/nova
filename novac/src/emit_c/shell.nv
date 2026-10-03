@@ -195,6 +195,7 @@ type Emitter consume {
     recv_copy bool /// the callable being printed takes a `value` record receiver BY COPY (D488 R5): `@f` is `.f`, `@` is the parameter itself; otherwise a value record's receiver is a pointer
     recv_ptr_value bool /// the callable being printed takes a `value` record receiver BY POINTER (D488 R3/R5): `@` as a value is `(*self)`
     hoist_root NodeId /// the value an assignment is printing: its OWN hoist is not read back (`x = x`), its children's are (registry 1619)
+    gone_root NodeId /// the move being printed inside its drop-flag set (D432 s5): printed once more, bare
     lit_tmp []str /// node id -> the hoisted temporary of an array literal (B8) or a record constructor (B13) in argument position; "" = none
     hlits []Node /// the handler literals of the reached functions; the index is the literal's C number (E.9 step 3)
     spawns []Node /// the `spawn` statements of the reached functions; the index is the spawn's C number (E.9 step 4)

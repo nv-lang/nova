@@ -1,0 +1,35 @@
+module must_consume.neg_13
+
+// A `return` WHILE A VALUE IS STILL OWNED (D133-not-consumed: `return` is an exit
+// point, and every live value but the returned one must be done there). The
+// ORACLE accepts it -- it judges only the body's end (registry 221.1 No.1668,
+// oracle); novac follows the spec. (Until step 3 this fixture held a legal
+// `return` from an arm, refused by the subset; that form now lives in pos_5.)
+
+// NOVAC_EXPECT is still owned when this `return` leaves its scope
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx @peek() -> int => @id
+
+fn run(n int) -> () {
+    consume t = Tx { id: n }
+    if n > 0 {
+        return
+    }
+    t.rollback()
+}
+
+fn main() {
+    run(1)
+}

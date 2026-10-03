@@ -1,0 +1,28 @@
+module must_consume.neg_39
+
+// A STRICTLY LINEAR VALUE STILL OWNED AT A `?`: on its empty path the `?` is a
+// `return` (D85), an exit point of D133 -- the value is not consumed there. The
+// ORACLE accepts it (it does not judge exit points, registry 221.1 No.1668).
+
+// NOVAC_EXPECT is still owned when this `?` leaves its scope
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn get(n int) -> Option[int] => if n > 0 { Some(n) } else { None }
+
+fn run(n int) -> Option[int] {
+    consume t = Tx { id: n }
+    ro v = get(n)?
+    t.commit()
+    Some(v)
+}
+
+fn main() {
+    println(run(1) ?? 0)
+}

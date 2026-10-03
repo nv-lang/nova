@@ -1,0 +1,92 @@
+module must_consume.pos_13
+
+// THE TWIN OF pos_12, WRITTEN OUT: every D476 temporary of pos_12 as the explicit
+// `consume t = e` binding the desugaring makes of it (a helper function is its
+// scope). The oracle builds this form, and its output is the output novac gives
+// pos_12 -- the behavioural proof of the desugaring while the oracle implements no
+// D476 (registry 221.1 No.1107; plan 274.12). Itself byte-for-byte with the oracle
+// (novac-e1-smoke).
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) -> () {
+    println("cleanup ${@id}")
+}
+
+fn Lk @peek() -> int => @id
+
+fn show(t Lk) -> () {
+    println("show ${t.peek()}")
+}
+
+fn two(a Lk, b Lk) -> int => a.peek() + b.peek()
+
+fn s1(n int) -> () {
+    consume t = Lk { id: n }
+    show(t)
+}
+
+fn s2() -> int {
+    consume t = Lk { id: 2 }
+    ro r = t.peek()
+    r
+}
+
+fn s3(x int, y int) -> int {
+    consume a = Lk { id: x }
+    consume b = Lk { id: y }
+    ro r = two(a, b)
+    r
+}
+
+fn tail_value() -> int {
+    println("tail")
+    s3(5, 6)
+}
+
+fn tail_unit() -> () {
+    s1(7)
+}
+
+fn branch(n int) -> int {
+    if n > 0 {
+        s3(20, 21)
+    } else {
+        0
+    }
+}
+
+fn s4() -> int {
+    consume t = Lk { id: 30 }
+    ro r = t.peek()
+    r
+}
+
+fn arm(n int) -> int {
+    ro r = match n {
+        1 => {
+            println("arm")
+            s4()
+        }
+        _ => 0
+    }
+    r
+}
+
+fn main() {
+    s1(1)
+    ro v = s2()
+    println(v)
+    println("mid")
+    ro w = s3(3, 4)
+    println(w)
+    for k in 0..2 {
+        s1(10 + k)
+    }
+    println(tail_value())
+    tail_unit()
+    println(branch(1))
+    println(arm(1))
+}

@@ -1,0 +1,24 @@
+module must_consume.neg_5
+
+// A `consume` PARAMETER OF A MUST-CONSUME TYPE NEVER CONSUMED (D133-not-consumed):
+// the callee owns `t` and only reads it. The oracle refuses it too.
+
+// NOVAC_EXPECT is not consumed before the end of its scope
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println(@id)
+}
+
+fn Tx @peek() -> int => @id
+
+fn take(consume t Tx) -> () {
+    println(t.peek())
+}
+
+fn main() {
+    take(Tx { id: 1 })
+}

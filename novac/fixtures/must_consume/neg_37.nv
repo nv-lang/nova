@@ -1,0 +1,29 @@
+module must_consume.neg_37
+
+// A FRESH AFFINE VALUE IN A VIEW INSIDE A LARGER EXPRESSION: D476 s2 opens the
+// scope around the whole expression the temporary takes part in -- here the
+// `println` call around `two(...)` -- and the oracle compiles the form (cleaning
+// nothing, registry 221.1 No.1107). novac embraces only a call that is a statement
+// or a binding's initializer, so this one is refused BY NAME with its stage.
+
+// NOVAC_EXPECT handed to a view inside a larger expression (the D476 scope embracing that expression, s2) is not tracked yet
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) -> () {
+    println("cleanup ${@id}")
+}
+
+fn Lk @peek() -> int => @id
+
+fn show(t Lk) -> () {
+    println("show ${t.peek()}")
+}
+
+fn two(a Lk, b Lk) -> int => a.peek() + b.peek()
+
+fn main() {
+    println(two(Lk { id: 3 }, Lk { id: 4 }))
+}

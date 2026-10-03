@@ -1,0 +1,68 @@
+module must_consume.pos_6
+
+// A LOOP LEFT ONLY THROUGH A `break` THAT FOLLOWS THE CONSUMPTION, and a pass
+// that consumes its own value before `continue` (D133 "Точки выхода": `loop
+// break` is an exit point; a literal `while true` has no other way out, the
+// tail_rules precedent, registry #1253). Every path consumes exactly once.
+// The ORACLE refuses all three ("possibly consumed", D131): its consume checker
+// joins the state at the loop's head with the state at its exits and does not
+// take a `break` or a `continue` as the end of a path. Registry 221.1 No.1669
+// (oracle); listed in novac/divergences.allow (plan 274.12).
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx @peek() -> int => @id
+
+fn forever(n int) -> () {
+    consume t = Tx { id: n }
+    mut i = 0
+    while true {
+        i += 1
+        if i > n {
+            t.commit()
+            break
+        }
+    }
+}
+
+fn by_match(n int) -> () {
+    consume t = Tx { id: n }
+    mut i = 0
+    while true {
+        i += 1
+        match i {
+            3 => {
+                t.commit()
+                break
+            }
+            _ => println(i)
+        }
+    }
+}
+
+fn skipped(n int) -> () {
+    for k in 0..n {
+        consume t = Tx { id: k }
+        if k == 0 {
+            t.rollback()
+            continue
+        }
+        t.commit()
+    }
+}
+
+fn main() {
+    forever(2)
+    by_match(1)
+    skipped(3)
+}

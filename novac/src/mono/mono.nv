@@ -157,6 +157,15 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
     // literal's `new`/`push`, `xs[i]`'s `index` over a vector novac makes
     // itself, 274.11 E.10 step 4c-2): no node holds them, so they are roots.
     ro _ = mark_wanted(ctx, out, seen, inst, subst, ptypes)
+    // THE AUTO-`@cleanup` CALLS (D432) are written by no one either: the lowering
+    // places them at exits, so each callable they name is a root.
+    for r in out.cleanups {
+        if raw_row(r.row) < seen.len() {
+            seen[raw_row(r.row)] = true
+        } else {
+            ice("mono: an auto-cleanup names a row outside the callable table")
+        }
+    }
     // Hoisted out of the fixpoint on purpose: the door builds a vector, and the
     // set of declarations does not change between rounds.
     ro decls_of_file = file_decls(file)

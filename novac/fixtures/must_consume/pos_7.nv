@@ -1,0 +1,76 @@
+module must_consume.pos_7
+
+// MUST-CONSUME VALUES IN SHAPES (D133, step 4 of the track): `Option[Tx]` is
+// must-consume itself -- `Option[T consume]` inherits the obligation (D156); a
+// `consume` pattern takes the payload out and owns it in its arm (D157 amendment,
+// consume-wave A), in a `match` and in an `if`-let; a value goes into a variant's
+// payload and into a `consume` field of a record literal, a pun `{ t }` included
+// (D133 amendment 2026-07-13), and a record holding one is declared `consume` with
+// its field marked.
+// Behaviour byte-for-byte with the oracle (novac-e1-smoke).
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx @peek() -> int => @id
+
+fn mk(n int) -> Option[Tx] => if n > 0 { Some(Tx { id: n }) } else { None }
+
+type Box consume {
+    consume t Tx
+    n int
+}
+
+fn Box consume @close() -> () {
+    println("close ${@n}")
+}
+
+fn wrap(n int) -> Option[Tx] {
+    consume t = Tx { id: n }
+    Some(t)
+}
+
+fn arms(n int) -> () {
+    match mk(n) {
+        Some(consume t) => t.commit()
+        None => println("none")
+    }
+}
+
+fn tested(n int) -> () {
+    if Some(consume t) = mk(n) {
+        println(t.peek())
+        t.rollback()
+    } else {
+        println("empty")
+    }
+}
+
+fn boxed(n int) -> () {
+    consume t = Tx { id: n }
+    t.commit()
+    consume u = Tx { id: n + 1 }
+    consume b = Box { t: u, n }
+    b.close()
+}
+
+fn main() {
+    arms(1)
+    arms(0)
+    tested(2)
+    tested(0)
+    match wrap(5) {
+        Some(consume t) => t.commit()
+        None => println("none")
+    }
+    boxed(7)
+}

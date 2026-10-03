@@ -1,0 +1,35 @@
+module must_consume.neg_40
+
+// A `?` AFTER A D476 TEMPORARY OF THE SAME CALL: the temporary is made, then the
+// `?` may leave -- and the temporary is no binding an exit could clean. Legal Nova
+// (D476's scope embraces the call, and its exit cleans the temporary); novac refuses
+// it BY NAME with its stage.
+
+// NOVAC_EXPECT left early by a `?` while a D476 temporary of the same call is alive
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @release() -> () {
+    println("release ${@id}")
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) -> () {
+    println("cleanup ${@id}")
+}
+
+fn Lk @peek() -> int => @id
+
+fn get(n int) -> Option[int] => if n > 0 { Some(n) } else { None }
+
+fn both(t Lk, n int) -> int => t.peek() + n
+
+fn run(n int) -> Option[int] {
+    ro v = both(Lk { id: 1 }, get(n)?)
+    Some(v)
+}
+
+fn main() {
+    println(run(1) ?? 0)
+}

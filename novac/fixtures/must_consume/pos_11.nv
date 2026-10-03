@@ -1,0 +1,32 @@
+module must_consume.pos_11
+
+// A `consume` PARAMETER OF AN AFFINE TYPE IS CLEANED AS A BINDING IS (D432 rev-2,
+// the owner 2026-09-16): left unconsumed at the end of the body it gets its
+// `@cleanup`; on the path that released it, nothing. The ORACLE still demands it
+// be consumed (D133-not-consumed) -- registry 221.1 No.1696 (oracle); listed in
+// novac/divergences.allow (plan 274.12).
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @release() -> () {
+    println("release ${@id}")
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) -> () {
+    println("cleanup ${@id}")
+}
+
+fn take(consume a Lk, n int) -> () {
+    if n > 0 {
+        a.release()
+        return
+    }
+    println("kept")
+}
+
+fn main() {
+    take(Lk { id: 1 }, 1)
+    take(Lk { id: 2 }, 0)
+}

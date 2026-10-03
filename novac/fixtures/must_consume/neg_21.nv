@@ -1,0 +1,28 @@
+module must_consume.neg_21
+
+// A MUST-CONSUME CONTAINER BOUND WITH `ro` (E_CONSUME_KEYWORD_MISSING):
+// `Option[T consume]` inherits its payload's obligation (D156, amendment
+// 2026-08-04), so `Some(t)` is must-consume and its binding says so. The ORACLE
+// accepts it and never tracks `o` (registry 221.1 No.1660, oracle).
+
+// NOVAC_EXPECT a value of must-consume type `Option[Tx]` is bound with `ro` or `mut`
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx @peek() -> int => @id
+
+fn main() {
+    consume t = Tx { id: 1 }
+    ro o = Some(t)
+    println(1)
+}

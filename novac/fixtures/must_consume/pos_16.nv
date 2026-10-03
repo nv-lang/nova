@@ -1,0 +1,39 @@
+module must_consume.pos_16
+
+// THE TWIN OF pos_15, WRITTEN SO THE ORACLE ACCEPTS IT: the move leaves the loop and
+// follows it, guarded by a flag of the author's -- the same output as pos_15 (D432 s5:
+// cleaned at the end only when nothing moved it). Byte-for-byte with the oracle
+// (novac-e1-smoke).
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @release() -> () {
+    println("release ${@id}")
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) -> () {
+    println("cleanup ${@id}")
+}
+
+fn carried(n int) -> () {
+    consume a = Lk { id: 50 + n }
+    mut hit = false
+    for k in 0..n {
+        if k == 1 {
+            hit = true
+            break
+        }
+        println("carry ${k}")
+    }
+    if hit {
+        a.release()
+    }
+    println("carried ${n}")
+}
+
+fn main() {
+    carried(1)
+    carried(3)
+}

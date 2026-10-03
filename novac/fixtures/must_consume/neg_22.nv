@@ -1,0 +1,26 @@
+module must_consume.neg_22
+
+// A MUST-CONSUME CONTAINER NEVER CONSUMED (D133-not-consumed): `o` holds the
+// value `t` moved into it. The oracle refuses it too.
+
+// NOVAC_EXPECT `o` (type `Option[Tx]`) is not consumed before the end of its scope
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn Tx consume @rollback() -> () {
+    println("rollback ${@id}")
+}
+
+fn Tx @peek() -> int => @id
+
+fn main() {
+    consume t = Tx { id: 1 }
+    consume o = Some(t)
+    println(1)
+}
