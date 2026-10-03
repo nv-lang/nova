@@ -344,23 +344,12 @@ fn effect_names_of(d Node) -> []str {
 /// reference; "" when it has none.
 fn first_ident_of(n Node) -> str {
     if n.is_ident() { return leaf_text(n) }
+    mut found = ""
     for c in branch_children(n) {
-        ro t = first_ident_of(c)
-        if t != "" { return t } else { continue }
+        if found != "" { break }
+        found = first_ident_of(c)
     }
-    ""
-}
-
-/// The function declarations of `file` written under `export`.
-fn exported_fns_of(file Node) -> []Node {
-    mut out = []Node.new()
-    for c in branch_children(file) {
-        if c.kind_of() != NodeKind.ExportDecl { continue }
-        for w in branch_children(c) {
-            if w.kind_of() == NodeKind.FnDecl { out.push(w) } else { continue }
-        }
-    }
-    out
+    found
 }
 
 /// Is `d` one of `fns` (the same node)?

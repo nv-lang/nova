@@ -25,7 +25,7 @@ module novac.check
 import ../tree.{Node, NodeKind, is_node}
 import ../lex.{TokenKind}
 import ../names.{NameTable, NamespaceId}
-import ../sem.{branch_children, leaf_text, leaf_kind, expr_leaf_name, file_decls, decl_fn_row}
+import ../sem.{branch_children, leaf_text, leaf_kind, expr_leaf_name, file_decls, file_exported_fns, decl_fn_row}
 import ../sem.{CalleeTarget, raw_row, call_arg_at, bind_mode_at, ParamMode, ty_source_name}
 import ../sem.{is_never_ty}
 import ../types.{TyId, no_ty, is_ty}
@@ -128,7 +128,7 @@ fn Checker mut @check_consume_flow(file Node) -> () {
             // At least one `consume` method: the type can be consumed.
         }
     }
-    ro exported = exported_fns_of(file)
+    ro exported = file_exported_fns(file)
     for d in file_decls(file) {
         if d.kind_of() != NodeKind.FnDecl { continue }
         @flow_fn(d, kinds, autos, node_among(exported, d))
@@ -141,7 +141,7 @@ fn Checker mut @check_consume_flow(file Node) -> () {
 fn Checker mut @check_consume_flow_instance(decl Node, body_file Node) -> () {
     ro kinds = @consume_kinds_of(body_file)
     if kinds.len() == 0 { return }
-    @flow_fn(decl, kinds, @auto_cleanups_of(body_file, kinds), node_among(exported_fns_of(body_file), decl))
+    @flow_fn(decl, kinds, @auto_cleanups_of(body_file, kinds), node_among(file_exported_fns(body_file), decl))
 }
 
 /// The file's own `type X consume` declarations, as types.

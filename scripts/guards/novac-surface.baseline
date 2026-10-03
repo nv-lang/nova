@@ -9,7 +9,9 @@
 #   спрашивает принтер на каждом переносе (emit_c). sem: `@record_gone` / `@gone_binder`
 #   (решение потока «это использование -- перенос привязки», читает принтер), `@mark_cond`
 #   (поздний проход цикла переводит вызов в условный) и `@has_cond` (понижение: нужен ли
-#   привязке флаг) -- канал чекера.
+#   привязке флаг) -- канал чекера. Шаг 6г, sem 348 -> 349: `file_exported_fns` -- какие
+#   функции файла написаны под `export` (их эффекты объявлены, не выведены, D432 s1); живёт
+#   у двери `file_decls`, потому что обход обёрток видимости -- её вопрос (П18).
 #
 #   2026-10-03 (облачная сессия p274-carina-strarm, D133-трек шаг 5 -- авто-`@cleanup`,
 #   D432), builtins 68 -> 71, lower 94 -> 98, sem 341 -> 344. builtins: `CLEANUP_METHOD`,
@@ -1063,7 +1065,7 @@ resolve 23
 #   tree is 341 -- main's 340 plus k1's `is_arg_value_kind` (part 5 step 3, its chronicle line above).
 # merge of origin/main f80d61e00 into p274-carina-strarm (2026-10-02): main's counts plus this
 #   branch's SourceText.@holds (source 6 -> 7); the counts are the guard's on the merged tree.
-sem 348
+sem 349
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
