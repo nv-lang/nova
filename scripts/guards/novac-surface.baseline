@@ -1088,7 +1088,11 @@ resolve 23
 # 2026-10-03, cloud session p274-carina-k1 (part 10): sem 349 -> 350: `is_place_expr` moves from
 #   check/methods.nv to sem/value_recv.nv -- the lowering spills a TEMPORARY receiver of a by-pointer
 #   `value` method into a local (D32) and must ask the same "is this a place?" check asked: one door.
-sem 350
+# 2026-10-03, cloud session p274-carina-k1 (part 11): sem 350 -> 352: `row_returns_recv_ref` and
+#   `call_returns_recv_ref` (sem/value_recv.nv) -- a `-> @` on a by-pointer receiver returns the
+#   receiver's storage (R6/R8, the integrator's ruling 2026-10-03); asked by the signature
+#   (emit_c/emit_c.nv), the call site (emit_c/emit_expr.nv) and the spill (lower/lower_hoist.nv): one door.
+sem 352
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

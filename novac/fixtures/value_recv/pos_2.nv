@@ -11,8 +11,8 @@ module value_recv.pos_2
 // Until part 10 of p274-carina-k1 novac refused every one of them ("does not
 // spill it to a place yet"; this file was neg_1 then), and a `-> @` method on
 // a by-pointer receiver returned the pointer where its signature promised the
-// value -- a C type error on every such method. A value-record `-> @` is a
-// copy (02-types.md, R7b): `c.set(5).set(6)` leaves `c.n` at 5.
+// value -- a C type error on every such method. It returns the receiver's
+// storage by reference (R6, R8): `c.set(5).set(6)` leaves `c.n` at 6.
 type Lg value {
     a int
     b int

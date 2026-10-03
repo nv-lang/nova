@@ -234,12 +234,14 @@ fn Emitter mut @print_chain(f Fn, at BlockId, stop BlockId, head_continues bool,
                 } else if @ret_self {
                     // `-> @` (D409): a return with no value returns the receiver; after
                     // a delegated value return (`return @other()`) the line is unreachable.
-                    // A `value` record that arrived BY POINTER (D488) returns its value:
-                    // a value-record `-> @` is a copy (02-types.md, R7b) -- `self` here is
-                    // the pointer, and returning it was a C type error on every such
-                    // method (part 10 of p274-carina-k1).
-                    ro deref = if @recv_ptr_value { "*" } else { "" }
-                    @body.append("    return ${deref}${RECV_C_NAME};\n")
+                    // A `value` record that arrived BY POINTER (D488) returns that
+                    // pointer -- the receiver's storage (R6: `-> @` of a `mut @` is
+                    // `mut ref @`), and the signature says so (`row_returns_recv_ref`).
+                    // Until part 10 of p274-carina-k1 the signature promised the value
+                    // and this line returned the pointer: a C type error on every such
+                    // method; part 10 returned a copy, which R6/R8 do not allow inside
+                    // one expression (`c.set(5).set(6)` must write `c` twice).
+                    @body.append("    return ${RECV_C_NAME};\n")
                 } else {
                     // The assignment to the return place already printed the return.
                 }

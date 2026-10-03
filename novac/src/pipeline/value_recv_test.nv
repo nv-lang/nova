@@ -3,15 +3,16 @@
 //   its `value` record by POINTER (D488 R3/R5; D32: "a value temporary as a
 //   `mut @` receiver is legal: hoisted, `&temp`") -- part 10 of p274-carina-k1:
 //   the four cells of the integrator's list (a call's result, a record literal,
-//   a result nobody reads, a `-> @` chain) and the `-> @` method itself, whose
-//   by-pointer body returned the pointer where its signature promised the value.
+//   a result nobody reads, a `-> @` chain) and the `-> @` method itself, which
+//   returns the receiver's storage by reference (R6, R8; the integrator's
+//   ruling of 2026-10-03: `c.set(5).set(6)` leaves `c.n` at 6).
 // Used by: check-novac-module-tests (the one batch runner); nothing imports it.
 // Guarded by: the same guards as every test file; the fixture
 //   novac/fixtures/value_recv/pos_2.nv (byte for byte with the oracle).
 //
 // Reverse probe (owner's rule, "prove it both ways"): with
 // `@spill_value_receiver` returning at once the receiver test reddens (no
-// `&` of a local); with the `*` of `return *_novac_self` dropped the `-> @` test
+// `&` of a local); with `row_returns_recv_ref` answering false the `-> @` test
 // reddens. Both were run before this file was committed.
 
 module novac.pipeline
@@ -29,13 +30,23 @@ test "a value temporary as a by-pointer receiver is spilled into a local and its
     assert(!c.contains("(&novac_fn"), c)
 }
 
-test "a `-> @` method on a by-pointer value receiver returns the value, and its chain spills each link (R7b)" {
-    ro (d, c) = compile_to_c("${PV_DECLS}fn main() {\n println(mk().set(5).set(6).n)\n}", std_decls())
+test "a `-> @` on a by-pointer value receiver returns the receiver's STORAGE: a chain writes one place (R6, R8)" {
+    // R6: `-> @` of a `mut @` is `mut ref @`; R8: it decays to a copy only at a
+    // binding, a return or a store. `c.set(5).set(6)` writes `c` twice, and
+    // the C function returns the pointer the receiver arrived as.
+    ro (d, c) = compile_to_c("${PV_DECLS}fn main() {\n mut c = mk()\n println(c.set(5).set(6).n)\n println(c.n)\n}", std_decls())
     assert(d.len() == 0, messages(d))
-    assert(c.contains("return *_novac_self;"), c)
-    // CONTROL: a by-COPY receiver (a small `ro @`) returns `self` as it is.
+    assert(c.contains("NovaValue_Pv* novac_fn_set"), c)
+    assert(c.contains("return _novac_self;"), c)
+    // The call is read THROUGH the pointer: the next link takes `&` of that lvalue.
+    assert(c.contains("(&(*novac_fn_set"), c)
+    // A temporary at the head of the chain is still spilled once.
+    ro (dt, ct) = compile_to_c("${PV_DECLS}fn main() {\n println(mk().set(5).set(6).n)\n}", std_decls())
+    assert(dt.len() == 0, messages(dt))
+    assert(ct.contains("(&_novac_l"), ct)
+    // CONTROL: a by-COPY receiver (a small `ro @`) returns its value as it is.
     ro (dc, cc) = compile_to_c("type Sm value {\n n int\n}\nfn Sm @same() -> @ {\n}\n\
 fn main() {\n ro s = Sm { n: 3 }\n println(s.same().n)\n}", std_decls())
     assert(dc.len() == 0, messages(dc))
-    assert(!cc.contains("return *_novac_self;"), cc)
+    assert(!cc.contains("NovaValue_Sm* novac_fn_same"), cc)
 }

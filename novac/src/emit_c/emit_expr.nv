@@ -14,7 +14,7 @@
 
 module novac.emit_c
 
-import ../sem.{c_free_symbol}
+import ../sem.{c_free_symbol, call_returns_recv_ref}
 import ../sem.{effect_op_dispatcher_c}
 // The absent local (F65): a node that was not hoisted.
 import ../lower.{no_local}
@@ -536,6 +536,11 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // `body_ours`: the file's own, a program module's, or an instance this
         // unit makes from a handed body (274.11 E.10 step 4c).
         ro static = is_ty(@ctx.fns.rows[raw_row(cr.callable_row())].owner)
+        // A `-> @` by reference (R6/R8, sem/value_recv.nv) returns the receiver's
+        // pointer: the value is read through it -- `(*f(..))`, an lvalue the next
+        // by-pointer link takes `&` of again, so a chain writes one storage.
+        ro by_ref = call_returns_recv_ref(@ctx, @out, e)
+        @body.append(if by_ref { "(*" } else { "" })
         // ONE question decides whose body this is (`Ctx @instantiates` asks the
         // shell by `c_overload_symbol`), and the name printed below is that
         // door's answer: a `consume` method of the shell (1564) and a second
@@ -564,6 +569,8 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // A static method takes no receiver: its slots are its written arguments.
         @emit_bound_args(kids, 3, !static, e.id_of(), cr.callable_row())
         @body.append(")")
+        // Closes the read through a `-> @` reference opened before the name.
+        @body.append(if by_ref { ")" } else { "" })
     } else if k == NodeKind.Call && @out.contract_of(e.id_of()).is_some() {
         // `assert(..)` (D81): the checker typed the intrinsic and noted its text.
         @emit_assert(e, branch_children(e))
