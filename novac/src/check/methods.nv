@@ -27,7 +27,7 @@ import ../diag.{ice}
 import ../names.{raw_decl}
 import ../resolve.{FnLookup}
 import ../sem.{LitArg, branch_children, ArgSpec, ArgClass, CallForm, FnRow, CalleeTarget, raw_row, no_row, bind_slots}
-import ../sem.{is_arg_value_kind}
+import ../sem.{is_arg_value_kind, arg_expr_of}
 import ../sem.{c_method_symbol, c_overload_symbol, impl_of_proto, ty_source_name, decl_of_ty}
 import ../sem.{row_recv_by_pointer}
 import ../sem.{option_payload}
@@ -434,7 +434,9 @@ fn Checker mut @type_method_call(e Node) -> () {
     @value_expect = no_ty()
     @type_expr(kids[0])
     mut i = 0
-    for c in kids {
+    for k in kids {
+        // A named argument is typed by its value (registry 1684, calls.nv).
+        ro c = arg_expr_of(k)
         if i > 2 && is_arg_value_kind(c.kind_of()) && !@is_deferred_variant(c) {
             // A bare `None` (`@is_deferred_variant`) is typed after the lookup,
             // by its parameter (registry 1565).

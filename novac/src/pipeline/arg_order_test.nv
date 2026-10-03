@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Role: D484 s2 -- arguments run left to right at EVERY call level, not only the
+//   top one (registry 1681): under `println` and under another call the calling
+//   arguments are laid down in temporaries in source order. The C compiler fixes
+//   no argument order (the oracle on Windows runs them right to left, №685), so
+//   the order is pinned here in the emitted C rather than by a fixture's output.
+// Used by: nova test novac/src/pipeline (the module-test batch of the gate).
+// Guarded by: check-novac-module-tests; the fixtures value_arg_once/,
+//   value_arg_nested/ and value_arg_named/ through the differential.
+//
+// THE TEST CARRIES ITS CONTROL. Reverse probe, run before the commit: with
+// `@hoist_ordered_args` ordering only its own call (the step-10 door), the
+// nested assertions redden -- the calls stand inline in the C call.
+
+module novac.pipeline
+
+/// Where `say(n)` is called in `c`, or -1 when it is not.
+fn say_at(c str, n int) -> int => c.find("_say__nova_int__to_nova_int(((nova_int)${n}LL))") ?? -1
+
+test "the arguments of a call under `println` and under another call run left to right (D484)" {
+    ro prog = "fn say(n int) -> int {\n println(n)\n n\n}\nfn id(x int) -> int => x\nfn three(a int, b int, c int) -> int => a + b + c\nfn main() {\n println(three(say(1), say(2), say(3)))\n ro r = id(three(say(4), say(5), say(6)))\n println(r)\n}"
+    ro (d, c) = compile_to_c(prog, std_decls())
+    assert(d.len() == 0, messages(d))
+    // Under `println`: each call laid down in its own temporary, in order.
+    assert(say_at(c, 1) >= 0 && say_at(c, 1) < say_at(c, 2) && say_at(c, 2) < say_at(c, 3), c)
+    // Under `id(..)`: the inner call's arguments in order, too.
+    assert(say_at(c, 4) >= 0 && say_at(c, 4) < say_at(c, 5) && say_at(c, 5) < say_at(c, 6), c)
+    // And not inline: the inner call reads temporaries, never a `say` call.
+    assert(!c.contains("_three__nova_int__nova_int__nova_int__to_nova_int(novac"), "a calling argument stayed inline")
+}

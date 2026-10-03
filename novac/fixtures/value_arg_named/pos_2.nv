@@ -1,0 +1,22 @@
+module value_arg_named.pos_2
+
+// A NAMED argument's value with effects (registry 1684): the value is typed and
+// laid down like a positional one -- a call, an operator over a call, a `match`
+// whose scrutinee calls, beside a calling positional argument. Each `say` once.
+fn say(n int) -> int {
+    println(n)
+    n
+}
+
+fn step(a int, by int = 1) -> int => a * 10 + by
+
+fn main() {
+    println(step(1, by: say(2)))
+    ro k = 3
+    println(step(4, by: k + say(5)))
+    ro r = step(say(6), by: match say(7) {
+        7 => 7
+        _ => 0
+    })
+    println(r)
+}

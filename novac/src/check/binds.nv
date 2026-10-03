@@ -27,7 +27,7 @@ import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING,
 import ../builtins.{VEC_INDEX_METHOD, VEC_INDEX_SET_OP, VEC_LEN_METHOD, EMPTY_CTOR, vec_op_method, vec_op_is_overload}
 import ../names.{NameTable, NamespaceId}
 import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
-import ../sem.{shape_of, ctor_field_name}
+import ../sem.{shape_of, ctor_field_name, contains_call}
 import ../sem.{Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text}
 import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of}
 import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
@@ -401,8 +401,21 @@ fn Checker mut @judge_record_ctor(ctor Node, vtype TyId) -> () {
             // bare `None` for an `Option[T]` field takes it, as an argument
             // takes its parameter's (#1565) -- `default_expr: None` in harvest.
             @value_expect = @ctor_field_expect(vtype, ctor_field_name(c))
+            ro mark = @out.len()
             @type_expr(fk[2])
             @value_expect = no_ty()
+            // Recorded for the same reason as an array element (registry 1681):
+            // the lowering orders an effectful field value through a temporary.
+            if @out.len() == mark && contains_call(fk[2]) {
+                ro ft = type_of(fk[2], @ctx, @scope, @chan)
+                if is_ty(ft) {
+                    @record(fk[2], ft)
+                } else {
+                    // Untypeable here: the field's own door speaks about it.
+                }
+            } else {
+                // Refused (one cause, one diagnostic), or no call: nothing to order.
+            }
         } else {
             // The type name and the braces of the ctor are children too, and
             // they hold no expression to type.
@@ -649,6 +662,15 @@ fn Checker mut @type_array_lit(init Node) -> TyId {
         @type_expr(e)
         if @out.len() > before { return no_ty() }
         ro et = type_of(e, @ctx, @scope, @chan)
+        // THE ELEMENT'S TYPE IS RECORDED, as `??` records its left operand: the
+        // lowering lays an effectful element down in a temporary of this type
+        // (F65, `@hoist_ordered_args`), and a free call records none of its own --
+        // without it `[f(), match g() {..}, h()]` ran `g` first (registry 1681).
+        if contains_call(e) {
+            @record(e, et)
+        } else {
+            // No call, nothing to order -- and a literal's POSITION width must win.
+        }
         if !is_ty(elem_t) {
             elem_t = et
         } else if et != elem_t {

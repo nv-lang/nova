@@ -28,7 +28,7 @@ module novac.check
 import ../sem.{c_free_symbol}
 // Which arguments have an observable order (F65) -- the same door the rule and
 // the lowering ask, so the three cannot disagree on WHICH arguments they mean.
-import ../sem.{contains_call}
+import ../sem.{contains_call, arg_expr_of}
 
 import ../tree.{Node, raw_node, NodeKind}
 // #1493: the file's import declarations are read leaf by leaf (`visible_imports`).
@@ -660,7 +660,9 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
 /// arbitrating it.
 fn Checker mut @record_arg_types(kids []Node, from int) -> () {
     mut i = 0
-    for c in kids {
+    for k in kids {
+        // A named argument's VALUE is what the hoist lays down (registry 1684).
+        ro c = arg_expr_of(k)
         if i < from || !is_arg_value_kind(c.kind_of()) {
             // The callee of a free call, and the receiver, dot and name of a
             // method call, are children too -- and none of them is an
@@ -793,7 +795,11 @@ fn Checker mut @type_free_call(e Node) -> () {
     // fn's return -- option_rules, wave W4).
     ro saved_expect = @value_expect
     @value_expect = no_ty()
-    for c in kids {
+    for k in kids {
+        // A NAMED argument is typed by its VALUE (registry 1684): the wrapper is
+        // no expression kind, so `f(by: k + 1)` left `k + 1` untyped and the
+        // emitter met "no type recorded" -- before any `match` stood there.
+        ro c = arg_expr_of(k)
         if !is_arg_value_kind(c.kind_of()) { continue }
         // A bare `None` takes its PARAMETER's instance, after the lookup (1565).
         if @is_deferred_variant(c) { continue }

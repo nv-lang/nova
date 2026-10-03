@@ -32,6 +32,14 @@ import ../sem.{branch_children, contains_call, is_expr_kind, leaf_kind}
 /// printed inline from the tree.
 fn is_block_form(k NodeKind) -> bool => k == NodeKind.Coalesce || k == NodeKind.Try
 
+/// A node whose expression children are OPERANDS it evaluates -- the carriers the
+/// two argument doors descend through (registries 1681, 1683). A closure, a block or
+/// a statement is none: what it holds runs at another time, or is its own lowering's.
+fn holds_arguments(k NodeKind) -> bool =>
+    k == NodeKind.Call || k == NodeKind.MethodCall || k == NodeKind.RecordCtor ||
+        k == NodeKind.ArrayLit || k == NodeKind.Bin || k == NodeKind.Unary ||
+        k == NodeKind.Paren || k == NodeKind.Index || k == NodeKind.FieldAccess
+
 /// `a && b` / `a || b`: the right side runs only when the left allows.
 fn is_short_circuit(e Node) -> bool {
     if e.kind_of() != NodeKind.Bin { return false }
@@ -226,21 +234,40 @@ fn Lowerer mut @hoist_ordered_args(call Node) -> () {
     // `mark("x", 0) > 1 && mark("y", 1) > 0` printed `eval y`). C's own `&&`
     // keeps the order and the short circuit (registry 1619's wave).
     if is_short_circuit(call) { return }
+    // A `match` / `if` / block form LOWERS ITS OWN INSIDES (its scrutinee or
+    // condition once, its arms only on their branch): its children are not
+    // arguments, and laying them down here ran the scrutinee twice (registry 1680).
+    if lowers_itself(call) || !holds_arguments(call.kind_of()) { return }
     ro kids = branch_children(call)
     mut effectful = 0
-    for c in kids {
+    for k in kids {
+        ro c = carried_expr(k)
         if !is_expr_kind(c.kind_of()) { continue }
         if !contains_call(c) { continue }
         effectful += 1
     }
-    if effectful < 2 { return }
+    if effectful < 2 {
+        // ONE effectful argument has no order against its siblings -- but its
+        // OWN arguments may: `id(three(f(), g(), h()))` and a call under
+        // `println` (registry 1681, D484 s2). Only the top call was ordered.
+        for k in kids {
+            ro c = carried_expr(k)
+            if !is_expr_kind(c.kind_of()) || !contains_call(c) { continue }
+            if @ir.local_of_node(c.id_of()) != no_local() { continue }
+            @hoist_ordered_args(c)
+        }
+        return
+    }
     // IN WRITTEN ORDER, which is the whole point: the children are walked
     // left to right and each hoist is a statement placed before the call's
     // own, so the order of effects is the order of the source by
     // construction rather than by anyone's care.
-    for c in kids {
+    for k in kids {
+        ro c = carried_expr(k)
         if !is_expr_kind(c.kind_of()) { continue }
         if !contains_call(c) { continue }
+        // Laid down already (an enclosing door got here first): once is the rule.
+        if @ir.local_of_node(c.id_of()) != no_local() { continue }
         ro t = @out.type_if_known(c.id_of())
         if !is_ty(t) {
             // SILENT-OK: an argument the checker recorded no type for was
@@ -272,18 +299,34 @@ fn Lowerer mut @hoist_ordered_args(call Node) -> () {
 fn Lowerer mut @hoist_sealed_args(call Node) -> () {
     // Not into a short circuit's right side: it lowers as a branch (lower_hoist.nv).
     if is_short_circuit(call) { return }
+    // Not into a form that lowers its own insides: a `match`'s scrutinee is laid
+    // down by `@lower_match` itself, and taking it for an argument here ran it
+    // twice (registry 1680, `match match f() {..} {..}`).
+    if lowers_itself(call) || !holds_arguments(call.kind_of()) { return }
     ro kids = branch_children(call)
     for k in kids {
-        // A constructor FIELD is an argument's position too (registry 1557).
-        ro c = if k.kind_of() == NodeKind.CtorField && branch_children(k).len() > 2 { branch_children(k)[2] } else { k }
+        // A constructor FIELD (registry 1557) and a NAMED argument (registry 1684)
+        // are an argument's position too.
+        ro c = carried_expr(k)
         if !is_expr_kind(c.kind_of()) { continue }
+        // ONCE PER NODE (registry 1680): `@hoist_ordered_args` may have laid this
+        // argument down already, and the doors beside this one ask the same.
+        if @ir.local_of_node(c.id_of()) != no_local() { continue }
         ro ck = c.kind_of()
+        // A NESTED CARRIER (registry 1683): `id(three(1, match k {..}, 1))` -- the
+        // value form two calls deep is lowered here too, before the seal; only
+        // the top call's arguments were, and the printer met the rest after it.
+        if ck != NodeKind.IfExpr && ck != NodeKind.MatchExpr && ck != NodeKind.Coalesce &&
+            ck != NodeKind.Try && ck != NodeKind.Unsafe {
+            @hoist_sealed_args(c)
+            continue
+        } else {
+            // A sealed form itself: lowered into its own local below.
+        }
         // `unsafe { .. }` JOINS THEM (registry 1525): `@lower_value_source`'s
         // third arm. std's `Vec[T] @get` returns `Some(unsafe { .. })`; check
         // took it, the printer had no arm, and every `get` instance the shell
         // lacks died in emit.
-        if ck != NodeKind.IfExpr && ck != NodeKind.MatchExpr && ck != NodeKind.Coalesce &&
-            ck != NodeKind.Try && ck != NodeKind.Unsafe { continue }
         ro t = @out.type_if_known(c.id_of())
         if !is_ty(t) {
             // SILENT-OK: refused where it was typed; nothing to hoist.
