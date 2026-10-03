@@ -70,12 +70,11 @@ fn Lowerer mut @lower_exit_value(e Node, dest Local, site NodeId) -> () {
 /// The auto-`@cleanup` calls the checker decided at exit `site` (D432): placed here,
 /// innermost binding first, before control leaves.
 fn Lowerer mut @lower_cleanups(site NodeId) -> () {
-    mut k = @out.cleanup_first(site)
-    if k < 0 { return }
-    while k < @out.cleanups.len() {
+    ro first = @out.cleanup_first(site)
+    if first < 0 { return }
+    for k in first..@out.cleanups.len() {
         ro r = @out.cleanups[k]
         if r.site != site { break }
         @ir.cleanup_call(CleanupCall { local: @ir.bound_local(r.binder), name: r.name, row: r.row })
-        k += 1
     }
 }
