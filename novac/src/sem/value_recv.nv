@@ -9,13 +9,16 @@
 //   size that rule reads.
 // Used by: check/check.nv (the receiver of a method on a value record is no
 //   longer refused), emit_c/emit_c.nv (the signature), emit_c/emit_expr.nv
-//   (the receiver at the call site, `@` and `@field` inside the body).
+//   (the receiver at the call site, `@` and `@field` inside the body),
+//   lower/lower_hoist.nv (a TEMPORARY receiver of a by-pointer method is
+//   spilled into a local, D32; `is_place_expr` says which is temporary).
 // Guarded by: novac/fixtures/value_recv (both sides of the threshold, byte
 //   for byte with the oracle), check-novac-differential.sh.
 
 module novac.sem
 
 import ../types.{TyId, is_ty}
+import ../tree.{Node, NodeKind}
 import ../builtins.{TypeKind, prim_row}
 
 /// D488 R5: the largest `ro @` receiver of a `value` record passed by COPY,
@@ -44,6 +47,19 @@ export fn row_recv_by_pointer(ctx Ctx, row FnRow) -> bool {
     if !fd.has_recv || fd.param_cnt == 0 { return false }
     ro p = ctx.fns.params[fd.param_off]
     is_value_record(ctx, p.type_id) && value_recv_by_pointer(ctx, p.type_id, p.mode)
+}
+
+/// Is this receiver expression a PLACE C can take the address of -- a bound
+/// name, `@`, a field of a place or `@field`, parenthesised or not? A call, a
+/// literal or an index result is a temporary (novac's `xs[i]` is a call).
+/// Asked by the lowering, which spills a temporary receiver of a by-pointer
+/// method into a local (D32), and by check.
+export fn is_place_expr(e Node) -> bool {
+    ro k = e.kind_of()
+    if k == NodeKind.Name || k == NodeKind.SelfExpr || k == NodeKind.SelfField { return true }
+    if k == NodeKind.Paren { return is_place_expr(branch_children(e)[1]) }
+    if k == NodeKind.FieldAccess { return is_place_expr(branch_children(e)[0]) }
+    false
 }
 
 /// The C (size, alignment) of a type laid out INLINE, or (-1, -1) when novac

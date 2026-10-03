@@ -27,6 +27,7 @@ module novac.lower
 import ../tree.{Node, NodeKind, bin_op_of}
 import ../types.{is_ty}
 import ../sem.{branch_children, contains_call, is_expr_kind, leaf_kind}
+import ../sem.{is_place_expr, row_recv_by_pointer, raw_row, no_row}
 
 /// A form whose value is laid down by blocks of the lowering and so cannot be
 /// printed inline from the tree.
@@ -257,6 +258,32 @@ fn Lowerer mut @hoist_ordered_args(call Node) -> () {
     }
 }
 
+/// A TEMPORARY as the receiver of a method that takes a `value` record by POINTER
+/// (D488: `mut @` always, a large `ro @`) -- `mk().bump()`, `Pv { n: 4 }.bump()`,
+/// the inner link of `mk().set(5).set(6)` -- is laid down in a local first, and
+/// the call takes the local's address: D32's "a value temporary as a `mut @`
+/// receiver is legal: hoisted, `&temp`". The printer reads the local back
+/// (`@emit_expr`'s head) inside `(&...)`. A place needs nothing; a receiver
+/// already in a local (`@hoist_ordered_args`) keeps it.
+fn Lowerer mut @spill_value_receiver(call Node) -> () {
+    if call.kind_of() != NodeKind.MethodCall || !@out.has_callee(call.id_of()) { return }
+    ro row = match @out.callee_of(call.id_of()).target {
+        CalleeFn(r) => r
+        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => no_row()
+    }
+    if raw_row(row) < 0 || !@ctx.in_program(row) || !row_recv_by_pointer(@ctx, row) { return }
+    ro recv = branch_children(call)[0]
+    if is_place_expr(recv) || @ir.local_of_node(recv.id_of()) != no_local() { return }
+    ro t = @out.type_if_known(recv.id_of())
+    if !is_ty(t) {
+        // SILENT-OK: an untyped receiver was refused where it was typed.
+        return
+    }
+    ro l = @ir.temp(t)
+    @lower_place(recv, l)
+    @ir.remember_hoist(recv.id_of(), l)
+}
+
 /// ONE MORE gate before `@lo.ir.finish()` seals the graph (registry #TBD,
 /// the if-in-argument wave): an argument whose OWN kind needs sealed
 /// blocks (`IfExpr`, `Coalesce` -- `@lower_value_source`'s own dispatch)
@@ -272,6 +299,7 @@ fn Lowerer mut @hoist_ordered_args(call Node) -> () {
 fn Lowerer mut @hoist_sealed_args(call Node) -> () {
     // Not into a short circuit's right side: it lowers as a branch (lower_hoist.nv).
     if is_short_circuit(call) { return }
+    @spill_value_receiver(call)
     ro kids = branch_children(call)
     for k in kids {
         // A constructor FIELD is an argument's position too (registry 1557).

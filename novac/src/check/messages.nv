@@ -415,7 +415,6 @@ const TEST_MSG = "outside the subset: a `test` block arrives with the test runne
 
 /// A method whose `value` record receiver crosses by POINTER (D488 R3/R5) needs a
 /// PLACE to take the address of; a temporary receiver (`mk().m()`) has none yet.
-const VALUE_RECV_TEMP_MSG = "outside the subset: this method takes its `value` record receiver by pointer (D488), and the receiver here is a temporary -- novac does not spill it to a place yet (E2-b3)"
 
 /// A `mut` PARAMETER of a value record (the receiver's rule is D488, compiled
 /// since 2026-10-01): the fixed point lowers a `mut x V` parameter to `V*` (plan 184,

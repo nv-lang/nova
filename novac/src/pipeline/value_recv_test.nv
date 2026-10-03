@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Role: acceptance tests of a TEMPORARY as the receiver of a method that takes
+//   its `value` record by POINTER (D488 R3/R5; D32: "a value temporary as a
+//   `mut @` receiver is legal: hoisted, `&temp`") -- part 10 of p274-carina-k1:
+//   the four cells of the integrator's list (a call's result, a record literal,
+//   a result nobody reads, a `-> @` chain) and the `-> @` method itself, whose
+//   by-pointer body returned the pointer where its signature promised the value.
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file; the fixture
+//   novac/fixtures/value_recv/pos_2.nv (byte for byte with the oracle).
+//
+// Reverse probe (owner's rule, "prove it both ways"): with
+// `@spill_value_receiver` returning at once the receiver test reddens (no
+// `&` of a local); with the `*` of `return *_novac_self` dropped the `-> @` test
+// reddens. Both were run before this file was committed.
+
+module novac.pipeline
+
+/// A by-pointer `mut @` method, a `-> @` one, and a maker of the temporary.
+const PV_DECLS = "type Pv value {\n n int\n}\nfn Pv mut @bump() -> int {\n @n += 1\n @n\n}\n\
+fn Pv mut @set(v int) -> @ {\n @n = v\n}\nfn mk() -> Pv => { n: 1 }\n"
+
+test "a value temporary as a by-pointer receiver is spilled into a local and its address taken (D32, D488)" {
+    ro calls = "fn main() {\n println(mk().bump())\n println(Pv { n: 4 }.bump())\n mk().bump()\n}"
+    ro (d, c) = compile_to_c("${PV_DECLS}${calls}", std_decls())
+    assert(d.len() == 0, messages(d))
+    // The receiver is a LOCAL whose address the call takes -- never `&mk()`.
+    assert(c.contains("(&_novac_l"), c)
+    assert(!c.contains("(&novac_fn"), c)
+}
+
+test "a `-> @` method on a by-pointer value receiver returns the value, and its chain spills each link (R7b)" {
+    ro (d, c) = compile_to_c("${PV_DECLS}fn main() {\n println(mk().set(5).set(6).n)\n}", std_decls())
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("return *_novac_self;"), c)
+    // CONTROL: a by-COPY receiver (a small `ro @`) returns `self` as it is.
+    ro (dc, cc) = compile_to_c("type Sm value {\n n int\n}\nfn Sm @same() -> @ {\n}\n\
+fn main() {\n ro s = Sm { n: 3 }\n println(s.same().n)\n}", std_decls())
+    assert(dc.len() == 0, messages(dc))
+    assert(!cc.contains("return *_novac_self;"), cc)
+}
