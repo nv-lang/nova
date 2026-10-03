@@ -1530,6 +1530,9 @@
 # 2026-10-03, assistant nova-88: rows -> 1612, max -> 1693 (row 1651 filed CLOSED -- not reproducible on the main binary of 74c0c7d1b, six forms; reserve 1651 dropped from gaps).
 # 2026-10-03, integrator nova-20: rows -> 1614, max -> 1700 (rows 1699 (ghost variant in a pattern reaches C) and 1700 (extern void in a value arm) filed; 1694-1698 issued to cloud sessions and the assistant, reserved).
 # 2026-10-03, cloud session p274-carina-k1 (merge of origin/main dc2617993, part 10 sync): rows -> 1618, max -> 1700 (rows 1673 and 1679 arrive filed closed, 1689 and 1690 open; all four dropped from gaps).
+# 2026-10-03, cloud session p274-carina-k1 (part 11): rows -> 1620, max -> 1702 (rows 1701 filed closed, 1702 open, numbered by the integrator).
+rows=1620
+max=1702
 rows=1618
 max=1700
 rows=1614
