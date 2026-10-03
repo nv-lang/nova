@@ -14,17 +14,23 @@
 
 module novac.pipeline
 
-/// Where `say(n)` is called in `c`, or -1 when it is not.
-fn say_at(c str, n int) -> int => c.find("_say__nova_int__to_nova_int(((nova_int)${n}LL))") ?? -1
+/// Where the call written as `call` stands in `c`, or -1 when it does not.
+fn call_at(c str, call str) -> int => c.find(call) ?? -1
 
 test "the arguments of a call under `println` and under another call run left to right (D484)" {
     ro prog = "fn say(n int) -> int {\n println(n)\n n\n}\nfn id(x int) -> int => x\nfn three(a int, b int, c int) -> int => a + b + c\nfn main() {\n println(three(say(1), say(2), say(3)))\n ro r = id(three(say(4), say(5), say(6)))\n println(r)\n}"
     ro (d, c) = compile_to_c(prog, std_decls())
     assert(d.len() == 0, messages(d))
+    ro s1 = call_at(c, "_say__nova_int__to_nova_int(((nova_int)1LL))")
+    ro s2 = call_at(c, "_say__nova_int__to_nova_int(((nova_int)2LL))")
+    ro s3 = call_at(c, "_say__nova_int__to_nova_int(((nova_int)3LL))")
+    ro s4 = call_at(c, "_say__nova_int__to_nova_int(((nova_int)4LL))")
+    ro s5 = call_at(c, "_say__nova_int__to_nova_int(((nova_int)5LL))")
+    ro s6 = call_at(c, "_say__nova_int__to_nova_int(((nova_int)6LL))")
     // Under `println`: each call laid down in its own temporary, in order.
-    assert(say_at(c, 1) >= 0 && say_at(c, 1) < say_at(c, 2) && say_at(c, 2) < say_at(c, 3), c)
+    assert(s1 >= 0 && s1 < s2 && s2 < s3, c)
     // Under `id(..)`: the inner call's arguments in order, too.
-    assert(say_at(c, 4) >= 0 && say_at(c, 4) < say_at(c, 5) && say_at(c, 5) < say_at(c, 6), c)
+    assert(s4 >= 0 && s4 < s5 && s5 < s6, c)
     // And not inline: the inner call reads temporaries, never a `say` call.
     assert(!c.contains("_three__nova_int__nova_int__nova_int__to_nova_int(novac"), "a calling argument stayed inline")
 }
