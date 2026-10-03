@@ -1527,6 +1527,9 @@
 # 2026-10-03, integrator nova-20: rows -> 1609, max -> 1685 (merge of p1649-match-foreign-variant: row 1649 arrives, its reserve dropped).
 # 2026-10-03, integrator nova-20: rows -> 1610, max -> 1691 (row 1691 filed -- Carina's self-build depends on CRLF; 1686-1690 issued to the assistant and cloud sessions, reserved in gaps).
 # 2026-10-03, integrator nova-20: rows -> 1611, max -> 1693 (row 1693 filed -- accepted red passes other gate refusals; 1692 issued to cast, reserved).
+# 2026-10-03, assistant nova-88: rows -> 1612, max -> 1693 (row 1651 filed CLOSED -- not reproducible on the main binary of 74c0c7d1b, six forms; reserve 1651 dropped from gaps).
+rows=1612
+max=1693
 rows=1611
 max=1693
 rows=1590
@@ -2276,7 +2279,7 @@ stale_gaps=0
 #   указателем); строки едут в его ветке `r3-threshold-24`. Условие снятия: тем же слиянием номера убираются из `gaps`.
 # 2026-10-02, integrator: 1610-1611 В `gaps` — РЕЗЕРВ, выданный помощнику nova-88: №1610 (вывод `Empty` как ParseBoolError, ветка
 #   p1456-builtin-sum-method) и №1611 (f64 -> int молча, К1). Тем же слиянием номера убираются из `gaps`.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1644-1647,1650-1654,1658-1660,1664,1666-1669,1671-1679,1686-1690,1692
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1644-1647,1650,1652-1654,1658-1660,1664,1666-1669,1671-1679,1686-1690,1692
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding

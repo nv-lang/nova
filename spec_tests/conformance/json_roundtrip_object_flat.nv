@@ -9,6 +9,8 @@
 // поведенческое изменение: вывод теперь insertion-order, не sorted) —
 // мигрировано вместе с ретайпом (этот тест не проверял конкретный порядок
 // ключей в выводе, только len()/contains(), так что миграция чистая).
+// #1638: integer values are built with `JsonValue.int(..)` -- an `F64`
+// (`JsonValue.num(1.0)`) now prints as `1.0`, distinct from the integer `1`.
 module spec_tests.conformance
 import std.encoding.json.{JsonValue, Json}
 import std.collections.index_map.{IndexMap}
@@ -31,7 +33,7 @@ test "parse flat object — len = 2" {
 test "roundtrip flat object preserves len + key existence" {
     mut m = IndexMap[str, JsonValue].new()
     m.insert("k", JsonValue.str("v"))
-    m.insert("n", JsonValue.num(42.0))
+    m.insert("n", JsonValue.int(42))
     ro orig = JsonValue.object(m)
     ro encoded = orig.to_str()
     ro decoded = Json.parse(encoded)!!

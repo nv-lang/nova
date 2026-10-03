@@ -52,10 +52,20 @@ fn str @parse_int_core(radix int) -> Result[int, ParseIntError] {
         else if c >= 'a' && c <= 'z' { d = c - 'a' + 10 }
         else if c >= 'A' && c <= 'Z' { d = c - 'A' + 10 }
         if d < 0 || d >= radix { return Err(ParseIntError.InvalidDigit { at: j }) }
-        if acc > (9223372036854775807 - d) / radix { return Err(if neg { ParseIntError.BelowMin } else { ParseIntError.AboveMax }) }
-        acc = acc * radix + d
+        // A negative number accumulates DOWNWARD: |int.MIN| = int.MAX + 1 has no
+        // positive `int`, so accumulating the magnitude and negating at the end
+        // refused "-9223372036854775808" as BelowMin (#1698, found by #1638).
+        // Division truncates toward zero, i.e. it is the ceiling for a negative
+        // bound -- exactly the smallest `acc` whose step stays >= int.MIN.
+        if neg {
+            if acc < (int.MIN + d) / radix { return Err(ParseIntError.BelowMin) }
+            acc = acc * radix - d
+        } else {
+            if acc > (int.MAX - d) / radix { return Err(ParseIntError.AboveMax) }
+            acc = acc * radix + d
+        }
     }
-    Ok(if neg { -acc } else { acc })
+    Ok(acc)
 }
 
 /// Unsigned decimal/radix-N engine (`uint`/u64 domain, full 64-bit unsigned

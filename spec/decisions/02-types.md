@@ -2072,7 +2072,8 @@ record-coercion матчила бы `{ debug: ... }` против **полей s
 3. **Композиция с sum-coercion:**
    ```nova
    ro j HashMap[str, JsonValue] = { name: "alice", age: 30.0 }
-   // "alice" → Str("alice"), 30.0 → Num(30.0); оба → JsonValue
+   // "alice" → Str("alice"), 30.0 → F64(30.0); оба → JsonValue
+   // (целый литерал 30 лёг бы в Int(30): у JsonValue с №1638 есть оба)
    ```
 4. **Десугаринг — без промежуточных объектов:** block-expression с
    `new(cap)` + `@insert_new`, никакой промежуточный record не
