@@ -20,6 +20,11 @@
 # «command not found при сигнатуре о другом» — носитель: фрагмент НАСТОЯЩЕГО
 # лога прогона 37020233144 (задание novac-gate, 2026-10-02), где красное было
 # по новой причине, а принималось по имени.
+#
+# №1693: КАЖДАЯ строка отказа гейта в логе (`NOVAC-GATE FAIL:`, `GATE FAIL:`,
+# итоги `  * …`) обязана покрываться сигнатурой — одна записанная причина не
+# белит соседние. Носитель: фрагмент НАСТОЯЩЕГО лога прогона 37079124188 —
+# записанный обрыв дифференциала №1442 рядом с тремя незаписанными строками.
 
 set -u
 export LC_ALL=C
@@ -109,6 +114,23 @@ logs = {
            "2026-10-02T14:32:46.4048196Z scripts/gate-novac.sh: line 443: novac_bin_out: command not found\n"
            "2026-10-02T14:32:46.4180444Z NOVAC-GATE FAIL: novac не собирается текущим оракулом (274.3/F1) - см. target/novac-build.log\n"
            "2026-10-02T14:32:49.6075343Z check-novac-differential: FAIL — novac/src существует, а бинаря /home/runner/work/nova/nova/novac/target/novac нет\n"),
+ # НОСИТЕЛЬ №1693: фрагмент настоящего лога задания novac-gate прогона
+ # 37079124188 (кандидат e4269b734, 2026-10-02/03) — записанная причина №1442
+ # рядом с тремя НЕЗАПИСАННЫМИ строками отказа гейта; страж принял задание.
+ # Строки — в таб-формате живого пути (`gh run view --job <id> --log`:
+ # «задание⇥шаг⇥время содержимое»; имена задания и шага С ПРОБЕЛАМИ — срезка
+ # префикса обязана выдерживать это, первой живой редакцией не выдерживала).
+ "90006": ("novac-gate (self-hosted compiler builds + module tests)\tUNKNOWN STEP\t2026-10-02T23:49:48.1893680Z NOVAC-GATE FAIL: живая строка плана отстала от кода\n"
+           "novac-gate (self-hosted compiler builds + module tests)\tUNKNOWN STEP\t2026-10-02T23:49:48.1929189Z NOVAC-GATE FAIL: коммит в novac/** без строки в леджере времени (274 §1.4)\n"
+           "novac-gate (self-hosted compiler builds + module tests)\tUNKNOWN STEP\t2026-10-02T23:53:34.5239870Z NOVAC-GATE FAIL: самосборка отвергла файл вне базы (регресс меры 0.2, реестр №1665) — или база не сужена\n"
+           "novac-gate (self-hosted compiler builds + module tests)\tUNKNOWN STEP\t2026-10-03T00:05:44.9847895Z NOVAC-GATE FAIL: check-novac-differential.sh: ОБРЫВ, вердикта нет — предмет не судили (Г16, №1113)\n"
+           "novac-gate (self-hosted compiler builds + module tests)\tUNKNOWN STEP\t2026-10-03T00:08:21.4817775Z   * живая строка плана отстала от кода\n"
+           "novac-gate (self-hosted compiler builds + module tests)\tUNKNOWN STEP\t2026-10-03T00:08:21.4818252Z   * коммит в novac/** без строки в леджере времени (274 §1.4)\n"
+           "novac-gate (self-hosted compiler builds + module tests)\tUNKNOWN STEP\t2026-10-03T00:08:21.4818811Z   * самосборка отвергла файл вне базы (регресс меры 0.2, реестр №1665) — или база не сужена\n"
+           "novac-gate (self-hosted compiler builds + module tests)\tUNKNOWN STEP\t2026-10-03T00:08:21.4819740Z   * check-novac-differential.sh: ОБРЫВ, вердикта нет — предмет не судили (Г16, №1113) [tree=/home/runner/work/nova/nova head=e4269b734 branch=integrate]\n"),
+ # Тот же срез лога, но только записанная причина — принятие законно.
+ "90007": ("novac-gate (self-hosted compiler builds + module tests)\tUNKNOWN STEP\t2026-10-03T00:05:44.9847895Z NOVAC-GATE FAIL: check-novac-differential.sh: ОБРЫВ, вердикта нет — предмет не судили (Г16, №1113)\n"
+           "novac-gate (self-hosted compiler builds + module tests)\tUNKNOWN STEP\t2026-10-03T00:08:21.4819740Z   * check-novac-differential.sh: ОБРЫВ, вердикта нет — предмет не судили (Г16, №1113) [tree=/home/runner/work/nova/nova head=e4269b734 branch=integrate]\n"),
 }
 json.dump(logs, open(sys.argv[1], "w", encoding="utf-8"), ensure_ascii=False)
 PYEOF
@@ -198,6 +220,38 @@ printf '{}' > "$TMP/logs-empty.json"
 LOGS="$TMP/logs-empty.json"
 run_case "лог не достался -> FAIL «вердикта нет», не принято" 1 "вердикта нет" "$TMP/red.json"
 LOGS="$TMP/logs.json"
+
+echo "== №1693: КАЖДАЯ строка отказа гейта покрыта сигнатурой =="
+# Носитель: лог прогона 37079124188 — четыре строки NOVAC-GATE FAIL и итоги
+# `  * …`; записана только причина №1442. До фикса задание принималось.
+acc "nova-gate / novac-gate #9001 sig:\"$SIG_DIFF\" open row, extra refusals"
+runs "$TMP/extra.json" "nova-gate:completed:failure:506"
+"$PY" - "$TMP/jobs506.json" <<'PYEOF'
+import json, sys
+json.dump({"506": [{"name": "novac-gate (self-hosted compiler builds + module tests)",
+                    "conclusion": "failure", "databaseId": 90006}],
+           "507": [{"name": "novac-gate (self-hosted compiler builds + module tests)",
+                    "conclusion": "failure", "databaseId": 90007}]}, open(sys.argv[1], "w"))
+PYEOF
+_out="$("$PY" "$GUARD" "$SHA" --runs-json "$TMP/extra.json" --jobs-json "$TMP/jobs506.json" \
+        --logs-json "$LOGS" --registry "$REG" --accepted "$TMP/acc.list" 2>&1)"
+_rc=$?
+if [ "$_rc" = 1 ] && printf '%s' "$_out" | grep -qF "UNRECORDED cause" \
+   && printf '%s' "$_out" | grep -qF "живая строка плана отстала от кода"; then
+    ok "носитель 37079124188: записанная причина + три лишние строки отказа -> FAIL с лишней строкой"
+else
+    bad "носитель 37079124188 (ждал rc=1, UNRECORDED cause + лишняя строка): $(printf '%s' "$_out" | tail -3)"
+fi
+
+runs "$TMP/onlyrec.json" "nova-gate:completed:failure:507"
+_out="$("$PY" "$GUARD" "$SHA" --runs-json "$TMP/onlyrec.json" --jobs-json "$TMP/jobs506.json" \
+        --logs-json "$LOGS" --registry "$REG" --accepted "$TMP/acc.list" 2>&1)"
+_rc=$?
+if [ "$_rc" = 0 ] && printf '%s' "$_out" | grep -qF "accepted by open row #9001"; then
+    ok "тот же гейт, в логе одна записанная причина (FAIL и итоговая строка-звёздочка) -> ok"
+else
+    bad "только записанная причина (ждал rc=0, accepted): $(printf '%s' "$_out" | tail -3)"
+fi
 
 acc "nova-gate / novac-gate #9001 sig:\"$SIG_DIFF\" open reason"
 runs "$TMP/other.json" "nova-lint:completed:failure:502"

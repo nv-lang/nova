@@ -32,7 +32,12 @@ pushed, with the LOCAL sha being pushed):
      the third word of G16, not green. And a log carrying a marker of a
      DIFFERENT cause (`command not found`, `No such file`, `Traceback`,
      `panicked`) that no signature of the entry is about is refused as "red by
-     an UNRECORDED cause" with the first lines of the log;
+     an UNRECORDED cause" with the first lines of the log. Since #1693 EVERY
+     gate refusal line of the log (`NOVAC-GATE FAIL:`, `GATE FAIL:`, and the
+     end-of-run summary lines `  * <cause>`) must be covered by a signature:
+     one recorded cause no longer whitewashes the other refusals beside it
+     (run 37079124188: the #1442 differential cut sat next to three new
+     NOVAC-GATE FAIL lines, and the job was accepted);
   3. a run still queued / in progress is a refusal ("wait"), not a pass.
 
 WORDS OF THE VERDICT (G9: say only what was established): "no run" (CI never
@@ -91,6 +96,31 @@ GREEN_JOB = ("success", "skipped")
 # job's log carries one and no signature of the accepting entry is about it,
 # the red is by an UNRECORDED cause and is refused.
 ALIEN_CAUSE = ("command not found", "No such file", "Traceback", "panicked")
+# The gate's own refusal lines (#1693): EVERY one of them in the accepted job's
+# log must be covered by a signature -- one recorded signature no longer
+# whitewashes the three other NOVAC-GATE FAIL lines beside it (measured on run
+# 37079124188: the differential cut of #1442 sat next to a stale plan liveline,
+# a missing time-ledger row and the #1665 ratchet regression, and the job was
+# accepted "by open row #1442"). Two forms: the FAIL lines the gates print per
+# refusal and the summary lines `  * <cause>` at the run's end.
+GATE_REFUSAL = ("NOVAC-GATE FAIL:", "GATE FAIL:")
+# Log lines are prefixed by a timestamp -- either bare (`2026-10-03T...Z <line>`,
+# the `gh api .../jobs/<id>/logs` form) or tab-prefixed (`<job>\t<step>\t2026-...Z
+# <line>`, the `gh run view --job <id> --log` form; both job and step names
+# contain spaces, so the strip matches up to the timestamp, not two \S+ fields).
+LOG_TS = re.compile(r"^.*?\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z\s+")
+
+
+def refusal_lines(log):
+    """The gate's refusal lines of a job log: `NOVAC-GATE FAIL: ...`,
+    `GATE FAIL: ...` and the end-of-run summary lines `  * <cause>` (exactly
+    two spaces -- the one-space ` * [new branch]` of git-fetch is not one)."""
+    out = []
+    for raw in log.splitlines():
+        content = LOG_TS.sub("", raw.rstrip("\r"), count=1)
+        if content.startswith(GATE_REFUSAL) or content.startswith("  * "):
+            out.append(content.strip())
+    return out
 
 
 def say(msg):
@@ -281,6 +311,7 @@ def main():
                 continue
             wf_e, job_e, num, sigs = hit[0]
             used.add(hit[0])
+            all_sigs = tuple(s for h in hit for s in h[3])
             log = job_log(j, logs_map)
             if log is None:
                 problems.append(
@@ -290,15 +321,20 @@ def main():
                     % (wf, jn, jc, num))
                 continue
             alien = [m for m in ALIEN_CAUSE
-                     if m in log and not any(m in s for s in sigs)]
-            have = [s for s in sigs if s in log]
-            if alien or not have:
+                     if m in log and not any(m in s for s in all_sigs)]
+            have = [s for s in all_sigs if s in log]
+            uncovered = [l for l in refusal_lines(log)
+                         if not any(s in l for s in all_sigs)]
+            if alien or not have or uncovered:
                 if alien:
                     why = ("the log carries `%s` -- a cause no signature of the entry is "
                            "about" % alien[0])
-                else:
+                elif not have:
                     why = ("no signature of the entry is in the log (recorded: %s)"
-                           % "; ".join("`%s`" % s for s in sigs))
+                           % "; ".join("`%s`" % s for s in all_sigs))
+                else:
+                    why = ("the log carries a gate refusal line no signature covers: "
+                           "`%s`" % uncovered[0][:200])
                 problems.append(
                     "%s / %s: red by an UNRECORDED cause, entry #%s does not cover it: "
                     "%s. The log begins: %s" % (wf, jn, num, why, log_head(log)))
