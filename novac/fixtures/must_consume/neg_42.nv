@@ -1,0 +1,36 @@
+module must_consume.neg_42
+
+// A STRICTLY LINEAR VALUE MOVED ON THE RIGHT OF `??`: the fallback runs only when the
+// left side is `None`, so `t` is consumed on some paths only -- D133's partly-consumed
+// refusal at the end of its scope (registry 221.1 #1716). novac walked the right side
+// as an ordinary operand and accepted the form; the oracle refuses it with
+// `D133-not-consumed`.
+
+// NOVAC_EXPECT is consumed on only some paths before the end of its scope
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn eat(consume t Tx) -> int {
+    t.commit()
+    0
+}
+
+fn mk(n int) -> Option[int] {
+    if n > 1 { Some(n) } else { None }
+}
+
+fn run(n int) -> () {
+    consume t = Tx { id: n }
+    ro v = mk(n) ?? eat(t)
+    println(v)
+}
+
+fn main() {
+    run(2)
+}

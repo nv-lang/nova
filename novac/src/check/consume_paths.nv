@@ -149,7 +149,7 @@ fn Checker mut @flow_branch(n Node, mut fl ConsumeFlow, moved bool) -> () {
     @flow_come_out(fl, joined, paths, entry)
 }
 
-/// `a && b`, `a || b`: the right side runs on SOME paths only -- a branch with no
+/// `a && b`, `a || b`, `a ?? b`: the right side runs on SOME paths only -- a branch with no
 /// `else`, and its state joins the left side's. Walked as any operand until
 /// 2026-10-03, so a move on the right counted as made on every path: an affine value
 /// moved there was left uncleaned where the left side skipped it (found by the drop
@@ -167,8 +167,13 @@ fn Checker mut @flow_short_circuit(e Node, mut fl ConsumeFlow) -> () {
     fl.state = joined
 }
 
-/// Is `e` a short-circuit operator -- `&&` or `||`?
+/// Is `e` an operator whose right operand runs on SOME paths only -- `&&`, `||` or
+/// `??`? THE ONE DOOR of "an operand that does not always run" (#1716): the other
+/// forms that run a part conditionally are branches (`is_branch_kind`) and loops
+/// (`is_loop_kind`), which have their own joins; every other form evaluates all of
+/// its operands.
 fn is_short_circuit(e Node) -> bool {
+    if e.kind_of() == NodeKind.Coalesce { return branch_children(e).len() >= 3 }
     if e.kind_of() != NodeKind.Bin { return false }
     ro op = leaf_kind(branch_children(e)[1])
     op == TokenKind.AmpAmp || op == TokenKind.PipePipe
