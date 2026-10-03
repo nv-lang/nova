@@ -1,8 +1,0 @@
-fn main() {
-    mut v = [5]
-    ro w = v.dedup()
-    println(w.len())
-    mut u = [1, 1, 2]
-    ro x = u.dedup()
-    println(x.len())
-}

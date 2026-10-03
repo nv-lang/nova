@@ -1,9 +1,0 @@
-module hp
-
-import ./geo
-
-fn main() {
-    mut v = [1, 2, 3]
-    ro w = v.mark()
-    println(w.len())
-}

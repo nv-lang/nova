@@ -1,7 +1,0 @@
-fn is_empty[T](xs []T) -> bool => xs.len() > 100
-
-fn main() {
-    ro v = [1, 2, 3]
-    println(v.is_empty())
-    println(is_empty(v))
-}

@@ -1,5 +1,0 @@
-fn main() {
-    mut v = [1, 2]
-    v.clear()
-    println(v.len())
-}

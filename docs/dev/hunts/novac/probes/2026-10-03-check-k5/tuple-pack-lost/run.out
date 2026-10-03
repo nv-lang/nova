@@ -1,0 +1,38 @@
+=== PROGRAM
+     1	module p
+     2	
+     3	type Tx consume {
+     4	    id int
+     5	}
+     6	
+     7	fn Tx consume @commit() -> () {
+     8	    println("commit ${@id}")
+     9	}
+    10	
+    11	fn ok(consume t Tx) -> bool {
+    12	    t.commit()
+    13	    true
+    14	}
+    15	
+    16	fn mk(n int) -> Option[int] => if n > 0 { Some(n) } else { None }
+    17	
+    18	fn run(n int) -> () {
+    19	    consume a = Tx { id: n }
+    20	    consume b = Tx { id: n + 1 }
+    21	    ro p = (a, b)
+    22	    println("pair")
+    23	}
+    24	
+    25	fn main() {
+    26	    run(1)
+    27	}
+=== ORACLE: nova check prog.nv
+oracle check rc=1
+  D:/Temp/tmp.QuN4k12OJS/prog.nv:18:21: error: [D133-not-consumed] переменная `a` (тип `Tx`) не consumed до scope-exit. Добавьте вызов одного из: commit, либо `return a`, либо передайте в consume-param.
+    help: consume `a` via method (D133-not-consumed quick fix) --> D:/Temp/tmp.QuN4k12OJS/prog.nv:18:21 [maybe-incorrect]
+  D:/Temp/tmp.QuN4k12OJS/prog.nv:18:21: error: [D133-not-consumed] переменная `b` (тип `Tx`) не consumed до scope-exit. Добавьте вызов одного из: commit, либо `return b`, либо передайте в consume-param.
+    help: consume `b` via method (D133-not-consumed quick fix) --> D:/Temp/tmp.QuN4k12OJS/prog.nv:18:21 [maybe-incorrect]
+=== SUBJECT: novac check prog.nv
+novac check rc=1
+{"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"D:/Temp/tmp.QuN4k12OJS/prog.nv","start":318,"end":320},"message":"a value of must-consume type `(Tx, Tx)` is bound with `ro` or `mut` -- bind it with `consume x = ...`, which is where its obligation starts (D133)","poisoned_by":null}
+=== VERDICT: BOTH REFUSE

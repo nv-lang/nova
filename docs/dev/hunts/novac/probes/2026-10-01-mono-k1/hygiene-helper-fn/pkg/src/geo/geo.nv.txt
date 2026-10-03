@@ -1,5 +1,0 @@
-module hp.geo
-
-fn helper() -> int => 2
-
-export fn Vec[T] @tag() -> int => helper()

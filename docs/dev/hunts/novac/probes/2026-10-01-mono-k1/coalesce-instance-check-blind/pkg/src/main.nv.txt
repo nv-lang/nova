@@ -1,4 +1,0 @@
-fn main() {
-    ro d = [1.5, 2.5]
-    println(d.first() ?? 0.0)
-}

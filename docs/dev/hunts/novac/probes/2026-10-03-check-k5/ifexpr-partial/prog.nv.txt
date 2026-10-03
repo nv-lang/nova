@@ -1,0 +1,31 @@
+module p
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn ok(consume t Tx) -> bool {
+    t.commit()
+    true
+}
+
+fn eat(consume t Tx) -> int {
+    t.commit()
+    0
+}
+
+fn mk(n int) -> Option[int] => if n > 0 { Some(n) } else { None }
+
+fn run(n int) -> int {
+    consume t = Tx { id: n }
+    ro v = if n > 0 { eat(t) } else { 5 }
+    v
+}
+
+fn main() {
+    println(run(1))
+}

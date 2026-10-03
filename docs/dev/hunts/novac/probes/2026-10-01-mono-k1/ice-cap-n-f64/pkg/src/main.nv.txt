@@ -1,6 +1,0 @@
-fn main() {
-    mut v = [1.5, 2.5, 3.5]
-    v.cap(50)
-    println(v.cap())
-    println(v.len())
-}

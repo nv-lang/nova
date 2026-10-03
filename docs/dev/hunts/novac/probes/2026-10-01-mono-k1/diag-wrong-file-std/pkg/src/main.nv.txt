@@ -1,7 +1,0 @@
-fn main() {
-    ro v = [1, 2, 3]
-    ro w = [1, 2, 3]
-    ro u = [1, 2, 4]
-    println(v.equal(w))
-    println(v.equal(u))
-}

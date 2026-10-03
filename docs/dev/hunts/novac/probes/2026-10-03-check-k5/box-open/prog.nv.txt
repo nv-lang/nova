@@ -1,0 +1,37 @@
+module p
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn ok(consume t Tx) -> bool {
+    t.commit()
+    true
+}
+
+fn eat(consume t Tx) -> int {
+    t.commit()
+    0
+}
+
+fn mk(n int) -> Option[int] => if n > 0 { Some(n) } else { None }
+
+type Box consume {
+    consume inner Tx
+}
+
+fn Box consume @open() -> Tx => @inner
+
+fn run(n int) -> () {
+    consume b = Box { inner: Tx { id: n } }
+    consume t = b.open()
+    t.commit()
+}
+
+fn main() {
+    run(1)
+}
