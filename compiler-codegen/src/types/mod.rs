@@ -11321,8 +11321,6 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::Call { func, args, trailing } => {
                 // #1517: a variant constructor's payload count (`variant_ctor.rs`).
                 self.check_variant_ctor_arity(e, scope, errors);
-                // #1645: its payload against the fields every instance shares.
-                self.check_variant_ctor_payload(e, gs, scope, errors);
                 // 172.1.2 Шаг 2: func-позиция — Member здесь = метод-вызов, не field-read.
                 self.in_call_func.set(true);
                 self.f1_expr(func, gs, scope, errors);
@@ -11605,10 +11603,14 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                     }
                 }
+                // #1645: its payload against the fields every instance shares -- AFTER
+                // the arguments are walked (#1692: a call's type is known only then).
+                self.check_variant_ctor_payload(e, gs, scope, errors);
                 self.f1_check_call(
                     func, args, trailing.is_some(), gs, scope, errors, e.id,
                 );
                 self.f5_check_tuple_construct(func, args, e.span, scope, errors);
+                self.check_tuple_ctor_values(func, args, gs, scope, errors); // #1692
                 // Plan 172.1.2 [M-172.1-U4-recv-infer]: materialize a method/free-call's
                 // inferred RETURN type into the checker channel (§0/§1 — receiver-inference).
                 // The consumer (`infer_expr_c_type`) prefers `resolved_callees`+`fn_ret_by_span`
@@ -13814,11 +13816,6 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             ExprKind::RecordLit { type_name, fields, .. } => {
-                // #1448/#1096: every field against its declared type, and
-                // completeness where #1142's site does not reach.
-                if let Some(path) = type_name {
-                    self.check_named_record_lit(e, path, fields, gs, scope, errors);
-                }
                 for f in fields {
                     if let Some(v) = &f.value {
                         self.f1_expr(v, gs, scope, errors);
@@ -13837,6 +13834,11 @@ impl<'a> TypeCheckCtx<'a> {
                             }
                         }
                     }
+                }
+                // #1448/#1096: every field against its declared type, and completeness where
+                // #1142's site does not reach -- AFTER the values are walked (#1692).
+                if let Some(path) = type_name {
+                    self.check_named_record_lit(e, path, fields, gs, scope, errors);
                 }
             }
             ExprKind::TaggedTemplate { tag, args, .. } => {
@@ -23477,6 +23479,16 @@ impl<'a> TypeCheckCtx<'a> {
                 if let Some(v) = self.anon_record_lit_compat(expr, fields, expected, expr_gs, exp_gs, scope) {
                     return v;
                 }
+            }
+            // #1692 (D489): an `if`/`match` value made of numeric literals is its literals.
+            ExprKind::If { .. } | ExprKind::Match { .. } if Self::literal_tails(expr).is_some() => {
+                for t in Self::literal_tails(expr).unwrap_or_default() {
+                    match self.assignable_direct(t, expected, expr_gs, exp_gs, scope) {
+                        Compat::Ok | Compat::Unknown => {}
+                        other => return other,
+                    }
+                }
+                return Compat::Ok;
             }
             ExprKind::IntLit(v) => {
                 return match &exp_rt {

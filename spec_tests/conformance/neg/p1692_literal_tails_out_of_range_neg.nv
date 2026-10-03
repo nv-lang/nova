@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR E_LIT_OUT_OF_RANGE
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 #1692, the literal half's negative: an `if`/`match` value of
+// numeric literals takes the written type of its position, and each literal is
+// checked against that type's range (D489). The cause is named at the literal. A
+// value tail that is not a literal keeps its own type (`b`: E_IMPLICIT_NARROWING).
+module neg.p1692_literal_tails_out_of_range_neg
+
+fn main() {
+    ro c = 3
+    ro n = 5
+    // nova:expect E_LIT_OUT_OF_RANGE -- `300` takes `u8` from the binding and does not fit
+    ro a u8 = if c > 0 { 300 } else { 0 }
+    // nova:expect E_IMPLICIT_NARROWING -- `n` is an `int` value, not a literal: it keeps its type
+    ro b u8 = if c > 0 { n } else { 0 }
+    // nova:expect E_LIT_OUT_OF_RANGE -- a `match` arm's `-1` takes `u8` and does not fit
+    ro d u8 = match c { 3 => 1, _ => -1 }
+    println(a as int)
+    println(b as int)
+    println(d as int)
+}

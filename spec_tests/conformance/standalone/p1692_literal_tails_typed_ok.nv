@@ -1,0 +1,28 @@
+// EXPECT_STDOUT 200 255 -1 7 1.5 -1 0
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 #1692, the literal half: an `if`/`match` VALUE made of numeric
+// literals at a position with a written type is its literals -- each takes that
+// type and is checked against its range (D489; the D433 note in 02-types.md: "at an
+// annotated result the literal takes its type"). The oracle refused it as an `int`
+// value in a binding and an argument, and the new tuple door (#1692) met it in std
+// (`i128(if @ < 0 { -1 } else { 0 }, ..)`, std/src/math/int128.nv). Positions: a
+// binding, an argument, a named-tuple slot, a record field, a float position with
+// an exact integer literal; nested `else if` and `match` arms. Negative half:
+// neg/p1692_literal_tails_out_of_range_neg.nv.
+module standalone.p1692_literal_tails_typed_ok
+
+type P1692tPt(h i64, l u8)
+type P1692tPr { s i16 }
+
+fn p1692t_take(x u8) -> int => x as int
+
+fn main() Io {
+    ro c = 3
+    ro a u8 = if c > 0 { 200 } else { 0 }
+    ro t = P1692tPt(if c < 0 { 1 } else if c < 9 { -1 } else { 0 }, match c { 3 => 7, _ => 9 })
+    ro f f32 = if c > 0 { 1.5 } else { 2 }
+    ro r = P1692tPr { s: match c { 3 => -1, _ => 1 } }
+    ro z i64 = if c > 5 { -1 } else { 0 }
+    println("${a as int} ${p1692t_take(if c > 1 { 255 } else { 1 })} ${t.h} ${t.l as int} ${f} ${r.s} ${z}")
+}
