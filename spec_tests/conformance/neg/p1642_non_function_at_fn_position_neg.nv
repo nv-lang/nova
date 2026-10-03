@@ -1,0 +1,38 @@
+// EXPECT_COMPILE_ERROR E7301
+//
+// Registry 221.1 #1642: a value that is certainly not a function was accepted
+// at a function-typed position, and the program called it as code.
+// `HashMap.get_or_insert(key, fallback fn() -> V)` takes a FUNCTION;
+// `m.get_or_insert(1, [])` built and died at run time -- "fiber stack
+// overflow in slot 0 (access violation in fiber arena)". The checker folds
+// `fn(..) -> ..` into a permissive category, so a literal, a scalar variable,
+// a string, a record -- every one passed. One cell per form; the positive twin
+// is standalone/p1642_get_or_insert_fallback.nv.
+module neg.p1642_non_function_at_fn_position_neg
+
+type P1642Rec { v int }
+
+fn call_it(f fn() -> int) -> int => f()
+
+fn call_vec(f fn() -> []int) -> int => f().len()
+
+// nova:expect E7301 -- returning an int where `fn() -> int` is declared
+fn mk_bad() -> fn() -> int => 0
+
+fn main() Io {
+    // nova:expect E7301 -- an int literal is not a `fn() -> int`
+    ro a = call_it(0)
+    ro x = 5
+    // nova:expect E7301 -- an int variable is not a `fn() -> int`
+    ro b = call_it(x)
+    // nova:expect E7301 -- an array literal is not a `fn() -> []int`
+    ro c = call_vec([])
+    // nova:expect E7301 -- a string is not a `fn() -> int`
+    ro d = call_it("s")
+    // nova:expect E7301 -- a record is not a `fn() -> int`
+    ro e = call_it(P1642Rec { v: 1 })
+    mut m = HashMap[int, []str].new()
+    // nova:expect E7301 -- `get_or_insert` takes `fallback fn() -> V`, not the value
+    ro g = m.get_or_insert(1, [])
+    println("${a} ${b} ${c} ${d} ${e} ${g.len()}")
+}

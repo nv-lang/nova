@@ -1,0 +1,120 @@
+=== PROGRAM
+     1	module prog
+     2	
+     3	// The same property ("a value form laid down twice") in other syntaxes than
+     4	// `match`: an `if` value, a `??`, a `?` -- each as the middle of three
+     5	// arguments that all call something, the call standing as an initializer.
+     6	// D484: each argument is evaluated once, left to right.
+     7	fn say(n int) -> int {
+     8	    println(n)
+     9	    n
+    10	}
+    11	
+    12	fn sayo(n int) -> Option[int] {
+    13	    println(n)
+    14	    Some(n)
+    15	}
+    16	
+    17	fn three(a int, b int, c int) -> int => a * 100 + b * 10 + c
+    18	
+    19	fn tryit() -> Option[int] {
+    20	    ro r = three(say(7), sayo(8)?, say(9))
+    21	    Some(r)
+    22	}
+    23	
+    24	fn main() {
+    25	    println("if value: norm 1 2 3 then 123")
+    26	    ro r1 = three(say(1), if say(2) > 0 { 2 } else { 0 }, say(3))
+    27	    println(r1)
+    28	    println("coalesce: norm 4 5 6 then 456")
+    29	    ro r2 = three(say(4), sayo(5) ?? 0, say(6))
+    30	    println(r2)
+    31	    println("try: norm 7 8 9 then 789")
+    32	    println(tryit() ?? 0)
+    33	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=0
+oracle run rc=0
+=== SUBJECT: novac emit prog.nv
+novac emit rc=0
+--- Carina's C, the body of main
+static nova_unit nova_fn_main_impl(void) {
+    nova_print_str(_novac_strlit_0);
+    nova_print_newline();
+    nova_int _novac_l2 = novac_fn_prog_say__nova_int__to_nova_int(((nova_int)1LL));
+    nova_int _novac_l4 = (nova_int){0};
+    if (((nova_int)((novac_fn_prog_say__nova_int__to_nova_int(((nova_int)2LL))) > (((nova_int)0LL))))) {
+        _novac_l4 = ((nova_int)2LL);
+    } else {
+        _novac_l4 = ((nova_int)0LL);
+    }
+    nova_int _novac_l3 = _novac_l4;
+    nova_int _novac_l5 = novac_fn_prog_say__nova_int__to_nova_int(((nova_int)3LL));
+    nova_int _novac_l6 = (nova_int){0};
+    if (((nova_int)((novac_fn_prog_say__nova_int__to_nova_int(((nova_int)2LL))) > (((nova_int)0LL))))) {
+        _novac_l6 = ((nova_int)2LL);
+    } else {
+        _novac_l6 = ((nova_int)0LL);
+    }
+    nova_int r1 = novac_fn_prog_three__nova_int__nova_int__nova_int__to_nova_int(_novac_l2, _novac_l3, _novac_l5);
+    nova_print_int(r1);
+    nova_print_newline();
+    nova_print_str(_novac_strlit_1);
+    nova_print_newline();
+    nova_int _novac_l8 = novac_fn_prog_say__nova_int__to_nova_int(((nova_int)4LL));
+    NovaOpt_nova_int _novac_l10 = novac_fn_prog_sayo__nova_int__to_Option_of_nova_int(((nova_int)5LL));
+    nova_int _novac_l11 = (nova_int){0};
+    if (_novac_l10.tag == NOVA_TAG_Option_Some) {
+        _novac_l11 = _novac_l10.value;
+    } else {
+        _novac_l11 = ((nova_int)0LL);
+    }
+    nova_int _novac_l9 = _novac_l11;
+    nova_int _novac_l12 = novac_fn_prog_say__nova_int__to_nova_int(((nova_int)6LL));
+    NovaOpt_nova_int _novac_l13 = novac_fn_prog_sayo__nova_int__to_Option_of_nova_int(((nova_int)5LL));
+    nova_int _novac_l14 = (nova_int){0};
+    if (_novac_l13.tag == NOVA_TAG_Option_Some) {
+        _novac_l14 = _novac_l13.value;
+    } else {
+        _novac_l14 = ((nova_int)0LL);
+    }
+    nova_int r2 = novac_fn_prog_three__nova_int__nova_int__nova_int__to_nova_int(_novac_l8, _novac_l9, _novac_l12);
+    nova_print_int(r2);
+    nova_print_newline();
+    nova_print_str(_novac_strlit_2);
+    nova_print_newline();
+    NovaOpt_nova_int _novac_l15 = novac_fn_prog_tryit__to_Option_of_nova_int();
+    nova_int _novac_l16 = (nova_int){0};
+    if (_novac_l15.tag == NOVA_TAG_Option_Some) {
+        _novac_l16 = _novac_l15.value;
+    } else {
+        _novac_l16 = ((nova_int)0LL);
+    }
+    nova_print_int(_novac_l16);
+    nova_print_newline();
+    return NOVA_UNIT;
+}
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+=== STDOUT, line by line: oracle | Carina
+  1  if value: norm 1 2 3 then 123| if value: norm 1 2 3 then 123
+  2  1                       | 1
+  3  2                       | 2
+  4  3                       | 3
+  5  123                     | 2
+  6  coalesce: norm 4 5 6 then 456| 123
+  7  4                       | coalesce: norm 4 5 6 then 456
+  8  5                       | 4
+  9  6                       | 5
+ 10  456                     | 6
+ 11  try: norm 7 8 9 then 789| 5
+ 12  7                       | 456
+ 13  8                       | try: norm 7 8 9 then 789
+ 14  9                       | 7
+ 15  789                     | 8
+ 16                          | 9
+ 17                          | 8
+ 18                          | 789
+=== VERDICT: DIFFERENT stdout

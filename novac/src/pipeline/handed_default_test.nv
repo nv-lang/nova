@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/pipeline/handed_default_test.nv -- a call that omits a slot whose
+// default is declared in ANOTHER file and is not a literal is refused by name
+// (registry 1578, check/handed_default.nv). Reverse probe: with
+// `refuse_foreign_defaults` not called (check/run.nv) the refusal case reddens.
+//
+// It used to be held by the fixture default_handed/neg_1 on std's
+// `StringBuilder.new()` (`cap int = INITIAL_CAPACITY`); since registry 1563 a
+// default naming its module's constant arrives as the literal, so that carrier
+// is legal and std hands no other reachable one -- the class is held here, on a
+// program module, with a call default.
+
+module novac.pipeline
+
+/// The program's other module: a default that is a CALL.
+fn seed_helpers() -> str => "module novac.helpers\nfn seed() -> int => 4\nexport fn pick(n int = seed()) -> int => n\n"
+
+test "omitting a handed non-literal default is refused by name, writing the argument compiles (registry 1578)" {
+    mut texts = std_decls()
+    texts.push(seed_helpers())
+    ro decls = parse_decls(texts)
+    mut link = InteropTable.new()
+    mark_program(link, parse_decls([]str.of(seed_helpers())))
+    ro (d, _) = compile_to_c_with("module novac.user\nimport ../helpers.{pick}\nfn main() {\n println(pick())\n}", decls, link)
+    assert(messages(d).contains("is not a literal -- novac carries only a literal"), messages(d))
+    // CONTROL: the slot WRITTEN at the call needs no default.
+    ro (d0, _) = compile_to_c_with("module novac.user\nimport ../helpers.{pick}\nfn main() {\n println(pick(5))\n}", decls, link)
+    assert(!messages(d0).contains("is not a literal"), messages(d0))
+}

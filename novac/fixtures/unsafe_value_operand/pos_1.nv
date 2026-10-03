@@ -1,0 +1,15 @@
+module unsafe_value_operand.pos_1
+
+// `unsafe { e }` with no statement IS `e` (D216: the block is a typing context
+// and does nothing at run time), so it stands in every value position, not only
+// where the lowering hoists a block into a temporary (an initializer, an
+// argument, a tail): here the operand of a cast and of an addition. Until
+// 2026-10-02 novac refused both by position ("an `unsafe` block is compiled as
+// a statement, an initializer, a call argument or a body's tail").
+fn code_of(c char) -> int => unsafe { c as u8 } as int
+
+fn main() {
+    ro ch = 'q'
+    println(code_of(ch))
+    println(unsafe { ch as u8 } as int + 1)
+}

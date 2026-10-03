@@ -1,0 +1,22 @@
+module own_static.pos_1
+
+// A STATIC method of the program's own type (`fn Tab.new() -> Tab`): its body
+// is the program's, compiled into this unit -- never a question for the shell.
+// Found by p274-carina-strarm on main: "the shell novac links into carries no
+// `new` for Tab". The static door asks `Ctx @in_program` first (task 4 of
+// p274-carina-mono-k2, 0bb67d3f9), and that door answers yes for every row
+// whose body this unit compiles. A static of a primitive beside it (`str`'s,
+// registry 1631) and one with an argument keep the axes apart.
+type Tab { n int }
+
+fn Tab.new() -> Tab => { n: 0 }
+
+fn Tab.sized(n int) -> Tab => { n }
+
+fn main() {
+    ro t = Tab.new()
+    ro u = Tab.sized(5)
+    println(t.n)
+    println(u.n)
+    println(str.new().byte_len())
+}

@@ -142,20 +142,34 @@ export fn Ctx @instantiates(row FnRow, args []TyId) -> bool {
     if @handed.decl_of(row).is_none() { return false }
     ro fd = @fns.rows[raw_row(row)]
     if args.len() != fd.tparam_cnt { return false }
+    // A NON-generic row of another module of the PROGRAM is compiled by its
+    // owner unit, never a second time here (274.11 E.10 step 2a); a generic one
+    // is instantiated by the caller, which alone knows the substitution.
+    if fd.tparam_cnt == 0 && @in_program(row) { return false }
+    // A declaration with no body (`extern "nova"`) has nothing to make an
+    // instance FROM: the shell's or nothing (registry shell-str, task 4).
+    ro bodied = match @handed.decl_of(row) {
+        Some(d) => has_body(d)
+        None => false
+    }
+    if !bodied { return false }
     // A FREE generic function of another module (`alloc_buf[T]`, 274.11 E.10
     // step 4c-2): the shell's spelling of its instances is not novac's to
     // compute, so a generic one with a BODY is always this unit's to make --
     // under OUR name, which cannot collide with the shell's. An `extern` one
     // has no body to make it from.
+    // A NON-generic one is this unit's to make only when the shell does not
+    // carry it (task 4: std's private `is_ascii_ws`, called from the body of
+    // `str @trim_ascii`, was printed under the shell's name the shell lacks).
     if !fd.has_recv && !is_ty(fd.owner) {
-        return fd.tparam_cnt > 0 && has_body(@handed.decl_of(row) ?? return false)
+        return fd.tparam_cnt > 0 || !@interop.has(c_free_symbol(@, row))
     } else {
         // A method or a static method: the shell is asked below.
     }
     // A STATIC method (`Vec[T].new`) is spelled off its owner type, a method
     // off its receiver (274.11 E.10 step 4c-2).
     if is_ty(fd.owner) {
-        return has_body(@handed.decl_of(row) ?? return false) && !@interop.has(c_static_symbol(@, row, args))
+        return !@interop.has(c_static_symbol(@, row, args))
     } else {
         // A method: its receiver is parameter zero.
     }
@@ -194,12 +208,6 @@ fn Ctx @overload_ordinal(row FnRow) -> int {
 /// own, a handed row of a program module, or an instance this unit makes from
 /// a handed body? The door that decides whose NAME a call prints.
 export fn Ctx @body_ours(row FnRow, args []TyId) -> bool => @in_program(row) || @instantiates(row, args)
-
-/// Is `t` a VECTOR (`[]T`, `Vec[T]`) -- the receiver of the implicit vector
-/// operations? One question for the checker that decides `==` on two vectors
-/// (D46) and the emitter that spells it (`vec_op_c`); two readers, one answer.
-export fn is_vector_ty(ctx Ctx, t TyId) -> bool =>
-    is_ty(t) && ctx.tys.names_a_decl(t) && decl_of_ty(ctx, t).name == SLICE_HEAD
 
 /// Is `row` -- a callable NAMED like the implicit vector operation `name` (the
 /// caller walks the name's chain in the callable index) -- the std

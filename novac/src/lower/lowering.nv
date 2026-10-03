@@ -616,7 +616,7 @@ fn Lowerer mut @lower_while_let(st Node) -> () {
         }
         // Any other variant (sweep 10): its test has no negated spelling, so
         // the body sits in the test's then-branch and the else leaves.
-        Expr(_) | NotSome(_) | FrameEntered(_) | Holds(_) => {
+        Expr(_) | NotSome(_) | FrameEntered(_) | Holds(_) | Flag(_) => {
             ro test_c = @ir.begin_if(@variant_test(pat, ot, lo), ElseShape.Braced)
             @lower_pattern_bind(pat, ot, lo)
             @lower_block_stmts_fn(kids[whilelet_body_at(kids)], false)

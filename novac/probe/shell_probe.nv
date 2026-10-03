@@ -154,7 +154,32 @@ fn main() {
     // `index(Range)` and `end_index` of Vec[str], the walk's `len`/`get`, and
     // the element read of Vec[u8].
     println("sl = ", slice_probe(argv_probe(), 0), " ", last_slash("a/b"))
+
+    // Registry #1573: `==` on `[]int` -- the comparison of
+    // `Interner @args_equal` (types.nv: `@args[a..b] == want` over `[]TyId`,
+    // whose newtype element the oracle erases to `nova_int`). Keeps `equal` of
+    // Vec[int] alive. The SLICE is not kept: since registry 1557 novac makes
+    // a Vec's `index(Range)` from std's body when the shell lacks it.
+    println("se = ", slice_eq_probe([]int.of(1, 2, 3), []int.of(1, 2)))
+
+    // `HashMap[str, int]` -- the map of `names.NameTable` (names.nv:81): its
+    // constructor `HashMap[str, int].new()`, `insert`, `get`, `clear`. Keeps
+    // that instance alive in the shell, which otherwise carries HashMap only as
+    // stubs (274.5 P4, a type applied to arguments).
+    println("hm = ", name_map_probe("k"))
 }
+
+/// The four operations of `names.NameTable` on `HashMap[str, int]` (274.5 P4).
+fn name_map_probe(k str) -> int {
+    mut m = HashMap[str, int].new()
+    m.insert(k, 7)
+    ro hit = m.get(k) ?? -1
+    m.clear()
+    hit + (m.get(k) ?? -1)
+}
+
+/// Two `[]int` compared with `==` (registry #1573).
+fn slice_eq_probe(xs []int, want []int) -> bool => xs == want
 
 /// A `for` over an open slice of `[]str`, and a closed one (main.nv:412).
 fn slice_probe(a []str, from int) -> int {

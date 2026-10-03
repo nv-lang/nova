@@ -1,0 +1,88 @@
+// EXPECT_STDOUT fn-if: 0 1 a1
+// EXPECT_STDOUT fn-match: 0 2 m2
+// EXPECT_STDOUT fn-block: 1 b3
+// EXPECT_STDOUT fn-return: 1 neg 1 pos
+// EXPECT_STDOUT op-tail: 0 1 a4
+// EXPECT_STDOUT op-direct: 1 d5
+// EXPECT_STDOUT op-return: 1 neg 1 pos
+//
+// Registry 221.1 #1641: an array literal of ANONYMOUS records -- `[{ name: "a",
+// n: k }]` -- takes its element type from the position's expected type
+// (D489). The expected type did not reach the tail of a branch (`if`/`else`,
+// a `match` arm, a block value) nor the body of a handler-literal operation,
+// whose declared `-> T` was ignored in favour of the enclosing function's
+// type. The literal stayed without an element type and codegen
+// monomorphized `Vec` with an EMPTY one: `cannot infer type argument`
+// (found under examples/real_world/orm_demo.nv, `in_memory_db_handler`,
+// the `RETURNING id` branch). Cells: each value position of a function body,
+// each of a handler operation, and `return` from the middle of both.
+module standalone.p1641_anon_record_array_branch_tail
+
+type Row2 { name str, n int }
+
+fn rows_if(k int) -> []Row2 {
+    if k == 0 {
+        []
+    } else {
+        [{ name: "a", n: k }]
+    }
+}
+
+fn rows_match(k int) -> []Row2 {
+    match k {
+        0 => []
+        _ => [{ name: "m", n: k }, { name: "m", n: k }]
+    }
+}
+
+fn rows_block(k int) -> []Row2 {
+    ro r []Row2 = {
+        ro j = k
+        [{ name: "b", n: j }]
+    }
+    r
+}
+
+fn rows_return(k int) -> []Row2 {
+    if k < 0 {
+        return [{ name: "neg", n: k }]
+    }
+    [{ name: "pos", n: k }]
+}
+
+type Src effect {
+    fn tail(k int) -> []Row2
+    fn direct(k int) -> []Row2
+    fn early(k int) -> []Row2
+}
+
+fn src() -> Effect[Src] => effect Src {
+    tail(k) -> []Row2 {
+        if k == 0 {
+            []
+        } else {
+            [{ name: "a", n: k }]
+        }
+    }
+    direct(k) -> []Row2 => [{ name: "d", n: k }]
+    early(k) -> []Row2 {
+        if k < 0 {
+            return [{ name: "neg", n: k }]
+        }
+        [{ name: "pos", n: k }]
+    }
+}
+
+fn first(rs []Row2) -> str => "${rs[0].name}${rs[0].n}"
+
+fn main() Io {
+    println("fn-if: ${rows_if(0).len()} ${rows_if(1).len()} ${first(rows_if(1))}")
+    println("fn-match: ${rows_match(0).len()} ${rows_match(2).len()} ${first(rows_match(2))}")
+    println("fn-block: ${rows_block(3).len()} ${first(rows_block(3))}")
+    println("fn-return: ${rows_return(-1).len()} ${rows_return(-1)[0].name} ${rows_return(1).len()} ${rows_return(1)[0].name}")
+    with Src = src() {
+        println("op-tail: ${Src.tail(0).len()} ${Src.tail(4).len()} ${first(Src.tail(4))}")
+        println("op-direct: ${Src.direct(5).len()} ${first(Src.direct(5))}")
+        println("op-return: ${Src.early(-1).len()} ${Src.early(-1)[0].name} ${Src.early(1).len()} ${Src.early(1)[0].name}")
+    }
+}

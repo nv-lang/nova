@@ -15,8 +15,14 @@
 # are not typed at all, so their own typing diagnostics are not in it. A unit
 # with no walk-refused file is typed whole, and its count is exact.
 #
-# A MEASURE, NOT A RATCHET (the integrator's decision, 2026-09-25): no guard
-# holds this number; it is quoted with its date and commit where it is used.
+# A MEASURE OF DIAGNOSTICS, A RATCHET OF FILES (revised 2026-10-02, registry
+# 221.1 №1665): the integrator's 2026-09-25 decision "no guard holds this
+# number" covered the DIAGNOSTIC count, and it still stands -- this total is
+# quoted with its date and commit where it is used. But the SET of refused
+# files is a ratchet now: on 2026-10-02 five files accepted at 00:23 were
+# refused by morning and nobody saw it until a hand measurement in the
+# evening. scripts/guards/check-novac-self-accepted.py compares the refused
+# set against scripts/guards/novac-self-accepted.baseline in both directions.
 # An ICE aborts a run and hides everything behind it, so the ICE count is
 # printed beside the total -- a total with ICE above zero is not a measure.
 #

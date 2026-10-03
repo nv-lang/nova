@@ -110,7 +110,13 @@
 #   priznak ostavsheysya raboty -- libuv doklonirovyvaetsya sam pri pervom
 #   `nova test`, i lyuboe otrabotavshee derevo potrebuet --force (zamer e6).
 #   Proveryat' 'est' li chto teryat' nado DO nego i otdel'no.
-worktrees=15
+# 2026-10-02 (integrator nova-20, by the owner's word "delete all old branches and folders"):
+#   15 -> 3. Removed 12 worktrees whose branch was merged into main (nova-accept, nova-hunt-mono,
+#   nova-kim, nova-p1532, nova-p1627, nova-p274-legacy, nova-p274, nova-wt-1352, nova-wt-research,
+#   nova.worktrees/project-review-request; nova-p274-e9s3 and nova-p283 had old uncommitted diffs,
+#   saved before removal). Left: main + the assistant's two live trees (nova-p1639, nova-p1642).
+#   A new worktree raises the count: remove a tree after its branch is merged.
+worktrees=3
 
 # БАМП 2026-08-29: 19 -> 20. Причина: открыто компилятор-окно p790
 # (`nova-p790`, ветка p790-fiber-cancel) под два К1-блокера тега №790/№791 —

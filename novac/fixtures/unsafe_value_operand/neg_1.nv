@@ -1,0 +1,12 @@
+module unsafe_value_operand.neg_1
+
+// ONE seeded cause: an unknown name INSIDE an `unsafe` block. Its refusal is
+// the only diagnostic -- the block is not also E_UNSAFE_UNUSED because the
+// operation that was refused was never counted as one (the cascade the walk
+// emitted until 2026-10-02: a second, false "unsafe block contains no unsafe
+// operation" about a block whose operation failed).
+// NOVAC_EXPECT unknown name
+fn main() {
+    ro b = unsafe { nosuch as u8 }
+    println(b)
+}

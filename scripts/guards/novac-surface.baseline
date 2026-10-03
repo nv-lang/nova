@@ -271,11 +271,10 @@
 # 2026-10-02, cloud session p274-carina-k1 (part 5, D216 `dist`): builtins 67 -> 68: `PTR_DIST`
 #   -- the raw-pointer intrinsic's name beside `PTR_OFFSET`, asked by check's typing of a
 #   pointer method (check/unsafe.nv) and by its emission (emit_c/emit_ptr.nv).
-# 2026-10-02, cloud session p274-carina-sweep (D46 on `str`, sweep 10): builtins 68 -> 69:
-#   `COMPARE_METHOD` -- the method an ordering lowers to (`a < b` is `a.@compare(b) < 0`), a name of
-#   the language beside `EQUAL_METHOD`; asked by check/operators.nv, which looks the row up by it.
-#   Same session, same day (D58, a `for` over an iterator): builtins 69 -> 70: `NEXT_METHOD` -- the
-#   method each turn of such a `for` calls, asked by check/for_iter.nv and spelled by emit_c/emit_place.nv.
+# 2026-10-03, cloud session p274-carina-sweep (sync with main dc2617993), builtins 68 -> 70:
+#   `COMPARE_METHOD` (D46: an ordering of two `str` calls `str @compare`; read by
+#   check/operators.nv and emit_c/emit_expr.nv) and `NEXT_METHOD` (D58: a `for` over an iterator
+#   calls `next`; read by check/for_iter.nv and emit_c/emit_place.nv) -- sweep 10, std names in builtins (P5).
 builtins 70
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
@@ -376,10 +375,14 @@ lex 11
 #   1542): PatTest (the nested subpattern's test, carried by Cond.Holds and printed by
 #   emit_c's pattern-test door) and FnBuilder.@note_arm_checks (how many nested-test
 #   Ifs an arm opened; emit_c finds the innermost through SwitchArm.checks).
-# 2026-10-02, cloud session p274-carina-sweep (D58, a `for` over an iterator): lower 93 -> 95:
-#   `NextRead` (the rvalue's payload: the `next` row and the iterator local) and `FnBuilder @call_next`
-#   (its one writer) -- read by emit_c/emit_place.nv, which prints `next(&it)` from the record.
-lower 95
+# lower 93 -> 94 (2026-10-01, the same session, registry 1568): `@note_arm_checks`
+#   became `@note_arm_heads` (the blocks of an arm's test Ifs -- the printer descends
+#   through a disjunction's switch to each) and `@set_bool` came in: the one constant
+#   the lowering writes, a disjunction's "an alternative held" flag.
+# 2026-10-03, cloud session p274-carina-sweep (sync with main dc2617993), lower 94 -> 96: `NextRead`
+#   and `FnBuilder @call_next` -- one turn of a `for` over an iterator (D58, sweep 10), recorded by
+#   lower/lowering.nv and printed by emit_c/emit_place.nv.
+lower 96
 main 0
 # mono -- НОВЫЙ модуль (2026-08-18, Э2-б2): коллектор достижимого.
 # Наружу три имени: тип Reach, вопрос @has (эмиттер спрашивает про каждую
@@ -1022,6 +1025,10 @@ resolve 23
 #   of every method on a value record that D488 replaces.
 # merge of p274-carina-sweep (deliveries 3-4) into the merge train (integrator, 2026-10-02): 336 + 3 (D488:
 #   RECV_COPY_MAX_BYTES, value_recv_by_pointer, row_recv_by_pointer) - 1 (recv_type_name) = 338.
+# source 6 -> 7 (2026-10-01, cloud session p274-carina-strarm, registry 1578):
+#   SourceText.@holds -- does a slice lie inside THIS file's text; the checker asks it
+#   of a handed default's first token (check/handed_default.nv), where an id can coincide.
+# (merge of origin/integrate 2488a47be into p274-carina-strarm, 2026-10-02: integrate's 6 + this branch's 1.)
 # merge of origin/integ/merge-train-1001 into p274-carina-cast (2026-10-02): the train's base
 #   plus what the sweep branch exported after the train took its earlier version -- pipeline
 #   `UnitFile` and sem's D488 doors (see the sweep chronicle lines on p274-carina-sweep);
@@ -1053,17 +1060,42 @@ resolve 23
 #   magnitude judges (check/literal_rules.nv) and both C spellings; the count stays 339.
 # merge of origin/main f80d61e00 into p274-carina-sweep (2026-10-02): main's 341 plus this
 #   branch's `literal_digits` (the two lines above) = 342; the count is the guard's on the merged tree.
+# merge of origin/main f80d61e00 into p274-carina-strarm (2026-10-02): main's counts plus this
+#   branch's SourceText.@holds (source 6 -> 7); the counts are the guard's on the merged tree.
+# merge of p274-carina-strarm (step 10) into main (integrator, 2026-10-02): the guard's counts on the
+#   merged tree -- sem 342 (main's, sweep's literal_digits included), source 7 (strarm's SourceText.@holds).
+# 2026-10-02, cloud session p274-carina-k1 (part 6, handed module values): sem 341 -> 342:
+#   `const_type_at` (sem/slots_decl.nv) -- where a constant's or module value's WRITTEN type
+#   starts; moved from check/const_types.nv, because sem's harvest now asks it too (a handed
+#   module value is registered only with a written type) -- one door for both, not two copies.
+# merge of p274-carina-k1 (part 6) into main (integrator, 2026-10-02): the guard's counts on the merged
+#   tree -- sem 343 (main's 342 plus k1's const_type_at), source 7 (unchanged).
+# merge of origin/main f80d61e00 into p274-carina-mono-k2 (task 4 sync): main's 341 plus
+#   this branch's `sole_expr_of_unsafe` (its line below) = 342 -- the guard's count on the merged tree.
+# 2026-10-02, cloud session p274-carina-mono-k2 (task 4): sem 338 -> 339: `sole_expr_of_unsafe`
+#   (sem/node_questions.nv) -- the one expression of `unsafe { e }`, asked by check's position
+#   gate (check/check.nv) and printed by the emitter (emit_c/emit_expr.nv): two askers, one door.
+# 2026-10-02, cloud session p274-carina-mono-k2 (registry 1647): sem 342 -> 343:
+#   `variant_sum_count` (sem/callables.nv) -- how many sums declare a variant name, the file's
+#   and the handed alike (D478 rule 2); asked by check's deferred-argument door and the lattice,
+#   where `variants_named`'s file-first count hid the language's `Result`/`Option` variants.
+# merge of p274-carina-mono-k2 (tasks 4-6) into main (integrator, 2026-10-02): the guard's counts on
+#   the merged tree -- sem 345 (main's 343 plus mono-k2's sole_expr_of_unsafe and variant_sum_count),
+#   source 7 (strarm's SourceText.@holds).
 # 2026-10-02, cloud session p274-carina-sweep (registry 1643 and D46 on vectors): sem 342 -> 344:
 #   `InteropTable @add_stub` (sem/interop.nv) -- the shell scan (emit_c/shell.nv) marks the erased
 #   generic layer's stub bodies, so `@has` answers no for them; `is_vector_ty` (sem/handed_bodies.nv)
 #   -- is this a `[]T`, asked by check's `==` door (check/operators.nv) and by the emitter that
 #   spells the call through `vec_op_c` (emit_c/emit_expr.nv): two readers, one answer.
-# 2026-10-02, cloud session p274-carina-sweep (sweep 10, `if <variant> = ..`): sem 344 -> 345:
-#   `is_option_some_pattern` -- is a pattern `Some(..)` over an Option. Asked by lower/lowering.nv
-#   (`@variant_test`: `Cond.IsSome` vs the arm head test); sem owns both the Option shape and the
-#   pattern head, and lower has no edge to builtins (architecture section 3), so the door lives here.
-sem 345
-source 6
+# merge of p274-carina-sweep (steps 8-9) into main (integrator, 2026-10-02): the branch's `is_vector_ty`
+#   is dropped with its second door for vector `==` (main's #1573 door stays the one); the counts
+#   are the guard's on the merged tree -- sem 346 (main's 345 plus the branch's `InteropTable @add_stub`, #1643).
+# 2026-10-03, cloud session p274-carina-sweep (sync with main dc2617993), sem 346 -> 347:
+#   `is_option_some_pattern` (sem/type_shape.nv) -- is a pattern `Some(..)` over an Option; asked by
+#   lower/lowering.nv `@variant_test` (sweep 10), which has no edge to builtins (architecture s3).
+#   The step-10 `is_vector_ty` is gone with the sync: main's one `==` door (registry 1573) stands.
+sem 347
+source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
 # шести местах четырёх модулей, и в половине следом брался `leaf_text` того же

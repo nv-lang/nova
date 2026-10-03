@@ -1,0 +1,31 @@
+=== PROGRAM
+     1	module prog
+     2	
+     3	// A `match` value as a NAMED argument (D102: `f(by: 2)` is how a defaulted
+     4	// parameter is reached). The refusal's own text lists "an argument" among
+     5	// the compiled positions. Legal Nova; the oracle prints 42 and 43.
+     6	fn step(a int, by int = 1) -> int => a + by
+     7	
+     8	fn main() {
+     9	    ro k = 3
+    10	    println(step(2, by: match k {
+    11	        3 => 40
+    12	        _ => 0
+    13	    }))
+    14	    ro r = step(3, by: if k > 0 { 40 } else { 0 })
+    15	    println(r)
+    16	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=0
+oracle run rc=0
+=== SUBJECT: novac emit prog.nv
+novac emit rc=1
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"<tmp>/prog.nv","start":326,"end":331},"message":"outside the subset: a `match` is compiled only as an initializer, a statement, a body tail, a match arm's body, an argument, an element or field, the right of an assignment or a scrutinee -- other positions are not compiled yet (E2, the control-flow horizon)","poisoned_by":null}
+{"id":"d1","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"<tmp>/prog.nv","start":398,"end":400},"message":"outside the subset: an `if` in value position is not compiled yet","poisoned_by":null}
+--- Carina's C, the body of main
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+(skipped: refused by novac, or no smoke cache)
+=== VERDICT: one side produced no run (see above)
+--- oracle stdout
+42
+43

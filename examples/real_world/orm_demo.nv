@@ -12,8 +12,9 @@
 // 3. Relations через композицию repo'ев: posts_of(user_id), без N+1.
 // 4. Pagination (Page[T]): cursor-based, типизированный Page-результат.
 // 5. Optimistic locking: update_versioned + Conflict ошибка.
-// 6. Транзакции с savepoints: вложенные in_transaction через handler-
-//    композицию (handler ловит throw → ROLLBACK TO SAVEPOINT).
+// 6. (Транзакции сняты 2026-10-02, реестр 221.1 №1639: операция
+//    `Db.in_transaction` удалена решением владельца, №570; замена —
+//    `consume`-тип `Tx` с `@cleanup`, проектируется в плане 268.)
 // 7. Spread в UPDATE: { ...user, balance: new_balance } обновляет одно
 //    поле без ручного перечисления остальных.
 // 8. Тесты — handler-substitution. Никаких mock'ов.
@@ -37,7 +38,6 @@ module real_world.orm_demo
 import std.data.sql.{Sql, SqlValue, Db, DbRow, SqlBuilder}
 import std.collections.vec_seq.{map}
 import std.text.{join}
-import std.time.duration.{Timestamp} // #971: was used unimported
 
 // ──────────────────────────────────────────────────────────────────────────
 // Domain — две сущности с relation
@@ -45,8 +45,15 @@ import std.time.duration.{Timestamp} // #971: was used unimported
 
 // Newtype'ы — domain-safety: `UserId` и `PostId` в сигнатурах
 // нельзя перепутать. В SQL coerce'ятся через `as u64`.
+// `UserId` is a `HashMap` key in `posts_of_many` -- it needs `Hash` (and
+// `Equal`); a newtype does not inherit them from `u64` (registry #1639: the
+// file did not type-check on main, and no guard saw it).
+#impl(Equal + Hash)
 type UserId u64
 type PostId u64
+
+fn UserId @equal(other UserId) -> bool => (@ as u64) == (other as u64)
+fn UserId @hash() -> u64 => @ as u64
 
 type User {
     ro id    UserId
@@ -54,7 +61,7 @@ type User {
     email          str
     balance        i64                   // для transfer пример
     version        i64                   // для optimistic locking
-    ro created_at Timestamp
+    ro created_at i64                 // unix seconds, as the row stores them
 }
 
 type Post {
@@ -62,7 +69,7 @@ type Post {
     ro user_id UserId              // FK → User.id
     title            str
     body             str
-    ro created_at Timestamp
+    ro created_at i64                 // unix seconds, as the row stores them
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -352,7 +359,7 @@ fn row_to_user(row DbRow) Fail[RepoError] -> User {
     User {
         id: id as UserId,
         name, email, balance, version,
-        created_at: Timestamp.from_unix(ts),
+        created_at: ts,
     }
 }
 
@@ -389,7 +396,7 @@ fn row_to_post(row DbRow) Fail[RepoError] -> Post {
         id: id as PostId,
         user_id: user_id as UserId,
         title, body,
-        created_at: Timestamp.from_unix(ts),
+        created_at: ts,
     }
 }
 
@@ -426,50 +433,12 @@ export fn posts_of_many(user_ids []UserId) Db Fail[RepoError] -> HashMap[UserId,
 
     mut grouped = HashMap[UserId, []Post].new()
     for p in posts {
-        mut bucket = grouped.get_or_insert(p.user_id, [])
+        // `get_or_insert` takes a FUNCTION for the absent value (#1642: `[]`
+        // here was accepted and would have been called as code).
+        mut bucket = grouped.get_or_insert(p.user_id, || [])
         bucket.push(p)
     }
     grouped
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Transactions — savepoints через handler-композицию
-// ──────────────────────────────────────────────────────────────────────────
-
-// transfer_balance — атомарный перевод средств между пользователями.
-//
-// Демонстрирует:
-// - вложенные `Db.in_transaction` — внешняя транзакция + savepoint
-//   на каждый шаг (handler сам решает BEGIN/SAVEPOINT/COMMIT по
-//   nesting-level).
-// - **spread в UPDATE**: `{ ...from, balance: from.balance - amount }`
-//   обновляет только нужное поле, остальные — копируются.
-// - optimistic locking через `update_versioned` — если версия не
-//   совпала, throw Conflict, handler делает rollback.
-//
-// Если внутри transfer что-то throw'нуло — handler автоматически
-// rollback'ит. Бизнес-код не пишет ни BEGIN, ни COMMIT.
-export fn transfer_balance(from_id UserId, to_id UserId, amount i64) Db Fail[RepoError] -> () {
-    if amount <= 0 { throw Inconsistent("amount must be positive") }
-
-    Db.in_transaction(|| {
-        ro repo = users_repo()
-        ro from = repo.find_by_id(from_id as u64)
-        ro to   = repo.find_by_id(to_id as u64)
-
-        if from.balance < amount {
-            throw Inconsistent("insufficient balance for ${from_id as u64}")
-        }
-
-        // spread — immutable update без перечисления остальных полей.
-        ro from_updated = { ...from, balance: from.balance - amount }
-        ro to_updated   = { ...to,   balance: to.balance + amount }
-
-        // Optimistic locking: если кто-то параллельно обновил баланс,
-        // version mismatch → Conflict → handler rollback'ит.
-        repo.update_versioned(from_updated, from.version)
-        repo.update_versioned(to_updated,   to.version)
-    })
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -543,7 +512,6 @@ fn in_memory_db_handler(mut storage HashMap[u64, DbRow]) -> Effect[Db] => effect
             if storage.contains(id) { 1 } else { 0 }
         }
     }
-    in_transaction(b) -> T => b()     // упрощённо: inline call без BEGIN/COMMIT
 }
 
 // Минимальный сидер для users-storage.
@@ -566,16 +534,24 @@ test "find_by_id returns the user" {
     }
 }
 
+// Is this failure `NotFound`? The handler below judges the thrown value: a
+// `match` over the `User` that `find_by_id` returns could never see a
+// `RepoError` variant (registry 221.1 #1649 refuses such an arm).
+fn is_not_found(e RepoError) -> bool => match e {
+    NotFound => true
+    _        => false
+}
+
 test "find_by_id throws NotFound for missing id" {
     mut storage = HashMap[u64, DbRow].new()
-    with Db = in_memory_db_handler(storage),
-         Fail[RepoError] = |e| interrupt e {
-        ro r = users_repo().find_by_id(999)
-        match r {
-            NotFound => ()                   // ожидаемый исход
-            _        => assert(false)
-        }
+    // `find_by_id` returns a `User` or throws; the verdict leaves through
+    // `interrupt`, so the `with` value is a `bool` either way.
+    ro not_found = with Db = in_memory_db_handler(storage),
+                        Fail[RepoError] = |e| interrupt is_not_found(e) {
+        ro _u = users_repo().find_by_id(999)
+        false
     }
+    assert(not_found)
 }
 
 test "Query fluent builder — where_eq + limit + fetch_all" {
@@ -621,38 +597,6 @@ test "bulk_load — anti-N+1 для списка id'ов" {
     }
 }
 
-// transfer с rollback на throw — главный transaction-тест.
-
-test "transfer rolls back on throw" {
-    mut commits = 0
-    mut rollbacks = 0
-
-    ro captured = with Db = effect Db {
-        query(q) -> []DbRow => []                     // всегда пусто → NotFound
-        exec(q) -> int => 0
-        in_transaction(b) -> T {
-            // Симулируем postgres-handler: при throw делаем rollback,
-            // при успехе — commit. На реальном соединении это были бы
-            // BEGIN/COMMIT/ROLLBACK SQL-команды.
-            ro r = with Fail[RepoError] = |e| interrupt Err(e) { Ok(b()) }
-            match r {
-                Ok(v)  => { commits += 1; v }
-                Err(e) => { rollbacks += 1; throw e }
-            }
-        }
-    },
-         Fail[RepoError] = |e| interrupt Some(e) {
-        transfer_balance(1 as UserId, 2 as UserId, 50)
-        None                                  // throw'а не было
-    }
-    match captured {
-        Some(NotFound) => ()                  // first find_by_id — NotFound
-        _              => assert(false)
-    }
-    assert(rollbacks == 1)
-    assert(commits == 0)
-}
-
 // Optimistic locking — Conflict при mismatch версии.
 
 test "update_versioned throws Conflict on version mismatch" {
@@ -668,7 +612,6 @@ test "update_versioned throws Conflict on version mismatch" {
             }
         }
         exec(q) -> int => 0             // ← 0 affected → Conflict
-        in_transaction(b) -> T => b()
     },
          Fail[RepoError] = |e| interrupt Some(e) {
         ro repo = users_repo()

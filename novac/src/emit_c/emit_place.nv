@@ -30,7 +30,7 @@ import ../sem.{branch_children, is_expr_kind, carrier_of, slice_shape_of}
 import ../sem.{FnRow, raw_row, c_callable, coerce_shell_symbol, c_shell_method, row_recv_by_pointer}
 import ../types.{TyId, is_ty}
 import ../lower.{Local, LocalDecl, AssignStmt, StoreStmt, Rvalue, Operand, OutputStmt, no_local}
-import ../builtins.{VEC_INDEX_METHOD, VEC_INDEX_SET_OP, VEC_LEN_METHOD, NEXT_METHOD}
+import ../builtins.{VEC_INDEX_METHOD, VEC_INDEX_SET_OP, VEC_LEN_METHOD, NEXT_METHOD, bool_c_literal}
 
 
 /// Prints ONE step of output: the printer of the value's CARRIER around the value.
@@ -102,6 +102,7 @@ fn Emitter @expr_of(rv Rvalue) -> Node {
         VariantField(_) => ice("emit_c: a variant field read reached expr_of -- only an assignment prints it")
         Read(_) => ice("emit_c: a place read reached expr_of -- only an assignment prints it")
         AnyData(_) => ice("emit_c: an unboxing reached expr_of -- only an assignment prints it")
+        Bool(_) => ice("emit_c: a flag constant reached expr_of -- only an assignment prints it")
         NoneOf => ice("emit_c: a `None` of the destination's type reached expr_of -- only an assignment prints it")
     }
 }
@@ -158,6 +159,11 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
             ro amp = if row_recv_by_pointer(@ctx, r.row) { "&" } else { "" }
             @emit_assign_head(d)
             @body.append("${sym}(${amp}${rd.name});\n")
+        }
+        Bool(b) => {
+            // A disjunction's "an alternative held" flag (registry 1568): the C keyword.
+            @emit_assign_head(d)
+            @body.append("${bool_c_literal(b)};\n")
         }
         NoneOf => {
             // The early return of `x?` (D85): the shell's `None` of the

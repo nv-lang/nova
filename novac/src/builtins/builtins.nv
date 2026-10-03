@@ -476,7 +476,7 @@ export type BuiltinType value {
 // 02-types.md:9319), and every reader reads that cell -- the private table
 // and its reader door `builtin_types()` that stood here while the oracle
 // could not export a `ro` vector are gone.
-export ro BuiltinType.ALL = [
+export ro BuiltinType.ALL []BuiltinType = [
     BuiltinType { name: "int", c_name: "nova_int", family: PrimFamily.PfInt, bits: 64, signed: true },
     BuiltinType { name: "str", c_name: "nova_str", family: PrimFamily.PfStr, bits: 0, signed: false },
     BuiltinType { name: "bool", c_name: "nova_bool", family: PrimFamily.PfBool, bits: 0, signed: false },

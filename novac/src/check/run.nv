@@ -118,6 +118,9 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
             }
         }
         c.type_file(file)
+        // A non-literal default of another file, left to a call (registry 1578),
+        // asked once the callees are recorded.
+        c.refuse_foreign_defaults(file)
         // The disjointness walk that stood here is gone (2026-08-18): the
         // channel holds ONE sum per node now, so "a call and an
         // instantiation at once" is not a state that can be built.

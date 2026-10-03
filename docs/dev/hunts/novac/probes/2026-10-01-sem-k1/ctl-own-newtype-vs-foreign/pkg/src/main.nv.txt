@@ -1,9 +1,0 @@
-module hp
-
-type Id int
-
-fn sum(a Id, b Id) -> Id => a + b
-
-fn main() {
-    println(sum(Id(200), Id(100)))
-}

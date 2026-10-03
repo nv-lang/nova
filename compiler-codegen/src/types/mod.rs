@@ -9658,6 +9658,14 @@ impl<'a> TypeCheckCtx<'a> {
                 if let Some(name) = pattern_simple_name(&d.pattern) {
                     snapshot.push((name.clone(), scope.get(&name).cloned()));
                 }
+                // #1657: the shadow of an untyped local ends with its block.
+                let mut names = Vec::new();
+                consume_pattern_names(&d.pattern, &mut names);
+                for n in names {
+                    let k = local_shadow_key(&n);
+                    let prev = scope.get(&k).cloned();
+                    snapshot.push((k, prev));
+                }
             }
         }
         // Plan 124.8 [M-124.8-ro-binding-scope] fix (2026-06-03):
@@ -9716,7 +9724,11 @@ impl<'a> TypeCheckCtx<'a> {
                 if let Some(name) = pattern_simple_name(&d.pattern) {
                     match d.ty.clone().or_else(|| self.infer_expr_type(&d.value, &s)) {
                         Some(t) => { s.insert(name, t); }
-                        None => { s.remove(&name); }
+                        // #1657: still a local -- it shadows every outer name.
+                        None => {
+                            s.remove(&name);
+                            s.insert(local_shadow_key(&name), TypeRef::Unit(d.value.span));
+                        }
                     }
                 }
             }
@@ -10156,7 +10168,11 @@ impl<'a> TypeCheckCtx<'a> {
                         .or_else(|| self.closure_literal_fn_typeref(&d.value, scope))
                     {
                         Some(t) => { scope.insert(name, t); }
-                        None => { scope.remove(&name); }
+                        // #1657: still a local -- it shadows every outer name.
+                        None => {
+                            scope.remove(&name);
+                            scope.insert(local_shadow_key(&name), TypeRef::Unit(d.value.span));
+                        }
                     }
                 } else if let Pattern::Tuple(pats, _) = &d.pattern {
                     // Plan 221.1 №286/№143 (окно p-chan): `ro (tx, rx) =
@@ -10209,20 +10225,24 @@ impl<'a> TypeCheckCtx<'a> {
                             drop(buf);
                             Self::resolved_to_typeref_tp(&rt, d.value.span)
                         });
+                    // #1657: an element the RHS type does not type is still a
+                    // local, shadowing every outer name (`shadow_bound_names`).
+                    let mut typed = false;
                     if let Some(TypeRef::Tuple(tys, _)) = rhs_tr {
                         if tys.len() == pats.len() {
+                            typed = true;
                             for (pp, ty) in pats.iter().zip(tys) {
                                 if let Pattern::Ident { name: pn, .. } = pp {
                                     scope.insert(pn.clone(), ty);
                                 }
                             }
                         }
-                    } else {
-                        for pp in pats {
-                            if let Pattern::Ident { name: pn, .. } = pp {
-                                scope.remove(pn);
-                            }
-                        }
+                    }
+                    if !typed {
+                        let mut names = Vec::new();
+                        consume_pattern_names(&d.pattern, &mut names);
+                        // The block restores these keys (`f1_block` snapshot).
+                        let _ = shadow_bound_names(&names, scope, d.value.span);
                     }
                     }
                 } else if let Pattern::Record { fields, .. } = &d.pattern {
@@ -11541,6 +11561,9 @@ impl<'a> TypeCheckCtx<'a> {
                         let mut saved: Vec<(String, Option<TypeRef>)> = Vec::new();
                         for (n, t) in binds {
                             saved.push((n.clone(), scope.insert(n.clone(), t.clone())));
+                            // #1657: tell the closure arm this entry IS its parameter's.
+                            let k = closure_seed_key(n);
+                            saved.push((k.clone(), scope.insert(k, TypeRef::Unit(a.expr().span))));
                         }
                         self.f1_expr(a.expr(), gs, scope, errors);
                         // 172.1.2 C6b (2026-07-03): сам closure-arg аннотируется
@@ -13462,6 +13485,12 @@ impl<'a> TypeCheckCtx<'a> {
                 // Plan 124.2 (D221): pattern destructure priv-field check.
                 let scrut_ty = self.infer_expr_type(scrutinee, scope);
                 self.check_priv_pattern_recursive(pattern, scrut_ty.as_ref(), errors);
+                // #1649: an `if let` pattern naming a foreign variant can never match.
+                if let Some(st) = scrut_ty.as_ref() {
+                    if std::env::var("NOVA_KILL_1649").as_deref() != Ok("1") {
+                        self.check_pattern_foreign_variants(pattern, st, e.span, errors);
+                    }
+                }
                 // №279: resolve nested bare-variant sub-patterns against the
                 // scrutinee's structural type (see fn doc).
                 self.resolve_pattern_variant_types(pattern, scrut_ty.as_ref());
@@ -13480,7 +13509,11 @@ impl<'a> TypeCheckCtx<'a> {
                 // name's type to tell a scalar bare-bind apart from a
                 // heap-owning one).
                 let binds = self.match_arm_bindings(pattern, scrut_ty.as_ref());
-                let mut saved: Vec<(String, Option<TypeRef>)> = Vec::new();
+                // #1657: every bound name shadows the outer ones; the typed
+                // binds go over the shadow.
+                let mut pat_names = Vec::new();
+                consume_pattern_names(pattern, &mut pat_names);
+                let mut saved = shadow_bound_names(&pat_names, scope, e.span);
                 for (n, t) in &binds {
                     saved.push((n.clone(), scope.insert(n.clone(), t.clone())));
                 }
@@ -13498,12 +13531,7 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f1_block(then, gs, scope, errors);
                 *self.ro_binding_names.borrow_mut() = ro_snapshot;
                 *self.consume_binding_names.borrow_mut() = consume_snapshot;
-                for (n, prev) in saved {
-                    match prev {
-                        Some(t) => { scope.insert(n, t); }
-                        None => { scope.remove(&n); }
-                    }
-                }
+                restore_scope_entries(scope, saved);
                 if let Some(eb) = else_ {
                     self.f1_else(eb, gs, scope, errors);
                 }
@@ -13518,6 +13546,7 @@ impl<'a> TypeCheckCtx<'a> {
                 // держит четыре законные формы от ложняка]. До этой волны
                 // непокрытый вариант проходил check и build и давал ТИХО
                 // неверный результат (код 0).
+                self.check_match_foreign_variants(scrut_ty.as_ref(), arms, e.span, errors); // #1649
                 self.check_match_exhaustive(scrut_ty.as_ref(), arms, e.span, errors);
                 for arm in arms {
                     self.check_pattern_literal_type(&arm.pattern, scrut_ty.as_ref(), errors); // #1535
@@ -13637,7 +13666,10 @@ impl<'a> TypeCheckCtx<'a> {
                     // into `f64 @clamp` (implicit int64_t<->double cast, precision loss at i64
                     // extremes, no CC-FAIL since both sides are scalar).
                     let binds = self.match_arm_bindings(&arm.pattern, binds_scrut_ty.as_ref());
-                    let mut saved: Vec<(String, Option<TypeRef>)> = Vec::new();
+                    // #1657: shadow first, the typed binds over it (see if-let).
+                    let mut pat_names = Vec::new();
+                    consume_pattern_names(&arm.pattern, &mut pat_names);
+                    let mut saved = shadow_bound_names(&pat_names, scope, e.span);
                     for (n, t) in &binds {
                         saved.push((n.clone(), scope.insert(n.clone(), t.clone())));
                     }
@@ -13675,12 +13707,7 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                     *self.ro_binding_names.borrow_mut() = ro_snapshot;
                     *self.consume_binding_names.borrow_mut() = consume_snapshot;
-                    for (n, prev) in saved {
-                        match prev {
-                            Some(t) => { scope.insert(n, t); }
-                            None => { scope.remove(&n); }
-                        }
-                    }
+                    restore_scope_entries(scope, saved);
                 }
                 // [M-match-arm-mixed-int-width-sentinel-coerce] fix (P1, 2026-07-21):
                 // arms with GENUINELY incompatible int widths (neither safely widens
@@ -13893,6 +13920,21 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f1_expr(body, gs, scope, errors)
             }
             ExprKind::ClosureLight { params, body, .. } => {
+                // #1657: an untyped parameter is a local of the body -- it
+                // shadows every outer name (`|sec| sec + 1` beside `fn sec`).
+                // A parameter the call seeded from the callee's signature keeps
+                // its type; the seed marks end here, so a nested closure with
+                // the same parameter name does not inherit them.
+                let mut unseeded: Vec<String> = Vec::new();
+                let mut saved: Vec<(String, Option<TypeRef>)> = Vec::new();
+                for p in params.iter() {
+                    let k = closure_seed_key(&p.name);
+                    match scope.remove(&k) {
+                        Some(mark) => saved.push((k, Some(mark))),
+                        None => unseeded.push(p.name.clone()),
+                    }
+                }
+                saved.extend(shadow_bound_names(&unseeded, scope, e.span));
                 match body {
                     ClosureBody::Expr(be) => {
                         self.check_ref_escape_capture(be, errors);
@@ -13903,6 +13945,7 @@ impl<'a> TypeCheckCtx<'a> {
                         self.f1_block(b, gs, scope, errors)
                     }
                 }
+                restore_scope_entries(scope, saved);
                 // 2026-07-02 (tally АТОМ 3b): zero-param truthful-подмножество —
                 // `|| body` без параметров: нечего гадать про params, ret = infer
                 // тела. Гейт §1: primitive non-Unit ret + не упоминает gs.
@@ -14062,7 +14105,12 @@ impl<'a> TypeCheckCtx<'a> {
                 self.check_priv_pattern_recursive(pattern, scrut_ty.as_ref(), errors);
                 // №279: resolve nested bare-variant sub-patterns (see fn doc).
                 self.resolve_pattern_variant_types(pattern, scrut_ty.as_ref());
+                // #1657: the bound names shadow the outer ones in the body.
+                let mut pat_names = Vec::new();
+                consume_pattern_names(pattern, &mut pat_names);
+                let saved = shadow_bound_names(&pat_names, scope, e.span);
                 self.f1_loop_body(|| self.f1_block(body, gs, scope, errors));
+                restore_scope_entries(scope, saved);
             }
             ExprKind::Loop { body, .. } => {
                 // Registry #1384: `loop` without a break cannot exit.
@@ -15125,7 +15173,15 @@ impl<'a> TypeCheckCtx<'a> {
                     None => { scope.remove(name); }
                 }
             }
-            _ => self.f1_block(body, gs, scope, errors),
+            // #1657: a loop variable the checker does not type is still a
+            // local, shadowing every outer name for the body.
+            _ => {
+                let mut names = Vec::new();
+                consume_pattern_names(pattern, &mut names);
+                let saved = shadow_bound_names(&names, scope, body.span);
+                self.f1_block(body, gs, scope, errors);
+                restore_scope_entries(scope, saved);
+            }
         }
     }
 
@@ -15970,6 +16026,36 @@ impl<'a> TypeCheckCtx<'a> {
     ///
     /// Returns true when the verdict is final here (reported or proven fine),
     /// false to hand the `match` on to the sum analysis.
+    /// The precise refusal for an UNBOUND METHOD VALUE (`T.@method`, the
+    /// function `fn(T, params..) -> R`) passed where a function type is expected
+    /// and `assignable` found it does not fit -- the same words codegen's
+    /// method-value door uses ("method-value argument type mismatch"), now said
+    /// where the checker first sees it. `None` for any other argument, which
+    /// keeps the generic E7301.
+    fn method_value_arg_mismatch(&self, arg: &Expr, param_name: &str, exp_ty: &TypeRef) -> Option<Diagnostic> {
+        let ExprKind::Member { obj, name } = &arg.kind else { return None };
+        let method = name.strip_prefix('@')?;
+        let TypeRef::Func { params, .. } = exp_ty.strip_readonly() else { return None };
+        let recv = match &obj.kind {
+            ExprKind::Ident(n) => n.clone(),
+            ExprKind::Path(parts) => parts.join("."),
+            _ => return None,
+        };
+        let first = params
+            .first()
+            .map(|t| format!(", whose first parameter is `{}`", typeref_display(t)))
+            .unwrap_or_default();
+        Some(Diagnostic::new(
+            format!(
+                "[E7301] method-value argument type mismatch: `{recv}.@{method}` takes a `{recv}` \
+                 receiver, but argument `{param_name}` expects `{}`{first} -- an unbound method \
+                 value is `fn({recv}, ..) -> ..`, and its receiver and parameters must fit that type",
+                typeref_display(exp_ty),
+            ),
+            arg.span,
+        ))
+    }
+
     fn check_match_open_or_empty(
         &self,
         scrut_ty: Option<&TypeRef>,
@@ -16076,6 +16162,165 @@ impl<'a> TypeCheckCtx<'a> {
     }
 
     #[allow(clippy::only_used_in_recursion)]
+    /// Registry 221.1 #1649: a pattern that names a variant of a sum the
+    /// scrutinee's type is not -- `match user { NotFound => .. }` with
+    /// `NotFound` of `RepoError` -- can never match, yet reads as a working arm,
+    /// and codegen tests a tag the value does not have (CC-FAIL on a record,
+    /// garbage on another sum). #567 refused it only for a SUM scrutinee and only
+    /// when no catch-all arm came before the analysis returned; a record, an
+    /// `int`/`str`, a sum with `_`, and a nested pattern (`Some(NotFound)` over
+    /// `Option[User]`) passed silently. This check runs for every arm (a guarded
+    /// one too), every scrutinee whose type is known, and recurses into the
+    /// payload patterns of a variant the type does have. A name that is no sum's
+    /// variant is left to the other checks (a constant pattern, E_MATCH_CONST_PATTERN).
+    /// KILL SWITCH `NOVA_KILL_1649=1` (and #567's `NOVA_KILL_567_NEG=1`).
+    fn check_match_foreign_variants(
+        &self,
+        scrut_ty: Option<&TypeRef>,
+        arms: &[crate::ast::MatchArm],
+        span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        if std::env::var("NOVA_KILL_1649").as_deref() == Ok("1")
+            || std::env::var("NOVA_KILL_567_NEG").as_deref() == Ok("1")
+        {
+            return;
+        }
+        let Some(ty) = scrut_ty else { return };
+        for arm in arms {
+            self.check_pattern_foreign_variants(&arm.pattern, ty, span, errors);
+        }
+    }
+
+    /// #1649: one pattern against the type it matches (see `check_match_foreign_variants`).
+    fn check_pattern_foreign_variants(
+        &self,
+        pattern: &crate::ast::Pattern,
+        ty: &TypeRef,
+        span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        use crate::ast::{Pattern, VariantPatternKind};
+        match pattern {
+            Pattern::Or { alternatives, .. } => {
+                for alt in alternatives {
+                    self.check_pattern_foreign_variants(alt, ty, span, errors);
+                }
+            }
+            Pattern::Binding { inner, .. } => self.check_pattern_foreign_variants(inner, ty, span, errors),
+            Pattern::Tuple(pats, _) => {
+                if let TypeRef::Tuple(tys, _) = ty.strip_readonly() {
+                    for (sp, st) in pats.iter().zip(tys.iter()) {
+                        self.check_pattern_foreign_variants(sp, st, span, errors);
+                    }
+                }
+            }
+            Pattern::Variant { path, kind, span: at } => {
+                let Some(v) = path.last() else { return };
+                let Some((type_name, names)) = self.pattern_variant_universe(ty, span) else { return };
+                if names.iter().any(|n| n == v) {
+                    if let VariantPatternKind::Tuple { patterns, .. } = kind {
+                        if let Some(payload) = self.variant_payload_types(ty, v, span) {
+                            for (sp, pt) in patterns.iter().zip(payload.iter()) {
+                                self.check_pattern_foreign_variants(sp, pt, span, errors);
+                            }
+                        }
+                    }
+                    return;
+                }
+                let Some(owner) = self.sum_owning_variant(v) else { return };
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_MATCH_FOREIGN_VARIANT] the pattern names `{v}`, a variant of `{owner}`, but the \
+                         value it matches is `{type_name}`, which has no such variant: the arm can NEVER match, \
+                         yet it reads as a working one, and the generated code would test a tag the value does \
+                         not have (registry 221.1 #567, #1649). Remove the arm, or name a variant of `{type_name}`."
+                    ),
+                    *at,
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    /// #1649: the variant names a pattern may use against `ty`, with the type's
+    /// display name; `None` when the type is not known well enough to judge.
+    fn pattern_variant_universe(&self, ty: &TypeRef, span: Span) -> Option<(String, Vec<String>)> {
+        match ty.strip_readonly() {
+            TypeRef::Named { path, span: ty_span, .. } => {
+                let name = path.last()?.clone();
+                match name.as_str() {
+                    "Option" => return Some((name, vec!["Some".into(), "None".into()])),
+                    "Result" => return Some((name, vec!["Ok".into(), "Err".into()])),
+                    _ => {}
+                }
+                if Self::is_primitive_type_name(&name) {
+                    return Some((name, Vec::new()));
+                }
+                let file = if ty_span.file_id != span.file_id { ty_span.file_id } else { span.file_id };
+                let td = self.types_get_for_file(&name, file)?;
+                match &td.kind {
+                    TypeDeclKind::Sum(variants) => Some((name, variants.iter().map(|v| v.name.clone()).collect())),
+                    TypeDeclKind::NamedTuple(_) => Some((name.clone(), vec![name])),
+                    TypeDeclKind::Record(_) => Some((name, Vec::new())),
+                    _ => None,
+                }
+            }
+            TypeRef::Tuple(..) | TypeRef::Array(..) | TypeRef::FixedArray(..) => {
+                Some((typeref_display(ty), Vec::new()))
+            }
+            _ => None,
+        }
+    }
+
+    /// #1649: the payload types of variant `v` of `ty` (`Some` of `Option[T]` ->
+    /// `[T]`), the type's own arguments substituted; `None` when unknown.
+    fn variant_payload_types(&self, ty: &TypeRef, v: &str, span: Span) -> Option<Vec<TypeRef>> {
+        let TypeRef::Named { path, generics, span: ty_span } = ty.strip_readonly() else { return None };
+        let name = path.last()?;
+        match (name.as_str(), v) {
+            ("Option", "Some") => return generics.first().map(|t| vec![t.clone()]),
+            ("Result", "Ok") => return generics.first().map(|t| vec![t.clone()]),
+            ("Result", "Err") => return generics.get(1).map(|t| vec![t.clone()]),
+            ("Option", _) | ("Result", _) => return None,
+            _ => {}
+        }
+        let file = if ty_span.file_id != span.file_id { ty_span.file_id } else { span.file_id };
+        let td = self.types_get_for_file(name, file)?;
+        let TypeDeclKind::Sum(variants) = &td.kind else { return None };
+        let var = variants.iter().find(|x| x.name == v)?;
+        let crate::ast::SumVariantKind::Tuple(tys) = &var.kind else { return None };
+        if td.generics.len() != generics.len() {
+            return if td.generics.is_empty() { Some(tys.clone()) } else { None };
+        }
+        let subst: HashMap<String, TypeRef> = td
+            .generics
+            .iter()
+            .map(|g| g.name.clone())
+            .zip(generics.iter().cloned())
+            .collect();
+        Some(tys.iter().map(|t| subst_typeref(t, &subst)).collect())
+    }
+
+    /// #1649: a sum (or `Option`/`Result`) that declares variant `v`, for the message.
+    fn sum_owning_variant(&self, v: &str) -> Option<String> {
+        match v {
+            "Some" | "None" => return Some("Option".into()),
+            "Ok" | "Err" => return Some("Result".into()),
+            _ => {}
+        }
+        let mut owners: Vec<&str> = self
+            .types
+            .values()
+            .filter_map(|td| match &td.kind {
+                TypeDeclKind::Sum(variants) if variants.iter().any(|x| x.name == v) => Some(td.name.as_str()),
+                _ => None,
+            })
+            .collect();
+        owners.sort_unstable();
+        owners.first().map(|s| s.to_string())
+    }
+
     fn check_match_exhaustive(
         &self,
         scrut_ty: Option<&TypeRef>,
@@ -16198,20 +16443,9 @@ impl<'a> TypeCheckCtx<'a> {
         // гасила проверку исчерпаемости ЦЕЛИКОМ при коллизии имён. Снятие было
         // верным; замена — не сдаваться, а НАЗВАТЬ чужой вариант, и это безопасно
         // только теперь, когда разрешение импорто-осведомлённое.
-        if std::env::var("NOVA_KILL_567_NEG").as_deref() != Ok("1") {
-            for (v, at) in &covered_at {
-                if all.contains(v) {
-                    continue;
-                }
-                errors.push(Diagnostic::new(
-                    format!(
-                        "[E_MATCH_FOREIGN_VARIANT] ветка `match` называет `{}` — этого варианта нет у суммы `{}`, так что ветка НЕ СРАБОТАЕТ никогда, а читается как рабочая. До №567 совпадение имени с чужой суммой было хуже мёртвой ветки: матч уходил в чужой тег и возвращал мусор из неинициализированной памяти. Убери ветку либо назови вариант этой суммы.",
-                        v, sum_name
-                    ),
-                    *at,
-                ));
-            }
-        }
+        // #1649: the foreign-variant half moved to `check_match_foreign_variants`,
+        // which runs for every scrutinee and every arm, a catch-all included.
+        let _ = &covered_at;
         let missing: Vec<&String> = all.iter().filter(|v| !covered.contains(*v)).collect();
         if missing.is_empty() {
             return;
@@ -16423,13 +16657,19 @@ impl<'a> TypeCheckCtx<'a> {
             // АТОМ 2a: расширить scope биндингами паттерна (типы из scrut_ty).
             // Пустой набор биндингов → армы работают в наружном scope как раньше.
             let binds = self.match_arm_bindings(&arm.pattern, scrut_ty);
-            let ext_scope: Option<HashMap<String, TypeRef>> = if binds.is_empty() {
-                None
-            } else {
-                let mut s = scope.clone();
-                for (k, v) in binds { s.insert(k, v); }
-                Some(s)
-            };
+            // #1657: every name the pattern binds is a local of the arm; the
+            // typed binds go over the shadow.
+            let mut pat_names = Vec::new();
+            consume_pattern_names(&arm.pattern, &mut pat_names);
+            let ext_scope: Option<HashMap<String, TypeRef>> =
+                match scope_hiding_names(&pat_names, scope, arm.span) {
+                    None if binds.is_empty() => None,
+                    hidden => {
+                        let mut s = hidden.unwrap_or_else(|| scope.clone());
+                        for (k, v) in binds { s.insert(k, v); }
+                        Some(s)
+                    }
+                };
             let scope: &HashMap<String, TypeRef> = ext_scope.as_ref().unwrap_or(scope);
             // 172.1.2 stmts-relax: канальный фоллбек (buf-аннотация сделана в
             // правильном scope при f1-рекурсии) — работаем в ResolvedType.
@@ -18261,20 +18501,28 @@ impl<'a> TypeCheckCtx<'a> {
                             && typeref_mentions_any(&param.ty, &recv_generic_names);
                         match compat {
                             Compat::Bad { found } if generic_param => {
-                                errors.push(
-                                    Diagnostic::new(
-                                        format!(
-                                            "[E7301] cannot pass value of type `{}` as \
-                                             argument `{}` of type `{}`",
-                                            found, param.name, typeref_display(&exp_ty),
-                                        ),
-                                        arg.expr().span,
-                                    )
-                                    .with_note_at(
-                                        format!("parameter `{}` declared here", param.name),
-                                        param.span,
-                                    ),
-                                );
+                                // An unbound method value (`T.@method`) gets the precise
+                                // method-value refusal, not the generic one: since #1648
+                                // substitutes the receiver's type arguments into a
+                                // function type too, `Option[int].map(str.@byte_len)` is
+                                // judged HERE (`fn(int) -> U`), before codegen's own
+                                // method-value door could speak.
+                                let diag = self
+                                    .method_value_arg_mismatch(arg.expr(), &param.name, &exp_ty)
+                                    .unwrap_or_else(|| {
+                                        Diagnostic::new(
+                                            format!(
+                                                "[E7301] cannot pass value of type `{}` as \
+                                                 argument `{}` of type `{}`",
+                                                found, param.name, typeref_display(&exp_ty),
+                                            ),
+                                            arg.expr().span,
+                                        )
+                                    });
+                                errors.push(diag.with_note_at(
+                                    format!("parameter `{}` declared here", param.name),
+                                    param.span,
+                                ));
                             }
                             Compat::RecordLit { faults } if generic_param => {
                                 errors.extend(faults.into_iter().map(|(m, s)| Diagnostic::new(m, s)));
@@ -21722,23 +21970,38 @@ impl<'a> TypeCheckCtx<'a> {
             // `Option[T]`/`Result[T,E]`, it just never got THIS field's `T` handed
             // to it before). Anonymous literals (D55 record-coercion) are handled
             // identically — `expected` alone decides the field schema, `type_name`
-            // is not consulted. Scoped to non-generic declared records (mirrors
-            // this function's other `td.generics.is_empty()`-gated arms) —
-            // a generic record's field types would need receiver-generic
-            // substitution first, out of scope here.
+            // is not consulted.
+            // Registry 221.1 #1648: a GENERIC record is no longer skipped. Its
+            // field types name its parameters (`id_of fn(T) -> u64`), and the
+            // expected instance binds them (`Repo[User]`): each field's type is
+            // substituted (`subst_typeref`) before it becomes the field value's
+            // expected type. Skipped, a closure-light in such a field got no
+            // parameter type at all, and codegen defaulted it to `nova_int`
+            // (`|u| u.id` -> CC-FAIL "member reference base type 'nova_int'").
+            // An arity mismatch (an unannotated generic instance) is skipped,
+            // as before.
             ExprKind::RecordLit { fields, .. } => {
                 if let TypeRef::Named { path, generics, .. } = expected {
-                    if generics.is_empty() {
-                        if let Some(name) = path.last() {
-                            if let Some(td) = self.types_get_here(name) {
-                                if td.generics.is_empty() {
-                                    if let TypeDeclKind::Record(decl_fields) = &td.kind {
-                                        for f in fields {
-                                            if let Some(v) = &f.value {
-                                                if let Some(fd) =
-                                                    decl_fields.iter().find(|df| df.name == f.name)
-                                                {
+                    if let Some(name) = path.last() {
+                        if let Some(td) = self.types_get_here(name) {
+                            if td.generics.len() == generics.len() {
+                                if let TypeDeclKind::Record(decl_fields) = &td.kind {
+                                    let subst: HashMap<String, TypeRef> = td
+                                        .generics
+                                        .iter()
+                                        .map(|g| g.name.clone())
+                                        .zip(generics.iter().cloned())
+                                        .collect();
+                                    for f in fields {
+                                        if let Some(v) = &f.value {
+                                            if let Some(fd) =
+                                                decl_fields.iter().find(|df| df.name == f.name)
+                                            {
+                                                if subst.is_empty() {
                                                     self.materialize_literal_coercion(v, &fd.ty);
+                                                } else {
+                                                    let fty = subst_typeref(&fd.ty, &subst);
+                                                    self.materialize_literal_coercion(v, &fty);
                                                 }
                                             }
                                         }
@@ -22146,8 +22409,12 @@ impl<'a> TypeCheckCtx<'a> {
                 // ловит своё.
                 // #1517: a variant constructor of the declared sum is judged by
                 // its payload (`variant_ctor.rs`) -- a precise verdict, reported.
+                // #1642: a function-typed return is judged too -- there is no D55
+                // coercion INTO a function type, and `assignable_direct` refuses a
+                // value there only when it is certainly not a function.
                 if !ResolvedType::from_type_ref(ret).is_primitive_lowerable()
                     && !self.is_ctor_of_expected_sum(value, ret, scope)
+                    && !self.typeref_is_func_compatible(ret)
                 {
                     return;
                 }
@@ -22967,6 +23234,49 @@ impl<'a> TypeCheckCtx<'a> {
     /// `resolved_cat_of_depth`'s guard) — generics-carrying Named refs are NOT
     /// peeled (a fn-newtype has none; bail conservatively to `false` rather
     /// than mis-resolve a parametric unrelated type of the same name).
+    /// #1642: the display of `expr`'s type when it is CERTAINLY not a function
+    /// value -- a literal of a non-function kind, or an inferred scalar, string,
+    /// bool, array, tuple, unit, or a declared type that is not a fn-newtype or
+    /// alias. `None` when it may be a function or cannot be known (a type
+    /// parameter, `any`, an uninferred expression): a refusal is issued only on
+    /// certainty, so the false positive of #101 (a name resolved to an
+    /// unrelated function) has no room here.
+    fn certainly_not_a_function(&self, expr: &Expr, scope: &HashMap<String, TypeRef>) -> Option<String> {
+        let literal = match &expr.kind {
+            ExprKind::IntLit(_) => Some("int"),
+            ExprKind::FloatLit(_) => Some("f64"),
+            ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => Some("str"),
+            ExprKind::BoolLit(_) => Some("bool"),
+            ExprKind::CharLit(_) => Some("char"),
+            ExprKind::UnitLit => Some("()"),
+            ExprKind::ArrayLit(_) => Some("an array literal"),
+            ExprKind::MapLit { .. } => Some("a map literal"),
+            ExprKind::TupleLit(_) => Some("a tuple literal"),
+            ExprKind::RecordLit { .. } => Some("a record literal"),
+            _ => None,
+        };
+        if let Some(l) = literal {
+            return Some(l.to_string());
+        }
+        let found = self.infer_expr_type(expr, scope)?;
+        if matches!(found, TypeRef::Func { .. }) || self.typeref_is_func_compatible(&found) {
+            return None;
+        }
+        let certain = match ResolvedType::from_type_ref(&found).peel_view() {
+            ResolvedType::Scalar { .. } | ResolvedType::Float { .. } | ResolvedType::Str
+            | ResolvedType::Bool | ResolvedType::Unit | ResolvedType::Array(_)
+            | ResolvedType::FixedArray(..) | ResolvedType::Tuple(_) => true,
+            ResolvedType::Named { name, .. } => self.types_get_here(&name).is_some_and(|td| {
+                matches!(
+                    td.kind,
+                    TypeDeclKind::Record(_) | TypeDeclKind::Sum(_) | TypeDeclKind::NamedTuple(_)
+                )
+            }),
+            _ => false,
+        };
+        certain.then(|| typeref_display(&found))
+    }
+
     fn typeref_is_func_compatible(&self, tr: &TypeRef) -> bool {
         self.typeref_is_func_compatible_depth(tr, 0)
     }
@@ -23326,6 +23636,19 @@ impl<'a> TypeCheckCtx<'a> {
         // Both used to pass unjudged -- `(d, 1)` with `d f64` for `(int, int)` truncated.
         if let Some(v) = self.composite_literal_compat(expr, expected, expr_gs, exp_gs, scope) {
             return v;
+        }
+        // #1642: a value that is certainly not a function, at a function-typed
+        // position. `resolved_cat_of` collapses `Func` into the permissive `Any`
+        // below, so `call(0)`, `call([])`, `call("s")`, a record -- every one was
+        // accepted for `f fn() -> T`, and the program called the value as code:
+        // `m.get_or_insert(1, [])` (the parameter is `fallback fn() -> V`) built
+        // and died at run time, "fiber stack overflow ... access violation".
+        // The opposite direction (a function value at a non-function position)
+        // has its own narrow door, `check_fn_value_mismatch` (#101).
+        if self.typeref_is_func_compatible(expected) {
+            if let Some(found) = self.certainly_not_a_function(expr, scope) {
+                return Compat::Bad { found };
+            }
         }
         // Generic-параметр / any / func / tuple — проверить нельзя.
         if matches!(exp_rt, ResolvedType::Any) {
@@ -24299,6 +24622,9 @@ impl<'a> TypeCheckCtx<'a> {
     /// return check of #1517 refused a correct program (E7301). Without a tail the old
     /// reading stays (a body lowered with its value as the last statement).
     fn block_value_type(&self, b: &Block, scope: &HashMap<String, TypeRef>) -> Option<TypeRef> {
+        // #1657: the block's own lets are not in `scope`; hide their names.
+        let hidden = scope_hiding_names(&block_let_names(b), scope, b.span);
+        let scope = hidden.as_ref().unwrap_or(scope);
         match &b.trailing {
             Some(t) => self.infer_expr_type(t, scope),
             None => b.stmts.iter().rev().find_map(|s| {
@@ -24355,6 +24681,10 @@ impl<'a> TypeCheckCtx<'a> {
                             return Some(tr);
                         }
                     }
+                }
+                // #1657: a local of unknown type shadows every outer name below.
+                if scope.contains_key(&local_shadow_key(name)) {
+                    return None;
                 }
                 // #1488: a module-level `const`/`ro` read by name (`const_names.rs`).
                 if let Some(tr) = self.module_value_ident_type(name, expr.span) {
@@ -24648,15 +24978,21 @@ impl<'a> TypeCheckCtx<'a> {
                 // Unit — точное зеркало else-стороны (ниже, None => Unit); прежняя
                 // асимметрия роняла statement-form цепочки (`if c { v.push(x) }
                 // else { ... }`) в legacy. Join-правила НЕ менялись (D275-mirror).
+                // #1657: a branch tail is typed in the OUTER scope with the
+                // branch's own let names hidden (`scope_hiding_names`).
+                let then_hidden = scope_hiding_names(&block_let_names(then), scope, then.span);
                 let then_t = match &then.trailing {
-                    Some(t) => self.infer_expr_type(t, scope),
+                    Some(t) => self.infer_expr_type(t, then_hidden.as_ref().unwrap_or(scope)),
                     None => Some(TypeRef::Unit(expr.span)),
                 };
                 let (else_div, else_t): (bool, Option<TypeRef>) = match eb {
                     crate::ast::ElseBranch::Block(b) => (
                         block_diverges(b),
                         match &b.trailing {
-                            Some(t) => self.infer_expr_type(t, scope),
+                            Some(t) => {
+                                let else_hidden = scope_hiding_names(&block_let_names(b), scope, b.span);
+                                self.infer_expr_type(t, else_hidden.as_ref().unwrap_or(scope))
+                            }
                             None => Some(TypeRef::Unit(expr.span)),
                         },
                     ),
@@ -25771,9 +26107,14 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
                 for arm in arms {
+                    // #1657: the arm's bound names are locals of the arm.
+                    let mut pat_names = Vec::new();
+                    consume_pattern_names(&arm.pattern, &mut pat_names);
+                    let hidden = scope_hiding_names(&pat_names, scope, expr.span);
+                    let arm_scope = hidden.as_ref().unwrap_or(scope);
                     let ty = match &arm.body {
-                        MatchArmBody::Expr(e) => self.infer_expr_type(e, scope),
-                        MatchArmBody::Block(b) => self.block_value_type(b, scope),
+                        MatchArmBody::Expr(e) => self.infer_expr_type(e, arm_scope),
+                        MatchArmBody::Block(b) => self.block_value_type(b, arm_scope),
                     };
                     if let Some(t) = ty {
                         return Some(t);
@@ -25788,16 +26129,22 @@ impl<'a> TypeCheckCtx<'a> {
                 if else_.is_none() {
                     return Some(TypeRef::Unit(expr.span));
                 }
-                // Try then-block tail first.
+                // Try then-block tail first (#1657: its own let names hidden).
+                let then_hidden = scope_hiding_names(&block_let_names(then), scope, then.span);
+                let then_scope = then_hidden.as_ref().unwrap_or(scope);
                 let then_ty = then.stmts.iter().rev().find_map(|s| {
-                    if let Stmt::Expr(e) = s { self.infer_expr_type(e, scope) } else { None }
+                    if let Stmt::Expr(e) = s { self.infer_expr_type(e, then_scope) } else { None }
                 });
                 if let Some(t) = then_ty { return Some(t); }
                 // Fall through to else branch.
                 match else_ {
-                    Some(ElseBranch::Block(b)) => b.stmts.iter().rev().find_map(|s| {
-                        if let Stmt::Expr(e) = s { self.infer_expr_type(e, scope) } else { None }
-                    }),
+                    Some(ElseBranch::Block(b)) => {
+                        let else_hidden = scope_hiding_names(&block_let_names(b), scope, b.span);
+                        let else_scope = else_hidden.as_ref().unwrap_or(scope);
+                        b.stmts.iter().rev().find_map(|s| {
+                            if let Stmt::Expr(e) = s { self.infer_expr_type(e, else_scope) } else { None }
+                        })
+                    }
                     Some(ElseBranch::If(e)) => self.infer_expr_type(e, scope),
                     None => unreachable!(),
                 }
@@ -31681,8 +32028,13 @@ impl<'a> BoundCtx<'a> {
                     let inferred = d.ty.clone()
                         .or_else(|| Self::infer_arg_ty(&d.value, scope))
                         .or_else(|| self.call_return_ty(&d.value));
-                    if let Some(t) = inferred {
-                        scope.insert(name, t);
+                    match inferred {
+                        Some(t) => { scope.insert(name, t); }
+                        // #1657: still a local -- it hides an outer binding of the
+                        // same name. This pass resolves names by the scope alone, so
+                        // removing the outer entry IS the shadow; `walk_block`'s
+                        // snapshot puts it back at the block's end.
+                        None => { scope.remove(&name); }
                     }
                 }
             }
@@ -31990,9 +32342,14 @@ impl<'a> BoundCtx<'a> {
                     }
                 }
             }
-            ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            ExprKind::IfLet { pattern, scrutinee, then, else_, .. } => {
                 self.walk_expr(scrutinee, scope, errors);
+                // #1657: the bound names hide the outer ones in `then`.
+                let mut names = Vec::new();
+                consume_pattern_names(pattern, &mut names);
+                let saved = hide_bound_names(&names, scope);
                 self.walk_block(then, scope, errors);
+                restore_scope_entries(scope, saved);
                 if let Some(eb) = else_ {
                     match eb {
                         ElseBranch::Block(b) => self.walk_block(b, scope, errors),
@@ -32003,11 +32360,16 @@ impl<'a> BoundCtx<'a> {
             ExprKind::Match { scrutinee, arms } => {
                 self.walk_expr(scrutinee, scope, errors);
                 for arm in arms {
+                    // #1657: the arm's bound names hide the outer ones.
+                    let mut names = Vec::new();
+                    consume_pattern_names(&arm.pattern, &mut names);
+                    let saved = hide_bound_names(&names, scope);
                     if let Some(g) = &arm.guard { self.walk_expr(g, scope, errors); }
                     match &arm.body {
                         MatchArmBody::Expr(e) => self.walk_expr(e, scope, errors),
                         MatchArmBody::Block(b) => self.walk_block(b, scope, errors),
                     }
+                    restore_scope_entries(scope, saved);
                 }
             }
             ExprKind::Block(b) => self.walk_block(b, scope, errors),
@@ -32055,15 +32417,29 @@ impl<'a> BoundCtx<'a> {
             // Plan 19, C5: BoundCtx обходит тело closure-light /
             // closure-full для генерик-bound проверок. Полный
             // bidirectional inference — фаза C6; здесь — только walk.
-            ExprKind::ClosureLight { body, .. } => match body {
-                crate::ast::ClosureBody::Expr(e) => self.walk_expr(e, scope, errors),
-                crate::ast::ClosureBody::Block(b) => self.walk_block(b, scope, errors),
-            },
-            ExprKind::ClosureFull(sb) => match &sb.body {
-                FnBody::Expr(e) => self.walk_expr(e, scope, errors),
-                FnBody::Block(b) => self.walk_block(b, scope, errors),
-                FnBody::External => {}
-            },
+            // #1657: a parameter hides an outer binding of the same name; a
+            // closure-full parameter carries its declared type.
+            ExprKind::ClosureLight { params, body } => {
+                let names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+                let saved = hide_bound_names(&names, scope);
+                match body {
+                    crate::ast::ClosureBody::Expr(e) => self.walk_expr(e, scope, errors),
+                    crate::ast::ClosureBody::Block(b) => self.walk_block(b, scope, errors),
+                }
+                restore_scope_entries(scope, saved);
+            }
+            ExprKind::ClosureFull(sb) => {
+                let mut saved: Vec<(String, Option<TypeRef>)> = Vec::new();
+                for p in &sb.params {
+                    saved.push((p.name.clone(), scope.insert(p.name.clone(), p.ty.clone())));
+                }
+                match &sb.body {
+                    FnBody::Expr(e) => self.walk_expr(e, scope, errors),
+                    FnBody::Block(b) => self.walk_block(b, scope, errors),
+                    FnBody::External => {}
+                }
+                restore_scope_entries(scope, saved);
+            }
             ExprKind::Spawn(body) => self.walk_expr(body, scope, errors),
             ExprKind::Detach(body) | ExprKind::Blocking(body) => self.walk_block(body, scope, errors),
             ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
@@ -32078,17 +32454,27 @@ impl<'a> BoundCtx<'a> {
                 self.walk_expr(iter, scope, errors);
                 self.walk_block(body, scope, errors);
             }
-            ExprKind::For { iter, body, .. } => {
+            ExprKind::For { pattern, iter, body, .. } => {
                 self.walk_expr(iter, scope, errors);
+                // #1657: the loop variable hides an outer binding of its name.
+                let mut names = Vec::new();
+                consume_pattern_names(pattern, &mut names);
+                let saved = hide_bound_names(&names, scope);
                 self.walk_block(body, scope, errors);
+                restore_scope_entries(scope, saved);
             }
             ExprKind::While { cond, body, .. } => {
                 self.walk_expr(cond, scope, errors);
                 self.walk_block(body, scope, errors);
             }
-            ExprKind::WhileLet { scrutinee, body, .. } => {
+            ExprKind::WhileLet { pattern, scrutinee, body, .. } => {
                 self.walk_expr(scrutinee, scope, errors);
+                // #1657: the bound names hide the outer ones in the body.
+                let mut names = Vec::new();
+                consume_pattern_names(pattern, &mut names);
+                let saved = hide_bound_names(&names, scope);
                 self.walk_block(body, scope, errors);
+                restore_scope_entries(scope, saved);
             }
             ExprKind::Loop { body, .. } => self.walk_block(body, scope, errors),
             ExprKind::Select { arms } => {
@@ -41237,8 +41623,18 @@ fn subst_typeref(t: &TypeRef, subst: &HashMap<String, TypeRef>) -> TypeRef {
         TypeRef::Uninit(inner, s) => TypeRef::Uninit(Box::new(subst_typeref(inner, subst)), *s),
         // Plan 184: `ref T` — подставляем цель (`f[T]() -> ref T` при T=…).
         TypeRef::Ref(inner, s) => TypeRef::Ref(Box::new(subst_typeref(inner, subst)), *s),
-        // Func/Protocol/Unit — params/methods rarely reference the receiver's
-        // type-params in a way the narrowing check needs; clone as-is.
+        // Registry 221.1 #1648: a function type's parameters and result carry
+        // the type parameters too -- `id_of fn(T) -> u64` at `Repo[User]` is
+        // `fn(User) -> u64`. Cloned as-is, a closure in such a field got no
+        // parameter type and codegen defaulted it to `nova_int`.
+        TypeRef::Func { params, effects, return_type, extern_abi, span } => TypeRef::Func {
+            params: params.iter().map(|p| subst_typeref(p, subst)).collect(),
+            effects: effects.clone(),
+            return_type: return_type.as_ref().map(|r| Box::new(subst_typeref(r, subst))),
+            extern_abi: extern_abi.clone(),
+            span: *span,
+        },
+        // Protocol/Unit -- nothing here names a type parameter the callers need.
         _ => t.clone(),
     }
 }
@@ -44197,6 +44593,94 @@ impl ConsumeRegistry {
                         .push(mode_shape_of(fd));
                 }
             }
+        }
+    }
+}
+
+/// Registry 221.1 #1657: the scope key that marks `name` as bound by a LOCAL
+/// whose type the checker could not infer. Such a local still SHADOWS every
+/// outer name -- a free function, a module constant -- exactly as a typed one
+/// does. Without the mark the untyped local was simply absent from the scope,
+/// and `infer_expr_type` resolved its name to an outer one: std
+/// `Timestamp @to_zoned`'s `ro sec = if .. { .. } else { .. }` became the
+/// program's `fn sec(str) -> Section`, and the C code zeroed the time of day.
+/// The key cannot collide with a Nova identifier (it starts with U+0001).
+fn local_shadow_key(name: &str) -> String {
+    format!("\u{1}local:{name}")
+}
+
+/// #1657: the scope key the closure-argument seeder (`closure_arg_param_seeds`)
+/// sets beside a parameter type it put in the scope -- the closure arm keeps
+/// such an entry instead of shadowing it as an outer name.
+fn closure_seed_key(name: &str) -> String {
+    format!("\u{1}seed:{name}")
+}
+
+/// #1657: every name in `names` becomes a local of unknown type for the
+/// walk that follows -- an outer typed entry of the same name is removed (the
+/// inner local is a different value), and the shadow key is set. Returns the
+/// previous entries; restore them with `restore_scope_entries`.
+fn shadow_bound_names(
+    names: &[String],
+    scope: &mut HashMap<String, TypeRef>,
+    span: Span,
+) -> Vec<(String, Option<TypeRef>)> {
+    let mut saved = Vec::new();
+    for n in names {
+        if n == "_" {
+            continue;
+        }
+        saved.push((n.clone(), scope.remove(n)));
+        let k = local_shadow_key(n);
+        saved.push((k.clone(), scope.insert(k, TypeRef::Unit(span))));
+    }
+    saved
+}
+
+/// #1657: the names a block's own `let`s bind (every pattern form).
+fn block_let_names(b: &Block) -> Vec<String> {
+    let mut names = Vec::new();
+    for st in &b.stmts {
+        if let Stmt::Let(d) = st {
+            consume_pattern_names(&d.pattern, &mut names);
+        }
+    }
+    names
+}
+
+/// #1657: a copy of `scope` in which `names` are locals of unknown type, for
+/// typing a tail or an arm body in the OUTER scope (`infer_expr_type`'s
+/// conservative rule: a tail naming a block local types as `None`). Without it
+/// such a name took the type of an outer namesake -- `{ ro s = <untyped>; s + 1 }`
+/// under an outer `s str` typed as `str`. `None` when nothing is hidden.
+fn scope_hiding_names(
+    names: &[String],
+    scope: &HashMap<String, TypeRef>,
+    span: Span,
+) -> Option<HashMap<String, TypeRef>> {
+    if names.iter().all(|n| n == "_") {
+        return None;
+    }
+    let mut hidden = scope.clone();
+    let _ = shadow_bound_names(names, &mut hidden, span);
+    Some(hidden)
+}
+
+/// #1657 (the bound-check pass): hide every outer entry of `names` for the walk
+/// that follows -- a name bound by a pattern or a parameter is a new local. That
+/// pass looks names up in its scope only, so the hidden entry is the shadow.
+/// Restore with `restore_scope_entries`.
+fn hide_bound_names(names: &[String], scope: &mut HashMap<String, TypeRef>) -> Vec<(String, Option<TypeRef>)> {
+    names.iter().filter(|n| n.as_str() != "_").map(|n| (n.clone(), scope.remove(n))).collect()
+}
+
+/// Restore entries saved by `shadow_bound_names` (and by binding inserts made
+/// after it) -- in REVERSE order, so an entry saved twice gets its oldest value.
+fn restore_scope_entries(scope: &mut HashMap<String, TypeRef>, saved: Vec<(String, Option<TypeRef>)>) {
+    for (n, prev) in saved.into_iter().rev() {
+        match prev {
+            Some(t) => { scope.insert(n, t); }
+            None => { scope.remove(&n); }
         }
     }
 }
@@ -47707,7 +48191,18 @@ fn check_unsafe_coerce_args(
 /// false-positive risk: the caller only fires on a positive `Some`) or the
 /// field's own type isn't a single-segment `Named` (generic/tuple/etc).
 fn local_field_type_name(module: &Module, type_name: &str, field_name: &str) -> Option<String> {
-    let field_ty = module.items.iter().find_map(|it| {
+    let field_ty = local_field_typeref(module, type_name, field_name)?;
+    match field_ty.strip_readonly() {
+        TypeRef::Named { path, .. } => path.last().cloned(),
+        _ => None,
+    }
+}
+
+/// The declared type of field `field_name` of the LOCALLY-declared record or
+/// named tuple `type_name` (#1636: shared by `local_field_type_name` and
+/// `chain_link`, which also needs a pointer field's type).
+fn local_field_typeref(module: &Module, type_name: &str, field_name: &str) -> Option<TypeRef> {
+    module.items.iter().find_map(|it| {
         let Item::Type(td) = it else { return None };
         if td.name != type_name {
             return None;
@@ -47721,11 +48216,7 @@ fn local_field_type_name(module: &Module, type_name: &str, field_name: &str) -> 
                 .map(|f| f.ty.clone()),
             _ => None,
         }
-    })?;
-    match field_ty.strip_readonly() {
-        TypeRef::Named { path, .. } => path.last().cloned(),
-        _ => None,
-    }
+    })
 }
 
 /// №370 companion of `local_field_type_name`: does the LOCALLY-declared type
@@ -49644,6 +50135,68 @@ fn consume_walk_consume_for(
 /// Used by mut-method-on-chain check (`b.field.sub.mut_m()`) — root binding'а
 /// `b` mutability gate'ит весь chain независимо от типов промежуточных полей.
 /// Cross-ref: `is_through_ro_binding` (Plan 124.8) — symmetric для D175.
+/// Registry 221.1 #1636: does a field/index chain end at the receiver `@`?
+fn lvalue_root_is_self(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::SelfAccess => true,
+        ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } => lvalue_root_is_self(obj),
+        ExprKind::TurboFish { base, .. } => lvalue_root_is_self(base),
+        _ => false,
+    }
+}
+
+/// Registry 221.1 #1636 (D246 P4/P5): does a field chain reach its last link
+/// THROUGH a `*mut` field? The ro-view of a binding stops at every `*`; a
+/// `*mut T` pointee is writable from its type, so a mutating method on it
+/// mutates neither the binding nor its record. A `*T` (ro pointee) is NOT a
+/// wall here -- the pointee's own capability is not this pass's question, and
+/// the chain stays refused as before. Unknown types answer `false` (refuse).
+fn chain_passes_mut_pointer(module: &Module, root_ty: Option<&str>, e: &Expr) -> bool {
+    matches!(chain_link(module, root_ty, e), ChainLink::MutPointer)
+}
+
+enum ChainLink {
+    Named(String),
+    MutPointer,
+    Unknown,
+}
+
+fn chain_link(module: &Module, root_ty: Option<&str>, e: &Expr) -> ChainLink {
+    match &e.kind {
+        ExprKind::SelfAccess | ExprKind::Ident(_) => match root_ty.map(str::trim) {
+            Some(t) if t.starts_with("*mut ") => ChainLink::MutPointer,
+            Some(t) => ChainLink::Named(t.split('[').next().unwrap_or(t).trim().to_string()),
+            None => ChainLink::Unknown,
+        },
+        ExprKind::Member { obj, name } => match chain_link(module, root_ty, obj) {
+            ChainLink::Named(t) => match local_field_typeref(module, &t, name) {
+                Some(ty) => match ty.strip_readonly() {
+                    TypeRef::Pointer(inner, _) if matches!(**inner, TypeRef::Mut(..)) => ChainLink::MutPointer,
+                    TypeRef::Named { path, .. } => path.last().cloned().map_or(ChainLink::Unknown, ChainLink::Named),
+                    _ => ChainLink::Unknown,
+                },
+                None => ChainLink::Unknown,
+            },
+            other => other,
+        },
+        ExprKind::Index { obj, .. } => match chain_link(module, root_ty, obj) {
+            ChainLink::MutPointer => ChainLink::MutPointer,
+            _ => ChainLink::Unknown,
+        },
+        ExprKind::TurboFish { base, .. } => chain_link(module, root_ty, base),
+        _ => ChainLink::Unknown,
+    }
+}
+
+/// Plan 128.2 / Plan 135: a chain's method mutates when it is registered `mut`
+/// on any type and has no `ro` overload anywhere, or is a builtin mut-method --
+/// conservative, the receiver type of a chain link is not known here.
+fn chain_method_is_mut(reg: &ConsumeRegistry, method: &str) -> bool {
+    let is_registered_mut_any = reg.mut_methods.iter().any(|(_, m)| m == method);
+    let has_any_ro_overload = reg.ro_methods.iter().any(|(_, m)| m == method);
+    (is_registered_mut_any && !has_any_ro_overload) || is_builtin_mut_method(method)
+}
+
 fn lvalue_root_ident(e: &Expr) -> Option<&str> {
     match &e.kind {
         ExprKind::Ident(name) => Some(name.as_str()),
@@ -50366,14 +50919,11 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                             // (Plan 128.2 §1.3 — acceptable trade-off.)
                             // Plan 135: если recv-mut overload pair (и ro и mut),
                             // то ro-binding может вызывать через chain — не ошибка.
-                            let is_registered_mut_any = ctx.reg.mut_methods.iter()
-                                .any(|(_, m)| m == method.as_str());
-                            // Plan 135: check if there's a ro-overload for ANY type
-                            // with this method name (conservative mirror of mut check).
-                            let has_any_ro_overload = ctx.reg.ro_methods.iter()
-                                .any(|(_, m)| m == method.as_str());
-                            let is_mut_method = (is_registered_mut_any && !has_any_ro_overload)
-                                || is_builtin_mut_method(method.as_str());
+                            // #1636 (D246 P4/P5): a chain that reaches its method
+                            // THROUGH a `*mut` field mutates the pointee, not the
+                            // binding -- the ro-view stops at every `*`.
+                            let is_mut_method = chain_method_is_mut(ctx.reg, method)
+                                && !chain_passes_mut_pointer(ctx.module, recv_ty.as_deref(), obj);
                             if is_mut_method {
                                 // (a) Param check — E_PARAM_NOT_MUT.
                                 if let Some(&is_mut) = ctx.param_mut.get(&root) {
@@ -50424,6 +50974,38 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                     }
                                 }
                             }
+                        } else if !matches!(obj.kind, ExprKind::SelfAccess)
+                            && lvalue_root_is_self(obj)
+                            && ctx.self_recv.is_some()
+                            && !ctx.self_recv_is_mut
+                            && chain_method_is_mut(ctx.reg, method)
+                            && !chain_passes_mut_pointer(ctx.module, ctx.self_type.as_deref(), obj)
+                        {
+                            // Registry 221.1 #1636: the chain's root is the receiver
+                            // `@` -- a parameter of the method, bound `ro` unless the
+                            // method says `mut @` (D176). Binding dominates down the
+                            // chain (D35, D175: `acc.tags.items.push` through `ro acc`
+                            // is refused), so `@items.push(x)` in `fn T @m()` is the
+                            // same error as `p.items.push(x)` through a non-`mut` `p`.
+                            // `lvalue_root_ident` knows only an `Ident` root, and the
+                            // `@` root passed silently. No `#share` exception: a
+                            // mutating method of a shared field is still a mutation
+                            // through the receiver. A `*mut` field is the wall (D246
+                            // P4: "L2 freeze stops at every `*`"; P5: `*mut T` is a
+                            // writable target from its type) -- `@rc.fetch_add(1)`
+                            // with `rc *mut AtomicInt` mutates the pointee only.
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_PARAM_NOT_MUT] the receiver `@` is not `mut`, but the \
+                                     mut-method `{}` is called through the chain `@…`. The root \
+                                     binding of a chain must be `mut` (D35, D175).",
+                                    method),
+                                e.span,
+                            ).with_note(
+                                "declare the method with `mut @`: `fn T mut @name(...)`; \
+                                 its callers then need a `mut` binding."
+                                    .to_string(),
+                            ));
                         } else if let ExprKind::Call { func: inner_func, args: inner_args, .. } = &obj.kind {
                             // Plan 184 Р7 / D181 follow-up (ex-172.5 R6,
                             // `[M-172.5-chain-gating-ro-at]`): `obj` — сам результат
@@ -54826,12 +55408,23 @@ impl MapLitAnnotator<'_> {
     /// single-wrapper rewrite now runs on the returned leaves
     /// (`wrap_return_tail`); `walk_expr(t, None)` stays, for the other
     /// mechanisms this paragraph is about.
+    /// Correction (registry 221.1 #1641): it does not stay -- `None` withheld
+    /// the return type from the element-type inference of an anonymous-record
+    /// array in a branch tail. The tail is now walked against the return type,
+    /// exactly as an expression body (`FnBody::Expr` above) always was, and
+    /// `wrap_return_tail` follows it on both paths.
     fn walk_fn_body_block(&mut self, b: &mut Block) {
         for s in &mut b.stmts {
             self.walk_stmt(s);
         }
         if let Some(t) = &mut b.trailing {
-            self.walk_expr(t, None);
+            // #1641: the tail IS the return value -- it gets the declared type
+            // as its expected type, so an `if`/`match`/block tail hands it on to
+            // its branches (`walk_block_to`). Before, an array of anonymous
+            // records in a branch tail (`else { [{ name: "a", n: k }] }`) had no
+            // element type, and codegen monomorphized `Vec` with an EMPTY one.
+            let ret_ty = self.current_fn_return_ty.clone();
+            self.walk_expr(t, ret_ty.as_ref());
             if let Some(ret_ty) = self.current_fn_return_ty.clone() {
                 // #1260: `return` is a position of the single-wrapper rule
                 // (D55 amend: `let`/`const`, `return`, call-arg, element), and
@@ -54925,8 +55518,11 @@ impl MapLitAnnotator<'_> {
                 // widen the PRE-EXISTING D55 single-wrapper `try_wrap_leaf`
                 // rewrite to a position it was never scoped to (return),
                 // outside Plan 214's mandate).
+                // Corrected by #1260 (return IS a wrap position) and #1641
+                // (the value is walked against the return type, as a tail is).
                 if let Some(v) = value {
-                    self.walk_expr(v, None);
+                    let ret_ty = self.current_fn_return_ty.clone();
+                    self.walk_expr(v, ret_ty.as_ref());
                     if let Some(ret_ty) = self.current_fn_return_ty.clone() {
                         // #1260: see `walk_fn_body_block` -- return is a wrap position.
                         self.wrap_return_tail(v, &ret_ty);
@@ -55576,7 +56172,8 @@ impl MapLitAnnotator<'_> {
                 self.walk_block(body);
             }
             ExprKind::Loop { body, .. } => self.walk_block(body),
-            ExprKind::Block(b) => self.walk_block(b),
+            // #1641: a block VALUE -- its tail is the value.
+            ExprKind::Block(b) => self.walk_block_to(b, expected),
             ExprKind::Spawn(x) => self.walk_expr(x, None),
             ExprKind::Detach(b) | ExprKind::Blocking(b) => self.walk_block(b),
             ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
@@ -55627,10 +56224,17 @@ impl MapLitAnnotator<'_> {
             // Plan 97 Ф.4 (D142): protocol-литерал — walk-mut идентичен.
             ExprKind::HandlerLit { methods, .. } | ExprKind::ProtocolLit { methods, .. } => {
                 for m in methods.iter_mut() {
+                    // #1641: an `effect X { op(..) -> T { .. } }` op declares `T`
+                    // (mandatory there); its body's tail and its `return`s target
+                    // it -- not the enclosing function's type. A protocol
+                    // method-impl has no `ret_ty` and keeps `None`, as before.
+                    let op_ret = m.ret_ty.clone();
+                    let saved = std::mem::replace(&mut self.current_fn_return_ty, op_ret.clone());
                     match &mut m.body {
-                        HandlerMethodBody::Expr(x) => self.walk_expr(x, None),
-                        HandlerMethodBody::Block(b) => self.walk_block(b),
+                        HandlerMethodBody::Expr(x) => self.walk_expr(x, op_ret.as_ref()),
+                        HandlerMethodBody::Block(b) => self.walk_block_to(b, op_ret.as_ref()),
                     }
+                    self.current_fn_return_ty = saved;
                 }
             }
             ExprKind::Select { arms } => {

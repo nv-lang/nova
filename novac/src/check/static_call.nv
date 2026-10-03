@@ -18,9 +18,11 @@ module novac.check
 
 import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
+import ../sem.{is_arg_node, arg_expr_of}
 import ../sem.{branch_children, leaf_text, leaf_kind, expr_leaf_name, ty_of_decl, raw_row, no_row, FnRow}
 import ../sem.{CalleeTarget, bind_slots, is_arg_value_kind, c_static_symbol}
 import ../types.{TyId, no_ty, is_ty}
+import ../names.{raw_decl}
 
 /// `Type.f(args)` where `Type` names a type with a STATIC method `f`: typed,
 /// recorded, and answered true -- or false when the head names no type, or the
@@ -28,20 +30,55 @@ import ../types.{TyId, no_ty, is_ty}
 /// variant, a method) judge it.
 fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
     // SILENT-OK: not the spelling `Name.name(args)` -- the other doors judge it.
-    if kids.len() < 4 || kids[0].kind_of() != NodeKind.Name || kids[2].kind_of() != NodeKind.LeafNode { return false }
+    if kids.len() < 4 || kids[2].kind_of() != NodeKind.LeafNode { return false }
+    // THE HEAD: a type's name, or a type APPLIED to arguments --
+    // `HashMap[str, int].new()` (274.5 P4, `names.NameTable.new`): the parser
+    // reads the run as an `Index` and leaves the judgment to the name it
+    // starts with (parse/expr.nv). `applied` holds the written arguments; empty
+    // for a bare head.
+    mut head = kids[0]
+    mut applied = []TyId.new()
+    if kids[0].kind_of() == NodeKind.Index {
+        match @applied_head(kids[0]) {
+            // SILENT-OK: no type applied to type names -- an index, which the method door types.
+            None => return false
+            Some(ha) => {
+                head = ha.0
+                applied = ha.1
+            }
+        }
+    } else if kids[0].kind_of() != NodeKind.Name {
+        // SILENT-OK: a computed receiver is no type -- the method door judges it.
+        return false
+    } else {
+        // A bare name: asked of the registry below.
+    }
     mut head_t = no_ty()
-    match @ctx.defs.def_of(expr_leaf_name(kids[0])) {
+    match @ctx.defs.def_of(expr_leaf_name(head)) {
         // SILENT-OK: the head names nothing -- the path-head door refused it already.
         None => return false
         Some(hd) => match hd.target {
-            DefType(decl) => { head_t = ty_of_decl(@ctx, decl) }
+            DefType(decl) => {
+                head_t = if applied.len() == 0 {
+                    ty_of_decl(@ctx, decl)
+                } else if applied.len() == @ctx.types[raw_decl(decl)].tparam_cnt {
+                    @ctx.tys.app(decl, applied)
+                } else {
+                    no_ty()
+                }
+            }
             // SILENT-OK: a function or a constant head is no type: the method door judges.
             DefFn(_) | DefConst(_) => return false
         }
     }
-    // SILENT-OK: a head that is no declared type has no static methods to ask.
-    if !is_ty(head_t) || !@ctx.tys.names_a_decl(head_t) { return false }
-    ro head_decl = @ctx.tys.decl_head_of(head_t)
+    // SILENT-OK: a head that is no type has no static methods to ask.
+    if !is_ty(head_t) { return false }
+    // A PRIMITIVE head (`str.new()`, std's `str.alloc_copy(p, n)`) names no
+    // declaration: its static methods are the rows OWNED by that very type
+    // (registry 1631). Until then the door answered "not mine" for it, and the
+    // variant door below called it the program's error -- "this type declares
+    // no static method of this name" about `fn str.new()`, which std declares.
+    ro head_nominal = @ctx.tys.names_a_decl(head_t)
     ro mname = leaf_text(kids[2])
     // THE ROW, by name and written arity among the type's static methods --
     // asked BEFORE the arguments are walked, so a spelling that is not a static
@@ -58,8 +95,16 @@ fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
     for i in 0..@ctx.fns.rows.len() {
         ro fd = @ctx.fns.rows[i]
         if fd.name != mname || !is_ty(fd.owner) { continue }
-        // A static method of a PRIMITIVE (`int.max_value()`) names no declaration.
-        if !@ctx.tys.names_a_decl(fd.owner) || @ctx.tys.decl_head_of(fd.owner) != head_decl { continue }
+        // A nominal head matches by its declaration (`Vec[T]` and `Vec[int]`
+        // are one head); a primitive one (`int.max_value()`) by the type itself.
+        if head_nominal {
+            if !@ctx.tys.names_a_decl(fd.owner) { continue }
+            if @ctx.tys.decl_head_of(fd.owner) != @ctx.tys.decl_head_of(head_t) { continue }
+        } else if fd.owner != head_t {
+            continue
+        } else {
+            // A static method of this very primitive.
+        }
         named += 1
         // The written arguments fill the leading parameters; the rest must
         // carry defaults (D102: `Vec[T].new(cap int = 0)` takes `new()`).
@@ -81,15 +126,23 @@ fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
         // At least one static method takes this many arguments.
     }
     ro before = @out.len()
+    // The tail's expectation stays outside the call, as the free and the method
+    // call have it (part 6 of p274-carina-k1): it reached the arguments, and
+    // `=> Tb.id(if m { 1 } else { 0 })` in a `-> Row` body deduced `T = Row`.
+    ro saved_expect = @value_expect
+    @value_expect = no_ty()
     at = 0
     for c in kids {
-        if at > 2 && is_arg_value_kind(c.kind_of()) {
-            @type_expr(c)
+        if at > 2 && is_arg_node(c) {
+            // A NAMED argument's value too (registry 1630: std's
+            // `StringBuilder.new(cap: s.byte_len() + 2)` in `str @pad_start`).
+            @type_expr(arg_expr_of(c))
         } else {
             // The head, the dot, the name and the punctuation: nothing to type.
         }
         at += 1
     }
+    @value_expect = saved_expect
     // SILENT-OK: an argument's own refusal is the call's one cause.
     if @out.len() > before { return true }
     // An effectful argument is hoisted into a local, and a local needs its
@@ -116,7 +169,20 @@ fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
     }
     ro key = typed_args(kids, 3, @ctx, @scope, @chan)
     mut ids = []TyId.new()
-    if fd.tparam_cnt > 0 {
+    if fd.tparam_cnt > 0 && applied.len() > 0 {
+        // The instance is WRITTEN: `HashMap[str, int].new()` names its
+        // arguments, and a constructor without parameters of that type has
+        // nothing to deduce them from. A static method with type parameters
+        // of its own beyond the type's is not compiled on this spelling yet.
+        if fd.tparam_cnt != applied.len() {
+            // A static method with type parameters of its OWN beyond the
+            // type's: the rest of the form this wave does not compile yet.
+            @report_first_leaf_of(kids, APPLIED_TYPE_MSG)
+            return true
+        } else {
+            ids = applied
+        }
+    } else if fd.tparam_cnt > 0 {
         ids = match @deduce_from_args(row, key, kids) {
             // SILENT-OK: the deduction door named which of its cases it was.
             None => return true
@@ -125,10 +191,13 @@ fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
     } else {
         // Not generic: no substitution.
     }
-    // WHOSE BODY: the shell's, or one this unit makes from the body it was
-    // handed -- refused by the shell's name when neither.
-    if !@ctx.instantiates(row, ids) && !@ctx.interop.has(c_static_symbol(@ctx, row, ids)) {
-        @report_first_leaf_of(kids, no_shell_method_msg(mname, expr_leaf_name(kids[0])))
+    // WHOSE BODY: the PROGRAM's (another module of it -- `ConstTable.new()`
+    // from novac's own `sem` in the self-build; its owner unit compiles it, as
+    // a method of a program module, 274.11 E.10 step 2a), the shell's, or one
+    // this unit makes from the body it was handed -- refused by the shell's
+    // name when none.
+    if !@ctx.in_program(row) && !@ctx.instantiates(row, ids) && !@ctx.interop.has(c_static_symbol(@ctx, row, ids)) {
+        @report_first_leaf_of(kids, no_shell_method_msg(mname, expr_leaf_name(head)))
         return true
     } else {
         // Callable: recorded below.
@@ -138,6 +207,31 @@ fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
         bind_slots(@ctx.fns.params, fd.param_off, fd.param_cnt, key))
     @record(e, @ctx.tys.subst(fd.ret_id, ids))
     true
+}
+
+/// The refusal of a type applied to arguments where novac does not compile it
+/// yet: an index run whose head is a type (binds.nv `@type_index`), and a static
+/// method on one with type parameters of its own (`@type_static_call`).
+const APPLIED_TYPE_MSG = "outside the subset: a type applied to arguments is read but not compiled yet (274.5 P4)"
+
+/// The HEAD of a type applied to arguments, `HashMap[str, int]`, read from the
+/// parser's `Index` run: the head's name node and the written arguments, each
+/// a type's name -- or None when any argument is no type's name (an index, or a
+/// form this door does not read), and the method door judges the node.
+fn Checker @applied_head(ix Node) -> Option[(Node, []TyId)] {
+    ro ik = branch_children(ix)
+    if ik.len() < 4 || ik[0].kind_of() != NodeKind.Name { return None }
+    mut args = []TyId.new()
+    for i in 2..ik.len() {
+        ro c = ik[i]
+        if c.kind_of() == NodeKind.LeafNode { continue }
+        if c.kind_of() != NodeKind.Name { return None }
+        ro t = @ctx.ty_of_name(expr_leaf_name(c)) ?? no_ty()
+        if !is_ty(t) { return None }
+        args.push(t)
+    }
+    if args.len() == 0 { return None }
+    Some((ik[0], args))
 }
 
 /// Intern the CONCRETE signature of instance `(row, ids)`: every parameter

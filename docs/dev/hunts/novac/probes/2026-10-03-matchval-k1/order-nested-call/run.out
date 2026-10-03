@@ -1,0 +1,98 @@
+=== PROGRAM
+     1	module prog
+     2	
+     3	// D484: arguments left to right, observably -- for a call that is itself an
+     4	// ARGUMENT of another call (`println(f(..))`, `ro r = g(f(..))`). Carina's F65
+     5	// hoist orders a call standing as a statement or an initializer; here the
+     6	// ordered call is one level down. Lines 1-3: no `match` at all.
+     7	fn say(n int) -> int {
+     8	    println(n)
+     9	    n
+    10	}
+    11	
+    12	fn three(a int, b int, c int) -> int => a * 100 + b * 10 + c
+    13	
+    14	fn id(x int) -> int => x
+    15	
+    16	fn main() {
+    17	    println("control, init: norm 1 2 3 then 123")
+    18	    ro r0 = three(say(1), say(2), say(3))
+    19	    println(r0)
+    20	    println("under println: norm 1 2 3 then 123")
+    21	    println(three(say(1), say(2), say(3)))
+    22	    println("under id in init: norm 4 5 6 then 456")
+    23	    ro r1 = id(three(say(4), say(5), say(6)))
+    24	    println(r1)
+    25	    println("match arg under println: norm 7 8 9 then 789")
+    26	    println(three(say(7), match say(8) {
+    27	        8 => 8
+    28	        _ => 0
+    29	    }, say(9)))
+    30	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=0
+oracle run rc=0
+=== SUBJECT: novac emit prog.nv
+novac emit rc=0
+--- Carina's C, the body of main
+static nova_unit nova_fn_main_impl(void) {
+    nova_print_str(_novac_strlit_0);
+    nova_print_newline();
+    nova_int _novac_l2 = novac_fn_prog_say__nova_int__to_nova_int(((nova_int)1LL));
+    nova_int _novac_l3 = novac_fn_prog_say__nova_int__to_nova_int(((nova_int)2LL));
+    nova_int _novac_l4 = novac_fn_prog_say__nova_int__to_nova_int(((nova_int)3LL));
+    nova_int r0 = novac_fn_prog_three__nova_int__nova_int__nova_int__to_nova_int(_novac_l2, _novac_l3, _novac_l4);
+    nova_print_int(r0);
+    nova_print_newline();
+    nova_print_str(_novac_strlit_1);
+    nova_print_newline();
+    nova_print_int(novac_fn_prog_three__nova_int__nova_int__nova_int__to_nova_int(novac_fn_prog_say__nova_int__to_nova_int(((nova_int)1LL)), novac_fn_prog_say__nova_int__to_nova_int(((nova_int)2LL)), novac_fn_prog_say__nova_int__to_nova_int(((nova_int)3LL))));
+    nova_print_newline();
+    nova_print_str(_novac_strlit_2);
+    nova_print_newline();
+    nova_int r1 = novac_fn_prog_id__nova_int__to_nova_int(novac_fn_prog_three__nova_int__nova_int__nova_int__to_nova_int(novac_fn_prog_say__nova_int__to_nova_int(((nova_int)4LL)), novac_fn_prog_say__nova_int__to_nova_int(((nova_int)5LL)), novac_fn_prog_say__nova_int__to_nova_int(((nova_int)6LL))));
+    nova_print_int(r1);
+    nova_print_newline();
+    nova_print_str(_novac_strlit_3);
+    nova_print_newline();
+    nova_int _novac_l7 = novac_fn_prog_say__nova_int__to_nova_int(((nova_int)8LL));
+    nova_int _novac_l6 = (nova_int){0};
+    int _novac_matched_t0 = 0;
+    if (!_novac_matched_t0 && ((_novac_l7 == 8LL))) {
+        _novac_l6 = ((nova_int)8LL);
+    _novac_matched_t0 = 1;
+    }
+    if (!_novac_matched_t0 && (true)) {
+        _novac_l6 = ((nova_int)0LL);
+    _novac_matched_t0 = 1;
+    }
+    nova_print_int(novac_fn_prog_three__nova_int__nova_int__nova_int__to_nova_int(novac_fn_prog_say__nova_int__to_nova_int(((nova_int)7LL)), _novac_l6, novac_fn_prog_say__nova_int__to_nova_int(((nova_int)9LL))));
+    nova_print_newline();
+    return NOVA_UNIT;
+}
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+=== STDOUT, line by line: oracle | Carina
+  1  control, init: norm 1 2 3 then 123| control, init: norm 1 2 3 then 123
+  2  3                       | 1
+  3  2                       | 2
+  4  1                       | 3
+  5  123                     | 123
+  6  under println: norm 1 2 3 then 123| under println: norm 1 2 3 then 123
+  7  3                       | 3
+  8  2                       | 2
+  9  1                       | 1
+ 10  123                     | 123
+ 11  under id in init: norm 4 5 6 then 456| under id in init: norm 4 5 6 then 456
+ 12  6                       | 6
+ 13  5                       | 5
+ 14  4                       | 4
+ 15  456                     | 456
+ 16  match arg under println: norm 7 8 9 then 789| match arg under println: norm 7 8 9 then 789
+ 17  7                       | 8
+ 18  8                       | 9
+ 19  9                       | 7
+ 20  789                     | 789
+=== VERDICT: DIFFERENT stdout

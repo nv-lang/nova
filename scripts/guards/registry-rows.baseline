@@ -1513,6 +1513,28 @@
 # 2026-10-02, integrator nova-20: rows -> 1584, max -> 1638 (rows 1637 (SqlValue variants per numeric type, owner's decision) and 1638 (JsonValue numbers) filed; 1635-1636 reserved for the assistant's branch).
 # 2026-10-02, integrator nova-20: rows -> 1586, max -> 1638 (merge of p1598-ro-receiver-write: rows 1635, 1636 filed, their reserve dropped).
 # 2026-10-02, assistant nova-88: rows -> 1587, max -> 1639 (branch p1608-no-implicit-numeric-change: row 1639 filed -- an example without fn main is checked by nothing (orm_demo), number from the integrator).
+# 2026-10-02, integrator nova-20: rows -> 1590, max -> 1642 (rows 1640 (closed by c8aef519e), 1641, 1642 filed (the assistant's findings on orm_demo)).
+# 2026-10-02, integrator nova-20: rows -> 1592, max -> 1642 (merge of p274-carina-sweep steps 5-7: rows 1617, 1618 arrive, their reserve dropped).
+# 2026-10-02, integrator nova-20: rows -> 1597, max -> 1662 (rows 1655 (stdout buffered), 1656 (false E_DEP_PATH_OUTSIDE_REPO), 1657 (free fn named like a std local), 1661 (gate-novac without the novac_bin door), 1662 (accepted red by job name) filed; 1643-1654 and 1658-1660 reserved in gaps -- numbers issued to cloud sessions and the assistant, their rows travel in branches or wait for a filing; condition to drop: the same merge or filing removes them from gaps).
+# 2026-10-02, integrator nova-20: rows -> 1598, max -> 1662 (merge of p274-carina-sweep steps 8-9: row 1643 arrives, its reserve dropped; its tag field set to NO).
+# 2026-10-03, integrator nova-20: rows -> 1600, max -> 1665 (rows 1663 (smoke cache keeps a removed tree's oracle path) and 1665 (measure 0.2 is no ratchet) filed; 1664 reserved in gaps (1666-1675 above max, issued too) -- issued to cloud sessions (cast 1664, mono-k2 1666-1667, strarm 1668-1669, k1 1671-1673, sweep 1674-1675) and the assistant (1670); their rows travel in branches; condition to drop: the same merge removes them from gaps).
+# 2026-10-02, assistant nova-88: rows -> 1598, max -> 1662 (branch p1648-generic-record-field-expected: row 1648 filed with its fix -- a closure in a field of a generic record instance got `int` for the type parameter; number from the integrator, reserve 1648 dropped from gaps).
+# 2026-10-03, integrator nova-20: rows -> 1601, max -> 1665 (merge of p1648-generic-record-field-expected: row 1648 arrives, its reserve dropped).
+# 2026-10-03, assistant nova-88: rows -> 1598, max -> 1670 (branch p1657-untyped-local-shadows: row 1670 filed -- the return check judges by the function's entry scope, a false E_IMPLICIT_NARROWING; number from the integrator; 1663-1669, issued to other sessions and not filed on main, reserved in gaps; condition to drop: their rows' filing removes them).
+# 2026-10-03, integrator nova-20: rows -> 1602, max -> 1670 (merge of p1657-untyped-local-shadows: row 1670 arrives; 1666-1669 stay reserved for the cloud sessions mono-k2 and strarm).
+# 2026-10-03, integrator nova-20: rows -> 1608, max -> 1685 (rows 1680-1685 filed from the hunt 2026-10-03-matchval-k1; 1671-1679 issued to cloud sessions tonight -- reserved in gaps).
+# 2026-10-03, assistant nova-88: rows -> 1602, max -> 1665 (branch p1649-match-foreign-variant: row 1649 filed with its fix -- a foreign sum's variant in a pattern passed for every scrutinee but a catch-all-free sum; number from the integrator, reserve 1649 dropped from gaps).
+# 2026-10-03, integrator nova-20: rows -> 1609, max -> 1685 (merge of p1649-match-foreign-variant: row 1649 arrives, its reserve dropped).
+# 2026-10-03, integrator nova-20: rows -> 1610, max -> 1691 (row 1691 filed -- Carina's self-build depends on CRLF; 1686-1690 issued to the assistant and cloud sessions, reserved in gaps).
+# 2026-10-03, integrator nova-20: rows -> 1611, max -> 1693 (row 1693 filed -- accepted red passes other gate refusals; 1692 issued to cast, reserved).
+# 2026-10-03, assistant nova-88: rows -> 1612, max -> 1693 (row 1651 filed CLOSED -- not reproducible on the main binary of 74c0c7d1b, six forms; reserve 1651 dropped from gaps).
+# 2026-10-03, integrator nova-20: rows -> 1614, max -> 1700 (rows 1699 (ghost variant in a pattern reaches C) and 1700 (extern void in a value arm) filed; 1694-1698 issued to cloud sessions and the assistant, reserved).
+rows=1614
+max=1700
+rows=1611
+max=1693
+rows=1590
+max=1642
 rows=1587
 max=1639
 rows=1586
@@ -2258,7 +2280,7 @@ stale_gaps=0
 #   указателем); строки едут в его ветке `r3-threshold-24`. Условие снятия: тем же слиянием номера убираются из `gaps`.
 # 2026-10-02, integrator: 1610-1611 В `gaps` — РЕЗЕРВ, выданный помощнику nova-88: №1610 (вывод `Empty` как ParseBoolError, ветка
 #   p1456-builtin-sum-method) и №1611 (f64 -> int молча, К1). Тем же слиянием номера убираются из `gaps`.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1617-1618
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1644-1647,1650,1652-1654,1658-1660,1664,1666-1669,1671-1679,1686-1690,1692,1694-1698
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding

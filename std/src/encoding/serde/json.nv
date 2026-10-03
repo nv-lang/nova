@@ -112,14 +112,17 @@ fn JsonSerializer mut @serialize_int(v int) -> Result[(), SerError] {
     if v >= 9007199254740992 || v <= -9007199254740992 {
         return Err(SerError.new(SerLossyInteger(v.to_str())))
     }
-    @put(JsonValue.num(v as f64))
+    // #1638: an integer is written as an integer (`Int`), so `3` prints `3`,
+    // not `3.0`, and equals the `Int(3)` the reader makes of the same text.
+    @put(JsonValue.Int(v))
 }
 
 fn JsonSerializer mut @serialize_uint(v u64) -> Result[(), SerError] {
     if v >= 9007199254740992 {
         return Err(SerError.new(SerLossyInteger(v.to_str())))
     }
-    @put(JsonValue.num(v as f64))
+    // Below 2^53 a `u64` always fits `int`: the same `Int` the reader makes.
+    @put(JsonValue.Int(v as int))
 }
 
 fn JsonSerializer mut @serialize_float(v f64) -> Result[(), SerError] {
@@ -218,38 +221,53 @@ fn JsonDeserializer mut @deser_str() -> Result[str, DeError] {
     }
 }
 
+// #1638 "read exactly": an integer target takes `Int`/`U64` as they are; an
+// `F64` only when it is an exact integer in the safe range (else
+// LossyInteger); a float target takes any number whose conversion is exact.
 fn JsonDeserializer mut @deser_float() -> Result[f64, DeError] {
     match @cur.num() {
         Some(n) => Ok(n)
-        None    => Err(DeError.unexpected("number", json_kind(@cur)))
+        None => if @cur.is_num() {
+            Err(DeError.new(LossyInteger(@cur.to_str())))
+        } else {
+            Err(DeError.unexpected("number", json_kind(@cur)))
+        }
     }
 }
 
 fn JsonDeserializer mut @deser_int() -> Result[int, DeError] {
-    match @cur.num() {
-        None => Err(DeError.unexpected("int", json_kind(@cur)))
-        Some(n) => {
-            if !is_exact_int(n) {
-                Err(DeError.new(LossyInteger(n.to_str())))
-            } else {
-                Ok(n as int)
-            }
+    match @cur {
+        JsonValue.Int(n) => Ok(n)
+        JsonValue.U64(n) => if n <= (int.MAX as u64) {
+            Ok(n as int)
+        } else {
+            Err(DeError.new(OutOfRange(n.to_str())))
         }
+        JsonValue.F64(n) => if !is_exact_int(n) {
+            Err(DeError.new(LossyInteger(n.to_str())))
+        } else {
+            Ok(n as int)
+        }
+        _ => Err(DeError.unexpected("int", json_kind(@cur)))
     }
 }
 
 fn JsonDeserializer mut @deser_uint() -> Result[u64, DeError] {
-    match @cur.num() {
-        None => Err(DeError.unexpected("uint", json_kind(@cur)))
-        Some(n) => {
-            if n < 0.0 {
-                Err(DeError.new(OutOfRange(n.to_str())))
-            } else if !is_exact_int(n) {
-                Err(DeError.new(LossyInteger(n.to_str())))
-            } else {
-                Ok(n as u64)
-            }
+    match @cur {
+        JsonValue.U64(n) => Ok(n)
+        JsonValue.Int(n) => if n < 0 {
+            Err(DeError.new(OutOfRange(n.to_str())))
+        } else {
+            Ok(n as u64)
         }
+        JsonValue.F64(n) => if n < 0.0 {
+            Err(DeError.new(OutOfRange(n.to_str())))
+        } else if !is_exact_int(n) {
+            Err(DeError.new(LossyInteger(n.to_str())))
+        } else {
+            Ok(n as u64)
+        }
+        _ => Err(DeError.unexpected("uint", json_kind(@cur)))
     }
 }
 

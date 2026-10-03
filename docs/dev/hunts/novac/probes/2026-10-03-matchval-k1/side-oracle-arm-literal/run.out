@@ -1,0 +1,51 @@
+=== PROGRAM
+     1	module prog
+     2	
+     3	// D489, the paragraph on a match arm and an if branch: when the result type is WRITTEN (a typed
+     4	// binding, a return, an argument), every arm is a position of that type and a
+     5	// literal in it takes that type. All literals here fit their type. The norm:
+     6	// the program builds and prints 250, -1, 255, -32768.
+     7	fn found(k int) -> Option[int] {
+     8	    if k > 0 { Some(k) } else { None }
+     9	}
+    10	
+    11	fn take8(x u8) -> int => x as int
+    12	
+    13	fn take16(x i16) -> int => x as int
+    14	
+    15	fn main() {
+    16	    ro k = 3
+    17	    ro c u8 = match k {
+    18	        3 => 250
+    19	        _ => 0
+    20	    }
+    21	    println(c as int)
+    22	    ro d i16 = match found(k) {
+    23	        Some(v) => -1
+    24	        None => 7
+    25	    }
+    26	    println(d as int)
+    27	    println(take8(match k {
+    28	        3 => 255
+    29	        _ => 1
+    30	    }))
+    31	    println(take16(match found(0) {
+    32	        Some(v) => 1
+    33	        None => -32768
+    34	    }))
+    35	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=1
+[1m[31merror:[0m[0m \\?\D:\Temp\tmp.qupJ2qbJa9\prog.nv:17:15: error: [E_IMPLICIT_NARROWING] cannot assign value of type `int` to `c` of type `u8` — a value does not change its numeric type implicitly (D491); use an explicit `... as u8` cast
+\\?\D:\Temp\tmp.qupJ2qbJa9\prog.nv:22:16: error: [E_IMPLICIT_NARROWING] cannot assign value of type `int` to `d` of type `i16` — a value does not change its numeric type implicitly (D491); use an explicit `... as i16` cast
+\\?\D:\Temp\tmp.qupJ2qbJa9\prog.nv:27:19: error: [E_IMPLICIT_NARROWING] cannot pass `int` as argument `x` of type `u8` — a value does not change its numeric type implicitly (D491); use an explicit `<value> as u8` cast
+\\?\D:\Temp\tmp.qupJ2qbJa9\prog.nv:31:20: error: [E_IMPLICIT_NARROWING] cannot pass `int` as argument `x` of type `i16` — a value does not change its numeric type implicitly (D491); use an explicit `<value> as i16` cast
+(no oracle binary)
+=== SUBJECT: novac emit prog.nv
+novac emit rc=1
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"<tmp>/prog.nv","start":690,"end":695},"message":"outside the subset: this argument's type is not the one this function declares here","poisoned_by":null}
+{"id":"d1","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"<tmp>/prog.nv","start":758,"end":764},"message":"outside the subset: this argument's type is not the one this function declares here","poisoned_by":null}
+--- Carina's C, the body of main
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+(skipped: refused by novac, or no smoke cache)
+=== VERDICT: one side produced no run (see above)

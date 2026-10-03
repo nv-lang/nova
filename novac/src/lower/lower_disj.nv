@@ -22,6 +22,7 @@ import ../types.{TyId, is_ty}
 import ../sem.{pattern_shape, pattern_head_text, pattern_subpatterns}
 import ../sem.{pattern_fields, patfield_sub, patfield_name, pattern_name_node, patfield_name_node}
 import ../sem.{payload_named, VariantRow}
+import ../sem.{PatShape, variant_in_sum, is_vrow, no_vrow, raw_vrow, payload_as_seen}
 
 /// How a sub-pattern standing in a payload, a component or an element binds.
 /// Asked once, so the three doors that read a piece out of a base agree.
@@ -77,6 +78,114 @@ fn Lowerer mut @lower_disj_bind(pat Node, ty TyId, base Local, pre []str) -> () 
         @ir.end_arm(c)
     }
     @ir.end_switch(c)
+}
+
+/// A disjunction whose alternatives TEST below their heads (registry 1568):
+/// `Aa(1) | Bb(1)`. The arm head (or the parent's test) proved one of the HEADS;
+/// which alternative held is decided here. The binders are declared once above,
+/// a flag local starts false, and a switch over `base` tries the alternatives in
+/// order: each arm tests its own head, then the tests below it -- the recursion
+/// that binds -- and raises the flag in its innermost branch. Its first-match flag
+/// is set there too, so an alternative whose test below fails falls through to
+/// the next, exactly as an arm of the outer match does. The flag's `If` is then
+/// one more synthetic condition of the enclosing arm.
+fn Lowerer mut @lower_disj_tests(pat Node, ty TyId, base Local, pre []str, mut opened []IfCtx) -> () {
+    ro alts = pattern_subpatterns(pat)
+    mut names = []str.new()
+    mut btys = []TyId.new()
+    if alts.len() > 0 { @disj_binders(alts[0], names, btys) } else { // A recovery gap binds nothing.
+    }
+    for i in 0..names.len() {
+        if !contains_name(pre, names[i]) {
+            @ir.declare_zeroed(@ir.named(btys[i], names[i]))
+        } else {
+            // An enclosing disjunction declared it; this one only writes it.
+        }
+    }
+    mut all = []str.new()
+    all.append(pre)
+    all.append(names)
+    ro held = @ir.temp(@ctx.prims.bool_id)
+    @ir.declare_zeroed(held)
+    ro c = @ir.begin_switch(base)
+    for alt in alts {
+        @ir.begin_arm(c, @pattern_of(alt, ty), None)
+        mut inner = []IfCtx.new()
+        @lower_pattern_tests(alt, ty, base, all, inner)
+        mut heads = []BlockId.new()
+        for o in inner {
+            heads.push(o.head)
+        }
+        @ir.note_arm_heads(heads)
+        @ir.set_bool(held, true)
+        mut k = inner.len()
+        while k > 0 {
+            k -= 1
+            @ir.end_if(inner[k])
+        }
+        @ir.end_arm(c)
+    }
+    @ir.end_switch(c)
+    opened.push(@ir.begin_if(Cond.Flag(held), ElseShape.NoElse))
+}
+
+/// Does any alternative of the disjunction test something BELOW its head?
+fn Lowerer @alts_test_below(pat Node, ty TyId) -> bool {
+    for alt in pattern_subpatterns(pat) {
+        if @tests_below(alt, ty) { return true }
+    }
+    false
+}
+
+/// Does anything below this pattern's own head test something -- a subpattern
+/// with a head of its own (`@sub_has_test`), at any depth? Types come from the
+/// same doors the binding recursion reads them through.
+fn Lowerer @tests_below(pat Node, ty TyId) -> bool {
+    ro sh = pattern_shape(pat)
+    if sh == PatShape.Variant {
+        ro vrow = variant_in_sum(@ctx, ty, pattern_head_text(pat)) ?? no_vrow()
+        if !is_vrow(vrow) { return false }
+        ro vr = @ctx.variant_rows[raw_vrow(vrow)]
+        mut i = 0
+        for sub in pattern_subpatterns(pat) {
+            if i >= vr.payload_cnt { break }
+            ro pt = payload_as_seen(@ctx, ty, @ctx.payload_types[vr.payload_off + i])
+            if @sub_has_test(sub, pt) || @tests_below(sub, pt) { return true }
+            i += 1
+        }
+        return false
+    }
+    if sh == PatShape.Record {
+        for f in pattern_fields(pat) {
+            match patfield_sub(f) {
+                Some(sub) => {
+                    ro ft = @out.type_of(f.id_of())
+                    if @sub_has_test(sub, ft) || @tests_below(sub, ft) { return true }
+                }
+                None => {}
+            }
+        }
+        return false
+    }
+    if sh == PatShape.Array {
+        ro et = @ctx.tys.arg(ty, 0)
+        for sub in pattern_subpatterns(pat) {
+            if @sub_has_test(sub, et) || @tests_below(sub, et) { return true }
+        }
+        return false
+    }
+    if sh == PatShape.Disj { return @alts_test_below(pat, ty) }
+    // A literal, a binder, `_`: nothing below the head. A positional bracket
+    // asks its components.
+    if sh == PatShape.Lit || sh == PatShape.Bind || sh == PatShape.Wild { return false }
+    mut j = 0
+    for sub in pattern_subpatterns(pat) {
+        if j >= @ctx.tys.arg_count(ty) { break }
+        ro et = @ctx.tys.arg(ty, j)
+        if @sub_has_test(sub, et) || @tests_below(sub, et) { return true }
+        j += 1
+    }
+    false
 }
 
 /// The names a pattern BINDS, with their types, in written order. A binder is

@@ -160,7 +160,11 @@
 #   an index key other than `int` is a LANGUAGE error (D238, D405, D52; the integrator's
 #   ruling), and NEWTYPE_CTOR_SELF_MSG went in on the language door (D52 amendment
 #   2026-10-02). Numbers are the guard's on the tree after the merge of the train.
-undated=57
+# 2026-10-02, cloud session p274-carina-strarm (step 10): 57 -> 55. The two undated
+#   refusals of `==` over a vector (registry 1573, check/operators.nv) leave: a right side of
+#   another type is a LANGUAGE error (D405, D491), and an `equal` not handed gets its stage
+#   (E2-b2 multi-file) -- `str` and `Vec` declare it, so the form is legal.
+undated=55
 
 # ВТОРОЕ ЧИСЛО — ОБЩЕЕ, храповик ВНИЗ с целью НОЛЬ (274 §1.3а п. «г»). Заведено
 # 2026-09-13 окном 274; предписано оно было ещё 2026-09-05 планом 274.7 §И («страж
@@ -428,11 +432,17 @@ undated=57
 # dated (E2-b): a test below an alternative of `|` (`Aa(1) | Bb(1)`) was DROPPED IN
 # SILENCE -- the disjunction tests the heads only; novac printed 1 where the oracle
 # printed 0 (measured). Carriers of the new refusal in novac's own source: zero.
+# 2026-10-01, the same session (registry 1568): refusals 141 -> 140. `DISJ_NESTED_TEST_MSG`
+# is gone: the alternative whose tests all held raises a flag the arm tests (fixture
+# disj_nested/pos_1, byte-for-byte). A refusal retired, none added.
 # 2026-10-02, cloud session p274-carina-cast (step 6): INT_INDEX_MSG left the subset door --
 #   an index key other than `int` is a LANGUAGE error (D238, D405, D52; the integrator's
 #   ruling), and NEWTYPE_CTOR_SELF_MSG went in on the language door (D52 amendment
 #   2026-10-02). Numbers are the guard's on the tree after the merge of the train.
-refusals=140
+# 2026-10-02, cloud session p274-carina-strarm (step 10): refusals 140 -> 138, the guard's
+#   count on this branch after the merge of origin/main f80d61e00 and this step together; this
+#   step's own share is the right-side refusal of `==`, moved to the language door.
+refusals=138
 # ТРЕТЬЕ ЧИСЛО — БЕССРОЧНЫЕ ПО ДВЕРИ (волна 274.7 В11-б, засев 2026-09-14, окно 274).
 #
 # Два числа выше мерят НАПИСАНИЕ текста отказа, а у предмета есть машинный признак:
