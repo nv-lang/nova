@@ -81,10 +81,8 @@ fn Checker @is_owned_kind(kinds []TyId, t TyId) -> bool {
     if is_kind_of(kinds, t) { return true }
     // A type with ARGUMENTS holds them -- an application, a structural record on the
     // stack, a newtype's representation -- except a raw pointer, which owns nothing.
-    // A NEWTYPE over a must-consume type counts by its representation: the spec has
-    // no line on it (D156 names containers and `[T consume]` only), and the stricter
-    // reading admits nothing extra -- AWAITS THE OWNER'S DECISION (the integrator's
-    // question of 2026-10-03, report 14 question 4).
+    // A NEWTYPE over a must-consume type is must-consume itself -- D156, amendment
+    // 2026-10-03 (the owner's word on report 14's question 4; the pointer is in D52).
     if @ctx.tys.kind_of(t) == TypeKind.TkPtr { return false }
     for i in 0..@ctx.tys.arg_count(t) {
         if @is_owned_kind(kinds, @ctx.tys.arg(t, i)) { return true }
@@ -274,7 +272,8 @@ fn Checker mut @flow_own_binders(p Node, marked bool, mut fl ConsumeFlow) -> () 
 /// a view receiver (D476 s1). D476 desugars it to `consume x = e { ... }`, and for a
 /// type with no `@cleanup` that binding is left unconsumed -- `D133-not-consumed`
 /// (s4), worded on the expression the author wrote, never on a synthetic name (s5).
-/// A type WITH one is the D476 scope itself, the `@cleanup` step of the track.
+/// A type WITH one is the D476 scope itself: an AFFINE one in a view the flow
+/// embraces where it can (`@flow_fresh_in_view`); what reaches here is refused.
 /// ONE judge for both positions: the flow asks it for a view, typing for a `mut`
 /// view (calls.nv, where P14 would refuse the class first). True when the verdict is
 /// a language error.

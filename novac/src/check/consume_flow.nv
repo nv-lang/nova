@@ -53,6 +53,8 @@ type ConsumeFlow {
     cont []VarState /// the innermost loop's pass: the joined state at its `continue`s
     cont_paths int /// how many `continue`s (and pass ends) joined into `cont`
     forced bool /// the expression walked next stands where the grammar forces a move (an arm's or a body's value, a `return`, a constructor argument)
+    scope_call Node /// the call whose value is a statement's or a binding's own (D476 s2: a scope can embrace it), valid while `scope_ok`
+    scope_ok bool /// `scope_call` names such a call
     stopped bool /// a refusal stopped tracking this body: what follows is not judged
 }
 
@@ -199,7 +201,8 @@ fn Checker mut @flow_fn(f Node, kinds []TyId, autos AutoCleanups) -> () {
                            owned_ty: []TyId.new(), at: []Node.new(), state: []VarState.new(), loose: []bool.new(),
                            auto_at: []int.new(), origin: []Node.new(), autos,
                            depth: 0, nest: 0, dead: false, loop_mark: -1, brk: []VarState.new(), brk_paths: 0,
-                           cont: []VarState.new(), cont_paths: 0, forced: false, stopped: false }
+                           cont: []VarState.new(), cont_paths: 0, forced: false, scope_call: f,
+                           scope_ok: false, stopped: false }
     ro first = if fd.has_recv { 1 } else { 0 }
     for p in first..fd.param_cnt {
         ro pd = @ctx.fns.params[fd.param_off + p]
@@ -490,9 +493,11 @@ fn Checker mut @flow_stmt(st Node, mut fl ConsumeFlow, is_last bool) -> () {
         fl.dead = true
     } else {
         // An expression statement: its value is the tail's when it is the last one,
-        // else it is used and dropped.
+        // else it is used and dropped. A call standing alone is a scope D476 can embrace.
         fl.forced = forced
+        flow_open_scope(st, fl)
         @flow_expr(st, fl, is_last)
+        fl.scope_ok = false
     }
 }
 
@@ -517,8 +522,11 @@ fn Checker mut @flow_bind(st Node, mut fl ConsumeFlow) -> () {
     ro init = kids[kids.len() - 1]
     ro it = @chan.type_if_known(init.id_of())
     if !@is_owned_kind(fl.kinds, it) {
-        // Not a must-consume value: the initializer is an ordinary use.
+        // Not a must-consume value: the initializer is an ordinary use -- a call
+        // there is a scope D476 can embrace (its value lands in the binding).
+        flow_open_scope(init, fl)
         @flow_expr(init, fl, false)
+        fl.scope_ok = false
         return
     } else {
         // A must-consume value: judged below.
@@ -722,7 +730,7 @@ fn Checker mut @flow_call(e Node, mut fl ConsumeFlow) -> () {
         ro arg = if is_method && at == 0 { kids[0] } else { call_arg_at(kids, from, written) }
         ro mode = if s < fd.param_cnt { @ctx.fns.params[fd.param_off + s].mode } else { ParamMode.ModeRo }
         if mode != ParamMode.ModeConsume && @is_fresh_owned(arg, fl) {
-            @flow_fresh_in_view(arg, fl)
+            @flow_fresh_in_view(arg, e, fl)
         } else {
             @flow_expr(arg, fl, mode == ParamMode.ModeConsume)
         }
@@ -744,12 +752,54 @@ fn Checker @answers_receiver(e Node) -> bool {
     }
 }
 
-/// A fresh value handed to a view: the one judge (`@judge_fresh_in_view`,
-/// consume_shapes.nv) says which verdict, and tracking stops either way.
-fn Checker mut @flow_fresh_in_view(e Node, mut fl ConsumeFlow) -> () {
+/// A fresh value handed to a view in `call`. Of an AFFINE type (D432) in a call
+/// that is a statement's or a binding's own, D476 desugars it to `consume t = e {
+/// call }` -- the scope embraces the call (s2) -- and the temporary is cleaned once
+/// the call is done: recorded at the call (`@flow_record_temp`). Anywhere else the
+/// one judge (`@judge_fresh_in_view`, consume_shapes.nv) says which verdict, and
+/// tracking stops either way.
+fn Checker mut @flow_fresh_in_view(e Node, call Node, mut fl ConsumeFlow) -> () {
     if fl.stopped { return }
-    @judge_fresh_in_view(e, @chan.type_if_known(e.id_of()))
-    fl.stopped = true
+    ro t = @chan.type_if_known(e.id_of())
+    ro a = auto_index_of(fl.autos, t)
+    ro embraced = fl.scope_ok && fl.scope_call.id_of() == call.id_of()
+    if a < 0 {
+        // Not an affine type: judged by name.
+        @judge_fresh_in_view(e, t)
+        fl.stopped = true
+    } else if fl.autos.eff[a] {
+        @flow_stop(e, "cleaned by a `@cleanup` with effects (their propagation, D432 s1 amendment)", fl)
+    } else if !embraced {
+        @flow_stop(e, "handed to a view inside a larger expression (the D476 scope embracing that expression, s2)", fl)
+    } else {
+        @flow_record_temp(call, e, fl.autos.rows[a])
+        // The value moves into the scope's binding: its parts are walked as moved.
+        fl.forced = true
+        @flow_expr(e, fl, true)
+    }
+}
+
+/// Opens the D476 scope over `e` when it is a call (s2: the scope embraces the
+/// expression the temporary takes part in, here the whole call).
+fn flow_open_scope(e Node, mut fl ConsumeFlow) -> () {
+    ro k = e.kind_of()
+    fl.scope_ok = k == NodeKind.Call || k == NodeKind.MethodCall
+    fl.scope_call = e
+}
+
+/// One D476 temporary of `call`: cleaned after the call by `row` -- recorded once
+/// (a loop's second pass reaches the same call), the call's temporaries together.
+fn Checker mut @flow_record_temp(call Node, arg Node, row FnRow) -> () {
+    ro first = @chan.cleanup_first(call.id_of())
+    if first >= 0 {
+        for k in first..@chan.cleanups.len() {
+            if @chan.cleanups[k].site != call.id_of() { break }
+            if @chan.cleanups[k].binder == arg.id_of() { return } else { continue }
+        }
+    } else {
+        // The call's first temporary.
+    }
+    @chan.record_cleanup(call.id_of(), arg.id_of(), "", row)
 }
 
 /// The arguments of a call that names no callable row: each moves into what is built

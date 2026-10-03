@@ -17,7 +17,8 @@
 
 module novac.lower
 
-import ../tree.{Node, NodeId, raw_node}
+import ../tree.{Node, NodeId, NodeKind, raw_node}
+import ../sem.{branch_children}
 import ../sem.{FnRow}
 
 /// One auto-`@cleanup` call: the value is a local of the body (a `consume x = e`
@@ -48,6 +49,54 @@ export fn FnBuilder @bound_local(bind NodeId) -> Local {
 /// One auto-`@cleanup` call, at the current point of the body.
 export fn FnBuilder mut @cleanup_call(c CleanupCall) -> () {
     @cur.push(Stmt.Cleanup(c))
+}
+
+/// D476: a call some of whose arguments are fresh values of an affine type handed to
+/// a view -- the checker recorded each at the call (`cleanups` rows whose site IS
+/// the call). Every argument is laid down in written order, each in a temporary
+/// (the order the cleanups derive from, s7; the printer reads a hoisted node back as
+/// its local), and the cleanups of the recorded ones are handed back for after the
+/// call. A call with no such argument hands back none and lays nothing down.
+fn Lowerer mut @d476_args(call Node) -> []CleanupCall {
+    mut out = []CleanupCall.new()
+    ro first = @out.cleanup_first(call.id_of())
+    if first < 0 { return out }
+    ro is_method = call.kind_of() == NodeKind.MethodCall
+    ro from = if is_method { 3 } else { 1 }
+    mut i = 0
+    for c in branch_children(call) {
+        ro at = i
+        i += 1
+        match c {
+            Leaf(_) => continue
+            Branch { .. } => {}
+        }
+        ro is_arg = (is_method && at == 0) || at >= from
+        if !is_arg || c.kind_of() == NodeKind.NamedArg { continue }
+        ro t = @ir.temp(@out.type_of(c.id_of()))
+        @lower_place(c, t)
+        @ir.remember_hoist(c.id_of(), t)
+        for k in first..@out.cleanups.len() {
+            ro r = @out.cleanups[k]
+            if r.site != call.id_of() { break }
+            if r.binder == c.id_of() {
+                out.push(CleanupCall { local: t, name: "", row: r.row })
+            } else {
+                continue
+            }
+        }
+    }
+    out
+}
+
+/// The cleanups `@d476_args` handed back, after the call: the last temporary first
+/// (D476 s7, LIFO -- the reverse of evaluation).
+fn Lowerer mut @d476_cleanups(cs []CleanupCall) -> () {
+    mut k = cs.len() - 1
+    while k >= 0 {
+        @ir.cleanup_call(cs[k])
+        k -= 1
+    }
 }
 
 /// The VALUE of an exit lands in `dest` (D432): when the exit cleans values, through a

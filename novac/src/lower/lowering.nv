@@ -255,6 +255,16 @@ fn Lowerer mut @lower_block_value(b Node, t Local) -> () {
 /// Emit one statement by node kind (call/if/while/return/bind/assign/for/expr).
 fn Lowerer mut @lower_stmt(st Node) -> () {
     ro k = st.kind_of()
+    // A call holding D476 temporaries (an affine value handed to a view): its
+    // arguments laid down, the call run, the temporaries cleaned (ir_cleanup.nv).
+    if (k == NodeKind.Call || k == NodeKind.MethodCall) && @out.cleanup_first(st.id_of()) >= 0 {
+        ro cs = @d476_args(st)
+        @lower_eval(st)
+        @d476_cleanups(cs)
+        return
+    } else {
+        // An ordinary statement: by kind below.
+    }
     if k == NodeKind.Unsafe {
         @lower_unsafe_stmt(st)
     } else if k == NodeKind.MatchExpr {
@@ -730,6 +740,27 @@ fn Lowerer mut @lower_return(st Node) -> () {
 /// streaming bridge of waves M1/M2a: statements are lowered and printed one
 /// by one until M2b prints sealed blocks.
 fn Lowerer mut @lower_place(e Node, dest Local) -> () {
+    // A call holding D476 temporaries (ir_cleanup.nv): its arguments laid down first,
+    // its value placed in a temporary, then they go, and only then does the value reach
+    // `dest` -- which may be the return place, whose assignment the printer spells as
+    // the `return` itself. HERE and not at the binding: every value door -- a binding,
+    // a body's or a branch's tail -- comes through this one, and a door that skipped it
+    // would drop the cleanups silently (the tail did, on the first probe).
+    ro cs = @d476_args(e)
+    if cs.len() == 0 {
+        @lower_place_value(e, dest)
+        return
+    } else {
+        // D476 temporaries: the value waits in a temporary.
+    }
+    ro t = @ir.temp(@ir.decl_of(dest).ty)
+    @lower_place_value(e, t)
+    @d476_cleanups(cs)
+    @ir.copy(dest, t)
+}
+
+/// `dest = e` once the D476 temporaries, if any, are laid down (`@lower_place`).
+fn Lowerer mut @lower_place_value(e Node, dest Local) -> () {
     // A CALL IN VALUE POSITION NEEDS ITS ARGUMENTS ORDERED TOO (F65). The first
     // edition put the hoist only in `@lower_eval`, the STATEMENT door, and the
     // probe said so at once: `ro s = take(left(), right())` still printed right
