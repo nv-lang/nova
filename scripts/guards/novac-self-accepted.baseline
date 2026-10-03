@@ -16,6 +16,12 @@
 # мерой и здесь не сверяется.
 #
 # Летопись (новые записи — сверху):
+# 2026-10-03, облачная сессия p274-carina-strarm, слияние origin/main dc2617993: ВОШЛИ 3 — законное
+#   вскрытие: трек D133 этой ветки (шаги 1–6) впервые проводит модуль emit_c/ через типизацию (мера
+#   ветки 28 -> 36 при шаге 5, отчёт 15), и показались его скрытые отказы — emit_c/emit_c.nv («`@`
+#   needs ownership»), emit_c/emit_expr.nv (приёмник value-записи по указателю, D488, №1654 cast),
+#   emit_c/emit_place.nv (голый `None` без типа). Отказы — в исходнике emit_c/, не в треке D133;
+#   на ветке до слияния те же три файла отвергались так же (мера 36). ICE 0.
 # 2026-10-03, интегратор nova-20: база — МНОЖЕСТВО CI (Linux, LF), 16 файлов: вошёл
 #   pipeline/instance_scope_test.nv, вышел pipeline/handed_free_test.nv. На Windows-извлечении (CRLF)
 #   множество другое ровно на эти два файла — Карина зависит от переводов строк (реестр №1691);
@@ -46,6 +52,9 @@ novac/src/check/methods.nv
 novac/src/check/mut_args.nv
 novac/src/check/type_of.nv
 novac/src/diag/diag.nv
+novac/src/emit_c/emit_c.nv
+novac/src/emit_c/emit_expr.nv
+novac/src/emit_c/emit_place.nv
 novac/src/emit_c/shell.nv
 novac/src/lex/lex_test.nv
 novac/src/main.nv
