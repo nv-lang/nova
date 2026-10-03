@@ -440,7 +440,7 @@ fn Checker mut @type_method_call(e Node) -> () {
     @type_expr(kids[0])
     mut i = 0
     for c in kids {
-        if i > 2 && is_arg_value_kind(c.kind_of()) && !@is_deferred_variant(c) {
+        if i > 2 && is_arg_value_kind(c.kind_of()) && !@is_deferred_arg(c) {
             // A bare `None` (`@is_deferred_variant`) is typed after the lookup,
             // by its parameter (registry 1565).
             @type_expr(c)

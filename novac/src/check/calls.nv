@@ -836,7 +836,7 @@ fn Checker mut @type_free_call(e Node) -> () {
     for c in kids {
         if !is_arg_value_kind(c.kind_of()) { continue }
         // A bare `None` takes its PARAMETER's instance, after the lookup (1565).
-        if @is_deferred_variant(c) { continue }
+        if @is_deferred_arg(c) { continue }
         @type_expr(c)
     }
     @value_expect = saved_expect

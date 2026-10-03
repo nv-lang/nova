@@ -235,8 +235,11 @@ fn Checker mut @adapt_literal_args(e Node, kids []Node, from int, recv_rows int)
         // literal handed to `T` takes the instance's type (D489, `bs.push(4)`).
         ro want = subst_type(@ctx, @ctx.fns.params[fd.param_off + s].type_id, @chan.callee_subst_of(e.id_of()))
         ro a = call_arg_at(kids, from, at - recv_rows)
-        if !lit_admits(@ctx.tys, lit_arg_of(a), want) { continue }
+        if !lit_admits(@ctx.tys, arg_lit_of(a), want) { continue }
         if type_of(a, @ctx, @scope, @chan) == want { continue }
+        // An `if`/`match` of literals (1697) was typed AFTER the lookup with its
+        // parameter as the expectation (`@type_deferred_args`): nothing to adapt.
+        if a.kind_of() == NodeKind.IfExpr || a.kind_of() == NodeKind.MatchExpr { continue }
         if !@lit_fits_or_refuse(a, want) { return }
         @record(a, want)
     }

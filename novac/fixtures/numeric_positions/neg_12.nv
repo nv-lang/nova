@@ -1,0 +1,12 @@
+module numeric_positions.neg_12
+
+// ONE seeded cause (registry 1697, D489): an `if` value of literals handed as an
+// argument takes the parameter's type, and a literal that does not fit is
+// refused at its own token -- not the whole argument as an `int`.
+// NOVAC_EXPECT this literal does not fit `u8` (D227 rule 3, E_LIT_OUT_OF_RANGE)
+fn take8(b u8) -> int => b as int
+fn main() {
+    ro c = 3
+    ro b = take8(if c > 0 { 300 } else { 0 })
+    println(b)
+}

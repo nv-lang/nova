@@ -188,6 +188,17 @@ fn Checker mut @type_bare_variant_value(e Node, t Token, v VariantRow) -> () {
 /// leaves it untyped -- the key then holds an unknown slot, which the lookup
 /// matches by every other position -- and `@type_deferred_args` types it once
 /// the callee is decided.
+/// An argument typed AFTER the lookup, with its parameter's type as the
+/// expectation: a bare generic variant (`None`, 1565), or an `if`/`match` whose
+/// value tails are numeric literals of one family (1697, D489) -- typed first
+/// without the parameter, its literals would take `int` and the channel cannot
+/// take a second answer.
+fn Checker @is_deferred_arg(c Node) -> bool {
+    ro k = c.kind_of()
+    if (k == NodeKind.IfExpr || k == NodeKind.MatchExpr) && arg_lit_of(c) != LitArg.NotLit { return true }
+    @is_deferred_variant(c)
+}
+
 fn Checker @is_deferred_variant(c Node) -> bool {
     if c.kind_of() != NodeKind.Name { return false }
     ro nm = expr_leaf_name(c)
@@ -211,7 +222,7 @@ fn Checker mut @type_deferred_args(kids []Node, from int, recv bool, row FnRow, 
         ro at = slots[s].arg_row
         if at < 0 || (recv && at == 0) { continue }
         ro c = call_arg_at(kids, from, if recv { at - 1 } else { at })
-        if !@is_deferred_variant(c) { continue }
+        if !@is_deferred_arg(c) { continue }
         ro pt = @ctx.fns.params[fd.param_off + s].type_id
         @value_expect = if is_ty(pt) && @ctx.tys.is_concrete(pt) { pt } else { no_ty() }
         @type_expr(c)
