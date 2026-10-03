@@ -1,0 +1,39 @@
+module variant_by_expect.pos_1
+
+// A file sum declaring `Ok` / `Err` / `None` beside the language's `Result` and
+// `Option`: in every position D478 lists -- a tail, a call argument, a binding
+// with a declared type -- the variant is the one the position EXPECTS
+// (registry 1647). Until then the file's set won the count before the
+// expectation was asked, and `Ok(3)` for a `Result[int, int]` parameter was a
+// `Verdict`.
+
+type Verdict enum
+    | Ok(int)
+    | Err(int)
+    | None
+
+fn take(r Result[int, int]) -> int {
+    match r {
+        Ok(x) => x
+        Err(e) => e
+    }
+}
+
+fn opt() -> Option[int] => None
+
+fn mine() -> Verdict => Ok(7)
+
+fn main() {
+    println(take(Ok(3)))
+    ro r Result[int, int] = Err(4)
+    println(take(r))
+    match opt() {
+        Some(x) => println(x)
+        None => println(0)
+    }
+    match mine() {
+        Ok(x) => println(x)
+        Err(e) => println(e)
+        None => println(-1)
+    }
+}

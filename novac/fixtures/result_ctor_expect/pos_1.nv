@@ -1,0 +1,34 @@
+module result_ctor_expect.pos_1
+
+// `Ok(..)` and `Err(..)` of a `Result` take the parameter their payload does
+// not fix from the POSITION -- the declared return at a tail or a `return`
+// operand, as a bare `None` does (registry 1632). And `[]u8 @to_str`, made
+// from std's body, now runs: its `Ok(str.alloc_copy(@ptr(), n))` (a static of
+// a primitive, 1631; `@ptr()` returns `*mut u8` as `-> *u8`, the narrowing
+// 02-types.md P8 makes without `as`, 1633) and its `Err(Utf8Error { .. })`.
+fn half(n int) -> Result[int, int] {
+    if n % 2 != 0 {
+        return Err(-1)
+    }
+    Ok(n / 2)
+}
+
+fn main() {
+    match half(8) {
+        Ok(v) => println(v)
+        Err(e) => println(e)
+    }
+    match half(3) {
+        Ok(v) => println(v)
+        Err(e) => println(e)
+    }
+    match "hi".bytes().to_str() {
+        Ok(s) => println(s)
+        Err(e) => println(e.byte_offset)
+    }
+    ro bad = []u8.of(97 as u8, 255 as u8)
+    match bad.to_str() {
+        Ok(s) => println(s)
+        Err(e) => println(e.byte_offset)
+    }
+}

@@ -36,6 +36,7 @@ export type InteropTable {
     names NameTable /// identifier -> insertion index; presence is the fact, the index is incidental (NsInterop namespace)
     sym_cnt int /// how many identifiers were lifted; printed by the gate so a shell that lost its symbols is loud
     modules NameTable /// the PROGRAM's modules, dotted (`novac.sem`): files handed from the program's own root (NOVAC_SELF_PATH), whose bodies the program compiles -- std's are not here (274.11 E.10 step 2a) (NsInterop namespace)
+    stubs NameTable /// functions whose shell BODY is a constant in place of a refusal (registry 1643): the erased generic layer `Nova_Vec_method_equal(..) { (void)..; return (nova_bool){0}; }` -- carried, never callable; `@has` answers no for them (NsInterop namespace)
     struct_bodies NameTable /// identifiers the shell defines a `struct <name> {` BODY for -- a forward typedef is NOT here (C11 allows repeating it), so the declaration judge refuses only the real one-unit redefinition (NsInterop namespace)
     decl_names []str /// per handed declaration tree (its index in the decls handed to `collect`): the file name it was read from -- a contract in a body instantiated from it prints that name (274.11 E.10 step 4c); empty when the decls were not described
     decl_texts []str /// per handed declaration tree: the very text it was parsed from -- a token's position is its slice's distance from THAT buffer (`SourceText.offset_of`), so a copy would not do
@@ -44,7 +45,7 @@ export type InteropTable {
 /// An empty surface -- what a test builds when it wants no interop at all.
 export fn InteropTable.new() -> InteropTable =>
     { names: NameTable.new(NamespaceId.NsInterop), sym_cnt: 0,
-      modules: NameTable.new(NamespaceId.NsInterop),
+      modules: NameTable.new(NamespaceId.NsInterop), stubs: NameTable.new(NamespaceId.NsInterop),
       struct_bodies: NameTable.new(NamespaceId.NsInterop), decl_names: []str.new(), decl_texts: []str.new() }
 
 /// Register one identifier the shell carries. A repeat is a no-op: the shell
@@ -57,8 +58,18 @@ export fn InteropTable mut @add(sym str) -> () {
 
 /// Does the shell carry this identifier? The O(1) door -- asked before printing
 /// a name, so the answer "no" becomes a refusal by name rather than a linker error.
+/// A STUB is carried and still answered no (registry 1643): its body returns a
+/// constant whatever it is given, and printing its name would compile a silent
+/// wrong value -- `==` over two vectors of the erased layer was always false.
 #realtime nogc
-export fn InteropTable @has(sym str) -> bool => @names.find(sym) >= 0
+export fn InteropTable @has(sym str) -> bool => @names.find(sym) >= 0 && @stubs.find(sym) < 0
+
+/// Register a function the shell DEFINES as a stub (registry 1643). One writer:
+/// shell_surface's scan, which reads the body's shape.
+export fn InteropTable mut @add_stub(sym str) -> () {
+    if @stubs.find(sym) >= 0 { return }
+    @stubs.put(sym, 1)
+}
 
 /// Register a struct NAME the shell defines a body for (`struct X {` in the
 /// template). One writer: shell_surface's scan.

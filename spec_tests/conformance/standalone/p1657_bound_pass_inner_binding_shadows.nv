@@ -1,0 +1,69 @@
+// EXPECT_STDOUT let: 1790962168000000001
+// EXPECT_STDOUT for: 6
+// EXPECT_STDOUT match: 8
+// EXPECT_STDOUT iflet: 10
+// EXPECT_STDOUT closure: 4
+// EXPECT_STDOUT outer: abc
+//
+// Registry 221.1 #1657, the bound-check pass: that pass (`BoundCtx`) resolves
+// names by its own scope only, and put into it nothing but parameters and the
+// `let`s it could type. An inner binding it did not type -- a `let` whose
+// right-hand side it cannot read, a `for` variable, a `match`/`if let`
+// binding, a closure parameter -- left the OUTER binding of the same name
+// visible, and the pass judged the inner name by the outer one's type: an
+// integer `s + 1` under an outer `ro s = "abc"` was refused as a string
+// concatenation (`E_STR_CONCAT_PLUS`, a false refusal of legal code). A
+// binding of unknown type hides the outer one in that pass too. (The values
+// stay out of `return` position: that check's own scope is #1670.)
+module standalone.p1657_bound_pass_inner_binding_shadows
+
+import std.time.civil
+
+fn let_cell(s str) -> i64 {
+    ro r = if s != "" {
+        ro s = (1790962168000 as i64).to_unix_millis().unix_nanos()
+        s + 1
+    } else { 0 }
+    r
+}
+
+fn for_cell(s str) -> int {
+    mut n = 0
+    if s != "" {
+        for s in [1, 3] {
+            n += s + 1
+        }
+    }
+    n
+}
+
+fn match_cell(s str) -> int {
+    ro r = match Some(7) {
+        Some(s) => s + 1
+        None => s.byte_len()
+    }
+    r
+}
+
+fn iflet_cell(s str) -> int {
+    mut r = s.byte_len()
+    if Some(s) = Some(9) {
+        r = s + 1
+    }
+    r
+}
+
+fn closure_cell(s str) -> int {
+    ro f = |s| s + 1
+    if s != "" { f(3) } else { 0 }
+}
+
+fn main() Io {
+    ro s = "abc"
+    println("let: ${let_cell(s)}")
+    println("for: ${for_cell(s)}")
+    println("match: ${match_cell(s)}")
+    println("iflet: ${iflet_cell(s)}")
+    println("closure: ${closure_cell(s)}")
+    println("outer: ${s}")
+}

@@ -30,6 +30,10 @@ static inline int64_t io_write_fd(int64_t fd, const uint8_t* buf, int64_t len) {
     if (len <= 0) return 0;
     FILE* f = (fd == 2) ? stderr : stdout;
     size_t w = fwrite((const void*)buf, 1, (size_t)len, f);
+    /* Registry 221.1 #1655: `Stdout @write` reaches the fd before it returns
+     * (std: "the fd is unbuffered on the Nova side") -- C's `stdout` is fully
+     * buffered when redirected to a file or a pipe. */
+    if (f == stdout) fflush(stdout);
     if (w < (size_t)len) {
         if (ferror(f)) {
             int e = errno;

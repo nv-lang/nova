@@ -19,6 +19,19 @@ mk() {
     printf 'module ok_example\n\nfn main() Io -> () {\n    println("ok")\n}\n' > "$T/ex/ok_example.nv"
     # сниппет: точка входа ЗАКОММЕНТИРОВАНА
     printf 'module snip\n\n// fn main() Io -> () {\n//     println("x")\n// }\n' > "$T/ex/snip.nv"
+    # №1639: файл без fn main, сам проходящий check
+    printf 'module lib_ok\n\nfn lib_helper() -> int => 1\n' > "$T/ex/lib_ok.nv"
+    # №1639: пир точки входа своего модуля (форма живого
+    # `flagship/http_proxy_chain/src`: оба файла `module main`). main.nv от пира
+    # НЕ зависит — иначе подделка 6 краснела бы сборкой точки входа.
+    # НАЗВАННЫЙ ПРОБЕЛ: необходимость ПОКРЫТИЯ этот макет не доказывает — он
+    # лежит вне проекта, где правило пути модуля не действует, и пир проходит
+    # `check` и в одиночку. Доказывает её живая половина: в `examples` пять пиров
+    # `http_proxy_chain/src` поодиночке получают E_D78_MODULE_PATH_MISMATCH
+    # (замер 2026-10-02), и без покрытия страж покраснел бы на них ложно.
+    mkdir -p "$T/ex/pkg"
+    printf 'module main\n\nfn from_main() -> int => 2\n\nfn main() Io -> () {\n    println("pkg")\n}\n' > "$T/ex/pkg/main.nv"
+    printf 'module main\n\nfn part() -> int => from_main()\n' > "$T/ex/pkg/part.nv"
     # в _wip страж не смотрит вовсе — намеренно битый файл
     printf 'module wip\n\nfn main() Io -> () { this is not nova }\n' > "$T/ex/_wip/broken.nv"
     printf '# exceptions\nsnip.nv # сниппет по замыслу: точки входа нет по причине\n' > "$T/exc.list"
@@ -75,11 +88,30 @@ if ! run; then
     rc=1
 fi
 
+# ── подделка 5 (№1639): файл без fn main, который НЕ проходит check ────
+mk
+printf 'module lib_bad\n\nfn lib_bad_helper() -> int => "not an int"\n' > "$T/ex/lib_bad.nv"
+if run; then
+    echo "FAIL: файл без fn main с ошибкой типов прошёл стража — третья корзина не судится (№1639)" >&2
+    rc=1
+elif ! grep -q "lib_bad.nv" "$T/out"; then
+    echo "FAIL: красный есть, но файл без main не назван:" >&2; tail -2 "$T/out" | sed 's/^/    /' >&2
+    rc=1
+fi
+
+# ── подделка 6 (№1639): пир с ДРУГИМ module — уже не покрыт точкой входа ──
+mk
+printf 'module other\n\nfn part() -> int => from_main()\n' > "$T/ex/pkg/part.nv"
+if run; then
+    echo "FAIL: файл другого модуля засчитан покрытым чужой точкой входа (№1639)" >&2
+    rc=1
+fi
+
 # ── подделка 4: нет каталога примеров — судить нечего, но молчать нельзя ─
 if NOVA_EXAMPLES_DIR="$T/nosuch" NOVA_EXAMPLES_EXCEPTIONS="$T/exc.list" sh "$GUARD" "$ROOT" >"$T/o5" 2>&1; then
     echo "FAIL: отсутствующий каталог примеров дал зелёный" >&2
     rc=1
 fi
 
-[ "$rc" -eq 0 ] && echo "test-check-examples-strict-effects ok: четыре подделки покраснели, здоровый макет и _wip зелёные (живая половина — шаг гейта яруса full: 31 сборка, 328с)"
+[ "$rc" -eq 0 ] && echo "test-check-examples-strict-effects ok: шесть подделок покраснели (в т.ч. файл без main с ошибкой и чужой модуль, №1639), здоровый макет (с файлом без main и пиром точки входа) и _wip зелёные (живая половина — шаг гейта яруса full)"
 exit "$rc"

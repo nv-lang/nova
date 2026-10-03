@@ -1,0 +1,54 @@
+// EXPECT_STDOUT shape: 2 3
+// EXPECT_STDOUT option: 8 0
+// EXPECT_STDOUT result: 5 bad
+// EXPECT_STDOUT nested: 5
+//
+// Registry 221.1 #1649, the positive twin of
+// spec_tests/conformance/neg/p1649_match_foreign_variant_any_scrutinee_neg.nv:
+// patterns naming the scrutinee type's OWN variants -- a sum's, `Option`'s and
+// `Result`'s, and a variant nested in a payload of the right type -- are
+// accepted and match. (A named tuple's own constructor pattern is accepted by
+// the check too, but such a `match` does not build in C today -- a separate
+// codegen gap, reported on its own.)
+module standalone.p1649_match_own_variants
+
+type P1649bShape
+    | Circle(int)
+    | Square(int)
+
+fn area(s P1649bShape) -> int {
+    match s {
+        Circle(r) => r
+        Square(x) => x
+    }
+}
+
+fn main() Io {
+    println("shape: ${area(Circle(2))} ${area(Square(3))}")
+    ro o1 = match Some(7) {
+        Some(v) => v + 1
+        None => 0
+    }
+    ro none_int Option[int] = None
+    ro o2 = match none_int {
+        Some(v) => v + 1
+        None => 0
+    }
+    println("option: ${o1} ${o2}")
+    ro ok_r Result[int, str] = Ok(4)
+    ro err_r Result[int, str] = Err("bad")
+    ro r1 = match ok_r {
+        Ok(v) => v + 1
+        Err(_) => 0
+    }
+    ro r2 = match err_r {
+        Ok(_) => "ok"
+        Err(m) => m
+    }
+    println("result: ${r1} ${r2}")
+    ro n = match Some(Square(5)) {
+        Some(Square(x)) => x
+        _ => 0
+    }
+    println("nested: ${n}")
+}

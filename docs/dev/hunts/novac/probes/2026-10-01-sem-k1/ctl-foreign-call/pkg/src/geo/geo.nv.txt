@@ -1,3 +1,0 @@
-module hp.geo
-
-export fn f() -> int => 2

@@ -35,11 +35,13 @@ test "a handed free function: resolved, judged like the file's own, spelled as t
     ro (d0, c0) = compile_to_c_with(prog, decls, shell)
     assert(d0.len() == 0, messages(d0))
     assert(c0.contains("${sym}("), c0)
-    // The shell WITHOUT the symbol: refused by the true reason, naming the module and the symbol.
-    ro (d1, _) = compile_to_c_with(prog, decls, InteropTable.new())
-    assert(d1.len() == 1, messages(d1))
-    assert(messages(d1).contains("declared in module `encoding.utf16`"), messages(d1))
-    assert(messages(d1).contains("carries no `${sym}`"), messages(d1))
+    // The shell WITHOUT the symbol: the unit makes the function from its handed
+    // body (task 4) and calls it under ITS OWN name -- a call under the shell's
+    // would not link (the defect: `nova_fn_11is_ascii_ws` undefined).
+    ro (d1, c1) = compile_to_c_with(prog, decls, described_bare(std))
+    assert(d1.len() == 0, messages(d1))
+    assert(c1.contains("nova_print_bool(novac_fn_encoding_utf16_is_high_surrogate__"), c1)
+    assert(c0.contains("nova_print_bool(${sym}("), c0)
     // ARITY against the harvested signature: judged like the file's own function
     // -- the binding refusal names the parameter left without a value (wave 4:
     // binding before arity), exactly as it would for a function of this file.
@@ -70,10 +72,13 @@ test "a function of ANOTHER MODULE OF THE PROGRAM: judged by its signature, name
     ro (d0, c0) = compile_to_c_with(prog, decls, link)
     assert(d0.len() == 0, messages(d0))
     assert(c0.contains("novac_fn_novac_helpers_twice__"), c0)
-    // CONTROL: the same module NOT marked as the program's -- the old refusal
-    // by name, the module and the missing symbol.
-    ro (d1, _) = compile_to_c_with(prog, decls, InteropTable.new())
-    assert(messages(d1).contains("declared in module `novac.helpers`"), messages(d1))
+    // The owner unit compiles the body: this one only CALLS it.
+    assert(!c0.contains("novac_fn_novac_helpers_twice__nova_int__to_nova_int(nova_int n) {"), c0)
+    // CONTROL: the same module NOT marked as the program's -- not compiled
+    // anywhere else, so this unit makes it from the handed body (task 4).
+    ro (d1, c1) = compile_to_c_with(prog, decls, described_bare(texts))
+    assert(d1.len() == 0, messages(d1))
+    assert(c1.contains("novac_fn_novac_helpers_twice__nova_int__to_nova_int(nova_int n) {"), c1)
 }
 
 test "a POINTER in a handed declaration is read: a std record with a `*mut` field is whole (274.11 E.10 step 3b)" {

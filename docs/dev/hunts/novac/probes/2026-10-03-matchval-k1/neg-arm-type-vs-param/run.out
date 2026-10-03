@@ -1,0 +1,34 @@
+=== PROGRAM
+     1	module prog
+     2	
+     3	// D491: a value of a numeric type never changes its type implicitly -- an
+     4	// argument whose type differs from the parameter's is an error, "the hint is
+     5	// the form with `as`". Here the argument is a `match` whose arms are `int`
+     6	// VALUES (not literals: `v` bound from Option[int], `n` a local) and the
+     7	// parameter is `f64`. The norm: no program. Printed value if one is built:
+     8	// 1.5 (int 3 widened to f64 and halved).
+     9	fn found(k int) -> Option[int] {
+    10	    if k > 0 { Some(k) } else { None }
+    11	}
+    12	
+    13	fn half(x f64) -> f64 => x / 2.0
+    14	
+    15	fn main() {
+    16	    ro k = 3
+    17	    ro n = 3
+    18	    println(half(match found(k) {
+    19	        Some(v) => v
+    20	        None => n
+    21	    }))
+    22	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=1
+[1m[31merror:[0m[0m \\?\D:\Temp\tmp.10xizxBftv\prog.nv:18:18: error: [E_IMPLICIT_NARROWING] cannot pass `int` as argument `x` of type `f64` — a value does not change its numeric type implicitly (D491); use an explicit `<value> as f64` cast
+(no oracle binary)
+=== SUBJECT: novac emit prog.nv
+novac emit rc=1
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"<tmp>/prog.nv","start":593,"end":597},"message":"outside the subset: this argument's type is not the one this function declares here","poisoned_by":null}
+--- Carina's C, the body of main
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+(skipped: refused by novac, or no smoke cache)
+=== VERDICT: one side produced no run (see above)

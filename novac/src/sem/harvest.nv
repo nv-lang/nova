@@ -604,7 +604,9 @@ fn harvest_fn(kids []Node, handed_from str, own_module str, types []TypeDef, mut
     // identical to one the file declares is the file's own method read a
     // second time -- in module mode the unit is inside `NOVAC_SELF_PATH`, and
     // every call of its own methods was an ambiguity (237 over novac's source).
-    if !is_free && fns.file_declares_method(mname, param_ids) { return key }
+    // A static method is the file's when its OWNER matches too (registry 1354's static twin).
+    ro own_owner = if is_static { recv_t } else { no_ty() }
+    if !is_free && fns.file_declares_method(mname, param_ids, own_owner) { return key }
     if is_static {
         fns.add_static(recv_t, mname, ret_t, param_ids, tps, bounds, handed_from, ret_is_ro(ret_kids))
     } else {
@@ -744,6 +746,7 @@ fn harvest_consts(decls []Node, mut defs DefTable, mut consts ConstTable) -> () 
     for d in decls {
         ro home = module_dotted(d)
         for c in file_decls(d) {
+            harvest_module_value(c, home, defs, consts)
             ro ck = const_decl_of(c)
             if !ck.is_some() { continue }
             ro kids = branch_children(ck ?? c)
@@ -759,6 +762,25 @@ fn harvest_consts(decls []Node, mut defs DefTable, mut consts ConstTable) -> () 
                 // No name: a parse-error shape, refused in its own file.
             }
         }
+    }
+}
+
+/// A handed MODULE VALUE (`ro NAME T = expr`), registered by its WRITTEN type
+/// (part 6 of p274-carina-k1): the cell is its owner's, and a reader needs only
+/// the name and the type. So the row carries NO initializer -- the owner's
+/// tree's ids never reach this file's channel -- and its type is read off the
+/// declaration by text (`@written_const_type`, check). A value with no written
+/// type stays unregistered and its read is refused by name: typing a handed
+/// initializer needs a channel of its own (docs/dev/simplifications.md).
+fn harvest_module_value(c Node, home str, mut defs DefTable, mut consts ConstTable) -> () {
+    ro lk = let_decl_of(c)
+    if !lk.is_some() { return }
+    ro kids = branch_children(lk ?? c)
+    if const_type_at(kids) < 0 { return }
+    if Some(cname) = const_full_name(kids) {
+        defs.add(cname, DefTarget.DefConst(consts.add(cname, no_ty(), []Node.new(), true, kids)), home: home)
+    } else {
+        // No name: a parse-error shape, refused in its own file.
     }
 }
 

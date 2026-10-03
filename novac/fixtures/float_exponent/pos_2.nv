@@ -1,0 +1,34 @@
+module float_exponent.pos_2
+
+// EXPONENT LITERALS (registry 1605): every float form of D44 -- an exponent
+// with and without a sign, with and without a fraction, either letter case,
+// and `_` between digits anywhere a digit run stands. Until the fix the lexer
+// stopped at the `e`: `1e20` was one refused token (an ICE in a constant) and
+// `1.5e3` a float `1.5` followed by an unknown name `e3`. The hex literal and
+// the range stand beside them as the control: `0x1e5` keeps its `e` as a hex
+// digit, `0..3` keeps its two dots.
+const BIG = 1e20 as i32
+const K = 1.5e3
+const MILLI = 1.5e-3
+
+fn main() {
+    println(BIG)
+    println(K)
+    println(MILLI)
+    println(1e10)
+    println(2E+2)
+    println(1E5)
+    println(-2.5e2)
+    println(1_000.5)
+    println(1_000.25e-1)
+    println(1.0e1_0)
+    println(2.5e0 * 4.0)
+    println(1e3 > 999.5)
+    println((1.5e3 as int) + 1)
+    println(0x1e5)
+    mut sum = 0
+    for i in 0..3 {
+        sum += i
+    }
+    println(sum)
+}

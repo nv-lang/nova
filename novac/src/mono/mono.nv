@@ -316,7 +316,10 @@ fn mark_ref(cr CalleeRef, ctx Ctx, out CheckOut, mut seen []bool, mut inst []Ins
             // compiled (sub-plan L2) -- nothing to instantiate.
             ro gen = is_generic(ctx, row)
             ro args = if gen { out.subst_of_ref(cr) } else { []TyId.new() }
-            if gen && (ctx.fns.compiles_body(row) || ctx.instantiates(row, args)) {
+            // A NON-generic handed body this unit makes (the shell lacks it,
+            // `Ctx @instantiates`) is an instance too, with an empty
+            // substitution -- its body is typed and emitted the same way.
+            if (gen && ctx.fns.compiles_body(row)) || ctx.instantiates(row, args) {
                 // A GENERIC callee is reached per SUBSTITUTION: the element
                 // of the set is the instance, and the same call written
                 // twice adds nothing while two type arguments add two.

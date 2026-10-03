@@ -1,0 +1,24 @@
+// EXPECT_STDOUT first 0 then 1
+// EXPECT_STDOUT | ints 0 7
+//
+// Registry 221.1 #1642, the positive twin of
+// neg/p1642_non_function_at_fn_position_neg.nv: `get_or_insert` takes a
+// FUNCTION for the absent value and calls it only when the key is missing.
+// A closure literal, a named function and a function-typed local all pass.
+module standalone.p1642_get_or_insert_fallback
+
+fn zero() -> int => 0
+
+fn main() Io {
+    mut m = HashMap[int, []str].new()
+    ro first = m.get_or_insert(1, || [])
+    m.insert(1, ["x"])
+    ro second = m.get_or_insert(1, || [])
+    println("first ${first.len()} then ${second.len()}")
+
+    mut n = HashMap[str, int].new()
+    ro a = n.get_or_insert("a", zero)
+    ro seven fn() -> int = || 7
+    ro b = n.get_or_insert("b", seven)
+    println("| ints ${a} ${b}")
+}

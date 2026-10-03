@@ -110,7 +110,9 @@ export type P409Container value { b P409Box }
 
 // Mirrors `ChanTx[T].send` (pre-workaround nvchan.nv, commit `d8a0f8617`)
 // statement-for-statement.
-fn P409Container @run() -> bool {
+// #1636: `@b.buf.push(1)` mutates a field of the receiver -- the method is
+// `mut @` (D35); the field-cache x auto-cleanup shape under test is unchanged.
+fn P409Container mut @run() -> bool {
     consume guard = @b.locker.acquire()
     while @b.buf.len() == @b.cap && !@b.closed {
         @b.buf.push(1)
@@ -133,7 +135,7 @@ test "№409: field-cache x auto-@cleanup — guard.release() disarms, no double
             return ()
         }
     } {
-        ro c = P409Container { b: P409Box.new(5, 10) }
+        mut c = P409Container { b: P409Box.new(5, 10) }
         ro ok = c.run()
         assert(ok)
     }

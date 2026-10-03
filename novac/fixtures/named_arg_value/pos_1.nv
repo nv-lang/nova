@@ -1,0 +1,27 @@
+module named_arg_value.pos_1
+
+// A NAMED argument's value is typed like a positional one, in every call form
+// (registry 1630): a free call, a method call, a static call. Until then the
+// value was never walked, and a method call inside it (`by: s.byte_len()`)
+// reached `type_of` undecided -- an ICE ("method call reached type_of with no
+// decision"), first met in std's `str @pad_start`:
+// `StringBuilder.new(cap: s.byte_len() + 2 * 3)`. The chain after it writes
+// into the temporary `StringBuilder.new(..)` itself -- a `mut` receiver that
+// is an rvalue (D33: no binding to check, 02-types.md:13526). `pad` is
+// `pad_start`'s own shape; the std method itself waits on `@chars().count()`
+// (a value record's shell method called through a pointer, a defect of its own).
+type Bx { n int }
+
+fn Bx @mul(k int, by int = 1) -> int => @n * k * by
+
+fn g(n int, by int = 1) -> int => n * by
+
+fn pad(s str) -> str => StringBuilder.new(cap: s.byte_len() + 2 * 3).append_repeat(s, 2).append(s).into_str()
+
+fn main() {
+    ro s = "ab"
+    ro b = Bx { n: 3 }
+    println(g(2, by: s.byte_len()))
+    println(b.mul(2, by: s.byte_len()))
+    println(pad(s))
+}

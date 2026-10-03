@@ -1,0 +1,131 @@
+=== PROGRAM
+     1	module prog
+     2	
+     3	// A `match` value whose arm LEAVES the function (`return`) or the loop
+     4	// (`break`/`continue`), standing as an argument, an element and the right of
+     5	// `+=`. A leaving arm produces no value: the call / store must not run on
+     6	// that path. Each print is labelled with the norm.
+     7	fn found(k int) -> Option[int] {
+     8	    if k > 0 { Some(k) } else { None }
+     9	}
+    10	
+    11	fn twice(n int) -> int {
+    12	    println("twice called")
+    13	    n * 2
+    14	}
+    15	
+    16	fn pick(k int) -> int {
+    17	    ro r = twice(match found(k) {
+    18	        Some(v) => v
+    19	        None => return -7
+    20	    })
+    21	    r + 1
+    22	}
+    23	
+    24	fn main() {
+    25	    println("pick(5): twice called, then 11")
+    26	    println(pick(5))
+    27	    println("pick(0): -7, no call")
+    28	    println(pick(0))
+    29	    println("loop sum over 3 0 4 with continue on None: 7")
+    30	    mut sum = 0
+    31	    for k in [3, 0, 4] {
+    32	        sum += match found(k) {
+    33	            Some(v) => v
+    34	            None => continue
+    35	        }
+    36	    }
+    37	    println(sum)
+    38	    println("loop stops at 0 with break: 3")
+    39	    mut acc = 0
+    40	    for k in [3, 0, 4] {
+    41	        ro t = twice(match found(k) {
+    42	            Some(v) => v
+    43	            None => break
+    44	        })
+    45	        acc = acc + t / 2
+    46	    }
+    47	    println(acc)
+    48	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=0
+oracle run rc=0
+=== SUBJECT: novac emit prog.nv
+novac emit rc=0
+--- Carina's C, the body of main
+static nova_unit nova_fn_main_impl(void) {
+    nova_print_str(_novac_strlit_1);
+    nova_print_newline();
+    nova_print_int(novac_fn_prog_pick__nova_int__to_nova_int(((nova_int)5LL)));
+    nova_print_newline();
+    nova_print_str(_novac_strlit_2);
+    nova_print_newline();
+    nova_print_int(novac_fn_prog_pick__nova_int__to_nova_int(((nova_int)0LL)));
+    nova_print_newline();
+    nova_print_str(_novac_strlit_3);
+    nova_print_newline();
+    nova_int sum = ((nova_int)0LL);
+    Nova_Vec____nova_int* _novac_tmp_t1 = Nova_Vec____nova_int_static_new(3);
+    (void)Vec____nova_int_method_push(_novac_tmp_t1, ((nova_int)3LL));
+    (void)Vec____nova_int_method_push(_novac_tmp_t1, ((nova_int)0LL));
+    (void)Vec____nova_int_method_push(_novac_tmp_t1, ((nova_int)4LL));
+    Nova_Vec____nova_int* _novac_l2 = _novac_tmp_t1;
+    for (nova_int _novac_l3 = 0; _novac_l3 < Vec____nova_int_method_len(_novac_l2); _novac_l3++) {
+    nova_int k = Vec____nova_int_method_index(_novac_l2, _novac_l3);
+    NovaOpt_nova_int _novac_l6 = novac_fn_prog_found__nova_int__to_Option_of_nova_int(k);
+    nova_int _novac_l5 = (nova_int){0};
+    int _novac_matched_t0 = 0;
+    if (!_novac_matched_t0 && ((_novac_l6.tag == NOVA_TAG_Option_Some))) {
+    nova_int v = _novac_l6.value;
+        _novac_l5 = v;
+    _novac_matched_t0 = 1;
+    }
+    if (!_novac_matched_t0 && ((_novac_l6.tag == NOVA_TAG_Option_None))) {
+    continue;
+    _novac_matched_t0 = 1;
+    }
+    sum = nova_int_checked_add(sum, _novac_l5);
+    }
+    nova_print_int(sum);
+    nova_print_newline();
+    nova_print_str(_novac_strlit_4);
+    nova_print_newline();
+    nova_int acc = ((nova_int)0LL);
+    Nova_Vec____nova_int* _novac_tmp_t2 = Nova_Vec____nova_int_static_new(3);
+    (void)Vec____nova_int_method_push(_novac_tmp_t2, ((nova_int)3LL));
+    (void)Vec____nova_int_method_push(_novac_tmp_t2, ((nova_int)0LL));
+    (void)Vec____nova_int_method_push(_novac_tmp_t2, ((nova_int)4LL));
+    Nova_Vec____nova_int* _novac_l9 = _novac_tmp_t2;
+    for (nova_int _novac_l10 = 0; _novac_l10 < Vec____nova_int_method_len(_novac_l9); _novac_l10++) {
+    nova_int k = Vec____nova_int_method_index(_novac_l9, _novac_l10);
+    NovaOpt_nova_int _novac_l14 = novac_fn_prog_found__nova_int__to_Option_of_nova_int(k);
+    nova_int _novac_l13 = (nova_int){0};
+    int _novac_matched_t1 = 0;
+    if (!_novac_matched_t1 && ((_novac_l14.tag == NOVA_TAG_Option_Some))) {
+    nova_int v = _novac_l14.value;
+        _novac_l13 = v;
+    _novac_matched_t1 = 1;
+    }
+    if (!_novac_matched_t1 && ((_novac_l14.tag == NOVA_TAG_Option_None))) {
+    break;
+    _novac_matched_t1 = 1;
+    }
+    nova_int t = novac_fn_prog_twice__nova_int__to_nova_int(_novac_l13);
+    acc = nova_int_checked_add(acc, nova_int_checked_div(t, ((nova_int)2LL)));
+    }
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+=== STDOUT, line by line: oracle | Carina
+  1  pick(5): twice called, then 11| pick(5): twice called, then 11
+  2  twice called            | twice called
+  3  11                      | 11
+  4  pick(0): -7, no call    | pick(0): -7, no call
+  5  -7                      | -7
+  6  loop sum over 3 0 4 with continue on None: 7| loop sum over 3 0 4 with continue on None: 7
+  7  7                       | 7
+  8  loop stops at 0 with break: 3| loop stops at 0 with break: 3
+  9  twice called            | twice called
+ 10  3                       | 3
+=== VERDICT: SAME stdout

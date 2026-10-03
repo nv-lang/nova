@@ -1,3 +1,0 @@
-module hp.lexer
-
-export type Token { kind int, text str }

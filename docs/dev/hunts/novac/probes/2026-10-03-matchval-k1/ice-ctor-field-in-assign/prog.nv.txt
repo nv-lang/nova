@@ -1,0 +1,17 @@
+module prog
+
+// A `match` value as a constructor FIELD (a sweep-9 position) where the
+// constructor is the right side of a plain `=` (another sweep-9 position).
+// Each position alone compiles; together they reach the emitter unlowered.
+// Legal Nova; the oracle prints 5.
+type Pv { b int, f f64 }
+
+fn main() {
+    ro k = 3
+    mut q = Pv { b: 1, f: 1.0 }
+    q = Pv { b: match k {
+        3 => 5
+        _ => 6
+    }, f: 1.0 }
+    println(q.b)
+}
