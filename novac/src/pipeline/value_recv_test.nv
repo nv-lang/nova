@@ -1,0 +1,87 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Role: D488 -- how a `value` record's receiver crosses the call, asked ONE way
+//   for a body of the program and a declaration handed from std (registry 221.1
+//   #1654): a `ro @` up to three words by copy, larger by pointer; by pointer at
+//   any size for a type that must not be copied (`#no_copy`, `#zero_on_move`,
+//   `#share`, a `consume` type) and for a fluent `-> @` -- the oracle's rule
+//   (codegen/emit_c/value_abi.rs), so a call into the shell matches its signature.
+// Used by: nova test novac/src/pipeline (the module-test batch of the gate).
+// Guarded by: check-novac-module-tests, check-novac-file-size.py; the fixtures
+//   value_recv/ through check-novac-differential (the shell's receivers end to
+//   end: Path, IoError, EnvVar, OpenOptions).
+//
+// Why the door is asked directly: a handed non-generic method is the SHELL's
+// body, and the shell carries only what the probe uses -- these declarations
+// have no symbol there, so the pinned cells cannot be emitted from a test. The
+// pin is read where the row is collected, and that is what is held here.
+
+module novac.pipeline
+
+import ../parse.{parse}
+import ../sem.{InteropTable, ParamMode, FnRow, value_recv_by_pointer, recv_by_pointer_of, ty_of_decl}
+import ../types.{TyId, no_ty}
+
+/// A handed module with small `value` records -- eight bytes each, below the
+/// copy threshold: one plain, one per pin, and one with a fluent `-> @`.
+fn recv_decls() -> []str {
+    mut std = std_decls()
+    std.push("module std.rv\n\
+export type Pl value { n int }\n\
+export fn Pl @get() -> int => @n\n\
+#no_copy\n\
+export type Nc value { n int }\n\
+#zero_on_move\n\
+export type Zm value { n int }\n\
+#stable(since = \"0.1\")\n\
+#share\n\
+export type Sh value { n int }\n\
+export type Cs consume value { n int }\n\
+export type Fl value { n int }\n\
+export fn Fl @peek() -> @ {}\n")
+    std
+}
+
+/// The unit's context with the handed module above.
+fn recv_ctx() -> Ctx => context(parse(tokens_of("fn main() {}")), parse_decls(recv_decls()), InteropTable.new())
+
+/// The term of the handed type `name`, through the name door.
+fn ty_named(ctx Ctx, name str) -> TyId {
+    match ctx.defs.def_of(name) {
+        Some(d) => match d.target {
+            DefType(decl) => ty_of_decl(ctx, decl)
+            DefFn(_) | DefConst(_) => no_ty()
+        }
+        None => no_ty()
+    }
+}
+
+/// The one method whose RECEIVER is `t` -- each record above declares one.
+fn method_of(ctx Ctx, t TyId) -> FnRow {
+    for i in 0..ctx.fns.rows.len() {
+        ro fd = ctx.fns.rows[i]
+        if fd.has_recv && fd.param_cnt > 0 && ctx.fns.params[fd.param_off].type_id == t { return FnRow(i) }
+    }
+    FnRow(-1)
+}
+
+test "a small `ro @` crosses by COPY unless the type must not be copied (#1654, the oracle's pin)" {
+    ro ctx = recv_ctx()
+    // CONTROL: eight bytes, nothing pins it -- a copy, as the oracle's shell has it.
+    assert(!value_recv_by_pointer(ctx, ty_named(ctx, "Pl"), ParamMode.ModeRo), "Pl")
+    // The same size, pinned: a pointer, whatever the attribute run holds beside it.
+    assert(value_recv_by_pointer(ctx, ty_named(ctx, "Nc"), ParamMode.ModeRo), "#no_copy")
+    assert(value_recv_by_pointer(ctx, ty_named(ctx, "Zm"), ParamMode.ModeRo), "#zero_on_move")
+    assert(value_recv_by_pointer(ctx, ty_named(ctx, "Sh"), ParamMode.ModeRo), "#share after #stable")
+    assert(value_recv_by_pointer(ctx, ty_named(ctx, "Cs"), ParamMode.ModeRo), "consume type")
+    // `mut @` is a pointer at any size (R3), pinned or not.
+    assert(value_recv_by_pointer(ctx, ty_named(ctx, "Pl"), ParamMode.ModeMut), "mut @")
+}
+
+test "a fluent `-> @` takes its receiver by POINTER at any size (#1654, the oracle's forced pointer)" {
+    ro ctx = recv_ctx()
+    ro fl = ty_named(ctx, "Fl")
+    assert(recv_by_pointer_of(ctx, method_of(ctx, fl), fl, ParamMode.ModeRo), "peek")
+    // CONTROL: a plain `ro @` of the same size stays a copy.
+    ro pl = ty_named(ctx, "Pl")
+    assert(!recv_by_pointer_of(ctx, method_of(ctx, pl), pl, ParamMode.ModeRo), "get")
+}

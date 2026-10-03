@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E_LIT_INEXACT
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 #1646, the float half: an integer literal arm beside an `f32` arm
+// takes `f32` (D489) only if its exact value fits; `16777217` does not (it would
+// become 16777216). The cause is the literal, `E_LIT_INEXACT`, not two arms of
+// different types.
+module neg.p1646_literal_arm_inexact_neg
+
+fn main() {
+    mut fs = []f32.new()
+    fs.push(1.5)
+    ro k = 2
+    // nova:expect E_LIT_INEXACT -- `16777217` is not exactly an `f32`
+    ro c = if k > 1 { 16777217 } else { fs[0] }
+    println(c)
+}

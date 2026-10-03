@@ -13,7 +13,7 @@
 //! "permissive by design / checker already guaranteed" ring): the checker
 //! decided nothing about a variant constructor and codegen took what it found.
 //!
-//! Three doors, one per question:
+//! Four doors, one per question:
 //!
 //! * `variant_ctor_compat` -- payload against the INSTANCE's field types; called
 //!   from `assignable_direct`, so every position that already has a door (`let`
@@ -23,6 +23,13 @@
 //!   adaptation kept). A mismatch is the position's own `E7301`.
 //! * `check_variant_ctor_arity` -- the number of payload values, in every
 //!   position (called from `f1_expr_inner`'s call arm): `E_VARIANT_CTOR_ARITY`.
+//! * `check_variant_ctor_payload` (#1645) -- the payload against the fields
+//!   that name no type parameter of the sum, in EVERY position: `Sv.Int(x)`
+//!   with `x u8` and `Sv.Txt(5)` were accepted wherever nothing expected the
+//!   sum (`ro s = Sv.Int(x)`), because door 1 asks only with an expected
+//!   instance. Such a field's type is the same in every instance, so no
+//!   position is needed to know it; door 1 leaves those fields to this one (one
+//!   reason, one report). D491: a number keeps its type in a payload too.
 //! * `check_untyped_variant_ctor` -- a binding with no declared type whose
 //!   value is a generic sum's constructor that fixes not every parameter
 //!   (`None`, `Err(e)`): `E_VARIANT_CTOR_UNTYPED`. D55 (`let x = value` without
@@ -169,7 +176,12 @@ impl<'a> TypeCheckCtx<'a> {
         }
         let subst: HashMap<String, TypeRef> =
             td.generics.iter().map(|g| g.name.clone()).zip(targs.iter().cloned()).collect();
+        let params: HashSet<String> = td.generics.iter().map(|g| g.name.clone()).collect();
         for (i, (field, arg)) in fields.iter().zip(args).enumerate() {
+            if !typeref_mentions_any(field, &params) {
+                // The same type in every instance: door 4's (`check_variant_ctor_payload`).
+                continue;
+            }
             let want = subst_typeref(field, &subst);
             match self.assignable(arg.expr(), &want, expr_gs, exp_gs, scope) {
                 Compat::Ok | Compat::Unknown => {}
@@ -239,6 +251,59 @@ impl<'a> TypeCheckCtx<'a> {
             return;
         }
         errors.push(Diagnostic::new(arity_message(&ctor.sum, &ctor.variant, want, args.len()), expr.span));
+    }
+
+    /// #1645 door 4: each payload value whose field names no type parameter of
+    /// the sum, against that field -- in every position, an expected type or not.
+    pub(super) fn check_variant_ctor_payload(
+        &self,
+        expr: &Expr,
+        gs: &GenericScope,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let Some(ctor) = self.variant_ctor_use(expr, scope) else { return };
+        let Some(args) = ctor.args else { return };
+        let Some(td) = self.types_get_here(&ctor.sum) else { return };
+        let TypeDeclKind::Sum(variants) = &td.kind else { return };
+        let Some(v) = variants.iter().find(|v| v.name == ctor.variant) else { return };
+        let SumVariantKind::Tuple(fields) = &v.kind else { return };
+        if fields.len() != args.len() || args.iter().any(|a| !matches!(a, CallArg::Item(_))) {
+            // The count is door 2's.
+            return;
+        }
+        let params: HashSet<String> = td.generics.iter().map(|g| g.name.clone()).collect();
+        for (field, arg) in fields.iter().zip(args) {
+            if typeref_mentions_any(field, &params) {
+                // Its type is the instance's: door 1 judges it where one is expected.
+                continue;
+            }
+            let value = arg.expr();
+            let shown = typeref_display(field);
+            let what = format!("the payload of `{}.{}`", ctor.sum, ctor.variant);
+            match self.assignable(value, field, gs, gs, scope) {
+                Compat::Ok | Compat::Unknown => {}
+                Compat::Bad { found } => errors.push(Diagnostic::new(
+                    format!("[E7301] cannot pass value of type `{found}` as {what} of type `{shown}`"),
+                    value.span,
+                )),
+                Compat::OutOfRange { msg } => {
+                    errors.push(Diagnostic::new(literal_exact::literal_diag(&msg), value.span))
+                }
+                Compat::Narrowing { from, to } => errors.push(Diagnostic::new(
+                    format!(
+                        "[E_IMPLICIT_NARROWING] cannot pass value of type `{from}` as {what} of \
+                         type `{to}` — {}; use an explicit `... as {to}` cast",
+                        numeric_change::numeric_change_why(&from, &to),
+                    ),
+                    value.span,
+                )),
+                Compat::CoerceConflict { msg } => errors.push(Diagnostic::new(msg, value.span)),
+                Compat::RecordLit { faults } => {
+                    errors.extend(faults.into_iter().map(|(m, s)| Diagnostic::new(m, s)))
+                }
+            }
+        }
     }
 
     /// #1517 door 3: `ro x = None` -- a binding with no declared type whose

@@ -374,6 +374,11 @@ export const IMPL_ATTR = "impl"
 /// for MUTATION from another fiber (06-concurrency.md:7383, audited vouch):
 /// the sync primitives of std carry it (`Atomic*`, `Mutex`, ...).
 export const SHARE_ATTR = "share"
+/// `#no_copy` and `#zero_on_move` -- a `value` record that must not be copied
+/// (a copy would not be zeroed, or would duplicate what the type owns): its
+/// `ro @` receiver crosses by pointer at any size (D488, the oracle's pin).
+export const NO_COPY_ATTR = "no_copy"
+export const ZERO_ON_MOVE_ATTR = "zero_on_move"
 
 /// Does the primitive whose C spelling is `c_name` carry a FIXED runtime type
 /// id (`nova_rt/typeid.h`: NOVA_TID_nova_int .. NOVA_TID_nova_unit)? Every other

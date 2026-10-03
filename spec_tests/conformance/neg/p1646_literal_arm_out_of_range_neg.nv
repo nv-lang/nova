@@ -1,0 +1,30 @@
+// EXPECT_COMPILE_ERROR E_LIT_OUT_OF_RANGE
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 #1646: a literal arm beside a typed arm TAKES that arm's type (D489,
+// the `None => -1` example: `E_LIT_OUT_OF_RANGE`) and is checked against its range.
+// The oracle named it `E_MATCH_ARM_WIDTH_MISMATCH` -- two arms of different types --
+// which points at the wrong cause: nothing is wrong with the arms, the literal does
+// not fit. Either order, `match` and `if`. Two TYPED arms of different types stay
+// `E_MATCH_ARM_WIDTH_MISMATCH` (n_match_arm_width_mismatch.nv). One line per cell, at
+// the literal.
+module neg.p1646_literal_arm_out_of_range_neg
+
+fn main() {
+    mut bs = []u8.new()
+    bs.push(4)
+    ro k = 2
+    ro a = match k {
+        // nova:expect E_LIT_OUT_OF_RANGE -- the literal arm first: it takes `u8` from the arm below
+        0 => 300
+        _ => bs[0]
+    }
+    ro b = match k {
+        0 => bs[0]
+        // nova:expect E_LIT_OUT_OF_RANGE -- the literal arm last; a negative never fits `u8`
+        _ => -1
+    }
+    // nova:expect E_LIT_OUT_OF_RANGE -- the branches of an `if`
+    ro c = if k > 1 { 256 } else { bs[0] }
+    println("${a}${b}${c}")
+}

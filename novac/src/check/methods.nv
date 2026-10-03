@@ -306,7 +306,13 @@ fn Checker mut @judge_method_lookup(e Node, t Token, key []ArgSpec, found FnLook
                 // shell-str group: `s.replace(a, b)`, `k.is_dir()` -- std's body
                 // was handed and novac compiles it), exactly as a generic
                 // method's instance is made; `Ctx @instantiates` is the one door.
-                if @ctx.interop.has(sym) || @ctx.instantiates(row, []TyId.new()) {
+                ro callable = @ctx.interop.has(sym) || @ctx.instantiates(row, []TyId.new())
+                if callable && row_recv_by_pointer(@ctx, row) && !is_place_expr(branch_children(e)[0]) {
+                    // The receiver by POINTER (1654): the same dated refusal as the
+                    // program's row above -- no spill to a place yet.
+                    @refuse(t, VALUE_RECV_TEMP_MSG)
+                    @chan.record_type(e.id_of(), mfd.ret_id)
+                } else if callable {
                     @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new(),
                         bind_slots(@ctx.fns.params, mfd.param_off, mfd.param_cnt, key))
                     @record(e, mfd.ret_id)
@@ -464,7 +470,7 @@ fn Checker mut @type_method_call(e Node) -> () {
     @type_expr(kids[0])
     mut i = 0
     for c in kids {
-        if i > 2 && is_arg_node(c) && !@is_deferred_variant(c) {
+        if i > 2 && is_arg_node(c) && !@is_deferred_arg(c) {
             // A bare `None` (`@is_deferred_variant`) is typed after the lookup,
             // by its parameter (registry 1565). A NAMED argument's value is
             // typed like a positional one (registry 1630).

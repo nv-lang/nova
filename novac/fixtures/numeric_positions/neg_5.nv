@@ -1,0 +1,12 @@
+module numeric_positions.neg_5
+
+// ONE seeded cause (registry 1609, D491): a numeric value standing in
+// an element (a generic argument), of another numeric type. A number never changes its type
+// implicitly; the refusal carries the oracle's code.
+// NOVAC_EXPECT as argument 2 (argument 1 made it `int`) -- a number never changes its type implicitly
+fn main() {
+    ro x = 7 as u8
+    mut v = []int.new()
+    v.push(x)
+    println(v.len())
+}

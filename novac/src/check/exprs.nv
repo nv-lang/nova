@@ -421,6 +421,16 @@ fn Checker mut @type_expr(e Node) -> () {
         // recorded anywhere. The list of containers lives in `coalesce_ok_variant`; this
         // rule asks it and does not repeat it.
         ro payload = coalesce_payload(@ctx, lt)
+        // A LEFT SIDE THAT READS A POISONED NAME has no type because an EARLIER
+        // initializer was refused (`defs.type_decl(t) ?? no_decl()` after `ro
+        // defs = DefTable.new()` was): the cause already spoke, and "this left
+        // side is neither" would be its echo (one cause, one diagnostic).
+        if !is_ty(lt) && reads_poisoned(qk[0], @scope) {
+            // SILENT-OK: the refused initializer of the name read here is the cause.
+            return
+        } else {
+            // A typed left side, or one with no poisoned read: judged below.
+        }
         if !is_ty(payload) {
             @reject_first_leaf_of(qk, COALESCE_NONOPT_MSG)
             return

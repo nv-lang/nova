@@ -1,0 +1,14 @@
+module value_recv.neg_2
+
+import std.fs.{Path}
+
+// NOVAC_EXPECT the receiver here is a temporary
+// ONE seeded cause (registry 1654): the SHELL's `Path @to_str` takes its receiver
+// by pointer (D488: a `Path` is larger than three words), and the receiver is a
+// call's result -- no place to take the address of. The program's own rows were
+// refused this way already (neg_1); a shell row asked the question not at all and
+// passed the value, which clang refused. novac does not spill it yet; the oracle
+// does, so novac is narrower here, the legal direction.
+fn main() {
+    println(Path.posix("a/b.txt").to_str() ?? "-")
+}

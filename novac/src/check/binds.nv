@@ -55,6 +55,19 @@ fn Checker mut @type_bind(st Node) -> () {
     // or convert to it -- stays outside the subset, said with the type's name.
     if kids.len() > 4 {
         ro declared = @declared_local_type(kids)
+        // A PLAIN EXPRESSION under a written type is judged as every position with a
+        // written type is (registry 1609, typed_bind.nv): a literal takes the type
+        // (D489), a number of another type is D491's. The forms whose own door types
+        // them against the expectation -- a `match`, a constructor, an array, a handler
+        // literal -- take the path below: typed with the written type as the
+        // expectation, then held to it.
+        if is_ty(declared) && @plain_written_init(kids) {
+            @type_declared_bind(kids, declared)
+            // SILENT-OK: the written-type door bound the name or refused by name.
+            return
+        } else {
+            // A form typed against the expectation, or a type the door cannot read.
+        }
         // The written type is the initializer's EXPECTATION (D478's list: "a
         // binding with a declared type" -- `ro r Result[int, int] = Err(4)`
         // beside a file sum with an `Err`, registry 1647).
@@ -452,9 +465,15 @@ fn Checker mut @judge_record_ctor(ctor Node, vtype TyId) -> () {
             // The FIELD's declared type is the value's expectation (E2-b3): a
             // bare `None` for an `Option[T]` field takes it, as an argument
             // takes its parameter's (#1565) -- `default_expr: None` in harvest.
-            @value_expect = @ctor_field_expect(vtype, ctor_field_name(c))
+            ro fexp = @ctor_field_expect(vtype, ctor_field_name(c))
+            @value_expect = fexp
+            ro fmark = @out.len()
             @type_expr(fk[2])
             @value_expect = no_ty()
+            // THE VALUE IS JUDGED AGAINST THE FIELD (D491, D489): until 2026-10-02
+            // nothing compared them -- `Box { n: "s" }` and a `u8` field given 300
+            // compiled in silence. Asked only when typing refused nothing (#902).
+            if @out.len() == fmark { @judge_value_in(fk[2], fexp, "in this field") } else { }
         } else {
             // The type name and the braces of the ctor are children too, and
             // they hold no expression to type.

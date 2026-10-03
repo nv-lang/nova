@@ -442,7 +442,12 @@ undated=55
 # 2026-10-02, cloud session p274-carina-strarm (step 10): refusals 140 -> 138, the guard's
 #   count on this branch after the merge of origin/main f80d61e00 and this step together; this
 #   step's own share is the right-side refusal of `==`, moved to the language door.
-refusals=138
+# 2026-10-02, cloud session p274-carina-cast (step 9): the match-guard refusal of `??`/`?`
+#   (GUARD_BLOCK_FORM_MSG) left with the form -- the guard's block forms are laid down and the
+#   printer tells their `if`s from the guard's. Refusals 140 -> 139, the guard's count on the tree.
+# merge of origin/main dc2617993 into p274-carina-cast (2026-10-03): refusals 138 -> 137, the guard's
+#   count on the merged tree -- main's 138 less this branch's GUARD_BLOCK_FORM_MSG (step 9, above).
+refusals=137
 # ТРЕТЬЕ ЧИСЛО — БЕССРОЧНЫЕ ПО ДВЕРИ (волна 274.7 В11-б, засев 2026-09-14, окно 274).
 #
 # Два числа выше мерят НАПИСАНИЕ текста отказа, а у предмета есть машинный признак:

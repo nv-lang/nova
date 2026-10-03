@@ -1,0 +1,51 @@
+// EXPECT_COMPILE_ERROR E_IMPLICIT_NARROWING
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 #1692: a CALL value in a constructor position was never judged.
+// The record-field door (`check_named_record_lit`) and the variant-payload door
+// (#1645's `check_variant_ctor_payload`) ran BEFORE the values were walked, when a
+// call has no type yet -- `assignable` answered Unknown, and `Pr { f: three() }`
+// (`f f64`, `three() -> int`) passed while `ro x f64 = three()` was refused. A
+// named tuple's positional constructor `Pt(..)` and a tuple literal under a written
+// tuple type had no value door at all. D491: a number keeps its type in every
+// position with a written type. Cells: a record field, a `value` record field, a
+// variant payload, a positional named-tuple constructor, a tuple literal bound with
+// a written type; the value a call, a method, an operator over a call.
+module neg.p1692_ctor_call_value_neg
+
+type P1692Pr { b u8, f f64 }
+type P1692Pv value { b u8, f f32 }
+type P1692Pt(x u16, y f64)
+type P1692Sv enum P1692Small(i8) | P1692Wide(f64)
+
+fn p1692_three() -> int => 3
+
+fn int @p1692_twice() -> int => @ * 2
+
+fn main() {
+    ro n = 7
+    // nova:expect E_IMPLICIT_NARROWING -- a call into a record's `f64` field
+    ro a = P1692Pr { b: 1 as u8, f: p1692_three() }
+    // nova:expect E_IMPLICIT_NARROWING -- a method into a record's `u8` field
+    ro b = P1692Pr { b: n.p1692_twice(), f: 1.0 }
+    // nova:expect E_IMPLICIT_NARROWING -- an operator over a call into a `value` record's `f32` field
+    ro c = P1692Pv { b: 1 as u8, f: p1692_three() + 1 }
+    // nova:expect E_IMPLICIT_NARROWING -- a call as a variant's `f64` payload
+    ro d = P1692Sv.P1692Wide(p1692_three())
+    // nova:expect E_IMPLICIT_NARROWING -- a method as a variant's `i8` payload
+    ro e = P1692Small(n.p1692_twice())
+    // nova:expect E_IMPLICIT_NARROWING -- a call into a named tuple's `u16` slot, positional constructor
+    ro f = P1692Pt(p1692_three(), 1.0)
+    // nova:expect E_IMPLICIT_NARROWING -- an operator over a call into its `f64` slot
+    ro g = P1692Pt(1 as u16, p1692_three() * 2)
+    // nova:expect E_IMPLICIT_NARROWING -- a tuple literal bound with the written tuple type
+    ro h P1692Pt = (p1692_three(), 1.0)
+    println(a.f)
+    println(b.b as int)
+    println(c.f)
+    match d { P1692Small(v) => println(v as int), P1692Wide(w) => println(w) }
+    match e { P1692Small(v) => println(v as int), P1692Wide(w) => println(w) }
+    println(f.y)
+    println(g.y)
+    println(h.y)
+}

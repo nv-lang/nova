@@ -48,7 +48,7 @@ fn Emitter mut @emit_bound_args(kids []Node, from int, recv_slot bool,
         if at < 0 {
             @emit_slot_default(row, s)
         } else if recv_slot && at == 0 {
-            ro by_ptr = raw_row(row) >= 0 && @ctx.in_program(row) && row_recv_by_pointer(@ctx, row) // D488
+            ro by_ptr = raw_row(row) >= 0 && row_recv_by_pointer(@ctx, row) // D488: program and shell alike (1654)
             @body.append(if by_ptr { "(&" } else { "" })
             @emit_expr(kids[0])
             @body.append(if by_ptr { ")" } else { "" })

@@ -1,0 +1,66 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `check_expr_coercible_to_type` -- a value judged against its
+// position's written type; NOT taken: Rust's coercions (D491 has none).
+// Role: acceptance tests of registry 1609 (D491, D489): a numeric value keeps
+// its type in every position, a literal takes its position's type.
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file; fixtures numeric_positions/
+// through check-novac-no-cascade and the differential.
+// novac/src/pipeline/numeric_test.nv -- D491 positions.
+
+module novac.pipeline
+
+test "a number keeps its type in every position (D491); a literal takes the position's (D489)" {
+    ro std = std_decls()
+    // LEGAL: a written local type with a literal, a literal field, a literal
+    // branch beside a `u8` value -- the branch takes `u8`.
+    ro (d0, c0) = compile_to_c("type Box { n u8 }\nfn pick(c bool, b u8) -> u8 {\n ro r = if c { b } else { 0 }\n r\n}\nfn main() {\n ro a u8 = 200\n ro x = Box { n: 17 }\n println(pick(true, a))\n println(x.n)\n}", std)
+    assert(d0.len() == 0, messages(d0))
+    assert(c0.contains("nova_byte)200") || c0.contains("nova_byte)0xC8"), c0)
+    // REFUSED with the oracle's code: a binding, a field, the branches.
+    ro (d1, _) = compile_to_c("fn main() {\n ro x = 7 as u32\n ro y int = x\n println(y)\n}", std)
+    assert(d1.len() == 1 && messages(d1).contains("E_IMPLICIT_NARROWING"), messages(d1))
+    ro (d2, _) = compile_to_c("type Box { n int }\nfn main() {\n ro x = 7 as u8\n ro b = Box { n: x }\n println(b.n)\n}", std)
+    assert(d2.len() == 1 && messages(d2).contains("in this field"), messages(d2))
+    ro (d3, _) = compile_to_c("fn main() {\n ro a = 7 as u8\n ro b = 9\n ro r = if b > 1 { a } else { b }\n println(r)\n}", std)
+    assert(d3.len() == 1 && messages(d3).contains("E_MATCH_ARM_WIDTH_MISMATCH"), messages(d3))
+    // CONTROL: a non-number in a field is E7301, not D491's code.
+    ro (d4, _) = compile_to_c("type Box { n int }\nfn main() {\n ro b = Box { n: \"s\" }\n println(b.n)\n}", std)
+    assert(d4.len() == 1 && messages(d4).contains("E7301") && !messages(d4).contains("D491"), messages(d4))
+}
+
+/// Registry 1682 (the hunt's carrier `Pv { b: n }` with `b u8`, `n = 300`, which
+/// printed 44 on main): a constructor's value is judged against the declared field
+/// in every constructor form -- a record, a `value` record, a named tuple, a variant
+/// with data -- whatever the value is: a binding, a call, a value form (`if`, `match`).
+fn ctor_head() -> str => "type Pr { b u8, f f64 }\ntype Pv value { b u8, f f32 }\ntype Pt(x u16, y f64)\n\
+type Sv enum\n | Small(i8)\n | Wide(f64)\nfn three() -> int => 3\nfn main() {\n ro k = 3\n ro n = 300\n"
+
+test "a constructor's value keeps its type in every constructor form (D491, #1682)" {
+    ro std = std_decls()
+    ro cells = []str.of(
+        " ro a = Pr { b: n, f: 2.0 }\n println(a.b as int)\n}",
+        " ro a = Pr { b: 1 as u8, f: three() }\n println(a.f)\n}",
+        " ro a = Pr { b: if k > 0 { n } else { n }, f: 2.0 }\n println(a.b as int)\n}",
+        " ro a = Pv { b: n, f: 2.0 }\n println(a.b as int)\n}",
+        " ro a = Pv { b: 1 as u8, f: three() }\n println(a.f)\n}",
+        " ro w = 2.5\n ro a = Pv { b: 1 as u8, f: w }\n println(a.f)\n}",
+        " ro a = Pt(n * 1000, 1.0)\n println(a.x as int)\n}",
+        " ro a = Pt(1 as u16, three())\n println(a.y)\n}",
+        " ro a = Sv.Small(n)\n match a { Small(v) => println(v as int), Wide(w) => println(w) }\n}",
+        " ro a = Sv.Wide(three())\n match a { Small(v) => println(v as int), Wide(w) => println(w) }\n}",
+        " ro a = Sv.Small(if k > 0 { n } else { n })\n match a { Small(v) => println(v as int), Wide(w) => println(w) }\n}",
+        // A `match` value in a field (the hunt's own cell; the position compiles since the sync).
+        " ro a = Pr { b: match k {\n 3 => n\n _ => n\n }, f: 2.0 }\n println(a.b as int)\n}",
+        " ro a = Pr { b: 1 as u8, f: match k {\n 3 => k\n _ => k\n } }\n println(a.f)\n}")
+    for c in cells {
+        ro (d, _) = compile_to_c("${ctor_head()}${c}", std)
+        // ONE refusal per cell, by D491's own words: the value does not become the field's type.
+        assert(d.len() == 1 && messages(d).contains("D491"), "${c}: ${messages(d)}")
+    }
+    // CONTROL: the same constructors with values of the declared types compile.
+    ro ok = " ro a = Pr { b: 3 as u8, f: 2.0 }\n ro c = Pt(7, 1.5)\n ro d = Sv.Small(-3)\n println(a.b as int)\n\
+ println(c.x as int)\n match d { Small(v) => println(v as int), Wide(w) => println(w) }\n}"
+    ro (d0, _) = compile_to_c("${ctor_head()}${ok}", std)
+    assert(d0.len() == 0, messages(d0))
+}

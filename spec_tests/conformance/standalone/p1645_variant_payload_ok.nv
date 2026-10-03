@@ -1,0 +1,33 @@
+// EXPECT_STDOUT 7 255 1.5 12 t:3 k
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 #1645, the positive half: with no expected type a payload of the
+// field's own type is accepted, a literal takes the field's type when it fits
+// (D489), `as` says the change (D491), and a field that names a type parameter is
+// left to the instance (`Tag(T, u16)`: `T` from the declared type here; the form
+// without one is standalone/p1653_generic_sum_literal_concrete_field_ok). Negative halves:
+// neg/p1645_variant_payload_*_neg.nv.
+module standalone.p1645_variant_payload_ok
+
+type P1645oSv enum P1645oInt(int) | P1645oByte(u8) | P1645oWide(f64) | P1645oTxt(str)
+type P1645oTagged[T] enum P1645oTag(T, u16) | P1645oNone
+
+fn show(s P1645oSv) -> str => match s {
+    P1645oInt(n) => "${n}"
+    P1645oByte(b) => "${b}"
+    P1645oWide(w) => "${w}"
+    P1645oTxt(t) => t
+}
+
+fn main() Io {
+    ro x = 7 as u8
+    ro f = 1.5 as f32
+    ro a = P1645oSv.P1645oInt(x as int)
+    ro b = P1645oByte(255)
+    ro c = P1645oWide(f as f64)
+    ro d = P1645oInt(12)
+    ro e P1645oTagged[str] = P1645oTag("t", 3)
+    ro g = P1645oTxt("k")
+    ro tag = match e { P1645oTag(s, n) => "${s}:${n}", P1645oNone => "-" }
+    println("${show(a)} ${show(b)} ${show(c)} ${show(d)} ${tag} ${show(g)}")
+}

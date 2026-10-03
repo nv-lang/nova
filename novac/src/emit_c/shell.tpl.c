@@ -7415,7 +7415,7 @@ static NovaRes_nova_char_Nova_ParseCharError_p* Nova_str_method_to_char(nova_str
     nova_preempt_check();
     NovaValue_CharsIter it = Nova_str_method_chars(nova_self);
     NovaRes_nova_char_Nova_ParseCharError_p* _nv_tmp_587 = Nova_Option_consume_ok_or_nova_char____Nova_ParseCharError_p(Nova_CharsIter_method_next(&(it)), nova_make_ParseCharError_Empty());
-    if (_nv_tmp_587->tag == NOVA_TAG_Result_Err) { nova_throw_trace_push("parse.nv", 135); return nova_make_NovaRes_nova_char_Nova_ParseCharError_p_Err(_nv_tmp_587->payload.Err._0); }
+    if (_nv_tmp_587->tag == NOVA_TAG_Result_Err) { nova_throw_trace_push("parse.nv", 145); return nova_make_NovaRes_nova_char_Nova_ParseCharError_p_Err(_nv_tmp_587->payload.Err._0); }
     nova_char c = (_nv_tmp_587->payload.Ok._0);
     NovaOpt_nova_char _nv_scr_588 = Nova_CharsIter_method_next(&(it));
     NovaRes_nova_char_Nova_ParseCharError_p* _nv_match_589;

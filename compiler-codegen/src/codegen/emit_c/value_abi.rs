@@ -68,6 +68,18 @@ impl super::CEmitter {
         f.returns_receiver || f.receiver.as_ref().map_or(false, |r| r.consume)
     }
 
+    /// Registry 221.1 #1664: is `obj`, whose C type is a STARRED value struct
+    /// (`NovaValue_X*`), the PLACE of a value record rather than a raw `*T`? A
+    /// fluent `-> @` returns the receiver's place as `NovaValue_X*` (D409, #1598),
+    /// and its `.write(v)` / `.read()` are the record's methods, not the pointer
+    /// intrinsics -- `f.bump().write(5)` was printed as a store through the
+    /// pointer. The C type cannot tell them apart (`*mut Pt` is `NovaValue_Pt*`
+    /// too); the checker's type of the expression can: a record, not a pointer.
+    pub(super) fn starred_value_is_place(&self, obj: &crate::ast::Expr, obj_ty: &str) -> bool {
+        Self::is_value_struct_ptr(obj_ty)
+            && matches!(self.resolved_types.get(&obj.id), Some(crate::types::ResolvedType::Named { .. }))
+    }
+
     /// The same, for a call that holds only the registered signature.
     pub(super) fn sig_recv_forced_ptr(&self, sig: &super::MethodSig) -> bool {
         sig.recv_consume

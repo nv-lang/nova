@@ -1,0 +1,87 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/check/arm_fold.nv -- the arms of a `match` agree on ONE type.
+//
+// Donor: none -- the fold is the subset's own; the rule is D491 (arms without a
+//        written result type are one type) and D489 (a literal arm takes the
+//        type of the arm that is a value).
+// Role: check (layer 7) -- folds every arm's type into the match's, and names
+//       the disagreement: two numbers by D491's code (E_MATCH_ARM_WIDTH_MISMATCH),
+//       anything else as the subset's arm rule.
+// Used by: match_arms.nv `@type_match` (the fold over the arms).
+// Guarded by: check-novac-fixture-expect.sh (fixtures numeric_positions/ and
+//             the arm fixtures), check-novac-differential.sh.
+//
+// A FILE OF ITS OWN because match_arms.nv crossed the thousand-line limit with
+// registry 1609 (the literal arm and the numeric code).
+
+module novac.check
+
+import ../tree.{Node, NodeKind}
+import ../types.{TyId}
+import ../sem.{is_never_ty, branch_children, arm_body_at}
+
+/// Fold one arm's type into the answer the arms agreed on so far.
+///
+/// Every arm of a `match` must carry the SAME type, and the first arm that has
+/// one sets it. Both "no answer" cases are None and neither is a number: the
+/// arm whose body the walk refused has no type to compare, and before the first
+/// such arm there is nothing to compare AGAINST — two facts that shared the
+/// value -1 until 2026-08-19 and were told apart by their position in the code.
+fn Checker mut @fold_arm_type(arm Node, scr_t TyId, first Option[TyId], before_arms int,
+                               first_arm Node) -> Option[TyId] {
+    // No type: the arm reported a diagnostic and has nothing to offer, so the
+    // fold carries the first one through.
+    if Some(at) = @type_arm(arm, scr_t) { @agree_arm_type(arm, at, first, before_arms, first_arm) } else { first }
+}
+
+/// The same fold once THIS arm has a type: agree with the first one or report.
+///
+/// `before_arms` (registry #1249, the #1242 class): the RELATIVE mark taken
+/// by the caller before the arm-folding loop started, not literal zero. Was
+/// `@out.len() == 0` -- true only when NOTHING in the whole FILE had ever
+/// been refused, so a match placed anywhere after the file's first refusal
+/// silently stopped reporting disagreeing arm types (K-C: the oracle refuses
+/// `match n { 0 => 1  _ => "s" }`, novac accepted it once an earlier,
+/// unrelated declaration had already been refused).
+fn Checker mut @agree_arm_type(arm Node, at TyId, first Option[TyId], before_arms int, first_arm Node) -> Option[TyId] {
+    match first {
+        // The first arm with a type sets what the rest must match.
+        None => Some(at)
+        Some(f) => {
+            // An arm of type `never` (D26, B10 part 3) produces no value, so it
+            // does not vote: `TkParam => ice(..)` beside `TkPrim => row.head_id`
+            // is a match of `int`. A `never` first arm yields to the first arm
+            // that has a value; a match whose every arm is `never` is `never`.
+            if is_never_ty(@ctx.tys, f) {
+                Some(at)
+            } else {
+                if at == f || is_never_ty(@ctx.tys, at) || @out.len() > before_arms {
+                    // The arm agrees, is `never`, or a diagnostic already
+                    // stands: the answer is the first arm's type either way.
+                    return Some(f)
+                }
+                // A LITERAL arm takes the value arm's type (D489), this one or
+                // the first: `match k { 0 => b[0]  _ => 0 }` is a `u8`.
+                if @literal_takes(arm_value_of(arm), f) { return Some(f) }
+                if @literal_takes(arm_value_of(first_arm), at) { return Some(at) }
+                if differ_numeric(@ctx, at, f) {
+                    @reject_first_leaf_of([]Node.of(arm), ARMS_WIDTH_MSG)
+                } else {
+                    @report_first_leaf_of([]Node.of(arm), ARMS_DISAGREE_MSG)
+                }
+                first
+            }
+        }
+    }
+}
+
+/// The value node of an arm (its body), or the arm itself when it has none --
+/// what a literal arm is asked about.
+fn arm_value_of(arm Node) -> ro Node {
+    if arm.kind_of() != NodeKind.MatchArm { return arm }
+    ro ak = branch_children(arm)
+    match arm_body_at(ak) {
+        Some(i) => ak[i]
+        None => arm
+    }
+}

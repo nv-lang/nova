@@ -179,7 +179,6 @@ fn Checker mut @type_arm_stmt(arm Node, scr_t TyId) -> () {
         ro gk = branch_children(g)
         if gk.len() < 2 { continue }
         @type_expr(gk[1])
-        @refuse_block_form_in_guard(gk[1])
     }
     ro body = ak[arm_body_at(ak) ?? ice("check: a statement-position match arm with no body reached the checker")]
     @type_body(body)
@@ -220,13 +219,23 @@ fn Checker mut @type_match(m Node) -> () {
     }
     ro before_arms = @out.len()
     mut first_t = no_arm_type()
+    mut first_at = -1 // WHICH child set `first_t`: a literal arm is compared to it
+    mut ci = 0
     for c in kids {
+        ci += 1
         if c.kind_of() != NodeKind.MatchArm { continue }
         // EVERY arm starts from the position's expectation: an arm's body may
         // clear it on its way (a statement, an `if`), and the next arm must not
         // inherit that -- `Branch { .. } => None` after a block arm was refused.
         @value_expect = arm_expect
-        first_t = @fold_arm_type(c, scr_t, first_t, before_arms)
+        ro had = first_t.is_some()
+        ro first_arm = if first_at >= 0 { kids[first_at] } else { m }
+        first_t = @fold_arm_type(c, scr_t, first_t, before_arms, first_arm)
+        if !had && first_t.is_some() {
+            first_at = ci - 1
+        } else {
+            // The arm that set the type stays the one a literal arm is compared to.
+        }
     }
     @value_expect = arm_expect
     if @out.len() > before_arms { return }
@@ -263,52 +272,6 @@ fn Checker mut @type_match(m Node) -> () {
 /// it: the `-> f64` return coerces the integer literal), and that is
 /// bidirectional inference -- E2-b3 work, not a patch. Refusing is the safe
 /// direction: narrower than the language, never wider.
-
-/// Fold one arm's type into the answer the arms agreed on so far.
-///
-/// Every arm of a `match` must carry the SAME type, and the first arm that has
-/// one sets it. Both "no answer" cases are None and neither is a number: the
-/// arm whose body the walk refused has no type to compare, and before the first
-/// such arm there is nothing to compare AGAINST — two facts that shared the
-/// value -1 until 2026-08-19 and were told apart by their position in the code.
-fn Checker mut @fold_arm_type(arm Node, scr_t TyId, first Option[TyId], before_arms int) -> Option[TyId] {
-    // No type: the arm reported a diagnostic and has nothing to offer, so the
-    // fold carries the first one through.
-    if Some(at) = @type_arm(arm, scr_t) { @agree_arm_type(arm, at, first, before_arms) } else { first }
-}
-
-/// The same fold once THIS arm has a type: agree with the first one or report.
-///
-/// `before_arms` (registry #1249, the #1242 class): the RELATIVE mark taken
-/// by the caller before the arm-folding loop started, not literal zero. Was
-/// `@out.len() == 0` -- true only when NOTHING in the whole FILE had ever
-/// been refused, so a match placed anywhere after the file's first refusal
-/// silently stopped reporting disagreeing arm types (K-C: the oracle refuses
-/// `match n { 0 => 1  _ => "s" }`, novac accepted it once an earlier,
-/// unrelated declaration had already been refused).
-fn Checker mut @agree_arm_type(arm Node, at TyId, first Option[TyId], before_arms int) -> Option[TyId] {
-    match first {
-        // The first arm with a type sets what the rest must match.
-        None => Some(at)
-        Some(f) => {
-            // An arm of type `never` (D26, B10 part 3) produces no value, so it
-            // does not vote: `TkParam => ice(..)` beside `TkPrim => row.head_id`
-            // is a match of `int`. A `never` first arm yields to the first arm
-            // that has a value; a match whose every arm is `never` is `never`.
-            if is_never_ty(@ctx.tys, f) {
-                Some(at)
-            } else {
-                if at != f && !is_never_ty(@ctx.tys, at) && @out.len() == before_arms {
-                    @report_first_leaf_of([]Node.of(arm), ARMS_DISAGREE_MSG)
-                } else {
-                    // The arm agrees, is `never`, or a diagnostic already
-                    // stands: the answer is the first arm's type either way.
-                }
-                first
-            }
-        }
-    }
-}
 
 /// One arm: binders first (payload fields of a variant pattern, or the whole
 /// scrutinee under a plain binder), then the guard and the arm's value --
@@ -831,7 +794,6 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
         // remnant with nothing to type; the next arm child is next.
         if gk.len() < 2 { continue }
         @type_expr(gk[1])
-        @refuse_block_form_in_guard(gk[1])
     }
     @value_expect = body_expect
     ro body = ak[arm_body_at(ak) ?? ice("check: a match arm with no body reached the checker")]

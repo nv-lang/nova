@@ -69,7 +69,7 @@ fn typed_args(kids []Node, from int, ctx Ctx, scope Scope, chan CheckOut) -> []A
             // the wrapper adds.
             ro ax = arg_expr_of(c)
             out.push(ArgSpec { type_id: type_of(ax, ctx, scope, chan),
-                               cls: typed_arg_class(ax, ctx, scope, chan), name: arg_name_of(c), lit: lit_arg_of(ax) })
+                               cls: typed_arg_class(ax, ctx, scope, chan), name: arg_name_of(c), lit: arg_lit_of(ax) })
         } else {
             // Syntax, not an argument: the argument cursor stays put while the
             // child cursor advances.
@@ -259,6 +259,68 @@ fn lit_arg_of(e Node) -> LitArg {
     if lk == TokenKind.IntLit { return LitArg.IntLitArg }
     if lk == TokenKind.FloatLit { return LitArg.FloatLitArg }
     LitArg.NotLit
+}
+
+/// The literal family of an ARGUMENT: a bare numeric literal's, or -- registry
+/// 1697 (D489) -- that of an `if`/`match` value whose every value tail is a
+/// numeric literal of one family (`take(if c < 0 { -1 } else { 0 })`): such a
+/// value is its literals, and takes its parameter's type as a bare one does.
+fn arg_lit_of(e Node) -> LitArg {
+    ro k = e.kind_of()
+    if k != NodeKind.IfExpr && k != NodeKind.MatchExpr { return lit_arg_of(e) }
+    tail_family(e)
+}
+
+/// Is this a literal's family, not `NotLit`? A sum is told by `match`, never by
+/// `==` (D363: `==` on a sum needs `Equal`, and `LitArg` declares none).
+#realtime nogc
+fn is_lit_family(l LitArg) -> bool {
+    match l {
+        NotLit => false
+        IntLitArg | FloatLitArg => true
+    }
+}
+
+/// Are two literal families the same one? Two `NotLit` are not a family.
+#realtime nogc
+fn same_lit_family(a LitArg, b LitArg) -> bool {
+    match a {
+        NotLit => false
+        IntLitArg => match b {
+            IntLitArg => true
+            NotLit | FloatLitArg => false
+        }
+        FloatLitArg => match b {
+            FloatLitArg => true
+            NotLit | IntLitArg => false
+        }
+    }
+}
+
+/// The one literal family of `n`'s value tails, or `NotLit` when a tail is
+/// anything else or two families meet. An `if` without `else` is no value.
+fn tail_family(n Node) -> LitArg {
+    ro k = n.kind_of()
+    if k == NodeKind.Lit { return lit_arg_of(n) }
+    if k == NodeKind.Block {
+        ro t = block_tail(n)
+        if t.id_of() == n.id_of() { return LitArg.NotLit }
+        return tail_family(t)
+    }
+    if k != NodeKind.IfExpr && k != NodeKind.MatchExpr { return LitArg.NotLit }
+    mut fam = LitArg.NotLit
+    mut tails = 0
+    for c in branch_children(n) {
+        ro ck = c.kind_of()
+        ro is_tail = ck == NodeKind.Block || ck == NodeKind.IfExpr || ck == NodeKind.MatchArm
+        if !is_tail { continue }
+        ro f = tail_family(if ck == NodeKind.MatchArm { arm_value_of(c) } else { c })
+        if !is_lit_family(f) || (tails > 0 && !same_lit_family(f, fam)) { return LitArg.NotLit }
+        fam = f
+        tails += 1
+    }
+    if tails < 2 { return LitArg.NotLit }
+    fam
 }
 
 /// The type an OPERAND takes beside the other operand: a bare numeric literal

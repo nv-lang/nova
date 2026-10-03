@@ -252,6 +252,7 @@ fn register_sum_variants(c Node, mut types []TypeDef, mut defs DefTable,
                                           gate_off: types[raw_decl(sum_decl)].gate_off,
                                           gate_cnt: types[raw_decl(sum_decl)].gate_cnt,
                                           ty_id: sum_ty, name: sname,
+                                          copy_pinned: types[raw_decl(sum_decl)].copy_pinned,
                                           share: types[raw_decl(sum_decl)].share,
                                           rows: TypeRows.VariantRows(VariantRow(off), vcnt) }
 }
@@ -439,6 +440,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                                  // does not decide coverage. Whether the synthesis READS it is
                                  // the checker's question, and the variant tag is separate work.
                                  gate_off: gates.len(), gate_cnt: push_gates(gates, decls_of_file, c.id_of()),
+                                 copy_pinned: false,
                                  share: share_marked_before(decls_of_file, c.id_of()), rows: TypeRows.NoRows })
             continue
         }
@@ -467,6 +469,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                                  tparam_cnt: generic_names(nk).len(),
                                  ty_id: tys.record(d), name: tname,
                                  gate_off: gates.len(), gate_cnt: push_gates(gates, decls_of_file, c.id_of()),
+                                 copy_pinned: false,
                                  share: false, rows: TypeRows.NoRows })
             continue
         }
@@ -506,6 +509,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                                      // is a SIBLING of the declaration, so the question is
                                      // positional and gets one answer from the same door.
                                      gate_off: gates.len(), gate_cnt: push_gates(gates, decls_of_file, c.id_of()),
+                                     copy_pinned: copy_pinned_before(decls_of_file, c),
                                      share: share_marked_before(decls_of_file, c.id_of()), rows: TypeRows.NoRows })
             }
             ShapeNewtype => {
@@ -519,6 +523,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                                      // Display; the gate is stored all the same, because storing
                                      // is not reading.
                                      gate_off: gates.len(), gate_cnt: push_gates(gates, decls_of_file, c.id_of()),
+                                     copy_pinned: false,
                                      share: share_marked_before(decls_of_file, c.id_of()), rows: TypeRows.NoRows })
             }
             ShapeAlias => {
@@ -802,6 +807,7 @@ fn fill_record_fields(c Node, owner_id DeclId, tname str, mut types []TypeDef, d
                                           tparam_cnt: mine.tparam_cnt,
                                           gate_off: mine.gate_off, gate_cnt: mine.gate_cnt,
                                           ty_id: mine.ty_id, name: tname,
+                                          copy_pinned: mine.copy_pinned,
                                           share: mine.share, rows: TypeRows.FieldRows(FieldRow(off), cnt) }
 }
 

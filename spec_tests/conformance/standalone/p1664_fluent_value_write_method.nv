@@ -1,0 +1,53 @@
+// EXPECT_STDOUT 5 6 9 10 11 12 3 8 opts 41
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 #1664: a method named `write` (or `read`) called on the RESULT
+// of a fluent `-> @` of a `value` record was printed as the raw-pointer
+// intrinsic -- `f.bump().write(5)` became `(*(bump(&f))) = (5)` and C refused
+// it. A fluent `-> @` returns the receiver's place as `NovaValue_X*` (D409,
+// D488), and the intrinsic was chosen by the C type alone; `*mut Pt` is
+// `NovaValue_Pt*` too, so the CHECKER's type tells them apart: a record is a
+// place whose methods are its own, a pointer keeps the intrinsics (the last
+// cell, `p.write(..)` through `&mut`). Cells: on a binding and on a temporary;
+// a `mut @` method on the fluent result; chains of two and three; the result
+// used and not used; std's `OpenOptions` (`o.read(true).write(true)`); the
+// control `f.bump().bump()`.
+module standalone.p1664_fluent_value_write_method
+
+import std.fs.{OpenOptions}
+
+type P1664Fl value { n int }
+
+fn P1664Fl mut @bump() -> @ { @n += 1 }
+
+fn P1664Fl mut @write(v int) -> @ { @n = v }
+
+fn P1664Fl @read() -> int => @n
+
+fn p1664_mk() -> P1664Fl => { n: 10 }
+
+fn main() Io {
+    mut f = P1664Fl { n: 1 }
+    f.bump().write(5)
+    print("${f.n} ")
+    ro g = f.bump().write(6)
+    print("${g.n} ")
+    f.bump().bump().write(8)
+    f.bump()
+    print("${f.n} ")
+    ro t = p1664_mk().write(10)
+    print("${t.n} ")
+    print("${p1664_mk().bump().read()} ")
+    print("${p1664_mk().bump().bump().read()} ")
+    mut h = P1664Fl { n: 1 }
+    h.bump().bump()
+    print("${h.n} ")
+    print("${h.bump().bump().bump().write(8).read()} ")
+    mut o = OpenOptions.new()
+    o.read(true).write(true)
+    print("opts ")
+    mut q = P1664Fl { n: 0 }
+    ro p = &q
+    unsafe { p.write(P1664Fl { n: 41 }) }
+    println("${q.n}")
+}

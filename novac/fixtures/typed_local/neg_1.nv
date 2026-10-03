@@ -1,10 +1,11 @@
 module typed_local.neg_1
 
 // ONE seeded cause: a declared type the initializer does not have. The oracle
-// refuses it (E7301, `int` into `str`); novac compiles a declared local type
-// only when the initializer has exactly that type, and says so -- one
+// refuses it (E7301, `int` into `str`), and since registry 1609 so does novac,
+// by the oracle's code: the written type is a position, and a value of another
+// named type standing in it is the language's error, not the subset's -- one
 // diagnostic, and the later use of `b` adds none.
-// NOVAC_EXPECT only an initializer of exactly the written type is (E2-b3)
+// NOVAC_EXPECT no implicit conversion between named types (E7301, D405)
 fn main() {
     ro b str = 5
     println(b)

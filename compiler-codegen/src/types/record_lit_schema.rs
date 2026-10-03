@@ -261,6 +261,74 @@ impl<'a> TypeCheckCtx<'a> {
     /// Anonymous literal door, from `assignable_direct`: `None` when `expected`
     /// is not a record type (the caller's own rules apply), otherwise the
     /// verdict of the whole literal.
+    /// Registry 221.1 #1692: the declared element types of a non-generic TUPLE type
+    /// named `name` -- a named tuple's fields or a positional tuple's elements --
+    /// with the name of each slot (`.0`, `.1` for a positional one). `None` for any
+    /// other type, and for a generic one (its slots are the instance's).
+    pub(super) fn tuple_decl_slots(&self, name: &str) -> Option<Vec<(String, TypeRef)>> {
+        let td = self.types_get_here(name)?;
+        if !td.generics.is_empty() {
+            return None;
+        }
+        match &td.kind {
+            TypeDeclKind::NamedTuple(fields) => Some(fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect()),
+            TypeDeclKind::Newtype(TypeRef::Tuple(tys, _)) => {
+                Some(tys.iter().enumerate().map(|(i, t)| (i.to_string(), t.clone())).collect())
+            }
+            _ => None,
+        }
+    }
+
+    /// #1692: the VALUES of a tuple type's constructor `Pt(a, b)` against the declared
+    /// slots -- by position, a named argument by its name. Arity, names and access are
+    /// `f5_check_tuple_construct`'s; this door says only whether each value IS the
+    /// slot's type (D491: a number does not change its type; D489: a literal takes it).
+    pub(super) fn check_tuple_ctor_values(
+        &self,
+        func: &Expr,
+        args: &[CallArg],
+        gs: &GenericScope,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let ExprKind::Ident(name) = &func.kind else { return };
+        if scope.contains_key(name.as_str()) || args.iter().any(|a| matches!(a, CallArg::Spread(_))) {
+            return;
+        }
+        let Some(slots) = self.tuple_decl_slots(name) else { return };
+        for (i, arg) in args.iter().enumerate() {
+            let slot = match arg {
+                CallArg::Named { name: n, .. } => slots.iter().find(|(s, _)| s == n),
+                _ => slots.get(i),
+            };
+            let Some((slot_name, ty)) = slot else { continue };
+            let value = arg.expr();
+            let shown = typeref_display(ty);
+            match self.assignable(value, ty, gs, gs, scope) {
+                Compat::Ok | Compat::Unknown => {}
+                Compat::Bad { found } => errors.push(Diagnostic::new(
+                    format!("[E7301] cannot pass value of type `{found}` as field `{slot_name}` of `{name}` of type `{shown}`"),
+                    value.span,
+                )),
+                Compat::OutOfRange { msg } => {
+                    errors.push(Diagnostic::new(super::literal_exact::literal_diag(&msg), value.span))
+                }
+                Compat::Narrowing { from, to } => errors.push(Diagnostic::new(
+                    format!(
+                        "[E_IMPLICIT_NARROWING] cannot pass value of type `{from}` as field `{slot_name}` of \
+                         `{name}` of type `{to}` -- {}; use an explicit `... as {to}` cast",
+                        super::numeric_change::numeric_change_why(&from, &to),
+                    ),
+                    value.span,
+                )),
+                Compat::CoerceConflict { msg } => errors.push(Diagnostic::new(msg, value.span)),
+                Compat::RecordLit { faults } => {
+                    errors.extend(faults.into_iter().map(|(m, s)| Diagnostic::new(m, s)))
+                }
+            }
+        }
+    }
+
     pub(super) fn anon_record_lit_compat(
         &self,
         expr: &Expr,

@@ -1,0 +1,34 @@
+// EXPECT_COMPILE_ERROR E7301
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 #1645: a variant constructor's payload was compared with the
+// variant's field only where the position EXPECTED the sum (#1517 door 1). With
+// nothing expected -- `ro s = P1645Sv.P1645Txt(5)`, an argument of a generic
+// parameter, a payload of another constructor -- `Txt(5)` with `| Txt(str)` passed
+// `nova check` silently. A field that names no type parameter of the sum has the
+// same type in every instance, so it is judged in every position. One line per
+// cell, at the payload value. Positive half: standalone/p1645_variant_payload_ok.nv.
+module neg.p1645_variant_payload_any_position_neg
+
+type P1645Sv enum P1645Int(int) | P1645Txt(str)
+type P1645Tagged[T] enum P1645Tag(T, str) | P1645Bare
+
+fn p1645_take[T](v T) -> int => 1
+
+fn main() {
+    // nova:expect E7301 -- qualified constructor, no declared type on the binding
+    ro a = P1645Sv.P1645Txt(5)
+    // nova:expect E7301 -- bare constructor, no declared type
+    ro b = P1645Txt(6)
+    // nova:expect E7301 -- an argument of a generic parameter expects no sum
+    ro c = p1645_take(P1645Sv.P1645Txt(7))
+    // nova:expect E7301 -- the payload of another constructor (`Option[T]`'s `T` fixes nothing)
+    ro d = Some(P1645Txt(8))
+    // nova:expect E7301 -- a generic sum's field that names no parameter: `str` in every instance
+    ro e = P1645Tag(1, 9)
+    match a { P1645Int(n) => println(n), _ => println(0) }
+    match b { P1645Int(n) => println(n), _ => println(0) }
+    println(c)
+    println(d.is_some())
+    match e { P1645Tag(n, _) => println(n), _ => println(0) }
+}

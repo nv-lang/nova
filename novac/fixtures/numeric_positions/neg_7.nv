@@ -1,0 +1,12 @@
+module numeric_positions.neg_7
+
+// ONE seeded cause (registry 1609, D491): a numeric value standing in
+// the branches of an `if` without a written result type, of another numeric type. A number never changes its type
+// implicitly; the refusal carries the oracle's code.
+// NOVAC_EXPECT (D491, E_MATCH_ARM_WIDTH_MISMATCH)
+fn main() {
+    ro a = 7 as u8
+    ro b = 9
+    ro r = if b > 1 { a } else { b }
+    println(r)
+}

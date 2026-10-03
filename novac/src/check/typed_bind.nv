@@ -1,0 +1,64 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/check/typed_bind.nv -- a binding with a WRITTEN type, `ro y T = e`
+// (registry 1609: D491's first position, the binding).
+//
+// Donor: rustc `check_decl_local` -- a local's written type is the initializer's
+//        expectation, and the initializer is coerced to it; NOT taken: Rust's
+//        coercions -- D491 has none for numbers, so the value must BE `T`.
+// Role: check (layer 7) -- the door the shape walk opens for a declared local
+//       whose type the reference door reads; its initializer is judged as every
+//       position with a written type is (numeric_positions.nv), and the name is
+//       bound with the WRITTEN type.
+// Used by: binds.nv `@type_bind` -- the written type is read there by
+//          `@declared_local_type`, the one reader the shape walk asks too.
+// Guarded by: check-novac-fixture-expect.sh (fixtures numeric_positions/),
+//             check-novac-differential.sh (pos byte for byte with the oracle).
+
+module novac.check
+
+import ../tree.{Node, NodeKind}
+import ../types.{TyId, is_ty}
+import ../sem.{bind_mode_at, leaf_text, ty_source_name, is_expr_kind}
+
+/// Is the initializer of `ro y T = e` a PLAIN expression -- one this door judges
+/// as a value in a position (1609)? A `match`, a constructor, an array and a
+/// handler literal are typed by their own doors against the expectation instead
+/// (binds.nv, the declared-type path of #1647).
+fn Checker @plain_written_init(kids []Node) -> bool {
+    ro ik = kids[kids.len() - 1].kind_of()
+    is_expr_kind(ik) && ik != NodeKind.MatchExpr && ik != NodeKind.RecordCtor && ik != NodeKind.ArrayLit &&
+        ik != NodeKind.HandlerLit
+}
+
+/// `ro y T = e`: the written type is the initializer's expectation (a bare
+/// `None` takes it), a literal takes it (D489), any other value must BE it
+/// (D491) -- and the name is bound with `T`, whatever the initializer was.
+fn Checker mut @type_declared_bind(kids []Node, dt TyId) -> () {
+    ro vname = leaf_text(kids[1])
+    ro init = kids[kids.len() - 1]
+    ro before = @out.len()
+    ro saved = @value_expect
+    @value_expect = dt
+    @type_expr(init)
+    @value_expect = saved
+    if @out.len() == before {
+        @judge_value_in(init, dt, "in this binding (written `${ty_source_name(@ctx, dt)}`)")
+    } else {
+        // The initializer was refused where it was typed: one cause.
+    }
+    if @out.len() > before {
+        @bind_poisoned(vname, kids)
+        return
+    } else {
+        // Judged and of the written type.
+    }
+    // The emitter reads the initializer's type from the channel, as the untyped
+    // binding records it: a form whose door decided its type by the expectation
+    // alone (a string literal under `str`) has no answer there yet.
+    if !is_ty(@chan.type_if_known(init.id_of())) {
+        @record(init, dt)
+    } else {
+        // The initializer's own door recorded it: one writer per node.
+    }
+    @scope.bind(vname, dt, bind_mode_at(kids))
+}

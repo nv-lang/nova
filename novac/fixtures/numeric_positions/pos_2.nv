@@ -1,0 +1,24 @@
+module numeric_positions.pos_2
+
+// Registry 1697 (D489): an `if` value made of numeric literals, handed as an
+// ARGUMENT with a written parameter type, is its literals -- each takes the
+// parameter's type, as in a binding, a field or a tuple slot. novac typed it
+// before the lookup, its literals took `int`, and the call was refused as D491.
+// It is typed after the lookup now, with the parameter as the expectation (the
+// door a bare `None` takes). Byte for byte with the oracle; the control is an
+// `if` of values of the parameter's own type.
+fn take(h i64) -> i64 => h
+fn take8(b u8) -> int => b as int
+fn tf(x f32) -> f32 => x
+fn main() {
+    ro c = 3
+    ro a = take(if c < 0 { -1 } else { 0 })
+    ro b = take8(if c > 0 { 250 } else { 0 })
+    ro f = tf(if c > 0 { 1.5 } else { 2.5 })
+    ro n = c as i64
+    ro g = take(if c > 0 { n } else { n })
+    println(a)
+    println(b)
+    println(f)
+    println(g)
+}

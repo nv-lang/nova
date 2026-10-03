@@ -26,10 +26,11 @@ module novac.check
 
 import ../source.{SourceText}
 import ../lex.{TokenKind}
-import ../tree.{Node, NodeId, no_node, raw_node}
+import ../tree.{Node, NodeId, NodeKind, no_node, raw_node}
 import ../diag.{Diagnostic}
 import ../builtins.{IMPL_ATTR}
 import ../sem.{Ctx, CheckOut, branch_children, file_decls, attr_kids_name, FnRow, no_row, raw_row, module_dotted}
+import ../sem.{leaf_text}
 import ../names.{NameTable, NamespaceId}
 import ../resolve.{FnIndex, FieldIndex, PRELUDE_ASKER}
 import ../types.{TyId, no_ty}
@@ -248,4 +249,52 @@ fn Checker mut @reject_repeated_impl(kids []Node) -> () {
         }
         prev_impl = is_impl
     }
+}
+
+/// What THIS file imported (registry 221.1 #1493, D29), for `FnIndex.build_for`:
+/// with `seg` false every name in a brace list, with `seg` true the last segment
+/// of the module path each of them came from -- two parallel lists, one walk
+/// each. Read from the import DECLARATIONS, never from the source text, where
+/// `import` in a comment would count. An import without a brace list brings the
+/// module's name, not its functions; `file_decls` unwraps `export import`.
+fn import_parts(file Node, seg bool) -> []str {
+    mut out = []str.new()
+    for d in file_decls(file) {
+        if d.kind_of() != NodeKind.ImportDecl { continue }
+        out.append(import_parts_of(branch_children(d), seg))
+    }
+    out
+}
+
+/// The parts of ONE import: the last identifier of the path before the brace
+/// list, once per name inside it (`seg`), or the names themselves. An aliased
+/// import is refused before typing (`@walk_import`), so `as` never reaches a
+/// lookup.
+fn import_parts_of(kids []Node, seg bool) -> []str {
+    mut res = []str.new()
+    mut last = ""
+    mut in_braces = false
+    mut first = true
+    for c in kids {
+        if c.kind_of() != NodeKind.LeafNode { continue }
+        ro t = leaf_text(c)
+        if first {
+            first = false // the keyword: `import` / `use`
+        } else if t == "{" {
+            in_braces = true
+        } else if t == "}" {
+            in_braces = false
+        } else if in_braces {
+            if t != "," && t != "as" {
+                res.push(if seg { last } else { t })
+            } else {
+                // The separator, or the `as` before an alias.
+            }
+        } else if t != "." && t != ".." && t != "/" {
+            last = t
+        } else {
+            // Path punctuation.
+        }
+    }
+    res
 }

@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR E_MATCH_ARM_WIDTH_MISMATCH
+// EXPECT_COMPILE_ERROR E_LIT_OUT_OF_RANGE
 // [M-match-arm-mixed-int-width-sentinel-coerce] amend (2026-07-21): the literal-fit
 // exception (a bare int literal adopts the sibling arm's concrete type — see
 // `d129_match_arm_width_widen.nv`'s D407-shape case) does NOT relax the D227 Rule 6
@@ -7,11 +7,16 @@
 // literal's own default) cannot safely widen into it either (same width, signed →
 // unsigned is never implicit), so this is a genuine mismatch: hard error, not a
 // silent widen. Coordinator-requested regression guard (mega-CU gate review).
+// #1646 (2026-10-02): the code follows D489's `None => -1` example -- the literal takes
+// the typed arm's `uint` and is out of its range: `E_LIT_OUT_OF_RANGE`. Still a hard
+// error, never a silent widen; only the named cause changed.
 module neg.n_match_arm_width_negative_literal_uint
 
 fn pick(o Option[uint]) -> uint {
+    // nova:allow W_MANUAL_COALESCE -- the match form is the subject
     match o {
         Some(v) => v
+        // nova:expect E_LIT_OUT_OF_RANGE -- `-1` takes `uint` from the arm above and does not fit (D227 Rule 6, D489)
         None => -1
     }
 }

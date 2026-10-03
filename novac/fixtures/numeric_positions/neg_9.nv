@@ -1,0 +1,12 @@
+module numeric_positions.neg_9
+
+// ONE seeded cause (registry 1609, D491): a numeric value standing in
+// the right side of `=`, of another numeric type. A number never changes its type
+// implicitly; the refusal carries the oracle's code.
+// NOVAC_EXPECT on the right of `=` (the target is `int`) -- a number never changes its type implicitly
+fn main() {
+    ro x = 7 as u8
+    mut y = 0
+    y = x
+    println(y)
+}

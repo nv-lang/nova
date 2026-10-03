@@ -83,6 +83,21 @@ fn Checker mut @judge_qualified_payload(e Node, kids []Node, vt Token, vrow Vari
         return
     }
     ro vd = @ctx.variant_rows[raw_vrow(vrow)]
+    // THE PAYLOAD IS A POSITION WITH A WRITTEN TYPE (D55, D491), as at the bare
+    // variant's door (option_rules.nv): `Sv.Int(x)` with `x u8` and `Sv.Txt(5)`
+    // compiled without a comparison until 2026-10-02.
+    mut k = 0
+    mut j = 0
+    for c in kids {
+        if j >= arg_from && is_arg_value_kind(c.kind_of()) && k < vd.payload_cnt {
+            @judge_value_in(c, @ctx.payload_types[vd.payload_off + k], "as this variant's payload")
+            k += 1
+        } else {
+            // Not a payload argument: the head, the dot, the parentheses.
+        }
+        j += 1
+    }
+    if @out.len() > before { return }
     @record(e, vd.sum_id)
     @chan.record_callee(e.id_of(),
         CalleeTarget.CalleeVariant(vrow), []TyId.new(), identity_slots(arg_count(kids, arg_from)))

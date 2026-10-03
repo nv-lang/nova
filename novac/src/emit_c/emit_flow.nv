@@ -481,3 +481,4 @@ fn Emitter mut @emit_push_frame(f int) -> () {
 fn Emitter mut @emit_pop_frame() -> () {
     @body.append("    nova_interrupt_pop();\n")
 }
+

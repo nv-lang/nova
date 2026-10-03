@@ -36,7 +36,7 @@ import ../types.{TyId, no_ty, is_ty}
 import ../builtins.{TypeKind, RESULT_SUM}
 import ../sem.{CalleeTarget, VariantRow, raw_vrow, decl_of_ty, decl_index_of_ty, identity_slots, ArgSpec}
 import ../sem.{FnRow, raw_row, bind_slots, call_arg_at, expr_leaf_name, variants_named, is_arg_node, c_struct}
-import ../sem.{variant_sum_count, branch_children, call_callee_text}
+import ../sem.{variant_sum_count, branch_children, call_callee_text, arg_expr_of}
 
 /// A bare variant of a generic sum with nothing around it to say which
 /// instance it is.
@@ -85,6 +85,18 @@ fn Checker mut @type_variant_call(e Node, kids []Node, v VariantRow) -> () {
         return
     }
     if !@variant_sum_is_generic(v) {
+        // THE PAYLOAD IS A POSITION WITH A WRITTEN TYPE (D55, D491): a literal
+        // takes it, a number of another type does not -- `Sv.Int(x)` with `x
+        // u8` -- and no other type stands there either. Until 2026-10-02 the
+        // payload of a non-generic variant was not compared at all.
+        // The same walk `typed_args` takes: child zero is the variant's name.
+        mut k = 0
+        for i in 1..kids.len() {
+            if !is_arg_node(kids[i]) || k >= vd.payload_cnt { continue }
+            @judge_value_in(arg_expr_of(kids[i]), @ctx.payload_types[vd.payload_off + k], "as this variant's payload")
+            k += 1
+        }
+        if @out.len() > vbefore { return }
         // A variant's payload is positional by construction -- no names to
         // bind by, no defaults to omit -- so its binding is the identity, and
         // the decision is this record.
@@ -232,6 +244,17 @@ fn Checker @is_deferred_variant(c Node) -> bool {
     @ctx.variant_rows[raw_vrow(v)].payload_cnt == 0 && @variant_sum_is_generic(v)
 }
 
+/// An argument typed AFTER the lookup, with its parameter's type as the
+/// expectation: a bare generic variant (`None`, 1565), or an `if`/`match` whose
+/// value tails are numeric literals of one family (1697, D489) -- typed first
+/// without the parameter, its literals would take `int` and the channel cannot
+/// take a second answer.
+fn Checker @is_deferred_arg(c Node) -> bool {
+    ro k = c.kind_of()
+    if (k == NodeKind.IfExpr || k == NodeKind.MatchExpr) && is_lit_family(arg_lit_of(c)) { return true }
+    @is_deferred_variant(c)
+}
+
 /// Type the deferred arguments of a call whose callee is DECIDED (`row`): each
 /// takes its parameter's type as the expectation, the same door a tail's bare
 /// `None` takes the declared return through. `from` is where the written
@@ -246,7 +269,7 @@ fn Checker mut @type_deferred_args(kids []Node, from int, recv bool, row FnRow, 
         ro at = slots[s].arg_row
         if at < 0 || (recv && at == 0) { continue }
         ro c = call_arg_at(kids, from, if recv { at - 1 } else { at })
-        if !@is_deferred_variant(c) { continue }
+        if !@is_deferred_arg(c) { continue }
         ro pt = @ctx.fns.params[fd.param_off + s].type_id
         @value_expect = if is_ty(pt) && @ctx.tys.is_concrete(pt) { pt } else { no_ty() }
         @type_expr(c)

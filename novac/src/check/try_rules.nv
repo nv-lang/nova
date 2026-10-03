@@ -24,12 +24,6 @@ import ../tree.{Node, NodeKind}
 import ../types.{TyId, no_ty, is_ty}
 import ../sem.{branch_children, coalesce_payload, option_payload, is_coalesce_return, raw_row}
 
-/// A match GUARD is tested inside the arm's chain of checks, and the printer
-/// finds the arm's innermost check by counting the `if`s the lowering opened:
-/// a `??` or a `?` laid down in the guard opens one more and the arm is lost
-/// (measured 2026-10-02: the guard and the body vanished from the C).
-const GUARD_BLOCK_FORM_MSG = "outside the subset: `??` and `?` inside a match guard are not compiled yet (E2, the control-flow horizon: the guard is tested inside the arm's chain of checks) -- bind the value before the `match`"
-
 /// `?` takes an Option or a Result (D85). The oracle accepts any operand here
 /// (`x?` with `x int` compiles), so the reference is the spec.
 const TRY_NOT_CONTAINER_MSG = "`?` takes an `Option` or a `Result` (D85), and this operand is neither"
@@ -61,6 +55,13 @@ fn Checker mut @type_try(e Node) -> () {
     if @out.len() > before { return }
     ro ot = type_of(tk[0], @ctx, @scope, @chan)
     ro payload = if is_ty(ot) { coalesce_payload(@ctx, ot) } else { no_ty() }
+    // The same cascade door as `??`'s (exprs.nv): a poisoned read is not `?`'s fault.
+    if !is_ty(ot) && reads_poisoned(tk[0], @scope) {
+        // SILENT-OK: the refused initializer of the name read here is the cause.
+        return
+    } else {
+        // A typed operand, or one with no poisoned read: judged below.
+    }
     if !is_ty(payload) {
         @reject_first_leaf_of(tk, TRY_NOT_CONTAINER_MSG)
         return
@@ -113,29 +114,4 @@ fn Checker mut @type_coalesce_return(e Node, qk []Node) -> bool {
     if @out.len() > mark { return false }
     @judge_return(qk[3], @tail_type_of(qk[3]))
     @out.len() == mark
-}
-
-
-/// A guard holding `??` or `?` is refused by name (`GUARD_BLOCK_FORM_MSG`);
-/// called after the guard was typed, so a refusal inside it speaks first.
-fn Checker mut @refuse_block_form_in_guard(g Node) -> () {
-    if holds_block_form(g) {
-        @report_first_leaf_of(branch_children(g), GUARD_BLOCK_FORM_MSG)
-    } else {
-        // No block form: the guard prints inline, as it always has.
-    }
-}
-
-/// Does this expression hold a `??` or a `?` anywhere?
-fn holds_block_form(e Node) -> bool {
-    match e {
-        Leaf(_) => false
-        Branch { kind, children, .. } => {
-            if kind == NodeKind.Coalesce || kind == NodeKind.Try { return true }
-            for c in children {
-                if holds_block_form(c) { return true }
-            }
-            false
-        }
-    }
 }

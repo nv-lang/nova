@@ -1,0 +1,43 @@
+module value_recv.pos_2
+
+import std.fs.{Path, OpenOptions}
+import std.io.error.{IoError}
+import std.os.{EnvVar}
+
+// THE SHELL'S RECEIVERS (registry 1654): Carina calls methods of the shell the
+// oracle emits, so it asks the shell's rows the same D488 question as its own --
+// with the oracle's exceptions. `Path` and `IoError` and `EnvVar` are larger than
+// three words: `ro @` by pointer. `OpenOptions @read` is a fluent `mut @ ... -> @`:
+// by pointer, and it returns the pointer. Before, every shell receiver crossed by
+// value and clang refused the call. `Path.posix` is a static the shell lacks:
+// Carina makes its body from the declaration, as an instance with no substitution.
+// The program's own fluent `-> @` on a small `value` record (`Fl`): the same rule.
+
+type Fl value {
+    n int
+}
+
+fn Fl mut @bump() -> @ {
+    @n = @n + 1
+}
+
+fn Fl @peek() -> @ {}
+
+fn main() {
+    ro p = Path.posix("a/b.txt")
+    println(p.to_str() ?? "-")
+    ro e = IoError.from_os(4, "read")
+    println(e.is_interrupted())
+    println(e.to_str())
+    ro v = EnvVar { key: "K", value: "V" }
+    println(v.key())
+    println(v.value())
+    mut o = OpenOptions.new()
+    o.read(true)
+    o.write(true)
+    mut f = Fl { n: 1 }
+    f.bump()
+    f.bump()
+    f.peek()
+    println(f.n)
+}

@@ -221,13 +221,24 @@ fn Checker mut @type_if_value(n Node) -> () {
     } else {
         // Neither branch is `never`: the comparison below.
     }
-    if then_t != else_t {
-        @report_first_leaf_of(kids, "outside the subset: the branches of a tail `if` must agree on a type (E2-b)")
+    // A LITERAL branch takes the value branch's type (D489: `if c { b[0] } else
+    // { 0 }` with `b []u8` is a `u8`).
+    mut agreed = then_t
+    if then_t != else_t && @literal_takes(block_tail(kids[4]), then_t) {
+        agreed = then_t
+    } else if then_t != else_t && @literal_takes(block_tail(kids[2]), else_t) {
+        agreed = else_t
+    } else if then_t != else_t {
+        if differ_numeric(@ctx, then_t, else_t) {
+            @reject_first_leaf_of(kids, ARMS_WIDTH_MSG)
+        } else {
+            @report_first_leaf_of(kids, "outside the subset: the branches of a tail `if` must agree on a type (E2-b)")
+        }
         return
     } else {
         // Agreed: the `if` carries that type.
     }
-    @record(n, then_t)
+    @record(n, agreed)
 }
 
 /// The type a BRANCH of a tail `if` produces: its last statement's, or
@@ -588,3 +599,13 @@ fn Checker mut @reject_return_self_in(n Node) -> () {
 /// Is `n` the receiver itself, written bare (`@`)? `@field` is a `SelfField`
 /// and `@m()` a `MethodCall`, so only the one-leaf `SelfExpr` answers yes.
 fn is_bare_self(n Node) -> bool => n.kind_of() == NodeKind.SelfExpr
+
+/// The value-placing tail of a branch BLOCK, or the branch itself when it is
+/// not a block (an `else if`): what a literal branch is asked about.
+fn block_tail(b Node) -> ro Node {
+    if b.kind_of() != NodeKind.Block { return b }
+    ro kids = branch_children(b)
+    ro last = last_branch_of(kids)
+    if last < 0 { return b }
+    kids[last]
+}

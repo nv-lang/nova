@@ -1,0 +1,63 @@
+module numeric_positions.pos_1
+
+// D491 / D489 (registry 1609): a value keeps its numeric type in every
+// position, and a LITERAL takes its position's type when its value fits. The
+// legal side, byte for byte with the oracle: bindings with a written type, a
+// literal into a field, a payload and a generic argument, literal branches and
+// arms beside a value of another width (`if c { b[0] } else { 0 }` with `b
+// []u8` is a `u8`), and the conversions written with `as`.
+
+type Box { n u8 }
+type Sv enum
+    | Int(int)
+    | U8(u8)
+
+fn width(x u8) -> int => x as int
+
+fn main() {
+    ro a u8 = 200
+    ro b i64 = 7
+    ro c f32 = 1.5
+    ro d int = width(a) + 1
+    println(a)
+    println(b + 1)
+    println(c)
+    println(d)
+    mut bs = []u8.new()
+    bs.push(4)
+    bs.push(250)
+    ro k = 2
+    ro r = if k > 1 { bs[0] } else { 0 }
+    ro s = match k {
+        0 => 255
+        _ => bs[1]
+    }
+    ro t = match k {
+        2 => bs[0]
+        _ => 9
+    }
+    println(r)
+    println(s)
+    println(t)
+    ro box = Box { n: 17 }
+    println(box.n)
+    ro v = Sv.U8(bs[1])
+    ro w = Sv.Int(a as int)
+    ro z = U8(3)
+    match v {
+        Int(n) => println(n)
+        U8(m) => println(m)
+    }
+    match w {
+        Int(n) => println(n)
+        U8(m) => println(m)
+    }
+    match z {
+        Int(n) => println(n)
+        U8(m) => println(m)
+    }
+    ro e Option[int] = None
+    println(e ?? 3)
+    ro sum = (a as int) + d
+    println(sum)
+}

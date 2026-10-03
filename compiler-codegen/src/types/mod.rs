@@ -11626,10 +11626,14 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                     }
                 }
+                // #1645: its payload against the fields every instance shares -- AFTER
+                // the arguments are walked (#1692: a call's type is known only then).
+                self.check_variant_ctor_payload(e, gs, scope, errors);
                 self.f1_check_call(
                     func, args, trailing.is_some(), gs, scope, errors, e.id,
                 );
                 self.f5_check_tuple_construct(func, args, e.span, scope, errors);
+                self.check_tuple_ctor_values(func, args, gs, scope, errors); // #1692
                 // Plan 172.1.2 [M-172.1-U4-recv-infer]: materialize a method/free-call's
                 // inferred RETURN type into the checker channel (§0/§1 — receiver-inference).
                 // The consumer (`infer_expr_c_type`) prefers `resolved_callees`+`fn_ret_by_span`
@@ -13839,11 +13843,6 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             ExprKind::RecordLit { type_name, fields, .. } => {
-                // #1448/#1096: every field against its declared type, and
-                // completeness where #1142's site does not reach.
-                if let Some(path) = type_name {
-                    self.check_named_record_lit(e, path, fields, gs, scope, errors);
-                }
                 for f in fields {
                     if let Some(v) = &f.value {
                         self.f1_expr(v, gs, scope, errors);
@@ -13862,6 +13861,11 @@ impl<'a> TypeCheckCtx<'a> {
                             }
                         }
                     }
+                }
+                // #1448/#1096: every field against its declared type, and completeness where
+                // #1142's site does not reach -- AFTER the values are walked (#1692).
+                if let Some(path) = type_name {
+                    self.check_named_record_lit(e, path, fields, gs, scope, errors);
                 }
             }
             ExprKind::TaggedTemplate { tag, args, .. } => {
@@ -16973,6 +16977,9 @@ impl<'a> TypeCheckCtx<'a> {
     /// fits -- exactly, for a float -- a decimal fraction any float); two typed arms of
     /// different numeric types are `E_MATCH_ARM_WIDTH_MISMATCH`. D433 R1 (the arms unify
     /// to the wider side) is revoked by D491. Non-numeric arms are not judged here.
+    /// #1646: a literal arm next to a typed one TAKES that type (D489, the `None => -1`
+    /// example) -- when its value does not fit, the cause is the literal's range,
+    /// `E_LIT_OUT_OF_RANGE` / `E_LIT_INEXACT`, not two arms of different types.
     fn check_numeric_arms_agree(
         &self,
         what: &str,
@@ -16990,6 +16997,21 @@ impl<'a> TypeCheckCtx<'a> {
         let name = |t: &ResolvedType| match t.peel_view() {
             ResolvedType::Float { width } => format!("f{width}"),
             other => other.int_name().unwrap_or("<int>").to_string(),
+        };
+        // Why a literal of this family does not take `t`: `None` when it is not a literal
+        // of a family `t` belongs to (an integer literal and any number; a float literal
+        // that does not take a float is already taken by `adopts`) -- then the arms are of
+        // different types, not a literal out of its range.
+        let misfit = |int_lit: Option<i128>, t: &ResolvedType| -> Option<String> {
+            match (int_lit, t.peel_view()) {
+                (Some(v), ResolvedType::Scalar { .. }) => {
+                    let ty = t.sized_int_name().unwrap_or_else(|| name(t));
+                    let why = lit_range_check(v, &ty).unwrap_or_else(|| format!("{v} < {ty}.MIN (0)"));
+                    Some(literal_exact::literal_diag(&why))
+                }
+                (Some(v), ResolvedType::Float { width }) => literal_exact::int_literal_into_float(v, *width),
+                _ => None,
+            }
         };
         let mut common: Option<(Span, ResolvedType, Option<i128>, bool)> = None;
         for (span, rt, int_lit, float_lit) in arms {
@@ -17015,6 +17037,23 @@ impl<'a> TypeCheckCtx<'a> {
                 continue;
             }
             let (here, there) = (name(&rt), name(&c));
+            let lit_cause = if !c_is_lit {
+                misfit(int_lit, &c).map(|m| (m, span, there.clone(), c_span))
+            } else if int_lit.is_none() && !float_lit {
+                misfit(c_int, &rt).map(|m| (m, c_span, here.clone(), span))
+            } else {
+                None
+            };
+            if let Some((msg, at, typed, typed_at)) = lit_cause {
+                if errors.iter().any(|d| d.span == at && d.message == msg) {
+                    return; // the position's own door (a `return`, an annotation) named it already
+                }
+                errors.push(
+                    Diagnostic::new(msg, at)
+                        .with_note_at(format!("the literal takes the type `{typed}` of this {one} (D489)"), typed_at),
+                );
+                return;
+            }
             errors.push(
                 Diagnostic::new(
                     format!(
@@ -22429,10 +22468,12 @@ impl<'a> TypeCheckCtx<'a> {
                 ));
             }
             Compat::OutOfRange { msg } => {
-                errors.push(Diagnostic::new(
-                    literal_exact::literal_diag(&msg),
-                    value.span,
-                ));
+                let msg = literal_exact::literal_diag(&msg);
+                // #1646: a literal arm of a returned `match`/`if` is named by the arms'
+                // agreement already (`check_numeric_arms_agree`) -- one cause, one report.
+                if !errors.iter().any(|d| d.span == value.span && d.message == msg) {
+                    errors.push(Diagnostic::new(msg, value.span));
+                }
             }
             Compat::Narrowing { from, to } => {
                 errors.push(Diagnostic::new(
@@ -23761,6 +23802,16 @@ impl<'a> TypeCheckCtx<'a> {
                 if let Some(v) = self.anon_record_lit_compat(expr, fields, expected, expr_gs, exp_gs, scope) {
                     return v;
                 }
+            }
+            // #1692 (D489): an `if`/`match` value made of numeric literals is its literals.
+            ExprKind::If { .. } | ExprKind::Match { .. } if Self::literal_tails(expr).is_some() => {
+                for t in Self::literal_tails(expr).unwrap_or_default() {
+                    match self.assignable_direct(t, expected, expr_gs, exp_gs, scope) {
+                        Compat::Ok | Compat::Unknown => {}
+                        other => return other,
+                    }
+                }
+                return Compat::Ok;
             }
             ExprKind::IntLit(v) => {
                 return match &exp_rt {

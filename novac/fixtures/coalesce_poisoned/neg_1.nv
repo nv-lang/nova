@@ -1,0 +1,21 @@
+module coalesce_poisoned.neg_1
+
+// ONE seeded cause: an initializer refused (`Defs.new()` -- the type declares
+// no such static method), and then a `??` whose left side reads the poisoned
+// name. The `??` has nothing of its own to say: "this left side is neither"
+// was the echo of the first refusal (novac's own sem/collect.nv:
+// `defs.type_decl(tname) ?? no_decl()` after `DefTable.new()`). One cause,
+// one diagnostic -- the `reads_poisoned` door.
+// NOVAC_EXPECT this type declares no static method of this name
+type Defs { n int }
+
+fn Defs @find(k int) -> Option[int] {
+    if k > @n { return None }
+    Some(k)
+}
+
+fn main() {
+    ro defs = Defs.new()
+    ro x = defs.find(1) ?? 0
+    println(x)
+}

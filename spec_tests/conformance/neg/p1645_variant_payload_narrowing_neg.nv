@@ -1,0 +1,30 @@
+// EXPECT_COMPILE_ERROR E_IMPLICIT_NARROWING
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 #1645, the numeric half: `P1645nSv.P1645nInt(x)` with `x u8` and
+// `| Int(int)` was accepted wherever nothing expected the sum. D491: a numeric value
+// never changes its type implicitly, in a payload as anywhere -- the payload must BE
+// the field's type, or say `as`. D129: `int` and `i64` are distinct. One line per
+// cell, at the payload value.
+module neg.p1645_variant_payload_narrowing_neg
+
+type P1645nSv enum P1645nInt(int) | P1645nWide(f64) | P1645nLong(i64)
+type P1645nTagged[T] enum P1645nTag(T, u16) | P1645nNone
+
+fn main() {
+    ro x = 7 as u8
+    ro f = 1.5 as f32
+    ro n = 3
+    // nova:expect E_IMPLICIT_NARROWING -- `u8` into an `int` payload, no declared type
+    ro a = P1645nSv.P1645nInt(x)
+    // nova:expect E_IMPLICIT_NARROWING -- `f32` into an `f64` payload, bare constructor
+    ro b = P1645nWide(f)
+    // nova:expect E_IMPLICIT_NARROWING -- `int` into `i64` (D129: distinct types)
+    ro c = P1645nLong(n)
+    // nova:expect E_IMPLICIT_NARROWING -- a generic sum's concrete field `u16` gets an `int`
+    ro d = P1645nTag("t", n)
+    match a { P1645nInt(v) => println(v), _ => println(0) }
+    match b { P1645nWide(v) => println(v), _ => println(0) }
+    match c { P1645nLong(v) => println(v), _ => println(0) }
+    match d { P1645nTag(s, _) => println(s), _ => println(0) }
+}
