@@ -93,21 +93,45 @@ fn main() {\n println(f(1))\n}", std_decls())
     assert(dc.len() >= 1, "disagreeing arms of an else-if chain must be refused")
 }
 
-test "the tail's expectation stays outside a STATIC call's arguments (part 6 of p274-carina-k1)" {
-    // `=> Tb.id(if m { 1 } else { 0 })` in a `-> Row` body: the branch literals
-    // took the RETURN's type `Row` through the static call's argument walk, so
-    // `T` was deduced as `Row` -- the leak part 5 closed for the method call
-    // (methods.nv). The argument is the literal's position (D489), and an
-    // `if` whose branches are both literals with no written type is `int`:
-    // `T = int`, and the body's value is `int` where `Row` is declared -- the
-    // verdict the generic METHOD of the same shape gets.
+test "a type parameter is fixed by the call's EXPECTED type: free, static, method, outer argument (part 7 of p274-carina-k1)" {
+    // D489 "where it applies": a literal takes the type of its position
+    // wherever the position knows its type, and the position of `x T` knows
+    // `T` from the expected RESULT -- `-> Row` gives `T = Row`, and the literal
+    // branches take `Row`. Until part 7 novac deduced `T = int` from the
+    // literals and refused the return (E7301): the integrator's ruling of
+    // 2026-10-02 names that the defect. (Part 6 asserted the opposite here.)
     mut std = std_decls()
-    std.push("module std.s\nexport type Tb { n int }\nexport type Row int\nexport fn Tb.id[T](x T) -> T => x\n")
-    ro src = "fn mk(m bool) -> Row => Tb.id(if m { 1 } else { 0 })\nfn main() {\n println(1)\n}"
-    ro d = compile_with(src, parse_decls(std), interop_surface())
-    assert(messages(d).contains("cannot return value of type `int`"), messages(d))
-    // CONTROL: where the declared return IS `int`, the same call compiles.
-    ro ok = "fn mk(m bool) -> int => Tb.id(if m { 1 } else { 0 })\nfn main() {\n println(1)\n}"
-    ro d2 = compile_with(ok, parse_decls(std), interop_surface())
+    std.push("module std.s\nexport type Tb { n int }\nexport type Row int\n\
+export fn Tb.id[T](x T) -> T => x\nexport fn Tb @pass[T](x T) -> T => x\n")
+    ro pd = parse_decls(std)
+    ro idf = "fn idf[T](consume x T) -> T => x\n"
+    ro main = "${idf}fn main() {\n println(1)\n}"
+    ro ds = compile_with("fn s(m bool) -> Row => Tb.id(if m { 1 } else { 0 })\n${main}", pd, interop_surface())
+    assert(ds.len() == 0, messages(ds))
+    ro df = compile_with("fn f(m bool) -> Row => idf(if m { 1 } else { 0 })\n${main}", pd, interop_surface())
+    assert(df.len() == 0, messages(df))
+    ro dm = compile_with("fn me(t Tb, m bool) -> Row => t.pass(if m { 1 } else { 0 })\n${main}", pd, interop_surface())
+    assert(dm.len() == 0, messages(dm))
+    ro dl = compile_with("fn l() -> Row => idf(7)\n${main}", pd, interop_surface())
+    assert(dl.len() == 0, messages(dl))
+    ro outer = "${idf}fn take(r Row) -> int => 1\nfn main() {\n println(take(idf(if true { 5 } else { 0 })))\n}"
+    ro dt = compile_with(outer, pd, interop_surface())
+    assert(dt.len() == 0, messages(dt))
+    // A type parameter NO argument mentions is fixed by the position alone:
+    // until part 7 "no argument fixes this type parameter".
+    mut ostd = std_decls()
+    ostd.push("module std.o\nexport type Option[T] enum Some(T) | None\n")
+    ro dn = compile_with("fn nothing[T](n int) -> Option[T] => None\nfn g() -> Option[int] => nothing(1)\n${main}",
+                         parse_decls(ostd), interop_surface())
+    assert(dn.len() == 0, messages(dn))
+    // CONTROL: with no expectation the ARGUMENT fixes `T` -- `T = int` here,
+    // and the binding is an int.
+    ro ok = "${idf}fn main() {\n ro c = idf(6)\n println(c + 1)\n}"
+    ro d2 = compile_with(ok, pd, interop_surface())
     assert(d2.len() == 0, messages(d2))
+    // CONTROL: a TYPED argument that fixes `T` otherwise wins over the
+    // expectation, and the return is refused for its own type, as before.
+    ro bad = "${idf}fn b(n int) -> Row => idf(n)\nfn main() {\n println(1)\n}"
+    ro d3 = compile_with(bad, pd, interop_surface())
+    assert(d3.len() >= 1, "a typed int argument must not become a Row")
 }

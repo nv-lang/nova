@@ -1,0 +1,32 @@
+module hp
+
+type Id int
+
+type Small u8
+
+fn k(b u8, c int) -> int => (b as int) + c
+
+fn s(v i16) -> int => v as int
+
+fn g(i Id, c int) -> int => (i as int) + c
+
+fn sm(v Small) -> int => (v as u8) as int
+
+const C u8 = 40 + 2
+
+fn r() -> u8 => 40 + 2
+
+fn main() {
+    println(k(40 + 2, 0))
+    println(k(50 - 8, 0))
+    println(k(6 * 7, 0))
+    println(k(84 / 2, 0))
+    println(k(7 / 2, 0))
+    println(k((2 + 4) * (3 + 4), 0))
+    println(k(-3 + 5, 0))
+    println(s(-(100 * 300)))
+    println(g(40 + 2, 0))
+    println(sm(40 + 2))
+    println(r())
+    println(C)
+}

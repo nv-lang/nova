@@ -31,6 +31,7 @@ import ../builtins.{ENTRY_FN, PRINT_FN, TypeKind, is_bool_literal, RECV_BINDING,
 import ../builtins.{EQUAL_METHOD, DISPLAY_PROTO}
 import ../sem.{gate_names, field_range_of, raw_frow}
 import ../sem.{c_method_symbol}
+import ../sem.{is_const_int_expr}
 import ../builtins.{DISPLAY_METHOD}
 import ../sem.{raw_crow}
 import ../sem.{variant_range_of, VariantRow, variants_named, variant_named_in}
@@ -907,7 +908,16 @@ fn Checker mut @type_expr(e Node) -> () {
 // decision 12).
 
 /// Record a node's type through the channel's one writer door.
+///
+/// A CONSTANT EXPRESSION (`40 + 2`) a position adapts is the literal's case one
+/// level up (D489): when the walk already typed it, its provisional `int`
+/// gives way to the position's type through the channel's one sanctioned door
+/// (`retype_constant`); unrecorded, the position's type is its first answer.
 fn Checker mut @record(n Node, t TyId) -> () {
+    if n.kind_of() != NodeKind.Lit && is_const_int_expr(n) && is_ty(@chan.type_if_known(n.id_of())) {
+        @chan.retype_constant(n.id_of(), t, @ctx.prims.int_id)
+        return
+    }
     @chan.record_type(n.id_of(), t)
 }
 

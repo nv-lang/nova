@@ -338,6 +338,7 @@ fn Checker mut @branch_literal_tail(c Node) -> TyId {
     match lit_arg_of(c) {
         NotLit => { return no_ty() }
         IntLitArg | FloatLitArg => {
+            @walk_constant_first(c)
             ro adapted = adapt_operand(c, type_of(c, @ctx, @scope, @chan), @value_expect, @ctx.tys)
             if @lit_fits_or_refuse(c, adapted) {
                 @record(c, adapted)
@@ -348,6 +349,20 @@ fn Checker mut @branch_literal_tail(c Node) -> TyId {
         }
     }
     no_ty()
+}
+
+/// A CONSTANT EXPRESSION (`40 + 2`, D489) that a position is about to adapt
+/// is walked FIRST, as any expression is -- without the position's expectation,
+/// which is what the caller is deciding -- so its parts are typed and judged
+/// (a literal's magnitude, #810) and the emitter finds every part it prints
+/// when the position leaves it at `int`. The position's type then replaces the
+/// walk's provisional `int` (`@record`). A bare literal has no parts: nothing.
+fn Checker mut @walk_constant_first(c Node) -> () {
+    if c.kind_of() == NodeKind.Lit || is_ty(@chan.type_if_known(c.id_of())) { return }
+    ro saved = @value_expect
+    @value_expect = no_ty()
+    @type_expr(c)
+    @value_expect = saved
 }
 
 /// The index of the last BRANCH child: trailing leaves are not statements.

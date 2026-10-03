@@ -11,14 +11,21 @@
 //   (E_CONST_NOT_CONSTEXPR). The list is the spec's, word for word
 //   (03-syntax.md:1344-1352 and 8047-8056), not the oracle's predicate: the
 //   oracle is wrong both ways (the integrator's ruling of 2026-09-30).
-// Used by: check/check.nv -- the ConstDecl and LetDecl arms of the walk.
+//   SECOND, the untyped integer CONSTANT EXPRESSION of D489 (`40 + 2`): its
+//   shape (`is_const_int_expr`) and its exact value (`const_int_value`), so a
+//   position takes it as it takes a literal (registry 1679).
+// Used by: check/check.nv -- the ConstDecl and LetDecl arms of the walk;
+//   check/type_of.nv, literal_rules.nv, exprs.nv, const_types.nv and
+//   emit_c/emit_expr.nv -- the constant expression.
 // Guarded by: nova test novac/src/pipeline/module_value_test.nv (both
 //   directions, each listed shape and the unlisted ones); the self-build
-//   (no `const` of novac's own source is refused).
+//   (no `const` of novac's own source is refused); pipeline/const_expr_test.nv
+//   (the constant expression, both directions).
 
 module novac.sem
 
-import ../tree.{Node, NodeKind}
+import ../tree.{Node, NodeKind, bin_op_of, un_op_of}
+import ../lex.{TokenKind}
 import ../builtins.{is_bool_literal}
 
 /// Is `e` constexpr-eligible (D184 / D199)? The spec's list and nothing else:
@@ -158,4 +165,141 @@ fn names_a_type(name str, ctx Ctx) -> bool {
             DefFn(_) | DefConst(_) => false
         }
     }
+}
+
+/// Is `e` an UNTYPED INTEGER CONSTANT EXPRESSION (D489, the Rule: a literal and
+/// an untyped constant expression of literals -- `40 + 60`, `-1` -- have no type
+/// until their position gives one)? Integer literals joined by `+ - * /`, a
+/// unary minus, parentheses; nothing else. A bare literal answers too, so one
+/// question covers both shapes. NOT: a float literal (its kind is its form, and
+/// the float half is not this wave), a NAME (a constant has its type, D491), `%`,
+/// the bitwise family, a cast. The shape only: whether the value FOLDS is
+/// `const_int_value`'s question.
+#realtime nogc
+export fn is_const_int_expr(e Node) -> bool {
+    ro k = e.kind_of()
+    if k == NodeKind.Lit {
+        ro lk = branch_children(e)
+        return leaf_kind(lk[lk.len() - 1]) == TokenKind.IntLit
+    }
+    if k == NodeKind.Paren { return is_const_int_expr(branch_children(e)[1]) }
+    if k == NodeKind.Unary {
+        ro uk = branch_children(e)
+        ro neg = match un_op_of(leaf_kind(uk[0])) {
+            Negate => true
+            Not | BitNot => false
+        }
+        return neg && is_const_int_expr(uk[1])
+    }
+    if k == NodeKind.Bin {
+        ro bk = branch_children(e)
+        ro arith = match bin_op_of(leaf_kind(bk[1])) {
+            Add | Sub | Mul | Div => true
+            Modulo | BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight => false
+            Less | LessEq | Greater | GreaterEq | Equal | NotEqual => false
+            AndAlso | OrElse | Range => false
+        }
+        return arith && is_const_int_expr(bk[0]) && is_const_int_expr(bk[2])
+    }
+    false
+}
+
+/// The magnitude bound of the fold: every literal and every intermediate stays
+/// strictly inside +-2^62, so no `+ - *` of two of them can leave `int` before
+/// the bound is asked. A SIMPLIFICATION (docs/dev/simplifications.md): Go folds
+/// with arbitrary precision; here a constant expression past 2^62 anywhere is
+/// not folded, and its position refuses it as it refused it before this wave.
+const CONST_FOLD_LIMIT = 4611686018427387904
+
+/// The EXACT value of an untyped integer constant expression
+/// (`is_const_int_expr`), or `None` when it does not fold: a division by zero,
+/// or a magnitude reaching `CONST_FOLD_LIMIT`. Division truncates toward zero,
+/// as the operator does at run time.
+export fn const_int_value(e Node) -> Option[int] {
+    ro k = e.kind_of()
+    if k == NodeKind.Lit { return lit_int_value(e) }
+    if k == NodeKind.Paren { return const_int_value(branch_children(e)[1]) }
+    if k == NodeKind.Unary {
+        ro v = const_int_value(branch_children(e)[1])
+        if v.is_none() { return None }
+        return Some(0 - (v ?? 0))
+    }
+    if k != NodeKind.Bin { return None }
+    ro bk = branch_children(e)
+    ro lo = const_int_value(bk[0])
+    ro hi = const_int_value(bk[2])
+    if lo.is_none() || hi.is_none() { return None }
+    ro a = lo ?? 0
+    ro b = hi ?? 0
+    // The shape test admitted `+ - * /` only; any other operator answers as a
+    // division by zero does -- no value. A number per operator rather than an
+    // `Option` per arm: a bare `None` in a match arm has no type to take in
+    // novac's own subset.
+    ro code = match bin_op_of(leaf_kind(bk[1])) {
+        Add => 1
+        Sub => 2
+        Mul => 3
+        Div => 4
+        Modulo | BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight => 0
+        Less | LessEq | Greater | GreaterEq | Equal | NotEqual | AndAlso | OrElse | Range => 0
+    }
+    if code == 1 { return within_limit(Some(a + b)) }
+    if code == 2 { return within_limit(Some(a - b)) }
+    if code == 3 { return mul_within_limit(a, b) }
+    if code != 4 || b == 0 { return None }
+    Some(a / b)
+}
+
+/// `a * b` when its magnitude stays under the bound; asked BEFORE multiplying.
+fn mul_within_limit(a int, b int) -> Option[int] {
+    if a == 0 || b == 0 { return Some(0) }
+    if magnitude(a) >= CONST_FOLD_LIMIT / magnitude(b) { return None }
+    Some(a * b)
+}
+
+/// `|x|` for a value inside the bound (no `int` minimum reaches here).
+fn magnitude(x int) -> int {
+    if x < 0 { return 0 - x }
+    x
+}
+
+/// The value itself when it stays strictly inside the bound, `None` otherwise.
+fn within_limit(v Option[int]) -> Option[int] {
+    if v.is_none() { return None }
+    ro x = v ?? 0
+    if x >= CONST_FOLD_LIMIT || 0 - x >= CONST_FOLD_LIMIT { return None }
+    Some(x)
+}
+
+/// The value of an integer LITERAL node (`[Minus, lit]` negated), decimal with
+/// `_` separators or `0x` hex, or `None` at the bound.
+fn lit_int_value(e Node) -> Option[int] {
+    ro lk = branch_children(e)
+    ro b = leaf_text(lk[lk.len() - 1]).bytes()
+    mut base = 10
+    mut i = 0
+    if b.len() > 2 && b[0] == ('0' as u8) && b[1] == ('x' as u8) {
+        base = 16
+        i = 2
+    } else {
+        // Decimal: every byte is a digit or a separator.
+    }
+    mut v = 0
+    while i < b.len() {
+        ro d = fold_digit(b[i])
+        i += 1
+        if d < 0 { continue }
+        if v >= CONST_FOLD_LIMIT / base { return None }
+        v = v * base + d
+    }
+    if lk.len() > 1 { return Some(0 - v) }
+    Some(v)
+}
+
+/// One digit's value, or -1 for the `_` separator.
+fn fold_digit(c u8) -> int {
+    if c >= ('0' as u8) && c <= ('9' as u8) { return (c - ('0' as u8)) as int }
+    if c >= ('a' as u8) && c <= ('f' as u8) { return (c - ('a' as u8)) as int + 10 }
+    if c >= ('A' as u8) && c <= ('F' as u8) { return (c - ('A' as u8)) as int + 10 }
+    -1
 }

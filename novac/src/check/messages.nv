@@ -49,6 +49,10 @@ const INT_MAX_TEXT = "9223372036854775807"
 /// any row this language has, signed or not.
 const U64_MAX_TEXT = "18446744073709551615"
 
+/// An untyped integer constant expression that does not fold (part 9 of
+/// p274-carina-k1, sem/constexpr.nv): its position would need its exact value.
+const CONST_NO_FOLD_MSG = "outside the subset: this constant expression does not fold -- a division by zero, or a magnitude past 2^62 somewhere inside it (D489 takes the type of the position by the exact value; a 128-bit fold arrives with E3)"
+
 const INT_TOO_LARGE_MSG = "this integer literal does not fit any integer type novac knows -- the language makes that a hard compile error (E_LIT_OUT_OF_RANGE, 03-syntax.md), not a silent truncation; the oracle wraps it in the emitted C (#810)"
 
 /// The nesting refusal (#807/#808). The number is the oracle's 512, which is
@@ -411,7 +415,6 @@ const TEST_MSG = "outside the subset: a `test` block arrives with the test runne
 
 /// A method whose `value` record receiver crosses by POINTER (D488 R3/R5) needs a
 /// PLACE to take the address of; a temporary receiver (`mk().m()`) has none yet.
-const VALUE_RECV_TEMP_MSG = "outside the subset: this method takes its `value` record receiver by pointer (D488), and the receiver here is a temporary -- novac does not spill it to a place yet (E2-b3)"
 
 /// A `mut` PARAMETER of a value record (the receiver's rule is D488, compiled
 /// since 2026-10-01): the fixed point lowers a `mut x V` parameter to `V*` (plan 184,
@@ -665,3 +668,7 @@ const COND_BARE_NAME_MSG = "a bare name as the whole condition pattern needs `ro
 /// instance's name. ONE text for every family, `arrives` saying when it comes.
 fn no_shell_instance_msg(head str, of str, arrives str) -> str =>
     "outside the subset: the shell novac links into carries no `${head}` instance for ${of} -- the interop surface is the probe program (novac/probe/shell_probe.nv, E2-b); ${arrives}"
+
+/// A method whose `value` record receiver crosses by POINTER (D488 R3/R5) needs a
+/// PLACE to take the address of; a temporary receiver (`mk().m()`) has none yet.
+const VALUE_RECV_TEMP_MSG = "outside the subset: this method takes its `value` record receiver by pointer (D488), and the receiver here is a temporary -- novac does not spill it to a place yet (E2-b3)"

@@ -91,6 +91,7 @@ fn Checker mut @type_tail_value(e Node) -> () {
         match lit_arg_of(e) {
             NotLit => {}
             IntLitArg | FloatLitArg => {
+                @walk_constant_first(e)
                 ro own = type_of(e, @ctx, @scope, @chan)
                 ro adapted = adapt_operand(e, own, @ret_expect, @ctx.tys)
                 if @lit_fits_or_refuse(e, adapted) {

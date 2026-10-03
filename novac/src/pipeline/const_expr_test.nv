@@ -1,0 +1,104 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Role: acceptance tests of the untyped integer CONSTANT EXPRESSION (registry
+//   1679, part 9 of p274-carina-k1; D489, the Rule: "a literal -- and an
+//   untyped constant expression of literals (`40 + 60`, `-1`) -- has no type
+//   until its position gives one"). `+ - * /`, nested parentheses, a unary
+//   minus; into a narrow width, a signed width, a newtype, an overload set, a
+//   return, a constant, an operand; refused past the position's range by the
+//   EXACT value, and refused when a non-constant takes part.
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file; the probes const-expr-arg
+//   and const-expr-overflow under docs/dev/hunts/novac/probes/2026-10-01-mono-k1/.
+//
+// Reverse probe (owner's rule, "prove it both ways"): with `is_const_int_expr`
+// answering false for every non-literal the first test reddens ("this
+// argument's type is not the one this function declares"); with
+// `int_value_fits_row` answering true the range test reddens. Both were run
+// before this file was committed.
+
+module novac.pipeline
+
+/// The callees every case below calls: a narrow width, a signed width, two
+/// newtypes and an overload set.
+const CONST_DECLS = "type Id int\ntype Small u8\nfn k(b u8, c int) -> int => (b as int) + c\n\
+fn s(v i16) -> int => v as int\nfn g(i Id, c int) -> int => (i as int) + c\n\
+fn sm(v Small) -> int => (v as u8) as int\nfn h(b u8) -> int => b as int\nfn h(t str) -> int => 0\n"
+
+test "a constant expression of literals takes its position's type by its exact value (D489, registry 1679)" {
+    ro calls = "fn main() {\n println(k(40 + 2, 0))\n println(k(50 - 8, 0))\n println(k(6 * 7, 0))\n\
+ println(k(84 / 2, 0))\n println(k((2 + 4) * (3 + 4), 0))\n println(k(-3 + 5, 0))\n\
+ println(s(-(100 * 300)))\n println(g(40 + 2, 0))\n println(sm(40 + 2))\n println(h(40 + 2))\n}"
+    ro (d, c) = compile_to_c("${CONST_DECLS}${calls}", std_decls())
+    assert(d.len() == 0, messages(d))
+    // The EXACT value in the position's row, the literal's own spelling: no
+    // run-time arithmetic of the narrow width (`-3 + 5` would trap on `-3`).
+    assert(c.contains("42ULL)"), c)
+    assert(c.contains("2ULL)"), c)
+    assert(c.contains("-30000LL)"), c)
+}
+
+test "the other positions that know a type: return, constant, operand, compound assignment, value `if` (D489)" {
+    ro src = "const C u8 = 40 + 2\nfn r() -> u8 => 40 + 2\nfn o(x u8) -> u8 => x + (40 + 2)\n\
+fn q(x u8) -> bool => x == 40 + 2\nfn b(x u8) -> u8 {\n mut y = x\n y += 40 + 2\n y\n}\n\
+fn t(c bool) -> u8 {\n if c { 40 + 2 } else { 0 }\n}\n\
+fn main() {\n println(C)\n println(r())\n println(o(1))\n println(q(42))\n println(b(1))\n println(t(true))\n}"
+    ro (d, _) = compile_to_c(src, std_decls())
+    assert(d.len() == 0, messages(d))
+}
+
+test "a constant expression outside its position's range is refused by its value, not wrapped (D489, E_LIT_OUT_OF_RANGE)" {
+    // The oracle wraps every one of these in silence (`44`, `-25536`, `254`);
+    // the spec names it a compile error.
+    ro (du, _) = compile_to_c("${CONST_DECLS}fn main() {\n println(k(200 + 100, 0))\n}", std_decls())
+    assert(du.len() == 1, messages(du))
+    assert(du[0].message.contains("is 300, and it does not fit `u8`"), messages(du))
+    ro (di, _) = compile_to_c("${CONST_DECLS}fn main() {\n println(s(200 * 200))\n}", std_decls())
+    assert(di.len() == 1, messages(di))
+    assert(di[0].message.contains("does not fit `i16`"), messages(di))
+    ro (dn, _) = compile_to_c("${CONST_DECLS}fn main() {\n println(k(3 - 5, 0))\n}", std_decls())
+    assert(dn.len() == 1, messages(dn))
+    assert(dn[0].message.contains("is -2"), messages(dn))
+    ro (dr, _) = compile_to_c("fn r() -> u8 => 250 + 10\nfn main() {\n println(r())\n}", std_decls())
+    assert(dr.len() == 1, messages(dr))
+    ro (dc, _) = compile_to_c("const D u8 = 200 + 100\nfn main() {\n println(D)\n}", std_decls())
+    assert(dc.len() == 1, messages(dc))
+    // A NEWTYPE over `u8` is judged as `u8` -- the constant and the bare literal
+    // alike (the literal passed unjudged after part 8).
+    ro (dt, _) = compile_to_c("${CONST_DECLS}fn main() {\n println(sm(200 + 100))\n}", std_decls())
+    assert(dt.len() == 1, messages(dt))
+    ro (dl, _) = compile_to_c("${CONST_DECLS}fn main() {\n println(sm(300))\n}", std_decls())
+    assert(dl.len() == 1, messages(dl))
+    assert(dl[0].message.contains("does not fit `u8`"), messages(dl))
+}
+
+test "a non-constant in the expression keeps its type: refused, and `int` positions stay run-time arithmetic (D491)" {
+    // CONTROL: `n` is an `int` binding (D491: a typed value never changes type).
+    ro (dm, _) = compile_to_c("${CONST_DECLS}fn main() {\n ro n = 2\n println(k(40 + n, 0))\n}", std_decls())
+    assert(dm.len() >= 1, "a constant mixed with an int binding must not take `u8`")
+    ro (dg, _) = compile_to_c("${CONST_DECLS}fn main() {\n ro n = 2\n println(g(40 + n, 0))\n}", std_decls())
+    assert(dg.len() >= 1, "a constant mixed with an int binding must not take a newtype")
+    // CONTROL: at `int` itself nothing is folded -- the checked operator stays.
+    ro (dk, c) = compile_to_c("fn ki(n int) -> int => n\nfn main() {\n println(ki(4611686018427387904 + 1))\n}", std_decls())
+    assert(dk.len() == 0, messages(dk))
+    assert(c.contains("nova_int_checked_add"), c)
+    // A division by zero has no value to judge: refused, never emitted.
+    ro (dz, _) = compile_to_c("${CONST_DECLS}fn main() {\n println(k(1 / 0, 0))\n}", std_decls())
+    assert(dz.len() == 1, messages(dz))
+    assert(dz[0].message.contains("does not fold"), messages(dz))
+}
+
+test "a binding with a DECLARED type is a position too: a literal and a constant expression take it (D489)" {
+    // Until part 10 of p274-carina-k1 a declared local took only an initializer
+    // of exactly its type: `ro a u8 = 42` was "a declared local type is not
+    // compiled yet".
+    ro (d, c) = compile_to_c("${CONST_DECLS}fn main() {\n ro a u8 = 42\n ro b u8 = 40 + 2\n ro i Small = 40 + 2\n\
+ println(k(a, 0) + k(b, 0) + sm(i))\n}", std_decls())
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("42ULL)"), c)
+    ro (dv, _) = compile_to_c("fn main() {\n ro a u8 = 200 + 100\n println(a)\n}", std_decls())
+    assert(dv.len() == 1, messages(dv))
+    assert(dv[0].message.contains("is 300, and it does not fit `u8`"), messages(dv))
+    // CONTROL: a typed value keeps its type (D491) -- refused, as before.
+    ro (dm, _) = compile_to_c("fn main() {\n ro n = 2\n ro a u8 = 40 + n\n println(a)\n}", std_decls())
+    assert(dm.len() >= 1, "a constant mixed with an int binding must not take a declared `u8`")
+}

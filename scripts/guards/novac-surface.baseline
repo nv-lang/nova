@@ -1093,7 +1093,17 @@ resolve 23
 # merge of origin/main dc2617993 into p274-carina-cast (2026-10-03): the guard's count on the merged
 #   tree -- sem 348, main's 346 plus this branch's `recv_by_pointer_of` and `row_returns_recv_pointer`
 #   (#1654, the chronicle lines above).
-sem 348
+# merge of origin/main dc2617993 into p274-carina-k1 (part 10 sync): main's 346 plus this
+#   branch's part 9 (`is_const_int_expr`, `const_int_value`, `@retype_constant`, its line below) = 349.
+# 2026-10-03, cloud session p274-carina-k1 (part 10): sem 349 -> 350: `is_place_expr` moves from
+#   check/methods.nv to sem/value_recv.nv -- the lowering spills a TEMPORARY receiver of a by-pointer
+#   `value` method into a local (D32) and must ask the same "is this a place?" check asked: one door.
+# 2026-10-03, cloud session p274-carina-k1 (part 11): sem 350 -> 352: `row_returns_recv_ref` and
+#   `call_returns_recv_ref` (sem/value_recv.nv) -- a `-> @` on a by-pointer receiver returns the
+#   receiver's storage (R6/R8, the integrator's ruling 2026-10-03); asked by the signature
+#   (emit_c/emit_c.nv), the call site (emit_c/emit_expr.nv) and the spill (lower/lower_hoist.nv): one door.
+# merge of p274-carina-k1 (parts 7-11) into main (integrator, 2026-10-03): the guard's count on the merged tree -- sem 354 (cast 348 plus k1's is_place_expr, row_returns_recv_ref, call_returns_recv_ref and its expectation doors).
+sem 354
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
@@ -1305,3 +1315,9 @@ types 30
 #   (у какого ключа нет своего голого имени: запись и срез -- перегрузки `index`) и `PTR_OFFSET`
 #   (`p.offset(n)`, D216). Их читают `check/slice.nv`, `check/binds.nv`, `check/unsafe.nv`,
 #   `sem/handed_bodies.nv`, `emit_c/emit_slice.nv`, `emit_c/emit_ptr.nv`; имена std живут в builtins (П5).
+# sem 342 -> 345 (2026-10-02, облачная сессия p274-carina-k1, часть 9, №1679): нетипизированное
+#   константное выражение D489 (`40 + 2`). `is_const_int_expr` (форма) и `const_int_value` (точное
+#   значение) живут в `sem/constexpr.nv`, а спрашивают их `check/` (позиция берёт выражение как
+#   литерал и судит его диапазон по значению) и `emit_c/` (печать значения в строке позиции): одна
+#   дверь, иначе проверка и печать посчитают разное. `@retype_constant` (CheckOut) -- единственная
+#   санкционированная вторая запись типа узла: позиция заменяет временный `int` выражения своим.

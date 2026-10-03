@@ -1,0 +1,50 @@
+module value_recv.pos_3
+
+// A TEMPORARY AS THE RECEIVER of a method that takes its `value` record by
+// POINTER (D488: R5 for a large `ro @`, R3 for every `mut @`) is legal: D32 --
+// hoisted, `&temp`. A call's result (`mk().sum()`, `pv().bump()`), a record
+// literal (`Pv { n: 4 }.bump()`), a result nobody reads (`pv().bump()` as a
+// statement). The inner links of a `-> @` chain (`pv().set(5).set(6).n`) are
+// spilled the same way; they stay out of this file because the oracle does not
+// compile that chain (its C takes `.` on a pointer) -- pipeline/value_recv_test.nv
+// holds them.
+// Until part 10 of p274-carina-k1 novac refused every one of them ("does not
+// spill it to a place yet"; this file was neg_1 then, pos_2 in the branch -- pos_3 beside cast's pos_2 at the merge), and a `-> @` method on
+// a by-pointer receiver returned the pointer where its signature promised the
+// value -- a C type error on every such method. It returns the receiver's
+// storage by reference (R6, R8): `c.set(5).set(6)` leaves `c.n` at 6.
+type Lg value {
+    a int
+    b int
+    c int
+    d int
+}
+
+fn Lg @sum() -> int => @a + @b + @c + @d
+
+fn mk() -> Lg => { a: 1, b: 2, c: 3, d: 4 }
+
+type Pv value {
+    n int
+}
+
+fn Pv mut @bump() -> int {
+    @n += 1
+    @n
+}
+
+fn Pv mut @set(v int) -> @ {
+    @n = v
+}
+
+fn pv() -> Pv => { n: 1 }
+
+fn main() {
+    println(mk().sum())
+    println(pv().bump())
+    println(Pv { n: 4 }.bump())
+    pv().bump()
+    mut c = pv()
+    c.set(5)
+    println(c.n)
+}

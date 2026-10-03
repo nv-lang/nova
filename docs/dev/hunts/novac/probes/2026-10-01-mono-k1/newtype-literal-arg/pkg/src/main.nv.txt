@@ -1,0 +1,16 @@
+module hp
+
+type Id int
+
+fn f(i Id) -> int => (i as int) + 1
+
+fn f(s str) -> int => 2
+
+fn g(i Id, k int) -> int => (i as int) + k
+
+fn main() {
+    println(f(0))
+    println(f("a"))
+    println(g(0, 3))
+    println(g(4, 3))
+}

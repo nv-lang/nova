@@ -1,0 +1,25 @@
+module hp
+
+type Pv value {
+    n int
+}
+
+fn Pv mut @bump() -> int {
+    @n += 1
+    @n
+}
+
+fn Pv mut @set(v int) -> @ {
+    @n = v
+}
+
+fn mk() -> Pv => { n: 1 }
+
+fn main() {
+    println(mk().bump())
+    println(Pv { n: 4 }.bump())
+    mk().bump()
+    mut c = mk()
+    c.set(5)
+    println(c.n)
+}

@@ -7,7 +7,8 @@
 // literal (#810) and a top-level name declared twice (#811). Both came from
 // the hunt of 2026-08-30 and both are silent-acceptance defects: the first
 // let the emitted C wrap, the second let a second body vanish.
-// Used by: check.nv -- the Lit arm and the declaration arms of the walk.
+// Used by: check.nv -- the Lit arm and the declaration arms of the walk;
+//   binds.nv -- a literal or a constant expression under a declared local type.
 // Guarded by: check-novac-file-size.py (this file exists because rules.nv
 // crossed 1000 lines on 2026-08-30 -- the cut sem.nv, typing.nv and emit_c.nv
 // took before it), and the two class tests in pipeline_test.nv.
@@ -22,6 +23,7 @@ import ../sem.{raw_frow, no_frow, ctor_field_name}
 // The interpolation slicer comes with the judge moved here on 2026-09-20.
 import ../sem.{interp_slices, subst_type, literal_digits}
 import ../sem.{prim_row_of, lit_admits, call_arg_at, raw_row, no_row, CalleeTarget}
+import ../sem.{const_int_value}
 import ../diag.{ice}
 import ../builtins.{BuiltinType}
 import ../types.{TyId, is_ty}
@@ -177,7 +179,10 @@ fn Checker mut @lit_fits_or_refuse(e Node, t TyId) -> bool {
     // Spelled as a test and a `??` rather than a `match` with `return` in an
     // arm: novac's own subset reads the former and not yet the latter, and
     // this file is part of what novac compiles about itself (274.5).
-    ro row_opt = prim_row_of(@ctx.tys, t)
+    // A NEWTYPE over a number is judged by its representation's row (D489:
+    // "newtype over a number, by its base type's rule"): `sm(300)` with
+    // `v Small`, `type Small u8`, is out of range as `u8` is (part 9).
+    ro row_opt = prim_row_of(@ctx.tys, numeric_rep(@ctx.tys, t))
     if row_opt.is_none() { return true }
     ro r = row_opt ?? ice("check: a primitive row vanished between two reads of one Option")
     ro is_int = match r.family {
@@ -185,6 +190,13 @@ fn Checker mut @lit_fits_or_refuse(e Node, t TyId) -> bool {
         PfFloat | PfStr | PfBool | PfChar | PfUnit | PfAny | PfNever => false
     }
     if !is_int { return true }
+    // A constant expression at `int` itself changes no type: it stays the
+    // run-time arithmetic it always was (its overflow is the operator's panic,
+    // as at the oracle), so nothing is folded or judged here.
+    if e.kind_of() != NodeKind.Lit {
+        if t == @ctx.prims.int_id { return true }
+        return @const_fits_or_refuse(e, r)
+    }
     ro lk_kids = branch_children(e)
     ro tok = lk_kids[lk_kids.len() - 1]
     if leaf_kind(tok) != TokenKind.IntLit { return true }
@@ -195,6 +207,57 @@ fn Checker mut @lit_fits_or_refuse(e Node, t TyId) -> bool {
         Branch { .. } => {}
     }
     false
+}
+
+/// An untyped integer CONSTANT EXPRESSION (`40 + 2`, `-(100 * 300)`) that took
+/// an integer row must fit it by its EXACT value (D489: the value, not each
+/// literal -- `-3 + 5` is 2 and fits `u8`). One that does not fold (a division
+/// by zero, a magnitude past the fold's bound) is refused as the subset's
+/// limit, never emitted as run-time arithmetic of the narrow row.
+fn Checker mut @const_fits_or_refuse(e Node, r BuiltinType) -> bool {
+    ro folded = const_int_value(e)
+    if folded.is_none() {
+        @report_first_leaf_of([]Node.of(e), CONST_NO_FOLD_MSG)
+        return false
+    }
+    ro v = folded ?? 0
+    if int_value_fits_row(v, r) { return true }
+    @reject_first_leaf_of([]Node.of(e), "this constant expression is ${v}, and it does not fit `${r.name}` (D489, E_LIT_OUT_OF_RANGE): the type holds at most ${int_max_text(r.bits, r.signed, v < 0)} on this side of zero")
+    false
+}
+
+/// Does the exact value `v` fit integer row `r`? A 64-bit row holds every value
+/// the fold produces (its bound is 2^62); a negative value never fits an
+/// unsigned row.
+fn int_value_fits_row(v int, r BuiltinType) -> bool {
+    if v < 0 && !r.signed { return false }
+    if r.bits >= 64 { return true }
+    if !r.signed { return v < (1 << r.bits) }
+    ro half = 1 << (r.bits - 1)
+    v >= 0 - half && v < half
+}
+
+/// The initializer of a binding with a DECLARED type, when it is a literal or
+/// an untyped constant expression, takes that type (D489) -- recorded before
+/// the binding is typed, so the lattice answers the written type for it.
+/// Answers false when the fit door refused it (out of range); true otherwise,
+/// a non-literal included (it is judged by the binding's own rule).
+fn Checker mut @adapt_bind_literal(kids []Node, declared TyId) -> bool {
+    ro init = kids[kids.len() - 1]
+    if !is_ty(declared) { return true }
+    match lit_arg_of(init) {
+        NotLit => { return true }
+        IntLitArg | FloatLitArg => {
+            @walk_constant_first(init)
+            ro adapted = adapt_operand(init, type_of(init, @ctx, @scope, @chan), declared, @ctx.tys)
+            // Another kind than the written type's (`ro a u8 = 1.5`): the
+            // binding's own rule refuses it below, with the two types.
+            if adapted != declared { return true }
+            if !@lit_fits_or_refuse(init, declared) { return false }
+            @record(init, declared)
+        }
+    }
+    true
 }
 
 /// D227 rule 2 AT A CALL: once the binding is known, every bare numeric

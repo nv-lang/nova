@@ -185,10 +185,14 @@ fn Checker mut @refuse_arg_type(kids []Node, row FnRow, key []ArgSpec, form Call
             // not be shadowed by a class question at some OTHER slot.
             if mode_admits(want.mode, key[at].cls) {
                 continue
-            } else if want.mode == ParamMode.ModeMut && @is_value_type(want.type_id) {
+            } else if want.mode == ParamMode.ModeMut && @is_value_type(want.type_id) && want.name != RECV_BINDING {
                 // A LANGUAGE error, not a subset limit: a `mut` parameter of a
                 // VALUE type is the caller's own storage (D326 revision R3),
-                // and this argument has none to write back into.
+                // and this argument has none to write back into. NOT the
+                // RECEIVER: a value temporary as a `mut @` receiver is legal
+                // (D32, `&v` / hoist + `&temp`) -- the subset refusal below
+                // stands for it until the hoist arrives (registry 1630); part 7
+                // of p274-carina-k1 found part 6 calling it a language error.
                 @reject_first_leaf_of(kids, "parameter `${want.name}` of a value type needs a mutable place -- this argument has no storage the call could write back into (E_MUT_ARG_NOT_MUTABLE, D326 revision R3)")
                 return
             } else {
@@ -452,6 +456,13 @@ fn Checker mut @resolve_generic_or_refuse(e Node, kids []Node, cname str, key []
 /// demanding different types for one slot.
 fn Checker mut @deduce_from_args(row FnRow, key []ArgSpec, kids []Node) -> Option[[]TyId] {
     ro fd = @ctx.fns.rows[raw_row(row)]
+    // THE CALL'S POSITION (part 7 of p274-carina-k1, D489): the expectation the
+    // caller restored around this call -- a declared return, an outer argument's
+    // parameter -- fixes the slots the declared return mentions. The arguments
+    // were typed under it (`@type_arg_expecting`), so a literal agrees; a typed
+    // argument that fixes a slot otherwise WINS, and the mismatch is then the
+    // return's or the argument's own refusal, as before.
+    ro pre = @expected_ids(row, @value_expect)
     mut ids = []TyId.new()
     for slot in 0..fd.tparam_cnt {
         mut found = no_ty()
@@ -523,9 +534,14 @@ fn Checker mut @deduce_from_args(row FnRow, key []ArgSpec, kids []Node) -> Optio
                 "outside the subset: argument ${clash_at + 1} is ${ty_source_name(@ctx, key[clash_at].type_id)}, but argument ${first_at + 1} already fixed this type parameter to ${ty_source_name(@ctx, found)} -- novac names the conflict instead of choosing (E2-b3)")
             return None
         }
+        if !is_ty(found) && slot < pre.len() {
+            found = pre[slot]
+        } else {
+            // An argument fixed it, or the position says nothing about it.
+        }
         if !is_ty(found) {
             @report_first_leaf_of(kids,
-                "outside the subset: no argument fixes this type parameter -- novac deduces from arguments only, never from the return position (E2-b3)")
+                "outside the subset: no argument fixes this type parameter, and the call's position does not either (E2-b3)")
             return None
         }
         ids.push(found)
@@ -865,14 +881,26 @@ fn Checker mut @type_free_call(e Node) -> () {
     // fn's return -- option_rules, wave W4).
     ro saved_expect = @value_expect
     @value_expect = no_ty()
+    // THE ONE ROW this name and arity can mean, asked before the arguments are
+    // typed, so each argument meets its PARAMETER's type as its expectation
+    // (part 7, `@type_arg_expecting`); an overload set gives none.
+    ro arg_row = match @res.lookup(@ctx.fns, @ctx.tys, cname, free_call_key(kids, @scope), CallForm.FreeCall) {
+        FnFound(r) => r
+        FnUnknown | FnOverloaded(_) => no_row()
+    }
+    ro pre = @expected_ids(arg_row, saved_expect)
+    mut argi = 0
     for c in kids {
         // A NAMED argument's value is typed like a positional one (registry
         // 1630): `g(2, by: s.byte_len())` left the inner call undecided, and
-        // the key's `type_of` iced on it.
+        // the key's `type_of` iced on it. It binds by name, not by place: no
+        // positional expectation (part 7 of p274-carina-k1).
         if !is_arg_node(c) { continue }
+        ro want = if c.kind_of() == NodeKind.NamedArg { no_ty() } else { @param_expect(arg_row, argi, pre) }
+        argi += 1
         // A bare `None` takes its PARAMETER's instance, after the lookup (1565).
         if @is_deferred_arg(c) { continue }
-        @type_expr(arg_expr_of(c))
+        @type_arg_expecting(arg_expr_of(c), want)
     }
     @value_expect = saved_expect
     if @out.len() > before { return }

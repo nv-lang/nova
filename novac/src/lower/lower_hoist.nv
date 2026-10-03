@@ -27,6 +27,7 @@ module novac.lower
 import ../tree.{Node, NodeKind, bin_op_of}
 import ../types.{is_ty}
 import ../sem.{branch_children, contains_call, is_expr_kind, leaf_kind}
+import ../sem.{is_place_expr, row_recv_by_pointer, raw_row, no_row, call_returns_recv_ref}
 
 /// A form whose value is laid down by blocks of the lowering and so cannot be
 /// printed inline from the tree.
@@ -257,6 +258,35 @@ fn Lowerer mut @hoist_ordered_args(call Node) -> () {
     }
 }
 
+/// A TEMPORARY as the receiver of a method that takes a `value` record by POINTER
+/// (D488: `mut @` always, a large `ro @`) -- `mk().bump()`, `Pv { n: 4 }.bump()`,
+/// the inner link of `mk().set(5).set(6)` -- is laid down in a local first, and
+/// the call takes the local's address: D32's "a value temporary as a `mut @`
+/// receiver is legal: hoisted, `&temp`". The printer reads the local back
+/// (`@emit_expr`'s head) inside `(&...)`. A place needs nothing; a receiver
+/// already in a local (`@hoist_ordered_args`) keeps it.
+fn Lowerer mut @spill_value_receiver(call Node) -> () {
+    if call.kind_of() != NodeKind.MethodCall || !@out.has_callee(call.id_of()) { return }
+    ro row = match @out.callee_of(call.id_of()).target {
+        CalleeFn(r) => r
+        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => no_row()
+    }
+    if raw_row(row) < 0 || !@ctx.in_program(row) || !row_recv_by_pointer(@ctx, row) { return }
+    ro recv = branch_children(call)[0]
+    // A `-> @` by reference is a PLACE too: the receiver's own storage, which a
+    // spill would copy away (R6/R8: `c.set(5).set(6)` writes `c` twice).
+    if is_place_expr(recv) || call_returns_recv_ref(@ctx, @out, recv) { return }
+    if @ir.local_of_node(recv.id_of()) != no_local() { return }
+    ro t = @out.type_if_known(recv.id_of())
+    if !is_ty(t) {
+        // SILENT-OK: an untyped receiver was refused where it was typed.
+        return
+    }
+    ro l = @ir.temp(t)
+    @lower_place(recv, l)
+    @ir.remember_hoist(recv.id_of(), l)
+}
+
 /// ONE MORE gate before `@lo.ir.finish()` seals the graph (registry #TBD,
 /// the if-in-argument wave): an argument whose OWN kind needs sealed
 /// blocks (`IfExpr`, `Coalesce` -- `@lower_value_source`'s own dispatch)
@@ -272,12 +302,22 @@ fn Lowerer mut @hoist_ordered_args(call Node) -> () {
 fn Lowerer mut @hoist_sealed_args(call Node) -> () {
     // Not into a short circuit's right side: it lowers as a branch (lower_hoist.nv).
     if is_short_circuit(call) { return }
+    @spill_value_receiver(call)
     ro kids = branch_children(call)
     for k in kids {
         // A constructor FIELD is an argument's position too (registry 1557).
         ro c = if k.kind_of() == NodeKind.CtorField && branch_children(k).len() > 2 { branch_children(k)[2] } else { k }
         if !is_expr_kind(c.kind_of()) { continue }
         ro ck = c.kind_of()
+        // A CALL AS AN ARGUMENT carries arguments of its own, and a sealed one
+        // among them (`take(idf(if c { 5 } else { 0 }))`) is printed inline with
+        // the outer call unless it is lowered here, before the seal -- the emit
+        // ice "expression kind outside the subset" (part 7 of p274-carina-k1).
+        // A call already hoisted whole (`@hoist_ordered_args`) lowered its own.
+        if (ck == NodeKind.Call || ck == NodeKind.MethodCall) && @ir.local_of_node(c.id_of()) == no_local() {
+            @hoist_sealed_args(c)
+            continue
+        }
         // `unsafe { .. }` JOINS THEM (registry 1525): `@lower_value_source`'s
         // third arm. std's `Vec[T] @get` returns `Some(unsafe { .. })`; check
         // took it, the printer had no arm, and every `get` instance the shell

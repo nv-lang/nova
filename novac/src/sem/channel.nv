@@ -445,6 +445,22 @@ export fn CheckOut mut @record_type(id NodeId, t TyId) -> ()
     @types[raw_node(id)] = t
 }
 
+/// THE ONE SANCTIONED SECOND ANSWER: an untyped integer CONSTANT EXPRESSION
+/// (`40 + 2`, sem/constexpr.nv) is typed `int` by the expression walk -- D44's
+/// default, PROVISIONAL by D489 ("no type until its position gives one") --
+/// and its position may replace that default once with its own type. The
+/// caller proves the shape (`is_const_int_expr`); this door proves the
+/// replaced answer was the default `dflt`. Any other overwrite is the ice
+/// `record_type` raises. A bare literal never needs this: the walk leaves it
+/// unrecorded, and its position is the first to write.
+export fn CheckOut mut @retype_constant(id NodeId, t TyId, dflt TyId) -> ()
+    requires is_node(id) && raw_node(id) < @types.len(), "sem: channel asked about a node outside this file's id space"
+{
+    ro prev = @types[raw_node(id)]
+    assert(!is_ty(prev) || prev == t || prev == dflt, "sem: a constant expression was retyped over a decided type")
+    @types[raw_node(id)] = t
+}
+
 /// Record the decided target of a call.
 export fn CheckOut mut @record_callee(id NodeId, target CalleeTarget, subst []TyId,
                                      slots []SlotBind) -> ()

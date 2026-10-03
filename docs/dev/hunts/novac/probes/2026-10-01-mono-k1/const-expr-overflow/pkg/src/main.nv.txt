@@ -1,0 +1,17 @@
+module hp
+
+type Id int
+
+type Small u8
+
+fn k(b u8, c int) -> int => (b as int) + c
+
+fn s(v i16) -> int => v as int
+
+fn g(i Id, c int) -> int => (i as int) + c
+
+fn sm(v Small) -> int => (v as u8) as int
+
+fn main() {
+    println(k(200 + 100, 0))
+}

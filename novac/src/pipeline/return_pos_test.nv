@@ -57,3 +57,19 @@ fn main() {\n println(one(1))\n}", std_decls())
     assert(d2.len() == 0, messages(d2))
     assert(c2.contains("= ((nova_int)7LL);"), c2)
 }
+
+test "a value `if` inside a call that `println` prints is lowered before the seal (part 7 of p274-carina-k1)" {
+    // `println(idf(if c { 5 } else { 0 }))`: `@lower_println` laid down the `??`
+    // and `?` forms nested in a call argument, not its value `if`, which the
+    // printer met inline -- "emit: expression kind outside the subset". One
+    // level deeper (`take(idf(if ..))`) the call's own argument walk had the
+    // same gap.
+    ro defs = "fn idf[T](consume x T) -> T => x\nfn take(r int) -> int => r + 1\n"
+    ro (d, c) = compile_to_c("${defs}fn main() {\n ro b = true\n println(idf(if b { 5 } else { 0 }))\n\
+ println(take(idf(if b { 7 } else { 0 })))\n}", std_decls())
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("= ((nova_int)5LL);"), c)
+    // CONTROL: the same `if` bound first was lowered all along.
+    ro (d2, _) = compile_to_c("${defs}fn main() {\n ro b = true\n ro v = idf(if b { 5 } else { 0 })\n println(v)\n}", std_decls())
+    assert(d2.len() == 0, messages(d2))
+}

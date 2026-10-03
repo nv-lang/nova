@@ -160,6 +160,11 @@ test "a temporary of a HEAP type may fill a `mut` parameter; of a VALUE type it 
     ro (dv, _) = compile_to_c("fn inc(mut n int) -> int => n\nfn main() {\n println(inc(3))\n}", std)
     assert(messages(dv).contains("E_MUT_ARG_NOT_MUTABLE"), messages(dv))
     assert(dv[0].code == "E_NOVAC_LANG", dv[0].code)
+    // A value temporary as a `mut @` RECEIVER is legal (D32: hoisted, `&temp`)
+    // and is NOT that language error -- part 6 said it was (found in part 7).
+    ro (dr2, _) = compile_to_c("type Pv value { n int }\nfn Pv mut @bump() -> int {\n @n += 1\n @n\n}\n\
+fn mk() -> Pv => { n: 1 }\nfn main() {\n println(mk().bump())\n}", std)
+    assert(!messages(dr2).contains("E_MUT_ARG_NOT_MUTABLE"), messages(dr2))
     // CONTROL: a `ro` BINDING of a heap type is still no mutable place -- only
     // the temporary is admitted, and only when no overload takes it otherwise.
     ro (dr, _) = compile_to_c("type Bag { n int }\nfn fill(mut b Bag) -> int => b.n\n\
