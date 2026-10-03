@@ -4,6 +4,13 @@
 # сужение без опускания — красный (протухшая база пропустит следующий рост).
 # Снято 2026-08-16. Заметь sem: широчайшая дверь наружу — до-дженериковый реестр.
 #
+#   2026-10-03 (облачная сессия p274-carina-strarm, D133-трек шаг 6б -- drop-флаг, D432 s5),
+#   lower 98 -> 99, sem 344 -> 348. lower: `@gone_of` -- флаг привязки по её узлу; его
+#   спрашивает принтер на каждом переносе (emit_c). sem: `@record_gone` / `@gone_binder`
+#   (решение потока «это использование -- перенос привязки», читает принтер), `@mark_cond`
+#   (поздний проход цикла переводит вызов в условный) и `@has_cond` (понижение: нужен ли
+#   привязке флаг) -- канал чекера.
+#
 #   2026-10-03 (облачная сессия p274-carina-strarm, D133-трек шаг 5 -- авто-`@cleanup`,
 #   D432), builtins 68 -> 71, lower 94 -> 98, sem 341 -> 344. builtins: `CLEANUP_METHOD`,
 #   `SCOPE_OUTCOME_TYPE`, `SCOPE_OUTCOME_SUCCESS` -- имена языка/std, которые спрашивают
@@ -384,7 +391,7 @@ lex 11
 #   became `@note_arm_heads` (the blocks of an arm's test Ifs -- the printer descends
 #   through a disjunction's switch to each) and `@set_bool` came in: the one constant
 #   the lowering writes, a disjunction's "an alternative held" flag.
-lower 98
+lower 99
 main 0
 # mono -- НОВЫЙ модуль (2026-08-18, Э2-б2): коллектор достижимого.
 # Наружу три имени: тип Reach, вопрос @has (эмиттер спрашивает про каждую
@@ -1056,7 +1063,7 @@ resolve 23
 #   tree is 341 -- main's 340 plus k1's `is_arg_value_kind` (part 5 step 3, its chronicle line above).
 # merge of origin/main f80d61e00 into p274-carina-strarm (2026-10-02): main's counts plus this
 #   branch's SourceText.@holds (source 6 -> 7); the counts are the guard's on the merged tree.
-sem 344
+sem 348
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
