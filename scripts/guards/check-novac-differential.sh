@@ -148,12 +148,31 @@ if [ "${NOVAC_SMOKE:-1}" = "0" ]; then
 else
     SMOKE="$ROOT/scripts/tools/novac-e1-smoke.sh"
     if [ -x "$SMOKE" ] || [ -f "$SMOKE" ]; then
-        beh=0; behbad=0
+        # БЛИЗНЕЦ (2026-10-03, трек D133): строка `// NOVAC_TWIN <файл>` в фикстуре
+        # называет её явный разворот, лежащий рядом, — норму, которую оракул не
+        # реализует (D476, реестр 221.1 №1107). Тогда оракул собирает БЛИЗНЕЦА, novac —
+        # фикстуру, и ответ сверяется так же байт в байт. Это не пропуск: allow здесь
+        # ничего не снимает, а близнец без файла — красный.
+        beh=0; behbad=0; twins=0
         while IFS= read -r f; do
             rel=${f#"$ROOT"/}
             "$BIN" check "$f" >/dev/null 2>&1 </dev/null || continue
             "$ORACLE" check "$f" >/dev/null 2>&1 </dev/null || continue
-            if bash "$SMOKE" "$f" >"$T/smoke.out" 2>&1; then
+            twin=$(sed -n 's|^// NOVAC_TWIN \([^ ]*\)$|\1|p' "$f" | head -n 1)
+            src="$f"
+            if [ -n "$twin" ]; then
+                src="$(dirname "$f")/$twin"
+                if [ ! -f "$src" ]; then
+                    behbad=$((behbad+1))
+                    printf '  %s: близнец NOVAC_TWIN %s не найден\n' "$rel" "$twin" >> "$T/behbad"
+                    continue
+                fi
+                twins=$((twins+1))
+            else
+                # Без близнеца: оракул и novac собирают одну и ту же фикстуру.
+                :
+            fi
+            if bash "$SMOKE" "$src" "$f" >"$T/smoke.out" 2>&1; then
                 beh=$((beh+1))
             else
                 behbad=$((behbad+1))
@@ -168,7 +187,7 @@ else
             echo "  подмножество имеет право ОТКАЗАТЬ, но не имеет права посчитать иначе." >&2
             exit 1
         fi
-        echo "$NAME этап 2/3 ПОВЕДЕНИЕ: $beh из $N байт-в-байт — НЕ ВЕРДИКТ, храповик ниже"
+        echo "$NAME этап 2/3 ПОВЕДЕНИЕ: $beh из $N байт-в-байт (из них против близнеца NOVAC_TWIN: $twins) — НЕ ВЕРДИКТ, храповик ниже"
     fi
 fi
 

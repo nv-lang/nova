@@ -16,11 +16,18 @@
 #      are computed once into the argv cache.
 # Warm target: <= 2s per file (emit + clang ~0.5s + two runs).
 #
-# Usage: sh scripts/tools/novac-e1-smoke.sh [file.nv]   (default: hello)
+# Usage: sh scripts/tools/novac-e1-smoke.sh [file.nv [novac-file.nv]]   (default: hello)
+#
+# ВТОРОЙ ФАЙЛ — БЛИЗНЕЦ (2026-10-03, трек D133, D476): оракул собирает ПЕРВЫЙ файл,
+# novac — ВТОРОЙ, и сверяется вывод. Нужен там, где норму реализовал только novac
+# (D476 у оракула нет, реестр 221.1 №1107): программа, записанная нормой, и та же
+# программа, записанная её явным разворотом, обязаны вести себя одинаково — и это
+# проверяется байт в байт, а не объявляется. Без второго файла — как прежде.
 # Проверялся: Windows (Git Bash), 2026-08-15.
 export LC_ALL=C
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 FILE="${1:-examples/basics/hello.nv}"
+NFILE="${2:-$FILE}"
 # NOVAC_BIN — мерить ПРИВАТНУЮ сборку, не устанавливая общий бинарь. Дисциплина
 # уже принята («под идущим гейтом собирай в приватный путь»), а инструмент её не
 # поддерживал: 2026-09-03 общий novac.exe оказался ЗАНЯТ открытым хэндлом после
@@ -166,7 +173,7 @@ fi
 # отказов `E_NOVAC_SUBSET` дым сказал «novac emit упал:» и НИЧЕГО после
 # двоеточия. Отказ без слов — тот же класс, что «молчание читается как успех»:
 # по нему идут искать крах компилятора, а был обычный отказ по подмножеству.
-"$NOVAC" emit "$FILE" > "$T/novac.c" 2>"$T/emit.err" \
+"$NOVAC" emit "$NFILE" > "$T/novac.c" 2>"$T/emit.err" \
     || fail "novac emit упал: stderr «$(cat "$T/emit.err")»; диагностики из stdout ($(grep -c '"code"' "$T/novac.c") шт.): $(grep -o '"message":"[^"]*"' "$T/novac.c" | head -3 | tr '\n' ' ' | cut -c1-400)"
 # the emission's first include IS the PCH prelude; drop that one line
 sed '0,/^#include "nova_rt\/nova_rt.h"$/{//d}' "$T/novac.c" > "$T/body.c"
