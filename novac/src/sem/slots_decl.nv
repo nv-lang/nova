@@ -37,7 +37,7 @@ module novac.sem
 
 import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
-import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, VALUE_MARKER, EFFECT_MARKER}
+import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, VALUE_MARKER, EFFECT_MARKER, is_field_visibility_word}
 import ../names.{DeclId, no_decl, is_decl}
 
 /// What the TAIL of a type declaration says, when it is a type reference:
@@ -272,7 +272,9 @@ export fn field_name_at(fk []Node) -> Option[int] {
             i += 1
             continue
         }
-        if mode_of_leaf(c).is_none() { return Some(i) }
+        // A VISIBILITY modifier (D220: `priv`, `pub`) heads the field like a
+        // mode does; both words are reserved, so neither is ever the name.
+        if mode_of_leaf(c).is_none() && !is_field_visibility_word(leaf_text(c)) { return Some(i) }
         i += 1
     }
     None

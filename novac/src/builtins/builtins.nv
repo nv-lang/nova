@@ -276,6 +276,17 @@ export const VALUE_MARKER = "value"
 /// nothing to refuse until cross-module compilation arrives.
 export const PRIV_MARKER = "priv"
 
+/// The word that LIFTS a type-level `priv` off one field (D220): `pub ro tag str`
+/// inside `type Secret priv { .. }`.
+const PUB_MARKER = "pub"
+
+/// Is this word a field's VISIBILITY modifier (D220: `priv` or `pub`, written
+/// before the field's mode and name -- `priv mut money f64`)? Both are reserved
+/// words, so a leaf spelled so at the head of a field is always the modifier,
+/// never the field's name. Asked by the field reader, by `field_name_at` and
+/// by the collector.
+export fn is_field_visibility_word(text str) -> bool => text == PRIV_MARKER || text == PUB_MARKER
+
 /// The word that marks a PROTOCOL declaration: `type Sized protocol { ... }`.
 ///
 /// A contextual word like `alias` and `enum`, not a keyword -- the lexer knows

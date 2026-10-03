@@ -306,7 +306,8 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     @loop_depth += 1
                 }
                 Field => {
-                    @report_if_missing_type(past_field_ro(children), "outside the E1 subset: field must declare a type")
+                    @report_if_missing_type(past_field_ro(past_field_visibility(children)),
+                        "outside the E1 subset: field must declare a type")
                 }
                 RetType => {
                     // The return type is a type reference too, and it was

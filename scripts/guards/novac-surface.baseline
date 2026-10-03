@@ -278,7 +278,11 @@
 #   And 69 -> 72 the same day: `WITH_WORD`, `SUPERVISED_WORD`, `SPAWN_WORD` -- three of those
 #   words the parser reads by spelling in their own position; with the list in builtins,
 #   check-novac-no-name-hardcode (P5) wants their spelling there too.
-builtins 72
+# 2026-10-03, cloud session p274-carina-mono-k2 (D83, field names): builtins 72 -> 73:
+#   `is_field_visibility_word` -- a field's D220 modifier (`priv`, `pub`) at its head; asked by
+#   the field reader (parse/type_decl.nv), by `field_name_at` (sem/slots_decl.nv), by the
+#   collector's per-field privacy (sem/collect.nv) and by check's field shape rule (check/rules.nv).
+builtins 73
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует

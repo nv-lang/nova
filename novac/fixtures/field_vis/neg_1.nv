@@ -1,0 +1,10 @@
+module field_vis.neg_1
+
+// A field std keeps PRIVATE (D220 `priv pos int` in `CharsIter`) is not read
+// from another module. Until 2026-10-03 novac accepted `it.pos` in silence
+// (the oracle: E_FIELD_MODULE_PRIVATE); novac refuses it as an unknown field.
+// NOVAC_EXPECT unknown field
+fn main() {
+    ro it = "abc".chars()
+    println(it.pos)
+}

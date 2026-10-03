@@ -24,7 +24,7 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, NodeId, raw_node, is_node}
 import ../diag.{ice}
 import ../names.{NameTable, NamespaceId, DeclId, raw_decl, no_decl, is_decl}
-import ../builtins.{TypeKind, BuiltinType, COERCE_ATTR, UNIT_TYPE_NAME, PRIV_MARKER}
+import ../builtins.{TypeKind, BuiltinType, COERCE_ATTR, UNIT_TYPE_NAME, PRIV_MARKER, is_field_visibility_word}
 import ../types.{Interner, TyId, no_ty, is_ty}
 
 /// The type and declaration registry of ONE file (without methods:
@@ -759,7 +759,8 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
 /// and the handed ones share (registry 1322), so the two cannot read a field
 /// two ways.
 fn fill_record_fields(c Node, owner_id DeclId, tname str, mut types []TypeDef, defs DefTable,
-                      mut fields FieldTable, mut tys Interner, private bool, private_to str) -> () {
+                      mut fields FieldTable, mut tys Interner, private bool, private_to str,
+                      field_priv_hides bool = false, pub_lifts bool = false) -> () {
     ro mine = types[raw_decl(owner_id)]
     ro off = fields.rows.len()
     mut cnt = 0
@@ -788,7 +789,18 @@ fn fill_record_fields(c Node, owner_id DeclId, tname str, mut types []TypeDef, d
         // a slice type was dropped from the registry.
         ro ft = ty_of_type_ref(fk, ftat, no_ty(), tps, prow, types, defs, tys)
         if !is_ty(ft) { continue }
-        if private {
+        // THE FIELD'S OWN MODIFIER over the type's default (D220): `priv` hides
+        // this field from where the caller says a field `priv` is hidden (another
+        // module), `pub` lifts a type-level bare `priv` off it.
+        ro own = field_visibility_of(fk)
+        ro hidden = if own == PRIV_MARKER {
+            private || field_priv_hides
+        } else if own != "" {
+            private && !pub_lifts
+        } else {
+            private
+        }
+        if hidden {
             fields.add_private(mine.ty_id, leaf_text(fk[fnat]), ft, is_leaf_kind(fk[ftat], TokenKind.KwRo), private_to)
         } else {
             fields.add(mine.ty_id, leaf_text(fk[fnat]), ft, ro_view: is_leaf_kind(fk[ftat], TokenKind.KwRo))
@@ -936,8 +948,19 @@ fn fill_one_handed(c Node, exported bool, same_module bool, foreign_cnt int, mut
     // record not exported), its declaring FILE for a qualified one -- spelled
     // `#<tree>`, which no module path can equal, so only a body read from that
     // same tree reads it (`check.Checker @field_visible`).
+    // A FIELD's own `priv` (D220) hides it from another module; its `pub` lifts
+    // only a bare type-level `priv` of an exported record.
     fill_record_fields(c, owner_id, tname, types, defs, fields, tys, !visible,
-                       if qualified { "#${tree}" } else { home })
+                       if qualified { "#${tree}" } else { home },
+                       field_priv_hides: !same_module, pub_lifts: !same_module && exported && has_priv && !qualified)
+}
+
+/// The VISIBILITY modifier a field is written with (D220) -- `priv`, `pub` --
+/// or "" when it has none. The parser keeps it as the field's first leaf.
+fn field_visibility_of(fk []Node) -> str {
+    if fk.len() == 0 || fk[0].kind_of() != NodeKind.LeafNode { return "" }
+    ro w = leaf_text(fk[0])
+    if is_field_visibility_word(w) { w } else { "" }
 }
 
 /// Where a declaration's type-level privacy marker stands (D281), or -1 when it

@@ -22,6 +22,7 @@ module novac.parse
 
 import ../lex.{TokenKind, paren_delta}
 import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, VALUE_MARKER, PRIV_MARKER, SUM_MARKER, EFFECT_MARKER}
+import ../builtins.{is_field_visibility_word}
 import ../tree.{Node, NodeKind}
 
 /// `type Name { field type ... }` — fields are pairs of idents, separated by
@@ -249,12 +250,13 @@ fn Cursor mut @type_decl() -> Node {
         // into the junk bucket.
         while @peek() == TokenKind.Ident || @at_mode_word() {
             mut fk = []Node.new()
+            @push_field_visibility(fk)
             if @at_mode_word() {
                 fk.push(@take())
             } else {
                 // No mode: the field is read-only by default (D176).
             }
-            @push_expected(fk, TokenKind.Ident) // field name
+            @push_name(fk) // field name -- a reserved word is refused (D83)
             // THE TYPE IS READ BY THE SAME DOOR PARAMETERS USE (274.5 wave
             // B1). It used to be one Ident, so `xs []int` and `rows Vec[T]`
             // were unreadable in a field while both are read in a parameter
@@ -289,12 +291,13 @@ fn Cursor mut @type_decl() -> Node {
         kids.push(@take())
         while @peek() == TokenKind.Ident || @at_mode_word() {
             mut fk = []Node.new()
+            @push_field_visibility(fk)
             if @at_mode_word() {
                 fk.push(@take())
             } else {
                 // No mode: read-only by default (D176), exactly as the brace form.
             }
-            @push_expected(fk, TokenKind.Ident) // field name
+            @push_name(fk) // field name -- a reserved word is refused (D83)
             fk.append(@type_ref())              // same door parameters and brace fields use
             // A DEFAULT: `type Complex(re f64 = 0.0)`. The constructor is an
             // ordinary function, so its default is read exactly as a
@@ -354,7 +357,7 @@ fn Cursor mut @variant_record_fields(mut vk []Node) -> () {
     vk.push(@take()) // '{'
     while @peek() == TokenKind.Ident {
         mut fk = []Node.new()
-        @push_expected(fk, TokenKind.Ident) // field name
+        @push_name(fk) // field name -- a reserved word is refused (D83)
         fk.append(@type_ref())
         vk.push(@node(NodeKind.Field, fk))
         // The comma between fields is trivia, as in the record body (#1227).
@@ -427,7 +430,7 @@ fn Cursor mut @effect_op() -> Node {
             } else {
                 // No mode: read-only by default (D176), as every parameter.
             }
-            pk.push(@take()) // parameter name
+            pk.push(@take_name()) // parameter name -- a reserved word is refused (1652)
             pk.append(@type_ref())
             @push_if(pk, TokenKind.Comma)
             kids.push(@node(NodeKind.Param, pk))
@@ -446,4 +449,18 @@ fn Cursor mut @effect_op() -> Node {
         // is VISIBLE (no RetType node), the same contract `ProtoMethod` keeps.
     }
     @node(NodeKind.EffectOp, kids)
+}
+
+/// A field's VISIBILITY modifier (D220), when one stands at its head: `priv` or
+/// `pub`, before the mode word and the name (`priv mut money f64`). Taken as a
+/// leaf of the field; `field_name_at` steps over it. Until 2026-10-03 the word
+/// was read as the field's NAME and the name as its type -- std's `priv buf
+/// str` declared a field `priv` of an undeclared type `buf` -- and a field
+/// NAMED by a reserved word (`with int`) was accepted, which D83 forbids.
+fn Cursor mut @push_field_visibility(mut fk []Node) -> () {
+    if @peek() == TokenKind.Ident && is_field_visibility_word(@peek_text()) {
+        fk.push(@take())
+    } else {
+        // No modifier: the type's default visibility (D47, or D281's `priv`).
+    }
 }
