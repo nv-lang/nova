@@ -65,6 +65,7 @@ ALLOWED_DIRS='
 .claude
 .githooks
 .kimi-code
+.opencode
 .github
 .sourcecraft
 .vscode
@@ -95,6 +96,9 @@ THIRD_PARTY
 # nova_tests.old — отдельная открытая запись №542 (886 файлов, «что его собирает»),
 # в списке как факт, не как одобрение. scratch-opencode — штатное рабочее место
 # opencode (docs/dev/opencode-runbook.md), в индексе только его .gitignore.
+# .opencode — обвязка OpenCode, как .claude для Claude Code (2026-10-03): отслеживаются
+# .opencode/agents/{defect-hunter,spec-reader}.md — указатели на агентов из .claude/agents.
+# Каталог конфигурации инструмента, а не черновик окна; удалять нельзя — агенты пропадут.
 
 FOUND=$(git -C "$ROOT" ls-files --full-name 2>/dev/null | grep -v '/')
 # core.quotepath=off: иначе путь с не-ASCII внутри приходит в кавычках и

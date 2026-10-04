@@ -4,14 +4,14 @@
 НЕ опубликовано: ждёт предпроверки -> `integrate` -> CI -> три зеркала (слово владельца на пуш — спросить).
 
 **Среда (всё уже стоит, проверено пробами):**
-- Клон `D:\Sources\nv-lang\nova-ensemble`, лаунчер — `nova-ensemble.ps1` на рабочем столе владельца
-  (`XDG_DATA_HOME=D:\Sources\.opencode-data`, `NOVA_WORKTREE_ROOT=D:\Sources`, Git Bash первым в PATH).
+- Клон `nova-ensemble` (рядом с остальными деревьями), лаунчер — `nova-ensemble.ps1` на рабочем столе владельца
+  (`XDG_DATA_HOME` — каталог данных OpenCode рядом с деревьями, `NOVA_WORKTREE_ROOT` — их родитель, Git Bash первым в PATH).
   `TEMP` в лаунчере НЕ ставить — OpenCode падает с ошибкой 126; `TEMP=D:\Temp` командам ставит плагин.
 - Глобальные плагины — репозиторий `nv-lang/nova-opencode-plugins` (приватный, клон рядом): `nova-env`
   (окружение команд, штамп времени на каждом сообщении агента, отказ на `Get-Date`/`date` ради времени),
   `nova-guards` (хуки и `permissions.deny` из `.claude/settings.json` сессионного репозитория, команды
   `.claude/commands`), `nova-peers` (письма между окнами по ролям: `peer_list/role/send/inbox`, ящик
-  `D:\Sources\.opencode-data\opencode\nova-peers`). Правка плагина — только в ветке своего дерева.
+  `<XDG_DATA_HOME>/opencode/nova-peers`). Правка плагина — только в ветке своего дерева.
 - Ensemble удалён (#40: `team_spawn` сломан на V2). Окна — вкладки OpenCode со своей ролью; сессию окна в его
   дерево переносит `session_move`. Субагенты: `explore` = Haiku, `general` = Sonnet (глобальный конфиг).
 - Лимиты: `tool_output` 500 строк / 20 КБ, `compaction.keep` 10000, `snapshots: false`.
