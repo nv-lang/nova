@@ -15,6 +15,12 @@ import sys
 import tempfile
 import time
 
+# Роль плагина OpenCode (#1730) читается по id сессии из окружения: самотест,
+# запущенный внутри вкладки OpenCode, иначе унаследовал бы её роль в клетки,
+# которые ждут роль по ветке. Клетки плагина выставляют окружение сами.
+os.environ.pop("OPENCODE_SESSION_ID", None)
+os.environ.pop("XDG_DATA_HOME", None)
+
 HOOK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                     "guard-stop-v2.py")
 if not os.path.exists(HOOK):
@@ -87,6 +93,10 @@ def run(tmp, turns, session="s1", active=False, role="integrator",
     payload = {"transcript_path": transcript(tmp, turns), "cwd": tmp,
                "session_id": session, "stop_hook_active": active}
     env = dict(os.environ)
+    # Роль плагина OpenCode (#1730) читается из файла по id сессии: окно самотеста
+    # внутри OpenCode унаследует чужой id и чужую роль — клетки обязаны начинаться чисто.
+    env.pop("OPENCODE_SESSION_ID", None)
+    env.pop("XDG_DATA_HOME", None)
     if role:
         env["NOVA_WINDOW_ROLE"] = role
     else:
@@ -708,7 +718,115 @@ def _t_escape_names_what_it_let_through():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-for _name, _fn in ((u"визитка НАЗЫВАЕТ роль помощника на чужой ветке",
+# --- роль плагина OpenCode (дефект №1730) ------------------------------------
+# Вкладка OpenCode стоит в общей главной копии: ветка `main` говорит
+# «интегратор» про каждое окно. Плагин пишет роль по id сессии в файл состояния.
+# Клетки идут парами: роль плагина `worker` на `main` обязана молчать, а
+# отключённое чтение плагина — краснеть (блок интегратора).
+
+def _main_tree():
+    tmp = tempfile.mkdtemp(prefix="nova-stop-plugin-")
+    g = os.path.join(tmp, ".git")
+    os.makedirs(g, exist_ok=True)
+    with io.open(os.path.join(g, "HEAD"), "w", encoding="utf-8") as fh:
+        fh.write(u"ref: refs/heads/main\n")
+    return tmp
+
+
+def _plugin_run(content, role=None, sid=u"PLUGIN-SID", extra=None):
+    u"""Файл состояния плагина с `content` (None — файла нет) на главной копии."""
+    tmp = _main_tree()
+    xdg = tempfile.mkdtemp(prefix="nova-stop-xdg-")
+    try:
+        if content is not None:
+            d = os.path.join(xdg, "opencode", "nova-peers", "status")
+            os.makedirs(d, exist_ok=True)
+            with io.open(os.path.join(d, sid + ".json"), "w", encoding="utf-8") as fh:
+                fh.write(content)
+        env_extra = {"OPENCODE_SESSION_ID": sid, "XDG_DATA_HOME": xdg}
+        if extra:
+            env_extra.update(extra)
+        return run(tmp, [(u"Готово.", 0)], session="plug", role=role,
+                   env_extra=env_extra)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        shutil.rmtree(xdg, ignore_errors=True)
+
+
+def _t_plugin_worker_on_main_silent():
+    res = _plugin_run(json.dumps({"role": "worker"}))
+    return res is None
+
+
+def _t_plugin_integrator_blocks():
+    res = _plugin_run(json.dumps({"role": "integrator"}))
+    return bool(res) and res.get("decision") == "block"
+
+
+def _t_env_role_beats_plugin():
+    res = _plugin_run(json.dumps({"role": "worker"}), role="integrator")
+    return bool(res) and res.get("decision") == "block"
+
+
+def _t_no_session_falls_to_branch():
+    res = run(_main_tree(), [(u"Готово.", 0)], session="plug0", role=None)
+    return bool(res) and res.get("decision") == "block"
+
+
+def _t_plugin_corrupt_falls_to_branch():
+    res = _plugin_run(u"{не json")
+    return bool(res) and res.get("decision") == "block"
+
+
+def _t_plugin_empty_falls_to_branch():
+    res = _plugin_run(u"")
+    return bool(res) and res.get("decision") == "block"
+
+
+def _t_plugin_copies_agree():
+    u"""Копия чтения в снимке очереди даёт ту же роль, что хук на той же вкладке."""
+    tmp = _main_tree()
+    xdg = tempfile.mkdtemp(prefix="nova-stop-xdg-")
+    d = os.path.join(xdg, "opencode", "nova-peers", "status")
+    os.makedirs(d, exist_ok=True)
+    with io.open(os.path.join(d, "PLUGIN-SID.json"), "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"role": "worker"}))
+    old = {k: os.environ.get(k) for k in ("OPENCODE_SESSION_ID", "XDG_DATA_HOME",
+                                          "NOVA_WINDOW_ROLE")}
+    os.environ["OPENCODE_SESSION_ID"] = "PLUGIN-SID"
+    os.environ["XDG_DATA_HOME"] = xdg
+    os.environ.pop("NOVA_WINDOW_ROLE", None)
+    try:
+        mod = {}
+        src = io.open(os.path.join(os.path.dirname(HOOK), "..", "tools",
+                                   "queue-snapshot.py"), encoding="utf-8").read()
+        snap = {"__name__": "snap"}
+        exec(compile(src.replace('if __name__ == "__main__":', "if False:"),
+                     "snap", "exec"), snap)
+        snap_role = snap["detect_role"](tmp)
+        hook_role = _hook_detect_role(tmp, "PLUGIN-SID")
+        return snap_role == hook_role == u"none", u"снимок=%s, хук=%s" % (snap_role, hook_role)
+    finally:
+        for k, v in old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(tmp, ignore_errors=True)
+        shutil.rmtree(xdg, ignore_errors=True)
+
+
+for _name, _fn in ((u"роль плагина worker на main: хук молчит",
+                    _t_plugin_worker_on_main_silent),
+                   (u"роль плагина integrator на main: блокирует",
+                    _t_plugin_integrator_blocks),
+                   (u"NOVA_WINDOW_ROLE старше плагина", _t_env_role_beats_plugin),
+                   (u"без OPENCODE_SESSION_ID: роль по ветке, как раньше",
+                    _t_no_session_falls_to_branch),
+                   (u"битый JSON плагина: откат на ветку", _t_plugin_corrupt_falls_to_branch),
+                   (u"пустой файл плагина: откат на ветку", _t_plugin_empty_falls_to_branch),
+                   (u"снимок и хук читают роль плагина одинаково", _t_plugin_copies_agree),
+                   (u"визитка НАЗЫВАЕТ роль помощника на чужой ветке",
                     _t_assistant_card_names_role),
                    (u"чужая визитка помощника роли не даёт", _t_assistant_card_foreign),
                    (u"визитка ЧУЖОЙ сессии: роль не моя, хук молчит", _t_card_foreign),

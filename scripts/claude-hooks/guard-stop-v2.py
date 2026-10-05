@@ -178,6 +178,30 @@ ROLE_NOTE = {
 }
 NOTE_FRESH_SEC = 10 * 60
 
+# Роль ПЛАГИНА OpenCode (дефект №1730). Вкладка OpenCode стоит в ОБЩЕЙ главной
+# копии, и ветка `main` называет интегратором каждое окно сразу. Плагин знает,
+# чья это вкладка, и пишет роль в файл состояния по id сессии. Копия этого
+# чтения — в `scripts/tools/queue-snapshot.py`; расхождение ловит самотест.
+def plugin_role():
+    u"""Роль из файла состояния плагина; None — файла нет или он не читается."""
+    sid = (os.environ.get(u"OPENCODE_SESSION_ID") or u"").strip()
+    if not sid:
+        return None
+    base = (os.environ.get(u"XDG_DATA_HOME") or u"").strip() or \
+        os.path.join(os.path.expanduser(u"~"), u".local", u"share")
+    path = os.path.join(base, u"opencode", u"nova-peers", u"status", sid + u".json")
+    try:
+        with io.open(path, encoding=u"utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    role = data.get(u"role")
+    if not isinstance(role, str) or not role.strip():
+        return None
+    return role.strip().lower()
+
 # Закрытый список необратимых действий (AGENTS.md «Git», /flow пункт 2).
 IRREVERSIBLE = [u"пуш", u"push", u"тег", u"tag", u"удал", u"публик",
                 u"наружу", u"force", u"релиз", u"слия", u"merge"]
@@ -590,6 +614,12 @@ def detect_role(cwd):
     env = (os.environ.get("NOVA_WINDOW_ROLE") or u"").strip().lower()
     if env:
         return env
+    # Плагин ВПЕРЕДИ ветки: плагин знает вкладку, ветка — только общую копию.
+    # Роль, которой нет в словаре хука (`worker`), — это «роли нет», а не
+    # откат на ветку: откат и дал бы интегратора на главной копии.
+    pr = plugin_role()
+    if pr is not None:
+        return pr if pr in ROLE_NOTE else u"none"
     card = card_role(cwd)
     if card:
         return card
