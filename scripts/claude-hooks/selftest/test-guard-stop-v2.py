@@ -15,6 +15,12 @@ import sys
 import tempfile
 import time
 
+# Роль плагина OpenCode (#1730) читается по id сессии из окружения: самотест,
+# запущенный внутри вкладки OpenCode, иначе унаследовал бы её роль в клетки,
+# которые ждут роль по ветке. Клетки плагина выставляют окружение сами.
+os.environ.pop("OPENCODE_SESSION_ID", None)
+os.environ.pop("XDG_DATA_HOME", None)
+
 HOOK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                     "guard-stop-v2.py")
 if not os.path.exists(HOOK):
@@ -81,15 +87,22 @@ def handoff(tmp, session="s1", age_sec=0):
 
 
 def run(tmp, turns, session="s1", active=False, role="integrator",
-        hook=None, env_extra=None):
-    u"""role=None — окно без роли: ворота по роли обязаны сделать хук немым."""
+        hook=None, env_extra=None, env_drop=None):
+    u"""role=None — окно без роли: ворота по роли обязаны сделать хук немым.
+    env_drop — переменные, которых в окне НЕТ (чтобы не унаследовать их из своей среды)."""
     payload = {"transcript_path": transcript(tmp, turns), "cwd": tmp,
                "session_id": session, "stop_hook_active": active}
     env = dict(os.environ)
+    # Роль плагина OpenCode (#1730) читается из файла по id сессии: окно самотеста
+    # внутри OpenCode унаследует чужой id и чужую роль — клетки обязаны начинаться чисто.
+    env.pop("OPENCODE_SESSION_ID", None)
+    env.pop("XDG_DATA_HOME", None)
     if role:
         env["NOVA_WINDOW_ROLE"] = role
     else:
         env.pop("NOVA_WINDOW_ROLE", None)
+    for k in (env_drop or []):
+        env.pop(k, None)
     if env_extra:
         env.update(env_extra)
     r = subprocess.run([sys.executable, hook or HOOK], input=json.dumps(payload),
@@ -327,6 +340,125 @@ def c_no_agents_no_line_needed(tmp):
                       u"СТОП: очередь-пуста", 0)]), False
 
 
+# --------------------------------------- код «жду» (задача интегратора #5, 2026-10-05)
+# Ожидание окна доказывается файлом состояния вкладки плагина opencode-peers:
+# `$XDG_DATA_HOME/opencode/nova-peers/status/<OPENCODE_SESSION_ID>.json` и
+# `watches/*.json`. Корень данных — шов через XDG_DATA_HOME, машинных путей нет.
+# Клетки идут парами: живое ожидание пропускается, пустое — блокируется.
+
+PEERS_SID = u"ses_TESTSID"
+PEERS_OTHER = u"ses_OTHERSID"
+PEERS_EMPTY = {"session": PEERS_SID, "state": "idle",
+               "watches": [], "asked": [], "tasks": []}
+
+
+def _peers(xdg, status=None, watches=()):
+    u"""Дерево данных плагина: status — словарь файла вкладки или None (файла нет),
+    watches — пары (имя файла, тело)."""
+    base = os.path.join(xdg, "opencode", "nova-peers")
+    os.makedirs(os.path.join(base, "status"), exist_ok=True)
+    os.makedirs(os.path.join(base, "watches"), exist_ok=True)
+    if status is not None:
+        with io.open(os.path.join(base, "status", PEERS_SID + ".json"), "w",
+                     encoding="utf-8") as fh:
+            fh.write(json.dumps(status, ensure_ascii=False))
+    for name, body in watches:
+        with io.open(os.path.join(base, "watches", name), "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(body, ensure_ascii=False))
+    return base
+
+
+def _wait(tmp, status=None, watches=(), arg=u"peer_watch гейта", sid=PEERS_SID,
+          drop_sid=False):
+    xdg = tempfile.mkdtemp(prefix="stopwait-")
+    try:
+        _peers(xdg, status, watches)
+        env = {"XDG_DATA_HOME": xdg}
+        if sid:
+            env["OPENCODE_SESSION_ID"] = sid
+        text = u"Жду своё.\n\nСТОП: жду" + (u" " + arg if arg else u"")
+        return run(tmp, [(text, 0)], env_extra=env,
+                   env_drop=[] if sid and not drop_sid else ["OPENCODE_SESSION_ID"])
+    finally:
+        shutil.rmtree(xdg, ignore_errors=True)
+
+
+def c_wait_live_watch(tmp):
+    st = dict(PEERS_EMPTY, watches=[{"id": "w1", "note": "гейт", "minutes": 60}])
+    return _wait(tmp, st), False
+
+
+def c_wait_req_file_before_status(tmp):
+    u"""Только что поставленный peer_watch: в status его ещё нет, есть задание."""
+    return _wait(tmp, PEERS_EMPTY,
+                 [("1791-x.req.json", {"session": PEERS_SID, "command": "gate"})]), False
+
+
+def c_wait_running_watch_file(tmp):
+    return _wait(tmp, PEERS_EMPTY,
+                 [("1791-y.json", {"session": PEERS_SID, "status": "running"})]), False
+
+
+def c_wait_done_watch_blocks(tmp):
+    u"""Контроль к предыдущей: завершённое наблюдение ожиданием не является."""
+    return _wait(tmp, PEERS_EMPTY,
+                 [("1791-z.json", {"session": PEERS_SID, "status": "done"})]), True
+
+
+def c_wait_other_session_watch_blocks(tmp):
+    return _wait(tmp, PEERS_EMPTY,
+                 [("1791-o.json", {"session": PEERS_OTHER, "status": "running"})]), True
+
+
+def c_wait_asked_passes(tmp):
+    st = dict(PEERS_EMPTY, asked=[{"qid": "qabc", "to": "nova.integrator", "at": 1}])
+    return _wait(tmp, st, arg=u"ответа qabc"), False
+
+
+def c_wait_tasks_passes(tmp):
+    st = dict(PEERS_EMPTY, tasks=[{"n": 5, "status": "running", "priority": "P1",
+                                   "title": "t"}])
+    return _wait(tmp, st, arg=u"своих задач"), False
+
+
+def c_wait_acceptance_passes(tmp):
+    st = dict(PEERS_EMPTY, task={"n": 1, "status": "reviewing", "as": "executor",
+                                 "title": "t"})
+    return _wait(tmp, st, arg=u"приёмки #1"), False
+
+
+def c_wait_rework_passes(tmp):
+    st = dict(PEERS_EMPTY, task={"n": 1, "status": "rework", "as": "executor",
+                                 "title": "t"})
+    return _wait(tmp, st, arg=u"доработки #1"), False
+
+
+def c_wait_own_running_task_blocks(tmp):
+    u"""Своя задача в работе — не ожидание: окно её делает сейчас, не ждёт."""
+    st = dict(PEERS_EMPTY, task={"n": 1, "status": "running", "as": "executor",
+                                 "title": "t"})
+    return _wait(tmp, st, arg=u"чего-то"), True
+
+
+def c_wait_empty_blocks(tmp):
+    return _wait(tmp, PEERS_EMPTY), True
+
+
+def c_wait_no_subject_blocks(tmp):
+    st = dict(PEERS_EMPTY, watches=[{"id": "w1", "note": "гейт", "minutes": 60}])
+    return _wait(tmp, st, arg=u""), True
+
+
+def c_wait_no_session_env_blocks(tmp):
+    st = dict(PEERS_EMPTY, watches=[{"id": "w1", "note": "гейт", "minutes": 60}])
+    return _wait(tmp, st, sid=None), True
+
+
+def c_wait_no_status_file_blocks(tmp):
+    return _wait(tmp, None,
+                 [("1791-x.req.json", {"session": PEERS_SID})]), True
+
+
 for n, f in [
     (u"нет кода остановки", c_no_code),
     (u"помощник: «смена» без записки — отказ", c_assistant_shift_blocked),
@@ -357,6 +489,20 @@ for n, f in [
     (u"снимок битый JSON — блок", c_queue_broken_json),
     (u"кириллический путь и cp1251 — хук говорит", c_cyrillic_path_cp1251),
     (u"третья блокировка подряд пропускается", c_escape_after_two),
+    (u"жду: живое наблюдение в status — пропуск", c_wait_live_watch),
+    (u"жду: req-файл наблюдения до status — пропуск", c_wait_req_file_before_status),
+    (u"жду: идущее наблюдение в watches/ — пропуск", c_wait_running_watch_file),
+    (u"жду: завершённое наблюдение — блок", c_wait_done_watch_blocks),
+    (u"жду: наблюдение ЧУЖОЙ сессии — блок", c_wait_other_session_watch_blocks),
+    (u"жду: непустой asked — пропуск", c_wait_asked_passes),
+    (u"жду: непустой tasks — пропуск", c_wait_tasks_passes),
+    (u"жду: задача на приёмке — пропуск", c_wait_acceptance_passes),
+    (u"жду: задача на доработке — пропуск", c_wait_rework_passes),
+    (u"жду: своя задача в работе — блок", c_wait_own_running_task_blocks),
+    (u"жду: пустые списки — блок", c_wait_empty_blocks),
+    (u"жду без предмета — блок", c_wait_no_subject_blocks),
+    (u"жду без OPENCODE_SESSION_ID — блок", c_wait_no_session_env_blocks),
+    (u"жду: файла состояния нет — блок", c_wait_no_status_file_blocks),
 ]:
     case(n, f)
 
@@ -572,7 +718,115 @@ def _t_escape_names_what_it_let_through():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-for _name, _fn in ((u"визитка НАЗЫВАЕТ роль помощника на чужой ветке",
+# --- роль плагина OpenCode (дефект №1730) ------------------------------------
+# Вкладка OpenCode стоит в общей главной копии: ветка `main` говорит
+# «интегратор» про каждое окно. Плагин пишет роль по id сессии в файл состояния.
+# Клетки идут парами: роль плагина `worker` на `main` обязана молчать, а
+# отключённое чтение плагина — краснеть (блок интегратора).
+
+def _main_tree():
+    tmp = tempfile.mkdtemp(prefix="nova-stop-plugin-")
+    g = os.path.join(tmp, ".git")
+    os.makedirs(g, exist_ok=True)
+    with io.open(os.path.join(g, "HEAD"), "w", encoding="utf-8") as fh:
+        fh.write(u"ref: refs/heads/main\n")
+    return tmp
+
+
+def _plugin_run(content, role=None, sid=u"PLUGIN-SID", extra=None):
+    u"""Файл состояния плагина с `content` (None — файла нет) на главной копии."""
+    tmp = _main_tree()
+    xdg = tempfile.mkdtemp(prefix="nova-stop-xdg-")
+    try:
+        if content is not None:
+            d = os.path.join(xdg, "opencode", "nova-peers", "status")
+            os.makedirs(d, exist_ok=True)
+            with io.open(os.path.join(d, sid + ".json"), "w", encoding="utf-8") as fh:
+                fh.write(content)
+        env_extra = {"OPENCODE_SESSION_ID": sid, "XDG_DATA_HOME": xdg}
+        if extra:
+            env_extra.update(extra)
+        return run(tmp, [(u"Готово.", 0)], session="plug", role=role,
+                   env_extra=env_extra)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        shutil.rmtree(xdg, ignore_errors=True)
+
+
+def _t_plugin_worker_on_main_silent():
+    res = _plugin_run(json.dumps({"role": "worker"}))
+    return res is None
+
+
+def _t_plugin_integrator_blocks():
+    res = _plugin_run(json.dumps({"role": "integrator"}))
+    return bool(res) and res.get("decision") == "block"
+
+
+def _t_env_role_beats_plugin():
+    res = _plugin_run(json.dumps({"role": "worker"}), role="integrator")
+    return bool(res) and res.get("decision") == "block"
+
+
+def _t_no_session_falls_to_branch():
+    res = run(_main_tree(), [(u"Готово.", 0)], session="plug0", role=None)
+    return bool(res) and res.get("decision") == "block"
+
+
+def _t_plugin_corrupt_falls_to_branch():
+    res = _plugin_run(u"{не json")
+    return bool(res) and res.get("decision") == "block"
+
+
+def _t_plugin_empty_falls_to_branch():
+    res = _plugin_run(u"")
+    return bool(res) and res.get("decision") == "block"
+
+
+def _t_plugin_copies_agree():
+    u"""Копия чтения в снимке очереди даёт ту же роль, что хук на той же вкладке."""
+    tmp = _main_tree()
+    xdg = tempfile.mkdtemp(prefix="nova-stop-xdg-")
+    d = os.path.join(xdg, "opencode", "nova-peers", "status")
+    os.makedirs(d, exist_ok=True)
+    with io.open(os.path.join(d, "PLUGIN-SID.json"), "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"role": "worker"}))
+    old = {k: os.environ.get(k) for k in ("OPENCODE_SESSION_ID", "XDG_DATA_HOME",
+                                          "NOVA_WINDOW_ROLE")}
+    os.environ["OPENCODE_SESSION_ID"] = "PLUGIN-SID"
+    os.environ["XDG_DATA_HOME"] = xdg
+    os.environ.pop("NOVA_WINDOW_ROLE", None)
+    try:
+        mod = {}
+        src = io.open(os.path.join(os.path.dirname(HOOK), "..", "tools",
+                                   "queue-snapshot.py"), encoding="utf-8").read()
+        snap = {"__name__": "snap"}
+        exec(compile(src.replace('if __name__ == "__main__":', "if False:"),
+                     "snap", "exec"), snap)
+        snap_role = snap["detect_role"](tmp)
+        hook_role = _hook_detect_role(tmp, "PLUGIN-SID")
+        return snap_role == hook_role == u"none", u"снимок=%s, хук=%s" % (snap_role, hook_role)
+    finally:
+        for k, v in old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(tmp, ignore_errors=True)
+        shutil.rmtree(xdg, ignore_errors=True)
+
+
+for _name, _fn in ((u"роль плагина worker на main: хук молчит",
+                    _t_plugin_worker_on_main_silent),
+                   (u"роль плагина integrator на main: блокирует",
+                    _t_plugin_integrator_blocks),
+                   (u"NOVA_WINDOW_ROLE старше плагина", _t_env_role_beats_plugin),
+                   (u"без OPENCODE_SESSION_ID: роль по ветке, как раньше",
+                    _t_no_session_falls_to_branch),
+                   (u"битый JSON плагина: откат на ветку", _t_plugin_corrupt_falls_to_branch),
+                   (u"пустой файл плагина: откат на ветку", _t_plugin_empty_falls_to_branch),
+                   (u"снимок и хук читают роль плагина одинаково", _t_plugin_copies_agree),
+                   (u"визитка НАЗЫВАЕТ роль помощника на чужой ветке",
                     _t_assistant_card_names_role),
                    (u"чужая визитка помощника роли не даёт", _t_assistant_card_foreign),
                    (u"визитка ЧУЖОЙ сессии: роль не моя, хук молчит", _t_card_foreign),
