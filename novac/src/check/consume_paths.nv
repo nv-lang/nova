@@ -312,7 +312,11 @@ fn Checker mut @flow_arm(a Node, is_match_arm bool, pat Node, moved bool, entry 
 /// A guard that came out: on its FALSE path the values bound before the branch go on to
 /// the next arm in the state it left (`guard_out`). A value the arm's own PATTERN bound
 /// and the guard moved would be bound again by the next arm from the same scrutinee --
-/// refused by name, since the track does not follow it back.
+/// a SUBSET DEBT since 2026-10-05 (274.7 B13; integrator's decision on #1716): the norm is
+/// D131 (consumed at most once) and D133's join; the oracle accepts the form and consumes
+/// twice (registry 221.1 #1726, second carrier; fixture must_consume/neg_45). Removed
+/// when the binders of the arms below start MaybeConsumed from the scrutinee's state --
+/// the guard's state carried into the patterns that bind the same value again.
 fn Checker mut @flow_guard_out(g Node, mark int, mut fl ConsumeFlow, mut guard_out []VarState) -> () {
     for i in mark..fl.owned_ty.len() {
         if fl.state[i] != VarState.VsLive {
