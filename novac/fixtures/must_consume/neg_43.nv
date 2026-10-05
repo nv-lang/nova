@@ -1,0 +1,32 @@
+module must_consume.neg_43
+
+// A STRICTLY LINEAR VALUE STILL OWNED AT `?? return`: the fallback `return` is an EXIT
+// POINT on the path where the left side is `None` (D133's list: `return expr`), and `t`
+// is not consumed there -- D133-not-consumed (registry 221.1 #1716, the `??` door). The
+// oracle accepts the form and leaks `t` on that path (274.12, direction 1); novac iced
+// on it once `??` entered the short-circuit door, walking the `return` leaf as a value.
+
+// NOVAC_EXPECT is still owned when this `?? return` leaves its scope
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn mk(n int) -> Option[int] {
+    if n > 1 { Some(n) } else { None }
+}
+
+fn run(n int) -> int {
+    consume t = Tx { id: n }
+    ro v = mk(n) ?? return 0
+    t.commit()
+    v
+}
+
+fn main() {
+    println(run(2))
+}

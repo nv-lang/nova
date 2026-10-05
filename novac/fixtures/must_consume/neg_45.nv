@@ -1,0 +1,39 @@
+module must_consume.neg_45
+
+// A VALUE THE ARM'S OWN PATTERN BOUND, MOVED IN ITS GUARD (registry 221.1 #1716; subset
+// debt, 274.7 B13): the guard moves `t` into `eat` and is false, and the next arm binds
+// `u` from the same scrutinee -- the value `t` already consumed. novac does not carry
+// the guard's state into the binders of the arms below, so it refuses the form by name
+// rather than track it wrong; the oracle accepts it and commits the value twice at run
+// time (#1726, second carrier).
+
+// NOVAC_EXPECT moved in a `match` guard while its own pattern bound it
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn eat(consume t Tx) -> int {
+    t.commit()
+    0
+}
+
+fn mk(n int) -> Option[Tx] {
+    if n > 1 { Some(Tx { id: n }) } else { None }
+}
+
+fn run(n int) -> () {
+    match mk(n) {
+        Some(consume t) if eat(t) == 7 => println("seven")
+        Some(consume u) => u.commit()
+        None => println("none")
+    }
+}
+
+fn main() {
+    run(2)
+}
