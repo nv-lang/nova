@@ -1556,8 +1556,9 @@
 # 2026-10-05, task #2 (acceptance round 2): rows -> 1664, max -> 1734 (row 1734 a unit with no `main` types no instance of a generic body it calls -- mono's only root is the entry; numbered by the integrator), and 1730-1733 declared a gap: 1730-1732 are numbers of main this branch has not merged (main's max is 1732 per the integrator), 1733 is GIVEN to task #8. Removal: drop 1730-1733 from gaps= when this branch merges main.
 # 2026-10-05, task #2 (acceptance round 3): rows -> 1665, max -> 1735 (row 1735 the oracle's `nova build` accepts `mut x = <ro parameter>` of a heap type that `nova test` of the same source refuses E_READONLY_COERCE; numbered by the integrator).
 # 2026-10-06, integrator (candidate of task #2 on main 7992b1846 + p-integ-mechanics): rows 1663 (main) + 10 (#2: 1719-1724, 1727, 1729, 1734, 1735) = 1673, max stays 1736.
-rows=1673
-max=1736
+# 2026-10-06, integrator: rows -> 1674, max -> 1737 (row 1737 filed CLOSED -- the E1 smoke left the `-L` directory in the compile flags when the oracle's GC is not under `.../lib`; the pair is now dropped as a pair).
+rows=1674
+max=1737
 rows=1611
 max=1693
 rows=1590
