@@ -1549,8 +1549,9 @@
 # 2026-10-05, task #8 (number from the integrator): rows -> 1659, max -> 1733 (row 1733 filed OPEN -- check-novac-differential skips stage 2 silently when the smoke file is missing and its ok line still names behaviour; found by the guards hunt 2026-10-05-corpus-pool, p6).
 # 2026-10-06, acceptor of task #1 (candidate from main 4bec9a5e4): rows 1659 -> 1661, max stays 1733 (rows 1725 and 1726 arrive with the #1716 branch).
 # 2026-10-06, acceptor of task #3 (nova.worker, candidate from main 848dda3f2): rows 1661 -> 1662, max stays 1733 (row 1728 arrives with the #1707 branch; 1728 leaves gaps=).
-rows=1662
-max=1733
+# 2026-10-06, integrator (task #9): rows -> 1660, max -> 1736 (row 1736 filed CLOSED -- pre-push judged origin/main instead of the sha being pushed; fixed by passing the sending sha; 1734-1735 are issued to task #2 and not yet in main, declared as holes in gaps=).
+rows=1663
+max=1736
 rows=1611
 max=1693
 rows=1590
@@ -2304,7 +2305,8 @@ stale_gaps=0
 #   and №1690 ARRIVE with this branch (1673 and 1679 filed closed, 1689 and 1690 open, route the
 #   assistant) -- taken out of gaps= by the same merge that brings their rows.
 # 2026-10-05, acceptor of task #1: 1725-1726 arrive with the #1716 branch -- taken out of gaps= by the same merge that brings their rows.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698,1719-1724,1727,1729
+# 2026-10-06, integrator (task #9): 1734-1735 В `gaps` — РЕЗЕРВ, выданный задаче #2; строки едут в её ветке. Условие снятия: тем же слиянием номера убираются из `gaps`.
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698,1719-1724,1727,1729,1734-1735
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding

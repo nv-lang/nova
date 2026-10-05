@@ -108,8 +108,21 @@ fi
 GUARD="$REPO_ROOT/scripts/guards/check-ci-status.sh"
 [ -x "$GUARD" ] || [ -f "$GUARD" ] || exit 0
 
+# Судит ОТПРАВЛЯЕМЫЙ sha main, а не старую вершину origin/main (класс №1736).
+# Без аргумента check-ci-status.sh берёт origin/main: 2026-10-06 пуш 13fea91f2..4bec9a5e4
+# остановил вердикт «STALE — на 13fea91f2 нет прогонов», хотя на 4bec9a5e4 7/7 зелёные.
+# Почему sha, а не пропуск стража: тот же sha уже судит check-push-proven-by-ci.py
+# (он проверяет, что CI доказал КОММИТ), но check-ci-status судит ещё и красное
+# на этом sha и ночные прогоны — отдельный вердикт, не дубль по сути; дубль по
+# звонку gh ради него цена приемлемая. Удаление main (нулевой sha) — без аргумента.
+GUARD_SHA=""
+case "$MAIN_SHA" in
+    ""|0000000000000000000000000000000000000000) ;;
+    *) GUARD_SHA="$MAIN_SHA" ;;
+esac
+
 echo "pre-push: проверяю внешний авторитетный гейт (GitHub Actions)…"
-if bash "$GUARD" --strict; then
+if bash "$GUARD" --strict ${GUARD_SHA:+"$GUARD_SHA"}; then
     exit 0
 fi
 
