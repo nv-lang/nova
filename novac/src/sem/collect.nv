@@ -832,7 +832,6 @@ fn fill_record_fields(c Node, owner_id DeclId, tname str, mut types []TypeDef, d
                                           gate_off: mine.gate_off, gate_cnt: mine.gate_cnt,
                                           ty_id: mine.ty_id, name: tname,
                                           copy_pinned: mine.copy_pinned,
-
                                           must_consume: mine.must_consume,
                                           share: mine.share, rows: TypeRows.FieldRows(FieldRow(off), cnt) }
 }
@@ -884,97 +883,6 @@ fn is_own_type_decl(c Node, shape DeclShape) -> bool {
     nk.len() >= 2 && nk[1].kind_of() == NodeKind.LeafNode && shape_of_decl(c) == shape
 }
 
-/// The FIELDS OF HANDED RECORDS, filled where the language lets the compiled
-/// file see them (registry 1322).
-///
-/// `harvest_types` registers a handed record's name and kind and NOT its fields
-/// ("FIELDS ARE NOT READ YET"), on the reasoning that a handed field is reached
-/// only through a form the subset does not compile. The self-build refutes it:
-/// in module mode a unit's neighbours in the same module are in the unit, but
-/// every type of ANOTHER module arrives handed -- `Ctx`, `FnRow`, `SourceText`
-/// -- and 771 of the 4156 typing diagnostics of novac's own source were
-/// "unknown field" about fields written right there (measured 2026-09-25).
-///
-/// VISIBILITY IS THE LANGUAGE'S, D281 with D220 brought to it (2026-09-24):
-/// fields are public by default; a type-level bare `priv` makes them
-/// module-private; `priv(type)` and `priv(file)` narrow further. So a handed
-/// record of the SAME module shows its fields unless its `priv` is qualified,
-/// and one of ANOTHER module only when it is exported and carries no `priv` at
-/// all. Whatever this does not open stays "unknown field" -- a loud refusal,
-/// never a silent grant.
-///
-/// The FIRST handed declaration of a name owns its row (harvest's own rule), so
-/// only that declaration fills it; a row the file itself declares shadows the
-/// handed one and is left to the file's own pass.
-fn fill_handed_fields(file Node, decls []Node, foreign_cnt int, mut types []TypeDef, defs DefTable,
-                      mut fields FieldTable, mut tys Interner) -> () {
-    ro own_module = module_dotted(file)
-    mut seen = []bool.new()
-    while seen.len() < foreign_cnt { seen.push(false) }
-    mut tree = 0 - 1
-    for d in decls {
-        tree += 1
-        // NO MODULE IS NOBODY'S MODULE (D281, registry 221.1 #1521): a file with
-        // no module line and a handed std file read without one (std's
-        // `#prelude` files -- `collections/vec/core.nv`) both answer "", and
-        // the equality made `Vec`'s `priv` fields the moduleless file's own --
-        // `v.len` compiled where the oracle says E_FIELD_MODULE_PRIVATE.
-        ro same_module = own_module != "" && module_dotted(d) == own_module
-        // The `file_decls` walk, keeping what it drops: whether the declaration
-        // stood inside an `export` wrapper -- the other half of D281's rule.
-        for w in branch_children(d) {
-            if w.kind_of() != NodeKind.ExportDecl {
-                fill_one_handed(w, false, same_module, foreign_cnt, seen, types, defs, fields, tys,
-                                module_dotted(d), tree)
-                continue
-            }
-            for inner in branch_children(w) {
-                if inner.kind_of() == NodeKind.LeafNode { continue }
-                fill_one_handed(inner, true, same_module, foreign_cnt, seen, types, defs, fields, tys,
-                                module_dotted(d), tree)
-            }
-        }
-    }
-}
-
-/// One handed declaration of `fill_handed_fields`: a record whose row it owns,
-/// filled when D281 lets the compiled file see its fields.
-fn fill_one_handed(c Node, exported bool, same_module bool, foreign_cnt int, mut seen []bool,
-                   mut types []TypeDef, defs DefTable, mut fields FieldTable, mut tys Interner,
-                   home str, tree int) -> () {
-    if c.kind_of() != NodeKind.TypeDecl { return }
-    if shape_of_decl(c) != DeclShape.ShapeRecord { return }
-    ro nk = branch_children(c)
-    if nk.len() < 2 || nk[1].kind_of() != NodeKind.LeafNode { return }
-    ro tname = leaf_text(nk[1])
-    ro owner_id = defs.type_decl(tname) ?? no_decl()
-    if !is_decl(owner_id) { return }
-    ro at = raw_decl(owner_id)
-    // The file's own row shadows the handed one; its own pass fills it.
-    if at >= foreign_cnt { return }
-    if types[at].name != tname || types[at].kind != TypeKind.TkRecord { return }
-    if seen[at] { return }
-    seen[at] = true
-    ro marker_at = priv_marker_at(nk)
-    ro has_priv = marker_at >= 0
-    ro qualified = has_priv && marker_at + 1 < nk.len() && leaf_kind(nk[marker_at + 1]) == TokenKind.LParen
-    ro visible = if same_module { !qualified } else { exported && !has_priv }
-    // A field the file may NOT read is registered all the same, marked private
-    // to its module (274.11 E.10 step 4c-2): a body of that module this unit
-    // instantiates (`Vec[T] @len` reads `@len`) has every right to it. Until
-    // this day such a record got no fields at all, and its own body could not
-    // read them.
-    // WHERE a private field is visible from: its module for a bare `priv` (or a
-    // record not exported), its declaring FILE for a qualified one -- spelled
-    // `#<tree>`, which no module path can equal, so only a body read from that
-    // same tree reads it (`check.Checker @field_visible`).
-    // A FIELD's own `priv` (D220) hides it from another module; its `pub` lifts
-    // only a bare type-level `priv` of an exported record.
-    fill_record_fields(c, owner_id, tname, types, defs, fields, tys, !visible,
-                       if qualified { "#${tree}" } else { home },
-                       field_priv_hides: !same_module, pub_lifts: !same_module && exported && has_priv && !qualified)
-}
-
 /// Is the field written `consume f T` (D133)? The mode word heads the field,
 /// before its name -- among the leaves `field_name_at` steps over.
 fn field_marked_consume(fk []Node, name_at int) -> bool {
@@ -990,20 +898,4 @@ fn field_visibility_of(fk []Node) -> str {
     if fk.len() == 0 || fk[0].kind_of() != NodeKind.LeafNode { return "" }
     ro w = leaf_text(fk[0])
     if is_field_visibility_word(w) { w } else { "" }
-}
-
-/// Where a declaration's type-level privacy marker stands (D281), or -1 when it
-/// has none. A qualifier group -- `priv(type)`, `priv(file)` -- opens with the
-/// `(` right after it, which the caller asks of the next child. An int and not a
-/// pair: a tuple in a signature is a form novac does not compile yet, and this
-/// file is part of its own source.
-fn priv_marker_at(nk []Node) -> int {
-    for i in 0..nk.len() {
-        if nk[i].kind_of() == NodeKind.LeafNode && leaf_text(nk[i]) == PRIV_MARKER {
-            return i
-        } else {
-            // Not the marker: keep looking.
-        }
-    }
-    0 - 1
 }

@@ -8,19 +8,23 @@
 // a literal in the tree -- novac's tree is the parser's and nobody rewrites it,
 // so the answer is a TABLE beside it, handed in like the declarations and the
 // interop surface (architecture section 1: the compiler reads nothing itself).
-// Role: layer 3 -- the door's findings, keyed by the path literal's source text,
-//   read by check (`check/embed_call.nv`: the type and the D412 refusals) and by
-//   emit_c (the blob it prints).
+// Role: layer 3 -- the door's findings, keyed by the DIRECTORY of the file a
+//   call is written in and the path literal's source text, read by check
+//   (`check/embed_call.nv`: the type and the D412 refusals) and by emit_c (the
+//   blob it prints).
 // Used by: main.nv (the door fills it), pipeline.nv (hands it to `collect`),
 //   check/embed_call.nv, emit_c/emit_embed.nv.
 // Guarded by: novac/fixtures/embed (pos byte-for-byte with the oracle, neg for
 //   the refusals), check-novac-differential.sh.
 //
-// WHY THE LITERAL'S TEXT IS THE KEY: the checker knows the literal and not the
-// file it was written in (a handed body's tree carries no path). One literal in
-// two files that name DIFFERENT bytes -- the same relative path under two
-// directories -- is therefore one key with two answers, and the row says so
-// (`EMBED_AMBIGUOUS`): the checker refuses it by name instead of picking one.
+// WHY THE DIRECTORY AND THE LITERAL ARE THE KEY (D412: the path is resolved
+// relative to the file the call stands in). What a literal names depends on
+// that file's directory and on nothing else -- the project root is found from
+// the same directory -- so one (directory, literal) pair has exactly one
+// answer, and the same literal in two directories is two rows. The checker
+// knows the directory of every body it types: the compiled unit's is `home`
+// (a unit is the files of ONE directory, main.nv `same_dir`), a handed body's
+// is its declaration file's (`Checker @embed_home`).
 
 module novac.sem
 
@@ -35,14 +39,14 @@ export const EMBED_NOT_FOUND = 1
 export const EMBED_IS_A_DIR = 2
 /// The path leaves the package root (D412: `..` above the root, E_EMBED_OUTSIDE_PROJECT).
 export const EMBED_OUTSIDE = 3
-/// One literal, two files that disagree (see the header).
-export const EMBED_AMBIGUOUS = 4
 
-/// The door's findings, one row per distinct path literal. The rows are
+/// The door's findings, one row per (directory, path literal). The rows are
 /// parallel vectors of carried element types: the content of every row lives
 /// in ONE byte vector, addressed by `off`/`len`.
 export type EmbedTable {
-    lits []str /// per row: the literal's source text, quotes included -- the key
+    home str /// the directory of the compiled file(s), as the door wrote it: the key directory of the unit's own calls
+    dirs []str /// per row: the directory of the file the literal was written in -- half of the key
+    lits []str /// per row: the literal's source text, quotes included -- the other half
     codes []int /// per row: one of the EMBED_* answers above
     paths []str /// per row: the path as the door resolved it, for the messages
     off []int /// per row: where its bytes begin in `data`
@@ -52,73 +56,46 @@ export type EmbedTable {
 
 /// No literal seen yet.
 export fn EmbedTable.new() -> EmbedTable =>
-    { lits: []str.new(), codes: []int.new(), paths: []str.new(), off: []int.new(), len: []int.new(),
-      data: []u8.new() }
+    { home: "", dirs: []str.new(), lits: []str.new(), codes: []int.new(), paths: []str.new(),
+      off: []int.new(), len: []int.new(), data: []u8.new() }
 
-/// The row of a path literal, by its source text, or -1.
-export fn EmbedTable @find(lit str) -> int {
+/// The row of a path literal written in a file of directory `dir`, or -1.
+#realtime nogc
+export fn EmbedTable @find(dir str, lit str) -> int {
     for i in 0..@lits.len() {
-        if @lits[i] == lit { return i }
+        if @lits[i] == lit && @dirs[i] == dir { return i }
     }
     0 - 1
 }
 
-/// How many rows the table holds.
-export fn EmbedTable @count() -> int => @lits.len()
-
 /// The answer of row `i` (an EMBED_* constant).
+#realtime nogc
 export fn EmbedTable @code_at(i int) -> int => @codes[i]
 
 /// The resolved path of row `i`.
+#realtime nogc
 export fn EmbedTable @path_at(i int) -> str => @paths[i]
 
 /// The byte count of row `i`.
+#realtime nogc
 export fn EmbedTable @len_at(i int) -> int => @len[i]
 
 /// Byte `k` of row `i`.
+#realtime nogc
 export fn EmbedTable @byte_at(i int, k int) -> u8 => @data[@off[i] + k]
 
-/// Note what the door found for `lit` in one file. A literal seen before keeps
-/// its row when the new finding agrees with it (the same code and the same
-/// bytes), and becomes EMBED_AMBIGUOUS when it does not.
-export fn EmbedTable mut @note(lit str, code int, path str, bytes []u8) -> () {
-    ro i = @find(lit)
-    if i < 0 {
-        @lits.push(lit)
-        @codes.push(code)
-        @paths.push(path)
-        @off.push(@data.len())
-        @len.push(bytes.len())
-        @data.append(bytes)
-        return
-    } else {
-        // Seen before: the two findings are compared below.
-    }
-    if @codes[i] == code && @same_bytes(i, bytes) { return }
-    @codes[i] = EMBED_AMBIGUOUS
-    @paths[i] = "${@paths[i]}` and `${path}"
-}
-
-/// Does row `i` hold exactly `bytes`?
-fn EmbedTable @same_bytes(i int, bytes []u8) -> bool {
-    if @len[i] != bytes.len() { return false }
-    for k in 0..bytes.len() {
-        if @data[@off[i] + k] != bytes[k] { return false }
-    }
-    true
-}
-
-/// A copy of the table: the door's per-file tables start from the one the
-/// declarations filled, and a file's findings must not leak into the next.
-export fn EmbedTable @copy() -> EmbedTable {
-    mut t = EmbedTable.new()
-    t.lits.append(@lits)
-    t.codes.append(@codes)
-    t.paths.append(@paths)
-    t.off.append(@off)
-    t.len.append(@len)
-    t.data.append(@data)
-    t
+/// Note what the door found for `lit` in a file of directory `dir`. A pair seen
+/// before keeps its row: the same directory and the same literal name the same
+/// file (see the header), so a second finding can only repeat the first.
+export fn EmbedTable mut @note(dir str, lit str, code int, path str, bytes []u8) -> () {
+    if @find(dir, lit) >= 0 { return }
+    @dirs.push(dir)
+    @lits.push(lit)
+    @codes.push(code)
+    @paths.push(path)
+    @off.push(@data.len())
+    @len.push(bytes.len())
+    @data.append(bytes)
 }
 
 /// The path literals of a text's `embed("...")` calls, by their tokens: the
@@ -152,7 +129,11 @@ export fn embed_dir_of(path str) -> str {
     ro b = path.bytes()
     mut cut = 0 - 1
     for k in 0..b.len() {
-        if b[k] == 0x2F || b[k] == 0x5C { cut = k }
+        if b[k] == 0x2F || b[k] == 0x5C {
+            cut = k
+        } else {
+            // Not a separator: the last one seen stays the cut.
+        }
     }
     if cut < 0 { return "." }
     if cut == 0 { return "/" }

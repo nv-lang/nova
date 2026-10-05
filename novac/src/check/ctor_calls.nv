@@ -81,7 +81,7 @@ fn Checker mut @record_newtype_ctor(e Node, kids []Node, type_id TyId) -> () {
     } else {
         // A newtype: exactly one argument, of its representation.
     }
-    ro args = typed_free_key(kids, @ctx, @scope, @chan)
+    ro args = typed_free_key(kids, @ctx, @scope, @chan, @fres)
     if args.len() != 1 {
         @report_first_leaf_of(kids,
             "outside the subset: constructing a newtype takes exactly one argument -- its representation")
@@ -127,7 +127,7 @@ fn Checker mut @record_newtype_ctor(e Node, kids []Node, type_id TyId) -> () {
 /// `compiles_body` says so (the row is registered after `own_cnt` is fixed).
 fn Checker mut @record_paren_ctor(e Node, kids []Node, type_id TyId) -> () {
     ro cname = call_callee_text(kids)
-    ro key = typed_free_key(kids, @ctx, @scope, @chan)
+    ro key = typed_free_key(kids, @ctx, @scope, @chan, @fres)
     match @res.lookup(@ctx.fns, @ctx.tys, cname, key, CallForm.FreeCall) {
         FnFound(row) => {
             ro fd = @ctx.fns.rows[raw_row(row)]

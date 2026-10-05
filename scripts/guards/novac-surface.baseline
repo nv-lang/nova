@@ -314,7 +314,11 @@
 #   (`print`, the print statement without the newline) and `is_print_fn` (println or print) -- asked by
 #   check/typing.nv, emit_c/emit_expr.nv and sem/node_questions.nv: the two statements are one form.
 # merge of p274-carina-k1 (#1703) into main (integrator, 2026-10-03): main's number plus k1's growth over the merge base, equal to the guard's measure.
-builtins 82
+# 2026-10-05, task #2 (Carina measure 0.2, D412): builtins 82 -> 84: `EMBED_FN` (`embed`, the bare-name
+#   intrinsic, asked by check/embed_call.nv and by sem/embeds.nv's token scan) and `BYTE_TYPE` (`u8`,
+#   the element of the `[]u8` an `embed` is, asked by check/embed_call.nv); names the compiler must
+#   know live in builtins (P5).
+builtins 84
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -513,7 +517,11 @@ parse 1
 #   plus what the sweep branch exported after the train took its earlier version -- pipeline
 #   `UnitFile` and sem's D488 doors (see the sweep chronicle lines on p274-carina-sweep);
 #   the counts are the guard's on the merged tree.
-pipeline 14
+# 2026-10-05, task #2 (D412): pipeline 14 -> 16: `compile_with_embeds` and `compile_to_c_with_embeds`
+#   -- the door (main.nv) hands in what it read for the text's `embed` calls, beside the declarations
+#   and the interop surface; the old entries delegate to them with an empty table (a default value
+#   of a record type is not in the subset, so a second name and not a parameter default).
+pipeline 16
 # 2026-08-28 (274.4 step 3): the field root gets the same cut. sem 171 -> 169:
 # has_field and field_type moved OUT to resolve (FieldIndex); resolve 11 -> 15:
 # FieldIndex, build, has_field, field_type.
@@ -532,7 +540,10 @@ pipeline 14
 #   `args_misfit` with its two answers `ARGS_FIT` / `ARGS_UNBOUND` -- the question every
 #   lookup candidate passes (binding, type, mode), as a door of its own, so check's static
 #   call door asks it of a row that stood alone instead of taking that row unjudged.
-resolve 26
+# 2026-10-05, task #2 (D133, registry 1719): resolve 26 -> 27: `FieldIndex @field_is_owned` -- is a
+#   field declared `consume`; asked by check/type_of.nv (the P14 class door), through the name chain
+#   like `@field_is_ro` and not by a scan of the rows (resolve-discipline).
+resolve 27
 # sem 54 -> 56 (2026-08-18): наружу вышли ДВЕ двери параметра,
 # param_name_at и param_type_at. Имя и тип параметра больше не берутся
 # индексом pk[0]/pk[1]: индекс сдвигается, как только у параметра
@@ -1164,7 +1175,16 @@ resolve 26
 # 2026-10-03, cloud session p274-carina-k1 (part 12, registry 1703): sem 352 -> 353: `print_call_ends_line`
 #   (sem/node_questions.nv) -- `println` or `print`, asked by the lowering that ends the statement.
 # merge of p274-carina-k1 (#1703) into main (integrator, 2026-10-03): main's number plus k1's growth over the merge base, equal to the guard's measure.
-sem 364
+# 2026-10-05, task #2 (D412 `embed`): sem 364 -> 387. sem/embeds.nv, the door's findings: the four
+#   `EMBED_*` answers (main.nv writes them, check/embed_call.nv reads them), `EmbedTable` with `new`,
+#   `@find`, `@code_at`, `@path_at` (check), `@len_at`, `@byte_at` (emit_c/emit_embed.nv) and `@note`
+#   (main.nv); `embed_literals` (the token scan) and the path arithmetic `embed_dir_of` (main.nv and
+#   check/embed_call.nv `@embed_home`), `embed_normalize`, `embed_join`, `embed_inside`,
+#   `embed_is_absolute`, `embed_lit_path` (main.nv: moving them into the door was measured -- the
+#   root unit then instantiates std `Vec @pop`, whose `read_consume_at` novac does not compile).
+#   sem/channel.nv: `@record_embed`, `@record_embed_copy` (check) and `@embed_row_at`,
+#   `@embed_copies` (check and emit_c) -- the checker's decision on an `embed` call node.
+sem 387
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

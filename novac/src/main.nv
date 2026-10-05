@@ -122,7 +122,7 @@ fn compile_unit(u Unit, decls []Node, interop InteropTable, embeds EmbedTable) -
 }
 
 /// Read a module's files and compile them as one unit.
-fn check_unit(paths []str, decls []Node, interop InteropTable, decl_embeds EmbedTable) Fs -> Verdict {
+fn check_unit(paths []str, decls []Node, interop InteropTable, mut embeds EmbedTable) Fs -> Verdict {
     mut texts = []str.new()
     mut kept = []str.new()
     for p in paths {
@@ -143,10 +143,15 @@ fn check_unit(paths []str, decls []Node, interop InteropTable, decl_embeds Embed
     // rest of the module is still judgeable, and a door error for the batch
     // would hide every diagnostic of its peers.
     // Each file's `embed`s are read against ITS OWN path (D412: relative to the
-    // file the call stands in), before the texts become one unit.
-    mut embeds = decl_embeds.copy()
+    // file the call stands in), before the texts become one unit -- and noted
+    // under the unit's ONE directory, the key its bodies are typed with (the
+    // peers are of one directory, `same_dir`, whichever separator spells it).
+    // ONE TABLE for the whole run: a row is keyed by its directory, so one
+    // unit's findings cannot answer another's; only `home` is per compile.
+    ro home = if kept.len() > 0 { embed_dir_of(kept[0]) } else { "" }
+    embeds.home = home
     for i in 0..texts.len() {
-        embeds_of(texts[i], kept[i], embeds)
+        embeds_of(texts[i], kept[i], home, embeds)
     }
     if texts.len() < paths.len() {
         ro u = unit_of(kept, texts)
@@ -161,9 +166,10 @@ fn check_unit(paths []str, decls []Node, interop InteropTable, decl_embeds Embed
 /// itself (architecture section 1), so the files an `embed` names are read HERE
 /// and handed in as a table (sem/embeds.nv), like the declarations. Which
 /// literals a text names is `embed_literals`' answer; reading is this door's.
-fn embeds_of(text str, path str, mut table EmbedTable) Fs -> () {
+/// `key` is the directory the findings are noted under (sem/embeds.nv).
+fn embeds_of(text str, path str, key str, mut table EmbedTable) Fs -> () {
     for lit in embed_literals(text) {
-        note_embed(lit, path, table)
+        note_embed(lit, path, key, table)
     }
 }
 
@@ -172,7 +178,7 @@ fn embeds_of(text str, path str, mut table EmbedTable) Fs -> () {
 /// not, which the checker turns into the D412 code. Paths are compared
 /// CANONICAL, as the oracle compares them (`embed_resolve.rs`): a link or a
 /// `..` cannot lead out of the tree unseen.
-fn note_embed(lit str, path str, mut table EmbedTable) Fs -> () {
+fn note_embed(lit str, path str, key str, mut table EmbedTable) Fs -> () {
     ro rel = embed_lit_path(lit)
     // SILENT-OK: an escape or an interpolation -- the checker refuses the literal by name.
     if rel == "" { return }
@@ -181,31 +187,34 @@ fn note_embed(lit str, path str, mut table EmbedTable) Fs -> () {
     ro written = if embed_is_absolute(rel) { embed_normalize(rel) } else { embed_join(dir, rel) }
     // A file that is not there has no canonical path: that IS the finding.
     match canon_text(written) {
-        Some(full) => { note_embed_file(lit, full, project_root_of(canon_text(dir) ?? embed_normalize(dir)), table) }
-        None => { table.note(lit, EMBED_NOT_FOUND, written, []u8.new()) }
+        Some(full) => {
+            ro root = project_root_of(canon_text(dir) ?? embed_normalize(dir))
+            note_embed_file(key, lit, full, root, table)
+        }
+        None => { table.note(key, lit, EMBED_NOT_FOUND, written, []u8.new()) }
     }
 }
 
 /// The canonical `full`, in the oracle's order: a directory is refused by its
 /// own code (it reads as a listing, never as bytes), then a path outside the
 /// project `root`, then the file is read.
-fn note_embed_file(lit str, full str, root str, mut table EmbedTable) Fs -> () {
+fn note_embed_file(key str, lit str, full str, root str, mut table EmbedTable) Fs -> () {
     match read_dir(full.to_path()) {
         Ok(_) => {
-            table.note(lit, EMBED_IS_A_DIR, full, []u8.new())
+            table.note(key, lit, EMBED_IS_A_DIR, full, []u8.new())
             return
         }
         // nova:allow W_RESULT_DISCARDED -- not a directory: the file is read below
         Err(_) => {}
     }
     if !embed_inside(full, root) {
-        table.note(lit, EMBED_OUTSIDE, full, []u8.new())
+        table.note(key, lit, EMBED_OUTSIDE, full, []u8.new())
         return
     }
     match read(full.to_path()) {
-        Ok(bytes) => { table.note(lit, EMBED_READ, full, bytes) }
+        Ok(bytes) => { table.note(key, lit, EMBED_READ, full, bytes) }
         // nova:allow W_RESULT_DISCARDED -- an unreadable file IS the finding (E_EMBED_NOT_FOUND)
-        Err(_) => { table.note(lit, EMBED_NOT_FOUND, full, []u8.new()) }
+        Err(_) => { table.note(key, lit, EMBED_NOT_FOUND, full, []u8.new()) }
     }
 }
 
@@ -326,13 +335,14 @@ fn read_decls(dir str, mut names []str) Fs -> []str {
 
 /// Check one path (read + compile), printing diagnostics; the outcome is
 /// this file's contribution to the batch verdict.
-fn check_path(path str, decls []Node, interop InteropTable, decl_embeds EmbedTable) Fs -> Verdict {
+fn check_path(path str, decls []Node, interop InteropTable, mut embeds EmbedTable) Fs -> Verdict {
     match read(path.to_path()) {
         Ok(bytes) => {
             match bytes.to_str() {
                 Ok(text) => {
-                    mut embeds = decl_embeds.copy()
-                    embeds_of(text, path, embeds)
+                    ro home = embed_dir_of(path)
+                    embeds.home = home
+                    embeds_of(text, path, home, embeds)
                     compile_one(text, path, decls, interop, embeds)
                 }
                 Err(_) => {
@@ -499,9 +509,9 @@ fn run(a []str) -> int {
         interop.describe_decls(decl_names, decl_texts)
         // What the declarations' `embed`s name (D412), each against its own file:
         // a body handed from another file is compiled here too.
-        mut decl_embeds = EmbedTable.new()
+        mut embeds = EmbedTable.new()
         for i in 0..decl_texts.len() {
-            embeds_of(decl_texts[i], decl_names[i], decl_embeds)
+            embeds_of(decl_texts[i], decl_names[i], embed_dir_of(decl_names[i]), embeds)
         }
         ro argi = 2
         if argi >= a.len() {
@@ -523,7 +533,7 @@ fn run(a []str) -> int {
             ro unit_mode = env("NOVAC_UNIT") ?? ""
             if unit_mode == "" {
                 for path in a[argi..] {
-                    worst = worse(worst, check_path(path, decls, interop, decl_embeds))
+                    worst = worse(worst, check_path(path, decls, interop, embeds))
                 }
                 return worst.code()
             } else {
@@ -579,7 +589,7 @@ fn run(a []str) -> int {
                             // and both are reached again by the outer scan.
                         }
                     }
-                    worst = worse(worst, check_unit(group, decls, interop, decl_embeds))
+                    worst = worse(worst, check_unit(group, decls, interop, embeds))
                     i2 += 1
                 }
                 return worst.code()
@@ -590,8 +600,9 @@ fn run(a []str) -> int {
             Ok(bytes) => {
                 match bytes.to_str() {
                     Ok(text) => {
-                        mut embeds = decl_embeds.copy()
-                        embeds_of(text, path, embeds)
+                        ro home = embed_dir_of(path)
+                        embeds.home = home
+                        embeds_of(text, path, home, embeds)
                         return emit_one(text, path, decls, interop, embeds).code()
                     }
                     Err(_) => {

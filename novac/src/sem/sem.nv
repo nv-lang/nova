@@ -228,20 +228,6 @@ export fn FieldTable mut @add_private(owner_id TyId, name str, type_id TyId, ro_
     @rows.push(FieldDef { name, type_id, owner_id, ro_view, private: true, private_to: home, owned })
 }
 
-/// Is `owner_id`.`fname` declared `consume` (D133)? Tolerant like
-/// `FieldIndex.field_is_ro`: an unknown field answers false, and the field
-/// door names it. A walk over the rows and not the resolver's chain: the
-/// question is asked by the P14 class door (check/type_of.nv), which holds
-/// the registry and not the checker's index, and only for a field of an
-/// owned receiver.
-export fn field_is_owned(fields FieldTable, owner_id TyId, fname str) -> bool {
-    for i in 0..fields.rows.len() {
-        ro fd = fields.rows[i]
-        if fd.owner_id == owner_id && fd.name == fname { return fd.owned }
-    }
-    false
-}
-
 /// THE row of a sum's VARIANT in `Ctx.variant_rows` -- a space of its own since
 /// wave B2 (2026-08-22), and the last bare `int` in the arms of `DefTarget` and
 /// `CalleeTarget`.

@@ -20,9 +20,8 @@ import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
 import ../types.{no_ty, is_ty}
 import ../sem.{is_arg_node, arg_expr_of, branch_children, leaf_text, leaf_kind, interp_slices, slice_term_of}
-import ../sem.{EMBED_READ, EMBED_NOT_FOUND, EMBED_IS_A_DIR, EMBED_OUTSIDE, EMBED_AMBIGUOUS}
-import ../builtins.{SIZE_OF_FN, ASSERT_FN, EMBED_FN}
-import ../diag.{ice}
+import ../sem.{EMBED_READ, EMBED_NOT_FOUND, EMBED_IS_A_DIR, EMBED_OUTSIDE, embed_dir_of, raw_row}
+import ../builtins.{SIZE_OF_FN, ASSERT_FN, EMBED_FN, BYTE_TYPE}
 
 const EMBED_ARG_MSG = "the argument of `embed` is one string LITERAL, by position -- the path is resolved at compile time: `embed(\"relative/path\")` (E_EMBED_ARG_NOT_STR_LITERAL, D412)"
 
@@ -91,10 +90,11 @@ fn Checker mut @type_embed(e Node, kids []Node) -> () {
         return
     }
     // THE DOOR NOTES EVERY PLAIN LITERAL it finds (main.nv `embeds_of`, over the
-    // compiled texts and every declaration's): a plain literal with no row means
-    // the compile was handed no findings at all -- a broken door, not a program.
-    ro row = @ctx.embeds.find(lit)
-    if row < 0 { ice("check: an `embed` path literal the door did not read (sem/embeds.nv)") }
+    // compiled texts and every declaration's), under the directory of the file
+    // it stands in: a plain literal with no row means the compile was handed no
+    // findings at all -- a broken door, not a program.
+    ro row = @embed_row(@embed_home(), lit)
+    assert(row >= 0, "check: an `embed` path literal the door did not read (sem/embeds.nv)")
     ro code = @ctx.embeds.code_at(row)
     ro path = @ctx.embeds.path_at(row)
     if code == EMBED_NOT_FOUND {
@@ -109,12 +109,8 @@ fn Checker mut @type_embed(e Node, kids []Node) -> () {
         @reject_first_leaf_of(kids, "embedded file `${path}` escapes the package root -- paths above the package tree are forbidden (E_EMBED_OUTSIDE_PROJECT, D412)")
         return
     }
-    if code == EMBED_AMBIGUOUS {
-        @report_first_leaf_of(kids, "outside the subset: this path literal names different files in `${path}` -- novac keys `embed` by its literal text, and two files that disagree are told apart once a handed tree carries its path (E2-b2 multi-file)")
-        return
-    }
-    if code != EMBED_READ { ice("check: an `embed` finding with no known code (sem/embeds.nv)") }
-    ro u8_t = @ctx.ty_of_name("u8") ?? no_ty()
+    assert(code == EMBED_READ, "check: an `embed` finding with no known code (sem/embeds.nv)")
+    ro u8_t = @ctx.ty_of_name(BYTE_TYPE) ?? no_ty()
     ro vec_t = if is_ty(u8_t) { slice_term_of(u8_t, @ctx.types, @ctx.defs, @ctx.tys) } else { no_ty() }
     if !is_ty(vec_t) {
         @report_first_leaf_of(kids, no_slice_head_msg())
@@ -122,6 +118,19 @@ fn Checker mut @type_embed(e Node, kids []Node) -> () {
     }
     @chan.record_embed(e.id_of(), row)
     @record(e, vec_t)
+}
+
+/// The row the door noted for `lit` in a file of directory `home`, or -1.
+#realtime nogc
+fn Checker @embed_row(home str, lit str) -> int => @ctx.embeds.find(home, lit)
+
+/// The directory of the file the body being typed was written in -- the key of
+/// its `embed` rows (sem/embeds.nv). The compiled unit's own (`home`), or, for
+/// an instance of a body handed from another file (274.11 E.10 step 4c), that
+/// file's: a path in it is relative to IT (D412), not to the unit.
+fn Checker @embed_home() -> str {
+    if raw_row(@inst_row) < 0 || @ctx.fns.compiles_body(@inst_row) { return @ctx.embeds.home }
+    embed_dir_of(@ctx.interop.decl_name(@ctx.handed.tree_of(@inst_row)))
 }
 
 /// A `mut` or `consume` binding of an `embed` COPIES the blob into the heap

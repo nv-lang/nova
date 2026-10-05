@@ -181,7 +181,7 @@ fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
     } else {
         // A safe static method: callable anywhere.
     }
-    ro key = typed_args(kids, 3, @ctx, @scope, @chan)
+    ro key = typed_args(kids, 3, @ctx, @scope, @chan, @fres)
     // THE ROW IS JUDGED, chosen or alone (registry 1650): the arguments pass
     // the question every candidate of a lookup passes (`args_misfit`, the
     // resolver's own) -- binding, type, mode. One row of the name and arity
