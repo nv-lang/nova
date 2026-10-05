@@ -1,0 +1,34 @@
+module must_consume.pos_24
+
+// A MUST-CONSUME VALUE BUILT BY `??` MOVES WITH ITS OPERANDS (registry 221.1 #1716): the
+// payload of the left side or the fallback on the right lands in the `consume` binding,
+// so the fallback moves on the path where it runs -- an operand of a value that moves,
+// as `@flow_expr`'s last arm moves any operator's parts. Once `??` entered the
+// short-circuit door, its operands are walked there and must still move.
+// Behaviour byte-for-byte with the oracle.
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @release() -> () {
+    println("release ${@id}")
+}
+
+fn mk(n int) -> Option[Lk] {
+    if n > 1 { Some(Lk { id: n }) } else { None }
+}
+
+fn zero() -> Lk {
+    Lk { id: 0 }
+}
+
+fn run(n int) -> () {
+    consume x = mk(n) ?? zero()
+    x.release()
+}
+
+fn main() {
+    run(1)
+    run(2)
+}

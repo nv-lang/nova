@@ -1,0 +1,36 @@
+module must_consume.neg_44
+
+// A FALSE `match` GUARD THAT CONSUMED A VALUE HANDS THE NEXT ARM ITS STATE (registry
+// 221.1 #1716, the class of an operand that does not always run): the guard of the first
+// arm moves `t` into `eat` and is false, so the second arm runs with `t` already
+// consumed and consumes it AGAIN -- D131's "at most once". The next arm's entry is the
+// join of the match's entry and the state the false guard left, so `t` is consumed on
+// some paths only there. novac walked every arm from the match's entry and accepted the
+// form; the oracle accepts it too and commits `t` twice at run time (274.12, direction 1).
+
+// NOVAC_EXPECT is used after it was possibly consumed
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn eat(consume t Tx) -> int {
+    t.commit()
+    0
+}
+
+fn run(n int) -> () {
+    consume t = Tx { id: n }
+    match n {
+        1 if eat(t) == 7 => println("one")
+        _ => t.commit()
+    }
+}
+
+fn main() {
+    run(1)
+}

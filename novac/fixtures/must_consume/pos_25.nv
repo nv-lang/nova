@@ -1,0 +1,37 @@
+module must_consume.pos_25
+
+// AN AFFINE VALUE MOVED IN A FALSE `match` GUARD (registry 221.1 #1716, D432 s5): the
+// guard runs only where its pattern matched, and when it is false the next arm runs in
+// the state it left -- `t` released there, so its `@cleanup` is skipped behind the drop
+// flag; where the pattern did not match, the guard never ran and `t` is cleaned at the
+// end of its scope. Behaviour byte-for-byte with the oracle.
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) -> () {
+    println("cleanup ${@id}")
+}
+
+fn Lk consume @release() -> () {
+    println("release ${@id}")
+}
+
+fn eat(consume t Lk) -> int {
+    t.release()
+    0
+}
+
+fn run(n int) -> () {
+    consume t = Lk { id: n }
+    match n {
+        1 if eat(t) == 7 => println("one")
+        _ => println("other ${n}")
+    }
+}
+
+fn main() {
+    run(1)
+    run(2)
+}

@@ -668,7 +668,7 @@ fn Checker mut @flow_expr(e Node, mut fl ConsumeFlow, moved bool) -> () {
     } else if is_branch_kind(k) {
         @flow_branch(e, fl, moved)
     } else if is_short_circuit(e) {
-        @flow_short_circuit(e, fl)
+        @flow_short_circuit(e, fl, moved && owned)
     } else if k == NodeKind.RecordCtor {
         @flow_record_ctor(e, fl)
     } else if k == NodeKind.Block {

@@ -18,7 +18,7 @@
 module novac.check
 
 import ../tree.{Node, NodeKind, is_node}
-import ../sem.{branch_children, expr_leaf_name, ty_source_name, leaf_kind}
+import ../sem.{branch_children, expr_leaf_name, ty_source_name, leaf_kind, is_coalesce_return}
 import ../sem.{iflet_body_at, iflet_else_at, arm_body_at, loop_ctl_is_break}
 import ../builtins.{is_true_literal}
 import ../lex.{TokenKind}
@@ -107,11 +107,23 @@ fn Checker mut @flow_branch(n Node, mut fl ConsumeFlow, moved bool) -> () {
         }
         @flow_expr(kids[1], fl, owns)
         entry = flow_states_copy(fl.state)
+        // An arm is reached where the arms above it did not match -- or matched and
+        // their GUARD was false, after it ran: its state joins the next arm's entry
+        // (D131: a value a false guard consumed is not there for the next arm).
+        mut arm_entry = flow_states_copy(entry)
         for a in kids {
             if fl.stopped { return }
             if a.kind_of() != NodeKind.MatchArm { continue }
             ro ak = branch_children(a)
-            if !@flow_arm(a, true, ak[0], moved, entry, fl, joined, paths) { continue }
+            mut guard_out = []VarState.new()
+            ro came_out = @flow_arm(a, true, ak[0], moved, arm_entry, fl, joined, paths, guard_out)
+            if fl.stopped { return }
+            if guard_out.len() > 0 {
+                flow_join(arm_entry, guard_out, 1)
+            } else {
+                // No guard, or one that never comes out: nothing new reaches the next arm.
+            }
+            if !came_out { continue }
             paths += 1
         }
     } else {
@@ -127,14 +139,15 @@ fn Checker mut @flow_branch(n Node, mut fl ConsumeFlow, moved bool) -> () {
         // The then-arm binds what an `if`-let's pattern binds; a plain condition
         // binds nothing (its "pattern" is the condition, which owns nothing).
         ro pat = if k == NodeKind.IfLet { kids[1] } else { kids[0] }
-        if @flow_arm(kids[then_at], false, pat, moved, entry, fl, joined, paths) {
+        mut no_guard = []VarState.new()
+        if @flow_arm(kids[then_at], false, pat, moved, entry, fl, joined, paths, no_guard) {
             paths += 1
         } else {
             // The arm left early: it takes no part in the join.
         }
         if fl.stopped { return }
         if kids.len() > else_at {
-            if @flow_arm(kids[else_at], false, kids[0], moved, entry, fl, joined, paths) {
+            if @flow_arm(kids[else_at], false, kids[0], moved, entry, fl, joined, paths, no_guard) {
                 paths += 1
             } else {
                 // The arm left early: it takes no part in the join.
@@ -153,18 +166,61 @@ fn Checker mut @flow_branch(n Node, mut fl ConsumeFlow, moved bool) -> () {
 /// `else`, and its state joins the left side's. Walked as any operand until
 /// 2026-10-03, so a move on the right counted as made on every path: an affine value
 /// moved there was left uncleaned where the left side skipped it (found by the drop
-/// flag's probe -- the oracle cleaned it, novac did not).
-fn Checker mut @flow_short_circuit(e Node, mut fl ConsumeFlow) -> () {
+/// flag's probe -- the oracle cleaned it, novac did not). The operands of `??` are its
+/// value's parts, so when a must-consume value of it MOVES (`builds`) they move as any
+/// operator's parts do (`@flow_expr`'s last arm); `X ?? return R` leaves on its right
+/// (`@flow_coalesce_return`).
+fn Checker mut @flow_short_circuit(e Node, mut fl ConsumeFlow, builds bool) -> () {
     ro kids = branch_children(e)
-    @flow_expr(kids[0], fl, false)
+    @flow_operand(kids[0], fl, builds)
     if fl.stopped { return }
     ro entry = flow_states_copy(fl.state)
-    @flow_expr(kids[2], fl, false)
+    if is_coalesce_return(kids) {
+        @flow_coalesce_return(e, kids, fl)
+        // The path that went on is the left side's -- its value was there.
+        fl.state = entry
+        return
+    } else {
+        // A right side that yields a value: its path joins the left side's below.
+    }
+    @flow_operand(kids[2], fl, builds)
     if fl.stopped { return }
     mut joined = []VarState.new()
     flow_join(joined, fl.state, 0)
     flow_join(joined, entry, 1)
     fl.state = joined
+}
+
+/// One operand of a short-circuit form: a must-consume part moves when the form's
+/// value does (`builds`), as in `@flow_expr`'s last arm; anything else is used.
+fn Checker mut @flow_operand(c Node, mut fl ConsumeFlow, builds bool) -> () {
+    ro part_owned = @is_tracked_name(c, fl) ||
+                    (is_node(c.id_of()) && @is_owned_kind(fl.kinds, @chan.type_if_known(c.id_of())))
+    fl.forced = builds && part_owned
+    @flow_expr(c, fl, builds && part_owned)
+}
+
+/// `X ?? return R` (D86 amended 2026-09-01) on its empty path: an EXIT POINT, like
+/// the `?` it abbreviates (`@flow_try_exit`) -- `R` leaves first, as a `return`'s
+/// value does, then what is still owned is judged: a strictly linear value is D133's
+/// error, an affine one is cleaned there (D432), its call recorded at the `??` node,
+/// where the lowering's None branch places it. Walked as an ordinary operand until
+/// 2026-10-05, the `return` leaf iced the walk once `??` entered this door (#1716).
+fn Checker mut @flow_coalesce_return(e Node, kids []Node, mut fl ConsumeFlow) -> () {
+    if kids.len() > 3 {
+        fl.forced = true
+        @flow_expr(kids[3], fl, true)
+        if fl.stopped { return }
+    } else {
+        // A bare `?? return` of a unit body: no value leaves.
+    }
+    if fl.depth > 0 && flow_any_live(fl) {
+        @flow_stop(e, "left early by a `?? return` inside a `with`, a `spawn` or a handler", fl)
+    } else if fl.scope_ok && @chan.cleanup_first(fl.scope_call.id_of()) >= 0 {
+        @flow_stop(e, "left early by a `?? return` while a D476 temporary of the same call is alive", fl)
+    } else {
+        @flow_exit(fl, 0, e, "this `?? return`")
+    }
 }
 
 /// Is `e` an operator whose right operand runs on SOME paths only -- `&&`, `||` or
@@ -205,9 +261,12 @@ fn pattern_takes(p Node) -> bool {
 /// values bound before the branch joins `joined` (`paths` arms so far) and the
 /// answer is true; an arm that LEFT early answers false. `is_match_arm`: `a` is a
 /// whole `match` arm (its guard and body); otherwise it is an `if` arm's body
-/// itself. `moved`: the arm's value leaves with the branch's.
+/// itself. `moved`: the arm's value leaves with the branch's. `guard_out`: the state a
+/// guard leaves for the values bound before the branch -- the state its FALSE path
+/// carries to the next arm (left empty with no guard, or one that never comes out).
 fn Checker mut @flow_arm(a Node, is_match_arm bool, pat Node, moved bool, entry []VarState,
-                         mut fl ConsumeFlow, mut joined []VarState, paths int) -> bool {
+                         mut fl ConsumeFlow, mut joined []VarState, paths int,
+                         mut guard_out []VarState) -> bool {
     fl.state = flow_states_copy(entry)
     fl.dead = false
     ro mark = fl.owned_ty.len()
@@ -222,7 +281,10 @@ fn Checker mut @flow_arm(a Node, is_match_arm bool, pat Node, moved bool, entry 
         // A match arm: [pattern, guard?, `=>`, body, `,`?]; the guard runs on this path.
         ro ak = branch_children(a)
         for c in ak {
-            if c.kind_of() == NodeKind.Guard { @flow_child(c, fl) } else { continue }
+            if c.kind_of() != NodeKind.Guard { continue }
+            @flow_child(c, fl)
+            if fl.stopped || fl.dead { break }
+            @flow_guard_out(c, mark, fl, guard_out)
         }
         match arm_body_at(ak) {
             Some(b) => @flow_arm_body(ak[b], moved, fl)
@@ -245,6 +307,22 @@ fn Checker mut @flow_arm(a Node, is_match_arm bool, pat Node, moved bool, entry 
     if fl.stopped || !came_out { return false }
     flow_join(joined, fl.state, paths)
     true
+}
+
+/// A guard that came out: on its FALSE path the values bound before the branch go on to
+/// the next arm in the state it left (`guard_out`). A value the arm's own PATTERN bound
+/// and the guard moved would be bound again by the next arm from the same scrutinee --
+/// refused by name, since the track does not follow it back.
+fn Checker mut @flow_guard_out(g Node, mark int, mut fl ConsumeFlow, mut guard_out []VarState) -> () {
+    for i in mark..fl.owned_ty.len() {
+        if fl.state[i] != VarState.VsLive {
+            @flow_stop(g, "moved in a `match` guard while its own pattern bound it", fl)
+            return
+        } else {
+            continue
+        }
+    }
+    guard_out.append(flow_states_prefix(fl.state, mark))
 }
 
 /// The body node of a `match` arm -- its block, or its one expression.

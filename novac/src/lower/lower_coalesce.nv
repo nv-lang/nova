@@ -69,13 +69,16 @@ fn Lowerer mut @lower_coalesce(e Node) -> Local {
     // THE FALLBACK LIVES HERE, not above: its hoists and its effects belong
     // to the None branch alone -- that is the short circuit, in one place.
     // `X ?? return R` (D86 amended 2026-09-01) RETURNS from this branch, through
-    // the door a `return` statement takes; the result local is then never read.
+    // the door a `return` statement takes; the result local is then never read. It is an
+    // exit (D133): what the checker found owned there is cleaned before it leaves (D432),
+    // its calls recorded at this `??` node (check/consume_paths.nv `@flow_coalesce_return`).
     if is_coalesce_return(qk) {
         if qk.len() > 3 {
-            @lower_place(qk[3], @ir.ret_place())
+            @lower_exit_value(qk[3], @ir.ret_place(), e.id_of())
         } else {
             // A bare `?? return` of a unit (or `-> @`) body: the `Return`
             // terminator prints the unit, or the receiver (emit_flow.nv).
+            @lower_cleanups(e.id_of())
         }
         @ir.ret()
     } else {

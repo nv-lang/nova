@@ -1,0 +1,52 @@
+module must_consume.pos_23
+
+// `?? return` IS AN EXIT POINT (D133, registry 221.1 #1716): an affine value still owned
+// where the left side is `None` is cleaned before the `return` leaves (D432) -- its
+// `@cleanup` runs on that path only; a strictly linear value consumed before the `??`
+// leaves nothing to judge. novac iced on both once `??` entered the short-circuit door
+// (the `return` leaf walked as a value). Behaviour byte-for-byte with the oracle.
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) -> () {
+    println("cleanup ${@id}")
+}
+
+fn Lk consume @release() -> () {
+    println("release ${@id}")
+}
+
+type Tx consume {
+    id int
+}
+
+fn Tx consume @commit() -> () {
+    println("commit ${@id}")
+}
+
+fn mk(n int) -> Option[int] {
+    if n > 1 { Some(n) } else { None }
+}
+
+fn run(n int) -> int {
+    consume t = Lk { id: n }
+    ro v = mk(n) ?? return 0
+    t.release()
+    v
+}
+
+fn done_first(n int) -> int {
+    consume t = Tx { id: n }
+    t.commit()
+    ro v = mk(n) ?? return 10
+    v
+}
+
+fn main() {
+    println(run(1))
+    println(run(2))
+    println(done_first(1))
+    println(done_first(3))
+}
