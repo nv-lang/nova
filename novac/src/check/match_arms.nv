@@ -221,9 +221,23 @@ fn Checker mut @type_match(m Node) -> () {
     mut first_t = no_arm_type()
     mut first_at = -1 // WHICH child set `first_t`: a literal arm is compared to it
     mut ci = 0
+    // A BARE VARIANT ARM WAITS FOR ITS SIBLINGS when the position names no type
+    // (D489, its paragraph on a `match` arm and an `if` branch: with no written
+    // result type the arms are one type, and a literal arm -- a variant is one,
+    // as a record is, and takes its place's type -- takes the type of the arm
+    // that is a value). So
+    // `ro built = match op { Set => build()  Update(_) => None }` is an
+    // `Option[str]`: the `None` arm is typed after the others, expecting
+    // what they agreed on (`@sibling_expect`). Refused until registry #TBD.
+    ro waits = !is_ty(arm_expect)
+    mut waiting = []Node.new()
     for c in kids {
         ci += 1
         if c.kind_of() != NodeKind.MatchArm { continue }
+        if waits && @arm_is_bare_variant(c) {
+            waiting.push(c)
+            continue
+        }
         // EVERY arm starts from the position's expectation: an arm's body may
         // clear it on its way (a statement, an `if`), and the next arm must not
         // inherit that -- `Branch { .. } => None` after a block arm was refused.
@@ -236,6 +250,11 @@ fn Checker mut @type_match(m Node) -> () {
         } else {
             // The arm that set the type stays the one a literal arm is compared to.
         }
+    }
+    for c in waiting {
+        @value_expect = @sibling_expect(first_t)
+        ro first_arm = if first_at >= 0 { kids[first_at] } else { m }
+        first_t = @fold_arm_type(c, scr_t, first_t, before_arms, first_arm)
     }
     @value_expect = arm_expect
     if @out.len() > before_arms { return }

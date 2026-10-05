@@ -122,6 +122,7 @@ export type TypeDef value {
     rows TypeRows /// WHICH rows this declaration owns and in WHICH space -- one field, because the space and the range are one fact (see TypeRows)
     tparam_cnt int /// how many type parameters the declaration binds; 0 = not generic. A FIELD and not a derivation: a handed-over declaration's NODE is not retained after collect, so the count cannot be re-read -- and it is the one fact of the generics a HEAD needs (step B1)
     gate_off int /// First protocol name of THIS declaration's `#impl(...)` gate in `Ctx.gates`; 0 with gate_cnt 0 = no gate
+    must_consume bool /// PER ROW: the declaration is written `type X consume` (D133) -- a value of it carries an obligation, and a field of it is marked `consume`. A FIELD for the reason `share` is: a HANDED declaration's node is gone after collect, and the field-marker judge asks of std's `StringBuilder` (registry #TBD)
     share bool /// PER ROW: `#share` vouches the type mut-alias-safe (06-concurrency.md:7348): a `mut` binding of it may be captured by a `spawn` body. A FIELD for the reason `tparam_cnt` is: the declaration's node is gone after collect
     copy_pinned bool /// PER ROW: a `value` record that must not be COPIED -- `#no_copy`, `#zero_on_move`, `#share` above it, or a `consume` type: its `ro @` receiver crosses by pointer at any size (D488; the oracle's `recv_pinned_c`). A FIELD for the reason `share` is
     gate_cnt int /// How many protocols the gate lists. A LIST and not a bool, deliberately: D186 spells `#impl(A + B + C)`, and the protocols may be the program's OWN. Which of them this compiler READS is a question of coverage and moves with the subset; how many a type may opt into is a question of the LANGUAGE, and a bit would have answered it wrongly in the representation itself. A FIELD and not a derivation for the same reason as `tparam_cnt`: the declaration's NODE is gone after collect, and the slot judge holds a TyId, not a node
@@ -195,6 +196,7 @@ export type FieldDef value {
     ro_view bool /// declared `f ro T` (D176): read through, never written through (registry 1458)
     private bool /// a field of a HANDED record its module keeps private (D281: `priv`, or a record not exported): readable only from inside `private_to` (274.11 E.10 step 4c-2 -- std's `Vec[T]` bodies read `@data`, the program may not)
     private_to str /// the module path (dotted) a private field is visible from; "" for a module with no `module` line
+    owned bool /// declared `consume f T` (D133): the record holds the field's obligation, and a `consume` method of the record moves it out ("Field-aware flow", 02-types.md) -- registry #TBD
 }
 
 /// Record-field registry: rows and their payload, grouped per type via
@@ -214,15 +216,30 @@ export fn FieldTable.new() -> FieldTable =>
 
 /// Register one field of `owner_id`. The same-name chain is not grown here:
 /// the resolver builds its index FROM these rows (274.4 step 3).
-export fn FieldTable mut @add(owner_id TyId, name str, type_id TyId, ro_view bool = false) -> () {
-    @rows.push(FieldDef { name, type_id, owner_id, ro_view, private: false, private_to: "" })
+export fn FieldTable mut @add(owner_id TyId, name str, type_id TyId, ro_view bool = false, owned bool = false) -> () {
+    @rows.push(FieldDef { name, type_id, owner_id, ro_view, private: false, private_to: "", owned })
 }
 
 /// A field of a handed record that its module keeps PRIVATE: registered, so the
 /// module's own bodies a unit instantiates can read it, and visible from
 /// `home` only (274.11 E.10 step 4c-2).
-export fn FieldTable mut @add_private(owner_id TyId, name str, type_id TyId, ro_view bool, home str) -> () {
-    @rows.push(FieldDef { name, type_id, owner_id, ro_view, private: true, private_to: home })
+export fn FieldTable mut @add_private(owner_id TyId, name str, type_id TyId, ro_view bool, home str,
+                                      owned bool = false) -> () {
+    @rows.push(FieldDef { name, type_id, owner_id, ro_view, private: true, private_to: home, owned })
+}
+
+/// Is `owner_id`.`fname` declared `consume` (D133)? Tolerant like
+/// `FieldIndex.field_is_ro`: an unknown field answers false, and the field
+/// door names it. A walk over the rows and not the resolver's chain: the
+/// question is asked by the P14 class door (check/type_of.nv), which holds
+/// the registry and not the checker's index, and only for a field of an
+/// owned receiver.
+export fn field_is_owned(fields FieldTable, owner_id TyId, fname str) -> bool {
+    for i in 0..fields.rows.len() {
+        ro fd = fields.rows[i]
+        if fd.owner_id == owner_id && fd.name == fname { return fd.owned }
+    }
+    false
 }
 
 /// THE row of a sum's VARIANT in `Ctx.variant_rows` -- a space of its own since
@@ -328,6 +345,7 @@ export type Ctx {
     gates []str /// Protocol names written in `#impl(...)` gates, grouped per declaration via TypeDef.gate_off/gate_cnt. NAMES and not ids on purpose: a protocol may be declared after the type that opts into it, or live in std, so resolving here would impose an order the language does not have -- and the unknown-protocol judgement (D186 `E_UNKNOWN_PROTOCOL`) is a separate question this subset does not answer yet
     interop InteropTable /// THE interop surface: C identifiers the linked shell carries, read from the embedded shell once per process (sub-plan L).
     handed HandedBodies /// where each HANDED callable's body lives: its declaration tree and `FnDecl` node (274.11 E.10 step 4a)
+    embeds EmbedTable /// what the door read for each `embed("path")` (D412): HANDED like `interop`, never read here (sem/embeds.nv)
 }
 
 /// Seed one pre-declared type: the registry row and the def row are born
@@ -340,7 +358,7 @@ fn seed(mut types []TypeDef, mut defs DefTable, mut tys Interner, name str, ordi
                          // gate: D422 has every primitive family implement Display itself.
                          ty_id, name, tparam_cnt: 0, gate_off: 0, gate_cnt: 0,
                          copy_pinned: false,
-                         share: false, rows: TypeRows.NoRows })
+                         must_consume: false, share: false, rows: TypeRows.NoRows })
     defs.add(name, DefTarget.DefType(id))
     id
 }
@@ -379,7 +397,7 @@ fn seed_effect_ctor(mut types []TypeDef, mut defs DefTable, mut tys Interner) ->
     types.push(TypeDef { kind: TypeKind.TkRecord, shape: RecordShape.Record,
                          tparam_cnt: 1, ty_id, name: HANDLER_CTOR, gate_off: 0, gate_cnt: 0,
                          copy_pinned: false,
-                         share: false, rows: TypeRows.NoRows })
+                         must_consume: false, share: false, rows: TypeRows.NoRows })
     defs.add(HANDLER_CTOR, DefTarget.DefType(id))
     id
 }

@@ -1,0 +1,9 @@
+module embed.neg_3
+
+// NOVAC_EXPECT E_EMBED_PATH_BACKSLASH
+// ONE seeded cause: a backslash in the path literal -- a path is written with `/` on every OS (D412 amendment).
+fn data() -> []u8 => embed("sub\\pos_1.txt") // the one refusal: line 5
+
+fn main() {
+    println(data().len())
+}

@@ -1,0 +1,21 @@
+module consume_field_move.neg_1
+
+// NOVAC_EXPECT needs ownership
+// ONE seeded cause: the same `consume` field moved out of a receiver that is
+// NOT owned -- `@peek` takes `@` as a view, and a view's field hands nothing
+// over (P14; D133's view table: a consume method through a view is refused).
+// Only a `consume` receiver owns its `consume` fields.
+type Pad consume {
+    n int
+    consume body StringBuilder
+}
+
+fn Pad @peek() -> str => @body.into_str() // the one refusal: line 13
+
+fn Pad consume @finish() -> str => @body.into_str()
+
+fn main() {
+    consume p = Pad { n: 0, body: StringBuilder.new(cap: 8) }
+    println(p.peek())
+    println(p.finish())
+}

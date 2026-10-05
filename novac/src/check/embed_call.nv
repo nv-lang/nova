@@ -1,0 +1,142 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `include_bytes!` (`expand_include_bytes`: the argument is a
+// string LITERAL, the path is the calling file's, a missing file is a compile
+// error) and Zig `Sema.zirEmbedFile` (`@embedFile`: its own error per failure). NOT taken: reading
+// the file here -- the door read it (main.nv) and the answer arrives as
+// `Ctx.embeds` (sem/embeds.nv); this judge only reads that table.
+// Role: the compile-time intrinsic `embed("relative/path")` -> `[]u8` (D412):
+// the argument's form, the D412 refusals by their codes, the type, and the
+// note on the call node the emitter prints the blob from; and, at a `mut` or
+// `consume` binding, the note that the blob is COPIED there (D412
+// "materialisation": a `ro` binding is a view of the static bytes).
+// Used by: check/calls.nv (`@type_free_call` asks `@typed_as_intrinsic`, the
+//   one door of the bare-name intrinsics), check/binds.nv (`@type_bind`).
+// Guarded by: novac/fixtures/embed (pos byte-for-byte with the oracle, neg for
+//   each refusal), check-novac-differential.sh.
+
+module novac.check
+
+import ../tree.{Node, NodeKind}
+import ../lex.{TokenKind}
+import ../types.{no_ty, is_ty}
+import ../sem.{is_arg_node, arg_expr_of, branch_children, leaf_text, leaf_kind, interp_slices, slice_term_of}
+import ../sem.{EMBED_READ, EMBED_NOT_FOUND, EMBED_IS_A_DIR, EMBED_OUTSIDE, EMBED_AMBIGUOUS}
+import ../builtins.{SIZE_OF_FN, ASSERT_FN, EMBED_FN}
+import ../diag.{ice}
+
+const EMBED_ARG_MSG = "the argument of `embed` is one string LITERAL, by position -- the path is resolved at compile time: `embed(\"relative/path\")` (E_EMBED_ARG_NOT_STR_LITERAL, D412)"
+
+const EMBED_BACKSLASH_MSG = "the path argument of `embed` uses POSIX `/` separators, not `\\` -- a path is portable source, whatever the compiling OS (E_EMBED_PATH_BACKSLASH, D412 amendment)"
+
+/// The language's INTRINSICS called by bare name, each through its own door --
+/// true when the call was one (typed, or refused by that door). A program's own
+/// declaration of the name outranks every intrinsic (the rule `size_of` set).
+///
+/// `embed("path")` (D412): the door read the file it names, and its judge reads
+/// the door's finding (below). `size_of[T]()` (274.11 E.10 step 4c-2: std's
+/// `alloc_buf[T]`): its type argument is recorded, its value is an `int`.
+/// `assert(cond[, msg])` (D81): the prelude declares it `extern "nova"`, so no
+/// row of anyone's has a body -- its door types it and notes the condition's
+/// text and line for the emitter.
+fn Checker mut @typed_as_intrinsic(e Node, kids []Node, cname str) -> bool {
+    if @ctx.defs.def_of(cname).is_some() { return false }
+    if cname == EMBED_FN {
+        @type_embed(e, kids)
+        return true
+    }
+    if cname == SIZE_OF_FN {
+        @type_size_of(e, kids)
+        return true
+    }
+    if cname == ASSERT_FN {
+        @type_assert(e, kids)
+        return true
+    }
+    false
+}
+
+/// `embed("path")`: the argument's form, the door's finding for it, and the
+/// type `[]u8` with the row noted on the call for the emitter.
+fn Checker mut @type_embed(e Node, kids []Node) -> () {
+    mut n = 0
+    mut arg = e
+    mut at = 0
+    for c in kids {
+        if at >= 1 && is_arg_node(c) {
+            n += 1
+            arg = c
+        } else {
+            // The callee's name, or punctuation: not an argument.
+        }
+        at += 1
+    }
+    if n != 1 || has_named_arg(kids) {
+        @reject_first_leaf_of(kids, EMBED_ARG_MSG)
+        return
+    }
+    ro a = arg_expr_of(arg)
+    if a.kind_of() != NodeKind.Lit {
+        @reject_first_leaf_of(kids, EMBED_ARG_MSG)
+        return
+    }
+    ro lk = branch_children(a)
+    ro t = lk[lk.len() - 1]
+    if leaf_kind(t) != TokenKind.StrLit || interp_slices(leaf_text(t)).len() >= 2 {
+        @reject_first_leaf_of(kids, EMBED_ARG_MSG)
+        return
+    }
+    ro lit = leaf_text(t)
+    if lit.contains("\\") {
+        @reject_first_leaf_of(kids, EMBED_BACKSLASH_MSG)
+        return
+    }
+    // THE DOOR NOTES EVERY PLAIN LITERAL it finds (main.nv `embeds_of`, over the
+    // compiled texts and every declaration's): a plain literal with no row means
+    // the compile was handed no findings at all -- a broken door, not a program.
+    ro row = @ctx.embeds.find(lit)
+    if row < 0 { ice("check: an `embed` path literal the door did not read (sem/embeds.nv)") }
+    ro code = @ctx.embeds.code_at(row)
+    ro path = @ctx.embeds.path_at(row)
+    if code == EMBED_NOT_FOUND {
+        @reject_first_leaf_of(kids, "embedded file not found: `${path}` (E_EMBED_NOT_FOUND, D412)")
+        return
+    }
+    if code == EMBED_IS_A_DIR {
+        @reject_first_leaf_of(kids, "`${path}` is a directory, not a file -- use `embed_dir(...)` instead of `embed(...)` (E_EMBED_IS_A_DIR, D412 amendment)")
+        return
+    }
+    if code == EMBED_OUTSIDE {
+        @reject_first_leaf_of(kids, "embedded file `${path}` escapes the package root -- paths above the package tree are forbidden (E_EMBED_OUTSIDE_PROJECT, D412)")
+        return
+    }
+    if code == EMBED_AMBIGUOUS {
+        @report_first_leaf_of(kids, "outside the subset: this path literal names different files in `${path}` -- novac keys `embed` by its literal text, and two files that disagree are told apart once a handed tree carries its path (E2-b2 multi-file)")
+        return
+    }
+    if code != EMBED_READ { ice("check: an `embed` finding with no known code (sem/embeds.nv)") }
+    ro u8_t = @ctx.ty_of_name("u8") ?? no_ty()
+    ro vec_t = if is_ty(u8_t) { slice_term_of(u8_t, @ctx.types, @ctx.defs, @ctx.tys) } else { no_ty() }
+    if !is_ty(vec_t) {
+        @report_first_leaf_of(kids, no_slice_head_msg())
+        return
+    }
+    @chan.record_embed(e.id_of(), row)
+    @record(e, vec_t)
+}
+
+/// A `mut` or `consume` binding of an `embed` COPIES the blob into the heap
+/// (D412 "materialisation"): the value is then an ordinary writable vector,
+/// while a `ro` binding is a view of the static bytes, which nothing may write.
+fn Checker mut @note_embed_copy(st Node) -> () {
+    ro kids = branch_children(st)
+    if kids.len() < 2 { return }
+    ro init = kids[kids.len() - 1]
+    if init.kind_of() != NodeKind.Call || @chan.embed_row_at(init.id_of()) < 0 { return }
+    if kids[0].kind_of() != NodeKind.LeafNode { return }
+    ro mode = leaf_kind(kids[0])
+    if mode == TokenKind.KwMut || mode == TokenKind.KwConsume {
+        @chan.record_embed_copy(init.id_of())
+    } else {
+        // A `ro` binding: the view of the static blob.
+    }
+}

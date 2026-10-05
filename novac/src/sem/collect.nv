@@ -253,6 +253,8 @@ fn register_sum_variants(c Node, mut types []TypeDef, mut defs DefTable,
                                           gate_cnt: types[raw_decl(sum_decl)].gate_cnt,
                                           ty_id: sum_ty, name: sname,
                                           copy_pinned: types[raw_decl(sum_decl)].copy_pinned,
+
+                                          must_consume: types[raw_decl(sum_decl)].must_consume,
                                           share: types[raw_decl(sum_decl)].share,
                                           rows: TypeRows.VariantRows(VariantRow(off), vcnt) }
 }
@@ -441,6 +443,8 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                                  // the checker's question, and the variant tag is separate work.
                                  gate_off: gates.len(), gate_cnt: push_gates(gates, decls_of_file, c.id_of()),
                                  copy_pinned: false,
+
+                                 must_consume: declared_consume(c),
                                  share: share_marked_before(decls_of_file, c.id_of()), rows: TypeRows.NoRows })
             continue
         }
@@ -470,7 +474,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                                  ty_id: tys.record(d), name: tname,
                                  gate_off: gates.len(), gate_cnt: push_gates(gates, decls_of_file, c.id_of()),
                                  copy_pinned: false,
-                                 share: false, rows: TypeRows.NoRows })
+                                 must_consume: false, share: false, rows: TypeRows.NoRows })
             continue
         }
         match shape_of_decl(c) {
@@ -510,6 +514,8 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                                      // positional and gets one answer from the same door.
                                      gate_off: gates.len(), gate_cnt: push_gates(gates, decls_of_file, c.id_of()),
                                      copy_pinned: copy_pinned_before(decls_of_file, c),
+
+                                     must_consume: declared_consume(c),
                                      share: share_marked_before(decls_of_file, c.id_of()), rows: TypeRows.NoRows })
             }
             ShapeNewtype => {
@@ -524,6 +530,8 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                                      // is not reading.
                                      gate_off: gates.len(), gate_cnt: push_gates(gates, decls_of_file, c.id_of()),
                                      copy_pinned: false,
+
+                                     must_consume: false,
                                      share: share_marked_before(decls_of_file, c.id_of()), rows: TypeRows.NoRows })
             }
             ShapeAlias => {
@@ -757,7 +765,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
           payload_names, gates,
           fn_decl_rows, fns: own,
           module_c: module_path_c(file), builtin_names, coerces, protos, effects: fx, consts,
-          interop: InteropTable.new(), handed: HandedBodies.new() }
+          interop: InteropTable.new(), handed: HandedBodies.new(), embeds: EmbedTable.new() }
 }
 
 /// Fill ONE record declaration's field rows -- the door the file's own records
@@ -805,10 +813,14 @@ fn fill_record_fields(c Node, owner_id DeclId, tname str, mut types []TypeDef, d
         } else {
             private
         }
+        // THE `consume` MARKER (D133) heads the field like any mode word: the
+        // record owns the field's obligation, and the P14 class door reads it.
+        ro owned = field_marked_consume(fk, fnat)
+        ro ro_view = is_leaf_kind(fk[ftat], TokenKind.KwRo)
         if hidden {
-            fields.add_private(mine.ty_id, leaf_text(fk[fnat]), ft, is_leaf_kind(fk[ftat], TokenKind.KwRo), private_to)
+            fields.add_private(mine.ty_id, leaf_text(fk[fnat]), ft, ro_view, private_to, owned: owned)
         } else {
-            fields.add(mine.ty_id, leaf_text(fk[fnat]), ft, ro_view: is_leaf_kind(fk[ftat], TokenKind.KwRo))
+            fields.add(mine.ty_id, leaf_text(fk[fnat]), ft, ro_view: ro_view, owned: owned)
         }
         cnt += 1
     }
@@ -820,6 +832,8 @@ fn fill_record_fields(c Node, owner_id DeclId, tname str, mut types []TypeDef, d
                                           gate_off: mine.gate_off, gate_cnt: mine.gate_cnt,
                                           ty_id: mine.ty_id, name: tname,
                                           copy_pinned: mine.copy_pinned,
+
+                                          must_consume: mine.must_consume,
                                           share: mine.share, rows: TypeRows.FieldRows(FieldRow(off), cnt) }
 }
 
@@ -959,6 +973,15 @@ fn fill_one_handed(c Node, exported bool, same_module bool, foreign_cnt int, mut
     fill_record_fields(c, owner_id, tname, types, defs, fields, tys, !visible,
                        if qualified { "#${tree}" } else { home },
                        field_priv_hides: !same_module, pub_lifts: !same_module && exported && has_priv && !qualified)
+}
+
+/// Is the field written `consume f T` (D133)? The mode word heads the field,
+/// before its name -- among the leaves `field_name_at` steps over.
+fn field_marked_consume(fk []Node, name_at int) -> bool {
+    for i in 0..name_at {
+        if is_leaf_kind(fk[i], TokenKind.KwConsume) { return true }
+    }
+    false
 }
 
 /// The VISIBILITY modifier a field is written with (D220) -- `priv`, `pub` --

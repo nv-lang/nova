@@ -1,0 +1,21 @@
+module embed.pos_1
+
+// `embed("path")` (D412): the bytes of a file beside this one, read at compile
+// time, as a `[]u8` -- a VIEW of the static blob at a tail or a `ro` binding,
+// a heap COPY at a `mut` binding, which may then be written and grown while the
+// view keeps the file's bytes. The form of novac's own `shell_template()`
+// (emit_c/shell.nv). Until registry #TBD novac refused `embed` as a callable it
+// does not know. The data file has no line end, so its bytes are the same on
+// every checkout.
+fn greeting() -> []u8 => embed("pos_1.txt")
+
+fn main() {
+    ro g = greeting()
+    println(g.len())
+    println(g.to_str() ?? "?")
+    mut m = embed("pos_1.txt")
+    m[0] = 0x4A
+    m.push(0x21)
+    println(m.to_str() ?? "?")
+    println(g.to_str() ?? "?")
+}
