@@ -16,6 +16,8 @@
       "Bash(git -C * cat-file *)",
       "Bash(git -C * check-ignore *)",
       "Bash(git -C * merge --no-ff *)",
+      "Bash(git -C * merge --ff-only *)",
+      "Bash(git -C * checkout -b * main)",
       "Bash(git -C * merge main)",
       "Bash(git -C * merge --abort)",
       "Bash(git -C * push origin *:integrate)",
