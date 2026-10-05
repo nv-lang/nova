@@ -107,8 +107,11 @@ fn Lowerer mut @lower_try(e Node) -> Local {
     @ir.take_payload(lr, lo)
     @ir.begin_else(c)
     // The empty path is an exit (D85: `return None`): what the checker found owned
-    // there is cleaned before it leaves (D432).
-    @lower_cleanups(e.id_of())
+    // there is cleaned before it leaves (D432) -- with `Success`, D314's row for `?`
+    // over an `Option` (amended 2026-10-03): `None` is "no value", not an error. The
+    // `Err` exit of `?` over a `Result` would hand `Failure(e)`; it is outside the
+    // subset (try_rules.nv, E2-b3; registry 221.1 #1707).
+    @lower_cleanups(e.id_of(), ExitOutcome.NormalExit)
     @ir.set_none(@ir.ret_place())
     @ir.ret()
     @ir.end_if(c)

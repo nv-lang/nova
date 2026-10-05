@@ -78,6 +78,9 @@ fn Checker mut @type_try(e Node) -> () {
         @reject_first_leaf_of(tk, TRY_RESULT_IN_OPTION_MSG)
     } else if !op_is_opt {
         // The Err branch builds this body's `Result` -- E2-b3 (literal_rules.nv).
+        // Lifting it owes D314's `Failure(e)` to the cleanups at that exit
+        // (`ExitOutcome.FailureExit`, registry 221.1 #1707): the obligation is
+        // fixtures/cleanup_try_outcome/neg_1.nv, which reddens the day this goes.
         @report_first_leaf_of(tk, TRY_RESULT_MSG)
     } else {
         // An Option in a body returning an Option: the language's form, compiled.
