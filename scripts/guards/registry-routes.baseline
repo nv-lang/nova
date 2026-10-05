@@ -1524,7 +1524,9 @@ no_caveat=0
 # 1723 (Carina: the consume flow tracks only the file's own must-consume types), 1724 (oracle: a bare
 # variant with no type source is accepted, D55 E_VARIANT_CTOR_UNTYPED), 1727 (oracle: a consume field
 # consumed through a view receiver is accepted, D133).
-blockers=102
+# 2026-10-05, task #2 (acceptance round 3): 102 -> 103, row 1735 (oracle: `nova build` accepts a D246
+# ro-launder `nova test` refuses, K2, blocks the tag: the build path ships the violation), routed 274.10.
+blockers=103
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed

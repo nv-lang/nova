@@ -1548,8 +1548,9 @@
 # 2026-10-05, task #2: rows -> 1662, max -> 1727 (row 1727 the oracle accepts a consume field consumed through a view receiver, D133; numbered by the integrator), and 1725-1726 declared a gap: the numbers are GIVEN to task #1, the rows live in ITS branch. Removal: when both branches meet, drop 1725-1726 from gaps= -- a gap left after the merge lets a real row be lost.
 # 2026-10-05, task #2: rows -> 1663, max -> 1729 (row 1729 the oracle checks `{ None }` in a match arm and its codegen reads it as an anonymous record; numbered by the integrator), and 1728 declared a gap: the number is GIVEN to task #3, the row lives in ITS branch. Removal: drop 1728 from gaps= when the branches meet.
 # 2026-10-05, task #2 (acceptance round 2): rows -> 1664, max -> 1734 (row 1734 a unit with no `main` types no instance of a generic body it calls -- mono's only root is the entry; numbered by the integrator), and 1730-1733 declared a gap: 1730-1732 are numbers of main this branch has not merged (main's max is 1732 per the integrator), 1733 is GIVEN to task #8. Removal: drop 1730-1733 from gaps= when this branch merges main.
-rows=1664
-max=1734
+# 2026-10-05, task #2 (acceptance round 3): rows -> 1665, max -> 1735 (row 1735 the oracle's `nova build` accepts `mut x = <ro parameter>` of a heap type that `nova test` of the same source refuses E_READONLY_COERCE; numbered by the integrator).
+rows=1665
+max=1735
 rows=1611
 max=1693
 rows=1590
