@@ -465,13 +465,17 @@ fn Emitter mut @print_stmt(s Stmt) -> () {
 }
 
 /// One auto-`@cleanup` call (D432): the type's `@cleanup` on the value still owned,
-/// with the exit's outcome -- every exit the subset reaches is a `Success`: no
-/// unwinding (the checker refuses it), and a `?` is a `return` (D85), `Success` by
-/// D314 s2's row for `return v` -- as the oracle passes it. The spec also says
-/// `Failure(e)` for "`?` propagation" (03-syntax.md:9503, D188's block form); the
-/// contradiction went to the owner (report 16 of p274-carina-strarm).
+/// with the outcome THE LOWERING DECIDED for its exit (`ExitOutcome`, D314's table,
+/// amended 2026-10-03) -- printed here, not chosen. `Failure(e)` needs `e` boxed into
+/// `any`, which novac does not build yet; its one source, `?` over a `Result`, is
+/// outside the subset (E2-b3), so it stops here loudly rather than passing `Success`
+/// (registry 221.1 #1707).
 fn Emitter mut @emit_cleanup(c CleanupCall) -> () {
     ro target = if raw_local(c.local) >= 0 { @lo.ir.decl_of(c.local).name } else { c.name }
+    match c.outcome {
+        NormalExit => {}
+        FailureExit(_) => ice("emit: an auto-cleanup at a `Failure(e)` exit reached the emitter -- boxing `e` into `any` is not built (E2-b3, registry 221.1 #1707)")
+    }
     ro outcome_t = @ctx.ty_of_name(SCOPE_OUTCOME_TYPE) ?? no_ty()
     ro success = variant_named_in(@ctx, SCOPE_OUTCOME_SUCCESS, outcome_t)
     assert(raw_vrow(success) >= 0, "emit: an auto-cleanup reached the emitter with no `ScopeOutcome.Success` to pass")

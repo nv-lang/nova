@@ -4,6 +4,10 @@
 # сужение без опускания — красный (протухшая база пропустит следующий рост).
 # Снято 2026-08-16. Заметь sem: широчайшая дверь наружу — до-дженериковый реестр.
 #
+#   2026-10-05 (задача #3 интегратора, реестр 221.1 №1707), lower 101 -> 102: `ExitOutcome` --
+#   исход выхода (D314 после амендмента 2026-10-03), который решает понижение и несёт
+#   `CleanupCall.outcome`; наружу потому, что его читает и печатает emit_c.
+#
 #   2026-10-03 (облачная сессия p274-carina-strarm, D133-трек шаг 6б -- drop-флаг, D432 s5),
 #   lower 98 -> 99, sem 344 -> 348. lower: `@gone_of` -- флаг привязки по её узлу; его
 #   спрашивает принтер на каждом переносе (emit_c). sem: `@record_gone` / `@gone_binder`
@@ -422,7 +426,7 @@ lex 11
 #   and `FnBuilder @call_next` -- one turn of a `for` over an iterator (D58, sweep 10), recorded by
 #   lower/lowering.nv and printed by emit_c/emit_place.nv.
 # merge of p274-carina-strarm (D133 steps 1-6) into main (integrator, 2026-10-03): main's number plus strarm's own growth over the merge base, equal to the guard's measure.
-lower 101
+lower 102
 main 0
 # mono -- НОВЫЙ модуль (2026-08-18, Э2-б2): коллектор достижимого.
 # Наружу три имени: тип Reach, вопрос @has (эмиттер спрашивает про каждую

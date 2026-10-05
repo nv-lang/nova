@@ -1,0 +1,33 @@
+module cleanup_try_outcome.neg_1
+
+// `?` OVER A `Result` IN A BODY WITH AN AUTO-CLEANUP is outside the subset (E2-b3),
+// refused by name -- and this fixture is the DEBT'S OBLIGATION, not only its pin
+// (registry 221.1 #1707). D314's table (amended 2026-10-03) hands the cleanup at
+// `?`'s `Err(e)` exit `Failure(e)`, the payload the very `Err` value; the lowering
+// says so through `ExitOutcome.FailureExit` (lower/ir_cleanup.nv), and the emitter
+// stops on it until boxing `e` into `any` is built. THE DAY THIS REFUSAL GOES, this
+// file reddens check-novac-fixture-expect, and its replacement is a pos_N.nv per
+// #1707's carrier caveat: in a function, inside a loop, the payload narrowed by
+// `if err is T` in the cleanup -- each printing its outcome. The oracle passes
+// `Success` there (#1706), so each is compared against a NOVAC_TWIN that spells
+// the outcome by hand, not against the oracle's own run.
+
+// NOVAC_EXPECT `?` over a `Result` is not compiled yet
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) -> () {
+    println("cleanup ${@id}")
+}
+
+fn decode(b []u8) -> Result[str, Utf8Error] {
+    consume a = Lk { id: b.len() }
+    ro s = b.to_str()?
+    Ok(s)
+}
+
+fn main() {
+    println(decode([]u8.new()) ?? "bad")
+}

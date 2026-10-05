@@ -134,7 +134,7 @@ fn Lowerer mut @lower_block_stmts_fn(b Node, tail bool) -> () {
     // The block's end is an exit of what it bound (D432) -- unless its returned
     // value already ran them, between the value and the `return`.
     if !cleaned {
-        @lower_cleanups(b.id_of())
+        @lower_cleanups(b.id_of(), ExitOutcome.NormalExit)
     } else {
         // `@lower_exit_value` placed them.
     }
@@ -185,7 +185,7 @@ fn Lowerer mut @lower_block_stmts_value(b Node, dest Local) -> () {
         i += 1
     }
     // The block's end is an exit of what it bound (D432): after its value is placed.
-    @lower_cleanups(b.id_of())
+    @lower_cleanups(b.id_of(), ExitOutcome.NormalExit)
 }
 
 /// A tail `if` laid down as a VALUE: a zero-initialised temporary, both
@@ -345,7 +345,7 @@ fn Lowerer mut @lower_stmt(st Node) -> () {
         // `break` / `continue` (274.7 B10): the block ends with the jump, what the
         // source wrote after it lands in a fresh block -- `@lower_return`'s shape.
         // The values the pass bound and still owns are cleaned first (D432 s6).
-        @lower_cleanups(st.id_of())
+        @lower_cleanups(st.id_of(), ExitOutcome.NormalExit)
         if loop_ctl_is_break(st) {
             @ir.break_loop()
         } else {
@@ -671,7 +671,7 @@ fn Lowerer mut @lower_return(st Node) -> () {
     }
     if kids.len() <= 1 {
         // A bare `return`: the values still owned are cleaned before it (D432).
-        @lower_cleanups(st.id_of())
+        @lower_cleanups(st.id_of(), ExitOutcome.NormalExit)
     } else {
         // `@lower_exit_value` cleaned them between the value and the return.
     }
