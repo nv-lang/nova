@@ -40,7 +40,7 @@ name: nova-lint
 on:
   pull_request:
   push:
-    branches: [main, integrate]
+    branches: [main, integrate, 'integrate/**']
 
 jobs:
   nova-lint-leading-binop-nova-tests-gate:

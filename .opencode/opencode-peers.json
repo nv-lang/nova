@@ -62,7 +62,7 @@
     {
       "id": "ci",
       "required": true,
-      "text": "CI ветки на GitHub зелёный (nova-gate, nova-lint, nova-test-regression, crate-tests, dco …)"
+      "text": "CI на кандидате зелёный: кандидат (свежий main + ветка задачи) запушен в свою ветку integrate/t<N>, `python scripts/guards/check-push-proven-by-ci.py <полный хеш>` — ok (/integrator, путь приёмщика, шаг 4)"
     },
     {
       "id": "commits",

@@ -6,7 +6,7 @@ Owner's decision 2026-09-30 (integrator window, on the question "should the
 heavy gates run locally, once a day, or on GitHub CI?"): the local machine runs
 only the cheap tier (guards, targeted fixtures); the heavy tier (mega-CU, crate
 tests, conformance-full, novac-gate) is GitHub CI. The integrator pushes the
-candidate to the branch `integrate` on origin -- the workflows trigger on it
+candidate to the branch `integrate/<task>` on origin (one branch per candidate, 2026-10-05) -- the workflows trigger on `integrate` and `integrate/**`
 (affa00973) -- and moves `main` to the SAME commit only when CI on that commit
 is green. Measured the same evening: seven local push-tier gates in one evening
 (limit: one a day), six red on what the guards catch in seconds, each holding
@@ -15,7 +15,7 @@ the one machine the three windows share for 5-40 minutes.
 WHAT IT CHECKS (called by scripts/githooks/pre-push when refs/heads/main is
 pushed, with the LOCAL sha being pushed):
   1. every REQUIRED workflow (list below) has a completed run on exactly this
-     sha (any event: the `integrate` push, a PR, a dispatch); of several runs of
+     sha (any event: the `integrate/<task>` push, a PR, a dispatch); of several runs of
      one workflow the newest is judged;
   2. every job of those runs concluded success (or skipped) -- or is named in
      scripts/guards/ci-accepted-red.list together with a registry row that is
@@ -284,7 +284,7 @@ def main():
     for wf in REQUIRED:
         r = latest.get(wf)
         if r is None:
-            problems.append("%s: no run on %s -- push it to `integrate` first and wait for CI"
+            problems.append("%s: no run on %s -- push it to `integrate/<task>` first and wait for CI"
                             % (wf, sha[:9]))
             continue
         if r.get("status") != "completed":

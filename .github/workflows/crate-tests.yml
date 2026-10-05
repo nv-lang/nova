@@ -32,7 +32,7 @@ name: crate-tests
 
 on:
   push:
-    branches: [main, integrate]
+    branches: [main, integrate, 'integrate/**']
   pull_request:
     branches: [main]
 
