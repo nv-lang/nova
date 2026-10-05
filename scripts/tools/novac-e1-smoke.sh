@@ -96,7 +96,26 @@ EFFN=$(sed -n '1s/.*nova-effect-count: \([0-9][0-9]*\).*/\1/p' "$ROOT/novac/src/
 FLAGKEY="$ORACLE_STAMP-e$EFFN"
 
 # ---- 1. oracle binary (per file) + captured argv (per oracle and shell) ---
-KEY=$(cksum < "$FILE" | cut -d' ' -f1)-$ORACLE_STAMP
+# ФАЙЛЫ, КОТОРЫЕ ФИКСТУРА ВСТРАИВАЕТ (D412, 2026-10-06, приёмка задачи #2, круг 4).
+# Оракул собирает КОПИЮ фикстуры в pkgless, а `embed("путь")` разрешается от файла
+# вызова: копия без файла данных давала E_EMBED_NOT_FOUND на CI (embed/pos_1), а
+# локально это прятал близнец. Поэтому каждый файл, названный литералом `embed`,
+# едет в pkgless тем же относительным путём. Путь выше каталога фикстуры (`..`) или
+# абсолютный копия унести не может — это отказ по имени, а не тихая подмена.
+# Файлы данных входят и в КЛЮЧ кэша: правка данных при той же фикстуре давала бы
+# прежний бинарь оракула.
+FDIR=$(dirname "$FILE")
+grep -o 'embed("[^"\\]*")' "$FILE" | sed 's/^embed("//; s/")$//' | sort -u > "$T/embed.paths"
+: > "$T/embed.files"
+while IFS= read -r rel; do
+    case "$rel" in
+        /*|[A-Za-z]:*|..|../*|*/../*|*/..)
+            fail "фикстура $FILE встраивает \`$rel\` вне своего каталога: копия pkgless его не унесёт" ;;
+        *) [ -f "$FDIR/$rel" ] && printf '%s\n' "$rel" >> "$T/embed.files" ;;
+    esac
+done < "$T/embed.paths"
+KEY=$( { cat "$FILE"; while IFS= read -r rel; do cat "$FDIR/$rel"; done < "$T/embed.files"; } \
+       | cksum | cut -d' ' -f1)-$ORACLE_STAMP
 ORACLE_EXE="$CACHE/oracle-$KEY.exe"
 LINKCMD="$CACHE/link-$FLAGKEY.argv"
 CFLAGS="$CACHE/cflags-$FLAGKEY.argv"
@@ -105,6 +124,18 @@ if [ ! -f "$ORACLE_EXE" ]; then
     STEM=$(basename "$FILE" .nv)
     mkdir -p "$T/pkgless"
     sed "s/^module [a-zA-Z_.]*${STEM}\$/module ${STEM}/" "$FILE" > "$T/pkgless/$STEM.nv"
+    while IFS= read -r rel; do
+        mkdir -p "$T/pkgless/$(dirname "$rel")"
+        cp "$FDIR/$rel" "$T/pkgless/$rel"
+    done < "$T/embed.files"
+    # Копия лежит ВНЕ дерева проекта (оракул идёт из cwd = $ROOT), и граница embed для
+    # такого файла сужается до ближайшего nova.toml над ним (compiler-codegen
+    # embed_resolve.rs `per_file_embed_root`); без манифеста оракул отвечал
+    # E_EMBED_OUTSIDE_PROJECT. Манифест пишется ТОЛЬКО фикстуре с данными: прочие
+    # собираются ровно как прежде.
+    if [ -s "$T/embed.files" ]; then
+        printf '[package]\nname = "%s"\nversion = "0.0.0"\n' "$STEM" > "$T/pkgless/nova.toml"
+    fi
     "$ORACLE" build "$T/pkgless/$STEM.nv" -o "$T/oracle.exe" >"$T/oracle.out" 2>&1 \
         || fail "оракул не собрал $FILE: $(tail -3 "$T/oracle.out")"
     cp "$T/oracle.exe" "$ORACLE_EXE"

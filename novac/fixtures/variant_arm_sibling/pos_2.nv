@@ -6,7 +6,10 @@ module variant_arm_sibling.pos_2
 // registry #1721 novac refused it as having no type to take. The ORACLE
 // MISCOMPILES this form (registry #1724: it types the `if` by its first branch,
 // `Option[int]`, and clang refuses the C) -- the E1 smoke runs it against a
-// twin with the type written (`ro tail Option[str] = ..`).
+// twin with the type written (`ro tail Option[str] = ..`), pos_3.
+
+// NOVAC_TWIN pos_3.nv
+
 fn show(o Option[str]) -> str => match o {
     Some(t) => t
     None => "-"
