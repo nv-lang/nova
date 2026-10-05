@@ -292,11 +292,17 @@ git -C "$REPO" init -q 2>/dev/null
 cp "$HOOK" "$REPO/scripts/githooks/pre-push"
 # Заглушка стража: записывает, с чем её позвали, и отказывает.
 cat > "$REPO/scripts/guards/check-push-proven-by-ci.py" <<'EOF'
-import sys
+import os, sys
 open(sys.argv[0] + ".called", "w").write(" ".join(sys.argv[1:]))
-sys.exit(1)
+sys.exit(int(os.environ.get("STUB_PROVEN", "1")))
 EOF
-printf '#!/usr/bin/env bash\nexit 0\n' > "$REPO/scripts/guards/check-ci-status.sh"
+# Заглушка check-ci-status: записывает аргументы (#1736: должен получить ОТПРАВЛЯЕМЫЙ sha).
+cat > "$REPO/scripts/guards/check-ci-status.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s' "$*" > "$0.called"
+exit "${STUB_CI:-0}"
+EOF
+CI_MARK="$REPO/scripts/guards/check-ci-status.sh.called"
 STUB_MARK="$REPO/scripts/guards/check-push-proven-by-ci.py.called"
 LSHA=2222222222222222222222222222222222222222
 RSHA=3333333333333333333333333333333333333333
@@ -321,6 +327,73 @@ if [ "$_rc" = 0 ] && [ ! -f "$STUB_MARK" ]; then ok "pre-push не в main: ст
     | NOVA_SKIP_CI_CHECK=1 bash scripts/githooks/pre-push origin url >/dev/null 2>&1 )
 if [ ! -f "$STUB_MARK" ]; then ok "удаление main: доказывать нечего, страж не зван"; else
     bad "удаление main: страж зван с нулевым sha"; fi
+
+# №1736: check-ci-status судит ОТПРАВЛЯЕМЫЙ sha. Заглушка доказательства говорит «доказан»,
+# заглушка check-ci-status — её вердикт; проверяем, с чем её позвали, и что отказ стоит.
+rm -f "$STUB_MARK"
+( cd "$REPO" && printf 'refs/heads/main %s refs/heads/main %s\n' "$LSHA" "$RSHA" \
+    | STUB_PROVEN=0 STUB_CI=0 bash scripts/githooks/pre-push origin url >/dev/null 2>&1 )
+_rc=$?
+if [ "$_rc" = 0 ] && [ "$(cat "$CI_MARK" 2>/dev/null)" = "--strict $LSHA" ]; then
+    ok "pre-push main: check-ci-status зван с ОТПРАВЛЯЕМЫМ sha (--strict $LSHA), не с origin/main"
+else
+    bad "pre-push main: rc=$_rc, check-ci-status звали с '$(cat "$CI_MARK" 2>/dev/null)' (ждал '--strict $LSHA')"
+fi
+( cd "$REPO" && printf 'refs/heads/main %s refs/heads/main %s\n' "$LSHA" "$RSHA" \
+    | STUB_PROVEN=0 STUB_CI=1 bash scripts/githooks/pre-push origin url >/dev/null 2>&1 )
+_rc=$?
+if [ "$_rc" = 1 ]; then ok "pre-push main: красный вердикт check-ci-status по отправляемому sha останавливает пуш"; else
+    bad "pre-push main: check-ci-status красен, а пуш rc=$_rc (ждал 1)"; fi
+
+# ── Поведение целиком: НАСТОЯЩИЙ check-ci-status + подложенный gh ───────────────
+# Старая вершина origin/main без прогонов, отправляемый main с прогонами. До #1736
+# страж судил origin/main и отказывал; теперь — отправляемый sha.
+BEH="$TMP/beh"
+mkdir -p "$BEH/scripts/guards" "$BEH/scripts/githooks" "$TMP/ghbin"
+git -C "$BEH" init -q 2>/dev/null
+cp "$HOOK" "$BEH/scripts/githooks/pre-push"
+cp "$ROOT/scripts/guards/check-ci-status.sh" "$BEH/scripts/guards/check-ci-status.sh"
+cat >"$BEH/scripts/guards/check-push-proven-by-ci.py" <<'EOF'
+import os, sys
+sys.exit(int(os.environ.get("STUB_PROVEN", "1")))
+EOF
+GIT_ID="-c user.name=selftest -c user.email=selftest@invalid"
+# Старая вершина датирована давно: без прогонов она STALE (а не «жду»), так что старый
+# судящий страж на ней КРАСНЕЕТ — клетка это и ловит.
+GIT_AUTHOR_DATE="2026-10-01T00:00:00Z" GIT_COMMITTER_DATE="2026-10-01T00:00:00Z" \
+    git -C "$BEH" $GIT_ID commit -q --allow-empty -m "old tip" 2>/dev/null
+OLD="$(git -C "$BEH" rev-parse HEAD)"
+git -C "$BEH" $GIT_ID commit -q --allow-empty -m "pushed main" 2>/dev/null
+NEW="$(git -C "$BEH" rev-parse HEAD)"
+git -C "$BEH" update-ref refs/remotes/origin/main "$OLD"
+# gh: прогоны есть только на NEW; их вердикт задаёт $GH_CONC.
+cat > "$TMP/ghbin/gh" <<EOF
+#!/usr/bin/env bash
+case "\$1" in
+  auth) exit 0 ;;
+  run)  if [ -n "\${GH_CONC:-}" ]; then
+          echo '[{"name":"nova-gate","status":"completed","conclusion":"'"\$GH_CONC"'","headSha":"$NEW","createdAt":"2026-10-06T00:00:00Z","event":"push","databaseId":1}]'
+        else echo '[]'; fi ;;
+  *) exit 0 ;;
+esac
+EOF
+chmod +x "$TMP/ghbin/gh"
+# beh <gh-конклюзия или пусто> <вердикт доказательства 0|1> — пуш main на NEW поверх OLD; печатает rc.
+# Вердикт доказательства подложен: check-push-proven-by-ci.py здесь заглушка, он судит «нет прогонов».
+# check-ci-status на СВЕЖЕМ коммите без прогонов говорит «жду» (exit 0) — это его замысел, поэтому
+# отказ при отсутствии прогонов — дело доказательства, и клетка это и проверяет.
+beh() {
+    ( cd "$BEH" && printf 'refs/heads/main %s refs/heads/main %s\n' "$NEW" "$OLD" \
+        | env PATH="$TMP/ghbin:$PATH" STUB_PROVEN="$2" GH_CONC="$1" bash scripts/githooks/pre-push origin url >/dev/null 2>&1 )
+    echo $?
+}
+_rc="$(beh success 0)"
+if [ "$_rc" = 0 ]; then ok "старая вершина без прогонов + отправляемый sha доказан зелёным -> пуш проходит без NOVA_SKIP_CI_CHECK"
+else bad "старая вершина без прогонов: пуш rc=$_rc (ждал 0)"; fi
+_rc="$(beh failure 0)"
+if [ "$_rc" = 1 ]; then ok "отправляемый sha красный -> отказ"; else bad "красный отправляемый sha: rc=$_rc (ждал 1)"; fi
+_rc="$(beh "" 1)"
+if [ "$_rc" = 1 ]; then ok "отправляемый sha без прогонов, не доказан -> отказ"; else bad "без прогонов: rc=$_rc (ждал 1)"; fi
 
 TOTAL=$((PASS+FAIL))
 if [ "$FAIL" -ne 0 ]; then
