@@ -1,0 +1,19 @@
+// Registry #1734, the LIBRARY half: the same body as entry.nv.txt, with no
+// `main` -- an exported function, as in any module of novac's own source but
+// main.nv. novac ACCEPTS it in silence: mono's only root is the entry point
+// (mono/mono.nv `reachable`: "No entry point in this file: nothing is
+// reachable"), so the instance of `Vec[str] @pop` is never made and its body
+// is never typed. The verdict of a library unit says nothing about the
+// generic bodies it calls.
+//
+// Run from the root of the repository, the file copied to `<scratch>/library.nv`:
+//   novac/target/novac check <scratch>/library.nv   -> no diagnostic, exit 0
+// Measured 2026-10-05 on branch t2-karina-mera-0-2-emit-c-emit-place-shell.
+module popprobe2
+
+export fn last_of() -> int {
+    mut v = []str.new()
+    v.push("a")
+    ro last = v.pop()
+    if last.is_some() { 1 } else { 0 }
+}
