@@ -51,9 +51,12 @@ NOVA="$ROOT/nova-cli/target/release/nova.exe"
 [ -x "$NOVA" ] || NOVA="$ROOT/nova-cli/target/release/nova"
 [ -x "$NOVA" ] || { echo "check-clean-checkout-build: нет бинаря $NOVA — собери компилятор" >&2; exit 1; }
 
-# Временное дерево кладём РЯДОМ с репозиторием: правило worktree-location
-# (реестр №561) запрещает и `C:`-временные каталоги, и место внутри репы.
-WT="$(cd "$ROOT/.." && pwd)/nova-cleanprobe-$$"
+# Временное дерево кладём в папку деревьев рядом с репозиторием: правило
+# worktree-location (реестр №561) запрещает и `C:`-временные каталоги, и место
+# внутри репы, а с 2026-10-05 — и корень рядом с основными репозиториями.
+. "$(dirname "$0")/lib/family.sh"
+WT="$(nova_worktree_dir "$ROOT")/nova-cleanprobe-$$"
+mkdir -p "${WT%/*}"
 BR="cleanprobe-$$"
 
 cleanup() {

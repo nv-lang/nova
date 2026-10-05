@@ -53,8 +53,12 @@ targets=()
 if [ "$#" -gt 0 ]; then
     targets=("$@")
 else
-    parent="$(cd "$REPO_ROOT/.." && pwd)"
-    for d in "$parent"/*/; do
+    # Соседи — у родителя ГЛАВНОЙ копии, и деревья — в его папке worktrees/
+    # (с 2026-10-05; lib/family.sh): родитель REPO_ROOT из дерева был бы
+    # папкой деревьев, и пакетные репы выпали бы из проверки молча.
+    . "$SCRIPT_DIR/lib/family.sh"
+    parent="$(nova_family_root "$REPO_ROOT")"
+    for d in "$parent"/*/ "$(nova_worktree_dir "$REPO_ROOT")"/*/; do
         [ -d "$d" ] || continue
         targets+=("${d%/}")
     done

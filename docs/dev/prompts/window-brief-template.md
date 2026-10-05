@@ -122,10 +122,10 @@ git -C <дерево> diff --cached | grep -cE '^\+(<<<<<<<|=======|>>>>>>>)'
 ## 3. Настройка worktree
 
 ```
-git -C /d/Sources/nv-lang/nova worktree add -b <ветка> /d/Sources/nv-lang/nova-<имя> main
-cd /d/Sources/nv-lang/nova-<имя> && cargo build --release --manifest-path nova-cli/Cargo.toml
+git -C <главное дерево> worktree add -b <ветка> <родитель главного>/worktrees/nova-<имя> main
+cd <родитель главного>/worktrees/nova-<имя> && cargo build --release --manifest-path nova-cli/Cargo.toml
 ```
-Worktree только в `d:/Sources/nv-lang/` (страж `check-worktree-location.sh`).
+Worktree только в папке `worktrees/` рядом с главным деревом (страж `check-worktree-location.sh`).
 
 **Готовить окружение НЕ НУЖНО** (реестр №650, 2026-08-14): свежий worktree
 собирает сам — GC-тулчейн находится через главное дерево, libuv-сабмодуль

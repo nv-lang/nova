@@ -2192,8 +2192,13 @@ if body_runs; then
         PKG_ABSENT=0
         PKG_TOTAL=0
         # №768: корень соседей ВЫВОДИТСЯ, а не пишется — та же деривация,
-        # что у стража расположения worktree.
-        PKG_ROOT="${NOVA_WORKTREE_ROOT:-$(cd "$ROOT/.." && pwd)}"
+        # что у стража расположения worktree (lib/family.sh): родитель
+        # ГЛАВНОЙ копии, потому что с 2026-10-05 деревья живут в его папке
+        # worktrees/ и родитель ROOT из дерева — не там, где пакеты.
+        # NOVA_WORKTREE_ROOT больше не читается: ярлык владельца ставит его
+        # на каталог выше nv-lang, где пакетов нет.
+        . "$ROOT/scripts/guards/lib/family.sh"
+        PKG_ROOT="$(nova_family_root "$ROOT")"
         tr -d "$(printf '\r')" < "$PKG_LIST" > "${TMPDIR:-/tmp}/gate_pkg_list_$$.txt"
         while read -r _pname _ppath _pcmd; do
             case "$_pname" in ''|\#*) continue ;; esac

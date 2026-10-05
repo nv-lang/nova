@@ -44,7 +44,7 @@ allowed-tools: "Bash, Read, Grep, Glob, Agent, SendMessage, ListAgents, Write, E
 **Не занято ли:** `git worktree list`, ветки `git branch -a | grep -i <номер>`, последние письма соседей, строка реестра («ИСПРАВЛЕНО В ВЕТКЕ …»). Задачу, которую ведёт сосед или облачная сессия владельца, не бери.
 
 **Как запускать:**
-- Своё дерево РЯДОМ с репой, не внутри: `git -C <главное дерево> worktree add -b p<номер>-<суть> <родитель>/nova-p<номер> main`, затем `git -C <это дерево> submodule update --init compiler-codegen/nova_rt/libuv`.
+- Своё дерево в папке `worktrees/` рядом с репой, не внутри: `git -C <главное дерево> worktree add -b p<номер>-<суть> <родитель>/worktrees/nova-p<номер> main`, затем `git -C <это дерево> submodule update --init compiler-codegen/nova_rt/libuv`.
 - Модель — по [`/delegate`](delegate.md). Правка оракула — opus; инвентарь или механика — sonnet/haiku.
 - Бриф — по `/delegate` и `docs/dev/delegation-agent-briefs.md`. Здесь только то, что в брифе обязано стоять всегда:
   - путь дерева и запрет трогать главное дерево;

@@ -31,7 +31,8 @@ ROOT="${1:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 BASELINE="$SCRIPT_DIR/doc-hygiene.baseline"
 
 doc_dirs=("$ROOT/std/src" "$ROOT/examples")
-parent="$(cd "$ROOT/.." && pwd)"
+. "$SCRIPT_DIR/lib/family.sh"
+parent="$(nova_family_root "$ROOT")"
 for pkg in nova-bigint nova-polaris nova-http nova-compress nova-tls; do
     [ -d "$parent/$pkg/src" ] && doc_dirs+=("$parent/$pkg/src")
 done
