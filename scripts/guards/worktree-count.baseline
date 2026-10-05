@@ -116,7 +116,13 @@
 #   nova.worktrees/project-review-request; nova-p274-e9s3 and nova-p283 had old uncommitted diffs,
 #   saved before removal). Left: main + the assistant's two live trees (nova-p1639, nova-p1642).
 #   A new worktree raises the count: remove a tree after its branch is merged.
-worktrees=3
+# 2026-10-05 (integrator, OpenCode, owner's task "all worktrees in D:/Sources/nv-lang/worktrees"):
+#   3 -> 2. Removed by the owner's word nova-ci-red2 and nova-peers-config-name (clean; their one
+#   commit, the config rename, is superseded by .opencode/opencode-peers.json from p-peers-settings;
+#   the branches are kept), and the integrator's own worktrees/nova-peers-settings after its branches
+#   were merged. nova-carina moved to worktrees/ (mv + `git worktree repair` + submodule gitfile and
+#   core.worktree paths one level deeper). Left: main + worktrees/nova-carina.
+worktrees=2
 
 # БАМП 2026-08-29: 19 -> 20. Причина: открыто компилятор-окно p790
 # (`nova-p790`, ветка p790-fiber-cancel) под два К1-блокера тега №790/№791 —
