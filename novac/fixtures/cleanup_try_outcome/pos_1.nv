@@ -1,0 +1,65 @@
+module cleanup_try_outcome.pos_1
+
+// THE OUTCOME an auto-`@cleanup` is handed (D314's table, amended 2026-10-03), on
+// every exit the subset reaches: `?` over an `Option` leaving with `None` is a
+// `Success` -- no error exists, `None` means "no value" -- in a function and inside
+// a loop; so are a `return`, a `break` and a block's end. The cleanup PRINTS the
+// outcome, so the choice is checked, not only the call. `?` over a `Result` (its
+// `Err` exit is `Failure(e)`) is outside the subset -- neg_1. Behaviour
+// byte-for-byte with the oracle (novac-e1-smoke); registry 221.1 #1707.
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) -> () {
+    match outcome {
+        Success => println("cleanup ${@id}: Success")
+        Failure(_) => println("cleanup ${@id}: Failure")
+        Panic(_) => println("cleanup ${@id}: Panic")
+    }
+}
+
+fn get(n int) -> Option[int] => if n > 0 { Some(n) } else { None }
+
+fn one(n int) -> Option[int] {
+    consume a = Lk { id: n }
+    ro v = get(n)?
+    println("got ${v}")
+    Some(v)
+}
+
+fn looped(n int) -> Option[int] {
+    for k in 0..2 {
+        consume a = Lk { id: 40 + k }
+        ro v = get(n - k)?
+        println("pass ${v}")
+    }
+    Some(0)
+}
+
+fn early(n int) -> int {
+    consume a = Lk { id: 70 + n }
+    if n > 1 {
+        return n
+    }
+    0
+}
+
+fn broken() -> () {
+    for k in 0..3 {
+        consume a = Lk { id: 80 + k }
+        if k == 1 {
+            break
+        }
+    }
+}
+
+fn main() {
+    println(one(1) ?? 0)
+    println(one(-1) ?? 0)
+    println(looped(1) ?? 9)
+    println(early(1))
+    println(early(2))
+    broken()
+}
