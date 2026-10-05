@@ -1,11 +1,11 @@
 ---
 name: peers
-description: "обход соседних сессий — адаптер .claude/commands/peers.md (в Kimi Code peer-протокол недоступен, форма сообщений сохраняется)"
+description: "обход соседних сессий — адаптер .claude/commands/old-peers.md (в Kimi Code peer-протокол недоступен, форма сообщений сохраняется)"
 type: prompt
 disableModelInvocation: true
 ---
 
-**Это АДАПТЕР, а не вторая копия.** Источник правды — `.claude/commands/peers.md`.
+**Это АДАПТЕР, а не вторая копия.** Источник правды — `.claude/commands/old-peers.md`.
 Прочитай его целиком и следуй ему, но учти:
 
 - `ListAgents` и `SendMessage` — **недоступны в Kimi Code CLI**. Живых соседних
