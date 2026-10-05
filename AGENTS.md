@@ -56,8 +56,8 @@ The single home of the prohibitions (root [CLAUDE.md](CLAUDE.md) only orders you
 * **Temporary files and scratch directories go in your session's scratchpad, NOWHERE else** — never at a drive root,
   beside the repository, or in the parent of the working copy. Needs to outlive the session? It goes into the
   repository under a named path, in a commit.
-* Worktrees live **beside the repository**, never inside it and never on a system drive with no room; the root is
-  derived (parent of the main working copy, `NOVA_WORKTREE_ROOT` overrides), enforced by
+* Worktrees live in **`worktrees/` beside the repository** (`<parent of the main copy>/worktrees`,
+  `NOVA_WORKTREE_DIR` overrides), never inside it, never on a system drive with no room; enforced by
   `scripts/guards/check-worktree-location.sh`.
 
 **Changing the language**

@@ -41,7 +41,8 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # Скрипт живёт в scripts/guards/ — корень репы на два уровня выше.
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-FAMILY_PARENT="$(cd "$REPO_ROOT/.." && pwd)"
+. "$SCRIPT_DIR/lib/family.sh"
+FAMILY_PARENT="$(nova_family_root "$REPO_ROOT")"
 CHECK_ONLY=0
 [ "${1:-}" = "--check" ] && CHECK_ONLY=1
 

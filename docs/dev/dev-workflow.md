@@ -125,7 +125,8 @@ Nova — системный ЯП «для эпохи ИИ»: побочные э
 | `editors/` | Подсветка синтаксиса (VSCode/Vim/Emacs/Sublime). |
 
 **Соседние рабочие копии (вне дерева репо):**
-- `../nova-pNN` — worktree активных планов (одна `.git` с главным репо — см. §5).
+- `../worktrees/nova-pNN` — worktree активных планов (одна `.git` с главным репо — см. §5); все деревья
+  только в `../worktrees/`, в родителе — одни основные репозитории (страж `check-worktree-location.sh`).
 - `../www` — **отдельный** репозиторий сайта nv-lang.org.
 - `nova-private` — **отдельный** репозиторий: discussion-log, приватные заметки. Не в main-репо.
 
@@ -227,7 +228,7 @@ Nova-workspace `nova.toml` (members: `std`, `examples`, `nova_tests`). Подр�
 1. **Прочитать план** целиком (`docs/plans/NNN-*.md`) — он самодостаточен.
 2. **Worktree на план.** Главный репо — точка интеграции; для плана — свой worktree:
    ```sh
-   git worktree add -b plan-NN-<slug> ../nova-pNN main
+   git worktree add -b plan-NN-<slug> ../worktrees/nova-pNN main
    ```
    Соглашение имён: **`nova-pNN`** (не `nova-planNN`). На изолированной задаче создавать свой worktree
    сразу, а не переключать ветки в чужой рабочей копии. `git worktree list` — что сейчас занято.
