@@ -222,10 +222,39 @@ def role_belongs_to_me(tree, role):
     return True
 
 
+# Копия `plugin_role` + порядок из `detect_role` хука (дефект №1730). Снимок и
+# хук обязаны видеть одну роль; расхождение ловит клетка самотеста.
+PLUGIN_ROLES = (u"integrator", u"carina", u"controller", u"assistant")
+
+
+def plugin_role():
+    u"""Роль из файла состояния плагина; None — файла нет или он не читается."""
+    sid = (os.environ.get(u"OPENCODE_SESSION_ID") or u"").strip()
+    if not sid:
+        return None
+    base = (os.environ.get(u"XDG_DATA_HOME") or u"").strip() or \
+        os.path.join(os.path.expanduser(u"~"), u".local", u"share")
+    path = os.path.join(base, u"opencode", u"nova-peers", u"status", sid + u".json")
+    try:
+        with io.open(path, encoding=u"utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    role = data.get(u"role")
+    if not isinstance(role, str) or not role.strip():
+        return None
+    return role.strip().lower()
+
+
 def detect_role(tree):
     env = (os.environ.get("NOVA_WINDOW_ROLE") or u"").strip().lower()
     if env:
         return env
+    pr = plugin_role()
+    if pr is not None:
+        return pr if pr in PLUGIN_ROLES else u"none"
     br = current_branch(tree).lower()
     if not br:
         return u"none"

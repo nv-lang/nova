@@ -29,6 +29,12 @@ import sys
 import tempfile
 import time
 
+# Роль плагина OpenCode (#1730) читается по id сессии из окружения: самотест,
+# запущенный внутри вкладки OpenCode, иначе унаследовал бы её роль в клетки,
+# которые ждут роль по ветке. Клетки плагина выставляют окружение сами.
+os.environ.pop("OPENCODE_SESSION_ID", None)
+os.environ.pop("XDG_DATA_HOME", None)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOLS = os.path.dirname(HERE)
 TREE = os.path.dirname(os.path.dirname(TOOLS))
@@ -57,6 +63,10 @@ def run_snapshot(env_extra, tree=None):
     fd, out = tempfile.mkstemp(suffix=".json", prefix="queue-selftest-")
     os.close(fd)
     env = dict(os.environ)
+    # Роль плагина OpenCode (#1730) читается по id сессии: самотест внутри OpenCode
+    # не должен унаследовать чужую роль — клетки начинаются чисто.
+    env.pop("OPENCODE_SESSION_ID", None)
+    env.pop("XDG_DATA_HOME", None)
     env["NOVA_QUEUE_OUT"] = out
     env.setdefault("NOVA_QUEUE_MIRRORS", "origin")
     env.update(env_extra)
@@ -493,6 +503,74 @@ cell(u"подпланы: один открыт — очередь непуста
 cell(u"подпланы: «закрыта» в прозе НЕ закрывает", c_subplans_prose_is_not_a_verdict)
 cell(u"подпланы: пропавший файл — громкий отказ", c_subplans_missing_is_loud)
 cell(u"подпланы: нет строки статуса — громкий отказ", c_subplans_no_status_line_is_loud)
+
+# --------------------------------------------------------------------------
+# роль плагина OpenCode (дефект №1730): вкладка стоит в общей главной копии
+# --------------------------------------------------------------------------
+
+def _plugin_detect(content, sid=u"PLUGIN-SID", env_role=None):
+    u"""Роль снимка на главной копии при файле состояния плагина `content`."""
+    tree = tempfile.mkdtemp(prefix="queue-plugin-")
+    g = os.path.join(tree, ".git")
+    os.makedirs(g, exist_ok=True)
+    with io.open(os.path.join(g, "HEAD"), "w", encoding="utf-8") as fh:
+        fh.write(u"ref: refs/heads/main\n")
+    xdg = tempfile.mkdtemp(prefix="queue-xdg-")
+    d = os.path.join(xdg, "opencode", "nova-peers", "status")
+    os.makedirs(d, exist_ok=True)
+    if content is not None:
+        with io.open(os.path.join(d, sid + ".json"), "w", encoding="utf-8") as fh:
+            fh.write(content)
+    keys = ("OPENCODE_SESSION_ID", "XDG_DATA_HOME", "NOVA_WINDOW_ROLE")
+    old = {k: os.environ.get(k) for k in keys}
+    os.environ["OPENCODE_SESSION_ID"] = sid
+    os.environ["XDG_DATA_HOME"] = xdg
+    if env_role:
+        os.environ["NOVA_WINDOW_ROLE"] = env_role
+    else:
+        os.environ.pop("NOVA_WINDOW_ROLE", None)
+    try:
+        return snapmod.detect_role(tree)
+    finally:
+        for k in keys:
+            if old[k] is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = old[k]
+        shutil.rmtree(tree, ignore_errors=True)
+        shutil.rmtree(xdg, ignore_errors=True)
+
+
+def c_plugin_worker_on_main():
+    got = _plugin_detect(json.dumps({"role": "worker"}))
+    return got == u"none", u"снимок=%s (ветка main дала бы integrator)" % got
+
+
+def c_plugin_corrupt_falls_to_branch():
+    got = _plugin_detect(u"{не json")
+    return got == u"integrator", u"снимок=%s" % got
+
+
+def c_plugin_empty_falls_to_branch():
+    got = _plugin_detect(u"")
+    return got == u"integrator", u"снимок=%s" % got
+
+
+def c_plugin_env_beats_plugin():
+    got = _plugin_detect(json.dumps({"role": "worker"}), env_role=u"integrator")
+    return got == u"integrator", u"снимок=%s" % got
+
+
+def c_plugin_integrator_on_main():
+    got = _plugin_detect(json.dumps({"role": "integrator"}))
+    return got == u"integrator", u"снимок=%s" % got
+
+
+cell(u"плагин worker на main: снимок `none`", c_plugin_worker_on_main)
+cell(u"плагин битый: откат на ветку", c_plugin_corrupt_falls_to_branch)
+cell(u"плагин пустой: откат на ветку", c_plugin_empty_falls_to_branch)
+cell(u"NOVA_WINDOW_ROLE старше плагина", c_plugin_env_beats_plugin)
+cell(u"плагин integrator на main: `integrator`", c_plugin_integrator_on_main)
 
 
 print(u"PASS %d  FAIL %d" % (ok_count, fail_count))
