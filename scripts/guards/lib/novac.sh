@@ -155,6 +155,13 @@ novac_bin() {
 # строка хеша на каталог, подмодули — их коммитом), плюс грязная разница рабочего
 # дерева и неотслеживаемые файлы — правка без коммита тоже меняет ключ. Вне git ключа
 # нет (rc=1): вызывающий остаётся при штампе времени, как было.
+# Кроме деревьев оракул слушает ОКРУЖЕНИЕ и КОРНЕВОЙ nova.toml: NOVA_STD_PATH и ключ
+# `std = "..."` (compiler-codegen/src/manifest.rs) уводят std в другой каталог,
+# NOVA_RT_DIR / NOVA_CG_INCLUDE (nova-cli/src/main.rs, RepoPaths) — рантайм; ключ
+# знает их значения и текст nova.toml (охота guards 2026-10-05, находка 8). Clang —
+# его путь и версия; нет clang — так и пишется, а не пустая строка.
+# Не знает: файлы, игнорируемые git, в compiler-codegen/ и std/ — сборочный мусор
+# меняет ключ каждый прогон, а оракул его, по чтению, не читает.
 novac_oracle_key() {
     _ok_root="$1"; _ok_oracle="$2"; _ok_cc="$3"
     _ok_paths="compiler-codegen std"
@@ -167,7 +174,11 @@ novac_oracle_key() {
         # shellcheck disable=SC2086
         git -C "$_ok_root" ls-files -o --exclude-standard -z -- $_ok_paths 2>/dev/null \
             | (cd "$_ok_root" && xargs -0 -r sha256sum)
-        "$_ok_cc" --version 2>/dev/null | head -n 1
+        cat "$_ok_root/nova.toml" 2>/dev/null
+        printf 'env NOVA_STD_PATH=%s NOVA_RT_DIR=%s NOVA_CG_INCLUDE=%s\n' \
+            "${NOVA_STD_PATH:-}" "${NOVA_RT_DIR:-}" "${NOVA_CG_INCLUDE:-}"
+        printf 'clang %s: ' "$_ok_cc"
+        "$_ok_cc" --version 2>/dev/null | head -n 1 || echo "нет"
     } | sha256sum | cut -c1-16
 }
 
@@ -177,6 +188,10 @@ novac_oracle_key() {
 # новых фикстур снимали стража без вердикта. Поток s берёт строки с номером
 # i ≡ s (mod J): делёж детерминирован, и вызывающий ОБЯЗАН сверить, что итог есть у
 # каждой строки (FN пишет файл по номеру) — строка без итога красная, а не пропуск.
+# FN зовётся с ЗАКРЫТЫМ stdin: стандартный ввод потока — сам список, и программа,
+# читающая ввод (бинарь фикстуры в смоуке), съедала строки своего потока (охота
+# guards 2026-10-05, находка 4). Каталог итогов вызывающий берёт из mktemp: в
+# переиспользованном каталоге чужой итог прошёл бы за свой (находки 2–3).
 novac_pool() {
     _np_fn="$1"; _np_list="$2"; _np_j="${3:-$(novac_pool_jobs)}"
     _np_s=0
@@ -185,16 +200,20 @@ novac_pool() {
           while IFS= read -r _np_f; do
               _np_i=$((_np_i + 1))
               [ $(( (_np_i - 1) % _np_j )) -eq "$_np_s" ] || continue
-              "$_np_fn" "$_np_i" "$_np_f"
+              "$_np_fn" "$_np_i" "$_np_f" </dev/null
           done < "$_np_list" ) &
         _np_s=$((_np_s + 1))
     done
     wait
 }
 
-# novac_pool_jobs — число потоков пула: NOVAC_POOL_JOBS, иначе число ядер.
+# novac_pool_jobs — число потоков пула: NOVAC_POOL_JOBS, иначе число ядер (nproc;
+# нет его — 2). Ведущие нули снимаются: `08` в арифметике оболочки — неверное
+# восьмеричное, и пул умирал целиком (охота guards 2026-10-05, находка 1).
 novac_pool_jobs() {
-    _pj="${NOVAC_POOL_JOBS:-$(nproc 2>/dev/null || echo 2)}"
+    _pj_n=$(nproc 2>/dev/null || echo 2)
+    _pj=$(printf '%s' "${NOVAC_POOL_JOBS:-$_pj_n}" | sed 's/^0*//')
+    case "$_pj" in ''|*[!0-9]*) _pj=$_pj_n ;; esac
     case "$_pj" in ''|*[!0-9]*|0) _pj=2 ;; esac
     printf '%s\n' "$_pj"
 }

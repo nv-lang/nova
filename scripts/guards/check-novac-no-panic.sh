@@ -40,8 +40,9 @@ BIN="${2:-$(novac_bin "$ROOT")}"   # #1607: the door, not a file name
 novac_require_bin "$NAME" "$ROOT" "$BIN"
 
 FIXDIR="$ROOT/novac/fixtures"
-T="${TMPDIR:-/tmp}/novac-no-panic.$$"
-mkdir -p "$T"
+# mktemp, а не `.$$`: снятый пределом страж не убирает за собой, и при повторе PID
+# чужие файлы итогов прошли бы за свои (охота guards 2026-10-05).
+T=$(mktemp -d "${TMPDIR:-/tmp}/novac-no-panic.XXXXXX") || { echo "$NAME: FAIL — mktemp не создал каталог" >&2; exit 1; }
 trap 'rm -rf "$T"' 0
 
 if [ -d "$FIXDIR" ]; then
@@ -68,16 +69,19 @@ J=$(novac_pool_jobs)
 t0=$(date +%s)
 novac_pool one_check "$T/list" "$J"
 bad=0
+lost=0
 i=0
 while IFS= read -r f; do
     i=$((i+1))
     rel=${f#"$ROOT"/}
-    if [ ! -f "$T/r/$i.rc" ]; then
-        printf '  %s: итога нет — поток пула его не записал (№1717)\n' "$rel" >> "$T/bad"
-        bad=$((bad+1))
-        continue
-    fi
-    read -r rc < "$T/r/$i.rc"
+    rc=""
+    [ -f "$T/r/$i.rc" ] && read -r rc < "$T/r/$i.rc"
+    case "$rc" in
+        ''|*[!0-9]*)  # нет файла или он пуст: поток умер на этой строке
+            printf '  %s: итога нет — поток пула его не записал\n' "$rel" >> "$T/lost"
+            lost=$((lost+1))
+            continue ;;
+    esac
     if novac_is_panic_rc "$rc"; then
         printf '  %s: код возврата %s (контракт §7: вердикт 0/1, дверь 2)\n' "$rel" "$rc" >> "$T/bad"
         bad=$((bad+1))
@@ -90,6 +94,12 @@ while IFS= read -r f; do
     fi
 done < "$T/list"
 
+# Потерянная пулом строка — не паника novac: свой заголовок (охота guards 2026-10-05).
+if [ "$lost" -gt 0 ]; then
+    echo "$NAME: FAIL — фикстур без итога: $lost из $N — пул потерял их, о них не узнали ничего (№1717):" >&2
+    cat "$T/lost" >&2
+    exit 1
+fi
 if [ "$bad" -gt 0 ]; then
     echo "$NAME: FAIL — паника/крэш novac на $bad фикстур(ах):" >&2
     cat "$T/bad" >&2

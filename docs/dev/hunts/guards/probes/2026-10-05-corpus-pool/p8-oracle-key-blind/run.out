@@ -1,0 +1,20 @@
+warning: in the working copy of '.gitignore', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'compiler-codegen/nova_rt/rt.c', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'nova.toml', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'std/src/a.nv', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'std2/src/a.nv', LF will be replaced by CRLF the next time Git touches it
+K0 clean:                                   a0a8de00acaecf12
+ rc=0
+K1 root nova.toml now says std = std2:      a0a8de00acaecf12
+ rc=0
+K2 NOVA_STD_PATH=std2 in env:               a0a8de00acaecf12
+ rc=0
+K3 NOVA_RT_DIR=/elsewhere in env:           a0a8de00acaecf12
+ rc=0
+K4 gitignored compiler-codegen/nova_rt/libstale.a appears: a0a8de00acaecf12
+ rc=0
+K5 control: tracked std/src/a.nv edited:    4768befcd2c4905f
+ rc=0
+K6 clang path that does not exist:          9815e82e5d268761
+ rc=0
+K7 root outside git:                        [ rc=1]

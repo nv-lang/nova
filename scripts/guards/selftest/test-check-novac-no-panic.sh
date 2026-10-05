@@ -44,6 +44,14 @@ NOVAC_POOL_JOBS=3 sh "$G" "$FIX" "$TMP/bin.sh" > "$TMP/pool.out" 2>&1
 check "паника одной фикстуры пула — красный" "$?" "1"
 grep -q 'pos_n5.nv: код возврата 134' "$TMP/pool.out"
 check "красный называет ИМЕННО её" "$?" "0"
+# Поток пула умирает на pos_n2 (поддельный novac убивает своего родителя — поток):
+# его строки остаются без итога. Без ветки «итога нет» `read` взял бы код прошлой
+# строки, и страж был бы зелёным (охота guards 2026-10-05, находка 7).
+mkbin 'case "$2" in *pos_n2.nv) kill -9 $PPID;; esac; exit 0'
+NOVAC_POOL_JOBS=3 sh "$G" "$FIX" "$TMP/bin.sh" > "$TMP/pool.out" 2>&1
+check "поток пула умер — красный" "$?" "1"
+grep -q 'фикстур без итога: .*пул потерял' "$TMP/pool.out" && grep -q 'pos_n2.nv: итога нет' "$TMP/pool.out"
+check "красный назван «пул потерял», с адресом строки, а не паникой novac" "$?" "0"
 rm -f "$FIX"/novac/fixtures/pos_n*.nv
 
 echo "итог: $PASS ok, $FAIL FAIL"

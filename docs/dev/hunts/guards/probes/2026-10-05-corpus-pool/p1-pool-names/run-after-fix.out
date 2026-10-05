@@ -1,0 +1,8 @@
+fixtures on disk: 6
+J=1 rc=0 calls=6 dup-lines=0 :: check-novac-no-panic ok: фикстур 6, паник/крэшей нет (все коды 0/1, stderr без 'panic'); стена 1с, потоков 1
+J=3 rc=0 calls=6 dup-lines=0 :: check-novac-no-panic ok: фикстур 6, паник/крэшей нет (все коды 0/1, stderr без 'panic'); стена 0с, потоков 3
+J=50 rc=0 calls=6 dup-lines=0 :: check-novac-no-panic ok: фикстур 6, паник/крэшей нет (все коды 0/1, stderr без 'panic'); стена 2с, потоков 50
+panic on 'pos  b.nv', J=3: rc=1
+check-novac-no-panic: FAIL — паника/крэш novac на 1 фикстур(ах):
+  novac/fixtures/pos  b.nv: код возврата 101 (контракт §7: вердикт 0/1, дверь 2)
+  Инвариант 11 плана 274: сломанный ввод пережёвывается узлами-

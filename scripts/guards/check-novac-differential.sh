@@ -92,8 +92,9 @@ fi
 
 FIXDIR="$ROOT/novac/fixtures"
 ALLOW="$ROOT/novac/divergences.allow"
-T="${TMPDIR:-/tmp}/novac-differential.$$"
-mkdir -p "$T"
+# mktemp, а не `.$$`: снятый пределом страж (TERM/KILL) не убирает за собой, и при
+# повторе PID чужие файлы итогов прошли бы за свои (охота guards 2026-10-05).
+T=$(mktemp -d "${TMPDIR:-/tmp}/novac-differential.XXXXXX") || { echo "$NAME: FAIL — mktemp не создал каталог" >&2; exit 1; }
 trap 'rm -rf "$T"' 0
 
 if [ -d "$FIXDIR" ]; then
@@ -146,12 +147,15 @@ i=0
 while IFS= read -r f; do
     i=$((i+1))
     rel=${f#"$ROOT"/}
-    if [ ! -f "$T/r/$i.v" ]; then
-        printf '  %s: исхода нет — поток пула его не записал\n' "$rel" >> "$T/lost"
-        lost=$((lost+1))
-        continue
-    fi
-    read -r b o < "$T/r/$i.v"
+    b=""; o=""
+    [ -f "$T/r/$i.v" ] && read -r b o < "$T/r/$i.v"
+    case "$b $o" in
+        "принял принял"|"принял отверг"|"отверг принял"|"отверг отверг") ;;
+        *)  # нет файла или он пуст/обрезан: поток умер на этой строке
+            printf '  %s: исхода нет — поток пула его не записал\n' "$rel" >> "$T/lost"
+            lost=$((lost+1))
+            continue ;;
+    esac
     if [ "$b" != "$o" ]; then
         if [ -f "$ALLOW" ] && grep -Fxq "$rel" "$ALLOW"; then
             allowed=$((allowed+1))
@@ -218,7 +222,7 @@ else
                 if "$ORACLE" check "$_src" >/dev/null 2>&1 </dev/null; then _o="принял"; else _o="отверг"; fi
             fi
             if [ "$_o" != "принял" ]; then echo "не-судилась оракул отверг" > "$_r.b"; return 0; fi
-            if bash "$SMOKE" "$_src" "$2" > "$_r.out" 2>&1; then
+            if bash "$SMOKE" "$_src" "$2" > "$_r.out" 2>&1 </dev/null; then
                 if [ "$_src" = "$2" ]; then echo "совпало" > "$_r.b"; else echo "близнец" > "$_r.b"; fi
             else
                 echo "разошлось поведение разошлось с оракулом" > "$_r.b"
@@ -235,17 +239,13 @@ else
             jb=1
         fi
         novac_pool one_behaviour "$T/list" "$jb"
-        beh=0; behbad=0; twins=0; skipped=0; fromcache=0
+        beh=0; behbad=0; twins=0; skipped=0; fromcache=0; lost=0
         i=0
         while IFS= read -r f; do
             i=$((i+1))
             rel=${f#"$ROOT"/}
-            if [ ! -f "$T/r/$i.b" ]; then
-                behbad=$((behbad+1))
-                printf '  %s: итога нет — поток пула его не записал (№1717)\n' "$rel" >> "$T/behbad"
-                continue
-            fi
-            read -r verdict why < "$T/r/$i.b"
+            verdict=""; why=""
+            [ -f "$T/r/$i.b" ] && read -r verdict why < "$T/r/$i.b"
             [ -f "$T/r/$i.out" ] && grep -q 'оракул из кэша' "$T/r/$i.out" && fromcache=$((fromcache+1))
             case "$verdict" in
                 совпало) beh=$((beh+1)) ;;
@@ -253,12 +253,22 @@ else
                 не-судилась)
                     skipped=$((skipped+1))
                     printf '  %s: не судилась — %s\n' "$rel" "$why" >> "$T/skipped" ;;
-                *)
+                разошлось)
                     behbad=$((behbad+1))
                     printf '  %s: %s\n' "$rel" "$why" >> "$T/behbad"
                     [ -f "$T/r/$i.out" ] && sed 's/^/      /' "$T/r/$i.out" | head -n 4 >> "$T/behbad" ;;
+                *)  # нет файла итога или он пуст: поток умер на этой строке
+                    lost=$((lost+1))
+                    printf '  %s: итога нет — поток пула его не записал\n' "$rel" >> "$T/lost" ;;
             esac
         done < "$T/list"
+        # Потерянная пулом строка — не расхождение компиляторов: свой заголовок, иначе
+        # поломку пошли бы искать в novac (охота guards 2026-10-05, находка 6).
+        if [ "$lost" -gt 0 ]; then
+            echo "$NAME: FAIL — фикстур без итога поведения: $lost из $N — пул потерял их, о них не узнали ничего (№1717):" >&2
+            cat "$T/lost" >&2
+            exit 1
+        fi
         if [ "$behbad" -gt 0 ]; then
             echo "$NAME: FAIL — фикстура принята обоими, но ОТВЕТ разный: $behbad" >&2
             cat "$T/behbad" >&2

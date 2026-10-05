@@ -1,0 +1,16 @@
+NOVAC_POOL_JOBS='8' rc=0
+    check-novac-no-panic ok: фикстур 5, паник/крэшей нет (все коды 0/1, stderr без 'panic'); стена 1с, потоков 8
+NOVAC_POOL_JOBS='08' rc=0
+    check-novac-no-panic ok: фикстур 5, паник/крэшей нет (все коды 0/1, stderr без 'panic'); стена 0с, потоков 8
+NOVAC_POOL_JOBS='09' rc=0
+    check-novac-no-panic ok: фикстур 5, паник/крэшей нет (все коды 0/1, stderr без 'panic'); стена 1с, потоков 9
+NOVAC_POOL_JOBS='010' rc=0
+    check-novac-no-panic ok: фикстур 5, паник/крэшей нет (все коды 0/1, stderr без 'panic'); стена 0с, потоков 10
+NOVAC_POOL_JOBS='abc' rc=0
+    check-novac-no-panic ok: фикстур 5, паник/крэшей нет (все коды 0/1, stderr без 'panic'); стена 1с, потоков 16
+NOVAC_POOL_JOBS='-1' rc=0
+    check-novac-no-panic ok: фикстур 5, паник/крэшей нет (все коды 0/1, stderr без 'panic'); стена 1с, потоков 16
+NOVAC_POOL_JOBS='0' rc=0
+    check-novac-no-panic ok: фикстур 5, паник/крэшей нет (все коды 0/1, stderr без 'panic'); стена 1с, потоков 16
+NOVAC_POOL_JOBS='' rc=0
+    check-novac-no-panic ok: фикстур 5, паник/крэшей нет (все коды 0/1, stderr без 'panic'); стена 1с, потоков 16

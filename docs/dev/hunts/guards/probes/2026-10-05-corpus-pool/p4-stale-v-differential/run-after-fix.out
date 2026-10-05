@@ -1,0 +1,16 @@
+== run A: fresh T ==
+rc=1
+check-novac-differential: FAIL — фикстур без исхода: 2 из 3 — пул потерял их, о них не узнали ничего (№1717):
+  novac/fixtures/pos_n2.nv: исхода нет — поток пула его не записал
+  novac/fixtures/pos_n3.nv: исхода нет — поток пула его не записал
+== run B: stale T with r/2.v empty, r/3.v='x x' ==
+rc=1
+pre-created <scratch>/p4-stale-v-differential/work/tmp/novac-differential.1888314
+check-novac-differential: FAIL — фикстур без исхода: 2 из 3 — пул потерял их, о них не узнали ничего (№1717):
+  novac/fixtures/pos_n2.nv: исхода нет — поток пула его не записал
+  novac/fixtures/pos_n3.nv: исхода нет — поток пула его не записал
+== kill.log ==
+killing pool thread 1888304 at <scratch>/p4-stale-v-differential/work/root/novac/fixtures/pos_n2.nv
+killing pool thread 1888333 at <scratch>/p4-stale-v-differential/work/root/novac/fixtures/pos_n2.nv
+== leftover dirs in TMPDIR after B ==
+novac-differential.1888314

@@ -122,7 +122,10 @@ if [ -z "${NOVAC_SMOKE_ORACLE_KEY:-}" ]; then
 fi
 EXE_CACHE="${NOVAC_SMOKE_EXE_CACHE:-$CACHE}"
 mkdir -p "$EXE_CACHE"
-KEY=$(sha256sum < "$FILE" | cut -c1-16)-$NOVAC_SMOKE_ORACLE_KEY
+# Имя файла — тоже вход: оракул собирает копию с `module`, переписанным по имени
+# (шаг ниже), и тот же текст под другим именем — другая программа.
+_STEMK=${FILE##*/}
+KEY=$(sha256sum < "$FILE" | cut -c1-16)-${_STEMK%.nv}-$NOVAC_SMOKE_ORACLE_KEY
 ORACLE_EXE="$EXE_CACHE/oracle-$KEY.exe"
 LINKCMD="$CACHE/link-$FLAGKEY.argv"
 CFLAGS="$CACHE/cflags-$FLAGKEY.argv"
@@ -222,8 +225,8 @@ eval "\"$REAL_CLANG\" $(tr '\n' ' ' < "$LINKCMD") -o \"$T/emitted_prog.exe\" \"$
     || fail "clang не слинковал: $(head -5 "$T/link.out")"
 
 # ---- 4. behavior diff ---------------------------------------------------
-"$ORACLE_EXE" > "$T/out.oracle" 2>&1; e_o=$?
-"$T/emitted_prog.exe"  > "$T/out.novac"  2>&1; e_n=$?
+"$ORACLE_EXE" > "$T/out.oracle" 2>&1 </dev/null; e_o=$?
+"$T/emitted_prog.exe"  > "$T/out.novac"  2>&1 </dev/null; e_n=$?
 # `head -3` показывал только «1c1», строку оракула и разделитель — НАШЕЙ строки
 # в отчёте не было вовсе (замерено 2026-08-27 на `[7, 8].cap()`: видно «< 8»,
 # не видно «> 2»). Отчёт, показывающий одну сторону расхождения, заставляет

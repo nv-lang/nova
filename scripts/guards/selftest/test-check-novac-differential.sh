@@ -103,6 +103,22 @@ NOVAC_POOL_JOBS=3 NOVAC_CORPUS=0 sh "$G" "$FIX" "$TMP/bin.sh" > "$TMP/pool.out" 
 check "одна фикстура пула разошлась — красный" "$?" "1"
 grep -q 'pos_n6.nv: поведение разошлось' "$TMP/pool.out"
 check "красный называет ИМЕННО её" "$?" "0"
+# Поток пула умирает (поддельный бинарь убивает родителя — поток): строки потока
+# остаются без итога. Без ветки «итога нет» сводка взяла бы итог прошлой строки и
+# была бы зелёной (охота guards 2026-10-05, находка 7). Этап 1 — через novac, этап 2 —
+# через смоук.
+mksmoke 'exit 0'
+mkbin 'case "$2" in *pos_n2.nv) kill -9 $PPID;; esac; exit 0'
+NOVAC_POOL_JOBS=3 NOVAC_CORPUS=0 sh "$G" "$FIX" "$TMP/bin.sh" > "$TMP/pool.out" 2>&1
+check "поток этапа 1 умер — красный" "$?" "1"
+grep -q 'фикстур без исхода: .*пул потерял' "$TMP/pool.out" && grep -q 'pos_n2.nv: исхода нет' "$TMP/pool.out"
+check "этап 1: красный назван «пул потерял», с адресом строки" "$?" "0"
+mkbin 'case "$2" in *pos_n4.nv) exit 1;; esac; exit 0'
+mksmoke 'case "$1" in *pos_n3.nv) kill -9 $PPID;; esac; exit 0'
+NOVAC_POOL_JOBS=3 NOVAC_CORPUS=0 sh "$G" "$FIX" "$TMP/bin.sh" > "$TMP/pool.out" 2>&1
+check "поток этапа 2 умер — красный" "$?" "1"
+grep -q 'фикстур без итога поведения: .*пул потерял' "$TMP/pool.out" && grep -q 'pos_n3.nv: итога нет' "$TMP/pool.out"
+check "этап 2: красный назван «пул потерял», а не «ОТВЕТ разный»" "$?" "0"
 rm -f "$FIX"/novac/fixtures/pos_n*.nv
 
 echo "итог: $PASS ok, $FAIL FAIL"

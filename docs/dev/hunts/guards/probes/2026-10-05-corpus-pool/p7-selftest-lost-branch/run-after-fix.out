@@ -1,0 +1,9 @@
+control (no mutation):
+  selftest test-check-novac-no-panic on mutant: rc=0 :: итог: 11 ok, 0 FAIL
+  selftest test-check-novac-differential on mutant: rc=0 :: итог: 26 ok, 0 FAIL
+mutant m1: check-novac-no-panic branch .rc replaced: before=0 after=0
+  probe broken: mutation did not apply
+mutant m2: check-novac-differential branch .v replaced: before=0 after=0
+  probe broken: mutation did not apply
+mutant m3: check-novac-differential branch .b replaced: before=0 after=0
+  probe broken: mutation did not apply
