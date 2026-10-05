@@ -1543,8 +1543,9 @@
 # 2026-10-03, integrator (OpenCode move): rows -> 1652, max -> 1715 (rows 1714 install-guards finds repos by fixed names, 1715 no .claude/settings.json mechanism acts in OpenCode; branch p-opencode-guards).
 # 2026-10-03, integrator (OpenCode): rows -> 1653, max -> 1716 (row 1716 filed by the hunt check x K5, numbered at merge).
 # 2026-10-05, integrator (OpenCode): rows -> 1654, max -> 1717 (row 1717 with-deadline does not grow with the fixture corpus, filed by p-ci-red2, numbered at merge).
-rows=1654
-max=1717
+# 2026-10-05, integrator (OpenCode): rows -> 1655, max -> 1718 (row 1718 the novac smoke's PCH flag filter keeps the value of a two-token -L option, found by the no-limit differential run).
+rows=1655
+max=1718
 rows=1611
 max=1693
 rows=1590
