@@ -1520,7 +1520,11 @@ no_caveat=0
 # 2026-10-03, cloud session p274-carina-sweep, sync with main dc2617993: 99 -> 98 on this branch --
 # row 1643 (the shell stub bodies, blocks the tag) is closed in main by the merge of sweeps 8-9; main's value taken.
 # 2026-10-05, integrator (OpenCode): 98 -> 99, row 1716 (Carina: the right side of ?? is not a conditional operand, K1, blocks the tag) arrived numbered with the hunt merge f7d13e1dc and left this value behind; main was red on it since. Its fix waits on branch p274-carina-coalesce (3902f6e52), whose merge closes the row and brings 99 -> 98.
-blockers=99
+# 2026-10-05, task #2 (Carina measure 0.2): 99 -> 102, three open K1 rows that block the tag, each with a route:
+# 1723 (Carina: the consume flow tracks only the file's own must-consume types), 1724 (oracle: a bare
+# variant with no type source is accepted, D55 E_VARIANT_CTOR_UNTYPED), 1727 (oracle: a consume field
+# consumed through a view receiver is accepted, D133).
+blockers=102
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed
