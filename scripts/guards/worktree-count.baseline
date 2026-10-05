@@ -116,7 +116,7 @@
 #   nova.worktrees/project-review-request; nova-p274-e9s3 and nova-p283 had old uncommitted diffs,
 #   saved before removal). Left: main + the assistant's two live trees (nova-p1639, nova-p1642).
 #   A new worktree raises the count: remove a tree after its branch is merged.
-# 2026-10-05 (integrator, OpenCode, owner's task "all worktrees in D:/Sources/nv-lang/worktrees"):
+# 2026-10-05 (integrator, OpenCode, owner's task "all worktrees in one worktrees/ folder"):
 #   3 -> 2. Removed by the owner's word nova-ci-red2 and nova-peers-config-name (clean; their one
 #   commit, the config rename, is superseded by .opencode/opencode-peers.json from p-peers-settings;
 #   the branches are kept), and the integrator's own worktrees/nova-peers-settings after its branches
