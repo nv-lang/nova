@@ -122,7 +122,13 @@
 #   the branches are kept), and the integrator's own worktrees/nova-peers-settings after its branches
 #   were merged. nova-carina moved to worktrees/ (mv + `git worktree repair` + submodule gitfile and
 #   core.worktree paths one level deeper). Left: main + worktrees/nova-carina.
-worktrees=2
+# 2026-10-05 (integrator, OpenCode): 2 -> 5. BUMP by the owner's decision of the same day: Carina
+#   work is handed out as peer_spawn tasks, each in its own worktree (worktrees/nova-opencode-<n>-
+#   <slug>), at most three at once (owner's limit; two while the machine runs a differential).
+#   5 = main + worktrees/nova-carina (branch p274-carina-coalesce, kept by the owner's word) + 3 task
+#   trees. A task's tree is removed when the task is accepted (`peer_task cleaned`), and the base
+#   goes down with the last one.
+worktrees=5
 
 # БАМП 2026-08-29: 19 -> 20. Причина: открыто компилятор-окно p790
 # (`nova-p790`, ветка p790-fiber-cancel) под два К1-блокера тега №790/№791 —
