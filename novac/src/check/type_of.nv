@@ -187,7 +187,7 @@ fn typed_arg_class(e Node, ctx Ctx, scope Scope, chan CheckOut) -> ArgClass {
     // how the method closes the record (at its exit every `consume` field is
     // Consumed). `field_class` lends a field as `mut` and nothing more; this
     // is the one place a field hands over ownership. Refused by P14 until
-    // registry #TBD (novac's own emit_c.nv `@into_parts`).
+    // registry #1719 (novac's own emit_c.nv `@into_parts`).
     if owned_field_of_owned_recv(e, ctx, scope, chan) { return ArgClass.ArgConsume }
     arg_class(e, scope)
 }
@@ -198,7 +198,7 @@ fn typed_arg_class(e Node, ctx Ctx, scope Scope, chan CheckOut) -> ArgClass {
 /// and "Nested field paths": `@inner.tx.commit()`). A receiver that is `mut`
 /// keeps the field a `mut` place here: the D133 rotate pattern (consume, then
 /// rebind before the exit) needs the field's state tracked, which the flow
-/// does not do yet -- refused by P14, registry #TBD.
+/// does not do yet -- refused by P14, registry #1723.
 fn owned_field_of_owned_recv(e Node, ctx Ctx, scope Scope, chan CheckOut) -> bool {
     ro k = e.kind_of()
     if k == NodeKind.Paren { return owned_field_of_owned_recv(branch_children(e)[1], ctx, scope, chan) }

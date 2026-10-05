@@ -162,7 +162,7 @@ fn Checker mut @judge_field_marker(f Node, fty TyId, type_name str, type_marked 
     // A MUST-CONSUME TYPE OF ANOTHER MODULE is one too (D133: `StringBuilder
     // consume` of std is the canonical opaque resource): `kinds` holds the file's
     // own only -- the types whose values the flow tracks -- and the marker rule
-    // is about the field's TYPE wherever it was declared. Until registry #TBD
+    // is about the field's TYPE wherever it was declared. Until registry #1720
     // `consume body StringBuilder` was refused as a marker on nothing.
     ro owned = @is_owned_kind(kinds, fty) || @is_declared_must_consume(fty)
     if owned && !marked {

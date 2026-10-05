@@ -4,7 +4,7 @@ module consume_field_move.pos_1
 // flow"; 02-types.md: at the exit of `fn X consume @m()` every `consume` field is
 // Consumed). `@body.into_str()` hands the field's obligation to the consuming
 // call -- the form of novac's own `Emitter @into_parts` (emit_c.nv). Until
-// registry #TBD the field answered as a `mut` place and P14 refused it ("needs
+// registry #1719 the field answered as a `mut` place and P14 refused it ("needs
 // ownership"). The oracle compiles it.
 type Pad consume {
     n int

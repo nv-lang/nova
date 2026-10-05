@@ -4,7 +4,7 @@ module variant_arm_sibling.pos_1
 // and an `if` branch: with no written result type the arms are one type, and a
 // literal arm -- a variant is one -- takes the type of the arm that is a value).
 // The form of novac's own `@emit_store` (emit_place.nv): `ro built = match op {
-// Set => @build_value(..)  Update(_) => None }`. Until registry #TBD the `None`
+// Set => @build_value(..)  Update(_) => None }`. Until registry #1721 the `None`
 // was refused as having no type to take. The oracle compiles it; the `None` in
 // the FIRST branch of an `if` is pos_2 (the oracle miscompiles that one).
 type Op enum Set | Update(int)

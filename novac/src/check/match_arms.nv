@@ -228,7 +228,7 @@ fn Checker mut @type_match(m Node) -> () {
     // that is a value). So
     // `ro built = match op { Set => build()  Update(_) => None }` is an
     // `Option[str]`: the `None` arm is typed after the others, expecting
-    // what they agreed on (`@sibling_expect`). Refused until registry #TBD.
+    // what they agreed on (`@sibling_expect`). Refused until registry #1721.
     ro waits = !is_ty(arm_expect)
     mut waiting = []Node.new()
     for c in kids {

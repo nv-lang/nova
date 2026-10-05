@@ -3,8 +3,8 @@ module variant_arm_sibling.pos_2
 // A BARE `None` IN THE FIRST BRANCH of a value `if` takes the type of the
 // branch after it (D489, a `match` arm and an `if` branch alike): the `if`
 // below is an `Option[str]`, so the waiting branch is typed second. Until
-// registry #TBD novac refused it as having no type to take. The ORACLE
-// MISCOMPILES this form (registry #TBD: it types the `if` by its first branch,
+// registry #1721 novac refused it as having no type to take. The ORACLE
+// MISCOMPILES this form (registry #1724: it types the `if` by its first branch,
 // `Option[int]`, and clang refuses the C) -- the E1 smoke runs it against a
 // twin with the type written (`ro tail Option[str] = ..`).
 fn show(o Option[str]) -> str => match o {

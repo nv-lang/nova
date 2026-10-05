@@ -1544,8 +1544,9 @@
 # 2026-10-03, integrator (OpenCode): rows -> 1653, max -> 1716 (row 1716 filed by the hunt check x K5, numbered at merge).
 # 2026-10-05, integrator (OpenCode): rows -> 1654, max -> 1717 (row 1717 with-deadline does not grow with the fixture corpus, filed by p-ci-red2, numbered at merge).
 # 2026-10-05, integrator (OpenCode): rows -> 1655, max -> 1718 (row 1718 the novac smoke's PCH flag filter keeps the value of a two-token -L option, found by the no-limit differential run).
-rows=1655
-max=1718
+# 2026-10-05, task #2 (Carina measure 0.2): rows -> 1661, max -> 1724 (rows 1719-1724 numbered by the integrator: 1719-1722 closed by this branch, 1723 consume flow tracks only the file's own must-consume types, 1724 oracle miscompiles a bare None in the first if branch; the 7th row of the branch stays TBD).
+rows=1661
+max=1724
 rows=1611
 max=1693
 rows=1590
