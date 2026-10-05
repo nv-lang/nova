@@ -364,6 +364,55 @@ fi
 $GC merge --abort >/dev/null 2>&1
 $GC checkout -q -f main 2>/dev/null
 
+# ── КАНДИДАТ СЛИЯНИЯ (2026-10-05, решение владельца «в main вливает приёмщик
+#    задачи»): приёмщик гоняет гейт в дереве задачи после слияния main в ветку.
+#    Вердикт на вершине, СОДЕРЖАЩЕЙ HEAD, судит то же дерево, что даст слияние. ──
+
+# 25. Вершина содержит HEAD, вердикт на ней свежий — ПРОПУСК; ритм не судится
+#     (маленький батч сразу после «recent» без обхода — как в случае 21).
+$GC checkout -q -b candbr main 2>/dev/null
+echo c1 > "$TMP/c1.txt"; $GC add c1.txt >/dev/null 2>&1; $GC commit -q -m c1 >/dev/null 2>&1
+CAND_SHA=$($GC rev-parse HEAD 2>/dev/null)
+$GC checkout -q main 2>/dev/null
+$GC merge --no-commit --no-ff candbr >/dev/null 2>&1
+echo "RC=0 SEC=1 TIER=main:push HASH=$CAND_SHA BRANCH=candbr" > "$V"
+out=$(NOVA_GATE_VERDICT="$V" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && echo "$out" | grep -q 'кандидата слияния' && ! echo "$out" | grep -q 'ОТКАЗ'; then
+    ok "вердикт на кандидате, содержащем HEAD, открывает слияние (ритм не судится)"
+else
+    bad "ложный отказ на вердикте кандидата (код $rc): $out"
+fi
+$GC merge --abort >/dev/null 2>&1
+
+# 26. Вершина НЕ содержит HEAD (ветка от main~1) — вердикт на ней НЕ годится:
+#     результат слияния — другое дерево. Ритм снят обходом, чтобы судилось именно это.
+$GC checkout -q -b stalebr main~1 2>/dev/null
+echo st > "$TMP/st.txt"; $GC add st.txt >/dev/null 2>&1; $GC commit -q -m st >/dev/null 2>&1
+STALE_SHA=$($GC rev-parse HEAD 2>/dev/null)
+$GC checkout -q main 2>/dev/null
+$GC merge --no-commit --no-ff stalebr >/dev/null 2>&1
+echo "RC=0 SEC=1 TIER=main:push HASH=$STALE_SHA BRANCH=stalebr" > "$V"
+out=$(NOVA_GATE_VERDICT="$V" NOVA_MERGE_URGENT="selftest" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q 'ДРУГОЕ дерево'; then
+    ok "отказ: вердикт на вершине, не содержащей HEAD"
+else
+    bad "вершина без HEAD принята как кандидат (код $rc): $out"
+fi
+$GC merge --abort >/dev/null 2>&1
+
+# 27. Кандидат годный, но вердикт СТАРШЕ его коммита — ОТКАЗ.
+$GC merge --no-commit --no-ff candbr >/dev/null 2>&1
+echo "RC=0 SEC=1 TIER=main:push HASH=$CAND_SHA BRANCH=candbr" > "$V"
+touch -d '2010-01-01' "$V" 2>/dev/null || touch -t 201001010000 "$V"
+out=$(NOVA_GATE_VERDICT="$V" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q 'СТАРШЕ кандидата'; then
+    ok "отказ: вердикт старше кандидата слияния"
+else
+    bad "устаревший вердикт кандидата принят (код $rc): $out"
+fi
+$GC merge --abort >/dev/null 2>&1
+$GC checkout -q -f main 2>/dev/null
+
 if [ "$FAILED" -eq 0 ]; then echo "селфтест check-merge-discipline: $CASES/$CASES ok"; exit 0; fi
 echo "селфтест check-merge-discipline: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1

@@ -50,9 +50,9 @@ The single home of the prohibitions (root [CLAUDE.md](CLAUDE.md) only orders you
 
 **Where you work**
 
-* `main` belongs to the integrator. You work in **your own branch in your own worktree**; the integrator merges.
-* Your own branch MAY be pushed to `origin` (`git push origin <branch>`; never `--force`, never `main`, never a
-  tag, `origin` only — the mirrors carry `main`; owner's word 2026-09-30).
+* You work in **your own branch in your own worktree**. The task's **acceptor** (not its author) merges it into
+  `main` by the acceptance steps; a commit straight to `main`: the integrator only.
+* Your own branch MAY be pushed to `origin` (never `--force`, never `main`, never a tag; the mirrors carry `main`).
 * **Temporary files and scratch directories go in your session's scratchpad, NOWHERE else** — never at a drive root,
   beside the repository, or in the parent of the working copy. Needs to outlive the session? It goes into the
   repository under a named path, in a commit.
